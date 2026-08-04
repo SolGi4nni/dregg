@@ -773,19 +773,49 @@ pub struct MapOpSpec {
 /// could not express: none folds in another STARK proof; this one rides the named recursion
 /// argument (`joint_turn_recursive.rs` leaf verifier / `ivc_turn_chain.rs` aggregate prover),
 /// exactly as `MemOp`/`UMemOp` ride the offline-memory argument rather than a row-local poly.
-/// The binding is enforced at the per-turn FOLD, not by an in-AIR row gate: the rotated Custom
+/// ⚑ **THE ROW-LOCAL SEAM (2026-08-04).** Until this revision the per-row `proof_bind` denotation
+/// was `True` in Lean and a bare `continue` in `Ir2Air::eval` — and unlike `MemOp`/`MapOp`, whose
+/// `True` is compensated by a LogUp send, this kind emitted no bus interaction either. It was the
+/// one constraint kind that denoted NOTHING in either language, and no served descriptor emitted
+/// one. Worse, the §6c existential it deferred to (`ProofBind.boundAt`) reads over FREE `commit`
+/// and `vk` columns, so even a fully deployed recursion layer would have discharged it with a
+/// verifying sub-proof of ANY program about ANY statement.
+///
+/// `vk_pin` and `bound` are the two things a ROW can say, and `Ir2Air::eval` now asserts them:
+/// `guard·(guard − 1)`, `guard·(vk − vk_pin)` and `guard·(commit − bound)`. Both are `Option`:
+/// `None` (wire `null`) means the descriptor DECLARES it cannot pin that half — correct for the
+/// Custom effect, which dispatches an arbitrary registered program and derives its commitment
+/// off-row. An absent pin is a VALUE a gate can count, not a silence.
+///
+/// For the Custom member the binding still lands at the per-turn FOLD, not here: the rotated Custom
 /// member PUBLISHES these columns as descriptor public inputs (Lean
 /// `EffectVmEmitRotationV3.customPiExposure`, eight `.piBinding .first` pins), and the fold
-/// connects those PIs to the custom sub-proof leaf's PI-commitment. The per-row `proof_bind`
-/// denotation therefore stays a declaration (`True`, like `MemOp`/`UMemOp`).
+/// connects those PIs to the custom sub-proof leaf's PI-commitment.
+///
+/// ⚠ WIDTH: these are ONE felt each; the real commitment is eight
+/// (`circuit-prove/src/custom_proof_bind.rs::PROOF_BIND_COMMIT_WIDTH`). A `bound` tie is worth
+/// 2^31, not the 2^124 of the object it is a limb of. Descriptors needing the full digest in their
+/// public statement PI-bind the eight squeeze lanes; this pins the program.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProofBindSpec {
-    /// Selector guard (active iff it evaluates to 1).
+    /// Selector guard (active iff it evaluates to 1). Forced boolean by the seam.
     pub guard: LeanExpr,
     /// The `custom_proof_commitment` column (bound to a verifying sub-proof's PI commitment).
     pub commit: LeanExpr,
     /// The `custom_program_vk_hash` column (bound to that sub-proof's program VK).
     pub vk: LeanExpr,
+    /// ⚑ The DECLARED program VK literal. `None` = the descriptor declares the program unpinned.
+    pub vk_pin: Option<i64>,
+    /// ⚑ The DECLARED row-local expression `commit` must equal. `None` = declared free-witnessed.
+    pub bound: Option<LeanExpr>,
+}
+
+impl ProofBindSpec {
+    /// A seam that pins NEITHER the program nor the commitment. Countable, so the number can
+    /// ratchet down; the Lean twin is `DescriptorIR2.ProofBind.isDeclarative`.
+    pub fn is_declarative(&self) -> bool {
+        self.vk_pin.is_none() && self.bound.is_none()
+    }
 }
 
 /// A two-row arithmetic expression (Lean `DescriptorIR2.WindowExpr`): a polynomial over BOTH
@@ -1343,7 +1373,30 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
             c.expect(b',')?;
             c.expect_key("vk")?;
             let vk = parse_expr(c)?;
-            VmConstraint2::ProofBind(ProofBindSpec { guard, commit, vk })
+            // ⚑ The seam's two declared halves. Both are `null`-able: the Lean emitter renders
+            // `Option.none` as a bare `null`, which is how a descriptor SAYS it cannot pin that
+            // half rather than leaving the reader to infer it.
+            c.expect(b',')?;
+            c.expect_key("vk_pin")?;
+            let vk_pin = if c.try_null()? {
+                None
+            } else {
+                Some(c.parse_int()?)
+            };
+            c.expect(b',')?;
+            c.expect_key("bound")?;
+            let bound = if c.try_null()? {
+                None
+            } else {
+                Some(parse_expr(c)?)
+            };
+            VmConstraint2::ProofBind(ProofBindSpec {
+                guard,
+                commit,
+                vk,
+                vk_pin,
+                bound,
+            })
         }
         "window_gate" => {
             c.expect(b',')?;
@@ -1889,6 +1942,9 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
                 // VK at the per-turn FOLD via the recursion argument — not by a row-local poly here.
                 for e in [&m.guard, &m.commit, &m.vk] {
                     chk(e, "proof_bind field", ci)?;
+                }
+                if let Some(b) = &m.bound {
+                    chk(b, "proof_bind bound", ci)?;
                 }
             }
             VmConstraint2::WindowGate(g) => {
@@ -3347,13 +3403,41 @@ fn eval_row_local_constraints<AB>(
                 w.on_transition.then(|| builder.is_transition()),
                 w.body.eval_expr::<AB>(local, next),
             ),
+            // ⚑ THE RECURSION SEAM (Lean `DescriptorIR2.ProofBind.holdsAt`). This arm used to sit
+            // in the `continue` list below with the bus kinds — but unlike them it emitted NO bus
+            // interaction either, so it was the one constraint kind that denoted NOTHING in either
+            // language. It now asserts the same up-to-three polynomials the Lean denotation does:
+            //
+            //   guard·(guard − 1)        the selector is a bit
+            //   guard·(vk − vk_pin)      the attested program is the DECLARED one   [if pinned]
+            //   guard·(commit − bound)   the commitment is the DECLARED row expr    [if bound]
+            //
+            // `vk_pin`/`bound` are `Option`s in the wire IR: `null` means the descriptor DECLARES
+            // it cannot pin that half (the Custom effect dispatches an arbitrary program; its
+            // commitment is derived off-row and bound by the fold's lane-by-lane `connect`). An
+            // absent pin is a VALUE here, countable by a gate — not the silence it replaced.
+            //
+            // Emitted as its own `assert_zero`s rather than through the shared tail below,
+            // because the arm produces up to three bodies and the tail asserts exactly one.
+            VmConstraint2::ProofBind(p) => {
+                let guard = p.guard.eval_expr::<AB>(local);
+                builder.assert_zero(guard.clone() * (guard.clone() - AB::Expr::ONE));
+                if let Some(v) = p.vk_pin {
+                    let vk = p.vk.eval_expr::<AB>(local);
+                    builder.assert_zero(guard.clone() * (vk - const_to_expr::<AB>(v)));
+                }
+                if let Some(b) = &p.bound {
+                    let commit = p.commit.eval_expr::<AB>(local);
+                    builder.assert_zero(guard * (commit - b.eval_expr::<AB>(local)));
+                }
+                continue;
+            }
             // The bus-bearing kinds carry no row-local algebra — their content is the multiset /
             // lookup argument, emitted by the caller that HAS a bus.
             VmConstraint2::Lookup(_)
             | VmConstraint2::MemOp(_)
             | VmConstraint2::MapOp(_)
-            | VmConstraint2::UMemOp(_)
-            | VmConstraint2::ProofBind(_) => continue,
+            | VmConstraint2::UMemOp(_) => continue,
         };
         builder.assert_zero(match sel {
             Some(s) => s * body,
@@ -4212,6 +4296,9 @@ pub fn read_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
             VmConstraint2::ProofBind(p) => {
                 for x in [&p.guard, &p.commit, &p.vk] {
                     e(x, &mut out);
+                }
+                if let Some(b) = &p.bound {
+                    e(b, &mut out);
                 }
             }
             VmConstraint2::WindowGate(g) => w(&g.body, &mut out),
@@ -9354,7 +9441,7 @@ mod tests {
 
     /// The Lean `#guard`-pinned demo-custom golden (DescriptorIR2 §10c): the `proof_bind` grammar
     /// (the row's commitment + vk columns, gated), byte-for-byte.
-    const DEMO_CUSTOM: &str = "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}";
+    const DEMO_CUSTOM: &str = "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1},\"vk_pin\":45,\"bound\":{\"t\":\"const\",\"v\":123}}],\"hash_sites\":[],\"ranges\":[]}";
 
     /// The byte-pinned Lean proof-bind golden parses, decoding the accumulator constraint kind.
     #[test]
@@ -9368,6 +9455,8 @@ mod tests {
                 guard: LeanExpr::Var(2),
                 commit: LeanExpr::Var(0),
                 vk: LeanExpr::Var(1),
+                vk_pin: Some(45),
+                bound: Some(LeanExpr::Const(123)),
             })
         ));
         // The binding rides the recursion argument, not a committed table — the descriptor
@@ -9379,7 +9468,7 @@ mod tests {
     /// v2-only, like every other new kind.
     #[test]
     fn proof_bind_in_v1_wire_refuses() {
-        let v1 = "{\"name\":\"x\",\"trace_width\":3,\"public_input_count\":0,\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}";
+        let v1 = "{\"name\":\"x\",\"trace_width\":3,\"public_input_count\":0,\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1},\"vk_pin\":45,\"bound\":{\"t\":\"const\",\"v\":123}}],\"hash_sites\":[],\"ranges\":[]}";
         assert!(
             parse_vm_descriptor_any(v1).is_err(),
             "v1 wire carrying a proof_bind must refuse"
