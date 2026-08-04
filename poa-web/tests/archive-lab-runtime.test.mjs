@@ -35,6 +35,21 @@ const fixtureDocument = async () => JSON.parse(await fixtureText());
 const provenanceText = () => readFile(provenanceUrl, "utf8");
 const provenanceDocument = async () => JSON.parse(await provenanceText());
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+const gitBlobSha1 = (value) => createHash("sha1")
+  .update(`blob ${value.byteLength}\0`)
+  .update(value)
+  .digest("hex");
+
+async function hasGitObjectDatabase() {
+  try {
+    const { stdout } = await execFile("git", ["rev-parse", "--is-inside-work-tree"], { cwd: repositoryRoot });
+    assert.equal(stdout, "true\n");
+    return true;
+  } catch (error) {
+    if (error?.code === 128 && String(error.stderr).includes("not a git repository")) return false;
+    throw error;
+  }
+}
 
 async function descriptor() {
   return loadArchiveLabDescriptor(await fixtureDocument(), {
@@ -73,11 +88,16 @@ test("archive fixture and all three Lean source byte streams are explicitly pinn
   });
 });
 
-test("archive provenance commit tree binds committed semantics while the new emitter is honestly workspace-pinned", async () => {
+test("archive provenance bytes bind claimed Git blobs, and a checkout also binds their commit tree", async () => {
   const provenance = await provenanceDocument();
+  const gitTreeSources = provenance.generator.sources.filter((source) => source.binding === "git-tree");
+  for (const source of gitTreeSources) {
+    const body = await readFile(new URL(`../../${source.path}`, import.meta.url));
+    assert.equal(gitBlobSha1(body), source.git_blob, source.path);
+  }
+  if (!(await hasGitObjectDatabase())) return;
   await execFile("git", ["cat-file", "-e", `${provenance.source_repository_commit}^{commit}`], { cwd: repositoryRoot });
-  for (const source of provenance.generator.sources) {
-    if (source.binding !== "git-tree") continue;
+  for (const source of gitTreeSources) {
     const { stdout: treeLine } = await execFile("git", ["ls-tree", provenance.source_repository_commit, "--", source.path], { cwd: repositoryRoot });
     assert.match(treeLine, new RegExp(`^100644 blob ${source.git_blob}\\t${source.path}\\n$`));
     const { stdout: blob } = await execFile("git", ["cat-file", "blob", source.git_blob], { cwd: repositoryRoot, encoding: "buffer", maxBuffer: 1024 * 1024 });

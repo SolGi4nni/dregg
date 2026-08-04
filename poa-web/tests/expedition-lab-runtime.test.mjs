@@ -59,6 +59,24 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function gitBlobSha1(value) {
+  return createHash("sha1")
+    .update(`blob ${value.byteLength}\0`)
+    .update(value)
+    .digest("hex");
+}
+
+async function hasGitObjectDatabase() {
+  try {
+    const { stdout } = await execFile("git", ["rev-parse", "--is-inside-work-tree"], { cwd: repositoryRoot });
+    assert.equal(stdout, "true\n");
+    return true;
+  } catch (error) {
+    if (error?.code === 128 && String(error.stderr).includes("not a git repository")) return false;
+    throw error;
+  }
+}
+
 async function builtinFetch(url) {
   const href = String(url);
   const body = href.includes("provenance") ? await provenanceText() : await fixtureText();
@@ -189,8 +207,13 @@ test("provenance validation refuses a source-commit self-assertion", async () =>
   );
 });
 
-test("the provenance commit tree binds each named source path to its claimed blob and digest", async () => {
+test("provenance bytes bind claimed Git blobs, and a checkout also binds their commit tree", async () => {
   const provenance = await provenanceDocument();
+  for (const source of provenance.generator.sources) {
+    const body = await readFile(new URL(`../../${source.path}`, import.meta.url));
+    assert.equal(gitBlobSha1(body), source.git_blob, source.path);
+  }
+  if (!(await hasGitObjectDatabase())) return;
   await execFile("git", ["cat-file", "-e", `${provenance.source_repository_commit}^{commit}`], { cwd: repositoryRoot });
   for (const source of provenance.generator.sources) {
     const { stdout: treeLine } = await execFile(
