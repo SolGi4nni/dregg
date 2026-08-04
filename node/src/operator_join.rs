@@ -22,7 +22,7 @@
 //!
 //! **The PRIMARY add path is LIVE, not a re-roll** (docs/guide/
 //! FEDERATION-JOIN.md): a candidate's Join proposal goes on-chain
-//! (`join` auto-proposes; `propose-epoch-transition` proposes on their
+//! (`join` auto-proposes unless `--follow-only`; `propose-epoch-transition` proposes on their
 //! behalf), each committee operator admits with [`approve_membership`]
 //! (`approve-membership` / `POST /membership/approve`), and at quorum the
 //! committee advances live — chain continues, `federation_id` unchanged,
@@ -46,8 +46,9 @@
 //!   dir + `node.key` exist (auto-generating the key, printing the pubkey) and a
 //!   committee `genesis.json` is present, then hand the daemon the bootstrap
 //!   peer. The node syncs the blocklace from the bootstrap and — if its key is
-//!   in the committee — votes; if not, it auto-proposes membership
-//!   (`propose_join_if_needed`) and follows until an operator admits it.
+//!   in the committee — votes; if not, it follows and normally auto-proposes
+//!   membership (`propose_join_if_needed`). `join --follow-only` suppresses the
+//!   proposal so observation is not an admission request.
 
 use std::path::{Path, PathBuf};
 
@@ -843,7 +844,7 @@ pub fn prepare_join(data_dir: &str, bootstrap: &str, json: bool) -> Result<JoinP
 }
 
 /// Print the human-facing summary of a join plan (before the daemon starts).
-pub fn announce_join(plan: &JoinPlan, data_dir: &str, bind: &str) {
+pub fn announce_join(plan: &JoinPlan, data_dir: &str, bind: &str, follow_only: bool) {
     println!("Joining federation via bootstrap {}", plan.bootstrap);
     println!("  Data dir          : {}", expand_path(data_dir).display());
     println!("  This validator    : {}", hex32(&plan.self_pubkey));
@@ -851,6 +852,12 @@ pub fn announce_join(plan: &JoinPlan, data_dir: &str, bind: &str) {
     if plan.in_committee {
         println!(
             "  Committee member  : YES — this node will sync the blocklace and cast finalization votes."
+        );
+    } else if follow_only {
+        println!(
+            "  Committee member  : no — this node will sync as a FOLLOWER without proposing membership.\n  \
+             It anchors no finality and remains an observer until a separate operator action opens\n  \
+             and the committee ratifies an admission proposal."
         );
     } else {
         println!(
