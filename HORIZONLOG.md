@@ -1,5 +1,79 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 4 (wrap census) — **83.0% of Mina's wrap circuit, MEASURED**, and the scoreboard is now a gate
+
+The wrap-scale emission of all fourteen rungs finished (`bf97c2eb0`, cone `16d6bdf23dd2c86c…` over 101
+modules, VERIFIED against the tree; `w11_bullet`'s placement alone took 2 109 s). So the census that
+had been *derived* is **measured**, and it is no longer a `census.py` in a scratchpad:
+`bridge/mina-zkapp/scripts/wrapmain-shape-diff.mjs` + `fixtures/wrapmain-wrap-census-baseline.json`,
+wired into `scripts/local-gates.sh` (both halves) and `scripts/pickles-synthesis-oracles.sh`.
+
+```
+gate type      ours   mina   delta    % of mina        run-length family     ours  mina
+Poseidon       1507   2871   -1364      52.5%          EndoMul x 32            79    79   ✅
+EndoMul        2528   2528      +0     100.0% ✅       VarBaseMul x 1        2417  2417   ✅
+EndoMulScalar   368    536    -168      68.7%          Poseidon x 11          137   261
+VarBaseMul     2417   2417      +0     100.0% ✅       CompleteAdd x 3          0    22
+CompleteAdd     492    492      +0     100.0% ✅       CompleteAdd x 2         80    65   ⚠ +15
+Generic        2282   3521   -1239      64.8%          Zero x >=2             137     0   ⚠
+Zero           2956   2757    +199     107.2%          Generic x 630 446 230…   0   ~12
+TOTAL         12550  15122   -2572      83.0%          PI  24 of the 24 wrap_main PINS (40 wide)
+non-Generic   10268  11601   -1333      88.5%
+```
+
+⚑ **NO SINGLE ARTIFACT HOLDS ALL FOURTEEN RUNGS AND CENSUSING ONE UNDERSTATES THE ASSEMBLY.**
+`rungsUpto` is a TREE — three branches hang off `w9_prev` (`finalize`; `wraphack → close`;
+`combine → bullet`) — so `w11_bullet.json` is `prev+combine+bullet` and contains no
+finalize/wraphack/close, while summing the six files double-counts `w9_prev` five times. The union is
+assembled by PREFIX-STRIPPING and the prefix relation is verified on the emitted bytes (`typ` +
+`coeffs`), not on the `rfl` theorem that motivates it. Both synthetic seams are `Zero → Generic`, so
+the run-length multiset is order-independent across the branches — measured, and printed every run.
+
+⚑ **EVERY DERIVED WRAP ROW-COUNT IN §1's TABLE IS CONFIRMED.** `w7_split` 6472+20 = **6492**,
+`w8_ftcomm` 6492+846 = **7338**, `w9_prev` 7338+6 = **7344**, `w11_wraphack` 7344+637 = **7981**,
+`w12_close` 7981+2 = **7983** — five for five against the finished emission. So is
+`comb_and_bullet_close_minas_endomul_census`: 32 × (46 + 33) = 2528, and the emission carries
+**79 runs of exactly 32** where the assembly carried zero this morning.
+
+⚠ **WHAT DID NOT CLOSE, named rather than averaged into the 83%.**
+* **`Zero` runs of length ≥ 2: ours 137, Mina's 0.** Mina's wrap has no two consecutive `Zero` rows
+  anywhere. Ours are the σ-only probe rows — 134 × 2, 2 × 3, 1 × 10. This is the largest structural
+  divergence left and it is not scope, it is a row-economy choice this assembly makes.
+* **`CompleteAdd` batching is inverted, not absent.** Totals are at parity (492/492) but Mina batches
+  `×3` 22 times and `×2` 65 times where we emit `×2` 80, `×1` 253, and one `×18` and one `×7` Mina
+  never emits at all. Right gadget count, wrong grouping.
+* **The long `Generic` runs are still all Mina's.** `×630` twice, `×446`, `×230`, `×137`, `×121` and
+  `×109` twice — none emitted; we emit `×475` twice, `×291`, `×132` instead. ⚠ And this is the one
+  place the target is unreachable by construction: `wrap_main.ml:215-219` bakes the per-branch step VK
+  commitments as `Inner_curve.constant`, so the `Generic` stream is per-zkApp. **The reachable target
+  is the non-Generic stream, and that is 10 268 / 11 601 = 88.5%.**
+* **Poseidon 137 of 261.** The remainder is W-FINALIZE's two `finalize_other_proof` sponges.
+
+⚑ **TWO FIGURES CORRECTED, AND ONE OF THE CORRECTIONS WAS ITSELF WRONG — verified at source.**
+* "`EndoMul 32×77`, exactly Mina's" **is a true STEP result** (`KimchiStepMain.lean:203`: ours 2464 =
+  `32×77` against Mina's step `32×77 + 1×1`) and every occurrence of it in the tree sits in a step
+  context. Quoting it about the WRAP is a CROSS-CIRCUIT error, not a false step claim: the wrap number
+  is **79**, and this assembly emitted **zero** 32-blocks before W-COMBINE and W-BULLET. ⚠ The draft
+  of this entry said 77 "was never our count", which would have replaced one misquote with another.
+* "Poseidon 89/89, 100%" was **per-instance internal-row identity**, not coverage. Coverage was 89 of
+  261 = 34% and is **137 of 261 = 52.5%** now. `KimchiWrapMain.lean` §1 already carried this
+  correction in prose; the gate makes it mechanical, which prose cannot be.
+* **PI is not "23 of 40".** `WRAP_PRIMARY_LEN = 40` is the statement WIDTH; `wrap_main` pins **24** of
+  those slots and the other sixteen are values it passes through unchecked (0–4, 9), `Spec.T.Constant`
+  padding (30–37) and the dead lookup `Opt` (38–39) — all sixteen zero in a real devnet proof. This
+  assembly pins **24 of 24**. The gate READS the denominator out of `WRAP_PINNED_SLOTS` and refuses
+  rather than falling back to a number.
+
+⚑ **THE RATCHET, AND `3` IS NOT `1`.** Per gate type and per `typ × length` family, `|ours − mina|`
+may SHRINK, never GROW; a NEW divergent family reds; and a shrink the baseline does not record reds
+too, which is what makes the census monotone rather than merely non-increasing. `--update-baseline`
+REFUSES on growth or on a new family unless `--accept-growth` is passed, so the reflex after a red is
+the safe path. A missing rung, a stale provenance stamp, a broken prefix relation or a census too
+small to be a census all exit **3 = BLOCKED** — and `local-gates.sh` now has a BLOCKED arm, because it
+collapsed exit 3 into `FAIL` and "there is no wrap emission on this box" arrived as the same red line
+as "the assembly diverged from Mina's circuit". BLOCKED still counts as a failure. Eight self-test
+legs: two anchors, three ratchet bites, three assembly-floor blocks.
+
 ## ⚑⚑⚑ AUGUST 4 (PoA replay + holder admission follow-up) — the source braid is wider; counter 3 is cryptographically blocked
 
 The post-milestone review found that PoA had many strong Lean kernels but only one operational durable

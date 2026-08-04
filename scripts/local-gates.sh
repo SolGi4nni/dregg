@@ -170,6 +170,24 @@ GATES=(
   # its five cases were verified to FAIL against the pre-repair parser (the fifth is a forward
   # guard on the new stack-popping and says so). ~0s, no git, no Lean, no cargo.
   "workflow-wd-scope-red|60|python3 scripts/emit_descriptors.py --self-test-workflow-scope"
+  # ⚑ THE PICKLES SCOREBOARD, WHICH LIVED IN A SCRATCHPAD. "What percentage of Mina's wrap circuit do
+  # we emit?" is the number this whole epoch is measured by, and until 2026-08-04 it was a `census.py`
+  # in `/private/tmp/.../scratchpad/` re-typed by hand each session. Two figures got quoted all day
+  # that the numbers do not support, and both are the shape a hand-read table produces:
+  #   * "EndoMul 32x77 exactly Mina's" — Mina's wrap-transaction has SEVENTY-NINE runs of 32 EndoMul
+  #     rows, not 77, and at the time it was quoted the Lean assembly emitted ZERO. It was a fact
+  #     about MINA'S blob read off one column and repeated as a conformance result about US.
+  #   * "Poseidon 89/89, 100%" — quoted as COVERAGE when it was per-instance internal-row identity of
+  #     the blocks we do emit. Mina's wrap has 261 permutations; coverage was 34%.
+  # So the gate prints both sides of every ratio and prints those two corrections in its own output.
+  # ⚑ AND IT ASSEMBLES SOMETHING NO SINGLE ARTIFACT HOLDS. `rungsUpto` is a TREE: three branches hang
+  # off `w9_prev`, so `w11_bullet.json` is `prev+combine+bullet` and contains no finalize/wraphack/
+  # close. Censusing one file UNDERSTATES the assembly and summing the files DOUBLE-COUNTS `w9_prev`
+  # five times. The union is built by prefix-stripping, VERIFIED on the emitted bytes (typ+coeffs),
+  # and a branch that is not its base plus a suffix BLOCKS rather than grading.
+  # This row is the `--self-test` half: it needs NEITHER Lean NOR an emission (Mina's own gate list is
+  # the honest candidate), ~2s. The full grade needs a `DREGG_WM=wrap` emission and is under --all.
+  "wrapmain-shape-diff-red|120|node bridge/mina-zkapp/scripts/wrapmain-shape-diff.mjs --self-test"
   "no-degraded-felt|180|bash scripts/check-no-degraded-felt.sh --rev HEAD"
   "emitter-routing|120|bash scripts/check-emitter-routing.sh"
   "anchored-lc-committee|60|bash scripts/check-anchored-lc-committee.sh"
@@ -792,6 +810,20 @@ GATES_ALL=(
   # It is invoked WITHOUT `--no-ts`/`--no-xi` on purpose: a missing ts-node prints `RED` and exits
   # non-zero, and narrowing the invocation here would re-create the delegation this row closes.
   "pickles-synthesis-oracles|14400|bash scripts/pickles-synthesis-oracles.sh"
+  # ⚑ THE WRAP CENSUS ITSELF — the ratchet, not its red-path proof (that row is in the everyday table
+  # above and needs nothing). MEASURED 2026-08-04 over all fourteen rungs at the committed wrap shape:
+  # 12 550 of Mina's 15 122 gates = 83.0%, with EndoMul 2528/2528, VarBaseMul 2417/2417 and
+  # CompleteAdd 492/492 at parity, and PI 24 of the 24 statement words `wrap_main` actually pins.
+  # RATCHET: per gate type and per `typ x length` family, |ours - mina| may SHRINK, never GROW; a new
+  # divergent family reds; and a shrink that the baseline does not record reds too, which is what makes
+  # the census MONOTONE rather than merely non-increasing. `--update-baseline` REFUSES on growth or on
+  # a new family unless `--accept-growth` is passed, so the reflex after a red is the safe path.
+  # ⚠ HERE AND NOT ABOVE for one reason: it needs a `DREGG_WM=wrap` emission of all fourteen rungs
+  # (hours of Lean; `w11_bullet`'s placement alone measured 2109 s) and REFUSES — exit 3, BLOCKED —
+  # without one, rather than skipping or grading a nine-rung assembly as though it were the circuit.
+  # It also refuses an emission whose provenance stamp does not match the source cone as the tree
+  # stands right now, so it cannot grade a file nobody emitted. ~3s when the emission is present.
+  "wrapmain-shape-diff|300|node bridge/mina-zkapp/scripts/wrapmain-shape-diff.mjs"
 )
 
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }
@@ -799,7 +831,7 @@ want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -q
 printf '%-28s %-6s %-8s %s\n' GATE RESULT TIME NOTE
 printf '%.0s─' {1..96}; echo
 
-pass=0; fail=0; skip=0; timedout=0; failed=()
+pass=0; fail=0; skip=0; timedout=0; blocked=0; failed=()
 run_one() {
   IFS='|' read -r name to cmd <<< "$1"
   want "$name" || return 0
@@ -828,6 +860,22 @@ run_one() {
     # a defect" — those want different fixes (a budget or a phase split, vs an actual repair).
     printf '%-28s \033[31m%-6s\033[0m %-8s %s\n' "$name" TIMEOUT "$((e-s))s" "exceeded ${to}s — NOT A VERDICT, counted as a failure"
     fail=$((fail+1)); failed+=("$name (timeout)"); timedout=$((timedout+1))
+  elif [ "$rc" -eq 3 ]; then
+    # ⚑ 3 IS NOT 1, AND IT IS NOT 0 EITHER.
+    #
+    # Several gates in this table already SPEAK the distinction — the pickles conformance gates and
+    # the wrap census exit 3 when a PREREQUISITE is absent or stale (no emission on this box, an
+    # artifact whose provenance stamp does not match the source cone) and 1 when they found a real
+    # divergence. `pickles-synthesis-oracles.sh` names them apart internally; THIS runner collapsed
+    # both into `FAIL`, so "there is no wrap emission on this machine" and "the Lean assembly
+    # diverged from Mina's compiled circuit" arrived as the same red line. A reader cannot act on
+    # that, and the predictable response to an unactionable red is to stop reading the gate.
+    #
+    # ⚠ AND BLOCKED IS STILL A FAILURE. A prerequisite that is absent means the gate DID NOT RUN,
+    # which is not a pass — this is about making the failure ACTIONABLE, never about letting one
+    # through. It counts in `fail` and the run exits non-zero exactly as before.
+    printf '%-28s \033[33m%-6s\033[0m %-8s %s\n' "$name" BLOCKED "$((e-s))s" "prerequisite absent/stale — DID NOT RUN, counted as a failure"
+    fail=$((fail+1)); failed+=("$name (blocked)"); blocked=$((blocked+1))
   else
     printf '%-28s \033[31m%-6s\033[0m %-8s %s\n' "$name" "FAIL" "$((e-s))s" "$note"
     fail=$((fail+1)); failed+=("$name")
@@ -847,6 +895,7 @@ fi
 echo
 echo "passed $pass · failed $fail · skipped $skip"
 [ "$timedout" -gt 0 ] && echo "  ⚠ $timedout failure(s) produced NO VERDICT (timeout) — that wants a budget or a phase split, not a repair"
+[ "$blocked" -gt 0 ] && echo "  ⚠ $blocked failure(s) are BLOCKED (exit 3) — an INPUT is absent or stale, not a divergence. Produce the input; do not 'fix' the gate"
 [ ${#failed[@]} -gt 0 ] && printf 'failing: %s\n' "${failed[*]}"
 
 # ── WHAT THIS DELIBERATELY DOES NOT RUN, and why ───────────────────────────────

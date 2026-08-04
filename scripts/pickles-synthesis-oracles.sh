@@ -162,6 +162,22 @@ run_one "wrapmain-region-conformance.mjs --self-test (blob-fact red path + --rep
 run_one "wrapmain-region-conformance.mjs (Lean wrap assembly vs 2 compiled wrap_main blobs)" \
   node "scripts/wrapmain-region-conformance.mjs"
 
+# ⚑ AND THE SCOREBOARD, WHICH WAS A SCRATCHPAD `census.py` UNTIL 2026-08-04. The region-conformance
+# gate above grades gate BY gate inside the regions it knows; this one answers the question the epoch
+# is actually measured by — WHAT FRACTION OF MINA'S WRAP CIRCUIT DO WE EMIT — and ratchets it.
+# ⚑ IT ASSEMBLES SOMETHING NO SINGLE ARTIFACT HOLDS: `rungsUpto` is a TREE, three branches off
+# `w9_prev`, so `w11_bullet.json` is `prev+combine+bullet` and holds no finalize/wraphack/close.
+# Censusing one file UNDERSTATES the assembly; summing the files DOUBLE-COUNTS `w9_prev` five times.
+# The union is prefix-stripped and the prefix relation is VERIFIED on the emitted bytes.
+# MEASURED at the committed wrap shape over all fourteen rungs: 12550/15122 = 83.0%, EndoMul
+# 2528/2528, VarBaseMul 2417/2417, CompleteAdd 492/492, PI 24 of the 24 slots `wrap_main` pins.
+# ⚠ Same two-step shape as the gate above: `--self-test` needs neither Lean nor an emission, and the
+# full grade REFUSES (exit 3) without a `DREGG_WM=wrap` emission of all fourteen rungs.
+run_one "wrapmain-shape-diff.mjs --self-test (ratchet bites + the assembly floor blocks)" \
+  node "scripts/wrapmain-shape-diff.mjs" --self-test
+run_one "wrapmain-shape-diff.mjs (14-rung census ratchet vs Mina's wrap-transaction)" \
+  node "scripts/wrapmain-shape-diff.mjs"
+
 # ⚑ THE TWO THAT WERE IN NO SCRIPT AT ALL, AND WHY THEY ARE HERE NOW (2026-08-03).
 #
 # `stepmain-shape-diff.mjs` PRINTED TWO TABLES AND EXITED 0 — no comparison, no failure counter, no
