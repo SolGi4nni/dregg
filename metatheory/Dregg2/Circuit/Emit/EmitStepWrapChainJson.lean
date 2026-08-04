@@ -42,8 +42,12 @@ def emitChainRung (dir pfx : String) (t : WrapData) (k : Rung) (both : Bool) : I
   let gu := wrapGates rowsU
   if refusalOf t.sh p gs != none then
     throw (IO.userError s!"placeChecked REFUSED at {pfx}_{k.tag}: {repr (refusalOf t.sh p gs)}")
-  let wit := wrapWitness t p rowsW
-  let pub := if p == 0 then [] else wrapPublic t
+  -- ⚠ ⚑ RUNG-EXPLICIT. These read `wrapWitness t p rowsW` / `wrapPublic t` until 2026-08-04; those
+  -- aliases silently denoted `.prev` after W-PREV, so this driver would have written
+  -- `"public_input_size": 22` beside a 23-element `"public_input"` and a witness grid from another
+  -- rung's environment. The aliases are deleted; see `KimchiStepWrapChain` §9a.
+  let wit := wrapWitnessAt t k p rowsW
+  let pub := if p == 0 then [] else wrapPublicAt t k
   let probes := rungProbeRows t k
   IO.FS.writeFile s!"{dir}/{pfx}_{k.tag}.json"
     (renderWrapCircuit s!"{pfx}_{k.tag}" p (p + rowsW.length) (placedOf t.sh p gs) wit pub probes)
@@ -67,8 +71,8 @@ def main : IO Unit := do
   let _ ← emitChainRung dir "chainunread" tChainUnread .bind false
   -- ⚑ A LOUD refusal if the two controls collapsed into each other. The harness checks this too,
   -- but a driver that wrote a file it knew was wrong would be the worse failure.
-  if wrapPublic tChainBent == wrapPublic tChain then
+  if wrapPublicAt tChainBent .bind == wrapPublicAt tChain .bind then
     throw (IO.userError "the BENT emission's public vector equals the honest one - no chain")
-  if wrapPublic tChainUnread != wrapPublic tChain then
+  if wrapPublicAt tChainUnread .bind != wrapPublicAt tChain .bind then
     throw (IO.userError "the UNREAD-bend emission's public vector moved - the tape is not the input")
   IO.println s!"wrote {dir}/chain_*.json, chainbent_w4_bind.json, chainunread_w4_bind.json"

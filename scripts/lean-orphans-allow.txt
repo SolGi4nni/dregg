@@ -203,30 +203,20 @@ Dregg2.Circuit.Emit.MinaWrapSgChunk3
 #   scripts/run-mina-sg-compiled.sh   (and `lake build mina_sg_bench` for the native number)
 Dregg2.Bridge.MinaWrapSgWeld
 
-# ── 2026-08-04 — THE ONE GENUINELY RED CONE OF THE 23-ORPHAN SWEEP ──────────────────────────────
-# Twenty of the twenty-three unlisted orphans were ROOTED in this change (three new lean_libs in
-# metatheory/lakefile.toml: PicklesEmitDrivers / DivergenceToothGuards / PathOfAngelsGuards). These
-# two are the exception, and the reason is not WIP — it is that the module is RED AT HEAD.
+# ── 2026-08-04 — THE ONE GENUINELY RED CONE OF THE 23-ORPHAN SWEEP, NOW REPAIRED AND ROOTED ────
+# `KimchiStepWrapChain` and `EmitStepWrapChainJson` were listed here for ONE day as a NAMED RED.
+# They are gone from this list because the redness is gone, not because it was reclassified:
+# `KimchiStepWrapChain` is rooted via `Dregg2/PicklesSynthesis.lean` and `EmitStepWrapChainJson`
+# via `PicklesEmitDrivers` in `metatheory/lakefile.toml`.
 #
-# ⚑ `KimchiStepWrapChain` DOES NOT COMPILE, and this is exactly the wound the orphan gate exists to
-# surface. Measured 2026-08-04 (`lean` with extracted LEAN_PATH, 515 s):
-#
-#   KimchiStepWrapChain.lean:533:2: error: Tactic `native_decide` evaluated that the proposition
-#     wrapPublic tChainBent ≠ wrapPublic tChain ∧ … is false
-#   KimchiStepWrapChain.lean:535:0: error: compiled-pin FAIL:
-#     …the_emitted_public_vector_moves_with_the_step_proof depends on axioms [sorryAx]
-#
-# The theorem is the wrap chain's TAMPER-DETECTION claim — that bending one Fq coordinate of the
-# step proof's `w_comm` moves the emitted public vector. It evaluates FALSE. `#assert_compiled`
-# caught the `sorryAx` fallback correctly; nothing ever ran it, because nothing built this module.
-# Its olean was ABSENT from `.lake/build` entirely, so every other module importing it was
-# unbuildable too — which is the only reason `EmitStepWrapChainJson` is on this list.
-#
-# ⚠ NOT allowlisted as "intentional WIP". Allowlisted as a NAMED RED with an owner: the in-AIR
-# Kimchi verifier lane owns `KimchiStepWrapChain`'s cone. Rooting it would turn the default build
-# red; leaving it unlisted would have left the gate red on a module whose real defect is this
-# theorem, not its registration. De-list BOTH the moment the theorem is repaired — rooting is then
-# ~515 s (its 18 `#assert_compiled` run the compiled evaluator over a real sponge), which is the
-# most expensive single rooting in this population by two orders of magnitude.
-Dregg2.Circuit.Emit.KimchiStepWrapChain
-Dregg2.Circuit.Emit.EmitStepWrapChainJson
+# ⚠ TWO CORRECTIONS THIS LEAVES BEHIND, because the entry that stood here got both wrong:
+#   * "Rooting it would turn the default build red" was true only while the theorem was false, and
+#     the false thing was a WIDTH — `(wrapPublic tChain).length = shapeChain.pubWords` became
+#     `23 = 22` when W-PREV gave `w9_prev` a 23rd public word. The tamper claim in the same
+#     conjunction is TRUE and always was. A conjunction that fails names nothing; it is now four
+#     named theorems.
+#   * "Registering it would pull the whole `KimchiWrapMain` cone into every build" is FALSE.
+#     `Dregg2/PicklesSynthesis.lean` — a default target — has imported `KimchiWrapMain` all along,
+#     so the closure grew by exactly one module. `metatheory/lakefile.toml` already recorded this
+#     for the 20 orphans rooted the same day ("the cone cost is ZERO beyond the modules themselves")
+#     and this entry contradicted it.

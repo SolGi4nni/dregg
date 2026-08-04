@@ -103,10 +103,20 @@ remaining five are taken from `KimchiWrapMain.shapeWrap` unchanged, for two diff
 ⚑ **AND THE `x_hat` SLOT IS THE ONE PLACE THE CHAIN OVERRIDES A DERIVED VALUE.** `schedule` absorbs
 `s.xhatXY` at `wrap_verifier.ml:617`; `chainSchedule` absorbs `STEP_PUBCOMM_XY`, the public-input
 commitment kimchi's own verifier absorbed for THIS step proof. It has to: `chain_reality_gate` is a
-claim about what `proof.oracles(...)` computed, and §15's 67 scalars are `xhatScalar =
-wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i` — a deterministic filler, not any statement's words. So the
-MSM is emitted over the RIGHT SHAPE and the WRONG SCALARS, and closing that is W-PREV's job
-(`wrap_main.ml:201-256`'s `exists ~request:Req.Proof_state`), not this file's. §8 states it. -/
+claim about what `proof.oracles(...)` computed, and §15's 67 scalars are not any statement's words.
+
+⚠ **RE-CHECKED 2026-08-04, AFTER W-PREV LANDED (`5269fa248`), AND THE OVERRIDE STAYS.** An earlier
+draft of this paragraph said closing the gap was "W-PREV's job", and quoted the scalars as
+`wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i`. Both are stale. W-PREV has landed nine wrap rungs, and what
+it supplied is the previous STEP statement's **SHAPE**, not its values: `KimchiWrapMainField` §15c′
+derives the 57 packed words (`composition_types.ml:1453-1459`) and their expansion to §15a's 67
+entries, pins each to the width `spec.ml:374-392` packs it at, boolean-constrains `should_finalize`,
+and ties word 54 (`messages_for_next_step_proof`) to `w9_prev`'s 23rd public word. The VALUES are now
+`xhatScalar i = prevWordVal (xhatWordOf i)`, i.e. `wrapFixtureQ 34 w` through an `x^9` mixer — still a
+named fixture. And §15c now argues that is the FAITHFUL choice rather than a stand-in: upstream's 57
+words are a FREE WITNESS, and "a named fixture" and "a free witness" are the same object. So this
+override is not pending on any rung; it is what a reality gate about `proof.oracles(...)` requires,
+permanently. §8b states it as a theorem. -/
 
 def shapeChain : WrapShape :=
   { prevs := STEP_PREVCOMM_XY.length / 2
@@ -466,10 +476,10 @@ left for a reader to notice, and the memo obligation discharged for the COMMITTE
 
 * The chain absorbs `STEP_PUBCOMM_XY`, this step proof's real public-input commitment.
 * `schedule` absorbs `shapeChain.xhatXY`, §15's MSM output.
-* They DIFFER — so the override is real, not a relabelling, and §15's MSM is not yet an MSM over
-  dregg's step statement. `xhatScalar` is `wrapFixtureQ`'s filler; the 67 real scalars are
-  W-PREV's (`wrap_main.ml:201-256`), which is named in `KimchiWrapMain.WRAP_UNCONSUMED` and is why
-  `x_hat` stayed on that census when its MSM landed.
+* They DIFFER — so the override is real, not a relabelling, and §15's MSM is not an MSM over dregg's
+  step statement. ⚠ W-PREV has LANDED (`5269fa248`) and this stays true: it gave those 67 entries the
+  previous step statement's SHAPE (§1), not its values, which are still `prevWordVal`'s named
+  fixture. `x_hat` remains on `KimchiWrapMain.WRAP_UNCONSUMED` for that reason.
 * And `shapeChain.xhatXY = xhatOut shapeChain.xhatTerms` — the obligation `EmitWrapMainJson`
   enforces at emission time and `xhat_smoke_shape_absorbs_the_msm_output` closes only for
   `shapeSmoke`. Here it is a theorem at the committed shape. -/
@@ -519,20 +529,103 @@ def tChainBent : WrapData :=
   , sp := runSpongeQ (baseSp shapeChain) (chainBentSchedule shapeChain) 99999 0
   , br := chainBranch }
 
-/-- **`the_emitted_public_vector_moves_with_the_step_proof`** — the closing rung's PUBLIC words,
-which are what a verifier sees, differ between the honest and bent emissions, and the assembly's
-shape does not. This is §6's property carried all the way to the object the Pallas harness proves.
+/-! ### §9a — ⚑ THE RUNG IS PART OF THE STATEMENT, AND A RUNG-BLIND ALIAS MOVED UNDER THIS FILE.
 
-⚠ `pubWords` is `shapeWrap.pubWords`; `KimchiWrapMain.exposedVars` maps them onto raw prechallenges,
-so a word that moved is a challenge that moved. -/
+`KimchiWrapMain` used to carry `wrapPublic`/`wrapWitness`, aliases documented as "the closing rung's
+… kept for callers that do not carry a `Rung`". "The closing rung" is not a constant. This file's
+four emitted-vector facts landed at `b7145476a` (08-03 01:44), when `wrapPublic` had an inline
+`t.sh.pubWords`-wide body over the sponge/challenge/branch env; the alias was then REDEFINED FOUR
+TIMES in 23 hours as the ladder grew — `wrapPublicAt _ .xhat` (`d89815028`, 08-03 10:23), `.split`
+(`a06587ab3`, 17:20), `.ftcomm` (`de39288d2`, 18:11), `.prev` (`5269fa248`, 08-04 00:45, W-PREV) —
+and **not one caller's diff shows any of it.**
+
+Three of those four were harmless here, by luck rather than by design: `WitnessBuilder.envIndex`
+folds the REVERSED env so a variable's FIRST binding wins, and each rung APPENDS its environment, so
+widening `.bind` to `.ftcomm` cannot move a word already bound. The fourth was not:
+`rungPub _ .prev = s.pubWords + 1`, because `w9_prev`'s own row ties `messages_for_next_step_proof`
+to a 23rd public word (`wrap_main.ml:350-351`).
+
+⚑ **THAT — an off-by-one in a WIDTH — is the whole reason this module was RED**, and the reason the
+redness read as something far worse. These four facts used to be ONE conjunction; its third conjunct
+said `(wrapPublic tChain).length = shapeChain.pubWords`, which W-PREV turned into `23 = 22`.
+`native_decide` reported *the conjunction* false and `#assert_compiled` correctly caught the
+`sorryAx`, so a module whose olean was absent from every build read as **"the wrap chain's
+tamper-detection claim is false."** It is not. Measured 2026-08-04 on a clean HEAD worktree, in 5.8
+seconds: the tamper claim is TRUE, the shape claim is TRUE, the negative control is TRUE, and only
+the width was false. A conjunction that fails tells you nothing about which half failed; each
+conjunct is now its own named theorem, so the next such move names itself.
+
+⚑ **AND THE RUNG IS `.bind`.** §0b: everything this file emits is at `Rung.bind` (`w4_bind`), and the
+old theorem already paired its public vector with `rungRows _ .bind true`. Pairing `.bind` rows with a
+`.prev` public vector was never the intended statement. `wrapPublicAt _ .bind` is, and it puts the
+vector, the rows, the placement and §10's JSON on one single rung. The aliases are DELETED rather than
+repaired: their only two consumers were this file and `EmitStepWrapChainJson`, and a name whose
+meaning is a moving target is worse than no name. -/
+
+/-- **`the_emitted_public_vector_is_its_rungs_width`** — the instance of
+`KimchiWrapMain.wrapPublicAt_length`, at the committed shape, at BOTH the rung this file emits and
+the ladder's closing rung. ⚑ It is an INSTANCE of a general kernel-clean lemma, not a separately
+evaluated literal — which is exactly what the false conjunct was, and why a rung change could
+falsify it in silence. The `+ 1` is `w9_prev`'s 23rd word. -/
+theorem the_emitted_public_vector_is_its_rungs_width :
+    (wrapPublicAt tChain .bind).length = shapeChain.pubWords
+    ∧ (wrapPublicAt tChain .prev).length = shapeChain.pubWords + 1 :=
+  ⟨wrapPublicAt_length tChain .bind, wrapPublicAt_length tChain .prev⟩
+
+#assert_axioms the_emitted_public_vector_is_its_rungs_width
+
+/-- **`the_emitted_public_vector_moves_with_the_step_proof`** — ⚑ THE TAMPER CLAIM, ALONE, so that a
+failure names itself. `w4_bind`'s PUBLIC words — what a verifier sees — differ between the honest
+emission and the one whose step proof had a single Fq coordinate of `w_comm` bent. This is §6's
+property carried all the way to the object the Pallas harness proves.
+
+⚠ `KimchiWrapMain.exposedVars` maps these words onto RAW prechallenges, so a word that moved is a
+challenge that moved. -/
 theorem the_emitted_public_vector_moves_with_the_step_proof :
-    wrapPublic tChainBent ≠ wrapPublic tChain
-    ∧ (rungRows tChainBent .bind true).length = (rungRows tChain .bind true).length
-    ∧ (wrapPublic tChain).length = shapeChain.pubWords
-    ∧ wrapPublic tChainUnread = wrapPublic tChain := by
+    wrapPublicAt tChainBent .bind ≠ wrapPublicAt tChain .bind := by
   native_decide
 
 #assert_compiled the_emitted_public_vector_moves_with_the_step_proof
+
+/-- **`the_bend_moves_every_transcript_derived_public_word`** — ⚑ THE FIGURE, and it is a THEOREM
+rather than a count read off a harness artifact. "21 of 22" has been reported repeatedly from the
+committed JSON; this states the sharp form the count was standing in for.
+
+`exposedVars` is 4 challenge words + 1 fork digest + 16 bulletproof prechallenges + 1 `branch_data`,
+`.take 22`. The first 21 are transcript-derived and EVERY ONE of them moves under the bend. Word 21
+is `(branchVars …).packed` — `branch_data`, `4·16 + 2·1 = 66`, which has no transcript dependence at
+all — and it does not move. So the honest statement is not "21 of 22 happened to differ": it is
+*every transcript-derived public word moves and the one non-transcript word does not*, with the
+identity of that word pinned to the variable rather than to an index. -/
+theorem the_bend_moves_every_transcript_derived_public_word :
+    (exposedVars tChain).length = 22
+    ∧ ((List.range 21).all (fun i =>
+        (wrapPublicAt tChainBent .bind).getD i 0 != (wrapPublicAt tChain .bind).getD i 0)) = true
+    ∧ (wrapPublicAt tChainBent .bind).getD 21 0 = (wrapPublicAt tChain .bind).getD 21 0
+    ∧ (exposedVars tChain).getD 21 (.external 0)
+        = (branchVars shapeChain (baseBr shapeChain tChain.sp)).packed := by
+  native_decide
+
+#assert_compiled the_bend_moves_every_transcript_derived_public_word
+
+/-- **`the_emitted_assembly_shape_does_not_move_with_the_step_proof`** — and the assembly does NOT
+move: a bend changes the values a verifier reads, not the circuit it reads them from. Without this,
+"the public vector moved" would be consistent with having emitted a different circuit. -/
+theorem the_emitted_assembly_shape_does_not_move_with_the_step_proof :
+    (rungRows tChainBent .bind true).length = (rungRows tChain .bind true).length := by
+  native_decide
+
+#assert_compiled the_emitted_assembly_shape_does_not_move_with_the_step_proof
+
+/-- **`the_emitted_public_vector_does_not_move_with_what_it_does_not_read`** — the negative control
+carried to the emission. `tChainUnread` is driven by a tape RE-EXTRACTED from a second, genuinely
+different proof object whose `z_1`, `z_2`, `ft_eval1`, `delta` and `sg` were bent
+(`chain_unread_bend_is_a_different_proof_with_the_same_tape`), and its public vector is identical. -/
+theorem the_emitted_public_vector_does_not_move_with_what_it_does_not_read :
+    wrapPublicAt tChainUnread .bind = wrapPublicAt tChain .bind := by
+  native_decide
+
+#assert_compiled the_emitted_public_vector_does_not_move_with_what_it_does_not_read
 
 /-- **`the_chained_assembly_places`** — `placeChecked` ACCEPTS the chained assembly at the closing
 rung, with no inert public word. `KimchiWrapMain`'s placement refuses a declared public word no gate
@@ -567,12 +660,17 @@ theorem the_chained_control_differs_only_in_the_placement :
 
 /-! ## §10 — the renderer. Same JSON the pickles harnesses parse. -/
 
+/-- ⚠ ⚑ **RUNG-EXPLICIT IN EVERY ARGUMENT.** This read `wrapWitness t p rows` and `wrapPublic t`
+until 2026-08-04 — the rung-blind aliases §9a describes. After W-PREV those denoted `.prev`, so
+`chainJson t .bind …` would have written `"public_input_size": 22` beside a 23-element
+`"public_input"`, with a witness grid built from a different rung's environment than its gates.
+`KimchiWrapMain.rungJson` was already rung-explicit; this is now the same shape. -/
 def chainJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :=
   let rows := rungRows t k wired
   let p := rungPub t.sh k
   renderWrapCircuit name p (p + rows.length)
-    (placedOf t.sh p (wrapGates rows)) (wrapWitness t p rows)
-    (if p == 0 then [] else wrapPublic t) (rungProbeRows t k)
+    (placedOf t.sh p (wrapGates rows)) (wrapWitnessAt t k p rows)
+    (if p == 0 then [] else wrapPublicAt t k) (rungProbeRows t k)
 
 /-! ⚠ NO `#assert_namespace_axioms` HERE, and the absence is the honest label. Every theorem above
 rests on `Lean.ofReduceBool` — they are closed by compiled evaluation, not by the kernel — so a

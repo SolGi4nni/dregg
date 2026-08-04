@@ -175,12 +175,14 @@ globs = ["Dregg2.TurnAuthGuards"]
 # and until now they broke SILENTLY — the render modules are rooted (PicklesSynthesis) while their
 # drivers were not, so an API change stayed green in CI and failed only when a human ran the emit.
 # That is the `TurnAuthLamportEmit` wound (stale oleans through a cutover) one file over.
-# ⚠ `EmitStepWrapChainJson` is NOT here: it imports `KimchiStepWrapChain`, which is RED at HEAD.
-# Both are allowlisted in `scripts/lean-orphans-allow.txt` with the redness named.
+# ⚑ `EmitStepWrapChainJson` JOINED 2026-08-04, when the redness it waited on was repaired: the
+# `KimchiStepWrapChain` conjunct W-PREV falsified was a WIDTH (`23 = 22`), not the tamper claim.
+# Both modules are de-listed from `scripts/lean-orphans-allow.txt`.
 [[lean_lib]]
 name = "PicklesEmitDrivers"
 globs = [
   "Dregg2.Circuit.Emit.EmitComposeMsmJson",
+  "Dregg2.Circuit.Emit.EmitStepWrapChainJson",
   "Dregg2.Circuit.Emit.EmitCurveGateJson",
   "Dregg2.Circuit.Emit.EmitPoseidonJson",
   "Dregg2.Circuit.Emit.EmitPublicInputJson",

@@ -120,6 +120,13 @@ import Dregg2.Circuit.Emit.MinaStepSrsLagrangePin
 -- how many cells a prover can still choose and which of them change what the circuit accepts.
 import Dregg2.Circuit.Emit.KimchiStepProverChoice
 import Dregg2.Circuit.Emit.KimchiWrapProverChoice
+-- ⚑ THE STEP→WRAP CHAIN, ROOTED 2026-08-04. Its 16 `#assert_compiled` pins ran in NO build: the
+-- module was RED (a width conjunct W-PREV falsified, `KimchiStepWrapChain` §9a) AND unrooted, so the
+-- redness was invisible except to `check-lean-orphans.sh`. ⚠ The "rooting pulls the whole
+-- `KimchiWrapMain` cone" worry does NOT apply: this file already imports `KimchiWrapMain` two lines
+-- up, so the closure grows by exactly one module. That is also what `metatheory/lakefile.toml`
+-- records for the 20 orphans rooted the same day.
+import Dregg2.Circuit.Emit.KimchiStepWrapChain
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff

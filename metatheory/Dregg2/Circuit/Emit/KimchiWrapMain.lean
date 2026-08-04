@@ -2512,7 +2512,14 @@ def wrapPublicAt (t : WrapData) (k : Rung) : List Int :=
   (List.range (rungPub t.sh k)).map (fun i =>
     envLookupAt ix ((exposedVarsAt t k).getD i (.external 0)))
 
-def wrapPublic (t : WrapData) : List Int := wrapPublicAt t .prev
+/-- **`wrapPublicAt_length`** — a rung's public vector is exactly that rung's declared width, for
+EVERY `WrapData` and EVERY `Rung`. General and kernel-clean, in the idiom of `rungRows_is_a_ladder`:
+a shape instance of this is an INSTANCE, never a separately evaluated literal that a rung change can
+silently falsify. (`wrapPublic`, the rung-blind alias that used to sit here, is deleted — see the
+note above `rungJson`.) -/
+theorem wrapPublicAt_length (t : WrapData) (k : Rung) :
+    (wrapPublicAt t k).length = rungPub t.sh k := by
+  simp only [wrapPublicAt, List.length_map, List.length_range]
 
 def wrapGates (rows : List WRow) : List PGate :=
   rows.map (fun r => { kind := r.kind, permVars := r.perm, coeffs := r.coeffs })
@@ -2570,9 +2577,22 @@ def renderWrapCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedG
        ++ qs "gates" ++ ":[" ++ String.intercalate "," (gs.map renderGate) ++ "],"
        ++ qs "witness" ++ ":[" ++ String.intercalate "," (w.map renderIntList) ++ "]}"
 
-/-- The closing rung's witness — kept for callers that do not carry a `Rung`. -/
-def wrapWitness (t : WrapData) (pubSize : Nat) (rows : List WRow) : List (List Int) :=
-  wrapWitnessAt t .prev pubSize rows
+/-! ⚠ ⚑ **`wrapWitness` AND `wrapPublic` ARE DELETED, and the deletion is the point.** They were
+rung-blind aliases — "the closing rung's …, kept for callers that do not carry a `Rung`" — and "the
+closing rung" is not a constant. Measured 2026-08-04: `wrapPublic` was REDEFINED FOUR TIMES in 23
+hours as this ladder grew — `wrapPublicAt _ .xhat` (`d89815028`, 08-03 10:23), `.split`
+(`a06587ab3`, 17:20), `.ftcomm` (`de39288d2`, 18:11), `.prev` (`5269fa248`, 08-04 00:45) — each time
+changing every caller's meaning with NO diff in the caller.
+
+Three of the four were harmless by luck, not by design: `WitnessBuilder.envIndex` folds the REVERSED
+env so a variable's FIRST binding wins, and each rung APPENDS its environment, so a widened env
+cannot move a word already bound. The fourth was not: `rungPub _ .prev = pubWords + 1`, which turned
+`KimchiStepWrapChain`'s `(wrapPublic tChain).length = shapeChain.pubWords` into `23 = 22` and took a
+whole conjunction — including that file's tamper-detection claim — down with it, in a module nothing
+was compiling.
+
+Every caller now carries its rung: `wrapPublicAt t k` / `wrapWitnessAt t k`. See
+`KimchiStepWrapChain` §9a. Do not reintroduce a rung-blind alias for these. -/
 
 def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :=
   let rows := rungRows t k wired
