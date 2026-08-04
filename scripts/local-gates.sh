@@ -39,6 +39,17 @@ GATES=(
   "doc-refs|300|bash scripts/check-doc-refs.sh"
   "dark-modules|300|python3 scripts/check-dark-modules.py"
   "never-run-targets|300|python3 scripts/check-never-run-targets.py"
+  # ⚑ THE COMPILE-FAIL RATCHET'S RED PROOF (2026-08-03). The two rows above are sweeps
+  # 2 and 3 over `.github/dark-targets.txt`; sweep 1 — the one that catches a target
+  # that DOES NOT COMPILE — had no script at all. It was inline shell in one step of
+  # `ci.yml`'s `clippy-correctness`, which means the only machine that could ever run it
+  # was a GitHub runner reaching step 7. MEASURED across every ci.yml run 08-01..08-03:
+  # it executed 3 times and was SKIPPED 31, because step 6 (the correctness sweep) fails
+  # first and Actions stops a job at the first failed step. `commons-arbiter` and
+  # `confined-swarm` both went dark inside that window and nothing said so.
+  # This row is the SELF-TEST (~3s, real cargo over a 3-crate temp workspace, 11 legs).
+  # The full sweep is under --all below — it is a whole-workspace clippy.
+  "dark-targets-red|300|python3 scripts/check-dark-targets.py --self-test"
   "emit-gate-weld|120|python3 scripts/check-emit-gate-weld.py"
   "independence-controls|300|bash scripts/check-independence-controls.sh"
   "ratchet-darkness|120|bash scripts/check-ratchet-darkness.sh"
@@ -175,6 +186,23 @@ GATES=(
   "feature-t3-ratchet|60|bash scripts/feature-t3-sweep.sh --self-test"
   "ci-invariants-structural|900|bash scripts/ci-invariants.sh structural"
   "descriptor-drift|1800|bash scripts/check-descriptor-drift.sh --rev HEAD"
+  # ⚑ DECORATIVE PUBLIC INPUTS — the class found BY HAND THREE TIMES before it was a gate.
+  # A `pi_binding` ties a column to a public input and to NOTHING ELSE, so a descriptor can publish
+  # a bank hash, an app hash, a target root, and never name that column in a gate body or a lookup
+  # tuple. `solLcVerifyDesc` does exactly that with eleven anchors; `LightClientSolanaAir` §6b says
+  # in PROSE that "the identical decomposition holds for the Midnight and Tendermint descriptors"
+  # and prose is not a gate. Measured 2026-08-04 over all 84 served IR-v2 descriptors: 235
+  # decorative anchors in 21 of them, 63 across the five light-client VERIFY descriptors.
+  # The check builds the column-connectivity graph (two columns adjacent iff ONE constraint names
+  # both) and reds when a PI-bound column's component is a singleton it was not baselined as.
+  # ⚠ An ARITY-1 RANGE LOOKUP READS A COLUMN AND JOINS IT TO NOTHING — Mina's eighteen 29/22-bit
+  # lane bounds do not make its published state hashes bound, and the gate says so.
+  # Ratchet, not ban: `scripts/descriptor-anchor-inertness-baseline.txt` may only shrink, and a NEW
+  # descriptor carrying decorative anchors with no row is red. Lean twin (the six light clients as
+  # named theorems, each a tripwire meant to fail when a binding lands):
+  # `metatheory/Dregg2/Circuit/Emit/LightClientAnchorConnectivity.lean`.
+  "descriptor-anchor-inertness|60|python3 scripts/check-descriptor-anchor-inertness.py"
+  "descriptor-anchor-inertness-red|60|python3 scripts/check-descriptor-anchor-inertness.py --self-test"
   # ⚑ A FULLY-IMPLEMENTED GATE THAT NOTHING RAN. `emit_descriptors.py --verify-provenance` has
   # existed for months, checks every descriptor byte against `circuit/descriptors/PROVENANCE.json`,
   # and was invoked by NO `.sh`, NO `.yml` and NO `.py` — 13 references in the tree, every one of
@@ -698,6 +726,11 @@ GATES=(
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
+  # THE COMPILE-FAIL RATCHET ITSELF, over the real tree. Expensive for one reason: it is a
+  # whole-workspace `cargo clippy --all-targets --keep-going` (226 members). Its cheap half
+  # — the self-test — is in the default set above and is the part that proves the gate can
+  # go red. This is the part that says whether the tree IS dark right now.
+  "dark-targets|5400|python3 scripts/check-dark-targets.py --sweep"
   "gates-executed|2400|python3 scripts/check-gates-executed.py"
   "lean-marshal|1200|bash scripts/check-lean-marshal.sh"
   "ci-invariants-falsifiers|14400|bash scripts/ci-invariants.sh falsifiers"

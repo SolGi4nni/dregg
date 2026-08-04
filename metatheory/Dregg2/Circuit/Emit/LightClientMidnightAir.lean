@@ -195,11 +195,18 @@ def ED_OK : Nat := 0
 /-- **CARRIER** — the authority-set-root compare RESULT (derived set binds the pinned WS anchor root);
 forced `= 1`. NAMED carrier (the denominator-shrink pin). Witness. -/
 def AUTHSET_OK : Nat := 1
-/-- **GATE** — the ROUND binding (every counted precommit names the claimed round R — cross-round); forced
-`= 1`. -/
+/-- **CARRIER** — the ROUND-binding RESULT (every counted precommit names the claimed round R —
+cross-round); forced `= 1`. Witness.
+⚠ **CORRECTED 2026-08-04 — this was labelled GATE and it is the same `x − 1` shape as the two
+admitted carriers.** Its gate names column 2 and nothing else; the PUBLISHED round is column 49 and
+is read by no gate and no lookup, so nothing relates the bit to the round it is named after. A prover
+publishes any round and writes 1 here. `LightClientAnchorConnectivity.mid_round_and_era_bits_are_-
+not_joined_to_the_published_round_and_era` is that measured on the emitted object. -/
 def ROUND_OK : Nat := 2
-/-- **GATE** — the ERA binding (the claimed set id equals the anchored era AND every counted precommit
-carries it — stale-authority-set); forced `= 1`. -/
+/-- **CARRIER** — the ERA-binding RESULT (the claimed set id equals the anchored era AND every counted
+precommit carries it — stale-authority-set); forced `= 1`. Witness.
+⚠ Same correction as `ROUND_OK`: the bit is column 3, the published era is column 50, and they share
+no constraint. There is no stale-authority-set refusal in the emitted object. -/
 def ERA_OK : Nat := 3
 
 /-! ### ⚑ THE TALLY, AS A LIMB VECTOR.

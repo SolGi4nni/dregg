@@ -271,7 +271,13 @@ anchors. -/
 
 /-- `SEG_LEN` — the number of blocks EXHIBITED above the pinned anchor. Witness. -/
 def SEG_LEN : Nat := 0
-/-- `ANCHOR_H` — the pinned weak-subjectivity anchor's blockchain length. Witness. -/
+/-- `ANCHOR_H` — the weak-subjectivity anchor's blockchain length. Witness.
+⚠ **NOT PINNED, by anything.** Measured on the emitted object 2026-08-04: this column is not
+PI-bound, carries no range lookup, and no gate equates it to a literal — it appears only in G1 and
+G4, joined to `SEG_LEN`/`BLOCK_LEN` and to `ANCH_SLACK`/`SUBMIT_H`. It also shares NO constraint with
+the anchor STATE lanes (cols 12..20), so the height and the hash of "the anchor" are two unrelated
+prover choices. `LightClientAnchorConnectivity.minaVerify_anchor_height_is_pinned_to_nothing` is that
+as a theorem; this docstring said "the pinned" and meant the operator's intent, not a gate. -/
 def ANCHOR_H : Nat := 1
 /-- `SUBMIT_H` — the height the settlement being finalized was submitted at. Witness. -/
 def SUBMIT_H : Nat := 2

@@ -1,0 +1,34 @@
+# scripts/descriptor-anchor-inertness-baseline.txt — DECORATIVE PUBLIC INPUTS per served descriptor.
+#
+# A DECORATIVE anchor is a `pi_binding` column whose connected component in the
+# constraint graph is a SINGLETON: it co-occurs with no other column in any gate body,
+# boundary body, window-gate body, lookup tuple, hash site, transition or bus op. The
+# proof carries the value; nothing in the circuit is about it.
+#
+# ⚑ THESE NUMBERS MAY ONLY GO DOWN. Regenerate with
+#   scripts/check-descriptor-anchor-inertness.py --write-baseline
+# and say in the commit WHICH anchor became load-bearing and by what gate.
+#
+# `count  descriptor-name`; descriptors at zero are omitted.
+
+26	bridge-action-leaf::bridge_action_air_v1
+1	dark-amm-private-v1::wide-poseidon2-v2
+12	dregg-automatafl-legc-n11
+12	dregg-automatafl-legc-n5
+18	dregg-bound-presentation::v1
+16	dregg-descent-custody-census-fixed8-v2
+11	dregg-eth-lightclient-verify::v1
+8	dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1
+12	dregg-midnight-lightclient-verify::v1
+18	dregg-mina-lightclient-verify::v1
+19	dregg-presentation-freshness::summary-v1
+1	dregg-shielded-spend-pinned-root::v1
+11	dregg-solana-lightclient-verify::v1
+1	dregg-temporal-predicate-gte::dsl-v1
+11	dregg-tm-lightclient-verify::v1
+12	faithful-note-spend-v2::exact-note16-root8-hiding
+4	faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state
+8	private-book-bfv-threshold-terminal-q0-b80::exact-limb-v1
+1	private-graph-rewrite-4x2::injective-swapnet-poseidon2-v1
+17	private-graph-rewrite-cell-4x2::injective-swapnet-poseidon2-v1
+16	private-preference-cell-n4k4::score2-wide-poseidon2-v1
