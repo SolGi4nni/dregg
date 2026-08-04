@@ -327,6 +327,55 @@ impl PoaExpeditionPolicy {
     }
 }
 
+/// A versioned Lean judge protocol label.  The label is intentionally distinct
+/// from the artifact digest: the former selects the public wire contract while
+/// the latter pins the exact deployed Lean program/schema bundle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoaJudgeProgram {
+    /// `POA-DARK-BAZAAR-IN-1` -> `POA-DARK-BAZAAR-OUT-1`, the bounded four-order
+    /// private settlement judge.
+    DarkBazaarV1,
+}
+
+/// A labelled observation of exact bytes entering and leaving a PoA Lean
+/// judge.  Constructing this value does not assert that the judge accepted the
+/// input; it only preserves the identities needed to join a runtime verdict to
+/// a separately authenticated expedition receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoaLabelledJudgeObservation {
+    pub program: PoaJudgeProgram,
+    pub artifact_digest: [u8; 32],
+    pub judge_input_digest: [u8; 32],
+    pub judge_output_digest: [u8; 32],
+}
+
+impl PoaLabelledJudgeObservation {
+    pub const fn dark_bazaar_v1(
+        artifact_digest: [u8; 32],
+        judge_input_digest: [u8; 32],
+        judge_output_digest: [u8; 32],
+    ) -> Self {
+        Self {
+            program: PoaJudgeProgram::DarkBazaarV1,
+            artifact_digest,
+            judge_input_digest,
+            judge_output_digest,
+        }
+    }
+}
+
+/// Authenticated correlation evidence waiting for an actual Lean/runtime
+/// transition verdict.  This type deliberately carries neither a minting
+/// capability nor a claim that the observed output was accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoaPendingJudgeObservation {
+    pub program: PoaJudgeProgram,
+    pub receipt_digest: [u8; 32],
+    pub artifact_digest: [u8; 32],
+    pub judge_input_digest: [u8; 32],
+    pub judge_output_digest: [u8; 32],
+}
+
 /// Deployment-selected receipt consumer. It deliberately has no issuer-only
 /// mint path: the real Lean/runtime transition verifier must be wired first.
 #[derive(Clone, Debug)]
@@ -341,6 +390,32 @@ impl PoaSalvageMinter {
 
     pub fn policy(&self) -> &PoaExpeditionPolicy {
         &self.policy
+    }
+
+    /// Authenticate an expedition envelope and correlate it with one labelled
+    /// judge observation.  This is an observation-only stage: it accepts no
+    /// [`LootVault`] and therefore cannot mint before a runtime has actually
+    /// invoked the pinned Lean judge and validated its canonical output.
+    pub fn observe_pending(
+        &self,
+        receipt: &PoaExpeditionReceipt,
+        observation: PoaLabelledJudgeObservation,
+    ) -> Result<PoaPendingJudgeObservation, PoaExpeditionError> {
+        self.policy.verify(receipt)?;
+        let claim = &receipt.claim;
+        if observation.artifact_digest != claim.artifact_digest
+            || observation.judge_input_digest != claim.judge_input_digest
+            || observation.judge_output_digest != claim.judge_output_digest
+        {
+            return Err(PoaExpeditionError::JudgeObservationMismatch);
+        }
+        Ok(PoaPendingJudgeObservation {
+            program: observation.program,
+            receipt_digest: receipt.digest(),
+            artifact_digest: observation.artifact_digest,
+            judge_input_digest: observation.judge_input_digest,
+            judge_output_digest: observation.judge_output_digest,
+        })
     }
 
     /// Authenticate the outer envelope, then fail closed until the actual
@@ -372,6 +447,7 @@ pub enum PoaExpeditionError {
     SalvageSlotOutOfBounds,
     ContributionOutOfBounds,
     InvalidSignature,
+    JudgeObservationMismatch,
     MissingTransitionVerifier,
 }
 
@@ -412,6 +488,10 @@ impl fmt::Display for PoaExpeditionError {
                 )
             }
             Self::InvalidSignature => write!(f, "receipt issuer signature is invalid"),
+            Self::JudgeObservationMismatch => write!(
+                f,
+                "labelled judge observation does not match the authenticated receipt"
+            ),
             Self::MissingTransitionVerifier => write!(
                 f,
                 "PoA transition verifier is not wired; issuer authentication alone cannot mint"

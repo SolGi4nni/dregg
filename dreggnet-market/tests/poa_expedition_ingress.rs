@@ -15,7 +15,7 @@
 use dreggnet_market::poa_expedition::{
     POA_DECK_COUNT, POA_SALVAGE_SLOTS, PoaContributionBounds, PoaContributionClaim,
     PoaExpeditionClaim, PoaExpeditionError, PoaExpeditionPolicy, PoaExpeditionReceipt,
-    PoaSalvageMinter,
+    PoaJudgeProgram, PoaLabelledJudgeObservation, PoaSalvageMinter,
 };
 use dungeon_on_dregg::loot::LootVault;
 use ed25519_dalek::{Signer as _, SigningKey};
@@ -236,6 +236,38 @@ fn signed_poa_envelope_refuses_every_substitution_and_cannot_mint_unjudged() {
             PoaExpeditionError::InvalidSignature,
         );
     }
+
+    // The market can correlate a signed envelope with the exact, separately
+    // labelled judge input/output identities without acquiring a minting
+    // capability or pretending that correlation is transition verification.
+    let observation = PoaLabelledJudgeObservation::dark_bazaar_v1(
+        claim.artifact_digest,
+        claim.judge_input_digest,
+        claim.judge_output_digest,
+    );
+    let pending = minter
+        .observe_pending(&receipt, observation)
+        .expect("the exact labelled observation joins to the signed envelope");
+    assert_eq!(pending.program, PoaJudgeProgram::DarkBazaarV1);
+    assert_eq!(pending.receipt_digest, receipt.digest());
+    assert_eq!(pending.artifact_digest, claim.artifact_digest);
+    assert_eq!(pending.judge_input_digest, claim.judge_input_digest);
+    assert_eq!(pending.judge_output_digest, claim.judge_output_digest);
+    assert_eq!(vault.item_count(), 0, "observation alone cannot mint");
+
+    let mut mismatched_observation = observation;
+    mismatched_observation.judge_output_digest[0] ^= 1;
+    assert_eq!(
+        minter
+            .observe_pending(&receipt, mismatched_observation)
+            .unwrap_err(),
+        PoaExpeditionError::JudgeObservationMismatch,
+    );
+    assert_eq!(
+        vault.item_count(),
+        0,
+        "a mismatched observation cannot mint"
+    );
 
     assert_eq!(
         minter.mint(&mut vault, &receipt).unwrap_err(),
