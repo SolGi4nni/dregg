@@ -1,15 +1,17 @@
 /-
 # Dregg2.Games.PathOfAngels.DailyMission — finalized-epoch daily selection.
 
-The browser clock is not part of this state machine.  A signed content catalog
-declares a finite, nonempty mission rotation and an inclusive finalized-epoch
-window.  Selection is a total deterministic function inside that window and
-refuses a stale epoch or a request for a different signed activation.
+The browser clock is not part of this state machine.  An already-authenticated
+content catalog declares a finite, nonempty mission rotation and an inclusive
+finalized-epoch window.  Selection is a total deterministic function inside that
+window and refuses a stale epoch or a request for a different activation.
 
 `DailyRequest.finalizedEpoch` is an input to this pure semantic layer.  The
 network adapter remains responsible for deriving it from Dregg finality rather
 than from a client claim; this module makes the exact value consumed by the
-selector explicit and receipt-visible.
+selector explicit and receipt-visible.  The same adapter must verify the curator
+signature and faithfully derive the digest fields from the activated POAG bundle;
+this pure selector does not claim to implement either cryptographic check.
 -/
 import Dregg2.Games.PathOfAngels.Core
 
@@ -21,9 +23,11 @@ open Dregg2.Games.PathOfAngels
 make modulo selection partial: an empty catalog and a backwards activation
 window. -/
 structure Catalog where
+  federationId : Digest32
   contentEpoch : EpochId
   contentRoot : Digest32
   activationDigest : Digest32
+  contentSession : Digest32
   catalogDigest : Digest32
   opensAt : EpochId
   closesAt : EpochId
@@ -37,9 +41,11 @@ deriving DecidableEq
 identity here prevents a stale catalog with the same display mission ids from
 being selected accidentally. -/
 structure Request where
+  federationId : Digest32
   contentEpoch : EpochId
   contentRoot : Digest32
   activationDigest : Digest32
+  contentSession : Digest32
   catalogDigest : Digest32
   finalizedEpoch : EpochId
 deriving DecidableEq
@@ -47,9 +53,12 @@ deriving DecidableEq
 /-- A daily selection is a receipt-shaped projection of every input that chose
 the mission.  It is not a judged game receipt and grants no world contribution. -/
 structure Selection where
+  private mk ::
+  federationId : Digest32
   contentEpoch : EpochId
   contentRoot : Digest32
   activationDigest : Digest32
+  contentSession : Digest32
   catalogDigest : Digest32
   finalizedEpoch : EpochId
   rotationOffset : Nat
@@ -58,9 +67,11 @@ deriving DecidableEq
 
 def Request.matchesCatalog (request : Request) (catalog : Catalog) : Bool :=
   decide (
+    request.federationId = catalog.federationId ∧
     request.contentEpoch = catalog.contentEpoch ∧
     request.contentRoot = catalog.contentRoot ∧
     request.activationDigest = catalog.activationDigest ∧
+    request.contentSession = catalog.contentSession ∧
     request.catalogDigest = catalog.catalogDigest)
 
 def Catalog.activeAt (catalog : Catalog) (epoch : EpochId) : Bool :=
@@ -86,9 +97,11 @@ def select (catalog : Catalog) (request : Request) : Option Selection :=
   if request.matchesCatalog catalog then
     if catalog.activeAt request.finalizedEpoch then
       some {
+        federationId := request.federationId
         contentEpoch := request.contentEpoch
         contentRoot := request.contentRoot
         activationDigest := request.activationDigest
+        contentSession := request.contentSession
         catalogDigest := request.catalogDigest
         finalizedEpoch := request.finalizedEpoch
         rotationOffset := catalog.rotationOffset request.finalizedEpoch
@@ -142,14 +155,40 @@ theorem select_binds_catalog {catalog : Catalog} {request : Request}
   split at h <;> try contradiction
   · rename_i hm
     have hmatches :
+        request.federationId = catalog.federationId ∧
         request.contentEpoch = catalog.contentEpoch ∧
         request.contentRoot = catalog.contentRoot ∧
         request.activationDigest = catalog.activationDigest ∧
+        request.contentSession = catalog.contentSession ∧
         request.catalogDigest = catalog.catalogDigest := by
       simpa [Request.matchesCatalog] using hm
     split at h <;> try contradiction
     injection h with heq
-    rw [← heq, hmatches.2.2.2]
+    rw [← heq, hmatches.2.2.2.2.2]
+
+theorem select_matches_catalog {catalog : Catalog} {request : Request}
+    {selection : Selection} (h : select catalog request = some selection) :
+    selection.federationId = catalog.federationId ∧
+    selection.contentEpoch = catalog.contentEpoch ∧
+    selection.contentRoot = catalog.contentRoot ∧
+    selection.activationDigest = catalog.activationDigest ∧
+    selection.contentSession = catalog.contentSession ∧
+    selection.catalogDigest = catalog.catalogDigest := by
+  simp only [select] at h
+  split at h <;> try contradiction
+  · rename_i hm
+    have hmatches :
+        request.federationId = catalog.federationId ∧
+        request.contentEpoch = catalog.contentEpoch ∧
+        request.contentRoot = catalog.contentRoot ∧
+        request.activationDigest = catalog.activationDigest ∧
+        request.contentSession = catalog.contentSession ∧
+        request.catalogDigest = catalog.catalogDigest := by
+      simpa [Request.matchesCatalog] using hm
+    split at h <;> try contradiction
+    injection h with heq
+    rw [← heq]
+    exact hmatches
 
 theorem select_mission_mem {catalog : Catalog} {request : Request}
     {selection : Selection} (h : select catalog request = some selection) :
@@ -189,6 +228,7 @@ theorem adjacent_epochs_rotate (catalog : Catalog) (epoch : EpochId)
 #assert_axioms select_refuses_after_window
 #assert_axioms select_binds_finalized_epoch
 #assert_axioms select_binds_catalog
+#assert_axioms select_matches_catalog
 #assert_axioms select_mission_mem
 #assert_axioms select_offset_lt_length
 #assert_axioms adjacent_epochs_rotate
