@@ -1,17 +1,20 @@
 /**
- * SPA-safe, per-origin opt-in mounting for the Path of Angels YouTube companion.
+ * SPA-safe, per-origin opt-in mounting for the Path of Angels media companion.
  *
- * Detection is intentionally a HINT layer: it extracts the video id from the
- * URL and an optional channel id from YouTube's DOM, then asks the background
- * engine to recognize it. Nothing mounts until that background response is
- * verified. The browser-authenticated sender URL is authoritative there.
+ * Detection derives a YouTube video or X status id from the exact tab URL, then
+ * asks the background engine to recognize it. Nothing mounts until that
+ * background response is verified. The browser-authenticated sender URL is
+ * authoritative there; page DOM is used only to choose a respectful mount.
  */
 
 import {
   POA_BETA_URL,
+  parsePoAContextUrl,
   parsePoAYouTubeUrl,
+  poaContextId,
   type PoACompanionPort,
   type PoACompanionResponse,
+  type PoAResolvedContext,
 } from "./poa";
 import {
   DreggPoA,
@@ -22,20 +25,21 @@ import {
 
 const UPGRADE_ORIGINS_KEY = "dregg_upgrade_origins";
 const MOUNT_ATTR = "data-dregg-poa-companion";
+const DEFAULT_REFRESH_MS = 5 * 60 * 1000;
 
-export interface DetectedPoAContext {
-  href: string;
-  videoId: string;
-  channelHint?: string;
-}
+export type DetectedPoAContext = PoAResolvedContext & { href: string };
 
 export interface PoADetectorOptions {
   isOriginAllowed?: () => Promise<boolean>;
   getContext?: () => DetectedPoAContext | null;
-  getTarget?: () => Element | null;
+  getTarget?: (context: DetectedPoAContext) => Element | null;
   port?: PoACompanionPort;
   root?: Document | Element;
   debounceMs?: number;
+  /** Signed-manifest refresh cadence. Focus/visible transitions refresh sooner. */
+  refreshMs?: number;
+  /** Testable wall clock (unix seconds). */
+  nowSeconds?: () => number;
 }
 
 async function defaultOriginAllowed(): Promise<boolean> {
@@ -66,12 +70,33 @@ export function currentPoAYouTubeContext(): DetectedPoAContext | null {
   if (!parsed) return null;
   return {
     href,
+    platform: "youtube",
     videoId: parsed.videoId,
     ...(parsed.channelHint ? { channelHint: parsed.channelHint } : {}),
   };
 }
 
-function defaultTarget(): Element | null {
+export function currentPoAContext(): DetectedPoAContext | null {
+  const href = location.href;
+  const parsed = parsePoAContextUrl(href, channelHintFromDocument());
+  return parsed ? { href, ...parsed } : null;
+}
+
+export function findPoAXPostTarget(postId: string, root: ParentNode = document): Element | null {
+  for (const anchor of root.querySelectorAll<HTMLAnchorElement>('article a[href*="/status/"]')) {
+    let parsed: PoAResolvedContext | null = null;
+    try {
+      parsed = parsePoAContextUrl(new URL(anchor.getAttribute("href") || "", location.href).href);
+    } catch {
+      // A malformed page-owned href is not a mount target.
+    }
+    if (parsed?.platform === "x" && parsed.postId === postId) return anchor.closest("article");
+  }
+  return null;
+}
+
+function defaultTarget(context: DetectedPoAContext): Element | null {
+  if (context.platform === "x") return findPoAXPostTarget(context.postId);
   // A dedicated marker is useful to PoA-owned pages and to fixtures. The other
   // selectors are stable YouTube layout regions, ordered from sidebar to below-player.
   return document.querySelector(
@@ -99,58 +124,129 @@ function fallbackLink(betaUrl: string): HTMLAnchorElement {
 
 /** Start the detector after the origin opt-in resolves. It is idempotent per
  * invocation, keeps exactly one companion mounted, and follows YouTube's
- * `yt-navigate-finish` SPA event as well as DOM replacement/popstate. */
+ * `yt-navigate-finish` SPA event as well as DOM replacement/popstate. A mounted
+ * signed model is refreshed on focus/visibility and periodically before expiry,
+ * so a higher route-free manifest revokes an already-mounted game. */
 export async function startPoACompanionDetector(options: PoADetectorOptions = {}): Promise<() => void> {
   registerPoAElement();
   const allowed = await (options.isOriginAllowed ?? defaultOriginAllowed)();
   if (!allowed) return () => {};
 
   // Do not install a document-wide observer on every site. Tests/host pages can
-  // inject a context provider; production only runs on actual YouTube origins.
+  // inject a context provider; production only runs on supported media origins.
   if (!options.getContext) {
     const host = location.hostname.toLowerCase();
-    if (host !== "www.youtube.com" && host !== "m.youtube.com" && host !== "youtube.com") return () => {};
+    if (!["www.youtube.com", "m.youtube.com", "youtube.com", "x.com", "www.x.com", "twitter.com", "www.twitter.com"].includes(host)) return () => {};
   }
 
   const root = options.root ?? document;
-  const getContext = options.getContext ?? currentPoAYouTubeContext;
+  const getContext = options.getContext ?? currentPoAContext;
   const getTarget = options.getTarget ?? defaultTarget;
   const port = options.port ?? chromePoAPort();
   const debounceMs = options.debounceMs ?? 80;
+  const refreshMs = Math.max(1000, options.refreshMs ?? DEFAULT_REFRESH_MS);
+  const nowSeconds = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
   let disposed = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let scheduledForce = false;
   let generation = 0;
   let accepted: { context: DetectedPoAContext; response: Extract<PoACompanionResponse, { ok: true }> } | null = null;
 
   const mount = (context: DetectedPoAContext, response: Extract<PoACompanionResponse, { ok: true }>): boolean => {
-    const target = getTarget();
+    const target = getTarget(context);
     if (!target) return false;
     removeMounted(root);
     const element = document.createElement("dregg-poa") as DreggPoA;
-    element.setAttribute(MOUNT_ATTR, context.videoId);
+    const contextId = poaContextId(context);
+    element.setAttribute(MOUNT_ATTR, `${context.platform}:${contextId}`);
     element.setAttribute("page-url", context.href);
-    element.setAttribute("video-id", context.videoId);
-    if (context.channelHint) element.setAttribute("channel-hint", context.channelHint);
+    element.setAttribute("platform", context.platform);
+    element.setAttribute("context-id", contextId);
+    if (context.platform === "youtube") {
+      element.setAttribute("video-id", context.videoId);
+      if (context.channelHint) element.setAttribute("channel-hint", context.channelHint);
+    } else {
+      element.setAttribute("post-id", context.postId);
+    }
     element.appendChild(fallbackLink(response.model.betaUrl));
     // Prime before connection: the accepted model never crosses through a
     // page-readable attribute and the element does not repeat the node fetch.
     primePoAElement(element, response);
-    target.prepend(element);
+    if (context.platform === "x") target.insertAdjacentElement("afterend", element);
+    else target.prepend(element);
     return true;
   };
 
-  const sync = async (): Promise<void> => {
+  const isExpired = (entry: typeof accepted): boolean =>
+    !!entry && entry.response.model.trust === "signed_manifest" && entry.response.model.expiresAt <= nowSeconds();
+
+  const responseIdentity = (response: Extract<PoACompanionResponse, { ok: true }>): string =>
+    response.model.trust === "signed_manifest"
+      ? `signed:${response.model.manifestDigest}`
+      : `local:${response.model.contextId}`;
+
+  const clearRefresh = (): void => {
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
+    refreshTimer = null;
+  };
+
+  let schedule: (force?: boolean) => void;
+
+  const armRefresh = (): void => {
+    clearRefresh();
+    if (disposed || !accepted) return;
+    let delay = refreshMs;
+    if (accepted.response.model.trust === "signed_manifest") {
+      const untilExpiry = Math.max(0, (accepted.response.model.expiresAt - nowSeconds()) * 1000);
+      delay = Math.min(delay, untilExpiry);
+    }
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      schedule(true);
+    }, delay);
+  };
+
+  const sync = async (force = false): Promise<void> => {
     if (disposed) return;
     const context = getContext();
     if (!context) {
       accepted = null;
+      clearRefresh();
       removeMounted(root);
       return;
     }
     const existing = allMounted(root);
-    if (existing.length === 1 && existing[0].getAttribute(MOUNT_ATTR) === context.videoId) return;
-    if (accepted?.context.videoId === context.videoId) {
-      mount(context, accepted.response);
+    const identity = `${context.platform}:${poaContextId(context)}`;
+    let hasCurrentMount = existing.length === 1 && existing[0].getAttribute(MOUNT_ATTR) === identity;
+    let previous = accepted && accepted.context.platform === context.platform &&
+      poaContextId(accepted.context) === poaContextId(context) ? accepted : null;
+
+    // Never display a panel beside the wrong SPA route while the new lookup is
+    // in flight. X relies on DOM mutation to notice pushState navigation, so
+    // this check is independent of platform-specific navigation events.
+    if (existing.length > 0 && !hasCurrentMount) {
+      removeMounted(root);
+      hasCurrentMount = false;
+    }
+
+    // The signed lease is a display/authority boundary, not merely a deadline
+    // for the next request. Remove an expired panel before transport begins so
+    // a slow or hung worker cannot keep a nested game alive past expiresAt.
+    if (previous?.response.model.trust === "signed_manifest" && isExpired(previous)) {
+      accepted = null;
+      clearRefresh();
+      removeMounted(root);
+      hasCurrentMount = false;
+      previous = null;
+    }
+    if (!force && hasCurrentMount) {
+      armRefresh();
+      return;
+    }
+    if (!force && previous) {
+      mount(context, previous.response);
+      armRefresh();
       return;
     }
 
@@ -159,49 +255,101 @@ export async function startPoACompanionDetector(options: PoADetectorOptions = {}
     try {
       response = await port.request({
         op: "openContext",
-        context: { href: context.href, ...(context.channelHint ? { channelHint: context.channelHint } : {}) },
+        context: {
+          href: context.href,
+          ...(context.platform === "youtube" && context.channelHint ? { channelHint: context.channelHint } : {}),
+        },
       });
     } catch {
       response = { ok: false, recognized: false, verified: false, tier: "none", error: "companion lookup failed" };
     }
     if (disposed || mine !== generation) return;
-    // The response must bind the same URL-derived video. A stale SPA response
+    // The response must bind the same browser-authenticated media identity. A stale SPA response
     // is discarded even if it was otherwise valid.
-    if (!response.ok || !response.recognized || response.model.videoId !== context.videoId) {
+    if (!response.ok || !response.recognized || response.model.platform !== context.platform ||
+        response.model.contextId !== poaContextId(context)) {
+      // A transport miss, 401 or stale rollback response must not erase an
+      // already-verified route before its signed expiry. At expiry it fails
+      // closed. A local shell carries no signed lease and may disappear.
+      if (previous?.response.model.trust === "signed_manifest" && !isExpired(previous)) {
+        accepted = previous;
+        if (!hasCurrentMount) mount(context, previous.response);
+        armRefresh();
+        return;
+      }
       accepted = null;
+      clearRefresh();
       removeMounted(root);
       return;
     }
+
+    // The background validates freshness before returning, but the signed
+    // lease may expire while its response crosses a slow runtime-message or
+    // network boundary. Never mount a response that is expired on arrival.
+    if (response.model.trust === "signed_manifest" && response.model.expiresAt <= nowSeconds()) {
+      accepted = null;
+      clearRefresh();
+      removeMounted(root);
+      return;
+    }
+
+    // A transient unauthenticated/local response cannot downgrade a still-live
+    // signed panel. A higher signed route-free response is accepted and mounted
+    // below, removing any nested game immediately.
+    if (previous?.response.model.trust === "signed_manifest" &&
+        response.model.trust === "local_allowlist" && !isExpired(previous)) {
+      accepted = previous;
+      if (!hasCurrentMount) mount(context, previous.response);
+      armRefresh();
+      return;
+    }
+
+    const unchanged = previous && responseIdentity(previous.response) === responseIdentity(response);
     accepted = { context, response };
-    mount(context, response);
+    if (!unchanged || !hasCurrentMount) mount(context, response);
+    armRefresh();
   };
 
-  const schedule = (): void => {
-    if (disposed || timer !== null) return;
-    timer = setTimeout(() => {
-      timer = null;
-      void sync();
+  schedule = (force = false): void => {
+    if (disposed) return;
+    scheduledForce ||= force;
+    if (debounceTimer !== null) return;
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      const runForced = scheduledForce;
+      scheduledForce = false;
+      void sync(runForced);
     }, debounceMs);
   };
 
-  const observer = new MutationObserver(schedule);
+  const observer = new MutationObserver(() => schedule());
   observer.observe(root, { childList: true, subtree: true });
   const navigation = (): void => {
     accepted = null;
+    clearRefresh();
     generation += 1;
     schedule();
   };
+  const refreshOnFocus = (): void => schedule(true);
+  const refreshOnVisible = (): void => {
+    if (document.visibilityState === "visible") schedule(true);
+  };
   window.addEventListener("popstate", navigation);
   window.addEventListener("yt-navigate-finish", navigation as EventListener);
+  window.addEventListener("focus", refreshOnFocus);
+  document.addEventListener("visibilitychange", refreshOnVisible);
   await sync();
 
   return () => {
     disposed = true;
     generation += 1;
-    if (timer !== null) clearTimeout(timer);
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
+    clearRefresh();
     observer.disconnect();
     window.removeEventListener("popstate", navigation);
     window.removeEventListener("yt-navigate-finish", navigation as EventListener);
+    window.removeEventListener("focus", refreshOnFocus);
+    document.removeEventListener("visibilitychange", refreshOnVisible);
     removeMounted(root);
   };
 }

@@ -123,20 +123,31 @@ prefix: `/api/node/status`, `/api/cell/{id}`, `/api/turns/submit-signed`,
 
 The opt-in YouTube companion asks
 `https://node.pathofangels.network/api/poa/companion/youtube/<video-id>` for a
-curator-signed routing manifest. The currently protected beta endpoint returns
+curator-signed routing manifest. Exact X/Twitter status pages use the same
+verifier and lifecycle at
+`https://node.pathofangels.network/api/poa/companion/x/<post-id>`. X support is
+deliberately limited to browser-authenticated `/user/status/<snowflake>` tab
+URLs; feed-card ids scraped from page-owned DOM are not authority. The currently protected beta endpoint returns
 HTTP 401 to the extension. This is deliberately treated as **no signed route**:
 the extension does not embed the beta Basic Auth password, synthesize an
 `Authorization` header, or turn a 401 into verification. Until a proper
 authenticated/public manifest transport is deployed, an exact extension-local
 video allowlist may render only a `recognized`, **not verified**, game-free
 shell linking to `beta.pathofangels.network`; an unknown video renders nothing.
+X has no unsigned/local fallback.
 
 Signed `poa-companion/v1` manifests carry a numeric `contentEpoch` and monotone
-`counter` in their canonical signed bytes. After signature verification, the
-extension persists the highest `(contentEpoch, counter, canonical digest)` per
-exact `(video id, curator key)`. A lower version is refused; an equal version is
+`counter` in their canonical signed bytes. The signed context is discriminated
+as either `{platform: "youtube", videoId, channelId}` or
+`{platform: "x", postId}`; the original YouTube canonical bytes are unchanged.
+After signature verification, the extension persists the highest
+`(contentEpoch, counter, canonical digest)` per exact
+`(platform, stable context id, curator key)`. A lower version is refused; an equal version is
 idempotent only with the same digest; an equal version with different content
-is refused. A curator revokes an attached mission by signing a higher counter
+is refused. Ratchets for simultaneously trusted curator keys are intentionally
+independent; adding or rotating a curator is therefore a governed trust-set
+transition, not automatic version continuity between keys. A curator revokes
+an attached mission by signing a higher counter
 with the `game` route omitted (or the user removes that curator from the trust
 set); the persisted high-water mark then rejects the superseded route.
 Manifests are additionally limited to a seven-day signed lifetime,
@@ -144,6 +155,13 @@ bounding first-seen replay before the client has learned a newer high-water
 mark. The persisted state is `dregg_poa_manifest_versions`; trusted curator keys
 and exact local video recognition use `dregg_poa_trusted_curators` and
 `dregg_poa_youtube_videos`, all in extension-private storage.
+
+While a signed companion is mounted, the content script refreshes its manifest
+on focus, on returning to a visible tab, every five minutes, and no later than
+the signed expiry. A higher route-free revision removes the mounted mission
+without reloading YouTube. A transient transport failure may retain the last
+verified panel only until its signed expiry; it cannot extend that lease or
+downgrade it to a local-allowlist route.
 
 ## Build
 

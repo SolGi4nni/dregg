@@ -2,7 +2,7 @@
  * Path of Angels companion context — the BACKGROUND side of `<dregg-poa>`.
  *
  * This module deliberately contains no game rules. It recognizes an exact
- * YouTube video context, verifies a curator-signed routing manifest (or an
+ * browser-authenticated media context, verifies a curator-signed routing manifest (or an
  * explicit local video allowlist), and returns a small presentation model. A
  * routed game remains a normal `<dregg-descent>` whose rules and receipts are
  * owned by the existing background/wasm engine.
@@ -29,6 +29,7 @@ export const POA_MANIFEST_VERSIONS_KEY = "dregg_poa_manifest_versions";
 
 const YOUTUBE_VIDEO_RE = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_CHANNEL_RE = /^[A-Za-z0-9_-]{3,128}$/;
+const X_POST_RE = /^[1-9][0-9]{0,19}$/;
 const EXPERIENCE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const DESCENT_URI_RE = /^dregg:\/\/descent\/b3_[0-9a-f]{6,}$/i;
 const HEX_KEY_RE = /^[0-9a-f]{64}$/i;
@@ -47,6 +48,16 @@ export interface PoAYouTubeContext {
   channelHint?: string;
 }
 
+export interface PoAXContext {
+  platform: "x";
+  postId: string;
+}
+
+export type PoAResolvedContext = PoAYouTubeContext | PoAXContext;
+export type PoAManifestContext =
+  | { platform: "youtube"; videoId: string; channelId: string }
+  | { platform: "x"; postId: string };
+
 export interface PoAGameRoute {
   kind: "descent";
   src: string;
@@ -58,11 +69,7 @@ export interface PoAManifestV1 {
   contentEpoch: number;
   /** Monotone revision within `contentEpoch`. */
   counter: number;
-  context: {
-    platform: "youtube";
-    videoId: string;
-    channelId: string;
-  };
+  context: PoAManifestContext;
   experience: {
     id: string;
     title: string;
@@ -82,7 +89,9 @@ export interface SignedPoAManifestV1 {
 }
 
 interface PoACompanionModelBase {
-  videoId: string;
+  platform: "youtube" | "x";
+  /** Stable identity within `platform`, used by the shared mount lifecycle. */
+  contextId: string;
   experienceId: string;
   title: string;
   episode?: string;
@@ -90,18 +99,46 @@ interface PoACompanionModelBase {
   betaUrl: string;
 }
 
-export interface PoASignedCompanionModel extends PoACompanionModelBase {
+interface PoASignedCompanionModelBase extends PoACompanionModelBase {
   trust: "signed_manifest";
-  channelId: string;
+  contentEpoch: number;
+  counter: number;
+  manifestDigest: string;
+  issuedAt: number;
+  expiresAt: number;
   game?: PoAGameRoute;
   signer: string;
 }
 
+export interface PoAYouTubeSignedCompanionModel extends PoASignedCompanionModelBase {
+  platform: "youtube";
+  videoId: string;
+  channelId: string;
+  postId?: never;
+}
+
+export interface PoAXSignedCompanionModel extends PoASignedCompanionModelBase {
+  platform: "x";
+  postId: string;
+  videoId?: never;
+  channelId?: never;
+}
+
+export type PoASignedCompanionModel = PoAYouTubeSignedCompanionModel | PoAXSignedCompanionModel;
+
 export interface PoALocalCompanionModel extends PoACompanionModelBase {
   trust: "local_allowlist";
+  platform: "youtube";
+  videoId: string;
   // These `never` fields make it impossible to accidentally bless a locally
   // recognized shell with curator/game authority at the TypeScript boundary.
   channelId?: never;
+  postId?: never;
+  contentEpoch?: never;
+  counter?: never;
+  manifestDigest?: never;
+  issuedAt?: never;
+  expiresAt?: never;
   game?: never;
   signer?: never;
 }
@@ -120,7 +157,7 @@ export interface PoACompanionPort {
 }
 
 export interface PoAEngineDeps {
-  resolveSignedManifest(context: PoAYouTubeContext): Promise<unknown | null>;
+  resolveSignedManifest(context: PoAResolvedContext): Promise<unknown | null>;
   isVideoAllowlisted(videoId: string): Promise<boolean>;
   trustedCuratorKeys(): Promise<ReadonlySet<string>>;
   /** Persist/check the highest signed version for this exact video+curator. */
@@ -131,7 +168,8 @@ export interface PoAEngineDeps {
 
 export interface PoAManifestVersion {
   signer: string;
-  videoId: string;
+  platform: "youtube" | "x";
+  contextId: string;
   contentEpoch: number;
   counter: number;
   digest: string;
@@ -162,18 +200,51 @@ export function parsePoAYouTubeUrl(href: string, channelHint?: string): PoAYouTu
   return { platform: "youtube", videoId, channelHint: cleanChannel };
 }
 
+/** Parse only browser-authenticated, canonical media routes. X feed cards are
+ * deliberately excluded: their post ids come from page-owned DOM, whereas an
+ * exact `/status/<id>` tab URL is supplied authoritatively by the browser. */
+export function parsePoAContextUrl(href: string, channelHint?: string): PoAResolvedContext | null {
+  const youtube = parsePoAYouTubeUrl(href, channelHint);
+  if (youtube) return youtube;
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" || (host !== "x.com" && host !== "www.x.com" && host !== "twitter.com" && host !== "www.twitter.com")) {
+    return null;
+  }
+  const match = url.pathname.match(/^\/[A-Za-z0-9_]{1,15}\/status\/([0-9]{1,20})(?:\/|$)/);
+  const postId = match?.[1] ?? "";
+  if (!X_POST_RE.test(postId)) return null;
+  return { platform: "x", postId };
+}
+
+export function poaContextId(context: PoAResolvedContext | PoAManifestContext): string {
+  return context.platform === "youtube" ? context.videoId : context.postId;
+}
+
+function samePoAContext(manifest: PoAManifestContext, page: PoAResolvedContext): boolean {
+  return manifest.platform === page.platform && poaContextId(manifest) === poaContextId(page);
+}
+
 /** Canonical signed bytes for `poa-companion/v1`. The fixed-field projection is
  * intentional: unknown JSON fields are neither silently signed nor interpreted. */
 export function poaManifestSigningBytes(manifest: PoAManifestV1): Uint8Array<ArrayBuffer> {
+  const context = manifest.context.platform === "youtube"
+    ? {
+        platform: "youtube" as const,
+        videoId: manifest.context.videoId,
+        channelId: manifest.context.channelId,
+      }
+    : { platform: "x" as const, postId: manifest.context.postId };
   const canonical = {
     schema: manifest.schema,
     contentEpoch: manifest.contentEpoch,
     counter: manifest.counter,
-    context: {
-      platform: manifest.context.platform,
-      videoId: manifest.context.videoId,
-      channelId: manifest.context.channelId,
-    },
+    context,
     experience: {
       id: manifest.experience.id,
       title: manifest.experience.title,
@@ -217,8 +288,17 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
   if (m.schema !== "poa-companion/v1" || !context || !experience) return null;
   if (!Number.isSafeInteger(m.contentEpoch) || (m.contentEpoch as number) < 0) return null;
   if (!Number.isSafeInteger(m.counter) || (m.counter as number) < 0) return null;
-  if (context.platform !== "youtube" || !boundedString(context.videoId, 11) || !YOUTUBE_VIDEO_RE.test(context.videoId)) return null;
-  if (!boundedString(context.channelId, 128) || !YOUTUBE_CHANNEL_RE.test(context.channelId)) return null;
+  let manifestContext: PoAManifestContext;
+  if (context.platform === "youtube") {
+    if (!boundedString(context.videoId, 11) || !YOUTUBE_VIDEO_RE.test(context.videoId)) return null;
+    if (!boundedString(context.channelId, 128) || !YOUTUBE_CHANNEL_RE.test(context.channelId)) return null;
+    manifestContext = { platform: "youtube", videoId: context.videoId, channelId: context.channelId };
+  } else if (context.platform === "x") {
+    if (!boundedString(context.postId, 20) || !X_POST_RE.test(context.postId)) return null;
+    manifestContext = { platform: "x", postId: context.postId };
+  } else {
+    return null;
+  }
   if (!boundedString(experience.id, 64) || !EXPERIENCE_ID_RE.test(experience.id)) return null;
   if (!boundedString(experience.title, 160)) return null;
   if (experience.episode !== undefined && !boundedString(experience.episode, 96)) return null;
@@ -245,7 +325,7 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
     schema: "poa-companion/v1",
     contentEpoch: m.contentEpoch as number,
     counter: m.counter as number,
-    context: { platform: "youtube", videoId: context.videoId, channelId: context.channelId },
+    context: manifestContext,
     experience: {
       id: experience.id,
       title: experience.title,
@@ -310,8 +390,8 @@ export class PoAEngine {
 
   async handle(req: PoACompanionRequest): Promise<PoACompanionResponse> {
     if (!req || req.op !== "openContext" || !req.context) return refuse("unsupported companion request");
-    const context = parsePoAYouTubeUrl(req.context.href, req.context.channelHint);
-    if (!context) return refuse("not a supported YouTube video context");
+    const context = parsePoAContextUrl(req.context.href, req.context.channelHint);
+    if (!context) return refuse("not a supported Path of Angels media context");
 
     let envelope: unknown | null = null;
     try {
@@ -323,27 +403,45 @@ export class PoAEngine {
 
     const signed = await this.acceptSigned(envelope, context);
     if (signed) {
+      const manifestContext = signed.manifest.context;
+      const common = {
+        trust: "signed_manifest" as const,
+        contextId: poaContextId(manifestContext),
+        contentEpoch: signed.manifest.contentEpoch,
+        counter: signed.manifest.counter,
+        manifestDigest: signed.digest,
+        issuedAt: signed.manifest.issuedAt,
+        expiresAt: signed.manifest.expiresAt,
+        experienceId: signed.manifest.experience.id,
+        title: signed.manifest.experience.title,
+        ...(signed.manifest.experience.episode === undefined ? {} : { episode: signed.manifest.experience.episode }),
+        ...(signed.manifest.experience.dispatch === undefined ? {} : { dispatch: signed.manifest.experience.dispatch }),
+        betaUrl: signed.manifest.experience.betaUrl,
+        ...(signed.manifest.experience.game === undefined ? {} : { game: signed.manifest.experience.game }),
+        signer: signed.signer.toLowerCase(),
+      };
+      const model: PoASignedCompanionModel = manifestContext.platform === "youtube"
+        ? {
+            ...common,
+            platform: "youtube",
+            videoId: manifestContext.videoId,
+            channelId: manifestContext.channelId,
+          }
+        : {
+            ...common,
+            platform: "x",
+            postId: manifestContext.postId,
+          };
       return {
         ok: true,
         recognized: true,
         verified: true,
         tier: "extension",
-        model: {
-          trust: "signed_manifest",
-          videoId: signed.manifest.context.videoId,
-          channelId: signed.manifest.context.channelId,
-          experienceId: signed.manifest.experience.id,
-          title: signed.manifest.experience.title,
-          ...(signed.manifest.experience.episode === undefined ? {} : { episode: signed.manifest.experience.episode }),
-          ...(signed.manifest.experience.dispatch === undefined ? {} : { dispatch: signed.manifest.experience.dispatch }),
-          betaUrl: signed.manifest.experience.betaUrl,
-          ...(signed.manifest.experience.game === undefined ? {} : { game: signed.manifest.experience.game }),
-          signer: signed.signer.toLowerCase(),
-        },
+        model,
       };
     }
 
-    if (await this.deps.isVideoAllowlisted(context.videoId)) {
+    if (context.platform === "youtube" && await this.deps.isVideoAllowlisted(context.videoId)) {
       const beta = new URL(POA_BETA_URL);
       beta.searchParams.set("youtube", context.videoId);
       return {
@@ -353,6 +451,8 @@ export class PoAEngine {
         tier: "none",
         model: {
           trust: "local_allowlist",
+          platform: "youtube",
+          contextId: context.videoId,
           videoId: context.videoId,
           experienceId: `youtube-${context.videoId}`,
           title: "Path of Angels field terminal",
@@ -361,13 +461,13 @@ export class PoAEngine {
         },
       };
     }
-    return refuse("this video is not in the Path of Angels trust set");
+    return refuse("this media context is not in the Path of Angels trust set");
   }
 
   private async acceptSigned(
     value: unknown,
-    context: PoAYouTubeContext,
-  ): Promise<{ manifest: PoAManifestV1; signer: string } | null> {
+    context: PoAResolvedContext,
+  ): Promise<{ manifest: PoAManifestV1; signer: string; digest: string } | null> {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const envelope = value as Record<string, unknown>;
     if (!boundedString(envelope.signer, 64) || !HEX_KEY_RE.test(envelope.signer)) return null;
@@ -376,7 +476,7 @@ export class PoAEngine {
     const trusted = await this.deps.trustedCuratorKeys();
     if (!trusted.has(signer)) return null;
     const manifest = validatePoAManifest(envelope.manifest, (this.deps.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
-    if (!manifest || manifest.context.videoId !== context.videoId) return null;
+    if (!manifest || !samePoAContext(manifest.context, context)) return null;
     const verify = this.deps.verifyEd25519 ?? verifyPoAEd25519;
     if (!(await verify(signer, poaManifestSigningBytes(manifest), envelope.signature))) return null;
     let digest: string;
@@ -387,12 +487,13 @@ export class PoAEngine {
     }
     if (!(await this.acceptVersion({
       signer,
-      videoId: manifest.context.videoId,
+      platform: manifest.context.platform,
+      contextId: poaContextId(manifest.context),
       contentEpoch: manifest.contentEpoch,
       counter: manifest.counter,
       digest,
     }))) return null;
-    return { manifest, signer };
+    return { manifest, signer, digest };
   }
 }
 
@@ -439,8 +540,11 @@ function parseStoredVersion(value: unknown): StoredPoAManifestVersion | null {
   return { contentEpoch: v.contentEpoch as number, counter: v.counter as number, digest: v.digest.toLowerCase() };
 }
 
-function versionStorageKey(version: Pick<PoAManifestVersion, "signer" | "videoId">): string {
-  return `v1:${version.signer.toLowerCase()}:${version.videoId}`;
+function versionStorageKey(version: Pick<PoAManifestVersion, "signer" | "platform" | "contextId">): string {
+  // Preserve the already-shipped YouTube key shape; X is explicitly namespaced.
+  return version.platform === "youtube"
+    ? `v1:${version.signer.toLowerCase()}:${version.contextId}`
+    : `v1:${version.signer.toLowerCase()}:x:${version.contextId}`;
 }
 
 /** Extension-persisted rollback gate. Comparison is lexicographic by
@@ -451,7 +555,10 @@ export async function acceptStoredPoAManifestVersion(
   storage: PoAStorageLike,
   version: PoAManifestVersion,
 ): Promise<boolean> {
-  if (!HEX_KEY_RE.test(version.signer) || !YOUTUBE_VIDEO_RE.test(version.videoId)) return false;
+  const validContext = version.platform === "youtube"
+    ? YOUTUBE_VIDEO_RE.test(version.contextId)
+    : version.platform === "x" && X_POST_RE.test(version.contextId);
+  if (!HEX_KEY_RE.test(version.signer) || !validContext) return false;
   const candidate = parseStoredVersion(version);
   if (!candidate) return false;
   const stored = await storage.get(POA_MANIFEST_VERSIONS_KEY);
@@ -484,7 +591,9 @@ export function createStoredPoAEngine(storage: PoAStorageLike, fetcher: PoAFetch
     async resolveSignedManifest(context) {
       const stored = await storage.get(POA_NODE_URL_KEY);
       const base = safePoANodeBase(stored[POA_NODE_URL_KEY]);
-      const url = `${base}/api/poa/companion/youtube/${encodeURIComponent(context.videoId)}`;
+      const url = context.platform === "youtube"
+        ? `${base}/api/poa/companion/youtube/${encodeURIComponent(context.videoId)}`
+        : `${base}/api/poa/companion/x/${encodeURIComponent(context.postId)}`;
       const response = await fetcher(url, {
         cache: "no-store",
         signal: AbortSignal.timeout(10_000),

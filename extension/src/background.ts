@@ -3945,7 +3945,7 @@ function getDescentEngine(): DescentEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Path of Angels YouTube companion — <dregg-poa>.
+// Path of Angels media companion — <dregg-poa>.
 //
 // This engine recognizes context and verifies a routing manifest; it does not
 // implement game rules. The browser-provided sender.tab.url is authoritative.

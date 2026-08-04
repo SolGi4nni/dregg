@@ -71,6 +71,7 @@ const STYLE = `
 .eyebrow { position: relative; color: #a8b78b; font: 600 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .13em; text-transform: uppercase; }
 .title { position: relative; margin: 6px 0 2px; color: #f1ead7; font-size: 17px; font-weight: 650; }
 .episode { position: relative; color: #aaa38f; font-size: 12px; }
+.epoch { position: relative; margin-top: 4px; color: #879776; font: 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; letter-spacing: .06em; }
 .dispatch { position: relative; margin: 11px 0; color: #d2cbb9; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
 .mission { position: relative; margin-top: 12px; }
 .links { position: relative; display: flex; gap: 10px; align-items: center; margin-top: 11px; }
@@ -82,7 +83,14 @@ function validModel(value: unknown): value is PoACompanionModel {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const m = value as PoACompanionModel;
   if (m.trust !== "signed_manifest" && m.trust !== "local_allowlist") return false;
-  if (typeof m.videoId !== "string" || !/^[A-Za-z0-9_-]{11}$/.test(m.videoId)) return false;
+  if (m.platform === "youtube") {
+    if (typeof m.videoId !== "string" || !/^[A-Za-z0-9_-]{11}$/.test(m.videoId) || m.contextId !== m.videoId) return false;
+  } else if (m.platform === "x") {
+    if (m.trust !== "signed_manifest") return false;
+    if (typeof m.postId !== "string" || !/^[1-9][0-9]{0,19}$/.test(m.postId) || m.contextId !== m.postId) return false;
+  } else {
+    return false;
+  }
   if (typeof m.experienceId !== "string" || !m.experienceId || m.experienceId.length > 64) return false;
   if (typeof m.title !== "string" || !m.title || m.title.length > 160) return false;
   if (m.episode !== undefined && (typeof m.episode !== "string" || m.episode.length > 96)) return false;
@@ -95,6 +103,12 @@ function validModel(value: unknown): value is PoACompanionModel {
   if (m.game) {
     if (m.trust !== "signed_manifest") return false;
     if (m.game.kind !== "descent" || !/^dregg:\/\/descent\/b3_[0-9a-f]{6,}$/i.test(m.game.src)) return false;
+  }
+  if (m.trust === "signed_manifest") {
+    if (!Number.isSafeInteger(m.contentEpoch) || m.contentEpoch < 0) return false;
+    if (!Number.isSafeInteger(m.counter) || m.counter < 0) return false;
+    if (!/^[0-9a-f]{64}$/i.test(m.manifestDigest)) return false;
+    if (!Number.isSafeInteger(m.issuedAt) || !Number.isSafeInteger(m.expiresAt) || m.expiresAt <= m.issuedAt) return false;
   }
   return true;
 }
@@ -157,6 +171,9 @@ export class DreggPoA extends HTMLElement {
     terminal.appendChild(makeDiv("eyebrow", "KHOVOKHI // FIELD TERMINAL"));
     terminal.appendChild(makeDiv("title", model.title));
     if (model.episode) terminal.appendChild(makeDiv("episode", model.episode));
+    if (model.trust === "signed_manifest") {
+      terminal.appendChild(makeDiv("epoch", `content epoch ${model.contentEpoch} · revision ${model.counter}`));
+    }
     if (model.dispatch) terminal.appendChild(makeDiv("dispatch", model.dispatch));
 
     if (model.game?.kind === "descent") {
@@ -193,15 +210,31 @@ export class DreggPoA extends HTMLElement {
 
     this.setAttribute("recognized", "");
     this.setAttribute("experience", model.experienceId);
-    this.setAttribute("video-id", model.videoId);
+    this.setAttribute("platform", model.platform);
+    this.setAttribute("context-id", model.contextId);
+    if (model.platform === "youtube") {
+      this.setAttribute("video-id", model.videoId);
+      this.removeAttribute("post-id");
+    } else {
+      this.setAttribute("post-id", model.postId);
+      this.removeAttribute("video-id");
+    }
     if (model.trust === "signed_manifest") {
       this.setAttribute("trust", "extension");
       this.setAttribute("verified", "");
       this.setAttribute("manifest-signed", "");
+      this.setAttribute("content-epoch", String(model.contentEpoch));
+      this.setAttribute("manifest-counter", String(model.counter));
+      this.setAttribute("manifest-digest", model.manifestDigest);
+      this.setAttribute("expires-at", String(model.expiresAt));
     } else {
       this.setAttribute("trust", "local");
       this.removeAttribute("verified");
       this.removeAttribute("manifest-signed");
+      this.removeAttribute("content-epoch");
+      this.removeAttribute("manifest-counter");
+      this.removeAttribute("manifest-digest");
+      this.removeAttribute("expires-at");
     }
     this.removeAttribute("error");
     this.exposeRootForTest(root);
@@ -212,6 +245,10 @@ export class DreggPoA extends HTMLElement {
   private failClosed(reason: string): void {
     this.removeAttribute("verified");
     this.removeAttribute("manifest-signed");
+    this.removeAttribute("content-epoch");
+    this.removeAttribute("manifest-counter");
+    this.removeAttribute("manifest-digest");
+    this.removeAttribute("expires-at");
     this.removeAttribute("recognized");
     this.setAttribute("trust", "none");
     this.setAttribute("error", "");

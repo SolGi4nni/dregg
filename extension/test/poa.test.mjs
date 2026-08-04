@@ -6,6 +6,7 @@ import {
   PoAEngine,
   acceptStoredPoAManifestVersion,
   createStoredPoAEngine,
+  parsePoAContextUrl,
   parsePoAYouTubeUrl,
   poaManifestSigningBytes,
   validatePoAManifest,
@@ -14,6 +15,8 @@ import {
 const NOW = 1_800_000_000;
 const VIDEO = 'AbCdEfGhI01';
 const OTHER = 'ZyXwVuTsR02';
+const X_POST = '1891234567890123456';
+const OTHER_X_POST = '1891234567890123457';
 const SIGNER = '11'.repeat(32);
 const OTHER_SIGNER = '33'.repeat(32);
 const SIGNATURE = '22'.repeat(64);
@@ -57,6 +60,20 @@ function manifest(overrides = {}) {
   };
 }
 
+function xManifest(postId = X_POST, overrides = {}) {
+  const value = manifest({
+    ...overrides,
+    experience: {
+      id: 'x-field-dispatch',
+      title: 'Path of Angels X field dispatch',
+      betaUrl: `${POA_BETA_URL}?x=${postId}`,
+      ...(overrides.experience || {}),
+    },
+  });
+  value.context = { platform: 'x', postId, ...(overrides.context || {}) };
+  return value;
+}
+
 function engineFor(envelope, allowlisted = new Set()) {
   return new PoAEngine({
     resolveSignedManifest: async () => envelope,
@@ -78,6 +95,15 @@ test('YouTube recognition accepts exact watch/shorts/live routes only', () => {
   assert.equal(parsePoAYouTubeUrl('https://www.youtube.com/watch?v=short'), null, 'malformed id refused');
 });
 
+test('X recognition accepts exact browser-authenticated status routes only', () => {
+  assert.deepEqual(parsePoAContextUrl(`https://x.com/sentyr/status/${X_POST}`), { platform: 'x', postId: X_POST });
+  assert.deepEqual(parsePoAContextUrl(`https://twitter.com/sentyr/status/${X_POST}/photo/1`), { platform: 'x', postId: X_POST });
+  assert.equal(parsePoAContextUrl(`https://x.com/home?status=${X_POST}`), null, 'feed DOM/query hints are not authoritative');
+  assert.equal(parsePoAContextUrl(`https://x.com/sentyr/status/0`), null, 'zero is not a snowflake');
+  assert.equal(parsePoAContextUrl(`http://x.com/sentyr/status/${X_POST}`), null, 'HTTP refused');
+  assert.equal(parsePoAContextUrl(`https://x.com/sentyr/status/${X_POST}999`), null, 'overlong post id refused');
+});
+
 test('canonical signing bytes are stable and omit no interpreted optional field', () => {
   const bytes = new TextDecoder().decode(poaManifestSigningBytes(manifest()));
   assert.match(bytes, /^poa-companion\/v1\n\{/);
@@ -85,6 +111,10 @@ test('canonical signing bytes are stable and omit no interpreted optional field'
   assert.match(bytes, /"videoId":"AbCdEfGhI01"/);
   assert.match(bytes, /"game":\{"kind":"descent","src":"dregg:\/\/descent\/b3_de5ce0"\}/);
   assert.match(bytes, /"expiresAt":1800003600\}$/);
+
+  const xBytes = new TextDecoder().decode(poaManifestSigningBytes(xManifest()));
+  assert.match(xBytes, new RegExp(`"context":\\{"platform":"x","postId":"${X_POST}"\\}`));
+  assert.doesNotMatch(xBytes, /videoId|channelId/, 'X signs only its discriminated stable identity');
 });
 
 test('manifest validator rejects stale, overlong, foreign-beta, and unknown game routes', () => {
@@ -111,6 +141,11 @@ test('signed manifest is bound to the URL-derived video id', async () => {
   assert.equal(accepted.verified, true);
   assert.equal(accepted.tier, 'extension');
   assert.equal(accepted.model.trust, 'signed_manifest');
+  assert.equal(accepted.model.contentEpoch, 1);
+  assert.equal(accepted.model.counter, 1);
+  assert.match(accepted.model.manifestDigest, /^[0-9a-f]{64}$/);
+  assert.equal(accepted.model.issuedAt, NOW - 60);
+  assert.equal(accepted.model.expiresAt, NOW + 3600);
   assert.equal(accepted.model.game.kind, 'descent');
 
   const wrongVideo = await engineFor(envelope).handle({
@@ -118,6 +153,32 @@ test('signed manifest is bound to the URL-derived video id', async () => {
     context: { href: `https://www.youtube.com/watch?v=${OTHER}` },
   });
   assert.equal(wrongVideo.ok, false, 'a valid signature for another episode is refused');
+});
+
+test('signed X manifest is bound to platform plus stable post id', async () => {
+  const envelope = { manifest: xManifest(), signer: SIGNER, signature: SIGNATURE };
+  const accepted = await engineFor(envelope).handle({
+    op: 'openContext',
+    context: { href: `https://x.com/sentyr/status/${X_POST}` },
+  });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.verified, true);
+  assert.equal(accepted.model.platform, 'x');
+  assert.equal(accepted.model.contextId, X_POST);
+  assert.equal(accepted.model.postId, X_POST);
+  assert.equal(accepted.model.videoId, undefined);
+
+  const wrongPost = await engineFor(envelope).handle({
+    op: 'openContext',
+    context: { href: `https://x.com/sentyr/status/${OTHER_X_POST}` },
+  });
+  assert.equal(wrongPost.ok, false, 'signature for another X post is refused');
+
+  const wrongPlatform = await engineFor({ manifest: manifest(), signer: SIGNER, signature: SIGNATURE }).handle({
+    op: 'openContext',
+    context: { href: `https://x.com/sentyr/status/${X_POST}` },
+  });
+  assert.equal(wrongPlatform.ok, false, 'same-looking id on another platform cannot establish context');
 });
 
 test('exact local video allowlist produces a game-free shell', async () => {
@@ -222,6 +283,33 @@ test('persisted epoch+counter rejects stale and equal-conflicting signed routes'
   assert.equal((await open(makeEngine())).ok, true, 'separately trusted curator has an independent high-water mark');
 });
 
+test('rollback ratchets namespace X and YouTube identities independently', async () => {
+  const storage = memoryStorage();
+  const ambiguousId = '12345678901';
+  const base = {
+    signer: SIGNER,
+    contextId: ambiguousId,
+    contentEpoch: 1,
+    counter: 1,
+  };
+  assert.equal(await acceptStoredPoAManifestVersion(storage, {
+    ...base,
+    platform: 'youtube',
+    digest: 'aa'.repeat(32),
+  }), true);
+  assert.equal(await acceptStoredPoAManifestVersion(storage, {
+    ...base,
+    platform: 'x',
+    digest: 'bb'.repeat(32),
+  }), true, 'same textual id on X does not collide with the YouTube ratchet');
+  assert.equal(await acceptStoredPoAManifestVersion(storage, {
+    ...base,
+    platform: 'x',
+    counter: 0,
+    digest: 'cc'.repeat(32),
+  }), false, 'X route rollback is refused by the shared persistent gate');
+});
+
 test('401 protected endpoint embeds no credential and yields local-only recognition', async () => {
   const storage = memoryStorage({
     dregg_poa_youtube_videos: { [VIDEO]: true },
@@ -248,4 +336,20 @@ test('401 protected endpoint embeds no credential and yields local-only recognit
     context: { href: `https://www.youtube.com/watch?v=${VIDEO}` },
   });
   assert.equal(denied.ok, false, '401 with no exact local allowlist stays default-deny');
+});
+
+test('X transport uses its exact post endpoint and never embeds beta credentials', async () => {
+  let request = null;
+  const engine = createStoredPoAEngine(memoryStorage(), async (url, init) => {
+    request = { url, init };
+    return new Response('', { status: 401 });
+  });
+  const response = await engine.handle({
+    op: 'openContext',
+    context: { href: `https://x.com/sentyr/status/${X_POST}` },
+  });
+  assert.equal(response.ok, false, 'X has no unsigned/local authority fallback');
+  assert.match(request.url, new RegExp(`/api/poa/companion/x/${X_POST}$`));
+  assert.deepEqual(request.init.headers, { Accept: 'application/json' });
+  assert.equal('Authorization' in request.init.headers, false);
 });

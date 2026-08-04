@@ -57,10 +57,11 @@ registerDescentElement();
 // custody, no trust decision. A bad kind / non-hex / wrong-length id fails closed (no render).
 registerSpriteElement();
 
-// Path of Angels companion: on an explicitly upgrade-enabled YouTube origin,
-// recognize the exact video through the background's signed/local trust set and
-// mount one SPA-safe `<dregg-poa>` beside the player. The element is a closed-
-// shadow thin view; any routed Descent remains owned by its background engine.
+// Path of Angels companion: on an explicitly upgrade-enabled YouTube or exact
+// X status origin, recognize the browser-authenticated media identity through
+// the background's signed trust path (plus YouTube's game-free local fallback)
+// and mount one SPA-safe `<dregg-poa>`. The element is a closed-shadow thin view;
+// any routed Descent remains owned by its background engine.
 void startPoACompanionDetector();
 
 // Methods that any page origin can call without prior approval.

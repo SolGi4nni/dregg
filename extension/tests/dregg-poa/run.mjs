@@ -47,21 +47,30 @@ window.__poaSnap = function () {
     const root = window.__dreggPoARoots && window.__dreggPoARoots.get(el);
     const descent = root && root.querySelector('dregg-descent');
     return {
+      platform: el.getAttribute('platform'),
+      contextId: el.getAttribute('context-id'),
       videoId: el.getAttribute('video-id'),
+      postId: el.getAttribute('post-id'),
       trust: el.getAttribute('trust'),
       recognized: el.hasAttribute('recognized'),
       verified: el.hasAttribute('verified'),
       signed: el.hasAttribute('manifest-signed'),
+      contentEpoch: el.getAttribute('content-epoch'),
+      manifestCounter: el.getAttribute('manifest-counter'),
+      expiresAt: el.getAttribute('expires-at'),
       error: el.hasAttribute('error'),
       pageSeesShadow: el.shadowRoot !== null,
       title: root ? root.querySelector('.title')?.textContent : null,
       dispatch: root ? root.querySelector('.dispatch')?.textContent : null,
+      epochText: root ? root.querySelector('.epoch')?.textContent : null,
       badge: root ? root.querySelector('.badge')?.textContent : null,
       betaHref: root ? root.querySelector('.links a')?.href : null,
       fallbackHref: el.querySelector('a[data-poa-fallback]')?.href || null,
       descentSrc: descent?.getAttribute('src') || null,
       descentVerified: descent?.hasAttribute('verified') || false,
       pageSeesDescentShadow: descent ? descent.shadowRoot !== null : null,
+      unsafeNodeCount: root ? root.querySelectorAll('script,img,iframe,object').length : null,
+      followsSourcePost: el.previousElementSibling?.hasAttribute('data-x-source-post') || false,
     };
   });
 };
@@ -94,6 +103,12 @@ test("dregg-poa: opt-in + signed context + closed shadow + engine route + SPA re
     assert.equal(snap.recognized, true);
     assert.equal(snap.signed, true, "signed manifest trust is reflected");
     assert.equal(snap.trust, "extension");
+    assert.equal(snap.platform, "youtube");
+    assert.equal(snap.contextId, "AbCdEfGhI01");
+    assert.equal(snap.contentEpoch, "1");
+    assert.equal(snap.manifestCounter, "1");
+    assert.equal(snap.expiresAt, "1800003600");
+    assert.match(snap.epochText, /content epoch 1 · revision 1/i);
     assert.match(snap.title, /Field Dispatch 1/);
     assert.match(snap.dispatch, /Deck 401/);
     assert.match(snap.badge, /curator manifest verified/i);
@@ -103,11 +118,58 @@ test("dregg-poa: opt-in + signed context + closed shadow + engine route + SPA re
     assert.match(snap.fallbackHref, /^https:\/\/beta\.pathofangels\.network\//, "light-DOM beta fallback remains");
     assert.equal(await page.evaluate(() => window.__poaLookupCount()), 1, "primed response avoids a second node lookup");
 
+    // A higher route-free signed revision revokes an already-mounted game on
+    // focus refresh. Hostile markup remains literal text under page CSP.
+    await page.evaluate(() => window.__poaRevokeA());
+    await page.waitForFunction(() => document.querySelector('dregg-poa[manifest-counter="2"]'));
+    [snap] = await page.evaluate(() => window.__poaSnap());
+    assert.equal(snap.verified, true, "route-free revocation is itself curator-verified");
+    assert.equal(snap.descentSrc, null, "higher route-free revision removes the mounted game");
+    assert.match(snap.epochText, /content epoch 1 · revision 2/i);
+    assert.match(snap.dispatch, /<img src=x onerror=/, "signed dispatch markup is shown literally");
+    assert.equal(snap.unsafeNodeCount, 0, "signed content cannot inject script/image/frame/object DOM");
+    assert.equal(await page.evaluate(() => window.__POA_XSS), undefined, "no inline handler executed under CSP/runtime");
+
+    // A stale signed route fetched later cannot restore the revoked game. The
+    // current verified panel remains mounted until its signed expiry.
+    const beforeRollback = await page.evaluate(() => window.__poaCompletedLookupCount());
+    await page.evaluate(() => window.__poaRollbackA());
+    await page.waitForFunction((n) => window.__poaCompletedLookupCount() > n, beforeRollback);
+    await page.waitForTimeout(50);
+    [snap] = await page.evaluate(() => window.__poaSnap());
+    assert.equal(snap.manifestCounter, "2");
+    assert.equal(snap.descentSrc, null, "rollback cannot resurrect the revoked route");
+
     // YouTube tears down sidebars during SPA navigation. Same-video replacement
     // remounts from the accepted model without duplicating or re-fetching.
+    const beforeRemount = await page.evaluate(() => window.__poaLookupCount());
     await page.evaluate(() => window.__poaRemoveMounted());
     await page.waitForFunction(() => document.querySelectorAll("dregg-poa").length === 1);
-    assert.equal(await page.evaluate(() => window.__poaLookupCount()), 1);
+    assert.equal(await page.evaluate(() => window.__poaLookupCount()), beforeRemount);
+
+    // Crossing expiresAt unmounts synchronously before a slow/offline transport
+    // is allowed to answer. Mutation-driven duplicate lookups are held too: no
+    // signed shell or nested game survives anywhere in the request window.
+    await page.evaluate(() => window.__poaExpireAOfflineHeld());
+    await page.waitForFunction(() => window.__poaDeferredCount() > 0);
+    assert.equal(await page.evaluate(() => document.querySelectorAll("dregg-poa").length), 0,
+      "expired signed panel is absent while refresh transport is stalled");
+    assert.equal(await page.evaluate(() => window.__poaSnap().length), 0,
+      "expired nested game has no stale display window");
+    assert.equal(await page.evaluate(() => window.__poaReleaseDeferredAndFlush()), 0);
+
+    // Restore the still-valid revision, then hold its next valid response until
+    // after its lease expires. The content side rejects it on arrival instead
+    // of mounting it for even the zero-delay timer window.
+    await page.evaluate(() => window.__poaResetClock());
+    await page.evaluate(() => window.__poaRestoreRevokedA());
+    await page.waitForFunction(() => document.querySelector('dregg-poa[manifest-counter="2"]'));
+    await page.evaluate(() => window.__poaHoldValidA());
+    await page.waitForFunction(() => window.__poaDeferredCount() > 0);
+    await page.evaluate(() => window.__poaAdvancePastAExpiry());
+    assert.equal(await page.evaluate(() => window.__poaReleaseDeferredAndFlush()), 0,
+      "signed response that expires in flight is never mounted on arrival");
+    await page.evaluate(() => window.__poaResetClock());
 
     const videos = await page.evaluate(() => window.__POA_VIDEOS);
     await page.evaluate((id) => window.__poaSetVideo(id), videos.VIDEO_B);
@@ -133,6 +195,41 @@ test("dregg-poa: opt-in + signed context + closed shadow + engine route + SPA re
     assert.match(snap.badge, /locally recognized · not verified/i);
     assert.equal(snap.descentSrc, null, "local allowlist cannot attach game semantics");
     assert.match(snap.fallbackHref, /^https:\/\/beta\.pathofangels\.network\//, "local shell keeps beta fallback");
+
+    // The same verified lifecycle serves an exact browser-authenticated X post.
+    // X mounts alongside the matching article/card target, never by rewriting
+    // its page-owned prose, and leaving the status route removes it SPA-safely.
+    await page.evaluate((id) => window.__poaSetXPostHeld(id), videos.X_POST);
+    await page.waitForFunction(() => window.__poaDeferredCount() > 0);
+    assert.equal(await page.evaluate(() => document.querySelectorAll("dregg-poa").length), 0,
+      "the prior YouTube panel is removed while the X SPA lookup is in flight");
+    await page.evaluate(() => window.__poaReleaseDeferredAndFlush());
+    await page.waitForFunction((id) => document.querySelector(`dregg-poa[post-id="${id}"][verified]`), videos.X_POST);
+    await page.waitForFunction(() => {
+      const poa = document.querySelector('dregg-poa[platform="x"]');
+      const root = window.__dreggPoARoots?.get(poa);
+      return root?.querySelector("dregg-descent")?.hasAttribute("verified");
+    });
+    [snap] = await page.evaluate(() => window.__poaSnap());
+    assert.equal(snap.platform, "x");
+    assert.equal(snap.contextId, videos.X_POST);
+    assert.equal(snap.postId, videos.X_POST);
+    assert.equal(snap.videoId, null);
+    assert.equal(snap.followsSourcePost, true, "X panel is inserted beside, not inside/replacing, the source post target");
+    assert.match(await page.locator('[data-x-source-post] p').textContent(), /remains page-owned and untouched/);
+    assert.equal(snap.descentSrc, "dregg://descent/b3_de5ce0");
+    assert.match(snap.dispatch, /<img src=x onerror=/, "X dispatch markup is text, not HTML");
+    assert.equal(snap.unsafeNodeCount, 0);
+    assert.equal(await page.evaluate(() => window.__POA_X_XSS), undefined);
+
+    const beforeXRemount = await page.evaluate(() => window.__poaLookupCount());
+    await page.evaluate(() => window.__poaRemoveMounted());
+    await page.waitForFunction((id) => document.querySelector(`dregg-poa[post-id="${id}"]`), videos.X_POST);
+    assert.equal(await page.evaluate(() => window.__poaLookupCount()), beforeXRemount,
+      "X card teardown remounts the accepted signed model without a second lookup");
+
+    await page.evaluate(() => window.__poaClearContext());
+    await page.waitForFunction(() => document.querySelectorAll("dregg-poa").length === 0);
 
     assert.deepEqual(errors, [], `no page errors: ${errors.join("; ")}`);
   } finally {
