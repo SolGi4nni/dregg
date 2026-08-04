@@ -523,6 +523,29 @@ fn main() {
         ),
     };
 
+    // ⚑ `DREGG_WM_RUNGS` — a comma list that RESTRICTS the run to those rungs. Additive and
+    // opt-in: unset, the behaviour is exactly what it was. It exists because a lane that owns two
+    // rungs of fourteen should not have to emit and prove the other twelve to see its own five
+    // polarities, and because the emitter is minutes per rung.
+    let filt = std::env::var("DREGG_WM_RUNGS").ok();
+    let rungs: Vec<&str> = match &filt {
+        None => rungs,
+        Some(f) => {
+            let want: Vec<&str> = f
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let sel: Vec<&str> = rungs.into_iter().filter(|r| want.contains(r)).collect();
+            assert!(
+                !sel.is_empty(),
+                "DREGG_WM_RUNGS={f:?} selected NO rung out of {RUNGS:?} - refusing to report a \
+                 green run that proved nothing"
+            );
+            sel
+        }
+    };
+
     println!("== wrap_main harness: the LEAN-ASSEMBLED WRAP-SIDE sub-circuits, over Pallas/Fq ==");
     println!("   dir={} tag={tag}", dir.display());
     let mut summary = Vec::new();
