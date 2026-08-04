@@ -1,7 +1,40 @@
 # Path of Angels: development map
 
-Status: working design, 2026-08-03. This is a menu and dependency map for co-creation with
-Sentyr, not a promise that every row becomes canon or ships in order.
+Status: live epoch 1 plus working design, 2026-08-04. This is a menu and dependency map for
+co-creation with Sentyr, not a promise that every row becomes canon or ships in order.
+
+## What epoch 1 actually establishes
+
+This document began before the first release. The deployed beta now closes enough of the spine to
+distinguish implemented substrate from the option space below:
+
+- `beta.pathofangels.network` serves an authenticated, signed-content station with an Expedition
+  Officer slot, deck map, daily board, Field Records/Bazaar/Choir hatches, and one playable finite
+  game. Signal Triangulation consumes the Lean-emitted lookup table; the browser does not score it.
+  A curator-authenticated counter-2 successor containing Relay Repair and Salvage Lock as equally
+  literal finite tables is frozen and tested, but remains distinct from the active counter-1 site
+  until the content-only release ceremony promotes it.
+- The PoA federation is distinct from public Dregg: three validators, threshold three, separate
+  keys/storage/ports/deployment domain, no demo economy, required Lean authority and full-turn
+  proving. Its finalized history converges across workhorse, hbox and persvati.
+- Lean owns the three emitted game state machines and their judged/canon boundaries. It also owns
+  Black Box Reconstruction, Containment Inspection, deck validation, daily mission selection,
+  accessibility commitments, the Field Archive, and the bounded Dark Bazaar settlement core;
+  those additional systems are not all activated browser content merely because their semantics
+  exist.
+- The curator, content-epoch rollback ratchet, extension route authentication, exact release gate,
+  content-addressed web staging and atomic web+node cutover are exercised rather than diagrammed.
+- DrEX ingress signs distinct exact Lean-judge input and output digests and still refuses to crown a
+  claim because the finalized-state adapter is not wired. The native FFI executes the Lean judge,
+  but deliberately supplies no authority for caller-authored Canon or carrier fields. This is the
+  next meaningful end-to-end boundary, not a release checkbox to wave through.
+- Rooted transitive N=2 admission is proved and differentially tested, but the live node remains the
+  fixed genesis committee until authenticated vouch rows are persisted and consumed.
+
+Epoch 1 is therefore a trustworthy field terminal and federation, not yet the whole “sealed beta
+station” constellation. The immediate expansion is promotion of the three-game successor, one
+finalized node-derived judged receipt reaching durable world/archive state, and that same receipt
+reaching an actually private Bazaar clearing path without weakening the existing refusal.
 
 ## The opportunity
 
@@ -251,15 +284,23 @@ is not durable coverage.
 
 ## Near-term build order
 
-1. Close the judged-receipt, counter, canon-admission, seed, and signed-content contracts in Lean.
-2. Emit and sign one deterministic POAG1 content epoch containing the three finite games.
-3. Make the beta station consume only that epoch and visibly distinguish local field records from
-   federation-judged receipts.
-4. Cut the isolated node image and ceremony with the PoA deployment domain, verified N=2 admission,
-   and no demo economy.
-5. Wire one end-to-end judged run into world contribution and the Field Archive.
-6. Wire that same receipt into one fail-closed Dark Bazaar salvage offer and private clearing demo.
-7. Deploy behind Basic Auth, exercise it visually and from the extension, then publish exact operator
-   reproduction steps.
-8. Expand content through declarative deck maps and additional finite games; start The Descent work
-   once the shared receipt/content spine is boringly reliable.
+1. **Closed in Lean:** judged runs, counters, Canon admission, world chaining, seeds, signed content,
+   archive acquisition, declared assists, and transcript-independent replay identity.
+2. **Frozen successor:** deterministic POAG1 epoch 1/counter 2 contains all three finite games and
+   reproduces exactly under its curator signature.
+3. **Promotion pending:** the browser consumes only authenticated emitted tables and distinguishes
+   local transcripts from judged receipts; the counter-2 web successor still needs the v3
+   content-only ceremony.
+4. **Runtime deployed, admission residual explicit:** the isolated three-node federation has no
+   demo economy and requires Lean/full-turn proving. N=2 admission is proved but not live because
+   finalized typed vouch rows are not yet persisted and consumed by the node.
+5. **Evaluator complete, authority adapter open:** Lean can judge and atomically compute the exact
+   world/Canon/counter successor through native FFI. The node must still load persisted state and
+   derive `FinalizedCarrier` from a finalized signed turn before that result is authoritative.
+6. **Bazaar semantics complete, private verifier open:** the bounded Dark Bazaar core proves escrow,
+   conservation, policy, and replay properties; DrEX v2 binds judge input/output digests and refuses
+   minting until the real adapter and private authorization verifier exist.
+7. **Deploy and inspect:** promote the signed three-game web successor without restarting validators,
+   then exercise all three games through Basic Auth and the extension and record exact hashes.
+8. **Broaden life aboard ship:** activate archive/deck systems and additional finite games; begin the
+   Descent once the finalized receipt/content spine is boringly reliable.

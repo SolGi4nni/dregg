@@ -21,6 +21,17 @@ Runtime code must not invent a second transition function in Rust or
 TypeScript. A UI fixture is not an authority and must be visibly rejected when
 its manifest does not match the checked-in Lean emission.
 
+The first complete internal network evaluator is
+`Dregg2.Games.PathOfAngels.NetworkJudge.processSignalWire`. It strictly decodes
+the complete Signal config, world, canon state, finalized carrier, and request;
+replays the Lean game; applies the atomic canon/world/counter transition; and
+emits a canonical receipt plus successor. `verifySignalTransition` recomputes
+that exact transition before accepting output bytes, and the native FFI has no
+Rust semantic fallback. None of those facts authenticate a caller-authored
+`FinalizedCarrier`: a host adapter must replace submitted Canon/config with
+persisted active state, derive the carrier from an already-finalized Dregg turn,
+and bind the AIR-authenticated pre-state root before the result is authoritative.
+
 ## POAG1 bundle
 
 The checked-in bundle lives at `poa/artifacts/poag1/`. Its manifest is canonical
@@ -48,6 +59,8 @@ The canonical v1 artifact set is:
 
 - `schema.json`
 - `catalog.json`
+- `games/relay-repair.json`
+- `games/salvage-lock.json`
 - `games/signal-triangulation.json`
 
 The manifest cryptographically pins every member but does not pin itself.
@@ -65,11 +78,18 @@ schema; textual concatenation is forbidden.
 
 | Purpose | Domain |
 |---|---|
-| Game run | `pathofangels.network/run-receipt/v1` |
+| Expedition judgement envelope | `pathofangels.network/expedition-judgement-receipt/v2` |
+| Lean judge input digest slot | `pathofangels.network/lean-judge-input-digest/v2` |
+| Lean judge output digest slot | `pathofangels.network/lean-judge-output-digest/v2` |
 | Content epoch | `pathofangels.network/content-epoch/v1` |
 | Canon promotion | `pathofangels.network/canon-promotion/v1` |
 | Bazaar ingress | `pathofangels.network/bazaar-ingress/v1` |
 | Devnet identity | `pathofangels.network/federation/v1` |
+
+The two judge-digest domains label fixed 32-byte slots inside the v2 expedition
+envelope; they are not independently signed claims. The outer signature binds
+their order and every other claim field. Version 1 expedition envelopes are
+incompatible and must be reissued rather than reinterpreted.
 
 A run receipt binds at least the PoA federation id, player key, mission id,
 mission/rules artifact digest, pre-state digest, post-state digest, bounded

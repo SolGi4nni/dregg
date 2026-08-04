@@ -6,6 +6,9 @@ set -euo pipefail
 # additionally reproduces the post-genesis Lean bundle, authenticates its
 # curator epoch, stages those exact bytes into the web surface, and runs the
 # actual-bundle hostile tests.
+# It does not claim that N=2 admission is live, authenticate NetworkJudge's
+# caller, construct Dark Bazaar's private authorization, or smoke a promoted
+# public deployment; each remains a separate fail-closed runtime/infra gate.
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 mode="${1:-source}"
