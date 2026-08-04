@@ -21,7 +21,13 @@ test("loads the actual curator-authenticated Lean-emitted POAG1 bundle", async (
   assert.equal(bundle.manifest.authority, "Dregg2.Games.PathOfAngels");
   assert.equal(bundle.contentEpoch.contentEpoch, 1);
   assert.match(bundle.manifestDigest, /^sha256:[0-9a-f]{64}$/);
-  assert.deepEqual(Object.keys(bundle.payloads), ["schema.json", "catalog.json", "games/signal-triangulation.json"]);
+  assert.deepEqual(Object.keys(bundle.payloads), [
+    "schema.json",
+    "catalog.json",
+    "games/relay-repair.json",
+    "games/salvage-lock.json",
+    "games/signal-triangulation.json",
+  ]);
 });
 test("refuses a missing artifact instead of falling back", async () => {
   const files = await actualBundleFiles();

@@ -1,16 +1,11 @@
 import { ArtifactRefusal, sha256Hex } from "./poag1.js";
 
 const SIGNAL_FORMAT = "POAG1-GAME";
-const CATALOG_FORMAT = "POAG1-CATALOG";
 const ENGINE = "Dregg2.Games.PathOfAngels.SignalTriangulation";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const HEX_32 = /^[0-9a-f]{64}$/;
 const PALETTE = ["#9bd8bf", "#d6e779", "#dcac62", "#a9cbd6", "#bb9dd1", "#d2786c"];
 const CONTENT_ROOT_DOMAIN = new TextEncoder().encode("path-of-angels/content-root/v1\0");
-const METRIC_LIMIT = 1_000_000;
-const RESULT_RELIC_LIMIT = 64;
-const WORLD_RELIC_LIMIT = 4096;
-const BETA_ARTIFACT_LIMIT = 4096;
 
 function refuse(condition, code, message) {
   if (!condition) throw new ArtifactRefusal(code, message);
@@ -49,120 +44,6 @@ export async function contentRoot(files) {
     parts.push(u64be(pathBytes.byteLength), pathBytes, u64be(bytes.byteLength), bytes);
   }
   return `sha256:${await sha256Hex(concat(parts))}`;
-}
-
-function artifactRef(value, at) {
-  exactKeys(value, ["mission_id", "artifact_id", "source_digest", "content_digest"], at);
-  refuse(integer(value.mission_id, 0, Number.MAX_SAFE_INTEGER), "artifact-ref", `${at}.mission_id is invalid`);
-  refuse(integer(value.artifact_id, 0, Number.MAX_SAFE_INTEGER), "artifact-ref", `${at}.artifact_id is invalid`);
-  refuse(typeof value.source_digest === "string" && SHA256.test(value.source_digest), "artifact-ref", `${at}.source_digest is invalid`);
-  refuse(typeof value.content_digest === "string" && SHA256.test(value.content_digest), "artifact-ref", `${at}.content_digest is invalid`);
-  return Object.freeze({ ...value });
-}
-
-function contribution(value, at, relicKey = "relics") {
-  exactKeys(value, ["intel", "supplies", "cohesion", "influence", "score", relicKey], at);
-  for (const field of ["intel", "supplies", "cohesion", "influence", "score"]) {
-    refuse(integer(value[field], 0, METRIC_LIMIT), "contribution", `${at}.${field} exceeds the Lean metric bound`);
-  }
-  const relics = value[relicKey];
-  if (Array.isArray(relics)) {
-    refuse(relics.length <= RESULT_RELIC_LIMIT, "contribution", `${at}.${relicKey} exceeds the Lean result relic bound`);
-    refuse(relics.every((id) => integer(id, 0, Number.MAX_SAFE_INTEGER)), "contribution", `${at}.${relicKey} contains an invalid id`);
-    refuse(new Set(relics).size === relics.length, "contribution", `${at}.${relicKey} contains a duplicate id`);
-  } else {
-    refuse(integer(relics, 0, RESULT_RELIC_LIMIT), "contribution", `${at}.${relicKey} exceeds the Lean result relic bound`);
-  }
-  return Object.freeze({ ...value, [relicKey]: Array.isArray(relics) ? Object.freeze([...relics]) : relics });
-}
-
-function worldState(value, at) {
-  exactKeys(value, ["intel", "supplies", "cohesion", "influence", "score", "discovered_relics", "beta_artifacts", "sequence"], at);
-  for (const field of ["intel", "supplies", "cohesion", "influence", "score"]) {
-    refuse(integer(value[field], 0, METRIC_LIMIT), "world-state", `${at}.${field} exceeds the Lean metric bound`);
-  }
-  refuse(integer(value.sequence, 0, Number.MAX_SAFE_INTEGER), "world-state", `${at}.sequence is not an exact nonnegative integer`);
-  refuse(Array.isArray(value.discovered_relics) && value.discovered_relics.length <= WORLD_RELIC_LIMIT, "world-state", `${at}.discovered_relics exceeds the Lean bound`);
-  refuse(value.discovered_relics.every((id) => integer(id, 0, Number.MAX_SAFE_INTEGER)), "world-state", `${at}.discovered_relics contains an invalid id`);
-  refuse(new Set(value.discovered_relics).size === value.discovered_relics.length, "world-state", `${at}.discovered_relics contains a duplicate id`);
-  refuse(Array.isArray(value.beta_artifacts) && value.beta_artifacts.length <= BETA_ARTIFACT_LIMIT, "world-state", `${at}.beta_artifacts exceeds the Lean bound`);
-  const betaArtifacts = value.beta_artifacts.map((artifact, index) => artifactRef(artifact, `${at}.beta_artifacts[${index}]`));
-  const betaKeys = betaArtifacts.map((artifact) => `${artifact.mission_id}:${artifact.artifact_id}:${artifact.source_digest}:${artifact.content_digest}`);
-  refuse(new Set(betaKeys).size === betaKeys.length, "world-state", `${at}.beta_artifacts contains an exact duplicate`);
-  return Object.freeze({
-    ...value,
-    discovered_relics: Object.freeze([...value.discovered_relics]),
-    beta_artifacts: Object.freeze(betaArtifacts),
-  });
-}
-
-/** Parse the exact Lean catalog and select the one Signal mission. */
-export async function loadSignalMission(catalog, descriptorBytes) {
-  exactKeys(catalog, ["format", "schema_version", "missions", "fixtures"], "catalog.json");
-  refuse(catalog.format === CATALOG_FORMAT && catalog.schema_version === 1, "catalog-format", "unsupported POAG1 catalog");
-  refuse(Array.isArray(catalog.missions) && catalog.missions.length === 1, "catalog-missions", "POAG1 catalog v1 must contain exactly one mission");
-  const matches = catalog.missions.filter((mission) => mission?.engine_module === ENGINE && mission?.ruleset === "signal-v1");
-  refuse(matches.length === 1, "catalog-signal", "catalog must contain exactly one Signal mission");
-  const mission = matches[0];
-  exactKeys(mission, ["mission_id", "title", "engine_module", "ruleset", "reward_class", "action_limit", "privacy_grade", "ballot_regime", "epoch", "federation_id", "content_root", "activation", "content_session", "run_seed", "budget", "allowed_relics", "descriptor_path", "allowed_beta_discoveries"], "Signal mission");
-  refuse(integer(mission.mission_id, 0, Number.MAX_SAFE_INTEGER), "mission-id", "Signal mission_id is invalid");
-  refuse(mission.title === "Signal Triangulation" && mission.engine_module === ENGINE && mission.ruleset === "signal-v1", "mission-identity", "Signal mission identity is invalid");
-  refuse(mission.reward_class === "non-economic-demo", "mission-reward-class", "Signal mission must remain a non-economic demo");
-  refuse(integer(mission.action_limit, 1, 32), "mission-action-limit", "Signal mission action_limit is invalid");
-  refuse(mission.privacy_grade === "public" && mission.ballot_regime === "none", "mission-policy", "Signal v1 must be public and have no ballot regime");
-  refuse(integer(mission.epoch, 0, Number.MAX_SAFE_INTEGER), "mission-epoch", "Signal mission epoch is invalid");
-  for (const field of ["federation_id", "content_session", "run_seed"]) {
-    refuse(typeof mission[field] === "string" && HEX_32.test(mission[field]), "mission-domain", `Signal mission ${field} must be exact 32-byte lowercase hex`);
-  }
-  refuse(typeof mission.content_root === "string" && SHA256.test(mission.content_root), "content-root", "Signal mission content_root is invalid");
-  exactKeys(mission.activation, ["state", "digest_source"], "Signal mission activation");
-  refuse(
-    mission.activation.state === "detached-signature-required" &&
-      mission.activation.digest_source === "POA-CONTENT-EPOCH-SIGNATURE-V1",
-    "mission-activation",
-    "Signal mission activation contract is invalid",
-  );
-  const budget = contribution(mission.budget, "Signal mission budget", "relics");
-  refuse(Array.isArray(mission.allowed_relics) && mission.allowed_relics.length <= WORLD_RELIC_LIMIT && mission.allowed_relics.every((id) => integer(id, 0, Number.MAX_SAFE_INTEGER)), "mission-relics", "Signal allowed_relics is invalid");
-  refuse(new Set(mission.allowed_relics).size === mission.allowed_relics.length, "mission-relics", "Signal allowed_relics contains a duplicate id");
-  refuse(mission.descriptor_path === "games/signal-triangulation.json", "descriptor-path", "Signal descriptor path is invalid");
-  refuse(descriptorBytes instanceof Uint8Array, "descriptor-bytes", "exact Signal descriptor bytes are required for content-root verification");
-  const measuredContentRoot = await contentRoot([[mission.descriptor_path, descriptorBytes]]);
-  refuse(measuredContentRoot === mission.content_root, "content-root-mismatch", "Signal mission content_root does not authenticate its descriptor bytes");
-  refuse(Array.isArray(mission.allowed_beta_discoveries) && mission.allowed_beta_discoveries.length === 1, "beta-discoveries", "Signal must have exactly one predeclared beta discovery");
-  const betaArtifact = artifactRef(mission.allowed_beta_discoveries[0], "Signal beta discovery");
-
-  refuse(Array.isArray(catalog.fixtures) && catalog.fixtures.length === 1, "catalog-fixtures", "POAG1 catalog v1 must contain exactly one fixture");
-  const previews = catalog.fixtures.filter((fixture) => fixture?.mission_id === mission.mission_id);
-  refuse(previews.length === 1, "catalog-preview", "catalog must have exactly one Signal preview fixture");
-  const preview = previews[0];
-  exactKeys(preview, ["id", "mission_id", "run_seed", "base_world", "contribution", "preview_world"], "Signal preview");
-  refuse(preview.id === "signal-solved-preview-v1", "preview-id", "Signal preview fixture id is invalid");
-  refuse(preview.run_seed === mission.run_seed, "preview-seed", "Signal preview run_seed disagrees with its mission");
-  const reward = contribution(preview.contribution, "Signal preview contribution");
-  const baseWorld = worldState(preview.base_world, "Signal preview base_world");
-  refuse(preview.preview_world !== null, "preview-world", "Signal preview_world must be present");
-  const previewWorld = worldState(preview.preview_world, "Signal preview preview_world");
-  return Object.freeze({
-    missionId: mission.mission_id,
-    title: mission.title,
-    rewardClass: mission.reward_class,
-    actionLimit: mission.action_limit,
-    epoch: mission.epoch,
-    privacyGrade: mission.privacy_grade,
-    ballotRegime: mission.ballot_regime,
-    federationId: mission.federation_id,
-    contentSession: mission.content_session,
-    runSeed: mission.run_seed,
-    contentRoot: mission.content_root,
-    activation: Object.freeze({ state: mission.activation.state, digestSource: mission.activation.digest_source }),
-    budget,
-    allowedRelics: Object.freeze([...mission.allowed_relics]),
-    betaArtifact,
-    reward,
-    baseWorld,
-    previewWorld,
-  });
 }
 
 /**

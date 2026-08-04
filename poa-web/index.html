@@ -7,7 +7,9 @@
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="The Khovokhi expedition terminal — Path of Angels beta field network." />
     <title>KHOVOKHI // Path of Angels</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./minigames.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to ship terminal</a>
@@ -97,10 +99,10 @@
             </article>
 
             <article class="panel mission-teaser">
-              <div class="panel-label">TODAY’S FIELD WINDOW</div>
+              <div class="panel-label">AUTHENTICATED FIELD DRILLS</div>
               <div class="mission-icon">⌁</div>
-              <div><p class="mission-code">SIGNAL // MISSION 1</p><h2>Signal Triangulation</h2><p>The authenticated field window is ready when its content epoch verifies.</p></div>
-              <button class="primary" type="button" data-goto="missions">Open mission</button>
+              <div><p class="mission-code">MISSIONS 1–3 // LOCAL</p><h2>Three ways below</h2><p>Signal, Relay, and Salvage controls open only after the complete content epoch verifies.</p></div>
+              <button class="primary" type="button" data-goto="missions">Open field board</button>
             </article>
 
             <article class="panel condition-panel">
@@ -113,9 +115,10 @@
 
         <section class="view" id="view-missions" data-view="missions">
           <div class="view-heading">
-            <div><p class="eyebrow">DAILY FIELD BOARD // ONE WINDOW OPEN</p><h1>Signal Triangulation</h1></div>
-            <p class="watch-copy">Reconstruct the authenticated band sequence using only the transition rows emitted by Lean.</p>
+            <div><p class="eyebrow">FIELD BOARD // LOCAL BETA // UNSETTLED</p><h1 id="mission-title">Authenticating missions</h1></div>
+            <p class="watch-copy" id="mission-watch-copy">No game controller opens until the signed catalog and every descriptor agree.</p>
           </div>
+          <nav class="mission-selector" id="mission-selector" aria-label="Authenticated field drills"></nav>
           <div class="mission-layout">
             <article class="panel signal-game" id="signal-game">
               <div class="panel-head">
@@ -135,6 +138,7 @@
               </div>
               <div class="receipt-slip" id="signal-receipt" hidden></div>
             </article>
+            <article class="panel finite-game" id="finite-game" hidden></article>
 
             <aside class="mission-sidebar">
               <article class="panel assignment-card">
@@ -142,7 +146,7 @@
                 <dl>
                   <div><dt>Location</dt><dd>not declared by POAG1</dd></div>
                   <div><dt>Authority</dt><dd id="rules-authority">checking…</dd></div>
-                  <div><dt>World effect</dt><dd id="mission-contribution">checking…</dd></div>
+                  <div><dt>Unsettled preview</dt><dd id="mission-contribution">checking…</dd></div>
                   <div><dt>Discovery</dt><dd>predeclared, sealed</dd></div>
                 </dl>
               </article>

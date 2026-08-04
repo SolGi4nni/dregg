@@ -4,12 +4,30 @@ import {
   canonicalReplay,
   createSignalRun,
   loadSignalDescriptor,
-  loadSignalMission,
   submitSignalGuess,
 } from "./signal-runtime.js";
+import { finiteTableAuthority, loadMissionCatalog, missionByGameId } from "./mission-catalog.js";
+import { loadRelayRepairDescriptor } from "./relay-runtime.js";
+import { loadSalvageLockDescriptor } from "./salvage-runtime.js";
+import { launchCatalogMission } from "./mission-launcher.js";
 
 const byId = (id) => document.getElementById(id);
-const state = { bundle: null, signal: null, run: null, draft: [] };
+const state = {
+  bundle: null,
+  missions: Object.freeze([]),
+  games: Object.freeze([]),
+  activeGame: null,
+  finiteController: null,
+  signal: null,
+  run: null,
+  draft: [],
+};
+
+const missionCopy = Object.freeze({
+  "signal-triangulation": "Reconstruct the band sequence using only authenticated outcome rows emitted by Lean.",
+  "relay-repair": "Restore a route by dispatching only the authenticated Relay transition table emitted by Lean.",
+  "salvage-lock": "Expose plates and clear pairs through the authenticated Salvage transition table emitted by Lean.",
+});
 
 const deckCopy = {
   118: ["DECK 118", "Cartography shell: no signed field record is attached to this hotspot."],
@@ -85,6 +103,10 @@ function sealAuthority(error) {
   byId("artifact-pin").textContent = "POAG1 / REFUSED";
   byId("rules-authority").textContent = "refused";
   byId("footer-authority").textContent = "Mission authority refused";
+  byId("mission-selector").replaceChildren();
+  state.finiteController?.destroy();
+  state.finiteController = null;
+  byId("finite-game").hidden = true;
   disableSignal();
 }
 
@@ -110,21 +132,6 @@ function initializeSignal(descriptor) {
   state.draft = [];
   byId("turn-limit").textContent = `/ ${descriptor.maxTurns} TRANSMISSIONS`;
   byId("signal-instruction").textContent = `Assemble ${descriptor.codeLength} carrier bands. Feedback is looked up from the authenticated mission table; the browser does not score it. Transparent beta drill: the target table is public, and no competitive or economic reward is attached to this local transcript.`;
-  const nonzero = ["intel", "supplies", "cohesion", "influence", "score"].filter((key) => descriptor.mission.reward[key] !== 0);
-  byId("mission-contribution").textContent = nonzero.length ? nonzero.join(" / ") : "none";
-  byId("curator-discovery").value = `mission:${descriptor.mission.betaArtifact.mission_id} artifact:${descriptor.mission.betaArtifact.artifact_id}`;
-  byId("curator-contribution").value = [
-    ...["intel", "supplies", "cohesion", "influence", "score"].map((key) => `${key}: ${descriptor.mission.reward[key]}`),
-    `relics: [${descriptor.mission.reward.relics.join(", ")}]`,
-  ].join("\n");
-  renderMeters([
-    ["INTEL", descriptor.mission.reward.intel, "#d6e779"],
-    ["SUPPLIES", descriptor.mission.reward.supplies, "#dcac62"],
-    ["COHESION", descriptor.mission.reward.cohesion, "#9bd8bf"],
-    ["INFLUENCE", descriptor.mission.reward.influence, "#a9cbd6"],
-  ]);
-  const previewSequence = descriptor.mission.previewWorld.sequence;
-  byId("world-preview-note").textContent = `Lean-emitted solved-run preview for mission ${descriptor.missionId}; preview sequence ${previewSequence}. This is not current ship state.`;
   byId("signal-symbols").replaceChildren(...descriptor.symbols.map((symbol) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -136,6 +143,71 @@ function initializeSignal(descriptor) {
   byId("signal-clear").disabled = false;
   byId("signal-receipt").hidden = true;
   renderSignal();
+}
+
+function presentMission(mission) {
+  byId("mission-title").textContent = mission.title;
+  byId("mission-watch-copy").textContent = missionCopy[mission.gameId];
+  document.querySelectorAll("[data-mission-game]").forEach((button) => {
+    const selected = button.dataset.missionGame === mission.gameId;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  const nonzero = ["intel", "supplies", "cohesion", "influence", "score"].filter((key) => mission.reward[key] !== 0);
+  byId("mission-contribution").textContent = nonzero.length ? `preview: ${nonzero.join(" / ")}` : "preview: none";
+  byId("curator-discovery").value = `mission:${mission.betaArtifact.mission_id} artifact:${mission.betaArtifact.artifact_id}`;
+  byId("curator-contribution").value = [
+    "UNSETTLED LEAN PREVIEW — NOT WORLD STATE",
+    ...["intel", "supplies", "cohesion", "influence", "score"].map((key) => `${key}: ${mission.reward[key]}`),
+    `relics: [${mission.reward.relics.join(", ")}]`,
+  ].join("\n");
+  renderMeters([
+    ["INTEL", mission.reward.intel, "#d6e779"],
+    ["SUPPLIES", mission.reward.supplies, "#dcac62"],
+    ["COHESION", mission.reward.cohesion, "#9bd8bf"],
+    ["INFLUENCE", mission.reward.influence, "#a9cbd6"],
+  ]);
+  byId("world-preview-note").textContent = `Lean-emitted solved-run preview for mission ${mission.missionId}; preview sequence ${mission.previewWorld.sequence}. This is not current ship state and grants nothing.`;
+}
+
+function renderMissionSelector() {
+  byId("mission-selector").replaceChildren(...state.missions.map((mission) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "mission-tab";
+    button.dataset.missionGame = mission.gameId;
+    button.setAttribute("aria-pressed", "false");
+    const number = document.createElement("span");
+    number.textContent = String(mission.missionId).padStart(2, "0");
+    const label = document.createElement("b");
+    label.textContent = mission.title;
+    const boundary = document.createElement("small");
+    boundary.textContent = "LOCAL // UNSETTLED";
+    button.append(number, label, boundary);
+    button.addEventListener("click", () => selectMission(mission.gameId));
+    return button;
+  }));
+}
+
+function selectMission(gameId) {
+  try {
+    const mission = missionByGameId(state.missions, gameId);
+    const descriptor = state.games.find((candidate) => candidate.gameId === gameId);
+    state.finiteController?.destroy();
+    state.finiteController = null;
+    presentMission(mission);
+    const launched = launchCatalogMission({
+      mission,
+      descriptor,
+      signalRoot: byId("signal-game"),
+      finiteRoot: byId("finite-game"),
+      launchSignal: initializeSignal,
+    });
+    state.activeGame = launched.gameId;
+    state.finiteController = launched.controller;
+  } catch (error) {
+    sealAuthority(error);
+  }
 }
 
 function appendSymbol(symbolId) {
@@ -219,17 +291,28 @@ async function boot() {
       expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     });
     state.bundle = bundle;
-    markAuthority(bundle);
-    const mission = await loadSignalMission(
-      bundle.payloads["catalog.json"].json,
-      bundle.payloads["games/signal-triangulation.json"].bytes,
-    );
-    const descriptor = loadSignalDescriptor(
+    const missions = await loadMissionCatalog(bundle);
+    const signalMission = missionByGameId(missions, "signal-triangulation");
+    const relayMission = missionByGameId(missions, "relay-repair");
+    const salvageMission = missionByGameId(missions, "salvage-lock");
+    const signal = loadSignalDescriptor(
       bundle.payloads["games/signal-triangulation.json"].json,
-      mission,
+      signalMission,
       bundle.contentEpoch,
     );
-    initializeSignal(descriptor);
+    const relay = loadRelayRepairDescriptor(
+      bundle.payloads[relayMission.descriptorPath].json,
+      finiteTableAuthority(relayMission),
+    );
+    const salvage = loadSalvageLockDescriptor(
+      bundle.payloads[salvageMission.descriptorPath].json,
+      finiteTableAuthority(salvageMission),
+    );
+    state.missions = missions;
+    state.games = Object.freeze([signal, relay, salvage]);
+    markAuthority(bundle);
+    renderMissionSelector();
+    selectMission("signal-triangulation");
   } catch (error) {
     sealAuthority(error);
   } finally {

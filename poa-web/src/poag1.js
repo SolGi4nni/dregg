@@ -9,6 +9,8 @@ export const POAG1_AUTHORITY = "Dregg2.Games.PathOfAngels";
 export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
   Object.freeze({ path: "schema.json", mediaType: "application/schema+json" }),
   Object.freeze({ path: "catalog.json", mediaType: "application/json" }),
+  Object.freeze({ path: "games/relay-repair.json", mediaType: "application/json" }),
+  Object.freeze({ path: "games/salvage-lock.json", mediaType: "application/json" }),
   Object.freeze({ path: "games/signal-triangulation.json", mediaType: "application/json" }),
 ]);
 
@@ -106,7 +108,7 @@ async function checkedFetch(fetcher, url, label) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-/** Load, byte-pin, and parse the exact three-object POAG1 bundle. */
+/** Load, byte-pin, and parse the exact five-object POAG1 bundle. */
 export async function loadPOAG1({
   baseUrl = new URL("../public/artifacts/poag1/", import.meta.url),
   fetcher = globalThis.fetch,

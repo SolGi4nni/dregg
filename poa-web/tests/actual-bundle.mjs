@@ -13,6 +13,8 @@ export async function actualBundleFiles() {
     key: new Uint8Array(await readFile(curatorKey)),
     schema: await actualBytes("schema.json"),
     catalog: await actualBytes("catalog.json"),
+    relay: await actualBytes("games/relay-repair.json"),
+    salvage: await actualBytes("games/salvage-lock.json"),
     signal: await actualBytes("games/signal-triangulation.json"),
   };
 }
@@ -40,6 +42,8 @@ export async function actualFetch(overrides = {}) {
     "poa-curator-key.json": files.key,
     "schema.json": files.schema,
     "catalog.json": files.catalog,
+    "games/relay-repair.json": files.relay,
+    "games/salvage-lock.json": files.salvage,
     "games/signal-triangulation.json": files.signal,
     ...overrides,
   });

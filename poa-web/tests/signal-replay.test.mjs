@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { loadPOAG1 } from "../src/poag1.js";
-import { canonicalReplay, createSignalRun, loadSignalDescriptor, loadSignalMission, replaySignal, submitSignalGuess } from "../src/signal-runtime.js";
+import { loadMissionCatalog, missionByGameId } from "../src/mission-catalog.js";
+import { canonicalReplay, createSignalRun, loadSignalDescriptor, replaySignal, submitSignalGuess } from "../src/signal-runtime.js";
 import { actualFetch } from "./actual-bundle.mjs";
 
 async function authenticatedBundle() {
@@ -17,9 +18,8 @@ async function authenticatedBundle() {
 
 async function actualSignal(bundle) {
   bundle ??= await authenticatedBundle();
-  const decode = (bytes) => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   const descriptor = bundle.payloads["games/signal-triangulation.json"];
-  const mission = await loadSignalMission(bundle.payloads["catalog.json"].json, descriptor.bytes);
+  const mission = missionByGameId(await loadMissionCatalog(bundle), "signal-triangulation");
   return loadSignalDescriptor(descriptor.json, mission, bundle.contentEpoch);
 }
 
@@ -63,10 +63,7 @@ test("a descriptor with an omitted row is refused, never locally scored", async 
   const bundle = await authenticatedBundle();
   const game = structuredClone(bundle.payloads["games/signal-triangulation.json"].json);
   game.outcomes.pop();
-  const mission = await loadSignalMission(
-    bundle.payloads["catalog.json"].json,
-    bundle.payloads["games/signal-triangulation.json"].bytes,
-  );
+  const mission = missionByGameId(await loadMissionCatalog(bundle), "signal-triangulation");
   assert.throws(() => loadSignalDescriptor(game, mission, bundle.contentEpoch), { code: "outcome-count" });
 });
 
@@ -82,10 +79,7 @@ test("a descriptor cannot silently claim secure or rewarded play", async () => {
   const bundle = await authenticatedBundle();
   const game = structuredClone(bundle.payloads["games/signal-triangulation.json"].json);
   game.security.economic_rewards = true;
-  const mission = await loadSignalMission(
-    bundle.payloads["catalog.json"].json,
-    bundle.payloads["games/signal-triangulation.json"].bytes,
-  );
+  const mission = missionByGameId(await loadMissionCatalog(bundle), "signal-triangulation");
   assert.throws(
     () => loadSignalDescriptor(game, mission, bundle.contentEpoch),
     { code: "signal-security" },
@@ -94,22 +88,25 @@ test("a descriptor cannot silently claim secure or rewarded play", async () => {
 
 test("catalog v1 refuses mission, fixture, policy, and world-state drift", async () => {
   const bundle = await authenticatedBundle();
-  const descriptorBytes = bundle.payloads["games/signal-triangulation.json"].bytes;
   const source = bundle.payloads["catalog.json"].json;
   const refuses = async (mutate, code) => {
     const catalog = structuredClone(source);
     mutate(catalog);
-    await assert.rejects(loadSignalMission(catalog, descriptorBytes), { code });
+    const altered = {
+      ...bundle,
+      payloads: { ...bundle.payloads, "catalog.json": { ...bundle.payloads["catalog.json"], json: catalog } },
+    };
+    await assert.rejects(loadMissionCatalog(altered), { code });
   };
 
   await refuses((catalog) => catalog.missions.push(structuredClone(catalog.missions[0])), "catalog-missions");
   await refuses((catalog) => catalog.fixtures.push(structuredClone(catalog.fixtures[0])), "catalog-fixtures");
-  await refuses((catalog) => { catalog.missions[0].privacy_grade = "process-separated-threshold"; }, "mission-policy");
-  await refuses((catalog) => { catalog.missions[0].ballot_regime = "one-wallet-one-voice"; }, "mission-policy");
-  await refuses((catalog) => { catalog.fixtures[0].base_world.extra = 0; }, "signal-field");
-  await refuses((catalog) => { catalog.fixtures[0].preview_world.intel = 1_000_001; }, "world-state");
-  await refuses((catalog) => { catalog.fixtures[0].preview_world.discovered_relics.push(catalog.fixtures[0].preview_world.discovered_relics[0]); }, "world-state");
-  await refuses((catalog) => { catalog.fixtures[0].preview_world.beta_artifacts.push(structuredClone(catalog.fixtures[0].preview_world.beta_artifacts[0])); }, "world-state");
+  await refuses((catalog) => { catalog.missions[0].privacy_grade = "process-separated-threshold"; }, "catalog-policy");
+  await refuses((catalog) => { catalog.missions[0].ballot_regime = "one-wallet-one-voice"; }, "catalog-policy");
+  await refuses((catalog) => { catalog.fixtures[0].base_world.extra = 0; }, "catalog-field");
+  await refuses((catalog) => { catalog.fixtures[0].preview_world.intel = 1_000_001; }, "catalog-world");
+  await refuses((catalog) => { catalog.fixtures[0].preview_world.discovered_relics.push(catalog.fixtures[0].preview_world.discovered_relics[0]); }, "catalog-array");
+  await refuses((catalog) => { catalog.fixtures[0].preview_world.beta_artifacts.push(structuredClone(catalog.fixtures[0].preview_world.beta_artifacts[0])); }, "catalog-preview");
 });
 
 test("the web runtime contains no feedback implementation or answer generator", async () => {

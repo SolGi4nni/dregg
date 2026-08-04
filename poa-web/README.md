@@ -45,9 +45,29 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
 
 - `src/poag1.js` validates and pins the envelope; `src/content-epoch.js`
   authenticates its exact bytes and rejects epoch/counter rollback.
-- `src/signal-runtime.js` is a generic table interpreter and replay recorder.
-  It does not score guesses or select outcomes itself.
+- `src/mission-catalog.js` accepts exactly Signal, Relay, and Salvage from one
+  authenticated content epoch, checks their shared three-descriptor content
+  root, manifest-bound beta artifacts, zero-economy policy, and preview shapes.
+- `src/mission-launcher.js` is the exhaustive controller switch. Unknown games
+  and catalog/descriptor mismatches refuse; neither can fall back to Signal.
+- `src/signal-runtime.js` consumes Signal's compact outcome oracle. It does not
+  score guesses or select outcomes itself.
+- `src/finite-table-runtime.js` consumes the complete legal-state closure and
+  state × action rows used by Relay Repair and Salvage Lock. Their strict
+  decoders and dormant UI mounts live in `relay-*` / `salvage-*`; none of these
+  files contains the Lean transition functions.
 - `public/artifacts/poag1/` is generated material copied from `poa/`; never
   hand-edit it here.
 - The curator panel is a preview/inspection surface. Signing and canon
   promotion remain the responsibility of the curator tool and capability.
+
+The terminal exposes all three selectors only after the five-file manifest,
+curator activation, complete catalog, and every descriptor validate. All play is
+still visibly `LOCAL // UNSETTLED`: a browser transcript is not a RunReceipt and
+does not grant score, contribution, salvage, ranking, or canon status.
+
+`tests/mission-launch-browser.html` is the real-DOM controller harness for the
+exact candidate Relay/Salvage bytes. Serve the repository root, open that path,
+and require `body[data-status="pass"]`. It deliberately does not pretend the
+candidate epoch is signed; signature/rollback checks remain separate and the
+production boot stays sealed until operator signing.
