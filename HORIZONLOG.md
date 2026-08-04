@@ -1,5 +1,51 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 4 (PoA source milestone) — the Rust node now carries native-Lean Signal finality; the new build is NOT promoted
+
+This pass turned the beta arcade from a signed static bundle into a tested source-side authority
+spine. There is still **no bespoke PoA Rust webserver**: Caddy serves static beta content, the existing
+Axum node owns HTTP/network/persistence/finality, and native compiled Lean remains the semantic judge.
+The node now admits only one exact Signal carrier, calls the linked Lean judge, atomically welds its
+successor to the generic commit/receipt row, persists a replayable head/transition journal, and audits
+that join on restart. The explicit operator ceremony rederives the hybrid committee, binds exact
+manifest/policy bytes into the Lean-derived deployment digest, retains authenticated genesis bytes
+across the TOCTOU boundary, and refuses runtime drift. Combined remote node evidence is 25/25 PASS;
+the separate public player-head/claim ingress is 2/2 PASS.
+
+The browser seam is now deliberately narrow. The extension accepts only `{schema, missionId, code}`
+from the exact beta origin, derives player/nonce/receipt state from federation-scoped redacted reads,
+revalidates the complete signed carrier before consent, pins retries to the PoA node, and distinguishes
+HTTP admission from an observed finalized transition. The anonymous node route accepts only mission-1
+Signal postcard bytes, exact media/size/federation/signer/carrier shape, with 10/min/IP and four global
+in-flight requests; generic cell and generic turn APIs remain protected. Extension pure tests are
+107/107; focused claim tests are 5/5; typecheck/build pass.
+
+The arcade also grew real depth in Lean: Archive Lab is an emitted 822-state/6,576-transition evidence
+game with one terminal route and no browser scoring twin (20 fast web checks + exact remote
+regeneration); Crew Relay Expedition has canonical run admission and session-identity settlement;
+AttendantKernel models owner-qualified companion custody/progression plus explicit head/revision/root/
+nullifier CAS teeth (845/845 hbox build, independent adversarial review clean); EditorialRegistry
+models beta-canon promotion through sealed provenance/oracle/CAS receipts and external fixture-boundary
+teeth. These are raw platform primitives for more games, not a claim that the current UI exposes every
+one.
+
+**Honest red boundaries found by the swarm:** the WASM nonce regression compiles, but its hybrid
+signature run refuses because browser/native-WASM has no installed verified ML-DSA core; no unaudited
+fallback or classical downgrade was enabled, so player publication is not yet live. Dark Bazaar
+settlement v3 initially had a real Lean precedence/count bug, no strict descriptor provenance, and an
+arbitrary-JSON ingress; its source repair is WIP while the repository-wide provenance stamp is already
+red. Bazaar's critical semantic-key alias was repaired in WIP, but its expanded examples did not finish
+verification. Galley Commons still has two HIGH review findings around cross-oracle provenance and a
+forgeable persistence receipt. None of those WIP slices is committed or deployed.
+
+The live domains therefore remain the earlier password-protected release (receipt
+`92d8afd26dc2665b9d8219bb254a27e648025dfbabdd9ae37fafea1c514f46f9`, node binary
+`a9858c0298fa5517ef9d845566f59258c3e39404571a6b1bca77990b9b9bfb9f`), which predates these APIs
+and returns 404 for Signal status. New source commits, in dependency order: `216daae29`, `230c134bb`,
+`12b450232`, `492ff787e`, `720132f34`, `46a857003`, `d9314e72a`, `890fc5e74`, `2fd086064`,
+`a0f153987`, `6a387359e`. Promotion waits for verified browser custody plus a new release ceremony;
+beta itself remains entirely behind Basic Auth.
+
 ## ⚑⚑⚑ AUGUST 4 (Path of Angels epoch 1) — the arcade has a Lean spine, and the beta is LIVE on its own federation
 
 `https://beta.pathofangels.network` now serves the signed epoch-1 PoA field terminal behind Basic
