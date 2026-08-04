@@ -249,6 +249,7 @@ theorem applyGameEffect_same_counter_replay_refused {effect : GameEffect}
 then exact canon admission.  `postWorld` is a projection of the judged receipt,
 never an independently supplied state. -/
 structure SettledRun where
+  private mk ::
   judged : JudgedRun
   postWorld : WorldState
   postCanon : CanonState
