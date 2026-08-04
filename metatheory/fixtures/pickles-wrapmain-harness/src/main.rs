@@ -11,7 +11,7 @@
 // (`WitnessBuilder.compose`). House Law #1: `proof-systems` (tag 0.3.0) is the Rust PROVER that
 // RUNS it and authors no constraint. No OCaml, no Node, no o1js in this path.
 //
-// EIGHT RUNGS, each a superset of the one below, each proved with BOTH polarities:
+// NINE RUNGS, each a superset of the one below, each proved with BOTH polarities:
 //   w1_transcript  the Fq Poseidon sponge of `wrap_verifier.ml:516-646` + `check_bulletproof`'s
 //                  continuation, driven by the REAL rate-2 state machine (`poseidon.rs:107-146`):
 //                  beta and gamma share ONE permutation, and the digest squeeze is the FORK at
@@ -56,6 +56,22 @@
 //                  `B + q` both satisfy that. §17 names it and proves it; it is upstream's, and
 //                  bounding it here would be a divergence from `wrap_main`, not a fix to it.
 //                  The first ladder's base is W-KEY's sealed `sigma_comm.(6)`
+//   w9_prev        W-PREV: the WITNESSED PREVIOUS STEP STATEMENT (`wrap_main.ml:201-256` and
+//                  `:340-356`). ⚑ READ §18 BEFORE QUOTING THIS RUNG. Its OWN rows are small on
+//                  purpose, because upstream `exists ~request:Req.Proof_state` costs only what its
+//                  `typ` checks: TWO `Boolean.typ`s on the two `should_finalize` words, and NOTHING
+//                  else - `Limb_vector.Challenge.typ` is `Typ.field` with a transport and no range
+//                  check at all, and the `~assert_16_bits` `wrap_main.ml:208` passes is consumed
+//                  ONLY by `Branch_data`, which the STEP per-proof spec does not contain. Plus
+//                  `Inner_curve.typ`'s `assert_on_curve` on each of the two `prev_step_accs` -
+//                  three R1CS rows each, over the very cells `wrap_verifier.ml:538` ABSORBS as
+//                  `sg_old` - and one `Field.Assert.equal` that makes
+//                  `messages_for_next_step_proof` a PUBLIC word. What the rung really buys is in
+//                  the WIRING: the 67 MSM scalars stop being 67 independent draws and become the
+//                  packed image of 57 statement words, so `w7_split`'s `x` is the word itself and
+//                  no longer a cell derived downward from its own outputs. ⚠ `x_hat` does NOT
+//                  leave the unconsumed census: 66 of the 67 scalars are still free witnesses,
+//                  here and upstream, and what would tie them is W-FINALIZE / W-WRAPHACK
 //
 // THE GATE, per rung:
 //   (1) HONEST      — the assembled circuit's good witness verify()==true;
@@ -65,17 +81,17 @@
 //   (3) NOT-ADJACENCY — the SAME flips on the UNWIRED control (identical rows, byte-identical
 //                     witness, probe rows in NO sigma class) are ACCEPTED;
 //   (4) NON-VACUITY — an unread advice-cell flip is ACCEPTED;
-//   (5) PUBLIC INPUT (w4 only) — the honest proof verified against a tampered public vector is
+//   (5) PUBLIC INPUT (w4/w9) — the honest proof verified against a tampered public vector is
 //                     REJECTED, and flipping public cell (i,0) AND telling the verifier the new
 //                     value is STILL REJECTED, by the copy-permutation alone, at i=0 and i=last.
 //
 // disable_gates_checks=true: a sigma desync is rejected by the PROOF (the permutation argument's
 // z-polynomial), not by a debug assert.
 //
-// SCOPE. INNER-KIMCHI FIDELITY of eight assembled sub-circuits of `wrap_main`. NOT a soundness
+// SCOPE. INNER-KIMCHI FIDELITY of nine assembled sub-circuits of `wrap_main`. NOT a soundness
 // proof, NOT "machine-checked Pickles", NOT a Mina-valid proof; the kimchi proof is an INNER
 // Pallas/Fq proof of a `wrap_main`-SHAPED circuit, and `KimchiWrapMain` §13 names by sub-circuit
-// everything that is not here (W-COMBINE, W-BULLET, W-FINALIZE, W-WRAPHACK, W-PREV, and
+// everything that is not here (W-COMBINE, W-BULLET, W-FINALIZE, W-WRAPHACK, and
 // W-CLOSE's curve-side asserts).
 //
 // REGENERATE the fixtures (only when the Lean assembly changes):
@@ -121,8 +137,8 @@ type BaseSponge = DefaultFqSponge<PallasParameters, PlonkSpongeConstantsKimchi, 
 type ScalarSponge = DefaultFrSponge<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
 type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
 
-/// The six rungs, in assembly order. Each is a superset of the one before it.
-const RUNGS: [&str; 8] = [
+/// The nine rungs, in assembly order. Each is a superset of the one before it.
+const RUNGS: [&str; 9] = [
     "w1_transcript",
     "w2_challenges",
     "w3_branch",
@@ -131,6 +147,7 @@ const RUNGS: [&str; 8] = [
     "w6_xhat",
     "w7_split",
     "w8_ftcomm",
+    "w9_prev",
 ];
 
 // ---- the Lean-emitted JSON shape (identical schema to the step side's) ----
@@ -460,7 +477,7 @@ fn main() {
             fixtures_dir(),
             "smoke".to_string(),
             usize::MAX,
-            vec!["w1_transcript", "w7_split", "w8_ftcomm"],
+            vec!["w1_transcript", "w7_split", "w8_ftcomm", "w9_prev"],
         ),
         1 => (
             PathBuf::from(&args[0]),
@@ -491,9 +508,7 @@ fn main() {
             o.rows, o.domain, o.honest_ms, o.probes_tested
         );
     }
-    println!(
-        "== VERDICT: eight sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on"
-    );
+    println!("== VERDICT: nine sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on");
     println!("   PALLAS with verify()==true, and BIND at every sub-circuit boundary. The rest of");
     println!("   `wrap_main` is named by sub-circuit in KimchiWrapMain §13. ==");
 }
@@ -508,13 +523,14 @@ mod wrapmain_tests {
     /// The fixture subset actually PROVED in CI: the bottom rung, the closing rung, and the top
     /// one. w2/w3 are read for their census without proving, because each prove is seconds and the
     /// ladder pins (`KimchiWrapMain` §12b, §14b) already establish that they are supersets.
-    const COMMITTED: [&str; 6] = [
+    const COMMITTED: [&str; 7] = [
         "w1_transcript",
         "w4_bind",
         "w5_key",
         "w6_xhat",
         "w7_split",
         "w8_ftcomm",
+        "w9_prev",
     ];
 
     struct Fixture {
@@ -638,7 +654,7 @@ mod wrapmain_tests {
 
     #[test]
     fn public_input_binds_and_is_wired_in() {
-        for rung in ["w4_bind", "w5_key"] {
+        for rung in ["w4_bind", "w5_key", "w9_prev"] {
             let f = fixture(rung);
             assert!(
                 f.wired.public_input_size > 0,
@@ -659,6 +675,53 @@ mod wrapmain_tests {
                 );
             }
         }
+    }
+
+    /// ⚑ w9 is W-PREV: the WITNESSED PREVIOUS STEP STATEMENT (`wrap_main.ml:201-256`, `:340-356`).
+    /// Three measurable things, and the third is the one that matters:
+    ///   (a) the public vector GROWS BY EXACTLY ONE - `messages_for_next_step_proof`, the
+    ///       `Field.Assert.equal` of `:350-351`. It is the ONLY rung above `w4_bind` that grows it,
+    ///       because it is the only one that derives a wrap statement word `w4_bind` did not;
+    ///   (b) the rung adds NO curve gate and NO Poseidon permutation - `exists ~request` costs its
+    ///       `typ`'s checks and nothing else, and that `typ` emits two `Boolean.typ`s over 57 words
+    ///       (`Limb_vector.Challenge.typ` has NO range check; the `~assert_16_bits` is consumed only
+    ///       by `Branch_data`, absent from the STEP per-proof spec). A Poseidon run appearing here
+    ///       would mean W-WRAPHACK had been folded in without being named;
+    ///   (c) it adds exactly one sigma-only probe.
+    /// ⚠ What the rung BUYS is not visible in this census at all - it is that the x_hat MSM's
+    /// scalar cells ARE the packed statement words (`KimchiWrapMain.prev_msm_scalars_are_the_
+    /// statement_words`, proved in the KERNEL). The gate count is deliberately small; do not read
+    /// it as the size of the change.
+    #[test]
+    fn prev_rung_adds_one_public_word_and_no_curve_gate() {
+        let w8 = load("w8_ftcomm");
+        let w9 = load("w9_prev");
+        let c8 = gate_census(&w8);
+        let c9 = gate_census(&w9);
+        assert!(w9.num_rows > w8.num_rows, "the ladder is monotone");
+        assert_eq!(
+            w9.public_input_size,
+            w8.public_input_size + 1,
+            "w9 must expose exactly one more public word than every rung below it"
+        );
+        assert_eq!(w9.public_input.len(), w9.public_input_size);
+        for k in [2usize, 3, 4, 5, 6] {
+            assert_eq!(
+                c9[k], c8[k],
+                "w9 adds only Generic/Zero rows (family {k} moved) - a Poseidon or curve run here \
+                 would mean W-WRAPHACK or W-COMBINE was folded in unnamed"
+            );
+        }
+        assert_eq!(
+            w9.probe_rows.len(),
+            w8.probe_rows.len() + 1,
+            "W-PREV drops exactly one sigma-only probe"
+        );
+        assert_eq!(
+            w9.gates.len(),
+            w9.num_rows,
+            "placement produced a gate per row (incl. the public rows)"
+        );
     }
 
     /// ⚑ w5 is W-KEY: `choose_key` (`wrap_verifier.ml:189-204`) over `Inner_curve.constant` step

@@ -144,5 +144,6 @@ affordances, and rehydration.
   `WebView` today).
 
 *Cross-refs: `desktop-os-research/REHYDRATABLE-SURFACES.md` (the membrane model) ·
-`desktop-os-research/ARCHITECTURES.md` (the compositor-PD) · `STARBRIDGE-V2.md` (the
+`.docs-history-noclaude/desktop-os-research/ARCHITECTURES.md` (the compositor-PD, archived —
+its sibling `REHYDRATABLE-SURFACES.md` stayed under `docs/`) · `STARBRIDGE-V2.md` (the
 native cockpit).*

@@ -13,7 +13,7 @@ entirely and states only what ArkLib's reduction already constructs.
 - **Artifact dir (scratch ArkLib copy):** `/private/tmp/arklib-extraction`
   (fresh `cp -r` of `/private/tmp/arklib-review`, ArkLib @ `d72f8392`, Lean `v4.31.0`).
 - **Patch:** `candidates/extraction.patch` (full diff against ArkLib `Binding.lean`).
-- **Survives-attack proof:** `candidates/RepairSurvives.lean` (`sorry`-free; the exact
+- **Survives-attack proof:** `docs/reference/arklib-kzg-vacuity/RepairSurvives.lean` (`sorry`-free; the exact
   trapdoor attack and the repaired bounds coexist in one axiom closure).
 - **Companion (the minimal split alone):** `../binding-repair.patch`, `../REPAIR.md`.
 

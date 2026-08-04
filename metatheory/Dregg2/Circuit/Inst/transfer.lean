@@ -30,8 +30,7 @@ VERBATIM order of `BalanceMovementSpec`. The apex's component clause is the FULL
 so no "subset ⇐ full-equality" weakening is needed.
 
 ADDITIVE: imports `EffectCommit2` + the balance-movement spec; edits NEITHER `EffectCommit2`/`StateCommit`
-NOR any `Spec/*` file NOR `Dregg2.lean`. Follows the `burnA` template EXACTLY + the recipe in
-`Dregg2/Circuit/CONTRIBUTING.md`.
+NOR any `Spec/*` file NOR `Dregg2.lean`. Follows the `burnA` template EXACTLY + the recipe REMOVED from `Dregg2/Circuit/` in 59f7852d3 (a commit titled "green"); recover it with `git show 59f7852d3^:metatheory/…/CONTRIBUTING.md`, but note its §1/§6 predate the #guard ban (metatheory/docs/GUARD-DISCIPLINE.md) and are stale — the LIVE recipe is the template named above plus the generic theorems in `Dregg2/Circuit/EffectCommit2.lean`.
 -/
 import Dregg2.Circuit.EffectCommit2
 import Dregg2.Exec.CircuitEmit

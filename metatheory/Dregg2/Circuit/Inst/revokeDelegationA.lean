@@ -24,7 +24,7 @@ in `Dregg2/Circuit/Spec/authorityrevocation.lean`, whose executor corner for thi
 `execFullA_revokeDelegation_iff_spec`).
 
 ADDITIVE: imports `EffectCommit2` + the authority-revocation spec; edits NONE of them. Follows the
-`burnA` template (`Inst/burnA.lean`) + the recipe in `Dregg2/Circuit/CONTRIBUTING.md`.
+`burnA` template (`Inst/burnA.lean`) + the recipe REMOVED from `Dregg2/Circuit/` in 59f7852d3 (a commit titled "green"); recover it with `git show 59f7852d3^:metatheory/…/CONTRIBUTING.md`, but note its §1/§6 predate the #guard ban (metatheory/docs/GUARD-DISCIPLINE.md) and are stale — the LIVE recipe is the template named above plus the generic theorems in `Dregg2/Circuit/EffectCommit2.lean`.
 -/
 import Dregg2.Circuit.EffectCommit2
 import Dregg2.Exec.CircuitEmit

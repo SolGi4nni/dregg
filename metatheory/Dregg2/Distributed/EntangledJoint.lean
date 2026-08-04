@@ -3,7 +3,7 @@
 # over the verified per-cell executor, evolving the cell-entanglement graph.
 
 **The gap this closes.** `Exec/JointCell.lean` is the *bilateral* (exactly TWO ledgers `A`/`B`)
-joint turn: one half-edge out, one in, CG-5 over `total A + total B`. `Exec/Coordination.lean` is
+joint turn: one half-edge out, one in, CG-5 over `total A + total B`. `Dregg2/Coordination.lean` is
 an *abstract* CG-algebra. The running coordinator (`coord/src/atomic.rs`) does NOT run a bilateral
 turn — it runs an **N-participant 2-phase commit**: many cells contribute legs to ONE combined
 forest (`AtomicForest { participants, forest, preconditions }`), and the forest commits *all-or-none*

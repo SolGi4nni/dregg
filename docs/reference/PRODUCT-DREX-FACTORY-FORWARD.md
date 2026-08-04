@@ -115,7 +115,7 @@ Three tools in `tools/`: `token-factory/` (orchestrator), `dregg-audit/` (9-door
   `uvx --from halmos halmos`, maps each `[PASS]/[FAIL]` to a door).
 - **The emitted "safe" contract is a genuine cap-safe token** — `constant cap` literal, one-shot
   mint latch, no owner/seize/pause/blacklist/selfdestruct/proxy/fee door (verified
-  `artifacts/GOOD/GOOD.sol:31,52`). Halmos proves the cap over its real bytecode.
+  `tools/token-factory/artifacts/GOOD/GOOD.sol:31,52`). Halmos proves the cap over its real bytecode.
 - **deployer-gate's macaroon gate is real** — composes the real `dregg_macaroon` crate
   (`Cargo.toml:15`), mints an HMAC-chained capability with 3 caveats (`lib.rs:367-370`), verifies
   the chain + clears caveats against a live snapshot (`lib.rs:394-400`), fails-closed on unknown

@@ -7,7 +7,7 @@ This module is the reusable half of that skeleton:
 
 1. **The frame family, tagged into the `[Dregg2]` aesop rule-set.** The per-mutator / per-effect
    "effect X leaves field Y alone" lemmas already proved across `Exec/CellCommit.lean`,
-   `Exec/CellNullifier.lean`, `Exec/CellConfine.lean`, `Exec/Apps/Identity.lean` are re-exported and
+   `Exec/CellNullifier.lean`, `Exec/CellConfine.lean`, `Apps/Identity.lean` are re-exported and
    registered with `@[aesop safe apply (rule_sets := [Dregg2])]` (the rule-set is declared in
    `Dregg2/Catalog.lean`). Tagged once here, discovered forever by `aesop (rule_sets := [Dregg2])`
    and by the `exec_frame` tactic (`Dregg2/Verify/Tactics.lean`). These are the `@[dregg_frame]`

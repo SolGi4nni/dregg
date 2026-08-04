@@ -18,8 +18,7 @@ witness for `refusalE` proves the complete declarative `RefusalSpec` (the apex t
 `Dregg2/Circuit/Spec/cellstateaudit.lean`, whose executor corner is `execFullA_refusalA_iff_spec`).
 
 ADDITIVE: imports `EffectCommit` + the cell-state-audit spec; edits NEITHER. Follows
-`EffectInstances.setFieldE` + the `mintA` `propBit` guard pattern + the recipe in
-`Dregg2/Circuit/CONTRIBUTING.md`.
+`EffectInstances.setFieldE` + the `mintA` `propBit` guard pattern + the recipe REMOVED from `Dregg2/Circuit/` in 59f7852d3 (a commit titled "green"); recover it with `git show 59f7852d3^:metatheory/…/CONTRIBUTING.md`, but note its §1/§6 predate the #guard ban (metatheory/docs/GUARD-DISCIPLINE.md) and are stale — the LIVE recipe is the template named above plus the generic theorems in `Dregg2/Circuit/EffectCommit.lean`.
 -/
 import Dregg2.Circuit.EffectCommit
 import Dregg2.Exec.CircuitEmit

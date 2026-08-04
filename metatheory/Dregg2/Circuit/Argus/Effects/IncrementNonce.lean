@@ -4,7 +4,7 @@ welded into the Argus IR.
 
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated
 it on transfer/mint/burn/createEscrow; `Effects/BalanceA.lean` welded a per-asset move against the v2
-`Surface2` FULL-STATE descriptor, and `Effects/Seal.lean` welded a LIST side-table effect against its
+`Surface2` FULL-STATE descriptor, and `Effects/CellSeal.lean` welded a LIST side-table effect against its
 own v2 `Surface2` full-state descriptor with the receipt-log prepend carried as the explicit kernel-vs-
 runtime divergence. This module welds the DIFFERENT **per-cell metadata field-write** primitive
 `incrementNonceA` (the monotone nonce bump), in a disjoint file (it imports the Argus IR + the audited

@@ -531,6 +531,18 @@ def minaHeadAir : EffectAir :=
       , rangeLeg ANCH_SLACK
       , .gate depthSlackC
       , rangeLeg DEPTH_SLACK
+      -- ⚑⚑ ADDED 2026-08-03 — the leg that makes `SUBMIT_H ≤ BLOCK_LEN` a GATE rather than a
+      -- verifier convention. `REQ_DEPTH` carried NO range lookup: it was PI-pinned and otherwise
+      -- free, so a prover could put a NEGATIVE required depth on the wire, meet G5's
+      -- `DEPTH_SLACK + REQ_DEPTH = WIT_DEPTH` with a non-negative slack, and drive `WIT_DEPTH` — and
+      -- therefore `BLOCK_LEN − SUBMIT_H` — negative. A settlement submitted ABOVE the verified tip
+      -- satisfied every emitted constraint. The only thing that caught it was a verifier that read
+      -- `PI[19]` and compared it to 290 by hand, which is a convention and not a check.
+      --
+      -- One lookup closes it, on the table already declared, with NO new column and no width change:
+      -- `0 ≤ REQ_DEPTH` plus `0 ≤ DEPTH_SLACK` gives `0 ≤ WIT_DEPTH` from G5, and G2 turns that into
+      -- `SUBMIT_H ≤ BLOCK_LEN` (`minaLcAir_forces_submit_within_the_segment`).
+      , rangeLeg REQ_DEPTH
       , .gate linkC
       , .gate picklesC
       , .gate canonC
@@ -551,10 +563,10 @@ theorem minaHeadAir_mainRailOk : minaHeadAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaHeadAir_pinsFit : minaHeadAir.pinsFit MINA_PI_COUNT = true := by rfl
 
-/-- The source carries 35 legs: 8 gates + 3 slack lookups + 2 `.limbs` + 2 top-lane lookups + 20 PI
-pins. ⚑ A `.limbs` leg is ONE leg and EIGHT constraints — `minaLcVerifyDesc_constraint_count` is the
+/-- The source carries 36 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
+2 top-lane lookups + 20 PI pins. ⚑ A `.limbs` leg is ONE leg and EIGHT constraints — `minaLcVerifyDesc_constraint_count` is the
 number a dropped lane moves, and this one is not. -/
-theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 35 := by rfl
+theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 36 := by rfl
 
 /-- ⚑ **THE LIMBED QUANTITIES ARE COUNTED, AND A DROPPED LANE MOVES A NUMBER.** Two nine-lane state
 hashes ⟹ two `.limbs` legs lowering to `8 + 8 = 16` per-limb range lookups (`totalRangeLookups`; this
@@ -611,18 +623,19 @@ theorem minaLcVerifyDesc_tables :
 theorem minaLcVerifyDesc_hashSites : minaLcVerifyDesc.hashSites = [] := rfl
 theorem minaLcVerifyDesc_ranges : minaLcVerifyDesc.ranges = [] := rfl
 
-/-- The compiler emitted 49 constraints from 35 legs: one per leg, except the two `.limbs` legs which
+/-- The compiler emitted 50 constraints from 36 legs: one per leg, except the two `.limbs` legs which
 lower to EIGHT lookups each. ⚑ A dropped lane moves this number and nothing else does — which is why
 the count is pinned separately from the leg count. (`EffectLower.lowerLeg_ne_nil` is the general
 statement that no leg can vanish; this is the exact arithmetic at this descriptor.) -/
-theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 49 := rfl
+theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 50 := rfl
 
 /-- ⚑ **THE SIXTEEN LANE LOOKUPS AND THE TWO TOP-LANE LOOKUPS, AT THEIR EMITTED POSITIONS.** `rfl` on
-a slice of the compiler's output: constraints 11..18 are the anchor's low lanes at 29 bits, 19 is the
-anchor's TOP lane on the NARROW table, 20..27 the tip's low lanes, 28 the tip's top lane. A leg that
+a slice of the compiler's output: constraints 12..19 are the anchor's low lanes at 29 bits, 20 is the
+anchor's TOP lane on the NARROW table, 21..28 the tip's low lanes, 29 the tip's top lane.
+⚑ Each index is ONE HIGHER than before 2026-08-03: the `REQ_DEPTH` range leg is emitted at 8. A leg that
 lost a lane, or a top-lane query that drifted onto the wide table, moves this. -/
 theorem minaLcVerifyDesc_canon_lookups :
-    (minaLcVerifyDesc.constraints.drop 11).take 18 =
+    (minaLcVerifyDesc.constraints.drop 12).take 18 =
       [ .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 0)]⟩
       , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 1)]⟩
       , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 2)]⟩
@@ -643,7 +656,8 @@ theorem minaLcVerifyDesc_canon_lookups :
       , .lookup ⟨minaRangeTid MINA_TOP_LANE_BITS, [.var (TIP_STATE 8)]⟩ ] := rfl
 
 /-- ⚑ **THE THREE SLACK LOOKUPS, AT THEIR EMITTED POSITIONS.** `rfl` on a slice of the compiler's
-output: constraint 3 is the segment tooth, 5 the anchor tooth, 7 the depth tooth. A leg that lowered
+output: constraint 3 is the segment tooth, 5 the anchor tooth, 7 the depth-slack tooth and ⚑ **8 the
+`REQ_DEPTH` tooth added 2026-08-03**. A leg that lowered
 to `EffectLower.refuseConstraints` would emit a `.boundary` pair here instead and this goes red. -/
 theorem minaLcVerifyDesc_slack_lookups :
     (minaLcVerifyDesc.constraints.drop 3).take 1
@@ -651,14 +665,16 @@ theorem minaLcVerifyDesc_slack_lookups :
       ∧ (minaLcVerifyDesc.constraints.drop 5).take 1
         = [.lookup ⟨TableId.range, [.var ANCH_SLACK]⟩]
       ∧ (minaLcVerifyDesc.constraints.drop 7).take 1
-        = [.lookup ⟨TableId.range, [.var DEPTH_SLACK]⟩] :=
-  ⟨rfl, rfl, rfl⟩
+        = [.lookup ⟨TableId.range, [.var DEPTH_SLACK]⟩]
+      ∧ (minaLcVerifyDesc.constraints.drop 8).take 1
+        = [.lookup ⟨TableId.range, [.var REQ_DEPTH]⟩] :=
+  ⟨rfl, rfl, rfl, rfl⟩
 
 /-- ⚑ **THE TWENTY PI PINS, AS THE COMPILER EMITTED THEM** — the addressing layer AND the dregg state
 write, in one `rfl`. Nine pinned-anchor limbs, nine verified-tip limbs, the DERIVED height, the depth
 policy met. A reordering, a dropped pin or a re-indexed slot moves this. -/
 theorem minaLcVerifyDesc_pins :
-    minaLcVerifyDesc.constraints.drop 29 =
+    minaLcVerifyDesc.constraints.drop 30 =
       [ .base (.piBinding VmRow.first (ANCHOR_STATE 0) (PI_ANCHOR_STATE 0))
       , .base (.piBinding VmRow.first (ANCHOR_STATE 1) (PI_ANCHOR_STATE 1))
       , .base (.piBinding VmRow.first (ANCHOR_STATE 2) (PI_ANCHOR_STATE 2))
@@ -741,6 +757,21 @@ It is NOT a compatibility surface and nothing but §7 reads it — `shifted_anch
 exhibits a row this predicate ACCEPTS and `airAccepts` REFUSES, which is the whole claim of the rung
 and is unstateable without naming the thing that was refuted. -/
 def verifyAccepts (a : Assignment) : Prop :=
+  blockLenC.holds a
+  ∧ witDepthC.holds a
+  ∧ segSlackC.holds a ∧ inRange a SEG_SLACK
+  ∧ anchSlackC.holds a ∧ inRange a ANCH_SLACK
+  ∧ depthSlackC.holds a ∧ inRange a DEPTH_SLACK
+  -- ⚑ THE DEPTH-POLICY TOOTH, added 2026-08-03: `REQ_DEPTH` carried no lookup at all, and that is
+  -- exactly why `SUBMIT_H ≤ BLOCK_LEN` was unforced.
+  ∧ inRange a REQ_DEPTH
+  ∧ linkC.holds a ∧ picklesC.holds a ∧ canonC.holds a
+
+/-- ⚑ **THE PREDICATE AS IT WAS BEFORE THE `REQ_DEPTH` LOOKUP** — kept for exactly one purpose: to
+state, as a theorem rather than a claim, that a row with a NEGATIVE required depth used to be
+accepted and is now refused (`mina_negative_req_depth_old_admits_new_rejects`). It is not a
+compatibility surface and nothing else reads it. -/
+def verifyAcceptsWithoutDepthPolicyRange (a : Assignment) : Prop :=
   blockLenC.holds a
   ∧ witDepthC.holds a
   ∧ segSlackC.holds a ∧ inRange a SEG_SLACK
@@ -952,7 +983,8 @@ theorem minaLcAir_sound (a : Assignment) (segLen anchorH submitH reqDepth : Nat)
     (hacc : airAccepts a) :
     minaVerifyDecision segLen anchorH submitH (anchorH + segLen - submitH) reqDepth
       linkB picklesB canonB = true := by
-  obtain ⟨hbl, hwd, hss, ⟨hss0, _⟩, has, ⟨has0, _⟩, hds, ⟨hds0, _⟩, hlkC, hpkC, hcnC⟩ := hacc.1
+  obtain ⟨hbl, hwd, hss, ⟨hss0, _⟩, has, ⟨has0, _⟩, hds, ⟨hds0, _⟩, ⟨hrd0c, _⟩,
+    hlkC, hpkC, hcnC⟩ := hacc.1
   rw [blockLenC_holds_iff] at hbl
   rw [witDepthC_holds_iff] at hwd
   rw [segSlackC_holds_iff] at hss
@@ -1063,7 +1095,7 @@ theorem minaLcAir_complete (a : Assignment) (segLen anchorH submitH reqDepth : N
   have hsh0 : (0 : ℤ) ≤ (submitH : ℤ) := Int.natCast_nonneg submitH
   have hah0 : (0 : ℤ) ≤ (anchorH : ℤ) := Int.natCast_nonneg anchorH
   have hseg0 : (0 : ℤ) ≤ (segLen : ℤ) := Int.natCast_nonneg segLen
-  refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_, ?_, ?_⟩
   · rw [blockLenC_holds_iff, hblk, hah, hsl]
   · rw [witDepthC_holds_iff, hwd, hsh, hblk]; ring
   · rw [segSlackC_holds_iff, hss, hsl]; ring
@@ -1075,9 +1107,63 @@ theorem minaLcAir_complete (a : Assignment) (segLen anchorH submitH reqDepth : N
   · rw [depthSlackC_holds_iff, hds, hrd, hwd]; ring
   · rw [hds]; linarith
   · rw [hds]; linarith
+  -- ⚑ THE NEW TOOTH's completeness half: the required depth is a `Nat` on the wire, so it is
+  -- non-negative for free, and it fits the declared interval because it is at most the derived
+  -- witnessed depth, which `hfit` bounds.
+  · rw [hrd]; exact hrd0
+  · rw [hrd]; linarith
   · rw [linkC_holds_iff, hlk, hlk1]; norm_num
   · rw [picklesC_holds_iff, hpk, hpk1]; norm_num
   · rw [canonC_holds_iff, hcn, hcn1]; norm_num
+
+/-! ## §6b — ⚑⚑ `SUBMIT_H ≤ BLOCK_LEN`, FROM THE TRACE. The relation the AIR did not force.
+
+Every theorem in §6 is a refinement, taking a witness relation that names which column carries which
+projection. These take none: they read the emitted gates and the emitted lookups and conclude a fact
+about the columns.
+
+⚠ **WHY IT WAS OPEN, precisely.** `SEG_SLACK` and `ANCH_SLACK` and `DEPTH_SLACK` were each ranged
+independently and never compared, and `REQ_DEPTH` carried **NO RANGE LOOKUP AT ALL** — it was
+PI-pinned (`PI[19]`) and otherwise a free witness. G5 (`DEPTH_SLACK + REQ_DEPTH = WIT_DEPTH`) then
+bought nothing about the SIGN of `WIT_DEPTH`: a sufficiently negative `REQ_DEPTH` is met by a
+non-negative `DEPTH_SLACK` at a negative witnessed depth, and G2 turns that into a settlement
+submitted ABOVE the verified tip. It was catchable only by a verifier that read `PI[19]` and compared
+it to 290 by hand — a convention, not a gate. One lookup on the already-declared table closes it. -/
+
+/-- ⚑⚑ **THE WITNESSED DEPTH IS NON-NEGATIVE, FROM THE TRACE.** `0 ≤ DEPTH_SLACK` (its own tooth) and
+`0 ≤ REQ_DEPTH` (the tooth added 2026-08-03) with G5 give it. Before the second lookup, only the
+first held and this was FALSE — see `mina_negative_req_depth_old_admits_new_rejects`. -/
+theorem minaLcAir_forces_nonneg_witnessed_depth (a : Assignment) (hacc : airAccepts a) :
+    0 ≤ a WIT_DEPTH := by
+  obtain ⟨-, -, -, -, -, -, hds, ⟨hds0, -⟩, ⟨hrd0, -⟩, -, -, -⟩ := hacc.1
+  rw [depthSlackC_holds_iff] at hds
+  linarith
+
+/-- ⚑⚑ **AND THEREFORE `SUBMIT_H ≤ BLOCK_LEN`** — the settlement being finalized was submitted at or
+below the height this proof verifies, which is the Mina instance of the class the three peer-chain
+tallies belong to (`signed ≤ total`) and the ETH client's `PC ≤ BL`.
+
+G2 (`WIT_DEPTH + SUBMIT_H = BLOCK_LEN`) plus a non-negative witnessed depth. No hypothesis about the
+update at all. -/
+theorem minaLcAir_forces_submit_within_the_segment (a : Assignment) (hacc : airAccepts a) :
+    a SUBMIT_H ≤ a BLOCK_LEN := by
+  have hd := minaLcAir_forces_nonneg_witnessed_depth a hacc
+  obtain ⟨-, hwd, -, -, -, -, -, -, -, -, -, -⟩ := hacc.1
+  rw [witDepthC_holds_iff] at hwd
+  linarith
+
+/-- ⚑ **AND `minaLinkAir` DOES NOT ALREADY COVER THIS — checked at source, not assumed.**
+
+`LightClientMinaLinkAir.link_seg_len_counts_the_real_rows` says the LINK descriptor's `SEG_LEN`
+column equals the number of exhibited block rows: it closes the count relation for the multi-row
+companion, over `SEG_LEN` and the row list. It says nothing about `SUBMIT_H`, `REQ_DEPTH` or
+`BLOCK_LEN`, which are columns of THIS descriptor and are not in the link AIR at all. The two
+statements are about different objects; the overlap is zero.
+
+Stated here as the two columns' membership rather than as prose, so the disjointness is checkable. -/
+theorem mina_submit_relation_is_not_the_link_count :
+    SUBMIT_H < MINA_LC_WIDTH ∧ REQ_DEPTH < MINA_LC_WIDTH ∧ BLOCK_LEN < MINA_LC_WIDTH
+      ∧ SUBMIT_H ≠ REQ_DEPTH ∧ REQ_DEPTH ≠ BLOCK_LEN := by decide
 
 /-! ## §7 — ⚑ THE REFUSING WITNESSES. Both polarities, exhibited, not asserted.
 
@@ -1090,6 +1176,47 @@ unanchored subtraction. -/
 reads `0` above its end — the four LOGIC refusals below leave the lane columns at `0` (which is a
 canonical `Fp` element, so they are refused by the logic and not incidentally by the lane gates). -/
 def rowOf (vs : List ℤ) : Assignment := fun w => vs.getD w 0
+
+/-! ## §6c — ⚑ THE FALSIFIER, BOTH POLARITIES, ON ONE ROW.
+
+A repair that only shows the new tooth refusing a value has not shown the value was ever admitted.
+This row differs from an honest one in exactly the columns a forger controls. -/
+
+/-- ⚑ **THE ROW THAT PROVED BEFORE THE `REQ_DEPTH` LOOKUP.** Anchor at 1000, a five-block segment, so
+the DERIVED tip is 1005 — and the settlement claims to have been submitted at **2000**, five hundred
+blocks ABOVE the verified tip. `WIT_DEPTH = 1005 − 2000 = −995`; the forger publishes
+`REQ_DEPTH = −1000`, and G5's slack comes out `−995 − (−1000) = 5`, comfortably inside `[0, 2^24)`.
+
+G1, G2, G3, G4, G5 ALL HOLD. Every carrier is `1`. Every slack that HAD a lookup is non-negative. -/
+def negativeReqDepthRow : Assignment :=
+  rowOf [5, 1000, 2000, -995, -1000, 4, 1000, 5, 1, 1, 1, 1005]
+
+/-- ⚑ **BEFORE: the pre-2026-08-03 predicate ACCEPTS it.** Not "would have accepted" — the predicate
+is defined (`verifyAcceptsWithoutDepthPolicyRange`) and this is a proof over it. -/
+theorem mina_negative_req_depth_was_admitted :
+    verifyAcceptsWithoutDepthPolicyRange negativeReqDepthRow := by
+  refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ?_, ?_⟩ <;>
+    simp only [negativeReqDepthRow, rowOf, blockLenC, witDepthC, segSlackC, anchSlackC,
+      depthSlackC, linkC, picklesC, canonC, Dregg2.Circuit.Constraint.holds, Expr.eval,
+      SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK, DEPTH_SLACK,
+      LINK_OK, PICKLES_OK, CANON_OK, BLOCK_LEN, MINA_RANGE_BITS, List.getD,
+      List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some] <;> norm_num
+
+/-- ⚑⚑ **AFTER: the served descriptor REFUSES it**, on the `REQ_DEPTH` tooth — `−1000 ∉ [0, 2^24)`.
+The pair is the claim: one row, admitted then refused, differing only in whether the lookup exists. -/
+theorem mina_negative_req_depth_is_refused : ¬ airAccepts negativeReqDepthRow := by
+  intro h
+  have hrd0 := h.1.2.2.2.2.2.2.2.2.1.1
+  simp only [negativeReqDepthRow, rowOf, REQ_DEPTH] at hrd0
+  norm_num at hrd0
+
+/-- …and on the SAME row the relation the tooth exists to force is visibly violated:
+`SUBMIT_H = 2000 > 1005 = BLOCK_LEN`. So the refusal is of the thing it is named for and not of some
+incidental other defect. -/
+theorem mina_negative_req_depth_row_submits_above_the_tip :
+    negativeReqDepthRow BLOCK_LEN < negativeReqDepthRow SUBMIT_H := by
+  simp only [negativeReqDepthRow, rowOf, BLOCK_LEN, SUBMIT_H]
+  norm_num
 
 /-- The base-`2^29` lanes of Mina devnet **genesis**'s state hash
 `3NL93SipJfAMNDBRfQ8Uo8LPovC74mnJZfZYB5SK7mTtkL72dsPx` — the natural weak-subjectivity anchor for a
@@ -1132,7 +1259,7 @@ once per column rather than once per theorem. -/
 private theorem honest_verify_cols :
     verifyAccepts honestRow ∧ verifyAccepts shiftedAnchorRow := by
   constructor <;>
-  · refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ?_, ?_⟩ <;>
+  · refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_, ?_, ?_⟩ <;>
       simp only [blockLenC_holds_iff, witDepthC_holds_iff, segSlackC_holds_iff, anchSlackC_holds_iff,
         depthSlackC_holds_iff, linkC_holds_iff, picklesC_holds_iff, canonC_holds_iff,
         honestRow, shiftedAnchorRow, honestLogicCols, GENESIS_ANCHOR_LANES, SHIFTED_ANCHOR_LANES,
@@ -1192,7 +1319,9 @@ def bentProofRow : Assignment := rowOf [300, 1000, 1010, 290, 290, 299, 10, 0, 1
 
 theorem bent_proof_word_refused : ¬ airAccepts bentProofRow := by
   intro h
-  have hpk := h.1.2.2.2.2.2.2.2.2.2.1
+  -- ⚠ ONE `.2` DEEPER than before 2026-08-03: `inRange REQ_DEPTH` sits between the depth tooth
+  -- and the three carriers in `verifyAccepts`.
+  have hpk := h.1.2.2.2.2.2.2.2.2.2.2.1
   rw [picklesC_holds_iff] at hpk
   simp only [bentProofRow, rowOf, PICKLES_OK, List.getD, List.getElem?_cons_zero,
     List.getElem?_cons_succ, Option.getD_some] at hpk
@@ -1298,6 +1427,15 @@ theorem mina_air_discriminates :
 #assert_axioms shifted_anchor_old_admits_new_rejects
 #assert_axioms the_top_lane_width_is_load_bearing
 #assert_axioms mina_air_discriminates
+-- ⚑⚑ THE CLOSURE, 2026-08-03: `SUBMIT_H ≤ BLOCK_LEN` was unforced because `REQ_DEPTH` carried NO
+-- range lookup. One leg on the already-declared table closes it, and the falsifier is exhibited
+-- both ways over a DEFINED pre-repair predicate rather than a remembered one.
+#assert_axioms minaLcAir_forces_nonneg_witnessed_depth
+#assert_axioms minaLcAir_forces_submit_within_the_segment
+#assert_axioms mina_submit_relation_is_not_the_link_count
+#assert_axioms mina_negative_req_depth_was_admitted
+#assert_axioms mina_negative_req_depth_is_refused
+#assert_axioms mina_negative_req_depth_row_submits_above_the_tip
 #assert_axioms minaLcAir_sound
 #assert_axioms minaLcAir_no_forgery
 

@@ -12,7 +12,8 @@ carrier (`SpineCommits`) plus the deployed nullifier-accumulator faithfulness (`
 
 This file does the last mile the assurance-perimeter campaign (`docs/DESIGN-assurance-perimeter-closure.md`,
 `docs/ROADMAP-assurance-perimeter.md`) asked for, copying the non-rev TEMPLATE
-(`Emit/NonRevocationRefineBridge.lean`, `209d543e5`):
+(`Emit/AccumulatorNonRevocationRefine.lean`, which absorbed the template that was
+`Emit/NonRevocationRefineBridge` at `209d543e5`):
 
   * fold the residual trust into ONE named carrier bundle (`NoteFreshCarriers`);
   * state the literal `⟺` (accept-SET ↔ the human spec `nf ∉ nulls`);

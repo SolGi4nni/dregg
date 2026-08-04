@@ -331,9 +331,13 @@ theorem shoup_ggm_sound_lt_one (strat : ShoupStrat p) (fuel D : ℕ) (hD : 1 ≤
 
 ### 6.2 Dependency-ordered task plan
 
-New file: **`candidates/GgmRandomEncodingShoup.lean`** (Tier 1), importing `GgmRandomEncoding`,
-`GgmDegreeDischarge`, `GgmCandidate`. Optional **`candidates/GgmEmbedShoup.lean`** +
-`GgmShoupEndToEnd.lean` (Tier 2), importing `GgmEmbed`, `GgmProbThreading`.
+New file under `candidates/`: **`GgmRandomEncodingShoup`** (Tier 1), importing `GgmRandomEncoding`,
+`GgmDegreeDischarge`, `GgmCandidate`. Optional **`GgmEmbedShoup`** +
+`GgmShoupEndToEnd` (Tier 2), importing `GgmEmbed`, `GgmProbThreading`.
+
+*(These name modules that do not exist yet — this section is the task plan, not a citation.
+Written as bare module names, matching the convention the rest of this file already uses, so
+the doc-reference gate is not asked to resolve a path nobody has written.)*
 
 | # | task | new file · def/thm | worker | effort | depends on |
 |---|---|---|---|---|---|

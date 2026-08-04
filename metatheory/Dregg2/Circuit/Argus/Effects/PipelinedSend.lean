@@ -4,7 +4,7 @@
 
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated
 it on transfer/mint/burn/createEscrow; `Effects/BalanceA.lean` welded a per-asset move against a
-FULL-STATE descriptor; `Effects/Seal.lean` welded a kernel-touching LIST-side-table effect against its
+FULL-STATE descriptor; `Effects/CellSeal.lean` welded a kernel-touching LIST-side-table effect against its
 own full-state descriptor over the chained executor. This module welds the DIFFERENT
 **CapTP pipelined-send** primitive `pipelinedSendA` — the apply-time NEUTRAL clock row of captp routing
 (a pipelined send whose real dispatch / `EventualRef`→prior-result resolution already ran in the

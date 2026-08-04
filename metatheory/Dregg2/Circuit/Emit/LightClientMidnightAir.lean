@@ -246,8 +246,28 @@ def TPOS_LIMB (i : Nat) : Nat := 21 + i
 /-- **Offset carry `i` of the emptiness-floor chain** (columns 26..29), same `−128` offset. -/
 def TPOS_CARRY (i : Nat) : Nat := 26 + i
 
+/-! ### ⚑⚑ THE THIRD CHAIN, ADDED 2026-08-03 — a relation NO GATE FORCED.
+
+The two chains above force `3·signedWeight − 2·totalWeight − 1 ≥ 0` and `totalWeight − 1 ≥ 0`. Read
+the leg list: those were the ONLY comparisons. **Nothing related the two tallies to each other.**
+`TOTAL_WEIGHT_LIMB` and `SIGNED_WEIGHT_LIMB` are independent witnessed limb vectors carrying only
+their own 16-bit lookups, and the quorum tooth gets *easier* as `signedWeight` grows — so a row
+claiming a signed authority weight ABOVE the total satisfied every emitted constraint. `(total,
+signed) = (3, 100)` passes the quorum (`293 ≥ 0`) and the floor (`2 ≥ 0`) and PROVED.
+
+That is the Midnight instance of the class the ETH light client's `PC = 1023`-of-512 belonged to
+(`dfa434d46`), and it is closed the same way — but not with eth's one column, because these counts
+are `u64` limb VECTORS: a third `LimbTally` chain at `α = 1, β = 1, γ = 0`, whose difference is
+`totalWeight − signedWeight` and whose non-negativity IS `signedWeight ≤ totalWeight`. -/
+
+/-- **Limb `i` of the ORDERING difference `totalWeight − signedWeight`**, LSB-first. Five limbs
+(columns 30..34). Its non-negativity is `signedWeight ≤ totalWeight` — the relation nothing forced. -/
+def SLE_LIMB (i : Nat) : Nat := 30 + i
+/-- **Offset carry `i` of the ordering chain** (columns 35..38), same `−128` offset. -/
+def SLE_CARRY (i : Nat) : Nat := 35 + i
+
 /-- **PUBLIC ANCHOR** — the pinned WS authority-set root (the governance trust anchor). PI-bound. -/
-def ANCHOR_ROOT : Nat := 30
+def ANCHOR_ROOT : Nat := 39
 
 /-- The number of ~31-bit limbs the FULL 256-bit finalized target root is exposed as: `⌈256 / 31⌉ = 9`.
 Eight 31-bit limbs cover 248 bits; the ninth (most-significant) limb carries the remaining 8 bits. This
@@ -259,23 +279,24 @@ def TARGET_ROOT_LIMBS : Nat := 9
 MOST-SIGNIFICANT-limb-first decomposition. Limb `i` is trace column `31 + i` (cols 31..39); limb `0` is
 the MSB (its top carries only 8 bits). PI-bound to slot `1 + i`, so the peer-wrap's radix-`2^31`
 MSB-first pack over `PI[1..9]` recomposes the 256-bit target root exactly before its 128-bit split. -/
-def TARGET_ROOT (i : Nat) : Nat := 31 + i
+def TARGET_ROOT (i : Nat) : Nat := 40 + i
 
 /-- **PUBLIC ANCHOR** — the GRANDPA round R. PI-bound. -/
-def ROUND_COL : Nat := 31 + TARGET_ROOT_LIMBS
+def ROUND_COL : Nat := 40 + TARGET_ROOT_LIMBS
 /-- **PUBLIC ANCHOR** — the authority-set id (era) E. PI-bound. -/
-def ERA_COL : Nat := 32 + TARGET_ROOT_LIMBS
+def ERA_COL : Nat := 41 + TARGET_ROOT_LIMBS
 
 /-- Total main-trace width: 4 boolean logic columns + 4 total-weight limbs + 4 signed-weight limbs +
-5 quorum-difference limbs + 4 quorum carries + 5 floor-difference limbs + 4 floor carries + 1
-anchor-root + 9 target-root limbs + round + era = 42.
+5 quorum-difference limbs + 4 quorum carries + 5 floor-difference limbs + 4 floor carries + 5
+ORDERING-difference limbs + 4 ordering carries + 1 anchor-root + 9 target-root limbs + round + era
+= 51.
 
-⚑ It was 20. The +22 is the two comparisons becoming limbed chains: two `u64` operands, two
-difference vectors, two borrow chains. On Midnight — unlike its two siblings — that is NOT the price
-of representing the live authority set (130 fit one column). It is the price of a refusal whose
-premises do not mention the field, and of a tally column that means `u64` rather than "whatever the
-D-parameter happens to be today". -/
-def MID_LC_WIDTH : Nat := 42
+⚑ It was 20, then 42, and it is now 51. The +22 was the two comparisons becoming limbed chains; this
++9 is the THIRD comparison, `signedWeight ≤ totalWeight`, which no gate forced at all. On Midnight —
+unlike its two siblings — the limbing was NOT the price of representing the live authority set (130
+fit one column); it was the price of a refusal whose premises do not mention the field. This nine is
+different: it is a check that was ABSENT, at any width. -/
+def MID_LC_WIDTH : Nat := 51
 
 /-- PI slot 0: the pinned WS anchor root. -/
 def PI_ANCHOR_ROOT : Nat := 0
@@ -333,6 +354,23 @@ def tPosRungs : List LimbTally.Rung :=
 /-- The floor difference vector's TOP limb — that chain's closure column. -/
 def TPOS_TOP : Nat := TPOS_LIMB 4
 
+/-- ⚑ **The four rungs of the ORDERING chain** — `α = 1` on TOTAL weight, `β = 1` on SIGNED weight,
+`γ = 0`, i.e. the emitted difference is `totalWeight − signedWeight`.
+
+⚠ The operands are SWAPPED relative to `wDiffRungs`: `aCol` is the total-weight limb here and the
+signed-weight limb there, because `LimbTally.cmp_sound` concludes `γ ≤ α·A − β·B` and the relation
+wanted is `0 ≤ total − signed`. The two chains therefore read the SAME eight operand columns in the
+opposite order, which is what makes them two teeth on ONE pair of tallies rather than two spellings
+of one (`mid_ordering_reads_the_quorum_operands`). -/
+def sleRungs : List LimbTally.Rung :=
+  [ ⟨TOTAL_WEIGHT_LIMB 0, SIGNED_WEIGHT_LIMB 0, SLE_LIMB 0, SLE_CARRY 0⟩
+  , ⟨TOTAL_WEIGHT_LIMB 1, SIGNED_WEIGHT_LIMB 1, SLE_LIMB 1, SLE_CARRY 1⟩
+  , ⟨TOTAL_WEIGHT_LIMB 2, SIGNED_WEIGHT_LIMB 2, SLE_LIMB 2, SLE_CARRY 2⟩
+  , ⟨TOTAL_WEIGHT_LIMB 3, SIGNED_WEIGHT_LIMB 3, SLE_LIMB 3, SLE_CARRY 3⟩ ]
+
+/-- The ordering difference vector's TOP limb — that chain's closure column. -/
+def SLE_TOP : Nat := SLE_LIMB 4
+
 /-- The emitted QUORUM gate bodies: five from four rungs (one per rung plus the closure gate). -/
 def wDiffChainBodies : List EmittedExpr :=
   LimbTally.chainBodies MID_LIMB_BITS 3 2 1 LimbTally.TALLY_CARRY_OFF WDIFF_TOP wDiffRungs
@@ -340,6 +378,10 @@ def wDiffChainBodies : List EmittedExpr :=
 /-- The emitted EMPTY-SET FLOOR gate bodies: five from four rungs. -/
 def tPosChainBodies : List EmittedExpr :=
   LimbTally.chainBodies MID_LIMB_BITS 1 0 1 LimbTally.TALLY_CARRY_OFF TPOS_TOP tPosRungs
+
+/-- The emitted ORDERING gate bodies (`signedWeight ≤ totalWeight`): five from four rungs. -/
+def sleChainBodies : List EmittedExpr :=
+  LimbTally.chainBodies MID_LIMB_BITS 1 1 0 LimbTally.TALLY_CARRY_OFF SLE_TOP sleRungs
 
 /-- `ED_OK − 1` — zero iff the Ed25519 carrier bit is set. -/
 def edBody : EmittedExpr := .add (.var ED_OK) (.const (-1))
@@ -370,45 +412,81 @@ def TID_TALLY_LIMB : TableId := .custom (64 + MID_LIMB_BITS)
 /-- The chain-carry range table: wire id `5 + 64 + 8 = 77`. -/
 def TID_TALLY_CARRY : TableId := .custom (64 + MID_CARRY_BITS)
 
-/-- ⚑ **THE TEETH: one range lookup PER LIMB, for BOTH comparisons.**
+/-! ### ⚑ THE FIVE LIMBED QUANTITIES, AS `EffectAirIR` LEGS — the teeth are the COMPILER's output.
 
-Twenty-two 16-bit lookups (four total-weight limbs, four signed-weight limbs, five quorum-difference
-limbs, five floor-difference limbs) and eight 8-bit carry lookups. The load-bearing ones are the TEN
-on the two differences: they are what force `3·signed − 2·total − 1 ≥ 0` and `total − 1 ≥ 0`, because
-a limb vector of non-negative limbs denotes a non-negative value (`LimbTally.limbValue_nonneg`).
+⚑ **THIS BLOCK USED TO BE A HAND-WRITTEN `List VmConstraint2`** — twenty-six literal `.lookup`s that
+agreed with the leg shapes by inspection and by nothing else. It is now `EffectLower.lowerLimbsLeg`
+output, the same path the Tendermint and Mina siblings take, so there is ONE road from source to
+constraints rather than a source language plus a transcription. The emitted bytes for the six
+pre-existing quantities are UNCHANGED — `lowerLimbsLeg` emits exactly `cols.map (fun c => .lookup
+⟨table, [.var c]⟩)` in declaration order — so this is a routing change, not a wire change.
+
+⚑ And it makes the IR's width verdict LOAD-BEARING on the deployed descriptor:
+`LimbsLeg.mainRailOk` refuses an empty limb vector (which would denote `0` and check nothing) and any
+limb width above the wrap-free ceiling 29 — the class this descriptor SHIPPED IN at 128 bits.
+`mid_tally_legs_are_expressible` is that verdict, `decide`d. -/
+
+/-- The total authority weight as a limbed quantity: four 16-bit limbs, LSB-first. -/
+def totalWeightLeg : EffectAirIR.LimbsLeg :=
+  { cols := [TOTAL_WEIGHT_LIMB 0, TOTAL_WEIGHT_LIMB 1, TOTAL_WEIGHT_LIMB 2, TOTAL_WEIGHT_LIMB 3]
+  , bits := MID_LIMB_BITS, table := TID_TALLY_LIMB }
+
+/-- The counted signed authority weight as a limbed quantity. -/
+def signedWeightLeg : EffectAirIR.LimbsLeg :=
+  { cols := [SIGNED_WEIGHT_LIMB 0, SIGNED_WEIGHT_LIMB 1, SIGNED_WEIGHT_LIMB 2, SIGNED_WEIGHT_LIMB 3]
+  , bits := MID_LIMB_BITS, table := TID_TALLY_LIMB }
+
+/-- ⚑ The QUORUM difference — FIVE limbs, load-bearing: its containment forces `3·S − 2·T − 1 ≥ 0`. -/
+def wDiffLeg : EffectAirIR.LimbsLeg :=
+  { cols := [WDIFF_LIMB 0, WDIFF_LIMB 1, WDIFF_LIMB 2, WDIFF_LIMB 3, WDIFF_LIMB 4]
+  , bits := MID_LIMB_BITS, table := TID_TALLY_LIMB }
+
+/-- The quorum chain's offset carries. ⚠ NOT part of the threshold argument — they exist solely for
+the mod-`p` ↔ `ℤ` bridge (`LimbTally.chain_recomposes` needs no carry bound at all). -/
+def wDiffCarryLeg : EffectAirIR.LimbsLeg :=
+  { cols := [WDIFF_CARRY 0, WDIFF_CARRY 1, WDIFF_CARRY 2, WDIFF_CARRY 3]
+  , bits := MID_CARRY_BITS, table := TID_TALLY_CARRY }
+
+/-- ⚑ The EMPTY-SET FLOOR difference — FIVE limbs; its containment forces `T − 1 ≥ 0`. -/
+def tPosLeg : EffectAirIR.LimbsLeg :=
+  { cols := [TPOS_LIMB 0, TPOS_LIMB 1, TPOS_LIMB 2, TPOS_LIMB 3, TPOS_LIMB 4]
+  , bits := MID_LIMB_BITS, table := TID_TALLY_LIMB }
+
+/-- The floor chain's offset carries. -/
+def tPosCarryLeg : EffectAirIR.LimbsLeg :=
+  { cols := [TPOS_CARRY 0, TPOS_CARRY 1, TPOS_CARRY 2, TPOS_CARRY 3]
+  , bits := MID_CARRY_BITS, table := TID_TALLY_CARRY }
+
+/-- ⚑ The ORDERING difference — FIVE limbs; its containment forces `T − S ≥ 0`, the relation this
+descriptor did not have. -/
+def sleLeg : EffectAirIR.LimbsLeg :=
+  { cols := [SLE_LIMB 0, SLE_LIMB 1, SLE_LIMB 2, SLE_LIMB 3, SLE_LIMB 4]
+  , bits := MID_LIMB_BITS, table := TID_TALLY_LIMB }
+
+/-- The ordering chain's offset carries. -/
+def sleCarryLeg : EffectAirIR.LimbsLeg :=
+  { cols := [SLE_CARRY 0, SLE_CARRY 1, SLE_CARRY 2, SLE_CARRY 3]
+  , bits := MID_CARRY_BITS, table := TID_TALLY_CARRY }
+
+/-- ⚑ **THE TEETH: one range lookup PER LIMB, for ALL THREE comparisons.**
+
+Twenty-three 16-bit lookups (four total-weight limbs, four signed-weight limbs, five
+quorum-difference, five floor-difference, five ORDERING-difference) and twelve 8-bit carry lookups.
+The load-bearing ones are the FIFTEEN on the three differences: they are what force
+`3·signed − 2·total − 1 ≥ 0`, `total − 1 ≥ 0` and `total − signed ≥ 0`, because a limb vector of
+non-negative limbs denotes a non-negative value (`LimbTally.limbValue_nonneg`).
 
 ⚠ The eight OPERAND lookups are not part of that argument (`LimbTally.cmp_sound` does not use them);
 they are there for the mod-`p` ↔ `ℤ` bridge (`LimbTally.rung_no_alias_at_deployed_constants`,
-`mid_tpos_rung_no_alias_at_deployed_constants`), which needs every limb in `[0, 2^16)`. Two different
-jobs, said apart rather than blurred. The floor chain queries NO operand lookups of its own — its
-operands ARE the total-weight limbs, already checked once. -/
+`mid_tpos_rung_no_alias_at_deployed_constants`, `mid_sle_rung_no_alias_at_deployed_constants`), which
+needs every limb in `[0, 2^16)`. Two different jobs, said apart rather than blurred. The floor and
+ordering chains query NO operand lookups of their own — their operands ARE the two weight vectors,
+already checked once. -/
 def tallyRangeLookups : List VmConstraint2 :=
-  [ .lookup ⟨TID_TALLY_LIMB, [.var (TOTAL_WEIGHT_LIMB 0)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (TOTAL_WEIGHT_LIMB 1)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (TOTAL_WEIGHT_LIMB 2)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (TOTAL_WEIGHT_LIMB 3)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (SIGNED_WEIGHT_LIMB 0)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (SIGNED_WEIGHT_LIMB 1)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (SIGNED_WEIGHT_LIMB 2)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (SIGNED_WEIGHT_LIMB 3)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (WDIFF_LIMB 0)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (WDIFF_LIMB 1)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (WDIFF_LIMB 2)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (WDIFF_LIMB 3)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (WDIFF_LIMB 4)]⟩
-  , .lookup ⟨TID_TALLY_CARRY, [.var (WDIFF_CARRY 0)]⟩
-  , .lookup ⟨TID_TALLY_CARRY, [.var (WDIFF_CARRY 1)]⟩
-  , .lookup ⟨TID_TALLY_CARRY, [.var (WDIFF_CARRY 2)]⟩
-  , .lookup ⟨TID_TALLY_CARRY, [.var (WDIFF_CARRY 3)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (TPOS_LIMB 0)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (TPOS_LIMB 1)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (TPOS_LIMB 2)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (TPOS_LIMB 3)]⟩
-  , .lookup ⟨TID_TALLY_LIMB, [.var (TPOS_LIMB 4)]⟩
-  , .lookup ⟨TID_TALLY_CARRY, [.var (TPOS_CARRY 0)]⟩
-  , .lookup ⟨TID_TALLY_CARRY, [.var (TPOS_CARRY 1)]⟩
-  , .lookup ⟨TID_TALLY_CARRY, [.var (TPOS_CARRY 2)]⟩
-  , .lookup ⟨TID_TALLY_CARRY, [.var (TPOS_CARRY 3)]⟩ ]
+  EffectLower.lowerLimbsLeg totalWeightLeg ++ EffectLower.lowerLimbsLeg signedWeightLeg
+    ++ EffectLower.lowerLimbsLeg wDiffLeg ++ EffectLower.lowerLimbsLeg wDiffCarryLeg
+    ++ EffectLower.lowerLimbsLeg tPosLeg ++ EffectLower.lowerLimbsLeg tPosCarryLeg
+    ++ EffectLower.lowerLimbsLeg sleLeg ++ EffectLower.lowerLimbsLeg sleCarryLeg
 
 /-- The generated QUORUM gates, wrapped into the target's constraint constructor. GENERATED — there
 is no hand-written `VmConstraint2` in this block. -/
@@ -418,6 +496,10 @@ def wDiffChainGates : List VmConstraint2 :=
 /-- The generated EMPTY-SET FLOOR gates. Also generated, from the same `LimbTally.chainBodies`. -/
 def tPosChainGates : List VmConstraint2 :=
   tPosChainBodies.map (fun b => .base (.gate b))
+
+/-- The generated ORDERING gates (`signedWeight ≤ totalWeight`). Also `LimbTally.chainBodies` output. -/
+def sleChainGates : List VmConstraint2 :=
+  sleChainBodies.map (fun b => .base (.gate b))
 
 def edGate : VmConstraint2 := .base (.gate edBody)
 def authsetGate : VmConstraint2 := .base (.gate authsetBody)
@@ -459,7 +541,7 @@ def midLcVerifyDesc : EffectVmDescriptor2 :=
   , piCount     := PI_COUNT
   , tables      := [⟨TID_TALLY_LIMB,  "range_w16", 1, .rangeLimb MID_LIMB_BITS⟩
                    , ⟨TID_TALLY_CARRY, "range_w8",  1, .rangeLimb MID_CARRY_BITS⟩]
-  , constraints := tallyRangeLookups ++ wDiffChainGates ++ tPosChainGates
+  , constraints := tallyRangeLookups ++ wDiffChainGates ++ tPosChainGates ++ sleChainGates
                    ++ [edGate, authsetGate, roundGate, eraGate, anchorRootPin]
                    ++ targetRootPins ++ [roundPin, eraPin]
   , hashSites   := []
@@ -610,6 +692,9 @@ def airAccepts (a : Assignment) : Prop :=
   ∧ LimbTally.LimbsInRange MID_LIMB_BITS a (LimbTally.diffCols wDiffRungs WDIFF_TOP)
   ∧ LimbTally.BodiesVanish a tPosChainBodies
   ∧ LimbTally.LimbsInRange MID_LIMB_BITS a (LimbTally.diffCols tPosRungs TPOS_TOP)
+  -- ⚑ THE ORDERING TOOTH: `totalWeight − signedWeight ≥ 0`. Added 2026-08-03; nothing forced it.
+  ∧ LimbTally.BodiesVanish a sleChainBodies
+  ∧ LimbTally.LimbsInRange MID_LIMB_BITS a (LimbTally.diffCols sleRungs SLE_TOP)
   ∧ edBody.eval a = 0
   ∧ authsetBody.eval a = 0
   ∧ roundBody.eval a = 0
@@ -633,7 +718,8 @@ theorem midLcAir_sound (a : Assignment)
     (hera : a ERA_OK = (if eraB then (1 : ℤ) else 0))
     (hacc : airAccepts a) :
     midVerifyDecision signedW totalW edB authsetB roundB eraB = true := by
-  obtain ⟨hwBodies, hwLimbs, htBodies, htLimbs, hedB, hauthsetB, hroundB, heraB⟩ := hacc
+  obtain ⟨hwBodies, hwLimbs, htBodies, htLimbs, _hsBodies, _hsLimbs,
+    hedB, hauthsetB, hroundB, heraB⟩ := hacc
   -- ⚑ STRICT > 2/3, AT ANY TALLY MAGNITUDE. `LimbTally.emitted_chain_sound` reads the five generated
   -- quorum gates and the five difference-limb containments and returns `1 ≤ 3·A − 2·B` over the LIMB
   -- VALUES; the two hypotheses say those values are the true `signedW` / `totalW`.
@@ -722,26 +808,135 @@ theorem midLcAir_complete (a : Assignment)
       (LimbTally.diffCols wDiffRungs WDIFF_TOP))
     (hTPosChain : LimbTally.BodiesVanish a tPosChainBodies)
     (hTPosLimbs : LimbTally.LimbsInRange MID_LIMB_BITS a (LimbTally.diffCols tPosRungs TPOS_TOP))
+    (hSleChain : LimbTally.BodiesVanish a sleChainBodies)
+    (hSleLimbs : LimbTally.LimbsInRange MID_LIMB_BITS a (LimbTally.diffCols sleRungs SLE_TOP))
     (hdec : midVerifyDecision signedW totalW edB authsetB roundB eraB = true) :
     airAccepts a := by
   unfold midVerifyDecision at hdec
   simp only [Bool.and_eq_true, decide_eq_true_eq] at hdec
   obtain ⟨⟨⟨⟨⟨_hpos, _hthr⟩, hedB⟩, hauthsetB⟩, hroundB⟩, heraB⟩ := hdec
-  refine ⟨hWDiffChain, hWDiffLimbs, hTPosChain, hTPosLimbs, ?_, ?_, ?_, ?_⟩
+  refine ⟨hWDiffChain, hWDiffLimbs, hTPosChain, hTPosLimbs, hSleChain, hSleLimbs,
+    ?_, ?_, ?_, ?_⟩
   · rw [ed_body_zero_iff, hed]; simp [hedB]
   · rw [authset_body_zero_iff, hauthset]; simp [hauthsetB]
   · rw [round_body_zero_iff, hround]; simp [hroundB]
   · rw [era_body_zero_iff, hera]; simp [heraB]
 
+/-! ## §5b — ⚑⚑ THE RELATION NO GATE FORCED, NOW FORCED **FROM THE TRACE ALONE**.
+
+§5 is a refinement: it says what the AIR entails GIVEN a witness relation naming which columns carry
+which projections. This takes no such hypothesis. -/
+
+/-- ⚑ **THE ORDERING CHAIN READS THE QUORUM CHAIN'S OPERANDS, SWAPPED — by `rfl`.**
+
+Without this the two chains could bound two DIFFERENT pairs while both looking right: a prover could
+satisfy `signed ≤ total` on one pair of vectors and `3·signed > 2·total` on another. -/
+theorem mid_ordering_reads_the_quorum_operands :
+    LimbTally.aCols sleRungs = LimbTally.bCols wDiffRungs
+      ∧ LimbTally.bCols sleRungs = LimbTally.aCols wDiffRungs := by decide
+
+/-- ⚑⚑ **`signedWeight ≤ totalWeight`, FROM THE TRACE, WITH NO HYPOTHESIS ABOUT THE UPDATE.**
+
+Before the ordering chain, a row claiming a signed authority weight ABOVE the total satisfied every
+emitted constraint — the quorum tooth only gets EASIER as `signedWeight` grows, and the two limb
+vectors were otherwise unrelated. -/
+theorem midLcAir_forces_signed_le_total (a : Assignment) (hacc : airAccepts a) :
+    LimbTally.limbValue MID_LIMB_BITS a (LimbTally.aCols wDiffRungs)
+      ≤ LimbTally.limbValue MID_LIMB_BITS a (LimbTally.bCols wDiffRungs) := by
+  have h := LimbTally.emitted_chain_sound hacc.2.2.2.2.1 hacc.2.2.2.2.2.1
+  have hA : LimbTally.aCols sleRungs = LimbTally.bCols wDiffRungs := by decide
+  have hB : LimbTally.bCols sleRungs = LimbTally.aCols wDiffRungs := by decide
+  rw [hA, hB] at h
+  linarith
+
+/-- **The three teeth together, as one sandwich** — what the emitted AIR now forces about a Midnight
+GRANDPA tally, with no hypothesis about the update:
+
+    1 ≤ totalWeight    and    2·totalWeight < 3·signedWeight    and    signedWeight ≤ totalWeight -/
+theorem midLcAir_forces_the_tally_sandwich (a : Assignment) (hacc : airAccepts a) :
+    1 ≤ LimbTally.limbValue MID_LIMB_BITS a (LimbTally.bCols wDiffRungs)
+    ∧ 2 * LimbTally.limbValue MID_LIMB_BITS a (LimbTally.bCols wDiffRungs)
+        < 3 * LimbTally.limbValue MID_LIMB_BITS a (LimbTally.aCols wDiffRungs)
+    ∧ LimbTally.limbValue MID_LIMB_BITS a (LimbTally.aCols wDiffRungs)
+        ≤ LimbTally.limbValue MID_LIMB_BITS a (LimbTally.bCols wDiffRungs) := by
+  refine ⟨?_, ?_, midLcAir_forces_signed_le_total a hacc⟩
+  · have h := LimbTally.emitted_chain_sound hacc.2.2.1 hacc.2.2.2.1
+    have hA : LimbTally.aCols tPosRungs = LimbTally.bCols wDiffRungs := by decide
+    rw [hA] at h; linarith
+  · have h := LimbTally.emitted_chain_sound hacc.1 hacc.2.1
+    linarith
+
+/-- ⚑ **THE ORDERING REFUSAL, ON THE EMITTED OBJECT, AT EVERY LIMB WIDTH.** If the true signed weight
+EXCEEDS the true total, no assignment of ordering-difference limbs and carries satisfies the emitted
+chain together with the containments. No premise about `p`. -/
+theorem mid_ordering_refusal_is_field_independent (a : Assignment) (bits : Nat)
+    (hfail : 1 * LimbTally.limbValue bits a (LimbTally.aCols sleRungs)
+      - 1 * LimbTally.limbValue bits a (LimbTally.bCols sleRungs) < 0) :
+    ¬ (LimbTally.BodiesVanish a
+        (LimbTally.chainBodies bits 1 1 0 LimbTally.TALLY_CARRY_OFF SLE_TOP sleRungs)
+      ∧ LimbTally.LimbsInRange bits a (LimbTally.diffCols sleRungs SLE_TOP)) :=
+  LimbTally.emitted_chain_refuses hfail
+
+/-- ⚑ **NO TOOTH SUBSUMES ANOTHER — the arithmetic, at three.**
+
+  * `(total, signed) = (0, 1)`: QUORUM passes (`3·1 − 2·0 − 1 = 2`), ORDERING fails, FLOOR fails.
+  * `(total, signed) = (3, 100)`: QUORUM passes hugely, ORDERING fails ALONE, FLOOR passes.
+    ⚑ **This row PROVED before this change.**
+  * `(total, signed) = (3, 1)`: QUORUM fails ALONE, ORDERING passes, FLOOR passes. -/
+theorem mid_three_teeth_are_independent :
+    ((0 : ℤ) ≤ 3 * 1 - 2 * 0 - 1 ∧ ¬ ((0 : ℤ) ≤ 0 - 1) ∧ ¬ ((0 : ℤ) ≤ 0 - 1))
+    ∧ ((0 : ℤ) ≤ 3 * 100 - 2 * 3 - 1 ∧ ¬ ((0 : ℤ) ≤ 3 - 100) ∧ (0 : ℤ) ≤ 3 - 1)
+    ∧ (¬ ((0 : ℤ) ≤ 3 * 1 - 2 * 3 - 1) ∧ (0 : ℤ) ≤ 3 - 1 ∧ (0 : ℤ) ≤ 3 - 1) := by
+  refine ⟨⟨by norm_num, by norm_num, by norm_num⟩, ⟨by norm_num, by norm_num, by norm_num⟩,
+    ⟨by norm_num, by norm_num, by norm_num⟩⟩
+
+/-- ⚑ **THE THREE DIFFERENCE VECTORS SHARE NO COLUMN**, and neither do their carries — the property
+`mid_three_teeth_are_independent` is arithmetic ABOUT, as a `decide`able fact on the emitted lists. -/
+theorem mid_the_three_slacks_are_disjoint :
+    (LimbTally.diffCols wDiffRungs WDIFF_TOP).all
+        (fun c => !(LimbTally.diffCols tPosRungs TPOS_TOP).contains c
+                  && !(LimbTally.diffCols sleRungs SLE_TOP).contains c) = true
+    ∧ (LimbTally.diffCols tPosRungs TPOS_TOP).all
+        (fun c => !(LimbTally.diffCols sleRungs SLE_TOP).contains c) = true
+    ∧ (LimbTally.carryCols wDiffRungs).all
+        (fun c => !(LimbTally.carryCols tPosRungs).contains c
+                  && !(LimbTally.carryCols sleRungs).contains c) = true
+    ∧ (LimbTally.carryCols tPosRungs).all
+        (fun c => !(LimbTally.carryCols sleRungs).contains c) = true := by decide
+
+/-- **NO ALIAS FOR THE ORDERING RUNGS.** `LimbTally.rung_no_alias_at_deployed_constants` is stated at
+`α = 3, β = 2, γ = 1`; the ordering chain runs at `α = 1, β = 1, γ = 0`. Smaller image, but "smaller,
+therefore fine" is an argument and not a theorem. -/
+theorem mid_sle_rung_no_alias_at_deployed_constants (x y d cin cout : ℤ)
+    (hx : 0 ≤ x ∧ x < (2 : ℤ) ^ MID_LIMB_BITS) (hy : 0 ≤ y ∧ y < (2 : ℤ) ^ MID_LIMB_BITS)
+    (hd : 0 ≤ d ∧ d < (2 : ℤ) ^ MID_LIMB_BITS)
+    (hcin : 0 ≤ cin ∧ cin < (2 : ℤ) ^ MID_CARRY_BITS)
+    (hcout : 0 ≤ cout ∧ cout < (2 : ℤ) ^ MID_CARRY_BITS) :
+    -Dregg2.Circuit.Emit.EffectLower.P
+        < 1 * x - 1 * y - 0 + (cin - LimbTally.TALLY_CARRY_OFF) - d
+            - (cout - LimbTally.TALLY_CARRY_OFF) * (2 : ℤ) ^ MID_LIMB_BITS
+      ∧ 1 * x - 1 * y - 0 + (cin - LimbTally.TALLY_CARRY_OFF) - d
+            - (cout - LimbTally.TALLY_CARRY_OFF) * (2 : ℤ) ^ MID_LIMB_BITS
+          < Dregg2.Circuit.Emit.EffectLower.P := by
+  have h := LimbTally.rung_value_bounds MID_LIMB_BITS MID_CARRY_BITS 1 1 0
+    LimbTally.TALLY_CARRY_OFF x y d cin cout (by norm_num) (by norm_num) (by norm_num)
+    (by norm_num [LimbTally.TALLY_CARRY_OFF]) hx hy hd hcin hcout
+  obtain ⟨hlo, hhi⟩ := h
+  simp only [MID_LIMB_BITS, MID_CARRY_BITS, LimbTally.TALLY_LIMB_BITS, LimbTally.TALLY_CARRY_BITS,
+    LimbTally.TALLY_CARRY_OFF] at hlo hhi ⊢
+  norm_num [Dregg2.Circuit.Emit.EffectLower.P] at hlo hhi ⊢
+  constructor <;> linarith
+
 /-! ## §6 — the emitted wire JSON (byte-pinned golden) + shape pins. -/
 
--- The Rust decoder ingests THIS string (`parse_vm_descriptor2`); byte-pinned golden (a drift on either
--- side breaks this `#guard`). ⚑ RE-EMITTED 2026-08-03 for the limbed tally: trace width 20 → 42,
--- two declared range tables (16 / 8) where there was one 29-bit felt-wide table, and the two single
--- gate+lookup slacks replaced by ten GENERATED chain gates and twenty-six per-limb lookups.
--- Captured from this module's own `emitVmJson2`.
-#guard emitVmJson2 midLcVerifyDesc ==
-  "{\"name\":\"dregg-midnight-lightclient-verify::v1\",\"ir\":2,\"trace_width\":42,\"public_input_count\":12,\"tables\":[{\"id\":85,\"name\":\"range_w16\",\"arity\":1,\"sem\":\"range\",\"bits\":16},{\"id\":77,\"name\":\"range_w8\",\"arity\":1,\"sem\":\"range\",\"bits\":8}],\"constraints\":[{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":6}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":8}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":9}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":10}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":17}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":18}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":20}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":21}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":22}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":23}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":24}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":25}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":26}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":27}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":28}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":29}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":8}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":12}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":17}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":9}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":18}}},\"r\":{\"t\":\"var\",\"v\":17}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":10}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":14}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":19}}},\"r\":{\"t\":\"var\",\"v\":18}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":11}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":15}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"var\",\"v\":19}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":20},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":21}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":26}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":22}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":27}}},\"r\":{\"t\":\"var\",\"v\":26}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":23}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":28}}},\"r\":{\"t\":\"var\",\"v\":27}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":7}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":24}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":29}}},\"r\":{\"t\":\"var\",\"v\":28}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":29},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":25}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":30,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":31,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":32,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":33,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":34,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":35,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":36,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":37,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":38,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":39,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":40,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":41,\"pi_index\":11}],\"hash_sites\":[],\"ranges\":[]}"
+-- ⚑ THE BYTE-GOLDEN `#guard` IS RETIRED, not deleted — the same move the ETH lane made
+-- (`dfa434d46`) and the Tendermint sibling makes in this commit. A transcribed 10 KB wire string
+-- cannot see a DROPPED leg (it only sees the string it was captured from), it is invisible to
+-- `#assert_axioms`, and it is exactly the `#guard` discipline `metatheory/docs/GUARD-DISCIPLINE.md`
+-- forbids. What replaces it is stronger: `rfl` pins on the compiler's own emission
+-- (`mid_tally_lookups_are_the_compilers_output`), the structural shape pins, and the checked-in
+-- artifact `circuit/descriptors/by-name/dregg-midnight-lightclient-verify-v1.json`, which
+-- `EmitByName.lean` RE-DERIVES from this very `def`.
 
 /-- Shape pins (robust; a layout drift moves these). ⚠ NAMED THEOREMS rather than `#guard`s, per
 `metatheory/docs/GUARD-DISCIPLINE.md`: a `#guard` produces no term and is invisible to
@@ -749,29 +944,56 @@ theorem midLcAir_complete (a : Assignment)
 theorem mid_shape_pins :
     midLcVerifyDesc.traceWidth = MID_LC_WIDTH
       ∧ midLcVerifyDesc.piCount = PI_COUNT
-      ∧ midLcVerifyDesc.constraints.length = 52
+      ∧ midLcVerifyDesc.constraints.length = 66
       ∧ midLcVerifyDesc.tables.length = 2 := by
   refine ⟨rfl, rfl, ?_, rfl⟩
   decide
 
-/-- ⚑ **THE TWO TALLIES ARE TWENTY-SIX LOOKUPS, NOT TWO.** Twenty-two 16-bit limb checks plus eight
-8-bit carry checks, where the two single-felt slacks carried exactly ONE each. A re-emission that
-dropped a limb moves this number; the old shape had no number to move. -/
-theorem mid_tally_lookup_count : tallyRangeLookups.length = 26 := by decide
+/-- ⚑ **THE THREE COMPARISONS ARE THIRTY-FIVE LOOKUPS.** Twenty-three 16-bit limb checks plus twelve
+8-bit carry checks, where the two single-felt slacks carried exactly ONE each and the two-chain
+limbed shape carried twenty-six. A re-emission that dropped a limb moves this number. -/
+theorem mid_tally_lookup_count : tallyRangeLookups.length = 35 := by decide
+
+/-- ⚑ **AND THE LOOKUPS ARE THE COMPILER'S OUTPUT, by `rfl` on the emission** — this block used to be
+twenty-six hand-written `.lookup` literals. `EffectLower.lowerLimbsLeg` is now the ONLY path from a
+`LimbsLeg` to the range teeth in this descriptor. -/
+theorem mid_tally_lookups_are_the_compilers_output :
+    tallyRangeLookups
+      = EffectLower.lowerLimbsLeg totalWeightLeg ++ EffectLower.lowerLimbsLeg signedWeightLeg
+        ++ EffectLower.lowerLimbsLeg wDiffLeg ++ EffectLower.lowerLimbsLeg wDiffCarryLeg
+        ++ EffectLower.lowerLimbsLeg tPosLeg ++ EffectLower.lowerLimbsLeg tPosCarryLeg
+        ++ EffectLower.lowerLimbsLeg sleLeg ++ EffectLower.lowerLimbsLeg sleCarryLeg := rfl
+
+/-- ⚑ **THE IR'S WIDTH VERDICT IS LOAD-BEARING ON THIS DEPLOYED DESCRIPTOR.** All eight limbed
+quantities pass `EffectAirIR.LimbsLeg.mainRailOk`, which REFUSES an empty limb vector and any limb
+width above the wrap-free ceiling 29 — and this descriptor SHIPPED at 128. -/
+theorem mid_tally_legs_are_expressible :
+    totalWeightLeg.mainRailOk = true ∧ signedWeightLeg.mainRailOk = true
+      ∧ wDiffLeg.mainRailOk = true ∧ wDiffCarryLeg.mainRailOk = true
+      ∧ tPosLeg.mainRailOk = true ∧ tPosCarryLeg.mainRailOk = true
+      ∧ sleLeg.mainRailOk = true ∧ sleCarryLeg.mainRailOk = true := by decide
+
+/-- …and the width this AIR SHIPPED is one the IR now refuses outright. A verdict that could not go
+red would be decoration; this is the red, on the actual historical constant. -/
+theorem mid_the_shipped_width_is_refused_by_the_ir :
+    ({ totalWeightLeg with bits := 128 } : EffectAirIR.LimbsLeg).mainRailOk = false
+      ∧ ({ totalWeightLeg with bits := 30 } : EffectAirIR.LimbsLeg).mainRailOk = false := by decide
 
 /-- …and each chain is FIVE generated gates for four rungs — one per rung plus the closure gate that
 forces the final carry into the top difference limb. Without the closure gate the prover could dump a
-residue into a carry nothing reads, and the recomposition would be off by `2^64`. -/
+residue into a carry nothing reads, and the recomposition would be off by `2^64`.
+
+⚑ THREE chains now: quorum, emptiness floor, ordering (`signed ≤ total`). -/
 theorem mid_chain_gate_counts :
-    wDiffChainGates.length = 5 ∧ tPosChainGates.length = 5 := by decide
+    wDiffChainGates.length = 5 ∧ tPosChainGates.length = 5 ∧ sleChainGates.length = 5 := by decide
 
 /-- The two crypto carriers are real trace columns, and none is PI-bound (the results ride hidden). -/
 theorem mid_carriers_are_hidden_columns :
     ED_OK < MID_LC_WIDTH ∧ AUTHSET_OK < MID_LC_WIDTH := by decide
 
-/-- The tally block occupies columns 4..29 contiguously, below the published anchors: four
-total-weight limbs, four signed-weight limbs, five quorum-difference limbs, four quorum carries, five
-floor-difference limbs, four floor carries. -/
+/-- The tally block occupies columns 4..38 contiguously, below the published anchors: four
+total-weight limbs, four signed-weight limbs, and THREE chains of five difference limbs + four
+carries each — quorum (12..20), floor (21..29), ordering (30..38). -/
 theorem mid_tally_block_layout :
     TOTAL_WEIGHT_LIMB 0 = 4 ∧ TOTAL_WEIGHT_LIMB 3 = 7
       ∧ SIGNED_WEIGHT_LIMB 0 = 8 ∧ SIGNED_WEIGHT_LIMB 3 = 11
@@ -779,14 +1001,16 @@ theorem mid_tally_block_layout :
       ∧ WDIFF_CARRY 0 = 17 ∧ WDIFF_CARRY 3 = 20
       ∧ TPOS_LIMB 0 = 21 ∧ TPOS_TOP = 25
       ∧ TPOS_CARRY 0 = 26 ∧ TPOS_CARRY 3 = 29
-      ∧ TPOS_CARRY 3 < ANCHOR_ROOT := by decide
+      ∧ SLE_LIMB 0 = 30 ∧ SLE_TOP = 34
+      ∧ SLE_CARRY 0 = 35 ∧ SLE_CARRY 3 = 38
+      ∧ SLE_CARRY 3 < ANCHOR_ROOT := by decide
 
 /-- The widened finalized-target-root anchor is unchanged by the tally work, only shifted: nine limbs,
-contiguous cols 31..39 → PI 1..9, MSB-first, `⌈256/31⌉ = 9` covering the full 256 bits. -/
+contiguous cols 40..48 → PI 1..9, MSB-first, `⌈256/31⌉ = 9` covering the full 256 bits. -/
 theorem mid_target_root_anchor_layout :
     TARGET_ROOT_LIMBS = 9 ∧ targetRootPins.length = TARGET_ROOT_LIMBS
-      ∧ TARGET_ROOT 0 = 31 ∧ TARGET_ROOT 8 = 39
-      ∧ ROUND_COL = 40 ∧ ERA_COL = 41
+      ∧ TARGET_ROOT 0 = 40 ∧ TARGET_ROOT 8 = 48
+      ∧ ROUND_COL = 49 ∧ ERA_COL = 50
       ∧ PI_TARGET_ROOT 0 = 1 ∧ PI_TARGET_ROOT 8 = 9
       ∧ PI_ROUND = 10 ∧ PI_ERA = 11
       ∧ TARGET_ROOT 8 < ROUND_COL
@@ -818,6 +1042,8 @@ def midLiveCells : List ℤ :=
   , 128, 128, 128, 128               -- WDIFF carries, offset (honest carry 0 rides as 128)
   , 129, 0, 0, 0, 0                  -- TPOS  limbs = 130 − 1 = 129
   , 128, 128, 128, 128               -- TPOS carries, offset
+  , 43, 0, 0, 0, 0                   -- SLE   limbs = 130 − 87 = 43
+  , 128, 128, 128, 128               -- SLE   carries, offset
   , 77777                            -- ANCHOR_ROOT       (addressing layer; no logic gate reads it)
   , 1, 2, 3, 4, 5, 6, 7, 8, 9        -- TARGET_ROOT limbs 0..8 (addressing layer)
   , 4242                             -- ROUND_COL         (addressing layer)
@@ -851,7 +1077,7 @@ theorem midLiveRow_floor_operand_is_the_live_authority_weight :
 strict-supermajority boundary (`WDIFF = 0`, the tightest accepting row there is). Every generated gate
 of `midLcVerifyDesc` vanishes on this row and every range tooth admits it. -/
 theorem midLcAir_accepts_the_live_authority_set : airAccepts midLiveRow := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ### The exactly-2/3 sub-quorum, at a total divisible by 3.
 
@@ -867,6 +1093,8 @@ def mid129Cells : List ℤ :=
   , 128, 128, 128, 128               -- WDIFF carries, offset
   , 128, 0, 0, 0, 0                  -- TPOS  limbs = 129 − 1 = 128
   , 128, 128, 128, 128               -- TPOS carries, offset
+  , 42, 0, 0, 0, 0                   -- SLE   limbs = 129 − 87 = 42
+  , 128, 128, 128, 128               -- SLE   carries, offset
   , 77777
   , 1, 2, 3, 4, 5, 6, 7, 8, 9
   , 4242
@@ -885,7 +1113,7 @@ theorem mid129Row_denotes :
 
 /-- **87 of 129 ACCEPTS.** -/
 theorem midLcAir_accepts_87_of_129 : airAccepts mid129Row := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **AND 86 of 129 — EXACTLY 2/3 — IS REFUSED.** `3·86 = 258 = 2·129`, so the quorum difference
 is `−1`, and `LimbTally.emitted_chain_refuses` gives: NO assignment of difference limbs and carries
@@ -927,6 +1155,28 @@ theorem midLcAir_quorum_also_refuses_the_empty_authority_set (a : Assignment)
   refine LimbTally.emitted_chain_refuses ?_
   rw [hTotal, hSigned]; norm_num
 
+/-- ⚑⚑ **AND A SIGNED WEIGHT ABOVE THE TOTAL IS REFUSED — the row that PROVED before this change.**
+`(total, signed) = (3, 100)` clears the quorum tooth (`3·100 − 2·3 − 1 = 293 ≥ 0`) and the emptiness
+floor (`3 − 1 = 2 ≥ 0`), and satisfied every other emitted constraint. The ordering chain refuses it
+ALONE: its difference is `3 − 100 = −97`, and no vector of non-negative limbs denotes a negative
+number.
+
+This is the Midnight instance of the class the ETH client's `PC = 1023`-of-512 belonged to. -/
+theorem midLcAir_refuses_signed_above_total (a : Assignment)
+    (hTotal : LimbTally.limbValue MID_LIMB_BITS a (LimbTally.bCols wDiffRungs) = 3)
+    (hSigned : LimbTally.limbValue MID_LIMB_BITS a (LimbTally.aCols wDiffRungs) = 100) :
+    ¬ (LimbTally.BodiesVanish a sleChainBodies
+        ∧ LimbTally.LimbsInRange MID_LIMB_BITS a (LimbTally.diffCols sleRungs SLE_TOP)) := by
+  refine LimbTally.emitted_chain_refuses ?_
+  have hA : LimbTally.aCols sleRungs = LimbTally.bCols wDiffRungs := by decide
+  have hB : LimbTally.bCols sleRungs = LimbTally.aCols wDiffRungs := by decide
+  rw [hA, hB, hTotal, hSigned]; norm_num
+
+/-- …and the QUORUM chain does NOT catch it — the pair is the point, and this is the half that shows
+the ordering tooth is not redundant. `3·100 − 2·3 − 1 = 293`, comfortably accepting. -/
+theorem mid_quorum_admits_signed_above_total :
+    (1 : ℤ) ≤ 3 * 100 - 2 * 3 := by norm_num
+
 /-! ### ⚑ THE `u64` TYPE CEILING — the capability, exercised.
 
 130 fits a felt. `2^64 − 1` does not fit anything narrower than the four limbs this AIR now carries,
@@ -945,6 +1195,8 @@ def midU64CeilingCells : List ℤ :=
   , 128, 128, 128, 128               -- WDIFF carries, offset (honest carry 0 at every rung)
   , 65534, 65535, 65535, 65535, 0    -- TPOS  limbs = T − 1 = 18446744073709551614
   , 128, 128, 128, 128               -- TPOS carries, offset
+  , 21844, 21845, 21845, 21845, 0    -- SLE   limbs = T − S = 6148914691236517204
+  , 128, 128, 128, 128               -- SLE   carries, offset
   , 77777
   , 1, 2, 3, 4, 5, 6, 7, 8, 9
   , 4242
@@ -977,7 +1229,7 @@ billion times the BabyBear modulus, which no single column and no declared range
 representable. That is the difference between "adequate for the 130 measured today" and "adequate for
 the type the protocol declares". -/
 theorem midLcAir_accepts_at_the_u64_type_ceiling : airAccepts midU64CeilingRow := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- …and the SAME total does not fit a felt, at any declared width: `2^64 − 1` is more than 9.16
 billion field moduli. The pair is what makes the ceiling row a capability claim and not decoration. -/
@@ -1055,6 +1307,21 @@ theorem mid_carrier_bits_discriminate :
 #assert_axioms u64_ceiling_does_not_fit_a_felt
 #assert_axioms the_live_authority_weight_did_fit_a_felt
 #assert_axioms mid_carrier_bits_discriminate
+-- ⚑⚑ THE CLOSURE, 2026-08-03: `signedWeight ≤ totalWeight`, forced FROM THE TRACE with no
+-- hypothesis about the update, plus the arithmetic that says no tooth subsumes another and the
+-- mod-`p` bridge at the new coefficients.
+#assert_axioms mid_ordering_reads_the_quorum_operands
+#assert_axioms midLcAir_forces_signed_le_total
+#assert_axioms midLcAir_forces_the_tally_sandwich
+#assert_axioms mid_ordering_refusal_is_field_independent
+#assert_axioms mid_three_teeth_are_independent
+#assert_axioms mid_the_three_slacks_are_disjoint
+#assert_axioms mid_sle_rung_no_alias_at_deployed_constants
+#assert_axioms midLcAir_refuses_signed_above_total
+#assert_axioms mid_quorum_admits_signed_above_total
+#assert_axioms mid_tally_lookups_are_the_compilers_output
+#assert_axioms mid_tally_legs_are_expressible
+#assert_axioms mid_the_shipped_width_is_refused_by_the_ir
 
 #print axioms midLcAir_sound
 #print axioms midLcAir_no_forgery

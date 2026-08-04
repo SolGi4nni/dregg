@@ -61,7 +61,7 @@ The de-vacuation reduction survives the exact attack.
 - Byte-matches the build tree copy; `binding_reduces_to_tSdh` / `binding` themselves are
   axiom-clean in the repaired tree.
 
-### `candidates/RepairSurvives.lean` — **BROKEN DUPLICATE. Removed (safe consolidation).**
+### The `candidates/` copy of `RepairSurvives.lean` — **BROKEN DUPLICATE. Removed (safe consolidation).**
 Proof body is identical to the canonical top-level file; the only divergence is five extra
 trailing `#print axioms` lines. One of them references
 `KZG.CommitmentScheme.bindingCondExt_yields_tSdhCondition`, which **does not exist** in the
@@ -209,8 +209,8 @@ extraction. Clean, canaried.
 `AlgebraicTSdh.lean` (keep — the probability-level anchor), `AgmSound.lean` (exploratory),
 `KzgQDlogVacuity.lean` (exploratory / droppable).
 
-**Removed:** `candidates/RepairSurvives.lean` — broken divergent duplicate of the canonical
-top-level file (references a nonexistent constant; does not elaborate).
+**Removed:** the `candidates/` copy of `RepairSurvives.lean` — broken divergent duplicate of the
+canonical top-level file (references a nonexistent constant; does not elaborate).
 
 **Duplicate resolution:** the two `RepairSurvives.lean` differ only in trailing
 `#print axioms` lines; the **top-level** one is canonical (byte-matches the build tree and
@@ -225,7 +225,7 @@ elaborates clean), the `candidates/` one is broken and removed.
 2. `GgmAdaptive.adaptive_bound_lt_one` — same unused `[Fact (Nat.Prime p)]`, same fix.
    Both now match the `omit` idiom `GgmRandomEncoding` already uses; downstream consumers
    (`GgmArkLibTransport`, `GgmRandomEncoding`) rebuilt clean against the changed olean.
-3. Removed the broken duplicate `candidates/RepairSurvives.lean` (safe consolidation).
+3. Removed the broken duplicate — the `candidates/` copy of `RepairSurvives.lean` (safe consolidation).
 
 **Recommended (judgment calls, left for ember):**
 - `GgmDegreeInvariant`: optionally prove the `buildTable`/`buildPaired` mirror faithful to

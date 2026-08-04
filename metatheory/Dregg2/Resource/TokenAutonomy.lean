@@ -32,7 +32,7 @@ of `F` (homs preserve `a*a=a`), which in cancellative `F` is forced to `1`, and 
   Such a protocol MUST instantiate its own resource algebra — its own token.
 
 This is exactly an autonomy theorem for dregg2's set-valued resources: the
-capability lattice (`Exec/Positional.lean` `Auth` + `Finset Auth`), the nullifier and
+capability lattice (`Authority/Positional.lean` `Auth` + `Finset Auth`), the nullifier and
 commitment SETs (`Exec/RecordKernel.lean`), the CRDT `GSet` (`Confluence/CRDT.lean`) —
 all `Finset`-under-`∪` idempotent monoids — are NOT ADA-substitutable. An idempotent
 (non-numeric) resource forces an autonomous (non-numeric) token. See
