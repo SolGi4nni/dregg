@@ -19,6 +19,7 @@ usage:
   poa-curator sign-content --secret PATH --pin PATH --manifest PATH --deployment PATH --epoch N --counter N [--output PATH]
   poa-curator verify-content --pin PATH --manifest PATH --deployment PATH --epoch N --counter N [--signature PATH]
   poa-curator preview-epoch --manifest PATH --deployment PATH [--pin PATH --signature PATH --epoch N --counter N]
+  poa-curator signal-replay --bundle PATH
 
 `keygen` creates a DEVELOPMENT beta curator key, never a Sentyr identity. It
 refuses to overwrite either output and writes the raw 32-byte secret mode 0600.
@@ -26,6 +27,10 @@ refuses to overwrite either output and writes the raw 32-byte secret mode 0600.
 `preview-epoch` is read-only JSON. With no signature tuple it loudly reports an
 unsigned WIP; signature status becomes valid only when all four verification
 flags are supplied and verify against the exact bundle and deployment.
+
+`signal-replay` is read-only. It verifies an exact exported durable-wire bundle,
+reruns every transition through native Lean, and prints one machine-readable
+JSON report naming the deterministic final head.
 "#;
 
 fn main() {
@@ -49,8 +54,20 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         "sign-content" => command_sign_content(&flags),
         "verify-content" => command_verify_content(&flags),
         "preview-epoch" => command_preview_epoch(&flags),
+        "signal-replay" => command_signal_replay(&flags),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
+}
+
+fn command_signal_replay(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(flags, &["bundle"], &[])?;
+    let report = poa_curator::signal_replay::replay_exact_bundle_file(flag_path(flags, "bundle")?)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "{}",
+        serde_json::to_string(&report).map_err(|error| error.to_string())?
+    );
+    Ok(())
 }
 
 fn parse_flags(arguments: &[String]) -> Result<BTreeMap<String, String>, String> {

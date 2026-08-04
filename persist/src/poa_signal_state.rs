@@ -298,6 +298,16 @@ impl PreparedPoaSignalTransitionV1 {
     pub fn judge_output_digest(&self) -> [u8; 32] {
         sha256(&self.judge_output)
     }
+
+    /// Exact canonical Lean input retained by the finalized-transition weld.
+    pub fn judge_input(&self) -> &[u8] {
+        &self.judge_input
+    }
+
+    /// Exact canonical Lean output retained by the finalized-transition weld.
+    pub fn judge_output(&self) -> &[u8] {
+        &self.judge_output
+    }
 }
 
 /// Immutable typed record for one finalized Signal transition.
@@ -378,6 +388,38 @@ impl PoaSignalTransitionV1 {
     /// Exact canonical Lean output bytes.
     pub fn judge_output(&self) -> &[u8] {
         &self.judge_output
+    }
+
+    /// Decode the exact predecessor image carried by this immutable row.
+    pub fn predecessor_head(&self) -> Result<PoaSignalHeadV1> {
+        PoaSignalHeadV1::decode(&self.predecessor_head)
+    }
+
+    /// Decode the exact successor image carried by this immutable row.
+    pub fn successor_head(&self) -> Result<PoaSignalHeadV1> {
+        PoaSignalHeadV1::decode(&self.successor_head)
+    }
+
+    /// Deterministically reconstruct the complete storage row from a predecessor,
+    /// generic finalized commit, and already-judged semantic candidate.
+    ///
+    /// This is an audit primitive, not a semantic judge: callers must obtain the
+    /// candidate by invoking the authoritative evaluator. In particular it does
+    /// not read or trust this row's stored successor. Comparing its result with a
+    /// stored row proves that every storage field, including the successor head
+    /// and transition-chain digest, was derived from those inputs.
+    pub fn reconstruct_for_audit(
+        predecessor: &PoaSignalHeadV1,
+        commit: &CommitRecord,
+        candidate: &PreparedPoaSignalTransitionV1,
+    ) -> Result<Self> {
+        plan_transition(
+            predecessor.encode()?,
+            predecessor.clone(),
+            commit.ordinal,
+            commit,
+            candidate,
+        )
     }
 
     fn key(&self) -> [u8; 40] {
@@ -549,6 +591,33 @@ impl PoaSignalTransitionV1 {
     }
 }
 
+/// One structurally audited, immutable authority history captured from a
+/// single redb read transaction. Semantic replay starts at [`Self::genesis`]
+/// and must derive [`Self::current`] rather than trusting intermediate heads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoaSignalHistoryV1 {
+    genesis: PoaSignalHeadV1,
+    current: PoaSignalHeadV1,
+    transitions: Vec<PoaSignalTransitionV1>,
+}
+
+impl PoaSignalHistoryV1 {
+    /// Exact zero-transition image at the start of the retained journal.
+    pub const fn genesis(&self) -> &PoaSignalHeadV1 {
+        &self.genesis
+    }
+
+    /// Exact currently published head.
+    pub const fn current(&self) -> &PoaSignalHeadV1 {
+        &self.current
+    }
+
+    /// Dense, sequence-ordered immutable transition rows.
+    pub fn transitions(&self) -> &[PoaSignalTransitionV1] {
+        &self.transitions
+    }
+}
+
 impl PersistentStore {
     /// Atomically install the one PoA deployment head, or accept an exact retry.
     ///
@@ -717,6 +786,59 @@ impl PersistentStore {
         validate_tables(&heads, &transitions, &by_ordinal)?;
         let commits = read.open_table(tables::COMMIT_LOG)?;
         validate_generic_commit_carriers(&transitions, &commits)
+    }
+
+    /// Capture one complete, structurally audited Signal history under one read
+    /// transaction. This deliberately performs no game evaluation; the node's
+    /// native-Lean semantic audit consumes the returned immutable snapshot.
+    pub fn load_poa_signal_history(
+        &self,
+        authority_id: [u8; 32],
+    ) -> Result<Option<PoaSignalHistoryV1>> {
+        let read = self.db.begin_read()?;
+        let heads = read.open_table(tables::POA_SIGNAL_HEADS_V1)?;
+        let transitions = read.open_table(tables::POA_SIGNAL_TRANSITIONS_V1)?;
+        let by_ordinal = read.open_table(tables::POA_SIGNAL_BY_COMMIT_ORDINAL_V1)?;
+        validate_tables(&heads, &transitions, &by_ordinal)?;
+        let commits = read.open_table(tables::COMMIT_LOG)?;
+        validate_generic_commit_carriers(&transitions, &commits)?;
+
+        let Some(current_bytes) = heads.get(&authority_id)? else {
+            return Ok(None);
+        };
+        let current = PoaSignalHeadV1::decode(current_bytes.value())?;
+        if current.authority_id != authority_id {
+            return Err(integrity("PoA Signal history head key/authority mismatch"));
+        }
+
+        let capacity = usize::try_from(current.transition_count)
+            .map_err(|_| integrity("PoA Signal history length exceeds usize"))?;
+        let mut ordered = Vec::with_capacity(capacity);
+        for sequence in 1..=current.transition_count {
+            let key = transition_key(authority_id, sequence);
+            let bytes = transitions
+                .get(&key)?
+                .ok_or_else(|| integrity("PoA Signal history has a sequence gap"))?;
+            let transition = PoaSignalTransitionV1::decode(bytes.value())?;
+            if transition.key() != key {
+                return Err(integrity("PoA Signal history key/wire mismatch"));
+            }
+            ordered.push(transition);
+        }
+        let genesis = match ordered.first() {
+            Some(first) => first.predecessor_head()?,
+            None => current.clone(),
+        };
+        if genesis.transition_count != 0 {
+            return Err(integrity(
+                "PoA Signal semantic history does not start at genesis",
+            ));
+        }
+        Ok(Some(PoaSignalHistoryV1 {
+            genesis,
+            current,
+            transitions: ordered,
+        }))
     }
 }
 
@@ -1551,7 +1673,7 @@ mod tests {
     }
 
     #[test]
-    fn poa_signal_gap_and_orphan_audit_refuses() {
+    fn poa_signal_gap_reorder_extra_and_orphan_audit_refuses() {
         let gap_store = initialized_store();
         let first = candidate(&gap_store, 1);
         gap_store
@@ -1572,6 +1694,69 @@ mod tests {
         }
         write.commit().unwrap();
         assert!(gap_store.audit_poa_signal_state().is_err());
+        assert!(gap_store.load_poa_signal_history(AUTHORITY).is_err());
+
+        let reordered_store = initialized_store();
+        let first = candidate(&reordered_store, 3);
+        reordered_store
+            .commit_finalized_turn_with_poa_signal(0, &record(0, [4; 32]), &first)
+            .unwrap();
+        let second = candidate(&reordered_store, 4);
+        reordered_store
+            .commit_finalized_turn_with_poa_signal(1, &record(1, [5; 32]), &second)
+            .unwrap();
+        let write = reordered_store.db.begin_write().unwrap();
+        {
+            let mut transitions = write.open_table(tables::POA_SIGNAL_TRANSITIONS_V1).unwrap();
+            let first_key = transition_key(AUTHORITY, 1);
+            let second_key = transition_key(AUTHORITY, 2);
+            let first_bytes = transitions
+                .get(&first_key)
+                .unwrap()
+                .unwrap()
+                .value()
+                .to_vec();
+            let second_bytes = transitions
+                .get(&second_key)
+                .unwrap()
+                .unwrap()
+                .value()
+                .to_vec();
+            transitions
+                .insert(&first_key, second_bytes.as_slice())
+                .unwrap();
+            transitions
+                .insert(&second_key, first_bytes.as_slice())
+                .unwrap();
+        }
+        write.commit().unwrap();
+        assert!(reordered_store.audit_poa_signal_state().is_err());
+        assert!(reordered_store.load_poa_signal_history(AUTHORITY).is_err());
+
+        let extra_store = initialized_store();
+        let first = candidate(&extra_store, 5);
+        extra_store
+            .commit_finalized_turn_with_poa_signal(0, &record(0, [6; 32]), &first)
+            .unwrap();
+        let published_first = extra_store
+            .load_poa_signal_head(AUTHORITY)
+            .unwrap()
+            .unwrap();
+        let second = candidate(&extra_store, 6);
+        extra_store
+            .commit_finalized_turn_with_poa_signal(1, &record(1, [7; 32]), &second)
+            .unwrap();
+        let published_first_bytes = published_first.encode().unwrap();
+        let write = extra_store.db.begin_write().unwrap();
+        {
+            let mut heads = write.open_table(tables::POA_SIGNAL_HEADS_V1).unwrap();
+            heads
+                .insert(&AUTHORITY, published_first_bytes.as_slice())
+                .unwrap();
+        }
+        write.commit().unwrap();
+        assert!(extra_store.audit_poa_signal_state().is_err());
+        assert!(extra_store.load_poa_signal_history(AUTHORITY).is_err());
 
         let orphan_store = initialized_store();
         let transition = candidate(&orphan_store, 1);
@@ -1587,5 +1772,6 @@ mod tests {
         }
         write.commit().unwrap();
         assert!(orphan_store.audit_poa_signal_state().is_err());
+        assert!(orphan_store.load_poa_signal_history(AUTHORITY).is_err());
     }
 }

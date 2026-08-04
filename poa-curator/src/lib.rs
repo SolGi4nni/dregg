@@ -6,6 +6,8 @@
 //! byte-pinned container, selects values, and delegates signatures to the
 //! canonical `dregg-types` Ed25519 primitive.
 
+pub mod signal_replay;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Read;

@@ -1,14 +1,19 @@
-//! Non-authoritative Path of Angels Signal transport adapter.
+//! Path of Angels Signal transport, finality, and replay adapter.
 //!
 //! This module classifies the reserved SDK event, constructs the complete
 //! canonical Lean wire from a host-only context, invokes the Lean evaluator,
-//! and strictly parses its canonical reply.  It does not load persistence,
-//! derive finality, execute a turn, or commit the successor.  Consequently a
-//! successful [`evaluate_signal_claim`] is an evaluated candidate, never a
+//! and strictly parses its canonical reply. Live evaluation remains
+//! non-authoritative until the finalized-turn weld commits it. Restart audit is
+//! deliberately stronger: it reloads each finalized carrier, reconstructs the
+//! exact judge input, re-invokes native Lean, and derives the complete successor
+//! projection without trusting the stored successor. Consequently a successful
+//! [`evaluate_signal_claim`] alone is still an evaluated candidate, never a
 //! finalized receipt.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
+use dregg_blocklace::finality::Payload;
 use dregg_sdk::poa_signal::{
     SIGNAL_BAND_MAX, SignalClaimError, SignalClaimV1, SignalCode, SignalEventRoute,
     classify_signal_event,
@@ -110,9 +115,9 @@ impl CanonicalSignalOutput {
 
 /// Host-only pieces used to construct a complete judge input.
 ///
-/// The sole constructor currently discards the request from an already strict
-/// canonical input.  A later authoritative adapter may construct this from
-/// persisted state and an authenticated finalized turn; this slice does not.
+/// The public constructor discards the request from an already strict canonical
+/// input. Finality and semantic replay construct the same context from the
+/// persisted head plus the exact finalized turn and receipt.
 #[derive(Clone, Debug)]
 pub struct SignalAuthorityContext {
     config: SignalConfigDto,
@@ -127,6 +132,16 @@ pub struct SignalAuthorityContext {
 pub struct EvaluatedSignalCandidate {
     input: CanonicalSignalInput,
     output: CanonicalSignalOutput,
+}
+
+/// Result of rebuilding one complete persisted Signal history through the
+/// native Lean judge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SignalSemanticAuditReport {
+    pub authority_id: [u8; 32],
+    pub transition_count: u64,
+    pub retained_genesis_digest: [u8; 32],
+    pub rebuilt_head_digest: [u8; 32],
 }
 
 impl EvaluatedSignalCandidate {
@@ -236,6 +251,262 @@ pub fn evaluate_persisted_signal_claim(
     .map_err(|error| SignalAdapterError::PreparedTransition(error.to_string()))
 }
 
+/// Rebuild a finalized Signal history from its retained genesis and immutable
+/// finalized carriers, invoking the native Lean judge once for every row.
+///
+/// The stored predecessor is checked against the previously rebuilt head. The
+/// exact stored judge input must also be the byte-identical input reconstructed
+/// from that head, the carrying finalized `SignedTurn`, and its durable receipt.
+/// Lean then re-executes those exact bytes; its canonical output must be
+/// byte-identical to the stored output. Finally the persistence projection is
+/// reconstructed from the fresh Lean output and generic commit coordinates, so
+/// no stored successor head participates in deriving the next step.
+///
+/// This is an audit-only operation: it never mutates or repairs persistence.
+pub fn audit_persisted_signal_semantics(
+    store: &dregg_persist::PersistentStore,
+    authority_id: [u8; 32],
+) -> Result<SignalSemanticAuditReport, SignalAdapterError> {
+    audit_persisted_signal_semantics_against_genesis(store, authority_id, None)
+}
+
+/// Semantic replay with an optional independently re-derived genesis digest.
+/// Passing `None` names the current boundary exactly: replay starts from the
+/// structurally retained zero-transition genesis installed by the ceremony.
+/// A future boot ceremony can pass `Some` without changing replay semantics.
+pub fn audit_persisted_signal_semantics_against_genesis(
+    store: &dregg_persist::PersistentStore,
+    authority_id: [u8; 32],
+    expected_genesis_digest: Option<[u8; 32]>,
+) -> Result<SignalSemanticAuditReport, SignalAdapterError> {
+    let history = store
+        .load_poa_signal_history(authority_id)
+        .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?
+        .ok_or_else(|| {
+            SignalAdapterError::SemanticReplay(
+                "requested PoA Signal authority has no persisted genesis".to_owned(),
+            )
+        })?;
+    if expected_genesis_digest.is_some_and(|expected| expected != history.genesis().digest()) {
+        return Err(SignalAdapterError::SemanticReplay(
+            "retained Signal genesis differs from the independently expected digest".to_owned(),
+        ));
+    }
+
+    let blocks = load_signal_block_index(store)?;
+    let receipts = load_signal_receipt_index(store)?;
+    let mut rebuilt = history.genesis().clone();
+
+    for stored in history.transitions() {
+        let sequence = stored.sequence();
+        if stored.predecessor_head().map_err(|error| {
+            SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} predecessor is invalid: {error}"
+            ))
+        })? != rebuilt
+        {
+            return Err(SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} predecessor is not the previously rebuilt head"
+            )));
+        }
+
+        let commit = store
+            .commit_record_at(stored.commit_ordinal())
+            .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?
+            .ok_or_else(|| {
+                SignalAdapterError::SemanticReplay(format!(
+                    "Signal sequence {sequence} has no carrying generic commit"
+                ))
+            })?;
+        let block = blocks.get(&commit.block_id).ok_or_else(|| {
+            SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} has no persisted carrying block"
+            ))
+        })?;
+        let signed_bytes = persisted_finalized_turn_bytes(&block.payload).ok_or_else(|| {
+            SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} carrying block has no SignedTurn"
+            ))
+        })?;
+        let signed =
+            crate::signed_turn_validation::decode_signed_turn(signed_bytes).map_err(|error| {
+                SignalAdapterError::SemanticReplay(format!(
+                    "Signal sequence {sequence} carrying SignedTurn is not exact: {error}"
+                ))
+            })?;
+        if signed.turn.hash() != commit.turn_hash || commit.turn_hash != stored.turn_hash() {
+            return Err(SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} disagrees with its finalized SignedTurn"
+            )));
+        }
+        let claim = dregg_sdk::poa_signal::claim_from_exact_signal_turn(&signed.turn).map_err(
+            |error| {
+                SignalAdapterError::SemanticReplay(format!(
+                    "Signal sequence {sequence} carrying turn is not the exact Signal carrier: {error}"
+                ))
+            },
+        )?;
+        let receipt = receipts.get(&commit.receipt_hash).ok_or_else(|| {
+            SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} has no exact durable receipt"
+            ))
+        })?;
+        if receipt.receipt_hash() != commit.receipt_hash
+            || commit.receipt_hash != stored.receipt_hash()
+            || receipt.turn_hash != commit.turn_hash
+            || receipt.federation_id != authority_id
+            || receipt.agent != signed.turn.agent
+        {
+            return Err(SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} receipt/finality coordinates disagree"
+            )));
+        }
+
+        let context = authority_context_from_persisted_head(
+            &rebuilt,
+            authority_id,
+            signed.signer.0,
+            receipt.pre_state_hash,
+        )?;
+        let expected_input = prepare_signal_input(&context, claim)?;
+        let exact_input = std::str::from_utf8(stored.judge_input()).map_err(|_| {
+            SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} judge input is not UTF-8"
+            ))
+        })?;
+        // Invoke native Lean on the stored bytes even when the independently
+        // reconstructed authority input will subsequently expose substitution.
+        // This makes the replay claim literal: every decodable journal input is
+        // re-judged; authority binding and byte-identical output are separate
+        // mandatory checks over that verdict.
+        let replayed_verdict = dregg_lean_ffi::poa_ffi::judge_poa_signal(exact_input)
+            .map_err(SignalAdapterError::LeanTransport)?;
+        if expected_input.as_str().as_bytes() != stored.judge_input() {
+            return Err(SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} stored judge input is not the input derived from finalized authority"
+            )));
+        }
+        let replayed_output = match replayed_verdict {
+            dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(bytes) => bytes,
+            dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Rejected => {
+                return Err(SignalAdapterError::SemanticReplay(format!(
+                    "Lean rejected stored Signal sequence {sequence}"
+                )));
+            }
+        };
+        if replayed_output.as_bytes() != stored.judge_output() {
+            return Err(SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} stored judge output differs from native Lean replay"
+            )));
+        }
+        let output = CanonicalSignalOutput::parse(&replayed_output)?;
+        validate_evaluation_binding(&expected_input.dto, &output.dto)?;
+        let successor_canon = serde_json::to_vec(&output.dto.successor_canon)
+            .map_err(|error| SignalAdapterError::Json(error.to_string()))?;
+        let candidate = dregg_persist::PreparedPoaSignalTransitionV1::new(
+            authority_id,
+            rebuilt.digest(),
+            output.dto.successor_world.sequence,
+            output.dto.successor_canon.revision,
+            successor_canon,
+            expected_input.as_str().as_bytes().to_vec(),
+            replayed_output.into_bytes(),
+        )
+        .map_err(|error| SignalAdapterError::PreparedTransition(error.to_string()))?;
+        let reconstructed = dregg_persist::PoaSignalTransitionV1::reconstruct_for_audit(
+            &rebuilt, &commit, &candidate,
+        )
+        .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?;
+        if &reconstructed != stored {
+            return Err(SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} stored successor is not the projection of native Lean output"
+            )));
+        }
+        rebuilt = reconstructed.successor_head().map_err(|error| {
+            SignalAdapterError::SemanticReplay(format!(
+                "Signal sequence {sequence} rebuilt successor is invalid: {error}"
+            ))
+        })?;
+    }
+
+    if &rebuilt != history.current() {
+        return Err(SignalAdapterError::SemanticReplay(
+            "persisted Signal head differs from the semantically rebuilt history".to_owned(),
+        ));
+    }
+    Ok(SignalSemanticAuditReport {
+        authority_id,
+        transition_count: u64::try_from(history.transitions().len()).map_err(|_| {
+            SignalAdapterError::SemanticReplay(
+                "persisted Signal transition count exceeds u64".to_owned(),
+            )
+        })?,
+        retained_genesis_digest: history.genesis().digest(),
+        rebuilt_head_digest: rebuilt.digest(),
+    })
+}
+
+fn load_signal_block_index(
+    store: &dregg_persist::PersistentStore,
+) -> Result<BTreeMap<[u8; 32], dregg_blocklace::finality::Block>, SignalAdapterError> {
+    let mut out = BTreeMap::new();
+    for block in store
+        .load_all_blocks()
+        .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?
+    {
+        let id = block.id().0;
+        if out.insert(id, block).is_some() {
+            return Err(SignalAdapterError::SemanticReplay(
+                "persisted blocklace contains duplicate computed block ids".to_owned(),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+fn load_signal_receipt_index(
+    store: &dregg_persist::PersistentStore,
+) -> Result<BTreeMap<[u8; 32], dregg_turn::TurnReceipt>, SignalAdapterError> {
+    let mut out = BTreeMap::new();
+    for (index, bytes) in store
+        .load_receipt_chain()
+        .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?
+        .into_iter()
+        .enumerate()
+    {
+        let (receipt, remainder): (dregg_turn::TurnReceipt, &[u8]) =
+            postcard::take_from_bytes(&bytes).map_err(|error| {
+                SignalAdapterError::SemanticReplay(format!(
+                    "durable receipt {index} is not decodable: {error}"
+                ))
+            })?;
+        if !remainder.is_empty() {
+            return Err(SignalAdapterError::SemanticReplay(format!(
+                "durable receipt {index} has trailing bytes"
+            )));
+        }
+        let hash = receipt.receipt_hash();
+        if out.insert(hash, receipt).is_some() {
+            return Err(SignalAdapterError::SemanticReplay(
+                "durable receipt chain contains a duplicate receipt hash".to_owned(),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+fn persisted_finalized_turn_bytes(payload: &Payload) -> Option<&[u8]> {
+    match payload {
+        Payload::Turn(bytes) => Some(bytes),
+        Payload::TurnBundle(bundle) => Some(&bundle.signed_turn),
+        Payload::ConsensusTimedTurnV1(bundle) => Some(bundle.signed_turn()),
+        Payload::Ack
+        | Payload::Checkpoint { .. }
+        | Payload::MembershipVote { .. }
+        | Payload::Data(_) => None,
+    }
+}
+
 /// Transport-layer failures.  None authorizes ordinary-event fallback.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignalAdapterError {
@@ -249,6 +520,7 @@ pub enum SignalAdapterError {
     LeanRejected,
     OutputBinding(&'static str),
     PreparedTransition(String),
+    SemanticReplay(String),
 }
 
 impl fmt::Display for SignalAdapterError {
@@ -273,6 +545,7 @@ impl fmt::Display for SignalAdapterError {
             Self::PreparedTransition(error) => {
                 write!(f, "PoA Signal persistence envelope refused: {error}")
             }
+            Self::SemanticReplay(error) => write!(f, "PoA Signal semantic replay failed: {error}"),
         }
     }
 }
@@ -943,9 +1216,12 @@ fn counter_key(row: &PlayerCounterRowDto) -> (&str, &str, u64, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dregg_blocklace::finality::{Block, Payload};
     use dregg_cell::{CellId, field_from_u64};
+    use dregg_persist::{CommitRecord, PersistentStore, PreparedPoaSignalTransitionV1};
     use dregg_sdk::poa_signal::{SIGNAL_CLAIM_TOPIC_V1, signal_claim_event};
     use dregg_turn::action::{Event, symbol};
+    use zeroize::Zeroizing;
 
     const INPUT_FILE: &str =
         include_str!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json");
@@ -972,6 +1248,113 @@ mod tests {
     fn fixture_head() -> dregg_persist::PoaSignalHeadV1 {
         let input = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
         fixture_signal_head_for_finality_test(hex32(&input.dto.canon.federation_id))
+    }
+
+    #[derive(Clone, Copy)]
+    enum StoredSemanticCorruption {
+        None,
+        Input,
+        Output,
+        Successor,
+    }
+
+    fn persisted_semantic_fixture(
+        corruption: StoredSemanticCorruption,
+    ) -> (PersistentStore, [u8; 32], [u8; 32]) {
+        assert!(
+            dregg_lean_ffi::poa_ffi::poa_signal_judge_available(),
+            "semantic persistence tests require the native Lean Signal judge"
+        );
+        let authority = fixture_head().authority_id();
+        let head = fixture_signal_head_for_finality_test(authority);
+        let store = PersistentStore::open_in_memory().unwrap();
+        store.initialize_poa_signal_head(&head).unwrap();
+
+        let clerk = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0x31; 32]));
+        let claim = claim();
+        let turn = dregg_sdk::poa_signal::signal_claim_turn(&clerk.public_key().0, 0, None, claim);
+        let signed = clerk.sign_turn(&turn);
+        let actor_root = [0x44; 32];
+        let context = authority_context_from_persisted_head(
+            &head,
+            authority,
+            clerk.public_key().0,
+            actor_root,
+        )
+        .unwrap();
+        let evaluated = evaluate_signal_claim(&context, claim).unwrap();
+        let mut stored_input = evaluated.input.dto.clone();
+        let mut stored_output = evaluated.output.dto.clone();
+        let mut successor_canon = evaluated.output.dto.successor_canon.clone();
+        match corruption {
+            StoredSemanticCorruption::None => {}
+            StoredSemanticCorruption::Input => {
+                stored_input.request.actions[0].low =
+                    (stored_input.request.actions[0].low + 1) % (SIGNAL_BAND_MAX + 1);
+            }
+            StoredSemanticCorruption::Output => {
+                stored_output.receipt.post_world.score += 1;
+                stored_output.successor_world.score += 1;
+                stored_output.successor_canon.world.score += 1;
+                successor_canon = stored_output.successor_canon.clone();
+            }
+            StoredSemanticCorruption::Successor => {
+                successor_canon.curator_counter += 1;
+            }
+        }
+        let input_bytes = serde_json::to_vec(&stored_input).unwrap();
+        let output_bytes = serde_json::to_vec(&stored_output).unwrap();
+        let successor_bytes = serde_json::to_vec(&successor_canon).unwrap();
+        let candidate = PreparedPoaSignalTransitionV1::new(
+            authority,
+            head.digest(),
+            stored_output.successor_world.sequence,
+            stored_output.successor_canon.revision,
+            successor_bytes,
+            input_bytes,
+            output_bytes,
+        )
+        .unwrap();
+
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash: signed.turn.hash(),
+            pre_state_hash: actor_root,
+            agent: signed.turn.agent,
+            federation_id: authority,
+            ..Default::default()
+        };
+        let receipt_hash = receipt.receipt_hash();
+        let signed_bytes = postcard::to_stdvec(&signed).unwrap();
+        let block = Block {
+            creator: [0x81; 32],
+            ed25519: [0x82; 32],
+            seq: 1,
+            payload: Payload::Turn(signed_bytes),
+            predecessors: Vec::new(),
+            signature: [0; 64],
+            pq_signature: Vec::new(),
+        };
+        let record = CommitRecord {
+            ordinal: 0,
+            height: 1,
+            block_id: block.id().0,
+            block_executed_up_to: 1,
+            turn_hash: signed.turn.hash(),
+            creator: *signed.turn.agent.as_bytes(),
+            receipt_hash,
+            ledger_root: [0x91; 32],
+            touched_cells: Vec::new(),
+            removed: Vec::new(),
+        };
+        store.persist_block(&block).unwrap();
+        store
+            .append_receipt_chain_entry(0, &postcard::to_stdvec(&receipt).unwrap())
+            .unwrap();
+        store
+            .commit_finalized_turn_with_poa_signal(0, &record, &candidate)
+            .unwrap();
+        let genesis_digest = head.digest();
+        (store, authority, genesis_digest)
     }
 
     #[test]
@@ -1133,5 +1516,70 @@ mod tests {
         .unwrap();
         assert_ne!(prepared.judge_input_digest(), [0; 32]);
         assert_ne!(prepared.judge_output_digest(), [0; 32]);
+    }
+
+    #[test]
+    fn semantic_replay_rebuilds_the_published_head_from_retained_genesis() {
+        let (store, authority, genesis_digest) =
+            persisted_semantic_fixture(StoredSemanticCorruption::None);
+        let report = audit_persisted_signal_semantics_against_genesis(
+            &store,
+            authority,
+            Some(genesis_digest),
+        )
+        .unwrap();
+        assert_eq!(report.authority_id, authority);
+        assert_eq!(report.transition_count, 1);
+        assert_eq!(report.retained_genesis_digest, genesis_digest);
+        assert_eq!(
+            report.rebuilt_head_digest,
+            store
+                .load_poa_signal_head(authority)
+                .unwrap()
+                .unwrap()
+                .digest()
+        );
+        assert!(
+            audit_persisted_signal_semantics_against_genesis(&store, authority, Some([0xfe; 32]),)
+                .unwrap_err()
+                .to_string()
+                .contains("independently expected digest")
+        );
+    }
+
+    #[test]
+    fn semantic_replay_refuses_a_structurally_sealed_input_substitution() {
+        let (store, authority, _) = persisted_semantic_fixture(StoredSemanticCorruption::Input);
+        store
+            .audit_poa_signal_state()
+            .expect("structural hashes alone accept the coherently sealed row");
+        let error = audit_persisted_signal_semantics(&store, authority)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("stored judge input"), "{error}");
+    }
+
+    #[test]
+    fn semantic_replay_refuses_a_structurally_sealed_output_substitution() {
+        let (store, authority, _) = persisted_semantic_fixture(StoredSemanticCorruption::Output);
+        store
+            .audit_poa_signal_state()
+            .expect("structural hashes alone accept the coherently sealed row");
+        let error = audit_persisted_signal_semantics(&store, authority)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("differs from native Lean replay"), "{error}");
+    }
+
+    #[test]
+    fn semantic_replay_refuses_a_successor_not_derived_from_lean_output() {
+        let (store, authority, _) = persisted_semantic_fixture(StoredSemanticCorruption::Successor);
+        store
+            .audit_poa_signal_state()
+            .expect("structural hashes alone accept the coherently sealed row");
+        let error = audit_persisted_signal_semantics(&store, authority)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("stored successor"), "{error}");
     }
 }

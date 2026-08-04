@@ -96,7 +96,17 @@ pub fn verify_poa_signal_boot_from_env(
         runtime_genesis_bytes,
         &manifest,
         &main_data_dir,
-    )
+    )?;
+    let replay =
+        crate::poa_signal_adapter::audit_persisted_signal_semantics(store, head.authority_id())
+            .map_err(|error| format!("PoA Signal semantic boot replay refused: {error}"))?;
+    tracing::info!(
+        transitions = replay.transition_count,
+        retained_genesis = %dregg_types::hex_encode(&replay.retained_genesis_digest),
+        rebuilt_head = %dregg_types::hex_encode(&replay.rebuilt_head_digest),
+        "rebuilt persisted PoA Signal history through native Lean"
+    );
+    Ok(())
 }
 
 fn verify_poa_signal_boot_identity(
