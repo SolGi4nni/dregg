@@ -12,6 +12,7 @@ meta_root="$repo_root/metatheory"
 checked_root="$repo_root/poa/artifacts/poag1"
 mode="${1:-check}"
 poa_root="${POA_ROOT:-}"
+devnet_manifest="${POA_DEVNET_MANIFEST:-}"
 main_data_dir="${POA_MAIN_DATA_DIR:-$HOME/.dregg}"
 
 case "$mode" in
@@ -22,11 +23,14 @@ case "$mode" in
     ;;
 esac
 
-if [ -z "$poa_root" ]; then
-  echo "POA_ROOT is required: POAG1 artifacts are emitted only after a PoA genesis exists" >&2
+if [ -n "$devnet_manifest" ]; then
+  poa_root="$(cd "$(dirname "$devnet_manifest")" && pwd)"
+elif [ -n "$poa_root" ]; then
+  devnet_manifest="$poa_root/poa-devnet.json"
+else
+  echo "POA_ROOT or POA_DEVNET_MANIFEST is required: POAG1 emission is post-genesis" >&2
   exit 2
 fi
-devnet_manifest="$poa_root/poa-devnet.json"
 if [ ! -f "$devnet_manifest" ]; then
   echo "missing authenticated PoA deployment manifest: $devnet_manifest" >&2
   exit 2
@@ -60,6 +64,9 @@ be64() {
 source_files=(
   "Dregg2/Games/PathOfAngels/Core.lean"
   "Dregg2/Games/PathOfAngels/SignalTriangulation.lean"
+  "Dregg2/Games/PathOfAngels/RelayRepair.lean"
+  "Dregg2/Games/PathOfAngels/SalvageLock.lean"
+  "Dregg2/Games/PathOfAngels/FiniteTables.lean"
   "Dregg2/Games/PathOfAngels/Emit.lean"
   "Dregg2/Games/PathOfAngels/EmitMain.lean"
 )
@@ -77,22 +84,30 @@ export LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-2}"
 (
   cd "$meta_root"
   lake build Dregg2.Games.PathOfAngels.Emit
-  POA_EMIT_MODE=signal POA_EMIT_OUT="$tmp_root" \
+  POA_EMIT_MODE=descriptors POA_EMIT_OUT="$tmp_root" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
 )
 
+relay_sha="$(sha_file "$tmp_root/games/relay-repair.json")"
+salvage_sha="$(sha_file "$tmp_root/games/salvage-lock.json")"
 signal_sha="$(sha_file "$tmp_root/games/signal-triangulation.json")"
-content_path="games/signal-triangulation.json"
-content_path_bytes="$(printf '%s' "$content_path" | wc -c | tr -d ' ')"
-content_bytes="$(wc -c < "$tmp_root/$content_path" | tr -d ' ')"
+content_paths=(
+  "games/relay-repair.json"
+  "games/salvage-lock.json"
+  "games/signal-triangulation.json"
+)
 content_root_sha="$(
   {
     printf 'path-of-angels/content-root/v1\0'
-    be64 1
-    be64 "$content_path_bytes"
-    printf '%s' "$content_path"
-    be64 "$content_bytes"
-    command cat "$tmp_root/$content_path"
+    be64 "${#content_paths[@]}"
+    for content_path in "${content_paths[@]}"; do
+      content_path_bytes="$(printf '%s' "$content_path" | wc -c | tr -d ' ')"
+      content_bytes="$(wc -c < "$tmp_root/$content_path" | tr -d ' ')"
+      be64 "$content_path_bytes"
+      printf '%s' "$content_path"
+      be64 "$content_bytes"
+      command cat "$tmp_root/$content_path"
+    done
   } | shasum -a 256 | awk '{printf "sha256:%s", $1}'
 )"
 
@@ -100,7 +115,8 @@ content_root_sha="$(
   cd "$meta_root"
   POA_EMIT_MODE=artifacts POA_EMIT_OUT="$tmp_root" \
     POA_FEDERATION_ID="$federation_id" \
-    POA_SOURCE_SHA256="$source_sha" POA_SIGNAL_SHA256="$signal_sha" \
+    POA_SOURCE_SHA256="$source_sha" POA_RELAY_SHA256="$relay_sha" \
+    POA_SALVAGE_SHA256="$salvage_sha" POA_SIGNAL_SHA256="$signal_sha" \
     POA_CONTENT_ROOT_SHA256="$content_root_sha" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
 )
@@ -112,7 +128,8 @@ catalog_sha="$(sha_file "$tmp_root/catalog.json")"
   cd "$meta_root"
   POA_EMIT_MODE=bundle POA_EMIT_OUT="$tmp_root" \
     POA_FEDERATION_ID="$federation_id" \
-    POA_SOURCE_SHA256="$source_sha" POA_SIGNAL_SHA256="$signal_sha" \
+    POA_SOURCE_SHA256="$source_sha" POA_RELAY_SHA256="$relay_sha" \
+    POA_SALVAGE_SHA256="$salvage_sha" POA_SIGNAL_SHA256="$signal_sha" \
     POA_CONTENT_ROOT_SHA256="$content_root_sha" \
     POA_SCHEMA_SHA256="$schema_sha" POA_CATALOG_SHA256="$catalog_sha" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
@@ -120,6 +137,8 @@ catalog_sha="$(sha_file "$tmp_root/catalog.json")"
 
 test "$(sha_file "$tmp_root/schema.json")" = "$schema_sha"
 test "$(sha_file "$tmp_root/catalog.json")" = "$catalog_sha"
+test "$(sha_file "$tmp_root/games/relay-repair.json")" = "$relay_sha"
+test "$(sha_file "$tmp_root/games/salvage-lock.json")" = "$salvage_sha"
 test "$(sha_file "$tmp_root/games/signal-triangulation.json")" = "$signal_sha"
 
 catalog_federations="$(jq -er '[.missions[].federation_id] | unique | .[]' "$tmp_root/catalog.json")"
@@ -132,6 +151,8 @@ expected=(
   "manifest.json"
   "schema.json"
   "catalog.json"
+  "games/relay-repair.json"
+  "games/salvage-lock.json"
   "games/signal-triangulation.json"
 )
 
@@ -216,4 +237,4 @@ const verified = await authenticateContentEpoch({
 process.stdout.write(`POAG1 curator signature authenticated (activation=${verified.activationDigest})\n`);
 NODE
 
-echo "POAG1 artifacts reproduce exactly (federation=$federation_id source=$source_sha signal=$signal_sha content_root=$content_root_sha)"
+echo "POAG1 artifacts reproduce exactly (federation=$federation_id source=$source_sha relay=$relay_sha salvage=$salvage_sha signal=$signal_sha content_root=$content_root_sha)"

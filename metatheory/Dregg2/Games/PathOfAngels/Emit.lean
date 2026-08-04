@@ -21,6 +21,7 @@ about what those digests authorize.
 import Lean.Data.Json
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SignalTriangulation
+import Dregg2.Games.PathOfAngels.FiniteTables
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.Emit
@@ -44,6 +45,9 @@ private def jsonPrettyArray (xs : List String) : String :=
   match xs with
   | [] => "[]"
   | _ => "[\n" ++ String.intercalate ",\n" xs ++ "\n  ]"
+
+private def jsonBool (value : Bool) : String :=
+  if value then "true" else "false"
 
 private def lowerHexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat ('0'.toNat + n)
@@ -461,6 +465,175 @@ def signalDescriptorJson : String :=
   "  \"outcomes\":" ++ jsonPrettyArray ((signalRows signalTarget).map signalRowJson) ++ "\n" ++
   "}\n"
 
+/-! ## Finite-table descriptors -/
+
+def relayRunSeed : Digest32 :=
+  taggedBytes32 [82, 69, 76, 65, 89, 45, 49]
+
+def salvageRunSeed : Digest32 :=
+  taggedBytes32 [2, 83, 65, 76, 86, 65, 71, 69, 45, 49]
+
+def salvageSeed : Fin 3 :=
+  SalvageLock.seedFromRunSeed salvageRunSeed
+
+theorem salvageSeed_literal : salvageSeed = 2 := by
+  native_decide
+
+#assert_compiled salvageSeed_literal
+
+private def relayStateJson (state : RelayRepair.State) : String :=
+  "    {\"id\":" ++ jsonString (FiniteTables.relayStateId state) ++
+    ",\"terminal\":" ++ jsonBool (RelayRepair.reachableB state.panel) ++
+    ",\"view\":{\"installed\":" ++
+      jsonArray ((FiniteTables.relayInstalledActionIds state.panel).map jsonString) ++
+    ",\"spares\":" ++ toString state.spares ++
+    ",\"turns\":" ++ toString state.turns ++
+    ",\"solved\":" ++ jsonBool (RelayRepair.reachableB state.panel) ++ "}}"
+
+private def relayActionJson (action : RelayRepair.Action) : String :=
+  "    {\"id\":" ++ jsonString (FiniteTables.relayActionId action) ++
+    ",\"label\":" ++ jsonString (FiniteTables.relayActionLabel action) ++
+    ",\"from\":" ++ jsonString (FiniteTables.relayActionFrom action) ++
+    ",\"to\":" ++ jsonString (FiniteTables.relayActionTo action) ++ "}"
+
+private def relayTransitionJson (transition : FiniteTables.RelayTransition) : String :=
+  let nextId := transition.next.map FiniteTables.relayStateId
+  let reason := FiniteTables.relayRefusalReason transition.state transition.action
+  "    {\"state\":" ++ jsonString (FiniteTables.relayStateId transition.state) ++
+    ",\"action\":" ++ jsonString (FiniteTables.relayActionId transition.action) ++
+    ",\"verdict\":" ++ jsonString (if nextId.isSome then "accept" else "refuse") ++
+    ",\"next\":" ++ (match nextId with | none => "null" | some id => jsonString id) ++
+    ",\"reason\":" ++ (match reason with | none => "null" | some value => jsonString value) ++ "}"
+
+def relayDescriptorJson : String :=
+  "{\n" ++
+  "  \"format\":\"POAG1-GAME\",\n" ++
+  "  \"schema_version\":1,\n" ++
+  "  \"game_id\":\"relay-repair\",\n" ++
+  "  \"ruleset\":\"relay-v1\",\n" ++
+  "  \"engine_module\":\"Dregg2.Games.PathOfAngels.RelayRepair\",\n" ++
+  "  \"action_limit\":" ++ toString RelayRepair.MAX_TURNS ++ ",\n" ++
+  "  \"run_seed\":" ++ jsonString (bytes32Hex relayRunSeed) ++ ",\n" ++
+  "  \"security\":{\"classification\":\"transparent-beta-demo\"," ++
+    "\"target_visibility\":\"public\",\"competitive_rewards\":false," ++
+    "\"economic_rewards\":false},\n" ++
+  "  \"state_machine\":{\n" ++
+  "    \"initial_state\":" ++ jsonString (FiniteTables.relayStateId RelayRepair.initialState) ++ ",\n" ++
+  "    \"states\":" ++ jsonPrettyArray (FiniteTables.relayStates.map relayStateJson) ++ ",\n" ++
+  "    \"actions\":" ++ jsonPrettyArray (FiniteTables.relayActions.map relayActionJson) ++ ",\n" ++
+  "    \"transitions\":" ++
+    jsonPrettyArray (FiniteTables.relayTransitions.map relayTransitionJson) ++ "\n" ++
+  "  },\n" ++
+  "  \"output\":{\"requires\":\"terminal\",\"contribution\":\"mission_reward\"," ++
+    "\"artifact\":\"mission_artifact\"}\n" ++
+  "}\n"
+
+private def salvageStateJson (state : SalvageLock.State) : String :=
+  let exposed := match state.exposed with
+    | none => "null"
+    | some slot => toString slot.val
+  "    {\"id\":" ++ jsonString (FiniteTables.salvageStateId state) ++
+    ",\"terminal\":" ++ jsonBool (SalvageLock.solvedB state) ++
+    ",\"view\":{\"cleared\":" ++
+      jsonArray ((FiniteTables.salvageClearedSlots state).map (toString ·.val)) ++
+    ",\"exposed\":" ++ exposed ++
+    ",\"turns\":" ++ toString state.turns ++
+    ",\"solved\":" ++ jsonBool (SalvageLock.solvedB state) ++ "}}"
+
+private def salvageActionJson (seed : Fin 3) (action : SalvageLock.Action) : String :=
+  let slot := SalvageLock.actionSlot action
+  let glyph := SalvageLock.glyphAt seed slot
+  "    {\"id\":" ++ jsonString (FiniteTables.salvageActionId action) ++
+    ",\"label\":" ++ jsonString (FiniteTables.salvageActionLabel action) ++
+    ",\"slot\":" ++ toString slot.val ++
+    ",\"glyph_id\":" ++ toString glyph.val ++
+    ",\"glyph_label\":" ++ jsonString (FiniteTables.salvageGlyphLabel glyph) ++ "}"
+
+private def salvageTransitionJson (transition : FiniteTables.SalvageTransition) : String :=
+  let nextId := transition.next.map FiniteTables.salvageStateId
+  let reason := FiniteTables.salvageRefusalReason transition.state transition.action
+  "    {\"state\":" ++ jsonString (FiniteTables.salvageStateId transition.state) ++
+    ",\"action\":" ++ jsonString (FiniteTables.salvageActionId transition.action) ++
+    ",\"verdict\":" ++ jsonString (if nextId.isSome then "accept" else "refuse") ++
+    ",\"next\":" ++ (match nextId with | none => "null" | some id => jsonString id) ++
+    ",\"reason\":" ++ (match reason with | none => "null" | some value => jsonString value) ++ "}"
+
+def salvageDescriptorJson : String :=
+  let states := FiniteTables.salvageStates salvageSeed
+  let actions := FiniteTables.salvageActions
+  let transitions := FiniteTables.salvageTransitions salvageSeed
+  "{\n" ++
+  "  \"format\":\"POAG1-GAME\",\n" ++
+  "  \"schema_version\":1,\n" ++
+  "  \"game_id\":\"salvage-lock\",\n" ++
+  "  \"ruleset\":\"salvage-v1\",\n" ++
+  "  \"engine_module\":\"Dregg2.Games.PathOfAngels.SalvageLock\",\n" ++
+  "  \"action_limit\":" ++ toString SalvageLock.MAX_TURNS ++ ",\n" ++
+  "  \"run_seed\":" ++ jsonString (bytes32Hex salvageRunSeed) ++ ",\n" ++
+  "  \"security\":{\"classification\":\"transparent-beta-demo\"," ++
+    "\"target_visibility\":\"public\",\"competitive_rewards\":false," ++
+    "\"economic_rewards\":false},\n" ++
+  "  \"state_machine\":{\n" ++
+  "    \"initial_state\":" ++ jsonString (FiniteTables.salvageStateId SalvageLock.initialState) ++ ",\n" ++
+  "    \"states\":" ++ jsonPrettyArray (states.map salvageStateJson) ++ ",\n" ++
+  "    \"actions\":" ++ jsonPrettyArray (actions.map (salvageActionJson salvageSeed)) ++ ",\n" ++
+  "    \"transitions\":" ++ jsonPrettyArray (transitions.map salvageTransitionJson) ++ "\n" ++
+  "  },\n" ++
+  "  \"output\":{\"requires\":\"terminal\",\"contribution\":\"mission_reward\"," ++
+    "\"artifact\":\"mission_artifact\"}\n" ++
+  "}\n"
+
+/-! Strict schema checks for the exact finite-table wire. -/
+
+private def validateFiniteDescriptorCommon (j : Json) : Except String Json := do
+  exactKeys j ["format", "schema_version", "game_id", "ruleset", "engine_module",
+    "action_limit", "run_seed", "security", "state_machine", "output"]
+  let security ← j.getObjVal? "security"
+  exactKeys security ["classification", "target_visibility", "competitive_rewards",
+    "economic_rewards"]
+  let machine ← j.getObjVal? "state_machine"
+  exactKeys machine ["initial_state", "states", "actions", "transitions"]
+  let output ← j.getObjVal? "output"
+  exactKeys output ["requires", "contribution", "artifact"]
+  pure machine
+
+private def validateTransitionObjects (machine : Json) : Except String Unit := do
+  let transitions ← (machine.getObjVal? "transitions") >>= Json.getArr?
+  for transition in transitions do
+    exactKeys transition ["state", "action", "verdict", "next", "reason"]
+
+def validateRelayDescriptor (bytes : String) : Except String Unit := do
+  let machine ← validateFiniteDescriptorCommon (← Json.parse bytes)
+  let states ← (machine.getObjVal? "states") >>= Json.getArr?
+  for state in states do
+    exactKeys state ["id", "terminal", "view"]
+    exactKeys (← state.getObjVal? "view") ["installed", "spares", "turns", "solved"]
+  let actions ← (machine.getObjVal? "actions") >>= Json.getArr?
+  for action in actions do
+    exactKeys action ["id", "label", "from", "to"]
+  validateTransitionObjects machine
+
+def validateSalvageDescriptor (bytes : String) : Except String Unit := do
+  let machine ← validateFiniteDescriptorCommon (← Json.parse bytes)
+  let states ← (machine.getObjVal? "states") >>= Json.getArr?
+  for state in states do
+    exactKeys state ["id", "terminal", "view"]
+    exactKeys (← state.getObjVal? "view") ["cleared", "exposed", "turns", "solved"]
+  let actions ← (machine.getObjVal? "actions") >>= Json.getArr?
+  for action in actions do
+    exactKeys action ["id", "label", "slot", "glyph_id", "glyph_label"]
+  validateTransitionObjects machine
+
+theorem relayDescriptor_exact_schema : validateRelayDescriptor relayDescriptorJson = .ok () := by
+  native_decide
+
+theorem salvageDescriptor_exact_schema :
+    validateSalvageDescriptor salvageDescriptorJson = .ok () := by
+  native_decide
+
+#assert_compiled relayDescriptor_exact_schema
+#assert_compiled salvageDescriptor_exact_schema
+
 def signalBudget : ContributionBudget :=
   { intel := ⟨25, by decide⟩
     supplies := ⟨15, by decide⟩
@@ -546,49 +719,214 @@ def signalPreview
     signalReward
     WorldState.empty
 
-def catalogJson (federationId sourceDigest contentDigest contentRoot : Digest32) : String :=
+def relayContentSession : Digest32 :=
+  taggedBytes32 [80, 79, 65, 45, 82, 69, 76, 65, 89, 45, 49]
+
+def relayBudget : ContributionBudget :=
+  { intel := ⟨10, by decide⟩
+    supplies := ⟨40, by decide⟩
+    cohesion := ⟨20, by decide⟩
+    influence := ⟨5, by decide⟩
+    score := ⟨650, by decide⟩
+    relics := ⟨1, by decide⟩ }
+
+def relayReward : Contribution :=
+  { intel := ⟨10, by decide⟩
+    supplies := ⟨40, by decide⟩
+    cohesion := ⟨20, by decide⟩
+    influence := ⟨5, by decide⟩
+    score := ⟨650, by decide⟩
+    relics := {⟨2⟩}
+    relics_bounded := by simp [RELIC_LIMIT] }
+
+theorem relayReward_within : relayReward.within relayBudget = true := by
+  decide
+
+def relayArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
+  { missionId := ⟨2⟩
+    artifactId := ⟨2⟩
+    sourceDigest
+    contentDigest }
+
+def relayMission (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    MissionSpec :=
+  { missionId := ⟨2⟩
+    artifact := relayArtifact sourceDigest contentDigest
+    epoch := ⟨1⟩
+    federationId
+    contentRoot
+    activationDigest
+    contentSession := relayContentSession
+    runSeed := relayRunSeed
+    budget := relayBudget
+    allowedRelics := {⟨2⟩}
+    privacy := .public
+    ballot := .none
+    artifact_matches := rfl
+    allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
+
+theorem relayReward_accepted
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (relayMission federationId sourceDigest contentDigest contentRoot activationDigest).acceptsContribution
+      relayReward = true := by
+  apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
+  exact ⟨relayReward_within, by simp [relayMission, relayReward]⟩
+
+def relayConfig
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    RelayRepair.Config :=
+  { mission := relayMission federationId sourceDigest contentDigest contentRoot activationDigest
+    reward := relayReward
+    reward_accepted := relayReward_accepted federationId sourceDigest contentDigest contentRoot
+      activationDigest }
+
+def relayPreview
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) : Option WorldState :=
+  applyContribution (relayMission federationId sourceDigest contentDigest contentRoot activationDigest)
+    relayReward WorldState.empty
+
+def salvageContentSession : Digest32 :=
+  taggedBytes32 [80, 79, 65, 45, 83, 65, 76, 86, 65, 71, 69, 45, 49]
+
+def salvageBudget : ContributionBudget :=
+  { intel := ⟨30, by decide⟩
+    supplies := ⟨25, by decide⟩
+    cohesion := ⟨10, by decide⟩
+    influence := ⟨15, by decide⟩
+    score := ⟨750, by decide⟩
+    relics := ⟨1, by decide⟩ }
+
+def salvageReward : Contribution :=
+  { intel := ⟨30, by decide⟩
+    supplies := ⟨25, by decide⟩
+    cohesion := ⟨10, by decide⟩
+    influence := ⟨15, by decide⟩
+    score := ⟨750, by decide⟩
+    relics := {⟨3⟩}
+    relics_bounded := by simp [RELIC_LIMIT] }
+
+theorem salvageReward_within : salvageReward.within salvageBudget = true := by
+  decide
+
+def salvageArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
+  { missionId := ⟨3⟩
+    artifactId := ⟨3⟩
+    sourceDigest
+    contentDigest }
+
+def salvageMission (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    MissionSpec :=
+  { missionId := ⟨3⟩
+    artifact := salvageArtifact sourceDigest contentDigest
+    epoch := ⟨1⟩
+    federationId
+    contentRoot
+    activationDigest
+    contentSession := salvageContentSession
+    runSeed := salvageRunSeed
+    budget := salvageBudget
+    allowedRelics := {⟨3⟩}
+    privacy := .public
+    ballot := .none
+    artifact_matches := rfl
+    allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
+
+theorem salvageReward_accepted
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (salvageMission federationId sourceDigest contentDigest contentRoot activationDigest).acceptsContribution
+      salvageReward = true := by
+  apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
+  exact ⟨salvageReward_within, by simp [salvageMission, salvageReward]⟩
+
+def salvageConfig
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    SalvageLock.Config :=
+  { seed := salvageSeed
+    mission := salvageMission federationId sourceDigest contentDigest contentRoot activationDigest
+    reward := salvageReward
+    reward_accepted := salvageReward_accepted federationId sourceDigest contentDigest contentRoot
+      activationDigest
+    seed_eq := rfl }
+
+def salvagePreview
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) : Option WorldState :=
+  applyContribution (salvageMission federationId sourceDigest contentDigest contentRoot activationDigest)
+    salvageReward WorldState.empty
+
+#assert_axioms relayReward_within
+#assert_axioms relayReward_accepted
+#assert_axioms salvageReward_within
+#assert_axioms salvageReward_accepted
+
+structure GameContentDigests where
+  signal : Digest32
+  relay : Digest32
+  salvage : Digest32
+deriving DecidableEq
+
+private def missionCatalogJson (mission : MissionSpec) (title engineModule ruleset : String)
+    (actionLimit : Nat) (allowedRelics : List RelicId) (descriptorPath : String) : String :=
+  "    {\"mission_id\":" ++ toString mission.missionId.value ++
+  ",\"title\":" ++ jsonString title ++
+  ",\"engine_module\":" ++ jsonString engineModule ++
+  ",\"ruleset\":" ++ jsonString ruleset ++
+  ",\"reward_class\":\"non-economic-demo\"" ++
+  ",\"action_limit\":" ++ toString actionLimit ++
+  ",\"privacy_grade\":" ++ jsonString (privacyGradeTag mission.privacy) ++
+  ",\"ballot_regime\":" ++ jsonString (ballotRegimeTag mission.ballot) ++
+  ",\"epoch\":" ++ toString mission.epoch.value ++
+  ",\"federation_id\":" ++ jsonString (bytes32Hex mission.federationId) ++
+  ",\"content_root\":" ++ jsonString (digestHex mission.contentRoot) ++
+  ",\"activation\":{\"state\":\"detached-signature-required\"," ++
+    "\"digest_source\":\"POA-CONTENT-EPOCH-SIGNATURE-V1\"}" ++
+  ",\"content_session\":" ++ jsonString (bytes32Hex mission.contentSession) ++
+  ",\"run_seed\":" ++ jsonString (bytes32Hex mission.runSeed) ++
+  ",\"budget\":" ++ contributionBudgetJson mission.budget ++
+  ",\"allowed_relics\":" ++ jsonArray (allowedRelics.map (toString ·.value)) ++
+  ",\"descriptor_path\":" ++ jsonString descriptorPath ++
+  ",\"allowed_beta_discoveries\":[" ++ artifactRefJson mission.artifact ++ "]}"
+
+private def previewFixtureJson (id : String) (mission : MissionSpec) (reward : Contribution)
+    (relics : List RelicId) (preview : Option WorldState) : String :=
+  "    {\"id\":" ++ jsonString id ++
+  ",\"mission_id\":" ++ toString mission.missionId.value ++
+  ",\"run_seed\":" ++ jsonString (bytes32Hex mission.runSeed) ++
+  ",\"base_world\":" ++ worldStateJsonWith WorldState.empty [] [] ++
+  ",\"contribution\":" ++ contributionJsonWithRelics reward relics ++
+  ",\"preview_world\":" ++
+    (match preview with
+     | none => "null"
+     | some world => worldStateJsonWith world relics [mission.artifact]) ++ "}"
+
+def catalogJson (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) : String :=
   /- The activation digest necessarily depends on the detached signature over the
   finished manifest, so it cannot occur inside that manifest without a hash cycle.
   Runtime activation replaces this zero only after signature verification. -/
   let inactiveActivation : Digest32 := taggedBytes32 []
-  let mission := signalMission federationId sourceDigest contentDigest contentRoot inactiveActivation
-  let preview := signalPreview federationId sourceDigest contentDigest contentRoot inactiveActivation
+  let signal := signalMission federationId sourceDigest digests.signal contentRoot inactiveActivation
+  let relay := relayMission federationId sourceDigest digests.relay contentRoot inactiveActivation
+  let salvage := salvageMission federationId sourceDigest digests.salvage contentRoot inactiveActivation
+  let missions :=
+    [ missionCatalogJson signal "Signal Triangulation"
+        "Dregg2.Games.PathOfAngels.SignalTriangulation" "signal-v1"
+        SignalTriangulation.MAX_TURNS [⟨1⟩] "games/signal-triangulation.json"
+    , missionCatalogJson relay "Relay Repair" "Dregg2.Games.PathOfAngels.RelayRepair"
+        "relay-v1" RelayRepair.MAX_TURNS [⟨2⟩] "games/relay-repair.json"
+    , missionCatalogJson salvage "Salvage Lock" "Dregg2.Games.PathOfAngels.SalvageLock"
+        "salvage-v1" SalvageLock.MAX_TURNS [⟨3⟩] "games/salvage-lock.json" ]
+  let fixtures :=
+    [ previewFixtureJson "signal-solved-preview-v1" signal signalReward [⟨1⟩]
+        (signalPreview federationId sourceDigest digests.signal contentRoot inactiveActivation)
+    , previewFixtureJson "relay-solved-preview-v1" relay relayReward [⟨2⟩]
+        (relayPreview federationId sourceDigest digests.relay contentRoot inactiveActivation)
+    , previewFixtureJson "salvage-solved-preview-v1" salvage salvageReward [⟨3⟩]
+        (salvagePreview federationId sourceDigest digests.salvage contentRoot inactiveActivation) ]
   "{\n" ++
   "  \"format\":\"POAG1-CATALOG\",\n" ++
   "  \"schema_version\":1,\n" ++
-  "  \"missions\":[{\n" ++
-  "    \"mission_id\":" ++ toString mission.missionId.value ++ ",\n" ++
-  "    \"title\":\"Signal Triangulation\",\n" ++
-  "    \"engine_module\":\"Dregg2.Games.PathOfAngels.SignalTriangulation\",\n" ++
-  "    \"ruleset\":\"signal-v1\",\n" ++
-  "    \"reward_class\":\"non-economic-demo\",\n" ++
-  "    \"action_limit\":" ++ toString SignalTriangulation.MAX_TURNS ++ ",\n" ++
-  "    \"privacy_grade\":" ++ jsonString (privacyGradeTag mission.privacy) ++ ",\n" ++
-  "    \"ballot_regime\":" ++ jsonString (ballotRegimeTag mission.ballot) ++ ",\n" ++
-  "    \"epoch\":" ++ toString mission.epoch.value ++ ",\n" ++
-  "    \"federation_id\":" ++ jsonString (bytes32Hex mission.federationId) ++ ",\n" ++
-  "    \"content_root\":" ++ jsonString (digestHex mission.contentRoot) ++ ",\n" ++
-  "    \"activation\":{\"state\":\"detached-signature-required\"," ++
-    "\"digest_source\":\"POA-CONTENT-EPOCH-SIGNATURE-V1\"},\n" ++
-  "    \"content_session\":" ++ jsonString (bytes32Hex mission.contentSession) ++ ",\n" ++
-  "    \"run_seed\":" ++ jsonString (bytes32Hex mission.runSeed) ++ ",\n" ++
-  "    \"budget\":" ++ contributionBudgetJson mission.budget ++ ",\n" ++
-  "    \"allowed_relics\":" ++
-    jsonArray ["1"] ++ ",\n" ++
-  "    \"descriptor_path\":\"games/signal-triangulation.json\",\n" ++
-  "    \"allowed_beta_discoveries\":[" ++ artifactRefJson mission.artifact ++ "]\n" ++
-  "  }],\n" ++
-  "  \"fixtures\":[{\n" ++
-  "    \"id\":\"signal-solved-preview-v1\",\n" ++
-  "    \"mission_id\":" ++ toString mission.missionId.value ++ ",\n" ++
-  "    \"run_seed\":" ++ jsonString (bytes32Hex signalRunSeed) ++ ",\n" ++
-  "    \"base_world\":" ++ worldStateJsonWith WorldState.empty [] [] ++ ",\n" ++
-  "    \"contribution\":" ++ contributionJsonWithRelics signalReward [⟨1⟩] ++ ",\n" ++
-  "    \"preview_world\":" ++
-    (match preview with
-     | none => "null"
-     | some world => worldStateJsonWith world [⟨1⟩] [mission.artifact]) ++ "\n" ++
-  "  }]\n" ++
+  "  \"missions\":" ++ jsonPrettyArray missions ++ ",\n" ++
+  "  \"fixtures\":" ++ jsonPrettyArray fixtures ++ "\n" ++
   "}\n"
 
 def schemaJson : String :=
@@ -606,7 +944,8 @@ def schemaJson : String :=
     "\"domain\":\"path-of-angels/content-root/v1\\u0000\"," ++
     "\"framing\":\"file_count_be64 || (path_len_be64 || path_utf8 || content_len_be64 || content_bytes)*\"," ++
     "\"entry_order\":\"path_ascending\"," ++
-    "\"paths\":[\"games/signal-triangulation.json\"]},\n" ++
+    "\"paths\":[\"games/relay-repair.json\",\"games/salvage-lock.json\"," ++
+      "\"games/signal-triangulation.json\"]},\n" ++
   "    \"activation_digest\":{\"algorithm\":\"sha256\"," ++
     "\"domain\":\"pathofangels.network/activation-digest/v1\\u0000\"," ++
     "\"framing\":\"schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64\"," ++
@@ -616,85 +955,101 @@ def schemaJson : String :=
   "  }\n" ++
   "}\n"
 
-def canonicalArtifacts (federationId sourceDigest contentDigest contentRoot : Digest32) :
+def canonicalArtifacts (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) :
     List ArtifactBytes :=
   [ { path := "schema.json", mediaType := "application/schema+json", contents := schemaJson }
   , { path := "catalog.json", mediaType := "application/json",
-      contents := catalogJson federationId sourceDigest contentDigest contentRoot }
+      contents := catalogJson federationId sourceDigest contentRoot digests }
+  , { path := "games/relay-repair.json", mediaType := "application/json",
+      contents := relayDescriptorJson }
+  , { path := "games/salvage-lock.json", mediaType := "application/json",
+      contents := salvageDescriptorJson }
   , { path := "games/signal-triangulation.json", mediaType := "application/json",
       contents := signalDescriptorJson } ]
 
 /-! SHA-256 is a deployed crypto primitive rather than a theorem implemented in
-this emitter.  The driver measures these three exact Lean-rendered byte strings;
+this emitter.  The driver measures these five exact Lean-rendered byte strings;
 the signed content epoch anchors the resulting manifest. -/
 structure ArtifactHashes where
   schema : String
   catalog : String
+  relay : String
+  salvage : String
   signal : String
 deriving DecidableEq, Repr
 
 def ArtifactHashes.valid (h : ArtifactHashes) : Bool :=
-  validSha256 h.schema && validSha256 h.catalog && validSha256 h.signal
+  validSha256 h.schema && validSha256 h.catalog && validSha256 h.relay &&
+    validSha256 h.salvage && validSha256 h.signal
 
-def canonicalPins (federationId sourceDigest contentDigest contentRoot : Digest32)
+def canonicalPins (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)
     (hashes : ArtifactHashes) : List ArtifactPin :=
-  match canonicalArtifacts federationId sourceDigest contentDigest contentRoot with
-  | [schema, catalog, signal] =>
-      [schema.pin hashes.schema, catalog.pin hashes.catalog, signal.pin hashes.signal]
+  match canonicalArtifacts federationId sourceDigest contentRoot digests with
+  | [schema, catalog, relay, salvage, signal] =>
+      [ schema.pin hashes.schema
+      , catalog.pin hashes.catalog
+      , relay.pin hashes.relay
+      , salvage.pin hashes.salvage
+      , signal.pin hashes.signal ]
   | _ => []
 
 def manifestFor (sourceDigestString : String)
-    (federationId sourceDigest contentDigest contentRoot : Digest32)
+    (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)
     (hashes : ArtifactHashes) : Manifest :=
   { format := FORMAT
     schemaVersion := SCHEMA_VERSION
     sourceDigest := sourceDigestString
     authority := AUTHORITY
-    artifacts := canonicalPins federationId sourceDigest contentDigest contentRoot hashes }
+    artifacts := canonicalPins federationId sourceDigest contentRoot digests hashes }
 
 /-- A manifest is accepted only if it is exactly the one reconstructed from the
 Lean-owned artifact bytes and the externally measured full-width source digest. -/
 def acceptsManifest (sourceDigestString : String)
-    (federationId sourceDigest contentDigest contentRoot : Digest32)
+    (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)
     (hashes : ArtifactHashes) (candidate : Manifest) : Bool :=
   validSha256 sourceDigestString &&
     hashes.valid &&
     decide (digestHex sourceDigest = sourceDigestString) &&
-    decide (digestHex contentDigest = hashes.signal) &&
+    decide (digestHex digests.signal = hashes.signal) &&
+    decide (digestHex digests.relay = hashes.relay) &&
+    decide (digestHex digests.salvage = hashes.salvage) &&
     decide (candidate =
-      manifestFor sourceDigestString federationId sourceDigest contentDigest contentRoot hashes)
+      manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes)
 
 theorem acceptsManifest_eq_true_iff
-    (sourceDigestString : String) (federationId sourceDigest contentDigest contentRoot : Digest32)
-    (hashes : ArtifactHashes) (candidate : Manifest) :
-    acceptsManifest sourceDigestString federationId sourceDigest contentDigest contentRoot hashes candidate =
+    (sourceDigestString : String) (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) (hashes : ArtifactHashes) (candidate : Manifest) :
+    acceptsManifest sourceDigestString federationId sourceDigest contentRoot digests hashes candidate =
       true ↔
       validSha256 sourceDigestString = true ∧
       hashes.valid = true ∧
       digestHex sourceDigest = sourceDigestString ∧
-      digestHex contentDigest = hashes.signal ∧
+      digestHex digests.signal = hashes.signal ∧
+      digestHex digests.relay = hashes.relay ∧
+      digestHex digests.salvage = hashes.salvage ∧
       candidate =
-        manifestFor sourceDigestString federationId sourceDigest contentDigest contentRoot hashes := by
+        manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes := by
   simp [acceptsManifest, and_assoc]
 
 /-- Parse plus exact reconstruction.  A parse error, version drift, field drift,
 pin mismatch, reordered file, unknown file, or source mismatch is an error. -/
 def ingestManifest (sourceDigestString : String)
-    (federationId sourceDigest contentDigest contentRoot : Digest32)
+    (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)
     (hashes : ArtifactHashes) (bytes : String) : Except String Manifest := do
   let parsed ← parseManifest bytes
-  if acceptsManifest sourceDigestString federationId sourceDigest contentDigest contentRoot hashes parsed then
+  if acceptsManifest sourceDigestString federationId sourceDigest contentRoot digests hashes parsed then
     pure parsed
   else
     throw "POAG1 manifest does not exactly match the Lean-emitted bundle"
 
 theorem ingestManifest_exact
-    (sourceDigestString : String) (federationId sourceDigest contentDigest contentRoot : Digest32)
-    (hashes : ArtifactHashes) (bytes : String) (accepted : Manifest)
-    (h : ingestManifest sourceDigestString federationId sourceDigest contentDigest contentRoot hashes bytes =
+    (sourceDigestString : String) (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) (hashes : ArtifactHashes) (bytes : String) (accepted : Manifest)
+    (h : ingestManifest sourceDigestString federationId sourceDigest contentRoot digests hashes bytes =
       .ok accepted) :
     accepted =
-      manifestFor sourceDigestString federationId sourceDigest contentDigest contentRoot hashes := by
+      manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes := by
   cases hm : parseManifest bytes with
   | error err =>
       simp only [ingestManifest, hm, bind, Except.bind] at h
@@ -705,7 +1060,7 @@ theorem ingestManifest_exact
       · rename_i ha
         injection h with h
         subst accepted
-        exact (acceptsManifest_eq_true_iff _ _ _ _ _ _ _).mp ha |>.2.2.2.2
+        exact (acceptsManifest_eq_true_iff _ _ _ _ _ _ _).mp ha |>.2.2.2.2.2.2
       · contradiction
 
 #assert_axioms acceptsManifest_eq_true_iff
