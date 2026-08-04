@@ -244,6 +244,11 @@ Before the first beta is called protocol-backed:
 - The public bundle, authenticated beta deployment, node artifact, and documented hashes are the
   exact tested bytes.
 
+The discoverable gate is `scripts/test-poa.sh source`. After genesis, emission, and the curator
+ceremony, `scripts/test-poa.sh release` adds exact Lean reproduction, signature/rollback pins,
+artifact staging, and the full browser hostile suite. A focused green that is absent from this gate
+is not durable coverage.
+
 ## Near-term build order
 
 1. Close the judged-receipt, counter, canon-admission, seed, and signed-content contracts in Lean.
@@ -258,4 +263,3 @@ Before the first beta is called protocol-backed:
    reproduction steps.
 8. Expand content through declarative deck maps and additional finite games; start The Descent work
    once the shared receipt/content spine is boringly reliable.
-

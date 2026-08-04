@@ -1,0 +1,37 @@
+name: Path of Angels source gate
+
+# Manual by design. The gate compiles the Lean semantic spine and the Rust/DrEX
+# slice, so firing it on every edit would reclaim the shared hbox build capacity
+# that lean-seed.yml deliberately freed. It is the CI-discoverable entrypoint for
+# pre-release and protocol-boundary changes; the deployment release gate invokes
+# the stronger post-genesis artifact half separately.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: path-of-angels-source-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain sanity
+        run: |
+          set -euo pipefail
+          command -v lake >/dev/null
+          command -v cargo-nextest >/dev/null
+          command -v node >/dev/null
+          command -v npm >/dev/null
+      - name: Install extension development dependencies
+        working-directory: extension
+        run: npm ci || npm install
+      - name: Run the complete pre-ceremony gate
+        env:
+          LEAN_NUM_THREADS: 4
+        run: scripts/test-poa.sh source
