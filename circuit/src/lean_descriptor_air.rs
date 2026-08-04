@@ -531,6 +531,19 @@ impl<'a> JsonCursor<'a> {
         self.expect(b':')
     }
 
+    /// Consume a bare JSON `null` if one is next, reporting whether it did. The Lean emitter
+    /// renders `Option.none` as `null` (`proof_bind`'s `vk_pin` / `bound`) — an ABSENT declaration
+    /// carried as a value the decoder must see, rather than a key the decoder may skip.
+    pub(crate) fn try_null(&mut self) -> Result<bool, String> {
+        self.skip_ws();
+        if self.s[self.i..].starts_with(b"null") {
+            self.i += 4;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Parse a bare JSON boolean literal (`true` / `false`). The Lean emitter renders
     /// `WindowConstraint.onTransition` exactly so (`window_gate`'s `on_transition`).
     pub(crate) fn parse_bool(&mut self) -> Result<bool, String> {
@@ -617,6 +630,29 @@ pub(crate) fn parse_range(c: &mut JsonCursor) -> Result<RangeSpec, String> {
     let bits = c.parse_int()?;
     if bits < 0 {
         return Err(format!("negative range bits {bits}"));
+    }
+    // ⚑ THE WIDTH REFUSAL, AT THE JSON DOOR, FOR THE `.ranges[]` SPELLING.
+    //
+    // `descriptor_ir2::parse_table_def` has refused a vacuous `.tables[].bits` here for a while,
+    // and `descriptor_ir2_canonical` refuses it at the protocol-identity door. `.ranges[].bits`
+    // was refused at NEITHER: this function checked only for a negative width, so a per-wire
+    // range gate could declare 31..63 and constrain nothing. Contained in practice only because
+    // `check_descriptor2` refuses non-empty `.ranges` for v2 assembly — but THIS parser also
+    // feeds the v1 path, which accepted it. A gate that something walks around is not a gate.
+    //
+    // Bound and reason are the table door's, because the obligation is identical: at BabyBear
+    // `p < 2^31`, so `[0, 2^bits)` with `bits >= 31` contains every field element (Lean:
+    // `RangeFieldContainment.range_vacuous_at_or_above_31`, a general theorem over ALL widths
+    // `>= 31` and ALL field elements). 30 is deliberately NOT refused here — it is not wrap-free
+    // but it is not vacuous either, and 50 emitted `.ranges[]` entries declare it.
+    if bits as usize >= crate::descriptor_ir2::VACUOUS_RANGE_BITS {
+        return Err(format!(
+            "range entry on wire {wire} declares bits {bits} >= {}: the BabyBear field is below \
+             2^31, so [0, 2^{bits}) contains every element and the gate refuses nothing (Lean: \
+             RangeFieldContainment.range_vacuous_at_or_above_31). Re-emit the descriptor at a \
+             wrap-free width (<= 29), or express the quantity as a limb VECTOR at that width",
+            crate::descriptor_ir2::VACUOUS_RANGE_BITS
+        ));
     }
     c.expect(b'}')?;
     Ok(RangeSpec {

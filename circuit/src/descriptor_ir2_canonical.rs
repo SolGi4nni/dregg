@@ -68,6 +68,25 @@ pub enum CanonicalDescriptorError {
     /// nothing, and until 2026-08-03 the layout filler ALSO masked it into `v >= 1` and refused
     /// every honest row. Vacuous one side, unprovable the other, and no load path looked.
     VacuousRangeWidth { bits: usize, max: usize },
+    /// ⚑ A `.ranges[]` ENTRY declares a width that refuses nothing at BabyBear.
+    ///
+    /// The sibling of [`Self::VacuousRangeWidth`], and it was the hole that variant's docblock
+    /// did not cover. `.tables[].bits` was refused at both doors; `.ranges[].bits` was refused at
+    /// NEITHER — `parse_range` checked only for a NEGATIVE width and this decoder checked nothing
+    /// at all. A `.ranges[]` entry is the same range obligation in the other spelling (a per-wire
+    /// gate rather than a declared table), so a width at or above `VACUOUS_RANGE_BITS` is exactly
+    /// as vacuous: `[0, 2^bits)` contains every element of a field below `2^31`, and the gate
+    /// constrains nothing.
+    ///
+    /// This is not hypothetical in kind: three light clients shipped `>= 31` TABLE widths that let
+    /// a sub-quorum and an empty stake table through, because a table wider than the field refuses
+    /// nothing. Naming the WIRE here is deliberate — a range entry is per-wire, so the operator
+    /// needs to know which wire lost its bound, not merely that one did.
+    VacuousRangeSpecWidth {
+        wire: usize,
+        bits: usize,
+        max: usize,
+    },
 }
 
 impl fmt::Display for CanonicalDescriptorError {
@@ -109,6 +128,14 @@ impl fmt::Display for CanonicalDescriptorError {
                 f,
                 "range table declares bits {bits} >= {max}: the BabyBear field is below 2^31, so \
                  [0, 2^{bits}) contains every element and the lookup refuses nothing"
+            ),
+            Self::VacuousRangeSpecWidth { wire, bits, max } => write!(
+                f,
+                "range entry on wire {wire} declares bits {bits} >= {max}: the BabyBear field is \
+                 below 2^31, so [0, 2^{bits}) contains every element and the gate refuses nothing \
+                 (Lean: RangeFieldContainment.range_vacuous_at_or_above_31). Re-emit the \
+                 descriptor at a wrap-free width (<= 29), or express the quantity as a limb \
+                 VECTOR at that width"
             ),
         }
     }
@@ -418,10 +445,37 @@ fn write_constraint(
         }
         VmConstraint2::ProofBind(binding) => {
             writer.u8(5);
-            let ProofBindSpec { guard, commit, vk } = binding;
+            let ProofBindSpec {
+                guard,
+                commit,
+                vk,
+                vk_pin,
+                bound,
+            } = binding;
             write_lean_expr(writer, guard, 0)?;
             write_lean_expr(writer, commit, 0)?;
-            write_lean_expr(writer, vk, 0)
+            write_lean_expr(writer, vk, 0)?;
+            // ⚑ The seam's two declared halves, in the FINGERPRINT. A descriptor that drops its
+            // program pin or its bound expression must move its canonical digest — otherwise the
+            // registry could not tell a bound seam from a declarative one, and "the seam landed"
+            // would be a claim about a file rather than about the committed object.
+            match vk_pin {
+                None => writer.u8(0),
+                Some(v) => {
+                    writer.u8(1);
+                    writer.i64(*v);
+                }
+            }
+            match bound {
+                None => {
+                    writer.u8(0);
+                    Ok(())
+                }
+                Some(b) => {
+                    writer.u8(1);
+                    write_lean_expr(writer, b, 0)
+                }
+            }
         }
         VmConstraint2::WindowGate(gate) => {
             writer.u8(6);
@@ -819,6 +873,16 @@ fn read_constraint(reader: &mut Reader<'_>) -> Result<VmConstraint2, CanonicalDe
             guard: read_lean_expr(reader, 0)?,
             commit: read_lean_expr(reader, 0)?,
             vk: read_lean_expr(reader, 0)?,
+            vk_pin: if reader.boolean()? {
+                Some(reader.i64()?)
+            } else {
+                None
+            },
+            bound: if reader.boolean()? {
+                Some(read_lean_expr(reader, 0)?)
+            } else {
+                None
+            },
         })),
         6 => Ok(VmConstraint2::WindowGate(WindowGateSpec {
             body: read_window_expr(reader, 0)?,
@@ -846,10 +910,19 @@ fn read_hash_site(reader: &mut Reader<'_>) -> Result<VmHashSite, CanonicalDescri
 }
 
 fn read_range(reader: &mut Reader<'_>) -> Result<RangeSpec, CanonicalDescriptorError> {
-    Ok(RangeSpec {
-        wire: reader.index("RangeSpec.wire")?,
-        bits: reader.index("RangeSpec.bits")?,
-    })
+    let wire = reader.index("RangeSpec.wire")?;
+    let bits = reader.index("RangeSpec.bits")?;
+    // ⚑ THE OTHER SPELLING OF THE SAME OBLIGATION, AT THE PROTOCOL-IDENTITY DOOR.
+    // `read_table_semantics` refuses a vacuous `.tables[].bits`; without this, a record could
+    // carry the identical vacuity as a `.ranges[]` entry and walk straight past it.
+    if bits >= VACUOUS_RANGE_BITS {
+        return Err(CanonicalDescriptorError::VacuousRangeSpecWidth {
+            wire,
+            bits,
+            max: VACUOUS_RANGE_BITS,
+        });
+    }
+    Ok(RangeSpec { wire, bits })
 }
 
 /// Decode exactly one schema-v1 canonical DescriptorIR-v2 record.
@@ -1019,6 +1092,8 @@ mod tests {
                 guard: expr(40),
                 commit: expr(41),
                 vk: expr(42),
+                vk_pin: Some(-7),
+                bound: Some(expr(45)),
             }),
             VmConstraint2::WindowGate(WindowGateSpec {
                 body: WindowExpr::Add(
@@ -1052,7 +1127,16 @@ mod tests {
                     HashInput::Col(3),
                 ],
             }],
-            ranges: vec![RangeSpec { wire: 88, bits: 31 }],
+            // ⚑ WAS `bits: 31`, AND THAT WAS THE BUG SITTING IN THE FIXTURE.
+            //
+            // This is the all-variant round-trip probe, so it must keep exercising `.ranges[]` —
+            // hence a width, not an empty vec. But 31 is VACUOUS at BabyBear, and this fixture
+            // round-tripped it green, which is precisely how the open door stayed invisible: the
+            // one place that pinned `.ranges[].bits` behaviour pinned it to ACCEPT the vacuous
+            // width. 29 is the last wrap-free width (`RangeFieldContainment.wrap_free_iff_le_29`),
+            // so the round trip now carries an HONEST entry, and the refusal of 31 is asserted by
+            // `a_vacuous_range_entry_width_is_refused_by_the_canonical_decoder` below.
+            ranges: vec![RangeSpec { wire: 88, bits: 29 }],
         }
     }
 
@@ -1117,6 +1201,72 @@ mod tests {
                 .unwrap_or_else(|e| panic!("a {ok}-bit range table must still decode: {e}"));
             assert_eq!(decoded, d);
         }
+    }
+
+    /// ⚑ **THE `.ranges[]` SPELLING OF THE SAME REFUSAL — THE DOOR THAT WAS LEFT OPEN.**
+    ///
+    /// The test above pins `.tables[].bits`. Until 2026-08-03 `.ranges[].bits` was refused at
+    /// NEITHER door: [`crate::lean_descriptor_air::parse_range`] checked only for a NEGATIVE
+    /// width, and [`read_range`] checked nothing. A `.ranges[]` entry is the same range
+    /// obligation expressed per-wire, so a width at or above `VACUOUS_RANGE_BITS` is exactly as
+    /// vacuous — and the all-variant fixture was itself round-tripping `bits: 31`, which is how
+    /// the hole stayed green.
+    ///
+    /// The negative clause matters as much as the positive one: 30 is NOT swept in. It is not
+    /// wrap-free, but it is not vacuous either, and 50 emitted `.ranges[]` entries declare it —
+    /// refusing it here would be a different change (a completeness re-pricing), not this one.
+    #[test]
+    fn a_vacuous_range_entry_width_is_refused_by_the_canonical_decoder() {
+        for bad in [VACUOUS_RANGE_BITS, 32, 63, 64, 128] {
+            let mut d = all_variant_descriptor();
+            for r in d.ranges.iter_mut() {
+                r.bits = bad;
+            }
+            let bytes = canonical(&d);
+            match decode_canonical_effect_vm_descriptor2(&bytes) {
+                Err(CanonicalDescriptorError::VacuousRangeSpecWidth { wire, bits, max }) => {
+                    assert_eq!(
+                        wire, 88,
+                        "the refusal must name the wire that lost its bound"
+                    );
+                    assert_eq!(bits, bad);
+                    assert_eq!(max, VACUOUS_RANGE_BITS);
+                }
+                other => panic!("a {bad}-bit range ENTRY must be refused at decode, got {other:?}"),
+            }
+        }
+        // …and the honest widths still round-trip, 30 among them.
+        for ok in [1usize, 8, 16, 29, 30] {
+            let mut d = all_variant_descriptor();
+            for r in d.ranges.iter_mut() {
+                r.bits = ok;
+            }
+            let decoded = decode_canonical_effect_vm_descriptor2(&canonical(&d))
+                .unwrap_or_else(|e| panic!("a {ok}-bit range entry must still decode: {e}"));
+            assert_eq!(decoded, d);
+        }
+    }
+
+    /// The JSON door, same obligation. `parse_vm_descriptor2` routes `.ranges[]` through
+    /// `lean_descriptor_air::parse_range`, which is also the v1 path's range parser — so this one
+    /// assertion covers both spellings of the JSON entry.
+    #[test]
+    fn a_vacuous_range_entry_width_is_refused_by_the_json_door() {
+        for bad in [31usize, 32, 63, 64, 128] {
+            let json = format!(
+                r#"{{"ir":2,"name":"vacuous-range-entry","trace_width":8,"public_input_count":1,"tables":[],"constraints":[{{"t":"gate","body":{{"t":"var","v":0}}}}],"hash_sites":[],"ranges":[{{"wire":3,"bits":{bad}}}]}}"#
+            );
+            let err = parse_vm_descriptor2(&json)
+                .expect_err("a vacuous range entry must be refused at the JSON door");
+            assert!(
+                err.contains("refuses nothing") && err.contains("wire 3"),
+                "the refusal must name the wire and the reason, got: {err}"
+            );
+        }
+        // 30 still parses — the deliberate non-refusal.
+        let json = r#"{"ir":2,"name":"honest-range-entry","trace_width":8,"public_input_count":1,"tables":[],"constraints":[{"t":"gate","body":{"t":"var","v":0}}],"hash_sites":[],"ranges":[{"wire":3,"bits":30}]}"#;
+        let d = parse_vm_descriptor2(json).expect("a 30-bit range entry must still parse");
+        assert_eq!(d.ranges, vec![RangeSpec { wire: 3, bits: 30 }]);
     }
 
     #[test]

@@ -537,13 +537,29 @@ pub(crate) fn fill_reserved_bits(row: &mut [BabyBear], sealed_mask: u32, mode_fl
 ///
 /// `new_balance` is the post-effect cell balance. We split it the same way
 /// `split_u64` does (lo = low 30 bits, hi = balance >> 30) and write 30
-/// boolean bits per limb. The AIR enforces `Σ bit_i 2^i == balance_{lo,hi}`,
-/// which pins each limb into `[0, 2^30)` and — because a wrapped (underflowed)
-/// debit lands ≥ 2^30 — rejects modular-subtraction underflow in-circuit.
+/// boolean bits per limb.
 ///
-/// Honest balances always fit (init limbs asserted `< 2^30` at trace gen, so
-/// every limb stays `< 2^30`). A malicious prover that writes a wrapped limb
-/// cannot produce a consistent 30-bit decomposition; the AIR then rejects.
+/// ⚑ **THESE COLUMNS ARE DELETED BEFORE THEY ARE PROVED, AND THE UNDERFLOW CLAIM THAT USED TO
+/// BE HERE WAS FALSE.** This said the recomposition "pins each limb into `[0, 2^30)` and —
+/// because a wrapped (underflowed) debit lands ≥ 2^30 — rejects modular-subtraction underflow
+/// in-circuit", and that "a malicious prover that writes a wrapped limb cannot produce a
+/// consistent 30-bit decomposition".
+///
+/// Both sentences are wrong. `p = 2013265921 < 2^31`, so an underflow of magnitude `k` lands at
+/// `p - k`, which is BELOW `2^30` for every `k > 939524097` — such a value has a perfectly
+/// consistent 30-bit decomposition and the constraint accepts it
+/// (`Dregg2.Circuit.RangeFieldContainment.underflow_admitted_at_30_iff`, both directions,
+/// `#assert_axioms`-clean).
+///
+/// It is moot on the wire regardless: the columns this writes (absolute 126..156 and 156..186)
+/// fall inside the E1 kill-set run `(101, 186)` that every wide-registry member deletes
+/// (`e1_compact_generated::E1_COMPACT_TABLE`), and `trace_rotated::compact_e1_columns` drops
+/// them from the producer's rows. Nothing deployed evaluates them. The real over-debit refusal
+/// is the availability weld's 15-bit borrow chain plus its no-final-borrow gate — see the note
+/// on `columns::BAL_LIMB_BITS`.
+///
+/// This function survives because the v1-face row shape is still built before compaction, not
+/// because the constraint it feeds carries any weight.
 pub(crate) fn fill_balance_limb_bits(row: &mut [BabyBear], new_balance: u64) {
     let lo = (new_balance & 0x3FFF_FFFF) as u32; // low 30 bits
     let hi = new_balance >> 30; // remaining bits

@@ -273,18 +273,70 @@ pub const AUX_BASE: usize = STATE_AFTER_BASE + state::SIZE; // 76 + 14 = 90
 /// to PI[v3::ASSET_CLASS], binding the per-cell asset class into the proof).
 pub const NUM_AUX: usize = 98;
 
-/// Bit-width of each balance limb's in-circuit range proof. Both limbs are
-/// decomposed into `BAL_LIMB_BITS` boolean aux columns and recomposed; the
-/// recomposed value is `< 2^30 < p`, so the decomposition is UNIQUE and the
-/// in-field recomposition CANNOT wrap. A debit whose modular subtraction
-/// underflowed (`old - amount` ≡ p - k) would land at a field element
-/// ≥ 2^30 that has no 30-bit boolean decomposition — the recomposition
-/// constraint then fails, so the STARK rejects the wrap in-circuit.
+/// Bit-width of each balance limb's v1-face boolean decomposition.
 ///
-/// 30 bits covers every honest balance limb (init limbs are asserted
-/// `< 2^30` at trace generation; balances thus span `[0, 2^60)`), and keeps
-/// the recomposition strictly below the BabyBear prime so there is exactly
-/// one satisfying witness per field value.
+/// ⚑ **THE UNDERFLOW ARGUMENT THAT USED TO BE WRITTEN HERE WAS FALSE, AND THE MECHANISM IT
+/// CREDITED IS NOT IN THE DEPLOYED CIRCUIT.** Both halves of that are worth stating, because
+/// either one alone would have left the next reader with a working lemma.
+///
+/// It read: *"A debit whose modular subtraction underflowed (`old - amount` ≡ p - k) would land
+/// at a field element ≥ 2^30 that has no 30-bit boolean decomposition — the recomposition
+/// constraint then fails, so the STARK rejects the wrap in-circuit."*
+///
+/// **1. It is false on 12.5% of its own band.** `p = 2013265921 ≈ 2^30.907`, so `p - k < 2^30`
+/// exactly when `k > p - 2^30 = 939524097`. For every `k ∈ [939524098, 2^30)` the underflowed
+/// element IS below `2^30`, DOES have a 30-bit decomposition, and a 30-bit range obligation
+/// ACCEPTS it. Since both limbs are `< 2^30`, the difference `k = amount_limb - old_limb` ranges
+/// over all of `[0, 2^30)`, so the admitted band is `134217726` values reached by an ordinary
+/// over-debit — not a corner. Proved both directions, `#assert_axioms`-clean, at
+/// `Dregg2.Circuit.RangeFieldContainment.underflow_admitted_at_30_iff` (and at this constant, as
+/// `deployed_underflow_admitted_iff`). 29 is the last wrap-free width (`wrap_free_iff_le_29`);
+/// at 29 the band is EMPTY (`no_underflow_admitted_at_29`), which is why narrowing would have
+/// closed it rather than merely shrunk it.
+///
+/// **2. The 60 boolean columns this constant sizes are DEAD on every deployed member.** They are
+/// `AUX_BASE + NEW_BAL_LO_BIT_BASE` = absolute column 126 and `+ NEW_BAL_HI_BIT_BASE` = 156, and
+/// every wide-registry member's E1 kill-set deletes the run `(101, 186)` — see
+/// `e1_compact_generated::E1_COMPACT_TABLE`. `helpers::fill_balance_limb_bits` still writes them
+/// and `trace_rotated::compact_e1_columns` then drops them. So the recomposition constraint the
+/// old comment leaned on is not merely too weak; it is not there.
+///
+/// # What actually stops an over-debit
+///
+/// A **15-bit schoolbook borrow chain with a no-final-borrow gate**, in the availability weld —
+/// not a range proof on the post-state limb. On the deployed transfer member
+/// (`transferVmDescriptor2R24`, row 1 of `descriptors/rotation-wide-registry-staged.tsv`) the
+/// gates are, with `c54` = pre-balance lo, `c68` = amount, `c69` = direction, `c76` = post lo:
+///
+/// ```text
+///   [36] c54 = c94 + 2^15·c95        [37] c76 = c96 + 2^15·c97
+///   [38] c68 = c98 + 2^15·c99        ← the AMOUNT is decomposed and range-checked too
+///   [39] c100²= c100                 [40] c101² = c101          (borrow bits boolean)
+///   [41] c69·(c94 − c98 + 2^15·c100 − c96) = 0
+///   [42] c69·(c95 − c99 − c100 + 2^15·c101 − c97) = 0
+///   [43] c69·c101 = 0                ← THE NO-FINAL-BORROW GATE ⟹ amount ≤ pre-balance
+/// ```
+///
+/// with all six limbs `c94..c99` range-checked to 15 bits by lookups 184–189 against table 84
+/// (`range_w15`). The final borrow being pinned to zero makes `post = pre − amount` exact over ℤ,
+/// so no wrapped value is representable in the first place — the containment does not depend on
+/// the width of the post-state range at all. Burn carries the same chain UNGATED (debit-only);
+/// `transferFee` carries ten such lookups for the fee leg. Exactly five deployed members declare
+/// table 84, and they are exactly the five that debit a balance: rows 1, 2, 43, 45, 46. Every
+/// other member either pins `c76 = c54` (balance untouched) or is a credit (`mint`,
+/// `supplyMint`: `c76 = c54 + amount`, carry-chained at `[44]..[48]`).
+///
+/// The Lean side of that gate is `RotatedKernelRefinementMintBurnAvail` / `KernelConfigSoundness‑
+/// Avail` over the `RfixAvail` registry, whose debiting tags discharge availability.
+///
+/// So: **the conclusion "the deployed circuit rejects the wrap" survives; the stated reason for
+/// it did not.** The 30-bit obligation that IS live on the deployed member is a `table 2` lookup
+/// on `c76`/`c77` (constraints 182/183) bounding the limb — useful, but it is not what refuses an
+/// over-debit, and on its own it would admit the band above.
+///
+/// ⚠ Do not re-derive an underflow argument from this constant. If a NEW balance-debiting member
+/// is added, it needs the borrow chain; a 30-bit range on its post-state limb will not do the
+/// job, and `underflow_admitted_at_30_iff` is the counterexample generator.
 pub const BAL_LIMB_BITS: usize = 30;
 
 /// Auxiliary column offsets for state commitment tree intermediates.
@@ -352,15 +404,22 @@ pub mod aux_off {
 
     // ---- W9-RANGECHECK: in-circuit balance-limb range / underflow proof ----
     /// Base offset (within AUX) of the 30 boolean columns decomposing
-    /// `state_after.balance_lo`. Bit i lives at `NEW_BAL_LO_BIT_BASE + i`,
-    /// i ∈ {0..30}. The AIR enforces (unconditionally, every row):
-    ///   (1) each bit is boolean,
-    ///   (2) `Σ_{i=0}^{29} bit_i * 2^i == state_after.balance_lo`.
-    /// Together these prove `balance_lo ∈ [0, 2^30)` IN-circuit and, because
-    /// a wrapped (underflowed) debit lands ≥ 2^30, reject the wrap directly.
+    /// `state_after.balance_lo` — absolute column `AUX_BASE + 36` = 126.
+    ///
+    /// ⚑ **DEAD ON EVERY DEPLOYED MEMBER, AND THE CLAIM THAT USED TO BE HERE WAS FALSE ANYWAY.**
+    /// This said the two constraints "prove `balance_lo ∈ [0, 2^30)` IN-circuit and, because a
+    /// wrapped (underflowed) debit lands ≥ 2^30, reject the wrap directly". A wrapped debit does
+    /// NOT always land ≥ 2^30: `p - k < 2^30` for every `k > 939524097`, so a 30-bit
+    /// decomposition accepts an underflow of any such magnitude
+    /// (`RangeFieldContainment.underflow_admitted_at_30_iff`). And the columns are deleted from
+    /// every wide member by the E1 kill-set run `(101, 186)`
+    /// (`e1_compact_generated::E1_COMPACT_TABLE`), so no deployed constraint reads them.
+    ///
+    /// What actually refuses an over-debit is the 15-bit borrow chain with a no-final-borrow
+    /// gate; see the note on [`super::BAL_LIMB_BITS`] for the deployed gate list.
     pub const NEW_BAL_LO_BIT_BASE: usize = 36;
-    /// Base offset of the 30 boolean columns decomposing
-    /// `state_after.balance_hi`. Same two constraints as the lo limb.
+    /// Base offset of the 30 boolean columns decomposing `state_after.balance_hi` — absolute
+    /// column 156. Same two constraints as the lo limb, and equally dead (same kill-set run).
     pub const NEW_BAL_HI_BIT_BASE: usize = 36 + super::BAL_LIMB_BITS; // 66
 
     /// The `record_digest` witness column (audit P0-2): the single Poseidon2 felt
