@@ -399,24 +399,17 @@ NOT tidiness: `wrap_verifier.ml:617` absorbs the x_hat MSM's OUTPUT into the tra
 value has to exist before §2's schedule, and Lean is order-sensitive. §11a/§11b still pin the two
 constants a copy-paste would get wrong. -/
 
-/-- ⚑ **`Endo.Step_inner_curve.scalar`** (`endo.ml:16`) — `Pasta_bindings.Pallas.endo_scalar ()`,
-an element of `Backend.Tock.Field = Fq`, and the constant `to_field_checked` scales `a₈` by INSIDE
-THE WRAP CIRCUIT (`wrap_verifier.ml:134,143`). ⚠ It is NOT the step side's
-`Endo.Wrap_inner_curve.scalar`, which is an Fp element; §11b pins this against an independent
-module rather than against its own definition. -/
-def ENDO_Q : Nat :=
-  26005156700822196841419187675678338661165322343552424574062261873906994770353
-
 /-- Poseidon row `j`'s fifteen **Fq** round constants (five rounds × three lanes), from
 `PastaPoseidonFq.rcsQ` = `mina_poseidon::pasta::fq_kimchi::static_params()`. The step side's
 emitter reads `rcsN`; §11a pins that these are different elements. -/
 def poseidonRowCoeffsQ (j : Nat) : List Int :=
   (List.range 5).flatMap (fun i => (rcsQ.getD (5 * j + i) []).map (fun n => (n : Int)))
 
-/-- `c(x)` as an `Fq` element (`endomul_scalar.rs:303-309`): `0↦0 1↦0 2↦−1 3↦1`. -/
-def cFuncQ (x : Nat) : Nat := if x == 2 then qN - 1 else if x == 3 then 1 else 0
-/-- `d(x)` as an `Fq` element (`endomul_scalar.rs:311-317`): `0↦−1 1↦1 2↦0 3↦0`. -/
-def dFuncQ (x : Nat) : Nat := if x == 0 then qN - 1 else if x == 1 then 1 else 0
+/-! ⚑ `ENDO_Q`, `cFuncQ`/`dFuncQ` and the whole `to_field_checked` VALUE chain moved to
+`KimchiWrapMainField` §15c‴ at `w10_finalize`, for §15c″'s reason and not for tidiness: W-FINALIZE
+DERIVES the deferred `perm` of any block that claims `should_finalize`, so a packed statement word
+now depends on the α/ζ LIFTS, and a word's value has to exist before §2's schedule. §11b still pins
+`ENDO_Q` against an independent module. -/
 
 /-! ## §1 — the shape.
 
@@ -937,26 +930,17 @@ literally `ignore (SC.to_field_checked … ~num_bits:n)` — the same rows. -/
 
 def CHAL_BITS (s : WrapShape) : Nat := 16 * s.emsRows
 
-/-- The `8·emsRows` base-4 crumbs of `v`, MSB-first. -/
-def crumbsOfQ (s : WrapShape) (v : Nat) : List Nat :=
-  (List.range (8 * s.emsRows)).map (fun j => v / 4 ^ (8 * s.emsRows - 1 - j) % 4)
+/-- The `8·emsRows` base-4 crumbs of `v`, MSB-first. ⚑ The shape-free form is the DEFINITION
+(`KimchiWrapMainField` §15c‴); these four are its shape-carrying reads, and the delegation is what
+keeps §15c‴'s derived `perm` and §5's emitted chain ONE arithmetic rather than two that agree today. -/
+def crumbsOfQ (s : WrapShape) (v : Nat) : List Nat := crumbsOfQAt s.emsRows v
 
 /-- The `(n,a,b)` accumulator triples at every ROW boundary. -/
-def emsAccsQ (s : WrapShape) (v : Nat) : List (Nat × Nat × Nat) :=
-  let all := (crumbsOfQ s v).foldl
-    (fun acc x =>
-      let cur := acc.getLastD (0, 2, 2)
-      acc ++ [((4 * cur.1 + x) % qN, (2 * cur.2.1 + cFuncQ x) % qN,
-               (2 * cur.2.2 + dFuncQ x) % qN)])
-    [(0, 2, 2)]
-  (List.range (s.emsRows + 1)).map (fun k => all.getD (8 * k) (0, 2, 2))
+def emsAccsQ (s : WrapShape) (v : Nat) : List (Nat × Nat × Nat) := emsAccsQAt s.emsRows v
 
 /-- `a₈·endo + b₈` — `to_field_checked`'s closing line at `ENDO_Q`. -/
-def liftValQ (s : WrapShape) (v : Nat) : Nat :=
-  let a := (emsAccsQ s v).getD s.emsRows (0, 2, 2)
-  qAdd (qMul a.2.1 ENDO_Q) a.2.2
-def liftTValQ (s : WrapShape) (v : Nat) : Nat :=
-  qMul ((emsAccsQ s v).getD s.emsRows (0, 2, 2)).2.1 ENDO_Q
+def liftValQ (s : WrapShape) (v : Nat) : Nat := liftValQAt s.emsRows v
+def liftTValQ (s : WrapShape) (v : Nat) : Nat := liftTValQAt s.emsRows v
 
 /-- One `to_field_checked` chain's variable block. -/
 structure ChainVars where
@@ -3069,63 +3053,13 @@ def fnAlphaCombine (apow : List Nat) (cs : List Nat) : FM Nat := do
         let t ← fnMul (apow.getD (i + 1) 0) (rest.getD i 0)
         fnAdd acc t) c0
 
-/-! ### §19c — the wire, the config and the slots. -/
+/-! ### §19c — the wire, the config and the slots.
 
-/-- ⚑ `Common.wrap_domains ~proofs_verified:1 |>.h` — the wrap evaluation domain is `2^14`, NOT the
-`2^15` `Max_degree.wrap_log2` names. `common.ml:27-31` maps `0 ↦ 13, 1 ↦ 14, 2 ↦ 15`, and the devnet
-wrap index that `MinaRealBlockGate.OMEGA` came off is the `14`. -/
-def FIN_LOG2N : Nat := 14
-/-- The `2^14`-th root of unity of `Fq`, from the real block's verifier index. -/
-def FIN_OMEGA : Nat := 13720502009405270468270247285101677286753189198487843249698478072631298866919
-/-- ⚑ `env.endo_coefficient` is `Endo.Wrap_inner_curve.base = Vesta.endo_base ()` (`endo.ml:5`), the
-BASE endomorphism eigenvalue `5^((q−1)/3)` — **NOT** `ENDO_Q`, which is `Pallas.endo_scalar ()` and
-is what `to_field_checked` lifts by. Two different cube roots in two different roles; §19f pins that
-they differ. -/
-def FIN_ENDO : Nat :=
-  2942865608506852014473558576493638302197734138389222805617480874486368177743
-/-- The seven **Fq** coset shifts of the wrap domain, from the same real verifier index. -/
-def FIN_SHIFTS : List Nat :=
-  [ 1
-  , 328286983623303317637963920346571898945724874896624808297627776768640590563
-  , 220790353665890403705559231885806581221301230221265349993193424985261418438
-  , 211720422259245489258933986578227917398506328781182391541883955346082631533
-  , 211634429328372259348572816867521795029192573698954618296359582461568682420
-  , 317476258975906211462498873025720239242336777696786967497139785505242641540
-  , 99141114743446054294525453467100398765600279346526770105380817318185104545 ]
-/-- `Shifted_value.Type2.Shift = 2^{field size in bits}` (`shifted_value.ml:180-182`), and
-`Field.size_in_bits` for Fq is 255. -/
-def FIN_SHIFT2 : Nat := 2 ^ 255 % qN
-/-- The three `EndomulScalar` quotients `11/6, −5/2, 2/3` over `Fq`, as the CHECKED witnessed
-quotients `6·cA = 11`, `2·cB = −5`, `3·cC = 2` (§19f). -/
-def FIN_CA : Nat :=
-  4824670384888174809315457708695329493893842746990274563279957124732227158018
-def FIN_CB : Nat :=
-  14474011154664524427946373126085988481681528240970823689839871374196681474046
-def FIN_CC : Nat :=
-  9649340769776349618630915417390658987787685493980549126559914249464454316033
-
-/-- The 43 evaluation columns, in `to_absorption_sequence` order: `z`, the six gate selectors, the
-15 witness columns, the 15 coefficient columns, the six σ columns. -/
-def FIN_NCOLS : Nat := 43
-def FIN_IDX_Z : Nat := 0
-def FIN_IDX_SEL : Nat := 1
-def FIN_IDX_W : Nat := 7
-def FIN_IDX_COEFF : Nat := 22
-def FIN_IDX_S : Nat := 37
-/-- `Plonk_types.Permuts_minus_1.n` — the σ evals `ft_eval0` folds over, and the index of the `w_n`
-`ft_eval0` seeds with. -/
-def FIN_PERMUTS1 : Nat := 6
-
-/-- Column `k`'s value at ζ (`j = 0`) / at ζω (`j = 1`) for instance `p` — a NAMED FIXTURE, because
-`exists ~request:Req.Evals` is a free witness upstream and a fixture is the faithful stand-in. -/
-def finColVal (p k j : Nat) : Nat := wrapFixtureQ (40 + 2 * p + j) k
-/-- `evals.public_input.0` — `p(ζ)`, likewise witnessed. -/
-def finPZetaVal (p : Nat) : Nat := wrapFixtureQ (44 + p) 0
-
-/-- Instance `p`'s packed statement word `w` of its own 27-word block. -/
-def finBlockWord (p w : Nat) : Nat := PREV_PER_PROOF_WORDS * p + w
-/-- …and its VALUE. -/
-def finBlockVal (p w : Nat) : Nat := prevWordVal (finBlockWord p w)
+⚑ **THE DOMAIN CONSTANTS AND THE EVALUATION FIXTURES MOVED TO `KimchiWrapMainField` §15c‴**
+(`FIN_LOG2N` … `finBlockVal`), same namespace, nothing renamed. They had to: this rung DERIVES the
+deferred `perm` of the block that claims `should_finalize`, so `prevWordVal` reads `FIN_OMEGA`,
+`FIN_SHIFT2`, `finColVal` and the α/ζ lift — and a packed statement word's value has to exist above
+§2's schedule. §19d reads them back unchanged. -/
 
 /-- The cells §19's program reads. Every one is a variable ANOTHER rung's rows define, or a witness
 cell this rung's own region owns. -/
@@ -3398,7 +3332,22 @@ def finCfgOf (s : WrapShape) (p : Nat) : FinCfg :=
   , eqInv := 0, eqBit := 1 }
 
 /-- Instance `p`'s `.inp` lookup: the 87 witnessed evaluation cells, the two lifts, and the four
-statement words. Every entry is a cell some row of the assembly defines. -/
+statement words. Every entry is a cell some row of the assembly defines.
+
+⚠ ⚑ **THE OTHER REPAIR OF THIS EXACT DEFECT WAS A `z(ζω)` SOLVE, AND IT IS OUT — IT MADE THE ASSERT
+UNFALSIFIABLE.** `perm` is LINEAR in `e1z`, so setting `e1z ↦ e1z · permUsed / perm₀` forces
+`perm = permUsed` for **any** statement word whatever, in **every** block. That is cheaper than
+§15c‴'s flag day and it costs the whole content of the rung: `Field.equal` then takes `bit = 1`
+unconditionally, `1 − finalized` is 0 unconditionally, and
+`Boolean.Assert.any [finalized; not should_finalize]` cannot go red for any witness the emitter can
+produce — including the one it exists to refuse. A gate that cannot go red is not a gate.
+
+It also inverts the causation. Upstream, the previous proof's deferred `perm` is a FUNCTION of its
+evaluations; solving the evaluation out of the deferred value manufactures an eval vector to make a
+fixture look checked. Under §15c‴ the two `Field.equal` branches both stay live — block 1 carries the
+derived word and passes at `(0, 1)`, block 0 keeps the `a^9` fixture and runs `(d⁻¹, 0)` at a nonzero
+difference — and bending word 31 makes the rung UNSATISFIABLE, which is what
+`the_derived_perm_is_exactly_the_block_that_claims_should_finalize` pins. -/
 def finInputEnv (s : WrapShape) (sp : SpAcc) (p : Nat) : VarEnv :=
   (List.range FIN_NCOLS).flatMap (fun k =>
     [ (finEvVar s sp p k 0, (finColVal p k 0 : Int))
@@ -4732,18 +4681,23 @@ def shapeWrap : WrapShape :=
   -- ⚑ `xhatOut XHAT_TERMS_FULL`, and `EmitWrapMainJson` re-derives it and REFUSES on disagreement
   -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far
   -- more reduced, and this file has no `native_decide`.
-  -- ⚠ ⚑ **THIS PAIR MOVED AT `w11_wraphack`, AND THE REFUSAL IS WHAT FOUND IT.** §21 makes packed
-  -- statement words 55 and 56 the two prev-proof `hash_messages_for_next_wrap_proof` squeezes
-  -- instead of fixtures, so MSM entries 65 and 66 carry different scalars and `xhatOut 67` is a
-  -- different point. The first wrap-scale emission after §21 landed threw
-  -- `⚑ xhatXY IS NOT THE MSM'S OUTPUT` and printed the new pair; this is that pair.
-  -- **WHAT RE-EMITS:** every `wrapmain_wrap_*.json` — the absorbed `x_hat` at
-  -- `wrap_verifier.ml:617` moves, so every wrap-scale challenge, the fork digest and all 22 derived
-  -- public words below it move with it. The SMOKE shape is unmoved: `xhatSel 5` does not select
-  -- entries 65/66, which is also why the smoke fixtures below `w11_wraphack` are byte-identical.
+  -- ⚠ ⚑ **THIS PAIR MOVED TWICE, AND THE REFUSAL FOUND IT BOTH TIMES.** It is the same mechanism
+  -- each time: a packed statement word stops being a fixture, so its MSM entries carry different
+  -- scalars and `xhatOut 67` is a different point. The wrap-scale emission throws
+  -- `⚑ xhatXY IS NOT THE MSM'S OUTPUT` and PRINTS the new pair; this is that pair.
+  --   * at `w11_wraphack` — §21 made words 55 and 56 the two prev-proof
+  --     `hash_messages_for_next_wrap_proof` squeezes, moving entries 65 and 66;
+  --   * at `w10_finalize` — §15c‴ makes word **31** (block 1's deferred `perm`) the value
+  --     `finalize_other_proof` DERIVES, and `xhatWordOf` splits it into entries **40 and 41**.
+  -- **WHAT RE-EMITS:** every `wrapmain_wrap_*.json` from `w6_xhat` up — the absorbed `x_hat` at
+  -- `wrap_verifier.ml:617` moves, so every wrap-scale challenge, the fork digest and all 24 derived
+  -- public words below it move with it. The SMOKE shape's `x_hat` is unmoved BOTH times: `xhatSel 5`
+  -- is `[0, 1, 11, 64, 31]` and selects neither 65/66 nor 40/41. ⚠ But word 31's VALUE is in
+  -- `prevEnv`'s 57, so the smoke fixtures from `w9_prev` UP re-emit even though `w1`–`w8` are
+  -- byte-identical — an unmoved `xhatXY` is not an unmoved rung set.
   , xhatXY :=
-      (27534166148223008355278056763413711424779277410543948788032764825660730916734,
-       13845564567107428770336275512814846537757742990744982818601823862046640819426) }
+      (7010950420339520799249158106844769378945390774823028707769739740558499795344,
+       19278183658611599696273562084343283700001227827045965916615871661466285431748) }
 
 /-- A small shape for the in-CI `#guard`s (the committed one is emitted by the driver). -/
 def shapeSmoke : WrapShape :=
@@ -4761,6 +4715,19 @@ def shapeSmoke : WrapShape :=
   , xhatXY :=
       (16939429680523055563406117440808118430703004205774435970856079172456077167531,
        12956915833716130635753754766705188581923939059745973521002626957608324504831) }
+
+/-- ⚑ **THE ASSUMPTION §15c‴ MAKES, AS A GATE.** `prevWordVal` is shape-free — a packed statement
+word may not depend on which shape is being emitted — but W-FINALIZE's derived `perm` reads α and ζ
+through `to_field_checked`, whose value depends on `emsRows`. So `EMS_ROWS_Q` is hoisted out of the
+shape, and this is what stops that from being a silent assumption: both committed shapes carry it,
+and the two shape-carrying reads ARE the shape-free definition at that width. A shape that moved
+`emsRows` reds here rather than emitting a statement word the lift chain does not produce. -/
+theorem both_committed_shapes_carry_the_lift_width :
+    shapeSmoke.emsRows = EMS_ROWS_Q
+  ∧ shapeWrap.emsRows = EMS_ROWS_Q
+  ∧ (∀ v : Nat, liftValQ shapeWrap v = liftValQAt EMS_ROWS_Q v)
+  ∧ (∀ v : Nat, liftValQ shapeSmoke v = liftValQAt EMS_ROWS_Q v) := by
+  refine ⟨rfl, rfl, fun _ => rfl, fun _ => rfl⟩
 
 
 /-! ## §11 — the CONSTANT PINS, each against an INDEPENDENT source.
