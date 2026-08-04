@@ -82,8 +82,12 @@ private def modPowAux (m : Nat) : Nat → Nat → Nat → Nat → Nat
 /-- **`fInv`** — the `Fp` multiplicative inverse via Fermat (`a^(p−2) mod p`), `pN` prime. -/
 def fInv (a : Nat) : Nat := modPowAux pN 260 (a % pN) (pN - 2) 1
 
+/-- The affine `add_fast` slope `(y₂−y₁)·inv` at an ALREADY-COMPUTED `inv = (x₂−x₁)⁻¹`. ⚑ Split out
+so `completeAddWitness` can share the one inverse with the `x21_inv` cell it also has to store — see
+its note. `addSlope` is this at `inv = fInv (fSub x2 x1)`, so there is one formula and one body. -/
+def addSlopeWithInv (y1 y2 inv : Nat) : Nat := fMul (fSub y2 y1) inv
 /-- The affine `add_fast` slope `(y₂−y₁)/(x₂−x₁)` (distinct-x case). -/
-def addSlope (x1 y1 x2 y2 : Nat) : Nat := fMul (fSub y2 y1) (fInv (fSub x2 x1))
+def addSlope (x1 y1 x2 y2 : Nat) : Nat := addSlopeWithInv y1 y2 (fInv (fSub x2 x1))
 /-- The doubling slope `3x₁²/(2y₁)`. -/
 def dblSlope (x1 y1 : Nat) : Nat := fMul (fMul 3 (fMul x1 x1)) (fInv (fMul 2 y1))
 
@@ -98,7 +102,7 @@ def completeAddWitness (x1 y1 x2 y2 : Nat) : List Nat :=
   -- the SAME inverse, and each one is a 255-squaring Fermat exponentiation — the single most
   -- expensive primitive in the whole assembly. The `x₁ = x₂` branch still computes none of it.
   let x21Inv := if x1 == x2 then 0 else fInv (fSub x2 x1)
-  let s := if x1 == x2 then dblSlope x1 y1 else fMul (fSub y2 y1) x21Inv
+  let s := if x1 == x2 then dblSlope x1 y1 else addSlopeWithInv y1 y2 x21Inv
   let x3 := fSub (fSub (fMul s s) x1) x2
   let y3 := fSub (fMul s (fSub x1 x3)) y1
   let inf := if x1 == x2 && y1 != y2 then 1 else 0
