@@ -3,6 +3,6 @@
   "manifest_sha256": "sha256:c4f34a6ef639c532965ee5c05ec9bbbd7ac722ad7350f1825915bf67f0b69d2b",
   "curator_pubkey": "a3e630900af50a8701387c9ab528e3db23a5650c3e1ff3b4b3ee09aa42c65e23",
   "content_epoch": 1,
-  "counter": 3,
-  "signature": "e05b38bd1f80bada8da344eb6fd721075e52c65d8edb03e6fadf0ab4a3c4470222890ac4a30fc286ad05c00d966b38637923ce3ff403221d82d3fbe81820a207"
+  "counter": 2,
+  "signature": "1d425f3083ad2a457478bbf601905d12bef57d1b03f3df404ac764d76b8bed9aaeadb548f4d929496dc81454900016b2d245e3624df7216ccacc98af4464640d"
 }
