@@ -30,7 +30,7 @@ use futures_util::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use subtle::ConstantTimeEq;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use dregg_sdk::{Attenuation, AuthRequest, CellId, SignedTurn};
 use dregg_token::BudgetSpec;
@@ -181,6 +181,24 @@ pub struct PoaSignalTransitionViewV1 {
     pub judge_input_digest: String,
     pub judge_output_digest: String,
     pub consensus_finality: &'static str,
+}
+
+/// The only player-cell projection needed to construct a fresh Signal claim.
+///
+/// This deliberately does not reuse [`CellDetailResponse`]: that explorer view
+/// also exposes balances, program/state fields, delegates, and the complete
+/// capability list.  A public game ingress needs only the replay coordinates
+/// and the identity binding it is about to sign against.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PoaSignalPlayerHeadResponseV1 {
+    pub format: &'static str,
+    pub authority_id: String,
+    pub federation_id: String,
+    pub cell_id: String,
+    pub found: bool,
+    pub nonce: u64,
+    pub public_key: Option<String>,
+    pub last_receipt_hash: Option<String>,
 }
 
 /// Response from `GET /api/node/producer` — the honest verified-execution
@@ -1724,6 +1742,22 @@ impl RateLimiter {
     }
 }
 
+/// Shared admission budget for the anonymous, exact-shape PoA Signal ingress.
+#[derive(Clone)]
+struct PoaSignalIngressLimits {
+    per_ip: RateLimiter,
+    in_flight: Arc<Semaphore>,
+}
+
+impl PoaSignalIngressLimits {
+    fn new() -> Self {
+        Self {
+            per_ip: RateLimiter::new(POA_SIGNAL_SUBMITS_PER_MINUTE, 60),
+            in_flight: Arc::new(Semaphore::new(POA_SIGNAL_MAX_IN_FLIGHT)),
+        }
+    }
+}
+
 // =============================================================================
 // Authentication
 // =============================================================================
@@ -1933,6 +1967,20 @@ pub const MAX_PENDING_CONDITIONALS: usize = 1_000;
 /// Maximum request body size in bytes (P2 Fix 11: 1 MB).
 const MAX_BODY_SIZE: usize = 1_024 * 1_024;
 
+/// A canonical hybrid-signed Signal carrier contains two ML-DSA-65 public-key /
+/// signature pairs (action + outer turn) and is comfortably below this bound.
+/// Keep the anonymous game ingress two orders of magnitude below the generic
+/// node body ceiling so it cannot be used as a free one-megabyte buffering path.
+const POA_SIGNAL_MAX_CLAIM_BYTES: usize = 16 * 1_024;
+
+/// Signal publication is a consented player action, not a bulk-ingest API.
+const POA_SIGNAL_SUBMITS_PER_MINUTE: u32 = 10;
+
+/// The state-write lock already serializes execution.  This smaller explicit
+/// admission ceiling prevents an anonymous burst from accumulating expensive
+/// hybrid-signature work while waiting for that lock.
+const POA_SIGNAL_MAX_IN_FLIGHT: usize = 4;
+
 // =============================================================================
 // Router
 // =============================================================================
@@ -1972,6 +2020,10 @@ pub fn router_with_cors(
 
     // Rate limiter for turn submission: DEFAULT_TURN_RATE_LIMIT per 60 seconds per IP.
     let turn_limiter = RateLimiter::new(DEFAULT_TURN_RATE_LIMIT, 60);
+    // The anonymous PoA door is narrower than generic signed-turn ingress: one
+    // exact game carrier, a ten-per-minute real-IP budget, and four requests in
+    // flight across the process.
+    let poa_signal_ingress_limits = PoaSignalIngressLimits::new();
     // Shared by both faithful-mirror aliases so changing the path cannot double
     // an attacker's ML-DSA signing budget.
     let faithful_mirror_limiter = RateLimiter::new(120, 60);
@@ -2015,6 +2067,20 @@ pub fn router_with_cors(
         .route(
             "/api/poa/signal/{authority}/transitions/{sequence}",
             get(get_poa_signal_transition),
+        )
+        .route(
+            "/api/poa/signal/{authority}/players/{cell}/head",
+            get(get_poa_signal_player_head),
+        )
+        .route(
+            "/api/poa/signal/{authority}/claims",
+            post({
+                let limits = poa_signal_ingress_limits.clone();
+                move |connect_info, headers, path, state, body| {
+                    post_poa_signal_claim(connect_info, headers, path, state, body, limits.clone())
+                }
+            })
+            .layer(DefaultBodyLimit::max(POA_SIGNAL_MAX_CLAIM_BYTES)),
         )
         .route("/federation/roots", get(get_federation_roots))
         // The ATTESTED-ROOTS surface under its own honest name. `/api/blocks`
@@ -2592,7 +2658,24 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
 
 const POA_SIGNAL_STATUS_FORMAT_V1: &str = "POA-SIGNAL-STATUS-1";
 const POA_SIGNAL_TRANSITION_VIEW_FORMAT_V1: &str = "POA-SIGNAL-TRANSITION-VIEW-1";
+const POA_SIGNAL_PLAYER_HEAD_FORMAT_V1: &str = "POA-SIGNAL-PLAYER-HEAD-1";
 const POA_SIGNAL_VIEW_FINALITY_CLAIM: &str = "not_asserted_by_this_view";
+const POA_SIGNAL_PUBLIC_MISSION_ID: u32 = 1;
+
+fn parse_poa_signal_authority(authority: &str) -> Result<[u8; 32], StatusCode> {
+    if authority.len() != 64
+        || !authority
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    hex_decode(authority).map_err(|_| StatusCode::BAD_REQUEST)
+}
+
+fn parse_poa_signal_player_cell(cell: &str) -> Result<CellId, StatusCode> {
+    parse_poa_signal_authority(cell).map(CellId)
+}
 
 /// Decode a canonical, positive decimal PoA transition coordinate.
 ///
@@ -2657,7 +2740,7 @@ async fn get_poa_signal_status(
     State(state): State<NodeState>,
 ) -> Result<Json<PoaSignalStatusResponseV1>, StatusCode> {
     // Parse the fixed-width input before acquiring the shared state lock.
-    let requested = hex_decode(&authority).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let requested = parse_poa_signal_authority(&authority)?;
     let s = state.read().await;
     let authority_id =
         select_local_poa_signal_authority(requested, s.federation_configured, s.federation_id)?;
@@ -2676,6 +2759,35 @@ async fn get_poa_signal_status(
     }))
 }
 
+/// `GET /api/poa/signal/{authority}/players/{cell}/head`.
+///
+/// Supplies exactly the replay and identity coordinates the extension needs
+/// before it constructs a signed Signal carrier.  It intentionally cannot be
+/// widened by query parameters and never serializes the cell's balance,
+/// program, state fields, delegates, or capability list.
+async fn get_poa_signal_player_head(
+    AxumPath((authority, cell)): AxumPath<(String, String)>,
+    State(state): State<NodeState>,
+) -> Result<Json<PoaSignalPlayerHeadResponseV1>, StatusCode> {
+    let requested = parse_poa_signal_authority(&authority)?;
+    let cell_id = parse_poa_signal_player_cell(&cell)?;
+    let s = state.read().await;
+    let authority_id =
+        select_local_poa_signal_authority(requested, s.federation_configured, s.federation_id)?;
+    let live = s.ledger.get(&cell_id);
+    let normalized_authority = hex_encode(&authority_id);
+    Ok(Json(PoaSignalPlayerHeadResponseV1 {
+        format: POA_SIGNAL_PLAYER_HEAD_FORMAT_V1,
+        authority_id: normalized_authority.clone(),
+        federation_id: normalized_authority,
+        cell_id: hex_encode(&cell_id.0),
+        found: live.is_some(),
+        nonce: live.map_or(0, |cell| cell.state.nonce()),
+        public_key: live.map(|cell| hex_encode(cell.public_key())),
+        last_receipt_hash: persistent_receipt_head(&s, &cell_id).map(|hash| hex_encode(&hash)),
+    }))
+}
+
 /// `GET /api/poa/signal/{authority}/transitions/{sequence}`.
 ///
 /// The returned record is the store-validated immutable transition envelope.
@@ -2687,7 +2799,7 @@ async fn get_poa_signal_transition(
     State(state): State<NodeState>,
 ) -> Result<Json<PoaSignalTransitionViewV1>, StatusCode> {
     let sequence = parse_poa_signal_sequence(&sequence)?;
-    let requested = hex_decode(&authority).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let requested = parse_poa_signal_authority(&authority)?;
     let s = state.read().await;
     let authority_id =
         select_local_poa_signal_authority(requested, s.federation_configured, s.federation_id)?;
@@ -4327,6 +4439,68 @@ async fn post_submit_turn(
     }
 }
 
+/// `POST /api/poa/signal/{authority}/claims` — anonymous ingress for exactly
+/// one mission-1 Signal claim and no other Dregg turn.
+///
+/// CORS handles `OPTIONS` before routing.  This handler is deliberately public,
+/// so its own boundary is semantic: exact media type and size, the node's exact
+/// configured/installed authority, a strict one-envelope decode, the SDK's
+/// no-piggyback carrier predicate, the deployment mission, and the canonical
+/// signer-derived player cell.  Only then does it enter [`submit_signed_turn`].
+async fn post_poa_signal_claim(
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    AxumPath(authority): AxumPath<String>,
+    State(state): State<NodeState>,
+    body: axum::body::Bytes,
+    limits: PoaSignalIngressLimits,
+) -> Result<Json<SubmitSignedTurnResponse>, StatusCode> {
+    if headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        != Some("application/octet-stream")
+    {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    if body.len() > POA_SIGNAL_MAX_CLAIM_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    let requested = parse_poa_signal_authority(&authority)?;
+    if !limits.per_ip.check_request(addr.ip(), &headers).await {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+    let _permit = Arc::clone(&limits.in_flight)
+        .try_acquire_owned()
+        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
+
+    {
+        let s = state.read().await;
+        let authority_id =
+            select_local_poa_signal_authority(requested, s.federation_configured, s.federation_id)?;
+        let installed = s
+            .store
+            .load_poa_signal_head(authority_id)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .is_some();
+        if !installed {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+
+    let signed = crate::signed_turn_validation::decode_signed_turn(&body)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let claim = dregg_sdk::poa_signal::claim_from_exact_signal_turn(&signed.turn)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if claim.mission_id() != POA_SIGNAL_PUBLIC_MISSION_ID
+        || dregg_sdk::poa_signal::signal_player_cell(&signed.signer.0) != signed.turn.agent
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    submit_signed_turn(state, signed).await
+}
+
 /// POST /turns/submit — accept a caller-signed canonical `SignedTurn`.
 ///
 /// Wire format: `Content-Type: application/octet-stream`, body =
@@ -4345,13 +4519,24 @@ async fn post_submit_signed_turn(
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
-    crate::metrics::inc_turns_submitted();
-    let start = Instant::now();
-
     let signed: SignedTurn = match crate::signed_turn_validation::decode_signed_turn(&body) {
         Ok(turn) => turn,
         Err(_) => return Err(StatusCode::BAD_REQUEST),
     };
+
+    submit_signed_turn(state, signed).await
+}
+
+/// The one signed-turn execution path shared by authenticated generic ingress
+/// and the public, exact-carrier Signal ingress.  Transport-specific admission
+/// happens before this function; signature, receipt-chain, executor, proving,
+/// gossip, and consensus staging remain byte-for-byte one implementation.
+async fn submit_signed_turn(
+    state: NodeState,
+    signed: SignedTurn,
+) -> Result<Json<SubmitSignedTurnResponse>, StatusCode> {
+    crate::metrics::inc_turns_submitted();
+    let start = Instant::now();
 
     let turn_hash_bytes = signed.turn.hash();
     let turn_hash = hex_encode(&turn_hash_bytes);
@@ -9680,6 +9865,62 @@ mod tests {
         (status, json)
     }
 
+    async fn post_bytes(
+        app: &Router,
+        uri: &str,
+        content_type: Option<&str>,
+        body: Vec<u8>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut request = Request::builder().method("POST").uri(uri);
+        if let Some(content_type) = content_type {
+            request = request.header(header::CONTENT_TYPE, content_type);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                request
+                    .extension(ConnectInfo(
+                        "127.0.0.1:4444"
+                            .parse::<std::net::SocketAddr>()
+                            .expect("test client address"),
+                    ))
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let json = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    fn signed_test_poa_signal_turn(
+        cclerk: &dregg_sdk::AgentCipherclerk,
+        mission_id: u64,
+        mutate: impl FnOnce(&mut Turn),
+    ) -> SignedTurn {
+        let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
+            mission_id,
+            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).expect("bounded code"),
+        )
+        .expect("bounded mission");
+        let mut turn =
+            dregg_sdk::poa_signal::signal_claim_turn(&cclerk.public_key().0, 0, None, claim);
+        mutate(&mut turn);
+        let unsigned = turn.call_forest.roots[0].action.clone();
+        turn.call_forest.roots[0].action =
+            cclerk.sign_action_hybrid(unsigned, &TEST_POA_AUTHORITY, turn.nonce);
+        turn.call_forest.roots[0].hash = [0; 32];
+        turn.call_forest.forest_hash = [0; 32];
+        cclerk.sign_turn(&turn)
+    }
+
     fn test_poa_genesis() -> dregg_persist::PoaSignalHeadV1 {
         dregg_persist::PoaSignalHeadV1::genesis(
             TEST_POA_AUTHORITY,
@@ -9690,6 +9931,13 @@ mod tests {
             br#"{"canon":"private-test-canon"}"#.to_vec(),
         )
         .expect("test PoA genesis")
+    }
+
+    async fn install_test_poa_genesis(state: &NodeState) {
+        let s = state.write().await;
+        s.store
+            .initialize_poa_signal_head(&test_poa_genesis())
+            .expect("initialize test PoA authority");
     }
 
     async fn install_test_poa_transition(state: &NodeState) -> ([u8; 32], [u8; 32]) {
@@ -9752,6 +10000,21 @@ mod tests {
                 "selector {invalid:?} must refuse"
             );
         }
+    }
+
+    #[test]
+    fn poa_signal_authority_selector_has_one_lowercase_url() {
+        let authority = [0xab; 32];
+        let canonical = hex_encode(&authority);
+        assert_eq!(parse_poa_signal_authority(&canonical), Ok(authority));
+        assert_eq!(
+            parse_poa_signal_authority(&canonical.to_uppercase()),
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            parse_poa_signal_authority(&canonical[..63]),
+            Err(StatusCode::BAD_REQUEST)
+        );
     }
 
     #[tokio::test]
@@ -9874,6 +10137,181 @@ mod tests {
         assert_eq!(status_code, StatusCode::OK);
         assert_eq!(transition_code, StatusCode::OK);
         assert_current_view(&reopened_status, &reopened_transition);
+    }
+
+    #[tokio::test]
+    async fn poa_signal_player_head_is_federation_scoped_and_exactly_redacted() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        configure_test_poa_authority(&state).await;
+
+        let cclerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new([0x91; 32]));
+        let cell_id = dregg_sdk::poa_signal::signal_player_cell(&cclerk.public_key().0);
+        let ml_dsa_public_key = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(
+            &cclerk.gossip_signing_key().to_bytes(),
+        )
+        .public_bytes();
+        let cell = dregg_cell::Cell::with_hybrid_balance(
+            cclerk.public_key().0,
+            &ml_dsa_public_key,
+            *blake3::hash(b"default").as_bytes(),
+            5_000,
+        )
+        .expect("hybrid player cell");
+        state
+            .write()
+            .await
+            .ledger
+            .insert_cell(cell)
+            .expect("insert player cell");
+
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state, false, recorder.handle());
+        let authority = hex_encode(&TEST_POA_AUTHORITY);
+        let cell_hex = hex_encode(&cell_id.0);
+        let (status, body) = get_json(
+            &app,
+            &format!("/api/poa/signal/{authority}/players/{cell_hex}/head"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["format"], POA_SIGNAL_PLAYER_HEAD_FORMAT_V1);
+        assert_eq!(body["authority_id"], authority);
+        assert_eq!(body["federation_id"], authority);
+        assert_eq!(body["cell_id"], cell_hex);
+        assert_eq!(body["found"], true);
+        assert_eq!(body["nonce"], 0);
+        assert_eq!(body["public_key"], hex_encode(&cclerk.public_key().0));
+        assert!(body["last_receipt_hash"].is_null());
+
+        let mut keys: Vec<&str> = body
+            .as_object()
+            .expect("head object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "authority_id",
+                "cell_id",
+                "federation_id",
+                "format",
+                "found",
+                "last_receipt_hash",
+                "nonce",
+                "public_key",
+            ],
+            "the signing read must not grow into the explorer's cell projection"
+        );
+
+        let wrong = hex_encode(&[0x42; 32]);
+        let (status, _) = get_json(
+            &app,
+            &format!("/api/poa/signal/{wrong}/players/{cell_hex}/head"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn poa_signal_public_claim_ingress_accepts_only_the_exact_bounded_carrier() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        configure_test_poa_authority(&state).await;
+        install_test_poa_genesis(&state).await;
+        state.write().await.unlocked = true;
+
+        let cclerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new([0x92; 32]));
+        let exact = signed_test_poa_signal_turn(&cclerk, 1, |_| {});
+        let exact_body = postcard::to_stdvec(&exact).expect("exact Signal envelope");
+        assert!(
+            exact_body.len() <= POA_SIGNAL_MAX_CLAIM_BYTES,
+            "canonical hybrid carrier must fit the public ingress ceiling"
+        );
+
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state, false, recorder.handle());
+        let authority = hex_encode(&TEST_POA_AUTHORITY);
+        let endpoint = format!("/api/poa/signal/{authority}/claims");
+
+        let (status, _) = post_bytes(
+            &app,
+            &endpoint,
+            Some("application/json"),
+            exact_body.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        let (status, _) = post_bytes(
+            &app,
+            &endpoint,
+            Some("application/octet-stream"),
+            vec![0; POA_SIGNAL_MAX_CLAIM_BYTES + 1],
+        )
+        .await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+
+        let wrong_authority = hex_encode(&[0x42; 32]);
+        let (status, _) = post_bytes(
+            &app,
+            &format!("/api/poa/signal/{wrong_authority}/claims"),
+            Some("application/octet-stream"),
+            exact_body.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let wrong_mission = postcard::to_stdvec(&signed_test_poa_signal_turn(&cclerk, 2, |_| {}))
+            .expect("wrong-mission envelope");
+        let (status, _) = post_bytes(
+            &app,
+            &endpoint,
+            Some("application/octet-stream"),
+            wrong_mission,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let generic = postcard::to_stdvec(&signed_test_poa_signal_turn(&cclerk, 1, |turn| {
+            turn.call_forest.roots[0].action.method =
+                dregg_turn::action::symbol("ordinary-game-action");
+        }))
+        .expect("generic signed turn");
+        let (status, _) =
+            post_bytes(&app, &endpoint, Some("application/octet-stream"), generic).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let piggyback = postcard::to_stdvec(&signed_test_poa_signal_turn(&cclerk, 1, |turn| {
+            turn.call_forest.roots[0]
+                .action
+                .effects
+                .push(Effect::IncrementNonce { cell: turn.agent });
+        }))
+        .expect("piggyback envelope");
+        let (status, _) =
+            post_bytes(&app, &endpoint, Some("application/octet-stream"), piggyback).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // The exact carrier reaches the shared signed-turn perimeter without a
+        // bearer token. Its later executor verdict is represented in the JSON
+        // response rather than by any transport/auth refusal.
+        let (status, body) = post_bytes(
+            &app,
+            &endpoint,
+            Some("application/octet-stream"),
+            exact_body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.get("accepted").is_some(),
+            "shared ingress response: {body}"
+        );
     }
 
     // THE TOOTH — the async-attestation gate's variant coverage, WILDCARD-FREE.

@@ -889,6 +889,7 @@ async function submitSignedTurnBytes(input: {
   metadata?: Record<string, unknown>;
   expectedSigner?: Uint8Array;
   targetConfig?: NodeConfig;
+  endpoint?: string;
 }): Promise<OutboxSubmitResult<SubmitSignedTurnResponse>> {
   requireWasm("submitSignedTurn");
   // The SIGNATURE now comes from the active CustodyProvider (§4.5 chain), not a
@@ -958,7 +959,7 @@ async function submitSignedTurnBytes(input: {
   return submitNodeBytesWithOutbox<SubmitSignedTurnResponse>({
     kind: "turn",
     label: input.label,
-    endpoint: "/api/turns/submit-signed",
+    endpoint: input.endpoint ?? "/api/turns/submit-signed",
     body: envelope,
     headers,
     turnId: input.turnIdHex,
@@ -3304,7 +3305,7 @@ interface PoASignalTransitionView {
 interface PoASignalCellView {
   found?: boolean;
   nonce?: number;
-  public_key?: string;
+  public_key?: string | null;
   last_receipt_hash?: string | null;
 }
 
@@ -3407,7 +3408,7 @@ async function submitPoaSignalClaim(
 
   const cell = await nodeRequest<PoASignalCellView>(
     POA_SIGNAL_NODE_CONFIG,
-    `/api/cell/${agentCellId}`,
+    `/api/poa/signal/${POA_SIGNAL_FEDERATION_HEX}/players/${agentCellId}/head`,
   );
   if (!cell.ok) {
     return poaSignalRefused(`Could not read the player's live nonce and receipt head: ${cell.error || "node request failed"}`);
@@ -3495,6 +3496,7 @@ async function submitPoaSignalClaim(
     publicKey: cc.publicKey,
     expectedSigner: publicKey,
     targetConfig: POA_SIGNAL_NODE_CONFIG,
+    endpoint: `/api/poa/signal/${POA_SIGNAL_FEDERATION_HEX}/claims`,
     label: "Path of Angels Signal claim",
     metadata: {
       action: "submitPoaSignalClaim",
