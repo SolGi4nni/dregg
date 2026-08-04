@@ -95,6 +95,9 @@ lean_object *initialize_Dregg2_Dregg2_Exec_DistributedExports(uint8_t builtin);
  * with `dregg_ffi_init`; availability still confers no authority on caller-authored state. */
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkJudge(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_DARK_BAZAAR_JUDGE
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(uint8_t builtin);
+#endif
 }
 
 /* dregg_ffi_init_st — the single-threaded init for the executor-in-a-constrained-host
@@ -160,6 +163,18 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(poares);
+    }
+#endif
+#ifdef DREGG_POA_DARK_BAZAAR_JUDGE
+    {
+        lean_object *bazaarres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(1);
+        if (!lean_io_result_is_ok(bazaarres)) {
+            lean_io_result_show_error(bazaarres);
+            lean_dec_ref(bazaarres);
+            return 1;
+        }
+        lean_dec_ref(bazaarres);
     }
 #endif
     lean_io_mark_end_initialization();

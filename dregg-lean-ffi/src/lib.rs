@@ -51,6 +51,11 @@ pub mod bridge_lc_ffi;
 #[path = "poa_ffi.rs"]
 pub mod poa_ffi;
 
+/// Lean-owned bounded private batch-settlement evaluator. Rust transports the
+/// canonical wire and has no settlement/authorization fallback.
+#[path = "poa_dark_bazaar_ffi.rs"]
+pub mod poa_dark_bazaar_ffi;
+
 pub use bridge_lc_ffi::{
     eth_committee_rotation_available, eth_committee_rotation_wire, eth_lc_verify_available,
     eth_lc_verify_wire, mina_account_opening_wire, mina_account_state_ok_available,

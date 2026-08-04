@@ -423,6 +423,14 @@ extern lean_object *dregg_poa_signal_judge(lean_object *input);
 #define DREGG_POA_SIGNAL_WIRE_MAX_BYTES ((size_t)67108864u)
 #endif
 
+/* Bounded four-order Dark Bazaar settlement evaluator. The only authorization
+ * constructor lives behind its Lean descriptor check; this shim transports strings. */
+#ifdef DREGG_POA_DARK_BAZAAR_JUDGE
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(uint8_t builtin);
+extern lean_object *dregg_poa_dark_bazaar_judge(lean_object *input);
+#define DREGG_POA_DARK_BAZAAR_WIRE_MAX_BYTES ((size_t)16777216u)
+#endif
+
 /* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
  * (`Dregg2.Circuit.FriLedger.friLedgerFFI`): decodes the wire
  * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (eight decimal
@@ -1052,6 +1060,16 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(poares);
 #endif
+#ifdef DREGG_POA_DARK_BAZAAR_JUDGE
+    lean_object *bazaarres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(1);
+    if (!lean_io_result_is_ok(bazaarres)) {
+        lean_io_result_show_error(bazaarres);
+        lean_dec_ref(bazaarres);
+        return 1;
+    }
+    lean_dec_ref(bazaarres);
+#endif
     /* NOTE: DREGG_GRAIN_R3_VERIFY needs NO module initializer here — `dregg_grain_r3_verify`'s
      * generated C is self-contained (static-const string literals + a lazy once-cell), and calling
      * `initialize_Dregg2_Dregg2_Grain_R3Verify` would drag its Mathlib-tactic import closure's
@@ -1140,6 +1158,35 @@ size_t dregg_storage_content_root_str(const char *in_utf8, char *out, size_t out
     lean_object *res = dregg_storage_content_root(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_DARK_BAZAAR_JUDGE
+/* Host-bounded string bridge. Zero-length output is Lean's semantic refusal;
+ * `(size_t)-1` is an unusable or over-limit host transport. */
+size_t dregg_poa_dark_bazaar_judge_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_DARK_BAZAAR_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_dark_bazaar_judge(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_DARK_BAZAAR_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
     memcpy(out, cstr, copy);
     out[copy] = '\0';

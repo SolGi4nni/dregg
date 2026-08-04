@@ -238,6 +238,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          caller-authored carrier/state must never be promoted to finality",
     ),
     (
+        "dregg_poa_dark_bazaar_judge",
+        "the Path of Angels Dark Bazaar v1 SETTLEMENT EVALUATOR compiles out: canonical decoding, \
+         the concrete four-order private descriptor authorization, escrow/nullifier accounting, \
+         exact successor reconstruction and labelled receipt digests have no answer source. \
+         Callers must refuse; there is no Rust authorization or settlement twin",
+    ),
+    (
         "dregg_deleg_admit",
         "the DELEGATED TOOL/MCP-ACCESS admission verdict has no answer source: the SDK tool \
          gateway, the starbridge tool-access-delegation app and the dreggnet offerings session \
@@ -2267,6 +2274,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_trustline_step_present)");
 
@@ -3156,6 +3164,17 @@ fn main() {
         absent_export_warn("dregg_poa_signal_judge");
     }
 
+    // PATH OF ANGELS DARK BAZAAR V1 SETTLEMENT EVALUATOR: exact, bounded private opening
+    // authorization and public transition. This is a separately versioned symbol so archive
+    // presence cannot reinterpret Signal or a future generalized market verifier.
+    let poa_dark_bazaar_judge_present =
+        archive_exports(&build_archive, "dregg_poa_dark_bazaar_judge");
+    if poa_dark_bazaar_judge_present {
+        println!("cargo:rustc-cfg=dregg_poa_dark_bazaar_judge_present");
+    } else {
+        absent_export_warn("dregg_poa_dark_bazaar_judge");
+    }
+
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
     // `@[export] dregg_{eth,tm,mpt}_lc_verify` symbols (the extracted, Lean-verified foreign-chain
     // admission decisions from `Dregg2.Bridge.LightClient{Eth,Tendermint,Mpt}Gate`). Present ⇒ gate
@@ -3535,6 +3554,9 @@ fn main() {
     // module initializer in BOTH default and single-threaded runtime init paths.
     if poa_signal_judge_present {
         shim.define("DREGG_POA_SIGNAL_JUDGE", None);
+    }
+    if poa_dark_bazaar_judge_present {
+        shim.define("DREGG_POA_DARK_BAZAAR_JUDGE", None);
     }
     // DELEGATED TOOL-ACCESS ADMISSION: `DREGG_DELEG_ADMIT` gates BOTH the extern decl and the `_str`
     // bridge in `lean_init.c` (no module initializer — `Dregg2.Apps.DelegAdmit` is Init-only and its

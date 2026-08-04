@@ -18,6 +18,7 @@ import Dregg2.Bridge.InterchainAdapterDecision
 import Dregg2.Games.AutomataflFFI
 import Dregg2.Games.MultiwayTugFFI
 import Dregg2.Games.PathOfAngels.NetworkJudge
+import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Apps.DelegAdmit
 
 -- §1.4 Post-quantum cores.
