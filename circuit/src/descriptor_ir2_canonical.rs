@@ -14,7 +14,7 @@ use std::fmt;
 
 use crate::descriptor_ir2::{
     EffectVmDescriptor2, LookupSpec, MapKind, MapOpSpec, MemKind, MemOpSpec, ProofBindSpec,
-    TableDef2, TableSem, UMemOpSpec, VmConstraint2, WindowExpr, WindowGateSpec,
+    TableDef2, TableSem, UMemOpSpec, VACUOUS_RANGE_BITS, VmConstraint2, WindowExpr, WindowGateSpec,
 };
 use crate::lean_descriptor_air::{HashInput, LeanExpr, RangeSpec, VmConstraint, VmHashSite, VmRow};
 
@@ -59,6 +59,15 @@ pub enum CanonicalDescriptorError {
     RecordTooLarge { len: usize, max: usize },
     /// A valid record was followed by unconsumed bytes.
     TrailingBytes(usize),
+    /// ⚑ A `range` table declares a width that refuses nothing at BabyBear.
+    ///
+    /// This decoder is the PROTOCOL-IDENTITY door and it takes externally supplied records, so it
+    /// carries the same width refusal `descriptor_ir2::parse_table_def` applies to the JSON door.
+    /// Closing one and leaving the other open would be the fail-open shape: a declaration at or
+    /// above `VACUOUS_RANGE_BITS` contains the whole field (`p < 2^31`), so the lookup constrains
+    /// nothing, and until 2026-08-03 the layout filler ALSO masked it into `v >= 1` and refused
+    /// every honest row. Vacuous one side, unprovable the other, and no load path looked.
+    VacuousRangeWidth { bits: usize, max: usize },
 }
 
 impl fmt::Display for CanonicalDescriptorError {
@@ -96,6 +105,11 @@ impl fmt::Display for CanonicalDescriptorError {
                 write!(f, "canonical descriptor has {len} bytes, maximum is {max}")
             }
             Self::TrailingBytes(count) => write!(f, "{count} trailing canonical descriptor bytes"),
+            Self::VacuousRangeWidth { bits, max } => write!(
+                f,
+                "range table declares bits {bits} >= {max}: the BabyBear field is below 2^31, so \
+                 [0, 2^{bits}) contains every element and the lookup refuses nothing"
+            ),
         }
     }
 }
@@ -694,9 +708,16 @@ fn read_table_semantics(reader: &mut Reader<'_>) -> Result<TableSem, CanonicalDe
     match reader.u8()? {
         0 => Ok(TableSem::Main),
         1 => Ok(TableSem::Poseidon2Chip),
-        2 => Ok(TableSem::Range {
-            bits: reader.index("TableSem::Range.bits")?,
-        }),
+        2 => {
+            let bits: usize = reader.index("TableSem::Range.bits")?;
+            if bits >= VACUOUS_RANGE_BITS {
+                return Err(CanonicalDescriptorError::VacuousRangeWidth {
+                    bits,
+                    max: VACUOUS_RANGE_BITS,
+                });
+            }
+            Ok(TableSem::Range { bits })
+        }
         3 => Ok(TableSem::Memory),
         4 => Ok(TableSem::MapOps),
         5 => Ok(TableSem::UMemory),
@@ -1055,6 +1076,47 @@ mod tests {
         let decoded = decode_canonical_effect_vm_descriptor2(&bytes).expect("strict decode");
         assert_eq!(decoded, original);
         assert_eq!(canonical(&decoded), bytes);
+    }
+
+    /// ⚑ **THE PROTOCOL-IDENTITY DOOR CARRIES THE SAME WIDTH REFUSAL AS THE JSON ONE.**
+    ///
+    /// This decoder takes EXTERNALLY SUPPLIED records, so refusing a vacuous range width only in
+    /// `descriptor_ir2::parse_table_def` would leave the second door open — the fail-open shape
+    /// where a gate exists and something walks around it. A record that ENCODES cleanly (the
+    /// encoder is total; a width is just a `u64`) must still fail to DECODE.
+    ///
+    /// The test builds the bytes by encoding a descriptor whose range width was mutated after
+    /// parsing, so the record is genuinely well-formed apart from the width.
+    #[test]
+    fn a_vacuous_range_width_is_refused_by_the_canonical_decoder() {
+        for bad in [VACUOUS_RANGE_BITS, 32, 64, 128] {
+            let mut d = all_variant_descriptor();
+            for t in d.tables.iter_mut() {
+                if let TableSem::Range { bits } = &mut t.sem {
+                    *bits = bad;
+                }
+            }
+            let bytes = canonical(&d);
+            match decode_canonical_effect_vm_descriptor2(&bytes) {
+                Err(CanonicalDescriptorError::VacuousRangeWidth { bits, max }) => {
+                    assert_eq!(bits, bad);
+                    assert_eq!(max, VACUOUS_RANGE_BITS);
+                }
+                other => panic!("a {bad}-bit range table must be refused at decode, got {other:?}"),
+            }
+        }
+        // …and the honest widths still round-trip (the negative clause: 30 is NOT swept in).
+        for ok in [8usize, 16, 29, 30] {
+            let mut d = all_variant_descriptor();
+            for t in d.tables.iter_mut() {
+                if let TableSem::Range { bits } = &mut t.sem {
+                    *bits = ok;
+                }
+            }
+            let decoded = decode_canonical_effect_vm_descriptor2(&canonical(&d))
+                .unwrap_or_else(|e| panic!("a {ok}-bit range table must still decode: {e}"));
+            assert_eq!(decoded, d);
+        }
     }
 
     #[test]

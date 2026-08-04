@@ -70,7 +70,8 @@
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, TableSem, prove_vm_descriptor2, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, TableSem, parse_vm_descriptor2, prove_vm_descriptor2,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_circuit::refusal;
@@ -133,8 +134,14 @@ const CARRY_OFF: i64 = 128;
 const RUNGS: usize = 4;
 
 /// The width that SHIPPED. `128 % 64 == 0`, so the layout filler's `(v as u64) >= (1u64 << bits)`
-/// masks to a shift by 0 and the test collapses to `v >= 1`: vacuous in the denotation, refusing
+/// masked to a shift by 0 and the test collapsed to `v >= 1`: vacuous in the denotation, refusing
 /// EVERYTHING in the deployed prover.
+///
+/// ⚑ **BOTH HALVES CLOSED 2026-08-03 — this constant now names a REFUSED declaration, not a live
+/// one.** `parse_table_def` refuses a range width at or above `VACUOUS_RANGE_BITS` (31) at
+/// descriptor LOAD, and the filler's bound is total (`value_fits_bits`), so an in-memory descriptor
+/// at this width admits everything exactly as `DescriptorIR2.rangeRows` says. Both are measured by
+/// `the_shipped_128_bit_width_refuses_even_an_honest_justification` below.
 const SHIPPED_MID_BITS: usize = 128;
 
 /// The smallest FULLY VACUOUS width (`2^32 > p`) the deployed prover can still execute.
@@ -961,47 +968,78 @@ fn a_round_or_era_that_disagrees_with_its_public_input_is_refused() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-// ⚑ THE SECOND DEFECT — the width that shipped refuses EVERYTHING
+// ⚑ THE SECOND DEFECT — CLOSED 2026-08-03: the over-wide width is REFUSED AT DESCRIPTOR LOAD
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
-/// ⚑ **WHAT THE SHIPPED WIDTH ACTUALLY DID, AND IT IS NOT WHAT THE DENOTATION SAYS.**
+/// The served descriptor's own JSON bytes, so a width substitution below is done to the REAL wire
+/// object rather than to a hand-typed stand-in.
+const MIDNIGHT_LC_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-midnight-lightclient-verify-v1.json");
+
+/// ⚑⚑ **THE WIDTH THAT SHIPPED IS NOW REFUSED AT THE DOOR, AND THIS TEST CHANGED MEANING.**
 ///
-/// `dregg-midnight-lightclient-verify::v1` shipped `bits: 128`. In Lean's `rangeRows 128` that
-/// interval contains every field element and the tooth refuses NOTHING. In the deployed Rust prover
-/// it refuses EVERYTHING: the layout filler's bound is `(v as u64) >= (1u64 << rb.bits)`
-/// (`circuit/src/descriptor_ir2.rs:4310`) and `128 % 64 == 0`, so the shift masks to a shift by 0,
-/// the test becomes `v >= 1`, and every nonzero value on a ranged wire is refused. Under
-/// `cargo test` the same expression is an OVERFLOW PANIC (`[profile.dev]` keeps `overflow-checks`).
+/// # What it used to assert, and why that was the bug and not the tooth
 ///
-/// So an HONEST Midnight justification — the positive polarity that proves above — could not be
-/// proved at all at the width that shipped. **That is the mechanical reason no prover had ever run
+/// `dregg-midnight-lightclient-verify::v1` shipped `bits: 128` on its range table. In Lean's `rangeRows 128` that interval
+/// contains every BabyBear element and the tooth refuses NOTHING. In the deployed Rust prover it
+/// refused EVERYTHING: the layout filler's bound was `(v as u64) >= (1u64 << rb.bits)`, and a `u64`
+/// shift by 128 masks to a shift by 0, so the test collapsed to `v >= 1` and every nonzero value on
+/// a ranged wire was refused (`row 0: range wire 4 value 62195 >= 2^128`). Under `cargo test` the
+/// same expression was an OVERFLOW PANIC. **That was the mechanical reason no prover had ever run
 /// this descriptor: the first honest attempt would have been refused.**
+///
+/// This harness EXHIBITED that as a tooth. It was never a tooth — it was the defect wearing one.
+///
+/// # What it asserts now
+///
+/// Both halves of the repair, on the real bytes:
+///
+///  1. **The declaration is REFUSED AT LOAD.** `parse_vm_descriptor2` rejects a range table at or
+///     above `VACUOUS_RANGE_BITS = 31`, naming the reason. A width that refuses nothing at BabyBear
+///     is a defect however it got onto the wire, so it cannot be served at all — this is the gate,
+///     and it is at the DOOR rather than deep in the prover.
+///  2. **The mask is gone.** The filler's bound is now total (`value_fits_bits`), so a descriptor
+///     constructed IN MEMORY at a vacuous width behaves the way its denotation says: it admits
+///     everything, including the honest row. That is the difference between "the prover disagrees
+///     with `rangeRows`" and "the prover implements it".
+///
+/// ⚠ The in-memory path is deliberately left open: that is exactly what a vacuity CONTROL does
+/// (`the_*_is_admitted_when_the_width_is_vacuous`), and a control that could not construct a vacuous
+/// width could not measure vacuity.
 #[test]
 fn the_shipped_128_bit_width_refuses_even_an_honest_justification() {
-    let j = honest(LIVE_TOTAL_WEIGHT, LIVE_MIN_SUPERMAJORITY);
-    let cells = row_cells(j);
-    let pis = pis_of(j);
-    must_prove("the honest live justification at 16-bit limbs", j);
-
-    let shipped = desc_with_limb_range_width(SHIPPED_MID_BITS);
-    if cfg!(debug_assertions) {
-        let msg = refusal::must_panic_containing(
-            "⚑ the honest justification at the SHIPPED bits=128",
-            "shift left with overflow",
-            || {
-                let _ = prove_and_verify(&shipped, &cells, &pis);
-            },
-        );
-        eprintln!("honest justification at the shipped bits=128 (debug): {msg}");
-    } else {
-        let e: String = refusal::must_refuse(
-            "⚑ the honest justification at the SHIPPED bits=128",
-            || prove_and_verify(&shipped, &cells, &pis),
-        );
-        eprintln!("honest justification at the shipped bits=128 (release): {e}");
+    // ── 1. LOAD REFUSES the width, on the real served bytes with one integer moved.
+    let served = MIDNIGHT_LC_JSON;
+    assert!(
+        parse_vm_descriptor2(served).is_ok(),
+        "the SERVED descriptor must still load — its declared widths are 16 and 8"
+    );
+    for bad in [31usize, 32, 64, SHIPPED_MID_BITS] {
+        let mutated = served.replace("\"bits\":16", &format!("\"bits\":{bad}"));
+        assert_ne!(mutated, served, "the width substitution must have bitten");
+        let e = parse_vm_descriptor2(&mutated)
+            .expect_err("a range table at or above 31 bits must be REFUSED AT LOAD");
         assert!(
-            e.contains("range wire"),
-            "the refusal must come from the range layout bound, got: {e}"
+            e.contains(&format!("declares bits {bad}")) && e.contains("refuses nothing"),
+            "the refusal must name the width and the reason, got: {e}"
         );
+        eprintln!("⚑ dregg-midnight-lightclient-verify::v1 at bits={bad}: REFUSED AT LOAD — {e}");
     }
+
+    // ── 2. THE MASK IS GONE: the honest row, at an in-memory vacuous width, now PROVES.
+    //     Before the repair this was `row 0: range wire N value V >= 2^128` in release and a
+    //     `shift left with overflow` panic under `cargo test`. The denotation always said it should
+    //     be admitted; now the prover says so too.
+    let j = honest(LIVE_TOTAL_WEIGHT, LIVE_MIN_SUPERMAJORITY);
+    must_prove("the honest live-scale j at the declared limb widths", j);
+    must_prove_under(
+        "⚑ the SAME honest j at an in-memory bits=128 — vacuous, therefore ADMITTED",
+        &desc_with_limb_range_width(SHIPPED_MID_BITS),
+        j,
+    );
+    eprintln!(
+        "⚑ dregg-midnight-lightclient-verify::v1: the honest j now PROVES at an in-memory bits=128 (vacuous, admits \
+         everything) instead of being refused by a masked comparison — and bits=128 can no \
+         longer be LOADED at all"
+    );
 }

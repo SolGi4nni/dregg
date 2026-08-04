@@ -403,6 +403,56 @@ pub const LIMB_BITS: usize = 4;
 /// refuses any other height (`ir2_oversized_byte_table_refuses`).
 pub const BYTE_TABLE_HEIGHT: usize = 1 << LIMB_BITS;
 
+/// ⚑ **THE SMALLEST RANGE WIDTH THAT REFUSES NOTHING AT BABYBEAR — a declaration here is ALWAYS a
+/// defect, and [`parse_table_def`] refuses it at descriptor LOAD.**
+///
+/// `p = 2013265921 < 2^31`, so EVERY canonical field element already lies in `[0, 2^31)`: a range
+/// lookup declared at 31 bits or wider constrains nothing. Lean states exactly this — `Dregg2.
+/// Circuit.RangeFieldContainment.range_vacuous_at_or_above_31`, with `wrap_free_iff_le_29` giving
+/// the tighter bound a *wrap-free* tooth needs. The IR's own limb vocabulary already refuses the
+/// class (`EffectAirIR.LimbsLeg.mainRailOk` caps a limb at 29); this is the same refusal one layer
+/// down, on the wire, where a hand-written or drifted descriptor enters.
+///
+/// ⚠ **30 IS NOT REFUSED and that is deliberate.** 30 is not wrap-free (`not_wrap_free_at_30`) but
+/// it is not vacuous either, and 33 deployed by-name descriptors declare it. Refusing 30 here would
+/// be a different change — a completeness/soundness re-pricing of the shared table — not this one.
+///
+/// The measured defect this closes: `dregg-solana-lightclient-verify::v1` and
+/// `dregg-midnight-lightclient-verify::v1` shipped `bits: 128`, which is vacuous in the denotation
+/// AND was silently masked into `v >= 1` by the layout filler, so the prover refused every honest
+/// row. Vacuous one side, unprovable the other, and nothing in the load path looked.
+pub const VACUOUS_RANGE_BITS: usize = 31;
+
+/// Is the canonical felt representative `v` inside the declared interval `[0, 2^bits)`?
+///
+/// ⚑ **TOTAL BY CONSTRUCTION, AND THAT IS THE WHOLE POINT.** This was
+/// `(v as u64) >= (1u64 << bits)`. In Rust `1u64 << bits` for `bits >= 64` is a shift by
+/// `bits % 64` — at `bits = 64` and `bits = 128` it is `1`, so the test collapsed to `v >= 1` and
+/// the prover refused every nonzero row at a width whose *denotation* admits everything. (In a
+/// debug build it is worse still: the shift panics rather than masking.)
+///
+/// The honest reading is the denotation's: at `bits >= 32` the interval contains every `u32`, hence
+/// every canonical felt, so the check passes. [`parse_table_def`] is what keeps such a width off
+/// the wire; this function is what keeps the PROVER agreeing with `DescriptorIR2.rangeRows` when
+/// one is constructed in memory — which is exactly what a vacuity CONTROL does when it hands the
+/// identical trace to the identical AIR at a wider width.
+const fn value_fits_bits(v: u32, bits: usize) -> bool {
+    bits >= 32 || (v as u64) < (1u64 << bits)
+}
+
+/// The `i`-th `LIMB_BITS`-wide limb of `val`, TOTAL in `i`.
+///
+/// Same defect class as [`value_fits_bits`]: `val >> (i * LIMB_BITS)` on a `u32` is undefined for a
+/// shift of 32 or more (debug panic, release mask), and `decomp_cols(128)` asks for limb 31. Limbs
+/// past the top of a `u32` are ZERO, which is what the value actually is.
+const fn limb_at(val: u32, i: usize) -> u32 {
+    if i * LIMB_BITS >= 32 {
+        0
+    } else {
+        (val >> (i * LIMB_BITS)) & ((1 << LIMB_BITS) - 1)
+    }
+}
+
 /// Minimum height for the auxiliary tables (chip / memory / boundary / map-ops).
 /// Prover-only: it floors the witness table heights in `next_pow2` / `build_traces`.
 const MIN_TABLE_HEIGHT: usize = 8;
@@ -1063,9 +1113,25 @@ fn parse_table_def(c: &mut JsonCursor) -> Result<TableDef2, String> {
     let sem = match sem_tag.as_deref() {
         Some("main") => TableSem::Main,
         Some("poseidon2_chip") => TableSem::Poseidon2Chip,
-        Some("range") => TableSem::Range {
-            bits: bits.ok_or("range table def missing \"bits\"")?,
-        },
+        // ⚑ THE WIDTH REFUSAL, AT THE DOOR. A range table declared at or above
+        // `VACUOUS_RANGE_BITS` refuses nothing at BabyBear, so it is a defect however it got here —
+        // never a wide-but-honest check. Refusing at LOAD is what makes it impossible to serve one;
+        // the prover-side filler stays denotation-faithful (`value_fits_bits`) so an in-memory
+        // vacuity CONTROL still measures vacuity rather than hitting a masked comparison.
+        Some("range") => {
+            let bits = bits.ok_or("range table def missing \"bits\"")?;
+            if bits >= VACUOUS_RANGE_BITS {
+                return Err(format!(
+                    "range table \"{}\" declares bits {bits} >= {VACUOUS_RANGE_BITS}: the BabyBear \
+                     field is below 2^31, so [0, 2^{bits}) contains every element and the lookup \
+                     refuses nothing (Lean: RangeFieldContainment.range_vacuous_at_or_above_31). \
+                     Re-emit the descriptor at a wrap-free width (<= 29), or express the quantity \
+                     as a limb VECTOR at that width",
+                    name.as_deref().unwrap_or("<unnamed>")
+                ));
+            }
+            TableSem::Range { bits }
+        }
         Some("memory") => TableSem::Memory,
         Some("map_ops") => TableSem::MapOps,
         Some("umemory") => TableSem::UMemory,
@@ -4234,14 +4300,14 @@ fn fill_decomp(
     let (n, top_bits) = limb_geom(bits);
     let partial = top_bits < LIMB_BITS;
     for i in 0..n {
-        let byte = (val >> (i * LIMB_BITS)) & ((1 << LIMB_BITS) - 1);
+        let byte = limb_at(val, i);
         out.push(BabyBear::new(byte));
         if !(i == n - 1 && partial) {
             hist[byte as usize] += 1;
         }
     }
     if partial {
-        let top = (val >> ((n - 1) * LIMB_BITS)) & ((1 << LIMB_BITS) - 1);
+        let top = limb_at(val, n - 1);
         for b in 0..top_bits {
             out.push(BabyBear::new((top >> b) & 1));
         }
@@ -4265,14 +4331,14 @@ fn fill_decomp_at(
     let (n, top_bits) = limb_geom(bits);
     let partial = top_bits < LIMB_BITS;
     for i in 0..n {
-        let byte = (val >> (i * LIMB_BITS)) & ((1 << LIMB_BITS) - 1);
+        let byte = limb_at(val, i);
         out[at + i] = BabyBear::new(byte);
         if !(i == n - 1 && partial) {
             hist[byte as usize] += 1;
         }
     }
     if partial {
-        let top = (val >> ((n - 1) * LIMB_BITS)) & ((1 << LIMB_BITS) - 1);
+        let top = limb_at(val, n - 1);
         for b in 0..top_bits {
             out[at + n + b] = BabyBear::new((top >> b) & 1);
         }
@@ -4328,7 +4394,7 @@ fn fill_main_layout_row(
     }
     for rb in &layout.ranges {
         let v = base_row[rb.wire].as_u32();
-        if (v as u64) >= (1u64 << rb.bits) {
+        if !value_fits_bits(v, rb.bits) {
             return Err(format!(
                 "row {ri}: range wire {} value {v} >= 2^{}",
                 rb.wire, rb.bits
@@ -7523,6 +7589,79 @@ mod tests {
     /// The Lean `#guard`-pinned demo-v2 golden (DescriptorIR2 §10): every v2 constraint
     /// kind + the five tables, byte-for-byte.
     const DEMO_V2: &str = "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":17,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0}],\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":[{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}";
+
+    /// ⚑ **A RANGE TABLE AT OR ABOVE `VACUOUS_RANGE_BITS` IS REFUSED AT LOAD, AND 30 IS NOT.**
+    ///
+    /// The refusal is the DOOR half of the 2026-08-03 masking repair. Two chains shipped
+    /// `bits: 128`, which contains the whole BabyBear field in the denotation and — through the
+    /// filler's `1u64 << bits` — refused every nonzero row in the prover. Neither side looked at
+    /// load. Now the wire cannot carry one.
+    ///
+    /// The 30 case is the load-bearing NEGATIVE clause: 33 checked-in by-name descriptors declare
+    /// 30, so a refusal that swept it up would be a different (and much larger) change wearing this
+    /// one's clothes.
+    #[test]
+    fn ir2_vacuous_range_width_refuses_at_load() {
+        for bad in [VACUOUS_RANGE_BITS, 32, 64, 128, 255] {
+            let j = DEMO_V2.replace("\"bits\":30", &format!("\"bits\":{bad}"));
+            assert_ne!(j, DEMO_V2, "the substitution must have bitten");
+            let e = parse_vm_descriptor2(&j)
+                .expect_err("a vacuous range width must be refused at descriptor load");
+            assert!(
+                e.contains(&format!("declares bits {bad}")) && e.contains("refuses nothing"),
+                "the refusal must name the width and the reason, got: {e}"
+            );
+        }
+        // …and every width the corpus actually declares still loads.
+        for ok in [4usize, 8, 11, 12, 14, 15, 16, 22, 24, 27, 29, 30] {
+            let j = DEMO_V2.replace("\"bits\":30", &format!("\"bits\":{ok}"));
+            let d = parse_vm_descriptor2(&j)
+                .unwrap_or_else(|e| panic!("a declared corpus width {ok} must still load: {e}"));
+            assert_eq!(d.tables[2].sem, TableSem::Range { bits: ok });
+        }
+    }
+
+    /// ⚑ **THE FILLER'S RANGE BOUND IS TOTAL — no width masks it into a nonsense comparison.**
+    ///
+    /// `(v as u64) >= (1u64 << bits)` was the bug: at `bits = 64` and `bits = 128` the shift masks
+    /// to `bits % 64 == 0`, so the bound became `v >= 1` and the prover refused every nonzero row
+    /// at a width whose denotation admits everything. This pins BOTH the honest widths (the bound
+    /// bites exactly at `2^bits`) and the vacuous ones (everything fits, matching `rangeRows`).
+    #[test]
+    fn ir2_range_bound_is_total_at_every_width() {
+        // A real width bites exactly at its ceiling.
+        for bits in [1usize, 4, 8, 11, 16, 29, 30, 31] {
+            let ceil = 1u32 << bits;
+            assert!(
+                value_fits_bits(ceil - 1, bits),
+                "2^{bits} − 1 must fit at {bits}"
+            );
+            assert!(
+                !value_fits_bits(ceil, bits),
+                "2^{bits} must NOT fit at {bits}"
+            );
+        }
+        // ⚑ The widths that used to mask. Every `u32` is below `2^32`, so all of these ADMIT —
+        // which is exactly what `DescriptorIR2.rangeRows` says and what the prover used to deny.
+        for bits in [32usize, 33, 63, 64, 65, 128, 255, 4096] {
+            assert!(value_fits_bits(0, bits));
+            assert!(
+                value_fits_bits(62_195, bits),
+                "the row the bits=128 exhibit refused"
+            );
+            assert!(value_fits_bits(u32::MAX, bits));
+            assert!(
+                value_fits_bits(2_013_265_920, bits),
+                "p − 1 is in range at a vacuous width"
+            );
+        }
+        // And the limb extraction is total too — `decomp_cols(128)` asks for limb 31 of a `u32`.
+        assert_eq!(limb_at(0xABCD_EF01, 0), 0x1);
+        assert_eq!(limb_at(0xABCD_EF01, 7), 0xA);
+        for i in 8..64usize {
+            assert_eq!(limb_at(u32::MAX, i), 0, "limb {i} is past the top of a u32");
+        }
+    }
 
     /// The byte-pinned Lean golden parses, with every v2 element decoded.
     #[test]

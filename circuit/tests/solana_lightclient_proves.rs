@@ -25,18 +25,33 @@
 //! 2013265920`, and the 128-bit interval contained it. **The empty stake table passed its own
 //! emptiness floor.**
 //!
-//! ⚠ And the quorum did not save it, which is the part worth stating precisely: Solana's threshold
-//! is the NON-STRICT `3·rooted ≥ 2·total` (`solVerifyDecision`, `γ = 0`), so at
-//! `rooted = total = 0` the quorum difference is `3·0 − 2·0 = 0` — an HONEST, in-range, accepting
-//! fill. `the_empty_stake_table_is_refused_by_the_FLOOR_and_the_quorum_admits_it` measures both
-//! halves on the deployed prover: the quorum chain fills to all-zero difference limbs with every
-//! carry at the honest offset, and the floor chain's top difference limb is the field element
-//! `p − 1`, which the 16-bit tooth has no row for. The floor is not redundant with the quorum. It
-//! is the only thing standing between this client and a block signed by nobody.
+//! ⚠ And the quorum did not save it — because the threshold was the WRONG POLARITY. This descriptor
+//! shipped the NON-STRICT `3·rooted ≥ 2·total` (`γ = 0`), so at `rooted = total = 0` the quorum
+//! difference was `3·0 − 2·0 = 0`: an HONEST, in-range, ACCEPTING fill, and the emptiness floor was
+//! the ONLY thing between this client and a block signed by nobody.
 //!
-//! **The sub-quorum**, one lamport out of 4.3e17. At mainnet-beta's live active stake the minimal
-//! non-strict quorum is `288433455950417058`; `288433455950417057` gives `3·R − 2·T = −3` and is
-//! refused.
+//! ⚑⚑ **That was not Solana's rule.** `get_highest_super_majority_root`
+//! (`core/src/commitment_service.rs:54-64`, agave `c7670b260b8cd34674e05c03c0babdaf54e15987`) — the
+//! rooted-finality rule this AIR models — compares
+//! `(stake_sum as f64 / total_stake as f64) > VOTE_THRESHOLD_SIZE`, **strictly**, against
+//! `2f64/3f64` (`runtime/src/commitment.rs:9`). Transcribing that comparison and sweeping it: over
+//! 6,684,470 pairs with both operands below 2^53 (including EVERY `(rooted, total)` with
+//! `total <= 3000`) the strict integer rule `3·rooted > 2·total` matches agave on **all of them**,
+//! while the non-strict rule differs on 1000 — every one the exact-2/3 point, every one this
+//! descriptor accepting where agave refuses. And at `total = 0`, agave computes `0f64/0f64 = NaN`
+//! and `NaN > x` is `false`, so **agave refuses the empty stake table at the threshold itself**.
+//!
+//! So `γ` is now `1`, and the empty stake table is refused by BOTH chains.
+//! `the_empty_stake_table_is_refused_by_both_teeth` and
+//! `with_the_emptiness_floor_disarmed_the_strict_quorum_still_refuses_the_empty_table` disarm them
+//! ONE AT A TIME on the deployed prover — quorum disarmed ⇒ the floor bites, floor disarmed ⇒ the
+//! quorum bites — and `at_the_shipped_non_strict_gamma_disarming_the_floor_left_nothing` exhibits
+//! the state that preceded it, where disarming the floor left every tally wire in range.
+//!
+//! **The exact-2/3 point**, one lamport out of 4.3e17. At mainnet-beta's live active stake the
+//! minimal STRICT quorum is `288433455950417059`; `288433455950417058` is exactly 2/3
+//! (`3·R = 2·T = 865300367851251174`), **proved before this repair**, and is refused now.
+//! `288433455950417057` gives `3·R − 2·T − 1 = −4` and was refused before and after.
 //!
 //! # The tally is a LIMB VECTOR, and that is what makes live scale representable at all
 //!
@@ -56,8 +71,9 @@
 //! `ED_OK` / `STAKE_TABLE_OK` / `ROOTED_OK` / `AUTH_OK` are witnessed carrier bits, not in-AIR
 //! ed25519 and SHA-256; the dregg-side STARK inherits the undischarged FRI floor. The mod-`p` ↔ ℤ
 //! residual is DISCHARGED for the chain gates at THIS AIR's constants
-//! (`LightClientSolanaAir.sol_qdiff_rung_no_alias` at `α=3, β=2, γ=0` and `sol_tpos_rung_no_alias`
-//! at `α=1, β=0, γ=1` — neither is Tendermint's, and neither cites it) and still stands elsewhere.
+//! (`LightClientSolanaAir.sol_qdiff_rung_no_alias` at `α=3, β=2, γ=1` and `sol_tpos_rung_no_alias`
+//! at `α=1, β=0, γ=1`; the quorum's constants now coincide with `LimbTally`'s deployed ones, and it
+//! is still proved locally rather than by citation) and still stands elsewhere.
 //! This is a prover running the served object. It is **not** "Solana-valid", and it is not
 //! "machine-checked" — the machine-checked statements are the Lean ones this file names, and a Rust
 //! case-test quantifies over nothing.
@@ -70,7 +86,8 @@
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, TableSem, prove_vm_descriptor2, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, TableSem, parse_vm_descriptor2, prove_vm_descriptor2,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_circuit::refusal;
@@ -138,12 +155,14 @@ const RUNGS: usize = 4;
 
 /// The width that SHIPPED on this descriptor's single range table.
 ///
-/// ⚑ In the DENOTATION (`DescriptorIR2.rangeRows 128`) that interval contains every BabyBear
-/// element, so it refused nothing. In the DEPLOYED Rust prover it refuses EVERYTHING: the layout
-/// filler's bound is `(v as u64) >= (1u64 << rb.bits)` (`circuit/src/descriptor_ir2.rs:4310`) and
-/// `128 % 64 == 0`, so the shift masks to a shift by 0 and the test collapses to `v >= 1`.
-/// **Vacuous in the denotation, unprovable in the prover** — the mechanical reason no honest
-/// attempt was ever made.
+/// ⚑ **BOTH HALVES OF THAT DEFECT ARE CLOSED (2026-08-03) AND THIS CONSTANT NOW NAMES A REFUSED
+/// DECLARATION, NOT A LIVE ONE.** `128 >= 31`, so the interval contained the whole BabyBear field
+/// and the lookup refused nothing; and the layout filler's `(v as u64) >= (1u64 << bits)` masked to
+/// a shift by 0, so the same declaration ALSO refused every nonzero row in the prover. Now
+/// `parse_table_def` refuses the declaration at descriptor LOAD (`VACUOUS_RANGE_BITS`), and the
+/// filler's bound is total (`value_fits_bits`), so an in-memory descriptor at this width behaves the
+/// way `DescriptorIR2.rangeRows` says: it admits everything. Both are measured by
+/// `the_shipped_128_bit_width_refuses_even_an_honest_update` below.
 const SHIPPED_SOL_BITS: usize = 128;
 
 /// The smallest FULLY VACUOUS width (`2^32 > p`, so `[0, 2^32)` covers the field) the deployed
@@ -222,9 +241,11 @@ fn limbs4(v: u64) -> [i64; RUNGS] {
 /// ⚑ **THE HONEST FILL**, parametric in the chain constants, because this AIR runs TWO chains over
 /// the same limb vectors and they do not share constants:
 ///
-///  * the QUORUM chain is `α = 3` on rooted stake, `β = 2` on total stake, `γ = 0` — Solana's
-///    NON-STRICT `3·rooted ≥ 2·total` (agave's `VOTE_THRESHOLD_SIZE` is a float ratio a circuit
-///    cannot evaluate; the integer reading is `LightClientSolanaAir`'s module header, §"fidelity"),
+///  * the QUORUM chain is `α = 3` on rooted stake, `β = 2` on total stake, ⚑ `γ = 1` — agave's
+///    STRICT `3·rooted > 2·total`. It shipped `γ = 0`; `get_highest_super_majority_root`
+///    (`core/src/commitment_service.rs:54-64`) compares `> VOTE_THRESHOLD_SIZE`, and over 6,684,470
+///    pairs below 2^53 the strict integer rule matches agave's float on ALL of them while the
+///    non-strict rule differs on the exact-2/3 point every time (`LightClientSolanaAir` header),
 ///  * the FLOOR chain is `α = 1`, `β = 0`, `γ = 1` — `total − 1 ≥ 0`, the `EmptyStakeTable` refusal.
 ///
 /// `fillDigit` is a FLOOR mod (`rem_euclid`, always in `[0, 2^16)` by construction, never by check)
@@ -306,12 +327,12 @@ fn honest(total_stk: u64, rooted_stk: u64) -> Update {
 fn row_cells(u: Update) -> Vec<i64> {
     let total = limbs4(u.total_stk);
     let rooted = limbs4(u.rooted_stk);
-    // §2: `α = 3` on rooted, `β = 2` on total, `γ = 0` — the NON-STRICT `3·rooted ≥ 2·total`.
-    let q = fill_chain(3, rooted, 2, total, 0);
+    // §2: `α = 3` on rooted, `β = 2` on total, ⚑ `γ = 1` — agave's STRICT `3·rooted > 2·total`.
+    let q = fill_chain(3, rooted, 2, total, QUORUM_GAMMA);
     // §2: `α = 1`, `β = 0`, `γ = 1` — `total − 1 ≥ 0`. The `β` operand column is the total-stake
     // limb ON PURPOSE (`tposRungs`): at `β = 0` the emitted term is `0 · var`, so no dedicated zero
     // column is needed and none has to be pinned.
-    let t = fill_chain(1, total, 0, total, 1);
+    let t = fill_chain(1, total, 0, total, FLOOR_GAMMA);
 
     let mut r = vec![0i64; SOL_LC_WIDTH];
     r[ED_OK] = u.ed_ok as i64;
@@ -416,8 +437,24 @@ fn must_refuse_violated_gate(
 /// `432.650M SOL = 2^58.586`. **214,899,670 × the BabyBear modulus.**
 const LIVE_ACTIVE_STAKE: u64 = 432_650_183_925_625_587;
 
-/// The SMALLEST rooted stake satisfying Solana's NON-STRICT `3·rooted ≥ 2·total` at that total.
-const MIN_QUORUM: u64 = 288_433_455_950_417_058;
+/// ⚑ The EXACT-2/3 point at that total: `3 · 288_433_455_950_417_058 = 865_300_367_851_251_174`
+/// is `2 · LIVE_ACTIVE_STAKE` on the nose. It was the accepting anchor under the shipped non-strict
+/// rule; under agave's STRICT `>` it is a **REFUSAL**, and it is kept precisely because it is the
+/// one row the strictness repair flips.
+const EXACT_TWO_THIRDS: u64 = 288_433_455_950_417_058;
+
+/// The SMALLEST rooted stake satisfying agave's STRICT `3·rooted > 2·total` at that total —
+/// **one lamport** above the exact-2/3 point, out of 4.3e17.
+const MIN_QUORUM: u64 = 288_433_455_950_417_059;
+
+/// The quorum chain's `γ`. ⚑ `1` = STRICT (`3·rooted ≥ 2·total + 1`), matching
+/// `get_highest_super_majority_root`'s `>` and the constants Midnight and Tendermint already used.
+/// It shipped `0`. Named rather than inlined so the DISARM tests below can build the non-strict
+/// fill by name and show what it admitted.
+const QUORUM_GAMMA: i64 = 1;
+
+/// The emptiness floor's `γ` — `total − 1 ≥ 0`. Unchanged by the strictness repair.
+const FLOOR_GAMMA: i64 = 1;
 
 /// Mainnet-beta's total SUPPLY at the same sample (`getSupply`): `2^59.13`. The protocol ceiling on
 /// what a stake tally could ever have to hold — no stake table can exceed the supply.
@@ -438,11 +475,11 @@ const LEAN_MAX_SCALE_CELLS: [i64; SOL_LC_WIDTH] = [
     52452,
     5388,
     1537,
-    19618,
+    19619,
     13123,
     47283,
     1024,
-    0,
+    2,
     0,
     0,
     0,
@@ -566,20 +603,30 @@ fn the_honest_fill_reproduces_the_lean_row() {
     let rooted = limbs4(MIN_QUORUM);
     assert_eq!(limb_value(&total), LIVE_ACTIVE_STAKE as i128);
     assert_eq!(limb_value(&rooted), MIN_QUORUM as i128);
-    let q = fill_chain(3, rooted, 2, total, 0);
+    let q = fill_chain(3, rooted, 2, total, QUORUM_GAMMA);
     assert_eq!(
         limb_value(&q.diff),
-        3 * MIN_QUORUM as i128 - 2 * LIVE_ACTIVE_STAKE as i128
+        3 * MIN_QUORUM as i128 - 2 * LIVE_ACTIVE_STAKE as i128 - QUORUM_GAMMA as i128
     );
-    let t = fill_chain(1, total, 0, total, 1);
+    let t = fill_chain(1, total, 0, total, FLOOR_GAMMA);
     assert_eq!(limb_value(&t.diff), LIVE_ACTIVE_STAKE as i128 - 1);
 
-    // The quorum really is at the boundary: one lamport less fails Solana's `3·R ≥ 2·T`.
-    assert!(3 * MIN_QUORUM as i128 >= 2 * LIVE_ACTIVE_STAKE as i128);
-    assert!(3 * ((MIN_QUORUM - 1) as i128) < 2 * LIVE_ACTIVE_STAKE as i128);
+    // The quorum really is at the boundary: one lamport less fails agave's STRICT `3·R > 2·T`.
+    assert!(3 * MIN_QUORUM as i128 > 2 * LIVE_ACTIVE_STAKE as i128);
+    assert!(3 * ((MIN_QUORUM - 1) as i128) == 2 * LIVE_ACTIVE_STAKE as i128);
+    assert_eq!(MIN_QUORUM - 1, EXACT_TWO_THIRDS);
+    // ⚑ …and that one-lamport-below value is EXACTLY 2/3 — the row the shipped non-strict rule
+    // accepted and agave refuses. The whole strictness repair is this single lamport.
+    assert!(
+        3 * EXACT_TWO_THIRDS as i128 >= 2 * LIVE_ACTIVE_STAKE as i128,
+        "non-strict ACCEPTS it"
+    );
+    assert!(
+        !(3 * EXACT_TWO_THIRDS as i128 > 2 * LIVE_ACTIVE_STAKE as i128),
+        "strict REFUSES it"
+    );
 
     // ⚑ And the quorum carries are NOT trivial: `[127, 127, 130, 128]` is `[−1, −1, +2, 0]`. The
-    // difference limbs are all zero (the minimal quorum hits `3·R − 2·T = 0` exactly), but the
     // chain does real work in BOTH directions — this row is the boundary, not a degenerate one.
     assert_eq!(q.carry, [127, 127, 130, 128]);
     assert!(q.carry.iter().any(|&c| c > CARRY_OFF) && q.carry.iter().any(|&c| c < CARRY_OFF));
@@ -593,19 +640,19 @@ fn the_honest_fill_reproduces_the_lean_row() {
 /// PROVER.**
 ///
 /// `totalStk = 432650183925625587` lamports is the measured live active stake;
-/// `rootedStk = 288433455950417058` is the SMALLEST value satisfying Solana's non-strict
-/// `3·rooted ≥ 2·total`. At a single felt this update could not be REPRESENTED, let alone accepted:
+/// `rootedStk = 288433455950417059` is the SMALLEST value satisfying agave's STRICT
+/// `3·rooted > 2·total`. At a single felt this update could not be REPRESENTED, let alone accepted:
 /// `3·rootedStk = 865300367851251174` is 429.8 million times the BabyBear modulus, so no declared
 /// width — 29, 30, 64 or the 128 that shipped — ever made it provable. The Lean counterpart is
 /// `LightClientSolanaAir.solLcAir_accepts_at_live_active_stake`, over the same 41 cells.
 #[test]
 fn the_live_mainnet_beta_active_stake_proves() {
     let u = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM);
-    assert!(3 * u.rooted_stk as i128 >= 2 * u.total_stk as i128);
+    assert!(3 * u.rooted_stk as i128 > 2 * u.total_stk as i128);
 
     let t0 = std::time::Instant::now();
     must_prove(
-        "⚑ mainnet-beta's live active stake at the minimal non-strict quorum",
+        "⚑ mainnet-beta's live active stake at the minimal STRICT quorum",
         u,
     );
     let dt = t0.elapsed();
@@ -622,15 +669,15 @@ fn the_live_mainnet_beta_active_stake_proves() {
 #[test]
 fn a_stake_table_at_the_whole_supply_proves() {
     let total = LIVE_TOTAL_SUPPLY;
-    // ceil(2T/3), the minimal non-strict quorum.
-    let rooted = (2 * total as u128).div_ceil(3) as u64;
-    assert!(3 * rooted as u128 >= 2 * total as u128);
-    assert!(3 * ((rooted - 1) as u128) < 2 * total as u128);
+    // ⚑ ceil((2T+1)/3), the minimal STRICT quorum (agave's `>`), not ceil(2T/3).
+    let rooted = (2 * total as u128 + 1).div_ceil(3) as u64;
+    assert!(3 * rooted as u128 > 2 * total as u128);
+    assert!(!(3 * ((rooted - 1) as u128) > 2 * total as u128));
 
     let u = honest(total, rooted);
     let cells = row_cells(u);
     // The chain must actually be exercised at this scale, or the test measures nothing.
-    let q = fill_chain(3, limbs4(rooted), 2, limbs4(total), 0);
+    let q = fill_chain(3, limbs4(rooted), 2, limbs4(total), QUORUM_GAMMA);
     assert!(
         q.carry.iter().any(|&c| c != CARRY_OFF),
         "the carry chain must do real work at the supply ceiling; carries = {:?}",
@@ -650,34 +697,80 @@ fn a_stake_table_at_the_whole_supply_proves() {
     );
 }
 
-/// A small honest update proves too: `rooted = 2` of `total = 3` is Solana's exact NON-STRICT
-/// boundary (`3·2 = 6 = 2·3`), the tightest accepting row there is.
+/// ⚑⚑ **THE EXACT-2/3 BOUNDARY IS REFUSED — the strictness repair, at the smallest scale there is.**
 ///
-/// ⚠ Worth naming: this row is EXACTLY 2/3, and under Solana's semantics it ACCEPTS. Tendermint's
-/// `>2/3` refuses the same ratio, and Midnight's does too. The chain constant `γ` is where that
-/// difference lives (`γ = 0` here, `γ = 1` there), and it is a fidelity choice
-/// (`LightClientSolanaAir` module header, §"the reference implementation compares a float ratio"),
-/// not an oversight.
+/// `rooted = 2` of `total = 3` is exactly 2/3 (`3·2 = 6 = 2·3`). It **proved** under the shipped
+/// `γ = 0` and it is refused now, which is what agave does: transcribing
+/// `(2f64 / 3f64) > (2f64 / 3f64)` gives `false`, and this pair is one of the 1000 cases in the
+/// full exhaustive sweep (`t <= 3000`) where agave and the non-strict rule disagreed.
+///
+/// ⚠ Both legs, because they catch different forgers: the honest fill's top difference limb is out
+/// of range, and forcing it into range leaves the closure gate violated.
 #[test]
-fn the_non_strict_two_thirds_boundary_proves() {
+fn the_exact_two_thirds_boundary_is_refused() {
     let u = honest(3, 2);
-    let q = fill_chain(3, limbs4(2), 2, limbs4(3), 0);
+    let q = fill_chain(3, limbs4(2), 2, limbs4(3), QUORUM_GAMMA);
     assert_eq!(
         limb_value(&q.diff),
-        0,
-        "exactly 2/3 fills the boundary zero"
+        -1,
+        "3·2 − 2·3 − 1 = −1: the STRICT quorum refuses the exact-2/3 point"
     );
-    must_prove("Solana's non-strict exactly-2/3 boundary", u);
+    // …and the NON-STRICT fill this descriptor used to ship accepted the very same row.
+    let q_old = fill_chain(3, limbs4(2), 2, limbs4(3), 0);
+    assert_eq!(
+        limb_value(&q_old.diff),
+        0,
+        "γ = 0 filled it to an accepting zero"
+    );
+    assert_eq!(q_old.diff, [0; RUNGS + 1]);
+
+    let d = desc();
+    let cells = row_cells(u);
+    let pis = pis_of(u);
+    let e = must_refuse_out_of_range(
+        "⚑⚑ the EXACT-2/3 point (total 3, rooted 2)",
+        &d,
+        &cells,
+        &pis,
+    );
+    eprintln!("⚑⚑ SOLANA exact-2/3 refused: {e}");
+    assert!(
+        e.contains(&format!("range wire {}", QDIFF_0 + RUNGS)),
+        "the refusal must be the QUORUM tooth on col {}: {e}",
+        QDIFF_0 + RUNGS
+    );
+
+    let mut forged = cells.clone();
+    forged[QDIFF_0 + RUNGS] = 0;
+    let e2 = must_refuse_violated_gate(
+        "⚑⚑ the EXACT-2/3 point with the quorum top limb forced into range",
+        &d,
+        &forged,
+        &pis,
+    );
+    eprintln!("⚑⚑ SOLANA exact-2/3, quorum top limb forged to 0: {e2}");
+}
+
+/// ⚑ **AND THE ACCEPTING SIDE AT THE SAME SCALE**, so the refusal above is a boundary and not a
+/// blanket. `rooted = 3` of `total = 3` clears the strict threshold (`9 > 6`) and PROVES.
+#[test]
+fn the_strict_two_thirds_boundary_proves() {
+    let u = honest(3, 3);
+    let q = fill_chain(3, limbs4(3), 2, limbs4(3), QUORUM_GAMMA);
+    assert_eq!(limb_value(&q.diff), 2, "3·3 − 2·3 − 1 = 2");
+    must_prove("agave's STRICT >2/3 boundary (rooted 3 of total 3)", u);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // ⚑ TOOTH 1 — the sub-quorum, one lamport out of 4.3e17
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
-/// ⚑ **ONE LAMPORT BELOW THE MINIMAL QUORUM IS REFUSED, AT LIVE SCALE.**
+/// ⚑⚑ **ONE LAMPORT BELOW THE MINIMAL STRICT QUORUM IS REFUSED, AT LIVE SCALE — and that value is
+/// the EXACT-2/3 POINT, which PROVED before the strictness repair.**
 ///
-/// `rootedStk = 288433455950417057` gives `3·R − 2·T = −3`. Both legs are exercised, because they
-/// catch different forgers:
+/// `rootedStk = 288433455950417058` gives `3·R = 2·T = 865300367851251174` exactly, so the strict
+/// difference `3·R − 2·T − 1` is `−1`. This is the row agave refuses (`d > d` is false) and the
+/// shipped `γ = 0` accepted. Both legs are exercised, because they catch different forgers:
 ///
 ///  * **The honest fill is out of range.** `fillCarry` borrows all the way up and the top
 ///    difference limb comes out `−1`, i.e. the field element `p − 1 = 2013265920`, which the 16-bit
@@ -686,29 +779,39 @@ fn the_non_strict_two_thirds_boundary_proves() {
 ///    `0` to satisfy the range tooth then leaves `c₃ − d₄ − 128 = 127 − 0 − 128 = −1 ≠ 0`.
 ///
 /// ⚠ Neither leg is the general statement. "NO assignment of difference limbs and carries satisfies
-/// the chain" is `solLcAir_refuses_sub_quorum_at_live_active_stake`, a Lean theorem over the
-/// emitted bodies with no width, field or magnitude hypothesis. A Rust test quantifies over nothing
-/// and this file does not pretend otherwise.
+/// the chain" is `solLcAir_refuses_the_exact_two_thirds_point_at_live_active_stake`, a Lean theorem
+/// over the emitted bodies with no width, field or magnitude hypothesis. A Rust test quantifies over
+/// nothing and this file does not pretend otherwise.
 #[test]
 fn one_lamport_below_the_quorum_is_refused_at_live_active_stake() {
     let u = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM - 1);
+    assert_eq!(u.rooted_stk, EXACT_TWO_THIRDS);
     assert!(
-        3 * (u.rooted_stk as i128) < 2 * u.total_stk as i128,
-        "one lamport below the minimal quorum must not finalize"
+        !(3 * (u.rooted_stk as i128) > 2 * u.total_stk as i128),
+        "the exact-2/3 point must not finalize under agave's STRICT rule"
+    );
+    assert!(
+        3 * (u.rooted_stk as i128) >= 2 * u.total_stk as i128,
+        "…and it DID under the non-strict rule this descriptor shipped"
     );
 
-    let q = fill_chain(3, limbs4(u.rooted_stk), 2, limbs4(u.total_stk), 0);
-    assert_eq!(limb_value(&q.diff), -3, "the sub-quorum's true difference");
+    let q = fill_chain(
+        3,
+        limbs4(u.rooted_stk),
+        2,
+        limbs4(u.total_stk),
+        QUORUM_GAMMA,
+    );
+    assert_eq!(
+        limb_value(&q.diff),
+        -1,
+        "the exact-2/3 point's strict difference"
+    );
     assert_eq!(q.diff[RUNGS], -1, "…carried into the TOP limb");
     assert_eq!(
         felt(q.diff[RUNGS]).as_u32() as i64,
         P - 1,
         "…which on the wire is p − 1, an element with no row in [0, 2^16)"
-    );
-    assert_eq!(
-        q.carry,
-        [126, 126, 129, 127],
-        "and every rung BORROWED relative to the honest row's carries"
     );
 
     let d = desc();
@@ -771,83 +874,185 @@ fn the_sub_quorum_is_admitted_when_the_limb_table_is_vacuous() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-// ⚑⚑ TOOTH 2 — THE EMPTY STAKE TABLE, and the quorum that does not catch it
+// ⚑⚑ TOOTH 2 — THE EMPTY STAKE TABLE, and the STRICT quorum that now also catches it
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
-/// ⚑⚑ **THE EMPTY STAKE TABLE IS REFUSED — BY THE FLOOR, AND THE QUORUM ADMITS IT.**
+/// ⚑⚑ **THE EMPTY STAKE TABLE IS REFUSED BY BOTH TEETH — DISARMED ONE AT A TIME.**
 ///
 /// This is the check that FAILED. At `TOTAL_STK = 0` the `EmptyStakeTable` floor
 /// `TPOS = TOTAL_STK − 1 ≥ 0` fills to `−1`, which in the deployed mod-`p` reading rides as
 /// `p − 1 = 2013265920` — and the shipped `[0, 2^128)` CONTAINED it
 /// (`sol_empty_stake_table_was_admitted_at_128`).
 ///
-/// ⚠ **And the quorum is not a second line of defence, which this test measures rather than
-/// assumes.** Solana's threshold is NON-STRICT, so at `rooted = total = 0` the quorum difference is
-/// `3·0 − 2·0 = 0`: an honest, in-range, ACCEPTING fill. Every quorum difference limb is zero and
-/// every quorum carry sits at the honest offset. A block signed by nobody satisfied the quorum
-/// then and satisfies it now — the floor is the only thing that refuses it.
+/// ⚑ **And the quorum used to be no help, which is what the strictness repair changed.** Under the
+/// shipped `γ = 0` the quorum difference at `rooted = total = 0` was `3·0 − 2·0 = 0`: an honest,
+/// in-range, ACCEPTING fill — the floor was the ONLY thing between this descriptor and a block
+/// signed by nobody. Under agave's actual STRICT rule (`γ = 1`) the difference is `−1` and the
+/// QUORUM chain refuses it too, from its own columns.
 ///
-/// Both floor legs are exercised: the honest fill's top limb is out of range, and forcing it into
-/// range leaves the closure gate violated.
+/// The test DISARMS THEM ONE AT A TIME rather than asserting the pair — the same shape the Midnight
+/// harness uses. Three refusals, none of them the same one twice:
+///
+///  * **Leg 1** — the honest row: the QUORUM top limb (col 16) is what the layout filler reaches
+///    first.
+///  * **Leg 2** — force the quorum's top limb into range: the refusal MOVES to the EMPTINESS floor's
+///    top limb (col 25). With the quorum tooth disarmed the floor still bites.
+///  * **Leg 3** — force BOTH into range: an algebraic closure gate is what is left standing, so
+///    neither refusal was the layout filler's pre-flight alone.
+///
+/// ⚠ Leg 2 is the load-bearing one for "depth": it is the state the descriptor was ACTUALLY in
+/// before this repair (one tooth), and it still refuses.
 #[test]
-fn the_empty_stake_table_is_refused_by_the_floor_and_the_quorum_admits_it() {
+fn the_empty_stake_table_is_refused_by_both_teeth() {
     let u = honest(0, 0);
     let cells = row_cells(u);
+    let d = desc();
+    let pis = pis_of(u);
 
-    // ⚑ The quorum chain ACCEPTS the empty set — stated as a measurement of the fill, not a mood.
-    let q = fill_chain(3, limbs4(0), 2, limbs4(0), 0);
+    // Both chains fill to −1 — the same wire value, from two different linear forms over two
+    // different column sets.
+    let q = fill_chain(3, limbs4(0), 2, limbs4(0), QUORUM_GAMMA);
+    let t = fill_chain(1, limbs4(0), 0, limbs4(0), FLOOR_GAMMA);
     assert_eq!(
         limb_value(&q.diff),
-        0,
-        "3·0 − 2·0 = 0: the NON-STRICT quorum is satisfied"
+        -1,
+        "3·0 − 2·0 − 1 = −1: the STRICT quorum fails"
     );
-    assert_eq!(q.diff, [0; RUNGS + 1]);
-    assert_eq!(
-        q.carry, [CARRY_OFF; RUNGS],
-        "…with every carry at the honest offset"
-    );
-    for i in 0..=RUNGS {
-        assert!(
-            cells[QDIFF_0 + i] >= 0 && cells[QDIFF_0 + i] < (1 << SOL_LIMB_BITS),
-            "every quorum difference limb is INSIDE the declared interval — the quorum tooth has \
-             nothing to bite on"
-        );
-    }
-
-    // …and the FLOOR chain is where `−1` lands.
-    let t = fill_chain(1, limbs4(0), 0, limbs4(0), 1);
     assert_eq!(
         limb_value(&t.diff),
         -1,
-        "0 − 1 = −1: the EmptyStakeTable floor fails"
+        "0 − 1 = −1: the emptiness floor fails"
     );
-    assert_eq!(t.diff[RUNGS], -1);
+    assert_eq!(felt(q.diff[RUNGS]).as_u32() as i64, P - 1);
+    assert_eq!(felt(t.diff[RUNGS]).as_u32() as i64, P - 1);
+
+    // ⚑ …and the SHIPPED non-strict quorum admitted exactly this row. Stated as a measurement of
+    // the fill, not a mood: every difference limb zero, every carry at the honest offset.
+    let q_old = fill_chain(3, limbs4(0), 2, limbs4(0), 0);
     assert_eq!(
-        felt(t.diff[RUNGS]).as_u32() as i64,
-        P - 1,
-        "…which on the wire is p − 1 — the exact element the shipped [0, 2^128) admitted"
+        limb_value(&q_old.diff),
+        0,
+        "γ = 0: `3·0 − 2·0 = 0` is an ACCEPTING fill"
+    );
+    assert_eq!(q_old.diff, [0; RUNGS + 1]);
+    assert_eq!(q_old.carry, [CARRY_OFF; RUNGS]);
+
+    // Leg 1 — the QUORUM tooth (this is new; it did not exist at γ = 0).
+    let e1 = must_refuse_out_of_range("⚑⚑ the EMPTY stake table", &d, &cells, &pis);
+    eprintln!("⚑⚑ SOLANA empty stake table refused (STRICT quorum): {e1}");
+    assert!(
+        e1.contains(&format!("range wire {}", QDIFF_0 + RUNGS)),
+        "the first refusal must be the QUORUM tooth on col {}: {e1}",
+        QDIFF_0 + RUNGS
     );
 
-    let d = desc();
-    let pis = pis_of(u);
-    let e = must_refuse_out_of_range("⚑⚑ the EMPTY stake table", &d, &cells, &pis);
-    eprintln!("⚑⚑ SOLANA empty stake table refused: {e}");
+    // Leg 2 — DISARM the quorum and the EMPTINESS floor is what refuses.
+    let mut q_forged = cells.clone();
+    q_forged[QDIFF_0 + RUNGS] = 0;
+    let e2 = must_refuse_out_of_range(
+        "⚑⚑ the EMPTY stake table with the quorum's top limb forced into range",
+        &d,
+        &q_forged,
+        &pis,
+    );
+    eprintln!("⚑⚑ SOLANA empty stake table refused (emptiness floor): {e2}");
     assert!(
-        e.contains(&format!("range wire {}", TPOS_0 + RUNGS)),
-        "the refusal must be the FLOOR tooth on col {} — NOT the quorum, which admits this row: {e}",
+        e2.contains(&format!("range wire {}", TPOS_0 + RUNGS)),
+        "with the quorum disarmed, the EMPTINESS floor (col {}) must be what bites: {e2}",
         TPOS_0 + RUNGS
     );
 
-    // …and the in-circuit leg, so this is not only the layout filler's pre-flight.
-    let mut forged = cells.clone();
-    forged[TPOS_0 + RUNGS] = 0;
-    let e2 = must_refuse_violated_gate(
-        "⚑⚑ the EMPTY stake table (floor top limb forced into range)",
+    // Leg 3 — disarm BOTH range teeth and an algebraic closure gate is what is left.
+    let mut both_forged = q_forged.clone();
+    both_forged[TPOS_0 + RUNGS] = 0;
+    let e3 = must_refuse_violated_gate(
+        "⚑⚑ the EMPTY stake table with BOTH top limbs forced into range",
         &d,
-        &forged,
+        &both_forged,
         &pis,
     );
-    eprintln!("⚑⚑ SOLANA empty stake table, floor top limb forged to 0: {e2}");
+    eprintln!("⚑⚑ SOLANA empty stake table, both top limbs forged to 0: {e3}");
+}
+
+/// ⚑⚑ **THE OTHER DIRECTION OF THE DISARM: with the FLOOR disabled, the STRICT QUORUM still refuses
+/// the empty stake table.**
+///
+/// Leg 2 above disarms the quorum and shows the floor bites. This disarms the FLOOR — by forcing its
+/// whole difference vector to the honest fill of a chain that is not being asked anything — and
+/// shows the quorum bites. Together they are the claim "no single gate is the whole defence",
+/// demonstrated on the deployed prover rather than asserted.
+///
+/// ⚠ The floor is disarmed at the WITNESS, not by editing the descriptor: forcing `TPOS`'s top limb
+/// to `0` is exactly what a forger with a working floor bypass would hand the prover.
+#[test]
+fn with_the_emptiness_floor_disarmed_the_strict_quorum_still_refuses_the_empty_table() {
+    let u = honest(0, 0);
+    let d = desc();
+    let pis = pis_of(u);
+
+    let mut floor_disarmed = row_cells(u);
+    floor_disarmed[TPOS_0 + RUNGS] = 0;
+
+    let e = must_refuse_out_of_range(
+        "⚑⚑ the EMPTY stake table with the EMPTINESS FLOOR disarmed",
+        &d,
+        &floor_disarmed,
+        &pis,
+    );
+    eprintln!("⚑⚑ SOLANA empty stake table, floor disarmed, refused by the STRICT quorum: {e}");
+    assert!(
+        e.contains(&format!("range wire {}", QDIFF_0 + RUNGS)),
+        "with the FLOOR disarmed, the STRICT QUORUM (col {}) must be what bites: {e}",
+        QDIFF_0 + RUNGS
+    );
+}
+
+/// ⚑ **AND THE COUNTERFACTUAL THAT MAKES THE DEPTH REAL: at the SHIPPED `γ = 0`, disarming the floor
+/// leaves NOTHING.**
+///
+/// The same row, filled with the non-strict quorum this descriptor used to emit, and with the
+/// emptiness floor's top limb forced into range: every cell is inside its declared interval. There
+/// is no second tooth to move the refusal to. That is the state the finding described, exhibited
+/// rather than recalled — and the reason `γ` was the fix rather than a new gate.
+///
+/// ⚠ This asserts about CELLS, not about the served descriptor: the deployed descriptor is `γ = 1`
+/// now, so a `γ = 0` row does not satisfy its quorum gates. The claim being made is exactly the
+/// range-containment one — under the old constant the empty row had no out-of-range wire left once
+/// the floor was disarmed.
+#[test]
+fn at_the_shipped_non_strict_gamma_disarming_the_floor_left_nothing() {
+    let q_old = fill_chain(3, limbs4(0), 2, limbs4(0), 0);
+    let t = fill_chain(1, limbs4(0), 0, limbs4(0), FLOOR_GAMMA);
+
+    // The floor is the ONLY out-of-range wire at γ = 0…
+    assert_eq!(t.diff[RUNGS], -1);
+    for i in 0..=RUNGS {
+        assert!(
+            q_old.diff[i] >= 0 && q_old.diff[i] < (1 << SOL_LIMB_BITS),
+            "at γ = 0 every quorum difference limb is INSIDE the declared interval — the quorum \
+             tooth had nothing to bite on"
+        );
+    }
+    for i in 0..RUNGS {
+        assert!(q_old.carry[i] >= 0 && q_old.carry[i] < (1 << SOL_CARRY_BITS));
+    }
+    // …so with the floor's top limb forced into range, nothing is left out of range.
+    let mut old_cells = vec![0i64; SOL_LC_WIDTH];
+    old_cells[QDIFF_0..QDIFF_0 + RUNGS + 1].copy_from_slice(&q_old.diff);
+    old_cells[QDIFF_CARRY_0..QDIFF_CARRY_0 + RUNGS].copy_from_slice(&q_old.carry);
+    old_cells[TPOS_0..TPOS_0 + RUNGS + 1].copy_from_slice(&t.diff);
+    old_cells[TPOS_CARRY_0..TPOS_CARRY_0 + RUNGS].copy_from_slice(&t.carry);
+    old_cells[TPOS_0 + RUNGS] = 0; // disarm the floor
+    for i in QDIFF_0..=(TPOS_0 + RUNGS) {
+        assert!(
+            old_cells[i] >= 0 && old_cells[i] < (1 << SOL_LIMB_BITS),
+            "col {i} out of range at γ = 0 — expected NOTHING left to refuse the empty table"
+        );
+    }
+    eprintln!(
+        "⚑ AT γ = 0, WITH THE FLOOR DISARMED, EVERY TALLY WIRE OF THE EMPTY STAKE TABLE IS IN \
+         RANGE — one tooth, and this is what it looked like from the other side"
+    );
 }
 
 /// ⚑ **AND THE CONTROL, ON THE FLOOR.** The empty stake table at a VACUOUS 32-bit limb width — an
@@ -1048,53 +1253,78 @@ fn a_slot_that_disagrees_with_its_public_input_is_refused() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-// ⚑ THE SECOND DEFECT — the width that shipped refuses EVERYTHING
+// ⚑ THE SECOND DEFECT — CLOSED 2026-08-03: the over-wide width is REFUSED AT DESCRIPTOR LOAD
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
-/// ⚑ **WHAT THE SHIPPED WIDTH ACTUALLY DID, AND IT IS NOT WHAT THE DENOTATION SAYS.**
+/// The served descriptor's own JSON bytes, so a width substitution below is done to the REAL wire
+/// object rather than to a hand-typed stand-in.
+const SOLANA_LC_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-solana-lightclient-verify-v1.json");
+
+/// ⚑⚑ **THE WIDTH THAT SHIPPED IS NOW REFUSED AT THE DOOR, AND THIS TEST CHANGED MEANING.**
 ///
-/// `dregg-solana-lightclient-verify::v1` shipped `bits: 128`. In Lean's `rangeRows 128` that
-/// interval contains every field element and the tooth refuses NOTHING. In the deployed Rust prover
-/// it refuses EVERYTHING: the layout filler's bound is `(v as u64) >= (1u64 << rb.bits)`
-/// (`circuit/src/descriptor_ir2.rs:4310`), and a `u64` shift by 128 masks to a shift by 0 in a
-/// release build, so the test becomes `v >= 1` and every nonzero value on a ranged wire is refused.
-/// Under `cargo test` the same expression is an OVERFLOW PANIC, because `[profile.dev]` leaves
-/// `overflow-checks` on.
+/// # What it used to assert, and why that was the bug and not the tooth
 ///
-/// So an HONEST Solana update — the positive polarity that proves above — could not be proved at
-/// all at the width that shipped. **That is the mechanical reason no prover had ever run this
-/// descriptor: the first honest attempt would have been refused.**
+/// `dregg-solana-lightclient-verify::v1` shipped `bits: 128` on its range table. In Lean's `rangeRows 128` that interval
+/// contains every BabyBear element and the tooth refuses NOTHING. In the deployed Rust prover it
+/// refused EVERYTHING: the layout filler's bound was `(v as u64) >= (1u64 << rb.bits)`, and a `u64`
+/// shift by 128 masks to a shift by 0, so the test collapsed to `v >= 1` and every nonzero value on
+/// a ranged wire was refused (`row 0: range wire 4 value 62195 >= 2^128`). Under `cargo test` the
+/// same expression was an OVERFLOW PANIC. **That was the mechanical reason no prover had ever run
+/// this descriptor: the first honest attempt would have been refused.**
 ///
-/// ⚠ Stated at the resolution it was measured: this is the observed behaviour of THIS prover on
-/// THIS descriptor, and the refusal SHAPE differs by profile — which is itself the finding, so the
-/// test names both rather than accepting either.
+/// This harness EXHIBITED that as a tooth. It was never a tooth — it was the defect wearing one.
+///
+/// # What it asserts now
+///
+/// Both halves of the repair, on the real bytes:
+///
+///  1. **The declaration is REFUSED AT LOAD.** `parse_vm_descriptor2` rejects a range table at or
+///     above `VACUOUS_RANGE_BITS = 31`, naming the reason. A width that refuses nothing at BabyBear
+///     is a defect however it got onto the wire, so it cannot be served at all — this is the gate,
+///     and it is at the DOOR rather than deep in the prover.
+///  2. **The mask is gone.** The filler's bound is now total (`value_fits_bits`), so a descriptor
+///     constructed IN MEMORY at a vacuous width behaves the way its denotation says: it admits
+///     everything, including the honest row. That is the difference between "the prover disagrees
+///     with `rangeRows`" and "the prover implements it".
+///
+/// ⚠ The in-memory path is deliberately left open: that is exactly what a vacuity CONTROL does
+/// (`the_*_is_admitted_when_the_width_is_vacuous`), and a control that could not construct a vacuous
+/// width could not measure vacuity.
 #[test]
 fn the_shipped_128_bit_width_refuses_even_an_honest_update() {
-    let u = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM);
-    let cells = row_cells(u);
-    let pis = pis_of(u);
-    // The very witness that PROVES at the limbed widths.
-    must_prove("the honest live-scale update at 16-bit limbs", u);
-
-    let shipped = desc_with_limb_range_width(SHIPPED_SOL_BITS);
-    if cfg!(debug_assertions) {
-        let msg = refusal::must_panic_containing(
-            "⚑ the honest update at the SHIPPED bits=128",
-            "shift left with overflow",
-            || {
-                let _ = prove_and_verify(&shipped, &cells, &pis);
-            },
-        );
-        eprintln!("honest update at the shipped bits=128 (debug): {msg}");
-    } else {
-        let e: String =
-            refusal::must_refuse("⚑ the honest update at the SHIPPED bits=128", || {
-                prove_and_verify(&shipped, &cells, &pis)
-            });
-        eprintln!("honest update at the shipped bits=128 (release): {e}");
+    // ── 1. LOAD REFUSES the width, on the real served bytes with one integer moved.
+    let served = SOLANA_LC_JSON;
+    assert!(
+        parse_vm_descriptor2(served).is_ok(),
+        "the SERVED descriptor must still load — its declared widths are 16 and 8"
+    );
+    for bad in [31usize, 32, 64, SHIPPED_SOL_BITS] {
+        let mutated = served.replace("\"bits\":16", &format!("\"bits\":{bad}"));
+        assert_ne!(mutated, served, "the width substitution must have bitten");
+        let e = parse_vm_descriptor2(&mutated)
+            .expect_err("a range table at or above 31 bits must be REFUSED AT LOAD");
         assert!(
-            e.contains("range wire"),
-            "the refusal must come from the range layout bound, got: {e}"
+            e.contains(&format!("declares bits {bad}")) && e.contains("refuses nothing"),
+            "the refusal must name the width and the reason, got: {e}"
         );
+        eprintln!("⚑ dregg-solana-lightclient-verify::v1 at bits={bad}: REFUSED AT LOAD — {e}");
     }
+
+    // ── 2. THE MASK IS GONE: the honest row, at an in-memory vacuous width, now PROVES.
+    //     Before the repair this was `row 0: range wire N value V >= 2^128` in release and a
+    //     `shift left with overflow` panic under `cargo test`. The denotation always said it should
+    //     be admitted; now the prover says so too.
+    let u = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM);
+    must_prove("the honest live-scale u at the declared limb widths", u);
+    must_prove_under(
+        "⚑ the SAME honest u at an in-memory bits=128 — vacuous, therefore ADMITTED",
+        &desc_with_limb_range_width(SHIPPED_SOL_BITS),
+        u,
+    );
+    eprintln!(
+        "⚑ dregg-solana-lightclient-verify::v1: the honest u now PROVES at an in-memory bits=128 (vacuous, admits \
+         everything) instead of being refused by a masked comparison — and bits=128 can no \
+         longer be LOADED at all"
+    );
 }
