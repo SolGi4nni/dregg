@@ -93,6 +93,12 @@ declare -A UNROUTED_OK=(
   [EmitTurnChain.lean]="covered:EmitByName.lean:turnChainBindingDescriptor|turn-chain-binding.json (EmitByName.lean:218)"
   [EmitPastaWindowed.lean]="covered:EmitByName.lean:windowedRowDesc|pasta-rcb-windowed.json (EmitByName.lean:295)"
   [EmitPastaSliced.lean]="covered:EmitByName.lean:slicedRowDesc|pasta-rcb-sg-slice-{0..3}-of-4{,-w8}.json (EmitByName.lean:300-316)"
+  # The two FELT-SOUND runners. Both landed with their descriptors checked into by-name/ and NO
+  # EmitByName entry — `--verify-by-name-routing` named pasta-f{p,q}mul-sound.json by hand on
+  # 2026-08-03. Routed now; these runners survive only because they ALSO render the honest witness
+  # TRACES into circuit/tests/fixtures/, which emit_descriptors.py structurally cannot install.
+  [EmitPastaFpMulSound.lean]="covered:EmitByName.lean:fpMulSoundDesc|pasta-f{p,q}mul-sound.json; its trace arg renders circuit/tests/fixtures/pasta-fpmul-sound-trace.txt, which the driver cannot install"
+  [EmitPastaAddSubSound.lean]="covered:EmitByName.lean:fpAddSoundDesc|pasta-f{p,q}{add,sub}-sound.json; its addtrace/subtrace args render circuit/tests/fixtures/pasta-fp{add,sub}-sound-trace.txt, which the driver cannot install"
   # ⚠ THE GATE'S OWN MOTIVATING EXAMPLE, AND IT HAS MOVED ON. The fixtures named in the header above
   # (circuit/tests/fixtures/{discharge,vault}-sat-v3-staged.json) NO LONGER EXIST; the two
   # descriptors now ride the ROUTED EmitRotationV3.lean as rows 59-60 of

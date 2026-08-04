@@ -181,6 +181,14 @@ BY_NAME_NEWLINE_TERMINATED = frozenset({
     "pasta-rcb-sg-slice-1-of-4-w8.json",
     "pasta-rcb-sg-slice-2-of-4-w8.json",
     "pasta-rcb-sg-slice-3-of-4-w8.json",
+    # …and the six FELT-SOUND replacements (`PastaFieldSound` / `PastaAddSubSound`), emitted the
+    # same way.
+    "pasta-fpmul-sound.json",
+    "pasta-fqmul-sound.json",
+    "pasta-fpadd-sound.json",
+    "pasta-fpsub-sound.json",
+    "pasta-fqadd-sound.json",
+    "pasta-fqsub-sound.json",
     "dark-bazaar-private-n4k4.json",
     "faithful-note-spend-v2.json",
     "field-delta-result-range.json",
@@ -1190,7 +1198,15 @@ BY_NAME_TABLE_DECL = "def byNameDescriptors : List (String × EffectVmDescriptor
 _BY_NAME_TERM = re.compile(r"^[ \t]*\][ \t]*$", re.M)
 _BY_NAME_OPENER = re.compile(r"^[ \t]*[\[,][ \t]*\(", re.M)
 _BY_NAME_NAMED = re.compile(r"^[ \t]*[\[,][ \t]*\(\s*\"([^\"\n]*)\"\s*,", re.M)
-_BY_NAME_GUARD = re.compile(r"#guard\s+byNameDescriptors\.length\s*==\s*(\d+)")
+# The table's own machine-checked length pin, in EITHER form. It was a `#guard` and is now a NAMED
+# THEOREM (`byNameDescriptors_length`, `EmitByName.lean`) per the repo's guard discipline — a
+# `#guard` leaves no term, so the pin this parser leans on had no reusable content and was invisible
+# to axiom accounting. Both spellings are accepted so the reader does not become the reason the
+# conversion cannot happen; the theorem form is the one to write.
+_BY_NAME_GUARD = re.compile(
+    r"#guard\s+byNameDescriptors\.length\s*==\s*(\d+)"
+    r"|theorem\s+byNameDescriptors_length\s*:\s*byNameDescriptors\.length\s*=\s*(\d+)"
+)
 
 
 def parse_by_name_routing() -> list[str]:
@@ -1242,16 +1258,16 @@ def parse_by_name_routing() -> list[str]:
     guard = _BY_NAME_GUARD.search(src)
     if not guard:
         sys.exit(
-            f"{fatal}\n  (no `#guard byNameDescriptors.length == N` — the parse has "
-            "nothing independent to check itself against)"
+            f"{fatal}\n  (no `theorem byNameDescriptors_length : byNameDescriptors.length = N` "
+            "and no legacy `#guard` — the parse has nothing independent to check itself against)"
         )
-    if int(guard.group(1)) != len(names):
+    pinned = guard.group(1) or guard.group(2)
+    if int(pinned) != len(names):
         sys.exit(
             f"emit_descriptors: {path} — parsed {len(names)} routing entries but the "
-            f"file's own `#guard byNameDescriptors.length == {guard.group(1)}` says "
-            f"{guard.group(1)}. Either the guard is stale (Lean would catch that at build "
-            "time) or this parser is missing entries. Refusing to report on a table it "
-            "may be reading wrong."
+            f"file's own length pin says {pinned}. Either the pin is stale (Lean would catch "
+            "that at build time) or this parser is missing entries. Refusing to report on a "
+            "table it may be reading wrong."
         )
     return names
 

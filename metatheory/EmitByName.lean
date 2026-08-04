@@ -63,6 +63,8 @@ import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 import Dregg2.Circuit.Emit.Poseidon2HashEmit
 import Dregg2.Circuit.Emit.PastaMsmWindowed
 import Dregg2.Circuit.Emit.PastaMsmSliced
+import Dregg2.Circuit.Emit.PastaFieldSound
+import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.PredicatesArithmeticEmit
 import Dregg2.Circuit.Emit.PredicatesGtEmit
 import Dregg2.Circuit.Emit.PredicatesInRangeEmit
@@ -368,6 +370,30 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 2 8)
   , ("pasta-rcb-sg-slice-3-of-4-w8.json",
       Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 3 8)
+    -- ⚑ THE FELT-SOUND REPLACEMENTS for the six Pasta field ops. The nine `pasta-rcb-*` entries
+    -- above are read over ℤ and the deployed prover reads them mod BabyBear; both halves of that
+    -- gap are now exhibited as PROVING falsifiers against the very first entry
+    -- (`circuit/tests/pasta_{field,addsub}_felt_soundness.rs`). These six are the encodings whose
+    -- every gate body FITS a felt, so the two readings coincide — `8×32` limbs, range-checked
+    -- carries, and a forcing theorem whose HYPOTHESIS is the mod-`P` reading
+    -- (`PastaFieldSound.felt_gates_force_congruence`, `PastaAddSubSound.addsub_gates_force_congruence`).
+    --
+    -- ⚑ They landed here UNROUTED on 2026-08-03 (`3dcefe00a`, the multiply pair) — checked into
+    -- `by-name/` with no entry in this table, which is exactly the ungated hand-transcription hop
+    -- the comment above records, and `--verify-by-name-routing` named both by hand. Routed now,
+    -- with the add/sub four.
+  , ("pasta-fpmul-sound.json",
+      Dregg2.Circuit.Emit.PastaFieldSound.fpMulSoundDesc)
+  , ("pasta-fqmul-sound.json",
+      Dregg2.Circuit.Emit.PastaFieldSound.fqMulSoundDesc)
+  , ("pasta-fpadd-sound.json",
+      Dregg2.Circuit.Emit.PastaAddSubSound.fpAddSoundDesc)
+  , ("pasta-fpsub-sound.json",
+      Dregg2.Circuit.Emit.PastaAddSubSound.fpSubSoundDesc)
+  , ("pasta-fqadd-sound.json",
+      Dregg2.Circuit.Emit.PastaAddSubSound.fqAddSoundDesc)
+  , ("pasta-fqsub-sound.json",
+      Dregg2.Circuit.Emit.PastaAddSubSound.fqSubSoundDesc)
   ]
 
 /- The routing table covers the checked-in directory exactly. A bare count is a
@@ -382,7 +408,7 @@ Both directions are gated outside Lean:
   table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
   STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
   committing its artifact reds that gate by name. -/
-#guard byNameDescriptors.length == 78
+theorem byNameDescriptors_length : byNameDescriptors.length = 84 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
