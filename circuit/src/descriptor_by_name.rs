@@ -444,12 +444,24 @@ const AUTOMATAFL_STEP_MARKS_N11_JSON: &str =
 
 /// The four STARK-ified peer-chain lightclient VERIFICATION AIRs (bridge tree), each authored +
 /// byte-pinned in `metatheory/Dregg2/Circuit/Emit/LightClient{Eth,Tendermint,Solana,Midnight}Air.lean`
-/// (`ethLcVerifyDesc` / `tmLcVerifyDesc` / `solLcVerifyDesc` / `midLcVerifyDesc`, each with an
-/// `emitVmJson2` `#guard`) and re-derived onto `by-name/` by `EmitByName.lean`. Dispatched here so a
+/// (`ethLcVerifyDesc` / `tmLcVerifyDesc` / `solLcVerifyDesc` / `midLcVerifyDesc`) and re-derived onto
+/// `by-name/` by `EmitByName.lean`. Dispatched here so a
 /// dregg node can `descriptor_by_name(name)` → `prove_vm_descriptor2` the consensus-verification STARK
 /// (the producibility prerequisite for the gnark peer-wrap → on-chain `DreggPeerRegistry` flow). Each
 /// descriptor carries the chain's no-forgery obligation; soundness WHEN USED still rests on the
 /// undischarged FRI/STARK floor and the chain's trusted-instance mirror.
+///
+/// ⚑ **FLAG DAY 2026-08-03, ETH ONLY.** `ethLcVerifyDesc` became COMPILER OUTPUT
+/// (`EffectLower.lowerAir` of the `EffectAir` source `ethHeadAir`; no hand-written `VmConstraint2`
+/// in its module) and gained a `PC_SLACK` leg forcing `PC ≤ BL` — closing the participation count
+/// that was an unbounded witness and PROVED at `PC = 1023` against a 512-key committee
+/// (`circuit/tests/eth_lightclient_proves.rs::an_over_committee_participation_count_proved_before_
+/// the_bound_and_is_refused_after` runs both polarities). Trace width 20 → 21, constraints 20 → 22,
+/// the eleven anchor columns shifted up by one. **The PI surface is UNCHANGED** — 11 slots, same
+/// meanings, so the gnark peer-wrap's pack over `PI[1..9]` is untouched. What re-emits:
+/// `descriptors/by-name/dregg-eth-lightclient-verify-v1.json` (done) and this descriptor's VK
+/// (operator ceremony — `scripts/emit-descriptors.sh` under `DREGG_VK_REGEN_ACK`). Nothing else
+/// moves; no other descriptor changes shape and nothing re-genesises.
 const ETH_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-eth-lightclient-verify-v1.json");
 const TM_LIGHTCLIENT_VERIFY_JSON: &str =

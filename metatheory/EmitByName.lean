@@ -297,13 +297,22 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
   -- DELETED in the felt-width cutover of 2026-07-23 — it must never re-enter this table.
   , ("guarded-hiding-span-m0-wide-blinded-commit-blind5-v1.json",
       Dregg2.Circuit.Emit.GuardedHidingSpanWideBlindEmit.guardedHidingSpanWideBlindDesc)
-  -- ⚑ The four peer-chain lightclient verification AIRs. Each is byte-pinned by a machine-checked
-  -- `#guard emitVmJson2 <desc> == <GOLDEN>` in its authoring module (`LightClient*Air.lean`); this
-  -- table makes those bytes the SOLE checked-in artifact and RE-DERIVABLE from the Lean author
-  -- (house-law #1). The descriptors carry the chain's consensus no-forgery obligation, so a dregg
-  -- node can now emit + prove the STARK from `descriptor_by_name` — the producibility prerequisite
-  -- for the gnark peer-wrap → on-chain `DreggPeerRegistry` true-peers flow. Soundness WHEN USED
-  -- still rests on the undischarged FRI/STARK floor and each chain's trusted-instance mirror.
+  -- ⚑ The four peer-chain lightclient verification AIRs. Each is byte-pinned in its authoring
+  -- module (`LightClient*Air.lean`); this table makes those bytes the SOLE checked-in artifact and
+  -- RE-DERIVABLE from the Lean author (house-law #1). The descriptors carry the chain's consensus
+  -- no-forgery obligation, so a dregg node can now emit + prove the STARK from `descriptor_by_name`
+  -- — the producibility prerequisite for the gnark peer-wrap → on-chain `DreggPeerRegistry`
+  -- true-peers flow. Soundness WHEN USED still rests on the undischarged FRI/STARK floor and each
+  -- chain's trusted-instance mirror.
+  --
+  -- ⚑ FLAG DAY 2026-08-03, ETH ONLY: `ethLcVerifyDesc` is now COMPILER OUTPUT
+  -- (`EffectLower.lowerAir` of the `EffectAir` source `ethHeadAir`, no hand-written `VmConstraint2`
+  -- in its module) AND carries a new `PC_SLACK` leg that forces `PC ≤ BL` — the unbounded
+  -- participation count that PROVED at `PC = 1023` against a 512-key committee. Trace width 20 → 21,
+  -- constraints 20 → 22, all eleven anchor columns shifted up by one; the PI surface is UNCHANGED
+  -- (11 slots, same meanings). `dregg-eth-lightclient-verify-v1.json` RE-EMITS and its VK must be
+  -- re-minted; no other descriptor moves, nothing re-genesises. Its module's byte-golden `#guard` is
+  -- retired in favour of `rfl` pins on the compiler's own emission.
   , ("dregg-eth-lightclient-verify-v1.json",
       Dregg2.Circuit.Emit.LightClientEthAir.ethLcVerifyDesc)
   , ("dregg-tm-lightclient-verify-v1.json",

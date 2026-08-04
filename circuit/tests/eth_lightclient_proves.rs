@@ -21,8 +21,9 @@
 //!  * **complete for the real domain** — the quorum slack `QDIFF = 3·PC − 1024` maxes at
 //!    `3·512 − 1024 = 512` for a full sync committee, and `512 < 2048`.
 //!
-//! So this file is not a repair. It is the missing measurement: the deployed prover PROVES an
-//! honest finalized update and REFUSES the Nomad-class sub-quorum, on the served object.
+//! So this file was not a width repair. It is the missing measurement: the deployed prover PROVES
+//! an honest finalized update and REFUSES the Nomad-class sub-quorum, on the served object — and,
+//! since 2026-08-03, refuses an over-committee participation count too (below).
 //!
 //! # The tooth: the 342 / 341 boundary
 //!
@@ -39,21 +40,31 @@
 //! `pc ≥ 342 > 0`, so the empty-committee case rides the same tooth (`the_empty_participation_set_
 //! is_refused` measures it as its own row anyway, because "subsumed" is a claim worth checking).
 //!
-//! # ⚠ THE RESIDUAL THIS FILE MEASURED AND DID NOT CLOSE: `PC` IS NOT BOUND TO THE BITFIELD
+//! # ⚑⚑ THE RESIDUAL THIS FILE FOUND IS NOW CLOSED (2026-08-03), AND BOTH POLARITIES ARE HERE
 //!
-//! `a_participant_count_larger_than_the_committee_still_PROVES` is a MEASUREMENT, not a tooth. The
-//! AIR forces `CL = 512` and `BL = 512` and it forces the quorum slack — but **no gate relates `PC`
-//! to either**. A prover may claim `PC = 1023` against a 512-key committee and the descriptor
-//! accepts. The only thing bounding `PC` at all is the range width, incidentally: `3·PC − 1024 <
-//! 2^11` caps `PC` at `1023`, i.e. at 2× the committee.
+//! The first version of this harness MEASURED a hole: the AIR forced `CL = 512` and `BL = 512` and
+//! the quorum slack, but **no gate related `PC` to either**, so `PC = 1023` against a 512-key
+//! committee PROVED AND VERIFIED. The only bound was incidental — `3·PC − 1024 < 2^11` capping `PC`
+//! at `1023`, i.e. 2× the committee. No stated theorem broke (`ethLcAir_sound` takes
+//! `hpc : a PC = (pc : ℤ)` as a WITNESS RELATION, so `PC` sat inside the named boundary), which is
+//! exactly why it survived: it was undone work wearing a residual's clothes.
 //!
-//! This is inside the NAMED carrier boundary rather than outside it — `PC` is a trusted projection
-//! of the deployed node's popcount, the same posture the Solana module names for `ROOTED_STK`
-//! ("the counted popcount-of-stake is a trusted projection … the same posture as the ETH `PC`
-//! participant count") — and `ethLcAir_sound` is stated over rows whose columns already read the
-//! update's TRUE projections. But an over-claimed `PC` is exactly the shape a forger would reach
-//! for, so it is exhibited running rather than left as prose. **The closure is a `PC ≤ BL` gate in
-//! `LightClientEthAir`, and it is not in this file** — House Law #1: the AIR is Lean-authored.
+//! The closure is Lean-side, in `LightClientEthAir` — House Law #1, the AIR is Lean-authored, and
+//! as of this revision it is COMPILER-authored (`EffectLower.lowerAir` of the `EffectAir` source
+//! `ethHeadAir`; no hand-written `VmConstraint2` in the module). One new column `PC_SLACK`, one new
+//! gate `PC_SLACK + PC = BL`, one new lookup on the SAME 11-bit table. Non-negativity of the slack
+//! IS `PC ≤ BL`.
+//!
+//! `an_over_committee_participation_count_proved_before_the_bound_and_is_refused_after` runs BOTH
+//! halves on the deployed prover: the identical row PROVES with the two new constraints removed and
+//! is REFUSED with them present, `row 0: range wire 9 value 2013265410 >= 2^11`. The Lean statement
+//! it cashes is `ethLcAir_forces_participation_bounded` — `342 ≤ PC ≤ BL = 512` from the trace, no
+//! hypothesis about the update.
+//!
+//! ⚠ **AND THE SAME OMISSION IS IN THE DECISION.** `LightClientEthGate.syncDecision` does not check
+//! `pc ≤ bitsLen` either, so the AIR is now strictly STRONGER than the object it refines on this
+//! conjunct. Its three peers are worse off: `signed ≤ total` is forced by no gate in the Tendermint,
+//! Solana or Midnight AIRs, and by no conjunct of their scalar decisions.
 //!
 //! # Scope, said plainly
 //!
@@ -70,9 +81,11 @@
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, TableSem, prove_vm_descriptor2, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, prove_vm_descriptor2,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::heap_root::HeapLeaf;
+use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal;
 
 const ETH_LC_VERIFY_DESCRIPTOR: &str = "dregg-eth-lightclient-verify::v1";
@@ -99,15 +112,18 @@ const FIN_OK: usize = 6;
 const EL: usize = 7;
 /// CARRIER — the SHA-256 execution-branch reconstruction compare (subtree index 9).
 const EXEC_OK: usize = 8;
+/// ⚑ The PARTICIPATION slack `BL − PC`, range-checked into `[0, 2^11)` — the column that closes the
+/// unbounded-count residual this file MEASURED on 2026-08-03 and that `LightClientEthAir` now gates.
+const PC_SLACK: usize = 9;
 /// PUBLIC ANCHOR — the TRUSTED sync-committee root (the WS-checkpoint trust anchor).
-const COMMITTEE_ROOT: usize = 9;
+const COMMITTEE_ROOT: usize = 10;
 /// PUBLIC ANCHOR limb 0 — the finalized execution state root as nine radix-`2^31` MSB-first limbs.
-const FIN_STATE_ROOT_0: usize = 10;
+const FIN_STATE_ROOT_0: usize = 11;
 const FIN_STATE_ROOT_LIMBS: usize = 9;
 /// PUBLIC ANCHOR — the fork/domain (genesis-validators-root-derived signing domain).
-const DOMAIN_GVR: usize = 19;
+const DOMAIN_GVR: usize = 20;
 
-const ETH_LC_WIDTH: usize = 20;
+const ETH_LC_WIDTH: usize = 21;
 const ETH_PI_COUNT: usize = 11;
 
 /// The declared quorum-slack width. ⚑ **UNCHANGED by the width census** — genuinely inside the
@@ -207,15 +223,19 @@ fn honest(participants: u32) -> Update {
     }
 }
 
-/// The 20 cells of one logical row, as integers — kept in `i64` so a sub-quorum's NEGATIVE slack
-/// survives to `felt` unaltered, which is the value the tooth must refuse.
+/// The 21 cells of one logical row, as integers — kept in `i64` so a sub-quorum's NEGATIVE slack
+/// (and an over-claimed count's negative PARTICIPATION slack) survives to `felt` unaltered, which is
+/// the value the tooth must refuse.
 fn row_cells(u: Update) -> Vec<i64> {
     let mut r = vec![0i64; ETH_LC_WIDTH];
     r[CL] = u.committee_len as i64;
     r[BL] = u.bitfield_len as i64;
     r[PC] = u.participants as i64;
-    // §2, verbatim: `QDIFF − 3·PC + 1024 = 0`.
+    // §2, verbatim: `QDIFF + 1024 = 3·PC`.
     r[QDIFF] = 3 * u.participants as i64 - 1024;
+    // ⚑ §2 G4, verbatim: `PC_SLACK + PC = BL`. COMPUTED from the identity its gate forces, never
+    // claimed — a caller cannot hand this a slack, only the count the slack derives from.
+    r[PC_SLACK] = u.bitfield_len as i64 - u.participants as i64;
     r[BLS_OK] = u.bls_ok as i64;
     r[FL] = u.finality_depth as i64;
     r[FIN_OK] = u.fin_ok as i64;
@@ -311,8 +331,8 @@ fn the_served_descriptor_is_the_lean_emitted_one_and_its_width_is_sound() {
     assert_eq!(d.name, ETH_LC_VERIFY_DESCRIPTOR);
     assert_eq!(d.trace_width, ETH_LC_WIDTH);
     assert_eq!(d.public_input_count, ETH_PI_COUNT);
-    // 8 gates + 1 quorum lookup + 11 PI pins = 20.
-    assert_eq!(d.constraints.len(), 20);
+    // 9 gates + 2 slack lookups + 11 PI pins = 22 (`ethLcVerifyDesc_constraint_count`).
+    assert_eq!(d.constraints.len(), 22);
     assert_eq!(d.tables.len(), 1);
 
     // ⚠ Read the width OUT OF THE SERVED DESCRIPTOR, not out of this file's `Q_BITS`. A constant
@@ -508,56 +528,146 @@ fn a_forged_quorum_slack_is_refused() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-// ⚠ THE MEASURED RESIDUAL — `PC` is not bound to the bitfield
+// ⚑⚑ THE CLOSED RESIDUAL — `PC ≤ BL`, ACCEPTED BEFORE / REFUSED AFTER, ON THE SAME PROVER
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
-/// ⚠ **THIS TEST NAMES A HOLE, NOT A TOOTH — read the assertion, not the test name's mood.**
+/// The served descriptor with the PARTICIPATION-BOUND leg REMOVED — the exact shape this descriptor
+/// had before 2026-08-03.
 ///
-/// `CL` and `BL` are both forced to `512`. `PC` is forced by NOTHING except the quorum slack. So a
-/// prover may claim more participants than the committee has keys, and the descriptor ACCEPTS:
-/// `pc = 1023` gives `QDIFF = 2045 < 2048`, in range, every gate satisfied.
+/// ⚑ This is the control that makes the closure a measurement rather than an assertion. Removing a
+/// constraint from an AIR makes it accept STRICTLY MORE (`TableAirIR.rowHolds_of_sublist`), and no
+/// byte-golden and no denotation can see the loss — so the only honest way to show the new leg BITES
+/// is to hand the identical trace to the identical prover with and without it.
 ///
-/// The only bound on `PC` is incidental — the range width caps `3·PC − 1024 < 2^11`, hence
-/// `PC ≤ 1023`, i.e. 2× the committee. `pc = 1024` is refused, and by the RANGE tooth rather than
-/// by any structural check, which is the point: nothing in this AIR knows that `PC` counts bits of
-/// a 512-bit field.
+/// The two constraints removed are the `PC_SLACK + PC = BL` gate and its range lookup, at emission
+/// indices 4 and 5 — pinned Lean-side by `ethLcVerifyDesc_slack_lookups` and re-derived here off the
+/// SERVED bytes rather than transcribed, so a re-emission that moves them fails here loudly.
+fn desc_without_participation_bound() -> EffectVmDescriptor2 {
+    let mut d = desc();
+    let at = d
+        .constraints
+        .iter()
+        .position(|k| {
+            matches!(k, VmConstraint2::Lookup(l)
+                if l.table == TID_RANGE && l.tuple == vec![LeanExpr::Var(PC_SLACK)])
+        })
+        .expect("the served descriptor must carry a range lookup on PC_SLACK");
+    assert_eq!(
+        at, 5,
+        "the participation lookup must be emission index 5 (Lean: ethLcVerifyDesc_slack_lookups)"
+    );
+    // The identity gate is the leg immediately before its lookup, exactly as the quorum pair is.
+    d.constraints.remove(at);
+    d.constraints.remove(at - 1);
+    assert_eq!(
+        d.constraints.len(),
+        20,
+        "the pre-2026-08-03 shape is 20 constraints"
+    );
+    d
+}
+
+/// ⚑⚑ **THE DELIVERABLE: THE UNBOUNDED PARTICIPATION COUNT PROVED, AND NOW IT DOES NOT.**
 ///
-/// ⚑ It sits inside the NAMED carrier boundary — `PC` is a trusted projection of the deployed
-/// node's popcount, and `ethLcAir_sound` is stated over rows already reading the update's TRUE
-/// projections — so this is not a break of a stated theorem. It is undone work wearing a named
-/// residual's clothes, and the closure is a `PC ≤ BL` gate **in `LightClientEthAir`**, Lean-side.
-/// This file does not add one: House Law #1.
+/// `CL` and `BL` are both forced to `512`. Before this revision `PC` was forced by NOTHING except
+/// the quorum slack, so a prover could claim more participants than the committee has keys and the
+/// descriptor ACCEPTED: `pc = 1023` gives `QDIFF = 2045 < 2048`, in range, every gate satisfied.
+/// The only bound was incidental — the range width capping `3·PC − 1024 < 2^11`, hence `PC ≤ 1023`,
+/// i.e. 2× the committee. Nothing in the AIR knew that `PC` counts bits of a 512-bit field.
+///
+/// This test runs BOTH halves on the deployed prover, in one place, differing in exactly two
+/// constraints:
+///
+///  * **BEFORE** (`desc_without_participation_bound`) — `PC = 1023` PROVES AND VERIFIES.
+///  * **AFTER** (the served descriptor) — the SAME row is REFUSED, on the RANGE tooth, because
+///    `PC_SLACK = 512 − 1023 = −511` is the field element `p − 511 = 2013265410`, six orders of
+///    magnitude above the interval ceiling (Lean: `eth_wrapped_slack_is_outside_the_range`).
+///
+/// The Lean statement this cashes is `ethLcAir_forces_participation_bounded`, which concludes
+/// `342 ≤ PC ≤ BL = 512` from the trace with NO hypothesis about the update — the bound that was
+/// previously available only through the witness relation `hpc`.
 #[test]
-fn a_participant_count_larger_than_the_committee_still_proves() {
-    // 1023 participants against a 512-key committee — an over-claim of 2×, ACCEPTED.
+fn an_over_committee_participation_count_proved_before_the_bound_and_is_refused_after() {
     let over = honest(1023);
-    assert_eq!(row_cells(over)[QDIFF], 2045);
-    assert!(row_cells(over)[QDIFF] < (1 << Q_BITS));
+    let cells = row_cells(over);
+    let pis = pis_of(over);
+    assert_eq!(cells[QDIFF], 2045);
+    assert!(
+        cells[QDIFF] < (1 << Q_BITS),
+        "the QUORUM tooth does NOT catch this"
+    );
+    assert_eq!(cells[PC_SLACK], -511);
+    assert_eq!(felt(cells[PC_SLACK]).as_u32() as i64, P - 511);
     assert!(
         over.participants > over.bitfield_len,
-        "the whole point: PC exceeds the bitfield length and no gate relates them"
+        "the whole point: PC exceeds the bitfield length"
     );
+
+    // ── BEFORE: the pre-2026-08-03 AIR accepts it. The `PC_SLACK` column is present in the trace
+    //    but no constraint reads it, which is precisely the state the residual described.
     must_prove_under(
-        "⚠ an over-claimed participant count (1023 of a 512-key committee) — a MEASURED RESIDUAL",
-        &desc(),
+        "⚑ BEFORE the bound: an over-claimed participant count (1023 of a 512-key committee)",
+        &desc_without_participation_bound(),
         over,
     );
     eprintln!(
-        "⚠ ETH RESIDUAL: PC={} against BL={} PROVED. No gate relates PC to BL; the only bound is \
-         the range width, incidentally capping PC at 1023.",
+        "⚑ ETH BEFORE: PC={} against BL={} PROVED AND VERIFIED with the participation leg removed",
         over.participants, over.bitfield_len
     );
 
-    // …and the incidental cap: one more participant leaves the interval.
-    let past = honest(1024);
-    assert_eq!(row_cells(past)[QDIFF], 2048);
+    // ── AFTER: the served descriptor refuses the identical row, on the participation tooth.
     let e = must_refuse_out_of_range(
-        "the incidental range cap on PC",
+        "⚑ AFTER the bound: the SAME over-claimed participant count",
         &desc(),
-        &row_cells(past),
-        &pis_of(past),
+        &cells,
+        &pis,
     );
-    eprintln!("⚠ ETH PC cap (incidental, from the range width, not from a structural gate): {e}");
+    assert!(
+        e.contains(&format!("range wire {PC_SLACK}")),
+        "the PARTICIPATION tooth is what must bite (not the quorum one): {e}"
+    );
+    eprintln!("⚑ ETH AFTER: {e}");
+}
+
+/// ⚑ The bound is not a single-value coincidence: EVERY count above the bitfield length is refused,
+/// and every count at or below it (down to the quorum floor) still proves. The two teeth together
+/// pin `PC` to exactly `[342, 512]`, which is what a 512-key sync committee can actually produce.
+#[test]
+fn the_participation_bound_holds_across_the_whole_boundary() {
+    let d = desc();
+    for pc in [342u32, 400, 511, 512] {
+        must_prove_under(&format!("⚑ an honest {pc} of 512"), &d, honest(pc));
+    }
+    for pc in [513u32, 600, 1023] {
+        let u = honest(pc);
+        let e = must_refuse_out_of_range(
+            &format!("⚑ an over-committee count {pc} of 512"),
+            &d,
+            &row_cells(u),
+            &pis_of(u),
+        );
+        assert!(e.contains(&format!("range wire {PC_SLACK}")));
+    }
+    eprintln!(
+        "⚑ ETH PARTICIPATION BOUND: [342, 512] proves, 513+ refused on the PC_SLACK tooth — the \
+         interval a 512-key committee can actually produce"
+    );
+}
+
+/// ⚑ **THE CONTROL FOR THE NEW TOOTH.** The same over-committee row at a VACUOUS 32-bit table
+/// PROVES, so the refusal above is the DECLARED WIDTH doing work and not the trace being malformed.
+/// One integer moves.
+#[test]
+fn the_over_committee_count_is_admitted_when_the_width_is_vacuous() {
+    must_prove_under(
+        "⚑ the SAME 1023-of-512 over-claim at a VACUOUS range width",
+        &desc_with_range_width(VACUOUS_BITS),
+        honest(1023),
+    );
+    eprintln!(
+        "⚑ ETH 1023-of-512 ADMITTED at a vacuous 32-bit width — the 11-bit declaration is what \
+         refuses it"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
