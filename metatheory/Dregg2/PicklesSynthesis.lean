@@ -120,12 +120,23 @@ import Dregg2.Circuit.Emit.MinaStepSrsLagrangePin
 -- how many cells a prover can still choose and which of them change what the circuit accepts.
 import Dregg2.Circuit.Emit.KimchiStepProverChoice
 import Dregg2.Circuit.Emit.KimchiWrapProverChoice
--- ⚑ THE STEP→WRAP CHAIN, ROOTED 2026-08-04. Its 16 `#assert_compiled` pins ran in NO build: the
--- module was RED (a width conjunct W-PREV falsified, `KimchiStepWrapChain` §9a) AND unrooted, so the
--- redness was invisible except to `check-lean-orphans.sh`. ⚠ The "rooting pulls the whole
--- `KimchiWrapMain` cone" worry does NOT apply: this file already imports `KimchiWrapMain` two lines
--- up, so the closure grows by exactly one module. That is also what `metatheory/lakefile.toml`
--- records for the 20 orphans rooted the same day.
+-- ⚑ THE STEP→WRAP CHAIN, ROOTED 2026-08-04. Its 19 pins (18 `#assert_compiled` + 1
+-- `#assert_axioms`) ran in NO build: the module was RED (a width conjunct W-PREV falsified,
+-- `KimchiStepWrapChain` §9a) AND unrooted, so the redness was invisible to everything except
+-- `check-lean-orphans.sh`.
+-- ⚠ TWO COST CLAIMS THE ALLOWLIST ENTRY MADE, BOTH MEASURED FALSE HERE:
+--   * "rooting pulls the whole `KimchiWrapMain` cone" — this file has imported `KimchiWrapMain`
+--     two lines up all along, so the closure grows by exactly ONE module (3055 → 3056 jobs), the
+--     same finding `metatheory/lakefile.toml` records for the 20 orphans rooted the same day;
+--   * "~515 s, the most expensive single rooting in this population by two orders of magnitude" —
+--     the module builds in **11 s** (`124ba5077`, hbox, warm `.lake`, INCLUDING C codegen). The
+--     old file on the same box, same warm tree, `lean` with an extracted `LEAN_PATH`: **425.8 s**
+--     (and RED). Nearly all of that was the ONE `native_decide` that had to evaluate `wrapPublic`
+--     = `wrapPublicAt _ .prev` — the whole nine-rung environment including §15's 67-scalar MSM
+--     ladders, three `qInv`s deep each. That conjunct is now the kernel-clean INSTANCE
+--     `the_emitted_public_vector_is_its_rungs_width`, which needs no environment at all. It is also
+--     why the predecessor's two isolation probes each cost more than the whole file: probing a
+--     conjunction that contains `.prev` re-pays `.prev` every time. 425.8 s → 11 s, 39x.
 import Dregg2.Circuit.Emit.KimchiStepWrapChain
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
