@@ -825,6 +825,37 @@ theorem sboxPIs_length : sboxPIs.length = 64 := by decide
 /-- ⚑ Every emitted PI is a canonical felt. -/
 theorem sboxPIs_canonical : (sboxPIs.all fun v => decide (0 ≤ v ∧ v < P)) = true := by decide
 
+/-! ### §7b — WHICH STAGES FIT, one instance at a time.
+
+⚑ `rom_cannot_hold_the_whole_verifier` says the PROGRAM does not fit. The useful follow-on question
+— and the one that decides whether segmentation is a pleasant refactor or a research problem — is
+**which stages do**. All six of them do, with the largest at 83% of the cap. So the seam is
+per-STAGE, at exactly the boundaries `MinaWrapVerifierAir` §5 already names, and the only thing a
+segmented verifier has to carry across instances is the register file. That is a much smaller
+problem than "the ROM cannot express the verifier". -/
+
+/-- ⚑ **EVERY STAGE FITS IN ONE ROM; THE VERIFIER DOES NOT.** The largest single stage is the
+47-term ξ-aggregate at `503 808` instructions — **82.6%** of the `610 080`-instruction cap — and the
+smallest, `f_comm`, is 3.4%. The sum is 2.62× the cap. -/
+theorem every_stage_fits_one_rom_but_their_sum_does_not :
+    MinaWrapVerifierAir.STAGE_TRANSCRIPT ≤ MAX_ROM_CELLS / ROM_ARITY
+      ∧ MinaWrapVerifierAir.STAGE_PUBLIC_COMM ≤ MAX_ROM_CELLS / ROM_ARITY
+      ∧ MinaWrapVerifierAir.STAGE_F_COMM ≤ MAX_ROM_CELLS / ROM_ARITY
+      ∧ MinaWrapVerifierAir.STAGE_FT_COMM ≤ MAX_ROM_CELLS / ROM_ARITY
+      ∧ MinaWrapVerifierAir.STAGE_XI_AGGREGATE ≤ MAX_ROM_CELLS / ROM_ARITY
+      ∧ MinaWrapVerifierAir.STAGE_OPENING ≤ MAX_ROM_CELLS / ROM_ARITY
+      ∧ MAX_ROM_CELLS / ROM_ARITY < MinaWrapVerifierAir.VERIFIER_ROWS := by decide
+
+/-- ⚑ **AND THE STAGE THIS FILE'S ATOM BUILDS IS THE ONE THAT FITS MOST COMFORTABLY.** The Fq
+transcript sponge is 148 permutations × 1 155 instructions = `170 940`, **28.0%** of one ROM — so
+the stage §7's S-box is the atom of is reachable as a single instance, and it is the natural next
+rung. What is NOT yet done is the register allocation for a full round (three S-boxes and the 3×3
+MDS over the `fq_kimchi` constants, which is why `NREG = 6`) and the `qLimb` instantiation the Wrap
+phase-2 sponge needs; this file's stage is `pLimb`. Named, not implied. -/
+theorem the_transcript_sponge_is_the_reachable_stage :
+    MinaWrapVerifierAir.STAGE_TRANSCRIPT = 148 * MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM
+      ∧ 100 * MinaWrapVerifierAir.STAGE_TRANSCRIPT < 29 * (MAX_ROM_CELLS / ROM_ARITY) := by decide
+
 /-! ### §8b — THE SAME MACHINE AT A THOUSAND INSTRUCTIONS.
 
 ⚑ An 8-row instance prices the prover's FIXED cost, not the machine's. This program is the same
@@ -934,6 +965,11 @@ theorem the_discharge_removes_the_srs_leg_not_the_opening :
 #assert_axioms rom_cell_cap_binds_before_the_row_cap
 #assert_axioms rom_cannot_hold_the_whole_verifier
 #assert_axioms the_narrow_word_still_does_not_fit
+#assert_axioms every_stage_fits_one_rom_but_their_sum_does_not
+#assert_axioms the_transcript_sponge_is_the_reachable_stage
+#assert_axioms longProg_length
+#assert_axioms longAir_mainRailOk
+#assert_axioms longProg_rom_cells
 #assert_axioms programAir_mainRailOk
 #assert_axioms sboxAir_mainRailOk
 #assert_axioms sbox_program_denotes_the_seventh_power
