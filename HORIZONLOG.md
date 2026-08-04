@@ -1,5 +1,60 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 4 — the tripwire is re-baselined BY its audit, `padVecE` TAKES the obligation, and the chain still binds
+
+Three named reds closed, and each one was a slightly different shape than the brief that named it.
+
+**1. `generic/exact-value-census` — AUDITED, then re-stamped (`1b98b3ac6`).** The §22-state fixture at
+`9525085e6` reproduces the recorded digest `a8dcbafea71719d8` / `679/3287` exactly, so the baseline was
+recoverable and the miss list could be DIFFED rather than reset. Six keys moved, no key decreased:
+`[0 0 0 0 0]` +5, `[1 0 0 -1 0]` 0→1, and four MATCHED keys +6 between them (3287 → 3299). Every
+pre-existing key holds its exact count, so **no coefficient in the 1683 Generic rows was bent** — the
+only sentence this instrument exists to be able to say. The one new key is `m₀ − m₀·m₁ = 0`,
+`Prefix_mask.there`'s SUFFIX shape, a §23 GATE (`KimchiStepMainCore.lean:4293-4294`) that refuses a
+branch mask the circuit accepted until then; it is an exact-MISS and a family-MATCH because Mina emits
+the same equation with the opposite global sign. The five new all-zero tails are audited one by one in
+the ledger entry. ⚠ THREE MORE ENTRIES WERE HIDING BEHIND #24 — the oracle cites the FIRST divergence
+only, so `generic/empty-second-half` (167→172), `generic/row-equality-not-sigma-tie` (83→86 saved rows,
+a number DERIVED from the one that moved) and `probe-rows` (470→463) were all red and unreported. A
+scratch all-divergences runner is how they surfaced; the gate itself still cites one.
+
+**2. `MapWideImtPadOpen` / `MapInsertImtRepoint` — migrated, and there was a THIRD (`435f3dd0a`).** The
+two named modules carried 26 capacity sites; `MapAafiLiveRepoint`, which imports `MapInsertImtRepoint`
+and therefore could never build while it was red, carried 15 more of its own. Per-file green hiding a
+red umbrella. **`padVecE` takes the obligation** — REFUSAL, not truncation, because `heap_root.rs`'s
+wide builders (`:1015-1019`, `:1149-1153`) carry the same release-active `assert!` as the 1-felt one,
+because below `padVecE` sits `perfectRoot` (one felt, no length, no tag, no refusal — the discriminator
+`DescriptorIR2.padTo` MEETS and this one does not), and because the node layer never widens so
+`over_capacity_roots_collide` transports to every `LaneEnc`. ⚑ The obligation immediately caught that
+`AafiInsertsUpToLayout`'s post heap GROWS, so `h.length ≤ 2^dep` does not discharge it and a full tree
+admits no insert — the gate's own `h.length ≤ p₂ < 2^dep` is what makes room. No `maxHeartbeats`, no
+`sorry`, no `#guard`, no `commit_congr`; the `whnf` hazard was avoided by naming the occupancy proofs
+and by routing every dependent `rw` through `padTo_congr` or through the body.
+
+**3. `KimchiStepWrapChain` — GREEN AT HEAD, and the controls re-ran.** `scripts/dregg-clean-build … --host
+hbox` on the committed tree: `CB_RESULT=GREEN`, 3055 jobs, 1794 s. That compiles all fifteen of the
+module's `native_decide` theorems, which ARE the controls — the positive (`chain_moves_with_the_step_proof`),
+both halves of the negative (`chain_does_not_move_with_what_it_does_not_read`,
+`chain_unread_bend_is_a_different_proof_with_the_same_tape`), and the emitted-vector pair. ⚠ The local
+tree could not say this: a sibling has 480 uncommitted lines in `KimchiWrapMain.lean` and it is RED
+there. The working tree was REDDER than HEAD, which is the mirror of the usual hazard.
+
+⚑ **THE FIGURE, AND THE CORRECTION TO "no build ever said so".** 21 of 22, and the one word that does
+NOT move is index 21 — `exposedVars`' last entry, `(branchVars …).packed` = `branch_data` = 66 =
+`4·16 + 2·1`. It has NO transcript dependence at all, so the sharp statement is *every one of the 21
+transcript-derived public words moves and the one non-transcript word does not*, which is DERIVABLE from
+`exposedVars` (4 challenge + 1 fork digest + 16 bulletproof prechallenges + 1 branch_data) rather than
+merely counted. ⚠ Measured on the COMMITTED harness artifacts, last re-emitted at `dca30f544` (§20) — a
+live HEAD re-emission of the count is NOT yet in. And the module is an ORPHAN: not reachable from
+`Dregg2.lean`, so `lake build` still never compiles it — but `scripts/check-lean-orphans.sh` (which IS in
+`local-gates.sh`) DOES name it, and that gate is RED right now with 17 unlisted orphans, three of them
+this trio. The coverage gap is DETECTED and un-actioned, not invisible. Registering it would pull the
+whole `KimchiWrapMain` cone into every build while a sibling owns that file, so it belongs with W-PREV.
+
+**Ratchet:** guard-discipline is GREEN at HEAD — **15 449 / 1 165**, not the 15 478 / 1 166 the brief
+carried; siblings converted 29 more since. Zero `#guard`s added by any of the above.
+
+
 ## ⚑⚑⚑⚑ AUGUST 3 (floor probe) — the perf pass shipped RED, and its own table measured a STALE OLEAN
 
 `95ed4f2ec` and `cfc5783eb` rewrote both `rungRows` as `rungOwn`/`rungsUpto` + `foldl` and hoisted
