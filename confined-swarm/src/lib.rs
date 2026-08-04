@@ -79,7 +79,16 @@ pub fn attestation_commitment(att: &ZkOracleAttestation) -> [u8; 32] {
     h.update(&(pres.recv.len() as u64).to_le_bytes());
     h.update(&pres.recv);
     h.update(&pres.notary_sig);
-    h.update(&att.content_commit.as_u32().to_le_bytes());
+    // ⚑ ALL EIGHT LANES. This read `att.content_commit.as_u32()` — one felt — until the
+    // 2026-08-01 widening, which landed in `deos-hermes/src/attest.rs:109` and
+    // `attested-dm/src/lib.rs:379` and MISSED this twin and `confined-swarm`. Both missed copies
+    // then failed to compile against the widened `[CommitLane; 8]`, so the gap was invisible
+    // rather than merely unfixed. The reason it matters, in the reference's own words: a wide
+    // BLAKE3 seeded from a ~30.91-bit value inherits that value's 2^15.45 collision set exactly,
+    // however wide the output looks.
+    for lane in &att.content_commit {
+        h.update(&lane.as_u32().to_le_bytes());
+    }
     h.update(&(att.field_span.offset as u64).to_le_bytes());
     h.update(&(att.field_span.len as u64).to_le_bytes());
     *h.finalize().as_bytes()
