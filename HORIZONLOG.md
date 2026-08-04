@@ -1,5 +1,69 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 4 (in-AIR Kimchi verifier) — the ALU row became a MACHINE; the ROM that forces the program holds every STAGE and not the verifier
+
+`MinaWrapVerifierAir` proved that every row is the Pasta operation its selector names and that a
+chained transition passes one value. Its own `unchained_transition_relates_nothing` says the rest:
+an unchained trace is N UNRELATED operations, WHICH operations was the prover's choice, and
+`x⁴ = x²·x²` — two operands that are the same earlier result — was not expressible at all.
+
+`Dregg2/Circuit/Emit/MinaWrapVerifierProgram.lean` closes both, Lean-authored, `lowerAir` of
+`programAir`, zero hand-written `VmConstraint2`, columns 0..225 unmoved so the three ALU forcing
+theorems are about this row. A **register file** (6 x 32 limb columns, `.transition` copy-forward)
+forces operands and their evolution with no free case; an **instruction ROM** as a
+`TableSem.exactPublicRows` manifest makes the program the DESCRIPTOR's — `PublicLookupBalanced` is
+a PERMUTATION, not a subset. `pasta-sbox-prog` proves **`x -> x^7` over the Pasta base field as a
+sentence about 64 public inputs** — the Poseidon S-box, the atom of the 148-permutation Fq
+transcript sponge, and the first object in this cone whose statement names neither rows nor columns.
+**10/10 in release** (`circuit/tests/pasta_sbox_program_proves.rs`), literal refusal text per stage;
+PI/register/routing forgeries refuse at `OodEvaluationMismatch`, ROM lies at *"exact-public table
+pasta_program_rom lookup multiset does not equal its Lean-emitted manifest"*.
+
+⚑ **The run corrected an overclaim in the same commit that made it.** Swapping two instructions is
+NOT refused by the ROM: the swap carries each row's `pc` cell with it, the multiset is unchanged,
+and the **pc thread** gate refuses. The permutation fixes WHICH instructions run; the pc thread
+fixes their ORDER. Both poles now sit on the lie each is responsible for.
+
+⚑ **CEILINGS, as `decide`s.** `MAX_EXACT_PUBLIC_CELLS = 2^25` at a 55-cell instruction word holds
+610,080 instructions against the verifier's 1,598,396 (2.62x); dropping all 32 immediate limbs
+still falls 8.7% short. But `every_stage_fits_one_rom_but_their_sum_does_not`: all six stages fit,
+the largest (xi-aggregate, 503,808) at 82.6%. **The segmentation seam is per-STAGE and the only
+thing to carry across instances is the register file.** The transcript sponge is 28.0% of one ROM —
+the reachable next rung; what it still needs is the register allocation for a full round (3 S-boxes
++ the 3x3 MDS over the real `fq_kimchi` constants, which is where NREG=6 comes from) and the `qLimb`
+instantiation. Named, not implied.
+
+MEASURED at 1,037 committed columns (1.31x the ALU's 794): a two-point slope of ~0.87-1.03
+ms/instruction between 2^3 and 2^10 (the 8-row quotient says 18-21 ms — 18-24x too high, all fixed
+cost), so the verifier is **>= 23-27 min / 6.63 GB**, and the `>=` is load-bearing because FRI is
+O(n log n).
+
+⚑ **THE FRI BLOWUP IS DECIDED BY CONSTRAINT DEGREE, NOT PROOF SIZE.** Swept at parity on this
+workload (130 conjectured / 73 proven bits held at every point): lb=6 1145 ms / 513.2 KiB, lb=3 348
+/ 870.4, lb=2 246 / 1191.7, lb=1 251 / 2208.4 — ~4-4.6x faster and 16x less LDE at lb=2, 2.32x the
+wire, and lb=1 buys nothing over lb=2. The blocker on a GLOBAL drop is the frozen degree ledger
+(`ir2_degree_budget`): `chip = 7` (the inline x^7 S-box) and `setFieldDynVmDescriptor2 main = 8`
+give `log_quotient_degree = 3`, so global lb<3 is below their floor. This machine declares no
+Poseidon2 chip (max degree 3) and PROVES AND VERIFIES at lb=2 and lb=1 — so the per-descriptor
+override is available for a reason that is a property of the descriptor, not a policy. **Nothing was
+landed: `IR2_FRI_LOG_BLOWUP` is unchanged at 6.**
+
+⚠ NAMED FOLLOW-UPS THIS LANE DID NOT TAKE.
+  * `scripts/emit_descriptors.py --verify-by-name-routing` is **FAIL on 15 UNSTAMPED descriptors**,
+    13 of them pre-existing (`pasta-alu-sound`, the six `pasta-*-sound`, `dark-bazaar-*`,
+    `dregg-mina-lightclient-*`, `dregg-solana-stake-table-fold-v1`) and 2 this lane's. The repair is
+    the stamp ceremony in a detached worktree (`docs/VK-REGEN-CONTROLS.md`), and `--stamp-existing`
+    **demotes every descriptor's `mode` from Lean-witnessed `emit` to a disk re-hash** — a
+    campaign-wide weakening, so this lane declined it rather than taking it for two artifacts.
+  * `scripts/check-guard-discipline.py` is RED on three STALE baseline rows from sibling
+    conversions (KimchiWrapMain -8, LightClientMidnightAir -1, LightClientTendermintAir -1). This
+    lane added zero `#guard`s.
+  * `dark-bazaar-private-poa-settlement-n4k4-v3.json` on disk DIFFERS from its Lean emission
+    (checked over all 91 `EmitByName` rows; the other 90 match).
+
+Commits: `e7cae7eae`, `dd9a4585a`, `2390a5a80`, `8087faf5b`.
+
+
 ## ⚑⚑⚑ AUGUST 4 (step→wrap chain, RE-MEASURED at HEAD) — the figure is UNCHANGED at 21 of 22, the owed re-emission is DONE and BYTE-IDENTICAL, and `t_comm` is the only absorbed family nothing reads
 
 The 08-04 entry below owed a re-emission: *"the COUNT was measured on the committed harness artifacts,
