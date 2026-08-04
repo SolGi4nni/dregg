@@ -70,10 +70,11 @@
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, TableSem, parse_vm_descriptor2, prove_vm_descriptor2,
-    verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, parse_vm_descriptor2,
+    prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::heap_root::HeapLeaf;
+use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint};
 use dregg_circuit::refusal;
 
 const MID_LC_VERIFY_DESCRIPTOR: &str = "dregg-midnight-lightclient-verify::v1";
@@ -102,17 +103,27 @@ const WDIFF_CARRY_0: usize = 17;
 const TPOS_0: usize = 21;
 /// The offset carry out of floor rung 0. Four carries, columns 26..29.
 const TPOS_CARRY_0: usize = 26;
+// ⚑⚑ THE CHAIN ADDED 2026-08-03. `signedWeight <= totalWeight` was forced by NO gate: the two
+// tallies were independent witnessed limb vectors and the quorum tooth only gets EASIER as
+// `signedWeight` grows, so `(total, signed) = (3, 100)` cleared the quorum AND the floor and PROVED.
+/// `SLE` limb 0 (LSB) — the ORDERING difference `total − signed`. FIVE limbs, columns 30..34.
+const SLE_0: usize = 30;
+/// The offset carry out of ordering rung 0. Four carries, columns 35..38.
+const SLE_CARRY_0: usize = 35;
+/// The FIRST column of the new chain, and one past its LAST — the window
+/// `desc_without_the_ordering_chain` strips.
+const NEW_CHAIN_COLS: std::ops::Range<usize> = SLE_0..ANCHOR_ROOT;
 /// PUBLIC ANCHOR — the pinned WS authority-set root.
-const ANCHOR_ROOT: usize = 30;
-/// PUBLIC ANCHOR limb 0 — the finalized target root as nine radix-`2^31` MSB-first limbs, 31..39.
-const TARGET_ROOT_0: usize = 31;
+const ANCHOR_ROOT: usize = 39;
+/// PUBLIC ANCHOR limb 0 — the finalized target root as nine radix-`2^31` MSB-first limbs, 40..48.
+const TARGET_ROOT_0: usize = 40;
 const TARGET_ROOT_LIMBS: usize = 9;
 /// PUBLIC ANCHOR — the GRANDPA round R.
-const ROUND_COL: usize = 40;
+const ROUND_COL: usize = 49;
 /// PUBLIC ANCHOR — the authority-set id (era) E.
-const ERA_COL: usize = 41;
+const ERA_COL: usize = 50;
 
-const MID_LC_WIDTH: usize = 42;
+const MID_LC_WIDTH: usize = 51;
 const MID_PI_COUNT: usize = 12;
 
 /// The tally limb width. `4 · 16 = 64` — four limbs are exactly `AuthorityWeight = u64`.
@@ -141,7 +152,7 @@ const RUNGS: usize = 4;
 /// one.** `parse_table_def` refuses a range width at or above `VACUOUS_RANGE_BITS` (31) at
 /// descriptor LOAD, and the filler's bound is total (`value_fits_bits`), so an in-memory descriptor
 /// at this width admits everything exactly as `DescriptorIR2.rangeRows` says. Both are measured by
-/// `the_shipped_128_bit_width_refuses_even_an_honest_justification` below.
+/// `the_shipped_128_bit_width_is_refused_at_load_and_no_longer_masks_the_honest_justification` below.
 const SHIPPED_MID_BITS: usize = 128;
 
 /// The smallest FULLY VACUOUS width (`2^32 > p`) the deployed prover can still execute.
@@ -276,7 +287,7 @@ fn honest(total_weight: u64, signed_weight: u64) -> Justification {
     }
 }
 
-/// The 42 cells of one logical row, **as integers** — the same 42 numbers, in the same order, as
+/// The 51 cells of one logical row, **as integers** — the same 51 numbers, in the same order, as
 /// `LightClientMidnightAir.midLiveCells`.
 fn row_cells(j: Justification) -> Vec<i64> {
     let total = limbs4(j.total_weight);
@@ -287,6 +298,10 @@ fn row_cells(j: Justification) -> Vec<i64> {
     // limb ON PURPOSE (`tPosRungs`): at `β = 0` the emitted term is `0 · var`, so no dedicated zero
     // column is needed and none has to be pinned.
     let t = fill_chain(1, total, 0, total, 1);
+    // ⚑ §2 (2026-08-03): `α = 1`, `β = 1`, `γ = 0` — `total − signed ≥ 0`. Note the operands are
+    // SWAPPED relative to the quorum chain: `LimbTally.cmp_sound` concludes `γ ≤ α·A − β·B` and the
+    // relation wanted is `0 ≤ T − S`.
+    let sle = fill_chain(1, total, 1, signed, 0);
 
     let mut r = vec![0i64; MID_LC_WIDTH];
     r[ED_OK] = j.ed_ok as i64;
@@ -299,6 +314,8 @@ fn row_cells(j: Justification) -> Vec<i64> {
     r[WDIFF_CARRY_0..WDIFF_CARRY_0 + RUNGS].copy_from_slice(&w.carry);
     r[TPOS_0..TPOS_0 + RUNGS + 1].copy_from_slice(&t.diff);
     r[TPOS_CARRY_0..TPOS_CARRY_0 + RUNGS].copy_from_slice(&t.carry);
+    r[SLE_0..SLE_0 + RUNGS + 1].copy_from_slice(&sle.diff);
+    r[SLE_CARRY_0..SLE_CARRY_0 + RUNGS].copy_from_slice(&sle.carry);
     r[ANCHOR_ROOT] = j.anchor_root as i64;
     for (i, l) in j.target_root.iter().enumerate() {
         r[TARGET_ROOT_0 + i] = *l as i64;
@@ -401,18 +418,18 @@ const U64_CEILING: u64 = 18_446_744_073_709_551_615;
 /// The minimal strict supermajority of `2^64 − 1`.
 const U64_CEILING_MIN_SUPERMAJORITY: u64 = 12_297_829_382_473_034_411;
 
-/// `LightClientMidnightAir.midLiveCells`, transcribed. Lean hand-writes these 42 numbers and
+/// `LightClientMidnightAir.midLiveCells`, transcribed. Lean hand-writes these 51 numbers and
 /// `decide`s what they denote; Rust COMPUTES them from `total`/`signed` through `fill_chain`.
 const LEAN_LIVE_CELLS: [i64; MID_LC_WIDTH] = [
     1, 1, 1, 1, 130, 0, 0, 0, 87, 0, 0, 0, 0, 0, 0, 0, 0, 128, 128, 128, 128, 129, 0, 0, 0, 0, 128,
-    128, 128, 128, 77777, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4242, 647,
+    128, 128, 128, 43, 0, 0, 0, 0, 128, 128, 128, 128, 77777, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4242, 647,
 ];
 
 /// `LightClientMidnightAir.midU64CeilingCells`, transcribed.
 const LEAN_U64_CEILING_CELLS: [i64; MID_LC_WIDTH] = [
     1, 1, 1, 1, 65535, 65535, 65535, 65535, 43691, 43690, 43690, 43690, 2, 0, 0, 0, 0, 128, 128,
-    128, 128, 65534, 65535, 65535, 65535, 0, 128, 128, 128, 128, 77777, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-    4242, 647,
+    128, 128, 65534, 65535, 65535, 65535, 0, 128, 128, 128, 128, 21844, 21845, 21845, 21845, 0,
+    128, 128, 128, 128, 77777, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4242, 647,
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -425,12 +442,13 @@ fn the_served_descriptor_is_the_lean_emitted_one() {
     assert_eq!(d.name, MID_LC_VERIFY_DESCRIPTOR);
     assert_eq!(
         d.trace_width, MID_LC_WIDTH,
-        "⚑ the two tallies became limb vectors: 20 → 42 columns"
+        "⚑ the two tallies became limb vectors (20 → 42) and then RELATED (42 → 51): \
+         `signed ≤ total` is a THIRD limbed chain, nine columns"
     );
     assert_eq!(d.public_input_count, MID_PI_COUNT);
-    // 26 per-limb lookups + 10 generated chain gates + 4 carrier/logic gates + 12 PI pins = 52
+    // 35 per-limb lookups + 15 generated chain gates + 4 carrier/logic gates + 12 PI pins = 66
     // (`LightClientMidnightAir.mid_shape_pins`).
-    assert_eq!(d.constraints.len(), 52);
+    assert_eq!(d.constraints.len(), 66);
     assert_eq!(d.tables.len(), 2);
 
     let bits_of = |id: usize| -> usize {
@@ -780,6 +798,109 @@ fn the_empty_authority_set_is_admitted_when_the_limb_table_is_vacuous() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
+// ⚑⚑ THE RELATION NO GATE FORCED — proved BEFORE, refused AFTER, on the deployed prover
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// The served descriptor **with the 2026-08-03 ordering chain REMOVED** — the exact pre-change
+/// shape. The strip is by COLUMN (`30..38`), so a re-emission that reordered the constraint list
+/// would still produce the right "before", and the length assertion catches a wrong strip.
+fn desc_without_the_ordering_chain() -> EffectVmDescriptor2 {
+    fn mentions_new(e: &LeanExpr) -> bool {
+        match e {
+            LeanExpr::Var(v) => NEW_CHAIN_COLS.contains(v),
+            LeanExpr::Const(_) => false,
+            LeanExpr::Add(l, r) | LeanExpr::Mul(l, r) => mentions_new(l) || mentions_new(r),
+        }
+    }
+    let mut d = desc();
+    d.constraints.retain(|k| match k {
+        VmConstraint2::Lookup(l) => !l.tuple.iter().any(mentions_new),
+        VmConstraint2::Base(VmConstraint::Gate(b)) => !mentions_new(b),
+        _ => true,
+    });
+    assert_eq!(
+        d.constraints.len(),
+        52,
+        "the pre-2026-08-03 shape is 52 constraints: 66 minus 9 lookups and 5 chain gates"
+    );
+    d
+}
+
+/// ⚑⚑ **THE DELIVERABLE: A SIGNED AUTHORITY WEIGHT ABOVE THE TOTAL PROVED, AND NOW IT DOES NOT.**
+///
+/// `TOTAL_WEIGHT` and `SIGNED_WEIGHT` were two independent witnessed limb vectors carrying only
+/// their own 16-bit lookups. The two comparisons this descriptor had — the strict quorum and the
+/// emptiness floor — both ACCEPT `(total, signed) = (3, 100)`: the quorum difference is
+/// `3·100 − 2·3 − 1 = 293` and the floor's is `3 − 1 = 2`. Nothing related the two tallies.
+///
+///  * **BEFORE** (`desc_without_the_ordering_chain`) — PROVES AND VERIFIES.
+///  * **AFTER** (the served descriptor) — the SAME row is REFUSED on the ORDERING tooth:
+///    `3 − 100 = −97` rides as `p − 1` in the top difference limb, which has no row in `[0, 2^16)`.
+///
+/// Lean: `midLcAir_forces_signed_le_total`, `midLcAir_refuses_signed_above_total`.
+#[test]
+fn a_signed_weight_above_the_total_proved_before_the_ordering_chain_and_is_refused_after() {
+    let j = honest(3, 100);
+    let cells = row_cells(j);
+    let pis = pis_of(j);
+
+    let w = fill_chain(3, limbs4(100), 2, limbs4(3), 1);
+    let t = fill_chain(1, limbs4(3), 0, limbs4(3), 1);
+    let sle = fill_chain(1, limbs4(3), 1, limbs4(100), 0);
+    assert_eq!(limb_value(&w.diff), 293, "the QUORUM admits it");
+    assert_eq!(limb_value(&t.diff), 2, "the FLOOR admits it too");
+    assert_eq!(
+        limb_value(&sle.diff),
+        -97,
+        "only the ORDERING chain refuses"
+    );
+    assert_eq!(felt(sle.diff[RUNGS]).as_u32() as i64, P - 1);
+
+    // BEFORE.
+    let t0 = std::time::Instant::now();
+    refusal::must_accept(
+        "⚑ BEFORE: signedWeight = 100 against totalWeight = 3, without the ordering chain",
+        || prove_and_verify(&desc_without_the_ordering_chain(), &cells, &pis),
+    );
+    eprintln!(
+        "⚑ BEFORE: total=3 signed=100 PROVED AND VERIFIED in {:?} (pre-2026-08-03 shape)",
+        t0.elapsed()
+    );
+
+    // AFTER.
+    let e = must_refuse_out_of_range(
+        "⚑ AFTER: signedWeight = 100 against totalWeight = 3",
+        &desc(),
+        &cells,
+        &pis,
+    );
+    eprintln!("⚑ AFTER: {e}");
+    assert!(
+        e.contains(&format!("range wire {}", SLE_0 + RUNGS)),
+        "the ORDERING tooth on the top difference limb (col {}) must be what bites — not the \
+         quorum, which admits this row, and not the floor, which admits it too: {e}",
+        SLE_0 + RUNGS
+    );
+
+    // …and the in-circuit leg: force the top limb into range, the CLOSURE GATE refuses.
+    let mut forged = cells.clone();
+    forged[SLE_0 + RUNGS] = 0;
+    let e2 = must_refuse_violated_gate(
+        "⚑ AFTER: signedWeight above totalWeight (top ordering limb forced into range)",
+        &desc(),
+        &forged,
+        &pis,
+    );
+    eprintln!("⚑ AFTER, top ordering limb forged to 0: {e2}");
+
+    // …and the honest live authority set still proves.
+    must_prove(
+        "Midnight's live authority set, after the ordering chain",
+        honest(LIVE_TOTAL_WEIGHT, LIVE_MIN_SUPERMAJORITY),
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
 // ⚑ THE CHAINS' OWN TEETH
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
@@ -1007,7 +1128,7 @@ const MIDNIGHT_LC_JSON: &str =
 /// (`the_*_is_admitted_when_the_width_is_vacuous`), and a control that could not construct a vacuous
 /// width could not measure vacuity.
 #[test]
-fn the_shipped_128_bit_width_refuses_even_an_honest_justification() {
+fn the_shipped_128_bit_width_is_refused_at_load_and_no_longer_masks_the_honest_justification() {
     // ── 1. LOAD REFUSES the width, on the real served bytes with one integer moved.
     let served = MIDNIGHT_LC_JSON;
     assert!(

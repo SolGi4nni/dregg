@@ -266,10 +266,18 @@ fn the_served_descriptor_is_the_lean_compiled_one() {
     assert_eq!(d.name, MINA_LC_VERIFY_DESCRIPTOR);
     assert_eq!(d.trace_width, MINA_LC_WIDTH);
     assert_eq!(d.public_input_count, MINA_LC_PI_COUNT);
-    // 8 gates + 3 slack lookups + 16 lane lookups (two `.limbs` legs) + 2 top-lane lookups
-    // + 20 PI pins = 49, from 35 source legs (`minaHeadAir_leg_count`,
+    // 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 16 lane lookups (two `.limbs` legs)
+    // + 2 top-lane lookups + 20 PI pins = 50, from 36 source legs (`minaHeadAir_leg_count`,
     // `minaLcVerifyDesc_constraint_count`).
-    assert_eq!(d.constraints.len(), 49);
+    //
+    // ⚑ **49 -> 50, 2026-08-03.** `REQ_DEPTH` was PI-pinned and otherwise FREE — it carried no
+    // range lookup at all, so a prover could put a negative required depth on the wire, satisfy
+    // G5's `DEPTH_SLACK + REQ_DEPTH = WIT_DEPTH` with a non-negative slack, and drive `WIT_DEPTH`
+    // — and therefore `BLOCK_LEN - SUBMIT_H` — negative. A settlement submitted ABOVE the verified
+    // tip satisfied every emitted constraint; the only thing that caught it was a verifier reading
+    // `PI[19]` and comparing it to 290 by hand, which is a convention and not a check. One lookup
+    // on the table already declared closes it (`minaLcAir_forces_submit_within_the_segment`).
+    assert_eq!(d.constraints.len(), 50);
     // `range` at 24 bits (the slack teeth), `range_w29` (wire 98, the sixteen low lanes),
     // `range_w22` (wire 91, the two TOP lanes — the canonicality tooth).
     assert_eq!(d.tables.len(), 3);

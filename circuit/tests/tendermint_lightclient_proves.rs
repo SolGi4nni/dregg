@@ -18,8 +18,12 @@
 //! voting-power threshold and the three time-window bounds — rides as a non-negative slack, because
 //! a field has no order. At 64 bits every one of them was satisfied by any assignment. `TM_BITS` is
 //! now **29**, the maximum wrap-free width at BabyBear (`wrap_free_iff_le_29`; 30 already fails),
-//! and the three TIME teeth still ride it — `the_shipped_64_bit_width_refuses_even_an_honest_header`
-//! and the two `…_is_admitted_when_vacuous` legs below are that repair, both polarities, measured.
+//! and the three TIME teeth still ride it. ⚑ **The repair is now at the DOOR**: a range table
+//! declared at or above 31 bits is refused by `parse_table_def` at descriptor LOAD, and the prover's
+//! own bound became total, so an in-memory vacuous width admits rather than masks —
+//! `the_shipped_64_bit_width_is_refused_at_load_and_no_longer_masks_the_honest_header` measures both
+//! halves, and `the_vacuity_controls_bypass_the_load_gate` confirms the five
+//! `…_is_admitted_when_vacuous` legs can still build their vacuous polarity.
 //!
 //! **Layer 3 — ⚑ AND THE REPAIR EXPOSED A WOUND IT COULD NOT CLOSE: THE TALLY NEVER FIT.**
 //! `TOTAL_POW` and `SIGNED_POW` were ONE BabyBear COLUMN EACH. A felt holds 30.9 bits. CometBFT's
@@ -94,9 +98,11 @@
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, TableSem, prove_vm_descriptor2, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, parse_vm_descriptor2,
+    prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::heap_root::HeapLeaf;
+use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint};
 use dregg_circuit::refusal;
 
 const TM_LC_VERIFY_DESCRIPTOR: &str = "dregg-tm-lightclient-verify::v1";
@@ -130,12 +136,27 @@ const SIGNED_POW_0: usize = 19;
 const TDIFF_0: usize = 23;
 /// The offset carry out of rung 0. Four carries, columns 28..31; each denotes `col − 128`.
 const TDIFF_CARRY_0: usize = 28;
-const TRUSTED_NEXT_VALS_ROOT: usize = 32;
-const COMMITTED_APP_HASH_0: usize = 33;
+// ⚑⚑ THE TWO CHAINS ADDED 2026-08-03. `signedPow <= totalPow` was forced by NO gate, and there was
+// no emptiness floor at all — the strict quorum refuses `(0,0)` and NOTHING ELSE at `total = 0`.
+/// Limb 0 of the ORDERING difference `totalPow − signedPow` (cols 32..36; its non-negativity IS
+/// `signedPow ≤ totalPow`).
+const SLE_0: usize = 32;
+/// Offset carry 0 of the ordering chain (cols 37..40).
+const SLE_CARRY_0: usize = 37;
+/// Limb 0 of the EMPTY-SET FLOOR difference `totalPow − 1` (cols 41..45; non-negativity IS
+/// `totalPow ≥ 1`).
+const TPOS_0: usize = 41;
+/// Offset carry 0 of the floor chain (cols 46..49).
+const TPOS_CARRY_0: usize = 46;
+/// The FIRST column of the two new chains, and one past their LAST — the window a
+/// `desc_without_the_new_chains` must strip.
+const NEW_CHAIN_COLS: std::ops::Range<usize> = SLE_0..TRUSTED_NEXT_VALS_ROOT;
+const TRUSTED_NEXT_VALS_ROOT: usize = 50;
+const COMMITTED_APP_HASH_0: usize = 51;
 const APP_HASH_LIMBS: usize = 9;
-const CHAIN_ID_DOMAIN: usize = 42;
+const CHAIN_ID_DOMAIN: usize = 60;
 
-const TM_LC_WIDTH: usize = 43;
+const TM_LC_WIDTH: usize = 61;
 const TM_PI_COUNT: usize = 11;
 
 /// The time-slack width. `2^29 = 536870912` — the maximum WRAP-FREE width at BabyBear.
@@ -163,10 +184,16 @@ const TALLY_RUNGS: usize = 4;
 
 /// The width that SHIPPED on the time table.
 ///
-/// ⚑ In the DENOTATION (`DescriptorIR2.rangeRows 64`) this interval contains every BabyBear element,
-/// so it refuses nothing. In the DEPLOYED Rust prover it refuses EVERYTHING — see
-/// `the_shipped_64_bit_width_refuses_even_an_honest_header`. The two readings of the same declared
-/// constant disagree maximally, and nothing had ever run to notice.
+/// In the DENOTATION (`DescriptorIR2.rangeRows 64`) this interval contains every BabyBear element,
+/// so it refuses nothing; in the DEPLOYED Rust prover it used to refuse EVERYTHING, because
+/// `1u64 << 64` masks to `1u64 << 0`. The two readings of the same declared constant disagreed
+/// maximally, and nothing had ever run to notice.
+///
+/// ⚑ **BOTH HALVES CLOSED 2026-08-03 — this constant now names a REFUSED declaration, not a live
+/// one.** `parse_table_def` refuses a range width at or above `VACUOUS_RANGE_BITS` (31) at descriptor
+/// LOAD, and the filler's bound is total (`value_fits_bits`), so an in-memory descriptor at this
+/// width admits everything exactly as `DescriptorIR2.rangeRows` says. Both are measured by
+/// `the_shipped_64_bit_width_is_refused_at_load_and_no_longer_masks_the_honest_header` below.
 const SHIPPED_TM_BITS: usize = 64;
 
 /// The smallest FULLY VACUOUS width (`2^32 > p`, so `[0, 2^32)` covers the field) that the deployed
@@ -238,6 +265,46 @@ struct TallyFill {
     diff: [i64; TALLY_RUNGS + 1],
     /// The carry out of each rung, OFFSET: `carry[i] = c_{i+1} + 128`.
     carry: [i64; TALLY_RUNGS],
+    /// ⚑ `totalPow − signedPow` as FIVE 16-bit limbs — the ORDERING chain added 2026-08-03.
+    sle_diff: [i64; TALLY_RUNGS + 1],
+    /// …and its four offset carries.
+    sle_carry: [i64; TALLY_RUNGS],
+    /// ⚑ `totalPow − 1` as FIVE 16-bit limbs — the EMPTY-SET FLOOR chain added 2026-08-03.
+    tpos_diff: [i64; TALLY_RUNGS + 1],
+    /// …and its four offset carries.
+    tpos_carry: [i64; TALLY_RUNGS],
+}
+
+/// ⚑ **ONE CHAIN'S HONEST FILL** — `LimbTally.fillDigit` / `LimbTally.fillCarry` at arbitrary
+/// `(α, β, γ)`, so the three chains this descriptor carries share ONE transcription of the Lean
+/// definition rather than three that agree by inspection.
+///
+/// `a` and `b` are the operand limb vectors; the difference is `α·A − β·B − γ`. Returns the five
+/// difference limbs (the last being the final carry, the chain's CLOSURE) and the four OFFSET
+/// carries.
+fn fill_chain(
+    alpha: i64,
+    beta: i64,
+    gamma: i64,
+    a: &[i64; TALLY_RUNGS],
+    b: &[i64; TALLY_RUNGS],
+) -> ([i64; TALLY_RUNGS + 1], [i64; TALLY_RUNGS]) {
+    let radix: i64 = 1 << TM_LIMB_BITS;
+    let mut diff = [0i64; TALLY_RUNGS + 1];
+    let mut carry = [0i64; TALLY_RUNGS];
+    let mut c: i64 = 0;
+    for i in 0..TALLY_RUNGS {
+        let g = if i == 0 { gamma } else { 0 };
+        let raw = alpha * a[i] - beta * b[i] - g + c;
+        let d = raw.rem_euclid(radix);
+        // Exact: `raw − d` is a multiple of the radix, so truncating and floor division agree.
+        c = (raw - d) / radix;
+        diff[i] = d;
+        carry[i] = c + CARRY_OFF;
+    }
+    // The chain's CLOSURE: the operands have run out, so the final carry IS the top digit.
+    diff[TALLY_RUNGS] = c;
+    (diff, carry)
 }
 
 /// ⚑ **THE HONEST FILL.** `α = 3` on signed power, `β = 2` on total power, `γ = 1` for the STRICT
@@ -252,34 +319,29 @@ struct TallyFill {
 /// the refusal, and this function expresses it rather than hiding it: the caller puts `p + v` on the
 /// wire, which is the element the 16-bit tooth has no row for.
 fn fill_tally(total: u64, signed: u64) -> TallyFill {
-    let radix: i64 = 1 << TM_LIMB_BITS;
     let mut t = [0i64; TALLY_RUNGS];
     let mut s = [0i64; TALLY_RUNGS];
     for i in 0..TALLY_RUNGS {
         t[i] = ((total >> (TM_LIMB_BITS * i)) & 0xFFFF) as i64;
         s[i] = ((signed >> (TM_LIMB_BITS * i)) & 0xFFFF) as i64;
     }
-    let mut diff = [0i64; TALLY_RUNGS + 1];
-    let mut carry = [0i64; TALLY_RUNGS];
-    let mut c: i64 = 0;
-    for i in 0..TALLY_RUNGS {
-        let gamma = if i == 0 { 1 } else { 0 };
-        let raw = 3 * s[i] - 2 * t[i] - gamma + c;
-        let d = raw.rem_euclid(radix);
-        // Exact: `raw − d` is a multiple of the radix, so truncating and floor division agree.
-        c = (raw - d) / radix;
-        diff[i] = d;
-        carry[i] = c + CARRY_OFF;
-    }
-    // The chain's CLOSURE: the operands have run out, so the final carry IS the top digit. Without
-    // this the prover could dump a residue into a carry nothing reads and the recomposition would
-    // be off by `2^64` (`LimbTally.ChainOk`, the `[]` case).
-    diff[TALLY_RUNGS] = c;
+    // The QUORUM chain: `3·signedPow − 2·totalPow − 1 ≥ 0`.
+    let (diff, carry) = fill_chain(3, 2, 1, &s, &t);
+    // ⚑ The ORDERING chain: `1·totalPow − 1·signedPow − 0 ≥ 0`. Note the operands are SWAPPED —
+    // `LimbTally.cmp_sound` concludes `γ ≤ α·A − β·B` and the relation wanted is `0 ≤ T − S`.
+    let (sle_diff, sle_carry) = fill_chain(1, 1, 0, &t, &s);
+    // ⚑ The EMPTY-SET FLOOR chain: `1·totalPow − 0·(…) − 1 ≥ 0`. `bCol` points at the total-power
+    // limbs, exactly as the Lean rung list does; at `β = 0` it contributes nothing.
+    let (tpos_diff, tpos_carry) = fill_chain(1, 0, 1, &t, &t);
     TallyFill {
         total: t,
         signed: s,
         diff,
         carry,
+        sle_diff,
+        sle_carry,
+        tpos_diff,
+        tpos_carry,
     }
 }
 
@@ -400,6 +462,11 @@ fn row_cells(h: Header) -> Vec<i64> {
     r[SIGNED_POW_0..SIGNED_POW_0 + TALLY_RUNGS].copy_from_slice(&tally.signed);
     r[TDIFF_0..TDIFF_0 + TALLY_RUNGS + 1].copy_from_slice(&tally.diff);
     r[TDIFF_CARRY_0..TDIFF_CARRY_0 + TALLY_RUNGS].copy_from_slice(&tally.carry);
+    // ⚑ The two chains added 2026-08-03, columns 32..49.
+    r[SLE_0..SLE_0 + TALLY_RUNGS + 1].copy_from_slice(&tally.sle_diff);
+    r[SLE_CARRY_0..SLE_CARRY_0 + TALLY_RUNGS].copy_from_slice(&tally.sle_carry);
+    r[TPOS_0..TPOS_0 + TALLY_RUNGS + 1].copy_from_slice(&tally.tpos_diff);
+    r[TPOS_CARRY_0..TPOS_CARRY_0 + TALLY_RUNGS].copy_from_slice(&tally.tpos_carry);
 
     r[TRUSTED_NEXT_VALS_ROOT] = h.next_vals as i64;
     for (i, l) in h.app_hash.iter().enumerate() {
@@ -585,6 +652,26 @@ const LEAN_MAX_SCALE_CELLS: [i64; TM_LC_WIDTH] = [
     128,
     128,
     128,
+    // ⚑ SLE limbs = T − S = 384307168202282324, and its four offset carries.
+    21844,
+    21845,
+    21845,
+    1365,
+    0,
+    128,
+    128,
+    128,
+    128,
+    // ⚑ TPOS limbs = T − 1 = 1152921504606846974, and its four offset carries.
+    65534,
+    65535,
+    65535,
+    4095,
+    0,
+    128,
+    128,
+    128,
+    128,
     11111,
     1,
     2,
@@ -610,12 +697,13 @@ fn the_served_descriptor_is_the_lean_emitted_one() {
     assert_eq!(d.name, TM_LC_VERIFY_DESCRIPTOR);
     assert_eq!(
         d.trace_width, TM_LC_WIDTH,
-        "⚑ the tally became a limb vector: 29 → 43 columns"
+        "⚑ the tally became a limb vector (29 → 43) and then RELATED (43 → 61): `signed ≤ total` \
+         and `total ≥ 1` are two more limbed chains, nine columns each"
     );
     assert_eq!(d.public_input_count, TM_PI_COUNT);
-    // 2 shape gates + 3 time gates + 3 time lookups + 17 tally lookups + 5 generated chain gates
-    // + 3 carrier gates + 11 PI pins = 44 (`LightClientTendermintAir.tm_shape_pins`).
-    assert_eq!(d.constraints.len(), 44);
+    // 2 shape gates + 3 time gates + 3 time lookups + 35 tally lookups + 15 generated chain gates
+    // + 3 carrier gates + 11 PI pins = 72 (`LightClientTendermintAir.tm_shape_pins`).
+    assert_eq!(d.constraints.len(), 72);
     assert_eq!(
         d.tables.len(),
         3,
@@ -873,10 +961,15 @@ fn the_live_cosmos_hub_validator_set_proves() {
     );
 }
 
-/// ⚑ **THE EMPTY VALIDATOR SET IS REFUSED**, and by the same tooth as the sub-quorum: at
-/// `totalPow = signedPow = 0` the strict difference is `0 − 0 − 1 = −1`. Tendermint's strict
-/// threshold subsumes the empty-set floor its Solana and Midnight siblings carry as a separate
-/// slack (`LightClientTendermintAir.tmLcAir_refuses_the_empty_validator_set`).
+/// ⚑ **THE ALL-ZERO VALIDATOR SET IS REFUSED**, and now by THREE teeth rather than one: the quorum
+/// difference is `0 − 0 − 1 = −1`, the emptiness floor's is `0 − 1 = −1`, and the ordering chain's
+/// is `0 − 0 = 0` (which passes — this row is the one case the quorum alone did catch).
+///
+/// ⚠ **The claim this test used to carry was FALSE.** It read "Tendermint's strict threshold
+/// subsumes the empty-set floor its Solana and Midnight siblings carry as a separate slack". That
+/// holds at `signedPow = 0` and nowhere else on the empty set — see
+/// `an_empty_validator_set_with_signed_power_proved_before_the_floor_and_is_refused_after`, which
+/// runs `total = 0, signed = 1` on the deployed prover both ways.
 #[test]
 fn the_empty_validator_set_is_refused() {
     let mut h = protocol_max_header();
@@ -884,27 +977,342 @@ fn the_empty_validator_set_is_refused() {
     h.signed_pow = 0;
 
     let f = fill_tally(0, 0);
+    // The QUORUM chain fills `−1` …
     assert_eq!(limb_value(&f.diff), -1);
+    // … and the EMPTINESS FLOOR fills `−1` on its OWN five difference limbs, at columns that share
+    // nothing with the quorum's (`tm_the_three_slacks_are_disjoint`). Two teeth, two slacks.
+    assert_eq!(limb_value(&f.tpos_diff), -1);
+    // … while the ORDERING chain is SATISFIED here (`0 − 0 = 0`). ⚑ That is the point of running
+    // the all-zero row rather than `(0, 1)`: the floor is not a re-spelling of the ordering tooth,
+    // because here the ordering tooth does not fire at all.
+    assert_eq!(limb_value(&f.sle_diff), 0);
     assert_eq!(f.total, [0, 0, 0, 0]);
     assert_eq!(f.signed, [0, 0, 0, 0]);
 
     let d = desc();
     let cells = row_cells(h);
     let pis = pis_of(h);
+
+    // ── Both range teeth ARMED. The prover refuses on the FIRST out-of-range wire it reaches,
+    //    which is the quorum chain's top difference limb.
     let e = must_refuse_out_of_range("⚑ the EMPTY validator set", &d, &cells, &pis);
+    assert!(
+        e.contains(&format!("range wire {}", TDIFF_0 + TALLY_RUNGS)),
+        "the first refusal must be the QUORUM chain's top difference limb (col {}): {e}",
+        TDIFF_0 + TALLY_RUNGS
+    );
     eprintln!("⚑ empty validator set refused: {e}");
 
-    // …and the in-circuit leg, so this is not only the layout filler's pre-flight: force the
-    // out-of-range top limb into `[0, 2^16)` and the chain's CLOSURE GATE is what refuses.
-    let mut forged = cells.clone();
-    forged[TDIFF_0 + TALLY_RUNGS] = 0;
-    let e2 = must_refuse_violated_gate(
-        "⚑ the EMPTY validator set (top limb forced into range)",
+    // ── ⚑ QUORUM TOOTH DISARMED — the floor refuses ALONE.
+    //
+    // Force the quorum chain's out-of-range top limb into `[0, 2^16)`, so the tooth that fired
+    // above cannot fire. The EMPTINESS FLOOR still refuses, on its own top difference limb at
+    // column 45. **This is the leg that shows the floor is a second tooth rather than a second
+    // reading of the first** — before 2026-08-03 the descriptor had no floor chain and this row,
+    // with the quorum limb patched, had nothing left to refuse it.
+    let mut only_floor = cells.clone();
+    only_floor[TDIFF_0 + TALLY_RUNGS] = 0;
+    let e2 = must_refuse_out_of_range(
+        "⚑ the EMPTY validator set (QUORUM tooth disarmed)",
+        &d,
+        &only_floor,
+        &pis,
+    );
+    assert!(
+        e2.contains(&format!("range wire {}", TPOS_0 + TALLY_RUNGS)),
+        "with the quorum limb patched, the EMPTINESS FLOOR must be what refuses (col {}): {e2}",
+        TPOS_0 + TALLY_RUNGS
+    );
+    eprintln!("⚑ empty validator set, quorum tooth disarmed — the FLOOR refuses alone: {e2}");
+
+    // ── BOTH range teeth disarmed: the in-circuit CLOSURE GATES refuse.
+    //
+    // So this is not only the layout filler's pre-flight. With both out-of-range top limbs forced
+    // into range, neither chain's borrow recomposes and an emitted GATE is what does not vanish.
+    let mut forged = only_floor.clone();
+    forged[TPOS_0 + TALLY_RUNGS] = 0;
+    let e3 = must_refuse_violated_gate(
+        "⚑ the EMPTY validator set (both top limbs forced into range)",
         &d,
         &forged,
         &pis,
     );
-    eprintln!("⚑ empty validator set, top limb forged to 0: {e2}");
+    eprintln!("⚑ empty validator set, both top limbs forged to 0: {e3}");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// ⚑⚑ THE TWO RELATIONS NO GATE FORCED — proved BEFORE, refused AFTER, on the deployed prover
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// The served descriptor **with the two 2026-08-03 chains REMOVED** — the exact pre-change shape.
+///
+/// ⚑ This is what makes the pair below a measurement rather than an assertion: a repair that only
+/// shows the new tooth refusing a value has not shown the value was ever ADMITTED. The identical
+/// row goes through the identical prover, differing in exactly the twenty-eight constraints the
+/// ordering chain and the emptiness floor contribute.
+///
+/// The strip is by COLUMN, not by index: every constraint that mentions a column in `32..49` — the
+/// two new difference vectors and their carries — is dropped. A re-emission that reordered the
+/// constraint list would still produce the right "before" here, and the length assertion catches a
+/// strip that removed the wrong thing.
+fn desc_without_the_new_chains() -> EffectVmDescriptor2 {
+    fn mentions_new(e: &LeanExpr) -> bool {
+        match e {
+            LeanExpr::Var(v) => NEW_CHAIN_COLS.contains(v),
+            LeanExpr::Const(_) => false,
+            LeanExpr::Add(l, r) | LeanExpr::Mul(l, r) => mentions_new(l) || mentions_new(r),
+        }
+    }
+    let mut d = desc();
+    d.constraints.retain(|k| match k {
+        VmConstraint2::Lookup(l) => !l.tuple.iter().any(mentions_new),
+        VmConstraint2::Base(VmConstraint::Gate(b)) => !mentions_new(b),
+        _ => true,
+    });
+    assert_eq!(
+        d.constraints.len(),
+        44,
+        "the pre-2026-08-03 shape is 44 constraints: 72 minus 18 lookups and 10 chain gates"
+    );
+    d
+}
+
+/// ⚑⚑ **THE DELIVERABLE (1): A SIGNED VOTING POWER ABOVE THE TOTAL PROVED, AND NOW IT DOES NOT.**
+///
+/// `TOTAL_POW` and `SIGNED_POW` were two independent witnessed limb vectors carrying only their own
+/// 16-bit lookups. The only comparison in the descriptor was the strict quorum
+/// `3·S − 2·T − 1 ≥ 0`, which gets EASIER as `S` grows. So a trace claiming a hundred units of
+/// verified stake against a validator set holding three satisfied every emitted constraint — the
+/// Tendermint shape of the ETH client's `PC = 1023` against a 512-key sync committee (`dfa434d46`).
+///
+///  * **BEFORE** (`desc_without_the_new_chains`) — `total = 3, signed = 100` PROVES AND VERIFIES.
+///  * **AFTER** (the served descriptor) — the SAME row is REFUSED, on the ORDERING tooth: the
+///    difference `3 − 100 = −97` rides as the field element `p − 97`, which has no row in
+///    `[0, 2^16)`.
+///
+/// The Lean statement this cashes is `tmLcAir_forces_signed_le_total`, which concludes
+/// `signedPow ≤ totalPow` from the trace with NO hypothesis about the update.
+#[test]
+fn a_signed_power_above_the_total_proved_before_the_ordering_chain_and_is_refused_after() {
+    let mut h = honest_header();
+    h.total_pow = 3;
+    h.signed_pow = 100;
+
+    let f = fill_tally(h.total_pow, h.signed_pow);
+    assert_eq!(
+        limb_value(&f.diff),
+        3 * 100 - 2 * 3 - 1,
+        "the QUORUM tooth does not catch this — the difference is +293, comfortably in range"
+    );
+    assert!(
+        f.diff
+            .iter()
+            .all(|&l| (0..(1 << TM_LIMB_BITS)).contains(&l))
+    );
+    assert_eq!(
+        limb_value(&f.sle_diff),
+        -97,
+        "the ORDERING difference is negative — that is the whole finding"
+    );
+    assert_eq!(f.sle_diff[TALLY_RUNGS], -1, "…borrowed into the TOP limb");
+    assert_eq!(felt(f.sle_diff[TALLY_RUNGS]).as_u32() as i64, P - 1);
+
+    let cells = row_cells(h);
+    let pis = pis_of(h);
+
+    // BEFORE — the identical row through the identical prover, minus the two new chains.
+    let t0 = std::time::Instant::now();
+    refusal::must_accept(
+        "⚑ BEFORE: signedPow = 100 against totalPow = 3, without the ordering chain",
+        || prove_and_verify(&desc_without_the_new_chains(), &cells, &pis),
+    );
+    eprintln!(
+        "⚑ BEFORE: total=3 signed=100 PROVED AND VERIFIED in {:?} (pre-2026-08-03 shape)",
+        t0.elapsed()
+    );
+
+    // AFTER — the served descriptor.
+    let e = must_refuse_out_of_range(
+        "⚑ AFTER: signedPow = 100 against totalPow = 3",
+        &desc(),
+        &cells,
+        &pis,
+    );
+    eprintln!("⚑ AFTER: {e}");
+    assert!(
+        e.contains(&format!("range wire {}", SLE_0 + TALLY_RUNGS)),
+        "the ORDERING tooth on the top difference limb (col {}) must be what bites, not the quorum \
+         or the floor: {e}",
+        SLE_0 + TALLY_RUNGS
+    );
+
+    // …and the in-circuit leg: force the out-of-range top limb into `[0, 2^16)` and the chain's
+    // CLOSURE GATE is the only thing left standing.
+    let mut forged = cells.clone();
+    forged[SLE_0 + TALLY_RUNGS] = 0;
+    let e2 = must_refuse_violated_gate(
+        "⚑ AFTER: signedPow above totalPow (top ordering limb forced into range)",
+        &desc(),
+        &forged,
+        &pis,
+    );
+    eprintln!("⚑ AFTER, top ordering limb forged to 0: {e2}");
+
+    // …and the honest update still proves, so the new leg is a repair and not a narrowing.
+    must_prove(
+        "the honest supermajority, after the ordering chain",
+        honest_header(),
+    );
+}
+
+/// ⚑⚑ **THE DELIVERABLE (2): AN EMPTY VALIDATOR SET WITH CLAIMED SIGNED POWER PROVED, AND NOW IT
+/// DOES NOT.**
+///
+/// ⚠ **A recorded claim was FALSE at source.** `tmLcAir_refuses_the_empty_validator_set` used to
+/// say Tendermint's strict threshold "subsumes the empty-set floor its Solana and Midnight siblings
+/// carry as a separate `TPOS` slack" — while taking BOTH `totalPow = 0` and `signedPow = 0` as
+/// hypotheses. At `totalPow = 0, signedPow = 1` the quorum difference is `3·1 − 2·0 − 1 = 2`: an
+/// honest, in-range, ACCEPTING fill. A strict quorum refuses `(0,0)` and NOTHING ELSE at
+/// `total = 0`.
+///
+///  * **BEFORE** (`desc_without_the_new_chains`) — `total = 0, signed = 1` PROVES AND VERIFIES.
+///  * **AFTER** — REFUSED, on the FLOOR tooth (`0 − 1 = −1`) — and independently on the ORDERING
+///    tooth, which is what "two independent teeth" means here.
+///
+/// Lean: `tmLcAir_forces_nonempty_validator_set`, `tmLcAir_refuses_zero_total_with_signed_power`.
+#[test]
+fn an_empty_validator_set_with_signed_power_proved_before_the_floor_and_is_refused_after() {
+    let mut h = honest_header();
+    h.total_pow = 0;
+    h.signed_pow = 1;
+
+    let f = fill_tally(h.total_pow, h.signed_pow);
+    assert_eq!(
+        limb_value(&f.diff),
+        2,
+        "⚑ THE FINDING: the STRICT quorum is SATISFIED on an empty validator set"
+    );
+    assert_eq!(limb_value(&f.tpos_diff), -1, "the FLOOR difference is −1");
+    assert_eq!(limb_value(&f.sle_diff), -1, "…and so is the ORDERING one");
+
+    let cells = row_cells(h);
+    let pis = pis_of(h);
+
+    // BEFORE.
+    refusal::must_accept(
+        "⚑ BEFORE: an EMPTY validator set with one unit of claimed signed power",
+        || prove_and_verify(&desc_without_the_new_chains(), &cells, &pis),
+    );
+    eprintln!("⚑ BEFORE: total=0 signed=1 PROVED AND VERIFIED (pre-2026-08-03 shape)");
+
+    // AFTER — the served descriptor. The layout filler refuses on the FIRST out-of-range wire it
+    // meets, so the message names one of the two teeth; both are exercised below by disarming.
+    let e = must_refuse_out_of_range(
+        "⚑ AFTER: an EMPTY validator set with claimed signed power",
+        &desc(),
+        &cells,
+        &pis,
+    );
+    eprintln!("⚑ AFTER: {e}");
+}
+
+/// ⚑⚑ **THE TWO NEW TEETH, DISARMED ONE AT A TIME** — the bar Midnight set for its two floors.
+///
+/// A pair of teeth that always fire together is one tooth with two names. This runs
+/// `total = 0, signed = 1` against a descriptor carrying ONLY the ordering chain, and again against
+/// one carrying ONLY the floor, and both refuse. Then it runs `total = 3, signed = 100` — which the
+/// FLOOR admits (`3 − 1 = 2 ≥ 0`) — and only the ordering-only descriptor refuses it.
+///
+/// Lean: `tm_three_teeth_are_independent` (the arithmetic) and `tm_the_three_slacks_are_disjoint`
+/// (the columns).
+#[test]
+fn the_two_new_teeth_refuse_independently_when_disarmed_one_at_a_time() {
+    // A descriptor carrying the base shape plus exactly ONE of the two new chains.
+    fn desc_with_only(keep: std::ops::Range<usize>) -> EffectVmDescriptor2 {
+        fn cols_of(e: &LeanExpr, out: &mut Vec<usize>) {
+            match e {
+                LeanExpr::Var(v) => out.push(*v),
+                LeanExpr::Const(_) => {}
+                LeanExpr::Add(l, r) | LeanExpr::Mul(l, r) => {
+                    cols_of(l, out);
+                    cols_of(r, out);
+                }
+            }
+        }
+        let mut d = desc();
+        d.constraints.retain(|k| {
+            let mut cols = Vec::new();
+            match k {
+                VmConstraint2::Lookup(l) => l.tuple.iter().for_each(|e| cols_of(e, &mut cols)),
+                VmConstraint2::Base(VmConstraint::Gate(b)) => cols_of(b, &mut cols),
+                _ => return true,
+            }
+            // Drop anything touching a NEW column that is not in the kept window.
+            !cols
+                .iter()
+                .any(|c| NEW_CHAIN_COLS.contains(c) && !keep.contains(c))
+        });
+        assert_eq!(
+            d.constraints.len(),
+            58,
+            "base 44 plus exactly one chain's 9 lookups and 5 gates"
+        );
+        d
+    }
+
+    let sle_only = desc_with_only(SLE_0..TPOS_0);
+    let tpos_only = desc_with_only(TPOS_0..TRUSTED_NEXT_VALS_ROOT);
+
+    // ── The empty set with claimed signed power: BOTH teeth refuse it, each alone.
+    let mut empty = honest_header();
+    empty.total_pow = 0;
+    empty.signed_pow = 1;
+    let ecells = row_cells(empty);
+    let epis = pis_of(empty);
+    let e1 = must_refuse_out_of_range(
+        "⚑ (0,1) against the ORDERING chain alone",
+        &sle_only,
+        &ecells,
+        &epis,
+    );
+    assert!(
+        e1.contains(&format!("range wire {}", SLE_0 + TALLY_RUNGS)),
+        "{e1}"
+    );
+    let e2 = must_refuse_out_of_range(
+        "⚑ (0,1) against the FLOOR chain alone",
+        &tpos_only,
+        &ecells,
+        &epis,
+    );
+    assert!(
+        e2.contains(&format!("range wire {}", TPOS_0 + TALLY_RUNGS)),
+        "{e2}"
+    );
+    eprintln!("⚑ (0,1) refused by the ordering chain alone: {e1}\n⚑ …and by the floor alone: {e2}");
+
+    // ── Signed above total at a NON-empty set: the FLOOR admits it, the ORDERING chain does not.
+    // This is the half that proves neither tooth is the other one renamed.
+    let mut over = honest_header();
+    over.total_pow = 3;
+    over.signed_pow = 100;
+    let ocells = row_cells(over);
+    let opis = pis_of(over);
+    refusal::must_accept(
+        "⚑ (3,100) against the FLOOR chain alone — the floor ADMITS a signed weight above the total",
+        || prove_and_verify(&tpos_only, &ocells, &opis),
+    );
+    let e3 = must_refuse_out_of_range(
+        "⚑ (3,100) against the ORDERING chain alone",
+        &sle_only,
+        &ocells,
+        &opis,
+    );
+    assert!(
+        e3.contains(&format!("range wire {}", SLE_0 + TALLY_RUNGS)),
+        "{e3}"
+    );
+    eprintln!("⚑ (3,100) ADMITTED by the floor alone, refused by the ordering chain: {e3}");
 }
 
 /// ⚑ **A TALLY THAT MAKES THE CARRY CHAIN DO REAL WORK.** `totalPow = 1147797409030816545`
@@ -1114,55 +1522,133 @@ fn the_exactly_two_thirds_sub_quorum_is_refused() {
 // The THREE TIME teeth — still on the 29-bit felt table, still both polarities
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
-/// ⚑ **WHAT THE SHIPPED WIDTH ACTUALLY DID, AND IT IS NOT WHAT THE DENOTATION SAYS.**
-///
-/// `dregg-tm-lightclient-verify::v1` shipped `bits: 64`. In Lean's `rangeRows 64` that interval
-/// contains every field element and the tooth refuses NOTHING. In the deployed Rust prover it
-/// refuses EVERYTHING: the layout filler's bound is `(v as u64) >= (1u64 << rb.bits)`
-/// (`circuit/src/descriptor_ir2.rs:4310`), and a `u64` shift by 64 is masked to a shift by 0 in a
-/// release build, so the test becomes `v >= 1` and every nonzero value on a ranged wire is refused.
-/// Under `cargo test` the same expression is an OVERFLOW PANIC, because `[profile.dev]` leaves
-/// `overflow-checks` on.
-///
-/// So an HONEST Tendermint header — the positive polarity that proves at 29 bits — could not be
-/// proved at all at the width that shipped. **That is the mechanical reason no prover had ever run
-/// this descriptor: the first honest attempt would have been refused.** The same masking hits the
-/// two 128-bit siblings (`128 % 64 == 0`).
-///
-/// ⚠ Stated at the resolution it was measured: this is the observed behaviour of THIS prover on THIS
-/// descriptor, and the refusal SHAPE differs by profile — which is itself the finding, so the test
-/// names both rather than accepting either. It is not a claim about what any `bits >= 31` descriptor
-/// does; 32 through 63 shift fine and are vacuous in both readings, which is what the two tests
-/// below exhibit.
-#[test]
-fn the_shipped_64_bit_width_refuses_even_an_honest_header() {
-    let h = honest_header();
-    let cells = row_cells(h);
-    let pis = pis_of(h);
-    // The very witness that PROVES at the repaired width.
-    must_prove("the honest header at 29 bits", h);
+/// The served descriptor's own JSON bytes, so the width substitution below is done to the REAL wire
+/// object rather than to a hand-typed stand-in.
+const TM_LC_JSON: &str = include_str!("../descriptors/by-name/dregg-tm-lightclient-verify-v1.json");
 
-    let shipped = desc_with_time_range_width(SHIPPED_TM_BITS);
-    if cfg!(debug_assertions) {
-        let msg = refusal::must_panic_containing(
-            "⚑ the honest header at the SHIPPED bits=64",
-            "shift left with overflow",
-            || {
-                let _ = prove_and_verify(&shipped, &cells, &pis);
-            },
-        );
-        eprintln!("honest header at the shipped bits=64 (debug): {msg}");
-    } else {
-        let e: String =
-            refusal::must_refuse("⚑ the honest header at the SHIPPED bits=64", || {
-                prove_and_verify(&shipped, &cells, &pis)
-            });
-        eprintln!("honest header at the shipped bits=64 (release): {e}");
+/// ⚑⚑ **THE WIDTH THAT SHIPPED IS NOW REFUSED AT THE DOOR, AND THIS TEST CHANGED MEANING.**
+///
+/// # What it used to assert, and why that was the DEFECT rather than the tooth
+///
+/// `dregg-tm-lightclient-verify::v1` shipped `bits: 64` on its range table. In Lean's `rangeRows 64`
+/// that interval contains every field element and the tooth refuses NOTHING. In the deployed Rust
+/// prover it refused EVERYTHING: the layout filler's bound was `(v as u64) >= (1u64 << rb.bits)`, and
+/// a `u64` shift by 64 masks to a shift by 0, so the test collapsed to `v >= 1` and every nonzero
+/// value on a ranged wire was refused. Under `cargo test` the same expression was an OVERFLOW PANIC.
+/// **That is the mechanical reason no prover had ever run this descriptor: the first honest attempt
+/// would have been refused.**
+///
+/// This harness EXHIBITED that as a tooth, naming both profile shapes. It was never a tooth — it was
+/// the defect wearing one, and an honest header being unprovable is not a security property.
+///
+/// # What it asserts now
+///
+/// Both halves of the repair, on the real bytes:
+///
+///  1. **The declaration is REFUSED AT LOAD, at both doors.** `parse_vm_descriptor2`
+///     (`parse_table_def`) rejects a range table declared at or above `VACUOUS_RANGE_BITS = 31`,
+///     naming the width and the reason. A width that refuses nothing at BabyBear is a defect however
+///     it reached the wire, so it cannot be SERVED at all. This is the gate, and it sits at the door
+///     rather than deep in the prover.
+///  2. **The mask is gone.** The filler's bound is now total (`value_fits_bits`: `bits >= 32` admits
+///     every canonical felt), so a descriptor constructed IN MEMORY at a vacuous width behaves the
+///     way its denotation says — it admits everything, including the honest row. That is the
+///     difference between "the prover disagrees with `rangeRows`" and "the prover implements it".
+///
+/// ⚠ The in-memory path is deliberately left open, and the five `desc_with_time_range_width`
+/// vacuity CONTROLS in this file depend on it: they mutate the parsed struct rather than the wire
+/// bytes, so `parse_table_def` never sees their 32. A control that could not construct a vacuous
+/// width could not measure vacuity. `the_vacuity_controls_bypass_the_load_gate` pins that.
+#[test]
+fn the_shipped_64_bit_width_is_refused_at_load_and_no_longer_masks_the_honest_header() {
+    // ── 1. LOAD REFUSES the width, on the real served bytes with one integer moved.
+    let served = TM_LC_JSON;
+    assert!(
+        parse_vm_descriptor2(served).is_ok(),
+        "the SERVED descriptor must still load — its declared widths are 29, 16 and 8"
+    );
+    for bad in [31usize, 32, SHIPPED_TM_BITS, 128] {
+        let mutated = served.replace("\"bits\":29", &format!("\"bits\":{bad}"));
+        assert_ne!(mutated, served, "the width substitution must have bitten");
+        let e = parse_vm_descriptor2(&mutated)
+            .expect_err("a range table at or above 31 bits must be REFUSED AT LOAD");
         assert!(
-            e.contains("range wire"),
-            "the refusal must come from the range layout bound, got: {e}"
+            e.contains(&format!("declares bits {bad}")) && e.contains("refuses nothing"),
+            "the refusal must name the width and the reason, got: {e}"
         );
+        eprintln!("⚑ dregg-tm-lightclient-verify::v1 at bits={bad}: REFUSED AT LOAD — {e}");
     }
+
+    // ── 2. THE MASK IS GONE: the honest header, at an in-memory vacuous width, now PROVES.
+    //     Before the repair this was `row 0: range wire N value V >= 2^64` in release and a
+    //     `shift left with overflow` panic under `cargo test`. The denotation always said the row
+    //     should be admitted; now the prover says so too.
+    let h = honest_header();
+    must_prove("the honest header at the served 29-bit time width", h);
+    must_prove_under(
+        "⚑ the SAME honest header at an in-memory bits=64 — vacuous, therefore ADMITTED",
+        &desc_with_time_range_width(SHIPPED_TM_BITS),
+        h,
+    );
+    eprintln!(
+        "⚑ dregg-tm-lightclient-verify::v1: the honest header now PROVES at an in-memory bits=64 \
+         (vacuous, admits everything) instead of being refused by a masked comparison — and \
+         bits=64 can no longer be LOADED at all"
+    );
+}
+
+/// ⚑ **THE VACUITY CONTROLS STILL WORK — verified, not assumed.**
+///
+/// The load gate above refuses `bits >= 31` on the WIRE. Five tests in this file build a control
+/// descriptor at `VACUOUS_BITS = 32` to show a tooth's paired polarity, and if that construction
+/// went through the load path they would all be dead — a paired-polarity leg that cannot build its
+/// vacuous half silently degrades into a one-sided assertion.
+///
+/// It does not go through the load path: `desc_with_time_range_width` mutates the already-parsed
+/// `EffectVmDescriptor2`, so `parse_table_def` never sees the 32. This test states that as a
+/// measurement — the same integer is REFUSED on the wire and ACCEPTED in memory, and the in-memory
+/// one really is vacuous (its interval covers the field).
+#[test]
+fn the_vacuity_controls_bypass_the_load_gate() {
+    // The control width really does cover the whole field — otherwise it is not a vacuity control.
+    assert!(
+        (1u64 << VACUOUS_BITS) > P as u64,
+        "the control width must be vacuous — its interval must cover the field"
+    );
+
+    // On the WIRE the same width is refused …
+    let mutated = TM_LC_JSON.replace("\"bits\":29", &format!("\"bits\":{VACUOUS_BITS}"));
+    let e = parse_vm_descriptor2(&mutated)
+        .expect_err("bits=32 on the wire must be refused at load, like every width >= 31");
+    assert!(e.contains(&format!("declares bits {VACUOUS_BITS}")));
+
+    // … and IN MEMORY it is constructible, which is what the five controls need.
+    let vacuous = desc_with_time_range_width(VACUOUS_BITS);
+    let declared = vacuous
+        .tables
+        .iter()
+        .find(|t| t.id == TID_TIME_RANGE)
+        .map(|t| match t.sem {
+            TableSem::Range { bits } => bits,
+            _ => panic!("table {TID_TIME_RANGE} must be a range table"),
+        })
+        .expect("the time-range table must still be declared");
+    assert_eq!(
+        declared, VACUOUS_BITS,
+        "the in-memory control must actually carry the vacuous width"
+    );
+
+    // And it PROVES an honest row — a control that refused everything would make every paired
+    // `…_is_admitted_when_vacuous` leg vacuous in the other direction.
+    must_prove_under(
+        "⚑ the honest header under the in-memory vacuity control",
+        &vacuous,
+        honest_header(),
+    );
+    eprintln!(
+        "⚑ bits={VACUOUS_BITS}: REFUSED on the wire ({e}) — constructible IN MEMORY, where the five \
+         vacuity controls live"
+    );
 }
 
 /// A header from the FUTURE: `time` beyond `now + clockDrift` fills `TW_DRIFT` negative — refused at
