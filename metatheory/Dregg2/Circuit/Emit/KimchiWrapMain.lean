@@ -262,6 +262,13 @@ assembly against it. RE-GRADED at `w6_xhat` (exit 0), the verdicts that are not 
     header did — reads a per-instance fidelity result as a whole-circuit one; it was 89 of 261,
     i.e. 34%, and it is 137 of 261 now. The remainder is W-FINALIZE's two `finalize_other_proof`
     sponges at `prevs = 2` (≈122 blocks) and is named in §13 item 7, not implied by a percentage.
+    ⚑ **AND THE 48 W-WRAPHACK ADDED INTRODUCE NO NEW SIGNATURE**, measured on the emitted smoke JSON
+    rather than argued: `w9_prev` carries 46 `Poseidon` runs, `w11_wraphack` 94, **every one of them
+    eleven rows long and every one of them the SAME single coefficient signature** — the class
+    already graded byte-for-byte against `wrap-transaction`. So this rung cannot have moved the
+    per-instance Poseidon verdict in either direction; it emitted 48 more of exactly the block that
+    was already conformant. That is the cheap half of the conformance question, and it is the half
+    that does not need a wrap-scale emission.
   * **`EndoMulScalar` — the BODY 42/42, the whole instance 0/42**, with the seam exactly three cells
     and both of them this file being STRICTER; §13 names them.
   * **`VarBaseMul` — 1805 of Mina's 2417**, and **`CompleteAdd` — 232 of 492**, both from `w6_xhat`.
@@ -6213,7 +6220,7 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      values, CONSUMED by W-FTCOMM/W-COMBINE/W-BULLET, and this rung consumes the PREVIOUS
      statement's — packed words 4, 6, 7, 8, 9 and 26 of each block, six per instance that were
      absorbed-but-not-consumed at `w9_prev`.
-  8. ✅ **W-WRAPHACK — LANDED at `w11_wraphack`** (§24). All THREE
+  8. ✅ **W-WRAPHACK — LANDED at `w11_wraphack`** (§21). All THREE
      `hash_messages_for_next_wrap_proof` sponges (`wrap_hack.ml:110-137` at `wrap_main.ml:341-348`
      and `:421-431`): 32 absorbs and one `squeeze_field` each, **16 Fq permutations per sponge, 48
      for the rung**. ⚑ **It closes the public vector.** Wrap statement word 11 is the closing
