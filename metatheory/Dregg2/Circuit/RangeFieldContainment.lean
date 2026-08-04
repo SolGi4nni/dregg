@@ -218,9 +218,23 @@ theorem minus_one_refused_at_29 : ([2013265920] : List ℤ) ∉ rangeRows 29 := 
 theorem minus_one_admitted_at_128 : ([2013265920] : List ℤ) ∈ rangeRows 128 := by
   rw [range_row_mem_iff]; norm_num
 
-/-- ⚑ **AND THE 30-BIT ADMISSION**, so the "83 descriptors at 30 bits" line is measured and not
-assumed: the slack `−939524098` rides as `p − 939524098 = 1073741823`, inside `[0, 2^30)`. Those
-tables are not vacuous, but they are not wrap-free. -/
+/-- ⚑ **AND THE 30-BIT ADMISSION**: the slack `−939524098` rides as `p − 939524098 = 1073741823`,
+inside `[0, 2^30)`. Those tables are not vacuous, but they are not wrap-free.
+
+⚑ CORRECTED 2026-08-04 (measured, not inherited). This docstring used to say "the 83 descriptors at
+30 bits". **83 is not a descriptor count.** Measured over `circuit/descriptors/**/*.json`: 83 is the
+number of *JSON objects* carrying `"bits": 30`, and it splits into two populations that are not the
+same construct —
+
+* **33** `.tables[]` entries `{"id":2,"name":"range","arity":1,"sem":"range","bits":30}` (the shared
+  IR2 range table), in 33 files; and
+* **50** `.ranges[]` entries `{"bits":30,"wire":w}` with `w ∈ {76,77}` (the v1/v2 carrier), in 25
+  files — two per file.
+
+They live in **58** files, not 83, and the two populations are the SAME TWO TEETH in two descriptor
+generations: `EffectVmEmitV2.graduateV1` rewrites each `.ranges` entry into a `lookup` against table
+2 and sets `ranges := []`. `circuit/src/descriptor_ir2.rs:417` inherited the 33 with the wrong
+locative ("33 deployed **by-name** descriptors") — only ONE of the 33 is under `by-name/`. -/
 theorem large_negative_admitted_at_30 : ([1073741823] : List ℤ) ∈ rangeRows 30 := by
   rw [range_row_mem_iff]; norm_num
 
@@ -239,6 +253,79 @@ theorem small_negative_refused_at_30 (k : ℤ) (hk : 0 < k) (hk' : k ≤ 9395240
   norm_num at hlt
   omega
 
+/-! ## §5a — THE DEPLOYED WIDTH, tied to the constant the emitter actually reads.
+
+⚠ §5's pair is stated at the *literal* 30. A literal is not the deployed object: `wire 76/77`'s width
+comes from `DescriptorIR2.BAL_LIMB_BITS`, and a theorem about `30` says nothing about it until the
+two are joined. That join is this section, and it is a GATE rather than decoration because the two
+sources are independent — `BAL_LIMB_BITS` is fixed by the emitter, the interval arithmetic below by
+the field. If a lane retunes `BAL_LIMB_BITS`, these break rather than quietly keeping their meaning.
+
+WHAT wires 76/77 ARE (measured 2026-08-04, `circuit/src/effect_vm/columns.rs:257,221,222`):
+`STATE_AFTER_BASE = 76`, `BALANCE_LO = +0`, `BALANCE_HI = +1` — the **post-state balance limbs**,
+bound to public inputs `FINAL_BAL_LO`/`FINAL_BAL_HI` (22/23). A balance is the two-limb value
+`lo + 2^BAL_LIMB_BITS * hi`, so this is a **limb decomposition**, and it is carried at a width the
+repo's own limb vocabulary refuses: `EffectAirIR.LimbsLeg.mainRailOk` requires `bits ≤ 29`. -/
+
+/-- The deployed balance-limb width, pinned where the containment argument can read it. -/
+theorem deployed_balance_limb_width : BAL_LIMB_BITS = 30 := rfl
+
+/-- ⚑ **THE DEPLOYED WIDTH IS NOT WRAP-FREE.** Not a statement about the literal 30 — about the
+constant every effect descriptor's `wire 76`/`wire 77` teeth are emitted at. -/
+theorem deployed_balance_limbs_not_wrap_free : ¬ Wrapfree BAL_LIMB_BITS := by
+  rw [deployed_balance_limb_width]; exact not_wrap_free_at_30
+
+/-- ⚑ **THE EXACT ADMITTED BAND, both directions.** A modular-subtraction underflow of magnitude `k`
+lands on the field element `p − k`; the deployed 30-bit tooth admits it **iff `k > 939524097`**.
+
+This is the theorem that REFUTES a live soundness claim. `circuit/src/effect_vm/columns.rs:279-283`
+argues the balance range-proof is sound because *"A debit whose modular subtraction underflowed
+(`old - amount` ≡ p - k) would land at a field element ≥ 2^30 that has no 30-bit boolean
+decomposition — the recomposition constraint then fails, so the STARK rejects the wrap in-circuit."*
+The `←` direction below says that is true only for `k ≤ 939524097`. For every `k` in
+`[939524098, p)` the underflowed element is `< 2^30`, HAS a 30-bit decomposition, and the
+recomposition constraint accepts it. Both limbs are `< 2^30`, so `k = amount_limb − old_limb` ranges
+over all of `[0, 2^30)` — the admitted band `[939524098, 2^30)` is `134217726` values, ≈ 12.5% of it,
+and is not a corner: it is reached by an ordinary over-debit.
+
+⚠ SCOPE, stated so this does not read wider than it is. This is a statement about **what the range
+tooth admits**, which is what `columns.rs:279-283` claims soundness from. It is NOT a claim that an
+over-debit is constructible end-to-end: the borrow/conservation gates are a separate obligation and
+this file does not model them. What is settled is that the recomposition constraint is not the thing
+that stops it. -/
+theorem underflow_admitted_at_30_iff (k : ℤ) (hk : 0 < k) (hk' : k < P) :
+    ([P - k] : List ℤ) ∈ rangeRows 30 ↔ 939524097 < k := by
+  rw [range_row_mem_iff]
+  have hp : (P : ℤ) = 2013265921 := babybear_modulus
+  constructor
+  · rintro ⟨_, hlt⟩; rw [hp] at hlt; norm_num at hlt; omega
+  · intro h; rw [hp] at hk' ⊢; norm_num; omega
+
+/-- The same characterisation at the DEPLOYED constant, so the refutation names the emitted width. -/
+theorem deployed_underflow_admitted_iff (k : ℤ) (hk : 0 < k) (hk' : k < P) :
+    ([P - k] : List ℤ) ∈ rangeRows BAL_LIMB_BITS ↔ 939524097 < k := by
+  rw [deployed_balance_limb_width]; exact underflow_admitted_at_30_iff k hk hk'
+
+/-- ⚑ **THE NARROWING, EXHIBITED AT THE DEPLOYED CONSTANT.** `p − 939524098 = 1073741823` is an
+underflowed balance limb the deployed width ADMITS… -/
+theorem deployed_underflow_admitted : ([1073741823] : List ℤ) ∈ rangeRows BAL_LIMB_BITS := by
+  rw [deployed_balance_limb_width]; exact large_negative_admitted_at_30
+
+/-- …and that 29 REFUSES. This pair is the whole case for the narrowing: it is the value that
+changes hands. -/
+theorem deployed_underflow_refused_at_29 : ([1073741823] : List ℤ) ∉ rangeRows 29 :=
+  large_negative_refused_at_29
+
+/-- ⚑ **AND AT 29 THE BAND IS EMPTY** — the narrowing does not shrink the hole, it closes it. No
+underflow of any magnitude representable in a 29-bit limb difference is admitted, because a limb
+difference is `< 2^29 = 536870912` while admission needs `k > p − 2^29 = 1476395009`. -/
+theorem no_underflow_admitted_at_29 (k : ℤ) (hk : 0 < k) (hk' : k < 536870912) :
+    ([P - k] : List ℤ) ∉ rangeRows 29 := by
+  rw [range_row_mem_iff]
+  rintro ⟨_, hlt⟩
+  have hp : (P : ℤ) = 2013265921 := babybear_modulus
+  rw [hp] at hlt; norm_num at hlt; omega
+
 /-! ## §6 — axiom hygiene. -/
 
 #assert_axioms range_vacuous_at_or_above_31
@@ -246,5 +333,10 @@ theorem small_negative_refused_at_30 (k : ℤ) (hk : 0 < k) (hk' : k ≤ 9395240
 #assert_axioms wrap_free_iff_le_29
 #assert_axioms minus_one_admitted_at_64
 #assert_axioms minus_one_refused_at_29
+#assert_axioms deployed_balance_limbs_not_wrap_free
+#assert_axioms underflow_admitted_at_30_iff
+#assert_axioms deployed_underflow_admitted_iff
+#assert_axioms deployed_underflow_admitted
+#assert_axioms no_underflow_admitted_at_29
 
 end Dregg2.Circuit.RangeFieldContainment

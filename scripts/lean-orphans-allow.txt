@@ -184,7 +184,10 @@ Dregg2.Circuit.Emit.AutomataflNGenGolden  # A 2.98 MB byte-pinned WIRE GOLDEN (1
 # The CHECKER half stays rooted and gated: `PastaIpaFold` (the folding identity, gate-count-independent,
 # arbitrary `AddCommGroup`), `PastaMsmAir`/`MinaOpeningCheckWeld` (the opening check FORCED by emitted
 # gates), `PastaMsmLayouts`. Nothing that generalises was excluded.
-Dregg2.Circuit.Emit.MinaWrapSrsG
+# ⚑ `Dregg2.Circuit.Emit.MinaWrapSrsG` DE-LISTED 2026-08-04 — it is REACHABLE now (something in the
+# default-target closure imports it), so the entry had stopped recording an exclusion and started
+# hiding the next real orphan, which is what `stale_registered` fails on. The six siblings below are
+# still genuinely orphaned and keep their entries; only the row whose exclusion ended is gone.
 Dregg2.Circuit.Emit.MinaWrapSgParts
 Dregg2.Circuit.Emit.MinaWrapSgCore
 Dregg2.Circuit.Emit.MinaWrapSgChunk0
@@ -199,3 +202,31 @@ Dregg2.Circuit.Emit.MinaWrapSgChunk3
 # still run NOWHERE unless someone runs the script, which is now:
 #   scripts/run-mina-sg-compiled.sh   (and `lake build mina_sg_bench` for the native number)
 Dregg2.Bridge.MinaWrapSgWeld
+
+# ── 2026-08-04 — THE ONE GENUINELY RED CONE OF THE 23-ORPHAN SWEEP ──────────────────────────────
+# Twenty of the twenty-three unlisted orphans were ROOTED in this change (three new lean_libs in
+# metatheory/lakefile.toml: PicklesEmitDrivers / DivergenceToothGuards / PathOfAngelsGuards). These
+# two are the exception, and the reason is not WIP — it is that the module is RED AT HEAD.
+#
+# ⚑ `KimchiStepWrapChain` DOES NOT COMPILE, and this is exactly the wound the orphan gate exists to
+# surface. Measured 2026-08-04 (`lean` with extracted LEAN_PATH, 515 s):
+#
+#   KimchiStepWrapChain.lean:533:2: error: Tactic `native_decide` evaluated that the proposition
+#     wrapPublic tChainBent ≠ wrapPublic tChain ∧ … is false
+#   KimchiStepWrapChain.lean:535:0: error: compiled-pin FAIL:
+#     …the_emitted_public_vector_moves_with_the_step_proof depends on axioms [sorryAx]
+#
+# The theorem is the wrap chain's TAMPER-DETECTION claim — that bending one Fq coordinate of the
+# step proof's `w_comm` moves the emitted public vector. It evaluates FALSE. `#assert_compiled`
+# caught the `sorryAx` fallback correctly; nothing ever ran it, because nothing built this module.
+# Its olean was ABSENT from `.lake/build` entirely, so every other module importing it was
+# unbuildable too — which is the only reason `EmitStepWrapChainJson` is on this list.
+#
+# ⚠ NOT allowlisted as "intentional WIP". Allowlisted as a NAMED RED with an owner: the in-AIR
+# Kimchi verifier lane owns `KimchiStepWrapChain`'s cone. Rooting it would turn the default build
+# red; leaving it unlisted would have left the gate red on a module whose real defect is this
+# theorem, not its registration. De-list BOTH the moment the theorem is repaired — rooting is then
+# ~515 s (its 18 `#assert_compiled` run the compiled evaluator over a real sponge), which is the
+# most expensive single rooting in this population by two orders of magnitude.
+Dregg2.Circuit.Emit.KimchiStepWrapChain
+Dregg2.Circuit.Emit.EmitStepWrapChainJson

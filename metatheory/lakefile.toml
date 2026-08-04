@@ -1,5 +1,5 @@
 name = "Dregg2"
-defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards", "TurnAuthGuards"]
+defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards", "TurnAuthGuards", "PicklesEmitDrivers", "DivergenceToothGuards", "PathOfAngelsGuards"]
 
 # Pin mathlib to the exact revision matching v4.30.0
 # (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). This is a PORTABLE `git`+`rev`
@@ -143,3 +143,82 @@ globs = ["Dregg2.CommitBindsGuards"]
 [[lean_lib]]
 name = "TurnAuthGuards"
 globs = ["Dregg2.TurnAuthGuards"]
+
+# ── 2026-08-04 — THE 23-ORPHAN SWEEP ────────────────────────────────────────────────────────────
+# Three libs, same mechanism as PicklesSynthesis/MinaBridgeGuards/CommitBindsGuards/TurnAuthGuards
+# above: root a cone of orphans WITHOUT touching the `Dregg2.lean` import block (swept by siblings).
+#
+# ⚑ WHY `globs` NAMES EACH MODULE DIRECTLY INSTEAD OF A RE-EXPORT AGGREGATE. The four libs above
+# each glob ONE aggregate module that imports its cone. That shape is UNAVAILABLE here: eight of
+# these modules carry a top-level `def main`, and an aggregate importing two of them is a duplicate
+# `main` declaration — the exact reason `Dregg2.lean:1328-1330` gives for excluding `EmitAllJson` /
+# `EmitGraduate` ("their top-level `main` collides with `Dregg2.Apps.AgentOrchestration.main`").
+# A `globs` entry that names a module compiles it as its OWN module, in its own environment, so the
+# `main`s never meet. That is what makes these drivers rootable at all rather than allowlisted
+# forever, and it retires the "pure `def main` ⇒ nothing to enmesh" reasoning: there WAS something
+# to enmesh — the compile itself. (`check-lean-orphans.sh` seeds a bare glob name directly, so its
+# reachability agrees with lake's.)
+#
+# COST, MEASURED 2026-08-04 (`lean` with an extracted LEAN_PATH, warm .lake, per module):
+#   PicklesEmitDrivers   7 modules   5–11 s   (~59 s total)
+#   DivergenceToothGuards 6 modules  2–5 s    (~24 s total)
+#   PathOfAngelsGuards   7 modules   3–7 s    (~31 s total)
+# ~114 s added to a full build for 258 `#assert_axioms` + 10 `#assert_compiled` that ran NOWHERE.
+# ⚠ The cone cost is ZERO beyond the modules themselves: every import these 20 modules make was
+# ALREADY in the default-target closure (measured — rooting all 20 adds exactly 20 modules). The
+# "rooting pulls a large cone" worry does not apply to this population; `KimchiWrapMain`, the usual
+# example, is already rooted via `PicklesSynthesis`.
+
+# PicklesEmitDrivers — the `lake env lean --run` JSON emit drivers for the Pickles/Kimchi harnesses.
+# Zero theorems and zero pins each, so this buys COMPILE COVERAGE, not verification: these are the
+# modules that break when `KimchiWrapMain`/`KimchiRenderPoseidon`/`KimchiComposeMSM` change shape,
+# and until now they broke SILENTLY — the render modules are rooted (PicklesSynthesis) while their
+# drivers were not, so an API change stayed green in CI and failed only when a human ran the emit.
+# That is the `TurnAuthLamportEmit` wound (stale oleans through a cutover) one file over.
+# ⚠ `EmitStepWrapChainJson` is NOT here: it imports `KimchiStepWrapChain`, which is RED at HEAD.
+# Both are allowlisted in `scripts/lean-orphans-allow.txt` with the redness named.
+[[lean_lib]]
+name = "PicklesEmitDrivers"
+globs = [
+  "Dregg2.Circuit.Emit.EmitComposeMsmJson",
+  "Dregg2.Circuit.Emit.EmitCurveGateJson",
+  "Dregg2.Circuit.Emit.EmitPoseidonJson",
+  "Dregg2.Circuit.Emit.EmitPublicInputJson",
+  "Dregg2.Circuit.Emit.EmitStepFragmentJson",
+  "Dregg2.Circuit.Emit.EmitStepMainJson",
+  "Dregg2.Circuit.Emit.EmitWrapMainJson",
+]
+
+# DivergenceToothGuards — the first-divergence / tooth-combinator statement cone plus the Mina
+# fixture emitter. 70 `#assert_axioms` across `FirstDivergence` (22), `FirstDivergenceInstances`
+# (33), `ToothCombinator` (14) and `Verify.ToothCheck` (1), plus `MinaFixtureEmit`'s 3 — none of
+# which ran in a plain `lake build`. `ToothCombinator` prints a four-line tooth census at
+# elaboration (unconditional-false / refutable / fires / same-witness) that was going to no log.
+# `KimchiStepWrapChainFixture` is here for compile coverage only (it is a pure data fixture, and it
+# is GREEN — it is the CHAIN module that is red, not the fixture).
+[[lean_lib]]
+name = "DivergenceToothGuards"
+globs = [
+  "Dregg2.Circuit.FirstDivergence",
+  "Dregg2.Circuit.FirstDivergenceInstances",
+  "Dregg2.Circuit.ToothCombinator",
+  "Dregg2.Verify.ToothCheck",
+  "Dregg2.Circuit.Emit.MinaFixtureEmit",
+  "Dregg2.Circuit.Emit.KimchiStepWrapChainFixture",
+]
+
+# PathOfAngelsGuards — the Path-of-Angels game cone: 185 `#assert_axioms` + 10 `#assert_compiled`
+# (DarkBazaar 60, ContainmentInspection 41, DeckGraph 38, AssistProfile 17+10, FieldArchive 16,
+# DailyMission 13) that ran in NO CI target. `EmitMain` carries a `def main` and is rooted by the
+# same direct-glob mechanism as the Pickles drivers.
+[[lean_lib]]
+name = "PathOfAngelsGuards"
+globs = [
+  "Dregg2.Games.PathOfAngels.AssistProfile",
+  "Dregg2.Games.PathOfAngels.ContainmentInspection",
+  "Dregg2.Games.PathOfAngels.DailyMission",
+  "Dregg2.Games.PathOfAngels.DarkBazaar",
+  "Dregg2.Games.PathOfAngels.DeckGraph",
+  "Dregg2.Games.PathOfAngels.EmitMain",
+  "Dregg2.Games.PathOfAngels.FieldArchive",
+]
