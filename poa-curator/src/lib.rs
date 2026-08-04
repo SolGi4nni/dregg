@@ -37,15 +37,18 @@ const CONTENT_ROOT_DOMAIN: &[u8] = b"path-of-angels/content-root/v1\0";
 const ACTIVATION_DIGEST_DOMAIN: &[u8] = b"pathofangels.network/activation-digest/v1\0";
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_ARTIFACT_BYTES: u64 = 16 * 1024 * 1024;
-
-const REQUIRED_ARTIFACTS: [(&str, &str, &str); 3] = [
-    ("schema.json", "application/schema+json", "POAG1-SCHEMA"),
-    ("catalog.json", "application/json", "POAG1-CATALOG"),
-    (
-        "games/signal-triangulation.json",
-        "application/json",
-        "POAG1-GAME",
-    ),
+const MAX_MISSIONS_PER_EPOCH: usize = 3;
+const MAX_FIXTURES_PER_EPOCH: usize = 24;
+const MAX_FIXTURES_PER_MISSION: usize = 8;
+const MAX_DISCOVERIES_PER_MISSION: usize = 8;
+const MAX_RELICS_PER_MISSION: usize = 16;
+const SCHEMA_PATH: &str = "schema.json";
+const CATALOG_PATH: &str = "catalog.json";
+const SIGNAL_PATH: &str = "games/signal-triangulation.json";
+const SUPPORTED_GAME_PATHS: [&str; MAX_MISSIONS_PER_EPOCH] = [
+    "games/relay-repair.json",
+    "games/salvage-lock.json",
+    SIGNAL_PATH,
 ];
 
 #[derive(Debug, Error)]
@@ -170,7 +173,9 @@ pub struct Poag1Bundle {
     artifacts: BTreeMap<String, Vec<u8>>,
     schema: Value,
     catalog: Value,
-    signal_triangulation: Value,
+    game_descriptors: BTreeMap<String, Value>,
+    content_root: String,
+    content_epoch: u64,
     missions: BTreeMap<u64, MissionIndex>,
     fixtures: BTreeMap<String, FixtureIndex>,
 }
@@ -271,6 +276,7 @@ struct MissionIndex {
     federation_id: String,
     content_root: String,
     content_session: String,
+    run_seed: String,
     allowed_beta_discoveries: Vec<ArtifactRef>,
 }
 
@@ -282,7 +288,11 @@ struct FixtureIndex {
     preview_world: Value,
 }
 
-type CatalogIndex = (BTreeMap<u64, MissionIndex>, BTreeMap<String, FixtureIndex>);
+struct CatalogIndex {
+    missions: BTreeMap<u64, MissionIndex>,
+    fixtures: BTreeMap<String, FixtureIndex>,
+    content_epoch: u64,
+}
 
 impl Poag1Bundle {
     /// Load and authenticate every byte named by a POAG1 v1 manifest.
@@ -299,7 +309,7 @@ impl Poag1Bundle {
                 path: manifest_path.clone(),
                 reason: e.to_string(),
             })?;
-        validate_manifest(&manifest)?;
+        let game_paths = validate_manifest(&manifest)?;
 
         let root = manifest_path.parent().ok_or_else(|| {
             CuratorError::Manifest("manifest path has no containing directory".into())
@@ -352,27 +362,31 @@ impl Poag1Bundle {
             artifacts.insert(pin.path.clone(), bytes);
         }
 
-        let schema =
-            parse_artifact_json(&manifest_path, &artifacts, "schema.json", "POAG1-SCHEMA")?;
+        let schema = parse_artifact_json(&manifest_path, &artifacts, SCHEMA_PATH, "POAG1-SCHEMA")?;
+        validate_schema_contract(&schema, &game_paths)?;
         let catalog =
-            parse_artifact_json(&manifest_path, &artifacts, "catalog.json", "POAG1-CATALOG")?;
-        let signal_triangulation = parse_artifact_json(
-            &manifest_path,
-            &artifacts,
-            "games/signal-triangulation.json",
-            "POAG1-GAME",
-        )?;
-        let content_root = content_root_v1(&artifacts)?;
-        let signal_digest = sha256_tagged(
-            artifacts
-                .get("games/signal-triangulation.json")
-                .expect("required artifact set was checked"),
-        );
-        let (missions, fixtures) = index_catalog(
+            parse_artifact_json(&manifest_path, &artifacts, CATALOG_PATH, "POAG1-CATALOG")?;
+        let mut game_descriptors = BTreeMap::new();
+        let mut descriptor_digests = BTreeMap::new();
+        for path in &game_paths {
+            let descriptor = parse_artifact_json(&manifest_path, &artifacts, path, "POAG1-GAME")?;
+            game_descriptors.insert(path.clone(), descriptor);
+            descriptor_digests.insert(
+                path.clone(),
+                sha256_tagged(
+                    artifacts
+                        .get(path)
+                        .expect("validated manifest path was loaded"),
+                ),
+            );
+        }
+        let content_root = content_root_v1(&artifacts, &game_paths)?;
+        let index = index_catalog(
             &catalog,
             &content_root,
             &manifest.source_digest,
-            &signal_digest,
+            &game_descriptors,
+            &descriptor_digests,
         )?;
 
         Ok(Self {
@@ -383,9 +397,11 @@ impl Poag1Bundle {
             artifacts,
             schema,
             catalog,
-            signal_triangulation,
-            missions,
-            fixtures,
+            game_descriptors,
+            content_root,
+            content_epoch: index.content_epoch,
+            missions: index.missions,
+            fixtures: index.fixtures,
         })
     }
 
@@ -414,7 +430,25 @@ impl Poag1Bundle {
     }
 
     pub fn signal_triangulation(&self) -> &Value {
-        &self.signal_triangulation
+        self.game_descriptors
+            .get(SIGNAL_PATH)
+            .expect("Signal is required in every POAG1 v1 epoch")
+    }
+
+    pub fn game_descriptor(&self, path: &str) -> Option<&Value> {
+        self.game_descriptors.get(path)
+    }
+
+    pub fn game_paths(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.game_descriptors.keys().map(String::as_str)
+    }
+
+    pub fn content_root(&self) -> &str {
+        &self.content_root
+    }
+
+    pub fn content_epoch(&self) -> u64 {
+        self.content_epoch
     }
 
     pub fn artifact_bytes(&self, path: &str) -> Option<&[u8]> {
@@ -622,6 +656,12 @@ impl ContentEpochEnvelope {
                 self.content_epoch
             )));
         }
+        if self.content_epoch != bundle.content_epoch {
+            return Err(CuratorError::ContentEpoch(format!(
+                "signed content epoch {} != authenticated catalog epoch {}",
+                self.content_epoch, bundle.content_epoch
+            )));
+        }
         if self.counter != expected_counter {
             return Err(CuratorError::ContentEpoch(format!(
                 "counter {} != expected {expected_counter}",
@@ -812,19 +852,25 @@ impl<'a> CuratorSigner<'a> {
         bound: &DeploymentBoundBundle<'_>,
         content_epoch: u64,
         counter: u64,
-    ) -> ContentEpochEnvelope {
+    ) -> Result<ContentEpochEnvelope, CuratorError> {
         let bundle = bound.bundle;
+        if content_epoch != bundle.content_epoch {
+            return Err(CuratorError::ContentEpoch(format!(
+                "requested content epoch {content_epoch} != authenticated catalog epoch {}",
+                bundle.content_epoch
+            )));
+        }
         let message =
             content_epoch_signing_message(content_epoch, counter, bundle.manifest_bytes());
         let signature = dregg_types::sign(self.key, &message);
-        ContentEpochEnvelope {
+        Ok(ContentEpochEnvelope {
             schema: CONTENT_EPOCH_SCHEMA.into(),
             manifest_sha256: bundle.manifest_sha256.clone(),
             curator_pubkey: self.key.public_key().hex(),
             content_epoch,
             counter,
             signature: hex_encode(&signature.0),
-        }
+        })
     }
 
     pub fn sign_canon_decision(
@@ -1087,7 +1133,7 @@ pub fn content_epoch_signing_message(epoch: u64, counter: u64, manifest: &[u8]) 
     out
 }
 
-fn validate_manifest(manifest: &Poag1Manifest) -> Result<(), CuratorError> {
+fn validate_manifest(manifest: &Poag1Manifest) -> Result<Vec<String>, CuratorError> {
     if manifest.format != POAG1_FORMAT {
         return Err(CuratorError::Manifest(format!(
             "format {} != {POAG1_FORMAT}",
@@ -1107,12 +1153,33 @@ fn validate_manifest(manifest: &Poag1Manifest) -> Result<(), CuratorError> {
         )));
     }
     parse_sha256(&manifest.source_digest, "source_digest")?;
-    if manifest.artifacts.len() != REQUIRED_ARTIFACTS.len() {
+    let minimum_artifacts = 3;
+    let maximum_artifacts = 2 + MAX_MISSIONS_PER_EPOCH;
+    if !(minimum_artifacts..=maximum_artifacts).contains(&manifest.artifacts.len()) {
         return Err(CuratorError::Manifest(format!(
-            "artifact set has {}, expected exactly {}",
+            "artifact set has {}, expected {minimum_artifacts}..={maximum_artifacts}",
             manifest.artifacts.len(),
-            REQUIRED_ARTIFACTS.len()
         )));
+    }
+
+    if manifest.artifacts[0].path != SCHEMA_PATH || manifest.artifacts[1].path != CATALOG_PATH {
+        return Err(CuratorError::Manifest(format!(
+            "artifact order must begin [{SCHEMA_PATH:?}, {CATALOG_PATH:?}]"
+        )));
+    }
+    let game_paths: Vec<String> = manifest.artifacts[2..]
+        .iter()
+        .map(|pin| pin.path.clone())
+        .collect();
+    if !game_paths.iter().any(|path| path == SIGNAL_PATH) {
+        return Err(CuratorError::Manifest(
+            "every POAG1 v1 epoch must retain Signal Triangulation".into(),
+        ));
+    }
+    if !game_paths.windows(2).all(|pair| pair[0] < pair[1]) {
+        return Err(CuratorError::Manifest(
+            "game artifacts must be strictly path-ascending after schema/catalog".into(),
+        ));
     }
 
     let mut seen = BTreeSet::new();
@@ -1136,18 +1203,24 @@ fn validate_manifest(manifest: &Poag1Manifest) -> Result<(), CuratorError> {
                 pin.path
             )));
         }
-        let expected = REQUIRED_ARTIFACTS
-            .iter()
-            .find(|(path, _, _)| *path == pin.path)
-            .ok_or_else(|| CuratorError::Manifest(format!("unknown artifact {}", pin.path)))?;
-        if pin.media_type != expected.1 {
+        let expected_media_type = if pin.path == SCHEMA_PATH {
+            "application/schema+json"
+        } else if pin.path == CATALOG_PATH || SUPPORTED_GAME_PATHS.contains(&pin.path.as_str()) {
+            "application/json"
+        } else {
+            return Err(CuratorError::Manifest(format!(
+                "unknown artifact {}",
+                pin.path
+            )));
+        };
+        if pin.media_type != expected_media_type {
             return Err(CuratorError::Manifest(format!(
                 "artifact {} media type {} != {}",
-                pin.path, pin.media_type, expected.1
+                pin.path, pin.media_type, expected_media_type
             )));
         }
     }
-    Ok(())
+    Ok(game_paths)
 }
 
 fn validate_relative_path(path: &str) -> Result<(), CuratorError> {
@@ -1234,11 +1307,205 @@ fn parse_artifact_json(
     Ok(value)
 }
 
+fn validate_schema_contract(schema: &Value, game_paths: &[String]) -> Result<(), CuratorError> {
+    let object = schema
+        .as_object()
+        .ok_or_else(|| CuratorError::Catalog("POAG1 schema is not an object".into()))?;
+    require_exact_object_keys(
+        object,
+        &["format", "schema_version", "contract"],
+        "POAG1 schema",
+    )
+    .map_err(CuratorError::Catalog)?;
+    let contract = object
+        .get("contract")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("POAG1 schema contract is not an object".into()))?;
+    require_exact_object_keys(
+        contract,
+        &[
+            "manifest_required",
+            "artifact_pin_required",
+            "source_digest_pattern",
+            "artifact_sha256_pattern",
+            "bytes32_pattern",
+            "fnv1a64_pattern",
+            "content_root",
+            "activation_digest",
+            "unknown_fields",
+            "unknown_artifacts",
+        ],
+        "POAG1 schema contract",
+    )
+    .map_err(CuratorError::Catalog)?;
+    require_exact_string_array(
+        contract.get("manifest_required"),
+        &[
+            "format",
+            "schema_version",
+            "source_digest",
+            "authority",
+            "artifacts",
+        ],
+        "manifest_required",
+    )?;
+    require_exact_string_array(
+        contract.get("artifact_pin_required"),
+        &["path", "media_type", "bytes", "sha256", "fnv1a64"],
+        "artifact_pin_required",
+    )?;
+    for (field, expected) in [
+        ("source_digest_pattern", "^sha256:[0-9a-f]{64}$"),
+        ("artifact_sha256_pattern", "^sha256:[0-9a-f]{64}$"),
+        ("bytes32_pattern", "^[0-9a-f]{64}$"),
+        ("fnv1a64_pattern", "^[0-9a-f]{16}$"),
+        ("unknown_fields", "reject"),
+        ("unknown_artifacts", "reject"),
+    ] {
+        if contract.get(field).and_then(Value::as_str) != Some(expected) {
+            return Err(CuratorError::Catalog(format!(
+                "POAG1 schema {field} differs from v1"
+            )));
+        }
+    }
+
+    let root = contract
+        .get("content_root")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("content_root contract is not an object".into()))?;
+    require_exact_object_keys(
+        root,
+        &["algorithm", "domain", "framing", "entry_order", "paths"],
+        "content_root contract",
+    )
+    .map_err(CuratorError::Catalog)?;
+    if root.get("algorithm").and_then(Value::as_str) != Some("sha256")
+        || root.get("domain").and_then(Value::as_str) != Some("path-of-angels/content-root/v1\0")
+        || root.get("framing").and_then(Value::as_str)
+            != Some(
+                "file_count_be64 || (path_len_be64 || path_utf8 || content_len_be64 || content_bytes)*",
+            )
+        || root.get("entry_order").and_then(Value::as_str) != Some("path_ascending")
+    {
+        return Err(CuratorError::Catalog(
+            "content_root contract differs from POAG1 v1".into(),
+        ));
+    }
+    let schema_paths = root
+        .get("paths")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CuratorError::Catalog("content_root.paths is not an array".into()))?;
+    let schema_paths: Vec<&str> = schema_paths
+        .iter()
+        .map(|path| {
+            path.as_str().ok_or_else(|| {
+                CuratorError::Catalog("content_root.paths contains a non-string".into())
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    if schema_paths != game_paths.iter().map(String::as_str).collect::<Vec<_>>() {
+        return Err(CuratorError::Catalog(
+            "content_root.paths does not exactly equal the canonical manifest game order".into(),
+        ));
+    }
+
+    let activation = contract
+        .get("activation_digest")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("activation_digest is not an object".into()))?;
+    require_exact_object_keys(
+        activation,
+        &["algorithm", "domain", "framing", "location"],
+        "activation_digest contract",
+    )
+    .map_err(CuratorError::Catalog)?;
+    if activation.get("algorithm").and_then(Value::as_str) != Some("sha256")
+        || activation.get("domain").and_then(Value::as_str)
+            != Some("pathofangels.network/activation-digest/v1\0")
+        || activation.get("framing").and_then(Value::as_str)
+            != Some(
+                "schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64",
+            )
+        || activation.get("location").and_then(Value::as_str)
+            != Some("detached verified activation; excluded from manifest preimage")
+    {
+        return Err(CuratorError::Catalog(
+            "activation_digest contract differs from POAG1 v1".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_exact_string_array(
+    value: Option<&Value>,
+    expected: &[&str],
+    field: &str,
+) -> Result<(), CuratorError> {
+    let actual = value
+        .and_then(Value::as_array)
+        .ok_or_else(|| CuratorError::Catalog(format!("{field} is not an array")))?;
+    let actual: Vec<&str> = actual
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| CuratorError::Catalog(format!("{field} contains a non-string")))
+        })
+        .collect::<Result<_, _>>()?;
+    if actual != expected {
+        return Err(CuratorError::Catalog(format!(
+            "{field} differs from the exact ordered POAG1 v1 contract"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_game_descriptor_mission_match(
+    descriptor_path: &str,
+    descriptor: &Value,
+    mission: &serde_json::Map<String, Value>,
+    mission_id: u64,
+) -> Result<(), CuratorError> {
+    let descriptor = descriptor
+        .as_object()
+        .ok_or_else(|| CuratorError::Artifact {
+            path: descriptor_path.into(),
+            reason: "game descriptor is not an object".into(),
+        })?;
+    let expected_game_id = descriptor_path
+        .strip_prefix("games/")
+        .and_then(|path| path.strip_suffix(".json"))
+        .expect("supported game paths have canonical names");
+    if descriptor.get("game_id").and_then(Value::as_str) != Some(expected_game_id) {
+        return Err(CuratorError::Catalog(format!(
+            "mission {mission_id} descriptor game_id does not match {descriptor_path}"
+        )));
+    }
+    for field in ["ruleset", "engine_module", "run_seed"] {
+        let descriptor_value = descriptor.get(field).and_then(Value::as_str);
+        let mission_value = mission.get(field).and_then(Value::as_str);
+        if descriptor_value.is_none() || descriptor_value != mission_value {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} {field} differs from {descriptor_path}"
+            )));
+        }
+    }
+    if descriptor.get("action_limit").and_then(Value::as_u64)
+        != mission.get("action_limit").and_then(Value::as_u64)
+    {
+        return Err(CuratorError::Catalog(format!(
+            "mission {mission_id} action_limit differs from {descriptor_path}"
+        )));
+    }
+    Ok(())
+}
+
 fn index_catalog(
     catalog: &Value,
     authenticated_content_root: &str,
     authenticated_source_digest: &str,
-    authenticated_signal_digest: &str,
+    authenticated_game_descriptors: &BTreeMap<String, Value>,
+    authenticated_descriptor_digests: &BTreeMap<String, String>,
 ) -> Result<CatalogIndex, CuratorError> {
     let object = catalog
         .as_object()
@@ -1253,7 +1520,24 @@ fn index_catalog(
         .get("missions")
         .and_then(Value::as_array)
         .ok_or_else(|| CuratorError::Catalog("missions is not an array".into()))?;
+    if !(1..=MAX_MISSIONS_PER_EPOCH).contains(&mission_values.len()) {
+        return Err(CuratorError::Catalog(format!(
+            "missions has {}, expected 1..={MAX_MISSIONS_PER_EPOCH}",
+            mission_values.len()
+        )));
+    }
+    if mission_values.len() != authenticated_game_descriptors.len() {
+        return Err(CuratorError::Catalog(
+            "mission count does not equal authenticated game descriptor count".into(),
+        ));
+    }
     let mut missions = BTreeMap::new();
+    let mut previous_mission_id = None;
+    let mut content_epoch = None;
+    let mut descriptor_paths = BTreeSet::new();
+    let mut content_sessions = BTreeSet::new();
+    let mut run_seeds = BTreeSet::new();
+    let mut all_artifacts = BTreeSet::new();
     for mission in mission_values {
         let obj = mission
             .as_object()
@@ -1287,9 +1571,44 @@ fn index_catalog(
             .get("mission_id")
             .and_then(Value::as_u64)
             .ok_or_else(|| CuratorError::Catalog("mission_id is not a u64".into()))?;
-        obj.get("epoch").and_then(Value::as_u64).ok_or_else(|| {
+        if previous_mission_id.is_some_and(|previous| mission_id <= previous) {
+            return Err(CuratorError::Catalog(
+                "missions must be strictly mission_id-ascending".into(),
+            ));
+        }
+        previous_mission_id = Some(mission_id);
+        let epoch = obj.get("epoch").and_then(Value::as_u64).ok_or_else(|| {
             CuratorError::Catalog(format!("mission {mission_id} epoch is not a u64"))
         })?;
+        if content_epoch.is_some_and(|expected| epoch != expected) {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} epoch {epoch} differs from the epoch's other missions"
+            )));
+        }
+        content_epoch.get_or_insert(epoch);
+        for field in [
+            "title",
+            "engine_module",
+            "ruleset",
+            "reward_class",
+            "privacy_grade",
+            "ballot_regime",
+        ] {
+            if obj
+                .get(field)
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty)
+            {
+                return Err(CuratorError::Catalog(format!(
+                    "mission {mission_id} {field} is not a nonempty string"
+                )));
+            }
+        }
+        obj.get("action_limit")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                CuratorError::Catalog(format!("mission {mission_id} action_limit is not a u64"))
+            })?;
         let federation_id = obj
             .get("federation_id")
             .and_then(Value::as_str)
@@ -1310,11 +1629,21 @@ fn index_catalog(
             .and_then(Value::as_str)
             .ok_or_else(|| CuratorError::Catalog("content_session is not a string".into()))?;
         parse_hex_array::<32>(content_session, "content_session")?;
+        if !content_sessions.insert(content_session.to_owned()) {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} reuses another mission's content_session"
+            )));
+        }
         let run_seed = obj
             .get("run_seed")
             .and_then(Value::as_str)
             .ok_or_else(|| CuratorError::Catalog("run_seed is not a string".into()))?;
         parse_hex_array::<32>(run_seed, "run_seed")?;
+        if !run_seeds.insert(run_seed.to_owned()) {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} reuses another mission's run_seed"
+            )));
+        }
         let activation = obj
             .get("activation")
             .and_then(Value::as_object)
@@ -1332,31 +1661,74 @@ fn index_catalog(
                 "mission {mission_id} has a non-v1 activation marker"
             )));
         }
+        let budget = obj
+            .get("budget")
+            .and_then(Value::as_object)
+            .ok_or_else(|| CuratorError::Catalog("budget is not an object".into()))?;
+        require_exact_object_keys(
+            budget,
+            &[
+                "intel",
+                "supplies",
+                "cohesion",
+                "influence",
+                "score",
+                "relics",
+            ],
+            "mission budget",
+        )
+        .map_err(CuratorError::Catalog)?;
+        if budget.values().any(|value| value.as_u64().is_none()) {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} budget contains a non-u64 value"
+            )));
+        }
         let descriptor_path = obj
             .get("descriptor_path")
             .and_then(Value::as_str)
             .ok_or_else(|| CuratorError::Catalog("descriptor_path is not a string".into()))?;
-        if descriptor_path != "games/signal-triangulation.json" {
+        if !SUPPORTED_GAME_PATHS.contains(&descriptor_path) {
             return Err(CuratorError::Catalog(format!(
-                "mission {mission_id} names unpinned descriptor {descriptor_path}"
+                "mission {mission_id} names unsupported descriptor {descriptor_path}"
             )));
         }
+        let descriptor = authenticated_game_descriptors
+            .get(descriptor_path)
+            .ok_or_else(|| {
+                CuratorError::Catalog(format!(
+                    "mission {mission_id} names unpinned descriptor {descriptor_path}"
+                ))
+            })?;
+        if !descriptor_paths.insert(descriptor_path.to_owned()) {
+            return Err(CuratorError::Catalog(format!(
+                "descriptor {descriptor_path} is assigned to more than one mission"
+            )));
+        }
+        validate_game_descriptor_mission_match(descriptor_path, descriptor, obj, mission_id)?;
         let allowed_relics = obj
             .get("allowed_relics")
             .and_then(Value::as_array)
             .ok_or_else(|| {
                 CuratorError::Catalog(format!("mission {mission_id} lacks allowed_relics"))
             })?;
+        if allowed_relics.len() > MAX_RELICS_PER_MISSION {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} has {} allowed relics, maximum is {MAX_RELICS_PER_MISSION}",
+                allowed_relics.len()
+            )));
+        }
         let mut relics = BTreeSet::new();
+        let mut previous_relic = None;
         for relic in allowed_relics {
             let relic = relic.as_u64().ok_or_else(|| {
                 CuratorError::Catalog(format!("mission {mission_id} has nonnumeric allowed relic"))
             })?;
-            if !relics.insert(relic) {
+            if previous_relic.is_some_and(|previous| relic <= previous) || !relics.insert(relic) {
                 return Err(CuratorError::Catalog(format!(
-                    "mission {mission_id} has duplicate allowed relic {relic}"
+                    "mission {mission_id} allowed_relics must be strictly ascending; saw {relic}"
                 )));
             }
+            previous_relic = Some(relic);
         }
         let allowed_values = obj
             .get("allowed_beta_discoveries")
@@ -1366,8 +1738,18 @@ fn index_catalog(
                     "mission {mission_id} lacks allowed_beta_discoveries"
                 ))
             })?;
+        if !(1..=MAX_DISCOVERIES_PER_MISSION).contains(&allowed_values.len()) {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} allowed_beta_discoveries has {}, expected 1..={MAX_DISCOVERIES_PER_MISSION}",
+                allowed_values.len()
+            )));
+        }
+        let descriptor_digest = authenticated_descriptor_digests
+            .get(descriptor_path)
+            .expect("descriptor digest set matches authenticated descriptors");
         let mut allowed_beta_discoveries = Vec::with_capacity(allowed_values.len());
         let mut unique = BTreeSet::new();
+        let mut previous_artifact = None;
         for artifact in allowed_values {
             let artifact: ArtifactRef = serde_json::from_value(artifact.clone()).map_err(|e| {
                 CuratorError::Catalog(format!(
@@ -1382,17 +1764,27 @@ fn index_catalog(
                 )));
             }
             if artifact.source_digest != authenticated_source_digest
-                || artifact.content_digest != authenticated_signal_digest
+                || artifact.content_digest != *descriptor_digest
             {
                 return Err(CuratorError::Catalog(format!(
                     "mission {mission_id} artifact does not bind the authenticated source and descriptor bytes"
                 )));
             }
-            if !unique.insert(artifact.clone()) {
+            if previous_artifact
+                .as_ref()
+                .is_some_and(|previous| artifact <= *previous)
+                || !unique.insert(artifact.clone())
+            {
                 return Err(CuratorError::Catalog(format!(
-                    "mission {mission_id} has duplicate artifact ref"
+                    "mission {mission_id} artifact refs must be unique and strictly ascending"
                 )));
             }
+            if !all_artifacts.insert(artifact.clone()) {
+                return Err(CuratorError::Catalog(
+                    "the same exact artifact ref appears in more than one mission".into(),
+                ));
+            }
+            previous_artifact = Some(artifact.clone());
             allowed_beta_discoveries.push(artifact);
         }
         if missions
@@ -1403,6 +1795,7 @@ fn index_catalog(
                     federation_id: federation_id.to_owned(),
                     content_root: content_root.to_owned(),
                     content_session: content_session.to_owned(),
+                    run_seed: run_seed.to_owned(),
                     allowed_beta_discoveries,
                 },
             )
@@ -1414,11 +1807,27 @@ fn index_catalog(
         }
     }
 
+    let authenticated_paths: BTreeSet<String> =
+        authenticated_game_descriptors.keys().cloned().collect();
+    if descriptor_paths != authenticated_paths {
+        return Err(CuratorError::Catalog(
+            "catalog missions do not cover every authenticated descriptor exactly once".into(),
+        ));
+    }
+
     let mut fixtures = BTreeMap::new();
     if let Some(fixture_values) = object.get("fixtures") {
         let fixture_values = fixture_values
             .as_array()
             .ok_or_else(|| CuratorError::Catalog("fixtures is not an array".into()))?;
+        if fixture_values.len() > MAX_FIXTURES_PER_EPOCH {
+            return Err(CuratorError::Catalog(format!(
+                "fixtures has {}, maximum is {MAX_FIXTURES_PER_EPOCH}",
+                fixture_values.len()
+            )));
+        }
+        let mut previous_fixture_key: Option<(u64, String)> = None;
+        let mut fixture_counts = BTreeMap::<u64, usize>::new();
         for fixture in fixture_values {
             let obj = fixture
                 .as_object()
@@ -1450,6 +1859,33 @@ fn index_catalog(
                     "fixture {id} names unknown mission {mission_id}"
                 )));
             }
+            let key = (mission_id, id.to_owned());
+            if previous_fixture_key
+                .as_ref()
+                .is_some_and(|previous| key <= *previous)
+            {
+                return Err(CuratorError::Catalog(
+                    "fixtures must be strictly ordered by (mission_id, id)".into(),
+                ));
+            }
+            previous_fixture_key = Some(key);
+            let count = fixture_counts.entry(mission_id).or_default();
+            *count += 1;
+            if *count > MAX_FIXTURES_PER_MISSION {
+                return Err(CuratorError::Catalog(format!(
+                    "mission {mission_id} has more than {MAX_FIXTURES_PER_MISSION} fixtures"
+                )));
+            }
+            let fixture_seed = obj
+                .get("run_seed")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CuratorError::Catalog(format!("fixture {id} lacks run_seed")))?;
+            parse_hex_array::<32>(fixture_seed, "fixture.run_seed")?;
+            if fixture_seed != missions[&mission_id].run_seed {
+                return Err(CuratorError::Catalog(format!(
+                    "fixture {id} run_seed differs from mission {mission_id}"
+                )));
+            }
             let field = |name: &'static str| {
                 obj.get(name)
                     .cloned()
@@ -1466,20 +1902,27 @@ fn index_catalog(
             }
         }
     }
-    Ok((missions, fixtures))
+    Ok(CatalogIndex {
+        missions,
+        fixtures,
+        content_epoch: content_epoch.expect("nonempty mission list was checked"),
+    })
 }
 
 /// POAG1 v1 content root. Schema/catalog/manifest envelopes are intentionally
-/// excluded, avoiding a self-hash cycle; only executable game program/assets
-/// participate. V1 admits exactly the one required signal descriptor.
-fn content_root_v1(artifacts: &BTreeMap<String, Vec<u8>>) -> Result<String, CuratorError> {
-    let semantic_paths = ["games/signal-triangulation.json"];
+/// excluded, avoiding a self-hash cycle; only the bounded canonical game
+/// descriptor set participates. `semantic_paths` is already checked strictly
+/// ascending against both manifest and schema.
+fn content_root_v1(
+    artifacts: &BTreeMap<String, Vec<u8>>,
+    semantic_paths: &[String],
+) -> Result<String, CuratorError> {
     let mut preimage = Vec::new();
     preimage.extend_from_slice(CONTENT_ROOT_DOMAIN);
     preimage.extend_from_slice(&(semantic_paths.len() as u64).to_be_bytes());
     for path in semantic_paths {
         let contents = artifacts.get(path).ok_or_else(|| CuratorError::Artifact {
-            path: path.into(),
+            path: path.clone(),
             reason: "content-root input is absent".into(),
         })?;
         push_frame(&mut preimage, path.as_bytes());
@@ -1674,8 +2117,52 @@ impl<'de> Visitor<'de> for StrictValueVisitor {
 mod tests {
     use super::*;
 
-    const TEST_GAME: &[u8] =
-        br#"{"format":"POAG1-GAME","schema_version":1,"game":"signal-triangulation"}"#;
+    #[derive(Clone, Copy)]
+    struct GameSpec {
+        mission_id: u64,
+        artifact_id: u64,
+        path: &'static str,
+        title: &'static str,
+        engine: &'static str,
+        ruleset: &'static str,
+        action_limit: u64,
+        session_byte: u8,
+        seed_byte: u8,
+    }
+
+    const SIGNAL: GameSpec = GameSpec {
+        mission_id: 7,
+        artifact_id: 447,
+        path: SIGNAL_PATH,
+        title: "Deck 447 intercept",
+        engine: "Dregg2.Games.PathOfAngels.SignalTriangulation",
+        ruleset: "signal-v1",
+        action_limit: 5,
+        session_byte: 0x55,
+        seed_byte: 0x66,
+    };
+    const RELAY: GameSpec = GameSpec {
+        mission_id: 8,
+        artifact_id: 448,
+        path: "games/relay-repair.json",
+        title: "Relay Repair",
+        engine: "Dregg2.Games.PathOfAngels.RelayRepair",
+        ruleset: "relay-v1",
+        action_limit: 4,
+        session_byte: 0x56,
+        seed_byte: 0x67,
+    };
+    const SALVAGE: GameSpec = GameSpec {
+        mission_id: 9,
+        artifact_id: 449,
+        path: "games/salvage-lock.json",
+        title: "Salvage Lock",
+        engine: "Dregg2.Games.PathOfAngels.SalvageLock",
+        ruleset: "salvage-v1",
+        action_limit: 12,
+        session_byte: 0x57,
+        seed_byte: 0x68,
+    };
 
     struct ExactAdmission {
         action: CanonAction,
@@ -1684,6 +2171,7 @@ mod tests {
     }
 
     struct ExactActivation;
+    struct MultiActivation;
 
     impl MissionActivationOracle for ExactActivation {
         fn admit(&self, config: &ActivatedMissionConfig) -> Result<(), String> {
@@ -1696,6 +2184,20 @@ mod tests {
                 Ok(())
             } else {
                 Err("test Lean activation adapter refused config".into())
+            }
+        }
+    }
+
+    impl MissionActivationOracle for MultiActivation {
+        fn admit(&self, config: &ActivatedMissionConfig) -> Result<(), String> {
+            if [SIGNAL, RELAY, SALVAGE].iter().any(|spec| {
+                config.mission_id == spec.mission_id
+                    && config.mission_template["descriptor_path"] == spec.path
+                    && config.content_epoch == 2
+            }) {
+                Ok(())
+            } else {
+                Err("test Lean multi-mission adapter refused config".into())
             }
         }
     }
@@ -1727,63 +2229,135 @@ mod tests {
     }
 
     fn allowed_artifact_ref() -> ArtifactRef {
+        artifact_for(SIGNAL)
+    }
+
+    fn artifact_for(spec: GameSpec) -> ArtifactRef {
         ArtifactRef {
-            mission_id: 7,
-            artifact_id: 447,
+            mission_id: spec.mission_id,
+            artifact_id: spec.artifact_id,
             source_digest: digest(0x11),
-            content_digest: sha256_tagged(TEST_GAME),
+            content_digest: sha256_tagged(&game_bytes(spec)),
         }
     }
 
     fn write_bundle(root: &Path) -> PathBuf {
-        fs::create_dir_all(root.join("games")).unwrap();
-        let schema = br#"{"format":"POAG1-SCHEMA","schema_version":1,"definitions":{}}"#;
-        let game = TEST_GAME;
-        let mut semantic_artifacts = BTreeMap::new();
-        semantic_artifacts.insert("games/signal-triangulation.json".to_owned(), game.to_vec());
-        let content_root = content_root_v1(&semantic_artifacts).unwrap();
-        let catalog = serde_json::to_vec(&serde_json::json!({
-            "format": "POAG1-CATALOG",
+        write_bundle_with_games(root, &[SIGNAL])
+    }
+
+    fn game_bytes(spec: GameSpec) -> Vec<u8> {
+        let game_id = spec
+            .path
+            .strip_prefix("games/")
+            .unwrap()
+            .strip_suffix(".json")
+            .unwrap();
+        serde_json::to_vec(&serde_json::json!({
+            "format": "POAG1-GAME",
             "schema_version": 1,
-            "missions": [{
-                "mission_id": 7,
-                "title": "Deck 447 intercept",
-                "engine_module": "Dregg2.Games.PathOfAngels.SignalTriangulation",
-                "ruleset": "signal-triangulation-v1",
+            "game_id": game_id,
+            "ruleset": spec.ruleset,
+            "engine_module": spec.engine,
+            "action_limit": spec.action_limit,
+            "run_seed": hex_encode(&[spec.seed_byte; 32]),
+            "definition": {"owned_by": "Lean"}
+        }))
+        .unwrap()
+    }
+
+    fn schema_bytes(game_paths: &[String]) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "format": "POAG1-SCHEMA",
+            "schema_version": 1,
+            "contract": {
+                "manifest_required": ["format", "schema_version", "source_digest", "authority", "artifacts"],
+                "artifact_pin_required": ["path", "media_type", "bytes", "sha256", "fnv1a64"],
+                "source_digest_pattern": "^sha256:[0-9a-f]{64}$",
+                "artifact_sha256_pattern": "^sha256:[0-9a-f]{64}$",
+                "bytes32_pattern": "^[0-9a-f]{64}$",
+                "fnv1a64_pattern": "^[0-9a-f]{16}$",
+                "content_root": {
+                    "algorithm": "sha256",
+                    "domain": "path-of-angels/content-root/v1\0",
+                    "framing": "file_count_be64 || (path_len_be64 || path_utf8 || content_len_be64 || content_bytes)*",
+                    "entry_order": "path_ascending",
+                    "paths": game_paths
+                },
+                "activation_digest": {
+                    "algorithm": "sha256",
+                    "domain": "pathofangels.network/activation-digest/v1\0",
+                    "framing": "schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64",
+                    "location": "detached verified activation; excluded from manifest preimage"
+                },
+                "unknown_fields": "reject",
+                "unknown_artifacts": "reject"
+            }
+        }))
+        .unwrap()
+    }
+
+    fn write_bundle_with_games(root: &Path, specs: &[GameSpec]) -> PathBuf {
+        fs::create_dir_all(root.join("games")).unwrap();
+        let mut semantic_artifacts = BTreeMap::new();
+        for spec in specs {
+            semantic_artifacts.insert(spec.path.to_owned(), game_bytes(*spec));
+        }
+        let game_paths: Vec<String> = semantic_artifacts.keys().cloned().collect();
+        let schema = schema_bytes(&game_paths);
+        let content_root = content_root_v1(&semantic_artifacts, &game_paths).unwrap();
+        let missions: Vec<Value> = specs
+            .iter()
+            .map(|spec| serde_json::json!({
+                "mission_id": spec.mission_id,
+                "title": spec.title,
+                "engine_module": spec.engine,
+                "ruleset": spec.ruleset,
                 "reward_class": "non-economic-demo",
-                "action_limit": 5,
+                "action_limit": spec.action_limit,
                 "privacy_grade": "public",
                 "ballot_regime": "none",
                 "epoch": 2,
                 "federation_id": hex_encode(&[0x33; 32]),
                 "content_root": content_root,
-                "content_session": hex_encode(&[0x55; 32]),
-                "run_seed": hex_encode(&[0x66; 32]),
-                "activation": {
-                    "state": "detached-signature-required",
-                    "digest_source": "POA-CONTENT-EPOCH-SIGNATURE-V1"
-                },
+                "content_session": hex_encode(&[spec.session_byte; 32]),
+                "run_seed": hex_encode(&[spec.seed_byte; 32]),
+                "activation": {"state": "detached-signature-required", "digest_source": CONTENT_EPOCH_SCHEMA},
                 "budget": {"intel": 3, "supplies": 1, "cohesion": 0, "influence": 0, "score": 50, "relics": 1},
-                "allowed_relics": [99],
-                "descriptor_path": "games/signal-triangulation.json",
-                "allowed_beta_discoveries": [allowed_artifact_ref()]
-            }],
-            "fixtures": [{
-                "id": "solved-one",
-                "mission_id": 7,
-                "run_seed": hex_encode(&[0x66; 32]),
-                "base_world": {"intel": 10, "sequence": 2},
-                "contribution": {"intel": 3, "relics": [99]},
-                "preview_world": {"intel": 13, "sequence": 3}
-            }]
+                "allowed_relics": [spec.artifact_id],
+                "descriptor_path": spec.path,
+                "allowed_beta_discoveries": [artifact_for(*spec)]
+            }))
+            .collect();
+        let fixtures: Vec<Value> = specs
+            .iter()
+            .map(|spec| {
+                serde_json::json!({
+                    "id": format!("fixture-{:02}", spec.mission_id),
+                    "mission_id": spec.mission_id,
+                    "run_seed": hex_encode(&[spec.seed_byte; 32]),
+                    "base_world": {"intel": 10, "sequence": 2},
+                    "contribution": {"intel": 3, "relics": [spec.artifact_id]},
+                    "preview_world": {"intel": 13, "sequence": 3}
+                })
+            })
+            .collect();
+        let catalog = serde_json::to_vec(&serde_json::json!({
+            "format": "POAG1-CATALOG",
+            "schema_version": 1,
+            "missions": missions,
+            "fixtures": fixtures
         }))
         .unwrap();
 
-        let files = [
-            ("schema.json", "application/schema+json", schema.as_slice()),
-            ("catalog.json", "application/json", catalog.as_slice()),
-            ("games/signal-triangulation.json", "application/json", game),
+        let mut files = vec![
+            (SCHEMA_PATH.to_owned(), "application/schema+json", schema),
+            (CATALOG_PATH.to_owned(), "application/json", catalog),
         ];
+        files.extend(
+            semantic_artifacts
+                .into_iter()
+                .map(|(path, bytes)| (path, "application/json", bytes)),
+        );
         for (path, _, bytes) in &files {
             fs::write(root.join(path), bytes).unwrap();
         }
@@ -1800,10 +2374,10 @@ mod tests {
             })
             .collect();
         let manifest = serde_json::to_vec(&serde_json::json!({
-            "format": "POAG1",
-            "schema_version": 1,
+            "format": POAG1_FORMAT,
+            "schema_version": POAG1_SCHEMA_VERSION,
             "source_digest": digest(0x11),
-            "authority": "Dregg2.Games.PathOfAngels",
+            "authority": POAG1_AUTHORITY,
             "artifacts": artifacts
         }))
         .unwrap();
@@ -1841,11 +2415,299 @@ mod tests {
         let bundle = Poag1Bundle::load(&path).unwrap();
         let allowed = allowed_artifact_ref();
         let draft = bundle
-            .prepare_mission(7, std::slice::from_ref(&allowed), Some("solved-one"))
+            .prepare_mission(7, std::slice::from_ref(&allowed), Some("fixture-07"))
             .unwrap();
         assert_eq!(draft.predeclared_beta_discoveries, vec![allowed]);
         assert_eq!(draft.mission_spec["action_limit"], 5);
         assert_eq!(draft.preview.unwrap().preview_world["intel"], 13);
+    }
+
+    #[test]
+    fn checked_in_epoch_one_bundle_remains_accepted() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let manifest = repo.join("poa/artifacts/poag1/manifest.json");
+        let bundle = Poag1Bundle::load(&manifest).unwrap();
+        assert_eq!(bundle.content_epoch(), 1);
+        assert_eq!(
+            bundle.game_paths().collect::<Vec<_>>(),
+            SUPPORTED_GAME_PATHS
+        );
+        assert_eq!(
+            bundle.signal_triangulation()["game_id"],
+            "signal-triangulation"
+        );
+    }
+
+    #[test]
+    fn checked_in_epoch_one_replacement_requires_counter_two() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let bundle = Poag1Bundle::load(repo.join("poa/artifacts/poag1/manifest.json")).unwrap();
+        let bound = bundle
+            .bind_deployment(repo.join("poa/deployments/epoch-1/poa-devnet.json"))
+            .unwrap();
+        let key = SigningKey::from_bytes(&[0x43; 32]);
+        let signer = CuratorSigner::new(&key);
+        let pin = CuratorKeyPin::new(&key.public_key());
+
+        let counter_one = signer.sign_content_epoch(&bound, 1, 1).unwrap();
+        assert!(matches!(
+            counter_one.verify(&bound, &pin, 1, 2),
+            Err(CuratorError::ContentEpoch(reason)) if reason == "counter 1 != expected 2"
+        ));
+
+        let counter_two = signer.sign_content_epoch(&bound, 1, 2).unwrap();
+        counter_two.verify(&bound, &pin, 1, 2).unwrap();
+        assert!(signer.sign_content_epoch(&bound, 2, 2).is_err());
+    }
+
+    #[test]
+    fn loads_bounded_three_mission_epoch_with_one_to_one_descriptors() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = write_bundle_with_games(temp.path(), &[SIGNAL, RELAY, SALVAGE]);
+        let bundle = Poag1Bundle::load(manifest).unwrap();
+        assert_eq!(bundle.content_epoch(), 2);
+        assert_eq!(
+            bundle.game_paths().collect::<Vec<_>>(),
+            SUPPORTED_GAME_PATHS
+        );
+        for spec in [SIGNAL, RELAY, SALVAGE] {
+            let draft = bundle
+                .prepare_mission(
+                    spec.mission_id,
+                    &[artifact_for(spec)],
+                    Some(&format!("fixture-{:02}", spec.mission_id)),
+                )
+                .unwrap();
+            assert_eq!(draft.mission_spec["descriptor_path"], spec.path);
+        }
+    }
+
+    #[test]
+    fn one_signature_activates_each_exact_mission_and_canons_relay() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = write_bundle_with_games(temp.path(), &[SIGNAL, RELAY, SALVAGE]);
+        let bundle = Poag1Bundle::load(manifest).unwrap();
+        let bound = bind_bundle(&bundle, temp.path());
+        let key = SigningKey::from_bytes(&[0x63; 32]);
+        let signer = CuratorSigner::new(&key);
+        let pin = CuratorKeyPin::new(&key.public_key());
+        let envelope = signer.sign_content_epoch(&bound, 2, 5).unwrap();
+        let verified = envelope.verify(&bound, &pin, 2, 5).unwrap();
+        for spec in [SIGNAL, RELAY, SALVAGE] {
+            verified
+                .activate_mission(&bound, spec.mission_id, &MultiActivation)
+                .unwrap();
+        }
+
+        let relay_activation = verified
+            .activate_mission(&bound, RELAY.mission_id, &MultiActivation)
+            .unwrap();
+        let relay_artifact = artifact_for(RELAY);
+        let admission = ExactAdmission {
+            action: CanonAction::Promote,
+            artifact: relay_artifact.clone(),
+            revision: 0,
+        };
+        let decision = CanonDecision::new(
+            &relay_activation,
+            0,
+            5,
+            6,
+            CanonAction::Promote,
+            relay_artifact,
+        )
+        .unwrap();
+        signer
+            .sign_canon_decision(decision, &admission)
+            .unwrap()
+            .verify(&relay_activation, 5, 6, 0, &admission)
+            .unwrap();
+    }
+
+    #[test]
+    fn hostile_fourth_mission_and_excess_fixtures_refuse() {
+        let fourth = GameSpec {
+            mission_id: 10,
+            artifact_id: 450,
+            session_byte: 0x58,
+            seed_byte: 0x69,
+            ..SIGNAL
+        };
+        let too_many_missions = tempfile::tempdir().unwrap();
+        let manifest =
+            write_bundle_with_games(too_many_missions.path(), &[SIGNAL, RELAY, SALVAGE, fourth]);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+
+        let too_many_fixtures = tempfile::tempdir().unwrap();
+        let manifest = write_bundle(too_many_fixtures.path());
+        mutate_json(too_many_fixtures.path().join(CATALOG_PATH), |catalog| {
+            let fixture = catalog["fixtures"][0].clone();
+            let fixtures = catalog["fixtures"].as_array_mut().unwrap();
+            fixtures.clear();
+            for index in 0..=MAX_FIXTURES_PER_EPOCH {
+                let mut next = fixture.clone();
+                next["id"] = Value::String(format!("fixture-{index:02}"));
+                fixtures.push(next);
+            }
+        });
+        repin_manifest(too_many_fixtures.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+    }
+
+    #[test]
+    fn hostile_cross_mission_epoch_identity_and_fixture_seed_refuse() {
+        let epoch_mismatch = tempfile::tempdir().unwrap();
+        let manifest = write_bundle_with_games(epoch_mismatch.path(), &[SIGNAL, RELAY, SALVAGE]);
+        mutate_json(epoch_mismatch.path().join(CATALOG_PATH), |catalog| {
+            catalog["missions"][1]["epoch"] = Value::from(3);
+        });
+        repin_manifest(epoch_mismatch.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+
+        let duplicate_session = tempfile::tempdir().unwrap();
+        let manifest = write_bundle_with_games(duplicate_session.path(), &[SIGNAL, RELAY, SALVAGE]);
+        mutate_json(duplicate_session.path().join(CATALOG_PATH), |catalog| {
+            catalog["missions"][1]["content_session"] =
+                catalog["missions"][0]["content_session"].clone();
+        });
+        repin_manifest(duplicate_session.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+
+        let fixture_seed = tempfile::tempdir().unwrap();
+        let manifest = write_bundle(fixture_seed.path());
+        mutate_json(fixture_seed.path().join(CATALOG_PATH), |catalog| {
+            catalog["fixtures"][0]["run_seed"] = Value::String(hex_encode(&[0x99; 32]));
+        });
+        repin_manifest(fixture_seed.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+    }
+
+    #[test]
+    fn hostile_duplicate_mission_and_descriptor_assignments_refuse() {
+        let duplicate_id = tempfile::tempdir().unwrap();
+        let manifest = write_bundle_with_games(duplicate_id.path(), &[SIGNAL, RELAY, SALVAGE]);
+        mutate_json(duplicate_id.path().join(CATALOG_PATH), |catalog| {
+            catalog["missions"][1]["mission_id"] = Value::from(SIGNAL.mission_id);
+        });
+        repin_manifest(duplicate_id.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+
+        let duplicate_descriptor = tempfile::tempdir().unwrap();
+        let manifest =
+            write_bundle_with_games(duplicate_descriptor.path(), &[SIGNAL, RELAY, SALVAGE]);
+        mutate_json(duplicate_descriptor.path().join(CATALOG_PATH), |catalog| {
+            catalog["missions"][1]["descriptor_path"] = Value::String(SIGNAL.path.into());
+        });
+        repin_manifest(duplicate_descriptor.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+    }
+
+    #[test]
+    fn hostile_unknown_catalog_field_and_artifact_refuse() {
+        let unknown_field = tempfile::tempdir().unwrap();
+        let manifest = write_bundle(unknown_field.path());
+        mutate_json(unknown_field.path().join(CATALOG_PATH), |catalog| {
+            catalog["missions"][0]["surprise"] = Value::Bool(true);
+        });
+        repin_manifest(unknown_field.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+
+        let unknown_artifact = tempfile::tempdir().unwrap();
+        let manifest = write_bundle(unknown_artifact.path());
+        mutate_json(&manifest, |value| {
+            value["artifacts"][2]["path"] = Value::String("games/unbounded-surprise.json".into());
+        });
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Manifest(_))
+        ));
+    }
+
+    #[test]
+    fn hostile_manifest_catalog_and_schema_order_refuse() {
+        let manifest_order = tempfile::tempdir().unwrap();
+        let manifest = write_bundle_with_games(manifest_order.path(), &[SIGNAL, RELAY, SALVAGE]);
+        mutate_json(&manifest, |value| {
+            value["artifacts"].as_array_mut().unwrap().swap(2, 3);
+        });
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Manifest(_))
+        ));
+
+        let catalog_order = tempfile::tempdir().unwrap();
+        let manifest = write_bundle_with_games(catalog_order.path(), &[SIGNAL, RELAY, SALVAGE]);
+        mutate_json(catalog_order.path().join(CATALOG_PATH), |catalog| {
+            catalog["missions"].as_array_mut().unwrap().swap(0, 1);
+        });
+        repin_manifest(catalog_order.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+
+        let schema_order = tempfile::tempdir().unwrap();
+        let manifest = write_bundle_with_games(schema_order.path(), &[SIGNAL, RELAY, SALVAGE]);
+        mutate_json(schema_order.path().join(SCHEMA_PATH), |schema| {
+            schema["contract"]["content_root"]["paths"]
+                .as_array_mut()
+                .unwrap()
+                .swap(0, 1);
+        });
+        repin_manifest(schema_order.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+    }
+
+    #[test]
+    fn self_consistently_repinned_descriptor_tamper_still_refuses() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = write_bundle(temp.path());
+        let descriptor_path = temp.path().join(SIGNAL_PATH);
+        mutate_json(&descriptor_path, |descriptor| {
+            descriptor["ruleset"] = Value::String("attacker-rules-v1".into());
+        });
+        let descriptor_bytes = fs::read(&descriptor_path).unwrap();
+        let mut semantic_artifacts = BTreeMap::new();
+        semantic_artifacts.insert(SIGNAL_PATH.to_owned(), descriptor_bytes.clone());
+        let game_paths = vec![SIGNAL_PATH.to_owned()];
+        let new_root = content_root_v1(&semantic_artifacts, &game_paths).unwrap();
+        mutate_json(temp.path().join(CATALOG_PATH), |catalog| {
+            catalog["missions"][0]["content_root"] = Value::String(new_root);
+            catalog["missions"][0]["allowed_beta_discoveries"][0]["content_digest"] =
+                Value::String(sha256_tagged(&descriptor_bytes));
+        });
+        repin_manifest(temp.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
     }
 
     #[test]
@@ -1901,8 +2763,10 @@ mod tests {
         let original_bound = bind_bundle(&original, temp.path());
         let curator_key = SigningKey::from_bytes(&[0x41; 32]);
         let pin = CuratorKeyPin::new(&curator_key.public_key());
-        let signed = CuratorSigner::new(&curator_key).sign_content_epoch(&original_bound, 4, 9);
-        signed.verify(&original_bound, &pin, 4, 9).unwrap();
+        let signed = CuratorSigner::new(&curator_key)
+            .sign_content_epoch(&original_bound, 2, 9)
+            .unwrap();
+        signed.verify(&original_bound, &pin, 2, 9).unwrap();
 
         // Exact bytes changed while the old manifest pins remain: loader refuses.
         fs::write(
@@ -1924,9 +2788,10 @@ mod tests {
         let attacker_bundle = Poag1Bundle::load(&repinned_path).unwrap();
         let attacker_bound = bind_bundle(&attacker_bundle, temp.path());
         let attacker_key = SigningKey::from_bytes(&[0x42; 32]);
-        let attacker_sig =
-            CuratorSigner::new(&attacker_key).sign_content_epoch(&attacker_bound, 4, 9);
-        assert!(attacker_sig.verify(&attacker_bound, &pin, 4, 9).is_err());
+        let attacker_sig = CuratorSigner::new(&attacker_key)
+            .sign_content_epoch(&attacker_bound, 2, 9)
+            .unwrap();
+        assert!(attacker_sig.verify(&attacker_bound, &pin, 2, 9).is_err());
     }
 
     fn repin_manifest(root: &Path, manifest_path: &Path) -> PathBuf {
@@ -1943,6 +2808,13 @@ mod tests {
         manifest_path.to_path_buf()
     }
 
+    fn mutate_json(path: impl AsRef<Path>, mutate: impl FnOnce(&mut Value)) {
+        let path = path.as_ref();
+        let mut value: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        mutate(&mut value);
+        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
     #[test]
     fn epoch_signature_refuses_wrong_epoch_counter_key_and_exact_bytes() {
         let temp = tempfile::tempdir().unwrap();
@@ -1951,16 +2823,17 @@ mod tests {
         let key = SigningKey::from_bytes(&[0x51; 32]);
         let signer = CuratorSigner::new(&key);
         let pin = CuratorKeyPin::new(&key.public_key());
-        let envelope = signer.sign_content_epoch(&bound, 12, 33);
-        envelope.verify(&bound, &pin, 12, 33).unwrap();
-        assert!(envelope.verify(&bound, &pin, 13, 33).is_err());
-        assert!(envelope.verify(&bound, &pin, 12, 34).is_err());
+        let envelope = signer.sign_content_epoch(&bound, 2, 33).unwrap();
+        envelope.verify(&bound, &pin, 2, 33).unwrap();
+        assert!(envelope.verify(&bound, &pin, 3, 33).is_err());
+        assert!(envelope.verify(&bound, &pin, 2, 34).is_err());
+        assert!(signer.sign_content_epoch(&bound, 12, 33).is_err());
         let wrong_pin = CuratorKeyPin::new(&SigningKey::from_bytes(&[0x52; 32]).public_key());
-        assert!(envelope.verify(&bound, &wrong_pin, 12, 33).is_err());
+        assert!(envelope.verify(&bound, &wrong_pin, 2, 33).is_err());
 
         let mut changed = bundle.manifest_bytes().to_vec();
         changed.push(b'\n');
-        let message = content_epoch_signing_message(12, 33, &changed);
+        let message = content_epoch_signing_message(2, 33, &changed);
         let signature = Signature(parse_hex_array::<64>(&envelope.signature, "signature").unwrap());
         assert!(!dregg_types::verify(
             &key.public_key(),
@@ -1977,7 +2850,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[0x61; 32]);
         let signer = CuratorSigner::new(&key);
         let pin = CuratorKeyPin::new(&key.public_key());
-        let epoch = signer.sign_content_epoch(&bound, 2, 8);
+        let epoch = signer.sign_content_epoch(&bound, 2, 8).unwrap();
         let verified_epoch = epoch.verify(&bound, &pin, 2, 8).unwrap();
         let activation = verified_epoch
             .activate_mission(&bound, 7, &ExactActivation)
@@ -2009,7 +2882,9 @@ mod tests {
         let bound = bind_bundle(&bundle, temp.path());
         let key = SigningKey::from_bytes(&[0x62; 32]);
         let pin = CuratorKeyPin::new(&key.public_key());
-        let epoch = CuratorSigner::new(&key).sign_content_epoch(&bound, 2, 1);
+        let epoch = CuratorSigner::new(&key)
+            .sign_content_epoch(&bound, 2, 1)
+            .unwrap();
         let verified_epoch = epoch.verify(&bound, &pin, 2, 1).unwrap();
         let activation = verified_epoch
             .activate_mission(&bound, 7, &ExactActivation)

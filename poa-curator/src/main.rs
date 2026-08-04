@@ -159,7 +159,9 @@ fn command_sign_content(flags: &BTreeMap<String, String>) -> Result<(), String> 
     let bound = bundle
         .bind_deployment(&deployment_path)
         .map_err(|error| error.to_string())?;
-    let envelope = CuratorSigner::new(&secret).sign_content_epoch(&bound, epoch, counter);
+    let envelope = CuratorSigner::new(&secret)
+        .sign_content_epoch(&bound, epoch, counter)
+        .map_err(|error| error.to_string())?;
     envelope
         .verify(&bound, &pin, epoch, counter)
         .map_err(|error| format!("self-verification failed: {error}"))?;

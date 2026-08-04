@@ -7,8 +7,8 @@ remain in Lean and are emitted into the POAG1 bundle.
 The component does five things:
 
 1. loads `poa/artifacts/poag1/manifest.json` and rejects any non-v1, unknown,
-   missing, duplicate, traversing, byte-length, SHA-256, FNV-1a, or JSON-shape
-   mismatch;
+   missing, duplicate, noncanonical-order, traversing, byte-length, SHA-256,
+   FNV-1a, or JSON-shape mismatch;
 2. selects a Lean-emitted mission, exact predeclared beta artifacts, and an
    optional Lean-emitted bounded preview fixture without recomputing semantics;
 3. binds that catalog to the separately verified `poa-devnet.json` federation;
@@ -23,6 +23,29 @@ action. The crate has no allow-all adapters: production implementations must
 invoke Lean's opaque activation witness and current-state admission (`beta` for
 promotion, `alpha` for supersession, exact scope, revision, and counter). A
 well-shaped signed request is not a canon transition by itself.
+
+## Bounded multi-mission epochs
+
+POAG1 v1 accepts one through three missions. Signal Triangulation remains the
+required size-one base; Relay Repair and Salvage Lock are the only additional
+descriptor paths. The manifest representation is exactly `schema.json`, then
+`catalog.json`, then the selected game paths in ascending byte order. The
+schema's `content_root.paths` must repeat that exact game order, and the content
+root frames every selected descriptor in that order.
+
+The catalog must contain exactly one mission per descriptor, ordered by strictly
+increasing mission id. Mission ids, descriptor assignments, content sessions,
+run seeds, exact artifact refs, and fixture ids are unique. Every mission shares
+one catalog epoch and content root; deployment binding then requires every
+mission federation to equal the separately verified devnet. Descriptor identity fields must
+agree with its mission; fixtures must carry that mission's exact run seed. The
+bounded ceilings are three missions, eight discoveries and sixteen relic ids per
+mission, eight fixtures per mission, and twenty-four fixtures per epoch.
+
+Game-specific transition payloads remain opaque Rust-side: the curator checks
+their common identity header and byte commitment, then the
+`MissionActivationOracle` asks Lean to admit the exact complete descriptor. Rust
+does not acquire a second copy of Relay or Salvage semantics.
 
 `manifest.sig.json` is deliberately detached and is not listed by the manifest
 it signs. Its strict wire shape is:
@@ -58,22 +81,30 @@ cargo run --manifest-path poa-curator/Cargo.toml -- sign-content \
   --secret /secure/poa-development-curator.key \
   --pin poa/config/curator-key.json \
   --manifest poa/artifacts/poag1/manifest.json \
-  --deployment "$POA_ROOT/poa-devnet.json" --epoch 1 --counter 1
+  --deployment "$POA_ROOT/poa-devnet.json" --epoch 1 --counter 2
 
 cargo run --manifest-path poa-curator/Cargo.toml -- verify-content \
   --pin poa/config/curator-key.json \
   --manifest poa/artifacts/poag1/manifest.json \
-  --deployment "$POA_ROOT/poa-devnet.json" --epoch 1 --counter 1
+  --deployment "$POA_ROOT/poa-devnet.json" --epoch 1 --counter 2
 ```
 
 Run `scripts/poa-devnet.sh verify` before the ceremony. The Rust binding checks
 schema/domain/federation equality; it deliberately does not duplicate the node
 kit's genesis, validator-key, or operator-policy verification.
 
+The checked-in three-game bundle replaces bytes already signed at epoch 1,
+counter 1. Its successor ceremony therefore retains catalog epoch 1 and advances
+the rollback counter to 2. The old envelope names a different exact manifest
+digest and is refused before signature verification.
+
 The cross-runtime byte/signature vector is
 `test-vectors/content-epoch-v1.json`. The signing domain in that vector is the
 exact ASCII byte string `pathofangels.network/content-epoch/v1\0`; aliases are
-different protocols and must refuse.
+different protocols and must refuse. Those epoch-1 bytes remain unchanged; the
+multi-mission set is committed through the existing exact-manifest signature,
+not a new signing protocol. Signing also refuses an epoch argument different
+from the single epoch authenticated in the catalog.
 
 Canon actions share the exact domain
 `pathofangels.network/canon-promotion/v1\0`; the signed action tag distinguishes
