@@ -93,6 +93,7 @@ mod operator_turn_receipt_head_e2e;
 mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
+pub mod poa_signal_adapter;
 pub mod poa_strand_admission;
 pub mod private_dependent_turns;
 mod program_registry_persistence;
