@@ -25,22 +25,23 @@
 // both figures are printed with their correction attached. A number without a denominator, or a
 // number from the neighbouring circuit, is how each of those went wrong.
 //
-// ## ⚑ THERE IS NO SINGLE ARTIFACT THAT HOLDS ALL 14 RUNGS — THE ASSEMBLY IS BUILT HERE
+// ## ⚑ THERE IS NO SINGLE ARTIFACT THAT HOLDS ALL 15 RUNGS — THE ASSEMBLY IS BUILT HERE
 //
 // `KimchiWrapMain.lean`'s `rungsUpto` is a TREE, not a chain: three branches hang off `w9_prev`.
 //
-//     w9_prev ─┬─ w10_finalize                          (finalize_other_proof, wrap_main.ml:329)
+//     w9_prev ─┬─ w10_finalize ── w11_finsponge         (finalize_other_proof, wrap_main.ml:329)
 //              ├─ w11_wraphack ── w12_close             (hash_messages_for_next_wrap_proof, :340)
 //              └─ w10_combine  ── w11_bullet            (Split_commitments.combine + bullet_reduce)
 //
 // so `wrapmain_wrap_w11_bullet.json` is NOT the whole circuit — it is `w9_prev + combine + bullet`
-// and contains none of finalize/wraphack/close. Censusing any ONE emitted file against Mina's blob
-// UNDERSTATES the assembly, and censusing the sum of the files DOUBLE-COUNTS `w9_prev` five times.
+// and contains none of finalize/finsponge/wraphack/close. Censusing any ONE emitted file against
+// Mina's blob UNDERSTATES the assembly, and censusing the sum of the files DOUBLE-COUNTS `w9_prev`
+// six times.
 //
 // This file assembles the union by PREFIX-STRIPPING and VERIFIES the prefix relation on the emitted
 // bytes — `(typ, coeffs)` per row, not on the `rfl` theorem that motivates it. A branch whose body
-// is not its base's body plus a suffix is a BLOCKED run (exit 3), because it means the six files on
-// disk are not one emission.
+// is not its base's body plus a suffix is a BLOCKED run (exit 3), because it means the seven files
+// on disk are not one emission.
 //
 // ⚠ THE ASSEMBLY ORDER ACROSS BRANCHES IS DECLARED, NOT DERIVED — `wrap_main.ml` runs the branches
 // but nothing in the emission fixes their relative order. It matters only where two segments would
@@ -89,16 +90,21 @@ const BASELINE_SCHEMA = 'wrapmain-wrap-census/1';
 const NAMES = ['Zero', 'Generic', 'Poseidon', 'CompleteAdd', 'VarBaseMul', 'EndoMul', 'EndoMulScalar'];
 const ORDER = ['Poseidon', 'EndoMul', 'EndoMulScalar', 'VarBaseMul', 'CompleteAdd', 'Generic', 'Zero'];
 
-// ⚑ ALL FOURTEEN. The freshness floor runs over every one of them, so an emission that stopped at
+// ⚑ ALL FIFTEEN. The freshness floor runs over every one of them, so an emission that stopped at
 // rung 9 BLOCKS instead of grading a nine-rung assembly as though it were the circuit.
+// ⚑ `w11_finsponge` (2026-08-05) is the fifteenth: `finalize_other_proof`'s SPONGE half, which hangs
+// off `w10_finalize` and carries the two `finalize` sponges — the largest single Poseidon family
+// left. It is a `Rung` constructor with a `rungOwn` arm AND an emitted artifact; before it existed
+// this list had fourteen entries and a census that omitted it read 122 Poseidon blocks short.
 const RUNGS = ['w1_transcript', 'w2_challenges', 'w3_branch', 'w4_bind', 'w5_key', 'w6_xhat',
-  'w7_split', 'w8_ftcomm', 'w9_prev', 'w10_finalize', 'w11_wraphack', 'w12_close',
+  'w7_split', 'w8_ftcomm', 'w9_prev', 'w10_finalize', 'w11_finsponge', 'w11_wraphack', 'w12_close',
   'w10_combine', 'w11_bullet'];
 // The union, as `rungsUpto` defines it. `base` is the rung whose body must be a PREFIX of this one's;
 // the difference is this rung's own row-set, and the union is the base plus every own-set exactly once.
 const TRUNK = 'w9_prev';
 const BRANCHES = [
   { tag: 'w10_finalize', base: TRUNK },
+  { tag: 'w11_finsponge', base: 'w10_finalize' },
   { tag: 'w11_wraphack', base: TRUNK },
   { tag: 'w12_close', base: 'w11_wraphack' },
   { tag: 'w10_combine', base: TRUNK },
@@ -408,6 +414,7 @@ function selfTest(mina) {
   good[TRUNK] = mk(trunkRows);
   good.w12_close = mk([...trunkRows, 'Generic|w11_wraphack', 'Generic|w12_close']);
   good.w11_bullet = mk([...trunkRows, 'Generic|w10_combine', 'Generic|w11_bullet']);
+  good.w11_finsponge = mk([...trunkRows, 'Generic|w10_finalize', 'Generic|w11_finsponge']);
   let blocked = false; try { assemble(good); } catch (e) { blocked = !!e.blocked; }
   leg('B4 control: a consistent synthetic emission ASSEMBLES', !blocked, blocked ? 'BLOCKED (wrong)' : 'assembled');
   const bent = JSON.parse(JSON.stringify(good));

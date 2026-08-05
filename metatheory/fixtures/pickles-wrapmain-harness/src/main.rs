@@ -148,10 +148,17 @@ type BaseSponge = DefaultFqSponge<PallasParameters, PlonkSpongeConstantsKimchi, 
 type ScalarSponge = DefaultFrSponge<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
 type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
 
-/// The twelve rungs. Each is a superset of the one below it; `w10_finalize` and `w10_wraphack`
-/// both hang off `w9_prev`, because `wrap_main.ml` runs `finalize_other_proof` (`:329`) before
-/// `hash_messages_for_next_wrap_proof` (`:340`) and neither reads the other's rows.
-const RUNGS: [&str; 14] = [
+/// The fifteen rungs. `rungsUpto` is a TREE, not a chain — each rung is a superset of its BASE, and
+/// three branches hang off `w9_prev`, because `wrap_main.ml` runs `finalize_other_proof` (`:329`)
+/// before `hash_messages_for_next_wrap_proof` (`:340`) and neither reads the other's rows:
+///
+///     w9_prev ─┬─ w10_finalize ── w11_finsponge
+///              ├─ w11_wraphack ── w12_close
+///              └─ w10_combine  ── w11_bullet
+///
+/// ⚠ So no single file here is the whole circuit, and this array's ORDER is the emission order, not
+/// a containment order. `wrapmain-shape-diff.mjs` assembles the union by prefix-stripping.
+const RUNGS: [&str; 15] = [
     "w1_transcript",
     "w2_challenges",
     "w3_branch",
@@ -162,6 +169,9 @@ const RUNGS: [&str; 14] = [
     "w8_ftcomm",
     "w9_prev",
     "w10_finalize",
+    // ⚑ W-FINSPONGE: `finalize_other_proof`'s sponge half — the nested challenge digest, the
+    // 91-element finalize sponge, and the three legs of `Boolean.all` that need its two squeezes.
+    "w11_finsponge",
     "w11_wraphack",
     "w12_close",
     // ⚑ W-COMBINE and W-BULLET hang off `w9_prev` too, and they are the pair that closes
@@ -578,7 +588,7 @@ mod wrapmain_tests {
     /// The fixture subset actually PROVED in CI: the bottom rung, the closing rung, and the top
     /// one. w2/w3 are read for their census without proving, because each prove is seconds and the
     /// ladder pins (`KimchiWrapMain` §12b, §14b) already establish that they are supersets.
-    const COMMITTED: [&str; 12] = [
+    const COMMITTED: [&str; 13] = [
         "w1_transcript",
         "w4_bind",
         "w5_key",
@@ -587,6 +597,7 @@ mod wrapmain_tests {
         "w8_ftcomm",
         "w9_prev",
         "w10_finalize",
+        "w11_finsponge",
         "w11_wraphack",
         "w12_close",
         "w10_combine",
@@ -820,6 +831,73 @@ mod wrapmain_tests {
             w5.probe_rows.len(),
             w4.probe_rows.len() + 1,
             "the index sponge's single squeeze must add exactly one sigma-only probe"
+        );
+    }
+
+    /// ⚑ w11_finsponge IS `finalize_other_proof`'s SPONGE half, and this is the census that says so
+    /// — the rung this whole epoch's largest remaining Poseidon gap was named against.
+    ///
+    /// Per instance: the nested challenge-digest sponge over the 30 flattened old bulletproof
+    /// challenges (**15** permutations — the rate-2 machine permutes before absorbs 3, 5, …, 29,
+    /// which is 14, and once more for the squeeze, which arrives at `Absorbed 2`), and the
+    /// 91-element finalize sponge (**46** — 45 during the absorbs and one for the FIRST squeeze;
+    /// the second reads lane 1 of that SAME permutation, `wrap_verifier.ml:892-894`, which is why
+    /// this is 46 and not 47). **61 per instance, 122 at `prevs = 2`.** Mina's `wrap-transaction`
+    /// carries 261 `(Poseidon x 11, Zero)` blocks; the assembly carried 137 before this rung.
+    ///
+    /// ⚠ The `EndoMulScalar` run length is asserted at **8** and that is this file being STRICTER
+    /// than Mina, not short of it. `compute_challenges` (`:1012-1013`) lifts all fifteen bulletproof
+    /// challenges in ONE unbroken `EndoMulScalar x 120` run upstream; `tfcRowsQ` brackets every
+    /// chain with its own seed pins and lift row because upstream's `a0`/`b0` are one constant
+    /// `Cvar` and its `a8`/`b8` closing is a `Cvar` linear combination that emits NO row. Fifteen
+    /// chains therefore come out as fifteen x8 blocks. Widening the emitted rows to reach x120
+    /// would be emitting rows to match a histogram.
+    #[test]
+    fn finsponge_rung_adds_the_two_finalize_sponges() {
+        let w10 = load("w10_finalize");
+        let w11 = load("w11_finsponge");
+        let c10 = gate_census(&w10);
+        let c11 = gate_census(&w11);
+        assert!(w11.num_rows > w10.num_rows, "the ladder is monotone");
+        assert_eq!(
+            c11[2],
+            c10[2] + 122 * 11,
+            "w11_finsponge must add exactly 122 whole Fq permutations - 61 per instance at prevs=2"
+        );
+        for (i, n) in run_lengths(&w11, 2).iter().enumerate() {
+            assert_eq!(*n, 11, "Poseidon run {i} is {n} rows, not one permutation");
+        }
+        // The sponge half emits no curve gadget at all: the ladders it needs (`compute_challenges`)
+        // are `EndoMulScalar` chains, and the three legs are Generic arithmetic.
+        for k in [3usize, 4, 5] {
+            assert_eq!(
+                c11[k], c10[k],
+                "the sponge half emits no curve gate - family {k} must not move"
+            );
+        }
+        // 19 `to_field_checked` chains per instance: fifteen `compute_challenges` lifts plus
+        // xi/xi_hi/r/r_hi, at 8 `EndoMulScalar` rows each.
+        assert_eq!(
+            c11[6],
+            c10[6] + 2 * 19 * 8,
+            "w11_finsponge must add exactly 19 eight-row lift chains per instance"
+        );
+        for (i, n) in run_lengths(&w11, 6).iter().enumerate() {
+            assert_eq!(*n, 8, "EndoMulScalar run {i} is {n} rows, not one chain");
+        }
+        assert_eq!(
+            w11.public_input_size, w10.public_input_size,
+            "W-FINSPONGE derives no NEW wrap statement word - it derives the PREVIOUS statement's"
+        );
+        assert_eq!(
+            w11.probe_rows.len(),
+            w10.probe_rows.len() + 2,
+            "one sigma-only probe per instance, on the two `Field.equal` outputs"
+        );
+        assert_eq!(
+            w11.gates.len(),
+            w11.num_rows,
+            "placement produced a gate per row (incl. the public rows)"
         );
     }
 

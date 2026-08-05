@@ -541,10 +541,19 @@ honest previous statement does, and a fixture there makes the rung unsatisfiable
 the same reason.** `xhatScalar` needs the values (words 27, 28 and 37 are x_hat entries 32/33, 34/35
 and 47) and the derivation that produces them is a 91-element Fq sponge plus a 1200-op straight-line
 program, which lives two modules above this one. ⚠ They are NOT fixtures:
-`KimchiWrapMain.fin_deferred_words_are_the_derivation` closes them by `rfl` IN THE KERNEL against
+`KimchiWrapMain.fin_deferred_words_are_the_derivation` (`…Pins12`) closes them against
 `finSpDerivedWords` — the very function `finSpRows` builds its witness from — and
 `EmitWrapMainJson` REFUSES to emit a tree where they disagree. A value that cannot reach a proved
 circuit while wrong is a memo; one that can is a fixture.
+
+⚠ ⚑ **AND UNTIL 2026-08-05 THAT THEOREM DID NOT EXIST — this paragraph said it "closes them by
+`rfl` IN THE KERNEL" and three other docblocks agreed with it.** `grep` over the tree found four
+citations and no `theorem`; the only live discharge was the emitter's runtime refusal. It exists
+now and it is **`native_decide` + `#assert_compiled`**, because the derivation is two sponges plus a
+**1732**-op `Array FOp` program per instance and in `whnf` an `Array` is its `List` model — a ~200-op
+program of the same shape does not reduce `.size` alone at 1,000,000 heartbeats
+(`KimchiWrapFinalizeSpongeGate`). A kernel `rfl` was never available here; claiming one for four
+docblocks is the same laundering as a `#guard`, spread over four files.
 
 ⚠ **AND ONLY ONE BLOCK GETS THEM, WHICH IS WHAT KEEPS THE ASSERT FALSIFIABLE.** Block 0's
 `should_finalize` is 0, so it keeps its `a^9` fixtures, runs all three `Field.equal` gadgets at

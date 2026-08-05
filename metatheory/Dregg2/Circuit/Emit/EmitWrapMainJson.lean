@@ -163,9 +163,12 @@ def main : IO Unit := do
   -- are the three deferred words the finalizing block carries, and `xhatScalar` reads them, so a
   -- wrong triple would put a scalar into the x_hat MSM that no row of W-FINSPONGE computes and make
   -- `Boolean.Assert.any [finalized; not should_finalize]` unsatisfiable in the rung that emits it.
-  -- The kernel closes this at BOTH committed shapes (`fin_deferred_words_are_the_derivation`); this
-  -- covers a `DREGG_WM`-supplied one, and it costs one evaluation of a program the emission runs
-  -- anyway.
+  -- ⚑ `fin_deferred_words_are_the_derivation` (`…Pins12`) closes this at the SMOKE shape by
+  -- `native_decide`; ⚠ it is not, and was never, a kernel `rfl` at both shapes, whatever this
+  -- comment said until 2026-08-05 — for a day the theorem it cited did not exist at all and THIS
+  -- refusal was the only discharge there was. It still is the only one at the WRAP shape and at any
+  -- `DREGG_WM`-supplied one, which is why it is here and not a comment, and it costs one evaluation
+  -- of a program the emission runs anyway.
   let fd := finSpDerivedWords (mkWrap s)
   if (FIN_DEFERRED_CIP, FIN_DEFERRED_B, FIN_DEFERRED_XI) != fd then
     throw (IO.userError s!"⚑ FIN_DEFERRED_* IS NOT THE DERIVATION: the memo carries \

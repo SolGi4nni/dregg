@@ -260,8 +260,12 @@ assembly against it. RE-GRADED at `w6_xhat` (exit 0), the verdicts that are not 
     ⚠ ⚑ **AND THE COUNT IS NOT THE CIRCUIT.** Mina's `wrap-transaction` carries **261**
     `Poseidon × 11` blocks. Quoting "89/89, 100%" as though it were a coverage figure — this
     header did — reads a per-instance fidelity result as a whole-circuit one; it was 89 of 261,
-    i.e. 34%, and it is 137 of 261 now. The remainder is W-FINALIZE's two `finalize_other_proof`
-    sponges at `prevs = 2` (≈122 blocks) and is named in §13 item 7, not implied by a percentage.
+    i.e. 34%, then 137 of 261, and it is **259 of 261** since W-FINSPONGE (§20) landed
+    `finalize_other_proof`'s two sponges: 15 permutations for the nested challenge digest and 46 for
+    the 91-element finalize sponge, **61 per instance and 122 at `prevs = 2`** — measured off the
+    emitted rows by `finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks`, not derived from a
+    schedule. ⚠ The remaining TWO blocks are named nowhere yet, which is said rather than rounded
+    away; §13 item 7 carries the rest.
     ⚑ **AND THE 48 W-WRAPHACK ADDED INTRODUCE NO NEW SIGNATURE**, measured on the emitted smoke JSON
     rather than argued: `w9_prev` carries 46 `Poseidon` runs, `w11_wraphack` 94, **every one of them
     eleven rows long and every one of them the SAME single coefficient signature** — the class
@@ -423,6 +427,7 @@ import Dregg2.Circuit.Emit.KimchiWrapMainPins08
 import Dregg2.Circuit.Emit.KimchiWrapMainPins09
 import Dregg2.Circuit.Emit.KimchiWrapMainPins10
 import Dregg2.Circuit.Emit.KimchiWrapMainPins11
+import Dregg2.Circuit.Emit.KimchiWrapMainPins12
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 open Dregg2.Circuit.Emit.KimchiTarget (KGateType K_PERMUTS)
@@ -537,15 +542,32 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      against packed statement word 4, and `Boolean.Assert.any [finalized; not should_finalize]`.
      Its α and ζ arrive through two `to_field_checked` chains at `ENDO_Q`, through §5's SHARED endo
      cell; β and γ are the RAW packed words, which is `map_plonk_to_field`'s own split.
-     ❌ **WHAT IT DOES NOT EMIT, AND WHAT THAT COSTS.** Three of `Boolean.all`'s four legs —
-     `xi_correct`, `b_correct`, `combined_inner_product_correct` — all need the finalize SPONGE
-     (`:844-894`: absorb `sponge_digest_before_evaluations`, a nested challenge-digest sponge over
-     the padded old bulletproof challenges, `ft_eval1`, both `public_input` evals and the 86-cell
-     absorption sequence, then squeeze ξ and r). Emitting ξ or r as free witnesses to get the legs
-     would be a witness nothing constrains, so they are NOT emitted. ⛑ That sponge is also where
-     wrap's largest remaining GATE gap lives: a calibrated census against Mina's real
-     `wrap-transaction` blob puts us **979 Poseidon against 2871**, and ≈122 of the 172 missing
-     `(Poseidon × 11, Zero)` blocks are these two sponges at `prevs = 2`.
+     ✅ **W-FINSPONGE — THE OTHER THREE LEGS LAND at `w11_finsponge`** (§20, 2026-08-05). What this
+     entry used to say — *"three of `Boolean.all`'s four legs all need the finalize SPONGE, and
+     emitting ξ or r as free witnesses would be a witness nothing constrains, so they are NOT
+     emitted"* — was the right refusal and it is discharged the way it asked to be: **the sponge is
+     emitted, and ξ and r are its two squeezes.** `wrap_verifier.ml:844-894`, on the nose: a nested
+     challenge-digest sponge over the 30 flattened old bulletproof challenges, then the 91-element
+     finalize sponge (`sponge_digest_before_evaluations`, that digest, `ft_eval1`, both
+     `public_input` evals, and `Evals.to_absorption_sequence`'s 43 columns at ζ and ζω interleaved),
+     then TWO squeezes out of ONE permutation at lanes 0 and 1. `xi_correct` (`:895-902`),
+     `b_correct` (`:1015-1026`, over `compute_challenges`' fifteen 128-bit lifts) and
+     `combined_inner_product_correct` (`:951-1009`, a 47-entry Horner fold in ξ per point) are three
+     real `Field.equal` gadgets, and `finsponge_legs_take_both_field_equal_branches` measures BOTH of
+     the gadget's branches live in one emission — the finalizing block at difference 0, the other at
+     a nonzero difference — so no leg is a constant 1.
+     ⛑ **AND IT IS WHERE WRAP'S LARGEST REMAINING GATE GAP WAS.** The census that motivated this
+     rung read **137 `(Poseidon × 11, Zero)` blocks of Mina's 261**; the two sponges are **61 per
+     instance and 122 at `prevs = 2`** (`finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks`,
+     measured off the emitted rows), so it is **259 of 261**. `prevs = 2` at both committed shapes,
+     so that is the wrap-scale figure too. ⚠ The residual TWO blocks are not this sponge's and are
+     not yet attributed; and the `Zero` overshoot grows with the win, because each block ends in its
+     own `Zero` and each squeeze is followed by a σ-only probe.
+     ⚠ **WHAT IT COSTS: three packed statement words stop being fixtures.** The finalizing block's
+     `combined_inner_product`, `b` and `xi` are now `FIN_DEFERRED_*`, a memo closed by
+     `fin_deferred_words_are_the_derivation` and refused at every emission. Those are x_hat MSM
+     entries 32/33, 34/35 and 47, so `xhatOut 67` moves and **every `wrapmain_wrap_*.json` from
+     `w6_xhat` up re-emits**. The SMOKE shape does not move (`xhatSel 5` selects none of them).
      ⚠ **AND THE `EndoMulScalar` DIVERGENCE IS THIS RUNG'S SHAPE, NOT ITS COUNT.** Mina's blob has
      `EndoMulScalar × 120` twice — `compute_challenges` (`:1012-1013`) lifting all fifteen
      bulletproof challenges in ONE unbroken run, once per instance — plus `×24` twice and `×16` six
@@ -666,12 +688,25 @@ measurement that sizes it. None of them is a value this file fakes and calls der
     W-BULLET and W-FINALIZE. Everything this file proves is about the transcript and the selection.
 -/
 
--- ⚠ ⚑ THE ONE EXCEPTION, AND IT IS NAMED RATHER THAN WAIVED.
--- `bullet_solves_g_on_curve_and_equal_g_is_one` rests on `native_decide` oracle axioms because
--- `bullData` does not whnf inside the heartbeat budget; it is pinned by `#assert_compiled` at its
--- own site, which is a RED path in both directions (a `sorry` still fails, and a kernel-clean fact
--- pinned there ALSO fails). Nothing else in this namespace is compiler-trusted.
+-- ⚠ ⚑ THE EXCEPTIONS, NAMED RATHER THAN WAIVED — and every one of them pinned by
+-- `#assert_compiled` at its own site, which is a RED path in BOTH directions (a `sorry` still
+-- fails, and a fact that BECOMES kernel-clean ALSO fails and forces the pin back up).
+--
+-- `bullet_solves_g_on_curve_and_equal_g_is_one` (§24c) rests on `native_decide` because `bullData`
+-- does not whnf inside the heartbeat budget.
+--
+-- The four §20b‴ pins rest on it because they read slots of a **1732-op `Array FOp`** program whose
+-- inputs come through `finZW0`'s 1047-op probe, and in `whnf` an `Array` is its `List` model:
+-- `KimchiWrapFinalizeSpongeGate` measured a ~200-op program of the same shape failing to reduce
+-- `.size` alone at 1,000,000 heartbeats. ⚠ Four docblocks in this tree said
+-- `fin_deferred_words_are_the_derivation` closed "by `rfl` IN THE KERNEL" while no such theorem
+-- existed at all; it exists now, and it is compiled, and the docblocks say so.
+-- Nothing else in this namespace is compiler-trusted.
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMain
   except bullet_solves_g_on_curve_and_equal_g_is_one
+         fin_deferred_words_are_the_derivation
+         finsponge_legs_take_both_field_equal_branches
+         finsponge_assert_reds_if_the_other_block_claims_should_finalize
+         finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

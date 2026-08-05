@@ -97,7 +97,7 @@ const FP = 289480223093290488558927462521719769633630564819415607159546767643499
 // emits and called the missing curve work an "absent region".
 // `KimchiWrapMain.lean:5132`'s `rungsUpto` branches THREE ways off `.prev` (w9_prev), and each
 // branch has its own tip — there is no single maximum:
-//     w9_prev ─┬─ w10_finalize ── w11_finsponge   (W-FINALIZE; finsponge is NOT emitted, see below)
+//     w9_prev ─┬─ w10_finalize ── w11_finsponge   (W-FINALIZE, W-FINSPONGE)
 //              ├─ w11_wraphack ── w12_close       (W-WRAPHACK, W-CLOSE)
 //              └─ w10_combine  ── w11_bullet      (W-COMBINE, W-BULLET)
 // THE CHOICE IS `w11_bullet`, and the reason is what this file measures. This gate is a GADGET
@@ -112,8 +112,13 @@ const FP = 289480223093290488558927462521719769633630564819415607159546767643499
 // UNION is the object `wrapmain-shape-diff.mjs` grades, by prefix-stripping the three branches and
 // verifying the prefix relation on the emitted rows; a single-rung gate cannot be the union and
 // does not pretend to be.
-// ⚠ `w11_finsponge` is a `Rung` constructor with a `rungOwn` arm and NO emitted artifact — the
-// emitter produces 14 rungs, not 15. It is not reachable as a top rung today.
+// ⚑ 2026-08-05: `w11_finsponge` IS emitted now — `EmitWrapMainJson`'s loop runs all FIFTEEN rungs
+// and the harness proves it — so the sentence that used to sit here ("a `Rung` constructor with a
+// `rungOwn` arm and NO emitted artifact") is retired. It is still not the TOP RUNG for THIS gate,
+// and that is a deliberate choice with the same reason as before: `w11_finsponge` adds two Fq
+// sponges (122 `(Poseidon × 11, Zero)` blocks at `prevs = 2`) and no curve ladder, so it carries
+// nothing this gadget-diff grades. The rung UNION — where those 122 blocks DO count — is
+// `wrapmain-shape-diff.mjs`'s object, and that file assembles all fifteen.
 const TOP_RUNG = 'w11_bullet';
 const LEAN_DEFAULT = `/tmp/pickles-wrapmain/wrapmain_wrap_${TOP_RUNG}.json`;
 // ⚑ THE COMMITTED FIXTURE. ⚠ 2026-08-03: the comment that used to sit here announced this fixture

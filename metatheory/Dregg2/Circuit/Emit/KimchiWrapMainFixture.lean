@@ -161,4 +161,36 @@ def tCommCells (t : WrapData) : List PVar :=
 def tCommReadsIn (t : WrapData) (k : Rung) : Nat :=
   ((rungCells t k).filter (fun v => (tCommCells t).contains v)).length
 
+/-! ### §20's SUBJECTS — W-FINSPONGE's per-instance data and its own emitted rows.
+
+⚠ Everything below is downstream of `finZW0`, which runs §19's 1047-op probe program to solve the
+finalizing block's `z(ζω)`. So a `def` here is affordable to EVALUATE and not to REDUCE, and
+`KimchiWrapMainPins12` says which of its pins that costs. -/
+
+/-- Every instance's sponge half at the smoke shape, built ONCE — `finSpRows`, `finSpEnv` and
+`finSpDerivedWords` each build this internally, so a pin that wants two of them pays for it twice
+unless it comes through here. -/
+def finSpDataW : List FinSpData := finSpAll tW (finAll tW)
+
+/-- Instance `p`'s five `Boolean.all` slots as the emission actually witnesses them:
+`(xi_correct, b_correct, combined_inner_product_correct, finalized, (1 − finalized)·should_finalize)`. -/
+def finSpLegsAt (p : Nat) : Nat × Nat × Nat × Nat × Nat :=
+  let d := finSpDataW.getD p default
+  ( d.vals.getD d.fp.slots.xc 0
+  , d.vals.getD d.fp.slots.bc 0
+  , d.vals.getD d.fp.slots.cc 0
+  , d.vals.getD d.fp.slots.finalized 0
+  , d.vals.getD d.fp.slots.out 0 )
+
+/-- …and the THREE `Field.equal` differences the legs are read off, which is where both branches of
+the gadget live: zero on the block that carries the derived words, nonzero on the one that does not. -/
+def finSpDiffsAt (p : Nat) : Nat × Nat × Nat :=
+  let d := finSpDataW.getD p default
+  ( d.vals.getD d.fp.slots.dXi 0
+  , d.vals.getD d.fp.slots.dB 0
+  , d.vals.getD d.fp.slots.dCip 0 )
+
+/-- W-FINSPONGE's OWN emitted rows at the smoke shape — the rung's row-set, not the ladder's. -/
+def finSpRowsW : List WRow := rungOwn tW true .finsponge
+
 end Dregg2.Circuit.Emit.KimchiWrapMain
