@@ -191,7 +191,10 @@ globs = [
   "Dregg2.Circuit.Emit.EmitWrapMainJson",
   # ⚑ The §15c‴ memo's BOOTSTRAP. It prints `finSpDerivedWords` so `FIN_DEFERRED_CIP/_B/_XI`
   # can be typed in; the OBLIGATION that they are that triple is discharged by
-  # `fin_deferred_words_are_the_derivation` (kernel `rfl`) and `EmitWrapMainJson`'s refusal.
+  # `fin_deferred_words_are_the_derivation` (`…Pins12`, `native_decide` + `#assert_compiled` —
+  # ⚠ this line said "kernel `rfl`" and was the FIFTH docblock to say so about a theorem that
+  # did not exist until 2026-08-05; the derivation is a 1732-op `Array FOp` program and `whnf`
+  # models an `Array` as a `List`) and `EmitWrapMainJson`'s refusal.
   # It was an unlisted orphan and therefore never compiled -- while it was the only way to
   # repair the memo that `d6683dd54` left at three zeros, which made every wrap emission
   # REFUSE. A bootstrap nothing builds is a bootstrap nobody can run.
@@ -236,4 +239,19 @@ globs = [
   # `#assert_axioms` + 11 `#assert_compiled` between them; both GREEN and cheap (2 s / 3 s).
   "Dregg2.Games.PathOfAngels.ActivityOutcome",
   "Dregg2.Games.PathOfAngels.DeckExpedition",
+  # ⚑ 2026-08-05 — THE GALLEY BOUNDARY TEETH RAN NOWHERE. Both modules are imported by NOTHING,
+  # appear in no `globs` above, and are not even in `scripts/lean-orphans-allow.txt` — so their
+  # 33 `#assert_axioms`-clean privacy theorems (13 + 20) executed in no `lake build` at all. Those
+  # theorems are the ONLY thing standing between the Galley kernel and a published `State.mk` /
+  # `reduce` / post-ballot fixture, and `docs/poa/GALLEY-LAYER-CONTRACT.md` §0 credits them as the
+  # kernel's ratchet. A ratchet nothing runs is not a ratchet: this is the same
+  # gating-defaults-to-silence wound as `TurnAuthLamportEmit` above, on a module whose whole job is
+  # to go red.
+  # Marginal cost is exactly these 2 modules: their entire import closure
+  # (`GalleyMaintenanceDaily` → `GalleyCommons` → `Canon`/`HolderMechanics`/
+  # `FinalizedRunEventAggregate`) is ALREADY in the default-target closure via
+  # `Dregg2.lean` → `Dregg2.FFI` → `…PathOfAngels.GalleyMaintenanceDailyRuntime` →
+  # `…GalleyMaintenanceDaily`, so nothing new is pulled in.
+  "Dregg2.Games.PathOfAngels.GalleyCommonsBoundary",
+  "Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary",
 ]
