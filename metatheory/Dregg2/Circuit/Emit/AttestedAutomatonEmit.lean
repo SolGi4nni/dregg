@@ -1169,20 +1169,21 @@ def wordN (n : Nat) : List Nat := List.replicate n 1
 
 -- Its wire size, pinned: 1190 bytes, of which the two 8-lane digest groups (`root`, `new_root` —
 -- the deployed `MapOpSpec.root : Vec<LeanExpr>` shape) are the bulk.
-#guard jsonBytes attestedInstance == 1190
+#guard jsonBytes attestedInstance == 1205
 
 -- ⚑ THE BYTES, MEASURED AGAINST THE RUN-TABLE BASELINE at k = 4. The attested descriptor is FLAT;
 -- the run-table descriptor grows ~10 bytes per symbol because it SHIPS THE RUN to the verifier.
--- They TIE at |w| = 60 (1190 = 1190); the attested object is strictly smaller from |w| = 61 on,
+-- They TIE at |w| = 60 (1205 = 1205); the attested object is strictly smaller from |w| = 61 on,
+-- (+15 bytes each side since 2026-08-05: the `,"challenges":0` header. The crossover is unmoved.)
 -- and strictly larger below. This is the honest byte crossover, not a claimed win.
 #guard (List.map (fun n => (jsonBytes attestedInstance, jsonBytes (prodRunDesc 4 (wordN n))))
     [8, 32, 60, 61, 128])
-  == [(1190, 669), (1190, 909), (1190, 1190), (1190, 1199), (1190, 1869)]
+  == [(1205, 684), (1205, 924), (1205, 1205), (1205, 1214), (1205, 1884)]
 
--- At the FIXED 8-symbol probe word the run-table descriptor is the smaller object (654–670 vs
--- 1190) — but it is a DIFFERENT object for each k AND each word, and it binds no automaton.
+-- At the FIXED 8-symbol probe word the run-table descriptor is the smaller object (669–685 vs
+-- 1205) — but it is a DIFFERENT object for each k AND each word, and it binds no automaton.
 #guard (List.map (fun k => (jsonBytes attestedInstance, jsonBytes (prodRunDesc k probeW)))
-    [1, 2, 3, 4]) == [(1190, 654), (1190, 654), (1190, 665), (1190, 670)]
+    [1, 2, 3, 4]) == [(1205, 669), (1205, 669), (1205, 680), (1205, 685)]
 
 -- ⚑ MAIN-TRACE AREA (columns × trace rows): attested 4·|w| vs the unbound run table's 3·|w|.
 -- The +|w| is the root column.

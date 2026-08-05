@@ -112,7 +112,6 @@ def refs2 : VmConstraint2 → List Nat
   | .proofBind m => refsE m.guard ++ refsE m.commit ++ refsE m.vk
       ++ (m.bound.map refsE).getD []
   | .windowGate w => refsW w.body
-  | .chalGate w => refsW w.body
 
 /-- The columns a hash site reads or writes. -/
 def refsSite (s : VmHashSite) : List Nat :=
@@ -204,7 +203,6 @@ def mapC2 (g : Nat → Nat) : VmConstraint2 → VmConstraint2
       , vkPin := m.vkPin
       , bound := m.bound.map (mapVarE g) }
   | .windowGate w => .windowGate { body := mapVarW g w.body, onTransition := w.onTransition }
-  | .chalGate w => .windowGate { body := mapVarW g w.body, onTransition := w.onTransition }
 
 /-! ## §2 — the S2 dead-column geometry and the index map. -/
 
@@ -468,6 +466,31 @@ theorem evalE_map_agree (g : Nat → Nat) (e : EmittedExpr) (a aX : Assignment)
   rw [evalE_map]
   exact (evalE_congr e aX (fun c => a (g c)) h).symm
 
+/-- ⚑ The challenge-expression twin of `evalW_map_agree`. It needs the extra hypothesis
+`envX.chal = env.chal`: a column REMAP does not touch the verifier's drawn randomness, so the two
+environments must carry the SAME challenge slice for the two evaluations to agree. Compaction
+preserves it (it rewrites column indices only), which is why the hypothesis is dischargeable — but
+it is a hypothesis rather than an assumption, because a transport that silently re-drew the
+challenge would be transporting a different gate. -/
+theorem evalChal_map_agree (g : Nat → Nat) (w : ChalExpr) (env envX : VmRowEnv)
+    (hloc : ∀ r ∈ refsChal w, envX.loc r = env.loc (g r))
+    (hnxt : ∀ r ∈ refsChal w, envX.nxt r = env.nxt (g r))
+    (hchal : envX.chal = env.chal) :
+    (mapChal g w).eval env = w.eval envX := by
+  induction w with
+  | loc c => exact (hloc c (by simp [refsChal])).symm
+  | nxt c => exact (hnxt c (by simp [refsChal])).symm
+  | const k => rfl
+  | chal i => simp [mapChal, ChalExpr.eval, hchal]
+  | add x y ihx ihy =>
+      simp only [mapChal, ChalExpr.eval]
+      rw [ihx (fun r hr => hloc r (by simp [refsChal, hr])) (fun r hr => hnxt r (by simp [refsChal, hr])),
+          ihy (fun r hr => hloc r (by simp [refsChal, hr])) (fun r hr => hnxt r (by simp [refsChal, hr]))]
+  | mul x y ihx ihy =>
+      simp only [mapChal, ChalExpr.eval]
+      rw [ihx (fun r hr => hloc r (by simp [refsChal, hr])) (fun r hr => hnxt r (by simp [refsChal, hr])),
+          ihy (fun r hr => hloc r (by simp [refsChal, hr])) (fun r hr => hnxt r (by simp [refsChal, hr]))]
+
 theorem evalW_map_agree (g : Nat → Nat) (w : WindowExpr) (env envX : VmRowEnv)
     (hloc : ∀ r ∈ refsW w, envX.loc r = env.loc (g r))
     (hnxt : ∀ r ∈ refsW w, envX.nxt r = env.nxt (g r)) :
@@ -647,6 +670,10 @@ def expandTrace (permOut : List ℤ → List ℤ) (bb laneBase : Nat) (t : VmTra
   let rows := t.rows.map (expandRow permOut (dropIdx bb laneBase) plan)
   { rows := rows
   , pub := t.pub
+  -- ⚑ The expansion rewrites COLUMNS and grows the chip table; the verifier's drawn randomness is
+  -- CARRIED, never re-derived. Defaulting it here would have made `holdsAt_transport`'s `hchal`
+  -- true only for challenge-free traces while looking general.
+  , chal := t.chal
   , tf := fun tid => if tid = TableId.poseidon2
       then t.tf TableId.poseidon2
         ++ rows.flatMap (fun aX => plan.map (fun p => chipRowN permOut (insVals aX p.1)))
@@ -701,6 +728,9 @@ theorem holdsAt_transport (hash : List ℤ → ℤ) (g : Nat → Nat)
     (hloc : ∀ r ∈ refs2 c, EX.loc r = E.loc (g r))
     (hnxt : ∀ r ∈ refs2 c, EX.nxt r = E.nxt (g r))
     (hpub : EX.pub = E.pub)
+    -- ⚑ A column remap does not re-draw the verifier's randomness; the challenge slice is carried,
+    -- not rebuilt. Named as a hypothesis so a transport that DID change it cannot be proved here.
+    (hchal : EX.chal = E.chal)
     (htrans : ∀ hi lo, c = .base (.transition hi lo) →
         g (sbCol hi) = sbCol hi ∧ g (saCol lo) = saCol lo)
     (htbl : ∀ tid : TableId, ∀ row ∈ tfC tid, row ∈ tfX tid)
@@ -824,6 +854,15 @@ theorem holdsAt_transport (hash : List ℤ → ℤ) (g : Nat → Nat)
         (fun r hr => hnxt r (by simpa [refs2] using hr))
     cases how : w.onTransition <;>
       simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, mapC2, how] at h ⊢ <;>
+      rwa [heq] at h
+  | chalGate w =>
+    have heq : (mapChal g w.body).eval E = w.body.eval EX :=
+      evalChal_map_agree g w.body E EX
+        (fun r hr => hloc r (by simpa [refs2] using hr))
+        (fun r hr => hnxt r (by simpa [refs2] using hr))
+        hchal
+    cases how : w.onTransition <;>
+      simp only [VmConstraint2.holdsAt, ChalConstraint.holdsAt, mapC2, how] at h ⊢ <;>
       rwa [heq] at h
 
 /-- Hash-site transport: the mapped site list holding on the compact row is the original list
@@ -1122,6 +1161,9 @@ theorem compactS2_expand (permOut : List ℤ → List ℤ) (hash : List ℤ → 
   have hnxtAg : ∀ i, ∀ c, c ∉ dead → (envAt tX i).nxt c = (envAt t i).nxt (g c) :=
     fun i c hc => expandTrace_getD_agree permOut bb laneBase t hsub (i + 1) c hc
   have hpubAg : ∀ i, (envAt tX i).pub = (envAt t i).pub := fun _ => rfl
+  -- ⚑ The expansion rewrites COLUMNS; it carries the challenge slice unchanged, which is what
+  -- `holdsAt_transport`'s `hchal` asks for.
+  have hchalAg : ∀ i, (envAt tX i).chal = (envAt t i).chal := fun _ => rfl
   have hnotdead : ∀ (c : VmConstraint2), keptOk bb laneBase c = true →
       ∀ r ∈ refs2 c, r ∉ dead := by
     intro c hk r hr
@@ -1244,6 +1286,7 @@ theorem compactS2_expand (permOut : List ℤ → List ℤ) (hash : List ℤ → 
         (fun r hr => hlocAg i r (hnotdead c hkept r hr))
         (fun r hr => hnxtAg i r (hnotdead c hkept r hr))
         (hpubAg i)
+        (hchalAg i)
         ?_ (expandTrace_table_mono permOut bb laneBase t) hcompact
       intro hi' lo' hceq
       subst hceq

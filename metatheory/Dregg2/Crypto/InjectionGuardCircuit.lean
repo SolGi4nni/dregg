@@ -485,7 +485,7 @@ objects are `mirrorRunDesc`/`bytesRunDesc` at the index words named here. -/
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
   , declaredRows := 3, forcedTraceRows := .pinned 3, nonlinearMults := 0 }
 #guard (costOf (bytesRunDesc injectSyms)).area == some 9
-#guard jsonBytes (bytesRunDesc injectSyms) == 613
+#guard jsonBytes (bytesRunDesc injectSyms) == 628
 
 -- …and at |field| = 5 bytes, the ONLY axis that moves is the table height (and 16 wire bytes,
 -- 8 per extra row): the circuit is O(1) in width/constraints/PIs and LINEAR in field length.
@@ -493,14 +493,14 @@ objects are `mirrorRunDesc`/`bytesRunDesc` at the index words named here. -/
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
   , declaredRows := 5, forcedTraceRows := .pinned 5, nonlinearMults := 0 }
 #guard (costOf (bytesRunDesc loneSyms)).area == some 15
-#guard jsonBytes (bytesRunDesc loneSyms) == 629
+#guard jsonBytes (bytesRunDesc loneSyms) == 644
 
 -- The mirror's circuit, for comparison — identical shape, so the one-token/two-byte spelling
 -- difference costs NOTHING in circuit area (it only moved a state class).
 #guard costOf (mirrorRunDesc mirrorMaliciousSyms) ==
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
   , declaredRows := 2, forcedTraceRows := .pinned 2, nonlinearMults := 0 }
-#guard jsonBytes (mirrorRunDesc mirrorMaliciousSyms) == 606
+#guard jsonBytes (mirrorRunDesc mirrorMaliciousSyms) == 621
 
 /-! ## §5 — Axiom hygiene. -/
 

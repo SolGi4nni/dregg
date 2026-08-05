@@ -491,7 +491,7 @@ gate ("never quote a cost without a `Satisfied2Public` witness") is met by const
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
   , declaredRows := 3, forcedTraceRows := .pinned 3, nonlinearMults := 0 }
 #guard (costOf (nodbRunDesc sepSyms)).area == some 9
-#guard jsonBytes (nodbRunDesc sepSyms) == 616
+#guard jsonBytes (nodbRunDesc sepSyms) == 631
 
 end Deployed
 
@@ -662,7 +662,7 @@ theorem pair_circuit_exposes_the_weakening :
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
   , declaredRows := 3, forcedTraceRows := .pinned 3, nonlinearMults := 0 }
 #guard (costOf (pairRunDesc sepSyms2)).area == some 9
-#guard jsonBytes (pairRunDesc sepSyms2) == 628
+#guard jsonBytes (pairRunDesc sepSyms2) == 643
 
 end Pair
 

@@ -716,7 +716,7 @@ preserved) and `TinyAutomataCompose.forced_trace_length` (why the declared table
   == [(some 24, some 24), (some 20, some 20), (some 18, some 18), (some 17, some 17)]
 
 -- The emitted WIRE BYTES of the packed descriptors (the verifier-held object).
-#guard (List.map (fun s => jsonBytes (packK4 s)) [1, 2, 4, 8]) == [673, 763, 943, 1316]
+#guard (List.map (fun s => jsonBytes (packK4 s)) [1, 2, 4, 8]) == [688, 778, 958, 1331]
 
 -- Byte identity of the `s = 1` packed descriptor with the UNPACKED run-table descriptor — the
 -- family really does contain the deployed shape.

@@ -207,7 +207,7 @@ theorem served_key_is_canonical {rows : List TRowEnv}
 def mkRow (i : Nat) : TRowEnv :=
   ⟨fun c => if c = BT_VALUE then (i : ℤ) else 0
   , fun c => if c = BT_VALUE then ((i : ℤ) + 1) else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0⟩
 
 /-- The honest increment trace of length `m`. -/
 def indexTrace (m : Nat) : List TRowEnv := (List.range m).map mkRow
@@ -253,7 +253,7 @@ theorem gates_admit_every_height (m : Nat) :
 /-- NON-VACUITY, the FALSE pole of the GATES themselves: a trace whose first row is not zero is
 REFUSED. A table AIR that no assignment refutes is decoration; this exhibits the refutation. -/
 theorem a_nonzero_first_row_is_refused :
-    ¬ byteTable.Holds [⟨fun _ => 1, fun _ => 2, fun _ => 0, fun _ => 0⟩] := by
+    ¬ byteTable.Holds [⟨fun _ => 1, fun _ => 2, fun _ => 0⟩] := by
   intro hh
   have hg := hh 0 (by simp) ⟨.first, v BT_VALUE⟩ (by simp [byteTable, byteGates, gFirst])
   simp only [TableGate.holdsAt] at hg

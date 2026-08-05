@@ -149,7 +149,9 @@ def expandRowG (ks : List Nat) (a : Assignment) : Assignment := fun c => a (drop
 /-- The expanded trace: rows remapped, PIs and every auxiliary table UNTOUCHED (no chip
 extension — the E1 kill-set constrains nothing that survives). -/
 def expandTraceG (ks : List Nat) (t : VmTrace) : VmTrace :=
-  { rows := t.rows.map (expandRowG ks), pub := t.pub, tf := t.tf }
+  -- ⚑ `chal := t.chal` — the expansion rewrites COLUMNS; the verifier's drawn randomness is
+  -- carried, never re-derived. `holdsAt_transport`'s `hchal` is `rfl` because of this line.
+  { rows := t.rows.map (expandRowG ks), pub := t.pub, tf := t.tf, chal := t.chal }
 
 /-- Row agreement, at the trace level: the expanded row reads the compact row through the map,
 in range and out (the off-the-end default is `zeroAsg` on both sides). -/
@@ -259,6 +261,8 @@ theorem compactE1_expand (hash : List ℤ → ℤ)
     exact holdsAt_transport hash g t.tf tX.tf (envAt t i) (envAt tX i)
       (i == 0) (i + 1 == t.rows.length) c
       (fun r _ => hlocAg i r) (fun r _ => hnxtAg i r) (hpubAg i)
+      -- ⚑ The E1 compaction rewrites COLUMNS; the challenge slice is carried unchanged.
+      rfl
       (htransOf c hc) htbl hcompact
   · -- rowHashes
     intro i hi
@@ -392,6 +396,7 @@ theorem compactE1Ok_deadColsE1 (M : EffectVmDescriptor2) (floor : Nat)
       | umemOp _ => rfl
       | proofBind _ => rfl
       | windowGate _ => rfl
+      | chalGate _ => rfl
   · -- hash sites
     intro s hs r hr
     rw [hnotKilled r (refsSite_mem_liveCols M s hs r hr)]; rfl

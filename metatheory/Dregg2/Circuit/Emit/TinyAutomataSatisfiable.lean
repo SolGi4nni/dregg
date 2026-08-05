@@ -974,9 +974,11 @@ theorem lanesRunI2_satisfies :
   == [(some 24, some 24), (some 24, some 40), (some 24, some 56), (some 24, some 72)]
 
 -- The same in EMITTED DESCRIPTOR BYTES (the verifier-held object): the product's run descriptor
--- barely moves with k (654 → 670); the lanes' grows ~496 bytes per lane (657 → 2145).
+-- barely moves with k (669 → 685); the lanes' grows ~496 bytes per lane (672 → 2160).
 #guard (List.map (fun k => (jsonBytes (prodRunDesc k probeW), jsonBytes (lanesRunI k probeW)))
-    [1, 2, 3, 4]) == [(654, 657), (654, 1153), (665, 1649), (670, 2145)]
+    [1, 2, 3, 4]) -- ⚑ +15 bytes per emitted descriptor: `,"challenges":0` (2026-08-05). Both routes pay it
+    -- once, so the SHAPE this guard measures — flat vs ~496/lane — is unchanged.
+    == [(669, 672), (669, 1168), (680, 1664), (685, 2160)]
 
 -- ⚑ AND THE FORK THAT ACTUALLY COSTS: WHOLE-GRAPH vs RUN tables, at the SAME product route. The
 -- reachability-minimised whole-graph declaration pins 4, 12, 24, 50 trace rows (area 12, 36, 72,

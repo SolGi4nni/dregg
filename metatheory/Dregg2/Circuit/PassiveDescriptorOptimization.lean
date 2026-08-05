@@ -345,6 +345,7 @@ theorem satisfiable_iff_of_preservation
   | umemOp _ => rfl
   | proofBind _ => rfl
   | windowGate _ => rfl
+  | chalGate _ => rfl
 
 theorem publicBindingSlots_mapC2 (g : Nat → Nat) (cs : List VmConstraint2) :
     (cs.map (mapC2 g)).filterMap bindingSlot? = cs.filterMap bindingSlot? := by
@@ -377,7 +378,10 @@ def projectRow (source : EffectVmDescriptor2) (ks : List Nat) (a : Assignment) :
   fun j => a ((survivorCols source ks).getD j (j + ks.length))
 
 def projectTrace (source : EffectVmDescriptor2) (ks : List Nat) (t : VmTrace) : VmTrace :=
-  { rows := t.rows.map (projectRow source ks), pub := t.pub, tf := t.tf }
+  -- ⚑ `chal := t.chal` — the projection removes dead COLUMNS; it does not re-draw the verifier's
+  -- randomness. Defaulting it would make the transport lemmas' `hchal` true only for
+  -- challenge-free traces while reading as general.
+  { rows := t.rows.map (projectRow source ks), pub := t.pub, tf := t.tf, chal := t.chal }
 
 theorem publicBindingSlots_compactE1 (source : EffectVmDescriptor2) (ks : List Nat) :
     publicBindingSlots (compactE1 source ks) = publicBindingSlots source := by

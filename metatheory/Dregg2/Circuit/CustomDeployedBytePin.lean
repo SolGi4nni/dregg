@@ -228,15 +228,25 @@ def windowReadsBindingCol : WindowExpr → Bool
   | .add a b => windowReadsBindingCol a || windowReadsBindingCol b
   | .mul a b => windowReadsBindingCol a || windowReadsBindingCol b
 
+/-- Does a challenge body read a Custom binding column? (`chal` leaves read no column.) -/
+def chalReadsBindingCol : ChalExpr → Bool
+  | .loc c | .nxt c => customBindingCols.contains c
+  | .const _ | .chal _ => false
+  | .add a b | .mul a b => chalReadsBindingCol a || chalReadsBindingCol b
+
 /-- Does a constraint IMPOSE anything on a custom binding column? The two carriers that legitimately
 NAME one are excluded: `.proofBind` (whose deployed denotation is `True` — it imposes nothing, which
 is exactly the point) and `.base (.piBinding …)` (which only publishes the column as a public input,
-imposing nothing on its VALUE). Everything else counts. -/
+imposing nothing on its VALUE). Everything else counts.
+
+⚑ `chalGate` counts too — see `chalReadsBindingCol` above. -/
 def constrainsBindingCol : VmConstraint2 → Bool
   | .base (.gate b)           => readsBindingCol b
   | .base (.boundary _ b)     => readsBindingCol b
   | .base (.transition hi lo) => customBindingCols.contains hi || customBindingCols.contains lo
   | .base (.piBinding ..)     => false
+  -- ⚑ A challenge gate CONSTRAINS every binding column its body reads. `Chal(i)` reads none.
+  | .chalGate w               => chalReadsBindingCol w.body
   | .lookup l                 => l.tuple.any readsBindingCol
   | .memOp _                  => true
   | .mapOp _                  => true

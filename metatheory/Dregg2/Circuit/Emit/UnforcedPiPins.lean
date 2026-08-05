@@ -59,7 +59,7 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmit
-open Dregg2.Circuit.Emit.RotWideCompactS2 (refsE refsW refsC refs2 refsSite)
+open Dregg2.Circuit.Emit.RotWideCompactS2 (refsE refsW refsC refsChal refs2 refsSite)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -139,6 +139,7 @@ theorem dropUnforcedPins_keeps_nonpin {M : EffectVmDescriptor2} {c : VmConstrain
   | umemOp _ => rfl
   | proofBind _ => rfl
   | windowGate _ => rfl
+  | chalGate _ => rfl
 
 /-- The subtraction removes no mem-op (it removes only `.base` pins). -/
 theorem dropUnforcedPins_memOpsOf (M : EffectVmDescriptor2) :
@@ -160,6 +161,7 @@ theorem dropUnforcedPins_memOpsOf (M : EffectVmDescriptor2) :
     | umemOp _ => simpa using ih
     | proofBind _ => simpa using ih
     | windowGate _ => simpa using ih
+    | chalGate _ => simpa using ih
 
 /-- The subtraction removes no map-op. -/
 theorem dropUnforcedPins_mapOpsOf (M : EffectVmDescriptor2) :
@@ -181,6 +183,7 @@ theorem dropUnforcedPins_mapOpsOf (M : EffectVmDescriptor2) :
     | umemOp _ => simpa using ih
     | proofBind _ => simpa using ih
     | windowGate _ => simpa using ih
+    | chalGate _ => simpa using ih
 
 /-- **THE PEEL** — a satisfying witness of `M` satisfies the subtracted descriptor. (Dropping
 constraints only weakens; the mem/map legs are literally the same logs.) -/
@@ -228,6 +231,7 @@ theorem filter_nonpin_dropUnforcedPins (M : EffectVmDescriptor2) :
   | umemOp _ => simp [isPin]
   | proofBind _ => simp [isPin]
   | windowGate _ => simp [isPin]
+  | chalGate _ => simp [isPin]
 
 /-- The forced surface is invariant under the subtraction. -/
 theorem forcedCols_dropUnforcedPins (M : EffectVmDescriptor2) :
@@ -266,6 +270,7 @@ theorem unforcedPins_dropUnforcedPins (M : EffectVmDescriptor2) :
   | umemOp _ => simp at hval
   | proofBind _ => simp at hval
   | windowGate _ => simp at hval
+  | chalGate _ => simp at hval
 
 /-! ## §3 — after the subtraction the column is DEAD (so E1 deletes it).
 
@@ -301,6 +306,7 @@ theorem dropUnforcedPins_refs_forced (M : EffectVmDescriptor2) (c : VmConstraint
     | umemOp _ => simp [isPin] at hp
     | proofBind _ => simp [isPin] at hp
     | windowGate _ => simp [isPin] at hp
+    | chalGate _ => simp [isPin] at hp
   · -- a NON-pin constraint: its references are the first component of `forcedCols`
     have hnp : isPin c = false := by simpa using hp
     refine List.mem_append_left _ (List.mem_append_left _ ?_)
@@ -361,6 +367,7 @@ theorem pinSlotsOf_spec {M : EffectVmDescriptor2} {col k : Nat} (h : k ∈ pinSl
   | umemOp _ => simp at hval
   | proofBind _ => simp at hval
   | windowGate _ => simp at hval
+  | chalGate _ => simp at hval
 
 /-- Overwrite every PI slot `col`'s pins publish. -/
 def setPub (M : EffectVmDescriptor2) (col : Nat) (a : Assignment) (v : ℤ) : Assignment :=
@@ -385,6 +392,27 @@ theorem evalE_congr (e : EmittedExpr) (a b : Assignment) (h : ∀ x ∈ refsE e,
 theorem evalE_setCol (e : EmittedExpr) (a : Assignment) (col : Nat) (v : ℤ)
     (h : col ∉ refsE e) : e.eval (setCol a col v) = e.eval a :=
   evalE_congr e _ _ (fun x hx => setCol_off (fun hxe => h (hxe ▸ hx)))
+
+/-- ⚑ The challenge-expression twin of `evalW_congr`. The `chal` leaf needs its own hypothesis —
+two environments agreeing on every COLUMN a body reads can still carry different challenge draws,
+and a congruence that ignored that would silently identify two different gates. -/
+theorem evalChal_congr (w : ChalExpr) (e f : VmRowEnv)
+    (hl : ∀ x ∈ refsChal w, e.loc x = f.loc x) (hn : ∀ x ∈ refsChal w, e.nxt x = f.nxt x)
+    (hc : e.chal = f.chal) :
+    w.eval e = w.eval f := by
+  induction w with
+  | loc c => simpa [ChalExpr.eval] using hl c (by simp [refsChal])
+  | nxt c => simpa [ChalExpr.eval] using hn c (by simp [refsChal])
+  | const k => rfl
+  | chal i => simp [ChalExpr.eval, hc]
+  | add p q ihp ihq =>
+    simp [ChalExpr.eval,
+      ihp (fun x hx => hl x (by simp [refsChal, hx])) (fun x hx => hn x (by simp [refsChal, hx])),
+      ihq (fun x hx => hl x (by simp [refsChal, hx])) (fun x hx => hn x (by simp [refsChal, hx]))]
+  | mul p q ihp ihq =>
+    simp [ChalExpr.eval,
+      ihp (fun x hx => hl x (by simp [refsChal, hx])) (fun x hx => hn x (by simp [refsChal, hx])),
+      ihq (fun x hx => hl x (by simp [refsChal, hx])) (fun x hx => hn x (by simp [refsChal, hx]))]
 
 /-- `WindowExpr.eval` depends only on the columns the expression reads (both rows). -/
 theorem evalW_congr (w : WindowExpr) (e f : VmRowEnv)
@@ -424,12 +452,15 @@ theorem unforced_pin_row_admits_any_value
       c.holdsAt hash tf
         { loc := setCol env.loc col v
         , nxt := setCol env.nxt col v
-        , pub := setPub M col env.pub v } isFirst isLast := by
+        , pub := setPub M col env.pub v
+        , chal := env.chal } isFirst isLast := by
   intro c hc
   set env' : VmRowEnv :=
     { loc := setCol env.loc col v
     , nxt := setCol env.nxt col v
-    , pub := setPub M col env.pub v } with henv'
+    , pub := setPub M col env.pub v
+    -- ⚑ The override sets a COLUMN VALUE, not a Fiat–Shamir draw; the challenge slice is carried.
+    , chal := env.chal } with henv'
   -- a NON-pin constraint of `M` never reads `col`
   have hnotref : ∀ d ∈ M.constraints, isPin d = false → col ∉ refs2 d := by
     intro d hd hnp hx
@@ -569,6 +600,23 @@ theorem unforced_pin_row_admits_any_value
     show WindowConstraint.holdsAt env' isLast w
     have hb2 : WindowConstraint.holdsAt env isLast w := hbase
     unfold WindowConstraint.holdsAt at hb2 ⊢
+    rw [heq]; exact hb2
+  -- ⚑ A challenge gate transports exactly as a window gate does. Setting ONE COLUMN cannot change
+  -- a `chal` leaf — a challenge is not a column — so `evalChal_congr` needs no extra hypothesis
+  -- here, and the unforced-pin census reaches this kind rather than skipping it.
+  | chalGate w =>
+    have href := hnotref _ hc rfl
+    have hb : col ∉ refsChal w.body := fun hx => href (by simpa [refs2] using hx)
+    have heq : w.body.eval env' = w.body.eval env :=
+      evalChal_congr w.body env' env
+        (fun x hx => setCol_off (fun hxe => hb (hxe ▸ hx)))
+        (fun x hx => setCol_off (fun hxe => hb (hxe ▸ hx)))
+        -- The row-value override touches `loc`/`nxt`/`pub` only; the challenge slice is the
+        -- environment's own default in both, so the two agree definitionally.
+        rfl
+    show ChalConstraint.holdsAt env' isLast w
+    have hb2 : ChalConstraint.holdsAt env isLast w := hbase
+    unfold ChalConstraint.holdsAt at hb2 ⊢
     rw [heq]; exact hb2
 
 /-! ## §5 — THE CENSUS, machine-checked on the deployed registry object.

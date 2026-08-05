@@ -785,20 +785,21 @@ object by `AttestedAutomatonEmit.attWit_satisfies`. Nothing without a witness is
   { traceWidth := 4, piCount := 3, constraints := 6, tables := 1
   , declaredRows := 0, forcedTraceRows := .unpinned, nonlinearMults := 0 }
 
--- ⚑ WIRE BYTES, pinned: 2596 welded vs 1190 unwelded — 2.18× (+1406 bytes), CONSTANT in `|w|` and
+-- ⚑ WIRE BYTES, pinned: 2611 welded vs 1205 unwelded — 2.17× (+1406 bytes), CONSTANT in `|w|` and
+-- (+15 each since 2026-08-05: the `,"challenges":0` header; the DELTA and the crossover are unmoved.)
 -- in `|Q|·|Σ|` exactly as before (ONE object for every automaton and every word length).
-#guard (jsonBytes weldInstance, jsonBytes attestedInstance) == (2596, 1190)
+#guard (jsonBytes weldInstance, jsonBytes attestedInstance) == (2611, 1205)
 
 -- ⚑ THE RESTATED CROSSOVER. The run-table descriptor at k = 4 grows ~10 bytes per symbol because it
 -- SHIPS THE RUN. The UNWELDED attested object ties it at |w| = 60 and is smaller from 61 on; the
--- WELDED object is still larger at |w| = 200 (2589 < 2596) and is strictly smaller from |w| = 201
--- on (2599 > 2596). The weld moves the byte crossover 60 → 201.
+-- WELDED object is still larger at |w| = 200 (2604 < 2611) and is strictly smaller from |w| = 201
+-- on (2614 > 2611). The weld moves the byte crossover 60 → 201.
 #guard (List.map (fun n => jsonBytes (prodRunDesc 4 (wordN n))) [60, 61, 128, 199, 200, 201, 202])
-  == [1190, 1199, 1869, 2579, 2589, 2599, 2609]
+  == [1205, 1214, 1884, 2594, 2604, 2614, 2624]
 
--- At the FIXED 8-symbol probe word the run-table descriptor is far smaller (654–670 vs 2596) — but
+-- At the FIXED 8-symbol probe word the run-table descriptor is far smaller (669–685 vs 2611) — but
 -- it is a DIFFERENT object per k AND per word, and it binds no automaton at any width.
-#guard (List.map (fun k => jsonBytes (prodRunDesc k probeW)) [1, 2, 3, 4]) == [654, 654, 665, 670]
+#guard (List.map (fun k => jsonBytes (prodRunDesc k probeW)) [1, 2, 3, 4]) == [669, 669, 680, 685]
 
 -- ⚑ MAIN-TRACE AREA (columns × trace rows): welded 11·|w| vs unwelded 4·|w| vs the unbound run
 -- table's 3·|w|. The weld's whole main-trace price is the 7 completion-lane columns.

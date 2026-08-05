@@ -228,6 +228,9 @@ theorem holdsAt_project (hash : List Int -> Int) (g : Nat -> Nat)
     (hloc : ∀ r ∈ refs2 c, EX.loc r = E.loc (g r))
     (hnxt : ∀ r ∈ refs2 c, EX.nxt r = E.nxt (g r))
     (hpub : EX.pub = E.pub)
+    -- ⚑ A column PROJECTION does not re-draw the verifier's randomness; the challenge slice is
+    -- carried. Named as a hypothesis so a projection that DID change it cannot be proved here.
+    (hchal : EX.chal = E.chal)
     (htrans : ∀ hi lo, c = .base (.transition hi lo) ->
       g (sbCol hi) = sbCol hi ∧ g (saCol lo) = saCol lo)
     (htbl : ∀ tid : TableId, ∀ row ∈ tfX tid, row ∈ tfC tid)
@@ -358,6 +361,15 @@ theorem holdsAt_project (hash : List Int -> Int) (g : Nat -> Nat)
         (fun r hr => hnxt r (by simpa [refs2] using hr))
     cases how : w.onTransition <;>
       simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, mapC2, how] at h ⊢ <;>
+      rwa [heq]
+  | chalGate w =>
+    have heq : (mapChal g w.body).eval E = w.body.eval EX :=
+      evalChal_map_agree g w.body E EX
+        (fun r hr => hloc r (by simpa [refs2] using hr))
+        (fun r hr => hnxt r (by simpa [refs2] using hr))
+        hchal
+    cases how : w.onTransition <;>
+      simp only [VmConstraint2.holdsAt, ChalConstraint.holdsAt, mapC2, how] at h ⊢ <;>
       rwa [heq]
 
 /-- Reverse hash-site transport over an unchanged auxiliary table family. -/
@@ -590,6 +602,8 @@ theorem compactE1_project (hash : List Int -> Int)
     (minit : Int -> Int) (mfin : Int -> Int × Nat) (maddrs : List Int)
     (tX tC : VmTrace) (hok : compactE1Ok source ks = true)
     (hlen : tX.rows.length = tC.rows.length) (hpub : tX.pub = tC.pub)
+    -- ⚑ The projection removes COLUMNS; it does not re-draw the verifier's randomness.
+    (hchalEq : tX.chal = tC.chal)
     (htf : tX.tf = tC.tf)
     (hagree : ∀ i r, r ∈ liveCols source ->
       (envAt tX i).loc r = (envAt tC i).loc (dropIdxG ks r))
@@ -630,7 +644,10 @@ theorem compactE1_project (hash : List Int -> Int)
       (i == 0) (i + 1 == tC.rows.length) c
       (fun r hr => hagree i r (refs2_mem_liveCols source c hc r hr))
       (fun r hr => hagree (i + 1) r (refs2_mem_liveCols source c hc r hr))
-      hpub (htransOf c hc) htbl hsource
+      hpub
+      -- ⚑ The projection carries the challenge slice; both envs come from `envAt` on traces that
+      -- differ only in COLUMNS.
+      (by simp only [envAt]; exact hchalEq) (htransOf c hc) htbl hsource
   · intro i hiC
     have hiX : i < tX.rows.length := by rw [hlen]; exact hiC
     change siteHoldsAll hash (envAt tC i) (source.hashSites.map (mapSite g))
@@ -668,6 +685,7 @@ theorem compactE1_projectU (hash : List Int -> Int)
     (uaddrs : List (Dregg2.Crypto.UniversalMemory.UAddr Int))
     (tX tC : VmTrace) (hok : compactE1Ok source ks = true)
     (hlen : tX.rows.length = tC.rows.length) (hpub : tX.pub = tC.pub)
+    (hchalEq : tX.chal = tC.chal)
     (htf : tX.tf = tC.tf)
     (hagree : ∀ i r, r ∈ liveCols source ->
       (envAt tX i).loc r = (envAt tC i).loc (dropIdxG ks r))
@@ -676,7 +694,7 @@ theorem compactE1_projectU (hash : List Int -> Int)
     Satisfied2U hash (compactE1 source ks) minit mfin maddrs
       uinit ufin uaddrs tC := by
   have hbase := compactE1_project hash source ks minit mfin maddrs
-    tX tC hok hlen hpub htf hagree hsat.toSatisfied2
+    tX tC hok hlen hpub hchalEq htf hagree hsat.toSatisfied2
   have huml : umemLog source tX = umemLog (compactE1 source ks) tC :=
     umemLog_project source ks tX tC hlen (fun i _ r hr => hagree i r hr)
   refine
@@ -776,6 +794,7 @@ theorem checkedDerived_complete (source : EffectVmDescriptor2) (floor : Nat)
   · simp [projectTrace]
   · rfl
   · rfl
+  · rfl
   · intro i r hr
     exact (projectTrace_getD source (deadColsE1 source floor)
       (deadColsE1_nodup source floor)
@@ -811,6 +830,8 @@ theorem checkedDerived_completeU (source : EffectVmDescriptor2) (floor : Nat)
     t (projectTrace source (deadColsE1 source floor) t)
     (compactE1Ok_of_ceiling source floor hceiling)
   · simp [projectTrace]
+  · rfl
+  -- ⚑ `hchalEq`: the projection carries the challenge slice (see `projectTrace`).
   · rfl
   · rfl
   · intro i r hr

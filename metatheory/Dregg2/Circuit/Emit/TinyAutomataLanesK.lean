@@ -798,7 +798,7 @@ every `k` measured, no longer cost-of-an-emitted-object at `k = 3, 4`. -/
 
 -- The same in emitted descriptor bytes (the verifier-held object).
 #guard (List.map (fun k => (jsonBytes (prodRunDesc k probeW), jsonBytes (lanesRunIK k probeW)))
-  [1, 2, 3, 4]) == [(654, 657), (654, 1153), (665, 1649), (670, 2145)]
+  [1, 2, 3, 4]) == [(669, 672), (669, 1168), (680, 1664), (685, 2160)]
 
 -- The witness's own realised trace length at each k (compiled evaluation of the same 8 the
 -- `Prop`-level `lanesKWit_probe_length` proves).

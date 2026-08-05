@@ -220,7 +220,7 @@ def padServesRow0 : TRowEnv :=
       else if c = UBC_IS_REAL then 1
       else if c = UBC_ADDR_MULT then 1
       else 0
-  , fun _ => 0, fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0⟩
 
 /-- The pad that serves a SECOND key. Its `nxt` is all-zero, which is what a coherent two-row
 trace's second window carries: `rows[1].nxt` is the wrap row and the tooth does not bind it. -/
@@ -230,7 +230,7 @@ def padServesRow1 : TRowEnv :=
       else if c = UBC_KEY then 9
       else if c = UBC_ADDR_MULT then 7
       else 0
-  , fun _ => 0, fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0⟩
 
 /-- ⚑ **THE REFUTATION, ON THE EMITTED OBJECT.** Both windows satisfy every emitted gate — row 0 as
 the FIRST row of a two-row trace, row 1 as its LAST — while the pad carries a different key and a
@@ -279,13 +279,13 @@ theorem a_second_real_row_is_refused :
     ¬ cohortTable.RowHolds
         (⟨fun c => if c = UBC_IS_REAL then 1 else 0
         , fun c => if c = UBC_IS_REAL then 1 else 0
-        , fun _ => 0, fun _ => 0⟩) true false := by decide
+        , fun _ => 0⟩) true false := by decide
 
 /-- …and a NON-CANONICAL `none` (present = 0 with a nonzero payload) is REFUSED on a real row. -/
 theorem a_non_canonical_none_is_refused :
     ¬ cohortTable.RowHolds
         (⟨fun c => if c = UBC_IS_REAL then 1 else if c = UBC_INIT_VALUE then 1 else 0
-        , fun _ => 0, fun _ => 0, fun _ => 0⟩) true true := by decide
+        , fun _ => 0, fun _ => 0⟩) true true := by decide
 
 /-! ## §5 — The wire pin. -/
 

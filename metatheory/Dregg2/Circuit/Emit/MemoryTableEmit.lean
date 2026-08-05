@@ -362,7 +362,7 @@ def wrapRow : TRowEnv :=
       else if c = MEM_GAP then 5
       else if c = MEM_GAP_LIMB0 then 5
       else 0
-  , fun _ => 0, fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0⟩
 
 /-- ⚑ **THE REFUTATION, ON THE EMITTED OBJECT.** Every gate of `memoryTable` — the emitted list,
 not a transcription — vanishes on `wrapRow`, and the claimed prior serial it carries is ABOVE
@@ -387,7 +387,7 @@ window with `prev_serial = 0` and `gap = 0` is also accepted, and a window whose
 disagrees with its limbs is REFUSED. A table AIR no assignment refutes is decoration. -/
 def honestRow : TRowEnv :=
   ⟨fun c => if c = MEM_SERIAL then 1 else if c = MEM_IS_REAL then 1 else 0
-  , fun _ => 0, fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0⟩
 
 theorem honest_row_is_accepted : memoryTable.RowHolds honestRow true true := by decide
 
@@ -396,7 +396,7 @@ recomposition gate. -/
 theorem an_unwitnessed_gap_is_refused :
     ¬ memoryTable.RowHolds
         (⟨fun c => if c = MEM_SERIAL then 1 else if c = MEM_IS_REAL then 1
-                   else if c = MEM_GAP then 1 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩)
+                   else if c = MEM_GAP then 1 else 0, fun _ => 0, fun _ => 0⟩)
         true true := by decide
 
 /-- ⚠ **NO GATE RANGE-CHECKS `MEM_PREV_SERIAL`**, stated as an emission fact rather than as prose:

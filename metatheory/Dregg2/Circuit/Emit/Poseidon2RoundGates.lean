@@ -468,7 +468,7 @@ the whole-permutation check below ever goes red. -/
 private def katState : List Nat := [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3]
 
 private def evalAt (e : TExpr) (s : List Nat) : ℤ :=
-  e.evalWith #[] ⟨fun c => (s.getD c 0 : ℤ), fun _ => 0, fun _ => 0, fun _ => 0⟩ % 2013265921
+  e.evalWith #[] ⟨fun c => (s.getD c 0 : ℤ), fun _ => 0, fun _ => 0⟩ % 2013265921
 
 #guard evalAt (eSbox (v 5)) katState == (P2.sbox (katState.getD 5 0) : ℤ)
 #guard ((List.range WIDTH).map (fun i => evalAt (gx (extLayer ((List.range WIDTH).map v)) i) katState))
