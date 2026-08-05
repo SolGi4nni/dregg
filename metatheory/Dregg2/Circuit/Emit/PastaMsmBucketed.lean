@@ -965,9 +965,154 @@ theorem wrap_srs_fused_fits_one_instance :
     ∧ 100 * fusedAdds WRAP_SRS 256 12 < 39 * DREGG_MAX_ROWS := by
   constructor <;> decide
 
+/-! ## §6c — ⚑ THE CELL CAP IS DENOMINATED IN THE WRONG QUANTITY, and that is the answer to §6.
+
+§6 said `srs_cells_exceed_the_deployed_cap` forces a choice between raising `MAX_EXACT_PUBLIC_CELLS`
+and splitting the manifest. **Read against what the verifier actually allocates, it forces neither.**
+
+`descriptor_ir2.rs` states the discrepancy itself, in the docblock that sets the cap:
+*"the cap counts `rows.len() * arity`, while the committed matrix is `next_pow2(distinct) *
+prep_width` — one column WIDER than `arity`."* Those are different numbers whenever a manifest has
+MULTIPLICITY, and an SRS manifest is nothing but multiplicity: it declares one row per TRACE row
+(the balance is a permutation) over only `n` DISTINCT generators.
+
+At the real object the gap is a factor of 21:
+
+  * declared, which the cap counts: `1,474,800 × 28 = 41,294,400` — over the `2^25` cap;
+  * committed, which the verifier materialises: `65,536 × 30 = 1,966,080` — **7.9 MB, and 5.9% of
+    the cap.**
+
+The two tables whose distinct count really is their declared count (`schedule`, keyed by row index,
+and `cover`) commit `2^21 × 5` each, and the three together are `22,937,600` cells — `91.8 MB`
+against the `276.8 MB` worst case `exactpublic_lean_emission_differential` already measures as
+admissible. **Nothing here is near a real limit.**
+
+⚑ **So the recommendation is neither of §6's two options.** Raising the constant would admit
+manifests whose COMMITTED size really is large; splitting the SRS manifest in two would route
+around a per-table cap while leaving the verifier's total allocation exactly what it was, which is
+cap-shaped compliance rather than a saving. The fix is to measure the resource the cap NAMES:
+`next_pow2(distinct) * (arity + 2)`, summed. Under that reading this layout needs no change at all,
+and a manifest that genuinely would cost the verifier `2^25` cells is still refused. -/
+
+/-- The `prep_width` of a realized exact-public instance: the declared arity plus the pinned
+multiplicity column and the table-id column (`descriptor_ir2.rs::ExactPublicManifest`). -/
+def prepWidthOf (arity : Nat) : Nat := arity + 2
+
+/-- What the VERIFIER materialises for the SRS manifest: one row per DISTINCT generator, rounded to
+a power of two, at `prep_width`. `n = 2^16` is already a power of two. -/
+def srsCommittedCells (n : Nat) : Nat := n * prepWidthOf SRS_TUP
+
+/-- ⚑ **The cap over-counts the SRS manifest by 21×.** The declared figure `srs_cells_exceed_the_
+deployed_cap` refutes against is 21 times the matrix the verifier actually commits. -/
+theorem srs_declared_overcounts_committed_by_21x :
+    21 * srsCommittedCells STEP_SRS ≤ srsCells STEP_SRS FULL_BITS BEST_C := by decide
+
+/-- ⚑ **…and the committed matrix is well under the cap** — 5.9% of it. So the descriptor that
+`srs_cells_exceed_the_deployed_cap` says would be REFUSED costs the verifier `7.9 MB`. -/
+theorem srs_committed_cells_fit :
+    100 * srsCommittedCells STEP_SRS < 6 * MAX_EP_CELLS := by decide
+
+/-- The whole layout's committed exact-public footprint: the SRS matrix plus the two tables whose
+distinct count IS their declared count, each rounded up to `2^21`. -/
+def committedExactPublicCells : Nat :=
+  srsCommittedCells STEP_SRS + 2097152 * prepWidthOf COVER_TUP + 2097152 * prepWidthOf SCHED_TUP
+
+/-- ⚑ **`22,937,600` cells = `91.8 MB`** — a third of the `69,206,016` worst case the deployed
+differential already measures as admissible. -/
+theorem committed_footprint_is_under_the_measured_worst_case :
+    committedExactPublicCells = 22937600 ∧ committedExactPublicCells < 69206016 := by
+  constructor <;> decide
+
+/-! ## §6d — ⚑ THE PRICE ON THE SOUND GATE, which is the real one.
+
+§7.2 says every row here is denominated in `PastaField.fpMulCore` — ONE degree-2 gate, no limb
+ranges, no carry pins — and that at `p_babybear` that gate holds at every operand triple. The
+felt-sound encodings exist: `PastaFieldSound` (8-bit limbs, `SK = 32`, **253** constraints and 190
+declared columns for one multiply) and `PastaAddSubSound` (**160** constraints, 128 declared).
+
+⚑ **BUT THERE IS NO SOUND COMPLETE ADD, AND IT IS NOT MERELY UNBUILT — IT IS A TYPE OBSTRUCTION.**
+`swCompleteAddGadget` takes gate CONSTRUCTORS (`Nat → Nat → Nat → Nat → VmConstraint2`); the sound
+replacements are `EffectAir`s lowered through `EffectLower.lowerAir` into 253/160-constraint
+DESCRIPTORS. They cannot be passed to the gadget. A sound complete add is a new emitter, and the
+`AddGadget` parameter §4a introduces does NOT reach it — §4a swaps the PRIME, not the ENCODING.
+
+The price is recorded in the tree, and this file restates it as theorems because of where it
+currently lives:
+
+⚠ **`Dregg2.lean`'s import comment carries `33 → 4,470` constraints (135×) and `442 → 2,980`
+columns (6.7×) for one complete add, and that is the ONLY place those numbers exist** — no theorem,
+no `#guard`, no Rust assertion produces them. Two things about them do not hold up:
+
+  * the marginal add/sub figure it uses is **96**, while `PastaAddSubSound`'s own docblock computes
+    **64** (`32` coefficient gates + `1` carry-bit + `31` carries). `14·189 + 19·96 = 4,470`;
+    `14·189 + 19·64 = 3,862`. Both are stated below so the spread is visible rather than averaged;
+  * **no sound `smul` core exists at all**, so the 2 constant-multiplies are priced at the full
+    multiply's shape by assumption. That is an over-estimate of unknown size, and it is an
+    ASSUMPTION, not a measurement. -/
+
+/-- Multiply-shaped gates in one RCB complete add: 12 `mulC` + 2 `smulC`. -/
+def RCB_MULS : Nat := 14
+/-- Add/sub gates in one complete add: 14 `addC` + 5 `subC`. -/
+def RCB_ADDSUBS : Nat := 19
+/-- `PastaFieldSound`'s MARGINAL multiply — operands already range-checked upstream. -/
+def SOUND_MUL_MARGINAL : Nat := 189
+/-- `Dregg2.lean`'s marginal add/sub. -/
+def SOUND_ADDSUB_DREGG2 : Nat := 96
+/-- `PastaAddSubSound`'s OWN marginal add/sub, which disagrees. -/
+def SOUND_ADDSUB_FILE : Nat := 64
+
+/-- One complete add on the sound gate, at `Dregg2.lean`'s reading. -/
+def soundRcbConstraintsHigh : Nat :=
+  RCB_MULS * SOUND_MUL_MARGINAL + RCB_ADDSUBS * SOUND_ADDSUB_DREGG2
+/-- …and at `PastaAddSubSound`'s own. -/
+def soundRcbConstraintsLow : Nat :=
+  RCB_MULS * SOUND_MUL_MARGINAL + RCB_ADDSUBS * SOUND_ADDSUB_FILE
+
+/-- ⚑ **The in-tree figure, reproduced from its own inputs** — so `4,470` is now a term rather than
+a sentence in an import comment. -/
+theorem sound_rcb_reproduces_the_in_tree_figure : soundRcbConstraintsHigh = 4470 := by decide
+
+/-- ⚑ **…and the same arithmetic on the marginal `PastaAddSubSound` itself computes.** The two
+readings differ by `608` constraints per complete add — 13.6%. Stated, not averaged. -/
+theorem sound_rcb_readings_disagree :
+    soundRcbConstraintsLow = 3862 ∧ soundRcbConstraintsHigh - soundRcbConstraintsLow = 608 := by
+  constructor <;> decide
+
+/-- The emitted gate this layout's rows are actually denominated in. -/
+def UNSOUND_RCB_GATES : Nat := 33
+
+/-- ⚑ **The sound complete add is between 117× and 136× the emitted one.** Both bounds, because
+one of the two marginals is wrong and this file does not know which. -/
+theorem sound_rcb_is_over_a_hundredfold :
+    117 * UNSOUND_RCB_GATES ≤ soundRcbConstraintsLow
+    ∧ soundRcbConstraintsHigh ≤ 136 * UNSOUND_RCB_GATES := by
+  constructor <;> decide
+
+/-- ⚑ **THE LAYOUT ON THE SOUND GATE.** `Dregg2.lean` prices the COLUMN blow-up at `442 → 2,980`
+(6.7×). A row is one complete add, so the width goes with it: `612 → ~3,150`, and the committed
+area of the full-width instance goes from `9.03 · 10^8` cells to `4.65 · 10^9` — **18.6 GB of main
+trace before any low-degree extension**, against `3.6 GB` on the emitted gate.
+
+The ROW count does not move: it is an algorithmic quantity and `fused_at_step` is unchanged. What
+moves is the cost OF a row, and it moves by 5.1×. -/
+def SOUND_ROW_WIDTH : Nat := 3150
+def soundAreaCells : Nat := fusedAdds STEP_SRS FULL_BITS BEST_C * SOUND_ROW_WIDTH
+def emittedAreaCells : Nat := fusedAdds STEP_SRS FULL_BITS BEST_C * WK
+
+/-- The sound layout's committed area, and the factor it costs over the emitted one. -/
+theorem sound_area_is_five_times_the_emitted :
+    5 * emittedAreaCells < soundAreaCells ∧ soundAreaCells < 6 * emittedAreaCells := by
+  constructor <;> decide
+
+/-- ⚑ …and the row count is IDENTICAL, which is the point: soundness is a price on the row, not on
+the algorithm. Every layout comparison in §0b survives the correction unchanged. -/
+theorem sound_and_emitted_share_a_row_count :
+    soundAreaCells / SOUND_ROW_WIDTH = emittedAreaCells / WK := by decide
+
 /-! ## §7 — ⚑ THE RESIDUALS, at CURRENT resolution.
 
-**7.1 — the row count is not the only axis, and this file does not pretend it is.**
+**7.1 — the row count is not the only axis, and this file does not pretend it is.** (§6d prices
+the same area on the SOUND gate, which is the number that actually decides it.)
 `fused_fits_one_instance` is a statement about ROWS. The committed area is `rows × width`:
 `1,474,800 × 612 ≈ 9.03 · 10^8` cells of BabyBear, which is ~3.6 GB of main trace before any
 low-degree extension — so "fits one instance" means *the two-adicity ceiling admits it*, NOT that
@@ -975,7 +1120,9 @@ a box proves it. The four-way cut `PastaMsmSliced` exists for is therefore still
 real; what this file retracts is the claim that the ceiling FORCES a cut, and the claim that a
 bucketed layout is inexpressible.
 
-**7.2 — the gate these rows are denominated in is the UNSOUND one, unchanged.**
+**7.2 — the gate these rows are denominated in is the UNSOUND one, unchanged.** ⚑ §6d now prices
+it — and finds the tree's only statement of that price is an import comment whose two inputs
+disagree by 13.6%.
 Every row here is one RCB complete add over `PastaField.fpMulCore`: one degree-2 gate of 81
 cross-products, no limb ranges, no carry pins, `pastaLimbRange` emitted nowhere — so at
 `p_babybear` its nine quotient limbs are free and the gate holds at every operand triple
@@ -1004,34 +1151,52 @@ each term `windowsOf 255 13 = 20` rows. The redundancy factor drops 256 → 20.
 arm and wrong about the mechanism, and the mechanism is in a vocabulary the main descriptor cannot
 reach. That remains an IR change.
 
-**7.4 — ⚑ THE CONTROL THIS CIRCUIT DOES NOT PASS, and neither does the native oracle.**
-A claim REBUILT around tampered challenges — new `u⃗`, recomputed `s`, recomputed `C` — is
-accepted, here and natively, because the relation binds the PAIR `(s, C)` and both halves moved
-together. This AIR forces that the trace computes `Σ s_i·g_i` over Mina's REAL generators and that
-the answer is the declared `C`; it does not and cannot force that `u⃗` is the challenge vector of a
-real Mina block. That binding is a transcript commitment, not an MSM constraint, and it lives
-outside every object in this cone.
+**7.4 — ⚑ THE CONTROL THIS CIRCUIT DOES NOT PASS, and WHERE the fix lives so the next lane wires
+it rather than rediscovering it.**
 
-**7.5 — ⚑ WHICH CURVE, AND WHICH SRS. The demonstration is not on the leg the target names.**
-The row template this file extends is `PastaMsmWindowed.rowGates`, whose add is
-`pallasCompleteAdd` — the `swCompleteAddGadget` at the PALLAS base field `p` — and the generators
-the emitted instances carry are `MinaWrapSrsG.SRS_G`, **32,768 PALLAS points, the WRAP/Tock SRS**.
-The object the campaign targets is the STEP/Tick leg: `2^16 = 65,536` **VESTA** generators, where
-`C = messages_for_next_wrap_proof.challenge_polynomial_commitment` and `u⃗` is the 16 endo-lifted
-`deferred_values.bulletproof_challenges` (`accumulator_check.rs:23-53`).
+A claim REBUILT around tampered challenges — new `u⃗`, recomputed `s = b_poly_coefficients(u⃗)`,
+recomputed `C = ⟨s, srs.g⟩` — is accepted here and accepted natively, because the relation binds the
+PAIR `(s, C)` and both halves moved together. This is TERMINAL for an MSM AIR: the statement
+`C = ⟨s, srs.g⟩` is true of the rebuilt pair, and no constraint over that statement can distinguish
+a real `u⃗` from an invented one. It is not a hole in this construction; it is the wrong place to
+look for the binding.
 
-So §0b's row counts ARE the target object's (`n = 65,536`, `nbits = 255`); the emitted
-DESCRIPTORS are on the cone's existing curve and SRS. Naming the swap precisely, because it is
-smaller than it sounds and larger than nothing:
+⚑ **The binding is the TRANSCRIPT, and the transcript is a sponge.** In Pickles the bulletproof
+challenges are not free inputs — `deferred_values.bulletproof_challenges` are SQUEEZED from the
+Fiat–Shamir sponge that has already ABSORBED the proof's commitments, so an invented `u⃗` is one
+that no sponge run produces from that transcript. Concretely, closing it needs three things and
+none of them is an MSM constraint:
 
-  * the arithmetic is ALREADY THERE and ALREADY PROVED — `PastaCurveComplete.vestaCompleteAdd`
-    (`:319`) is the same `swCompleteAddGadget` with the `fq*` cores, and `vestaCompleteAdd_forces`
-    (`:438`) is its forcing theorem. It is a ONE-SYMBOL substitution in a `rowGates`-shaped `def`;
-  * but `rowGates` is a `def`, not a parameter, so the swap emits a SECOND row template rather than
-    re-instantiating this one — and there is no `MinaStepSrsG` in the tree, so the `2^16` Vesta
-    generators would have to be exported the way `wrap_group_export.rs` exported the Wrap ones.
+  1. **The Fq sponge in-AIR, absorbing a real Mina transcript.** `MinaWrapVerifierSponge` already
+     emits a 55-round permutation and an absorption whose squeeze is
+     `PastaPoseidonFq.Core.hash fqParams` BY PROOF. What it does not yet have is that the absorbed
+     values came FROM a Kimchi transcript — its own §4c says so. That is the rung that must land.
+  2. **The 16 endo-lifted challenges as ONE shared public-input vector** between that sponge AIR and
+     this one. This descriptor's `piCount = 27` publishes only the output `C`; `u⃗` enters through
+     `T_COVER`'s declared digits and is therefore a DESCRIPTOR PARAMETER, not a wire value. §7.3's
+     weld to `PastaMsmScalarDerive` is the prerequisite: once the digits are DERIVED from a
+     challenge vector on the wire, that vector is a PI, and a PI can be tied to the sponge's squeeze
+     lanes in the batch.
+  3. **The endo lift itself**, between the sponge's squeezed 128-bit challenge and the 255-bit
+     scalar `b_poly_coefficients` consumes (`accumulator_check.rs:23-53`). Nothing in this cone
+     emits it.
 
-Neither is done here, and no theorem below is stated as if it were.
+So the seam is: **sponge squeeze → PI vector → `PastaMsmScalarDerive` → `T_COVER`'s digits**, and
+the two ends of it are being built by two different lanes right now. Written down here because
+the natural failure mode is for each lane to name the other's half as out of scope.
+
+**7.5 — ⚑ WHICH CURVE. BUILT (2026-08-05); what remains is the SRS WIDTH, not the curve.**
+This paragraph used to say the demonstration was on the Pallas/Wrap leg while the target was
+Step/Tick on Vesta. §4a closed that: `rowGatesWith` takes the `AddGadget`, `bucketedRowDescVesta`
+instantiates it at `vestaCompleteAdd`, `MinaStepSrsG` carries the 65,536 real Vesta generators
+decoded from the same byte-pinned blob the native oracle checks, and
+`dregg-pasta-msm-bucketed-vesta-c2::v1` PROVES AND VERIFIES with its forged commitment REFUSED
+(`circuit/tests/pasta_msm_bucketed_prove.rs`).
+
+⚠ What is still a demonstration rather than the object: the emitted instance is `n = 27`
+generators, not `2^16`. The AIR is size-generic and every theorem in §0b is stated at `2^16`, so
+what a full-width emission needs is not a new construction — it is the committed area §7.1 prices
+and the digit weld §7.3 names. **The curve is no longer on the list.**
 
 **7.6 — the wire format moved under this file on the day it was written.** A sibling lane landed a
 `challenges` field on `EffectVmDescriptor2` (2026-08-05), and every artifact under
@@ -1083,5 +1248,13 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms wrap_srs_fused_beats_naive
 #assert_axioms wrap_srs_fused_is_about_21x
 #assert_axioms wrap_srs_fused_fits_one_instance
+#assert_axioms srs_declared_overcounts_committed_by_21x
+#assert_axioms srs_committed_cells_fit
+#assert_axioms committed_footprint_is_under_the_measured_worst_case
+#assert_axioms sound_rcb_reproduces_the_in_tree_figure
+#assert_axioms sound_rcb_readings_disagree
+#assert_axioms sound_rcb_is_over_a_hundredfold
+#assert_axioms sound_area_is_five_times_the_emitted
+#assert_axioms sound_and_emitted_share_a_row_count
 
 end Dregg2.Circuit.Emit.PastaMsmBucketed
