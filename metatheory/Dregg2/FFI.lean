@@ -22,6 +22,8 @@ import Dregg2.Games.PathOfAngels.NetworkGenesis
 import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime
 import Dregg2.Games.PathOfAngels.EventBatchRuntime
+import Dregg2.Games.PathOfAngels.WorldActivation
+import Dregg2.Games.PathOfAngels.ActivatedContentRuntime
 import Dregg2.Apps.DelegAdmit
 
 -- §1.4 Post-quantum cores.
@@ -240,6 +242,17 @@ is stated on their entry rather than implied by membership in this archive.
   deployment/content tuple and zero-head ceremony: Lean emits the exact config/Canon bytes,
   hashes, and faithful coordinates a host may transport. External manifest/signature verification
   remains outside this export; absence or rejection has no Rust reconstruction fallback.)
+* `Dregg2.Games.PathOfAngels.WorldActivation` — `dregg_poa_world_activation_judge` and
+  `dregg_poa_world_activation_authorizes` (the signed, append-only active-world lineage: exact
+  counter/predecessor edges, epoch succession, rollback ancestry, and all-five-field
+  `EventBatch.WorldIdentity` authority. Native code verifies the exact Ed25519 statement under an
+  external pin; Lean alone decides both transition and final candidate equality. Absence means no
+  world can be activated and finalized PoA admission must refuse.)
+* `Dregg2.Games.PathOfAngels.ActivatedContentRuntime` —
+  `dregg_poa_activated_content_authorize` (strict canonical manifest decoding, exact per-component
+  SHA-256, exact all-five-field active-world root/scope membership, and canonical Galley policy
+  extraction. Persistence supplies the world after its same-writer signed-lineage audit; absence
+  or rejection means no gameplay policy can be installed, with no Rust semantic twin.)
 
 ### §1.4 Post-quantum cores — the crates these take OUT of the TCB (10 symbols)
 Absent ⇒ `dregg-pq` answers with an unaudited third-party crate. `DREGG_REQUIRE_PQ_CORES` turns

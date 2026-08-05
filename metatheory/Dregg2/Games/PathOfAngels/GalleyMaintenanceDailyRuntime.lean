@@ -553,6 +553,14 @@ def decodeInputWithLimit (byteLimit : Nat) (bytes : String) : Option InputWire :
 def decodeInput (bytes : String) : Option InputWire :=
   decodeInputWithLimit WIRE_BYTE_LIMIT bytes
 
+/-- Strict policy-only decoder for the activated-content boundary.  This is
+the same parser and canonical encoder used by the game input decoder; the
+content installer therefore does not need a Rust policy parser or a second
+Lean policy grammar. -/
+def decodePolicyWithLimit (byteLimit : Nat) (bytes : String) : Option PolicyWire :=
+  if bytes.utf8ByteSize ≤ byteLimit then canonicalDecode parsePolicy PolicyWire.toJson bytes
+  else none
+
 theorem canonicalDecode_reencodes {T : Type} (parse : Json → Except String T)
     (encode : T → String) {bytes : String} {value : T}
     (accepted : canonicalDecode parse encode bytes = some value) : encode value = bytes := by
@@ -563,6 +571,15 @@ theorem canonicalDecode_reencodes {T : Type} (parse : Json → Except String T)
   rename_i equal
   cases accepted
   exact equal
+
+def decodePolicy (bytes : String) : Option PolicyWire :=
+  decodePolicyWithLimit WIRE_BYTE_LIMIT bytes
+
+theorem decodePolicy_reencodes {bytes : String} {policy : PolicyWire}
+    (accepted : decodePolicy bytes = some policy) : policy.toJson = bytes := by
+  simp only [decodePolicy, decodePolicyWithLimit] at accepted
+  split at accepted <;> try contradiction
+  exact canonicalDecode_reencodes parsePolicy PolicyWire.toJson accepted
 
 theorem decodeInput_reencodes {bytes : String} {input : InputWire}
     (accepted : decodeInput bytes = some input) : input.toJson = bytes := by
@@ -1398,6 +1415,7 @@ theorem hostile_tiny_byte_limit_refused :
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeInput_reencodes
 #assert_axioms decodeInput_refuses_oversized
+#assert_axioms decodePolicy_reencodes
 #assert_axioms reduce_preserves_advantage_anchors
 #assert_axioms reduce_holder_sponsor_bounded
 #assert_axioms AdmittedBetaSponsor.no_chamber_power

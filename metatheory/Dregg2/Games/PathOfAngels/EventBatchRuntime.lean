@@ -42,8 +42,10 @@ open Dregg2.Games.PathOfAngels.EventSourcing
 
 set_option autoImplicit false
 
-abbrev INPUT_FORMAT : String := "POA-EVENT-BATCH-RUNTIME-IN-1"
-abbrev OUTPUT_FORMAT : String := "POA-EVENT-BATCH-PREPARED-2"
+abbrev INPUT_FORMAT : String := "POA-EVENT-BATCH-RUNTIME-IN-2"
+abbrev OUTPUT_FORMAT : String := "POA-EVENT-BATCH-PREPARED-3"
+abbrev INITIAL_HEADS_INPUT_FORMAT : String := "POA-EVENT-BATCH-INITIAL-HEADS-IN-1"
+abbrev INITIAL_HEADS_OUTPUT_FORMAT : String := "POA-EVENT-BATCH-INITIAL-HEADS-DIGEST-1"
 abbrev WIRE_U32_MAX : Nat := 2 ^ 32 - 1
 abbrev WIRE_U64_MAX : Nat := 2 ^ 64 - 1
 abbrev WIRE_BYTE_LIMIT : Nat := 64 * 1024 * 1024
@@ -148,6 +150,10 @@ def digestString (domain : Nat) (value : String) : Digest32 :=
 
 /-! ## Canonical proof-erased wire values -/
 
+private def zeroDigest : Digest32 where
+  bytes := List.replicate 32 0
+  length_eq := by simp
+
 structure WorldWire where
   federationId : Digest32
   contentRoot : Digest32
@@ -155,6 +161,11 @@ structure WorldWire where
   contentSession : Digest32
   contentEpoch : Nat
 deriving DecidableEq
+
+def WorldWire.validB (world : WorldWire) : Bool :=
+  world.federationId != zeroDigest && world.contentRoot != zeroDigest &&
+    world.activationDigest != zeroDigest && world.contentSession != zeroDigest &&
+    world.contentEpoch != 0
 
 structure CoordinateWire where
   world : WorldWire
@@ -166,12 +177,20 @@ structure CoordinateWire where
   signer : Digest32
 deriving DecidableEq
 
+def CoordinateWire.validB (coordinate : CoordinateWire) : Bool :=
+  coordinate.world.validB && coordinate.blockId != zeroDigest &&
+    coordinate.turnHash != zeroDigest && coordinate.receiptHash != zeroDigest &&
+    coordinate.actorRoot != zeroDigest && coordinate.signer != zeroDigest
+
 structure StreamWire where
-  namespaceId : Digest32
+  world : WorldWire
   kind : Nat
   key : Digest32
   version : Nat
 deriving DecidableEq
+
+def StreamWire.validB (stream : StreamWire) : Bool :=
+  stream.world.validB && stream.kind != 0 && stream.key != zeroDigest && stream.version != 0
 
 structure HeadWire where
   stream : StreamWire
@@ -228,6 +247,17 @@ structure InputWire where
   events : List CandidateEventWire
 deriving DecidableEq
 
+/-- A narrow host-only request for the Lean-authored digest that welds one
+exact, world-scoped durable head set into the privileged planner envelope. -/
+structure InitialHeadsDigestInputWire where
+  coordinate : CoordinateWire
+  initialHeads : List HeadWire
+deriving DecidableEq
+
+structure InitialHeadsDigestOutputWire where
+  initialHeadsDigest : Digest32
+deriving DecidableEq
+
 structure PreparedEventWire where
   eventIndex : Nat
   stream : StreamWire
@@ -270,7 +300,7 @@ def CoordinateWire.toJson (coordinate : CoordinateWire) : String :=
     ",\"signer\":" ++ jsonString (Emit.bytes32Hex coordinate.signer) ++ "}"
 
 def StreamWire.toJson (stream : StreamWire) : String :=
-  "{\"namespace_id\":" ++ jsonString (Emit.bytes32Hex stream.namespaceId) ++
+  "{\"world\":" ++ stream.world.toJson ++
     ",\"kind\":" ++ toString stream.kind ++
     ",\"key\":" ++ jsonString (Emit.bytes32Hex stream.key) ++
     ",\"version\":" ++ toString stream.version ++ "}"
@@ -325,6 +355,16 @@ def InputWire.toJson (input : InputWire) : String :=
     ",\"initial_heads\":" ++ jsonArray (input.initialHeads.map HeadWire.toJson) ++
     ",\"events\":" ++ jsonArray (input.events.map CandidateEventWire.toJson) ++ "}"
 
+def InitialHeadsDigestInputWire.toJson (input : InitialHeadsDigestInputWire) : String :=
+  "{\"format\":" ++ jsonString INITIAL_HEADS_INPUT_FORMAT ++
+    ",\"coordinate\":" ++ input.coordinate.toJson ++
+    ",\"initial_heads\":" ++ jsonArray (input.initialHeads.map HeadWire.toJson) ++ "}"
+
+def InitialHeadsDigestOutputWire.toJson (output : InitialHeadsDigestOutputWire) : String :=
+  "{\"format\":" ++ jsonString INITIAL_HEADS_OUTPUT_FORMAT ++
+    ",\"initial_heads_digest\":" ++
+      jsonString (Emit.bytes32Hex output.initialHeadsDigest) ++ "}"
+
 def PreparedEventWire.toJson (event : PreparedEventWire) : String :=
   "{\"event_index\":" ++ toString event.eventIndex ++
     ",\"stream\":" ++ event.stream.toJson ++
@@ -378,9 +418,9 @@ private def parseCoordinate (j : Json) : Except String CoordinateWire := do
   }
 
 private def parseStream (j : Json) : Except String StreamWire := do
-  exactKeys j ["namespace_id", "kind", "key", "version"]
+  exactKeys j ["world", "kind", "key", "version"]
   pure {
-    namespaceId := ← objectDigest j "namespace_id"
+    world := ← parseWorld (← j.getObjVal? "world")
     kind := ← objectNat j "kind"
     key := ← objectDigest j "key"
     version := ← objectNat j "version"
@@ -476,6 +516,16 @@ private def parseInputJson (j : Json) : Except String InputWire := do
     events := ← parseCandidateEvents (← j.getObjVal? "events")
   }
 
+private def parseInitialHeadsDigestInputJson (j : Json) :
+    Except String InitialHeadsDigestInputWire := do
+  exactKeys j ["format", "coordinate", "initial_heads"]
+  if (← j.getObjValAs? String "format") != INITIAL_HEADS_INPUT_FORMAT then
+    throw "wrong initial-heads input format"
+  pure {
+    coordinate := ← parseCoordinate (← j.getObjVal? "coordinate")
+    initialHeads := ← parseHeads (← j.getObjVal? "initial_heads")
+  }
+
 def canonicalDecode {T : Type} (parse : Json → Except String T) (encode : T → String)
     (bytes : String) : Option T :=
   match Json.parse bytes with
@@ -490,6 +540,15 @@ def decodeInputWithLimit (byteLimit : Nat) (bytes : String) : Option InputWire :
 
 def decodeInput (bytes : String) : Option InputWire :=
   decodeInputWithLimit WIRE_BYTE_LIMIT bytes
+
+def decodeInitialHeadsDigestInputWithLimit (byteLimit : Nat) (bytes : String) :
+    Option InitialHeadsDigestInputWire :=
+  if bytes.length ≤ byteLimit then
+    canonicalDecode parseInitialHeadsDigestInputJson InitialHeadsDigestInputWire.toJson bytes
+  else none
+
+def decodeInitialHeadsDigestInput (bytes : String) : Option InitialHeadsDigestInputWire :=
+  decodeInitialHeadsDigestInputWithLimit WIRE_BYTE_LIMIT bytes
 
 theorem canonicalDecode_reencodes {T : Type} (parse : Json → Except String T)
     (encode : T → String) {bytes : String} {value : T}
@@ -534,8 +593,9 @@ def CoordinateWire.toSemantic (coordinate : CoordinateWire) : EventBatch.Finaliz
 }
 
 def StreamWire.toSemantic (stream : StreamWire) : EventBatch.StreamId := {
+  world := stream.world.toSemantic
   aggregate := {
-    namespaceId := stream.namespaceId
+    namespaceId := stream.world.federationId
     kind := stream.kind
     key := stream.key
   }
@@ -543,7 +603,12 @@ def StreamWire.toSemantic (stream : StreamWire) : EventBatch.StreamId := {
 }
 
 def StreamWire.ofSemantic (stream : EventBatch.StreamId) : StreamWire := {
-  namespaceId := stream.aggregate.namespaceId
+  world := {
+    federationId := stream.world.federationId
+    contentRoot := stream.world.contentRoot
+    activationDigest := stream.world.activationDigest
+    contentSession := stream.world.contentSession
+    contentEpoch := stream.world.contentEpoch.value }
   kind := stream.aggregate.kind
   key := stream.aggregate.key
   version := stream.version.value
@@ -607,10 +672,6 @@ def digestBoundary : EventBatch.DigestBoundary where
 def initialHeadsDigest (heads : List HeadWire) : Digest32 :=
   digestString INITIAL_HEADS_DIGEST_DOMAIN (jsonArray (heads.map HeadWire.toJson))
 
-private def zeroDigest : Digest32 where
-  bytes := List.replicate 32 0
-  length_eq := by simp
-
 private def streamIds (heads : List HeadWire) : List StreamWire := heads.map HeadWire.stream
 
 private def headFor? : List HeadWire → StreamWire → Option HeadWire
@@ -621,16 +682,36 @@ private def replaceHead (heads : List HeadWire) (successor : HeadWire) : List He
   heads.map fun head => if head.stream = successor.stream then successor else head
 
 private def inputHeadValidB (coordinate : CoordinateWire) (head : HeadWire) : Bool :=
-  head.stream.namespaceId = coordinate.world.federationId &&
+  head.stream.world = coordinate.world && head.stream.validB &&
     head.stream.kind ≤ WIRE_U64_MAX && head.stream.version ≤ WIRE_U64_MAX &&
-    head.sequence ≤ WIRE_U64_MAX && head.projection.validB &&
+    head.sequence ≤ WIRE_U64_MAX && head.semanticHead != zeroDigest &&
+    head.storageHeadDigest != zeroDigest && head.projectionDigest != zeroDigest &&
+    head.projection.validB &&
     head.projectionDigest = digestBytes PROJECTION_DIGEST_DOMAIN head.projection.bytes &&
-    head.storageHeadDigest != zeroDigest &&
     (head.origin = "existing" || (head.origin = "genesis" && head.sequence = 0))
+
+def initialHeadsDigestInput? (input : InitialHeadsDigestInputWire) :
+    Option InitialHeadsDigestOutputWire := do
+  if input.initialHeads.isEmpty || input.initialHeads.length > MAX_EVENTS then none else
+  if !input.coordinate.validB then none else
+  if input.coordinate.world.contentEpoch > WIRE_U64_MAX ||
+      input.coordinate.commitOrdinal > WIRE_U64_MAX then none else
+  if !(streamIds input.initialHeads).Nodup then none else
+  if !input.initialHeads.all (inputHeadValidB input.coordinate) then none else
+  let digest := initialHeadsDigest input.initialHeads
+  if digest = zeroDigest then none else
+  some { initialHeadsDigest := digest }
+
+def initialHeadsDigestBytes? (bytes : String) : Option String := do
+  let input ← decodeInitialHeadsDigestInput bytes
+  let output ← initialHeadsDigestInput? input
+  some output.toJson
 
 private def candidateValidB (event : CandidateEventWire) : Bool :=
   event.eventIndex ≤ WIRE_U32_MAX && event.statement.kind ≤ WIRE_U64_MAX &&
     event.statement.version ≤ WIRE_U64_MAX && event.statement.sequence ≤ WIRE_U64_MAX &&
+    event.statement.predecessor != zeroDigest && event.statement.payloadDigest != zeroDigest &&
+    event.eventDigest != zeroDigest && event.successorProjectionDigest != zeroDigest &&
     event.payload.validB && event.successorProjection.validB &&
     event.statement.payloadDigest = digestBytes PAYLOAD_DIGEST_DOMAIN event.payload.bytes &&
     event.eventDigest = digestBoundary.eventDigest event.statement.toSemantic &&
@@ -661,7 +742,7 @@ private def prepareEvents : CoordinateWire → Nat → List StreamWire → List 
       if event.eventIndex != expectedIndex then none else
       if !candidateValidB event then none else
       if !bindingMatchesB coordinate event binding then none else
-      let stream := StreamWire.mk event.statement.namespaceId event.statement.kind
+      let stream := StreamWire.mk coordinate.world event.statement.kind
         event.statement.key event.statement.version
       let before ← headFor? heads stream
       if event.statement.sequence != before.sequence + 1 then none else
@@ -703,6 +784,7 @@ def planInput? (input : InputWire) : Option PreparedBatchWire := do
   if input.events.isEmpty || input.events.length > MAX_EVENTS then none else
   if input.initialHeads.isEmpty || input.initialHeads.length > MAX_EVENTS then none else
   if input.authority.coordinate != input.coordinate then none else
+  if !input.coordinate.validB then none else
   if input.coordinate.world.contentEpoch > WIRE_U64_MAX ||
       input.coordinate.commitOrdinal > WIRE_U64_MAX then none else
   if input.authority.initialHeadsDigest != initialHeadsDigest input.initialHeads then none else
@@ -714,6 +796,7 @@ def planInput? (input : InputWire) : Option PreparedBatchWire := do
     events := input.events.map CandidateEventWire.toIndexed
   }
   let batchDigest := digestBoundary.batchDigest statement
+  if batchDigest = zeroDigest then none else
   let applied ← (EventBatch.applyBatch digestBoundary (eventBatchInitialHeads input.initialHeads)
     { statement, batchDigest }).toOption
   let (events, successorHeads) ← prepareEvents input.coordinate 0 [] input.initialHeads
@@ -739,6 +822,15 @@ never be allowed to supply `authority` before the finalized native seam has
 constructed it from the carrying CommitRecord and game-judge result. -/
 @[export dregg_poa_event_batch_runtime_plan]
 def planFFI (bytes : String) : String := (planBytes? bytes).getD ""
+
+/-- Host-only digest adapter for the exact canonical
+`POA-EVENT-BATCH-INITIAL-HEADS-IN-1` request.  It emits one canonical
+`POA-EVENT-BATCH-INITIAL-HEADS-DIGEST-1` object, or the empty string on any
+syntax, canonicality, bound, identity, duplicate-stream, or cross-world
+failure.  This does not construct a native head or grant planner authority. -/
+@[export dregg_poa_event_batch_runtime_initial_heads_digest]
+def initialHeadsDigestFFI (bytes : String) : String :=
+  (initialHeadsDigestBytes? bytes).getD ""
 
 theorem planInput_deterministic (input : InputWire) (left right : PreparedBatchWire)
     (hl : planInput? input = some left) (hr : planInput? input = some right) : left = right := by
@@ -770,7 +862,7 @@ private def fixtureCoordinate : CoordinateWire := {
 }
 
 private def fixtureStream (kind key : Nat) : StreamWire := {
-  namespaceId := fixtureWorld.federationId
+  world := fixtureWorld
   kind
   key := fixtureDigest key
   version := 1
@@ -798,7 +890,7 @@ private def fixtureEvent (eventIndex : Nat) (stream : StreamWire) (sequence : Na
   let payloadBytes := fixtureBytes payload
   let projectionBytes := fixtureBytes projection
   let statement : StatementWire := {
-    namespaceId := stream.namespaceId
+    namespaceId := stream.world.federationId
     kind := stream.kind
     key := stream.key
     version := stream.version
@@ -852,6 +944,11 @@ private def fixtureInput : InputWire := {
   events := fixtureEvents
 }
 
+private def fixtureInitialHeadsDigestInput : InitialHeadsDigestInputWire := {
+  coordinate := fixtureCoordinate
+  initialHeads := fixtureHeads
+}
+
 theorem fixture_canonical_decode_accepts :
     decodeInput fixtureInput.toJson = some fixtureInput := by native_decide
 
@@ -873,6 +970,24 @@ theorem fixture_repeated_stream_uses_prior_successor_storage_digest :
 
 theorem fixture_ffi_emits_nonempty_canonical_plan :
     planFFI fixtureInput.toJson != "" := by native_decide
+
+theorem fixture_initial_heads_digest_export_is_exact :
+    initialHeadsDigestFFI fixtureInitialHeadsDigestInput.toJson =
+      (InitialHeadsDigestOutputWire.mk (initialHeadsDigest fixtureHeads)).toJson := by
+  native_decide
+
+theorem hostile_initial_heads_digest_cross_world_refused :
+    let foreignWorld := { fixtureWorld with contentSession := fixtureDigest 99 }
+    let foreignStream := { canonHead.stream with world := foreignWorld }
+    let foreignHead := { canonHead with stream := foreignStream }
+    let input := { fixtureInitialHeadsDigestInput with initialHeads := [foreignHead, attendantHead] }
+    initialHeadsDigestFFI input.toJson = "" := by native_decide
+
+theorem hostile_initial_heads_digest_zero_world_refused :
+    let zeroWorld := { fixtureWorld with contentEpoch := 0 }
+    let coordinate := { fixtureCoordinate with world := zeroWorld }
+    let input := { fixtureInitialHeadsDigestInput with coordinate }
+    initialHeadsDigestFFI input.toJson = "" := by native_decide
 
 theorem hostile_reorder_refused :
     let hostile := { fixtureInput with events := [attendant, firstCanon, secondCanon] }
@@ -944,6 +1059,9 @@ theorem hostile_sequence_overflow_refused :
 #assert_compiled fixture_multi_stream_repeated_stream_plans
 #assert_compiled fixture_repeated_stream_uses_prior_successor_storage_digest
 #assert_compiled fixture_ffi_emits_nonempty_canonical_plan
+#assert_compiled fixture_initial_heads_digest_export_is_exact
+#assert_compiled hostile_initial_heads_digest_cross_world_refused
+#assert_compiled hostile_initial_heads_digest_zero_world_refused
 #assert_compiled hostile_reorder_refused
 #assert_compiled hostile_payload_mutation_refused
 #assert_compiled hostile_projection_mutation_refused

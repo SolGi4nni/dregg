@@ -39,6 +39,15 @@ structure WorldIdentity where
   contentEpoch : EpochId
 deriving DecidableEq
 
+private def zeroDigest : Digest32 where
+  bytes := List.replicate 32 0
+  length_eq := by simp
+
+def WorldIdentity.validB (world : WorldIdentity) : Bool :=
+  world.federationId != zeroDigest && world.contentRoot != zeroDigest &&
+    world.activationDigest != zeroDigest && world.contentSession != zeroDigest &&
+    world.contentEpoch.value != 0
+
 /-- Exact finalized carrier shared by every event in one batch.  `blockId`,
 `turnHash`, `receiptHash`, and `commitOrdinal` must be welded to the generic
 `CommitRecord`; `actorRoot` and `signer` must be welded to the native judge. -/
@@ -52,14 +61,25 @@ structure FinalizedTurnCoordinate where
   signer : Digest32
 deriving DecidableEq
 
+def FinalizedTurnCoordinate.validB (coordinate : FinalizedTurnCoordinate) : Bool :=
+  coordinate.world.validB && coordinate.blockId != zeroDigest &&
+    coordinate.turnHash != zeroDigest && coordinate.receiptHash != zeroDigest &&
+    coordinate.actorRoot != zeroDigest && coordinate.signer != zeroDigest
+
 /-- A stream is an aggregate together with the schema version under which its
 event bytes are interpreted.  Schema version is part of stream identity. -/
 structure StreamId where
+  world : WorldIdentity
   aggregate : AggregateId
   version : SchemaVersion
 deriving DecidableEq
 
-def streamOfStatement (statement : EventStatement) : StreamId where
+def StreamId.validB (stream : StreamId) : Bool :=
+  stream.world.validB && stream.aggregate.namespaceId = stream.world.federationId &&
+    stream.aggregate.kind != 0 && stream.aggregate.key != zeroDigest && stream.version.value != 0
+
+def streamOfStatement (world : WorldIdentity) (statement : EventStatement) : StreamId where
+  world
   aggregate := statement.aggregate
   version := statement.version
 
@@ -116,6 +136,8 @@ inductive Error where
   | emptyBatch
   | batchTooLarge
   | duplicateInitialStream
+  | invalidCoordinateIdentity
+  | invalidInitialHead
   | commitOrdinalOutOfRange
   | eventIndexOutOfRange
   | sequenceOutOfRange
@@ -144,7 +166,8 @@ private def applyOne (boundary : DigestBoundary)
   if WIRE_U64_MODULUS ≤ event.statement.sequence then throw .sequenceOutOfRange
   if event.statement.aggregate.namespaceId != coordinate.world.federationId then
     throw .wrongFederationNamespace
-  let stream := streamOfStatement event.statement
+  let stream := streamOfStatement coordinate.world event.statement
+  if !stream.validB then throw .invalidInitialHead
   let before ← match headFor? heads stream with
     | none => throw .unknownStream
     | some before => pure before
@@ -172,6 +195,10 @@ def applyBatch (boundary : DigestBoundary) (initialHeads : List StreamHead)
     (envelope : Envelope) : Except Error AppliedBatch := do
   if envelope.statement.events.isEmpty then throw .emptyBatch
   if MAX_BATCH_EVENTS < envelope.statement.events.length then throw .batchTooLarge
+  if !envelope.statement.coordinate.validB then throw .invalidCoordinateIdentity
+  if !initialHeads.all (fun head => head.stream.validB &&
+      head.stream.world = envelope.statement.coordinate.world && head.head != zeroDigest &&
+      head.sequence < WIRE_U64_MODULUS) then throw .invalidInitialHead
   if !(streamIds initialHeads).Nodup then throw .duplicateInitialStream
   if WIRE_U64_MODULUS ≤ envelope.statement.coordinate.commitOrdinal then
     throw .commitOrdinalOutOfRange
@@ -217,6 +244,7 @@ private def fixtureCoordinate : FinalizedTurnCoordinate where
   signer := digestByte 12
 
 private def stream (kind : Nat) (key : Nat) : StreamId where
+  world := fixtureWorld
   aggregate := { namespaceId := fixtureWorld.federationId, kind, key := digestByte key }
   version := ⟨1⟩
 
@@ -331,6 +359,36 @@ theorem hostile_foreign_federation_refused :
         .error .wrongFederationNamespace := by
   native_decide
 
+theorem world_scoped_streams_separate_activation_session_and_epoch :
+    let activation := { fixtureWorld with activationDigest := digestByte 90 }
+    let session := { fixtureWorld with contentSession := digestByte 91 }
+    let epoch := { fixtureWorld with contentEpoch := ⟨6⟩ }
+    (streamOfStatement activation firstCanon.statement != canonHead.stream) &&
+      (streamOfStatement session firstCanon.statement != canonHead.stream) &&
+      (streamOfStatement epoch firstCanon.statement != canonHead.stream) = true := by
+  native_decide
+
+theorem hostile_reused_stream_after_world_rollback_refused :
+    let rollbackWorld := { fixtureWorld with
+      activationDigest := digestByte 90
+      contentSession := digestByte 91
+      contentEpoch := ⟨4⟩ }
+    let rollbackCoordinate := { fixtureCoordinate with world := rollbackWorld }
+    let statement := { fixtureStatement with coordinate := rollbackCoordinate }
+    applyBatch fixtureBoundary [canonHead, attendantHead]
+      { statement, batchDigest := fixtureBoundary.batchDigest statement } =
+        .error .invalidInitialHead := by
+  native_decide
+
+theorem hostile_zero_world_identity_refused :
+    let zeroWorld := { fixtureWorld with contentSession := zeroDigest }
+    let coordinate := { fixtureCoordinate with world := zeroWorld }
+    let statement := { fixtureStatement with coordinate }
+    applyBatch fixtureBoundary [canonHead, attendantHead]
+      { statement, batchDigest := fixtureBoundary.batchDigest statement } =
+        .error .invalidCoordinateIdentity := by
+  native_decide
+
 #assert_axioms applyBatch_deterministic
 #assert_compiled fixture_cross_aggregate_batch_accepts
 #assert_compiled fixture_repeated_stream_is_explicitly_chained
@@ -342,5 +400,8 @@ theorem hostile_foreign_federation_refused :
 #assert_compiled hostile_batch_digest_refused
 #assert_compiled hostile_duplicate_initial_stream_refused
 #assert_compiled hostile_foreign_federation_refused
+#assert_compiled world_scoped_streams_separate_activation_session_and_epoch
+#assert_compiled hostile_reused_stream_after_world_rollback_refused
+#assert_compiled hostile_zero_world_identity_refused
 
 end Dregg2.Games.PathOfAngels.EventBatch
