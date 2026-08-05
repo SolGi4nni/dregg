@@ -243,6 +243,64 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     // `PredicateKind` family). Keys are the descriptors' self-declared `name` fields; the golden's
     // `name` must equal the key (checked by `every_static_golden_decodes_and_dispatches`). This is
     // what makes the STARK-ified lightclients PRODUCIBLE by a node (`descriptor_by_name` → prove).
+    //
+    // ⚑⚑ **AND PRODUCIBLE IS ALL IT IS. MEASURED 2026-08-05, SO NOBODY RE-DISCOVERS IT: NOT ONE OF
+    // THESE FOUR HAS A NON-TEST RESOLVER.** Every const holding one of these names lives in
+    // `circuit/tests/{eth,tendermint,solana,midnight}_lightclient_proves.rs`. The name-agnostic
+    // production seams that COULD resolve them — `turn/src/conditional.rs:502/570`
+    // (`ProofCondition::expected_air`), `bridge/src/verifier.rs:335`,
+    // `circuit/src/presentation.rs:90`, `wasm/src/lib.rs:408` — are never handed one of these
+    // strings anywhere in the repo. `turn/src/executor/` contains exactly ONE head verifier,
+    // `mina_head_verifier.rs`. So the row above is a claim about DISPATCH, and the sentence a reader
+    // should take away is *"a node CAN prove this"*, never *"a node checks this"*.
+    //
+    // ⚑ **THE JUDGEMENT, PER CHAIN — three GAPS and one PREMATURE, not four by-design.** The
+    // missing consumer has the same shape in every case, and `mina_head_verifier.rs` is the worked
+    // example: a `WitnessedPredicateVerifier` under a fixed `Custom { vk_hash }`, registered in
+    // `turn/src/executor/membership_verifier.rs::registry_with_real_verifiers` beside the Mina row,
+    // pinning PI slots to a CELL-PROGRAM trust root and to the slot the turn writes, then
+    // `descriptor_by_name(…)` → `verify_vm_descriptor2`, fail-closed at every seam.
+    //
+    // * **`eth` — GAP.** `eth-lightclient/` is a real Altair sync-committee + finality client whose
+    //   DECISIONS already come from the Lean archive (`verified_gate::decide` →
+    //   `dregg_lean_ffi::verified_eth_lc_verify`). Its only production caller is the standalone CLI
+    //   `eth-lightclient/src/bin/verify_holding.rs`; `node/`, `turn/` and `persist/` do not depend
+    //   on that crate at all. So a verified ETH decision terminates in a Rust `Bool` on the
+    //   operator's own machine and produces NO dregg state transition — verbatim the wound
+    //   `mina_head_verifier.rs`'s header was written about, one chain over. Missing consumer:
+    //   `turn/src/executor/eth_head_verifier.rs`.
+    // * **`tm` — GAP, and colder.** `cosmos-lightclient::verify_cosmos_header` (→
+    //   `verified_tm_lc_verify` / `verified_tm_skip_verify`) has NO production call site in the
+    //   repo — only that crate's own tests and `dregg-interchain-gov`'s. Both legs, native and
+    //   STARK, are unconsumed. Missing consumer: `turn/src/executor/tm_head_verifier.rs`.
+    // * **`solana` — THE SHARPEST GAP, because here the native leg IS live and the proved one is
+    //   not.** `bridge/src/solana_relayer.rs:836` and `:929` call
+    //   `solana_trustless::verify_lock_proof_consensus{_anchored}` on the real finalized-RPC mint
+    //   path, so Solana consensus verification already gates value movement — in hand-written Rust,
+    //   outside any AIR. Meanwhile the node's own live Solana surface
+    //   (`node/src/poa_holding_api.rs`) imports only `validate_rpc_snapshot`, the RPC-beta trust
+    //   tier, NOT the consensus path; and `poa-solana-gate::verify_consensus_source`, the one
+    //   function that can return a `ConsensusVerified` holding, has no non-test caller. Missing
+    //   consumer: `turn/src/executor/solana_head_verifier.rs`, with
+    //   [`SOLANA_STAKE_TABLE_FOLD_JSON`] as its SUB-PROOF — exactly the relationship
+    //   `dregg-pasta-fq-chainlink::v1` has to the Mina head rung: verify the fold, then pin the
+    //   light client's `PI_TOTAL_STK` slots 19..22 against the denominator it published.
+    // * **`midnight` — NOT a gap; PREMATURE, and say so rather than implying a peer.** There is no
+    //   Midnight light client in this tree. `bridge/src/midnight.rs` verifies an ed25519
+    //   `FederationAttestation` — a 2/3 multisig over dregg's own federation — which is not a header
+    //   verification, and `midnight_inclusion.rs`'s mirror tree is an explicit BLAKE3 PLACEHOLDER
+    //   rather than Poseidon-over-BLS12-381, so it is not Compact-compatible. Nothing named
+    //   `midnight` exists anywhere in `turn/`, `cell/`, `persist/` or `node/`. A consumer written
+    //   today would refuse a turn on a proof about a chain state this tree cannot independently
+    //   derive; the missing piece is upstream of the AIR, not downstream of it.
+    //
+    // ⚠ These four rows are deliberately KEPT despite having no resolver, and that is a different
+    // call from the one made for `dregg-pasta-fq-wraplink::v1` below. The wraplink was STRICTLY
+    // DOMINATED — a superseding sibling took over its role in the same seam, so two resolvable
+    // names meant the next reader could pick the weaker object. These four are dominated by
+    // nothing; the wound is the ABSENT consumer, and deleting the row would delete the thing that
+    // consumer must dispatch. What is not kept is the implication: this comment is the second
+    // source for "served, and by whom", and it says by nobody.
     (
         "dregg-eth-lightclient-verify::v1",
         ETH_LIGHTCLIENT_VERIFY_JSON,
