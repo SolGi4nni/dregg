@@ -32,6 +32,10 @@ never `EffectVmEmitV2`):
   * `Dregg2.Circuit.Emit.KimchiRender`        — R4a: PlacedGate → proof-systems gate-list/witness render
   * `Dregg2.Circuit.Emit.KimchiRenderPoseidon` — R4a-scaled: a REAL Poseidon-permutation circuit
       (11 byte-exact `Poseidon` rows + a `Zero` gate, Lean-placed, Lean-witnessed via `PastaPoseidon`)
+  * `Dregg2.Circuit.Emit.KimchiPreimageCircuit` — ⚑ the first circuit here that is NOT a Pickles
+      shape: `Poseidon.hash([x]) = c` with `c` the ONE PUBLIC INPUT, i.e. the shape of a zkApp
+      method body. Its siblings above all carry `public_input_size = 0` and no statement; this one
+      carries a statement, a secret, and the copy-permutation class that BINDS them
   * `Dregg2.Circuit.Emit.KimchiRenderCompleteAdd`   — CURVE gate: a REAL `complete_add` circuit
       (G + [2]G = [3]G; Lean witness generator, output cross-checked vs the `PastaCurve.Gp3` KAT)
   * `Dregg2.Circuit.Emit.KimchiRenderEndoMulScalar` — CURVE gate: a REAL `endo_mul_scalar` circuit
@@ -99,6 +103,7 @@ import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.KimchiPlacement
 import Dregg2.Circuit.Emit.KimchiRender
 import Dregg2.Circuit.Emit.KimchiRenderPoseidon
+import Dregg2.Circuit.Emit.KimchiPreimageCircuit
 import Dregg2.Circuit.Emit.KimchiRenderCompleteAdd
 import Dregg2.Circuit.Emit.KimchiRenderEndoMulScalar
 import Dregg2.Circuit.Emit.KimchiRenderVarBaseMul

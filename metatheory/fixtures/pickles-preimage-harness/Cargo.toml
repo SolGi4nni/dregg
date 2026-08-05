@@ -1,0 +1,80 @@
+# pickles-preimage-harness — PROVE + VERIFY a Lean-authored circuit that is NOT `wrap_main`.
+#
+# Standalone: deliberately NOT a member of the breadstuffs workspace. An EMPTY `[workspace]` table is
+# the only mechanism that detaches a nested package (a path-prefix member match in the root manifest
+# silently wins over `exclude`). Same shape/reason as the sibling `pickles-r4-harness` /
+# `pickles-poseidon-harness` fixture crates: they pin `o1-labs/proof-systems` at tag 0.3.0, a
+# different rev than the workspace's `emberian/proof-systems` patch.
+#
+# ⚑ WHAT MAKES THIS ONE DIFFERENT FROM ITS SIBLINGS. `pickles-poseidon-harness` proves a bare
+# Poseidon permutation with `public_input_size = 0` — a circuit with NO STATEMENT. `pickles-r4-
+# harness` proves `p = a·b ∧ p = 35`, also with no public input. `pickles-wrapmain-harness` proves
+# rungs of `wrap_main`. This crate proves the first Lean-authored circuit in the tree that has the
+# shape of a zkApp method body:
+#
+#     "I know x such that Poseidon.hash([x]) = c",  c the ONE PUBLIC INPUT.
+#
+# authored in `Dregg2.Circuit.Emit.KimchiPreimageCircuit`, emitted by `EmitPreimageJson`.
+#
+# THE FIVE PROPERTIES (each a `#[test]`):
+#   1. the honest witness PROVES and `kimchi::verifier::batch_verify` ACCEPTS it;
+#   2. the Lean digest equals `mina-poseidon`'s own `fp_kimchi` permutation of `[x,0,0]` — an
+#      INDEPENDENT implementation of the hash the circuit computes;
+#   3. a FORGED public input (`c+1`, witness cell moved with it) is REJECTED;
+#   4. the CONTROL circuit — byte-identical gates, coefficients and witness, missing ONLY the
+#      copy-permutation wire from the public cell to the permutation output — ACCEPTS that same
+#      forgery. So (3) is the WIRE refusing, not the gate;
+#   5. the verifier-index digest DIFFERS between the two, so the wire is IN the key.
+#
+# ⚠ SCOPE, said plainly. This is an INNER kimchi proof on Vesta/Fp. It is not wrapped, no Mina
+# verifier has seen it, and it is NOT a Mina-valid Pickles proof or a zkApp. The SRS is built by
+# Mina's own deterministic `SRS::<Vesta>::create` (so the commitments are on Mina's generators), but
+# at this circuit's 2^5 domain, not Mina's 2^16 — a VK derived here is not comparable to a deployed
+# one. A Mina account's key is a WRAP-side Pallas key; see `KimchiPreimageCircuit` §6.
+#
+# ⚠ House Law #1: the CIRCUIT is Lean-authored (gates, coefficients, copy-permutation variables,
+# placement and witness); `proof-systems` is the Rust PROVER that RUNS it. No OCaml, no Node, no
+# o1js in this path.
+#
+# REGENERATE the fixtures (only when the Lean circuit changes):
+#   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiPreimageCircuit \
+#     && lake env lean --run Dregg2/Circuit/Emit/EmitPreimageJson.lean \
+#     && cp /tmp/pickles-preimage/{preimage,unbound}.json \
+#           fixtures/pickles-preimage-harness/fixtures/
+#
+# RUN (release — a debug prove is slow):
+#   cargo test --release --manifest-path metatheory/fixtures/pickles-preimage-harness/Cargo.toml \
+#     -- --nocapture
+
+[package]
+name = "pickles-preimage-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# `[[bin]]` (not `examples/`) so `scripts/check-dark-modules.py` sees a declaration for src/main.rs.
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ec = "0.5.0"
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+ark-poly = "0.5.0"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }
