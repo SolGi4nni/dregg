@@ -45,6 +45,7 @@ test.describe('window.dregg injection', () => {
     expect(methods).toContain('authorize');
     expect(methods).toContain('isConnected');
     expect(methods).toContain('canAuthorize');
+    expect(methods).toContain('getActiveIdentity');
     expect(methods).toContain('provision');
     expect(methods).toContain('postIntent');
     expect(methods).toContain('shareCapability');
@@ -54,6 +55,53 @@ test.describe('window.dregg injection', () => {
     expect(methods).toContain('storageQuota');
     expect(methods).toContain('on');
     expect(methods).toContain('off');
+    await page.close();
+  });
+
+  test('getActiveIdentity is public-only, follows profile switches, and refuses while locked', async ({ context, workerWallet }) => {
+    await workerWallet.janitor.evaluate(async () => {
+      await chrome.storage.local.set({
+        dregg_allowed_origins: {
+          'https://example.com': {
+            methods: ['dregg:getActiveIdentity'],
+            expires: Date.now() + 60_000,
+          },
+        },
+      });
+    });
+    const page = await context.newPage();
+    await page.goto('https://example.com');
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
+
+    const before = await page.evaluate(async () => await (window as any).dregg.getActiveIdentity());
+    expect(Object.keys(before).sort()).toEqual(['profileName', 'publicKeyHex']);
+    expect(before.publicKeyHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(before.profileName).toBe('default');
+    expect(JSON.stringify(before)).not.toMatch(/secret|mnemonic|receipt|provider/i);
+
+    const switched = await workerWallet.janitor.evaluate(async () => {
+      const created = await chrome.runtime.sendMessage({ type: 'dregg:createProfile', name: 'expedition' });
+      const used = await chrome.runtime.sendMessage({ type: 'dregg:useProfile', name: 'expedition' });
+      return { created, used };
+    });
+    expect(switched.created?.result?.created?.publicKeyHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(switched.used?.result?.active).toBe('expedition');
+    const after = await page.evaluate(async () => await (window as any).dregg.getActiveIdentity());
+    expect(after.profileName).toBe('expedition');
+    expect(after.publicKeyHex).toBe(switched.created.result.created.publicKeyHex);
+    expect(after.publicKeyHex).not.toBe(before.publicKeyHex);
+
+    await workerWallet.janitor.evaluate(async () => {
+      await chrome.runtime.sendMessage({ type: 'dregg:lock' });
+    });
+    const locked = await page.evaluate(async () => {
+      try {
+        return await (window as any).dregg.getActiveIdentity();
+      } catch (error: any) {
+        return { error: error.message };
+      }
+    });
+    expect(locked.error).toMatch(/locked/i);
     await page.close();
   });
 });

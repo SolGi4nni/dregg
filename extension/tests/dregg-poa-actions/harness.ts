@@ -7,8 +7,10 @@ import {
 import {
   registerPoAElement,
   setPoAFieldRecordTransportFactory,
+  setPoAGalleyTransportFactory,
   setPoAPortFactory,
 } from "../../src/elements/dregg-poa";
+import type { PoAGalleyStatus } from "../../src/poa-galley";
 
 declare const window: any;
 
@@ -67,12 +69,14 @@ function success(model: PoACompanionModel): PoACompanionResponse {
 }
 
 let deferredRelease: ((value: unknown) => void) | null = null;
+let galleyDeferredRelease: ((value: any) => void) | null = null;
 
 setPoAPortFactory(() => ({
   async request(req) {
     const href = req.context.href;
     if (href.includes("local")) return success(localModel);
     if (href.includes("x-route")) return success(signedModel("x-episode-debrief", "x"));
+    if (href.includes("galley-deferred")) return success(signedModel("galley-deferred"));
     if (href.includes("mismatch")) return success(signedModel("mismatch-record"));
     if (href.includes("deferred")) return success(signedModel("deferred-record"));
     return success(signedModel("no-transport-record"));
@@ -144,9 +148,77 @@ setPoAFieldRecordTransportFactory(() => ({
   },
 }));
 
+const galleyEvent = {
+  sequence: 8,
+  turn_hash: "bb".repeat(32),
+  receipt_hash: "cc".repeat(32),
+  event_digest: "dd".repeat(32),
+  payload_digest: "ee".repeat(32),
+  payload: { browser_does_not_score_this: 17 },
+  receipt: { index: 13, postcard_base64: "AQIDBA==", sha256: "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a" },
+};
+
+const priorGalleyEvent = {
+  ...galleyEvent,
+  sequence: 7,
+  turn_hash: "ba".repeat(32),
+  receipt_hash: "ca".repeat(32),
+  event_digest: "aa".repeat(32),
+};
+
+function galleyStatus(withEvent = false): PoAGalleyStatus {
+  return {
+    format: "POA-GALLEY-STATUS-V1",
+    federation_id: FEDERATION,
+    daily_id: "galley:daily:2044-03-19",
+    aggregate_id: "khv:galley",
+    schema_version: 1,
+    sequence: withEvent ? 8 : 7,
+    semantic_head: (withEvent ? "dd" : "aa").repeat(32),
+    projection_digest: "bb".repeat(32),
+    projection: { browser_does_not_score_this: 17 },
+    actions: [
+      { kind: "public_vote", action_token: "opaque.vote.7", expires_after_sequence: withEvent ? 8 : 7 },
+      { kind: "perform", action_token: "opaque.perform.7", expires_after_sequence: withEvent ? 8 : 7 },
+      { kind: "visit_commons", action_token: "opaque.commons.7", expires_after_sequence: withEvent ? 8 : 7 },
+      { kind: "holder_sponsorship", action_token: "opaque.holder.7", expires_after_sequence: withEvent ? 8 : 7 },
+    ],
+    events: withEvent ? [galleyEvent] : [priorGalleyEvent],
+    replay: {
+      audited: true,
+      event_count: 1,
+      total_event_count: withEvent ? 8 : 7,
+      from_sequence: withEvent ? 8 : 7,
+      through_sequence: withEvent ? 8 : 7,
+      head_digest: (withEvent ? "dd" : "aa").repeat(32),
+    },
+  };
+}
+
+let commandObserved = false;
+setPoAGalleyTransportFactory(() => ({
+  async request(request) {
+    if (request.binding.experienceId === "galley-deferred") {
+      return new Promise((resolve) => { galleyDeferredRelease = resolve; });
+    }
+    if (request.op === "status") return { ok: true, op: "status", status: galleyStatus(commandObserved) };
+    commandObserved = true;
+    return {
+      ok: true,
+      op: "command",
+      admission: "submitted",
+      observation: "receipt_observed",
+      turnHash: galleyEvent.turn_hash,
+      event: galleyEvent,
+      status: galleyStatus(true),
+    };
+  },
+}));
+
 appendCompanion("active", "https://x.com/sentyr/status/x-route");
 appendCompanion("mismatch", "https://www.youtube.com/watch?v=mismatch");
 appendCompanion("deferred", "https://www.youtube.com/watch?v=deferred");
+appendCompanion("galley-deferred", "https://www.youtube.com/watch?v=galley-deferred");
 appendCompanion("local", "https://www.youtube.com/watch?v=local");
 
 window.__poaActionsRoot = (id: string): ShadowRoot | null => {
@@ -165,5 +237,9 @@ window.__poaReleaseDeferred = () => {
   };
   deferredRelease?.(record(binding));
   deferredRelease = null;
+};
+window.__poaReleaseGalleyDeferred = () => {
+  galleyDeferredRelease?.({ ok: true, op: "status", status: galleyStatus(false) });
+  galleyDeferredRelease = null;
 };
 window.__POA_ACTIONS_READY = true;

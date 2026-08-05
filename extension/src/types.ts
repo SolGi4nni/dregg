@@ -198,6 +198,8 @@ export type MessageType =
   | "dregg:descent"
   // Path of Angels signed/allowlisted YouTube companion — <dregg-poa>
   | "dregg:poa"
+  // Background-only, manifest-bound live Galley projection + signed action.
+  | "dregg:poaGalley"
   // Node configuration
   | "dregg:getNodeConfig"
   | "dregg:setNodeConfig"
@@ -231,6 +233,8 @@ export type MessageType =
   | "dregg:clearDisclosurePref"
   // Turn v3 (pre-built postcard bytes)
   | "dregg:signTurnV3"
+  // Public key of the unlocked active named profile; per-origin permission.
+  | "dregg:getActiveIdentity"
   // Offering turn (G1 rung 2): sign a dreggnet-offerings move with the
   // extension-held identity key (verified server-side by
   // OfferingHost::advance_signed).

@@ -145,14 +145,15 @@ export class MockNode {
       res.json({ turn_id: turnId, accepted: true, receipt: 'mock_receipt_hash' });
     });
 
-    // Bearer auth (export sturdy ref). The extension reads { node_id, secret }.
+    // Bearer auth verifies an already-built, actor-bound proof. It is NOT a
+    // sturdy-ref export/mint route and never returns a swiss secret.
     const bearerAuth = (req: express.Request, res: express.Response) => {
       this.state.lastBearerAuth = req.body;
-      const cellId = req.body.cell_id || 'abcd'.repeat(16);
       res.json({
-        node_id: 'node_mock_001',
-        secret: 'mock_bearer_secret',
-        cell_id: cellId,
+        authorized: Boolean(req.body.bearer_proof && req.body.actor_cell && req.body.target_cell),
+        error: req.body.bearer_proof && req.body.actor_cell && req.body.target_cell
+          ? null
+          : 'actor-bound bearer proof required',
       });
     };
     this.app.post('/turns/bearer-auth', bearerAuth);

@@ -83,6 +83,7 @@ const RESTRICTED_METHODS = new Set<MessageType>([
   "dregg:postIntent",
   "dregg:signTurn",
   "dregg:signTurnV3",
+  "dregg:getActiveIdentity",
   "dregg:submitPoaSignalClaim",
   // Offering turn (G1 rung 2): a key-touching signature over a
   // dreggnet-offerings move — per-origin grant + the un-overlayable

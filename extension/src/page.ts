@@ -18,6 +18,10 @@ import {
   validateFederationDomain,
 } from "./federation-domain";
 import {
+  parseActiveDreggIdentity,
+  type ActiveDreggIdentity,
+} from "./active-identity";
+import {
   parseOfferingTurnParams,
   type OfferingSignFailure,
   type OfferingSignResult,
@@ -326,6 +330,12 @@ export interface DreggAPI {
   proposeRoutes(routes: unknown[]): Promise<{ proposalId: string; submitted: boolean; queued?: boolean; error?: string }>;
   voteOnProposal(proposalId: string, approve: boolean): Promise<{ accepted: boolean; proposalId: string; queued?: boolean; error?: string }>;
   /**
+   * Return the unlocked active named profile's public Dregg identity. This is
+   * a per-origin permissioned disclosure: no secret key, mnemonic, holding
+   * receipt, wallet-provider object, or signing capability is returned.
+   */
+  getActiveIdentity(): Promise<ActiveDreggIdentity>;
+  /**
    * Sign and submit a pre-built postcard-encoded Turn (v3 wire format).
    * starbridge-apps' turn-builders produce raw bytes; use this instead of
    * `signTurn` when the turn is already serialized.
@@ -600,6 +610,14 @@ const dregg: DreggAPI = {
 
   voteOnProposal(proposalId, approve) {
     return sendMessage("dregg:voteOnProposal", { proposalId, approve }) as Promise<{ accepted: boolean; proposalId: string; queued?: boolean; error?: string }>;
+  },
+
+  getActiveIdentity() {
+    return (sendMessage("dregg:getActiveIdentity", {}) as Promise<unknown>).then((value) => {
+      const identity = parseActiveDreggIdentity(value);
+      if (!identity) throw new Error("Dregg: extension returned a malformed active identity");
+      return identity;
+    });
   },
 
   signTurnV3(turnBytes, federationId) {

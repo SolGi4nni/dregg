@@ -17,6 +17,15 @@ import {
   type PoAEpisodeActions,
   type PoAFieldRecordBinding,
 } from "../poa";
+import {
+  poAGalleyActionLabel,
+  poAGalleyAvailableAtSequence,
+  type PoAGalleyAction,
+  type PoAGalleyBinding,
+  type PoAGalleyPortRequest,
+  type PoAGalleyPortResponse,
+  type PoAGalleyStatus,
+} from "../poa-galley";
 
 export type PoAPortFactory = () => PoACompanionPort;
 let poaPortFactory: PoAPortFactory | null = null;
@@ -38,6 +47,37 @@ let poaFieldRecordTransportFactory: PoAFieldRecordTransportFactory | null = null
 
 export function setPoAFieldRecordTransportFactory(factory: PoAFieldRecordTransportFactory | null): void {
   poaFieldRecordTransportFactory = factory;
+}
+
+/** Background-only access to the versioned Galley projection.  The host page
+ * never receives action tokens, receipt postcards, or a signing method. */
+export interface PoAGalleyTransport {
+  request(request: PoAGalleyPortRequest): Promise<PoAGalleyPortResponse>;
+}
+
+export type PoAGalleyTransportFactory = () => PoAGalleyTransport;
+let poaGalleyTransportFactory: PoAGalleyTransportFactory | null = null;
+
+export function setPoAGalleyTransportFactory(factory: PoAGalleyTransportFactory | null): void {
+  poaGalleyTransportFactory = factory;
+}
+
+export function chromePoAGalleyTransport(): PoAGalleyTransport {
+  return {
+    async request(request): Promise<PoAGalleyPortResponse> {
+      const response = await chrome.runtime.sendMessage({ type: "dregg:poaGalley", ...request });
+      if (response && typeof response === "object" && "result" in response) {
+        return (response as { result: PoAGalleyPortResponse }).result;
+      }
+      return {
+        ok: false,
+        op: request.op,
+        error: response && typeof response === "object" && "error" in response
+          ? String((response as { error: unknown }).error)
+          : "empty Galley response",
+      };
+    },
+  };
 }
 
 /** Production transport. The background disregards the supplied href and
@@ -104,6 +144,18 @@ const STYLE = `
 .record button { min-height: 44px; padding: 8px 10px; border: 1px solid #788c5d; border-radius: 6px; color: #e9f0d8; background: #242a20; cursor: pointer; font: 600 11px/1.3 system-ui, sans-serif; }
 .record button:disabled { cursor: progress; opacity: .65; }
 .record button:focus-visible, .action:focus-visible, .links a:focus-visible { outline: 2px solid #d9efac; outline-offset: 2px; }
+.galley { position: relative; margin: 12px 0 2px; padding: 10px; border: 1px solid #4f5947; border-radius: 7px; background: rgba(26,35,25,.62); }
+.galley h3 { margin: 0 0 7px; color: #dce7c6; font-size: 13px; }
+.galley-status { color: #b9c4aa; font-size: 11px; line-height: 1.4; }
+.galley dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 9px; margin: 8px 0; font: 10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.galley dt { color: #859575; }
+.galley dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: #ced8bd; }
+.galley-controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.galley button { min-height: 44px; padding: 7px 9px; border: 1px solid #68785a; border-radius: 6px; color: #e8efd9; background: #222a20; cursor: pointer; font: 600 11px/1.25 system-ui, sans-serif; }
+.galley button:disabled { cursor: not-allowed; opacity: .58; }
+.galley button:focus-visible { outline: 2px solid #d9efac; outline-offset: 2px; }
+.galley-result { margin-top: 9px; padding-top: 8px; border-top: 1px solid #3d4637; color: #bac7aa; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.galley-result a { color: #cbdca7; }
 .badge { position: relative; margin-top: 9px; color: #8fb878; font: 10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; }
 `;
 
@@ -184,6 +236,7 @@ function makeDiv(className: string, text?: string): HTMLDivElement {
 export class DreggPoA extends HTMLElement {
   private readonly port = getPort();
   private readonly fieldRecordTransport = poaFieldRecordTransportFactory?.() ?? null;
+  private readonly galleyTransport = (poaGalleyTransportFactory ?? chromePoAGalleyTransport)();
   private booted = false;
   private lifecycle = 0;
 
@@ -296,6 +349,10 @@ export class DreggPoA extends HTMLElement {
       terminal.appendChild(this.fieldRecordPanel(model, lifecycle));
     }
 
+    if (model.trust === "signed_manifest") {
+      terminal.appendChild(this.galleyPanel(model, lifecycle));
+    }
+
     const links = makeDiv("links");
     const beta = document.createElement("a");
     beta.href = model.betaUrl;
@@ -348,6 +405,172 @@ export class DreggPoA extends HTMLElement {
     }
     this.removeAttribute("error");
     this.exposeRootForTest(root);
+  }
+
+  private galleyPanel(
+    model: Extract<PoACompanionModel, { trust: "signed_manifest" }>,
+    lifecycle: number,
+  ): HTMLElement {
+    const panel = document.createElement("section");
+    panel.className = "galley";
+    panel.setAttribute("aria-label", "Live Khovokhi shift");
+    const heading = document.createElement("h3");
+    heading.textContent = "Live Khovokhi shift";
+    const identityBoundary = makeDiv("galley-identity-boundary",
+      "Cipherclerk's background attaches the permissioned active public key as a claimed preparation identity. That header authorizes nothing; the exact turn signature and finalized receipt identify the authoritative transition.");
+    const statusLine = makeDiv("galley-status", "Contacting the versioned ship journal…");
+    statusLine.setAttribute("role", "status");
+    statusLine.setAttribute("aria-live", "polite");
+    const facts = document.createElement("dl");
+    const controls = makeDiv("galley-controls");
+    const result = makeDiv("galley-result");
+    result.hidden = true;
+    panel.append(heading, identityBoundary, statusLine, facts, controls, result);
+
+    const binding: PoAGalleyBinding = Object.freeze({
+      platform: model.platform,
+      contextId: model.contextId,
+      experienceId: model.experienceId,
+      manifestDigest: model.manifestDigest,
+    });
+
+    const refresh = async (): Promise<void> => {
+      statusLine.textContent = "Refreshing the versioned ship journal…";
+      controls.replaceChildren();
+      try {
+        const response = await this.galleyTransport.request({ op: "status", binding });
+        if (!this.isConnected || lifecycle !== this.lifecycle) return;
+        if (!response.ok || response.op !== "status") {
+          facts.replaceChildren();
+          statusLine.textContent = `Live Galley projection unavailable: ${response.error}. No local ship state is substituted.`;
+          this.addRefreshButton(controls, refresh);
+          return;
+        }
+        this.renderGalleyStatus(response.status, facts, statusLine);
+        this.renderGalleyActions(response.status, binding, model, lifecycle, controls, result, refresh);
+      } catch {
+        if (!this.isConnected || lifecycle !== this.lifecycle) return;
+        facts.replaceChildren();
+        statusLine.textContent = "Live Galley projection unavailable. No local ship state is substituted.";
+        this.addRefreshButton(controls, refresh);
+      }
+    };
+
+    // Paint first; a delayed node response is lifecycle-bound and cannot
+    // resurrect this panel after a YouTube/X SPA route replacement.
+    queueMicrotask(() => {
+      if (this.isConnected && lifecycle === this.lifecycle) void refresh();
+    });
+    return panel;
+  }
+
+  private addRefreshButton(container: HTMLElement, refresh: () => Promise<void>): void {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Refresh ship status";
+    button.addEventListener("click", () => void refresh());
+    container.appendChild(button);
+  }
+
+  private renderGalleyStatus(status: PoAGalleyStatus, facts: HTMLDListElement, statusLine: HTMLElement): void {
+    statusLine.textContent = status.replay.audited
+      ? `Journal replay audited through event ${status.replay.through_sequence}. The preparation identity remains a non-authoritative public claim.`
+      : "Node projection returned without a successful replay audit; actions are unavailable.";
+    const rows: Array<[string, string]> = [
+      ["Shift", status.daily_id],
+      ["Sequence", String(status.sequence)],
+      ["Events", `${status.replay.event_count} shown / ${status.replay.total_event_count} total`],
+      ["Semantic head", `${status.semantic_head.slice(0, 12)}…${status.semantic_head.slice(-8)}`],
+    ];
+    facts.replaceChildren(...rows.flatMap(([term, value]) => {
+      const dt = document.createElement("dt");
+      const dd = document.createElement("dd");
+      dt.textContent = term;
+      dd.textContent = value;
+      return [dt, dd];
+    }));
+  }
+
+  private renderGalleyActions(
+    status: PoAGalleyStatus,
+    binding: PoAGalleyBinding,
+    model: Extract<PoACompanionModel, { trust: "signed_manifest" }>,
+    lifecycle: number,
+    controls: HTMLElement,
+    result: HTMLElement,
+    refresh: () => Promise<void>,
+  ): void {
+    controls.replaceChildren();
+    for (const action of status.actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = poAGalleyActionLabel(action.kind);
+      const holderV1 = action.kind === "holder_sponsorship";
+      const available = status.replay.audited &&
+        poAGalleyAvailableAtSequence(action.expires_after_sequence, status.sequence) && !holderV1;
+      button.disabled = !available;
+      if (holderV1) {
+        button.title = "Holder sponsorship waits for the V2 receipt that binds the active Dregg player key.";
+        button.setAttribute("aria-description", button.title);
+      } else if (!poAGalleyAvailableAtSequence(action.expires_after_sequence, status.sequence)) {
+        button.title = "This server-issued action token expired at the current journal sequence.";
+      } else if (!status.replay.audited) {
+        button.title = "Actions require an audited server replay.";
+      }
+      if (available) {
+        button.addEventListener("click", () => void this.runGalleyAction(action, binding, model, lifecycle, controls, result, refresh));
+      }
+      controls.appendChild(button);
+    }
+    this.addRefreshButton(controls, refresh);
+  }
+
+  private async runGalleyAction(
+    action: PoAGalleyAction,
+    binding: PoAGalleyBinding,
+    model: Extract<PoACompanionModel, { trust: "signed_manifest" }>,
+    lifecycle: number,
+    controls: HTMLElement,
+    result: HTMLElement,
+    refresh: () => Promise<void>,
+  ): Promise<void> {
+    for (const button of controls.querySelectorAll("button")) button.disabled = true;
+    result.hidden = false;
+    result.textContent = "Preparing for the background-owned public identity claim. Cipherclerk will ask who actually signs the exact server-authored turn.";
+    try {
+      const response = await this.galleyTransport.request({ op: "command", binding, actionToken: action.action_token });
+      if (!this.isConnected || lifecycle !== this.lifecycle) return;
+      if (!response.ok || response.op !== "command") {
+        result.textContent = `Shift action refused: ${!response.ok ? response.error : "unexpected Galley response"}`;
+        await refresh();
+        return;
+      }
+      if (response.observation !== "receipt_observed" || !response.event) {
+        result.textContent = response.admission === "queued"
+          ? `Turn ${response.turnHash} is queued; no journal receipt has been observed yet.`
+          : `Turn ${response.turnHash} was submitted, but no exact matching journal receipt has been observed yet.`;
+        await refresh();
+        return;
+      }
+      const event = response.event;
+      const intro = document.createElement("span");
+      intro.textContent = `Journal event ${event.sequence} observed for exact turn ${event.turn_hash}. Receipt ${event.receipt_hash}; adjacent postcard SHA-256 checksum ${event.receipt.sha256} matched. The preparation actor header remains non-authoritative; canonical receipt verification is not yet installed. `;
+      result.replaceChildren(intro);
+      const signedRoute = model.actions?.evidence ?? model.actions?.debrief;
+      if (signedRoute) {
+        const link = document.createElement("a");
+        link.href = signedRoute.betaUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Open curator-signed evidence route";
+        result.appendChild(link);
+      }
+      await refresh();
+    } catch {
+      if (!this.isConnected || lifecycle !== this.lifecycle) return;
+      result.textContent = "Shift transport failed before an exact journal receipt was observed.";
+      await refresh();
+    }
   }
 
   private fieldRecordPanel(

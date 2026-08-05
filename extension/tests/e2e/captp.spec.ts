@@ -50,8 +50,11 @@ test.describe('Share capability', () => {
     // Wait briefly for the async response.
     await popup.waitForTimeout(500);
     const display = await shareResult.evaluate(el => getComputedStyle(el).display);
-    // Should be visible (showing either URI or error).
+    // The extension must fail closed: bearer-auth is a verifier, not a
+    // capability/sturdy-ref mint endpoint.
     expect(display).toBe('block');
+    await expect(shareResult).toContainText('Capability export route not implemented');
+    expect(mockNode.state.lastBearerAuth).toBeNull();
   });
 });
 

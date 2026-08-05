@@ -14,6 +14,7 @@ import { CustodyWasm, bytesEqual } from "./custody";
 import { ChromeCustodyStore } from "./passkey";
 import { resolveCustody } from "./custody-resolve";
 import { validateFederationDomain, ZERO_FEDERATION_DOMAIN_HEX } from "./federation-domain";
+import { resolveActiveDreggIdentity } from "./active-identity";
 import {
   bytesToHex as offeringBytesToHex,
   counterWire,
@@ -95,6 +96,32 @@ import {
   type PoACompanionRequest,
   type PoAEngine,
 } from "./poa";
+import {
+  POA_GALLEY_API_PATH,
+  POA_GALLEY_ACTOR_HEADER,
+  POA_GALLEY_PENDING_JOURNAL_FORMAT,
+  checkPoAGalleyReceiptPostcardSha256,
+  decodePoAGalleyPostcard,
+  findPoAGalleyAction,
+  findPoAGalleyEvent,
+  makePoAGalleyPendingIntent,
+  makePoAGalleyPrepare,
+  parsePoAGalleyBinding,
+  parsePoAGalleyPendingJournal,
+  parsePoAGalleySession,
+  parsePoAGalleyStatus,
+  parsePoAGalleyUnsignedTurn,
+  poAGalleyAvailableAtSequence,
+  poAGalleyActorHeaders,
+  poAGalleyPendingIntentKey,
+  reconcilePoAGalleyPendingIntents,
+  type PoAGalleyBinding,
+  type PoAGalleyPendingIntent,
+  type PoAGalleyPortResponse,
+  type PoAGalleySession,
+  type PoAGalleyStatus,
+  type PoAGalleyUnsignedTurn,
+} from "./poa-galley";
 import {
   POA_SIGNAL_BETA_ORIGIN,
   POA_SIGNAL_FEDERATION_HEX,
@@ -197,6 +224,7 @@ const WS_AUTH_TIMEOUT_MS = 5000;
 const OUTBOX_MAX_ENTRIES = 200;
 const OUTBOX_FLUSH_INTERVAL_MS = 30_000;
 const OUTBOX_ALARM_NAME = "dregg-outbox-flush";
+const POA_GALLEY_PENDING_INTENTS_KEY = "dregg_poa_galley_pending_intents_v1";
 // Receipt stream (node SSE /api/events/stream).
 const RECENT_RECEIPTS_KEY = "dregg_recent_receipts";
 const RECENT_RECEIPTS_MAX = 50;
@@ -1655,6 +1683,11 @@ async function listProfiles(): Promise<ProfileInfo[]> {
   return profileInfos(cc);
 }
 
+async function getActiveIdentity(): Promise<{ publicKeyHex: string; profileName?: string } | { error: string }> {
+  const resolved = resolveActiveDreggIdentity(await loadState());
+  return resolved.ok ? resolved.identity : { error: resolved.error };
+}
+
 // ---------------------------------------------------------------------------
 // Cap-account login — log the wallet into the live cloud (console / attach)
 //
@@ -2716,20 +2749,18 @@ setInterval(gcIntentPool, INTENT_GC_INTERVAL);
 
 const liveRefs = new Map<string, Omit<ExtensionLiveRef, "refId">>();
 
-async function shareCapability(cellId: string): Promise<{ uri?: string; cellId?: string; nodeId?: string; error?: string }> {
+async function shareCapability(_cellId: string): Promise<{ uri?: string; cellId?: string; nodeId?: string; error?: string }> {
   const cc = await loadState();
   if (cc.locked) return { error: "Cipherclerk is locked" };
-  const resp = await nodeRequest<{ node_id?: string; secret?: string }>(nodeConfig, "/api/turns/bearer-auth", {
-    method: "POST",
-    body: JSON.stringify({ cell_id: cellId }),
-  });
-  if (!resp.ok) return { error: `Failed to export sturdy ref: ${resp.error}` };
-  const nodeId = resp.data?.node_id || "local";
-  const secret = resp.data?.secret || "";
-  const uri = `dregg://${nodeId}/${cellId}/${secret}`;
-  cc.log.push({ action: "shareCapability", resource: cellId, allowed: true, timestamp: Date.now(), mode: "captp" });
-  await saveState();
-  return { uri, cellId, nodeId };
+  // `/api/turns/bearer-auth` is an actor-bound VERIFIER. It neither exports a
+  // capability nor mints the swiss secret required by a sturdy reference. The
+  // old call sent `{cell_id}` and then treated a test mock's invented
+  // `{node_id,secret}` response as authority. Refuse until an actual export
+  // route exists; never relabel structural proof checking as capability minting.
+  return {
+    error:
+      "Capability export route not implemented; bearer-auth verifies an existing actor-bound proof and cannot mint a sturdy reference.",
+  };
 }
 
 async function acceptCapability(uri: string, tabId?: number): Promise<{ refId?: string; cellId?: string; nodeId?: string; permissions?: string; error?: string }> {
@@ -3194,6 +3225,13 @@ async function signTurnV3(
   turnBytes: Uint8Array,
   origin?: string,
   federationIdInput?: unknown,
+  options: {
+    expectedTurnHash?: string;
+    targetConfig?: NodeConfig;
+    label?: string;
+    metadata?: Record<string, unknown>;
+    beforeSubmit?: () => Promise<string | null>;
+  } = {},
 ): Promise<SignTurnResult> {
   requireWasm("signTurnV3");
   const w = wasm!;
@@ -3228,6 +3266,12 @@ async function signTurnV3(
     const err = e as Error;
     return { error: err.message || "sign_turn_v3 failed", submitted: false };
   }
+  if (options.expectedTurnHash !== undefined && signed.turn_id !== options.expectedTurnHash) {
+    return {
+      error: "Server-authored turn hash does not match the canonical turn decoded by Cipherclerk",
+      submitted: false,
+    };
+  }
 
   // The clerk's reading of exactly the term that was signed: decode the
   // round-trippable JSON encoding the signer emitted alongside the postcard
@@ -3256,6 +3300,14 @@ async function signTurnV3(
   if (!confirmed) {
     return { error: "User declined to sign this turn", submitted: false };
   }
+  if (options.beforeSubmit) {
+    try {
+      const refusal = await options.beforeSubmit();
+      if (refusal) return { error: refusal, submitted: false };
+    } catch {
+      return { error: "Could not revalidate the browser tab before submission", submitted: false };
+    }
+  }
 
   const submit = await submitSignedTurnBytes({
     // The round-trippable JSON `Turn` the signer emitted — the assembler re-signs
@@ -3264,17 +3316,21 @@ async function signTurnV3(
     turnIdHex: signed.turn_id,
     secretKey: cc.secretKey,
     publicKey: cc.publicKey,
-    label: "sign turn (v3)",
+    label: options.label ?? "sign turn (v3)",
     // Retain the SELECTED domain: a queued retry re-POSTs the stored signed
     // envelope (the domain is baked into its action signatures), and the
     // metadata records which domain that is — a retry can never silently
     // fall back to zero.
-    metadata: { action: "signTurnV3", federationDomainHex },
+    metadata: { action: "signTurnV3", federationDomainHex, ...(options.metadata ?? {}) },
+    targetConfig: options.targetConfig,
   });
   if (submit.submitted) {
     const d = submit.data ?? {};
     if (d.accepted === false) {
       return { turnId: signed.turn_id, submitted: false, error: d.error || "node rejected turn" };
+    }
+    if (d.turn_hash !== undefined && d.turn_hash !== signed.turn_id) {
+      return { turnId: signed.turn_id, submitted: false, error: "Node response named a different turn hash" };
     }
     return {
       turnId: d.turn_hash || signed.turn_id,
@@ -3286,7 +3342,7 @@ async function signTurnV3(
       },
     };
   }
-  if (submit.queued) return { turnId: signed.turn_id, submitted: false, queued: true, error: `Queued for retry: ${submit.error}` };
+  if (submit.queued) return { turnId: signed.turn_id, submitted: false, queued: true, outboxId: submit.outboxId, error: `Queued for retry: ${submit.error}` };
   return { error: `Turn submission failed: ${submit.error}`, submitted: false };
 }
 
@@ -3940,6 +3996,7 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
   "dregg:launchpadCommit", "dregg:launchpadReveal", "dregg:launchpadStatus",
   "dregg:launchpadReclaimTx",
   "dregg:signTurn", "dregg:signTurnV3", "dregg:submitPoaSignalClaim", "dregg:queryBalance",
+  "dregg:getActiveIdentity",
   "dregg:shareCapability", "dregg:acceptCapability", "dregg:createHandoff",
   "dregg:mountService", "dregg:discoverServices", "dregg:resolvePath",
   "dregg:storageWrite", "dregg:storageRead", "dregg:storageQuota",
@@ -3954,6 +4011,9 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
   "dregg:story", // verifiable choose-your-own-adventure port: <dregg-story>
   "dregg:descent", // The Descent played in-tab: <dregg-descent>
   "dregg:poa", // signed/allowlisted Path of Angels YouTube companion: <dregg-poa>
+  // Internal content-element port. page.ts exposes no method, and content.ts
+  // rejects unknown page messages before they can reach this route.
+  "dregg:poaGalley",
 ]);
 
 const POPUP_ONLY_METHODS = new Set<MessageType>([
@@ -4270,6 +4330,260 @@ function getPoAEngine(): PoAEngine {
   return poaEngine;
 }
 
+function poaGalleyError(op: "status" | "command", error: string): PoAGalleyPortResponse {
+  return { ok: false, op, error: error.slice(0, 320) };
+}
+
+async function readPoAGalleyPendingIntents(): Promise<PoAGalleyPendingIntent[]> {
+  const stored = await chrome.storage.local.get(POA_GALLEY_PENDING_INTENTS_KEY);
+  const payload = stored[POA_GALLEY_PENDING_INTENTS_KEY];
+  if (payload === undefined) return [];
+  const journal = parsePoAGalleyPendingJournal(payload);
+  if (journal) return [...journal.entries];
+  await chrome.storage.local.remove(POA_GALLEY_PENDING_INTENTS_KEY);
+  return [];
+}
+
+async function writePoAGalleyPendingIntents(entries: readonly PoAGalleyPendingIntent[]): Promise<void> {
+  await chrome.storage.local.set({
+    [POA_GALLEY_PENDING_INTENTS_KEY]: {
+      format: POA_GALLEY_PENDING_JOURNAL_FORMAT,
+      entries: [...entries].slice(-64),
+    },
+  });
+}
+
+// The service worker can receive overlapping messages. Serialize this
+// read-modify-write so one tab cannot erase another tab's durable intent.
+let poaGalleyPendingMutation: Promise<void> = Promise.resolve();
+
+function mutatePoAGalleyPending<T>(mutation: () => Promise<T>): Promise<T> {
+  const result = poaGalleyPendingMutation.then(mutation, mutation);
+  poaGalleyPendingMutation = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function recordPoAGalleyPendingIntent(
+  session: PoAGalleySession,
+  prepared: PoAGalleyUnsignedTurn,
+): Promise<PoAGalleyPendingIntent | null> {
+  return mutatePoAGalleyPending(async () => {
+    const intent = makePoAGalleyPendingIntent(session, prepared);
+    if (!intent) return null;
+    const key = poAGalleyPendingIntentKey(intent);
+    const entries = (await readPoAGalleyPendingIntents())
+      .filter((candidate) => poAGalleyPendingIntentKey(candidate) !== key);
+    entries.push(intent);
+    await writePoAGalleyPendingIntents(entries);
+    return intent;
+  });
+}
+
+/** Remove only sequence-expired intents or exact-turn events whose adjacent
+ * receipt-postcard checksum matches. Canonical receipt verification is a later
+ * WASM boundary and is deliberately not claimed here. */
+async function reconcileStoredPoAGalleyPendingIntents(status: PoAGalleyStatus): Promise<void> {
+  await mutatePoAGalleyPending(async () => {
+    const entries = await readPoAGalleyPendingIntents();
+    if (entries.length === 0) return;
+    const reconciliation = reconcilePoAGalleyPendingIntents(entries, status);
+    const retained = [...reconciliation.pending];
+    for (const intent of reconciliation.observed) {
+      const event = findPoAGalleyEvent(status, intent.turn_hash);
+      if (!event || !await checkPoAGalleyReceiptPostcardSha256(event)) retained.push(intent);
+    }
+    await writePoAGalleyPendingIntents(retained);
+  });
+}
+
+async function authorizePoAGalleyBinding(
+  value: unknown,
+  sender: chrome.runtime.MessageSender,
+): Promise<{ binding: PoAGalleyBinding; pageOrigin: string } | { error: string }> {
+  const binding = parsePoAGalleyBinding(value);
+  if (!binding) return { error: "Malformed Path of Angels manifest binding." };
+  const pageUrl = sender.tab?.url;
+  if (!pageUrl) return { error: "A browser-authenticated YouTube/X tab is required." };
+  let pageOrigin: string;
+  try {
+    pageOrigin = new URL(pageUrl).origin;
+  } catch {
+    return { error: "The browser tab URL is invalid." };
+  }
+  const context = await getPoAEngine().handle({ op: "openContext", context: { href: pageUrl } });
+  if (!context.ok || !context.recognized || !context.verified || context.tier !== "extension" ||
+      !context.model || context.model.trust !== "signed_manifest") {
+    return { error: "This tab has no current curator-signed Path of Angels route." };
+  }
+  const model = context.model;
+  if (model.platform !== binding.platform || model.contextId !== binding.contextId ||
+      model.experienceId !== binding.experienceId || model.manifestDigest !== binding.manifestDigest) {
+    return { error: "The live tab no longer matches the signed companion binding." };
+  }
+  return { binding, pageOrigin };
+}
+
+async function readPoAGalleyStatus(
+  actorHeaders: Readonly<Record<typeof POA_GALLEY_ACTOR_HEADER, string>>,
+): Promise<PoAGalleyStatus | { error: string }> {
+  const response = await nodeRequest<unknown>(POA_SIGNAL_NODE_CONFIG, `${POA_GALLEY_API_PATH}/status`, {
+    method: "GET",
+    cache: "no-store",
+    headers: actorHeaders,
+  });
+  if (!response.ok) return { error: response.error || "Galley status request failed" };
+  const status = parsePoAGalleyStatus(response.data);
+  if (!status) return { error: "The node returned a non-canonical Galley status envelope." };
+  await reconcileStoredPoAGalleyPendingIntents(status);
+  return status;
+}
+
+async function handlePoAGalley(
+  message: Record<string, unknown>,
+  sender: chrome.runtime.MessageSender,
+): Promise<PoAGalleyPortResponse> {
+  const op = message.op === "command" ? "command" : message.op === "status" ? "status" : null;
+  if (!op) return poaGalleyError("status", "Unknown Galley operation.");
+  if (["actor", "actorPublicKeyHex", "playerPublicKey", "player_public_key", "headers"].some((field) => field in message)) {
+    return poaGalleyError(op, "Galley preparation identity is background-owned and cannot be supplied by the page.");
+  }
+  const authorized = await authorizePoAGalleyBinding(message.binding, sender);
+  if ("error" in authorized) return poaGalleyError(op, authorized.error);
+  const identity = await getActiveIdentity();
+  if ("error" in identity) {
+    return poaGalleyError(op, `Active Dregg preparation identity unavailable: ${identity.error}`);
+  }
+  const actorHeaders = poAGalleyActorHeaders(identity.publicKeyHex);
+  if (!actorHeaders) return poaGalleyError(op, "The background resolved a non-canonical active Dregg public key.");
+
+  if (op === "status") {
+    const status = await readPoAGalleyStatus(actorHeaders);
+    if ("error" in status) return poaGalleyError("status", status.error);
+    return { ok: true, op: "status", status };
+  }
+
+  if (typeof message.actionToken !== "string") return poaGalleyError("command", "Missing opaque Galley action token.");
+  const sessionResponse = await nodeRequest<unknown>(POA_SIGNAL_NODE_CONFIG, `${POA_GALLEY_API_PATH}/session`, {
+    method: "GET",
+    cache: "no-store",
+    headers: actorHeaders,
+  });
+  if (!sessionResponse.ok) return poaGalleyError("command", sessionResponse.error || "Galley session request failed");
+  const session = parsePoAGalleySession(sessionResponse.data);
+  if (!session) return poaGalleyError("command", "The node returned a non-canonical Galley session envelope.");
+  if (!session.replay.audited) return poaGalleyError("command", "The node has not audited this journal replay.");
+  const action = findPoAGalleyAction(session, message.actionToken);
+  if (!action || !poAGalleyAvailableAtSequence(action.expires_after_sequence, session.sequence)) {
+    return poaGalleyError("command", "That server-issued action is absent or expired. Refresh the shift.");
+  }
+  if (action.kind === "holder_sponsorship") {
+    return poaGalleyError(
+      "command",
+      "Holder sponsorship is disabled until the V2 holding receipt binds the active Dregg player key.",
+    );
+  }
+  const prepare = makePoAGalleyPrepare(action.action_token);
+  if (!prepare) return poaGalleyError("command", "The server-issued action token is not canonical.");
+  const preparedResponse = await nodeRequest<unknown>(POA_SIGNAL_NODE_CONFIG, `${POA_GALLEY_API_PATH}/command`, {
+    method: "POST",
+    body: JSON.stringify(prepare),
+    cache: "no-store",
+    headers: actorHeaders,
+  });
+  if (!preparedResponse.ok) return poaGalleyError("command", preparedResponse.error || "Galley command preparation failed");
+  const prepared = parsePoAGalleyUnsignedTurn(preparedResponse.data);
+  if (!prepared || prepared.federation_id !== session.federation_id ||
+      !poAGalleyAvailableAtSequence(prepared.expires_after_sequence, session.sequence)) {
+    return poaGalleyError("command", "The prepared turn is invalid, expired, or belongs to another federation.");
+  }
+  const turnBytes = decodePoAGalleyPostcard(prepared.turn_postcard_base64);
+  if (!turnBytes) return poaGalleyError("command", "The prepared turn postcard is not canonical.");
+  const pendingIntent = await recordPoAGalleyPendingIntent(session, prepared);
+  if (!pendingIntent) {
+    return poaGalleyError("command", "The prepared turn could not be durably bound to this Galley world and sequence.");
+  }
+
+  const signed = await signTurnV3(
+    turnBytes,
+    authorized.pageOrigin,
+    Array.from(Uint8Array.from(prepared.federation_id.match(/.{2}/g)!, (pair) => Number.parseInt(pair, 16))),
+    {
+      expectedTurnHash: prepared.turn_hash,
+      targetConfig: POA_SIGNAL_NODE_CONFIG,
+      label: "Path of Angels Galley shift",
+      metadata: {
+        action: "poaGalley",
+        intentId: prepared.intent_id,
+        galleyPendingKey: poAGalleyPendingIntentKey(pendingIntent),
+        dailyId: session.daily_id,
+        aggregateId: session.aggregate_id,
+        turnHash: prepared.turn_hash,
+        expiresAfterSequence: prepared.expires_after_sequence,
+        platform: authorized.binding.platform,
+        contextId: authorized.binding.contextId,
+        manifestDigest: authorized.binding.manifestDigest,
+      },
+      beforeSubmit: async () => {
+        if (sender.tab?.id === undefined) return "The originating Path of Angels tab no longer exists.";
+        const currentTab = await chrome.tabs.get(sender.tab.id);
+        const current = await authorizePoAGalleyBinding(
+          authorized.binding,
+          { ...sender, tab: currentTab },
+        );
+        return "error" in current ? current.error : null;
+      },
+    },
+  );
+  if (!signed.submitted) {
+    if (signed.queued) {
+      return {
+        ok: true,
+        op: "command",
+        admission: "queued",
+        observation: "not_observed",
+        turnHash: prepared.turn_hash,
+        error: signed.error,
+      };
+    }
+    return poaGalleyError("command", signed.error || "Cipherclerk refused the Galley turn.");
+  }
+
+  // Finality discovery is by the exact canonical turn hash in the replayed
+  // status journal.  Never synthesize a receipt URL from a hash.
+  let latestStatus: PoAGalleyStatus | undefined;
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    const observed = await readPoAGalleyStatus(actorHeaders);
+    if (!("error" in observed) && observed.federation_id === session.federation_id &&
+        observed.daily_id === session.daily_id && observed.aggregate_id === session.aggregate_id) {
+      latestStatus = observed;
+      const event = findPoAGalleyEvent(observed, prepared.turn_hash);
+      if (event) {
+        if (!await checkPoAGalleyReceiptPostcardSha256(event)) {
+          return poaGalleyError("command", "The matching journal receipt postcard failed its adjacent SHA-256 checksum.");
+        }
+        return {
+          ok: true,
+          op: "command",
+          admission: "submitted",
+          observation: "receipt_observed",
+          turnHash: prepared.turn_hash,
+          event,
+          status: observed,
+        };
+      }
+    }
+    if (attempt < 6) await new Promise<void>((resolve) => setTimeout(resolve, 250));
+  }
+  return {
+    ok: true,
+    op: "command",
+    admission: "submitted",
+    observation: "not_observed",
+    turnHash: prepared.turn_hash,
+    ...(latestStatus ? { status: latestStatus } : {}),
+  };
+}
+
 async function handleMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
   // Security: strip _skipDisclosure from page-originated requests.
   if (sender?.tab && message?.request) {
@@ -4416,6 +4730,9 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       };
       return { id: message.id, result: await getPoAEngine().handle(req) };
     }
+
+    case "dregg:poaGalley":
+      return { id: message.id, result: await handlePoAGalley(message, sender) };
 
     case "dregg:canAuthorize":
       return { id: message.id, result: await canAuthorize(message.request as AuthorizeRequest) };
@@ -5245,6 +5562,23 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result };
     }
 
+    case "dregg:getActiveIdentity": {
+      let tabOrigin: string | undefined;
+      try {
+        tabOrigin = sender.tab?.url ? new URL(sender.tab.url).origin : undefined;
+      } catch {
+        tabOrigin = undefined;
+      }
+      const bridgedOrigin = typeof message._origin === "string" ? message._origin : undefined;
+      if (!tabOrigin || bridgedOrigin !== tabOrigin) {
+        return { id: message.id, error: "Active identity requires an origin-bound page request." };
+      }
+      const identity = await getActiveIdentity();
+      return "error" in identity
+        ? { id: message.id, error: identity.error }
+        : { id: message.id, result: identity };
+    }
+
     case "dregg:submitPoaSignalClaim": {
       let tabOrigin: string | undefined;
       try {
@@ -5810,7 +6144,7 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, sender: 
     if ((message.type === "dregg:authorize" || message.type === "dregg:poll" ||
          message.type === "dregg:cell" || message.type === "dregg:doc" ||
          message.type === "dregg:doctext" || message.type === "dregg:story" ||
-         message.type === "dregg:descent") && !ready) {
+         message.type === "dregg:descent" || message.type === "dregg:poaGalley") && !ready) {
       return new Promise((resolve) => {
         pendingQueue.push({ msg: message, sender, resolve });
       });
