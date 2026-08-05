@@ -529,8 +529,48 @@ def whSg : Nat × Nat := (wrapFixtureQ 43 0, wrapFixtureQ 43 1)
 `wrap_main.ml:421-431` `Field.Assert.equal`s. -/
 def whCloseDigest : Nat := whDigestOf whNewChals whSg
 
+/-! ### §15c‴ — ⚑ **W-FINSPONGE's VALUE LAYER**: three deferred words that are NOT witnessed either.
+
+`finalize_other_proof` returns `Boolean.all [xi_correct; b_correct; combined_inner_product_correct;
+plonk_checks_passed]` and `wrap_main.ml:335` asserts `Boolean.Assert.any [finalized; not
+should_finalize]`. Once **all four** legs are emitted (`KimchiWrapMain` §20), the block whose
+`should_finalize` word is 1 must carry the DERIVED `combined_inner_product`, `b` and `xi` — an
+honest previous statement does, and a fixture there makes the rung unsatisfiable rather than strict.
+
+⚑ **SO THESE THREE ARE A MEMO WITH A PROOF OBLIGATION, in the shape of `WrapShape.xhatXY` and for
+the same reason.** `xhatScalar` needs the values (words 27, 28 and 37 are x_hat entries 32/33, 34/35
+and 47) and the derivation that produces them is a 91-element Fq sponge plus a 1200-op straight-line
+program, which lives two modules above this one. ⚠ They are NOT fixtures:
+`KimchiWrapMain.fin_deferred_words_are_the_derivation` closes them by `rfl` IN THE KERNEL against
+`finSpDerivedWords` — the very function `finSpRows` builds its witness from — and
+`EmitWrapMainJson` REFUSES to emit a tree where they disagree. A value that cannot reach a proved
+circuit while wrong is a memo; one that can is a fixture.
+
+⚠ **AND ONLY ONE BLOCK GETS THEM, WHICH IS WHAT KEEPS THE ASSERT FALSIFIABLE.** Block 0's
+`should_finalize` is 0, so it keeps its `a^9` fixtures, runs all three `Field.equal` gadgets at
+NONZERO differences and takes the `(d⁻¹, 0)` branch. Deriving both blocks would leave
+`(1 − finalized)·should_finalize = 0` with no failing instance the emitter can produce. -/
+
+/-- ⚑ The block that claims `should_finalize`. Measured at both committed shapes: block 1's packed
+word 53 is **1** and block 0's word 26 is 0 (`KimchiWrapMain` §19's own docblock), so block 1 is the
+one whose deferred values must be derived and block 0 is the one that keeps `Field.equal`'s other
+branch live. -/
+def FIN_LIVE_BLOCK : Nat := 1
+
+/-- `Shifted_value.Type2.of_field` of the derived `combined_inner_product` — the fold
+`combine ζ + r · combine ζω` less `2^255`. -/
+def FIN_DEFERRED_CIP : Nat :=
+  0
+/-- …and of the derived `b` — `challenge_polynomial ζ + r · challenge_polynomial ζω`. -/
+def FIN_DEFERRED_B : Nat :=
+  0
+/-- …and the RAW 128-bit ξ′, the finalize sponge's first squeeze. -/
+def FIN_DEFERRED_XI : Nat :=
+  0
+
 /-- ⚑ Word `w`'s WITNESSED VALUE — a named fixture, exactly as `exists ~request:Req.Proof_state` is a
-free witness upstream. ⚠ **EXCEPT AT 55 AND 56**, which `wrap_main.ml:340-348` computes; see §15c″.
+free witness upstream. ⚠ **EXCEPT AT 55 AND 56**, which `wrap_main.ml:340-348` computes (§15c″), and
+at the finalizing block's words 0, 1 and 10, which `finalize_other_proof` CHECKS (§15c‴).
 
 ⚑ **THE NINTH POWER IS NOT DECORATION, AND THE OLD `/ 7` WAS THE SAME LESSON, MEASURED AGAIN.**
 `wrapFixtureQ 34 w = 11 + 1000003·(578 + w)` never wraps `qN`, so it is a ~29-bit integer whose
@@ -545,6 +585,9 @@ blew `maxRecDepth` outright — and a 254-bit `B Digest` is what a digest actual
 are the pins that keep it fixed; both go red under the raw mixer. -/
 def prevWordVal (w : Nat) : Nat :=
   if PREV_MSG_NEXT_STEP < w && w < PREV_WORDS then whPrevDigest (w - PREV_MSG_NEXT_STEP - 1)
+  else if w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK then FIN_DEFERRED_CIP
+  else if w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1 then FIN_DEFERRED_B
+  else if w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10 then FIN_DEFERRED_XI
   else
     let a := wrapFixtureQ 34 w
     let a2 := qMul a a

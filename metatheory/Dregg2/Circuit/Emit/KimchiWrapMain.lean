@@ -352,17 +352,20 @@ HOLDING THE WRONG OBJECT UNDER THE RIGHT NAME.** Rust kimchi's `VerifierIndex::d
 (`verifier_index.rs:451-530`) absorbs Pickles' eight index fields AND THEN the optional gate
 commitments and the whole lookup index when they exist; Pickles' `Plonk_verification_key_evals.t`
 has no such fields. The two agree only for an index carrying none of them, so
-`fixtures/kimchi-extractors/wrap_key_index_export.rs` **asserts** they are all `None` before it
+`fixtures/kimchi-extractors/step_vk_index_export.rs` **asserts** they are all `None` before it
 dumps. Without that assertion the 56 numbers would be a PREFIX of the digest's preimage wearing the
 name of the whole of it — and, exactly as in the 20-words case, nothing downstream would notice.
 
 ## Axiom hygiene / build
 
 NO `main` (roots into `PicklesSynthesis`; the emit driver is `EmitWrapMainJson.lean`). No `sorry`,
-**no `native_decide`**, no `decide` over the big grid. §14b's facts are NAMED THEOREMS closed by
-`rfl`/`decide` IN THE KERNEL — strictly stronger than the `#guard`s they would have been
-(`metatheory/docs/GUARD-DISCIPLINE.md`) — and `#assert_namespace_axioms` at the foot of the file
-accounts for every one of them. The remaining `#guard`s reduce in the interpreter and are the
+no `decide` over the big grid, and **exactly ONE `native_decide`** — §24's
+`bullet_solves_g_on_curve_and_equal_g_is_one`, whose subject is `bullData` (34 + 33 ladders) and does
+not whnf inside the heartbeat budget. It is pinned by `#assert_compiled` at its site and NAMED in the
+`except` clause at the foot of the file, so the compiler-trust is accounted rather than hidden. Every
+other fact is a NAMED THEOREM closed by `rfl`/`decide` IN THE KERNEL — strictly stronger than the
+`#guard`s they would have been (`metatheory/docs/GUARD-DISCIPLINE.md`) — and
+`#assert_namespace_axioms` accounts for every one of them. The remaining `#guard`s reduce in the interpreter and are the
 conversion backlog, not the model.
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
@@ -546,12 +549,28 @@ def RC_XHAT : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.PUBCOMM_XY
 def RC_WCOMM : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.WCOMM_XY
 def RC_ZCOMM : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.ZCOMM_XY
 def RC_TCOMM : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.TCOMM_XY
-/-- ⚑ …and the real proof's own verifier-index digest, which is `wrap_verifier.ml:537`'s first
-absorbed item. ⚑ **AT `w5_key` THIS IS NO LONGER A FIXTURE**: §14 emits `choose_key`
-(`wrap_main.ml:215-220`) and the index sponge (`wrap_verifier.ml:521-530`) over the 56 real
-coordinates of that same index, and `key_digest_is_the_index_digest` pins the derivation's output to
-this value. Below `w5_key` it is still a witnessed constant, which is what §2c now says. -/
-def RC_DIGEST : Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST
+/-- ⚑ **THE INDEX DIGEST OF §14's `STEP_VK_XY`** — `verifier_index.digest::<BaseSponge>()` as Rust
+kimchi computes it for Mina's `step-transaction` key, which `key_digest_is_the_index_digest`
+re-derives from the 56 coordinates through THIS FILE's own Fq sponge, and which the extractor re-derives a third time by an independent `absorb_fq`
+replay. Two implementations, three computations, one number.
+
+⚠ It is NOT `PastaPoseidonFq.VKDIGEST` any more, and the split is the point: that constant is the
+verifier-index digest of the accepted proof §12a's reality gate replays, and the two coincided only
+while `STEP_VK_XY` was that proof's index. `wrap_verifier.ml:537` absorbs the STEP KEY's digest, so
+this is the object the transcript's first word must be. -/
+def STEP_VK_DIGEST : Nat := 4681608191240531986877886841186183594145822800262795016763288444525244254540
+
+/-- ⚑ …and the STEP KEY's verifier-index digest, which is `wrap_verifier.ml:537`'s first absorbed
+item. ⚑ **AT `w5_key` THIS IS NO LONGER A FIXTURE**: §14 emits `choose_key`
+(`wrap_main.ml:215-220`) and the index sponge (`wrap_verifier.ml:521-530`) over the 56 coordinates of
+Mina's `step-transaction` key, and `key_digest_is_the_index_digest` pins the derivation's output to
+this value. Below `w5_key` it is still a witnessed constant, which is what §2c now says.
+
+⚠ **IT USED TO BE `PastaPoseidonFq.VKDIGEST` AND THAT WAS A CONFLATION.** That constant is the
+verifier-index digest of the accepted proof §12a replays; it stood here only because `STEP_VK_XY`
+was, until 2026-08-04, that proof's own (degenerate, seven-identity) index. §14's header says what
+broke and what re-emitted. -/
+def RC_DIGEST : Nat := STEP_VK_DIGEST
 
 /-! ### §2d — **THE FIXTURES, NAMED.**
 
@@ -1334,10 +1353,21 @@ unreachable at the shape the pins actually run on.
 
 ### ⚑ THE REALITY GATE, AND THE ONE PLACE IT COULD HAVE BEEN THE WRONG OBJECT
 
-`STEP_VK_XY` below is the 56 coordinates of a REAL `VerifierIndex` — the very index the
-`PastaPoseidonFq` fixture's accepted Vesta proof was proved against — dumped in
-`index_to_field_elements` order by `fixtures/kimchi-extractors/wrap_key_index_export.rs`, whose
-output is `metatheory/kimchi_wrap_key_index.json`.
+`STEP_VK_XY` below is the 56 coordinates of **MINA'S OWN `step-transaction` VERIFICATION KEY** —
+branch 0 of the transaction SNARK, the step rule this wrap circuit exists to verify — dumped in
+`index_to_field_elements` order by `fixtures/kimchi-extractors/step_vk_index_export.rs`, whose output
+is `metatheory/kimchi_step_key_index.json`. The input is o1-labs' RELEASED gate blob
+(`circuit-blobs/berkeley-devnet`, md5 `c33ec5211c07928c87e850a63c6a2079` — the release filename IS
+the OCaml constraint-system digest), 17 806 rows at 67 public inputs, which openmina independently
+transcribes as `StepTransactionProof {PRIMARY_LEN 67, ROWS 17806}`.
+
+⚑ **AND MINA'S OWN WRAP CIRCUIT BAKES THESE 56 NUMBERS IN, WHICH IS THE PIN.** `choose_key`
+(`wrap_verifier.ml:189-204`) holds `step_keys` as `Inner_curve.constant`, so the coordinates appear
+as literal gate coefficients of the compiled wrap. Measured by the extractor, which REFUSES on
+disagreement: **56/56 of them occur among `wrap-transaction`'s 995 distinct coefficients, and 0/56
+among `wrap-blockchain`'s 584** — the second leg is what makes it a check and not a birthday
+coincidence, since the blockchain wrap wraps the blockchain step rules. Two independently released
+artifacts, one key.
 
 ⚠ **Rust kimchi's `VerifierIndex::digest` is NOT `index_to_field_elements` in general.**
 `kimchi/src/verifier_index.rs:451-530` absorbs the same eight fields in the same order, and THEN
@@ -1347,10 +1377,33 @@ an index that carries none of them. The extractor **asserts** that every optiona
 lookup index is `None` before it dumps — otherwise these 56 numbers would be a prefix of the digest
 preimage wearing the name of the whole of it, which is this campaign's own recorded defect.
 
-⚠ **Seven of the 28 points are the identity** — unused coefficient columns of a small generic-only
-test circuit — and `DefaultFqSponge::absorb_g` (`poseidon/src/sponge.rs:332-345`) absorbs the FAKE
-POINT `(0,0)` for infinity, so they contribute 14 zero coordinates rather than being skipped. That
-is recorded because a model that SKIPPED them would produce a different digest, silently. -/
+## ⚠ ⚑ THIS KEY REPLACED A DEGENERATE ONE, AND THAT IS A FLAG DAY — READ IT
+
+Until 2026-08-04 `STEP_VK_XY` was kimchi's **own generic-gate test circuit** — `create_circuit(0, 5)`
+through `new_index_for_test_with_lookups`, dumped by `wrap_key_index_export.rs`. That circuit has no
+Poseidon, CompleteAdd, VarBaseMul, EndoMul or EndoMulScalar row and writes only 8 of the 15
+coefficient columns, so **seven of its 28 commitments were the point at infinity** — coefficient
+columns 3, 6, 10, 11, 12, 13 and 14. The cause is exact and is at
+`kimchi/src/verifier_index.rs:230-238`: `sigma_comm` and `coefficients_comm` are committed with
+`commit_evaluations_non_hiding`, **unmasked**, so a zero column lands on the identity; the six
+selectors below them go through `mask_fixed` with blinder 1, so a zero selector lands on the SRS
+blinding base `h` instead — which is why five of that key's singles were the same point, and that
+point was `MinaStepSrsLagrange.URS_H_XY`.
+
+`index_to_field_elements` flattens infinity as the FAKE POINT `(0,0)` (`DefaultFqSponge::absorb_g`,
+`poseidon/src/sponge.rs:332-345`), W-COMBINE folds the 28 points with `Ops.add_fast` — the INCOMPLETE
+add — and a chord through `(0,0)` is not on `y² = x³ + 5`. So `combined_polynomial` was off-curve,
+`p_prime`, `q`, `cq` and `lhs` inherited it, and `wrap_main.ml:419`'s
+`Boolean.Assert.is_true bulletproof_success` had **no satisfying witness at all**: the honest
+`G := z₁⁻¹(lhs − z₂H) − b·u` solve needs an on-curve `lhs` to land on. It was the FIXTURE, not the
+gadget, and §24's header carried that finding for one day before this key closed it.
+
+**WHAT RE-EMITS:** everything. `index_digest` is the wrap transcript's FIRST absorbed word
+(`wrap_verifier.ml:537`), so every squeezed challenge, every derived public word and every rung's
+witness moves. `STEP_VK_DIGEST` replaces `PastaPoseidonFq.VKDIGEST` as `RC_DIGEST`; the two were
+welded only because the old key happened to be the index that fixture's proof was made against.
+§12a's reality gate is UNTOUCHED — it drives a separate sponge over that proof's own tape, and
+`PastaPoseidonFq.VKDIGEST` is still the head of it, which is the correct object for that gate. -/
 
 /-- `Plonk_types.Permuts.n` — `sigma_comm`'s length. -/
 def KEY_SIGMA : Nat := 7
@@ -1363,27 +1416,30 @@ def KEY_POINTS : Nat := KEY_SIGMA + KEY_COLS + KEY_SINGLES
 /-- …and the field elements the index sponge absorbs, at `~g z = [x; y]`. -/
 def KEY_COORDS : Nat := 2 * KEY_POINTS
 
-/-- ⚑ **THE REAL STEP VERIFICATION KEY, FLATTENED.** `metatheory/kimchi_wrap_key_index.json`,
-`index_comm_xy` — 56 Fq coordinates in `index_to_field_elements` order. The extractor asserts, in
-Rust, that `verifier_index.digest::<BaseSponge>()` on this index is `PastaPoseidonFq.VKDIGEST` AND
-that an independent `absorb_fq` replay over exactly these 56 numbers reproduces it, so the list is
-the digest's preimage rather than a second copy of some coordinates. -/
+/-- ⚑ **MINA'S `step-transaction` VERIFICATION KEY, FLATTENED.** `metatheory/kimchi_step_key_index
+.json`, `index_comm_xy` — 56 Fq coordinates in `index_to_field_elements` order. The extractor
+asserts, in Rust: that no optional commitment and no lookup index is present; that **none of the 28
+points is the identity**; that the SRS it committed against has `h = MinaStepSrsLagrange.URS_H_XY`,
+so this is the STEP URS the x_hat MSM already runs on; that all 56 coordinates occur as
+`wrap-transaction` gate coefficients and NONE occurs in `wrap-blockchain`; and that an independent
+`absorb_fq` replay over exactly these 56 numbers reproduces `verifier_index.digest::<BaseSponge>()`,
+so the list is the digest's preimage rather than a second copy of some coordinates. -/
 def STEP_VK_XY : List Nat :=
 [
-  17543387709741642679739098213698819913488961292403631225445715364238599519526, 11573119529266093432396705461675492768038945834599255508296049241297856734468, 24282664799507863726157063054906103836202492223618401057783687704719820518705, 20450769838057368128713704557782545311454600786604851373719488932980829136843,
-  13113153697847829803920060773119622631328674576725490904704100107786648013785, 18268880086648877151518696776539000602490214710016166711666240084965263566097, 17263379750694784169780313942094169078426558408734693614265244171650715328121, 9516830587755563624520140836045964417674452343254966588144055563065053437379,
-  5571680532746181882816762299697441868911258251718183279851151166607476540269, 26089732342446321127783040719047971682230909306947938294879670120879789365816, 11084502016271805275156586017751893052296064720808704716139366911383136640483, 13575924989125377237478499118365277423417352119937721717049105910199671479436,
-  8524547102381891393261912421754872664239363432604302927612170249743630855664, 24154532797574905872704672317362362731042105066852021571757264474697449209648, 20098847360559689704156237343437698136685061298335774373054279593854954294157, 16016631076239966449375000253103811755798626487622941417714689406337320150621,
-  19173029641940667037213690524237473254239936644985289298821252322304963417134, 13649680322427311111003087732784799183031566494751591093631401121426475486568, 22968308972962693007021994118989831571840507329322261781320027130804109359533, 4699393604549216660493350767071496631231541711590188006949964301836284822067,
-  0, 0, 15946577074244468859156586973572112925677512585555558705349790263010734874107, 19830108337409191689946544792769765859766881769361046975673792357296329864584,
-  12806597378361232525042966560513890323423999808517697669343319205651472509020, 24214522613166948753927263944427591729742024623019401563814603303410302167085, 0, 0,
-  22968308972962693007021994118989831571840507329322261781320027130804109359533, 4699393604549216660493350767071496631231541711590188006949964301836284822067, 5855324959043032206080591060552754589277265355003809508810922677413304314288, 27932104530385305061856817511502119186290266679145697503580270326100011568248,
-  7036480107581638277610712629716610245645415109171603721188368913225225471884, 3567323232828783680610059751565196267442548472793536898599635367442107934142, 0, 0,
-  0, 0, 0, 0,
-  0, 0, 0, 0,
-  8208862071468831568051590605385178994882582145299441122791530348420333425160, 15207365439891095423786130753506646110027367253224152562652125356368357079146, 4128018831155263258921677689761735101256426860488784731125497417640507220481, 22304269070532896717707344537995120070212833580943367087267197592645043797542,
-  4128018831155263258921677689761735101256426860488784731125497417640507220481, 22304269070532896717707344537995120070212833580943367087267197592645043797542, 4128018831155263258921677689761735101256426860488784731125497417640507220481, 22304269070532896717707344537995120070212833580943367087267197592645043797542,
-  4128018831155263258921677689761735101256426860488784731125497417640507220481, 22304269070532896717707344537995120070212833580943367087267197592645043797542, 4128018831155263258921677689761735101256426860488784731125497417640507220481, 22304269070532896717707344537995120070212833580943367087267197592645043797542
+  7838087279879676988487524620018877099697850333536108594890305181134476064109, 6862458903183076358794804158815719092069743952414443701796013163943330780886, 21569770123320958997141546748269312575599811482377528453067296363263509355160, 14831154974989574843865288625259329553643196642542558606202890285470699918383,
+  3560450003512249024409829945285052200733803457856555953541880567009457529941, 21300440324491612702438114091755179103724859179797933308254392224248452634198, 27811548696859300672030920370491524663871233726404568842157093983436742351790, 1019005569818862979818515017915427357531367052099945156164116380307024580822,
+  26806482625388101877865595690247158683969662175939617638680733272824795520600, 20807048512676894705070190745423807476394776417488119995584790564879906625550, 4264921334837211813523473596106659753780429242059460249028903670194047444859, 15002824747260430568018596693971462363413716130450885434092317522975368885083,
+  9973737635982028161229945394735368614595826208720132528626693541866367064730, 16659983257260110859039822567874232195774207251037813693410305820458243284408, 6789171475125240853106418159619911679547993077039670979696986007339761837963, 9954962990733376247478547393614381021734444402551376939777273613821496057163,
+  20441985299479206844856618377502721386546485981104536189177508596763081613846, 8437013323026492242835746190639999279940648822570426142081354060059597581354, 7428444655971501060314217372484428511951982333145045518108400976108376363414, 14964834431185989489044468659340852205684700893168630975786671472036071611623,
+  11003199762419203965178628795408442038044740124278653514016456446516605881389, 24295953863481597447043611018977063350795404043491089551371918032778736488583, 23209251104262728415991697618120051317993574566580727430451243398730303885509, 27871326997877373287941141073908256466130775246153087971101975248713771958196,
+  14733450161582593406877278657140958916205965759158250410954950808860069381600, 4373252547534122630906505992479353093090205058461560044958206946818920929159, 2414776948690910771466703311103896306893508714970431281994316441460480355270, 18059676002121798624789491098740021239957823038165119492651077911753051580827,
+  13989863828120645283890262231662545934119019705549233995221856532838452175342, 14357490266021739134916759742795636242761766133521234852967225526090908171625, 4767918159193249017153143429329706708556268933477552723804974643215431065699, 7716082504585394456849865359945150483547335864125586464941318802937186312598,
+  24977425038157702399148147775397729352308687538526000284810585132652947534036, 12744816833487249843437985908205002162615373239400952061299483211869107849182, 11059547395811712232277984980108008802362989976094718193158581914943611537369, 22392709934111142868429807112448426168132179721445499650123144170456559762110,
+  12308879040194379789595637963739559587788945735249459474541295465767102094943, 16913494992236477182403705531101361400832188323022474017688573878570805298259, 1108939583278668348735941230120457730006347969722607769862817764301566439293, 18867148946624578488604077886301147760211655910964942745930560496217255397061,
+  24011126098988602671910387116937753816234144577820719437376506993486031316621, 18560717796954544475185179396456927010146736365913713783711218177005996649611, 25193222744664952841564739090004189114337884494344796110684543247362396029933, 6751793767093906846141277563468135897565712435126409584454802214774747456090,
+  25155928172182760879570967334854982065796984066472662203442437861526155449412, 11652429192093861033924657190627873179752162738595026112334026099149954614968, 3257648458652036328358617834555037576116682576201252973846584715201501429220, 7909179644321276961050844815424388529013106586525611413036608508886302802213,
+  6112345133339187774424965719472681942223308075989306910616908574075076689837, 27349563440527400850628712495340704438886226561321588757627527101101858081586, 7460570426237314259837285873223905596811295885898345835344619846043062276989, 9878879395752744355402770915411675925276816629622263160718393689597676814917,
+  4129260839752076466596086431914048517141014770261954927508289257654980391346, 26308296295204227453552650644860782362357850810154305358229728558512579255099, 24502611438695320232273002947412396906059627211521155699290420437119200351654, 27688738592432713487369312650930096659220848921637869873729171969431898187759
 ]
 
 /-- ⚑ Which entry of `step_keys` holds the REAL key. `wrap_main.ml:98-101` makes `step_keys` a
@@ -3929,32 +3985,35 @@ moved; the 16 prechallenges and `c` change value, hence public words 13–28. No
 an external source moves — β, γ, α and ζ are squeezed BEFORE `lr` (§2b), so §12a's reality gate and
 §14b's `index_digest` are untouched.
 
-## ⚑ `equal_g` IS COMPUTED, AND AT THIS TREE'S FIXTURES IT COMPUTES **ZERO**
+## ⚑ `equal_g` IS COMPUTED, AND THE FIXTURE THAT MADE IT COMPUTE **ZERO** IS GONE
 
 `equal_g lhs rhs` (`:177-181`) is `Field.equal` per coordinate then `Boolean.all`, and this section
 emits the real gadget: `d = lhs − rhs`, `d·inv = 1 − bit`, `d·bit = 0`, `bit² = bit`. Its value is
-NOT assumed.
+NOT assumed — `bulletEnv` computes `d` off the assembly and reads `bit` off `d`.
 
-⚠ ⚑ **AND IT IS 0, FOR A REASON THAT IS A FINDING AND NOT A SHRUG.** The step side closed the same
-gadget by SOLVING `G := z₁⁻¹·(lhs − z₂·H) − b·u` — one scalar-field inverse and three scalar
-multiplications — and that solve needs `lhs` to be **on the curve**. Here it is not, and the cause is
-upstream's own arithmetic on this tree's step verification key: **seven of that key's 28 commitments
-are the identity**, `index_to_field_elements` flattens the identity as the fake point `(0, 0)`
-(§14's own note), and `Ops.add_fast` is the INCOMPLETE add — a chord through `(0,0)`, which is not on
-`y² = x³ + 5`. So W-COMBINE's `combined_polynomial` is an off-curve pair, `p_prime`, `q`, `cq` and
-`lhs` inherit it, and no `G` closes the opening.
+⚠ ⚑ **FOR ONE DAY IT WAS 0, AND THE CAUSE WAS THE KEY.** The step side closes the same gadget by
+SOLVING `G := z₁⁻¹·(lhs − z₂·H) − b·u` — one scalar-field inverse and three scalar multiplications —
+and that solve needs `lhs` to be **on the curve**. Until 2026-08-04 it was not: `STEP_VK_XY` was
+kimchi's own generic-gate TEST index, **seven of whose 28 commitments are the point at infinity**
+(`verifier_index.rs:230-238` commits `sigma_comm` and `coefficients_comm` UNMASKED, so a zero column
+lands on the identity), `index_to_field_elements` flattens the identity as the fake point `(0, 0)`,
+and `Ops.add_fast` is the INCOMPLETE add — a chord through `(0,0)`, which is not on `y² = x³ + 5`. So
+W-COMBINE's `combined_polynomial` was an off-curve pair, `p_prime`, `q`, `cq` and `lhs` inherited it,
+and no `G` closed the opening: `wrap_main.ml:419-420`'s `Boolean.Assert.is_true bulletproof_success`
+was **UNSATISFIABLE at that key**. It was never W-BULLET being incomplete — the gadget was emitted in
+full and its witness was honest — it was the FIXTURE.
 
-⚑ **THE CONSEQUENCE FOR W-CLOSE, SAID OUT LOUD:** `wrap_main.ml:419-420`'s
-`Boolean.Assert.is_true bulletproof_success` is **UNSATISFIABLE at this key**. That is not W-BULLET
-being incomplete — the gadget is emitted in full and its witness is honest — it is the FIXTURE. A
-step key with no identity commitment would put `lhs` back on the curve and the solve back in reach.
-Recorded here rather than worked around, because a witness that made `bit = 1` would have to fake a
-cell this section computes.
+⚑ **§14 NOW CARRIES MINA'S OWN `step-transaction` KEY, WHOSE 28 COMMITMENTS ARE ALL ON VESTA**
+(`key_index_has_no_identity_and_is_on_vesta`), so the fold stays on the curve and the solve is back
+in reach. `challenge_polynomial_commitment` accordingly gets its `assert_on_curve` — it is the last
+of `bullOCPts` — which is the check upstream's `Openings.Bulletproof.typ` always ran and this rung
+could not. `bullet_challenge_commitment_is_on_curve_and_refuses_off_curve` exhibits both poles.
 
-⚠ For the same reason `challenge_polynomial_commitment` gets **no `assert_on_curve`** while `lr`,
-`delta` and every `endo_inv` witness DO: an on-curve `G` is exactly what this fixture cannot supply,
-and emitting the check on a value the honest witness fails is a rung that cannot be proved. Named,
-not banked.
+⚠ **WHAT `equal_g` STILL DOES NOT DO, AND SAYING OTHERWISE WOULD BE THE WHOLE DEFECT.** It refuses
+nothing by construction even at a good key: `G`, `z₁` and `z₂` have no binder in `verify_one`, so an
+honest witness SOLVES for `G` rather than being caught by the equation. That is faithful to upstream
+— the binder is the NEXT proof's `finalize_other_proof` — and it is §13's standing residual, not
+something this key changed.
 
 ## ⚑ THE DEFECT CLASSES, INSIDE THIS SUB-CIRCUIT
 
@@ -3989,9 +4048,15 @@ def SF_CHUNKS : Nat := FTC_CHUNKS
 def BULL_SF : Nat := 4
 /-- `2 × ipaRounds` from `bullet_reduce` plus `Scalar_challenge.endo q c`. -/
 def bullNE (s : WrapShape) : Nat := 2 * s.ipaRounds + 1
-/-- The points `Inner_curve.typ` checks here: the `2·ipaRounds` `lr` points, `delta`, and the
-`ipaRounds` `endo_inv` witnesses. ⚠ NOT `challenge_polynomial_commitment` — see the header. -/
-def bullOCPts (s : WrapShape) : Nat := 3 * s.ipaRounds + 1
+/-- The points `Inner_curve.typ` checks here: the `2·ipaRounds` `lr` points, `delta`, the
+`ipaRounds` `endo_inv` witnesses, **and `challenge_polynomial_commitment`**, which is the LAST index.
+
+⚑ `G` arrives through `Openings.Bulletproof.typ`'s `Inner_curve.typ` (`wrap_main.ml:357-383`) just
+as `lr` and `delta` do, so upstream checks it and so must this. It was omitted for exactly one day:
+at the degenerate step key the honest `G := z₁⁻¹(lhs − z₂H) − b·u` solve produced an off-curve
+value, because `lhs` itself was off-curve, and emitting the check on a value the honest witness fails
+is a rung that cannot be proved. §14's key closed that, so the check is here. -/
+def bullOCPts (s : WrapShape) : Nat := 3 * s.ipaRounds + 2
 
 /-! ### §24a — the variable layout. -/
 
@@ -4097,7 +4162,30 @@ wrap statement slot 1 (W-FINALIZE's), `z₁`/`z₂` and `challenge_polynomial_co
 `openings_proof`'s and have no binder in `wrap_main` at all — which is §13's own note and the reason
 `equal_g` refuses no on-curve substitution. -/
 def bullScalVal (j : Nat) : Nat := wrapFixtureQ (40 + j) 0
-def bullGVal : Nat × Nat := dblAQ (dblAQ (dblAQ (xhatBase 62)))
+
+/-- ⚑ **THE PROVER'S SOLVE FOR `challenge_polynomial_commitment`**, `G := z₁⁻¹·(lhs − z₂·H) − b·u` —
+one inverse in VESTA'S SCALAR FIELD and three scalar multiplications, the step side's `bpSolveG`
+transposed to the wrap side's curve. Every multiplier carries `Shifted_value.Type1`'s shift, because
+`Ops.scale_fast` computes `(2^255 + 2s + 1)·T` and not `[s]·T` (`sfKQ`), so the solve must invert the
+SHIFTED `z₁` and subtract the SHIFTED `b·u` or it closes nothing.
+
+⚠ ⚑ **THIS IS WHY `equal_g` REFUSES NOTHING, AND IT IS UPSTREAM'S SHAPE AND NOT OURS.** `G`, `z₁` and
+`z₂` reach `check_bulletproof` through `Openings.Bulletproof.typ` with no binder anywhere in
+`wrap_main`, so for ANY `lhs` on the curve a prover can produce a `G` that closes the opening — the
+equation constrains the TRIPLE and nothing pins two of its three legs. What binds them is the NEXT
+proof's `finalize_other_proof`. Emitting the honest witness by SOLVING is therefore faithful, and
+saying that the gadget refuses a bad opening would not be.
+
+⚠ It needs `lhs` ON THE CURVE — a scalar multiple of an off-curve pair is meaningless and
+`vestaScMul` returns `(0,0)` for a point it cannot ladder. That is exactly what §14's key restored;
+before it, this function had nothing to land on and `bullGVal` was a standalone fixture that made
+`equal_g` compute 0. -/
+def bullSolveG (u H lhs : Nat × Nat) (bv z1 z2 : Nat) : Nat × Nat :=
+  let bu := vestaScMul (sfKQ bv) u
+  let z2h := vestaScMul (sfKQ z2) H
+  let t := addAQ lhs (z2h.1, qSub 0 z2h.2)
+  let g := vestaScMul (pInvW (sfKQ z1)) t
+  addAQ g (bu.1, qSub 0 bu.2)
 
 /-- One `Ops.scale_fast ~num_bits:255` ladder, seeded exactly as `plonk_curve_ops.ml:157-158`. -/
 def sfLadderQ (T : Nat × Nat) (v : Nat) : TermDataQ := runVbmQ T (addAQ T T) (ftcBitsOf v)
@@ -4127,6 +4215,8 @@ structure BullData where
   pp : Nat × Nat
   q : Nat × Nat
   lhs : Nat × Nat
+  /-- ⚑ `challenge_polynomial_commitment`, SOLVED off `lhs` rather than fixtured. -/
+  g : Nat × Nat
   gb : Nat × Nat
   rhs : Nat × Nat
   deriving Inhabited
@@ -4159,13 +4249,18 @@ def bullData (t : WrapData) : BullData :=
   let pp := addAQ combined (uc.accs.getLastD (0, 0))
   let q := addAQ pp lrProd
   let ec := runEndoQ q (bullChalVal t (2 * s.ipaRounds))
-  let gb := addAQ bullGVal (bu.accs.getLastD (0, 0))
+  -- ⚑ `lhs` FIRST, then the solve, then `rhs` — a chain and not a cycle, because `G` enters only
+  -- through `gb` and nothing on the `lhs` side reads it.
+  let lhs := addAQ (ec.accs.getLastD (0, 0)) bullDeltaVal
+  let g := bullSolveG u XHAT_H lhs (bullScalVal 0) (bullScalVal 1) (bullScalVal 2)
+  let gb := addAQ g (bu.accs.getLastD (0, 0))
   let z1g := sfLadderQ gb (bullScalVal 1)
   let z2h := sfLadderQ XHAT_H (bullScalVal 2)
   { gm := gm, sfs := [uc, bu, z1g, z2h], res := rd.1, eds := rd.2.1 ++ [ec]
   , terms := terms, reds := reds
   , combOut := combined, lrProd := lrProd, pp := pp, q := q
-  , lhs := addAQ (ec.accs.getLastD (0, 0)) bullDeltaVal
+  , lhs := lhs
+  , g := g
   , gb := gb
   , rhs := addAQ (z1g.accs.getLastD (0, 0)) (z2h.accs.getLastD (0, 0)) }
 
@@ -4178,6 +4273,8 @@ def bullQ (_t : WrapData) (v : BullData) : Nat × Nat := v.q
 def bullCq (t : WrapData) (v : BullData) : Nat × Nat :=
   (v.eds.getD (2 * t.sh.ipaRounds) default).accs.getLastD (0, 0)
 def bullLhs (_t : WrapData) (v : BullData) : Nat × Nat := v.lhs
+/-- `challenge_polynomial_commitment`, as `bullData` solved it. -/
+def bullG (_t : WrapData) (v : BullData) : Nat × Nat := v.g
 def bullGb (_t : WrapData) (v : BullData) : Nat × Nat := v.gb
 def bullZ1g (_t : WrapData) (v : BullData) : Nat × Nat := (v.sfs.getD 2 default).accs.getLastD (0, 0)
 def bullZ2h (_t : WrapData) (v : BullData) : Nat × Nat := (v.sfs.getD 3 default).accs.getLastD (0, 0)
@@ -4198,16 +4295,18 @@ def sfN (t : WrapData) (k j : Nat) : PVar :=
   else bV t.sh t.sp (BU_SF + SF_STRIDE * k + 2 * (SF_CHUNKS + 1) + j)
 
 /-- The `i`-th point `Inner_curve.typ` checks, as a variable and a value: the `2·ipaRounds` `lr`
-points, `delta`, then the `ipaRounds` `endo_inv` witnesses. -/
+points, `delta`, the `ipaRounds` `endo_inv` witnesses, then `challenge_polynomial_commitment`. -/
 def bullOcVar (t : WrapData) (v : BullData) (i : Nat) : PVar × PVar :=
   let s := t.sh
   if i < 2 * s.ipaRounds then bullLrV t (i / 2) (i % 2)
   else if i == 2 * s.ipaRounds then bullDeltaV t
+  else if i == 3 * s.ipaRounds + 1 then bullGV s t.sp
   else bullResV s t.sp (i - 2 * s.ipaRounds - 1)
 def bullOcVal (t : WrapData) (v : BullData) (i : Nat) : Nat × Nat :=
   let s := t.sh
   if i < 2 * s.ipaRounds then bullLrVal (i / 2) (i % 2)
   else if i == 2 * s.ipaRounds then bullDeltaVal
+  else if i == 3 * s.ipaRounds + 1 then v.g
   else v.res.getD (i - 2 * s.ipaRounds - 1) (0, 0)
 
 /-! ### §24b — the rows. -/
@@ -4379,7 +4478,7 @@ def bulletRows (t : WrapData) (wired : Bool) : List WRow :=
   -- (7) `rhs = z₁·(G + b_u) + z₂·H`, then `equal_g`.
   let rhsRows : List WRow :=
     [ caRowQ (bullGV s sp) (sfAccV s sp 1 SF_CHUNKS) (bullGbV s sp)
-        (caWitnessQ bullGVal.1 bullGVal.2 (bullBu t v).1 (bullBu t v).2) ]
+        (caWitnessQ (bullG t v).1 (bullG t v).2 (bullBu t v).1 (bullBu t v).2) ]
     ++ sfRows 2 ++ sfRows 3
     ++ [ caRowQ (sfAccV s sp 2 SF_CHUNKS) (sfAccV s sp 3 SF_CHUNKS) (bullRhsV s sp)
            (caWitnessQ (bullZ1g t v).1 (bullZ1g t v).2 (bullZ2h t v).1 (bullZ2h t v).2)
@@ -4414,7 +4513,7 @@ def bulletEnv (t : WrapData) : VarEnv :=
     else bullLrVal (m / 2) 1
   (List.range 43).map (fun i => (bullGm s sp i, (v.gm.getD i 0 : Int)))
   ++ [ ((bullHV s sp).1, (XHAT_H.1 : Int)), ((bullHV s sp).2, (XHAT_H.2 : Int))
-     , ((bullGV s sp).1, (bullGVal.1 : Int)), ((bullGV s sp).2, (bullGVal.2 : Int))
+     , ((bullGV s sp).1, ((bullG t v).1 : Int)), ((bullGV s sp).2, ((bullG t v).2 : Int))
      , ((bullGbV s sp).1, ((bullGb t v).1 : Int)), ((bullGbV s sp).2, ((bullGb t v).2 : Int))
      , ((bullPpV s sp).1, ((bullPp t v).1 : Int)), ((bullPpV s sp).2, ((bullPp t v).2 : Int))
      , ((bullQV s sp).1, ((bullQ t v).1 : Int)), ((bullQV s sp).2, ((bullQ t v).2 : Int))
@@ -4449,8 +4548,9 @@ def bulletEnv (t : WrapData) : VarEnv :=
            let a := ed.accs.getD e (0, 0)
            [ ((enAccV s sp m e).1, (a.1 : Int)), ((enAccV s sp m e).2, (a.2 : Int)) ])
       ++ (List.range ENDO_BLOCKS).map (fun e => (enN t m e, (ed.ns.getD e 0 : Int))))
-  -- ⚑ `equal_g`'s witness, COMPUTED off the assembly: `d = lhs − rhs` per coordinate. It is nonzero
-  -- at this tree's step key (the header says why), so `bit = 0` and `bulletproof_success = 0`.
+  -- ⚑ `equal_g`'s witness, COMPUTED off the assembly: `d = lhs − rhs` per coordinate, `bit` READ OFF
+  -- `d`. Nothing here asserts which way it lands — §24's header records what it was at the old
+  -- degenerate key and `close_bulletproof_success_is_satisfiable` states what it is at Mina's.
   ++ (List.range 2).flatMap (fun i =>
       let l := if i == 0 then (bullLhs t v).1 else (bullLhs t v).2
       let r := if i == 0 then (bullRhs t v).1 else (bullRhs t v).2
@@ -4464,11 +4564,536 @@ def bulletEnv (t : WrapData) : VarEnv :=
   ++ [ (bullEqV s sp 12,
         ((if bullLhs t v == bullRhs t v then 1 else 0 : Nat) : Int)) ]
 
+/-! ## §20 — ⚑ **W-FINSPONGE**: `finalize_other_proof`'s SPONGE HALF, and the three legs it closes.
+
+`wrap_verifier.ml:844-1013`. §19 emits `plonk_checks_passed` and named the other three legs of
+`Boolean.all [xi_correct; b_correct; combined_inner_product_correct; plonk_checks_passed]` as the
+remainder, because **all three need ξ and r, which are the finalize sponge's two squeezes**. Three
+lanes in a row declined to emit them as free witnesses — correctly, a witness nothing constrains is
+not a leg — so this rung emits **the sponge**, and the legs follow from it.
+
+## WHAT UPSTREAM DOES, READ OFF A REAL DEVNET BLOCK RATHER THAN OFF PROSE
+
+The tape is not inferred here. `metatheory/mina_real_block_proof.json` is devnet block 539508
+(`3NLmVB6Fs3dm4kXNkgwheHXzJXNpCCwEDe76RpTVeBTNujm12zNk`), ground-truthed
+`openmina BlockVerifier + accumulator_check=true + kimchi::verifier::verify=Ok`, and its
+`wrap_transcript` carries the **whole phase-2 tape and both of its squeezes**:
+`phase2_tape_len = 91`, `prev_challenge_digest`, `phase2_evals_tape` (86), `v_chal`, `u_chal`. So:
+
+  * **a NESTED sponge first.** `Sponge.create`, absorb the flattened old bulletproof challenges —
+    `WH_MLMB · WH_ROUNDS = 30` of them, the SAME vector §21's `hash_messages_for_next_wrap_proof`
+    absorbs — and close with ONE `Sponge.squeeze_field`. That is `prev_challenge_digest`, and
+    `finalize_sponge_reproduces_the_accepted_block` derives the block's own out of this file's
+    emitter.
+  * **then the finalize sponge**, `Sponge.create` again, over **91** elements:
+    `sponge_digest_before_evaluations` (packed word 5 of the block), the challenge digest,
+    `ft_eval1`, `evals.public_input.0`, `evals.public_input.1`, and then
+    `Evals.to_absorption_sequence` — the **43 columns at ζ and ζω INTERLEAVED**, 86 cells, in
+    §19c's own `FIN_NCOLS` order.
+  * **then TWO squeezes**, ξ′ and r′ (`:892-894`). ⚑ They come out of **ONE** permutation, at lanes
+    0 and 1: the rate-2 machine §4 already runs leaves the sponge `Absorbed 1` after 91 absorbs, the
+    first squeeze permutes, the second reads lane 1 with no permutation at all. A block model would
+    put them two permutations apart and every value below would be wrong.
+
+⚑ **THE 86 CELLS ARE `w10_finalize`'s OWN.** `finEvVar` is where §19 witnesses `Req.Evals`, and this
+sponge absorbs those variables — including the SOLVED `z(ζω)` of the block that claims
+`should_finalize`. That is the whole point of the rung sitting above §19 rather than beside it:
+`plonk_checks_passed` and `combined_inner_product_correct` read ONE set of evaluation columns, and a
+prover who moves a column to satisfy one of them moves ξ and breaks the other.
+
+## THE THREE LEGS
+
+  * **`xi_correct`** (`:895-902`) — `xi_actual = lowest_128_bits ~constrain_low_bits:true` of the
+    first squeeze, `Field.equal`'d against the block's own packed word 10. Both halves are
+    range-checked exactly as §5 does for the transcript's challenges: the low part IS a
+    `to_field_checked` chain, the high part gets its own `assert_128_bits` chain.
+  * **`b_correct`** (`:1015-1026`) — `b_actual = challenge_polynomial(ζ) + r · challenge_polynomial(ζω)`
+    over the FIFTEEN lifted bulletproof challenges of the block (`compute_challenges`, `:1012-1013`),
+    against `Shifted_value.Type2.to_field` of packed word 1. `zetaw = ω · ζ` at the wrap domain's own
+    generator, which §19c pins.
+  * **`combined_inner_product_correct`** (`:951-1009`) — `Pcs_batch.combine_split_evaluations`, a
+    Horner fold in ξ over **47** entries per point: the `prevs` old accumulators' challenge
+    polynomials at that point, `evals.public_input`, `ft_eval`, then the 43 columns; the ζ fold uses
+    **§19's own `ft_eval0` slot** and the ζω fold uses `ft_eval1`; and the two combine as
+    `combine ζ + r · combine ζω`. ⚑ **THE FOLD IS CHECKED AGAINST THE SAME REAL BLOCK**, not against
+    its own definition: at block 539508's ξ, r, ζ, ζω, evaluations, `ft_eval0`/`ft_eval1`, public
+    evals and 2 × 15 recursion challenges, this expression reproduces that proof's
+    `combined_inner_product` on the nose. The measurement is what fixed the entry ORDER and the
+    Horner DIRECTION, both of which prose gets wrong silently.
+
+## ⚑ THREE PACKED STATEMENT WORDS BECOME DERIVED, AND THAT IS A FLAG DAY
+
+`Boolean.Assert.any [finalized; not should_finalize]` is §19's row and `finalized` is now the AND of
+four legs. Block 1's packed word 53 IS `should_finalize = 1` (§19 measured it), so block 1 must
+satisfy **all four** — which means its `combined_inner_product`, `b` and `xi` words are no longer
+free fixtures. They are `FIN_DEFERRED_*`, a MEMO WITH A KERNEL OBLIGATION in the shape of
+`WrapShape.xhatXY`: `fin_deferred_words_are_the_derivation` closes them by `rfl` against the very
+program and sponge this rung emits, and `EmitWrapMainJson` REFUSES to emit a disagreeing tree.
+
+**WHAT RE-EMITS:** everything from `w6_xhat` up at the WRAP shape — packed words 27, 28 and 37 are
+x_hat entries 32/33, 34/35 and 47, so `xhatOut 67` moves and with it the absorbed `x_hat`, every
+challenge and all 24 derived public words. The SMOKE shape does not move: `xhatSel 5` selects none
+of those five entries, which is why the committed fixtures below this rung are byte-identical.
+
+⚠ **AND BLOCK 0 KEEPS ITS FIXTURES, WHICH IS WHAT KEEPS THE ASSERT FALSIFIABLE.** Deriving all three
+words in EVERY block would force `xc = bc = cc = 1` for any witness the emitter can produce, and
+`(1 − finalized)·should_finalize = 0` would have no failing instance left — the exact defect the
+`w10_finalize` lane caught in its own solve. Block 0 does not claim `should_finalize`, so it runs
+all three `Field.equal` gadgets at NONZERO differences and takes the `(d⁻¹, 0)` branch, while block
+1 takes `(0, 1)`. Both branches live, and the assert reds the moment block 0 claims `should_finalize`.
+
+⚠ **`old_bp_chals` IS ONE `exists` UPSTREAM AND THIS LADDER HOLDS TWO COPIES.** `wrap_main.ml:226-256`
+witnesses it once; `hash_messages_for_next_wrap_proof` (§21, the `.wraphack` branch) and this rung's
+challenge digest both read it. `.finsponge` does not contain `.wraphack`, so the two branches allocate
+two regions over one vector at one set of VALUES. That is the §21 composition hazard in a new place
+and it closes the same way — when the ladder becomes one chain, the two become one σ class. Said,
+not banked. -/
+
+/-- An old bulletproof challenge, absorbed by the challenge-digest sponge. -/
+def T_FINOLD : Nat := 11
+/-- A word of the finalize sponge's own 91-element tape. -/
+def T_FINTAPE : Nat := 12
+
+/-- Packed per-proof word indices this rung reads by NAME (`composition_types.ml:1268-1276`). -/
+def FIN_W_CIP : Nat := 0
+def FIN_W_B : Nat := 1
+def FIN_W_DIGEST : Nat := 5
+def FIN_W_XI : Nat := 10
+/-- …and where the fifteen `B Bulletproof_challenge` words start. -/
+def FIN_W_CHAL : Nat := 11
+
+/-- `evals.ft_eval1` — a `Req.Evals` witness upstream (`wrap_main.ml:262-268`), so a NAMED FIXTURE
+here for the same reason §19's evaluation columns are. -/
+def finFtEval1Val (p : Nat) : Nat := wrapFixtureQ (60 + p) 0
+/-- `evals.public_input.1` — `p(ζω)`, likewise. §19 witnessed only `p(ζ)` because `ft_eval0` is the
+only consumer it had; the finalize sponge absorbs both. -/
+def finPZetaWVal (p : Nat) : Nat := wrapFixtureQ (62 + p) 0
+
+/-- Instance `p`'s challenge-digest sponge: a FRESH Fq sponge over the `WH_MLMB · WH_ROUNDS`
+flattened old bulletproof challenges, closed by one `Sponge.squeeze_field`. `bt` is out of range so
+no word is bent. -/
+def finChalSpongeOf (base : Nat) (cs : List Nat) : SpAcc :=
+  runSpongeQ base (cs.map (fun w => Ev.abs T_FINOLD w) ++ [Ev.sq .full]) (cs.length + 1) 0
+
+def finChalSponge (base p : Nat) : SpAcc := finChalSpongeOf base (whOldChals p)
+
+/-- `Evals.to_absorption_sequence` — the 43 columns at ζ and ζω INTERLEAVED, at the SOLVED `z(ζω)`
+so the sponge absorbs §19's own cells and not a second reading of them. -/
+def finEvalTape (s : WrapShape) (sp : SpAcc) (p : Nat) : List Nat :=
+  (List.range FIN_NCOLS).flatMap (fun k =>
+    [ finColVal p k 0, (if k == FIN_IDX_Z then finZW0 s sp p else finColVal p k 1) ])
+
+/-- **THE 91-ELEMENT TAPE** (`wrap_verifier.ml:844-891`), in upstream's own order. -/
+def finSpTape (s : WrapShape) (sp : SpAcc) (p cd : Nat) : List Nat :=
+  [ finBlockVal p FIN_W_DIGEST, cd, finFtEval1Val p, finPZetaVal p, finPZetaWVal p ]
+  ++ finEvalTape s sp p
+
+/-- …and the sponge over it, closed by the TWO squeezes ξ′ and r′. -/
+def finFrSpongeOf (base : Nat) (tp : List Nat) : SpAcc :=
+  runSpongeQ base (tp.map (fun w => Ev.abs T_FINTAPE w) ++ [Ev.sq .chal, Ev.sq .chal])
+    (tp.length + 1) 0
+
+def finFrSponge (s : WrapShape) (sp : SpAcc) (base p cd : Nat) : SpAcc :=
+  finFrSpongeOf base (finSpTape s sp p cd)
+
+/-- Squeeze `k` of a sponge — the cell it is read out of, and its value. -/
+def finSpSq (a : SpAcc) (k : Nat) : PVar × Nat := (chalSqueezes a).getD k (.external 0, 0)
+
+/-- The cells §20's program reads. Every one is a variable some row of the assembly defines. -/
+structure FinSpWire where
+  /-- ζ, LIFTED — §19's own chain cell. -/
+  zeta : PVar
+  /-- ξ, LIFTED. -/
+  xiF : PVar
+  /-- r, LIFTED. -/
+  rF : PVar
+  /-- ξ′ — the RAW 128-bit challenge, i.e. the low half of the first squeeze. -/
+  xiRaw : PVar
+  /-- the fifteen LIFTED bulletproof challenges (`compute_challenges`). -/
+  u : Nat → PVar
+  /-- old accumulator `i`'s challenge `k` — the challenge-digest sponge's OWN absorb cell. -/
+  old : Nat → Nat → PVar
+  /-- column `k` at ζ / at ζω — §19's `Req.Evals` cells. -/
+  ez : Nat → PVar
+  ew : Nat → PVar
+  pZeta : PVar
+  pZetaW : PVar
+  ftEval1 : PVar
+  /-- ⚑ §19's OWN `ft_eval0` slot, read as an input. -/
+  ftEval0 : PVar
+  /-- …and §19's `plonk_checks_passed` bit, the fourth leg of `Boolean.all`. -/
+  permOk : PVar
+  cipStmt : PVar
+  bStmt : PVar
+  xiStmt : PVar
+  shouldFin : PVar
+  deriving Inhabited
+
+/-- What the program bakes in, and the three `Field.equal` witnesses its own rows CHECK. -/
+structure FinSpCfg where
+  omega : Nat
+  shift2 : Nat
+  /-- `Backend.Tock.Rounds.n` — the finalized WRAP proof's IPA round count. -/
+  rounds : Nat
+  /-- how many old accumulators the block carries. -/
+  vecs : Nat
+  eqInv : List Nat
+  eqBit : List Nat
+  deriving Repr, Inhabited
+
+structure FinSpSlots where
+  bAct : Nat
+  bUsed : Nat
+  cipAct : Nat
+  cipUsed : Nat
+  dXi : Nat
+  dB : Nat
+  dCip : Nat
+  xc : Nat
+  bc : Nat
+  cc : Nat
+  finalized : Nat
+  out : Nat
+  deriving Repr, Inhabited
+
+/-- `challenge_polynomial cs x = ∏ₖ (1 + cₖ · x^{2^{n−1−k}})` (`wrap_verifier.ml:14-35`). One
+squaring chain, shared by every factor. -/
+def fnChalPoly (one : Nat) (cs : List Nat) (x : Nat) : FM Nat := do
+  let n := cs.length
+  let ps ← (List.range (n - 1)).foldlM (fun acc _ => do
+      let y ← fnMul (acc.getLastD x) (acc.getLastD x); pure (acc ++ [y])) [x]
+  (List.range n).foldlM (fun acc k => do
+      let t ← fnMul (cs.getD k 0) (ps.getD (n - 1 - k) 0)
+      let f ← fnAdd one t
+      fnMul acc f) one
+
+/-- `Pcs_batch.combine_split_evaluations` (`pickles_types/pcs_batch.ml:69-83`) — a Horner fold in ξ
+with the FIRST entry at ξ⁰. ⚑ The direction is MEASURED against block 539508, not read off the
+constructor's name. -/
+def fnHorner (xi : Nat) (vs : List Nat) : FM Nat :=
+  match vs.reverse with
+  | [] => fnLit 0
+  | v :: rest => rest.foldlM (fun acc x => do let m ← fnMul acc xi; fnAdd x m) v
+
+/-- **The sponge half's straight-line program**, `wrap_verifier.ml:895-1026` line by line. -/
+def finSpBuild (W : FinSpWire) (C : FinSpCfg) : FM FinSpSlots := do
+  let zero ← fnLit 0
+  let one ← fnLit 1
+  let sh2 ← fnLit C.shift2
+  let om ← fnLit C.omega
+  let zeta ← fnInp W.zeta
+  -- `zetaw = domain#generator · ζ`, ONE binding, exactly as `:934` binds it once upstream.
+  let zetaw ← fnMul om zeta
+  let xiF ← fnInp W.xiF
+  let rF ← fnInp W.rF
+  -- ── `b_correct` (`:1015-1026`) ────────────────────────────────────────────────────────────
+  let us ← (List.range C.rounds).foldlM (fun acc k => do
+      let v ← fnInp (W.u k); pure (acc ++ [v])) []
+  let bZ ← fnChalPoly one us zeta
+  let bW ← fnChalPoly one us zetaw
+  let rbw ← fnMul rF bW
+  let bAct ← fnAdd bZ rbw
+  let bStmt ← fnInp W.bStmt
+  let bUsed ← fnAdd bStmt sh2
+  -- ── the old accumulators' challenge polynomials — the `sg_olds` entries of the fold ────────
+  let olds ← (List.range C.vecs).foldlM (fun acc i => do
+      let cs ← (List.range C.rounds).foldlM (fun a k => do
+          let v ← fnInp (W.old i k); pure (a ++ [v])) []
+      pure (acc ++ [cs])) []
+  let sgZ ← olds.foldlM (fun acc cs => do let z ← fnChalPoly one cs zeta; pure (acc ++ [z])) []
+  let sgW ← olds.foldlM (fun acc cs => do let z ← fnChalPoly one cs zetaw; pure (acc ++ [z])) []
+  -- ── `combined_inner_product_correct` (`:951-1009`) ────────────────────────────────────────
+  let ez ← (List.range FIN_NCOLS).foldlM (fun acc k => do
+      let v ← fnInp (W.ez k); pure (acc ++ [v])) []
+  let ew ← (List.range FIN_NCOLS).foldlM (fun acc k => do
+      let v ← fnInp (W.ew k); pure (acc ++ [v])) []
+  let pz ← fnInp W.pZeta
+  let pzw ← fnInp W.pZetaW
+  let ft0 ← fnInp W.ftEval0
+  let ft1 ← fnInp W.ftEval1
+  let hZ ← fnHorner xiF (sgZ ++ [pz, ft0] ++ ez)
+  let hW ← fnHorner xiF (sgW ++ [pzw, ft1] ++ ew)
+  let rh ← fnMul rF hW
+  let cipAct ← fnAdd hZ rh
+  let cipStmt ← fnInp W.cipStmt
+  let cipUsed ← fnAdd cipStmt sh2
+  -- ── `Field.equal`, the real gadget, three times ───────────────────────────────────────────
+  let mkEq : Nat → Nat → Nat → FM (Nat × Nat) := fun i x y => do
+    let d ← fnSub x y
+    let iv ← fnWit (C.eqInv.getD i 0)
+    let bb ← fnWit (C.eqBit.getD i 0)
+    let bb2 ← fnMul bb bb
+    let _ ← fnAeq bb2 bb
+    let pm ← fnMul d iv
+    let qq ← fnSub one bb
+    let _ ← fnAeq pm qq
+    let sZ ← fnMul d bb
+    let _ ← fnAeq sZ zero
+    pure (d, bb)
+  let xiRaw ← fnInp W.xiRaw
+  let xiStmt ← fnInp W.xiStmt
+  let e0 ← mkEq 0 xiRaw xiStmt
+  let e1 ← mkEq 1 bUsed bAct
+  let e2 ← mkEq 2 cipUsed cipAct
+  -- ── `Boolean.all [xi_correct; b_correct; cip_correct; plonk_checks_passed]` (`:1141-1147`) ─
+  let pk ← fnInp W.permOk
+  let f1 ← fnMul e0.2 e1.2
+  let f2 ← fnMul f1 e2.2
+  let fin ← fnMul f2 pk
+  -- ⚑ …and `Boolean.Assert.any [finalized; not should_finalize]` over the FOUR-leg `finalized`.
+  -- §19's own row asserts the same thing over `plonk_checks_passed` alone; it is implied by this
+  -- one and is kept because a rung IS the rung below it plus its own rows.
+  let sf ← fnInp W.shouldFin
+  let nfin ← fnSub one fin
+  let out ← fnMul nfin sf
+  let _ ← fnAeq out zero
+  pure { bAct := bAct, bUsed := bUsed, cipAct := cipAct, cipUsed := cipUsed
+       , dXi := e0.1, dB := e1.1, dCip := e2.1
+       , xc := e0.2, bc := e1.2, cc := e2.2, finalized := fin, out := out }
+
+structure FinSpProg where
+  prog : Array FOp
+  slots : FinSpSlots
+  deriving Repr, Inhabited
+
+def finSpProgOf (W : FinSpWire) (C : FinSpCfg) : FinSpProg :=
+  let r := (finSpBuild W C).run #[]
+  { prog := r.2, slots := r.1 }
+
+/-! ### §20a — the variable space. -/
+
+/-- Fifteen `compute_challenges` lifts, then ξ, ξ's high part, r, r's high part. -/
+def FINSP_CHAINS : Nat := WH_ROUNDS + 4
+def FINSP_XI : Nat := WH_ROUNDS
+def FINSP_XIHI : Nat := WH_ROUNDS + 1
+def FINSP_R : Nat := WH_ROUNDS + 2
+def FINSP_RHI : Nat := WH_ROUNDS + 3
+
+/-- Everything one instance of the sponge half evaluates, ONCE. -/
+structure FinSpData where
+  base : Nat
+  cs : SpAcc
+  fs : SpAcc
+  fp : FinSpProg
+  vals : Array Nat
+  deriving Inhabited
+
+def finSpFsBase (d : FinSpData) : Nat := d.base + d.cs.next
+def finSpChBase (d : FinSpData) : Nat := finSpFsBase d + d.fs.next
+def finSpWireBase (s : WrapShape) (d : FinSpData) : Nat :=
+  finSpChBase d + FINSP_CHAINS * chainStride s
+def finSpProgBase (s : WrapShape) (d : FinSpData) : Nat := finSpWireBase s d + 2
+def finSpSize (s : WrapShape) (d : FinSpData) : Nat :=
+  finSpProgBase s d + d.fp.prog.size - d.base
+def finSpChain (s : WrapShape) (d : FinSpData) (c : Nat) : ChainVars :=
+  chainVars s (finSpChBase d) c
+/-- `ft_eval1`'s cell and `p(ζω)`'s — the two `Req.Evals` witnesses §19 had no consumer for. -/
+def finSpFt1V (s : WrapShape) (d : FinSpData) : PVar := .external (finSpWireBase s d)
+def finSpPzwV (s : WrapShape) (d : FinSpData) : PVar := .external (finSpWireBase s d + 1)
+/-- Old accumulator `i`'s challenge `k`, as the challenge-digest sponge's own absorb cell. -/
+def finSpOldV (d : FinSpData) (i k : Nat) : PVar :=
+  ((d.cs.evs.getD (WH_ROUNDS * i + k) default).wordV)
+
+/-- The region above §19's programs. ⚠ It is `WrapData`-dependent and not shape-dependent, because
+`finStride` is instance 0's compiled program size and nothing but the emitter knows it. -/
+def baseFinSp (t : WrapData) (fa : List FinData) : Nat :=
+  finProgBase t.sh t.sp + t.sh.prevs * finStride fa
+
+/-- §19's `ft_eval0` slot, as a VARIABLE and as a VALUE. -/
+def finFtEval0V (t : WrapData) (fa : List FinData) (p : Nat) : PVar :=
+  let d := fa.getD p default
+  fnVarAt (finProgAt t.sh t.sp fa p) d.fp.prog d.fp.slots.ftEval0
+def finFtEval0N (fa : List FinData) (p : Nat) : Nat :=
+  let d := fa.getD p default
+  d.vals.getD d.fp.slots.ftEval0 0
+/-- …and its `plonk_checks_passed` bit. -/
+def finPermOkV (t : WrapData) (fa : List FinData) (p : Nat) : PVar :=
+  let d := fa.getD p default
+  fnVarAt (finProgAt t.sh t.sp fa p) d.fp.prog d.fp.slots.permOk
+def finPermOkN (fa : List FinData) (p : Nat) : Nat :=
+  let d := fa.getD p default
+  d.vals.getD d.fp.slots.permOk 0
+
+/-- Instance `p`'s wire. -/
+def finSpWireOf (t : WrapData) (fa : List FinData) (d : FinSpData) (p : Nat) : FinSpWire :=
+  let s := t.sh
+  let sp := t.sp
+  { zeta := (finChainVars s sp p 1).lift
+  , xiF := (finSpChain s d FINSP_XI).lift
+  , rF := (finSpChain s d FINSP_R).lift
+  , xiRaw := (finSpChain s d FINSP_XI).n s.emsRows
+  , u := fun k => (finSpChain s d k).lift
+  , old := fun i k => finSpOldV d i k
+  , ez := fun k => finEvVar s sp p k 0
+  , ew := fun k => finEvVar s sp p k 1
+  , pZeta := finPZetaVar s sp p
+  , pZetaW := finSpPzwV s d
+  , ftEval1 := finSpFt1V s d
+  , ftEval0 := finFtEval0V t fa p
+  , permOk := finPermOkV t fa p
+  , cipStmt := prevW s sp (finBlockWord p FIN_W_CIP)
+  , bStmt := prevW s sp (finBlockWord p FIN_W_B)
+  , xiStmt := prevW s sp (finBlockWord p FIN_W_XI)
+  , shouldFin := prevW s sp (finBlockWord p PREV_SHOULD_FINALIZE) }
+
+/-- Instance `p`'s `.inp` lookup — every cell the program aliases, at its value. -/
+def finSpInputEnv (t : WrapData) (fa : List FinData) (d : FinSpData) (p : Nat) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  let sq0 := finSpSq d.fs 0
+  let sq1 := finSpSq d.fs 1
+  let xiLo := sq0.2 % 2 ^ CHAL_BITS s
+  let rLo := sq1.2 % 2 ^ CHAL_BITS s
+  [ ((finChainVars s sp p 1).lift, (liftValQ s (finBlockVal p 9) : Int))
+  , ((finSpChain s d FINSP_XI).lift, (liftValQ s xiLo : Int))
+  , ((finSpChain s d FINSP_R).lift, (liftValQ s rLo : Int))
+  , ((finSpChain s d FINSP_XI).n s.emsRows, (xiLo : Int))
+  , (finPZetaVar s sp p, (finPZetaVal p : Int))
+  , (finSpPzwV s d, (finPZetaWVal p : Int))
+  , (finSpFt1V s d, (finFtEval1Val p : Int))
+  , (finFtEval0V t fa p, (finFtEval0N fa p : Int))
+  , (finPermOkV t fa p, (finPermOkN fa p : Int))
+  , (prevW s sp (finBlockWord p FIN_W_CIP), (finBlockVal p FIN_W_CIP : Int))
+  , (prevW s sp (finBlockWord p FIN_W_B), (finBlockVal p FIN_W_B : Int))
+  , (prevW s sp (finBlockWord p FIN_W_XI), (finBlockVal p FIN_W_XI : Int))
+  , (prevW s sp (finBlockWord p PREV_SHOULD_FINALIZE),
+     (finBlockVal p PREV_SHOULD_FINALIZE : Int)) ]
+  ++ (List.range WH_ROUNDS).map (fun k =>
+      ((finSpChain s d k).lift, (liftValQ s (finBlockVal p (FIN_W_CHAL + k)) : Int)))
+  ++ (List.range WH_MLMB).flatMap (fun i =>
+      (List.range WH_ROUNDS).map (fun k =>
+        (finSpOldV d i k, (whOldChal p (WH_ROUNDS * i + k) : Int))))
+  ++ (List.range FIN_NCOLS).flatMap (fun k =>
+      [ (finEvVar s sp p k 0, (finColVal p k 0 : Int))
+      , (finEvVar s sp p k 1,
+         ((if k == FIN_IDX_Z then finZW0 s sp p else finColVal p k 1 : Nat) : Int)) ])
+
+/-- The config, at a PLACEHOLDER `Field.equal` witness. -/
+def finSpCfg0 : FinSpCfg :=
+  { omega := FIN_OMEGA, shift2 := FIN_SHIFT2, rounds := WH_ROUNDS, vecs := WH_MLMB
+  , eqInv := [0, 0, 0], eqBit := [1, 1, 1] }
+
+/-- ⚑ **THE THREE `Field.equal` WITNESSES ARE COMPUTED FROM THE GADGET'S OWN INPUTS**, exactly as
+§19's `runFin` computes its one: the program is built once at a placeholder pair, its `d` slots are
+read, and the honest `(inv, bit)` follows from the ACTUAL difference — `(0, 1)` where they agree and
+`(d⁻¹, 0)` where they do not. Asserting the answer instead is what made the first `w10_finalize`
+emission unprovable while every σ-pin stayed green. -/
+def runFinSp (t : WrapData) (fa : List FinData) (base p : Nat) : FinSpData :=
+  let s := t.sh
+  let sp := t.sp
+  let cs := finChalSponge base p
+  let fs := finFrSponge s sp (base + cs.next) p (whDigestVal cs)
+  let d0 : FinSpData := { base := base, cs := cs, fs := fs, fp := default, vals := #[] }
+  let W := finSpWireOf t fa d0 p
+  let lk := envLookupAt (envIndex (finSpInputEnv t fa d0 p))
+  let probe := finSpProgOf W finSpCfg0
+  let pv := fnEval lk probe.prog
+  let ds := [ pv.getD probe.slots.dXi 0, pv.getD probe.slots.dB 0, pv.getD probe.slots.dCip 0 ]
+  let cfg : FinSpCfg :=
+    { finSpCfg0 with
+      eqInv := ds.map (fun x => if x == 0 then 0 else qInv x)
+      eqBit := ds.map (fun x => if x == 0 then 1 else 0) }
+  let fp := finSpProgOf W cfg
+  { base := base, cs := cs, fs := fs, fp := fp, vals := fnEval lk fp.prog }
+
+/-- Every instance's sponge half, built ONCE and stacked — the regions are data-sized, so the fold
+threads the base rather than a shape stride. -/
+def finSpAll (t : WrapData) (fa : List FinData) : List FinSpData :=
+  (List.range t.sh.prevs).foldl
+    (fun acc p =>
+      let b := match acc.getLast? with
+               | none => baseFinSp t fa
+               | some d => d.base + finSpSize t.sh d
+      acc ++ [runFinSp t fa b p])
+    []
+
+/-! ### §20b — the rows. -/
+
+/-- **W-FINSPONGE's ROWS.** Per instance: the two sponges, the ties that make their absorb cells the
+assembly's own, the nineteen `to_field_checked` chains, the program, and one σ-only probe. -/
+def finSpRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let cb := baseCh s sp
+  let fa := finAll t
+  let da := finSpAll t fa
+  (List.range s.prevs).flatMap (fun p =>
+    let d := da.getD p default
+    let sq0 := finSpSq d.fs 0
+    let sq1 := finSpSq d.fs 1
+    let xiLo := sq0.2 % 2 ^ CHAL_BITS s
+    let xiHi := sq0.2 / 2 ^ CHAL_BITS s
+    let rLo := sq1.2 % 2 ^ CHAL_BITS s
+    let rHi := sq1.2 / 2 ^ CHAL_BITS s
+    let pB := finSpProgBase s d
+    let V := fnVarAt pB d.fp.prog
+    -- ⚑ the absorbed word of tape position `j`, as the sponge's OWN cell.
+    let tv : Nat → PVar := fun j => (d.fs.evs.getD j default).wordV
+    -- (1) the nested challenge-digest sponge and (2) the finalize sponge.
+    transcriptRowsQ d.base d.cs wired
+    ++ transcriptRowsQ (finSpFsBase d) d.fs wired
+    -- (3) the ties: every tape position that has a cell elsewhere in the assembly IS that cell.
+    ++ packHalves
+        ([ ([some (tv 0), some (prevW s sp (finBlockWord p FIN_W_DIGEST)), none], cEq)
+         , ([some (tv 1), some (whDigestVar d.cs), none], cEq)
+         , ([some (tv 2), some (finSpFt1V s d), none], cEq)
+         , ([some (tv 3), some (finPZetaVar s sp p), none], cEq)
+         , ([some (tv 4), some (finSpPzwV s d), none], cEq) ]
+         ++ (List.range FIN_NCOLS).flatMap (fun k =>
+              [ ([some (tv (5 + 2 * k)), some (finEvVar s sp p k 0), none], cEq)
+              , ([some (tv (6 + 2 * k)), some (finEvVar s sp p k 1), none], cEq) ]))
+    -- (4) `compute_challenges` — fifteen 128-bit lifts of the block's own words.
+    ++ (List.range WH_ROUNDS).flatMap (fun k =>
+        tfcRowsQ s cb (finSpChain s d k) (prevW s sp (finBlockWord p (FIN_W_CHAL + k))) false
+          (finBlockVal p (FIN_W_CHAL + k)) wired)
+    -- (5) ξ and r: `lowest_128_bits` with BOTH halves range-checked, then the lift.
+    ++ tfcRowsQ s cb (finSpChain s d FINSP_XI) sq0.1 true xiLo wired
+    ++ tfcRowsQ s cb (finSpChain s d FINSP_XIHI) (finSpChain s d FINSP_XI).hi false xiHi wired
+    ++ tfcRowsQ s cb (finSpChain s d FINSP_R) sq1.1 true rLo wired
+    ++ tfcRowsQ s cb (finSpChain s d FINSP_RHI) (finSpChain s d FINSP_R).hi false rHi wired
+    -- (6) the three legs and `Boolean.all`.
+    ++ fnRows pB d.fp.prog
+    ++ [ probeRow wired (V d.fp.slots.cipAct) (V d.fp.slots.bAct) ])
+
+/-- W-FINSPONGE's variable environment. -/
+def finSpEnv (t : WrapData) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  let fa := finAll t
+  let da := finSpAll t fa
+  (List.range s.prevs).flatMap (fun p =>
+    let d := da.getD p default
+    let sq0 := finSpSq d.fs 0
+    let sq1 := finSpSq d.fs 1
+    spongeEnv d.base d.cs
+    ++ spongeEnv (finSpFsBase d) d.fs
+    ++ (List.range WH_ROUNDS).flatMap (fun k =>
+        chainEnv s (finSpChain s d k) (finBlockVal p (FIN_W_CHAL + k)) 0)
+    ++ chainEnv s (finSpChain s d FINSP_XI) (sq0.2 % 2 ^ CHAL_BITS s) (sq0.2 / 2 ^ CHAL_BITS s)
+    ++ chainEnv s (finSpChain s d FINSP_XIHI) (sq0.2 / 2 ^ CHAL_BITS s) 0
+    ++ chainEnv s (finSpChain s d FINSP_R) (sq1.2 % 2 ^ CHAL_BITS s) (sq1.2 / 2 ^ CHAL_BITS s)
+    ++ chainEnv s (finSpChain s d FINSP_RHI) (sq1.2 / 2 ^ CHAL_BITS s) 0
+    ++ [ (finSpFt1V s d, (finFtEval1Val p : Int))
+       , (finSpPzwV s d, (finPZetaWVal p : Int)) ]
+    ++ fnEnvOf (finSpProgBase s d) d.fp.prog d.vals)
+
+/-- ⚑ **THE THREE DEFERRED WORDS, DERIVED** — `combined_inner_product`, `b` and `xi` of the block
+that claims `should_finalize`, as this rung's own program computes them. `EmitWrapMainJson` and
+`fin_deferred_words_are_the_derivation` both read THIS function, so the memo in
+`KimchiWrapMainField` cannot drift away from the emission. -/
+def finSpDerivedWords (t : WrapData) : Nat × Nat × Nat :=
+  let fa := finAll t
+  let da := finSpAll t fa
+  let d := da.getD FIN_LIVE_BLOCK default
+  ( qSub (d.vals.getD d.fp.slots.cipAct 0) FIN_SHIFT2
+  , qSub (d.vals.getD d.fp.slots.bAct 0) FIN_SHIFT2
+  , (finSpSq d.fs 0).2 % 2 ^ CHAL_BITS t.sh )
+
 /-! ## §7 — rows, environment, rungs. -/
 
 inductive Rung where
   | transcript | challenges | branch | bind | key | xhat | split | ftcomm | prev | finalize
-  | wraphack | close | combine | bullet
+  | finsponge | wraphack | close | combine | bullet
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
@@ -4476,6 +5101,7 @@ def Rung.tag : Rung → String
   | .branch => "w3_branch" | .bind => "w4_bind" | .key => "w5_key"
   | .xhat => "w6_xhat" | .split => "w7_split" | .ftcomm => "w8_ftcomm"
   | .prev => "w9_prev" | .finalize => "w10_finalize"
+  | .finsponge => "w11_finsponge"
   | .wraphack => "w11_wraphack" | .close => "w12_close"
   | .combine => "w10_combine" | .bullet => "w11_bullet"
 
@@ -4503,6 +5129,7 @@ def rungOwn (t : WrapData) (wired : Bool) : Rung → List WRow
   | .wraphack => whRows t wired
   | .close => closeRows t wired
   | .finalize => finRows t wired
+  | .finsponge => finSpRows t wired
   | .combine => combRows t wired
   | .bullet => bulletRows t wired
 
@@ -4524,6 +5151,8 @@ def rungsUpto : Rung → List Rung
                     .wraphack, .close]
   | .finalize   => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
                     .finalize]
+  | .finsponge  => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
+                    .finalize, .finsponge]
   | .combine    => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
                     .combine]
   | .bullet     => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
@@ -4611,6 +5240,10 @@ slot is RESERVED in `AUXW` at every rung, so below `w9_prev` it sits in `placeCh
 any gate that touched it would be refused rather than silently absorbed. -/
 def rungPub (s : WrapShape) : Rung → Nat
   | .finalize => s.pubWords + 1
+  -- ⚑ W-FINSPONGE derives no NEW wrap statement word either: ξ (slot 9) is a value `wrap_main`
+  -- passes through as `~plonk` and never checks (§10's census), and what this rung derives are the
+  -- PREVIOUS statement's deferred words, which are not wrap public words at all.
+  | .finsponge => s.pubWords + 1
   | .bind => s.pubWords
   | .key => s.pubWords
   | .xhat => s.pubWords
@@ -4632,7 +5265,7 @@ reads that cell and a public word on an unread cell is a public fixture. -/
 def exposedVarsAt (t : WrapData) (k : Rung) : List PVar :=
   exposedVars t ++ (match k with
     | .prev => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
-    | .finalize => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
+    | .finalize | .finsponge => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
     | .combine | .bullet => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
     -- ⚑ …and `w11_wraphack` appends slot 11, the closing `hash_messages_for_next_wrap_proof`
     -- squeeze (`wrap_main.ml:421-431`). `w12_close` inherits it and adds none.
@@ -4655,6 +5288,7 @@ def circuitEnvAt (t : WrapData) (k : Rung) : VarEnv :=
       | .ftcomm => xhatEnv t ++ splitEnv t ++ ftcEnv t
       | .prev => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t
       | .finalize => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ finEnv t
+      | .finsponge => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ finEnv t ++ finSpEnv t
       | .wraphack => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ whEnv t
       | .close => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ whEnv t ++ closeEnv t
       | .combine => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ combEnv t
@@ -4789,7 +5423,8 @@ def shapeWrap : WrapShape :=
   , branches := 5, pubWords := 22, xhatTerms := XHAT_TERMS_FULL
   -- ⚑ `xhatOut XHAT_TERMS_FULL`, and `EmitWrapMainJson` re-derives it and REFUSES on disagreement
   -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far
-  -- more reduced, and this file has no `native_decide`.
+  -- more reduced. ⚠ The file's ONE `native_decide` is §24's
+  -- `bullet_solves_g_on_curve_and_equal_g_is_one`, pinned by `#assert_compiled`; this is not it.
   -- ⚠ ⚑ **THIS PAIR MOVED AT `w11_wraphack`, AND THE REFUSAL IS WHAT FOUND IT.** §21 makes packed
   -- statement words 55 and 56 the two prev-proof `hash_messages_for_next_wrap_proof` squeezes
   -- instead of fixtures, so MSM entries 65 and 66 carry different scalars and `xhatOut 67` is a
@@ -5169,7 +5804,7 @@ theorem bind_rung_is_well_formed_for_the_harness :
 `metatheory/docs/GUARD-DISCIPLINE.md`: a fact worth asserting is worth naming, and where the KERNEL
 can reach it, `rfl`/`decide` is strictly stronger than the `#guard` would have been. Every fact below
 is kernel-clean — `#assert_namespace_axioms` at the foot of the file accounts for all of them, and
-none of them is a `native_decide` oracle. -/
+none of them is a `native_decide` oracle. (§24 has the file's one exception; it is named there.) -/
 
 /-- The smoke instance, materialised once so the interpreter and the kernel share one term. -/
 def tKey : WrapData := mkWrap shapeSmoke
@@ -5182,12 +5817,21 @@ theorem key_index_shape :
   refine ⟨rfl, rfl, rfl, rfl, rfl, ?_⟩
   decide
 
-/-- ⚠ Seven of the 28 commitments are the identity, so 14 of the 56 coordinates are `0` — a
-property of the small generic-only index the fixture came from, recorded because a model that
-SKIPPED infinity instead of absorbing `(0,0)` would produce a different digest silently
-(`poseidon/src/sponge.rs:332-345`). -/
-theorem key_index_carries_the_identity_points :
-    (STEP_VK_XY.filter (fun x => x == 0)).length = 14 := by decide
+/-- ⚑⚑ **NO COMMITMENT OF THIS KEY IS THE IDENTITY, AND EVERY ONE OF THE 28 IS ON VESTA.** This is
+the property W-COMBINE needs and the one the previous fixture did not have: `index_to_field_elements`
+flattens infinity as the fake point `(0,0)` (`poseidon/src/sponge.rs:332-345`), `Ops.add_fast` is the
+INCOMPLETE add, and a chord through `(0,0)` leaves `y² = x³ + 5` — so a single identity commitment
+put `combined_polynomial`, `p_prime`, `q`, `cq` and `lhs` off the curve and made
+`Boolean.Assert.is_true bulletproof_success` unsatisfiable. The old key had seven.
+
+⚠ The zero-count leg is not decoration: `(0,0)` is the ONLY off-curve pair the flattening can
+produce from a well-formed `PolyComm`, so it and the on-curve leg are the same fact approached from
+both sides — and the first is what a regression would trip. -/
+theorem key_index_has_no_identity_and_is_on_vesta :
+    (STEP_VK_XY.filter (fun x => x == 0)).length = 0
+    ∧ (List.range KEY_POINTS).all (fun p =>
+        onCurveQ (STEP_VK_XY.getD (2 * p) 0, STEP_VK_XY.getD (2 * p + 1) 0)) = true := by
+  refine ⟨?_, ?_⟩ <;> decide
 
 /-- The index sponge is 56 absorbs and ONE squeeze — `wrap_verifier.ml:524-530`'s `Array.iter … ~f:
 Sponge.absorb` then `Sponge.squeeze_field`, at rate 2, which is 28 permutations. -/
@@ -5198,14 +5842,14 @@ theorem key_sponge_schedule :
   refine ⟨?_, ?_, ?_⟩ <;> rfl
 
 /-- ⚑⚑ **THE REALITY GATE, AND THE POINT OF THE WHOLE RUNG.** Driving THIS FILE'S OWN Fq sponge
-over the 56 coordinates of a REAL `VerifierIndex`, in `index_to_field_elements` order, reproduces the
-digest that RUST KIMCHI computed for that index (`verifier_index.rs:407-533`) — recorded in
-`PastaPoseidonFq.VKDIGEST` before this sub-circuit existed, and re-derived a third time by the
-extractor's independent `absorb_fq` replay. Two implementations, three computations, one number.
+over the 56 coordinates of **Mina's `step-transaction` verification key**, in
+`index_to_field_elements` order, reproduces the digest that RUST KIMCHI computed for that index
+(`verifier_index.rs:407-533`) — and the extractor re-derives it a third time by an independent
+`absorb_fq` replay. Two implementations, three computations, one number.
 
 ⚑ **So the wrap transcript's first absorbed item is DERIVED here, not fixtured.** -/
 theorem key_digest_is_the_index_digest :
-    keyDigestVal shapeSmoke tKey.sp = Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST := by rfl
+    keyDigestVal shapeSmoke tKey.sp = STEP_VK_DIGEST := by rfl
 
 /-- …and it is the value the TRANSCRIPT absorbs first (`wrap_verifier.ml:537`), so `RC_DIGEST` is no
 longer standing in for anything: the tie row in `keyRows` puts the two in one σ class and this puts
@@ -5214,13 +5858,11 @@ theorem key_digest_is_the_transcript_input :
     itemVal T_DIGEST 0 = keyDigestVal shapeSmoke tKey.sp := by rfl
 
 /-- ⚑ **RED CONTROL — the digest is a function of EVERY coordinate.** Bending any one of the 56
-inputs by `+1` moves it, including one of the 14 that are `0` (an identity commitment's fake point:
-absorbing it is not a no-op) and the last one. Without this the theorem above is a number agreeing
-with a number. -/
+inputs by `+1` moves it: the first, one in `coefficients_comm`, one in the six singles, and the last.
+Without this the theorem above is a number agreeing with a number. -/
 theorem key_digest_bends_at_every_probed_coordinate :
     [0, 20, 41, 55].all (fun k =>
-      keyDigestValOf (keySpongeBent shapeSmoke tKey.sp k 1)
-        != Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST) = true := by rfl
+      keyDigestValOf (keySpongeBent shapeSmoke tKey.sp k 1) != STEP_VK_DIGEST) = true := by rfl
 
 /-- ⚑ **AND THE ONE-HOT SELECTION MATTERS.** `choose_key` at a DIFFERENT branch produces a different
 key and therefore a different `index_digest`; the real key is at `KEY_REAL_BRANCH` and
@@ -5322,7 +5964,8 @@ def xhHasConstRow (vx vy : PVar) (p : Nat × Nat) : Bool :=
 /-- ⚑ **THE MEMO'S OBLIGATION, IN THE KERNEL.** `shapeSmoke.xhatXY` — the pair `schedule` hands the
 transcript at `wrap_verifier.ml:617` — IS §15's MSM output. Without this the field would be a
 fixture with a good docstring. (The wrap shape's copy is discharged by `EmitWrapMainJson`'s refusal
-at every emission; 1805 chunks is out of the kernel's reach and this file has no `native_decide`.) -/
+at every emission; 1805 chunks is out of the kernel's reach, and §24's is the file's one
+`native_decide`.) -/
 theorem xhat_smoke_shape_absorbs_the_msm_output :
     shapeSmoke.xhatXY = xhatOut shapeSmoke.xhatTerms := by rfl
 
@@ -6159,18 +6802,50 @@ theorem wrap_lr_and_delta_are_curve_points :
   refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **W-BULLET's LAYOUT IS ITS SOURCE'S SHAPE.** Four `scale_fast` (`uc`, `b_u`, `z₁·(G+b_u)`,
-`z₂·H`), `2·ipaRounds + 1` endo ladders, and `3·ipaRounds + 1` points through `Inner_curve.typ`
-(the `2·ipaRounds` `lr`, `delta`, and the `ipaRounds` `endo_inv` witnesses). ⚠ NOT
-`challenge_polynomial_commitment` — §24's header says why, and the count is what makes the omission
-visible instead of silent. -/
+`z₂·H`), `2·ipaRounds + 1` endo ladders, and `3·ipaRounds + 2` points through `Inner_curve.typ`
+(the `2·ipaRounds` `lr`, `delta`, the `ipaRounds` `endo_inv` witnesses, and
+`challenge_polynomial_commitment`). ⚑ **The last one was `3·ipaRounds + 1` until 2026-08-04**: `G`
+was the one point `Openings.Bulletproof.typ` checks that this rung did not, because at the degenerate
+step key the honest witness for it was off-curve. §14's key closed that. -/
 theorem bullet_layout_is_check_bulletproofs_shape :
     BULL_SF = 4
     ∧ bullNE shapeWrap = 2 * shapeWrap.ipaRounds + 1
-    ∧ bullOCPts shapeWrap = 3 * shapeWrap.ipaRounds + 1
+    ∧ bullOCPts shapeWrap = 3 * shapeWrap.ipaRounds + 2
     ∧ shapeWrap.ipaRounds = 16
     ∧ EN_STRIDE = 3 + 2 * (ENDO_BLOCKS + 1) + ENDO_BLOCKS
     ∧ SF_STRIDE = 2 * (SF_CHUNKS + 1) + SF_CHUNKS := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑⚑ **THE CLOSING FACT, AND THE ONE THIS RUNG EXISTED WITHOUT FOR A DAY.** At Mina's
+`step-transaction` key: W-COMBINE's fold output is ON VESTA, so `lhs` is, so the prover's solve for
+`challenge_polynomial_commitment` lands on Vesta too — and `equal_g lhs rhs` computes **1**. Every
+leg is read off the same `bullData` the emitted witness is built from, so this cannot drift into
+being about a second spelling of the assembly.
+
+⚠ The last two legs are the REFUTATION side of the new `assert_on_curve`: a `G` bent by one in either
+coordinate is off the curve, so `cOnCurveQ`'s row has no satisfying assignment there. A check that
+could only ever pass would be decoration. -/
+theorem bullet_solves_g_on_curve_and_equal_g_is_one :
+    onCurveQ (bullData (mkWrap shapeSmoke)).combOut = true
+    ∧ onCurveQ (bullData (mkWrap shapeSmoke)).lhs = true
+    ∧ onCurveQ (bullData (mkWrap shapeSmoke)).g = true
+    ∧ bullOcVal (mkWrap shapeSmoke) (bullData (mkWrap shapeSmoke))
+        (3 * shapeSmoke.ipaRounds + 1) = (bullData (mkWrap shapeSmoke)).g
+    ∧ (bullData (mkWrap shapeSmoke)).lhs = (bullData (mkWrap shapeSmoke)).rhs
+    ∧ onCurveQ (qAdd (bullData (mkWrap shapeSmoke)).g.1 1, (bullData (mkWrap shapeSmoke)).g.2)
+        = false
+    ∧ onCurveQ ((bullData (mkWrap shapeSmoke)).g.1, qAdd (bullData (mkWrap shapeSmoke)).g.2 1)
+        = false := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> native_decide
+
+/-! ⚑ **AND IT IS THE ONE COMPILER-TRUSTED FACT IN THIS FILE, SAID OUT LOUD.** Closing the theorem
+above in the kernel means whnf-ing `bullData` — 34 W-COMBINE ladders, 33 endo ladders and four
+`scale_fast` at 51 chunks — and it times out at 4 000 000 heartbeats. `#assert_compiled` is the pin
+for exactly that class (`Dregg2/Tactics.lean` §): it passes only if every axiom is kernel-clean or a
+`native_decide` oracle AND at least one oracle is present, so the compiler-trust is recorded rather
+than hidden. ⚠ A `#guard` here would have been the SAME compiled evaluation with the name, the term
+and the axiom record deleted. -/
+#assert_compiled bullet_solves_g_on_curve_and_equal_g_is_one
 
 /-! ## §13 — ⚑ WHAT IS LEFT, BY SUB-CIRCUIT.
 
@@ -6406,6 +7081,12 @@ measurement that sizes it. None of them is a value this file fakes and calls der
     W-BULLET and W-FINALIZE. Everything this file proves is about the transcript and the selection.
 -/
 
+-- ⚠ ⚑ THE ONE EXCEPTION, AND IT IS NAMED RATHER THAN WAIVED.
+-- `bullet_solves_g_on_curve_and_equal_g_is_one` rests on `native_decide` oracle axioms because
+-- `bullData` does not whnf inside the heartbeat budget; it is pinned by `#assert_compiled` at its
+-- own site, which is a RED path in both directions (a `sorry` still fails, and a kernel-clean fact
+-- pinned there ALSO fails). Nothing else in this namespace is compiler-trusted.
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMain
+  except bullet_solves_g_on_curve_and_equal_g_is_one
 
 end Dregg2.Circuit.Emit.KimchiWrapMain
