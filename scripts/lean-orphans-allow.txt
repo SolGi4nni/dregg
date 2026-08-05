@@ -220,3 +220,27 @@ Dregg2.Bridge.MinaWrapSgWeld
 #     so the closure grew by exactly one module. `metatheory/lakefile.toml` already recorded this
 #     for the 20 orphans rooted the same day ("the cone cost is ZERO beyond the modules themselves")
 #     and this entry contradicted it.
+
+# ── 2026-08-05 — THE BUCKETED MSM CONE (`GOAL: IPA accumulator MSM as a dregg AIR`) ────────────
+# ⚑ `MinaStepSrsG` is the STEP/Tick twin of `MinaWrapSrsG`: 65,536 **Vesta** generators against
+# that module's 32,768 Pallas ones (`accumulator_check.rs:11`, `urs: &SRS<Vesta>`). It is excluded
+# for the SAME reason `MinaWrapSrsG` was until it became reachable — 10 MB of Lean, 143 s to
+# elaborate on its own, and a 289 MB olean. Rooting it does not turn the build red; it makes
+# `lake build Dregg2` take minutes longer for a fixture no theorem quantifies over.
+#
+# ⚠ IT IS NOT UNCHECKED. The generators are not transcribed, they are DECODED by
+# `scripts/gen-mina-step-srs.py` from `metatheory/emitted/mina-accumulator/vesta_srs_g.bin` — the
+# same blob `dregg_bridge::mina_accumulator_discharge` pins by sha256 and whose `vesta_srs_g(0)`
+# re-checks all 65,536 points are on `y² = x³ + 5` over `q` before the native oracle discharges a
+# claim. `gen-mina-step-srs.py --check` regenerates into memory and diffs, so a drifted blob or an
+# edited Lean file is findable without a commit. That script is the gate this entry defers to.
+Dregg2.Circuit.Emit.MinaStepSrsG
+#
+# `PastaMsmBucketed` — the bucketed/fused MSM AIR. Excluded per house practice for GATE modules
+# (the same reason `PastaMsmLayouts` was, before it was rooted): its emitted descriptors are
+# sha256-pinned in `circuit/tests/pasta_msm_bucketed_prove.rs`, which is the check that actually
+# reads them, and its emitter `EmitPastaBucketed.lean` imports BOTH SRS fixtures.
+# ⚠ Unlike the fixture above this one is CHEAP (5 s) and carries 50+ named theorems that nothing
+# in the root closure can see. It is a candidate for rooting the moment the digit weld
+# (`PastaMsmScalarDerive`, §7.3) lands and the cone stops being parameterised by a scalar vector.
+Dregg2.Circuit.Emit.PastaMsmBucketed
