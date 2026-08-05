@@ -484,9 +484,14 @@ mod tests {
             content_counter: 4,
             sequence: 7,
             poa_origin: POA_ORIGIN.into(),
-            federation_id: "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a"
+            // ⚠ TYPED, not derived — and typed a second time in the expected string below,
+            // so these two do NOT go red when the deployment moves. They named the DEAD
+            // three-validator federation until 2026-08-05 and nothing noticed. The values
+            // that DO have teeth in this test are `content_pack_digest` and the catalog
+            // asset, which come out of the real POAG1 bundle two lines up.
+            federation_id: "70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b"
                 .into(),
-            deployment_id: "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e"
+            deployment_id: "4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d"
                 .into(),
             content_pack_digest: bundle.manifest_sha256().into(),
             context: CompanionContext::Youtube {
@@ -535,15 +540,15 @@ mod tests {
                 "poa-companion/v3\n",
                 "{\"schema\":\"poa-companion/v3\",\"contentEpoch\":1,\"contentCounter\":4,\"sequence\":7,",
                 "\"poaOrigin\":\"https://beta.pathofangels.network\",",
-                "\"federationId\":\"4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a\",",
-                "\"deploymentId\":\"d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e\",",
-                "\"contentPackDigest\":\"sha256:c4f34a6ef639c532965ee5c05ec9bbbd7ac722ad7350f1825915bf67f0b69d2b\",",
+                "\"federationId\":\"70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b\",",
+                "\"deploymentId\":\"4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d\",",
+                "\"contentPackDigest\":\"sha256:3cff74449b87d468aec9bd95c04e7fc3bb6d193e23f5b00076691c23abdcd1df\",",
                 "\"context\":{\"platform\":\"youtube\",\"videoId\":\"AbCdEfGhI01\",\"channelId\":\"UC_PathOfAngels\"},",
                 "\"experience\":{\"id\":\"episode-1\",\"title\":\"Path of Angels field dispatch\",\"episode\":\"Episode 1\",",
                 "\"dispatch\":\"A signed field route is available.\",\"betaUrl\":\"https://beta.pathofangels.network/?episode=1\",",
                 "\"game\":{\"kind\":\"descent\",\"src\":\"dregg://descent/b3_de5ce0\"},",
                 "\"contentAssets\":[{\"path\":\"catalog.json\",\"url\":\"https://beta.pathofangels.network/artifacts/poag1/catalog.json\",",
-                "\"mediaType\":\"application/json\",\"bytes\":5447,\"sha256\":\"bc57b4ca130e598fd7fabfa23edb101ccf9d49fdd852cddd13350685f114e051\"}],",
+                "\"mediaType\":\"application/json\",\"bytes\":5508,\"sha256\":\"2e85db1fbe2b670d2bbc210790e0b04be521a6cddfa65b9724c49aa2558b39f8\"}],",
                 "\"actions\":{\"mission\":{\"label\":\"Open field terminal\",\"betaUrl\":\"https://beta.pathofangels.network/?station=field\"}}},",
                 "\"issuedAt\":1799999940,\"expiresAt\":1800003600}"
             )

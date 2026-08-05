@@ -4463,8 +4463,32 @@ mod tests {
         assert!(dregg_types::verify(&key.public_key(), &message, &signature));
     }
 
+    /// ⚠ RENAMED 2026-08-05, because the name had stopped being true.
+    ///
+    /// These three assertions were the "JS identity vectors": values `image-identity.mjs`
+    /// produced from the same files, transcribed here so two implementations had to agree.
+    /// `fff0e8df7` DELETED that script when the deployment was re-pointed at the live solo
+    /// federation, so the JS half is gone and the name was claiming a mirror that no longer
+    /// exists. The three are NOT equally well founded, and saying so is the point:
+    ///
+    /// * `manifest_sha256` — TWO-SOURCE, and still a gate. `poa/deployments/epoch-1/
+    ///   release-lock.json` records `files[].sha256` for `poa-devnet.json` from the release
+    ///   tooling, and any SHA-256 implementation reproduces it. The value below was taken
+    ///   from an independent `shasum -a 256`, not from `scope`.
+    /// * `deployment_digest` — TWO-SOURCE AGAIN, by a better second source than the deleted
+    ///   JS: `Dregg2.Games.PathOfAngels.NetworkGenesis.deploymentBindingChecks` recomputes
+    ///   `sha256(DOMAIN ‖ 0 ‖ id ‖ 0 ‖ manifest ‖ 0 ‖ policy)` in Lean and REFUSES on
+    ///   mismatch, and that module is green carrying exactly this value. A third, standalone
+    ///   computation over the same preimage produced it before either was consulted.
+    /// * `policy_sha256` — ⚠ A SELF-PIN, and it was one before the re-point too. `scope`
+    ///   computes it as `sha256(POA_PRODUCTION_POLICY_CANONICAL)`, a constant compiled into
+    ///   THIS FILE, so the assertion is a constant checked against its own definition. It is
+    ///   left standing because it still detects an accidental edit to that constant, but it
+    ///   is decoration as a cross-implementation claim and must not be read as one. (What
+    ///   does have teeth is `verify_production_policy`, which requires the LIVE manifest's
+    ///   policy object to equal that constant — that is a real check against a real file.)
     #[test]
-    fn production_deployment_verifier_matches_js_identity_vectors() {
+    fn production_deployment_verifier_matches_independent_identity_vectors() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let main = tempfile::tempdir().unwrap();
         let scope = PoaDeploymentScope::load_verified(
@@ -4475,7 +4499,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             scope.manifest_sha256(),
-            "427a7a33ae19e450e2b9eb86453ac247b94d47725e29f8d470f0e9cad8073510"
+            "85c5f58a8237333c6935374b5c8f40f479cb4e50bcbd91a4c4e8eb7a534dc7bb"
         );
         assert_eq!(
             scope.policy_sha256(),
@@ -4483,7 +4507,7 @@ mod tests {
         );
         assert_eq!(
             scope.deployment_digest(),
-            "5891c919acca76af3c553d157768d9f274b71610ed3b09bb09c954da2c7aa67e"
+            "893e03f5075a70b67902a46f9a7415bea29d321d0f3296e16f3e2623c0930691"
         );
     }
 

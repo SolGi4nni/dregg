@@ -15,9 +15,17 @@ const EPISODE_ONE = "AbCdEfGhI01";
 const EPISODE_TWO = "ZyXwVuTsR02";
 const SIGNER = "11".repeat(32);
 const OTHER_SIGNER = "22".repeat(32);
-const FEDERATION = "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a";
-const DEPLOYMENT = "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e";
-const PACK = "sha256:c4f34a6ef639c532965ee5c05ec9bbbd7ac722ad7350f1825915bf67f0b69d2b";
+// ⚠ RE-POINTED 2026-08-05 with the Rust mirror in poa-curator/src/companion.rs. These four
+// are the SHARED PAYLOAD of a two-implementation gate: neither side derives them here, and
+// what the two tests actually compare is that the JS and Rust canonical serializers produce
+// identical bytes from identical records. Moving them in ONE file only would turn that into
+// two serializers agreeing about nothing.
+// ⚑ On the RUST side `contentPackDigest` and the catalog `bytes`/`sha256` are DERIVED from
+// poa/artifacts/poag1/manifest.json, so a POAG1 re-emit turns that test red and forces this
+// file to follow. Here they are typed, so this file cannot notice on its own.
+const FEDERATION = "70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b";
+const DEPLOYMENT = "4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d";
+const PACK = "sha256:3cff74449b87d468aec9bd95c04e7fc3bb6d193e23f5b00076691c23abdcd1df";
 
 function manifest(videoId = EPISODE_ONE, overrides = {}) {
   const base = {
@@ -41,8 +49,8 @@ function manifest(videoId = EPISODE_ONE, overrides = {}) {
         path: "catalog.json",
         url: `${POA_BETA_URL}artifacts/poag1/catalog.json`,
         mediaType: "application/json",
-        bytes: 5447,
-        sha256: "bc57b4ca130e598fd7fabfa23edb101ccf9d49fdd852cddd13350685f114e051",
+        bytes: 5508,
+        sha256: "2e85db1fbe2b670d2bbc210790e0b04be521a6cddfa65b9724c49aa2558b39f8",
       }],
       actions: {
         mission: { label: "Open field terminal", betaUrl: `${POA_BETA_URL}?station=field` },
@@ -112,7 +120,7 @@ test("v3 signing bytes are byte-identical to the curator's canonical projection"
     '"dispatch":"A signed field route is available.","betaUrl":"https://beta.pathofangels.network/?episode=1",',
     '"game":{"kind":"descent","src":"dregg://descent/b3_de5ce0"},',
     '"contentAssets":[{"path":"catalog.json","url":"https://beta.pathofangels.network/artifacts/poag1/catalog.json",',
-    '"mediaType":"application/json","bytes":5447,"sha256":"bc57b4ca130e598fd7fabfa23edb101ccf9d49fdd852cddd13350685f114e051"}],',
+    '"mediaType":"application/json","bytes":5508,"sha256":"2e85db1fbe2b670d2bbc210790e0b04be521a6cddfa65b9724c49aa2558b39f8"}],',
     '"actions":{"mission":{"label":"Open field terminal","betaUrl":"https://beta.pathofangels.network/?station=field"}}},',
     '"issuedAt":1799999940,"expiresAt":1800003600}',
   ].join(""));

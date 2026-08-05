@@ -337,21 +337,48 @@ verbatim; it must not recreate either object with serde/Rust game logic. -/
 def networkGenesisFFI (bytes : String) : String :=
   (processNetworkGenesisWire bytes).getD ""
 
-/-! ## Live epoch-1 fixture and independently computed byte pins -/
+/-! ## Live epoch-1 fixture and independently computed byte pins
+
+⚑ RE-POINTED 2026-08-05.  These five deployment constants named the DEAD three-validator
+federation (`4ea83e8e…`, manifest sha `427a7a33…`).  `poa/deployments/epoch-1/` was moved
+to the live solo federation in `fff0e8df7`, whose flag day named `release-receipt.json`
+and `image-identity.mjs` as deleted but did NOT say that the old manifest sha was pinned
+here and in `poa-curator`.  It was, in three places, and this is one of them.
+
+Every value below was recomputed INDEPENDENTLY — a standalone SHA-256 over the exact
+preimages, not read back out of `sha256Wire?` or out of Rust:
+
+* `FIXTURE_FEDERATION_ID` / `FIXTURE_GENESIS_SHA256` are read from
+  `poa/deployments/epoch-1/poa-devnet.json`.
+* `FIXTURE_DEPLOYMENT_MANIFEST_SHA256` is `sha256(poa-devnet.json)`, which also appears
+  in `release-lock.json`'s `files[]` — a genuinely separate producer, so this one has a
+  second source and stays a two-implementation pin.
+* `FIXTURE_DEPLOYMENT_ID` REDERIVES: `sha256(DEPLOYMENT_DOMAIN ‖ 0 ‖ fed ‖ 0 ‖ genesis)`
+  reproduces the id the live manifest carries, so Lean and the JS that wrote the manifest
+  agree without either being told the answer.  `fixture_deployment_id_rederived` is that
+  check inside Lean.
+* `FIXTURE_DEPLOYMENT_DIGEST` is `sha256(DEPLOYMENT_IDENTITY_DOMAIN ‖ 0 ‖ id ‖ 0 ‖
+  manifest ‖ 0 ‖ policy)`, and `deploymentBindingChecks` recomputes it here.
+
+⚠ The CONTENT half of this fixture (`FIXTURE_MANIFEST_SHA256`, content root, activation
+digest, source/signal digests, curator key, epoch counter) is still content epoch 1
+counter 2 and the PRE-re-emit POAG1 manifest.  It was deliberately NOT moved in this
+pass: POAG1 was being re-emitted and counter 7 signed at the same time, and pinning a
+value mid-signature would have been a guess.  It needs its own pass. -/
 
 private def digestOrZero (hex : String) : Digest32 :=
   (Emit.parseBytes32Hex? hex).getD zeroDigest
 
 abbrev FIXTURE_DEPLOYMENT_ID : String :=
-  "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e"
+  "4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d"
 abbrev FIXTURE_DEPLOYMENT_DIGEST : String :=
-  "5891c919acca76af3c553d157768d9f274b71610ed3b09bb09c954da2c7aa67e"
+  "893e03f5075a70b67902a46f9a7415bea29d321d0f3296e16f3e2623c0930691"
 abbrev FIXTURE_FEDERATION_ID : String :=
-  "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a"
+  "70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b"
 abbrev FIXTURE_GENESIS_SHA256 : String :=
-  "5766736201a9ede62c79fe9beac04df8f8b5367feec5400c073fd631132bdb7f"
+  "f7010ca2acf705a9d941cc27ae500b4274e958ec9529b364b8b678c3ce3ccdea"
 abbrev FIXTURE_DEPLOYMENT_MANIFEST_SHA256 : String :=
-  "427a7a33ae19e450e2b9eb86453ac247b94d47725e29f8d470f0e9cad8073510"
+  "85c5f58a8237333c6935374b5c8f40f479cb4e50bcbd91a4c4e8eb7a534dc7bb"
 abbrev FIXTURE_DEPLOYMENT_POLICY_SHA256 : String := PRODUCTION_POLICY_SHA256
 abbrev FIXTURE_MANIFEST_SHA256 : String :=
   "c4f34a6ef639c532965ee5c05ec9bbbd7ac722ad7350f1825915bf67f0b69d2b"
@@ -365,15 +392,18 @@ abbrev FIXTURE_SIGNAL_DIGEST : String :=
   "c3a9603f84f1e5918c6a46f30c507a39b6c9d5fd57c9f3edec3b03597eec49bf"
 abbrev FIXTURE_CURATOR_KEY : String :=
   "a3e630900af50a8701387c9ab528e3db23a5650c3e1ff3b4b3ee09aa42c65e23"
-/-- ⚠ RE-PINNED 2026-08-05.  The Signal config the genesis ceremony authorizes changed
-bytes when `Emit.signalMission` took its run seed as a PARAMETER and the template began
-carrying `Emit.UNBOUND_RUN_SEED` — the hidden-instance split.  This value was recomputed
-with `sha256sum` over the exact UTF-8 bytes Lean emits for `fixtureConfigJson`, an
-independent implementation from `sha256Wire?`, which is what makes the pin a gate. -/
+/-- ⚠ RE-PINNED TWICE on 2026-08-05.  First when `Emit.signalMission` took its run seed
+as a PARAMETER and the template began carrying `Emit.UNBOUND_RUN_SEED` (the hidden-instance
+split); then again when the deployment was re-pointed at the live solo federation, because
+the federation id is INSIDE the mission this config authorizes.  `FIXTURE_CANON_SHA256`
+moved for the same reason — the canon state carries the federation id too.  Both were
+recomputed with `sha256sum` over the exact UTF-8 bytes Lean emits, an independent
+implementation from `sha256Wire?`, which is what makes the pin a gate rather than a
+constant checked against its own definition. -/
 abbrev FIXTURE_CONFIG_SHA256 : String :=
-  "6decc86fa8bb65030068ee4031e791f110e9779898d9b037146df19f461f9f58"
+  "31ba37b4bebba44252b2b4da96c4d13a411e75b6d2b106f5459cb2b9ebca7b17"
 abbrev FIXTURE_CANON_SHA256 : String :=
-  "aad848fbf40d82d3efb1f6f5fe6ea1fb7704bccc839710f0202951ec4ebd667a"
+  "f770d6bd6fd3fe09ec7c2fe882b74aa655c4ce6687f1a01e02e4faa468ba6181"
 
 def fixtureDeploymentId := digestOrZero FIXTURE_DEPLOYMENT_ID
 def fixtureDeploymentDigest := digestOrZero FIXTURE_DEPLOYMENT_DIGEST
