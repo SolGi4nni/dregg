@@ -20,6 +20,8 @@ usage:
   poa-curator verify-content --pin PATH --manifest PATH --deployment PATH --epoch N --counter N [--signature PATH]
   poa-curator preview-epoch --manifest PATH --deployment PATH [--pin PATH --signature PATH --epoch N --counter N]
   poa-curator signal-replay --bundle PATH
+  poa-curator signal-review --bundle PATH
+  poa-curator promotion-inbox --bundle PATH --manifest PATH --deployment PATH --pin PATH --signature PATH --epoch N --counter N
 
 `keygen` creates a DEVELOPMENT beta curator key, never a Sentyr identity. It
 refuses to overwrite either output and writes the raw 32-byte secret mode 0600.
@@ -28,9 +30,15 @@ refuses to overwrite either output and writes the raw 32-byte secret mode 0600.
 unsigned WIP; signature status becomes valid only when all four verification
 flags are supplied and verify against the exact bundle and deployment.
 
-`signal-replay` is read-only. It verifies an exact exported durable-wire bundle,
+`signal-replay` is read-only. It checks a caller-supplied sealed wire chain,
 reruns every transition through native Lean, and prints one machine-readable
-JSON report naming the deterministic final head.
+semantic-replay report. It does not authenticate where the wires came from.
+
+`signal-review` reruns the supplied state/carrier through Lean for semantic
+inspection only. Its commit/receipt/signer coordinates are caller claims, not
+finality evidence. `promotion-inbox` therefore refuses until a node authority
+bridge supplies and verifies the finalized SignedTurn, executor receipt, signer,
+and durable CommitRecord reconstruction.
 "#;
 
 fn main() {
@@ -55,8 +63,42 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         "verify-content" => command_verify_content(&flags),
         "preview-epoch" => command_preview_epoch(&flags),
         "signal-replay" => command_signal_replay(&flags),
+        "signal-review" => command_signal_review(&flags),
+        "promotion-inbox" => command_promotion_inbox(&flags),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
+}
+
+fn command_signal_review(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(flags, &["bundle"], &[])?;
+    let export =
+        poa_curator::signal_replay::export_semantic_review_file(flag_path(flags, "bundle")?)
+            .map_err(|error| error.to_string())?;
+    println!(
+        "{}",
+        serde_json::to_string(&export).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+fn command_promotion_inbox(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(
+        flags,
+        &[
+            "bundle",
+            "manifest",
+            "deployment",
+            "pin",
+            "signature",
+            "epoch",
+            "counter",
+        ],
+        &[],
+    )?;
+    Err(
+        "promotion-inbox refused: semantic replay cannot authenticate finalized provenance; a node authority bridge must verify the exact SignedTurn, executor receipt, signer, and durable CommitRecord before beta evidence can become promotion-ready"
+            .into(),
+    )
 }
 
 fn command_signal_replay(flags: &BTreeMap<String, String>) -> Result<(), String> {

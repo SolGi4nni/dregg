@@ -13,6 +13,37 @@ fn binary() -> &'static str {
 }
 
 #[test]
+fn promotion_inbox_fails_closed_until_the_node_authority_bridge_exists() {
+    let output = Command::new(binary())
+        .args([
+            "promotion-inbox",
+            "--bundle",
+            "caller-supplied.json",
+            "--manifest",
+            "catalog.json",
+            "--deployment",
+            "deployment.json",
+            "--pin",
+            "curator-pin.json",
+            "--signature",
+            "content-epoch.json",
+            "--epoch",
+            "1",
+            "--counter",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("promotion-inbox refused"));
+    assert!(error.contains("node authority bridge"));
+    assert!(error.contains("SignedTurn"));
+    assert!(error.contains("durable CommitRecord"));
+}
+
+#[test]
 fn keygen_is_mode_safe_and_refuses_overwrite() {
     let temp = tempfile::tempdir().unwrap();
     let secret = temp.path().join("development-curator.key");

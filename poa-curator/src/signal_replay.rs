@@ -1,9 +1,11 @@
-//! Read-only replay of exact durable Path of Angels Signal wires.
+//! Read-only semantic replay of caller-supplied Path of Angels Signal wires.
 //!
-//! The bundle deliberately carries the sealed bytes written by `dregg-persist`,
-//! not a lossy public API projection. Rust checks the storage envelope and exact
-//! byte bindings; every game transition is rerun by Lean's sole Signal judge.
-//! There is no Rust game-semantic fallback.
+//! Rust checks the claimed storage envelope and exact byte bindings; every game
+//! transition is rerun by Lean's sole Signal judge. This proves semantic
+//! self-consistency only. The bundle contains no SignedTurn, executor receipt,
+//! signer reconstruction, or durable CommitRecord evidence and therefore
+//! authenticates neither finality nor provenance. There is no Rust semantic
+//! fallback and no promotion-authority path in this module.
 
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -19,6 +21,7 @@ use thiserror::Error;
 
 pub const EXACT_REPLAY_BUNDLE_FORMAT_V1: &str = "POA-SIGNAL-EXACT-REPLAY-BUNDLE-1";
 pub const REPLAY_REPORT_FORMAT_V1: &str = "POA-SIGNAL-REPLAY-REPORT-1";
+pub const SEMANTIC_REVIEW_FORMAT_V1: &str = "POA-SIGNAL-SEMANTIC-REVIEW-1";
 
 const HEAD_MAGIC: [u8; 4] = *b"PSHD";
 const TRANSITION_MAGIC: [u8; 4] = *b"PSTR";
@@ -43,19 +46,19 @@ pub struct ExactReplayBundleV1 {
     pub expected_head_digest: String,
 }
 
-/// Machine-readable success report. Any mismatch is an error and produces no
-/// success report, so `status = "verified"` has one unambiguous meaning.
+/// Machine-readable semantic replay report. No field is a finality claim.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ReplayReportV1 {
     pub format: &'static str,
     pub status: &'static str,
-    pub authority_id: String,
-    pub deployment_digest: String,
-    pub transitions_verified: u64,
-    pub lean_transitions_verified: u64,
-    pub first_commit_ordinal: Option<u64>,
-    pub last_commit_ordinal: Option<u64>,
-    pub head_digest: String,
+    pub authority_status: &'static str,
+    pub claimed_authority_id: String,
+    pub claimed_deployment_digest: String,
+    pub semantic_transitions_replayed: u64,
+    pub native_lean_transitions_replayed: u64,
+    pub first_claimed_commit_ordinal: Option<u64>,
+    pub last_claimed_commit_ordinal: Option<u64>,
+    pub replayed_head_digest: String,
     pub transition_count: u64,
     pub world_sequence: u64,
     pub canon_revision: u64,
@@ -63,7 +66,65 @@ pub struct ReplayReportV1 {
     pub config_sha256: String,
     pub canon_sha256: String,
     pub exact_wire_bytes_replayed: u64,
-    pub semantic_authority: &'static str,
+    pub semantic_judge: &'static str,
+}
+
+/// Deterministic semantic inspection of one caller-supplied transition. All
+/// turn/receipt/signer coordinates are explicitly unverified claims.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SemanticEventReviewV1 {
+    pub sequence: u64,
+    pub claimed_commit_ordinal: u64,
+    pub claimed_turn_hash: String,
+    pub claimed_receipt_hash: String,
+    pub predecessor_head_digest: String,
+    pub successor_head_digest: String,
+    pub transition_digest: String,
+    pub judge_input_digest: String,
+    pub judge_output_digest: String,
+    pub claimed_federation_id: String,
+    pub claimed_actor_root: String,
+    pub claimed_signer: String,
+    pub mission_id: u64,
+    pub receipt: serde_json::Value,
+    pub beta_artifacts_added: Vec<ObservedArtifactV1>,
+    pub exact_judge_input: String,
+    pub exact_judge_output: String,
+}
+
+/// Exact artifact identity as it appears on the semantically accepted wire.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct ObservedArtifactV1 {
+    pub mission_id: u64,
+    pub artifact_id: u64,
+    pub source_digest: String,
+    pub content_digest: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SignalSemanticReviewV1 {
+    pub format: &'static str,
+    pub status: &'static str,
+    pub authority_status: &'static str,
+    pub source_bundle_sha256: String,
+    pub replay: ReplayReportV1,
+    pub events: Vec<SemanticEventReviewV1>,
+    pub beta_artifacts_observed: Vec<SemanticBetaObservationV1>,
+    pub editorial_authority: &'static str,
+    pub required_authority_bridge: &'static str,
+}
+
+/// Semantic beta observation only. It is not finalized provenance, promotion
+/// evidence, a `CanonDecision`, or a curator capability.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SemanticBetaObservationV1 {
+    pub artifact: ObservedArtifactV1,
+    pub first_observed_sequence: u64,
+    pub first_observed_transition_digest: String,
+    pub replayed_head_digest: String,
+    pub replayed_canon_revision: u64,
+    pub evidence_status: &'static str,
+    pub authorization_status: &'static str,
 }
 
 #[derive(Debug, Error)]
@@ -84,6 +145,8 @@ pub enum ReplayError {
     LeanRejected(u64),
     #[error("native Lean output mismatch at transition {0}")]
     LeanMismatch(u64),
+    #[error("semantic history projection refused: {0}")]
+    Projection(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,6 +186,13 @@ struct Transition {
     judge_output: Vec<u8>,
 }
 
+struct SemanticallyReplayedHistory {
+    report: ReplayReportV1,
+    source_bundle_sha256: [u8; 32],
+    current: Head,
+    transitions: Vec<Transition>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JudgeInputEnvelope {
@@ -146,7 +216,19 @@ struct JudgeOutputEnvelope {
 /// Read and replay one bounded exact bundle. Symlinks are refused on Unix so a
 /// privileged operator cannot be raced onto a different input after review.
 pub fn replay_exact_bundle_file(path: impl AsRef<Path>) -> Result<ReplayReportV1, ReplayError> {
-    let path = path.as_ref();
+    let bytes = read_bundle_file(path.as_ref())?;
+    replay_exact_bundle_bytes(&bytes)
+}
+
+/// Project caller-supplied transitions after native Lean semantic replay.
+pub fn export_semantic_review_file(
+    path: impl AsRef<Path>,
+) -> Result<SignalSemanticReviewV1, ReplayError> {
+    let bytes = read_bundle_file(path.as_ref())?;
+    export_semantic_review_bytes(&bytes)
+}
+
+fn read_bundle_file(path: &Path) -> Result<Vec<u8>, ReplayError> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -179,22 +261,211 @@ pub fn replay_exact_bundle_file(path: impl AsRef<Path>) -> Result<ReplayReportV1
             "input exceeds the {MAX_BUNDLE_BYTES}-byte bundle cap"
         )));
     }
-    replay_exact_bundle_bytes(&bytes)
+    Ok(bytes)
 }
 
-/// Replay one serialized bundle through the linked native Lean authority.
+/// Replay one serialized bundle through the linked native Lean semantic judge.
 pub fn replay_exact_bundle_bytes(bytes: &[u8]) -> Result<ReplayReportV1, ReplayError> {
-    replay_exact_bundle_with(
-        bytes,
-        |input| match dregg_lean_ffi::poa_ffi::judge_poa_signal(input) {
-            Ok(dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(output)) => Ok(Some(output)),
-            Ok(dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Rejected) => Ok(None),
-            Err(reason) => Err(reason),
-        },
-    )
+    replay_exact_bundle_with(bytes, native_judge)
+}
+
+pub fn export_semantic_review_bytes(bytes: &[u8]) -> Result<SignalSemanticReviewV1, ReplayError> {
+    let history = verify_exact_bundle_with(bytes, native_judge)?;
+    project_semantic_history(history)
+}
+
+fn native_judge(input: &str) -> Result<Option<String>, String> {
+    match dregg_lean_ffi::poa_ffi::judge_poa_signal(input) {
+        Ok(dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(output)) => Ok(Some(output)),
+        Ok(dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Rejected) => Ok(None),
+        Err(reason) => Err(reason),
+    }
+}
+
+fn project_semantic_history(
+    history: SemanticallyReplayedHistory,
+) -> Result<SignalSemanticReviewV1, ReplayError> {
+    let mut events = Vec::with_capacity(history.transitions.len());
+    let mut first_observed = std::collections::BTreeMap::<ObservedArtifactV1, (u64, String)>::new();
+
+    for transition in &history.transitions {
+        let input: serde_json::Value = serde_json::from_slice(&transition.judge_input)
+            .map_err(|error| ReplayError::Projection(format!("judge input JSON: {error}")))?;
+        let output: serde_json::Value = serde_json::from_slice(&transition.judge_output)
+            .map_err(|error| ReplayError::Projection(format!("judge output JSON: {error}")))?;
+        let predecessor_canon: serde_json::Value =
+            serde_json::from_slice(&transition.predecessor.canon).map_err(|error| {
+                ReplayError::Projection(format!("predecessor Canon JSON: {error}"))
+            })?;
+        let carrier = object_field(&input, "carrier")?;
+        let receipt = output
+            .get("receipt")
+            .cloned()
+            .ok_or_else(|| ReplayError::Projection("judge output lacks receipt".into()))?;
+        let mission_id = receipt
+            .get("mission")
+            .and_then(|mission| mission.get("mission_id"))
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| ReplayError::Projection("receipt lacks mission_id".into()))?;
+        let before = artifact_set(
+            predecessor_canon
+                .get("world")
+                .and_then(|world| world.get("beta_artifacts"))
+                .ok_or_else(|| {
+                    ReplayError::Projection("predecessor Canon lacks world.beta_artifacts".into())
+                })?,
+        )?;
+        let after = artifact_set(
+            output
+                .get("successor_canon")
+                .and_then(|canon| canon.get("world"))
+                .and_then(|world| world.get("beta_artifacts"))
+                .ok_or_else(|| {
+                    ReplayError::Projection(
+                        "judge output lacks successor_canon.world.beta_artifacts".into(),
+                    )
+                })?,
+        )?;
+        let added: Vec<_> = after.difference(&before).cloned().collect();
+        for artifact in &added {
+            first_observed
+                .entry(artifact.clone())
+                .or_insert_with(|| (transition.sequence, hex32(transition.transition_digest)));
+        }
+        events.push(SemanticEventReviewV1 {
+            sequence: transition.sequence,
+            claimed_commit_ordinal: transition.commit_ordinal,
+            claimed_turn_hash: hex32(transition.turn_hash),
+            claimed_receipt_hash: hex32(transition.receipt_hash),
+            predecessor_head_digest: hex32(transition.predecessor_head_digest),
+            successor_head_digest: hex32(transition.successor_head_digest),
+            transition_digest: hex32(transition.transition_digest),
+            judge_input_digest: hex32(transition.judge_input_digest),
+            judge_output_digest: hex32(transition.judge_output_digest),
+            claimed_federation_id: string_field(carrier, "federation_id")?.to_owned(),
+            claimed_actor_root: string_field(carrier, "actor_root")?.to_owned(),
+            claimed_signer: string_field(carrier, "player_key")?.to_owned(),
+            mission_id,
+            receipt,
+            beta_artifacts_added: added,
+            exact_judge_input: String::from_utf8(transition.judge_input.clone()).map_err(|_| {
+                ReplayError::Projection("replayed judge input ceased to be UTF-8".into())
+            })?,
+            exact_judge_output: String::from_utf8(transition.judge_output.clone()).map_err(
+                |_| ReplayError::Projection("replayed judge output ceased to be UTF-8".into()),
+            )?,
+        });
+    }
+
+    let final_canon: serde_json::Value = serde_json::from_slice(&history.current.canon)
+        .map_err(|error| ReplayError::Projection(format!("current Canon JSON: {error}")))?;
+    let final_world = object_field(&final_canon, "world")?;
+    let final_beta = artifact_set(final_world.get("beta_artifacts").ok_or_else(|| {
+        ReplayError::Projection("current Canon lacks world.beta_artifacts".into())
+    })?)?;
+    let final_alpha =
+        artifact_set(final_canon.get("alpha").ok_or_else(|| {
+            ReplayError::Projection("current Canon lacks alpha artifacts".into())
+        })?)?;
+    let final_superseded = artifact_set(final_canon.get("superseded").ok_or_else(|| {
+        ReplayError::Projection("current Canon lacks superseded artifacts".into())
+    })?)?;
+    let mut beta_artifacts_observed = Vec::new();
+    for artifact in final_beta {
+        if final_alpha.contains(&artifact) || final_superseded.contains(&artifact) {
+            continue;
+        }
+        let Some((sequence, transition_digest)) = first_observed.get(&artifact) else {
+            // Genesis beta entries have no transition-level semantic observation
+            // and are deliberately absent from this event-derived review.
+            continue;
+        };
+        beta_artifacts_observed.push(SemanticBetaObservationV1 {
+            artifact,
+            first_observed_sequence: *sequence,
+            first_observed_transition_digest: transition_digest.clone(),
+            replayed_head_digest: history.report.replayed_head_digest.clone(),
+            replayed_canon_revision: history.report.canon_revision,
+            evidence_status: "semantic_observation_only_unverified_carrier",
+            authorization_status: "unavailable_missing_finality_authority_evidence",
+        });
+    }
+
+    Ok(SignalSemanticReviewV1 {
+        format: SEMANTIC_REVIEW_FORMAT_V1,
+        status: "semantic_review_only",
+        authority_status: "unverified_no_signed_turn_or_commit_evidence",
+        source_bundle_sha256: format!("sha256:{}", hex32(history.source_bundle_sha256)),
+        replay: history.report,
+        events,
+        beta_artifacts_observed,
+        editorial_authority: "none; semantic review cannot produce promotion evidence or construct CuratorCapability",
+        required_authority_bridge: "node must reconstruct the exact carrier from a finalized SignedTurn, executor receipt, signer, and durable CommitRecord",
+    })
+}
+
+fn artifact_set(
+    value: &serde_json::Value,
+) -> Result<std::collections::BTreeSet<ObservedArtifactV1>, ReplayError> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| ReplayError::Projection("artifact collection is not an array".into()))?;
+    rows.iter()
+        .map(|row| {
+            let artifact = ObservedArtifactV1 {
+                mission_id: u64_field(row, "mission_id")?,
+                artifact_id: u64_field(row, "artifact_id")?,
+                source_digest: string_field(row, "source_digest")?.to_owned(),
+                content_digest: string_field(row, "content_digest")?.to_owned(),
+            };
+            for (field, digest) in [
+                ("source_digest", artifact.source_digest.as_str()),
+                ("content_digest", artifact.content_digest.as_str()),
+            ] {
+                parse_hex32(digest, field).map_err(|error| {
+                    ReplayError::Projection(format!("artifact {field}: {error}"))
+                })?;
+            }
+            Ok(artifact)
+        })
+        .collect()
+}
+
+fn object_field<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a serde_json::Value, ReplayError> {
+    value
+        .get(key)
+        .filter(|value| value.is_object())
+        .ok_or_else(|| ReplayError::Projection(format!("field {key:?} is not an object")))
+}
+
+fn string_field<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str, ReplayError> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| ReplayError::Projection(format!("field {key:?} is not a string")))
+}
+
+fn u64_field(value: &serde_json::Value, key: &str) -> Result<u64, ReplayError> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| ReplayError::Projection(format!("field {key:?} is not a u64")))
 }
 
 fn replay_exact_bundle_with<F>(bytes: &[u8], mut judge: F) -> Result<ReplayReportV1, ReplayError>
+where
+    F: FnMut(&str) -> Result<Option<String>, String>,
+{
+    Ok(verify_exact_bundle_with(bytes, &mut judge)?.report)
+}
+
+fn verify_exact_bundle_with<F>(
+    bytes: &[u8],
+    mut judge: F,
+) -> Result<SemanticallyReplayedHistory, ReplayError>
 where
     F: FnMut(&str) -> Result<Option<String>, String>,
 {
@@ -239,6 +510,8 @@ where
     let mut previous_commit_ordinal = None;
     let mut first_commit_ordinal = None;
     let mut exact_wire_bytes = current.wire.len() as u64;
+    let mut semantically_replayed_transitions =
+        Vec::with_capacity(bundle.transition_wires_hex.len());
 
     for (index, encoded) in bundle.transition_wires_hex.iter().enumerate() {
         let expected_sequence = u64::try_from(index)
@@ -317,7 +590,8 @@ where
 
         first_commit_ordinal.get_or_insert(transition.commit_ordinal);
         previous_commit_ordinal = Some(transition.commit_ordinal);
-        current = transition.successor;
+        current = transition.successor.clone();
+        semantically_replayed_transitions.push(transition);
     }
 
     if current.digest() != expected_head_digest {
@@ -333,16 +607,17 @@ where
         ));
     }
 
-    Ok(ReplayReportV1 {
+    let report = ReplayReportV1 {
         format: REPLAY_REPORT_FORMAT_V1,
-        status: "verified",
-        authority_id: hex32(authority_id),
-        deployment_digest: hex32(deployment_digest),
-        transitions_verified: current.transition_count,
-        lean_transitions_verified: current.transition_count,
-        first_commit_ordinal,
-        last_commit_ordinal: previous_commit_ordinal,
-        head_digest: hex32(current.digest()),
+        status: "semantic_review_only",
+        authority_status: "unverified_no_signed_turn_or_commit_evidence",
+        claimed_authority_id: hex32(authority_id),
+        claimed_deployment_digest: hex32(deployment_digest),
+        semantic_transitions_replayed: current.transition_count,
+        native_lean_transitions_replayed: current.transition_count,
+        first_claimed_commit_ordinal: first_commit_ordinal,
+        last_claimed_commit_ordinal: previous_commit_ordinal,
+        replayed_head_digest: hex32(current.digest()),
         transition_count: current.transition_count,
         world_sequence: current.world_sequence,
         canon_revision: current.canon_revision,
@@ -350,7 +625,13 @@ where
         config_sha256: hex32(sha256(&current.config)),
         canon_sha256: hex32(sha256(&current.canon)),
         exact_wire_bytes_replayed: exact_wire_bytes,
-        semantic_authority: "Dregg2.Games.PathOfAngels.NetworkJudge.signalJudgeFFI",
+        semantic_judge: "Dregg2.Games.PathOfAngels.NetworkJudge.signalJudgeFFI",
+    };
+    Ok(SemanticallyReplayedHistory {
+        report,
+        source_bundle_sha256: sha256(bytes),
+        current,
+        transitions: semantically_replayed_transitions,
     })
 }
 
@@ -889,26 +1170,19 @@ mod tests {
     fn exact_bundle_replays_to_deterministic_head() {
         let (genesis, transitions) = two_transition_bundle();
         let report = fake_replay(&bundle_bytes(&genesis, &transitions)).unwrap();
-        assert_eq!(report.status, "verified");
-        assert_eq!(report.transitions_verified, 2);
-        assert_eq!(report.first_commit_ordinal, Some(10));
-        assert_eq!(report.last_commit_ordinal, Some(12));
+        assert_eq!(report.status, "semantic_review_only");
+        assert_eq!(
+            report.authority_status,
+            "unverified_no_signed_turn_or_commit_evidence"
+        );
+        assert_eq!(report.semantic_transitions_replayed, 2);
+        assert_eq!(report.first_claimed_commit_ordinal, Some(10));
+        assert_eq!(report.last_claimed_commit_ordinal, Some(12));
         assert_eq!(report.world_sequence, 2);
         assert_eq!(report.canon_revision, 2);
     }
 
-    #[test]
-    fn checked_in_signal_fixture_replays_through_native_lean() {
-        let judge_input_file =
-            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json");
-        let judge_output_file =
-            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-output-v1.json");
-        let judge_input = judge_input_file
-            .strip_suffix(b"\n")
-            .expect("committed Signal fixture has one file newline");
-        let judge_output = judge_output_file
-            .strip_suffix(b"\n")
-            .expect("committed Signal fixture has one file newline");
+    fn signal_bundle(judge_input: &[u8], judge_output: &[u8]) -> Vec<u8> {
         let input: JudgeInputEnvelope = serde_json::from_slice(judge_input).unwrap();
         let output: JudgeOutputEnvelope = serde_json::from_slice(judge_output).unwrap();
         let canon: serde_json::Value = serde_json::from_str(input.canon.get()).unwrap();
@@ -932,10 +1206,99 @@ mod tests {
             judge_output.to_vec(),
             output.successor_canon.get().as_bytes().to_vec(),
         );
-        let report = replay_exact_bundle_bytes(&bundle_bytes(&genesis, &[transition])).unwrap();
-        assert_eq!(report.status, "verified");
-        assert_eq!(report.lean_transitions_verified, 1);
+        bundle_bytes(&genesis, &[transition])
+    }
+
+    fn checked_in_signal_bundle() -> (Vec<u8>, String) {
+        let judge_input =
+            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
+                .strip_suffix(b"\n")
+                .expect("committed Signal fixture has one file newline");
+        let judge_output =
+            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-output-v1.json")
+                .strip_suffix(b"\n")
+                .expect("committed Signal fixture has one file newline");
+        (
+            signal_bundle(judge_input, judge_output),
+            String::from_utf8(judge_output.to_vec()).unwrap(),
+        )
+    }
+
+    #[test]
+    fn checked_in_signal_fixture_replays_through_native_lean() {
+        let (bundle, _) = checked_in_signal_bundle();
+        let report = replay_exact_bundle_bytes(&bundle).unwrap();
+        assert_eq!(report.status, "semantic_review_only");
+        assert_eq!(report.native_lean_transitions_replayed, 1);
         assert_eq!(report.transition_count, 1);
+    }
+
+    #[test]
+    fn self_consistent_fixture_projects_semantic_review_without_finality() {
+        let (bundle, judge_output) = checked_in_signal_bundle();
+        let history =
+            verify_exact_bundle_with(&bundle, |_| Ok(Some(judge_output.clone()))).unwrap();
+        let review = project_semantic_history(history).unwrap();
+        assert_eq!(review.status, "semantic_review_only");
+        assert_eq!(
+            review.authority_status,
+            "unverified_no_signed_turn_or_commit_evidence"
+        );
+        assert_eq!(review.events.len(), 1);
+        assert_eq!(review.events[0].mission_id, 1);
+        assert_eq!(review.events[0].claimed_commit_ordinal, 7);
+        assert_eq!(review.events[0].beta_artifacts_added.len(), 1);
+        assert_eq!(review.beta_artifacts_observed.len(), 1);
+        assert_eq!(
+            review.beta_artifacts_observed[0].authorization_status,
+            "unavailable_missing_finality_authority_evidence"
+        );
+        let rendered = serde_json::to_string(&review.beta_artifacts_observed[0]).unwrap();
+        assert!(!rendered.contains("signature"));
+        assert!(!rendered.contains("promotion"));
+        assert!(!rendered.contains("finalized"));
+        assert!(!rendered.contains("provenance"));
+        assert!(!rendered.contains("\"action\""));
+    }
+
+    #[test]
+    fn hostile_self_consistent_forged_carrier_is_never_reported_as_finality() {
+        let original_input = std::str::from_utf8(
+            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
+                .strip_suffix(b"\n")
+                .expect("committed Signal fixture has one file newline"),
+        )
+        .unwrap();
+        let original_actor_root = "44".repeat(32);
+        let forged_actor_root = "ab".repeat(32);
+        let forged_input = original_input.replace(&original_actor_root, &forged_actor_root);
+        assert_eq!(forged_input.matches(&forged_actor_root).count(), 2);
+
+        // The Lean judge authenticates game semantics, not the origin of this
+        // carrier. A hostile caller can therefore make a self-consistent actor
+        // claim which Lean accepts and faithfully copies into the receipt.
+        let forged_output = native_judge(&forged_input)
+            .expect("native Lean judge is linked")
+            .expect("self-consistent forged carrier remains semantically valid");
+        assert!(forged_output.contains(&forged_actor_root));
+
+        let bundle = signal_bundle(forged_input.as_bytes(), forged_output.as_bytes());
+        let history = verify_exact_bundle_with(&bundle, |actual| {
+            assert_eq!(actual, forged_input);
+            Ok(Some(forged_output.clone()))
+        })
+        .unwrap();
+        let review = project_semantic_history(history).unwrap();
+        assert_eq!(review.status, "semantic_review_only");
+        assert_eq!(
+            review.authority_status,
+            "unverified_no_signed_turn_or_commit_evidence"
+        );
+        assert_eq!(review.events[0].claimed_actor_root, forged_actor_root);
+        assert_eq!(
+            review.beta_artifacts_observed[0].authorization_status,
+            "unavailable_missing_finality_authority_evidence"
+        );
     }
 
     #[test]
