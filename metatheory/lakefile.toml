@@ -315,7 +315,7 @@ globs = [
   "Dregg2.Games.PathOfAngels.ArchiveLabDemonstrator",  # 20 comp
   "Dregg2.Games.PathOfAngels.ArchiveLabDemonstratorEmit",  # 12 comp
   "Dregg2.Games.PathOfAngels.AttendantContinuityAggregate",  # 18 ax, 19 comp
-  "Dregg2.Games.PathOfAngels.BazaarGameExamples",  # 3 ax, 64 comp
+  "Dregg2.Games.PathOfAngels.BazaarGameExamples",  # 3 ax, 68 comp
   "Dregg2.Games.PathOfAngels.CanonicalCodec",  # 1 ax
   "Dregg2.Games.PathOfAngels.CanonicalCodecDayWire",  # 5 ax, 4 comp
   "Dregg2.Games.PathOfAngels.CanonicalCodecFalsifier",  # 3 ax
