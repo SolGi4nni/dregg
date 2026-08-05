@@ -68,6 +68,10 @@ import Dregg2.Circuit.Emit.PastaMsmSliced
 import Dregg2.Circuit.Emit.PastaFieldSound
 import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.PastaCurveSound
+import Dregg2.Circuit.Emit.PastaLadderThread
+-- ⚑ NOT routed below, and imported anyway: the conjunction AIR is built by the emit gate so it
+-- cannot drift while its row-local layout is being threaded. See the note at the length pin.
+import Dregg2.Circuit.Emit.MinaWrapConjunctionAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
 import Dregg2.Circuit.Emit.MinaPhase2Chain
@@ -529,6 +533,15 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.PastaCurveSound.pallasCompleteAddSoundDesc)
   , ("pasta-vesta-complete-add-sound.json",
       Dregg2.Circuit.Emit.PastaCurveSound.vestaCompleteAddSoundDesc)
+    -- ⚑ 2026-08-05 — THE THREADED SOUND ROW. The same RCB complete addition with the accumulator
+    -- carried to the NEXT row by 96 `.transition` window legs, so a ladder's depth is ROWS and the
+    -- width is a constant 3 048 at every depth. `PastaCurveSound.sound_ladder_does_not_fit_a_row`
+    -- priced the row-local layout at 731 136 columns in ONE row at GLV depth; this is the layout
+    -- that answers it, and the layout `minaOpeningCheckDesc` was refused by the prover for lacking.
+  , ("pasta-pallas-rcb-thread.json",
+      Dregg2.Circuit.Emit.PastaLadderThread.pallasThreadDesc)
+  , ("pasta-vesta-rcb-thread.json",
+      Dregg2.Circuit.Emit.PastaLadderThread.vestaThreadDesc)
   ]
 
 /- The routing table covers the checked-in directory exactly. A bare count is a
@@ -561,7 +574,16 @@ Both directions are gated outside Lean:
 -- ⚑ 2026-08-05 — 107 = 104 + the phase-1 (Fp) sponge trio: `pasta-fp-round`, `pasta-fp-absorb`
 -- and `pasta-fp-chainlink`. Same shared-line hazard as every note above: if the blame on this
 -- line is one lane's, the count is probably already short again.
-theorem byNameDescriptors_length : byNameDescriptors.length = 107 := rfl
+-- ⚑ 2026-08-05 — 109 = 107 + the threaded sound row on both curves (`pasta-{pallas,vesta}-rcb-
+-- thread`). ⚠ `MinaWrapConjunctionAir.conjunctionDesc` is deliberately NOT routed here: its emitted
+-- instance is ROW-LOCAL (22 184 columns, 30 607 constraints, a 24 MB artifact — 10x the largest
+-- descriptor in the tree and 40% of the directory), which is the very layout `PastaLadderThread`
+-- exists to replace. Routing it would check in the shape this lane just measured as wrong. The AIR,
+-- its `mainRailOk`, its allocator-disjointness theorems and its forcing theorems are on disk; the
+-- routing row lands when its b-polynomial chain is threaded across rows the way the ladder now is.
+-- Same shared-line hazard as every note above: if the blame on this line is one lane's, the count
+-- is probably already short again.
+theorem byNameDescriptors_length : byNameDescriptors.length = 109 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
