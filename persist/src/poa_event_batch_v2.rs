@@ -912,14 +912,19 @@ pub(crate) fn audit_poa_event_batch_store_v2_in(write: &WriteTransaction) -> Res
     let heads = write.open_table(POA_EVENT_BATCH_HEADS_V2)?;
     let commits = write.open_table(tables::COMMIT_LOG)?;
     let metadata = write.open_table(tables::METADATA)?;
-    let compacted_ids = write.open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)?;
+    let compacted_floor = metadata
+        .get(tables::META_COMMIT_COMPACTED)?
+        .map(|value| value.value())
+        .unwrap_or(0);
+    let compacted =
+        crate::poa_compact_authority::load_audited_certificates_in_write(write, compacted_floor)?;
     validate_tables(
         &manifests,
         &events,
         &heads,
         &commits,
-        &metadata,
-        &compacted_ids,
+        compacted_floor,
+        &compacted,
     )
 }
 
@@ -1231,14 +1236,21 @@ impl PersistentStore {
         let heads = read.open_table(POA_EVENT_BATCH_HEADS_V2)?;
         let commits = read.open_table(tables::COMMIT_LOG)?;
         let metadata = read.open_table(tables::METADATA)?;
-        let compacted_ids = read.open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)?;
+        let compacted_floor = metadata
+            .get(tables::META_COMMIT_COMPACTED)?
+            .map(|value| value.value())
+            .unwrap_or(0);
+        let compacted = crate::poa_compact_authority::load_audited_certificates_in_read(
+            &read,
+            compacted_floor,
+        )?;
         validate_tables(
             &manifests,
             &events,
             &heads,
             &commits,
-            &metadata,
-            &compacted_ids,
+            compacted_floor,
+            &compacted,
         )
     }
 }
@@ -1248,13 +1260,9 @@ fn validate_tables(
     events: &impl ReadableTable<&'static [u8; 12], &'static [u8]>,
     heads: &impl ReadableTable<&'static [u8; 32], &'static [u8]>,
     commits: &impl ReadableTable<u64, &'static [u8]>,
-    metadata: &impl ReadableTable<&'static str, u64>,
-    compacted_ids: &impl ReadableTable<&'static [u8; 32], ()>,
+    compacted_floor: u64,
+    compacted: &BTreeMap<u64, crate::poa_compact_authority::CompactCommitAuthorityCertificateV1>,
 ) -> Result<()> {
-    let compacted_floor = metadata
-        .get(tables::META_COMMIT_COMPACTED)?
-        .map(|value| value.value())
-        .unwrap_or(0);
     let decoded_manifests = validate_structural_tables(manifests, events, heads)?;
     for (ordinal, manifest) in &decoded_manifests {
         match commits.get(*ordinal)? {
@@ -1269,12 +1277,24 @@ fn validate_tables(
                 }
             }
             None if *ordinal < compacted_floor => {
-                if compacted_ids
-                    .get(&manifest.prepared.coordinate.block_id)?
-                    .is_none()
+                let certificate = compacted.get(ordinal).ok_or_else(|| {
+                    integrity("PoA V2 manifest has no compact authority certificate")
+                })?;
+                let wire = manifests
+                    .get(*ordinal)?
+                    .ok_or_else(|| integrity("PoA V2 manifest disappeared during carrier audit"))?;
+                let identity =
+                    crate::poa_compact_authority::event_batch_v2_identity(*ordinal, wire.value())?;
+                let coordinate = &manifest.prepared.coordinate;
+                if !certificate.matches_block_carrier(
+                    *ordinal,
+                    coordinate.block_id,
+                    coordinate.turn_hash,
+                    coordinate.receipt_hash,
+                ) || !certificate.has_sidecar(&identity)
                 {
                     return Err(integrity(
-                        "compacted PoA V2 carrier lacks retained block id",
+                        "compacted PoA V2 manifest disagrees with its certified carrier",
                     ));
                 }
             }

@@ -151,19 +151,34 @@ itself idempotent and crash-safe (`persist/src/commit_log.rs:1055`).
 
 ## Compaction — bounding the WAL
 
-`compact_below(height)` removes the contiguous ordinal prefix of records strictly
-below `height`, but ONLY when a covering ledger checkpoint at/above `height`
-subsumes their finalized state; otherwise it is a no-op returning 0 (the safety
-guard against losing a finalized turn) (`persist/src/commit_log.rs:871`,
-`persist/src/commit_log.rs:880`). It preserves the cursor (only the physical
-record count drops), advances `commit_compacted_floor` by exactly the count
+`compact_below_with_poa_anchor_v1(height, anchor, external_policy)` removes the contiguous ordinal
+prefix of records strictly below `height`, but ONLY when a covering ledger checkpoint subsumes
+their finalized state and an enrolled hybrid quorum signs the exact compact preview. The caller's
+`PoaCompactTrustPolicyV1` comes from independently authenticated deployment/genesis configuration;
+the roster copied into `PCA1` is redundant evidence, never a trust root. Every historical anchor
+must match the policy's exact deployment, federation, committee epoch, Ed25519 roster, ML-DSA
+roster, and canonical quorum threshold. Epochs may advance only to another externally authorized
+policy root and may never regress. Removing or replacing a historical policy root makes reopen fail
+closed. The PCC tables have no API capable of installing or rotating this policy.
+
+A positive-floor restart MUST use
+`PersistentStore::open_with_poa_compact_trust_v1(path, external_policy)`. Plain
+`PersistentStore::open(path)` deliberately refuses compacted state because trusting the anchor's
+self-carried roster would let a database attacker replace the certificate suffix, head, roster,
+and signatures coherently. The unsigned `compact_below(height)` compatibility entry point is also
+a fail-closed no-op. Authenticated compaction preserves the cursor (only the physical record count
+drops), advances `commit_compacted_floor` by exactly the count
 removed, retains each compacted turn's `block_id` in `COMMIT_COMPACTED_BLOCK_IDS`
 (reported by `commit_log_block_ids` so the identity execution cursor never
 re-applies it), and re-derives the cell index from survivors — all in one
 transaction (`persist/src/commit_log.rs:849`–`persist/src/commit_log.rs:998`).
-Checkpointing co-drives compaction: `checkpoint_ledger` writes the checkpoint
-FIRST (the load-bearing durability) then drives `compact_below`; a compaction
-error is logged but does not fail the checkpoint (`persist/src/ledger_store.rs:60`).
+Checkpointing writes the checkpoint FIRST (the load-bearing durability). A checkpoint height is an
+exact-wire identity: a byte-identical retry succeeds idempotently, while a differing same-height
+write is refused before mutation (including after a signed compact anchor references it).
+Compaction is a separate hybrid-quorum ceremony: the externally pinned committee signs the exact
+checkpoint bytes/root and compact certificate head, then drives
+`compact_below_with_poa_anchor_v1`; an unsigned `compact_below` refuses. A compaction error is logged
+but does not fail the checkpoint (`persist/src/ledger_store.rs`).
 
 ## Ledger checkpoints
 

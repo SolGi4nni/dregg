@@ -583,11 +583,14 @@ impl PersistentStore {
         let event_scopes = read.open_table(POA_HOLDING_CONSUMPTION_BY_EVENT_SCOPE_V1)?;
         let commits = read.open_table(tables::COMMIT_LOG)?;
         let metadata = read.open_table(tables::METADATA)?;
-        let compacted = read.open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)?;
         let compacted_floor = metadata
             .get(tables::META_COMMIT_COMPACTED)?
             .map(|value| value.value())
             .unwrap_or(0);
+        let compacted = crate::poa_compact_authority::load_audited_certificates_in_read(
+            &read,
+            compacted_floor,
+        )?;
         let mut row_count = 0_u64;
         for entry in rows.iter()? {
             let (key, wire) = entry.map_err(db_error)?;
@@ -622,9 +625,20 @@ impl PersistentStore {
                     }
                 }
                 None if decoded.commit_ordinal < compacted_floor => {
-                    if compacted.get(&decoded.block_id)?.is_none() {
+                    let certificate = compacted.get(&decoded.commit_ordinal).ok_or_else(|| {
+                        integrity("PoA holding consumption has no compact authority certificate")
+                    })?;
+                    let identity =
+                        crate::poa_compact_authority::holding_identity(key.value(), wire.value())?;
+                    if !certificate.matches_block_carrier(
+                        decoded.commit_ordinal,
+                        decoded.block_id,
+                        decoded.turn_hash,
+                        decoded.receipt_hash,
+                    ) || !certificate.has_sidecar(&identity)
+                    {
                         return Err(integrity(
-                            "compacted PoA holding consumption has no block carrier",
+                            "compacted PoA holding consumption disagrees with its certified carrier",
                         ));
                     }
                 }

@@ -742,7 +742,7 @@ mod tests {
                 sovereign_registrations: Vec::new(),
             })
             .unwrap();
-        assert_eq!(store.compact_below(2).unwrap(), 1);
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(2).unwrap(), 1);
 
         // Model a pre-v1 image: compaction history exists, but neither the
         // schema marker nor either durable projection was carried forward.

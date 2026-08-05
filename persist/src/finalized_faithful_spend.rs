@@ -1130,10 +1130,16 @@ mod tests {
         store
             .checkpoint_ledger(&dregg_cell::Ledger::new(), record.height + 1)
             .unwrap();
+        assert_eq!(
+            store
+                .compact_below_with_test_poa_anchor_v1(record.height + 1)
+                .unwrap(),
+            1
+        );
         assert!(store.lookup_turn(&record.turn_hash).unwrap().is_none());
         drop(store);
 
-        let reopened = PersistentStore::open(&path).unwrap();
+        let reopened = PersistentStore::open_with_test_poa_compact_trust_v1(&path).unwrap();
         let authority = reopened
             .finalized_faithful_spend(&input.nullifier)
             .unwrap()

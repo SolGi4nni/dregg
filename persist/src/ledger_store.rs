@@ -52,49 +52,62 @@ impl PersistentStore {
     // Ledger Checkpoint Storage
     // =========================================================================
 
-    /// Serialize and persist the current ledger state as a checkpoint.
+    /// Install one canonical checkpoint wire exactly once.
     ///
-    /// The checkpoint is keyed by block height. Also updates the metadata
-    /// tracking the latest ledger checkpoint height.
-    ///
-    /// CO-DRIVES COMMIT-LOG COMPACTION (the sibling of attested-root
-    /// `prune_before`): once this finalized checkpoint at `height` is durably
-    /// committed, it SUBSUMES every commit-log record whose finalized state it
-    /// folded in, so they become redundant write-ahead-log. We then drive
-    /// [`PersistentStore::compact_below`]`(height)` to bound that WAL. The
-    /// checkpoint write is committed FIRST and is the load-bearing durability;
-    /// compaction runs as its own transaction and is provably safe (it deletes
-    /// only records this just-written checkpoint at/above `height` subsumes).
-    /// A compaction error is logged but does NOT fail the checkpoint: not
-    /// compacting is always safe (the WAL merely stays larger and the next
-    /// checkpoint retries), so it never masks or rolls back the durable
-    /// checkpoint.
-    pub fn checkpoint_ledger(&self, ledger: &Ledger, height: u64) -> Result<()> {
-        let snapshot = ledger_to_checkpoint(ledger, height);
-        let serialized =
-            postcard::to_stdvec(&snapshot).map_err(|e| StoreError::Serialization(e.to_string()))?;
-
+    /// A same-height retry is accepted only when its bytes are identical. Checkpoint identities
+    /// are signed by PoA compact anchors and may also be trusted by snapshot consumers, so treating
+    /// a height as an upsert would let a successful call poison those authorities for the next
+    /// restart. A differing retry aborts its transaction before any table or metadata mutation.
+    fn store_exact_ledger_checkpoint_wire(&self, height: u64, serialized: &[u8]) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(tables::LEDGER_CHECKPOINTS)?;
-            table.insert(height, serialized.as_slice())?;
+            let existing = table.get(height)?.map(|guard| guard.value().to_vec());
+            match existing {
+                Some(bytes) if bytes == serialized => {}
+                Some(_) => {
+                    return Err(StoreError::Integrity(format!(
+                        "ledger checkpoint height {height} is already bound to different exact bytes"
+                    )));
+                }
+                None => {
+                    table.insert(height, serialized)?;
+                }
+            }
 
-            // Update latest ledger checkpoint height metadata.
             let mut meta = write_txn.open_table(tables::METADATA)?;
             let current_latest = meta
                 .get(tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT)?
-                .map(|g| g.value())
+                .map(|guard| guard.value())
                 .unwrap_or(0);
             if height >= current_latest {
                 meta.insert(tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT, height)?;
             }
         }
         write_txn.commit()?;
+        Ok(())
+    }
 
-        // Co-drive compaction now that a covering checkpoint at `height` exists.
-        // Provably safe (guarded inside `compact_below`); non-fatal on error so
-        // a transient compaction failure never fails an already-durable
-        // checkpoint.
+    /// Serialize and persist the current ledger state as a checkpoint.
+    ///
+    /// The checkpoint is keyed by block height. Also updates the metadata
+    /// tracking the latest ledger checkpoint height.
+    ///
+    /// The checkpoint write is committed first. The legacy unsigned compaction request below now
+    /// deliberately refuses: subsumption alone cannot authenticate the compact authority carrier.
+    /// A separate committee ceremony prepares and hybrid-signs
+    /// `PoaCompactCheckpointStatementV1`, then calls
+    /// `compact_below_with_poa_anchor_v1`. Until that producer is wired, the WAL stays larger.
+    pub fn checkpoint_ledger(&self, ledger: &Ledger, height: u64) -> Result<()> {
+        let snapshot = ledger_to_checkpoint(ledger, height);
+        let serialized =
+            postcard::to_stdvec(&snapshot).map_err(|e| StoreError::Serialization(e.to_string()))?;
+
+        self.store_exact_ledger_checkpoint_wire(height, &serialized)?;
+
+        // Ask the unsigned compatibility entry point. It is intentionally a no-op until the node
+        // supplies the separately finalized signed anchor; a checkpoint remains useful without
+        // granting itself deletion authority.
         match self.compact_below(height) {
             Ok(0) => {}
             Ok(n) => tracing::debug!(
@@ -190,29 +203,12 @@ impl PersistentStore {
     /// Store a pre-serialized [`LedgerCheckpoint`] (e.g. one received in a shipped
     /// snapshot) at its own height, updating the latest-checkpoint-height
     /// metadata. The counterpart to [`Self::checkpoint_ledger`] for a checkpoint
-    /// the node did not compute locally.
+    /// the node did not compute locally. Same-height retries are exact-wire idempotent; a differing
+    /// snapshot is refused before mutation.
     pub fn store_ledger_checkpoint_snapshot(&self, snapshot: &LedgerCheckpoint) -> Result<()> {
         let serialized =
             postcard::to_stdvec(snapshot).map_err(|e| StoreError::Serialization(e.to_string()))?;
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(tables::LEDGER_CHECKPOINTS)?;
-            table.insert(snapshot.height, serialized.as_slice())?;
-
-            let mut meta = write_txn.open_table(tables::METADATA)?;
-            let current_latest = meta
-                .get(tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT)?
-                .map(|g| g.value())
-                .unwrap_or(0);
-            if snapshot.height >= current_latest {
-                meta.insert(
-                    tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT,
-                    snapshot.height,
-                )?;
-            }
-        }
-        write_txn.commit()?;
-        Ok(())
+        self.store_exact_ledger_checkpoint_wire(snapshot.height, &serialized)
     }
 
     /// Install a set of overlay cell post-states into the cell-by-id index (the
@@ -277,6 +273,8 @@ impl PersistentStore {
                 entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
             heights.push(entry.0.value());
         }
+        let compact_authority_checkpoints =
+            crate::poa_compact_authority::required_checkpoint_heights_in_read(&read_txn)?;
         drop(table);
         drop(read_txn);
 
@@ -286,12 +284,16 @@ impl PersistentStore {
 
         // Sort descending so we keep the largest heights.
         heights.sort_unstable_by(|a, b| b.cmp(a));
-        let to_remove = &heights[keep_last_n..];
+        let to_remove: Vec<u64> = heights[keep_last_n..]
+            .iter()
+            .copied()
+            .filter(|height| !compact_authority_checkpoints.contains(height))
+            .collect();
 
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(tables::LEDGER_CHECKPOINTS)?;
-            for &h in to_remove {
+            for &h in &to_remove {
                 table.remove(h)?;
             }
         }
@@ -381,4 +383,68 @@ fn checkpoint_to_ledger(snapshot: LedgerCheckpoint) -> Ledger {
     }
 
     ledger
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(height: u64, tag: u8) -> LedgerCheckpoint {
+        LedgerCheckpoint {
+            height,
+            cells: Vec::new(),
+            sovereign_commitments: vec![([tag; 32], [tag.wrapping_add(1); 32])],
+            sovereign_registrations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn checkpoint_height_is_exact_wire_idempotent_not_an_upsert() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let original = snapshot(7, 0x31);
+        store.store_ledger_checkpoint_snapshot(&original).unwrap();
+        store
+            .store_ledger_checkpoint_snapshot(&original)
+            .expect("byte-identical retry is idempotent");
+
+        let substituted = snapshot(7, 0x41);
+        let error = store
+            .store_ledger_checkpoint_snapshot(&substituted)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("already bound to different exact bytes"),
+            "{error}"
+        );
+
+        let (_, retained) = store
+            .latest_ledger_checkpoint_at_or_below(7)
+            .unwrap()
+            .expect("original checkpoint remains");
+        assert_eq!(retained.height, original.height);
+        assert_eq!(
+            retained.sovereign_commitments, original.sovereign_commitments,
+            "refused substitution must not mutate the checkpoint"
+        );
+    }
+
+    #[test]
+    fn locally_computed_checkpoint_also_refuses_same_height_substitution() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let ledger = Ledger::new();
+        store.checkpoint_ledger(&ledger, 9).unwrap();
+        store
+            .checkpoint_ledger(&ledger, 9)
+            .expect("same ledger and height retry is idempotent");
+
+        let error = store
+            .store_ledger_checkpoint_snapshot(&snapshot(9, 0x51))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("already bound to different exact bytes"),
+            "{error}"
+        );
+        assert_eq!(store.latest_ledger_checkpoint_height().unwrap(), 9);
+    }
 }

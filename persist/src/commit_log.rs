@@ -2197,155 +2197,169 @@ impl PersistentStore {
                 // committed durably. Accept iff the stored record matches.
                 if expected_ordinal < cursor {
                     let log = write_txn.open_table(tables::COMMIT_LOG)?;
-                    match log.get(expected_ordinal)? {
-                        Some(guard) => {
-                            let existing = decode_commit_record(guard.value())?;
-                            if existing.turn_hash == record.turn_hash {
-                                let durable_note_count = meta
-                                    .get(tables::META_NOTE_TREE_SIZE)?
-                                    .map(|guard| guard.value())
-                                    .unwrap_or(0);
-                                let tracked_executor_state = {
-                                    let frontiers = write_txn
-                                        .open_table(tables::EXECUTOR_ACCUMULATOR_FRONTIERS_V1)?;
-                                    frontiers.get(expected_ordinal)?.is_some()
-                                };
-                                match (executor_state, tracked_executor_state) {
-                                    (Some(state), true) => {
-                                        crate::executor_consensus_state::verify_replayed_executor_consensus_state_in(
+                    let existing = match log.get(expected_ordinal)? {
+                        Some(guard) => decode_commit_record(guard.value())?,
+                        None => {
+                            let compacted_floor = meta
+                                .get(tables::META_COMMIT_COMPACTED)?
+                                .map(|value| value.value())
+                                .unwrap_or(0);
+                            if expected_ordinal >= compacted_floor {
+                                return Err(StoreError::Integrity(format!(
+                                    "commit_finalized_turn: cursor {cursor} > expected {expected_ordinal} \
+                                     but no live or compacted authority at that ordinal (corrupt log)"
+                                )));
+                            }
+                            crate::poa_compact_authority::require_exact_compacted_record_in(
+                                &write_txn,
+                                compacted_floor,
+                                expected_ordinal,
+                                record,
+                            )?;
+                            record.clone()
+                        }
+                    };
+                    drop(log);
+                    if existing.turn_hash == record.turn_hash {
+                        let durable_note_count = meta
+                            .get(tables::META_NOTE_TREE_SIZE)?
+                            .map(|guard| guard.value())
+                            .unwrap_or(0);
+                        let tracked_executor_state = {
+                            let frontiers =
+                                write_txn.open_table(tables::EXECUTOR_ACCUMULATOR_FRONTIERS_V1)?;
+                            frontiers.get(expected_ordinal)?.is_some()
+                        };
+                        match (executor_state, tracked_executor_state) {
+                            (Some(state), true) => {
+                                crate::executor_consensus_state::verify_replayed_executor_consensus_state_in(
                                             &write_txn,
                                             expected_ordinal,
                                             durable_note_count,
                                             note_commitments,
                                             state,
                                         )?;
-                                        crate::promise_resolutions::verify_replayed_promise_resolution_batch_in(
+                                crate::promise_resolutions::verify_replayed_promise_resolution_batch_in(
                                             &write_txn,
                                             &existing,
                                             &state.promise_resolutions,
                                         )?;
-                                    }
-                                    (None, false) => {}
-                                    _ => {
-                                        return Err(StoreError::Integrity(
+                            }
+                            (None, false) => {}
+                            _ => {
+                                return Err(StoreError::Integrity(
                                             "replayed finalized turn omitted or invented its executor consensus-state weld"
                                                 .to_string(),
                                         ));
-                                    }
-                                }
-                                crate::poa_signal_state::verify_replayed_poa_signal_transition_in(
+                            }
+                        }
+                        crate::poa_signal_state::verify_replayed_poa_signal_transition_in(
+                            &write_txn,
+                            expected_ordinal,
+                            &existing,
+                            poa_signal,
+                        )?;
+                        crate::poa_event_store::verify_replayed_poa_event_in(
+                            &write_txn,
+                            expected_ordinal,
+                            &existing,
+                            poa_event,
+                        )?;
+                        if poa_galley.is_none() {
+                            if let Some(poa_batch) = poa_batch {
+                                crate::poa_world_activation::require_poa_historical_world_exact_in(
                                     &write_txn,
-                                    expected_ordinal,
-                                    &existing,
-                                    poa_signal,
+                                    poa_batch.coordinate().world(),
                                 )?;
-                                crate::poa_event_store::verify_replayed_poa_event_in(
-                                    &write_txn,
-                                    expected_ordinal,
-                                    &existing,
-                                    poa_event,
-                                )?;
-                                if poa_galley.is_none() {
-                                    if let Some(poa_batch) = poa_batch {
-                                        crate::poa_world_activation::require_poa_historical_world_exact_in(
-                                                &write_txn,
-                                                poa_batch.coordinate().world(),
-                                            )?;
-                                    }
-                                    crate::poa_event_batch_v2::verify_replayed_poa_event_batch_in(
-                                        &write_txn,
-                                        expected_ordinal,
-                                        &existing,
-                                        poa_batch,
-                                    )?;
-                                    crate::poa_holding_consumption::verify_replayed_poa_holding_consumption_in(
+                            }
+                            crate::poa_event_batch_v2::verify_replayed_poa_event_batch_in(
+                                &write_txn,
+                                expected_ordinal,
+                                &existing,
+                                poa_batch,
+                            )?;
+                            crate::poa_holding_consumption::verify_replayed_poa_holding_consumption_in(
                                         &write_txn,
                                         expected_ordinal,
                                         &existing,
                                         poa_holding,
                                     )?;
-                                }
-                                crate::per_cell_receipt_heads::verify_replayed_per_cell_receipt_heads_in(
-                                    &write_txn,
-                                    &existing,
-                                )?;
-                                if let Some(receipt_entry) = receipt_entry.as_ref() {
-                                    let (receipt_index, encoded_receipt) = receipt_entry.entry();
-                                    // The original atomic commit must already
-                                    // contain the exact receipt bytes. A replay
-                                    // never patches a missing/conflicting entry.
-                                    Self::write_receipt_chain_entry_in(
-                                        &write_txn,
-                                        receipt_index,
-                                        encoded_receipt,
-                                        false,
-                                    )?;
-                                }
-                                if let Some(faithful) = faithful.as_ref() {
-                                    // The replay checks below include the
-                                    // attested-root table, whose helper updates
-                                    // METADATA on fresh writes and therefore
-                                    // intentionally refuses a concurrently-live
-                                    // table handle even for exact replay.
-                                    drop(meta);
-                                    verify_replayed_faithful_notes_in(
-                                        &write_txn,
-                                        faithful.envelope,
-                                        note_commitments,
-                                        durable_note_count,
-                                    )?;
-                                    verify_replayed_nullifiers_in(&write_txn, faithful)?;
-                                    crate::faithful_note_root_history::append_faithful_note_root_verified_in(
+                        }
+                        crate::per_cell_receipt_heads::verify_replayed_per_cell_receipt_heads_in(
+                            &write_txn, &existing,
+                        )?;
+                        if let Some(receipt_entry) = receipt_entry.as_ref() {
+                            let (receipt_index, encoded_receipt) = receipt_entry.entry();
+                            // The original atomic commit must already
+                            // contain the exact receipt bytes. A replay
+                            // never patches a missing/conflicting entry.
+                            Self::write_receipt_chain_entry_in(
+                                &write_txn,
+                                receipt_index,
+                                encoded_receipt,
+                                false,
+                            )?;
+                        }
+                        if let Some(faithful) = faithful.as_ref() {
+                            // The replay checks below include the
+                            // attested-root table, whose helper updates
+                            // METADATA on fresh writes and therefore
+                            // intentionally refuses a concurrently-live
+                            // table handle even for exact replay.
+                            drop(meta);
+                            verify_replayed_faithful_notes_in(
+                                &write_txn,
+                                faithful.envelope,
+                                note_commitments,
+                                durable_note_count,
+                            )?;
+                            verify_replayed_nullifiers_in(&write_txn, faithful)?;
+                            crate::faithful_note_root_history::append_faithful_note_root_verified_in(
                                         &write_txn,
                                         faithful.envelope,
                                         faithful.initial_anchor,
                                         true,
                                     )?;
-                                    crate::federation::store_attested_root_in(
-                                        &write_txn,
-                                        faithful.attested_root,
-                                        crate::federation::AttestedRootWrite::ExactReplay,
-                                    )?;
-                                    crate::finalized_faithful_spend::write_finalized_faithful_spends_in(
-                                        &write_txn,
-                                        record,
-                                        faithful.attested_root,
-                                        faithful.finalized_spends,
-                                        false,
-                                    )?;
-                                }
-                                if let Some(raw_galley) = poa_galley.as_ref() {
-                                    let faithful = faithful.as_ref().ok_or_else(|| {
-                                        StoreError::Integrity(
-                                            "raw Galley replay omitted its faithful finality weld"
-                                                .to_string(),
-                                        )
-                                    })?;
-                                    if executor_state.is_none() {
-                                        return Err(StoreError::Integrity(
-                                            "raw Galley replay omitted its executor-state weld"
-                                                .to_string(),
-                                        ));
-                                    }
-                                    let receipt_entry =
-                                        receipt_entry.as_ref().ok_or_else(|| {
-                                            StoreError::Integrity(
-                                                "raw Galley replay omitted its exact receipt weld"
-                                                    .to_string(),
-                                            )
-                                        })?;
-                                    let (_, encoded_receipt) = receipt_entry.entry();
-                                    let canonical_raw = postcard::to_stdvec(raw_galley.receipt)
-                                        .map_err(|error| {
-                                            StoreError::Serialization(error.to_string())
-                                        })?;
-                                    if canonical_raw.as_slice() != encoded_receipt {
-                                        return Err(StoreError::Integrity(
-                                            "raw Galley receipt differs from the exact replayed receipt"
-                                                .to_string(),
-                                        ));
-                                    }
-                                    let stored_batch = crate::poa_event_batch_v2::load_poa_event_batch_v2_in(
+                            crate::federation::store_attested_root_in(
+                                &write_txn,
+                                faithful.attested_root,
+                                crate::federation::AttestedRootWrite::ExactReplay,
+                            )?;
+                            crate::finalized_faithful_spend::write_finalized_faithful_spends_in(
+                                &write_txn,
+                                record,
+                                faithful.attested_root,
+                                faithful.finalized_spends,
+                                false,
+                            )?;
+                        }
+                        if let Some(raw_galley) = poa_galley.as_ref() {
+                            let faithful = faithful.as_ref().ok_or_else(|| {
+                                StoreError::Integrity(
+                                    "raw Galley replay omitted its faithful finality weld"
+                                        .to_string(),
+                                )
+                            })?;
+                            if executor_state.is_none() {
+                                return Err(StoreError::Integrity(
+                                    "raw Galley replay omitted its executor-state weld".to_string(),
+                                ));
+                            }
+                            let receipt_entry = receipt_entry.as_ref().ok_or_else(|| {
+                                StoreError::Integrity(
+                                    "raw Galley replay omitted its exact receipt weld".to_string(),
+                                )
+                            })?;
+                            let (_, encoded_receipt) = receipt_entry.entry();
+                            let canonical_raw = postcard::to_stdvec(raw_galley.receipt)
+                                .map_err(|error| StoreError::Serialization(error.to_string()))?;
+                            if canonical_raw.as_slice() != encoded_receipt {
+                                return Err(StoreError::Integrity(
+                                    "raw Galley receipt differs from the exact replayed receipt"
+                                        .to_string(),
+                                ));
+                            }
+                            let stored_batch = crate::poa_event_batch_v2::load_poa_event_batch_v2_in(
                                             &write_txn,
                                             expected_ordinal,
                                         )?
@@ -2355,91 +2369,91 @@ impl PersistentStore {
                                                     .to_string(),
                                             )
                                         })?;
-                                    let activated = crate::poa_activated_content::prepare_historical_poa_galley_policy_v1_in(
+                            let activated = crate::poa_activated_content::prepare_historical_poa_galley_policy_v1_in(
                                             &write_txn,
                                             stored_batch.coordinate().world(),
                                         )?;
-                                    let policy = crate::AuthenticatedPoaGalleyPolicyV1::from_activated_content(activated)?;
-                                    let finality = ValidatedPoaGalleyFinalityWeldV1 {
-                                        ordinal: existing.ordinal,
-                                        block_id: existing.block_id,
-                                        turn_hash: existing.turn_hash,
-                                        receipt_hash: existing.receipt_hash,
-                                    };
-                                    let finalized = crate::poa_galley_authority::derive_poa_finalized_public_perform_v1(
+                            let policy =
+                                crate::AuthenticatedPoaGalleyPolicyV1::from_activated_content(
+                                    activated,
+                                )?;
+                            let finality = ValidatedPoaGalleyFinalityWeldV1 {
+                                ordinal: existing.ordinal,
+                                block_id: existing.block_id,
+                                turn_hash: existing.turn_hash,
+                                receipt_hash: existing.receipt_hash,
+                            };
+                            let finalized = crate::poa_galley_authority::derive_poa_finalized_public_perform_v1(
                                             &policy,
                                             &finality,
                                             raw_galley.signed_turn,
                                             raw_galley.receipt,
                                             record,
                                         )?;
-                                    if finalized.coordinate() != stored_batch.coordinate() {
-                                        return Err(StoreError::Integrity(
+                            if finalized.coordinate() != stored_batch.coordinate() {
+                                return Err(StoreError::Integrity(
                                             "raw Galley replay finality coordinate differs from stored batch"
                                                 .to_string(),
                                         ));
-                                    }
-                                    crate::poa_event_batch_v2::verify_replayed_poa_event_batch_in(
-                                        &write_txn,
-                                        expected_ordinal,
-                                        &existing,
-                                        Some(&stored_batch),
-                                    )?;
-                                    crate::poa_holding_consumption::verify_replayed_poa_holding_consumption_in(
+                            }
+                            crate::poa_event_batch_v2::verify_replayed_poa_event_batch_in(
+                                &write_txn,
+                                expected_ordinal,
+                                &existing,
+                                Some(&stored_batch),
+                            )?;
+                            crate::poa_holding_consumption::verify_replayed_poa_holding_consumption_in(
                                         &write_txn,
                                         expected_ordinal,
                                         &existing,
                                         None,
                                     )?;
-                                    let _ = faithful;
-                                }
-                                let (committed_head, replayed_core_id) = match exact_fnsp_v3
-                                    .as_ref()
-                                {
-                                    #[cfg(test)]
-                                    Some(ExactFnspV3Weld::AccumulatorOnly(exact)) => {
-                                        crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
+                            let _ = faithful;
+                        }
+                        let (committed_head, replayed_core_id) = match exact_fnsp_v3.as_ref() {
+                            #[cfg(test)]
+                            Some(ExactFnspV3Weld::AccumulatorOnly(exact)) => {
+                                crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
                                             &write_txn,
                                             *exact,
                                         )?;
-                                        (None, None)
-                                    }
-                                    Some(ExactFnspV3Weld::Frame {
-                                        exact,
-                                        activation,
-                                        frame,
-                                    }) => {
-                                        crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
+                                (None, None)
+                            }
+                            Some(ExactFnspV3Weld::Frame {
+                                exact,
+                                activation,
+                                frame,
+                            }) => {
+                                crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
                                             &write_txn,
                                             *exact,
                                         )?;
-                                        crate::exact_fnsp_v3_frame_head::verify_replayed_exact_fnsp_v3_frame_with_activation_in(
+                                crate::exact_fnsp_v3_frame_head::verify_replayed_exact_fnsp_v3_frame_with_activation_in(
                                             &write_txn,
                                             *exact,
                                             activation.as_ref(),
                                             frame,
                                         )?;
-                                        let faithful = faithful.as_ref().ok_or_else(|| {
-                                            StoreError::Integrity(
-                                                "exact frame replay omitted faithful consensus coordinates"
-                                                    .to_string(),
-                                            )
-                                        })?;
-                                        let receipt_entry = receipt_entry.as_ref().ok_or_else(|| {
-                                            StoreError::Integrity(
-                                                "exact frame replay omitted durable receipt coordinates"
-                                                    .to_string(),
-                                            )
-                                        })?;
-                                        let (receipt_index, encoded_receipt) =
-                                            receipt_entry.entry();
-                                        if receipt_index != frame.receipt_log_index() {
-                                            return Err(StoreError::Integrity(
-                                                "exact frame replay receipt index disagrees with frame"
-                                                    .to_string(),
-                                            ));
-                                        }
-                                        let core_id = crate::finalized_receipt_core_v1::verify_replayed_finalized_receipt_core_in(
+                                let faithful = faithful.as_ref().ok_or_else(|| {
+                                    StoreError::Integrity(
+                                        "exact frame replay omitted faithful consensus coordinates"
+                                            .to_string(),
+                                    )
+                                })?;
+                                let receipt_entry = receipt_entry.as_ref().ok_or_else(|| {
+                                    StoreError::Integrity(
+                                        "exact frame replay omitted durable receipt coordinates"
+                                            .to_string(),
+                                    )
+                                })?;
+                                let (receipt_index, encoded_receipt) = receipt_entry.entry();
+                                if receipt_index != frame.receipt_log_index() {
+                                    return Err(StoreError::Integrity(
+                                        "exact frame replay receipt index disagrees with frame"
+                                            .to_string(),
+                                    ));
+                                }
+                                let core_id = crate::finalized_receipt_core_v1::verify_replayed_finalized_receipt_core_in(
                                             &write_txn,
                                             &existing,
                                             receipt_index,
@@ -2448,40 +2462,32 @@ impl PersistentStore {
                                             encoded_receipt,
                                             faithful,
                                         )?;
-                                        (
+                                (
                                             Some(crate::CommittedExactFnspV3FrameHeadV1::from_verified_durable(
                                                 frame.clone(),
                                             )),
                                             Some(core_id),
                                         )
-                                    }
-                                    None => (None, None),
-                                };
-                                // Already durably committed; nothing to do. The
-                                // welded notes/burns were written by the original
-                                // commit; signal a replay so the caller does NOT
-                                // re-apply purely-in-RAM derived state.
-                                return Ok(WeldedCommitOutcome {
-                                    outcome: CommitOutcome {
-                                        ordinal: expected_ordinal,
-                                        freshly_committed: false,
-                                    },
-                                    committed_head,
-                                    finalized_receipt_core_id: replayed_core_id,
-                                });
                             }
-                            return Err(StoreError::Integrity(format!(
-                                "commit_finalized_turn: ordinal {expected_ordinal} already holds a \
-                                 different turn (stored turn_hash != supplied)"
-                            )));
-                        }
-                        None => {
-                            return Err(StoreError::Integrity(format!(
-                                "commit_finalized_turn: cursor {cursor} > expected {expected_ordinal} \
-                                 but no record at {expected_ordinal} (corrupt log)"
-                            )));
-                        }
+                            None => (None, None),
+                        };
+                        // Already durably committed; nothing to do. The
+                        // welded notes/burns were written by the original
+                        // commit; signal a replay so the caller does NOT
+                        // re-apply purely-in-RAM derived state.
+                        return Ok(WeldedCommitOutcome {
+                            outcome: CommitOutcome {
+                                ordinal: expected_ordinal,
+                                freshly_committed: false,
+                            },
+                            committed_head,
+                            finalized_receipt_core_id: replayed_core_id,
+                        });
                     }
+                    return Err(StoreError::Integrity(format!(
+                        "commit_finalized_turn: ordinal {expected_ordinal} already holds a \
+                         different turn (stored turn_hash != supplied)"
+                    )));
                 }
                 return Err(StoreError::Integrity(format!(
                     "commit_finalized_turn: expected ordinal {expected_ordinal} but durable cursor \
@@ -2911,6 +2917,40 @@ impl PersistentStore {
             Some(guard) => Ok(Some(decode_commit_record(guard.value())?)),
             None => Ok(None),
         }
+    }
+
+    /// Load the immutable finalized authority coordinates for a live or compacted commit.
+    ///
+    /// Unlike [`Self::commit_record_at`], this remains available below the compaction floor. A
+    /// compacted result comes only from the audited dense certificate chain; it is sufficient for
+    /// PoA semantic replay but cannot be used to re-apply the checkpoint-subsumed write set.
+    pub fn finalized_commit_authority_at(
+        &self,
+        ordinal: u64,
+    ) -> Result<Option<crate::FinalizedCommitAuthorityV1>> {
+        let read_txn = self.db.begin_read()?;
+        let compacted_floor = read_txn
+            .open_table(tables::METADATA)?
+            .get(tables::META_COMMIT_COMPACTED)?
+            .map(|value| value.value())
+            .unwrap_or(0);
+        if ordinal < compacted_floor {
+            let certificates = crate::poa_compact_authority::load_audited_certificates_in_read(
+                &read_txn,
+                compacted_floor,
+            )?;
+            return Ok(certificates
+                .get(&ordinal)
+                .map(|certificate| certificate.authority()));
+        }
+        let table = read_txn.open_table(tables::COMMIT_LOG)?;
+        table
+            .get(ordinal)?
+            .map(|guard| {
+                decode_commit_record(guard.value())
+                    .and_then(|record| crate::FinalizedCommitAuthorityV1::from_record(&record))
+            })
+            .transpose()
     }
 
     /// The blocklace `block_id` of every durably committed turn this node has
@@ -3424,9 +3464,9 @@ impl PersistentStore {
     // Commit-log compaction (bound the WAL below a finalized checkpoint)
     // =========================================================================
 
-    /// Compact (delete) commit-log records whose finalized state a checkpoint
-    /// at/above `height` already subsumes, bounding the otherwise-unbounded
-    /// write-ahead log. Returns the number of records compacted.
+    /// Unsigned compatibility entry point. It never deletes: a checkpoint proves subsumption but
+    /// does not authenticate the compact carrier which replaces the removed records. Call
+    /// [`Self::compact_below_with_poa_anchor_v1`] with a signed exact preview to compact.
     ///
     /// # The safety constraint (provably safe — never best-effort)
     ///
@@ -3441,7 +3481,7 @@ impl PersistentStore {
     /// exists.
     ///
     /// Compaction is therefore safe ONLY under a COVERING ledger checkpoint:
-    /// this method removes records iff
+    /// the authenticated method removes records iff
     /// `latest_ledger_checkpoint_height() >= height`, and even then only the
     /// contiguous ordinal PREFIX of records with `record.height < height` (it
     /// stops at the first record with `record.height >= height`, so the live log
@@ -3479,6 +3519,40 @@ impl PersistentStore {
     /// crash mid-compaction leaves the pre-compaction (already-consistent) state
     /// in place.
     pub fn compact_below(&self, height: u64) -> Result<u64> {
+        if height == 0 {
+            return Ok(0);
+        }
+        tracing::debug!(
+            requested_height = height,
+            "compact_below: deletion requires an externally pinned signed PoA compact checkpoint anchor; refusing before mutation"
+        );
+        Ok(0)
+    }
+
+    /// Delete a checkpoint-subsumed prefix only after a hybrid quorum signed its exact preview.
+    ///
+    /// `trust_policy` is deployment/genesis-authenticated configuration supplied independently of
+    /// this database. The anchor's self-carried roster must equal its exact epoch root, and every
+    /// already-stored anchor is reauthenticated under the same policy before the lineage extends.
+    pub fn compact_below_with_poa_anchor_v1(
+        &self,
+        height: u64,
+        anchor: crate::SignedPoaCompactCheckpointAnchorV1,
+        trust_policy: &crate::PoaCompactTrustPolicyV1,
+    ) -> Result<u64> {
+        let trust_root = trust_policy.root_for_statement(anchor.statement())?;
+        let anchor = crate::poa_compact_authority::StoredPoaCompactCheckpointAnchorV1::new(
+            anchor, trust_root,
+        )?;
+        self.audit_poa_compact_authority_v1(Some(trust_policy))?;
+        self.compact_below_with_verified_poa_anchor_v1(height, anchor)
+    }
+
+    fn compact_below_with_verified_poa_anchor_v1(
+        &self,
+        height: u64,
+        anchor: crate::poa_compact_authority::StoredPoaCompactCheckpointAnchorV1,
+    ) -> Result<u64> {
         // ── Refuse without a covering checkpoint (the safety guard) ─────────
         // Compaction is sound only when a finalized ledger checkpoint at/above
         // `height` captures the state the to-be-removed records reconstruct.
@@ -3570,6 +3644,21 @@ impl PersistentStore {
                 &write_txn,
                 old_floor,
                 &doomed_records,
+            )?;
+
+            // Preserve the complete authority tuple and exact PoA sidecar identities BEFORE the
+            // generic rows which authenticated them are removed. The certificate chain and its
+            // terminal head advance in this same writer; a failure leaves the old log/floor intact.
+            let checkpoint_identity = crate::poa_compact_authority::checkpoint_identity_in_write(
+                &write_txn,
+                checkpoint_height,
+            )?;
+            crate::poa_compact_authority::stage_compacted_commit_authority_prefix_in(
+                &write_txn,
+                old_floor,
+                checkpoint_identity,
+                &doomed_records,
+                anchor,
             )?;
 
             // 2. Remove the doomed records from the commit log + their receipt /
@@ -5839,6 +5928,170 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn poa_v2_and_holding_compaction_reopen_keep_exact_retry_and_coordinates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("poa-v2-holding-compacted.redb");
+        let signer = [0x91; 32];
+        let actor_root = [0x92; 32];
+        let federation = [0x93; 32];
+        let (fixture_record, encoded, batch) = poa_v2_authority_fixture(
+            signer, signer, actor_root, actor_root, federation, federation,
+        );
+        let player_cell =
+            dregg_cell::CellId::derive_raw(&signer, blake3::hash(b"default").as_bytes()).0;
+        let holding = exact_poa_v2_holding(&batch, signer, player_cell);
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            if !install_active_poa_world(&store, batch.coordinate().world().clone()) {
+                return;
+            }
+            store
+                .commit_finalized_turn_welded(
+                    0,
+                    &fixture_record,
+                    &[],
+                    &[],
+                    Some(ReceiptWeldMode::AppendOrVerify {
+                        index: 0,
+                        encoded: &encoded,
+                    }),
+                    None,
+                    None,
+                    None,
+                    &[],
+                    None,
+                    None,
+                    Some(&batch),
+                    Some(&holding),
+                )
+                .unwrap();
+            let mut survivor = record(1, 1, Vec::new());
+            survivor.ledger_root = fixture_record.ledger_root;
+            store.commit_finalized_turn(1, &survivor).unwrap();
+            store
+                .store_ledger_checkpoint_snapshot(&crate::LedgerCheckpoint {
+                    height: 2,
+                    cells: Vec::new(),
+                    sovereign_commitments: Vec::new(),
+                    sovereign_registrations: Vec::new(),
+                })
+                .unwrap();
+            assert_eq!(store.compact_below_with_test_poa_anchor_v1(2).unwrap(), 1);
+            assert!(store.commit_record_at(0).unwrap().is_none());
+            store.audit_poa_event_batch_store_v2().unwrap();
+            store.audit_poa_holding_consumptions().unwrap();
+        }
+
+        let reopened = PersistentStore::open_with_test_poa_compact_trust_v1(&path).unwrap();
+        assert_eq!(
+            reopened.load_poa_event_batch_v2(0).unwrap(),
+            Some(batch.clone())
+        );
+        assert!(
+            !reopened
+                .commit_finalized_turn_welded(
+                    0,
+                    &fixture_record,
+                    &[],
+                    &[],
+                    Some(ReceiptWeldMode::AppendOrVerify {
+                        index: 0,
+                        encoded: &encoded,
+                    }),
+                    None,
+                    None,
+                    None,
+                    &[],
+                    None,
+                    None,
+                    Some(&batch),
+                    Some(&holding),
+                )
+                .unwrap()
+                .outcome
+                .freshly_committed,
+            "byte-exact V2 plus holding retry must survive compaction and reopen"
+        );
+
+        let mut substituted_record = fixture_record.clone();
+        substituted_record.creator[0] ^= 1;
+        assert!(
+            reopened
+                .commit_finalized_turn_welded(
+                    0,
+                    &substituted_record,
+                    &[],
+                    &[],
+                    Some(ReceiptWeldMode::AppendOrVerify {
+                        index: 0,
+                        encoded: &encoded,
+                    }),
+                    None,
+                    None,
+                    None,
+                    &[],
+                    None,
+                    None,
+                    Some(&batch),
+                    Some(&holding),
+                )
+                .is_err(),
+            "compacted V2 replay may not substitute the generic authority tuple"
+        );
+        assert!(
+            reopened
+                .commit_finalized_turn_welded(
+                    0,
+                    &fixture_record,
+                    &[],
+                    &[],
+                    Some(ReceiptWeldMode::AppendOrVerify {
+                        index: 0,
+                        encoded: &encoded,
+                    }),
+                    None,
+                    None,
+                    None,
+                    &[],
+                    None,
+                    None,
+                    Some(&batch),
+                    None,
+                )
+                .is_err(),
+            "compacted V2 replay may not omit the certified holding sidecar"
+        );
+
+        let (_, _, substituted_batch) = poa_v2_authority_fixture(
+            signer, signer, actor_root, [0x94; 32], federation, federation,
+        );
+        let substituted_holding = exact_poa_v2_holding(&substituted_batch, signer, player_cell);
+        assert!(
+            reopened
+                .commit_finalized_turn_welded(
+                    0,
+                    &fixture_record,
+                    &[],
+                    &[],
+                    Some(ReceiptWeldMode::AppendOrVerify {
+                        index: 0,
+                        encoded: &encoded,
+                    }),
+                    None,
+                    None,
+                    None,
+                    &[],
+                    None,
+                    None,
+                    Some(&substituted_batch),
+                    Some(&substituted_holding),
+                )
+                .is_err(),
+            "a compacted manifest cannot substitute its finalized actor-root coordinate"
+        );
+    }
+
+    #[test]
     fn poa_v2_central_writer_refuses_absent_or_wrong_active_world() {
         let signer = [0xE4; 32];
         let actor_root = [0xE5; 32];
@@ -6985,7 +7238,7 @@ pub(crate) mod tests {
         // ordinals 0,1,2 → heights 1,2,3). compact_below(3) removes the records
         // STRICTLY below height 3 = heights 1,2 = ordinals 0,1.
         checkpoint_from_log_no_codrive(&store, 3);
-        let compacted = store.compact_below(3).unwrap();
+        let compacted = store.compact_below_with_test_poa_anchor_v1(3).unwrap();
         assert_eq!(compacted, 2, "heights 1 and 2 are strictly below 3");
 
         // Physical records dropped by 2; the CURSOR is unchanged; the floor rose.
@@ -7040,7 +7293,7 @@ pub(crate) mod tests {
         let surviving_turn = store.commit_record_at(4).unwrap().unwrap();
 
         checkpoint_from_log_no_codrive(&store, 3);
-        assert_eq!(store.compact_below(3).unwrap(), 2);
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(3).unwrap(), 2);
 
         let report = store.verify_index_agrees_with_log().unwrap();
         assert!(report.ok(), "audit must hold after compaction: {report:?}");
@@ -7091,7 +7344,7 @@ pub(crate) mod tests {
         assert_eq!(ids_before.len(), 6);
 
         checkpoint_from_log_no_codrive(&store, 3);
-        assert_eq!(store.compact_below(3).unwrap(), 2);
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(3).unwrap(), 2);
 
         let ids_after: std::collections::HashSet<[u8; 32]> =
             store.commit_log_block_ids().unwrap().into_iter().collect();
@@ -7139,7 +7392,7 @@ pub(crate) mod tests {
                 sovereign_registrations: Vec::new(),
             })
             .unwrap();
-        assert_eq!(store.compact_below(3).unwrap(), 2);
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(3).unwrap(), 2);
 
         let after = store.load_per_cell_receipt_head_recovery_v1().unwrap();
         assert!(after.live_records.is_empty());
@@ -7187,7 +7440,7 @@ pub(crate) mod tests {
                 sovereign_registrations: Vec::new(),
             })
             .unwrap();
-        assert_eq!(store.compact_below(2).unwrap(), 1);
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(2).unwrap(), 1);
 
         let mut poisoned_x = x;
         assert!(poisoned_x.state.credit_balance(1));
@@ -7215,11 +7468,10 @@ pub(crate) mod tests {
         assert!(store.verify_index_agrees_with_log().unwrap().ok());
     }
 
-    /// THE CHECKPOINT CO-DRIVE: `checkpoint_ledger` at height H drives
-    /// `compact_below(H)`, so taking a finalized full-ledger checkpoint bounds
-    /// the WAL automatically — and the recovered ledger is unchanged.
+    /// A checkpoint alone is not deletion authority. It remains durable while unsigned
+    /// compaction refuses; a subsequent genuine hybrid anchor drives the same safe prefix.
     #[test]
-    fn checkpoint_ledger_co_drives_compaction() {
+    fn checkpoint_ledger_refuses_unsigned_compaction_then_signed_anchor_drives_it() {
         let store = PersistentStore::open_in_memory().unwrap();
         commit_distinct(&store, 6); // heights 1..=6
         let root_before = recovered_root(&store);
@@ -7232,14 +7484,18 @@ pub(crate) mod tests {
                 let _ = full.insert_cell(c);
             }
         }
-        // Checkpoint at height 6 → co-drives compact_below(6): every record with
-        // height < 6 (ordinals 0..4 = heights 1..5) is subsumed and compacted.
+        // The checkpoint is durable, but its old automatic call has no signed anchor and must
+        // delete nothing.
         store.checkpoint_ledger(&full, 6).unwrap();
+        assert_eq!(store.commit_compacted_floor().unwrap(), 0);
+        assert_eq!(store.commit_log_len().unwrap(), 6);
+
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(6).unwrap(), 5);
 
         assert_eq!(
             store.commit_compacted_floor().unwrap(),
             5,
-            "checkpoint at 6 co-drove compaction of the 5 records below height 6"
+            "the signed anchor compacted the 5 records below height 6"
         );
         assert_eq!(store.commit_log_len().unwrap(), 1, "only height-6 survives");
         assert_eq!(store.commit_cursor().unwrap(), 6, "cursor unchanged");
@@ -7266,11 +7522,11 @@ pub(crate) mod tests {
             root_before = recovered_root(&store);
             head_root = store.commit_record_at(5).unwrap().unwrap().ledger_root;
             checkpoint_from_log_no_codrive(&store, 4);
-            assert_eq!(store.compact_below(4).unwrap(), 3); // heights 1,2,3
+            assert_eq!(store.compact_below_with_test_poa_anchor_v1(4).unwrap(), 3); // heights 1,2,3
             drop(store);
         }
 
-        let store = PersistentStore::open(&path).unwrap();
+        let store = PersistentStore::open_with_test_poa_compact_trust_v1(&path).unwrap();
         // Durable post-compaction state.
         assert_eq!(store.commit_compacted_floor().unwrap(), 3);
         assert_eq!(store.commit_log_len().unwrap(), 3);
@@ -7294,7 +7550,7 @@ pub(crate) mod tests {
         commit_distinct(&store, 6); // heights 1..=6
         // Cover up to height 6, but only ask to compact below height 4.
         checkpoint_from_log_no_codrive(&store, 6);
-        let compacted = store.compact_below(4).unwrap();
+        let compacted = store.compact_below_with_test_poa_anchor_v1(4).unwrap();
         // heights 1,2,3 are strictly below 4 → ordinals 0,1,2 removed; the
         // record at height 4 (ordinal 3) and above survive.
         assert_eq!(compacted, 3);
@@ -7309,7 +7565,7 @@ pub(crate) mod tests {
 
         // A second compaction at the same height is an idempotent no-op (the
         // below-prefix is already gone).
-        assert_eq!(store.compact_below(4).unwrap(), 0);
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(4).unwrap(), 0);
         assert_eq!(store.commit_compacted_floor().unwrap(), 3);
     }
 
@@ -7328,7 +7584,7 @@ pub(crate) mod tests {
         // Checkpoint at height 3 covers heights ≤3. Records at heights 4,5,6 are
         // the overlay and are LOAD-BEARING (distinct, undominated cells).
         checkpoint_from_log_no_codrive(&store, 3);
-        assert_eq!(store.compact_below(3).unwrap(), 2); // only heights 1,2 go
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(3).unwrap(), 2); // only heights 1,2 go
 
         // The overlay records (4,5,6) are untouched and the ledger is intact.
         assert_eq!(recovered_root(&store), full);
@@ -8189,8 +8445,20 @@ pub(crate) mod tests {
         assert_eq!(store.receipt_chain_len().unwrap(), 1);
         assert_eq!(store.load_faithful_nullifier_records().unwrap().len(), 2);
 
+        store
+            .store_ledger_checkpoint_snapshot(&crate::LedgerCheckpoint {
+                height: 2,
+                cells: Vec::new(),
+                sovereign_commitments: Vec::new(),
+                sovereign_registrations: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(2).unwrap(), 1);
+        assert!(store.commit_record_at(0).unwrap().is_none());
+
         drop(store);
-        let reopened = PersistentStore::open(&path).expect("restart reauthenticates FRC1");
+        let reopened = PersistentStore::open_with_test_poa_compact_trust_v1(&path)
+            .expect("restart reauthenticates FRC1");
         assert_eq!(
             reopened.finalized_receipt_core_v1(0).unwrap().unwrap().0,
             fresh_core_id
@@ -8238,7 +8506,7 @@ pub(crate) mod tests {
         write.commit().unwrap();
         drop(reopened);
         assert!(
-            PersistentStore::open(&path).is_err(),
+            PersistentStore::open_with_test_poa_compact_trust_v1(&path).is_err(),
             "restart audit must refuse one semantic id indexed at two receipt coordinates"
         );
     }

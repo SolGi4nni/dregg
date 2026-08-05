@@ -316,14 +316,14 @@ pub fn audit_persisted_signal_semantics_against_genesis(
         }
 
         let commit = store
-            .commit_record_at(stored.commit_ordinal())
+            .finalized_commit_authority_at(stored.commit_ordinal())
             .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?
             .ok_or_else(|| {
                 SignalAdapterError::SemanticReplay(format!(
                     "Signal sequence {sequence} has no carrying generic commit"
                 ))
             })?;
-        let block = blocks.get(&commit.block_id).ok_or_else(|| {
+        let block = blocks.get(&commit.block_id()).ok_or_else(|| {
             SignalAdapterError::SemanticReplay(format!(
                 "Signal sequence {sequence} has no persisted carrying block"
             ))
@@ -339,7 +339,7 @@ pub fn audit_persisted_signal_semantics_against_genesis(
                     "Signal sequence {sequence} carrying SignedTurn is not exact: {error}"
                 ))
             })?;
-        if signed.turn.hash() != commit.turn_hash || commit.turn_hash != stored.turn_hash() {
+        if signed.turn.hash() != commit.turn_hash() || commit.turn_hash() != stored.turn_hash() {
             return Err(SignalAdapterError::SemanticReplay(format!(
                 "Signal sequence {sequence} disagrees with its finalized SignedTurn"
             )));
@@ -351,14 +351,14 @@ pub fn audit_persisted_signal_semantics_against_genesis(
                 ))
             },
         )?;
-        let receipt = receipts.get(&commit.receipt_hash).ok_or_else(|| {
+        let receipt = receipts.get(&commit.receipt_hash()).ok_or_else(|| {
             SignalAdapterError::SemanticReplay(format!(
                 "Signal sequence {sequence} has no exact durable receipt"
             ))
         })?;
-        if receipt.receipt_hash() != commit.receipt_hash
-            || commit.receipt_hash != stored.receipt_hash()
-            || receipt.turn_hash != commit.turn_hash
+        if receipt.receipt_hash() != commit.receipt_hash()
+            || commit.receipt_hash() != stored.receipt_hash()
+            || receipt.turn_hash != commit.turn_hash()
             || receipt.federation_id != authority_id
             || receipt.agent != signed.turn.agent
         {
@@ -418,10 +418,11 @@ pub fn audit_persisted_signal_semantics_against_genesis(
             replayed_output,
         )
         .map_err(|error| SignalAdapterError::PreparedTransition(error.to_string()))?;
-        let reconstructed = dregg_persist::PoaSignalTransitionV1::reconstruct_for_audit(
-            &rebuilt, &commit, &candidate,
-        )
-        .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?;
+        let reconstructed =
+            dregg_persist::PoaSignalTransitionV1::reconstruct_from_finalized_authority_for_audit(
+                &rebuilt, &commit, &candidate,
+            )
+            .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?;
         if &reconstructed != stored {
             return Err(SignalAdapterError::SemanticReplay(format!(
                 "Signal sequence {sequence} stored successor is not the projection of native Lean output"
@@ -1266,13 +1267,19 @@ mod tests {
     fn persisted_semantic_fixture(
         corruption: StoredSemanticCorruption,
     ) -> (PersistentStore, [u8; 32], [u8; 32]) {
+        populate_persisted_semantic_fixture(PersistentStore::open_in_memory().unwrap(), corruption)
+    }
+
+    fn populate_persisted_semantic_fixture(
+        store: PersistentStore,
+        corruption: StoredSemanticCorruption,
+    ) -> (PersistentStore, [u8; 32], [u8; 32]) {
         assert!(
             dregg_lean_ffi::poa_ffi::poa_signal_judge_available(),
             "semantic persistence tests require the native Lean Signal judge"
         );
         let authority = fixture_head().authority_id();
         let head = fixture_signal_head_for_finality_test(authority);
-        let store = PersistentStore::open_in_memory().unwrap();
         store.initialize_poa_signal_head(&head).unwrap();
 
         let clerk = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0x31; 32]));
@@ -1550,6 +1557,52 @@ mod tests {
                 .to_string()
                 .contains("independently expected digest")
         );
+    }
+
+    #[test]
+    fn semantic_replay_survives_checkpoint_compaction_and_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("poa-signal-semantic-compaction.redb");
+        let (store, authority, genesis_digest) = populate_persisted_semantic_fixture(
+            PersistentStore::open(&path).unwrap(),
+            StoredSemanticCorruption::None,
+        );
+        let survivor = CommitRecord {
+            ordinal: 1,
+            height: 2,
+            block_id: [0xA1; 32],
+            block_executed_up_to: 2,
+            turn_hash: [0xA2; 32],
+            creator: [0xA3; 32],
+            receipt_hash: [0xA4; 32],
+            ledger_root: [0x91; 32],
+            touched_cells: Vec::new(),
+            removed: Vec::new(),
+        };
+        store.commit_finalized_turn(1, &survivor).unwrap();
+        store
+            .store_ledger_checkpoint_snapshot(&dregg_persist::LedgerCheckpoint {
+                height: 2,
+                cells: Vec::new(),
+                sovereign_commitments: Vec::new(),
+                sovereign_registrations: Vec::new(),
+            })
+            .unwrap();
+        crate::install_verified_pq_cores();
+        assert_eq!(store.compact_below_with_test_poa_anchor_v1(2).unwrap(), 1);
+        assert!(store.commit_record_at(0).unwrap().is_none());
+        drop(store);
+
+        let reopened = PersistentStore::open_with_test_poa_compact_trust_v1(&path).unwrap();
+        let report = audit_persisted_signal_semantics_against_genesis(
+            &reopened,
+            authority,
+            Some(genesis_digest),
+        )
+        .unwrap();
+        assert_eq!(report.transition_count, 1);
+        assert_eq!(report.authority_id, authority);
+        assert_eq!(report.retained_genesis_digest, genesis_digest);
     }
 
     #[test]

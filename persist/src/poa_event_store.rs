@@ -540,14 +540,21 @@ impl PersistentStore {
         let by_ordinal = read.open_table(POA_EVENT_BY_COMMIT_ORDINAL_V1)?;
         let commits = read.open_table(tables::COMMIT_LOG)?;
         let metadata = read.open_table(tables::METADATA)?;
-        let compacted_ids = read.open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)?;
+        let compacted_floor = metadata
+            .get(tables::META_COMMIT_COMPACTED)?
+            .map(|value| value.value())
+            .unwrap_or(0);
+        let compacted = crate::poa_compact_authority::load_audited_certificates_in_read(
+            &read,
+            compacted_floor,
+        )?;
         validate_tables(
             &heads,
             &events,
             &by_ordinal,
             &commits,
-            &metadata,
-            &compacted_ids,
+            compacted_floor,
+            &compacted,
         )
     }
 
@@ -562,14 +569,21 @@ impl PersistentStore {
         let by_ordinal = read.open_table(POA_EVENT_BY_COMMIT_ORDINAL_V1)?;
         let commits = read.open_table(tables::COMMIT_LOG)?;
         let metadata = read.open_table(tables::METADATA)?;
-        let compacted_ids = read.open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)?;
+        let compacted_floor = metadata
+            .get(tables::META_COMMIT_COMPACTED)?
+            .map(|value| value.value())
+            .unwrap_or(0);
+        let compacted = crate::poa_compact_authority::load_audited_certificates_in_read(
+            &read,
+            compacted_floor,
+        )?;
         validate_tables(
             &heads,
             &events,
             &by_ordinal,
             &commits,
-            &metadata,
-            &compacted_ids,
+            compacted_floor,
+            &compacted,
         )?;
         validate_tag(schema_version, "PoA event schema version")?;
         let aggregate_key = stream_digest(aggregate, schema_version);
@@ -888,15 +902,11 @@ fn validate_tables(
     events: &impl ReadableTable<&'static [u8; 40], &'static [u8]>,
     by_ordinal: &impl ReadableTable<u64, &'static [u8; 40]>,
     commits: &impl ReadableTable<u64, &'static [u8]>,
-    metadata: &impl ReadableTable<&'static str, u64>,
-    compacted_ids: &impl ReadableTable<&'static [u8; 32], ()>,
+    compacted_floor: u64,
+    compacted: &BTreeMap<u64, crate::poa_compact_authority::CompactCommitAuthorityCertificateV1>,
 ) -> Result<()> {
-    let compacted_floor = metadata
-        .get(tables::META_COMMIT_COMPACTED)?
-        .map(|value| value.value())
-        .unwrap_or(0);
     let decoded_events = decode_indexed_events(events, by_ordinal)?;
-    for event in decoded_events.values() {
+    for (key, event) in &decoded_events {
         match commits.get(event.commit_ordinal)? {
             Some(commit_bytes) => {
                 let commit = crate::commit_log::decode_commit_record(commit_bytes.value())?;
@@ -909,9 +919,22 @@ fn validate_tables(
                 }
             }
             None if event.commit_ordinal < compacted_floor => {
-                if compacted_ids.get(&event.block_id)?.is_none() {
+                let certificate = compacted
+                    .get(&event.commit_ordinal)
+                    .ok_or_else(|| integrity("PoA event has no compact authority certificate"))?;
+                let wire = events
+                    .get(key)?
+                    .ok_or_else(|| integrity("PoA event disappeared during carrier audit"))?;
+                let identity = crate::poa_compact_authority::event_v1_identity(key, wire.value())?;
+                if !certificate.matches_block_carrier(
+                    event.commit_ordinal,
+                    event.block_id,
+                    event.turn_hash,
+                    event.receipt_hash,
+                ) || !certificate.has_sidecar(&identity)
+                {
                     return Err(integrity(
-                        "PoA event's compacted generic carrier has no retained block id",
+                        "compacted PoA event disagrees with its certified carrier",
                     ));
                 }
             }
@@ -1617,10 +1640,10 @@ mod tests {
                     sovereign_registrations: Vec::new(),
                 })
                 .unwrap();
-            assert_eq!(store.compact_below(2).unwrap(), 1);
+            assert_eq!(store.compact_below_with_test_poa_anchor_v1(2).unwrap(), 1);
             store.audit_poa_event_store().unwrap();
         }
-        let reopened = PersistentStore::open(&path).unwrap();
+        let reopened = PersistentStore::open_with_test_poa_compact_trust_v1(&path).unwrap();
         reopened.audit_poa_event_store().unwrap();
         assert_eq!(reopened.commit_compacted_floor().unwrap(), 1);
         assert_eq!(
@@ -1635,7 +1658,7 @@ mod tests {
     }
 
     #[test]
-    fn poa_event_store_reopen_rejects_missing_compacted_carrier_identity() {
+    fn poa_event_store_authority_does_not_degrade_to_compacted_block_membership() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("poa-events-corrupt-compacted-carrier.redb");
         {
@@ -1663,7 +1686,7 @@ mod tests {
                     sovereign_registrations: Vec::new(),
                 })
                 .unwrap();
-            assert_eq!(store.compact_below(2).unwrap(), 1);
+            assert_eq!(store.compact_below_with_test_poa_anchor_v1(2).unwrap(), 1);
 
             let write = store.db.begin_write().unwrap();
             {
@@ -1674,9 +1697,14 @@ mod tests {
             }
             write.commit().unwrap();
         }
-        // Opening a durable database runs the store audit, so the missing
-        // compacted carrier must prevent the image from reopening at all.
-        assert!(PersistentStore::open(&path).is_err());
+        // The certificate remains the PoA authority; the compacted block-id table is a separate
+        // no-double-apply projection. They must nevertheless be EXACTLY equal, because silently
+        // losing this row would make an already-applied block executable again after restart.
+        let error = match PersistentStore::open_with_test_poa_compact_trust_v1(&path) {
+            Ok(_) => panic!("open unexpectedly accepted a missing compacted block id"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("cardinality disagrees"), "{error}");
     }
 
     #[test]

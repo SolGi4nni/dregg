@@ -46,6 +46,7 @@ pub mod note_tree;
 pub mod per_cell_receipt_heads;
 pub mod poa_activated_content;
 pub mod poa_authority_export;
+mod poa_compact_authority;
 pub mod poa_event_batch_plan;
 pub mod poa_event_batch_v2;
 pub mod poa_event_store;
@@ -109,6 +110,10 @@ pub use poa_activated_content::{
     PoaActivatedContentInstallOutcomeV1, PoaActivatedContentInstallStatusV1,
 };
 pub use poa_authority_export::PoaAuthorityCommitSnapshotV1;
+pub use poa_compact_authority::{
+    FinalizedCommitAuthorityV1, PoaCompactCheckpointStatementV1, PoaCompactTrustPolicyV1,
+    PoaCompactTrustRootV1, SignedPoaCompactCheckpointAnchorV1,
+};
 pub use poa_event_batch_plan::{
     PoaEventBatchInitialHeadOriginV2, PoaEventBatchPlanAuthorityV2,
     PoaEventBatchPlanEventAuthorityV2, PoaEventBatchPlanInitialHeadV2,
@@ -770,6 +775,10 @@ impl PersistentStore {
         };
         store.initialize_tables()?;
         store.enforce_canonical_state_schema_epoch()?;
+        store.enforce_poa_compact_authority_schema_v1()?;
+        // Trust is checked before any reopen migration mutates derived indexes. A positive-floor
+        // store opened without its external deployment policy refuses at this wall.
+        store.audit_poa_compact_authority_v1(None)?;
         // This migration must precede any generic index rebuild: once a legacy
         // store has compacted records, their write sets are unavailable and an
         // absent provenance baseline is unreconstructable (fail before mutating
@@ -777,6 +786,39 @@ impl PersistentStore {
         store.migrate_per_cell_receipt_head_index_v1()?;
         // One-time index-shape migration for stores written before the
         // (height, creator, ordinal) key (no-op on fresh/migrated stores).
+        store.migrate_height_creator_index()?;
+        store.rebuild_exact_fnsp_v3_online_index_on_open()?;
+        store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
+        store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
+        store.audit_finalized_receipt_cores_v1_on_open()?;
+        store.audit_poa_signal_state()?;
+        store.audit_poa_event_store()?;
+        store.audit_poa_event_batch_store_v2()?;
+        store.audit_poa_holding_consumptions()?;
+        Ok(store)
+    }
+
+    /// Open a persistent store while supplying the independently authenticated PoA compaction
+    /// committee history for this deployment.
+    ///
+    /// A store with a positive compaction floor cannot be opened through [`Self::open`]: its
+    /// self-carried anchor rosters are evidence, not trust roots. Production derives `trust_policy`
+    /// from deployment/genesis configuration held outside this database and supplies it on every
+    /// restart. Every historical anchor must resolve to one exact policy root.
+    pub fn open_with_poa_compact_trust_v1(
+        path: &Path,
+        trust_policy: &PoaCompactTrustPolicyV1,
+    ) -> Result<Self> {
+        let db = Database::create(path).map_err(|e| StoreError::Database(e.to_string()))?;
+        let store = Self {
+            db,
+            fail_persist_block: std::sync::atomic::AtomicBool::new(false),
+        };
+        store.initialize_tables()?;
+        store.enforce_canonical_state_schema_epoch()?;
+        store.enforce_poa_compact_authority_schema_v1()?;
+        store.audit_poa_compact_authority_v1(Some(trust_policy))?;
+        store.migrate_per_cell_receipt_head_index_v1()?;
         store.migrate_height_creator_index()?;
         store.rebuild_exact_fnsp_v3_online_index_on_open()?;
         store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
@@ -803,10 +845,12 @@ impl PersistentStore {
         };
         store.initialize_tables()?;
         store.enforce_canonical_state_schema_epoch()?;
+        store.enforce_poa_compact_authority_schema_v1()?;
         store.migrate_per_cell_receipt_head_index_v1()?;
         store.rebuild_exact_fnsp_v3_online_index_on_open()?;
         store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
+        store.audit_poa_compact_authority_v1(None)?;
         store.audit_finalized_receipt_cores_v1_on_open()?;
         store.audit_poa_signal_state()?;
         store.audit_poa_event_store()?;
@@ -956,6 +1000,7 @@ impl PersistentStore {
             poa_event_store::initialize_poa_event_tables_in(&write_txn)?;
             poa_event_batch_v2::initialize_poa_event_batch_tables_v2_in(&write_txn)?;
             poa_holding_consumption::initialize_poa_holding_consumption_tables_in(&write_txn)?;
+            poa_compact_authority::initialize_poa_compact_authority_tables_v1_in(&write_txn)?;
             poa_world_activation::initialize_poa_world_activation_tables_v1_in(&write_txn)?;
             poa_activated_content::initialize_poa_activated_content_tables_v1_in(&write_txn)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;

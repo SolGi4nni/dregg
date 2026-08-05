@@ -419,8 +419,10 @@ mod tests {
     ///
     /// Reconstructs via `{latest checkpoint} ⊕ cell_overlay_since(cp_height)` —
     /// i.e. `CrashRecovery.recover`, which equals full replay (`recover_eq_replay`)
-    /// AND is stable under commit-log compaction (`checkpoint_ledger` co-drives
-    /// `compact_below`, so `commit_records_from(0)` is no longer the full history
+    /// AND is stable under authenticated commit-log compaction (a signed
+    /// `PoaCompactCheckpointStatementV1` plus an externally authenticated
+    /// `PoaCompactTrustPolicyV1` drives `compact_below_with_poa_anchor_v1`, so
+    /// `commit_records_from(0)` is no longer the full history
     /// once a checkpoint exists; the checkpoint subsumes the compacted prefix).
     /// Falls back to a genesis full-log replay when no checkpoint exists.
     fn full_replay_root(store: &PersistentStore) -> [u8; 32] {

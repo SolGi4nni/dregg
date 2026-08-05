@@ -18,7 +18,7 @@ use redb::{ReadableTable, ReadableTableMetadata, TableDefinition};
 
 use crate::commit_log::{CommitRecord, FinalizedFaithfulRootWeld, decode_commit_record};
 use crate::faithful_note_root_history::{FaithfulNoteRootEnvelopeV1, FaithfulNoteRootRecordV1};
-use crate::{PersistentStore, Result, StoreError, StoredAttestedRoot};
+use crate::{FinalizedCommitAuthorityV1, PersistentStore, Result, StoreError, StoredAttestedRoot};
 
 pub(crate) const FINALIZED_RECEIPT_CORES_V1: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("finalized_receipt_cores_v1");
@@ -125,7 +125,7 @@ fn validate_legacy_predecessor_in(
 }
 
 fn validate_consensus_coordinates(
-    record: &CommitRecord,
+    authority: &FinalizedCommitAuthorityV1,
     faithful: &FaithfulNoteRootRecordV1,
     attested: &StoredAttestedRoot,
     receipt: &TurnReceipt,
@@ -135,21 +135,21 @@ fn validate_consensus_coordinates(
     let tau_round = attested
         .finality_round
         .ok_or_else(|| integrity("authenticated finality round is absent"))?;
-    if context.block_id() != record.block_id
+    if context.block_id() != authority.block_id()
         || context.block_id() != faithful.block_id
         || attested.blocklace_block_id != Some(context.block_id())
         || context.tau_round() != tau_round
         || context.consensus_unix_seconds() != attested.timestamp
-        || core.turn_hash() != record.turn_hash
+        || core.turn_hash() != authority.turn_hash()
         || core.turn_hash() != receipt.turn_hash
-        || core.agent() != record.creator
+        || core.agent() != authority.creator()
         || core.agent() != receipt.agent.0
         || core.federation_id() != faithful.federation_id
         || core.federation_id() != receipt.federation_id
         || attested.federation_id.0 != core.federation_id()
         || core.committee_epoch() != faithful.committee_epoch
-        || record.receipt_hash != receipt.receipt_hash()
-        || record.height != faithful.height
+        || authority.receipt_hash() != receipt.receipt_hash()
+        || authority.height() != faithful.height
         || attested.height != faithful.height
     {
         return Err(integrity(
@@ -166,10 +166,22 @@ fn derive_core(
     predecessor: FinalizedReceiptPredecessorV1,
     receipt: &TurnReceipt,
 ) -> Result<FinalizedReceiptCoreV1> {
+    let authority = FinalizedCommitAuthorityV1::from_record(record)?;
+    derive_core_from_authority(&authority, faithful, attested, predecessor, receipt)
+}
+
+fn derive_core_from_authority(
+    authority: &FinalizedCommitAuthorityV1,
+    faithful: &FaithfulNoteRootRecordV1,
+    attested: &StoredAttestedRoot,
+    predecessor: FinalizedReceiptPredecessorV1,
+    receipt: &TurnReceipt,
+) -> Result<FinalizedReceiptCoreV1> {
     let tau_round = attested
         .finality_round
         .ok_or_else(|| integrity("authenticated finality round is absent"))?;
-    let context = FinalizedExecutionContextV1::new(record.block_id, tau_round, attested.timestamp);
+    let context =
+        FinalizedExecutionContextV1::new(authority.block_id(), tau_round, attested.timestamp);
     let core = FinalizedReceiptCoreV1::from_receipt(
         context,
         faithful.committee_epoch,
@@ -177,7 +189,7 @@ fn derive_core(
         receipt,
     )
     .map_err(|error| integrity(format!("core derivation failed: {error}")))?;
-    validate_consensus_coordinates(record, faithful, attested, receipt, &core)?;
+    validate_consensus_coordinates(authority, faithful, attested, receipt, &core)?;
     Ok(core)
 }
 
@@ -346,11 +358,12 @@ pub(crate) fn verify_replayed_finalized_receipt_core_in(
 fn audit_loaded_core(
     core: &FinalizedReceiptCoreV1,
     receipt: &TurnReceipt,
-    record: &CommitRecord,
+    authority: &FinalizedCommitAuthorityV1,
     faithful: &FaithfulNoteRootRecordV1,
     attested: &StoredAttestedRoot,
 ) -> Result<()> {
-    let expected = derive_core(record, faithful, attested, core.predecessor(), receipt)?;
+    let expected =
+        derive_core_from_authority(authority, faithful, attested, core.predecessor(), receipt)?;
     if &expected != core {
         return Err(integrity("durable core does not rederive at open"));
     }
@@ -525,7 +538,27 @@ impl PersistentStore {
         let attested = read.open_table(crate::tables::ATTESTED_ROOTS)?;
         let idx_turn = read.open_table(crate::tables::IDX_TURN_BY_HASH)?;
         let log = read.open_table(crate::tables::COMMIT_LOG)?;
-        let compacted = read.open_table(crate::tables::COMMIT_COMPACTED_BLOCK_IDS)?;
+        let compacted_floor = read
+            .open_table(crate::tables::METADATA)?
+            .get(crate::tables::META_COMMIT_COMPACTED)?
+            .map(|value| value.value())
+            .unwrap_or(0);
+        let compact_certificates = crate::poa_compact_authority::load_audited_certificates_in_read(
+            &read,
+            compacted_floor,
+        )?;
+        let mut compact_authority_by_turn = BTreeMap::new();
+        for certificate in compact_certificates.values() {
+            let authority = certificate.authority();
+            if compact_authority_by_turn
+                .insert(authority.turn_hash(), authority)
+                .is_some()
+            {
+                return Err(integrity(
+                    "compacted finalized authorities contain a duplicate turn hash",
+                ));
+            }
+        }
         let mut rebuilt_heads: BTreeMap<[u8; 32], DurableFinalizedReceiptCoreHeadV1> =
             BTreeMap::new();
         let mut referenced_ids = BTreeSet::new();
@@ -578,27 +611,16 @@ impl PersistentStore {
                 &attested_root,
             )?;
 
-            let record = if let Some(ordinal) = idx_turn.get(&core.turn_hash())? {
+            let authority = if let Some(ordinal) = idx_turn.get(&core.turn_hash())? {
                 let bytes = log
                     .get(ordinal.value())?
                     .ok_or_else(|| integrity("turn index names a missing commit record"))?;
-                decode_commit_record(bytes.value())?
-            } else if compacted.get(&core.context().block_id())?.is_some() {
-                CommitRecord {
-                    ordinal: 0,
-                    height: faithful.height,
-                    block_id: core.context().block_id(),
-                    block_executed_up_to: 0,
-                    turn_hash: receipt.turn_hash,
-                    creator: receipt.agent.0,
-                    receipt_hash: receipt.receipt_hash(),
-                    ledger_root: attested_root.merkle_root,
-                    touched_cells: Vec::new(),
-                    removed: Vec::new(),
-                }
+                FinalizedCommitAuthorityV1::from_record(&decode_commit_record(bytes.value())?)?
+            } else if let Some(authority) = compact_authority_by_turn.get(&core.turn_hash()) {
+                authority.clone()
             } else {
                 return Err(integrity(
-                    "semantic core is neither live-indexed nor covered by compaction",
+                    "semantic core is neither live-indexed nor named by exact compact authority",
                 ));
             };
 
@@ -651,7 +673,7 @@ impl PersistentStore {
                     && previous.legacy_receipt_hash == legacy_receipt_hash => {}
                 _ => return Err(integrity("semantic per-agent chain is broken")),
             }
-            audit_loaded_core(&core, &receipt, &record, faithful, &attested_root)?;
+            audit_loaded_core(&core, &receipt, &authority, faithful, &attested_root)?;
             rebuilt_heads.insert(
                 receipt.agent.0,
                 DurableFinalizedReceiptCoreHeadV1 {

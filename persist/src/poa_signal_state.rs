@@ -539,7 +539,24 @@ impl PoaSignalTransitionV1 {
             predecessor.encode()?,
             predecessor.clone(),
             commit.ordinal,
-            commit,
+            commit.turn_hash,
+            commit.receipt_hash,
+            candidate,
+        )
+    }
+
+    /// Reconstruct from the compaction-stable finalized authority view.
+    pub fn reconstruct_from_finalized_authority_for_audit(
+        predecessor: &PoaSignalHeadV1,
+        authority: &crate::FinalizedCommitAuthorityV1,
+        candidate: &PreparedPoaSignalTransitionV1,
+    ) -> Result<Self> {
+        plan_transition(
+            predecessor.encode()?,
+            predecessor.clone(),
+            authority.ordinal(),
+            authority.turn_hash(),
+            authority.receipt_hash(),
             candidate,
         )
     }
@@ -907,7 +924,16 @@ impl PersistentStore {
         let by_ordinal = read.open_table(tables::POA_SIGNAL_BY_COMMIT_ORDINAL_V1)?;
         validate_tables(&heads, &transitions, &by_ordinal)?;
         let commits = read.open_table(tables::COMMIT_LOG)?;
-        validate_generic_commit_carriers(&transitions, &commits)
+        let compacted_floor = read
+            .open_table(tables::METADATA)?
+            .get(tables::META_COMMIT_COMPACTED)?
+            .map(|value| value.value())
+            .unwrap_or(0);
+        let compacted = crate::poa_compact_authority::load_audited_certificates_in_read(
+            &read,
+            compacted_floor,
+        )?;
+        validate_generic_commit_carriers(&transitions, &commits, compacted_floor, &compacted)
     }
 
     /// Capture one complete, structurally audited Signal history under one read
@@ -923,7 +949,16 @@ impl PersistentStore {
         let by_ordinal = read.open_table(tables::POA_SIGNAL_BY_COMMIT_ORDINAL_V1)?;
         validate_tables(&heads, &transitions, &by_ordinal)?;
         let commits = read.open_table(tables::COMMIT_LOG)?;
-        validate_generic_commit_carriers(&transitions, &commits)?;
+        let compacted_floor = read
+            .open_table(tables::METADATA)?
+            .get(tables::META_COMMIT_COMPACTED)?
+            .map(|value| value.value())
+            .unwrap_or(0);
+        let compacted = crate::poa_compact_authority::load_audited_certificates_in_read(
+            &read,
+            compacted_floor,
+        )?;
+        validate_generic_commit_carriers(&transitions, &commits, compacted_floor, &compacted)?;
 
         let Some(current_bytes) = heads.get(&authority_id)? else {
             return Ok(None);
@@ -997,7 +1032,8 @@ pub(crate) fn stage_fresh_poa_signal_transition_in(
         predecessor_bytes,
         predecessor,
         commit_ordinal,
-        record,
+        record.turn_hash,
+        record.receipt_hash,
         candidate,
     )?;
     let key = transition.key();
@@ -1064,7 +1100,8 @@ pub(crate) fn verify_replayed_poa_signal_transition_in(
         stored.predecessor_head.clone(),
         predecessor,
         commit_ordinal,
-        record,
+        record.turn_hash,
+        record.receipt_hash,
         candidate,
     )?;
     if expected.encode()? != stored_bytes {
@@ -1144,7 +1181,8 @@ fn plan_transition(
     predecessor_head: Vec<u8>,
     predecessor: PoaSignalHeadV1,
     commit_ordinal: u64,
-    record: &CommitRecord,
+    turn_hash: [u8; 32],
+    receipt_hash: [u8; 32],
     candidate: &PreparedPoaSignalTransitionV1,
 ) -> Result<PoaSignalTransitionV1> {
     if predecessor.authority_id != candidate.authority_id
@@ -1179,8 +1217,8 @@ fn plan_transition(
         candidate.authority_id,
         sequence,
         commit_ordinal,
-        record.turn_hash,
-        record.receipt_hash,
+        turn_hash,
+        receipt_hash,
         predecessor.digest(),
         &successor,
         judge_input_digest,
@@ -1193,8 +1231,8 @@ fn plan_transition(
         authority_id: candidate.authority_id,
         sequence,
         commit_ordinal,
-        turn_hash: record.turn_hash,
-        receipt_hash: record.receipt_hash,
+        turn_hash,
+        receipt_hash,
         predecessor_head_digest: predecessor.digest(),
         successor_head_digest: successor.digest(),
         transition_digest,
@@ -1319,21 +1357,46 @@ fn validate_tables(
 fn validate_generic_commit_carriers(
     transitions: &impl ReadableTable<&'static [u8; 40], &'static [u8]>,
     commits: &impl ReadableTable<u64, &'static [u8]>,
+    compacted_floor: u64,
+    compacted: &BTreeMap<u64, crate::poa_compact_authority::CompactCommitAuthorityCertificateV1>,
 ) -> Result<()> {
     for entry in transitions.iter()? {
-        let (_, value) = entry?;
+        let (key, value) = entry?;
+        let key = *key.value();
         let transition = PoaSignalTransitionV1::decode(value.value())?;
-        let commit_bytes = commits
-            .get(transition.commit_ordinal)?
-            .ok_or_else(|| integrity("PoA Signal transition has no generic commit carrier"))?;
-        let commit = crate::commit_log::decode_commit_record(commit_bytes.value())?;
-        if commit.ordinal != transition.commit_ordinal
-            || commit.turn_hash != transition.turn_hash
-            || commit.receipt_hash != transition.receipt_hash
-        {
-            return Err(integrity(
-                "PoA Signal transition disagrees with its generic commit carrier",
-            ));
+        match commits.get(transition.commit_ordinal)? {
+            Some(commit_bytes) => {
+                let commit = crate::commit_log::decode_commit_record(commit_bytes.value())?;
+                if commit.ordinal != transition.commit_ordinal
+                    || commit.turn_hash != transition.turn_hash
+                    || commit.receipt_hash != transition.receipt_hash
+                {
+                    return Err(integrity(
+                        "PoA Signal transition disagrees with its generic commit carrier",
+                    ));
+                }
+            }
+            None if transition.commit_ordinal < compacted_floor => {
+                let certificate = compacted.get(&transition.commit_ordinal).ok_or_else(|| {
+                    integrity("PoA Signal transition has no compact authority certificate")
+                })?;
+                let identity = crate::poa_compact_authority::signal_identity(&key, value.value())?;
+                if !certificate.matches_signal(
+                    transition.commit_ordinal,
+                    transition.turn_hash,
+                    transition.receipt_hash,
+                ) || !certificate.has_sidecar(&identity)
+                {
+                    return Err(integrity(
+                        "compacted PoA Signal transition disagrees with its certified carrier",
+                    ));
+                }
+            }
+            None => {
+                return Err(integrity(
+                    "PoA Signal transition has no generic commit carrier",
+                ));
+            }
         }
     }
     Ok(())
@@ -1729,6 +1792,124 @@ mod tests {
         assert_eq!(
             store.load_poa_signal_head(AUTHORITY).unwrap().unwrap(),
             head
+        );
+    }
+
+    #[test]
+    fn poa_signal_compaction_reopen_preserves_history_and_exact_retry_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("poa-signal-compacted.redb");
+        let empty_root = crate::canonical_ledger_root(&Ledger::new());
+        let signal_record = record(0, empty_root);
+        let candidate;
+        let durable_head;
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            store.initialize_poa_signal_head(&genesis()).unwrap();
+            candidate = self::candidate(&store, 1);
+            store
+                .commit_finalized_turn_with_poa_signal(0, &signal_record, &candidate)
+                .unwrap();
+            durable_head = store.load_poa_signal_head(AUTHORITY).unwrap().unwrap();
+            store
+                .commit_finalized_turn(1, &record(1, empty_root))
+                .unwrap();
+            store
+                .store_ledger_checkpoint_snapshot(&crate::LedgerCheckpoint {
+                    height: 2,
+                    cells: Vec::new(),
+                    sovereign_commitments: Vec::new(),
+                    sovereign_registrations: Vec::new(),
+                })
+                .unwrap();
+            assert_eq!(store.compact_below_with_test_poa_anchor_v1(2).unwrap(), 1);
+            assert!(store.commit_record_at(0).unwrap().is_none());
+            store.audit_poa_signal_state().unwrap();
+        }
+
+        let reopened = PersistentStore::open_with_test_poa_compact_trust_v1(&path).unwrap();
+        let history = reopened
+            .load_poa_signal_history(AUTHORITY)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.transitions().len(), 1);
+        assert_eq!(history.current(), &durable_head);
+        let replay = reopened
+            .commit_finalized_turn_with_poa_signal(0, &signal_record, &candidate)
+            .unwrap();
+        assert!(!replay.freshly_committed);
+
+        let mut substituted_record = signal_record.clone();
+        substituted_record.creator[0] ^= 1;
+        assert!(
+            reopened
+                .commit_finalized_turn_with_poa_signal(0, &substituted_record, &candidate)
+                .is_err(),
+            "compacted retry must bind every scalar coordinate of the original CommitRecord"
+        );
+        let substituted_candidate = PreparedPoaSignalTransitionV1::new(
+            AUTHORITY,
+            candidate.expected_predecessor_head_digest(),
+            8,
+            12,
+            br#"{"canon":"substituted-after-compaction"}"#.to_vec(),
+            br#"{"judgeInput":1}"#.to_vec(),
+            br#"{"judgeOutput":1}"#.to_vec(),
+        )
+        .unwrap();
+        assert!(
+            reopened
+                .commit_finalized_turn_with_poa_signal(0, &signal_record, &substituted_candidate,)
+                .is_err(),
+            "compacted retry must keep the exact certified Signal sidecar coordinate and wire"
+        );
+        assert_eq!(
+            reopened.load_poa_signal_head(AUTHORITY).unwrap().unwrap(),
+            durable_head
+        );
+
+        // Re-seal a well-formed Signal row under a substituted carrier coordinate. The row's own
+        // framing remains valid, but its exact wire identity no longer matches the immutable
+        // compact certificate captured before the generic record was deleted.
+        let key = transition_key(AUTHORITY, 1);
+        let write = reopened.db.begin_write().unwrap();
+        {
+            let mut transitions = write.open_table(tables::POA_SIGNAL_TRANSITIONS_V1).unwrap();
+            let bytes = transitions.get(&key).unwrap().unwrap().value().to_vec();
+            let mut substituted = PoaSignalTransitionV1::decode(&bytes).unwrap();
+            substituted.turn_hash[0] ^= 1;
+            let mut successor = substituted.successor_head().unwrap();
+            let substituted_digest = transition_core_digest(
+                substituted.authority_id,
+                substituted.sequence,
+                substituted.commit_ordinal,
+                substituted.turn_hash,
+                substituted.receipt_hash,
+                substituted.predecessor_head_digest,
+                &successor,
+                substituted.judge_input_digest,
+                substituted.judge_output_digest,
+            );
+            successor.last_transition_digest = substituted_digest;
+            substituted.transition_digest = substituted_digest;
+            substituted.successor_head_digest = successor.digest();
+            substituted.successor_head = successor.encode().unwrap();
+            let coherently_resealed = substituted.encode().unwrap();
+            transitions
+                .insert(&key, coherently_resealed.as_slice())
+                .unwrap();
+        }
+        write.commit().unwrap();
+        let policy = PersistentStore::test_poa_compact_trust_policy_v1().unwrap();
+        let error = reopened
+            .audit_poa_compact_authority_v1(Some(&policy))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("sidecars disagree"), "{error}");
+        drop(reopened);
+        assert!(
+            PersistentStore::open_with_test_poa_compact_trust_v1(&path).is_err(),
+            "open-time audit must reject a re-sealed compacted Signal coordinate substitution"
         );
     }
 
