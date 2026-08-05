@@ -429,7 +429,7 @@ pub fn verify_authority_export(
         .map_err(AuthorityExportError::Lean)?;
     match replayed {
         dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(bytes)
-            if bytes.as_bytes() == judge_output => {}
+            if bytes.as_str().as_bytes() == judge_output => {}
         dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(_) => {
             return Err(AuthorityExportError::Lean(
                 "native Lean output differs from the exported exact output".into(),

@@ -221,6 +221,9 @@ pg-mirror-live = ["dep:tokio-postgres"]
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
+# Exposes only explicitly named corruption/legacy-atomicity fixture helpers;
+# production builds retain the closed PoA preparation/finalization boundary.
+dregg-persist = { path = "../persist", features = ["test-support"] }
 # `tests/mldsa_live_verify.rs` generates a GENUINE ML-DSA-65 keypair + signature with the crate and
 # proves the node's installed Lean verify core (BRICK 8) is the accept/reject authority routing them —
 # same fips204 0.4.x the `dregg-pq` leaf carries, so the sig bytes are byte-identical to production.

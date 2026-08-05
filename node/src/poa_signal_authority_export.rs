@@ -402,7 +402,7 @@ mod tests {
             .append_receipt_chain_entry(0, &postcard::to_stdvec(&receipt).unwrap())
             .unwrap();
         store
-            .commit_finalized_turn_with_poa_signal(0, &record, &candidate)
+            .commit_finalized_turn_with_poa_signal_for_test(0, &record, &candidate)
             .unwrap();
 
         let export = build_authority_export(&store, authority, 1, &node_key).unwrap();

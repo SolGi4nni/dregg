@@ -276,7 +276,9 @@ pub fn export_semantic_review_bytes(bytes: &[u8]) -> Result<SignalSemanticReview
 
 fn native_judge(input: &str) -> Result<Option<String>, String> {
     match dregg_lean_ffi::poa_ffi::judge_poa_signal(input) {
-        Ok(dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(output)) => Ok(Some(output)),
+        Ok(dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(output)) => {
+            Ok(Some(output.into_string()))
+        }
         Ok(dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Rejected) => Ok(None),
         Err(reason) => Err(reason),
     }

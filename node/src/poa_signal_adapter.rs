@@ -132,6 +132,7 @@ pub struct SignalAuthorityContext {
 pub struct EvaluatedSignalCandidate {
     input: CanonicalSignalInput,
     output: CanonicalSignalOutput,
+    lean_acceptance: dregg_lean_ffi::poa_ffi::AcceptedPoaSignalOutput,
 }
 
 /// Result of rebuilding one complete persisted Signal history through the
@@ -208,15 +209,19 @@ pub fn evaluate_signal_claim(
     let input = prepare_signal_input(context, claim)?;
     let verdict = dregg_lean_ffi::poa_ffi::judge_poa_signal(input.as_str())
         .map_err(SignalAdapterError::LeanTransport)?;
-    let bytes = match verdict {
-        dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(bytes) => bytes,
+    let accepted = match verdict {
+        dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(accepted) => accepted,
         dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Rejected => {
             return Err(SignalAdapterError::LeanRejected);
         }
     };
-    let output = CanonicalSignalOutput::parse(&bytes)?;
+    let output = CanonicalSignalOutput::parse(accepted.as_str())?;
     validate_evaluation_binding(&input.dto, &output.dto)?;
-    Ok(EvaluatedSignalCandidate { input, output })
+    Ok(EvaluatedSignalCandidate {
+        input,
+        output,
+        lean_acceptance: accepted,
+    })
 }
 
 /// Evaluate one public claim against an exact persisted authority head and
@@ -239,14 +244,14 @@ pub fn evaluate_persisted_signal_claim(
     let evaluated = evaluate_signal_claim(&context, claim)?;
     let successor_canon = serde_json::to_vec(&evaluated.output.dto.successor_canon)
         .map_err(|error| SignalAdapterError::Json(error.to_string()))?;
-    dregg_persist::PreparedPoaSignalTransitionV1::new(
+    dregg_persist::PreparedPoaSignalTransitionV1::from_lean_accepted(
         head.authority_id(),
         head.digest(),
         evaluated.output.dto.successor_world.sequence,
         evaluated.output.dto.successor_canon.revision,
         successor_canon,
         evaluated.input.bytes.into_bytes(),
-        evaluated.output.bytes.into_bytes(),
+        evaluated.lean_acceptance,
     )
     .map_err(|error| SignalAdapterError::PreparedTransition(error.to_string()))
 }
@@ -387,30 +392,30 @@ pub fn audit_persisted_signal_semantics_against_genesis(
             )));
         }
         let replayed_output = match replayed_verdict {
-            dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(bytes) => bytes,
+            dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Accepted(output) => output,
             dregg_lean_ffi::poa_ffi::PoaSignalVerdict::Rejected => {
                 return Err(SignalAdapterError::SemanticReplay(format!(
                     "Lean rejected stored Signal sequence {sequence}"
                 )));
             }
         };
-        if replayed_output.as_bytes() != stored.judge_output() {
+        if replayed_output.as_str().as_bytes() != stored.judge_output() {
             return Err(SignalAdapterError::SemanticReplay(format!(
                 "Signal sequence {sequence} stored judge output differs from native Lean replay"
             )));
         }
-        let output = CanonicalSignalOutput::parse(&replayed_output)?;
+        let output = CanonicalSignalOutput::parse(replayed_output.as_str())?;
         validate_evaluation_binding(&expected_input.dto, &output.dto)?;
         let successor_canon = serde_json::to_vec(&output.dto.successor_canon)
             .map_err(|error| SignalAdapterError::Json(error.to_string()))?;
-        let candidate = dregg_persist::PreparedPoaSignalTransitionV1::new(
+        let candidate = dregg_persist::PreparedPoaSignalTransitionV1::from_lean_accepted(
             authority_id,
             rebuilt.digest(),
             output.dto.successor_world.sequence,
             output.dto.successor_canon.revision,
             successor_canon,
             expected_input.as_str().as_bytes().to_vec(),
-            replayed_output.into_bytes(),
+            replayed_output,
         )
         .map_err(|error| SignalAdapterError::PreparedTransition(error.to_string()))?;
         let reconstructed = dregg_persist::PoaSignalTransitionV1::reconstruct_for_audit(
@@ -1305,7 +1310,7 @@ mod tests {
         let input_bytes = serde_json::to_vec(&stored_input).unwrap();
         let output_bytes = serde_json::to_vec(&stored_output).unwrap();
         let successor_bytes = serde_json::to_vec(&successor_canon).unwrap();
-        let candidate = PreparedPoaSignalTransitionV1::new(
+        let candidate = PreparedPoaSignalTransitionV1::new_for_test(
             authority,
             head.digest(),
             stored_output.successor_world.sequence,
@@ -1351,7 +1356,7 @@ mod tests {
             .append_receipt_chain_entry(0, &postcard::to_stdvec(&receipt).unwrap())
             .unwrap();
         store
-            .commit_finalized_turn_with_poa_signal(0, &record, &candidate)
+            .commit_finalized_turn_with_poa_signal_for_test(0, &record, &candidate)
             .unwrap();
         let genesis_digest = head.digest();
         (store, authority, genesis_digest)

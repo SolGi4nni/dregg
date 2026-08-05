@@ -10003,7 +10003,7 @@ mod tests {
         s.store
             .initialize_poa_signal_head(&genesis)
             .expect("initialize test PoA authority");
-        let candidate = dregg_persist::PreparedPoaSignalTransitionV1::new(
+        let candidate = dregg_persist::PreparedPoaSignalTransitionV1::new_for_test(
             TEST_POA_AUTHORITY,
             genesis.digest(),
             genesis.world_sequence() + 1,
@@ -10029,7 +10029,7 @@ mod tests {
             removed: Vec::new(),
         };
         s.store
-            .commit_finalized_turn_with_poa_signal(0, &record, &candidate)
+            .commit_finalized_turn_with_poa_signal_for_test(0, &record, &candidate)
             .expect("atomically commit test PoA transition");
         (turn_hash, receipt_hash)
     }
