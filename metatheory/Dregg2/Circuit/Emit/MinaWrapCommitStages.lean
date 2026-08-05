@@ -14,7 +14,9 @@ emitted descriptor, fills cells, and runs the deployed prover. House Law #1.
 `kimchi/src/verifier.rs` on a Wrap verifier index (no lookup index, no optional gate commitments):
 
   * **`public_comm`** (`verifier.rs:834-857`) — `PolyComm::multi_scalar_mul(lagrange_bases,
-    −public_input)`, then `mask_custom` with all-ones blinders, i.e. one further `+ H`. **40 terms.**
+    −public_input)`, then `mask_custom` with all-ones blinders, i.e. one further `+ H`.
+    **41 nominal, 31 meaningful**: ten of the block's forty public inputs are ZERO, and a zero
+    scalar makes the term the point at infinity, which an affine term list cannot carry (§6b).
   * **`f_comm`** (`verifier.rs:904-953`) — `sigma_comm[PERMUTS−1]` at `perm_scalars`, plus one term
     per `linearization.index_terms`; that list is **empty** on the wrap side, so **1 term**.
   * **`ft_comm`** (`verifier.rs:958-964`) — `chunk(f_comm, ζ^srs_len) − chunk(t_comm, ζ^srs_len) ·
@@ -496,15 +498,60 @@ def XI_TERMS : List Aff :=
     toAff (MinaWrapGroupGate.smul (qpow XI i)
       (MinaWrapAggregationGate.COMBINE_POINTS.getD i (0, 0, 1))))
 
-/-- ⚑ The 41 terms of `public_comm`: the forty Lagrange bases at the block's own NEGATED public
-inputs, then the SRS blinder `H` that `mask_custom` adds (`verifier.rs:849-855`). The blinder is a
-TERM, not a decoration — `MinaWrapPublicCommGate.tamper_blinder_dropped` is the refutation that
+/-- ⚑ The 41 NOMINAL terms of `public_comm`: the forty Lagrange bases at the block's own NEGATED
+public inputs, then the SRS blinder `H` that `mask_custom` adds (`verifier.rs:849-855`). The blinder
+is a TERM, not a decoration — `MinaWrapPublicCommGate.tamper_blinder_dropped` is the refutation that
 dropping it changes the answer. -/
-def PUBLIC_TERMS : List Aff :=
+def PUBLIC_TERMS_NOMINAL : List Aff :=
   ((List.range 40).map (fun i =>
       toAff (MinaWrapGroupGate.smul (MinaWrapPublicCommGate.NEG_PUBLIC.getD i 0)
         (MinaWrapPublicCommGate.LAGRANGE.getD i (0, 0, 1)))))
   ++ [toAff MinaWrapPublicCommGate.SRS_H]
+
+/-! ### ⚑ THE IDENTITY CANNOT RIDE IN AN AFFINE TERM LIST — found 2026-08-05, on the wire.
+
+TEN of the block's forty public inputs are **zero**. `smul 0 P` is the point at infinity, and
+`toAff` reads it as `(0, 0)` — because `finv 0 = 0`, not because `(0,0)` means anything. `(0,0)` is
+**not on Pallas**, and folding it with `addAffine` takes the running total OFF THE CURVE.
+
+⚑ **The 41-term fold reached o1-labs' `public_comm` ANYWAY, and only because ten is EVEN.** Adding
+`(0,0)` twice is the identity map, so the ten pseudo-points cancel in pairs and the accumulator
+returns to the curve. With an odd count the answer is simply WRONG. That is a correct result
+standing on a parity coincidence in one block's public inputs, and the theorems below are what
+replace the coincidence: the identity terms are DROPPED, and the fold is over the 31 that carry a
+non-zero scalar.
+
+This is the same "nominal vs meaningful" split `FT_TERMS` already carries (9 nominal / 7 meaningful),
+now forced by the data rather than by the shape of `verifier.rs`. -/
+
+/-- The affine reading of the point at infinity. Not a point — a sentinel `toAff` produces. -/
+def AFF_IDENTITY : Aff := (0, 0)
+
+/-- ⚑ **AND IT IS NOT ON THE CURVE**, which is the whole reason it cannot be a fold term. -/
+theorem the_affine_identity_is_not_on_pallas : onPallas AFF_IDENTITY = false := by decide
+
+/-- ⚑ **ONE OF THEM TAKES THE FOLD OFF PALLAS; TWO OF THEM CANCEL.** The mechanism, on the block's
+own point — this is the coincidence the filter removes, stated so it cannot be rediscovered. -/
+theorem the_identity_term_leaves_the_curve_and_pairs_cancel :
+    onPallas (addAffine PT_A AFF_IDENTITY) = false
+      ∧ addAffine (addAffine PT_A AFF_IDENTITY) AFF_IDENTITY = PT_A := by decide
+
+/-- ⚑ **THE MEANINGFUL TERMS — 31 of 41.** -/
+def PUBLIC_TERMS : List Aff :=
+  PUBLIC_TERMS_NOMINAL.filter (fun p => !(decide (p.1 = 0) && decide (p.2 = 0)))
+
+/-- ⚑ **THE CENSUS: 41 nominal, 31 meaningful, 10 dropped.** -/
+theorem the_public_term_census :
+    PUBLIC_TERMS_NOMINAL.length = 41 ∧ PUBLIC_TERMS.length = 31 := by decide
+
+/-- ⚑ **AND EVERYTHING DROPPED WAS THE IDENTITY** — nothing with a real scalar left the fold. -/
+theorem only_identity_terms_were_dropped :
+    ((PUBLIC_TERMS_NOMINAL.filter (fun p => decide (p.1 = 0) && decide (p.2 = 0))).all
+      (fun p => decide (p = AFF_IDENTITY))) = true := by decide
+
+/-- ⚑ **AND EVERY SURVIVING TERM IS A REAL PALLAS POINT.** -/
+theorem every_meaningful_public_term_is_on_pallas :
+    PUBLIC_TERMS.all onPallas = true := by decide
 
 /-- ⚑ The 8 terms of `ft_comm`: `chunk(f_comm, ζ^srs)` — one chunk on the wrap side, so `f_comm`
 itself — minus each of the seven `t_comm` chunks at `ζ^(srs·j) · (ζⁿ − 1)`. **9 nominal, 7
@@ -540,10 +587,30 @@ multiplication actually happens inside a descriptor. -/
 theorem the_xi_fold_is_o1_labs_aggregate :
     sumOut XI_TERMS = toAff MinaWrapAggregationGate.COMBINED_GOLD := by decide
 
-/-- ⚑ **THE `public_comm` FOLD REACHES o1-LABS' `public_comm`** — 40 Lagrange bases at the negated
-public inputs, plus the `mask_custom` blinder, which is a TERM and not a decoration. -/
+/-- ⚑ **THE `public_comm` FOLD REACHES o1-LABS' `public_comm`** — the 31 Lagrange terms with a
+non-zero public input, plus the `mask_custom` blinder, which is a TERM and not a decoration. -/
 theorem the_public_fold_is_o1_labs_public_comm :
     sumOut PUBLIC_TERMS = toAff MinaWrapPublicCommGate.PUBLIC_COMM_GOLD := by decide
+
+/-- ⚑ **AND THE 41-TERM FOLD REACHED IT TOO — BY PARITY, NOT BY CONSTRUCTION.** Kept as the record
+of what was actually shipped before 2026-08-05: the nominal fold agrees. -/
+theorem the_nominal_fold_also_agreed :
+    sumOut PUBLIC_TERMS_NOMINAL = toAff MinaWrapPublicCommGate.PUBLIC_COMM_GOLD := by decide
+
+/-- ⚑ **…AND ONE MORE IDENTITY BREAKS IT.** This is the refutation that makes the theorem above a
+COINCIDENCE rather than a result: append a single further point at infinity — the shape a block with
+an odd number of zero public inputs would produce — and the fold misses o1-labs' value. The filtered
+`PUBLIC_TERMS` is insensitive to this by construction; the nominal list was not. -/
+theorem an_odd_identity_count_misses_the_golden :
+    sumOut (PUBLIC_TERMS_NOMINAL ++ [AFF_IDENTITY])
+      ≠ toAff MinaWrapPublicCommGate.PUBLIC_COMM_GOLD := by decide
+
+/-- ⚑ …and the filtered fold IS insensitive: the same appended identity is dropped, so the answer
+does not move. -/
+theorem the_filtered_fold_is_insensitive_to_an_appended_identity :
+    sumOut ((PUBLIC_TERMS_NOMINAL ++ [AFF_IDENTITY]).filter
+      (fun p => !(decide (p.1 = 0) && decide (p.2 = 0))))
+      = toAff MinaWrapPublicCommGate.PUBLIC_COMM_GOLD := by decide
 
 /-- ⚑ **THE `ft_comm` FOLD REACHES o1-LABS' `ft_comm`.** -/
 theorem the_ft_fold_is_o1_labs_ft_comm :
@@ -851,5 +918,13 @@ def ladderPIs : List ℤ := piPair ladderRef.1 ladderRef.2
 #assert_axioms the_ft_fold_is_o1_labs_ft_comm
 #assert_axioms the_f_fold_is_o1_labs_f_comm
 #assert_axioms the_four_goldens_are_distinct
+#assert_axioms the_affine_identity_is_not_on_pallas
+#assert_axioms the_identity_term_leaves_the_curve_and_pairs_cancel
+#assert_axioms the_public_term_census
+#assert_axioms only_identity_terms_were_dropped
+#assert_axioms every_meaningful_public_term_is_on_pallas
+#assert_axioms the_nominal_fold_also_agreed
+#assert_axioms an_odd_identity_count_misses_the_golden
+#assert_axioms the_filtered_fold_is_insensitive_to_an_appended_identity
 
 end Dregg2.Circuit.Emit.MinaWrapCommitStages

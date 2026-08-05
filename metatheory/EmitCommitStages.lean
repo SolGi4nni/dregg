@@ -57,5 +57,16 @@ def main (args : List String) : IO Unit :=
   -- `the_xi_fold_is_o1_labs_aggregate` and its three siblings, plus
   -- `the_four_goldens_are_distinct` so they cannot all be satisfied by one collapsed constant.
   | ["aggmsm"]     => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm.xiAggMsmDesc)
+  -- ⚑ The four o1-labs goldens as limb pairs, taken from the GATE CONSTANTS and never from any
+  -- fold's own output. This is the anchor `circuit/tests/mina_commit_stages_prove.rs` recomputes
+  -- against, so that test carries NO transcribed decimal: it reads the term points out of the
+  -- emitted descriptor's ROM, folds them in Rust, and lands here.
+  | ["goldlimbs"]  => do
+      let emit (g : Dregg2.Circuit.Emit.MinaWrapGroupGate.Pt) : IO Unit :=
+        IO.println (render (piPair (toAff g).1 (toAff g).2))
+      emit Dregg2.Circuit.Emit.MinaWrapPublicCommGate.PUBLIC_COMM_GOLD
+      emit Dregg2.Circuit.Emit.MinaWrapGroupGate.F_COMM_GOLD
+      emit Dregg2.Circuit.Emit.MinaWrapGroupGate.FT_COMM_GOLD
+      emit Dregg2.Circuit.Emit.MinaWrapAggregationGate.COMBINED_GOLD
   | _ => IO.eprintln
-      "usage: EmitCommitStages.lean (sizes|xi|pub|f|ft|agg|ladder)[trace|pis] | aggmsm"
+      "usage: EmitCommitStages.lean (sizes|xi|pub|f|ft|agg|ladder)[trace|pis] | aggmsm | goldlimbs"
