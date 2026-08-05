@@ -32,11 +32,17 @@
 //! 20 s *per link*):
 //!
 //! ```text
-//! cd metatheory && lake build mina_chain_emit \
-//!   && ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink
+//! cd metatheory && lake build mina_chain_emit
+//! # §1-§4 reach only links 0..3 -- ~4 MINUTES, and the whole fold gate goes live:
+//! ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink 4
+//! # §5 (the whole chain) needs all 46 -- ~45 min:
+//! ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink
 //! ```
 //!
-//! The 46 PI vectors ARE tracked (`chainlink-pis.txt`), so §0 runs with no emit at all.
+//! ⚑ **THE PARTIAL EMIT IS THE POINT OF THE `count` ARGUMENT.** A fold gate that needs 45 minutes
+//! of rendering before it can run at all is a gate every machine reports RED and everyone learns to
+//! ignore. Four links is four minutes. The 46 PI vectors ARE tracked (`pasta-fq-chainlink-pis.txt`),
+//! so §0 -- the claim that the 46 emitted witnesses ARE the block's chain -- runs with no emit at all.
 //!
 //! Run: `cargo test -p dregg-circuit-prove --release --test mina_phase2_chain_fold -- --nocapture`
 
@@ -101,9 +107,11 @@ fn link_trace(j: usize) -> Vec<Vec<BabyBear>> {
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
             "chain-link witness {} missing ({e}).\n\
-             Emit the 46 witnesses first (COMPILED — the interpreter costs 9m20s per link):\n  \
+             Emit the witnesses first (COMPILED — the interpreter costs 9m20s per link).\n  \
+             §1-§4 need only links 0..3, which is ~4 MINUTES:\n  \
              cd metatheory && lake build mina_chain_emit \\\n    \
-             && ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink",
+             && ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink 4\n  \
+             (omit the `4` for all 46, which §5 needs.)",
             path.display()
         )
     });

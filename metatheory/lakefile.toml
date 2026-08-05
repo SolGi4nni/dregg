@@ -76,7 +76,13 @@ root = "MinaSgBench"
 # ⚠ DELIBERATELY NOT IN `defaultTargets`, like `mina_sg_bench`: it drags the whole Pasta sponge
 # cone through C codegen. Build it explicitly:
 #     lake build mina_chain_emit
-#     ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink
+#     ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink 4   # ~4 min
+#     ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink     # all 46, ~45 min
+#
+# The optional COUNT exists so the fold gate is livable: sections 1-4 of
+# `circuit-prove/tests/mina_phase2_chain_fold.rs` reach only links 0..3. A gate that needs 45
+# minutes of rendering before it can run at all is one every machine reports RED and everyone
+# learns to ignore.
 [[lean_exe]]
 name = "mina_chain_emit"
 root = "MinaChainEmit"
