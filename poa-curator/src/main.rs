@@ -35,10 +35,13 @@ reruns every transition through native Lean, and prints one machine-readable
 semantic-replay report. It does not authenticate where the wires came from.
 
 `signal-review` reruns the supplied state/carrier through Lean for semantic
-inspection only. Its commit/receipt/signer coordinates are caller claims, not
-finality evidence. `promotion-inbox` therefore refuses until a node authority
-bridge supplies and verifies the finalized SignedTurn, executor receipt, signer,
-and durable CommitRecord reconstruction.
+inspection only. `promotion-inbox` instead requires `--bundle` to be a
+bearer-fetched POA-SIGNAL-NODE-ENVELOPE-V1: the curator checks its exact
+SignedTurn, executor receipt, rostered-node signature, durable CommitRecord
+digest/projection, and native-Lean replay. The V1 export has no quorum or
+threshold/hybrid certificate, external deployment-manifest trust pin,
+actor-cell PQ-enrollment proof, or exact signed-catalog mission/config binding,
+so this command still refuses canon promotion.
 "#;
 
 fn main() {
@@ -95,10 +98,69 @@ fn command_promotion_inbox(flags: &BTreeMap<String, String>) -> Result<(), Strin
         ],
         &[],
     )?;
-    Err(
-        "promotion-inbox refused: semantic replay cannot authenticate finalized provenance; a node authority bridge must verify the exact SignedTurn, executor receipt, signer, and durable CommitRecord before beta evidence can become promotion-ready"
-            .into(),
+    let authority_path = flag_path(flags, "bundle")?;
+    let manifest_path = flag_path(flags, "manifest")?;
+    let deployment_path = flag_path(flags, "deployment")?;
+    let pin = CuratorKeyPin::load(flag_path(flags, "pin")?).map_err(|error| error.to_string())?;
+    let bundle = Poag1Bundle::load(&manifest_path).map_err(|error| error.to_string())?;
+    let bound = bundle
+        .bind_deployment(&deployment_path)
+        .map_err(|error| error.to_string())?;
+    let envelope = ContentEpochEnvelope::load(flag_path(flags, "signature")?)
+        .map_err(|error| error.to_string())?;
+    let epoch = flag_u64(flags, "epoch")?;
+    let counter = flag_u64(flags, "counter")?;
+    let verified_content = envelope
+        .verify(&bound, &pin, epoch, counter)
+        .map_err(|error| error.to_string())?;
+    let authority = poa_curator::authority_export::verify_authority_export_file(
+        &authority_path,
+        bound.deployment(),
     )
+    .map_err(|error| error.to_string())?;
+    let activation_digest = verified_content
+        .activation_digest()
+        .strip_prefix("sha256:")
+        .ok_or_else(|| "verified activation digest is not canonical SHA-256".to_owned())?
+        .to_owned();
+    if authority.content_root != bundle.content_root()
+        || authority.content_epoch != bundle.content_epoch()
+        || authority.activation_digest != activation_digest
+    {
+        return Err(
+            "promotion-inbox refused: node envelope names a different signed content epoch".into(),
+        );
+    }
+    let _mission_draft = bundle
+        .prepare_mission(authority.mission_id, &[], None)
+        .map_err(|error| error.to_string())?;
+    refuse_node_envelope_promotion(authority.sequence, epoch, counter)
+}
+
+fn refuse_node_envelope_promotion(sequence: u64, epoch: u64, counter: u64) -> Result<(), String> {
+    Err(format!(
+        "promotion-inbox refused after checking the exact node-attested envelope for authority sequence {}: POA-SIGNAL-NODE-ENVELOPE-V1 does not prove an externally pinned deployment roster, actor-cell PQ enrollment, exact authenticated mission/config equality, or federation finality; those bindings plus a quorum/threshold hybrid certificate over the carrying block, exact receipt, and durable commitment root are required (signed content epoch {epoch}, counter {counter})",
+        sequence
+    ))
+}
+
+#[cfg(test)]
+mod node_envelope_promotion_tests {
+    use super::*;
+
+    #[test]
+    fn otherwise_checked_node_envelope_reaches_explicit_four_gap_hard_refusal() {
+        let error = refuse_node_envelope_promotion(3, 7, 4).unwrap_err();
+        for missing in [
+            "externally pinned deployment roster",
+            "actor-cell PQ enrollment",
+            "exact authenticated mission/config equality",
+            "federation finality",
+            "quorum/threshold hybrid certificate",
+        ] {
+            assert!(error.contains(missing), "missing refusal clause: {missing}");
+        }
+    }
 }
 
 fn command_signal_replay(flags: &BTreeMap<String, String>) -> Result<(), String> {

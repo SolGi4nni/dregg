@@ -2407,6 +2407,10 @@ pub fn router_with_cors(
         // `dark-bazaar-private-n4k4` family and fails closed on committee / verified-core /
         // certificate. (`crate::dark_clearing_service`.)
         .merge(crate::dark_clearing_service::routes())
+        // Operator-only Signal node-envelope diagnostic. This route inherits
+        // the bearer layer below and applies its own proxy-aware rate/concurrency
+        // budget; it is neither anonymous nor a finality/provenance surface.
+        .merge(crate::poa_signal_authority_export::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 

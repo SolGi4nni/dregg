@@ -6,6 +6,7 @@
 //! byte-pinned container, selects values, and delegates signatures to the
 //! canonical `dregg-types` Ed25519 primitive.
 
+pub mod authority_export;
 pub mod signal_replay;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -253,6 +254,7 @@ pub struct PoaDeploymentScope {
     manifest_sha256: String,
     policy_sha256: String,
     deployment_digest: String,
+    validator_public_keys: Vec<[u8; 32]>,
     verified: Option<VerifiedDeploymentArtifacts>,
 }
 
@@ -334,6 +336,7 @@ impl PoaDeploymentScope {
         let policy_sha256 = hex_encode(&sha256_raw(&policy_bytes));
         let deployment_digest =
             derive_signal_deployment_digest(deployment_id, &manifest_sha256, &policy_sha256);
+        let validator_public_keys = manifest_validator_public_keys(object)?;
         Ok(Self {
             deployment_id: deployment_id.to_owned(),
             federation_id: federation_id.to_owned(),
@@ -341,6 +344,7 @@ impl PoaDeploymentScope {
             manifest_sha256,
             policy_sha256,
             deployment_digest,
+            validator_public_keys,
             verified: None,
         })
     }
@@ -477,6 +481,10 @@ impl PoaDeploymentScope {
             genesis_epoch,
             genesis_threshold,
         )?;
+        let validator_public_keys = validators
+            .iter()
+            .map(|validator| parse_hex_array::<32>(&validator.public_key, "validator public_key"))
+            .collect::<Result<Vec<_>, _>>()?;
         let nodes = verify_public_topology(manifest, &validators)?;
         let deployment_preimage = format!(
             "{POA_DEPLOYMENT_DOMAIN}\0{}\0{}",
@@ -500,6 +508,7 @@ impl PoaDeploymentScope {
             manifest_sha256,
             policy_sha256,
             deployment_digest,
+            validator_public_keys,
             verified: Some(VerifiedDeploymentArtifacts {
                 root,
                 manifest_bytes,
@@ -534,6 +543,14 @@ impl PoaDeploymentScope {
     /// policy digest as well as the manifest-pinned genesis identity.
     pub fn deployment_digest(&self) -> &str {
         &self.deployment_digest
+    }
+
+    /// Exact ordered Ed25519 committee roster pinned by this deployment.
+    /// Authority exports are accepted only when their node signature verifies
+    /// under one of these keys; the export's self-declared key is never a trust
+    /// root.
+    pub fn validator_public_keys(&self) -> &[[u8; 32]] {
+        &self.validator_public_keys
     }
 
     pub fn verified_manifest_bytes(&self) -> Result<&[u8], CuratorError> {
@@ -3006,6 +3023,36 @@ fn require_exact_object_keys(
     Err(format!(
         "{context} keys differ from v1 (missing={missing:?}, unknown={unknown:?})"
     ))
+}
+
+fn manifest_validator_public_keys(
+    manifest: &serde_json::Map<String, Value>,
+) -> Result<Vec<[u8; 32]>, CuratorError> {
+    let nodes = manifest
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CuratorError::Deployment("manifest validator roster is absent".into()))?;
+    let mut keys = Vec::with_capacity(nodes.len());
+    let mut distinct = BTreeSet::new();
+    for (index, node) in nodes.iter().enumerate() {
+        let key = node
+            .as_object()
+            .and_then(|node| node.get("public_key"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                CuratorError::Deployment(format!(
+                    "manifest node {index} validator public_key is absent"
+                ))
+            })?;
+        let key = parse_hex_array::<32>(key, "validator public_key")?;
+        if !distinct.insert(key) {
+            return Err(CuratorError::Deployment(
+                "manifest validator roster contains a duplicate key".into(),
+            ));
+        }
+        keys.push(key);
+    }
+    Ok(keys)
 }
 
 fn parse_sha256(value: &str, field: &'static str) -> Result<[u8; 32], CuratorError> {

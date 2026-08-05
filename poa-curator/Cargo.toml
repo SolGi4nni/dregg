@@ -13,8 +13,14 @@ description = "Fail-closed Path of Angels content curator over Lean-emitted POAG
 
 [dependencies]
 blake3 = "1"
+dregg-cell = { path = "../cell" }
 dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+dregg-pq = { path = "../dregg-pq" }
+dregg-sdk = { path = "../sdk", default-features = false }
+dregg-turn = { path = "../turn" }
 dregg-types = { path = "../types" }
+base64 = "0.22"
+postcard = { version = "1", features = ["use-std"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
@@ -23,3 +29,19 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Match the parent workspace's resolution law even though the curator remains
+# independently buildable for the operator ceremony.
+[patch."https://github.com/o1-labs/proof-systems"]
+poly-commitment = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
+mina-poseidon = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
+mina-curves = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
+
+[patch."https://github.com/Plonky3/Plonky3"]
+p3-fri = { path = "../vendor/plonky3-fri-82cfad73" }
+p3-challenger = { path = "../vendor/plonky3-challenger-82cfad73" }
+
+[patch.crates-io]
+curve25519-dalek = { path = "../vendor/curve25519-dalek-dregg" }
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }

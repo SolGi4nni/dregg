@@ -13,7 +13,7 @@ fn binary() -> &'static str {
 }
 
 #[test]
-fn promotion_inbox_fails_closed_until_the_node_authority_bridge_exists() {
+fn promotion_inbox_fails_closed_on_missing_authority_and_content_artifacts() {
     let output = Command::new(binary())
         .args([
             "promotion-inbox",
@@ -37,10 +37,8 @@ fn promotion_inbox_fails_closed_until_the_node_authority_bridge_exists() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let error = String::from_utf8_lossy(&output.stderr);
-    assert!(error.contains("promotion-inbox refused"));
-    assert!(error.contains("node authority bridge"));
-    assert!(error.contains("SignedTurn"));
-    assert!(error.contains("durable CommitRecord"));
+    assert!(error.contains("poa-curator:"));
+    assert!(error.contains("No such file") || error.contains("not found"));
 }
 
 #[test]
