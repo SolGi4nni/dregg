@@ -1,5 +1,69 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (THE MISSING PRIMITIVE) — **`assert_equal` exists**: a zero-row union-find over `PVar` composed at `circuitPositions`, and a merged placement is PROVED to be `place` of the renamed gate list — so the old naming-a-variable style is the special case and every existing byte pin transfers
+
+The lane that wrote the first non-`wrap_main` circuit named it: *"`mergeRoots` is the seam where an
+`assert_equal` remap would compose — and has no declaration at all. This is the single biggest
+missing primitive."* `Dregg2/Circuit/Emit/KimchiAssertEqual.lean` is it. `KimchiPlacement` is
+UNCHANGED but for the comment that named the hole.
+
+⛑ **CAN TWO ALREADY-PLACED VALUES BE EQUATED? YES, AT ZERO ROWS.** Two gate fragments authored
+separately, sharing no variable (`the_fragments_share_no_variable`), concatenated by a third party:
+before the equality every cell self-wires; after one appended pair σ carries a 2-cycle ACROSS them,
+`(0,2) ↦ (1,0) ↦ (0,2)`. Row count, gate sequence and every coefficient unchanged.
+
+⛑ **THE ROW COST IS MEASURED, NOT RELAYED.** `bridge/mina-zkapp/scripts/assert-equal-row-cost-oracle.mjs`
+(o1js 2.15.0, read-only `Provable.constraintSystem`, exits non-zero if this stops holding): two
+constrained witnesses ± `a.assertEquals(b)` = **2 rows both ways**; `Poseidon.hash([x])` against a
+separately-allocated claim ± `h.assertEquals(c)` = **14 rows both ways**, identical gate sequence.
+**Delta 0.** `merging_emits_no_row` is that fact as a theorem, general in the map AND the gate list.
+
+⛑ **THE COMPATIBILITY ARGUMENT IS STRONGER THAN "THE CLASSES AGREE".**
+`merging_is_naming_the_same_variable`: a merged placement **is** `place` of the renamed gate list, so
+there is no second placement pass to keep honest and every byte pin already proved about `place`
+transfers verbatim. `no_merges_is_the_placement_pass` — `placeWith [] = place` — closes the other
+side: nothing in the existing tree moves by the existence of this file.
+
+⛑ **THE PREIMAGE CIRCUIT'S BINDING, RE-AUTHORED THROUGH IT, IS BYTE-IDENTICAL.** The output row now
+exposes `internal 2` (naming nothing of the public interface) and the binding is the appended value
+`assertEqual (external 0) (internal 2)`. `preimagePlacedAE = preimagePlaced` by `decide +kernel`, and
+the two emitted files diff to **zero bytes** (27,855 each, sha `186973141d8c8691`), measured by the
+harness's `assert_eq!` on the raw artifacts. **One verification key**, digest
+`15392032806416370408764905728711890234508851923219077090970983453746134506813`.
+
+⛑ **THE TEETH ARE STILL IN THE PERMUTATION.** On the re-authored objects, with the gate preflight
+DISABLED: the forgery is refused by `Permutation("final value")` — a prover-side refusal, every gate
+still holding — and the control with the equality REMOVED **accepts the same forgery**, and moves the
+VK digest. 11/11 in `pickles-preimage-harness`.
+
+⛑ **AND THE NEGATIVE IS NOW ALSO CAUGHT STATICALLY.** Removing the `assertEqual` leaves public word 0
+read by no gate, so `placeCheckedMerged` refuses it as `inertPublicWord 0` — no witness, no prover.
+The merged entry does not re-implement `placeChecked`'s refusals, it **calls** `placeCheckedWith` on
+the post-merge gate list, so H1, the dead gap and H2 are the ones running and cannot be weakened
+here. H2 composes for free in both directions: a public word bound only by an `assertEqual` genuinely
+appears in the renamed gates, and a merge that renames an aux id into the dead gap is caught by the
+existing refusal with no new check (`a_merge_into_the_dead_gap_is_refused_by_the_existing_gate`).
+
+⛑ **AN UNINTENTIONAL ALIAS IS DETECTABLE — the `exposedVars` shape, named.** A binding IS a copy
+class of more than one cell, so `aliasCensus` enumerates every one off the emitted positions, and the
+entry diffs it against an AUTHORED declaration (never derived from the gates — that is the
+`inertPublicWordsBeyond` laundering). One accidental cell apart, green and red: the same declaration
+accepts `mProbe` and refuses `mProbeAliased` with `undeclaredAlias (external 11) 2`. Padding the
+declaration does not buy it either (`declaredAliasAbsent`).
+
+⚠ **NAMED RESIDUAL — the union-find is CHECKED, not PROVED.** There is no general theorem that
+`(a,b) ∈ ms → rootVar ms a = rootVar ms b`; that needs the union-find's own invariant. Instead the
+entry recomputes closure on its own output and refuses (`mergeNotClosed`), and
+`the_accepted_merge_is_closed` inverts that into a guarantee about everything it emits — for every
+contract and every gate list. Detected, not merely documented. The general theorem is open.
+
+⚠ **`varIx` INTERLEAVES THE NAMESPACES, so a public word can be out-ranked.** The class root is the
+minimum `varIx`, which makes it order-independent and makes the public word the root in the ordinary
+case — but `internal n ↦ 2n+1` means an internal id below the public range wins. That emission is a
+correct partition and one NO authoring could produce, so §6's equivalence would stop covering it:
+`publicWordDemoted` refuses it and names the allocation fix.
+
+
 ## ⛑⛑⛑ AUGUST 5 (THE SIX PASS-THROUGH WORDS STOP BEING FIXTURES) — **`wrap_main` reads slots 0–4 and 9 out of its PUBLIC INPUT now, not out of six free witnesses, and the values are Mina's own `expand_deferred` output** — and the emitted vector agrees with `to_public_input(40)` at 16 of 40, which names the next lane's work exactly
 
 `docs/HANDOFF-wrap-public-input-40.md` closed ORDER and WIDTH and left **INSTANCE**: *"the exposed

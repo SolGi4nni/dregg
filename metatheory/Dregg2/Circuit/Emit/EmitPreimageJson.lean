@@ -1,10 +1,16 @@
 /-
 # Dregg2.Circuit.Emit.EmitPreimageJson — the `--run` emit driver for the Poseidon-preimage circuit.
 
-Thin executable: writes `KimchiPreimageCircuit`'s two artifacts —
+Thin executable: writes `KimchiPreimageCircuit`'s artifacts —
 
-  * `preimage.json`  — the circuit: `Poseidon.hash([x]) = c` with `c` the one PUBLIC input.
-  * `unbound.json`   — the CONTROL: same gates, same coefficients, same witness, no binding wire.
+  * `preimage.json`     — the circuit: `Poseidon.hash([x]) = c` with `c` the one PUBLIC input.
+  * `unbound.json`      — the CONTROL: same gates, same coefficients, same witness, no binding wire.
+  * `preimage_ae.json`  — ⚑ the SAME circuit with its binding re-authored through `assertEqual`
+                          (`KimchiAssertEqual`): the output row exposes a variable of its own and the
+                          equality is an appended VALUE. Byte-identical to `preimage.json` — proved
+                          by `the_reauthored_json_is_byte_identical`, and MEASURED by the harness's
+                          `assert_eq!` on the two raw files.
+  * `unbound_ae.json`   — its control: the same gate list with the `assertEqual` REMOVED.
 
 to `$DREGG_PREIMAGE_OUT` (default `/tmp/pickles-preimage/`), which the
 `pickles-preimage-harness` Rust crate proves + verifies through `kimchi::verifier`.
@@ -18,6 +24,8 @@ House Law #1: the CIRCUIT is Lean-authored; `proof-systems` (the harness) is the
 import Dregg2.Circuit.Emit.KimchiPreimageCircuit
 
 open Dregg2.Circuit.Emit.KimchiPreimageCircuit
+open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiAssertEqual
 
 /-- Write ATOMICALLY: stage beside the target, then rename into place. Same reason as
 `EmitWrapMainJson.writeAtomic` — a reader cannot tell a complete artifact from one whose writer
@@ -56,12 +64,38 @@ def main : IO Unit := do
   -- ⚑ …and the CONTROL must actually be a control: same shape, missing wire.
   if wiresOf unboundPlaced 0 0 != ⟨0, 0⟩ then
     throw (IO.userError "⚑ THE CONTROL IS NOT A CONTROL: its public cell is wired.")
+  -- ⚑ THE `assertEqual` RE-AUTHORING'S OWN OBLIGATION. `the_reauthored_json_is_byte_identical` is
+  -- a kernel theorem at THIS shape; it is re-checked by value here so that an edit which moves one
+  -- artifact and not the other REFUSES instead of shipping two circuits under one claim.
+  if preimageJsonAE != preimageJson then
+    throw (IO.userError "⚑ THE RE-AUTHORED EMISSION DIVERGED: the `assertEqual` binding and the \
+      named-variable binding no longer produce the same artifact. Refusing rather than emitting \
+      two circuits under one compatibility claim.")
+  if unboundJsonAE != unboundJson then
+    throw (IO.userError "⚑ THE RE-AUTHORED CONTROL DIVERGED from the named-variable control.")
+  -- ⚑ …and the merged entry must ACCEPT the re-authored circuit and REFUSE its control (the missing
+  -- equality leaves public word 0 inert — the negative, caught statically).
+  match placeCheckedMerged preimageContract [] ⟨preimageMerges, preimageAliases⟩ preimageGatesAE with
+  | .error e => throw (IO.userError s!"⚑ THE MERGED ENTRY REFUSED THE CIRCUIT: {repr e}")
+  | .ok _ => pure ()
+  match placeCheckedMerged preimageContract [] ⟨[], unboundAliases⟩ preimageGatesAE with
+  | .error (.place (.inertPublicWord 0)) => pure ()
+  | other =>
+      throw (IO.userError s!"⚑ THE CONTROL WAS NOT REFUSED AS AN INERT PUBLIC WORD: {repr other}. \
+        Removing the `assertEqual` must leave the public word read by nothing.")
   writeAtomic s!"{dir}/preimage.json" preimageJson
   writeAtomic s!"{dir}/unbound.json" unboundJson
-  IO.println s!"EmitPreimageJson: wrote {dir}/preimage.json and {dir}/unbound.json"
+  writeAtomic s!"{dir}/preimage_ae.json" preimageJsonAE
+  writeAtomic s!"{dir}/unbound_ae.json" unboundJsonAE
+  IO.println s!"EmitPreimageJson: wrote {dir}/preimage.json, unbound.json, preimage_ae.json, \
+    unbound_ae.json"
   IO.println s!"  rows = {preimagePlaced.length} (1 public + 13)  witness = \
     {preimageWitness.length} x {NROWS}  public words = {PUB}"
   IO.println s!"  secret  x = {xSecret}"
   IO.println s!"  public  c = {digest}   (= Ref.hash [x] = o1js Poseidon.hash([x]))"
   IO.println s!"  binding: sigma(0,0) = {repr (wireAt 0 0)}, sigma(12,0) = {repr (wireAt 12 0)}"
   IO.println s!"  control: sigma(0,0) = {repr (wiresOf unboundPlaced 0 0)} (a singleton)"
+  IO.println s!"  assertEqual re-authoring: {repr preimageMerges}"
+  IO.println s!"    rows named-variable = {preimagePlaced.length}, rows assertEqual = \
+    {preimagePlacedAE.length}  (delta = {preimagePlacedAE.length - preimagePlaced.length})"
+  IO.println s!"    byte-identical = {preimageJsonAE == preimageJson}"

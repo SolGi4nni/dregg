@@ -52,12 +52,14 @@ and **three copy-permutation classes** carry the whole statement:
 -/
 import Dregg2.Tactics
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiAssertEqual
 import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.PastaPoseidon
 
 namespace Dregg2.Circuit.Emit.KimchiPreimageCircuit
 
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiAssertEqual
 open Dregg2.Circuit.Emit.KimchiCustomGates (poseidonRowCoeffs)
 open Dregg2.Circuit.Emit.PastaPoseidon
 
@@ -290,7 +292,107 @@ theorem the_zero_assert_row_is_satisfied :
 #assert_axioms preimage_gate_ordinals
 #assert_axioms the_zero_assert_row_is_satisfied
 
-/-! ## §7 — the JSON render (the shape `pickles-r4-harness`/`pickles-poseidon-harness` parse,
+/-! ## §7 — ⚑ THE SAME BINDING, RE-AUTHORED THROUGH `assertEqual`.
+
+§4's binding is authored the only way that was available: the output row NAMES `external 0`, the
+public word's variable, so the two cells are one class because they carry one variable. That works
+only because the same author owns both cells. `KimchiAssertEqual` is the primitive that does not need
+that, and this section re-authors the binding through it:
+
+  * the output row exposes its OWN variable, `internal 2` — it names nothing of the public interface;
+  * the equality `assertEqual (external 0) (internal 2)` is appended as a VALUE.
+
+`internal 2` has `varIx 5`; the public word has `varIx 0`, the global minimum — so the class roots at
+the public word and `placeCheckedMerged`'s `publicWordDemoted` check passes rather than being
+tiptoed around. The emitted object is then proved BYTE-IDENTICAL to §4's, and the harness measures
+the same identity on the two emitted files. -/
+
+/-- The output row, re-authored: it exposes `internal 2`, a variable of its own, and names no part of
+the public interface. -/
+def outputRowVarsAE : List (Option PVar) :=
+  [some (.internal 2), none, none, none, none, none, none]
+
+/-- The re-authored gate list: `preimageGates` with ONLY the output row's variable changed. -/
+def preimageGatesAE : List PGate :=
+  preimageGates.set 11 { kind := .zero, permVars := outputRowVarsAE, coeffs := [] }
+
+/-- ⚑ **THE EQUALITY, AS A VALUE.** This is the whole re-authoring: one appended pair. -/
+def preimageMerges : Merges := [(.external 0, .internal 2)]
+
+/-- The declared census of every binding this circuit makes — AUTHORED. The public word bound to the
+permutation output, and the two idle sponge lanes pinned to the zero-assert row. -/
+def preimageAliases : List (PVar × Nat) :=
+  [(.external 0, 2), (.internal 0, 2), (.internal 1, 2)]
+
+/-- The variable-numbering contract: one public word at `external 0`, and the circuit allocates its
+own `external` ids from 1 upward (it allocates none — every variable it owns is `internal`). -/
+def preimageContract : Contract := ⟨PUB, 1⟩
+
+def preimagePlacedAE : List PlacedGate := placeWith preimageMerges PUB preimageGatesAE
+
+/-- ⚑ **THE COMPATIBILITY CLAIM, MEASURED ON THE EMITTED OBJECT.** The circuit whose binding is an
+`assertEqual` between two independently-named variables and the circuit whose binding is one variable
+written at two cells are **the same placed circuit** — every gate, every coefficient, every one of
+the 98 σ cells. -/
+theorem the_reauthored_circuit_is_byte_identical : preimagePlacedAE = preimagePlaced := by
+  decide +kernel
+
+/-- …and it cost no row, cited from the general theorem rather than re-measured. -/
+theorem the_reauthored_binding_costs_zero_rows :
+    preimagePlacedAE.length = (place PUB preimageGatesAE).length :=
+  assertEqual_costs_zero_rows _ _ _
+
+/-- **The fail-closed merged entry ACCEPTS the re-authored circuit** — closure, no aliased public
+words, no demoted public word, the census exactly as declared, and `placeChecked`'s H1/gap/H2 on the
+post-merge gate list. -/
+theorem the_reauthored_circuit_is_accepted :
+    placeCheckedMerged preimageContract [] ⟨preimageMerges, preimageAliases⟩ preimageGatesAE
+      = .ok preimagePlaced := by decide +kernel
+
+/-- ⚑ …and the ORIGINAL circuit passes the SAME declaration under no equalities, so the census is a
+statement about the circuit and not about the authoring style. -/
+theorem the_original_circuit_passes_the_same_declaration :
+    placeCheckedMerged preimageContract [] ⟨[], preimageAliases⟩ preimageGates
+      = .ok preimagePlaced := by decide +kernel
+
+/-! ### §7a — the CONTROL, re-authored: REMOVE the equality and nothing else.
+
+§4a's control had to DELETE the output row's variable. Through the primitive the control is the
+honest one: the same gate list, the same declared shape, with the `assertEqual` **removed** — which
+is the counterfactual the negative actually wants. It emits the SAME object as §4a's control, so the
+Rust harness's measured teeth (the forgery accepted, the VK digest moving) transfer to it exactly. -/
+
+/-- The control census: without the equality, `external 0` and `internal 2` are singletons, so the
+only bindings left are the two idle-lane pins. -/
+def unboundAliases : List (PVar × Nat) := [(.internal 0, 2), (.internal 1, 2)]
+
+def unboundPlacedAE : List PlacedGate := placeWith [] PUB preimageGatesAE
+
+/-- **Removing the `assertEqual` IS the control.** Same gates, same coefficients, same witness — and
+the public cell and the permutation-output cell are singletons again. -/
+theorem removing_the_assertEqual_is_the_control : unboundPlacedAE = unboundPlaced := by
+  decide +kernel
+
+/-- ⚑ **THE EQUALITY IS LOAD-BEARING, at the emitted object.** Two placed circuits, one appended pair
+apart, and σ differs at exactly the binding cell. -/
+theorem the_assertEqual_is_not_automatic : unboundPlacedAE ≠ preimagePlacedAE := by decide
+
+/-- ⚑ …and H2 CATCHES THE MISSING EQUALITY WITHOUT ANY WITNESS OR PROVER. With the equality gone, no
+gate reads public word 0: it is an inert, unconstrained input, and the merged entry refuses. **This
+is the negative caught statically** — §4a's control could only be caught by the prover. -/
+theorem the_control_is_refused_as_an_inert_public_word :
+    placeCheckedMerged preimageContract [] ⟨[], unboundAliases⟩ preimageGatesAE
+      = .error (.place (.inertPublicWord 0)) := by decide +kernel
+
+#assert_axioms the_reauthored_circuit_is_byte_identical
+#assert_axioms the_reauthored_binding_costs_zero_rows
+#assert_axioms the_reauthored_circuit_is_accepted
+#assert_axioms the_original_circuit_passes_the_same_declaration
+#assert_axioms removing_the_assertEqual_is_the_control
+#assert_axioms the_assertEqual_is_not_automatic
+#assert_axioms the_control_is_refused_as_an_inert_public_word
+
+/-! ## §8 — the JSON render (the shape `pickles-r4-harness`/`pickles-poseidon-harness` parse,
 plus the `public_input` vector the wrap harness's shape carries). -/
 
 private def q (s : String) : String := "\"" ++ s ++ "\""
@@ -332,5 +434,29 @@ def preimageJson : String :=
 /-- The CONTROL circuit: same gates, same coefficients, same witness, **no binding wire**. -/
 def unboundJson : String :=
   renderCircuit "poseidonPreimageUNBOUND" PUB NROWS unboundPlaced preimageWitness preimagePublic
+
+/-- The circuit with its binding re-authored through `assertEqual`. Emitted under the SAME name, so
+the harness's byte-diff against `preimage.json` is a diff of two independently-produced artifacts and
+not of two names. -/
+def preimageJsonAE : String :=
+  renderCircuit "poseidonPreimage" PUB NROWS preimagePlacedAE preimageWitness preimagePublic
+
+/-- Its control: the same gate list with the `assertEqual` REMOVED. -/
+def unboundJsonAE : String :=
+  renderCircuit "poseidonPreimageUNBOUND" PUB NROWS unboundPlacedAE preimageWitness preimagePublic
+
+/-- ⚑ **BYTE-IDENTICAL EMISSIONS**, not merely equal placements: the two render calls agree
+character for character, so the harness's `assert_eq!` on the raw files is measuring the same fact
+this theorem states. -/
+theorem the_reauthored_json_is_byte_identical : preimageJsonAE = preimageJson := by
+  unfold preimageJsonAE preimageJson
+  rw [the_reauthored_circuit_is_byte_identical]
+
+theorem the_reauthored_control_json_is_byte_identical : unboundJsonAE = unboundJson := by
+  unfold unboundJsonAE unboundJson
+  rw [removing_the_assertEqual_is_the_control]
+
+#assert_axioms the_reauthored_json_is_byte_identical
+#assert_axioms the_reauthored_control_json_is_byte_identical
 
 end Dregg2.Circuit.Emit.KimchiPreimageCircuit

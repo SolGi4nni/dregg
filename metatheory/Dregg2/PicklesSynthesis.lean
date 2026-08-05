@@ -29,6 +29,11 @@ never `EffectVmEmitV2`):
 
   * `Dregg2.Circuit.Emit.KimchiCustomGates`   — R2: custom-gate rows (typ+coeffs) byte-exact vs o1js
   * `Dregg2.Circuit.Emit.KimchiPlacement`     — R1: cell placement + copy-permutation `wires` byte-exact
+  * `Dregg2.Circuit.Emit.KimchiAssertEqual`   — ⚑ Snarky's `assert_equal` as a ZERO-ROW union-find
+      over `PVar`, composed at `circuitPositions`. Proved general in the gate list: merging emits no
+      row and moves no coefficient, and a merged placement IS `place` of the renamed gate list — so
+      the existing naming-a-variable style is the special case and every byte pin transfers. The
+      fail-closed entry routes through `placeCheckedWith`, so H1/dead-gap/H2 are the ones running
   * `Dregg2.Circuit.Emit.KimchiRender`        — R4a: PlacedGate → proof-systems gate-list/witness render
   * `Dregg2.Circuit.Emit.KimchiRenderPoseidon` — R4a-scaled: a REAL Poseidon-permutation circuit
       (11 byte-exact `Poseidon` rows + a `Zero` gate, Lean-placed, Lean-witnessed via `PastaPoseidon`)
@@ -101,6 +106,7 @@ a real kimchi inner proof (R4a), not a recursion-soundness theorem (Phase B / R5
 
 import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiAssertEqual
 import Dregg2.Circuit.Emit.KimchiRender
 import Dregg2.Circuit.Emit.KimchiRenderPoseidon
 import Dregg2.Circuit.Emit.KimchiPreimageCircuit

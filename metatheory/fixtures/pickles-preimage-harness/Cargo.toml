@@ -39,8 +39,13 @@
 # REGENERATE the fixtures (only when the Lean circuit changes):
 #   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiPreimageCircuit \
 #     && lake env lean --run Dregg2/Circuit/Emit/EmitPreimageJson.lean \
-#     && cp /tmp/pickles-preimage/{preimage,unbound}.json \
+#     && cp /tmp/pickles-preimage/{preimage,unbound,preimage_ae,unbound_ae}.json \
 #           fixtures/pickles-preimage-harness/fixtures/
+#
+# `*_ae.json` are the SAME circuit with its binding re-authored through `assertEqual`
+# (`Dregg2.Circuit.Emit.KimchiAssertEqual`) and its control with the equality REMOVED. They are
+# byte-identical to the named-variable pair — proved in Lean, and measured here by `assert_eq!` on
+# the raw files.
 #
 # RUN (release — a debug prove is slow):
 #   cargo test --release --manifest-path metatheory/fixtures/pickles-preimage-harness/Cargo.toml \

@@ -385,6 +385,45 @@ fn main() {
     println!("-- the SAME forgery, CONTROL circuit (no binding wire) --");
     println!("   {:?}", ctl);
 
+    // ⚑ THE SAME STATEMENT, BINDING RE-AUTHORED THROUGH `assertEqual`. Snarky's `assert_equal`
+    // unions equivalence classes and emits NO row; the claim is that the two authoring styles
+    // produce one artifact, and the claim is measured as a byte diff of the two emitted files.
+    let ae_raw = std::fs::read_to_string(dir.join("preimage_ae.json")).expect("preimage_ae.json");
+    let named_raw = std::fs::read_to_string(dir.join("preimage.json")).expect("preimage.json");
+    let control_ae = load(&dir, "unbound_ae.json");
+    let iae = index_for(&load(&dir, "preimage_ae.json"));
+    let icae = index_for(&control_ae);
+    println!();
+    println!("-- the binding re-authored through `assertEqual` --");
+    println!("   rows named-variable : {}", bound.num_rows);
+    println!(
+        "   rows assertEqual    : {}",
+        load(&dir, "preimage_ae.json").num_rows
+    );
+    println!("   byte-identical      : {}", ae_raw == named_raw);
+    println!(
+        "   vk digest assertEqual: {}",
+        vk_digest(&iae).into_bigint()
+    );
+    println!(
+        "   same key as named   : {}",
+        if vk_digest(&iae) == vk_digest(&ib) {
+            "YES"
+        } else {
+            "NO"
+        }
+    );
+    let (fw3, fp3) = forged(&control_ae);
+    let ctl_ae = prove_and_verify(&icae, &group_map, fw3, &fp3);
+    println!(
+        "   control (equality REMOVED) accepts the forgery: {}",
+        ctl_ae.is_ok()
+    );
+    println!(
+        "   vk moves when the equality is removed: {}",
+        vk_digest(&iae) != vk_digest(&icae)
+    );
+
     println!();
     println!(
         "VERDICT: honest={} wrong_claim_rejected_by_VERIFIER={} forgery_rejected_by_PROVER={} \
@@ -547,6 +586,104 @@ mod tests {
             vk_digest(&ib),
             vk_digest(&ic),
             "a circuit and its unbound control must not share a verification key"
+        );
+    }
+
+    // ---- ⚑ the `assertEqual` re-authoring (`Dregg2.Circuit.Emit.KimchiAssertEqual`) ----
+    //
+    // `preimage_ae.json` is the SAME statement with its binding authored the other way: the output
+    // row exposes a variable of its own (`internal 2`) and the equality
+    // `assertEqual (external 0) (internal 2)` is an appended VALUE, not a naming convention shared
+    // between two cells. `unbound_ae.json` is that gate list with the equality REMOVED — the honest
+    // counterfactual, which the old control could not be (it had to delete a variable).
+
+    fn raw(name: &str) -> String {
+        std::fs::read_to_string(fixtures_dir().join(name)).expect("fixture")
+    }
+
+    /// ⚑ **THE COMPATIBILITY CLAIM, MEASURED.** The Lean side proves the two renders are equal
+    /// (`the_reauthored_json_is_byte_identical`); this is the same fact read off the two files the
+    /// emitter actually wrote — a byte diff, not a re-parse.
+    #[test]
+    fn the_reauthored_emission_is_byte_identical() {
+        assert_eq!(
+            raw("preimage_ae.json"),
+            raw("preimage.json"),
+            "the assertEqual-authored circuit must emit the SAME bytes as the \
+             named-variable-authored one"
+        );
+        assert_eq!(
+            raw("unbound_ae.json"),
+            raw("unbound.json"),
+            "…and so must its control"
+        );
+        // …and the pair is not vacuously identical: bound and control DO differ.
+        assert_ne!(raw("preimage_ae.json"), raw("unbound_ae.json"));
+    }
+
+    /// ⚑ **AND IT COSTS ZERO ROWS.** Snarky's `assert_equal` unions equivalence classes and emits no
+    /// gate; o1js spends no row on `assertEquals` between two allocated values. Read off the emitted
+    /// artifacts: same row count, same `typ` sequence, same coefficients.
+    #[test]
+    fn the_assert_equal_costs_no_rows() {
+        let named = fx("preimage.json");
+        let ae = fx("preimage_ae.json");
+        assert_eq!(ae.num_rows, named.num_rows, "assertEqual must emit no row");
+        assert_eq!(ae.gates.len(), named.gates.len());
+        let tn: Vec<u64> = named.gates.iter().map(|g| g.typ).collect();
+        let ta: Vec<u64> = ae.gates.iter().map(|g| g.typ).collect();
+        assert_eq!(ta, tn, "the gate sequence must be untouched");
+        let cn: Vec<&Vec<String>> = named.gates.iter().map(|g| &g.coeffs).collect();
+        let ca: Vec<&Vec<String>> = ae.gates.iter().map(|g| &g.coeffs).collect();
+        assert_eq!(ca, cn, "no coefficient may move");
+        // the equality shows up ONLY in the copy permutation
+        assert_eq!(ae.gates[0].wires[0], [12, 0]);
+        assert_eq!(ae.gates[12].wires[0], [0, 0]);
+    }
+
+    /// ⚑ **THE TEETH ARE IN THE PERMUTATION, AND THEY BITE ON THE RE-AUTHORED OBJECT.** The forgery
+    /// keeps every gate satisfied (preflight disabled), so the only thing that can refuse it is the
+    /// copy-permutation product; the control — the same gates with the `assertEqual` REMOVED —
+    /// accepts the same forgery.
+    #[test]
+    fn the_reauthored_circuit_refuses_the_forgery_in_the_permutation() {
+        let group_map = <Vesta as CommitmentCurve>::Map::setup();
+
+        let b = fx("preimage_ae.json");
+        let index = index_with(&b, /* preflight */ false);
+        let (w, p) = forged(&b);
+        let e = prove_and_verify(&index, &group_map, w, &p)
+            .expect_err("the assertEqual-bound circuit must REFUSE the forged claim");
+        assert!(
+            e.contains("Permutation"),
+            "the refusal must be the copy-permutation argument, not a gate check; got: {e}"
+        );
+
+        let c = fx("unbound_ae.json");
+        let icn = index_with(&c, /* preflight */ false);
+        let (w2, p2) = forged(&c);
+        prove_and_verify(&icn, &group_map, w2, &p2)
+            .expect("with the assertEqual removed the same forgery must be ACCEPTED");
+    }
+
+    /// ⚑ **THE `assertEqual` IS IN THE KEY.** One appended pair apart, the two circuits do not share
+    /// a verification key — so the equality is part of what a chain would be committing to, not a
+    /// prover-side convention. (And the re-authored key is the SAME key as the named-variable one,
+    /// which is what byte-identity buys.)
+    #[test]
+    fn the_assert_equal_moves_the_verification_key() {
+        let ib = index_for(&fx("preimage_ae.json"));
+        let ic = index_for(&fx("unbound_ae.json"));
+        assert_ne!(
+            vk_digest(&ib),
+            vk_digest(&ic),
+            "removing the assertEqual must move the verification key"
+        );
+        let named = index_for(&fx("preimage.json"));
+        assert_eq!(
+            vk_digest(&ib),
+            vk_digest(&named),
+            "the two authoring styles must produce ONE verification key"
         );
     }
 }

@@ -134,8 +134,13 @@ def cyclePairs (cs : List Cell) : List (Cell × Cell) :=
 `wire` records `{row,col}` into the variable's class (`:1121-1123`); a class is deduplicated by
 `Hash_set.of_list` (`:931`). Union-find (`:764`) only merges classes when `assert_equal` unions two
 DISTINCT variables — the R1 copy circuits create their copies from the SAME variable in several
-cells, so class = "cells of one variable" with no merge. `mergeRoots` is the seam where an
-`assert_equal` remap would compose; identity for R1. -/
+cells, so class = "cells of one variable" with no merge.
+
+⚑ **`assert_equal` NOW EXISTS**, in `Dregg2.Circuit.Emit.KimchiAssertEqual`: a zero-row union-find
+over `PVar` composed at `circuitPositions` (`mergedPositions`/`placeWith`), with a fail-closed entry
+`placeCheckedMerged` that routes through `placeCheckedWith` below on the post-merge gate list, so H1,
+the dead-gap refusal and H2 are the ones running and cannot be weakened there. `place` and
+`circuitPositions` are UNCHANGED — `placeWith ms` at `ms = []` is `place`, proved. -/
 
 /-- One grid row's `(variable, cell)` positions, cols `0..`, skipping `None`. Truncated to
 `K_PERMUTS` by the caller (`add_row`'s `min permutation_cols`). -/
