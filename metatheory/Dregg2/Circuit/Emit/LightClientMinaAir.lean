@@ -275,13 +275,28 @@ anchors. -/
 
 /-- `SEG_LEN` — the number of blocks EXHIBITED above the pinned anchor. Witness. -/
 def SEG_LEN : Nat := 0
-/-- `ANCHOR_H` — the weak-subjectivity anchor's blockchain length. Witness.
-⚠ **NOT PINNED, by anything.** Measured on the emitted object 2026-08-04: this column is not
-PI-bound, carries no range lookup, and no gate equates it to a literal — it appears only in G1 and
-G4, joined to `SEG_LEN`/`BLOCK_LEN` and to `ANCH_SLACK`/`SUBMIT_H`. It also shares NO constraint with
-the anchor STATE lanes (cols 12..20), so the height and the hash of "the anchor" are two unrelated
-prover choices. `LightClientAnchorConnectivity.minaVerify_anchor_height_is_pinned_to_nothing` is that
-as a theorem; this docstring said "the pinned" and meant the operator's intent, not a gate. -/
+/-- `ANCHOR_H` — the weak-subjectivity anchor's blockchain length.
+
+⚑ **PI-BOUND AT SLOT 29 SINCE 2026-08-05, AND READ THE NEXT PARAGRAPH BEFORE CALLING THAT A FIX.**
+Until then this column was PUBLISHED BY NOTHING: not PI-bound, no range lookup, no gate equating it
+to a literal — it appeared only in G1 and G4, joined to `SEG_LEN`/`BLOCK_LEN` and to
+`ANCH_SLACK`/`SUBMIT_H`. So "the published height is the PINNED anchor plus the exhibited segment"
+related THREE numbers the prover chose, and a prover who wanted a head to read 1 000 000 blocks high
+picked `ANCHOR_H` to make G1 come out. `minaVerify_anchor_height_is_published` is the flip of the old
+`minaVerify_anchor_height_is_pinned_to_nothing`, on the emitted bytes.
+
+⚠ **WHAT THE PIN DOES AND DOES NOT DO, because a PI pin adds NO graph edge.**
+`LightClientAnchorConnectivity.relatedCols` returns `[]` for a `piBinding` ON PURPOSE — a pin ties a
+column to a PUBLIC INPUT, not to another column. So this leg does **not** connect the height to the
+anchor STATE lanes (cols 12..20), and `minaVerify_anchor_height_shares_no_constraint_with_the_hash`
+still holds. In-circuit, the height and the hash of "the anchor" remain two unrelated prover choices.
+
+What the pin buys is that the choice is now **EXHIBITED**: `ANCHOR_H` leaves the proof as PI 29 where
+a consumer can refuse it against a value it holds independently. That consumer half is
+`dregg_turn::executor::mina_head_verifier`'s REFUSAL 2 — it compares PI 29 against the anchor HEIGHT
+the cell program pinned, which travels inside the predicate commitment beside the anchor hash. A pin
+whose only witness is the descriptor's own definition would be decoration; the second, independent
+source is the cell program. -/
 def ANCHOR_H : Nat := 1
 /-- `SUBMIT_H` — the height the settlement being finalized was submitted at. Witness. -/
 def SUBMIT_H : Nat := 2
@@ -369,9 +384,16 @@ def PI_BLOCK_LEN : Nat := 2 * STATE_LIMBS
 def PI_REQ_DEPTH : Nat := 2 * STATE_LIMBS + 1
 /-- ⚑ PI slots 20..28: the wraplink sub-proof's public-input commitment lanes. -/
 def PI_SUB_PI (i : Nat) : Nat := 2 * STATE_LIMBS + 2 + i
+/-- ⚑ PI slot 29: the weak-subjectivity anchor's blockchain length (`ANCHOR_H`, col 1).
+
+**APPENDED, not inserted at 20.** Giving the height slot 20 would have shifted `PI_SUB_PI` to 21..29
+and moved `PI_SUB_COMMIT_BASE` in every consumer — a re-index whose only benefit is that the slots
+read in column order. The pin's CONSTRAINT is emitted next to the other pins (right after
+`PI_REQ_DEPTH`); its SLOT is the last one. Emission order and slot order are independent. -/
+def PI_ANCHOR_H : Nat := 3 * STATE_LIMBS + 2
 /-- Number of public inputs: two nine-limb hashes + the height + the depth policy + ⚑ the nine-lane
-sub-proof commitment. -/
-def MINA_PI_COUNT : Nat := 3 * STATE_LIMBS + 2
+sub-proof commitment + ⚑ the anchor height. -/
+def MINA_PI_COUNT : Nat := 3 * STATE_LIMBS + 3
 
 /-- The slack range width. ⚑ **24, AND THE CEILING IS THE FIELD, NOT THE WIRE.**
 
@@ -703,7 +725,11 @@ def minaHeadAir : EffectAir :=
       , topLaneLeg (TIP_STATE 8) ]
       ++ anchorStatePins ++ tipStatePins
       ++ [ .pin ⟨VmRow.first, BLOCK_LEN, PI_BLOCK_LEN⟩
-         , .pin ⟨VmRow.first, REQ_DEPTH, PI_REQ_DEPTH⟩ ]
+         , .pin ⟨VmRow.first, REQ_DEPTH, PI_REQ_DEPTH⟩
+         -- ⚑ 2026-08-05 — the anchor HEIGHT leaves the proof. Before this leg G1's
+         -- `BLOCK_LEN = ANCHOR_H + SEG_LEN` related three prover-chosen numbers and the consumer
+         -- could see only the sum. See `ANCHOR_H`'s docstring for what a pin does NOT do.
+         , .pin ⟨VmRow.first, ANCHOR_H, PI_ANCHOR_H⟩ ]
       -- ⚑⚑ §2b — THE RECURSION CARRIER AND ITS NINE BINDS. The first leg in this file whose `= 1`
       -- a prover cannot simply write down.
       ++ [.gate wrapFsC] ++ wrapBindLegs ++ subPiPins }
@@ -716,11 +742,12 @@ theorem minaHeadAir_mainRailOk : minaHeadAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaHeadAir_pinsFit : minaHeadAir.pinsFit MINA_PI_COUNT = true := by rfl
 
-/-- The source carries 55 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
-2 top-lane lookups + 20 PI pins + ⚑ the `WRAP_FS_PROVED` gate + 9 `.bind` legs + 9 sub-proof PI pins.
+/-- The source carries 56 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
+2 top-lane lookups + ⚑ 21 PI pins (the 21st is `ANCHOR_H`, 2026-08-05) + ⚑ the `WRAP_FS_PROVED` gate
++ 9 `.bind` legs + 9 sub-proof PI pins.
 ⚑ A `.limbs` leg is ONE leg and EIGHT constraints — `minaLcVerifyDesc_constraint_count` is the
 number a dropped lane moves, and this one is not. -/
-theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 55 := by rfl
+theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 56 := by rfl
 
 /-- ⚑⚑ **NINE RECURSION BINDS, AND NONE OF THEM DECLARATIVE.** `bindCount` is the number a
 re-emission that dropped a sub-proof obligation would move while every other shape count sat still;
@@ -787,19 +814,20 @@ theorem minaLcVerifyDesc_tables :
 theorem minaLcVerifyDesc_hashSites : minaLcVerifyDesc.hashSites = [] := rfl
 theorem minaLcVerifyDesc_ranges : minaLcVerifyDesc.ranges = [] := rfl
 
-/-- The compiler emitted 69 constraints from 55 legs: one per leg, except the two `.limbs` legs which
+/-- The compiler emitted 70 constraints from 56 legs: one per leg, except the two `.limbs` legs which
 lower to EIGHT lookups each. ⚑ A dropped lane moves this number and nothing else does — which is why
 the count is pinned separately from the leg count. (`EffectLower.lowerLeg_ne_nil` is the general
 statement that no leg can vanish; this is the exact arithmetic at this descriptor.) -/
-theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 69 := rfl
+theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 70 := rfl
 
 /-- ⚑⚑ **THE NINE `proofBind` CONSTRAINTS, AS THE COMPILER EMITTED THEM** — the whole recursion
-declaration, on the bytes, at their emitted positions (51..59; 50 is the `WRAP_FS_PROVED` gate).
+declaration, on the bytes, at their emitted positions (52..60; 51 is the `WRAP_FS_PROVED` gate).
+⚑ Each index is ONE HIGHER than before 2026-08-05: the `ANCHOR_H` PI pin is emitted at 50.
 
 This is the object the carrier's content IS. A leg that lost its `vkPin`, or whose `vk` drifted onto
 another column, or whose declared commitment stopped being the PI-bound lane, moves this `rfl`. -/
 theorem minaLcVerifyDesc_proof_binds :
-    (minaLcVerifyDesc.constraints.drop 51).take 9 =
+    (minaLcVerifyDesc.constraints.drop 52).take 9 =
       [ .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 0), .var (SUB_VK 0),
                     some (wraplinkVkLane 0), none⟩
       , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 1), .var (SUB_VK 1),
@@ -883,11 +911,12 @@ theorem minaLcVerifyDesc_slack_lookups :
         = [.lookup ⟨TableId.range, [.var REQ_DEPTH]⟩] :=
   ⟨rfl, rfl, rfl, rfl⟩
 
-/-- ⚑ **THE TWENTY PI PINS, AS THE COMPILER EMITTED THEM** — the addressing layer AND the dregg state
-write, in one `rfl`. Nine pinned-anchor limbs, nine verified-tip limbs, the DERIVED height, the depth
-policy met. A reordering, a dropped pin or a re-indexed slot moves this. -/
+/-- ⚑ **THE TWENTY-ONE PI PINS, AS THE COMPILER EMITTED THEM** — the addressing layer AND the dregg
+state write, in one `rfl`. Nine pinned-anchor limbs, nine verified-tip limbs, the DERIVED height, the
+depth policy met, ⚑ and the anchor HEIGHT (2026-08-05, PI slot 29). A reordering, a dropped pin or a
+re-indexed slot moves this. -/
 theorem minaLcVerifyDesc_pins :
-    (minaLcVerifyDesc.constraints.drop 30).take 20 =
+    (minaLcVerifyDesc.constraints.drop 30).take 21 =
       [ .base (.piBinding VmRow.first (ANCHOR_STATE 0) (PI_ANCHOR_STATE 0))
       , .base (.piBinding VmRow.first (ANCHOR_STATE 1) (PI_ANCHOR_STATE 1))
       , .base (.piBinding VmRow.first (ANCHOR_STATE 2) (PI_ANCHOR_STATE 2))
@@ -907,13 +936,14 @@ theorem minaLcVerifyDesc_pins :
       , .base (.piBinding VmRow.first (TIP_STATE 7) (PI_TIP_STATE 7))
       , .base (.piBinding VmRow.first (TIP_STATE 8) (PI_TIP_STATE 8))
       , .base (.piBinding VmRow.first BLOCK_LEN PI_BLOCK_LEN)
-      , .base (.piBinding VmRow.first REQ_DEPTH PI_REQ_DEPTH) ] := rfl
+      , .base (.piBinding VmRow.first REQ_DEPTH PI_REQ_DEPTH)
+      , .base (.piBinding VmRow.first ANCHOR_H PI_ANCHOR_H) ] := rfl
 
-/-- ⚑ **THE NINE SUB-PROOF-COMMITMENT PINS** (constraints 60..68). Without these the commitment the
+/-- ⚑ **THE NINE SUB-PROOF-COMMITMENT PINS** (constraints 61..69). Without these the commitment the
 recursion existential quantifies over would be a hidden column and the consumer would have nothing to
 compare a sub-proof's public inputs against. -/
 theorem minaLcVerifyDesc_subpi_pins :
-    minaLcVerifyDesc.constraints.drop 60 =
+    minaLcVerifyDesc.constraints.drop 61 =
       [ .base (.piBinding VmRow.first (SUB_PI 0) (PI_SUB_PI 0))
       , .base (.piBinding VmRow.first (SUB_PI 1) (PI_SUB_PI 1))
       , .base (.piBinding VmRow.first (SUB_PI 2) (PI_SUB_PI 2))
@@ -932,7 +962,7 @@ theorem mina_layout_wellformed :
       ∧ TIP_STATE 8 < MINA_LC_WIDTH ∧ BLOCK_LEN < ANCHOR_STATE 0
       ∧ PI_TIP_STATE 8 < PI_BLOCK_LEN ∧ PI_REQ_DEPTH < MINA_PI_COUNT
       ∧ SUB_PI 8 < MINA_LC_WIDTH ∧ PI_SUB_PI 8 < MINA_PI_COUNT
-      ∧ MINA_LC_WIDTH = 49 ∧ MINA_PI_COUNT = 29
+      ∧ MINA_LC_WIDTH = 49 ∧ MINA_PI_COUNT = 30
       ∧ 29 * (STATE_LIMBS - 1) + 24 = 256 := by
   refine ⟨rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, ?_⟩ <;> decide
 

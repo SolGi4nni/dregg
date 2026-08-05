@@ -171,6 +171,8 @@ use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
 use dregg_circuit::faithful9::Faithful9;
 
+use super::mina_accumulator_oracle::{WireAccumulatorClaim, installed_mina_accumulator_oracle};
+
 /// The Lean-COMPILED Mina anchored-head verify descriptor's `descriptor_by_name` key.
 ///
 /// Authored as `minaLcVerifyDesc` in
@@ -188,6 +190,18 @@ pub const MINA_WRAPLINK_DESCRIPTOR: &str = "dregg-pasta-fq-wraplink::v1";
 /// `MinaBlockFqTranscript.LINK_PI_COUNT`).
 pub const MINA_WRAPLINK_PI_COUNT: usize = 224;
 
+/// Limbs per Pasta field element in a phase-2 pin block (`PastaFieldSound.SK`).
+pub const PASTA_LIMBS: usize = 32;
+
+/// ⚑ PI offset of the sub-proof's FIRST OUTGOING sponge lane. Lean
+/// `MinaBlockFqTranscript.linkPins` lays the seven blocks out as
+/// `first r0 ‖ first r1 ‖ first r2 ‖ first r3 ‖ first r4 ‖ last r4 ‖ last r5` — three incoming
+/// state lanes, two absorbed elements, then the two lanes the permutation LANDS ON. So the
+/// outgoing pair is slots `160..224`, and that pair is what a recursion root must reproduce.
+pub const WRAPLINK_OUT_LANES_LO: usize = 5 * PASTA_LIMBS;
+/// Width of the sub-proof's outgoing pinned pair (two lanes).
+pub const WRAPLINK_OUT_LANES_WIDTH: usize = 2 * PASTA_LIMBS;
+
 /// Domain separation for the sub-proof public-input commitment the head descriptor publishes at PI
 /// slots 20..28. ⚑ Changing this string is a wire-format flag day for [`MinaHeadProofWire`] AND for
 /// `LightClientMinaAir.WRAPLINK_PI_LANES`; the two are gated against each other by
@@ -196,9 +210,10 @@ pub const WRAPLINK_PI_COMMITMENT_CONTEXT: &str =
     "dregg.mina-lightclient.wraplink-subproof-pi-commitment.v1";
 
 /// Number of public inputs the descriptor declares: nine pinned-anchor lanes, nine verified-tip
-/// lanes, the derived `blockchain_length`, the Samasika depth met, ⚑ and the nine-lane commitment
-/// to the Fq-transcript sub-proof's public inputs. Pinned to `LightClientMinaAir.MINA_PI_COUNT`.
-pub const MINA_LC_PI_COUNT: usize = 29;
+/// lanes, the derived `blockchain_length`, the Samasika depth met, ⚑ the nine-lane commitment
+/// to the Fq-transcript sub-proof's public inputs, ⚑ and the anchor HEIGHT. Pinned to
+/// `LightClientMinaAir.MINA_PI_COUNT`.
+pub const MINA_LC_PI_COUNT: usize = 30;
 
 /// Lanes per 32-byte Mina state hash (`Faithful9`).
 pub const MINA_STATE_LANES: usize = 9;
@@ -214,6 +229,94 @@ pub const PI_BLOCK_LEN: usize = 2 * MINA_STATE_LANES;
 pub const PI_REQ_DEPTH: usize = 2 * MINA_STATE_LANES + 1;
 /// ⚑ PI slot of sub-proof-commitment lane `i` (`LightClientMinaAir.PI_SUB_PI`), slots 20..28.
 pub const PI_SUB_COMMIT_BASE: usize = 2 * MINA_STATE_LANES + 2;
+/// ⚑ PI slot 29: the weak-subjectivity anchor's blockchain length
+/// (`LightClientMinaAir.PI_ANCHOR_H`, col 1). **New 2026-08-05.**
+///
+/// Until that day `ANCHOR_H` was published by nothing — the descriptor's G1 forces
+/// `BLOCK_LEN = ANCHOR_H + SEG_LEN` and only the SUM left the proof, so a prover picked the
+/// summands and `minaVerify_anchor_height_is_pinned_to_nothing` was a theorem about the emitted
+/// bytes. It is now PI-bound (`minaVerify_anchor_height_is_published`), and
+/// [`check_anchor_binding`] is the half that makes the pin worth something: a PI pin adds no
+/// in-circuit edge (`relatedCols` returns `[]` for a `piBinding`, deliberately), so the value comes
+/// from a consumer refusing the published height against a height it holds independently.
+pub const PI_ANCHOR_H: usize = 3 * MINA_STATE_LANES + 2;
+
+/// Domain separation for the WEAK-SUBJECTIVITY ANCHOR commitment — see [`mina_anchor_commitment`].
+pub const MINA_ANCHOR_COMMITMENT_CONTEXT: &str = "dregg.mina-lightclient.anchor-commitment.v1";
+
+/// ⚑⚑ **THE OPERATOR'S ANCHOR IS A PAIR, AND THE COMMITMENT NOW BINDS BOTH HALVES.**
+///
+/// A Mina weak-subjectivity anchor is `(protocol state hash, blockchain length)`. Until 2026-08-05
+/// the `WitnessedPredicate` commitment WAS the 32-byte state hash and the height existed nowhere a
+/// consumer could see, so "the published height is the pinned anchor plus the exhibited segment"
+/// had no second source for the word *pinned*. This binds the pair:
+///
+/// ```text
+///     commitment = blake3_derive_key(MINA_ANCHOR_COMMITMENT_CONTEXT, state_hash ‖ height_le32)
+/// ```
+///
+/// ⚑ **FLAG DAY.** The cell-program-visible commitment for a `MinaAnchoredHead` predicate is a
+/// DIFFERENT 32 bytes than it was: a program that pinned the bare state hash no longer matches, and
+/// fails as `anchor commitment mismatch` rather than being reinterpreted. Cell programs carrying a
+/// Mina anchor must be re-pinned with this function; nothing else in the tree produces the old
+/// shape, and there is no accepted second form.
+pub fn mina_anchor_commitment(state_hash: &[u8; 32], height: u32) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key(MINA_ANCHOR_COMMITMENT_CONTEXT);
+    h.update(state_hash);
+    h.update(&height.to_le_bytes());
+    *h.finalize().as_bytes()
+}
+
+/// ⚑⚑ **THE ANCHOR REFUSAL — the exhibited anchor pair IS the cell-program-pinned one, and the
+/// proof used THAT height.**
+///
+/// Two refusals, and they are separate on purpose:
+///
+/// 1. **The declared anchor is the pinned anchor.** `commitment` is cell-program state; the wire
+///    carries the preimage. A prover that names any other `(hash, height)` pair fails here, which
+///    is what lets refusal 2 trust `declared_height`.
+/// 2. **The proof's published `ANCHOR_H` is that height.** This is the consumer half of the
+///    2026-08-05 PI pin. Without it the pin publishes a number nobody compares — decoration, and
+///    the descriptor's own definition is not a second source.
+///
+/// ⚠ **WHAT THIS STILL DOES NOT DO.** Nothing here or in the AIR says the height is the height OF
+/// that state hash — `minaVerify_anchor_height_shares_no_constraint_with_the_hash` is that residual,
+/// kept as a live theorem. Both halves are now refused against the SAME cell-program-pinned pair,
+/// so a prover cannot mix an operator's hash with its own height; what remains open is that the
+/// operator's pair is itself asserted, not derived from Mina state in-circuit.
+pub fn check_anchor_binding(
+    commitment: &[u8; 32],
+    declared_state: &[u8; 32],
+    declared_height: u32,
+    pis: &[u32],
+) -> Result<(), String> {
+    if pis.len() != MINA_LC_PI_COUNT {
+        return Err(format!(
+            "Mina anchored-head proof declared {} public inputs; {MINA_LC_VERIFY_DESCRIPTOR} binds \
+             exactly {MINA_LC_PI_COUNT}",
+            pis.len()
+        ));
+    }
+    let recomputed = mina_anchor_commitment(declared_state, declared_height);
+    if recomputed != *commitment {
+        return Err(format!(
+            "anchor commitment mismatch: the wire declares a weak-subjectivity anchor at height \
+             {declared_height} whose commitment is {}, but the cell program pinned {}. This proof \
+             is about an anchor the program did not pin.",
+            hex::encode(recomputed),
+            hex::encode(commitment)
+        ));
+    }
+    let published = pis[PI_ANCHOR_H];
+    if published != declared_height {
+        return Err(format!(
+            "the proof published an anchor height of {published}, but the cell-program-pinned \
+             anchor is at height {declared_height}: the derived `blockchain_length` was computed \
+             against a different anchor than the one this consumer pinned"
+        ));
+    }
+    Ok(())
+}
 
 /// ⚑ **THE DEPTH FLOOR.** Mina mainnet's Samasika confirmation depth `k = 290`. The descriptor
 /// PUBLISHES which depth policy an acceptance met (PI 19) precisely so a consumer can refuse a
@@ -257,6 +360,78 @@ pub struct MinaHeadProofWire {
     pub transcript_public_inputs: Vec<u32>,
     /// ⚑ The IR-v2 batch proof over `MINA_WRAPLINK_DESCRIPTOR`. **This node verifies it.**
     pub transcript_proof: Ir2BatchProof<DreggStarkConfig>,
+    /// ⚑⚑ **THE RECURSION ROOT OF THE 46-LINK PHASE-2 CHAIN**, postcard-serialised
+    /// `BatchStarkProof<DreggRecursionConfig>` bytes.
+    ///
+    /// REQUIRED, and REQUIRED as bytes rather than a typed field on purpose: a recursion root's
+    /// type lives in `dregg-recursion-verify`, and `dregg-turn` does not take that edge (see
+    /// [`MinaChainRootBackend`]). Bytes here, structure there, and the seam refuses when the
+    /// backend is absent.
+    pub chain_root_proof: Vec<u8>,
+    /// ⚑ The weak-subjectivity anchor's 32-byte protocol state hash — the PREIMAGE half of the
+    /// predicate commitment. REQUIRED. See [`mina_anchor_commitment`].
+    pub pinned_anchor_state: [u8; 32],
+    /// ⚑ The weak-subjectivity anchor's `blockchain_length` — the other preimage half, and the
+    /// value PI 29 must equal. REQUIRED.
+    pub pinned_anchor_height: u32,
+    /// ⚑⚑ **THE DEFERRED IPA ACCUMULATOR CLAIM THIS HEAD CARRIES.** REQUIRED, so a pre-2026-08-05
+    /// blob fails to DECODE rather than being reinterpreted as "no accumulator supplied" — the
+    /// refusal is at the codec, which is the only place it cannot be forgotten.
+    ///
+    /// This is the claim `Ipa::Step::accumulator_check` discharges upstream and that this tree
+    /// discharged only in an example binary until today. See
+    /// [`super::mina_accumulator_oracle`] for what the discharge establishes and what it does not.
+    pub accumulator: WireAccumulatorClaim,
+}
+
+/// ⚑⚑ **THE CLAIM A MINA PHASE-2 CHAIN-FOLD ROOT PUBLISHES**, as canonical `u32` lanes.
+///
+/// Read end to end: *starting from the sponge state `in_state`, absorbing exactly the tape
+/// `transcript_acc` commits to, a chain of `absorbProg` executions lands on `out_state`.* The
+/// widths are the Lean `MinaPhase2Chain` layout: three 32-limb sponge lanes each side.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinaChainRootClaim {
+    /// 96 limbs — the sponge state the chain's FIRST link consumed.
+    pub in_state: Vec<u32>,
+    /// 96 limbs — the sponge state the chain's LAST link produced.
+    pub out_state: Vec<u32>,
+    /// The ordered commitment to every element the chain absorbed.
+    pub transcript_acc: Vec<u32>,
+}
+
+/// Width of one whole three-lane sponge state in the chain claim.
+pub const CHAIN_STATE_WIDTH: usize = 3 * PASTA_LIMBS;
+
+/// ⚑⚑ **THE INJECTED RECURSION-ROOT BACKEND — the seam, and the reason `dregg-turn` still has no
+/// `dregg-circuit-prove` edge.**
+///
+/// Verifying a recursion root needs `p3-recursion` + `p3-circuit-prover`, which `dregg-turn`
+/// deliberately does not link (`turn/Cargo.toml`). So the crypto is injected: a host that WANTS
+/// the capability depends on `dregg-recursion-verify` — a crate that unconditionally verifies —
+/// and installs an impl. `dregg-node` does exactly that in `executor_setup.rs`.
+///
+/// ⚑ **THE FINGERPRINT COMPARISON IS NOT THE BACKEND'S TO MAKE.** [`verify_chain_root`] returns
+/// the fingerprint it MEASURED off the proof; [`pinned_root_vk`] returns the anchor the backend
+/// was constructed with; and it is [`MinaAnchoredHeadStarkVerifier::verify`] — here, in
+/// `dregg-turn` — that requires them equal. A backend that simply forgot to compare therefore
+/// cannot fail open, which is the whole point of splitting the trait this way rather than having
+/// one `fn verify(&self, bytes) -> Result<Claim, String>` that is trusted to have checked.
+///
+/// [`verify_chain_root`]: MinaChainRootBackend::verify_chain_root
+/// [`pinned_root_vk`]: MinaChainRootBackend::pinned_root_vk
+pub trait MinaChainRootBackend: Send + Sync + std::fmt::Debug {
+    /// The `recursion_vk_fingerprint` this backend's operator pinned as the trust anchor —
+    /// extracted once from an honest fold. An all-zero value is REFUSED by the consumer as an
+    /// unset anchor.
+    fn pinned_root_vk(&self) -> [u8; 32];
+
+    /// Verify the root and report `(measured recursion_vk_fingerprint, claim)`.
+    ///
+    /// MUST verify the STARK. MUST NOT decide whether the fingerprint is acceptable — report it.
+    fn verify_chain_root(
+        &self,
+        proof_bytes: &[u8],
+    ) -> Result<([u8; 32], MinaChainRootClaim), String>;
 }
 
 /// ⚑ **THE SUB-PROOF PUBLIC-INPUT COMMITMENT** the head descriptor PI-binds at slots 20..28: blake3
@@ -382,10 +557,126 @@ pub fn check_head_binding(
     Ok(())
 }
 
+/// ⚑⚑ **REFUSALS 7-10 — THE RECURSION ROOT, as a pure function of the backend's report.**
+///
+/// Separated from the verifier for the same reason [`check_head_binding`] is: these are the
+/// refusals that make a fold root LOAD-BEARING, and a refusal that cannot be exhibited without
+/// minting a 17-minute fold is a refusal nobody checks.
+///
+/// * **7 — the anchor is set.** An all-zero `pinned` is refused. An unset anchor that compares
+///   equal to a proof nobody pinned is the fail-open shape this whole seam exists to avoid.
+/// * **8 — the root is a proof of the PINNED circuit.** `measured == pinned`. Without it, "the
+///   root verifies" means only "*some* circuit's proof verifies".
+/// * **9 — the chain started from a FRESH Kimchi sponge.** A root whose `in_state` is anything
+///   else proves a sentence about a transcript prefix nobody checked — the prover picked where
+///   to start.
+/// * **10 ⚑⚑ THE WELD.** The root's outgoing lanes 0 and 1 ARE the sub-proof's two pinned
+///   outgoing lanes (`linkPins`' `last r4 ‖ last r5`, slots 160..224). This is what ties the
+///   recursion root to the head proof already being verified: the sub-proof's incoming sponge
+///   state stops being a free prover choice and becomes the output of a 46-link chain that
+///   started at (0,0,0). It is residual (2) of this module's header narrowing — **not closing**:
+///   nothing here relates either object to `TIP_STATE`, which still needs the Fp phase-1 leg.
+pub fn check_chain_root_binding(
+    pinned: &[u8; 32],
+    measured: &[u8; 32],
+    claim: &MinaChainRootClaim,
+    transcript_pis: &[u32],
+) -> Result<(), String> {
+    // ── REFUSAL 7: the anchor is set.
+    if pinned == &[0u8; 32] {
+        return Err(
+            "the recursion-root trust anchor is all-zero: this node has no pinned \
+             `recursion_vk_fingerprint` and therefore cannot tell which circuit a root proves"
+                .into(),
+        );
+    }
+
+    // ── REFUSAL 8: the root is a proof of THAT circuit.
+    if measured != pinned {
+        return Err(format!(
+            "recursion root VK fingerprint is {}, but this consumer's pinned anchor is {}: the \
+             root is a proof of a DIFFERENT circuit",
+            hex::encode(measured),
+            hex::encode(pinned)
+        ));
+    }
+
+    if claim.in_state.len() != CHAIN_STATE_WIDTH || claim.out_state.len() != CHAIN_STATE_WIDTH {
+        return Err(format!(
+            "the recursion root's claim carries {}/{} state limbs; a Mina phase-2 chain claim is \
+             {CHAIN_STATE_WIDTH} each side",
+            claim.in_state.len(),
+            claim.out_state.len()
+        ));
+    }
+
+    // ── REFUSAL 9: the chain started from a FRESH Kimchi sponge.
+    if let Some(i) = claim.in_state.iter().position(|v| *v != 0) {
+        return Err(format!(
+            "the recursion root's incoming sponge limb {i} is {}, not 0: the chain did not start \
+             from a FRESH Kimchi sponge, so it says nothing about the whole transcript",
+            claim.in_state[i]
+        ));
+    }
+
+    // ── REFUSAL 10 ⚑⚑ THE WELD: the root LANDS ON the sub-proof's own outgoing lanes.
+    if transcript_pis.len() != MINA_WRAPLINK_PI_COUNT {
+        return Err(format!(
+            "the Fq-transcript sub-proof declared {} public inputs; \
+             {MINA_WRAPLINK_DESCRIPTOR} binds exactly {MINA_WRAPLINK_PI_COUNT}",
+            transcript_pis.len()
+        ));
+    }
+    let sub_out = &transcript_pis[WRAPLINK_OUT_LANES_LO..][..WRAPLINK_OUT_LANES_WIDTH];
+    for (i, want) in sub_out.iter().enumerate() {
+        let got = claim.out_state[i];
+        if got != *want {
+            return Err(format!(
+                "recursion-root outgoing limb {i} is {got}, but the Fq-transcript sub-proof pins \
+                 {want}: the root does not LAND ON the sub-proof this head presents — the two are \
+                 about different transcripts"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// ⚑ The Mina anchored-head verifier: a dregg turn's acceptance made to DEPEND on a verified Mina
-/// head. See the module docs for the four refusals and the named residuals.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MinaAnchoredHeadStarkVerifier;
+/// head. See the module docs for the refusals and the named residuals.
+///
+/// ⚑ **CONSTRUCTED UNWIRED, AND UNWIRED MEANS REFUSE.** `Default` / [`Self::unwired`] carry no
+/// [`MinaChainRootBackend`], and a head presented to an unwired verifier is REJECTED at refusal 7
+/// — never waved through. A host that can verify a recursion root installs one with
+/// [`Self::with_chain_root_backend`]; `dregg-node` does.
+#[derive(Clone, Debug, Default)]
+pub struct MinaAnchoredHeadStarkVerifier {
+    chain_root: Option<Arc<dyn MinaChainRootBackend>>,
+}
+
+impl MinaAnchoredHeadStarkVerifier {
+    /// The verifier with NO recursion-root backend: every head is refused at refusal 7.
+    ///
+    /// This is what `registry_with_real_verifiers()` installs, because `dregg-turn` cannot verify
+    /// a recursion root and the honest behaviour of a consumer that cannot check something is to
+    /// refuse it.
+    pub fn unwired() -> Self {
+        Self::default()
+    }
+
+    /// The verifier with a host-injected recursion-root backend.
+    pub fn with_chain_root_backend(backend: Arc<dyn MinaChainRootBackend>) -> Self {
+        Self {
+            chain_root: Some(backend),
+        }
+    }
+
+    /// Whether this verifier can check a recursion root at all. Diagnostic only — the REFUSAL is
+    /// in `verify`, not in a caller's `if`.
+    pub fn is_chain_root_wired(&self) -> bool {
+        self.chain_root.is_some()
+    }
+}
 
 impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
     fn name(&self) -> &'static str {
@@ -455,20 +746,100 @@ impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
             reason,
         };
 
+        // ── ⚑⚑⚑ REFUSAL 0 — CAPABILITY, CHECKED BEFORE ANYTHING ELSE.
+        //
+        // Whether this node can verify a recursion root is a property of the NODE, not of the
+        // blob, so it is decided before the blob is even decoded. A node with no injected backend
+        // REFUSES the head. It does not log and proceed, it does not treat "we cannot check the
+        // root" as "there was no root to check", and it does not spend two STARK verifications
+        // first. `dregg-turn` cannot link the recursion verifier (`turn/Cargo.toml`), so this is
+        // the seam where the capability enters — and absence at a seam has exactly one honest
+        // answer.
+        let backend = self.chain_root.as_ref().ok_or_else(|| {
+            reject(
+                "no recursion-root backend is injected (fail-closed): this node cannot verify the \
+                 Mina phase-2 chain root and therefore refuses the head. A host that CAN installs \
+                 one via `register_mina_head_verifier_with_chain_root` (backend: \
+                 `dregg-recursion-verify`)."
+                    .into(),
+            )
+        })?;
+
         let wire: MinaHeadProofWire = postcard::from_bytes(proof_bytes).map_err(|e| {
             reject(format!(
                 "Mina anchored-head proof wire did not decode (expected MinaHeadProofWire): {e}"
             ))
         })?;
 
+        // ── ⚑⚑ REFUSAL 0b: THE ANCHOR PAIR. The wire's declared `(state, height)` must be the
+        // pair the cell program committed to, and the proof's PI 29 must be that height. The
+        // anchor-height half is new on 2026-08-05 and is the consumer side of the `ANCHOR_H` PI
+        // pin — a pin whose only reader is the descriptor that declares it is decoration.
+        check_anchor_binding(
+            commitment,
+            &wire.pinned_anchor_state,
+            wire.pinned_anchor_height,
+            &wire.public_inputs,
+        )
+        .map_err(reject)?;
+
         // ── REFUSALS 1-3: the proof must be ABOUT the pinned anchor, must record THAT head, and
         // must have met at least the mainnet Samasika depth. All three read authoritative state,
         // never the action.
-        check_head_binding(commitment, &recorded_tip, &wire.public_inputs).map_err(reject)?;
+        //
+        // ⚑ The anchor argument is the wire's declared state, NOT `commitment` — since the
+        // 2026-08-05 flag day the commitment is `H(state ‖ height)` and is no longer the state
+        // hash itself. `check_anchor_binding` above is what makes that substitution safe: it has
+        // already refused unless the declared state hashes into the pinned commitment.
+        check_head_binding(
+            &wire.pinned_anchor_state,
+            &recorded_tip,
+            &wire.public_inputs,
+        )
+        .map_err(reject)?;
+
+        // ── ⚑⚑ REFUSAL 3b: **THE DEFERRED IPA ACCUMULATOR.** The leg Halo/Pickles never evaluates
+        // in-circuit and upstream `&&`s into `batch_step_dlog_check` — and that this light client
+        // did not evaluate AT ALL until today. Fail-closed on an ABSENT backend: a node that cannot
+        // discharge the accumulator cannot know whether the terminal opening is vacuous, so it
+        // refuses the head rather than accepting the carrier on the prover's word.
+        wire.accumulator.check_arity().map_err(reject)?;
+        let acc_oracle = installed_mina_accumulator_oracle().ok_or_else(|| {
+            reject(
+                "no Mina accumulator oracle is installed (fail-closed): this node cannot discharge \
+                 the deferred IPA accumulator claim `C == <b_poly_coefficients(u), srs.g>` and \
+                 therefore refuses the head. Install it at startup via \
+                 `dregg_exec_lean::register_mina_accumulator_oracle`."
+                    .to_string(),
+            )
+        })?;
+        acc_oracle.discharged(&wire.accumulator).map_err(|e| {
+            reject(format!(
+                "the Mina deferred IPA accumulator did not discharge: {e}"
+            ))
+        })?;
 
         // ── ⚑⚑ REFUSAL 4: the head proof's DECLARED sub-proof is the one presented.
         check_transcript_binding(&wire.public_inputs, &wire.transcript_public_inputs)
             .map_err(reject)?;
+
+        // ── ⚑⚑ REFUSALS 7-10: THE RECURSION ROOT OF THE 46-LINK PHASE-2 CHAIN. The backend was
+        // required at refusal 0; here it is used.
+        let (measured_vk, root_claim) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                backend.verify_chain_root(&wire.chain_root_proof)
+            }))
+            .map_err(|_| {
+                reject("Mina phase-2 chain-root verify panicked (treated as rejection)".into())
+            })?
+            .map_err(|reason| reject(format!("the Mina phase-2 chain root rejected: {reason}")))?;
+        check_chain_root_binding(
+            &backend.pinned_root_vk(),
+            &measured_vk,
+            &root_claim,
+            &wire.transcript_public_inputs,
+        )
+        .map_err(reject)?;
 
         // ── ⚑⚑ REFUSAL 5: **THE SUB-PROOF ITSELF.** This is the step that makes the light client
         // consume a proof where it used to consume a bit. `descriptor_by_name` is fail-closed
@@ -536,9 +907,33 @@ impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
     }
 }
 
-/// The verifier as a registry-ready `Arc`, under [`mina_head_predicate_vk`].
+/// The verifier as a registry-ready `Arc`, under [`mina_head_predicate_vk`] — **UNWIRED**.
+///
+/// It refuses every head at refusal 7 until a host installs a recursion-root backend with
+/// [`register_mina_head_verifier_with_chain_root`]. That is the honest default: `dregg-turn`
+/// cannot verify a recursion root, and a verifier that accepts what it cannot check is the
+/// fail-open shape.
 pub fn mina_head_verifier() -> Arc<dyn WitnessedPredicateVerifier> {
-    Arc::new(MinaAnchoredHeadStarkVerifier)
+    Arc::new(MinaAnchoredHeadStarkVerifier::unwired())
+}
+
+/// ⚑ **THE HOST WIRING HELPER.** Replace the registry's UNWIRED Mina anchored-head verifier with
+/// one that can check a recursion root, backed by `backend`.
+///
+/// The app-side analogue of `TeeWitnessedPredicateVerifier::with_verifier`: the vk is unchanged
+/// (`mina_head_predicate_vk()`), so a cell program written against the unwired node keeps working
+/// — it just stops being refused at refusal 7. `dregg-node` calls this from `executor_setup.rs`
+/// with the `dregg-recursion-verify` backend.
+pub fn register_mina_head_verifier_with_chain_root(
+    registry: &mut dregg_cell::predicate::WitnessedPredicateRegistry,
+    backend: Arc<dyn MinaChainRootBackend>,
+) {
+    registry.register_custom(
+        mina_head_predicate_vk(),
+        Arc::new(MinaAnchoredHeadStarkVerifier::with_chain_root_backend(
+            backend,
+        )),
+    );
 }
 
 #[cfg(test)]
@@ -701,9 +1096,15 @@ mod tests {
         let mut short = pis_for(&anchor, &tip, 290);
         short.pop();
         let err = check_head_binding(&anchor, &tip, &short).unwrap_err();
+        // ⚑ FIXED 2026-08-05. This asserted `binds exactly 20` while the message has interpolated
+        // `MINA_LC_PI_COUNT` — 29 since the PI flip — for as long as the flip has been in. It
+        // therefore could not go red for the right reason; it only ever passed because
+        // `"…binds exactly 29"` does not contain `"binds exactly 20"`… which is to say it did NOT
+        // pass, it would have failed the moment anyone ran it. Assert on the CONSTANT, so a
+        // future PI flip moves the expectation with the message instead of rotting again.
         assert!(
-            err.contains("binds exactly 20"),
-            "expected a PI-count refusal, got: {err}"
+            err.contains(&format!("binds exactly {MINA_LC_PI_COUNT}")),
+            "expected a PI-count refusal naming {MINA_LC_PI_COUNT}, got: {err}"
         );
     }
 
@@ -724,14 +1125,195 @@ mod tests {
     }
 
     /// A garbage proof blob is a fail-closed REJECTION at the wire, never a panic.
+    ///
+    /// ⚑ Run against a WIRED verifier deliberately: on an unwired one the refusal would be
+    /// refusal 0, and this test would pass without ever exercising the codec it is about.
     #[test]
     fn a_garbage_proof_blob_is_refused() {
         let anchor = [7u8; 32];
         let tip = [3u8; 32];
-        let err = MinaAnchoredHeadStarkVerifier
+        let v =
+            MinaAnchoredHeadStarkVerifier::with_chain_root_backend(Arc::new(ScriptedRootBackend {
+                pinned: [9u8; 32],
+                measured: [9u8; 32],
+                claim: honest_root_claim(),
+            }));
+        let err = v
             .verify(&anchor, &PredicateInput::Slot(&tip), &[0xAAu8; 64])
             .unwrap_err();
-        assert!(matches!(err, WitnessedPredicateError::Rejected { .. }));
+        match err {
+            WitnessedPredicateError::Rejected { reason, .. } => {
+                assert!(reason.contains("did not decode"), "{reason}")
+            }
+            other => panic!("expected a wire-decode rejection, got {other:?}"),
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // ⚑⚑ REFUSALS 7-10 — THE RECURSION ROOT. Both polarities, and the ABSENT case exhibited.
+    // ════════════════════════════════════════════════════════════════════════════════════════
+
+    /// A backend that reports whatever it is told to. The refusals under test are the CONSUMER's,
+    /// so the backend must be able to report an honest triple as well as each dishonest one —
+    /// otherwise the positive pole below would be untestable and the negatives vacuous.
+    #[derive(Debug)]
+    struct ScriptedRootBackend {
+        pinned: [u8; 32],
+        measured: [u8; 32],
+        claim: MinaChainRootClaim,
+    }
+
+    impl MinaChainRootBackend for ScriptedRootBackend {
+        fn pinned_root_vk(&self) -> [u8; 32] {
+            self.pinned
+        }
+        fn verify_chain_root(
+            &self,
+            _proof_bytes: &[u8],
+        ) -> Result<([u8; 32], MinaChainRootClaim), String> {
+            Ok((self.measured, self.claim.clone()))
+        }
+    }
+
+    /// The 224 sub-proof PIs, with the two OUTGOING lanes filled from `out` (128 limbs of the
+    /// chain claim's outgoing state).
+    fn sub_pis_landing_on(out: &[u32]) -> Vec<u32> {
+        let mut pis: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        pis[WRAPLINK_OUT_LANES_LO..][..WRAPLINK_OUT_LANES_WIDTH]
+            .copy_from_slice(&out[..WRAPLINK_OUT_LANES_WIDTH]);
+        pis
+    }
+
+    /// An honest root claim: fresh sponge in, some outgoing state, some accumulator.
+    fn honest_root_claim() -> MinaChainRootClaim {
+        MinaChainRootClaim {
+            in_state: vec![0u32; CHAIN_STATE_WIDTH],
+            // Values chosen inside the 8-bit limb range the Lean layout uses, so nothing here is
+            // refused for a reason other than the one under test.
+            out_state: (0..CHAIN_STATE_WIDTH as u32)
+                .map(|i| (i * 3) % 251)
+                .collect(),
+            transcript_acc: vec![7u32; 8],
+        }
+    }
+
+    /// ⚑⚑ POSITIVE POLARITY: an honest root — pinned anchor set, measured fingerprint equal,
+    /// fresh sponge in, landing on the sub-proof's own outgoing lanes — BINDS. Without this the
+    /// four refusals below would be satisfied by a check that refuses everything.
+    #[test]
+    fn an_honest_chain_root_binds_to_the_sub_proof_it_closes() {
+        let claim = honest_root_claim();
+        let sub = sub_pis_landing_on(&claim.out_state);
+        check_chain_root_binding(&[9u8; 32], &[9u8; 32], &claim, &sub)
+            .expect("an honest root that lands on the presented sub-proof must bind");
+    }
+
+    /// ⚑ REFUSED (7): an all-zero anchor. An unset trust anchor that happens to compare equal is
+    /// the fail-open shape — a node with no pinned fingerprint cannot tell which circuit a root
+    /// proves, and must say so rather than accept.
+    #[test]
+    fn an_unset_root_anchor_is_refused() {
+        let claim = honest_root_claim();
+        let sub = sub_pis_landing_on(&claim.out_state);
+        let err = check_chain_root_binding(&[0u8; 32], &[0u8; 32], &claim, &sub).unwrap_err();
+        assert!(err.contains("all-zero"), "{err}");
+    }
+
+    /// ⚑⚑ REFUSED (8): a root of a DIFFERENT circuit. This is the refusal that makes
+    /// `recursion_vk_fingerprint` the root's identity — without it "the root verifies" means only
+    /// "*some* circuit's proof verifies".
+    #[test]
+    fn a_root_of_a_different_circuit_is_refused() {
+        let claim = honest_root_claim();
+        let sub = sub_pis_landing_on(&claim.out_state);
+        let mut other = [9u8; 32];
+        other[31] ^= 1;
+        let err = check_chain_root_binding(&[9u8; 32], &other, &claim, &sub).unwrap_err();
+        assert!(err.contains("DIFFERENT circuit"), "{err}");
+    }
+
+    /// ⚑ REFUSED (9): a chain that did not start from a fresh Kimchi sponge. Every gate of the
+    /// fold still holds on such a root — it is a perfectly good proof of a SUFFIX — which is
+    /// exactly why the consumer has to refuse it.
+    #[test]
+    fn a_root_that_starts_mid_transcript_is_refused() {
+        let mut claim = honest_root_claim();
+        claim.in_state[17] = 1;
+        let sub = sub_pis_landing_on(&claim.out_state);
+        let err = check_chain_root_binding(&[9u8; 32], &[9u8; 32], &claim, &sub).unwrap_err();
+        assert!(err.contains("FRESH Kimchi sponge"), "{err}");
+    }
+
+    /// ⚑⚑ REFUSED (10 — THE WELD): a root that does not land on the sub-proof this head presents.
+    /// Both objects are internally impeccable; what is false is only that they are about the same
+    /// transcript.
+    #[test]
+    fn a_root_that_lands_elsewhere_than_the_sub_proof_is_refused() {
+        let claim = honest_root_claim();
+        let mut sub = sub_pis_landing_on(&claim.out_state);
+        sub[WRAPLINK_OUT_LANES_LO + 5] = sub[WRAPLINK_OUT_LANES_LO + 5].wrapping_add(1);
+        let err = check_chain_root_binding(&[9u8; 32], &[9u8; 32], &claim, &sub).unwrap_err();
+        assert!(err.contains("does not LAND ON"), "{err}");
+    }
+
+    /// ⚑ REFUSED: a claim of the wrong shape. A root that verifies but publishes a 200-lane claim
+    /// of some OTHER circuit's layout must not be sliced into acceptance.
+    #[test]
+    fn a_root_claim_of_the_wrong_width_is_refused() {
+        let mut claim = honest_root_claim();
+        claim.out_state.pop();
+        let sub: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        let err = check_chain_root_binding(&[9u8; 32], &[9u8; 32], &claim, &sub).unwrap_err();
+        assert!(err.contains("state limbs"), "{err}");
+    }
+
+    /// ⚑⚑⚑ **ABSENCE IS REFUSAL, EXHIBITED AT THE REGISTRY-FACING SURFACE.** The verifier
+    /// `registry_with_real_verifiers()` installs has NO backend, and a head presented to it is
+    /// `Rejected` **naming the missing backend** — not accepted, not skipped, not
+    /// logged-and-proceeded.
+    ///
+    /// ⚑ The refusal is reachable with ARBITRARY bytes precisely because it fires at refusal 0,
+    /// before the wire is decoded: whether this node can check a recursion root is a fact about
+    /// the node. A test that had to mint two real IR-v2 proofs to reach it would be a test nobody
+    /// runs, and the refusal it guards is the one this whole seam exists for.
+    #[test]
+    fn an_unwired_node_refuses_a_head_rather_than_skipping_the_root() {
+        let v = MinaAnchoredHeadStarkVerifier::unwired();
+        assert!(!v.is_chain_root_wired());
+        let err = v
+            .verify(&[7u8; 32], &PredicateInput::Slot(&[3u8; 32]), &[0u8; 8])
+            .unwrap_err();
+        match err {
+            WitnessedPredicateError::Rejected { reason, .. } => assert!(
+                reason.contains("no recursion-root backend is injected"),
+                "the refusal must NAME the absent capability, got: {reason}"
+            ),
+            other => panic!("an unwired verifier must REJECT, got {other:?}"),
+        }
+    }
+
+    /// ⚑ The wired verifier reports itself wired, and the registry helper installs it under the
+    /// SAME vk — a host upgrade must not mint a second predicate identity.
+    #[test]
+    fn the_host_helper_upgrades_in_place_under_the_same_vk() {
+        use dregg_cell::predicate::{WitnessedPredicateKind, WitnessedPredicateRegistry};
+
+        let mut reg = WitnessedPredicateRegistry::empty();
+        reg.register_custom(mina_head_predicate_vk(), mina_head_verifier());
+        register_mina_head_verifier_with_chain_root(
+            &mut reg,
+            Arc::new(ScriptedRootBackend {
+                pinned: [9u8; 32],
+                measured: [9u8; 32],
+                claim: honest_root_claim(),
+            }),
+        );
+        let v = reg
+            .get(WitnessedPredicateKind::Custom {
+                vk_hash: mina_head_predicate_vk(),
+            })
+            .expect("the upgraded verifier resolves under the unchanged vk");
+        assert_eq!(v.name(), "mina-anchored-head-stark");
     }
 
     /// The input shape is checked: this predicate reads a 32-byte state slot, never a signing
@@ -739,7 +1321,7 @@ mod tests {
     #[test]
     fn a_signing_message_input_is_refused() {
         let anchor = [7u8; 32];
-        let err = MinaAnchoredHeadStarkVerifier
+        let err = MinaAnchoredHeadStarkVerifier::unwired()
             .verify(
                 &anchor,
                 &PredicateInput::SigningMessage(b"not a state slot"),

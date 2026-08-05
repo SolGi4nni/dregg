@@ -189,6 +189,10 @@ BY_NAME_NEWLINE_TERMINATED = frozenset({
     "pasta-fpsub-sound.json",
     "pasta-fqadd-sound.json",
     "pasta-fqsub-sound.json",
+    # ⚑ The eight-block phase-2 chain link (routed 2026-08-05). Emitted by redirect out of
+    # `EmitPastaAlu.lean fqchain` before it was routed here, so it carries the trailing newline
+    # every redirect-emitted artifact carries.
+    "pasta-fq-chainlink.json",
     "dark-bazaar-private-n4k4.json",
     "faithful-note-spend-v2.json",
     "field-delta-result-range.json",

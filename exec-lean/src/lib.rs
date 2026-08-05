@@ -29,9 +29,12 @@
 
 pub mod conservation_oracle;
 pub mod constraint_oracle;
+// ⚑ The Mina deferred-IPA-accumulator backend. Native Pasta MSM over the byte-pinned Vesta SRS,
+// routed through the Lean decision `dregg_mina_deferral_ok`. `dregg-turn` holds only the trait.
 pub mod distributed_gates;
 pub mod lean_apply;
 pub mod lean_shadow;
+pub mod mina_accumulator_oracle;
 pub mod nullifier;
 pub mod spec_audit;
 
@@ -53,6 +56,7 @@ pub use lean_apply::{
     profile_lean_phases,
 };
 pub use lean_shadow::{ShadowAgreement, ShadowReport, shadow_agreement_for, shadow_report};
+pub use mina_accumulator_oracle::{LeanMinaAccumulatorOracle, register_mina_accumulator_oracle};
 pub use spec_audit::{
     AuditEntry, AuditOutcome, AuditWorker, DivergenceKind, DivergenceReport, DivergenceSink,
     SpeculativeAudit, WorkerStop,

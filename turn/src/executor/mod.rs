@@ -798,7 +798,8 @@ pub use membership_verifier::{
 pub mod mina_head_verifier;
 pub use mina_head_verifier::{
     MINA_LC_VERIFY_DESCRIPTOR, MINA_MIN_CONFIRMATION_DEPTH, MinaAnchoredHeadStarkVerifier,
-    MinaHeadProofWire, mina_head_predicate_vk, mina_head_verifier,
+    MinaChainRootBackend, MinaChainRootClaim, MinaHeadProofWire, check_chain_root_binding,
+    mina_head_predicate_vk, mina_head_verifier, register_mina_head_verifier_with_chain_root,
 };
 
 /// The OWNER-SIGNED ENVELOPE keystone: an `Authorization::Custom` verifier that
@@ -2535,4 +2536,14 @@ pub use conservation_oracle::{
     ConservationOracle, assert_conservation_oracle_installed, conservation_oracle_installed,
     ensure_conservation_oracle_installed, install_conservation_oracle,
     native_build_requires_oracle, require_verified_conservation_gate,
+};
+
+// ⚑ The Mina deferred-IPA-accumulator seam. Same shape as `conservation_oracle` and for the same
+// reason: the backend needs `libdregg_lean.a` (and a 4 MB Vesta SRS) that `dregg-turn` cannot link,
+// so the trait lives here and `dregg-exec-lean` installs the implementation at native startup.
+pub mod mina_accumulator_oracle;
+pub use mina_accumulator_oracle::{
+    MINA_ACCUMULATOR_ROUNDS, MinaAccumulatorOracle, WireAccumulatorClaim,
+    install_mina_accumulator_oracle, installed_mina_accumulator_oracle,
+    mina_accumulator_oracle_installed,
 };

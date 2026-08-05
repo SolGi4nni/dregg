@@ -68,6 +68,7 @@ import Dregg2.Circuit.Emit.PastaFieldSound
 import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
+import Dregg2.Circuit.Emit.MinaPhase2Chain
 import Dregg2.Circuit.Emit.PredicatesArithmeticEmit
 import Dregg2.Circuit.Emit.PredicatesGtEmit
 import Dregg2.Circuit.Emit.PredicatesInRangeEmit
@@ -239,6 +240,15 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.MinaWrapVerifierProgram.longDesc)
   , ("pasta-alu-fq-sound.json",
       Dregg2.Circuit.Emit.MinaWrapVerifierAir.fqAluDesc)
+  -- ⚑ 2026-08-05 — THE EIGHT-BLOCK PHASE-2 CHAIN LINK, routed so its bytes are re-derivable from
+  -- Lean on a flag day. `MinaPhase2Chain.the_chain_air_extends_the_program_air`: this and
+  -- `dregg-pasta-fq-wraplink::v1` are the SAME `programAir qLimb absorbProg` (2048-instruction
+  -- `fq_kimchi` ROM); only the boundary pin blocks differ — `chainPins` pins EIGHT
+  -- (`in(3) ++ out(3) ++ absorbed(2)`, 256 PIs) where `linkPins` pins SEVEN (224 PIs) and exposes
+  -- only TWO of a Poseidon state's THREE outgoing lanes. That missing third lane is why a chain
+  -- welded on the wraplink hands a third of its state on as a free prover scalar.
+  , ("pasta-fq-chainlink.json",
+      Dregg2.Circuit.Emit.MinaPhase2Chain.chainDesc)
   , ("predicate-arith-gt.json",
       Dregg2.Circuit.Emit.PredicatesGtEmit.predicateGtDesc)
   , ("predicate-arith-inrange.json",
@@ -478,7 +488,7 @@ Both directions are gated outside Lean:
 -- ⚠ 91, not 89: this lane added `pasta-sbox-prog` + `pasta-sbox-prog-1k` (the register-file /
 -- instruction-ROM machine and its 2^10 instance). Same shared-line hazard as the note above — if
 -- the blame on this line is one lane's, the count is probably still short.
-theorem byNameDescriptors_length : byNameDescriptors.length = 91 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 92 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

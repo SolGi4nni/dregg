@@ -83,6 +83,11 @@ mod init;
 mod mailbox_crank_e2e;
 pub mod mcp;
 pub mod metrics;
+// ⚑ THE RECURSION-ROOT CAPABILITY. `dregg-turn` cannot verify a Mina phase-2 fold root (it does
+// not link the recursion tower) and REFUSES every anchored head until a host injects a backend.
+// This is that host: a thin adapter over `dregg-recursion-verify`, installed in
+// `executor_setup` only when the operator has pinned a `recursion_vk_fingerprint`.
+pub mod mina_chain_root_backend;
 #[cfg(test)]
 mod node_integrator_e2e;
 #[cfg(test)]
@@ -97,6 +102,7 @@ pub mod poa_compact_ceremony;
 pub(crate) mod poa_galley_api;
 pub mod poa_galley_genesis;
 pub mod poa_holding_api;
+pub mod poa_records_api;
 pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;
 pub mod poa_signal_genesis;
@@ -912,6 +918,23 @@ pub fn install_verified_executor_oracles() {
     if dregg_exec_lean::register_conservation_oracle() {
         tracing::debug!(
             "conservation oracle: verified Lean cross-cell per-asset Σδ=0 decision installed"
+        );
+    }
+    // ⚑ The MINA DEFERRED-IPA ACCUMULATOR (2026-08-05). Native Vesta MSM over the byte-pinned
+    // 65 536-generator SRS, routed through the Lean decision `dregg_mina_deferral_ok`. This is the
+    // leg Halo/Pickles never evaluate in-circuit and that upstream `&&`s into
+    // `batch_step_dlog_check`; until today it had no caller outside an example binary.
+    //
+    // Installed HERE — beside the other two — rather than in `run`, for exactly the reason this
+    // function's docblock gives: `NodeState::new` is a way to obtain a node too, and an oracle
+    // armed only from the CLI is armed for one of the ways in.
+    //
+    // A no-op when the archive lacks the export, and that is FAIL-CLOSED, not a degrade: with no
+    // oracle installed `MinaAnchoredHeadStarkVerifier::verify` REFUSES every Mina anchored head
+    // rather than accepting an accumulator claim on the prover's word.
+    if dregg_exec_lean::register_mina_accumulator_oracle() {
+        tracing::debug!(
+            "mina accumulator oracle: native Vesta-SRS discharge + verified Lean deferral gate installed"
         );
     }
 }

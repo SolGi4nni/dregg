@@ -276,6 +276,14 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     // a dispatch miss is a REJECTION of the turn, so a node built without this row refuses Mina
     // heads rather than waving the carrier through.
     ("dregg-pasta-fq-wraplink::v1", MINA_WRAPLINK_TRANSCRIPT_JSON),
+    // ⚑⚑ THE EIGHT-BLOCK CHAIN LINK (2026-08-05). The 46-link fold, the endo lift and the ξ chain
+    // were all PROVED against this descriptor and none of them could reach it by name — it was
+    // emitted, checked in, and served to nobody. Serving it is what lets a consumer dispatch the
+    // chain the fold is actually about instead of the one-permutation wraplink beside it.
+    (
+        "dregg-pasta-fq-chainlink::v1",
+        MINA_CHAINLINK_TRANSCRIPT_JSON,
+    ),
     // ⚑ The Solana STAKE-TABLE FOLD: one row per stake-table entry. The eight-lane Poseidon2
     // commitment to the table and the u64 active-stake DENOMINATOR both come out of the SAME rows,
     // so a swapped validator set with an identical tally moves the root.
@@ -583,6 +591,35 @@ const MINA_LIGHTCLIENT_LINK_JSON: &str =
 /// witness. See `LightClientMinaAir` §2b, which states the residual with the number.
 const MINA_WRAPLINK_TRANSCRIPT_JSON: &str =
     include_str!("../descriptors/by-name/pasta-fq-wraplink.json");
+
+/// ⚑⚑ `dregg-pasta-fq-chainlink::v1` — **THE EIGHT-BLOCK LINK THE 46-LINK FOLD IS BUILT ON**, served
+/// from 2026-08-05. Lean-authored (`Dregg2.Circuit.Emit.MinaPhase2Chain.chainDesc`).
+///
+/// The SAME 2 048-instruction `fq_kimchi` sponge program as [`MINA_WRAPLINK_TRANSCRIPT_JSON`] —
+/// `MinaPhase2Chain.the_chain_air_extends_the_program_air` states both airs as
+/// `programAir qLimb absorbProg ++ <pins>` — differing ONLY in the boundary pin blocks:
+///
+/// | | pin blocks | PIs | outgoing lanes exposed |
+/// |---|---|---|---|
+/// | `dregg-pasta-fq-wraplink::v1` | 7 (`in(3) ++ absorbed(2) ++ out(2)`) | 224 | **TWO of three** |
+/// | `dregg-pasta-fq-chainlink::v1` | 8 (`in(3) ++ out(3) ++ absorbed(2)`) | 256 | **THREE of three** |
+///
+/// ⚑ **THAT THIRD LANE IS THE WHOLE POINT.** A Poseidon state is three lanes and
+/// `MinaPhase2Chain.the_outgoing_lanes_are_registers_4_5_0` names them; `linkPins` pins `last 4` and
+/// `last 5` only. So a CHAIN welded on the wraplink would leave each successor's third incoming lane
+/// a free prover scalar — `MinaPhase2Chain`'s own words, *"the chain would prove nothing about the
+/// transcript."* `chainPins` adds `last 0`, which is why
+/// `the_whole_phase2_transcript_folds_into_one_claim` can fold 46 of these over block 539508's real
+/// 91-element phase-2 tape and mean something.
+///
+/// ⚠ **SERVED IS NOT CONSUMED.** Serving this row makes the chainlink dispatchable by name; it does
+/// NOT re-point the Mina head verifier, which still recursion-binds
+/// `dregg-pasta-fq-wraplink::v1` (`turn::executor::mina_head_verifier::MINA_WRAPLINK_DESCRIPTOR`)
+/// and therefore still attests ONE permutation with two of three lanes pinned. Re-pointing
+/// `LightClientMinaAir.WRAPLINK_VK_LANES` at this descriptor's fingerprint is the next step and it
+/// rotates the head VK; see that module's `WRAPLINK_VK_LANES` docblock for the flag day.
+const MINA_CHAINLINK_TRANSCRIPT_JSON: &str =
+    include_str!("../descriptors/by-name/pasta-fq-chainlink.json");
 
 /// ⚑ `dregg-solana-stake-table-fold::v1` — the Solana stake table, FOLDED, one row per entry.
 ///

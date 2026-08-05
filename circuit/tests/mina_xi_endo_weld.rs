@@ -94,7 +94,33 @@ const AGG_DESC: &str = include_str!("../descriptors/by-name/mina-xi-aggregate-ms
 /// free prover scalar and the chain would prove nothing about the transcript."* `chainPins` pins
 /// EIGHT (`in(3) ++ out(3) ++ absorbed(2)`, 256 PIs). A weld to the seven-block descriptor would
 /// inherit that seam, so this file welds to the eight-block one.
-const CHAINLINK_PIS: &str = include_str!("fixtures/pasta-fq-chainlink/link-45-pis.txt");
+///
+/// ⚠ **READ OUT OF THE TRACKED AGGREGATE, ONE LINE PER LINK — NOT out of the emit directory.**
+/// `circuit/tests/fixtures/pasta-fq-chainlink/.gitignore` ignores `link-*-pis.txt`: those 46 files
+/// are the ~150 MB emit's by-products and are regenerated, never committed. A committed
+/// `include_str!` of one of them compiles for whoever ran the emit and REDS FOR EVERY FRESH CLONE,
+/// which is what HEAD did between `f93e47090` and this line. The 46 public-input vectors are
+/// tracked one directory up, exactly as that `.gitignore` says they are, and this reads link 45
+/// from there — ONE source of these bytes, not two that agree today.
+const CHAINLINK_ALL_PIS: &str = include_str!("fixtures/pasta-fq-chainlink-pis.txt");
+
+/// The number of links the phase-2 chain folds — one tracked PI line each.
+const CHAINLINK_LINKS: usize = 46;
+
+/// Link 45's public inputs: the last line of [`CHAINLINK_ALL_PIS`]. Byte-identical to the emit's
+/// `link-45-pis.txt`, which is why that file can stay untracked.
+fn chainlink_pis() -> &'static str {
+    let mut lines = CHAINLINK_ALL_PIS.lines();
+    let n = CHAINLINK_ALL_PIS.lines().count();
+    assert_eq!(
+        n, CHAINLINK_LINKS,
+        "the tracked chain-link PI aggregate carries {n} lines; the fold is {CHAINLINK_LINKS} links \
+         — re-emit it rather than reading a truncated chain"
+    );
+    lines
+        .nth(CHAINLINK_LINKS - 1)
+        .expect("checked non-empty above")
+}
 
 /// The seven-block descriptor's PIs, kept ONLY as a corroboration that the two emissions agree on
 /// the squeeze — never as the weld's own side.
@@ -125,7 +151,7 @@ fn no_fixture_is_empty() {
         ("chain desc", CHAIN_DESC),
         ("chain pis", CHAIN_PIS),
         ("aggregate desc", AGG_DESC),
-        ("chainlink link-45 pis", CHAINLINK_PIS),
+        ("chainlink link-45 pis", chainlink_pis()),
         ("wraplink pis", WRAPLINK_PIS),
     ] {
         assert!(
@@ -704,7 +730,7 @@ fn the_declared_orbit_is_forty_seven_distinct_scalars() {
 #[test]
 fn the_endo_input_is_the_chain_terminal_squeeze_truncated() {
     let endo_pis = parse_pis(ENDO_PIS);
-    let link_pis = parse_pis(CHAINLINK_PIS);
+    let link_pis = parse_pis(chainlink_pis());
     assert_eq!(
         link_pis.len(),
         8 * SK,
@@ -759,7 +785,7 @@ fn the_endo_input_is_the_chain_terminal_squeeze_truncated() {
 /// seven-block descriptor left free.
 #[test]
 fn the_two_emissions_agree_on_the_squeeze() {
-    let link_pis = parse_pis(CHAINLINK_PIS);
+    let link_pis = parse_pis(chainlink_pis());
     let wrap_pis = parse_pis(WRAPLINK_PIS);
     assert_eq!(
         wrap_pis.len(),

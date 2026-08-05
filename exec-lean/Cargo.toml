@@ -18,6 +18,10 @@ description = "The verified-Lean-FFI executor cluster — the shadow differentia
 [dependencies]
 dregg-turn = { path = "../turn" }
 dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+# ⚑ The Mina accumulator DISCHARGE (native Vesta MSM + the byte-pinned SRS). No cycle:
+# `dregg-bridge` depends on `dregg-turn` and on this crate NEVER — which is precisely why the
+# discharge cannot be called from `dregg-turn` directly and needs this installer.
+dregg-bridge = { path = "../bridge" }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-types = { path = "../types" }

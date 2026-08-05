@@ -93,13 +93,19 @@ commitment the prover can afford, and derive the anchor instead of publishing it
   both inside the height/depth component. *The prover exhibited a segment length, an anchor height, a
   submission height and three range-checked slacks in an additive relation, published the derived
   block length and the required depth, set three bits to 1, and separately exhibited eighteen lane
-  values each bounded to 29 or 22 bits.* ⚑ Two corrections the measurement forces:
-  - the anchor HEIGHT (`ANCHOR_H`, col 1) is a FREE WITNESS — not PI-bound, not range-looked-up, and
-    **pinned to no constant**; `LightClientMinaAir:274` calls it "the pinned weak-subjectivity
-    anchor's blockchain length" and no constraint pins it;
-  - the anchor STATE HASH (cols 12..20) and the anchor HEIGHT (col 1) share no constraint at all, so
-    "the published height is the pinned anchor plus the exhibited segment" is a relation among three
-    prover-chosen numbers.
+  values each bounded to 29 or 22 bits.* ⚑ Two corrections the measurement forced, ONE OF WHICH IS NOW
+  REPAIRED (2026-08-05):
+  - ✅ the anchor HEIGHT (`ANCHOR_H`, col 1) WAS a free witness — not PI-bound, not range-looked-up,
+    and pinned to no constant, while `LightClientMinaAir` called it "the pinned weak-subjectivity
+    anchor's blockchain length". It is now **PI-bound at slot 29**
+    (`minaVerify_anchor_height_is_published`), so the consumer can refuse it against the height the
+    operator pinned instead of seeing only the sum;
+  - ⚠ **STILL OPEN, and the pin did not touch it:** the anchor STATE HASH (cols 12..20) and the
+    anchor HEIGHT (col 1) share no constraint at all, because a `piBinding` contributes no edge by
+    construction. "The published height is the pinned anchor plus the exhibited segment" is now a
+    relation among two prover-chosen numbers and one PUBLISHED one, and nothing in-circuit says the
+    published height is the height OF the published hash
+    (`minaVerify_anchor_height_shares_no_constraint_with_the_hash`).
   The lane bounds are real and strictly stronger than canonicality (`8·29 + 22 = 254`,
   `2^254 < p_Pasta`) — but they bound each lane of a value tied to nothing.
 
@@ -430,7 +436,7 @@ theorem minaVerify_subproof_commitment_is_published_and_joined :
     ((List.range 9).all fun i =>
         isPiBound LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)
           && isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)) = true
-      ∧ LightClientMinaAir.minaLcVerifyDesc.piCount = 29
+      ∧ LightClientMinaAir.minaLcVerifyDesc.piCount = 30
       ∧ (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 18 := by
   refine ⟨by decide, rfl, by decide⟩
 
@@ -445,14 +451,37 @@ theorem minaVerify_recursion_guard_is_joined_and_hidden :
           isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_VK i)) = true := by
   refine ⟨by decide, by decide, by decide⟩
 
-/-- ⚑ **THE ANCHOR HEIGHT AND THE ANCHOR HASH SHARE NO CONSTRAINT**, and the anchor height is pinned
-by nothing. `ANCHOR_H` (col 1) is joined only to the height arithmetic; it is not PI-bound, carries no
-range lookup, and no gate equates it to a literal. So "the published height is the PINNED anchor plus
-the exhibited segment" (`LightClientMinaAir:274`, and the campaign brief) is a relation among three
-numbers the prover chose. -/
-theorem minaVerify_anchor_height_is_pinned_to_nothing :
-    isPiBound LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.ANCHOR_H = false ∧
-    isRelated LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.ANCHOR_H = true ∧
+/-- ⚑ **THE ANCHOR HEIGHT IS NOW PUBLISHED** — the flip of the former
+`minaVerify_anchor_height_is_pinned_to_nothing`, on the emitted bytes (2026-08-05).
+
+`ANCHOR_H` (col 1) is PI-bound at slot `PI_ANCHOR_H` and related, so it is neither hidden nor
+decorative: a consumer holding the operator's anchor can compare the height the proof used against
+the height it pinned, which is `dregg_turn::executor::mina_head_verifier`'s REFUSAL 2. Before this
+leg the only published consequence of `ANCHOR_H` was the SUM `BLOCK_LEN`, and a prover picked the
+summands.
+
+⚠ **This is a PUBLICATION result, NOT a connectivity one** — see
+`minaVerify_anchor_height_shares_no_constraint_with_the_hash` immediately below, which is the part
+that did NOT change and is the honest residual. -/
+theorem minaVerify_anchor_height_is_published :
+    isPiBound LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.ANCHOR_H = true ∧
+    isRelated LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.ANCHOR_H = true := by
+  refine ⟨by decide, by decide⟩
+
+/-- ⚑⚑ **AND THE HEIGHT STILL SHARES NO CONSTRAINT WITH THE HASH. THIS IS THE RESIDUAL.**
+
+`relatedCols` returns `[]` for a `piBinding` deliberately — a pin ties a column to a PUBLIC INPUT,
+not to another column — so the 2026-08-05 pin above bought publication and bought **zero** edges.
+IN-CIRCUIT, "the anchor" is still two unrelated prover choices: the height (col 1) and the state
+hash (cols 12..20) appear in no common constraint. Nothing in this descriptor says the height is
+the height OF that hash.
+
+That join is a Mina-state lookup this descriptor does not perform, and it is not closed by anything
+here. What closes the *consumer's* exposure is that both halves are refused against cell-program
+state off-row; what would close the *circuit's* is a constraint that does not exist yet. Kept as a
+theorem, in the affirmative, so it reds the day someone builds it — at which point the honest move
+is to delete this and state the join. -/
+theorem minaVerify_anchor_height_shares_no_constraint_with_the_hash :
     (∀ col ∈ [12, 13, 14, 15, 16, 17, 18, 19, 20],
       ∀ c ∈ LightClientMinaAir.minaLcVerifyDesc.constraints,
         col ∈ relatedCols c → LightClientMinaAir.ANCHOR_H ∉ relatedCols c) := by
@@ -578,7 +607,8 @@ theorem the_five_verify_descriptors_carry_sixty_two_decorative_anchors :
 #assert_axioms minaVerify_subproof_commitment_is_published_and_joined
 #assert_axioms minaVerify_recursion_guard_is_joined_and_hidden
 #assert_axioms minaVerify_state_lanes_are_read_but_never_joined
-#assert_axioms minaVerify_anchor_height_is_pinned_to_nothing
+#assert_axioms minaVerify_anchor_height_is_published
+#assert_axioms minaVerify_anchor_height_shares_no_constraint_with_the_hash
 #assert_axioms minaLink_decorative_anchors
 #assert_axioms minaLink_has_twenty_pi_bound_columns
 #assert_axioms solStakeFold_decorative_anchors
