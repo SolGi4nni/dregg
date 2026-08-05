@@ -740,14 +740,15 @@ theorem reduce_holder_sponsor_bounded (policy : PolicyWire) (before after : Proj
     all_goals simp_all
   exact ⟨serviceExact.trans_le serviceBound, anchors⟩
 
-/-! ## Opaque beta holder authority -/
+/-! ## Opaque future holder authority -/
 
 inductive EligibilityClass where
   | holder
 deriving DecidableEq
 
-/-- Issued only by the trusted native beta-RPC authority bridge. There is no public
-JSON parser or String-to-authority function in this module. -/
+/-- Reserved for a future authority bridge backed by an atomically consumable
+wallet capability.  The constructor is private and the old caller-JSON admission
+and native sponsor export are deliberately absent. -/
 structure AdmittedBetaSponsor where
   private mk ::
   carrier : BetaHolderSealWire
@@ -1035,32 +1036,13 @@ theorem decodeBetaHolderSeal_reencodes {bytes : String} {carrier : BetaHolderSea
   · exact canonicalDecode_reencodes parseBetaHolderSealJson BetaHolderSealWire.toJson accepted
   · contradiction
 
-private def admittedBetaSponsor? (input : InputWire)
-    (state : EventSourcing.ReplayState ProjectionWire) (carrier : BetaHolderSealWire) :
-    Option AdmittedBetaSponsor :=
-  let admitted : AdmittedBetaSponsor :=
-    ⟨carrier, carrier.playerCell, .holder, 0, rfl⟩
-  if authorityMatchesB input.policy input.viewer state.cursor 0 admitted then some admitted else none
+/-- Compatibility-shaped refusal surface for code which has not yet removed the
+old sponsor call.  Caller JSON is never decoded and can never mint
+`AdmittedBetaSponsor`; there is intentionally no native export for this function. -/
+def runAdmittedBetaSponsorWire (_inputJson _sealJson : String) : String := ""
 
-def runAdmittedBetaSponsorWire (inputJson sealJson : String) : String :=
-  (do
-    let input ← decodeInput inputJson
-    if input.mode != "view" && input.action.kind != "holder-sponsor" then none else
-    let state ← validatedPrefix? input
-    let carrier ← decodeBetaHolderSeal sealJson
-    let admitted ← admittedBetaSponsor? input state carrier
-    let output ← judgeInput? inputJson input 0 (some admitted)
-    some output.toJson).getD ""
-
-@[export dregg_poa_galley_daily_sponsor_judge]
-def sponsorJudgeFFI (inputJson sealJson : String) : String :=
-  runAdmittedBetaSponsorWire inputJson sealJson
-
-theorem admitted_beta_sponsor_has_zero_power (input : InputWire)
-    (state : EventSourcing.ReplayState ProjectionWire) (carrier : BetaHolderSealWire)
-    (admitted : AdmittedBetaSponsor)
-    (_accepted : admittedBetaSponsor? input state carrier = some admitted) :
-    admitted.chamberPower = 0 := admitted.no_chamber_power
+theorem sponsor_wire_is_unconditionally_disabled (inputJson sealJson : String) :
+    runAdmittedBetaSponsorWire inputJson sealJson = "" := rfl
 
 /-! ## Strict response decoder (clients can verify the same canonical bytes) -/
 
@@ -1326,10 +1308,6 @@ private def fixtureForgedSponsor : InputWire := {
   action := { kind := "holder-sponsor", token := fixtureDigest 99 }
 }
 
-private def fixtureWrongPlayerCarrier : BetaHolderSealWire := {
-  fixtureCarrier with player := fixtureDigest 98
-}
-
 theorem fixture_policy_valid : fixturePolicy.validB = true := by native_decide
 
 theorem fixture_input_roundtrip :
@@ -1366,22 +1344,18 @@ theorem fixture_beta_sponsor_accepted_without_advantage :
 theorem fixture_beta_seal_roundtrip :
     decodeBetaHolderSeal fixtureCarrier.toJson = some fixtureCarrier := by native_decide
 
-theorem fixture_server_sponsor_export_accepted :
-    runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson fixtureCarrier.toJson != "" := by
+theorem fixture_sponsor_wire_refuses_valid_caller_json :
+    runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson fixtureCarrier.toJson = "" := rfl
+
+theorem fixture_internal_sponsor_view_authors_token :
+    decide ((sponsorAction fixturePolicy fixtureState0 fixtureViewer fixtureAuthority) ∈
+      (viewOf fixturePolicy fixtureState0 fixtureViewer 50 (some fixtureAuthority)).availableActions) =
+        true := by
   native_decide
 
-theorem fixture_server_sponsor_view_authors_token :
-    (match decodeOutput (runAdmittedBetaSponsorWire fixtureViewInput.toJson fixtureCarrier.toJson) with
-    | none => false
-    | some output =>
-        decide ((sponsorAction fixturePolicy fixtureState0 fixtureViewer fixtureAuthority) ∈
-          output.view.availableActions)) = true := by
-  native_decide
-
-theorem fixture_server_sponsor_output_redecodes :
-    (decodeOutput
-      (runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson fixtureCarrier.toJson)).isSome = true := by
-  native_decide
+theorem fixture_sponsor_wire_output_never_decodes :
+    decodeOutput (runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson fixtureCarrier.toJson) =
+      none := by native_decide
 
 theorem hostile_wrong_version_refused :
     judgeBytesWithAuthority? fixtureWrongVersion.toJson 0 none = none := by native_decide
@@ -1394,14 +1368,6 @@ theorem hostile_stale_projection_refused :
 
 theorem hostile_forged_sponsor_without_authority_refused :
     judgeBytesWithAuthority? fixtureForgedSponsor.toJson 0 none = none := by native_decide
-
-theorem hostile_wrong_player_seal_refused :
-    runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson fixtureWrongPlayerCarrier.toJson = "" := by
-  native_decide
-
-theorem hostile_trailing_seal_byte_refused :
-    runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson (fixtureCarrier.toJson ++ " ") = "" := by
-  native_decide
 
 theorem hostile_trailing_byte_refused :
     decodeInput (fixtureViewInput.toJson ++ " ") = none := by native_decide
@@ -1422,7 +1388,7 @@ theorem hostile_tiny_byte_limit_refused :
 #assert_axioms receiptOf_has_no_advantage_delta
 #assert_axioms no_authority_cannot_form_holder_payload
 #assert_axioms decodeBetaHolderSeal_reencodes
-#assert_axioms admitted_beta_sponsor_has_zero_power
+#assert_axioms sponsor_wire_is_unconditionally_disabled
 #assert_axioms decodeOutput_reencodes
 #assert_axioms decodeOutput_refuses_oversized
 #assert_compiled fixture_policy_valid
@@ -1433,15 +1399,13 @@ theorem hostile_tiny_byte_limit_refused :
 #assert_compiled fixture_replay_successor_accepted
 #assert_compiled fixture_beta_sponsor_accepted_without_advantage
 #assert_compiled fixture_beta_seal_roundtrip
-#assert_compiled fixture_server_sponsor_export_accepted
-#assert_compiled fixture_server_sponsor_view_authors_token
-#assert_compiled fixture_server_sponsor_output_redecodes
+#assert_axioms fixture_sponsor_wire_refuses_valid_caller_json
+#assert_compiled fixture_internal_sponsor_view_authors_token
+#assert_compiled fixture_sponsor_wire_output_never_decodes
 #assert_compiled hostile_wrong_version_refused
 #assert_compiled hostile_wrong_payload_digest_refused
 #assert_compiled hostile_stale_projection_refused
 #assert_compiled hostile_forged_sponsor_without_authority_refused
-#assert_compiled hostile_wrong_player_seal_refused
-#assert_compiled hostile_trailing_seal_byte_refused
 #assert_compiled hostile_trailing_byte_refused
 #assert_compiled hostile_unknown_field_refused
 #assert_compiled hostile_tiny_byte_limit_refused

@@ -258,12 +258,6 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          source. The daily must refuse; there is no Rust gameplay twin",
     ),
     (
-        "dregg_poa_galley_daily_sponsor_judge",
-        "the Path of Angels Galley holder-SPONSOR evaluator compiles out: the server-sealed, \
-         replay-bound, zero-advantage holder admission cannot be composed with the daily. Holder \
-         sponsorship must remain disabled; no Rust code may synthesize this verdict",
-    ),
-    (
         "dregg_poa_event_batch_runtime_plan",
         "the Path of Angels finalized EventBatch planner compiles out: exact world/coordinate, \
          ordered multi-stream predecessor chaining, payload/projection commitments and the \
@@ -2328,7 +2322,6 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_network_genesis_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
-    println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_sponsor_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_plan_present)");
     println!(
         "cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_initial_heads_digest_present)"
@@ -3246,9 +3239,9 @@ fn main() {
         absent_export_warn("dregg_poa_dark_bazaar_judge");
     }
 
-    // PATH OF ANGELS GALLEY DAILY: the public and server-sealed sponsor entry points are probed
-    // independently so a half-linked archive cannot silently turn sponsorship into public play or
-    // make an absent sponsor gate look like ordinary semantic refusal.
+    // PATH OF ANGELS GALLEY DAILY: only the public evaluator may be linked.  The former sponsor
+    // export minted authority from caller JSON without an atomically consumable wallet capability;
+    // its *presence* is now a build failure rather than a required-export success.
     let poa_galley_daily_judge_present =
         archive_exports(&build_archive, "dregg_poa_galley_daily_judge");
     if poa_galley_daily_judge_present {
@@ -3256,12 +3249,11 @@ fn main() {
     } else {
         absent_export_warn("dregg_poa_galley_daily_judge");
     }
-    let poa_galley_daily_sponsor_judge_present =
-        archive_exports(&build_archive, "dregg_poa_galley_daily_sponsor_judge");
-    if poa_galley_daily_sponsor_judge_present {
-        println!("cargo:rustc-cfg=dregg_poa_galley_daily_sponsor_judge_present");
-    } else {
-        absent_export_warn("dregg_poa_galley_daily_sponsor_judge");
+    if archive_exports(&build_archive, "dregg_poa_galley_daily_sponsor_judge") {
+        panic!(
+            "SECURITY: forbidden dregg_poa_galley_daily_sponsor_judge is present; caller JSON \
+             must not mint holder authority before an atomically consumable wallet capability exists"
+        );
     }
     let poa_event_batch_runtime_plan_present =
         archive_exports(&build_archive, "dregg_poa_event_batch_runtime_plan");
@@ -3689,9 +3681,6 @@ fn main() {
     }
     if poa_galley_daily_judge_present {
         shim.define("DREGG_POA_GALLEY_DAILY_JUDGE", None);
-    }
-    if poa_galley_daily_sponsor_judge_present {
-        shim.define("DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE", None);
     }
     if poa_event_batch_runtime_plan_present {
         shim.define("DREGG_POA_EVENT_BATCH_RUNTIME_PLAN", None);

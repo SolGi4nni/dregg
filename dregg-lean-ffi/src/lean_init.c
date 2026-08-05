@@ -441,20 +441,15 @@ extern lean_object *dregg_poa_dark_bazaar_judge(lean_object *input);
 #define DREGG_POA_DARK_BAZAAR_WIRE_MAX_BYTES ((size_t)16777216u)
 #endif
 
-/* Replay-first Galley daily. The public evaluator has no holder authority parameter. The sponsor
- * evaluator accepts a second, server-authored sealed eligibility carrier and is never exposed by
- * the public shim accidentally: they remain separately probed symbols and separately named C
- * bridges. Both consume/return canonical UTF-8 strings and use empty output for semantic refusal. */
-#if defined(DREGG_POA_GALLEY_DAILY_JUDGE) || defined(DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE)
+/* Replay-first Galley daily. The public evaluator has no holder authority parameter. The former
+ * caller-JSON sponsor bridge is intentionally absent until an atomically consumable wallet
+ * capability can cross this boundary. */
+#ifdef DREGG_POA_GALLEY_DAILY_JUDGE
 extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_GalleyMaintenanceDailyRuntime(uint8_t builtin);
 #define DREGG_POA_GALLEY_DAILY_WIRE_MAX_BYTES ((size_t)1048576u)
-#define DREGG_POA_GALLEY_DAILY_SEAL_MAX_BYTES ((size_t)16384u)
 #endif
 #ifdef DREGG_POA_GALLEY_DAILY_JUDGE
 extern lean_object *dregg_poa_galley_daily_judge(lean_object *input);
-#endif
-#ifdef DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE
-extern lean_object *dregg_poa_galley_daily_sponsor_judge(lean_object *input, lean_object *seal);
 #endif
 
 /* Post-finality, multi-stream EventBatch planner. The native host constructs the duplicated
@@ -1144,7 +1139,7 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(bazaarres);
 #endif
-#if defined(DREGG_POA_GALLEY_DAILY_JUDGE) || defined(DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE)
+#ifdef DREGG_POA_GALLEY_DAILY_JUDGE
     lean_object *galleyres =
         initialize_Dregg2_Dregg2_Games_PathOfAngels_GalleyMaintenanceDailyRuntime(1);
     if (!lean_io_result_is_ok(galleyres)) {
@@ -1322,37 +1317,6 @@ size_t dregg_poa_galley_daily_judge_str(const char *in_utf8, char *out, size_t o
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_poa_galley_daily_judge(in_obj);
-    const char *cstr = lean_string_cstr(res);
-    size_t full = strlen(cstr);
-    if (full > DREGG_POA_GALLEY_DAILY_WIRE_MAX_BYTES) {
-        out[0] = '\0';
-        lean_dec_ref(res);
-        return (size_t)-1;
-    }
-    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
-    memcpy(out, cstr, copy);
-    out[copy] = '\0';
-    lean_dec_ref(res);
-    return full;
-}
-#endif
-
-#ifdef DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE
-size_t dregg_poa_galley_daily_sponsor_judge_str(
-    const char *in_utf8, const char *seal_utf8, char *out, size_t out_cap) {
-    if (in_utf8 == 0 || seal_utf8 == 0 || out == 0 || out_cap == 0) {
-        return (size_t)-1;
-    }
-    size_t input_len = strlen(in_utf8);
-    size_t seal_len = strlen(seal_utf8);
-    if (input_len > DREGG_POA_GALLEY_DAILY_WIRE_MAX_BYTES ||
-        seal_len > DREGG_POA_GALLEY_DAILY_SEAL_MAX_BYTES) {
-        out[0] = '\0';
-        return (size_t)-1;
-    }
-    lean_object *in_obj = lean_mk_string(in_utf8);
-    lean_object *seal_obj = lean_mk_string(seal_utf8);
-    lean_object *res = dregg_poa_galley_daily_sponsor_judge(in_obj, seal_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_GALLEY_DAILY_WIRE_MAX_BYTES) {
