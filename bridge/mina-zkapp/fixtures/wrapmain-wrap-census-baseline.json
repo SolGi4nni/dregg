@@ -1,7 +1,7 @@
 {
   "schema": "wrapmain-wrap-census/1",
   "what": "The 14-rung Lean wrap_main assembly against Mina's compiled wrap-transaction. Every row is OURS - MINA. It may shrink; a GROWTH and a NEW divergent family are both red, and a shrink that is not recorded here is red too (that is what makes the census monotone).",
-  "measured_at": "2026-08-04T23:22:35.949Z",
+  "measured_at": "2026-08-05T00:14:37.061Z",
   "mina": {
     "circuit": "wrap-transaction",
     "md5": "b9a01295c8cc9bda6d12142a581cd305",
@@ -9,7 +9,7 @@
     "primary": 40
   },
   "ours": {
-    "gates": 12550,
+    "gates": 12227,
     "public_input_size": 24,
     "rungs": 14,
     "emit_dir": "/tmp/pickles-wrapmain"
@@ -20,40 +20,39 @@
     "emitted_at": "2026-08-04T23:09:22.133Z"
   },
   "coverage": {
-    "total": "83.0%",
-    "non_generic": "88.5%",
+    "total": "80.9%",
+    "non_generic": "85.7%",
     "pinned_statement_words": "24/24"
   },
   "gate_type_delta": {
     "Generic": -1239,
     "Poseidon": -1364,
-    "Zero": 199,
+    "Zero": -124,
     "EndoMulScalar": -168
   },
   "run_length_delta": {
     "Generic x 27": 1,
     "Poseidon x 11": -124,
-    "Zero x 1": -85,
+    "Zero x 1": -124,
     "Generic x 1": -136,
-    "Zero x 3": 2,
-    "Zero x 2": 134,
-    "Generic x 3": -9,
+    "Generic x 3": -11,
     "EndoMulScalar x 8": 27,
-    "Generic x 2": 66,
-    "Generic x 14": 1,
+    "Generic x 4": 56,
+    "Generic x 37": 1,
     "Generic x 291": 1,
-    "CompleteAdd x 1": 27,
+    "CompleteAdd x 1": -33,
     "Generic x 6": 5,
-    "Generic x 4": 14,
-    "Generic x 10": -7,
-    "Zero x 10": 1,
+    "Generic x 2": -25,
+    "Generic x 14": 1,
     "CompleteAdd x 7": 1,
-    "Generic x 5": 1,
-    "Generic x 475": 2,
-    "Generic x 46": 1,
-    "CompleteAdd x 2": 15,
-    "Generic x 132": 1,
-    "CompleteAdd x 18": 1,
+    "Generic x 7": -1,
+    "Generic x 479": 1,
+    "Generic x 480": 1,
+    "Generic x 51": 1,
+    "CompleteAdd x 2": -46,
+    "CompleteAdd x 3": 38,
+    "Generic x 135": 1,
+    "CompleteAdd x 20": 1,
     "Generic x 8": 1,
     "Generic x 230": -1,
     "EndoMulScalar x 16": -6,
@@ -64,12 +63,13 @@
     "Generic x 109": -2,
     "Generic x 137": -1,
     "Generic x 446": -1,
-    "Generic x 7": -2,
     "Generic x 25": -1,
+    "Generic x 21": -1,
     "Generic x 17": -1,
+    "Generic x 10": -8,
     "Generic x 11": -7,
+    "Generic x 5": -1,
     "Generic x 31": -1,
-    "CompleteAdd x 3": -22,
     "CompleteAdd x 16": -1
   }
 }

@@ -145,8 +145,26 @@ function loadRung(tag) {
   if (j.name !== `wrapmain_wrap_${tag}`)
     block(`${p} names itself "${j.name}" but this gate asked for wrapmain_wrap_${tag} — a file from a `
       + `different shape or rung is sitting under this name.`);
-  const rows = j.gates.map((g) => `${typeof g.typ === 'number' ? NAMES[g.typ] : g.typ}|${(g.coeffs ?? []).join(',')}`);
-  return { pub: j.public_input_size, rows, path: p };
+  // ⚑⚑ THE σ-ONLY PROBE ROWS ARE THIS ASSEMBLY'S INSTRUMENT AND ARE SPLICED OUT BEFORE ANY COUNT.
+  // ⚠ 2026-08-04, MEASURED AND FIXED. Until now this mapped `j.gates` straight through, so every
+  // number this file produced — the coverage headline, `gate_type_delta`, `run_length_delta`, and
+  // the committed `wrapmain-wrap-census-baseline.json` — counted 323 rows that `KimchiWrapMain.lean`
+  // declares are OURS and that `wrap_main` has none of (`:714`, "A σ-ONLY PROBE: a standalone `Zero`
+  // row"). The instrument was measuring itself.
+  // The loudest consequence was a divergence that did not exist. This file reported 137 consecutive-
+  // `Zero` runs of length >= 2 against Mina's 0 and called it the largest structural gap left, under
+  // a line (`:320`) that ALREADY said "ours are the sigma-only probe rows". Splice them and the
+  // count is {} — EXACTLY Mina's. Every one of the 137 was a probe row landing beside a gadget's
+  // closing `Zero`; not one was an extra `Zero` the assembly emits.
+  // The sibling gate `wrapmain-region-conformance.mjs` has always spliced them (`normalizeLean`),
+  // so the two files disagreed about what a row IS. They agree now.
+  const probe = new Set(j.probe_rows ?? []);
+  if ([...probe].some((i) => i < j.public_input_size))
+    block(`${p}: a probe row sits inside the public block — splicing would move the PI width.`);
+  const rows = j.gates
+    .filter((_, i) => !probe.has(i))
+    .map((g) => `${typeof g.typ === 'number' ? NAMES[g.typ] : g.typ}|${(g.coeffs ?? []).join(',')}`);
+  return { pub: j.public_input_size, rows, path: p, probes: probe.size };
 }
 
 const typeOf = (row) => row.slice(0, row.indexOf('|'));
@@ -317,7 +335,8 @@ function report(ours, mina, asm, WRAP_PINNED_WORDS) {
   console.log(`   consecutive-Zero runs (len >= 2)   ours ${zo.reduce((s, [, v]) => s + v, 0)} runs `
     + `[${zo.map(([k, v]) => `${k}: ${v}`).join(', ') || 'none'}]  ·  mina ${zm.reduce((s, [, v]) => s + v, 0)} runs `
     + `[${zm.map(([k, v]) => `${k}: ${v}`).join(', ') || 'none'}]`);
-  console.log('     Mina\'s wrap has NO two consecutive Zero rows anywhere; ours are the sigma-only probe rows.');
+  console.log('     Mina\'s wrap has NO two consecutive Zero rows anywhere, and neither do we — the 137 runs');
+  console.log('     this line used to report were the sigma-only probe rows, which are now spliced in loadRung.');
 
   // R3 — OVERSHOOT, its own section every run.
   const over = keys.map((k) => [k, (fo.get(k) ?? 0) - (fm.get(k) ?? 0)]).filter(([, d]) => d > 0);
