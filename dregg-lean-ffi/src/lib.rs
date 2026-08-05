@@ -70,6 +70,19 @@ pub mod poa_galley_ffi;
 #[path = "poa_event_batch_ffi.rs"]
 pub mod poa_event_batch_ffi;
 
+/// Lean-owned signed active-world lineage and exact EventBatch world selector.
+#[path = "poa_world_activation_ffi.rs"]
+pub mod poa_world_activation_ffi;
+
+/// Lean-owned exact activated-content manifest and named Galley-policy membership authority.
+#[path = "poa_activated_content_ffi.rs"]
+pub mod poa_activated_content_ffi;
+
+/// Exact-byte durable restart/CAS substrate for the Lean-owned PoA Bazaar.
+/// It stores only opaque canonical StateKey images and contains no Rust game-semantic fallback.
+#[path = "poa_bazaar_restart_portal.rs"]
+pub mod poa_bazaar_restart_portal;
+
 pub use bridge_lc_ffi::{
     eth_committee_rotation_available, eth_committee_rotation_wire, eth_lc_verify_available,
     eth_lc_verify_wire, mina_account_opening_wire, mina_account_state_ok_available,

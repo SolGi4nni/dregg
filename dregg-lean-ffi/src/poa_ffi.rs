@@ -20,11 +20,41 @@ use crate::{ensure_lean_init, lean_init_once};
 /// before/after the FFI call; a value between 16 and 64 MiB still reaches Lean only to be rejected.
 pub const MAX_POA_SIGNAL_WIRE_BYTES: usize = 64 * 1024 * 1024;
 
+/// A nonempty canonical reply produced by native Lean for one exact input.
+///
+/// The fields are deliberately private.  Persistence accepts this carrier,
+/// rather than arbitrary output bytes, when it prepares a durable Signal
+/// transition.  This prevents a downstream Rust caller from laundering
+/// caller-authored bytes as a Lean verdict while still permitting strict
+/// node-side parsing through [`Self::as_str`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedPoaSignalOutput {
+    output: String,
+    judged_input_digest: [u8; 32],
+}
+
+impl AcceptedPoaSignalOutput {
+    /// Exact canonical bytes returned by native Lean.
+    pub fn as_str(&self) -> &str {
+        &self.output
+    }
+
+    /// Whether these bytes were produced by judging this exact input.
+    pub fn was_judged_for(&self, input: &[u8]) -> bool {
+        self.judged_input_digest == *blake3::hash(input).as_bytes()
+    }
+
+    /// Consume the authority carrier and retain the exact Lean bytes.
+    pub fn into_string(self) -> String {
+        self.output
+    }
+}
+
 /// The only two semantic outcomes exposed by the internal evaluator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PoaSignalVerdict {
     /// Lean replayed the complete transition and emitted these canonical `POA-SIGNAL-OUT-1` bytes.
-    Accepted(String),
+    Accepted(AcceptedPoaSignalOutput),
     /// Lean refused strict decoding, semantic reconstruction, game replay, or Canon application.
     Rejected,
 }
@@ -63,14 +93,17 @@ fn validate_transport_input(len: usize, has_interior_nul: bool) -> Result<(), St
 /// bytes from authenticated node state outside this module.
 pub fn judge_poa_signal(wire: &str) -> Result<PoaSignalVerdict, String> {
     let output = shadow_poa_signal_judge(wire)?;
-    Ok(decode_reply(output))
+    Ok(decode_reply(wire, output))
 }
 
-fn decode_reply(output: String) -> PoaSignalVerdict {
+fn decode_reply(input: &str, output: String) -> PoaSignalVerdict {
     if output.is_empty() {
         PoaSignalVerdict::Rejected
     } else {
-        PoaSignalVerdict::Accepted(output)
+        PoaSignalVerdict::Accepted(AcceptedPoaSignalOutput {
+            output,
+            judged_input_digest: *blake3::hash(input.as_bytes()).as_bytes(),
+        })
     }
 }
 
@@ -152,16 +185,22 @@ mod tests {
 
     #[test]
     fn empty_lean_reply_is_rejected_not_accepted() {
-        assert_eq!(decode_reply(String::new()), PoaSignalVerdict::Rejected);
+        assert_eq!(
+            decode_reply("input", String::new()),
+            PoaSignalVerdict::Rejected
+        );
     }
 
     #[test]
     fn nonempty_lean_reply_is_preserved_opaquely() {
         let reply = r#"{"format":"POA-SIGNAL-OUT-1"}"#.to_owned();
-        assert_eq!(
-            decode_reply(reply.clone()),
-            PoaSignalVerdict::Accepted(reply)
-        );
+        let PoaSignalVerdict::Accepted(accepted) = decode_reply("exact input", reply.clone())
+        else {
+            panic!("nonempty native reply must be accepted");
+        };
+        assert_eq!(accepted.as_str(), reply);
+        assert!(accepted.was_judged_for(b"exact input"));
+        assert!(!accepted.was_judged_for(b"different input"));
     }
 
     #[test]

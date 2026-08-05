@@ -460,10 +460,37 @@ extern lean_object *dregg_poa_galley_daily_sponsor_judge(lean_object *input, lea
 /* Post-finality, multi-stream EventBatch planner. The native host constructs the duplicated
  * authority envelope from its commit record and game-judge result; this bridge transports the
  * exact canonical bytes and never promotes a network caller's alleged authority. */
-#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+#if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
+    defined(DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST)
 extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(uint8_t builtin);
-extern lean_object *dregg_poa_event_batch_runtime_plan(lean_object *input);
 #define DREGG_POA_EVENT_BATCH_RUNTIME_WIRE_MAX_BYTES ((size_t)67108864u)
+#endif
+#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+extern lean_object *dregg_poa_event_batch_runtime_plan(lean_object *input);
+#endif
+#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST
+extern lean_object *dregg_poa_event_batch_runtime_initial_heads_digest(lean_object *input);
+#endif
+
+/* Signed active-world lineage. Native persistence verifies Ed25519 and builds the state from its
+ * durable history; this judge owns transition, rollback and exact-world semantics. */
+#if defined(DREGG_POA_WORLD_ACTIVATION_JUDGE) || defined(DREGG_POA_WORLD_ACTIVATION_AUTHORIZES)
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_WorldActivation(uint8_t builtin);
+#define DREGG_POA_WORLD_ACTIVATION_WIRE_MAX_BYTES ((size_t)16777216u)
+#endif
+#ifdef DREGG_POA_WORLD_ACTIVATION_JUDGE
+extern lean_object *dregg_poa_world_activation_judge(lean_object *input);
+#endif
+#ifdef DREGG_POA_WORLD_ACTIVATION_AUTHORIZES
+extern lean_object *dregg_poa_world_activation_authorizes(lean_object *input);
+#endif
+
+/* Exact activated-content membership under a persistence-authenticated world. The exported
+ * runtime owns canonical manifest/component/policy semantics; the host only transports bytes. */
+#ifdef DREGG_POA_ACTIVATED_CONTENT_AUTHORIZE
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_ActivatedContentRuntime(uint8_t builtin);
+#define DREGG_POA_ACTIVATED_CONTENT_WIRE_MAX_BYTES ((size_t)4194304u)
+extern lean_object *dregg_poa_activated_content_authorize(lean_object *input);
 #endif
 
 /* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
@@ -1127,7 +1154,8 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(galleyres);
 #endif
-#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+#if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
+    defined(DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST)
     lean_object *batchres =
         initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(1);
     if (!lean_io_result_is_ok(batchres)) {
@@ -1136,6 +1164,26 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(batchres);
+#endif
+#if defined(DREGG_POA_WORLD_ACTIVATION_JUDGE) || defined(DREGG_POA_WORLD_ACTIVATION_AUTHORIZES)
+    lean_object *worldactivationres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_WorldActivation(1);
+    if (!lean_io_result_is_ok(worldactivationres)) {
+        lean_io_result_show_error(worldactivationres);
+        lean_dec_ref(worldactivationres);
+        return 1;
+    }
+    lean_dec_ref(worldactivationres);
+#endif
+#ifdef DREGG_POA_ACTIVATED_CONTENT_AUTHORIZE
+    lean_object *activatedcontentres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_ActivatedContentRuntime(1);
+    if (!lean_io_result_is_ok(activatedcontentres)) {
+        lean_io_result_show_error(activatedcontentres);
+        lean_dec_ref(activatedcontentres);
+        return 1;
+    }
+    lean_dec_ref(activatedcontentres);
 #endif
     /* NOTE: DREGG_GRAIN_R3_VERIFY needs NO module initializer here — `dregg_grain_r3_verify`'s
      * generated C is self-contained (static-const string literals + a lazy once-cell), and calling
@@ -1335,6 +1383,116 @@ size_t dregg_poa_event_batch_runtime_plan_str(const char *in_utf8, char *out, si
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_EVENT_BATCH_RUNTIME_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST
+size_t dregg_poa_event_batch_runtime_initial_heads_digest_str(
+    const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_EVENT_BATCH_RUNTIME_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_event_batch_runtime_initial_heads_digest(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_EVENT_BATCH_RUNTIME_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_WORLD_ACTIVATION_JUDGE
+size_t dregg_poa_world_activation_judge_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_WORLD_ACTIVATION_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_world_activation_judge(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_WORLD_ACTIVATION_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_WORLD_ACTIVATION_AUTHORIZES
+size_t dregg_poa_world_activation_authorizes_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_WORLD_ACTIVATION_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_world_activation_authorizes(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > 1) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_ACTIVATED_CONTENT_AUTHORIZE
+size_t dregg_poa_activated_content_authorize_str(
+    const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_ACTIVATED_CONTENT_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_activated_content_authorize(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_ACTIVATED_CONTENT_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;

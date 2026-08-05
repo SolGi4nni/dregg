@@ -271,6 +271,32 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          construct a PreparedPoaEventBatchV2 from caller-authored fields",
     ),
     (
+        "dregg_poa_event_batch_runtime_initial_heads_digest",
+        "the Path of Angels EventBatch initial-head-set digest compiles out: the finalized host \
+         cannot bind its exact world-scoped durable predecessor set into the privileged planner \
+         envelope. Planning must refuse; Rust may not duplicate Lean's canonical digestString",
+    ),
+    (
+        "dregg_poa_world_activation_judge",
+        "the Path of Angels active-world authority compiles out: the signed monotone lineage, \
+         rollback ancestry, exact content epoch and all-five-field EventBatch world selector have \
+         no answer source. No world may be activated and finalized PoA admission must refuse; \
+         Rust may verify Ed25519 transport but must not implement a transition twin",
+    ),
+    (
+        "dregg_poa_world_activation_authorizes",
+        "the Path of Angels exact active-world selector compiles out: finalized EventBatch \
+         admission can no longer ask Lean whether the durable all-five-field world identity \
+         equals its candidate. Admission must refuse; Rust may not replace this with equality",
+    ),
+    (
+        "dregg_poa_activated_content_authorize",
+        "the Path of Angels exact activated-content authority compiles out: persistence cannot \
+         prove that canonical Galley policy bytes are a named SHA-256 member of the exact active \
+         world's manifest root and scope. Content installation and gameplay must refuse; Rust \
+         may not reconstruct manifest, membership, or policy semantics",
+    ),
+    (
         "dregg_deleg_admit",
         "the DELEGATED TOOL/MCP-ACCESS admission verdict has no answer source: the SDK tool \
          gateway, the starbridge tool-access-delegation app and the dreggnet offerings session \
@@ -2304,6 +2330,12 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_sponsor_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_plan_present)");
+    println!(
+        "cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_initial_heads_digest_present)"
+    );
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_world_activation_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_world_activation_authorizes_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_activated_content_authorize_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_trustline_step_present)");
 
@@ -3238,6 +3270,36 @@ fn main() {
     } else {
         absent_export_warn("dregg_poa_event_batch_runtime_plan");
     }
+    let poa_event_batch_runtime_initial_heads_digest_present = archive_exports(
+        &build_archive,
+        "dregg_poa_event_batch_runtime_initial_heads_digest",
+    );
+    if poa_event_batch_runtime_initial_heads_digest_present {
+        println!("cargo:rustc-cfg=dregg_poa_event_batch_runtime_initial_heads_digest_present");
+    } else {
+        absent_export_warn("dregg_poa_event_batch_runtime_initial_heads_digest");
+    }
+    let poa_world_activation_judge_present =
+        archive_exports(&build_archive, "dregg_poa_world_activation_judge");
+    if poa_world_activation_judge_present {
+        println!("cargo:rustc-cfg=dregg_poa_world_activation_judge_present");
+    } else {
+        absent_export_warn("dregg_poa_world_activation_judge");
+    }
+    let poa_world_activation_authorizes_present =
+        archive_exports(&build_archive, "dregg_poa_world_activation_authorizes");
+    if poa_world_activation_authorizes_present {
+        println!("cargo:rustc-cfg=dregg_poa_world_activation_authorizes_present");
+    } else {
+        absent_export_warn("dregg_poa_world_activation_authorizes");
+    }
+    let poa_activated_content_authorize_present =
+        archive_exports(&build_archive, "dregg_poa_activated_content_authorize");
+    if poa_activated_content_authorize_present {
+        println!("cargo:rustc-cfg=dregg_poa_activated_content_authorize_present");
+    } else {
+        absent_export_warn("dregg_poa_activated_content_authorize");
+    }
 
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
     // `@[export] dregg_{eth,tm,mpt}_lc_verify` symbols (the extracted, Lean-verified foreign-chain
@@ -3633,6 +3695,18 @@ fn main() {
     }
     if poa_event_batch_runtime_plan_present {
         shim.define("DREGG_POA_EVENT_BATCH_RUNTIME_PLAN", None);
+    }
+    if poa_event_batch_runtime_initial_heads_digest_present {
+        shim.define("DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST", None);
+    }
+    if poa_world_activation_judge_present {
+        shim.define("DREGG_POA_WORLD_ACTIVATION_JUDGE", None);
+    }
+    if poa_world_activation_authorizes_present {
+        shim.define("DREGG_POA_WORLD_ACTIVATION_AUTHORIZES", None);
+    }
+    if poa_activated_content_authorize_present {
+        shim.define("DREGG_POA_ACTIVATED_CONTENT_AUTHORIZE", None);
     }
     // DELEGATED TOOL-ACCESS ADMISSION: `DREGG_DELEG_ADMIT` gates BOTH the extern decl and the `_str`
     // bridge in `lean_init.c` (no module initializer — `Dregg2.Apps.DelegAdmit` is Init-only and its

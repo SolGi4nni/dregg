@@ -25,10 +25,13 @@ fn frozen_lean_fixture_is_linked_and_exact() {
     );
     let input = without_fixture_newline(INPUT_FILE);
     let expected = without_fixture_newline(OUTPUT_FILE);
-    assert_eq!(
-        judge_poa_signal(input).expect("linked Lean evaluator must be callable"),
-        PoaSignalVerdict::Accepted(expected.to_owned())
-    );
+    let PoaSignalVerdict::Accepted(accepted) =
+        judge_poa_signal(input).expect("linked Lean evaluator must be callable")
+    else {
+        panic!("frozen canonical fixture must be accepted");
+    };
+    assert_eq!(accepted.as_str(), expected);
+    assert!(accepted.was_judged_for(input.as_bytes()));
 }
 
 #[test]

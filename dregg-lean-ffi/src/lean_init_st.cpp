@@ -105,8 +105,15 @@ lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(uint8_t
 #if defined(DREGG_POA_GALLEY_DAILY_JUDGE) || defined(DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE)
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_GalleyMaintenanceDailyRuntime(uint8_t builtin);
 #endif
-#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+#if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
+    defined(DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST)
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(uint8_t builtin);
+#endif
+#if defined(DREGG_POA_WORLD_ACTIVATION_JUDGE) || defined(DREGG_POA_WORLD_ACTIVATION_AUTHORIZES)
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_WorldActivation(uint8_t builtin);
+#endif
+#ifdef DREGG_POA_ACTIVATED_CONTENT_AUTHORIZE
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_ActivatedContentRuntime(uint8_t builtin);
 #endif
 }
 
@@ -211,7 +218,8 @@ extern "C" int dregg_ffi_init_st(void) {
         lean_dec_ref(galleyres);
     }
 #endif
-#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+#if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
+    defined(DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST)
     {
         lean_object *batchres =
             initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(1);
@@ -221,6 +229,30 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(batchres);
+    }
+#endif
+#if defined(DREGG_POA_WORLD_ACTIVATION_JUDGE) || defined(DREGG_POA_WORLD_ACTIVATION_AUTHORIZES)
+    {
+        lean_object *worldactivationres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_WorldActivation(1);
+        if (!lean_io_result_is_ok(worldactivationres)) {
+            lean_io_result_show_error(worldactivationres);
+            lean_dec_ref(worldactivationres);
+            return 1;
+        }
+        lean_dec_ref(worldactivationres);
+    }
+#endif
+#ifdef DREGG_POA_ACTIVATED_CONTENT_AUTHORIZE
+    {
+        lean_object *activatedcontentres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_ActivatedContentRuntime(1);
+        if (!lean_io_result_is_ok(activatedcontentres)) {
+            lean_io_result_show_error(activatedcontentres);
+            lean_dec_ref(activatedcontentres);
+            return 1;
+        }
+        lean_dec_ref(activatedcontentres);
     }
 #endif
     lean_io_mark_end_initialization();
