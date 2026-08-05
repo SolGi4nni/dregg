@@ -2,11 +2,37 @@
 # KimchiWrapFinalizeSpongeGate — ⚑ the REALITY GATE for `KimchiWrapMain` §20.
 
 `finalize_other_proof`'s sponge half, checked against a REAL accepted Mina block rather than against
-a second spelling of `wrap_verifier.ml`. It is a separate module for a MEASURED reason: closing these
-in the kernel means whnf-ing 46 Fq permutations and a 47-entry Horner over 254-bit literals, and
-inside `KimchiWrapMain` — already the largest module in the tree — that took the elaborator past this
-box's memory (`Lean exited with code 137`, twice, 2026-08-04). Splitting the checks out costs nothing
-and keeps the emitter module buildable on a saturated box.
+a second spelling of `wrap_verifier.ml`. It is a separate module so that a rung's pins re-elaborate
+without the emitter's 5,000 lines of `def` behind them — the same reason `KimchiStepMainPins01–13`
+exist.
+
+## ⚠ WHY THIS MODULE SHIPPED RED, AND WHAT IT COSTS TO SPLIT ONE OFF
+
+⚑ **A `set_option` DOES NOT CROSS AN IMPORT.** `KimchiWrapMain` sets `maxRecDepth 100000` and
+`maxHeartbeats 4000000` (`:389,:392`) because its pins reduce whole sponge trajectories in the
+kernel. This file was split out carrying `maxRecDepth 8000` and the DEFAULT 200,000 heartbeats, so
+four of its five proofs did not elaborate:
+
+    :55  maximum recursion depth has been reached          (finalize_sponge_reproduces_…)
+    :78  maximum recursion depth has been reached
+    :122 (deterministic) timeout at `whnf`, 200000 heartbeats   (cip_fold_reproduces_…)
+    :140 (deterministic) timeout at `whnf`, 200000 heartbeats   (cip_fold_direction_…)
+
+⚑ **AND LEAN ADDED ALL FOUR TO THE ENVIRONMENT ANYWAY, PROVED BY `sorryAx`.** That is the whole
+danger: a resource failure is an *error*, but the declaration still lands, still has the right
+STATEMENT, and anything downstream that cites it type-checks. Nothing in this file contains the
+token `sorry`. The only thing that turned it into a build failure was
+`#assert_namespace_axioms` at the foot — which reported the LAST of the four and said `[sorryAx]`.
+
+⚠ So do not read that hygiene failure as being about dependencies. It was about this preamble, and
+the lesson generalises: **a module split off from a module with a `set_option` preamble must carry
+that preamble, and must keep a namespace-wide axiom pin, or a proof that stops working comes back
+as a green build with a sorry in it.**
+
+⚑ **THE PINS ARE NOT ACTUALLY EXPENSIVE.** With the parent's budgets restored the whole file
+elaborates in seconds, in the kernel, with no `native_decide`: `finChalSpongeOf`'s 16 permutations
+and `finFrSpongeOf`'s 46 close by `rfl` at 13 s in an isolated probe. The `exit 137` that motivated
+the split was the elaborator inside a 7,092-line module, not these reductions.
 
 NEW standalone file. Import line for the root (do NOT edit `Dregg2.lean` from a lane):
 `import Dregg2.Circuit.Emit.KimchiWrapFinalizeSpongeGate`
@@ -17,7 +43,11 @@ namespace Dregg2.Circuit.Emit.KimchiWrapFinalizeSpongeGate
 
 open Dregg2.Circuit.Emit.KimchiWrapMain
 
-set_option maxRecDepth 8000
+-- ⚑ VERBATIM `KimchiWrapMain.lean:389-392`. See the docblock: these do not cross the import, and
+-- without them four proofs below become `sorryAx` while still landing in the environment.
+set_option autoImplicit false
+set_option maxRecDepth 100000
+set_option maxHeartbeats 4000000
 
 /-! ### §12a′ — ⚑ **THE SECOND REALITY GATE: this file's FINALIZE sponge is upstream's too.**
 
@@ -75,8 +105,12 @@ def blockFinBent : List Nat :=
       (Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2.set 90 0))).map
     (fun e => e.2 % 2 ^ 128)
 
+-- ⚠ `≠` + `decide`, NOT `(… == …) = false := rfl`. The `rfl` spelling makes the elaborator prove
+-- `(blockFinBent == blockFinChals) =?= false` by `isDefEq`, which blows `maxRecDepth` even at
+-- 100000 — while `decide` on the same two sponges closes in ~30 s. And `≠` is the stronger
+-- statement: it is about the VALUES, not about the `BEq` instance that compares them.
 theorem finalize_sponge_bends_on_one_absorbed_evaluation :
-    (blockFinBent == blockFinChals) = false := rfl
+    blockFinBent ≠ blockFinChals := by decide
 
 /-! ### §12a″ — ⚑ **AND THE `combined_inner_product` FOLD IS THE SAME BLOCK'S.**
 
@@ -107,19 +141,46 @@ def cipFoldVal (xi r : Nat) (ez ew : List Nat) : Nat :=
 def blockXiField : Nat := liftValQ shapeWrap Dregg2.Circuit.Emit.MinaRealBlockTranscript.V_CHAL
 def blockRField : Nat := liftValQ shapeWrap Dregg2.Circuit.Emit.MinaRealBlockTranscript.U_CHAL
 
-/-- ⚑ **THE FOLD, THE LIFT AND THE ENTRY COUNT, ALL AGAINST BLOCK 539508.** The first two conjuncts
-are also the pin that §5's `EndoMulScalar` chain IS `ScalarChallenge::to_field` at `ENDO_Q` — a
-second implementation (`KimchiVerify.endoMap`, through `MinaRealBlockGate`'s own constants) of the
-map this file emits eight `EndoMulScalar` rows for. -/
-theorem cip_fold_reproduces_the_accepted_block :
+/-- ⚑ **THE LIFT AND THE ENTRY COUNT, AGAINST BLOCK 539508 — IN THE KERNEL.** This is the pin that
+§5's `EndoMulScalar` chain IS `ScalarChallenge::to_field` at `ENDO_Q`: a second implementation
+(`KimchiVerify.endoMap`, through `MinaRealBlockGate`'s own constants) of the map this file emits
+eight `EndoMulScalar` rows for, agreeing on that block's own ξ′ and r′.
+
+⚑ It is split out of `cip_fold_reproduces_the_accepted_block` on purpose. That theorem must be
+compiler-trusted (see below) and `#assert_compiled` would then have covered these three conjuncts
+too — labelling three kernel-clean facts as compiler-trusted and losing their real pin. Splitting
+keeps the confession down to exactly the conjunct that earns it. -/
+theorem cip_lift_reproduces_the_accepted_block :
     blockXiField = Dregg2.Circuit.Emit.MinaRealBlockGate.VV.val
     ∧ blockRField = Dregg2.Circuit.Emit.MinaRealBlockGate.UU.val
     ∧ Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZ_N.length = FIN_NCOLS + 4
-    ∧ cipFoldVal blockXiField blockRField
+    ∧ Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZW_N.length = FIN_NCOLS + 4 := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
+
+/-! ⚠ **THE TWO BELOW ARE COMPILER-TRUSTED, AND HERE IS THE MEASUREMENT.**
+
+`cipFoldVal` is not a sponge — it BUILDS a straight-line program in `FM = StateM (Array FOp)` and
+then interprets it. 47 + 47 `fnLit`s, two `fnHorner`s, a `fnMul` and a `fnAdd` is ~200 ops, and in
+`whnf` an `Array` is its `List` model: ~200 `Array.push`es is a quadratic list append, and `fnEval`
+then does a lookup per op over that same list, all carrying 254-bit literals with no sharing.
+Measured 2026-08-05 on this box: **`(cipFoldProg …).run #[] |>.2.size` alone does not close at
+1,000,000 heartbeats**, and the five `rfl`s together took the elaborator to **21.9 GB** before being
+killed. This is the same wall §24's `bullData` hit, and it is a property of the `Array`-in-`whnf`
+model, not of the module boundary — splitting the file does not make a `whnf` cheaper.
+
+⚑ **THE SPONGES ARE NOT IN THIS CLASS AND ARE NOT PINNED HERE.** `finChalSpongeOf`'s 16 Fq
+permutations and `finFrSpongeOf`'s 46 close by `rfl` IN THE KERNEL in ~13 s (probed separately), so
+they stay `#assert_namespace_axioms`-clean above. Only the fold is confessed. -/
+
+/-- ⚑ **THE `combined_inner_product` FOLD OF BLOCK 539508, BY COMPILED EVALUATION.** `#assert_compiled`
+below records the compiler-trust rather than hiding it — which a `#guard` of the same expression
+would not, being the same evaluation with the name, the term and the axiom record deleted. -/
+theorem cip_fold_reproduces_the_accepted_block :
+    cipFoldVal blockXiField blockRField
         Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZ_N
         Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZW_N
       = Dregg2.Circuit.Emit.MinaRealBlockGate.CIP.val := by
-  refine ⟨rfl, rfl, rfl, rfl⟩
+  native_decide
 
 /-- ⚑ RED CONTROL — the fold is over EVERY entry and in ONE direction. Reversing the ζ list, or
 bending one column, moves the result. A Horner whose direction is wrong reproduces nothing, which is
@@ -137,9 +198,19 @@ theorem cip_fold_direction_and_every_entry_are_load_bearing :
         Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZ_N
         (Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZW_N.set 0 0)
       == Dregg2.Circuit.Emit.MinaRealBlockGate.CIP.val) = false := by
-  refine ⟨rfl, rfl, rfl⟩
+  native_decide
 
+-- ⚑ Both halves of `#assert_compiled` are load-bearing here: a `sorry` still ERRORS, and a
+-- kernel-clean fact ALSO errors — so if `whnf` over `Array` ever gets cheap enough for these to
+-- close by `rfl`, these two lines go RED and force the pin back up to `#assert_axioms`.
+#assert_compiled cip_fold_reproduces_the_accepted_block
+#assert_compiled cip_fold_direction_and_every_entry_are_load_bearing
 
+-- ⚠ The two named below are the ONLY compiler-trusted facts in this namespace, each pinned by
+-- `#assert_compiled` at its own site (a RED path in both directions). Everything else — both
+-- sponges included — is closed by `rfl` in the kernel.
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapFinalizeSpongeGate
+  except cip_fold_reproduces_the_accepted_block
+         cip_fold_direction_and_every_entry_are_load_bearing
 
 end Dregg2.Circuit.Emit.KimchiWrapFinalizeSpongeGate
