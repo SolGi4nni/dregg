@@ -876,8 +876,9 @@ structure SuccessfulPersistence (request : RuntimeCasRequest) where
 indexed by its exact optional predecessor and exact full replacement key. -/
 def PersistenceCandidate.continue (candidate : PersistenceCandidate)
     (_receipt : SuccessfulPersistence candidate.request) : DurableDeployment :=
-  ⟨candidate.registry, candidate.state, candidate.head_exact,
-    candidate.revision_exact, candidate.authority_exact⟩
+  match candidate with
+  | ⟨_predecessor, registry, state, headExact, revisionExact, authorityExact⟩ =>
+      ⟨registry, state, headExact, revisionExact, authorityExact⟩
 
 theorem SuccessfulPersistence.exact_cas {request : RuntimeCasRequest}
     (receipt : SuccessfulPersistence request) :
@@ -1228,30 +1229,31 @@ def DeploymentRegistry.initialize {authorityId : Digest32}
 /-- Turn a pure semantic successor into an exact persistence candidate.  This
 function advances the registry revision in the candidate but returns no live
 state; only a later indexed `SuccessfulPersistence` can continue it. -/
-private def preparePersistence (live : DurableDeployment)
+private def preparePersistence (registry : DeploymentRegistry)
+    (state : BazaarGameState)
     (result : Except Refusal BazaarGameState) :
     Except Refusal PersistenceCandidate :=
   match result with
   | .error refusal => .error refusal
   | .ok candidate =>
-      if hAuthority : candidate.authority ≠ live.registry.authority then
+      if hAuthority : candidate.authority ≠ registry.authority then
         .error .registryAuthorityMismatch
-      else if candidate.registryRevision ≠ live.state.registryRevision then
+      else if candidate.registryRevision ≠ state.registryRevision then
         .error .proposalRevisionMismatch
-      else match live.registry.revision.next with
+      else match registry.revision.next with
         | none => .error .registryRevisionExhausted
         | some nextRevision =>
           let accepted : BazaarGameState := {
             candidate with registryRevision := nextRevision
           }
           let nextRegistry : DeploymentRegistry := {
-            live.registry with
+            registry with
             revision := nextRevision
             head := some accepted.key
             consumedOrigins := accepted.consumedOrigins
           }
           .ok {
-            predecessor := some live.state.key
+            predecessor := some state.key
             registry := nextRegistry
             state := accepted
             head_exact := rfl
@@ -1265,10 +1267,11 @@ private def preparePersistence (live : DurableDeployment)
 it was proposed.  A receipt for any other predecessor cannot inhabit the
 dependent continuation argument. -/
 private theorem preparePersistence_success_expected_exact
-    (live : DurableDeployment) (result : Except Refusal BazaarGameState)
+    (registry : DeploymentRegistry) (state : BazaarGameState)
+    (result : Except Refusal BazaarGameState)
     (candidate : PersistenceCandidate)
-    (success : preparePersistence live result = .ok candidate) :
-    candidate.request.expected = some live.state.key := by
+    (success : preparePersistence registry state result = .ok candidate) :
+    candidate.request.expected = some state.key := by
   unfold preparePersistence at success
   cases result with
   | error refusal => simp at success
@@ -1283,6 +1286,30 @@ private theorem preparePersistence_success_expected_exact
       · simp only [Except.ok.injEq] at success
         subst candidate
         rfl
+
+private theorem preparePersistence_success_replacement_state_fields
+    (registry : DeploymentRegistry) (before after : BazaarGameState)
+    (candidate : PersistenceCandidate)
+    (success : preparePersistence registry before (.ok after) = .ok candidate) :
+    candidate.request.replacement.inventory = after.inventory ∧
+      candidate.request.replacement.market = after.market ∧
+      candidate.request.replacement.current = after.current.map Round.key ∧
+      candidate.request.replacement.history = after.history ∧
+      candidate.request.replacement.tick = after.tick ∧
+      candidate.request.replacement.nextRound = after.nextRound ∧
+      candidate.request.replacement.consumedOrigins = after.consumedOrigins ∧
+      candidate.request.replacement.consumedSettlements = after.consumedSettlements := by
+  unfold preparePersistence at success
+  dsimp only at success
+  split at success
+  · contradiction
+  split at success
+  · contradiction
+  split at success
+  · contradiction
+  · simp only [Except.ok.injEq] at success
+    subst candidate
+    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 theorem PersistenceCandidate.continuation_replacement_exact
     (candidate : PersistenceCandidate)
@@ -1641,31 +1668,69 @@ private theorem openRound_success_requires_maker
       exact of_not_not c10
 
 private def proposeSubmitEnvelope {authorityId : Digest32}
-    (authority : DeploymentAuthority authorityId) (envelope : SealedEnvelope)
+    (_authority : DeploymentAuthority authorityId) (envelope : SealedEnvelope)
     (state : BazaarGameState) : Except Refusal BazaarGameState :=
-  match authorizedNextTick authority state with
-  | .error refusal => .error refusal
-  | .ok nextTick => match state.current with
-  | none => .error .noOpenRound
-  | some round => match round.phase with
-    | .awaitingSettlement _ => .error .wrongPhase
-    | .collecting =>
-        if state.tick.val < round.schedule.opensAt ∨
-            round.schedule.closesAt ≤ state.tick.val then
-          .error .outsideCollectionWindow
-        else if envelope.actor ≠ round.buyer then .error .envelopeActorMismatch
-        else if envelope.round ≠ round.id then .error .envelopeRoundMismatch
-        else if envelope.batchKey ≠ round.batchKey then .error .envelopeBatchMismatch
-        else if envelope.nullifier ∈ round.orderNullifiers then
-          .error .duplicateOrderNullifier
-        else if envelope.nullifier ∈ state.market.consumedOrderNullifiers then
-          .error .orderNullifierAlreadyConsumed
-        else if round.envelopes.card ≥ round.maxOrders then .error .orderCapacityReached
-        else .ok {
-          state with
-          tick := nextTick
-          current := some { round with envelopes := insert envelope round.envelopes }
-        }
+  match state with
+  | ⟨stateAuthority, registryRevision, inventory, market, current, history,
+      tick, nextRound, consumedOrigins, consumedSettlements⟩ =>
+      if authorityId ≠ stateAuthority then .error .wrongAuthority
+      else match tick.next with
+      | none => .error .clockExhausted
+      | some nextTick => match current with
+      | none => .error .noOpenRound
+      | some ⟨roundId, lot, buyer, batchKey, quoteAsset, pricing, schedule,
+          maxOrders, maxOrderQuantity, allowedOutputs, fees, requestedPrivacy,
+          preferenceIngress, phase, envelopes⟩ => match phase with
+        | .awaitingSettlement _ => .error .wrongPhase
+        | .collecting =>
+            if tick.val < schedule.opensAt ∨ schedule.closesAt ≤ tick.val then
+              .error .outsideCollectionWindow
+            else if envelope.actor ≠ buyer then .error .envelopeActorMismatch
+            else if envelope.round ≠ roundId then .error .envelopeRoundMismatch
+            else if envelope.batchKey ≠ batchKey then .error .envelopeBatchMismatch
+            else if hDuplicate :
+                envelope.nullifier ∈ envelopes.image SealedEnvelope.nullifier then
+              .error .duplicateOrderNullifier
+            else if envelope.nullifier ∈ market.consumedOrderNullifiers then
+              .error .orderNullifierAlreadyConsumed
+            else if envelopes.card ≥ maxOrders then .error .orderCapacityReached
+            else .ok {
+              authority := stateAuthority
+              registryRevision
+              inventory
+              market
+              current := some {
+                id := roundId
+                lot
+                buyer
+                batchKey
+                quoteAsset
+                pricing
+                schedule
+                maxOrders
+                maxOrderQuantity
+                allowedOutputs
+                fees
+                requestedPrivacy
+                preferenceIngress
+                phase := .collecting
+                envelopes := Finset.cons envelope envelopes (by
+                  intro member
+                  apply hDuplicate
+                  exact Finset.mem_image.mpr ⟨envelope, member, rfl⟩)
+              }
+              history
+              tick := nextTick
+              nextRound
+              consumedOrigins
+              consumedSettlements
+            }
+
+private theorem fresh_envelope_cons_eq_insert (envelope : SealedEnvelope)
+    (envelopes : Finset SealedEnvelope) (fresh : envelope ∉ envelopes) :
+    Finset.cons envelope envelopes fresh = insert envelope envelopes := by
+  ext candidate
+  simp
 
 /-- A fresh ciphertext and signature cannot recycle a nullifier which any
 previously settled book already consumed in the threaded Dark Bazaar state. -/
@@ -1685,8 +1750,14 @@ private theorem consumed_order_nullifier_refused {authorityId : Digest32}
     (consumed : envelope.nullifier ∈ state.market.consumedOrderNullifiers) :
     proposeSubmitEnvelope authority envelope state =
       .error .orderNullifierAlreadyConsumed := by
-  simp [proposeSubmitEnvelope, authorizedNextTick, authority_exact, next_tick,
-    current, phase, windowOpen, actor, roundId, batch, freshInRound, consumed]
+  have freshImage : ∀ old ∈ round.envelopes,
+      ¬ old.nullifier = envelope.nullifier := by
+    intro old member equal
+    apply freshInRound
+    exact Finset.mem_image.mpr ⟨old, member, equal⟩
+  (simp [proposeSubmitEnvelope, authority_exact, next_tick,
+    current, phase, windowOpen, actor, roundId, batch, consumed]
+    ; exact freshImage)
 
 def bookReceiptMatchesB (round : Round)
     (receipt : OpeningAwareBookReceipt) : Bool :=
@@ -1971,7 +2042,9 @@ and returns only a persistence candidate. -/
 def advanceClock (live : DurableDeployment)
     {authorityId : Digest32} (authority : DeploymentAuthority authorityId)
     : Except Refusal PersistenceCandidate :=
-  preparePersistence live (proposeAdvanceClock authority live.state)
+  match live with
+  | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
+      preparePersistence registry state (proposeAdvanceClock authority state)
 
 /-- Public hostile-state statement over the persisted API: once the persisted
 pending observation says its deadline has arrived, the canonical clock command
@@ -1984,20 +2057,23 @@ theorem advanceClock_persisted_at_or_after_expiry_refused
     (observed : live.observePending = some pending)
     (expired : pending.expiresAt ≤ live.clock) :
     advanceClock live authority = .error .activeRoundRequiresExpiry := by
-  cases hcurrent : live.state.current with
-  | none => simp [DurableDeployment.observePending, observePendingState,
-      hcurrent] at observed
+  rcases live with ⟨registry, state, headExact, revisionExact, authorityExactLive⟩
+  change authorityId = state.key.authority at authorityExact
+  change observePendingState state = some pending at observed
+  change pending.expiresAt ≤ state.tick.val at expired
+  change preparePersistence registry state (proposeAdvanceClock authority state) =
+    .error .activeRoundRequiresExpiry
+  cases hcurrent : state.current with
+  | none => simp [observePendingState, hcurrent] at observed
   | some round =>
       have deadlineExact : round.schedule.expiresAt = pending.expiresAt := by
         have mapped := congrArg (Option.map PendingObservation.expiresAt) observed
-        simpa [DurableDeployment.observePending, observePendingState,
-          hcurrent] using mapped
-      have authorityExact' : authorityId = live.state.authority := by
+        simpa [observePendingState, hcurrent] using mapped
+      have authorityExact' : authorityId = state.authority := by
         simpa [DurableDeployment.key, BazaarGameState.key] using authorityExact
-      have expired' : round.schedule.expiresAt ≤ live.state.tick.val := by
+      have expired' : round.schedule.expiresAt ≤ state.tick.val := by
         simpa [DurableDeployment.clock, deadlineExact] using expired
-      unfold advanceClock
-      rw [advanceClock_active_at_or_after_expiry_refused authority live.state
+      rw [advanceClock_active_at_or_after_expiry_refused authority state
         round authorityExact' hcurrent expired']
       rfl
 
@@ -2006,41 +2082,54 @@ def openRound (live : DurableDeployment)
     (lot : CrownedSalvage) (buyer : ParticipantId) (quoteAsset : AssetRef)
     (schedule : RoundSchedule) (maxOrders : Nat) (fees : FeePolicy)
     (privacy : RequestedPrivacy) : Except Refusal PersistenceCandidate :=
-  preparePersistence live
-    (proposeOpenRound authority lot buyer quoteAsset schedule maxOrders fees privacy
-      live.state)
+  match live with
+  | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
+      preparePersistence registry state
+        (proposeOpenRound authority lot buyer quoteAsset schedule maxOrders fees privacy state)
 
 def openAuthoredRound (live : DurableDeployment)
     {authorityId : Digest32} (authority : DeploymentAuthority authorityId)
     (lot : CrownedSalvage) (schedule : RoundSchedule) (fees : FeePolicy)
     (privacy : RequestedPrivacy) : Except Refusal PersistenceCandidate :=
-  preparePersistence live
-    (proposeOpenAuthoredRound authority lot schedule fees privacy live.state)
+  match live with
+  | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
+      preparePersistence registry state
+        (proposeOpenAuthoredRound authority lot schedule fees privacy state)
 
 def submitEnvelope (live : DurableDeployment)
     {authorityId : Digest32} (authority : DeploymentAuthority authorityId)
     (envelope : SealedEnvelope) : Except Refusal PersistenceCandidate :=
-  preparePersistence live (proposeSubmitEnvelope authority envelope live.state)
+  match live with
+  | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
+      preparePersistence registry state (proposeSubmitEnvelope authority envelope state)
 
 def closeRound (live : DurableDeployment)
     {authorityId : Digest32} (authority : DeploymentAuthority authorityId)
     (receipt : OpeningAwareBookReceipt) : Except Refusal PersistenceCandidate :=
-  preparePersistence live (proposeCloseRound authority receipt live.state)
+  match live with
+  | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
+      preparePersistence registry state (proposeCloseRound authority receipt state)
 
 def cancelRound (live : DurableDeployment)
     {authorityId : Digest32} (authority : DeploymentAuthority authorityId)
     : Except Refusal PersistenceCandidate :=
-  preparePersistence live (proposeCancelRound authority live.state)
+  match live with
+  | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
+      preparePersistence registry state (proposeCancelRound authority state)
 
 def expireRound (live : DurableDeployment)
     {authorityId : Digest32} (authority : DeploymentAuthority authorityId)
     : Except Refusal PersistenceCandidate :=
-  preparePersistence live (proposeExpireRound authority live.state)
+  match live with
+  | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
+      preparePersistence registry state (proposeExpireRound authority state)
 
 def settleRound (live : DurableDeployment)
     {authorityId : Digest32} (authority : DeploymentAuthority authorityId)
     (receipt : OpeningAwareV1Receipt) : Except Refusal PersistenceCandidate :=
-  preparePersistence live (proposeSettleRound authority receipt live.state)
+  match live with
+  | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
+      preparePersistence registry state (proposeSettleRound authority receipt state)
 
 private theorem settleRound_success_moves_exact_lot_and_consumes_receipt
     {authorityId : Digest32} {authority : DeploymentAuthority authorityId}
@@ -2090,6 +2179,76 @@ private theorem settleRound_success_moves_exact_lot_and_consumes_receipt
           Inventory.settleLot_wellFormed before.inventory round.lot.key
             hinventory.1 hinventory.2.1,
           by simp, rfl⟩
+
+/-- A successful persisted settlement moves the exact lot named by the public
+pending observation.  The theorem exposes only replacement-key custody, not
+the private `BazaarGameState` or the unopened order book. -/
+theorem settleRound_success_moves_observed_lot
+    (live : DurableDeployment) {authorityId : Digest32}
+    (authority : DeploymentAuthority authorityId)
+    (receipt : OpeningAwareV1Receipt) (candidate : PersistenceCandidate)
+    (pending : PendingObservation)
+    (observed : live.observePending = some pending)
+    (success : settleRound live authority receipt = .ok candidate) :
+    pending.lot ∉ candidate.request.replacement.inventory.maker ∧
+      pending.lot ∈ candidate.request.replacement.inventory.taker ∧
+      pending.lot ∉ candidate.request.replacement.inventory.escrow ∧
+      receipt.claim.spec.key ∈
+        candidate.request.replacement.consumedSettlements := by
+  rcases live with ⟨registry, before, headExact, revisionExact, authorityExact⟩
+  change observePendingState before = some pending at observed
+  change preparePersistence registry before
+    (proposeSettleRound authority receipt before) = .ok candidate at success
+  cases proposedExact : proposeSettleRound authority receipt before with
+  | error refusal =>
+      rw [proposedExact] at success
+      simp [preparePersistence] at success
+  | ok after =>
+      rw [proposedExact] at success
+      obtain ⟨inventoryExact, _marketExact, _currentExact, _historyExact,
+        _tickExact, _nextRoundExact, _originsExact, settlementsExact⟩ :=
+        preparePersistence_success_replacement_state_fields
+          registry before after candidate success
+      obtain ⟨round, current, taker, escrow, maker, _wellFormed,
+        consumed, _finished⟩ :=
+        settleRound_success_moves_exact_lot_and_consumes_receipt proposedExact
+      have mapped := congrArg (Option.map PendingObservation.lot) observed
+      have lotExact : round.lot.key = pending.lot := by
+        simpa [observePendingState, current] using mapped
+      rw [inventoryExact, ← lotExact, settlementsExact]
+      exact ⟨maker, taker, escrow, consumed⟩
+
+/-- Expiry returns the exact publicly observed lot to the maker in the
+replacement key while keeping the private state constructor sealed. -/
+theorem expireRound_success_returns_observed_lot
+    (live : DurableDeployment) {authorityId : Digest32}
+    (authority : DeploymentAuthority authorityId)
+    (candidate : PersistenceCandidate) (pending : PendingObservation)
+    (observed : live.observePending = some pending)
+    (success : expireRound live authority = .ok candidate) :
+    pending.lot ∈ candidate.request.replacement.inventory.maker ∧
+      pending.lot ∉ candidate.request.replacement.inventory.escrow := by
+  rcases live with ⟨registry, before, headExact, revisionExact, authorityExact⟩
+  change observePendingState before = some pending at observed
+  change preparePersistence registry before (proposeExpireRound authority before) =
+    .ok candidate at success
+  cases proposedExact : proposeExpireRound authority before with
+  | error refusal =>
+      rw [proposedExact] at success
+      simp [preparePersistence] at success
+  | ok after =>
+      rw [proposedExact] at success
+      obtain ⟨inventoryExact, _marketExact, _currentExact, _historyExact,
+        _tickExact, _nextRoundExact, _originsExact, _settlementsExact⟩ :=
+        preparePersistence_success_replacement_state_fields
+          registry before after candidate success
+      obtain ⟨round, current, maker, escrow, _wellFormed, _finished⟩ :=
+        expireRound_success_returns_exact_lot proposedExact
+      have mapped := congrArg (Option.map PendingObservation.lot) observed
+      have lotExact : round.lot.key = pending.lot := by
+        simpa [observePendingState, current] using mapped
+      rw [inventoryExact, ← lotExact]
+      exact ⟨maker, escrow⟩
 
 /-- A consumed settlement cannot fill a second round in the same threaded game
 state, independently of how its opening is represented. -/
@@ -2154,6 +2313,7 @@ private theorem settled_lot_cannot_be_relisted_from_success
 #assert_axioms observableV1MarketShapeB_requires_v1_policy
 #assert_axioms initializationMatchesB_requires_current_v1
 #assert_axioms authoredRoundMatchesB_iff
+#assert_axioms fresh_envelope_cons_eq_insert
 #assert_axioms runtimeCas_same_old_fork_has_one_winner
 #assert_axioms runtimeCas_genesis_is_explicit
 #assert_axioms SuccessfulPersistence.exact_cas
@@ -2161,6 +2321,7 @@ private theorem settled_lot_cannot_be_relisted_from_success
 #assert_axioms TrustedRuntimePortal.authorizeSameOpening_exact
 #assert_axioms TrustedRuntimePortal.provisionCrownedSalvage_success_exact
 #assert_axioms preparePersistence_success_expected_exact
+#assert_axioms preparePersistence_success_replacement_state_fields
 #assert_axioms PersistenceCandidate.continuation_replacement_exact
 #assert_axioms PersistenceCandidate.continuation_revision_exact
 #assert_axioms OpeningAwareBookReceipt.transcript_card
@@ -2177,6 +2338,8 @@ private theorem settled_lot_cannot_be_relisted_from_success
 #assert_axioms OpeningAwareV1Receipt.quote_currency_bounded
 #assert_axioms settlementMatchesB_inventory
 #assert_axioms settleRound_success_moves_exact_lot_and_consumes_receipt
+#assert_axioms settleRound_success_moves_observed_lot
+#assert_axioms expireRound_success_returns_observed_lot
 #assert_axioms consumed_settlement_refused
 #assert_axioms settled_lot_cannot_be_relisted_from_success
 
