@@ -1,5 +1,45 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 5 — the Fq Kimchi sponge PROVES; the blocker was the witness generator, not the AIR
+
+`dregg-pasta-fq-absorb::v1` — fresh sponge `(0,0,0)`, absorb `[1,2]`, 55 full rounds, squeeze lane 0 —
+**proves and verifies in release**, 2048 rows / 469 declared / 1037 committed / 192 public inputs.
+Its squeeze public input recomposes to
+`18721052396410244253982636774728806624181288577958764574163425862396352099420`, what
+`ArithmeticSponge::<Fq, PlonkSpongeConstantsKimchi, 55>::new(fq_kimchi::static_params())` returns from
+`absorb([1,2]); squeeze()`. `pasta_fq_sponge_proves` is **9 passed / 0 failed in release**, every
+refusal asserted on its `Err` text.
+
+The AIR, the denotations and the Rust harness had been on disk since 08-04 and had **never proved**:
+the absorb fixtures were **zero bytes**. The cause was not the machine and not the constraints. A
+`lean --run EmitPastaAlu.lean fqabsorbpis` from that lane was still running **412 CPU-minutes** later
+and was killed here. `RegFile` is `Nat → Nat` and `stepRegsAt` is a closure that re-reads `st` on
+every application — nothing memoises, so a register's value costs its dataflow DAG unfolded as a
+**tree**. One round (30 instructions) unfolds; 1652 do not.
+
+The repair is a six-entry `List Nat` register file, which Lean evaluates strictly. **Not one gate,
+column, constraint or descriptor byte changed** — both descriptors re-emit byte-identical — and it is
+not a second generator: `regsOf_stepVecAt`, `regsOf_runProgVecAt`, `runRowsVecAt_is_runRowsAt`,
+`roundTrace_is_the_program_run`, `absorbTrace_is_the_program_run` carry the §5–§7 denotations to the
+emitted artifact by rewriting. Absorb PIs **412 CPU-min (unfinished) → 5.2 s**; the 2048-row trace
+emits in 9m14s; the 32-row round trace and PIs re-emit **byte-identical** to the closure generator's.
+
+⚑ **The division of labour, measured rather than asserted.** The ROM bus refuses a round constant used
+at the wrong round (`exact-public table pasta_program_rom lookup multiset …`); the pc thread — an
+algebraic gate — refuses a reorder (`OodEvaluationMismatch`); and on the absorb the poles **invert**:
+the absorbed values are register operands with zero immediates, so the ROM is silent about *which*
+values are absorbed and the boundary pins are what refuse.
+
+⚠ **Named residuals.** One stage of six — the field stage; the five MSM stages need curve arithmetic
+that is not programmed. Nothing binds the absorbed values to a real Kimchi transcript. The weld to
+o1-labs' implementation is a **transcribed constant** checked in two places (a `#guard` in
+`PastaPoseidonFq` §4 and the decimal in the Rust harness), not a proof that the number came from
+upstream. Measured price: slope **1634.5 µs/instruction** (the 32-row quotient would have said
+9.1× that); the census under-priced a permutation by **42.9%** — 1650 instructions, not 1155, because
+it counted 21 multiplies and none of the 9 additions — so the 148-permutation transcript stage is
+244 200 instructions, **40.0%** of one ROM (not 28.0%), ~1.01 GB of trace, ≥6.7 min at lb=6.
+
+
 ## ⚑⚑⚑ AUGUST 5 (Path of Angels counter 4) — the six-organ ship terminal is LIVE; source breadth is not deployment authority
 
 `https://beta.pathofangels.network` now serves curator epoch 1 / counter 4 behind Basic Auth. The
