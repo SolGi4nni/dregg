@@ -4,9 +4,9 @@ import { test } from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("the primary terminal exposes all six platform routes and exact lab entries", async () => {
+test("the primary terminal exposes all seven platform routes and exact lab entries", async () => {
   const html = await read("../index.html");
-  for (const route of ["overview", "missions", "crew", "records", "bazaar", "choir"]) {
+  for (const route of ["overview", "missions", "galley", "crew", "records", "bazaar", "choir"]) {
     assert.match(html, new RegExp(`data-route="${route}"`));
     assert.match(html, new RegExp(`data-view="${route}"`));
   }
@@ -28,9 +28,9 @@ test("platform rendering uses text nodes and links without inline styles or clic
   assert.match(source, /No control here settles, signs, or promotes/);
 });
 
-test("platform navigation remains keyboard-visible and fits six routes on mobile", async () => {
+test("platform navigation remains keyboard-visible and fits seven routes on mobile", async () => {
   const css = await read("../styles.css");
-  assert.match(css, /\.rail nav \{[^}]*grid-template-columns:\s*repeat\(6,\s*1fr\)/s);
+  assert.match(css, /\.rail nav \{[^}]*grid-template-columns:\s*repeat\(7,\s*1fr\)/s);
   assert.match(css, /\.platform-card__link:focus-visible/);
   assert.match(css, /\.primary-link:focus-visible/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);

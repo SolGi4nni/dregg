@@ -11,6 +11,11 @@ test("main mission surface mounts restrained optional admission below the games"
   assert.match(app, /mountDreggAdmissionPanel/u);
   assert.match(app, /getWalletStandardRegistry\(window\)/u);
   assert.match(app, /PoA wallet admission unavailable/u);
-  assert.doesNotMatch(app, /onAdmissionChange/u, "client receipt must not become local game authority");
+  assert.doesNotMatch(app, /onAdmissionChange|setHoldingCredential\(credential\)/u,
+    "local RPC holding receipts are not federation-verifiable Galley eligibility");
+  assert.match(app, /createGalleyTransport/u);
+  assert.match(app, /mountGalley/u);
+  assert.doesNotMatch(app, /credential\.(?:score|progress|vote|balance)/u,
+    "the local receipt cannot become browser game authority");
   assert.doesNotMatch(html, /governance (?:enabled|active)|verified balance/iu);
 });

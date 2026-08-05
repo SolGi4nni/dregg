@@ -10,6 +10,8 @@ import {
   discoverDreggWallets,
   formatDreggChallenge,
   buildDreggOwnerBindingMessage,
+  base58ToBytes,
+  bytesToBase58,
   normalizeSolanaPublicKey,
 } from "../src/dregg-wallet.js";
 import { buildDreggServerVerificationPlan } from "../src/dregg-wallet-verification.js";
@@ -93,6 +95,18 @@ test("durable owner binding bytes exactly match Rust domain || owner(32) || vote
   assert.equal(message.length, domain.length + 64);
   assert.deepEqual(message.slice(0, domain.length), domain);
   assert.deepEqual(message.slice(domain.length), new Uint8Array(64));
+});
+
+test("canonical base58 encoder round-trips Ed25519 keys including zero prefixes", () => {
+  for (const bytes of [
+    new Uint8Array(32),
+    Uint8Array.from({ length: 32 }, (_, index) => index),
+    Uint8Array.from({ length: 32 }, (_, index) => 255 - index),
+  ]) {
+    const encoded = bytesToBase58(bytes);
+    assert.deepEqual(base58ToBytes(encoded), bytes);
+    assert.equal(bytesToBase58(base58ToBytes(encoded)), encoded);
+  }
 });
 
 test("server plan requires exact mint/owner and finalized fresh RPC context", async () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
@@ -12,62 +13,42 @@ import {
   normalizeHoldingChallenge,
   resolveSameOriginAdmissionEndpoint,
 } from "../src/dregg-admission-panel.js";
-import { DREGG_MINT, buildDreggOwnerBindingMessage, bytesToBase64 } from "../src/dregg-wallet.js";
+import { DREGG_MINT, base64ToBytes, bytesToBase64 } from "../src/dregg-wallet.js";
 
 const origin = "https://beta.pathofangels.network";
-const nowMs = Date.parse("2026-08-04T13:02:00.000Z");
+const nowMs = Date.parse("2026-08-04T15:42:00.000Z");
 const nowSeconds = Math.floor(nowMs / 1000);
-const walletAddress = "11111111111111111111111111111111";
-const challengeId = "A".repeat(43);
-const receiptId = bytesToBase64(new Uint8Array(32).fill(1))
-  .replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
-const signingBytes = buildDreggOwnerBindingMessage(walletAddress, DREGG_MINT);
+const crossWire = JSON.parse(readFileSync(new URL("./fixtures/dregg-holding-cross-wire-v2.json", import.meta.url), "utf8"));
+const walletAddress = crossWire.challenge.wallet;
+const playerPublicKey = "c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445a";
+const playerBase58 = "DwiiKAQ7MXWDnCQiZcH81bF1pMyf6mYBLSKNKAxSEWzd";
+const playerCell = "aRGH51etufHsmWISQhQnEfNzAi6UhfhyaM24efjhGTM";
+const challengeId = crossWire.challenge.challenge_id;
+const receiptId = crossWire.capability.receipt_id;
+const signingBytes = base64ToBytes(crossWire.challenge.signing_message_base64);
 const signatureBytes = new Uint8Array(64).fill(1);
 
 function storedReceipt(wallet = walletAddress, receipt = receiptId) {
   return JSON.stringify({
-    format: "poa-dregg-holding-session-v1",
+    format: "poa-dregg-holding-session-v2",
+    player: playerBase58,
+    player_cell: playerCell,
     receipt_id: receipt,
     wallet,
   });
 }
 
-const challenge = Object.freeze({
-  format: DREGG_HOLDING_CHALLENGE_FORMAT,
-  challenge_id: challengeId,
-  wallet: walletAddress,
-  signing_message_base64: bytesToBase64(signingBytes),
-  mint: DREGG_MINT,
-  cluster: "solana:mainnet-beta",
-  minimum_raw_balance: "1",
-  min_context_slot: 420000000,
-  issued_at: nowSeconds - 30,
-  expires_at: nowSeconds + 90,
-});
+const challenge = Object.freeze(structuredClone(crossWire.challenge));
 
 function capability(overrides = {}) {
-  return {
-    format: DREGG_HOLDING_CAPABILITY_FORMAT,
-    receipt_id: receiptId,
-    trust: "beta-rpc-attested",
-    wallet: walletAddress,
-    mint: DREGG_MINT,
-    snapshot_slot: 420000001,
-    issued_at: nowSeconds - 10,
-    expires_at: nowSeconds + 110,
-    governance_weight_bearing: false,
-    ...overrides,
-  };
+  return { ...structuredClone(crossWire.capability), ...overrides };
 }
 
 function status(overrides = {}) {
-  return {
-    ...capability(),
-    format: DREGG_HOLDING_STATUS_FORMAT,
-    state: "active",
-    ...overrides,
-  };
+  return { ...structuredClone(crossWire.status), ...overrides };
 }
+
+const getDreggIdentity = async () => ({ profileName: "marrow", publicKeyHex: playerPublicKey });
 
 class FakeElement {
   constructor(tagName, ownerDocument) {
@@ -150,40 +131,68 @@ test("configured holder endpoints are exact same-origin beta proxy routes", () =
 });
 
 test("challenge validation binds exact wallet/mint/cluster/window and signing bytes", () => {
-  const parsed = normalizeHoldingChallenge(challenge, { walletAddress }, nowMs);
+  const parsed = normalizeHoldingChallenge(challenge, { walletAddress, playerPublicKey }, nowMs);
   assert.deepEqual(parsed.signingMessage, signingBytes);
   assert.equal(parsed.challengeId, challengeId);
-  assert.throws(() => normalizeHoldingChallenge({ ...challenge, wallet: DREGG_MINT }, { walletAddress }, nowMs), /wallet/u);
-  assert.throws(() => normalizeHoldingChallenge({ ...challenge, mint: walletAddress }, { walletAddress }, nowMs), /mint/u);
-  assert.throws(() => normalizeHoldingChallenge({ ...challenge, signing_message_base64: "AAAA=" }, { walletAddress }, nowMs), /base64/u);
-  const wrongBinding = buildDreggOwnerBindingMessage(DREGG_MINT, walletAddress);
+  assert.throws(() => normalizeHoldingChallenge({ ...challenge, wallet: DREGG_MINT }, { walletAddress, playerPublicKey }, nowMs), /wallet/u);
+  assert.throws(() => normalizeHoldingChallenge({ ...challenge, mint: walletAddress }, { walletAddress, playerPublicKey }, nowMs), /mint/u);
+  assert.throws(() => normalizeHoldingChallenge({ ...challenge, signing_message_base64: "***" }, { walletAddress, playerPublicKey }, nowMs), /base64/u);
+  const wrongBinding = Uint8Array.from(signingBytes, (value, index) => index === signingBytes.length - 1 ? value ^ 1 : value);
   assert.throws(() => normalizeHoldingChallenge({
     ...challenge, signing_message_base64: bytesToBase64(wrongBinding),
-  }, { walletAddress }, nowMs), /owner binding/u);
-  assert.throws(() => normalizeHoldingChallenge({ ...challenge, expires_at: nowSeconds + 3600 }, { walletAddress }, nowMs), /short-lived/u);
+  }, { walletAddress, playerPublicKey }, nowMs), /wallet consent/u);
+  assert.throws(() => normalizeHoldingChallenge({ ...challenge, player: DREGG_MINT }, { walletAddress, playerPublicKey }, nowMs), /officer/u);
+  assert.throws(() => normalizeHoldingChallenge({ ...challenge, expires_at: nowSeconds + 3600 }, { walletAddress, playerPublicKey }, nowMs), /short-lived/u);
   assert.throws(() => normalizeHoldingChallenge({
     ...challenge,
     issued_at: nowSeconds,
     expires_at: nowSeconds + 301,
-  }, { walletAddress }, nowMs), /short-lived/u);
+  }, { walletAddress, playerPublicKey }, nowMs), /short-lived/u);
 });
 
 test("capability yields game admission without exposing returned raw balance", () => {
-  const credential = normalizeHoldingCapability(capability(), { walletAddress }, nowMs);
+  const credential = normalizeHoldingCapability(capability(), { walletAddress, playerPublicKey, playerCell }, nowMs);
   assert.equal(credential.scope, DREGG_ADMISSION_SCOPE);
   assert.equal(credential.trustGrade, "rpcAttested");
   assert.equal(credential.backendTrust, "beta-rpc-attested");
   assert.equal(credential.governanceWeightBearing, false);
   assert.equal(credential.balanceClaimBearing, false);
+  assert.equal(credential.sponsorshipBearing, false);
+  assert.equal(credential.playerPublicKey, playerPublicKey);
   assert.equal("rawBalance" in credential, false);
   assert.equal("raw_balance" in credential, false);
-  assert.throws(() => normalizeHoldingCapability({ ...capability(), raw_balance: "1" }, { walletAddress }, nowMs), /unexpected/u);
-  assert.throws(() => normalizeHoldingCapability(capability({ governance_weight_bearing: true }), { walletAddress }, nowMs), /authority/u);
-  assert.throws(() => normalizeHoldingCapability(capability({ trust: "consensus-proven" }), { walletAddress }, nowMs), /authority/u);
+  assert.throws(() => normalizeHoldingCapability({ ...capability(), raw_balance: "1" }, { walletAddress, playerPublicKey, playerCell }, nowMs), /unexpected/u);
+  assert.throws(() => normalizeHoldingCapability(capability({ governance_weight_bearing: true }), { walletAddress, playerPublicKey, playerCell }, nowMs), /authority/u);
+  assert.throws(() => normalizeHoldingCapability(capability({ trust: "consensus-proven" }), { walletAddress, playerPublicKey, playerCell }, nowMs), /authority/u);
+  assert.throws(() => normalizeHoldingCapability(capability({ player: DREGG_MINT }), { walletAddress, playerPublicKey, playerCell }, nowMs), /bindings/u);
+  assert.throws(() => normalizeHoldingCapability(capability({ player_cell: "A".repeat(43) }), { walletAddress, playerPublicKey, playerCell }, nowMs), /bindings/u);
   assert.throws(() => normalizeHoldingCapability(capability({
     issued_at: nowSeconds,
     expires_at: nowSeconds + 121,
-  }), { walletAddress }, nowMs), /short-lived/u);
+  }), { walletAddress, playerPublicKey, playerCell }, nowMs), /short-lived/u);
+});
+
+test("active Dregg identity is required before wallet connection or network access", async () => {
+  const { root } = fakeDom();
+  const wallet = standardWallet();
+  let walletConnections = 0;
+  let fetches = 0;
+  const originalConnect = wallet.features["standard:connect"].connect;
+  wallet.features["standard:connect"].connect = async (...args) => {
+    walletConnections += 1;
+    return originalConnect(...args);
+  };
+  const controller = mountDreggAdmissionPanel(root, {
+    walletsRegistry: { get: () => [wallet] }, origin, now: () => nowMs, storage: memoryStorage(),
+    getDreggIdentity: async () => { throw new Error("active Dregg expedition officer is unavailable"); },
+    fetchImpl: async () => { fetches += 1; throw new Error("must not fetch"); },
+  });
+  await controller.ready;
+  assert.equal(await controller.authenticate(wallet), null);
+  assert.equal(walletConnections, 0);
+  assert.equal(fetches, 0);
+  assert.match(all(root).find((node) => node.attributes.get("role") === "status").textContent,
+    /Unlock or create an active Dregg expedition officer/u);
 });
 
 test("panel mounts an accessible Wallet Standard choice and truthful boundary", async () => {
@@ -219,7 +228,7 @@ test("exact node wire signs once, sends no balance fields, and stores only walle
     requests.push({ url, options });
     const pathname = new URL(url).pathname;
     if (pathname.endsWith("/challenge")) {
-      assert.deepEqual(JSON.parse(options.body), { wallet: walletAddress });
+      assert.deepEqual(JSON.parse(options.body), { wallet: walletAddress, player: playerBase58 });
       return response(201, challenge);
     }
     if (pathname.endsWith("/verify")) {
@@ -232,7 +241,7 @@ test("exact node wire signs once, sends no balance fields, and stores only walle
     throw new Error("unexpected endpoint");
   };
   const controller = mountDreggAdmissionPanel(root, {
-    walletsRegistry: { get: () => [wallet] }, origin, now: () => nowMs, fetchImpl, storage,
+    walletsRegistry: { get: () => [wallet] }, origin, now: () => nowMs, fetchImpl, storage, getDreggIdentity,
   });
   await controller.ready;
   const admitted = await controller.authenticate(wallet);
@@ -241,7 +250,9 @@ test("exact node wire signs once, sends no balance fields, and stores only walle
   assert.equal(admitted.scope, DREGG_ADMISSION_SCOPE);
   assert.equal("rawBalance" in admitted, false);
   assert.deepEqual(JSON.parse(storage.value()), {
-    format: "poa-dregg-holding-session-v1",
+    format: "poa-dregg-holding-session-v2",
+    player: playerBase58,
+    player_cell: playerCell,
     receipt_id: receiptId,
     wallet: walletAddress,
   });
@@ -249,7 +260,7 @@ test("exact node wire signs once, sends no balance fields, and stores only walle
   assert.ok(requests.every(({ options }) => options.credentials === "same-origin" && options.redirect === "error"));
   const surface = all(root).map((node) => node.textContent).join("\n");
   assert.doesNotMatch(surface, /raw balance|raw_balance/iu);
-  assert.match(surface, /No governance authority granted/u);
+  assert.match(surface, /No Galley sponsorship or governance authority granted/u);
 
   assert.equal(controller.logout(), true);
   assert.equal(controller.getCredential(), null);
@@ -283,6 +294,24 @@ test("saved receipt restores only through active status and unknown status fails
   assert.equal(await unavailable.ready, null);
   assert.equal(unavailable.getCredential(), null);
   assert.equal(storage.value(), null);
+});
+
+test("legacy wallet-only receipt is cleared and can never restore sponsorship", async () => {
+  const legacy = JSON.stringify({
+    format: "poa-dregg-holding-session-v1",
+    receipt_id: receiptId,
+    wallet: walletAddress,
+  });
+  const storage = memoryStorage(legacy);
+  let fetches = 0;
+  const controller = mountDreggAdmissionPanel(fakeDom().root, {
+    walletsRegistry: { get: () => [standardWallet()] }, origin, now: () => nowMs, storage,
+    fetchImpl: async () => { fetches += 1; throw new Error("legacy receipt must not reach status"); },
+  });
+  assert.equal(await controller.ready, null);
+  assert.equal(controller.getCredential(), null);
+  assert.equal(storage.value(), null);
+  assert.equal(fetches, 0);
 });
 
 test("saved receipt is independently wallet-bound and response substitution fails closed", async () => {
@@ -340,7 +369,7 @@ test("credential expiry timer and on-read guard close local admission and notify
   const wallet = standardWallet();
   const controller = mountDreggAdmissionPanel(root, {
     walletsRegistry: { get: () => [wallet] }, origin, now: () => currentMs, storage,
-    onAdmissionChange: (value) => notifications.push(value),
+    onAdmissionChange: (value) => notifications.push(value), getDreggIdentity,
     ...timers,
     fetchImpl: async (url) => new URL(url).pathname.endsWith("/challenge")
       ? response(201, challenge)
@@ -363,7 +392,7 @@ test("credential expiry timer and on-read guard close local admission and notify
   scheduled = null;
   const second = mountDreggAdmissionPanel(fakeDom().root, {
     walletsRegistry: { get: () => [wallet] }, origin, now: () => currentMs, storage: secondStorage,
-    onAdmissionChange: (value) => secondNotifications.push(value),
+    onAdmissionChange: (value) => secondNotifications.push(value), getDreggIdentity,
     ...timers,
     fetchImpl: async (url) => new URL(url).pathname.endsWith("/challenge")
       ? response(201, challenge)
@@ -387,7 +416,7 @@ test("unavailable or over-claiming node response leaves admission closed", async
     return response(200, capability({ governance_weight_bearing: true }));
   };
   const controller = mountDreggAdmissionPanel(root, {
-    walletsRegistry: { get: () => [wallet] }, origin, now: () => nowMs, fetchImpl, storage: memoryStorage(),
+    walletsRegistry: { get: () => [wallet] }, origin, now: () => nowMs, fetchImpl, storage: memoryStorage(), getDreggIdentity,
   });
   await controller.ready;
   assert.equal(await controller.authenticate(wallet), null);

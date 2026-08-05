@@ -89,9 +89,9 @@ test("the home terminal reads the exact installed provenance and replay sources"
   assert.equal(Object.isFrozen(evidence.archive), true);
 });
 
-test("six platform organs expose separate evidence grades instead of laundering one green light", async () => {
+test("seven platform organs expose separate evidence grades instead of laundering one green light", async () => {
   const model = buildPlatformModel({ contentAuthority: readyContent, evidence: await realEvidence() });
-  assert.deepEqual(model.surfaces.map(({ id }) => id), ["daily", "expedition", "archive", "recorder", "crew", "bazaar"]);
+  assert.deepEqual(model.surfaces.map(({ id }) => id), ["daily", "expedition", "archive", "recorder", "crew", "bazaar", "galley"]);
   assert.deepEqual(model.surfaces.map(({ grade }) => grade.label), [
     "SIGNED CONTENT",
     "PINNED PROVENANCE",
@@ -99,6 +99,7 @@ test("six platform organs expose separate evidence grades instead of laundering 
     "LINKED REPLAY",
     "NO PROFILE RECEIPT",
     "NO SETTLEMENT",
+    "VERSIONED NODE",
   ]);
   assert.match(model.surfaces[0].copy, /3 authenticated drills/);
   assert.match(model.surfaces[0].grade.detail, /rules, not a played run/);
@@ -218,7 +219,7 @@ test("mounting creates navigable organs and aria-disabled market gates", async (
 
     const home = descendants(roots.home);
     const cards = home.filter(({ dataset }) => dataset.surface);
-    assert.equal(cards.length, 6);
+    assert.equal(cards.length, 7);
     assert.deepEqual(home.filter(({ tagName }) => tagName === "A").map(({ href }) => href), [
       "#missions",
       "./labs/expedition-lab.html",
@@ -226,6 +227,7 @@ test("mounting creates navigable organs and aria-disabled market gates", async (
       "./labs/flight-recorder.html",
       "#crew",
       "#bazaar",
+      "#galley",
     ]);
     assert.equal(descendants(roots.register).filter(({ dataset }) => dataset.evidence).length, 5);
     assert.equal(descendants(roots.crew).filter(({ className }) => className === "crew-role").length, 4);

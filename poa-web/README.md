@@ -61,14 +61,16 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
 - The curator panel is a preview/inspection surface. Signing and canon
   promotion remain the responsibility of the curator tool and capability.
 
-The terminal exposes all three selectors only after the five-file manifest,
-curator activation, complete catalog, and every descriptor validate. All play is
-still visibly `LOCAL // UNSETTLED`: a browser transcript is not a RunReceipt and
-does not grant score, contribution, salvage, ranking, or canon status.
+The terminal exposes all three drill selectors only after the five-file
+manifest, curator activation, complete catalog, and every descriptor validate.
+Those catalog drills remain visibly `LOCAL // UNSETTLED`: a browser transcript
+is not a RunReceipt and does not grant score, contribution, salvage, ranking,
+or canon status. The Galley is a separate versioned-node surface described
+below; its journal receipts must never be inferred from a local drill.
 
 ## Ship platform and evidence grades
 
-The overview is also the ship's between-episode terminal. It joins six visible
+The overview is also the ship's between-episode terminal. It joins seven visible
 organs without pretending they share one authority:
 
 - **Field drills** consume curator-signed POAG1 content. That signature says
@@ -84,6 +86,12 @@ organs without pretending they share one authority:
 - **Dark Bazaar** exposes inventory, private-order, clearing, and settlement as
   four independent locked gates. A decorative market cannot make any of them
   true.
+- **The Galley** reads the frozen `POA-GALLEY-*-V1` session/status envelopes,
+  prepares one opaque action token through the same-origin node, sends the exact
+  returned postcard to `dregg.signTurnV3`, and checks the observed receipt
+  postcard against its adjacent SHA-256 checksum. That checksum is transport
+  integrity, not canonical Dregg receipt verification. Its projection remains
+  deliberately opaque until the authoritative presentation schema is frozen.
 
 `src/platform-terminal.js` is a projection over these existing sources. It does
 not sign, score, settle, promote canon, or invent a browser fallback. Every
@@ -99,6 +107,7 @@ corresponding receipt:
 | Game organ | Player loop | Capability required before it can persist |
 | --- | --- | --- |
 | Watch cycle | rotating drills, one clean run, crew upkeep | authenticated cycle definition, replay protection, settled RunReceipt |
+| Galley | take a maintenance/Commons action and inspect its journal wake | sequence-expiring node action, exact signed turn postcard, range/head-bound replay summary, durable pending-intent coordinates, canonical receipt verifier |
 | Officer | role, loadout, injury, recovery, reputation | wallet-bound but privacy-conscious profile capability and versioned state transition |
 | Expedition | assemble a crew, cross a deck, extract or withdraw | Lean-authored joint state machine, participant signatures, exact contribution and custody output |
 | Field archive | compare evidence, form a beta record, seek promotion | artifact lineage, curator capability, supersession and alpha/beta provenance |
@@ -112,6 +121,48 @@ Rust and the node should transport, persist, prove, and serve those decisions;
 the browser should render them and fail closed. The PoA devnet becomes useful
 when a second node can independently replay and verify these exact transitions,
 not merely when the primary server can display them.
+
+### Galley V1 wire
+
+The web terminal and extension use one contract and one method set:
+
+- `GET /api/poa/galley/v1/session`
+- `POST /api/poa/galley/v1/command` with only
+  `POA-GALLEY-COMMAND-PREPARE-V1` plus the server-issued action token
+- normal `dregg.signTurnV3(postcard, federationId)` submission
+- `GET /api/poa/galley/v1/status`, locating the result by exact turn hash
+
+The page resolves the permissioned `window.dregg.getActiveIdentity()` before
+its first session request. All three node requests carry exactly
+`X-Dregg-Actor: <64 lowercase hex>`; the command JSON still contains no player
+field. The header is a claimed public personalization key, not authentication,
+eligibility, signer evidence, or finality. If identity sharing is unavailable
+or declined, the Galley remains read-only and sends no session request.
+
+The direct page signer result is also treated as untrusted admission evidence.
+`submitted` and `queued` results must return the exact prepared `turnId`; any
+returned receipt or node turn hash must agree with it. Only an exact
+`submitted` result starts journal observation. Queued, refused, declined,
+mismatched, malformed, and thrown-error outcomes stay distinct in the UI and
+leave the durable intent for exact later reconciliation or sequence expiry.
+
+Expiry is relative to the Galley journal (`expires_after_sequence`), matching
+the Lean runtime rather than trusting browser or server wall clocks. Before a
+postcard reaches the signer, the web app and extension durably record only its
+world/aggregate/intent/turn coordinates. A restart keeps that intent pending;
+it is removed only when the same world reports the exact turn with a
+checksum-matched postcard, or when the journal sequence passes its expiry.
+The replay window is a suffix whose total, range, and head are bound to the
+current projection instead of being accepted as unrelated node testimony.
+
+Caddy exposes those node routes to this site under `/node`. The browser sends
+no JSON player field: authoritative signer identity comes from the signed Dregg
+turn, never from the preparation header. Ordinary
+actions need no Solana wallet. Holder sponsorship is intentionally unadvertised
+and refused in V1 until eligibility is a deployment-pinned,
+federation-verifiable certificate; a local RPC receipt is not enough. The
+byte-pinned cross-client specimen is
+`tests/fixtures/galley-wire-v1.json`.
 
 The deeper game can therefore grow outward—crew quarters, cooperative deck
 sorties, salvage collections, research plans, auctions, recovery clocks, and

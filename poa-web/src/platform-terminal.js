@@ -318,6 +318,16 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
       "locked",
       grade("settlement-locked", "NO SETTLEMENT", "No DrEX settlement receipt or owned salvage inventory is available to this web build.", "red"),
     ),
+    surface(
+      "galley",
+      "DECK 119 COMMONS",
+      "The Galley",
+      "The public journal and signed maintenance share one node-authored projection. Actions use opaque expiring tokens, exact turn postcards, and returned receipt evidence.",
+      "#galley",
+      "Enter the Galley",
+      "network",
+      grade("versioned-node-required", "VERSIONED NODE", "The Galley fails closed unless its frozen V1 node API supplies every action, projection, event, receipt, and replay summary.", "blue"),
+    ),
   ];
 
   const register = [

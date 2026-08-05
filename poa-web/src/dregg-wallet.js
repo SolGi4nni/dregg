@@ -114,6 +114,30 @@ export function base58ToBytes(text) {
   return Uint8Array.from(bytes.reverse());
 }
 
+/** Canonical base58 encoding for a byte public key (all-zero prefixes retained). */
+export function bytesToBase58(bytesLike) {
+  const input = asBytes(bytesLike, "public key");
+  if (input.length === 0) throw new TypeError("public key must not be empty");
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const digits = [0];
+  for (const byte of input) {
+    let carry = byte;
+    for (let index = 0; index < digits.length; index += 1) {
+      carry += digits[index] << 8;
+      digits[index] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
+  }
+  let output = "";
+  for (let index = 0; index < input.length - 1 && input[index] === 0; index += 1) output += "1";
+  for (let index = digits.length - 1; index >= 0; index -= 1) output += alphabet[digits[index]];
+  return output;
+}
+
 /** Refuse malformed or non-32-byte Solana/Ed25519 public keys at the boundary. */
 export function normalizeSolanaPublicKey(name, value) {
   const text = requiredText(name, value);

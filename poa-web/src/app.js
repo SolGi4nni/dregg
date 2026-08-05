@@ -12,6 +12,8 @@ import { loadSalvageLockDescriptor } from "./salvage-runtime.js";
 import { launchCatalogMission } from "./mission-launcher.js";
 import { mountDreggAdmissionPanel } from "./dregg-admission-panel.js";
 import { getWalletStandardRegistry } from "./wallet-standard-registry.js";
+import { mountGalley } from "./galley-controller.js";
+import { createGalleyTransport } from "./galley-runtime.js";
 import {
   buildPlatformModel,
   loadPlatformEvidence,
@@ -28,6 +30,7 @@ const state = {
   signal: null,
   run: null,
   draft: [],
+  galleyController: null,
   platformEvidence: Object.freeze({}),
   contentAuthority: Object.freeze({ state: "pending" }),
 };
@@ -78,6 +81,22 @@ function initializeChrome() {
 
   byId("signal-clear").addEventListener("click", clearDraft);
   byId("signal-submit").addEventListener("click", submitDraft);
+}
+
+function initializeGalley() {
+  const root = byId("galley-root");
+  if (!root) return;
+  try {
+    state.galleyController = mountGalley(root, {
+      transport: createGalleyTransport({ origin: location.origin }),
+      dreggProvider: window.dregg ?? null,
+    });
+  } catch (error) {
+    console.error("PoA Galley unavailable", error);
+    root.dataset.state = "unavailable";
+    const fallback = root.querySelector("p:last-child");
+    if (fallback) fallback.textContent = "The versioned Galley node instrument is unavailable. No browser-authored game fallback was opened.";
+  }
 }
 
 function initializeDreggAdmission() {
@@ -341,6 +360,7 @@ function escapeHtml(value) {
 
 async function boot() {
   initializeChrome();
+  initializeGalley();
   initializeDreggAdmission();
   const platformEvidence = initializePlatformEvidence();
   try {

@@ -1,0 +1,108 @@
+{
+  "format": "POA-GALLEY-CROSS-WIRE-V1",
+  "prepare": {
+    "format": "POA-GALLEY-COMMAND-PREPARE-V1",
+    "action_token": "perform:vat-pressure:third-watch"
+  },
+  "session": {
+    "format": "POA-GALLEY-SESSION-V1",
+    "federation_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "daily_id": "daily-119-third-watch",
+    "aggregate_id": "galley:deck-119",
+    "schema_version": 1,
+    "sequence": 7,
+    "semantic_head": "6666666666666666666666666666666666666666666666666666666666666666",
+    "projection_digest": "7777777777777777777777777777777777777777777777777777777777777777",
+    "projection": {
+      "kind": "GalleyMaintenanceDaily",
+      "summary": "Reclamation vat pressure loss",
+      "note": "Opaque beta projection; presentation schema not frozen"
+    },
+    "actions": [
+      {
+        "kind": "perform",
+        "action_token": "perform:vat-pressure:third-watch",
+        "expires_after_sequence": 7
+      },
+      {
+        "kind": "visit_commons",
+        "action_token": "commons:third-watch",
+        "expires_after_sequence": 7
+      },
+      {
+        "kind": "public_vote",
+        "action_token": "vote:third-watch",
+        "expires_after_sequence": 7
+      }
+    ],
+    "replay": {
+      "audited": true,
+      "event_count": 1,
+      "total_event_count": 7,
+      "from_sequence": 7,
+      "through_sequence": 7,
+      "head_digest": "6666666666666666666666666666666666666666666666666666666666666666"
+    }
+  },
+  "unsigned_turn": {
+    "format": "POA-GALLEY-UNSIGNED-TURN-V1",
+    "intent_id": "galley-intent-008",
+    "federation_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "turn_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+    "turn_postcard_base64": "AQIDBA==",
+    "expires_after_sequence": 7
+  },
+  "status": {
+    "format": "POA-GALLEY-STATUS-V1",
+    "federation_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "daily_id": "daily-119-third-watch",
+    "aggregate_id": "galley:deck-119",
+    "schema_version": 1,
+    "sequence": 8,
+    "semantic_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "projection_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "projection": {
+      "kind": "GalleyMaintenanceDaily",
+      "summary": "Reclamation vat pressure accepted",
+      "note": "Opaque beta projection; presentation schema not frozen"
+    },
+    "actions": [
+      {
+        "kind": "perform",
+        "action_token": "perform:intake-collar:third-watch",
+        "expires_after_sequence": 8
+      },
+      {
+        "kind": "visit_commons",
+        "action_token": "commons:third-watch",
+        "expires_after_sequence": 8
+      }
+    ],
+    "replay": {
+      "audited": true,
+      "event_count": 1,
+      "total_event_count": 8,
+      "from_sequence": 8,
+      "through_sequence": 8,
+      "head_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "events": [
+      {
+        "sequence": 8,
+        "turn_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+        "receipt_hash": "9999999999999999999999999999999999999999999999999999999999999999",
+        "event_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "payload_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "payload": {
+          "kind": "maintenance_observation",
+          "visibility": "public"
+        },
+        "receipt": {
+          "index": 8,
+          "postcard_base64": "AQIDBA==",
+          "sha256": "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a"
+        }
+      }
+    ]
+  }
+}

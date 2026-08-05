@@ -1,21 +1,23 @@
 import {
   DREGG_MINT,
-  DREGG_OWNER_BIND_DOMAIN,
+  DREGG_TOKEN_PROGRAM,
   base64ToBytes,
   base58ToBytes,
+  bytesToBase58,
   bytesToBase64,
   connectDreggWallet,
   discoverDreggWallets,
   normalizeSolanaPublicKey,
 } from "./dregg-wallet.js";
 
-export const DREGG_HOLDING_CHALLENGE_FORMAT = "poa-dregg-holding-challenge-v1";
-export const DREGG_HOLDING_CAPABILITY_FORMAT = "poa-dregg-holding-capability-v1";
-export const DREGG_HOLDING_STATUS_FORMAT = "poa-dregg-holding-status-v1";
+export const DREGG_HOLDING_CHALLENGE_FORMAT = "poa-dregg-holding-challenge-v2";
+export const DREGG_HOLDING_CAPABILITY_FORMAT = "poa-dregg-holding-capability-v2";
+export const DREGG_HOLDING_STATUS_FORMAT = "poa-dregg-holding-status-v2";
 export const DREGG_ADMISSION_SCOPE = "poa:beta:game-admission";
 export const DREGG_ADMISSION_TRUST_GRADE = "rpcAttested";
 export const DREGG_BACKEND_TRUST = "beta-rpc-attested";
 export const DREGG_CLUSTER = "solana:mainnet-beta";
+export const DREGG_HOLDING_WALLET_CONSENT_DOMAIN = "path-of-angels/dregg-holding/wallet-consent/v2";
 
 /** Beta routes are proxied through `/node/*`; node-internal routes omit `/node`. */
 export const DEFAULT_DREGG_ADMISSION_ENDPOINTS = Object.freeze({
@@ -25,22 +27,30 @@ export const DEFAULT_DREGG_ADMISSION_ENDPOINTS = Object.freeze({
 });
 
 const RECEIPT_STORAGE_KEY = "poa.dregg.beta-holding-receipt.v1";
-const RECEIPT_STORAGE_FORMAT = "poa-dregg-holding-session-v1";
+const RECEIPT_STORAGE_FORMAT = "poa-dregg-holding-session-v2";
 const MAX_CHALLENGE_LIFETIME_SECONDS = 300;
 const MAX_CAPABILITY_LIFETIME_SECONDS = 120;
 const CLOCK_SKEW_SECONDS = 30;
-const encoder = new TextEncoder();
+const DREGG_ADMISSION_ORIGIN = "https://beta.pathofangels.network";
+const DREGG_ADMISSION_DOMAIN = "pathofangels.network";
+const MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+const CAPABILITY_TTL_SECONDS = 120;
+const decoder = new TextDecoder("utf-8", { fatal: true });
 
 const CHALLENGE_KEYS = Object.freeze([
   "challenge_id", "cluster", "expires_at", "format", "issued_at", "min_context_slot",
-  "minimum_raw_balance", "mint", "signing_message_base64", "wallet",
+  "minimum_raw_balance", "mint", "player", "player_cell", "signing_message_base64", "wallet",
 ]);
 const CAPABILITY_KEYS = Object.freeze([
   "expires_at", "format", "governance_weight_bearing", "issued_at", "mint",
-  "receipt_id", "snapshot_slot", "trust", "wallet",
+  "player", "player_cell", "receipt_id", "snapshot_slot", "trust", "wallet",
 ]);
-const STATUS_KEYS = Object.freeze([...CAPABILITY_KEYS, "state"].sort());
-const STORED_RECEIPT_KEYS = Object.freeze(["format", "receipt_id", "wallet"]);
+const STATUS_KEYS = Object.freeze([
+  "expires_at", "format", "governance_weight_bearing", "receipt_id", "state", "trust",
+]);
+const STORED_RECEIPT_KEYS = Object.freeze([
+  "format", "player", "player_cell", "receipt_id", "wallet",
+]);
 
 class HoldingBackendError extends Error {
   constructor(status, code = null) {
@@ -103,13 +113,101 @@ function bytesEqual(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function validateOwnerBindingMessage(message, walletAddress) {
-  const domain = encoder.encode(DREGG_OWNER_BIND_DOMAIN);
-  const owner = base58ToBytes(walletAddress);
-  if (message.length !== domain.length + 64 ||
-      !bytesEqual(message.slice(0, domain.length), domain) ||
-      !bytesEqual(message.slice(domain.length, domain.length + 32), owner)) {
-    throw new Error("node signing message is not the canonical Dregg owner binding for this wallet");
+function bytesToHex(bytes) {
+  return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function base64UrlToBytes(name, value) {
+  const text = base64Url32(name, value);
+  return base64ToBytes(`${text.replace(/-/gu, "+").replace(/_/gu, "/")}=`);
+}
+
+function framedFields(message, count) {
+  const fields = [];
+  let offset = 0;
+  while (offset < message.length) {
+    if (offset + 4 > message.length) throw new Error("wallet consent has a truncated field length");
+    const length = new DataView(message.buffer, message.byteOffset + offset, 4).getUint32(0, false);
+    offset += 4;
+    if (offset + length > message.length) throw new Error("wallet consent has a truncated field");
+    fields.push(message.slice(offset, offset + length));
+    offset += length;
+  }
+  if (fields.length !== count) throw new Error("wallet consent has the wrong field count");
+  return fields;
+}
+
+function utf8Field(name, bytes) {
+  let text;
+  try { text = decoder.decode(bytes); }
+  catch { throw new Error(`${name} is not canonical UTF-8`); }
+  return requiredText(name, text);
+}
+
+function u64Field(name, bytes) {
+  if (bytes.length !== 8) throw new Error(`${name} must be an eight-byte integer`);
+  const value = new DataView(bytes.buffer, bytes.byteOffset, 8).getBigUint64(0, false);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`${name} exceeds browser-safe bounds`);
+  return Number(value);
+}
+
+function nonzeroBytes32(name, bytes) {
+  if (bytes.length !== 32 || bytes.every((value) => value === 0)) {
+    throw new Error(`${name} must be a nonzero 32-byte value`);
+  }
+  return bytes;
+}
+
+function normalizePlayerBase58(name, value) {
+  const normalized = normalizeSolanaPublicKey(name, value);
+  return Object.freeze({ base58: normalized, hex: bytesToHex(base58ToBytes(normalized)) });
+}
+
+function normalizePlayerIdentity(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("active Dregg identity is required");
+  }
+  const publicKeyHex = value.publicKeyHex ?? value.public_key_hex;
+  const profileName = value.profileName ?? value.profile_name;
+  if (typeof publicKeyHex !== "string" || !/^[0-9a-f]{64}$/u.test(publicKeyHex) || /^0+$/u.test(publicKeyHex)) {
+    throw new TypeError("active Dregg identity must expose a lowercase nonzero Ed25519 public key");
+  }
+  if (typeof profileName !== "string" || profileName.length === 0 || profileName.length > 80 ||
+      /[\u0000-\u001f\u007f]/u.test(profileName)) {
+    throw new TypeError("active Dregg identity must expose a bounded profile name");
+  }
+  const identity = Object.freeze({ publicKeyHex, profileName });
+  const bytes = Uint8Array.from(identity.publicKeyHex.match(/.{2}/gu), (pair) => Number.parseInt(pair, 16));
+  return Object.freeze({ ...identity, base58: bytesToBase58(bytes) });
+}
+
+function validateWalletConsentMessage(message, challenge, expectedOrigin) {
+  const fields = framedFields(message, 19);
+  const expected = [
+    [utf8Field("wallet consent domain", fields[0]), DREGG_HOLDING_WALLET_CONSENT_DOMAIN],
+    [bytesToHex(fields[1]), bytesToHex(base64UrlToBytes("challenge_id", challenge.challengeId))],
+    [utf8Field("wallet consent origin", fields[3]), expectedOrigin],
+    [utf8Field("wallet consent domain name", fields[4]), DREGG_ADMISSION_DOMAIN],
+    [utf8Field("wallet consent cluster", fields[5]), challenge.cluster],
+    [bytesToHex(fields[6]), bytesToHex(base58ToBytes(MAINNET_GENESIS))],
+    [bytesToHex(fields[8]), bytesToHex(base58ToBytes(challenge.mint))],
+    [bytesToHex(fields[9]), bytesToHex(base58ToBytes(DREGG_TOKEN_PROGRAM))],
+    [bytesToHex(fields[10]), bytesToHex(base58ToBytes(challenge.walletAddress))],
+    [bytesToHex(fields[11]), bytesToHex(base58ToBytes(challenge.player.base58))],
+    [bytesToHex(fields[12]), bytesToHex(base64UrlToBytes("player_cell", challenge.playerCell))],
+    [u64Field("minimum_raw_balance", fields[14]), Number(challenge.minimumRawBalance)],
+    [u64Field("min_context_slot", fields[15]), challenge.minContextSlot],
+    [u64Field("issued_at", fields[16]), challenge.issuedAt],
+    [u64Field("expires_at", fields[17]), challenge.expiresAt],
+    [u64Field("capability_ttl", fields[18]), CAPABILITY_TTL_SECONDS],
+  ];
+  nonzeroBytes32("federation id", fields[2]);
+  nonzeroBytes32("RPC endpoint id", fields[7]);
+  nonzeroBytes32("challenge nonce", fields[13]);
+  if (fields[1].length !== 32 || fields[6].length !== 32 || fields[8].length !== 32 ||
+      fields[9].length !== 32 || fields[10].length !== 32 || fields[11].length !== 32 ||
+      fields[12].length !== 32 || expected.some(([actual, wanted]) => actual !== wanted)) {
+    throw new Error("node signing message is not the canonical wallet consent for this challenge and Dregg officer");
   }
 }
 
@@ -139,6 +237,8 @@ export function normalizeHoldingChallenge(payload, expected, nowMs = Date.now())
     format: requiredText("format", payload.format),
     challengeId: base64Url32("challenge_id", payload.challenge_id),
     walletAddress: normalizeSolanaPublicKey("wallet", payload.wallet),
+    player: normalizePlayerBase58("player", payload.player),
+    playerCell: base64Url32("player_cell", payload.player_cell),
     signingMessage: base64ToBytes(requiredText("signing_message_base64", payload.signing_message_base64)),
     mint: normalizeSolanaPublicKey("mint", payload.mint),
     cluster: requiredText("cluster", payload.cluster),
@@ -147,27 +247,39 @@ export function normalizeHoldingChallenge(payload, expected, nowMs = Date.now())
     issuedAt: safeInteger("issued_at", payload.issued_at),
     expiresAt: safeInteger("expires_at", payload.expires_at),
   };
-  if (challenge.format !== DREGG_HOLDING_CHALLENGE_FORMAT || challenge.walletAddress !== expected.walletAddress) {
-    throw new Error("holding challenge has the wrong format or wallet");
+  if (challenge.format !== DREGG_HOLDING_CHALLENGE_FORMAT ||
+      challenge.walletAddress !== expected.walletAddress ||
+      challenge.player.hex !== expected.playerPublicKey) {
+    throw new Error("holding challenge has the wrong format, wallet, or Dregg officer");
   }
   if (challenge.mint !== DREGG_MINT || challenge.cluster !== DREGG_CLUSTER || challenge.minimumRawBalance !== "1") {
     throw new Error("holding challenge has the wrong mint, cluster, or admission threshold");
   }
   if (challenge.signingMessage.length === 0) throw new Error("holding challenge has an empty signing message");
-  validateOwnerBindingMessage(challenge.signingMessage, challenge.walletAddress);
   validateWindow(
     challenge.issuedAt,
     challenge.expiresAt,
     safeNowSeconds(nowMs),
     MAX_CHALLENGE_LIFETIME_SECONDS,
   );
+  validateWalletConsentMessage(
+    challenge.signingMessage,
+    challenge,
+    expected.origin ? new URL(expected.origin).origin : DREGG_ADMISSION_ORIGIN,
+  );
   return Object.freeze(challenge);
 }
 
-function admissionCredential({ receiptId, walletAddress, snapshotSlot, issuedAt, expiresAt }) {
+function admissionCredential({
+  receiptId, walletAddress, playerPublicKey, playerBase58, playerCell,
+  snapshotSlot = null, issuedAt = null, expiresAt,
+}) {
   return Object.freeze({
     receiptId,
     walletAddress,
+    playerPublicKey,
+    playerBase58,
+    playerCell,
     snapshotSlot,
     issuedAt,
     expiresAt,
@@ -178,6 +290,7 @@ function admissionCredential({ receiptId, walletAddress, snapshotSlot, issuedAt,
     governanceWeightBearing: false,
     balanceClaimBearing: false,
     accountsProofAnchored: false,
+    sponsorshipBearing: false,
   });
 }
 
@@ -189,17 +302,23 @@ export function normalizeHoldingCapability(payload, expected, nowMs = Date.now()
   const receiptId = base64Url32("receipt_id", payload.receipt_id);
   const trust = requiredText("trust", payload.trust);
   const walletAddress = normalizeSolanaPublicKey("wallet", payload.wallet);
+  const player = normalizePlayerBase58("player", payload.player);
+  const playerCell = base64Url32("player_cell", payload.player_cell);
   const mint = normalizeSolanaPublicKey("mint", payload.mint);
   const snapshotSlot = safeInteger("snapshot_slot", payload.snapshot_slot);
   const issuedAt = safeInteger("issued_at", payload.issued_at);
   const expiresAt = safeInteger("expires_at", payload.expires_at);
   if (format !== DREGG_HOLDING_CAPABILITY_FORMAT || trust !== DREGG_BACKEND_TRUST ||
       walletAddress !== expected.walletAddress || mint !== DREGG_MINT ||
+      player.hex !== expected.playerPublicKey || playerCell !== expected.playerCell ||
       payload.governance_weight_bearing !== false) {
     throw new Error("holding capability has unsupported authority or bindings");
   }
   validateWindow(issuedAt, expiresAt, safeNowSeconds(nowMs), MAX_CAPABILITY_LIFETIME_SECONDS);
-  return admissionCredential({ receiptId, walletAddress, snapshotSlot, issuedAt, expiresAt });
+  return admissionCredential({
+    receiptId, walletAddress, playerPublicKey: player.hex, playerBase58: player.base58,
+    playerCell, snapshotSlot, issuedAt, expiresAt,
+  });
 }
 
 /** Active status can restore beta admission; expired/consumed receipts cannot. */
@@ -207,27 +326,38 @@ export function normalizeHoldingStatus(payload, expected, nowMs = Date.now()) {
   if (!payload || typeof payload !== "object") throw new TypeError("holding status is required");
   exactKeys("holding status", payload, STATUS_KEYS);
   if (requiredText("format", payload.format) !== DREGG_HOLDING_STATUS_FORMAT ||
-      base64Url32("receipt_id", payload.receipt_id) !== expected.receiptId) {
+      base64Url32("receipt_id", payload.receipt_id) !== expected.receiptId ||
+      requiredText("trust", payload.trust) !== DREGG_BACKEND_TRUST ||
+      payload.governance_weight_bearing !== false) {
     throw new Error("holding status has the wrong format or receipt");
   }
   const state = requiredText("state", payload.state);
   if (!["active", "expired", "consumed"].includes(state)) throw new Error("holding status has an unknown state");
   if (state !== "active") return Object.freeze({ state, credential: null });
-  const { state: _state, ...capabilityFields } = payload;
-  const capabilityShape = { ...capabilityFields, format: DREGG_HOLDING_CAPABILITY_FORMAT };
+  const expiresAt = safeInteger("expires_at", payload.expires_at);
+  const nowSeconds = safeNowSeconds(nowMs);
+  if (expiresAt <= nowSeconds - CLOCK_SKEW_SECONDS ||
+      expiresAt > nowSeconds + MAX_CAPABILITY_LIFETIME_SECONDS + CLOCK_SKEW_SECONDS) {
+    throw new Error("holding status is outside its short-lived time window");
+  }
   return Object.freeze({
     state,
-    credential: normalizeHoldingCapability(
-      capabilityShape,
-      { walletAddress: expected.walletAddress },
-      nowMs,
-    ),
+    credential: admissionCredential({
+      receiptId: expected.receiptId,
+      walletAddress: expected.walletAddress,
+      playerPublicKey: expected.playerPublicKey,
+      playerBase58: expected.playerBase58,
+      playerCell: expected.playerCell,
+      expiresAt,
+    }),
   });
 }
 
-function encodeStoredReceipt(receiptId, walletAddress) {
+function encodeStoredReceipt(receiptId, walletAddress, playerBase58, playerCell) {
   return JSON.stringify({
     format: RECEIPT_STORAGE_FORMAT,
+    player: normalizePlayerBase58("player", playerBase58).base58,
+    player_cell: base64Url32("player_cell", playerCell),
     receipt_id: base64Url32("receipt_id", receiptId),
     wallet: normalizeSolanaPublicKey("wallet", walletAddress),
   });
@@ -243,6 +373,11 @@ function decodeStoredReceipt(serialized) {
   return Object.freeze({
     receiptId: base64Url32("receipt_id", payload.receipt_id),
     walletAddress: normalizeSolanaPublicKey("wallet", payload.wallet),
+    ...(() => {
+      const player = normalizePlayerBase58("player", payload.player);
+      return { playerBase58: player.base58, playerPublicKey: player.hex };
+    })(),
+    playerCell: base64Url32("player_cell", payload.player_cell),
   });
 }
 
@@ -297,7 +432,9 @@ function isTransientBackendFailure(error) {
 
 function authenticationFailureMessage(error, savedReceiptRetained) {
   let message;
-  if (error instanceof HoldingBackendError && error.status === 401) {
+  if (error instanceof Error && /active Dregg|Dregg identity|Dregg expedition officer/iu.test(error.message)) {
+    message = "Unlock or create an active Dregg expedition officer before binding a Solana wallet.";
+  } else if (error instanceof HoldingBackendError && error.status === 401) {
     message = "The beta invitation session was refused. Re-enter the beta credentials and try again.";
   } else if (error instanceof HoldingBackendError && error.code === "insufficient_dregg") {
     message = "The finalized RPC check did not find the minimum $DREGG holding for this wallet.";
@@ -351,6 +488,13 @@ export function mountDreggAdmissionPanel(root, {
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout,
   classicProviderSource = [],
+  getDreggIdentity = async () => {
+    const provider = globalThis.window?.dregg;
+    if (!provider || typeof provider.getActiveIdentity !== "function") {
+      throw new Error("active Dregg expedition officer is unavailable");
+    }
+    return provider.getActiveIdentity();
+  },
   onAdmissionChange = () => {},
 } = {}) {
   if (!root || typeof root.replaceChildren !== "function") throw new TypeError("panel root is required");
@@ -359,6 +503,7 @@ export function mountDreggAdmissionPanel(root, {
   if (typeof setTimeoutImpl !== "function" || typeof clearTimeoutImpl !== "function") {
     throw new TypeError("credential expiry timers are required");
   }
+  if (typeof getDreggIdentity !== "function") throw new TypeError("Dregg identity reader is required");
   const trustedOrigin = new URL(requiredText("origin", origin)).origin;
   const urls = Object.freeze({
     challenge: resolveSameOriginAdmissionEndpoint(endpoints.challenge, trustedOrigin),
@@ -379,16 +524,16 @@ export function mountDreggAdmissionPanel(root, {
   headingCopy.append(eyebrow, title);
   heading.append(headingCopy, el(documentRef, "span", "dregg-admission__grade", "RPC-ATTESTED"));
   const intro = el(documentRef, "p", "dregg-admission__intro",
-    "Sign the node's short-lived challenge. The node checks the exact Token-2022 mint at a finalized slot and returns only a beta game receipt.");
+    "Bind one Solana wallet to the active Dregg expedition officer, then sign the node's short-lived challenge. The node checks the exact Token-2022 mint at a finalized slot.");
   const boundary = el(documentRef, "div", "dregg-admission__boundary");
   boundary.setAttribute("role", "note");
   boundary.append(
     el(documentRef, "b", undefined, "GAME ADMISSION, NOT GOVERNANCE"),
     el(documentRef, "p", undefined,
-      "This panel never displays or asserts a token balance and cannot create voting weight. Governance requires a Dregg-accepted anchored accounts proof."),
+      "This panel never displays or asserts a token balance and cannot create voting weight. Its local-node receipt is bound to one Dregg officer but is not federation-verifiable eligibility; Galley holder sponsorship remains closed."),
   );
   const trustList = el(documentRef, "dl", "dregg-admission__trust");
-  for (const [term, detail] of [["Wallet", "Ed25519 signature"], ["Admission", "short-lived"], ["Trust", "node RPC attestation"]]) {
+  for (const [term, detail] of [["Officer", "active Dregg identity"], ["Wallet", "Solana Ed25519 signature"], ["Admission", "short-lived"], ["Trust", "node RPC attestation"]]) {
     const item = el(documentRef, "div");
     item.append(el(documentRef, "dt", undefined, term), el(documentRef, "dd", undefined, detail));
     trustList.append(item);
@@ -490,8 +635,9 @@ export function mountDreggAdmissionPanel(root, {
     walletRegion.hidden = true;
     sessionRegion.hidden = false;
     sessionWallet.textContent = `Wallet ${abbreviated(credential.walletAddress)}`;
+    sessionWallet.textContent += ` // officer ${credential.playerPublicKey.slice(0, 8)}…${credential.playerPublicKey.slice(-8)}`;
     sessionExpiry.textContent = `Short-lived access ends ${new Date(credential.expiresAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
-    setStatus("admitted", "RPC-attested beta game receipt active. No governance authority granted.");
+    setStatus("admitted", "Local RPC-attested holder receipt active. No Galley sponsorship or governance authority granted.");
     onAdmissionChange(credential);
     scheduleCredentialExpiry(credential);
     return true;
@@ -557,16 +703,18 @@ export function mountDreggAdmissionPanel(root, {
     if (state.destroyed || state.busy) return null;
     setBusy(true);
     retryReceiptButton.hidden = true;
-    setStatus("working", "Connecting wallet…");
+    setStatus("working", "Reading the active Dregg expedition officer…");
     try {
+      const player = normalizePlayerIdentity(await getDreggIdentity());
+      setStatus("working", `Connecting a Solana wallet to officer ${player.profileName}…`);
       const session = await connectDreggWallet(wallet, { cluster: "solana:mainnet" });
       setStatus("working", "Requesting a short-lived node challenge…");
       const challengePayload = await jsonRequest(fetchImpl, urls.challenge, {
-        method: "POST", body: Object.freeze({ wallet: session.address }),
+        method: "POST", body: Object.freeze({ wallet: session.address, player: player.base58 }),
       });
       const challenge = normalizeHoldingChallenge(
         challengePayload,
-        { walletAddress: session.address },
+        { walletAddress: session.address, playerPublicKey: player.publicKeyHex, origin: trustedOrigin },
         safeInteger("clock", now()),
       );
       setStatus("working", "Confirm the non-transaction message signature in your wallet…");
@@ -579,14 +727,26 @@ export function mountDreggAdmissionPanel(root, {
       });
       const credential = normalizeHoldingCapability(
         capabilityPayload,
-        { walletAddress: session.address },
+        {
+          walletAddress: session.address,
+          playerPublicKey: player.publicKeyHex,
+          playerCell: challenge.playerCell,
+        },
         safeInteger("clock", now()),
       );
       state.savedReceipt = Object.freeze({
         receiptId: credential.receiptId,
         walletAddress: credential.walletAddress,
+        playerPublicKey: credential.playerPublicKey,
+        playerBase58: credential.playerBase58,
+        playerCell: credential.playerCell,
       });
-      receiptStorage.set(encodeStoredReceipt(credential.receiptId, credential.walletAddress));
+      receiptStorage.set(encodeStoredReceipt(
+        credential.receiptId,
+        credential.walletAddress,
+        credential.playerBase58,
+        credential.playerCell,
+      ));
       if (!showCredential(credential)) return null;
       return credential;
     } catch (error) {

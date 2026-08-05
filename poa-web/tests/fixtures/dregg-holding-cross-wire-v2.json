@@ -1,0 +1,54 @@
+{
+  "format": "poa-dregg-holding-cross-wire-vector-v2",
+  "rust_sources": {
+    "gate": "poa-solana-gate/src/lib.rs",
+    "api": "node/src/poa_holding_api.rs",
+    "binding": "dregg-governance/src/holding_weight.rs"
+  },
+  "inputs": {
+    "federation_id_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "rpc_endpoint_id_hex": "0202020202020202020202020202020202020202020202020202020202020202",
+    "nonce_hex": "0303030303030303030303030303030303030303030303030303030303030303",
+    "wallet_seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+    "player_seed_hex": "5151515151515151515151515151515151515151515151515151515151515151",
+    "player_hex": "c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445a",
+    "player_cell_hex": "691187e757adb9f1ec99621242142711f373022e9485f87268cdb879f8e11933",
+    "token_account_hex": "0404040404040404040404040404040404040404040404040404040404040404"
+  },
+  "challenge": {
+    "format": "poa-dregg-holding-challenge-v2",
+    "challenge_id": "kqg2vvFH4pXqJ_2c7qzoXLynRFcDkyjSlq0fJZaS2_g",
+    "wallet": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+    "player": "DwiiKAQ7MXWDnCQiZcH81bF1pMyf6mYBLSKNKAxSEWzd",
+    "player_cell": "aRGH51etufHsmWISQhQnEfNzAi6UhfhyaM24efjhGTM",
+    "signing_message_base64": "AAAALnBhdGgtb2YtYW5nZWxzL2RyZWdnLWhvbGRpbmcvd2FsbGV0LWNvbnNlbnQvdjIAAAAgkqg2vvFH4pXqJ/2c7qzoXLynRFcDkyjSlq0fJZaS2/gAAAAgAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAhaHR0cHM6Ly9iZXRhLnBhdGhvZmFuZ2Vscy5uZXR3b3JrAAAAFHBhdGhvZmFuZ2Vscy5uZXR3b3JrAAAAE3NvbGFuYTptYWlubmV0LWJldGEAAAAgRSlpmKb44qeE212fleGPwj9wRBoQOURoAQiYebCMfvAAAAAgAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAAgB+DGVmP4omUc0knfSTQsjdX/nZRvGyEvPcSEmAr3mA8AAAAgBt324e51j94YQl285GzN2rYa/E2DuQ0n/r35KNihi/wAAAAg6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iwAAAAgwFDFY3pE+oYp//PMzOIwDLNipj2Z2V/FQUUmb0MyRFoAAAAgaRGH51etufHsmWISQhQnEfNzAi6UhfhyaM24efjhGTMAAAAgAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMAAAAIAAAAAAAAAAEAAAAIAAAAABkIsQAAAAAIAAAAAGpyB9AAAAAIAAAAAGpyCPwAAAAIAAAAAAAAAHg=",
+    "mint": "XkeTXo1125vz5H9svJpGiw4JvLbN8VmMu9cmMvspump",
+    "cluster": "solana:mainnet-beta",
+    "minimum_raw_balance": "1",
+    "min_context_slot": 420000000,
+    "issued_at": 1785858000,
+    "expires_at": 1785858300
+  },
+  "signature_base64": "rtFRHwD3TwfxCLDryIs5ylpP7MFNvWLBKQQGZlccUtZnMX60/kX4ORcsT3GmDta5UR8YgYEuf1v7bVqVJFpBDQ==",
+  "capability": {
+    "format": "poa-dregg-holding-capability-v2",
+    "receipt_id": "7yCzWYPXzsbb5Llaur2t57r3G3d2DnmoGm-1mZSiZis",
+    "trust": "beta-rpc-attested",
+    "wallet": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+    "player": "DwiiKAQ7MXWDnCQiZcH81bF1pMyf6mYBLSKNKAxSEWzd",
+    "player_cell": "aRGH51etufHsmWISQhQnEfNzAi6UhfhyaM24efjhGTM",
+    "mint": "XkeTXo1125vz5H9svJpGiw4JvLbN8VmMu9cmMvspump",
+    "snapshot_slot": 420000001,
+    "issued_at": 1785858010,
+    "expires_at": 1785858130,
+    "governance_weight_bearing": false
+  },
+  "status": {
+    "format": "poa-dregg-holding-status-v2",
+    "receipt_id": "7yCzWYPXzsbb5Llaur2t57r3G3d2DnmoGm-1mZSiZis",
+    "state": "active",
+    "trust": "beta-rpc-attested",
+    "expires_at": 1785858130,
+    "governance_weight_bearing": false
+  }
+}

@@ -19,13 +19,15 @@ import {
   DREGG_TOKEN_PROGRAM,
   base58ToBytes,
   base64ToBytes,
+  bytesToBase58,
   bytesToBase64,
 } from "../src/dregg-wallet.js";
 
-const VECTOR_SHA256 = "0cce843c20b8b12c13fc6095f7876bf89bd683b8bf6e9ece3d7fb44c3cd25993";
+const VECTOR_SHA256 = "4137e6f473017430a6e52be83587478535cea74c3624f2448e020eba48422b49";
 const MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
-const CHALLENGE_DOMAIN = "path-of-angels/dregg-holding/challenge/v1";
-const RECEIPT_DOMAIN = "path-of-angels/dregg-holding/receipt/v1";
+const CHALLENGE_DOMAIN = "path-of-angels/dregg-holding/challenge/v2";
+const WALLET_CONSENT_DOMAIN = "path-of-angels/dregg-holding/wallet-consent/v2";
+const RECEIPT_DOMAIN = "path-of-angels/dregg-holding/receipt/v2";
 
 function sha256(...parts) {
   return createHash("sha256").update(Buffer.concat(parts.map((part) => Buffer.from(part)))).digest();
@@ -47,8 +49,8 @@ function put(bytes) {
   return Buffer.concat([u32(bytes.length), Buffer.from(bytes)]);
 }
 
-test("byte-pinned vector reproduces Rust challenge, signing, receipt, and JSON shapes", async () => {
-  const raw = await readFile(new URL("./fixtures/dregg-holding-cross-wire-v1.json", import.meta.url));
+test("byte-pinned vector reproduces Rust V2 officer binding, challenge consent, receipt, and JSON shapes", async () => {
+  const raw = await readFile(new URL("./fixtures/dregg-holding-cross-wire-v2.json", import.meta.url));
   assert.equal(sha256(raw).toString("hex"), VECTOR_SHA256);
   const vector = JSON.parse(raw);
   const { challenge, capability, status, inputs } = vector;
@@ -62,6 +64,20 @@ test("byte-pinned vector reproduces Rust challenge, signing, receipt, and JSON s
   const wallet = createPublicKey(privateKey).export({ format: "der", type: "spki" }).subarray(-32);
   assert.deepEqual(wallet, Buffer.from(base58ToBytes(challenge.wallet)));
 
+  const playerPrivateKey = createPrivateKey({
+    key: Buffer.concat([
+      Buffer.from("302e020100300506032b657004220420", "hex"),
+      Buffer.from(inputs.player_seed_hex, "hex"),
+    ]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const player = createPublicKey(playerPrivateKey).export({ format: "der", type: "spki" }).subarray(-32);
+  const playerCell = Buffer.from(inputs.player_cell_hex, "hex");
+  assert.equal(player.toString("hex"), inputs.player_hex);
+  assert.equal(bytesToBase58(player), challenge.player);
+  assert.equal(playerCell.toString("base64url"), challenge.player_cell);
+
   const issuedAt = challenge.issued_at;
   const transcript = Buffer.concat([
     Buffer.from(CHALLENGE_DOMAIN),
@@ -74,6 +90,8 @@ test("byte-pinned vector reproduces Rust challenge, signing, receipt, and JSON s
     Buffer.from(base58ToBytes(DREGG_MINT)),
     Buffer.from(base58ToBytes(DREGG_TOKEN_PROGRAM)),
     wallet,
+    player,
+    playerCell,
     Buffer.from(inputs.nonce_hex, "hex"),
     u64(1),
     u64(challenge.min_context_slot),
@@ -82,12 +100,30 @@ test("byte-pinned vector reproduces Rust challenge, signing, receipt, and JSON s
     u64(issuedAt),
     u64(challenge.expires_at),
   ].map(put));
-  const voter = sha256(transcript);
-  assert.equal(voter.toString("hex"), inputs.voter_hex);
   const challengeId = sha256(Buffer.from(CHALLENGE_DOMAIN), transcript);
   assert.equal(challengeId.toString("base64url"), challenge.challenge_id);
 
-  const signingMessage = Buffer.concat([Buffer.from(DREGG_OWNER_BIND_DOMAIN), wallet, voter]);
+  const signingMessage = Buffer.concat([
+    Buffer.from(WALLET_CONSENT_DOMAIN),
+    challengeId,
+    Buffer.from(inputs.federation_id_hex, "hex"),
+    Buffer.from("https://beta.pathofangels.network"),
+    Buffer.from("pathofangels.network"),
+    Buffer.from("solana:mainnet-beta"),
+    Buffer.from(base58ToBytes(MAINNET_GENESIS)),
+    Buffer.from(inputs.rpc_endpoint_id_hex, "hex"),
+    Buffer.from(base58ToBytes(DREGG_MINT)),
+    Buffer.from(base58ToBytes(DREGG_TOKEN_PROGRAM)),
+    wallet,
+    player,
+    playerCell,
+    Buffer.from(inputs.nonce_hex, "hex"),
+    u64(1),
+    u64(challenge.min_context_slot),
+    u64(challenge.issued_at),
+    u64(challenge.expires_at),
+    u64(120),
+  ].map(put));
   assert.equal(signingMessage.toString("base64"), challenge.signing_message_base64);
   assert.equal(bytesToBase64(base64ToBytes(vector.signature_base64)), vector.signature_base64);
   assert.equal(verify(null, signingMessage, createPublicKey(privateKey), Buffer.from(vector.signature_base64, "base64")), true);
@@ -97,6 +133,8 @@ test("byte-pinned vector reproduces Rust challenge, signing, receipt, and JSON s
     challengeId,
     Buffer.from(inputs.rpc_endpoint_id_hex, "hex"),
     wallet,
+    player,
+    playerCell,
     Buffer.from(base58ToBytes(DREGG_MINT)),
     u64(1),
     u64(capability.snapshot_slot),
@@ -108,17 +146,27 @@ test("byte-pinned vector reproduces Rust challenge, signing, receipt, and JSON s
 
   const parsedChallenge = normalizeHoldingChallenge(
     challenge,
-    { walletAddress: challenge.wallet },
+    { walletAddress: challenge.wallet, playerPublicKey: inputs.player_hex },
     issuedAt * 1000,
   );
   const parsedCapability = normalizeHoldingCapability(
     capability,
-    { walletAddress: challenge.wallet },
+    {
+      walletAddress: challenge.wallet,
+      playerPublicKey: inputs.player_hex,
+      playerCell: challenge.player_cell,
+    },
     capability.issued_at * 1000,
   );
   const parsedStatus = normalizeHoldingStatus(
     status,
-    { receiptId: capability.receipt_id, walletAddress: challenge.wallet },
+    {
+      receiptId: capability.receipt_id,
+      walletAddress: challenge.wallet,
+      playerPublicKey: inputs.player_hex,
+      playerBase58: challenge.player,
+      playerCell: challenge.player_cell,
+    },
     capability.issued_at * 1000,
   );
   assert.deepEqual(Buffer.from(parsedChallenge.signingMessage), signingMessage);
@@ -134,14 +182,17 @@ test("checked Rust sources retain the constants and response formats pinned by t
     readFile(new URL("../../node/src/poa_holding_api.rs", import.meta.url), "utf8"),
     readFile(new URL("../../dregg-governance/src/holding_weight.rs", import.meta.url), "utf8"),
   ]);
-  assert.match(gate, /CHALLENGE_DOMAIN:\s*&\[u8\]\s*=\s*b"path-of-angels\/dregg-holding\/challenge\/v1"/u);
-  assert.match(gate, /RECEIPT_DOMAIN:\s*&\[u8\]\s*=\s*b"path-of-angels\/dregg-holding\/receipt\/v1"/u);
+  assert.match(gate, /CHALLENGE_DOMAIN:\s*&\[u8\]\s*=\s*b"path-of-angels\/dregg-holding\/challenge\/v2"/u);
+  assert.match(gate, /WALLET_CONSENT_DOMAIN:\s*&\[u8\]\s*=\s*b"path-of-angels\/dregg-holding\/wallet-consent\/v2"/u);
+  assert.match(gate, /RECEIPT_DOMAIN:\s*&\[u8\]\s*=\s*b"path-of-angels\/dregg-holding\/receipt\/v2"/u);
+  assert.match(gate, /canonical_player_cell\(&presented\.player\)/u);
   assert.match(gate, /challenge_ttl_secs:\s*300/u);
   assert.match(gate, /capability_ttl_secs:\s*120/u);
   assert.match(binding, /BIND_DOMAIN:\s*&\[u8\]\s*=\s*b"dregg-holding-weight-bind-v1"/u);
   for (const format of [
-    "poa-dregg-holding-challenge-v1",
-    "poa-dregg-holding-capability-v1",
-    "poa-dregg-holding-status-v1",
+    "poa-dregg-holding-challenge-v2",
+    "poa-dregg-holding-capability-v2",
+    "poa-dregg-holding-status-v2",
   ]) assert.match(api, new RegExp(format, "u"));
+  assert.match(api, /struct ChallengeRequest\s*\{\s*wallet:\s*String,\s*player:\s*String,/su);
 });

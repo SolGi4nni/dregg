@@ -1,0 +1,582 @@
+/**
+ * Canonical Path of Angels Galley V1 browser transport.
+ *
+ * The node owns projection, actions, unsigned turn bytes, events, and receipts.
+ * The browser validates and renders that authority; it does not carry a Galley
+ * reducer or accept caller-authored player identity.
+ */
+
+export const POA_GALLEY_SESSION_FORMAT = "POA-GALLEY-SESSION-V1";
+export const POA_GALLEY_STATUS_FORMAT = "POA-GALLEY-STATUS-V1";
+export const POA_GALLEY_COMMAND_PREPARE_FORMAT = "POA-GALLEY-COMMAND-PREPARE-V1";
+export const POA_GALLEY_UNSIGNED_TURN_FORMAT = "POA-GALLEY-UNSIGNED-TURN-V1";
+export const POA_GALLEY_PENDING_JOURNAL_FORMAT = "POA-GALLEY-PENDING-INTENT-JOURNAL-V1";
+export const POA_GALLEY_PENDING_STORAGE_KEY = "poa.galley.pending-intents.v1";
+export const POA_GALLEY_ACTOR_HEADER = "X-Dregg-Actor";
+
+/** Caddy adds `/node`; the authority itself serves `/api/poa/galley/v1`. */
+export const DEFAULT_GALLEY_ENDPOINTS = Object.freeze({
+  session: "/node/api/poa/galley/v1/session",
+  command: "/node/api/poa/galley/v1/command",
+  status: "/node/api/poa/galley/v1/status",
+});
+
+const HEX32 = /^[0-9a-f]{64}$/u;
+const PROFILE_NAME = /^[a-z0-9_-]{1,64}$/u;
+const OPAQUE_ID = /^[\x21-\x7e]{1,256}$/u;
+const ACTION_TOKEN = /^[\x21-\x7e]{1,4096}$/u;
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const CURRENT_KEYS = Object.freeze([
+  "actions", "aggregate_id", "daily_id", "federation_id", "projection",
+  "projection_digest", "replay", "schema_version", "semantic_head", "sequence",
+]);
+const SESSION_KEYS = Object.freeze([...CURRENT_KEYS, "format"]);
+const STATUS_KEYS = Object.freeze([...CURRENT_KEYS, "events", "format"]);
+const MAX_OPAQUE_JSON_BYTES = 128 * 1024;
+const MAX_OPAQUE_JSON_DEPTH = 16;
+const MAX_EVENTS = 4096;
+const MAX_POSTCARD_BYTES = 1024 * 1024;
+
+export class GalleyApiRefusal extends Error {
+  constructor(code, message, status = null) {
+    super(message);
+    this.name = "GalleyApiRefusal";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+function refuse(condition, code, message, status = null) {
+  if (!condition) throw new GalleyApiRefusal(code, message, status);
+}
+
+function freeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    if (ArrayBuffer.isView(value)) return value;
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function object(name, value) {
+  refuse(value && typeof value === "object" && !Array.isArray(value) &&
+    [Object.prototype, null].includes(Object.getPrototypeOf(value)), "galley-shape", `${name} must be a plain object`);
+  return value;
+}
+
+function exact(name, value, keys) {
+  const row = object(name, value);
+  const actual = Object.keys(row).sort();
+  const expected = [...keys].sort();
+  refuse(actual.length === expected.length && actual.every((key, index) => key === expected[index]),
+    "galley-shape", `${name} has unexpected or missing fields`);
+  return row;
+}
+
+function natural(name, value) {
+  refuse(Number.isSafeInteger(value) && value >= 0, "galley-integer", `${name} must be a non-negative safe integer`);
+  return value;
+}
+
+function opaque(name, value) {
+  refuse(typeof value === "string" && OPAQUE_ID.test(value), "galley-text", `${name} must be bounded opaque text`);
+  return value;
+}
+
+function digest(name, value) {
+  refuse(typeof value === "string" && HEX32.test(value), "galley-digest", `${name} must be a lowercase 32-byte digest`);
+  return value;
+}
+
+/** Parse the permissioned page-provider result without granting it authority.
+ * The public key is only a personalization claim for node preparation. */
+export function normalizeGalleyActorIdentity(value) {
+  const row = object("active Dregg identity", value);
+  const keys = Object.keys(row).sort();
+  refuse(keys.join(",") === "publicKeyHex" || keys.join(",") === "profileName,publicKeyHex",
+    "galley-actor", "active Dregg identity has unexpected or missing fields");
+  refuse(typeof row.publicKeyHex === "string" && HEX32.test(row.publicKeyHex),
+    "galley-actor", "active Dregg public key must be 64 lowercase hexadecimal characters");
+  refuse(row.profileName === undefined || (typeof row.profileName === "string" && PROFILE_NAME.test(row.profileName)),
+    "galley-actor", "active Dregg profile name is not canonical");
+  return freeze({
+    publicKeyHex: row.publicKeyHex,
+    ...(row.profileName === undefined ? {} : { profileName: row.profileName }),
+  });
+}
+
+export function galleyActorHeaders(publicKeyHex) {
+  refuse(typeof publicKeyHex === "string" && HEX32.test(publicKeyHex),
+    "galley-actor", "Galley actor header must be a 64-character lowercase public key");
+  return freeze({ [POA_GALLEY_ACTOR_HEADER]: publicKeyHex });
+}
+
+function hexBytes(value) {
+  return Uint8Array.from(value.match(/.{2}/gu), (pair) => Number.parseInt(pair, 16));
+}
+
+function canonicalBase64(name, value, maxBytes) {
+  refuse(typeof value === "string" && value.length > 0 && value.length <= Math.ceil(maxBytes / 3) * 4 && BASE64.test(value),
+    "galley-base64", `${name} must be canonical bounded base64`);
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  refuse((value.length / 4) * 3 - padding <= maxBytes, "galley-base64", `${name} exceeds its byte bound`);
+  return value;
+}
+
+function jsonValue(value, depth = 0) {
+  if (depth > MAX_OPAQUE_JSON_DEPTH) return false;
+  if (value === null || typeof value === "boolean" || typeof value === "string") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length <= 4096 && value.every((item) => jsonValue(item, depth + 1));
+  if (!value || typeof value !== "object" || ![Object.prototype, null].includes(Object.getPrototypeOf(value)) ||
+      Object.keys(value).length > 4096) return false;
+  return Object.values(value).every((item) => jsonValue(item, depth + 1));
+}
+
+function boundedJson(name, value) {
+  refuse(jsonValue(value), "galley-json", `${name} is not bounded JSON`);
+  let bytes;
+  try { bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength; }
+  catch { throw new GalleyApiRefusal("galley-json", `${name} cannot be serialized`); }
+  refuse(bytes <= MAX_OPAQUE_JSON_BYTES, "galley-json", `${name} exceeds its byte bound`);
+  return value;
+}
+
+function providerText(name, value, { optional = false } = {}) {
+  if (optional && value === undefined) return null;
+  refuse(typeof value === "string" && value.length > 0 && value.length <= 320 && !/[\u0000-\u001f\u007f]/u.test(value),
+    "galley-sign-result", `${name} must be bounded printable text`);
+  return value;
+}
+
+function providerTurnHash(name, value, expectedTurnHash, { optional = false } = {}) {
+  if (optional && value === undefined) return null;
+  refuse(typeof value === "string" && HEX32.test(value),
+    "galley-sign-result", `${name} must be a canonical lowercase turn hash`);
+  refuse(value === expectedTurnHash, "galley-sign-mismatch",
+    `${name} does not match the prepared turn carrier`);
+  return value;
+}
+
+/** Bind the page provider's signing/submission report back to the exact
+ * server-prepared carrier. This report is admission state, never finality. */
+export function normalizeGalleySigningResult(value, expectedTurnHash) {
+  const expected = digest("expected turn hash", expectedTurnHash);
+  const row = object("Dregg signing result", value);
+  const allowed = new Set(["error", "nodeResult", "outboxId", "queued", "receipt", "submitted", "turnId"]);
+  refuse(Object.keys(row).every((key) => allowed.has(key)), "galley-sign-result",
+    "Dregg signing result has an unexpected field");
+  refuse(typeof row.submitted === "boolean", "galley-sign-result", "Dregg signing result must state whether it was submitted");
+  refuse(row.queued === undefined || typeof row.queued === "boolean", "galley-sign-result", "queued must be boolean when present");
+  const queued = row.queued === true;
+  refuse(!(row.submitted && queued), "galley-sign-result", "a turn cannot be both submitted and queued");
+
+  const turnHash = providerTurnHash("turnId", row.turnId, expected, { optional: true });
+  const error = providerText("signing error", row.error, { optional: true });
+  const outboxId = providerText("outboxId", row.outboxId, { optional: true });
+  refuse(!outboxId || queued, "galley-sign-result", "outboxId is only valid for a queued turn");
+
+  if (row.receipt !== undefined) {
+    refuse(row.submitted, "galley-sign-result", "receipt metadata is only valid after submission");
+    const receipt = object("signing receipt", row.receipt);
+    providerTurnHash("receipt.turnHash", receipt.turnHash, expected, { optional: true });
+  }
+  if (row.nodeResult !== undefined) {
+    refuse(row.submitted && boundedJson("nodeResult", row.nodeResult), "galley-sign-result",
+      "nodeResult is only valid after submission");
+    const nodeResult = object("nodeResult", row.nodeResult);
+    providerTurnHash("nodeResult.turn_hash", nodeResult.turn_hash, expected, { optional: true });
+  }
+
+  if (row.submitted) {
+    refuse(turnHash !== null && error === null, "galley-sign-result",
+      "submitted turn must return its exact turnId without an error");
+    return freeze({ state: "submitted", turnHash, outboxId: null, error: null });
+  }
+  if (queued) {
+    refuse(turnHash !== null, "galley-sign-result", "queued signed turn must return its exact turnId");
+    return freeze({ state: "queued", turnHash, outboxId, error });
+  }
+  const declined = typeof error === "string" && /\b(?:user\s+)?declin(?:e|ed)\b/iu.test(error);
+  return freeze({ state: declined ? "declined" : "refused", turnHash, outboxId: null, error });
+}
+
+function galleySigningException(error) {
+  const declined = error?.name === "DreggUserDeclined" || error?.code === "user-declined" ||
+    /\b(?:user\s+)?declin(?:e|ed)\b/iu.test(error instanceof Error ? error.message : "");
+  const message = error instanceof GalleyApiRefusal
+    ? `${error.code}: ${error.message}`
+    : error instanceof Error ? error.message : "Dregg signer returned an unknown error";
+  return freeze({ state: declined ? "declined" : "error", turnHash: null, outboxId: null, error: message.slice(0, 320) });
+}
+
+function normalizeAction(value, at) {
+  const row = exact(at, value, ["action_token", "expires_after_sequence", "kind"]);
+  refuse(["public_vote", "perform", "visit_commons", "holder_sponsorship"].includes(row.kind),
+    "galley-action", `${at}.kind is unsupported`);
+  refuse(typeof row.action_token === "string" && ACTION_TOKEN.test(row.action_token),
+    "galley-action", `${at}.action_token is not canonical`);
+  return freeze({
+    kind: row.kind,
+    actionToken: row.action_token,
+    expiresAfterSequence: natural(`${at}.expires_after_sequence`, row.expires_after_sequence),
+  });
+}
+
+function normalizeReplay(value, sequence, semanticHead) {
+  const row = exact("replay", value,
+    ["audited", "event_count", "total_event_count", "from_sequence", "head_digest", "through_sequence"]);
+  refuse(typeof row.audited === "boolean", "galley-replay", "replay.audited must be boolean");
+  const replay = {
+    audited: row.audited,
+    eventCount: natural("replay.event_count", row.event_count),
+    totalEventCount: natural("replay.total_event_count", row.total_event_count),
+    fromSequence: natural("replay.from_sequence", row.from_sequence),
+    throughSequence: natural("replay.through_sequence", row.through_sequence),
+    headDigest: digest("replay.head_digest", row.head_digest),
+  };
+  refuse(replay.totalEventCount === sequence && replay.headDigest === semanticHead,
+    "galley-replay", "replay total or head does not bind the current projection");
+  if (replay.totalEventCount === 0) {
+    refuse(replay.eventCount === 0 && replay.fromSequence === 0 && replay.throughSequence === 0,
+      "galley-replay", "empty replay coordinates are incoherent");
+  } else {
+    refuse(replay.eventCount > 0 && replay.throughSequence === sequence && replay.fromSequence >= 1 &&
+      replay.fromSequence + replay.eventCount - 1 === replay.throughSequence,
+    "galley-replay", "replay window does not form the current journal suffix");
+  }
+  return freeze(replay);
+}
+
+function normalizeCurrent(row) {
+  const actions = Array.isArray(row.actions) ? row.actions.map(normalizeAction) : null;
+  refuse(actions && actions.length <= 128, "galley-actions", "actions must be a bounded array");
+  refuse(new Set(actions.map(({ actionToken }) => actionToken)).size === actions.length,
+    "galley-actions", "action tokens must be unique");
+  return freeze({
+    federationId: digest("federation_id", row.federation_id),
+    dailyId: opaque("daily_id", row.daily_id),
+    aggregateId: opaque("aggregate_id", row.aggregate_id),
+    schemaVersion: natural("schema_version", row.schema_version),
+    sequence: natural("sequence", row.sequence),
+    semanticHead: digest("semantic_head", row.semantic_head),
+    projectionDigest: digest("projection_digest", row.projection_digest),
+    projection: boundedJson("projection", row.projection),
+    actions: Object.freeze(actions),
+    replay: normalizeReplay(row.replay, row.sequence, row.semantic_head),
+  });
+}
+
+export function normalizeGalleySession(value) {
+  const row = exact("Galley session", value, SESSION_KEYS);
+  refuse(row.format === POA_GALLEY_SESSION_FORMAT, "galley-format", "Galley session format is unsupported");
+  return freeze({ format: POA_GALLEY_SESSION_FORMAT, ...normalizeCurrent(row), events: Object.freeze([]) });
+}
+
+function normalizeReceipt(value, at) {
+  const row = exact(at, value, ["index", "postcard_base64", "sha256"]);
+  return freeze({
+    index: natural(`${at}.index`, row.index),
+    postcardBase64: canonicalBase64(`${at}.postcard_base64`, row.postcard_base64, MAX_POSTCARD_BYTES),
+    sha256: digest(`${at}.sha256`, row.sha256),
+  });
+}
+
+function normalizeEvent(value, at) {
+  const row = exact(at, value, ["event_digest", "payload", "payload_digest", "receipt", "receipt_hash", "sequence", "turn_hash"]);
+  return freeze({
+    sequence: natural(`${at}.sequence`, row.sequence),
+    turnHash: digest(`${at}.turn_hash`, row.turn_hash),
+    receiptHash: digest(`${at}.receipt_hash`, row.receipt_hash),
+    eventDigest: digest(`${at}.event_digest`, row.event_digest),
+    payloadDigest: digest(`${at}.payload_digest`, row.payload_digest),
+    payload: boundedJson(`${at}.payload`, row.payload),
+    receipt: normalizeReceipt(row.receipt, `${at}.receipt`),
+  });
+}
+
+export function normalizeGalleyStatus(value) {
+  const row = exact("Galley status", value, STATUS_KEYS);
+  refuse(row.format === POA_GALLEY_STATUS_FORMAT, "galley-format", "Galley status format is unsupported");
+  refuse(Array.isArray(row.events) && row.events.length <= MAX_EVENTS, "galley-events", "events must be a bounded array");
+  const current = normalizeCurrent(row);
+  const events = Object.freeze(row.events.map((event, index) => normalizeEvent(event, `events[${index}]`)));
+  for (let index = 0; index < events.length; index += 1) {
+    refuse(events[index].sequence <= current.sequence && (index === 0 || events[index - 1].sequence < events[index].sequence),
+      "galley-events", "event sequences must be strictly increasing and within the current projection");
+  }
+  refuse(current.replay.eventCount === events.length, "galley-replay", "replay count does not match returned events");
+  if (events.length > 0) {
+    const first = events[0];
+    const last = events.at(-1);
+    refuse(first.sequence === current.replay.fromSequence && last.sequence === current.replay.throughSequence &&
+      last.eventDigest === current.replay.headDigest && last.eventDigest === current.semanticHead,
+    "galley-replay", "replay range or head does not bind the returned journal suffix");
+  }
+  return freeze({ format: POA_GALLEY_STATUS_FORMAT, ...current, events });
+}
+
+export function normalizeGalleyUnsignedTurn(value) {
+  const row = exact("Galley unsigned turn", value,
+    ["expires_after_sequence", "federation_id", "format", "intent_id", "turn_hash", "turn_postcard_base64"]);
+  refuse(row.format === POA_GALLEY_UNSIGNED_TURN_FORMAT, "galley-format", "Galley unsigned turn format is unsupported");
+  return freeze({
+    format: POA_GALLEY_UNSIGNED_TURN_FORMAT,
+    intentId: opaque("intent_id", row.intent_id),
+    federationId: digest("federation_id", row.federation_id),
+    turnHash: digest("turn_hash", row.turn_hash),
+    turnPostcardBase64: canonicalBase64("turn_postcard_base64", row.turn_postcard_base64, MAX_POSTCARD_BYTES),
+    expiresAfterSequence: natural("expires_after_sequence", row.expires_after_sequence),
+  });
+}
+
+export function galleyActionLabel(kind) {
+  return Object.freeze({
+    public_vote: "Answer the shift call",
+    perform: "Take the maintenance station",
+    visit_commons: "Visit the Commons",
+    holder_sponsorship: "Holder sponsorship unavailable",
+  })[kind] ?? "Unknown action";
+}
+
+export function galleyAvailableAtSequence(expiresAfterSequence, currentSequence) {
+  return Number.isSafeInteger(expiresAfterSequence) && Number.isSafeInteger(currentSequence) &&
+    expiresAfterSequence >= 0 && currentSequence >= 0 && currentSequence <= expiresAfterSequence;
+}
+
+export function decodeGalleyPostcard(base64) {
+  canonicalBase64("postcard", base64, MAX_POSTCARD_BYTES);
+  try {
+    const binary = globalThis.atob
+      ? globalThis.atob(base64)
+      : Buffer.from(base64, "base64").toString("binary");
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    throw new GalleyApiRefusal("galley-base64", "postcard could not be decoded");
+  }
+}
+
+/** Adjacent transport checksum only; this is not canonical Dregg receipt verification. */
+export async function checkGalleyReceiptPostcardSha256(event, cryptoImpl = globalThis.crypto) {
+  const postcard = decodeGalleyPostcard(event.receipt.postcardBase64);
+  refuse(cryptoImpl?.subtle?.digest, "galley-crypto", "SHA-256 is unavailable");
+  const hash = new Uint8Array(await cryptoImpl.subtle.digest("SHA-256", postcard));
+  const hex = [...hash].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return hex === event.receipt.sha256;
+}
+
+function pendingKey(intent) {
+  return JSON.stringify([
+    intent.federationId, intent.dailyId, intent.aggregateId, intent.intentId, intent.turnHash,
+  ]);
+}
+
+function normalizePendingIntent(value, at = "pending intent") {
+  const row = exact(at, value, [
+    "aggregate_id", "daily_id", "expires_after_sequence", "federation_id", "intent_id",
+    "prepared_at_sequence", "turn_hash",
+  ]);
+  const intent = freeze({
+    federationId: digest(`${at}.federation_id`, row.federation_id),
+    dailyId: opaque(`${at}.daily_id`, row.daily_id),
+    aggregateId: opaque(`${at}.aggregate_id`, row.aggregate_id),
+    intentId: opaque(`${at}.intent_id`, row.intent_id),
+    turnHash: digest(`${at}.turn_hash`, row.turn_hash),
+    preparedAtSequence: natural(`${at}.prepared_at_sequence`, row.prepared_at_sequence),
+    expiresAfterSequence: natural(`${at}.expires_after_sequence`, row.expires_after_sequence),
+  });
+  refuse(galleyAvailableAtSequence(intent.expiresAfterSequence, intent.preparedAtSequence),
+    "galley-pending", `${at} expires before it was prepared`);
+  return intent;
+}
+
+function pendingWire(intent) {
+  return {
+    federation_id: intent.federationId,
+    daily_id: intent.dailyId,
+    aggregate_id: intent.aggregateId,
+    intent_id: intent.intentId,
+    turn_hash: intent.turnHash,
+    prepared_at_sequence: intent.preparedAtSequence,
+    expires_after_sequence: intent.expiresAfterSequence,
+  };
+}
+
+export function normalizeGalleyPendingJournal(value) {
+  const row = exact("pending journal", value, ["entries", "format"]);
+  refuse(row.format === POA_GALLEY_PENDING_JOURNAL_FORMAT && Array.isArray(row.entries) && row.entries.length <= 64,
+    "galley-pending", "pending journal format or bound is invalid");
+  const entries = Object.freeze(row.entries.map((entry, index) => normalizePendingIntent(entry, `entries[${index}]`)));
+  refuse(new Set(entries.map(pendingKey)).size === entries.length, "galley-pending", "pending intent keys must be unique");
+  return freeze({ format: POA_GALLEY_PENDING_JOURNAL_FORMAT, entries });
+}
+
+/** Durable local journal of intent coordinates only; never a Galley state twin. */
+export function createGalleyPendingIntentJournal({
+  storage,
+  storageKey = POA_GALLEY_PENDING_STORAGE_KEY,
+} = {}) {
+  if (storage === undefined) {
+    try { storage = globalThis.window?.localStorage ?? null; }
+    catch { storage = null; }
+  }
+  const available = storage && typeof storage.getItem === "function" && typeof storage.setItem === "function";
+
+  function read() {
+    if (!available) return [];
+    let serialized;
+    try { serialized = storage.getItem(storageKey); }
+    catch { return []; }
+    if (serialized === null) return [];
+    try { return [...normalizeGalleyPendingJournal(JSON.parse(serialized)).entries]; }
+    catch {
+      try { storage.removeItem?.(storageKey); } catch { /* corrupt journal stays unusable */ }
+      return [];
+    }
+  }
+
+  function write(entries) {
+    refuse(available, "galley-pending-storage", "durable pending-intent storage is unavailable");
+    const bounded = entries.slice(-64);
+    const payload = { format: POA_GALLEY_PENDING_JOURNAL_FORMAT, entries: bounded.map(pendingWire) };
+    normalizeGalleyPendingJournal(payload);
+    try { storage.setItem(storageKey, JSON.stringify(payload)); }
+    catch { throw new GalleyApiRefusal("galley-pending-storage", "durable pending-intent write failed"); }
+  }
+
+  function record(view, prepared) {
+    refuse(prepared.federationId === view.federationId &&
+      galleyAvailableAtSequence(prepared.expiresAfterSequence, view.sequence),
+    "galley-pending", "prepared intent does not bind this world or sequence");
+    const intent = normalizePendingIntent({
+      federation_id: view.federationId,
+      daily_id: view.dailyId,
+      aggregate_id: view.aggregateId,
+      intent_id: prepared.intentId,
+      turn_hash: prepared.turnHash,
+      prepared_at_sequence: view.sequence,
+      expires_after_sequence: prepared.expiresAfterSequence,
+    });
+    const entries = read().filter((candidate) => pendingKey(candidate) !== pendingKey(intent));
+    entries.push(intent);
+    write(entries);
+    return intent;
+  }
+
+  function reconcile(status) {
+    const pending = [];
+    const settled = [];
+    const expired = [];
+    for (const intent of read()) {
+      const sameWorld = intent.federationId === status.federationId && intent.dailyId === status.dailyId &&
+        intent.aggregateId === status.aggregateId;
+      if (!sameWorld) pending.push(intent);
+      else if (status.events.some((event) => event.turnHash === intent.turnHash)) settled.push(intent);
+      else if (!galleyAvailableAtSequence(intent.expiresAfterSequence, status.sequence)) expired.push(intent);
+      else pending.push(intent);
+    }
+    write(pending);
+    return freeze({ pending: Object.freeze(pending), settled: Object.freeze(settled), expired: Object.freeze(expired) });
+  }
+
+  function forView(view) {
+    return Object.freeze(read().filter((intent) => intent.federationId === view.federationId &&
+      intent.dailyId === view.dailyId && intent.aggregateId === view.aggregateId));
+  }
+
+  return freeze({ list: () => Object.freeze(read()), forView, record, reconcile });
+}
+
+export function resolveSameOriginGalleyEndpoint(endpoint, origin) {
+  const trustedOrigin = new URL(opaque("origin", origin)).origin;
+  const resolved = new URL(opaque("endpoint", endpoint), `${trustedOrigin}/`);
+  refuse(resolved.origin === trustedOrigin && !resolved.username && !resolved.password,
+    "galley-origin", "Galley endpoints must be same-origin");
+  return resolved.href;
+}
+
+async function jsonRequest(fetchImpl, url, actorPublicKeyHex, { method = "GET", body } = {}) {
+  const actorHeaders = galleyActorHeaders(actorPublicKeyHex);
+  const response = await fetchImpl(url, {
+    method,
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error",
+    headers: Object.freeze({ Accept: "application/json", "Content-Type": "application/json", ...actorHeaders }),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const contentType = response.headers?.get?.("content-type") ?? "";
+  if (!response.ok) throw new GalleyApiRefusal("galley-http", `Galley node refused request (${response.status})`, response.status);
+  refuse(contentType.toLowerCase().includes("application/json"), "galley-content-type", "Galley node did not return JSON");
+  return response.json();
+}
+
+/** Exact GET/prepare/sign/status transport shared conceptually with the extension. */
+export function createGalleyTransport({
+  origin = globalThis.location?.origin,
+  endpoints = DEFAULT_GALLEY_ENDPOINTS,
+  fetchImpl = globalThis.fetch,
+  cryptoImpl = globalThis.crypto,
+} = {}) {
+  refuse(typeof fetchImpl === "function", "galley-fetch", "fetch implementation is required");
+  const urls = freeze({
+    session: resolveSameOriginGalleyEndpoint(endpoints.session, origin),
+    command: resolveSameOriginGalleyEndpoint(endpoints.command, origin),
+    status: resolveSameOriginGalleyEndpoint(endpoints.status, origin),
+  });
+
+  async function openSession(actorPublicKeyHex) {
+    return normalizeGalleySession(await jsonRequest(fetchImpl, urls.session, actorPublicKeyHex));
+  }
+
+  async function requestCommand(view, actionToken, actorPublicKeyHex) {
+    const action = view?.actions?.find((candidate) => candidate.actionToken === actionToken);
+    refuse(action, "galley-action", "action token is absent from the current node session");
+    refuse(action.kind !== "holder_sponsorship", "galley-holder-cert",
+      "holder sponsorship is disabled until eligibility is federation-verifiable");
+    refuse(view.replay.audited, "galley-replay", "node has not audited this Galley journal");
+    refuse(galleyAvailableAtSequence(action.expiresAfterSequence, view.sequence),
+      "galley-action-expired", "server-issued action token expired at this journal sequence");
+    const prepared = normalizeGalleyUnsignedTurn(await jsonRequest(fetchImpl, urls.command, actorPublicKeyHex, {
+      method: "POST",
+      body: Object.freeze({ format: POA_GALLEY_COMMAND_PREPARE_FORMAT, action_token: action.actionToken }),
+    }));
+    refuse(prepared.federationId === view.federationId, "galley-federation", "prepared turn belongs to another federation");
+    refuse(galleyAvailableAtSequence(prepared.expiresAfterSequence, view.sequence),
+      "galley-turn-expired", "prepared turn expired at this journal sequence");
+    return freeze({ kind: "signing", signingRequest: prepared, view });
+  }
+
+  async function sign(signingRequest, provider, currentSequence) {
+    refuse(provider && typeof provider.signTurnV3 === "function", "galley-provider", "Dregg turn signer is unavailable");
+    refuse(galleyAvailableAtSequence(signingRequest.expiresAfterSequence, currentSequence),
+      "galley-turn-expired", "prepared turn expired before signing at this journal sequence");
+    try {
+      return normalizeGalleySigningResult(await provider.signTurnV3(
+        decodeGalleyPostcard(signingRequest.turnPostcardBase64),
+        hexBytes(signingRequest.federationId),
+      ), signingRequest.turnHash);
+    } catch (error) {
+      return galleySigningException(error);
+    }
+  }
+
+  async function status(signingRequest, actorPublicKeyHex) {
+    const view = normalizeGalleyStatus(await jsonRequest(fetchImpl, urls.status, actorPublicKeyHex));
+    refuse(view.federationId === signingRequest.federationId &&
+      (!signingRequest.dailyId || view.dailyId === signingRequest.dailyId) &&
+      (!signingRequest.aggregateId || view.aggregateId === signingRequest.aggregateId),
+    "galley-federation", "status belongs to another Galley world or aggregate");
+    const event = view.events.find((candidate) => candidate.turnHash === signingRequest.turnHash) ?? null;
+    if (!event) {
+      const state = galleyAvailableAtSequence(signingRequest.expiresAfterSequence, view.sequence) ? "pending" : "expired";
+      return freeze({ state, event: null, receiptChecksumMatched: false, view });
+    }
+    refuse(await checkGalleyReceiptPostcardSha256(event, cryptoImpl), "galley-receipt-checksum",
+      "matching receipt postcard failed its adjacent SHA-256 checksum");
+    return freeze({ state: "settled", event, receiptChecksumMatched: true, view });
+  }
+
+  return freeze({ openSession, requestCommand, sign, status, endpoints: urls });
+}
