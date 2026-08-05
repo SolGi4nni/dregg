@@ -4889,6 +4889,43 @@ async fn post_aggregate_bundle(
         hex_decode_var(&req.signed_turn).map_err(|_| StatusCode::BAD_REQUEST)?;
     let signed: SignedTurn = crate::signed_turn_validation::decode_signed_turn(&signed_turn_bytes)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // ⚑ AUTHENTICATE BEFORE DISCARDING THE SIGNATURE.
+    //
+    // This handler used to do `let turn = signed.turn;` here — dropping `signature`, `signer` and both
+    // PQ fields — and then hand the *unsigned* turn to a real outer STARK prove below, on a route with
+    // no rate limiter. A full-file read (2026-08-05) grepped this whole handler body for
+    // `validate_signed_turn|verify|signature|signer` and found ZERO hits, while the docblock above
+    // called it "the canonical Turn" twice. The word was doing work no code did.
+    //
+    // ⚠ It was never a spend hole — the route is bearer-gated and touches no ledger — but it was a
+    // PROVENANCE hole (anyone past the bearer could attribute a turn to any agent) and an UNMETERED
+    // PROVING AMPLIFIER (an arbitrary body reaches the prover). Both close here.
+    //
+    // The load-bearing tooth is `turn.agent == CellId::derive_raw(signer, blake3("default"))` — the
+    // agent id IS a commitment to the signing key, so this is the check that makes attribution mean
+    // anything.
+    {
+        let s = state.read().await;
+        let executor = crate::executor_setup::new_submit_executor(&s);
+        if let Err(error) = crate::signed_turn_validation::validate_signed_turn(
+            &signed,
+            &executor,
+            s.ledger.get(&signed.turn.agent),
+        ) {
+            tracing::warn!(
+                ?error,
+                "aggregate-bundle: refused an unauthenticated signed turn"
+            );
+            return Ok(Json(AggregateBundleResponse {
+                aggregated: false,
+                n_cells: req.entries.len(),
+                aggregated_bundle: None,
+                error: Some(format!("signed turn failed validation: {error:?}")),
+            }));
+        }
+    }
+
     let turn = signed.turn;
 
     if req.entries.len() < 2 {
