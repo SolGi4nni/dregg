@@ -377,6 +377,16 @@ pub fn configure_turn_executor(
         registry.register_builtin(Arc::new(DslCircuitDfaVerifier::new(Arc::new(
             program_registry_with_route_circuit(s),
         ))));
+
+        // ⚑⚑ THE RECURSION-ROOT CAPABILITY. `registry_with_real_verifiers` installs the Mina
+        // anchored-head verifier UNWIRED — `dregg-turn` does not link `p3-recursion` and so
+        // cannot check a Mina phase-2 fold root, and it REFUSES every head rather than waving
+        // the root through. The node CAN: it depends on `dregg-recursion-verify`, a crate that
+        // unconditionally verifies. This installs that backend — but only when the operator has
+        // pinned a `recursion_vk_fingerprint` (`DREGG_MINA_CHAIN_ROOT_VK`), because a node that
+        // has not been told which fold circuit it trusts cannot tell one root from another. No
+        // pin ⇒ no install ⇒ the head stays REFUSED. Absence is a refusal at both layers.
+        crate::mina_chain_root_backend::install_mina_chain_root_backend(registry);
     }
 
     // THE EPOCH §5 (signed wells): wire the genesis-declared wells so fees

@@ -57,6 +57,14 @@ dregg-circuit = { path = "../circuit" }
 # the byte envelope (`verify_whole_chain_proof_bytes`). Already in the node graph transitively via
 # `dregg-turn/prover`; named directly so the node can hold the fold's types.
 dregg-circuit-prove = { path = "../circuit-prove" }
+# ⚑ THE VERIFY-ONLY RECURSION CRATE — the edge that gives this node the ability to check a
+# recursion ROOT. `dregg-turn` deliberately does not take it (`turn/Cargo.toml`) and therefore
+# REFUSES every Mina anchored head; `mina_chain_root_backend.rs` injects the capability here.
+# Named directly rather than reached through `dregg-circuit-prove` on purpose: the boundary the
+# operator asked for is "which crates take the edge", and an edge you can see in `cargo tree` is
+# a boundary, while a cargo feature is a hidden one. This is also the crate a prover-free
+# consumer (the wasm card, a future seL4 verifier PD) would take INSTEAD of `circuit-prove`.
+dregg-recursion-verify = { path = "../recursion-verify" }
 dregg-commit = { path = "../commit" }
 # The realm/instance/identity/catalog MUD substrate (realm-model, §9.4/§9.5/§9.2).
 # The node HOSTS a durable `RealmWorld` via `realm_service`: realm-turn admission
@@ -133,7 +141,11 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `raw_value` so the PoA Records read can splice native Lean's exact emitted
+# document into its response instead of re-serializing it through `Value`, which
+# would reorder keys and stop the served bytes from being Lean's bytes. Std-only
+# feature; it adds no crate to the graph.
+serde_json = { version = "1", features = ["raw_value"] }
 clap = { version = "4", features = ["derive"] }
 # Pulled only by the `deos-host` feature (the playable `mud-client` reads world cells off
 # the node over HTTP via `GET /api/cell/{id}`). Already in the graph via `dregg-sdk-net`, so
