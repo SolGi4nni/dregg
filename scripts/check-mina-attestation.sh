@@ -245,6 +245,7 @@ air-fullchain|2|root-air-fullchain
 cellcommit|1|cellcommit-native
 incnonce|2|incnonce-native
 mina-merkle|2|mina-merkle
+capability|2|capability-gate
 cell-fact|0|cell-fact"
 
 TIER=0
@@ -484,6 +485,10 @@ run_cell_fact() { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent cell-fac
 run_incnonce()  { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent incnonce-native ); }
 run_mina_merkle(){ ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
     npm run --silent mina-merkle ); }
+# ⚑ NO `--devnet-vk`. The devnet fetch is opt-in precisely so this leg needs no
+# network; a gate that reaches the internet is a gate that goes red when a
+# GraphQL endpoint has a bad afternoon.
+run_capability(){ ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent capability-gate ); }
 run_uniform()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-uniform ); }
 run_preamble()  { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-preamble ); }
 run_consume()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-consume-differential ); }
@@ -1225,6 +1230,30 @@ if [ "$MODE" = "headline" ]; then
     [ "$rc" -eq 0 ] || die "the Mina-Poseidon Merkle row leg exited $rc"
     grep -q '=== MINA-POSEIDON MERKLE PASS ===' <<<"$mm_out" \
       || die "the Mina-Poseidon Merkle leg did not print its PASS line"
+  fi
+
+  if leg_at_tier capability; then
+    # THE SIDE-LOADED CAPABILITY GATE. A zkApp honoring a dregg capability that was
+    # narrowed twice, under a verification key the contract has never seen.
+    cap_out="$(run_capability "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$cap_out"
+    [ "$rc" -eq 0 ] || die "the capability-gate leg exited $rc"
+    # ⚑ THE SENTINEL, NOT THE EXIT CODE. The script itself refuses to print this
+    # line unless every GREEN was accepted AND every RED refused.
+    grep -q 'DREGG-CAPABILITY-GATE: CONTROLS-MOVED-BOTH-WAYS' <<<"$cap_out" \
+      || die "the capability gate did not print its controls-moved line"
+    # And the four things whose ABSENCE would make that line vacuous.
+    grep -q 'GREEN: 28 effect bits, all agree with facet.rs' <<<"$cap_out" \
+      || die "the facet.rs transcription gate did not run (the in-circuit lattice would be unchecked)"
+    grep -q 'an arity-0 proof is admitted by slot arity \[0\] and no other' <<<"$cap_out" \
+      || die "the maxProofsVerified pin was not re-measured (the two-method design rests on it)"
+    grep -q 'R1 .*ATTENUATION: delegate exercises SET_FIELD' <<<"$cap_out" \
+      || die "the attenuation control did not run — without it the gate is a proof verifier"
+    # ⚑ THE ROGUE. A real adversary program with honest ancestry and no narrowing check. This is
+    # the control that keeps the narrowing-RULE pin from being deleted by a future tidy-up, which
+    # is exactly how the first revision of the gate was written.
+    grep -q 'R11 .*ROGUE NARROWING' <<<"$cap_out" \
+      || die "the rogue-narrowing control did not run — the scope on a delegated capability would be forgeable"
   fi
 
   # ⚑ THE TIER IS IN THE VERDICT, so a transcript can never be read as a fuller

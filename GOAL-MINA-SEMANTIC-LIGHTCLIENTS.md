@@ -1976,3 +1976,133 @@ is right on upstream's standard and blocked on a derivation standard; both are d
 different work. `docs/HANDOFF-wrap-public-input-40.md` states it; it is a taste call and it is the
 operator's.
 
+
+## ⚑⚑ 2026-08-05, the zkApp/o1js surface — **A MINA zkApp EXERCISES AN ATTENUATED DREGG CAPABILITY**
+
+The question this answers is the operator's: *"is there a way we can use zkApps and so forth to
+expose dreggic programmability?"* The answer is **yes, and the dregg-shaped version of it runs
+today with nothing fabricated** — but not the version anyone would name first.
+
+`bridge/mina-zkapp/src/DreggCapability.ts` · `src/DreggCapabilityGate.ts` ·
+`scripts/dregg-capability-gate.ts` · record `bridge/mina-zkapp/dregg-capability-gate-run.json` ·
+`npm run capability-gate`, tier 2, leg in `scripts/check-mina-attestation.sh`.
+
+### What runs
+
+A `SmartContract` on a local chain with proofs ENABLED honors the exercise of a dregg capability
+**narrowed twice**, presented under a verification key the contract does not hold and its own VK
+does not depend on, and refuses the exercise each narrowing removed. The scope algebra is
+`cell/src/facet.rs` verbatim in circuit — `is_facet_attenuation` (:144), `is_effect_permitted`
+(:160) **including the P2-1 `Some(0) = deny all` fix** (:154-166), and `MaxTransferAmount` with
+`is_at_least_as_tight` (:355, :402). The runner re-reads `facet.rs` and refuses to run on drift.
+
+The subject cell, transfer amount and turn hashes are read at run time from
+`demo/two-ai-handoff/state/` — a real two-party dregg handoff, `charlie.verdict.json`
+"Effect VM proof verified (trace_len=2, pi_count=74)" — and their digests printed.
+
+### Why attenuation and not "a zkApp that verifies a dregg proof"
+
+o1js, of side-loaded proofs: *"the circuit makes no assertions about the verificationKey used on
+its own. This is the responsibility of the application developer"* (`proof.d.ts:121-123`). That is
+the affordance and not a caveat — `DynamicProof` hands the circuit a key's **identity as a Field**,
+and a decision procedure over key identities **is** a capability policy. It is the one thing
+side-loading gives that a baked-in `Proof` does not, and it is the clause dregg is actually about.
+
+### ⚑ TWO PINS MEASURED, both contradicting what o1js's own docs imply
+
+**1. `maxProofsVerified` must EQUAL the foreign proof's arity, not bound it.** `proof.d.ts:113-114`
+says *"If you are unsure about what that is for you, you should use 2."* One arity-0 proof through
+three slots differing only in that number:
+
+```
+slot maxProofsVerified = 0  ->  PROVED
+slot maxProofsVerified = 1  ->  Constraint unsatisfied ... step_verifier.ml line 1315
+                                / step_main.ml line 85 / prevs_verified
+slot maxProofsVerified = 2  ->  TypeError: Cannot read properties of undefined (reading '2')
+```
+
+**Consequence, and it dictates the contract's shape**: one side-loaded slot admits programs of
+exactly ONE recursion arity, so a root capability (arity 0) and a delegate (arity 1) cannot share
+one — hence two methods. Attenuation is arity-preserving, so ONE arity-1 slot serves every depth.
+
+**2. The feature-flag pin bites on emitted GATE TYPES, not on "uses gadgets".** `allNone` ACCEPTS
+the root circuit (`Gadgets.rangeCheck32` goes through `rangeCheckHelper` → generic gates, in
+`gateToFlag` nowhere) and REFUSES the attenuator (`Gadgets.and` emits `Xor16`, which is flagged).
+A one-sided probe would have concluded the opposite.
+
+**Consequence for candidate "an UPGRADEABLE side-loaded key so the dregg program can evolve":** that
+is real but **strictly narrower than it sounds**. The replacement key's circuit must have the same
+recursion arity AND the same gate composition. A dregg program that adds a range-check gate or
+changes its recursion depth needs a NEW zkApp, not a state update.
+
+### ⚑ AND TWO FACTS FOR THE BRIDGE LANES, both new
+
+**The dregg key is not arity-mismatched.** The devnet-registered `KimchiWrapMain` VK's binprot
+header reads `max_proofs_verified = N1, actual_wrap_domain_size = N1` — the **same** as an o1js
+recursive program's, and the same as this gate's delegated slot. Whatever blocks it, that is not it.
+
+**And it goes all the way INTO a live side-loaded slot.** The run points the gate's narrowing-rule
+pin at the dregg key (on-chain state, no redeploy, gate VK unmoved) and then exercises through it.
+The refusal is:
+
+```
+Constraint unsatisfied (unreduced): / all: snarky/src/base/utils.ml line 388 / prevs_verified
+```
+
+i.e. **past** `Pickles.sideLoaded.vkToCircuit`, **past** the in-circuit `inCircuitVkHash ==
+vk.hash` assert (`zkprogram.js:561`), **inside** `Pickles.sideLoaded.inCircuit`, and failing only at
+the verification of the (deliberately foreign) proof. Mina PARSED the Lean-derived key, HASHED it
+in-circuit, and ADMITTED it into an arity-1 slot in a compiled zkApp method. The only thing missing
+is a dregg proof.
+
+### What is NOT verified, at the line where it would be
+
+`DreggCapabilityGate.checkAndRecord` step 5 folds the dregg turn hash into a Poseidon receipt chain
+and marks it **COMMITTED, NOT VERIFIED**, naming both remaining blockers where the missing `verify`
+would go:
+
+- **dregg side.** The width gap closed today (third pass above: forty words, Pickles' slot order,
+  kimchi accepts, nothing padded). What remains is that the exposed values are that assembly's
+  transcript over FIXTURE commitments — "not a Pickles-valid statement and not a Mina-valid proof" —
+  and the Pickles-layer blockers. ⚑ **Side-loading is a PICKLES-layer verifier, so a kimchi-layer
+  acceptance does not reach it.**
+- **this side.** A dregg turn statement must be projected onto a FIXED-WIDTH app state chosen at the
+  verifier's compile time. **That decision has not been made.** Not an obstacle — a decision.
+
+### ⚑ A hole found in this artifact and closed in it
+
+The first revision pinned only `rootAuthority`. `authority` is unforgeable (it is `parentVk.hash`,
+tied in-circuit to the bytes that verified the parent, `zkprogram.js:557-563`), so that proves the
+chain **descends** from the root — **not that the descent NARROWED**, because the program computing
+the child's scope is the prover's choice. `DreggRogueAttenuate` is that program: honest ancestry, no
+subset check, arbitrary output scope. It is compiled and PROVED in the run, and the run prints that
+its output satisfies **every other conjunct the gate checks**. The gate now pins TWO fields — which
+capability TREE and which narrowing RULE — and R11 is the control.
+
+Fixing the rule is not a retreat from "a key the gate has never seen": the DELEGATES stay unbounded
+and unseen — the gate never learns how many narrowings happened, who performed them, or to what. Only
+the attenuation semantics is fixed, as biscuit fixes its Datalog evaluator.
+
+### ⚠ ONE PRE-EXISTING RED THE WIRING RUNS INTO, and it is not this lane's
+
+`npm run capability-gate` is `npm run build && node dist/scripts/...` — the house pattern every leg
+in `bridge/mina-zkapp` follows. `build` is `tsc` over the whole directory, and **`tsc` is red at
+HEAD** (2 errors, both committed, neither in this lane's files):
+
+```
+scripts/pickles-step-statement-oracle.ts(100,5)   TS2367  two bigint literals "have no overlap"
+scripts/shrink-claim-in-openings-probe.ts(38,17)  TS2352  bigint[] -> number[]
+```
+
+So **every** leg of `check-mina-attestation.sh` is currently gated behind those two lines, not just
+this one. `tsc` still EMITS, so the compiled `dist/scripts/dregg-capability-gate.js` runs to
+`CONTROLS-MOVED-BOTH-WAYS` — but the npm wrapper exits 1 before reaching it. Not worked around
+here: special-casing this leg out of the build would remove exactly the check that makes a type
+error bite.
+
+### Say it at the resolution measured
+
+What verified is the **ATTENUATION ALGEBRA**: a monotone chain of narrowings from a named root and an
+exercise inside the narrowest scope, over dregg's own facet lattice, with the Mina state change
+gated on it. **Not** the dregg turn. Nothing was submitted to devnet; the key fetch is read-only and
+opt-in. Deploying the contract is a transaction and is the operator's.

@@ -67,7 +67,8 @@
     "fold-tree": "npm run build && node --max-old-space-size=16384 dist/scripts/fold-tree.js",
     "fri-mutation-gate": "bash scripts/fri-mutation-gate.sh",
     "devnet:head-deploy": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-deploy.js",
-    "devnet:head-advance": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-advance.js"
+    "devnet:head-advance": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-advance.js",
+    "capability-gate": "npm run build && node --max-old-space-size=16384 dist/scripts/dregg-capability-gate.js"
   },
   "dependencies": {
     "o1js": "2.15.0"

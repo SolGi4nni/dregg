@@ -1,0 +1,320 @@
+{
+  "what": "dregg capability exercised through a Mina zkApp side-loaded slot",
+  "ranAt": "2026-08-05T22:20:38.826Z",
+  "transcriptionGate": {
+    "file": "/Users/ember/dev/breadstuffs/cell/src/facet.rs",
+    "sha256": "09e24471275202318dcfbd475bbe5ecc410c5b72bfdd0b8aae5906c4529b71d2",
+    "bits": 28,
+    "ok": true
+  },
+  "dreggTurn": {
+    "dir": "/Users/ember/dev/breadstuffs/demo/two-ai-handoff/state",
+    "files": {
+      "alice.out.json": "30e11a2ecf98699660ca9cf7ce57a83258d68e26aa82c3a4f275a75d5d182dcb",
+      "bob.exercise.json": "a8f7b6371431813ebfe268995896fb94951fc6885522eb93633b4f864f3f1822",
+      "charlie.verdict.json": "63043f8bf9230e9466ef3917998731f94ddb0757a27225caa11260a797642f9e"
+    },
+    "aliceCell": "28292ff1b04ee1a666d2c4f7556d240b12f485edac0ff1a89c24dddffb680cee",
+    "grantTurn": "a50d29f08df55871f0fc94113a41f90908889302fee5d5a53a11c2ee7ebe53c4",
+    "exerciseTurn": "e6bce25f9e8e01e1e9294e903e7fd09c4e11c7dc9df2ea7c878585c0b58571a2",
+    "transferAmount": 100
+  },
+  "arityPin": [
+    {
+      "tagArity": 0,
+      "verdict": "PROVED",
+      "detail": "15.8s"
+    },
+    {
+      "tagArity": 1,
+      "verdict": "REFUSED",
+      "detail": "Constraint unsatisfied (unreduced): / File \"src/mina/src/lib/crypto/pickles/step_verifier.ml\", line 1315, characters 40-47:0 / File \"src/mina/src/lib/crypto/pickles/step_verifier.ml\", line 1296, characters 15-22 / File \"src/mina/src/lib/crypto/pickles/step_main.ml\", line 85, characters 17-24"
+    },
+    {
+      "tagArity": 2,
+      "verdict": "REFUSED",
+      "detail": "Cannot read properties of undefined (reading '2')"
+    }
+  ],
+  "keys": {
+    "rootVkHash": "7193257021001310091362390544769697525293174193614886641271692365974662829054",
+    "attenuatorVkHash": "7295704366683469484974845174268670609209486287451475176773007525008177781468",
+    "rogueVkHash": "17807127933965591414897687098097737098955845838833253505066146274473539840269",
+    "gateVkHash": "356257459120279310702245700149775905259110678344332105078087110707701721487"
+  },
+  "chain": {
+    "rootMask": "0x00000017",
+    "rootCeiling": "1000000",
+    "depth1Mask": "0x00000012",
+    "depth1Ceiling": "1000",
+    "depth2Mask": "0x00000002",
+    "depth2Ceiling": "100",
+    "authorityCarried": true
+  },
+  "proverRefusals": [
+    {
+      "label": "P1 widen the mask at depth 1 (add a bit the root does not hold: MINT)",
+      "ok": true,
+      "msg": "attenuation would AMPLIFY: child mask has a bit the parent does not (cell/src/facet.rs:144)"
+    },
+    {
+      "label": "P2 raise the ceiling at depth 1 above the root (1_000_001)",
+      "ok": true,
+      "msg": "attenuation would RAISE the transfer ceiling (cell/src/facet.rs:402)"
+    },
+    {
+      "label": "P3 widen at depth 2: re-add SET_FIELD the depth-1 narrowing dropped",
+      "ok": true,
+      "msg": "attenuation would AMPLIFY: child mask has a bit the parent does not (cell/src/facet.rs:144)"
+    },
+    {
+      "label": "P4 raise the ceiling at depth 2 above depth 1 (1001)",
+      "ok": true,
+      "msg": "attenuation would RAISE the transfer ceiling (cell/src/facet.rs:402)"
+    }
+  ],
+  "rogue": {
+    "vkHash": "17807127933965591414897687098097737098955845838833253505066146274473539840269",
+    "authorityEqualsRoot": true,
+    "effectMask": "0xffffffff",
+    "maxTransfer": "9223372036854775807"
+  },
+  "revocation": {
+    "chainSurvived": true,
+    "turnsHonoredAtRotation": "5"
+  },
+  "circuitFlags": {
+    "root": {
+      "rangeCheck0": false,
+      "rangeCheck1": false,
+      "foreignFieldAdd": false,
+      "foreignFieldMul": false,
+      "xor": false,
+      "rot": false,
+      "lookup": false,
+      "runtimeTables": false
+    },
+    "attenuator": {
+      "rangeCheck0": false,
+      "rangeCheck1": false,
+      "foreignFieldAdd": false,
+      "foreignFieldMul": false,
+      "xor": true,
+      "rot": false,
+      "lookup": false,
+      "runtimeTables": false
+    }
+  },
+  "featureFlagPinDiscriminates": true,
+  "featureFlagPin": [
+    {
+      "circuit": "root (arity 0)",
+      "flags": "allMaybe",
+      "verdict": "PROVED",
+      "detail": "29.4s"
+    },
+    {
+      "circuit": "root (arity 0)",
+      "flags": "allNone",
+      "verdict": "PROVED",
+      "detail": "17.5s"
+    },
+    {
+      "circuit": "attenuator (arity 1)",
+      "flags": "allMaybe",
+      "verdict": "PROVED",
+      "detail": "22.7s"
+    },
+    {
+      "circuit": "attenuator (arity 1)",
+      "flags": "allNone",
+      "verdict": "REFUSED",
+      "detail": "0,248,Assert_failure,-11,0,src/mina/src/lib/crypto/kimchi_backend/common/plonk_types.ml,402,51"
+    }
+  ],
+  "vkHeaders": {
+    "o1js root capability VK": {
+      "bytes": 1796,
+      "maxProofsVerified": 0,
+      "actualWrapDomainSize": 0
+    },
+    "o1js attenuator VK": {
+      "bytes": 1796,
+      "maxProofsVerified": 1,
+      "actualWrapDomainSize": 1
+    },
+    "o1js gate VK": {
+      "bytes": 1796,
+      "maxProofsVerified": 1,
+      "actualWrapDomainSize": 1
+    }
+  },
+  "dreggVk": {
+    "bytes": 1796,
+    "maxProofsVerified": 1,
+    "actualWrapDomainSize": 1,
+    "sha256": "f495c530c7109356286f431c8ddc56d430df60a29a207f5232787505d597a420",
+    "onChainHash": "3406194937895477457970245030395621250788267645790344513677408083740320002590"
+  },
+  "results": [
+    {
+      "id": "G1 ⚑ DELEGATED depth 1: narrowed capability, key the gate has NEVER seen, TRANSFER 100",
+      "want": "GREEN",
+      "aimedAt": "the whole claim",
+      "got": "ACCEPTED",
+      "ms": 13012,
+      "msg": "",
+      "chain": "17511864947843648259816293270473855515358278759059484764476349298265100348762"
+    },
+    {
+      "id": "G2 ⚑ DELEGATED depth 2: narrowed twice, TRANSFER 100 (exactly its ceiling)",
+      "want": "GREEN",
+      "aimedAt": "attenuation composes; one arity-1 slot serves every depth",
+      "got": "ACCEPTED",
+      "ms": 15639,
+      "msg": "",
+      "chain": "9183594245372839782871860143578838195903996176904865884790711291502492583703"
+    },
+    {
+      "id": "G3 DIRECT: the root's own capability, TRANSFER 100",
+      "want": "GREEN",
+      "aimedAt": "the arity-0 slot and the direct branch",
+      "got": "ACCEPTED",
+      "ms": 12623,
+      "msg": "",
+      "chain": "28061580542814060494321475829557457667848173684463986531192504261876493039285"
+    },
+    {
+      "id": "G4 DIRECT: SET_FIELD — the root HOLDS this bit",
+      "want": "GREEN",
+      "aimedAt": "pairs with R1: the root may do what the delegate may not",
+      "got": "ACCEPTED",
+      "ms": 13472,
+      "msg": "",
+      "chain": "23683292365516055673968088075774703770057936126190436933938683337509017572013"
+    },
+    {
+      "id": "G5 DELEGATED depth 1: EMIT_EVENT — depth 1 KEPT this bit, depth 2 dropped it",
+      "want": "GREEN",
+      "aimedAt": "pairs with R2: the same bit at two depths",
+      "got": "ACCEPTED",
+      "ms": 18069,
+      "msg": "",
+      "chain": "13808342841001115111595680102486061695325330129163083472275333995665246256171"
+    },
+    {
+      "id": "R1 ⚑ ATTENUATION: delegate exercises SET_FIELD, which the narrowing DROPPED",
+      "want": "RED",
+      "aimedAt": "is_effect_permitted / facet.rs:160 — pairs with G4",
+      "got": "REFUSED",
+      "ms": 29,
+      "msg": "effect not permitted by the capability's facet mask (cell/src/facet.rs:160) / Bool.assertTrue(): false != true"
+    },
+    {
+      "id": "R2 ⚑ ATTENUATION AT DEPTH 2: EMIT_EVENT, which the SECOND narrowing dropped",
+      "want": "RED",
+      "aimedAt": "the same conjunct one level deeper — pairs with G5",
+      "got": "REFUSED",
+      "ms": 53,
+      "msg": "effect not permitted by the capability's facet mask (cell/src/facet.rs:160) / Bool.assertTrue(): false != true"
+    },
+    {
+      "id": "R3 BUDGET: depth 2 transfers 101, one over its narrowed ceiling of 100",
+      "want": "RED",
+      "aimedAt": "FacetConstraint::MaxTransferAmount / facet.rs:355",
+      "got": "REFUSED",
+      "ms": 94,
+      "msg": "transfer amount exceeds the capability's MaxTransferAmount (cell/src/facet.rs:355)"
+    },
+    {
+      "id": "R4 BUDGET at the root: 1_000_001, one over ITS ceiling",
+      "want": "RED",
+      "aimedAt": "the same conjunct, showing the root is bounded too",
+      "got": "REFUSED",
+      "ms": 31,
+      "msg": "transfer amount exceeds the capability's MaxTransferAmount (cell/src/facet.rs:355)"
+    },
+    {
+      "id": "R5 FACET: root exercises MINT, a bit nobody in this chain holds",
+      "want": "RED",
+      "aimedAt": "is_effect_permitted, hit conjunct",
+      "got": "REFUSED",
+      "ms": 24,
+      "msg": "effect not permitted by the capability's facet mask (cell/src/facet.rs:160) / Bool.assertTrue(): false != true"
+    },
+    {
+      "id": "R6 ⚑ BENT KEY: the delegate's real bytes with hash+1 — the pair Mina's JSON ingest ACCEPTS",
+      "want": "RED",
+      "aimedAt": "o1js zkprogram.js:561 \"Provided VerificationKey hash not correct\"",
+      "got": "REFUSED",
+      "ms": 18,
+      "msg": "delegated capability was not produced by the narrowing rule this gate holds / Field.assertEquals(): 7295704366683469484974845174268670609209486287451475176773007525008177781469 != 7295704366683469484974845174268670609209486287451475176773007525008177781468"
+    },
+    {
+      "id": "R7 WRONG KEY: the delegate's proof under the ROOT's key (both keys real and consistent)",
+      "want": "RED",
+      "aimedAt": "Pickles side-loaded verification itself",
+      "got": "REFUSED",
+      "ms": 41,
+      "msg": "delegated capability was not produced by the narrowing rule this gate holds / Field.assertEquals(): 7193257021001310091362390544769697525293174193614886641271692365974662829054 != 7295704366683469484974845174268670609209486287451475176773007525008177781468"
+    },
+    {
+      "id": "R8 ⚑ ZERO MASK: a capability faceted to nothing must permit NOTHING",
+      "want": "RED",
+      "aimedAt": "the `Some(0) => false` conjunct ALONE, facet.rs:163 (the P2-1 fix); budget deliberately slack",
+      "got": "REFUSED",
+      "ms": 22,
+      "msg": "effect not permitted by the capability's facet mask (cell/src/facet.rs:160) / Bool.assertTrue(): false != true"
+    },
+    {
+      "id": "R11 ⚑ ROGUE NARROWING: EFFECT_ALL and a raised ceiling, honest ancestry",
+      "want": "RED",
+      "aimedAt": "vk.hash == attenuatorProgram — the narrowing-RULE pin, which is the only conjunct it fails",
+      "got": "REFUSED",
+      "ms": 21,
+      "msg": "delegated capability was not produced by the narrowing rule this gate holds / Field.assertEquals(): 17807127933965591414897687098097737098955845838833253505066146274473539840269 != 7295704366683469484974845174268670609209486287451475176773007525008177781468"
+    },
+    {
+      "id": "R9 AUTHORITY: the SAME delegated exercise as G1, after rotation",
+      "want": "RED",
+      "aimedAt": "cap.authority == rootAuthority",
+      "got": "REFUSED",
+      "ms": 17,
+      "msg": "delegated capability does not chain to this gate's root authority / Field.assertEquals(): 7193257021001310091362390544769697525293174193614886641271692365974662829054 != 12345678901234567890"
+    },
+    {
+      "id": "R10 AUTHORITY: the SAME direct exercise as G3, after rotation",
+      "want": "RED",
+      "aimedAt": "the direct branch's vk.hash == rootAuthority conjunct",
+      "got": "REFUSED",
+      "ms": 22,
+      "msg": "root capability presented under a key this gate does not hold / Field.assertEquals(): 7193257021001310091362390544769697525293174193614886641271692365974662829054 != 12345678901234567890"
+    },
+    {
+      "id": "G6 the delegated exercise works again after rotating back (the rotation was the cause)",
+      "want": "GREEN",
+      "aimedAt": "proves R9/R10 were about the authority and nothing else",
+      "got": "ACCEPTED",
+      "ms": 14920,
+      "msg": "",
+      "chain": "12529526870489302151785129581776748170749568405703288981096490434465299732419"
+    },
+    {
+      "id": "D1 the registered DREGG key, with its real hash, presented with the delegate's proof",
+      "want": "RED",
+      "aimedAt": "MEASUREMENT: where does a real dregg key stop in a real side-loaded slot?",
+      "got": "REFUSED",
+      "ms": 1809,
+      "msg": "Constraint unsatisfied (unreduced): / all: File \"src/mina/src/lib/snarky/src/base/utils.ml\", line 388, characters 6-162 / prevs_verified"
+    }
+  ],
+  "verdict": {
+    "greensOk": true,
+    "redsOk": true,
+    "proverOk": true,
+    "controlsMoved": true,
+    "turnsHonored": "6",
+    "receiptChain": "12529526870489302151785129581776748170749568405703288981096490434465299732419"
+  },
+  "claim": "A Mina zkApp honored the exercise of a dregg capability narrowed TWICE without the issuer, under a verification key it had never seen, and refused the exercise each narrowing removed. What is verified is the ATTENUATION ALGEBRA (cell/src/facet.rs), not the dregg TURN — the turn is committed into the receipt chain and NOT verified."
+}
