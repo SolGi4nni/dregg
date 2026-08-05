@@ -161,6 +161,8 @@ theorem filterMap_nil_of_noPlain {β : Type} {ex : List VmConstraint2} (h : NoPl
     (hb : ∀ c, f (.base c) = none) (hl : ∀ l, f (.lookup l) = none)
     (hm : ∀ m, f (.memOp m) = none) (hmp : ∀ m, f (.mapOp m) = none)
     (hu : ∀ m, f (.umemOp m) = none) (hp : ∀ m, f (.proofBind m) = none)
+    -- ⚑ Its OWN hypothesis, not `hp` reused.
+    (hcg : ∀ w, f (.chalGate w) = none)
     (hw : ∀ w, w.onTransition = true → f (.windowGate w) = none) :
     ex.filterMap f = [] := by
   rw [List.filterMap_eq_nil_iff]
@@ -172,6 +174,7 @@ theorem filterMap_nil_of_noPlain {β : Type} {ex : List VmConstraint2} (h : NoPl
   | mapOp m => exact hmp m
   | umemOp m => exact hu m
   | proofBind m => exact hp m
+  | chalGate m => exact hcg m
   | windowGate w => exact hw w (h w ha)
 
 /-- The same blindness for `any` recognisers. -/
@@ -180,6 +183,9 @@ theorem any_false_of_noPlain {ex : List VmConstraint2} (h : NoPlainWindowGate ex
     (hb : ∀ c, f (.base c) = false) (hl : ∀ l, f (.lookup l) = false)
     (hm : ∀ m, f (.memOp m) = false) (hmp : ∀ m, f (.mapOp m) = false)
     (hu : ∀ m, f (.umemOp m) = false) (hp : ∀ m, f (.proofBind m) = false)
+    -- ⚑ Its OWN hypothesis, not `hp` reused: a challenge gate is a different kind and a
+    -- recogniser that happened to be false on `proofBind` says nothing about it.
+    (hcg : ∀ w, f (.chalGate w) = false)
     (hw : ∀ w, w.onTransition = true → f (.windowGate w) = false) :
     ex.any f = false := by
   by_contra hc
@@ -192,6 +198,7 @@ theorem any_false_of_noPlain {ex : List VmConstraint2} (h : NoPlainWindowGate ex
   | mapOp m => rw [hmp m] at hfa; exact absurd hfa (by simp)
   | umemOp m => rw [hu m] at hfa; exact absurd hfa (by simp)
   | proofBind m => rw [hp m] at hfa; exact absurd hfa (by simp)
+  | chalGate m => rw [hcg m] at hfa; exact absurd hfa (by simp)
   | windowGate w => rw [hw w (h w ha)] at hfa; exact absurd hfa (by simp)
 
 /-! ### The six recognisers, each nil/false on the class. -/
@@ -199,32 +206,33 @@ theorem any_false_of_noPlain {ex : List VmConstraint2} (h : NoPlainWindowGate ex
 theorem acceptRoots_nil {ex : List VmConstraint2} (h : NoPlainWindowGate ex) :
     acceptRoots ex = [] :=
   filterMap_nil_of_noPlain h _ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-    (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
+    (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
 
 theorem andEdges_nil {ex : List VmConstraint2} (h : NoPlainWindowGate ex) :
     andEdges ex = [] :=
   filterMap_nil_of_noPlain h _ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-    (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
+    (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
 
 theorem hasBitGate_false {ex : List VmConstraint2} (h : NoPlainWindowGate ex) (c : Nat) :
     hasBitGate ex c = false :=
   any_false_of_noPlain h _ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-    (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
+    (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
 
 theorem hasProdGate_false {ex : List VmConstraint2} (h : NoPlainWindowGate ex) (x out : Nat) :
     Dregg2.Circuit.PeepholeGeneralBatch.hasProdGate ex x out = false :=
   any_false_of_noPlain h _ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-    (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [Dregg2.Circuit.PeepholeGeneralBatch.isProdGate, hw])
+    (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+    (fun _ hw => by simp [Dregg2.Circuit.PeepholeGeneralBatch.isProdGate, hw])
 
 theorem collapseSites_nil {ex : List VmConstraint2} (h : NoPlainWindowGate ex) :
     collapseSites ex = [] :=
   filterMap_nil_of_noPlain h _ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-    (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
+    (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
 
 theorem confirmedOuts_nil {ex : List VmConstraint2} (h : NoPlainWindowGate ex) :
     confirmedOuts ex = [] :=
   filterMap_nil_of_noPlain h _ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-    (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
+    (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
 
 /-! ## 2. THE STRUCTURAL FINDING, ∀-d: on a plain-window-gate-free list BOTH passes are the IDENTITY.
 
@@ -247,6 +255,7 @@ theorem frontierKeep_true_of_no_sites {cs : List VmConstraint2} (h : collapseSit
   | mapOp _ => rfl
   | umemOp _ => rfl
   | proofBind _ => rfl
+  | chalGate _ => rfl
   | windowGate w =>
       obtain ⟨body, onT⟩ := w
       simp only [frontierKeep]
@@ -468,7 +477,7 @@ theorem collapseSites_append (cs ex : List VmConstraint2) (h : NoPlainWindowGate
   simp only [collapseSites, acceptReachable_append cs ex h, hasProdGate_append cs ex h]
   refine filterMap_append_nil cs ex _ ?_
   exact filterMap_nil_of_noPlain h _ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-    (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
+    (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) (fun _ hw => by simp [hw])
 
 theorem collapsedOuts_append (cs ex : List VmConstraint2) (h : NoPlainWindowGate ex) :
     collapsedOuts (cs ++ ex) = collapsedOuts cs := by
@@ -484,6 +493,7 @@ theorem frontierKeep_append (cs ex : List VmConstraint2) (h : NoPlainWindowGate 
   | mapOp _ => rfl
   | umemOp _ => rfl
   | proofBind _ => rfl
+  | chalGate _ => rfl
   | windowGate w =>
       obtain ⟨body, onT⟩ := w
       simp only [frontierKeep, collapsedOuts_append cs ex h, collapseSites_append cs ex h]
@@ -498,6 +508,7 @@ theorem frontierKeep_true_on_class {cs ex : List VmConstraint2} (h : NoPlainWind
   | mapOp _ => rfl
   | umemOp _ => rfl
   | proofBind _ => rfl
+  | chalGate _ => rfl
   | windowGate w => simp only [frontierKeep, h w he, if_true]
 
 /-- THE KEPT LIST under an append: the original survivors, then the appended block verbatim. -/

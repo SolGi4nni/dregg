@@ -305,6 +305,7 @@ theorem frontierKeep_false_windowGate {cs : List VmConstraint2} {c : VmConstrain
   | mapOp _ => simp [frontierKeep] at h
   | umemOp _ => simp [frontierKeep] at h
   | proofBind _ => simp [frontierKeep] at h
+  | chalGate _ => simp [frontierKeep] at h
 
 /-- A dropped constraint is one of a confirmed site's three gates, in one of the three shapes. -/
 theorem dropped_is_site {cs : List VmConstraint2} {c : VmConstraint2}
@@ -342,6 +343,7 @@ theorem dropped_is_site {cs : List VmConstraint2} {c : VmConstraint2}
   | mapOp _ => simp [frontierKeep] at h
   | umemOp _ => simp [frontierKeep] at h
   | proofBind _ => simp [frontierKeep] at h
+  | chalGate _ => simp [frontierKeep] at h
 
 /-- A confirmed site's matching product gate is present in the original list. -/
 theorem collapseSites_hasProd {cs : List VmConstraint2} {x out inv : Nat}
@@ -374,6 +376,7 @@ theorem collapseSites_hasProd {cs : List VmConstraint2} {x out inv : Nat}
   | mapOp _ => simp at hmatch
   | umemOp _ => simp at hmatch
   | proofBind _ => simp at hmatch
+  | chalGate _ => simp at hmatch
 
 /-- A confirmed `out` witnesses a full site in the list, hence a raw gate `x = 0` in the collapse. -/
 theorem collapsedOut_site {cs : List VmConstraint2} {out : Nat} (h : out ∈ collapsedOuts cs) :
@@ -614,6 +617,7 @@ theorem acceptGate_of_mem_acceptRoots {cs : List VmConstraint2} {c : Nat}
   | mapOp _ => simp at hmatch
   | umemOp _ => simp at hmatch
   | proofBind _ => simp at hmatch
+  | chalGate _ => simp at hmatch
 
 /-- A collapse site's output is accept-reachable (the scan condition it was recognised under). -/
 theorem collapseSites_out_reachable {cs : List VmConstraint2} {x out inv : Nat}
@@ -643,6 +647,7 @@ theorem collapseSites_out_reachable {cs : List VmConstraint2} {x out inv : Nat}
   | mapOp _ => simp at hmatch
   | umemOp _ => simp at hmatch
   | proofBind _ => simp at hmatch
+  | chalGate _ => simp at hmatch
 
 theorem reachStep_nil {cs : List VmConstraint2} (S : List Nat) (h : andEdges cs = []) :
     reachStep cs S = S := by simp [reachStep, h]

@@ -270,6 +270,8 @@ def selfSettlementDescriptor : EffectVmDescriptor2 :=
   | .base (.piBinding _ _ _) => true | _ => false)).length == 6
 #guard (settleConstraints.filter (fun c => match c with
   | .proofBind _ => true | _ => false)).length == 1
+#guard (settleConstraints.filter (fun c => match c with
+  | .chalGate _ => true | _ => false)).length == 0
 #guard selfSettlementDescriptor.ranges.length == 1
 #guard (emitVmJson2 selfSettlementDescriptor).startsWith
   "{\"name\":\"dregg-self-settlement-v1\",\"ir\":2"

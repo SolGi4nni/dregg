@@ -699,6 +699,7 @@ def substZeroGate (c : Nat) : VmConstraint2 → VmConstraint2
   | .mapOp m                   => .mapOp m
   | .umemOp m                  => .umemOp m
   | .proofBind m               => .proofBind m
+  | .chalGate m                => .chalGate m
   | .windowGate w              => .windowGate w
 
 /-- THE PASS's target descriptor: a record update of the constraint list alone. -/
@@ -744,6 +745,7 @@ theorem filterMap_map_substZeroGate {β : Type} (f : VmConstraint2 → Option β
       | mapOp m => simp only [substZeroGate, ih]
       | umemOp m => simp only [substZeroGate, ih]
       | proofBind m => simp only [substZeroGate, ih]
+      | chalGate m => simp only [substZeroGate, ih]
       | windowGate w => simp only [substZeroGate, ih]
 
 theorem filterMap_zeroSubst {β : Type} (f : VmConstraint2 → Option β)
@@ -828,6 +830,7 @@ theorem zeroSubst_security_row (c : Nat) (d : EffectVmDescriptor2)
   | mapOp m => exact htgt _ (substGate_mem_zeroSubst hx)
   | umemOp m => exact htgt _ (substGate_mem_zeroSubst hx)
   | proofBind m => exact htgt _ (substGate_mem_zeroSubst hx)
+  | chalGate m => exact htgt _ (substGate_mem_zeroSubst hx)
   | windowGate w => exact htgt _ (substGate_mem_zeroSubst hx)
 
 /-- COMPLETENESS row: every TARGET constraint holds on an accepting SOURCE row. The appended pin IS a
@@ -860,6 +863,7 @@ theorem zeroSubst_completeness_row (c : Nat) (d : EffectVmDescriptor2)
     | mapOp m => exact hsrc _ hy
     | umemOp m => exact hsrc _ hy
     | proofBind m => exact hsrc _ hy
+    | chalGate m => exact hsrc _ hy
     | windowGate w => exact hsrc _ hy
   · rw [List.mem_singleton] at happ
     subst happ

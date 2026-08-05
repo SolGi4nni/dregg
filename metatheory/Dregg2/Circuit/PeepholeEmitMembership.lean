@@ -589,6 +589,7 @@ theorem invGate_of_mem_collapseSites {cs : List VmConstraint2} {x out inv : Nat}
   | mapOp _ => simp at hmatch
   | umemOp _ => simp at hmatch
   | proofBind _ => simp at hmatch
+  | chalGate _ => simp at hmatch
 
 /-- Consequently EVERY collapsed output column of an emitted descriptor is a zeroTest column. -/
 theorem collapsedOut_mem_ztOuts {pub sec atoms : Nat} (p : Program pub sec atoms) {c : Nat}

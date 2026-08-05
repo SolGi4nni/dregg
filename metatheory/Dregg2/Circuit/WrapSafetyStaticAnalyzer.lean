@@ -331,6 +331,7 @@ def constraintVerdict (ranges : List VmRange) : VmConstraint2 → WrapVerdict
   | .mapOp _      => .notGate
   | .umemOp _     => .notGate
   | .proofBind _  => .notGate
+  | .chalGate _ => .notGate
 
 /-- Field-aware v2 classifier. -/
 def constraintVerdictF (ranges : List VmRange) : VmConstraint2 → WrapVerdict

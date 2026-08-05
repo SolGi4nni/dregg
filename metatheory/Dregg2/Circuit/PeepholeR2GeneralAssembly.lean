@@ -153,6 +153,7 @@ theorem r2Drop_mem_gates {s : R2SiteData} {c : VmConstraint2} (h : r2Drop s c = 
   | mapOp _ => simp [r2Drop] at h
   | umemOp _ => simp [r2Drop] at h
   | proofBind _ => simp [r2Drop] at h
+  | chalGate _ => simp [r2Drop] at h
 
 /-- BACKWARD: every site gate IS dropped, over an ARBITRARY site (each recogniser condition is a
 reflexivity of the site's own columns). -/
@@ -222,6 +223,7 @@ def r2Fresh (s : R2SiteData) : VmConstraint2 → Bool
   | .memOp _ => true
   | .umemOp _ => true
   | .proofBind _ => false
+  | .chalGate _ => false
   | .base _ => false
   | .lookup _ => false
   | .mapOp _ => false
@@ -250,6 +252,7 @@ theorem holdsAt_of_fresh {s : R2SiteData} {c : VmConstraint2} {hash : List ℤ �
   | memOp _ => trivial
   | umemOp _ => trivial
   | proofBind _ => simp [r2Fresh] at hf
+  | chalGate _ => simp [r2Fresh] at hf
   | base _ => simp [r2Fresh] at hf
   | lookup _ => simp [r2Fresh] at hf
   | mapOp _ => simp [r2Fresh] at hf

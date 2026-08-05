@@ -701,6 +701,7 @@ row-local kind, plus `memOp`/`mapOp` (whose content is `memBalanced`/`mapTableFa
 staged). -/
 def refs2Denoting : VmConstraint2 → List Nat
   | .proofBind _ => []
+  | .chalGate _ => []
   | .umemOp _    => []
   | c            => refs2 c
 
@@ -741,6 +742,7 @@ def registryDeclarationOnlyCount (R : List (String × EffectVmDescriptor2)) : Na
 /-- The same surface with ONLY `.proofBind` dropped — `.umemOp` kept. -/
 def refs2NoProofBind : VmConstraint2 → List Nat
   | .proofBind _ => []
+  | .chalGate _ => []
   | c            => refs2 c
 
 def forcedColsNoProofBind (M : EffectVmDescriptor2) : List Nat :=

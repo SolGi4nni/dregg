@@ -110,6 +110,7 @@ theorem andGate_of_mem_andEdges {cs : List VmConstraint2} {out l r : Nat}
   | mapOp _ => simp at hmatch
   | umemOp _ => simp at hmatch
   | proofBind _ => simp at hmatch
+  | chalGate _ => simp at hmatch
 
 /-- A column the list `hasBitGate` on really carries the booleanity gate `c·(c−1) = 0`. -/
 theorem bitGate_of_hasBitGate {cs : List VmConstraint2} {c : Nat}
@@ -138,6 +139,7 @@ theorem bitGate_of_hasBitGate {cs : List VmConstraint2} {c : Nat}
   | mapOp _ => exact absurd hp (by simp)
   | umemOp _ => exact absurd hp (by simp)
   | proofBind _ => exact absurd hp (by simp)
+  | chalGate _ => exact absurd hp (by simp)
 
 /-! ## 2. THE MISSING LEMMA — `acceptReachable_sound`. The syntactic fixpoint is SOUND w.r.t. the
 inductive `Forced` certificate. -/

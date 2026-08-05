@@ -291,6 +291,7 @@ theorem r2Drop_windowGate {s : R2SiteData} {c : VmConstraint2} (h : r2Drop s c =
   | mapOp _ => simp [r2Drop] at h
   | umemOp _ => simp [r2Drop] at h
   | proofBind _ => simp [r2Drop] at h
+  | chalGate _ => simp [r2Drop] at h
 
 /-- Any `filterMap` by a function that is `none` on every gate is invariant under the collapse. -/
 theorem filterMap_collapse_eq {β : Type} (f : VmConstraint2 → Option β)

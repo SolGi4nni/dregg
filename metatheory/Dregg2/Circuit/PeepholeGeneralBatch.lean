@@ -145,6 +145,7 @@ theorem isBitGateCol_eq {c : VmConstraint2} {out : Nat} (h : isBitGateCol c = so
   | mapOp _ => simp [isBitGateCol] at h
   | umemOp _ => simp [isBitGateCol] at h
   | proofBind _ => simp [isBitGateCol] at h
+  | chalGate _ => simp [isBitGateCol] at h
 
 /-- Product / inverse gates are never bit gates, so they always survive the filter. -/
 theorem isBitGateCol_prod (x out : Nat) : isBitGateCol (gate (.mul (.loc x) (.loc out))) = none :=
@@ -177,6 +178,7 @@ theorem isProdGate_eq {x out : Nat} {c : VmConstraint2} (h : isProdGate x out c 
   | mapOp _ => simp [isProdGate] at h
   | umemOp _ => simp [isProdGate] at h
   | proofBind _ => simp [isProdGate] at h
+  | chalGate _ => simp [isProdGate] at h
 
 /-- A confirmed `out` witnesses its two companion gates in the ORIGINAL list. -/
 theorem confirmed_companions {cs : List VmConstraint2} {out : Nat} (h : out ∈ confirmedOuts cs) :
@@ -214,6 +216,7 @@ theorem confirmed_companions {cs : List VmConstraint2} {out : Nat} (h : out ∈ 
   | mapOp _ => simp at hmatch
   | umemOp _ => simp at hmatch
   | proofBind _ => simp at hmatch
+  | chalGate _ => simp at hmatch
 
 /-! ## 3. The polynomial redundancy identity — program-independent soundness core. -/
 

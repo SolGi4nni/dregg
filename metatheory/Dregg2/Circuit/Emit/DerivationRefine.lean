@@ -479,6 +479,7 @@ theorem holdsAt_of_dc2 {hash : List ℤ → ℤ} {tf : TraceFamily} {env : VmRow
   | mapOp m      => exact absurd h Bool.false_ne_true
   | umemOp _     => exact True.intro
   | proofBind _  => exact True.intro
+  | chalGate _ => exact True.intro
   | windowGate w => exact (decideWindow_iff env l w).mp h
 
 /-- The whole `rowConstraints` leg, from a single Boolean decision (no `hmapDec` needed — the ONLY
