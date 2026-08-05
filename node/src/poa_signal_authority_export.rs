@@ -347,12 +347,25 @@ mod tests {
         .unwrap();
         let store = PersistentStore::open_in_memory().unwrap();
         store.initialize_poa_signal_head(&head).unwrap();
+        store
+            .install_poa_signal_slot_for_test(
+                &crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(authority),
+            )
+            .unwrap();
 
         let player = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0x75; 32]));
-        let claim = SignalClaimV1::new(1, SignalCode::new(2, 4, 1).unwrap()).unwrap();
+        let actor_root = [0x76; 32];
+        // The instance is a function of this federation and this player, so the
+        // solving code cannot be written down here. Ask Lean, as the node does.
+        let claim = crate::poa_signal_adapter::solving_claim_for_finality_test(
+            &head,
+            &crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(authority),
+            authority,
+            player.public_key().0,
+            actor_root,
+        );
         let turn = dregg_sdk::poa_signal::signal_claim_turn(&player.public_key().0, 0, None, claim);
         let signed = player.sign_turn(&turn);
-        let actor_root = [0x76; 32];
         let candidate = crate::poa_signal_adapter::evaluate_persisted_signal_claim(
             &head,
             &crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(authority),

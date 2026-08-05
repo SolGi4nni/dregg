@@ -10565,7 +10565,7 @@ mod tests {
         fn signal(cell: u8) -> dregg_turn::Effect {
             let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
                 1,
-                dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
+                dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).unwrap(),
             )
             .unwrap();
             dregg_turn::Effect::EmitEvent {
@@ -12351,11 +12351,20 @@ mod tests {
         nonce: u64,
         federation_id: &[u8; 32],
     ) -> dregg_sdk::SignedTurn {
-        let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
-            mission_id,
-            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
-        )
-        .unwrap();
+        // ⚠ The solving code cannot be written down: the instance is drawn per
+        // (slot, mission, PLAYER), so it differs for every fixture signer. Ask Lean
+        // for this player's answer exactly as the node does.
+        // `mission_id` is preserved because callers use a WRONG one (2, against an
+        // activated mission 1) to exercise the adapter's semantic refusal. Only the
+        // CODE is derived.
+        let solving = crate::poa_signal_adapter::solving_claim_for_finality_test(
+            &crate::poa_signal_adapter::fixture_signal_head_for_finality_test(*federation_id),
+            &crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(*federation_id),
+            *federation_id,
+            cclerk.public_key().0,
+            [0u8; 32],
+        );
+        let claim = dregg_sdk::poa_signal::SignalClaimV1::new(mission_id, solving.code()).unwrap();
         let mut turn =
             dregg_sdk::poa_signal::signal_claim_turn(&cclerk.public_key().0, nonce, None, claim);
         assert_eq!(turn.agent, actor, "fixture actor is the signing identity");
@@ -12544,6 +12553,15 @@ mod tests {
                 s.store
                     .initialize_poa_signal_head(&head)
                     .expect("install authenticated PoA Signal test deployment");
+                // A finalized Signal claim now requires an OPEN SLOT: without one
+                // the node refuses rather than drawing an uncommitted instance.
+                s.store
+                    .install_poa_signal_slot_for_test(
+                        &crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(
+                            federation_id,
+                        ),
+                    )
+                    .expect("open a PoA Signal slot for the test deployment");
             }
         }
         (state, actor_cclerk, actor, federation_id)
@@ -13363,7 +13381,7 @@ mod tests {
 
         let mixed_claim = dregg_sdk::poa_signal::SignalClaimV1::new(
             1,
-            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).expect("bounded Signal code"),
+            dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).expect("bounded Signal code"),
         )
         .expect("bounded mission");
         let mixed = signed_signal_effects_turn(

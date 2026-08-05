@@ -22,15 +22,22 @@
 //!
 //! Rust therefore computes nothing here. It carries bytes to Lean and back.
 //!
-//! # ⚠ STATUS: the export does not exist yet
+//! # STATUS: closed
 //!
-//! `metatheory/` exports `dregg_poa_signal_judge` but exports NO derivation entry
-//! point, so this seam currently compiles to its refusing arm and every scored
-//! Signal run fails closed with [`poa_slot_derive_available`] `== false`. That is a
-//! missing *export*, not a missing design: the required Lean shape is written out in
-//! full at [`SLOT_DERIVE_INPUT_FORMAT`] below, and landing it is two `@[export]`
-//! wrappers plus an archive rebuild. Until then the Signal path does not run, and it
-//! refuses loudly rather than deriving anything in Rust.
+//! `Dregg2.Games.PathOfAngels.SlotDeriveRuntime.slotDeriveFFI` is
+//! `@[export dregg_poa_signal_slot_derive]` and in the archive, and the symbol is on
+//! `REQUIRED_DECISION_EXPORTS`, so a `--release` / `DREGG_REQUIRE_LEAN=1` build now
+//! REFUSES to link an archive without it. This seam compiles to its live arm.
+//!
+//! (It shipped ahead of the export, compiling to the refusing arm, so that the gap
+//! was a named refusal rather than a Rust sponge written to avoid one.)
+//!
+//! ⚠ `SlotDeriveRuntime.decodeRequest` is `canonicalDecode parseRequestJson
+//! Request.toJson` — Lean re-encodes what it parsed and compares BYTES. The request
+//! key order at [`SLOT_DERIVE_INPUT_FORMAT`] is therefore load-bearing, not
+//! cosmetic: any other order is refused with the `""` sentinel, which every caller
+//! sees as an ordinary rejection. Callers must build this wire from a type whose
+//! field order is fixed, never from a map whose order depends on a cargo feature.
 
 use crate::{ensure_lean_init, lean_init_once};
 

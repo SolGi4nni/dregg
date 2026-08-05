@@ -2226,6 +2226,14 @@ pub fn router_with_cors(
         // finalized Token-2022 bytes. This tier never enters governance weight.
         .merge(crate::poa_galley_api::routes())
         .merge(crate::poa_holding_api::routes())
+        // Where a finished run lands and can be read back. Public because the
+        // record is the public artifact: it publishes what the Lean read model
+        // chose to publish (never the Signal target), it is rate-limited and
+        // in-flight capped because it re-judges the finalized history through
+        // native Lean on every request, and it refuses rather than serving a
+        // partial view. Before the first turn settles it shows the installed
+        // world and mission, which is a true thing to show.
+        .merge(crate::poa_records_api::routes())
         .route(
             "/cipherclerk/unlock",
             post({
@@ -9968,7 +9976,7 @@ mod tests {
     ) -> SignedTurn {
         let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
             mission_id,
-            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).expect("bounded code"),
+            dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).expect("bounded code"),
         )
         .expect("bounded mission");
         let mut turn =

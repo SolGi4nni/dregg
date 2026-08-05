@@ -226,6 +226,57 @@ struct LiveInstance {
     target: SignalCodeDto,
 }
 
+/// The `POA-SLOT-DERIVE-1` request, with the wire's key order as its FIELD order.
+///
+/// ⚠ THE ORDER OF THESE FIELDS IS THE WIRE. It is not style.
+///
+/// `SlotDeriveRuntime.decodeRequest` is `canonicalDecode parseRequestJson
+/// Request.toJson`: Lean parses, re-encodes in `Request.toJson`'s pinned order, and
+/// compares BYTES. A request whose keys are in any other order decodes to `none`,
+/// `slotDeriveFFI` returns its `""` refusal sentinel, and every scored Signal run
+/// fails as [`SignalAdapterError::LeanRejected`] — silently and totally.
+///
+/// This was a `serde_json::json!` literal. `json!` preserves insertion order only
+/// when serde_json's `preserve_order` feature is on, and **nothing in this
+/// workspace declares it** — `node/Cargo.toml` asks only for `raw_value`. It was on
+/// by feature unification from a transitive dependency, so the correct wire was an
+/// accident of the dependency graph, revocable by an unrelated crate dropping a
+/// feature nobody would connect to Path of Angels. A derived `Serialize` emits
+/// fields in declaration order unconditionally, so the wire no longer depends on
+/// any feature being anything.
+///
+/// `slot_derive_request_is_the_exact_pinned_wire` fails if this order changes.
+#[derive(Serialize)]
+struct SlotDeriveRequestDto<'a> {
+    format: &'static str,
+    slot: u64,
+    secret: &'a str,
+    mission_id: u64,
+    epoch: u64,
+    federation_id: &'a str,
+    content_session: &'a str,
+    player_key: &'a str,
+}
+
+/// Build the exact canonical derivation request. Extracted from
+/// [`derive_live_instance`] so a test can assert its BYTES without a Lean archive:
+/// the order gate must be able to fail on a machine that cannot run the export.
+fn slot_derive_request_wire(
+    context: &SignalAuthorityContext,
+) -> Result<String, SignalAdapterError> {
+    serde_json::to_string(&SlotDeriveRequestDto {
+        format: dregg_lean_ffi::poa_slot_derive_ffi::SLOT_DERIVE_INPUT_FORMAT,
+        slot: context.slot_state.slot,
+        secret: &context.slot_state.secret,
+        mission_id: context.config.mission.mission_id,
+        epoch: context.config.mission.epoch,
+        federation_id: &context.config.mission.federation_id,
+        content_session: &context.config.mission.content_session,
+        player_key: &context.carrier.player_key,
+    })
+    .map_err(|error| SignalAdapterError::Json(error.to_string()))
+}
+
 /// Ask Lean for `commit`, `runSeedFor` and `targetFromSeed` of this slot state and
 /// this player.
 ///
@@ -236,18 +287,7 @@ struct LiveInstance {
 fn derive_live_instance(
     context: &SignalAuthorityContext,
 ) -> Result<LiveInstance, SignalAdapterError> {
-    let request = serde_json::json!({
-        "format": dregg_lean_ffi::poa_slot_derive_ffi::SLOT_DERIVE_INPUT_FORMAT,
-        "slot": context.slot_state.slot,
-        "secret": context.slot_state.secret,
-        "mission_id": context.config.mission.mission_id,
-        "epoch": context.config.mission.epoch,
-        "federation_id": context.config.mission.federation_id,
-        "content_session": context.config.mission.content_session,
-        "player_key": context.carrier.player_key,
-    });
-    let wire = serde_json::to_string(&request)
-        .map_err(|error| SignalAdapterError::Json(error.to_string()))?;
+    let wire = slot_derive_request_wire(context)?;
     let reply = dregg_lean_ffi::poa_slot_derive_ffi::derive_poa_slot_instance(&wire)
         .map_err(SignalAdapterError::LeanTransport)?
         .ok_or(SignalAdapterError::LeanRejected)?;
@@ -1485,6 +1525,47 @@ pub(crate) fn fixture_signal_slot_for_finality_test(
     )
 }
 
+/// The claim that SOLVES the instance this exact context draws.
+///
+/// ⚠ There is no longer any such thing as "the answer to mission 1". The run seed
+/// is `runSeedFor ⟨secret, slot, playerKey⟩ ctx`, so the target moves with the
+/// federation, the content session, the slot, the secret AND the player. A test
+/// that hardcodes a code can only solve the one context that code was copied from,
+/// and every other context it is pointed at fails as `LeanRejected` — which reads
+/// like a broken judge and is actually the split working.
+///
+/// So tests ask Lean what the answer is, exactly as the node does. This is not a
+/// leak: the caller must already hold the slot secret to get here, and holding the
+/// secret is what knowing the instance MEANS.
+///
+/// Requires the derivation export; panics if absent, because a test that silently
+/// stopped checking the judge would be worse than one that stops.
+pub(crate) fn solving_claim_for_finality_test(
+    head: &dregg_persist::PoaSignalHeadV1,
+    slot: &dregg_persist::PoaInstalledSlotV1,
+    active_federation_id: [u8; 32],
+    player_key: [u8; 32],
+    actor_root: [u8; 32],
+) -> SignalClaimV1 {
+    let context = authority_context_from_persisted_head(
+        head,
+        slot,
+        active_federation_id,
+        player_key,
+        actor_root,
+    )
+    .expect("fixture authority context");
+    let instance = derive_live_instance(&context).expect("Lean must derive the fixture instance");
+    let code = SignalCode::new(
+        instance.target.low,
+        instance.target.mid,
+        instance.target.high,
+    )
+    .expect("a derived target is a legal code");
+    SignalClaimV1::new(context.config.mission.mission_id, code)
+        .expect("a derived claim is a legal claim")
+}
+
 pub(crate) fn fixture_signal_head_for_finality_test(
     authority_id: [u8; 32],
 ) -> dregg_persist::PoaSignalHeadV1 {
@@ -1534,8 +1615,20 @@ mod tests {
         bytes.strip_suffix('\n').expect("one fixture newline")
     }
 
+    /// The SOLVING claim for the committed fixture.
+    ///
+    /// ⚠ This was `(2, 4, 1)` — the old `Emit.signalTarget_literal`, back when the
+    /// run seed was a published constant and every mission had one answer forever.
+    /// The fixture's instance is now drawn from its slot secret, and its target is
+    /// `targetFromSeed(d15ad7b7…)` = `(5, 0, 5)`: `0xd1 % 6 = 5`, `0x5a % 6 = 0`,
+    /// `0xd7 % 6 = 5`.
+    ///
+    /// Nothing here is a leak. This is a test fixture whose secret is committed, so
+    /// its answer is computable BY ANYONE HOLDING THAT SECRET — which is exactly the
+    /// property the split preserves, and exactly why no real slot secret may ever be
+    /// checked in.
     fn claim() -> SignalClaimV1 {
-        SignalClaimV1::new(1, SignalCode::new(2, 4, 1).unwrap()).unwrap()
+        SignalClaimV1::new(1, SignalCode::new(5, 0, 5).unwrap()).unwrap()
     }
 
     fn hex32(value: &str) -> [u8; 32] {
@@ -1554,6 +1647,100 @@ mod tests {
 
     fn fixture_slot(authority_id: [u8; 32]) -> dregg_persist::PoaInstalledSlotV1 {
         fixture_signal_slot_for_finality_test(authority_id)
+    }
+
+    /// ⚠ THE KEY-ORDER GATE.
+    ///
+    /// `SlotDeriveRuntime.decodeRequest` is `canonicalDecode parseRequestJson
+    /// Request.toJson`: Lean re-encodes what it parsed and compares BYTES, so a
+    /// request whose keys are in any other order is refused and every scored Signal
+    /// run dies as `LeanRejected`. Nothing else in the Rust test suite would notice
+    /// — the value is identical, only the spelling moves — so this asserts the
+    /// spelling against a LITERAL rather than against a re-serialization of itself.
+    ///
+    /// A pin against its own definition is decoration; the second source here is
+    /// the key order written out in `SlotDeriveRuntime.lean:114-122`, transcribed
+    /// by hand.
+    ///
+    /// This is the test that would have caught the `serde_json::json!` bomb: `json!`
+    /// preserved insertion order only because `preserve_order` was on by feature
+    /// unification, and NOTHING in this workspace declares it. Had an unrelated
+    /// crate dropped that feature, `json!` would have serialized alphabetically —
+    /// `content_session` first, `slot` last — and this assertion is what turns that
+    /// into a named failure instead of a dead game.
+    #[test]
+    fn slot_derive_request_is_the_exact_pinned_wire() {
+        let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
+        let context = parsed.authority_context();
+        let wire = slot_derive_request_wire(&context).unwrap();
+
+        assert_eq!(
+            wire,
+            concat!(
+                r#"{"format":"POA-SLOT-DERIVE-1""#,
+                r#","slot":9"#,
+                r#","secret":"7777777777777777777777777777777777777777777777777777777777777777""#,
+                r#","mission_id":1"#,
+                r#","epoch":1"#,
+                r#","federation_id":"4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a""#,
+                r#","content_session":"504f412d5349472d310000000000000000000000000000000000000000000000""#,
+                r#","player_key":"5555555555555555555555555555555555555555555555555555555555555555"}"#,
+            ),
+            "the slot-derive request wire changed; Lean's canonicalDecode compares \
+             BYTES against Request.toJson, so this is a total Signal outage, not a \
+             formatting nit"
+        );
+    }
+
+    /// The order gate above is only worth having if a reordered wire is actually
+    /// refused. This asserts the CONSEQUENCE against the real export, so the gate
+    /// measures a live property rather than a belief about one.
+    ///
+    /// ⚠ Not covered by `dregg-lean-ffi/tests/poa_slot_derive_probe.rs`'s
+    /// `transposed_keys_are_refused`, despite the name: that one INSERTS a
+    /// `secret_placeholder` key, so it is refused by `exactKeys` on the key SET and
+    /// would still pass if `canonicalDecode`'s byte-comparison seal were deleted.
+    /// This case keeps the key set identical and moves only the ORDER, which is the
+    /// property the whole field-order discipline rests on.
+    ///
+    /// It also binds the wire this module actually BUILDS to the live export —
+    /// accepted, not merely well-shaped.
+    ///
+    /// Skipped (not silently passed) when the archive lacks the export.
+    #[test]
+    fn a_reordered_slot_derive_request_is_refused_by_lean() {
+        if !dregg_lean_ffi::poa_slot_derive_ffi::poa_slot_derive_available() {
+            eprintln!("skipped: dregg_poa_signal_slot_derive is not in the linked archive");
+            return;
+        }
+        let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
+        let context = parsed.authority_context();
+        let honest = slot_derive_request_wire(&context).unwrap();
+        assert!(
+            dregg_lean_ffi::poa_slot_derive_ffi::derive_poa_slot_instance(&honest)
+                .unwrap()
+                .is_some(),
+            "the pinned wire must be accepted, or this test proves nothing"
+        );
+
+        // Same values, alphabetical keys — exactly what `json!` would emit if
+        // `preserve_order` were ever unified away.
+        let alphabetical = concat!(
+            r#"{"content_session":"504f412d5349472d310000000000000000000000000000000000000000000000""#,
+            r#","epoch":1"#,
+            r#","federation_id":"4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a""#,
+            r#","format":"POA-SLOT-DERIVE-1""#,
+            r#","mission_id":1"#,
+            r#","player_key":"5555555555555555555555555555555555555555555555555555555555555555""#,
+            r#","secret":"7777777777777777777777777777777777777777777777777777777777777777""#,
+            r#","slot":9}"#,
+        );
+        assert_eq!(
+            dregg_lean_ffi::poa_slot_derive_ffi::derive_poa_slot_instance(alphabetical).unwrap(),
+            None,
+            "Lean accepted a reordered request; the canonical seal is not order-sensitive \
+             and the key-order gate above is decoration"
+        );
     }
 
     #[derive(Clone, Copy)]
@@ -1581,12 +1768,28 @@ mod tests {
         let authority = fixture_head().authority_id();
         let head = fixture_signal_head_for_finality_test(authority);
         store.initialize_poa_signal_head(&head).unwrap();
+        // The replay path loads the slot from the STORE rather than trusting the
+        // journal's copy, so a fixture must actually open one.
+        store
+            .install_poa_signal_slot_for_test(&fixture_slot(authority))
+            .unwrap();
 
         let clerk = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0x31; 32]));
-        let claim = claim();
+        let actor_root = [0x44; 32];
+        // ⚠ Derived BEFORE the turn is built. The replay reconstructs the judge
+        // input from the finalized turn's claim and compares BYTES, so the turn and
+        // the stored input must carry the same code. The instance depends on the
+        // PLAYER, and this fixture plays as `clerk`, not as the committed fixture's
+        // `5555…`, so the answer is asked for rather than written down.
+        let claim = solving_claim_for_finality_test(
+            &head,
+            &fixture_slot(authority),
+            authority,
+            clerk.public_key().0,
+            actor_root,
+        );
         let turn = dregg_sdk::poa_signal::signal_claim_turn(&clerk.public_key().0, 0, None, claim);
         let signed = clerk.sign_turn(&turn);
-        let actor_root = [0x44; 32];
         let context = authority_context_from_persisted_head(
             &head,
             &fixture_slot(authority),

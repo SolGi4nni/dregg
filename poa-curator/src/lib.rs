@@ -2412,6 +2412,12 @@ fn validate_schema_contract(schema: &Value, game_paths: &[String]) -> Result<(),
             "fnv1a64_pattern",
             "content_root",
             "activation_digest",
+            // ⚠ The hidden-instance split added these two, in this position. They
+            // are pinned as an EXACT key set, not waved through: the point of this
+            // check is that a descriptor cannot smuggle a field past the curator,
+            // so a third key nobody designed must still refuse.
+            "slot_opening",
+            "run_instance",
             "unknown_fields",
             "unknown_artifacts",
         ],
@@ -2511,6 +2517,153 @@ fn validate_schema_contract(schema: &Value, game_paths: &[String]) -> Result<(),
     {
         return Err(CuratorError::Catalog(
             "activation_digest contract differs from POAG1 v1".into(),
+        ));
+    }
+
+    // The slot opening: what a client must be handed before a scored run, and what
+    // it must refuse without. It cannot live in the content bundle — that is signed
+    // once per content epoch and slots open afterwards — so it is separately
+    // curator-signed, which is what `curator_pubkey` + `signature` are doing in the
+    // required list.
+    let opening = contract
+        .get("slot_opening")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("slot_opening is not an object".into()))?;
+    require_exact_object_keys(
+        opening,
+        &[
+            "required",
+            "commitment",
+            "opened_after_close",
+            "verify",
+            "missing_opening",
+        ],
+        "slot_opening contract",
+    )
+    .map_err(CuratorError::Catalog)?;
+    require_exact_string_array(
+        opening.get("required"),
+        &[
+            "slot",
+            "mission_id",
+            "commitment",
+            "curator_pubkey",
+            "signature",
+        ],
+        "slot_opening.required",
+    )?;
+    require_exact_string_array(
+        opening.get("opened_after_close"),
+        &["slot", "slot_secret"],
+        "slot_opening.opened_after_close",
+    )?;
+    // ⚠ `missing_opening` is the fail-closed instruction to every client: a run
+    // accepted without an opening has no binding to any instance at all. If this
+    // ever reads anything but `refuse`, the commitment scheme is decorative.
+    if opening.get("verify").and_then(Value::as_str)
+        != Some("commit(slot_secret, slot) == commitment")
+        || opening.get("missing_opening").and_then(Value::as_str) != Some("refuse")
+    {
+        return Err(CuratorError::Catalog(
+            "slot_opening contract does not require commitment verification and refusal".into(),
+        ));
+    }
+    let commitment = opening
+        .get("commitment")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("slot_opening.commitment is not an object".into()))?;
+    require_exact_object_keys(
+        commitment,
+        &["algorithm", "domain", "preimage", "binding_bits"],
+        "slot_opening.commitment contract",
+    )
+    .map_err(CuratorError::Catalog)?;
+    // 124 bits is the sponge CAPACITY bound (eight lanes, ~248 bits, so ~2^124 to
+    // find a colliding secret). It is the number to quote, not 2^248, and a schema
+    // that advertises a bigger one is overstating what the commitment binds.
+    if commitment.get("algorithm").and_then(Value::as_str) != Some("poseidon2-babybear-w16")
+        || commitment.get("domain").and_then(Value::as_str) != Some("POAC")
+        || commitment.get("preimage").and_then(Value::as_str)
+            != Some("domain || slot || slot_secret")
+        || commitment.get("binding_bits").and_then(Value::as_u64) != Some(124)
+    {
+        return Err(CuratorError::Catalog(
+            "slot_opening.commitment contract differs from the emitted hidden-instance scheme"
+                .into(),
+        ));
+    }
+
+    // The per-run instance block, which replaced the published `target`/`run_seed`.
+    let instance = contract
+        .get("run_instance")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("run_instance is not an object".into()))?;
+    require_exact_object_keys(
+        instance,
+        &[
+            "derivation_module",
+            "function",
+            "preimage",
+            "purposes",
+            "published_anywhere",
+            "operator_knows_instance",
+            "practice",
+        ],
+        "run_instance contract",
+    )
+    .map_err(CuratorError::Catalog)?;
+    // ⚠ `published_anywhere: false` is the whole claim of the split. A schema that
+    // says `true` is describing the OLD game, where the seed was in the catalog and
+    // `targetFromSeed` is public, so anyone who fetched the bundle had the answer.
+    if instance.get("derivation_module").and_then(Value::as_str)
+        != Some(POA_INSTANCE_DERIVATION_MODULE)
+        || instance.get("function").and_then(Value::as_str) != Some("runSeedFor(draw, mission)")
+        || instance.get("preimage").and_then(Value::as_str)
+            != Some(
+                "POAD || purpose || slot || mission_id || epoch || slot_secret || federation_id || content_session || player_key",
+            )
+        || instance.get("published_anywhere").and_then(Value::as_bool) != Some(false)
+        || instance
+            .get("operator_knows_instance")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        return Err(CuratorError::Catalog(
+            "run_instance contract differs from the emitted hidden-instance derivation".into(),
+        ));
+    }
+    let purposes = instance
+        .get("purposes")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("run_instance.purposes is not an object".into()))?;
+    require_exact_object_keys(purposes, &["judged", "practice"], "run_instance.purposes")
+        .map_err(CuratorError::Catalog)?;
+    if purposes.get("judged").and_then(Value::as_u64) != Some(1)
+        || purposes.get("practice").and_then(Value::as_u64) != Some(2)
+    {
+        return Err(CuratorError::Catalog(
+            "run_instance.purposes tags differ from the emitted domain separation".into(),
+        ));
+    }
+    let practice = instance
+        .get("practice")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("run_instance.practice is not an object".into()))?;
+    require_exact_object_keys(
+        practice,
+        &["seed", "scored", "transcript_field", "judge_accepts"],
+        "run_instance.practice contract",
+    )
+    .map_err(CuratorError::Catalog)?;
+    // A rehearsal a judge would score is not a rehearsal; it is a second scored
+    // path with client-chosen entropy, which is the hole this whole split closes.
+    if practice.get("seed").and_then(Value::as_str) != Some("client-chosen")
+        || practice.get("scored").and_then(Value::as_bool) != Some(false)
+        || practice.get("transcript_field").and_then(Value::as_str) != Some("mode")
+        || practice.get("judge_accepts").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(CuratorError::Catalog(
+            "run_instance.practice contract does not keep rehearsal unscored".into(),
         ));
     }
     Ok(())
@@ -3436,6 +3589,27 @@ mod tests {
                     "framing": "schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64",
                     "location": "detached verified activation; excluded from manifest preimage"
                 },
+                "slot_opening": {
+                    "required": ["slot", "mission_id", "commitment", "curator_pubkey", "signature"],
+                    "commitment": {
+                        "algorithm": "poseidon2-babybear-w16",
+                        "domain": "POAC",
+                        "preimage": "domain || slot || slot_secret",
+                        "binding_bits": 124
+                    },
+                    "opened_after_close": ["slot", "slot_secret"],
+                    "verify": "commit(slot_secret, slot) == commitment",
+                    "missing_opening": "refuse"
+                },
+                "run_instance": {
+                    "derivation_module": "Dregg2.Games.PathOfAngels.HiddenInstance",
+                    "function": "runSeedFor(draw, mission)",
+                    "preimage": "POAD || purpose || slot || mission_id || epoch || slot_secret || federation_id || content_session || player_key",
+                    "purposes": {"judged": 1, "practice": 2},
+                    "published_anywhere": false,
+                    "operator_knows_instance": true,
+                    "practice": {"seed": "client-chosen", "scored": false, "transcript_field": "mode", "judge_accepts": false}
+                },
                 "unknown_fields": "reject",
                 "unknown_artifacts": "reject"
             }
@@ -3765,6 +3939,74 @@ mod tests {
 
     /// The instance declaration is the field that says the answer is elsewhere.
     /// Every way of drifting it is a refusal, not a reinterpretation.
+    /// ⚠ A STALE BUNDLE MUST NOT SILENTLY PASS.
+    ///
+    /// The schema contract is what stops a descriptor smuggling a field past the
+    /// curator, so the migration to the hidden-instance shape had to PIN the new
+    /// exact key set, not widen it. These cases are the two directions that matter:
+    /// an OLD v1 contract (no `slot_opening`, no `run_instance`) must refuse, and a
+    /// contract carrying a third key nobody designed must refuse too.
+    ///
+    /// This is the check that caught the re-emitted-but-unmigrated artifacts, which
+    /// is exactly the failure mode it exists for.
+    #[test]
+    fn hostile_schema_contract_drift_refuses() {
+        for mutate in [
+            // The stale v1 shape: both new blocks absent.
+            (|schema: &mut Value| {
+                let contract = schema["contract"].as_object_mut().unwrap();
+                contract.remove("slot_opening");
+                contract.remove("run_instance");
+            }) as fn(&mut Value),
+            |schema: &mut Value| {
+                schema["contract"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("slot_opening");
+            },
+            |schema: &mut Value| {
+                schema["contract"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("run_instance");
+            },
+            // A key nobody designed.
+            |schema: &mut Value| {
+                schema["contract"]["run_instance_v2"] = Value::from("annex");
+            },
+            // The instance is published after all — the OLD game, relabelled.
+            |schema: &mut Value| {
+                schema["contract"]["run_instance"]["published_anywhere"] = Value::from(true);
+            },
+            // A client may play without an opening: the commitment binds nothing.
+            |schema: &mut Value| {
+                schema["contract"]["slot_opening"]["missing_opening"] = Value::from("allow");
+            },
+            // Rehearsal becomes scored: a second scored path on client entropy.
+            |schema: &mut Value| {
+                schema["contract"]["run_instance"]["practice"]["scored"] = Value::from(true);
+            },
+            // The opening stops being curator-signed.
+            |schema: &mut Value| {
+                schema["contract"]["slot_opening"]["required"] =
+                    Value::from(vec!["slot", "mission_id", "commitment"]);
+            },
+            // Overstating what the commitment binds.
+            |schema: &mut Value| {
+                schema["contract"]["slot_opening"]["commitment"]["binding_bits"] = Value::from(248);
+            },
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let manifest = write_bundle(dir.path());
+            mutate_json(dir.path().join(SCHEMA_PATH), mutate);
+            repin_manifest(dir.path(), &manifest);
+            assert!(
+                matches!(Poag1Bundle::load(&manifest), Err(CuratorError::Catalog(_))),
+                "a drifted schema contract loaded"
+            );
+        }
+    }
+
     #[test]
     fn hostile_instance_declaration_drift_refuses() {
         for mutate in [

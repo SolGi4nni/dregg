@@ -455,6 +455,15 @@ fn write_bundle(root: &Path) -> (PathBuf, PathBuf) {
             "fnv1a64_pattern":"^[0-9a-f]{16}$",
             "content_root":{"algorithm":"sha256","domain":"path-of-angels/content-root/v1\0","framing":"file_count_be64 || (path_len_be64 || path_utf8 || content_len_be64 || content_bytes)*","entry_order":"path_ascending","paths":["games/signal-triangulation.json"]},
             "activation_digest":{"algorithm":"sha256","domain":"pathofangels.network/activation-digest/v1\0","framing":"schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64","location":"detached verified activation; excluded from manifest preimage"},
+            "slot_opening":{"required":["slot","mission_id","commitment","curator_pubkey","signature"],
+                "commitment":{"algorithm":"poseidon2-babybear-w16","domain":"POAC","preimage":"domain || slot || slot_secret","binding_bits":124},
+                "opened_after_close":["slot","slot_secret"],
+                "verify":"commit(slot_secret, slot) == commitment","missing_opening":"refuse"},
+            "run_instance":{"derivation_module":"Dregg2.Games.PathOfAngels.HiddenInstance",
+                "function":"runSeedFor(draw, mission)",
+                "preimage":"POAD || purpose || slot || mission_id || epoch || slot_secret || federation_id || content_session || player_key",
+                "purposes":{"judged":1,"practice":2},"published_anywhere":false,"operator_knows_instance":true,
+                "practice":{"seed":"client-chosen","scored":false,"transcript_field":"mode","judge_accepts":false}},
             "unknown_fields":"reject","unknown_artifacts":"reject"
         }
     })).unwrap();
@@ -462,7 +471,7 @@ fn write_bundle(root: &Path) -> (PathBuf, PathBuf) {
         "format":"POAG1-GAME", "schema_version":1,
         "game_id":"signal-triangulation", "ruleset":"signal-v1",
         "engine_module":"Dregg2.Games.PathOfAngels.SignalTriangulation",
-        "action_limit":5, "run_seed":"66".repeat(32), "definition":{}
+        "action_limit":5, "definition":{}
     }))
     .unwrap();
     let source = format!("sha256:{}", "11".repeat(32));
@@ -479,7 +488,10 @@ fn write_bundle(root: &Path) -> (PathBuf, PathBuf) {
             "ruleset":"signal-v1","reward_class":"non-economic-demo","action_limit":5,"privacy_grade":"public",
             "ballot_regime":"none","epoch":2,"federation_id":"33".repeat(32),"content_root":content_root,
             "activation":{"state":"detached-signature-required","digest_source":"POA-CONTENT-EPOCH-SIGNATURE-V1"},
-            "content_session":"55".repeat(32),"run_seed":"66".repeat(32),
+            "content_session":"55".repeat(32),
+            "instance":{"binding":"per-run-hidden-draw","disclosure":"oracle-only",
+                "derivation_module":"Dregg2.Games.PathOfAngels.HiddenInstance",
+                "commitment_published_in":"slot-opening"},
             "budget":{"intel":0,"supplies":0,"cohesion":0,"influence":0,"score":0,"relics":0},"allowed_relics":[],
             "descriptor_path":"games/signal-triangulation.json",
             "allowed_beta_discoveries":[{"mission_id":7,"artifact_id":447,"source_digest":source,"content_digest":game_digest}]

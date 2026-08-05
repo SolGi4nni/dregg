@@ -326,6 +326,33 @@ impl PersistentStore {
         Ok(status)
     }
 
+    /// Insert an installed slot with NO curator signature and NO Lean commitment
+    /// check, for cross-crate fixtures only.
+    ///
+    /// ⚠ This is the storage write with all three refusals removed. It exists
+    /// because the alternative — fixtures minting curator signatures — would put a
+    /// curator signing path in the node, and because the commitment check needs a
+    /// linked archive that some test lanes do not have. Nothing outside a test may
+    /// call it, and a slot placed this way is not evidence that a curator opened
+    /// anything.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn install_poa_signal_slot_for_test(&self, record: &PoaInstalledSlotV1) -> Result<()> {
+        let authority_id = record.envelope.statement.authority_id;
+        let slot = record.envelope.statement.slot;
+        let encoded = postcard::to_stdvec(record)
+            .map_err(|error| integrity(format!("cannot encode PoA slot record: {error}")))?;
+        let write = self.db.begin_write()?;
+        {
+            let mut slots = write.open_table(POA_SIGNAL_SLOT_V1)?;
+            let mut open = write.open_table(POA_SIGNAL_OPEN_SLOT_V1)?;
+            slots.insert(slot_key(authority_id, slot).as_slice(), encoded.as_slice())?;
+            open.insert(authority_id.as_slice(), slot)?;
+        }
+        write.commit()?;
+        Ok(())
+    }
+
     /// Load one installed slot by its coordinates.
     pub fn load_poa_signal_slot_v1(
         &self,

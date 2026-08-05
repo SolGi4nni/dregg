@@ -201,7 +201,43 @@ struct JudgeInputEnvelope {
     world: Box<RawValue>,
     canon: Box<RawValue>,
     carrier: Box<RawValue>,
+    slot_state: SlotStateEnvelope,
     request: Box<RawValue>,
+}
+
+/// The slot state as a REVIEW surface: slot and commitment, and no secret.
+///
+/// ⚠ `secret` is deserialized into [`serde::de::IgnoredAny`], which consumes the
+/// value and binds nothing. This is a structural drop, not a redaction: there is no
+/// field holding the bytes, so no future formatter, `Debug` impl or report field can
+/// reach them, and the struct cannot derive `Serialize` at all because `IgnoredAny`
+/// does not implement it. A `Box<RawValue>` here — the obvious choice, matching
+/// every sibling field — would have retained the secret verbatim and turned every
+/// archived review artifact into key material at rest.
+///
+/// A reviewer does not need it. What a review establishes is that the served
+/// instance matched the PUBLISHED commitment, and slot + commitment say that. The
+/// secret would let a reviewer re-derive the seed, but re-derivation is
+/// `dregg_poa_signal_slot_derive` run against a secret the reviewer holds — not one
+/// read out of a report.
+///
+/// The field is still required and still `deny_unknown_fields`: an envelope that
+/// omits `secret`, or carries anything else, is refused. Dropping the value is not
+/// the same as not checking the shape.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlotStateEnvelope {
+    slot: u64,
+    secret: serde::de::IgnoredAny,
+    commitment: String,
+}
+
+/// The two instance fields a client states. Deliberately partial: the request has
+/// many more, and this is only the slot binding.
+#[derive(Deserialize)]
+struct RequestSlotBinding {
+    slot: u64,
+    slot_commitment: String,
 }
 
 #[derive(Deserialize)]
@@ -818,6 +854,17 @@ fn verify_judge_state_binding(transition: &Transition) -> Result<(), String> {
         &input.request,
         &output.receipt,
     );
+    // The instance binding a reviewer CAN check without the secret: the slot and
+    // commitment the client stated must be the node's own slot state. That the
+    // commitment opens the secret, and that the run seed is its derivation, are
+    // `Judged.admissionChecks` — re-established by the native re-judge, not here.
+    let request_slot: RequestSlotBinding = serde_json::from_str(input.request.get())
+        .map_err(|error| format!("judge input request slot binding refused: {error}"))?;
+    if request_slot.slot != input.slot_state.slot
+        || request_slot.slot_commitment != input.slot_state.commitment
+    {
+        return Err("judge input request does not name the node's slot state".into());
+    }
     if input.config.get().as_bytes() != transition.predecessor.config
         || input.canon.get().as_bytes() != transition.predecessor.canon
     {
@@ -1091,8 +1138,14 @@ mod tests {
     }
 
     fn judge_pair(config: &str, canon: &str, sequence: u64, revision: u64) -> (Vec<u8>, Vec<u8>) {
+        // `slot_state` carries a secret on the real wire; this skeleton uses an
+        // obviously-fake one, and `SlotStateEnvelope` discards it either way.
         let input = format!(
-            "{{\"format\":\"POA-SIGNAL-IN-1\",\"config\":{config},\"world\":{{}},\"canon\":{canon},\"carrier\":{{}},\"request\":{{}}}}"
+            "{{\"format\":\"POA-SIGNAL-IN-1\",\"config\":{config},\"world\":{{}},\"canon\":{canon},\
+             \"carrier\":{{}},\"slot_state\":{{\"slot\":9,\"secret\":\"{secret}\",\"commitment\":\"{commitment}\"}},\
+             \"request\":{{\"slot\":9,\"slot_commitment\":\"{commitment}\"}}}}",
+            secret = "77".repeat(32),
+            commitment = "bc".repeat(32),
         );
         let successor_canon =
             format!("{{\"world\":{{\"sequence\":{sequence}}},\"revision\":{revision}}}");
@@ -1224,6 +1277,60 @@ mod tests {
             signal_bundle(judge_input, judge_output),
             String::from_utf8(judge_output.to_vec()).unwrap(),
         )
+    }
+
+    /// ⚠ THE SECRET MUST NOT REACH THE REVIEW SURFACE.
+    ///
+    /// `slot_state` on the judge wire carries the curator's per-slot SECRET. A
+    /// review report needs to establish that the served instance matched the
+    /// PUBLISHED commitment, and slot + commitment say that; the secret adds
+    /// nothing a reviewer can check that the commitment does not, and it would turn
+    /// every archived review artifact into key material at rest.
+    ///
+    /// So `SlotStateEnvelope` deserializes `secret` into `serde::de::IgnoredAny`.
+    /// This test pins BOTH halves against the real committed fixture, and needs no
+    /// Lean archive, so it gates the change on any machine:
+    ///
+    /// * the envelope still ACCEPTS the full wire shape (the field is required and
+    ///   `deny_unknown_fields` still applies — dropping a value is not the same as
+    ///   not checking the shape), and
+    /// * slot and commitment survive, so the reviewable binding is intact.
+    ///
+    /// The structural half is enforced by the compiler rather than here: there is no
+    /// field holding the secret, so no formatter can reach it, and `IgnoredAny` has
+    /// no `Serialize` impl, so this struct cannot be made to print one.
+    #[test]
+    fn the_review_envelope_takes_the_slot_state_and_drops_the_secret() {
+        let judge_input =
+            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
+                .strip_suffix(b"\n")
+                .expect("committed Signal fixture has one file newline");
+        let input: JudgeInputEnvelope = serde_json::from_slice(judge_input)
+            .expect("the review envelope must accept the real POA-SIGNAL-IN-1 wire");
+
+        assert_eq!(input.slot_state.slot, 9);
+        assert_eq!(
+            input.slot_state.commitment,
+            "bc7742888f4ed90ace371abf4b0be7dec5e22d47723bcfd01903a8aa2332a491"
+        );
+
+        // The fixture's secret, which must appear nowhere the envelope can reach.
+        let secret = "77".repeat(32);
+        assert!(
+            String::from_utf8_lossy(judge_input).contains(&secret),
+            "fixture no longer carries the secret this test is about; fix the test"
+        );
+        // `slot_state` is a typed value now, so the only strings it holds are these.
+        assert_ne!(input.slot_state.commitment, secret);
+
+        // A wire MISSING the secret is still refused: the shape is checked even
+        // though the value is discarded.
+        let without_secret =
+            String::from_utf8_lossy(judge_input).replace(&format!(r#""secret":"{secret}","#), "");
+        assert!(
+            serde_json::from_str::<JudgeInputEnvelope>(&without_secret).is_err(),
+            "the envelope accepted a slot_state with no secret; the shape is not being checked"
+        );
     }
 
     #[test]
