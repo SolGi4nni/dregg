@@ -44,12 +44,21 @@ are undone work. None is terminal.
 
 ## The five weld points (game demand → system improvement)
 
-### W1 — A precommitted seed. → dregg needs a usable randomness beacon.
+### W1 — A precommitted seed. → the beacon exists on both sides and was never wired.
 *Game:* each run draws its instance from a seed nobody can grind; the target never appears in a public
 artifact; the receipt proves the instance was fixed before play.
-*System:* PoA reached for a constant because there is no ergonomic committed-randomness primitive to
-reach for. Build one, in Lean, over finalized-epoch entropy, and let Automatafl and the daily Descent
-use the same thing. **Until W1 lands, no PoA score means anything and no leaderboard is worth having.**
+*System:* ⚠ **corrected 2026-08-05 — my first draft of this weld said "dregg has no ergonomic
+committed-randomness primitive, build one." That was wrong and I had not checked.** dregg has
+`Dregg2/Crypto/RandomnessBeacon.lean`, `BeaconSlotRegrounded`, `VRF`, `XmVrfRefinement`,
+`Dregg2/Apps/CommitRevealApp.lean`, and the `pqvrf` / `crypto-xmvrf` / `crypto-hashrand` / `dice`
+crates. PoA's own Lean already speaks commit-reveal (`SalvageCrate`, `DeckGenerator`, `BazaarGame`,
+`ArchiveLabDemonstrator`). What is missing is the **wire**: `RandomnessBeacon.lean` carries **no
+`@[export]`**, so there is no FFI path a node can call — the exact
+[[minted-census-from-the-lean-side]] predictor — and `pqvrf` is consumed only by `dice`,
+`crypto-xmvrf` by nothing at all. This is [[minted-gating-defaults-to-silence]], not a construction
+job: export the beacon, have the mission spec bind a beacon slot instead of a literal, and let
+Automatafl and the daily Descent consume the same seam.
+**Until W1 lands, no PoA score means anything and no leaderboard is worth having.**
 
 ### W2 — A judged transition the circuit can see. → the second `Effect::Custom` carve-out.
 *Measured:* PoA game results ride `Effect::EmitEvent` with a reserved topic string, and
