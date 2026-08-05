@@ -46,10 +46,18 @@ descriptor for each rather than one descriptor that quietly does two of them:
 
 ⚠ So: obligation (2) is emitted at full term count over PRE-SCALED points, which means the emitted
 `sumProg` instances take `sᵢ·Bᵢ` as given. That is exactly what obligation (3) supplies and exactly
-what is NOT closed at full width. Nothing here should be read as "the ξ-aggregate is verified
-in-AIR". What is true is: *the scalar vector is computed in-AIR at full fidelity; the 47-term group
-fold is computed in-AIR at full term count; the 255-plane scalar multiplication that joins them is
-demonstrated at 8 planes and priced at 255.*
+what is NOT closed at full width **on this machine**. Nothing in THIS FILE should be read as "the
+ξ-aggregate is verified in-AIR". What is true here is: *the scalar vector is computed in-AIR at full
+fidelity; the 47-term group fold is computed in-AIR at full term count; the 255-plane scalar
+multiplication that joins them is demonstrated at 8 planes and priced at 255.*
+
+⚑ **AND THE ξ-AGGREGATE'S OBLIGATION (3) IS NOW CLOSED ELSEWHERE, AT FULL WIDTH.**
+`Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm` emits the same 47-term aggregate on
+`PastaMsmBucketed`'s fused running-sum layout: the scalars enter as NUMBERS, the generators enter
+UNSCALED, and `T_COVER`'s permutation makes `sᵢ·Bᵢ` the trace's own work at `nbits = 255`, in 8 192
+rows. That descriptor — not this one — is what may be cited for "the ξ-aggregate scales in-circuit".
+⚠ It buys that at a real price, named in its header and not to be absorbed: its rows are denominated
+in the **unsound `fpMulCore`**, where every descriptor in THIS file is `PastaFieldSound`.
 
 ## ⚑ INCOMPLETE ADDITION, NAMED
 
@@ -510,6 +518,51 @@ def FT_TERMS : List Aff :=
          (qneg (qmul (qpow MinaWrapGroupGate.ZETA_SRS j) MinaWrapGroupGate.ZETA_DOM_M1))
          (MinaWrapGroupGate.TCHUNKS.getD j (0, 0, 1))))
 
+/-! ### §6c — ⚑ THE WELD TO o1-LABS, AS NAMED THEOREMS.
+
+Until now these four folds matched o1-labs' own values by **two adjacent `IO.println`s** in
+`EmitCommitStages.lean` — a human reading two lines of stdout and agreeing they were the same
+digits. A sibling lane deleted exactly that shape after finding all 174 of its constants correctly
+copied, and its reason is the reason these exist: *"one wrong digit would have given a
+self-consistent tree — Lean proving the program computes ITS constants, the harness pinning ITS
+digest, every gate green."*
+
+Each theorem below says the AFFINE fold this file emits a descriptor for lands on the value the
+gate cone already carries from Mina devnet block 539508 — and each of those goldens is separately
+`by decide`-checked against o1-labs' `PolyComm::multi_scalar_mul`. The `golds` printlns are
+deleted; a reader wanting the comparison reads these.
+
+⚠ What these do NOT say is that the SCALING is in-circuit — it is not, in this file. These are
+folds of PRE-SCALED points, and `MinaWrapXiAggregateMsm` is where the ξ-aggregate's scalar
+multiplication actually happens inside a descriptor. -/
+
+/-- ⚑ **THE ξ-AGGREGATE FOLD REACHES o1-LABS' AGGREGATE.** -/
+theorem the_xi_fold_is_o1_labs_aggregate :
+    sumOut XI_TERMS = toAff MinaWrapAggregationGate.COMBINED_GOLD := by decide
+
+/-- ⚑ **THE `public_comm` FOLD REACHES o1-LABS' `public_comm`** — 40 Lagrange bases at the negated
+public inputs, plus the `mask_custom` blinder, which is a TERM and not a decoration. -/
+theorem the_public_fold_is_o1_labs_public_comm :
+    sumOut PUBLIC_TERMS = toAff MinaWrapPublicCommGate.PUBLIC_COMM_GOLD := by decide
+
+/-- ⚑ **THE `ft_comm` FOLD REACHES o1-LABS' `ft_comm`.** -/
+theorem the_ft_fold_is_o1_labs_ft_comm :
+    sumOut FT_TERMS = toAff MinaWrapGroupGate.FT_COMM_GOLD := by decide
+
+/-- ⚑ **THE `f_comm` FOLD REACHES o1-LABS' `f_comm`** — one term, because
+`linearization.index_terms` is empty on the wrap side. -/
+theorem the_f_fold_is_o1_labs_f_comm :
+    sumOut [toAff MinaWrapGroupGate.fComm] = toAff MinaWrapGroupGate.F_COMM_GOLD := by decide
+
+/-- ⚑ **AND THE FOUR GOLDENS ARE FOUR DIFFERENT POINTS.** Without this, four theorems of the form
+`sumOut X = toAff G` would all be satisfied by a cone in which every `G` had collapsed to the same
+value — which is exactly what a wrong shared constant looks like. -/
+theorem the_four_goldens_are_distinct :
+    toAff MinaWrapAggregationGate.COMBINED_GOLD ≠ toAff MinaWrapPublicCommGate.PUBLIC_COMM_GOLD
+      ∧ toAff MinaWrapGroupGate.FT_COMM_GOLD ≠ toAff MinaWrapGroupGate.F_COMM_GOLD
+      ∧ toAff MinaWrapAggregationGate.COMBINED_GOLD ≠ toAff MinaWrapGroupGate.FT_COMM_GOLD := by
+  decide
+
 /-! ## §7 — THE CENSUS: what a full-width stage costs on this machine. -/
 
 /-- Instructions per ladder plane. -/
@@ -583,6 +636,32 @@ def piPair (u v : Fp) : List ℤ :=
 /-- The initial register file of every stage: all zero except the pinned inputs. -/
 def initRegs (r : Nat) (v : Nat) : RegFile := fun k => if k = r then v else 0
 
+/-! ### §8-pre — ⚑ THE STRICT REGISTER FILE IS THIS FILE'S INITIAL STATE, not a copy of it.
+
+Every trace below runs on `runRowsVecAt`, whose state is a strict `NREG`-entry `List Nat`. These
+two theorems are the only thing standing between that and the closures the stages were written
+against, and they are what makes the swap a REWRITE: `regsOf` of the strict initial file IS
+`initRegs`, so `runRowsVecAt_is_runRowsAt` applies and **no emitted byte can move.** -/
+
+/-- ⚑ **THE STRICT ZERO FILE IS `initRegs ZERO 0`.** -/
+theorem regsOf_zeroVec : regsOf zeroVec = initRegs ZERO 0 := by
+  funext k
+  unfold regsOf readVec zeroVec initRegs ZERO
+  rw [List.getD_eq_getElem?_getD]
+  rcases Nat.lt_or_ge k NREG with h | h
+  · rw [List.getElem?_replicate_of_lt h]; simp
+  · rw [List.getElem?_eq_none (by simpa using h)]; simp
+
+/-- ⚑ **AND THE STRICT PINNED FILE IS `initRegs r v`**, for any register the file actually has. -/
+theorem regsOf_pinVec (r v : Nat) (hr : r < NREG) : regsOf (pinVec r v) = initRegs r v := by
+  funext k
+  unfold regsOf pinVec initRegs
+  rcases Nat.lt_or_ge k NREG with h | h
+  · rw [readVec_map _ k h]
+  · rw [readVec_map_ge _ k (by omega)]
+    have : ¬ (k = r) := by omega
+    rw [if_neg this]
+
 /-! ### §8a — STAGE (S): the ξ scalar vector, FULL fidelity. -/
 
 def XI_HEIGHT : Nat := 64
@@ -625,8 +704,19 @@ theorem qLimbFast_agrees_below_80 :
       fun j => decide (qLimbFast j = Dregg2.Circuit.Emit.PastaFieldSound.qLimb j)) = true := by
   decide
 
+/-- ⚑ **THE ξ TRACE, on the STRICT register file.** `runRowsVecAt` threads an `NREG`-entry
+`List Nat` where `runRowsAt` threaded a closure; the closure generator is `Theta(d^2)` in the
+program depth, which is why this trace was emitted as a ZERO-BYTE file and withdrawn. -/
 def xiTrace : List (List ℤ) :=
-  runRowsAt PastaField.qN qLimbFast (initRegs TX XI) (witsOf xiProg) 0 (instrs xiProg)
+  runRowsVecAt PastaField.qN qLimbFast (pinVec TX XI) (witsOf xiProg) 0 (instrs xiProg)
+
+/-- ⚑ **AND NOT ONE BYTE MOVED.** The strict generator emits the closure generator's list, by
+`runRowsVecAt_is_runRowsAt` at `regsOf (pinVec TX XI) = initRegs TX XI` — so the fixture check is a
+confirmation of this theorem and not the reason to believe it. -/
+theorem xiTrace_is_the_closure_trace :
+    xiTrace = runRowsAt PastaField.qN qLimbFast (initRegs TX XI) (witsOf xiProg) 0 (instrs xiProg) := by
+  unfold xiTrace
+  rw [runRowsVecAt_is_runRowsAt _ _ _ _ _ _ (pinVec_length TX XI), regsOf_pinVec TX XI (by decide)]
 
 def xiPIs : List ℤ := piPair XI XI_46
 
@@ -658,7 +748,16 @@ lookup per row made trace generation quadratic in the fold's own cost. Measured:
 aggregate did not finish in four minutes. -/
 def foldTrace (terms : List Aff) : List (List ℤ) :=
   let p := foldProg terms
-  runRows (initRegs ZERO 0) (witsOf p) 0 (instrs p)
+  runRowsVecAt pN Dregg2.Circuit.Emit.PastaFieldSound.pLimb zeroVec (witsOf p) 0 (instrs p)
+
+/-- ⚑ **AND NOT ONE BYTE MOVED**, for EVERY term list — this is a theorem about the generator, not
+about the two committed fixtures, so the stages that never fit a fixture are covered by it too. -/
+theorem foldTrace_is_the_closure_trace (terms : List Aff) :
+    foldTrace terms
+      = (let p := foldProg terms; runRows (initRegs ZERO 0) (witsOf p) 0 (instrs p)) := by
+  unfold foldTrace
+  rw [runRowsVecAt_is_runRowsAt _ _ _ _ _ _ zeroVec_length, regsOf_zeroVec,
+    runRowsAt_is_the_base_field_one]
 
 def foldPIs (terms : List Aff) : List ℤ := piPair (sumOut terms).1 (sumOut terms).2
 
@@ -709,7 +808,14 @@ def ladderDesc : EffectVmDescriptor2 :=
 
 def ladderTrace : List (List ℤ) :=
   let p := ladderProg
-  runRows (initRegs ZERO 0) (witsOf p) 0 (instrs p)
+  runRowsVecAt pN Dregg2.Circuit.Emit.PastaFieldSound.pLimb zeroVec (witsOf p) 0 (instrs p)
+
+/-- ⚑ **AND NOT ONE BYTE MOVED** for the ladder either. -/
+theorem ladderTrace_is_the_closure_trace :
+    ladderTrace = (let p := ladderProg; runRows (initRegs ZERO 0) (witsOf p) 0 (instrs p)) := by
+  unfold ladderTrace
+  rw [runRowsVecAt_is_runRowsAt _ _ _ _ _ _ zeroVec_length, regsOf_zeroVec,
+    runRowsAt_is_the_base_field_one]
 
 def ladderRef : Aff := termOut SIGMA6_AFF SIGMA6_AFF.1 SIGMA6_AFF.2 DEMO_SCALAR DEMO_PLANES
 def ladderPIs : List ℤ := piPair ladderRef.1 ladderRef.2
@@ -735,5 +841,15 @@ def ladderPIs : List ℤ := piPair ladderRef.1 ladderRef.2
 #assert_axioms foldAir_mainRailOk
 #assert_axioms ladderAir_mainRailOk
 #assert_axioms qLimbFast_agrees_below_80
+#assert_axioms regsOf_zeroVec
+#assert_axioms regsOf_pinVec
+#assert_axioms xiTrace_is_the_closure_trace
+#assert_axioms foldTrace_is_the_closure_trace
+#assert_axioms ladderTrace_is_the_closure_trace
+#assert_axioms the_xi_fold_is_o1_labs_aggregate
+#assert_axioms the_public_fold_is_o1_labs_public_comm
+#assert_axioms the_ft_fold_is_o1_labs_ft_comm
+#assert_axioms the_f_fold_is_o1_labs_f_comm
+#assert_axioms the_four_goldens_are_distinct
 
 end Dregg2.Circuit.Emit.MinaWrapCommitStages

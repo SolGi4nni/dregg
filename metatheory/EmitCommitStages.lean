@@ -12,6 +12,7 @@ Names: `xi` (the ξ scalar vector), `pub` / `f` / `ft` / `agg` (the four group f
 `Dregg2.Circuit.Emit.MinaWrapCommitStages`.
 -/
 import Dregg2.Circuit.Emit.MinaWrapCommitStages
+import Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.MinaWrapCommitStages
@@ -50,13 +51,11 @@ def main (args : List String) : IO Unit :=
   | ["ladder"]     => IO.println (emitVmJson2 ladderDesc)
   | ["laddertrace"]=> IO.print (renderRows ladderTrace)
   | ["ladderpis"]  => IO.print (render ladderPIs ++ "\n")
-  | ["golds"]      => do
-      IO.println s!"agg_out  {(sumOut XI_TERMS)}"
-      IO.println s!"agg_gold {toAff Dregg2.Circuit.Emit.MinaWrapAggregationGate.COMBINED_GOLD}"
-      IO.println s!"pub_out  {(sumOut PUBLIC_TERMS)}"
-      IO.println s!"pub_gold {toAff Dregg2.Circuit.Emit.MinaWrapPublicCommGate.PUBLIC_COMM_GOLD}"
-      IO.println s!"ft_out   {(sumOut FT_TERMS)}"
-      IO.println s!"ft_gold  {toAff Dregg2.Circuit.Emit.MinaWrapGroupGate.FT_COMM_GOLD}"
-      IO.println s!"f_out    {(sumOut [toAff Dregg2.Circuit.Emit.MinaWrapGroupGate.fComm])}"
-      IO.println s!"f_gold   {toAff Dregg2.Circuit.Emit.MinaWrapGroupGate.F_COMM_GOLD}"
-  | _ => IO.eprintln "usage: EmitCommitStages.lean (sizes|golds|xi|pub|f|ft|agg|ladder)[trace|pis]"
+  -- ⚑ The `golds` case is DELETED. It printed each fold's output next to its o1-labs golden on
+  -- adjacent lines, and a human agreeing the digits matched was the entire weld. The comparison is
+  -- now four NAMED THEOREMS in `MinaWrapCommitStages` §6c —
+  -- `the_xi_fold_is_o1_labs_aggregate` and its three siblings, plus
+  -- `the_four_goldens_are_distinct` so they cannot all be satisfied by one collapsed constant.
+  | ["aggmsm"]     => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm.xiAggMsmDesc)
+  | _ => IO.eprintln
+      "usage: EmitCommitStages.lean (sizes|xi|pub|f|ft|agg|ladder)[trace|pis] | aggmsm"

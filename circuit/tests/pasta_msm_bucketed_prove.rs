@@ -88,10 +88,10 @@ const WINDOWED_SHA: &str = "7c1326f8c705aad8d9165bc97d7c2926a98b2d7ec0bdc756b85e
 
 /// ⚑ THE VESTA/STEP INSTANCE — the curve the deferred accumulator actually lives on.
 const V2_JSON: &str = include_str!("fixtures/pasta-msm-bucketed/pasta-msm-bucketed-vesta-c2.json");
-const V2_SHA: &str = "254dcc4dad109a23ea5a3947e680360bfb1e3719f731f4ef2d2bea59d2ab5b3a";
+const V2_SHA: &str = "b580a8f199a1acca7607429242342f55741aba43b5c41b18ab679caa0621706e";
 
-const C2_SHA: &str = "7fb69f71ab235db03648ca784c05cabd0e78d23df552ac497605430edd2db056";
-const C3_SHA: &str = "90d3e81c1b7f8f3859c4393afc5e892c98491ae2ff116cbe5dd78e340fba2b2c";
+const C2_SHA: &str = "5798a59c1957a2ef19f087540b1d9ec382d15d83d897b9cc75e055317fbe0a53";
+const C3_SHA: &str = "535d48f303041185156b41ec91b1ca1fd1ecea166507c89df7704f08b2927ad1";
 
 // ---------------------------------------------------------------------------------------------
 // The Lean row layout (`PastaMsmBucketed` §1), restated so a drift in either side reds HERE rather
@@ -389,10 +389,10 @@ fn lean_artifacts_are_pinned() {
         WINDOWED_SHA,
         "the inherited row template was re-emitted; re-read the Lean and re-pin"
     );
-    for (json, want, c, curve) in [
-        (C2_JSON, C2_SHA, 2usize, "pallas"),
-        (C3_JSON, C3_SHA, 3, "pallas"),
-        (V2_JSON, V2_SHA, 2, "vesta"),
+    for (json, want, n, nbits, c, curve) in [
+        (C2_JSON, C2_SHA, 27usize, 4usize, 2usize, "pallas"),
+        (C3_JSON, C3_SHA, 54, 6, 3, "pallas"),
+        (V2_JSON, V2_SHA, 27, 4, 2, "vesta"),
     ] {
         assert_eq!(
             sha256_hex(json.as_bytes()),
@@ -403,7 +403,14 @@ fn lean_artifacts_are_pinned() {
         // ⚑ THE CURVE IS IN THE NAME. A descriptor that emitted one curve's gadget under the
         // other's name is a wrong-curve proof no shape check catches, so the name is load-bearing
         // and `shape_of` reads the witness modulus straight off it.
-        assert_eq!(d.name, format!("dregg-pasta-msm-bucketed-{curve}-c{c}::v1"));
+        // ⚑ n AND nbits ARE IN THE NAME TOO, since 2026-08-05. They were not, and
+        // `bucketedRowDesc 27 4 2` and the full-width xi-aggregate `bucketedRowDesc 59 255 2`
+        // therefore emitted ONE string for two different AIRs. Lean's
+        // `the_emitted_family_has_no_two_artifacts_with_one_name` is that as a kernel fact.
+        assert_eq!(
+            d.name,
+            format!("dregg-pasta-msm-bucketed-{curve}-n{n}b{nbits}-c{c}::v1")
+        );
         assert_eq!(d.trace_width, WK);
         assert_eq!(d.public_input_count, PI_COUNT);
         assert_eq!(

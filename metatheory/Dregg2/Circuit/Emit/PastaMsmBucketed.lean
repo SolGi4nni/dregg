@@ -644,7 +644,8 @@ lookups, and 27 output PI bindings. `91` constraints, a CONSTANT at every `(n, n
 def bucketedRowDescOn (add : AddGadget) (curve : String)
     (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
     EffectVmDescriptor2 :=
-  { name        := "dregg-pasta-msm-bucketed-" ++ curve ++ "-c" ++ toString c ++ "::v1"
+  { name        := "dregg-pasta-msm-bucketed-" ++ curve ++ "-n" ++ toString n
+                     ++ "b" ++ toString nbits ++ "-c" ++ toString c ++ "::v1"
   , traceWidth  := WK
   , piCount     := PI_COUNT
   , tables      := bucketedTables n nbits c gens scal
@@ -672,6 +673,46 @@ theorem vesta_and_pallas_descriptors_differ (n nbits c : Nat)
     (bucketedRowDescVesta n nbits c gens scal).name
       ≠ (bucketedRowDesc n nbits c gens scal).name := by
   simp [bucketedRowDescVesta, bucketedRowDesc, bucketedRowDescOn]
+
+/-- ⚑ **THE NAME IS A KEY, NOT A LABEL — and until 2026-08-05 it was a label.**
+
+The name carried only the curve and `c`, so `bucketedRowDesc 27 4 2` and `bucketedRowDesc 59 255 2`
+— a 64-row toy over 27 generators and an 8 192-row full-width MSM over 59 — emitted the SAME string
+`dregg-pasta-msm-bucketed-pallas-c2::v1`. Two different AIRs, one identifier: exactly the shape that
+resolves a lookup to the wrong artifact and reads as agreement.
+
+This pins the WHOLE EMITTED FAMILY pairwise distinct — the three artifacts `EmitPastaBucketed.lean`
+produces plus the ξ-aggregate `MinaWrapXiAggregateMsm` adds — rather than asserting a general
+injectivity of decimal-string concatenation, which is true but is a statement about `Nat.toString`
+and not about this cone. If a fifth instance is emitted, it belongs in this list, and a name it
+shares with an existing one turns the gate RED at the point of addition.
+
+⚠ It is a statement about `curve`, `n`, `nbits` and `c` ONLY; `gens` and `scal` are NOT in the name,
+so two instances differing only in their declared scalars still share one. That is correct — they
+are the same AIR — but it means **the name must never be what a test resolves a SCALAR SET by.**
+Resolve those by the manifest.
+
+⚠ FLAG DAY: every `pasta-msm-bucketed-*.json` re-emits with a new `name`, and
+`circuit/tests/pasta_msm_bucketed_prove.rs`'s name assertion changes shape with it. Nothing
+migrates; the old string simply no longer appears. -/
+def EMITTED_FAMILY : List String :=
+  [ (bucketedRowDesc 27 4 2 [] []).name          -- pasta-msm-bucketed-c2.json
+  , (bucketedRowDesc 54 6 3 [] []).name          -- pasta-msm-bucketed-c3.json
+  , (bucketedRowDescVesta 27 4 2 [] []).name     -- pasta-msm-bucketed-vesta-c2.json
+  , (bucketedRowDesc 59 255 2 [] []).name ]      -- mina-xi-aggregate-msm.json
+
+/-- ⚑ **NO TWO EMITTED ARTIFACTS SHARE A NAME.** Under the old naming this was FALSE: entries 0 and
+3 were both `dregg-pasta-msm-bucketed-pallas-c2::v1`. -/
+theorem the_emitted_family_has_no_two_artifacts_with_one_name :
+    EMITTED_FAMILY.Nodup := by decide
+
+/-- ⚑ …and the collision that motivated the rename, named as the specific pair it was: the toy
+`(27, 4)` and the full-width ξ-aggregate `(59, 255)`, both at `c = 2` on Pallas. -/
+theorem the_toy_and_the_full_width_instance_no_longer_collide
+    (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    (bucketedRowDesc 27 4 2 gens scal).name ≠ (bucketedRowDesc 59 255 2 gens scal).name := by
+  simp only [bucketedRowDesc, bucketedRowDescOn]
+  decide
 
 /-- ⚑ **The CURVE ARITHMETIC was not re-authored.** `PastaMsmWindowed.rowGates` — the 42 row-local
 gates, and with them `PastaCurveComplete.pallasCompleteAdd`'s 33, which is the arithmetic the whole
@@ -1339,5 +1380,7 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms lb2_row_ceiling
 #assert_axioms fused_clears_the_lb2_ceiling_twentyfoldly
 #assert_axioms lb2_lde_is_sixteen_times_smaller
+#assert_axioms the_emitted_family_has_no_two_artifacts_with_one_name
+#assert_axioms the_toy_and_the_full_width_instance_no_longer_collide
 
 end Dregg2.Circuit.Emit.PastaMsmBucketed
