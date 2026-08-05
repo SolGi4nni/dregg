@@ -33,6 +33,13 @@ pub const MAX_POA_EVENT_COMPONENT_BYTES_V1: usize = 16 * 1024 * 1024;
 /// or schema version.  These are bytes rather than Rust integers so the store
 /// does not silently narrow Lean's `Nat`-level identity space.
 pub const MAX_POA_EVENT_TAG_BYTES_V1: usize = 4096;
+/// Maximum canonical postcard payload inside either sealed frame.  An event
+/// contains three independently bounded component wires (payload plus two
+/// nested heads), while the fourth component and tag allowance keep this a
+/// deliberately conservative format bound rather than an accidental property
+/// of today's postcard layout.
+const MAX_POA_EVENT_FRAME_PAYLOAD_BYTES_V1: usize =
+    4 * MAX_POA_EVENT_COMPONENT_BYTES_V1 + 4 * MAX_POA_EVENT_TAG_BYTES_V1 + 4096;
 
 /// Exact identity of one independently replayable game aggregate.
 ///
@@ -736,21 +743,27 @@ pub(crate) fn truncate_poa_event_store_in(
     write: &WriteTransaction,
     new_cursor: u64,
 ) -> Result<u64> {
-    let doomed: Vec<(u64, [u8; 40], PoaEventEnvelopeV1)> = {
+    // Recovery runs after the generic doomed commit records have been removed
+    // from this still-uncommitted transaction, so carrier validation cannot run
+    // here.  The complete PoA graph itself must nevertheless be sound before
+    // any mutation: enumerating only the reverse-index tail would let a missing
+    // hostile index entry strand an event whose carrier is about to disappear.
+    let decoded_events = {
         let reverse = write.open_table(POA_EVENT_BY_COMMIT_ORDINAL_V1)?;
         let events = write.open_table(POA_EVENTS_V1)?;
-        let mut out = Vec::new();
-        for entry in reverse.range(new_cursor..)? {
-            let (ordinal, key) = entry?;
-            let ordinal = ordinal.value();
-            let key = *key.value();
-            let row = events
-                .get(&key)?
-                .ok_or_else(|| integrity("PoA event rewind found orphan reverse index"))?;
-            out.push((ordinal, key, PoaEventEnvelopeV1::decode(row.value())?));
-        }
-        out
+        decode_indexed_events(&events, &reverse)?
     };
+    {
+        let heads = write.open_table(POA_EVENT_HEADS_V1)?;
+        validate_stream_heads(&heads, &decoded_events)?;
+    }
+    let mut doomed: Vec<(u64, [u8; 40], PoaEventEnvelopeV1)> = decoded_events
+        .into_iter()
+        .filter_map(|(key, event)| {
+            (event.commit_ordinal >= new_cursor).then_some((event.commit_ordinal, key, event))
+        })
+        .collect();
+    doomed.sort_by_key(|(ordinal, _, _)| *ordinal);
     if doomed.is_empty() {
         return Ok(0);
     }
@@ -789,7 +802,17 @@ pub(crate) fn truncate_poa_event_store_in(
             }
         }
     }
-    Ok(doomed.len() as u64)
+    // Check the exact surviving graph while all edits are still rollback-able.
+    // This is intentionally independent of generic carriers; those are audited
+    // by the caller once recovery has published its lower cursor.
+    {
+        let events = write.open_table(POA_EVENTS_V1)?;
+        let reverse = write.open_table(POA_EVENT_BY_COMMIT_ORDINAL_V1)?;
+        let survivors = decode_indexed_events(&events, &reverse)?;
+        let heads = write.open_table(POA_EVENT_HEADS_V1)?;
+        validate_stream_heads(&heads, &survivors)?;
+    }
+    u64::try_from(doomed.len()).map_err(|_| integrity("PoA event rewind count exceeds u64"))
 }
 
 fn plan_event(
@@ -861,24 +884,8 @@ fn validate_tables(
         .get(tables::META_COMMIT_COMPACTED)?
         .map(|value| value.value())
         .unwrap_or(0);
-    let mut decoded_events = BTreeMap::new();
-    let mut seen_ordinals = BTreeSet::new();
-    for entry in events.iter()? {
-        let (key, value) = entry?;
-        let key = *key.value();
-        let event = PoaEventEnvelopeV1::decode(value.value())?;
-        if event.key() != key {
-            return Err(integrity("PoA event table key/wire mismatch"));
-        }
-        if !seen_ordinals.insert(event.commit_ordinal) {
-            return Err(integrity("multiple PoA events share one commit ordinal"));
-        }
-        let indexed = by_ordinal
-            .get(event.commit_ordinal)?
-            .ok_or_else(|| integrity("PoA event is absent from reverse index"))?;
-        if indexed.value() != &key {
-            return Err(integrity("PoA event reverse index points to another row"));
-        }
+    let decoded_events = decode_indexed_events(events, by_ordinal)?;
+    for event in decoded_events.values() {
         match commits.get(event.commit_ordinal)? {
             Some(commit_bytes) => {
                 let commit = crate::commit_log::decode_commit_record(commit_bytes.value())?;
@@ -899,9 +906,40 @@ fn validate_tables(
             }
             None => return Err(integrity("PoA event has no generic commit carrier")),
         }
+    }
+    validate_stream_heads(heads, &decoded_events)
+}
+
+/// Decode every immutable row and prove the reverse index is an exact
+/// one-to-one image of it.  This deliberately has no generic commit dependency
+/// so recovery can invoke it after removing an uncommitted divergent tail.
+fn decode_indexed_events(
+    events: &impl ReadableTable<&'static [u8; 40], &'static [u8]>,
+    by_ordinal: &impl ReadableTable<u64, &'static [u8; 40]>,
+) -> Result<BTreeMap<[u8; 40], PoaEventEnvelopeV1>> {
+    let mut decoded_events = BTreeMap::new();
+    let mut seen_ordinals = BTreeSet::new();
+    for entry in events.iter()? {
+        let (key, value) = entry?;
+        let key = *key.value();
+        let event = PoaEventEnvelopeV1::decode(value.value())?;
+        if event.key() != key {
+            return Err(integrity("PoA event table key/wire mismatch"));
+        }
+        if !seen_ordinals.insert(event.commit_ordinal) {
+            return Err(integrity("multiple PoA events share one commit ordinal"));
+        }
+        let indexed = by_ordinal
+            .get(event.commit_ordinal)?
+            .ok_or_else(|| integrity("PoA event is absent from reverse index"))?;
+        if indexed.value() != &key {
+            return Err(integrity("PoA event reverse index points to another row"));
+        }
         decoded_events.insert(key, event);
     }
-    if by_ordinal.len()? != decoded_events.len() as u64 {
+    let decoded_event_count = u64::try_from(decoded_events.len())
+        .map_err(|_| integrity("PoA event row count exceeds u64"))?;
+    if by_ordinal.len()? != decoded_event_count {
         return Err(integrity("PoA event reverse index cardinality mismatch"));
     }
     for entry in by_ordinal.iter()? {
@@ -914,7 +952,15 @@ fn validate_tables(
             return Err(integrity("PoA reverse index ordinal/wire mismatch"));
         }
     }
+    Ok(decoded_events)
+}
 
+fn validate_stream_heads(
+    heads: &impl ReadableTable<&'static [u8; 32], &'static [u8]>,
+    decoded_events: &BTreeMap<[u8; 40], PoaEventEnvelopeV1>,
+) -> Result<()> {
+    let decoded_event_count = u64::try_from(decoded_events.len())
+        .map_err(|_| integrity("PoA event row count exceeds u64"))?;
     let mut expected_event_count = 0u64;
     for entry in heads.iter()? {
         let (key, value) = entry?;
@@ -923,9 +969,20 @@ fn validate_tables(
         if current.stream_digest() != aggregate_key || current.sequence == 0 {
             return Err(integrity("PoA event head key/sequence mismatch"));
         }
+        // Reject impossible counters before entering a sequence-sized loop.
+        // A sealed-but-hostile `u64::MAX` head must be an O(1) refusal, not a
+        // practically unbounded audit.
+        if current.sequence > decoded_event_count {
+            return Err(integrity(
+                "PoA event head sequence exceeds stored row count",
+            ));
+        }
         expected_event_count = expected_event_count
             .checked_add(current.sequence)
             .ok_or_else(|| integrity("PoA event count overflow"))?;
+        if expected_event_count > decoded_event_count {
+            return Err(integrity("PoA event heads claim more rows than exist"));
+        }
         let mut prior_successor: Option<Vec<u8>> = None;
         let mut prior_semantic_head = None;
         let mut prior_commit_ordinal = None;
@@ -976,7 +1033,7 @@ fn validate_tables(
             ));
         }
     }
-    if expected_event_count != decoded_events.len() as u64 {
+    if expected_event_count != decoded_event_count {
         return Err(integrity(
             "PoA event rows exist outside published aggregate heads",
         ));
@@ -1002,12 +1059,16 @@ fn stream_digest(aggregate: &PoaAggregateIdV1, schema_version: &[u8]) -> [u8; 32
 
 fn encode_frame<T: Serialize>(magic: [u8; 4], domain: &[u8], value: &T) -> Result<Vec<u8>> {
     let payload = postcard::to_stdvec(value)?;
-    if payload.len() > MAX_POA_EVENT_COMPONENT_BYTES_V1 * 4 {
+    if payload.len() > MAX_POA_EVENT_FRAME_PAYLOAD_BYTES_V1 {
         return Err(integrity("PoA event frame exceeds storage bound"));
     }
     let payload_len = u32::try_from(payload.len())
         .map_err(|_| integrity("PoA event frame exceeds u32 length"))?;
-    let mut out = Vec::with_capacity(FRAME_HEADER_LEN + payload.len() + FRAME_SEAL_LEN);
+    let frame_len = FRAME_HEADER_LEN
+        .checked_add(payload.len())
+        .and_then(|n| n.checked_add(FRAME_SEAL_LEN))
+        .ok_or_else(|| integrity("PoA event frame length overflow"))?;
+    let mut out = Vec::with_capacity(frame_len);
     out.extend_from_slice(&magic);
     out.push(FRAME_VERSION);
     out.extend_from_slice(&[0; 3]);
@@ -1034,6 +1095,9 @@ fn decode_frame<T: for<'de> Deserialize<'de> + Serialize>(
     let mut len = [0u8; 4];
     len.copy_from_slice(&bytes[8..12]);
     let payload_len = u32::from_le_bytes(len) as usize;
+    if payload_len > MAX_POA_EVENT_FRAME_PAYLOAD_BYTES_V1 {
+        return Err(integrity(format!("{what} frame exceeds storage bound")));
+    }
     let expected = FRAME_HEADER_LEN
         .checked_add(payload_len)
         .and_then(|n| n.checked_add(FRAME_SEAL_LEN))
@@ -1167,6 +1231,81 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    fn commit_two_events(store: &PersistentStore) -> (PoaEventHeadV1, PoaEventHeadV1) {
+        store
+            .commit_finalized_turn_with_poa_event(0, &record(0), &first_candidate())
+            .unwrap();
+        let first_head = store
+            .load_poa_event_head(&aggregate(), &[1])
+            .unwrap()
+            .unwrap();
+        store
+            .commit_finalized_turn_with_poa_event(1, &record(1), &next_candidate(&first_head, 1))
+            .unwrap();
+        let second_head = store
+            .load_poa_event_head(&aggregate(), &[1])
+            .unwrap()
+            .unwrap();
+        (first_head, second_head)
+    }
+
+    #[test]
+    fn poa_event_store_enforces_component_tag_and_frame_boundaries() {
+        let maximal_aggregate = PoaAggregateIdV1::new(
+            [0x11; 32],
+            vec![0x33; MAX_POA_EVENT_TAG_BYTES_V1],
+            [0x22; 32],
+        )
+        .unwrap();
+        assert!(
+            PoaAggregateIdV1::new(
+                [0x11; 32],
+                vec![0x33; MAX_POA_EVENT_TAG_BYTES_V1 + 1],
+                [0x22; 32],
+            )
+            .is_err()
+        );
+
+        let maximal_head = PoaEventHeadV1::genesis(
+            maximal_aggregate,
+            vec![1],
+            [0x44; 32],
+            vec![0x55; MAX_POA_EVENT_COMPONENT_BYTES_V1],
+        )
+        .unwrap();
+        // The maximum semantic component must remain encodable by the enclosing
+        // storage format; this guards against its frame limit drifting lower.
+        maximal_head.encode().unwrap();
+        drop(maximal_head);
+        assert!(
+            PoaEventHeadV1::genesis(
+                aggregate(),
+                vec![1],
+                [0x44; 32],
+                vec![0x55; MAX_POA_EVENT_COMPONENT_BYTES_V1 + 1],
+            )
+            .is_err()
+        );
+
+        // A hostile declared length is rejected before seal verification or
+        // postcard decoding and does not require allocating the claimed frame.
+        let mut oversized = vec![0u8; FRAME_HEADER_LEN + FRAME_SEAL_LEN];
+        oversized[..4].copy_from_slice(&HEAD_MAGIC);
+        oversized[4] = FRAME_VERSION;
+        let declared = u32::try_from(MAX_POA_EVENT_FRAME_PAYLOAD_BYTES_V1 + 1).unwrap();
+        oversized[8..12].copy_from_slice(&declared.to_le_bytes());
+        let error = decode_frame::<PoaEventHeadV1>(
+            &oversized,
+            HEAD_MAGIC,
+            b"dregg-poa-event-head-frame-v1\0",
+            "PoA event head",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, StoreError::Integrity(message) if message.contains("storage bound"))
+        );
     }
 
     #[test]
@@ -1323,6 +1462,35 @@ mod tests {
     }
 
     #[test]
+    fn poa_event_store_rejects_canonical_cross_schema_head_substitution() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let v1 = first_candidate_for_schema(1, 0xa1, 0);
+        let v2 = first_candidate_for_schema(2, 0xa2, 1);
+        store
+            .commit_finalized_turn_with_poa_event(0, &record(0), &v1)
+            .unwrap();
+        store
+            .commit_finalized_turn_with_poa_event(1, &record(1), &v2)
+            .unwrap();
+        store.audit_poa_event_store().unwrap();
+
+        let v1_key = stream_digest(&aggregate(), &[1]);
+        let v2_key = stream_digest(&aggregate(), &[2]);
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut heads = write.open_table(POA_EVENT_HEADS_V1).unwrap();
+            let v1_bytes = heads.get(&v1_key).unwrap().unwrap().value().to_vec();
+            let v2_bytes = heads.get(&v2_key).unwrap().unwrap().value().to_vec();
+            // Both values remain canonical and correctly sealed; only their
+            // schema-version namespace placement is hostile.
+            heads.insert(&v1_key, v2_bytes.as_slice()).unwrap();
+            heads.insert(&v2_key, v1_bytes.as_slice()).unwrap();
+        }
+        write.commit().unwrap();
+        assert!(store.audit_poa_event_store().is_err());
+    }
+
+    #[test]
     fn poa_event_store_recovery_truncates_tail_and_restores_exact_head() {
         let store = PersistentStore::open_in_memory().unwrap();
         let empty_root = crate::canonical_ledger_root(&dregg_cell::Ledger::new());
@@ -1358,6 +1526,55 @@ mod tests {
                 .is_none()
         );
         store.audit_poa_event_store().unwrap();
+    }
+
+    #[test]
+    fn poa_event_store_recovery_refuses_corrupt_index_without_partial_truncation() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let empty_root = crate::canonical_ledger_root(&dregg_cell::Ledger::new());
+        let mut rec0 = record(0);
+        rec0.ledger_root = empty_root;
+        store
+            .commit_finalized_turn_with_poa_event(0, &rec0, &first_candidate())
+            .unwrap();
+        let first_head = store
+            .load_poa_event_head(&aggregate(), &[1])
+            .unwrap()
+            .unwrap();
+        let rec1 = record(1); // divergent tail, so recovery will attempt rewind
+        store
+            .commit_finalized_turn_with_poa_event(1, &rec1, &next_candidate(&first_head, 1))
+            .unwrap();
+        let second_head = store
+            .load_poa_event_head(&aggregate(), &[1])
+            .unwrap()
+            .unwrap();
+
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut reverse = write.open_table(POA_EVENT_BY_COMMIT_ORDINAL_V1).unwrap();
+            reverse.remove(1).unwrap();
+        }
+        write.commit().unwrap();
+
+        assert!(store.recover_to_last_consistent().is_err());
+        // Generic tail deletion happens earlier inside the same redb write
+        // transaction.  The PoA refusal must roll all of it back.
+        assert_eq!(store.commit_cursor().unwrap(), 2);
+        assert!(store.commit_record_at(1).unwrap().is_some());
+        assert!(
+            store
+                .load_poa_event(&aggregate(), &[1], 2)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            store
+                .load_poa_event_head(&aggregate(), &[1])
+                .unwrap()
+                .unwrap(),
+            second_head
+        );
     }
 
     #[test]
@@ -1404,6 +1621,97 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn poa_event_store_reopen_rejects_missing_compacted_carrier_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("poa-events-corrupt-compacted-carrier.redb");
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            let empty_root = crate::canonical_ledger_root(&dregg_cell::Ledger::new());
+            let mut rec0 = record(0);
+            rec0.ledger_root = empty_root;
+            store
+                .commit_finalized_turn_with_poa_event(0, &rec0, &first_candidate())
+                .unwrap();
+            let head = store
+                .load_poa_event_head(&aggregate(), &[1])
+                .unwrap()
+                .unwrap();
+            let mut rec1 = record(1);
+            rec1.ledger_root = empty_root;
+            store
+                .commit_finalized_turn_with_poa_event(1, &rec1, &next_candidate(&head, 1))
+                .unwrap();
+            store
+                .store_ledger_checkpoint_snapshot(&crate::LedgerCheckpoint {
+                    height: 2,
+                    cells: Vec::new(),
+                    sovereign_commitments: Vec::new(),
+                    sovereign_registrations: Vec::new(),
+                })
+                .unwrap();
+            assert_eq!(store.compact_below(2).unwrap(), 1);
+
+            let write = store.db.begin_write().unwrap();
+            {
+                let mut compacted_ids = write
+                    .open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)
+                    .unwrap();
+                compacted_ids.remove(&rec0.block_id).unwrap();
+            }
+            write.commit().unwrap();
+        }
+        // Opening a durable database runs the store audit, so the missing
+        // compacted carrier must prevent the image from reopening at all.
+        assert!(PersistentStore::open(&path).is_err());
+    }
+
+    #[test]
+    fn poa_event_store_audit_rejects_reverse_index_cardinality_and_mapping() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        commit_two_events(&store);
+        store.audit_poa_event_store().unwrap();
+        let key0 = event_key(stream_digest(&aggregate(), &[1]), 1);
+        let key1 = event_key(stream_digest(&aggregate(), &[1]), 2);
+
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut reverse = write.open_table(POA_EVENT_BY_COMMIT_ORDINAL_V1).unwrap();
+            reverse.insert(99, &key0).unwrap();
+        }
+        write.commit().unwrap();
+        assert!(store.audit_poa_event_store().is_err());
+
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut reverse = write.open_table(POA_EVENT_BY_COMMIT_ORDINAL_V1).unwrap();
+            reverse.remove(99).unwrap();
+            // Preserve cardinality while swapping both coordinates.
+            reverse.insert(0, &key1).unwrap();
+            reverse.insert(1, &key0).unwrap();
+        }
+        write.commit().unwrap();
+        assert!(store.audit_poa_event_store().is_err());
+    }
+
+    #[test]
+    fn poa_event_store_audit_rejects_hostile_max_sequence_in_constant_time() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let mut hostile =
+            PoaEventHeadV1::genesis(aggregate(), vec![1], [0x51; 32], b"projection".to_vec())
+                .unwrap();
+        hostile.sequence = u64::MAX;
+        let key = hostile.stream_digest();
+        let encoded = hostile.encode().unwrap();
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut heads = write.open_table(POA_EVENT_HEADS_V1).unwrap();
+            heads.insert(&key, encoded.as_slice()).unwrap();
+        }
+        write.commit().unwrap();
+        assert!(store.audit_poa_event_store().is_err());
     }
 
     #[test]
