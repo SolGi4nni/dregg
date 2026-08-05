@@ -587,6 +587,159 @@ impl TurnExecutor {
         Ok(())
     }
 
+    /// Enforce the complete executor-side `CellProgram` pipeline for one
+    /// already-applied hosted action.
+    ///
+    /// This is shared by ordinary call-forest execution and the hosted half of
+    /// `MixedAtomicTurn`.  Keeping one implementation is trust-critical: a
+    /// second path that merely calls `verify_authorization` and
+    /// `check_preconditions` would otherwise bypass every perpetual cell
+    /// invariant, sender rate limit, cross-cell bound delta, and capability-set
+    /// uniqueness check.
+    pub(super) fn validate_hosted_action_programs(
+        &self,
+        action: &Action,
+        ledger: &Ledger,
+        old_cell_states: &std::collections::HashMap<CellId, dregg_cell::CellState>,
+        sender_pk: Option<[u8; 32]>,
+        circuit_programs_verified: bool,
+        staged_rate_limits: &mut StagedRateLimitState,
+        path: &[usize],
+    ) -> Result<(), (TurnError, Vec<usize>)> {
+        let effects_mask = action
+            .effects
+            .iter()
+            .fold(0u32, |acc, effect| acc | effect.effect_kind_mask());
+        let meta = dregg_cell::program::TransitionMeta::new(action.method, effects_mask);
+        let witness_views: Vec<dregg_cell::program::WitnessBlobView<'_>> = action
+            .witness_blobs
+            .iter()
+            .map(|wb| dregg_cell::program::WitnessBlobView {
+                kind: match wb.kind {
+                    crate::action::WitnessKind::Preimage32 => {
+                        dregg_cell::program::WitnessKindTag::Preimage32
+                    }
+                    crate::action::WitnessKind::MerklePath => {
+                        dregg_cell::program::WitnessKindTag::MerklePath
+                    }
+                    crate::action::WitnessKind::RateLimitCount => {
+                        dregg_cell::program::WitnessKindTag::RateLimitCount
+                    }
+                    crate::action::WitnessKind::ProofBytes => {
+                        dregg_cell::program::WitnessKindTag::ProofBytes
+                    }
+                    crate::action::WitnessKind::Cleartext => {
+                        dregg_cell::program::WitnessKindTag::Cleartext
+                    }
+                },
+                bytes: &wb.bytes,
+            })
+            .collect();
+
+        let mut to_check: Vec<CellId> = old_cell_states.keys().copied().collect();
+        if !to_check.contains(&action.target) {
+            to_check.push(action.target);
+        }
+        // HashMap iteration order must not influence which constraint is
+        // evaluated first or which rate debit is staged first.
+        to_check.sort_unstable();
+        to_check.dedup();
+
+        let observed_authority = Self::build_finalized_root_authority(&to_check, ledger);
+        let witnesses = dregg_cell::program::WitnessBundle {
+            blobs: &witness_views,
+            registry: self.witnessed_registry.as_ref(),
+            finalized_roots: Some(&observed_authority),
+        };
+
+        for cell_id in &to_check {
+            let Some(touched_cell) = ledger.get(cell_id) else {
+                continue;
+            };
+            if touched_cell.program.is_none() {
+                continue;
+            }
+            if touched_cell.program.requires_proof() {
+                if circuit_programs_verified {
+                    continue;
+                }
+                return Err((
+                    TurnError::ProgramViolation {
+                        cell: *cell_id,
+                        reason: "hosted mixed-atomic action has no transition-proof carrier for its circuit CellProgram".into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            let old_state = old_cell_states.get(cell_id);
+            let cell_meta = meta
+                .clone()
+                .with_delegation_epoch(touched_cell.state.delegation_epoch());
+            let (sender_epoch_count, rate_debit) = self
+                .state_constraint_context_and_debit(
+                    cell_id,
+                    &touched_cell.program,
+                    sender_pk,
+                    old_state,
+                    &touched_cell.state,
+                    &cell_meta,
+                    staged_rate_limits,
+                )
+                .map_err(|reason| {
+                    (
+                        TurnError::ProgramViolation {
+                            cell: *cell_id,
+                            reason,
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+            let ctx = dregg_cell::EvalContext {
+                block_height: self.block_height,
+                timestamp: self.current_timestamp,
+                current_epoch: self.block_height.saturating_div(1024),
+                sender: sender_pk,
+                sender_epoch_count,
+                revealed_preimage: None,
+            };
+            if let Err(error) = Self::evaluate_cell_program_for_executor(
+                &touched_cell.program,
+                &touched_cell.state,
+                old_state,
+                &ctx,
+                &cell_meta,
+                &witnesses,
+            ) {
+                if let Some(diagnostic) = error.operator_diagnostic() {
+                    tracing::error!(
+                        cell = %cell_id,
+                        diagnostic = %diagnostic,
+                        "REFUSED a programmed-cell turn for a reason the player cannot fix"
+                    );
+                }
+                return Err((
+                    TurnError::ProgramViolation {
+                        cell: *cell_id,
+                        reason: error.to_string(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            self.validate_bound_delta_program(
+                cell_id,
+                &touched_cell.program,
+                old_cell_states,
+                ledger,
+                path,
+            )?;
+            self.validate_capability_uniqueness(cell_id, &touched_cell.program, ledger, path)?;
+            if let Some(debit) = rate_debit {
+                staged_rate_limits.stage(debit);
+            }
+        }
+        Ok(())
+    }
+
     /// Execute a single tree node and its children recursively.
     ///
     /// Returns Ok(()) on success or Err((TurnError, path)) on failure.
@@ -1173,157 +1326,15 @@ impl TurnExecutor {
             super::turn_profile::accum(super::turn_profile::Phase::f_apply, _pf_apply);
         }
         let _pf_program = super::turn_profile::Instant::now();
-        let parent_pk_opt: Option<[u8; 32]> = ledger.get(parent_cell).map(|p| *p.public_key());
-        let effects_mask: u32 = action
-            .effects
-            .iter()
-            .fold(0u32, |acc, e| acc | e.effect_kind_mask());
-        let meta = dregg_cell::program::TransitionMeta::new(action.method, effects_mask);
-        let witness_views: Vec<dregg_cell::program::WitnessBlobView<'_>> = action
-            .witness_blobs
-            .iter()
-            .map(|wb| dregg_cell::program::WitnessBlobView {
-                kind: match wb.kind {
-                    crate::action::WitnessKind::Preimage32 => {
-                        dregg_cell::program::WitnessKindTag::Preimage32
-                    }
-                    crate::action::WitnessKind::MerklePath => {
-                        dregg_cell::program::WitnessKindTag::MerklePath
-                    }
-                    crate::action::WitnessKind::RateLimitCount => {
-                        dregg_cell::program::WitnessKindTag::RateLimitCount
-                    }
-                    crate::action::WitnessKind::ProofBytes => {
-                        dregg_cell::program::WitnessKindTag::ProofBytes
-                    }
-                    crate::action::WitnessKind::Cleartext => {
-                        dregg_cell::program::WitnessKindTag::Cleartext
-                    }
-                },
-                bytes: &wb.bytes,
-            })
-            .collect();
-
-        // Walk every cell whose program might fire on this action: the
-        // target cell + any cell named in old_cell_states (the snapshot
-        // map, which holds every cell touched by an effect).
-        let mut to_check: Vec<CellId> = old_cell_states.keys().cloned().collect();
-        // Also include any cell newly created during effects (no old
-        // state but a fresh new state).
-        if !to_check.contains(&action.target) {
-            to_check.push(action.target);
-        }
-
-        // The host finalized-root authority for the §11.2 cross-cell
-        // verified-observation atom (`StateConstraint::ObservedFieldEquals`):
-        // the embedded executor's view of each referenced peer cell's GENUINE
-        // finalized commitment + field value, read from the shared ledger. A
-        // genuine read now ACCEPTS (the value matches the peer's finalized
-        // field); a forged `at_root` / absent peer / diverging local field
-        // still REJECTS. The authority owns a snapshot, so it holds no `ledger`
-        // borrow — `&observed_authority` lives only for the evaluation loop
-        // below.
-        let observed_authority = Self::build_finalized_root_authority(&to_check, ledger);
-        let witnesses = dregg_cell::program::WitnessBundle {
-            blobs: &witness_views,
-            registry: self.witnessed_registry.as_ref(),
-            finalized_roots: Some(&observed_authority),
-        };
-
-        for cell_id in &to_check {
-            let Some(touched_cell) = ledger.get(cell_id) else {
-                continue;
-            };
-            if touched_cell.program.is_none() {
-                continue;
-            }
-            if touched_cell.program.requires_proof() {
-                // Circuit programs: proof verification handles the
-                // transition; skip the predicate evaluator.
-                continue;
-            }
-            let old_state = old_cell_states.get(cell_id);
-            // Stamp the TOUCHED cell's own post-turn delegation_epoch onto the
-            // per-cell meta — the program-readable R7 freshness counter
-            // (`StateConstraint::DelegationEpochEquals`; the channels closure
-            // lane). Post-effects state: a `RevokeDelegation{anchor}` carried
-            // by this turn is already reflected.
-            let cell_meta = meta
-                .clone()
-                .with_delegation_epoch(touched_cell.state.delegation_epoch());
-            // Rate-limit context comes exclusively from committed executor
-            // state plus this turn's earlier staged debits. A carried
-            // RateLimitCount witness is informational and never authoritative.
-            let (sender_epoch_count, rate_debit) = self
-                .state_constraint_context_and_debit(
-                    cell_id,
-                    &touched_cell.program,
-                    parent_pk_opt,
-                    old_state,
-                    &touched_cell.state,
-                    &cell_meta,
-                    staged_rate_limits,
-                )
-                .map_err(|reason| {
-                    (
-                        TurnError::ProgramViolation {
-                            cell: *cell_id,
-                            reason,
-                        },
-                        path.clone(),
-                    )
-                })?;
-            let ctx = dregg_cell::EvalContext {
-                block_height: self.block_height,
-                timestamp: self.current_timestamp,
-                current_epoch: self.block_height.saturating_div(1024),
-                sender: parent_pk_opt,
-                sender_epoch_count,
-                revealed_preimage: None,
-            };
-            let result = Self::evaluate_cell_program_for_executor(
-                &touched_cell.program,
-                &touched_cell.state,
-                old_state,
-                &ctx,
-                &cell_meta,
-                &witnesses,
-            );
-            if let Err(e) = result {
-                // ⚑ THE TWO AUDIENCES OF A REFUSAL. `reason` is carried up and rendered to a
-                // PLAYER (`ProgramError`'s `Display`), so a refusal caused by missing server
-                // machinery must not hand them an internal symbol to go install — it did, on the
-                // live Discord bot, 2026-07-26. The operator's half is emitted here, at the
-                // instant the refusal is produced, so the fix and the apology are simultaneous.
-                // `None` for every ordinary constraint violation, so this adds no log volume to
-                // the refusals that ARE about the caller's move.
-                if let Some(diagnostic) = e.operator_diagnostic() {
-                    tracing::error!(
-                        cell = %cell_id,
-                        diagnostic = %diagnostic,
-                        "REFUSED a programmed-cell turn for a reason the player cannot fix"
-                    );
-                }
-                return Err((
-                    TurnError::ProgramViolation {
-                        cell: *cell_id,
-                        reason: e.to_string(),
-                    },
-                    path,
-                ));
-            }
-            self.validate_bound_delta_program(
-                cell_id,
-                &touched_cell.program,
-                &old_cell_states,
-                ledger,
-                &path,
-            )?;
-            self.validate_capability_uniqueness(cell_id, &touched_cell.program, ledger, &path)?;
-            if let Some(debit) = rate_debit {
-                staged_rate_limits.stage(debit);
-            }
-        }
+        self.validate_hosted_action_programs(
+            action,
+            ledger,
+            &old_cell_states,
+            sender_pk,
+            true,
+            staged_rate_limits,
+            &path,
+        )?;
 
         if _pf {
             super::turn_profile::accum(super::turn_profile::Phase::f_program, _pf_program);

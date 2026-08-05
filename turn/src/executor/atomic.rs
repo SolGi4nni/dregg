@@ -1424,6 +1424,10 @@ impl TurnExecutor {
                 required: mixed_turn.fee,
             });
         }
+        // Capture the authenticated acting identity ONCE, before any hosted
+        // effect can remove or transform the agent cell. Preconditions and
+        // perpetual CellPrograms must see the identical sender.
+        let sender_pk = Some(*agent_cell.public_key());
 
         // P0-4: reject any frozen agent, sovereign-entry cell, or hosted-action
         // target cell.
@@ -1617,6 +1621,7 @@ impl TurnExecutor {
         // back -- no partial state is left in the ledger.
         // ====================================================================
         let mut journal = LedgerJournal::with_capacity(16);
+        let mut staged_rate_limits = super::execute_tree::StagedRateLimitState::default();
         let mut hosted_deltas: Vec<i64> = Vec::with_capacity(mixed_turn.hosted_actions.len());
         // Tracks the true per-cell balance change across ALL hosted actions for
         // the cross-domain conservation check. Unlike `hosted_deltas` (which is
@@ -1680,7 +1685,6 @@ impl TurnExecutor {
             }
 
             // 3. Preconditions.
-            let sender_pk = ledger.get(&mixed_turn.agent).map(|cell| *cell.public_key());
             if let Err((err, _)) = self.check_preconditions(action, &target_cell, sender_pk, &path)
             {
                 journal.rollback(
@@ -1711,6 +1715,22 @@ impl TurnExecutor {
             // *targeting* this action's `target` cell flips the bit. Bound
             // into receipt_hash so executor can't strip the disclosure.
             let mut action_was_burn = false;
+
+            // Snapshot every cell this action can touch before applying any
+            // effect. The shared CellProgram validator below consumes the
+            // exact same old/new relation as ordinary call-forest execution.
+            let mut old_cell_states = HashMap::new();
+            for cell_id in Self::collect_touched_cells(action) {
+                if let Some(cell) = ledger.get(&cell_id) {
+                    old_cell_states.insert(cell_id, cell.state.clone());
+                }
+            }
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                old_cell_states.entry(action.target)
+                && let Some(cell) = ledger.get(&action.target)
+            {
+                entry.insert(cell.state.clone());
+            }
 
             // 4. Apply each effect via apply_effect (which is journaled).
             // Compute the net Transfer delta for this hosted entry for the
@@ -1791,6 +1811,35 @@ impl TurnExecutor {
                         reason: format!("{err}"),
                     });
                 }
+            }
+
+            // The hosted half is not a semantics-lite side door: enforce the
+            // very same touched-cell programs, contextual sender predicates,
+            // cross-cell deltas, capability uniqueness, and staged rate limits
+            // as `execute_tree` before accepting the action.
+            if let Err((err, _)) = self.validate_hosted_action_programs(
+                action,
+                ledger,
+                &old_cell_states,
+                sender_pk,
+                false,
+                &mut staged_rate_limits,
+                &path,
+            ) {
+                journal.rollback(
+                    ledger,
+                    &self.bridged_nullifiers,
+                    &self.note_nullifiers,
+                    &self.note_commitments,
+                    &self.note_revoked,
+                    &self.note_shielded,
+                    &self.reactive_registry,
+                    &self.reactive_nullifiers,
+                );
+                return Err(AtomicTurnError::HostedApplyFailed {
+                    cell: action.target,
+                    reason: format!("{err}"),
+                });
             }
             hosted_deltas.push(net_delta);
             // Capture the post-state commitment AFTER effects apply.
@@ -1977,6 +2026,11 @@ impl TurnExecutor {
             }
             receipts.push(receipt);
         }
+
+        // Publish sender/rate debits only after the complete mixed turn and
+        // every receipt have committed. Any earlier refusal drops the staged
+        // value alongside the rolled-back ledger journal.
+        staged_rate_limits.commit(self);
 
         Ok(MixedAtomicResult {
             sovereign_commitments: new_commitments.iter().map(|(_, c)| *c).collect(),
