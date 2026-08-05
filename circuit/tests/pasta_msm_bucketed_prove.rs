@@ -51,6 +51,15 @@
 //! forged-`sg` case is deliberately a forgery **the arithmetic cannot see** — a claimed commitment
 //! displaced by one generator, which only the PI binding can catch.
 //!
+//! ## ⚑ AND WHAT THE ξ-AGGREGATE'S 192 WIRE FELTS ARE NOT
+//!
+//! `scripts/check-descriptor-anchor-inertness.py` scores this descriptor at **192 decorative
+//! anchors — 192 of 219 public inputs, the largest row in that census**. It is right, and
+//! `the_published_basis_is_not_yet_bound_to_the_declared_digits` at the bottom of this file is that
+//! verdict on the deployed prover: the aggregate proves against a basis that is not the block's
+//! own. The two teeth above it prove the pin and the thread FIRE; that one shows what they do not
+//! reach. Read all three together before citing any of them.
+//!
 //! Run: `cargo test -p dregg-circuit --release --test pasta_msm_bucketed_prove -- --nocapture`
 
 // ⚑ These descriptors carry 495-bit gate coefficients (the `PastaField` value heads), so they
@@ -60,7 +69,7 @@
 // `PastaMsmBucketed` §7.2 says so out loud rather than letting the row counts read as sound ones.
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    DreggStarkConfig, EffectVmDescriptor2, MemBoundaryWitness, TableSem,
+    DreggStarkConfig, EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2,
     parse_vm_descriptor2_unsound_oversized, prove_vm_descriptor2, prove_vm_descriptor2_with_config,
     verify_vm_descriptor2, verify_vm_descriptor2_with_config,
 };
@@ -69,7 +78,9 @@ use dregg_circuit::pasta_windowed_witness::{
     NUM_LIMBS, P_PASTA, Pt, Q_PASTA, U256, fill_row_at, read_field,
 };
 use dregg_circuit::plonky3_prover::create_config_with_fri_full;
-use dregg_circuit::refusal::must_refuse;
+use dregg_circuit::refusal::{
+    Refusal, assert_violated_constraint_not_bus, must_refuse, must_refuse_or_unsat_panic,
+};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
@@ -131,6 +142,25 @@ const TIDX: usize = 608;
 const WIN: usize = 609;
 const GIDX: usize = 610;
 const DGT: usize = 611;
+
+/// `PastaMsmBucketed.outPiGates` — the 27 `.last` `piBinding`s on `TOT`, as constraint-LIST
+/// indices. `bucketedRowDesc` appends them after the row template, so they are the last `PI_COUNT`
+/// of the narrow `CONSTRAINTS`, and `bucketedRowDescChal` only APPENDS
+/// (`bucketedRowDescChalOn_extends_the_narrow_descriptor`) — so the same range names them on the
+/// widened ξ-aggregate too.
+const OUT_PI_GATES: std::ops::Range<usize> = (CONSTRAINTS - PI_COUNT)..CONSTRAINTS;
+
+/// `PastaMsmBucketed.chalPinGates[m]` — the first-row `piBinding` on column `CHB + m`. The pins
+/// follow the narrow list.
+const fn chal_pin_gate(m: usize) -> usize {
+    CONSTRAINTS + m
+}
+
+/// `PastaMsmBucketed.chalThreadGates[m]` — `nxt CH_m − CH_m` on the transition. The threads follow
+/// all `nc` pins.
+const fn chal_thread_gate(nc: usize, m: usize) -> usize {
+    CONSTRAINTS + nc + m
+}
 
 /// `PastaMsmWindowed.W` — the inherited row template's width, and the base `fill_row` produces.
 const WINDOWED_W: usize = 525;
@@ -449,6 +479,116 @@ fn prove_and_verify(
     verify_vm_descriptor2(desc, &proof, pis)
 }
 
+// ---------------------------------------------------------------------------------------------
+// ⚑ NAMING THE GATE THAT REFUSED — the discriminator the four PI-tampers below need.
+//
+// Every tooth in this file names the mechanism that must object. Until 2026-08-05 four of them
+// asserted that with `must_refuse`, which requires a fail-closed `Err` — and this descriptor
+// carries LOOKUPS, so under `cargo test` p3's `#[cfg(debug_assertions)]` constraint check panics
+// inside `prove_batch` before the producer's self-verify can return anything. All four were RED
+// while the constraint system refused every forgery exactly as documented: `refusal`'s own module
+// docblock records the same misrouting costing two teeth ten days in `shielded_ring_clearing_air`.
+// `must_refuse_or_unsat_panic` is the helper for a lookup-carrying site, and the panic message is
+// STRICTLY MORE informative than the `Err` — it carries the row and the failed constraint set.
+// ---------------------------------------------------------------------------------------------
+
+/// The AIR-constraint index p3 reports for the descriptor's `list_index`-th constraint.
+///
+/// `constraints not satisfied on row N: failed constraints = [#k]` numbers the AIR's constraints,
+/// and a `lookup` entry compiles to a BUS operation rather than an AIR constraint — so `#k` names
+/// the descriptor's `k`-th NON-LOOKUP constraint. On the ξ-aggregate the three manifests sit at
+/// list indices 61/62/63, which is why `chalPinGates[31]` (list index 122) is reported as `#119`.
+///
+/// ⚑ DERIVED, NOT PINNED. A literal `#119` would be a constant checked against nothing; this reads
+/// the Lean-emitted constraint list and meets the DEPLOYED PROVER'S OWN numbering, which is a
+/// second, independent source. A widening that inserted a gate moves both sides only if the
+/// mapping is real.
+fn air_index(desc: &EffectVmDescriptor2, list_index: usize) -> usize {
+    assert!(
+        list_index < desc.constraints.len(),
+        "constraint {list_index} is past the end of {}'s {} constraints",
+        desc.name,
+        desc.constraints.len()
+    );
+    assert!(
+        !matches!(desc.constraints[list_index], VmConstraint2::Lookup(_)),
+        "constraint {list_index} is a LOOKUP; it has no AIR-constraint index"
+    );
+    desc.constraints[..list_index]
+        .iter()
+        .filter(|c| !matches!(c, VmConstraint2::Lookup(_)))
+        .count()
+}
+
+/// ⚑ **THE REFUSAL NAMED THE GATE THIS TOOTH NAMES** — not merely "something objected".
+///
+/// Two clauses, and they are not the same strength:
+///
+///  * [`assert_violated_constraint_not_bus`] holds in EVERY profile and is the load-bearing
+///    NEGATIVE one. A tooth aimed at a PI pin must not be kept green by `pasta_msm_cover`'s LogUp
+///    failing instead — that would mean the manifest, not the pin, is what catches the forgery,
+///    and the three routing teeth above would then be testing the same thing four times.
+///  * The ROW and the failed-constraint SET are asserted only when p3's debug check is the
+///    mechanism, because `--release` refuses with `OodEvaluationMismatch`, which carries neither.
+///    Said out loud rather than left as a silent weakening: under `--release` these teeth assert
+///    the profile-independent clause and nothing finer.
+///
+/// `gates` are descriptor constraint-LIST indices. The assertion is that every constraint p3
+/// reported is one of them and that at least one fired — i.e. **nothing outside the named gate
+/// objected**. Deliberately not set EQUALITY: how many of a 27-limb PI block a given displacement
+/// moves is a fact about the forgery's arithmetic, not about the gate, and `assert_ne!` on the
+/// tampered vector is where that belongs.
+#[track_caller]
+fn refused_by_gates(
+    what: &str,
+    refusal: &Refusal<String>,
+    desc: &EffectVmDescriptor2,
+    gates: &[usize],
+    row: usize,
+) -> String {
+    let reason = refusal.reason();
+    assert_violated_constraint_not_bus(what, &reason);
+
+    let Some(rest) = reason.split("constraints not satisfied on row ").nth(1) else {
+        // `--release`: `OodEvaluationMismatch`, already checked above. Nothing finer is available.
+        return reason;
+    };
+    let (got_row, rest) = rest
+        .split_once(':')
+        .expect("p3 renders `on row N: failed constraints = [...]`");
+    assert_eq!(
+        got_row.trim().parse::<usize>().expect("a row index"),
+        row,
+        "{what}: refused on the wrong ROW — the gate this tooth names fires on row {row}: {reason}"
+    );
+    let list = rest
+        .split_once('[')
+        .and_then(|(_, r)| r.split_once(']'))
+        .expect("p3 renders the failed set in brackets")
+        .0;
+    let got: Vec<usize> = list
+        .split(',')
+        .map(|t| {
+            t.trim()
+                .trim_start_matches('#')
+                .parse::<usize>()
+                .expect("a constraint index")
+        })
+        .collect();
+    assert!(!got.is_empty(), "{what}: p3 named no failed constraint");
+
+    let want: Vec<usize> = gates.iter().map(|&i| air_index(desc, i)).collect();
+    for g in &got {
+        assert!(
+            want.contains(g),
+            "{what}: constraint #{g} objected, and it is NOT one of the gates this tooth names \
+             ({want:?}, from descriptor constraints {gates:?}). Something other than the named \
+             gate is what catches this forgery: {reason}"
+        );
+    }
+    reason
+}
+
 // =============================================================================================
 // (a) the artifacts are the ones this test was written against
 // =============================================================================================
@@ -677,11 +817,16 @@ fn a_forged_commitment_is_refused() {
         }
         assert_ne!(bad, pis, "the forged PI vector must differ");
 
-        let e = must_refuse(
-            &format!("[{label}] a commitment displaced by +G, honest trace"),
-            || prove_and_verify(&desc, &trace, &bad),
+        let what = format!("[{label}] a commitment displaced by +G, honest trace");
+        let r = must_refuse_or_unsat_panic(&what, || prove_and_verify(&desc, &trace, &bad));
+        let reason = refused_by_gates(
+            &what,
+            &r,
+            &desc,
+            &OUT_PI_GATES.collect::<Vec<_>>(),
+            sh.rows - 1,
         );
-        println!("  [FORGED] {label}: claimed C + G -> REFUSED: {e:?}");
+        println!("  [FORGED] {label}: claimed C + G -> REFUSED by outPiGates: {reason}");
     }
 }
 
@@ -1158,11 +1303,18 @@ fn a_forged_mina_xi_aggregate_is_refused() {
         "this tamper moves the OUTPUT and leaves the basis alone"
     );
 
-    let e = must_refuse(
-        "the Mina xi-aggregate claimed as C + G, honest trace",
-        || prove_and_verify(&desc, &trace, &bad),
+    let what = "the Mina xi-aggregate claimed as C + G, honest trace";
+    let r = must_refuse_or_unsat_panic(what, || prove_and_verify(&desc, &trace, &bad));
+    let reason = refused_by_gates(
+        what,
+        &r,
+        &desc,
+        &OUT_PI_GATES.collect::<Vec<_>>(),
+        sh.rows - 1,
     );
-    println!("\n  [FORGED ξ-AGGREGATE] claimed COMBINED_GOLD + G -> REFUSED: {e:?}");
+    println!(
+        "\n  [FORGED ξ-AGGREGATE] claimed COMBINED_GOLD + G -> REFUSED by outPiGates: {reason}"
+    );
 }
 
 /// ⚑⚑ **A FORGED BASIS FELT IS REFUSED — the wire block is a CHECK, not a decoration.**
@@ -1200,13 +1352,16 @@ fn a_forged_basis_felt_is_refused() {
         "this tamper moves the BASIS and leaves the claimed aggregate alone"
     );
 
-    let e = must_refuse(
-        "the xi-aggregate with one basis felt of xi^32 raised by one",
-        || prove_and_verify(&desc, &trace, &bad),
-    );
+    // ⚑ THE GATE, NAMED: `chalPinGates[SK - 1]` — the first-row pin on column `CHB + 31`. Nothing
+    // else in this AIR touches that column (the census below measures exactly that), so the
+    // assertion that ONLY this constraint objected is the tooth's whole content.
+    let what = "the xi-aggregate with one basis felt of xi^32 raised by one";
+    let r = must_refuse_or_unsat_panic(what, || prove_and_verify(&desc, &trace, &bad));
+    let reason = refused_by_gates(what, &r, &desc, &[chal_pin_gate(SK - 1)], 0);
     println!(
         "\n  [FORGED BASIS FELT] pi[{slot}] {before:?} -> {after:?} \
-         (the first-row challenge pin) -> REFUSED: {e:?}"
+         -> REFUSED by chalPinGates[{}] on row 0: {reason}",
+        SK - 1
     );
 }
 
@@ -1244,12 +1399,131 @@ fn a_basis_that_varies_by_row_is_refused() {
         "row 0 is untouched, so the PI pin still holds and only the thread can object"
     );
 
-    let e = must_refuse(
-        "the xi-aggregate with a fresh basis felt on row 4096",
-        || prove_and_verify(&desc, &trace, &pis),
-    );
+    // ⚑ THE GATE, NAMED: `chalThreadGates[SK - 1]`, and it fires on the TRANSITION INTO the moved
+    // row — p3 names the window gate by its LOWER row, so `row - 1`. That the pin (row 0) does NOT
+    // also appear in the failed set is what distinguishes this tooth from the one above it.
+    let what = "the xi-aggregate with a fresh basis felt on row 4096";
+    let r = must_refuse_or_unsat_panic(what, || prove_and_verify(&desc, &trace, &pis));
+    let reason = refused_by_gates(what, &r, &desc, &[chal_thread_gate(sh.nc, SK - 1)], row - 1);
     println!(
         "\n  [PER-ROW BASIS] trace[{row}][{col}] {before:?} -> {after:?} \
-         (row 0 and the public inputs untouched; the challenge THREAD) -> REFUSED: {e:?}"
+         (row 0 and the public inputs untouched) -> REFUSED by chalThreadGates[{}]: {reason}",
+        SK - 1
+    );
+}
+
+/// ⚑⚑ **THE 192 WIRE FELTS ARE NOT BOUND TO THE MSM — the census's verdict, EXHIBITED.**
+///
+/// `scripts/check-descriptor-anchor-inertness.py` scores this descriptor at **192 decorative
+/// anchors**: columns `612 … 803` are each touched by exactly two constraints — `chalPinGates`'
+/// first-row `piBinding` and `chalThreadGates`' `nxt CH_m − CH_m` — and by nothing that relates
+/// them to another column. The two teeth above prove those two constraints FIRE; this one proves
+/// what they do NOT reach.
+///
+/// ⚠ **It is here because the census was measurably wrong about this exact class the day the row
+/// was minted.** A `proof_bind` widening made `commit`/`vk`/`bound` lane VECTORS and the walker
+/// took only the operands that were themselves an expression dict, so a sibling descriptor scored
+/// 18 → 27 decorative with no anchor having changed. The walker is fixed; a graph property that
+/// nobody exercises is still a claim about a script. This is the claim on the machine.
+///
+/// The forgery: the block's own basis with one felt of `ξ³²` moved by one, applied to the trace
+/// **and** the public inputs together — so the pin holds, the thread holds, and the only thing
+/// left to object would be a gate that READS the basis. The proof is **accepted**, and the
+/// aggregate it publishes is bit-for-bit the honest one: o1-labs' `COMBINED_GOLD` for Mina devnet
+/// block 539508, reached by a trace that never looked at the basis at all.
+///
+/// ⚠ **WHAT DOES TIE THE BASIS TODAY IS OUTSIDE THIS AIR.** A batch verifier compares
+/// `aggPIs[27 … 218]` against `dregg-mina-xi-scalar-vector::v2`'s published block felt by felt
+/// (`MinaWrapXiBasisWeld`), and `chain_basis` above is that comparison in this harness. That weld
+/// makes the value non-free **relative to another proof of this block's transcript**; it does not
+/// make `T_COVER`'s digits the basis's in-circuit image. The digits are permutation-forced
+/// DESCRIPTOR data, so this is not a forgeable-digit hole — it is a 192-felt public statement that
+/// this proof does not make.
+///
+/// ⚑ **THIS TEST IS THE GATE ON THE REPAIR, AND IT IS MEANT TO GO RED.** When the tensor/digit
+/// chain lands (`MinaWrapXiAggregateMsm` §4 / `PastaMsmBucketed` §7.3 — ~1 400 constraints,
+/// ~2 700 columns, plus the `8 → 30` limb regroup and its range certificates), this call starts
+/// REFUSING. Then: invert it to `must_refuse_or_unsat_panic` naming the new gate, and drop this
+/// descriptor's row in `scripts/descriptor-anchor-inertness-baseline.txt` from 192 to 0.
+#[test]
+fn the_published_basis_is_not_yet_bound_to_the_declared_digits() {
+    let desc = parse(XIAGG_JSON);
+    let sh = shape_of(&desc);
+    let honest_basis = chain_basis();
+
+    // ⚠ The felt is READ FIRST and the change is ASSERTED to move it. A sibling in this cone
+    // drafted a refutation that moved a zero into a zero and `decide` refuted the refutation.
+    let mut wrong_basis = honest_basis.clone();
+    let slot = SK - 1; // the most significant limb of the head value `ξ³²`
+    let before = wrong_basis[slot];
+    let after = before + BabyBear::new(1);
+    assert_ne!(before, after, "the moved felt must actually change value");
+    wrong_basis[slot] = after;
+    assert_ne!(
+        wrong_basis, honest_basis,
+        "the basis under test must differ from the block's own"
+    );
+
+    // ⚠ And the filler must not quietly restore it. `honest_trace_with_chal` copies `chal` verbatim
+    // into columns `WK … WK + nc`, so this is checked rather than assumed — two lanes elsewhere
+    // today forged a lane the filler rewrites and passed for the wrong reason.
+    let (trace, pis) = honest_trace_with_chal(&sh, &wrong_basis);
+    assert_eq!(
+        &pis[PI_COUNT..],
+        &wrong_basis[..],
+        "the filler rewrote the challenge block; this tamper would test nothing"
+    );
+    assert_eq!(
+        trace[0][WK + slot],
+        after,
+        "the forged felt must be the one on the wire"
+    );
+    assert_eq!(
+        trace[sh.rows - 1][WK + slot],
+        after,
+        "…and down the whole trace, so the thread holds and cannot be what objects"
+    );
+
+    prove_and_verify(&desc, &trace, &pis).unwrap_or_else(|e| {
+        panic!(
+            "the ξ-aggregate REFUSED a basis that is not the block's own: {e}\n\
+             ⚑ If that is because the tensor/digit chain landed, this is the GOOD red: invert this \
+             test to `must_refuse_or_unsat_panic` naming the new gate, and take this descriptor's \
+             row in scripts/descriptor-anchor-inertness-baseline.txt from 192 to 0."
+        )
+    });
+
+    // …and the accepted proof publishes the HONEST aggregate. The forged basis changed the public
+    // statement and changed nothing the proof is about.
+    let (honest_trace, honest_pis) = honest_trace_with_chal(&sh, &honest_basis);
+    assert_eq!(
+        pis[..PI_COUNT],
+        honest_pis[..PI_COUNT],
+        "the claimed aggregate must be untouched — otherwise the basis DID reach the arithmetic"
+    );
+    let got = Pt {
+        x: read_field(trace.last().unwrap(), TOTX),
+        y: read_field(trace.last().unwrap(), TOTX + NUM_LIMBS),
+        z: read_field(trace.last().unwrap(), TOTX + 2 * NUM_LIMBS),
+    };
+    assert!(
+        proj_eq_at(&P_PASTA, &got, &mina_combined_gold()),
+        "the forged-basis trace still reaches o1-labs' COMBINED_GOLD"
+    );
+    assert_eq!(
+        trace.last().unwrap()[..WK],
+        honest_trace.last().unwrap()[..WK],
+        "…and every column of the row template is identical: 192 felts moved, the MSM did not"
+    );
+
+    println!(
+        "\n  [DECORATIVE] a basis that is NOT the block's own (pi[{}] {before:?} -> {after:?}) \n\
+           PROVES and VERIFIES, and still publishes o1-labs' COMBINED_GOLD. {} of {} public \n\
+           inputs ({:.1}%) are carried by this proof and read by no constraint. \n\
+           Baseline row: 192  dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1",
+        PI_COUNT + slot,
+        NC,
+        desc.public_input_count,
+        100.0 * NC as f64 / desc.public_input_count as f64
     );
 }

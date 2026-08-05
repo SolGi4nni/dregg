@@ -359,6 +359,24 @@ Read this before citing anything above.
   * And `MinaWrapXiBasisWeld` §3 proves `T_COVER`'s 7 552 declared digits are `digit_w` of the
     TENSOR IMAGE of exactly those 192 felts, over all 59 terms and all 128 windows.
 
+⚑⚑ **AND THE CENSUS SCORES THE 192 AS DECORATIVE — 192 OF 219 PUBLIC INPUTS, 87.7%, THE LARGEST
+ROW IN `scripts/descriptor-anchor-inertness-baseline.txt`.** Measured 2026-08-05 at source, not
+inferred: columns `612 … 803` are each touched by EXACTLY TWO constraints — `chalPinGates`'
+first-row `piBinding` and `chalThreadGates`' `nxt CH_m − CH_m` — and by nothing that relates them
+to another column. `nxt c` and `loc c` are the same column, so a thread is a UNARY window gate and
+the census reads it as joining nothing, **which is right**. The thread does real work (the block is
+one trace-global vector, not 8 192 free ones, and `a_basis_that_varies_by_row_is_refused` measures
+it firing as p3 constraint `#311` on row 4095); what it does not do is relate the basis to the MSM.
+
+The row is minted rather than argued away, with its reason in that file, and it carries a RUNNING
+TEST — `circuit/tests/pasta_msm_bucketed_prove.rs::the_published_basis_is_not_yet_bound_to_the_
+declared_digits` proves and verifies this aggregate against a basis that is NOT the block's own,
+reaching the same `COMBINED_GOLD` over an identical row template. ⚠ **The row goes to zero when
+`T_COVER`'s digits become these felts' in-circuit image, and not before.** Recomposing the 32 limbs
+of each value into a value column, or hashing the block into an anchor, would join all 192 columns
+to each other and zero the census while leaving 192 free witnesses — the "absorbing them as chip
+INPUTS" laundering that census file refuses by name.
+
 ⚠ **WHAT THIS IS NOT, and it must not be read as more.** The digits are still DESCRIPTOR data.
 `T_COVER` is `exactPublicRows` and `PublicLookupBalanced` demands a PERMUTATION, so the deployed
 prover already refuses a moved `DGT` — the digits were never forgeable and this is therefore **not a

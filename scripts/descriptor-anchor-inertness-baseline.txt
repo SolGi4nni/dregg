@@ -88,6 +88,51 @@
 # public inputs sit in a single component spanning all 469 columns — so it gets no row, per the
 # "descriptors at zero are omitted" rule above rather than by omission.
 #
+# ⚑⚑ 2026-08-05 — `dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1` ENTERS AT **192**, THE
+# LARGEST ROW IN THIS FILE, AND THE LARGEST BY SHARE BY A WIDE MARGIN. Per this file's own warning
+# above, say the share: **192 of 219 public inputs, 87.7%**. The next worst is `bridge-action-leaf`
+# at 26 columns. A row this size is not a number to leave uncommented, so:
+#
+#   * WHAT THE 192 ARE. The descriptor is the ξ-aggregate of Mina devnet block 539508 — 8192 x 804,
+#     475 constraints — and it publishes the six-value squaring basis `(ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ)` as
+#     6 x 32 eight-bit felts on columns 612 … 803. Each of those columns is touched by EXACTLY TWO
+#     constraints: `chalPinGates`' first-row `piBinding`, and `chalThreadGates`' `nxt CH_m − CH_m`.
+#
+#   * ⚠ THE THREAD IS NOT A MEASUREMENT ARTIFACT, AND IT IS NOT A BINDING EITHER. `nxt c` and
+#     `loc c` are the SAME column, so a thread is a UNARY window gate and this census reads it as
+#     joining nothing — correctly. Contrast the `::transition-v3` visibility grade above, where a
+#     unary gate forcing `= 1` WAS an artifact of the metric. Here the unary gate does real work: it
+#     makes the block one trace-global vector instead of 8192 free ones, and
+#     `a_basis_that_varies_by_row_is_refused` measures it firing (p3 constraint `#311`, row 4095).
+#     What it does not do is relate the basis to the MSM. It is 192 free felts, not 1 572 864.
+#
+#   * WHY THIS GETS A ROW WHERE `::receipt8-v2` GOT NONE. That family was stopped because its eight
+#     digests hashed canonical JSON strings, so NO AIR over that trace could ever derive them —
+#     publishing them was a statement the circuit could not make. The ξ basis is the opposite case:
+#     the in-circuit derivation is DESIGNED and PRICED (`PastaMsmBucketed` §7.3 — the tensor chain
+#     that re-derives each row's digit from the wire block, ~1 400 constraints and ~2 700 columns,
+#     plus the `8 → 30` limb regroup and its range certificates that `MinaWrapXiAggregateMsm` §2-pre
+#     names). And the felts are not free in the deployment: a batch verifier compares
+#     `aggPIs[27 … 218]` against `dregg-mina-xi-scalar-vector::v2`'s published block ELEMENTWISE
+#     (`MinaWrapXiBasisWeld`). This census cannot see that weld and should not — it is outside the
+#     descriptor — but it is the difference between "unbindable" and "not yet bound here".
+#
+#   * ⚠ WHAT WOULD BE CHEATING THIS ROW DOWN. Recomposing the 32 limbs of each value into a value
+#     column, or hashing the block into an anchor, joins all 192 columns to each other and takes
+#     this row to 0 while leaving 192 free witnesses — exactly the "absorbing them as chip INPUTS"
+#     laundering `::transition-v3` refused above. The row goes to zero when `T_COVER`'s declared
+#     digits become the IMAGE of these felts in-circuit, and not before.
+#
+#   * ⚑ AND THE ROW HAS A RUNNING TEST BEHIND IT, because a documented wound is not a detected one.
+#     `circuit/tests/pasta_msm_bucketed_prove.rs::the_published_basis_is_not_yet_bound_to_the_
+#     declared_digits` proves and verifies the aggregate against a basis that is NOT the block's
+#     own — same trace-template columns, same published `COMBINED_GOLD` — so the verdict is
+#     exhibited on the deployed prover rather than read off this script's graph. That test going
+#     RED is the signal to take this row to 0. It exists because this walker was measurably wrong
+#     about this class the same day: the `proof_bind` widening made `commit`/`vk`/`bound` lane
+#     VECTORS, the walker took only operands that were themselves an expression dict, and
+#     `dregg-mina-lightclient-verify::v1` scored 18 -> 27 with no anchor having changed.
+#
 # The connectivity facts themselves are named theorems in
 # `metatheory/Dregg2/Circuit/Emit/LightClientAnchorConnectivity.lean`
 # (`sol_decorative_anchors`, `sol_pinned_denominator_is_not_decorative`).
@@ -104,6 +149,7 @@
 8	dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1
 12	dregg-midnight-lightclient-verify::v1
 18	dregg-mina-lightclient-verify::v1
+192	dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1
 19	dregg-presentation-freshness::summary-v1
 1	dregg-shielded-spend-pinned-root::v1
 10	dregg-solana-lightclient-verify::v1
