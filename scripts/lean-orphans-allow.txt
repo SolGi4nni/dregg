@@ -244,3 +244,15 @@ Dregg2.Circuit.Emit.MinaStepSrsG
 # in the root closure can see. It is a candidate for rooting the moment the digit weld
 # (`PastaMsmScalarDerive`, §7.3) lands and the cone stops being parameterised by a scalar vector.
 Dregg2.Circuit.Emit.PastaMsmBucketed
+#
+# `MinaWrapXiAggregateMsm` — the xi-aggregate of Mina devnet block 539508 instantiated ON
+# `PastaMsmBucketed`, i.e. the one descriptor in the commit-stages campaign where the scalar
+# multiplication happens INSIDE the circuit rather than in a Lean reference function before the
+# descriptor exists. Excluded for the same reason its parent is, and inherited from it: it imports
+# `PastaMsmBucketed`, so rooting this without rooting that buys nothing.
+# ⚠ It is CHEAP by orphan standards but not free — 244 s, almost all of it
+# `the_declared_msm_is_o1_labs_aggregate`, which is 47 full 255-bit RCB ladders and 59 complete adds
+# decided in the kernel. Its emitted artifact is `circuit/descriptors/by-name/mina-xi-aggregate-msm.json`
+# and the check that actually reads it is `circuit/tests/mina_commit_stages_prove.rs`.
+# It should be rooted together with `PastaMsmBucketed` when the digit weld lands.
+Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm
