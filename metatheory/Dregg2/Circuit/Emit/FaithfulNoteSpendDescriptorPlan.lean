@@ -544,7 +544,7 @@ compares that artifact byte-for-byte against a fresh evaluation of this definiti
 def faithfulNoteSpendDescriptorJson : String := emitVmJson2 faithfulNoteSpendDescriptor
 
 -- Compact in-module KATs; the drift gate is the full 96,534-byte equality pin.
-#guard faithfulNoteSpendDescriptorJson.length == 96534
+#guard faithfulNoteSpendDescriptorJson.length == 96549
 #guard faithfulNoteSpendDescriptorJson.startsWith
   "{\"name\":\"faithful-note-spend-v2::exact-note16-root8-hiding\",\"ir\":2,\"trace_width\":1023"
 

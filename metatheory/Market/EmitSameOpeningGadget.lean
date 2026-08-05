@@ -322,7 +322,7 @@ def sameOpeningGadgetDescriptor : EffectVmDescriptor2 :=
 #guard gadgetBodies.length == 2 + 266 + 10 + 1
 #guard sameOpeningGadgetDescriptor.constraints.length == 1 + 2 * gadgetBodies.length + 20
 -- Byte pins on the emitted JSON (drift gate; the full golden file is supervisor wiring):
-#guard (emitVmJson2 sameOpeningGadgetDescriptor).length == 210314
+#guard (emitVmJson2 sameOpeningGadgetDescriptor).length == 210329
 #guard (emitVmJson2 sameOpeningGadgetDescriptor).contains "same-opening-gadget-n4::dec-limb-v1"
 -- The top Δ digit (32·4096^7 carries the 2^87 headroom structure) really rides the wire:
 #guard (emitVmJson2 sameOpeningGadgetDescriptor).contains "4084"

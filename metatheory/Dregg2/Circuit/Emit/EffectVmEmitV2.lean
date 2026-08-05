@@ -618,8 +618,13 @@ faithful limb table; memory/map tables are empty (the graduated v1 face is inert
 re-anchor loses nothing: `graduateV1_faithful` is the round trip. -/
 
 /-- The row environment of a bare row family (what `envAt` reads — trace-family-free). -/
-def envOf (rows : List Assignment) (pub : Assignment) (i : Nat) : VmRowEnv :=
-  { loc := rows.getD i zeroAsg, nxt := rows.getD (i + 1) zeroAsg, pub := pub }
+def envOf (rows : List Assignment) (pub : Assignment) (i : Nat)
+    (chal : Assignment := fun _ => 0) : VmRowEnv :=
+  -- ⚑ `chal` is a trailing parameter (defaulted) so `envOf` and `envAt` stay DEFINITIONALLY equal
+  -- on a `v2TraceOf`-built trace, which is what `graduateV1_sound`'s conclusion is stated against.
+  -- Defaulting it INSIDE (rather than threading) would have made the two envs different functions
+  -- and turned that `rfl` into a false statement about any challenge-bearing trace.
+  { loc := rows.getD i zeroAsg, nxt := rows.getD (i + 1) zeroAsg, pub := pub, chal := chal }
 
 /-- The gathered chip rows: every row's every site lookup tuple, evaluated (Phase B-GATE: the
 `i`-th site rides the lane base `width + 7·i`, mirroring `graduateV1`'s `mapIdx`). -/
@@ -800,19 +805,28 @@ theorem graduateV1_faithful (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (hgrad : graduable d = true) :
     (∀ i, i < rows.length →
         satisfiedVm hash d (envOf rows pub i) (i == 0) (i + 1 == rows.length))
-      ↔ ∃ t : VmTrace, t.rows = rows ∧ t.pub = pub
+      -- ⚑ `t.chal = fun _ => 0` is a CONJUNCT, not a default. A v1 descriptor carries no
+      -- `chalGate` (`challengeCount_eq_zero_of_no_chalGate`), so no challenge is readable on
+      -- either side and the round trip is about a challenge-free witness — which is the honest
+      -- thing to SAY rather than to arrange by picking a default that makes a `rfl` go through.
+      ↔ ∃ t : VmTrace, t.rows = rows ∧ t.pub = pub ∧ t.chal = (fun _ => 0)
           ∧ ChipTableSound hash (t.tf .poseidon2)
           ∧ t.tf .range = rangeRows BAL_LIMB_BITS
           ∧ Satisfied2 hash (graduateV1 d (sitesFit_admitted (graduable_spec hgrad).2.1)) (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] t := by
   constructor
   · intro h
-    refine ⟨v2TraceOf d (sitesFit_admitted (graduable_spec hgrad).2.1) rows pub, rfl, rfl,
+    refine ⟨v2TraceOf d (sitesFit_admitted (graduable_spec hgrad).2.1) rows pub, rfl, rfl, rfl,
       chipLogOf_sound hash d rows pub hgrad h, ?_,
       graduateV1_complete hash d rows pub hgrad h⟩
     rw [v2TraceOf_tf]
     exact v2TF_range d _ rows
-  · rintro ⟨t, rfl, rfl, hchip, hrange, hsat⟩
-    exact graduateV1_sound hash d _ _ _ t hchip hrange hgrad hsat
+  · rintro ⟨t, rfl, rfl, hchal, hchip, hrange, hsat⟩
+    have := graduateV1_sound hash d _ _ _ t hchip hrange hgrad hsat
+    intro i hi
+    have henv : envAt t i = envOf t.rows t.pub i := by
+      simp only [envAt, envOf, hchal]
+    rw [← henv]
+    exact this i hi
 
 /-! ## §6 — THE SWEEP: the graduation cohort, re-anchored.
 

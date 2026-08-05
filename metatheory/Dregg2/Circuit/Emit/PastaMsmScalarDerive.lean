@@ -1445,6 +1445,7 @@ theorem deriveGates_noLookup (nb planes : Nat) :
   | umemOp m => rfl
   | proofBind m => rfl
   | windowGate w => rfl
+  | chalGate w => rfl
   | lookup l =>
     exfalso
     simp only [deriveGates, deriveWireGates, deriveRowGates, gidxBitGates, chalPinGates,

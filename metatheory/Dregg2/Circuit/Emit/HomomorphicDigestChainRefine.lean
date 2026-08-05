@@ -70,11 +70,12 @@ set_option autoImplicit false
 /-! ## §0 — The whole-trace step chain. -/
 
 /-- The two-row window of an adjacent pair of main rows (`pub` rides along unchanged). -/
-def windowOf (pub a b : Assignment) : VmRowEnv :=
-  -- ⚑ `chal := zeroAsg` matches `envAt` on a challenge-free trace (`VmTrace.chal` defaults to the
-  -- all-zero assignment), which is what keeps `envAt_eq_windowOf` a `rfl`. This descriptor declares
-  -- no `chalGate`, so the field is never read (`challengeCount_eq_zero_of_no_chalGate`).
-  { loc := a, nxt := b, pub := pub, chal := fun _ => 0 }
+def windowOf (pub a b : Assignment) (chal : Assignment := fun _ => 0) : VmRowEnv :=
+  -- ⚑ `chal` is threaded rather than defaulted, so `envAt_eq_windowOf` stays a `rfl` on ANY trace
+  -- (`envAt` carries `t.chal`). This descriptor declares no `chalGate`, so the field is never read
+  -- (`challengeCount_eq_zero_of_no_chalGate`) — but a window that silently pinned it to zero would
+  -- be a different function from `envAt`, and the `rfl` would be hiding that.
+  { loc := a, nxt := b, pub := pub, chal := chal }
 
 /-- The whole-trace fold chain, structurally: starting from accumulator row `prev`, every
 adjacent row pair satisfies the per-step fold bundle `foldStepHolds` (the §3 bundle of
@@ -155,7 +156,8 @@ def RowSat (hash : List ℤ → ℤ) (t : VmTrace) : Prop :=
 
 /-- `envAt` IS the adjacent-pair window (both read the same total `getD` slices). -/
 theorem envAt_eq_windowOf (t : VmTrace) (i : Nat) :
-    envAt t i = windowOf t.pub (t.rows.getD i zeroAsg) (t.rows.getD (i + 1) zeroAsg) := rfl
+    envAt t i = windowOf t.pub (t.rows.getD i zeroAsg) (t.rows.getD (i + 1) zeroAsg) t.chal :=
+  rfl
 
 /-- The `A·enc` witness gate for coordinate `k < 4` is IN the descriptor. -/
 theorem contribGate_mem (k : Nat) (hk : k < 4) :
