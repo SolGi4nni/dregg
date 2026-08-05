@@ -95,6 +95,12 @@ const Z_BASE: usize = 64;
 const R_ZERO: usize = 0;
 const R_TX: usize = 1;
 const R_TY: usize = 2;
+/// ⚑ **The six SQUARING-BASIS holds** (`MinaWrapCommitStages.XI_BASIS_REGS`), high power first —
+/// the ladder's registers, idle in the ξ chain. `xiChainProg` taps `ξ^{2^j}` into each as the walk
+/// passes it, and `pinXiChain` publishes all six on the LAST row at PI blocks 2 … 7.
+const R_BASIS: [usize; 6] = [8, 7, 6, 5, 4, 3];
+/// Eight 32-felt blocks: `ξ`, `ξ⁴⁶`, then the basis.
+const XI_PI_BLOCKS: usize = 8;
 
 fn reg_col(r: usize) -> usize {
     REG_BASE + r * SK
@@ -192,12 +198,20 @@ fn parse_trace(text: &str) -> Vec<Vec<BabyBear>> {
     t
 }
 
+/// ⚑ A published vector is a whole number of 32-limb BLOCKS. The four fold stages and the ladder
+/// publish TWO (`x` then `y`); the ξ chain publishes EIGHT since 2026-08-05 (`ξ`, `ξ⁴⁶`, then the
+/// six-value squaring basis the ξ-aggregate's wire consumes). A flat `== 64` here was what made a
+/// widened surface look like a corrupt fixture.
 fn parse_pis(text: &str) -> Vec<BabyBear> {
     let pis: Vec<BabyBear> = text
         .split_whitespace()
         .map(|c| BabyBear::new(c.parse::<u32>().expect("PI is a u32 decimal")))
         .collect();
-    assert_eq!(pis.len(), 64, "32 limbs of x, then 32 of y");
+    assert!(
+        pis.len() >= 2 * SK && pis.len() % SK == 0,
+        "a published vector is a whole number of {SK}-limb blocks, got {}",
+        pis.len()
+    );
     pis
 }
 
@@ -275,7 +289,16 @@ fn the_commitment_machine_has_the_shape_lean_emitted() {
             rows.len() * ROM_ARITY,
         );
         assert_eq!(d.trace_width, CM_WIDTH);
-        assert_eq!(d.public_input_count, 64);
+        // ⚑ The ξ chain publishes EIGHT 32-felt blocks; every other stage publishes two.
+        assert_eq!(
+            d.public_input_count,
+            if label == "xi scalar vector" {
+                XI_PI_BLOCKS * SK
+            } else {
+                2 * SK
+            },
+            "{label} publishes an unexpected number of felts"
+        );
         // ⚑ The manifest key is `pc + 1`: strictly increasing and never zero, which is what turns
         // the permutation balance into a POINTWISE identification of row j with instruction j
         // rather than a statement about the multiset of instructions.
@@ -314,6 +337,12 @@ fn the_xi_scalar_vector_proves() {
 
     // The first row's R1 IS the claimed input, and the last row's R2 the claimed output: that is
     // the pin, read off the fixture before the prover ever sees it.
+    assert_eq!(
+        pis.len(),
+        XI_PI_BLOCKS * SK,
+        "the chain publishes eight 32-felt blocks since 2026-08-05"
+    );
+    assert_eq!(d.public_input_count, XI_PI_BLOCKS * SK);
     for i in 0..SK {
         assert_eq!(trace[0][reg_col(R_TX) + i], pis[i], "input limb {i}");
         assert_eq!(
@@ -323,12 +352,72 @@ fn the_xi_scalar_vector_proves() {
         );
     }
 
+    // ⚑ **AND THE SIX BASIS BLOCKS ARE THE SIX BASIS REGISTERS, ON THE LAST ROW.** This is the
+    // surface the ξ-aggregate's 192 wire felts are welded to; if a block published the wrong
+    // register the aggregate would still prove, against a basis nobody derived.
+    let last = &trace[trace.len() - 1];
+    for (b, r) in R_BASIS.iter().enumerate() {
+        for i in 0..SK {
+            assert_eq!(
+                last[reg_col(*r) + i],
+                pis[(2 + b) * SK + i],
+                "basis block {b} (register {r}) limb {i}"
+            );
+        }
+    }
+    // …and they are six DISTINCT values, so a tap that aliased its register reds here.
+    for a in 0..6 {
+        for b in (a + 1)..6 {
+            assert_ne!(
+                pis[(2 + a) * SK..(3 + a) * SK],
+                pis[(2 + b) * SK..(3 + b) * SK],
+                "basis blocks {a} and {b} publish the same 32 felts"
+            );
+        }
+    }
+    // …and the tail block is the chain's own INPUT `ξ`, which is what makes the basis an orbit of
+    // the value `dregg-mina-xi-endo-lift::v1` published rather than six free scalars.
+    assert_eq!(
+        pis[7 * SK..],
+        pis[..SK],
+        "the basis tail must be the chain's input xi"
+    );
+
     prove_and_verify(&d, &trace, &pis).expect("the xi power chain must prove and verify");
     println!(
         "\n§1 xi SCALAR VECTOR: 46 multiplies over the Pallas scalar field, {} rows, PROVED and \
-         VERIFIED in release against 64 public inputs.",
-        trace.len()
+         VERIFIED in release against {} public inputs — including the SIX-VALUE SQUARING BASIS \
+         (ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ) the ξ-aggregate's wire consumes.",
+        trace.len(),
+        pis.len()
     );
+}
+
+/// ⚑ …and a forged BASIS block is refused. The chain would prove perfectly well with any 192 felts
+/// in blocks 2 … 7 if they were not pinned to registers the program wrote — and then the
+/// ξ-aggregate's 192-felt weld would be a comparison of two numbers nobody derived.
+///
+/// **REFUSING GATE: `MinaWrapCommitStages.pinXiChain`'s LAST-ROW PI bindings** on the basis holds.
+///
+/// ⚠ The felt moved is READ first: `bump_limb8` wraps inside the 8-bit range so a RANGE lookup
+/// cannot be what objects, and the assertion below is that the value actually changed.
+#[test]
+fn a_forged_xi_basis_block_is_refused() {
+    let d = parse_desc(Xi::DESC);
+    let trace = parse_trace(Xi::TRACE);
+
+    for b in 0..6usize {
+        let mut bad = parse_pis(Xi::PIS);
+        let slot = (2 + b) * SK;
+        let before = bad[slot];
+        let after = bump_limb8(before);
+        assert_ne!(before, after, "the moved felt must actually change value");
+        bad[slot] = after;
+        let err = prove_and_verify(&d, &trace, &bad)
+            .expect_err("a claimed basis value the chain did not compute must be REFUSED");
+        assert!(!err.is_empty());
+        println!("\n§1d forged basis block {b} REFUSED: {err}");
+    }
 }
 
 /// …and a forged endpoint is refused, at both ends, so the chain is a binding and not a display.

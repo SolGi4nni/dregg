@@ -714,6 +714,122 @@ theorem the_toy_and_the_full_width_instance_no_longer_collide
   simp only [bucketedRowDesc, bucketedRowDescOn]
   decide
 
+/-! ### §4c — ⚑⚑ THE CHALLENGE BLOCK: A WIRE SLOT FOR THE SCALARS' GENERATOR.
+
+§7.4 read, until 2026-08-05: *"This descriptor's `piCount = 27` publishes only the output `C`; `u⃗`
+enters through `T_COVER`'s declared digits and is therefore a DESCRIPTOR PARAMETER, not a wire
+value."* That was a statement about a MISSING SURFACE, and this is the surface.
+
+`nc` challenge FELTS occupy the `nc` columns immediately above the bucketed row, and they are
+constrained by exactly the two objects `PastaMsmScalarDerive.deriveWireGates` uses for the same job
+one layout over:
+
+  * `chalPinGates` — a FIRST-ROW `piBinding` per felt. This is what "the challenges are on the
+    wire" means concretely: the verifier COMPARES them against a public-input vector it already
+    holds, rather than reading them out of a trace it was handed.
+  * `chalThreadGates` — `nxt CH_m = CH_m`, per felt. Without it a prover may use **a fresh
+    challenge vector per row**, which is the forgery `PastaMsmScalarDerive` §5d exhibits and the
+    one a row-local derivation cannot see. With it the block is one trace-global vector.
+
+⚠ **AND WHAT IS NOT HERE, said plainly.** These gates put the challenges on the wire; they do NOT
+make `T_COVER`'s digits their in-circuit image. That is the tensor chain — `PRc`/`MUc`/`QUc` in
+`PastaMsmScalarDerive`'s layout — and §7.3 still prices it at ~1 400 constraints and ~2 700 columns
+in THIS layout. The digits remain permutation-forced by `T_COVER`, which is why nothing below is a
+soundness repair; it is the difference between *the verifier is told the challenge* and *the
+challenge is a value the verifier already holds from another proof*.
+
+⚑ **NOTHING HERE NAMES A CHALLENGE VALUE.** `chalPinGates` takes a COUNT. A challenge baked into
+the descriptor would be a constant again, one indirection further out. -/
+
+/-- The challenge block's base column: immediately above the bucketed row, so not one existing
+column moves and every forcing theorem of the tower below still addresses what it addressed. -/
+def CHB : Nat := WK
+
+/-- ⚑ The FIRST-ROW public-input pins, one per challenge felt, based at `PI_COUNT` so the 27 output
+limbs keep slots `0 … 26`. -/
+def chalPinGates (nc : Nat) : List VmConstraint2 :=
+  (List.range nc).map (fun m => .base (.piBinding .first (CHB + m) (PI_COUNT + m)))
+
+/-- ⚑ The threads that make the block ONE vector for the whole trace: `nxt CH_m − CH_m`. -/
+def chalThreadGates (nc : Nat) : List VmConstraint2 :=
+  (List.range nc).map
+    (fun m => cw (.add (.nxt (CHB + m)) (.mul (.const (-1)) (.loc (CHB + m)))))
+
+/-- ⚑ **THE WIDENED DESCRIPTOR.** The bucketed artifact verbatim, plus `nc` columns, `nc` public
+inputs and the `2·nc` gates that tie them together. The name carries `nc`, because a name is a KEY
+and two AIRs of different width must not share one. -/
+def bucketedRowDescChalOn (add : AddGadget) (curve : String)
+    (nc n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    EffectVmDescriptor2 :=
+  { name        := "dregg-pasta-msm-bucketed-" ++ curve ++ "-n" ++ toString n
+                     ++ "b" ++ toString nbits ++ "-c" ++ toString c
+                     ++ "-w" ++ toString nc ++ "::v1"
+  , traceWidth  := WK + nc
+  , piCount     := PI_COUNT + nc
+  , tables      := bucketedTables n nbits c gens scal
+  , constraints := (bucketedRowDescOn add curve n nbits c gens scal).constraints
+                     ++ chalPinGates nc ++ chalThreadGates nc
+  , hashSites   := []
+  , ranges      := [] }
+
+/-- The PALLAS instance of the widened family. -/
+def bucketedRowDescChal (nc n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    EffectVmDescriptor2 :=
+  bucketedRowDescChalOn pallasCompleteAdd "pallas" nc n nbits c gens scal
+
+/-- ⚑ **AND THE NARROW ARTIFACT IS A PREFIX OF THE WIDE ONE.** Every forcing theorem proved about
+`bucketedRowDesc`'s constraint list applies to this one unchanged — the widening APPENDS, it does
+not re-author, and this is the statement that keeps that from being a claim about intent. -/
+theorem bucketedRowDescChalOn_extends_the_narrow_descriptor (add : AddGadget) (curve : String)
+    (nc n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    (bucketedRowDescOn add curve n nbits c gens scal).constraints
+      <+: (bucketedRowDescChalOn add curve nc n nbits c gens scal).constraints :=
+  ⟨chalPinGates nc ++ chalThreadGates nc, by simp [bucketedRowDescChalOn, List.append_assoc]⟩
+
+/-- ⚑ …and the three MANIFESTS are the same three objects, so the routing the narrow artifact's
+permutation forces is the routing this one forces. -/
+theorem bucketedRowDescChalOn_keeps_the_manifests (add : AddGadget) (curve : String)
+    (nc n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    (bucketedRowDescChalOn add curve nc n nbits c gens scal).tables
+      = (bucketedRowDescOn add curve n nbits c gens scal).tables := rfl
+
+/-- ⚑ **AND THE BLOCK IS BOTH PINNED AND THREADED, ONE OF EACH PER FELT.** A widening that emitted
+the pins and forgot the threads would publish a challenge vector that a prover may still vary from
+row to row — green everywhere, and exactly the forgery `PastaMsmScalarDerive` §5d names. -/
+theorem the_challenge_block_is_pinned_and_threaded (nc : Nat) :
+    (chalPinGates nc).length = nc ∧ (chalThreadGates nc).length = nc := by
+  refine ⟨by simp [chalPinGates], by simp [chalThreadGates]⟩
+
+/-- ⚑ **AND NO CHALLENGE PIN COLLIDES WITH AN OUTPUT PIN — not in its slot and not in its column.**
+`outPiGates` publishes `TOTX … TOTX+26` at slots `0 … 26` on the LAST row; the challenge block
+publishes `CHB … CHB+nc−1` at slots `27 …` on the FIRST. Two pins sharing a PI slot would let one
+value be read as the other, and every length and `piCount` arithmetic in this file would still add
+up — which is why this is checked over the emitted lists rather than argued from the offsets. -/
+theorem no_challenge_pin_collides_with_an_output_pin (nc : Nat) :
+    (outPiGates.all (fun g => match g with
+        | .base (.piBinding _ col idx) => decide (col < CHB ∧ idx < PI_COUNT)
+        | _ => false)) = true
+      ∧ ((chalPinGates nc).all (fun g => match g with
+          | .base (.piBinding r col idx) =>
+              decide (r = Dregg2.Circuit.Emit.EffectVmEmit.VmRow.first
+                        ∧ CHB ≤ col ∧ PI_COUNT ≤ idx)
+          | _ => false)) = true := by
+  refine ⟨by decide, ?_⟩
+  simp only [chalPinGates, List.all_map, List.all_eq_true, Function.comp_def]
+  intro m _
+  simp only [decide_eq_true_eq]
+  exact ⟨trivial, Nat.le_add_right _ _, Nat.le_add_right _ _⟩
+
+/-- ⚑ **AND EVERY CHALLENGE COLUMN IS INSIDE THE WIDENED TRACE AND ABOVE EVERY INHERITED ONE.** The
+block cannot alias `DGT`, `GIDX` or any limb column of the row template, and cannot address a column
+the descriptor does not declare — the two ways a widening silently reads someone else's value. -/
+theorem the_challenge_columns_are_fresh_and_declared (add : AddGadget) (curve : String)
+    (nc n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    WK ≤ CHB
+      ∧ CHB + nc = (bucketedRowDescChalOn add curve nc n nbits c gens scal).traceWidth
+      ∧ PI_COUNT + nc = (bucketedRowDescChalOn add curve nc n nbits c gens scal).piCount := by
+  refine ⟨Nat.le_refl _, rfl, rfl⟩
+
 /-- ⚑ **The CURVE ARITHMETIC was not re-authored.** `PastaMsmWindowed.rowGates` — the 42 row-local
 gates, and with them `PastaCurveComplete.pallasCompleteAdd`'s 33, which is the arithmetic the whole
 cone shares — is a PREFIX of the emitted list. -/

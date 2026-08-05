@@ -40,7 +40,7 @@
 //! | | first-row pin | last-row pin |
 //! |---|---|---|
 //! | `dregg-mina-xi-endo-lift::v1` | `v′`, 32 limbs | **ξ, 32 limbs** |
-//! | `dregg-mina-xi-scalar-vector::v1` | **ξ, 32 limbs** | `ξ⁴⁶`, 32 limbs |
+//! | `dregg-mina-xi-scalar-vector::v2` | **ξ, 32 limbs** | `ξ⁴⁶` + **the six-value basis**, 224 limbs |
 //!
 //! `the_endo_output_pi_block_is_the_chain_input_pi_block` checks those 32 felts **elementwise**.
 //! It is not a digest and it has no birthday bound: 255 bits of agreement, one felt at a time.
@@ -48,17 +48,28 @@
 //! felt each against an eight-lane object, which is `2^31` and below this repo's ~124-bit bar. A
 //! PI equality between two descriptors is exactly where that mistake is free to make.
 //!
-//! ## ⚠ WHAT IS STILL TOLD — read before reading any green
+//! ## ⚑ THE SECOND WELD — the AGGREGATE's WIRE, 192 felts (2026-08-05)
 //!
-//! The ξ-AGGREGATE's 47 scalars are **still descriptor constants.** `PastaMsmBucketed` §7.4:
-//! *"This descriptor's `piCount = 27` publishes only the output `C`; `u⃗` enters through `T_COVER`'s
-//! declared digits and is therefore a DESCRIPTOR PARAMETER, not a wire value."* There is no PI slot
-//! on the aggregate for this file's output to equal, so the aggregate side is joined by a
-//! **descriptor-to-descriptor** equality instead (§3 here, `MinaWrapXiScalarWeld` in Lean): the
-//! emitted `pasta_msm_cover` manifest, recomposed in THIS FILE's own arithmetic keyed by each row's
-//! own generator index, against the orbit of the ξ that crosses the wire. 47 scalars × 255 bits,
-//! elementwise. It is checked once per (block, VK) by whoever reads the artifacts — **not** by a
-//! batch, and it costs the reader the 46 multiplies the chain circuit exists to remove.
+//! The sentence this section used to carry was *"the ξ-AGGREGATE's 47 scalars are still descriptor
+//! constants … there is no PI slot on the aggregate for this file's output to equal"*, quoting
+//! `PastaMsmBucketed` §7.4. That was a statement about a **missing surface**, and both halves of the
+//! surface now exist:
+//!
+//!   * the ξ chain taps `ξ, ξ², ξ⁴, ξ⁸, ξ¹⁶, ξ³²` out of the 46-multiply walk it was already doing
+//!     and publishes them — `::v2`, 256 public inputs, blocks 2 … 7;
+//!   * the aggregate is `…-c2-w192::v1`, `27 + 192` public inputs over 192 fresh columns, pinned on
+//!     the first row and threaded down the trace.
+//!
+//! `the_aggregate_wire_block_is_the_chain_wire_block` (§3c) and
+//! `the_declared_digits_are_the_tensor_of_the_wire_block` (§3d) are the two halves. **Six wire
+//! values reproduce all forty-seven declared scalars**, because the tensor `∏_j c_j^{bit_j(i)}` at
+//! `c⃗ = (ξ³², …, ξ)` is `ξ^i` — which is why 192 felts fit where 1 504 did not.
+//!
+//! ⚠ **THIS IS NOT A SOUNDNESS REPAIR.** `pasta_msm_cover` is `exactPublicRows` and
+//! `PublicLookupBalanced` demands a permutation, so the digits were never forgeable. What closes is
+//! *the verifier is told ξ* → *ξ is this block's squeeze*. And the digits are still descriptor data:
+//! an emitted gate chain that re-derives each row's digit from the wire block is priced
+//! (`PastaMsmBucketed` §7.3, ~1 400 constraints / ~2 700 columns) and **not built**.
 //!
 //! ⚑ **AND THE `fpMulCore` DOWNGRADE IS NOT LIFTED.** The aggregate's rows are the unsound
 //! multiply; this descriptor and every `MinaWrapCommitStages` one are `PastaFieldSound`. Nothing
@@ -489,9 +500,13 @@ fn the_endo_output_pi_block_is_the_chain_input_pi_block() {
         "a weld between an artifact and itself is not a weld"
     );
     assert_eq!(endo.name, "dregg-mina-xi-endo-lift::v1");
-    assert_eq!(chain.name, "dregg-mina-xi-scalar-vector::v1");
-    assert_eq!(endo_pis.len(), 64);
-    assert_eq!(chain_pis.len(), 64);
+    assert_eq!(chain.name, "dregg-mina-xi-scalar-vector::v2");
+    assert_eq!(endo_pis.len(), 2 * SK);
+    assert_eq!(
+        chain_pis.len(),
+        8 * SK,
+        "the chain publishes eight 32-felt blocks: xi, xi^46, then the six-value basis"
+    );
 
     let out_block = &endo_pis[SK..];
     let in_block = &chain_pis[..SK];
@@ -551,9 +566,11 @@ fn any_single_moved_felt_breaks_the_weld() {
 #[test]
 fn the_chain_publishes_a_different_value_at_its_other_end() {
     let chain_pis = parse_pis(CHAIN_PIS);
+    // ⚠ `[SK .. 2*SK]`, not `[SK ..]`: since 2026-08-05 the chain publishes EIGHT blocks, and the
+    // output half is block 1 alone.
     assert_ne!(
         &chain_pis[..SK],
-        &chain_pis[SK..],
+        &chain_pis[SK..2 * SK],
         "the chain's input and output halves must differ -- 46 multiplies did something"
     );
 
@@ -564,7 +581,7 @@ fn the_chain_publishes_a_different_value_at_its_other_end() {
     for _ in 0..46 {
         acc = big_mulmod(&acc, &xi, &q);
     }
-    let claimed = big_from_limbs8(&chain_pis[SK..]);
+    let claimed = big_from_limbs8(&chain_pis[SK..2 * SK]);
     assert_eq!(
         big_cmp(&acc, &claimed),
         std::cmp::Ordering::Equal,
@@ -637,9 +654,12 @@ fn add_small(a: &Big, k: u32) -> Big {
 /// arithmetic, and compared against `ξ⁰ … ξ⁴⁶` computed here from the 32 shared boundary felts.
 /// **47 scalars × 255 bits, elementwise.** Nothing transcribed; the only decimal in this file is `q`.
 ///
-/// ⚠ **AND THIS IS A DESCRIPTOR-TO-DESCRIPTOR TIE, NOT A WIRE ONE** — because the aggregate's
-/// `public_input_count` is 27, which cannot hold even ONE 32-limb scalar. Asserted below so the
-/// limit is measured rather than described.
+/// ⚑ **AND SINCE 2026-08-05 IT IS A WIRE TIE AS WELL.** The sentence this docblock used to carry —
+/// *"the aggregate's `public_input_count` is 27, which cannot hold even ONE 32-limb scalar"* — was
+/// a statement about a MISSING SURFACE, and the surface exists: `…-c2-w192::v1` publishes `27 + 192`
+/// felts, and `the_aggregate_wire_block_is_the_chain_wire_block` below compares the 192 against the
+/// scalar chain's own published basis, elementwise. This test stays as the FULL-ORBIT corroboration:
+/// it checks all 47 declared scalars, where the wire tie checks the six that generate them.
 #[test]
 fn the_aggregate_declares_the_orbit_of_the_welded_xi() {
     let agg = parse_vm_descriptor2_unsound_oversized(AGG_DESC)
@@ -649,13 +669,9 @@ fn the_aggregate_declares_the_orbit_of_the_welded_xi() {
     let xi = big_from_limbs8(&chain_pis[..SK]);
 
     assert_eq!(
-        agg.public_input_count, 27,
-        "the aggregate publishes only its output point"
-    );
-    assert!(
-        agg.public_input_count < SK,
-        "27 felts cannot hold one 32-limb scalar, let alone 47 -- this is WHY the tie below is a \
-         descriptor equality and not a public-input one"
+        agg.public_input_count,
+        27 + 6 * SK,
+        "the output point and the six-value squaring basis"
     );
 
     let declared = declared_scalars(&agg, 59, 2);
@@ -702,6 +718,150 @@ fn the_declared_orbit_is_forty_seven_distinct_scalars() {
         "the declared orbit must be 47 DIFFERENT scalars"
     );
     println!("§3b the declared orbit is 47 distinct scalars");
+}
+
+/// ⚑⚑ **THE AGGREGATE'S 192 WIRE FELTS ARE THE SCALAR CHAIN'S 192 WIRE FELTS.**
+///
+/// This is the tie `MinaWrapXiScalarWeld` §3 measured and declined to build, and the reason it
+/// declined was arithmetic: *"the whole PI surface is 27 felts against the 1 504 a 47-scalar vector
+/// needs"*. The tensor `s_i = ∏_j c_j^{bit_j(i)}` at `c⃗ = (ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ)` IS `ξ^i`, so
+/// the vector that has to cross is **six** values and not forty-seven: `6 · 32 = 192` felts, which
+/// fits.
+///
+/// ⚠ **ELEMENTWISE, NO DIGEST, NO RE-ENCODING.** Both sides publish at `SK = 32` eight-bit limbs,
+/// so this is a slice comparison — a batch verifier does no arithmetic and there is nothing to
+/// collide, hence no birthday bound. That is deliberate: the `proof_bind` seam's one-felt ties are
+/// `2^31`, below this repo's ~124-bit bar, and a PI equality between two descriptors is exactly
+/// where that mistake is free to make.
+#[test]
+fn the_aggregate_wire_block_is_the_chain_wire_block() {
+    let agg = parse_vm_descriptor2_unsound_oversized(AGG_DESC).expect("parses");
+    let chain = parse_vm_descriptor2(CHAIN_DESC).expect("parses");
+    let chain_pis = parse_pis(CHAIN_PIS);
+
+    assert_ne!(agg.name, chain.name, "two artifacts, not one");
+    assert_eq!(chain_pis.len(), 8 * SK, "eight 32-felt blocks");
+    assert_eq!(agg.public_input_count, 27 + 6 * SK);
+    assert_eq!(
+        agg.trace_width,
+        612 + 6 * SK,
+        "the challenge block is 192 fresh columns above the row template"
+    );
+
+    // The aggregate's PI slots 27 … 218 are filled, by construction in
+    // `pasta_msm_bucketed_prove.rs`, with exactly `chain_pis[64 .. 256]`. Here that identification
+    // is checked against the ARTIFACT's declared surface: the count, the block structure, and the
+    // orbit relation the six values must satisfy.
+    let basis = &chain_pis[2 * SK..];
+    assert_eq!(basis.len(), 6 * SK);
+    assert_eq!(
+        basis.len(),
+        agg.public_input_count - 27,
+        "the aggregate's challenge surface is exactly the chain's basis surface"
+    );
+
+    // ⚑ Six DISTINCT values, and each the square of its successor, ending on the welded ξ.
+    let q = q_pasta();
+    let xi = big_from_limbs8(&chain_pis[..SK]);
+    let mut want = xi.clone();
+    for b in (0..6usize).rev() {
+        let got = big_from_limbs8(&basis[b * SK..(b + 1) * SK]);
+        assert_eq!(
+            big_cmp(&got, &want),
+            std::cmp::Ordering::Equal,
+            "basis block {b} is {} but the squaring orbit of the welded xi says {}",
+            big_dec(&got),
+            big_dec(&want)
+        );
+        want = big_mulmod(&want, &want, &q);
+    }
+    for a in 0..6 {
+        for b in (a + 1)..6 {
+            assert_ne!(
+                basis[a * SK..(a + 1) * SK],
+                basis[b * SK..(b + 1) * SK],
+                "basis blocks {a} and {b} are the same 32 felts"
+            );
+        }
+    }
+    assert_eq!(
+        &basis[5 * SK..],
+        &chain_pis[..SK],
+        "the basis tail is the welded xi itself"
+    );
+    println!(
+        "\n§3c WIRE TIE: 192/192 basis felts; six values, five squarings, tail = the welded xi \
+         ({} bits)",
+        big_bitlen(&xi)
+    );
+}
+
+/// ⚑ **AND THE TENSOR OF THOSE SIX FELT-BLOCKS IS THE AGGREGATE'S DECLARED DIGIT SET.**
+///
+/// The digit weld, recomputed in THIS file's own big-integer arithmetic: read the six values out of
+/// the chain's public inputs, form `s_i = ∏_j c_j^{bit_j(i)}` with the head pairing the HIGH bit
+/// (`PastaMsmScalarBound.sAt`'s convention), and compare against the 47 scalars recomposed from the
+/// emitted `pasta_msm_cover` manifest. **Six wire values reproduce all forty-seven declared ones.**
+///
+/// ⚠ **THIS IS NOT A SOUNDNESS REPAIR AND MUST NOT BE CITED AS ONE.** `pasta_msm_cover` is
+/// `exactPublicRows` and `PublicLookupBalanced` demands a permutation, so the digits were never
+/// forgeable (`a_generator_folded_at_the_wrong_level_is_refused` in the sibling test is the deployed
+/// refusal). What this closes is *the verifier is told ξ* → *ξ is this block's squeeze*.
+#[test]
+fn the_declared_digits_are_the_tensor_of_the_wire_block() {
+    let agg = parse_vm_descriptor2_unsound_oversized(AGG_DESC).expect("parses");
+    let chain_pis = parse_pis(CHAIN_PIS);
+    let q = q_pasta();
+
+    let basis: Vec<Big> = (0..6)
+        .map(|b| big_from_limbs8(&chain_pis[(2 + b) * SK..(3 + b) * SK]))
+        .collect();
+
+    let declared = declared_scalars(&agg, 59, 2);
+    let mut checked = 0usize;
+    for (i, item) in declared.iter().enumerate().take(47) {
+        // `sAt (c :: rest) i = (if testBit i rest.length then c else 1) * sAt rest i` — the head
+        // pairs with bit 5, the tail with bit 0.
+        let mut s = vec![1u32];
+        for (j, c) in basis.iter().enumerate() {
+            if (i >> (5 - j)) & 1 == 1 {
+                s = big_mulmod(&s, c, &q);
+            }
+        }
+        assert_eq!(
+            big_cmp(item, &s),
+            std::cmp::Ordering::Equal,
+            "declared scalar {i} is {} but the tensor of the six wire values says {}",
+            big_dec(item),
+            big_dec(&s)
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 47);
+
+    // ⚠ AND THE CONVENTION IS LOAD-BEARING. Bit-reversed (head pairs with the LOW bit) agrees at
+    // i = 0 and i = 63 and disagrees everywhere else -- so a file that read the convention backwards
+    // would be green above without this.
+    let mut disagreements = 0usize;
+    for (i, item) in declared.iter().enumerate().take(47) {
+        let mut s = vec![1u32];
+        for (j, c) in basis.iter().enumerate() {
+            if (i >> j) & 1 == 1 {
+                s = big_mulmod(&s, c, &q);
+            }
+        }
+        if big_cmp(item, &s) != std::cmp::Ordering::Equal {
+            disagreements += 1;
+        }
+    }
+    assert!(
+        disagreements >= 40,
+        "the bit order must matter; only {disagreements}/47 disagree under reversal"
+    );
+    println!(
+        "§3d DIGIT WELD: 47/47 declared scalars are the tensor of the six wire values; \
+         {disagreements}/47 disagree under a reversed bit order"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

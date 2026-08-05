@@ -21,11 +21,18 @@ The ξ-AGGREGATE cannot be joined that way, and the reason is structural rather 
 > This descriptor's `piCount = 27` publishes only the output `C`; `u⃗` enters through `T_COVER`'s
 > declared digits and is therefore a DESCRIPTOR PARAMETER, not a wire value.
 
-⚑ **So there is no PI slot on the aggregate for a published scalar to equal.** `the_aggregate_has_no_
-room_for_a_scalar_vector` is that as a theorem: the whole PI surface is 27 felts against the 1 504 a
-47-scalar vector needs at this cone's own limb width. A "PI equality" asserted against that side
-would have to be a one-felt digest, and a one-felt tie between two descriptors is `2^31` — the shape
-the `proof_bind` seam already has and the shape this cone was told not to add.
+⚑ **So there WAS no PI slot on the aggregate for a published scalar to equal**, and the arithmetic
+that made it look structural is `the_aggregate_has_room_for_the_basis_and_not_for_the_orbit`: a
+47-scalar vector needs 1 504 felts at this cone's own limb width, which fits nothing. A "PI equality"
+asserted against that side would have had to be a one-felt digest, and a one-felt tie between two
+descriptors is `2^31` — the shape the `proof_bind` seam already has and the shape this cone was told
+not to add.
+
+⚑ **UPDATED 2026-08-05 — THE OBSTRUCTION WAS A MISSING SURFACE, AND THE SURFACE IS BUILT.** §3's own
+closing note (six wire values, not forty-seven) is what made it cheap: `…-c2-w192::v1` publishes
+`27 + 192` felts, `dregg-mina-xi-scalar-vector::v2` publishes the six-value basis on 192 of its own,
+and `MinaWrapXiBasisWeld` ties them elementwise with no digest. **This file's §2 is now the
+FULL-ORBIT corroboration of a tie that is a wire equality on the six generators.**
 
 What IS available is a **descriptor-to-descriptor equality at full width**, and it is what this file
 proves: `T_COVER`'s emitted manifest, read in ONE ordered pass keyed by each row's own generator
@@ -178,16 +185,23 @@ theorem the_manifest_is_the_trace_height :
 Stated as theorems where it can be, so the limit is a fact about the artifacts and not a paragraph
 a later reader can decide was pessimistic. -/
 
-/-- ⚑ **THE AGGREGATE HAS NO ROOM FOR A SCALAR VECTOR ON ITS WIRE.** 27 public-input felts against
-the `47 · 32 = 1 504` a 47-scalar vector needs at this cone's limb width — and against the 32 ONE
-scalar needs. This is why §2's tie is descriptor-to-descriptor: not because a wire tie was priced
-and declined, but because the wire has no slot to put it in. -/
-theorem the_aggregate_has_no_room_for_a_scalar_vector :
-    xiAggMsmDesc.piCount = 27
-      ∧ xiAggMsmDesc.piCount < SK
-      ∧ xiAggMsmDesc.piCount < N_REAL * SK
-      ∧ N_REAL * SK = 1504 := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+/-- ⚑ **THE AGGREGATE HAS NO ROOM FOR A *47*-SCALAR VECTOR — AND IT HAS ROOM FOR THE SIX.**
+
+⚠ **This theorem said `piCount = 27` until 2026-08-05, and it went RED at the point of the change.**
+That is what it was for. The original reading — *"the wire has no slot to put it in"* — was a
+statement about a MISSING SURFACE and not about the layout, and `PastaMsmBucketed.chalPinGates`
+supplied the surface. What survives, and what made the fix cheap, is the ARITHMETIC: a 47-scalar
+vector needs `47 · 32 = 1 504` felts and would not have fitted anything; the six-value squaring
+basis needs `192`, and `the_squaring_basis_generates_the_orbit` below is why six is enough.
+
+`MinaWrapXiBasisWeld` is the wire tie this retires the obstruction for. -/
+theorem the_aggregate_has_room_for_the_basis_and_not_for_the_orbit :
+    xiAggMsmDesc.piCount = 27 + 6 * SK
+      ∧ xiAggMsmDesc.piCount = 219
+      ∧ 6 * SK < N_REAL * SK
+      ∧ N_REAL * SK = 1504
+      ∧ 6 * SK = 192 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **AND THE DERIVATION THAT WOULD FIX IT NEEDS SIX WIRE VALUES, NOT FORTY-SEVEN.**
 
@@ -235,7 +249,7 @@ block, and neither mentions the row template's multiply. -/
 #assert_axioms a_relabelled_key_leaves_the_orbit
 #assert_axioms the_tampered_rows_are_what_they_are_claimed_to_be
 #assert_axioms the_manifest_is_the_trace_height
-#assert_axioms the_aggregate_has_no_room_for_a_scalar_vector
+#assert_axioms the_aggregate_has_room_for_the_basis_and_not_for_the_orbit
 #assert_axioms the_squaring_basis_generates_the_orbit
 #assert_axioms six_squarings_cover_forty_seven_terms
 

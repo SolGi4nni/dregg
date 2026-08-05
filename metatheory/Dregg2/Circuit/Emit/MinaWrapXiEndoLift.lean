@@ -39,7 +39,7 @@ Two emitted objects are tied here by a **public-input equality**, and the tie is
 it actually has rather than at the width a digest would suggest:
 
   * `dregg-mina-xi-endo-lift::v1`'s LAST-row pin publishes `ξ` as **`SK = 32` eight-bit limbs**;
-  * `dregg-mina-xi-scalar-vector::v1`'s FIRST-row pin consumes `ξ` as the same 32 limbs.
+  * `dregg-mina-xi-scalar-vector::v2`'s FIRST-row pin consumes `ξ` as the same 32 limbs.
 
 `the_endo_output_block_is_the_chain_input_block` is that equality, and it is **32 felts / 255 bits
 of agreement, elementwise** — not a one-felt commitment. That distinction is the whole reason this
@@ -56,13 +56,16 @@ descriptors is exactly where that mistake would be free to make, and it is not m
   2. `ξ` — **COMPUTED**, here, from `v′`. `the_machine_computes_the_endo_lift`.
   3. `ξ⁰ … ξ⁴⁶` — **COMPUTED**, by `MinaWrapCommitStages.xiChainProg`'s 46 multiplies, from the ξ
      this file publishes; the two are joined by the PI equality above.
-  4. the ξ-AGGREGATE's 47 SCALARS — ⚠ **STILL DECLARED.** `MinaWrapXiAggregateMsm`'s digits live in
-     `T_COVER`'s `exactPublicRows` manifest, and `PastaMsmBucketed` §7.4 names the obstruction
-     exactly: *"This descriptor's `piCount = 27` publishes only the output `C`; `u⃗` enters through
-     `T_COVER`'s declared digits and is therefore a DESCRIPTOR PARAMETER, not a wire value."* There
-     is no PI slot on the aggregate for this file's output to equal. `MinaWrapXiScalarWeld` states
-     what CAN be tied — the manifest's 47 recomposed scalars against the orbit of this ξ, at full
-     width — and says plainly that it is a descriptor-to-descriptor equality and not a wire one.
+  4. the ξ-AGGREGATE's 47 SCALARS — ⚑ **UPDATED 2026-08-05: the generator of those scalars is now a
+     WIRE value.** The obstruction §7.4 named (*"`piCount = 27` publishes only the output `C`"*) was
+     a MISSING SURFACE, and the surface exists: `PastaMsmBucketed`'s `chalPinGates`/`chalThreadGates`
+     widen the aggregate to `27 + 192` public inputs, the scalar chain publishes the six-value
+     squaring basis `(ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ)` on 192 felts of its own, and `MinaWrapXiBasisWeld`
+     ties the two **elementwise, 192 felts, no digest** — and then maps that basis through
+     `PastaMsmScalarDerive`'s tensor to `T_COVER`'s 7 552 declared digits.
+     ⚠ The digits themselves are still DESCRIPTOR data (permutation-forced by `T_COVER`, and not
+     re-derived by an emitted gate). What moved is *where the challenge comes from*, not *who forces
+     the digits*. Read `MinaWrapXiBasisWeld` §4 before citing any of it.
 
 ⚑ **THE UNSOUND MULTIPLY IS NOT INHERITED HERE, AND THAT IS WORTH SAYING PLAINLY.** This descriptor
 is `PastaFieldSound.qLimb`, like every descriptor in `MinaWrapCommitStages`. The `fpMulCore`
@@ -309,7 +312,8 @@ theorem endoAir_mainRailOk : endoAir.mainRailOk = true := by
   unfold endoAir EffectAir.mainRailOk
   simp only [List.all_append, Bool.and_eq_true]
   refine ⟨commitAir_mainRailOk _ _, ?_⟩
-  simp only [Dregg2.Circuit.Emit.MinaWrapCommitStages.pinPair, List.all_append, List.all_map,
+  simp only [Dregg2.Circuit.Emit.MinaWrapCommitStages.pinPair,
+    Dregg2.Circuit.Emit.MinaWrapCommitStages.pinBlock, List.all_append, List.all_map,
     Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
@@ -390,19 +394,36 @@ theorem a_perturbed_output_limb_breaks_the_weld :
 a weld; these carry different names, so the batch cannot satisfy both halves with one proof. -/
 theorem the_welded_descriptors_are_distinct :
     endoDesc.name = "dregg-mina-xi-endo-lift::v1"
-      ∧ MinaWrapCommitStages.xiDesc.name = "dregg-mina-xi-scalar-vector::v1"
+      ∧ MinaWrapCommitStages.xiDesc.name = "dregg-mina-xi-scalar-vector::v2"
       ∧ endoDesc.name ≠ MinaWrapCommitStages.xiDesc.name := by
   refine ⟨rfl, rfl, ?_⟩
   decide
 
-/-- ⚑ **AND THE OTHER END OF THE CHAIN IS PINNED TOO.** The scalar chain's own output half is `ξ⁴⁶`,
-so the two descriptors overlap on ξ and disagree everywhere else — the shape that makes the pair a
-chain rather than a duplicate. -/
+/-- ⚑ **AND THE OTHER END OF THE CHAIN IS PINNED TOO.** The scalar chain's own second block is
+`ξ⁴⁶`, so the two descriptors overlap on ξ and disagree everywhere else — the shape that makes the
+pair a chain rather than a duplicate.
+
+⚠ `.drop SK |>.take SK` and not `.drop SK`: since 2026-08-05 the chain publishes EIGHT 32-felt
+blocks, not two. -/
 theorem the_chain_output_half_is_the_forty_sixth_power :
-    MinaWrapCommitStages.xiPIs.drop SK
+    (MinaWrapCommitStages.xiPIs.drop SK).take SK
       = (List.range SK).map (limbAt (MinaWrapCommitStages.qpow XI 46))
-      ∧ MinaWrapCommitStages.xiPIs.drop SK ≠ chainInputBlock := by
+      ∧ (MinaWrapCommitStages.xiPIs.drop SK).take SK ≠ chainInputBlock := by
   refine ⟨?_, ?_⟩ <;> decide
+
+/-- ⚑⚑ **AND THE CHAIN NOW PUBLISHES THE SQUARING BASIS, WHOSE HEAD IS THE ξ THIS FILE DERIVES.**
+
+Six further 32-felt blocks — `ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ` — and the LAST of them is byte-for-byte this
+file's output block. So the value the ξ-aggregate's wire will carry as its sixth challenge is the
+same 32 felts the endomorphism lift published, with no re-encoding between them.
+
+`MinaWrapXiBasisWeld` is where those blocks meet the aggregate; this is the statement that the
+chain's basis and this file's ξ are one value at the boundary. -/
+theorem the_basis_tail_ends_on_this_files_polyscale :
+    MinaWrapCommitStages.xiPIs.length = MinaWrapCommitStages.PI_XI
+      ∧ MinaWrapCommitStages.PI_XI = 8 * SK
+      ∧ MinaWrapCommitStages.xiPIs.drop (7 * SK) = endoOutputBlock := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
 
 /-! ### §5b — ⚑ WHAT THE TIE IS WORTH, said out loud.
 
@@ -439,5 +460,6 @@ theorem the_chain_output_half_is_the_forty_sixth_power :
 #assert_axioms a_perturbed_output_limb_breaks_the_weld
 #assert_axioms the_welded_descriptors_are_distinct
 #assert_axioms the_chain_output_half_is_the_forty_sixth_power
+#assert_axioms the_basis_tail_ends_on_this_files_polyscale
 
 end Dregg2.Circuit.Emit.MinaWrapXiEndoLift

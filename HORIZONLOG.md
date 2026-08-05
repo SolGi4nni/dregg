@@ -1,5 +1,102 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (THE AGGREGATE'S CHALLENGE GOES ON THE WIRE) — **the ξ-aggregate had no PI slot for a computed scalar; it now publishes the SIX-VALUE SQUARING BASIS on 192 felts, welded elementwise to the chain's own, and `T_COVER`'s 7 552 digits are the TENSOR IMAGE of those felts** — and the digits are still descriptor data, which is where the next lane starts
+
+The previous entry closed with the fix already priced and not built:
+
+> ⛑ **AND THE FIX NEEDS SIX WIRE VALUES, NOT FORTY-SEVEN — a fact the next lane should not have to
+> rediscover.** […] `6 x 32 = 192` PI felts, five squarings from the ξ this cone already publishes.
+
+Built. ⚑ **The obstruction was a MISSING SURFACE, not a property of the layout** —
+`the_aggregate_has_no_room_for_a_scalar_vector` went RED at the point of the change, which is what it
+was for, and is now `the_aggregate_has_room_for_the_basis_and_not_for_the_orbit`.
+
+⛑ **BOTH HALVES OF THE SURFACE.**
+
+| artifact | was | is |
+|---|---|---|
+| `dregg-mina-xi-scalar-vector` | `::v1`, 64 PIs, 2 blocks | **`::v2`, 256 PIs, 8 blocks** — `ξ`, `ξ⁴⁶`, then `ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ` |
+| the ξ-aggregate | `…-c2::v1`, 27 PIs, 612 cols | **`…-c2-w192::v1`, 219 PIs, 804 cols, 475 constraints** |
+
+The chain does **six extra instructions** and no extra rows: `xiChainProg` already walked
+`ξ¹ … ξ⁴⁶`, it just never kept the powers of two. Six `addR TY ZERO XBk` taps into the LADDER's
+registers (idle in this program) put them on the last row, `pinXiChain` publishes them, and the
+program goes 48 → 54 instructions inside its unchanged 64-row trace. The aggregate gets
+`PastaMsmBucketed.chalPinGates` (192 first-row `piBinding`s) + `chalThreadGates` (192 `nxt CH − CH`),
+and `bucketedRowDescChalOn_extends_the_narrow_descriptor` proves the narrow artifact is still a
+PREFIX, so every forcing theorem of the tower applies unchanged.
+
+⛑ **THE WIRE TIE IS 192 FELTS, ELEMENTWISE, WITH NO DIGEST AND NO RE-ENCODING.** Both sides publish
+at `SK = 32` eight-bit limbs, so a batch verifier compares two slices and does **no arithmetic** —
+that is why the encoding is the commit machine's and not this cone's `9 × 30` coordinate limbs.
+`MinaWrapXiBasisWeld.the_aggregate_wire_block_is_the_chain_wire_block`, kernel `decide`; Rust checks
+the same 192 off the emitted JSON. **192/192.**
+
+⛑ **AND `T_COVER`'s DIGITS ARE THE TENSOR IMAGE OF THOSE FELTS.**
+`the_emitted_cover_table_is_the_tensor_image_of_the_wire_block`: the table resolved BY NAME out of
+the emitted artifact carries `coverManifest` of `s_i = ∏_j c_j^{bit_j(i)}` over the six values
+DECODED from the aggregate's own public inputs. ⚑ **And the tensor is
+`PastaMsmScalarDerive`\'s, not a mirror of it** — `tensorQ_is_sNat` is a GENERAL theorem
+(`∀ cs, (∀ c ∈ cs, c < qN) → ∀ i, tensorQ cs i = sNat (cs.map (↑·)) i`) bridging the `Nat`-at-`q`
+recursion the kernel can evaluate to `PastaMsmScalarBound.sAt` at `Fq = ZMod qN`, which it cannot.
+Rust recomputes the whole thing in its own big-integer arithmetic: **47/47 declared scalars are the
+tensor of the six wire values**, and **41/47 disagree under a reversed bit order**, so the
+head-pairs-with-the-high-bit convention is load-bearing and checked rather than assumed.
+
+⛑ **BOTH POLARITIES, RELEASE, WITH THE REFUSING GATE NAMED — 46/46 across three suites.**
+
+| tamper | refusing gate | result |
+|---|---|---|
+| forged aggregate (`C + G`) | last-row PI bindings on `TOT` | `OodEvaluationMismatch { index: Some(0) }` |
+| **one forged BASIS felt** (`pi[58]`, `BB(6) → BB(7)`) | ⚑ `chalPinGates` — the FIRST-ROW challenge pin | REFUSED |
+| **a basis that varies BY ROW** (`trace[4096][643]`, row 0 and the PIs untouched) | ⚑ `chalThreadGates` — `nxt CH − CH` on the transition | REFUSED |
+| forged basis block, all six, on the CHAIN | `pinXiChain`'s last-row pins | 6/6 REFUSED |
+
+`pasta_msm_bucketed_prove` **14/14** (ξ-aggregate PROVED + VERIFIED, **8 192 × 804, 475 constraints,
+2 703.8 ms**), `mina_xi_endo_weld` **15/15**, `mina_commit_stages_prove` **17/17**.
+
+⚠ **THE PER-ROW TAMPER IS THE ONE THAT MATTERS, AND THE PIN ALONE WOULD NOT HAVE CAUGHT IT.** A PI
+binding looks at ONE row. Without the threads a prover pins the honest basis on row 0 and uses
+anything it likes on the other 8 191 — the forgery `PastaMsmScalarDerive` §5d names. That is why the
+widening is 2·192 gates and not 192.
+
+⚠ **A DRAFTED FALSIFIER WAS REFUTED AGAIN, AND AGAIN THAT IS THE USEFUL PART.**
+`the_moved_felt_is_what_it_is_claimed_to_be` GUESSED the moved felt was `27`; `decide` proved it
+false. It is now `the_moved_felt_is_a_nonzero_byte_and_moving_it_moves_the_value`, which reads the
+byte, checks it is non-zero, and checks the DECODED value moves — not merely the list.
+
+⚠⚠ **WHAT IS STILL DECLARED, at CURRENT resolution — read `MinaWrapXiBasisWeld` §4 before citing
+any of this.** The digits remain **descriptor data**. `T_COVER` is `exactPublicRows`,
+`PublicLookupBalanced` demands a PERMUTATION, and the deployed prover refuses a moved `DGT` — so the
+digits were never forgeable and **this is not a soundness repair.** What changed is the quantifier on
+the challenge: it was *a constant the verifier is told*, and it is now *a value the verifier already
+holds from another proof of this block\'s own transcript*. The remaining half — an emitted gate chain
+that RE-DERIVES each row\'s digit from the wire block — is `PastaMsmScalarDerive`\'s `PRc`/`MUc`/`QUc`
+in this layout, priced by `PastaMsmBucketed` §7.3 at ~1 400 constraints / ~2 700 columns, **plus an
+`8 → 30` limb regroup this encoding choice hands it**. Not built.
+
+⚠ **THE PRICE OF THE WIRE BLOCK, AS A NUMBER.** 192 columns × 8 192 rows = **1 572 864 more
+committed cells, +31.4%** on the row template\'s 5 013 504, and FRI pays for committed area.
+`the_wire_block_costs_thirty_one_percent_more_area`.
+
+⚠ **THE `fpMulCore` DOWNGRADE IS UNCHANGED AND STILL LIFTABLE.** Neither `chalPinGates` nor
+`chalThreadGates` multiplies anything, and neither half of the weld mentions the row template\'s
+multiply — so when the IR lane\'s `EffectAir`↔gadget bridge lands, all of this carries over unchanged.
+
+⚠ **FLAG DAY.** `mina-commit-xi.json` (`::v2`, 64 → 256 PIs), `mina-commit-xi-pis.txt` (64 → 256
+felts), `mina-commit-xi-trace.txt` and `mina-xi-aggregate-msm.json` (`-w192`, 27 → 219 PIs, 612 → 804
+columns) all RE-EMIT; `XIAGG_SHA` re-pinned. The three toy bucketed instances are **untouched** —
+they pass through `bucketedRowDesc`, which did not move. Nothing migrates; a `::v1` xi-chain artifact
+no longer resolves under any name this tree emits.
+
+⚠ **MEASUREMENT HYGIENE.** Built and run in a **detached worktree at `e6bd36a21`** with a cloned warm
+`.lake`, because the shared tree\'s `Dregg2/Circuit/DescriptorIR2.lean` was RED from a sibling\'s
+in-flight `ChalConstraint` edit and `circuit-prove` was RED from another sibling\'s un-emitted
+`dark-bazaar-private-poa-settlement-n4k4-v4.json`. Neither is this lane\'s. `DREGG_REQUIRE_LEAN=0`
+throughout (`Dregg2.Games.PathOfAngels.FiniteTables` is still red at HEAD). ⚠ The emitted descriptors
+were produced from that worktree, so if the sibling\'s `challenges` wire field lands they re-emit
+with it.
+
 ## ⛑⛑⛑ AUGUST 5 (THE WRAP LADDER STOPS RE-RUNNING ITS OWN SPONGE) — **every base address above `w5_key` computed the index sponge's allocation count by RUNNING the 28-permutation sponge, on every cell reference; the whole 15-rung smoke ladder went from ≥1 h 45 m unfinished to 5 m 08 s, and all 30 artifacts are byte-identical**
 
 `nKeySpVars` was `(keySponge s sp KEY_REAL_BRANCH).next`. `baseXh` IS that number, and **every** base

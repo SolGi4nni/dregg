@@ -277,3 +277,16 @@ Dregg2.Circuit.Emit.MinaWrapXiEndoLift
 # `PastaMsmBucketed` when the digit weld (`PastaMsmScalarDerive`, §7.3) lands — at which point its
 # §3 becomes a wire equality instead of a descriptor one and most of it is replaced.
 Dregg2.Circuit.Emit.MinaWrapXiScalarWeld
+#
+# `MinaWrapXiBasisWeld` — the read-only weld that puts the xi-aggregate's CHALLENGE on the wire.
+# Emits nothing; every object it names is emitted elsewhere. Excluded because it imports
+# `MinaWrapXiScalarWeld` (and through it both orphans above), so rooting it without rooting them
+# buys nothing.
+# ⚑ 36 s. It carries the two halves the 2026-08-05 widening added: `the_aggregate_wire_block_is_
+# the_chain_wire_block` (192 felts, elementwise, no digest — the aggregate's PI slots 27..218
+# against `dregg-mina-xi-scalar-vector::v2`'s blocks 2..7) and `the_emitted_cover_table_is_the_
+# tensor_image_of_the_wire_block` (T_COVER's 8 192 emitted rows ARE the digits of the tensor image
+# of those 192 felts, under `PastaMsmScalarBound.sAt` via the general bridge `tensorQ_is_sNat`).
+# ⚠ It does NOT make the digits an in-circuit image; that is `PastaMsmScalarDerive`'s gate chain,
+# priced in `PastaMsmBucketed` §7.3 and NOT built. Read this file's §4 before citing any of it.
+Dregg2.Circuit.Emit.MinaWrapXiBasisWeld

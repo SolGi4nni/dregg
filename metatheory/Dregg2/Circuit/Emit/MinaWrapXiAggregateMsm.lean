@@ -5,13 +5,14 @@ INSIDE THE CIRCUIT.
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
 **This is Lean-authored AIR.** The emitted object is
-`PastaMsmBucketed.bucketedRowDesc N_PAD NBITS C GENS SCAL` — an `EffectVmDescriptor2` built by a
-Lean `def` out of Lean-authored `VmConstraint2`s, whose first 42 constraints are
+`PastaMsmBucketed.bucketedRowDescChal NC N_PAD NBITS C GENS SCAL` — an `EffectVmDescriptor2` built
+by a Lean `def` out of Lean-authored `VmConstraint2`s, whose first 42 constraints are
 `PastaMsmWindowed.rowGates` verbatim (`bucketedRowDesc_extends_rowGates`), i.e. the same
-`PastaCurveComplete.pallasCompleteAdd` the whole Pasta cone shares. This file authors **no new
-gate**: it names a curve, a window, a generator list and a scalar list, and it proves things about
-the resulting artifact. Rust parses the descriptor, fills trace CELLS and runs the deployed prover.
-House Law #1.
+`PastaCurveComplete.pallasCompleteAdd` the whole Pasta cone shares, and whose narrow form is a
+PREFIX of it (`bucketedRowDescChalOn_extends_the_narrow_descriptor`). This file authors **no new
+gate**: it names a curve, a window, a generator list, a scalar list and a challenge-block WIDTH, and
+it proves things about the resulting artifact. Rust parses the descriptor, fills trace CELLS and
+runs the deployed prover. House Law #1.
 
 ## ⚑ THE DEFECT THIS FILE CLOSES, stated as it was found
 
@@ -42,16 +43,15 @@ makes the accumulation the trace's own work. **`s_i·P_i` is computed by the AIR
 
 Nothing below repairs these; they belong to `PastaMsmBucketed` and they travel with it.
 
-1. **The digits are DECLARED, not DERIVED.** `T_COVER`'s manifest carries `digit_w(s_i)` as a
-   descriptor parameter, so the artifact is SCALAR-SPECIALISED: it forces the trace to compute
-   `Σ s_i·P_i` for the `s` the descriptor names, and says nothing about where that `s` came from.
-   ⚑ What §2 *does* close is the weaker thing that was actually at risk: the declared digits
-   **recompose to the real ξ powers with no truncation** (`the_declared_digits_recompose`), so a
-   window count that silently dropped the top bits of a 255-bit scalar is refuted rather than
-   assumed. Deriving `ξ^i` from `ξ` in-circuit is `MinaWrapCommitStages.xiChainProg`'s 46 multiplies
-   — a DIFFERENT emitted object, welded to a published `ξ` since 2026-08-05 by
-   `MinaWrapXiEndoLift` and `MinaWrapXiScalarWeld`. §4 says exactly which half of that is a WIRE
-   equality and which half is still a descriptor one.
+1. **The digits are DECLARED, not DERIVED BY A GATE.** `T_COVER`'s manifest carries `digit_w(s_i)`
+   as a descriptor parameter, so the artifact is SCALAR-SPECIALISED: it forces the trace to compute
+   `Σ s_i·P_i` for the `s` the descriptor names. ⚑ **What §3b/§2-pre DO close is where that `s`
+   comes from:** since 2026-08-05 the six-value squaring basis that GENERATES all 47 scalars is on
+   this descriptor's own wire, 192 public-input felts, welded elementwise to
+   `dregg-mina-xi-scalar-vector::v2`'s published basis and thence to a `ξ` an emitted AIR lifted out
+   of the block's Fq sponge. `MinaWrapXiBasisWeld` is that weld and its §4 is the resolution
+   statement. ⚠ An emitted gate chain that re-derives each row's digit FROM the wire block is still
+   not built; `PastaMsmBucketed` §7.3 prices it.
 2. **The row template is `pallasCompleteAdd`.** Correct for this cone — the ξ-aggregate is a WRAP
    commitment combination over Pallas — but the Vesta swap `bucketedRowDescVesta` offers is not
    exercised here.
@@ -78,6 +78,7 @@ house practice for gates. Import line:
 -/
 import Dregg2.Circuit.Emit.PastaMsmBucketed
 import Dregg2.Circuit.Emit.MinaWrapAggregationGate
+import Dregg2.Circuit.Emit.PastaFieldSound
 
 namespace Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm
 
@@ -88,8 +89,10 @@ open Dregg2.Circuit.Emit.PastaCurveComplete (Oproj projOnCurveM projEqM isInfM)
 open Dregg2.Circuit.Emit.MinaWrapGroupGate (Pt smul padd msmComm)
 open Dregg2.Circuit.Emit.MinaWrapAggregationGate (XI COMBINE_POINTS COMBINED_GOLD)
 open Dregg2.Circuit.Emit.PastaMsmBucketed (windowsOf levelsOf fusedAdds bucketedRows termRows
-  winLen scalarDigitC coverManifest srsManifest schedManifest bucketedRowDesc bucketedTables
+  winLen scalarDigitC coverManifest srsManifest schedManifest bucketedRowDesc bucketedRowDescChal
+  bucketedTables chalPinGates chalThreadGates CHB WK PI_COUNT
   SCHED_TUP COVER_TUP SRS_TUP MAX_EP_ROWS MAX_EP_CELLS MAX_EP_ARITY)
+open Dregg2.Circuit.Emit.PastaFieldSound (SK limbAt)
 
 set_option autoImplicit false
 set_option maxRecDepth 4000000
@@ -146,8 +149,67 @@ theorem the_windows_cover_the_whole_scalar : NBITS ≤ windowsOf NBITS C * C := 
 
 /-! ## §2 — WHAT THE DESCRIPTOR DECLARES, welded to the block's own numbers. -/
 
-/-- The emitted artifact. -/
-def xiAggMsmDesc : EffectVmDescriptor2 := bucketedRowDesc N_PAD NBITS C GENS SCAL
+/-! ### ⚑⚑ §2-pre — THE SIX-VALUE BASIS ON THE WIRE, and why SIX.
+
+`MinaWrapXiScalarWeld.the_squaring_basis_generates_the_orbit` measured it and did not build it: at
+`c⃗ = (ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ)` the tensor `∏_j c_j^{bit_j(i)}` **is** `ξ^i` for every `i < 64`, so
+the 47 scalars of this aggregate are generated by SIX values and not by forty-seven. Six values at
+`SK = 32` eight-bit limbs is `192` public-input felts — a surface this descriptor can carry, where
+`47 · 32 = 1 504` was the number that made the whole idea look like a re-architecture.
+
+⚑ **THE ENCODING IS THE COMMIT-MACHINE'S, ON PURPOSE.** 32 limbs of 8 bits is what
+`MinaWrapCommitStages.piBlock` writes and what `MinaWrapXiEndoLift` already publishes, so the weld
+in `MinaWrapXiBasisWeld` is a **slice comparison and not a re-encoding**: a batch verifier compares
+`aggPIs[27 … 218]` against `xiPIs[64 … 255]` felt by felt and does no arithmetic. The alternative —
+this cone's own `9 × 30` coordinate limbs — would have made the tie a 255-bit recomposition in the
+verifier, which is the cost the whole cone exists to remove.
+
+⚠ **AND IT LEAVES A COST FOR THE RUNG AFTER THIS ONE, stated rather than discovered later.** The
+in-circuit tensor chain reduces in `fqMulCore`, which reads `9 × 30`; consuming these felts in-row
+will need an `8 → 30` bit regroup with its range certificates. That is a real cost of that rung and
+it is the price of making THIS tie free for the verifier. -/
+
+/-- The number of challenge values on the wire. -/
+def NCHAL : Nat := 6
+
+/-- The number of challenge FELTS. -/
+def NC : Nat := NCHAL * SK
+
+/-- ⚑ **THE SIX BASIS VALUES, DERIVED HERE FROM THIS FILE'S OWN ξ.** High power first, which is
+`PastaMsmScalarDerive.sAt`'s convention (challenge `j` pairs with binary digit `nb−1−j`).
+
+⚠ This list is built from `MinaWrapAggregationGate.XI` by THIS file's `qpow`; `MinaWrapCommitStages.
+XI_BASIS` is built by that file's, and the emitted chain descriptor publishes what its MACHINE
+computed. Three routes, and `MinaWrapXiBasisWeld` is where they are required to agree. -/
+def BASIS : List Nat :=
+  [qpow XI 32, qpow XI 16, qpow XI 8, qpow XI 4, qpow XI 2, qpow XI 1]
+
+/-- ⚑ **THE 192 FELTS THIS DESCRIPTOR'S WIRE CARRIES**, slots `27 … 218`. -/
+def basisPIs : List ℤ := BASIS.flatMap (fun v => (List.range SK).map (limbAt v))
+
+theorem the_basis_is_six_values_and_one_hundred_ninety_two_felts :
+    BASIS.length = NCHAL ∧ basisPIs.length = NC ∧ NC = 192
+      ∧ BASIS.eraseDups.length = NCHAL := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **AND EACH IS THE SQUARE OF ITS SUCCESSOR, ENDING ON ξ.** The basis is FIVE squarings from the
+one value this cone publishes — `the_polyscale_is_the_endo_lift_of_the_squeeze`'s ξ — and not six
+independent numbers. Without this the "six wire values" claim would be six free scalars. -/
+theorem the_basis_is_five_squarings_of_the_polyscale :
+    ((List.range (NCHAL - 1)).all
+      (fun j => decide (BASIS.getD j 0 = qmul (BASIS.getD (j + 1) 0) (BASIS.getD (j + 1) 0))))
+        = true
+      ∧ BASIS.getD (NCHAL - 1) 0 = XI := by
+  refine ⟨?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE EMITTED ARTIFACT — WIDENED.** `bucketedRowDesc`'s 91 constraints verbatim, plus 192
+first-row PI pins and 192 threads over the 192 fresh columns `612 … 803`.
+
+⚠ FLAG DAY: `piCount` moves `27 → 219`, `traceWidth` `612 → 804`, and the name gains `-w192`.
+`mina-xi-aggregate-msm.json` re-emits; the old artifact no longer resolves under any name this
+tree emits. The three toy instances (`pasta-msm-bucketed-{c2,c3,vesta-c2}.json`) are UNTOUCHED —
+they pass through `bucketedRowDesc`, which did not move. -/
+def xiAggMsmDesc : EffectVmDescriptor2 := bucketedRowDescChal NC N_PAD NBITS C GENS SCAL
 
 /-- Recompose a term's declared `c`-bit digits, MSB-first, over every window the descriptor has. -/
 def recompose (i : Nat) : Nat :=
@@ -234,38 +296,84 @@ prover that quietly omitted one generator would produce. -/
 theorem a_dropped_term_misses_the_aggregate :
     projEqM pN (msmComm ((SCAL.set (N_REAL - 1) 0).zip GENS)) COMBINED_GOLD = false := by decide
 
+/-! ## §3b — ⚑⚑ THE WIRE SURFACE, AS FACTS ABOUT THE EMITTED ARTIFACT. -/
+
+/-- ⚑ **THE AGGREGATE PUBLISHES 219 FELTS: THE OUTPUT POINT AND THE SIX-VALUE BASIS.**
+
+The sentence this retires is `MinaWrapXiScalarWeld.the_aggregate_has_no_room_for_a_scalar_vector`,
+which was true of `bucketedRowDesc` and is false of this artifact — the obstruction was a MISSING
+SURFACE and not a property of the layout. `27 + 6·32 = 219`, and the 192 challenge felts live in
+192 columns the row template never addresses. -/
+theorem the_aggregate_publishes_the_basis_on_its_wire :
+    xiAggMsmDesc.piCount = PI_COUNT + NC
+      ∧ xiAggMsmDesc.piCount = 219
+      ∧ xiAggMsmDesc.traceWidth = WK + NC
+      ∧ xiAggMsmDesc.traceWidth = 804
+      ∧ CHB = WK := by
+  refine ⟨rfl, by decide, rfl, by decide, rfl⟩
+
+/-- ⚑ **AND THE BLOCK IS PINNED AND THREADED, 192 OF EACH.** The pins put the basis on the wire;
+the threads make it ONE vector for the whole 8 192-row trace. Without the threads a prover may pick
+a fresh basis per row — the forgery `PastaMsmScalarDerive` §5d exhibits — and every PI comparison
+downstream would still hold, because a PI pin only looks at row 0. -/
+theorem the_wire_block_is_pinned_and_threaded :
+    (chalPinGates NC).length = NC ∧ (chalThreadGates NC).length = NC
+      ∧ xiAggMsmDesc.constraints.length
+          = (bucketedRowDesc N_PAD NBITS C GENS SCAL).constraints.length + 2 * NC
+      ∧ (bucketedRowDesc N_PAD NBITS C GENS SCAL).constraints.length = 91 := by
+  refine ⟨by simp [chalPinGates], by simp [chalThreadGates], ?_, by decide⟩
+  simp [xiAggMsmDesc, Dregg2.Circuit.Emit.PastaMsmBucketed.bucketedRowDescChal,
+    Dregg2.Circuit.Emit.PastaMsmBucketed.bucketedRowDescChalOn, bucketedRowDesc,
+    chalPinGates, chalThreadGates, Nat.two_mul]
+
+/-- ⚑ **AND THE THREE MANIFESTS DID NOT MOVE.** The widening APPENDS: `T_SCHED`, `T_COVER` and
+`T_SRS` are the same three `exactPublicRows` objects `bucketedRowDesc` declares, so every routing
+theorem above — and the permutation that forces a generator to be consumed at its declared level —
+holds of this artifact verbatim. -/
+theorem the_widening_did_not_move_a_manifest :
+    xiAggMsmDesc.tables = (bucketedRowDesc N_PAD NBITS C GENS SCAL).tables := rfl
+
+/-- ⚑ **AND THE NAME MOVED WITH THE SHAPE.** A widened PI surface under the old key is exactly the
+defect `PastaMsmBucketed` §4b renamed the family to kill: two AIRs, one identifier. -/
+theorem the_widened_artifact_has_its_own_name :
+    xiAggMsmDesc.name = "dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1"
+      ∧ xiAggMsmDesc.name ≠ (bucketedRowDesc N_PAD NBITS C GENS SCAL).name := by
+  refine ⟨rfl, by decide⟩
+
 /-! ## §4 — WHAT STILL HOLDS A VALUE NOTHING COMPUTES, at CURRENT resolution.
 
 Read this before citing anything above.
 
-⚑ **`ξ` ITSELF — UPDATED 2026-08-05, and the update is PARTIAL. Read which half moved.**
-
-`SCAL` is still the 47 powers as descriptor constants, and **that has not changed**: `T_COVER`'s
-manifest takes `scal` as a parameter, this descriptor's `piCount = 27` publishes only the output
-point `C`, and there is therefore NO PUBLIC-INPUT SLOT on this artifact for a computed scalar to
-equal. `PastaMsmBucketed` §7.4 names the obstruction and `PastaMsmScalarDerive`'s digit weld (§7.3)
-is the fix; it is not built.
-
-What DID move is everything upstream of the digits:
+⚑ **`ξ` AND ITS BASIS — ON THE WIRE SINCE 2026-08-05. Read exactly which half moved.**
 
   * `MinaWrapXiEndoLift` emits `ScalarChallenge(v′).to_field(endo_r)` AS AN AIR and proves its
     output is o1-labs' own `ξ` on the block's own `v′` — which `MinaBlockFqTranscript`'s emitted
     2 048-row Fq sponge squeezes from Mina devnet block 539508's 91-element phase-2 tape. **`ξ` is
-    computed now, from the transcript, not typed.**
-  * That descriptor's LAST-row pin and `MinaWrapCommitStages.xiDesc`'s FIRST-row pin are the SAME
-    32 public-input felts (`the_endo_output_block_is_the_chain_input_block`) — a wire equality at
-    255 bits, elementwise, no digest.
-  * `MinaWrapXiScalarWeld` reads THIS file's emitted `T_COVER` manifest as data, keyed by each row's
-    own generator index, and proves the 59 recomposed scalars are the orbit of that welded `ξ`.
+    computed, from the transcript, not typed.**
+  * `MinaWrapCommitStages.xiChainProg` taps `ξ, ξ², ξ⁴, ξ⁸, ξ¹⁶, ξ³²` out of its own 46-multiply
+    walk and its `::v2` descriptor publishes them as **192 public-input felts**.
+  * ⚑ **THIS descriptor now has 192 slots to equal them in**, pinned on the first row and threaded
+    down the trace, and `MinaWrapXiBasisWeld` proves the two 192-felt blocks are equal
+    **elementwise, no digest, no re-encoding** — the same standard `the_endo_output_block_is_the_
+    chain_input_block` met at 32.
+  * And `MinaWrapXiBasisWeld` §3 proves `T_COVER`'s 7 552 declared digits are `digit_w` of the
+    TENSOR IMAGE of exactly those 192 felts, over all 59 terms and all 128 windows.
 
-⚠ **So the honest reading of THIS artifact is now:** its 47 scalars are the orbit of a `ξ` that an
-emitted AIR derived from the block's own sponge — but they reach this descriptor as a
-DESCRIPTOR-TO-DESCRIPTOR equality a reader checks once per (block, VK), not as a wire value a batch
-checks per proof. The scalars are *derived*; they are not yet *on the wire*.
+⚠ **WHAT THIS IS NOT, and it must not be read as more.** The digits are still DESCRIPTOR data.
+`T_COVER` is `exactPublicRows` and `PublicLookupBalanced` demands a PERMUTATION, so the deployed
+prover already refuses a moved `DGT` — the digits were never forgeable and this is therefore **not a
+soundness repair**. What changed is the QUANTIFIER on the challenge: it was *a constant the verifier
+is told*, and it is now *a value the verifier already holds from another proof of this block's own
+transcript*. The remaining half — an emitted gate chain that RE-DERIVES each row's digit from the
+wire block, `PastaMsmScalarDerive`'s `PRc`/`MUc`/`QUc` in this layout — is **not built**;
+`PastaMsmBucketed` §7.3 prices it at ~1 400 constraints and ~2 700 columns, plus the `8 → 30` limb
+regroup §2-pre names.
 
 ⚑ **THE UNSOUND MULTIPLY.** Stated in the header and repeated because it is the kind of thing that
 gets absorbed: these rows are `fpMulCore`, not `PastaFieldSound`. `PastaMsmBucketed` §6d prices the
-sound row at over a hundredfold the gate count. -/
+sound row at over a hundredfold the gate count. ⚑ **And the widening does not touch it** — neither
+`chalPinGates` nor `chalThreadGates` multiplies anything, so when the `EffectAir`↔gadget bridge
+lands and the rows become sound, this whole wire block carries over unchanged. -/
 
 /-- The declared cell budget, so the deployed caps are checked rather than assumed. -/
 theorem the_manifests_fit_the_deployed_caps :
@@ -273,6 +381,16 @@ theorem the_manifests_fit_the_deployed_caps :
       ∧ SCHED_TUP < MAX_EP_ARITY ∧ COVER_TUP < MAX_EP_ARITY ∧ SRS_TUP < MAX_EP_ARITY
       ∧ bucketedRows N_PAD NBITS C * (SCHED_TUP + COVER_TUP + SRS_TUP) ≤ MAX_EP_CELLS := by
   decide
+
+/-- ⚑ **THE PRICE OF THE WIRE BLOCK, SAID OUT LOUD.** 192 columns over 8 192 rows is 1 572 864 more
+committed cells — a `31.4%` rise on the row template's own 5 013 504, and FRI pays for committed
+area. That is what a verifier-free basis tie costs here, and it is a number rather than an
+adjective. -/
+theorem the_wire_block_costs_thirty_one_percent_more_area :
+    bucketedRows N_PAD NBITS C * NC = 1572864
+      ∧ bucketedRows N_PAD NBITS C * WK = 5013504
+      ∧ 100 * (bucketedRows N_PAD NBITS C * NC) < 32 * (bucketedRows N_PAD NBITS C * WK) := by
+  refine ⟨by decide, by decide, by decide⟩
 
 /-- ⚑ **THE TERM ROWS ARE 92% OF THE TRACE**, and the rest is the fused collapse — the census that
 says the padding is a rounding error and the object is really doing 7 552 conditional adds. -/
@@ -298,7 +416,14 @@ theorem the_real_terms_are_forty_seven_fifty_ninths :
 #assert_axioms the_aggregate_is_a_real_finite_pallas_point
 #assert_axioms a_perturbed_challenge_misses_the_aggregate
 #assert_axioms a_dropped_term_misses_the_aggregate
+#assert_axioms the_basis_is_six_values_and_one_hundred_ninety_two_felts
+#assert_axioms the_basis_is_five_squarings_of_the_polyscale
+#assert_axioms the_aggregate_publishes_the_basis_on_its_wire
+#assert_axioms the_wire_block_is_pinned_and_threaded
+#assert_axioms the_widening_did_not_move_a_manifest
+#assert_axioms the_widened_artifact_has_its_own_name
 #assert_axioms the_manifests_fit_the_deployed_caps
+#assert_axioms the_wire_block_costs_thirty_one_percent_more_area
 #assert_axioms the_term_rows_dominate
 #assert_axioms the_real_terms_are_forty_seven_fifty_ninths
 

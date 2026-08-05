@@ -97,7 +97,7 @@ const V2_SHA: &str = "b580a8f199a1acca7607429242342f55741aba43b5c41b18ab679caa06
 /// it. Unlike the three toys it is FULL-WIDTH: `nbits = 255`, 47 real block commitments (+12
 /// inert padding terms), 8 192 rows.
 const XIAGG_JSON: &str = include_str!("../descriptors/by-name/mina-xi-aggregate-msm.json");
-const XIAGG_SHA: &str = "807be347312fe4388f7f42ac99540cdbf52553a13a787d2712177a2a38470c4b";
+const XIAGG_SHA: &str = "db3d6a6349a4511e1149549f455c48dd927b431c9fb0bac696ceb9102359594f";
 /// The four o1-labs goldens, emitted from the GATE CONSTANTS by `EmitCommitStages.lean goldlimbs`.
 /// Line 3 (0-indexed) is `MinaWrapAggregationGate.COMBINED_GOLD`.
 const MINA_GOLDS: &str = include_str!("fixtures/mina-commit-golds.txt");
@@ -186,6 +186,11 @@ struct Shape {
     windows: usize,
     c: usize,
     levels: usize,
+    /// ⚑ The CHALLENGE-BLOCK width in FELTS — `PastaMsmBucketed.chalPinGates`' `nc`. `0` for the
+    /// three toy instances; `192` for the ξ-aggregate, which carries the six-value squaring basis
+    /// at `SK = 32` eight-bit limbs each. Read off the descriptor's own width, never a constant
+    /// this file chose.
+    nc: usize,
     /// `gens[i]` — the real Mina SRS generator at absolute index `i`.
     gens: Vec<Pt>,
     /// `digits[w][i]` — the declared digit of term `i` in window `w`.
@@ -231,6 +236,21 @@ fn shape_of(desc: &EffectVmDescriptor2) -> Shape {
     for r in &real {
         digits[r[0] as usize - 1][r[1] as usize - 1] = r[2];
     }
+    // ⚑ The challenge block is whatever the descriptor declared ABOVE the row template, and the
+    // two declarations must agree: `nc` more columns and `nc` more public inputs. A descriptor that
+    // widened one and not the other would fill silently and publish nothing (or publish a slot no
+    // column feeds), so this is asserted rather than derived from one side.
+    assert!(
+        desc.trace_width >= WK,
+        "trace_width {} is below the row template's {WK}",
+        desc.trace_width
+    );
+    let nc = desc.trace_width - WK;
+    assert_eq!(
+        desc.public_input_count,
+        PI_COUNT + nc,
+        "the challenge block widened the trace by {nc} but not the public inputs"
+    );
     Shape {
         m,
         rows,
@@ -238,6 +258,7 @@ fn shape_of(desc: &EffectVmDescriptor2) -> Shape {
         windows,
         c,
         levels,
+        nc,
         gens,
         digits,
     }
@@ -282,8 +303,20 @@ fn schedule(sh: &Shape) -> Vec<(usize, Mode)> {
     out
 }
 
-/// Build the honest trace and its 27 public-input limbs (the claimed commitment `C`).
-fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+/// Build the honest trace and its public inputs: the 27 limbs of the claimed commitment `C`, then
+/// the `sh.nc` challenge felts.
+///
+/// ⚑ **THE CHALLENGE BLOCK IS WRITTEN INTO EVERY ROW, NOT JUST THE FIRST.** `chalPinGates` pins row
+/// 0 to the public inputs and `chalThreadGates` demands `nxt CH_m = CH_m` on every transition, so a
+/// witness that filled only row 0 is refused by the thread. Filling all rows is what an honest
+/// prover does; `a_basis_that_varies_by_row_is_refused` is the tamper that shows the thread is what
+/// makes that mandatory rather than customary.
+fn honest_trace_with_chal(sh: &Shape, chal: &[BabyBear]) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    assert_eq!(
+        chal.len(),
+        sh.nc,
+        "the challenge block must be exactly the width the descriptor declared"
+    );
     let sched = schedule(sh);
     let mut trace = Vec::with_capacity(sh.rows);
 
@@ -300,7 +333,8 @@ fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
 
         let mut row = fill_row_at(&sh.m, &acc, &src, true, dbl);
         assert_eq!(row.len(), WINDOWED_W);
-        row.resize(WK, BabyBear::new(0));
+        row.resize(WK + sh.nc, BabyBear::new(0));
+        row[WK..WK + sh.nc].copy_from_slice(chal);
 
         put_field(&mut row, RUNX, &run.x);
         put_field(&mut row, RUNX + NUM_LIMBS, &run.y);
@@ -353,8 +387,25 @@ fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     };
     assert!(proj_eq_at(&sh.m, &claimed, &tot) || claimed == tot);
 
-    let pis: Vec<BabyBear> = (0..PI_COUNT).map(|i| last[TOTX + i]).collect();
+    let mut pis: Vec<BabyBear> = (0..PI_COUNT).map(|i| last[TOTX + i]).collect();
+    pis.extend_from_slice(chal);
     (trace, pis)
+}
+
+/// The three toy instances carry no challenge block.
+///
+/// ⚠ This REFUSES an instance that has one rather than filling it with zeros. A zero basis proves
+/// perfectly well — the AIR pins and threads the block, it does not evaluate it — so a silent
+/// zero-fill would be a green test about nothing, which is exactly the shape this cone keeps
+/// finding.
+fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    assert_eq!(
+        sh.nc, 0,
+        "this instance declares a {}-felt challenge block; fill it with the block's OWN basis \
+         through honest_trace_with_chal, never with zeros",
+        sh.nc
+    );
+    honest_trace_with_chal(sh, &[])
 }
 
 /// The answer computed OUT of circuit, by plain per-term double-and-add — the oracle the trace is
@@ -912,6 +963,69 @@ fn mina_combined_gold() -> Pt {
     }
 }
 
+/// ⚑⚑ **THE SIX-VALUE SQUARING BASIS, READ OUT OF THE SCALAR CHAIN'S OWN PUBLIC INPUTS.**
+///
+/// This is the whole weld, as data. `dregg-mina-xi-scalar-vector::v2` publishes eight 32-felt
+/// blocks — `ξ`, `ξ⁴⁶`, then `ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ` — and blocks 2..8 are the basis. The
+/// ξ-aggregate is proved with **those felts and no others**, so "the aggregate's challenge is the
+/// chain's output" is not an assertion this file makes about two numbers; it is the only basis the
+/// aggregate is ever given.
+///
+/// ⚠ Deliberately NOT a second fixture of its own. A basis emitted twice is a basis that can
+/// disagree with itself, and no green would move.
+const CHAIN_PIS: &str = include_str!("fixtures/mina-commit-xi-pis.txt");
+
+/// `MinaWrapCommitStages.SK` — the boundary limb width the whole commit-machine cone publishes at.
+const SK: usize = 32;
+/// The basis occupies blocks 2..8 of the chain's PI vector.
+const CHAIN_BASIS_OFF: usize = 2 * SK;
+/// Six values at `SK` limbs each.
+const NC: usize = 6 * SK;
+
+fn chain_basis() -> Vec<BabyBear> {
+    let v: Vec<u32> = CHAIN_PIS
+        .split_whitespace()
+        .map(|t| t.parse::<u32>().expect("a PI limb is a decimal"))
+        .collect();
+    assert_eq!(
+        v.len(),
+        8 * SK,
+        "the scalar chain publishes eight 32-felt blocks since 2026-08-05"
+    );
+    assert!(
+        v.iter().all(|l| *l < 256),
+        "every published limb is eight bits"
+    );
+    let basis: Vec<BabyBear> = v[CHAIN_BASIS_OFF..]
+        .iter()
+        .map(|l| BabyBear::new(*l))
+        .collect();
+    assert_eq!(basis.len(), NC);
+    // ⚑ Six DISTINCT values. A tap that aliased its register would publish six copies of `ξ⁴⁶`,
+    // every length check would hold, and the aggregate would prove — so the distinctness is
+    // checked here, on the felts, before anything is filled with them.
+    for a in 0..6 {
+        for b in (a + 1)..6 {
+            assert_ne!(
+                basis[a * SK..(a + 1) * SK],
+                basis[b * SK..(b + 1) * SK],
+                "published basis values {a} and {b} are the same 32 felts"
+            );
+        }
+    }
+    // …and the last block is `ξ` itself, which is block 0 of the same vector (the chain's
+    // first-row input pin). That is the join to `dregg-mina-xi-endo-lift::v1`'s output.
+    assert_eq!(
+        basis[5 * SK..],
+        v[..SK]
+            .iter()
+            .map(|l| BabyBear::new(*l))
+            .collect::<Vec<_>>()[..],
+        "the basis tail must be the chain's own input xi"
+    );
+    basis
+}
+
 #[test]
 fn the_mina_xi_aggregate_scales_inside_the_circuit() {
     assert_eq!(
@@ -921,8 +1035,8 @@ fn the_mina_xi_aggregate_scales_inside_the_circuit() {
     );
     let desc = parse(XIAGG_JSON);
     assert_eq!(
-        desc.name, "dregg-pasta-msm-bucketed-pallas-n59b255-c2::v1",
-        "n and nbits are in the name since 2026-08-05"
+        desc.name, "dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1",
+        "n, nbits and the challenge-block width are in the name"
     );
     let sh = shape_of(&desc);
     assert_eq!(sh.rows, 8192, "128 windows of 64 rows");
@@ -933,6 +1047,15 @@ fn the_mina_xi_aggregate_scales_inside_the_circuit() {
     assert_eq!(sh.windows, 128, "ceil(255/2)");
     assert_eq!(sh.c, 2);
     assert_eq!(sh.levels, 3, "2^c - 1");
+    assert_eq!(sh.nc, NC, "the six-value basis at 32 limbs each");
+    assert_eq!(desc.public_input_count, PI_COUNT + NC, "27 + 192");
+    assert_eq!(desc.trace_width, WK + NC, "612 + 192");
+    assert_eq!(
+        desc.constraints.len(),
+        CONSTRAINTS + 2 * NC,
+        "the narrow 91 plus 192 first-row challenge pins and 192 challenge threads"
+    );
+    assert_eq!(desc.tables.len(), 3, "the widening moved no manifest");
 
     // ⚑ THE SCALARS ARE FULL-WIDTH. Recompose term 1's declared digits and check it is a real
     // 255-bit scalar and not something that fits in a window or two — this is the difference
@@ -949,7 +1072,13 @@ fn the_mina_xi_aggregate_scales_inside_the_circuit() {
         "xi^1 should occupy ~255 bits of declared digits, got {top}"
     );
 
-    let (trace, pis) = honest_trace(&sh);
+    let basis = chain_basis();
+    let (trace, pis) = honest_trace_with_chal(&sh, &basis);
+    assert_eq!(
+        &pis[PI_COUNT..],
+        &basis[..],
+        "the aggregate's wire block IS the scalar chain's published basis, felt for felt"
+    );
     let got = Pt {
         x: read_field(trace.last().unwrap(), TOTX),
         y: read_field(trace.last().unwrap(), TOTX + NUM_LIMBS),
@@ -974,23 +1103,28 @@ fn the_mina_xi_aggregate_scales_inside_the_circuit() {
     });
     println!(
         "\n  [ξ-AGGREGATE] Mina devnet block 539508, 47 commitments at nbits=255, \n\
-           {} rows x {} cols, {} constraints -> the trace REACHES o1-labs' COMBINED_GOLD, \n\
-           PROVED + VERIFIED in {:.1} ms. The scalar multiplication is INSIDE the circuit.",
+           {} rows x {} cols ({} of them the six-value basis on the wire), {} constraints \n\
+           -> the trace REACHES o1-labs' COMBINED_GOLD, PROVED + VERIFIED in {:.1} ms. \n\
+           The scalar multiplication is INSIDE the circuit and the challenge is ON THE WIRE.",
         sh.rows,
-        WK,
+        WK + sh.nc,
+        sh.nc,
         desc.constraints.len(),
         t0.elapsed().as_secs_f64() * 1e3
     );
 }
 
 /// ⚑ …and a forged aggregate is refused. The arithmetic cannot see this one — every row still adds
-/// correctly — so the 27 PI bindings are the only thing that can object. Same displacement, same
-/// encoding idiom, as `a_forged_commitment_is_refused` above.
+/// correctly — so the 27 output PI bindings are the only thing that can object. Same displacement,
+/// same encoding idiom, as `a_forged_commitment_is_refused` above.
+///
+/// **REFUSING GATE: the LAST-ROW PI BINDINGS on `TOT`** (`PastaMsmBucketed.outPiGates`).
 #[test]
 fn a_forged_mina_xi_aggregate_is_refused() {
     let desc = parse(XIAGG_JSON);
     let sh = shape_of(&desc);
-    let (trace, pis) = honest_trace(&sh);
+    let basis = chain_basis();
+    let (trace, pis) = honest_trace_with_chal(&sh, &basis);
 
     let honest = Pt {
         x: read_field(trace.last().unwrap(), TOTX),
@@ -1003,17 +1137,111 @@ fn a_forged_mina_xi_aggregate_is_refused() {
         "the forgery must move the point"
     );
 
-    let mut bad = vec![BabyBear::new(0); PI_COUNT];
+    let mut bad = pis.clone();
     for i in 0..NUM_LIMBS {
         bad[i] = BabyBear::new(forged.x.limb30(i));
         bad[NUM_LIMBS + i] = BabyBear::new(forged.y.limb30(i));
         bad[2 * NUM_LIMBS + i] = BabyBear::new(forged.z.limb30(i));
     }
     assert_ne!(bad, pis, "the forged PI vector must differ");
+    assert_eq!(
+        bad[PI_COUNT..],
+        pis[PI_COUNT..],
+        "this tamper moves the OUTPUT and leaves the basis alone"
+    );
 
     let e = must_refuse(
         "the Mina xi-aggregate claimed as C + G, honest trace",
         || prove_and_verify(&desc, &trace, &bad),
     );
     println!("\n  [FORGED ξ-AGGREGATE] claimed COMBINED_GOLD + G -> REFUSED: {e:?}");
+}
+
+/// ⚑⚑ **A FORGED BASIS FELT IS REFUSED — the wire block is a CHECK, not a decoration.**
+///
+/// The whole point of widening the PI surface is that a verifier holding the scalar chain's output
+/// can compare it against this aggregate's. That is worth nothing if the aggregate will prove
+/// against any 192 felts, so: one felt of the published basis moved by one, trace untouched.
+///
+/// **REFUSING GATE: `PastaMsmBucketed.chalPinGates` — the FIRST-ROW PI binding** on column
+/// `CHB + m`. Nothing else in this AIR reads a challenge column, so if this passed, the block would
+/// be 192 free prover scalars.
+///
+/// ⚠ **The felt moved is READ FIRST.** A sibling in this cone drafted a refutation that moved a row
+/// whose digit was zero into an accumulator that was also zero, and `decide` refuted the refutation.
+/// A tamper that changes nothing is not a tamper.
+#[test]
+fn a_forged_basis_felt_is_refused() {
+    let desc = parse(XIAGG_JSON);
+    let sh = shape_of(&desc);
+    let basis = chain_basis();
+    let (trace, pis) = honest_trace_with_chal(&sh, &basis);
+
+    // The most significant limb of the head basis value `ξ³²` — block 0, limb 31.
+    let slot = PI_COUNT + SK - 1;
+    let before = pis[slot];
+    let after = before + BabyBear::new(1);
+    assert_ne!(before, after, "the moved felt must actually change value");
+
+    let mut bad = pis.clone();
+    bad[slot] = after;
+    assert_ne!(bad, pis, "the forged PI vector must differ");
+    assert_eq!(
+        bad[..PI_COUNT],
+        pis[..PI_COUNT],
+        "this tamper moves the BASIS and leaves the claimed aggregate alone"
+    );
+
+    let e = must_refuse(
+        "the xi-aggregate with one basis felt of xi^32 raised by one",
+        || prove_and_verify(&desc, &trace, &bad),
+    );
+    println!(
+        "\n  [FORGED BASIS FELT] pi[{slot}] {before:?} -> {after:?} \
+         (the first-row challenge pin) -> REFUSED: {e:?}"
+    );
+}
+
+/// ⚑⚑ **A BASIS THAT VARIES BY ROW IS REFUSED — the pin alone would not have caught this.**
+///
+/// A PI binding looks at ONE row. Without `chalThreadGates` a prover may pin the honest basis on
+/// row 0 and use anything it likes on the other 8 191 — which is precisely the forgery
+/// `PastaMsmScalarDerive` §5d exhibits ("a prover using a FRESH CHALLENGE VECTOR PER ROW, which the
+/// row-local denotation accepts and the wire gates refuse"). This is that forgery on this layout.
+///
+/// **REFUSING GATE: `PastaMsmBucketed.chalThreadGates` — `nxt CH_m − CH_m` on the transition.**
+///
+/// ⚠ The cell moved is READ FIRST, and it is deliberately in a row that is neither the first (which
+/// the pin already covers) nor the last.
+#[test]
+fn a_basis_that_varies_by_row_is_refused() {
+    let desc = parse(XIAGG_JSON);
+    let sh = shape_of(&desc);
+    let basis = chain_basis();
+    let (mut trace, pis) = honest_trace_with_chal(&sh, &basis);
+
+    let row = 4096usize;
+    let col = WK + SK - 1;
+    assert!(row > 0 && row + 1 < sh.rows, "an interior row");
+    let before = trace[row][col];
+    let after = before + BabyBear::new(1);
+    assert_ne!(before, after, "the moved cell must actually change value");
+    assert_eq!(
+        trace[0][col], before,
+        "the honest fill is constant down the column, which is what the thread demands"
+    );
+    trace[row][col] = after;
+    assert_eq!(
+        trace[0][col], before,
+        "row 0 is untouched, so the PI pin still holds and only the thread can object"
+    );
+
+    let e = must_refuse(
+        "the xi-aggregate with a fresh basis felt on row 4096",
+        || prove_and_verify(&desc, &trace, &pis),
+    );
+    println!(
+        "\n  [PER-ROW BASIS] trace[{row}][{col}] {before:?} -> {after:?} \
+         (row 0 and the public inputs untouched; the challenge THREAD) -> REFUSED: {e:?}"
+    );
 }

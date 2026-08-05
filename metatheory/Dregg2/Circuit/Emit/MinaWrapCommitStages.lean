@@ -452,14 +452,70 @@ theorem every_combine_base_is_on_pallas :
 intermediate power is a register the ROM's own instruction wrote, so the whole scalar vector of the
 47-term aggregate is forced by 46 Pasta multiplies and the register file's hold half. -/
 
+/-! #### ⚑⚑ THE SQUARING BASIS, TAPPED OUT OF THE SAME WALK — 2026-08-05.
+
+The 46-multiply walk already passes through `ξ¹, ξ², ξ⁴, ξ⁸, ξ¹⁶, ξ³²`; it just never kept them.
+`MinaWrapXiScalarWeld.the_squaring_basis_generates_the_orbit` is the reason to: at
+`c⃗ = (ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ)` the tensor product `∏_j c_j^{bit_j(i)}` **is** `ξ^i` for every
+`i < 64`, so those six values are all the ξ-aggregate's 47 scalars need — **six wire values, not
+forty-seven.** Six `addR` copies keep them alive to the last row, where the widened pin publishes
+them.
+
+⚠ **The registers are the LADDER's, and they are idle here.** `xiChainProg` writes only `ZERO`,
+`TX` and `TY`; `AX … T1` are live in `ladderProg`'s inner loop and in no instruction of this one.
+Reusing them is what keeps the basis inside `NREG = 12` with no machine change. -/
+
+def XB1  : Nat := AX    -- ξ¹
+def XB2  : Nat := AY    -- ξ²
+def XB4  : Nat := BIT   -- ξ⁴
+def XB8  : Nat := SL    -- ξ⁸
+def XB16 : Nat := T0    -- ξ¹⁶
+def XB32 : Nat := T1    -- ξ³²
+
+/-- ⚑ **HIGH POWER FIRST** — `PastaMsmScalarDerive`'s own convention, where challenge `j` pairs
+with binary digit `nb−1−j` of the generator index. Getting this backwards would publish a basis
+whose tensor is `ξ^(bit-reversed i)`, which agrees with `ξ^i` at `i ∈ {0, 63}` and nowhere else. -/
+def XI_BASIS_REGS : List Nat := [XB32, XB16, XB8, XB4, XB2, XB1]
+
+/-- The basis width: six challenges. -/
+def NBASIS : Nat := 6
+
+/-- ⚑ **AND THE SIX ARE SIX DISTINCT REGISTERS, NONE OF THEM THE CHAIN'S OWN.** A tap that aliased
+`TY` would publish `ξ⁴⁶` six times and every downstream `decide` would still be green about it. -/
+theorem the_basis_registers_are_distinct_and_idle :
+    XI_BASIS_REGS.length = NBASIS
+      ∧ XI_BASIS_REGS.eraseDups.length = NBASIS
+      ∧ XI_BASIS_REGS.all (fun r => decide (r < NREG)) = true
+      ∧ XI_BASIS_REGS.all (fun r => decide (r ≠ ZERO ∧ r ≠ TX ∧ r ≠ TY)) = true := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- The copy that keeps `ξ^k` after the `k`-th multiply, for the six `k` the basis names. `addR x y
+w` is `w := x + y`, so `addR TY ZERO XBk` is a register move and nothing else. -/
+def xiBasisTap : Nat → List Step
+  | 1  => [(addR TY ZERO XB1,  0)]
+  | 2  => [(addR TY ZERO XB2,  0)]
+  | 4  => [(addR TY ZERO XB4,  0)]
+  | 8  => [(addR TY ZERO XB8,  0)]
+  | 16 => [(addR TY ZERO XB16, 0)]
+  | 32 => [(addR TY ZERO XB32, 0)]
+  | _  => []
+
 /-- `R1 := ξ` is the FIRST-ROW public-input pin; `R2 := 1` is the zeroth scalar; then `R2 := R2 · R1`
-forty-six times walks the whole vector `(ξ⁰, …, ξ⁴⁶)` through the register file. -/
-def xiChainSteps : Nat → List Step
-  | 0 => []
-  | n + 1 => (mulR TY TX TY, 0) :: xiChainSteps n
+forty-six times walks the whole vector `(ξ⁰, …, ξ⁴⁶)` through the register file — tapping the six
+squaring powers into their holds on the way. -/
+def xiChainSteps (n : Nat) : List Step :=
+  (List.range n).flatMap (fun j => (mulR TY TX TY, 0) :: xiBasisTap (j + 1))
 
 def xiChainProg : List Step :=
   emitInit ++ [(addI ZERO 1 TY, 0)] ++ xiChainSteps 46
+
+/-- ⚑ **THE TAPS COST SIX INSTRUCTIONS AND THE CHAIN STILL FITS ITS 64-ROW TRACE.** `1 + 1 + 46`
+multiplies plus `6` copies is `54`; the emitted height is unchanged, so the basis is bought out of
+padding and not out of a re-shaped artifact. -/
+theorem the_chain_is_fifty_four_instructions :
+    xiChainProg.length = 54 ∧ (xiChainSteps 46).length = 52
+      ∧ ((List.range 47).filter (fun k => !(xiBasisTap k).isEmpty)) = [1, 2, 4, 8, 16, 32] := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **THE CHAIN'S ENDPOINT IS `ξ⁴⁶`**, the last scalar `combine_commitments` assigns — computed
 by `qpow`, which is **`q`-arithmetic**: `ξ` is a SCALAR-field element and reducing its powers mod
@@ -683,10 +739,16 @@ length: a prover cannot run the program twice, stop early, or pad. -/
 def padTo (n : Nat) (p : List Step) : List Step :=
   p ++ List.replicate (n - p.length) (PAD, 0)
 
+/-- ONE 32-limb boundary block: register `r`'s limb columns on `row`, at public-input base `base`.
+Every pin in this file is one of these, so a block that landed at the wrong PI base would move a
+whole 32-felt slice rather than one felt — which is what makes the widened surface below readable
+as eight blocks and not as 256 indices. -/
+def pinBlock (row : VmRow) (r base : Nat) : List AirLeg :=
+  (List.range SK).map (fun i => AirLeg.pin ⟨row, regCol r + i, base + i⟩)
+
 /-- The 64 boundary pins: `R_in`'s 32 limbs on the FIRST row, `R_out`'s on the LAST. -/
 def pinPair (rIn rOut : Nat) : List AirLeg :=
-  ((List.range SK).map (fun i => AirLeg.pin ⟨VmRow.first, regCol rIn + i, i⟩))
-  ++ ((List.range SK).map (fun i => AirLeg.pin ⟨VmRow.last, regCol rOut + i, SK + i⟩))
+  pinBlock VmRow.first rIn 0 ++ pinBlock VmRow.last rOut SK
 
 /-- ⚑ **THE FOLD PINS BOTH COORDINATES OF THE RESULT** — 64 public inputs, `TX` and `TY` on the
 last row. A stage that pinned only the abscissa would accept `−Σ sᵢBᵢ` as readily as the sum. -/
@@ -699,6 +761,49 @@ def PI64 : Nat := 2 * SK
 /-- Public inputs from a field element pair. -/
 def piPair (u v : Fp) : List ℤ :=
   (List.range SK).map (limbAt u) ++ (List.range SK).map (limbAt v)
+
+/-- ONE published field element, as the `SK` eight-bit limbs every boundary in this cone uses. -/
+def piBlock (v : Fp) : List ℤ := (List.range SK).map (limbAt v)
+
+theorem piPair_is_two_blocks (u v : Fp) : piPair u v = piBlock u ++ piBlock v := rfl
+
+/-! ### ⚑⚑ THE ξ CHAIN'S WIDENED BOUNDARY — the squaring basis ON THE WIRE.
+
+`MinaWrapXiScalarWeld` §3 measured the obstruction and the fix in the same breath: the ξ-aggregate
+had **no PI slot** for a computed scalar, and the derivation that closes it needs a **six**-element
+challenge vector rather than a 47-element one. This is the publishing half. Eight blocks, `8 · 32 =
+256` public inputs:
+
+| block | row | register | what it carries |
+|---|---|---|---|
+| 0 | first | `TX` | `ξ` — consumed from `MinaWrapXiEndoLift`'s output |
+| 1 | last | `TY` | `ξ⁴⁶`, the orbit's endpoint |
+| 2–7 | last | `XB32 … XB1` | ⚑ **the squaring basis, high power first** |
+
+⚠ **FLAG DAY.** `piCount` moves `64 → 256` and the descriptor is `::v2`; `mina-commit-xi.json` and
+`mina-commit-xi-pis.txt` re-emit, and a `::v1` artifact no longer resolves under this name. Nothing
+migrates. -/
+
+/-- The widened public-input count: input ξ, output ξ⁴⁶, and the six basis powers. -/
+def PI_XI : Nat := (2 + NBASIS) * SK
+
+/-- ⚑ **THE EIGHT PINNED BLOCKS.** -/
+def pinXiChain : List AirLeg :=
+  pinPair TX TY
+  ++ pinBlock VmRow.last XB32 (2 * SK) ++ pinBlock VmRow.last XB16 (3 * SK)
+  ++ pinBlock VmRow.last XB8  (4 * SK) ++ pinBlock VmRow.last XB4  (5 * SK)
+  ++ pinBlock VmRow.last XB2  (6 * SK) ++ pinBlock VmRow.last XB1  (7 * SK)
+
+/-- ⚑ **AND THE EIGHT BLOCKS TILE THE PI SURFACE EXACTLY.** 256 pins, every declared slot addressed
+once, none twice and none past the count — so a block written at a stale base would leave a hole
+here rather than silently overlap a neighbour. -/
+theorem the_pinned_blocks_tile_the_public_inputs :
+    pinXiChain.length = PI_XI ∧ PI_XI = 256
+      ∧ ((List.range PI_XI).all (fun k =>
+            decide ((pinXiChain.filter
+                      (fun l => match l with | .pin p => p.idx == k | _ => false)).length = 1)))
+          = true := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
 
 /-- The initial register file of every stage: all zero except the pinned inputs. -/
 def initRegs (r : Nat) (v : Nat) : RegFile := fun k => if k = r then v else 0
@@ -741,17 +846,21 @@ same gates, a different limb vector. Emitting it at `pLimb` would be an AIR for 
 def xiAir : EffectAir :=
   { commitAir Dregg2.Circuit.Emit.PastaFieldSound.qLimb (instrs xiProg) with
     legs := (commitAir Dregg2.Circuit.Emit.PastaFieldSound.qLimb (instrs xiProg)).legs
-              ++ pinPair TX TY }
+              ++ pinXiChain }
 
 theorem xiAir_mainRailOk : xiAir.mainRailOk = true := by
   unfold xiAir EffectAir.mainRailOk
   simp only [List.all_append, Bool.and_eq_true]
   refine ⟨commitAir_mainRailOk _ _, ?_⟩
-  simp only [pinPair, List.all_append, List.all_map, Bool.and_eq_true, List.all_eq_true]
-  exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
+  simp only [pinXiChain, pinPair, pinBlock, List.all_append, List.all_map, Bool.and_eq_true,
+    List.all_eq_true]
+  exact ⟨⟨⟨⟨⟨⟨⟨fun _ _ => rfl, fun _ _ => rfl⟩, fun _ _ => rfl⟩, fun _ _ => rfl⟩,
+    fun _ _ => rfl⟩, fun _ _ => rfl⟩, fun _ _ => rfl⟩, fun _ _ => rfl⟩
 
+/-- ⚑ **`::v2` — THE PI SURFACE WIDENED, SO THE NAME MOVED.** `PastaMsmBucketed`'s own §4b: a name
+is a KEY, and two AIRs that differ in their published surface must not share one. -/
 def xiDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-mina-xi-scalar-vector::v1" CM_WIDTH PI64 [] xiAir
+  lowerAir "dregg-mina-xi-scalar-vector::v2" CM_WIDTH PI_XI [] xiAir
 
 /-- ⚑ **THE LIMB VECTOR IS MEMOISED, AND THAT IS NOT COSMETIC.** `qLimb j` is a 255-bit shift, and
 `mulAsg` queries it thousands of times per emitted column. On the `pN` path `pLimb` is a CONSTANT
@@ -785,7 +894,38 @@ theorem xiTrace_is_the_closure_trace :
   unfold xiTrace
   rw [runRowsVecAt_is_runRowsAt _ _ _ _ _ _ (pinVec_length TX XI), regsOf_pinVec TX XI (by decide)]
 
-def xiPIs : List ℤ := piPair XI XI_46
+/-- ⚑ **THE SIX BASIS VALUES, HIGH POWER FIRST.** `PastaMsmScalarDerive.sAt`'s convention pairs
+challenge `j` with binary digit `nb−1−j`, so `c⃗ = (ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ)` and its tensor
+`∏_j c_j^{bit_j(i)}` is `ξ^i`. -/
+def XI_BASIS : List Nat :=
+  [qpow XI 32, qpow XI 16, qpow XI 8, qpow XI 4, qpow XI 2, XI]
+
+/-- ⚑ **AND THE BASIS IS SIX SQUARINGS OF ONE VALUE**, not six numbers a file chose: each entry is
+the square of its successor, ending on `ξ` itself. `the_chain_computes_the_basis` in
+`MinaWrapXiBasisWeld` is the same fact about the emitted MACHINE. -/
+theorem the_basis_is_the_squaring_orbit :
+    XI_BASIS.length = NBASIS
+      ∧ ((List.range (NBASIS - 1)).all
+          (fun j => decide (XI_BASIS.getD j 0
+                      = qmul (XI_BASIS.getD (j + 1) 0) (XI_BASIS.getD (j + 1) 0)))) = true
+      ∧ XI_BASIS.getD (NBASIS - 1) 0 = XI := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE WIDENED PI VECTOR — 256 FELTS IN EIGHT BLOCKS.** `ξ`, `ξ⁴⁶`, then the squaring basis. -/
+def xiPIs : List ℤ := piPair XI XI_46 ++ XI_BASIS.flatMap piBlock
+
+theorem the_chain_publishes_two_hundred_and_fifty_six_felts :
+    xiPIs.length = PI_XI ∧ xiDesc.piCount = PI_XI := by
+  refine ⟨?_, ?_⟩ <;> decide
+
+/-- ⚑ **AND THE BASIS BLOCK IS SIX DISTINCT FIELD ELEMENTS.** Without this the elementwise weld
+downstream would be equally green over a basis that had collapsed to six copies of one value — the
+exact shape a tap that aliased its register would produce, and one no length check sees. -/
+theorem the_published_basis_is_six_distinct_values :
+    XI_BASIS.eraseDups.length = NBASIS
+      ∧ (xiPIs.drop (2 * SK)).length = NBASIS * SK
+      ∧ XI_BASIS.all (fun v => decide (2 ^ 240 < v ∧ v < PastaField.qN)) = true := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
 
 /-! ### §8b — STAGE (G2): the group folds, at FULL term count. -/
 
