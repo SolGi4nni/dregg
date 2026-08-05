@@ -121,23 +121,21 @@ prefix: `/api/node/status`, `/api/cell/{id}`, `/api/turns/submit-signed`,
 
 ### Path of Angels companion transport
 
-The opt-in YouTube companion asks
-`https://node.pathofangels.network/api/poa/companion/youtube/<video-id>` for a
+The opt-in YouTube companion asks the separate, static, read-only origin
+`https://companion.pathofangels.network/v1/youtube/<video-id>.json` for a
 curator-signed routing manifest. Exact X/Twitter status pages use the same
 verifier and lifecycle at
-`https://node.pathofangels.network/api/poa/companion/x/<post-id>`. X support is
+`https://companion.pathofangels.network/v1/x/<post-id>.json`. X support is
 deliberately limited to browser-authenticated `/user/status/<snowflake>` tab
-URLs; feed-card ids scraped from page-owned DOM are not authority. The currently
-protected beta endpoint returns HTTP 401 to the extension. This is deliberately
-treated as **no signed route**:
+URLs; feed-card ids scraped from page-owned DOM are not authority. The empty
+production tree returns HTTP 404. A 404, 401 or 403 is always **no signed route**:
 the extension does not embed the beta Basic Auth password, synthesize an
-`Authorization` header, or turn a 401 into verification. Until a proper
-authenticated/public manifest transport is deployed, an exact extension-local
-video allowlist may render only a `recognized`, **not verified**, game-free
-shell linking to `beta.pathofangels.network`; an unknown video renders nothing.
-X has no unsigned/local fallback.
+`Authorization` header, or turn transport failure into verification. An exact
+extension-local video allowlist may still render only a `recognized`, **not
+verified**, game-free shell linking to `beta.pathofangels.network`; an unknown
+video renders nothing. X has no unsigned/local fallback.
 
-Signed `poa-companion/v1` manifests carry a numeric `contentEpoch` and monotone
+Legacy `poa-companion/v1` manifests carry a numeric `contentEpoch` and monotone
 `counter` in their canonical signed bytes. The signed context is discriminated
 as either `{platform: "youtube", videoId, channelId}` or
 `{platform: "x", postId}`; the original YouTube canonical bytes are unchanged.
@@ -156,6 +154,21 @@ bounding first-seen replay before the client has learned a newer high-water
 mark. The persisted state is `dregg_poa_manifest_versions`; trusted curator keys
 and exact local video recognition use `dregg_poa_trusted_curators` and
 `dregg_poa_youtube_videos`, all in extension-private storage.
+
+Public discovery uses `poa-companion/v3`. Its signed bytes additionally bind the
+exact PoA origin, federation and deployment ids, the verified POAG1 content
+epoch/counter and manifest digest, an independent per-context `sequence`, and
+every exposed content asset's canonical beta URL, media type, byte length and
+SHA-256. Signed mission/evidence/debrief actions remain exact beta-origin URLs.
+The curator CLI refuses to sign unless each asset is an exact member of the
+authenticated POAG1 bundle and the companion signer is the content-epoch
+curator. The extension maps `sequence` into the existing per-context rollback
+ratchet. Legacy v1/v2 verification remains only behind the explicitly named
+`persisted_legacy_migration` engine source for importing an old locally stored
+envelope. The shipping network factory uses `public_network_v3`, rejects every
+other schema immediately after JSON decoding and checks the same policy again
+before generic signature acceptance. No production network caller enables the
+legacy mode.
 
 While a signed companion is mounted, the content script refreshes its manifest
 on focus, on returning to a visible tab, every five minutes, and no later than

@@ -213,6 +213,158 @@ fn content_sign_and_verify_cli_roundtrip() {
 }
 
 #[test]
+fn companion_sign_and_verify_cli_is_bound_to_content_and_refuses_overwrite() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let manifest = repo.join("poa/artifacts/poag1/manifest.json");
+    let deployment = repo.join("poa/deployments/epoch-1/poa-devnet.json");
+    let temp = tempfile::tempdir().unwrap();
+    let secret = temp.path().join("development-curator.key");
+    let pin = temp.path().join("curator-key.json");
+    let content_signature = temp.path().join("manifest.sig.json");
+    let draft = temp.path().join("episode-1-draft.json");
+    let output = temp.path().join("AbCdEfGhI01.json");
+    assert!(
+        Command::new(binary())
+            .args(["keygen", "--secret"])
+            .arg(&secret)
+            .arg("--pin")
+            .arg(&pin)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new(binary())
+            .args(["sign-content", "--secret"])
+            .arg(&secret)
+            .arg("--pin")
+            .arg(&pin)
+            .arg("--manifest")
+            .arg(&manifest)
+            .arg("--deployment")
+            .arg(&deployment)
+            .args(["--epoch", "1", "--counter", "4", "--output"])
+            .arg(&content_signature)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let manifest_digest = format!(
+        "sha256:{}",
+        hex(&Sha256::digest(fs::read(&manifest).unwrap()))
+    );
+    fs::write(
+        &draft,
+        serde_json::to_vec_pretty(&json!({
+            "schema": "poa-companion/v3",
+            "contentEpoch": 1,
+            "contentCounter": 4,
+            "sequence": 1,
+            "poaOrigin": "https://beta.pathofangels.network",
+            "federationId": "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a",
+            "deploymentId": "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e",
+            "contentPackDigest": manifest_digest,
+            "context": {
+                "platform": "youtube",
+                "videoId": "AbCdEfGhI01",
+                "channelId": "UC_PathOfAngels"
+            },
+            "experience": {
+                "id": "episode-1",
+                "title": "Path of Angels field dispatch",
+                "episode": "Episode 1",
+                "betaUrl": "https://beta.pathofangels.network/?episode=1",
+                "contentAssets": [{
+                    "path": "catalog.json",
+                    "url": "https://beta.pathofangels.network/artifacts/poag1/catalog.json",
+                    "mediaType": "application/json",
+                    "bytes": 5447,
+                    "sha256": "bc57b4ca130e598fd7fabfa23edb101ccf9d49fdd852cddd13350685f114e051"
+                }],
+                "actions": {
+                    "mission": {
+                        "label": "Open field terminal",
+                        "betaUrl": "https://beta.pathofangels.network/?station=field"
+                    }
+                }
+            },
+            "issuedAt": now,
+            "expiresAt": now + 3600
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let sign = Command::new(binary())
+        .args(["sign-companion", "--secret"])
+        .arg(&secret)
+        .arg("--pin")
+        .arg(&pin)
+        .arg("--manifest")
+        .arg(&manifest)
+        .arg("--deployment")
+        .arg(&deployment)
+        .arg("--content-signature")
+        .arg(&content_signature)
+        .args(["--content-epoch", "1", "--content-counter", "4", "--draft"])
+        .arg(&draft)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        sign.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sign.stderr)
+    );
+    let before = fs::read(&output).unwrap();
+
+    let verify = Command::new(binary())
+        .args(["verify-companion", "--pin"])
+        .arg(&pin)
+        .arg("--manifest")
+        .arg(&manifest)
+        .arg("--deployment")
+        .arg(&deployment)
+        .arg("--content-signature")
+        .arg(&content_signature)
+        .args(["--content-epoch", "1", "--content-counter", "4", "--input"])
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        verify.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verify.stderr)
+    );
+    assert!(String::from_utf8_lossy(&verify.stdout).contains("sequence 1"));
+
+    let overwrite = Command::new(binary())
+        .args(["sign-companion", "--secret"])
+        .arg(&secret)
+        .arg("--pin")
+        .arg(&pin)
+        .arg("--manifest")
+        .arg(&manifest)
+        .arg("--deployment")
+        .arg(&deployment)
+        .arg("--content-signature")
+        .arg(&content_signature)
+        .args(["--content-epoch", "1", "--content-counter", "4", "--draft"])
+        .arg(&draft)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!overwrite.status.success());
+    assert!(String::from_utf8_lossy(&overwrite.stderr).contains("refusing to overwrite"));
+    assert_eq!(fs::read(&output).unwrap(), before);
+}
+
+#[test]
 fn preview_refuses_partial_verification_tampered_bytes_and_wrong_counter() {
     let temp = tempfile::tempdir().unwrap();
     let (manifest, deployment) = write_bundle(temp.path());

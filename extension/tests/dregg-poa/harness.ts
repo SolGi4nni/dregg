@@ -125,6 +125,7 @@ const state = {
   const deferredReleases: Array<() => void> = [];
 
   const engine = new PoAEngine({
+    manifestSource: "persisted_legacy_migration",
     async resolveSignedManifest(context) {
       lookups += 1;
       if (context.platform === "x") return context.postId === X_POST ? signedX : null;

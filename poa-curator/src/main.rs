@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
 use dregg_types::{SigningKey, generate_keypair};
+use poa_curator::companion::{CompanionManifestV3, SignedCompanionManifestV3};
 use poa_curator::{
     ContentEpochEnvelope, CuratorKeyPin, CuratorSigner, DETACHED_SIGNATURE_FILENAME, Poag1Bundle,
 };
@@ -19,6 +20,8 @@ usage:
   poa-curator sign-content --secret PATH --pin PATH --manifest PATH --deployment PATH --epoch N --counter N [--output PATH]
   poa-curator verify-content --pin PATH --manifest PATH --deployment PATH --epoch N --counter N [--signature PATH]
   poa-curator preview-epoch --manifest PATH --deployment PATH [--pin PATH --signature PATH --epoch N --counter N]
+  poa-curator sign-companion --secret PATH --pin PATH --manifest PATH --deployment PATH --content-signature PATH --content-epoch N --content-counter N --draft PATH --output PATH
+  poa-curator verify-companion --pin PATH --manifest PATH --deployment PATH --content-signature PATH --content-epoch N --content-counter N --input PATH
   poa-curator signal-replay --bundle PATH
   poa-curator signal-review --bundle PATH
   poa-curator promotion-inbox --bundle PATH --manifest PATH --deployment PATH --pin PATH --signature PATH --epoch N --counter N
@@ -29,6 +32,11 @@ refuses to overwrite either output and writes the raw 32-byte secret mode 0600.
 `preview-epoch` is read-only JSON. With no signature tuple it loudly reports an
 unsigned WIP; signature status becomes valid only when all four verification
 flags are supplied and verify against the exact bundle and deployment.
+
+`sign-companion` signs one short-lived, exact YouTube/X discovery route only
+after the same curator key, POAG1 bytes, content epoch and PoA deployment have
+all been verified. It refuses to overwrite its output. `verify-companion`
+repeats the complete ceremony without reading a secret key.
 
 `signal-replay` is read-only. It checks a caller-supplied sealed wire chain,
 reruns every transition through native Lean, and prints one machine-readable
@@ -65,11 +73,120 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         "sign-content" => command_sign_content(&flags),
         "verify-content" => command_verify_content(&flags),
         "preview-epoch" => command_preview_epoch(&flags),
+        "sign-companion" => command_sign_companion(&flags),
+        "verify-companion" => command_verify_companion(&flags),
         "signal-replay" => command_signal_replay(&flags),
         "signal-review" => command_signal_review(&flags),
         "promotion-inbox" => command_promotion_inbox(&flags),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
+}
+
+fn command_sign_companion(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(
+        flags,
+        &[
+            "secret",
+            "pin",
+            "manifest",
+            "deployment",
+            "content-signature",
+            "content-epoch",
+            "content-counter",
+            "draft",
+            "output",
+        ],
+        &[],
+    )?;
+    let content_epoch = flag_u64(flags, "content-epoch")?;
+    let content_counter = flag_u64(flags, "content-counter")?;
+    let pin = CuratorKeyPin::load(flag_path(flags, "pin")?).map_err(|error| error.to_string())?;
+    let bundle =
+        Poag1Bundle::load(flag_path(flags, "manifest")?).map_err(|error| error.to_string())?;
+    let bound = bundle
+        .bind_deployment(flag_path(flags, "deployment")?)
+        .map_err(|error| error.to_string())?;
+    let content = ContentEpochEnvelope::load(flag_path(flags, "content-signature")?)
+        .map_err(|error| error.to_string())?;
+    let verified = content
+        .verify(&bound, &pin, content_epoch, content_counter)
+        .map_err(|error| error.to_string())?;
+    let secret = load_secret_key(&flag_path(flags, "secret")?)?;
+    if secret.public_key() != pin.public_key().map_err(|error| error.to_string())? {
+        return Err("secret key does not match the external public pin".into());
+    }
+    let manifest =
+        CompanionManifestV3::load(flag_path(flags, "draft")?).map_err(|error| error.to_string())?;
+    let now = unix_now()?;
+    let signed = SignedCompanionManifestV3::sign(manifest, &secret, &bound, &verified, now)
+        .map_err(|error| error.to_string())?;
+    signed
+        .verify(&pin, &bound, &verified, now)
+        .map_err(|error| format!("self-verification failed: {error}"))?;
+    let mut bytes = serde_json::to_vec_pretty(&signed).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    let output = flag_path(flags, "output")?;
+    atomic_write_new(&output, &bytes, 0o644)?;
+    println!(
+        "signed companion {}:{} sequence {}: {}",
+        match &signed.manifest.context {
+            poa_curator::companion::CompanionContext::Youtube { .. } => "youtube",
+            poa_curator::companion::CompanionContext::X { .. } => "x",
+        },
+        match &signed.manifest.context {
+            poa_curator::companion::CompanionContext::Youtube { video_id, .. } => video_id,
+            poa_curator::companion::CompanionContext::X { post_id } => post_id,
+        },
+        signed.manifest.sequence,
+        output.display()
+    );
+    Ok(())
+}
+
+fn command_verify_companion(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(
+        flags,
+        &[
+            "pin",
+            "manifest",
+            "deployment",
+            "content-signature",
+            "content-epoch",
+            "content-counter",
+            "input",
+        ],
+        &[],
+    )?;
+    let content_epoch = flag_u64(flags, "content-epoch")?;
+    let content_counter = flag_u64(flags, "content-counter")?;
+    let pin = CuratorKeyPin::load(flag_path(flags, "pin")?).map_err(|error| error.to_string())?;
+    let bundle =
+        Poag1Bundle::load(flag_path(flags, "manifest")?).map_err(|error| error.to_string())?;
+    let bound = bundle
+        .bind_deployment(flag_path(flags, "deployment")?)
+        .map_err(|error| error.to_string())?;
+    let content = ContentEpochEnvelope::load(flag_path(flags, "content-signature")?)
+        .map_err(|error| error.to_string())?;
+    let verified = content
+        .verify(&bound, &pin, content_epoch, content_counter)
+        .map_err(|error| error.to_string())?;
+    let signed = SignedCompanionManifestV3::load(flag_path(flags, "input")?)
+        .map_err(|error| error.to_string())?;
+    signed
+        .verify(&pin, &bound, &verified, unix_now()?)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "verified companion content epoch {} counter {} sequence {}",
+        content_epoch, content_counter, signed.manifest.sequence
+    );
+    Ok(())
+}
+
+fn unix_now() -> Result<u64, String> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| format!("system clock predates Unix epoch: {error}"))
 }
 
 fn command_signal_review(flags: &BTreeMap<String, String>) -> Result<(), String> {

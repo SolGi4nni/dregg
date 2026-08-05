@@ -18,7 +18,8 @@
   "host_permissions": [
     "https://node.dregg.net/*",
     "wss://node.dregg.net/*",
-    "https://node.pathofangels.network/*"
+    "https://node.pathofangels.network/*",
+    "https://companion.pathofangels.network/*"
   ],
   "optional_host_permissions": [
     "http://localhost:8420/*",

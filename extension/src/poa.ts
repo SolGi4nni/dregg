@@ -23,6 +23,10 @@
 export const POA_BETA_URL = "https://beta.pathofangels.network/";
 export const POA_NODE_URL = "https://node.pathofangels.network";
 export const POA_NODE_URL_KEY = "dregg_poa_node_url";
+/** Public, static, GET/HEAD-only discovery origin. It is deliberately not the
+ * password-curtained beta or the mutable node API. */
+export const POA_COMPANION_URL = "https://companion.pathofangels.network";
+export const POA_COMPANION_URL_KEY = "dregg_poa_companion_url";
 export const POA_VIDEO_ALLOWLIST_KEY = "dregg_poa_youtube_videos";
 export const POA_CURATOR_KEYS_KEY = "dregg_poa_trusted_curators";
 export const POA_MANIFEST_VERSIONS_KEY = "dregg_poa_manifest_versions";
@@ -36,6 +40,7 @@ const HEX_KEY_RE = /^[0-9a-f]{64}$/i;
 const HEX_SIG_RE = /^[0-9a-f]{128}$/i;
 const DIGEST_RE = /^[0-9a-f]{64}$/i;
 const LOWER_DIGEST_RE = /^[0-9a-f]{64}$/;
+const TAGGED_SHA256_RE = /^sha256:[0-9a-f]{64}$/;
 const MAX_MANIFEST_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
 
 export const POA_RECEIPT_CORE_PROTOCOL = "FRC1" as const;
@@ -87,6 +92,23 @@ export interface PoAFieldRecordRef {
   turnHash: string;
 }
 
+export interface PoAContentAsset {
+  path: string;
+  url: string;
+  mediaType: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface PoAContentScope {
+  poaOrigin: "https://beta.pathofangels.network";
+  federationId: string;
+  deploymentId: string;
+  contentCounter: number;
+  contentPackDigest: string;
+  contentAssets: readonly PoAContentAsset[];
+}
+
 interface PoAExperienceBase {
   id: string;
   title: string;
@@ -125,7 +147,31 @@ export interface PoAManifestV2 {
   expiresAt: number;
 }
 
-export type PoAManifest = PoAManifestV1 | PoAManifestV2;
+/** v3 is the public companion transport. Unlike the older protected-node
+ * drafts it binds the exact PoA deployment and signed POAG1 pack, and every
+ * content asset is itself hash/length/media-type pinned. `sequence` is the
+ * independent per-context revocation ratchet; contentCounter is the curator's
+ * already-verified POAG1 content envelope counter. */
+export interface PoAManifestV3 {
+  schema: "poa-companion/v3";
+  contentEpoch: number;
+  contentCounter: number;
+  sequence: number;
+  poaOrigin: "https://beta.pathofangels.network";
+  federationId: string;
+  deploymentId: string;
+  contentPackDigest: string;
+  context: PoAManifestContext;
+  experience: PoAExperienceBase & {
+    contentAssets: PoAContentAsset[];
+    actions?: PoAEpisodeActions;
+    fieldRecord?: PoAFieldRecordRef;
+  };
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export type PoAManifest = PoAManifestV1 | PoAManifestV2 | PoAManifestV3;
 
 export interface SignedPoAManifestV1 {
   manifest: PoAManifestV1;
@@ -139,7 +185,13 @@ export interface SignedPoAManifestV2 {
   signature: string;
 }
 
-export type SignedPoAManifest = SignedPoAManifestV1 | SignedPoAManifestV2;
+export interface SignedPoAManifestV3 {
+  manifest: PoAManifestV3;
+  signer: string;
+  signature: string;
+}
+
+export type SignedPoAManifest = SignedPoAManifestV1 | SignedPoAManifestV2 | SignedPoAManifestV3;
 
 interface PoACompanionModelBase {
   platform: "youtube" | "x";
@@ -162,6 +214,7 @@ interface PoASignedCompanionModelBase extends PoACompanionModelBase {
   game?: PoAGameRoute;
   actions?: PoAEpisodeActions;
   fieldRecord?: PoAFieldRecordRef;
+  contentScope?: PoAContentScope;
   signer: string;
 }
 
@@ -215,6 +268,10 @@ export interface PoACompanionPort {
 }
 
 export interface PoAEngineDeps {
+  /** The trust boundary that supplied an envelope. Public network discovery is
+   * v3-only. Legacy schemas are reachable solely through an explicit persisted
+   * migration reader; the shipping network factory never enables that mode. */
+  manifestSource: "public_network_v3" | "persisted_legacy_migration";
   resolveSignedManifest(context: PoAResolvedContext): Promise<unknown | null>;
   isVideoAllowlisted(videoId: string): Promise<boolean>;
   trustedCuratorKeys(): Promise<ReadonlySet<string>>;
@@ -300,6 +357,16 @@ function canonicalEpisodeActions(actions: PoAEpisodeActions): PoAEpisodeActions 
   };
 }
 
+function canonicalContentAsset(asset: PoAContentAsset): PoAContentAsset {
+  return {
+    path: asset.path,
+    url: asset.url,
+    mediaType: asset.mediaType,
+    bytes: asset.bytes,
+    sha256: asset.sha256,
+  };
+}
+
 /** Canonical signed bytes for the companion protocol. v1's projection and
  * domain remain byte-for-byte unchanged. Every v2 field interpreted by the
  * companion is included in a fixed order. */
@@ -311,12 +378,7 @@ export function poaManifestSigningBytes(manifest: PoAManifest): Uint8Array<Array
         channelId: manifest.context.channelId,
       }
     : { platform: "x" as const, postId: manifest.context.postId };
-  const canonical = {
-    schema: manifest.schema,
-    contentEpoch: manifest.contentEpoch,
-    counter: manifest.counter,
-    context,
-    experience: {
+  const canonicalExperience = {
       id: manifest.experience.id,
       title: manifest.experience.title,
       ...(manifest.experience.episode === undefined ? {} : { episode: manifest.experience.episode }),
@@ -325,17 +387,39 @@ export function poaManifestSigningBytes(manifest: PoAManifest): Uint8Array<Array
       ...(manifest.experience.game === undefined
         ? {}
         : { game: { kind: manifest.experience.game.kind, src: manifest.experience.game.src } }),
-      ...(manifest.schema === "poa-companion/v2" && manifest.experience.actions
+      ...(manifest.schema === "poa-companion/v3"
+        ? { contentAssets: manifest.experience.contentAssets.map(canonicalContentAsset) }
+        : {}),
+      ...((manifest.schema === "poa-companion/v2" || manifest.schema === "poa-companion/v3") && manifest.experience.actions
         ? { actions: canonicalEpisodeActions(manifest.experience.actions) }
         : {}),
-      ...(manifest.schema === "poa-companion/v2" && manifest.experience.fieldRecord
+      ...((manifest.schema === "poa-companion/v2" || manifest.schema === "poa-companion/v3") && manifest.experience.fieldRecord
         ? { fieldRecord: {
             finalizedReceiptCoreId: manifest.experience.fieldRecord.finalizedReceiptCoreId,
             federationId: manifest.experience.fieldRecord.federationId,
             turnHash: manifest.experience.fieldRecord.turnHash,
           } }
         : {}),
-    },
+  };
+  const canonical = manifest.schema === "poa-companion/v3" ? {
+    schema: manifest.schema,
+    contentEpoch: manifest.contentEpoch,
+    contentCounter: manifest.contentCounter,
+    sequence: manifest.sequence,
+    poaOrigin: manifest.poaOrigin,
+    federationId: manifest.federationId,
+    deploymentId: manifest.deploymentId,
+    contentPackDigest: manifest.contentPackDigest,
+    context,
+    experience: canonicalExperience,
+    issuedAt: manifest.issuedAt,
+    expiresAt: manifest.expiresAt,
+  } : {
+    schema: manifest.schema,
+    contentEpoch: manifest.contentEpoch,
+    counter: manifest.counter,
+    context,
+    experience: canonicalExperience,
     issuedAt: manifest.issuedAt,
     expiresAt: manifest.expiresAt,
   };
@@ -346,7 +430,10 @@ export function poaManifestSigningBytes(manifest: PoAManifest): Uint8Array<Array
 }
 
 function boundedString(value: unknown, max: number, allowEmpty = false): value is string {
-  return typeof value === "string" && value.length <= max && (allowEmpty || value.length > 0);
+  return typeof value === "string"
+    && value.length <= max
+    && (allowEmpty || value.length > 0)
+    && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function validBetaUrl(value: unknown): value is string {
@@ -391,6 +478,33 @@ function parseEpisodeActions(value: unknown): PoAEpisodeActions | null {
   return parsed;
 }
 
+function parseContentAssets(value: unknown): PoAContentAsset[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8) return null;
+  const parsed: PoAContentAsset[] = [];
+  let previous = "";
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const asset = item as Record<string, unknown>;
+    if (!exactObjectKeys(asset, ["path", "url", "mediaType", "bytes", "sha256"])) return null;
+    if (!boundedString(asset.path, 160) || asset.path.startsWith("/") || asset.path.includes("..") || asset.path.includes("\\")) return null;
+    if (previous && previous >= asset.path) return null;
+    previous = asset.path;
+    if (!boundedString(asset.url, 512) || !boundedString(asset.mediaType, 96)) return null;
+    if (!Number.isSafeInteger(asset.bytes) || (asset.bytes as number) <= 0 || (asset.bytes as number) > 16 * 1024 * 1024) return null;
+    if (typeof asset.sha256 !== "string" || !LOWER_DIGEST_RE.test(asset.sha256)) return null;
+    const expectedUrl = `${POA_BETA_URL}artifacts/poag1/${asset.path}`;
+    if (asset.url !== expectedUrl) return null;
+    parsed.push({
+      path: asset.path,
+      url: asset.url,
+      mediaType: asset.mediaType,
+      bytes: asset.bytes as number,
+      sha256: asset.sha256,
+    });
+  }
+  return parsed;
+}
+
 /** Validate the complete interpreted companion surface, including freshness,
  * v1 compatibility, and v2's exact authenticated action/receipt vocabulary. */
 export function validatePoAManifest(value: unknown, nowSeconds: number): PoAManifest | null {
@@ -398,22 +512,40 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
   const m = value as Record<string, unknown>;
   const context = m.context as Record<string, unknown> | undefined;
   const experience = m.experience as Record<string, unknown> | undefined;
-  if ((m.schema !== "poa-companion/v1" && m.schema !== "poa-companion/v2") || !context || !experience) return null;
+  if ((m.schema !== "poa-companion/v1" && m.schema !== "poa-companion/v2" && m.schema !== "poa-companion/v3") || !context || !experience) return null;
   const schema = m.schema;
-  if (schema === "poa-companion/v2") {
+  if (schema === "poa-companion/v3") {
+    if (!exactObjectKeys(m, [
+      "schema", "contentEpoch", "contentCounter", "sequence", "poaOrigin", "federationId",
+      "deploymentId", "contentPackDigest", "context", "experience", "issuedAt", "expiresAt",
+    ])) return null;
+    const contextKeys = context.platform === "youtube"
+      ? ["platform", "videoId", "channelId"]
+      : ["platform", "postId"];
+    if (!exactObjectKeys(context, contextKeys)) return null;
+    if (!exactOptionalObjectKeys(experience, ["id", "title", "episode", "dispatch", "betaUrl", "game", "contentAssets", "actions", "fieldRecord"])) return null;
+    if (m.poaOrigin !== "https://beta.pathofangels.network") return null;
+    for (const digestField of ["federationId", "deploymentId"] as const) {
+      if (typeof m[digestField] !== "string" || !LOWER_DIGEST_RE.test(m[digestField] as string)) return null;
+    }
+    if (typeof m.contentPackDigest !== "string" || !TAGGED_SHA256_RE.test(m.contentPackDigest)) return null;
+    if ((m.federationId as string) === "0".repeat(64) || (m.deploymentId as string) === "0".repeat(64) || m.contentPackDigest === `sha256:${"0".repeat(64)}`) return null;
+    if (!Number.isSafeInteger(m.contentCounter) || (m.contentCounter as number) < 0) return null;
+    if (!Number.isSafeInteger(m.sequence) || (m.sequence as number) < 0) return null;
+  } else if (schema === "poa-companion/v2") {
     if (!exactObjectKeys(m, ["schema", "contentEpoch", "counter", "context", "experience", "issuedAt", "expiresAt"])) return null;
     const contextKeys = context.platform === "youtube"
       ? ["platform", "videoId", "channelId"]
       : ["platform", "postId"];
     if (!exactObjectKeys(context, contextKeys)) return null;
     if (!exactOptionalObjectKeys(experience, ["id", "title", "episode", "dispatch", "betaUrl", "game", "actions", "fieldRecord"])) return null;
-  } else if ("actions" in experience || "fieldRecord" in experience) {
+  } else if ("actions" in experience || "fieldRecord" in experience || "contentAssets" in experience) {
     // These fields have v2 semantics and must never be interpreted under v1's
     // older canonical projection.
     return null;
   }
   if (!Number.isSafeInteger(m.contentEpoch) || (m.contentEpoch as number) < 0) return null;
-  if (!Number.isSafeInteger(m.counter) || (m.counter as number) < 0) return null;
+  if (schema !== "poa-companion/v3" && (!Number.isSafeInteger(m.counter) || (m.counter as number) < 0)) return null;
   let manifestContext: PoAManifestContext;
   if (context.platform === "youtube") {
     if (!boundedString(context.videoId, 11) || !YOUTUBE_VIDEO_RE.test(context.videoId)) return null;
@@ -449,7 +581,7 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
 
   let actions: PoAEpisodeActions | undefined;
   let fieldRecord: PoAFieldRecordRef | undefined;
-  if (schema === "poa-companion/v2") {
+  if (schema === "poa-companion/v2" || schema === "poa-companion/v3") {
     if ((experience.actions !== undefined || experience.fieldRecord !== undefined) && experience.episode === undefined) return null;
     if (experience.actions !== undefined) {
       actions = parseEpisodeActions(experience.actions) ?? undefined;
@@ -470,9 +602,16 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
     }
   }
 
+  let contentAssets: PoAContentAsset[] | undefined;
+  if (schema === "poa-companion/v3") {
+    contentAssets = parseContentAssets(experience.contentAssets) ?? undefined;
+    if (!contentAssets) return null;
+    if (fieldRecord && fieldRecord.federationId !== m.federationId) return null;
+  }
+
   const common = {
     contentEpoch: m.contentEpoch as number,
-    counter: m.counter as number,
+    counter: schema === "poa-companion/v3" ? m.sequence as number : m.counter as number,
     context: manifestContext,
     experience: {
       id: experience.id,
@@ -486,6 +625,25 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
     expiresAt,
   };
   if (schema === "poa-companion/v1") return { schema, ...common };
+  if (schema === "poa-companion/v3") return {
+    schema,
+    contentEpoch: common.contentEpoch,
+    contentCounter: m.contentCounter as number,
+    sequence: m.sequence as number,
+    poaOrigin: m.poaOrigin as "https://beta.pathofangels.network",
+    federationId: m.federationId as string,
+    deploymentId: m.deploymentId as string,
+    contentPackDigest: m.contentPackDigest as string,
+    context: common.context,
+    experience: {
+      ...common.experience,
+      contentAssets: contentAssets!,
+      ...(actions ? { actions } : {}),
+      ...(fieldRecord ? { fieldRecord } : {}),
+    },
+    issuedAt: common.issuedAt,
+    expiresAt: common.expiresAt,
+  };
   return {
     schema,
     ...common,
@@ -762,7 +920,7 @@ export class PoAEngine {
         trust: "signed_manifest" as const,
         contextId: poaContextId(manifestContext),
         contentEpoch: signed.manifest.contentEpoch,
-        counter: signed.manifest.counter,
+        counter: signed.manifest.schema === "poa-companion/v3" ? signed.manifest.sequence : signed.manifest.counter,
         manifestDigest: signed.digest,
         issuedAt: signed.manifest.issuedAt,
         expiresAt: signed.manifest.expiresAt,
@@ -772,11 +930,21 @@ export class PoAEngine {
         ...(signed.manifest.experience.dispatch === undefined ? {} : { dispatch: signed.manifest.experience.dispatch }),
         betaUrl: signed.manifest.experience.betaUrl,
         ...(signed.manifest.experience.game === undefined ? {} : { game: signed.manifest.experience.game }),
-        ...(signed.manifest.schema === "poa-companion/v2" && signed.manifest.experience.actions
+        ...((signed.manifest.schema === "poa-companion/v2" || signed.manifest.schema === "poa-companion/v3") && signed.manifest.experience.actions
           ? { actions: signed.manifest.experience.actions }
           : {}),
-        ...(signed.manifest.schema === "poa-companion/v2" && signed.manifest.experience.fieldRecord
+        ...((signed.manifest.schema === "poa-companion/v2" || signed.manifest.schema === "poa-companion/v3") && signed.manifest.experience.fieldRecord
           ? { fieldRecord: signed.manifest.experience.fieldRecord }
+          : {}),
+        ...(signed.manifest.schema === "poa-companion/v3"
+          ? { contentScope: {
+              poaOrigin: signed.manifest.poaOrigin,
+              federationId: signed.manifest.federationId,
+              deploymentId: signed.manifest.deploymentId,
+              contentCounter: signed.manifest.contentCounter,
+              contentPackDigest: signed.manifest.contentPackDigest,
+              contentAssets: signed.manifest.experience.contentAssets,
+            } }
           : {}),
         signer: signed.signer.toLowerCase(),
       };
@@ -831,6 +999,14 @@ export class PoAEngine {
   ): Promise<{ manifest: PoAManifest; signer: string; digest: string } | null> {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const envelope = value as Record<string, unknown>;
+    const rawManifest = envelope.manifest;
+    if (!rawManifest || typeof rawManifest !== "object" || Array.isArray(rawManifest)) return null;
+    const rawSchema = (rawManifest as Record<string, unknown>).schema;
+    if (this.deps.manifestSource === "public_network_v3") {
+      if (rawSchema !== "poa-companion/v3") return null;
+    } else if (rawSchema !== "poa-companion/v1" && rawSchema !== "poa-companion/v2") {
+      return null;
+    }
     if (!boundedString(envelope.signer, 64) || !HEX_KEY_RE.test(envelope.signer)) return null;
     if (!boundedString(envelope.signature, 128) || !HEX_SIG_RE.test(envelope.signature)) return null;
     const signer = envelope.signer.toLowerCase();
@@ -851,7 +1027,7 @@ export class PoAEngine {
       platform: manifest.context.platform,
       contextId: poaContextId(manifest.context),
       contentEpoch: manifest.contentEpoch,
-      counter: manifest.counter,
+      counter: manifest.schema === "poa-companion/v3" ? manifest.sequence : manifest.counter,
       digest,
     }))) return null;
     return { manifest, signer, digest };
@@ -874,15 +1050,15 @@ function exactTrueMap(value: unknown): Record<string, true> {
   return out;
 }
 
-function safePoANodeBase(value: unknown): string {
-  if (typeof value !== "string" || !value.trim()) return POA_NODE_URL;
+function safePoACompanionBase(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return POA_COMPANION_URL;
   try {
     const u = new URL(value);
     const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
-    if (u.protocol !== "https:" && !(local && u.protocol === "http:")) return POA_NODE_URL;
+    if (u.protocol !== "https:" && !(local && u.protocol === "http:")) return POA_COMPANION_URL;
     return u.origin;
   } catch {
-    return POA_NODE_URL;
+    return POA_COMPANION_URL;
   }
 }
 
@@ -946,28 +1122,37 @@ export async function acceptStoredPoAManifestVersion(
 }
 
 /** Construct the shipping background engine over extension-private storage and
- * the dedicated PoA node endpoint. */
+ * the dedicated public, static companion origin. Mutation and node diagnostics
+ * remain on their separately protected origins. */
 export function createStoredPoAEngine(storage: PoAStorageLike, fetcher: PoAFetch = fetch): PoAEngine {
   return new PoAEngine({
+    manifestSource: "public_network_v3",
     async resolveSignedManifest(context) {
-      const stored = await storage.get(POA_NODE_URL_KEY);
-      const base = safePoANodeBase(stored[POA_NODE_URL_KEY]);
+      const stored = await storage.get(POA_COMPANION_URL_KEY);
+      const base = safePoACompanionBase(stored[POA_COMPANION_URL_KEY]);
       const url = context.platform === "youtube"
-        ? `${base}/api/poa/companion/youtube/${encodeURIComponent(context.videoId)}`
-        : `${base}/api/poa/companion/x/${encodeURIComponent(context.postId)}`;
+        ? `${base}/v1/youtube/${encodeURIComponent(context.videoId)}.json`
+        : `${base}/v1/x/${encodeURIComponent(context.postId)}.json`;
       const response = await fetcher(url, {
         cache: "no-store",
         signal: AbortSignal.timeout(10_000),
         headers: { Accept: "application/json" },
       });
       if (response.status === 404 || response.status === 401 || response.status === 403) {
-        // The protected beta currently answers 401. Do not embed any beta
-        // credential in the extension: unauthenticated transport means no signed
-        // route. The engine may still show an exact local, unverified safe shell.
+        // Unknown contexts and a misrouted protected origin are both absence,
+        // never recognition. No beta credential is embedded or synthesized.
         return null;
       }
       if (!response.ok) throw new Error(`PoA companion HTTP ${response.status}`);
-      return response.json();
+      const envelope: unknown = await response.json();
+      // This is the public-network trust seam. Keep the legacy parser available
+      // for explicit persisted-envelope migration, but never hand a fresh v1/v2
+      // response to generic signature acceptance.
+      if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) return null;
+      const manifest = (envelope as Record<string, unknown>).manifest;
+      if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return null;
+      if ((manifest as Record<string, unknown>).schema !== "poa-companion/v3") return null;
+      return envelope;
     },
     async isVideoAllowlisted(videoId) {
       const stored = await storage.get(POA_VIDEO_ALLOWLIST_KEY);

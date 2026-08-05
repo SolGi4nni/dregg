@@ -52,6 +52,7 @@ function manifestV2(overrides = {}) {
 
 function engineFor(envelope) {
   return new PoAEngine({
+    manifestSource: "persisted_legacy_migration",
     resolveSignedManifest: async () => envelope,
     isVideoAllowlisted: async () => false,
     trustedCuratorKeys: async () => new Set([SIGNER]),

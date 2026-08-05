@@ -145,6 +145,36 @@ Canon actions share the exact domain
 promotion from supersession. Its cross-runtime vector is
 `test-vectors/canon-promotion-v1.json`.
 
+## Public media companion ceremony
+
+The browser extension discovers episode/post companions from the separate
+GET/HEAD-only `companion.pathofangels.network` static origin. The beta and node
+remain behind Basic Auth. A `poa-companion/v3` draft binds one exact YouTube
+video plus channel, or one exact X post, to the PoA origin, federation,
+deployment, verified content epoch/counter, exact POAG1 manifest digest,
+independent route sequence, lifetime, actions, and one through eight exact POAG1
+asset pins. The signer rejects foreign actions and any asset that does not match
+the authenticated bundle's path, URL, media type, byte length and SHA-256.
+
+```sh
+cargo run --manifest-path poa-curator/Cargo.toml -- sign-companion \
+  --secret /secure/poa-development-curator.key \
+  --pin poa/config/curator-key.json \
+  --manifest poa/artifacts/poag1/manifest.json \
+  --deployment poa/deployments/epoch-1/poa-devnet.json \
+  --content-signature poa/artifacts/poag1/manifest.sig.json \
+  --content-epoch 1 --content-counter 4 \
+  --draft /secure/review/episode-companion-v3.json \
+  --output poa/companion/public/v1/youtube/REAL_VIDEO_ID.json
+```
+
+`verify-companion` takes the same public inputs plus `--input` and no secret.
+Both commands re-run the content signature and deployment weld. The output is
+refuse-overwrite and contains only the strict manifest, public signer, and
+signature. No test key is compiled into either command. The checked-in
+production route tree is empty until the actual episode identifiers are
+author-supplied; test placeholders never leave the test directories.
+
 The component is currently an intentional nested workspace. Its scoped gate is:
 
 ```sh

@@ -76,6 +76,7 @@ function xManifest(postId = X_POST, overrides = {}) {
 
 function engineFor(envelope, allowlisted = new Set()) {
   return new PoAEngine({
+    manifestSource: 'persisted_legacy_migration',
     resolveSignedManifest: async () => envelope,
     isVideoAllowlisted: async (videoId) => allowlisted.has(videoId),
     trustedCuratorKeys: async () => new Set([SIGNER]),
@@ -83,6 +84,19 @@ function engineFor(envelope, allowlisted = new Set()) {
     verifyEd25519: async () => true,
     nowSeconds: () => NOW,
   });
+}
+
+function bytesToHex(bytes) {
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function cryptographicallySignedEnvelope(value, pair, signer) {
+  const signature = await crypto.subtle.sign(
+    { name: 'Ed25519' },
+    pair.privateKey,
+    poaManifestSigningBytes(value),
+  );
+  return { manifest: value, signer, signature: bytesToHex(signature) };
 }
 
 test('YouTube recognition accepts exact watch/shorts/live routes only', () => {
@@ -208,6 +222,7 @@ test('exact local video allowlist produces a game-free shell', async () => {
 
 test('node failure can only fall back to an exact local, game-free recognition', async () => {
   const offline = (allowlisted) => new PoAEngine({
+    manifestSource: 'public_network_v3',
     resolveSignedManifest: async () => { throw new Error('offline'); },
     isVideoAllowlisted: async (videoId) => allowlisted && videoId === VIDEO,
     trustedCuratorKeys: async () => new Set([SIGNER]),
@@ -231,6 +246,7 @@ test('persisted epoch+counter rejects stale and equal-conflicting signed routes'
   const storage = memoryStorage();
   let envelope = null;
   const makeEngine = () => new PoAEngine({
+    manifestSource: 'persisted_legacy_migration',
     resolveSignedManifest: async () => envelope,
     isVideoAllowlisted: async () => false,
     trustedCuratorKeys: async () => new Set([SIGNER, OTHER_SIGNER]),
@@ -328,8 +344,10 @@ test('401 protected endpoint embeds no credential and yields local-only recognit
   assert.equal(response.verified, false);
   assert.equal(response.model.trust, 'local_allowlist');
   assert.equal(response.model.game, undefined);
-  assert.match(request.url, /\/api\/poa\/companion\/youtube\/AbCdEfGhI01$/);
+  assert.equal(request.url, 'https://companion.pathofangels.network/v1/youtube/AbCdEfGhI01.json');
   assert.deepEqual(request.init.headers, { Accept: 'application/json' }, 'no Authorization header or embedded beta password');
+  assert.equal(request.init.cache, 'no-store');
+  assert.equal(request.init.method, undefined, 'fetch defaults to GET; the client never mutates the discovery origin');
 
   const denied = await createStoredPoAEngine(memoryStorage(), async () => new Response('', { status: 401 })).handle({
     op: 'openContext',
@@ -349,7 +367,51 @@ test('X transport uses its exact post endpoint and never embeds beta credentials
     context: { href: `https://x.com/sentyr/status/${X_POST}` },
   });
   assert.equal(response.ok, false, 'X has no unsigned/local authority fallback');
-  assert.match(request.url, new RegExp(`/api/poa/companion/x/${X_POST}$`));
+  assert.equal(request.url, `https://companion.pathofangels.network/v1/x/${X_POST}.json`);
   assert.deepEqual(request.init.headers, { Accept: 'application/json' });
   assert.equal('Authorization' in request.init.headers, false);
+});
+
+test('fresh public transport refuses valid trusted legacy v1/v2 for both YouTube and X', async () => {
+  const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const signer = bytesToHex(await crypto.subtle.exportKey('raw', pair.publicKey));
+
+  for (const schema of ['poa-companion/v1', 'poa-companion/v2']) {
+    for (const platform of ['youtube', 'x']) {
+      const value = platform === 'youtube' ? manifest({ schema }) : xManifest(X_POST, { schema });
+      const envelope = await cryptographicallySignedEnvelope(value, pair, signer);
+      assert.equal(await crypto.subtle.verify(
+        { name: 'Ed25519' },
+        pair.publicKey,
+        Buffer.from(envelope.signature, 'hex'),
+        poaManifestSigningBytes(value),
+      ), true, `${schema}/${platform} fixture really is signature-valid`);
+
+      const publicStorage = memoryStorage({
+        dregg_poa_trusted_curators: { [signer]: true },
+      });
+      const publicEngine = createStoredPoAEngine(publicStorage, async () => new Response(
+        JSON.stringify(envelope),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ));
+      const request = platform === 'youtube'
+        ? { op: 'openContext', context: { href: `https://www.youtube.com/watch?v=${VIDEO}` } }
+        : { op: 'openContext', context: { href: `https://x.com/sentyr/status/${X_POST}` } };
+      assert.equal((await publicEngine.handle(request)).ok, false, `${schema}/${platform} is unreachable from fresh public fetch`);
+
+      // Legacy compatibility is an explicitly named persisted-envelope
+      // migration mode, never the shipping public-network factory.
+      const legacyKey = 'dregg_poa_legacy_manifest_migration';
+      const persistedStorage = memoryStorage({ [legacyKey]: envelope });
+      const migrationEngine = new PoAEngine({
+        manifestSource: 'persisted_legacy_migration',
+        resolveSignedManifest: async () => (await persistedStorage.get(legacyKey))[legacyKey] ?? null,
+        isVideoAllowlisted: async () => false,
+        trustedCuratorKeys: async () => new Set([signer]),
+        acceptManifestVersion: async () => true,
+        nowSeconds: () => NOW,
+      });
+      assert.equal((await migrationEngine.handle(request)).ok, true, `${schema}/${platform} remains readable only for explicit persisted migration`);
+    }
+  }
 });

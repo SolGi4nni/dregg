@@ -7,6 +7,7 @@
 //! canonical `dregg-types` Ed25519 primitive.
 
 pub mod authority_export;
+pub mod companion;
 pub mod signal_replay;
 
 use std::collections::{BTreeMap, BTreeSet};
