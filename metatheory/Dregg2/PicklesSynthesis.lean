@@ -110,6 +110,18 @@ import Dregg2.Circuit.Emit.KimchiAssertEqual
 import Dregg2.Circuit.Emit.KimchiRender
 import Dregg2.Circuit.Emit.KimchiRenderPoseidon
 import Dregg2.Circuit.Emit.KimchiPreimageCircuit
+-- ⚑ THE AUTHORING LAYER. `KimchiArena` is the variable allocator that REFUSES reuse (`external`/
+-- `internal` separated; `alloc_injective` is general over every claim list, so two slots can never
+-- share a `PVar` — the `exposedVars` collision as a theorem rather than a near miss).
+-- `KimchiGadgets` is the `Boolean`/`select`/`assertEq`/one-hot rail: before it, `Field.if_` had 25
+-- occurrences in `metatheory/` and every one was a COMMENT, booleanity had no name, and the mux was
+-- open-coded three times. Coefficients byte-diffed against o1js 2.15.0
+-- (`bridge/mina-zkapp/scripts/kimchi-gadget-oracle.mjs`, green-or-bust with a RED self-test).
+-- `KimchiConditionalCircuit` is the first circuit in the tree that USES a conditional, and its
+-- §3b composes the arena's alias ledger with `KimchiAssertEqual`'s merge seam.
+import Dregg2.Circuit.Emit.KimchiArena
+import Dregg2.Circuit.Emit.KimchiGadgets
+import Dregg2.Circuit.Emit.KimchiConditionalCircuit
 import Dregg2.Circuit.Emit.KimchiRenderCompleteAdd
 import Dregg2.Circuit.Emit.KimchiRenderEndoMulScalar
 import Dregg2.Circuit.Emit.KimchiRenderVarBaseMul

@@ -5,6 +5,7 @@ and the committed shape. Definitions only — every `#guard` about them lives in
 so editing a rung re-elaborates THIS file (seconds) and then the pin modules IN PARALLEL.
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiGadgets
 import Dregg2.Circuit.Emit.WitnessBuilder
 import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.KimchiRenderPoseidon
@@ -1686,15 +1687,20 @@ same with `coeffs[5..9]` over cols 3,4,5 (`generic.rs:283-314`, read-only — `c
 def genericRow (v0 v1 v2 v3 v4 v5 : Option PVar) (c : List Int) : SRow :=
   { kind := .generic, perm := [v0, v1, v2, v3, v4, v5, none], coeffs := c }
 
-/-- `w₂ = w₀ + w₁`. -/ def cAdd : List Int := [1, 1, -1, 0, 0]
-/-- `w₂ = w₀ · w₁`. -/ def cMul : List Int := [0, 0, -1, 1, 0]
+/-! ⚑ **THE COEFFICIENT VECTORS LIVE ON THE GADGET RAIL** (`KimchiGadgets` §2), not here. These
+delegate, so there is ONE source for `cAdd`/`cMul`/`cSub`/`cEq`/`cConst`/`cNil` on the Step side and
+every existing `rfl` over them still holds (the definitions are defeq). ⚠ `KimchiWrapMainCore` still
+carries its own copy; that file is the wrap cone and is not touched here. -/
+
+/-- `w₂ = w₀ + w₁`. -/ def cAdd : List Int := KimchiGadgets.cAdd
+/-- `w₂ = w₀ · w₁`. -/ def cMul : List Int := KimchiGadgets.cMul
 /-- `w₂ = 1 + w₀·w₁`. -/ def cMulPlus1 : List Int := [0, 0, -1, 1, 1]
-/-- `w₂ = w₀ − w₁`. -/ def cSub : List Int := [1, -1, -1, 0, 0]
-/-- `w₀ = w₁`. -/ def cEq : List Int := [1, -1, 0, 0, 0]
-/-- `w₀ = k`. -/ def cConst (k : Int) : List Int := [1, 0, 0, 0, -k]
+/-- `w₂ = w₀ − w₁`. -/ def cSub : List Int := KimchiGadgets.cSub
+/-- `w₀ = w₁`. -/ def cEq : List Int := KimchiGadgets.cEq
+/-- `w₀ = k`. -/ def cConst (k : Int) : List Int := KimchiGadgets.cConst k
 /-- `w₀ = w₂ + 2^bits·w₁` — the challenge decomposition. -/
 def cSplit (bits : Nat) : List Int := [1, -((2 ^ bits : Nat) : Int), -1, 0, 0]
-/-- An unused generic half. -/ def cNil : List Int := [0, 0, 0, 0, 0]
+/-- An unused generic half. -/ def cNil : List Int := KimchiGadgets.cNil
 
 /-- A `complete_add` row: `o = l + r`, with `Ops.add_fast`'s four stored cells as advice. -/
 def caRow (l r o : PVar × PVar) (c : List Nat) : SRow :=
@@ -2998,20 +3004,36 @@ because a double-`Generic` half carries three variables and `res − else_ − b
 four. -/
 def sfTermRows (sl : SfSlots) (tm : FtcTerm) (wired : Bool) : List SRow :=
   packHalves
-    [ ([some sl.baseY, some sl.negY, none], [1, 1, 0, 0, 0])
-    , ([some sl.top, none, none], cConst 0)
-    , ([some (sl.accX FTC_CHUNKS), some sl.hmX, some sl.dX], [1, -1, -1, 0, 0])
-    , ([some sl.odd, some sl.dX, some sl.mX], cMul)
-    , ([some sl.hmX, some sl.mX, some sl.resX], cAdd)
-    , ([some (sl.accY FTC_CHUNKS), some sl.hmY, some sl.dY], [1, -1, -1, 0, 0])
-    , ([some sl.odd, some sl.dY, some sl.mY], cMul)
-    , ([some sl.hmY, some sl.mY, some sl.resY], cAdd) ]
+    ([ ([some sl.baseY, some sl.negY, none], [1, 1, 0, 0, 0])
+     , ([some sl.top, none, none], cConst 0) ]
+     ++ KimchiGadgets.sfMuxHalves sl.odd
+          (sl.accX FTC_CHUNKS) sl.hmX sl.dX sl.mX sl.resX
+          (sl.accY FTC_CHUNKS) sl.hmY sl.dY sl.mY sl.resY)
   ++ [ caRow (sl.baseX, sl.baseY) (sl.baseX, sl.baseY) (sl.accX 0, sl.accY 0) tm.dblCells ]
   ++ ((List.range FTC_CHUNKS).flatMap (sfChunkRows sl tm))
   ++ [ probeRow wired (sl.accX FTC_CHUNKS) (sl.accY FTC_CHUNKS)
      , caRow (sl.accX FTC_CHUNKS, sl.accY FTC_CHUNKS) (sl.baseX, sl.negY) (sl.hmX, sl.hmY)
              tm.hMgCells
      , probeRow wired sl.resX sl.resY ]
+
+set_option maxRecDepth 100000 in
+/-- ⚑ **THE EMITTED OBJECT DID NOT MOVE.** `sfTermRows`' first four rows are what the hand-written
+eight-half list produced — the `G.if_` mux on both coordinates, byte-for-byte — for EVERY `SfSlots`,
+by `rfl`. Not a case test: a general theorem over every shape. -/
+theorem sfTermRows_prefix_is_the_open_coded_shape (sl : SfSlots) (tm : FtcTerm) (wired : Bool) :
+    (sfTermRows sl tm wired).take 4 =
+      packHalves
+        [ ([some sl.baseY, some sl.negY, none], [1, 1, 0, 0, 0])
+        , ([some sl.top, none, none], cConst 0)
+        , ([some (sl.accX FTC_CHUNKS), some sl.hmX, some sl.dX], [1, -1, -1, 0, 0])
+        , ([some sl.odd, some sl.dX, some sl.mX], cMul)
+        , ([some sl.hmX, some sl.mX, some sl.resX], cAdd)
+        , ([some (sl.accY FTC_CHUNKS), some sl.hmY, some sl.dY], [1, -1, -1, 0, 0])
+        , ([some sl.odd, some sl.dY, some sl.mY], cMul)
+        , ([some sl.hmY, some sl.mY, some sl.resY], cAdd) ] := by
+  simp [sfTermRows, packHalves, KimchiGadgets.sfMuxHalves, KimchiGadgets.selectHalves,
+        KimchiGadgets.subHalf, KimchiGadgets.mulHalf, KimchiGadgets.addHalf,
+        KimchiGadgets.cSub, KimchiGadgets.cMul, KimchiGadgets.cAdd, cSub, cMul, cAdd, cNil]
 
 /-- §6b's term `k`, as `SfSlots`. -/
 def ftcSlots (s : StepShape) (k : Nat) : SfSlots :=
@@ -4143,6 +4165,45 @@ def SegSpec.stV (g : SegSpec) (base nb sq b j : Nat) : PVar :=
   | some f => if b == 0 then f j else sgSt base nb sq b j
   | none => sgSt base nb sq b j
 
+/-! ### §8m — ⚑ the segment mask's `Field.if_`, ON THE GADGET RAIL.
+
+Until 2026-08-05 this was open-coded here, and the same three-half mux was open-coded again in
+`sfTermRows` and a third time in `KimchiWrapMainCore` — three copies of `e + b·(t − e)` with no
+shared name, no soundness lemma, and nothing to stop one drifting. It is now
+`KimchiGadgets.spongeMaskHalves`, whose selector semantics are a named field-general theorem
+(`selectHalves_sound`) and whose booleanity gate is a named gate rather than a fourteenth
+`x(x−1)`. -/
+
+/-- ⚑ **THE MASK, AS ONE GADGET CALL.** Three lanes, one selector:
+`outⱼ = beforeⱼ + keep·(afterⱼ − beforeⱼ)`. -/
+def sgMaskRows (base nb sq : Nat) (g : SegSpec) (b : Nat) : List SRow :=
+  let lane : Nat → KimchiGadgets.MuxWires := fun j =>
+    ⟨sgAfter base nb sq b j, g.stV base nb sq b j, sgD base nb sq b j,
+     sgP base nb sq b j, g.stV base nb sq (b + 1) j⟩
+  packHalves (KimchiGadgets.spongeMaskHalves (g.keepVar b) [lane 0, lane 1, lane 2])
+
+set_option maxRecDepth 100000 in
+/-- ⚑ **THE EMITTED OBJECT DID NOT MOVE.** The gadget call produces exactly the five rows this site
+wrote by hand — three `(cSub ++ cMul)`, one `(cAdd ++ cAdd)`, one `(cAdd ++ cNil)` — for EVERY
+`base`, `nb`, `sq`, `g` and `b`, by `rfl`. Not a case test: a general theorem over every shape. -/
+theorem sgMaskRows_is_the_open_coded_shape (base nb sq : Nat) (g : SegSpec) (b : Nat) :
+    sgMaskRows base nb sq g b =
+      (List.range 3).map (fun j =>
+        genericRow (some (sgAfter base nb sq b j)) (some (g.stV base nb sq b j))
+                   (some (sgD base nb sq b j))
+                   (some (g.keepVar b)) (some (sgD base nb sq b j))
+                   (some (sgP base nb sq b j)) (cSub ++ cMul))
+      ++ [ genericRow (some (g.stV base nb sq b 0)) (some (sgP base nb sq b 0))
+                      (some (g.stV base nb sq (b + 1) 0))
+                      (some (g.stV base nb sq b 1)) (some (sgP base nb sq b 1))
+                      (some (g.stV base nb sq (b + 1) 1)) (cAdd ++ cAdd)
+         , genericRow (some (g.stV base nb sq b 2)) (some (sgP base nb sq b 2))
+                      (some (g.stV base nb sq (b + 1) 2)) none none none (cAdd ++ cNil) ] := by
+  simp [sgMaskRows, packHalves, genericRow, KimchiGadgets.spongeMaskHalves,
+        KimchiGadgets.selectHalvesN, KimchiGadgets.subHalf, KimchiGadgets.mulHalf,
+        KimchiGadgets.addHalf, KimchiGadgets.cSub, KimchiGadgets.cMul, KimchiGadgets.cAdd,
+        cSub, cMul, cAdd, cNil, List.range_succ, List.range_zero]
+
 /-- **One segment's rows.** -/
 def segRows (base : Nat) (g : SegSpec) (d : SegData) (wired : Bool) : List SRow :=
   let nb := g.nb
@@ -4173,20 +4234,9 @@ def segRows (base : Nat) (g : SegSpec) (d : SegData) (wired : Bool) : List SRow 
                      (some (sgPost base nb sq b 1)) (cAdd ++ cAdd) ]
         ++ permBlockRows (sgPost base nb sq b 0) (sgPost base nb sq b 1) (stv b 2)
              (out 0) (out 1) (out 2) (d.perms.getD b [])
-        ++ (if g.maskedAt b then
-              -- the `Field.if_` mux: outⱼ = beforeⱼ + keep·(afterⱼ − beforeⱼ)
-              (List.range 3).map (fun j =>
-                genericRow (some (sgAfter base nb sq b j)) (some (stv b j))
-                           (some (sgD base nb sq b j))
-                           (some (g.keepVar b)) (some (sgD base nb sq b j))
-                           (some (sgP base nb sq b j)) (cSub ++ cMul))
-              ++ [ genericRow (some (stv b 0)) (some (sgP base nb sq b 0))
-                              (some (stv (b + 1) 0))
-                              (some (stv b 1)) (some (sgP base nb sq b 1))
-                              (some (stv (b + 1) 1)) (cAdd ++ cAdd)
-                 , genericRow (some (stv b 2)) (some (sgP base nb sq b 2))
-                              (some (stv (b + 1) 2)) none none none (cAdd ++ cNil) ]
-            else [])
+        -- the `Field.if_` mux: outⱼ = beforeⱼ + keep·(afterⱼ − beforeⱼ), now ONE gadget call.
+        -- `sgMaskRows_is_the_open_coded_shape` (§8m) pins the emitted rows unchanged.
+        ++ (if g.maskedAt b then sgMaskRows base nb sq g b else [])
         -- ⚑ the probe sits on the state the FIRST squeeze reads — which is the last absorb block's
         -- own output now, not a squeeze block's.
         ++ (if b + 1 == nb then [probeRow wired (stv (b + 1) 0) (stv (b + 1) 1)] else [])
@@ -5060,7 +5110,7 @@ def gmRows (s : StepShape) (wired : Bool) : List SRow :=
         let o := 12 + 6 * i
         [ ([some x, some x, some (V o)], cMul)                                   -- sq = x·x
         , ([some (V o), some x, some (V (o+1))], [0, 0, -1, 1, (PALLAS_B : Int)]) -- q = sq·x + b
-        , ([some (V (o+2)), some (V (o+2)), none], [-1, 0, 0, 1, 0])              -- b² = b
+        , KimchiGadgets.boolHalf (V (o+2))                                        -- b² = b
         , ([some (V (o+2)), some (V (o+1)), some (V (o+3))],
            [0, 0, -1, ((pN + 1 - FP_NONRES : Nat) : Int), 0])                     -- db = (1−m)·b·q
         , ([some (V (o+1)), some (V (o+3)), some (V (o+4))],
