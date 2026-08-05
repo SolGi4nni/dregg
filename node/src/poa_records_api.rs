@@ -95,7 +95,7 @@ pub struct PoaRecordsResponseV1 {
     /// Whether the PoA genesis ceremony has run on this node.
     pub installed: bool,
     pub replay: Option<PoaRecordsReplayViewV1>,
-    /// The exact `POA-RECORDS-OUT-1` document native Lean emitted. Not
+    /// The exact `POA-RECORDS-OUT-2` document native Lean emitted. Not
     /// re-serialized: these are its bytes.
     pub records: Option<Box<RawValue>>,
     pub consensus_finality: &'static str,
@@ -175,9 +175,24 @@ impl RecordsRowRequest {
 ///
 /// The authority path component must name this node's exact configured
 /// federation; this route never enumerates authorities. It returns Canon and
-/// judge material only in the reduced form Lean chose to publish — in
-/// particular the Signal target is absent from `POA-RECORDS-OUT-1` by
-/// construction.
+/// judge material only in the reduced form Lean chose to publish.
+///
+/// ⚑ What is absent from `POA-RECORDS-OUT-2`, and why each absence is needed —
+/// this list used to be one item and one item was not enough:
+///
+/// * `target` — the Signal answer itself.
+/// * `run_seed` — `SignalTriangulation.targetFromSeed` is public and total, so a
+///   published live seed IS the answer. The mission is published as
+///   `PublicMissionWire`, which has no such field, and Lean additionally refuses
+///   any config whose seed is not the all-zero template sentinel.
+/// * `transcript_digest` — never a digest.
+///   `SignalTriangulation.transcriptDigest` is fixed-width plaintext whose tail
+///   is the submitted code. Hashing it would not help: an accepted transcript is
+///   at most five guesses from 216, about `2^39`, which brute-force inverts.
+///
+/// Everything this route does publish is chain-public or content-public already:
+/// commit coordinates, signer and actor root, the receipt key, the discovered
+/// artifact and its Canon status, the reward contribution, and world meters.
 async fn get_poa_records(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,

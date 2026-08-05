@@ -2,7 +2,7 @@
 //!
 //! The only implementation is `Dregg2.Games.PathOfAngels.RecordsRuntime.recordsProjectFFI`. This
 //! module supplies bounded UTF-8 transport and preserves its two outcomes: a nonempty canonical
-//! `POA-RECORDS-OUT-1` document is [`ProjectedRecords`], and Lean's empty refusal sentinel is
+//! `POA-RECORDS-OUT-2` document is [`ProjectedRecords`], and Lean's empty refusal sentinel is
 //! [`PoaRecordsVerdict::Rejected`]. Archive absence, initialization failure, an interior NUL, or a
 //! transport-limit fault is an `Err`; none has a Rust fallback, and in particular there is no
 //! host-side projection of a finalized run — the record shape is Lean's alone.
@@ -48,7 +48,7 @@ impl ProjectedRecords {
 /// The only two semantic outcomes exposed by the read model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PoaRecordsVerdict {
-    /// Lean rebuilt the projection and emitted these canonical `POA-RECORDS-OUT-1` bytes.
+    /// Lean rebuilt the projection and emitted these canonical `POA-RECORDS-OUT-2` bytes.
     Projected(ProjectedRecords),
     /// Lean refused strict decoding, the world/mission binding, a row's re-judgement, the Canon
     /// refold, or the commit ordering.
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn nonempty_lean_reply_is_preserved_opaquely_and_bound_to_its_request() {
-        let view = r#"{"format":"POA-RECORDS-OUT-1"}"#.to_owned();
+        let view = r#"{"format":"POA-RECORDS-OUT-2"}"#.to_owned();
         let PoaRecordsVerdict::Projected(projected) = decode_reply("exact request", view.clone())
         else {
             panic!("a nonempty native reply must be projected");

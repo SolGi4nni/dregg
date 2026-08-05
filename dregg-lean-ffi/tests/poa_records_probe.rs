@@ -5,10 +5,22 @@
 //! a real world rather than an empty page: the exact federation, content epoch, curator, world
 //! meters and playable mission the ceremony installed.
 //!
-//! It also asserts the one thing the view must NOT contain. The live config carries the Signal
-//! answer (`target`); `POA-RECORDS-OUT-1` has no field for it, and this probe fails if that ever
-//! stops being true. That is not a fix for the descriptor, which still publishes the target
-//! (`games/signal-triangulation.json`) — it keeps the Records read from becoming a second copy.
+//! It also asserts the things the view must NOT contain, which is more than one and was
+//! previously understated. `POA-RECORDS-OUT-2` has no `target` field — but omitting `target`
+//! was never sufficient, because a mission carries `run_seed` and
+//! `SignalTriangulation.targetFromSeed` is a public total function: a published live seed IS the
+//! answer, three modulo operations away. The view therefore publishes a seedless mission, and
+//! this probe fails if `run_seed` ever reappears anywhere in the document.
+//!
+//! It also fails if `transcript_digest` reappears. That field was never a digest —
+//! `SignalTriangulation.transcriptDigest` is a fixed-width plaintext encoding whose tail is the
+//! submitted code — and hashing it would not help, because an accepted transcript is at most five
+//! guesses from 216, about `2^39`, which brute-force inverts trivially.
+//!
+//! ⚠ The frozen genesis config is a mission TEMPLATE: its `run_seed` is the all-zero
+//! `Emit.UNBOUND_RUN_SEED` and its `target` is that sentinel's target, not any live instance's
+//! answer. Lean refuses to project a config whose seed is not the sentinel; the precise,
+//! attributable form of that refusal is `RecordsRuntime.hostile_live_run_seed_config_refused`.
 #![cfg(feature = "lean-lib")]
 
 use dregg_lean_ffi::poa_records_ffi::{
@@ -69,7 +81,10 @@ fn genesis_only_records_view_is_a_real_world_and_omits_the_signal_target() {
     );
 
     let view: Value = serde_json::from_str(projected.as_str()).expect("Lean emitted valid JSON");
-    assert_eq!(view["format"].as_str(), Some("POA-RECORDS-OUT-1"));
+    // ⚑ `-2`, not `-1`: the published mission lost `run_seed`, the run record lost
+    // `transcript_digest`, and the coordinate moved under `chain`. A reader pinned to the old
+    // tag must fail its format check rather than silently find fields missing.
+    assert_eq!(view["format"].as_str(), Some("POA-RECORDS-OUT-2"));
 
     // The world a run would land in — decoded from the bytes the ceremony installed.
     assert_eq!(view["federation_id"], canon_value["federation_id"]);
@@ -81,9 +96,28 @@ fn genesis_only_records_view_is_a_real_world_and_omits_the_signal_target() {
     assert_eq!(view["world"], canon_value["world"]);
     assert_eq!(view["canon_revision"], canon_value["revision"]);
 
-    // The playable mission and its exact reward, not a summary of them.
-    assert_eq!(view["mission"], config_value["mission"]);
+    // The playable mission and its exact reward, not a summary of them — except that the
+    // published mission is deliberately SEEDLESS. Every other field is byte-identical to the
+    // installed config, so this is a projection and not a re-description.
+    let mut expected_mission = config_value["mission"].clone();
+    let stripped = expected_mission
+        .as_object_mut()
+        .expect("the installed mission is a JSON object")
+        .remove("run_seed");
+    assert!(
+        stripped.is_some(),
+        "the frozen config's mission must carry a run_seed for this comparison to mean anything"
+    );
+    assert_eq!(view["mission"], expected_mission);
+    assert!(
+        view["mission"].get("run_seed").is_none(),
+        "the published mission must have no run_seed field"
+    );
     assert_eq!(view["reward"], config_value["reward"]);
+
+    // Before the first turn settles the view says so in one word, rather than leaving a reader
+    // to infer it from an empty array.
+    assert_eq!(view["stage"].as_str(), Some("awaiting-first-run"));
 
     // Nothing has landed yet, and the view says so in every projection at once.
     assert_eq!(view["runs"].as_array().map(Vec::len), Some(0));
@@ -99,15 +133,67 @@ fn genesis_only_records_view_is_a_real_world_and_omits_the_signal_target() {
         assert_eq!(view[counted].as_u64(), Some(0), "{counted}");
     }
 
-    // The answer is in the config this view was built from and must not be in the view.
+    // ⚠ Each needle is checked to be a real needle in the SOURCE before its absence is read in
+    // the OUTPUT. An absence assertion whose needle was never there to begin with passes while
+    // exercising nothing.
     assert!(
         config_value.get("target").is_some(),
-        "the frozen live config carries the target"
+        "the frozen config carries a target field"
     );
-    assert!(view.get("target").is_none());
     assert!(
-        !projected.as_str().contains("\"target\""),
-        "the Records view must never republish the Signal target"
+        config_value["mission"].get("run_seed").is_some(),
+        "the frozen config's mission carries a run_seed field"
+    );
+    for forbidden in ["\"target\"", "\"run_seed\"", "\"transcript_digest\""] {
+        assert!(
+            !projected.as_str().contains(forbidden),
+            "the Records view must never publish {forbidden}: the target is the answer, the run \
+             seed computes it, and the transcript spells it"
+        );
+    }
+    assert!(view.get("target").is_none());
+}
+
+/// The refusal that keeps the seedless mission from being one edit away from a leak: a config
+/// whose mission carries a LIVE run seed is refused outright, not rendered with the seed dropped.
+///
+/// ⚠ This asserts the mutation actually happened before reading the verdict. The precise
+/// attribution — that it is the seed gate and not the canonical seal doing the refusing — is
+/// `RecordsRuntime.hostile_live_run_seed_config_refused`, which substitutes a fully coherent
+/// live config.
+#[test]
+fn a_config_carrying_a_live_run_seed_is_refused() {
+    assert!(
+        poa_records_project_available(),
+        "dregg_poa_records_project is absent or initialization failed; this is refusal, not skip"
+    );
+
+    let config = fixture(CONFIG_FILE);
+    let canon = fixture(CANON_FILE);
+    let canon_value: Value = serde_json::from_str(canon).expect("frozen Canon is JSON");
+    let federation_id = canon_value["federation_id"]
+        .as_str()
+        .expect("Canon names its federation");
+
+    let sentinel = "0".repeat(64);
+    assert!(
+        config.contains(&sentinel),
+        "the frozen config must carry the all-zero UNBOUND_RUN_SEED sentinel"
+    );
+    let live = "7".repeat(64);
+    let mutated = config.replacen(&sentinel, &live, 1);
+    assert_ne!(
+        mutated, config,
+        "the live-seed substitution must have happened"
+    );
+    assert!(
+        mutated.contains(&live),
+        "the mutated config must carry the live seed"
+    );
+
+    assert_eq!(
+        project(&genesis_only_request(&mutated, canon, federation_id)),
+        PoaRecordsVerdict::Rejected
     );
 }
 

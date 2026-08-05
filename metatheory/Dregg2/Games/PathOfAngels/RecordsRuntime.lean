@@ -27,12 +27,35 @@ an empty list: it is the exact world identity, world meters, Canon revision and
 playable mission a run would write into, decoded from the bytes the genesis
 ceremony actually installed.  A node at height 0 has something true to display.
 
-**It never publishes the answer.**  `ViewWire` has no field for
-`SignalConfigWire.target`, so the emitter cannot leak the Signal solution.  That
-is a type-level absence rather than a filter someone can forget — but it is not
-a fix for the descriptor either: the target remains public in
-`games/signal-triangulation.json`, and this surface merely declines to become a
-second copy of it.
+**It never publishes the answer, and the previous spelling of this paragraph was
+wrong.**  It used to say that omitting `SignalConfigWire.target` was enough.  It
+is not, and the fixture in this very file proved it: `ViewWire.mission` was a
+full `MissionWire`, `MissionWire` carries `runSeed`, and
+`SignalTriangulation.targetFromSeed` is a public total function — three modulo
+operations from a published seed to the code.  A surface that omits `target` and
+publishes `runSeed` has published the target.
+
+Two things close it, and the second exists because the first is one edit away
+from being undone:
+
+* the published mission is `PublicMissionWire`, which has **no** `runSeed` field.
+  `publicMission_ignores_the_run_seed` says that substituting *any* seed leaves
+  the published value unchanged, so this is a theorem about the projection and
+  not a promise about a filter;
+* `project?` additionally **refuses** a config whose seed is not
+  `Emit.UNBOUND_RUN_SEED`.  A retained genesis config is a mission TEMPLATE and
+  carries the all-zero sentinel; a live seed appearing there means something
+  upstream is wrong, and this read refuses rather than rendering it.
+
+**It publishes nothing derived from the transcript, in any form.**
+`RunWire.transcriptDigest` is gone.  `SignalTriangulation.transcriptDigest` is
+**not a digest** — it is a fixed-width plaintext encoding, byte 0 the action
+count and bytes 1..15 the submitted bands, so for a solved run its tail *is* the
+target.  ⚠ And hashing it would be theatre, not a fix: an accepted transcript is
+at most five guesses from 216, a space of about `2^39`, which brute-force
+inverts on a laptop.  There is no safe encoding of a run's guesses on a public
+route, so there is no such field.  What a player did is theirs; what they *won*
+is the record.
 
 **Coordinates come from the checked payload, not from a re-decoded carrier.**
 `CheckedPayload` already proves the finalized `actorRoot`/`signer` equal the
@@ -63,7 +86,15 @@ open Dregg2.Games.PathOfAngels.FinalizedRunEventAggregate
 set_option autoImplicit false
 
 abbrev RECORDS_INPUT_FORMAT : String := "POA-RECORDS-IN-1"
-abbrev RECORDS_OUTPUT_FORMAT : String := "POA-RECORDS-OUT-1"
+
+/-- ⚑ Bumped to `-2` when the published mission lost `runSeed`, the run record
+lost `transcriptDigest`, and the chain coordinate moved under `chain`.  The
+request shape did not change, so `RECORDS_INPUT_FORMAT` stays at `-1`.
+
+A reader pinned to `POA-RECORDS-OUT-1` now fails its own format check instead of
+silently finding two fields missing and a third moved.  That is the point of the
+bump: the old shape must refuse to load rather than be reinterpreted. -/
+abbrev RECORDS_OUTPUT_FORMAT : String := "POA-RECORDS-OUT-2"
 
 abbrev RECORDS_U64_MAX : Nat := 2 ^ 64 - 1
 /-- Outer allocation fuse, checked before the JSON parser runs. -/
@@ -247,6 +278,19 @@ private def statusTag : CanonStatus → String
   | .alpha => "alpha"
   | .superseded => "superseded"
 
+private def privacyTag : PrivacyGrade → String
+  | .public => "public"
+  | .operatorVisibleHidingFri => "operator-visible-hiding-fri"
+  | .processSeparatedThreshold => "process-separated-threshold"
+  | .independentOperatorThreshold => "independent-operator-threshold"
+
+private def ballotTag : BallotRegime → String
+  | .none => "none"
+  | .onePlayerOneVoice => "one-player-one-voice"
+  | .oneWalletOneVoice => "one-wallet-one-voice"
+  | .cappedChoir => "capped-choir"
+  | .predictionOracle => "prediction-oracle"
+
 /-- Canon lifecycle is recomputed from the rebuilt Canon at read time; no status
 label is ever carried in from storage. -/
 structure ArtifactStatusWire where
@@ -254,24 +298,179 @@ structure ArtifactStatusWire where
   status : String
 deriving DecidableEq
 
-/-- One landed run.  The coordinate fields are the finalized ones the host
-supplied and which `CheckedPayload` binds to the judged carrier; the rest is the
-Field Archive projection of the re-judged receipt. -/
-structure RunWire where
+/-! ## The visible ladder
+
+A run can be in five places, and a reader must never have to guess which.  The
+rungs are named on the wire because the alternative — an unlabelled list — is
+how a local rehearsal comes to look like a settled record. -/
+
+/-- Where a run stands.  ⚑ Only `finalized` means *this chain committed it*.
+
+* `practice` — an instance the client drew for ITSELF through
+  `HiddenInstance.practiceRunSeed`.  It is a real instance of the same family and
+  a genuinely useful rehearsal, and it is scored by nobody:
+  `HiddenInstance.practice_is_not_judged` is the refutation, because the purpose
+  tag is inside the sponge preimage.
+* `submitted` — a claim the node accepted for evaluation.  No verdict exists.
+* `judged` — native Lean accepted it, and that is still not finality;
+  `poa_signal_adapter` says so in its own words: an evaluated candidate is never
+  a finalized receipt.
+* `finalized` — re-judged from the exact durable bytes and folded into Canon.
+  This is the only rung this surface emits.
+* `refused` — the judge said no.  A refusal is a result, not an absence. -/
+inductive RunStatus where
+  | practice
+  | submitted
+  | judged
+  | finalized
+  | refused
+deriving DecidableEq, Repr
+
+def RunStatus.tag : RunStatus → String
+  | .practice => "practice"
+  | .submitted => "submitted"
+  | .judged => "judged"
+  | .finalized => "finalized"
+  | .refused => "refused"
+
+/-- The rungs are distinguishable on the wire: no two spell the same tag, so a
+reader that switches on the string is switching on the rung. -/
+theorem RunStatus.tag_injective {left right : RunStatus} (h : left.tag = right.tag) :
+    left = right := by
+  cases left <;> cases right <;> simp_all [RunStatus.tag]
+
+/-- Where a run sits on THIS chain.  Its presence is what a settled record has and
+nothing else may have. -/
+structure ChainCoordinate where
   commitOrdinal : Nat
   turnHash : Digest32
   receiptHash : Digest32
   signer : Digest32
   actorRoot : Digest32
+deriving DecidableEq
+
+/-- One run, at whatever rung it stands on.
+
+⚑ There is no transcript field, hashed or otherwise — see the header.  What is
+published is who settled it, when, and which artifact it discovered. -/
+structure RunWire where
+  status : RunStatus
+  coordinate : Option ChainCoordinate
   originKey : ReceiptKeyWire
   artifact : ArtifactRefWire
   contribution : ContributionWire
   worldSequence : Nat
-  transcriptDigest : Digest32
 deriving DecidableEq
 
-/-- There is deliberately no `target` field: this surface will not become a
-second publisher of the Signal answer. -/
+/-- A record is coherent when its rung and its chain coordinate agree.  A
+coordinate is exactly the evidence `finalized` claims, so anything else carrying
+one is malformed and anything `finalized` without one is too. -/
+def RunWire.coherentB (run : RunWire) : Bool :=
+  match run.status, run.coordinate with
+  | .finalized, some _ => true
+  | .finalized, none => false
+  | _, some _ => false
+  | _, none => true
+
+/-- ⚑ **A chain coordinate is the exclusive property of a settled record.**  This
+is the statement that a practice entry cannot dress itself as one: not because a
+renderer is careful, but because a coherent record with a coordinate is
+`finalized` and there is no other case. -/
+theorem only_finalized_carries_a_coordinate {run : RunWire}
+    (coherent : run.coherentB = true) (settled : run.coordinate.isSome = true) :
+    run.status = .finalized := by
+  unfold RunWire.coherentB at coherent
+  cases hstatus : run.status <;> cases hcoord : run.coordinate <;>
+    simp_all
+
+/-- And the converse: an unsettled rung has no coordinate at all. -/
+theorem unsettled_has_no_coordinate {run : RunWire}
+    (coherent : run.coherentB = true) (unsettled : run.status ≠ .finalized) :
+    run.coordinate = none := by
+  unfold RunWire.coherentB at coherent
+  cases hstatus : run.status <;> cases hcoord : run.coordinate <;>
+    simp_all
+
+/-- The mission as a READER may see it.
+
+⚑ It has no `runSeed` field, and that absence is the security property.  A live
+`MissionSpec.runSeed` determines the Signal target through the public total
+function `SignalTriangulation.targetFromSeed`, so publishing the seed publishes
+the answer.  `MissionWire` carries one; this does not. -/
+structure PublicMissionWire where
+  missionId : Nat
+  artifact : ArtifactRefWire
+  epoch : Nat
+  federationId : Digest32
+  contentRoot : Digest32
+  activationDigest : Digest32
+  contentSession : Digest32
+  budget : BudgetWire
+  allowedRelics : List Nat
+  privacy : PrivacyGrade
+  ballot : BallotRegime
+deriving DecidableEq
+
+def PublicMissionWire.ofMission (m : MissionWire) : PublicMissionWire where
+  missionId := m.missionId
+  artifact := m.artifact
+  epoch := m.epoch
+  federationId := m.federationId
+  contentRoot := m.contentRoot
+  activationDigest := m.activationDigest
+  contentSession := m.contentSession
+  budget := m.budget
+  allowedRelics := m.allowedRelics
+  privacy := m.privacy
+  ballot := m.ballot
+
+/-- ⚑ **The published mission does not depend on the run seed.**  Substituting an
+arbitrary seed — the live one, the sentinel, an attacker's — leaves every
+published field identical.  This is the field-by-field answer to "can a reader
+reconstruct the instance from the mission": no, because the projection cannot
+see the seed at all. -/
+theorem publicMission_ignores_the_run_seed (m : MissionWire) (seed : Digest32) :
+    PublicMissionWire.ofMission { m with runSeed := seed } =
+      PublicMissionWire.ofMission m := rfl
+
+/-- The four values a browser needs to draw a PRACTICE instance for itself are
+exactly `missionId`, `epoch`, `federationId` and `contentSession` — which is
+`HiddenInstance.MissionContext`, the projection that deliberately excludes the
+run seed.  They are already published above, so there is no second shape here:
+this theorem records that the public mission carries the practice context, and
+that the context is seed-independent, without minting a duplicate wire record. -/
+theorem public_mission_carries_the_practice_context (m : MissionWire) (seed : Digest32) :
+    ((PublicMissionWire.ofMission { m with runSeed := seed }).missionId,
+        (PublicMissionWire.ofMission { m with runSeed := seed }).epoch,
+        (PublicMissionWire.ofMission { m with runSeed := seed }).federationId,
+        (PublicMissionWire.ofMission { m with runSeed := seed }).contentSession) =
+      ((PublicMissionWire.ofMission m).missionId, (PublicMissionWire.ofMission m).epoch,
+        (PublicMissionWire.ofMission m).federationId,
+        (PublicMissionWire.ofMission m).contentSession) := rfl
+
+/-- Whether this world has ever had a run land.  Derived from the rebuilt rows,
+so it cannot disagree with them. -/
+inductive WorldStage where
+  | awaitingFirstRun
+  | active
+deriving DecidableEq, Repr
+
+def WorldStage.tag : WorldStage → String
+  | .awaitingFirstRun => "awaiting-first-run"
+  | .active => "active"
+
+def stageOf : List RunWire → WorldStage
+  | [] => .awaitingFirstRun
+  | _ :: _ => .active
+
+/-- The stage is a reading of the rows and not an independent claim: it says
+"awaiting the first run" exactly when there is no run. -/
+theorem stageOf_awaiting_iff_no_runs (runs : List RunWire) :
+    stageOf runs = .awaitingFirstRun ↔ runs = [] := by
+  cases runs <;> simp [stageOf]
+
+/-- ⚑ There is deliberately no `target` field AND no `runSeed` field: this surface
+publishes neither the Signal answer nor anything a reader can compute it from. -/
 structure ViewWire where
   federationId : Digest32
   contentRoot : Digest32
@@ -279,7 +478,8 @@ structure ViewWire where
   contentSession : Digest32
   contentEpoch : Nat
   curatorKey : Digest32
-  mission : MissionWire
+  stage : WorldStage
+  mission : PublicMissionWire
   reward : ContributionWire
   world : WorldStateWire
   canonRevision : Nat
@@ -297,17 +497,37 @@ def ArtifactStatusWire.toJson (entry : ArtifactStatusWire) : String :=
   "{\"artifact\":" ++ entry.artifact.toJson ++
     ",\"status\":" ++ jsonString entry.status ++ "}"
 
+def ChainCoordinate.toJson (c : ChainCoordinate) : String :=
+  "{\"commit_ordinal\":" ++ toString c.commitOrdinal ++
+    ",\"turn_hash\":" ++ jsonString (Emit.bytes32Hex c.turnHash) ++
+    ",\"receipt_hash\":" ++ jsonString (Emit.bytes32Hex c.receiptHash) ++
+    ",\"signer\":" ++ jsonString (Emit.bytes32Hex c.signer) ++
+    ",\"actor_root\":" ++ jsonString (Emit.bytes32Hex c.actorRoot) ++ "}"
+
+/-- `chain` is `null` on every rung but `finalized`, which is the wire image of
+`only_finalized_carries_a_coordinate`. -/
 def RunWire.toJson (run : RunWire) : String :=
-  "{\"commit_ordinal\":" ++ toString run.commitOrdinal ++
-    ",\"turn_hash\":" ++ jsonString (Emit.bytes32Hex run.turnHash) ++
-    ",\"receipt_hash\":" ++ jsonString (Emit.bytes32Hex run.receiptHash) ++
-    ",\"signer\":" ++ jsonString (Emit.bytes32Hex run.signer) ++
-    ",\"actor_root\":" ++ jsonString (Emit.bytes32Hex run.actorRoot) ++
+  "{\"status\":" ++ jsonString run.status.tag ++
+    ",\"chain\":" ++ (match run.coordinate with
+      | none => "null"
+      | some coordinate => coordinate.toJson) ++
     ",\"origin_key\":" ++ run.originKey.toJson ++
     ",\"artifact\":" ++ run.artifact.toJson ++
     ",\"contribution\":" ++ run.contribution.toJson ++
-    ",\"world_sequence\":" ++ toString run.worldSequence ++
-    ",\"transcript_digest\":" ++ jsonString (Emit.bytes32Hex run.transcriptDigest) ++ "}"
+    ",\"world_sequence\":" ++ toString run.worldSequence ++ "}"
+
+def PublicMissionWire.toJson (m : PublicMissionWire) : String :=
+  "{\"mission_id\":" ++ toString m.missionId ++
+    ",\"artifact\":" ++ m.artifact.toJson ++
+    ",\"epoch\":" ++ toString m.epoch ++
+    ",\"federation_id\":" ++ jsonString (Emit.bytes32Hex m.federationId) ++
+    ",\"content_root\":" ++ jsonString (Emit.bytes32Hex m.contentRoot) ++
+    ",\"activation_digest\":" ++ jsonString (Emit.bytes32Hex m.activationDigest) ++
+    ",\"content_session\":" ++ jsonString (Emit.bytes32Hex m.contentSession) ++
+    ",\"budget\":" ++ m.budget.toJson ++
+    ",\"allowed_relics\":" ++ jsonArray (m.allowedRelics.map toString) ++
+    ",\"privacy\":" ++ jsonString (privacyTag m.privacy) ++
+    ",\"ballot\":" ++ jsonString (ballotTag m.ballot) ++ "}"
 
 def ViewWire.toJson (view : ViewWire) : String :=
   "{\"format\":" ++ jsonString RECORDS_OUTPUT_FORMAT ++
@@ -317,6 +537,7 @@ def ViewWire.toJson (view : ViewWire) : String :=
     ",\"content_session\":" ++ jsonString (Emit.bytes32Hex view.contentSession) ++
     ",\"content_epoch\":" ++ toString view.contentEpoch ++
     ",\"curator_key\":" ++ jsonString (Emit.bytes32Hex view.curatorKey) ++
+    ",\"stage\":" ++ jsonString view.stage.tag ++
     ",\"mission\":" ++ view.mission.toJson ++
     ",\"reward\":" ++ view.reward.toJson ++
     ",\"world\":" ++ view.world.toJson ++
@@ -342,26 +563,37 @@ Field Archive projection of the re-judged receipt. -/
 def runWireOf (checked : CheckedPayload) : RunWire :=
   let run := checked.settlement.judgedRun
   let entry := FieldArchive.ArchiveEntry.ofJudged run
-  { commitOrdinal := checked.raw.finalized.commitOrdinal
-    turnHash := checked.raw.finalized.turnHash
-    receiptHash := checked.raw.finalized.receiptHash
-    signer := checked.raw.finalized.signer
-    actorRoot := checked.raw.finalized.actorRoot
+  { status := .finalized
+    coordinate := some
+      { commitOrdinal := checked.raw.finalized.commitOrdinal
+        turnHash := checked.raw.finalized.turnHash
+        receiptHash := checked.raw.finalized.receiptHash
+        signer := checked.raw.finalized.signer
+        actorRoot := checked.raw.finalized.actorRoot }
     originKey := ReceiptKeyWire.ofSemantic entry.originKey
     artifact := ArtifactRefWire.ofSemantic entry.artifact
     contribution := ContributionWire.ofSemantic run.receipt.contribution
-    worldSequence := run.receipt.postWorld.sequence
-    transcriptDigest := run.receipt.transcriptDigest }
+    worldSequence := run.receipt.postWorld.sequence }
+
+/-- Every record this module emits is a settled one, and it is coherent, so
+`only_finalized_carries_a_coordinate` applies to it. -/
+theorem runWireOf_is_a_coherent_finalized_record (checked : CheckedPayload) :
+    (runWireOf checked).status = .finalized ∧
+      (runWireOf checked).coherentB = true ∧
+      (runWireOf checked).coordinate.isSome = true :=
+  ⟨rfl, rfl, rfl⟩
 
 /-- The published identity is simultaneously the host's finalized coordinate and
 the carrier the native judge actually settled against.  This is what makes
 republishing a signer meaningful rather than decorative. -/
 theorem runWireOf_coordinate_agrees_with_the_settlement_carrier (checked : CheckedPayload) :
-    (runWireOf checked).signer = checked.raw.finalized.signer ∧
-      (runWireOf checked).actorRoot = checked.raw.finalized.actorRoot ∧
-      (runWireOf checked).signer = checked.settlement.carrier.playerKey ∧
-      (runWireOf checked).actorRoot = checked.settlement.carrier.actorRoot :=
-  ⟨rfl, rfl, checked.signerExact, checked.actorRootExact⟩
+    (runWireOf checked).coordinate = some
+        { commitOrdinal := checked.raw.finalized.commitOrdinal
+          turnHash := checked.raw.finalized.turnHash
+          receiptHash := checked.raw.finalized.receiptHash
+          signer := checked.settlement.carrier.playerKey
+          actorRoot := checked.settlement.carrier.actorRoot } := by
+  simp only [runWireOf, checked.signerExact, checked.actorRootExact]
 
 /-- The archived provenance is the receipt's own replay key, not a host label. -/
 theorem runWireOf_origin_is_the_receipt_key (checked : CheckedPayload) :
@@ -459,6 +691,13 @@ def project? (bytes : String) : Option ViewWire := do
   else if configWire.mission.activationDigest != genesisWire.activationDigest then none
   else if configWire.mission.contentSession != genesisWire.contentSession then none
   else if configWire.mission.epoch != genesisWire.contentEpoch then none
+  -- ⚑ The retained genesis config is a mission TEMPLATE and its seed must be the
+  -- all-zero sentinel.  A live seed here would mean the node retained a drawn
+  -- instance as if it were the template, and since `targetFromSeed` is public
+  -- that value IS an answer.  `PublicMissionWire` cannot publish it in any case;
+  -- this refuses to serve the world at all, so the condition is detectable
+  -- rather than silently tolerated.
+  else if configWire.mission.runSeed != Emit.UNBOUND_RUN_SEED then none
   else do
     let genesisCanon ← genesisWire.toSemantic?
     -- Reconstructed only to refuse a config that is syntactically well formed
@@ -475,7 +714,8 @@ def project? (bytes : String) : Option ViewWire := do
       contentSession := folded.projection.canon.contentSession
       contentEpoch := folded.projection.canon.contentEpoch
       curatorKey := folded.projection.canon.curatorKey
-      mission := configWire.mission
+      stage := stageOf folded.runs
+      mission := PublicMissionWire.ofMission configWire.mission
       reward := configWire.reward
       world := folded.projection.canon.world
       canonRevision := folded.projection.canon.revision
@@ -512,7 +752,27 @@ private def digestByte (value : Nat) : Digest32 where
 
 private def fixtureGenesisWire : CanonStateWire := CanonStateWire.ofSemantic fixtureCanon
 
-private def fixtureConfigWire : SignalConfigWire := SignalConfigWire.ofSemantic fixtureConfig
+/-- ⚠ The TEMPLATE config — which is what a node actually retains and hands this
+surface.  `poa_signal_genesis.rs` writes `run_seed: UNBOUND_RUN_SEED` because
+genesis describes a mission with no instance; the live seed is drawn per run and
+substituted into a COPY at judge time (`poa_signal_adapter.rs`).
+
+The previous fixture handed this surface `fixtureConfig` — the LIVE config, whose
+mission carries the derived `fixtureRunSeed` — so the fixture did not model what
+production sends, and the emitted document therefore contained the live seed.
+That exact previous fixture is retained below as
+`hostile_live_run_seed_config_refused`. -/
+private def fixtureTemplateConfig : SignalTriangulation.Config :=
+  Emit.signalConfig Emit.UNBOUND_RUN_SEED fixtureFederationId fixtureSourceDigest
+    fixtureContentDigest fixtureContentRoot fixtureActivationDigest
+
+private def fixtureConfigWire : SignalConfigWire :=
+  SignalConfigWire.ofSemantic fixtureTemplateConfig
+
+/-- The plaintext "transcript digest" of the fixture's single submitted action.
+It exists here only to be searched for and not found. -/
+private def fixtureTranscript : Digest32 :=
+  SignalTriangulation.transcriptDigest [.submit fixtureConfig.target]
 
 private def fixtureRow : RowWire where
   commitOrdinal := 7
@@ -539,14 +799,17 @@ theorem fixture_request_round_trips :
 
 /-- The point of the surface: with no finalized run at all, the view still
 carries the exact world identity, world meters, Canon revision and playable
-mission a run would land in.  Height zero is not an empty page. -/
+mission a run would land in — and says, in one word, that it is waiting for its
+first run.  Height zero is not an empty page, and it is not a page pretending to
+be full either. -/
 theorem fixture_genesis_only_view_is_a_real_world :
     (genesisOnlyView?.map fun view =>
       decide (view.federationId = fixtureCarrier.federationId) &&
       decide (view.contentSession = fixtureCanon.contentSession) &&
       decide (view.curatorKey = fixtureCanon.curatorKey) &&
+      decide (view.stage = WorldStage.awaitingFirstRun) &&
       decide (view.mission.artifact =
-        ArtifactRefWire.ofSemantic fixtureConfig.mission.artifact) &&
+        ArtifactRefWire.ofSemantic fixtureTemplateConfig.mission.artifact) &&
       decide (view.world = WorldStateWire.ofSemantic WorldState.empty) &&
       decide (view.canonRevision = 0) &&
       decide (view.runs = []) &&
@@ -555,14 +818,19 @@ theorem fixture_genesis_only_view_is_a_real_world :
   native_decide
 
 /-- And one finalized run lands in every projection at once, with the artifact
-carrying a Canon-derived beta status recomputed at read time. -/
+carrying a Canon-derived beta status recomputed at read time.  The record's rung
+is `finalized` and it carries the chain coordinate the host committed to. -/
 theorem fixture_one_finalized_run_lands_in_every_projection :
     (oneRunView?.map fun view =>
-      decide (view.runs.map RunWire.signer = [fixtureCarrier.playerKey]) &&
-      decide (view.runs.map RunWire.actorRoot = [fixtureCarrier.actorRoot]) &&
-      decide (view.runs.map RunWire.commitOrdinal = [7]) &&
+      decide (view.stage = WorldStage.active) &&
+      decide (view.runs.map RunWire.status = [RunStatus.finalized]) &&
+      decide (view.runs.map RunWire.coordinate =
+        [some { commitOrdinal := 7, turnHash := digestByte 201,
+                receiptHash := digestByte 202, signer := fixtureCarrier.playerKey,
+                actorRoot := fixtureCarrier.actorRoot }]) &&
+      decide (view.runs.all RunWire.coherentB) &&
       decide (view.runs.map RunWire.artifact =
-        [ArtifactRefWire.ofSemantic fixtureConfig.mission.artifact]) &&
+        [ArtifactRefWire.ofSemantic fixtureTemplateConfig.mission.artifact]) &&
       decide (view.catalog.map ArtifactStatusWire.status = ["beta"]) &&
       decide (view.archiveEntries = 1) &&
       decide (view.lockerEntries = 1) &&
@@ -571,6 +839,66 @@ theorem fixture_one_finalized_run_lands_in_every_projection :
       decide (view.canonRevision = 1) &&
       decide (view.consumedRuns = 1) &&
       decide (view.world.sequence = 1)) = some true := by
+  native_decide
+
+/-! ### The two published leaks, and their absence
+
+⚠ Each needle below is checked to be a REAL needle before its absence is read.
+A search for a string that is empty, or that is not actually the secret, would
+pass while exercising nothing — an absence proof is only as good as the thing it
+looked for. -/
+
+/-- The live seed of this fixture's run is a genuine 64-character spelling and is
+NOT the all-zero template sentinel.  Without this, the absence below would be
+satisfiable by the needle simply being something the document never had. -/
+theorem fixture_live_seed_is_a_real_needle :
+    (Emit.bytes32Hex fixtureRunSeed).length = 64 ∧
+      fixtureRunSeed ≠ Emit.UNBOUND_RUN_SEED := by
+  native_decide
+
+/-- ⚑ **`transcriptDigest` is not a digest.**  Bytes 1..3 of the fixture's
+"digest" are exactly the three submitted bands, and the submitted code of a
+solved run is the target.  This is the reviewer's second defect, stated as a
+theorem about the actual encoding rather than asserted in prose — and it is why
+no transcript-derived field exists on this surface. -/
+theorem fixture_transcript_is_plaintext_of_the_submitted_code :
+    (fixtureTranscript.bytes.getD 1 0).val = fixtureConfig.target.low.val ∧
+      (fixtureTranscript.bytes.getD 2 0).val = fixtureConfig.target.mid.val ∧
+      (fixtureTranscript.bytes.getD 3 0).val = fixtureConfig.target.high.val ∧
+      fixtureConfig.target = SignalTriangulation.targetFromSeed fixtureRunSeed := by
+  native_decide
+
+/-- ⚑ The emitted document does not contain the live run seed anywhere — not in
+the mission, not in a record, not in any field.  `targetFromSeed` of that seed is
+the answer, so this is the load-bearing absence. -/
+theorem view_never_publishes_the_live_run_seed :
+    (oneRunView?.map fun view =>
+      decide ((view.toJson.splitOn (Emit.bytes32Hex fixtureRunSeed)).length = 1)) =
+        some true := by
+  native_decide
+
+/-- And it does not contain the plaintext transcript either. -/
+theorem view_never_publishes_the_transcript :
+    (oneRunView?.map fun view =>
+      decide ((view.toJson.splitOn (Emit.bytes32Hex fixtureTranscript)).length = 1)) =
+        some true := by
+  native_decide
+
+/-- ⚑ **The previous fixture, kept as the falsifier.**  Handing this surface the
+LIVE config — the one whose mission carries the derived seed, which is what the
+old fixture did — is refused outright rather than rendered. -/
+theorem hostile_live_run_seed_config_refused :
+    project? { fixtureRequest [fixtureRow] with
+      config := ⟨(SignalConfigWire.ofSemantic fixtureConfig).toJson⟩ }.toJson = none := by
+  native_decide
+
+/-- ⚠ The falsifier above really does substitute something: the live config's
+bytes differ from the template's, and they differ in the run seed specifically.
+Without this the refusal could be refusing an unchanged input. -/
+theorem hostile_live_config_is_a_real_substitution :
+    (SignalConfigWire.ofSemantic fixtureConfig).toJson ≠ fixtureConfigWire.toJson ∧
+      (SignalConfigWire.ofSemantic fixtureConfig).mission.runSeed ≠
+        fixtureConfigWire.mission.runSeed := by
   native_decide
 
 theorem hostile_substituted_signer_refused :
@@ -620,6 +948,13 @@ theorem fixture_export_refuses_malformed :
 
 #assert_axioms decodeRequest_reencodes
 #assert_axioms decodeRequest_refuses_oversized
+#assert_axioms RunStatus.tag_injective
+#assert_axioms only_finalized_carries_a_coordinate
+#assert_axioms unsettled_has_no_coordinate
+#assert_axioms publicMission_ignores_the_run_seed
+#assert_axioms public_mission_carries_the_practice_context
+#assert_axioms stageOf_awaiting_iff_no_runs
+#assert_axioms runWireOf_is_a_coherent_finalized_record
 #assert_axioms runWireOf_coordinate_agrees_with_the_settlement_carrier
 #assert_axioms runWireOf_origin_is_the_receipt_key
 #assert_axioms step_appends_exactly_one_checked_run
@@ -627,6 +962,12 @@ theorem fixture_export_refuses_malformed :
 #assert_compiled fixture_request_round_trips
 #assert_compiled fixture_genesis_only_view_is_a_real_world
 #assert_compiled fixture_one_finalized_run_lands_in_every_projection
+#assert_compiled fixture_live_seed_is_a_real_needle
+#assert_compiled fixture_transcript_is_plaintext_of_the_submitted_code
+#assert_compiled view_never_publishes_the_live_run_seed
+#assert_compiled view_never_publishes_the_transcript
+#assert_compiled hostile_live_run_seed_config_refused
+#assert_compiled hostile_live_config_is_a_real_substitution
 #assert_compiled hostile_substituted_signer_refused
 #assert_compiled hostile_substituted_actor_root_refused
 #assert_compiled hostile_row_against_a_foreign_genesis_refused
