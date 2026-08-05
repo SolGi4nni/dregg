@@ -832,6 +832,63 @@ theorem split_srs_cells_fit :
     ∧ bucketedRows STEP_SRS FULL_BITS BEST_C * 14 < MAX_EP_CELLS := by
   constructor <;> decide
 
+/-! ## §6b — ⚑ THE "EXCLUDED LEG" RE-PRICED. It is not out of reach.
+
+`MinaWrapVerifierAir` §5 prices the SRS-base leg the wrap-verifier construction EXCLUDES:
+`SRS_BASE_ROWS = msmRows 32768 = 256 · 32,769 · 41 = 343,943,424` rows, **215×** the
+`VERIFIER_ROWS = 1,598,396` of everything it does include, and calls that "the arithmetic behind
+*defer the IPA leg*". That figure is a NAIVE bit-plane scan — 256 planes, one row per term per
+plane — priced at 41 rows per complete add.
+
+Re-derived here as the FUSED layout, in the SAME 41-rows-per-add units so the comparison is like
+for like: `fusedAdds 32768 256 12 = 811,250` complete adds, i.e. **33,261,250 rows — 10.3× less,
+and 20.8× the verifier rather than 215×.** Named rather than narrated, below.
+
+⚑ And in the units this cone ACTUALLY emits — `PastaMsmWindowed`, ONE row per complete add — the
+same leg is **811,250 rows, 38.7% of the `2^21` ceiling.** The leg the wrap-verifier construction
+excludes as unreachable fits in one instance with 61% of the ceiling to spare.
+
+⚠ What that does NOT do is make the excluded leg free: 811,250 rows at 612 columns is still
+`4.97 · 10^8` committed cells, and §7.1's warning applies to it verbatim. The claim here is
+narrow and it is the one that was wrong — **215× was a property of the SCAN, not of the
+relation.** -/
+
+/-- The per-complete-add row price `MinaWrapVerifierAir.msmRows` uses. -/
+def WRAP_ROWS_PER_ADD : Nat := 41
+/-- The Wrap SRS width. -/
+def WRAP_SRS : Nat := 32768
+/-- `MinaWrapVerifierAir.VERIFIER_ROWS` — everything that construction DOES include. -/
+def WRAP_VERIFIER_ROWS : Nat := 1598396
+
+/-- `MinaWrapVerifierAir.SRS_BASE_ROWS`, restated so the re-derivation is against the same number
+and not a remembered one. -/
+def wrapSrsNaiveRows : Nat := 256 * (WRAP_SRS + 1) * WRAP_ROWS_PER_ADD
+
+/-- The same leg, fused, in the same units. -/
+def wrapSrsFusedRows : Nat := fusedAdds WRAP_SRS 256 12 * WRAP_ROWS_PER_ADD
+
+/-- The in-tree figure, reproduced. -/
+theorem wrap_srs_naive_is_the_in_tree_figure : wrapSrsNaiveRows = 343943424 := by decide
+
+/-- …and `215 × VERIFIER_ROWS < SRS_BASE_ROWS`, the claim it supports. -/
+theorem wrap_srs_naive_is_215x : 215 * WRAP_VERIFIER_ROWS < wrapSrsNaiveRows := by decide
+
+/-- ⚑ **THE RE-PRICING.** Fused, the same leg is more than TEN times smaller. -/
+theorem wrap_srs_fused_beats_naive : 10 * wrapSrsFusedRows < wrapSrsNaiveRows := by decide
+
+/-- ⚑ **…and the `215×` becomes `21×`** — the ratio the deferral verdict was priced against moves
+by an order of magnitude. Both bounds stated, so it is bracketed rather than rounded. -/
+theorem wrap_srs_fused_is_about_21x :
+    20 * WRAP_VERIFIER_ROWS < wrapSrsFusedRows ∧ wrapSrsFusedRows < 21 * WRAP_VERIFIER_ROWS := by
+  constructor <;> decide
+
+/-- ⚑ **AND AT ONE ROW PER COMPLETE ADD — the layout this cone emits — the excluded leg FITS**,
+at under 40% of the `2^21` ceiling. -/
+theorem wrap_srs_fused_fits_one_instance :
+    fusedAdds WRAP_SRS 256 12 < DREGG_MAX_ROWS
+    ∧ 100 * fusedAdds WRAP_SRS 256 12 < 39 * DREGG_MAX_ROWS := by
+  constructor <;> decide
+
 /-! ## §7 — ⚑ THE RESIDUALS, at CURRENT resolution.
 
 **7.1 — the row count is not the only axis, and this file does not pretend it is.**
@@ -940,5 +997,10 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms srs_cells_exceed_the_deployed_cap
 #assert_axioms split_srs_cells_fit
 #assert_axioms manifest_rows_fit
+#assert_axioms wrap_srs_naive_is_the_in_tree_figure
+#assert_axioms wrap_srs_naive_is_215x
+#assert_axioms wrap_srs_fused_beats_naive
+#assert_axioms wrap_srs_fused_is_about_21x
+#assert_axioms wrap_srs_fused_fits_one_instance
 
 end Dregg2.Circuit.Emit.PastaMsmBucketed
