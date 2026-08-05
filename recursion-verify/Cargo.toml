@@ -1,0 +1,80 @@
+[package]
+name = "dregg-recursion-verify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "VERIFY-ONLY half of the dregg recursion tower: the DreggRecursionConfig, the RecursionVk fingerprint, batch-proof verification, and the Mina phase-2 chain-root claim reader. No prover, no witness generation, no circuit construction."
+
+# ⚑ THERE IS NO `[features]` SECTION, AND THAT IS THE POINT.
+#
+# The `dregg-turn` firewall this crate exists beside was written as a COMMENT
+# (`turn/Cargo.toml:17-25`) naming an seL4 verifier-PD floor and a wasm/zkvm card. Measured
+# 2026-08-05, neither is what the firewall really buys — see this crate's `lib.rs` §"WHAT THE
+# FIREWALL ACTUALLY REQUIRES". What IS real is
+# `docs/reference/TURN-PROVER-CRATE-EXTRACTION-DESIGN.md` §0: a `#[cfg(feature = "prover")]`
+# arm that is off in one resolve and on in another is a compile error nobody sees until a
+# consumer four crates away selects the other arm. A CRATE is always compiled as itself, so
+# a shape change is an error at the source.
+#
+# Which means: the way to give a consumer recursion VERIFICATION is a crate it depends on,
+# not a feature it enables. Adding a feature here would re-open exactly the class the
+# extraction closed.
+
+[dependencies]
+# The verify floor. `BabyBear` is this crate's field type so a claim read here is the same
+# type the executor and the descriptor path already speak.
+dregg-circuit = { path = "../circuit" }
+
+# ── The Plonky3 stack, workspace-pinned. ────────────────────────────────────────────────
+# ⚑ HONESTY ABOUT WHAT THIS PULLS. Verification of a recursive batch proof is not free of
+# the recursion fork: `BatchStarkProver::verify_all_tables` (the actual check) lives in
+# `p3-circuit-prover`, and `DreggRecursionConfig` must carry the `FriRecursionConfig` impl —
+# which names `p3-recursion` types — because the ORPHAN RULE forbids that impl living
+# anywhere but the crate that owns the type. So this crate pulls `p3-circuit-prover`,
+# `p3-circuit` AND `p3-recursion`, all at rev `fc3c6df`.
+# What it does NOT pull, and what makes the boundary real rather than cosmetic:
+# `dregg-circuit-prove` itself (the IVC tower, the shielded prover, the custom proof-bind
+# engine, `wgpu`/`pollster`/`bytemuck` GPU backend, `rand`, `chacha20poly1305`,
+# `dregg-lean-ffi`, `dregg-commit`, `dregg-cell`, `dregg-p3-pasta`, `p3-bn254`).
+# `tests/dependency_closure.rs` is the gate on that, in both polarities.
+p3-field = { workspace = true }
+p3-baby-bear = { workspace = true }
+p3-challenger = { workspace = true }
+p3-commit = { workspace = true }
+p3-dft = { workspace = true }
+p3-fri = { workspace = true }
+p3-merkle-tree = { workspace = true }
+p3-symmetric = { workspace = true }
+p3-uni-stark = { workspace = true }
+p3-lookup = { workspace = true }
+p3-poseidon2-circuit-air = { workspace = true }
+p3-circuit = { workspace = true }
+p3-circuit-prover = { workspace = true }
+p3-recursion = { workspace = true }
+
+blake3 = "1"
+postcard = { version = "1", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+# ⚑ DEV-ONLY, AND THE DIRECTION IS THE POINT. `tests/mina_chain_root_seam.rs` mints a REAL fold
+# with the prover and then consumes the root through THIS crate's verify path plus `dregg-turn`'s
+# consumer-side binding — i.e. it drives the exact seam a node runs, end to end, without either
+# of those edges existing in the library graph. Cargo permits the dev-dep cycle
+# (`dregg-circuit-prove` depends on this crate normally); `tests/dependency_closure.rs` asserts
+# the LIBRARY graph is unaffected, in both polarities.
+dregg-circuit-prove = { path = "../circuit-prove" }
+dregg-turn = { path = "../turn" }
+dregg-cell = { path = "../cell", features = [
+    "test-stubs",
+    "test-stubs-release-test-target",
+] }
+postcard = { version = "1", features = ["alloc"] }
+
+[lints]
+workspace = true
