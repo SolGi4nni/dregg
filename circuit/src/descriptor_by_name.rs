@@ -347,6 +347,17 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-pasta-fq-chainlink::v1",
         MINA_CHAINLINK_TRANSCRIPT_JSON,
     ),
+    // ⚑⚑ 2026-08-05 — THE PHASE-1 (Fp) HALF OF THE SAME CHAIN, served so the weld is REACHABLE and
+    // not merely proved. The phase-2 chain above absorbs `fq_digest` as tape element 0 and NOTHING
+    // derived it; `MinaPhase1Chain` does, and its link 26's OUTGOING LANE 1 is that element. A
+    // consumer that resolves both names can compare 32 felts — elementwise, full limb width, no
+    // digest and therefore no birthday bound — and know WHOSE tape the phase-2 fold absorbed.
+    // Same eight-block pin layout (`MinaPhase2Chain.chainPins`, 256 PIs), same 2 048-instruction
+    // program at `pLimb` instead of `qLimb`.
+    (
+        "dregg-pasta-fp-chainlink::v1",
+        MINA_FP_CHAINLINK_TRANSCRIPT_JSON,
+    ),
     // ⚑ The Solana STAKE-TABLE FOLD: one row per stake-table entry. The eight-lane Poseidon2
     // commitment to the table and the u64 active-stake DENOMINATOR both come out of the SAME rows,
     // so a swapped validator set with an identical tally moves the root.
@@ -671,6 +682,39 @@ const MINA_LIGHTCLIENT_LINK_JSON: &str =
 /// is a function of the HEAD descriptor's NAME), so cell programs keep their pinned vk.
 const MINA_CHAINLINK_TRANSCRIPT_JSON: &str =
     include_str!("../descriptors/by-name/pasta-fq-chainlink.json");
+
+/// ⚑⚑ `dregg-pasta-fp-chainlink::v1` — **THE PHASE-1 LINK THAT DERIVES `fq_digest`**, served from
+/// 2026-08-05. Lean-authored (`Dregg2.Circuit.Emit.MinaPhase1Chain.chainDesc`).
+///
+/// The SAME machine as the phase-2 chain link above — same 469 columns, same 2 048-instruction
+/// program, same eight-block pin layout (`MinaPhase2Chain.chainPins` ITSELF, not a copy:
+/// `the_pin_layout_is_the_deployed_one`) — at **`pLimb` instead of `qLimb`** and the **`fp_kimchi`**
+/// constants instead of `fq_kimchi`. `MinaWrapVerifierSpongeFp
+/// .the_deployed_fq_programs_are_this_one_at_fqParams` proves by `rfl` that the two instruction
+/// streams are ONE program at two parameter sets; `pasta_fp_sponge_proves.rs` §12 measures it on the
+/// artifacts (2 048/2 048 instruction words identical in fields 0..23; exactly 660 immediates
+/// differ).
+///
+/// ⚑⚑ **WHY IT IS SERVED.** The phase-2 chain's tape begins with `fq_digest`, and until this
+/// descriptor **nothing derived it** — so the 46-link fold proved *a tape absorbs to block 539508's
+/// published challenges* without proving whose tape. `fq_digest` is phase 1's OUTPUT, and it is
+/// this descriptor's link 26 **outgoing lane 1**:
+///
+/// | | phase-1 (`fp`) link 26 | phase-2 (`fq`) link 0 |
+/// |---|---|---|
+/// | PI slice | `[4·SK, 5·SK)` — outgoing lane 1 | `[6·SK, 7·SK)` — `absorbed[0]` |
+///
+/// Those 32 felts are EQUAL, elementwise, at full limb width. ⚑ **No digest, so no birthday
+/// bound** — a forger must match all 32 eight-bit limbs of a 254-bit element. A one-felt tie would
+/// be `2^31`, below this repository's own ~124-bit bar.
+///
+/// ⚠ **WHAT IT DOES NOT ESTABLISH.** That the 53 absorbed coordinates are the commitments they
+/// claim to be. They enter the transcript as `(x, y)` field elements and nothing here checks a point
+/// is on the curve or that `public_comm` commits to the public input; that is the Wrap group check
+/// and it bottoms out at the IPA `msm == 0` floor (P10). Nor that the verifier-index digest (tape
+/// element 0) is the VK's. Deriving `fq_digest` removes a CARRIER; it does not verify Mina.
+const MINA_FP_CHAINLINK_TRANSCRIPT_JSON: &str =
+    include_str!("../descriptors/by-name/pasta-fp-chainlink.json");
 
 /// ⚑ `dregg-solana-stake-table-fold::v1` — the Solana stake table, FOLDED, one row per entry.
 ///
