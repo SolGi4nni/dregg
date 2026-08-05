@@ -1,0 +1,1605 @@
+/-
+# CrewFieldMission — semantic kernel for private briefings and deck extraction
+
+This is the game-facing layer above the lower-level Crew Relay vocabulary.  Four
+officers receive different role-exact observations.  They do not act in one
+shared browser session: every disclosure and choice is an independently signed
+handoff over the exact predecessor root and personal counter.
+
+Privacy is deliberately limited and temporal.  The trusted mission dealer and
+the operator executing Lean see the complete ordered briefing deck.  Before a
+seat acts, other players receive no observation through this state-machine API;
+the observation is deliberately disclosed into the public signed handoff and
+combined field record after that seat acts.  This is not MPC, FHE, threshold
+privacy, or secrecy from the operator.  The public deck commitment binds the
+activated ordering but makes no hiding claim.
+
+The first three specialists disclose evidence and recommend a route.  The
+quartermaster receives the accumulated field record and chooses both the route
+and whether to return safely or descend for a deeper recovery.  Safe extraction
+needs two matching signed route recommendations; those recommendations are not
+misdescribed as independent sensor corroboration.  Deep recovery needs unanimity,
+three matching observations, a stable extraction window, and a coordinated
+salvage strategy.
+
+Completion yields one exactly replayable combined field record and one predeclared beta
+candidate through `ActivityOutcome.Checked`.  It does not mint a `JudgedRun`, an
+Archive entry, or curator authority; those remain later canonical-settlement
+boundaries.  This file is not a durable aggregate or a byte-wire specification.
+`CanonicalRunAdmission` is an explicit one-shot *deployment boundary*, not a
+claim that immutable Lean values are globally linear: a runtime must issue it
+once, consume the session key by atomic CAS, and wrap accepted transitions in
+the generic finalized event stream.
+-/
+import Dregg2.Games.PathOfAngels.CrewRelayExpedition
+import Dregg2.Games.PathOfAngels.ActivityOutcome
+import Dregg2.Tactics
+
+namespace Dregg2.Games.PathOfAngels.CrewFieldMission
+
+open Dregg2.Games.PathOfAngels
+open Dregg2.Games.PathOfAngels.CrewRelayExpedition
+
+set_option autoImplicit false
+
+abbrev CREW_SIZE : Nat := 4
+
+/-! ## Authored mission and hidden role briefings -/
+
+inductive Route where
+  | maintenanceSpine
+  | signalGallery
+  | sealedNave
+deriving Repr, DecidableEq
+
+def Route.code : Route → Nat
+  | .maintenanceSpine => 0
+  | .signalGallery => 1
+  | .sealedNave => 2
+
+inductive ExtractionChoice where
+  | returnNow
+  | descendFurther
+deriving Repr, DecidableEq
+
+def ExtractionChoice.strategy : ExtractionChoice → Strategy
+  | .returnNow => .survey
+  | .descendFurther => .salvage
+
+/-- Every specialist action spends according to the crew-wide strategy. -/
+def specialistOperationalCost : Strategy → Nat
+  | .survey => 1
+  | .salvage => 2
+
+def mandatorySpecialistSpend (extraction : ExtractionChoice) : Nat :=
+  (CREW_SIZE - 1) * specialistOperationalCost extraction.strategy
+
+inductive ExtractionWindow where
+  | closing
+  | stable
+deriving Repr, DecidableEq
+
+inductive BriefingPrivacyBoundary where
+  | trustedDealerOperatorVisibleThenPublicHandoff
+deriving Repr, DecidableEq
+
+/-- These observations are private until their owner signs a handoff which
+discloses them.  The constructor itself carries the role: a pathfinder briefing
+cannot be relabelled as containment evidence. -/
+inductive PrivateObservation where
+  | pathfinder (mapped : Route)
+  | engineer (structurallySound : Route)
+  | containment (hazardClear : Route)
+  | quartermaster (window : ExtractionWindow)
+deriving Repr, DecidableEq
+
+def PrivateObservation.role : PrivateObservation → CrewRole
+  | .pathfinder _ => .pathfinder
+  | .engineer _ => .engineer
+  | .containment _ => .containment
+  | .quartermaster _ => .quartermaster
+
+def PrivateObservation.supportedRoute? : PrivateObservation → Option Route
+  | .pathfinder route | .engineer route | .containment route => some route
+  | .quartermaster _ => none
+
+def PrivateObservation.code : PrivateObservation → Nat
+  | .pathfinder route => 10 + route.code
+  | .engineer route => 20 + route.code
+  | .containment route => 30 + route.code
+  | .quartermaster .closing => 40
+  | .quartermaster .stable => 41
+
+structure BriefingAssignment where
+  seat : SeatId
+  observation : PrivateObservation
+deriving DecidableEq
+
+structure RouteOutcomeSpec where
+  route : Route
+  extraction : ExtractionChoice
+  operationalCost : Nat
+  featuredArtifact : ArtifactRef
+  outcome : ActivityOutcome.Raw
+deriving DecidableEq
+
+def RouteOutcomeSpec.key (spec : RouteOutcomeSpec) : Route × ExtractionChoice :=
+  (spec.route, spec.extraction)
+
+def routeOutcomeBy? : List RouteOutcomeSpec → Route → ExtractionChoice →
+    Option RouteOutcomeSpec
+  | [], _, _ => none
+  | spec :: specs, route, extraction =>
+      if spec.route = route ∧ spec.extraction = extraction then some spec
+      else routeOutcomeBy? specs route extraction
+
+def briefingBySeat? : List BriefingAssignment → SeatId → Option BriefingAssignment
+  | [], _ => none
+  | briefing :: briefings, id =>
+      if briefing.seat = id then some briefing else briefingBySeat? briefings id
+
+structure RawConfig where
+  federationId : Digest32
+  contentSession : Digest32
+  missionEpoch : EpochId
+  missionId : MissionId
+  relayId : Digest32
+  briefingPrivacy : BriefingPrivacyBoundary
+  briefingHashSuiteId : Digest32
+  briefingCommitment : Digest32
+  messageDigestSuiteId : Digest32
+  signingSuiteId : Digest32
+  roster : List Seat
+  policy : ActivityOutcome.Policy
+  operationalBudget : Nat
+  routeOutcomes : List RouteOutcomeSpec
+deriving DecidableEq
+
+/-- Public identity of the exact activated mission.  The hidden briefing deck is
+bound by `briefingCommitment`; collision resistance of its deployment hash is a
+named boundary rather than a theorem about `Digest32`. -/
+structure SessionDigest where
+  federationId : Digest32
+  contentSession : Digest32
+  missionEpoch : EpochId
+  missionId : MissionId
+  relayId : Digest32
+  briefingPrivacy : BriefingPrivacyBoundary
+  briefingHashSuiteId : Digest32
+  briefingCommitment : Digest32
+  messageDigestSuiteId : Digest32
+  signingSuiteId : Digest32
+  roster : List Seat
+  policy : ActivityOutcome.Policy
+  operationalBudget : Nat
+  routeOutcomes : List RouteOutcomeSpec
+deriving DecidableEq
+
+def RawConfig.sessionDigest (raw : RawConfig) : SessionDigest where
+  federationId := raw.federationId
+  contentSession := raw.contentSession
+  missionEpoch := raw.missionEpoch
+  missionId := raw.missionId
+  relayId := raw.relayId
+  briefingPrivacy := raw.briefingPrivacy
+  briefingHashSuiteId := raw.briefingHashSuiteId
+  briefingCommitment := raw.briefingCommitment
+  messageDigestSuiteId := raw.messageDigestSuiteId
+  signingSuiteId := raw.signingSuiteId
+  roster := raw.roster
+  policy := raw.policy
+  operationalBudget := raw.operationalBudget
+  routeOutcomes := raw.routeOutcomes
+
+/-- Exact ordered deck preimage.  The digest boundary receives deployment
+identity, roster order, the temporal privacy label, and every role briefing. -/
+structure BriefingDeckPreimage where
+  federationId : Digest32
+  contentSession : Digest32
+  missionEpoch : EpochId
+  missionId : MissionId
+  relayId : Digest32
+  privacy : BriefingPrivacyBoundary
+  roster : List Seat
+  orderedBriefings : List BriefingAssignment
+deriving DecidableEq
+
+def briefingDeckPreimage (raw : RawConfig)
+    (briefings : List BriefingAssignment) : BriefingDeckPreimage where
+  federationId := raw.federationId
+  contentSession := raw.contentSession
+  missionEpoch := raw.missionEpoch
+  missionId := raw.missionId
+  relayId := raw.relayId
+  privacy := raw.briefingPrivacy
+  roster := raw.roster
+  orderedBriefings := briefings
+
+/-- Activated digest trust boundary.  Collision resistance and faithful byte
+encoding remain deployment obligations; `Config` prevents substitution of this
+function under the same suite id after activation. -/
+structure BriefingDigestBoundary where
+  id : Digest32
+  digest : BriefingDeckPreimage → Digest32
+
+def expectedRoles : List CrewRole :=
+  [.pathfinder, .engineer, .containment, .quartermaster]
+
+def briefingsValidB (roster : List Seat) (briefings : List BriefingAssignment) : Bool :=
+  decide (briefings.map BriefingAssignment.seat = roster.map Seat.id) &&
+  briefings.all fun briefing =>
+    match seatById? roster briefing.seat with
+    | none => false
+    | some seat => decide (briefing.observation.role = seat.role)
+
+def expectedRouteOutcomeKeys : List (Route × ExtractionChoice) :=
+  [ (.maintenanceSpine, .returnNow), (.maintenanceSpine, .descendFurther)
+  , (.signalGallery, .returnNow), (.signalGallery, .descendFurther)
+  , (.sealedNave, .returnNow), (.sealedNave, .descendFurther) ]
+
+def routeSpecsFor (extraction : ExtractionChoice)
+    (specs : List RouteOutcomeSpec) : List RouteOutcomeSpec :=
+  specs.filter fun spec => decide (spec.extraction = extraction)
+
+def routeCostsFor (extraction : ExtractionChoice)
+    (specs : List RouteOutcomeSpec) : List Nat :=
+  (routeSpecsFor extraction specs).map RouteOutcomeSpec.operationalCost
+
+def routeArtifactsFor (extraction : ExtractionChoice)
+    (specs : List RouteOutcomeSpec) : List ArtifactRef :=
+  (routeSpecsFor extraction specs).map RouteOutcomeSpec.featuredArtifact
+
+def routeRewardsFor (extraction : ExtractionChoice)
+    (specs : List RouteOutcomeSpec) : List ActivityOutcome.Raw :=
+  (routeSpecsFor extraction specs).map RouteOutcomeSpec.outcome
+
+/-- Because safe return depends on matching recommendations rather than hidden
+sensor agreement, any authored return route can be recommended by two specialists.
+Activation therefore requires at least one such route to remain affordable after
+all three mandatory survey handoffs. -/
+def authoredSafeTerminalReachabilityFloorB (raw : RawConfig) : Bool :=
+  (routeSpecsFor .returnNow raw.routeOutcomes).any fun spec =>
+    decide (mandatorySpecialistSpend .returnNow + spec.operationalCost ≤
+      raw.operationalBudget)
+
+def rawConfigValidB (raw : RawConfig) (briefings : List BriefingAssignment)
+    (briefingDigest : BriefingDigestBoundary) : Bool :=
+  decide (raw.roster.length = CREW_SIZE) &&
+  decide (raw.roster.map Seat.id = [⟨0⟩, ⟨1⟩, ⟨2⟩, ⟨3⟩]) &&
+  decide (raw.roster.map Seat.role = expectedRoles) &&
+  decide (raw.roster.map Seat.playerKey).Nodup &&
+  decide (raw.roster.map Seat.credential).Nodup &&
+  raw.roster.all (fun seat => decide (seat.initialCounter + 1 < PLAYER_COUNTER_MODULUS)) &&
+  briefingsValidB raw.roster briefings &&
+  decide (raw.briefingPrivacy =
+    .trustedDealerOperatorVisibleThenPublicHandoff) &&
+  decide (raw.briefingHashSuiteId = briefingDigest.id) &&
+  decide (raw.briefingCommitment =
+    briefingDigest.digest (briefingDeckPreimage raw briefings)) &&
+  decide (raw.federationId = raw.policy.mission.federationId) &&
+  decide (raw.contentSession = raw.policy.mission.contentSession) &&
+  decide (raw.missionEpoch = raw.policy.mission.epoch) &&
+  decide (raw.missionId = raw.policy.mission.missionId) &&
+  decide (raw.policy.allowedBeta.filter (fun artifact =>
+    artifact.missionId = raw.missionId) = raw.policy.allowedBeta) &&
+  decide (0 < raw.operationalBudget ∧ raw.operationalBudget ≤ 32) &&
+  decide (raw.routeOutcomes.map RouteOutcomeSpec.key = expectedRouteOutcomeKeys) &&
+  raw.routeOutcomes.all (fun spec =>
+    decide (0 < spec.operationalCost ∧ spec.operationalCost ≤ raw.operationalBudget) &&
+    (ActivityOutcome.validate raw.policy spec.outcome).isSome &&
+    decide (spec.featuredArtifact ∈ spec.outcome.betaCandidates) &&
+    decide (spec.featuredArtifact.missionId = raw.missionId) &&
+    spec.outcome.betaCandidates.all fun artifact =>
+      decide (artifact.missionId = raw.missionId)) &&
+  authoredSafeTerminalReachabilityFloorB raw &&
+  decide (routeCostsFor .returnNow raw.routeOutcomes).Nodup &&
+  decide (routeCostsFor .descendFurther raw.routeOutcomes).Nodup &&
+  decide (routeArtifactsFor .returnNow raw.routeOutcomes).Nodup &&
+  decide (routeArtifactsFor .descendFurther raw.routeOutcomes).Nodup &&
+  decide (routeRewardsFor .returnNow raw.routeOutcomes).Nodup &&
+  decide (routeRewardsFor .descendFurther raw.routeOutcomes).Nodup
+
+structure SeatAdmissionBody where
+  session : SessionDigest
+  seat : Seat
+deriving DecidableEq
+
+abbrev SIGNATURE_BYTE_LENGTH : Nat := 64
+
+/-- Finite representation of an external signature.  These bytes are opaque to
+the semantic kernel; only the activated verifier interprets them. -/
+structure SignatureBytes where
+  bytes : List (Fin 256)
+  length_eq : bytes.length = SIGNATURE_BYTE_LENGTH
+deriving DecidableEq
+
+structure SeatSignature where
+  bytes : SignatureBytes
+deriving DecidableEq
+
+structure HandoffSignature where
+  bytes : SignatureBytes
+deriving DecidableEq
+
+/-! ## Signed asynchronous handoffs -/
+
+inductive Decision where
+  | specialist (recommended : Route) (command : Command)
+  | finalize (chosen : Route) (extraction : ExtractionChoice) (command : Command)
+deriving Repr, DecidableEq
+
+def Decision.command : Decision → Command
+  | .specialist _ command | .finalize _ _ command => command
+
+def Decision.route : Decision → Route
+  | .specialist route _ | .finalize route _ _ => route
+
+def Decision.code : Decision → Nat
+  | .specialist route command => 100 + route.code * 10 + command.code
+  | .finalize route .returnNow command => 200 + route.code * 10 + command.code
+  | .finalize route .descendFurther command => 300 + route.code * 10 + command.code
+
+inductive MissionPhase where
+  | active
+  | extracted
+deriving Repr, DecidableEq
+
+structure SeatCounter where
+  seat : SeatId
+  counter : Nat
+deriving Repr, DecidableEq
+
+structure HandoffTrace where
+  sequence : Nat
+  seat : Seat
+  previousCounter : Nat
+  counter : Nat
+  observation : PrivateObservation
+  decision : Decision
+  seatSignature : SeatSignature
+  signature : HandoffSignature
+deriving DecidableEq
+
+structure StateSnapshot where
+  phase : MissionPhase
+  sequence : Nat
+  nextSeat : Nat
+  counters : List SeatCounter
+  strategy : Option Strategy
+  operationalBudgetRemaining : Nat
+  transcript : List HandoffTrace
+deriving DecidableEq
+
+structure StateRoot where
+  session : SessionDigest
+  snapshot : StateSnapshot
+deriving DecidableEq
+
+structure HandoffBody where
+  session : SessionDigest
+  sequence : Nat
+  preRoot : StateRoot
+  seat : Seat
+  previousCounter : Nat
+  counter : Nat
+  observation : PrivateObservation
+  decision : Decision
+deriving DecidableEq
+
+abbrev SIGNING_FORMAT_VERSION : Nat := 1
+
+/-- Canonical signing preimages retain the complete semantic body instead of an
+ad-hoc arithmetic selection of fields.  A strict wire adapter must encode these
+structures prefix-free and byte-exact before applying its signature hash. -/
+structure SeatSigningPreimage where
+  formatVersion : Nat
+  messageDigestSuiteId : Digest32
+  signatureSuiteId : Digest32
+  body : SeatAdmissionBody
+deriving DecidableEq
+
+structure HandoffSigningPreimage where
+  formatVersion : Nat
+  messageDigestSuiteId : Digest32
+  signatureSuiteId : Digest32
+  body : HandoffBody
+deriving DecidableEq
+
+def SeatAdmissionBody.signingPreimage (messageDigestSuiteId signatureSuiteId : Digest32)
+    (body : SeatAdmissionBody) : SeatSigningPreimage :=
+  ⟨SIGNING_FORMAT_VERSION, messageDigestSuiteId, signatureSuiteId, body⟩
+
+def HandoffBody.signingPreimage (messageDigestSuiteId signatureSuiteId : Digest32)
+    (body : HandoffBody) : HandoffSigningPreimage :=
+  ⟨SIGNING_FORMAT_VERSION, messageDigestSuiteId, signatureSuiteId, body⟩
+
+/-! The message digest and signature verifier are separate activated boundaries.
+A publicly computable digest commits to a message; it is never proof that the
+seat's private key signed that message. -/
+structure SigningMessageDigestBoundary where
+  id : Digest32
+  seatMessageDigest : SeatSigningPreimage → Digest32
+  handoffMessageDigest : HandoffSigningPreimage → Digest32
+
+/-- Deployment-supplied verification of an exact finite signature byte string
+against the credential, player key, and full canonical semantic preimage. -/
+structure ActivatedSignatureVerifier where
+  id : Digest32
+  verifySeat : Digest32 → CredentialId → SeatSigningPreimage → SignatureBytes → Bool
+  verifyHandoff :
+    Digest32 → CredentialId → HandoffSigningPreimage → SignatureBytes → Bool
+
+/-- Digest selection, signature verification, and the clear briefing deck are
+activated deployment authority.  The private constructor prevents an accept-all
+verifier or same-id function substitution after activation.  It does not prove
+the production verifier's cryptographic security. -/
+structure Config where
+  private mk ::
+  raw : RawConfig
+  private briefings : List BriefingAssignment
+  private briefingDigest : BriefingDigestBoundary
+  private messageDigest : SigningMessageDigestBoundary
+  private signatureVerifier : ActivatedSignatureVerifier
+  valid : rawConfigValidB raw briefings briefingDigest = true
+  messageDigestSuiteExact : raw.messageDigestSuiteId = messageDigest.id
+  signingSuiteExact : raw.signingSuiteId = signatureVerifier.id
+
+/-- Public message commitment for display, logging, and detached transport.  It
+does not authenticate the seat and cannot be submitted as a signature. -/
+def SeatAdmissionBody.messageDigest (config : Config)
+    (body : SeatAdmissionBody) : Digest32 :=
+  config.messageDigest.seatMessageDigest
+    (body.signingPreimage config.raw.messageDigestSuiteId config.raw.signingSuiteId)
+
+/-- Public message commitment, not proof of key possession. -/
+def HandoffBody.messageDigest (config : Config) (body : HandoffBody) : Digest32 :=
+  config.messageDigest.handoffMessageDigest
+    (body.signingPreimage config.raw.messageDigestSuiteId config.raw.signingSuiteId)
+
+def seatSignatureValidB (config : Config) (seat : Seat)
+    (body : SeatAdmissionBody) (signature : SeatSignature) : Bool :=
+  config.signatureVerifier.verifySeat seat.playerKey seat.credential
+    (body.signingPreimage config.raw.messageDigestSuiteId config.raw.signingSuiteId)
+    signature.bytes
+
+def handoffSignatureValidB (config : Config) (seat : Seat)
+    (body : HandoffBody) (signature : HandoffSignature) : Bool :=
+  config.signatureVerifier.verifyHandoff seat.playerKey seat.credential
+    (body.signingPreimage config.raw.messageDigestSuiteId config.raw.signingSuiteId)
+    signature.bytes
+
+structure SeatCapability (config : Config) where
+  private mk ::
+  seat : Seat
+  admission : SeatAdmissionBody
+  signature : SeatSignature
+  authenticated : seatSignatureValidB config seat admission signature = true
+deriving DecidableEq
+
+/-- A private observation may be opened only through the exact authenticated
+seat capability.  The observation becomes public only when copied into a signed
+handoff body. -/
+structure Briefing (config : Config) where
+  private mk ::
+  seat : Seat
+  observation : PrivateObservation
+deriving DecidableEq
+
+structure SignedHandoff (config : Config) where
+  capability : SeatCapability config
+  briefing : Briefing config
+  body : HandoffBody
+  signature : HandoffSignature
+deriving DecidableEq
+
+structure State where
+  private mk ::
+  snapshot : StateSnapshot
+  root : StateRoot
+deriving DecidableEq
+
+structure CanonicalRunAdmission (config : Config) where
+  private mk ::
+  session : SessionDigest
+  exactSession : session = config.raw.sessionDigest
+
+def initialCounters (roster : List Seat) : List SeatCounter :=
+  roster.map fun seat => ⟨seat.id, seat.initialCounter⟩
+
+def rootFor (config : Config) (snapshot : StateSnapshot) : StateRoot :=
+  ⟨config.raw.sessionDigest, snapshot⟩
+
+private def initialState (config : Config) : State :=
+  let snapshot : StateSnapshot := {
+    phase := .active
+    sequence := 0
+    nextSeat := 0
+    counters := initialCounters config.raw.roster
+    strategy := none
+    operationalBudgetRemaining := config.raw.operationalBudget
+    transcript := []
+  }
+  ⟨snapshot, rootFor config snapshot⟩
+
+def start {config : Config} (_admission : CanonicalRunAdmission config) : State :=
+  initialState config
+
+def counterFor? : List SeatCounter → SeatId → Option Nat
+  | [], _ => none
+  | counter :: counters, id =>
+      if counter.seat = id then some counter.counter else counterFor? counters id
+
+def setCounter (counters : List SeatCounter) (id : SeatId) (value : Nat) : List SeatCounter :=
+  counters.map fun counter =>
+    if counter.seat = id then { counter with counter := value } else counter
+
+def expectedAdmission (config : Config) (seat : Seat) : SeatAdmissionBody :=
+  ⟨config.raw.sessionDigest, seat⟩
+
+def authenticateSeat? (config : Config) (id : SeatId)
+    (signature : SeatSignature) : Option (SeatCapability config) := do
+  let seat ← seatById? config.raw.roster id
+  let admission := expectedAdmission config seat
+  if h : seatSignatureValidB config seat admission signature = true then
+    some ⟨seat, admission, signature, h⟩
+  else none
+
+def briefingFor? (config : Config) (capability : SeatCapability config) :
+    Option (Briefing config) := do
+  let assignment ← briefingBySeat? config.briefings capability.seat.id
+  if assignment.observation.role = capability.seat.role then
+    some ⟨capability.seat, assignment.observation⟩
+  else none
+
+def expectedBody? (config : Config) (state : State)
+    (capability : SeatCapability config) (briefing : Briefing config)
+    (decision : Decision) : Option HandoffBody := do
+  let previousCounter ← counterFor? state.snapshot.counters capability.seat.id
+  some {
+    session := config.raw.sessionDigest
+    sequence := state.snapshot.sequence
+    preRoot := state.root
+    seat := capability.seat
+    previousCounter
+    counter := previousCounter + 1
+    observation := briefing.observation
+    decision
+  }
+
+def traceOf {config : Config} (handoff : SignedHandoff config) : HandoffTrace where
+  sequence := handoff.body.sequence
+  seat := handoff.body.seat
+  previousCounter := handoff.body.previousCounter
+  counter := handoff.body.counter
+  observation := handoff.body.observation
+  decision := handoff.body.decision
+  seatSignature := handoff.capability.signature
+  signature := handoff.signature
+
+def strategyCompatibleB (current : Option Strategy) (decision : Decision) : Bool :=
+  match current, decision.command.strategy? with
+  | _, none => false
+  | none, some _ => true
+  | some before, some after => decide (before = after)
+
+def decisionRoleExactB (role : CrewRole) (decision : Decision) : Bool :=
+  (match decision.command.role? with
+    | none => false
+    | some authored => decide (authored = role)) &&
+  match role, decision with
+  | .quartermaster, .finalize _ _ _ => true
+  | .pathfinder, .specialist _ _ => true
+  | .engineer, .specialist _ _ => true
+  | .containment, .specialist _ _ => true
+  | _, _ => false
+
+def recommendationCount (transcript : List HandoffTrace) (route : Route) : Nat :=
+  (transcript.filter fun trace => match trace.decision with
+    | .specialist recommendation _ => decide (recommendation = route)
+    | .finalize _ _ _ => false).length
+
+def evidenceCount (transcript : List HandoffTrace) (route : Route) : Nat :=
+  (transcript.filter fun trace =>
+    decide (trace.observation.supportedRoute? = some route)).length
+
+def finalChoiceValidB (state : State) (observation : PrivateObservation)
+    (decision : Decision) : Bool :=
+  match observation, decision with
+  | .quartermaster window, .finalize route extraction command =>
+      decide (state.snapshot.transcript.length = 3) &&
+      decide (command.strategy? = some extraction.strategy) &&
+      match extraction with
+      | .returnNow =>
+          decide (2 ≤ recommendationCount state.snapshot.transcript route)
+      | .descendFurther =>
+          decide (recommendationCount state.snapshot.transcript route = 3) &&
+          decide (evidenceCount state.snapshot.transcript route = 3) &&
+          decide (window = .stable)
+  | _, _ => false
+
+def decisionOperationalCost? (config : Config) (decision : Decision) : Option Nat :=
+  match decision with
+  | .specialist _ command => command.strategy?.map specialistOperationalCost
+  | .finalize route extraction _ =>
+      (routeOutcomeBy? config.raw.routeOutcomes route extraction).map
+        RouteOutcomeSpec.operationalCost
+
+def transcriptOperationalCost (config : Config)
+    (transcript : List HandoffTrace) : Nat :=
+  (transcript.map fun trace =>
+    (decisionOperationalCost? config trace.decision).getD 0).sum
+
+def operationalCostAvailableB (config : Config) (state : State)
+    (decision : Decision) : Bool :=
+  match decisionOperationalCost? config decision with
+  | none => false
+  | some cost => decide (cost ≤ state.snapshot.operationalBudgetRemaining)
+
+def stateValidB (config : Config) (state : State) : Bool :=
+  decide (state.root = rootFor config state.snapshot) &&
+  decide (state.snapshot.sequence = state.snapshot.transcript.length) &&
+  decide (state.snapshot.sequence = state.snapshot.nextSeat) &&
+  decide (state.snapshot.nextSeat ≤ config.raw.roster.length) &&
+  decide (state.snapshot.operationalBudgetRemaining ≤ config.raw.operationalBudget) &&
+  decide (state.snapshot.operationalBudgetRemaining +
+    transcriptOperationalCost config state.snapshot.transcript =
+      config.raw.operationalBudget) &&
+  decide (state.snapshot.counters.map SeatCounter.seat = config.raw.roster.map Seat.id) &&
+  state.snapshot.counters.all (fun counter =>
+    decide (counter.counter < PLAYER_COUNTER_MODULUS)) &&
+  match state.snapshot.phase with
+  | .active => decide (state.snapshot.nextSeat < config.raw.roster.length)
+  | .extracted => decide (state.snapshot.nextSeat = config.raw.roster.length)
+
+/-! ## Combined record and exact replay -/
+
+structure CombinedFieldRecord (config : Config) where
+  private mk ::
+  session : SessionDigest
+  route : Route
+  extraction : ExtractionChoice
+  strategy : Strategy
+  routeOperationalCost : Nat
+  totalOperationalCost : Nat
+  transcript : List HandoffTrace
+  finalCounters : List SeatCounter
+  finalRoot : StateRoot
+  outcomeRaw : ActivityOutcome.Raw
+  outcome : ActivityOutcome.Checked config.raw.policy
+  outcomeExact : ActivityOutcome.validate config.raw.policy outcomeRaw = some outcome
+  featuredBeta : ArtifactRef
+  featuredDeclared : featuredBeta ∈ outcome.betaCandidates
+deriving DecidableEq
+
+/-- Unchecked semantic projection used for replay tests.  This is not a canonical
+wire value: it has no byte codec, allocation bounds, or durable event/CAS
+envelope, and must not be persisted, hashed, or signed directly. -/
+structure RawCombinedFieldRecord where
+  session : SessionDigest
+  route : Route
+  extraction : ExtractionChoice
+  strategy : Strategy
+  routeOperationalCost : Nat
+  totalOperationalCost : Nat
+  transcript : List HandoffTrace
+  finalCounters : List SeatCounter
+  finalRoot : StateRoot
+  outcome : ActivityOutcome.Raw
+  featuredBeta : ArtifactRef
+deriving DecidableEq
+
+def CombinedFieldRecord.toRaw {config : Config}
+    (record : CombinedFieldRecord config) : RawCombinedFieldRecord where
+  session := record.session
+  route := record.route
+  extraction := record.extraction
+  strategy := record.strategy
+  routeOperationalCost := record.routeOperationalCost
+  totalOperationalCost := record.totalOperationalCost
+  transcript := record.transcript
+  finalCounters := record.finalCounters
+  finalRoot := record.finalRoot
+  outcome := record.outcomeRaw
+  featuredBeta := record.featuredBeta
+
+private def completedRecord? (config : Config) (state : State) :
+    Option (CombinedFieldRecord config) := do
+  if state.snapshot.phase ≠ .extracted then none
+  let finalTrace ← state.snapshot.transcript.getLast?
+  let (route, extraction) ← match finalTrace.decision with
+    | .finalize route extraction _ => some (route, extraction)
+    | .specialist _ _ => none
+  let spec ← routeOutcomeBy? config.raw.routeOutcomes route extraction
+  let raw := spec.outcome
+  match houtcome : ActivityOutcome.validate config.raw.policy raw with
+  | none => none
+  | some outcome =>
+      if hfeatured : spec.featuredArtifact ∈ outcome.betaCandidates then
+        some ⟨config.raw.sessionDigest, route, extraction, extraction.strategy,
+          spec.operationalCost,
+          transcriptOperationalCost config state.snapshot.transcript,
+          state.snapshot.transcript, state.snapshot.counters, state.root, raw,
+          outcome, houtcome, spec.featuredArtifact, hfeatured⟩
+      else none
+
+structure StepResult (config : Config) where
+  private mk ::
+  state : State
+  completion : Option (CombinedFieldRecord config)
+deriving DecidableEq
+
+inductive Refusal where
+  | invalidState
+  | terminal
+  | wrongSeat
+  | capabilityMismatch
+  | briefingMismatch
+  | wrongSession
+  | staleSequence
+  | staleRoot
+  | bodySeatMismatch
+  | observationMismatch
+  | counterMismatch
+  | counterOutOfRange
+  | signatureRefused
+  | roleWidening
+  | strategyConflict
+  | routeEvidenceRefused
+  | insufficientOperationalBudget
+  | invalidSuccessor
+  | outcomeRefused
+deriving Repr, DecidableEq
+
+private def transition (config : Config) (state : State)
+    (handoff : SignedHandoff config) : State :=
+  let nextSeat := state.snapshot.nextSeat + 1
+  let operationalCost :=
+    (decisionOperationalCost? config handoff.body.decision).getD 0
+  let snapshot : StateSnapshot := {
+    phase := if nextSeat = config.raw.roster.length then .extracted else .active
+    sequence := state.snapshot.sequence + 1
+    nextSeat
+    counters := setCounter state.snapshot.counters handoff.body.seat.id handoff.body.counter
+    strategy := handoff.body.decision.command.strategy?
+    operationalBudgetRemaining :=
+      state.snapshot.operationalBudgetRemaining - operationalCost
+    transcript := state.snapshot.transcript ++ [traceOf handoff]
+  }
+  ⟨snapshot, rootFor config snapshot⟩
+
+def execute (config : Config) (state : State) (handoff : SignedHandoff config) :
+    Except Refusal (StepResult config) :=
+  if stateValidB config state ≠ true then .error .invalidState
+  else if state.snapshot.phase = .extracted then .error .terminal
+  else match config.raw.roster[state.snapshot.nextSeat]? with
+    | none => .error .terminal
+    | some expected =>
+      if handoff.capability.seat ≠ expected then .error .wrongSeat
+      else if seatById? config.raw.roster handoff.capability.seat.id ≠
+          some handoff.capability.seat then .error .capabilityMismatch
+      else if handoff.briefing.seat ≠ handoff.capability.seat then .error .briefingMismatch
+      else if handoff.body.session ≠ config.raw.sessionDigest then .error .wrongSession
+      else if handoff.body.sequence ≠ state.snapshot.sequence then .error .staleSequence
+      else if handoff.body.preRoot ≠ state.root then .error .staleRoot
+      else if handoff.body.seat ≠ handoff.capability.seat then .error .bodySeatMismatch
+      else match briefingBySeat? config.briefings handoff.capability.seat.id with
+        | none => .error .briefingMismatch
+        | some assignment =>
+          if handoff.briefing.observation ≠ assignment.observation then
+            .error .briefingMismatch
+          else if handoff.body.observation ≠ handoff.briefing.observation then
+            .error .observationMismatch
+          else match counterFor? state.snapshot.counters handoff.capability.seat.id with
+            | none => .error .invalidState
+            | some previous =>
+              if handoff.body.previousCounter ≠ previous ∨
+                  handoff.body.counter ≠ previous + 1 then .error .counterMismatch
+              else if PLAYER_COUNTER_MODULUS ≤ handoff.body.counter then
+                .error .counterOutOfRange
+              else if handoffSignatureValidB config handoff.capability.seat
+                  handoff.body handoff.signature ≠ true then .error .signatureRefused
+              else if decisionRoleExactB handoff.capability.seat.role
+                  handoff.body.decision ≠ true then .error .roleWidening
+              else if strategyCompatibleB state.snapshot.strategy
+                  handoff.body.decision ≠ true then .error .strategyConflict
+              else if handoff.capability.seat.role = .quartermaster &&
+                  finalChoiceValidB state handoff.body.observation
+                    handoff.body.decision ≠ true then .error .routeEvidenceRefused
+              else if operationalCostAvailableB config state
+                  handoff.body.decision ≠ true then .error .insufficientOperationalBudget
+              else
+                let successor := transition config state handoff
+                if stateValidB config successor ≠ true then .error .invalidSuccessor
+                else
+                  let completion := completedRecord? config successor
+                  if successor.snapshot.phase = .extracted && completion.isNone then
+                    .error .outcomeRefused
+                  else .ok ⟨successor, completion⟩
+
+def signedHandoffFromTrace? (config : Config) (state : State)
+    (trace : HandoffTrace) : Option (SignedHandoff config) := do
+  let capability ← authenticateSeat? config trace.seat.id trace.seatSignature
+  let briefing ← briefingFor? config capability
+  let body ← expectedBody? config state capability briefing trace.decision
+  let handoff : SignedHandoff config := ⟨capability, briefing, body, trace.signature⟩
+  if traceOf handoff = trace then some handoff else none
+
+def replayTrace (config : Config) : State → List HandoffTrace →
+    Except Refusal (StepResult config)
+  | state, [] => .ok ⟨state, completedRecord? config state⟩
+  | state, trace :: traces => do
+      let handoff ← match signedHandoffFromTrace? config state trace with
+        | none => .error .signatureRefused
+        | some handoff => .ok handoff
+      let result ← execute config state handoff
+      match traces with
+      | [] => .ok result
+      | _ => replayTrace config result.state traces
+
+def CombinedFieldRecord.validB {config : Config}
+    (record : CombinedFieldRecord config) : Bool :=
+  match replayTrace config (initialState config) record.transcript with
+  | .error _ => false
+  | .ok result => match result.completion with
+    | none => false
+    | some replayed => decide (record.toRaw = replayed.toRaw)
+
+/-- Opaque readmission witness.  A raw record is not upgraded to this type until
+the entire signed transcript has rebuilt the byte-for-byte semantic record. -/
+structure ReplayedFieldRecord (config : Config) where
+  private mk ::
+  record : CombinedFieldRecord config
+  exactReplay : record.validB = true
+
+/-- Unchecked field-record projections have no authority by themselves.
+Readmission requires the original one-shot run admission and exact signed replay.
+The deployment adapter must atomically consume the admission/session key. -/
+def admitCombinedFieldRecord? {config : Config}
+    (admission : CanonicalRunAdmission config) (raw : RawCombinedFieldRecord) :
+    Option (ReplayedFieldRecord config) := do
+  if raw.session ≠ admission.session then none
+  match houtcome : ActivityOutcome.validate config.raw.policy raw.outcome with
+  | none => none
+  | some outcome =>
+      if hfeatured : raw.featuredBeta ∈ outcome.betaCandidates then
+        let record : CombinedFieldRecord config := ⟨raw.session, raw.route, raw.extraction,
+          raw.strategy, raw.routeOperationalCost, raw.totalOperationalCost,
+          raw.transcript, raw.finalCounters, raw.finalRoot, raw.outcome, outcome,
+          houtcome, raw.featuredBeta, hfeatured⟩
+        if hvalid : record.validB = true then some ⟨record, hvalid⟩ else none
+      else none
+
+theorem execute_deterministic (config : Config) (state : State)
+    (handoff : SignedHandoff config) {left right : StepResult config}
+    (hl : execute config state handoff = .ok left)
+    (hr : execute config state handoff = .ok right) : left = right := by
+  rw [hl] at hr
+  exact Except.ok.inj hr
+
+/-- The canonical semantic preimage itself loses no handoff field.  Only the
+deployment digest from that preimage remains a cryptographic trust boundary. -/
+theorem handoff_signing_preimage_injective
+    (messageDigestSuiteId signatureSuiteId : Digest32) :
+    Function.Injective
+      (HandoffBody.signingPreimage messageDigestSuiteId signatureSuiteId) := by
+  intro left right h
+  exact congrArg HandoffSigningPreimage.body h
+
+theorem seat_signing_preimage_injective
+    (messageDigestSuiteId signatureSuiteId : Digest32) :
+    Function.Injective
+      (SeatAdmissionBody.signingPreimage messageDigestSuiteId signatureSuiteId) := by
+  intro left right h
+  exact congrArg SeatSigningPreimage.body h
+
+theorem completed_featured_artifact_is_beta_candidate {config : Config}
+    (record : CombinedFieldRecord config) :
+    record.featuredBeta ∈ record.outcome.betaCandidates :=
+  record.featuredDeclared
+
+/-! ## Executable cooperative fixture -/
+
+def digestFilled (value : Nat) : Digest32 where
+  bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
+  length_eq := by simp
+
+private def signatureBytesPattern (value : Nat) : SignatureBytes where
+  bytes :=
+    List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩ ++
+    List.replicate 32 ⟨(value + 1) % 256, Nat.mod_lt _ (by omega)⟩
+  length_eq := by simp [SIGNATURE_BYTE_LENGTH]
+
+def fixtureBriefings : List BriefingAssignment :=
+  [ ⟨⟨0⟩, .pathfinder .signalGallery⟩
+  , ⟨⟨1⟩, .engineer .signalGallery⟩
+  , ⟨⟨2⟩, .containment .signalGallery⟩
+  , ⟨⟨3⟩, .quartermaster .stable⟩ ]
+
+private def digestCode (digest : Digest32) : Nat :=
+  (digest.bytes.map Fin.val).sum
+
+private def listCode {α : Type} (code : α → Nat) : List α → Nat
+  | [] => 0
+  | value :: values => code value + 257 * listCode code values
+
+private def artifactCode (artifact : ArtifactRef) : Nat :=
+  artifact.missionId.value + 17 * artifact.artifactId.value +
+    31 * digestCode artifact.sourceDigest + 43 * digestCode artifact.contentDigest
+
+private def rawContributionCode (raw : RawContribution) : Nat :=
+  raw.intel + 17 * raw.supplies + 31 * raw.cohesion + 43 * raw.influence +
+    59 * raw.score + 71 * listCode RelicId.value raw.relics
+
+private def outcomeCode (raw : ActivityOutcome.Raw) : Nat :=
+  rawContributionCode raw.contribution +
+    97 * listCode artifactCode raw.betaCandidates
+
+private def seatCode (seat : Seat) : Nat :=
+  seat.id.value + 11 * digestCode seat.playerKey + 17 * seat.credential.value +
+    23 * (match seat.role with
+      | .pathfinder => 0 | .engineer => 1 | .containment => 2 | .quartermaster => 3) +
+    29 * seat.initialCounter
+
+private def routeOutcomeCode (spec : RouteOutcomeSpec) : Nat :=
+  spec.route.code + 7 * (match spec.extraction with
+    | .returnNow => 0 | .descendFurther => 1) +
+    13 * spec.operationalCost + 19 * artifactCode spec.featuredArtifact +
+    31 * outcomeCode spec.outcome
+
+private def sessionCode (session : SessionDigest) : Nat :=
+  digestCode session.federationId + 3 * digestCode session.contentSession +
+    5 * session.missionEpoch.value + 7 * session.missionId.value +
+    11 * digestCode session.relayId + 13 * digestCode session.briefingHashSuiteId +
+    17 * digestCode session.briefingCommitment +
+    19 * digestCode session.messageDigestSuiteId +
+    23 * digestCode session.signingSuiteId + 29 * listCode seatCode session.roster +
+    31 * session.operationalBudget + 37 * listCode routeOutcomeCode session.routeOutcomes
+
+private def seatCounterCode (counter : SeatCounter) : Nat :=
+  counter.seat.value + 17 * counter.counter
+
+private def signatureBytesCode (signature : SignatureBytes) : Nat :=
+  (signature.bytes.map Fin.val).sum
+
+private def traceCode (trace : HandoffTrace) : Nat :=
+  trace.sequence + 3 * seatCode trace.seat + 5 * trace.previousCounter +
+    7 * trace.counter + 11 * trace.observation.code + 13 * trace.decision.code +
+    17 * signatureBytesCode trace.seatSignature.bytes +
+    19 * signatureBytesCode trace.signature.bytes
+
+private def snapshotCode (snapshot : StateSnapshot) : Nat :=
+  (match snapshot.phase with | .active => 0 | .extracted => 1) +
+    3 * snapshot.sequence + 5 * snapshot.nextSeat +
+    7 * listCode seatCounterCode snapshot.counters +
+    11 * (match snapshot.strategy with
+      | none => 0 | some .survey => 1 | some .salvage => 2) +
+    13 * snapshot.operationalBudgetRemaining +
+    17 * listCode traceCode snapshot.transcript
+
+private def stateRootCode (root : StateRoot) : Nat :=
+  sessionCode root.session + 101 * snapshotCode root.snapshot
+
+private def briefingPreimageCode (preimage : BriefingDeckPreimage) : Nat :=
+  digestCode preimage.federationId + 3 * digestCode preimage.contentSession +
+    5 * preimage.missionEpoch.value + 7 * preimage.missionId.value +
+    11 * digestCode preimage.relayId + 13 * listCode seatCode preimage.roster +
+    17 * listCode (fun briefing =>
+      briefing.seat.value + 19 * briefing.observation.code) preimage.orderedBriefings
+
+private def seatPreimageCode (preimage : SeatSigningPreimage) : Nat :=
+  preimage.formatVersion + 3 * digestCode preimage.messageDigestSuiteId +
+    5 * digestCode preimage.signatureSuiteId +
+    7 * sessionCode preimage.body.session + 11 * seatCode preimage.body.seat
+
+private def handoffPreimageCode (preimage : HandoffSigningPreimage) : Nat :=
+  preimage.formatVersion + 3 * digestCode preimage.messageDigestSuiteId +
+    5 * digestCode preimage.signatureSuiteId +
+    7 * sessionCode preimage.body.session + 11 * preimage.body.sequence +
+    13 * stateRootCode preimage.body.preRoot + 17 * seatCode preimage.body.seat +
+    19 * preimage.body.previousCounter + 23 * preimage.body.counter +
+    29 * preimage.body.observation.code + 31 * preimage.body.decision.code
+
+private def fixtureBriefingDigest : BriefingDigestBoundary where
+  id := digestFilled 190
+  digest preimage := digestFilled (briefingPreimageCode preimage)
+
+private def fixtureMessageDigestSuiteId : Digest32 := digestFilled 191
+
+private def fixtureSignatureSuiteId : Digest32 := digestFilled 192
+
+private def fixtureMessageDigest : SigningMessageDigestBoundary where
+  id := fixtureMessageDigestSuiteId
+  seatMessageDigest preimage := digestFilled (seatPreimageCode preimage)
+  handoffMessageDigest preimage := digestFilled (handoffPreimageCode preimage)
+
+/-! This deterministic verifier is fixture-only.  Production activation must
+replace it with a cryptographic verifier and faithful canonical byte codec; the
+kernel still supplies the full semantic preimage and exact 64-byte signature. -/
+private def fixtureExpectedSignature (domain : Nat) (playerKey : Digest32)
+    (credential : CredentialId) (messageDigest : Digest32) : SignatureBytes :=
+  signatureBytesPattern
+    (domain + 3 * (digestCode playerKey / 32) + 5 * credential.value +
+      7 * (digestCode messageDigest / 32) + 104729)
+
+private def fixtureSignatureVerifier : ActivatedSignatureVerifier where
+  id := fixtureSignatureSuiteId
+  verifySeat playerKey credential preimage signature :=
+    decide (preimage.formatVersion = SIGNING_FORMAT_VERSION) &&
+    decide (preimage.messageDigestSuiteId = fixtureMessageDigestSuiteId) &&
+    decide (preimage.signatureSuiteId = fixtureSignatureSuiteId) &&
+    decide (signature = fixtureExpectedSignature 1 playerKey credential
+      (fixtureMessageDigest.seatMessageDigest preimage))
+  verifyHandoff playerKey credential preimage signature :=
+    decide (preimage.formatVersion = SIGNING_FORMAT_VERSION) &&
+    decide (preimage.messageDigestSuiteId = fixtureMessageDigestSuiteId) &&
+    decide (preimage.signatureSuiteId = fixtureSignatureSuiteId) &&
+    decide (signature = fixtureExpectedSignature 2 playerKey credential
+      (fixtureMessageDigest.handoffMessageDigest preimage))
+
+def fixtureMaintenanceArtifact : ArtifactRef := {
+  DeckExpedition.fixtureArtifact with
+  artifactId := ⟨813⟩
+  contentDigest := digestFilled 201 }
+
+def fixtureSignalArtifact : ArtifactRef := DeckExpedition.fixtureArtifact
+
+def fixtureNaveArtifact : ArtifactRef := {
+  DeckExpedition.fixtureArtifact with
+  artifactId := ⟨814⟩
+  contentDigest := digestFilled 202 }
+
+def fixturePolicy : ActivityOutcome.Policy where
+  mission := DeckExpedition.fixtureMission
+  allowedBeta := {fixtureMaintenanceArtifact, fixtureSignalArtifact, fixtureNaveArtifact}
+  resultLimit := ⟨1, by decide⟩
+  catalogue_bounded := by native_decide
+
+def wrongMissionArtifact : ArtifactRef := {
+  fixtureMaintenanceArtifact with missionId := ⟨7002⟩ }
+
+def wrongArtifactPolicy : ActivityOutcome.Policy where
+  mission := DeckExpedition.fixtureMission
+  allowedBeta := {fixtureMaintenanceArtifact, fixtureSignalArtifact,
+    fixtureNaveArtifact, wrongMissionArtifact}
+  resultLimit := ⟨1, by decide⟩
+  catalogue_bounded := by native_decide
+
+def fixtureOutcome (route : Route) (extraction : ExtractionChoice) :
+    ActivityOutcome.Raw where
+  contribution := match route, extraction with
+    | .maintenanceSpine, .returnNow => ⟨2, 4, 4, 0, 18, []⟩
+    | .maintenanceSpine, .descendFurther =>
+        ⟨3, 2, 3, 0, 48, [DeckExpedition.fixtureRelic]⟩
+    | .signalGallery, .returnNow => ⟨6, 2, 3, 0, 25, []⟩
+    | .signalGallery, .descendFurther =>
+        ⟨8, 0, 2, 0, 62, [DeckExpedition.fixtureRelic]⟩
+    | .sealedNave, .returnNow => ⟨4, 1, 6, 0, 31, []⟩
+    | .sealedNave, .descendFurther =>
+        ⟨5, 0, 5, 0, 79, [DeckExpedition.fixtureRelic]⟩
+  betaCandidates := [match route with
+    | .maintenanceSpine => fixtureMaintenanceArtifact
+    | .signalGallery => fixtureSignalArtifact
+    | .sealedNave => fixtureNaveArtifact]
+
+def wrongMissionOutcome : ActivityOutcome.Raw := {
+  fixtureOutcome .maintenanceSpine .returnNow with
+  betaCandidates := [wrongMissionArtifact] }
+
+def fixtureRouteOutcomes : List RouteOutcomeSpec :=
+  [ ⟨.maintenanceSpine, .returnNow, 2, fixtureMaintenanceArtifact,
+      fixtureOutcome .maintenanceSpine .returnNow⟩
+  , ⟨.maintenanceSpine, .descendFurther, 5, fixtureMaintenanceArtifact,
+      fixtureOutcome .maintenanceSpine .descendFurther⟩
+  , ⟨.signalGallery, .returnNow, 3, fixtureSignalArtifact,
+      fixtureOutcome .signalGallery .returnNow⟩
+  , ⟨.signalGallery, .descendFurther, 7, fixtureSignalArtifact,
+      fixtureOutcome .signalGallery .descendFurther⟩
+  , ⟨.sealedNave, .returnNow, 11, fixtureNaveArtifact,
+      fixtureOutcome .sealedNave .returnNow⟩
+  , ⟨.sealedNave, .descendFurther, 12, fixtureNaveArtifact,
+      fixtureOutcome .sealedNave .descendFurther⟩ ]
+
+/-- Every terminal cost is individually within budget three, but mandatory
+specialist play spends all three units before the quartermaster can act. -/
+def globallyUnwinnableRouteOutcomes : List RouteOutcomeSpec :=
+  [ ⟨.maintenanceSpine, .returnNow, 1, fixtureMaintenanceArtifact,
+      fixtureOutcome .maintenanceSpine .returnNow⟩
+  , ⟨.maintenanceSpine, .descendFurther, 1, fixtureMaintenanceArtifact,
+      fixtureOutcome .maintenanceSpine .descendFurther⟩
+  , ⟨.signalGallery, .returnNow, 2, fixtureSignalArtifact,
+      fixtureOutcome .signalGallery .returnNow⟩
+  , ⟨.signalGallery, .descendFurther, 2, fixtureSignalArtifact,
+      fixtureOutcome .signalGallery .descendFurther⟩
+  , ⟨.sealedNave, .returnNow, 3, fixtureNaveArtifact,
+      fixtureOutcome .sealedNave .returnNow⟩
+  , ⟨.sealedNave, .descendFurther, 3, fixtureNaveArtifact,
+      fixtureOutcome .sealedNave .descendFurther⟩ ]
+
+def wrongArtifactRouteOutcomes : List RouteOutcomeSpec :=
+  [ ⟨.maintenanceSpine, .returnNow, 2, wrongMissionArtifact,
+      wrongMissionOutcome⟩
+  , ⟨.maintenanceSpine, .descendFurther, 5, fixtureMaintenanceArtifact,
+      fixtureOutcome .maintenanceSpine .descendFurther⟩
+  , ⟨.signalGallery, .returnNow, 3, fixtureSignalArtifact,
+      fixtureOutcome .signalGallery .returnNow⟩
+  , ⟨.signalGallery, .descendFurther, 7, fixtureSignalArtifact,
+      fixtureOutcome .signalGallery .descendFurther⟩
+  , ⟨.sealedNave, .returnNow, 11, fixtureNaveArtifact,
+      fixtureOutcome .sealedNave .returnNow⟩
+  , ⟨.sealedNave, .descendFurther, 12, fixtureNaveArtifact,
+      fixtureOutcome .sealedNave .descendFurther⟩ ]
+
+private def fixtureRawConfigBase : RawConfig where
+  federationId := DeckExpedition.fixtureMission.federationId
+  contentSession := DeckExpedition.fixtureMission.contentSession
+  missionEpoch := DeckExpedition.fixtureMission.epoch
+  missionId := DeckExpedition.fixtureMission.missionId
+  relayId := digestFilled 182
+  briefingPrivacy := .trustedDealerOperatorVisibleThenPublicHandoff
+  briefingHashSuiteId := fixtureBriefingDigest.id
+  briefingCommitment := digestFilled 0
+  messageDigestSuiteId := fixtureMessageDigest.id
+  signingSuiteId := fixtureSignatureVerifier.id
+  roster := fixtureRoster
+  policy := fixturePolicy
+  operationalBudget := 13
+  routeOutcomes := fixtureRouteOutcomes
+
+private def withFixtureBriefingCommitment (raw : RawConfig) : RawConfig := {
+  raw with
+  briefingCommitment := fixtureBriefingDigest.digest
+    (briefingDeckPreimage raw fixtureBriefings) }
+
+def fixtureRawConfig : RawConfig :=
+  withFixtureBriefingCommitment fixtureRawConfigBase
+
+def globallyUnwinnableRawConfig : RawConfig :=
+  withFixtureBriefingCommitment {
+    fixtureRawConfigBase with
+    operationalBudget := 3
+    routeOutcomes := globallyUnwinnableRouteOutcomes }
+
+theorem fixture_config_valid :
+    rawConfigValidB fixtureRawConfig fixtureBriefings fixtureBriefingDigest = true := by
+  native_decide
+
+theorem fixture_ordered_briefing_deck_is_commitment_bound :
+    fixtureRawConfig.briefingCommitment = fixtureBriefingDigest.digest
+      (briefingDeckPreimage fixtureRawConfig fixtureBriefings) := by
+  native_decide
+
+theorem hostile_unwinnable_terminal_costs_are_individually_within_budget :
+    globallyUnwinnableRouteOutcomes.all (fun spec =>
+      decide (0 < spec.operationalCost ∧
+        spec.operationalCost ≤ globallyUnwinnableRawConfig.operationalBudget)) = true := by
+  native_decide
+
+theorem hostile_unwinnable_config_has_no_affordable_safe_terminal :
+    authoredSafeTerminalReachabilityFloorB globallyUnwinnableRawConfig = false := by
+  native_decide
+
+theorem hostile_globally_unwinnable_config_refused_at_activation :
+    rawConfigValidB globallyUnwinnableRawConfig fixtureBriefings
+      fixtureBriefingDigest = false := by
+  native_decide
+
+def missionIdentityMutationsRefusedB : Bool :=
+  let mutations : List RawConfig :=
+    [ { fixtureRawConfigBase with federationId := digestFilled 241 }
+    , { fixtureRawConfigBase with contentSession := digestFilled 242 }
+    , { fixtureRawConfigBase with missionEpoch := ⟨243⟩ }
+    , { fixtureRawConfigBase with missionId := ⟨244⟩ } ]
+  mutations.all fun raw =>
+    !(rawConfigValidB (withFixtureBriefingCommitment raw) fixtureBriefings
+      fixtureBriefingDigest)
+
+theorem raw_identity_fields_must_exactly_match_policy_mission :
+    missionIdentityMutationsRefusedB = true := by
+  native_decide
+
+def wrongMissionArtifactRawConfig : RawConfig :=
+  withFixtureBriefingCommitment {
+    fixtureRawConfigBase with
+    policy := wrongArtifactPolicy
+    routeOutcomes := wrongArtifactRouteOutcomes }
+
+theorem wrong_mission_artifact_is_otherwise_declared_and_outcome_valid :
+    (ActivityOutcome.validate wrongArtifactPolicy wrongMissionOutcome).isSome = true ∧
+      wrongMissionArtifact ∈ wrongMissionOutcome.betaCandidates := by
+  native_decide
+
+theorem artifact_mission_must_exactly_match_activated_mission :
+    rawConfigValidB wrongMissionArtifactRawConfig fixtureBriefings
+      fixtureBriefingDigest = false := by
+  native_decide
+
+def substitutedFixtureBriefings : List BriefingAssignment :=
+  [ ⟨⟨0⟩, .pathfinder .sealedNave⟩
+  , ⟨⟨1⟩, .engineer .signalGallery⟩
+  , ⟨⟨2⟩, .containment .signalGallery⟩
+  , ⟨⟨3⟩, .quartermaster .stable⟩ ]
+
+theorem hostile_same_role_briefing_substitution_breaks_activation_commitment :
+    rawConfigValidB fixtureRawConfig substitutedFixtureBriefings
+      fixtureBriefingDigest = false := by
+  native_decide
+
+private def fixtureConfig : Config where
+  raw := fixtureRawConfig
+  briefings := fixtureBriefings
+  briefingDigest := fixtureBriefingDigest
+  messageDigest := fixtureMessageDigest
+  signatureVerifier := fixtureSignatureVerifier
+  valid := fixture_config_valid
+  messageDigestSuiteExact := rfl
+  signingSuiteExact := rfl
+
+private def fixtureAdmission : CanonicalRunAdmission fixtureConfig :=
+  ⟨fixtureConfig.raw.sessionDigest, rfl⟩
+
+private def testCapability? (id : SeatId) : Option (SeatCapability fixtureConfig) := do
+  let seat ← seatById? fixtureConfig.raw.roster id
+  let body := expectedAdmission fixtureConfig seat
+  let signature : SeatSignature := {
+    bytes := fixtureExpectedSignature 1 seat.playerKey seat.credential
+      (fixtureMessageDigest.seatMessageDigest
+        (body.signingPreimage fixtureConfig.raw.messageDigestSuiteId
+          fixtureConfig.raw.signingSuiteId)) }
+  authenticateSeat? fixtureConfig id signature
+
+private def testHandoff? (state : State) (id : SeatId) (decision : Decision) :
+    Option (SignedHandoff fixtureConfig) := do
+  let capability ← testCapability? id
+  let briefing ← briefingFor? fixtureConfig capability
+  let body ← expectedBody? fixtureConfig state capability briefing decision
+  let signature : HandoffSignature := {
+    bytes := fixtureExpectedSignature 2 capability.seat.playerKey
+      capability.seat.credential (fixtureMessageDigest.handoffMessageDigest
+        (body.signingPreimage fixtureConfig.raw.messageDigestSuiteId
+          fixtureConfig.raw.signingSuiteId)) }
+  some ⟨capability, briefing, body, signature⟩
+
+private def drive : State → List (SeatId × Decision) →
+    Option (StepResult fixtureConfig)
+  | state, [] => some ⟨state, completedRecord? fixtureConfig state⟩
+  | state, (id, decision) :: decisions => do
+      let handoff ← testHandoff? state id decision
+      match execute fixtureConfig state handoff with
+      | .error _ => none
+      | .ok result =>
+          match decisions with
+          | [] => some result
+          | _ => drive result.state decisions
+
+def safePlan : List (SeatId × Decision) :=
+  [ (⟨0⟩, .specialist .signalGallery .chartPressureRoute)
+  , (⟨1⟩, .specialist .signalGallery .braceTransit)
+  , (⟨2⟩, .specialist .sealedNave .quietAnomaly)
+  , (⟨3⟩, .finalize .signalGallery .returnNow .bankSupplies) ]
+
+def safeMaintenancePlan : List (SeatId × Decision) :=
+  [ (⟨0⟩, .specialist .maintenanceSpine .chartPressureRoute)
+  , (⟨1⟩, .specialist .maintenanceSpine .braceTransit)
+  , (⟨2⟩, .specialist .signalGallery .quietAnomaly)
+  , (⟨3⟩, .finalize .maintenanceSpine .returnNow .bankSupplies) ]
+
+def deepPlan : List (SeatId × Decision) :=
+  [ (⟨0⟩, .specialist .signalGallery .markSalvageRoute)
+  , (⟨1⟩, .specialist .signalGallery .overdriveCargoLift)
+  , (⟨2⟩, .specialist .signalGallery .screenRecovery)
+  , (⟨3⟩, .finalize .signalGallery .descendFurther .secureCache) ]
+
+private def completionFor? (plan : List (SeatId × Decision)) :
+    Option (CombinedFieldRecord fixtureConfig) := do
+  let result ← drive (start fixtureAdmission) plan
+  result.completion
+
+theorem safe_extraction_accepts_two_matching_signed_recommendations :
+    (completionFor? safePlan).isSome = true := by native_decide
+
+theorem alternative_safe_route_is_reachable :
+    (completionFor? safeMaintenancePlan).isSome = true := by native_decide
+
+theorem deep_recovery_requires_and_accepts_full_crew_consensus :
+    (completionFor? deepPlan).isSome = true := by native_decide
+
+def completedPlansDifferB : Bool :=
+  match completionFor? safePlan, completionFor? deepPlan with
+  | some safe, some deep =>
+      decide (safe.extraction = .returnNow) &&
+      decide (deep.extraction = .descendFurther) &&
+      decide (safe.outcome.contribution ≠ deep.outcome.contribution) &&
+      decide (safe.featuredBeta ∈ safe.outcome.betaCandidates) &&
+      decide (deep.featuredBeta ∈ deep.outcome.betaCandidates)
+  | _, _ => false
+
+theorem route_and_extraction_choices_produce_materially_distinct_records :
+    completedPlansDifferB = true := by native_decide
+
+def completedBudgetAccountingB : Bool :=
+  match completionFor? safePlan, completionFor? deepPlan with
+  | some safe, some deep =>
+      decide (safe.routeOperationalCost = 3) &&
+      decide (safe.totalOperationalCost = 6) &&
+      decide (safe.finalRoot.snapshot.operationalBudgetRemaining = 7) &&
+      decide (safe.totalOperationalCost +
+        safe.finalRoot.snapshot.operationalBudgetRemaining =
+          fixtureRawConfig.operationalBudget) &&
+      decide (deep.routeOperationalCost = 7) &&
+      decide (deep.totalOperationalCost = 13) &&
+      decide (deep.finalRoot.snapshot.operationalBudgetRemaining = 0) &&
+      decide (deep.totalOperationalCost +
+        deep.finalRoot.snapshot.operationalBudgetRemaining =
+          fixtureRawConfig.operationalBudget)
+  | _, _ => false
+
+theorem specialist_steps_and_final_route_are_both_charged_exactly :
+    completedBudgetAccountingB = true := by
+  native_decide
+
+def fixedExtractionRouteVariationB : Bool :=
+  match completionFor? safePlan, completionFor? safeMaintenancePlan with
+  | some signal, some maintenance =>
+      decide (signal.extraction = .returnNow) &&
+      decide (maintenance.extraction = .returnNow) &&
+      decide (signal.route ≠ maintenance.route) &&
+      decide (signal.routeOperationalCost ≠ maintenance.routeOperationalCost) &&
+      decide (signal.totalOperationalCost ≠ maintenance.totalOperationalCost) &&
+      decide (signal.finalRoot.snapshot.operationalBudgetRemaining ≠
+        maintenance.finalRoot.snapshot.operationalBudgetRemaining) &&
+      decide (signal.outcome.contribution ≠ maintenance.outcome.contribution) &&
+      decide (signal.featuredBeta ≠ maintenance.featuredBeta)
+  | _, _ => false
+
+/-- Route is a material choice even with extraction held fixed: it changes
+cost, bounded reward, and the exact beta candidate. -/
+theorem route_changes_cost_reward_and_artifact_at_fixed_extraction :
+    fixedExtractionRouteVariationB = true := by native_decide
+
+/-! Outcome-table well-formedness is not a claim that every authored branch is
+reachable from this particular briefing deck and cooperation policy. -/
+def allAuthoredOutcomesWellFormedB : Bool :=
+  fixtureRouteOutcomes.all fun spec =>
+    (ActivityOutcome.validate fixturePolicy spec.outcome).isSome &&
+    decide (spec.featuredArtifact ∈ spec.outcome.betaCandidates) &&
+    decide (0 < spec.operationalCost)
+
+theorem all_six_authored_route_extraction_outcomes_are_bounded_and_declared :
+    allAuthoredOutcomesWellFormedB = true := by native_decide
+
+def exactReplayB (plan : List (SeatId × Decision)) : Bool :=
+  match completionFor? plan with
+  | none => false
+  | some record =>
+      match replayTrace fixtureConfig (initialState fixtureConfig) record.transcript with
+      | .error _ => false
+      | .ok result => match result.completion with
+        | none => false
+        | some replayed => decide (replayed.toRaw = record.toRaw)
+
+theorem combined_field_record_replays_every_signed_handoff_exactly :
+    exactReplayB deepPlan = true := by native_decide
+
+def readmitB (plan : List (SeatId × Decision)) : Bool :=
+  match completionFor? plan with
+  | none => false
+  | some record => (admitCombinedFieldRecord? fixtureAdmission record.toRaw).isSome
+
+theorem unchecked_record_projection_readmits_after_exact_replay :
+    readmitB deepPlan = true := by native_decide
+
+def overBudgetSafePrefix : List (SeatId × Decision) :=
+  [ (⟨0⟩, .specialist .sealedNave .chartPressureRoute)
+  , (⟨1⟩, .specialist .sealedNave .braceTransit)
+  , (⟨2⟩, .specialist .signalGallery .quietAnomaly) ]
+
+/-- This branch satisfies the safe-return recommendation rule but its three
+survey steps leave only ten units, less than the sealed-nave return cost eleven. -/
+def overBudgetSafeFinalResult : Option Refusal := do
+  let prefixResult ← drive (start fixtureAdmission) overBudgetSafePrefix
+  let handoff ← testHandoff? prefixResult.state ⟨3⟩
+    (.finalize .sealedNave .returnNow .bankSupplies)
+  match execute fixtureConfig prefixResult.state handoff with
+  | .error refusal => some refusal
+  | .ok _ => none
+
+theorem recommendation_valid_but_over_budget_route_is_refused_at_live_budget_boundary :
+    overBudgetSafeFinalResult = some .insufficientOperationalBudget := by
+  native_decide
+
+def mixedStrategyPlan : List (SeatId × Decision) :=
+  [ (⟨0⟩, .specialist .signalGallery .markSalvageRoute)
+  , (⟨1⟩, .specialist .signalGallery .braceTransit)
+  , (⟨2⟩, .specialist .signalGallery .quietAnomaly)
+  , (⟨3⟩, .finalize .signalGallery .returnNow .bankSupplies) ]
+
+theorem hostile_mixed_crew_strategy_refused :
+    drive (start fixtureAdmission) mixedStrategyPlan = none := by native_decide
+
+def splitDeepPlan : List (SeatId × Decision) :=
+  [ (⟨0⟩, .specialist .signalGallery .markSalvageRoute)
+  , (⟨1⟩, .specialist .maintenanceSpine .overdriveCargoLift)
+  , (⟨2⟩, .specialist .signalGallery .screenRecovery)
+  , (⟨3⟩, .finalize .signalGallery .descendFurther .secureCache) ]
+
+theorem hostile_deep_recovery_without_unanimity_refused :
+    drive (start fixtureAdmission) splitDeepPlan = none := by native_decide
+
+private def firstState : State := start fixtureAdmission
+
+private def firstHandoff? : Option (SignedHandoff fixtureConfig) :=
+  testHandoff? firstState ⟨0⟩ (.specialist .signalGallery .chartPressureRoute)
+
+def substitutedObservationResult : Option Refusal := do
+  let handoff ← firstHandoff?
+  let forgedBody := { handoff.body with observation := .pathfinder .sealedNave }
+  match execute fixtureConfig firstState { handoff with body := forgedBody } with
+  | .error refusal => some refusal
+  | .ok _ => none
+
+theorem hostile_private_observation_substitution_refused :
+    substitutedObservationResult = some .observationMismatch := by native_decide
+
+def staleRootResult : Option Refusal := do
+  let handoff ← firstHandoff?
+  let forgedRoot : StateRoot := {
+    handoff.body.preRoot with snapshot := {
+      handoff.body.preRoot.snapshot with sequence := 1 } }
+  let forgedBody := { handoff.body with preRoot := forgedRoot }
+  match execute fixtureConfig firstState { handoff with body := forgedBody } with
+  | .error refusal => some refusal
+  | .ok _ => none
+
+theorem hostile_stale_predecessor_root_refused :
+    staleRootResult = some .staleRoot := by native_decide
+
+def substitutedSignatureResult : Option Refusal := do
+  let handoff ← firstHandoff?
+  let forged := { handoff with signature := {
+    bytes := signatureBytesPattern 250 } }
+  match execute fixtureConfig firstState forged with
+  | .error refusal => some refusal
+  | .ok _ => none
+
+theorem hostile_handoff_signature_substitution_refused :
+    substitutedSignatureResult = some .signatureRefused := by native_decide
+
+def unsignedDecisionSubstitutionResult : Option Refusal := do
+  let handoff ← firstHandoff?
+  let forgedBody := { handoff.body with decision :=
+    (Decision.specialist Route.maintenanceSpine Command.chartPressureRoute) }
+  match execute fixtureConfig firstState { handoff with body := forgedBody } with
+  | .error refusal => some refusal
+  | .ok _ => none
+
+theorem hostile_full_field_decision_substitution_refused_by_signature :
+    unsignedDecisionSubstitutionResult = some .signatureRefused := by native_decide
+
+def otherSeatSignatureResult : Option Refusal := do
+  let handoff ← firstHandoff?
+  let messageDigest := fixtureMessageDigest.handoffMessageDigest
+    (handoff.body.signingPreimage fixtureConfig.raw.messageDigestSuiteId
+      fixtureConfig.raw.signingSuiteId)
+  let forgedSignature : HandoffSignature := {
+    bytes := fixtureExpectedSignature 2 fixtureSeat1.playerKey
+      fixtureSeat1.credential messageDigest }
+  match execute fixtureConfig firstState { handoff with signature := forgedSignature } with
+  | .error refusal => some refusal
+  | .ok _ => none
+
+theorem hostile_signature_issued_for_other_seat_refused :
+    otherSeatSignatureResult = some .signatureRefused := by native_decide
+
+def wrongSigningSuiteResult : Option Refusal := do
+  let handoff ← firstHandoff?
+  let wrongPreimage := handoff.body.signingPreimage
+    fixtureConfig.raw.messageDigestSuiteId (digestFilled 249)
+  let forgedSignature : HandoffSignature := {
+    bytes := fixtureExpectedSignature 2 handoff.capability.seat.playerKey
+      handoff.capability.seat.credential
+      (fixtureMessageDigest.handoffMessageDigest wrongPreimage) }
+  match execute fixtureConfig firstState { handoff with signature := forgedSignature } with
+  | .error refusal => some refusal
+  | .ok _ => none
+
+theorem hostile_signing_suite_substitution_refused :
+    wrongSigningSuiteResult = some .signatureRefused := by native_decide
+
+private def digestDoubledAsSignatureBytes (digest : Digest32) : SignatureBytes where
+  bytes := digest.bytes ++ digest.bytes
+  length_eq := by simp [SIGNATURE_BYTE_LENGTH, digest.length_eq]
+
+/-- A message digest is public and easy to compute.  Repeating its 32 bytes to
+fit the 64-byte signature type still provides no proof of key possession. -/
+def forgedMessageDigestAsSignatureResult : Option Refusal := do
+  let handoff ← firstHandoff?
+  let forgedSignature : HandoffSignature := {
+    bytes := digestDoubledAsSignatureBytes
+      (handoff.body.messageDigest fixtureConfig) }
+  match execute fixtureConfig firstState { handoff with signature := forgedSignature } with
+  | .error refusal => some refusal
+  | .ok _ => none
+
+theorem hostile_public_message_digest_submitted_as_signature_refused :
+    forgedMessageDigestAsSignatureResult = some .signatureRefused := by
+  native_decide
+
+def tamperedRecordReadmitsB : Bool :=
+  match completionFor? deepPlan with
+  | none => false
+  | some record =>
+      let raw := { record.toRaw with route := .sealedNave }
+      (admitCombinedFieldRecord? fixtureAdmission raw).isSome
+
+theorem hostile_combined_record_route_substitution_refused :
+    tamperedRecordReadmitsB = false := by native_decide
+
+private def tamperFirstTrace : List HandoffTrace → List HandoffTrace
+  | [] => []
+  | trace :: traces =>
+      { trace with decision := .specialist .maintenanceSpine .markSalvageRoute } :: traces
+
+def expandedRecordMutationsRefusedB : Bool :=
+  match completionFor? deepPlan with
+  | none => false
+  | some record =>
+      let raw := record.toRaw
+      let rootMutation := { raw.finalRoot with snapshot := {
+        raw.finalRoot.snapshot with sequence := raw.finalRoot.snapshot.sequence + 1 } }
+      let mutations : List RawCombinedFieldRecord :=
+        [ { raw with route := .sealedNave }
+        , { raw with extraction := .returnNow }
+        , { raw with strategy := .survey }
+        , { raw with routeOperationalCost := raw.routeOperationalCost + 1 }
+        , { raw with totalOperationalCost := raw.totalOperationalCost + 1 }
+        , { raw with
+              outcome := fixtureOutcome .maintenanceSpine .descendFurther
+              featuredBeta := fixtureMaintenanceArtifact }
+        , { raw with featuredBeta := fixtureMaintenanceArtifact }
+        , { raw with finalRoot := rootMutation }
+        , { raw with transcript := tamperFirstTrace raw.transcript }
+        , { raw with transcript := raw.transcript.reverse }
+        , { raw with session := {
+              raw.session with briefingCommitment := digestFilled 244 } } ]
+      mutations.all fun mutated =>
+        !(admitCombinedFieldRecord? fixtureAdmission mutated).isSome
+
+theorem hostile_expanded_record_mutation_matrix_refused :
+    expandedRecordMutationsRefusedB = true := by native_decide
+
+#assert_axioms execute_deterministic
+#assert_axioms handoff_signing_preimage_injective
+#assert_axioms seat_signing_preimage_injective
+#assert_axioms completed_featured_artifact_is_beta_candidate
+#assert_compiled fixture_config_valid
+#assert_compiled fixture_ordered_briefing_deck_is_commitment_bound
+#assert_compiled hostile_unwinnable_terminal_costs_are_individually_within_budget
+#assert_compiled hostile_unwinnable_config_has_no_affordable_safe_terminal
+#assert_compiled hostile_globally_unwinnable_config_refused_at_activation
+#assert_compiled raw_identity_fields_must_exactly_match_policy_mission
+#assert_compiled wrong_mission_artifact_is_otherwise_declared_and_outcome_valid
+#assert_compiled artifact_mission_must_exactly_match_activated_mission
+#assert_compiled hostile_same_role_briefing_substitution_breaks_activation_commitment
+#assert_compiled safe_extraction_accepts_two_matching_signed_recommendations
+#assert_compiled alternative_safe_route_is_reachable
+#assert_compiled deep_recovery_requires_and_accepts_full_crew_consensus
+#assert_compiled route_and_extraction_choices_produce_materially_distinct_records
+#assert_compiled specialist_steps_and_final_route_are_both_charged_exactly
+#assert_compiled route_changes_cost_reward_and_artifact_at_fixed_extraction
+#assert_compiled all_six_authored_route_extraction_outcomes_are_bounded_and_declared
+#assert_compiled combined_field_record_replays_every_signed_handoff_exactly
+#assert_compiled unchecked_record_projection_readmits_after_exact_replay
+#assert_compiled recommendation_valid_but_over_budget_route_is_refused_at_live_budget_boundary
+#assert_compiled hostile_mixed_crew_strategy_refused
+#assert_compiled hostile_deep_recovery_without_unanimity_refused
+#assert_compiled hostile_private_observation_substitution_refused
+#assert_compiled hostile_stale_predecessor_root_refused
+#assert_compiled hostile_handoff_signature_substitution_refused
+#assert_compiled hostile_full_field_decision_substitution_refused_by_signature
+#assert_compiled hostile_signature_issued_for_other_seat_refused
+#assert_compiled hostile_signing_suite_substitution_refused
+#assert_compiled hostile_public_message_digest_submitted_as_signature_refused
+#assert_compiled hostile_combined_record_route_substitution_refused
+#assert_compiled hostile_expanded_record_mutation_matrix_refused
+
+end Dregg2.Games.PathOfAngels.CrewFieldMission
