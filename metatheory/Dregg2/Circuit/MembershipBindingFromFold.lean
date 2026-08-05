@@ -62,7 +62,7 @@ import Dregg2.Circuit.MembershipBackingAttack
 
 namespace Dregg2.Circuit.MembershipBindingFromFold
 
-open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding demoEngine)
+open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding oneLaneDemoEngine)
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
 open Dregg2.Circuit.CustomCarrierAttack
@@ -82,26 +82,39 @@ set_option linter.unusedVariables false
 membership leaf: a SATISFIED in-circuit membership-leaf verifier (pinned VK core `leafVk`,
 exposing tuple claim `leafCommit`) yields a GENUINELY VERIFYING membership sub-proof of engine `E`
 whose `piCommit` IS the exposed `leafCommit`. The membership instance of `AggAirSound.FriExtract`
-— see `membershipLeafFriFloor_of_aggFriExtract`. -/
+— see `membershipLeafFriFloor_of_aggFriExtract`.
+
+⚑ **ONE LANE, and the singleton says so.** `ProofEngine.piCommit` is a LANE VECTOR (2026-08-05; the
+deployed proof-bind commitment is eight felts). THIS fold model still carries the leaf claim as a
+single `ℤ`, so the floor is stated at the SINGLETON `[leafCommit]` — equality of the WHOLE
+commitment vector against a one-lane model, never a lane-0 match inside a wider one. -/
 def MembershipLeafFriFloor (E : ProofEngine) (MembershipLeafSat : ℤ → ℤ → Prop) : Prop :=
   ∀ leafVk leafCommit : ℤ, MembershipLeafSat leafVk leafCommit →
-    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = leafCommit
+    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [leafCommit]
 
 /-- The membership leaf's exposed segment projection: the leaf carries its tuple claim `x` in the
 ordered-digest lane `acc` (the other lanes are inert for a single-leaf wrap). -/
 def segOfCommit (x : ℤ) : Seg := { firstOld := 0, lastNew := 0, count := 0, acc := x }
 
-/-- **`membershipLeafFriFloor_of_aggFriExtract` — the FRI floor IS AggAirSound's carrier.** -/
+/-- **`membershipLeafFriFloor_of_aggFriExtract` — the FRI floor IS AggAirSound's carrier.**
+
+⚑ `Seg.acc` is one `ℤ` and `E.piCommit` is a lane VECTOR, so the engine boundary is named: `lane0`
+is the model's single squeezed lane and `hlane` says the commitment vector IS that lane. It holds by
+`rfl` on `floorEngine`. -/
 theorem membershipLeafFriFloor_of_aggFriExtract
-    (E : ProofEngine) (leafPre : ℤ) (ChildVerifierSat : ℤ → Seg → Prop)
+    (E : ProofEngine) (leafPre : ℤ) (lane0 : E.Proof → ℤ)
+    (hlane : ∀ q : E.Proof, E.piCommit q = [lane0 q])
+    (ChildVerifierSat : ℤ → Seg → Prop)
     (hagg : FriExtract E.Proof E.verify (fun _ => leafPre)
-              (fun q => segOfCommit (E.piCommit q)) ChildVerifierSat) :
+              (fun q => segOfCommit (lane0 q)) ChildVerifierSat) :
     MembershipLeafFriFloor E
       (fun leafVk leafCommit => ChildVerifierSat leafVk (segOfCommit leafCommit)) := by
   intro leafVk leafCommit hcv
   obtain ⟨q, hq, _hvkc, hexp⟩ := hagg leafVk (segOfCommit leafCommit) hcv
   refine ⟨q, hq, ?_⟩
-  simpa [segOfCommit] using congrArg Seg.acc hexp
+  have hacc : lane0 q = leafCommit := by
+    simpa [segOfCommit] using congrArg Seg.acc hexp
+  rw [hlane q, hacc]
 
 /-! ## §2 — the per-turn fold node + its satisfaction (the connect). -/
 
@@ -133,20 +146,23 @@ structure SatMembershipFold (E : ProofEngine) (MembershipLeafSat : ℤ → ℤ �
 per-turn fold including the membership leaf — FORCES, for the leg's published tuple claim
 `f.tup`: (binding) ∃ a verifying membership sub-proof `q` of `E` with `E.piCommit q = f.tup`; AND
 (anti-ghost) any two verifying sub-proofs exposing `f.tup` agree on their `vkOf`. The premise set
-is EXACTLY the `custom_binding_from_fold` / `factory_binding_from_fold` set. -/
+is EXACTLY the `custom_binding_from_fold` / `factory_binding_from_fold` set.
+
+⚑ The claim `f.tup` is ONE lane of this model against an eight-felt deployed commitment, so every
+engine-facing equality reads `= [f.tup]`: the whole lane vector of a one-lane engine. -/
 theorem membership_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (MembershipLeafSat : ℤ → ℤ → Prop)
     (hfri : MembershipLeafFriFloor E MembershipLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : MembershipFold E)
     (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.tup → E.piCommit q = f.tup → ¬ EncColl hash enc p q)
+        E.piCommit p = [f.tup] → E.piCommit q = [f.tup] → ¬ EncColl hash enc p q)
     (hsat : SatMembershipFold E MembershipLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.tup) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.tup]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.tup → E.piCommit q = f.tup → E.vkOf p = E.vkOf q) := by
+        E.piCommit p = [f.tup] → E.piCommit q = [f.tup] → E.vkOf p = E.vkOf q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   refine ⟨⟨q, hq, hqc⟩, ?_⟩
@@ -163,12 +179,12 @@ theorem membership_binding_from_fold_or_collides
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (MembershipLeafSat : ℤ → ℤ → Prop)
     (hfri : MembershipLeafFriFloor E MembershipLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : MembershipFold E) (hsat : SatMembershipFold E MembershipLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.tup) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.tup]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.tup → E.piCommit q = f.tup →
+        E.piCommit p = [f.tup] → E.piCommit q = [f.tup] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
@@ -187,7 +203,7 @@ theorem authorized_from_fold
     (M : MembershipEngine) (env : VmRowEnv)
     (E : ProofEngine) (MembershipLeafSat : ℤ → ℤ → Prop)
     (hfri : MembershipLeafFriFloor E MembershipLeafSat)
-    (hbacks : ∀ q : E.Proof, E.verify q = true → E.piCommit q = senderLeafOf env →
+    (hbacks : ∀ q : E.Proof, E.verify q = true → E.piCommit q = [senderLeafOf env] →
         Authorized M env)
     (f : MembershipFold E) (hsat : SatMembershipFold E MembershipLeafSat f)
     (htup : f.tup = senderLeafOf env) :
@@ -196,7 +212,10 @@ theorem authorized_from_fold
   rw [hsat.connect, htup] at hqc
   exact hbacks q hq hqc
 
-/-! ## §4 — NON-VACUITY: the binding FIRES on an honest fold; the §A forgery is REJECTED. -/
+/-! ## §4 — NON-VACUITY: the binding FIRES on an honest fold; the §A forgery is REJECTED.
+
+⚑ `floorEngine`'s squeeze is ONE lane (`piCommit p = [hash [p.1, p.2]]`), so the poles below read
+the singleton. The model did not widen with the engine; the deployed object is still eight felts. -/
 
 section Honest
 
@@ -209,7 +228,7 @@ def honestFold (hash : List ℤ → ℤ) : MembershipFold (floorEngine hash) :=
 /-- The honest membership-leaf verifier predicate. -/
 def honestMLS (hash : List ℤ → ℤ) : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit => ∃ q : ℤ × ℤ,
-    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = leafCommit
+    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = [leafCommit]
 
 theorem honestFloor (hash : List ℤ → ℤ) :
     MembershipLeafFriFloor (floorEngine hash) (honestMLS hash) :=
@@ -224,14 +243,14 @@ theorem honestSat (hash : List ℤ → ℤ) :
 the binding FIRES — unconditionally, at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED. -/
 theorem honest_companion_fires :
     (∃ q : ℤ × ℤ, (floorEngine refSponge).verify q = true ∧
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).tup) ∧
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).tup]) ∧
     (∀ p q : ℤ × ℤ, (floorEngine refSponge).verify p = true → (floorEngine refSponge).verify q = true →
-        (floorEngine refSponge).piCommit p = (honestFold refSponge).tup →
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).tup →
+        (floorEngine refSponge).piCommit p = [(honestFold refSponge).tup] →
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).tup] →
         (floorEngine refSponge).vkOf p = (floorEngine refSponge).vkOf q) :=
   membership_binding_from_fold (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestMLS refSponge)
     (honestFloor refSponge) (fun _p _ => rfl)
-    (by intro p q _ _ henc; injection henc)
+    (floorEngine_hvk refSponge)
     (honestFold refSponge)
     (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
     (honestSat refSponge)
@@ -245,34 +264,52 @@ published tuple claim `f.tup` is backed by NO verifying membership sub-proof CAN
 circuit twin of the tooth's forged-tuple rejection. -/
 theorem forged_unsat {E : ProofEngine} {MembershipLeafSat : ℤ → ℤ → Prop}
     (hfri : MembershipLeafFriFloor E MembershipLeafSat) {f : MembershipFold E}
-    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.tup) :
+    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.tup]) :
     ¬ SatMembershipFold E MembershipLeafSat f := by
   intro hsat
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   exact hforge ⟨q, hq, hqc⟩
 
-/-- The membership-leaf predicate over `demoEngine` (the only verifying sub-proof commits to
-`123`). -/
+/-- The membership-leaf predicate over `oneLaneDemoEngine` (the only verifying sub-proof commits to
+`123`).
+
+⚑ **WHY THE ONE-LANE ENGINE AND NOT `demoEngine`.** This fold model's leaf commitment is ONE `ℤ`,
+while `demoEngine` squeezes the deployed EIGHT lanes — so a scalar claim can never equal its
+commitment, and a forged-VALUE pole stated there would be true BY ARITY, saying nothing about the
+forged value at all (`demoEngine_is_eight_lanes_oneLane_is_one` pins the two widths). Over
+`oneLaneDemoEngine` the refusal is about the value again.
+
+⚠ A one-lane ENGINE MODEL is not a one-lane DESCRIPTOR seam: a scalar-commitment fold is fairly
+modelled at one lane, but `PROOF_BIND_MIN_LANES` refuses a one-lane seam at every admission door.
+`demoMLS_sat` is the companion that keeps this predicate from being false everywhere. -/
 def demoMLS : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit =>
-    ∃ q : Bool, demoEngine.verify q = true ∧ demoEngine.piCommit q = leafCommit
+    ∃ q : Bool, oneLaneDemoEngine.verify q = true ∧ oneLaneDemoEngine.piCommit q = [leafCommit]
 
-theorem demoFloor : MembershipLeafFriFloor demoEngine demoMLS :=
+/-- **`demoMLS_sat` — THE PREDICATE IS SATISFIED AT THE HONEST VALUE, so the pole below refuses a
+VALUE rather than everything.** Without it `forged_tuple_unsat_demo` is equally consistent with a
+leaf predicate that is FALSE EVERYWHERE — which is precisely what the eight-lane `demoEngine`
+silently became. The negative pole's meaning depends on this lemma, so it is named. -/
+theorem demoMLS_sat : demoMLS 0 123 := ⟨true, rfl, rfl⟩
+
+theorem demoFloor : MembershipLeafFriFloor oneLaneDemoEngine demoMLS :=
   fun _leafVk _leafCommit h => h
 
 /-- The `MembershipBackingAttack` §A forgery lifted onto the fold: the published tuple claim is
 `0` (`senderLeaf_forgedEnv`'s value — the NOT-IN-THE-SET sender) — a claim NO verifying sub-proof
-of `demoEngine` exposes. -/
-def forgedFold : MembershipFold demoEngine := { leafVk := 0, leafCommit := 0, tup := 0 }
+of `oneLaneDemoEngine` exposes, which commits to `123`. -/
+def forgedFold : MembershipFold oneLaneDemoEngine := { leafVk := 0, leafCommit := 0, tup := 0 }
 
 /-- **`forged_tuple_unsat_demo` (NEGATIVE non-vacuity — the §A attack, INVERTED onto the fold).**
 What the deployed AIR alone admitted (`deployed_admits_unbacked_membership`), the aggregate
 REFUSES. -/
-theorem forged_tuple_unsat_demo : ¬ SatMembershipFold demoEngine demoMLS forgedFold := by
+theorem forged_tuple_unsat_demo : ¬ SatMembershipFold oneLaneDemoEngine demoMLS forgedFold := by
   refine forged_unsat demoFloor (f := forgedFold) ?_
   rintro ⟨q, _hq, hc⟩
-  have hc' : (123 : ℤ) = 0 := hc
+  -- The one-lane engine commits to `[123]`; the forged claim is `[0]`. The refusal is about the
+  -- VALUE (paired with `demoMLS_sat`, which fires at `123`), not about the arity.
+  have hc' : [(123 : ℤ)] = [(0 : ℤ)] := hc
   exact absurd hc' (by decide)
 
 end Forged
@@ -285,6 +322,7 @@ end Forged
 #assert_axioms authorized_from_fold
 #assert_axioms honest_companion_fires
 #assert_axioms forged_unsat
+#assert_axioms demoMLS_sat
 #assert_axioms forged_tuple_unsat_demo
 
 end Dregg2.Circuit.MembershipBindingFromFold

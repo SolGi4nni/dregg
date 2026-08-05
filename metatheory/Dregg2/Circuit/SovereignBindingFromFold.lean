@@ -68,7 +68,7 @@ import Dregg2.Circuit.SovereignBackingAttack
 
 namespace Dregg2.Circuit.SovereignBindingFromFold
 
-open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding demoEngine)
+open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding oneLaneDemoEngine)
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
 open Dregg2.Circuit.CustomCarrierAttack
@@ -88,10 +88,15 @@ set_option linter.unusedVariables false
 authority leaf: a SATISFIED in-circuit authority-leaf verifier (pinned VK core `leafVk`, exposing
 key-commit claim `leafCommit`) yields a GENUINELY VERIFYING authority sub-proof of engine `E`
 whose `piCommit` IS the exposed `leafCommit`. The sovereign instance of `AggAirSound.FriExtract`
-(one child of one node), NOT a new dregg axiom — see `sovereignLeafFriFloor_of_aggFriExtract`. -/
+(one child of one node), NOT a new dregg axiom — see `sovereignLeafFriFloor_of_aggFriExtract`.
+
+⚑ **ONE LANE, and the singleton says so.** `ProofEngine.piCommit` is a LANE VECTOR (2026-08-05; the
+deployed proof-bind commitment is eight felts). THIS fold model still carries the leaf claim as a
+single `ℤ`, so the floor is stated at the SINGLETON `[leafCommit]` — equality of the WHOLE
+commitment vector against a one-lane model, never a lane-0 match inside a wider one. -/
 def SovereignLeafFriFloor (E : ProofEngine) (SovereignLeafSat : ℤ → ℤ → Prop) : Prop :=
   ∀ leafVk leafCommit : ℤ, SovereignLeafSat leafVk leafCommit →
-    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = leafCommit
+    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [leafCommit]
 
 /-- The authority leaf's exposed segment projection: the leaf carries its key-commit claim `x` in
 the ordered-digest lane `acc` (the other lanes are inert for a single-leaf wrap). -/
@@ -99,17 +104,25 @@ def segOfCommit (x : ℤ) : Seg := { firstOld := 0, lastNew := 0, count := 0, ac
 
 /-- **`sovereignLeafFriFloor_of_aggFriExtract` — the FRI floor IS AggAirSound's carrier.** Given
 the aggregation's per-child `FriExtract` over the authority engine — pinned VK core constant
-`leafPre`, the child exposing its key-commit claim in `acc` — the sovereign-leaf floor follows. -/
+`leafPre`, the child exposing its key-commit claim in `acc` — the sovereign-leaf floor follows.
+
+⚑ `Seg.acc` is one `ℤ` and `E.piCommit` is a lane VECTOR, so the engine boundary is named: `lane0`
+is the model's single squeezed lane and `hlane` says the commitment vector IS that lane. It holds by
+`rfl` on `floorEngine`. -/
 theorem sovereignLeafFriFloor_of_aggFriExtract
-    (E : ProofEngine) (leafPre : ℤ) (ChildVerifierSat : ℤ → Seg → Prop)
+    (E : ProofEngine) (leafPre : ℤ) (lane0 : E.Proof → ℤ)
+    (hlane : ∀ q : E.Proof, E.piCommit q = [lane0 q])
+    (ChildVerifierSat : ℤ → Seg → Prop)
     (hagg : FriExtract E.Proof E.verify (fun _ => leafPre)
-              (fun q => segOfCommit (E.piCommit q)) ChildVerifierSat) :
+              (fun q => segOfCommit (lane0 q)) ChildVerifierSat) :
     SovereignLeafFriFloor E
       (fun leafVk leafCommit => ChildVerifierSat leafVk (segOfCommit leafCommit)) := by
   intro leafVk leafCommit hcv
   obtain ⟨q, hq, _hvkc, hexp⟩ := hagg leafVk (segOfCommit leafCommit) hcv
   refine ⟨q, hq, ?_⟩
-  simpa [segOfCommit] using congrArg Seg.acc hexp
+  have hacc : lane0 q = leafCommit := by
+    simpa [segOfCommit] using congrArg Seg.acc hexp
+  rw [hlane q, hacc]
 
 /-! ## §2 — the per-turn fold node + its satisfaction (the connect). -/
 
@@ -146,20 +159,23 @@ fold including the authority leaf — FORCES, for the leg's published KEY_COMMIT
 
 The premise set is EXACTLY the `custom_binding_from_fold` / `factory_binding_from_fold` set; no
 staged-AIR carrier, no sovereign axiom. A forged claim with no backing sub-proof makes the
-aggregate UNSAT. -/
+aggregate UNSAT.
+
+⚑ The claim `f.kc` is ONE lane of this model against an eight-felt deployed commitment, so every
+engine-facing equality reads `= [f.kc]`: the whole lane vector of a one-lane engine. -/
 theorem sovereign_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (SovereignLeafSat : ℤ → ℤ → Prop)
     (hfri : SovereignLeafFriFloor E SovereignLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : SovereignFold E)
     (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.kc → E.piCommit q = f.kc → ¬ EncColl hash enc p q)
+        E.piCommit p = [f.kc] → E.piCommit q = [f.kc] → ¬ EncColl hash enc p q)
     (hsat : SatSovereignFold E SovereignLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.kc) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.kc]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.kc → E.piCommit q = f.kc → E.vkOf p = E.vkOf q) := by
+        E.piCommit p = [f.kc] → E.piCommit q = [f.kc] → E.vkOf p = E.vkOf q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   refine ⟨⟨q, hq, hqc⟩, ?_⟩
@@ -176,12 +192,12 @@ theorem sovereign_binding_from_fold_or_collides
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (SovereignLeafSat : ℤ → ℤ → Prop)
     (hfri : SovereignLeafFriFloor E SovereignLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : SovereignFold E) (hsat : SatSovereignFold E SovereignLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.kc) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.kc]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.kc → E.piCommit q = f.kc →
+        E.piCommit p = [f.kc] → E.piCommit q = [f.kc] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
@@ -200,7 +216,7 @@ theorem authorized_from_fold
     (S : SovAuthorityEngine) (replayed : ℤ → Prop) (env : VmRowEnv)
     (E : ProofEngine) (SovereignLeafSat : ℤ → ℤ → Prop)
     (hfri : SovereignLeafFriFloor E SovereignLeafSat)
-    (hbacks : ∀ q : E.Proof, E.verify q = true → E.piCommit q = keyCommitOf env →
+    (hbacks : ∀ q : E.Proof, E.verify q = true → E.piCommit q = [keyCommitOf env] →
         Authorized S replayed env)
     (f : SovereignFold E) (hsat : SatSovereignFold E SovereignLeafSat f)
     (hkc : f.kc = keyCommitOf env) :
@@ -209,7 +225,10 @@ theorem authorized_from_fold
   rw [hsat.connect, hkc] at hqc
   exact hbacks q hq hqc
 
-/-! ## §4 — NON-VACUITY: the binding FIRES on an honest fold; the §A forgery is REJECTED. -/
+/-! ## §4 — NON-VACUITY: the binding FIRES on an honest fold; the §A forgery is REJECTED.
+
+⚑ `floorEngine`'s squeeze is ONE lane (`piCommit p = [hash [p.1, p.2]]`), so the poles below read
+the singleton. The model did not widen with the engine; the deployed object is still eight felts. -/
 
 section Honest
 
@@ -223,7 +242,7 @@ def honestFold (hash : List ℤ → ℤ) : SovereignFold (floorEngine hash) :=
 sub-proof exposes the exposed claim. -/
 def honestSLS (hash : List ℤ → ℤ) : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit => ∃ q : ℤ × ℤ,
-    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = leafCommit
+    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = [leafCommit]
 
 theorem honestFloor (hash : List ℤ → ℤ) :
     SovereignLeafFriFloor (floorEngine hash) (honestSLS hash) :=
@@ -239,14 +258,14 @@ binding FIRES: the published KEY_COMMIT claim is BACKED by a verifying authority
 attesting a uniquely determined authority — unconditionally, at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED. -/
 theorem honest_companion_fires :
     (∃ q : ℤ × ℤ, (floorEngine refSponge).verify q = true ∧
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).kc) ∧
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).kc]) ∧
     (∀ p q : ℤ × ℤ, (floorEngine refSponge).verify p = true → (floorEngine refSponge).verify q = true →
-        (floorEngine refSponge).piCommit p = (honestFold refSponge).kc →
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).kc →
+        (floorEngine refSponge).piCommit p = [(honestFold refSponge).kc] →
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).kc] →
         (floorEngine refSponge).vkOf p = (floorEngine refSponge).vkOf q) :=
   sovereign_binding_from_fold (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestSLS refSponge)
     (honestFloor refSponge) (fun _p _ => rfl)
-    (by intro p q _ _ henc; injection henc)
+    (floorEngine_hvk refSponge)
     (honestFold refSponge)
     (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
     (honestSat refSponge)
@@ -262,34 +281,53 @@ satisfying fold would PRODUCE a backing sub-proof — contradiction. The circuit
 `deployed_sovereign_turn_forged_key_commit_rejected`. -/
 theorem forged_unsat {E : ProofEngine} {SovereignLeafSat : ℤ → ℤ → Prop}
     (hfri : SovereignLeafFriFloor E SovereignLeafSat) {f : SovereignFold E}
-    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.kc) :
+    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.kc]) :
     ¬ SatSovereignFold E SovereignLeafSat f := by
   intro hsat
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   exact hforge ⟨q, hq, hqc⟩
 
-/-- The authority-leaf predicate over `demoEngine` (the only verifying sub-proof commits to
-`123`). -/
+/-- The authority-leaf predicate over `oneLaneDemoEngine` (the only verifying sub-proof commits to
+`123`).
+
+⚑ **WHY THE ONE-LANE ENGINE AND NOT `demoEngine`.** This fold model's leaf commitment is ONE `ℤ`,
+while `demoEngine` squeezes the deployed EIGHT lanes — so a scalar claim can never equal its
+commitment, and a forged-VALUE pole stated there would be true BY ARITY, saying nothing about the
+forged value at all (`demoEngine_is_eight_lanes_oneLane_is_one` pins the two widths). Over
+`oneLaneDemoEngine` the refusal is about the value again.
+
+⚠ A one-lane ENGINE MODEL is not a one-lane DESCRIPTOR seam: a scalar-commitment fold is fairly
+modelled at one lane, but `PROOF_BIND_MIN_LANES` refuses a one-lane seam at every admission door.
+`demoSLS_sat` is the companion that keeps this predicate from being false everywhere. -/
 def demoSLS : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit =>
-    ∃ q : Bool, demoEngine.verify q = true ∧ demoEngine.piCommit q = leafCommit
+    ∃ q : Bool, oneLaneDemoEngine.verify q = true ∧ oneLaneDemoEngine.piCommit q = [leafCommit]
 
-theorem demoFloor : SovereignLeafFriFloor demoEngine demoSLS :=
+/-- **`demoSLS_sat` — THE PREDICATE IS SATISFIED AT THE HONEST VALUE, so the pole below refuses a
+VALUE rather than everything.** Without it `forged_keycommit_unsat_demo` is equally consistent with a
+leaf predicate that is FALSE EVERYWHERE — which is precisely what the eight-lane `demoEngine`
+silently became. The negative pole's meaning depends on this lemma, so it is named. -/
+theorem demoSLS_sat : demoSLS 0 123 := ⟨true, rfl, rfl⟩
+
+theorem demoFloor : SovereignLeafFriFloor oneLaneDemoEngine demoSLS :=
   fun _leafVk _leafCommit h => h
 
 /-- The `SovereignBackingAttack` §A forgery lifted onto the fold: the published KEY_COMMIT claim
-is `0` (`keyCommit_forgedEnv`'s value) — a claim NO verifying sub-proof of `demoEngine` exposes. -/
-def forgedFold : SovereignFold demoEngine := { leafVk := 0, leafCommit := 0, kc := 0 }
+is `0` (`keyCommit_forgedEnv`'s value) — a claim NO verifying sub-proof of `oneLaneDemoEngine`
+exposes, which commits to `123`. -/
+def forgedFold : SovereignFold oneLaneDemoEngine := { leafVk := 0, leafCommit := 0, kc := 0 }
 
 /-- **`forged_keycommit_unsat_demo` (NEGATIVE non-vacuity — the §A attack, INVERTED onto the
 fold).** The forged fold (published claim `0`, exactly `SovereignBackingAttack.keyCommit_forgedEnv`'s
 value, unbacked) does NOT satisfy: what the deployed AIR alone admitted
 (`deployed_admits_unbacked_sovereign`), the aggregate REFUSES. -/
-theorem forged_keycommit_unsat_demo : ¬ SatSovereignFold demoEngine demoSLS forgedFold := by
+theorem forged_keycommit_unsat_demo : ¬ SatSovereignFold oneLaneDemoEngine demoSLS forgedFold := by
   refine forged_unsat demoFloor (f := forgedFold) ?_
   rintro ⟨q, _hq, hc⟩
-  have hc' : (123 : ℤ) = 0 := hc
+  -- The one-lane engine commits to `[123]`; the forged claim is `[0]`. The refusal is about the
+  -- VALUE (paired with `demoSLS_sat`, which fires at `123`), not about the arity.
+  have hc' : [(123 : ℤ)] = [(0 : ℤ)] := hc
   exact absurd hc' (by decide)
 
 end Forged
@@ -302,6 +340,7 @@ end Forged
 #assert_axioms authorized_from_fold
 #assert_axioms honest_companion_fires
 #assert_axioms forged_unsat
+#assert_axioms demoSLS_sat
 #assert_axioms forged_keycommit_unsat_demo
 
 end Dregg2.Circuit.SovereignBindingFromFold

@@ -52,7 +52,7 @@ import Dregg2.Circuit.HatcheryBackingAttack
 
 namespace Dregg2.Circuit.HatcheryBindingFromFold
 
-open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding demoEngine)
+open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding oneLaneDemoEngine)
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
 open Dregg2.Circuit.CustomCarrierAttack
@@ -72,25 +72,38 @@ set_option linter.unusedVariables false
 contract-attestation leaf: a SATISFIED in-circuit contract-leaf verifier (pinned VK core `leafVk`,
 exposing attestation commitment `leafCommit`) yields a GENUINELY VERIFYING contract sub-proof of
 engine `E` whose `piCommit` IS the exposed `leafCommit`. The hatchery instance of
-`AggAirSound.FriExtract`, NOT a new dregg axiom. -/
+`AggAirSound.FriExtract`, NOT a new dregg axiom.
+
+⚑ **ONE LANE, and the singleton says so.** `ProofEngine.piCommit` is a LANE VECTOR (2026-08-05; the
+deployed proof-bind commitment is eight felts). THIS fold model still carries the leaf claim as a
+single `ℤ`, so the floor is stated at the SINGLETON `[leafCommit]` — equality of the WHOLE
+commitment vector against a one-lane model, never a lane-0 match inside a wider one. -/
 def ContractLeafFriFloor (E : ProofEngine) (ContractLeafSat : ℤ → ℤ → Prop) : Prop :=
   ∀ leafVk leafCommit : ℤ, ContractLeafSat leafVk leafCommit →
-    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = leafCommit
+    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [leafCommit]
 
 /-- The contract leaf's exposed segment projection (`acc` carries the attestation commitment). -/
 def segOfCommit (x : ℤ) : Seg := { firstOld := 0, lastNew := 0, count := 0, acc := x }
 
-/-- **`contractLeafFriFloor_of_aggFriExtract` — the FRI floor IS AggAirSound's carrier.** -/
+/-- **`contractLeafFriFloor_of_aggFriExtract` — the FRI floor IS AggAirSound's carrier.**
+
+⚑ `Seg.acc` is one `ℤ` and `E.piCommit` is a lane VECTOR, so the engine boundary is named: `lane0`
+is the model's single squeezed lane and `hlane` says the commitment vector IS that lane. It holds by
+`rfl` on `floorEngine`. -/
 theorem contractLeafFriFloor_of_aggFriExtract
-    (E : ProofEngine) (leafPre : ℤ) (ChildVerifierSat : ℤ → Seg → Prop)
+    (E : ProofEngine) (leafPre : ℤ) (lane0 : E.Proof → ℤ)
+    (hlane : ∀ q : E.Proof, E.piCommit q = [lane0 q])
+    (ChildVerifierSat : ℤ → Seg → Prop)
     (hagg : FriExtract E.Proof E.verify (fun _ => leafPre)
-              (fun q => segOfCommit (E.piCommit q)) ChildVerifierSat) :
+              (fun q => segOfCommit (lane0 q)) ChildVerifierSat) :
     ContractLeafFriFloor E
       (fun leafVk leafCommit => ChildVerifierSat leafVk (segOfCommit leafCommit)) := by
   intro leafVk leafCommit hcv
   obtain ⟨q, hq, _hvkc, hexp⟩ := hagg leafVk (segOfCommit leafCommit) hcv
   refine ⟨q, hq, ?_⟩
-  simpa [segOfCommit] using congrArg Seg.acc hexp
+  have hacc : lane0 q = leafCommit := by
+    simpa [segOfCommit] using congrArg Seg.acc hexp
+  rw [hlane q, hacc]
 
 /-! ## §2 — the per-turn fold node + its satisfaction (the connect). -/
 
@@ -120,20 +133,23 @@ structure SatHatcheryFold (E : ProofEngine) (ContractLeafSat : ℤ → ℤ → P
 fold including the contract-attestation leaf — FORCES, for the leg's published `contract_hash8`
 claim `f.ch`: (binding) ∃ a verifying contract sub-proof `q` with `E.piCommit q = f.ch`; AND
 (anti-ghost) the attested identity is DETERMINED by `f.ch`. Same premise set as
-`custom_binding_from_fold`; no staged-AIR carrier, no hatchery axiom. -/
+`custom_binding_from_fold`; no staged-AIR carrier, no hatchery axiom.
+
+⚑ The claim `f.ch` is ONE lane of this model against an eight-felt deployed commitment, so every
+engine-facing equality reads `= [f.ch]`: the whole lane vector of a one-lane engine. -/
 theorem hatchery_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (ContractLeafSat : ℤ → ℤ → Prop)
     (hfri : ContractLeafFriFloor E ContractLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : HatcheryFold E)
     (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.ch → E.piCommit q = f.ch → ¬ EncColl hash enc p q)
+        E.piCommit p = [f.ch] → E.piCommit q = [f.ch] → ¬ EncColl hash enc p q)
     (hsat : SatHatcheryFold E ContractLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.ch) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.ch]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.ch → E.piCommit q = f.ch → E.vkOf p = E.vkOf q) := by
+        E.piCommit p = [f.ch] → E.piCommit q = [f.ch] → E.vkOf p = E.vkOf q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   refine ⟨⟨q, hq, hqc⟩, ?_⟩
@@ -150,12 +166,12 @@ theorem hatchery_binding_from_fold_or_collides
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (ContractLeafSat : ℤ → ℤ → Prop)
     (hfri : ContractLeafFriFloor E ContractLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : HatcheryFold E) (hsat : SatHatcheryFold E ContractLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.ch) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.ch]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.ch → E.piCommit q = f.ch →
+        E.piCommit p = [f.ch] → E.piCommit q = [f.ch] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
@@ -173,7 +189,7 @@ theorem backed_from_fold
     (C : ContractEngine) (env : VmRowEnv)
     (E : ProofEngine) (ContractLeafSat : ℤ → ℤ → Prop)
     (hfri : ContractLeafFriFloor E ContractLeafSat)
-    (hbacks : ∀ q : E.Proof, E.verify q = true → E.piCommit q = contractHashOf env →
+    (hbacks : ∀ q : E.Proof, E.verify q = true → E.piCommit q = [contractHashOf env] →
         Backed C env)
     (f : HatcheryFold E) (hsat : SatHatcheryFold E ContractLeafSat f)
     (hch : f.ch = contractHashOf env) :
@@ -182,7 +198,10 @@ theorem backed_from_fold
   rw [hsat.connect, hch] at hqc
   exact hbacks q hq hqc
 
-/-! ## §4 — NON-VACUITY: the binding FIRES on an honest fold; a forged claim is REJECTED. -/
+/-! ## §4 — NON-VACUITY: the binding FIRES on an honest fold; a forged claim is REJECTED.
+
+⚑ `floorEngine`'s squeeze is ONE lane (`piCommit p = [hash [p.1, p.2]]`), so the poles below read
+the singleton. The model did not widen with the engine; the deployed object is still eight felts. -/
 
 section Honest
 
@@ -194,7 +213,7 @@ def honestFold (hash : List ℤ → ℤ) : HatcheryFold (floorEngine hash) :=
 /-- The honest contract-leaf verifier predicate. -/
 def honestHLS (hash : List ℤ → ℤ) : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit => ∃ q : ℤ × ℤ,
-    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = leafCommit
+    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = [leafCommit]
 
 theorem honestFloor (hash : List ℤ → ℤ) :
     ContractLeafFriFloor (floorEngine hash) (honestHLS hash) :=
@@ -212,14 +231,14 @@ FIRES: the published `contract_hash8` claim is BACKED by a verifying attestation
 uniquely determined identity. -/
 theorem honest_companion_fires :
     (∃ q : ℤ × ℤ, (floorEngine refSponge).verify q = true ∧
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).ch) ∧
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).ch]) ∧
     (∀ p q : ℤ × ℤ, (floorEngine refSponge).verify p = true → (floorEngine refSponge).verify q = true →
-        (floorEngine refSponge).piCommit p = (honestFold refSponge).ch →
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).ch →
+        (floorEngine refSponge).piCommit p = [(honestFold refSponge).ch] →
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).ch] →
         (floorEngine refSponge).vkOf p = (floorEngine refSponge).vkOf q) :=
   hatchery_binding_from_fold (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestHLS refSponge)
     (honestFloor refSponge) (fun _p _ => rfl)
-    (by intro p q _ _ henc; injection henc)
+    (floorEngine_hvk refSponge)
     (honestFold refSponge)
     (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
     (honestSat refSponge)
@@ -233,32 +252,51 @@ fold whose published `contract_hash8` claim `f.ch` is backed by NO verifying con
 CANNOT satisfy — the circuit twin of `deployed_hatchery_turn_forged_contract_hash_rejected`. -/
 theorem forged_unsat {E : ProofEngine} {ContractLeafSat : ℤ → ℤ → Prop}
     (hfri : ContractLeafFriFloor E ContractLeafSat) {f : HatcheryFold E}
-    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.ch) :
+    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.ch]) :
     ¬ SatHatcheryFold E ContractLeafSat f := by
   intro hsat
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   exact hforge ⟨q, hq, hqc⟩
 
-/-- The forged contract-leaf predicate over `demoEngine` (the only verifying sub-proof commits
-to `123`). -/
-def demoHLS : ℤ → ℤ → Prop :=
-  fun _leafVk leafCommit => ∃ q : Bool, demoEngine.verify q = true ∧ demoEngine.piCommit q = leafCommit
+/-- The forged contract-leaf predicate over `oneLaneDemoEngine` (the only verifying sub-proof
+commits to `123`).
 
-theorem demoFloor : ContractLeafFriFloor demoEngine demoHLS :=
+⚑ **WHY THE ONE-LANE ENGINE AND NOT `demoEngine`.** This fold model's leaf commitment is ONE `ℤ`,
+while `demoEngine` squeezes the deployed EIGHT lanes — so a scalar claim can never equal its
+commitment, and a forged-VALUE pole stated there would be true BY ARITY, saying nothing about the
+forged value at all (`demoEngine_is_eight_lanes_oneLane_is_one` pins the two widths). Over
+`oneLaneDemoEngine` the refusal is about the value again.
+
+⚠ A one-lane ENGINE MODEL is not a one-lane DESCRIPTOR seam: a scalar-commitment fold is fairly
+modelled at one lane, but `PROOF_BIND_MIN_LANES` refuses a one-lane seam at every admission door.
+`demoHLS_sat` is the companion that keeps this predicate from being false everywhere. -/
+def demoHLS : ℤ → ℤ → Prop :=
+  fun _leafVk leafCommit =>
+    ∃ q : Bool, oneLaneDemoEngine.verify q = true ∧ oneLaneDemoEngine.piCommit q = [leafCommit]
+
+/-- **`demoHLS_sat` — THE PREDICATE IS SATISFIED AT THE HONEST VALUE, so the pole below refuses a
+VALUE rather than everything.** Without it `forged_contract_unsat_demo` is equally consistent with a
+leaf predicate that is FALSE EVERYWHERE — which is precisely what the eight-lane `demoEngine`
+silently became. The negative pole's meaning depends on this lemma, so it is named. -/
+theorem demoHLS_sat : demoHLS 0 123 := ⟨true, rfl, rfl⟩
+
+theorem demoFloor : ContractLeafFriFloor oneLaneDemoEngine demoHLS :=
   fun _leafVk _leafCommit h => h
 
-/-- A FORGED fold over `demoEngine`: the published `contract_hash8` claim is `999`, a commitment
-NO verifying contract sub-proof exposes. -/
-def forgedFold : HatcheryFold demoEngine := { leafVk := 0, leafCommit := 999, ch := 999 }
+/-- A FORGED fold over `oneLaneDemoEngine`: the published `contract_hash8` claim is `999`, a
+commitment NO verifying contract sub-proof exposes — the engine's is `123`. -/
+def forgedFold : HatcheryFold oneLaneDemoEngine := { leafVk := 0, leafCommit := 999, ch := 999 }
 
 /-- **`forged_contract_unsat_demo` (NEGATIVE non-vacuity).** What the deployed AIR alone admitted
 (`deployed_admits_unbacked_hatchery` / `deployed_admits_wrong_contract`), the aggregate REFUSES:
 the forged fold does not satisfy. -/
-theorem forged_contract_unsat_demo : ¬ SatHatcheryFold demoEngine demoHLS forgedFold := by
+theorem forged_contract_unsat_demo : ¬ SatHatcheryFold oneLaneDemoEngine demoHLS forgedFold := by
   refine forged_unsat demoFloor (f := forgedFold) ?_
   rintro ⟨q, _hq, hc⟩
-  have hc' : (123 : ℤ) = 999 := hc
+  -- The one-lane engine commits to `[123]`; the forged claim is `[999]`. The refusal is about the
+  -- VALUE (paired with `demoHLS_sat`, which fires at `123`), not about the arity.
+  have hc' : [(123 : ℤ)] = [(999 : ℤ)] := hc
   exact absurd hc' (by decide)
 
 end Forged
@@ -271,6 +309,7 @@ end Forged
 #assert_axioms backed_from_fold
 #assert_axioms honest_companion_fires
 #assert_axioms forged_unsat
+#assert_axioms demoHLS_sat
 #assert_axioms forged_contract_unsat_demo
 
 end Dregg2.Circuit.HatcheryBindingFromFold
