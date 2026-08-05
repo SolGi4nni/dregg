@@ -237,7 +237,7 @@ pub use verify::verify_finalized_history;
 pub use turns::{AuthorizedTurn, TurnBuilder};
 
 // The identity, its runtime, and the effect vocabulary the verbs speak.
-pub use cipherclerk::{AgentCipherclerk, SignedTurn};
+pub use cipherclerk::AgentCipherclerk;
 /// **Does THIS build refuse a Lean-subset `StateConstraint` when no oracle is installed?** — the ONE
 /// source for the deployed executor's fail-closed gate, re-exported for the same reason as the
 /// `dregg-pq` outcomes above: a host (`dreggnet-web`, a bot, a funnel) must be able to ask the
@@ -256,6 +256,7 @@ pub use dregg_pq::{MlDsaKeygenCoreRealInstall, MlDsaSignCoreRealInstall};
 /// re-exported so an SDK-hosted process can match on them without a direct `dregg-pq` dependency.
 pub use dregg_pq::{MlKemDecapsCoreInstall, MlKemEncapsCoreInstall, MlKemKeygenCoreInstall};
 pub use dregg_turn::Effect;
+pub use dregg_turn::SignedTurn;
 pub use dregg_types::{PublicKey, Signature};
 pub use error::SdkError;
 /// ⚑ [`install_verified_pq_cores`] IS THE ONE AN SDK HOST SHOULD CALL. It arms all six verified PQ

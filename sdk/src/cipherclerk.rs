@@ -33,6 +33,7 @@ use dregg_intent::sse::EncryptedIntent;
 use dregg_intent::{CommitmentId, IntentKind, MatchSpec};
 use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken, TokenClearance};
 use dregg_trace::{AuthorizationTrace, Fact as TraceFact};
+pub use dregg_turn::SignedTurn;
 use dregg_turn::{Effect, SovereignCellWitness, Turn};
 use dregg_types::{PublicKey, Signature};
 
@@ -972,33 +973,6 @@ pub struct LocalDelegation {
     pub(crate) caveat_chain_hash: Option<[u8; 32]>,
     pub(crate) delegator_signature: Signature,
     pub(crate) delegator_public_key: PublicKey,
-}
-
-/// A turn signed by this cipherclerk's identity, ready for submission.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SignedTurn {
-    /// The original turn.
-    pub turn: Turn,
-    /// The Ed25519 signature over the turn hash.
-    pub signature: Signature,
-    /// The signer's public key.
-    pub signer: PublicKey,
-    /// The ML-DSA-65 (FIPS 204) signature over the SAME turn hash the ed25519
-    /// half signs — the post-quantum half of the HYBRID turn perimeter
-    /// (`dregg_turn::pq`). Empty ⇒ no PQ half (legacy classical envelope).
-    ///
-    /// STAGED: a verifier checks this half when present and REJECTS a
-    /// present-but-invalid PQ half (fail-closed); whether it is *required* is
-    /// gated node-side by `TurnExecutor::require_pq` (default off). Wire
-    /// flag-day: this trailing field widens the postcard envelope (big-bang).
-    #[serde(default)]
-    pub pq_signature: Vec<u8>,
-    /// The signer's serialized ML-DSA-65 public key (FIPS 204), carried so the
-    /// verifier is self-contained during the staged rollout. Derived
-    /// deterministically from the same seed as `signer`
-    /// (`dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed`). Empty ⇒ no PQ half.
-    #[serde(default)]
-    pub pq_signer: Vec<u8>,
 }
 
 /// A signed action paired with the clerk's faithful explanation of what it

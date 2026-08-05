@@ -116,6 +116,7 @@ pub mod finalized_receipt_core_v1;
 pub mod forest;
 pub(crate) mod journal;
 pub mod pending;
+pub mod poa_galley_carrier;
 pub mod pq;
 pub mod presence_discharge;
 pub mod reactive;
@@ -126,6 +127,7 @@ pub mod routing;
 pub mod script;
 pub mod shadow;
 pub mod shielded_verifier;
+pub mod signed_turn;
 pub mod state_commit;
 pub mod turn;
 pub mod umem;
@@ -221,6 +223,7 @@ pub use pending::{
     ResolutionOutcome,
 };
 pub use shielded_verifier::{ShieldedTransferVerifier, VerifiedShieldedTransfer};
+pub use signed_turn::SignedTurn;
 // `Precondition` and friends collapsed into `dregg_cell::preconditions`
 // per PREDICATE-INVENTORY §4.3 case 1. Re-export from cell for any
 // callers that still reach for them through the turn crate root.
