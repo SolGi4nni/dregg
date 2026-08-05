@@ -5092,6 +5092,16 @@ def shapeWrap : WrapShape :=
   -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far
   -- more reduced. ⚠ The file's ONE `native_decide` is §24's
   -- `bullet_solves_g_on_curve_and_equal_g_is_one`, pinned by `#assert_compiled`; this is not it.
+  -- ⚠ ⚑ **AND IT MOVED AGAIN AT §20 (2026-08-05), FOR THE SAME REASON, FOUND THE SAME WAY.**
+  -- `d6683dd54` landed W-FINSPONGE with `FIN_DEFERRED_CIP/_B/_XI` as three literal ZEROS, so every
+  -- emission REFUSED; repairing the memo (`44efc9a18`) made packed statement words 27, 28 and 37 the
+  -- DERIVED `combined_inner_product`, `b` and `xi` instead of `a^9` fixtures. Those are x_hat MSM
+  -- entries 32/33, 34/35 and 47, so `xhatOut 67` is again a different point. §20's own docblock
+  -- predicted exactly this in writing and the pair was not re-derived with it; `EmitWrapMainJson`'s
+  -- refusal and `KimchiStepWrapChain.chain_xhat_is_the_step_proofs_not_the_msm_output` are what
+  -- caught it. **WHAT RE-EMITS:** every `wrapmain_wrap_*.json` from `w6_xhat` up. ⚑ The SMOKE shape
+  -- is again unmoved — `xhatSel 5` selects none of entries 32/33/34/35/47 — which is why all 30
+  -- smoke rungs are byte-identical across the split.
   -- ⚠ ⚑ **THIS PAIR MOVED AT `w11_wraphack`, AND THE REFUSAL IS WHAT FOUND IT.** §21 makes packed
   -- statement words 55 and 56 the two prev-proof `hash_messages_for_next_wrap_proof` squeezes
   -- instead of fixtures, so MSM entries 65 and 66 carry different scalars and `xhatOut 67` is a
@@ -5102,8 +5112,8 @@ def shapeWrap : WrapShape :=
   -- public words below it move with it. The SMOKE shape is unmoved: `xhatSel 5` does not select
   -- entries 65/66, which is also why the smoke fixtures below `w11_wraphack` are byte-identical.
   , xhatXY :=
-      (27534166148223008355278056763413711424779277410543948788032764825660730916734,
-       13845564567107428770336275512814846537757742990744982818601823862046640819426) }
+      (21038944471751315142907703185900822264518741389040370626991641394610909963071,
+       19592567164898647587744187653137926963532786082618227593626077542755892693697) }
 
 /-- A small shape for the in-CI `#guard`s (the committed one is emitted by the driver). -/
 def shapeSmoke : WrapShape :=

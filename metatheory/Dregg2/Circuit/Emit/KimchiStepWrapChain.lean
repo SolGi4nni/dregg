@@ -805,12 +805,26 @@ and the digest of dregg's own *step* one. `.key` is in `rungsUpto` of every rung
 this single row is why the chain stops where it stops — not W-COMBINE, not W-BULLET.
 
 ⚠ It goes RED when `STEP_VK_XY` becomes dregg's own step key, which is exactly when the chain should
-climb. -/
+climb.
+
+⚑ **AND IT DID, ON 2026-08-04, AND THE RED WAS NOT NOTICED FOR A DAY.** `d6683dd54` — the harvest
+commit that landed three lanes' work unbuilt — swapped `STEP_VK_XY` to Mina's real
+`step-transaction` index and added `KimchiWrapMain.STEP_VK_DIGEST` for it, whose own docblock says
+in as many words *"It is NOT `PastaPoseidonFq.VKDIGEST` any more"*. `KimchiWrapMainPins04` was
+updated to the new constant; THIS call site was not, so the third conjunct compared the real key's
+index digest against the digest of the **degenerate seven-identity test index** it replaced, and
+`native_decide` evaluated the theorem FALSE.
+
+⚠ The repair is the constant, NOT the number: `STEP_VK_DIGEST` is
+`verifier_index.digest::<BaseSponge>()` as RUST KIMCHI computes it for that key, re-derived a third
+time by the extractor's independent `absorb_fq` replay. Pasting the value this file's own sponge
+prints would have made the pin a statement about its own definition. -/
 theorem the_chain_cannot_climb_past_bind_until_the_step_key_is_real :
     (chainRun.evs.getD 0 default).word = STEP_VKDIGEST
     ∧ keyDigestVal shapeChain chainRun ≠ STEP_VKDIGEST
+    ∧ keyDigestVal shapeChain chainRun = STEP_VK_DIGEST
     ∧ keyDigestVal shapeChain chainRun
-        = Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST
+        ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST
     ∧ (rungsUpto .combine).contains .key = true
     ∧ (rungsUpto .bullet).contains .key = true
     ∧ (rungsUpto .bind).contains .key = false := by
