@@ -7680,6 +7680,30 @@ async fn execute_finalized_turn(
             return outcome;
         }
     };
+    let galley_route = match crate::poa_galley_api::classify_finalized_galley(&signed_turn) {
+        Ok(route) => route,
+        Err(error) => {
+            let outcome = persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                error.code(),
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                reason_code = error.code(),
+                error = %error,
+                "reserved PoA Galley carrier refused before mutation"
+            );
+            return outcome;
+        }
+    };
+    let is_galley_public_perform = matches!(
+        galley_route,
+        crate::poa_galley_api::FinalizedGalleyRoute::PublicPerform
+    );
     // Classify the disjoint exact-FNSP route before consulting any Signal
     // deployment state. A mixed carrier is intrinsically unsupported: its
     // deterministic disposition must not change merely because one replica has
@@ -7721,6 +7745,82 @@ async fn execute_finalized_turn(
         );
         return outcome;
     }
+    if is_galley_public_perform && signal_claim.is_some() {
+        let outcome = persist_finalized_payload_rejection(
+            &s,
+            block_id,
+            turn_data,
+            Some(computed_hash),
+            "poa-galley-signal-combination-unsupported",
+        );
+        warn!(
+            block_id = %block_id,
+            turn_hash = %turn_hash_hex,
+            "PoA Galley plus Signal is a disjoint unsupported route"
+        );
+        return outcome;
+    }
+    if is_galley_public_perform && exact_fnsp_v3_route.is_some() {
+        let outcome = persist_finalized_payload_rejection(
+            &s,
+            block_id,
+            turn_data,
+            Some(computed_hash),
+            "poa-galley-exact-fnsp-v3-combination-unsupported",
+        );
+        warn!(
+            block_id = %block_id,
+            turn_hash = %turn_hash_hex,
+            "PoA Galley plus exact FNSP-v3 is a disjoint unsupported route"
+        );
+        return outcome;
+    }
+    let galley_preflight = if is_galley_public_perform {
+        match s
+            .store
+            .preflight_active_poa_galley_public_perform_v1(&signed_turn)
+        {
+            Ok(preflight) => Some(preflight),
+            Err(
+                dregg_persist::poa_galley_authority::PoaGalleyPublicPerformPreflightErrorV1::StaleAction(
+                    reason,
+                ),
+            ) => {
+                let outcome = persist_finalized_payload_rejection(
+                    &s,
+                    block_id,
+                    turn_data,
+                    Some(computed_hash),
+                    "poa-galley-stale-action",
+                );
+                warn!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    reason,
+                    "stale Galley action refused deterministically before execution"
+                );
+                return outcome;
+            }
+            Err(
+                dregg_persist::poa_galley_authority::PoaGalleyPublicPerformPreflightErrorV1::AuthorityUnavailable(
+                    error,
+                ),
+            ) => {
+                warn!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    error = %error,
+                    "Galley native authority unavailable; finalized identity remains pending"
+                );
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: format!("Galley preflight unavailable: {error}"),
+                };
+            }
+        }
+    } else {
+        None
+    };
     let signal_head_snapshot = if signal_claim.is_some() {
         match s.store.load_poa_signal_head(s.federation_id) {
             Ok(Some(head)) => Some(head),
@@ -8582,6 +8682,47 @@ async fn execute_finalized_turn(
             block_id,
             error: "global finalized frontier moved during off-lock execution".into(),
         };
+    }
+
+    // Galley action tokens are head-scoped. The first native preflight made an
+    // already-stale payload deterministic; this second mint closes the off-lock
+    // execution window. Any world/head/token movement is retryable because the
+    // action was valid at the earlier finalized snapshot, while equality lets
+    // the same-writer apex perform the final authoritative check.
+    if let Some(expected) = galley_preflight.as_ref() {
+        match s
+            .store
+            .preflight_active_poa_galley_public_perform_v1(&signed_turn)
+        {
+            Ok(current) if &current == expected => {}
+            Ok(_) => {
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: "PoA Galley world or stream head moved during off-lock execution"
+                        .into(),
+                };
+            }
+            Err(
+                dregg_persist::poa_galley_authority::PoaGalleyPublicPerformPreflightErrorV1::StaleAction(
+                    _,
+                ),
+            ) => {
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: "PoA Galley action expired during off-lock execution".into(),
+                };
+            }
+            Err(
+                dregg_persist::poa_galley_authority::PoaGalleyPublicPerformPreflightErrorV1::AuthorityUnavailable(
+                    error,
+                ),
+            ) => {
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: format!("could not revalidate PoA Galley head: {error}"),
+                };
+            }
+        }
     }
 
     // The judge ran against an owned persisted-head snapshot while the state
@@ -9645,7 +9786,19 @@ async fn execute_finalized_turn(
                     finalized_spends: &finalized_faithful_spends,
                 };
                 let commit_durable = || {
-                    match (receipt_already_in_log, poa_signal_transition.as_ref()) {
+                    if is_galley_public_perform {
+                        s.store.commit_finalized_poa_galley_public_perform_v1(
+                            expected_ordinal,
+                            &commit_record,
+                            &note_commitments,
+                            receipt_log_index,
+                            &signed_turn,
+                            &receipt,
+                            faithful_weld,
+                            &executor_state,
+                        )
+                    } else {
+                        match (receipt_already_in_log, poa_signal_transition.as_ref()) {
                         (true, Some(poa_signal)) => s
                             .store
                             .commit_finalized_turn_with_faithful_root_and_executor_state_existing_receipt_and_poa_signal(
@@ -9690,6 +9843,7 @@ async fn execute_finalized_turn(
                                 faithful_weld,
                                 &executor_state,
                             ),
+                        }
                     }
                 };
                 #[cfg(test)]

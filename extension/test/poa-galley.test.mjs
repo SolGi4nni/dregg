@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import {
   POA_GALLEY_ACTOR_HEADER,
   POA_GALLEY_COMMAND_PREPARE_FORMAT,
+  checkPoAGalleyPreparationDigest,
   checkPoAGalleyReceiptPostcardSha256,
   decodePoAGalleyPostcard,
   findPoAGalleyAction,
@@ -43,7 +44,7 @@ test("actor header is a canonical public preparation claim, never page-owned aut
 test("extension consumes the byte-pinned source-built web Galley fixture", async () => {
   const raw = await readFile(new URL("../../poa-web/tests/fixtures/galley-wire-v1.json", import.meta.url));
   assert.equal(createHash("sha256").update(raw).digest("hex"),
-    "b7b1e149c9abd0896a100893ab06ef7a85664062eef1f5d1efb1912d9fa7686e");
+    "8079046c826ed0b9f2ce2bdd241d4e9333940865a803828422649c45827ba29f");
   const fixture = JSON.parse(raw);
   assert.ok(parsePoAGalleySession(fixture.session));
   assert.ok(parsePoAGalleyStatus(fixture.status));
@@ -133,7 +134,7 @@ test("status requires the exact audited replay envelope and finds receipts only 
   assert.equal(parsePoAGalleyStatus({ ...current("POA-GALLEY-STATUS-V1"), replay: { ...replay(), from_sequence: 6 }, events: [event()] }), null, "range binds returned first event");
 });
 
-test("prepare carries no V1 holding receipt and unsigned turns are byte-bounded and exact", () => {
+test("prepare carries no V1 holding receipt and binds exact bytes before signing", async () => {
   assert.deepEqual(makePoAGalleyPrepare("opaque.perform.7"), {
     format: POA_GALLEY_COMMAND_PREPARE_FORMAT,
     action_token: "opaque.perform.7",
@@ -144,12 +145,19 @@ test("prepare carries no V1 holding receipt and unsigned turns are byte-bounded 
     format: "POA-GALLEY-UNSIGNED-TURN-V1",
     intent_id: "intent-7",
     federation_id: H("1"),
-    turn_hash: H("b"),
+    preparation_digest: "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
     turn_postcard_base64: "AQIDBA==",
     expires_after_sequence: 7,
   });
   assert.ok(unsigned);
   assert.deepEqual([...decodePoAGalleyPostcard(unsigned.turn_postcard_base64)], [1, 2, 3, 4]);
+  assert.equal(await checkPoAGalleyPreparationDigest(unsigned), true);
+  assert.equal(await checkPoAGalleyPreparationDigest({
+    ...unsigned,
+    turn_postcard_base64: "AQIDBQ==",
+  }), false, "a substituted prepared carrier is refused before custody signing");
+  assert.equal(parsePoAGalleyUnsignedTurn({ ...unsigned, turn_hash: H("b") }), null,
+    "a pre-authorization digest must never masquerade as the final signed turn hash");
   assert.equal(parsePoAGalleyUnsignedTurn({ ...unsigned, holding_receipt_id: "unsafe-v1" }), null);
   assert.equal(parsePoAGalleyUnsignedTurn({ ...unsigned, turn_postcard_base64: "not base64" }), null);
   assert.equal(poAGalleyAvailableAtSequence(unsigned.expires_after_sequence, 7), true);
@@ -162,12 +170,18 @@ test("pending intent coordinates survive restart and reconcile only by exact tur
     format: "POA-GALLEY-UNSIGNED-TURN-V1",
     intent_id: "intent-7",
     federation_id: H("1"),
-    turn_hash: H("b"),
+    preparation_digest: "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
     turn_postcard_base64: "AQIDBA==",
     expires_after_sequence: 7,
   });
-  const pending = makePoAGalleyPendingIntent(session, prepared);
+  const finalSignedTurnHash = H("b");
+  const pending = makePoAGalleyPendingIntent(session, prepared, finalSignedTurnHash);
   assert.ok(pending);
+  assert.equal(pending.preparation_digest, prepared.preparation_digest);
+  assert.equal(pending.turn_hash, finalSignedTurnHash);
+  assert.notEqual(pending.turn_hash, pending.preparation_digest,
+    "the post-authorization canonical hash is a distinct finality coordinate");
+  assert.equal(makePoAGalleyPendingIntent(session, prepared, "not-a-turn-hash"), null);
   const journal = parsePoAGalleyPendingJournal({ format: "POA-GALLEY-PENDING-INTENT-JOURNAL-V1", entries: [pending] });
   assert.ok(journal);
   const status = parsePoAGalleyStatus({ ...current("POA-GALLEY-STATUS-V1"), events: [event(H("b"))] });
@@ -181,4 +195,18 @@ test("pending intent coordinates survive restart and reconcile only by exact tur
     events: [{ ...event(H("9")), sequence: 8, event_digest: H("8") }],
   });
   assert.equal(reconcilePoAGalleyPendingIntents(journal.entries, advanced).expired.length, 1);
+});
+
+test("background uses a two-phase preparation digest then the signer-minted final hash", async () => {
+  const background = await readFile(new URL("../src/background.ts", import.meta.url), "utf8");
+  assert.match(background, /await checkPoAGalleyPreparationDigest\(prepared\)/,
+    "the exact prepared postcard is checked before custody signing");
+  assert.doesNotMatch(background, /expectedTurnHash:\s*prepared\./,
+    "a pre-authorization coordinate must not be compared to the final signed Turn hash");
+  assert.match(background, /beforeSubmit:\s*async \(signedTurnHash\)/,
+    "the signer-minted final hash crosses the pre-submit durability boundary");
+  assert.match(background, /recordPoAGalleyPendingIntent\(session, prepared, signedTurnHash\)/,
+    "pending reconciliation records the final signed hash, not the preparation digest");
+  assert.match(background, /findPoAGalleyEvent\(observed, finalTurnHash\)/,
+    "receipt discovery follows the exact post-authorization finality coordinate");
 });

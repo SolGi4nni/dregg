@@ -100,6 +100,7 @@ import {
   POA_GALLEY_API_PATH,
   POA_GALLEY_ACTOR_HEADER,
   POA_GALLEY_PENDING_JOURNAL_FORMAT,
+  checkPoAGalleyPreparationDigest,
   checkPoAGalleyReceiptPostcardSha256,
   decodePoAGalleyPostcard,
   findPoAGalleyAction,
@@ -3230,7 +3231,7 @@ async function signTurnV3(
     targetConfig?: NodeConfig;
     label?: string;
     metadata?: Record<string, unknown>;
-    beforeSubmit?: () => Promise<string | null>;
+    beforeSubmit?: (signedTurnHash: string) => Promise<string | null>;
   } = {},
 ): Promise<SignTurnResult> {
   requireWasm("signTurnV3");
@@ -3302,7 +3303,7 @@ async function signTurnV3(
   }
   if (options.beforeSubmit) {
     try {
-      const refusal = await options.beforeSubmit();
+      const refusal = await options.beforeSubmit(signed.turn_id);
       if (refusal) return { error: refusal, submitted: false };
     } catch {
       return { error: "Could not revalidate the browser tab before submission", submitted: false };
@@ -4366,9 +4367,10 @@ function mutatePoAGalleyPending<T>(mutation: () => Promise<T>): Promise<T> {
 async function recordPoAGalleyPendingIntent(
   session: PoAGalleySession,
   prepared: PoAGalleyUnsignedTurn,
+  signedTurnHash: string,
 ): Promise<PoAGalleyPendingIntent | null> {
   return mutatePoAGalleyPending(async () => {
-    const intent = makePoAGalleyPendingIntent(session, prepared);
+    const intent = makePoAGalleyPendingIntent(session, prepared, signedTurnHash);
     if (!intent) return null;
     const key = poAGalleyPendingIntentKey(intent);
     const entries = (await readPoAGalleyPendingIntents())
@@ -4498,54 +4500,63 @@ async function handlePoAGalley(
   }
   const turnBytes = decodePoAGalleyPostcard(prepared.turn_postcard_base64);
   if (!turnBytes) return poaGalleyError("command", "The prepared turn postcard is not canonical.");
-  const pendingIntent = await recordPoAGalleyPendingIntent(session, prepared);
-  if (!pendingIntent) {
-    return poaGalleyError("command", "The prepared turn could not be durably bound to this Galley world and sequence.");
+  if (!await checkPoAGalleyPreparationDigest(prepared)) {
+    return poaGalleyError("command", "The prepared turn postcard does not match its preparation digest.");
   }
 
+  let pendingIntent: PoAGalleyPendingIntent | null = null;
   const signed = await signTurnV3(
     turnBytes,
     authorized.pageOrigin,
     Array.from(Uint8Array.from(prepared.federation_id.match(/.{2}/g)!, (pair) => Number.parseInt(pair, 16))),
     {
-      expectedTurnHash: prepared.turn_hash,
       targetConfig: POA_SIGNAL_NODE_CONFIG,
       label: "Path of Angels Galley shift",
       metadata: {
         action: "poaGalley",
         intentId: prepared.intent_id,
-        galleyPendingKey: poAGalleyPendingIntentKey(pendingIntent),
+        preparationDigest: prepared.preparation_digest,
         dailyId: session.daily_id,
         aggregateId: session.aggregate_id,
-        turnHash: prepared.turn_hash,
         expiresAfterSequence: prepared.expires_after_sequence,
         platform: authorized.binding.platform,
         contextId: authorized.binding.contextId,
         manifestDigest: authorized.binding.manifestDigest,
       },
-      beforeSubmit: async () => {
+      beforeSubmit: async (signedTurnHash) => {
         if (sender.tab?.id === undefined) return "The originating Path of Angels tab no longer exists.";
         const currentTab = await chrome.tabs.get(sender.tab.id);
         const current = await authorizePoAGalleyBinding(
           authorized.binding,
           { ...sender, tab: currentTab },
         );
-        return "error" in current ? current.error : null;
+        if ("error" in current) return current.error;
+        pendingIntent = await recordPoAGalleyPendingIntent(session, prepared, signedTurnHash);
+        return pendingIntent
+          ? null
+          : "The signed turn could not be durably bound to this Galley intent before submission.";
       },
     },
   );
+  const finalTurnHash = signed.turnId;
   if (!signed.submitted) {
     if (signed.queued) {
+      if (!finalTurnHash || !/^[0-9a-f]{64}$/.test(finalTurnHash) || !pendingIntent) {
+        return poaGalleyError("command", "Cipherclerk queued no canonical signed turn bound to the durable Galley intent.");
+      }
       return {
         ok: true,
         op: "command",
         admission: "queued",
         observation: "not_observed",
-        turnHash: prepared.turn_hash,
+        turnHash: finalTurnHash,
         error: signed.error,
       };
     }
     return poaGalleyError("command", signed.error || "Cipherclerk refused the Galley turn.");
+  }
+  if (!finalTurnHash || !/^[0-9a-f]{64}$/.test(finalTurnHash) || !pendingIntent) {
+    return poaGalleyError("command", "Cipherclerk submitted no canonical signed turn bound to the durable Galley intent.");
   }
 
   // Finality discovery is by the exact canonical turn hash in the replayed
@@ -4556,7 +4567,7 @@ async function handlePoAGalley(
     if (!("error" in observed) && observed.federation_id === session.federation_id &&
         observed.daily_id === session.daily_id && observed.aggregate_id === session.aggregate_id) {
       latestStatus = observed;
-      const event = findPoAGalleyEvent(observed, prepared.turn_hash);
+      const event = findPoAGalleyEvent(observed, finalTurnHash);
       if (event) {
         if (!await checkPoAGalleyReceiptPostcardSha256(event)) {
           return poaGalleyError("command", "The matching journal receipt postcard failed its adjacent SHA-256 checksum.");
@@ -4566,7 +4577,7 @@ async function handlePoAGalley(
           op: "command",
           admission: "submitted",
           observation: "receipt_observed",
-          turnHash: prepared.turn_hash,
+          turnHash: finalTurnHash,
           event,
           status: observed,
         };
@@ -4579,7 +4590,7 @@ async function handlePoAGalley(
     op: "command",
     admission: "submitted",
     observation: "not_observed",
-    turnHash: prepared.turn_hash,
+    turnHash: finalTurnHash,
     ...(latestStatus ? { status: latestStatus } : {}),
   };
 }

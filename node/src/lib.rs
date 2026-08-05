@@ -93,6 +93,7 @@ mod operator_turn_receipt_head_e2e;
 mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
+pub(crate) mod poa_galley_api;
 pub mod poa_holding_api;
 pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;

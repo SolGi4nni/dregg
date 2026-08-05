@@ -91,7 +91,7 @@ export interface PoAGalleyUnsignedTurn {
   format: typeof POA_GALLEY_UNSIGNED_TURN_FORMAT;
   intent_id: string;
   federation_id: string;
-  turn_hash: string;
+  preparation_digest: string;
   turn_postcard_base64: string;
   expires_after_sequence: number;
 }
@@ -101,6 +101,7 @@ export interface PoAGalleyPendingIntent {
   daily_id: string;
   aggregate_id: string;
   intent_id: string;
+  preparation_digest: string;
   turn_hash: string;
   prepared_at_sequence: number;
   expires_after_sequence: number;
@@ -320,13 +321,13 @@ export function parsePoAGalleyStatus(value: unknown): PoAGalleyStatus | null {
 
 export function parsePoAGalleyUnsignedTurn(value: unknown): PoAGalleyUnsignedTurn | null {
   const row = object(value);
-  if (!row || !exact(row, ["format", "intent_id", "federation_id", "turn_hash", "turn_postcard_base64", "expires_after_sequence"])) return null;
-  if (row.format !== POA_GALLEY_UNSIGNED_TURN_FORMAT || !opaqueId(row.intent_id) || !hex32(row.federation_id) || !hex32(row.turn_hash) || !canonicalBase64(row.turn_postcard_base64, MAX_POSTCARD_BYTES) || !safeNatural(row.expires_after_sequence)) return null;
+  if (!row || !exact(row, ["format", "intent_id", "federation_id", "preparation_digest", "turn_postcard_base64", "expires_after_sequence"])) return null;
+  if (row.format !== POA_GALLEY_UNSIGNED_TURN_FORMAT || !opaqueId(row.intent_id) || !hex32(row.federation_id) || !hex32(row.preparation_digest) || !canonicalBase64(row.turn_postcard_base64, MAX_POSTCARD_BYTES) || !safeNatural(row.expires_after_sequence)) return null;
   return Object.freeze({
     format: POA_GALLEY_UNSIGNED_TURN_FORMAT,
     intent_id: row.intent_id,
     federation_id: row.federation_id,
-    turn_hash: row.turn_hash,
+    preparation_digest: row.preparation_digest,
     turn_postcard_base64: row.turn_postcard_base64,
     expires_after_sequence: row.expires_after_sequence,
   });
@@ -352,6 +353,21 @@ export function decodePoAGalleyPostcard(base64: string): Uint8Array<ArrayBuffer>
   }
 }
 
+/** Bind the exact unsigned postcard bytes to the preparation intent before
+ * custody sees them. The final canonical Turn hash is minted only after the
+ * signer replaces `Unchecked` authorization and is deliberately distinct. */
+export async function checkPoAGalleyPreparationDigest(prepared: PoAGalleyUnsignedTurn): Promise<boolean> {
+  const postcard = decodePoAGalleyPostcard(prepared.turn_postcard_base64);
+  if (!postcard) return false;
+  try {
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", postcard));
+    const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return hex === prepared.preparation_digest;
+  } catch {
+    return false;
+  }
+}
+
 /** Adjacent transport checksum only; this is not canonical Dregg receipt verification. */
 export async function checkPoAGalleyReceiptPostcardSha256(event: PoAGalleyEvent): Promise<boolean> {
   const postcard = decodePoAGalleyPostcard(event.receipt.postcard_base64);
@@ -367,15 +383,16 @@ export async function checkPoAGalleyReceiptPostcardSha256(event: PoAGalleyEvent)
 
 function pendingIntent(value: unknown): PoAGalleyPendingIntent | null {
   const row = object(value);
-  if (!row || !exact(row, ["federation_id", "daily_id", "aggregate_id", "intent_id", "turn_hash", "prepared_at_sequence", "expires_after_sequence"]) ||
+  if (!row || !exact(row, ["federation_id", "daily_id", "aggregate_id", "intent_id", "preparation_digest", "turn_hash", "prepared_at_sequence", "expires_after_sequence"]) ||
       !hex32(row.federation_id) || !opaqueId(row.daily_id) || !opaqueId(row.aggregate_id) || !opaqueId(row.intent_id) ||
-      !hex32(row.turn_hash) || !safeNatural(row.prepared_at_sequence) || !safeNatural(row.expires_after_sequence) ||
+      !hex32(row.preparation_digest) || !hex32(row.turn_hash) || !safeNatural(row.prepared_at_sequence) || !safeNatural(row.expires_after_sequence) ||
       !poAGalleyAvailableAtSequence(row.expires_after_sequence, row.prepared_at_sequence)) return null;
   return Object.freeze({
     federation_id: row.federation_id,
     daily_id: row.daily_id,
     aggregate_id: row.aggregate_id,
     intent_id: row.intent_id,
+    preparation_digest: row.preparation_digest,
     turn_hash: row.turn_hash,
     prepared_at_sequence: row.prepared_at_sequence,
     expires_after_sequence: row.expires_after_sequence,
@@ -383,18 +400,31 @@ function pendingIntent(value: unknown): PoAGalleyPendingIntent | null {
 }
 
 export function poAGalleyPendingIntentKey(intent: PoAGalleyPendingIntent): string {
-  return JSON.stringify([intent.federation_id, intent.daily_id, intent.aggregate_id, intent.intent_id, intent.turn_hash]);
+  return JSON.stringify([
+    intent.federation_id,
+    intent.daily_id,
+    intent.aggregate_id,
+    intent.intent_id,
+    intent.preparation_digest,
+    intent.turn_hash,
+  ]);
 }
 
-export function makePoAGalleyPendingIntent(session: PoAGalleyCurrentView, prepared: PoAGalleyUnsignedTurn): PoAGalleyPendingIntent | null {
+export function makePoAGalleyPendingIntent(
+  session: PoAGalleyCurrentView,
+  prepared: PoAGalleyUnsignedTurn,
+  signedTurnHash: string,
+): PoAGalleyPendingIntent | null {
   if (prepared.federation_id !== session.federation_id ||
+      !hex32(signedTurnHash) ||
       !poAGalleyAvailableAtSequence(prepared.expires_after_sequence, session.sequence)) return null;
   return pendingIntent({
     federation_id: session.federation_id,
     daily_id: session.daily_id,
     aggregate_id: session.aggregate_id,
     intent_id: prepared.intent_id,
-    turn_hash: prepared.turn_hash,
+    preparation_digest: prepared.preparation_digest,
+    turn_hash: signedTurnHash,
     prepared_at_sequence: session.sequence,
     expires_after_sequence: prepared.expires_after_sequence,
   });

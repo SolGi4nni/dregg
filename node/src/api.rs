@@ -1854,6 +1854,9 @@ async fn require_auth(
 /// (comma-separated), wired in `main.rs`.
 pub type CorsAllowlist = Arc<HashSet<String>>;
 
+pub(crate) const CORS_ALLOWED_REQUEST_HEADERS: &str =
+    "Content-Type, Authorization, X-Devnet-Key, X-Dregg-Actor";
+
 /// Middleware that adds CORS headers to every response.
 async fn cors_middleware(
     State(allowlist): State<CorsAllowlist>,
@@ -1893,7 +1896,7 @@ async fn cors_middleware(
         );
         headers.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("Content-Type, Authorization, X-Devnet-Key"),
+            HeaderValue::from_static(CORS_ALLOWED_REQUEST_HEADERS),
         );
         headers.insert(
             header::ACCESS_CONTROL_MAX_AGE,
@@ -2221,6 +2224,7 @@ pub fn router_with_cors(
         // accepts no balance or slot assertion from the browser; the isolated
         // gate reloads the server-issued challenge and validates server-fetched
         // finalized Token-2022 bytes. This tier never enters governance weight.
+        .merge(crate::poa_galley_api::routes())
         .merge(crate::poa_holding_api::routes())
         .route(
             "/cipherclerk/unlock",

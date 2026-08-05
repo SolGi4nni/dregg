@@ -24,7 +24,7 @@
 //! authority adapter exists it is structurally unavailable rather than silently
 //! downgraded to public play.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use dregg_lean_ffi::{
     poa_event_batch_ffi::{
@@ -37,7 +37,7 @@ use dregg_turn::poa_galley_carrier::{
     GalleyPlayerCommandV1, command_from_exact_galley_signed_turn, galley_player_cell,
 };
 use dregg_turn::{Effect, Finality, SignedTurn, TurnReceipt};
-use redb::WriteTransaction;
+use redb::{ReadableTable, ReadableTableMetadata, WriteTransaction};
 use serde::{Deserialize, Serialize};
 
 use crate::poa_activated_content::PreparedPoaActivatedGalleyPolicyV1;
@@ -58,6 +58,157 @@ const GALLEY_STREAM_VERSION: u64 = 1;
 const MAX_GALLEY_EVENTS: usize = 64;
 const MAX_GALLEY_ACTIONS: usize = 2;
 const MAX_COMPONENT_BYTES: usize = 16 * 1024 * 1024;
+// Until the canonical receipt chain grows a hash -> dense-index table, the
+// public Galley projection resolves at most this many exact receipt frames in
+// the SAME read/write snapshot as its audited event prefix.  Crossing the cap
+// refuses observability instead of silently returning unverifiable receipts.
+const MAX_GALLEY_RECEIPT_SCAN: u64 = 65_536;
+
+/// Persistence-owned, replay-audited public Galley observation.
+///
+/// All fields are private and there is no constructor: a caller cannot turn
+/// JSON, a claimed head, or an `audited: bool` into an authoritative view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoaGalleyObservationV1 {
+    world: PoaWorldIdentityV2,
+    deployment_id: [u8; 32],
+    daily_id: [u8; 32],
+    public_action_content_id: [u8; 32],
+    sequence: u64,
+    semantic_head: [u8; 32],
+    projection_digest: [u8; 32],
+    projection_json: Vec<u8>,
+    actions: Vec<PoaGalleyObservedActionV1>,
+    events: Vec<PoaGalleyObservedEventV1>,
+}
+
+impl PoaGalleyObservationV1 {
+    pub const fn world(&self) -> &PoaWorldIdentityV2 {
+        &self.world
+    }
+    pub const fn deployment_id(&self) -> [u8; 32] {
+        self.deployment_id
+    }
+    pub const fn daily_id(&self) -> [u8; 32] {
+        self.daily_id
+    }
+    pub const fn public_action_content_id(&self) -> [u8; 32] {
+        self.public_action_content_id
+    }
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+    pub const fn semantic_head(&self) -> [u8; 32] {
+        self.semantic_head
+    }
+    pub const fn projection_digest(&self) -> [u8; 32] {
+        self.projection_digest
+    }
+    pub fn projection_json(&self) -> &[u8] {
+        &self.projection_json
+    }
+    pub fn actions(&self) -> &[PoaGalleyObservedActionV1] {
+        &self.actions
+    }
+    pub fn events(&self) -> &[PoaGalleyObservedEventV1] {
+        &self.events
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoaGalleyObservedActionV1 {
+    token: [u8; 32],
+    expires_after_sequence: u64,
+}
+
+impl PoaGalleyObservedActionV1 {
+    pub const fn token(&self) -> [u8; 32] {
+        self.token
+    }
+    pub const fn expires_after_sequence(&self) -> u64 {
+        self.expires_after_sequence
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoaGalleyObservedEventV1 {
+    coordinate: FinalizedTurnCoordinateV2,
+    sequence: u64,
+    event_digest: [u8; 32],
+    payload_digest: [u8; 32],
+    payload_json: Vec<u8>,
+    receipt_index: u64,
+    receipt_postcard: Vec<u8>,
+}
+
+/// Exact active-world/head token established by persistence's native Lean
+/// view before a finalized public `Perform` executes off-lock.
+///
+/// The node compares a second independently minted value after re-acquiring
+/// its global state lock.  There is no public constructor and no caller-authored
+/// head/sequence field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoaGalleyPublicPerformPreflightV1 {
+    world: PoaWorldIdentityV2,
+    signer: [u8; 32],
+    action_token: [u8; 32],
+    action_content_id: [u8; 32],
+    sequence: u64,
+    semantic_head: [u8; 32],
+}
+
+/// Typed preflight disposition.  Authority/configuration failures remain
+/// retryable at node finality; an exact carrier whose action is absent from a
+/// successfully reconstructed native view is a deterministic stale payload.
+#[derive(Debug)]
+pub enum PoaGalleyPublicPerformPreflightErrorV1 {
+    AuthorityUnavailable(StoreError),
+    StaleAction(&'static str),
+}
+
+impl std::fmt::Display for PoaGalleyPublicPerformPreflightErrorV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AuthorityUnavailable(error) => {
+                write!(formatter, "Galley authority unavailable: {error}")
+            }
+            Self::StaleAction(reason) => write!(formatter, "stale Galley action: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for PoaGalleyPublicPerformPreflightErrorV1 {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::AuthorityUnavailable(error) => Some(error),
+            Self::StaleAction(_) => None,
+        }
+    }
+}
+
+impl PoaGalleyObservedEventV1 {
+    pub const fn coordinate(&self) -> &FinalizedTurnCoordinateV2 {
+        &self.coordinate
+    }
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+    pub const fn event_digest(&self) -> [u8; 32] {
+        self.event_digest
+    }
+    pub const fn payload_digest(&self) -> [u8; 32] {
+        self.payload_digest
+    }
+    pub fn payload_json(&self) -> &[u8] {
+        &self.payload_json
+    }
+    pub const fn receipt_index(&self) -> u64 {
+        self.receipt_index
+    }
+    pub fn receipt_postcard(&self) -> &[u8] {
+        &self.receipt_postcard
+    }
+}
 
 /// Exact finalized public `Perform` authority.
 ///
@@ -707,6 +858,197 @@ impl PersistentStore {
         Ok(token)
     }
 
+    /// Reconstruct the current public Galley view from the sealed active
+    /// content member and complete audited V2 journal in one database snapshot.
+    ///
+    /// `signer` personalizes the public Lean view only.  It confers no write or
+    /// finality authority; the only mutating path consumes a separately signed,
+    /// PQ-admitted `SignedTurn` at the node finalization apex.
+    pub fn observe_active_poa_galley_v1(&self, signer: [u8; 32]) -> Result<PoaGalleyObservationV1> {
+        if signer == [0; 32] {
+            return Err(integrity("Galley observation signer is zero"));
+        }
+        let write = self.db.begin_write()?;
+        let prepared =
+            crate::poa_activated_content::prepare_active_poa_galley_policy_v1_in(&write)?;
+        let policy = AuthenticatedPoaGalleyPolicyV1::from_activated_content(prepared)?;
+        let daily_id = decode_hex32(&policy.policy.daily_id)?;
+        let stream = PoaBatchStreamIdV2::new(
+            policy.world.clone(),
+            GALLEY_STREAM_KIND,
+            daily_id,
+            GALLEY_STREAM_VERSION,
+        )?;
+        let snapshot = self.load_galley_snapshot_in(&write, &policy, stream)?;
+        if snapshot.history.len() > MAX_GALLEY_EVENTS {
+            return Err(integrity(
+                "durable Galley history exceeds native replay bound",
+            ));
+        }
+        let player_cell = galley_player_cell(&signer).0;
+        let input = galley_input(
+            &policy,
+            &snapshot,
+            signer,
+            player_cell,
+            "view",
+            "none",
+            [0; 32],
+        )?;
+        let view = call_galley(&input)?;
+        validate_view(&policy, &snapshot, signer, &view)?;
+        let projection_digest = decode_hex32(&view.replay.projection_digest)?;
+        let actions = view
+            .view
+            .available_actions
+            .iter()
+            .map(|action| {
+                if action.kind != "public-play"
+                    || action.actor != hex(signer)
+                    || action.beneficiary != hex(signer)
+                    || action.expires_after_sequence != snapshot.sequence
+                {
+                    return Err(integrity(
+                        "native Galley exposed an action outside public observation authority",
+                    ));
+                }
+                Ok(PoaGalleyObservedActionV1 {
+                    token: decode_hex32(&action.token)?,
+                    expires_after_sequence: action.expires_after_sequence,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let receipt_frames = load_galley_receipts_in(&write, &snapshot.history)?;
+        let events = snapshot
+            .history
+            .iter()
+            .map(|recorded| {
+                let (receipt_index, receipt_postcard) = receipt_frames
+                    .get(&recorded.coordinate.receipt_hash())
+                    .ok_or_else(|| integrity("Galley event has no exact durable receipt frame"))?;
+                Ok(PoaGalleyObservedEventV1 {
+                    coordinate: recorded.coordinate.clone(),
+                    sequence: recorded.sequence,
+                    event_digest: recorded.event_digest,
+                    payload_digest: recorded.payload_digest,
+                    payload_json: recorded.payload_json.clone(),
+                    receipt_index: *receipt_index,
+                    receipt_postcard: receipt_postcard.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let observation = PoaGalleyObservationV1 {
+            world: policy.world.clone(),
+            deployment_id: decode_hex32(&policy.policy.deployment_id)?,
+            daily_id,
+            public_action_content_id: decode_hex32(&policy.policy.public_action_content_id)?,
+            sequence: snapshot.sequence,
+            semantic_head: snapshot.semantic_head,
+            projection_digest,
+            projection_json: snapshot.projection.clone(),
+            actions,
+            events,
+        };
+        write.abort()?;
+        Ok(observation)
+    }
+
+    /// Validate one exact signed public `Perform` against the active sealed
+    /// policy and native Lean view, returning a persistence-minted CAS token.
+    /// No finality is asserted and no state is mutated.
+    pub fn preflight_active_poa_galley_public_perform_v1(
+        &self,
+        signed: &SignedTurn,
+    ) -> std::result::Result<
+        PoaGalleyPublicPerformPreflightV1,
+        PoaGalleyPublicPerformPreflightErrorV1,
+    > {
+        use PoaGalleyPublicPerformPreflightErrorV1::{AuthorityUnavailable, StaleAction};
+
+        let command = command_from_exact_galley_signed_turn(signed)
+            .map_err(|_| StaleAction("signed carrier is not exact"))?;
+        let GalleyPlayerCommandV1::Perform {
+            action_token,
+            action_content_id,
+        } = command
+        else {
+            return Err(StaleAction("command has no registered public writer"));
+        };
+        let signer = signed.signer.0;
+        if signer == [0; 32] {
+            return Err(StaleAction("signer is zero"));
+        }
+        let write = self
+            .db
+            .begin_write()
+            .map_err(|error| AuthorityUnavailable(error.into()))?;
+        let result = (|| {
+            let prepared =
+                crate::poa_activated_content::prepare_active_poa_galley_policy_v1_in(&write)
+                    .map_err(AuthorityUnavailable)?;
+            let policy = AuthenticatedPoaGalleyPolicyV1::from_activated_content(prepared)
+                .map_err(AuthorityUnavailable)?;
+            let expected_content = decode_hex32(&policy.policy.public_action_content_id)
+                .map_err(AuthorityUnavailable)?;
+            if action_content_id != expected_content {
+                return Err(StaleAction("action content is not active"));
+            }
+            let stream = PoaBatchStreamIdV2::new(
+                policy.world.clone(),
+                GALLEY_STREAM_KIND,
+                decode_hex32(&policy.policy.daily_id).map_err(AuthorityUnavailable)?,
+                GALLEY_STREAM_VERSION,
+            )
+            .map_err(AuthorityUnavailable)?;
+            let snapshot = self
+                .load_galley_snapshot_in(&write, &policy, stream)
+                .map_err(AuthorityUnavailable)?;
+            let player_cell = galley_player_cell(&signer).0;
+            let input = galley_input(
+                &policy,
+                &snapshot,
+                signer,
+                player_cell,
+                "view",
+                "none",
+                [0; 32],
+            )
+            .map_err(AuthorityUnavailable)?;
+            let view = call_galley(&input).map_err(AuthorityUnavailable)?;
+            validate_view(&policy, &snapshot, signer, &view).map_err(AuthorityUnavailable)?;
+            if view
+                .view
+                .available_actions
+                .iter()
+                .filter(|offered| {
+                    offered.kind == "public-play"
+                        && offered.token == hex(action_token.to_bytes())
+                        && offered.actor == hex(signer)
+                        && offered.beneficiary == hex(signer)
+                        && offered.expires_after_sequence == snapshot.sequence
+                })
+                .count()
+                != 1
+            {
+                return Err(StaleAction(
+                    "action token is absent from the current native view",
+                ));
+            }
+            Ok(PoaGalleyPublicPerformPreflightV1 {
+                world: policy.world,
+                signer,
+                action_token: action_token.to_bytes(),
+                action_content_id,
+                sequence: snapshot.sequence,
+                semantic_head: snapshot.semantic_head,
+            })
+        })();
+        write
+            .abort()
+            .map_err(|error| AuthorityUnavailable(error.into()))?;
+        result
+    }
+
     fn load_galley_snapshot_in(
         &self,
         write: &WriteTransaction,
@@ -745,6 +1087,11 @@ impl PersistentStore {
             history.current_head().projection(),
             "durable Galley projection",
         )?;
+        if history.events().len() > MAX_GALLEY_EVENTS {
+            return Err(integrity(
+                "durable Galley history exceeds native replay bound",
+            ));
+        }
         let mut events = Vec::with_capacity(history.events().len());
         for recorded in history.events() {
             if recorded.coordinate().world() != &policy.world
@@ -769,10 +1116,16 @@ impl PersistentStore {
                 payload,
                 event_digest: hex(recorded.event().event_digest()),
             };
-            events.push(
-                serde_json::to_vec(&event)
-                    .map_err(|error| integrity(format!("Galley event JSON failed: {error}")))?,
-            );
+            let event_json = serde_json::to_vec(&event)
+                .map_err(|error| integrity(format!("Galley event JSON failed: {error}")))?;
+            events.push(GalleySnapshotEvent {
+                coordinate: recorded.coordinate().clone(),
+                sequence: recorded.event().sequence(),
+                event_digest: recorded.event().event_digest(),
+                payload_digest: recorded.event().payload_digest(),
+                payload_json: recorded.event().payload().to_vec(),
+                event_json,
+            });
         }
         Ok(GalleySnapshot {
             sequence: history.current_head().sequence(),
@@ -800,8 +1153,96 @@ struct GalleySnapshot {
     sequence: u64,
     semantic_head: [u8; 32],
     projection: Vec<u8>,
-    history: Vec<Vec<u8>>,
+    history: Vec<GalleySnapshotEvent>,
     initial_head: InitialGalleyHead,
+}
+
+struct GalleySnapshotEvent {
+    coordinate: FinalizedTurnCoordinateV2,
+    sequence: u64,
+    event_digest: [u8; 32],
+    payload_digest: [u8; 32],
+    payload_json: Vec<u8>,
+    event_json: Vec<u8>,
+}
+
+fn load_galley_receipts_in(
+    write: &WriteTransaction,
+    events: &[GalleySnapshotEvent],
+) -> Result<BTreeMap<[u8; 32], (u64, Vec<u8>)>> {
+    if events.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let targets = events
+        .iter()
+        .map(|event| (event.coordinate.receipt_hash(), event))
+        .collect::<BTreeMap<_, _>>();
+    if targets.len() != events.len() {
+        return Err(integrity(
+            "two Galley events claim the same finalized receipt hash",
+        ));
+    }
+    let table = write.open_table(crate::tables::RECEIPT_CHAIN)?;
+    let count = table.len()?;
+    if count > MAX_GALLEY_RECEIPT_SCAN {
+        return Err(integrity(format!(
+            "receipt chain length {count} exceeds Galley observation scan bound {MAX_GALLEY_RECEIPT_SCAN}"
+        )));
+    }
+    let mut expected_index = 0u64;
+    let mut found = BTreeMap::new();
+    for row in table.iter()? {
+        let (key, value) = row?;
+        let index = key.value();
+        if index != expected_index {
+            return Err(integrity(format!(
+                "receipt log gap during Galley observation: expected {expected_index}, found {index}"
+            )));
+        }
+        expected_index = expected_index
+            .checked_add(1)
+            .ok_or_else(|| integrity("receipt index overflow during Galley observation"))?;
+        let bytes = value.value();
+        let (receipt, remainder): (TurnReceipt, &[u8]) = postcard::take_from_bytes(bytes)
+            .map_err(|error| integrity(format!("Galley receipt postcard failed: {error}")))?;
+        if !remainder.is_empty()
+            || postcard::to_stdvec(&receipt)
+                .map_err(|error| integrity(format!("Galley receipt reencode failed: {error}")))?
+                != bytes
+        {
+            return Err(integrity(
+                "receipt chain contains a noncanonical Galley observation frame",
+            ));
+        }
+        let receipt_hash = receipt.receipt_hash();
+        let Some(event) = targets.get(&receipt_hash) else {
+            continue;
+        };
+        if receipt.turn_hash != event.coordinate.turn_hash()
+            || receipt.pre_state_hash != event.coordinate.actor_root()
+            || receipt.agent.0 != galley_player_cell(&event.coordinate.signer()).0
+            || receipt.federation_id != event.coordinate.world().federation_id()
+            || receipt.finality != Finality::Final
+        {
+            return Err(integrity(
+                "Galley journal coordinate disagrees with its canonical receipt",
+            ));
+        }
+        if found
+            .insert(receipt_hash, (index, bytes.to_vec()))
+            .is_some()
+        {
+            return Err(integrity(
+                "receipt chain repeats a Galley event receipt hash",
+            ));
+        }
+    }
+    if found.len() != targets.len() {
+        return Err(integrity(
+            "Galley journal references a receipt absent from the canonical chain",
+        ));
+    }
+    Ok(found)
 }
 
 enum InitialGalleyHead {
@@ -829,7 +1270,7 @@ fn galley_input(
     let mut history = Vec::with_capacity(snapshot.history.len());
     for event in &snapshot.history {
         history.push(
-            std::str::from_utf8(event)
+            std::str::from_utf8(&event.event_json)
                 .map_err(|_| integrity("durable Galley event is not UTF-8"))?,
         );
     }
@@ -1440,6 +1881,7 @@ mod tests {
         PoaWorldActivationKindV1, PoaWorldActivationStatementV1, SignedPoaWorldActivationEnvelopeV1,
     };
     use dregg_lean_ffi::{
+        poa_activated_content_ffi::poa_activated_content_runtime_available,
         poa_event_batch_ffi::{
             poa_event_batch_initial_heads_digest_available, poa_event_batch_runtime_available,
         },
@@ -1530,6 +1972,36 @@ mod tests {
             && poa_galley_daily_available()
             && poa_event_batch_runtime_available()
             && poa_event_batch_initial_heads_digest_available()
+    }
+
+    fn activated_manifest_for_fixture() -> (PoaWorldIdentityV2, Vec<u8>) {
+        use sha2::{Digest as _, Sha256};
+
+        let policy = String::from_utf8(policy_json()).expect("policy UTF-8");
+        let component_digest: [u8; 32] = Sha256::digest(policy.as_bytes()).into();
+        let manifest = format!(
+            concat!(
+                "{{\"format\":\"POA-ACTIVATED-CONTENT-MANIFEST-1\",",
+                "\"scope\":{{\"federation_id\":\"{}\",\"content_session\":\"{}\",",
+                "\"content_epoch\":7}},\"legacy_whole_pack_sha256\":null,",
+                "\"components\":[{{\"name\":\"poa.galley-maintenance-daily.policy.v1\",",
+                "\"sha256\":\"{}\",\"bytes_utf8\":{}}}]}}"
+            ),
+            hex([2; 32]),
+            hex([0x53; 32]),
+            hex(component_digest),
+            serde_json::to_string(&policy).expect("quoted policy"),
+        )
+        .into_bytes();
+        let world = PoaWorldIdentityV2::new(
+            [2; 32],
+            Sha256::digest(&manifest).into(),
+            [0x52; 32],
+            [0x53; 32],
+            7,
+        )
+        .expect("manifest world");
+        (world, manifest)
     }
 
     fn offered_public_token(
@@ -1876,5 +2348,113 @@ mod tests {
         assert_eq!(prepared.event_count(), 1);
         assert_eq!(prepared.coordinate().commit_ordinal(), 0);
         assert_ne!(prepared.batch_digest(), [0; 32]);
+    }
+
+    #[test]
+    fn active_observation_is_minted_from_sealed_content_and_native_replay() {
+        if !native_available() || !poa_activated_content_runtime_available() {
+            return;
+        }
+        let store = PersistentStore::open_in_memory().expect("store");
+        let (world, manifest) = activated_manifest_for_fixture();
+        install_world(&store, world.clone());
+        store
+            .install_poa_activated_content_v1(manifest)
+            .expect("activated Galley content");
+
+        let player_key = SigningKey::from_bytes(&[0x65; 32]);
+        let signer = player_key.verifying_key().to_bytes();
+        let observed = store
+            .observe_active_poa_galley_v1(signer)
+            .expect("audited active observation");
+        assert_eq!(observed.world(), &world);
+        assert_eq!(observed.daily_id(), [3; 32]);
+        assert_eq!(observed.public_action_content_id(), [12; 32]);
+        assert_eq!(observed.sequence(), 0);
+        assert_eq!(observed.events(), &[]);
+        assert_eq!(observed.actions().len(), 1);
+        assert_eq!(observed.actions()[0].expires_after_sequence(), 0);
+        assert_ne!(observed.actions()[0].token(), [0; 32]);
+        assert_eq!(observed.projection_json(), genesis_projection_json());
+        assert_ne!(observed.projection_digest(), [0; 32]);
+
+        let signed_perform = |token: [u8; 32]| {
+            let mut turn = dregg_turn::poa_galley_carrier::galley_player_command_turn(
+                &signer,
+                0,
+                None,
+                GalleyPlayerCommandV1::Perform {
+                    action_token: dregg_turn::poa_galley_carrier::GalleyActionToken::from_bytes(
+                        token,
+                    ),
+                    action_content_id: observed.public_action_content_id(),
+                },
+            );
+            turn.call_forest.hash();
+            let turn_hash = turn.hash();
+            SignedTurn {
+                turn,
+                signature: dregg_types::Signature(player_key.sign(&turn_hash).to_bytes()),
+                signer: dregg_types::PublicKey(signer),
+                pq_signature: Vec::new(),
+                pq_signer: Vec::new(),
+            }
+        };
+        let exact = signed_perform(observed.actions()[0].token());
+        let first = store
+            .preflight_active_poa_galley_public_perform_v1(&exact)
+            .expect("exact active preflight");
+        let retry = store
+            .preflight_active_poa_galley_public_perform_v1(&exact)
+            .expect("exact retry preflight");
+        assert_eq!(first, retry);
+        let stale = signed_perform([0xee; 32]);
+        assert!(matches!(
+            store.preflight_active_poa_galley_public_perform_v1(&stale),
+            Err(PoaGalleyPublicPerformPreflightErrorV1::StaleAction(_))
+        ));
+    }
+
+    #[test]
+    fn observed_receipt_join_is_dense_canonical_and_coordinate_exact() {
+        let store = PersistentStore::open_in_memory().expect("store");
+        let signer = [0x65; 32];
+        let world = world(0x51);
+        let mut receipt = TurnReceipt {
+            turn_hash: [0x62; 32],
+            pre_state_hash: [0x64; 32],
+            agent: galley_player_cell(&signer),
+            federation_id: world.federation_id(),
+            finality: Finality::Final,
+            ..TurnReceipt::default()
+        };
+        // Keep every hash-bound field fixed before deriving the coordinate.
+        receipt.post_state_hash = [0x70; 32];
+        let bytes = postcard::to_stdvec(&receipt).expect("canonical receipt");
+        store
+            .append_receipt_chain_entry(0, &bytes)
+            .expect("receipt chain append");
+        let coordinate = FinalizedTurnCoordinateV2::new(
+            world,
+            0,
+            [0x61; 32],
+            receipt.turn_hash,
+            receipt.receipt_hash(),
+            receipt.pre_state_hash,
+            signer,
+        )
+        .expect("coordinate");
+        let event = GalleySnapshotEvent {
+            coordinate,
+            sequence: 1,
+            event_digest: [0x71; 32],
+            payload_digest: [0x72; 32],
+            payload_json: b"{}".to_vec(),
+            event_json: b"{}".to_vec(),
+        };
+        let write = store.db.begin_write().expect("writer");
+        let joined = load_galley_receipts_in(&write, &[event]).expect("exact receipt join");
+        write.abort().expect("abort read-only writer");
+        assert_eq!(joined.get(&receipt.receipt_hash()), Some(&(0, bytes)));
     }
 }
