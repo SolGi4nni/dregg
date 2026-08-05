@@ -91,7 +91,30 @@ const FP = 289480223093290488558927462521719769633630564819415607159546767643499
 //   (3) `EMITTED_FAMILIES` names the gate families the top rung is known to emit, and ANY of them
 //       measuring zero is a hard exit-1 BEFORE the vector diff — an ABSENT verdict for a family the
 //       assembly actually emits can no longer be laundered through the ledger.
-const TOP_RUNG = 'w8_ftcomm';
+// ⚑⚑ AND `rungsUpto` IS A TREE, SO "THE TOP RUNG" IS A CHOICE — MADE HERE, NOT INHERITED.
+// ⚠ 2026-08-04, MEASURED AND RE-POINTED. This constant read `w8_ftcomm` while the assembly had
+// grown SIX rungs past it, so the gate graded 7120 of the 10593 probe-free rows the deepest rung
+// emits and called the missing curve work an "absent region".
+// `KimchiWrapMain.lean:5132`'s `rungsUpto` branches THREE ways off `.prev` (w9_prev), and each
+// branch has its own tip — there is no single maximum:
+//     w9_prev ─┬─ w10_finalize ── w11_finsponge   (W-FINALIZE; finsponge is NOT emitted, see below)
+//              ├─ w11_wraphack ── w12_close       (W-WRAPHACK, W-CLOSE)
+//              └─ w10_combine  ── w11_bullet      (W-COMBINE, W-BULLET)
+// THE CHOICE IS `w11_bullet`, and the reason is what this file measures. This gate is a GADGET
+// diff — it grades curve-ladder bodies and Generic selector halves — and `w11_bullet` is the only
+// rung on which all three curve families reach Mina's own count exactly: VarBaseMul 2417/2417,
+// EndoMul 2528/2528, CompleteAdd 492/492. The other two tips carry no curve work at all past the
+// trunk (w12_close adds 640 rows, w10_finalize 1008, both Poseidon/Generic), so pointing here loses
+// nothing this file can see and gains every ladder it exists to grade.
+// ⚠ WHAT THIS RUNG DOES NOT COVER, said rather than implied: W-FINALIZE's and W-WRAPHACK's four
+// sponges. That is the `poseidon/count` ledger row (mina 261 permutations / lean 89) and it is
+// UNCHANGED by the re-point — both `w8_ftcomm` and `w11_bullet` carry 979 Poseidon rows. The rung
+// UNION is the object `wrapmain-shape-diff.mjs` grades, by prefix-stripping the three branches and
+// verifying the prefix relation on the emitted rows; a single-rung gate cannot be the union and
+// does not pretend to be.
+// ⚠ `w11_finsponge` is a `Rung` constructor with a `rungOwn` arm and NO emitted artifact — the
+// emitter produces 14 rungs, not 15. It is not reachable as a top rung today.
+const TOP_RUNG = 'w11_bullet';
 const LEAN_DEFAULT = `/tmp/pickles-wrapmain/wrapmain_wrap_${TOP_RUNG}.json`;
 // ⚑ THE COMMITTED FIXTURE. ⚠ 2026-08-03: the comment that used to sit here announced this fixture
 // as "added 2026-08-03" and explained why an unreproducible gate is a bad gate — and the `.gz` was
@@ -106,9 +129,18 @@ const LEAN_FIXTURE_PROV = new URL(`../fixtures/${FIXTURE_STEM}.provenance.json`,
 const WRAP_REFRESH_CMD = 'node scripts/wrapmain-region-conformance.mjs --emit --refresh-fixture';
 // ⚑ Families the TOP RUNG emits. Zero for any of these means the gate is reading a lower rung (or
 // the assembly regressed); either way it is a RED, never an "absent region" the ledger may excuse.
-// EndoMul is deliberately NOT here — it is genuinely absent (W-COMBINE, W-BULLET) and the ledger is
-// the right home for a gap that is real.
-const EMITTED_FAMILIES = ['Zero', 'Generic', 'Poseidon', 'CompleteAdd', 'VarBaseMul', 'EndoMulScalar'];
+// ⚠ 2026-08-04: EndoMul USED to be excluded here with the note "it is genuinely absent (W-COMBINE,
+// W-BULLET) and the ledger is the right home for a gap that is real." W-COMBINE and W-BULLET landed
+// (`37abfb884`), and at `w11_bullet` EndoMul measures 2528 against Mina's 2528. The exclusion is
+// retired with the gap.
+const EMITTED_FAMILIES = ['Zero', 'Generic', 'Poseidon', 'CompleteAdd', 'VarBaseMul', 'EndoMul', 'EndoMulScalar'];
+// Which §13 sub-circuits each curve family's rows belong to — carried here now that the three
+// `absent/…` ledger rows (which used to hold this attribution) have retired at parity.
+const WHERE_EMITTED = {
+  VarBaseMul: '§13 W-XHAT + W-FTCOMM',
+  EndoMul: '§13 W-COMBINE + W-BULLET',
+  CompleteAdd: '§13 W-XHAT + W-COMBINE + W-BULLET',
+};
 
 const fq = (c) => { let v = BigInt(c) % FQ; if (v < 0n) v += FQ; return v.toString(); };
 const leHex = (h) => BigInt('0x' + Buffer.from(h, 'hex').reverse().toString('hex')).toString();
@@ -279,26 +311,14 @@ function localize(MG, mb, LG, lb, len, withCoeffs) {
 //              character is RED even though its key is still here.
 // RED three ways: a divergence with no entry; an entry no longer observed (a stale allowance); an
 // entry whose form moved.
+// ⚑ 2026-08-04 — THREE `absent/…` ROWS RETIRED, AND NOT BY DELETION. `absent/VarBaseMul`
+// (§13 W-XHAT + W-FTCOMM), `absent/EndoMul` (§13 W-COMBINE + W-BULLET) and `absent/CompleteAdd`
+// (§13 W-XHAT + W-COMBINE + W-BULLET) each said `lean 0`. All three regions have landed, and at
+// `w11_bullet` all three measure Mina's own count EXACTLY — 2417/2417, 2528/2528, 492/492.
+// An allowance whose gap has closed is not deleted into a silence here: the three families now
+// carry POSITIVE `conform:curve-family/…` legs (see `measure`), so a regression from parity is a
+// red on the family itself rather than the reappearance of a ledger row nobody would re-add.
 const LEDGER = {
-  'absent/VarBaseMul': {
-    why: '§13 W-XHAT + W-FTCOMM',
-    expect: 'mina 2417 rows / lean 0',
-    note: "wrap's x_hat MSM is 67 scalars at widths 15×255 · 40×128 · 12×1 (the STEP statement's 57 "
-      + 'packed words, with each of the 10 `Field` words split by `wrap_main.ml:69-81` into a 255-bit '
-      + 'value and a 1-bit parity); plus `Common.ft_comm`\'s eight 51-chunk ladders.',
-  },
-  'absent/EndoMul': {
-    why: '§13 W-COMBINE + W-BULLET',
-    expect: 'mina 2528 rows / lean 0',
-    note: '`Split_commitments.combine` over 47 commitments (N45 + prevs) and `bullet_reduce` over 16 '
-      + 'rounds, each round an `endo_inv` AND an `endo` — two 32-block ladders (`scalar_challenge.ml:'
-      + '343-354`).',
-  },
-  'absent/CompleteAdd': {
-    why: '§13 W-XHAT + W-COMBINE + W-BULLET',
-    expect: 'mina 492 rows / lean 0',
-    note: 'every `Ops.add_fast` is one CompleteAdd row; all of them belong to the three absent MSM/fold regions.',
-  },
   'poseidon/count': {
     why: '§13 W-FINALIZE + W-WRAPHACK',
     expect: 'mina 261 permutations / lean 89',
@@ -315,9 +335,13 @@ const LEDGER = {
       + 'ξ′/r′ lifts, which are W-PREV and W-FINALIZE.',
   },
   'pi/width': {
-    why: '§10 census — 22 of Mina\'s 40 wrap statement words are derived here',
-    expect: 'mina 40 / lean 22',
-    note: 'the 18 not exposed are wrap slots 0–4, 9 (W-FINALIZE), 11–12 (W-WRAPHACK) and 30–39 (the '
+    why: '§10 census — 23 of Mina\'s 40 wrap statement words are derived here',
+    // ⚠ 2026-08-04: was `lean 22`, which was `w8_ftcomm`'s width. `w9_prev` exposes ONE more word
+    // (`messages_for_next_step_proof`, KimchiWrapMain.lean:1245-1248), and every rung above it —
+    // including this gate's `w11_bullet` — carries it. `w11_wraphack` adds a 24th; that branch is
+    // not this rung's, so 23 is the number here and 24 is the union's.
+    expect: 'mina 40 / lean 23',
+    note: 'the 17 not exposed are wrap slots 0–4, 9 (W-FINALIZE), 11–12 (W-WRAPHACK) and 30–39 (the '
       + '8 feature-flag Bools and the lookup `Opt`\'s two words, which `spec.ml:190-195` lays out '
       + 'even at `Flag.No`). Exposing them as undERIVED witnesses would be a public vector of fixtures.',
   },
@@ -334,9 +358,16 @@ const LEDGER = {
   },
   'generic/shape-families': {
     why: "§13 \"two places this file is stricter than upstream\" + row economy",
-    expect: '664/926 match | x103 [1 -1 0 0 0] | x91 [0 0 0 0 0] | x56 [K 0 -1 0 0] '
-      + '| x4 [1 16 -1 0 0] | x2 [0 0 1 1 -1] | x2 [1 4 -1 0 0] | x1 [1 0 -1 -1 0] '
-      + '| x1 [1 0 -1 0 -1] | x1 [1 3 -1 0 0] | x1 [16 0 -1 0 0]',
+    // ⚠ 2026-08-04, RE-MEASURED AT `w11_bullet`. Was `664/926` — `w8_ftcomm`'s halves. The three
+    // new families are W-COMBINE/W-BULLET's: [0 0 1 -1 5] x51 and [0 0 1 -1 -5] x3 are `add_fast`'s
+    // slope rows, [0 0 1 4 0] / [5 1 -1 0 0] / [1 1 0 0 -1] the fold seams. They are counted, not
+    // excused — a family that GROWS here is red exactly as one that appears.
+    expect: '1885/2466 match | x163 [0 0 0 0 0] | x138 [1 -1 0 0 0] | x135 [K 0 -1 0 0] '
+      + '| x65 [1 -2 -1 0 0] | x51 [0 0 1 -1 5] | x4 [1 16 -1 0 0] | x3 [0 0 1 -1 -5] '
+      + '| x3 [0 0 1 4 0] | x3 [5 1 -1 0 0] | x2 [0 0 1 1 -1] | x2 [1 0 -1 -1 0] '
+      + '| x2 [1 1 0 0 -1] | x2 [1 4 -1 0 0] | x1 [1 -1 0 0 6] | x1 [1 0 -1 0 -1] '
+      + '| x1 [1 1 0 0 1] | x1 [1 1 1 -1 -1] | x1 [1 3 -1 0 0] | x1 [16 0 -1 0 0] '
+      + '| x1 [K -1 0 0 1] | x1 [K 1 0 0 K]',
     note: 'Generic selector halves this assembly emits whose SHAPE FAMILY (constants collapsed to K, '
       + 'sign-normalized) Snarky never emits in `wrap-transaction`, ATTRIBUTED ONE BY ONE: '
       + '[0 0 0 0 0] = the empty second half of an odd `packHalves` run (a row-economy cost, not a '
@@ -519,13 +550,22 @@ function measure(M, M2, L, fixture = 'absent') {
     R.regions.push(rec);
   }
 
-  // (3) ABSENT REGIONS — the families Mina spends rows on that this assembly does not emit at all.
-  // Reported as a NUMBER, per the ledger, so the gap cannot read as a silence.
+  // (3) THE THREE CURVE FAMILIES — at parity, partially emitted, or absent. THREE STATES, NOT TWO.
+  // ⚠ 2026-08-04. This block used to fire `absent/${k}` only when lean measured EXACTLY 0, so the
+  // middle state was SILENT: at `w8_ftcomm` VarBaseMul measured 2213 against Mina's 2417 and
+  // CompleteAdd 248 against 492, and neither the ledger nor the vector said a word — the 204- and
+  // 244-row gaps appeared only in a report section headed "what this assembly does not emit",
+  // beside the number that proved it did. A family that is PARTIALLY emitted is now `partial/${k}`,
+  // which is unledgered and therefore red, and a family AT PARITY gets a positive conform leg that
+  // reds if it ever falls back.
   const cen = (G) => { const h = {}; for (const g of G) h[g.typ] = (h[g.typ] ?? 0) + 1; return h; };
   const cm = cen(MG), cl = cen(LG);
   for (const k of ['VarBaseMul', 'EndoMul', 'CompleteAdd']) {
-    R.absent.push({ family: k, mina: cm[k] ?? 0, lean: cl[k] ?? 0 });
-    if ((cl[k] ?? 0) === 0 && (cm[k] ?? 0) > 0) diverge(`absent/${k}`, `mina ${cm[k]} rows / lean 0`);
+    const m = cm[k] ?? 0, l = cl[k] ?? 0;
+    R.absent.push({ family: k, mina: m, lean: l, state: l === m ? 'parity' : l === 0 ? 'absent' : 'partial' });
+    if (l === m) conform(`curve-family/${k}`, `${m} rows, at parity`, `${l} rows, at parity`);
+    else if (l === 0 && m > 0) diverge(`absent/${k}`, `mina ${m} rows / lean 0`);
+    else diverge(`partial/${k}`, `mina ${m} rows / lean ${l}`);
   }
   R.census = { mina: cm, lean: cl };
   if ((cl.Poseidon ?? 0) !== (cm.Poseidon ?? 0))
@@ -619,9 +659,12 @@ function report(R, src, M, L) {
   console.log(`              mina ${R.emsWidths.mina}`);
   console.log(`              lean ${R.emsWidths.lean}`);
 
-  console.log('\n── (3) ABSENT REGIONS — what wrap_main spends rows on that this assembly does not emit');
-  for (const a of R.absent)
-    console.log(`   ${a.family.padEnd(14)} mina ${String(a.mina).padStart(5)} rows   lean ${a.lean}   → ${LEDGER[`absent/${a.family}`]?.why ?? 'UNRECORDED'}`);
+  console.log('\n── (3) THE THREE CURVE FAMILIES — at parity / partial / absent');
+  for (const a of R.absent) {
+    const mark = a.state === 'parity' ? '✓ AT PARITY' : a.state === 'absent' ? '⚠ ABSENT' : `⚠ PARTIAL — ${a.mina - a.lean} rows short`;
+    const why = LEDGER[`absent/${a.family}`]?.why ?? LEDGER[`partial/${a.family}`]?.why ?? WHERE_EMITTED[a.family] ?? 'UNRECORDED';
+    console.log(`   ${a.family.padEnd(14)} mina ${String(a.mina).padStart(5)} rows   lean ${String(a.lean).padStart(5)}   ${mark}   → ${why}`);
+  }
 
   console.log('\n── (4) GENERIC SELECTOR HALVES (by SHAPE FAMILY: constants → K, sign-normalized)');
   console.log(`   ${R.generic.famIn}/${R.generic.total} of our halves match a family Snarky emits (${R.generic.minaFamilies} families upstream)`);
