@@ -369,7 +369,7 @@ fn main() {
     );
 
     println!("{{");
-    println!("  \"source\": \"o1-labs/circuit-blobs berkeley-devnet {STEP_BLOB}\",",);
+    println!("  \"source\": \"o1-labs/circuit-blobs berkeley-devnet {STEP_BLOB}\",");
     println!("  \"source_md5\": \"{STEP_BLOB_MD5}\",");
     println!("  \"circuit\": \"step-transaction (branch 0 of the transaction SNARK)\",");
     println!("  \"rows\": {STEP_ROWS},");
