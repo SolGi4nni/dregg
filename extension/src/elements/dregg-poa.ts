@@ -9,10 +9,13 @@
 
 import {
   POA_BETA_URL,
+  parsePoAReceiptCoreObservation,
   type PoACompanionPort,
   type PoACompanionRequest,
   type PoACompanionResponse,
   type PoACompanionModel,
+  type PoAEpisodeActions,
+  type PoAFieldRecordBinding,
 } from "../poa";
 
 export type PoAPortFactory = () => PoACompanionPort;
@@ -20,6 +23,21 @@ let poaPortFactory: PoAPortFactory | null = null;
 
 export function setPoAPortFactory(factory: PoAPortFactory): void {
   poaPortFactory = factory;
+}
+
+/** Deliberate production seam: no implementation is installed until the
+ * extension has a transport for a public FRC1 observation. The companion
+ * renders that absence explicitly instead of fetching through the host page or
+ * treating a local run as a network receipt. */
+export interface PoAFieldRecordTransport {
+  readReceiptCoreObservation(binding: PoAFieldRecordBinding): Promise<unknown>;
+}
+
+export type PoAFieldRecordTransportFactory = () => PoAFieldRecordTransport;
+let poaFieldRecordTransportFactory: PoAFieldRecordTransportFactory | null = null;
+
+export function setPoAFieldRecordTransportFactory(factory: PoAFieldRecordTransportFactory | null): void {
+  poaFieldRecordTransportFactory = factory;
 }
 
 /** Production transport. The background disregards the supplied href and
@@ -76,8 +94,44 @@ const STYLE = `
 .mission { position: relative; margin-top: 12px; }
 .links { position: relative; display: flex; gap: 10px; align-items: center; margin-top: 11px; }
 .links a { color: #cbdca7; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+.actions { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 7px; margin: 12px 0; }
+.action { min-height: 44px; padding: 8px 9px; border: 1px solid #5f6950; border-radius: 6px; color: #e3edd1; background: rgba(104,120,79,.13); text-decoration: none; }
+.action b, .action span { display: block; }
+.action b { font: 9px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; color: #94a47a; letter-spacing: .1em; text-transform: uppercase; }
+.action span { margin-top: 3px; font-size: 12px; line-height: 1.3; }
+.unavailable, .protected, .record-status { position: relative; margin-top: 10px; padding: 8px 9px; border-left: 2px solid #8d7e5a; color: #bbb29d; background: rgba(75,64,43,.17); font-size: 11px; line-height: 1.45; }
+.record { position: relative; margin-top: 11px; }
+.record button { min-height: 44px; padding: 8px 10px; border: 1px solid #788c5d; border-radius: 6px; color: #e9f0d8; background: #242a20; cursor: pointer; font: 600 11px/1.3 system-ui, sans-serif; }
+.record button:disabled { cursor: progress; opacity: .65; }
+.record button:focus-visible, .action:focus-visible, .links a:focus-visible { outline: 2px solid #d9efac; outline-offset: 2px; }
 .badge { position: relative; margin-top: 9px; color: #8fb878; font: 10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; }
 `;
+
+const ACTION_ORDER = ["mission", "evidence", "debrief"] as const;
+
+function trustedBetaUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === "https://beta.pathofangels.network" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function validEpisodeActions(value: unknown): value is PoAEpisodeActions {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actions = value as Record<string, unknown>;
+  if (Object.keys(actions).length < 1 || Object.keys(actions).some((key) => !ACTION_ORDER.includes(key as typeof ACTION_ORDER[number]))) return false;
+  return ACTION_ORDER.every((kind) => {
+    const candidate = actions[kind];
+    if (candidate === undefined) return true;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+    const link = candidate as Record<string, unknown>;
+    return Object.keys(link).sort().join(",") === "betaUrl,label" &&
+      typeof link.label === "string" && link.label.length > 0 && link.label.length <= 80 &&
+      typeof link.betaUrl === "string" && trustedBetaUrl(link.betaUrl);
+  });
+}
 
 function validModel(value: unknown): value is PoACompanionModel {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -95,11 +149,7 @@ function validModel(value: unknown): value is PoACompanionModel {
   if (typeof m.title !== "string" || !m.title || m.title.length > 160) return false;
   if (m.episode !== undefined && (typeof m.episode !== "string" || m.episode.length > 96)) return false;
   if (m.dispatch !== undefined && (typeof m.dispatch !== "string" || m.dispatch.length > 1200)) return false;
-  try {
-    if (new URL(m.betaUrl).origin !== "https://beta.pathofangels.network") return false;
-  } catch {
-    return false;
-  }
+  if (typeof m.betaUrl !== "string" || !trustedBetaUrl(m.betaUrl)) return false;
   if (m.game) {
     if (m.trust !== "signed_manifest") return false;
     if (m.game.kind !== "descent" || !/^dregg:\/\/descent\/b3_[0-9a-f]{6,}$/i.test(m.game.src)) return false;
@@ -109,6 +159,17 @@ function validModel(value: unknown): value is PoACompanionModel {
     if (!Number.isSafeInteger(m.counter) || m.counter < 0) return false;
     if (!/^[0-9a-f]{64}$/i.test(m.manifestDigest)) return false;
     if (!Number.isSafeInteger(m.issuedAt) || !Number.isSafeInteger(m.expiresAt) || m.expiresAt <= m.issuedAt) return false;
+    if (m.actions !== undefined && (!m.episode || !validEpisodeActions(m.actions))) return false;
+    if (m.fieldRecord !== undefined && (
+      !m.episode || !m.fieldRecord || typeof m.fieldRecord !== "object" ||
+      Object.keys(m.fieldRecord).sort().join(",") !== "federationId,finalizedReceiptCoreId,turnHash" ||
+      !/^[0-9a-f]{64}$/.test(m.fieldRecord.finalizedReceiptCoreId) ||
+      /^0{64}$/.test(m.fieldRecord.finalizedReceiptCoreId) ||
+      !/^[0-9a-f]{64}$/.test(m.fieldRecord.federationId) ||
+      !/^[0-9a-f]{64}$/.test(m.fieldRecord.turnHash)
+    )) return false;
+  } else {
+    if (m.availability !== "authenticated_route_unavailable" || m.actions !== undefined || m.fieldRecord !== undefined) return false;
   }
   return true;
 }
@@ -122,10 +183,18 @@ function makeDiv(className: string, text?: string): HTMLDivElement {
 
 export class DreggPoA extends HTMLElement {
   private readonly port = getPort();
+  private readonly fieldRecordTransport = poaFieldRecordTransportFactory?.() ?? null;
   private booted = false;
+  private lifecycle = 0;
 
   connectedCallback(): void {
-    if (!this.booted) void this.boot();
+    if (!this.booted) void this.boot(++this.lifecycle);
+  }
+
+  disconnectedCallback(): void {
+    // A delayed manifest or receipt response must never repaint a detached
+    // panel after YouTube/X replaces its SPA route.
+    this.lifecycle += 1;
   }
 
   private context(): { href: string; channelHint?: string } {
@@ -133,16 +202,18 @@ export class DreggPoA extends HTMLElement {
     return { href: this.getAttribute("page-url") || location.href, ...(channelHint ? { channelHint } : {}) };
   }
 
-  private async boot(): Promise<void> {
+  private async boot(lifecycle: number): Promise<void> {
     this.booted = true;
     let response: PoACompanionResponse;
     try {
       response = PRIMED_RESPONSES.get(this) ?? await this.port.request({ op: "openContext", context: this.context() });
       PRIMED_RESPONSES.delete(this);
     } catch (error) {
+      if (!this.isConnected || lifecycle !== this.lifecycle) return;
       this.failClosed(String((error as Error)?.message ?? error));
       return;
     }
+    if (!this.isConnected || lifecycle !== this.lifecycle) return;
     if (!response.ok || !response.recognized || !validModel(response.model)) {
       this.failClosed(response.ok ? "invalid companion model" : response.error);
       return;
@@ -157,10 +228,10 @@ export class DreggPoA extends HTMLElement {
       this.failClosed("local recognition cannot verify or attach a mission");
       return;
     }
-    this.paint(response.model);
+    this.paint(response.model, lifecycle);
   }
 
-  private paint(model: PoACompanionModel): void {
+  private paint(model: PoACompanionModel, lifecycle: number): void {
     const root = this.attachShadow({ mode: "closed" });
     CLOSED_ROOTS.set(this, root);
     const style = document.createElement("style");
@@ -176,6 +247,28 @@ export class DreggPoA extends HTMLElement {
     }
     if (model.dispatch) terminal.appendChild(makeDiv("dispatch", model.dispatch));
 
+    if (model.trust === "signed_manifest" && model.actions) {
+      const actions = document.createElement("nav");
+      actions.className = "actions";
+      actions.setAttribute("aria-label", `${model.episode} episode actions`);
+      for (const kind of ACTION_ORDER) {
+        const route = model.actions[kind];
+        if (!route) continue;
+        const link = document.createElement("a");
+        link.className = "action";
+        link.href = route.betaUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        const kindLabel = document.createElement("b");
+        kindLabel.textContent = kind;
+        const routeLabel = document.createElement("span");
+        routeLabel.textContent = route.label;
+        link.append(kindLabel, routeLabel);
+        actions.appendChild(link);
+      }
+      terminal.appendChild(actions);
+    }
+
     if (model.game?.kind === "descent") {
       const mission = makeDiv("mission");
       const descent = document.createElement("dregg-descent");
@@ -190,6 +283,19 @@ export class DreggPoA extends HTMLElement {
       terminal.appendChild(mission);
     }
 
+    if (model.trust === "local_allowlist") {
+      const unavailable = makeDiv(
+        "unavailable",
+        "Authenticated episode material is unavailable. This exact video is locally recognized only; no evidence, debrief, mission, or field record is verified.",
+      );
+      unavailable.setAttribute("role", "status");
+      terminal.appendChild(unavailable);
+    }
+
+    if (model.trust === "signed_manifest" && model.fieldRecord) {
+      terminal.appendChild(this.fieldRecordPanel(model, lifecycle));
+    }
+
     const links = makeDiv("links");
     const beta = document.createElement("a");
     beta.href = model.betaUrl;
@@ -198,6 +304,10 @@ export class DreggPoA extends HTMLElement {
     beta.rel = "noopener noreferrer";
     links.appendChild(beta);
     terminal.appendChild(links);
+    terminal.appendChild(makeDiv(
+      "protected",
+      "Protected beta route: your browser may ask for access. Cipherclerk stores no beta Basic Auth password.",
+    ));
     terminal.appendChild(
       makeDiv(
         "badge",
@@ -238,6 +348,56 @@ export class DreggPoA extends HTMLElement {
     }
     this.removeAttribute("error");
     this.exposeRootForTest(root);
+  }
+
+  private fieldRecordPanel(
+    model: Extract<PoACompanionModel, { trust: "signed_manifest" }>,
+    lifecycle: number,
+  ): HTMLDivElement {
+    const panel = makeDiv("record");
+    const status = makeDiv("record-status");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    if (!model.fieldRecord || !this.fieldRecordTransport) {
+      status.textContent = "Receipt-core observation transport is not connected in this extension build. No network receipt or quorum finality is claimed.";
+      panel.appendChild(status);
+      return panel;
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Check node receipt core";
+    const binding: PoAFieldRecordBinding = Object.freeze({
+      platform: model.platform,
+      contextId: model.contextId,
+      experienceId: model.experienceId,
+      manifestDigest: model.manifestDigest,
+      finalizedReceiptCoreId: model.fieldRecord.finalizedReceiptCoreId,
+      federationId: model.fieldRecord.federationId,
+      turnHash: model.fieldRecord.turnHash,
+    });
+    status.textContent = "A curator-signed receipt-core coordinate is attached. No node observation or quorum-finality certificate has been verified.";
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      status.textContent = "Checking the node-reported FRC1 receipt core…";
+      try {
+        const value = await this.fieldRecordTransport?.readReceiptCoreObservation(binding);
+        if (!this.isConnected || lifecycle !== this.lifecycle) return;
+        const observation = parsePoAReceiptCoreObservation(value, binding);
+        if (!observation) {
+          status.textContent = "No exact matching FRC1 receipt-core observation was returned. No receipt or finality is claimed.";
+          return;
+        }
+        status.textContent = `Node-reported FRC1 core ${observation.finalizedReceiptCoreId.slice(0, 10)}…${observation.finalizedReceiptCoreId.slice(-8)} matches the signed coordinates and canonical projection · tau round ${observation.tauRound}. This is a transport observation; quorum finality is not verified by Cipherclerk.`;
+      } catch {
+        if (!this.isConnected || lifecycle !== this.lifecycle) return;
+        status.textContent = "Receipt-core transport is unavailable. No receipt or finality is claimed.";
+      } finally {
+        if (this.isConnected && lifecycle === this.lifecycle) button.disabled = false;
+      }
+    });
+    panel.append(button, status);
+    return panel;
   }
 
   /** Fail closed to the beta link in light DOM. Never render a page-supplied

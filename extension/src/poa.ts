@@ -35,7 +35,11 @@ const DESCENT_URI_RE = /^dregg:\/\/descent\/b3_[0-9a-f]{6,}$/i;
 const HEX_KEY_RE = /^[0-9a-f]{64}$/i;
 const HEX_SIG_RE = /^[0-9a-f]{128}$/i;
 const DIGEST_RE = /^[0-9a-f]{64}$/i;
+const LOWER_DIGEST_RE = /^[0-9a-f]{64}$/;
 const MAX_MANIFEST_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
+
+export const POA_RECEIPT_CORE_PROTOCOL = "FRC1" as const;
+const FINALIZED_RECEIPT_CORE_V1_BYTES = 592;
 
 export interface PoAContextHint {
   href: string;
@@ -63,6 +67,35 @@ export interface PoAGameRoute {
   src: string;
 }
 
+export interface PoAEpisodeLink {
+  label: string;
+  betaUrl: string;
+}
+
+/** Curator-authenticated routes rendered beside one exact episode/post. */
+export interface PoAEpisodeActions {
+  mission?: PoAEpisodeLink;
+  evidence?: PoAEpisodeLink;
+  debrief?: PoAEpisodeLink;
+}
+
+/** A curator-signed coordinate in the node's finalized-receipt-core namespace.
+ * Naming the coordinate does not prove the node's consensus claim. */
+export interface PoAFieldRecordRef {
+  finalizedReceiptCoreId: string;
+  federationId: string;
+  turnHash: string;
+}
+
+interface PoAExperienceBase {
+  id: string;
+  title: string;
+  episode?: string;
+  dispatch?: string;
+  betaUrl: string;
+  game?: PoAGameRoute;
+}
+
 export interface PoAManifestV1 {
   schema: "poa-companion/v1";
   /** Monotone season/content epoch. A larger epoch may restart `counter`. */
@@ -70,23 +103,43 @@ export interface PoAManifestV1 {
   /** Monotone revision within `contentEpoch`. */
   counter: number;
   context: PoAManifestContext;
-  experience: {
-    id: string;
-    title: string;
-    episode?: string;
-    dispatch?: string;
-    betaUrl: string;
-    game?: PoAGameRoute;
+  experience: PoAExperienceBase & { actions?: never; fieldRecord?: never };
+  issuedAt: number;
+  expiresAt: number;
+}
+
+/** v2 adds only signed episode actions and a receipt-core observation seam.
+ * The routes remain beta-origin links; the extension carries no Basic Auth
+ * credential and the field-record pointer makes no claim until exact transport
+ * returns a matching FRC1 projection. No finality grade is inferred. */
+export interface PoAManifestV2 {
+  schema: "poa-companion/v2";
+  contentEpoch: number;
+  counter: number;
+  context: PoAManifestContext;
+  experience: PoAExperienceBase & {
+    actions?: PoAEpisodeActions;
+    fieldRecord?: PoAFieldRecordRef;
   };
   issuedAt: number;
   expiresAt: number;
 }
+
+export type PoAManifest = PoAManifestV1 | PoAManifestV2;
 
 export interface SignedPoAManifestV1 {
   manifest: PoAManifestV1;
   signer: string;
   signature: string;
 }
+
+export interface SignedPoAManifestV2 {
+  manifest: PoAManifestV2;
+  signer: string;
+  signature: string;
+}
+
+export type SignedPoAManifest = SignedPoAManifestV1 | SignedPoAManifestV2;
 
 interface PoACompanionModelBase {
   platform: "youtube" | "x";
@@ -107,6 +160,8 @@ interface PoASignedCompanionModelBase extends PoACompanionModelBase {
   issuedAt: number;
   expiresAt: number;
   game?: PoAGameRoute;
+  actions?: PoAEpisodeActions;
+  fieldRecord?: PoAFieldRecordRef;
   signer: string;
 }
 
@@ -140,7 +195,10 @@ export interface PoALocalCompanionModel extends PoACompanionModelBase {
   issuedAt?: never;
   expiresAt?: never;
   game?: never;
+  actions?: never;
+  fieldRecord?: never;
   signer?: never;
+  availability: "authenticated_route_unavailable";
 }
 
 export type PoACompanionModel = PoASignedCompanionModel | PoALocalCompanionModel;
@@ -230,9 +288,22 @@ function samePoAContext(manifest: PoAManifestContext, page: PoAResolvedContext):
   return manifest.platform === page.platform && poaContextId(manifest) === poaContextId(page);
 }
 
-/** Canonical signed bytes for `poa-companion/v1`. The fixed-field projection is
- * intentional: unknown JSON fields are neither silently signed nor interpreted. */
-export function poaManifestSigningBytes(manifest: PoAManifestV1): Uint8Array<ArrayBuffer> {
+function canonicalEpisodeLink(link: PoAEpisodeLink): PoAEpisodeLink {
+  return { label: link.label, betaUrl: link.betaUrl };
+}
+
+function canonicalEpisodeActions(actions: PoAEpisodeActions): PoAEpisodeActions {
+  return {
+    ...(actions.mission ? { mission: canonicalEpisodeLink(actions.mission) } : {}),
+    ...(actions.evidence ? { evidence: canonicalEpisodeLink(actions.evidence) } : {}),
+    ...(actions.debrief ? { debrief: canonicalEpisodeLink(actions.debrief) } : {}),
+  };
+}
+
+/** Canonical signed bytes for the companion protocol. v1's projection and
+ * domain remain byte-for-byte unchanged. Every v2 field interpreted by the
+ * companion is included in a fixed order. */
+export function poaManifestSigningBytes(manifest: PoAManifest): Uint8Array<ArrayBuffer> {
   const context = manifest.context.platform === "youtube"
     ? {
         platform: "youtube" as const,
@@ -254,11 +325,21 @@ export function poaManifestSigningBytes(manifest: PoAManifestV1): Uint8Array<Arr
       ...(manifest.experience.game === undefined
         ? {}
         : { game: { kind: manifest.experience.game.kind, src: manifest.experience.game.src } }),
+      ...(manifest.schema === "poa-companion/v2" && manifest.experience.actions
+        ? { actions: canonicalEpisodeActions(manifest.experience.actions) }
+        : {}),
+      ...(manifest.schema === "poa-companion/v2" && manifest.experience.fieldRecord
+        ? { fieldRecord: {
+            finalizedReceiptCoreId: manifest.experience.fieldRecord.finalizedReceiptCoreId,
+            federationId: manifest.experience.fieldRecord.federationId,
+            turnHash: manifest.experience.fieldRecord.turnHash,
+          } }
+        : {}),
     },
     issuedAt: manifest.issuedAt,
     expiresAt: manifest.expiresAt,
   };
-  const encoded = new TextEncoder().encode(`poa-companion/v1\n${JSON.stringify(canonical)}`);
+  const encoded = new TextEncoder().encode(`${manifest.schema}\n${JSON.stringify(canonical)}`);
   const out = new Uint8Array(new ArrayBuffer(encoded.length));
   out.set(encoded);
   return out;
@@ -272,20 +353,65 @@ function validBetaUrl(value: unknown): value is string {
   if (!boundedString(value, 512)) return false;
   try {
     const u = new URL(value);
-    return u.protocol === "https:" && u.origin === "https://beta.pathofangels.network";
+    return u.protocol === "https:" && u.origin === "https://beta.pathofangels.network" && !u.username && !u.password;
   } catch {
     return false;
   }
 }
 
-/** Validate the entire interpreted v1 surface, including freshness and the
- * only currently supported game route. */
-export function validatePoAManifest(value: unknown, nowSeconds: number): PoAManifestV1 | null {
+function exactObjectKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...allowed].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function exactOptionalObjectKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function parseEpisodeLink(value: unknown): PoAEpisodeLink | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const link = value as Record<string, unknown>;
+  if (!exactObjectKeys(link, ["label", "betaUrl"])) return null;
+  if (!boundedString(link.label, 80) || !validBetaUrl(link.betaUrl)) return null;
+  return { label: link.label, betaUrl: link.betaUrl };
+}
+
+function parseEpisodeActions(value: unknown): PoAEpisodeActions | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const actions = value as Record<string, unknown>;
+  if (!exactOptionalObjectKeys(actions, ["mission", "evidence", "debrief"]) || Object.keys(actions).length === 0) return null;
+  const parsed: PoAEpisodeActions = {};
+  for (const kind of ["mission", "evidence", "debrief"] as const) {
+    if (actions[kind] === undefined) continue;
+    const link = parseEpisodeLink(actions[kind]);
+    if (!link) return null;
+    parsed[kind] = link;
+  }
+  return parsed;
+}
+
+/** Validate the complete interpreted companion surface, including freshness,
+ * v1 compatibility, and v2's exact authenticated action/receipt vocabulary. */
+export function validatePoAManifest(value: unknown, nowSeconds: number): PoAManifest | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const m = value as Record<string, unknown>;
   const context = m.context as Record<string, unknown> | undefined;
   const experience = m.experience as Record<string, unknown> | undefined;
-  if (m.schema !== "poa-companion/v1" || !context || !experience) return null;
+  if ((m.schema !== "poa-companion/v1" && m.schema !== "poa-companion/v2") || !context || !experience) return null;
+  const schema = m.schema;
+  if (schema === "poa-companion/v2") {
+    if (!exactObjectKeys(m, ["schema", "contentEpoch", "counter", "context", "experience", "issuedAt", "expiresAt"])) return null;
+    const contextKeys = context.platform === "youtube"
+      ? ["platform", "videoId", "channelId"]
+      : ["platform", "postId"];
+    if (!exactObjectKeys(context, contextKeys)) return null;
+    if (!exactOptionalObjectKeys(experience, ["id", "title", "episode", "dispatch", "betaUrl", "game", "actions", "fieldRecord"])) return null;
+  } else if ("actions" in experience || "fieldRecord" in experience) {
+    // These fields have v2 semantics and must never be interpreted under v1's
+    // older canonical projection.
+    return null;
+  }
   if (!Number.isSafeInteger(m.contentEpoch) || (m.contentEpoch as number) < 0) return null;
   if (!Number.isSafeInteger(m.counter) || (m.counter as number) < 0) return null;
   let manifestContext: PoAManifestContext;
@@ -321,8 +447,30 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
     game = { kind: "descent", src: g.src };
   }
 
-  return {
-    schema: "poa-companion/v1",
+  let actions: PoAEpisodeActions | undefined;
+  let fieldRecord: PoAFieldRecordRef | undefined;
+  if (schema === "poa-companion/v2") {
+    if ((experience.actions !== undefined || experience.fieldRecord !== undefined) && experience.episode === undefined) return null;
+    if (experience.actions !== undefined) {
+      actions = parseEpisodeActions(experience.actions) ?? undefined;
+      if (!actions) return null;
+    }
+    if (experience.fieldRecord !== undefined) {
+      if (!experience.fieldRecord || typeof experience.fieldRecord !== "object" || Array.isArray(experience.fieldRecord)) return null;
+      const ref = experience.fieldRecord as Record<string, unknown>;
+      if (!exactObjectKeys(ref, ["finalizedReceiptCoreId", "federationId", "turnHash"])) return null;
+      if (typeof ref.finalizedReceiptCoreId !== "string" || !LOWER_DIGEST_RE.test(ref.finalizedReceiptCoreId) || ref.finalizedReceiptCoreId === "0".repeat(64)) return null;
+      if (typeof ref.federationId !== "string" || !LOWER_DIGEST_RE.test(ref.federationId)) return null;
+      if (typeof ref.turnHash !== "string" || !LOWER_DIGEST_RE.test(ref.turnHash)) return null;
+      fieldRecord = {
+        finalizedReceiptCoreId: ref.finalizedReceiptCoreId,
+        federationId: ref.federationId,
+        turnHash: ref.turnHash,
+      };
+    }
+  }
+
+  const common = {
     contentEpoch: m.contentEpoch as number,
     counter: m.counter as number,
     context: manifestContext,
@@ -337,6 +485,212 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
     issuedAt,
     expiresAt,
   };
+  if (schema === "poa-companion/v1") return { schema, ...common };
+  return {
+    schema,
+    ...common,
+    experience: {
+      ...common.experience,
+      ...(actions ? { actions } : {}),
+      ...(fieldRecord ? { fieldRecord } : {}),
+    },
+  };
+}
+
+export interface PoAFieldRecordBinding {
+  readonly platform: "youtube" | "x";
+  readonly contextId: string;
+  readonly experienceId: string;
+  readonly manifestDigest: string;
+  readonly finalizedReceiptCoreId: string;
+  readonly federationId: string;
+  readonly turnHash: string;
+}
+
+export type PoAReceiptCorePredecessorObservation =
+  | { kind: "genesis" }
+  | { kind: "legacy_cutover"; legacyReceiptIndex: number; legacyReceiptHash: string }
+  | { kind: "core"; coreId: string; legacyReceiptIndex: number; legacyReceiptHash: string };
+
+/** A self-consistent response from one node's FRC1 HTTP endpoint. Neither the
+ * FRC1 response nor its canonical core contains a quorum certificate. */
+export interface PoAReceiptCoreObservationV1 {
+  grade: "node_transport_observation";
+  quorumFinality: "not_verified_by_extension";
+  coreIdHash: "not_verified_by_extension";
+  canonicalProjection: "self_consistent_frc1";
+  protocol: typeof POA_RECEIPT_CORE_PROTOCOL;
+  platform: "youtube" | "x";
+  contextId: string;
+  experienceId: string;
+  manifestDigest: string;
+  finalizedReceiptCoreId: string;
+  receiptIndex: number;
+  federationId: string;
+  turnHash: string;
+  blockId: string;
+  tauRound: number;
+  consensusUnixSeconds: number;
+  committeeEpoch: number;
+  agent: string;
+  predecessor: PoAReceiptCorePredecessorObservation;
+}
+
+declare const POA_VERIFIED_FINALITY: unique symbol;
+
+/** Nominal interface reserved for a future verifier that consumes actual
+ * quorum evidence. Its unexported unique-symbol brand has no raw-JSON spelling,
+ * and this module deliberately exports no constructor or parser for it. */
+export interface PoAVerifiedFieldRecordFinality {
+  readonly finalizedReceiptCoreId: string;
+  readonly [POA_VERIFIED_FINALITY]: "quorum_evidence_verified";
+}
+
+interface DecodedFrc1Projection {
+  blockId: string;
+  tauRound: number;
+  consensusUnixSeconds: number;
+  committeeEpoch: number;
+  turnHash: string;
+  agent: string;
+  federationId: string;
+  predecessor: PoAReceiptCorePredecessorObservation;
+}
+
+function bytesHex(bytes: Uint8Array<ArrayBuffer>, start: number, end: number): string {
+  return Array.from(bytes.subarray(start, end), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function safeWireInteger(view: DataView, offset: number, signed = false): number | null {
+  const value = signed ? view.getBigInt64(offset, true) : view.getBigUint64(offset, true);
+  if (value < BigInt(Number.MIN_SAFE_INTEGER) || value > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return Number(value);
+}
+
+function decodeFrc1Projection(canonicalCore: string): DecodedFrc1Projection | null {
+  if (!new RegExp(`^[0-9a-f]{${FINALIZED_RECEIPT_CORE_V1_BYTES * 2}}$`).test(canonicalCore)) return null;
+  const bytes = hexToBytes(canonicalCore);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const hasPrefix = (offset: number, magic: readonly number[]): boolean =>
+    magic.every((byte, index) => bytes[offset + index] === byte) &&
+    bytes[offset + 4] === 1 && bytes[offset + 5] === 0 && bytes[offset + 6] === 0 && bytes[offset + 7] === 0;
+  if (!hasPrefix(0, [0x46, 0x52, 0x43, 0x31]) || !hasPrefix(8, [0x46, 0x45, 0x43, 0x31])) return null;
+  const tauRound = safeWireInteger(view, 48);
+  const consensusUnixSeconds = safeWireInteger(view, 56, true);
+  const committeeEpoch = safeWireInteger(view, 64);
+  if (tauRound === null || consensusUnixSeconds === null || committeeEpoch === null) return null;
+
+  const predecessorTag = bytes[248];
+  const legacyReceiptIndex = safeWireInteger(view, 249);
+  if (legacyReceiptIndex === null) return null;
+  const legacyReceiptHash = bytesHex(bytes, 257, 289);
+  const predecessorCoreId = bytesHex(bytes, 289, 321);
+  const zero = "0".repeat(64);
+  let predecessor: PoAReceiptCorePredecessorObservation;
+  if (predecessorTag === 0 && legacyReceiptIndex === 0 && legacyReceiptHash === zero && predecessorCoreId === zero) {
+    predecessor = { kind: "genesis" };
+  } else if (predecessorTag === 1 && legacyReceiptHash !== zero && predecessorCoreId === zero) {
+    predecessor = { kind: "legacy_cutover", legacyReceiptIndex, legacyReceiptHash };
+  } else if (predecessorTag === 2 && legacyReceiptHash !== zero && predecessorCoreId !== zero) {
+    predecessor = { kind: "core", coreId: predecessorCoreId, legacyReceiptIndex, legacyReceiptHash };
+  } else {
+    return null;
+  }
+  if ((bytes[585] & ~0b11) !== 0 || bytes.subarray(586, 592).some((byte) => byte !== 0)) return null;
+  return {
+    blockId: bytesHex(bytes, 16, 48),
+    tauRound,
+    consensusUnixSeconds,
+    committeeEpoch,
+    turnHash: bytesHex(bytes, 72, 104),
+    agent: bytesHex(bytes, 321, 353),
+    federationId: bytesHex(bytes, 353, 385),
+    predecessor,
+  };
+}
+
+function parseObservedPredecessor(value: unknown): PoAReceiptCorePredecessorObservation | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const predecessor = value as Record<string, unknown>;
+  if (predecessor.kind === "genesis") return exactObjectKeys(predecessor, ["kind"]) ? { kind: "genesis" } : null;
+  if (predecessor.kind === "legacy_cutover") {
+    if (!exactObjectKeys(predecessor, ["kind", "legacy_receipt_index", "legacy_receipt_hash"])) return null;
+    if (!Number.isSafeInteger(predecessor.legacy_receipt_index) || (predecessor.legacy_receipt_index as number) < 0) return null;
+    if (typeof predecessor.legacy_receipt_hash !== "string" || !LOWER_DIGEST_RE.test(predecessor.legacy_receipt_hash)) return null;
+    return { kind: "legacy_cutover", legacyReceiptIndex: predecessor.legacy_receipt_index as number, legacyReceiptHash: predecessor.legacy_receipt_hash };
+  }
+  if (predecessor.kind === "core") {
+    if (!exactObjectKeys(predecessor, ["kind", "core_id", "legacy_receipt_index", "legacy_receipt_hash"])) return null;
+    if (!Number.isSafeInteger(predecessor.legacy_receipt_index) || (predecessor.legacy_receipt_index as number) < 0) return null;
+    if (typeof predecessor.legacy_receipt_hash !== "string" || !LOWER_DIGEST_RE.test(predecessor.legacy_receipt_hash)) return null;
+    if (typeof predecessor.core_id !== "string" || !LOWER_DIGEST_RE.test(predecessor.core_id)) return null;
+    return { kind: "core", coreId: predecessor.core_id, legacyReceiptIndex: predecessor.legacy_receipt_index as number, legacyReceiptHash: predecessor.legacy_receipt_hash };
+  }
+  return null;
+}
+
+function sameObservedPredecessor(left: PoAReceiptCorePredecessorObservation, right: PoAReceiptCorePredecessorObservation): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "genesis" || right.kind === "genesis") return true;
+  if (left.legacyReceiptIndex !== right.legacyReceiptIndex || left.legacyReceiptHash !== right.legacyReceiptHash) return false;
+  return left.kind !== "core" || (right.kind === "core" && left.coreId === right.coreId);
+}
+
+/** Parse the actual public `FinalizedReceiptCoreResponse` shape. This checks
+ * exact signed coordinates and byte-level FRC1 projection consistency, but it
+ * deliberately returns only a node transport observation: the endpoint carries
+ * neither a quorum certificate nor a locally verifiable core-id hash primitive. */
+export function parsePoAReceiptCoreObservation(
+  value: unknown,
+  binding: PoAFieldRecordBinding,
+): PoAReceiptCoreObservationV1 | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!exactObjectKeys(record, [
+    "protocol", "receipt_index", "core_id", "canonical_core", "block_id", "tau_round",
+    "consensus_unix_seconds", "committee_epoch", "predecessor", "turn_hash", "agent", "federation_id",
+  ])) return null;
+  if (record.protocol !== POA_RECEIPT_CORE_PROTOCOL || record.core_id !== binding.finalizedReceiptCoreId) return null;
+  const validContext = binding.platform === "youtube" ? YOUTUBE_VIDEO_RE.test(binding.contextId) : X_POST_RE.test(binding.contextId);
+  if (!validContext || !EXPERIENCE_ID_RE.test(binding.experienceId)) return null;
+  if (![binding.manifestDigest, binding.finalizedReceiptCoreId, binding.federationId, binding.turnHash].every((digest) => LOWER_DIGEST_RE.test(digest))) return null;
+  if (binding.finalizedReceiptCoreId === "0".repeat(64)) return null;
+  if (!Number.isSafeInteger(record.receipt_index) || (record.receipt_index as number) < 0) return null;
+  if (!Number.isSafeInteger(record.tau_round) || (record.tau_round as number) < 0) return null;
+  if (!Number.isSafeInteger(record.consensus_unix_seconds)) return null;
+  if (!Number.isSafeInteger(record.committee_epoch) || (record.committee_epoch as number) < 0) return null;
+  for (const field of ["core_id", "block_id", "turn_hash", "agent", "federation_id"] as const) {
+    if (typeof record[field] !== "string" || !LOWER_DIGEST_RE.test(record[field])) return null;
+  }
+  if (record.turn_hash !== binding.turnHash || record.federation_id !== binding.federationId) return null;
+  if (typeof record.canonical_core !== "string") return null;
+  const canonical = decodeFrc1Projection(record.canonical_core);
+  const predecessor = parseObservedPredecessor(record.predecessor);
+  if (!canonical || !predecessor || !sameObservedPredecessor(canonical.predecessor, predecessor)) return null;
+  if (canonical.blockId !== record.block_id || canonical.tauRound !== record.tau_round ||
+      canonical.consensusUnixSeconds !== record.consensus_unix_seconds || canonical.committeeEpoch !== record.committee_epoch ||
+      canonical.turnHash !== record.turn_hash || canonical.agent !== record.agent || canonical.federationId !== record.federation_id) return null;
+  return Object.freeze({
+    grade: "node_transport_observation",
+    quorumFinality: "not_verified_by_extension",
+    coreIdHash: "not_verified_by_extension",
+    canonicalProjection: "self_consistent_frc1",
+    protocol: POA_RECEIPT_CORE_PROTOCOL,
+    platform: binding.platform,
+    contextId: binding.contextId,
+    experienceId: binding.experienceId,
+    manifestDigest: binding.manifestDigest,
+    finalizedReceiptCoreId: binding.finalizedReceiptCoreId,
+    receiptIndex: record.receipt_index as number,
+    federationId: record.federation_id,
+    turnHash: record.turn_hash,
+    blockId: record.block_id,
+    tauRound: record.tau_round as number,
+    consensusUnixSeconds: record.consensus_unix_seconds as number,
+    committeeEpoch: record.committee_epoch as number,
+    agent: record.agent,
+    predecessor,
+  });
 }
 
 function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
@@ -357,7 +711,7 @@ export async function verifyPoAEd25519(publicKeyHex: string, message: Uint8Array
 
 /** Digest of the exact canonical bytes the curator signed. Persisting this pin
  * makes an equal `(epoch,counter)` idempotent only for byte-identical content. */
-export async function poaManifestDigest(manifest: PoAManifestV1): Promise<string> {
+export async function poaManifestDigest(manifest: PoAManifest): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", poaManifestSigningBytes(manifest));
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -418,6 +772,12 @@ export class PoAEngine {
         ...(signed.manifest.experience.dispatch === undefined ? {} : { dispatch: signed.manifest.experience.dispatch }),
         betaUrl: signed.manifest.experience.betaUrl,
         ...(signed.manifest.experience.game === undefined ? {} : { game: signed.manifest.experience.game }),
+        ...(signed.manifest.schema === "poa-companion/v2" && signed.manifest.experience.actions
+          ? { actions: signed.manifest.experience.actions }
+          : {}),
+        ...(signed.manifest.schema === "poa-companion/v2" && signed.manifest.experience.fieldRecord
+          ? { fieldRecord: signed.manifest.experience.fieldRecord }
+          : {}),
         signer: signed.signer.toLowerCase(),
       };
       const model: PoASignedCompanionModel = manifestContext.platform === "youtube"
@@ -458,6 +818,7 @@ export class PoAEngine {
           title: "Path of Angels field terminal",
           dispatch: "This episode is recognized. No signed field mission is attached yet.",
           betaUrl: beta.toString(),
+          availability: "authenticated_route_unavailable",
         },
       };
     }
@@ -467,7 +828,7 @@ export class PoAEngine {
   private async acceptSigned(
     value: unknown,
     context: PoAResolvedContext,
-  ): Promise<{ manifest: PoAManifestV1; signer: string; digest: string } | null> {
+  ): Promise<{ manifest: PoAManifest; signer: string; digest: string } | null> {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const envelope = value as Record<string, unknown>;
     if (!boundedString(envelope.signer, 64) || !HEX_KEY_RE.test(envelope.signer)) return null;
