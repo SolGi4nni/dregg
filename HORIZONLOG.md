@@ -3,7 +3,11 @@
 ## ⚑⚑⚑⚑ AUGUST 5 (W-FINSPONGE) — **Poseidon 137 of 261 → 259 of 261**, and the memo four docblocks called a kernel theorem did not exist
 
 `w11_finsponge` is the **fifteenth** rung and it EMITS and PROVES: 5 434 rows, PI 7, 152 σ-only
-probes, `verify() == true` on Pallas, five polarities. Census
+probes, `verify() == true` on Pallas, **all five polarities in RELEASE** over the 13 committed rungs
+— `honest_rungs_verify`, `every_sigma_probe_binds`, `unwired_control_accepts_the_same_flips`
+(`test result: ok. 1 passed; 0 failed`, 5 380 s on its own),
+`control_differs_only_in_the_placement`, `unread_advice_cells_are_accepted`, plus
+`public_input_binds_and_is_wired_in` and the new census test. Census
 `Zero 601 · Generic 2220 · Poseidon 1848 · CompleteAdd 20 · VarBaseMul 281 · EndoMul 0 ·
 EndoMulScalar 464`, **168 Poseidon runs and every one exactly 11 rows, 58 `EndoMulScalar` runs and
 every one exactly 8.**
