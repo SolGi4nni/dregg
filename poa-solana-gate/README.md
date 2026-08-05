@@ -48,8 +48,8 @@ On `beta.pathofangels.network` the browser reaches those routes through the
 same-origin `/node/api/poa/holding/*` proxy. Challenge and capability state is
 stored durably, pruned after expiry, and bounded. Capability/status responses
 omit the observed balance and explicitly carry `governance_weight_bearing:
-false`. A crash between consuming a challenge and saving its capability burns
-that challenge fail-closed; the player requests a fresh one.
+false`. Challenge consumption and capability insertion are one atomic store
+transition, so a successful verification is either wholly durable or unchanged.
 
 ## Trust boundary
 

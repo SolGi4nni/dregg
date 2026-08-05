@@ -367,6 +367,18 @@ pub enum CapabilityUse {
     Replay,
 }
 
+/// Result of the single durable transition that spends a challenge and records
+/// the capability it authorizes. Keeping this one store operation prevents a
+/// crash from burning a valid challenge between two otherwise-atomic writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityIssue {
+    Issued,
+    UnknownChallenge,
+    ChallengeReplay,
+    ChallengeMismatch,
+    CapabilityCollision,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CapabilityStatus {
     Unknown,
@@ -377,7 +389,8 @@ pub enum CapabilityStatus {
 
 /// Durable replay boundary. Production implementations must make each `*_once`
 /// operation atomic and survive process restart; otherwise nonce replay reopens
-/// after every deploy.
+/// after every deploy. In particular, [`Self::issue_capability_once`] is the
+/// indivisible challenge-spend + capability-insert transition.
 pub trait AdmissionStore {
     type Error: std::fmt::Display;
     fn insert_challenge_once(
@@ -386,12 +399,12 @@ pub trait AdmissionStore {
         challenge: Challenge,
     ) -> Result<bool, Self::Error>;
     fn challenge(&self, id: &Bytes32) -> Result<Option<Challenge>, Self::Error>;
-    fn consume_challenge_once(&mut self, id: Bytes32) -> Result<bool, Self::Error>;
     fn challenge_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error>;
-    fn insert_capability_once(
+    fn issue_capability_once(
         &mut self,
+        challenge_id: Bytes32,
         capability: HoldingCapability,
-    ) -> Result<bool, Self::Error>;
+    ) -> Result<CapabilityIssue, Self::Error>;
     fn capability(&self, id: &Bytes32) -> Result<Option<HoldingCapability>, Self::Error>;
     fn capability_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error>;
     fn consume_capability_once(&mut self, id: Bytes32) -> Result<CapabilityUse, Self::Error>;
@@ -413,31 +426,40 @@ impl AdmissionStore for InMemoryAdmissionStore {
         nonce: Bytes32,
         challenge: Challenge,
     ) -> Result<bool, Self::Error> {
-        if !self.used_nonces.insert(nonce) {
+        if self.used_nonces.contains(&nonce) || self.issued.contains_key(&challenge.id) {
             return Ok(false);
         }
+        self.used_nonces.insert(nonce);
         self.issued.insert(challenge.id, challenge);
         Ok(true)
     }
     fn challenge(&self, id: &Bytes32) -> Result<Option<Challenge>, Self::Error> {
         Ok(self.issued.get(id).cloned())
     }
-    fn consume_challenge_once(&mut self, id: Bytes32) -> Result<bool, Self::Error> {
-        Ok(self.spent_challenges.insert(id))
-    }
     fn challenge_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error> {
         Ok(self.spent_challenges.contains(id))
     }
-    fn insert_capability_once(
+    fn issue_capability_once(
         &mut self,
+        challenge_id: Bytes32,
         capability: HoldingCapability,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<CapabilityIssue, Self::Error> {
+        if !self.issued.contains_key(&challenge_id) {
+            return Ok(CapabilityIssue::UnknownChallenge);
+        }
+        if self.spent_challenges.contains(&challenge_id) {
+            return Ok(CapabilityIssue::ChallengeReplay);
+        }
+        if capability.challenge_id != challenge_id {
+            return Ok(CapabilityIssue::ChallengeMismatch);
+        }
         let id = capability.receipt_id;
         if self.issued_capabilities.contains_key(&id) {
-            return Ok(false);
+            return Ok(CapabilityIssue::CapabilityCollision);
         }
+        self.spent_challenges.insert(challenge_id);
         self.issued_capabilities.insert(id, capability);
-        Ok(true)
+        Ok(CapabilityIssue::Issued)
     }
     fn capability(&self, id: &Bytes32) -> Result<Option<HoldingCapability>, Self::Error> {
         Ok(self.issued_capabilities.get(id).cloned())
@@ -512,6 +534,55 @@ impl<S: AdmissionStore> Gate<S> {
         Ok(CapabilityStatus::Active(capability))
     }
 
+    /// Cheap canonical checks that must pass before an HTTP adapter performs a
+    /// live holding lookup. [`Self::admit_beta`] repeats this preflight before
+    /// its atomic state transition, so callers cannot turn preflight into an
+    /// authorization bypass or a time-of-check/time-of-use assumption.
+    pub fn preflight_beta(
+        &self,
+        config: &GateConfig,
+        presented: &Challenge,
+        binding: &OwnerBinding,
+        now: u64,
+    ) -> Result<(), GateError> {
+        let issued = self
+            .store
+            .challenge(&presented.id)
+            .map_err(|e| GateError::Store(e.to_string()))?
+            .ok_or(GateError::UnknownChallenge)?;
+        if &issued != presented {
+            return Err(GateError::ChallengeMutation);
+        }
+        config.validate()?;
+        if presented.federation_id != config.federation_id
+            || presented.origin != config.origin
+            || presented.domain != config.domain
+            || presented.cluster != config.cluster
+            || presented.genesis_hash != config.genesis_hash
+            || presented.rpc_endpoint_id != config.rpc_endpoint_id
+            || presented.mint != config.mint
+            || presented.token_program != config.token_program
+            || presented.minimum_raw_balance != config.minimum_raw_balance
+            || presented.capability_ttl_secs != config.capability_ttl_secs
+        {
+            return Err(GateError::ChallengeMutation);
+        }
+        if self
+            .store
+            .challenge_consumed(&presented.id)
+            .map_err(|e| GateError::Store(e.to_string()))?
+        {
+            return Err(GateError::ChallengeReplay);
+        }
+        if now < presented.issued_at || now > presented.expires_at {
+            return Err(GateError::ChallengeExpired);
+        }
+        if binding.voter != presented.voter || !verify_binding(&presented.wallet, binding) {
+            return Err(GateError::BadWalletSignature);
+        }
+        Ok(())
+    }
+
     pub fn issue(
         &mut self,
         config: &GateConfig,
@@ -571,41 +642,7 @@ impl<S: AdmissionStore> Gate<S> {
         observation: RpcBetaObservation,
         now: u64,
     ) -> Result<HoldingCapability, GateError> {
-        let issued = self
-            .store
-            .challenge(&presented.id)
-            .map_err(|e| GateError::Store(e.to_string()))?
-            .ok_or(GateError::UnknownChallenge)?;
-        if &issued != presented {
-            return Err(GateError::ChallengeMutation);
-        }
-        config.validate()?;
-        if presented.federation_id != config.federation_id
-            || presented.origin != config.origin
-            || presented.domain != config.domain
-            || presented.cluster != config.cluster
-            || presented.genesis_hash != config.genesis_hash
-            || presented.rpc_endpoint_id != config.rpc_endpoint_id
-            || presented.mint != config.mint
-            || presented.token_program != config.token_program
-            || presented.minimum_raw_balance != config.minimum_raw_balance
-            || presented.capability_ttl_secs != config.capability_ttl_secs
-        {
-            return Err(GateError::ChallengeMutation);
-        }
-        if self
-            .store
-            .challenge_consumed(&presented.id)
-            .map_err(|e| GateError::Store(e.to_string()))?
-        {
-            return Err(GateError::ChallengeReplay);
-        }
-        if now < presented.issued_at || now > presented.expires_at {
-            return Err(GateError::ChallengeExpired);
-        }
-        if binding.voter != presented.voter || !verify_binding(&presented.wallet, binding) {
-            return Err(GateError::BadWalletSignature);
-        }
+        self.preflight_beta(config, presented, binding, now)?;
         if observation.endpoint_id != config.rpc_endpoint_id
             || observation.wallet != presented.wallet
             || observation.mint != config.mint
@@ -613,13 +650,6 @@ impl<S: AdmissionStore> Gate<S> {
             || observation.slot < presented.min_context_slot
         {
             return Err(GateError::ObservationMismatch);
-        }
-        if !self
-            .store
-            .consume_challenge_once(presented.id)
-            .map_err(|e| GateError::Store(e.to_string()))?
-        {
-            return Err(GateError::ChallengeReplay);
         }
         let expires_at = now
             .checked_add(presented.capability_ttl_secs)
@@ -640,17 +670,31 @@ impl<S: AdmissionStore> Gate<S> {
             issued_at: now,
             expires_at,
         };
-        if !self
+        match self
             .store
-            .insert_capability_once(capability.clone())
+            .issue_capability_once(presented.id, capability.clone())
             .map_err(|e| GateError::Store(e.to_string()))?
         {
-            return Err(GateError::CapabilityIdCollision);
+            CapabilityIssue::Issued => {}
+            CapabilityIssue::UnknownChallenge => return Err(GateError::UnknownChallenge),
+            CapabilityIssue::ChallengeReplay => return Err(GateError::ChallengeReplay),
+            CapabilityIssue::ChallengeMismatch => return Err(GateError::ChallengeMutation),
+            CapabilityIssue::CapabilityCollision => {
+                return Err(GateError::CapabilityIdCollision);
+            }
         }
         Ok(capability)
     }
 
     pub fn consume(&mut self, capability: &HoldingCapability, now: u64) -> Result<(), GateError> {
+        let issued = self
+            .store
+            .capability(&capability.receipt_id)
+            .map_err(|e| GateError::Store(e.to_string()))?
+            .ok_or(GateError::ForgedCapability)?;
+        if &issued != capability {
+            return Err(GateError::ForgedCapability);
+        }
         if now < capability.issued_at || now > capability.expires_at {
             return Err(GateError::CapabilityExpired);
         }
@@ -909,6 +953,9 @@ mod tests {
         assert_eq!(cap.trust(), TrustTier::BetaRpcAttested);
         assert_eq!(cap.raw_balance(), 17);
         assert!(!cap.is_governance_weight_bearing());
+        let mut forged = cap.clone();
+        forged.raw_balance += 1;
+        assert_eq!(gate.consume(&forged, 52), Err(GateError::ForgedCapability));
         assert_eq!(gate.consume(&cap, 52), Ok(()));
         assert_eq!(gate.consume(&cap, 53), Err(GateError::CapabilityReplay));
     }

@@ -21,8 +21,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine as _;
 use poa_solana_gate::{
-    AdmissionStore, Bytes32, CapabilityStatus, CapabilityUse, Challenge, Commitment,
-    DREGG_MINT_BASE58, Gate, GateConfig, GateError, HoldingCapability, RpcAccountSet,
+    AdmissionStore, Bytes32, CapabilityIssue, CapabilityStatus, CapabilityUse, Challenge,
+    Commitment, DREGG_MINT_BASE58, Gate, GateConfig, GateError, HoldingCapability, RpcAccountSet,
     RpcTokenAccount, TrustTier, decode_pubkey, encode_pubkey, validate_rpc_snapshot,
 };
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,7 @@ const MAX_LIVE_CAPABILITIES: usize = 4096;
 const REQUESTS_PER_MINUTE: u32 = 10;
 const MAX_IN_FLIGHT_RPC: usize = 4;
 const MAX_REQUEST_BYTES: usize = 4096;
+const MAX_RPC_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const RPC_URL_ENV: &str = "DREGG_POA_SOLANA_RPC_URL";
 const ENDPOINT_ID_DOMAIN: &[u8] = b"poa-solana-rpc-endpoint-v1";
 
@@ -93,7 +94,7 @@ impl HttpSolanaRpc {
     ) -> Result<serde_json::Value, String> {
         let endpoint = self.endpoint()?;
         let client = self.client.as_ref().map_err(Clone::clone)?;
-        let response = client
+        let mut response = client
             .post(endpoint)
             .json(&serde_json::json!({
                 "jsonrpc": "2.0",
@@ -107,9 +108,28 @@ impl HttpSolanaRpc {
         if !response.status().is_success() {
             return Err(format!("{method} returned HTTP {}", response.status()));
         }
-        let body: serde_json::Value = response
-            .json()
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_RPC_RESPONSE_BYTES as u64)
+        {
+            return Err(format!("{method} response exceeds size ceiling"));
+        }
+        let mut encoded = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
             .await
+            .map_err(|error| format!("{method} response body failed: {error}"))?
+        {
+            let next_len = encoded
+                .len()
+                .checked_add(chunk.len())
+                .ok_or_else(|| format!("{method} response length overflow"))?;
+            if next_len > MAX_RPC_RESPONSE_BYTES {
+                return Err(format!("{method} response exceeds size ceiling"));
+            }
+            encoded.extend_from_slice(&chunk);
+        }
+        let body: serde_json::Value = serde_json::from_slice(&encoded)
             .map_err(|error| format!("{method} returned invalid JSON: {error}"))?;
         if let Some(error) = body.get("error") {
             return Err(format!("{method} RPC error: {error}"));
@@ -284,7 +304,15 @@ fn routes_with_rpc<R: SolanaHoldingRpc>(rpc: R) -> Router<NodeState> {
                 }
             }),
         )
-        .route("/api/poa/holding/status/{receipt_id}", get(get_status))
+        .route(
+            "/api/poa/holding/status/{receipt_id}",
+            get({
+                let limits = limits.clone();
+                move |peer, headers, state, path| {
+                    get_status(peer, headers, state, path, limits.clone())
+                }
+            }),
+        )
         .layer(axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES))
 }
 
@@ -462,16 +490,19 @@ async fn post_verify<R: SolanaHoldingRpc>(
                 "challenge was not issued by this node",
             )
         })?;
+    let binding = dregg_governance::holding_weight::OwnerBinding {
+        voter: challenge.voter(),
+        sig: signature,
+    };
+    Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)))
+        .preflight_beta(&config, &challenge, &binding, now)
+        .map_err(map_gate_error)?;
     let snapshot = rpc
         .holding_snapshot(challenge.clone())
         .await
         .map_err(rpc_bad_gateway)?;
     let observation =
         validate_rpc_snapshot(&config, &challenge, &snapshot).map_err(map_gate_error)?;
-    let binding = dregg_governance::holding_weight::OwnerBinding {
-        voter: challenge.voter(),
-        sig: signature,
-    };
     let capability = {
         let _node_write = state.write().await;
         let mut gate = Gate::with_store(RedbAdmissionStore::new(store));
@@ -482,9 +513,13 @@ async fn post_verify<R: SolanaHoldingRpc>(
 }
 
 async fn get_status(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<NodeState>,
     Path(receipt_id): Path<String>,
+    limits: HoldingLimits,
 ) -> Result<Json<HoldingStatusResponse>, ApiError> {
+    admit_request(peer, &headers, &limits).await?;
     let receipt_id = decode_id(&receipt_id, "invalid_receipt_id")?;
     let now = unix_time()?;
     let (_, store) = node_admission_context(&state).await?;
@@ -554,15 +589,23 @@ fn encode_id(id: &Bytes32) -> String {
 }
 
 fn decode_id(text: &str, code: &'static str) -> Result<Bytes32, ApiError> {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(text)
-        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, code, error.to_string()))?
+        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, code, error.to_string()))?;
+    if base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&decoded) != text {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            code,
+            "id must use canonical base64url without padding",
+        ));
+    }
+    decoded
         .try_into()
         .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, code, "id must decode to 32 bytes"))
 }
 
 fn decode_signature(text: &str) -> Result<[u8; 64], ApiError> {
-    base64::engine::general_purpose::STANDARD
+    let decoded = base64::engine::general_purpose::STANDARD
         .decode(text)
         .map_err(|error| {
             ApiError::new(
@@ -570,15 +613,21 @@ fn decode_signature(text: &str) -> Result<[u8; 64], ApiError> {
                 "invalid_signature",
                 error.to_string(),
             )
-        })?
-        .try_into()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_signature",
-                "signature must decode to 64 bytes",
-            )
-        })
+        })?;
+    if base64::engine::general_purpose::STANDARD.encode(&decoded) != text {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_signature",
+            "signature must use canonical standard base64",
+        ));
+    }
+    decoded.try_into().map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_signature",
+            "signature must decode to 64 bytes",
+        )
+    })
 }
 
 fn capability_response(capability: &HoldingCapability) -> CapabilityResponse {
@@ -618,12 +667,20 @@ fn trust_name(trust: TrustTier) -> &'static str {
     }
 }
 
-fn rpc_unavailable(message: String) -> ApiError {
-    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "rpc_unavailable", message)
+fn rpc_unavailable(_detail: String) -> ApiError {
+    ApiError::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "rpc_unavailable",
+        "Solana holding RPC is unavailable",
+    )
 }
 
-fn rpc_bad_gateway(message: String) -> ApiError {
-    ApiError::new(StatusCode::BAD_GATEWAY, "rpc_refused", message)
+fn rpc_bad_gateway(_detail: String) -> ApiError {
+    ApiError::new(
+        StatusCode::BAD_GATEWAY,
+        "rpc_refused",
+        "Solana holding RPC refused the finalized evidence request",
+    )
 }
 
 fn map_gate_error(error: GateError) -> ApiError {
@@ -660,7 +717,13 @@ fn map_gate_error(error: GateError) -> ApiError {
         | GateError::ObservationMismatch
         | GateError::ForgedCapability => (StatusCode::FORBIDDEN, "evidence_mismatch"),
     };
-    ApiError::new(status, code, error.to_string())
+    let message = match code {
+        "admission_store_failed" => "durable admission storage failed".to_owned(),
+        "admission_configuration_failed" => "holding admission is misconfigured".to_owned(),
+        "rpc_refused" => "Solana holding RPC refused the evidence request".to_owned(),
+        _ => error.to_string(),
+    };
+    ApiError::new(status, code, message)
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -809,27 +872,34 @@ impl AdmissionStore for RedbAdmissionStore {
         Ok(self.load()?.challenges.get(id).cloned())
     }
 
-    fn consume_challenge_once(&mut self, id: Bytes32) -> Result<bool, Self::Error> {
-        self.mutate(|state| state.challenges.contains_key(&id) && state.spent_challenges.insert(id))
-    }
-
     fn challenge_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error> {
         Ok(self.load()?.spent_challenges.contains(id))
     }
 
-    fn insert_capability_once(
+    fn issue_capability_once(
         &mut self,
+        challenge_id: Bytes32,
         capability: HoldingCapability,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<CapabilityIssue, Self::Error> {
         self.mutate(|state| {
             state.prune_expired(capability.issued_at());
+            if !state.challenges.contains_key(&challenge_id) {
+                return CapabilityIssue::UnknownChallenge;
+            }
+            if state.spent_challenges.contains(&challenge_id) {
+                return CapabilityIssue::ChallengeReplay;
+            }
+            if capability.challenge_id() != challenge_id {
+                return CapabilityIssue::ChallengeMismatch;
+            }
             let id = capability.receipt_id();
             if state.capabilities.contains_key(&id) {
-                return false;
+                return CapabilityIssue::CapabilityCollision;
             }
+            state.spent_challenges.insert(challenge_id);
             state.capabilities.insert(id, capability);
             state.enforce_live_limits(None, Some(id));
-            true
+            CapabilityIssue::Issued
         })
     }
 
@@ -911,6 +981,27 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct NoSnapshotRpc {
+        endpoint_id: Bytes32,
+        slot: u64,
+    }
+
+    impl SolanaHoldingRpc for NoSnapshotRpc {
+        fn endpoint_id(&self) -> Result<Bytes32, String> {
+            Ok(self.endpoint_id)
+        }
+
+        fn finalized_slot(&self) -> RpcFuture<u64> {
+            let slot = self.slot;
+            Box::pin(async move { Ok(slot) })
+        }
+
+        fn holding_snapshot(&self, _challenge: Challenge) -> RpcFuture<RpcAccountSet> {
+            panic!("bad wallet signatures must be refused before the holding RPC")
+        }
+    }
+
     async fn configured_state() -> (NodeState, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
         let state = NodeState::new(dir.path(), vec![]).expect("state");
@@ -978,6 +1069,10 @@ mod tests {
                     .expect("message"),
             )
             .expect("message base64");
+        let domain = dregg_governance::holding_weight::BIND_DOMAIN;
+        assert_eq!(message.len(), domain.len() + 64);
+        assert_eq!(&message[..domain.len()], domain);
+        assert_eq!(&message[domain.len()..domain.len() + 32], &wallet);
         let signature = key.sign(&message).to_bytes();
         let (status, capability) = json_request(
             app,
@@ -1001,11 +1096,23 @@ mod tests {
             node.federation_id = [7; 32];
         }
         let receipt = capability["receipt_id"].as_str().expect("receipt");
-        let response = routes_with_rpc(rpc)
-            .with_state(reopened)
+        let reopened_app = routes_with_rpc(rpc).with_state(reopened);
+        let (replay_status, replay_body) = json_request(
+            reopened_app.clone(),
+            "POST",
+            "/api/poa/holding/verify",
+            serde_json::json!({
+                "challenge_id": challenge["challenge_id"],
+                "signature_base64": base64::engine::general_purpose::STANDARD.encode(signature),
+            }),
+        )
+        .await;
+        assert_eq!(replay_status, StatusCode::CONFLICT, "{replay_body}");
+        let response = reopened_app
             .oneshot(
                 Request::builder()
                     .uri(format!("/api/poa/holding/status/{receipt}"))
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 31337))))
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -1106,6 +1213,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/api/poa/holding/status/{}", encode_id(&[9; 32])))
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 31337))))
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -1137,6 +1245,38 @@ mod tests {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     }
 
+    #[tokio::test]
+    async fn bad_wallet_signature_is_refused_before_holding_rpc() {
+        let key = SigningKey::from_bytes(&[3; 32]);
+        let wallet = key.verifying_key().to_bytes();
+        let rpc = NoSnapshotRpc {
+            endpoint_id: [8; 32],
+            slot: 1000,
+        };
+        let (state, _dir) = configured_state().await;
+        let app = routes_with_rpc(rpc).with_state(state);
+        let (status, challenge) = json_request(
+            app.clone(),
+            "POST",
+            "/api/poa/holding/challenge",
+            serde_json::json!({ "wallet": encode_pubkey(&wallet) }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{challenge}");
+        let (status, body) = json_request(
+            app,
+            "POST",
+            "/api/poa/holding/verify",
+            serde_json::json!({
+                "challenge_id": challenge["challenge_id"],
+                "signature_base64": base64::engine::general_purpose::STANDARD.encode([1; 64]),
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["code"], "bad_wallet_signature");
+    }
+
     #[test]
     fn rpc_decoder_refuses_json_parsed_or_malformed_account_data() {
         let result = serde_json::json!({
@@ -1150,5 +1290,80 @@ mod tests {
             }]
         });
         assert!(decode_token_accounts_response(result, [1; 32], [2; 32], 9).is_err());
+    }
+
+    #[test]
+    fn rpc_decoder_preserves_raw_token_2022_evidence_for_the_gate() {
+        let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
+        let wallet = SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes();
+        let challenge = Gate::new()
+            .issue(&config, wallet, [9; 32], 1000, 10)
+            .expect("challenge");
+        let mut account_data = vec![0u8; 165];
+        account_data[..32].copy_from_slice(&config.mint);
+        account_data[32..64].copy_from_slice(&wallet);
+        account_data[64..72].copy_from_slice(&17u64.to_le_bytes());
+        account_data[108] = 1;
+        let result = serde_json::json!({
+            "context": { "slot": 1001 },
+            "value": [{
+                "pubkey": encode_pubkey(&[44; 32]),
+                "account": {
+                    "owner": encode_pubkey(&config.token_program),
+                    "data": [
+                        base64::engine::general_purpose::STANDARD.encode(&account_data),
+                        "base64"
+                    ]
+                }
+            }]
+        });
+        let decoded = decode_token_accounts_response(
+            result,
+            config.rpc_endpoint_id,
+            config.genesis_hash,
+            challenge.min_context_slot(),
+        )
+        .expect("raw RPC account set");
+        validate_rpc_snapshot(&config, &challenge, &decoded)
+            .expect("exact Token-2022 evidence must pass the canonical gate");
+    }
+
+    #[test]
+    fn wire_ids_and_wallet_signatures_require_canonical_base64() {
+        assert_eq!(decode_id(&encode_id(&[7; 32]), "bad").expect("id"), [7; 32]);
+        assert!(decode_id(&format!("{}=", encode_id(&[7; 32])), "bad").is_err());
+
+        let canonical = base64::engine::general_purpose::STANDARD.encode([1; 64]);
+        assert_eq!(decode_signature(&canonical).expect("signature"), [1; 64]);
+        let mut noncanonical = canonical.into_bytes();
+        let low_bits = noncanonical.len() - 3;
+        noncanonical[low_bits] = if noncanonical[low_bits] == b'Q' {
+            b'R'
+        } else {
+            b'B'
+        };
+        assert!(decode_signature(std::str::from_utf8(&noncanonical).expect("ascii")).is_err());
+    }
+
+    #[tokio::test]
+    async fn production_router_registers_the_status_route() {
+        let (state, _dir) = configured_state().await;
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let response = crate::api::router_with_cors(
+            state,
+            false,
+            recorder.handle(),
+            std::collections::HashSet::new(),
+        )
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/poa/holding/status/{}", encode_id(&[9; 32])))
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 31337))))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
