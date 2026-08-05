@@ -252,6 +252,18 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          Callers must refuse; there is no Rust authorization or settlement twin",
     ),
     (
+        "dregg_poa_galley_daily_judge",
+        "the Path of Angels Galley daily PUBLIC evaluator compiles out: strict replay, opaque \
+         action-token admission, event construction and successor projection have no answer \
+         source. The daily must refuse; there is no Rust gameplay twin",
+    ),
+    (
+        "dregg_poa_galley_daily_sponsor_judge",
+        "the Path of Angels Galley holder-SPONSOR evaluator compiles out: the server-sealed, \
+         replay-bound, zero-advantage holder admission cannot be composed with the daily. Holder \
+         sponsorship must remain disabled; no Rust code may synthesize this verdict",
+    ),
+    (
         "dregg_deleg_admit",
         "the DELEGATED TOOL/MCP-ACCESS admission verdict has no answer source: the SDK tool \
          gateway, the starbridge tool-access-delegation app and the dreggnet offerings session \
@@ -296,7 +308,6 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          IPA challenges) is never checked, and one real Mina proof replayed under a whole \
          fabricated segment would pass every remaining check",
     ),
-
     (
         "dregg_mina_state_hash_word_ok",
         "the PER-BLOCK proof↔`stateHash` DERIVATION compiles out — the observer refuses every \
@@ -2283,6 +2294,8 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_network_genesis_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_sponsor_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_trustline_step_present)");
 
@@ -3193,6 +3206,24 @@ fn main() {
         absent_export_warn("dregg_poa_dark_bazaar_judge");
     }
 
+    // PATH OF ANGELS GALLEY DAILY: the public and server-sealed sponsor entry points are probed
+    // independently so a half-linked archive cannot silently turn sponsorship into public play or
+    // make an absent sponsor gate look like ordinary semantic refusal.
+    let poa_galley_daily_judge_present =
+        archive_exports(&build_archive, "dregg_poa_galley_daily_judge");
+    if poa_galley_daily_judge_present {
+        println!("cargo:rustc-cfg=dregg_poa_galley_daily_judge_present");
+    } else {
+        absent_export_warn("dregg_poa_galley_daily_judge");
+    }
+    let poa_galley_daily_sponsor_judge_present =
+        archive_exports(&build_archive, "dregg_poa_galley_daily_sponsor_judge");
+    if poa_galley_daily_sponsor_judge_present {
+        println!("cargo:rustc-cfg=dregg_poa_galley_daily_sponsor_judge_present");
+    } else {
+        absent_export_warn("dregg_poa_galley_daily_sponsor_judge");
+    }
+
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
     // `@[export] dregg_{eth,tm,mpt}_lc_verify` symbols (the extracted, Lean-verified foreign-chain
     // admission decisions from `Dregg2.Bridge.LightClient{Eth,Tendermint,Mpt}Gate`). Present ⇒ gate
@@ -3578,6 +3609,12 @@ fn main() {
     }
     if poa_dark_bazaar_judge_present {
         shim.define("DREGG_POA_DARK_BAZAAR_JUDGE", None);
+    }
+    if poa_galley_daily_judge_present {
+        shim.define("DREGG_POA_GALLEY_DAILY_JUDGE", None);
+    }
+    if poa_galley_daily_sponsor_judge_present {
+        shim.define("DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE", None);
     }
     // DELEGATED TOOL-ACCESS ADMISSION: `DREGG_DELEG_ADMIT` gates BOTH the extern decl and the `_str`
     // bridge in `lean_init.c` (no module initializer — `Dregg2.Apps.DelegAdmit` is Init-only and its

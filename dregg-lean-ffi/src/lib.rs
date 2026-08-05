@@ -61,6 +61,11 @@ pub mod poa_network_genesis_ffi;
 #[path = "poa_dark_bazaar_ffi.rs"]
 pub mod poa_dark_bazaar_ffi;
 
+/// Lean-owned, replay-first Galley daily evaluator. Public play and the server-sealed holder
+/// sponsor ingress are distinct exports; both refuse rather than fall back to Rust semantics.
+#[path = "poa_galley_ffi.rs"]
+pub mod poa_galley_ffi;
+
 pub use bridge_lc_ffi::{
     eth_committee_rotation_available, eth_committee_rotation_wire, eth_lc_verify_available,
     eth_lc_verify_wire, mina_account_opening_wire, mina_account_state_ok_available,
