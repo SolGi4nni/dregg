@@ -473,6 +473,35 @@ const ETH_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-eth-lightclient-verify-v1.json");
 const TM_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-tm-lightclient-verify-v1.json");
+/// ⚑⚑ `dregg-solana-lightclient-verify::v1` — **MULTI-ROW since 2026-08-04, one row per
+/// stake-table entry**, and Lean-COMPILED (`LightClientSolanaAir.solLcVerifyDesc` =
+/// `EffectLower.lowerAir` of the `EffectAir` source `solLcVerifyAir`; no hand-written
+/// `VmConstraint2` in that module). Width 79, 22 PIs, 103 constraints, four declared range tables
+/// (29 / 24 / 16 / 8).
+///
+/// Its columns 0..43 ARE `dregg-solana-stake-table-fold::v1`'s columns, from the SAME source leg
+/// list (`foldLegs`), so the two rungs cannot drift about what a stake-table row is. The two numbers
+/// the light client's trust story hangs from are DERIVED from those rows:
+///
+///  * `PI[0..7]` — the weak-subjectivity STAKE-TABLE ROOT, as the fold's eight `.last` output lanes.
+///    It was ONE column carrying a 256-bit SHA-256 root (compared at 31 bits), then NINE `.first`
+///    radix-2^31 limbs that bound the full width and were read by no constraint at all. Eight lanes
+///    are `8 · 30.906891 = 247.26` bits of image ⇒ an equivocating prover needs a **2^123.63**
+///    birthday collision — ⚠ not the 2^247.3 second-preimage figure for the same object.
+///  * `PI[18..21]` — the ACTIVE-STAKE DENOMINATOR, `.last`-pinned from the fold's accumulator.
+///
+/// `STAKE_TABLE_OK` is GONE: it was a witnessed bit forced `= 1` asserting the sentence the fold now
+/// computes.
+///
+/// ⚠ **CALLERS SUPPLY A POSEIDON2 ROOT.** `EpochStakeTable::root` (`STAKE_TABLE_ROOT_TAG`,
+/// `bridge/src/solana_consensus.rs`) is a domain-separated SHA-256 and is NOT this value; it must be
+/// re-anchored to `dregg-solana-stake-table-root:v2` and every `WeakSubjectivityAnchor
+/// ::stake_table_root` re-derived. Until then a caller passing the SHA root is REFUSED at the
+/// last-row pin — loudly, at verify, which is the intended behaviour of a shape change here.
+///
+/// ⚠ Still CARRIED, not constrained: `ED_OK` (no in-AIR ed25519), `ROOTED_STK` (a witnessed
+/// projection — the fold binds who is in the table, not who voted), and the nine bank-root limbs
+/// plus the slot, which no gate reads.
 const SOLANA_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-solana-lightclient-verify-v1.json");
 const MIDNIGHT_LIGHTCLIENT_VERIFY_JSON: &str =
@@ -528,11 +557,14 @@ const MINA_LIGHTCLIENT_LINK_JSON: &str =
 /// `ROOT_OUT` as the eight-lane table root. The SAME rows drive a four-limb u64 accumulator with
 /// boolean carries whose LAST-row value is the published active-stake DENOMINATOR.
 ///
-/// ⚑ THE TOOTH: `dregg-solana-lightclient-verify::v1` PINS the denominator and says so in its own
-/// docblock — *"a swap to a different validator set with the SAME total active stake is NOT refused
-/// by this"* — and `solana_lightclient_proves.rs::a_swapped_stake_table_is_arithmetically_perfect`
-/// exhibits exactly such a row satisfying every gate. This descriptor refuses it: the tally pins
-/// still accept, and the root moves.
+/// ⚑ THE TOOTH: `dregg-solana-lightclient-verify::v1` used to PIN the denominator and say so in its
+/// own docblock — *"a swap to a different validator set with the SAME total active stake is NOT
+/// refused by this"*. This descriptor refuses it: the tally pins still accept, and the root moves.
+/// ⚑ **AND SINCE 2026-08-04 THE VERIFY RUNG ABSORBED THESE LEGS**, so the refusal is inside the
+/// light client's own proof (`solana_lightclient_proves.rs::
+/// a_same_tally_swap_is_refused_against_the_pinned_anchor_root`, paired with
+/// `a_same_tally_swap_is_arithmetically_perfect` — bit-identical published denominator, moved root).
+/// This rung remains served on its own for a consumer that wants only the table commitment.
 ///
 /// ⚠ The commitment is NOT `EpochStakeTable::root`'s SHA-256. That root is dregg-authored
 /// (`STAKE_TABLE_ROOT_TAG`) and its SHA-256 shape is 18,049,248 constraints / 12,831,336 columns at

@@ -71,8 +71,8 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, chip_absorb_all_lanes,
     parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
-use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 use dregg_circuit::heap_root::HeapLeaf;
+use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 use dregg_circuit::refusal;
 
 const SOL_LC_VERIFY_DESCRIPTOR: &str = "dregg-solana-lightclient-verify::v1";
@@ -630,33 +630,97 @@ const LIVE_SLOT: u32 = 436_909_708;
 /// permutation produced. Claiming "the same 79 numbers" would be false for twenty-four of them.
 const LEAN_MAX_SCALE_CELLS: [i64; SOL_LC_WIDTH] = [
     // ROOT_IN 0..7 — the chip's running image, NOT modelled in Lean
-    0, 0, 0, 0, 0, 0, 0, 0, //
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0, //
     // VOTER 0..8
-    11, 22, 33, 44, 55, 66, 77, 88, 99, //
+    11,
+    22,
+    33,
+    44,
+    55,
+    66,
+    77,
+    88,
+    99, //
     // STAKE 0..3 = 432650183925625587 (live active stake)
-    62195, 52452, 5388, 1537, //
+    62195,
+    52452,
+    5388,
+    1537, //
     // MID 0..7 — the chip's image, NOT modelled in Lean
-    0, 0, 0, 0, 0, 0, 0, 0, //
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0, //
     // ROOT_OUT 0..7 — the chip's image, NOT modelled in Lean
-    0, 0, 0, 0, 0, 0, 0, 0, //
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0, //
     // ACC 0..3 = the DENOMINATOR, and PI 18..21
-    62195, 52452, 5388, 1537, //
+    62195,
+    52452,
+    5388,
+    1537, //
     // CARRY 0..2
-    0, 0, 0, //
+    0,
+    0,
+    0, //
     // ED_OK, ROOTED_OK, AUTH_OK
-    1, 1, 1, //
+    1,
+    1,
+    1, //
     // ROOTED_STK limbs = 288433455950417059 (minimal STRICT quorum)
-    19619, 13123, 47283, 1024, //
+    19619,
+    13123,
+    47283,
+    1024, //
     // QDIFF limbs = 3·R − 2·T − 1 = 2
-    2, 0, 0, 0, 0, //
+    2,
+    0,
+    0,
+    0,
+    0, //
     // QDIFF carries, offset (honest carries −1, −1, +2, 0)
-    127, 127, 130, 128, //
+    127,
+    127,
+    130,
+    128, //
     // TPOS limbs = T − 1
-    62194, 52452, 5388, 1537, 0, //
+    62194,
+    52452,
+    5388,
+    1537,
+    0, //
     // TPOS carries, offset
-    128, 128, 128, 128, //
+    128,
+    128,
+    128,
+    128, //
     // BANK_ROOT limbs 0..8
-    1, 2, 3, 4, 5, 6, 7, 8, 9, //
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9, //
     // SLOT_COL
     436_909_708,
 ];
@@ -970,7 +1034,10 @@ fn a_multi_member_stake_table_proves() {
     assert_eq!(running[0], 200_000_000_000_000_000);
     assert_eq!(running[2], LIVE_ACTIVE_STAKE as i128);
     assert_eq!(*running.last().unwrap(), LIVE_ACTIVE_STAKE as i128);
-    must_prove("⚑ a three-member stake table summing to live active stake", &u);
+    must_prove(
+        "⚑ a three-member stake table summing to live active stake",
+        &u,
+    );
     eprintln!(
         "⚑ MULTI-MEMBER TABLE PROVED: running accumulator {:?}",
         running
@@ -1554,7 +1621,10 @@ fn a_same_tally_swap_is_refused_against_the_pinned_anchor_root() {
     let fc = trace_cells(&forged_u);
     let pinned = pis_from(&hc, &honest_u);
 
-    assert_ne!(hc, fc, "the two traces must differ, or there is nothing to refuse");
+    assert_ne!(
+        hc, fc,
+        "the two traces must differ, or there is nothing to refuse"
+    );
     assert_eq!(
         pinned[PI_TOTAL_STK_0..PI_TOTAL_STK_0 + RUNGS],
         pis_from(&fc, &forged_u)[PI_TOTAL_STK_0..PI_TOTAL_STK_0 + RUNGS],
@@ -1685,6 +1755,71 @@ fn chip_output_lanes_1_to_7_are_weld_owned_not_producer_owned() {
     eprintln!(
         "⚑ chip lane 3 tamper ACCEPTED (weld rewrote it); out0 tamper REFUSED — only out0 is \
          producer-forgeable"
+    );
+}
+
+/// ⚑⚑⚑ **THE ANCHOR'S OWN `out0`, FORGED, WITH THE PUBLIC INPUT MOVED TO MATCH — AND STILL
+/// REFUSED.**
+///
+/// Every other anchor tooth in this file moves a PI away from the trace and is caught by a
+/// **pin**. That is a check on the light client's side of the seam, and it says nothing about
+/// whether the root the prover published is the IMAGE of the rows or a number it chose. This one
+/// removes the pin from the argument entirely: the forger writes its own value into the last row's
+/// `ROOT_OUT` lane 0 and **publishes that value**, so `PI[0]` and the trace agree and every
+/// `pi_binding` is satisfied.
+///
+/// The last row is the one row where this is even worth attempting. `rootContinuity` is a
+/// `.transition` window gate, so it does not fire there — the forged lane feeds no successor and
+/// disturbs no continuity. And lane 0 is the one output lane `descriptor_ir2::fill_chip_lanes` does
+/// NOT rewrite (*"the producer's hash chain owns it"*), so unlike lanes 1..7 the forgery actually
+/// reaches the prover. What is left holding the anchor down is **the chip lookup and nothing else**.
+///
+/// ⚠ This refusal is expected on the LOOKUP BUS, not as a violated gate, so it is asserted with the
+/// weaker `must_refuse_or_unsat_panic` and the reason is printed rather than pattern-matched. Naming
+/// the tooth honestly is the point: `2^123.63` (birthday over `8 · 30.906891 = 247.26` bits) is the
+/// number that governs a forged root, and it is a property of the chip's image, not of a pin.
+#[test]
+fn a_forged_anchor_out0_with_a_matching_public_input_is_refused() {
+    let u = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM);
+    let honest_cells = trace_cells(&u);
+    let d = desc();
+
+    // The honest pole, so the refusal below is not vacuous.
+    refusal::must_accept("the honest fill, before the anchor out0 forgery", || {
+        prove_and_verify(&d, &honest_cells, &pis_from(&honest_cells, &u))
+    });
+
+    let mut forged = honest_cells.clone();
+    let last = forged.len() - 1;
+    forged[last][ROOT_OUT_0] += 1;
+
+    // ⚑ The forger PUBLISHES the root it wrote — `pis_from` reads the last row, so the pin agrees.
+    let self_consistent = pis_from(&forged, &u);
+    assert_eq!(
+        self_consistent[PI_ANCHOR_ROOT_0],
+        felt(forged[last][ROOT_OUT_0]),
+        "the published anchor must be the forged value, or the PIN is doing the work and this test \
+         is the one above"
+    );
+    assert_ne!(
+        self_consistent[PI_ANCHOR_ROOT_0],
+        pis_from(&honest_cells, &u)[PI_ANCHOR_ROOT_0],
+        "the forged anchor must differ from the honest one"
+    );
+    // …and the denominator is untouched, so nothing else moved.
+    assert_eq!(
+        self_consistent[PI_TOTAL_STK_0..PI_TOTAL_STK_0 + RUNGS],
+        pis_from(&honest_cells, &u)[PI_TOTAL_STK_0..PI_TOTAL_STK_0 + RUNGS],
+        "the forgery is of the ROOT alone"
+    );
+
+    let r = refusal::must_refuse_or_unsat_panic(
+        "⚑⚑ a forged anchor-root out0 published as its own public input",
+        || prove_and_verify(&d, &forged, &self_consistent),
+    );
+    eprintln!(
+        "⚑⚑ FORGED ANCHOR out0 REFUSED WITH ITS PIN SATISFIED: {}",
+        r.reason()
     );
 }
 
