@@ -227,7 +227,23 @@ def relatedCols : VmConstraint2 → List Nat
   | .mapOp m                 => nub ((exprCols m.guard) ++ (exprCols m.key) ++ (exprCols m.value) ++
                                      ((List.ofFn m.root).flatMap exprCols) ++
                                      ((List.ofFn m.newRoot).flatMap exprCols))
-  | .proofBind m             => nub ((exprCols m.guard) ++ (exprCols m.commit) ++ (exprCols m.vk))
+  -- ⚑ **LANE VECTORS, NOT ONE LIMB EACH** (the `ProofBind` widening, 2026-08-05). `commit`/`vk`/
+  -- `bound` are `List EmittedExpr` now, and this arm read them as if each were a single expression —
+  -- which is a TYPE error here and so left the module red, but is the same UNDER-READ that in an
+  -- untyped instrument goes silent: `scripts/check-descriptor-anchor-inertness.py` walked only the
+  -- operands that are themselves an expression and scored nine BOUND commitment lanes as DECORATIVE
+  -- ANCHORS (18 → 27) with no anchor having changed, and `circuit-prove/tests/fold_claim_pin_liveness.rs`
+  -- read lane 0 alone and would declare a live pin dead. Three instruments, one blindness; Lean is
+  -- the one that could not compile through it.
+  --
+  -- `bound` is included because `ProofBind.holdsAt` asserts `g·(commitᵢ − boundᵢ) ≡ 0` lane by lane:
+  -- those row-local expressions are tied to the commitment by the seam itself, so a walker that
+  -- omitted them would under-read exactly the tie this file exists to measure. Every seam served
+  -- today declares `bound := none`, so no committed count moves with this — it closes the hole
+  -- ahead of the first descriptor that uses it rather than after.
+  | .proofBind m             => nub ((exprCols m.guard) ++ (m.commit.flatMap exprCols) ++
+                                     (m.vk.flatMap exprCols) ++
+                                     ((m.bound.getD []).flatMap exprCols))
 
 /-- A constraint RELATES iff it names at least two distinct columns. ⚑ An arity-1 range lookup and a
 one-column forcing gate (`ED_OK − 1`) both fail this, and both should: neither joins anything. -/
