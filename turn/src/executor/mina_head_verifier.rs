@@ -960,7 +960,14 @@ mod tests {
         assert_eq!(PI_BLOCK_LEN, 18);
         assert_eq!(PI_REQ_DEPTH, 19);
         assert_eq!(PI_SUB_COMMIT_BASE, 20);
-        assert_eq!(MINA_LC_PI_COUNT, 29);
+        // ⚑ 30, not 29, since `ANCHOR_H` became a published PI on 2026-08-05. The literals here
+        // are deliberately literals: they are the SECOND source, and a pin written as
+        // `assert_eq!(MINA_LC_PI_COUNT, MINA_LC_PI_COUNT)` would be decoration. Checked against
+        // Lean `LightClientMinaAir.MINA_PI_COUNT` (`3 * STATE_LIMBS + 3`, with
+        // `minaVerify_layout_facts` proving it `= 30`) and against the emitted
+        // `dregg-mina-lightclient-verify-v1.json`, whose `public_input_count` is 30.
+        assert_eq!(PI_ANCHOR_H, 29);
+        assert_eq!(MINA_LC_PI_COUNT, 30);
     }
 
     /// ⚑⚑ POSITIVE POLARITY FOR THE SUB-PROOF BINDING: a head proof that publishes the digest of
