@@ -1717,3 +1717,144 @@ be one o1js program — **which is exactly why the deployed root verifier is ~50
 partition the root uses. **A batch-STARK verifier is intrinsically a partition chain — not a
 containment.** ⇒ This is the hard evidence for [[project-pickles-in-lean-epoch]] and the pure-Rust
 prover: the napi string wall is the JS tax as a HARD CEILING; Rust has no such wall.
+
+---
+
+# ⚑⚑⚑⚑ 2026-08-05 — THE VERDICT: MINA'S OWN VERIFIERS, RUN ON WHAT WE PRODUCED
+
+Every report in this campaign ended on *"not a Mina-valid proof"*, written as a label and left. It
+was never MEASURED. It is now, three ways, and the answer is not one word.
+
+**Has Mina verified anything we produced?**
+**At the KIMCHI layer, under the verifier index Mina itself builds from the 1796 bytes the devnet
+account holds — YES. At the PICKLES layer — NO, and the refusals are named below.**
+
+## What was run
+
+| # | verifier | what it is | verdict |
+|---|---|---|---|
+| 1 | o1js `verify(proof, vk)` | `Pickles.verify` — Mina's OCaml Pickles compiled into o1js (`zkprogram.js:63-83`) | **`false`** |
+| 2 | openmina `verify_zkapp` | the function `Verifier::verify_commands` calls for every zkApp proof on the network (`ledger/src/proofs/verification.rs:829`) | **REFUSE — by abort** |
+| 3 | `kimchi::verifier::verify` under `make_zkapp_verifier_index(<devnet bytes>)` | the last call `verify_impl` makes (`verification.rs:889`), on the index Mina synthesizes from account state (`verifiers.rs:396`) | **`Ok` at a 40-word public input; `IncorrectPubicInputLength(40)` at the circuit's own 6** |
+
+New drivers (both additive, nothing edited):
+* `bridge/mina-zkapp/scripts/mina-proof-verify-gate.mjs` — the o1js call. **Refuses to report unless
+  its controls move both ways first**: a known-good o1js proof + its own key → `true` (8.8 s), the
+  same proof + a foreign key → `false`.
+* `metatheory/fixtures/pickles-extractors/src/bin/mina_verdict.rs` — openmina's `verify_zkapp`,
+  reported as the CHAIN it is (index shape → proof shape → `accumulator_check` → the whole thing),
+  because "false" from the top names nothing.
+* `metatheory/fixtures/pickles-extractors/src/bin/mina_onchain_index_probe.rs` — prove the rung whose
+  key is on devnet, then hand the proof to the index MINA builds from those bytes.
+
+## ⚑ (3) is the new rung, and it is not vacuous
+
+`mina_onchain_index_probe`, `wrapmain_smoke_w4_bind` **at the exact emission the registered key was
+derived from** (`d6d3bc71…`, recovered from `d245921c7`), 498 Lean rows + 15883 `Zero` pad, domain
+2^14, Mina's SRS, `prev_challenges = 2`:
+
+```
+[A] 28 / 28 commitments identical   OURS (Lean gates -> ProverIndex) == MINA'S (devnet bytes -> make_zkapp_verifier_index)
+[B control] kimchi::verify(OUR index, our 6 public words)          = Ok
+[B]         kimchi::verify(MINA'S index, our 6 public words)       = Err(IncorrectPubicInputLength(40))
+            Mina's own words: "the public input is of an unexpected size (expected 40)"
+[B']        kimchi::verify(MINA'S index, those 6 words + 34 zeros) = Ok
+[C] word 0  moved by 1  -> Err(OpenProof) "the opening proof failed to verify"
+    word 39 moved by 1  -> Err(OpenProof)
+    and with the CURRENT (drifted) emission, whose key differs from the chain's in 3 of 7 sigma
+    commitments, [B'] returns OpenProof — so the acceptance discriminates the KEY as well as the WORDS.
+```
+
+**[A] is the first comparison in this tree between a key MINA reconstructed and a key our prover is
+actually proving against.** Every earlier gate — `vkToCircuit`, `devnet-verify-foreign-vk` — compared
+our bytes to our bytes. The round trip Lean → gates → Mina's SRS → 28 Pallas points → binprot →
+devnet → GraphQL → openmina → `VerifierIndex` closes, exactly.
+
+⚠ **[B'] IS A PROBE AND MUST BE QUOTED AS ONE.** *We* chose that 40-word vector. In the real path
+Pickles DERIVES all 40 from the statement (`prepared_statement.rs:53-182`) and hands them to kimchi;
+nothing lets a prover supply them. So [B'] says: **the 28 commitments, the SRS, the domain, `zk_rows`,
+`prev_challenges`, the feature flags and the IPA opening all agree with Mina's reconstruction — the
+one thing that does not is the public input.** That is a localization, not a settlement.
+
+## What Mina demands — printed from its own constructor, not recited
+
+`make_zkapp_verifier_index` on the devnet account's bytes. **The account carries only 28 curve points
+and two enum tags; everything below is synthesized in Rust:**
+
+```
+domain 2^14 · public 40 · prev_challenges 2 · zk_rows 3 · max_poly_size 2^15 · every feature flag false
+```
+
+The 40 (`prepared_statement.rs:53-182`): 5 shifted deferred scalars ‖ β,γ ‖ α,ζ,ξ ‖ 3 digests ‖
+**16 bulletproof challenges** ‖ `branch_data` ‖ 8 feature-flag bits ‖ `uses_lookup` ‖ `lookup_value`.
+Slot 13 is a Poseidon hash that binds **the VK's own 28 points** plus the app state — so the wrap
+public input is not free of the key, and a proof can never be portable between keys.
+
+## The named gaps, in the order Mina hits them
+
+1. ⚑ **`messages_for_next_wrap_proof.challenge_polynomial_commitment` IS A VESTA POINT AND WE EMIT A
+   PALLAS ONE.** `marshal.rs:223` types it `next_wrap_challenge_polynomial_commitment: Pallas`;
+   `StatementProofState::try_from` builds it with `Affine<VestaParameters>::new`, which ASSERTS
+   on-curve — so `verify_zkapp` **aborts the process** rather than returning false.
+   **MEASURED, against Mina's own bytes**: ours is on Pallas and not on Vesta; the same field of
+   `devnet-540890` and `mainnet-541858` is on Vesta and not on Pallas.
+   ⚠ **Both parse gates pass this object.** `binprot_read` and `Pickles.proofOfBase64` read two bare
+   `BigInt`s and never ask whether the pair is a point. This is the exact shape of "a documented
+   wound is not a detected one" — the READER gates were green all along and the defect only appeared
+   when something actually verified.
+2. **Past that (probe: the field replaced by the Vesta generator), `expand_deferred` aborts too**
+   (`step.rs:1915-2072`, an out-of-range `BigInt → Fp`). Key-independent: identical abort with the
+   on-chain key and with a freshly derived one. The statement we marshal is not a Pickles statement.
+3. **`accumulator_check` = `Ok(false)`** (`accumulator_check.rs:10`), on its own and before anything
+   else. The next-wrap accumulator we supply is not the dlog accumulator of the statement's 16
+   deferred challenges over the Vesta SRS.
+4. ⚑ **THE PUBLIC INPUT IS THE REAL WALL.** Mina hands the wrap verifier 40 words computed from the
+   statement. `KimchiWrapMainCore` §10 already names the gap in its own voice — `shapeWrap` carries
+   `pubWords := 22` against `WRAP_PRIMARY_LEN = 40`, an 18-word hole; the smoke shape is 6; the rung
+   whose key is on devnet exposes 6; `w1_transcript`, which the marshaller proves, exposes 0.
+   **This is the single item that stands between rung 3 above and the Pickles layer**, and it is a
+   Lean-side item: the closing rungs must expose Pickles' statement words, not the assembly's.
+
+## ⚑ AND A DRIFT THE RUN SURFACED: the two carried copies of `w4_bind` DISAGREE AT HEAD
+
+| | sha256 of `wrapmain_smoke_w4_bind.json` |
+|---|---|
+| `pickles-vk-derive/fixtures/` @ HEAD | `9386a456e2b9fc4f…` |
+| `pickles-wrapmain-harness/fixtures/` @ HEAD | `cf2667b59985376…` |
+| what the devnet key was derived from (`d245921c7`) | `d6d3bc718b2807eb…` |
+
+`dc33ceaa1` made the two copies equal; they have diverged again, so
+`scripts/mina-vk-derivation-gate.sh` is **RED at HEAD**. The chain is not wrong and did not drift —
+it holds an older circuit, exactly as `devnet-foreign-vk-registration.json`'s own
+`⚑ theHashIsNotStableAcrossCommits` note anticipated. The drift is **wiring only**: current vs
+registered move **3 of 7 sigma commitments and none of the other 21** — same gate types, same
+coefficients, a different copy-permutation.
+
+## Say it at the resolution measured
+
+**Mina's own kimchi verifier, under the verifier index Mina's own constructor builds from the exact
+1796 bytes `B62qrKdXQqNnhmszatQHMX9cLTKZUSYqadrBcmAHGAHQANm2b7Td1rm` holds, accepts a proof our
+prover produced from a Lean-emitted `wrap_main` rung — at a public input we chose. Mina's Pickles
+verifier, in both o1js and openmina, refuses that proof, and refuses it in the STATEMENT, before the
+key is ever consulted.** Nothing here is a Mina-valid Pickles proof, a zkApp transaction, or a
+soundness claim about `wrap_main`.
+
+## Re-run
+
+```
+curl -s -X POST https://api.minascan.io/node/devnet/v1/graphql -H 'content-type: application/json' \
+  -d '{"query":"query { account(publicKey: \"B62qrKdXQqNnhmszatQHMX9cLTKZUSYqadrBcmAHGAHQANm2b7Td1rm\") { verificationKey { hash verificationKey } } }"}'
+# -> {data, hash} into onchain-vk.json
+
+git show d245921c7:metatheory/fixtures/pickles-vk-derive/fixtures/wrapmain_smoke_w4_bind.json > w4_bind_AS_REGISTERED.json
+cargo run --release --manifest-path metatheory/fixtures/pickles-extractors/Cargo.toml \
+  --bin mina_onchain_index_probe -- --vk onchain-vk.json --circuit w4_bind_AS_REGISTERED.json --log2-domain 14
+
+cargo run --release --manifest-path metatheory/fixtures/pickles-extractors/Cargo.toml --bin pickles_kimchi_marshal -- /tmp/marshal
+cargo run --release --manifest-path metatheory/fixtures/pickles-extractors/Cargo.toml \
+  --bin mina_verdict -- --vk onchain-vk.json --proof /tmp/marshal/marshalled.binprot
+MINA_VERDICT_REAL_PROOFS=<real-block>.binprot  # adds the curve measurement against Mina's own bytes
+
+cd bridge/mina-zkapp && node scripts/mina-proof-verify-gate.mjs \
+  --pair onchain /tmp/marshal/marshalled.o1js-proof.json onchain-vk.json
+```

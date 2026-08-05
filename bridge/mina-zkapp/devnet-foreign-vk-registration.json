@@ -54,8 +54,25 @@
     "redProof": "The same verifier run against `vk-wrapmain-w4_bind-perturbed.json` — the SAME circuit with ONE coefficient at gate row 9 bumped by 1, moving exactly 1 of 28 commitments — goes RED on both comparisons. The verifier discriminates the registered key from its nearest neighbour, so its green is not vacuous."
   },
 
+  "recheckedOn": {
+    "date": "2026-08-05",
+    "keyStillOnChain": "yes — re-fetched over GraphQL, hash and the 1796 bytes both match this record exactly (sha256 f495c530…a420)",
+    "⚑ theEmissionHasMovedSince": {
+      "what": "`emissionSha256` above is the anchor this record told a future reader to check FIRST, and it now disagrees with both carried copies at HEAD: `pickles-vk-derive/fixtures` is 9386a456e2b9fc4f…, `pickles-wrapmain-harness/fixtures` is cf2667b59985376… (the two also disagree with EACH OTHER, so scripts/mina-vk-derivation-gate.sh is RED at HEAD; dc33ceaa1 had made them equal). The registered emission d6d3bc71… is recoverable at commit d245921c7.",
+      "so": "the chain is holding an OLDER circuit, which is the case this record's own `theHashIsNotStableAcrossCommits` note describes. Not a drift of the chain.",
+      "howFarApart": "3 of 7 sigma commitments differ; the 15 coefficient commitments and all 6 selector commitments are IDENTICAL. Same gate types, same coefficients, a different copy-permutation.",
+      "currentDerivedHash": "13798061594429054870758937373636515138052866933091369202769363653346084112884 (HEAD's vk-derive copy, --log2-domain 14)"
+    },
+    "aProofHasNowBeenProduced": {
+      "supersedes": "`notAWorkingBridge` below said NO PROOF HAS BEEN PRODUCED FOR THIS CIRCUIT. One has: `metatheory/fixtures/pickles-extractors --bin mina_onchain_index_probe` proves the registered emission on Pallas with Mina's SRS and prev_challenges=2.",
+      "whatMinaSaid": "`make_zkapp_verifier_index` fed THESE bytes reconstructs an index whose 28 commitments are identical to the prover's (28/28), and `kimchi::verifier::verify` ACCEPTS the proof at a 40-word public input; at the circuit's own 6 words it returns IncorrectPubicInputLength(40) — \"the public input is of an unexpected size (expected 40)\".",
+      "⚠ andWhatItDoesNotMean": "the 40-word vector was CHOSEN by the probe (the circuit's 6 words then 34 zeros). Pickles DERIVES all 40 from the statement and lets no prover supply them, so this is a localization of the gap, not a Pickles verification. openmina `verify_zkapp` and o1js `verify` both REFUSE — in the statement, before the key is consulted.",
+      "trail": "GOAL-MINA-SEMANTIC-LIGHTCLIENTS.md, section 2026-08-05"
+    }
+  },
+
   "⚠ whatThisIsNot": {
-    "notAWorkingBridge": "Registering a key means a node will STORE it and check proofs against it. It does NOT mean any proof verifies under it. NO PROOF HAS BEEN PRODUCED FOR THIS CIRCUIT. `KimchiWrapMain` §13 still names eight unassembled sub-circuits; the wrap assembly does not emit them.",
+    "notAWorkingBridge": "Registering a key means a node will STORE it and check proofs against it. It does NOT mean any proof verifies under it. ⚑ SUPERSEDED IN PART 2026-08-05 — see `recheckedOn.aProofHasNowBeenProduced`; a proof now exists and Mina's kimchi verifier accepts it under the index built from these bytes, while Mina's PICKLES verifier still refuses. `KimchiWrapMain` §13 still names eight unassembled sub-circuits; the wrap assembly does not emit them.",
     "notAContract": "This account carries a verification key and nothing else. There is no zkApp method, no state, no deployed logic. It is a key at an address.",
     "notRelatedToTheAttestedGate": "Distinct from `devnet-deployment.json`'s DreggAttestedGate, whose key came from o1js `.compile()` and whose live anchor is SIGNATURE-ONLY (see that file's `sourcesMovedPast`). Nothing here changes that.",
     "notVerified": "The key encodes a circuit; that the circuit is the one Lean specifies rests on the emission path, not on a machine-checked refinement of this artifact. Devnet acceptance is evidence about ENCODING — that the object is a well-formed Side_loaded_verification_key Mina will hold — and about nothing else."
