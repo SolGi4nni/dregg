@@ -1966,6 +1966,54 @@ def ftcOutV (s : WrapShape) (sp : SpAcc) : PVar × PVar :=
   (.external (ftcBaseO s sp + 3), .external (ftcBaseO s sp + 4))
 def nFtcVars (s : WrapShape) (sp : SpAcc) : Nat := ftcBaseO s sp + 5 - baseFtc s sp
 
+/-! ### §17b — ⚑⚑ **THE THREE BLOCKS ABOVE W-FTCOMM, AND WHY EACH IS A CAP.**
+
+`baseWh` (§21a), `baseFin` (§19e) and `baseComb` (§23a) were **each literally `baseFtc s sp +
+nFtcVars s sp`** until 2026-08-05 — three sub-circuits' variable regions at ONE address. That was
+sound only while no rung's `rungsUpto` held two of the three, which was an accident of the assembly
+order and not a property of the layout: `.wraphack`, `.finalize` and `.combine` were built
+concurrently as sibling branches off `.prev`. A rung composing two of them would have aliased two
+regions, and it would NOT have failed loudly — `placeChecked` sees one variable where two were meant,
+merges two σ classes that were never meant to meet, and the emitted witness makes cells agree that
+nothing asserted. That is the class §12 spends its whole length refusing, in a base address.
+
+They are now STACKED, and the space above W-FTCOMM is three disjoint blocks:
+
+    [baseWh  , +WH_REGION_CAP  )    W-WRAPHACK's three sponges, then W-CLOSE's one cell
+    [baseFin , +FIN_REGION_CAP )    W-FINALIZE's lifts, columns and programs, then W-FINSPONGE's
+    [baseComb, +COMB_REGION_CAP)    W-COMBINE's fold, then W-BULLET's opening check
+
+⚑ **AND EACH BLOCK IS A CAP, NOT A SIZE — for a measured reason.** Stacking a block on the ACTUAL
+size of the one below needs that size, and W-FINALIZE's is `finStride fa =
+(fa.getD 0 default).fp.prog.size` plus `finSpSize`, both computed by RUNNING the program builder.
+Threading them into `baseComb (s : WrapShape) (sp : SpAcc)` would drag a `finBuild` into every one of
+`combSlot`'s reductions and take §23/§24's pins with it — and an `Array` in `whnf` is its `List`
+model, so a `StateM (Array _)` program is not kernel-reachable at all: `.size` alone fails at
+1 000 000 heartbeats. So each block declares a cap that is a **constant in the shape**, every base
+reduces without the builder, and `EmitWrapMainJson` **REFUSES** to emit a rung whose gates reference
+a cell outside its own block. This is the memo-with-an-obligation shape `WrapShape.xhatXY` and
+`FIN_DEFERRED_*` already use twice; the obligation here is `regionEscape` (§7).
+
+⚠ **THE FAIL-CLOSED LEG IS THE DESIGN, NOT A GARNISH.** A cap without it is a number that drifts
+from the region it claims to bound, and the drift is silent aliasing. `regionEscape` reads the
+EMITTED gates, so it is a second and independent source against the caps' arithmetic rather than a
+pin against their own definition — and it checks BOTH ends, because an escape DOWNWARD into the
+block below is exactly the aliasing this layout exists to refuse and a max-index check cannot see it.
+
+⚠ Two of the three caps are EXACT — `WH_REGION_CAP` is `nWhVars s + 1` and `COMB_REGION_CAP` is
+`nCombVars s + nBullVars s`, because those regions ARE shape arithmetic and a cap with slack there
+would be slack nothing needs. Only W-FINALIZE's carries headroom, and inside it only the two
+builder-computed summands are capped rather than counted. -/
+
+/-- A half-open block of the external variable space: the `n` cells from `b`. The three blocks above
+W-FTCOMM are pairwise disjoint in this predicate for EVERY shape, EVERY sponge and EVERY cell —
+`no_rung_holds_two_colliding_regions`, whose red control re-stacks the same three caps at one address
+and exhibits the shared cell. -/
+def inBlock (b n x : Nat) : Prop := b ≤ x ∧ x < b + n
+
+instance (b n x : Nat) : Decidable (inBlock b n x) :=
+  inferInstanceAs (Decidable (b ≤ x ∧ x < b + n))
+
 /-- Ladder `l`'s base VARIABLES: W-KEY's sealed coordinates 12/13, then the fold's `res`. -/
 def ftcBaseVar (t : WrapData) (l : Nat) : PVar × PVar :=
   let s := t.sh
@@ -2258,17 +2306,21 @@ holds both**. It would not have failed loudly: `placeChecked` sees one variable 
 merges two σ classes that were never meant to meet, and the emitted witness makes cells agree that
 nothing asserted. It is the class this file spends its whole §12 refusing, in a base address.
 
-⚠ **AND THE COMPOSITION HAZARD IS NOT CLOSED, IT IS NAMED.** `baseFin` (§19) and `baseComb` (§23)
-are BOTH `baseFtc s sp + nFtcVars s sp` — the same address this now uses. That is sound TODAY only
-because no rung's `rungsUpto` contains two of `.finalize`, `.combine`, `.wraphack`: the three
-sub-circuits were assembled concurrently as siblings off `w9_prev`. **When the ladder closes into one
-chain, the three regions must be STACKED, and whichever lane does that owns all three base
-definitions at once.** `wraphack_region_is_above_ftcomms` refutes the bug that was here; it does not
-and cannot cover a rung that does not exist yet. -/
+⚑ **AND THE COMPOSITION HAZARD IS CLOSED, NOT NAMED — 2026-08-05.** `baseFin` (§19e) and `baseComb`
+(§23a) were BOTH this same address, sound TODAY only because no rung's `rungsUpto` contained two of
+`.finalize`, `.combine`, `.wraphack`. §17b stacks all three on shape-determined CAPS, so this is the
+BOTTOM block of three disjoint ones and the `rungsUpto` accident carries no weight any more. -/
 def baseWh (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + nFtcVars s sp
 def whBaseP (s : WrapShape) (sp : SpAcc) (p : Nat) : Nat := baseWh s sp + WH_VARS * p
 def whBaseC (s : WrapShape) (sp : SpAcc) : Nat := baseWh s sp + WH_VARS * s.prevs
 def nWhVars (s : WrapShape) : Nat := WH_VARS * (s.prevs + 1)
+
+/-- ⚑ **W-WRAPHACK'S BLOCK (§17b)** — the three sponges' cells, plus the ONE cell W-CLOSE puts at
+the block's last address (`baseClose = baseWh + nWhVars`, §22). EXACT, not capped: both summands are
+shape arithmetic, so a cap with slack here would be slack nothing needs.
+`close_is_the_last_cell_of_the_wraphack_block` is the `rfl` that says the `+ 1` is W-CLOSE's and that
+the block ends where W-CLOSE's cell does. -/
+def WH_REGION_CAP (s : WrapShape) : Nat := nWhVars s + 1
 
 /-- Previous proof `p`'s sponge (`wrap_main.ml:341-348`). -/
 def whSpongeP (t : WrapData) (p : Nat) : SpAcc :=
@@ -2330,8 +2382,16 @@ required. It is not a claim that the opening is checked — `equal_g` is not in 
 Emitting it anyway is right for the same reason `wrap_main` writes it: the assert is the closing
 tie, and a `check_bulletproof` whose result nothing asserts is a check that does not refuse. -/
 
-/-- The closing region: one cell. -/
+/-- The closing region: one cell, and it is the LAST cell of W-WRAPHACK's block (§17b). -/
 def baseClose (s : WrapShape) (sp : SpAcc) : Nat := baseWh s sp + nWhVars s
+
+/-- ⚑ **W-CLOSE'S CELL IS THE BLOCK'S LAST**, general over every shape and every sponge, by `rfl` —
+so `WH_REGION_CAP`'s `+ 1` is this rung's cell and not headroom, and a second closing cell would have
+to move `baseFin`. -/
+theorem close_is_the_last_cell_of_the_wraphack_block (s : WrapShape) (sp : SpAcc) :
+    baseClose s sp + 1 = baseWh s sp + WH_REGION_CAP s := by
+  simp [baseClose, WH_REGION_CAP, Nat.add_assoc]
+
 /-- `bulletproof_success` — `check_bulletproof`'s `` `Success `` (`wrap_verifier.ml:436`). -/
 def bpSuccessVar (s : WrapShape) (sp : SpAcc) : PVar := .external (baseClose s sp)
 
@@ -3061,8 +3121,37 @@ def finProgOf (W : FinWire) (C : FinCfg) : FinProg :=
 
 /-! ### §19e — the variable space, the wires, and the rows. -/
 
-/-- The finalize region starts after W-FTCOMM's, so nothing below `w10_finalize` moves. -/
-def baseFin (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + nFtcVars s sp
+/-- ⚑ **THE §19 PROGRAM'S CAP.** `finStride` — instance 0's compiled `finBuild` program size — is
+**1047** at BOTH committed shapes, measured through the emitter on 2026-08-05. It is not a shape
+formula and cannot be made one: it is the `.size` of an `Array FOp` a `StateM` builder produced, and
+reading it costs a `finBuild`. So the block declares a cap and `regionEscape` refuses an emission
+that outgrows it. -/
+def FIN_PROG_CAP : Nat := 1200
+/-- ⚑ …and §20's per instance: `finSpSize` is **1732** at both committed shapes, likewise measured
+and likewise builder-computed (two sponges, nineteen lift chains, then a second compiled program). -/
+def FINSP_BLOCK_CAP : Nat := 2000
+
+/-- ⚑ **W-FINALIZE'S BLOCK (§17b)** — and the only one of the three that carries headroom, because
+it is the only one whose size is not shape arithmetic.
+
+The FIRST TWO summands are EXACT and are spelled to match §19e's own layout: `finEvBase`'s two
+`to_field_checked` lift chains per instance (`2 · prevs · chainStride`) and `finProgBase`'s
+`2 · FIN_NCOLS + 1` evaluation columns per instance. `fin_block_prefix_is_shape_arithmetic` and
+`fin_block_ceiling_is_finProgBase_plus_the_two_caps` close both, general over every shape and every
+sponge — so the exact part is not taken on trust, and the block's CEILING is `finProgBase` plus
+exactly `prevs` copies of the two capped sizes. The last summand is the cap: one compiled §19 program
+and one §20 sponge half per instance.
+
+⚠ At both committed shapes this is **6694** against a cone measured at **5852** — 842 cells of
+headroom, which is what lets §19/§20 grow without moving W-COMBINE and W-BULLET. It is not slack for
+its own sake: a block whose cap is its exact size re-bases everything above it on any change. -/
+def FIN_REGION_CAP (s : WrapShape) : Nat :=
+  2 * s.prevs * chainStride s + s.prevs * (2 * FIN_NCOLS + 1)
+  + s.prevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP)
+
+/-- The finalize block starts above W-WRAPHACK's, at its CAP (§17b). ⚠ It read
+`baseFtc s sp + nFtcVars s sp` — W-WRAPHACK's own base and W-COMBINE's — until 2026-08-05. -/
+def baseFin (s : WrapShape) (sp : SpAcc) : Nat := baseWh s sp + WH_REGION_CAP s
 /-- Two `to_field_checked` chains per instance — α and ζ, the two `Scalar_challenge` fields
 `map_plonk_to_field` lifts. -/
 def finChainVars (s : WrapShape) (sp : SpAcc) (p j : Nat) : ChainVars :=
@@ -3076,6 +3165,23 @@ def finPZetaVar (s : WrapShape) (sp : SpAcc) (p : Nat) : PVar :=
   .external (finEvBase s sp + p * (2 * FIN_NCOLS + 1) + 2 * FIN_NCOLS)
 def finProgBase (s : WrapShape) (sp : SpAcc) : Nat :=
   finEvBase s sp + s.prevs * (2 * FIN_NCOLS + 1)
+
+/-- ⚑ **THE EXACT PART OF `FIN_REGION_CAP` IS EXACT** — everything below `finProgBase` is shape
+arithmetic, general over every shape and every sponge. -/
+theorem fin_block_prefix_is_shape_arithmetic (s : WrapShape) (sp : SpAcc) :
+    finProgBase s sp
+      = baseFin s sp + (2 * s.prevs * chainStride s + s.prevs * (2 * FIN_NCOLS + 1)) := by
+  simp [finProgBase, finEvBase, Nat.add_assoc]
+
+/-- ⚑⚑ **AND THEREFORE THE BLOCK'S CEILING IS `finProgBase` PLUS `prevs` COPIES OF THE TWO CAPPED
+SIZES** — which is what makes the emit refusal's obligation narrow enough to state in one line:
+each instance's compiled §19 program must fit in `FIN_PROG_CAP` and its §20 sponge half in
+`FINSP_BLOCK_CAP`. Nothing else in this block is taken on trust. General over every shape and every
+sponge, so it is not a coincidence of the two committed ones. -/
+theorem fin_block_ceiling_is_finProgBase_plus_the_two_caps (s : WrapShape) (sp : SpAcc) :
+    baseFin s sp + FIN_REGION_CAP s
+      = finProgBase s sp + s.prevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP) := by
+  simp [FIN_REGION_CAP, finProgBase, finEvBase, Nat.add_assoc]
 
 /-- Instance `p`'s wire. ⚑ β and γ are the RAW packed words; α and ζ are their lift chains' `lift`
 cells; `perm` and `should_finalize` are packed words 4 and 26 of the same block. -/
@@ -3451,16 +3557,17 @@ def combIsMux (s : WrapShape) (a : Nat) : Bool := combIdx s a < s.prevs
 
 /-! ### §23a — the variable layout.
 
-⚠ **THE REGION SHARES ITS BASE WITH W-FINALIZE's, AND THAT IS SAFE BECAUSE OF `rungsUpto`.**
-`.combine` and `.finalize` are sibling branches off `.prev`; no rung's `rungsUpto` contains both, so
-no emitted circuit ever holds cells from both regions. A rung that merged them would have to re-base
-one, and that is the one thing to check before merging. -/
+⚑ **THE REGION SHARED ITS BASE WITH W-FINALIZE'S AND W-WRAPHACK'S UNTIL 2026-08-05**, and was safe
+only because `.combine`, `.finalize` and `.wraphack` are sibling branches off `.prev` and no rung's
+`rungsUpto` contains two of them — an accident of the assembly order, which a rung that merged them
+would have spent. §17b stacks the three blocks on shape-determined caps, so this is the TOP block and
+its base is W-FINALIZE's cap. -/
 
 /-- Per-step slots: `p` (2), `endo·xt` (1), the 33 accumulator points (66), the 32 interior
 counters, the `Ops.add_fast` output (2), and the mux's `(d, m, r)` for x then y (6). -/
 def COMB_STRIDE : Nat := 3 + 2 * (ENDO_BLOCKS + 1) + ENDO_BLOCKS + 2 + 6
 
-def baseComb (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + nFtcVars s sp
+def baseComb (s : WrapShape) (sp : SpAcc) : Nat := baseFin s sp + FIN_REGION_CAP s
 /-- ⚑ ξ's own cell — ONE for all 46 ladders. -/
 def combXiV (s : WrapShape) (sp : SpAcc) : PVar := .external (baseComb s sp)
 def combSlot (s : WrapShape) (sp : SpAcc) (a o : Nat) : PVar :=
@@ -3735,6 +3842,19 @@ def BU_EN (s : WrapShape) : Nat := BU_OC s + 2 * bullOCPts s
 def nBullVars (s : WrapShape) : Nat := BU_EN s + bullNE s * EN_STRIDE
 
 def baseBull (s : WrapShape) (sp : SpAcc) : Nat := baseComb s sp + nCombVars s
+
+/-- ⚑ **W-COMBINE'S BLOCK (§17b)** — the fold's cells and W-BULLET's, which stack directly on them.
+EXACT, not capped: both are shape arithmetic, and
+`bullet_is_the_last_cell_of_the_combine_block` is the `rfl` that the block ends where W-BULLET's
+region does. ⚠ It is the TOP block, so an over-run here aliases nothing today — which is exactly why
+it still gets `regionEscape`'s refusal: "nothing is above it" is a fact about the ladder as it
+stands, and this file has already been wrong once about which of those hold. -/
+def COMB_REGION_CAP (s : WrapShape) : Nat := nCombVars s + nBullVars s
+
+theorem bullet_is_the_last_cell_of_the_combine_block (s : WrapShape) (sp : SpAcc) :
+    baseBull s sp + nBullVars s = baseComb s sp + COMB_REGION_CAP s := by
+  simp [baseBull, COMB_REGION_CAP, Nat.add_assoc]
+
 def bV (s : WrapShape) (sp : SpAcc) (o : Nat) : PVar := .external (baseBull s sp + o)
 
 def bullGm (s : WrapShape) (sp : SpAcc) (i : Nat) : PVar := bV s sp (BU_GM + i)
@@ -4819,11 +4939,45 @@ def ALL_RUNGS : List Rung :=
   [ .transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev
   , .finalize, .finsponge, .wraphack, .close, .combine, .bullet ]
 
-/-- ⚑ **THE THREE SUB-CIRCUITS WHOSE VARIABLE REGIONS START AT THE SAME ADDRESS.** `baseWh` (§21a),
-`baseFin` (§19e) and `baseComb` (§23a) are EACH literally `baseFtc s sp + nFtcVars s sp`. That is
-sound only while no rung's `rungsUpto` contains two of them, and `no_rung_holds_two_colliding_regions`
-is what makes that a gate instead of a comment. -/
+/-- ⚑ **THE THREE SUB-CIRCUITS THAT ONCE STARTED AT THE SAME ADDRESS.** `baseWh` (§21a), `baseFin`
+(§19e) and `baseComb` (§23a) were EACH literally `baseFtc s sp + nFtcVars s sp` until 2026-08-05,
+sound only while no rung's `rungsUpto` contained two of them. §17b stacks them on caps, so this list
+is no longer what makes the layout sound — it names the three block OWNERS, one per block, and
+`no_rung_holds_two_colliding_regions` still measures the ladder against it. -/
 def COLLIDING_REGION_OWNERS : List Rung := [ .wraphack, .finalize, .combine ]
+
+/-- ⚑ **THE BLOCK RUNG `k` MAY ALLOCATE IN** — its base and its CAP (§17b). A rung at or below
+`w9_prev` owns none of the three and everything it touches is below `baseWh`, which is what the `0`
+says: for those rungs the whole three-block space is out of bounds. -/
+def rungRegion (s : WrapShape) (sp : SpAcc) : Rung → Nat × Nat
+  | .wraphack | .close     => (baseWh s sp, WH_REGION_CAP s)
+  | .finalize | .finsponge => (baseFin s sp, FIN_REGION_CAP s)
+  | .combine  | .bullet    => (baseComb s sp, COMB_REGION_CAP s)
+  | _                      => (baseWh s sp, 0)
+
+/-- ⚑⚑ **THE CAPS' FAIL-CLOSED LEG — THE WHOLE REASON A CAP IS HONEST RATHER THAN A GUESS.** The
+first external id rung `k`'s gates reference that is neither below the three blocks nor inside `k`'s
+OWN block; `none` is the healthy case and `EmitWrapMainJson` STOPS on a `some`.
+
+⚠ **IT READS THE EMITTED GATES**, so it is a second and INDEPENDENT source against §17b's shape
+arithmetic rather than a pin against the caps' own definition. A block that outgrew its cap and a
+rung that reached into a sibling's block are both a `some i` here, and the second is the point: an
+escape DOWNWARD is the aliasing this layout exists to refuse, and a max-index check would not see it.
+
+⚠ `k`'s gates are the gates of the WHOLE rung — every rung at or below it — which is what makes the
+lower bound `baseWh s sp` rather than `k`'s own base. That is sound because no `rungsUpto` holds two
+block owners (`no_rung_holds_two_colliding_regions`); if one ever does, this refuses it, which is the
+correct answer for a rung whose two blocks would then both be live and only one of them declared.
+
+⚑ It is stated over an ARBITRARY `(wall, b, n)` and instantiated, so the red control is expressible:
+`region_escape_bites_on_the_emitted_gates` runs the SAME function over the SAME emitted gates at a
+zero-width block and at a sibling's block, and gets a `some` both times. A refusal nothing has ever
+been shown to fire is not a gate. -/
+def regionEscapeIn (wall b n : Nat) (gs : List PGate) : Option Nat :=
+  (externalRefs gs).find? (fun i => !(i < wall || (b ≤ i && i < b + n)))
+
+def regionEscape (s : WrapShape) (sp : SpAcc) (k : Rung) (gs : List PGate) : Option Nat :=
+  regionEscapeIn (baseWh s sp) (rungRegion s sp k).1 (rungRegion s sp k).2 gs
 
 
 /-- Rung `k`'s rows: the own-rows of every rung at or below it, concatenated in schedule order.

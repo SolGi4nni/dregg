@@ -68,13 +68,32 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   let jw := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}" p (p + rowsW.length) placed wit pub probes
   let ju := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}_UNWIRED" p (p + rowsU.length) placedU wit
               pub probes
+  -- ⚠ A REFUSAL IS LOUD, AND IT LANDS BEFORE THE WRITE. `placeChecked` returning `.error` yields
+  -- the empty placement, which would otherwise ship as a zero-gate circuit the harness "proves".
+  -- ⚑ Both refusals used to fire AFTER `writeAtomic`, which is not fail-closed at all: the artifact
+  -- the refusal is about was already on disk under its real name, and a reader of the emit
+  -- directory cannot tell it from a good one.
+  if placed.length != p + rowsW.length || placedU.length != p + rowsU.length then
+    throw (IO.userError s!"placeChecked REFUSED at {k.tag}: {repr (refusalOf t.sh p gs)}")
+  -- ⚑ **THE §17b CAPS' OBLIGATION, DISCHARGED AT EVERY EMISSION.** `baseWh`, `baseFin` and
+  -- `baseComb` are stacked on shape-determined CAPS rather than on the regions' actual sizes,
+  -- because W-FINALIZE's size is `finStride`/`finSpSize` — computed by RUNNING the program builder,
+  -- which no kernel reduction of `combSlot` can afford. A cap is only honest if an emission that
+  -- exceeds it STOPS, and this is where. `regionEscape` reads the emitted GATES, so it is an
+  -- independent source against the caps' arithmetic, and it checks both ends: a rung reaching DOWN
+  -- into the block below is the aliasing the layout exists to refuse.
+  match regionEscape t.sh t.sp k gs with
+  | some i =>
+    let (b, n) := rungRegion t.sh t.sp k
+    throw (IO.userError s!"⚑ REGION CAP ESCAPED at {k.tag}: a gate references external {i}, which \
+      is neither below the three blocks ({baseWh t.sh t.sp}) nor inside {k.tag}'s own block \
+      [{b}, {b + n}). Two sub-circuits' variable regions would alias — `placeChecked` would see one \
+      variable where two were meant and merge two σ classes that were never meant to meet. \
+      Refusing rather than emitting it; see §17b.")
+  | none => pure ()
   writeAtomic s!"{dir}/wrapmain_{tag}_{k.tag}.json" jw
   writeAtomic s!"{dir}/wrapmain_{tag}_{k.tag}_unwired.json" ju
   let t2 ← IO.monoMsNow
-  -- ⚠ A REFUSAL IS LOUD. `placeChecked` returning `.error` yields the empty placement, which would
-  -- otherwise ship as a zero-gate circuit the harness "proves".
-  if placed.length != p + rowsW.length || placedU.length != p + rowsU.length then
-    throw (IO.userError s!"placeChecked REFUSED at {k.tag}: {repr (refusalOf t.sh p gs)}")
   IO.println s!"  {k.tag}: {rowsW.length} rows, pub {p}, {probes.length} probes  \
     (place {t1 - t0} ms, witness+render {t2 - t1} ms)"
   pure (rowsW.length, probes.length)

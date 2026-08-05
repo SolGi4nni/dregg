@@ -42,6 +42,16 @@ def emitChainRung (dir pfx : String) (t : WrapData) (k : Rung) (both : Bool) : I
   let gu := wrapGates rowsU
   if refusalOf t.sh p gs != none then
     throw (IO.userError s!"placeChecked REFUSED at {pfx}_{k.tag}: {repr (refusalOf t.sh p gs)}")
+  -- ⚑ **THE §17b CAPS' OBLIGATION, HERE TOO.** This driver emits `.transcript` and `.bind`, both
+  -- below the three-block wall, so the check is satisfied by every rung it currently writes — which
+  -- is the reason to install it now rather than the reason to skip it: the day a lane adds a rung at
+  -- or above `w10_finalize` here, a region escape is a refusal instead of a silently aliased σ class.
+  match regionEscape t.sh t.sp k gs with
+  | some i =>
+    throw (IO.userError s!"⚑ REGION CAP ESCAPED at {pfx}_{k.tag}: a gate references external {i}, \
+      outside {k.tag}'s own block {repr (rungRegion t.sh t.sp k)} and not below the wall \
+      {baseWh t.sh t.sp}. Refusing rather than emitting it; see `KimchiWrapMainCore` §17b.")
+  | none => pure ()
   -- ⚠ ⚑ RUNG-EXPLICIT. These read `wrapWitness t p rowsW` / `wrapPublic t` until 2026-08-04; those
   -- aliases silently denoted `.prev` after W-PREV, so this driver would have written
   -- `"public_input_size": 22` beside a 23-element `"public_input"` and a witness grid from another

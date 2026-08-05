@@ -104,68 +104,143 @@ theorem comb_all_ladders_share_one_xi :
     ∧ combXiVal < 2 ^ ENDO_BITS := by
   refine ⟨?_, ?_, ?_⟩ <;> decide
 
-/-- ⚑ **THE REGIONS DO NOT OVERLAP.** W-COMBINE's cells start above W-FTCOMM's last and W-BULLET's
-above W-COMBINE's last, at both shapes. ⚠ W-COMBINE's base is `baseFin`'s — see §23a: `.combine` and
-`.finalize` are sibling branches off `.prev` and no `rungsUpto` contains both, so no emitted circuit
-holds cells from both regions. This is the pin that would go red if that stopped being true and one
-rung started emitting both. -/
-theorem comb_and_bullet_regions_are_disjoint :
-    baseComb shapeSmoke (mkWrap shapeSmoke).sp
-      = baseFtc shapeSmoke (mkWrap shapeSmoke).sp + nFtcVars shapeSmoke (mkWrap shapeSmoke).sp
-    ∧ baseBull shapeSmoke (mkWrap shapeSmoke).sp
-      = baseComb shapeSmoke (mkWrap shapeSmoke).sp + nCombVars shapeSmoke
+/-- ⚑ **THE REGIONS DO NOT OVERLAP.** W-BULLET's cells start above W-COMBINE's last, and the two
+together are EXACTLY W-COMBINE's block — `COMB_REGION_CAP` is `nCombVars + nBullVars`, so the block's
+last cell is W-BULLET's last, general over every shape and every sponge.
+
+⚠ **AND W-COMBINE'S BASE IS NO LONGER W-FTCOMM'S TOP.** It read `baseFtc + nFtcVars` — W-WRAPHACK's
+address and W-FINALIZE's — until 2026-08-05; §17b stacks the three blocks on caps, so the third
+conjunct is a strict inequality where an equation used to stand. The `rungsUpto` legs are kept
+because they are true and worth citing, but they are no longer what makes the layout sound. -/
+theorem comb_and_bullet_regions_are_disjoint (s : WrapShape) (sp : SpAcc) :
+    baseBull s sp = baseComb s sp + nCombVars s
+    ∧ baseBull s sp + nBullVars s = baseComb s sp + COMB_REGION_CAP s
+    ∧ baseFtc shapeSmoke (mkWrap shapeSmoke).sp + nFtcVars shapeSmoke (mkWrap shapeSmoke).sp
+        < baseComb shapeSmoke (mkWrap shapeSmoke).sp
     ∧ (rungsUpto .combine).contains .finalize = false
     ∧ (rungsUpto .bullet).contains .finalize = false
     ∧ (rungsUpto .bullet).contains .combine = true := by
-  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
+  refine ⟨rfl, bullet_is_the_last_cell_of_the_combine_block s sp, ?_, ?_, ?_, ?_⟩ <;> decide
 
-/-! ### ⚑ THE THREE-WAY BASE COLLISION, AS A GATE OVER EVERY RUNG RATHER THAN THREE INSTANCES.
+/-! ### ⚑ THE THREE-WAY BASE COLLISION — REPAIRED 2026-08-05, AND THE GATE STRENGTHENED WITH IT.
 
-`baseWh` (§21a), `baseFin` (§19e) and `baseComb` (§23a) are **each literally
+`baseWh` (§21a), `baseFin` (§19e) and `baseComb` (§23a) were **each literally
 `baseFtc s sp + nFtcVars s sp`** — three sub-circuits' variable regions at ONE address. §21a's own
-docblock concedes it is *"sound TODAY only"*, because `.wraphack`, `.finalize` and `.combine` were
-assembled concurrently as SIBLING branches off `.prev` and no `rungsUpto` holds two of them.
+docblock conceded it was *"sound TODAY only"*, because `.wraphack`, `.finalize` and `.combine` were
+assembled concurrently as SIBLING branches off `.prev` and no `rungsUpto` held two of them. A rung
+composing W-WRAPHACK with W-FINALIZE, or W-CLOSE with W-COMBINE, would have aliased two regions:
+`placeChecked` sees one variable where two were meant, merges two σ classes that were never meant to
+meet, and emits a witness making cells agree that nothing asserted — the class §12 spends its whole
+length refusing, in a base address.
 
-⚠ **AND `comb_and_bullet_regions_are_disjoint` ABOVE DOES NOT COVER IT.** It names three specific
-pairs — `.combine`/`.finalize`, `.bullet`/`.finalize`, `.bullet`/`.combine` — and says nothing at all
-about `.wraphack`. A rung composing W-WRAPHACK with W-FINALIZE, or W-CLOSE with W-COMBINE, aliases
-two regions and passes every pin in this file. `placeChecked` would see one variable where two were
-meant, merge two σ classes that were never meant to meet, and emit a witness making cells agree that
-nothing asserted — the class §12 spends its whole length refusing, in a base address.
+⚑ **THE BASES ARE NOW STACKED (§17b)** on three shape-determined CAPS, each with a fail-closed
+`EmitWrapMainJson` refusal (`regionEscape`). So the theorem below no longer certifies that no rung
+*holds* two colliding regions and leans on that; it says the regions **cannot overlap at all**, for
+every shape, every sponge and every cell, whatever any rung holds. The `rungsUpto` legs are KEPT —
+they are true, they are still worth citing, and losing them would lose the ladder measurement — but
+they have stopped being load-bearing, and that is the whole difference this repair made.
 
-⚑ So the pin is the GENERAL fact over the whole ladder, not an instance of it. It goes red the
-moment a composed rung lands, which is exactly when the aliasing becomes real, and it is the thing
-whichever lane closes the ladder has to satisfy.
+⚠ **WHY A CAP AND NOT THE TRUE SIZE**, since the question will come back: stacking on a region's
+actual size needs that size, and W-FINALIZE's is `finStride fa = (fa.getD 0 default).fp.prog.size`
+and `finSpSize`, both computed by RUNNING the program builder. Threading them into
+`baseComb (s : WrapShape) (sp : SpAcc)` would drag a `finBuild` into every one of `combSlot`'s
+reductions and take §23/§24's pins with it. A cap is a constant in the SHAPE, so every base reduces
+without the builder — and the emit-time refusal is what keeps the cap honest: if a region ever
+exceeds it the emission STOPS rather than silently overlapping. Neither half is optional. -/
 
-⚠ **THIS IS A DETECTOR, NOT THE REPAIR.** The repair is disjoint bases, and it is not a one-liner
-for a measured reason: stacking `baseComb` above the finalize region needs that region's SIZE, and
-`finStride fa = (fa.getD 0 default).fp.prog.size` / `finSpSize` are computed by running the program
-builder. Threading them into `baseComb (s : WrapShape) (sp : SpAcc)` would drag a `finBuild` into
-every one of `combSlot`'s reductions and take the §23/§24 pins with it. The shape that works is the
-one this file already uses twice — a shape-determined CAP per region (`WrapShape.xhatXY`,
-`FIN_DEFERRED_*`), with the obligation discharged by a kernel `rfl` AND an `EmitWrapMainJson`
-refusal. That moves `w10_finalize`, `w11_finsponge`, `w10_combine` and `w11_bullet`, so it re-emits
-and re-proves those four rungs, and it is the next piece of work on this file — not a caveat. -/
+/-- ⚑⚑ **NO CELL IS IN TWO OF THE THREE BLOCKS** — for every shape, every sponge and every cell, not
+for the pairs someone wrote down and not merely for the rungs that exist today. This is the statement
+that replaced *"no rung HOLDS two colliding regions"*: that one was true of the ladder and said
+nothing about a rung not yet written, and the three regions really did share an address underneath
+it.
 
-/-- ⚑ **NO RUNG HOLDS TWO OF THE THREE COLLIDING REGIONS** — over EVERY rung, not over the pairs
-someone wrote down. The first conjunct is the pin that `ALL_RUNGS` really is the whole type, so the
-bounded ∀ cannot go quietly weaker when a constructor is added; the third states the collision
-itself, so it is a named fact something can cite rather than a property of three definitions that
-happen to agree. -/
-theorem no_rung_holds_two_colliding_regions :
+The legs, in order: `ALL_RUNGS` is the whole type, so the bounded ∀ cannot go quietly weaker when a
+constructor is added; no rung's `rungsUpto` holds two block owners (kept, no longer load-bearing);
+the two stackings hold **by `rfl`**, so the blocks are the caps and not a coincidence of two shapes;
+and then the three pairwise disjointness facts, which follow from those by arithmetic alone.
+
+⚠ `.wraphack` is covered here, which the instance-pin this replaced never was — it named
+`.combine`/`.finalize`, `.bullet`/`.finalize` and `.bullet`/`.combine` and said nothing at all about
+W-WRAPHACK's region, the very one whose docblock carried the concession. -/
+theorem no_rung_holds_two_colliding_regions (s : WrapShape) (sp : SpAcc) (x : Nat) :
     ALL_RUNGS.length = 15
     ∧ (∀ k ∈ ALL_RUNGS,
         ((rungsUpto k).filter (fun r => COLLIDING_REGION_OWNERS.contains r)).length ≤ 1)
-    ∧ baseWh shapeSmoke (mkWrap shapeSmoke).sp = baseFin shapeSmoke (mkWrap shapeSmoke).sp
-    ∧ baseFin shapeSmoke (mkWrap shapeSmoke).sp = baseComb shapeSmoke (mkWrap shapeSmoke).sp := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+    ∧ baseFin s sp = baseWh s sp + WH_REGION_CAP s
+    ∧ baseComb s sp = baseFin s sp + FIN_REGION_CAP s
+    ∧ ¬(inBlock (baseWh s sp) (WH_REGION_CAP s) x ∧ inBlock (baseFin s sp) (FIN_REGION_CAP s) x)
+    ∧ ¬(inBlock (baseFin s sp) (FIN_REGION_CAP s) x ∧ inBlock (baseComb s sp) (COMB_REGION_CAP s) x)
+    ∧ ¬(inBlock (baseWh s sp) (WH_REGION_CAP s) x ∧ inBlock (baseComb s sp) (COMB_REGION_CAP s) x) := by
+  refine ⟨by decide, by decide, rfl, rfl, ?_, ?_, ?_⟩ <;>
+    simp only [inBlock, baseComb, baseFin] <;> omega
 
-/-- ⚑ RED CONTROL for the gate above: a rung that DID hold two of them fails the same test, so the
-∀ is a measurement of the ladder and not a vacuous truth about a list of singletons. -/
+/-- ⚑ RED CONTROL for the ladder leg: a rung that DID hold two block owners fails the same test, so
+the ∀ is a measurement of the ladder and not a vacuous truth about a list of singletons. -/
 theorem two_colliding_regions_in_one_rung_would_be_caught :
     (([Rung.transcript, .prev, .wraphack, .finalize].filter
         (fun r => COLLIDING_REGION_OWNERS.contains r)).length ≤ 1) = False := by
   decide
+
+/-- ⚑⚑ **RED CONTROL FOR THE DISJOINTNESS ITSELF, AND IT IS THE LAYOUT THIS REPAIR DELETED.** Take
+the same three caps and re-stack them the way `baseWh`, `baseFin` and `baseComb` were written until
+2026-08-05 — all three at ONE address — and EVERY such address is in all three blocks at once. So
+`no_rung_holds_two_colliding_regions` above measures where the bases ARE; it is not an arithmetic
+tautology about `inBlock`, and it goes red the moment any of the three is re-based onto another's
+address.
+
+⚠ The three cap values are stated here rather than as a pin of their own, because a constant against
+its own definition is decoration: what they are doing in THIS theorem is carrying the non-vacuity —
+a zero-width block would make the sharing claim empty, and 346 / 6694 / 5145 are why it is not. -/
+theorem stacking_the_three_bases_at_one_address_shares_a_cell (b : Nat) :
+    WH_REGION_CAP shapeSmoke = 346
+    ∧ FIN_REGION_CAP shapeSmoke = 6694
+    ∧ COMB_REGION_CAP shapeSmoke = 5145
+    ∧ inBlock b (WH_REGION_CAP shapeSmoke) b
+    ∧ inBlock b (FIN_REGION_CAP shapeSmoke) b
+    ∧ inBlock b (COMB_REGION_CAP shapeSmoke) b := by
+  have hw : WH_REGION_CAP shapeSmoke = 346 := by decide
+  have hf : FIN_REGION_CAP shapeSmoke = 6694 := by decide
+  have hc : COMB_REGION_CAP shapeSmoke = 5145 := by decide
+  refine ⟨hw, hf, hc, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ⟨?_, ?_⟩⟩ <;> omega
+
+/-- ⚑⚑ **AND THE EMIT REFUSAL ITSELF BITES — ON THE REAL EMITTED GATES, IN THE KERNEL.** The caps
+above are only honest because `EmitWrapMainJson` STOPS when a region escapes one; a refusal nothing
+has been shown to fire is a comment. So: `regionEscape` returns `none` on W-WRAPHACK's own gates at
+its own block (the healthy case), `some` when the SAME gates are checked against a zero-width block
+(the cap-outgrown direction), and `some` when they are checked against W-COMBINE's block instead of
+their own (the reached-into-a-sibling direction, which a max-index check cannot see).
+
+⚠ Only the LAST of those three is the one this whole layout exists to refuse, and it is the one an
+"is anything above the ceiling?" check would have missed — W-WRAPHACK's cells are *below* every
+address of W-COMBINE's block, so the escape is DOWNWARD. -/
+theorem region_escape_bites_on_the_emitted_gates :
+    regionEscape shapeSmoke tWh.sp .wraphack (wrapGates (whRows tWh true)) = none
+    ∧ regionEscapeIn (baseWh shapeSmoke tWh.sp) (baseWh shapeSmoke tWh.sp) 0
+        (wrapGates (whRows tWh true)) ≠ none
+    ∧ regionEscapeIn (baseWh shapeSmoke tWh.sp) (baseComb shapeSmoke tWh.sp)
+        (COMB_REGION_CAP shapeSmoke) (wrapGates (whRows tWh true)) ≠ none := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **WHAT THE KERNEL CLOSES ABOUT THE CAPS, AND WHAT IT CANNOT — SAID AS ONE STATEMENT.** Two of
+the three caps are EXACT and their blocks' last cells are named here (`close_is_the_last_cell_…`,
+`bullet_is_the_last_cell_…`, both general over shape and sponge). W-FINALIZE's is the one with
+headroom, and its ceiling is `finProgBase` — pure shape arithmetic — plus `prevs` copies of
+`FIN_PROG_CAP + FINSP_BLOCK_CAP`.
+
+⚠ **THE FIT OF THOSE TWO IS NOT CLOSED HERE AND CANNOT BE**, and that is not a hedge: reading
+`finStride` or `finSpSize` in the kernel means whnf-ing an `Array FOp` a `StateM` builder produced,
+and an `Array` in `whnf` is its `List` model — `.size` alone fails at 1 000 000 heartbeats. It is
+`EmitWrapMainJson`'s `regionEscape` refusal that discharges it, at every emission, off the emitted
+GATES. So: the kernel closes the layout ARITHMETIC and the two exact caps; the finalize block's fit
+is an emit-time obligation with a fail-closed refusal, and it is one or the other, never blurred. -/
+theorem the_caps_are_the_blocks (s : WrapShape) (sp : SpAcc) :
+    baseClose s sp + 1 = baseWh s sp + WH_REGION_CAP s
+    ∧ baseBull s sp + nBullVars s = baseComb s sp + COMB_REGION_CAP s
+    ∧ baseFin s sp + FIN_REGION_CAP s
+        = finProgBase s sp + s.prevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP) :=
+  ⟨close_is_the_last_cell_of_the_wraphack_block s sp
+  , bullet_is_the_last_cell_of_the_combine_block s sp
+  , fin_block_ceiling_is_finProgBase_plus_the_two_caps s sp⟩
 
 /-- ⚑ **THE COMMITMENTS THE FOLD READS ARE THE TRANSCRIPT'S OWN CELLS**, position by position —
 `sg_old`, `x_hat`, `ft_comm`, `z_comm` and `w_comm` at `wrap_verifier.ml:687-706`'s offsets. This is
