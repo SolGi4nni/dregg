@@ -41,6 +41,9 @@ pub const POA_EPOCH_PREVIEW_SCHEMA: &str = "POA-EPOCH-PREVIEW-V1";
 /// whitespace/key order, but this policy value may not be weakened or grown.
 pub const POA_PRODUCTION_POLICY_CANONICAL: &str = "{\"admission\":\"committee-ratified-manual-v1\",\"allow_unverified_consensus\":false,\"auto_approve_joins\":false,\"descriptor_pinned\":true,\"f4_transitive_vouch_rows_live\":false,\"faucet_http\":false,\"follower_first\":true,\"generic_genesis_value_issued\":false,\"objective_vouch_admission_ready\":false,\"prove_turns\":true,\"public_private_activity_counts\":false,\"require_lean\":true,\"shares_main_identity\":false,\"shares_main_storage\":false,\"strand_admission_gate\":true}";
 pub const POA_SIGNAL_DEPLOYMENT_IDENTITY_DOMAIN: &str = "POA-SIGNAL-DEPLOYMENT-IDENTITY-V2";
+/// The Lean module that draws every live run instance. A catalog naming a
+/// different one is describing a game this node cannot judge.
+pub const POA_INSTANCE_DERIVATION_MODULE: &str = "Dregg2.Games.PathOfAngels.HiddenInstance";
 const ML_DSA_65_PUBLIC_KEY_BYTES: usize = 1952;
 const FEDERATION_ID_DOMAIN: &str = "dregg-fed-id-v1";
 
@@ -1326,7 +1329,6 @@ struct MissionIndex {
     federation_id: String,
     content_root: String,
     content_session: String,
-    run_seed: String,
     allowed_beta_discoveries: Vec<ArtifactRef>,
 }
 
@@ -2559,7 +2561,10 @@ fn validate_game_descriptor_mission_match(
             "mission {mission_id} descriptor game_id does not match {descriptor_path}"
         )));
     }
-    for field in ["ruleset", "engine_module", "run_seed"] {
+    // ⚠ `run_seed` was a third field here. It is no longer a descriptor key OR a
+    // catalog key — the two artifacts used to publish the same instance twice, which
+    // is what made agreeing on it feel like a check.
+    for field in ["ruleset", "engine_module"] {
         let descriptor_value = descriptor.get(field).and_then(Value::as_str);
         let mission_value = mission.get(field).and_then(Value::as_str);
         if descriptor_value.is_none() || descriptor_value != mission_value {
@@ -2614,7 +2619,6 @@ fn index_catalog(
     let mut content_epoch = None;
     let mut descriptor_paths = BTreeSet::new();
     let mut content_sessions = BTreeSet::new();
-    let mut run_seeds = BTreeSet::new();
     let mut all_artifacts = BTreeSet::new();
     for mission in mission_values {
         let obj = mission
@@ -2636,7 +2640,13 @@ fn index_catalog(
                 "content_root",
                 "activation",
                 "content_session",
-                "run_seed",
+                // ⚠ `run_seed` was here. It named the instance of every game to
+                // anyone who fetched the bundle, and `targetFromSeed` is public, so
+                // deleting the descriptor's `target` alone closed nothing. The seed
+                // is now drawn per run from a slot secret the curator commits to
+                // before the slot opens; what an artifact publishes is where the
+                // seed comes FROM, not the seed.
+                "instance",
                 "budget",
                 "allowed_relics",
                 "descriptor_path",
@@ -2712,14 +2722,54 @@ fn index_catalog(
                 "mission {mission_id} reuses another mission's content_session"
             )));
         }
-        let run_seed = obj
-            .get("run_seed")
-            .and_then(Value::as_str)
-            .ok_or_else(|| CuratorError::Catalog("run_seed is not a string".into()))?;
-        parse_hex_array::<32>(run_seed, "run_seed")?;
-        if !run_seeds.insert(run_seed.to_owned()) {
+        // The instance declaration is schema, not a free-form annex: it is the
+        // field that says the answer is elsewhere, so it is not allowed to be
+        // optional and a drifted one is a refusal rather than a reinterpretation.
+        let instance = obj
+            .get("instance")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                CuratorError::Catalog(format!("mission {mission_id} instance is not an object"))
+            })?;
+        require_exact_object_keys(
+            instance,
+            &[
+                "binding",
+                "disclosure",
+                "derivation_module",
+                "commitment_published_in",
+            ],
+            "mission instance",
+        )
+        .map_err(CuratorError::Catalog)?;
+        if instance.get("binding").and_then(Value::as_str) != Some("per-run-hidden-draw") {
             return Err(CuratorError::Catalog(format!(
-                "mission {mission_id} reuses another mission's run_seed"
+                "mission {mission_id} instance is not a per-run hidden draw"
+            )));
+        }
+        if instance.get("derivation_module").and_then(Value::as_str)
+            != Some(POA_INSTANCE_DERIVATION_MODULE)
+        {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} instance names a foreign derivation module"
+            )));
+        }
+        if instance
+            .get("commitment_published_in")
+            .and_then(Value::as_str)
+            != Some("slot-opening")
+        {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} instance does not publish its commitment in the slot opening"
+            )));
+        }
+        if instance
+            .get("disclosure")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            return Err(CuratorError::Catalog(format!(
+                "mission {mission_id} instance disclosure is not a nonempty string"
             )));
         }
         let activation = obj
@@ -2873,7 +2923,6 @@ fn index_catalog(
                     federation_id: federation_id.to_owned(),
                     content_root: content_root.to_owned(),
                     content_session: content_session.to_owned(),
-                    run_seed: run_seed.to_owned(),
                     allowed_beta_discoveries,
                 },
             )
@@ -2915,7 +2964,8 @@ fn index_catalog(
                 &[
                     "id",
                     "mission_id",
-                    "run_seed",
+                    // ⚠ `run_seed` was here too: a solved-preview fixture that
+                    // carried the seed published the instance a second time.
                     "base_world",
                     "contribution",
                     "preview_world",
@@ -2952,16 +3002,6 @@ fn index_catalog(
             if *count > MAX_FIXTURES_PER_MISSION {
                 return Err(CuratorError::Catalog(format!(
                     "mission {mission_id} has more than {MAX_FIXTURES_PER_MISSION} fixtures"
-                )));
-            }
-            let fixture_seed = obj
-                .get("run_seed")
-                .and_then(Value::as_str)
-                .ok_or_else(|| CuratorError::Catalog(format!("fixture {id} lacks run_seed")))?;
-            parse_hex_array::<32>(fixture_seed, "fixture.run_seed")?;
-            if fixture_seed != missions[&mission_id].run_seed {
-                return Err(CuratorError::Catalog(format!(
-                    "fixture {id} run_seed differs from mission {mission_id}"
                 )));
             }
             let field = |name: &'static str| {
@@ -3367,7 +3407,6 @@ mod tests {
             "ruleset": spec.ruleset,
             "engine_module": spec.engine,
             "action_limit": spec.action_limit,
-            "run_seed": hex_encode(&[spec.seed_byte; 32]),
             "definition": {"owned_by": "Lean"}
         }))
         .unwrap()
@@ -3428,7 +3467,12 @@ mod tests {
                 "federation_id": hex_encode(&[0x33; 32]),
                 "content_root": content_root,
                 "content_session": hex_encode(&[spec.session_byte; 32]),
-                "run_seed": hex_encode(&[spec.seed_byte; 32]),
+                "instance": {
+                    "binding": "per-run-hidden-draw",
+                    "disclosure": "oracle-only",
+                    "derivation_module": POA_INSTANCE_DERIVATION_MODULE,
+                    "commitment_published_in": "slot-opening"
+                },
                 "activation": {"state": "detached-signature-required", "digest_source": CONTENT_EPOCH_SCHEMA},
                 "budget": {"intel": 3, "supplies": 1, "cohesion": 0, "influence": 0, "score": 50, "relics": 1},
                 "allowed_relics": [spec.artifact_id],
@@ -3442,7 +3486,6 @@ mod tests {
                 serde_json::json!({
                     "id": format!("fixture-{:02}", spec.mission_id),
                     "mission_id": spec.mission_id,
-                    "run_seed": hex_encode(&[spec.seed_byte; 32]),
                     "base_world": {"intel": 10, "sequence": 2},
                     "contribution": {"intel": 3, "relics": [spec.artifact_id]},
                     "preview_world": {"intel": 13, "sequence": 3}
@@ -3693,6 +3736,9 @@ mod tests {
             Err(CuratorError::Catalog(_))
         ));
 
+        // A fixture that carries a run seed at all is the OLD shape: the seed is no
+        // longer a catalog key, so a stale artifact must fail to load rather than be
+        // read as a hidden-instance one.
         let fixture_seed = tempfile::tempdir().unwrap();
         let manifest = write_bundle(fixture_seed.path());
         mutate_json(fixture_seed.path().join(CATALOG_PATH), |catalog| {
@@ -3703,6 +3749,64 @@ mod tests {
             Poag1Bundle::load(&manifest),
             Err(CuratorError::Catalog(_))
         ));
+
+        // Same for a mission: the old `run_seed` key must not be reinterpreted.
+        let mission_seed = tempfile::tempdir().unwrap();
+        let manifest = write_bundle(mission_seed.path());
+        mutate_json(mission_seed.path().join(CATALOG_PATH), |catalog| {
+            catalog["missions"][0]["run_seed"] = Value::String(hex_encode(&[0x99; 32]));
+        });
+        repin_manifest(mission_seed.path(), &manifest);
+        assert!(matches!(
+            Poag1Bundle::load(&manifest),
+            Err(CuratorError::Catalog(_))
+        ));
+    }
+
+    /// The instance declaration is the field that says the answer is elsewhere.
+    /// Every way of drifting it is a refusal, not a reinterpretation.
+    #[test]
+    fn hostile_instance_declaration_drift_refuses() {
+        for mutate in [
+            (|catalog: &mut Value| {
+                catalog["missions"][0]["instance"]["binding"] = Value::from("published-constant");
+            }) as fn(&mut Value),
+            |catalog: &mut Value| {
+                catalog["missions"][0]["instance"]["derivation_module"] =
+                    Value::from("Attacker.Module");
+            },
+            |catalog: &mut Value| {
+                catalog["missions"][0]["instance"]["commitment_published_in"] =
+                    Value::from("content-bundle");
+            },
+            |catalog: &mut Value| {
+                catalog["missions"][0]["instance"]["disclosure"] = Value::from("");
+            },
+            |catalog: &mut Value| {
+                catalog["missions"][0]["instance"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("commitment_published_in");
+            },
+            |catalog: &mut Value| {
+                catalog["missions"][0]["instance"]["extra"] = Value::from("annex");
+            },
+            |catalog: &mut Value| {
+                catalog["missions"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("instance");
+            },
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let manifest = write_bundle(dir.path());
+            mutate_json(dir.path().join(CATALOG_PATH), mutate);
+            repin_manifest(dir.path(), &manifest);
+            assert!(
+                matches!(Poag1Bundle::load(&manifest), Err(CuratorError::Catalog(_))),
+                "a drifted instance declaration loaded"
+            );
+        }
     }
 
     #[test]

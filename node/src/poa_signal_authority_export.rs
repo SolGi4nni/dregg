@@ -355,6 +355,7 @@ mod tests {
         let actor_root = [0x76; 32];
         let candidate = crate::poa_signal_adapter::evaluate_persisted_signal_claim(
             &head,
+            &crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(authority),
             authority,
             player.public_key().0,
             actor_root,

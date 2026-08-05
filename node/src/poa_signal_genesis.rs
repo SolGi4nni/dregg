@@ -25,6 +25,14 @@ const SIGNAL_PATH: &str = "games/signal-triangulation.json";
 const INPUT_FORMAT: &str = "POA-SIGNAL-GENESIS-IN-2";
 const OUTPUT_FORMAT: &str = "POA-SIGNAL-GENESIS-OUT-2";
 const ZERO_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+/// `Emit.UNBOUND_RUN_SEED` — the run-seed slot of a template mission: thirty-two
+/// zero bytes, meaning "no live draw has happened". It is not a seed and draws
+/// nothing; `Judged.admissionChecks` refuses it outright as a live seed.
+///
+/// Spelled separately from [`ZERO_HEX`] on purpose. They are equal today and mean
+/// different things, and a reader who sees `ZERO_HEX` here would reasonably think
+/// the field was merely unset.
+const UNBOUND_RUN_SEED: &str = ZERO_HEX;
 
 #[derive(Clone, Debug)]
 pub struct PoaSignalGenesisArgs {
@@ -439,7 +447,14 @@ fn build_network_genesis_input(
                 content_root: bare_sha(required_str(mission, "content_root")?, "mission root")?,
                 activation_digest: bare_sha(&verified.activation_digest(), "activation digest")?,
                 content_session: required_str(mission, "content_session")?.to_owned(),
-                run_seed: required_str(mission, "run_seed")?.to_owned(),
+                // ⚠ NOT read from the catalog: the catalog no longer carries a run
+                // seed, because genesis describes a mission TEMPLATE and a template
+                // has no instance. Lean's `expectedConfig` builds the genesis config
+                // with `Emit.UNBOUND_RUN_SEED` and compares it byte-for-byte, so this
+                // must be exactly that sentinel — thirty-two zero bytes, meaning "no
+                // live draw has happened". The live seed is drawn per run by
+                // `HiddenInstance.runSeedFor` and never appears in an artifact.
+                run_seed: UNBOUND_RUN_SEED.to_owned(),
                 budget: budget.clone(),
                 allowed_relics: allowed_relics.clone(),
                 privacy: required_str(mission, "privacy_grade")?.to_owned(),

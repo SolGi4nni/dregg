@@ -7853,6 +7853,42 @@ async fn execute_finalized_turn(
         None
     };
 
+    // The open slot is authority for the run's INSTANCE, exactly as the head is
+    // authority for its state. A node with no open slot cannot serve a scored run:
+    // the instance would be one nobody committed to in advance, which is the whole
+    // property the slot commitment exists to provide. Refuse rather than draw one.
+    let signal_slot_snapshot = if signal_claim.is_some() {
+        match s.store.load_poa_signal_open_slot_v1(s.federation_id) {
+            Ok(Some(slot)) => Some(slot),
+            Ok(None) => {
+                warn!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    federation_id = %dregg_types::hex_encode(&s.federation_id),
+                    "no PoA Signal slot is open; scored runs refuse until the curator opens one"
+                );
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: "no PoA Signal slot is open".into(),
+                };
+            }
+            Err(dregg_persist::StoreError::Database(error)) => {
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: format!("could not load the open PoA Signal slot: {error}"),
+                };
+            }
+            Err(error) => {
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: format!("PoA Signal slot malformed: {error}"),
+                };
+            }
+        }
+    } else {
+        None
+    };
+
     // EXACT FNSP-v3 is a disjoint finalized-turn route.  Classification happens after the full
     // SignedTurn perimeter but before the legacy FNSP decoder and every generic charge/mutation.
     // Once an `FNSP || version=3` carrier selects this branch, every refusal returns from here: it
@@ -8454,8 +8490,9 @@ async fn execute_finalized_turn(
         .as_ref()
         .map(|head| (head.authority_id(), head.digest()));
     let signal_evaluation_plan = signal_head_snapshot
+        .zip(signal_slot_snapshot)
         .zip(signal_claim)
-        .map(|(head, claim)| (head, s.federation_id, signed_turn.signer.0, claim));
+        .map(|((head, slot), claim)| (head, slot, s.federation_id, signed_turn.signer.0, claim));
 
     // ─── A1 FIX — the confirmed n=5 finalization-stall root cause ─────────────
     // The EXECUTION FFI (`dregg_exec_full_forest_auth`, reached through
@@ -8534,9 +8571,10 @@ async fn execute_finalized_turn(
         let poa_signal_evaluation = match (&result, signal_evaluation_plan) {
             (
                 dregg_turn::TurnResult::Committed { receipt, .. },
-                Some((head, federation_id, player_key, claim)),
+                Some((head, slot, federation_id, player_key, claim)),
             ) => Some(crate::poa_signal_adapter::evaluate_persisted_signal_claim(
                 &head,
+                &slot,
                 federation_id,
                 player_key,
                 receipt.pre_state_hash,

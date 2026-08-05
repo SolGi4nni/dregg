@@ -52,6 +52,7 @@ pub mod poa_event_batch_v2;
 pub mod poa_event_store;
 pub mod poa_galley_authority;
 pub mod poa_holding_consumption;
+pub mod poa_signal_slot;
 pub mod poa_signal_state;
 pub mod poa_world_activation;
 pub mod poseidon2_note_tree;
@@ -134,6 +135,10 @@ pub use poa_galley_authority::{
     PreparedPoaGalleyEventBatchV1,
 };
 pub use poa_holding_consumption::{PoaHoldingConsumptionV1, PreparedPoaHoldingConsumptionV1};
+pub use poa_signal_slot::{
+    POA_SLOT_OPENING_STATEMENT_SCHEMA_V1, PoaInstalledSlotV1, PoaSlotInstallStatusV1,
+    PoaSlotOpeningStatementV1, SignedPoaSlotOpeningEnvelopeV1,
+};
 pub use poa_signal_state::{
     MAX_POA_SIGNAL_WIRE_BYTES_V1, PoaSignalGenesisInitOutcome, PoaSignalHeadV1,
     PoaSignalTransitionV1, PreparedPoaSignalTransitionV1,
@@ -1003,6 +1008,7 @@ impl PersistentStore {
             poa_compact_authority::initialize_poa_compact_authority_tables_v1_in(&write_txn)?;
             poa_world_activation::initialize_poa_world_activation_tables_v1_in(&write_txn)?;
             poa_activated_content::initialize_poa_activated_content_tables_v1_in(&write_txn)?;
+            poa_signal_slot::initialize_poa_signal_slot_tables_v1_in(&write_txn)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
             // Compacted turn block-ids (the no-double-apply carrier for

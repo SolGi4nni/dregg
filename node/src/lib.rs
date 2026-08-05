@@ -106,6 +106,7 @@ pub mod poa_records_api;
 pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;
 pub mod poa_signal_genesis;
+pub mod poa_signal_slot_ceremony;
 pub mod poa_strand_admission;
 pub mod private_dependent_turns;
 mod program_registry_persistence;
@@ -453,6 +454,60 @@ pub enum Command {
         /// Write the preview here instead of stdout.
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+
+    /// Compute a Path of Angels slot commitment and print the exact bytes the
+    /// curator must sign to open that slot.
+    ///
+    /// Needs the curator's slot secret and this node's Lean archive. Needs NO
+    /// curator key, touches no database, and writes nothing durable. The node
+    /// never mints a slot secret: the curator draws it off-line.
+    PoaSlotOpeningPreview {
+        /// Existing PoA node data directory.
+        #[arg(long)]
+        data_dir: String,
+        /// Federation id of the Signal authority, 64 lowercase hex.
+        #[arg(long)]
+        authority_id: String,
+        /// Mission this slot opens for.
+        #[arg(long)]
+        mission_id: u64,
+        /// The beacon slot. Must strictly advance the authority's open slot.
+        #[arg(long)]
+        slot: u64,
+        /// File holding the curator's 32-byte slot secret as 64 lowercase hex.
+        #[arg(long)]
+        secret_file: PathBuf,
+        /// Write the preview here instead of stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Install a curator-signed Path of Angels slot opening and its secret.
+    ///
+    /// A separate operator ceremony against a STOPPED node. It never starts a
+    /// node, resets a database, or runs during generic `dregg-node run`. The node
+    /// holds no curator key: the signed opening is an input produced by the
+    /// curator from `poa-slot-opening-preview`'s `signing_message`.
+    InitPoaSignalSlot {
+        /// Existing PoA node data directory.
+        #[arg(long)]
+        data_dir: String,
+        /// Federation id of the Signal authority, 64 lowercase hex.
+        #[arg(long)]
+        authority_id: String,
+        /// Mission this slot opens for.
+        #[arg(long)]
+        mission_id: u64,
+        /// The beacon slot being opened.
+        #[arg(long)]
+        slot: u64,
+        /// File holding the curator's 32-byte slot secret as 64 lowercase hex.
+        #[arg(long)]
+        secret_file: PathBuf,
+        /// The curator-signed `POA-SLOT-OPENING-ENVELOPE-V1` document.
+        #[arg(long)]
+        signed_opening: PathBuf,
     },
 
     /// Install the Path of Angels Galley world: the curator pin, the signed
@@ -1118,6 +1173,64 @@ pub async fn run(cli: Cli) {
                 },
                 Err(error) => {
                     eprintln!("PoA Galley world preview refused: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::PoaSlotOpeningPreview {
+            data_dir,
+            authority_id,
+            mission_id,
+            slot,
+            secret_file,
+            output,
+        } => {
+            let args = poa_signal_slot_ceremony::PoaSlotOpeningArgs {
+                data_dir: expand_path(&data_dir),
+                authority_id,
+                mission_id,
+                slot,
+                secret_file,
+            };
+            match poa_signal_slot_ceremony::preview_poa_slot_opening(&args) {
+                Ok(preview) => match output {
+                    Some(path) => match std::fs::write(&path, preview.as_bytes()) {
+                        Ok(()) => println!("{}", path.display()),
+                        Err(error) => {
+                            eprintln!("PoA slot-opening preview could not be written: {error}");
+                            std::process::exit(1);
+                        }
+                    },
+                    None => println!("{preview}"),
+                },
+                Err(error) => {
+                    eprintln!("PoA slot-opening preview refused: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::InitPoaSignalSlot {
+            data_dir,
+            authority_id,
+            mission_id,
+            slot,
+            secret_file,
+            signed_opening,
+        } => {
+            let args = poa_signal_slot_ceremony::PoaSlotOpeningArgs {
+                data_dir: expand_path(&data_dir),
+                authority_id,
+                mission_id,
+                slot,
+                secret_file,
+            };
+            match poa_signal_slot_ceremony::initialize_poa_signal_slot(&args, &signed_opening) {
+                Ok(report) => println!(
+                    "PoA Signal slot {:?}: slot={} mission={} commitment={}",
+                    report.status, report.slot, report.mission_id, report.commitment,
+                ),
+                Err(error) => {
+                    eprintln!("PoA Signal slot install refused: {error}");
                     std::process::exit(1);
                 }
             }

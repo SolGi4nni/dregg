@@ -82,6 +82,7 @@ impl CanonicalSignalInput {
             world: self.dto.world.clone(),
             canon: self.dto.canon.clone(),
             carrier: self.dto.carrier.clone(),
+            slot_state: self.dto.slot_state.clone(),
         }
     }
 }
@@ -124,6 +125,9 @@ pub struct SignalAuthorityContext {
     world: WorldStateDto,
     canon: CanonStateDto,
     carrier: FinalizedCarrierDto,
+    /// Curator-held, ceremony-installed slot state. Never client-supplied and
+    /// never reconstructed from the request.
+    slot_state: SlotStateDto,
 }
 
 /// A side-effect-free evaluated candidate.  Possession of this value is not
@@ -158,6 +162,18 @@ impl EvaluatedSignalCandidate {
 /// Build the canonical Lean input while deriving every authority-bearing
 /// request field from the host context.  The public claim contributes exactly
 /// `mission_id` and one code.
+///
+/// # The live instance
+///
+/// The persisted config is a mission TEMPLATE and carries `Emit.UNBOUND_RUN_SEED`
+/// — genesis has no instance, because an instance is per (slot, mission, player).
+/// This function replaces the template's seed and target with the live draw for
+/// THIS player before judging.
+///
+/// The derivation is Lean's ([`derive_live_instance`]); nothing here recomputes it.
+/// The judge then re-derives it a second time from `slot_state` and refuses if the
+/// two disagree, so a node that published one commitment and served a different
+/// instance cannot settle the run.
 pub fn prepare_signal_input(
     context: &SignalAuthorityContext,
     claim: SignalClaimV1,
@@ -170,12 +186,17 @@ pub fn prepare_signal_input(
         });
     }
     let code = claim.code();
+    let instance = derive_live_instance(context)?;
+    let mut config = context.config.clone();
+    config.mission.run_seed = instance.run_seed;
+    config.target = instance.target;
     let dto = SignalInputDto {
         format: SIGNAL_INPUT_FORMAT.to_owned(),
-        config: context.config.clone(),
+        config,
         world: context.world.clone(),
         canon: context.canon.clone(),
         carrier: context.carrier.clone(),
+        slot_state: context.slot_state.clone(),
         request: SignalRequestDto {
             mission_id,
             federation_id: context.carrier.federation_id.clone(),
@@ -183,7 +204,8 @@ pub fn prepare_signal_input(
             activation_digest: context.carrier.activation_digest.clone(),
             content_session: context.carrier.content_session.clone(),
             content_epoch: context.carrier.content_epoch,
-            run_seed: context.config.mission.run_seed.clone(),
+            slot: context.slot_state.slot,
+            slot_commitment: context.slot_state.commitment.clone(),
             actor_root: context.carrier.actor_root.clone(),
             player_key: context.carrier.player_key.clone(),
             previous_player_counter: context.carrier.current_player_counter,
@@ -196,6 +218,64 @@ pub fn prepare_signal_input(
     let bytes =
         serde_json::to_string(&dto).map_err(|error| SignalAdapterError::Json(error.to_string()))?;
     CanonicalSignalInput::parse(&bytes)
+}
+
+/// The live run seed and its puzzle target, as derived by Lean.
+struct LiveInstance {
+    run_seed: String,
+    target: SignalCodeDto,
+}
+
+/// Ask Lean for `commit`, `runSeedFor` and `targetFromSeed` of this slot state and
+/// this player.
+///
+/// ⚠ Every branch here either returns Lean's answer or refuses. There is no Rust
+/// derivation and there must never be one: `HiddenInstance` is a Poseidon2-BabyBear
+/// sponge with its own padding, lane-aliasing rejection and domain tags, and a
+/// second copy of it in Rust would be an unproven twin of a soundness function.
+fn derive_live_instance(
+    context: &SignalAuthorityContext,
+) -> Result<LiveInstance, SignalAdapterError> {
+    let request = serde_json::json!({
+        "format": dregg_lean_ffi::poa_slot_derive_ffi::SLOT_DERIVE_INPUT_FORMAT,
+        "slot": context.slot_state.slot,
+        "secret": context.slot_state.secret,
+        "mission_id": context.config.mission.mission_id,
+        "epoch": context.config.mission.epoch,
+        "federation_id": context.config.mission.federation_id,
+        "content_session": context.config.mission.content_session,
+        "player_key": context.carrier.player_key,
+    });
+    let wire = serde_json::to_string(&request)
+        .map_err(|error| SignalAdapterError::Json(error.to_string()))?;
+    let reply = dregg_lean_ffi::poa_slot_derive_ffi::derive_poa_slot_instance(&wire)
+        .map_err(SignalAdapterError::LeanTransport)?
+        .ok_or(SignalAdapterError::LeanRejected)?;
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct DeriveReplyDto {
+        format: String,
+        commitment: String,
+        run_seed: String,
+        target: SignalCodeDto,
+    }
+    let reply: DeriveReplyDto = parse_exact(&reply, "Signal slot derivation")?;
+    if reply.format != dregg_lean_ffi::poa_slot_derive_ffi::SLOT_DERIVE_OUTPUT_FORMAT {
+        return Err(SignalAdapterError::InvalidField("slot derivation format"));
+    }
+    validate_digest("derived run_seed", &reply.run_seed)?;
+    validate_code(&reply.target)?;
+    // The commitment Lean computes from the node's secret must be the one the
+    // curator published and the node installed. Equal strings, not a recomputation:
+    // the derivation is Lean's on both sides.
+    if reply.commitment != context.slot_state.commitment {
+        return Err(SignalAdapterError::SlotCommitmentMismatch);
+    }
+    Ok(LiveInstance {
+        run_seed: reply.run_seed,
+        target: reply.target,
+    })
 }
 
 /// Invoke the existing Lean FFI and strictly parse its exact reply.
@@ -234,13 +314,19 @@ pub fn evaluate_signal_claim(
 /// finalized-turn path and committing its result with the carrying receipt.
 pub fn evaluate_persisted_signal_claim(
     head: &dregg_persist::PoaSignalHeadV1,
+    slot: &dregg_persist::PoaInstalledSlotV1,
     active_federation_id: [u8; 32],
     player_key: [u8; 32],
     actor_root: [u8; 32],
     claim: SignalClaimV1,
 ) -> Result<dregg_persist::PreparedPoaSignalTransitionV1, SignalAdapterError> {
-    let context =
-        authority_context_from_persisted_head(head, active_federation_id, player_key, actor_root)?;
+    let context = authority_context_from_persisted_head(
+        head,
+        slot,
+        active_federation_id,
+        player_key,
+        actor_root,
+    )?;
     let evaluated = evaluate_signal_claim(&context, claim)?;
     let successor_canon = serde_json::to_vec(&evaluated.output.dto.successor_canon)
         .map_err(|error| SignalAdapterError::Json(error.to_string()))?;
@@ -284,6 +370,52 @@ pub fn audit_persisted_signal_semantics_against_genesis(
     authority_id: [u8; 32],
     expected_genesis_digest: Option<[u8; 32]>,
 ) -> Result<SignalSemanticAuditReport, SignalAdapterError> {
+    replay_persisted_signal_history(store, authority_id, expected_genesis_digest)
+        .map(|replay| replay.report)
+}
+
+/// One finalized Signal transition as the Records read model needs it.
+///
+/// Every field is a *replayed* value, not a stored label: the coordinates come
+/// from the carrying generic commit, `signer` from the finalized `SignedTurn`,
+/// `actor_root` from the durable receipt's `pre_state_hash`, and the two byte
+/// blobs are the exact inputs/outputs the replay above re-derived and re-judged.
+/// Rust does not interpret the blobs; only Lean does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedSignalRow {
+    pub sequence: u64,
+    pub commit_ordinal: u64,
+    pub turn_hash: [u8; 32],
+    pub receipt_hash: [u8; 32],
+    pub actor_root: [u8; 32],
+    pub signer: [u8; 32],
+    pub judge_input: String,
+    pub judge_output: String,
+}
+
+/// A completed semantic replay: its verdict plus the finalized material every
+/// accepted row contributed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignalSemanticReplay {
+    pub report: SignalSemanticAuditReport,
+    /// Exact retained genesis config bytes (the active mission).
+    pub genesis_config: Vec<u8>,
+    /// Exact retained genesis Canon bytes.
+    pub genesis_canon: Vec<u8>,
+    pub rows: Vec<FinalizedSignalRow>,
+}
+
+/// The one replay implementation.
+///
+/// [`audit_persisted_signal_semantics_against_genesis`] is this function with
+/// its rows discarded, so an auditing caller and a reading caller cannot drift:
+/// a Records read that returns rows has necessarily passed every check the
+/// audit performs, in the same order.
+pub fn replay_persisted_signal_history(
+    store: &dregg_persist::PersistentStore,
+    authority_id: [u8; 32],
+    expected_genesis_digest: Option<[u8; 32]>,
+) -> Result<SignalSemanticReplay, SignalAdapterError> {
     let history = store
         .load_poa_signal_history(authority_id)
         .map_err(|error| SignalAdapterError::SemanticReplay(error.to_string()))?
@@ -301,6 +433,7 @@ pub fn audit_persisted_signal_semantics_against_genesis(
     let blocks = load_signal_block_index(store)?;
     let receipts = load_signal_receipt_index(store)?;
     let mut rebuilt = history.genesis().clone();
+    let mut rows = Vec::with_capacity(history.transitions().len());
 
     for stored in history.transitions() {
         let sequence = stored.sequence();
@@ -367,8 +500,37 @@ pub fn audit_persisted_signal_semantics_against_genesis(
             )));
         }
 
+        // Which slot this run was played in is read from the stored input, but the
+        // SECRET and COMMITMENT are then loaded from the store, not from those
+        // bytes. Taking the whole slot state from the journal would make the replay
+        // agree with any slot state the journal happened to contain; loading it
+        // independently is what lets the byte-identity check below detect a
+        // substituted instance.
+        let stored_slot = parse_exact::<SignalInputDto>(
+            std::str::from_utf8(stored.judge_input()).map_err(|_| {
+                SignalAdapterError::SemanticReplay(format!(
+                    "Signal sequence {sequence} judge input is not UTF-8"
+                ))
+            })?,
+            "stored Signal judge input",
+        )?
+        .slot_state
+        .slot;
+        let installed_slot = store
+            .load_poa_signal_slot_v1(authority_id, stored_slot)
+            .map_err(|error| {
+                SignalAdapterError::SemanticReplay(format!(
+                    "Signal sequence {sequence} slot load failed: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                SignalAdapterError::SemanticReplay(format!(
+                    "Signal sequence {sequence} names slot {stored_slot}, which is not installed"
+                ))
+            })?;
         let context = authority_context_from_persisted_head(
             &rebuilt,
+            &installed_slot,
             authority_id,
             signed.signer.0,
             receipt.pre_state_hash,
@@ -428,6 +590,19 @@ pub fn audit_persisted_signal_semantics_against_genesis(
                 "Signal sequence {sequence} stored successor is not the projection of native Lean output"
             )));
         }
+        // Retained only after this row has passed every check above. `signer`
+        // and `actor_root` are the finalized values — never re-derived from the
+        // judge input's own carrier, which is the thing they exist to bind.
+        rows.push(FinalizedSignalRow {
+            sequence,
+            commit_ordinal: stored.commit_ordinal(),
+            turn_hash: stored.turn_hash(),
+            receipt_hash: stored.receipt_hash(),
+            actor_root: receipt.pre_state_hash,
+            signer: signed.signer.0,
+            judge_input: expected_input.as_str().to_owned(),
+            judge_output: output.as_str().to_owned(),
+        });
         rebuilt = reconstructed.successor_head().map_err(|error| {
             SignalAdapterError::SemanticReplay(format!(
                 "Signal sequence {sequence} rebuilt successor is invalid: {error}"
@@ -440,15 +615,20 @@ pub fn audit_persisted_signal_semantics_against_genesis(
             "persisted Signal head differs from the semantically rebuilt history".to_owned(),
         ));
     }
-    Ok(SignalSemanticAuditReport {
-        authority_id,
-        transition_count: u64::try_from(history.transitions().len()).map_err(|_| {
-            SignalAdapterError::SemanticReplay(
-                "persisted Signal transition count exceeds u64".to_owned(),
-            )
-        })?,
-        retained_genesis_digest: history.genesis().digest(),
-        rebuilt_head_digest: rebuilt.digest(),
+    Ok(SignalSemanticReplay {
+        report: SignalSemanticAuditReport {
+            authority_id,
+            transition_count: u64::try_from(history.transitions().len()).map_err(|_| {
+                SignalAdapterError::SemanticReplay(
+                    "persisted Signal transition count exceeds u64".to_owned(),
+                )
+            })?,
+            retained_genesis_digest: history.genesis().digest(),
+            rebuilt_head_digest: rebuilt.digest(),
+        },
+        genesis_config: history.genesis().config().to_vec(),
+        genesis_canon: history.genesis().canon().to_vec(),
+        rows,
     })
 }
 
@@ -517,13 +697,23 @@ fn persisted_finalized_turn_bytes(payload: &Payload) -> Option<&[u8]> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignalAdapterError {
     Claim(SignalClaimError),
-    WireTooLarge { what: &'static str, bytes: usize },
+    WireTooLarge {
+        what: &'static str,
+        bytes: usize,
+    },
     Json(String),
     Noncanonical(&'static str),
     InvalidField(&'static str),
-    MissionMismatch { claimed: u64, active: u64 },
+    MissionMismatch {
+        claimed: u64,
+        active: u64,
+    },
     LeanTransport(String),
     LeanRejected,
+    /// The commitment Lean derives from the installed slot secret is not the one
+    /// the curator published. The node holds the wrong secret for this slot and
+    /// must not serve a run against it.
+    SlotCommitmentMismatch,
     OutputBinding(&'static str),
     PreparedTransition(String),
     SemanticReplay(String),
@@ -547,6 +737,11 @@ impl fmt::Display for SignalAdapterError {
             }
             Self::LeanTransport(error) => write!(f, "Lean Signal transport unavailable: {error}"),
             Self::LeanRejected => write!(f, "Lean rejected the Signal transition"),
+            Self::SlotCommitmentMismatch => write!(
+                f,
+                "the installed slot secret does not open the published slot commitment; \
+                 refusing to serve a run whose instance nobody committed to"
+            ),
             Self::OutputBinding(reason) => write!(f, "Lean Signal output binding failed: {reason}"),
             Self::PreparedTransition(error) => {
                 write!(f, "PoA Signal persistence envelope refused: {error}")
@@ -717,6 +912,30 @@ struct FinalizedCarrierDto {
     current_player_counter: u64,
 }
 
+/// Node-held slot state: the curator's per-slot secret, the slot it belongs to,
+/// and the commitment the curator published before the slot opened.
+///
+/// ⚠ This is NODE state, never client state. The judge is handed the secret
+/// because it RE-DERIVES the run seed rather than trusting one: `admissionChecks`
+/// requires `commitment = HiddenInstance.commit secret slot` and the live
+/// `run_seed` to be `HiddenInstance.runSeedFor` of that same secret, slot and
+/// player. A node that published one commitment and judged against a different
+/// secret is refused.
+///
+/// The secret must not leave the node. No output wire, descriptor or catalog
+/// renders it, and `Emit` has no function that could.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlotStateDto {
+    slot: u64,
+    secret: String,
+    commitment: String,
+}
+
+/// ⚠ `run_seed` is GONE from the request. A client that could state the live run
+/// seed could compute its own instance, which is the whole hole. What a client
+/// states instead is the slot it played in and the commitment its run opening
+/// showed it; the judge compares both against node state and derives the seed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SignalRequestDto {
@@ -726,7 +945,8 @@ struct SignalRequestDto {
     activation_digest: String,
     content_session: String,
     content_epoch: u64,
-    run_seed: String,
+    slot: u64,
+    slot_commitment: String,
     actor_root: String,
     player_key: String,
     previous_player_counter: u64,
@@ -743,6 +963,7 @@ struct SignalInputDto {
     world: WorldStateDto,
     canon: CanonStateDto,
     carrier: FinalizedCarrierDto,
+    slot_state: SlotStateDto,
     request: SignalRequestDto,
 }
 
@@ -783,7 +1004,18 @@ fn validate_input(input: &SignalInputDto) -> Result<(), SignalAdapterError> {
     validate_world(&input.world)?;
     validate_canon(&input.canon)?;
     validate_carrier(&input.carrier)?;
-    validate_request(&input.request)
+    validate_slot_state(&input.slot_state)?;
+    validate_request(&input.request)?;
+    // The client states the slot it played in and the commitment its opening
+    // showed it; both must name the node's own slot state. The judge enforces
+    // this too (`claim.slot = active.slot`, `claim.slotCommitment =
+    // active.slotCommitment`); refusing here means a mismatch never reaches it.
+    if input.request.slot != input.slot_state.slot
+        || input.request.slot_commitment != input.slot_state.commitment
+    {
+        return Err(SignalAdapterError::InvalidField("request slot binding"));
+    }
+    Ok(())
 }
 
 fn validate_output(output: &SignalOutputDto) -> Result<(), SignalAdapterError> {
@@ -835,7 +1067,12 @@ fn validate_evaluation_binding(
         && receipt.player_key == request.player_key
         && receipt.previous_player_counter == request.previous_player_counter
         && receipt.player_counter.checked_sub(1) == Some(request.previous_player_counter)
-        && receipt.run_seed == request.run_seed
+        // ⚠ The request no longer states a run seed, so this can no longer be a
+        // request/receipt comparison. What the receipt reveals — the run is over
+        // by then — must be exactly the instance the node served, which is the
+        // one in the config it judged. That the config's seed is the derivation
+        // from the committed secret is `Judged.admissionChecks`, in Lean.
+        && receipt.run_seed == input.config.mission.run_seed
         && receipt.pre_world == input.world
         && output.successor_world == receipt.post_world
         && output.successor_canon.world == receipt.post_world
@@ -1007,6 +1244,19 @@ fn validate_carrier(carrier: &FinalizedCarrierDto) -> Result<(), SignalAdapterEr
     Ok(())
 }
 
+/// Structural validation only. That the commitment is the commitment OF the
+/// secret is a Lean predicate (`HiddenInstance.commit`) and is checked by the
+/// judge, not restated here — Rust holds no second copy of that derivation.
+fn validate_slot_state(slot_state: &SlotStateDto) -> Result<(), SignalAdapterError> {
+    for (name, digest) in [
+        ("slot_state secret", &slot_state.secret),
+        ("slot_state commitment", &slot_state.commitment),
+    ] {
+        validate_digest(name, digest)?;
+    }
+    Ok(())
+}
+
 fn validate_request(request: &SignalRequestDto) -> Result<(), SignalAdapterError> {
     validate_id("request mission_id", request.mission_id)?;
     for (name, digest) in [
@@ -1014,7 +1264,7 @@ fn validate_request(request: &SignalRequestDto) -> Result<(), SignalAdapterError
         ("request content_root", &request.content_root),
         ("request activation_digest", &request.activation_digest),
         ("request content_session", &request.content_session),
-        ("request run_seed", &request.run_seed),
+        ("request slot_commitment", &request.slot_commitment),
         ("request actor_root", &request.actor_root),
         ("request player_key", &request.player_key),
     ] {
@@ -1035,6 +1285,7 @@ fn validate_code(code: &SignalCodeDto) -> Result<(), SignalAdapterError> {
 
 fn authority_context_from_persisted_head(
     head: &dregg_persist::PoaSignalHeadV1,
+    slot: &dregg_persist::PoaInstalledSlotV1,
     active_federation_id: [u8; 32],
     player_key: [u8; 32],
     actor_root: [u8; 32],
@@ -1042,6 +1293,11 @@ fn authority_context_from_persisted_head(
     if head.authority_id() != active_federation_id {
         return Err(SignalAdapterError::InvalidField(
             "persisted head authority/federation",
+        ));
+    }
+    if slot.envelope().statement().authority_id() != active_federation_id {
+        return Err(SignalAdapterError::InvalidField(
+            "installed slot authority/federation",
         ));
     }
     let config_bytes = std::str::from_utf8(head.config())
@@ -1091,11 +1347,23 @@ fn authority_context_from_persisted_head(
         current_player_counter,
     };
     validate_carrier(&carrier)?;
+    if slot.mission_id() != config.mission.mission_id {
+        return Err(SignalAdapterError::InvalidField(
+            "installed slot names another mission",
+        ));
+    }
+    let slot_state = SlotStateDto {
+        slot: slot.slot(),
+        secret: dregg_types::hex_encode(&slot.secret()),
+        commitment: dregg_types::hex_encode(&slot.commitment()),
+    };
+    validate_slot_state(&slot_state)?;
     Ok(SignalAuthorityContext {
         config,
         world: canon.world.clone(),
         canon,
         carrier,
+        slot_state,
     })
 }
 
@@ -1189,6 +1457,34 @@ fn receipt_key(receipt: &ReceiptKeyDto) -> (&str, &str, u64, &str, u64) {
 /// Keeping this here makes the test exercise the same private DTO validation
 /// and canonical serialization as the production persisted-head adapter.
 #[cfg(test)]
+/// The frozen fixture's own slot state, as an installed slot.
+///
+/// ⚠ Built with `new_for_test`, so it carries NO curator signature and NO Lean
+/// commitment check. It reproduces the slot state the fixture was judged against so
+/// finality tests can reach the adapter; it is not evidence that a slot was opened,
+/// and nothing outside a test may build one this way.
+pub(crate) fn fixture_signal_slot_for_finality_test(
+    authority_id: [u8; 32],
+) -> dregg_persist::PoaInstalledSlotV1 {
+    let bytes = include_str!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
+        .strip_suffix('\n')
+        .expect("PoA Signal fixture has one trailing newline");
+    let input = CanonicalSignalInput::parse(bytes).expect("canonical PoA Signal input fixture");
+    let hex32 = |value: &str| {
+        dregg_types::parse_hex32(value).expect("fixture digest is 32 bytes of lowercase hex")
+    };
+    let statement = dregg_persist::PoaSlotOpeningStatementV1::new(
+        authority_id,
+        input.dto.config.mission.mission_id,
+        input.dto.slot_state.slot,
+        hex32(&input.dto.slot_state.commitment),
+    );
+    dregg_persist::PoaInstalledSlotV1::new_for_test(
+        dregg_persist::SignedPoaSlotOpeningEnvelopeV1::new(statement, [0u8; 32], [0u8; 64]),
+        hex32(&input.dto.slot_state.secret),
+    )
+}
+
 pub(crate) fn fixture_signal_head_for_finality_test(
     authority_id: [u8; 32],
 ) -> dregg_persist::PoaSignalHeadV1 {
@@ -1256,6 +1552,10 @@ mod tests {
         fixture_signal_head_for_finality_test(hex32(&input.dto.canon.federation_id))
     }
 
+    fn fixture_slot(authority_id: [u8; 32]) -> dregg_persist::PoaInstalledSlotV1 {
+        fixture_signal_slot_for_finality_test(authority_id)
+    }
+
     #[derive(Clone, Copy)]
     enum StoredSemanticCorruption {
         None,
@@ -1289,6 +1589,7 @@ mod tests {
         let actor_root = [0x44; 32];
         let context = authority_context_from_persisted_head(
             &head,
+            &fixture_slot(authority),
             authority,
             clerk.public_key().0,
             actor_root,
@@ -1443,6 +1744,7 @@ mod tests {
         let head = fixture_head();
         let context = authority_context_from_persisted_head(
             &head,
+            &fixture_slot(head.authority_id()),
             head.authority_id(),
             [0x55; 32],
             [0x44; 32],
@@ -1463,6 +1765,7 @@ mod tests {
         assert!(matches!(
             authority_context_from_persisted_head(
                 &mismatched_projection,
+                &fixture_slot(head.authority_id()),
                 head.authority_id(),
                 [0x55; 32],
                 [0x44; 32],
@@ -1520,6 +1823,7 @@ mod tests {
         let head = fixture_head();
         let prepared = evaluate_persisted_signal_claim(
             &head,
+            &fixture_slot(head.authority_id()),
             head.authority_id(),
             [0x55; 32],
             [0x44; 32],
@@ -1603,6 +1907,42 @@ mod tests {
         assert_eq!(report.transition_count, 1);
         assert_eq!(report.authority_id, authority);
         assert_eq!(report.retained_genesis_digest, genesis_digest);
+    }
+
+    /// The Records read is only as honest as the coordinates it publishes.
+    /// This pins where each one comes from: the durable row for the commit
+    /// coordinates, the finalized `SignedTurn` for `signer`, the durable
+    /// receipt's `pre_state_hash` for `actor_root`, and the retained genesis
+    /// for the blobs Lean folds from. None is re-derived from the judge input's
+    /// own carrier — that carrier is what they exist to bind.
+    #[test]
+    fn semantic_replay_yields_the_finalized_material_the_records_read_needs() {
+        let (store, authority, genesis_digest) =
+            persisted_semantic_fixture(StoredSemanticCorruption::None);
+        let replay =
+            replay_persisted_signal_history(&store, authority, Some(genesis_digest)).unwrap();
+        assert_eq!(replay.report.transition_count, 1);
+        assert_eq!(replay.rows.len(), 1);
+
+        let row = &replay.rows[0];
+        assert_eq!(row.sequence, 1);
+        assert_eq!(row.actor_root, [0x44; 32]);
+        let clerk = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0x31; 32]));
+        assert_eq!(row.signer, clerk.public_key().0);
+
+        let stored = store
+            .load_poa_signal_transition(authority, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.commit_ordinal, stored.commit_ordinal());
+        assert_eq!(row.turn_hash, stored.turn_hash());
+        assert_eq!(row.receipt_hash, stored.receipt_hash());
+        assert_eq!(row.judge_input.as_bytes(), stored.judge_input());
+        assert_eq!(row.judge_output.as_bytes(), stored.judge_output());
+
+        let head = fixture_head();
+        assert_eq!(replay.genesis_canon, head.canon().to_vec());
+        assert_eq!(replay.genesis_config, head.config().to_vec());
     }
 
     #[test]

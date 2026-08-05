@@ -51,10 +51,23 @@ pub mod bridge_lc_ffi;
 #[path = "poa_ffi.rs"]
 pub mod poa_ffi;
 
+/// Lean-owned per-run instance derivation (slot commitment, live run seed, target).
+/// The judge re-derives all three and refuses on mismatch, which is only a check if
+/// the node derived them independently — so the node derives, and it derives HERE,
+/// by calling Lean. There is no Rust sponge.
+#[path = "poa_slot_derive_ffi.rs"]
+pub mod poa_slot_derive_ffi;
+
 /// Lean-owned bounded first-head ceremony. The host transports the exact emitted config/Canon
 /// bytes and does not reconstruct or persist them in this crate.
 #[path = "poa_network_genesis_ffi.rs"]
 pub mod poa_network_genesis_ffi;
+
+/// Lean-owned Path of Angels Records read model: the finalized-run projection rebuilt from the
+/// retained genesis blobs and the durable finalized rows. Rust transports the request and serves
+/// the emitted view verbatim; there is no host-side record projection.
+#[path = "poa_records_ffi.rs"]
+pub mod poa_records_ffi;
 
 /// Lean-owned bounded private batch-settlement evaluator. Rust transports the
 /// canonical wire and has no settlement/authorization fallback.
