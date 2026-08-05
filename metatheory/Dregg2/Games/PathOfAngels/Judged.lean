@@ -42,7 +42,7 @@ inductive GameConfigClaim where
   | signal (target : SignalTriangulation.Code) (mission : MissionSpec)
       (reward : Contribution)
   | relay (mission : MissionSpec) (reward : Contribution)
-  | salvage (seed : Fin 3) (mission : MissionSpec) (reward : Contribution)
+  | salvage (seed : Fin SalvageLock.SEED_SPACE) (mission : MissionSpec) (reward : Contribution)
   | blackBox (mission : MissionSpec) (reward : Contribution)
 deriving DecidableEq
 

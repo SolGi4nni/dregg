@@ -1,13 +1,13 @@
 {
   "format":"POAG1",
   "schema_version":1,
-  "source_digest":"sha256:53bef5c67f9b73fcf9595a9547046f17ea6789a6876c44c85f01d3385129b42f",
+  "source_digest":"sha256:72a238fb051d975583d2e67ce1a016783ae640dcb44ad07c5cff71dfcaf82e9f",
   "authority":"Dregg2.Games.PathOfAngels",
   "artifacts":[
     {"path":"schema.json","media_type":"application/schema+json","bytes":1142,"sha256":"sha256:4a17d808105ab70b004fc5faea46ded9d1f99a023c7ba108dc5be5a5b0765095","fnv1a64":"7f29631d47428a1d"},
-    {"path":"catalog.json","media_type":"application/json","bytes":5447,"sha256":"sha256:18fb75cae5d4707762b02de658c753fb312c1e33f6967782e10dc86e47ddde19","fnv1a64":"5f495e22c059100f"},
-    {"path":"games/relay-repair.json","media_type":"application/json","bytes":9165,"sha256":"sha256:7862d311fbb9840dd4d2e5a9785f673ff71be3d97b27fbcf5256e1d99823c464","fnv1a64":"516294351bd42bfc"},
-    {"path":"games/salvage-lock.json","media_type":"application/json","bytes":125365,"sha256":"sha256:ad40233a01f1d728a469b22f1fa890207865ea6d87369b787d622e9744c5697e","fnv1a64":"5a3ef34c8fc76fee"},
+    {"path":"catalog.json","media_type":"application/json","bytes":5447,"sha256":"sha256:cbbe2fb562172e64511726f2b0f06aae8b925bc7c4d732d27a2940dfadcdd1bc","fnv1a64":"09aa9a685e19fdbf"},
+    {"path":"games/relay-repair.json","media_type":"application/json","bytes":18694,"sha256":"sha256:f81703ef04df64e650474a9d16e30e29d17d29b1ea572eb4d893c815ca2e9b38","fnv1a64":"cc681f7bb3397eff"},
+    {"path":"games/salvage-lock.json","media_type":"application/json","bytes":125619,"sha256":"sha256:3074c759550f6fface98e72f7b1b4f5d4f4dc53afbdb023db5202e9b24e4e2b6","fnv1a64":"6f262692508e3a2c"},
     {"path":"games/signal-triangulation.json","media_type":"application/json","bytes":14021,"sha256":"sha256:c3a9603f84f1e5918c6a46f30c507a39b6c9d5fd57c9f3edec3b03597eec49bf","fnv1a64":"cbfac4aa9836a09d"}
   ]
 }

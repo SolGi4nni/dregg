@@ -95,6 +95,7 @@ pub mod operator_join;
 pub mod pg_mirror;
 pub mod poa_compact_ceremony;
 pub(crate) mod poa_galley_api;
+pub mod poa_galley_genesis;
 pub mod poa_holding_api;
 pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;
@@ -140,6 +141,11 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 }
+
+/// The predecessor digest of the FIRST PoA world activation: there is no
+/// predecessor, so the signed statement carries the zero digest.
+const ZERO_ACTIVATION_PREDECESSOR: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// The `dregg-node` subcommands.
 #[derive(Subcommand)]
@@ -379,6 +385,114 @@ pub enum Command {
         #[arg(long)]
         expected_content_epoch: u64,
         /// Caller-owned expected activation counter (rollback refusal).
+        #[arg(long)]
+        expected_activation_counter: u64,
+    },
+
+    /// Print the exact Galley world identity and the exact canonical bytes the
+    /// curator must sign to activate it. Opens no database and mints no key.
+    ///
+    /// The world is DERIVED, not accepted: `federation_id` from the verified
+    /// deployment manifest, `activation_digest` from the verified POAG1
+    /// content-epoch envelope, `content_root` from SHA-256 of `--content-manifest`,
+    /// `content_epoch` from the verified envelope. `--content-session` must equal
+    /// the manifest's own `scope.content_session` or Lean refuses the install.
+    PoaGalleyWorldPreview {
+        /// Existing PoA node data directory containing the exact genesis.json.
+        #[arg(long)]
+        data_dir: String,
+        /// Public PoA deployment manifest (`poa-devnet.json`).
+        #[arg(long)]
+        deployment_manifest: PathBuf,
+        /// Exact descriptor named by the deployment manifest.
+        #[arg(long)]
+        genesis: PathBuf,
+        /// Existing main-network data directory used to prove identity/storage
+        /// isolation from the PoA deployment.
+        #[arg(long)]
+        main_data_dir: PathBuf,
+        /// Lean-emitted POAG1 manifest naming the content artifacts.
+        #[arg(long)]
+        poag1_manifest: PathBuf,
+        /// Detached signed content-epoch envelope.
+        #[arg(long)]
+        content_envelope: PathBuf,
+        /// Independently distributed curator public-key pin.
+        #[arg(long)]
+        curator_key_pin: PathBuf,
+        /// Exact canonical `POA-ACTIVATED-CONTENT-MANIFEST-1` bytes.
+        #[arg(long)]
+        content_manifest: PathBuf,
+        /// Lowercase hex32 content session; must equal the manifest scope.
+        #[arg(long)]
+        content_session: String,
+        /// Caller-owned expected POAG1 content epoch (rollback refusal).
+        #[arg(long)]
+        expected_content_epoch: u64,
+        /// Caller-owned expected POAG1 content-epoch envelope counter.
+        #[arg(long)]
+        expected_activation_counter: u64,
+        /// World-activation lineage counter; `1` for the first world.
+        #[arg(long)]
+        world_counter: u64,
+        /// Digest of the predecessor activation envelope; 64 zeroes for the first.
+        #[arg(long, default_value = ZERO_ACTIVATION_PREDECESSOR)]
+        predecessor_head: String,
+        /// `advance` or `rollback`.
+        #[arg(long, default_value = "advance")]
+        kind: String,
+        /// Required for `rollback`, forbidden for `advance`.
+        #[arg(long)]
+        rollback_target: Option<String>,
+        /// Write the preview here instead of stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Install the Path of Angels Galley world: the curator pin, the signed
+    /// world activation, and the activated-content manifest, in that order.
+    ///
+    /// This is a separate operator ceremony against a STOPPED node. It never
+    /// starts a node, rewrites genesis.json, resets a database, or runs during
+    /// generic `dregg-node run`. The node holds no curator key: the signed
+    /// activation is an input produced by the curator ceremony from
+    /// `poa-galley-world-preview`'s `signing_message`.
+    InitPoaGalleyWorld {
+        /// Existing PoA node data directory containing the exact genesis.json.
+        #[arg(long)]
+        data_dir: String,
+        /// Public PoA deployment manifest (`poa-devnet.json`).
+        #[arg(long)]
+        deployment_manifest: PathBuf,
+        /// Exact descriptor named by the deployment manifest.
+        #[arg(long)]
+        genesis: PathBuf,
+        /// Existing main-network data directory used to prove identity/storage
+        /// isolation from the PoA deployment.
+        #[arg(long)]
+        main_data_dir: PathBuf,
+        /// Lean-emitted POAG1 manifest naming the content artifacts.
+        #[arg(long)]
+        poag1_manifest: PathBuf,
+        /// Detached signed content-epoch envelope.
+        #[arg(long)]
+        content_envelope: PathBuf,
+        /// Independently distributed curator public-key pin.
+        #[arg(long)]
+        curator_key_pin: PathBuf,
+        /// Exact canonical `POA-ACTIVATED-CONTENT-MANIFEST-1` bytes.
+        #[arg(long)]
+        content_manifest: PathBuf,
+        /// Lowercase hex32 content session; must equal the manifest scope.
+        #[arg(long)]
+        content_session: String,
+        /// Curator-signed `POA-WORLD-ACTIVATION-ENVELOPE-V1` document.
+        #[arg(long)]
+        signed_activation: PathBuf,
+        /// Caller-owned expected POAG1 content epoch (rollback refusal).
+        #[arg(long)]
+        expected_content_epoch: u64,
+        /// Caller-owned expected POAG1 content-epoch envelope counter.
         #[arg(long)]
         expected_activation_counter: u64,
     },
@@ -927,6 +1041,109 @@ pub async fn run(cli: Cli) {
                 ),
                 Err(error) => {
                     eprintln!("PoA Signal genesis refused: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::PoaGalleyWorldPreview {
+            data_dir,
+            deployment_manifest,
+            genesis,
+            main_data_dir,
+            poag1_manifest,
+            content_envelope,
+            curator_key_pin,
+            content_manifest,
+            content_session,
+            expected_content_epoch,
+            expected_activation_counter,
+            world_counter,
+            predecessor_head,
+            kind,
+            rollback_target,
+            output,
+        } => {
+            let args = poa_galley_genesis::PoaGalleyWorldArgs {
+                data_dir: expand_path(&data_dir),
+                deployment_manifest,
+                genesis,
+                main_data_dir,
+                poag1_manifest,
+                content_envelope,
+                curator_key_pin,
+                content_manifest,
+                content_session,
+                expected_content_epoch,
+                expected_activation_counter,
+            };
+            let coordinates = poa_galley_genesis::PoaGalleyActivationCoordinates {
+                counter: world_counter,
+                predecessor_head,
+                kind,
+                rollback_target,
+            };
+            match poa_galley_genesis::preview_poa_galley_world(&args, &coordinates) {
+                Ok(preview) => match output {
+                    Some(path) => match std::fs::write(&path, preview.as_bytes()) {
+                        Ok(()) => println!("{}", path.display()),
+                        Err(error) => {
+                            eprintln!("PoA Galley world preview could not be written: {error}");
+                            std::process::exit(1);
+                        }
+                    },
+                    None => println!("{preview}"),
+                },
+                Err(error) => {
+                    eprintln!("PoA Galley world preview refused: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::InitPoaGalleyWorld {
+            data_dir,
+            deployment_manifest,
+            genesis,
+            main_data_dir,
+            poag1_manifest,
+            content_envelope,
+            curator_key_pin,
+            content_manifest,
+            content_session,
+            signed_activation,
+            expected_content_epoch,
+            expected_activation_counter,
+        } => {
+            let args = poa_galley_genesis::PoaGalleyWorldArgs {
+                data_dir: expand_path(&data_dir),
+                deployment_manifest,
+                genesis,
+                main_data_dir,
+                poag1_manifest,
+                content_envelope,
+                curator_key_pin,
+                content_manifest,
+                content_session,
+                expected_content_epoch,
+                expected_activation_counter,
+            };
+            match poa_galley_genesis::initialize_poa_galley_world(&args, &signed_activation) {
+                Ok(report) => println!(
+                    "PoA Galley world {:?}/{:?}: curator={} federation={} content_root={} \
+                     activation={} session={} epoch={} counter={} component={} statement={}",
+                    report.activation_status,
+                    report.content_status,
+                    dregg_types::hex_encode(&report.curator_pin),
+                    dregg_types::hex_encode(&report.world.federation_id()),
+                    dregg_types::hex_encode(&report.world.content_root()),
+                    dregg_types::hex_encode(&report.world.activation_digest()),
+                    dregg_types::hex_encode(&report.world.content_session()),
+                    report.world.content_epoch(),
+                    report.world_counter,
+                    dregg_types::hex_encode(&report.component_sha256),
+                    dregg_types::hex_encode(&report.statement_sha256),
+                ),
+                Err(error) => {
+                    eprintln!("PoA Galley world activation refused: {error}");
                     std::process::exit(1);
                 }
             }

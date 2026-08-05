@@ -470,25 +470,50 @@ def signalDescriptorJson : String :=
 def relayRunSeed : Digest32 :=
   taggedBytes32 [82, 69, 76, 65, 89, 45, 49]
 
-def salvageRunSeed : Digest32 :=
-  taggedBytes32 [2, 83, 65, 76, 86, 65, 71, 69, 45, 49]
+/-- The Salvage run seed lives in `SalvageLock` because the BOARD is drawn from it;
+`Emit` only re-exports it under the name the descriptor uses.  ⚠ Its bytes CHANGED:
+`53 41 4c 56 41 47 45 2d 31` (`SALVAGE-1`, the shape `relayRunSeed` already has)
+where they were `02 53 41 …`.  The dropped leading `2` selected the deleted board's
+seed and named nothing else. -/
+def salvageRunSeed : Digest32 := SalvageLock.PINNED_RUN_SEED
 
-def salvageSeed : Fin 3 :=
-  SalvageLock.seedFromRunSeed salvageRunSeed
+def salvageSeed : Fin SalvageLock.SEED_SPACE := FiniteTables.salvagePinnedSeed
 
-theorem salvageSeed_literal : salvageSeed = 2 := by
+/-- Not a literal pinned against its own definition: the claim is that the four
+consuming draws over the run seed RESOLVE, so `salvageSeed` is a drawn board index
+and not the `getD` fallback. -/
+theorem salvageSeed_resolved :
+    SalvageLock.seedFromRunSeed? salvageRunSeed = some salvageSeed :=
+  FiniteTables.salvagePinnedSeed_resolved
+
+#assert_compiled salvageSeed_resolved
+
+/-- The damage board the precommitted relay seed draws.  `RelayRepair.Config.board_eq`
+requires exactly this board, so the judge cannot be handed a repriced relay. -/
+def relayBoardIndex : Fin 8 := RelayRepair.boardFromRunSeed relayRunSeed
+
+def relayBoard : RelayRepair.Board := RelayRepair.boardAt relayBoardIndex
+
+theorem relayBoardIndex_literal : relayBoardIndex = 2 := by
   native_decide
 
-#assert_compiled salvageSeed_literal
+/-- Two independent sources agree: the board the run seed draws is the board the
+finite-table counts in `FiniteTables` are pinned against. -/
+theorem relayBoard_is_the_pinned_board : relayBoard = FiniteTables.relayEmittedBoard := by
+  native_decide
 
-private def relayStateJson (state : RelayRepair.State) : String :=
+#assert_compiled relayBoardIndex_literal
+#assert_compiled relayBoard_is_the_pinned_board
+
+private def relayStateJson (board : RelayRepair.Board) (state : RelayRepair.State) : String :=
   "    {\"id\":" ++ jsonString (FiniteTables.relayStateId state) ++
-    ",\"terminal\":" ++ jsonBool (RelayRepair.reachableB state.panel) ++
+    ",\"terminal\":" ++ jsonBool (RelayRepair.routedB state.panel) ++
     ",\"view\":{\"installed\":" ++
       jsonArray ((FiniteTables.relayInstalledActionIds state.panel).map jsonString) ++
-    ",\"spares\":" ++ toString state.spares ++
+    ",\"spares\":" ++ toString (RelayRepair.sparesLeft board state.panel) ++
     ",\"turns\":" ++ toString state.turns ++
-    ",\"solved\":" ++ jsonBool (RelayRepair.reachableB state.panel) ++ "}}"
+    ",\"solved\":" ++ jsonBool (RelayRepair.routedB state.panel) ++
+    ",\"stranded\":" ++ jsonBool (RelayRepair.strandedB board state) ++ "}}"
 
 private def relayActionJson (action : RelayRepair.Action) : String :=
   "    {\"id\":" ++ jsonString (FiniteTables.relayActionId action) ++
@@ -496,33 +521,56 @@ private def relayActionJson (action : RelayRepair.Action) : String :=
     ",\"from\":" ++ jsonString (FiniteTables.relayActionFrom action) ++
     ",\"to\":" ++ jsonString (FiniteTables.relayActionTo action) ++ "}"
 
-private def relayTransitionJson (transition : FiniteTables.RelayTransition) : String :=
+private def relayTransitionJson (board : RelayRepair.Board)
+    (transition : FiniteTables.RelayTransition) : String :=
   let nextId := transition.next.map FiniteTables.relayStateId
-  let reason := FiniteTables.relayRefusalReason transition.state transition.action
+  let reason := FiniteTables.relayRefusalReason board transition.state transition.action
   "    {\"state\":" ++ jsonString (FiniteTables.relayStateId transition.state) ++
     ",\"action\":" ++ jsonString (FiniteTables.relayActionId transition.action) ++
     ",\"verdict\":" ++ jsonString (if nextId.isSome then "accept" else "refuse") ++
     ",\"next\":" ++ (match nextId with | none => "null" | some id => jsonString id) ++
     ",\"reason\":" ++ (match reason with | none => "null" | some value => jsonString value) ++ "}"
 
+private def relayBoardJson (index : Nat) (board : RelayRepair.Board) : String :=
+  "    {\"index\":" ++ toString index ++
+    ",\"spares\":" ++ toString board.spares ++
+    ",\"costs\":{" ++ String.intercalate "," (FiniteTables.relayActions.map fun action =>
+      jsonString (FiniteTables.relayActionId action) ++ ":" ++
+        toString (RelayRepair.cost board action)) ++ "}}"
+
+/-- The whole seed space, not merely the drawn board: a client can show the draw, and
+the design gate can check that every board is solvable and that the seed changes which
+routes are affordable.  Publishing it is the design — the damage report is the material
+a routing puzzle is played over. -/
+private def relayInstanceJson : String :=
+  "{\"seed_byte\":0,\"modulus\":8,\"selected\":" ++ toString relayBoardIndex.val ++
+    ",\"source\":\"alpha\",\"sink\":\"omega\"" ++
+    ",\"boards\":" ++ jsonPrettyArray
+      ((List.finRange 8).map fun index =>
+        relayBoardJson index.val (RelayRepair.boardAt index)) ++
+    "}"
+
 def relayDescriptorJson : String :=
+  let states := FiniteTables.relayStates relayBoard
+  let transitions := FiniteTables.relayTransitions relayBoard
   "{\n" ++
   "  \"format\":\"POAG1-GAME\",\n" ++
   "  \"schema_version\":1,\n" ++
   "  \"game_id\":\"relay-repair\",\n" ++
-  "  \"ruleset\":\"relay-v1\",\n" ++
+  "  \"ruleset\":\"relay-v2\",\n" ++
   "  \"engine_module\":\"Dregg2.Games.PathOfAngels.RelayRepair\",\n" ++
   "  \"action_limit\":" ++ toString RelayRepair.MAX_TURNS ++ ",\n" ++
   "  \"run_seed\":" ++ jsonString (bytes32Hex relayRunSeed) ++ ",\n" ++
   "  \"security\":{\"classification\":\"transparent-beta-demo\"," ++
     "\"target_visibility\":\"public\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
+  "  \"instance\":" ++ relayInstanceJson ++ ",\n" ++
   "  \"state_machine\":{\n" ++
   "    \"initial_state\":" ++ jsonString (FiniteTables.relayStateId RelayRepair.initialState) ++ ",\n" ++
-  "    \"states\":" ++ jsonPrettyArray (FiniteTables.relayStates.map relayStateJson) ++ ",\n" ++
+  "    \"states\":" ++ jsonPrettyArray (states.map (relayStateJson relayBoard)) ++ ",\n" ++
   "    \"actions\":" ++ jsonPrettyArray (FiniteTables.relayActions.map relayActionJson) ++ ",\n" ++
   "    \"transitions\":" ++
-    jsonPrettyArray (FiniteTables.relayTransitions.map relayTransitionJson) ++ "\n" ++
+    jsonPrettyArray (transitions.map (relayTransitionJson relayBoard)) ++ "\n" ++
   "  },\n" ++
   "  \"output\":{\"requires\":\"terminal\",\"contribution\":\"mission_reward\"," ++
     "\"artifact\":\"mission_artifact\"}\n" ++
@@ -540,7 +588,8 @@ private def salvageStateJson (state : SalvageLock.State) : String :=
     ",\"turns\":" ++ toString state.turns ++
     ",\"solved\":" ++ jsonBool (SalvageLock.solvedB state) ++ "}}"
 
-private def salvageActionJson (seed : Fin 3) (action : SalvageLock.Action) : String :=
+private def salvageActionJson (seed : Fin SalvageLock.SEED_SPACE)
+    (action : SalvageLock.Action) : String :=
   let slot := SalvageLock.actionSlot action
   let glyph := SalvageLock.glyphAt seed slot
   "    {\"id\":" ++ jsonString (FiniteTables.salvageActionId action) ++
@@ -585,9 +634,10 @@ def salvageDescriptorJson : String :=
 
 /-! Strict schema checks for the exact finite-table wire. -/
 
-private def validateFiniteDescriptorCommon (j : Json) : Except String Json := do
-  exactKeys j ["format", "schema_version", "game_id", "ruleset", "engine_module",
-    "action_limit", "run_seed", "security", "state_machine", "output"]
+private def validateFiniteDescriptorCommon (extra : List String) (j : Json) :
+    Except String Json := do
+  exactKeys j (["format", "schema_version", "game_id", "ruleset", "engine_module",
+    "action_limit", "run_seed", "security", "state_machine", "output"] ++ extra)
   let security ← j.getObjVal? "security"
   exactKeys security ["classification", "target_visibility", "competitive_rewards",
     "economic_rewards"]
@@ -602,19 +652,37 @@ private def validateTransitionObjects (machine : Json) : Except String Unit := d
   for transition in transitions do
     exactKeys transition ["state", "action", "verdict", "next", "reason"]
 
+/-- The relay instance block is schema, not a free-form annex: exactly the six keys,
+exactly one board object per seed class, and every board pricing exactly the emitted
+links.  A board added, dropped, renamed or left unpriced is a parse error. -/
+private def validateRelayInstance (document : Json) : Except String Unit := do
+  let block ← document.getObjVal? "instance"
+  exactKeys block ["seed_byte", "modulus", "selected", "source", "sink", "boards"]
+  let modulus ← block.getObjValAs? Nat "modulus"
+  let boards ← (block.getObjVal? "boards") >>= Json.getArr?
+  if boards.size != modulus then
+    throw s!"POAG1 relay instance declares {boards.size} boards for modulus {modulus}"
+  let linkIds := FiniteTables.relayActions.map FiniteTables.relayActionId
+  for board in boards do
+    exactKeys board ["index", "spares", "costs"]
+    exactKeys (← board.getObjVal? "costs") linkIds
+
 def validateRelayDescriptor (bytes : String) : Except String Unit := do
-  let machine ← validateFiniteDescriptorCommon (← Json.parse bytes)
+  let document ← Json.parse bytes
+  let machine ← validateFiniteDescriptorCommon ["instance"] document
+  validateRelayInstance document
   let states ← (machine.getObjVal? "states") >>= Json.getArr?
   for state in states do
     exactKeys state ["id", "terminal", "view"]
-    exactKeys (← state.getObjVal? "view") ["installed", "spares", "turns", "solved"]
+    exactKeys (← state.getObjVal? "view")
+      ["installed", "spares", "turns", "solved", "stranded"]
   let actions ← (machine.getObjVal? "actions") >>= Json.getArr?
   for action in actions do
     exactKeys action ["id", "label", "from", "to"]
   validateTransitionObjects machine
 
 def validateSalvageDescriptor (bytes : String) : Except String Unit := do
-  let machine ← validateFiniteDescriptorCommon (← Json.parse bytes)
+  let machine ← validateFiniteDescriptorCommon [] (← Json.parse bytes)
   let states ← (machine.getObjVal? "states") >>= Json.getArr?
   for state in states do
     exactKeys state ["id", "terminal", "view"]
@@ -775,10 +843,21 @@ theorem relayReward_accepted
 def relayConfig
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     RelayRepair.Config :=
-  { mission := relayMission federationId sourceDigest contentDigest contentRoot activationDigest
+  { board := relayBoard
+    mission := relayMission federationId sourceDigest contentDigest contentRoot activationDigest
     reward := relayReward
     reward_accepted := relayReward_accepted federationId sourceDigest contentDigest contentRoot
-      activationDigest }
+      activationDigest
+    board_eq := rfl }
+
+/-- The judged board is the emitted board, and both are the one the precommitted seed
+draws.  A host cannot judge a run on a cheaper relay than the client was shown. -/
+theorem relayConfig_board_is_emitted
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (relayConfig federationId sourceDigest contentDigest contentRoot activationDigest).board =
+      RelayRepair.boardAt (RelayRepair.boardFromRunSeed relayRunSeed) := rfl
+
+#assert_axioms relayConfig_board_is_emitted
 
 def relayPreview
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) : Option WorldState :=
@@ -846,7 +925,7 @@ def salvageConfig
     reward := salvageReward
     reward_accepted := salvageReward_accepted federationId sourceDigest contentDigest contentRoot
       activationDigest
-    seed_eq := rfl }
+    seed_eq := salvageSeed_resolved.symm }
 
 def salvagePreview
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) : Option WorldState :=
@@ -912,7 +991,7 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
         "Dregg2.Games.PathOfAngels.SignalTriangulation" "signal-v1"
         SignalTriangulation.MAX_TURNS [⟨1⟩] "games/signal-triangulation.json"
     , missionCatalogJson relay "Relay Repair" "Dregg2.Games.PathOfAngels.RelayRepair"
-        "relay-v1" RelayRepair.MAX_TURNS [⟨2⟩] "games/relay-repair.json"
+        "relay-v2" RelayRepair.MAX_TURNS [⟨2⟩] "games/relay-repair.json"
     , missionCatalogJson salvage "Salvage Lock" "Dregg2.Games.PathOfAngels.SalvageLock"
         "salvage-v1" SalvageLock.MAX_TURNS [⟨3⟩] "games/salvage-lock.json" ]
   let fixtures :=

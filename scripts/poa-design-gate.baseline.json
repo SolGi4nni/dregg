@@ -1,14 +1,8 @@
 {
   "accepted": [
-    "relay-repair/budget-slack",
-    "relay-repair/cannot-lose",
-    "relay-repair/no-outcome-fork",
-    "relay-repair/seed-unused",
-    "relay-repair/single-opener-class",
     "salvage-lock/budget-slack",
     "salvage-lock/doomed-but-open",
     "salvage-lock/instance-secret-published",
-    "salvage-lock/seed-inert",
     "salvage-lock/single-opener-class",
     "signal-triangulation/degenerate-instance-family",
     "signal-triangulation/instance-secret-published",

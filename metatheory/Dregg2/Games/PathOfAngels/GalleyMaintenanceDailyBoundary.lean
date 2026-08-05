@@ -53,6 +53,33 @@ theorem raw_replay_surface_is_private : True := by
   fail_if_success (have _ := proposeDaily)
   trivial
 
+/-- ⚑ THE CONFINEMENT GATE for the exported game surface.
+
+`genesisState` and `step` are public so that the Galley wire codec can run THIS
+reducer instead of restating a second one.  That is only safe while the daily's
+state space stays genesis-rooted: the importer must be unable to *name* a
+`State` it did not reach by stepping from `genesisState`.
+
+Every way to do that is negated here, so this theorem is refutable in the
+direction that matters — publish `State.mk`, `initialState`, or the post-ballot
+fixture (which is how this module's own tests skip the two-chamber ballot) and
+it goes red immediately.  A caller then still cannot enter `.maintenance`
+without a passed ballot, because the only remaining route is `step`, whose
+`openMaintenance` branch checks `twoChamberResult`. -/
+theorem exported_game_surface_is_genesis_rooted : True := by
+  fail_if_success (have _ := State.mk)
+  fail_if_success (have _ := initialState)
+  fail_if_success (have _ := reduce)
+  fail_if_success (have _ := participantStep)
+  fail_if_success (have _ := openMaintenanceStep)
+  fail_if_success (have _ := performStep)
+  fail_if_success (have _ := visitCommonsStep)
+  fail_if_success (have _ := recordOutputStep)
+  fail_if_success (have _ := fixtureMaintenanceReady)
+  fail_if_success (have _ := fixtureCompleted)
+  fail_if_success (have _ := fixtureRecorded)
+  trivial
+
 theorem activation_authority_is_opaque : True := by
   fail_if_success (have _ := DailyActivationProvenance.mk)
   fail_if_success (have _ := DailyActivationCapability.mk)
@@ -102,6 +129,19 @@ theorem shared_host_provisioning_portal_is_opaque : True := by
   fail_if_success (have _ := ProvisionedDeployment.mk)
   trivial
 
+-- The exported game surface the Galley wire codec is being cut over to.
+#check genesisState
+#check step
+#check step_is_reduce
+#check genesisState_is_ballot
+
+-- ⚠ The signatures below TYPE-CHECK; that is all `#check` establishes.  Every
+-- one of them is a function whose argument types have no inhabitant anywhere in
+-- the repository (`HostInitializer.mk` is private with zero construction sites;
+-- no `DailyPersistenceCASContract` / `OutputRegistryPersistenceContract` value
+-- exists), so none of them has ever been called and none can be called across
+-- an FFI carrying `Prop`-valued host predicates.  Do not read this block as
+-- evidence that the capability tower is reachable.
 #check admitDailyActivation
 #check admitDurableOutput
 #check admitDailyCommand
@@ -135,6 +175,7 @@ theorem shared_host_provisioning_portal_is_opaque : True := by
 #assert_axioms commons_fixtures_are_private
 #assert_axioms unchecked_daily_steps_are_private
 #assert_axioms raw_replay_surface_is_private
+#assert_axioms exported_game_surface_is_genesis_rooted
 #assert_axioms activation_authority_is_opaque
 #assert_axioms command_and_output_authority_are_opaque
 #assert_axioms durable_continuation_is_opaque

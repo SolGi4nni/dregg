@@ -564,6 +564,15 @@ ceiling. The generalized fix is the index, and it is one table.
 
 ## 10. The blocker a copying lane will hit first
 
+> **CLOSED 2026-08-05 for Galley.** `node/src/poa_galley_genesis.rs` +
+> `dregg-node poa-galley-world-preview` / `dregg-node init-poa-galley-world` now call the
+> three installers at the operator boundary, and
+> `poa/artifacts/galley/epoch-1/{policy,manifest}.json` is the authored production
+> component (`scripts/poa-galley-content.py`). **The class is not closed** — the section
+> below is kept because every *other* organ is still in exactly this position, and
+> because the diagnosis is what a copying lane needs. See §10.1 for what is now live and
+> what is still missing.
+
 **Nothing installs a Galley world on a running node.** The three installers —
 `install_poa_world_curator_pin_v1`, `install_poa_world_activation_v1`,
 `install_poa_activated_content_v1` — are `pub`, and every call site in the repo is inside
@@ -597,3 +606,46 @@ the operator boundary — a `dregg-node poa-galley-activate --manifest … --cur
 subcommand or an admin route behind the existing curator pin — plus a real authored policy
 component. It is small, and it is the difference between the whole traced path being live
 and being a test fixture.
+
+### 10.1 The ceremony that closes it, and what it does not close
+
+`node/src/poa_galley_genesis.rs`. Two subcommands, because the node must never mint a
+curator signature:
+
+```
+dregg-node poa-galley-world-preview  --data-dir … --deployment-manifest … --genesis …
+    --main-data-dir … --poag1-manifest … --content-envelope … --curator-key-pin …
+    --content-manifest poa/artifacts/galley/epoch-1/manifest.json
+    --content-session 504f412d47414c4c45592d310000000000000000000000000000000000000000
+    --expected-content-epoch 1 --expected-activation-counter 5 --world-counter 1
+        → POA-WORLD-ACTIVATION-PREVIEW-V1 {world, signing_message, signing_message_sha256}
+
+  curator signs `signing_message` with the pinned Ed25519 key
+        → POA-WORLD-ACTIVATION-ENVELOPE-V1 (schema, world, counter, predecessor_head,
+          kind, rollback_target, curator_key, signature)
+
+dregg-node init-poa-galley-world  … --signed-activation activation.sig.json
+        → install_poa_world_curator_pin_v1 → install_poa_world_activation_v1
+          → install_poa_activated_content_v1 → both reopen audits
+          → load_authenticated_poa_galley_policy_v1 (the organ is open)
+```
+
+The world identity is **derived, never accepted**: `federation_id` from the verified
+deployment manifest, `activation_digest` from the verified POAG1 content-epoch envelope,
+`content_root` from SHA-256 of the manifest file, `content_epoch` from the envelope. A
+curator signature over any other world refuses before the store is opened.
+
+What is still open:
+
+- **`content_session` has no independent source.** It is an operator flag that must equal
+  the manifest's `scope.content_session`; Lean refuses the install otherwise. Checking it
+  in the node would mean a second manifest grammar in Rust, so it is not checked there.
+- **The ceremony is offline.** It opens `dregg.redb` directly, so the node must be stopped.
+  There is still no admin route, and a live world rotation therefore still costs a restart.
+- **No other organ has one.** This is one installer for one organ, not the generic operator
+  boundary G1–G10 keep pointing at.
+- **`rules_digest` is provenance, not a binding.** The authored policy sets it to SHA-256 of
+  `GalleyMaintenanceDailyRuntime.lean` at authoring time. It is bound into every
+  action-token preimage and verified against nothing at runtime; editing that file makes
+  the artifact stale, and re-emitting it changes `content_root` and needs a new signed
+  activation.

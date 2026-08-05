@@ -438,6 +438,100 @@ theorem dregg_sponsorship_preserves_chamber_power (policy : HolderMechanics.Poli
   rcases hstep with ⟨_, _, rfl, _⟩
   exact ⟨rfl, rfl⟩
 
+/-! ## The exported game surface — ONE semantics for the Galley daily
+
+⚑ There have been two Galley state machines.  This module's `reduce` (the
+ballot / authored procedure / scarce commons / one finalized world output) and
+`GalleyMaintenanceDailyRuntime.reduce` (one visit per player against a
+`serviceTarget` meter) share exactly one identifier — `MAX_LOCAL_SERVICE` — and
+no type, no relation and no theorem.  Only the Runtime one carries `@[export]`,
+so the Runtime has been the entire shipped semantics.
+
+**No refinement theorem between them is honest and none will be written here.**
+They are not two implementations of one game:
+
+* the Runtime's sponsor transition adds `policy.sponsorService` to the only
+  progress variable it has, while this kernel's sponsorship provably moves
+  nothing (`dregg_sponsorship_preserves_chamber_power`) — a *contradiction*
+  under any relation that maps progress to progress, not a gap;
+* a commons visit here pays `choice.localService` or `0` by capacity, and the
+  Runtime pays a policy constant with no capacity, no rotation and no
+  authored alternative;
+* `perform` (an ordered authored procedure) and `recordFinalizedOutput` (the
+  world contribution, through a deployment-global coordinate/receipt registry)
+  have no Runtime counterpart at all, and the Runtime's four anchor roots have
+  no counterpart here.
+
+A simulation would therefore have to be stated over a `CommonsPolicy` carrier
+that no authored `DailySpec` and no emitted `PolicyWire` constructs — the
+identity-carrier vacuity shape — and, worse, over `ActivatedDaily`, which has
+no inhabitant anywhere in the tree (see the tower note below).  A theorem
+universally quantified over an uninhabited premise is the apex-vacuity wound,
+not a weld.
+
+So the resolution is a cutover, not a bridge: **this reducer becomes the one
+semantics, and `GalleyMaintenanceDailyRuntime` becomes a pure wire codec over
+the two functions below.**  `NightWatchLoopRuntime` is already exactly that
+shape over `NightWatchLoop.execute` — this is the house pattern, one directory
+over, not a new architecture.
+
+⚑ What is NOT exportable, and is not merely un-exported.  Everything below
+`/-! ## Opaque activation …-/` is a capability and CAS tower with **no
+inhabitant at any level**, measured against HEAD:
+
+* `HostInitializer.mk` is private and has **zero construction sites in the
+  repository** — not even a fixture — so `provisionCapabilities` and
+  `GalleyCommons.provisionDeployment` are uncallable, and `ActivatedDaily`,
+  `DailyDeploymentSnapshot`, `AdmittedDailyCommand` and `PersistedDailyRuntime`
+  are empty outside this file's private fixtures;
+* `DailyPersistenceCASContract`, `OutputRegistryPersistenceContract` and
+  `GalleyCommons.PersistenceCASContract` are **never constructed anywhere**,
+  and neither is any `DailyCanonicalSerializer` / `CanonicalSerializer`, so
+  `faithful` is never discharged;
+* consequently `PersistedDailyTransition.same_successor`, every
+  `revisionZero_same_genesis`, every `deployment_scoped` and every
+  `same_root` is `∀ persistence, …` over a record type with no value.
+
+They also *cannot* be given one across the FFI: `loadedAt`, `createGenesis`,
+`rootedAt` and `compareAndSwap` are `Prop`-valued host predicates, and a
+`String → String` export cannot receive a `Prop`.  The durability, CAS,
+world-activation audit and receipt resolution these model are already done, for
+real and with independent re-checks at five hops, in `persist/`.  The tower is
+therefore dead weight to be deleted by the cutover lane, not a gate to be
+opened — and the two boundary modules' privacy theorems are, read correctly,
+the machine-checked certificate that nothing can get in.
+
+Publishing the two functions below does **not** widen the reachable state set.
+`State.mk`, `initialState` and all five `*Step` functions stay private
+(`GalleyMaintenanceDailyBoundary`), so the only `State` an importer can name is
+`genesisState spec` and the only way to move is `step`.  In particular no caller
+can start a daily already in `.maintenance`: every route to that phase runs
+`openMaintenanceStep`, which refuses unless `twoChamberResult = .passed`.  The
+refutation to watch is the boundary module: make `State.mk`, `initialState` or
+`fixtureMaintenanceReady` public and `raw_replay_surface_is_private` /
+`daily_state_constructor_is_private` / `post_ballot_fixture_is_private` go red. -/
+
+/-- The one public entrance to a daily.  Ballot phase, empty board. -/
+def genesisState (spec : DailySpec) : State := initialState spec
+
+/-- The exported transition.  Definitionally `reduce`; there is no second
+reducer, and a codec layer must call this rather than restate it. -/
+def step (spec : DailySpec) (state : State) (payload : Payload) : Option State :=
+  reduce spec state payload
+
+theorem step_is_reduce (spec : DailySpec) (state : State) (payload : Payload) :
+    step spec state payload = reduce spec state payload := rfl
+
+theorem genesisState_is_ballot (spec : DailySpec) :
+    (genesisState spec).phase = .ballot ∧ (genesisState spec).sequence = 0 ∧
+      (genesisState spec).progress = 0 ∧ (genesisState spec).performed = [] ∧
+      (genesisState spec).terminalContentId = none ∧
+      (genesisState spec).finalizedOutput = none :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem genesisState_carries_its_spec (spec : DailySpec) :
+    (genesisState spec).spec = spec := rfl
+
 /-! ## Shared event-sourcing adapter -/
 
 def streamSpec (spec : DailySpec) : EventSourcing.StreamSpec where
@@ -1856,6 +1950,9 @@ theorem sourced_payload_sequence_mismatch_is_refused :
   native_decide
 
 #assert_axioms ExactFinalizedOutput.exact
+#assert_axioms step_is_reduce
+#assert_axioms genesisState_is_ballot
+#assert_axioms genesisState_carries_its_spec
 #assert_axioms admitted_holder_choir_delegates
 #assert_axioms dregg_sponsorship_preserves_chamber_power
 #assert_axioms successful_commons_visit_preserves_power

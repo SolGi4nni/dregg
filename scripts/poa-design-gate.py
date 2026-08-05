@@ -752,16 +752,27 @@ class MachineGame:
                      f"a budget of {self.budget}.  Failure is unrepresentable, so no "
                      f"choice carries a consequence.")
         else:
+            # Does some emitted view field mark exactly the lost runs?  A client can
+            # only tell the player the run is dead if the table says so.
+            marker = None
+            for key in sorted(self.states[self.initial]["view"]):
+                vals = {s: self.states[s]["view"].get(key) for s in reachable}
+                if (all(isinstance(v, bool) for v in vals.values())
+                        and {s for s in reachable if vals[s]} == doomed):
+                    marker = key
+                    break
+            example = sorted(doomed_open)[0] if doomed_open else sorted(doomed)[0]
             rep.find(self.name, "doomed-but-open", WARN if doomed_open else INFO,
                      f"{len(doomed)} reachable state(s) can no longer reach a reward, "
                      f"{len(doomed_open)} of them still accept actions",
                      f"PLATFORM-ROADMAP 12.3 names this case exactly: legal states from "
                      f"which the ranked goal is already impossible but play continues "
-                     f"misleadingly.  Example: "
-                     f"{sorted(doomed_open)[0] if doomed_open else sorted(doomed)[0]} "
-                     f"-> view "
-                     f"{self.states[sorted(doomed_open)[0] if doomed_open else sorted(doomed)[0]]['view']}."
-                     f"  Nothing in the state view marks the run as already lost.")
+                     f"misleadingly.  Example: {example} -> view "
+                     f"{self.states[example]['view']}.  " +
+                     (f"The emitted view marks exactly these states with "
+                      f"`{marker}: true`, so a client can say so."
+                      if marker else
+                      "Nothing in the state view marks the run as already lost."))
 
         if outcome_forks == 0:
             rep.find(self.name, "no-outcome-fork", WARN,
@@ -914,84 +925,345 @@ def hidden_pairing_worst_case(n_slots: int) -> tuple[int, int]:
     return value(frozenset(), None, frozenset(), all_boards), len(all_boards)
 
 
+def _salvage_draw_below(bound: int, stream: list[int]):
+    """The rejection-sampled CONSUMING draw of `SeedDraw.drawBelow?`: returns the
+    value and the bytes that remain.  A draw that re-read the same prefix (the shape
+    of `SalvageCrate.unbiasedIndex?`) would return the same byte four times and the
+    board index would be a function of one byte."""
+    ceiling = 256 - (256 % bound)
+    for i, b in enumerate(stream):
+        if b < ceiling:
+            return b % bound, stream[i + 1:]
+    return None
+
+
+def salvage_seed_from_run_seed(run_seed_hex: str):
+    """Four consuming draws: partner of plate 0 (5), partner of the lowest remaining
+    plate (3), glyph name for pair 0 (3), glyph name for pair 1 (2)."""
+    stream = [int(run_seed_hex[i:i + 2], 16) for i in range(0, len(run_seed_hex), 2)]
+    digits = []
+    for bound in (5, 3, 3, 2):
+        got = _salvage_draw_below(bound, stream)
+        if got is None:
+            return None, digits
+        value, stream = got
+        digits.append(value)
+    a, b, c, d = digits
+    return 18 * a + 6 * b + 2 * c + d, digits
+
+
+def salvage_board(seed: int) -> tuple[list[tuple[int, int]], list[int]]:
+    """`SalvageLock.pairsOf` / `glyphNamesOf` / `boardRow`, rebuilt.  Returns the
+    matching and the six-glyph row."""
+    a, b = seed // 18, (seed % 18) // 6
+    c, d = (seed % 6) // 2, seed % 2
+    rest0 = [1, 2, 3, 4, 5]
+    p = rest0[a]
+    rest1 = [x for x in rest0 if x != p]
+    m = rest1[0]
+    rest2 = [x for x in rest1 if x != m]
+    q = rest2[b]
+    rest3 = [x for x in rest2 if x != q]
+    pairs = [(0, p), (m, q), (rest3[0], rest3[1])]
+    names = [0, 1, 2]
+    g0 = names[c]
+    left = [x for x in names if x != g0]
+    g1 = left[d]
+    g2 = [x for x in left if x != g1][0]
+    row = [0] * 6
+    for (lo, hi), glyph in zip(pairs, [g0, g1, g2]):
+        row[lo] = glyph
+        row[hi] = glyph
+    return sorted(pairs), row
+
+
+def salvage_pairing_from_transitions(doc: dict) -> list[tuple[int, int]]:
+    """The pairing read back out of the TRANSITION table alone, with the action
+    rows ignored.  This is the independent half of the differential — and it is also
+    why deleting `glyph_id` from the action rows would hide nothing: which exposures
+    clear is stated by the successors."""
+    sm = doc["state_machine"]
+    states = {s["id"]: s for s in sm["states"]}
+    trans = {(t["state"], t["action"]): t for t in sm["transitions"]}
+    initial = sm["initial_state"]
+    partner = {}
+    for first in range(6):
+        step1 = trans.get((initial, f"slot-{first}"))
+        if step1 is None or step1["verdict"] != "accept":
+            raise Refusal(f"initial state refuses slot-{first}; cannot read the board "
+                          f"back out of the transition table")
+        exposed_state = step1["next"]
+        for second in range(6):
+            if second == first:
+                continue
+            step2 = trans.get((exposed_state, f"slot-{second}"))
+            if step2 is None or step2["verdict"] != "accept":
+                continue
+            if states[step2["next"]]["view"]["cleared"]:
+                partner[first] = second
+    if sorted(partner) != list(range(6)):
+        raise Refusal(f"the transition table pairs only {sorted(partner)}")
+    return sorted({tuple(sorted((s, partner[s]))) for s in range(6)})
+
+
 def salvage_seed_family(doc: dict, rep: Report, summary: dict) -> None:
-    """SalvageLock.glyphAt seed slot = (slot + seed) % 3 over 6 slots.  Rebuild the
-    board for every seed, differentially check the pinned one against the emitted
-    action table, then ask what the seed actually changes."""
+    """The board is drawn from `run_seed` by four consuming draws over the 90 boards
+    that carry two copies of each of three glyphs.  Rebuild it, differentially check
+    the pinned one against BOTH the emitted action table and the emitted transitions,
+    then ask what the seed actually changes."""
     name = doc["game_id"]
-    slots = 6
-    glyphs = 3
-    seed_space = list(range(glyphs))
-    pinned = int(doc["run_seed"][0:2], 16) % glyphs
+    slots, glyphs = 6, 3
+    seed_space = list(range(90))
+    pinned, digits = salvage_seed_from_run_seed(doc["run_seed"])
+    if pinned is None:
+        raise Refusal(f"the pinned run_seed exhausts its bytes after {len(digits)} of "
+                      f"4 draws; no board is determined")
 
-    def glyph_at(seed, slot):
-        return (slot + seed) % glyphs
-
+    pairs, row = salvage_board(pinned)
     emitted = {a["slot"]: a["glyph_id"] for a in doc["state_machine"]["actions"]}
-    model = {s: glyph_at(pinned, s) for s in range(slots)}
+    model = {s: row[s] for s in range(slots)}
     if emitted != model:
         raise Refusal(f"rebuilt glyph board {model} disagrees with the emitted action "
-                      f"table {emitted} for seed {pinned}")
+                      f"table {emitted} for seed {pinned} (drawn from run_seed "
+                      f"{doc['run_seed'][:16]}...).  Re-emit the descriptor from Lean.")
+    from_transitions = salvage_pairing_from_transitions(doc)
+    if from_transitions != pairs:
+        raise Refusal(f"the emitted transition table pairs {from_transitions} while the "
+                      f"rebuilt board pairs {pairs}: the action rows and the successors "
+                      f"describe different boards")
 
-    def pairing(seed):
-        buckets = defaultdict(list)
-        for s in range(slots):
-            buckets[glyph_at(seed, s)].append(s)
-        return sorted(tuple(v) for v in buckets.values())
-
-    pairings = {seed: pairing(seed) for seed in seed_space}
-    distinct = {tuple(p) for p in pairings.values()}
-    populations = {seed: sorted(Counter(glyph_at(seed, s) for s in range(slots)).values())
-                   for seed in seed_space}
+    families = defaultdict(list)
+    boards = set()
+    for seed in seed_space:
+        seed_pairs, seed_row = salvage_board(seed)
+        families[tuple(seed_pairs)].append(seed)
+        boards.add(tuple(seed_row))
+        counts = sorted(Counter(seed_row).values())
+        if counts != [2, 2, 2]:
+            raise Refusal(f"seed {seed} rebuilds to {seed_row}, which is not two of "
+                          f"each glyph")
 
     summary["seed_space"] = len(seed_space)
     summary["pinned_seed"] = pinned
-    summary["distinct_pairings_over_seed_space"] = len(distinct)
-    summary["pairing"] = [list(p) for p in pairings[pinned]]
-    summary["glyph_populations"] = populations[pinned]
+    summary["seed_draws"] = digits
+    summary["distinct_pairings_over_seed_space"] = len(families)
+    summary["distinct_boards_over_seed_space"] = len(boards)
+    summary["pairing"] = [list(p) for p in pairs]
+    summary["glyph_populations"] = sorted(Counter(row).values())
 
-    hidden_worst, boards = hidden_pairing_worst_case(slots)
-    summary["counterfactual_hidden_boards"] = boards
+    hidden_worst, matchings = hidden_pairing_worst_case(slots)
+    summary["counterfactual_hidden_boards"] = matchings
     summary["counterfactual_hidden_worst_case"] = hidden_worst
+
+    if len(families) < matchings:
+        rep.find(name, "seed-underdetermines-board", WARN,
+                 f"the {len(seed_space)} seeds reach only {len(families)} of the "
+                 f"{matchings} perfect matchings",
+                 f"a seed space that cannot name every matching hands some boards to "
+                 f"nobody, and a player who knows the reachable set starts with "
+                 f"information the design did not mean to give.")
+    else:
+        rep.find(name, "seed-names-the-board", INFO,
+                 f"the seed space is exactly the {len(boards)} two-of-each boards, over "
+                 f"all {matchings} perfect matchings",
+                 f"`run_seed` is drawn by four consuming rejection-sampled draws "
+                 f"(bounds 5, 3, 3, 2 -> digits {digits}) into board {pinned} of "
+                 f"{len(seed_space)}, whose pairing is {[list(p) for p in pairs]} and "
+                 f"whose row is {row}.  Each of the {matchings} matchings is carried by "
+                 f"{len(seed_space) // len(families)} seeds — its 3! glyph "
+                 f"relabellings — so a glyph name says nothing about the pairing beyond "
+                 f"agreement with a glyph already seen.  There is no memory-free "
+                 f"routine: `pair = slot mod {glyphs}` is wrong on "
+                 f"{matchings - 1} of the {matchings} matchings.")
+
     rep.find(name, "budget-sized-for-a-board-that-is-not-hidden", INFO,
              f"the budget fits a genuinely hidden board ({hidden_worst} turns) but the "
              f"emitted board needs {summary['execution_floor_as_emitted']}",
-             f"if `glyphAt` produced one of the {boards} perfect matchings of "
-             f"{slots} plates instead of `slot mod {glyphs}`, a perfect-memory player "
-             f"against an adaptive adversary would need {hidden_worst} turns in the "
-             f"worst case — which is what `action_limit = {doc['action_limit']}` looks "
-             f"sized for.  The emitted board needs "
-             f"{summary['execution_floor_as_emitted']}.  The budget is evidence of the "
-             f"game somebody meant to ship.")
-
-    if len(distinct) == 1:
-        rep.find(name, "seed-inert", WARN,
-                 f"all {len(seed_space)} seeds produce the SAME pairing",
-                 f"glyphAt seed slot = (slot + seed) % {glyphs}, so slot s and slot "
-                 f"s+{glyphs} always share a glyph: the pairing is "
-                 f"{[list(p) for p in pairings[pinned]]} for every seed.  The seed only "
-                 f"renames the glyphs.  A player who knows `pair = slot mod {glyphs}` "
-                 f"clears the hatch in {slots} turns every time, on every seed, without "
-                 f"remembering anything.  The seed space is nominally "
-                 f"{len(seed_space)} and effectively 1.")
+             f"against a uniformly drawn one of the {matchings} perfect matchings of "
+             f"{slots} plates, a perfect-memory player facing an adaptive adversary "
+             f"needs {hidden_worst} turns in the worst case — which is what "
+             f"`action_limit = {doc['action_limit']}` looks sized for.  The board IS "
+             f"now drawn from that family, so the {hidden_worst} is the honest cost of "
+             f"the game underneath; the emitted descriptor still publishes the instance "
+             f"(see `instance-secret-published`), so a player who reads it needs "
+             f"{summary['execution_floor_as_emitted']}.  Closing that gap is a wire "
+             f"change — a commitment to the board plus per-exposure openings — not a "
+             f"budget change.")
 
 
-def relay_seed_family(doc: dict, rep: Report, summary: dict) -> None:
-    """RelayRepair.Config carries no seed field; check the descriptor agrees."""
+def simple_paths(edges, source, sink):
+    """Every simple source->sink path in the emitted graph, as action-id lists.
+
+    `edges` maps action id -> (from, to).  The relay is undirected in the fiction
+    (a link carries power either way), so both orientations are walked.
+    """
+    adj = defaultdict(list)
+    for aid, (u, v) in edges.items():
+        adj[u].append((v, aid))
+        adj[v].append((u, aid))
+    out = []
+
+    def walk(node, seen_nodes, acc):
+        if node == sink:
+            out.append(list(acc))
+            return
+        for nxt, aid in adj[node]:
+            if nxt in seen_nodes:
+                continue
+            acc.append(aid)
+            walk(nxt, seen_nodes | {nxt}, acc)
+            acc.pop()
+
+    walk(source, {source}, [])
+    return out
+
+
+def relay_instance_family(doc: dict, rep: Report, summary: dict) -> None:
+    """Relay Repair publishes a seeded damage board.  Rebuild the whole rule from the
+    declared instance (graph + per-link spare cost + crate size) and refuse unless it
+    reproduces every emitted state view and every one of the emitted transition rows;
+    only then ask what the seed space actually contains."""
     name = doc["game_id"]
-    instance_carrying = [k for k in doc if k in ("target", "seed", "board", "instance")]
-    per_action = sorted({k for a in doc["state_machine"]["actions"] for k in a}
-                        - {"id", "label", "from", "to"})
-    summary["distinct_instances_expressible"] = 1
-    summary["seed_consumed"] = bool(instance_carrying or per_action)
-    if not summary["seed_consumed"]:
-        rep.find(name, "seed-unused", WARN,
-                 "the descriptor pins a run_seed that cannot influence play",
-                 f"run_seed = {doc['run_seed'][:16]}... is recorded in the receipt, but "
-                 f"the descriptor carries no instance data (no target, no per-action "
-                 f"payload beyond {['id', 'label', 'from', 'to']}) and "
-                 f"`RelayRepair.Config` has no seed field.  Every run of every seed is "
-                 f"the same puzzle.  The seed is a receipt nonce, not an instance.")
+    inst = doc.get("instance")
+    if inst is None:
+        raise Refusal("relay-repair no longer declares an `instance`; this gate "
+                      "cannot tell what the run seed selects")
+    want = {"seed_byte", "modulus", "selected", "source", "sink", "boards"}
+    if set(inst) != want:
+        raise Refusal(f"instance block carries {sorted(inst)}, expected {sorted(want)}")
+
+    budget = doc["action_limit"]
+    edges = {a["id"]: (a["from"], a["to"]) for a in doc["state_machine"]["actions"]}
+    action_ids = set(edges)
+    routes = simple_paths(edges, inst["source"], inst["sink"])
+    if not routes:
+        raise Refusal(f"no {inst['source']}->{inst['sink']} path exists in the emitted "
+                      f"link graph, so no run can ever be rewarded")
+
+    boards = inst["boards"]
+    if len(boards) != inst["modulus"]:
+        raise Refusal(f"{len(boards)} boards for a modulus of {inst['modulus']}")
+    for index, board in enumerate(boards):
+        if set(board) != {"index", "spares", "costs"} or board["index"] != index:
+            raise Refusal(f"board {index} is malformed or out of order")
+        if set(board["costs"]) != action_ids:
+            raise Refusal(f"board {index} does not price exactly the emitted links")
+        if any(c < 1 for c in board["costs"].values()):
+            raise Refusal(f"board {index} prices a link below one spare")
+
+    byte = int(doc["run_seed"][2 * inst["seed_byte"]:2 * inst["seed_byte"] + 2], 16)
+    if byte % inst["modulus"] != inst["selected"]:
+        raise Refusal(f"run_seed byte {inst['seed_byte']} = {byte} selects board "
+                      f"{byte % inst['modulus']}, but the descriptor claims "
+                      f"{inst['selected']}")
+    board = boards[inst["selected"]]
+    costs, crate = board["costs"], board["spares"]
+
+    def route_cost(links):
+        return sum(costs[l] for l in links)
+
+    def solved_by(installed):
+        return any(all(l in installed for l in r) for r in routes)
+
+    def completable(installed, turns, spares):
+        for r in routes:
+            missing = [l for l in r if l not in installed]
+            if len(missing) + turns <= budget and route_cost(missing) <= spares:
+                return True
+        return False
+
+    # -- differential 1: every emitted state view is what the board implies --------
+    facts = {}
+    for state in doc["state_machine"]["states"]:
+        view = state["view"]
+        installed = set(view["installed"])
+        if not installed <= action_ids:
+            raise Refusal(f"state {state['id']} installs an unknown link")
+        spares = crate - route_cost(installed)
+        solved = solved_by(installed)
+        stranded = not solved and not completable(installed, view["turns"], spares)
+        got = (state["terminal"], view["solved"], view["spares"], view["stranded"])
+        model = (solved, solved, spares, stranded)
+        if got != model:
+            raise Refusal(
+                f"rebuilt board disagrees with emitted state {state['id']}: "
+                f"(terminal, solved, spares, stranded) emitted={got} model={model}")
+        facts[state["id"]] = (installed, view["turns"], spares, solved, stranded)
+
+    # -- differential 2: every emitted row is what the rule implies ----------------
+    for t in doc["state_machine"]["transitions"]:
+        installed, turns, spares, solved, stranded = facts[t["state"]]
+        link = t["action"]
+        legal = (not solved and turns < budget and not stranded
+                 and link not in installed and costs[link] <= spares)
+        if legal != (t["verdict"] == "accept"):
+            raise Refusal(f"rebuilt rule disagrees with emitted row {t['state']}/"
+                          f"{link}: model says {'accept' if legal else 'refuse'}")
+        if legal:
+            nxt = facts[t["next"]]
+            if nxt[0] != installed | {link} or nxt[1] != turns + 1:
+                raise Refusal(f"row {t['state']}/{link} accepts into {t['next']}, "
+                              f"which is not that install")
+        else:
+            claim = {"solved": solved, "turn-limit": turns >= budget,
+                     "already-installed": link in installed,
+                     "no-spares": costs[link] > spares, "stranded": stranded}
+            if t["reason"] not in claim:
+                raise Refusal(f"row {t['state']}/{link} refuses with unmodelled "
+                              f"reason {t['reason']!r}")
+            if not claim[t["reason"]]:
+                raise Refusal(f"row {t['state']}/{link} refuses as {t['reason']!r}, "
+                              f"which is false of that state")
+
+    # -- what the seed space actually contains ------------------------------------
+    def signature(b):
+        aff = tuple(sorted(tuple(r) for r in routes
+                           if sum(b["costs"][l] for l in r) <= b["spares"]))
+        return aff
+
+    shapes = [signature(b) for b in boards]
+    unwinnable = [b["index"] for b, s in zip(boards, shapes) if not s]
+    distinct_boards = len({(b["spares"], tuple(sorted(b["costs"].items())))
+                           for b in boards})
+    distinct_classes = len(set(shapes))
+
+    summary["board_space"] = len(boards)
+    summary["selected_board"] = inst["selected"]
+    summary["routes_source_to_sink"] = [list(r) for r in routes]
+    summary["selected_route_costs"] = {"|".join(r): route_cost(r) for r in routes}
+    summary["selected_crate"] = crate
+    summary["distinct_instances_expressible"] = distinct_boards
+    summary["distinct_instance_classes"] = distinct_classes
+    summary["unwinnable_boards"] = unwinnable
+    summary["seed_consumed"] = True
+
+    if unwinnable:
+        rep.find(name, "unwinnable-seed", FAIL,
+                 f"{len(unwinnable)} board(s) in the seed space cannot be solved at all",
+                 f"boards {unwinnable} price every {inst['source']}->{inst['sink']} "
+                 f"route above their own crate, so a run that draws one is refused from "
+                 f"the first action.  The emitted machine only ever shows board "
+                 f"{inst['selected']}; this is visible only from the whole table.")
+
+    if distinct_classes == 1:
+        rep.find(name, "seed-inert", WARN,
+                 f"all {len(boards)} boards leave the same routes affordable",
+                 f"the seed repriced the links but never changed which of the "
+                 f"{len(routes)} routes a player can pay for, so the board is "
+                 f"decoration and one memorised line clears every seed.")
+
+    rep.find(name, "instance-published-by-design", INFO,
+             "the damage board is published in the descriptor, and for this game that "
+             "is the design",
+             f"`instance` states the crate ({crate} spares), the per-link cost, and all "
+             f"{len(boards)} boards the seed can select; run_seed byte "
+             f"{inst['seed_byte']} = 0x{byte:02x} selects board {inst['selected']}.  "
+             f"Relay Repair is a routing puzzle, not a deduction game: the damage report "
+             f"is the material the player reasons over, and hiding it would make the "
+             f"read a guess.  What the seed hides is nothing; what it changes is which "
+             f"of {len(routes)} routes can be paid for — "
+             f"{distinct_classes} distinct affordable-route shapes over "
+             f"{distinct_boards} distinct boards.")
 
 
 # ---------------------------------------------------------------------------
@@ -1020,6 +1292,20 @@ REFERENCE = [
      lambda g: _pol(g, [0, 0, 0])["worst_case"]),
     ("signal-triangulation", "naive opener (0,0,0) losses", 4,
      lambda g: _pol(g, [0, 0, 0])["losses"]),
+    # Salvage, hand-derived before the rebuilt model existed.  The run seed spells
+    # SALVAGE-1, so the four consuming draws take bytes 0x53, 0x41, 0x4c, 0x56
+    # against bounds 5, 3, 3, 2 (each below its ceiling, so none is rejected),
+    # giving 3, 2, 1, 0 and board 18*3 + 6*2 + 2*1 + 0 = 68.  A draw with no cursor
+    # would read 0x53 four times -> 3, 2, 2, 1 -> board 71, so this fixture is a
+    # witness that the draw consumes, not only the theorem in SeedDraw.
+    ("salvage-lock", "board space (6!/(2!2!2!))", 90,
+     lambda g: g["seed_space"]),
+    ("salvage-lock", "perfect matchings the seed space reaches", 15,
+     lambda g: g["distinct_pairings_over_seed_space"]),
+    ("salvage-lock", "board drawn by the pinned run seed", 68,
+     lambda g: g["pinned_seed"]),
+    ("salvage-lock", "hidden-board worst case (perfect memory)", 10,
+     lambda g: g["counterfactual_hidden_worst_case"]),
 ]
 
 
@@ -1180,9 +1466,14 @@ def render(report: Report, out) -> None:
             w(bar("dominated (state, action)",
                   f"{g['dominated_state_action_pairs']}   globally dominated: "
                   f"{g['globally_dominated_actions'] or 'none'}") + "\n")
-            for k in ("seed_space", "distinct_pairings_over_seed_space", "pairing",
+            for k in ("seed_space", "pinned_seed", "seed_draws",
+                      "distinct_pairings_over_seed_space",
+                      "distinct_boards_over_seed_space", "pairing",
                       "counterfactual_hidden_boards",
                       "counterfactual_hidden_worst_case",
+                      "board_space", "selected_board", "selected_crate",
+                      "routes_source_to_sink", "selected_route_costs",
+                      "distinct_instance_classes", "unwinnable_boards",
                       "distinct_instances_expressible", "seed_consumed"):
                 if k in g:
                     w(bar(k.replace("_", " "), f"{g[k]}") + "\n")
@@ -1235,7 +1526,7 @@ def analyse_doc(doc: dict, rep: Report) -> dict:
     if doc["game_id"] == "salvage-lock":
         salvage_seed_family(doc, rep, summary)
     if doc["game_id"] == "relay-repair":
-        relay_seed_family(doc, rep, summary)
+        relay_instance_family(doc, rep, summary)
     return summary
 
 
