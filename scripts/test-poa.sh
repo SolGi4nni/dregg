@@ -48,6 +48,18 @@ run env AXIOM_GUARD_TARGETS="${poa_lean_targets[*]}" \
   scripts/axiom-hygiene-guard.sh "$repo_root"
 run bash -n scripts/check-poag1-artifacts.sh
 
+# PLATFORM-ROADMAP 12.3.  `check-poag1-artifacts.sh` proves the descriptors are
+# well-formed and pinned; nothing above asks whether the games they describe have any
+# strategic content.  The design gate solves the emitted transition functions and
+# ratchets against an accepted-findings baseline, so a NEW design defect — a losing
+# opener, an unreachable outcome, a budget below the proven optimum, a seed that turns
+# out to be inert — fails the braid instead of joining a list nobody reads.  It also
+# refuses outright if its rule model stops reproducing the emitted tables.  The
+# fourteen findings in the baseline today are open design work, not accepted defects:
+# `scripts/poa-design-gate.py` with no arguments prints them with the numbers.
+run python3 scripts/poa-design-gate.py \
+  --baseline scripts/poa-design-gate.baseline.json
+
 run cargo nextest run --manifest-path poa-curator/Cargo.toml
 run node --test scripts/tests/poa-devnet-manifest.test.mjs
 run node --test scripts/tests/poa-follower-package.test.mjs
