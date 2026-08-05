@@ -26,11 +26,14 @@
 //! (`pasta_msm_cover`, the `(window, generator, digit)` grid) forces every generator to be folded
 //! exactly once per window at exactly its declared digit. **Three deployed teeth, zero new IR.**
 //!
-//! ## The two instances, and what each is for
+//! ## The instances, and what each is for
 //!
 //!   * `c = 2`: `n = 27` real Mina SRS generators, `W = 2` windows, `D = 3` levels,
 //!     `2·(2 + 27 + 3) = 64` rows × 612 columns.
 //!   * `c = 3`: `n = 54` generators, `W = 2`, `D = 7`, `2·(3 + 54 + 7) = 128` rows × 612 columns.
+//!   * ⚑ the ξ-AGGREGATE of Mina devnet block 539508: `n = 59`, `nbits = 255`, `c = 2`,
+//!     **8 192 rows × 804 columns, 475 constraints** — 612 of those columns the row template, 192
+//!     the CHALLENGE BLOCK, and the extra 384 constraints its pins and threads.
 //!
 //! Heights are powers of two because the deployed prover refuses a non-power-of-two base trace AND
 //! a permutation manifest's length IS the trace height. That is a parameter-choice constraint on
@@ -92,10 +95,15 @@ const V2_SHA: &str = "b580a8f199a1acca7607429242342f55741aba43b5c41b18ab679caa06
 
 /// ⚑ **THE ξ-AGGREGATE OF A REAL MINA BLOCK, on this layout.** Emitted by
 /// `EmitCommitStages.lean aggmsm` from `Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm.xiAggMsmDesc` =
-/// `bucketedRowDesc 59 255 2 GENS SCAL`. It belongs to the COMMITMENT-STAGES campaign, not to this
-/// file's demonstration family, and it lives here because the witness producer above is what fills
-/// it. Unlike the three toys it is FULL-WIDTH: `nbits = 255`, 47 real block commitments (+12
-/// inert padding terms), 8 192 rows.
+/// `bucketedRowDescChal 192 59 255 2 GENS SCAL`. It belongs to the COMMITMENT-STAGES campaign, not
+/// to this file's demonstration family, and it lives here because the witness producer above is
+/// what fills it. Unlike the three toys it is FULL-WIDTH: `nbits = 255`, 47 real block commitments
+/// (+12 inert padding terms), 8 192 rows.
+///
+/// ⚑ **AND SINCE 2026-08-05 IT IS THE ONLY INSTANCE WITH A CHALLENGE BLOCK**: 192 columns above the
+/// row template carrying the six-value squaring basis `(ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ)`, pinned to public
+/// inputs `27 … 218` on the first row and threaded down the trace. The three toys pass through
+/// `bucketedRowDesc`, which did not move, and their SHAs are unchanged.
 const XIAGG_JSON: &str = include_str!("../descriptors/by-name/mina-xi-aggregate-msm.json");
 const XIAGG_SHA: &str = "db3d6a6349a4511e1149549f455c48dd927b431c9fb0bac696ceb9102359594f";
 /// The four o1-labs goldens, emitted from the GATE CONSTANTS by `EmitCommitStages.lean goldlimbs`.
