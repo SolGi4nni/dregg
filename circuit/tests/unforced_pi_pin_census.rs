@@ -61,13 +61,21 @@
 //! aware-only residue — the legacy 1-felt state-commitment pins — is UNCHANGED at (51, 48, 48),
 //! because the row-blind subtraction cannot reach it. That is stated as its own assertion below.
 //!
-//! ⚑ AND `forcedCols` OVER-COUNTS BY EXACTLY TWO. A `proof_bind` has no row denotation — the
+//! ⚑ AND `forcedCols` OVER-COUNTS BY EXACTLY SIXTEEN. A `proof_bind` has no row denotation — the
 //! deployed `Ir2Air::eval` `continue`s on it and emits no bus interaction, and Lean's
 //! `VmConstraint2.holdsAt` is `trivial` for it — yet `forcedCols` counts its `commit`/`vk` column
-//! references. So `customVmDescriptor2R24`'s two surviving exposure pins (PI 46 → col 72, PI 54 →
-//! col 68) are as prover-chosen as the 159 that were deleted; they survive on the strength of a
-//! DECLARATION. That is measured, not asserted in prose, by
+//! references. So `customVmDescriptor2R24`'s surviving exposure pins (PI slots 46..61: an eight-lane
+//! proof commitment and an eight-lane program VK) are as prover-chosen as the 159 that were deleted;
+//! they survive on the strength of a DECLARATION. That is measured, not asserted in prose, by
 //! [`proof_bind_is_the_only_reader_of_the_custom_exposure_columns`].
+//!
+//! ⚑⚑ **SIXTEEN, AND IT USED TO SAY TWO — because this file DID NOT COMPILE for the whole interval.**
+//! The `ProofBindSpec` lane-vector widening turned `commit`/`vk` from one `LeanExpr` each into
+//! vectors; the `ProofBind` arm of `collect` kept destructuring single expressions, so `cargo test
+//! -p dregg-circuit --test unforced_pi_pin_census` was a BUILD FAILURE and none of these six numbers
+//! were being read by anything. A gate that cannot build cannot go red. Repaired 2026-08-05 together
+//! with the identical arm in `decider_experiments.rs`; the pins moved 830 → 844 and 1628 → 1642,
+//! which is the fourteen real columns the widening added, counted for the first time.
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, VmConstraint2, WindowExpr, parse_vm_descriptor2,
@@ -365,8 +373,8 @@ fn unforced_pi_pin_census_is_pinned() {
     );
     assert_eq!(
         measured,
-        "v3 60/830 blind=0 aware=51 | wide 57/1628 blind=0 aware=48 \
-         | welded 57/1628 blind=0 aware=48",
+        "v3 60/844 blind=0 aware=51 | wide 57/1642 blind=0 aware=48 \
+         | welded 57/1642 blind=0 aware=48",
         "the unforced-PI-pin census moved"
     );
 
@@ -521,16 +529,45 @@ fn proof_bind_is_the_only_reader_of_the_custom_exposure_columns() {
             }
         }
         declaration_only.sort();
+
+        // ⚑ SIXTEEN, not two — an 8-lane commitment and an 8-lane program VK, since the
+        // `ProofBindSpec` lane-vector widening made `commit`/`vk` vectors where each was one
+        // `LeanExpr`. The two-entry pin recorded here was the pre-widening picture, and after the
+        // widening this whole file stopped COMPILING (the `ProofBind` arm of `collect` still
+        // destructured single expressions), so the list was UNREADABLE rather than red. The claim
+        // below is unchanged and is the point: every one of these publishes on a DECLARATION alone.
+        //
+        // ⚑ The assertion is on `(member, PI SLOT)`, not on the column index. The same member sits
+        // at a different column base in each registry — 68..76 / 707..715 / 1813..1821 — so a
+        // column-indexed literal can only be true for one of the three, which is how this
+        // assertion would have read green for `v3` and red for `wide` on identical content. The PI
+        // slots ARE registry-independent, and they are what a light client sees.
+        let by_slot: Vec<(String, usize)> = declaration_only
+            .iter()
+            .map(|(k, _col, pi)| (k.clone(), *pi))
+            .collect();
+        let mut want: Vec<(String, usize)> = (46..=61)
+            .map(|pi| ("customVmDescriptor2R24".to_string(), pi))
+            .collect();
+        want.sort();
+        let mut got = by_slot.clone();
+        got.sort();
         assert_eq!(
-            declaration_only,
-            vec![
-                ("customVmDescriptor2R24".to_string(), 68, 54),
-                ("customVmDescriptor2R24".to_string(), 72, 46),
-            ],
+            got, want,
             "{label}: the pins whose only non-pin reader is a `proof_bind` — a constraint with no \
              row denotation in either the Lean model or the deployed `Ir2Air`. These publish; they \
              do not bind. The custom member's proof commitment and program VK are bound by the \
              per-turn FOLD over PI slots and by nothing in the AIR."
+        );
+
+        // And they are SIXTEEN DISTINCT COLUMNS, so the count above is not sixteen names for two.
+        let mut cols: Vec<usize> = declaration_only.iter().map(|(_, c, _)| *c).collect();
+        cols.sort_unstable();
+        cols.dedup();
+        assert_eq!(
+            cols.len(),
+            16,
+            "{label}: the eight commitment lanes and eight program-VK lanes must be distinct columns"
         );
     }
 }
@@ -571,7 +608,15 @@ fn published_slot_accounting_is_pinned() {
     // "pins removed" with "distinct pinned slots lost" is not an accident: the pin relation is a
     // partial injection over every deployed member, which `pin_relation_is_injective_so_the_no_op_theorem_applies`
     // (below) measures. So no surviving pin ever backfilled a slot a deleted one vacated.
-    assert_eq!(pinned_slots, 1628, "…of which some constraint pins");
+    // ⚑⚑ **1628 -> 1642, 2026-08-05, and this file could not report it.** The `ProofBindSpec`
+    // widening made `commit`/`vk` LANE VECTORS where each was one `LeanExpr`; the `ProofBind` arm of
+    // `collect` above still destructured them as single expressions, so this whole census stopped
+    // COMPILING and every number in it went unread until the arm was repaired. `customVmDescriptor2`
+    // carries an 8-lane commitment and an 8-lane program VK, so the deployed object has SIXTEEN
+    // proof-bind-referenced columns where the pre-widening one had two: +14, in `pins` and in
+    // `pinned_slots` alike. Nothing was widened, relaxed or admitted here — the object grew fourteen
+    // real columns and the census is finally counting them.
+    assert_eq!(pinned_slots, 1642, "…of which some constraint pins");
 }
 
 /// **The `hsole` side condition of `unforced_pin_row_admits_any_value`, MEASURED.**
