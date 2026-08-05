@@ -63,7 +63,6 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::field::BabyBear;
 
-use p3_field::PrimeField32;
 use p3_recursion::{BatchOnly, RecursionInput, RecursionOutput, Target};
 
 use crate::gpu_backend::{
@@ -82,12 +81,21 @@ type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericCon
 const CHAINLINK_DESC_JSON: &str =
     include_str!("../../circuit/descriptors/by-name/pasta-fq-chainlink.json");
 
-/// Limbs per Pasta field element (`PastaFieldSound.SK`).
-pub const SK: usize = 32;
-/// A Poseidon sponge state is three lanes.
-pub const STATE_LANES: usize = 3;
-/// The public-input width of one whole sponge state.
-pub const STATE_WIDTH: usize = STATE_LANES * SK;
+// ⚑ THE CLAIM SHAPE AND ITS READER LIVE IN `dregg-recursion-verify`, NOT HERE. A node that
+// consumes a fold ROOT must read the claim without linking this crate; a second copy of the
+// layout on the verify side is the "two shapes that agree today" failure in its purest form. The
+// PI layout below (which is about the LEAF's descriptor public inputs) stays, because only a
+// prover needs it.
+pub use dregg_recursion_verify::chain_root::{
+    ACC_WIDTH, CHAIN_CLAIM_LEN, CHAIN_LINKS, CLAIM_ACC_LO, ChainClaim, SK, STATE_LANES,
+    STATE_WIDTH, read_chain_claim_from_proof,
+};
+
+/// ⚑ TWO INDEPENDENT SOURCES, PINNED. `ACC_WIDTH` is the verify crate's statement of the
+/// transcript-accumulator width; `SEG_DIGEST_WIDTH` is the prover's. A constant checked against
+/// its own definition is decoration — this is the other kind.
+const _: () = assert!(ACC_WIDTH == SEG_DIGEST_WIDTH);
+
 /// PI offset of the INCOMING state block (`MinaPhase2Chain.inBlock`).
 pub const IN_PI_LO: usize = 0;
 /// PI offset of the OUTGOING state block (`MinaPhase2Chain.outBlock`).
@@ -98,26 +106,6 @@ pub const ABSORBED_PI_LO: usize = 2 * STATE_WIDTH;
 pub const ABSORBED_WIDTH: usize = 2 * SK;
 /// `MinaPhase2Chain.CHAIN_PI_COUNT`.
 pub const CHAIN_PI_COUNT: usize = ABSORBED_PI_LO + ABSORBED_WIDTH;
-/// The claim every leaf and every fold node exposes: `in_state ‖ out_state ‖ transcript_acc`.
-pub const CHAIN_CLAIM_LEN: usize = 2 * STATE_WIDTH + SEG_DIGEST_WIDTH;
-/// Offset of the transcript accumulator inside the claim.
-pub const CLAIM_ACC_LO: usize = 2 * STATE_WIDTH;
-/// The block's phase-2 tape is 91 elements at rate 2 — 45 arrival permutations plus the closing
-/// squeeze (`MinaPhase2Chain`'s `the_block_tape_costs_46_permutations`).
-pub const CHAIN_LINKS: usize = 46;
-
-const D: usize = 4;
-
-/// The claim a leaf or fold node publishes, read back host-side.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChainClaim {
-    /// The 96 limbs of the sponge state the FIRST link of this sub-chain consumed.
-    pub in_state: Vec<BabyBear>,
-    /// The 96 limbs of the sponge state the LAST link of this sub-chain produced.
-    pub out_state: Vec<BabyBear>,
-    /// The ordered commitment to every element this sub-chain absorbed.
-    pub transcript_acc: [BabyBear; SEG_DIGEST_WIDTH],
-}
 
 /// Parse the Lean-emitted chain-link descriptor. Rust authors none of it.
 pub fn chain_link_descriptor() -> Result<EffectVmDescriptor2, String> {
@@ -284,26 +272,11 @@ fn require_chain_claim(
 }
 
 /// Read the `in_state ‖ out_state ‖ transcript_acc` claim a leaf or fold node publishes.
+///
+/// ⚑ Delegates to the VERIFY crate's reader — the same function a node runs over a decoded root,
+/// so a fold measured here and a root consumed there cannot read the claim differently.
 pub fn read_chain_claim(output: &RecursionOutput<DreggRecursionConfig>) -> Option<ChainClaim> {
-    let claims: Vec<BabyBear> = output
-        .0
-        .non_primitives
-        .iter()
-        .find(|e| e.op_type.as_str() == "expose_claim")?
-        .public_values
-        .iter()
-        .map(|&v| BabyBear::new(v.as_canonical_u32()))
-        .collect();
-    if claims.len() != CHAIN_CLAIM_LEN {
-        return None;
-    }
-    let mut acc = [BabyBear::new(0); SEG_DIGEST_WIDTH];
-    acc.copy_from_slice(&claims[CLAIM_ACC_LO..CLAIM_ACC_LO + SEG_DIGEST_WIDTH]);
-    Some(ChainClaim {
-        in_state: claims[..STATE_WIDTH].to_vec(),
-        out_state: claims[STATE_WIDTH..2 * STATE_WIDTH].to_vec(),
-        transcript_acc: acc,
-    })
+    read_chain_claim_from_proof(&output.0)
 }
 
 // ============================================================================

@@ -9,6 +9,15 @@ description = "Heavy PROVE surface for dregg circuits: the p3-recursion tower (I
 
 [dependencies]
 dregg-circuit = { path = "../circuit" }
+# ⚑ THE VERIFY HALF OF THIS CRATE'S OWN RECURSION TOWER, EXTRACTED.
+# `DreggRecursionConfig`, `RecursionVk`, `recursion_vk_fingerprint`, the batch-proof verify
+# entry points and the Mina chain-claim reader now live in `dregg-recursion-verify` and are
+# RE-EXPORTED from `plonky3_recursion_impl::recursive` (so every existing path still resolves).
+# The direction matters: a consumer that only VERIFIES a recursion root takes the small crate,
+# not this one. A verify-side COPY of the config would have been cheaper and is exactly the
+# "two shapes that agree today" failure — the `FriRecursionConfig` impl (orphan rule) forced the
+# move rather than a copy, which is the good outcome.
+dregg-recursion-verify = { path = "../recursion-verify" }
 dregg-commit = { path = "../commit" }
 dregg-cell = { path = "../cell" }
 # The PoA Dark Bazaar v3 prover accepts only a value minted by the Lean-owned

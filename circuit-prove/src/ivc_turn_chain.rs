@@ -1600,14 +1600,15 @@ fn generate_chain_trace_rotated(
 /// instead. Moving `IR2_INNER_LOG_BLOWUP` alone would therefore have changed what the deployed
 /// prover runs while the gate went on judging a config assembled out of other constants. A
 /// soundness knob that no gate can read is not gated.
-pub const IR2_INNER_LOG_BLOWUP: usize = 6;
-pub const IR2_INNER_LOG_FINAL_POLY_LEN: usize = 0;
-/// The commit-phase grinding this wrap performs — `0`, like all ten shipped sites. This is the
-/// knob `Dregg2.Circuit.FriCommitPow` prices: it is the only lever on the branch that BINDS at this
-/// exact config (`FriDeployedHeightPairing.deployed_wrap_commitBits`) which is not a
-/// field-extension flag day. Capped at 30 by `grind`'s single-BabyBear-witness assertion.
-pub const IR2_INNER_COMMIT_POW_BITS: usize = 0;
-pub const IR2_INNER_QUERY_POW_BITS: usize = 16;
+///
+/// ⚑ They now LIVE in `dregg-recursion-verify::config` beside the config builder that reads
+/// them, and are re-exported here so the params gate's existing `ivc_turn_chain::IR2_INNER_*`
+/// paths still resolve. A verify-only consumer must be able to reach the knobs its own verify
+/// runs at without linking the prover.
+pub use dregg_recursion_verify::config::{
+    IR2_INNER_COMMIT_POW_BITS, IR2_INNER_LOG_BLOWUP, IR2_INNER_LOG_FINAL_POLY_LEN,
+    IR2_INNER_QUERY_POW_BITS,
+};
 
 /// THREAD 1 (C3 cutover) — the rotated multi-table `Ir2BatchProof` native-batch leaf-wrap.
 ///
@@ -1677,21 +1678,12 @@ pub fn prove_descriptor_leaf_rotated(
 /// the verifier circuit allocates match the siblings the inner proof carries. The inner proof
 /// fed to [`prove_descriptor_leaf_rotated`] must be minted under THIS config (see
 /// `descriptor_ir2::prove_vm_descriptor2_for_config`).
-pub fn ir2_leaf_wrap_config() -> DreggRecursionConfig {
-    // Fixed `IR2_INNER_*` knobs ⇒ identical config on every call; build once per thread and clone
-    // on access (Arc-backed, cheap). `thread_local` sidesteps any `Sync` requirement; the cached
-    // value is identical to a fresh `create_recursion_config_for_inner_fri(..)` at these constants.
-    thread_local! {
-        static LEAF_WRAP_CONFIG: DreggRecursionConfig =
-            crate::plonky3_recursion_impl::recursive::create_recursion_config_for_inner_fri(
-                IR2_INNER_LOG_BLOWUP,
-                IR2_INNER_LOG_FINAL_POLY_LEN,
-                IR2_INNER_COMMIT_POW_BITS,
-                IR2_INNER_QUERY_POW_BITS,
-            );
-    }
-    LEAF_WRAP_CONFIG.with(|c| c.clone())
-}
+///
+/// ⚑ The builder moved to `dregg-recursion-verify::config` with the constants it reads: a node
+/// verifying a fold ROOT must run at this exact engine, and it must be able to reach it without
+/// linking the prover. Re-exported here so every existing `ivc_turn_chain::ir2_leaf_wrap_config`
+/// call site resolves to the SAME function — not a second one that happens to agree.
+pub use dregg_recursion_verify::config::ir2_leaf_wrap_config;
 
 /// [`prove_descriptor_leaf_rotated`] under an explicit recursion config (the inner proof must
 /// have been minted under the SAME config — same FRI engine). Exposed so the smoke test +
