@@ -5353,9 +5353,21 @@ def wrapInertOk (s : WrapShape) (k : Rung) : List Nat :=
     WRAP_UNPINNED_SLOTS.contains i
     || (WRAP_PINNED_SLOTS.contains i && !((wrapSlotsAt s k).contains i)))
 
-/-- Slot `i`'s variable at rung `k`, or `none` where this rung derives nothing for it. -/
+/-- ⚑ **THE SLOT → VARIABLE TABLE, BUILT ONCE.** `wrapSlotsAt` beside `exposedVarsAt`, pointwise.
+
+⚠ **THIS IS A `let`-HOISTING SITE AND IT IS LOAD-BEARING, MEASURED.** Its consumers map over
+`WRAP_PRIMARY_LEN = 40` slots, and `exposedVarsAt _ .close` runs `whSpongeC` — three full
+`hash_messages_for_next_wrap_proof` sponges. Evaluated inside the map it is FORTY sponge runs per
+consumer and `wrapEnvAt`/`wrapPublicAt` are two consumers, where the dense vector cost eight.
+Measured 2026-08-05: `w12_close` emitted in ~3 min before the layout change and had not finished in
+**44** with the table rebuilt per slot. Callers bind this ONCE above their map. -/
+def slotVarTable (t : WrapData) (k : Rung) : List (Nat × PVar) :=
+  (wrapSlotsAt t.sh k).zip (exposedVarsAt t k)
+
+/-- Slot `i`'s variable at rung `k`, or `none` where this rung derives nothing for it. ⚠ Rebuilds
+the table; use `slotVarTable` directly when asking about more than one slot. -/
 def slotVarAt (t : WrapData) (k : Rung) (i : Nat) : Option PVar :=
-  ((wrapSlotsAt t.sh k).zip (exposedVarsAt t k)).lookup i
+  (slotVarTable t k).lookup i
 
 /-- ⚑ **THE ENVIRONMENT IS THE RUNG'S, NOT THE FILE'S.** `xhatEnv` carries every accumulator point
 and every slope of §15's ladders, and each of those is three `qInv`s deep. Folding it into one
@@ -5401,8 +5413,10 @@ does not check them either — is the fork `wrapInertOk`'s docblock states. -/
 def wrapEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   let ce := circuitEnvAt t k
   let ix := envIndex ce
+  -- ⚑ HOISTED. See `slotVarTable`: inside the map this is forty `whSpongeC` runs.
+  let tbl := slotVarTable t k
   ce ++ (List.range (rungPub t.sh k)).map (fun i =>
-    ((.external i : PVar), match slotVarAt t k i with
+    ((.external i : PVar), match tbl.lookup i with
                            | some v => envLookupAt ix v
                            | none => (0 : Int)))
 
@@ -5410,8 +5424,9 @@ def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .prev
 
 def wrapPublicAt (t : WrapData) (k : Rung) : List Int :=
   let ix := envIndex (circuitEnvAt t k)
+  let tbl := slotVarTable t k
   (List.range (rungPub t.sh k)).map (fun i =>
-    match slotVarAt t k i with
+    match tbl.lookup i with
     | some v => envLookupAt ix v
     | none => (0 : Int))
 
