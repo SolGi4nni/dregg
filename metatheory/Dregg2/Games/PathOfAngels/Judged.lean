@@ -15,6 +15,7 @@ a `JudgedRun` constructor or bypass the executable equality retained below.
 import Dregg2.Games.PathOfAngels.SignalTriangulation
 import Dregg2.Games.PathOfAngels.RelayRepair
 import Dregg2.Games.PathOfAngels.SalvageLock
+import Dregg2.Games.PathOfAngels.DeckDescent
 import Dregg2.Games.PathOfAngels.BlackBoxReconstruction
 import Dregg2.Games.PathOfAngels.PlayerCounters
 import Dregg2.Games.PathOfAngels.HiddenInstance
@@ -30,12 +31,14 @@ inductive ActiveGame where
   | relay (config : RelayRepair.Config)
   | salvage (config : SalvageLock.Config)
   | blackBox (config : BlackBoxReconstruction.Config)
+  | deckDescent (config : DeckDescent.Config)
 
 def ActiveGame.mission : ActiveGame → MissionSpec
   | .signal config => config.mission
   | .relay config => config.mission
   | .salvage config => config.mission
   | .blackBox config => config.mission
+  | .deckDescent config => config.mission
 
 /-- Proof fields are omitted, and — ⚠ CHANGED — so are the INSTANCE fields.
 
@@ -53,6 +56,7 @@ inductive GameConfigClaim where
   | relay (mission : MissionSpec) (reward : Contribution)
   | salvage (mission : MissionSpec) (reward : Contribution)
   | blackBox (mission : MissionSpec) (reward : Contribution)
+  | deckDescent (mission : MissionSpec) (reward : Contribution)
 deriving DecidableEq
 
 def ActiveGame.configClaim : ActiveGame → GameConfigClaim
@@ -60,6 +64,7 @@ def ActiveGame.configClaim : ActiveGame → GameConfigClaim
   | .relay config => .relay config.mission config.reward
   | .salvage config => .salvage config.mission config.reward
   | .blackBox config => .blackBox config.mission config.reward
+  | .deckDescent config => .deckDescent config.mission config.reward
 
 /-- Runtime state selected from the authenticated active catalog.  Domain fields
 are repeated intentionally and checked against the mission: malformed decoded
@@ -120,6 +125,7 @@ inductive SubmittedRun where
   | relay (actions : List RelayRepair.Action)
   | salvage (actions : List SalvageLock.Action)
   | blackBox (actions : List BlackBoxReconstruction.Action)
+  | deckDescent (actions : List DeckDescent.Action)
 
 def FinalizedCarrier.counterKey (carrier : FinalizedCarrier) : PlayerCounterKey where
   federationId := carrier.federationId
@@ -215,6 +221,11 @@ private def blackBoxContext (carrier : FinalizedCarrier) : BlackBoxReconstructio
   playerKey := carrier.playerKey
   previousPlayerCounter := carrier.currentPlayerCounter.val
 
+private def deckDescentContext (carrier : FinalizedCarrier) : DeckDescent.JudgeContext where
+  actorRoot := carrier.actorRoot
+  playerKey := carrier.playerKey
+  previousPlayerCounter := carrier.currentPlayerCounter.val
+
 /-! ## Abstract judged value with game-specific executable evidence -/
 
 private inductive JudgedEvidence where
@@ -246,6 +257,13 @@ private inductive JudgedEvidence where
       (actions : List BlackBoxReconstruction.Action)
       (run : BlackBoxReconstruction.JudgedRun)
       (judged : BlackBoxReconstruction.judge config active.world (blackBoxContext carrier) actions = some run)
+  | deckDescent
+      (active : ActiveRunState) (carrier : FinalizedCarrier) (claim : RunClaim)
+      (config : DeckDescent.Config)
+      (admitted : admissionChecks active carrier claim = true)
+      (actions : List DeckDescent.Action)
+      (run : DeckDescent.JudgedRun)
+      (judged : DeckDescent.judge config active.world (deckDescentContext carrier) actions = some run)
 
 /-- Public type, private constructor and payload. -/
 structure JudgedRun where
@@ -258,6 +276,7 @@ def JudgedRun.receipt (judgedRun : JudgedRun) : RunReceipt :=
   | .relay _ _ _ _ _ _ run _ => run.receipt
   | .salvage _ _ _ _ _ _ run _ => run.receipt
   | .blackBox _ _ _ _ _ _ run _ => run.receipt
+  | .deckDescent _ _ _ _ _ _ run _ => run.receipt
 
 /-- The exact game tag and executable judge, run against an admission fact the caller
 already holds.  `judgeActive` below is `admissionChecks`-then-this and nothing else, so
@@ -293,6 +312,11 @@ def judgeAdmitted (active : ActiveRunState) (carrier : FinalizedCarrier)
       match hjudged : BlackBoxReconstruction.judge config active.world
           (blackBoxContext carrier) actions with
       | some run => some ⟨.blackBox active carrier claim config hadmitted actions run hjudged⟩
+      | none => none
+  | .deckDescent config, .deckDescent actions =>
+      match hjudged : DeckDescent.judge config active.world
+          (deckDescentContext carrier) actions with
+      | some run => some ⟨.deckDescent active carrier claim config hadmitted actions run hjudged⟩
       | none => none
   | _, _ => none
 
@@ -482,6 +506,12 @@ theorem JudgedRun.has_executable_origin (run : JudgedRun) :
         (actions : List BlackBoxReconstruction.Action)
         (raw : BlackBoxReconstruction.JudgedRun),
       BlackBoxReconstruction.judge config active.world (blackBoxContext carrier) actions = some raw ∧
+      run.receipt = raw.receipt) ∨
+    (∃ (active : ActiveRunState) (carrier : FinalizedCarrier)
+        (config : DeckDescent.Config)
+        (actions : List DeckDescent.Action)
+        (raw : DeckDescent.JudgedRun),
+      DeckDescent.judge config active.world (deckDescentContext carrier) actions = some raw ∧
       run.receipt = raw.receipt) := by
   obtain ⟨evidence⟩ := run
   cases evidence with
@@ -492,7 +522,9 @@ theorem JudgedRun.has_executable_origin (run : JudgedRun) :
   | salvage active carrier claim config admitted actions raw judged =>
       exact Or.inr (Or.inr (Or.inl ⟨active, carrier, config, actions, raw, judged, rfl⟩))
   | blackBox active carrier claim config admitted actions raw judged =>
-      exact Or.inr (Or.inr (Or.inr ⟨active, carrier, config, actions, raw, judged, rfl⟩))
+      exact Or.inr (Or.inr (Or.inr (Or.inl ⟨active, carrier, config, actions, raw, judged, rfl⟩)))
+  | deckDescent active carrier claim config admitted actions raw judged =>
+      exact Or.inr (Or.inr (Or.inr (Or.inr ⟨active, carrier, config, actions, raw, judged, rfl⟩)))
 
 theorem JudgedRun.applied (run : JudgedRun) :
     applyContribution run.receipt.mission run.receipt.contribution

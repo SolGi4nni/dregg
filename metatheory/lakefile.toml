@@ -275,6 +275,11 @@ globs = [
   # `#assert_axioms` + 11 `#assert_compiled` between them; both GREEN and cheap (2 s / 3 s).
   "Dregg2.Games.PathOfAngels.ActivityOutcome",
   "Dregg2.Games.PathOfAngels.DeckExpedition",
+  # ⚑ 2026-08-05 (descent lane) — the judged descent kernel. New module, so it is
+  # rooted here on arrival rather than becoming the next orphan this list exists to
+  # catch. 48 `#assert_axioms` + 11 `#assert_compiled`; the compiled pins enumerate
+  # 2319 reachable states across the eight-board family, so budget ~40 s.
+  "Dregg2.Games.PathOfAngels.DeckDescent",
   # ⚑ 2026-08-05 — THE GALLEY BOUNDARY TEETH RAN NOWHERE. This block asked for
   # `Dregg2.Games.PathOfAngels.GalleyCommonsBoundary` and
   # `Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary`, crediting them with "33
