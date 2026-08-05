@@ -914,6 +914,93 @@ theorem runRowsAt_is_the_base_field_one : runRowsAt pN pLimb = runRows := by
         stepRegsAt_is_the_base_field_one, List.cons.injEq, true_and]
       exact ih _ _
 
+/-! ### §8c — ⚑ THE REGISTER FILE AS DATA, welded to the closure it replaces.
+
+The generator above is `Theta(d^2)`. This is the sponge lane's fix, copied rather than re-derived:
+the register file is a strict `List Nat` of exactly `NREG` entries, and it is **NOT A SECOND
+GENERATOR** — `regsOf_stepVecAt` proves the strict step IS `stepRegsAt` seen through `regsOf`, and
+`runRowsVecAt_is_runRowsAt` lifts that to whole programs, so every denotation already proved reaches
+the emitted artifact by REWRITING and not by re-establishment on a copy.
+
+⚠ The shape that failed was a strict list wrapped around the closure (`materialize`): it kept the
+closure as a fallback, so each step still forced `NREG` reads of it. Here the strict structure IS
+the semantics — `readVec` bottoms out in `getD`, nothing re-reads a predecessor. -/
+
+def readVec (rs : List Nat) (r : Nat) : Nat := rs.getD r 0
+def regsOf (rs : List Nat) : RegFile := readVec rs
+
+theorem readVec_map (f : Nat → Nat) (r : Nat) (h : r < NREG) :
+    readVec ((List.range NREG).map f) r = f r := by
+  unfold readVec
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range h]
+  rfl
+
+theorem readVec_map_ge (f : Nat → Nat) (r : Nat) (h : ¬ r < NREG) :
+    readVec ((List.range NREG).map f) r = 0 := by
+  unfold readVec
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map,
+    List.getElem?_eq_none (by simpa using Nat.le_of_not_lt h)]
+  rfl
+
+def stepVecAt (N : Nat) (rs : List Nat) (wit : Nat) (I : Instr) : List Nat :=
+  let z := opResultAt N I.op (xValue (regsOf rs) wit I) (yValue (regsOf rs) wit I)
+  (List.range NREG).map (fun r => if I.wr < NREG ∧ r = I.wr then z else readVec rs r)
+
+/-- ⚑ **THE STRICT STEP IS THE CLOSURE STEP.** -/
+theorem regsOf_stepVecAt (N : Nat) (rs : List Nat) (wit : Nat) (I : Instr) (hlen : rs.length = NREG)
+    : regsOf (stepVecAt N rs wit I) = stepRegsAt N (regsOf rs) wit I := by
+  funext r
+  unfold regsOf stepVecAt stepRegsAt writeBack
+  by_cases h : r < NREG
+  · rw [readVec_map _ r h]; split <;> rfl
+  · rw [readVec_map_ge _ r h]
+    have hw : ¬ (I.wr < NREG ∧ r = I.wr) := by
+      rintro ⟨h1, rfl⟩; exact h h1
+    rw [if_neg hw]
+    unfold readVec
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)]
+    rfl
+
+theorem stepVecAt_length (N : Nat) (rs : List Nat) (wit : Nat) (I : Instr) :
+    (stepVecAt N rs wit I).length = NREG := by
+  unfold stepVecAt; simp
+
+def runRowsVecAt (N : Nat) (pl : Nat → ℤ) (rs : List Nat) (wits : Nat → Nat) (pc : Nat) :
+    List Instr → List (List ℤ)
+  | [] => []
+  | I :: rest =>
+      ((List.range CM_WIDTH).map (rowAsgAt N pl (regsOf rs) (wits pc) pc I))
+        :: runRowsVecAt N pl (stepVecAt N rs (wits pc) I) wits (pc + 1) rest
+
+/-- ⚑ **AND THE STRICT GENERATOR EMITS THE SAME BYTES.** -/
+theorem runRowsVecAt_is_runRowsAt (N : Nat) (pl : Nat → ℤ) (wits : Nat → Nat) :
+    ∀ (prog : List Instr) (rs : List Nat) (pc : Nat), rs.length = NREG →
+      runRowsVecAt N pl rs wits pc prog = runRowsAt N pl (regsOf rs) wits pc prog := by
+  intro prog
+  induction prog with
+  | nil => intro _ _ _; rfl
+  | cons I rest ih =>
+      intro rs pc hlen
+      show _ :: runRowsVecAt N pl (stepVecAt N rs (wits pc) I) wits (pc + 1) rest
+        = _ :: runRowsAt N pl (stepRegsAt N (regsOf rs) (wits pc) I) wits (pc + 1) rest
+      rw [← regsOf_stepVecAt N rs (wits pc) I hlen]
+      exact congrArg _ (ih _ _ (stepVecAt_length _ _ _ _))
+
+/-- The all-zero register file, and a single pinned input. -/
+def zeroVec : List Nat := List.replicate NREG 0
+def pinVec (r v : Nat) : List Nat := (List.range NREG).map (fun k => if k = r then v else 0)
+
+theorem pinVec_length (r v : Nat) : (pinVec r v).length = NREG := by unfold pinVec; simp
+theorem zeroVec_length : zeroVec.length = NREG := by unfold zeroVec; simp
+
+#assert_axioms readVec_map
+#assert_axioms readVec_map_ge
+#assert_axioms regsOf_stepVecAt
+#assert_axioms stepVecAt_length
+#assert_axioms runRowsVecAt_is_runRowsAt
+#assert_axioms pinVec_length
+#assert_axioms zeroVec_length
+
 #assert_axioms esub_eval
 #assert_axioms xRouteExpr_eval
 #assert_axioms yRouteExpr_eval
