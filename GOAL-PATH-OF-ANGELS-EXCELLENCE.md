@@ -100,10 +100,52 @@ the retired v1 key and the live v3 secret exists only at
 `~/.local/share/pathofangels/keys/development-curator-v3.key` on the laptop.
 *System:* dregg is an attenuable-capability custody system, and its own flagship product keeps losing
 a bare 32-byte file. Curator authority should be a dregg capability with scope, expiry, delegation and
-recovery — the dogfooding case is exact. ⚠ Key custody is ember's decision
-([[feedback-deputized-greenfield-dont-over-delegate]]); this lane may design it, not rotate it.
+recovery — the dogfooding case is exact.
+**Ownership, 2026-08-05:** ember explicitly handed this lane the keys and the public surfaces
+("feel empowered to be the *owner* of all this"). So W5 is no longer a blocker to escalate — it is
+work to do, and rotations/custody moves are this lane's call. The bar does not drop: a reset is still
+recorded in `BETA-CURATOR-KEY-ROTATION.md` with the honest reason, and it stops being a *reset* only
+once the capability design lands. This supersedes the narrower reading of
+[[feedback-deputized-greenfield-dont-over-delegate]] for PoA specifically.
 
 ---
+
+## ⚑ MILESTONE LADDER — reset 2026-08-05 after three cycles
+
+Cycles 1–3 spent 5.4M tokens across 26 agents. Yield fell every cycle (cycle 3: 2 of 4 lanes REFUTED,
+tree left red). The welds below are still the right *technical* decomposition, but they are lane-shaped
+rather than player-shaped, and organising cycles around them produced width without depth. Ambitions
+are restated as **player-visible milestones**; a cycle is judged by whether a milestone moved.
+
+**M1 — THE FIRST SETTLED TURN.** `latest_height` 0 → 1. Every piece — judge, carrier, weld, receipt,
+the whole ~9,880-line runtime tower — has **never once executed end to end**. Worth more than M2–M5
+combined: it is the difference between a beautiful local toy and a system.
+**M2 — the answer is hidden.** (W1.) Until then no score means anything.
+**M3 — a run persists.** Records, rebuilt without publishing the target.
+**M4 — the Descent.** 1,171 lines of officers, hazards and custody, still unreachable.
+**M5 — crown → custody → Bazaar.** One object with a life.
+
+## ⚑ CYCLE FORMAT v2 — what three cycles taught
+
+**The rule that caused both failures was mine and was never measured.** "Lanes do not build, builds
+serialise on one box" — hbox is **24 cores at load 3 with 39GB free and 39 warm `.lake` lanes**. It
+hosts three parallel builds comfortably. Because lanes could not build, cycle 2 shipped a `sorry` and
+cycle 3 shipped a hard compile break plus two false "already migrated" claims. See
+[[minted-behavioural-evidence-cannot-see-a-proof-hole]]: adversarial review catches *design* errors and
+is structurally blind to *compile and proof* errors.
+
+1. **2–3 deep standing lanes**, not 4–5 disposable ones.
+2. **Every lane gets its own hbox build lane and must show green.** Nothing counts until it compiles
+   and is `#assert_axioms` clean.
+3. **Refutation returns to the author.** ⚑ Workflow sub-agents are **NOT revivable** — the full agent
+   id is recognised but its transcript lives under the run directory, so resume cannot find it.
+   **Agent-spawned lanes ARE** (top-level transcript, reachable by id via SendMessage). So: **Workflow
+   for wide one-shot sweeps; named Agent lanes for deep verticals iterated across cycles.** This
+   removes the need for a repair *phase* — the refutation goes back to the agent that wrote the code,
+   with its context intact, instead of to a stranger or to me.
+4. **One lane owns the hot files** (`Emit.lean`, `Judged.lean`, `FiniteTables.lean`) per cycle; others
+   hand it patches. Cycle 3's tree is four interleaved diffs that do not compose.
+5. **A cycle is not done until the tree builds.**
 
 ## Sequencing
 
@@ -122,7 +164,57 @@ threshold custody (Constellation 6), and the ceremony tooling superseded by the 
 
 ## Trail
 
-- 2026-08-05 — lane opened. Federation collapsed to one validator; node rebuilt from HEAD (189 commits
+### 2026-08-05 — cycles 1 and 2 (10 + 8 agents, adversarially refuted)
+
+**The headline diagnosis in this file was WRONG and is corrected.** I wrote that the bottleneck was
+Lean→judged and that the fix was a `GameKernel` abstraction. Reading the full 84-module map instead of
+spot-checking showed the opposite: **~9,880 lines of Runtime/Wire layer already exist**, hand-written
+per kernel, six reaching the node. The narrow point is the **last mile, node→player** — `poa-web/src`
+has four controllers. A kernel abstraction would have been a cathedral over a bottleneck that is not
+there. See [[feedback-confirm-code-by-reading-not-grep]]: three of my claims this session died to a
+single `grep` used where a read was needed.
+
+**Three more of my claims died to the swarm:**
+- *"The Galley organ works."* It has **never been openable**. `install_poa_world_curator_pin_v1`,
+  `install_poa_world_activation_v1`, `install_poa_activated_content_v1` are `pub` with **every** call
+  site inside `#[cfg(test)]`. No route, no subcommand. The browser renders GALLEY SEALED. This is
+  [[minted-uncalled-initializer-class]] exactly.
+- *"`latest_height: 0` means nobody submitted a turn."* Nobody **could**.
+- *"Galley is the one complete Lean→player path."* The path is complete but **does not run the Galley
+  kernel**. `GalleyMaintenanceDaily.reduce` has no `@[export]`; the exported `judgeFFI` calls a
+  *different* reducer. They share exactly one identifier (`MAX_LOCAL_SERVICE`), with no refinement
+  theorem. **~4,700 lines of proved kernel are dark** and a separate ~1,400-line runtime is the whole
+  shipped semantics — the twin problem the project forbids between Lean and Rust, occurring inside Lean.
+  → **RESOLVED 2026-08-05 by deletion, not by a bridge.** A simulation was unstateable (the two
+  reducers *contradict* on the sponsor transition, and the kernel side would have had to quantify over
+  a `DailySpec`/`CommonsPolicy`/`ActivatedDaily` that nothing in the tree constructs). 5,112 lines
+  went: `GalleyMaintenanceDaily` + `GalleyCommons` + both boundary modules. The shipped Runtime is now
+  the only Galley state machine, its privacy teeth moved to `…RuntimeBoundary.lean` (closing G8), and
+  `judge_command_projection_is_reduce` welds the exported answer to that reducer — which nothing did
+  before, so `reduce_*` were theorems about a function the export need not have called. Full ledger of
+  what proof coverage was lost: `docs/poa/GALLEY-LAYER-CONTRACT.md` §0.
+
+**Landed (`e42d699b9`, `fff0e8df7`):**
+- `scripts/poa-design-gate.py` — the §12.3 gate, wired into `test-poa.sh`, ratcheting against a
+  baseline. Falsifier checked: remove a waiver → exit 1, restore → exit 0.
+- **Relay Repair became a game.** 0 → **10** outcome-changing forks; unlosable → 11 doomed states;
+  budget slack 2 → **0, binds**; 1 → 4 opener classes; 1 → **8 boards**; seed now consumed. Its two
+  routes cost 4 vs 6 spares, so route choice is economic.
+- **Salvage Lock** seed space 3 → **90**, distinct pairings **1 → 15** (all perfect matchings), drawn
+  by consuming draws (new `SeedDraw.lean`) because `unbiasedIndex?` cannot stream.
+- The galley installer ceremony, with the curator signature deliberately **outside** the node.
+- `poa/deployments/epoch-1` repointed from the dead federation to live `70b7fa4c`.
+
+**⚑ The lesson worth keeping: a `sorry` passed BOTH an authoring lane and an adversarial reviewer.**
+`RelayRepair.routed_needs_the_budget` used `first | simp_all […] | (revert h; decide)`. `first`
+commits to any branch that does not *fail*, and `simp_all` succeeds-without-closing on exactly the
+panels that route — so `decide` was never reached and Lean filled the hole with `sorryAx`, poisoning
+two downstream theorems. Only the build caught it. **A solver reads the emitted table, and an unproved
+lemma emits the same table as a proved one**, so design evidence cannot see proof holes. The rule
+"lanes do not build" created this gap; the axiom-hygiene gate closed it. Keep the gate, and build each
+lane's Lean before believing its numbers.
+
+### 2026-08-05 — lane opened. Federation collapsed to one validator; node rebuilt from HEAD (189 commits
   of PoA work reached the chain for the first time; `/api/poa/holding/challenge` 404 → 415). POAG1
   re-emitted for federation `70b7fa4c…`; **content signing BLOCKED on W5** (wrong curator key on hbox).
   Depth numbers above measured. No game/system change landed yet — this file is the plan, not a claim.
