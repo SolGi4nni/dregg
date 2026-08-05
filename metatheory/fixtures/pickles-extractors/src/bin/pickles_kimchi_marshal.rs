@@ -138,6 +138,26 @@ struct CircuitJson {
     witness: Vec<Vec<String>>,
 }
 
+/// ⚑ **THE PROVER'S BLINDING RNG IS SEEDED, AND THAT IS WHAT MAKES THE FORTY WORDS A FIXTURE.**
+///
+/// It was `OsRng` until 2026-08-05, which made every run produce a different step proof and
+/// therefore a different `to_public_input(40)`. That is fatal to the emit path: slots 0–4 and 9 are
+/// `expand_deferred`'s recomputation over THIS step proof's transcript, so a Lean constant carrying
+/// them is stale the moment the binary is re-run, and the loop
+/// (run → read the forty → bake into Lean → re-emit → re-run) has no fixed point at all.
+///
+/// Seeding costs nothing here and hides nothing: the zero-knowledge blinding these bytes feed
+/// protects a witness that is a *smoke circuit's*, published in the fixture next door. The proofs
+/// are still produced by the real prover and still checked by `kimchi::verifier::batch_verify`;
+/// only the choice of blinders stops being fresh. The step proof does not depend on the wrap
+/// emission, so the fixed point is reachable in ONE iteration.
+///
+/// ⚠ Do not reuse a seed between the two proofs — a shared blinder stream across two different
+/// curves is a needless correlation in an artifact people will read as independent.
+fn fixture_rng(seed: [u8; 32]) -> rand::rngs::StdRng {
+    <rand::rngs::StdRng as rand::SeedableRng>::from_seed(seed)
+}
+
 fn sibling(harness: &str, fixture: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -337,7 +357,7 @@ fn prove_wrap() -> (
         &index,
         prev,
         None,
-        &mut rand::rngs::OsRng,
+        &mut fixture_rng(*b"dregg/pickles-marshal/wrap-proof"),
     )
     .expect("wrap prove");
     let secs = t0.elapsed().as_secs_f64();
@@ -469,7 +489,7 @@ fn prove_step(
         &index,
         prev_slots,
         None,
-        &mut rand::rngs::OsRng,
+        &mut fixture_rng(*b"dregg/pickles-marshal/step-proof"),
     )
     .expect("step prove");
     let secs = t0.elapsed().as_secs_f64();

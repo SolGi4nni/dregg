@@ -145,10 +145,17 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     W-FINALIZE. `wrap_main` READS all six — `combined_inner_product`/`b` in `check_bulletproof`
     (W-BULLET), `perm`/`zeta_to_srs_length`/`zeta_to_domain_size` in `ft_comm` (W-FTCOMM), `xi` in
     `Split_commitments.combine` (W-COMBINE) — and CHECKS none; the checker is the NEXT proof's
-    `finalize_other_proof`. This assembly wires those three consumers to fixture-defaulted free
-    witnesses instead of to the public words. Exposing them anyway is defensible on upstream's own
-    standard and blocked on a derivation standard; `wrapInertOk`'s docblock and
-    `docs/HANDOFF-wrap-public-input-40.md` state the fork, and it is the operator's.
+    `finalize_other_proof`. ⚑ **SINCE 2026-08-05 THOSE THREE CONSUMERS READ THE PUBLIC WORDS**, not
+    fixture-defaulted free witnesses: `WRAP_PASSTHROUGH_SLOTS` names the six, `ftcRows` / `combRows`
+    / `bulletRows` each close a `Generic` half onto the cell that already read them, and the values
+    are `MinaWrapDeferredWords`' measurement of `expand_deferred`'s own output. They still DERIVE
+    nothing and CHECK nothing — that is upstream's shape. What changed is that six free witnesses a
+    prover chose are now words a verifier is handed.
+
+    The fork this paragraph used to state — derivation standard against upstream's — was settled and
+    was never really two answers: **Pickles recomputes all six and substitutes them** (`expand_
+    deferred`, consumed at `verification.rs:886`), so the derivation horn describes a proof nobody
+    intends to hand to Pickles.
   * **W5 `key`** — §14. ⚑ **`choose_key` AND THE INDEX SPONGE**, i.e. the sub-circuit that makes the
     transcript's INPUT derived. `wrap_verifier.ml:189-204` folds the per-branch step keys against the
     SAME one-hot vector §9 already emits — and because `wrap_main.ml:218-219` passes them through

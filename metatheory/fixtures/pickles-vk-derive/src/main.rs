@@ -748,6 +748,32 @@ fn main() {
         log2.map(|k| format!("2^{k}")).unwrap_or("natural".into())
     );
 
+    // ⚑ **AN EXPLICIT CIRCUIT PATH — so a key can be derived for a rung this crate does not CARRY.**
+    // The two carried fixtures (`w3_branch`, `w4_bind`) exist for `mina-vk-derivation-gate.sh`'s
+    // drift `cmp`, and they are the two smallest. Every other rung lives in the emitter's own output
+    // directory, and copying a 4 MB fixture in here to derive one key would be a second copy with
+    // nothing keeping it fresh — the exact shape of the drift the gate exists to catch.
+    //
+    // ⚠ This derives and writes ONE key and returns; the movement gate below is deliberately not
+    // run, because its perturbation is defined against `w4_bind`.
+    if let Some(i) = args.iter().position(|a| a == "--circuit") {
+        let p = PathBuf::from(args.get(i + 1).expect("--circuit wants a path"));
+        let c = load(&p);
+        let d = derive(&c, log2);
+        println!(
+            "\n{}: {} Lean rows (+{} Zero pad) -> domain 2^{}, public {}",
+            c.name,
+            d.lean_rows,
+            d.padded_rows - d.lean_rows,
+            d.log2_domain,
+            d.public
+        );
+        println!("  hash {}", d.vk.hash());
+        let path = write_vk(&out, &format!("vk-{}", c.name), &d);
+        println!("  wrote {}", path.display());
+        return;
+    }
+
     let mut written = Vec::new();
     let mut derivations: Vec<(String, Derived)> = Vec::new();
 

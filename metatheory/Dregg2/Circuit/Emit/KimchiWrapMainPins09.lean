@@ -71,40 +71,60 @@ theorem the_challenge_slots_are_the_transcript_order :
   refine ⟨rfl, rfl, rfl, ?_⟩
   rfl
 
-/-- ⚑ **AND THE WHOLE MAP IS MINA'S**, at both committed shapes: every slot the ladder derives is a
-PINNED one, the map is injective, and at the terminal rung the derived set IS
-`WRAP_PINNED_SLOTS` — twenty-four of forty, in Pickles' own positions.
+/-- ⚑ **AND THE WHOLE MAP IS MINA'S**, at both committed shapes: every slot the ladder ties is one
+`wrap_main` itself reads, the map is injective, and at the terminal rung the tied set IS
+`WRAP_PINNED_SLOTS ∪ WRAP_PASSTHROUGH_SLOTS` — **thirty** of forty, in Pickles' own positions.
 
-The middle conjunct is what stops a silent collision: two derived words tied to ONE public cell
-would merge two σ classes and place, prove and commit without a word of complaint. -/
+⚠ **THIS SAID `WRAP_PINNED_SLOTS` AND TWENTY-FOUR UNTIL 2026-08-05, AND THAT WAS A TRUE STATEMENT
+ABOUT A CIRCUIT THAT READ SIX WORDS FEWER.** The six `~advice`/`~plonk`/`~xi` pass-throughs are tied
+now, so a conjunct asserting every tied slot is PINNED is FALSE — it is not a stale number, it is a
+different claim, and it is stated as the union rather than widened to something vacuous.
+
+The injectivity conjunct is what stops a silent collision: two tied words on ONE public cell would
+merge two σ classes and place, prove and commit without a word of complaint. -/
 theorem the_slot_map_is_minas :
-    (wrapSlotsAt shapeWrap .close).all (fun i => WRAP_PINNED_SLOTS.contains i) = true
+    (wrapSlotsAt shapeWrap .close).all (fun i =>
+      WRAP_PINNED_SLOTS.contains i || WRAP_PASSTHROUGH_SLOTS.contains i) = true
     ∧ (wrapSlotsAt shapeWrap .close).dedup.length = (wrapSlotsAt shapeWrap .close).length
-    ∧ (wrapSlotsAt shapeWrap .close).length = WRAP_PINNED_WORDS
+    ∧ (wrapSlotsAt shapeWrap .close).length = WRAP_PINNED_WORDS + WRAP_PASSTHROUGH_SLOTS.length
     ∧ ((List.range WRAP_PRIMARY_LEN).filter
-        (fun i => (wrapSlotsAt shapeWrap .close).contains i)) = WRAP_PINNED_SLOTS
-    -- …and the SMOKE shape derives a strict SUBSET of them — six of the twenty-four — which is why
-    -- a smoke-shape emission is a layout demonstration and not a closed statement.
+        (fun i => (wrapSlotsAt shapeWrap .close).contains i))
+      = (List.range WRAP_PRIMARY_LEN).filter (fun i =>
+          WRAP_PINNED_SLOTS.contains i || WRAP_PASSTHROUGH_SLOTS.contains i)
+    -- ⚑ …and the six are DISJOINT from the twenty-four, so the union is a real 30 and not a
+    -- relabelling of the same slots.
+    ∧ (WRAP_PASSTHROUGH_SLOTS.filter (fun i => WRAP_PINNED_SLOTS.contains i)) = []
+    -- …and the SMOKE shape ties a strict SUBSET — which is why a smoke-shape emission is a layout
+    -- demonstration and not a closed statement.
     ∧ (wrapSlotsAt shapeSmoke .bind) = [5, 6, 7, 8, 10, 13]
-    ∧ (wrapSlotsAt shapeSmoke .close).all (fun i => WRAP_PINNED_SLOTS.contains i) = true := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+    ∧ (wrapSlotsAt shapeSmoke .close).all (fun i =>
+        WRAP_PINNED_SLOTS.contains i || WRAP_PASSTHROUGH_SLOTS.contains i) = true := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- ⚑ **THE DECLARED-UNREAD SET IS THE COMPLEMENT, AND IT SHRINKS UP THE LADDER.** `w4_bind` admits
-to Mina's sixteen plus slots 11 and 12; `w9_prev` gives back 12; `w11_wraphack` gives back 11 and
-lands on exactly Mina's sixteen. A ladder that stopped moving here would be a ladder that stopped
-deriving. -/
-theorem the_declared_unread_set_shrinks_to_minas_sixteen :
+/-- ⚑ **THE DECLARED-UNREAD SET IS THE COMPLEMENT, AND IT SHRINKS UP THE LADDER TO THE DEAD TEN.**
+`w4_bind` admits to eighteen; `w8_ftcomm` gives back the `ft_comm` trio (slots 4, 2, 3); `w9_prev`
+gives back 12; `w11_wraphack` gives back 11; `w10_combine` gives back ξ; `w11_bullet` gives back
+`combined_inner_product` and `b`; and `w12_close` lands on exactly the ten `Spec.T.Constant` /
+dead-lookup slots. A ladder that stopped moving here would be a ladder that stopped deriving.
+
+⚠ **THE FLOOR WAS SIXTEEN UNTIL 2026-08-05 AND IS TEN NOW**, because six of that sixteen were words
+`wrap_main` reads and this assembly declined to tie. The terminal conjunct is the one that matters:
+what is left unread at the top of the ladder is the set nothing reads UPSTREAM either. -/
+theorem the_declared_unread_set_shrinks_to_the_dead_ten :
     (wrapInertOk shapeWrap .bind).length = 18
-    ∧ (wrapInertOk shapeWrap .prev).length = 17
-    ∧ (wrapInertOk shapeWrap .wraphack).length = 16
-    ∧ (wrapInertOk shapeWrap .close).length = 16
+    ∧ (wrapInertOk shapeWrap .ftcomm).length = 15
+    ∧ (wrapInertOk shapeWrap .prev).length = 14
+    ∧ (wrapInertOk shapeWrap .wraphack).length = 13
+    ∧ (wrapInertOk shapeWrap .combine).length = 13
+    ∧ (wrapInertOk shapeWrap .bullet).length = 11
+    ∧ (wrapInertOk shapeWrap .close).length = 10
     ∧ ((List.range WRAP_PRIMARY_LEN).filter
         (fun i => (wrapInertOk shapeWrap .close).contains i)) = WRAP_UNPINNED_SLOTS := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 #assert_axioms the_challenge_slots_are_the_transcript_order
 #assert_axioms the_slot_map_is_minas
-#assert_axioms the_declared_unread_set_shrinks_to_minas_sixteen
+#assert_axioms the_declared_unread_set_shrinks_to_the_dead_ten
 
 /-- ⚑ **THE TAPE IS `to_field_elements`'s, AND THE ORDER IS THE FACT.**
 `composition_types.ml:411-418` flattens the old bulletproof challenges FIRST and appends the
@@ -226,9 +246,15 @@ theorem wraphack_public_word_11_is_the_closing_squeeze :
     -- there and not here: `wrapPublicAt` runs `envIndex` over `circuitEnvAt … .wraphack`, which
     -- carries every accumulator point and slope of §15's MSM, and reducing it blew 4 000 000
     -- heartbeats. That is the measurement the `circuitEnvAt` docblock above is about.
-    ∧ (exposedVarsAt tWh .wraphack).length = shapeSmoke.pubWords + 2
-    ∧ (wrapSlotsAt shapeSmoke .wraphack).length = shapeSmoke.pubWords + 2 := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+    -- ⚑ `pubWords + 2` UNTIL 2026-08-05, and `+ 5` now: this rung sits above `w8_ftcomm`, so it
+    -- inherits the three `ft_comm` pass-throughs (slots 4, 2, 3) on top of its own slot 11 and
+    -- W-PREV's slot 12. It does NOT sit above W-COMBINE or W-BULLET, so ξ and the bulletproof pair
+    -- are not here — which is what makes `+ 5` rather than `+ 8` the load-bearing number.
+    ∧ (exposedVarsAt tWh .wraphack).length = shapeSmoke.pubWords + 5
+    ∧ (wrapSlotsAt shapeSmoke .wraphack).length = shapeSmoke.pubWords + 5
+    -- …and the two stay POINTWISE, which is the property the pair of lengths exists to protect.
+    ∧ (exposedVarsAt tWh .wraphack).length = (wrapSlotsAt shapeSmoke .wraphack).length := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- The `w11_wraphack` rung is a strict superset of `w9_prev`, its length is the sum of its parts,
 and the WIRED and UNWIRED emissions differ ONLY in the probe rows' permutation columns. -/
@@ -256,24 +282,39 @@ theorem wraphack_rung_places_and_the_rung_below_it_does_not :
         = some (.inertPublicWord WRAP_SLOT_MSG_NEXT_WRAP) := by
   refine ⟨rfl, rfl, rfl, rfl⟩
 
-/-- ⚑ **THE TWENTY-FOUR ARE DERIVED, AND TWENTY-FOUR IS NOT FORTY.** `WRAP_PINNED_SLOTS` is what
-`wrap_main` actually constrains; `WRAP_UNPINNED` is the rest, by REASON and by owner. A run that
-reads "public inputs: ours 24, mina 40" and calls the remaining sixteen a gap in this assembly would
-be reading a deferred value and a zero pad as work. -/
+/-- ⚑ **MINA'S FORTY SPLIT THREE WAYS: 24 CONSTRAINED, 6 READ, 10 DEAD — AND IT USED TO SPLIT TWO
+WAYS BECAUSE SIX WORDS WERE FILED UNDER "NOTHING READS THESE".**
+
+`WRAP_PINNED_SLOTS` is what `wrap_main` CONSTRAINS. `WRAP_PASSTHROUGH_SLOTS` is what it READS and
+does not check — `~advice`/`~plonk`/`~xi`, checked by the next proof's `finalize_other_proof`.
+`WRAP_UNPINNED_SLOTS` is what nothing reads at all, upstream or here.
+
+⚠ **THE OLD STATEMENT WAS `PINNED != UNPINNED` OVER THE FORTY, AND IT IS FALSE NOW** — not off by a
+count, but missing a category: six slots are in neither of those two lists. Restating it as a
+three-way partition is the whole content of this repair, and the `dedup.length` and pairwise-
+disjointness conjuncts are what stop "partition" from meaning "some list of forty things".
+
+A run that reads "public inputs: ours 30, mina 40" and calls the remaining ten a gap in this
+assembly would be reading a zero pad as work. -/
 theorem wraphack_closes_every_pinned_statement_word :
     WRAP_PINNED_WORDS = 24
     ∧ WRAP_PINNED_SLOTS.length = 24
-    ∧ WRAP_PRIMARY_LEN - WRAP_PINNED_WORDS = 16
-    ∧ WRAP_UNPINNED.length = 4
+    ∧ WRAP_PASSTHROUGH_SLOTS.length = 6
+    ∧ WRAP_UNPINNED_SLOTS.length = 10
+    ∧ WRAP_PRIMARY_LEN - WRAP_PINNED_WORDS - WRAP_PASSTHROUGH_SLOTS.length = 10
+    ∧ WRAP_UNPINNED.length = 2
+    ∧ WRAP_PASSTHROUGH.length = 6
     ∧ rungPub shapeSmoke .wraphack = WRAP_PRIMARY_LEN
-    -- ⚑ **THE TWO LISTS PARTITION MINA'S FORTY.** `WRAP_UNPINNED_SLOTS` is written down rather
-    -- than computed, so this is two independent readings of `wrap_main` agreeing, not a definition
-    -- unfolding: sixteen slots, disjoint from the twenty-four, and together exactly `range 40`.
-    ∧ WRAP_UNPINNED_SLOTS.length = 16
-    ∧ (WRAP_PINNED_SLOTS ++ WRAP_UNPINNED_SLOTS).dedup.length = WRAP_PRIMARY_LEN
-    ∧ ((List.range WRAP_PRIMARY_LEN).all
-        (fun i => WRAP_PINNED_SLOTS.contains i != WRAP_UNPINNED_SLOTS.contains i)) = true := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    -- ⚑ **THE THREE LISTS PARTITION MINA'S FORTY.** Each is written down rather than computed, so
+    -- this is three independent readings of `wrap_main` agreeing, not a definition unfolding:
+    -- 24 + 6 + 10 = 40, no slot in two of them, and together exactly `range 40`.
+    ∧ (WRAP_PINNED_SLOTS ++ WRAP_PASSTHROUGH_SLOTS ++ WRAP_UNPINNED_SLOTS).dedup.length
+        = WRAP_PRIMARY_LEN
+    ∧ ((List.range WRAP_PRIMARY_LEN).all (fun i =>
+        (if WRAP_PINNED_SLOTS.contains i then 1 else 0)
+        + (if WRAP_PASSTHROUGH_SLOTS.contains i then 1 else 0)
+        + (if WRAP_UNPINNED_SLOTS.contains i then 1 else 0) == 1)) = true := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- ⚠ ⚑ **THE CENSUS DID NOT MOVE, AND `sg_old`'s ENTRY IS REWRITTEN RATHER THAN STRUCK.**
 W-WRAPHACK gives `sg_old` a real consumer — it is hashed into packed statement words 55/56, which the

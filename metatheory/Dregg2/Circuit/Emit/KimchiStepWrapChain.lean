@@ -615,17 +615,36 @@ rather than a count read off a harness artifact. "21 of 22" has been reported re
 committed JSON; this states the sharp form the count was standing in for.
 
 `exposedVars` is 4 challenge words + 1 fork digest + 16 bulletproof prechallenges + 1 `branch_data`,
-`.take 22`. The first 21 are transcript-derived and EVERY ONE of them moves under the bend. Word 21
-is `(branchVars …).packed` — `branch_data`, `4·16 + 2·1 = 66`, which has no transcript dependence at
-all — and it does not move. So the honest statement is not "21 of 22 happened to differ": it is
-*every transcript-derived public word moves and the one non-transcript word does not*, with the
-identity of that word pinned to the variable rather than to an index. -/
+`.take 22`. All but the last are transcript-derived and EVERY ONE of them moves under the bend. The
+last is `(branchVars …).packed` — `branch_data`, `4·16 + 2·1 = 66`, which has no transcript
+dependence at all — and it does not move. So the honest statement is not "21 of 22 happened to
+differ": it is *every transcript-derived public word moves and the one non-transcript word does
+not*, with the identity of that word pinned to the variable rather than to an index.
+
+⚠ ⚑ **AND IT IS QUANTIFIED OVER THE SLOTS THIS RUNG DERIVES, NOT OVER `range 21`, SINCE 2026-08-05.**
+`wrapPublicAt` returns a vector indexed by **MINA'S SLOT**, 0–39 — it has since the layout landed —
+while this statement still read `(List.range 21)`, which was `exposedVars`' POSITION indexing from
+when the vector was dense. Those two agree for no index at all: `range 21` names Mina slots 0–20,
+eight of which (0, 1, 2, 3, 4, 9, 11, 12) `w4_bind` does not derive and which are therefore ZERO in
+BOTH emissions, so the conjunct asserted that a zero differs from itself. **This was a red the
+layout commit left behind, not one the pass-through wiring introduced** — `wrapSlots` and
+`wrapSlotsAt`'s `.bind` branch are untouched by that change, so the eight non-moving slots are the
+same eight before and after it.
+
+The repair is to say what the docblock always meant: quantify over `wrapSlotsAt … .bind`, the slots
+the rung actually ties, and exclude `branch_data` by SLOT rather than trimming an index range. -/
 theorem the_bend_moves_every_transcript_derived_public_word :
     (exposedVars tChain).length = 22
-    ∧ ((List.range 21).all (fun i =>
-        (wrapPublicAt tChainBent .bind).getD i 0 != (wrapPublicAt tChain .bind).getD i 0)) = true
-    ∧ (wrapPublicAt tChainBent .bind).getD 21 0 = (wrapPublicAt tChain .bind).getD 21 0
-    ∧ (exposedVars tChain).getD 21 (.external 0)
+    ∧ ((wrapSlotsAt shapeChain .bind).filter (fun s => s != WRAP_SLOT_BRANCH_DATA)).all (fun s =>
+        (wrapPublicAt tChainBent .bind).getD s 0 != (wrapPublicAt tChain .bind).getD s 0) = true
+    -- ⚑ …and the ONE that does not move is `branch_data`, at Mina's slot 29.
+    ∧ (wrapPublicAt tChainBent .bind).getD WRAP_SLOT_BRANCH_DATA 0
+        = (wrapPublicAt tChain .bind).getD WRAP_SLOT_BRANCH_DATA 0
+    ∧ (wrapSlotsAt shapeChain .bind).contains WRAP_SLOT_BRANCH_DATA = true
+    -- …with its identity pinned to the VARIABLE, which is the point of the whole statement.
+    ∧ slotVarAt tChain .bind WRAP_SLOT_BRANCH_DATA
+        = some (branchVars shapeChain (baseBr shapeChain tChain.sp)).packed
+    ∧ (exposedVars tChain).getD 21 PVAR_NOWHERE
         = (branchVars shapeChain (baseBr shapeChain tChain.sp)).packed := by
   native_decide
 

@@ -180,3 +180,114 @@ W-FINALIZE, exactly as this document said.
 
 ⚠ Still unsettled and untouched: which of `to_public_input_cvar`'s branches the side-loaded path
 takes, i.e. whether slots 30–39 are constants or variables. They are emitted as constant zero.
+
+---
+
+## ⚑ CLOSED 2026-08-05 (second pass) — INSTANCE, the last of the three deltas
+
+The first pass closed ORDER and WIDTH and left **INSTANCE** open: *"the exposed values are this
+assembly's transcript over fixture commitments, not any real proof's."* That is closed for the six
+words it was really about, and the fork above it is closed too.
+
+### What the six now are
+
+`ftcSVal`, `combXiVal` and `bullScalVal 0` were `wrapFixtureQ` draws — a deterministic filler. They
+are now `expand_deferred`'s own outputs for a real step proof, read out of
+`PreparedStatement::to_public_input(40)` and carried by
+`metatheory/Dregg2/Circuit/Emit/MinaWrapDeferredWords.lean` (7 theorems, kernel-clean).
+
+⚠ **Two corrections to this document's own list.** The handoff that generated this pass named six
+*families* — `ftcSVal`, `combXiVal`, `bullScalVal`, `finColVal`, `finPZetaVal`, `finFtEval1Val`.
+Read at source:
+
+- **`finColVal` / `finPZetaVal` / `finFtEval1Val` are not among Mina's forty at all.** They are
+  `Req.Evals` witnesses — the PREVIOUS proof's evaluation columns, `ft_eval1` and `p(ζ)` — which
+  arrive on the wire as `prev_evals`, not in the public input. `wrap-public-input.json` has no such
+  word and no fixture there could have come from it. They are untouched and still fixtures.
+- **`bullScalVal 1` and `2` are `z₁`/`z₂`**, `openings_proof`'s, with no slot in the forty. Only
+  index 0 (`advice.b`, slot 1) is a public word. They are untouched *deliberately* — measuring them
+  would put a real value in a cell whose honesty is that it is free.
+- **`bullCipVal` was never a fixture draw**: slot 0 reaches its cell through the transcript tape
+  (`itemVal T_CIP`), which fell through to `wrapFixture`. That fall-through is now `DEF_CIP`, which
+  is also the more faithful shape — `wrap_verifier.ml:395` absorbs `advice.combined_inner_product`,
+  i.e. the public word itself.
+
+So the real set is **five values across three families plus one transcript tape entry**, covering
+Mina slots 0, 1, 2, 3, 4 and 9.
+
+### ⚑ The fixture is REPRODUCIBLE now, and it had to become so first
+
+`pickles_kimchi_marshal` proved with `OsRng`. Every run produced a different step proof and
+therefore a different forty, so a Lean constant carrying them would have been stale the moment the
+binary was re-run — the loop (run → read → bake → re-emit) had **no fixed point**. Both provers now
+draw from a seeded `StdRng`. Two consecutive runs are byte-identical in `wrap-public-input.json`,
+`marshalled.binprot` and `marshalled.o1js-proof.json`; `PROOF_MARSHAL_RESULT=GREEN` both times.
+
+Nothing is hidden by seeding: the blinding protects a smoke circuit's witness, published next door,
+and the proofs are still produced by the real prover and still checked by `batch_verify`.
+
+### The fork is closed, and it was not a fork
+
+`wrap_main` reads slots 0–4 and 9 and checks none. The derivation horn said "expose only what you
+compute"; upstream's said "they are free pass-throughs". **Pickles recomputes all six and
+substitutes them**, so the derivation horn describes a proof nobody intends to hand to Pickles. The
+readers consume the public words now.
+
+`WRAP_PASSTHROUGH_SLOTS` is a **third category** beside `WRAP_PINNED_SLOTS` and
+`WRAP_UNPINNED_SLOTS` — read-but-not-checked. The forty split **24 constrained + 6 read + 10 dead**,
+and `wraphack_closes_every_pinned_statement_word` states that as a real three-way partition. The
+old statement was `PINNED != UNPINNED` over the forty and is now FALSE, not stale: six slots were in
+neither list.
+
+⚠ **This removes six free witnesses.** A prover could previously choose `perm`, `ξ`, `b` and the
+rest freely. The harness's polarity (5) sigma leg measures the change: those slots move from
+"accepts a cell flip" to "refuses one".
+
+### What Mina's own verifier says — `mina_onchain_index_probe`, release, on `w11_bullet`
+
+3691 Lean rows, `public_input_size = 40`, domain 2^14, all six tied. Both directions run:
+
+| `--vk` | [A] commitments | [B] `kimchi::verifier::verify` | [C] 40 slot-moves |
+|---|---|---|---|
+| key derived from THIS emission | **28 / 28** | **`Ok` — MINA'S OWN VERIFIER ACCEPTED IT** | REFUSED **40 / 40** |
+| a mismatched key (`w4_bind`'s) | 1 / 28 | **`Err(OpenProof)`** *"the opening proof failed to verify"* | REFUSED 40 / 40 |
+
+`PROBE_RESULT same_index=true control=true mina_40words=true falsifiers_refused=40/40`.
+
+⚠ **[C] is the VECTOR leg and does not discriminate read from unread** — the binary says so itself.
+Moving any public word changes the public commitment, so 40/40 was already true when six of the
+slots were inert. **The discriminating instrument is polarity (5)'s SIGMA leg**, and quoting [C] as
+evidence that the six are bound would be quoting the flattering number of a pair.
+
+### ⚑ How far this actually gets us — the emitted vector against Mina's
+
+At `w12_close`, emitted public vector vs `to_public_input(40)`: **16 of 40 agree** — slots 0, 1, 2,
+3, 4, 9 (the six, exactly) and 30–39 (the ten zeros). **The other 24 do not, and that is the honest
+residue**: they are the words this circuit DERIVES from its own transcript, which runs over fixture
+commitments rather than over the step proof those forty words came from.
+
+So: **`kimchi::verifier::verify` accepts. Pickles would not.** A Pickles wrap proof's slots 5–8, 10
+and 13–28 are the step proof's own challenges, asserted equal in-circuit; ours are our fixture
+transcript's. Closing THAT is the next thing, and it is a bigger object than this pass: it means the
+wrap assembly's sponge absorbing the real step proof's commitments, not a fixture's.
+
+### A red this pass found and did not cause
+
+`KimchiStepWrapChain.the_bend_moves_every_transcript_derived_public_word` was **already failing at
+HEAD**. `wrapPublicAt` returns a vector indexed by MINA'S SLOT since the layout commit, while the
+theorem still read `(List.range 21)` — `exposedVars`' POSITION indexing from when the vector was
+dense. Those agree for no index: `range 21` names slots 0–20, eight of which (0, 1, 2, 3, 4, 9, 11,
+12) `w4_bind` does not derive and which are therefore ZERO in both emissions, so a conjunct asserted
+that a zero differs from itself. `wrapSlots` and `wrapSlotsAt`'s `.bind` branch are untouched by
+this pass, so the eight are the same eight before and after it. Restated over
+`wrapSlotsAt … .bind` with `branch_data` excluded by SLOT.
+
+### What re-emits
+
+Every rung's witness from `w4_bind` up — `itemVal T_CIP` moved, and the 16 IPA prechallenges and `c`
+are squeezed after it (β/γ/α/ζ and the fork digest are squeezed before, and do not move). All 30
+smoke fixtures come from one run. `w3_branch` and `w4_bind` keep their VK hashes
+(`3188784766661697483171188289432725486872584657562879441369053845609461086197` for `w4_bind`) —
+they sit below `w8_ftcomm` and tie none of the six, so their gates are unchanged.
+
+⚠ **The devnet key is still stale and re-registration is still the operator's.** Untouched here.

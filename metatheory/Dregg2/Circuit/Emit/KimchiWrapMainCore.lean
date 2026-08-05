@@ -28,6 +28,7 @@ import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.PastaPoseidonFq
 import Dregg2.Circuit.Emit.MinaRealBlockTranscript
 import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
+import Dregg2.Circuit.Emit.MinaWrapDeferredWords
 import Dregg2.Circuit.Emit.KimchiWrapMainField
 import Dregg2.Circuit.Emit.KimchiStepWrapChainKey
 
@@ -38,6 +39,11 @@ open Dregg2.Circuit.Emit.WitnessBuilder
   (VarEnv GateWitness gridAt envIndex envLookupAt gateVarWitnessAt compose)
 open Dregg2.Circuit.Emit.PastaField (pN qN)
 open Dregg2.Circuit.Emit.PastaPoseidonFq (fqParams rcsQ mdsQ)
+-- ⚑ The six deferred words `wrap_main` READS and never derives, MEASURED through Mina's own
+-- `PreparedStatement::to_public_input(40)`. See `MinaWrapDeferredWords` for provenance and for the
+-- width signature that says each is the object its slot names.
+open Dregg2.Circuit.Emit.MinaWrapDeferredWords
+  (DEF_CIP DEF_B DEF_ZETA_TO_SRS_LENGTH DEF_ZETA_TO_DOMAIN_SIZE DEF_PERM DEF_XI)
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -137,6 +143,50 @@ def WRAP_SLOT_MSG_NEXT_STEP : Nat := 12
 /-- Mina's slot for `messages_for_next_wrap_proof` — the closing
 `hash_messages_for_next_wrap_proof` squeeze (`wrap_main.ml:421-431`), which W-WRAPHACK emits. -/
 def WRAP_SLOT_MSG_NEXT_WRAP : Nat := 11
+
+/-- Mina's slot for `branch_data` — `(domain_log2 <<< 2) ||| proofs_verified`
+(`branch_data.ml:63`, `prepared_statement.rs:131-139`), which §9's `Branch_data.Checked.pack`
+derives. ⚑ It is the ONE derived word with no transcript dependence at all, which is what
+`KimchiStepWrapChain.the_bend_moves_every_transcript_derived_public_word` singles it out for. -/
+def WRAP_SLOT_BRANCH_DATA : Nat := 29
+
+/-! ⚑ **THE SIX SLOTS `wrap_main` READS AND NEVER CHECKS**, named rather than written as literals at
+their tie sites. `prepared_statement.rs:99-117` is the authority for every index here, and
+`MinaWrapDeferredWords` carries the values with the width signature that says each is the object its
+name claims. ⚠ `perm` is slot **4** and `zeta_to_srs_length` is slot **2** — the emit order of
+`ftcSVal`'s three arguments (`0 = perm`, `1 = zeta_to_srs_length`, `2 = zeta_to_domain_size`) is
+`ft_comm`'s and is NOT Mina's slot order, which is exactly the transposition a slot map exists to
+get right. -/
+
+/-- `advice.combined_inner_product`, `absorb_shifted` at `wrap_verifier.ml:395`. -/
+def WRAP_SLOT_CIP : Nat := 0
+/-- `advice.b`, `check_bulletproof`'s `b·u` multiplier. -/
+def WRAP_SLOT_B : Nat := 1
+/-- `plonk.zeta_to_srs_length`, `ft_comm`'s fold multiplier. -/
+def WRAP_SLOT_ZETA_TO_SRS : Nat := 2
+/-- `plonk.zeta_to_domain_size`, `ft_comm`'s closing scale. -/
+def WRAP_SLOT_ZETA_TO_DOM : Nat := 3
+/-- `plonk.perm`, `ft_comm`'s `f_comm` scale. -/
+def WRAP_SLOT_PERM : Nat := 4
+/-- `xi`, the `Split_commitments.combine` endo ladders' shared scalar. -/
+def WRAP_SLOT_XI : Nat := 9
+
+/-- ⚑ **THE OUT-OF-RANGE SENTINEL — AND IT STOPPED BEING `.external 0` ON 2026-08-05.**
+
+Five `getD` sites need a total default for a lookup that should never miss (a squeeze index past the
+end of the tape, a `forkSqueeze` that found nothing). Every one of them used `.external 0`, which was
+harmless for exactly as long as slot 0 was declared unread: a fired default tied a cell to a public
+word nothing looked at.
+
+Slot 0 is `combined_inner_product` now, and it is READ. A fired default would silently alias the
+consumer's cell to it — `exposedVars`' `forkSqueeze` fallback is the sharp one, since that entry is
+tied to slot 10 and would have made slots 10 and 0 one variable. That is the exact shape of defect
+this layout exists to refuse: no length moves, no count moves, and every rung still proves.
+
+⚠ `.internal` is the right sentinel because `externalRefs` filters it out by construction, so a
+fired default can never make a public word look read. This file allocates NO other internal, so the
+id is unambiguous in a dump. -/
+def PVAR_NOWHERE : PVar := .internal 0
 
 /-! ## §2 — the transcript SCHEDULE, from source.
 
@@ -269,6 +319,16 @@ def itemVal (t i : Nat) : Nat :=
   -- squeezed before them, so §12a's reality gate does not move.
   | 7 => if i % 2 == 0 then (lrPointQ (i / 2)).1 else (lrPointQ (i / 2)).2
   | 8 => if i == 0 then deltaPointQ.1 else deltaPointQ.2
+  -- ⚑ **TAG 6 (`combined_inner_product`) IS MEASURED SINCE 2026-08-05.** `wrap_verifier.ml:395` is
+  -- `absorb_shifted sponge advice.combined_inner_product`, and `advice.combined_inner_product` IS
+  -- Mina slot 0 — so the word this tape absorbs and the word the public vector carries are ONE
+  -- object upstream, and were two numbers here while this fell through to `wrapFixture`. It now
+  -- carries `expand_deferred`'s own value, in the `Shifted_value.Type1` representation
+  -- `absorb_shifted` expects and `prepared_statement.rs:99` pushes.
+  -- ⚠ What re-emits: every rung's witness from `w4_bind` up. T_CIP is absorbed at `schedule`'s
+  -- `:291`, AFTER the fork squeeze and BEFORE `u = group_map t`, so the 16 IPA prechallenges and `c`
+  -- move with it; β/γ/α/ζ and the fork digest are squeezed earlier and do NOT.
+  | 6 => DEF_CIP
   | _ => wrapFixture t i
 
 /-- **THE EVENT LIST**, in `wrap_verifier.ml`'s own order.
@@ -981,7 +1041,7 @@ def challengeRowsQ (t : WrapData) (wired : Bool) : List WRow :=
   let sq := chalSqueezes t.sp
   endoPinRow cb
   ++ (List.range (nChals s)).flatMap (fun c =>
-      let e := sq.getD c (.external 0, 0)
+      let e := sq.getD c (PVAR_NOWHERE, 0)
       let lo := e.2 % 2 ^ CHAL_BITS s
       let hi := e.2 / 2 ^ CHAL_BITS s
       tfcRowsQ s cb (chainVars s (cb + 1) c) e.1 true lo wired
@@ -993,7 +1053,7 @@ def challengeEnv (t : WrapData) : VarEnv :=
   let sq := chalSqueezes t.sp
   [ (vEndoQ cb, (ENDO_Q : Int)) ]
   ++ (List.range (nChals s)).flatMap (fun c =>
-      let e := sq.getD c (.external 0, 0)
+      let e := sq.getD c (PVAR_NOWHERE, 0)
       let lo := e.2 % 2 ^ CHAL_BITS s
       let hi := e.2 / 2 ^ CHAL_BITS s
       chainEnv s (chainVars s (cb + 1) c) lo hi
@@ -1264,10 +1324,12 @@ layout, measured against a devnet block. Of those 40, this rung DERIVES:
                                                       one by one
     29     branch_data                             ✅ §9's `Branch_data.Checked.pack`
                                                       (`wrap_main.ml:189-199`)
-    0–4    cip, b, ζ^srs_len, ζ^dom, perm          ✗ READ by W-FTCOMM (2,3,4) and W-BULLET
-                                                      (0,1); CHECKED by the NEXT proof's
-                                                      `finalize_other_proof`, never by this one
-    9      xi                                      ✗ READ by W-COMBINE, same story
+    0–4    cip, b, ζ^srs_len, ζ^dom, perm          ◑ TIED since 2026-08-05 — READ by W-FTCOMM
+                                                      (2,3,4) and W-BULLET (0,1) out of the PUBLIC
+                                                      WORD, not out of a free witness; CHECKED by
+                                                      the NEXT proof's `finalize_other_proof`,
+                                                      never by this one
+    9      xi                                      ◑ TIED at W-COMBINE, same story
     12     messages_for_next_step_proof            ✅ at `w9_prev` ONLY (§18) — the
                                                       `Field.Assert.equal` of `wrap_main.ml:350-351`
                                                       against packed statement word 54, which the
@@ -1278,7 +1340,10 @@ layout, measured against a devnet block. Of those 40, this rung DERIVES:
     30–37  Spec.T.Constant padding                 ✗ (never constrained upstream either)
     38–39  the lookup Opt                          ✗ (`lookup_verification_enabled` is off)
 
-**22 of 40 through `w8_ftcomm`, 23 at `w9_prev`, 24 at `w11_wraphack`.**
+**22 of 40 through `w7_split`; 25 at `w8_ftcomm`, 26 at `w9_prev`, 27 at `w11_wraphack`, 28 at
+`w10_combine` and 30 at `w11_bullet` / `w12_close`** — the 24 this circuit DERIVES plus the six it
+READS, each appearing at the rung whose rows read it. ⚠ At the SMOKE shape `pubWords = 6` and
+`ipaRounds = 3`, so the derived base is 6, not 22, and `branch_data` is not exposed at all.
 
 ⚑ **AND `pubWords = 22` AGAINST `WRAP_PINNED_SLOTS.length = 24` IS THAT LADDER, NOT A SHORTFALL.**
 `pubWords` is the width of `exposedVars` — the words the CLOSING rung derives — and the last two
@@ -1298,21 +1363,27 @@ two agree is a fact to be checked, not a coincidence to be assumed: `the_challen
 transcript_order` is where it is checked, and a rotation here is precisely the defect that puts the
 wrong object under the right name and moves nothing a width signature can see.
 
-⚠ ⚑ **AND 40 IS NOT THE DENOMINATOR — 24 IS, AND THE OTHER SIXTEEN ARE NOT THIS FILE'S WORK.**
-`wrap_main` is HANDED forty words and CONSTRAINS twenty-four of them. Slots 0–4 and 9 are deferred
-values it passes straight through as `~advice` / `~plonk` / `~xi` (`wrap_main.ml:405-414`) and never
-checks — what CHECKS them is the NEXT proof's `finalize_other_proof`, and what READS them here is
-W-FTCOMM (2, 3, 4), W-COMBINE (9) and W-BULLET (0, 1). So they are not "missing from our public
-vector", they are unconstrained in `wrap_main` as written. Slots 30–37 are
-`Spec.T.Constant` padding and 38–39 the lookup `Opt` that `G.lookup_verification_enabled` leaves off
-(`wrap_verifier.ml:487,715`); a real devnet wrap proof carries **ZERO** in all ten
+⚠ ⚑ **THE DENOMINATOR IS 30, AND IT WAS 24 UNTIL 2026-08-05 BECAUSE SIX SLOTS WERE MISLABELLED.**
+`wrap_main` is HANDED forty words. It CONSTRAINS twenty-four. It READS six more — slots 0–4 and 9,
+passed through as `~advice` / `~plonk` / `~xi` (`wrap_main.ml:405-414`) — and CHECKS none of those
+six; what checks them is the NEXT proof's `finalize_other_proof`. The remaining ten are
+`Spec.T.Constant` padding (30–37) and the lookup `Opt` (38–39) that `G.lookup_verification_enabled`
+leaves off (`wrap_verifier.ml:487,715`); a real devnet wrap proof carries **ZERO** in all ten
 (`MinaWrapPublicInput.the_tail_is_padding_and_branch_data`, over
-`MinaWrapPublicCommGate.PUBLIC_INPUT`). Tying those to variables would be public fixtures — defect
-class 5 wearing a public vector. So the honest reading of a `PI 24 vs 40` delta is
-**6 pass-through + 10 constant-or-dead**, and this rung is the last of the 24. ⚠ The six are
-`~advice`/`~plonk`/`~xi`: `wrap_main` READS them (W-FTCOMM 2/3/4, W-COMBINE 9, W-BULLET 0/1) and
-CHECKS none of them; their checker is the NEXT proof's `finalize_other_proof`. Whether this assembly
-should expose them anyway is the fork `wrapInertOk` states — it is a taste call and it is open.
+`MinaWrapPublicCommGate.PUBLIC_INPUT`), and tying those to variables would be public fixtures —
+defect class 5 wearing a public vector.
+
+⚑ **SO THE HONEST READING OF A `PI ours-vs-mina` DELTA IS `30 read + 10 dead`, NOT `24 + 16`.** The
+six used to sit in `WRAP_UNPINNED_SLOTS` beside the dead ten, which said "nothing reads these" about
+words `ft_comm`, `Split_commitments.combine` and `check_bulletproof` all read. They were unread HERE
+only because this assembly wired those three consumers to free witnesses with fixture defaults, and
+that was a divergence from `wrap_main` wearing the clothes of a design choice.
+
+⚠ **AND BEING READ IS NOT A COSMETIC CHANGE — IT REMOVES SIX FREE WITNESSES.** A free witness is
+chosen by the prover; a public word is handed to the verifier. Before this, a prover could pick any
+`perm`, any `ξ`, any `b` it liked and the circuit would prove. `WRAP_PASSTHROUGH_SLOTS` and the ties
+in `ftcRows` / `combRows` / `bulletRows` are what closed that, and the harness's polarity (5) sigma
+leg is what MEASURES it: those six slots move from "accepts a cell flip" to "refuses one".
 
 ⚑ **AND EACH NEW WORD IS EXPOSED AT ONE RUNG, NOT AT ALL OF THEM.** `closingRows` emits `pubWords`
 halves at `w4_bind`, `prevRows` emits slot 12 and `whRows` slot 11; every rung declares all forty,
@@ -1335,24 +1406,50 @@ def WRAP_PINNED_SLOTS : List Nat :=
 
 def WRAP_PINNED_WORDS : Nat := WRAP_PINNED_SLOTS.length
 
-/-- ⚑ **THE SIXTEEN SLOTS `wrap_main` LEAVES UNREAD, as indices** — the complement of
-`WRAP_PINNED_SLOTS` in `WRAP_PRIMARY_LEN`, written down rather than computed from the emission,
-because it is what the emission is CHECKED AGAINST (`wrapInertOk`). `WRAP_UNPINNED` below is the
-same sixteen by reason and by owner. -/
+/-- ⚑ **THE SIX `wrap_main` READS AND NEVER CHECKS** — `~advice` / `~plonk` / `~xi`
+(`wrap_main.ml:405-414`). A THIRD category, and the reason it exists is that the other two were
+answering different questions and both answered this one wrong.
+
+  * `WRAP_PINNED_SLOTS` are the slots `wrap_main` CONSTRAINS. These are not among them: nothing in
+    this circuit checks them, and inventing a check would be a divergence from upstream, not a fix.
+  * `WRAP_UNPINNED_SLOTS` are the slots NOTHING reads. These are not among those either: `ft_comm`,
+    `Split_commitments.combine` and `check_bulletproof` all read them, and until 2026-08-05 this
+    assembly hid that by wiring those three consumers to free witnesses instead.
+
+So they are READ-BUT-NOT-CHECKED, they are tied to the cell that reads them, and their checker is
+the NEXT proof's `finalize_other_proof`. ⚠ Being read is what makes a prover unable to choose them:
+before this they were six free witnesses, and a public word is not. -/
+def WRAP_PASSTHROUGH_SLOTS : List Nat :=
+  [ WRAP_SLOT_CIP, WRAP_SLOT_B ]                  -- W-BULLET, check_bulletproof (wrap_verifier.ml:395)
+  ++ [ WRAP_SLOT_ZETA_TO_SRS, WRAP_SLOT_ZETA_TO_DOM, WRAP_SLOT_PERM ]   -- W-FTCOMM, ft_comm
+  ++ [ WRAP_SLOT_XI ]                             -- W-COMBINE, Split_commitments.combine
+
+/-- ⚑ **THE TEN SLOTS `wrap_main` LEAVES UNREAD, as indices** — written down rather than computed
+from the emission, because it is what the emission is CHECKED AGAINST (`wrapInertOk`).
+`WRAP_UNPINNED` below is the same ten by reason and by owner.
+
+⚠ **THIS WAS SIXTEEN UNTIL 2026-08-05** and six of those sixteen were a mislabel: they were unread
+HERE only because this assembly declined to tie them, not because upstream leaves them unread. They
+are now `WRAP_PASSTHROUGH_SLOTS`. What is left is the genuinely dead tail, and nothing upstream
+reads any of it. -/
 def WRAP_UNPINNED_SLOTS : List Nat :=
-  [0, 1, 2, 3, 4]                                 -- cip · b · ζ^srs_len · ζ^dom · perm — ~advice/~plonk
-  ++ [9]                                          -- xi — ~xi (wrap_main.ml:409)
-  ++ (List.range 8).map (fun j => 30 + j)         -- Spec.T.Constant padding
+  (List.range 8).map (fun j => 30 + j)            -- Spec.T.Constant padding
   ++ [38, 39]                                     -- the dead lookup Opt
 
-/-- …and the sixteen it does not pin, by REASON and by OWNER. -/
+/-- …and the ten it does not pin, by REASON and by OWNER. -/
 def WRAP_UNPINNED : List String :=
-  [ "0–4 cip · b · zeta_to_srs_length · zeta_to_domain_size · perm — PASSED THROUGH as ~advice/~plonk \
-     (wrap_main.ml:405-414); READ by W-FTCOMM (2,3,4) and W-BULLET (0,1), CHECKED by the NEXT \
-     proof's finalize_other_proof"
-  , "9 xi — PASSED THROUGH as ~xi (wrap_main.ml:409); READ by W-COMBINE, CHECKED by the next proof"
-  , "30–37 Spec.T.Constant padding — ZERO in a real devnet wrap proof, constrained by nothing upstream"
+  [ "30–37 Spec.T.Constant padding — ZERO in a real devnet wrap proof, constrained by nothing upstream"
   , "38–39 the lookup Opt — G.lookup_verification_enabled is off (wrap_verifier.ml:487,715)" ]
+
+/-- …and the six pass-throughs, by REASON and by OWNER. -/
+def WRAP_PASSTHROUGH : List String :=
+  [ "0 combined_inner_product — ~advice (wrap_main.ml:405-414); READ by W-BULLET at \
+     wrap_verifier.ml:395's absorb_shifted; CHECKED by the NEXT proof's finalize_other_proof"
+  , "1 b — ~advice; READ by W-BULLET as check_bulletproof's b·u multiplier; same checker"
+  , "2 zeta_to_srs_length — ~plonk; READ by W-FTCOMM as ft_comm's fold multiplier; same checker"
+  , "3 zeta_to_domain_size — ~plonk; READ by W-FTCOMM as ft_comm's closing scale; same checker"
+  , "4 perm — ~plonk; READ by W-FTCOMM as f_comm's scale (common.ml:245); same checker"
+  , "9 xi — ~xi (wrap_main.ml:409); READ by W-COMBINE, shared by all 46 endo ladders; same checker" ]
 
 /-- The variables this assembly exposes as public words, in order. ⚑ Slot order here is THIS
 circuit's; the census above maps each to Mina's slot.
@@ -1374,7 +1471,7 @@ def exposedVars (t : WrapData) : List PVar :=
   (List.range 4).map (fun c => (chainVars s (cb + 1) c).n s.emsRows)
   -- `sponge_digest_before_evaluations` IS a `Digest` (`Field.size_in_bits`), so THIS one is the
   -- full field squeeze — the fork at `wrap_verifier.ml:646`.
-  ++ [ (match forkSqueeze t.sp with | some e => e.1 | none => .external 0) ]
+  ++ [ (match forkSqueeze t.sp with | some e => e.1 | none => PVAR_NOWHERE) ]
   ++ (List.range (min s.ipaRounds (nChals s - 5))).map (fun r =>
        (chainVars s (cb + 1) (4 + r)).n s.emsRows)
   ++ [ (branchVars s (baseBr s t.sp)).packed ]
@@ -2056,9 +2153,20 @@ def ftcLadders (s : WrapShape) : Nat := s.tComms + 1
 def ftcScalarIdx (s : WrapShape) (l : Nat) : Nat :=
   if l == 0 then 0 else if l < s.tComms then 1 else 2
 
-/-- The three deferred values, as FIXTURES — `plonk.perm`, `plonk.zeta_to_srs_length`,
-`plonk.zeta_to_domain_size` are free witnesses here and checked by W-FINALIZE in the next proof. -/
-def ftcSVal (j : Nat) : Nat := wrapFixtureQ 22 j
+/-- The three deferred values `ft_comm` scales by — `plonk.perm`, `plonk.zeta_to_srs_length`,
+`plonk.zeta_to_domain_size`, at Mina slots **4, 2 and 3**.
+
+⚑ **MEASURED, NOT DRAWN, SINCE 2026-08-05.** These were `wrapFixtureQ 22 j`, a deterministic filler.
+They are now `expand_deferred`'s own recomputation over a real step proof's transcript, read out of
+`PreparedStatement::to_public_input(40)` — Mina's function — and carried by
+`MinaWrapDeferredWords`. They are still not DERIVED here and cannot be: `wrap_main` reads all three
+out of its public input and checks none of them, and their checker is the next proof's
+`finalize_other_proof`. What changed is that the number a verifier now sees at slot 2 is a real
+`ζ^(2^16)` rather than an arithmetic sequence, and `closingRows` ties the cell to the slot. -/
+def ftcSVal (j : Nat) : Nat :=
+  if j == 0 then DEF_PERM
+  else if j == 1 then DEF_ZETA_TO_SRS_LENGTH
+  else DEF_ZETA_TO_DOMAIN_SIZE
 
 /-- `messages.t_comm.(j)` — witnessed upstream (`Plonk_types.Messages.typ`), fixtures here, and on
 the curve because they are doublings of real SRS Lagrange bases. -/
@@ -2253,6 +2361,16 @@ def ftcRows (t : WrapData) (wired : Bool) : List WRow :=
   ++ [ caRowQ (ftcSum1V s sp) (lastOut.1, ftcNegY s sp) (ftcOutV s sp)
          (caWitnessQ (ftcSum1 t).1 (ftcSum1 t).2 (ftcLastScaled t).1
            (qSub 0 (ftcLastScaled t).2)) ]
+  -- (5) ⚑ **THE THREE PUBLIC TIES** — `~plonk`'s `perm`, `zeta_to_srs_length` and
+  -- `zeta_to_domain_size` at MINA'S slots 4, 2 and 3. `ft_comm` reads these three out of the wrap
+  -- statement (`wrap_main.ml:405-414`); before 2026-08-05 this rung read three free witnesses
+  -- instead, which is what made the slots look unread. The cells are unchanged — `ftcCnt` already
+  -- lands each one in the last `varBaseMul` row's counter column — so this adds only the half that
+  -- says the multiplier IS the public word.
+  ++ packHalves
+       [ ([some (.external WRAP_SLOT_PERM : PVar), some (ftcSV s sp 0), none], cEq)
+       , ([some (.external WRAP_SLOT_ZETA_TO_SRS : PVar), some (ftcSV s sp 1), none], cEq)
+       , ([some (.external WRAP_SLOT_ZETA_TO_DOM : PVar), some (ftcSV s sp 2), none], cEq) ]
   ++ [ probeRow wired (ftcOutV s sp).1 (ftcOutV s sp).2 ]
 
 /-- W-FTCOMM's variable environment. -/
@@ -3673,10 +3791,16 @@ def combTerms (s : WrapShape) : Nat :=
 /-- Fold steps — one fewer than the commitments, because `~init` consumes the last. -/
 def combSteps (s : WrapShape) : Nat := combTerms s - 1
 
-/-- ⚑ **`xi`**, `Deferred_values.xi`'s `Scalar_challenge.inner` — a RAW 128-bit challenge, free here
-and bound by W-FINALIZE. It is `< 2^ENDO_BITS` because the ladder's counter reconstructs exactly
-that many bits; a wider value would make `Field.Assert.equal !n_acc scalar` unsatisfiable. -/
-def combXiVal : Nat := wrapFixtureQ 30 0 % 2 ^ ENDO_BITS
+/-- ⚑ **`xi`**, `Deferred_values.xi`'s `Scalar_challenge.inner` — a RAW 128-bit challenge at Mina
+slot **9**. It is `< 2^ENDO_BITS` because the ladder's counter reconstructs exactly that many bits;
+a wider value would make `Field.Assert.equal !n_acc scalar` unsatisfiable.
+
+⚑ **MEASURED SINCE 2026-08-05**, and the `% 2 ^ ENDO_BITS` that used to reduce the filler is GONE
+rather than kept as a belt: the measurement is a real `Scalar_challenge.inner` and is 128 bits by
+construction, so a modulus here would have hidden a wrong object instead of catching one.
+`MinaWrapDeferredWords.the_six_fit_the_cells_that_will_carry_them` is where the bound is checked,
+and it is checked on the value rather than imposed on it. -/
+def combXiVal : Nat := DEF_XI
 
 /-- Commitment `k`'s VALUE, in `wrap_verifier.ml:687-706`'s flat order.
 
@@ -3859,6 +3983,12 @@ def combRows (t : WrapData) (wired : Bool) : List WRow :=
               , ([some (combMux s sp a c 1), some cu, some (combMux s sp a c 2)], cAdd) ]))
           else []))
   seedPins ++ stepRows
+  -- ⚑ **THE ξ PUBLIC TIE** — `~xi` (`wrap_main.ml:409`) at MINA'S slot 9. ONE half for all 46
+  -- ladders, because `combXiV` is one cell: `comb_all_ladders_share_one_xi` is what makes that a
+  -- fact about the emission rather than a hope. The value is the RAW 128-bit `Scalar_challenge.
+  -- inner`, which is the object `spec.ml:374-392` packs at slot 9 — the endo lift lives in the
+  -- ladder, not in the public word.
+  ++ packHalves [ ([some (.external WRAP_SLOT_XI : PVar), some (combXiV s sp), none], cEq) ]
   ++ [ probeRow wired (combOutVar t (ns - 1)).1 (combOutVar t (ns - 1)).2 ]
 
 /-- W-COMBINE's variable environment. -/
@@ -4102,7 +4232,7 @@ def bullChalV (t : WrapData) (m : Nat) : PVar :=
 def bullChalVal (t : WrapData) (m : Nat) : Nat :=
   let s := t.sh
   let c := if m == 2 * s.ipaRounds then 4 + s.ipaRounds else 4 + m / 2
-  ((chalSqueezes t.sp).getD c (.external 0, 0)).2 % 2 ^ CHAL_BITS s
+  ((chalSqueezes t.sp).getD c (PVAR_NOWHERE, 0)).2 % 2 ^ CHAL_BITS s
 
 def enN (t : WrapData) (m e : Nat) : PVar :=
   if e == ENDO_BLOCKS then bullChalV t m
@@ -4134,11 +4264,21 @@ the tape. They now read `t.sp`, exactly where `bullLrV`/`bullDeltaV` read the va
 def bullLrVal (t : WrapData) (r j : Nat) : Nat × Nat := absPtVal t.sp T_LR (2 * r + j)
 def bullDeltaVal (t : WrapData) : Nat × Nat := absPtVal t.sp T_DELTA 0
 
-/-- The three free scalars and the free commitment. ⚠ FIXTURES, and named as such: `advice.b` is
-wrap statement slot 1 (W-FINALIZE's), `z₁`/`z₂` and `challenge_polynomial_commitment` are
-`openings_proof`'s and have no binder in `wrap_main` at all — which is §13's own note and the reason
-`equal_g` refuses no on-curve substitution. -/
-def bullScalVal (j : Nat) : Nat := wrapFixtureQ (40 + j) 0
+/-- The three scalars `check_bulletproof` multiplies by. ⚑ **AND THEY ARE NOT ALL THE SAME KIND OF
+THING — ONE IS A PUBLIC WORD AND TWO ARE NOT.**
+
+  * `j = 0` is **`advice.b`**, Mina slot **1**: a word `wrap_main` READS out of its public input
+    (`wrap_main.ml:405-414`) and never checks. MEASURED since 2026-08-05 through
+    `PreparedStatement::to_public_input`, and tied to slot 1 by `bulletRows`.
+  * `j = 1, 2` are **`z₁` and `z₂`**, and they stay FIXTURES because they are not statement words at
+    all: they are `openings_proof`'s, they have no binder in `wrap_main`, and there is no slot in
+    Mina's forty for either. Feeding them a measured number would put a real value in a cell whose
+    honesty is that it is free — which is §13's own note and the reason `equal_g` refuses no
+    on-curve substitution.
+
+⚠ Do not "finish the job" by measuring 1 and 2. The asymmetry is the faithful shape. -/
+def bullScalVal (j : Nat) : Nat :=
+  if j == 0 then DEF_B else wrapFixtureQ (40 + j) 0
 
 /-- ⚑ **THE PROVER'S SOLVE FOR `challenge_polynomial_commitment`**, `G := z₁⁻¹·(lhs − z₂·H) − b·u` —
 one inverse in VESTA'S SCALAR FIELD and three scalar multiplications, the step side's `bpSolveG`
@@ -4476,6 +4616,17 @@ def bulletRows (t : WrapData) (wired : Bool) : List WRow :=
       ++ [ ([some (bullEqV s sp 2), some (bullEqV s sp 8), some (bullEqV s sp 12)], cMul) ])
   pins ++ ocRows ++ gmRows ++ sfRows 0 ++ sfRows 1
   ++ roundRows ++ redRows ++ tailRows ++ rhsRows ++ eqRows
+  -- ⚑ **THE TWO `~advice` PUBLIC TIES** — `combined_inner_product` at MINA'S slot 0 and `b` at slot
+  -- 1, both read by `check_bulletproof` (`wrap_verifier.ml:395`) and checked by neither this proof
+  -- nor this rung.
+  -- ⚠ **SLOT 0's CELL IS THE TRANSCRIPT'S, NOT A FRESH WITNESS.** `bullCipV` is the word the sponge
+  -- ABSORBED — upstream absorbs `advice.combined_inner_product` itself, so tying slot 0 here says
+  -- the absorbed word and the public word are one object, which upstream they are. Slot 1's cell is
+  -- `bullScalV … 0`, the `b·u` multiplier. `z₁`/`z₂` (`bullScalV … 1, 2`) get NO tie: they are
+  -- `openings_proof`'s and have no slot in Mina's forty.
+  ++ packHalves
+       [ ([some (.external WRAP_SLOT_CIP : PVar), some (bullCipV t), none], cEq)
+       , ([some (.external WRAP_SLOT_B : PVar), some (bullScalV s sp 0), none], cEq) ]
   ++ [ probeRow wired (bullEqV s sp 12) (bullEqV s sp 2) ]
 
 /-- W-BULLET's variable environment. -/
@@ -4702,7 +4853,7 @@ def finFrSponge (s : WrapShape) (sp : SpAcc) (base p cd : Nat) : SpAcc :=
   finFrSpongeOf base (finSpTape s sp p cd)
 
 /-- Squeeze `k` of a sponge — the cell it is read out of, and its value. -/
-def finSpSq (a : SpAcc) (k : Nat) : PVar × Nat := (chalSqueezes a).getD k (.external 0, 0)
+def finSpSq (a : SpAcc) (k : Nat) : PVar × Nat := (chalSqueezes a).getD k (PVAR_NOWHERE, 0)
 
 /-- The cells §20's program reads. Every one is a variable some row of the assembly defines. -/
 structure FinSpWire where
@@ -5344,23 +5495,46 @@ def rungPub (_s : WrapShape) : Rung → Nat
 `PREV_MSG_NEXT_STEP`, the MSM's entry 64 — and no rung below it may, because below `w6_xhat` no row
 reads that cell and a public word on an unread cell is a public fixture. -/
 def exposedVarsAt (t : WrapData) (k : Rung) : List PVar :=
+  let s := t.sh
+  let sp := t.sp
+  -- ⚑ The three `ft_comm` scales, in `ftcSVal`'s own argument order (`0 = perm`, `1 = ζ^srs_len`,
+  -- `2 = ζ^dom`). `wrapSlotsAt` maps them to Mina's 4, 2, 3 — NOT to 2, 3, 4.
+  let ftc := [ftcSV s sp 0, ftcSV s sp 1, ftcSV s sp 2]
+  let xi := [combXiV s sp]
+  let bul := [bullCipV t, bullScalV s sp 0]
+  let nextStep := [prevW s sp PREV_MSG_NEXT_STEP]
+  let nextWrap := [whDigestVar (whSpongeC t)]
   exposedVars t ++ (match k with
-    | .prev => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
-    | .finalize | .finsponge => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
-    | .combine | .bullet => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
+    | .ftcomm => ftc
+    | .prev => nextStep ++ ftc
+    | .finalize | .finsponge => nextStep ++ ftc
+    | .combine => nextStep ++ ftc ++ xi
+    | .bullet => nextStep ++ ftc ++ xi ++ bul
     -- ⚑ …and `w11_wraphack` appends slot 11, the closing `hash_messages_for_next_wrap_proof`
-    -- squeeze (`wrap_main.ml:421-431`). `w12_close` inherits it and adds none.
-    | .wraphack | .close =>
-        [prevW t.sh t.sp PREV_MSG_NEXT_STEP, whDigestVar (whSpongeC t)]
+    -- squeeze (`wrap_main.ml:421-431`). It does NOT sit above W-COMBINE or W-BULLET, so it carries
+    -- the ft_comm trio and neither ξ nor the bulletproof pair.
+    | .wraphack => nextStep ++ nextWrap ++ ftc
+    | .close => nextStep ++ nextWrap ++ ftc ++ xi ++ bul
     | _ => [])
 
 /-- **`wrapSlotsAt`** — Mina's slot for each of `exposedVarsAt t k`'s words, in that list's order.
 The base is `wrapSlots`; the ladder appends slot 12 where W-PREV's own row ties it and slot 11 where
 W-WRAPHACK's does. Pointwise with `exposedVarsAt` by construction. -/
 def wrapSlotsAt (s : WrapShape) (k : Rung) : List Nat :=
+  -- ⚠ POINTWISE WITH `exposedVarsAt`, and the two are matched by hand because `wrapInertOk` is
+  -- shape-only while the variables need a `WrapData`. The emitter refuses on a length, range or
+  -- collision disagreement (`⚑ SLOT MAP …` in `EmitWrapMainJson`), so a drift here is a REFUSAL to
+  -- emit rather than a wrong circuit.
+  let ftc := [WRAP_SLOT_PERM, WRAP_SLOT_ZETA_TO_SRS, WRAP_SLOT_ZETA_TO_DOM]
+  let xi := [WRAP_SLOT_XI]
+  let bul := [WRAP_SLOT_CIP, WRAP_SLOT_B]
   wrapSlots s ++ (match k with
-    | .prev | .finalize | .finsponge | .combine | .bullet => [WRAP_SLOT_MSG_NEXT_STEP]
-    | .wraphack | .close => [WRAP_SLOT_MSG_NEXT_STEP, WRAP_SLOT_MSG_NEXT_WRAP]
+    | .ftcomm => ftc
+    | .prev | .finalize | .finsponge => [WRAP_SLOT_MSG_NEXT_STEP] ++ ftc
+    | .combine => [WRAP_SLOT_MSG_NEXT_STEP] ++ ftc ++ xi
+    | .bullet => [WRAP_SLOT_MSG_NEXT_STEP] ++ ftc ++ xi ++ bul
+    | .wraphack => [WRAP_SLOT_MSG_NEXT_STEP, WRAP_SLOT_MSG_NEXT_WRAP] ++ ftc
+    | .close => [WRAP_SLOT_MSG_NEXT_STEP, WRAP_SLOT_MSG_NEXT_WRAP] ++ ftc ++ xi ++ bul
     | _ => [])
 
 /-- ⚑ **THE DECLARED UNREAD SET — what this rung says it does NOT derive, and the thing
@@ -5368,29 +5542,22 @@ def wrapSlotsAt (s : WrapShape) (k : Rung) : List Nat :=
 
 Two parts, both DECLARATIONS and neither read off the emitted gates:
 
-  * `WRAP_UNPINNED_SLOTS` — the sixteen `wrap_main` itself does not CONSTRAIN. Ten are
-    `Spec.T.Constant` padding and the dead lookup `Opt`, which `Spec.packed_typ` ALLOCATES and hands
-    the body a `Cvar.Constant` for (`composition_types/spec.ml:312-330`) — so nothing upstream reads
-    those, and tying them to variables would be a public fixture.
+  * `WRAP_UNPINNED_SLOTS` — the TEN nothing reads, upstream or here: `Spec.T.Constant` padding and
+    the dead lookup `Opt`, which `Spec.packed_typ` ALLOCATES and hands the body a `Cvar.Constant`
+    for (`composition_types/spec.ml:312-330`). Tying those to variables would be a public fixture.
+  * the slots this rung has not REACHED — whether `WRAP_PINNED_SLOTS` (12 below `w9_prev`, 11 below
+    `w11_wraphack`) or `WRAP_PASSTHROUGH_SLOTS` (4/2/3 below `w8_ftcomm`, 9 below `w10_combine`,
+    0/1 below `w11_bullet`). That is the reservation the old `AUXW` dead gap used to carry, said at
+    Mina's slot.
 
-    ⚠ **THE OTHER SIX ARE A DIFFERENT ANIMAL AND THE DIFFERENCE IS NOT COSMETIC.** Slots 0–4 and 9
-    are `~advice`/`~plonk`/`~xi` (`wrap_main.ml:405-414`): `wrap_main` never CHECKS them, but it
-    does READ them — `combined_inner_product` and `b` in `check_bulletproof` (W-BULLET,
-    `wrap_verifier.ml:395`), `perm`/`zeta_to_srs_length`/`zeta_to_domain_size` in `ft_comm`
-    (W-FTCOMM) and `xi` in `Split_commitments.combine` (W-COMBINE). What CHECKS them is the NEXT
-    proof's `finalize_other_proof`, not this one's. So they are unread HERE because this assembly
-    wires those three consumers to free witnesses with fixture defaults (`ftcSVal`, `combXiVal`,
-    `bullScalVal`) instead of to the public words.
-
-    ⚑ **THAT IS A DESIGN FORK, LEFT OPEN DELIBERATELY, AND IT IS THE OPERATOR'S.** On a DERIVATION
-    standard — a rung exposes only what it computes — the six stay unread until a next proof's
-    W-FINALIZE exists. On UPSTREAM'S standard they are free pass-throughs and four of the six
-    (2, 3, 4, 9) already have circuit-read cells, so each is one closing `Generic` half away. Both
-    are defensible, they give different work, and picking one silently inside a layout change is how
-    a taste decision becomes a fact nobody chose. `docs/HANDOFF-wrap-public-input-40.md` states the
-    fork; this file implements the first horn and says so.
-  * the PINNED slots this rung has not reached — 12 below `w9_prev`, 11 below `w11_wraphack`. That
-    is the reservation the old `AUXW` dead gap used to carry, said at Mina's slot.
+⚑ **THE FORK THAT USED TO BE STATED HERE IS CLOSED, AND IT WAS NOT A FORK.** This docblock read
+"a DESIGN FORK, LEFT OPEN DELIBERATELY, AND IT IS THE OPERATOR'S": a DERIVATION standard on which
+the six stay unread until a next proof's W-FINALIZE exists, against UPSTREAM'S on which they are
+free pass-throughs one closing `Generic` half away. The operator settled it on 2026-08-05, and the
+reason it was never really two answers is that **Pickles recomputes all six and substitutes them**
+(`expand_deferred`, consumed at `verification.rs:886`) — so the derivation horn describes a proof
+nobody intends to hand to Pickles. The readers now consume the public words. They still DERIVE
+nothing, and they still check nothing: that is upstream's shape, not a shortfall in this one.
 
 ⚠ **AND THE CHECK IS AN EQUALITY, NOT A SUBSET, WHERE IT IS PINNED.** `wrapInertOk` alone would
 only stop the emission from leaving MORE unread than declared; the per-rung theorems state
@@ -5399,7 +5566,8 @@ declares, or started deriving one it does not, is red either way. -/
 def wrapInertOk (s : WrapShape) (k : Rung) : List Nat :=
   (List.range WRAP_PRIMARY_LEN).filter (fun i =>
     WRAP_UNPINNED_SLOTS.contains i
-    || (WRAP_PINNED_SLOTS.contains i && !((wrapSlotsAt s k).contains i)))
+    || ((WRAP_PINNED_SLOTS.contains i || WRAP_PASSTHROUGH_SLOTS.contains i)
+        && !((wrapSlotsAt s k).contains i)))
 
 /-- ⚑ **THE SLOT → VARIABLE TABLE, BUILT ONCE.** `wrapSlotsAt` beside `exposedVarsAt`, pointwise.
 
@@ -5447,17 +5615,23 @@ def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .prev
 READ OUT of the circuit env at the exposed variables — so a public word and the variable its closing
 row ties it to hold ONE value by construction, exactly as a copy class does.
 
-⚠ ⚑ **WHAT SITS AT THE SIXTEEN THIS RUNG DOES NOT DERIVE, AND WHAT THAT IS AND IS NOT.** A ZERO.
-For the ten `Spec.T.Constant` / dead-lookup slots that IS the value a real devnet wrap proof carries
+⚠ ⚑ **WHAT SITS AT THE TEN THIS RUNG DOES NOT DERIVE, AND WHAT THAT IS AND IS NOT.** A ZERO. For
+the `Spec.T.Constant` / dead-lookup slots that IS the value a real devnet wrap proof carries
 (`MinaWrapPublicInput.the_tail_is_padding_and_branch_data`, over `MinaWrapPublicCommGate.
-PUBLIC_INPUT`), so those ten are right rather than merely accepted. For the six deferred slots — 0–4
-and 9 — a zero is a PLACEHOLDER: they are `expand_deferred`'s outputs, no wrap sub-circuit DERIVES
-them (their checker is the NEXT proof's `finalize_other_proof`), and this assembly's W-FTCOMM /
-W-COMBINE / W-BULLET read fixture-defaulted free witnesses where upstream reads these very words.
-The circuit reads neither set, so a verifier accepts any value at all there, and saying so is the
-point: those six are the honest residue of the layout, named by `wrapInertOk`, by the per-rung
-inertness equalities and by the emission's own printout. ⚠ Whether to expose them anyway — upstream
-does not check them either — is the fork `wrapInertOk`'s docblock states. -/
+PUBLIC_INPUT`), so those ten are right rather than merely accepted. The circuit reads none of them,
+so a verifier accepts any value there, and saying so is the point.
+
+⚑ **THE SIX DEFERRED SLOTS ARE NO LONGER AMONG THEM, AND THE ZERO THAT USED TO SIT THERE WAS THE
+WHOLE PROBLEM.** Slots 0–4 and 9 carried a PLACEHOLDER zero while W-FTCOMM / W-COMBINE / W-BULLET
+read fixture-defaulted free witnesses beside them — two objects where upstream has one. They now
+carry the value of the cell that reads them, which is `MinaWrapDeferredWords`' measurement of
+`expand_deferred`'s own output for a real step proof, and `slotVarTable` resolves them like any
+other tied slot. They are still DERIVED by nothing and CHECKED by nothing here; what changed is that
+a prover no longer chooses them.
+
+⚠ **AND A ZERO AT ONE OF THE SIX IS NOW A RED, NOT A RESIDUE.** If `tbl.lookup` ever misses at 0–4
+or 9 the slot silently reverts to the old placeholder, which is exactly the state this commit left.
+The instrument that sees it is the per-rung inertness EQUALITY, not this function. -/
 def wrapEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   let ce := circuitEnvAt t k
   let ix := envIndex ce
