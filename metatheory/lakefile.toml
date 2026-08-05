@@ -261,19 +261,99 @@ globs = [
   # `#assert_axioms` + 11 `#assert_compiled` between them; both GREEN and cheap (2 s / 3 s).
   "Dregg2.Games.PathOfAngels.ActivityOutcome",
   "Dregg2.Games.PathOfAngels.DeckExpedition",
-  # ⚑ 2026-08-05 — THE GALLEY BOUNDARY TEETH RAN NOWHERE. Both modules are imported by NOTHING,
-  # appear in no `globs` above, and are not even in `scripts/lean-orphans-allow.txt` — so their
-  # 33 `#assert_axioms`-clean privacy theorems (13 + 20) executed in no `lake build` at all. Those
-  # theorems are the ONLY thing standing between the Galley kernel and a published `State.mk` /
-  # `reduce` / post-ballot fixture, and `docs/poa/GALLEY-LAYER-CONTRACT.md` §0 credits them as the
-  # kernel's ratchet. A ratchet nothing runs is not a ratchet: this is the same
-  # gating-defaults-to-silence wound as `TurnAuthLamportEmit` above, on a module whose whole job is
-  # to go red.
-  # Marginal cost is exactly these 2 modules: their entire import closure
-  # (`GalleyMaintenanceDaily` → `GalleyCommons` → `Canon`/`HolderMechanics`/
-  # `FinalizedRunEventAggregate`) is ALREADY in the default-target closure via
-  # `Dregg2.lean` → `Dregg2.FFI` → `…PathOfAngels.GalleyMaintenanceDailyRuntime` →
-  # `…GalleyMaintenanceDaily`, so nothing new is pulled in.
-  "Dregg2.Games.PathOfAngels.GalleyCommonsBoundary",
-  "Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary",
+  # ⚑ 2026-08-05 — THE GALLEY BOUNDARY TEETH RAN NOWHERE. This block asked for
+  # `Dregg2.Games.PathOfAngels.GalleyCommonsBoundary` and
+  # `Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary`, crediting them with "33
+  # `#assert_axioms`-clean privacy theorems (13 + 20)".
+  #
+  # ⛑ NEITHER MODULE EXISTS. Not on disk, not in `git ls-files`, not on any branch — and there is no
+  # `GalleyCommons*` file in this tree at all. `lake` resolves a `globs` entry to a FILE, so the two
+  # names took `lake build` down at `[0/0] Running job computation` with
+  # `error: no such file or directory (error code: 4294967294)` — BEFORE any module is scheduled,
+  # which is why the message names nothing. Every default-target Lean build in the tree was dead
+  # from the moment they landed, and a build that cannot start runs zero pins, including all the
+  # ones the sweeps above were opened to make run.
+  #
+  # ⚠ AND THE COMMIT THAT DID IT WAS `3f0d759de`, subject `docs(lakefile): the fifth citation of the
+  # theorem that did not exist`. A DOCS commit — a correction to a docblock about a miscited theorem
+  # — carried an unmentioned hunk that broke the build with two more citations of things that do not
+  # exist. The subject is the alibi; that is the whole shape of the class, and here it appeared
+  # inside a commit about exactly that class.
+  #
+  # The real module is `GalleyMaintenanceDailyRuntimeBoundary` (6 `#assert_axioms`, not 20), and it
+  # is rooted below with the other 45 as part of the 46-orphan sweep. The `13 + 20` count and the
+  # `GalleyCommons` import chain were both about files that were never written.
+
+
+  # ⚑ 2026-08-05 — THE 46-ORPHAN PATH-OF-ANGELS SWEEP. Every module below was reachable from
+  # NOTHING: not from `Dregg2.lean`, not from any `globs` above, and not from
+  # `scripts/lean-orphans-allow.txt` — so `check-lean-orphans.sh` named all 46 as UNLISTED and
+  # `check-guard-modules.py` counted 378 of their pins as SILENCED. Between them they carry
+  # 378 `#assert_axioms` and 439 `#assert_compiled` that executed in NO `lake build` at all.
+  # That is the campaign's most-repeated wound at its largest measured scale, and it is the same
+  # one `TurnAuthGuards` and the 23-orphan sweep above were opened for.
+  #
+  # EACH ONE WAS ELABORATED BEFORE BEING ROOTED (`lake env lean`, per module, against the warm
+  # tree): 44 clean, 2 reporting only linter warnings (`unusedVariables`, `dupNamespace`), 0
+  # errors, 0 `sorryAx`. `CanonicalCodecDayWire` and `CanonicalCodecFalsifier` read as red in
+  # that pass for one reason and one only — `CanonicalCodec.olean` DID NOT EXIST, because
+  # `CanonicalCodec` was itself an orphan nothing had ever built. Rooting the three together is
+  # what makes that measurable at all, which is the wound stating its own shape.
+  #
+  # COST: the whole cone's imports were already in the default-target closure via
+  # `Dregg2.lean` -> `Dregg2.FFI` -> `…PathOfAngels.BazaarGameRuntime`/`GalleyMaintenanceDailyRuntime`,
+  # so the marginal cost is these 46 modules themselves (4-25 s each, two outliers at ~100 s:
+  # `ArchiveLabDemonstratorEmit`, `CrewFieldMissionRuntime`).
+  #
+  # ⚠ FIVE OF THEM CARRY A ROOT `def main` (`ArchiveLabDemonstrator`, `ArchiveLabDemonstratorEmit`,
+  # `ExpeditionDemonstratorEmit`, `NightWatchLoop`, `NightWatchLoopWire`). That is why this is a
+  # direct `globs` list and not a re-export aggregate: an aggregate importing two of them is a
+  # duplicate `main`, the same reason recorded for the Pickles drivers above. A `globs` entry
+  # compiles each as its OWN module, so the `main`s never meet.
+  "Dregg2.Games.PathOfAngels.ActivatedContentExamples",  # 15 comp
+  "Dregg2.Games.PathOfAngels.ArchiveLab",  # 17 ax
+  "Dregg2.Games.PathOfAngels.ArchiveLabDemonstrator",  # 20 comp
+  "Dregg2.Games.PathOfAngels.ArchiveLabDemonstratorEmit",  # 12 comp
+  "Dregg2.Games.PathOfAngels.AttendantContinuityAggregate",  # 18 ax, 19 comp
+  "Dregg2.Games.PathOfAngels.BazaarGameExamples",  # 3 ax, 64 comp
+  "Dregg2.Games.PathOfAngels.CanonicalCodec",  # 1 ax
+  "Dregg2.Games.PathOfAngels.CanonicalCodecDayWire",  # 5 ax, 4 comp
+  "Dregg2.Games.PathOfAngels.CanonicalCodecFalsifier",  # 3 ax
+  "Dregg2.Games.PathOfAngels.ContentContract",  # 17 ax, 8 comp
+  "Dregg2.Games.PathOfAngels.CrewExpeditionAuthority",  # 14 ax, 18 comp
+  "Dregg2.Games.PathOfAngels.CrewFieldMission",  # 4 ax, 30 comp
+  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime",  # 3 ax, 17 comp
+  "Dregg2.Games.PathOfAngels.CrewRelayExpedition",  # 6 ax, 28 comp
+  "Dregg2.Games.PathOfAngels.CrewRelayExpeditionBoundary",  # 20 ax
+  "Dregg2.Games.PathOfAngels.DeckGenerator",  # 22 ax, 5 comp
+  "Dregg2.Games.PathOfAngels.EditorialRegistryBoundary",  # 6 ax
+  "Dregg2.Games.PathOfAngels.ExpeditionDemonstrator",  # 4 ax, 19 comp
+  "Dregg2.Games.PathOfAngels.ExpeditionDemonstratorEmit",  # 1 ax, 22 comp
+  "Dregg2.Games.PathOfAngels.FheggPrivacyTopology",  # compile coverage only
+  "Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntimeBoundary",  # 6 ax
+  "Dregg2.Games.PathOfAngels.HolderMechanics",  # 7 ax, 16 comp
+  "Dregg2.Games.PathOfAngels.HolderMechanicsBoundary",  # 7 ax
+  "Dregg2.Games.PathOfAngels.NightWatchCampaign",  # 6 ax
+  "Dregg2.Games.PathOfAngels.NightWatchLoop",  # 13 ax, 15 comp
+  "Dregg2.Games.PathOfAngels.NightWatchLoopExamples",  # 4 ax, 4 comp
+  "Dregg2.Games.PathOfAngels.NightWatchLoopRuntime",  # 8 ax
+  "Dregg2.Games.PathOfAngels.NightWatchLoopWire",  # compile coverage only
+  "Dregg2.Games.PathOfAngels.NightWatchLoopWireExamples",  # 11 ax, 23 comp
+  "Dregg2.Games.PathOfAngels.OfficerLogbook",  # 10 comp
+  "Dregg2.Games.PathOfAngels.OrdinarySalvageExchange",  # 14 ax
+  "Dregg2.Games.PathOfAngels.OrdinarySalvageExchangeBoundary",  # 13 ax
+  "Dregg2.Games.PathOfAngels.OrdinarySalvageExchangeExamples",  # 13 ax, 1 comp
+  "Dregg2.Games.PathOfAngels.OrdinarySalvageFinalizedTransaction",  # 15 ax
+  "Dregg2.Games.PathOfAngels.OrdinarySalvageFinalizedTransactionBoundary",  # 13 ax
+  "Dregg2.Games.PathOfAngels.OrdinarySalvageFinalizedTransactionExamples",  # 11 ax
+  "Dregg2.Games.PathOfAngels.PoaCrewPreferenceDrExExercise",  # 5 ax, 22 comp
+  "Dregg2.Games.PathOfAngels.PrivateReconChoir",  # 17 ax
+  "Dregg2.Games.PathOfAngels.PrivateReconChoirExamples",  # 4 ax, 16 comp
+  "Dregg2.Games.PathOfAngels.SalvageCrate",  # 3 ax, 10 comp
+  "Dregg2.Games.PathOfAngels.SalvageCrateExamples",  # 2 ax, 4 comp
+  "Dregg2.Games.PathOfAngels.ShipExpeditionSeason",  # 4 ax, 4 comp
+  "Dregg2.Games.PathOfAngels.ShipExpeditionSeasonBoundary",  # 10 ax
+  "Dregg2.Games.PathOfAngels.ShipLifeProgression",  # 12 ax, 11 comp
+  "Dregg2.Games.PathOfAngels.ShipLifeProgressionBoundary",  # 13 ax
+  "Dregg2.Games.PathOfAngels.Shipworks",  # 23 ax, 22 comp
 ]
