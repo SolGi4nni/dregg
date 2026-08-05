@@ -6302,6 +6302,39 @@ fn instance_airs(
 /// DROPPING blowup at parity (the (2, 57) / (1, 114) points) inflates it. The next
 /// step up, (7, 17), buys only ~6.5 KiB for a further prover doubling: declined.
 ///
+/// ⚑ **CORRECTION 2026-08-04 — `(2, 57)` AND `(1, 114)` ARE NOT POINTS FOR MOST OF THIS
+/// REGISTRY, AND THE SENTENCE ABOVE READ AS THOUGH THEY WERE.** They are security-parity
+/// points on the two QUERY columns; they are not reachable configs. Every descriptor whose
+/// constraint list pulls in the Poseidon2 chip table REFUSES to prove at `log_blowup = 2`
+/// (`OodEvaluationMismatch { index: Some(1) }`, index 1 being the chip) because the chip's
+/// inline degree-7 x⁷ S-box needs a degree-6 quotient and a blowup of 4 cannot carry it.
+/// **38 of the 91 by-name goldens pull it in.** Measured by
+/// `circuit/tests/fri_blowup_global_knob_survey.rs`; the degree is the one frozen as
+/// `chip = 7` in `tests::ir2_degree_budget`. So the lowest parity rung the WHOLE registry
+/// can reach is `(3, 39)` — which is not one of the three named above — and the lowest a
+/// chip-free descriptor can reach is `(2, 57)`.
+///
+/// ⚠ And "parity" covers the two query columns ONLY. From `@[export] dregg_fri_ledger`,
+/// `(6,19) → (2,57)`: capacity `130 → 130` and Johnson `73 → 73`, but per-fold `109 → 118`
+/// and commit-phase `ε_C` `71 → 77`. At the deployed wrap **`ε_C` binds BELOW Johnson**, so
+/// on the column that actually binds, the low-blowup rung is the STRONGER one. Reading
+/// "parity" as "identical security" is therefore wrong in both directions.
+///
+/// ⚑ **WHY 6 STAYS ANYWAY (measured 2026-08-04, not landed by fiat).** On the axis this
+/// system optimizes — wire bytes and verify ms for light clients and on-chain verifiers —
+/// `(6,19)` wins on EVERY measured descriptor by 2.0–2.4× on both, and its costs (prover
+/// RAM, four bits of row ceiling, six bits of `ε_C`) land on a workload the registry does
+/// not contain yet. **The named trigger that flips this** is a descriptor needing more than
+/// `2^21` rows — the row ceiling is `log_rows ≤ 27 − log_blowup`. The in-AIR Kimchi/Wrap
+/// verifier is that descriptor (1.6 M instructions, pads to exactly `2^21`) and it is
+/// chip-free, so `(2, 57)` is legal for it: see
+/// `circuit/tests/pasta_sbox_program_proves.rs::the_blowup_is_swept_at_parity_on_this_machine`,
+/// where a real chip-free machine proves and verifies at `lb = 2` AND `lb = 1`. When a stage
+/// of it lands, the answer for that family is a per-descriptor knob — and the prerequisite is
+/// the recursion path, which reads `num_queries` from the inner proof structure
+/// (`recursion/src/pcs/fri/verifier.rs:1378`) and never pins it against a configured count.
+/// That is masked today only because every child runs 19 queries.
+///
 /// One config for every v2 descriptor: the whole-batch constraint-degree ceiling is 8
 /// (`setFieldDynVmDescriptor2`'s pinned slot gate; everything else ≤ 7 — guarded by
 /// `ir2_degree_budget`), far inside `log_blowup = 6`. Proofs are NOT interchangeable
