@@ -173,8 +173,19 @@ type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
 /// before `hash_messages_for_next_wrap_proof` (`:340`) and neither reads the other's rows:
 ///
 ///     w9_prev ─┬─ w10_finalize ── w11_finsponge
-///              ├─ w11_wraphack ── w12_close
-///              └─ w10_combine  ── w11_bullet
+///              └─ w10_combine  ── w11_bullet ── w12_close
+///                                              (+ w11_wraphack's own rows)
+///     w9_prev ─── w11_wraphack
+///
+/// ⚠ ⚑ **THIS DIAGRAM WAS WRONG AND NOTHING CAUGHT IT.** It drew `w12_close` hanging off
+/// `w11_wraphack` on a branch of its own, which was true until 2026-08-05. Since then
+/// `close_rung_extends_bullet` — kernel-clean and general over every `WrapData` — states
+/// `rungRows _ .close = rungRows _ .bullet ++ rungOwn _ .wraphack ++ rungOwn _ .close`, because
+/// `Boolean.Assert.is_true bulletproof_success` needs the rows that COMPUTE `bulletproof_success`.
+/// The committed fixtures still carry the old shape (`w12_close` 2260 rows against `w11_bullet`'s
+/// 3654 — a subset of what it must contain), and **no test compared the two**, so a topology change
+/// in the Lean, a fixture set that never followed it, and a diagram describing neither were all
+/// simultaneously green. `close_rung_contains_bullet` below is that missing comparison.
 ///
 /// ⚠ So no single file here is the whole circuit, and this array's ORDER is the emission order, not
 /// a containment order. `wrapmain-shape-diff.mjs` assembles the union by prefix-stripping.
@@ -965,6 +976,44 @@ mod wrapmain_tests {
             w4.probe_rows.len() + 1,
             "the index sponge's single squeeze must add exactly one sigma-only probe"
         );
+    }
+
+    /// ⚑ **`w12_close` MUST CONTAIN `w11_bullet`, and until now nothing here said so.**
+    ///
+    /// The Lean states it kernel-clean and general over every `WrapData`
+    /// (`KimchiWrapMain.close_rung_extends_bullet`, 2026-08-05):
+    /// `rungRows _ .close = rungRows _ .bullet ++ rungOwn _ .wraphack ++ rungOwn _ .close`.
+    /// `w12_close` asserts `bulletproof_success`, which is `equal_g`'s output, so the rung that
+    /// asserts it has to carry the rows that compute it.
+    ///
+    /// ⚠ This is a RATIO check, not a row-count pin: the exact delta is `w11_wraphack`'s own rows
+    /// plus two, and pinning that number here would duplicate a fact the Lean already proves
+    /// generally. What this catches is the SHAPE — a `w12_close` smaller than `w11_bullet` cannot
+    /// be a superset of it, whatever the arithmetic. That is exactly the state the committed
+    /// fixtures were in while every other gate stayed green.
+    #[test]
+    fn close_rung_contains_bullet() {
+        let bullet = load("w11_bullet");
+        let close = load("w12_close");
+        assert!(
+            close.num_rows > bullet.num_rows,
+            "w12_close ({} rows) must be a strict superset of w11_bullet ({} rows) — \
+             close_rung_extends_bullet says .close = .bullet ++ wraphack-own ++ close-own. \
+             A smaller w12_close means the fixtures predate that topology and must be re-emitted.",
+            close.num_rows,
+            bullet.num_rows
+        );
+        // …and per gate family, since a row count alone can be reached by a different circuit.
+        let cb = gate_census(&bullet);
+        let cc = gate_census(&close);
+        for k in 0..7 {
+            assert!(
+                cc[k] >= cb[k],
+                "w12_close must contain every w11_bullet gate of family {k}: {} < {}",
+                cc[k],
+                cb[k]
+            );
+        }
     }
 
     /// ⚑ w11_finsponge IS `finalize_other_proof`'s SPONGE half, and this is the census that says so
