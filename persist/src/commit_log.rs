@@ -3540,7 +3540,19 @@ impl PersistentStore {
         anchor: crate::SignedPoaCompactCheckpointAnchorV1,
         trust_policy: &crate::PoaCompactTrustPolicyV1,
     ) -> Result<u64> {
-        let trust_root = trust_policy.root_for_statement(anchor.statement())?;
+        let current_floor = self.commit_compacted_floor()?;
+        if anchor.statement().new_floor() <= current_floor {
+            if self.has_exact_poa_compact_checkpoint_anchor_v1(&anchor, trust_policy)? {
+                // The exact signed transaction already committed and its whole authority lineage
+                // re-audited.  This is a successful response-loss retry, not a second deletion.
+                return Ok(0);
+            }
+            return Err(StoreError::Integrity(
+                "PoA compact retry names an already-crossed floor but is not the exact stored anchor"
+                    .to_owned(),
+            ));
+        }
+        let trust_root = trust_policy.active_root_for_new_statement(anchor.statement())?;
         let anchor = crate::poa_compact_authority::StoredPoaCompactCheckpointAnchorV1::new(
             anchor, trust_root,
         )?;

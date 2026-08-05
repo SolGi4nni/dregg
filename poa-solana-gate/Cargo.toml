@@ -16,6 +16,7 @@ dregg-governance = { path = "../dregg-governance" }
 dregg-pay = { path = "../dregg-pay" }
 dregg-types = { path = "../types" }
 ed25519-dalek = { version = "2", features = ["std"] }
+postcard = { version = "1", features = ["use-std"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 thiserror = "2"

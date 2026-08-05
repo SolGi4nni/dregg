@@ -3463,11 +3463,14 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 name = "poa-solana-gate"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "bs58",
  "dregg-bridge",
  "dregg-governance",
  "dregg-pay",
+ "dregg-types",
  "ed25519-dalek",
+ "postcard",
  "serde",
  "sha2 0.10.9",
  "thiserror 2.0.19",

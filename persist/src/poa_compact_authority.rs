@@ -400,6 +400,15 @@ impl PoaCompactTrustPolicyV1 {
         self.roots_by_epoch.get(&committee_epoch)
     }
 
+    /// The currently active root. Older roots remain solely so stored authority and exact retries
+    /// can be replay-audited; they do not authorize a fresh destructive operation.
+    pub fn latest_root(&self) -> &PoaCompactTrustRootV1 {
+        self.roots_by_epoch
+            .last_key_value()
+            .map(|(_, root)| root)
+            .expect("validated PoA compact trust policy is non-empty")
+    }
+
     pub(crate) fn root_for_statement(
         &self,
         statement: &PoaCompactCheckpointStatementV1,
@@ -420,6 +429,19 @@ impl PoaCompactTrustPolicyV1 {
         if statement.federation_id != root.federation_id {
             return Err(integrity(
                 "PoA compact anchor self-carried federation/roster identity does not equal its external trust root",
+            ));
+        }
+        Ok(root)
+    }
+
+    pub(crate) fn active_root_for_new_statement(
+        &self,
+        statement: &PoaCompactCheckpointStatementV1,
+    ) -> Result<&PoaCompactTrustRootV1> {
+        let root = self.root_for_statement(statement)?;
+        if root.committee_epoch != self.latest_root().committee_epoch {
+            return Err(integrity(
+                "PoA compact fresh anchor uses a retired committee epoch; historical roots authorize replay audit and exact retry only",
             ));
         }
         Ok(root)
@@ -1118,6 +1140,32 @@ impl PersistentStore {
             trust_root.deployment_id,
             trust_root.committee_epoch,
         )
+    }
+
+    /// Return whether `anchor` is the exact already-committed anchor at its signed floor.
+    ///
+    /// This is the response-loss/restart tooth for an operator ceremony.  A caller which lost the
+    /// success response may submit the same quorum again and learn that the exact bytes already
+    /// landed.  A merely valid signature over a different statement at an old floor does not count
+    /// as a retry.  The complete compact authority is audited against the independently supplied
+    /// policy before the comparison, so a locally resealed or policy-substituted database cannot
+    /// manufacture an affirmative answer.
+    pub fn has_exact_poa_compact_checkpoint_anchor_v1(
+        &self,
+        anchor: &SignedPoaCompactCheckpointAnchorV1,
+        trust_policy: &PoaCompactTrustPolicyV1,
+    ) -> Result<bool> {
+        let trust_root = trust_policy.root_for_statement(anchor.statement())?;
+        let expected = StoredPoaCompactCheckpointAnchorV1::new(anchor.clone(), trust_root)?;
+        self.audit_poa_compact_authority_v1(Some(trust_policy))?;
+        let read = self.db.begin_read()?;
+        let anchors = read.open_table(POA_COMPACT_CHECKPOINT_ANCHORS_V1)?;
+        let Some(frame) = anchors.get(anchor.statement().new_floor())? else {
+            return Ok(false);
+        };
+        let stored: StoredPoaCompactCheckpointAnchorV1 = decode_frame(ANCHOR_MAGIC, frame.value())?;
+        stored.verify_against(trust_root)?;
+        Ok(stored == expected)
     }
 
     /// Fixture-only real hybrid ceremony used by compaction/reopen regression tests.
@@ -2078,6 +2126,7 @@ mod tests {
         let deployment = [0xD8; 32];
         let (root_0, signing_0, ml_dsa_signing_0) = trust_material(0xC0, deployment, 0);
         let (root_1, signing_1, ml_dsa_signing_1) = trust_material(0xC1, deployment, 1);
+        let epoch_0_policy = PoaCompactTrustPolicyV1::new(vec![root_0.clone()]).unwrap();
         let full_policy =
             PoaCompactTrustPolicyV1::new(vec![root_0.clone(), root_1.clone()]).unwrap();
         let store = PersistentStore::open_in_memory().unwrap();
@@ -2098,17 +2147,35 @@ mod tests {
                 })
                 .unwrap();
         }
+        let epoch_0_statement = store
+            .prepare_poa_compact_checkpoint_statement_v1(3, &root_0)
+            .unwrap()
+            .unwrap();
+        let epoch_0_anchor =
+            sign_statement(epoch_0_statement, &signing_0, &ml_dsa_signing_0, &root_0);
+        let retired_error = store
+            .compact_below_with_poa_anchor_v1(3, epoch_0_anchor.clone(), &full_policy)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            retired_error.contains("retired committee epoch"),
+            "{retired_error}"
+        );
+        assert_eq!(store.commit_compacted_floor().unwrap(), 0);
+
         assert_eq!(
-            compact_with_material(
-                &store,
-                3,
-                &full_policy,
-                &root_0,
-                &signing_0,
-                &ml_dsa_signing_0,
-            )
-            .unwrap(),
+            store
+                .compact_below_with_poa_anchor_v1(3, epoch_0_anchor.clone(), &epoch_0_policy,)
+                .unwrap(),
             2
+        );
+        // Once exact bytes are stored, historical policy material remains usable for response-loss
+        // retry even though it can no longer authorize any new floor.
+        assert_eq!(
+            store
+                .compact_below_with_poa_anchor_v1(3, epoch_0_anchor, &full_policy)
+                .unwrap(),
+            0
         );
         assert_eq!(
             compact_with_material(
@@ -2137,7 +2204,7 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(error.contains("committee epoch regressed"), "{error}");
+        assert!(error.contains("retired committee epoch"), "{error}");
         assert_eq!(store.commit_compacted_floor().unwrap(), floor_before);
         assert!(store.commit_record_at(floor_before).unwrap().is_some());
 

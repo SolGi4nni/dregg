@@ -707,18 +707,35 @@ fn rpc_bad_gateway(_detail: String) -> ApiError {
 fn map_gate_error(error: GateError) -> ApiError {
     let (status, code) = match error {
         GateError::UnknownChallenge => (StatusCode::NOT_FOUND, "unknown_challenge"),
-        GateError::ChallengeExpired | GateError::CapabilityExpired => (StatusCode::GONE, "expired"),
+        GateError::UnknownConsensusReservation => {
+            (StatusCode::NOT_FOUND, "unknown_consensus_reservation")
+        }
+        GateError::ChallengeExpired
+        | GateError::CapabilityExpired
+        | GateError::ConsensusReservationExpired => (StatusCode::GONE, "expired"),
         GateError::NonceAlreadyIssued
         | GateError::ChallengeReplay
         | GateError::CapabilityReplay
         | GateError::CapabilityIdCollision => (StatusCode::CONFLICT, "replay"),
+        // A conflict here is durable authority disagreeing with what the caller
+        // presented, so it is a refusal and never a retryable condition.
+        GateError::ConsensusReservationConflict
+        | GateError::ConsensusCapabilityConflict
+        | GateError::PrivilegeNullifierConflict => {
+            (StatusCode::CONFLICT, "consensus_authority_conflict")
+        }
+        GateError::ClockRollback => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "admission_clock_rollback",
+        ),
         GateError::AdmissionCapacity => (StatusCode::SERVICE_UNAVAILABLE, "admission_full"),
         GateError::BadWalletSignature => (StatusCode::FORBIDDEN, "bad_wallet_signature"),
         GateError::InsufficientBalance => (StatusCode::FORBIDDEN, "insufficient_dregg"),
         GateError::BadBase58
         | GateError::BadPubkeyLength
         | GateError::WeakNonce
-        | GateError::InvalidPlayer => (StatusCode::BAD_REQUEST, "invalid_request"),
+        | GateError::InvalidPlayer
+        | GateError::InvalidPrivilegeIntent => (StatusCode::BAD_REQUEST, "invalid_request"),
         GateError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "admission_store_failed"),
         GateError::InvalidConfiguration | GateError::TimeOverflow => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -738,12 +755,26 @@ fn map_gate_error(error: GateError) -> ApiError {
         | GateError::BalanceOverflow => (StatusCode::BAD_GATEWAY, "rpc_evidence_refused"),
         GateError::ChallengeMutation
         | GateError::ObservationMismatch
-        | GateError::ForgedCapability => (StatusCode::FORBIDDEN, "evidence_mismatch"),
+        | GateError::ForgedCapability
+        | GateError::ConsensusEvidenceMismatch
+        | GateError::InvalidExternalCheckpoint => (StatusCode::FORBIDDEN, "evidence_mismatch"),
+        // The verifier is node-selected, so its failure text is operator
+        // configuration detail and is not echoed to the caller.
+        GateError::ExternalCheckpoint(_) => (
+            StatusCode::BAD_GATEWAY,
+            "external_checkpoint_verifier_refused",
+        ),
     };
     let message = match code {
         "admission_store_failed" => "durable admission storage failed".to_owned(),
         "admission_configuration_failed" => "holding admission is misconfigured".to_owned(),
         "rpc_refused" => "Solana holding RPC refused the evidence request".to_owned(),
+        "admission_clock_rollback" => {
+            "holding admission clock moved behind its durable floor".to_owned()
+        }
+        "external_checkpoint_verifier_refused" => {
+            "external admission checkpoint verification failed".to_owned()
+        }
         _ => error.to_string(),
     };
     ApiError::new(status, code, message)
@@ -1736,6 +1767,84 @@ impl RedbAdmissionStore {
         self.save(&state)?;
         Ok(result)
     }
+
+    /// Load the consensus-grade lineage. Unlike the beta blob there is no legacy
+    /// shape to migrate: this key was introduced with V1 of the consensus
+    /// authority journal and an unrecognized version refuses rather than
+    /// reinterprets.
+    fn load_consensus(&self) -> Result<DurableConsensusAuthorityState, String> {
+        let Some(bytes) = self
+            .store
+            .get_config(CONSENSUS_AUTHORITY_STATE_KEY)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(DurableConsensusAuthorityState::default());
+        };
+        if bytes.len() > MAX_CONSENSUS_AUTHORITY_BYTES {
+            return Err("consensus authority state exceeds its size ceiling".to_owned());
+        }
+        let envelope: DurableConsensusAuthorityEnvelope = postcard::from_bytes(&bytes)
+            .map_err(|error| format!("consensus authority decode failed: {error}"))?;
+        if envelope.version != CONSENSUS_AUTHORITY_VERSION {
+            return Err(format!(
+                "unsupported consensus authority version {}",
+                envelope.version
+            ));
+        }
+        let canonical = postcard::to_stdvec(&envelope)
+            .map_err(|error| format!("consensus authority encode failed: {error}"))?;
+        if canonical != bytes {
+            return Err("consensus authority state is not canonically encoded".to_owned());
+        }
+        envelope.state.validate()?;
+        Ok(envelope.state)
+    }
+
+    fn save_consensus(&self, state: &DurableConsensusAuthorityState) -> Result<(), String> {
+        state.validate()?;
+        let bytes = postcard::to_stdvec(&DurableConsensusAuthorityEnvelope {
+            version: CONSENSUS_AUTHORITY_VERSION,
+            state: state.clone(),
+        })
+        .map_err(|error| format!("consensus authority encode failed: {error}"))?;
+        if bytes.len() > MAX_CONSENSUS_AUTHORITY_BYTES {
+            return Err("consensus authority state exceeds its size ceiling".to_owned());
+        }
+        self.store
+            .set_config(CONSENSUS_AUTHORITY_STATE_KEY, &bytes)
+            .map_err(|error| error.to_string())
+    }
+
+    fn mutate_consensus<T>(
+        &mut self,
+        change: impl FnOnce(&mut DurableConsensusAuthorityState) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut state = self.load_consensus()?;
+        let original_journal = state.journal.clone();
+        let original_floor = state.observed_time_floor;
+        let result = change(&mut state)?;
+        if !state.journal.starts_with(&original_journal) {
+            return Err("consensus authority journal mutation or rollback refused".to_owned());
+        }
+        if state.observed_time_floor < original_floor {
+            return Err("consensus authority observed-time floor rollback refused".to_owned());
+        }
+        self.save_consensus(&state)?;
+        Ok(result)
+    }
+
+    /// The exact set of challenges the consensus lineage has already reserved.
+    /// The beta and consensus lineages are separate blobs, so this is the only
+    /// way the beta capability path can see that a challenge is already spoken
+    /// for; `InMemoryAdmissionStore` enforces the same exclusion in-process.
+    fn consensus_reserved_challenges(&self) -> Result<BTreeSet<Bytes32>, String> {
+        Ok(self
+            .load_consensus()?
+            .replay_journal()?
+            .reservation_by_challenge
+            .into_keys()
+            .collect())
+    }
 }
 
 impl AdmissionStore for RedbAdmissionStore {
@@ -1784,13 +1893,19 @@ impl AdmissionStore for RedbAdmissionStore {
         challenge_id: Bytes32,
         capability: HoldingCapability,
     ) -> Result<CapabilityIssue, Self::Error> {
+        // A challenge that already backs a consensus reservation is spent for
+        // the beta path too. The two lineages are separate blobs, so the beta
+        // journal alone cannot see it.
+        let consensus_reserved = self.consensus_reserved_challenges()?;
         self.mutate(|state| {
             state.prune_expired(capability.issued_at());
             let projection = state.replay_journal()?;
             if !projection.challenges.contains_key(&challenge_id) {
                 return Ok(CapabilityIssue::UnknownChallenge);
             }
-            if projection.spent_challenges.contains(&challenge_id) {
+            if projection.spent_challenges.contains(&challenge_id)
+                || consensus_reserved.contains(&challenge_id)
+            {
                 return Ok(CapabilityIssue::ChallengeReplay);
             }
             if capability.challenge_id() != challenge_id {
@@ -1833,6 +1948,171 @@ impl AdmissionStore for RedbAdmissionStore {
 
     fn consume_capability_once(&mut self, _id: Bytes32) -> Result<CapabilityUse, Self::Error> {
         Err("PoA holding capabilities may only be consumed by finalized-turn weld".to_owned())
+    }
+
+    fn consensus_reservation(
+        &self,
+        id: &Bytes32,
+    ) -> Result<Option<ConsensusReservationReceipt>, Self::Error> {
+        Ok(self
+            .load_consensus()?
+            .replay_journal()?
+            .reservations
+            .get(id)
+            .cloned())
+    }
+
+    fn reserve_consensus_intent_once(
+        &mut self,
+        challenge_id: Bytes32,
+        reservation: ConsensusPrivilegeReservation,
+        observed_now: u64,
+    ) -> Result<ConsensusReservationIssue, Self::Error> {
+        // The challenge lives in the beta lineage and is read there. A
+        // reservation never writes that blob: it only refuses to build on a
+        // challenge which is absent, expired-out-of-lineage, or already spent.
+        let admission = self.load()?.replay_journal()?;
+        self.mutate_consensus(|state| {
+            let projection = state.replay_journal()?;
+            if observed_now < projection.observed_time_floor {
+                return Ok(ConsensusReservationIssue::ClockRollback);
+            }
+            let reservation_id = reservation.reservation_id();
+            if let Some(existing) = projection.reservations.get(&reservation_id) {
+                return Ok(
+                    if consensus_reservation_static_eq(existing.reservation(), &reservation) {
+                        ConsensusReservationIssue::ExistingExact(existing.clone())
+                    } else {
+                        ConsensusReservationIssue::Conflict
+                    },
+                );
+            }
+            if !admission.challenges.contains_key(&challenge_id) {
+                return Ok(ConsensusReservationIssue::UnknownChallenge);
+            }
+            if admission.spent_challenges.contains(&challenge_id)
+                || projection
+                    .reservation_by_challenge
+                    .contains_key(&challenge_id)
+            {
+                return Ok(ConsensusReservationIssue::ChallengeUnavailable);
+            }
+            if projection
+                .reservation_by_nullifier
+                .contains_key(&reservation.privilege_nullifier())
+            {
+                return Ok(ConsensusReservationIssue::NullifierConflict);
+            }
+            // Issued consensus authority is never evicted by later traffic, so
+            // at the ceiling the newcomer loses rather than an old receipt.
+            if projection.reservations.len() >= MAX_CONSENSUS_RESERVATIONS
+                || state.journal.len() >= MAX_CONSENSUS_AUTHORITY_RECORDS
+            {
+                return Ok(ConsensusReservationIssue::CapacityExceeded);
+            }
+            // The reservation the store records must be the one the caller
+            // named; the journal replay refuses anything else on reload.
+            if reservation.challenge_id() != challenge_id {
+                return Ok(ConsensusReservationIssue::Conflict);
+            }
+            let checkpoint = state.append(
+                observed_now,
+                ConsensusAuthorityJournalEvent::ReservationIssued {
+                    reservation: reservation.clone(),
+                },
+            )?;
+            let receipt =
+                ConsensusReservationReceipt::from_durable_record(reservation.clone(), checkpoint);
+            state
+                .reservation_by_challenge
+                .insert(challenge_id, reservation_id);
+            state
+                .reservation_by_nullifier
+                .insert(reservation.privilege_nullifier(), reservation_id);
+            state.reservations.insert(reservation_id, receipt.clone());
+            Ok(ConsensusReservationIssue::Issued(receipt))
+        })
+    }
+
+    fn consensus_capability(
+        &self,
+        id: &Bytes32,
+    ) -> Result<Option<ConsensusHoldingCapability>, Self::Error> {
+        Ok(self
+            .load_consensus()?
+            .replay_journal()?
+            .capabilities
+            .get(id)
+            .cloned())
+    }
+
+    fn issue_consensus_capability_once(
+        &mut self,
+        reservation_id: Bytes32,
+        capability: ConsensusHoldingCapability,
+        observed_now: u64,
+    ) -> Result<ConsensusCapabilityIssue, Self::Error> {
+        self.mutate_consensus(|state| {
+            let projection = state.replay_journal()?;
+            if observed_now < projection.observed_time_floor {
+                return Ok(ConsensusCapabilityIssue::ClockRollback);
+            }
+            let Some(receipt) = projection.reservations.get(&reservation_id) else {
+                return Ok(ConsensusCapabilityIssue::UnknownReservation);
+            };
+            if let Some(existing_id) = projection.capability_by_reservation.get(&reservation_id) {
+                let existing = projection
+                    .capabilities
+                    .get(existing_id)
+                    .ok_or_else(|| "consensus capability index lost its record".to_owned())?;
+                return Ok(if consensus_capability_static_eq(existing, &capability) {
+                    ConsensusCapabilityIssue::ExistingExact(existing.clone())
+                } else {
+                    ConsensusCapabilityIssue::Conflict
+                });
+            }
+            // Exactly the bindings `replay_journal` enforces, checked before the
+            // append so a mismatched caller gets a refusal instead of a store
+            // error over a half-built journal.
+            if capability.reservation() != receipt.reservation()
+                || capability.trust() != TrustTier::ConsensusVerified
+                || capability.wallet() != receipt.reservation().wallet()
+                || capability.player() != receipt.reservation().player()
+                || capability.player_cell() != receipt.reservation().player_cell()
+                || capability.federation_id() != receipt.reservation().federation_id()
+            {
+                return Ok(ConsensusCapabilityIssue::ReservationMismatch);
+            }
+            if projection
+                .capabilities
+                .contains_key(&capability.receipt_id())
+            {
+                return Ok(ConsensusCapabilityIssue::Conflict);
+            }
+            if projection.capabilities.len() >= MAX_CONSENSUS_CAPABILITIES
+                || state.journal.len() >= MAX_CONSENSUS_AUTHORITY_RECORDS
+            {
+                return Ok(ConsensusCapabilityIssue::CapacityExceeded);
+            }
+            state.append(
+                observed_now,
+                ConsensusAuthorityJournalEvent::CapabilityIssued {
+                    reservation_id,
+                    capability: capability.clone(),
+                },
+            )?;
+            state
+                .capability_by_reservation
+                .insert(reservation_id, capability.receipt_id());
+            state
+                .capabilities
+                .insert(capability.receipt_id(), capability.clone());
+            Ok(ConsensusCapabilityIssue::Issued(capability))
+        })
+    }
+
+    fn consensus_observed_time_floor(&self) -> Result<u64, Self::Error> {
+        Ok(self.load_consensus()?.replay_journal()?.observed_time_floor)
     }
 }
 
@@ -2580,5 +2860,124 @@ mod tests {
         .await
         .expect("response");
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The consensus lineage is a second durable blob beside the beta one. This
+    /// covers the four teeth that make it authority rather than a cache: it
+    /// survives a redb reopen, an exact retry returns the *original* checkpoint
+    /// rather than minting a second one, a reserved challenge is closed to the
+    /// beta capability path, and one wallet cannot reserve the same event
+    /// privilege twice under a second challenge.
+    #[tokio::test]
+    async fn consensus_reservation_lineage_survives_reopen_and_closes_its_challenge() {
+        use poa_solana_gate::ConsensusPrivilegeIntent;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("admission.redb");
+        let store = Arc::new(dregg_persist::PersistentStore::open(&path).expect("store"));
+        let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
+        let key = SigningKey::from_bytes(&[3; 32]);
+        let wallet = key.verifying_key().to_bytes();
+        let player = SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes();
+        let intent = |action_token: Bytes32| {
+            ConsensusPrivilegeIntent::new(
+                [0xD1; 32],
+                [0xE1; 32],
+                [0xF1; 32],
+                action_token,
+                [0xB1; 32],
+                1,
+                5,
+            )
+            .expect("bounded intent")
+        };
+
+        let challenge = Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)))
+            .issue(&config, wallet, player, [9; 32], 1000, 10)
+            .expect("challenge");
+        let binding = dregg_governance::holding_weight::OwnerBinding {
+            voter: challenge.player(),
+            sig: key.sign(&challenge.signing_message()).to_bytes(),
+        };
+        let receipt = Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)))
+            .reserve_consensus_intent(&config, &challenge, &binding, intent([0xA1; 32]), 11)
+            .expect("reservation");
+        assert_eq!(receipt.checkpoint().journal_len, 1);
+        assert_eq!(receipt.checkpoint().observed_time_floor, 11);
+        assert_ne!(receipt.checkpoint().journal_head, [0; 32]);
+
+        drop(store);
+        let reopened = Arc::new(dregg_persist::PersistentStore::open(&path).expect("reopen"));
+
+        // The audited lineage, not a live cache, answers after the reopen.
+        assert_eq!(
+            RedbAdmissionStore::new(Arc::clone(&reopened))
+                .consensus_reservation(&receipt.reservation().reservation_id())
+                .expect("durable reservation"),
+            Some(receipt.clone())
+        );
+        assert_eq!(
+            RedbAdmissionStore::new(Arc::clone(&reopened))
+                .consensus_observed_time_floor()
+                .expect("durable floor"),
+            11
+        );
+
+        // Response-loss retry: the original checkpoint, not a second record.
+        let retry = Gate::with_store(RedbAdmissionStore::new(Arc::clone(&reopened)))
+            .reserve_consensus_intent(&config, &challenge, &binding, intent([0xA1; 32]), 12)
+            .expect("exact retry");
+        assert_eq!(retry, receipt);
+
+        // A reserved challenge is spent for the beta path too, across blobs.
+        let snapshot = FakeRpc {
+            endpoint_id: [8; 32],
+            wallet,
+            amount: 17,
+            slot: 1000,
+        }
+        .holding_snapshot(challenge.clone())
+        .await
+        .expect("snapshot");
+        let observation =
+            validate_rpc_snapshot(&config, &challenge, &snapshot).expect("observation");
+        assert_eq!(
+            Gate::with_store(RedbAdmissionStore::new(Arc::clone(&reopened)))
+                .admit_beta(&config, &challenge, &binding, observation, 13)
+                .unwrap_err(),
+            GateError::ChallengeReplay
+        );
+
+        // A second challenge cannot re-reserve the same event privilege, and a
+        // differing intent on the already-reserved challenge is refused too.
+        assert_eq!(
+            Gate::with_store(RedbAdmissionStore::new(Arc::clone(&reopened)))
+                .reserve_consensus_intent(&config, &challenge, &binding, intent([0xA2; 32]), 14)
+                .unwrap_err(),
+            GateError::ChallengeReplay
+        );
+        let second = Gate::with_store(RedbAdmissionStore::new(Arc::clone(&reopened)))
+            .issue(&config, wallet, player, [0x0C; 32], 1000, 15)
+            .expect("second challenge");
+        let second_binding = dregg_governance::holding_weight::OwnerBinding {
+            voter: second.player(),
+            sig: key.sign(&second.signing_message()).to_bytes(),
+        };
+        assert_eq!(
+            Gate::with_store(RedbAdmissionStore::new(Arc::clone(&reopened)))
+                .reserve_consensus_intent(&config, &second, &second_binding, intent([0xA2; 32]), 16)
+                .unwrap_err(),
+            GateError::PrivilegeNullifierConflict
+        );
+
+        // Exactly one record: none of the refusals above appended authority.
+        let lineage = RedbAdmissionStore::new(reopened)
+            .load_consensus()
+            .expect("consensus state");
+        assert_eq!(lineage.journal.len(), 1);
+        assert_eq!(lineage.reservations.len(), 1);
+        assert!(lineage.capabilities.is_empty());
     }
 }
