@@ -879,7 +879,36 @@ the answer is the declared `C`; it does not and cannot force that `u⃗` is the 
 real Mina block. That binding is a transcript commitment, not an MSM constraint, and it lives
 outside every object in this cone.
 
-**7.5 — inherited without change.** P10 (passing ≠ knowing); the FRI floor; `srs.g` as the largest
+**7.5 — ⚑ WHICH CURVE, AND WHICH SRS. The demonstration is not on the leg the target names.**
+The row template this file extends is `PastaMsmWindowed.rowGates`, whose add is
+`pallasCompleteAdd` — the `swCompleteAddGadget` at the PALLAS base field `p` — and the generators
+the emitted instances carry are `MinaWrapSrsG.SRS_G`, **32,768 PALLAS points, the WRAP/Tock SRS**.
+The object the campaign targets is the STEP/Tick leg: `2^16 = 65,536` **VESTA** generators, where
+`C = messages_for_next_wrap_proof.challenge_polynomial_commitment` and `u⃗` is the 16 endo-lifted
+`deferred_values.bulletproof_challenges` (`accumulator_check.rs:23-53`).
+
+So §0b's row counts ARE the target object's (`n = 65,536`, `nbits = 255`); the emitted
+DESCRIPTORS are on the cone's existing curve and SRS. Naming the swap precisely, because it is
+smaller than it sounds and larger than nothing:
+
+  * the arithmetic is ALREADY THERE and ALREADY PROVED — `PastaCurveComplete.vestaCompleteAdd`
+    (`:319`) is the same `swCompleteAddGadget` with the `fq*` cores, and `vestaCompleteAdd_forces`
+    (`:438`) is its forcing theorem. It is a ONE-SYMBOL substitution in a `rowGates`-shaped `def`;
+  * but `rowGates` is a `def`, not a parameter, so the swap emits a SECOND row template rather than
+    re-instantiating this one — and there is no `MinaStepSrsG` in the tree, so the `2^16` Vesta
+    generators would have to be exported the way `wrap_group_export.rs` exported the Wrap ones.
+
+Neither is done here, and no theorem below is stated as if it were.
+
+**7.6 — the wire format moved under this file on the day it was written.** A sibling lane landed a
+`challenges` field on `EffectVmDescriptor2` (2026-08-05), and every artifact under
+`circuit/descriptors/by-name/` now refuses to load with *"pre-2026-08-05 shape; re-emit it"* until
+it is re-emitted. That is the repo's doctrine working as designed — the old shape REFUSES rather
+than reinterprets — and it is recorded here only because this file's Rust gate originally compared
+its inherited prefix against one of those shared artifacts and inherited the flag day. It now owns
+its comparand (`circuit/tests/fixtures/pasta-msm-bucketed/pasta-rcb-windowed.json`).
+
+**7.7 — inherited without change.** P10 (passing ≠ knowing); the FRI floor; `srs.g` as the largest
 piece of trusted data; RCB completeness cited from RCB'15 Thm 1 under the on-curve gate
 `PastaMsmOnCurve` emits, which this descriptor does NOT yet compose (it extends `windowedRowDesc`,
 not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
