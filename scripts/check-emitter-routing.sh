@@ -138,6 +138,69 @@ declare -A UNROUTED_OK=(
   [EmitTinyAutomataPacked.lean]="no-artifact|writes 45 files into an ARGV directory (default /tmp/packed) for circuit/tests/tiny_automata_packed_rows_measure.rs; none is checked in"
   [EmitPastaWindowedTrace.lean]="no-artifact|emits an honest WITNESS TRACE (not a descriptor), argv-parameterized, generated live by circuit/tests/pasta_windowed_{prove,tamper}.rs"
   [EmitParamComposeShapes.lean]="no-artifact|its 16 shapes are byte-pinned INTO Lean (Dregg2/Circuit/Emit/ParamComposeGolden{,Shapes,Census}.lean), where the kernel checks them; no JSON is committed"
+
+  # ── 2026-08-05 — THE NINETEEN THIS GATE HAD STOPPED CLASSIFYING. ───────────────────────────────
+  # Every one of them was added AFTER this script's last update (`56bbbe1e2`, 08-03), so the gate
+  # decayed by CALENDAR, not by defect: it went from naming 4 diagnosed emitters to printing 23
+  # names of which 19 carried neither an entry nor a class. A red with nineteen unexplained rows is
+  # a red a reader learns to skip, which is this gate's own failure mode pointed at itself.
+  #
+  # The PICKLES/KIMCHI HARNESS DRIVERS (9). Each writes into `/tmp/pickles-*/` — a scratch directory
+  # its Rust harness crate reads back in the same session — and commits NOTHING. Two of them take
+  # the destination from the environment (`DREGG_SM_OUT` / `DREGG_WM_OUT`) so two revisions can be
+  # byte-diffed without colliding; the default is still `/tmp`. There is no artifact for a flag day
+  # to leave behind, which is exactly the `no-artifact` class. (They ARE rooted — `PicklesEmitDrivers`
+  # in metatheory/lakefile.toml compiles all nine — so an API change reds them. Rooting and routing
+  # are different questions and this is the routing one.)
+  [EmitComposeMsmJson.lean]="no-artifact|writes /tmp/pickles-compose/compose_msm{,_unwired}.json for the pickles-compose-harness crate; nothing is checked in"
+  [EmitCurveGateJson.lean]="no-artifact|writes /tmp/pickles-curvegate/{complete_add,endo_mul_scalar,var_base_mul,endo_mul}.json for pickles-curvegate-harness; nothing is checked in"
+  [EmitPoseidonJson.lean]="no-artifact|writes /tmp/pickles-poseidon/poseidon.json for pickles-poseidon-harness; nothing is checked in"
+  [EmitPublicInputJson.lean]="no-artifact|writes /tmp/pickles-publicinput/pi_{mul_a,mul_b,nowire,wide}.json for pickles-publicinput-harness; nothing is checked in"
+  [EmitStepFragmentJson.lean]="no-artifact|writes /tmp/pickles-stepfragment/stepfragment*.json (shape via DREGG_SF_SHAPE) for pickles-stepfragment-harness; nothing is checked in"
+  [EmitStepMainJson.lean]="no-artifact|writes \$DREGG_SM_OUT (default /tmp/pickles-stepmain)/*.json for pickles-stepmain-harness; nothing is checked in"
+  [EmitStepWrapChainJson.lean]="no-artifact|writes /tmp/pickles-chain/chain{,bent,unread}_w*.json for pickles-chain-harness; nothing is checked in"
+  [EmitWrapMainJson.lean]="no-artifact|writes \$DREGG_WM_OUT (default /tmp/pickles-wrapmain)/wrapmain_*.json for pickles-wrapmain-harness; nothing is checked in"
+  [EmitWrapFinDeferred.lean]="no-artifact|prints the three §15c‴ deferred words to stdout; they are typed INTO Lean (KimchiWrapMainCore's FIN_DEFERRED_CIP/_B/_XI) and discharged there by fin_deferred_words_are_the_derivation — no file"
+
+  # ---- covered: the by-name route already re-emits these bytes off the SAME Lean def. -----------
+  # All four print `emitVmJson2` of a descriptor `EmitByName.lean` also renders, and `EmitByName` IS
+  # routed. They survive as focused runners because the by-name table's import closure is a strict
+  # superset of each of theirs — `EmitMinaLightClient.lean`'s own header records the day that
+  # mattered (2026-08-05: two sibling modules went red and took the WHOLE by-name surface with them).
+  [EmitMinaLink.lean]="covered:EmitByName.lean:minaLinkDesc|dregg-mina-lightclient-link-v1.json (EmitByName.lean:395)"
+  [EmitSolStakeFold.lean]="covered:EmitByName.lean:solStakeFoldDesc|dregg-solana-stake-table-fold-v1.json (EmitByName.lean:418)"
+  [EmitMinaLightClient.lean]="covered:EmitByName.lean:minaLcVerifyDesc|dregg-mina-lightclient-{verify,link}-v1.json (EmitByName.lean:385,395); its own header names EmitByName as the CANONICAL route"
+  # ⚠ A THIRD RENDERER OF THE SAME SIX, AND IT SHOULD BE DELETED. `EmitLcTmp.lean` prints
+  # `<name>\\t<emitVmJson2 d>` for all six light-client descriptors, every one of which is a row of
+  # `EmitByName.lean`'s table; it was untracked scratch until `dc5abe4ab` committed it. It writes to
+  # STDOUT and commits nothing, so no flag day leaves an artifact behind through it — but greenfield
+  # prefers deleting the old thing to keeping both, and this tree already has `EmitMinaLightClient`
+  # covering the Mina pair with a stated reason. Classified rather than deleted only because it
+  # landed mid-session from another lane; the right end-state is one renderer.
+  [EmitLcTmp.lean]="covered:EmitByName.lean:ethLcVerifyDesc|prints all six LC descriptors (eth/tm/solana/midnight/mina/mina-link) to stdout — every one a row of EmitByName.lean (:350,352,372,374,385,395); commits nothing"
+  # ⚠ AND A FINDING THE CLASS DOES NOT CARRY. `EmitPastaAlu.lean` also renders `fqAluDesc` into
+  # `circuit/descriptors/by-name/pasta-alu-fq-sound.json` — a committed, ROUTED descriptor with
+  # ZERO readers anywhere in the tree: no `include_str!`, no test, no script. Its Fp twin
+  # `pasta-alu-sound.json` is read by `circuit/tests/pasta_alu_verifier_row_proves.rs`. Routing is
+  # therefore CORRECT here and insufficient: a flag day will faithfully re-emit bytes nothing
+  # checks. That is a consumer question, not a routing one, and it is recorded here because this is
+  # where the next reader will be standing.
+  [EmitPastaAlu.lean]="covered:EmitByName.lean:fpAluDesc|pasta-alu-{,fq-}sound.json + pasta-sbox-prog{,-1k}.json (EmitByName.lean:235-242); its trace/pis/sboxtrace/sboxpis args render circuit/tests/fixtures/pasta-{alu,sbox}-*.txt, which the driver structurally cannot install"
+
+  # ---- regen: its own co-located regen/check pipeline. ------------------------------------------
+  [Dregg2/Games/PathOfAngels/EmitMain.lean]="regen:scripts/check-poag1-artifacts.sh|the POAG1 three-phase emit; that script re-runs all three phases, measures SHA-256 over what each produced, and byte-compares against the checked-in bundle"
+  [EmitConformanceVectors.lean]="regen:scripts/pickles-crossimpl-differential.sh|the LEAN half of the Lean<->Rust Pickles differential; that script re-runs both halves and requires the two TSVs to be BYTE-IDENTICAL"
+  # ⚑ THE TWO REGEN SCRIPTS BELOW WERE WRITTEN ON 2026-08-05 BECAUSE THESE TWO EMITTERS HAD NO
+  # RE-DERIVATION PATH AT ALL. Between them they produce 25 COMMITTED files whose only route back to
+  # the Lean was a human retyping shell redirections out of a docstring — the precise shape of the
+  # `{discharge,vault}-sat-v3-staged.json` wound in this script's own header, twice over. Neither
+  # can join `EMITTERS`: most of their output lands in `circuit/tests/fixtures/`, which
+  # `emit_descriptors.py` structurally cannot install (see the note at the bottom).
+  [EmitCommitStages.lean]="regen:scripts/regen-mina-commit-stages.sh|23 artifacts: 8 by-name descriptors (mina-commit-{xi,pub,f,ft,agg,ladder}, mina-xi-{aggregate-msm,endo-lift}) + 14 trace/pis fixtures + mina-commit-golds.txt, read by mina_commit_stages_prove.rs, mina_xi_endo_weld.rs and pasta_msm_bucketed_prove.rs"
+  [EmitPastaBucketed.lean]="regen:scripts/regen-pasta-bucketed.sh|4 artifacts under circuit/tests/fixtures/pasta-msm-bucketed/, sha256-pinned in circuit/tests/pasta_msm_bucketed_prove.rs; MUST NOT be routed — it imports MinaWrapSrsG/MinaStepSrsG (32k/64k pinned points), the same reason EmitPastaBound is not routed"
+
+  # ---- no-main: a library in the Emit* filename namespace, not an emitter. ----------------------
+  [Dregg2/Games/PathOfAngels/Emit.lean]="no-main|the POAG1 ARTIFACT BOUNDARY (ingestManifest + the bundle projection) — a library imported by EmitMain.lean and by the PoA runtimes; it has no root def main and lake env lean --run on it produces nothing"
 )
 
 # ── STILL FAILING, with a diagnosis. NOT an excuse — these are the silent case. ───────────────────
@@ -206,12 +269,45 @@ verify_class() {
   return 0
 }
 
+# ── THE POPULATION: TRACKED files only (`git ls-files`), same rule as check-dark-modules.py and
+# check-export-callers.py, and for the same reason. ⚑ 2026-08-05: this was `find`, which sweeps the
+# WORKING TREE, so in a shared tree with nine live lanes this gate graded other people's unsaved
+# scratch. `metatheory/EmitLcTmp.lean` — a six-line re-print of six descriptors `EmitByName.lean`
+# already emits — sat here UNTRACKED and red for everybody, and the only ways to clear it were to
+# classify a file nobody had committed or to delete another lane's working file. (It was committed
+# mid-session as `dc5abe4ab` and is classified below, which is the point: an UNCOMMITTED emitter
+# cannot leave a COMMITTED artifact stale, and it becomes this gate's business the moment it is
+# `git add`ed — not before.) It is NOT hidden either way: the untracked count is printed
+# unconditionally below, so the gap between what was scanned and what exists is a number on the same
+# screen as the verdict, never a subtraction the reader has to think to perform.
+mapfile -t emitters < <(git ls-files 'metatheory/*Emit*.lean' 'metatheory/**/Emit*.lean' \
+  | grep -E '(^|/)Emit[^/]*\.lean$' | grep -v '/\.lake/' | sort -u)
+untracked_n="$(git ls-files --others --exclude-standard 'metatheory/*Emit*.lean' 'metatheory/**/Emit*.lean' \
+  | grep -cE '(^|/)Emit[^/]*\.lean$' || true)"
+
+# ── NON-VACUITY. A gate that scans an empty set greens, and its closing line then says "every Lean
+# emitter is routed" about nothing at all. `check-lean-orphans.sh` states this rule and enforces it;
+# this script stated neither until 2026-08-05. The floor is well under the live population (~60) and
+# well over anything a broken path glob would return.
+if [ "${#emitters[@]}" -lt 30 ]; then
+  echo "check-emitter-routing: FATAL — found ${#emitters[@]} tracked Emit*.lean under metatheory/ (floor 30)." >&2
+  echo "  That is a blinded scan, not a small tree: the path glob or the git index is wrong." >&2
+  exit 2
+fi
+if [ -z "$routed" ]; then
+  echo "check-emitter-routing: FATAL — the driver's EMITTERS list parsed EMPTY." >&2
+  echo "  Every emitter would then read as unrouted, or (with an empty population) none would." >&2
+  exit 2
+fi
+
 fail=0
 broken_excuse=0
+excused=0
+routed_n=0
 declare -a unrouted=()
-while IFS= read -r p; do
+for p in "${emitters[@]}"; do
   n="$(basename "$p")"
-  grep -qx "$n" <<<"$routed" && continue
+  if grep -qx "$n" <<<"$routed"; then routed_n=$((routed_n + 1)); continue; fi
   # allowlist keys are basenames, except where two trees share one (Market/EmitSameOpeningGadget).
   key="$n"; [[ -v UNROUTED_OK["$key"] ]] || key="${p#metatheory/}"
   if [[ -v UNROUTED_OK["$key"] ]]; then
@@ -220,12 +316,14 @@ while IFS= read -r p; do
       echo "                 $why"
       broken_excuse=$((broken_excuse + 1))
       fail=$((fail + 1))
+    else
+      excused=$((excused + 1))
     fi
     continue
   fi
   unrouted+=("$p")
   fail=$((fail + 1))
-done < <(find metatheory -name 'Emit*.lean' -not -path '*/.lake/*' | sort)
+done
 
 for p in ${unrouted+"${unrouted[@]}"}; do
   n="$(basename "$p")"
@@ -258,6 +356,12 @@ otherwise the driver would rewrite a file the drift gate cannot see, which is th
 script's own header records. That is real work, and it is the work; it is not a reason to excuse
 them.
 MSG
+  echo
+  echo "check-emitter-routing: scanned ${#emitters[@]} tracked Emit*.lean — $routed_n routed, $excused excused (class verified), $broken_excuse broken excuse(s), ${#unrouted[@]} unclassified; $untracked_n untracked Emit*.lean not scanned."
   exit 1
 fi
-echo "check-emitter-routing: PASS — every Lean emitter is routed, or excused under a class this script verified."
+# ⚑ THE VERDICT NAMES ITS POPULATION. This line used to read "PASS — every Lean emitter is routed,
+# or excused under a class this script verified" and nothing else. That sentence is true of an empty
+# scan, and it is the sentence a reader quotes. The floor above makes an empty scan impossible; these
+# numbers make a SHRINKING one visible, which the floor alone does not.
+echo "check-emitter-routing: PASS — all ${#emitters[@]} tracked Emit*.lean under metatheory/ are accounted for: $routed_n routed through scripts/emit_descriptors.py, $excused excused under a class this script re-verified just now.${untracked_n:+ ($untracked_n untracked Emit*.lean present and NOT scanned — commit one and it becomes this gate's business.)}"
