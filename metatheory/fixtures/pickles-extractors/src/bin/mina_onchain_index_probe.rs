@@ -143,7 +143,12 @@ fn main() {
     let vk_path = vk_path.expect("--vk");
     let circuit_path = circuit_path.expect("--circuit");
 
-    println!("ON-CHAIN INDEX PROBE — Mina's own VerifierIndex, built from the bytes devnet holds");
+    println!("ON-CHAIN INDEX PROBE — Mina's own VerifierIndex, built from the bytes at --vk");
+    // ⚠ WHOSE BYTES THESE ARE IS AN ARGUMENT, NOT A FACT OF THIS BINARY. `--vk` is whatever file
+    // the caller hands over; only a key fetched from the account makes (A) a statement about the
+    // chain. It is printed so a run against a locally re-derived key cannot be read as a devnet
+    // measurement — which is exactly what a hardcoded "devnet" in the (A) verdict invited.
+    println!("  --vk     : {vk_path}");
 
     // ── the circuit, from the Lean emission ───────────────────────────────────────────────────
     let c: CircuitJson =
@@ -312,14 +317,14 @@ fn main() {
             k += 1;
         }
     }
-    println!("\n[A] the 28 commitments: OURS (Lean gates -> our ProverIndex) vs MINA'S (devnet bytes -> make_zkapp_verifier_index)");
+    println!("\n[A] the 28 commitments: OURS (Lean gates -> our ProverIndex) vs MINA'S (--vk bytes -> make_zkapp_verifier_index)");
     println!("      identical: {same} / 28");
     if !differ.is_empty() {
         println!("      differ   : {differ:?}");
     }
     let same_index = same == 28;
     println!(
-        "      => the key on devnet {} the circuit this binary proves",
+        "      => the key at {vk_path} {} the circuit this binary proves",
         if same_index {
             "IS the key of"
         } else {
@@ -381,7 +386,7 @@ fn main() {
             &group_map, &minas, &proof, &public,
         );
     println!(
-        "\n[B] kimchi::verifier::verify(MINA'S index from the devnet bytes, the same public input)"
+        "\n[B] kimchi::verifier::verify(MINA'S index from the --vk bytes, the same public input)"
     );
     match &verdict {
         Ok(()) => println!("      = Ok  — MINA'S OWN VERIFIER ACCEPTED IT"),

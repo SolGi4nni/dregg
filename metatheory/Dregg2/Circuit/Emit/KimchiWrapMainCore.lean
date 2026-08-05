@@ -1264,8 +1264,10 @@ layout, measured against a devnet block. Of those 40, this rung DERIVES:
                                                       one by one
     29     branch_data                             ✅ §9's `Branch_data.Checked.pack`
                                                       (`wrap_main.ml:189-199`)
-    0–4    cip, b, ζ^srs_len, ζ^dom, perm          ✗ W-FINALIZE
-    9      xi                                      ✗ W-FINALIZE
+    0–4    cip, b, ζ^srs_len, ζ^dom, perm          ✗ READ by W-FTCOMM (2,3,4) and W-BULLET
+                                                      (0,1); CHECKED by the NEXT proof's
+                                                      `finalize_other_proof`, never by this one
+    9      xi                                      ✗ READ by W-COMBINE, same story
     12     messages_for_next_step_proof            ✅ at `w9_prev` ONLY (§18) — the
                                                       `Field.Assert.equal` of `wrap_main.ml:350-351`
                                                       against packed statement word 54, which the
@@ -1299,14 +1301,18 @@ wrong object under the right name and moves nothing a width signature can see.
 ⚠ ⚑ **AND 40 IS NOT THE DENOMINATOR — 24 IS, AND THE OTHER SIXTEEN ARE NOT THIS FILE'S WORK.**
 `wrap_main` is HANDED forty words and CONSTRAINS twenty-four of them. Slots 0–4 and 9 are deferred
 values it passes straight through as `~advice` / `~plonk` / `~xi` (`wrap_main.ml:405-414`) and never
-checks — what consumes them is **W-FINALIZE**, §13 item 7, and until it lands they are not "missing
-from our public vector", they are unconstrained in `wrap_main` as written. Slots 30–37 are
+checks — what CHECKS them is the NEXT proof's `finalize_other_proof`, and what READS them here is
+W-FTCOMM (2, 3, 4), W-COMBINE (9) and W-BULLET (0, 1). So they are not "missing from our public
+vector", they are unconstrained in `wrap_main` as written. Slots 30–37 are
 `Spec.T.Constant` padding and 38–39 the lookup `Opt` that `G.lookup_verification_enabled` leaves off
 (`wrap_verifier.ml:487,715`); a real devnet wrap proof carries **ZERO** in all ten
 (`MinaWrapPublicInput.the_tail_is_padding_and_branch_data`, over
 `MinaWrapPublicCommGate.PUBLIC_INPUT`). Tying those to variables would be public fixtures — defect
 class 5 wearing a public vector. So the honest reading of a `PI 24 vs 40` delta is
-**6 W-FINALIZE + 10 constant-or-dead**, and this rung is the last of the 24.
+**6 pass-through + 10 constant-or-dead**, and this rung is the last of the 24. ⚠ The six are
+`~advice`/`~plonk`/`~xi`: `wrap_main` READS them (W-FTCOMM 2/3/4, W-COMBINE 9, W-BULLET 0/1) and
+CHECKS none of them; their checker is the NEXT proof's `finalize_other_proof`. Whether this assembly
+should expose them anyway is the fork `wrapInertOk` states — it is a taste call and it is open.
 
 ⚑ **AND EACH NEW WORD IS EXPOSED AT ONE RUNG, NOT AT ALL OF THEM.** `closingRows` emits `pubWords`
 halves at `w4_bind`, `prevRows` emits slot 12 and `whRows` slot 11; every rung declares all forty,
@@ -1342,8 +1348,9 @@ def WRAP_UNPINNED_SLOTS : List Nat :=
 /-- …and the sixteen it does not pin, by REASON and by OWNER. -/
 def WRAP_UNPINNED : List String :=
   [ "0–4 cip · b · zeta_to_srs_length · zeta_to_domain_size · perm — PASSED THROUGH as ~advice/~plonk \
-     (wrap_main.ml:405-414); W-FINALIZE is what consumes them"
-  , "9 xi — PASSED THROUGH as ~xi (wrap_main.ml:409); W-FINALIZE"
+     (wrap_main.ml:405-414); READ by W-FTCOMM (2,3,4) and W-BULLET (0,1), CHECKED by the NEXT \
+     proof's finalize_other_proof"
+  , "9 xi — PASSED THROUGH as ~xi (wrap_main.ml:409); READ by W-COMBINE, CHECKED by the next proof"
   , "30–37 Spec.T.Constant padding — ZERO in a real devnet wrap proof, constrained by nothing upstream"
   , "38–39 the lookup Opt — G.lookup_verification_enabled is off (wrap_verifier.ml:487,715)" ]
 
@@ -5313,11 +5320,27 @@ def wrapSlotsAt (s : WrapShape) (k : Rung) : List Nat :=
 
 Two parts, both DECLARATIONS and neither read off the emitted gates:
 
-  * `WRAP_UNPINNED_SLOTS` — the sixteen `wrap_main` itself leaves unread. Six are deferred values it
-    passes through as `~advice`/`~plonk`/`~xi` (`wrap_main.ml:405-414`), whose checker is
-    W-FINALIZE; ten are `Spec.T.Constant` padding and the dead lookup `Opt`, which
-    `Spec.packed_typ` ALLOCATES and hands the body a `Cvar.Constant` for
-    (`composition_types/spec.ml:312-330`), so nothing upstream reads them either.
+  * `WRAP_UNPINNED_SLOTS` — the sixteen `wrap_main` itself does not CONSTRAIN. Ten are
+    `Spec.T.Constant` padding and the dead lookup `Opt`, which `Spec.packed_typ` ALLOCATES and hands
+    the body a `Cvar.Constant` for (`composition_types/spec.ml:312-330`) — so nothing upstream reads
+    those, and tying them to variables would be a public fixture.
+
+    ⚠ **THE OTHER SIX ARE A DIFFERENT ANIMAL AND THE DIFFERENCE IS NOT COSMETIC.** Slots 0–4 and 9
+    are `~advice`/`~plonk`/`~xi` (`wrap_main.ml:405-414`): `wrap_main` never CHECKS them, but it
+    does READ them — `combined_inner_product` and `b` in `check_bulletproof` (W-BULLET,
+    `wrap_verifier.ml:395`), `perm`/`zeta_to_srs_length`/`zeta_to_domain_size` in `ft_comm`
+    (W-FTCOMM) and `xi` in `Split_commitments.combine` (W-COMBINE). What CHECKS them is the NEXT
+    proof's `finalize_other_proof`, not this one's. So they are unread HERE because this assembly
+    wires those three consumers to free witnesses with fixture defaults (`ftcSVal`, `combXiVal`,
+    `bullScalVal`) instead of to the public words.
+
+    ⚑ **THAT IS A DESIGN FORK, LEFT OPEN DELIBERATELY, AND IT IS THE OPERATOR'S.** On a DERIVATION
+    standard — a rung exposes only what it computes — the six stay unread until a next proof's
+    W-FINALIZE exists. On UPSTREAM'S standard they are free pass-throughs and four of the six
+    (2, 3, 4, 9) already have circuit-read cells, so each is one closing `Generic` half away. Both
+    are defensible, they give different work, and picking one silently inside a layout change is how
+    a taste decision becomes a fact nobody chose. `docs/HANDOFF-wrap-public-input-40.md` states the
+    fork; this file implements the first horn and says so.
   * the PINNED slots this rung has not reached — 12 below `w9_prev`, 11 below `w11_wraphack`. That
     is the reservation the old `AUXW` dead gap used to carry, said at Mina's slot.
 
@@ -5368,11 +5391,13 @@ row ties it to hold ONE value by construction, exactly as a copy class does.
 For the ten `Spec.T.Constant` / dead-lookup slots that IS the value a real devnet wrap proof carries
 (`MinaWrapPublicInput.the_tail_is_padding_and_branch_data`, over `MinaWrapPublicCommGate.
 PUBLIC_INPUT`), so those ten are right rather than merely accepted. For the six deferred slots — 0–4
-and 9 — a zero is a PLACEHOLDER for a value this assembly does not compute: `expand_deferred`'s
-outputs, whose in-circuit checker is W-FINALIZE. The circuit reads neither set, so a verifier accepts
-any value at all there, and saying so is the point: those six are the honest residue of the layout
-and are named as such by `wrapInertOk`, by the per-rung inertness equalities and by the emission's
-own printout. Filling them with derived values is W-FINALIZE's work, not a padding decision. -/
+and 9 — a zero is a PLACEHOLDER: they are `expand_deferred`'s outputs, no wrap sub-circuit DERIVES
+them (their checker is the NEXT proof's `finalize_other_proof`), and this assembly's W-FTCOMM /
+W-COMBINE / W-BULLET read fixture-defaulted free witnesses where upstream reads these very words.
+The circuit reads neither set, so a verifier accepts any value at all there, and saying so is the
+point: those six are the honest residue of the layout, named by `wrapInertOk`, by the per-rung
+inertness equalities and by the emission's own printout. ⚠ Whether to expose them anyway — upstream
+does not check them either — is the fork `wrapInertOk`'s docblock states. -/
 def wrapEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   let ce := circuitEnvAt t k
   let ix := envIndex ce

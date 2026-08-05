@@ -140,9 +140,15 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     placement rather than left to be discovered: the ten `Spec.T.Constant`/dead-lookup slots that
     `Spec.packed_typ` ALLOCATES and hands the body a `Cvar.Constant` for
     (`composition_types/spec.ml:312-330`) — so upstream reads them no more than we do — and the six
-    deferred words 0–4 and 9, whose in-circuit checker is W-FINALIZE. ⚠ Those six carry ZERO here
-    and that is a NAMED HOLE, not a padding choice: a verifier accepts anything at a slot nothing
-    reads, and filling them with derived values is W-FINALIZE's work.
+    pass-through words 0–4 and 9. ⚠ Those six carry ZERO here and that is a NAMED HOLE, not a
+    padding choice: a verifier accepts anything at a slot nothing reads. ⚑ And their owner is NOT
+    W-FINALIZE. `wrap_main` READS all six — `combined_inner_product`/`b` in `check_bulletproof`
+    (W-BULLET), `perm`/`zeta_to_srs_length`/`zeta_to_domain_size` in `ft_comm` (W-FTCOMM), `xi` in
+    `Split_commitments.combine` (W-COMBINE) — and CHECKS none; the checker is the NEXT proof's
+    `finalize_other_proof`. This assembly wires those three consumers to fixture-defaulted free
+    witnesses instead of to the public words. Exposing them anyway is defensible on upstream's own
+    standard and blocked on a derivation standard; `wrapInertOk`'s docblock and
+    `docs/HANDOFF-wrap-public-input-40.md` state the fork, and it is the operator's.
   * **W5 `key`** — §14. ⚑ **`choose_key` AND THE INDEX SPONGE**, i.e. the sub-circuit that makes the
     transcript's INPUT derived. `wrap_verifier.ml:189-204` folds the per-branch step keys against the
     SAME one-hot vector §9 already emits — and because `wrap_main.ml:218-219` passes them through

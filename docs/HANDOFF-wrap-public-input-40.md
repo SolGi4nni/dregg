@@ -142,3 +142,41 @@ cargo run --release --manifest-path metatheory/fixtures/pickles-extractors/Cargo
 `[B]` stops saying `IncorrectPubicInputLength(40)` and starts saying `Ok` **on the circuit's own
 public vector, with no padding**. `[A]` must stay 28/28 against a key derived from that same
 emission, and `[C]`'s two word-moves must stay `OpenProof`.
+
+---
+
+## ⚑ CLOSED 2026-08-05 — the layout landed, and here is what the probe said
+
+Commit `b75180149` (`feat(wrap): the public vector moves into Mina's own slot layout`) does items
+1 and 2 of "Three deltas": ORDER and WIDTH. Item 3, INSTANCE, is untouched and stays open.
+
+**22 vs 24 reconciled at source, and it was neither of the two candidates.** `pubWords = 22` is the
+width of `exposedVars` — the CLOSING rung's derivation. `exposedVarsAt` appends slot 12 at `.prev`
+and slot 11 at `.wraphack`; `22 + 1 + 1 = 24 = WRAP_PINNED_SLOTS.length`. No slot was missing and
+`pubWords` counts exactly what its docblock says. **Pure layout, no new derivation.**
+
+**What Mina's own kimchi verifier says now**, `mina_onchain_index_probe`, release, on the emitted
+`wrapmain_smoke_w4_bind` (532 Lean rows, `public_input_size = 40`, domain 2^14), both directions run:
+
+| `--vk` | [A] commitments | [B] `kimchi::verifier::verify` | [C] 40 slot-moves |
+|---|---|---|---|
+| key derived from THIS emission | **28 / 28** | **`Ok` — accepted** | **REFUSED 40/40** |
+| the key devnet holds (`3406194937…`) | 4 / 28 | `Err(OpenProof)` | REFUSED 40/40 |
+
+No padding leg remains: the emission IS forty words in Pickles' order, so the probe's `[B']` is
+deleted rather than relabelled. `[C]` moved from two hand-picked words to all forty.
+
+⚠ **THE DEVNET KEY IS STALE AND RE-REGISTRATION IS THE OPERATOR'S.** 40 public rows instead of 6
+shifts every gate row, so the account's 1796 bytes no longer describe the circuit — the second row
+above is that fact, measured. The new `w4_bind` key hashes
+`3188784766661697483171188289432725486872584657562879441369053845609461086197`.
+
+**The six pass-throughs are still unread, and the fork below is still open.** They are DECLARED
+(`wrapInertOk`), the declaration is checked against the emission as an EQUALITY at every rung, and
+`pickles-wrapmain-harness`'s polarity (5) MEASURES the split: the sigma leg refuses at every derived
+slot and accepts at every declared-unread one. The attribution in the Lean was corrected in the same
+commit — the six are read by W-FTCOMM / W-COMBINE / W-BULLET and checked by the next proof, not by
+W-FINALIZE, exactly as this document said.
+
+⚠ Still unsettled and untouched: which of `to_public_input_cvar`'s branches the side-loaded path
+takes, i.e. whether slots 30–39 are constants or variables. They are emitted as constant zero.

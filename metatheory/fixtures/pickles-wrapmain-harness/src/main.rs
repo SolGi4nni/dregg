@@ -28,7 +28,10 @@
 //                  ⚑ THE VECTOR IS FORTY WIDE AND IN MINA'S SLOT ORDER — `WRAP_PRIMARY_LEN`, what
 //                  `Impls.Wrap.input ()` allocates and what `make_zkapp_verifier_index` hands
 //                  `kimchi::verifier::verify`. Which of the forty this rung derives travels with
-//                  the circuit as `derived_slots`; the rest as `unread_slots`
+//                  the circuit as `derived_slots`; the rest as `unread_slots`. The sixteen unread
+//                  are Mina's own: ten `Spec.T.Constant`/dead-lookup slots upstream allocates and
+//                  never reads, and six pass-throughs (0-4, 9) `wrap_main` READS but never CHECKS
+//                  - their checker is the NEXT proof's `finalize_other_proof`
 //   w5_key         W-KEY: `choose_key` (`wrap_verifier.ml:189-204`) as a one-hot fold over the
 //                  per-branch step keys - which are `Inner_curve.constant`, so it is Generic
 //                  arithmetic and not a curve MSM - plus the INDEX SPONGE (`:521-530`), whose
