@@ -10,8 +10,8 @@ export const POA_GALLEY_SESSION_FORMAT = "POA-GALLEY-SESSION-V1";
 export const POA_GALLEY_STATUS_FORMAT = "POA-GALLEY-STATUS-V1";
 export const POA_GALLEY_COMMAND_PREPARE_FORMAT = "POA-GALLEY-COMMAND-PREPARE-V1";
 export const POA_GALLEY_UNSIGNED_TURN_FORMAT = "POA-GALLEY-UNSIGNED-TURN-V1";
-export const POA_GALLEY_PENDING_JOURNAL_FORMAT = "POA-GALLEY-PENDING-INTENT-JOURNAL-V1";
-export const POA_GALLEY_PENDING_STORAGE_KEY = "poa.galley.pending-intents.v1";
+export const POA_GALLEY_PENDING_JOURNAL_FORMAT = "POA-GALLEY-PENDING-INTENT-JOURNAL-V2";
+export const POA_GALLEY_PENDING_STORAGE_KEY = "poa.galley.pending-intents.v2";
 export const POA_GALLEY_ACTOR_HEADER = "X-Dregg-Actor";
 
 /** Caddy adds `/node`; the authority itself serves `/api/poa/galley/v1`. */
@@ -24,7 +24,7 @@ export const DEFAULT_GALLEY_ENDPOINTS = Object.freeze({
 const HEX32 = /^[0-9a-f]{64}$/u;
 const PROFILE_NAME = /^[a-z0-9_-]{1,64}$/u;
 const OPAQUE_ID = /^[\x21-\x7e]{1,256}$/u;
-const ACTION_TOKEN = /^[\x21-\x7e]{1,4096}$/u;
+const ACTION_TOKEN = HEX32;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const CURRENT_KEYS = Object.freeze([
   "actions", "aggregate_id", "daily_id", "federation_id", "projection",
@@ -32,6 +32,15 @@ const CURRENT_KEYS = Object.freeze([
 ]);
 const SESSION_KEYS = Object.freeze([...CURRENT_KEYS, "format"]);
 const STATUS_KEYS = Object.freeze([...CURRENT_KEYS, "events", "format"]);
+const PROJECTION_KEYS = Object.freeze([
+  "canon_revision", "canon_root", "local_service_total", "power_root",
+  "public_play_count", "public_players", "sequence", "sponsorship_count",
+  "sponsors", "spent_grant_nullifiers", "loot_root",
+]);
+const EVENT_PAYLOAD_KEYS = Object.freeze([
+  "activity_id", "actor", "authority_commitment", "beneficiary",
+  "grant_nullifier", "kind", "local_service",
+]);
 const MAX_OPAQUE_JSON_BYTES = 128 * 1024;
 const MAX_OPAQUE_JSON_DEPTH = 16;
 const MAX_EVENTS = 4096;
@@ -87,6 +96,13 @@ function opaque(name, value) {
 function digest(name, value) {
   refuse(typeof value === "string" && HEX32.test(value), "galley-digest", `${name} must be a lowercase 32-byte digest`);
   return value;
+}
+
+function digestList(name, value) {
+  refuse(Array.isArray(value) && value.length <= 64, "galley-projection", `${name} must be a bounded digest list`);
+  const values = value.map((item, index) => digest(`${name}[${index}]`, item));
+  refuse(new Set(values).size === values.length, "galley-projection", `${name} must not contain duplicates`);
+  return Object.freeze(values);
 }
 
 /** Parse the permissioned page-provider result without granting it authority.
@@ -150,19 +166,16 @@ function providerText(name, value, { optional = false } = {}) {
   return value;
 }
 
-function providerTurnHash(name, value, expectedTurnHash, { optional = false } = {}) {
+function providerTurnHash(name, value, { optional = false } = {}) {
   if (optional && value === undefined) return null;
   refuse(typeof value === "string" && HEX32.test(value),
     "galley-sign-result", `${name} must be a canonical lowercase turn hash`);
-  refuse(value === expectedTurnHash, "galley-sign-mismatch",
-    `${name} does not match the prepared turn carrier`);
   return value;
 }
 
-/** Bind the page provider's signing/submission report back to the exact
- * server-prepared carrier. This report is admission state, never finality. */
-export function normalizeGalleySigningResult(value, expectedTurnHash) {
-  const expected = digest("expected turn hash", expectedTurnHash);
+/** Parse the signer's final post-authorization turn hash. The separate
+ * preparation digest is checked against postcard bytes before this call. */
+export function normalizeGalleySigningResult(value) {
   const row = object("Dregg signing result", value);
   const allowed = new Set(["error", "nodeResult", "outboxId", "queued", "receipt", "submitted", "turnId"]);
   refuse(Object.keys(row).every((key) => allowed.has(key)), "galley-sign-result",
@@ -172,7 +185,7 @@ export function normalizeGalleySigningResult(value, expectedTurnHash) {
   const queued = row.queued === true;
   refuse(!(row.submitted && queued), "galley-sign-result", "a turn cannot be both submitted and queued");
 
-  const turnHash = providerTurnHash("turnId", row.turnId, expected, { optional: true });
+  const turnHash = providerTurnHash("turnId", row.turnId, { optional: true });
   const error = providerText("signing error", row.error, { optional: true });
   const outboxId = providerText("outboxId", row.outboxId, { optional: true });
   refuse(!outboxId || queued, "galley-sign-result", "outboxId is only valid for a queued turn");
@@ -180,13 +193,17 @@ export function normalizeGalleySigningResult(value, expectedTurnHash) {
   if (row.receipt !== undefined) {
     refuse(row.submitted, "galley-sign-result", "receipt metadata is only valid after submission");
     const receipt = object("signing receipt", row.receipt);
-    providerTurnHash("receipt.turnHash", receipt.turnHash, expected, { optional: true });
+    const receiptTurnHash = providerTurnHash("receipt.turnHash", receipt.turnHash, { optional: true });
+    refuse(receiptTurnHash === null || receiptTurnHash === turnHash, "galley-sign-mismatch",
+      "receipt.turnHash does not match the final signed turn");
   }
   if (row.nodeResult !== undefined) {
     refuse(row.submitted && boundedJson("nodeResult", row.nodeResult), "galley-sign-result",
       "nodeResult is only valid after submission");
     const nodeResult = object("nodeResult", row.nodeResult);
-    providerTurnHash("nodeResult.turn_hash", nodeResult.turn_hash, expected, { optional: true });
+    const nodeTurnHash = providerTurnHash("nodeResult.turn_hash", nodeResult.turn_hash, { optional: true });
+    refuse(nodeTurnHash === null || nodeTurnHash === turnHash, "galley-sign-mismatch",
+      "nodeResult.turn_hash does not match the final signed turn");
   }
 
   if (row.submitted) {
@@ -213,14 +230,40 @@ function galleySigningException(error) {
 
 function normalizeAction(value, at) {
   const row = exact(at, value, ["action_token", "expires_after_sequence", "kind"]);
-  refuse(["public_vote", "perform", "visit_commons", "holder_sponsorship"].includes(row.kind),
-    "galley-action", `${at}.kind is unsupported`);
-  refuse(typeof row.action_token === "string" && ACTION_TOKEN.test(row.action_token),
-    "galley-action", `${at}.action_token is not canonical`);
+  refuse(row.kind === "perform", "galley-action", `${at}.kind has no activated Galley writer`);
+  digest(`${at}.action_token`, row.action_token);
   return freeze({
     kind: row.kind,
     actionToken: row.action_token,
     expiresAfterSequence: natural(`${at}.expires_after_sequence`, row.expires_after_sequence),
+  });
+}
+
+/** Exact read schema emitted by the current Lean Galley runtime. This is a
+ * presentation read-model only: no browser transition is derived from it. */
+export function normalizeGalleyDailyProjection(value, expectedSequence) {
+  const row = exact("projection", value, PROJECTION_KEYS);
+  const publicPlayers = digestList("projection.public_players", row.public_players);
+  const sponsors = digestList("projection.sponsors", row.sponsors);
+  const spentGrantNullifiers = digestList("projection.spent_grant_nullifiers", row.spent_grant_nullifiers);
+  const sequence = natural("projection.sequence", row.sequence);
+  const publicPlayCount = natural("projection.public_play_count", row.public_play_count);
+  const sponsorshipCount = natural("projection.sponsorship_count", row.sponsorship_count);
+  refuse(sequence === expectedSequence, "galley-projection", "projection sequence does not bind the journal head");
+  refuse(publicPlayCount === publicPlayers.length && sponsorshipCount === sponsors.length,
+    "galley-projection", "projection participant counts are incoherent");
+  return freeze({
+    sequence,
+    publicPlayers,
+    sponsors,
+    spentGrantNullifiers,
+    publicPlayCount,
+    sponsorshipCount,
+    localServiceTotal: natural("projection.local_service_total", row.local_service_total),
+    powerRoot: digest("projection.power_root", row.power_root),
+    lootRoot: digest("projection.loot_root", row.loot_root),
+    canonRoot: digest("projection.canon_root", row.canon_root),
+    canonRevision: natural("projection.canon_revision", row.canon_revision),
   });
 }
 
@@ -262,7 +305,7 @@ function normalizeCurrent(row) {
     sequence: natural("sequence", row.sequence),
     semanticHead: digest("semantic_head", row.semantic_head),
     projectionDigest: digest("projection_digest", row.projection_digest),
-    projection: boundedJson("projection", row.projection),
+    projection: normalizeGalleyDailyProjection(boundedJson("projection", row.projection), row.sequence),
     actions: Object.freeze(actions),
     replay: normalizeReplay(row.replay, row.sequence, row.semantic_head),
   });
@@ -285,13 +328,26 @@ function normalizeReceipt(value, at) {
 
 function normalizeEvent(value, at) {
   const row = exact(at, value, ["event_digest", "payload", "payload_digest", "receipt", "receipt_hash", "sequence", "turn_hash"]);
+  const payloadRow = exact(`${at}.payload`, boundedJson(`${at}.payload`, row.payload), EVENT_PAYLOAD_KEYS);
+  refuse(payloadRow.kind === "public-play", "galley-event", `${at}.payload.kind has no activated Galley writer`);
+  const actor = digest(`${at}.payload.actor`, payloadRow.actor);
+  const beneficiary = digest(`${at}.payload.beneficiary`, payloadRow.beneficiary);
+  refuse(actor === beneficiary, "galley-event", `${at}.payload beneficiary does not match its public actor`);
   return freeze({
     sequence: natural(`${at}.sequence`, row.sequence),
     turnHash: digest(`${at}.turn_hash`, row.turn_hash),
     receiptHash: digest(`${at}.receipt_hash`, row.receipt_hash),
     eventDigest: digest(`${at}.event_digest`, row.event_digest),
     payloadDigest: digest(`${at}.payload_digest`, row.payload_digest),
-    payload: boundedJson(`${at}.payload`, row.payload),
+    payload: freeze({
+      kind: payloadRow.kind,
+      actor,
+      beneficiary,
+      activityId: digest(`${at}.payload.activity_id`, payloadRow.activity_id),
+      grantNullifier: digest(`${at}.payload.grant_nullifier`, payloadRow.grant_nullifier),
+      authorityCommitment: digest(`${at}.payload.authority_commitment`, payloadRow.authority_commitment),
+      localService: natural(`${at}.payload.local_service`, payloadRow.local_service),
+    }),
     receipt: normalizeReceipt(row.receipt, `${at}.receipt`),
   });
 }
@@ -319,13 +375,13 @@ export function normalizeGalleyStatus(value) {
 
 export function normalizeGalleyUnsignedTurn(value) {
   const row = exact("Galley unsigned turn", value,
-    ["expires_after_sequence", "federation_id", "format", "intent_id", "turn_hash", "turn_postcard_base64"]);
+    ["expires_after_sequence", "federation_id", "format", "intent_id", "preparation_digest", "turn_postcard_base64"]);
   refuse(row.format === POA_GALLEY_UNSIGNED_TURN_FORMAT, "galley-format", "Galley unsigned turn format is unsupported");
   return freeze({
     format: POA_GALLEY_UNSIGNED_TURN_FORMAT,
     intentId: opaque("intent_id", row.intent_id),
     federationId: digest("federation_id", row.federation_id),
-    turnHash: digest("turn_hash", row.turn_hash),
+    preparationDigest: digest("preparation_digest", row.preparation_digest),
     turnPostcardBase64: canonicalBase64("turn_postcard_base64", row.turn_postcard_base64, MAX_POSTCARD_BYTES),
     expiresAfterSequence: natural("expires_after_sequence", row.expires_after_sequence),
   });
@@ -333,11 +389,47 @@ export function normalizeGalleyUnsignedTurn(value) {
 
 export function galleyActionLabel(kind) {
   return Object.freeze({
-    public_vote: "Answer the shift call",
-    perform: "Take the maintenance station",
-    visit_commons: "Visit the Commons",
-    holder_sponsorship: "Holder sponsorship unavailable",
+    perform: "Take this watch",
   })[kind] ?? "Unknown action";
+}
+
+/** Player-facing read projection over exact node fields. It never judges a
+ * command or advances state; actions still originate exclusively at the node. */
+export function projectGalleyWatch(view, actorPublicKeyHex) {
+  const actor = digest("Galley watch actor", actorPublicKeyHex);
+  const audited = view.replay.audited;
+  const participated = audited && view.projection.publicPlayers.includes(actor);
+  const availableActions = audited ? view.actions.filter((action) =>
+    action.kind === "perform" && galleyAvailableAtSequence(action.expiresAfterSequence, view.sequence))
+    : [];
+  refuse(!(participated && availableActions.length > 0), "galley-presentation",
+    "a completed actor cannot also receive a public action at this daily head");
+  const records = Object.freeze((audited ? view.events : []).map((event) => freeze({
+    sequence: event.sequence,
+    isPersonal: event.payload.actor === actor,
+    actor: event.payload.actor,
+    localService: event.payload.localService,
+    turnHash: event.turnHash,
+    receiptHash: event.receiptHash,
+    eventDigest: event.eventDigest,
+  })));
+  const personalRecords = Object.freeze(records.filter(({ isPersonal }) => isPersonal));
+  return freeze({
+    state: !audited ? "unavailable" : participated ? "recorded" : availableActions.length > 0 ? "available" : "waiting",
+    participated,
+    availableActions: Object.freeze(availableActions),
+    publicPlayCount: audited ? view.projection.publicPlayCount : null,
+    localServiceTotal: audited ? view.projection.localServiceTotal : null,
+    records,
+    personalRecords,
+    nextVisit: !audited
+      ? "This watch is unavailable until the node returns an audited replay. No player record or action is claimed."
+      : participated
+      ? "Your signed shift is recorded for this daily. Return after the watch rotates."
+      : availableActions.length > 0
+        ? "One station is open at this journal head. Take the watch or return before it expires."
+        : "No station is open at this journal head. Refresh after the watch changes.",
+  });
 }
 
 export function galleyAvailableAtSequence(expiresAfterSequence, currentSequence) {
@@ -366,23 +458,34 @@ export async function checkGalleyReceiptPostcardSha256(event, cryptoImpl = globa
   return hex === event.receipt.sha256;
 }
 
+/** Bind the exact unsigned postcard bytes to the server's preparation
+ * coordinate before any signer sees them. This is not a turn or receipt hash. */
+export async function checkGalleyPreparationPostcardSha256(prepared, cryptoImpl = globalThis.crypto) {
+  const postcard = decodeGalleyPostcard(prepared.turnPostcardBase64);
+  refuse(cryptoImpl?.subtle?.digest, "galley-crypto", "SHA-256 is unavailable");
+  const hash = new Uint8Array(await cryptoImpl.subtle.digest("SHA-256", postcard));
+  const hex = [...hash].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return hex === prepared.preparationDigest;
+}
+
 function pendingKey(intent) {
   return JSON.stringify([
-    intent.federationId, intent.dailyId, intent.aggregateId, intent.intentId, intent.turnHash,
+    intent.federationId, intent.dailyId, intent.aggregateId, intent.intentId, intent.preparationDigest,
   ]);
 }
 
 function normalizePendingIntent(value, at = "pending intent") {
   const row = exact(at, value, [
-    "aggregate_id", "daily_id", "expires_after_sequence", "federation_id", "intent_id",
-    "prepared_at_sequence", "turn_hash",
+    "aggregate_id", "daily_id", "expires_after_sequence", "federation_id", "final_turn_hash",
+    "intent_id", "preparation_digest", "prepared_at_sequence",
   ]);
   const intent = freeze({
     federationId: digest(`${at}.federation_id`, row.federation_id),
     dailyId: opaque(`${at}.daily_id`, row.daily_id),
     aggregateId: opaque(`${at}.aggregate_id`, row.aggregate_id),
     intentId: opaque(`${at}.intent_id`, row.intent_id),
-    turnHash: digest(`${at}.turn_hash`, row.turn_hash),
+    preparationDigest: digest(`${at}.preparation_digest`, row.preparation_digest),
+    finalTurnHash: row.final_turn_hash === null ? null : digest(`${at}.final_turn_hash`, row.final_turn_hash),
     preparedAtSequence: natural(`${at}.prepared_at_sequence`, row.prepared_at_sequence),
     expiresAfterSequence: natural(`${at}.expires_after_sequence`, row.expires_after_sequence),
   });
@@ -397,7 +500,8 @@ function pendingWire(intent) {
     daily_id: intent.dailyId,
     aggregate_id: intent.aggregateId,
     intent_id: intent.intentId,
-    turn_hash: intent.turnHash,
+    preparation_digest: intent.preparationDigest,
+    final_turn_hash: intent.finalTurnHash,
     prepared_at_sequence: intent.preparedAtSequence,
     expires_after_sequence: intent.expiresAfterSequence,
   };
@@ -454,7 +558,8 @@ export function createGalleyPendingIntentJournal({
       daily_id: view.dailyId,
       aggregate_id: view.aggregateId,
       intent_id: prepared.intentId,
-      turn_hash: prepared.turnHash,
+      preparation_digest: prepared.preparationDigest,
+      final_turn_hash: null,
       prepared_at_sequence: view.sequence,
       expires_after_sequence: prepared.expiresAfterSequence,
     });
@@ -465,19 +570,53 @@ export function createGalleyPendingIntentJournal({
   }
 
   function reconcile(status) {
+    const entries = read();
+    if (!status.replay.audited) {
+      const replayRefused = entries.filter((intent) => intent.federationId === status.federationId &&
+        intent.dailyId === status.dailyId && intent.aggregateId === status.aggregateId);
+      return freeze({
+        pending: Object.freeze(entries),
+        settled: Object.freeze([]),
+        expired: Object.freeze([]),
+        replayRefused: Object.freeze(replayRefused),
+      });
+    }
     const pending = [];
     const settled = [];
     const expired = [];
-    for (const intent of read()) {
+    for (const intent of entries) {
       const sameWorld = intent.federationId === status.federationId && intent.dailyId === status.dailyId &&
         intent.aggregateId === status.aggregateId;
       if (!sameWorld) pending.push(intent);
-      else if (status.events.some((event) => event.turnHash === intent.turnHash)) settled.push(intent);
+      else if (status.replay.audited && intent.finalTurnHash &&
+        status.events.some((event) => event.turnHash === intent.finalTurnHash)) settled.push(intent);
       else if (!galleyAvailableAtSequence(intent.expiresAfterSequence, status.sequence)) expired.push(intent);
       else pending.push(intent);
     }
     write(pending);
-    return freeze({ pending: Object.freeze(pending), settled: Object.freeze(settled), expired: Object.freeze(expired) });
+    return freeze({
+      pending: Object.freeze(pending),
+      settled: Object.freeze(settled),
+      expired: Object.freeze(expired),
+      replayRefused: Object.freeze([]),
+    });
+  }
+
+  function discard(intent) {
+    const entries = read().filter((candidate) => pendingKey(candidate) !== pendingKey(intent));
+    write(entries);
+  }
+
+  function confirm(intent, finalTurnHash) {
+    const finalHash = digest("final signed turn hash", finalTurnHash);
+    const entries = read();
+    const index = entries.findIndex((candidate) => pendingKey(candidate) === pendingKey(intent));
+    refuse(index >= 0,
+      "galley-pending", "signed intent is absent from the durable journal");
+    const confirmed = freeze({ ...entries[index], finalTurnHash: finalHash });
+    entries[index] = confirmed;
+    write(entries);
+    return confirmed;
   }
 
   function forView(view) {
@@ -485,7 +624,7 @@ export function createGalleyPendingIntentJournal({
       intent.dailyId === view.dailyId && intent.aggregateId === view.aggregateId));
   }
 
-  return freeze({ list: () => Object.freeze(read()), forView, record, reconcile });
+  return freeze({ list: () => Object.freeze(read()), forView, record, confirm, discard, reconcile });
 }
 
 export function resolveSameOriginGalleyEndpoint(endpoint, origin) {
@@ -530,11 +669,13 @@ export function createGalleyTransport({
     return normalizeGalleySession(await jsonRequest(fetchImpl, urls.session, actorPublicKeyHex));
   }
 
+  async function openWatch(actorPublicKeyHex) {
+    return normalizeGalleyStatus(await jsonRequest(fetchImpl, urls.status, actorPublicKeyHex));
+  }
+
   async function requestCommand(view, actionToken, actorPublicKeyHex) {
     const action = view?.actions?.find((candidate) => candidate.actionToken === actionToken);
     refuse(action, "galley-action", "action token is absent from the current node session");
-    refuse(action.kind !== "holder_sponsorship", "galley-holder-cert",
-      "holder sponsorship is disabled until eligibility is federation-verifiable");
     refuse(view.replay.audited, "galley-replay", "node has not audited this Galley journal");
     refuse(galleyAvailableAtSequence(action.expiresAfterSequence, view.sequence),
       "galley-action-expired", "server-issued action token expired at this journal sequence");
@@ -553,10 +694,12 @@ export function createGalleyTransport({
     refuse(galleyAvailableAtSequence(signingRequest.expiresAfterSequence, currentSequence),
       "galley-turn-expired", "prepared turn expired before signing at this journal sequence");
     try {
+      refuse(await checkGalleyPreparationPostcardSha256(signingRequest, cryptoImpl),
+        "galley-preparation-digest", "server preparation digest does not match the exact postcard bytes");
       return normalizeGalleySigningResult(await provider.signTurnV3(
         decodeGalleyPostcard(signingRequest.turnPostcardBase64),
         hexBytes(signingRequest.federationId),
-      ), signingRequest.turnHash);
+      ));
     } catch (error) {
       return galleySigningException(error);
     }
@@ -568,7 +711,15 @@ export function createGalleyTransport({
       (!signingRequest.dailyId || view.dailyId === signingRequest.dailyId) &&
       (!signingRequest.aggregateId || view.aggregateId === signingRequest.aggregateId),
     "galley-federation", "status belongs to another Galley world or aggregate");
-    const event = view.events.find((candidate) => candidate.turnHash === signingRequest.turnHash) ?? null;
+    const expectedTurnHash = signingRequest.finalTurnHash;
+    refuse(expectedTurnHash, "galley-final-turn-hash",
+      "status reconciliation requires the signer's final turn hash");
+    if (!view.replay.audited) {
+      return freeze({ state: "replay-refused", event: null, receiptChecksumMatched: false, view });
+    }
+    const event = view.replay.audited
+      ? view.events.find((candidate) => candidate.turnHash === expectedTurnHash) ?? null
+      : null;
     if (!event) {
       const state = galleyAvailableAtSequence(signingRequest.expiresAfterSequence, view.sequence) ? "pending" : "expired";
       return freeze({ state, event: null, receiptChecksumMatched: false, view });
@@ -578,5 +729,5 @@ export function createGalleyTransport({
     return freeze({ state: "settled", event, receiptChecksumMatched: true, view });
   }
 
-  return freeze({ openSession, requestCommand, sign, status, endpoints: urls });
+  return freeze({ openSession, openWatch, requestCommand, sign, status, endpoints: urls });
 }

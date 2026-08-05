@@ -26,7 +26,7 @@ test("controller uses native controls, a labeled live region, and safe text-only
   assert.match(source, /control\.setAttribute\("aria-describedby", live\.id\)/);
   assert.match(source, /control\.addEventListener\("keydown"/);
   assert.match(source, /documentRef, "button"/);
-  assert.match(source, /JSON\.stringify\(view\.projection, null, 2\)/);
+  assert.match(source, /JSON\.stringify\(publicPlayProjection, null, 2\)/);
   assert.doesNotMatch(source, /\.innerHTML\b|\.outerHTML\b|\.style\b|setAttribute\(["']style/);
   assert.doesNotMatch(source, /pay.?to.?win/i);
 });
@@ -40,7 +40,7 @@ test("browser has no parallel wire, caller-authored player, reducer, or persiste
     "POA-GALLEY-STATUS-V1",
     "POA-GALLEY-COMMAND-PREPARE-V1",
     "POA-GALLEY-UNSIGNED-TURN-V1",
-    "POA-GALLEY-PENDING-INTENT-JOURNAL-V1",
+    "POA-GALLEY-PENDING-INTENT-JOURNAL-V2",
   ]) assert.match(runtime, new RegExp(format, "u"));
   assert.doesNotMatch(source, /poa-galley-node-view-v1|poa-galley-session-request-v1|expected_head_digest/);
   assert.doesNotMatch(runtime, /player_public_key|playerPublicKey|holding_receipt_id/);
@@ -51,5 +51,11 @@ test("browser has no parallel wire, caller-authored player, reducer, or persiste
   assert.doesNotMatch(source, /score\s*[+\-*/]?=/i);
   assert.doesNotMatch(source, /progress\s*\+=|revision\s*\+=|sequence\s*\+=/);
   assert.doesNotMatch(source, /function\s+(?:reduce|transition|score|judge)\b/i);
-  assert.match(controller, /Projection\/payload JSON remains\s*\n?\s*\* opaque/);
+  assert.match(runtime, /const PROJECTION_KEYS = Object\.freeze/);
+  assert.match(runtime, /const EVENT_PAYLOAD_KEYS = Object\.freeze/);
+  assert.match(runtime, /projectGalleyWatch/);
+  assert.match(controller, /publicPlayProjection/);
+  assert.match(controller, /documentRef, "details"/);
+  assert.match(controller, /documentRef, "summary"/);
+  assert.doesNotMatch(source, /holder_sponsorship|holder sponsorship/i);
 });

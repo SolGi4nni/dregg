@@ -14,6 +14,7 @@ import { mountDreggAdmissionPanel } from "./dregg-admission-panel.js";
 import { getWalletStandardRegistry } from "./wallet-standard-registry.js";
 import { mountGalley } from "./galley-controller.js";
 import { createGalleyTransport } from "./galley-runtime.js";
+import { resolveTerminalRoute } from "./terminal-route.js";
 import {
   buildPlatformModel,
   loadPlatformEvidence,
@@ -51,9 +52,8 @@ const deckCopy = {
 };
 
 function route() {
-  const requested = location.hash.slice(1) || "overview";
   const known = [...document.querySelectorAll("[data-view]")].map((node) => node.dataset.view);
-  const active = known.includes(requested) ? requested : "overview";
+  const active = resolveTerminalRoute(location, known);
   document.querySelectorAll("[data-view]").forEach((view) => view.classList.toggle("active", view.dataset.view === active));
   document.querySelectorAll("[data-route]").forEach((link) => link.classList.toggle("active", link.dataset.route === active));
   document.title = `${active === "overview" ? "KHOVOKHI" : active.toUpperCase()} // Path of Angels`;
