@@ -30,6 +30,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::sync::Semaphore;
 
 use crate::api::RateLimiter;
+use crate::signed_turn_validation::ValidatedSignedTurn;
 use crate::state::NodeState;
 
 /// V1 intentionally remains unread: it did not bind a capability to a Dregg
@@ -734,6 +735,276 @@ fn map_gate_error(error: GateError) -> ApiError {
     ApiError::new(status, code, message)
 }
 
+/// Checked, non-serializable holder intent beside one exact finalized Galley
+/// event.  This is deliberately *not* a persistence carrier: the raw prepared
+/// persistence constructor is crate-private to `dregg-persist`, so a future
+/// Galley adapter must add a Lean-authored semantic binding before anything can
+/// be consumed.  Keeping all intent/event coordinates here prevents that future
+/// seam from dropping beneficiary, action, activated content, or event scope.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct AuthorizedPoaHoldingConsumptionV1 {
+    capability_receipt_id: Bytes32,
+    holder_wallet: Bytes32,
+    player: Bytes32,
+    player_cell: Bytes32,
+    action_token: Bytes32,
+    beneficiary_player_id: Bytes32,
+    world_federation_id: Bytes32,
+    content_root: Bytes32,
+    activation_digest: Bytes32,
+    content_session: Bytes32,
+    content_epoch: u64,
+    event_scope_nullifier: Bytes32,
+    intent_event_binding: Bytes32,
+    batch_digest: Bytes32,
+    event_index: u32,
+    stream_digest: Bytes32,
+    event_sequence: u64,
+    event_digest: Bytes32,
+}
+
+/// Fail-closed holder-admission boundary for a future Galley finalization
+/// adapter.
+///
+/// `validated_turn` must come from the node's complete signed-turn perimeter,
+/// `receipt` from the executor-produced finalized authority.  Time comes from
+/// the node itself rather than a caller-supplied integer.  This function
+/// re-welds all of those coordinates to the Lean-prepared batch before
+/// consulting node-owned admission storage under the global node write lock.
+/// It neither consumes the capability nor exposes a transport: the exact
+/// prepared carrier must subsequently be committed atomically with `batch`, at
+/// which point persistence performs the one-shot nullifier transition.
+///
+/// The current Galley runtime emits exactly one event per accepted command.  A
+/// multi-event holder batch is refused until Lean exports an explicit sponsor
+/// event selector; Rust must not guess which event consumed the receipt.
+pub(crate) async fn authorize_poa_holding_finalization_v1(
+    state: &NodeState,
+    signed: &dregg_sdk::SignedTurn,
+    validated_turn: ValidatedSignedTurn,
+    receipt: &dregg_turn::TurnReceipt,
+    batch: &dregg_persist::PreparedPoaEventBatchV2,
+) -> Result<AuthorizedPoaHoldingConsumptionV1, PoaHoldingFinalizationError> {
+    let server_now =
+        unix_time().map_err(|error| PoaHoldingFinalizationError::Clock(error.message))?;
+    authorize_poa_holding_finalization_at_v1(
+        state,
+        server_now,
+        signed,
+        validated_turn,
+        receipt,
+        batch,
+    )
+    .await
+}
+
+async fn authorize_poa_holding_finalization_at_v1(
+    state: &NodeState,
+    server_now: u64,
+    signed: &dregg_sdk::SignedTurn,
+    validated_turn: ValidatedSignedTurn,
+    receipt: &dregg_turn::TurnReceipt,
+    batch: &dregg_persist::PreparedPoaEventBatchV2,
+) -> Result<AuthorizedPoaHoldingConsumptionV1, PoaHoldingFinalizationError> {
+    let command = dregg_sdk::poa_galley::command_from_exact_galley_signed_turn(signed)
+        .map_err(|_| PoaHoldingFinalizationError::InvalidGalleyCarrier)?;
+    let (action_token, capability_receipt_id, beneficiary_player_id) = match command {
+        dregg_sdk::poa_galley::GalleyPlayerCommandV1::HolderSponsorship {
+            action_token,
+            holder_receipt_id,
+            beneficiary_player_id,
+        } => (
+            action_token.to_bytes(),
+            holder_receipt_id.to_bytes(),
+            beneficiary_player_id,
+        ),
+        _ => return Err(PoaHoldingFinalizationError::NotHolderSponsorship),
+    };
+    if action_token == [0; 32] || beneficiary_player_id == [0; 32] {
+        return Err(PoaHoldingFinalizationError::InvalidHolderIntent);
+    }
+
+    let turn_hash = signed.turn.hash();
+    let coordinate = batch.coordinate();
+    let signer = signed.signer.0;
+    let canonical_player_cell =
+        dregg_cell::CellId::derive_raw(&signer, blake3::hash(b"default").as_bytes());
+    if validated_turn.turn_hash() != turn_hash
+        || receipt.turn_hash != turn_hash
+        || receipt.receipt_hash() != coordinate.receipt_hash()
+        || receipt.agent != signed.turn.agent
+        || receipt.agent != canonical_player_cell
+        || receipt.pre_state_hash != coordinate.actor_root()
+        || coordinate.turn_hash() != turn_hash
+        || coordinate.signer() != signer
+        || coordinate.world().federation_id() != receipt.federation_id
+    {
+        return Err(PoaHoldingFinalizationError::FinalizedContextMismatch);
+    }
+
+    let [event] = batch.events() else {
+        return Err(PoaHoldingFinalizationError::AmbiguousHolderEvent);
+    };
+    if event.event_index() != 0 {
+        return Err(PoaHoldingFinalizationError::AmbiguousHolderEvent);
+    }
+
+    // Serialize capability lookup/status and construction against every other
+    // admission blob RMW.  No network or proof work occurs while this lock is
+    // held.  The later exact persistence transaction remains the authority that
+    // wins a concurrent one-shot race.
+    let node = state.write().await;
+    if !node.federation_configured || node.federation_id == [0; 32] {
+        return Err(PoaHoldingFinalizationError::FederationUnconfigured);
+    }
+    if node.federation_id != receipt.federation_id {
+        return Err(PoaHoldingFinalizationError::FinalizedContextMismatch);
+    }
+    let admission = RedbAdmissionStore::new(Arc::clone(&node.store));
+    let durable = admission
+        .load()
+        .map_err(PoaHoldingFinalizationError::Store)?;
+    let capability = durable
+        .capabilities
+        .get(&capability_receipt_id)
+        .cloned()
+        .ok_or(PoaHoldingFinalizationError::UnknownCapability)?;
+    if admission
+        .capability_consumed(&capability_receipt_id)
+        .map_err(PoaHoldingFinalizationError::Store)?
+    {
+        return Err(PoaHoldingFinalizationError::CapabilityReplay);
+    }
+    if server_now < capability.issued_at() || server_now > capability.expires_at() {
+        return Err(PoaHoldingFinalizationError::CapabilityExpired);
+    }
+
+    let challenge = durable.challenges.get(&capability.challenge_id());
+    let challenge_backed = durable
+        .spent_challenges
+        .contains(&capability.challenge_id())
+        && challenge.is_some_and(|challenge| {
+            challenge.player() == capability.player()
+                && challenge.player_cell() == capability.player_cell()
+                && challenge.wallet() == capability.wallet()
+        });
+    let mainnet_mint = decode_pubkey(DREGG_MINT_BASE58)
+        .expect("the compile-time Path of Angels DREGG mint must decode");
+    if capability.receipt_id() != capability_receipt_id
+        || !challenge_backed
+        || capability.trust() != TrustTier::ConsensusVerified
+        || capability.mint() != mainnet_mint
+        || capability.origin() != "https://beta.pathofangels.network"
+        || capability.domain() != "pathofangels.network"
+        || capability.cluster() != "solana:mainnet-beta"
+        || capability.federation_id() != node.federation_id
+        || capability.federation_id() != coordinate.world().federation_id()
+        || capability.player() != signer
+        || capability.player_cell() != canonical_player_cell.0
+    {
+        return Err(PoaHoldingFinalizationError::CapabilityPolicyMismatch);
+    }
+
+    let world = coordinate.world();
+    let event_scope_nullifier =
+        dregg_persist::poa_holding_consumption::derive_poa_holding_event_scope_nullifier_v1(
+            capability.wallet(),
+            world.federation_id(),
+            world.content_root(),
+            world.activation_digest(),
+            world.content_session(),
+            world.content_epoch(),
+            batch.batch_digest(),
+            event.event_index(),
+            event.stream_digest(),
+            event.sequence(),
+            event.event_digest(),
+        );
+    let intent_event_binding =
+        dregg_persist::poa_holding_consumption::derive_poa_holding_intent_event_binding_v1(
+            capability_receipt_id,
+            capability.wallet(),
+            signer,
+            canonical_player_cell.0,
+            action_token,
+            beneficiary_player_id,
+            world.federation_id(),
+            world.content_root(),
+            world.activation_digest(),
+            world.content_session(),
+            world.content_epoch(),
+            batch.batch_digest(),
+            event.event_index(),
+            event.stream_digest(),
+            event.sequence(),
+            event.event_digest(),
+        );
+    Ok(AuthorizedPoaHoldingConsumptionV1 {
+        capability_receipt_id,
+        holder_wallet: capability.wallet(),
+        player: signer,
+        player_cell: canonical_player_cell.0,
+        action_token,
+        beneficiary_player_id,
+        world_federation_id: world.federation_id(),
+        content_root: world.content_root(),
+        activation_digest: world.activation_digest(),
+        content_session: world.content_session(),
+        content_epoch: world.content_epoch(),
+        event_scope_nullifier,
+        intent_event_binding,
+        batch_digest: batch.batch_digest(),
+        event_index: event.event_index(),
+        stream_digest: event.stream_digest(),
+        event_sequence: event.sequence(),
+        event_digest: event.event_digest(),
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PoaHoldingFinalizationError {
+    InvalidGalleyCarrier,
+    NotHolderSponsorship,
+    InvalidHolderIntent,
+    AmbiguousHolderEvent,
+    FinalizedContextMismatch,
+    FederationUnconfigured,
+    UnknownCapability,
+    CapabilityExpired,
+    CapabilityReplay,
+    CapabilityPolicyMismatch,
+    Clock(String),
+    Store(String),
+}
+
+impl std::fmt::Display for PoaHoldingFinalizationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            Self::InvalidGalleyCarrier => "Galley signed carrier is malformed",
+            Self::NotHolderSponsorship => "Galley command is not holder sponsorship",
+            Self::InvalidHolderIntent => "Galley holder intent has a zero action or beneficiary",
+            Self::AmbiguousHolderEvent => "Galley holder batch does not identify exactly one event",
+            Self::FinalizedContextMismatch => {
+                "finalized Galley signer, receipt, actor, world, or batch coordinates disagree"
+            }
+            Self::FederationUnconfigured => "node has no configured federation identity",
+            Self::UnknownCapability => "holding capability was not issued by this node",
+            Self::CapabilityExpired => {
+                "holding capability is expired at authenticated finalization time"
+            }
+            Self::CapabilityReplay => "holding capability has already been consumed",
+            Self::CapabilityPolicyMismatch => {
+                "holding capability is not consensus-verified or does not match the exact PoA policy/finalized player"
+            }
+            Self::Clock(detail) => return write!(f, "holding authority clock failed: {detail}"),
+            Self::Store(detail) => return write!(f, "holding authority store failed: {detail}"),
+        };
+        f.write_str(message)
+    }
+}
+
+impl std::error::Error for PoaHoldingFinalizationError {}
+
 #[derive(Default, Serialize, Deserialize)]
 struct DurableAdmissionState {
     challenges: BTreeMap<Bytes32, Challenge>,
@@ -913,6 +1184,7 @@ impl AdmissionStore for RedbAdmissionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use axum::body::Body;
     use axum::http::Request;
     use ed25519_dalek::{Signer as _, SigningKey};

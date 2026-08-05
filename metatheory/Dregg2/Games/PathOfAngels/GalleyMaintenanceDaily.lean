@@ -2,9 +2,10 @@
 # GalleyMaintenanceDaily — one replayable commons maintenance loop
 
 This is deliberately an integration, not a third event kernel.  A daily begins
-with the existing `HolderMechanics` ballot surface: public one-player/one-voice,
-holder choir votes with the already-proved cap, and zero-world-output holder
-sponsorship.  Only a two-chamber pass opens a short ordered maintenance procedure.
+with the existing `HolderMechanics` ballot surface: authoritative public
+one-player/one-voice, an exactly-one-voice advisory holder choir, and
+zero-world-output holder sponsorship.  Only a public-chamber pass opens a short
+ordered maintenance procedure.
 Sentyr authors every task, instruction, action, success, and failure content id.
 
 The same stream also carries the galley's shared daily commons.  A bounded set
@@ -157,7 +158,7 @@ inductive Phase
 deriving DecidableEq, Repr
 
 /-- The constructor is private.  Production reaches maintenance only through a
-two-chamber pass; the private post-ballot fixture below cannot leak as an API. -/
+public-chamber pass; the private post-ballot fixture below cannot leak as an API. -/
 structure State where
   private mk ::
   spec : DailySpec
@@ -1416,10 +1417,8 @@ private def fixtureHolderPolicy : HolderMechanics.Policy where
   rulesDigest := digestByte 71
   eventGenesisHead := digestByte 72
   sideExpeditionKey := digestByte 73
-  choirBonusCap := 3
   insuranceCap := ⟨20, by native_decide⟩
   sponsorCredit := ⟨2, by native_decide⟩
-  holderQuorum := 1
   publicQuorum := 1
 
 private def actionA : Digest32 := digestByte 80
@@ -1625,10 +1624,11 @@ theorem public_ballot_event_delegates_to_holder_mechanics :
         (fun state => state.holderState.publicChamber.yes) = some 1 := by
   native_decide
 
-theorem ballot_cannot_open_with_public_chamber_alone :
+theorem public_chamber_can_open_without_holder_veto :
     let afterPublic := (reduce fixtureSpec (initialState fixtureSpec)
       ⟨1, .participant (.publicVote fixturePublicVote)⟩).get (by native_decide)
-    reduce fixtureSpec afterPublic ⟨2, .openMaintenance⟩ = none := by
+    (reduce fixtureSpec afterPublic ⟨2, .openMaintenance⟩).map State.phase =
+      some .maintenance := by
   native_decide
 
 theorem wrong_authored_step_is_refused_without_advancing :
@@ -1882,7 +1882,7 @@ theorem sourced_payload_sequence_mismatch_is_refused :
 #assert_compiled candidate_spec_cannot_choose_its_own_activation_key
 #assert_compiled activation_capability_pins_deployment_id
 #assert_compiled public_ballot_event_delegates_to_holder_mechanics
-#assert_compiled ballot_cannot_open_with_public_chamber_alone
+#assert_compiled public_chamber_can_open_without_holder_veto
 #assert_compiled wrong_authored_step_is_refused_without_advancing
 #assert_compiled authored_rotation_repeats_deterministically
 #assert_compiled unknown_commons_choice_is_refused_without_advancing

@@ -9,9 +9,10 @@ content epoch, holder/player identity, PoA event, sequence/expiry window, and
 consume-once nullifier.
 
 The executable menu is intentionally modest in authority but broad in play:
-holder-only side-deck access, a capped choir ballot bonus, capped salvage
-insurance, sponsorship of a public player, and a two-chamber holder/public
-result.  The apparent sixth item—buying uncapped narrative weight—is present in
+holder-only side-deck access, an exactly-one-voice advisory choir, capped
+salvage insurance, and sponsorship of a public player.  Public one-player/
+one-voice ballots alone decide the result.  The apparent sixth item—buying
+uncapped narrative weight—is present in
 the wire vocabulary solely so the reducer can refuse it.  Receipts contain only
 bounded `Core.Contribution`s and game-local entitlements; this dependency cone
 does not import `Canon` and exposes no canon mutation.
@@ -58,10 +59,8 @@ structure Policy where
   rulesDigest : Digest32
   eventGenesisHead : Digest32
   sideExpeditionKey : Digest32
-  choirBonusCap : Nat
   insuranceCap : Metric
   sponsorCredit : Metric
-  holderQuorum : Nat
   publicQuorum : Nat
 deriving DecidableEq
 
@@ -249,24 +248,13 @@ theorem cappedMetric_le_policy (requested : Nat) (cap : Metric) :
     (cappedMetric requested cap).val ≤ cap.val :=
   Nat.min_le_right _ _
 
-def cappedChoirBonus (policy : Policy) (grant : AdmittedHoldingGrant) : Nat :=
-  min grant.grantedWeight policy.choirBonusCap
+/-- Holder balance is admission evidence, never ballot weight.  The choir is an
+advisory surface and every admitted holder has exactly one voice regardless of
+the proved amount or `grantedWeight`. -/
+def holderChoirWeight (_policy : Policy) (_grant : AdmittedHoldingGrant) : Nat := 1
 
-/-- One ordinary voice plus a balance-derived bonus that cannot exceed the
-authored cap. -/
-def holderChoirWeight (policy : Policy) (grant : AdmittedHoldingGrant) : Nat :=
-  1 + cappedChoirBonus policy grant
-
-theorem capped_choir_bonus_le_policy (policy : Policy) (grant : AdmittedHoldingGrant) :
-    cappedChoirBonus policy grant ≤ policy.choirBonusCap :=
-  Nat.min_le_right _ _
-
-theorem holder_choir_weight_le_cap_plus_one (policy : Policy)
-    (grant : AdmittedHoldingGrant) :
-    holderChoirWeight policy grant ≤ policy.choirBonusCap + 1 := by
-  unfold holderChoirWeight
-  simpa [Nat.add_comm] using
-    Nat.add_le_add_left (capped_choir_bonus_le_policy policy grant) 1
+theorem holder_choir_weight_is_one (policy : Policy) (grant : AdmittedHoldingGrant) :
+    holderChoirWeight policy grant = 1 := rfl
 
 theorem receipt_contribution_is_platform_bounded (receipt : Receipt) :
     receipt.contribution.intel.val ≤ METRIC_LIMIT ∧
@@ -437,29 +425,25 @@ inductive TwoChamberResult
   | failed
 deriving DecidableEq, Repr
 
-/-- A decision passes only after both quorums are present and both independently
-recorded chambers have a strict yes majority. -/
+/-- The holder choir is advisory: it is retained in replayable state and
+receipts, but cannot open, veto, or weight the public decision.  Only the public
+one-player/one-voice chamber supplies decision authority. -/
 def twoChamberResult (policy : Policy) (state : State) : TwoChamberResult :=
-  if state.holderChamber.turnout < policy.holderQuorum ∨
-      state.publicChamber.turnout < policy.publicQuorum then .pending
-  else if state.holderChamber.no < state.holderChamber.yes ∧
-      state.publicChamber.no < state.publicChamber.yes then .passed
+  if state.publicChamber.turnout < policy.publicQuorum then .pending
+  else if state.publicChamber.no < state.publicChamber.yes then .passed
   else .failed
 
-theorem two_chamber_pass_requires_both_majorities (policy : Policy) (state : State)
+theorem decision_pass_requires_public_majority (policy : Policy) (state : State)
     (h : twoChamberResult policy state = .passed) :
-    policy.holderQuorum ≤ state.holderChamber.turnout ∧
-      policy.publicQuorum ≤ state.publicChamber.turnout ∧
-      state.holderChamber.no < state.holderChamber.yes ∧
+    policy.publicQuorum ≤ state.publicChamber.turnout ∧
       state.publicChamber.no < state.publicChamber.yes := by
   unfold twoChamberResult at h
   split at h
   · contradiction
   · rename_i hquorum
     split at h
-    · rename_i hmajorities
-      exact ⟨Nat.le_of_not_gt (not_or.mp hquorum).1,
-        Nat.le_of_not_gt (not_or.mp hquorum).2, hmajorities.1, hmajorities.2⟩
+    · rename_i hmajority
+      exact ⟨Nat.le_of_not_gt hquorum, hmajority⟩
     · contradiction
 
 /-! ## Event-sourcing adapter -/
@@ -511,10 +495,8 @@ private def fixturePolicy : Policy where
   rulesDigest := digestByte 5
   eventGenesisHead := digestByte 6
   sideExpeditionKey := digestByte 7
-  choirBonusCap := 3
   insuranceCap := ⟨20, by native_decide⟩
   sponsorCredit := ⟨2, by native_decide⟩
-  holderQuorum := 1
   publicQuorum := 1
 
 private def fixtureGrantForPolicy (policy : Policy) (player : HolderPlayerId)
@@ -601,10 +583,10 @@ private def choirEvent : HolderEvent :=
   { player := holderB, grant := grantB2, action := .choirVote .yes }
 private def choirStep? := applyHolder fixturePolicy afterSide choirEvent
 
-theorem capped_choir_fires_at_cap_not_balance :
+theorem holder_choir_is_exactly_one_voice :
     choirStep?.map (fun result =>
-      decide (result.1.holderChamber.yes = 4) &&
-      decide (result.2.effect = .choirBallot holderB .yes 4)) = some true := by
+      decide (result.1.holderChamber.yes = 1) &&
+      decide (result.2.effect = .choirBallot holderB .yes 1)) = some true := by
   native_decide
 
 private def afterChoir : State := choirStep?.get (by native_decide) |>.1
@@ -658,6 +640,16 @@ private def publicStep? := applyPublicVote fixturePolicy afterInsurance publicVo
 theorem holder_and_public_chambers_pass_together :
     publicStep?.map (fun result => twoChamberResult fixturePolicy result.1) =
       some .passed := by
+  native_decide
+
+private def publicOnlyStep? :=
+  applyPublicVote fixturePolicy (initialState fixturePolicy) { publicVoteA with sequence := 1 }
+
+/-- Hostile regression: a holder abstention cannot veto the public chamber. -/
+theorem holder_chamber_is_advisory_not_decision_authority :
+    publicOnlyStep?.map (fun result =>
+      decide (result.1.holderChamber.turnout = 0) &&
+      decide (twoChamberResult fixturePolicy result.1 = .passed)) = some true := by
   native_decide
 
 private def afterPublic : State := publicStep?.get (by native_decide) |>.1
@@ -729,10 +721,9 @@ theorem grant_context_and_lifetime_are_fail_closed :
       { player := holderB, grant := grantA1, action := .claimSideExpedition }).isNone = true := by
   native_decide
 
-theorem same_ids_cannot_substitute_widened_policy_semantics :
-    let widened := { fixturePolicy with choirBonusCap := 1_000_000 }
-    applyHolder widened (initialState widened)
-      { player := holderA, grant := grantA1, action := .choirVote .yes } = none := by
+theorem enormous_balance_still_has_exactly_one_advisory_voice :
+    holderChoirWeight fixturePolicy
+      (fixtureGrantForPolicy fixturePolicy holderA 70 1 10 (digestByte 81)) = 1 := by
   native_decide
 
 theorem uncapped_pay_to_win_hostile_fixture_is_refused :
@@ -779,24 +770,24 @@ theorem sourced_payload_statement_sequence_mismatch_is_refused :
 #assert_axioms AdmittedHoldingGrant.backed
 #assert_axioms cappedMetric_le_settled
 #assert_axioms cappedMetric_le_policy
-#assert_axioms capped_choir_bonus_le_policy
-#assert_axioms holder_choir_weight_le_cap_plus_one
+#assert_axioms holder_choir_weight_is_one
 #assert_axioms receipt_contribution_is_platform_bounded
 #assert_axioms pay_to_win_is_always_refused
-#assert_axioms two_chamber_pass_requires_both_majorities
+#assert_axioms decision_pass_requires_public_majority
 
 #assert_compiled holder_side_expedition_fires
-#assert_compiled capped_choir_fires_at_cap_not_balance
+#assert_compiled holder_choir_is_exactly_one_voice
 #assert_compiled sponsor_public_player_fires
 #assert_compiled salvage_insurance_is_capped
 #assert_compiled holder_and_public_chambers_pass_together
+#assert_compiled holder_chamber_is_advisory_not_decision_authority
 #assert_compiled public_vote_replay_is_refused
 #assert_compiled spent_grant_nullifier_is_refused_even_at_fresh_sequence
 #assert_compiled untrusted_self_reported_loss_is_refused
 #assert_compiled loss_evidence_for_another_player_is_refused
 #assert_compiled spent_loss_receipt_is_refused_even_with_fresh_grant_and_sequence
 #assert_compiled grant_context_and_lifetime_are_fail_closed
-#assert_compiled same_ids_cannot_substitute_widened_policy_semantics
+#assert_compiled enormous_balance_still_has_exactly_one_advisory_voice
 #assert_compiled uncapped_pay_to_win_hostile_fixture_is_refused
 #assert_compiled sourced_holder_event_replays
 #assert_compiled sourced_payload_statement_sequence_mismatch_is_refused
