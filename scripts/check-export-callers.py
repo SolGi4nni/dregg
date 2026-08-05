@@ -33,16 +33,41 @@ SHIPPED — an `@[export NAME]` whose module is in the transitive `import` closu
 `Dregg2.lean` ELABORATES and emits no `:c` facet, so its symbol never enters the archive and
 "nobody calls it" is not a finding. Computed statically from `import` lines — no build needed.
 
-NAMED — the export's name (or `NAME_str`, the C string bridge) appears in a tracked `.rs` file
-OTHER than `dregg-lean-ffi/build.rs`. The build script names every symbol it PROBES, so counting it
-would make every shipped export look wired; that is the exact confusion this gate exists to
-prevent.
+NAMED — the export's name (or `NAME_str`, the C string bridge) appears in a tracked BINDER file:
+a `.rs` file other than `dregg-lean-ffi/build.rs`, or a `.c`/`.h` under `dregg-lean-ffi/`
+OUTSIDE its `extern` DECLARATIONS. Two exclusions, both the same rule — a file that merely
+SPELLS a symbol has not bound it:
+  · `dregg-lean-ffi/build.rs` names every symbol it PROBES with `archive_exports(...)`, so
+    counting it would make every shipped export look wired.
+  · a C `extern <ret> NAME(...);` prototype is the DECLARATION the compiler needs in order for a
+    call to typecheck. It is the exact analogue of the build-script probe: writing it costs
+    nothing and asserts nothing. `lean_init.c` declares all 15 `dregg_poa_bazaar_runtime_*`
+    exports in one block; 14 are then CALLED and one — `..._request_encode` — is not, and that
+    difference is the entire finding. So the prototype block is stripped before matching, and
+    what remains is call sites.
+
+⚑ 2026-08-05 — WHY C AT ALL. This gate scanned `tracked(["*.rs"])` only, while the binder for
+`Dregg2.Games.PathOfAngels.BazaarGameRuntime`'s exports is C: `dregg-lean-ffi/src/lean_init.c`
+calls fourteen of them directly, with the Rust side entering through `..._fixture_str`. The gate
+therefore reported 15 problems of which 14 were wrong, and a reader who learns to skip a red is a
+reader who will skip the next `deferral_ok` — this gate's own failure mode, pointed at itself.
+The scan is scoped to `dregg-lean-ffi/` because that crate is what LINKS `libdregg_lean.a`; C
+elsewhere in the tree (`orb/ffi/*.c`) links nothing from the archive, and a Lean-GENERATED
+`.lake/build/ir/*.c` would name its own exports the way `build.rs` does.
 
 A shipped export that is not named is a RED. That is the whole rule, and it is deliberately the
 weaker of the two available bars: it asks "is there a binding at all", not "is the binding
 reached". The stronger question — is the wrapper called from a CONSUMER crate — is reported in the
 second column (`consumers`) so a reader can see it, and is NOT ratcheted, because a gate should
-red on a fact it can state exactly rather than on a heuristic about call graphs.
+red on a fact it can state exactly rather than on a heuristic about call graphs. The C shim lives
+INSIDE `dregg-lean-ffi/`, so a C call site never counts as a consumer either.
+
+⚠ THE `binding-only` LINE MOVED 144 -> 158 WHEN C WAS ADDED, AND THAT IS NOT A REGRESSION. Those
+14 are the `lean_init.c` call sites: they went from "no binding at all" (wrong) to "bound, but the
+binder is in `dregg-lean-ffi`" (right). Nothing about the tree changed. The line stays UNGATED
+deliberately — a consumer-crate ratchet would be a ratchet on a heuristic, and would fire on the
+whole `dregg_d_*` FFIDirect constructor family, whose correct binder IS `lean_direct.rs` inside
+this crate. Read it as a standing SIZE, not a defect count.
 
 ═══ THE RATCHET ═══════════════════════════════════════════════════════════════════
 `.github/uncalled-exports.txt`, one row per deliberately-uncalled export:
@@ -53,8 +78,8 @@ An uncalled export NOT on the list fails. A row on the list that is NOW called A
 allowlist is how the next one gets waved through.
 
 ⚠ IT SWEEPS THE INDEX, NOT THE WORKING TREE (`git ls-files`), same as `check-dark-modules.py`: a
-NEW `.rs` you have not `git add`ed is INVISIBLE, so a freshly written caller reads as absent. In CI
-that is correct and total; locally, `git add` first.
+NEW `.rs`/`.c` you have not `git add`ed is INVISIBLE, so a freshly written caller reads as absent.
+In CI that is correct and total; locally, `git add` first.
 
 Usage:  python3 scripts/check-export-callers.py [--list PATH] [--print-all] [--self-test]
 Exit:   0 clean · 1 ratchet violation · 2 usage/environment error
@@ -76,8 +101,26 @@ METATHEORY = os.path.join(ROOT, "metatheory")
 EXPORT_RE = re.compile(r"@\[\s*export\s+([A-Za-z_][A-Za-z0-9_']*)\s*\]")
 IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z0-9_.]+)\s*$", re.M)
 
+# Lean comments, stripped before `EXPORT_RE` runs. ⚑ 2026-08-05: without this, a DOC-COMMENT that
+# spells `@[export foo]` — a header explaining a seam, or the note recording that one was deleted —
+# registers `foo` as a SHIPPED EXPORT, and the gate then demands a caller for a symbol that is not
+# in the archive at all. Measured over the tree at the time: 13 (file, name) pairs came from prose
+# only, including one for an export deleted in this same change; stripping loses ZERO real
+# `@[export]`s (checked both directions). The nested-block-comment case under-strips rather than
+# over-strips, which leaves a phantom rather than hiding a real export — the safe direction.
+LEAN_BLOCK_COMMENT = re.compile(r"/-.*?-/", re.DOTALL)
+LEAN_LINE_COMMENT = re.compile(r"--[^\n]*")
+
 # The build script names every symbol it PROBES with `archive_exports(...)`. Naming is not wiring.
 PROBE_FILES = {"dregg-lean-ffi/build.rs"}
+
+# The C half of the binder. Scoped to the crate that LINKS `libdregg_lean.a` — see the header.
+C_PATTERNS = ["dregg-lean-ffi/**/*.c", "dregg-lean-ffi/**/*.h"]
+
+# A C `extern` prototype: `extern <type> NAME(<params>);`, possibly spanning lines. It is the
+# DECLARATION a call needs to typecheck, not a call — the C analogue of `build.rs`'s probe list.
+# Stripped before matching so a declared-and-never-called export still reads as uncalled.
+C_EXTERN_DECL = re.compile(r"\bextern\b[^;{]*;", re.DOTALL)
 
 
 def tracked(patterns: list[str]) -> list[str]:
@@ -124,7 +167,9 @@ def exports_by_module() -> dict[str, list[str]]:
             continue
         with open(os.path.join(ROOT, rel), "r", encoding="utf-8", errors="replace") as fh:
             src = fh.read()
-        names = EXPORT_RE.findall(src)
+        names = EXPORT_RE.findall(
+            LEAN_LINE_COMMENT.sub(" ", LEAN_BLOCK_COMMENT.sub(" ", src))
+        )
         if not names:
             continue
         mod = os.path.relpath(os.path.join(ROOT, rel), METATHEORY)[: -len(".lean")]
@@ -132,17 +177,29 @@ def exports_by_module() -> dict[str, list[str]]:
     return out
 
 
-def rust_mentions(names: set[str]) -> dict[str, list[str]]:
-    """{export -> [tracked .rs files that name it]}, excluding the probe file."""
+def binder_mentions(names: set[str]) -> dict[str, list[str]]:
+    """{export -> [tracked binder files that name it]}.
+
+    Binders are tracked `.rs` (minus `PROBE_FILES`) and tracked `.c`/`.h` under `dregg-lean-ffi/`
+    with their `extern` prototypes stripped. Both exclusions say the same thing: a file that
+    merely SPELLS a symbol has not bound it.
+    """
     hits: dict[str, set[str]] = {n: set() for n in names}
+    sources: list[tuple[str, str]] = []
     for rel in tracked(["*.rs"]):
         if rel in PROBE_FILES:
             continue
+        sources.append((rel, "rs"))
+    for rel in tracked(C_PATTERNS):
+        sources.append((rel, "c"))
+    for rel, kind in sources:
         try:
             with open(os.path.join(ROOT, rel), "r", encoding="utf-8", errors="replace") as fh:
                 src = fh.read()
         except OSError:
             continue
+        if kind == "c":
+            src = C_EXTERN_DECL.sub(" ", src)
         for n in names:
             if n in src:
                 hits[n].add(rel)
@@ -171,7 +228,7 @@ def survey(list_path: str):
             for n in names:
                 shipped[n] = mod
     probe_names = set(shipped) | {f"{n}_str" for n in shipped}
-    mentions = rust_mentions(probe_names)
+    mentions = binder_mentions(probe_names)
 
     rows = []
     for name, mod in sorted(shipped.items()):
@@ -195,20 +252,72 @@ def main() -> int:
     if args.self_test:
         # A name no `.rs` in this tree contains, checked against the same matcher.
         canary = "dregg_selftest_export_no_caller_zzz"
-        found = rust_mentions({canary, canary + "_str"})
+        found = binder_mentions({canary, canary + "_str"})
         named = bool(found[canary] or found[canary + "_str"])
         if named:
             print(f"SELF-TEST FAIL: the canary {canary} is named in {found}")
             return 1
         # …and the positive control: an export that IS named must read as named.
         control = "dregg_mina_lc_verify"
-        ctrl = rust_mentions({control, control + "_str"})
+        ctrl = binder_mentions({control, control + "_str"})
         if not (ctrl[control] or ctrl[control + "_str"]):
             print(f"SELF-TEST FAIL: the control {control} reads as uncalled")
             return 1
+        # ── the C leg, BOTH poles. A gate that scans C must be shown to (a) SEE a C call and
+        # (b) NOT see an `extern` prototype — otherwise "scanning C" degenerates into "every
+        # declared symbol is wired", which is the build.rs confusion in a second language.
+        # The negative pole is SYNTHETIC on purpose: the only real extern-only export in the tree
+        # was deleted on 2026-08-05, and a self-test that needs one to exist would go quiet the
+        # moment the gate did its job.
+        c_called = "dregg_poa_bazaar_runtime_state_key_validate"  # declared AND called in lean_init.c
+        cleg = binder_mentions({c_called})
+        c_files = [f for f in cleg[c_called] if f.endswith((".c", ".h"))]
+        if not c_files:
+            print(
+                f"SELF-TEST FAIL: the C control {c_called} reads as unnamed — the C scan is blind "
+                f"(it is called from dregg-lean-ffi/src/lean_init.c)"
+            )
+            return 1
+        c_canary = "dregg_selftest_extern_only_zzz"
+        shim = os.path.join(ROOT, "dregg-lean-ffi", "src", "lean_init.c")
+        with open(shim, "r", encoding="utf-8", errors="replace") as fh:
+            c_src = fh.read()
+        spliced = c_src + f"\nextern lean_object *{c_canary}(lean_object *x);\n"
+        after = C_EXTERN_DECL.sub(" ", spliced)
+        if c_canary in after:
+            print(
+                f"SELF-TEST FAIL: an `extern` prototype for {c_canary} SURVIVED the stripper — a "
+                f"declared-and-never-called export would read as wired, so no dark C export can red"
+            )
+            return 1
+        if c_called not in after:
+            print(
+                f"SELF-TEST FAIL: the stripper ate {c_called}'s CALL SITE too — it over-fires, and "
+                f"every C-bound export would read as uncalled"
+            )
+            return 1
+        # ── the prose pole: a doc-comment spelling an attribute is not an attribute.
+        p_canary = "dregg_selftest_prose_export_zzz"
+        prose = f"-- see `@[export {p_canary}]`\n/-- `@[export {p_canary}]` -/\ndef f := 1\n"
+        real = f"@[export {p_canary}]\ndef f := 1\n"
+        strip = lambda s: LEAN_LINE_COMMENT.sub(" ", LEAN_BLOCK_COMMENT.sub(" ", s))
+        if EXPORT_RE.findall(strip(prose)):
+            print(
+                f"SELF-TEST FAIL: {p_canary} named only in a Lean COMMENT reads as a shipped "
+                f"export — the gate would demand a caller for a symbol not in the archive"
+            )
+            return 1
+        if EXPORT_RE.findall(strip(real)) != [p_canary]:
+            print(
+                f"SELF-TEST FAIL: a REAL `@[export {p_canary}]` is lost to comment-stripping — the "
+                f"gate has gone blind to the population it exists to census"
+            )
+            return 1
         print(
-            f"SELF-TEST PASS: an unnamed export reads as uncalled and {control} reads as called "
-            f"({len(ctrl[control]) + len(ctrl[control + '_str'])} files)."
+            f"SELF-TEST PASS: an unnamed export reads as uncalled; {control} reads as called "
+            f"({len(ctrl[control]) + len(ctrl[control + '_str'])} files); {c_called} reads as "
+            f"called from C ({', '.join(c_files)}); a synthetic extern-only prototype does NOT; "
+            f"and an `@[export]` spelled in Lean prose is not a shipped export while a real one is."
         )
         return 0
 
@@ -217,7 +326,7 @@ def main() -> int:
     binding_only = [(n, m) for (n, m, f, c) in rows if f and not c]
 
     print(f"shipped exports (in the Dregg2.FFI import closure): {len(rows)}")
-    print(f"  with a Rust binding : {len(rows) - len(uncalled)}")
+    print(f"  with a binding (.rs, or a C call site) : {len(rows) - len(uncalled)}")
     print(f"  UNCALLED            : {len(uncalled)}")
     print(f"  binding-only (no consumer crate outside dregg-lean-ffi): {len(binding_only)}")
 
@@ -233,14 +342,15 @@ def main() -> int:
         print(
             f"UNCALLED EXPORT: {name}  ({mod})\n"
             f"    it is in the Dregg2.FFI import closure, so it SHIPS in libdregg_lean.a, and no\n"
-            f"    tracked .rs file names it. Wire it, delete it, or put it on {os.path.relpath(args.list, ROOT)}\n"
+            f"    tracked .rs file — and no C call site in dregg-lean-ffi outside an `extern`\n"
+            f"    prototype — names it. Wire it, delete it, or put it on {os.path.relpath(args.list, ROOT)}\n"
             f"    with the reason nothing calls it."
         )
     stale = [n for n in allow if any(n == r[0] and r[2] for r in rows)]
     for n in stale:
         bad += 1
         print(
-            f"STALE ALLOWLIST ROW: {n} is now named by Rust — remove it from "
+            f"STALE ALLOWLIST ROW: {n} is now named by a binder — remove it from "
             f"{os.path.relpath(args.list, ROOT)}."
         )
     unknown = [n for n in allow if not any(n == r[0] for r in rows)]
@@ -254,7 +364,10 @@ def main() -> int:
     if bad:
         print(f"\nFAIL: {bad} problem(s).")
         return 1
-    print("\nCLEAN: every shipped Lean export is named by Rust, or is on the ratchet with a reason.")
+    print(
+        "\nCLEAN: every shipped Lean export is named by a Rust or C binder, or is on the ratchet "
+        "with a reason."
+    )
     return 0
 
 

@@ -423,6 +423,17 @@ extern lean_object *dregg_poa_signal_judge(lean_object *input);
 #define DREGG_POA_SIGNAL_WIRE_MAX_BYTES ((size_t)67108864u)
 #endif
 
+/* The Path of Angels RECORDS read model (`RecordsRuntime.recordsProjectFFI`). The host supplies the
+ * exact persisted genesis config/Canon blobs and one row per durable finalized transition; Lean
+ * re-judges every row and folds the finalized-run aggregate. Reading confers nothing: the export
+ * authenticates no coordinate and commits no state. Its own module initializer is required because
+ * the fold reaches the same Emit globals the evaluator does. */
+#ifdef DREGG_POA_RECORDS_PROJECT
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_RecordsRuntime(uint8_t builtin);
+extern lean_object *dregg_poa_records_project(lean_object *input);
+#define DREGG_POA_RECORDS_WIRE_MAX_BYTES ((size_t)67108864u)
+#endif
+
 /* The Lean-owned first-head ceremony (`NetworkGenesis.networkGenesisFFI`). The input tuple has
  * already undergone external manifest/genesis/signature verification; Lean rederives its
  * deployment binding and emits the exact config/Canon bytes and faithful digest coordinates.
@@ -497,7 +508,13 @@ extern uint8_t dregg_poa_bazaar_runtime_request_codec_valid(lean_object *request
 extern uint8_t dregg_poa_bazaar_runtime_request_expected_present(lean_object *request);
 extern lean_object *dregg_poa_bazaar_runtime_request_expected_encode(lean_object *request);
 extern lean_object *dregg_poa_bazaar_runtime_request_replacement_encode(lean_object *request);
-extern lean_object *dregg_poa_bazaar_runtime_request_encode(lean_object *request);
+extern uint8_t dregg_poa_bazaar_runtime_journaled_request_codec_valid(lean_object *request);
+extern uint8_t dregg_poa_bazaar_runtime_journaled_expected_present(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_journaled_expected_encode(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_journaled_replacement_encode(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_journaled_event_encode(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_journaled_deployment_encode(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_journaled_store_encode(lean_object *request);
 extern lean_object *dregg_poa_bazaar_runtime_state_from_game_encode(lean_object *state);
 extern uint8_t dregg_poa_bazaar_runtime_durable_load_valid(
     lean_object *registry, lean_object *state, lean_object *wire);
@@ -507,9 +524,17 @@ extern int32_t dregg_poa_bazaar_native_perform_cas(
     uint8_t expected_present,
     const uint8_t *expected, size_t expected_len,
     const uint8_t *replacement, size_t replacement_len);
+extern int32_t dregg_poa_bazaar_native_perform_journaled_cas(
+    uint8_t expected_present,
+    const uint8_t *expected, size_t expected_len,
+    const uint8_t *replacement, size_t replacement_len,
+    const uint8_t *event, size_t event_len,
+    const uint8_t *store_identity, size_t store_identity_len,
+    const uint8_t *deployment_id, size_t deployment_id_len);
 extern int32_t dregg_poa_bazaar_native_durable_load_matches(
     const uint8_t *canonical, size_t canonical_len);
 #define DREGG_POA_BAZAAR_STATE_WIRE_MAX_BYTES ((size_t)16777216u)
+#define DREGG_POA_BAZAAR_EVENT_WIRE_MAX_BYTES ((size_t)16777216u)
 
 static lean_object *dregg_poa_bazaar_io_bool(uint8_t value) {
     return lean_io_result_mk_ok(lean_box(value != 0));
@@ -566,6 +591,92 @@ lean_object *dregg_poa_bazaar_perform_cas_checked(lean_object *request) {
     lean_dec(replacement);
     if (result < 0) {
         return dregg_poa_bazaar_io_error("Bazaar durable CAS failed closed");
+    }
+    return dregg_poa_bazaar_io_bool(result == 1);
+}
+
+/* Event-bearing v3 CAS. Every byte passed to Rust is emitted independently by
+ * Lean from one private `JournaledRuntimeCasRequest`; C retains no game
+ * semantics and constructs no dependent admission. */
+lean_object *dregg_poa_bazaar_perform_journaled_cas_checked(
+    lean_object *request) {
+    lean_inc(request);
+    uint8_t codec_valid =
+        dregg_poa_bazaar_runtime_journaled_request_codec_valid(request);
+    if (!codec_valid) {
+        lean_dec(request);
+        return dregg_poa_bazaar_io_bool(0);
+    }
+
+    lean_inc(request);
+    uint8_t expected_present =
+        dregg_poa_bazaar_runtime_journaled_expected_present(request);
+    lean_inc(request);
+    lean_object *expected =
+        dregg_poa_bazaar_runtime_journaled_expected_encode(request);
+    lean_inc(request);
+    lean_object *replacement =
+        dregg_poa_bazaar_runtime_journaled_replacement_encode(request);
+    lean_inc(request);
+    lean_object *event =
+        dregg_poa_bazaar_runtime_journaled_event_encode(request);
+    lean_inc(request);
+    lean_object *store =
+        dregg_poa_bazaar_runtime_journaled_store_encode(request);
+    lean_inc(request);
+    lean_object *deployment =
+        dregg_poa_bazaar_runtime_journaled_deployment_encode(request);
+    lean_dec(request);
+
+    size_t expected_size = lean_string_size(expected);
+    size_t replacement_size = lean_string_size(replacement);
+    size_t event_size = lean_string_size(event);
+    size_t store_size = lean_string_size(store);
+    size_t deployment_size = lean_string_size(deployment);
+    if (expected_size == 0 || replacement_size == 0 || event_size == 0 ||
+        store_size == 0 || deployment_size == 0) {
+        lean_dec(expected);
+        lean_dec(replacement);
+        lean_dec(event);
+        lean_dec(store);
+        lean_dec(deployment);
+        return dregg_poa_bazaar_io_error(
+            "Bazaar journaled codec returned an invalid Lean string");
+    }
+    size_t expected_len = expected_size - 1;
+    size_t replacement_len = replacement_size - 1;
+    size_t event_len = event_size - 1;
+    size_t store_len = store_size - 1;
+    size_t deployment_len = deployment_size - 1;
+    if (expected_len > DREGG_POA_BAZAAR_STATE_WIRE_MAX_BYTES ||
+        replacement_len == 0 ||
+        replacement_len > DREGG_POA_BAZAAR_STATE_WIRE_MAX_BYTES ||
+        event_len == 0 || event_len > DREGG_POA_BAZAAR_EVENT_WIRE_MAX_BYTES ||
+        store_len != 64 || deployment_len != 64 ||
+        ((!expected_present) != (expected_len == 0))) {
+        lean_dec(expected);
+        lean_dec(replacement);
+        lean_dec(event);
+        lean_dec(store);
+        lean_dec(deployment);
+        return dregg_poa_bazaar_io_bool(0);
+    }
+
+    int32_t result = dregg_poa_bazaar_native_perform_journaled_cas(
+        expected_present,
+        (const uint8_t *)lean_string_cstr(expected), expected_len,
+        (const uint8_t *)lean_string_cstr(replacement), replacement_len,
+        (const uint8_t *)lean_string_cstr(event), event_len,
+        (const uint8_t *)lean_string_cstr(store), store_len,
+        (const uint8_t *)lean_string_cstr(deployment), deployment_len);
+    lean_dec(expected);
+    lean_dec(replacement);
+    lean_dec(event);
+    lean_dec(store);
+    lean_dec(deployment);
+    if (result < 0) {
+        return dregg_poa_bazaar_io_error(
+            "Bazaar durable journaled CAS failed closed");
     }
     return dregg_poa_bazaar_io_bool(result == 1);
 }
@@ -1237,6 +1348,18 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(poares);
 #endif
+#ifdef DREGG_POA_RECORDS_PROJECT
+    /* The Records read model closes over the same evaluator globals; initialize it explicitly and
+     * keep both runtime init paths in exact parity. Initialization confers no read authority. */
+    lean_object *poarecres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_RecordsRuntime(1);
+    if (!lean_io_result_is_ok(poarecres)) {
+        lean_io_result_show_error(poarecres);
+        lean_dec_ref(poarecres);
+        return 1;
+    }
+    lean_dec_ref(poarecres);
+#endif
 #ifdef DREGG_POA_NETWORK_GENESIS
     /* This module imports NetworkGenesisWire/Emit and therefore has initialized constants; keep
      * both runtime init paths in exact parity. Initialization does not verify the external tuple. */
@@ -1845,6 +1968,36 @@ size_t dregg_poa_signal_judge_str(const char *in_utf8, char *out, size_t out_cap
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_SIGNAL_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_RECORDS_PROJECT
+/* Bounded C string bridge over the Records read model. Same return contract as the evaluator
+ * bridge above: the full output length on success, zero for Lean's refusal sentinel, `(size_t)-1`
+ * for an unusable or over-limit host transport. */
+size_t dregg_poa_records_project_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_RECORDS_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_records_project(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_RECORDS_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;

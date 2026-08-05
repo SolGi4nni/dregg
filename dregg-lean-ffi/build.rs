@@ -238,6 +238,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          caller-authored carrier/state must never be promoted to finality",
     ),
     (
+        "dregg_poa_records_project",
+        "the Path of Angels RECORDS read model compiles out: rebuilding the finalized-run \
+         projection — re-judging every stored row, refolding Canon from the retained genesis, and \
+         deriving archive/locker/notice/inbox membership — has no answer source. The public \
+         Records read must refuse; Rust may not project a run record from stored bytes",
+    ),
+    (
         "dregg_poa_network_genesis",
         "the Path of Angels Signal NETWORK GENESIS ceremony compiles out: Lean cannot bind the \
          externally verified deployment/content tuple to the exact zero-head config and Canon \
@@ -2319,6 +2326,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_records_project_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_network_genesis_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
@@ -3219,6 +3227,17 @@ fn main() {
         absent_export_warn("dregg_poa_signal_judge");
     }
 
+    // PATH OF ANGELS RECORDS READ MODEL: rebuilds the finalized-run projection from the retained
+    // genesis blobs plus one row per durable transition. Separately versioned from the evaluator
+    // because it is a READ: presence confers no ability to settle, and absence must leave the
+    // public Records route refusing rather than falling back to a host-side projection.
+    let poa_records_project_present = archive_exports(&build_archive, "dregg_poa_records_project");
+    if poa_records_project_present {
+        println!("cargo:rustc-cfg=dregg_poa_records_project_present");
+    } else {
+        absent_export_warn("dregg_poa_records_project");
+    }
+
     // PATH OF ANGELS NETWORK GENESIS CEREMONY: validates the externally verified tuple and exact
     // zero state, then emits the complete Lean-owned PoaSignalHeadV1 byte image. It is separately
     // versioned from transition evaluation so availability cannot confer authority on an input.
@@ -3297,12 +3316,23 @@ fn main() {
     // PATH OF ANGELS PERSISTENT BAZAAR: all codec/equality helpers form one
     // indivisible typed ABI. The actual dependent admissions are constructed
     // by Lean wrappers around two private checked-Bool native primitives.
+    // ⚑ 2026-08-05: `dregg_poa_bazaar_runtime_request_encode` LEFT this list (16 -> 15) with the
+    // `@[export]` itself, which shipped and was called by nothing — see the note at its old site
+    // in `BazaarGameRuntime.lean`. The coherence check below is a count against this array, so it
+    // stays exact; what it must never become is a list carrying a symbol kept only to keep the
+    // count round.
     let poa_bazaar_runtime_exports = [
         "dregg_poa_bazaar_runtime_request_codec_valid",
         "dregg_poa_bazaar_runtime_request_expected_present",
         "dregg_poa_bazaar_runtime_request_expected_encode",
         "dregg_poa_bazaar_runtime_request_replacement_encode",
-        "dregg_poa_bazaar_runtime_request_encode",
+        "dregg_poa_bazaar_runtime_journaled_request_codec_valid",
+        "dregg_poa_bazaar_runtime_journaled_expected_present",
+        "dregg_poa_bazaar_runtime_journaled_expected_encode",
+        "dregg_poa_bazaar_runtime_journaled_replacement_encode",
+        "dregg_poa_bazaar_runtime_journaled_event_encode",
+        "dregg_poa_bazaar_runtime_journaled_deployment_encode",
+        "dregg_poa_bazaar_runtime_journaled_store_encode",
         "dregg_poa_bazaar_runtime_state_from_game_encode",
         "dregg_poa_bazaar_runtime_durable_load_valid",
         "dregg_poa_bazaar_runtime_state_key_validate",
@@ -3323,7 +3353,7 @@ fn main() {
     if poa_bazaar_runtime_present {
         println!("cargo:rustc-cfg=dregg_poa_bazaar_runtime_present");
     } else {
-        absent_export_warn("dregg_poa_bazaar_runtime_request_encode");
+        absent_export_warn("dregg_poa_bazaar_runtime_request_codec_valid");
     }
 
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
@@ -3705,6 +3735,9 @@ fn main() {
     // module initializer in BOTH default and single-threaded runtime init paths.
     if poa_signal_judge_present {
         shim.define("DREGG_POA_SIGNAL_JUDGE", None);
+    }
+    if poa_records_project_present {
+        shim.define("DREGG_POA_RECORDS_PROJECT", None);
     }
     if poa_network_genesis_present {
         shim.define("DREGG_POA_NETWORK_GENESIS", None);

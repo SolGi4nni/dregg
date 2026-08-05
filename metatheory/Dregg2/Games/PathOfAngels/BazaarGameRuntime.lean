@@ -854,9 +854,18 @@ def requestExpectedEncodeExport (request : RuntimeCasRequest) : String :=
 def requestReplacementEncodeExport (request : RuntimeCasRequest) : String :=
   stateKeyToCanonicalJson request.replacement
 
-@[export dregg_poa_bazaar_runtime_request_encode]
-def requestEncodeExport (request : RuntimeCasRequest) : String :=
-  runtimeCasRequestToCanonicalJson request
+-- ⚑ DELETED 2026-08-05: `@[export dregg_poa_bazaar_runtime_request_encode]` /
+-- `requestEncodeExport`, a whole-`RuntimeCasRequest` canonical-JSON render. It shipped in
+-- `libdregg_lean.a` and NOTHING called it — not `lean_init.c` (which declared it at :511 and
+-- never used it), not any `.rs`, in either the working tree or HEAD. It is not a v2 leftover of
+-- a v3 shape either: `dregg_poa_bazaar_perform_cas_checked` passes `expected` and `replacement`
+-- as two independently-emitted byte strings BY DESIGN, so that C retains no game structure, and a
+-- one-blob request render has no place on that path. Deleted rather than ratcheted because the
+-- ratchet's own rule is that a row must say what would WIRE it, and there is no such consumer to
+-- name. `runtimeCasRequestToCanonicalJson` itself STAYS — it is the codec-validity check at :805
+-- and the fixture-distinctness theorem at :1086. Only the `@[export]` seam is gone.
+-- Re-emits: none (Lean-side only). Also removed: the `extern` at `dregg-lean-ffi/src/lean_init.c`
+-- and the row in `dregg-lean-ffi/build.rs`'s 16-symbol coherence list, now 15.
 
 @[export dregg_poa_bazaar_runtime_journaled_request_codec_valid]
 def journaledRequestCodecValidExport
