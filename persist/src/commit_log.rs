@@ -340,6 +340,51 @@ fn validate_faithful_commit_coordinates(
     Ok(())
 }
 
+/// Join the Lean-prepared PoA V2 coordinate to authority which persistence can
+/// independently recover from the exact finalized receipt. This is the seam
+/// which prevents an otherwise well-formed batch from naming an arbitrary
+/// signer or actor root beside a genuine commit.
+fn validate_poa_v2_batch_authority(
+    record: &CommitRecord,
+    encoded_receipt: &[u8],
+    batch: &crate::PreparedPoaEventBatchV2,
+    holding: Option<&crate::PreparedPoaHoldingConsumptionV1>,
+) -> Result<()> {
+    let receipt: dregg_turn::TurnReceipt = postcard::from_bytes(encoded_receipt).map_err(|_| {
+        StoreError::Integrity("PoA V2 batch receipt is not canonical TurnReceipt bytes".to_string())
+    })?;
+    let canonical = postcard::to_stdvec(&receipt)
+        .map_err(|error| StoreError::Serialization(error.to_string()))?;
+    if canonical.as_slice() != encoded_receipt {
+        return Err(StoreError::Integrity(
+            "PoA V2 batch receipt encoding is not canonical".to_string(),
+        ));
+    }
+
+    let coordinate = batch.coordinate();
+    let signer_cell =
+        dregg_cell::CellId::derive_raw(&coordinate.signer(), blake3::hash(b"default").as_bytes());
+    if receipt.turn_hash != record.turn_hash
+        || receipt.receipt_hash() != record.receipt_hash
+        || receipt.pre_state_hash != coordinate.actor_root()
+        || receipt.agent != signer_cell
+        || receipt.federation_id != coordinate.world().federation_id()
+    {
+        return Err(StoreError::Integrity(
+            "PoA V2 batch signer/actor/world coordinate disagrees with exact finalized receipt"
+                .to_string(),
+        ));
+    }
+    if let Some(holding) = holding
+        && (holding.player() != coordinate.signer() || holding.player_cell() != receipt.agent.0)
+    {
+        return Err(StoreError::Integrity(
+            "PoA holding player is not the exact finalized receipt signer/agent".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Bind the one exact-v3 CAS candidate to the finalized spend carried by this turn.
 ///
 /// The durable exact accumulator independently replays the state transition, but without this
@@ -1016,6 +1061,8 @@ impl PersistentStore {
             &[],
             Some(poa_signal),
             None,
+            None,
+            None,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1041,6 +1088,8 @@ impl PersistentStore {
             &[],
             None,
             Some(poa_event),
+            None,
+            None,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1085,6 +1134,8 @@ impl PersistentStore {
             None,
             None,
             config_blobs,
+            None,
+            None,
             None,
             None,
         )
@@ -1135,6 +1186,8 @@ impl PersistentStore {
             &[],
             None,
             None,
+            None,
+            None,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1160,6 +1213,8 @@ impl PersistentStore {
             None,
             Some(executor_state),
             &[],
+            None,
+            None,
             None,
             None,
         )
@@ -1196,6 +1251,8 @@ impl PersistentStore {
             None,
             None,
             &[],
+            None,
+            None,
             None,
             None,
         )
@@ -1291,6 +1348,75 @@ impl PersistentStore {
             None,
             Some(executor_state),
             Some(poa_signal),
+        )
+    }
+
+    /// Faithful/executor-state finalized apex with one legacy Lean-authored PoA
+    /// V1 event. V1 has no receipt-bound signer coordinate, so this public apex
+    /// is intentionally public-play only. Holder mechanics use the V2 batch
+    /// apex, whose authority weld can bind player and cell to the receipt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_event(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+        poa_event: &crate::PreparedPoaEventEnvelopeV1,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode_with_poa(
+            expected_ordinal,
+            record,
+            note_commitments,
+            ReceiptWeldMode::AppendOrVerify {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            None,
+            Some(executor_state),
+            None,
+            Some(poa_event),
+            None,
+            None,
+        )
+    }
+
+    /// Faithful/executor-state finalized apex with an ordered PoA V2 event
+    /// batch and optional one-shot holding-capability consumption. The exact
+    /// receipt, ordered batch manifest, all event/projection edges, and the
+    /// capability nullifier land or fail in the same redb transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_event_batch(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+        poa_batch: &crate::PreparedPoaEventBatchV2,
+        poa_holding: Option<&crate::PreparedPoaHoldingConsumptionV1>,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode_with_poa(
+            expected_ordinal,
+            record,
+            note_commitments,
+            ReceiptWeldMode::AppendOrVerify {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            None,
+            Some(executor_state),
+            None,
+            None,
+            Some(poa_batch),
+            poa_holding,
         )
     }
 
@@ -1454,6 +1580,73 @@ impl PersistentStore {
         )
     }
 
+    /// Existing-receipt crash-replay counterpart of the legacy public-play PoA
+    /// V1 event apex. Replay requires the byte-identical event; V1 never admits
+    /// holding consumption because it cannot bind a signer to the receipt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_executor_state_existing_receipt_and_poa_event(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+        poa_event: &crate::PreparedPoaEventEnvelopeV1,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode_with_poa(
+            expected_ordinal,
+            record,
+            note_commitments,
+            ReceiptWeldMode::ExistingExact {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            None,
+            Some(executor_state),
+            None,
+            Some(poa_event),
+            None,
+            None,
+        )
+    }
+
+    /// Existing-receipt crash-replay counterpart of the faithful PoA V2 batch
+    /// apex. Replay requires the byte-identical ordered batch manifest and
+    /// optional holding-consumption weld; omission and invention both refuse.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_executor_state_existing_receipt_and_poa_event_batch(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+        poa_batch: &crate::PreparedPoaEventBatchV2,
+        poa_holding: Option<&crate::PreparedPoaHoldingConsumptionV1>,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode_with_poa(
+            expected_ordinal,
+            record,
+            note_commitments,
+            ReceiptWeldMode::ExistingExact {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            None,
+            Some(executor_state),
+            None,
+            None,
+            Some(poa_batch),
+            poa_holding,
+        )
+    }
+
     /// Exact-FNSP-v3 counterpart of
     /// [`Self::commit_finalized_turn_with_faithful_root_existing_receipt`].
     /// The receipt must already exist byte-for-byte; this method never repairs or appends it.
@@ -1561,6 +1754,8 @@ impl PersistentStore {
             &[],
             None,
             None,
+            None,
+            None,
         )?;
         let committed_head = welded.committed_head.ok_or_else(|| {
             StoreError::Integrity(
@@ -1590,6 +1785,36 @@ impl PersistentStore {
         exact_fnsp_v3: Option<ExactFnspV3Weld>,
         executor_state: Option<&crate::FinalizedExecutorConsensusState>,
         poa_signal: Option<&crate::PreparedPoaSignalTransitionV1>,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode_with_poa(
+            expected_ordinal,
+            record,
+            note_commitments,
+            receipt_entry,
+            faithful,
+            exact_fnsp_v3,
+            executor_state,
+            poa_signal,
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_finalized_turn_with_faithful_root_receipt_mode_with_poa(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_entry: ReceiptWeldMode<'_>,
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        exact_fnsp_v3: Option<ExactFnspV3Weld>,
+        executor_state: Option<&crate::FinalizedExecutorConsensusState>,
+        poa_signal: Option<&crate::PreparedPoaSignalTransitionV1>,
+        poa_event: Option<&crate::PreparedPoaEventEnvelopeV1>,
+        poa_batch: Option<&crate::PreparedPoaEventBatchV2>,
+        poa_holding: Option<&crate::PreparedPoaHoldingConsumptionV1>,
     ) -> Result<CommitOutcome> {
         if !faithful.envelope.verify_hybrid(
             faithful.author_committee,
@@ -1623,7 +1848,9 @@ impl PersistentStore {
             executor_state,
             &[],
             poa_signal,
-            None,
+            poa_event,
+            poa_batch,
+            poa_holding,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1657,6 +1884,8 @@ impl PersistentStore {
             &[],
             None,
             None,
+            None,
+            None,
         )
         .map(|outcome| outcome.outcome.ordinal)
     }
@@ -1680,7 +1909,41 @@ impl PersistentStore {
         config_blobs: &[(&str, &[u8])],
         poa_signal: Option<&crate::PreparedPoaSignalTransitionV1>,
         poa_event: Option<&crate::PreparedPoaEventEnvelopeV1>,
+        poa_batch: Option<&crate::PreparedPoaEventBatchV2>,
+        poa_holding: Option<&crate::PreparedPoaHoldingConsumptionV1>,
     ) -> Result<WeldedCommitOutcome> {
+        if poa_event.is_some() && poa_batch.is_some() {
+            return Err(StoreError::Integrity(
+                "finalized turn cannot weld both a PoA V1 event and V2 event batch".to_string(),
+            ));
+        }
+        if let Some(batch) = poa_batch {
+            let receipt_entry = receipt_entry.as_ref().ok_or_else(|| {
+                StoreError::Integrity(
+                    "PoA V2 batch requires the exact finalized receipt at the atomic apex"
+                        .to_string(),
+                )
+            })?;
+            let (_, encoded_receipt) = receipt_entry.entry();
+            validate_poa_v2_batch_authority(record, encoded_receipt, batch, poa_holding)?;
+        }
+        match (poa_holding, poa_event, poa_batch) {
+            (Some(holding), Some(event), None) if holding.matches_poa_event(event) => {}
+            (Some(holding), None, Some(batch)) if holding.matches_poa_batch(batch) => {}
+            (Some(_), Some(_), None) | (Some(_), None, Some(_)) => {
+                return Err(StoreError::Integrity(
+                    "PoA holding consumption is not bound to one exact welded PoA event"
+                        .to_string(),
+                ));
+            }
+            (Some(_), None, None) => {
+                return Err(StoreError::Integrity(
+                    "PoA holding consumption requires an exact welded PoA event".to_string(),
+                ));
+            }
+            (None, _, _) => {}
+            (Some(_), Some(_), Some(_)) => unreachable!("both world welds refused above"),
+        }
         let write_txn = self.db.begin_write()?;
         // Store-open/bootstrap established full faithful/exact history equality. The rolling
         // bridge is its durable induction hypothesis, so live admission checks only sealed count +
@@ -1753,6 +2016,18 @@ impl PersistentStore {
                                     expected_ordinal,
                                     &existing,
                                     poa_event,
+                                )?;
+                                crate::poa_event_batch_v2::verify_replayed_poa_event_batch_in(
+                                    &write_txn,
+                                    expected_ordinal,
+                                    &existing,
+                                    poa_batch,
+                                )?;
+                                crate::poa_holding_consumption::verify_replayed_poa_holding_consumption_in(
+                                    &write_txn,
+                                    expected_ordinal,
+                                    &existing,
+                                    poa_holding,
                                 )?;
                                 crate::per_cell_receipt_heads::verify_replayed_per_cell_receipt_heads_in(
                                     &write_txn,
@@ -2168,6 +2443,22 @@ impl PersistentStore {
                     assigned,
                     &stored_record,
                     poa_event,
+                )?;
+            }
+            if let Some(poa_batch) = poa_batch {
+                crate::poa_event_batch_v2::stage_fresh_poa_event_batch_in(
+                    &write_txn,
+                    assigned,
+                    &stored_record,
+                    poa_batch,
+                )?;
+            }
+            if let Some(poa_holding) = poa_holding {
+                crate::poa_holding_consumption::stage_fresh_poa_holding_consumption_in(
+                    &write_txn,
+                    assigned,
+                    &stored_record,
+                    poa_holding,
                 )?;
             }
 
@@ -3241,6 +3532,12 @@ impl PersistentStore {
 
             crate::poa_signal_state::truncate_poa_signal_state_in(&write_txn, new_cursor)?;
             crate::poa_event_store::truncate_poa_event_store_in(&write_txn, new_cursor)?;
+            crate::poa_event_batch_v2::truncate_poa_event_batch_store_v2_in(
+                &write_txn, new_cursor,
+            )?;
+            crate::poa_holding_consumption::truncate_poa_holding_consumptions_in(
+                &write_txn, new_cursor,
+            )?;
 
             // Reset the durable cursor to the last-good high-water mark. Unlike
             // compaction (which leaves the cursor as the applied high-water mark),
@@ -3777,6 +4074,574 @@ pub(crate) mod tests {
             touched_cells: cells,
             removed: Vec::new(),
         }
+    }
+
+    fn poa_event(
+        store: &PersistentStore,
+        record: &CommitRecord,
+    ) -> crate::PreparedPoaEventEnvelopeV1 {
+        let aggregate = crate::PoaAggregateIdV1::new([0x91; 32], b"galley".to_vec(), [0x92; 32])
+            .expect("aggregate");
+        let schema = b"galley-v1".to_vec();
+        let (sequence, predecessor_digest, semantic_predecessor, genesis) = match store
+            .load_poa_event_head(&aggregate, &schema)
+            .expect("head")
+        {
+            Some(head) => (
+                head.sequence() + 1,
+                head.digest(),
+                head.semantic_head(),
+                None,
+            ),
+            None => {
+                let projection = br#"{"sequence":0}"#.to_vec();
+                let semantic = [0x93; 32];
+                let head = crate::PoaEventHeadV1::genesis(
+                    aggregate.clone(),
+                    schema.clone(),
+                    semantic,
+                    projection.clone(),
+                )
+                .expect("genesis");
+                (1, head.digest(), semantic, Some(projection))
+            }
+        };
+        crate::PreparedPoaEventEnvelopeV1::new(
+            aggregate,
+            schema,
+            sequence,
+            record.ordinal,
+            record.turn_hash,
+            record.receipt_hash,
+            predecessor_digest,
+            semantic_predecessor,
+            [0xA0_u8.wrapping_add(sequence as u8); 32],
+            [0xB0_u8.wrapping_add(sequence as u8); 32],
+            vec![sequence as u8],
+            vec![sequence as u8, 0xC1],
+            genesis,
+            0,
+        )
+        .expect("prepared PoA event")
+    }
+
+    fn holding_use(
+        record: &CommitRecord,
+        event: &crate::PreparedPoaEventEnvelopeV1,
+        capability: u8,
+        player: u8,
+    ) -> crate::PreparedPoaHoldingConsumptionV1 {
+        crate::PreparedPoaHoldingConsumptionV1::new(
+            [capability; 32],
+            [player; 32],
+            [player.wrapping_add(1); 32],
+            record.ordinal,
+            record.turn_hash,
+            record.receipt_hash,
+            event.event_digest(),
+            0,
+            event.stream_digest(),
+            event.sequence(),
+            event.event_digest(),
+        )
+        .expect("prepared holding consumption")
+    }
+
+    fn poa_v2_authority_fixture(
+        receipt_signer: [u8; 32],
+        coordinate_signer: [u8; 32],
+        receipt_actor_root: [u8; 32],
+        coordinate_actor_root: [u8; 32],
+        receipt_federation: [u8; 32],
+        coordinate_federation: [u8; 32],
+    ) -> (CommitRecord, Vec<u8>, crate::PreparedPoaEventBatchV2) {
+        let mut record = record(0, 0, vec![]);
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash: record.turn_hash,
+            pre_state_hash: receipt_actor_root,
+            agent: dregg_cell::CellId::derive_raw(
+                &receipt_signer,
+                blake3::hash(b"default").as_bytes(),
+            ),
+            federation_id: receipt_federation,
+            finality: dregg_turn::Finality::Final,
+            ..Default::default()
+        };
+        record.receipt_hash = receipt.receipt_hash();
+        let encoded = postcard::to_stdvec(&receipt).expect("canonical receipt");
+        let world = crate::PoaWorldIdentityV2::new(
+            coordinate_federation,
+            [0xA1; 32],
+            [0xA2; 32],
+            [0xA3; 32],
+            b"beta-1".to_vec(),
+        )
+        .expect("world");
+        let coordinate = crate::FinalizedTurnCoordinateV2::new(
+            world,
+            record.ordinal,
+            record.block_id,
+            record.turn_hash,
+            record.receipt_hash,
+            coordinate_actor_root,
+            coordinate_signer,
+        )
+        .expect("coordinate");
+        let stream = crate::PoaBatchStreamIdV2::new(
+            coordinate_federation,
+            b"galley-daily".to_vec(),
+            [0xA4; 32],
+            b"galley-v2".to_vec(),
+        )
+        .expect("stream");
+        let semantic_predecessor = [0xA6; 32];
+        let genesis_projection = vec![0xAB];
+        let predecessor = crate::PoaBatchStreamHeadV2::genesis(
+            stream.clone(),
+            semantic_predecessor,
+            genesis_projection.clone(),
+        )
+        .expect("genesis head");
+        let event = crate::PreparedPoaBatchEventV2::new(
+            0,
+            stream,
+            1,
+            predecessor.digest(),
+            semantic_predecessor,
+            [0xA7; 32],
+            [0xA8; 32],
+            vec![0xA9],
+            vec![0xAA],
+            Some(genesis_projection),
+        )
+        .expect("event");
+        let batch = crate::PreparedPoaEventBatchV2::new(
+            coordinate,
+            b"lean-authoritative-statement".to_vec(),
+            [0xAC; 32],
+            vec![event],
+        )
+        .expect("batch");
+        (record, encoded, batch)
+    }
+
+    fn exact_poa_v2_holding(
+        record: &CommitRecord,
+        batch: &crate::PreparedPoaEventBatchV2,
+        player: [u8; 32],
+        player_cell: [u8; 32],
+    ) -> crate::PreparedPoaHoldingConsumptionV1 {
+        let event = &batch.events()[0];
+        crate::PreparedPoaHoldingConsumptionV1::new(
+            [0xAD; 32],
+            player,
+            player_cell,
+            record.ordinal,
+            record.turn_hash,
+            record.receipt_hash,
+            batch.batch_digest(),
+            event.event_index(),
+            event.stream_digest(),
+            event.sequence(),
+            event.event_digest(),
+        )
+        .expect("holding")
+    }
+
+    #[test]
+    fn poa_v2_authority_weld_refuses_coordinate_and_receipt_substitution() {
+        let signer = [0xB1; 32];
+        let actor_root = [0xB2; 32];
+        let federation = [0xB3; 32];
+        let (record, encoded, batch) = poa_v2_authority_fixture(
+            signer, signer, actor_root, actor_root, federation, federation,
+        );
+        validate_poa_v2_batch_authority(&record, &encoded, &batch, None).unwrap();
+
+        let (_, _, altered_actor) = poa_v2_authority_fixture(
+            signer, signer, actor_root, [0xC1; 32], federation, federation,
+        );
+        assert!(validate_poa_v2_batch_authority(&record, &encoded, &altered_actor, None).is_err());
+        let (_, _, altered_signer) = poa_v2_authority_fixture(
+            signer, [0xC2; 32], actor_root, actor_root, federation, federation,
+        );
+        assert!(validate_poa_v2_batch_authority(&record, &encoded, &altered_signer, None).is_err());
+        let (_, _, altered_federation) = poa_v2_authority_fixture(
+            signer, signer, actor_root, actor_root, federation, [0xC3; 32],
+        );
+        assert!(
+            validate_poa_v2_batch_authority(&record, &encoded, &altered_federation, None).is_err()
+        );
+
+        let mut noncanonical = encoded.clone();
+        noncanonical.push(0);
+        assert!(validate_poa_v2_batch_authority(&record, &noncanonical, &batch, None).is_err());
+    }
+
+    #[test]
+    fn poa_v2_authority_weld_refuses_holding_player_or_cell_substitution() {
+        let signer = [0xD1; 32];
+        let actor_root = [0xD2; 32];
+        let federation = [0xD3; 32];
+        let (record, encoded, batch) = poa_v2_authority_fixture(
+            signer, signer, actor_root, actor_root, federation, federation,
+        );
+        let player_cell =
+            dregg_cell::CellId::derive_raw(&signer, blake3::hash(b"default").as_bytes()).0;
+        let exact = exact_poa_v2_holding(&record, &batch, signer, player_cell);
+        validate_poa_v2_batch_authority(&record, &encoded, &batch, Some(&exact)).unwrap();
+        assert!(exact.matches_poa_batch(&batch));
+
+        let altered_player = exact_poa_v2_holding(&record, &batch, [0xD4; 32], player_cell);
+        assert!(
+            validate_poa_v2_batch_authority(&record, &encoded, &batch, Some(&altered_player),)
+                .is_err()
+        );
+        assert!(!altered_player.matches_poa_batch(&batch));
+
+        let altered_cell = exact_poa_v2_holding(&record, &batch, signer, [0xD5; 32]);
+        assert!(
+            validate_poa_v2_batch_authority(&record, &encoded, &batch, Some(&altered_cell),)
+                .is_err()
+        );
+        assert!(!altered_cell.matches_poa_batch(&batch));
+    }
+
+    #[test]
+    fn poa_v2_central_writer_commits_and_replays_exact_batch_and_holding() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let signer = [0xE1; 32];
+        let actor_root = [0xE2; 32];
+        let federation = [0xE3; 32];
+        let (record, encoded, batch) = poa_v2_authority_fixture(
+            signer, signer, actor_root, actor_root, federation, federation,
+        );
+        let player_cell =
+            dregg_cell::CellId::derive_raw(&signer, blake3::hash(b"default").as_bytes()).0;
+        let holding = exact_poa_v2_holding(&record, &batch, signer, player_cell);
+
+        let commit = || {
+            store.commit_finalized_turn_welded(
+                0,
+                &record,
+                &[],
+                &[],
+                Some(ReceiptWeldMode::AppendOrVerify {
+                    index: 0,
+                    encoded: &encoded,
+                }),
+                None,
+                None,
+                None,
+                &[],
+                None,
+                None,
+                Some(&batch),
+                Some(&holding),
+            )
+        };
+        assert!(commit().unwrap().outcome.freshly_committed);
+        assert!(!commit().unwrap().outcome.freshly_committed);
+        assert_eq!(
+            store.load_poa_event_batch_v2(0).unwrap(),
+            Some(batch.clone())
+        );
+        assert_eq!(
+            store
+                .load_poa_holding_consumption(&holding.capability_receipt_id())
+                .unwrap()
+                .unwrap()
+                .turn_hash(),
+            record.turn_hash
+        );
+        assert!(
+            store.commit_finalized_turn(0, &record).is_err(),
+            "replay may not omit its receipt, V2 batch, or holding weld"
+        );
+        store.audit_poa_event_batch_store_v2().unwrap();
+        store.audit_poa_holding_consumptions().unwrap();
+    }
+
+    #[test]
+    fn poa_holding_consumption_replay_is_exact_and_one_shot() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let first = record(0, 0, vec![]);
+        let first_event = poa_event(&store, &first);
+        let use_a = holding_use(&first, &first_event, 0x71, 0x31);
+
+        let fresh = store
+            .commit_finalized_turn_welded(
+                0,
+                &first,
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                None,
+                &[],
+                None,
+                Some(&first_event),
+                None,
+                Some(&use_a),
+            )
+            .unwrap();
+        assert!(fresh.outcome.freshly_committed);
+        assert_eq!(
+            store
+                .load_poa_holding_consumption(&[0x71; 32])
+                .unwrap()
+                .unwrap()
+                .turn_hash(),
+            first.turn_hash
+        );
+
+        let replay = store
+            .commit_finalized_turn_welded(
+                0,
+                &first,
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                None,
+                &[],
+                None,
+                Some(&first_event),
+                None,
+                Some(&use_a),
+            )
+            .unwrap();
+        assert!(!replay.outcome.freshly_committed);
+
+        let omitted = store.commit_finalized_turn(0, &first).unwrap_err();
+        assert!(omitted.to_string().contains("omitted or invented"));
+
+        let redirected = holding_use(&first, &first_event, 0x71, 0x41);
+        let redirected_error = match store.commit_finalized_turn_welded(
+            0,
+            &first,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            &[],
+            None,
+            Some(&first_event),
+            None,
+            Some(&redirected),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("redirected holding replay must refuse"),
+        };
+        assert!(redirected_error.to_string().contains("byte-identical"));
+
+        let second = record(1, 1, vec![]);
+        let second_event = poa_event(&store, &second);
+        let second_use_same_capability = holding_use(&second, &second_event, 0x71, 0x31);
+        let duplicate_error = match store.commit_finalized_turn_welded(
+            1,
+            &second,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            &[],
+            None,
+            Some(&second_event),
+            None,
+            Some(&second_use_same_capability),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("duplicate holding consumer must refuse"),
+        };
+        assert!(
+            duplicate_error
+                .to_string()
+                .contains("already has a consumer")
+        );
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert!(store.commit_record_at(1).unwrap().is_none());
+        store.audit_poa_holding_consumptions().unwrap();
+    }
+
+    #[test]
+    fn poa_holding_consumption_replay_refuses_invention() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let record = record(0, 0, vec![]);
+        store.commit_finalized_turn(0, &record).unwrap();
+        let event = poa_event(&store, &record);
+        let invented = holding_use(&record, &event, 0x72, 0x32);
+        let error = match store.commit_finalized_turn_welded(
+            0,
+            &record,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            &[],
+            None,
+            Some(&event),
+            None,
+            Some(&invented),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("invented holding replay must refuse"),
+        };
+        assert!(error.to_string().contains("omitted or invented"));
+    }
+
+    #[test]
+    fn poa_holding_consumption_must_bind_the_exact_event_before_any_write() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let record = record(0, 0, vec![]);
+        let event = poa_event(&store, &record);
+        let mismatched = crate::PreparedPoaHoldingConsumptionV1::new(
+            [0x73; 32],
+            [0x33; 32],
+            [0x34; 32],
+            record.ordinal,
+            record.turn_hash,
+            record.receipt_hash,
+            event.event_digest(),
+            0,
+            [0xEE; 32],
+            event.sequence(),
+            event.event_digest(),
+        )
+        .unwrap();
+        let error = match store.commit_finalized_turn_welded(
+            0,
+            &record,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            &[],
+            None,
+            Some(&event),
+            None,
+            Some(&mismatched),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("holding/event mismatch must refuse"),
+        };
+        assert!(error.to_string().contains("not bound"));
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert!(store.commit_record_at(0).unwrap().is_none());
+        assert!(
+            store
+                .load_poa_event_head(event.aggregate(), b"galley-v1")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .load_poa_holding_consumption(&[0x73; 32])
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn divergent_tail_recovery_unspends_holding_for_exact_retry() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let empty_root = crate::canonical_ledger_root(&dregg_cell::Ledger::new());
+
+        let mut first = record(0, 0, vec![]);
+        first.ledger_root = empty_root;
+        let first_event = poa_event(&store, &first);
+        let first_use = holding_use(&first, &first_event, 0x74, 0x34);
+        store
+            .commit_finalized_turn_welded(
+                0,
+                &first,
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                None,
+                &[],
+                None,
+                Some(&first_event),
+                None,
+                Some(&first_use),
+            )
+            .unwrap();
+
+        let mut second = record(1, 1, vec![]);
+        second.ledger_root = [0xFF; 32];
+        let second_event = poa_event(&store, &second);
+        let second_use = holding_use(&second, &second_event, 0x75, 0x35);
+        store
+            .commit_finalized_turn_welded(
+                1,
+                &second,
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                None,
+                &[],
+                None,
+                Some(&second_event),
+                None,
+                Some(&second_use),
+            )
+            .unwrap();
+        assert!(
+            store
+                .load_poa_holding_consumption(&[0x75; 32])
+                .unwrap()
+                .is_some()
+        );
+
+        assert_eq!(store.recover_to_last_consistent().unwrap(), 1);
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert!(
+            store
+                .load_poa_holding_consumption(&[0x75; 32])
+                .unwrap()
+                .is_none(),
+            "a truncated non-final tail must release its capability nullifier"
+        );
+
+        second.ledger_root = empty_root;
+        let retried = store
+            .commit_finalized_turn_welded(
+                1,
+                &second,
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                None,
+                &[],
+                None,
+                Some(&second_event),
+                None,
+                Some(&second_use),
+            )
+            .unwrap();
+        assert!(retried.outcome.freshly_committed);
+        assert!(
+            store
+                .load_poa_holding_consumption(&[0x75; 32])
+                .unwrap()
+                .is_some()
+        );
     }
 
     // signed-wells (ac01f9b7b): cell balances are i64; this test helper keeps a

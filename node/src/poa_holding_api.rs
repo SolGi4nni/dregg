@@ -22,8 +22,8 @@ use axum::{Json, Router};
 use base64::Engine as _;
 use poa_solana_gate::{
     AdmissionStore, Bytes32, CapabilityIssue, CapabilityStatus, CapabilityUse, Challenge,
-    Commitment, DREGG_MINT_BASE58, Gate, GateConfig, GateError, HoldingCapability, RpcAccountSet,
-    RpcTokenAccount, TrustTier, decode_pubkey, encode_pubkey, validate_rpc_snapshot,
+    ChallengeIssue, Commitment, DREGG_MINT_BASE58, Gate, GateConfig, GateError, HoldingCapability,
+    RpcAccountSet, RpcTokenAccount, TrustTier, decode_pubkey, encode_pubkey, validate_rpc_snapshot,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -32,12 +32,14 @@ use tokio::sync::Semaphore;
 use crate::api::RateLimiter;
 use crate::state::NodeState;
 
-const ADMISSION_STATE_KEY: &str = "poa_dregg_holding_admission_v1";
-const ADMISSION_STATE_VERSION: u16 = 1;
+/// V1 intentionally remains unread: it did not bind a capability to a Dregg
+/// player and therefore can never authorize sponsorship.
+const ADMISSION_STATE_KEY: &str = "poa_dregg_holding_admission_v2";
+const ADMISSION_STATE_VERSION: u16 = 2;
 const MAX_ADMISSION_STATE_BYTES: usize = 8 * 1024 * 1024;
-// Bound the live blob independently of traffic volume. If admission is flooded,
-// the oldest short-lived grant is shed and its holder may simply challenge
-// again; the node must never become permanently unwritable.
+// Bound the live blob independently of traffic volume. Expired rows are pruned,
+// but live authority is never evicted by unrelated traffic: at capacity the
+// newcomer is refused and can retry after the short TTL.
 const MAX_LIVE_CHALLENGES: usize = 4096;
 const MAX_LIVE_CAPABILITIES: usize = 4096;
 const REQUESTS_PER_MINUTE: u32 = 10;
@@ -320,6 +322,7 @@ fn routes_with_rpc<R: SolanaHoldingRpc>(rpc: R) -> Router<NodeState> {
 #[serde(deny_unknown_fields)]
 struct ChallengeRequest {
     wallet: String,
+    player: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -327,6 +330,8 @@ struct ChallengeResponse {
     format: &'static str,
     challenge_id: String,
     wallet: String,
+    player: String,
+    player_cell: String,
     signing_message_base64: String,
     mint: &'static str,
     cluster: String,
@@ -349,6 +354,8 @@ struct CapabilityResponse {
     receipt_id: String,
     trust: &'static str,
     wallet: String,
+    player: String,
+    player_cell: String,
     mint: String,
     snapshot_slot: u64,
     issued_at: u64,
@@ -362,10 +369,6 @@ struct HoldingStatusResponse {
     receipt_id: String,
     state: &'static str,
     trust: &'static str,
-    wallet: String,
-    mint: String,
-    snapshot_slot: u64,
-    issued_at: u64,
     expires_at: u64,
     governance_weight_bearing: bool,
 }
@@ -422,6 +425,9 @@ async fn post_challenge<R: SolanaHoldingRpc>(
     let wallet = decode_pubkey(&request.wallet).map_err(|error| {
         ApiError::new(StatusCode::BAD_REQUEST, "invalid_wallet", error.to_string())
     })?;
+    let player = decode_pubkey(&request.player).map_err(|error| {
+        ApiError::new(StatusCode::BAD_REQUEST, "invalid_player", error.to_string())
+    })?;
     let endpoint_id = rpc.endpoint_id().map_err(rpc_unavailable)?;
     let min_context_slot = rpc.finalized_slot().await.map_err(rpc_bad_gateway)?;
     let now = unix_time()?;
@@ -440,15 +446,17 @@ async fn post_challenge<R: SolanaHoldingRpc>(
         // against other node handlers. No network await occurs under this lock.
         let _node_write = state.write().await;
         let mut gate = Gate::with_store(RedbAdmissionStore::new(store));
-        gate.issue(&config, wallet, nonce, min_context_slot, now)
+        gate.issue(&config, wallet, player, nonce, min_context_slot, now)
             .map_err(map_gate_error)?
     };
     Ok((
         StatusCode::CREATED,
         Json(ChallengeResponse {
-            format: "poa-dregg-holding-challenge-v1",
+            format: "poa-dregg-holding-challenge-v2",
             challenge_id: encode_id(&challenge.id()),
             wallet: encode_pubkey(&challenge.wallet()),
+            player: encode_pubkey(&challenge.player()),
+            player_cell: encode_id(&challenge.player_cell()),
             signing_message_base64: base64::engine::general_purpose::STANDARD
                 .encode(challenge.signing_message()),
             mint: DREGG_MINT_BASE58,
@@ -491,7 +499,7 @@ async fn post_verify<R: SolanaHoldingRpc>(
             )
         })?;
     let binding = dregg_governance::holding_weight::OwnerBinding {
-        voter: challenge.voter(),
+        voter: challenge.player(),
         sig: signature,
     };
     Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)))
@@ -632,10 +640,12 @@ fn decode_signature(text: &str) -> Result<[u8; 64], ApiError> {
 
 fn capability_response(capability: &HoldingCapability) -> CapabilityResponse {
     CapabilityResponse {
-        format: "poa-dregg-holding-capability-v1",
+        format: "poa-dregg-holding-capability-v2",
         receipt_id: encode_id(&capability.receipt_id()),
         trust: trust_name(capability.trust()),
         wallet: encode_pubkey(&capability.wallet()),
+        player: encode_pubkey(&capability.player()),
+        player_cell: encode_id(&capability.player_cell()),
         mint: encode_pubkey(&capability.mint()),
         snapshot_slot: capability.snapshot_slot(),
         issued_at: capability.issued_at(),
@@ -647,14 +657,10 @@ fn capability_response(capability: &HoldingCapability) -> CapabilityResponse {
 fn status_response(state: &'static str, capability: &HoldingCapability) -> HoldingStatusResponse {
     let response = capability_response(capability);
     HoldingStatusResponse {
-        format: "poa-dregg-holding-status-v1",
+        format: "poa-dregg-holding-status-v2",
         receipt_id: response.receipt_id,
         state,
         trust: response.trust,
-        wallet: response.wallet,
-        mint: response.mint,
-        snapshot_slot: response.snapshot_slot,
-        issued_at: response.issued_at,
         expires_at: response.expires_at,
         governance_weight_bearing: response.governance_weight_bearing,
     }
@@ -691,11 +697,13 @@ fn map_gate_error(error: GateError) -> ApiError {
         | GateError::ChallengeReplay
         | GateError::CapabilityReplay
         | GateError::CapabilityIdCollision => (StatusCode::CONFLICT, "replay"),
+        GateError::AdmissionCapacity => (StatusCode::SERVICE_UNAVAILABLE, "admission_full"),
         GateError::BadWalletSignature => (StatusCode::FORBIDDEN, "bad_wallet_signature"),
         GateError::InsufficientBalance => (StatusCode::FORBIDDEN, "insufficient_dregg"),
-        GateError::BadBase58 | GateError::BadPubkeyLength | GateError::WeakNonce => {
-            (StatusCode::BAD_REQUEST, "invalid_request")
-        }
+        GateError::BadBase58
+        | GateError::BadPubkeyLength
+        | GateError::WeakNonce
+        | GateError::InvalidPlayer => (StatusCode::BAD_REQUEST, "invalid_request"),
         GateError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "admission_store_failed"),
         GateError::InvalidConfiguration | GateError::TimeOverflow => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -741,34 +749,6 @@ impl DurableAdmissionState {
             .retain(|_, capability| capability.expires_at() >= now);
         self.challenges
             .retain(|_, challenge| challenge.expires_at() >= now);
-        self.compact_indexes();
-    }
-
-    fn enforce_live_limits(
-        &mut self,
-        protected_challenge: Option<Bytes32>,
-        protected_capability: Option<Bytes32>,
-    ) {
-        while self.challenges.len() > MAX_LIVE_CHALLENGES {
-            let oldest = self
-                .challenges
-                .iter()
-                .filter(|(id, _)| Some(**id) != protected_challenge)
-                .min_by_key(|(id, challenge)| (challenge.issued_at(), **id))
-                .map(|(id, _)| *id)
-                .expect("nonempty challenge map");
-            self.challenges.remove(&oldest);
-        }
-        while self.capabilities.len() > MAX_LIVE_CAPABILITIES {
-            let oldest = self
-                .capabilities
-                .iter()
-                .filter(|(id, _)| Some(**id) != protected_capability)
-                .min_by_key(|(id, capability)| (capability.issued_at(), **id))
-                .map(|(id, _)| *id)
-                .expect("nonempty capability map");
-            self.capabilities.remove(&oldest);
-        }
         self.compact_indexes();
     }
 
@@ -855,16 +835,20 @@ impl AdmissionStore for RedbAdmissionStore {
         &mut self,
         nonce: Bytes32,
         challenge: Challenge,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<ChallengeIssue, Self::Error> {
         self.mutate(|state| {
             state.prune_expired(challenge.issued_at());
+            // Live issued authority is never evicted by unrelated traffic.
+            // At capacity the newcomer loses and can retry after expiry.
+            if state.challenges.len() >= MAX_LIVE_CHALLENGES {
+                return ChallengeIssue::CapacityExceeded;
+            }
             if !state.used_nonces.insert(nonce) || state.challenges.contains_key(&challenge.id()) {
-                return false;
+                return ChallengeIssue::Replay;
             }
             let challenge_id = challenge.id();
             state.challenges.insert(challenge_id, challenge);
-            state.enforce_live_limits(Some(challenge_id), None);
-            true
+            ChallengeIssue::Issued
         })
     }
 
@@ -892,13 +876,15 @@ impl AdmissionStore for RedbAdmissionStore {
             if capability.challenge_id() != challenge_id {
                 return CapabilityIssue::ChallengeMismatch;
             }
+            if state.capabilities.len() >= MAX_LIVE_CAPABILITIES {
+                return CapabilityIssue::CapacityExceeded;
+            }
             let id = capability.receipt_id();
             if state.capabilities.contains_key(&id) {
                 return CapabilityIssue::CapabilityCollision;
             }
             state.spent_challenges.insert(challenge_id);
             state.capabilities.insert(id, capability);
-            state.enforce_live_limits(None, Some(id));
             CapabilityIssue::Issued
         })
     }
@@ -908,20 +894,19 @@ impl AdmissionStore for RedbAdmissionStore {
     }
 
     fn capability_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error> {
+        if self
+            .store
+            .load_poa_holding_consumption(id)
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Ok(true);
+        }
         Ok(self.load()?.spent_capabilities.contains(id))
     }
 
-    fn consume_capability_once(&mut self, id: Bytes32) -> Result<CapabilityUse, Self::Error> {
-        self.mutate(|state| {
-            if state.spent_capabilities.contains(&id) {
-                return CapabilityUse::Replay;
-            }
-            if !state.capabilities.contains_key(&id) {
-                return CapabilityUse::Unknown;
-            }
-            state.spent_capabilities.insert(id);
-            CapabilityUse::Consumed
-        })
+    fn consume_capability_once(&mut self, _id: Bytes32) -> Result<CapabilityUse, Self::Error> {
+        Err("PoA holding capabilities may only be consumed by finalized-turn weld".to_owned())
     }
 }
 
@@ -1046,6 +1031,9 @@ mod tests {
     async fn challenge_verify_status_uses_server_rpc_and_survives_reopen() {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
+        let player = SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes();
         let rpc = FakeRpc {
             endpoint_id: [8; 32],
             wallet,
@@ -1058,7 +1046,10 @@ mod tests {
             app.clone(),
             "POST",
             "/api/poa/holding/challenge",
-            serde_json::json!({ "wallet": encode_pubkey(&wallet) }),
+            serde_json::json!({
+                "wallet": encode_pubkey(&wallet),
+                "player": encode_pubkey(&player),
+            }),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{challenge}");
@@ -1069,10 +1060,10 @@ mod tests {
                     .expect("message"),
             )
             .expect("message base64");
-        let domain = dregg_governance::holding_weight::BIND_DOMAIN;
-        assert_eq!(message.len(), domain.len() + 64);
-        assert_eq!(&message[..domain.len()], domain);
-        assert_eq!(&message[domain.len()..domain.len() + 32], &wallet);
+        assert!(
+            message.len() > 32 * 8,
+            "challenge must commit its full context"
+        );
         let signature = key.sign(&message).to_bytes();
         let (status, capability) = json_request(
             app,
@@ -1087,6 +1078,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{capability}");
         assert!(capability.get("raw_balance").is_none());
         assert_eq!(capability["governance_weight_bearing"], false);
+        assert_eq!(capability["player"], encode_pubkey(&player));
         drop(state);
 
         let reopened = NodeState::new(dir.path(), vec![]).expect("reopen");
@@ -1127,7 +1119,20 @@ mod tests {
             .to_bytes();
         let status: serde_json::Value = serde_json::from_slice(&bytes).expect("status json");
         assert_eq!(status["state"], "active");
-        assert!(status.get("raw_balance").is_none());
+        for private_field in [
+            "raw_balance",
+            "wallet",
+            "player",
+            "player_cell",
+            "mint",
+            "snapshot_slot",
+            "issued_at",
+        ] {
+            assert!(
+                status.get(private_field).is_none(),
+                "public status leaked {private_field}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1140,9 +1145,12 @@ mod tests {
         let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
+        let player = SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes();
         let old_challenge = {
             let mut gate = Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)));
-            gate.issue(&config, wallet, [9; 32], 1000, 10)
+            gate.issue(&config, wallet, player, [9; 32], 1000, 10)
                 .expect("old challenge")
         };
         let snapshot = FakeRpc {
@@ -1157,7 +1165,7 @@ mod tests {
         let observation =
             validate_rpc_snapshot(&config, &old_challenge, &snapshot).expect("observation");
         let binding = dregg_governance::holding_weight::OwnerBinding {
-            voter: old_challenge.voter(),
+            voter: old_challenge.player(),
             sig: key.sign(&old_challenge.signing_message()).to_bytes(),
         };
         let old_capability = {
@@ -1174,7 +1182,7 @@ mod tests {
 
         let current_challenge = {
             let mut gate = Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)));
-            gate.issue(&config, wallet, [10; 32], 2000, 1000)
+            gate.issue(&config, wallet, player, [10; 32], 2000, 1000)
                 .expect("current challenge")
         };
         let durable = RedbAdmissionStore::new(store)
@@ -1249,6 +1257,9 @@ mod tests {
     async fn bad_wallet_signature_is_refused_before_holding_rpc() {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
+        let player = SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes();
         let rpc = NoSnapshotRpc {
             endpoint_id: [8; 32],
             slot: 1000,
@@ -1259,7 +1270,10 @@ mod tests {
             app.clone(),
             "POST",
             "/api/poa/holding/challenge",
-            serde_json::json!({ "wallet": encode_pubkey(&wallet) }),
+            serde_json::json!({
+                "wallet": encode_pubkey(&wallet),
+                "player": encode_pubkey(&player),
+            }),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{challenge}");
@@ -1296,8 +1310,11 @@ mod tests {
     fn rpc_decoder_preserves_raw_token_2022_evidence_for_the_gate() {
         let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
         let wallet = SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes();
+        let player = SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes();
         let challenge = Gate::new()
-            .issue(&config, wallet, [9; 32], 1000, 10)
+            .issue(&config, wallet, player, [9; 32], 1000, 10)
             .expect("challenge");
         let mut account_data = vec![0u8; 165];
         account_data[..32].copy_from_slice(&config.mint);

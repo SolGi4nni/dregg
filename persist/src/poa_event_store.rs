@@ -297,6 +297,12 @@ impl PreparedPoaEventEnvelopeV1 {
     pub const fn semantic_predecessor(&self) -> [u8; 32] {
         self.semantic_predecessor
     }
+    pub const fn event_digest(&self) -> [u8; 32] {
+        self.event_digest
+    }
+    pub fn stream_digest(&self) -> [u8; 32] {
+        stream_digest(&self.aggregate, &self.schema_version)
+    }
 
     fn validate(&self) -> Result<()> {
         self.aggregate.validate()?;

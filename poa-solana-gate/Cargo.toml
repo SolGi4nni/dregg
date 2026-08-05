@@ -10,9 +10,11 @@ description = "Isolated Path of Angels server proof-of-DREGG-holding admission b
 
 [dependencies]
 bs58 = "0.5"
+blake3 = "1"
 dregg-bridge = { path = "../bridge" }
 dregg-governance = { path = "../dregg-governance" }
 dregg-pay = { path = "../dregg-pay" }
+dregg-types = { path = "../types" }
 ed25519-dalek = { version = "2", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"

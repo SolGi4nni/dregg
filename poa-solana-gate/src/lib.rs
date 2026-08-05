@@ -1,9 +1,11 @@
 //! Path of Angels server admission for Solana `$DREGG` holders.
 //!
 //! This crate is an adapter, not a second Solana verifier. Wallet control uses
-//! Dregg governance's existing [`binding_message`] / [`OwnerBinding`] scheme.
-//! Raw RPC account decoding uses `dregg-bridge`; the live account shape is
-//! `dregg-pay`'s watcher seam. Consensus upgrade uses `solana_feed` unchanged.
+//! an exact PoA challenge transcript and the governance [`OwnerBinding`] wire
+//! solely as a fixed-size `(player, signature)` carrier; it does not reuse a
+//! broader governance signature. Raw RPC decoding uses `dregg-bridge`; the
+//! live account shape is `dregg-pay`'s watcher seam. Consensus upgrade uses
+//! `solana_feed` unchanged.
 //!
 //! A [`TrustTier::BetaRpcAttested`] capability is intentionally weaker than a
 //! consensus holding and has no conversion into governance weight. Existing
@@ -16,8 +18,9 @@ use dregg_bridge::solana_holdings::{
     HoldingAssetPolicy, HoldingProofError, ProvenHolding, decode_token_account,
 };
 use dregg_bridge::solana_provenance::WeakSubjectivityAnchor;
-use dregg_governance::holding_weight::{OwnerBinding, binding_message, verify_binding};
+use dregg_governance::holding_weight::OwnerBinding;
 use dregg_pay::watcher::FetchedAccount;
+use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -26,8 +29,9 @@ pub const DREGG_MINT_BASE58: &str = "XkeTXo1125vz5H9svJpGiw4JvLbN8VmMu9cmMvspump
 /// mainnet `getAccountInfo`), not the legacy SPL Token program.
 pub const DREGG_TOKEN_PROGRAM_BASE58: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 pub const MAINNET_GENESIS_BASE58: &str = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
-const CHALLENGE_DOMAIN: &[u8] = b"path-of-angels/dregg-holding/challenge/v1";
-const RECEIPT_DOMAIN: &[u8] = b"path-of-angels/dregg-holding/receipt/v1";
+const CHALLENGE_DOMAIN: &[u8] = b"path-of-angels/dregg-holding/challenge/v2";
+const WALLET_CONSENT_DOMAIN: &[u8] = b"path-of-angels/dregg-holding/wallet-consent/v2";
+const RECEIPT_DOMAIN: &[u8] = b"path-of-angels/dregg-holding/receipt/v2";
 
 pub type Bytes32 = [u8; 32];
 
@@ -85,7 +89,8 @@ impl GateConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Challenge {
     id: Bytes32,
-    voter: Bytes32,
+    player: Bytes32,
+    player_cell: Bytes32,
     wallet: Bytes32,
     nonce: Bytes32,
     federation_id: Bytes32,
@@ -107,8 +112,13 @@ impl Challenge {
     pub fn id(&self) -> Bytes32 {
         self.id
     }
-    pub fn voter(&self) -> Bytes32 {
-        self.voter
+    /// Exact Dregg signing public key this wallet chose to sponsor.
+    pub fn player(&self) -> Bytes32 {
+        self.player
+    }
+    /// Canonical one-player cell derived from [`Self::player`].
+    pub fn player_cell(&self) -> Bytes32 {
+        self.player_cell
     }
     pub fn wallet(&self) -> Bytes32 {
         self.wallet
@@ -125,9 +135,11 @@ impl Challenge {
     pub fn min_context_slot(&self) -> u64 {
         self.min_context_slot
     }
-    /// Exact wallet `signMessage` bytes, reusing Dregg's owner→voter binding.
+    /// Exact wallet `signMessage` bytes. Unlike the reusable governance owner
+    /// binding, this PoA-specific consent commits the complete issued challenge
+    /// (deployment, federation, player, mint, slot floor, nonce, and expiry).
     pub fn signing_message(&self) -> Vec<u8> {
-        binding_message(&self.wallet, &self.voter)
+        challenge_signing_message(self)
     }
 }
 
@@ -304,12 +316,13 @@ pub struct HoldingCapability {
     challenge_id: Bytes32,
     trust: TrustTier,
     wallet: Bytes32,
+    player: Bytes32,
+    player_cell: Bytes32,
     federation_id: Bytes32,
     origin: String,
     domain: String,
     cluster: String,
     mint: Bytes32,
-    raw_balance: u64,
     snapshot_slot: u64,
     issued_at: u64,
     expires_at: u64,
@@ -328,6 +341,14 @@ impl HoldingCapability {
     pub fn wallet(&self) -> Bytes32 {
         self.wallet
     }
+    /// Exact Dregg signing public key bound by the Solana wallet signature.
+    pub fn player(&self) -> Bytes32 {
+        self.player
+    }
+    /// Canonical Dregg player cell for [`Self::player`].
+    pub fn player_cell(&self) -> Bytes32 {
+        self.player_cell
+    }
     pub fn federation_id(&self) -> Bytes32 {
         self.federation_id
     }
@@ -342,9 +363,6 @@ impl HoldingCapability {
     }
     pub fn mint(&self) -> Bytes32 {
         self.mint
-    }
-    pub fn raw_balance(&self) -> u64 {
-        self.raw_balance
     }
     pub fn snapshot_slot(&self) -> u64 {
         self.snapshot_slot
@@ -367,6 +385,13 @@ pub enum CapabilityUse {
     Replay,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChallengeIssue {
+    Issued,
+    Replay,
+    CapacityExceeded,
+}
+
 /// Result of the single durable transition that spends a challenge and records
 /// the capability it authorizes. Keeping this one store operation prevents a
 /// crash from burning a valid challenge between two otherwise-atomic writes.
@@ -377,6 +402,7 @@ pub enum CapabilityIssue {
     ChallengeReplay,
     ChallengeMismatch,
     CapabilityCollision,
+    CapacityExceeded,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -397,7 +423,7 @@ pub trait AdmissionStore {
         &mut self,
         nonce: Bytes32,
         challenge: Challenge,
-    ) -> Result<bool, Self::Error>;
+    ) -> Result<ChallengeIssue, Self::Error>;
     fn challenge(&self, id: &Bytes32) -> Result<Option<Challenge>, Self::Error>;
     fn challenge_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error>;
     fn issue_capability_once(
@@ -425,13 +451,13 @@ impl AdmissionStore for InMemoryAdmissionStore {
         &mut self,
         nonce: Bytes32,
         challenge: Challenge,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<ChallengeIssue, Self::Error> {
         if self.used_nonces.contains(&nonce) || self.issued.contains_key(&challenge.id) {
-            return Ok(false);
+            return Ok(ChallengeIssue::Replay);
         }
         self.used_nonces.insert(nonce);
         self.issued.insert(challenge.id, challenge);
-        Ok(true)
+        Ok(ChallengeIssue::Issued)
     }
     fn challenge(&self, id: &Bytes32) -> Result<Option<Challenge>, Self::Error> {
         Ok(self.issued.get(id).cloned())
@@ -577,7 +603,15 @@ impl<S: AdmissionStore> Gate<S> {
         if now < presented.issued_at || now > presented.expires_at {
             return Err(GateError::ChallengeExpired);
         }
-        if binding.voter != presented.voter || !verify_binding(&presented.wallet, binding) {
+        let wallet_key = VerifyingKey::from_bytes(&presented.wallet)
+            .map_err(|_| GateError::BadWalletSignature)?;
+        let wallet_signature = ed25519_dalek::Signature::from_bytes(&binding.sig);
+        if presented.player_cell != canonical_player_cell(&presented.player)
+            || binding.voter != presented.player
+            || wallet_key
+                .verify_strict(&presented.signing_message(), &wallet_signature)
+                .is_err()
+        {
             return Err(GateError::BadWalletSignature);
         }
         Ok(())
@@ -587,6 +621,7 @@ impl<S: AdmissionStore> Gate<S> {
         &mut self,
         config: &GateConfig,
         wallet: Bytes32,
+        player: Bytes32,
         nonce: Bytes32,
         min_context_slot: u64,
         now: u64,
@@ -598,16 +633,28 @@ impl<S: AdmissionStore> Gate<S> {
         let expires_at = now
             .checked_add(config.challenge_ttl_secs)
             .ok_or(GateError::TimeOverflow)?;
-        let transcript =
-            challenge_transcript(config, &wallet, &nonce, min_context_slot, now, expires_at);
-        let voter: Bytes32 = Sha256::digest(&transcript).into();
+        if player == [0; 32] || VerifyingKey::from_bytes(&player).is_err() {
+            return Err(GateError::InvalidPlayer);
+        }
+        let player_cell = canonical_player_cell(&player);
+        let transcript = challenge_transcript(
+            config,
+            &wallet,
+            &player,
+            &player_cell,
+            &nonce,
+            min_context_slot,
+            now,
+            expires_at,
+        );
         let mut id_hasher = Sha256::new();
         id_hasher.update(CHALLENGE_DOMAIN);
         id_hasher.update(&transcript);
         let id: Bytes32 = id_hasher.finalize().into();
         let challenge = Challenge {
             id,
-            voter,
+            player,
+            player_cell,
             wallet,
             nonce,
             federation_id: config.federation_id,
@@ -624,12 +671,14 @@ impl<S: AdmissionStore> Gate<S> {
             expires_at,
             capability_ttl_secs: config.capability_ttl_secs,
         };
-        if !self
+        match self
             .store
             .insert_challenge_once(nonce, challenge.clone())
             .map_err(|e| GateError::Store(e.to_string()))?
         {
-            return Err(GateError::NonceAlreadyIssued);
+            ChallengeIssue::Issued => {}
+            ChallengeIssue::Replay => return Err(GateError::NonceAlreadyIssued),
+            ChallengeIssue::CapacityExceeded => return Err(GateError::AdmissionCapacity),
         }
         Ok(challenge)
     }
@@ -660,12 +709,13 @@ impl<S: AdmissionStore> Gate<S> {
             challenge_id: presented.id,
             trust: TrustTier::BetaRpcAttested,
             wallet: presented.wallet,
+            player: presented.player,
+            player_cell: presented.player_cell,
             federation_id: presented.federation_id,
             origin: presented.origin.clone(),
             domain: presented.domain.clone(),
             cluster: presented.cluster.clone(),
             mint: presented.mint,
-            raw_balance: observation.amount,
             snapshot_slot: observation.slot,
             issued_at: now,
             expires_at,
@@ -682,6 +732,7 @@ impl<S: AdmissionStore> Gate<S> {
             CapabilityIssue::CapabilityCollision => {
                 return Err(GateError::CapabilityIdCollision);
             }
+            CapabilityIssue::CapacityExceeded => return Err(GateError::AdmissionCapacity),
         }
         Ok(capability)
     }
@@ -720,6 +771,8 @@ impl<S: AdmissionStore> Gate<S> {
 fn challenge_transcript(
     c: &GateConfig,
     wallet: &Bytes32,
+    player: &Bytes32,
+    player_cell: &Bytes32,
     nonce: &Bytes32,
     min_slot: u64,
     issued: u64,
@@ -736,6 +789,8 @@ fn challenge_transcript(
     put(&mut out, &c.mint);
     put(&mut out, &c.token_program);
     put(&mut out, wallet);
+    put(&mut out, player);
+    put(&mut out, player_cell);
     put(&mut out, nonce);
     put(&mut out, &c.minimum_raw_balance.to_be_bytes());
     put(&mut out, &min_slot.to_be_bytes());
@@ -746,12 +801,38 @@ fn challenge_transcript(
     out
 }
 
+fn challenge_signing_message(challenge: &Challenge) -> Vec<u8> {
+    let mut out = Vec::new();
+    put(&mut out, WALLET_CONSENT_DOMAIN);
+    put(&mut out, &challenge.id);
+    put(&mut out, &challenge.federation_id);
+    put(&mut out, challenge.origin.as_bytes());
+    put(&mut out, challenge.domain.as_bytes());
+    put(&mut out, challenge.cluster.as_bytes());
+    put(&mut out, &challenge.genesis_hash);
+    put(&mut out, &challenge.rpc_endpoint_id);
+    put(&mut out, &challenge.mint);
+    put(&mut out, &challenge.token_program);
+    put(&mut out, &challenge.wallet);
+    put(&mut out, &challenge.player);
+    put(&mut out, &challenge.player_cell);
+    put(&mut out, &challenge.nonce);
+    put(&mut out, &challenge.minimum_raw_balance.to_be_bytes());
+    put(&mut out, &challenge.min_context_slot.to_be_bytes());
+    put(&mut out, &challenge.issued_at.to_be_bytes());
+    put(&mut out, &challenge.expires_at.to_be_bytes());
+    put(&mut out, &challenge.capability_ttl_secs.to_be_bytes());
+    out
+}
+
 fn receipt_id(c: &Challenge, o: &RpcBetaObservation, issued: u64, expires: u64) -> Bytes32 {
     let mut h = Sha256::new();
     h.update(RECEIPT_DOMAIN);
     h.update(c.id);
     h.update(o.endpoint_id);
     h.update(o.wallet);
+    h.update(c.player);
+    h.update(c.player_cell);
     h.update(o.mint);
     h.update(o.amount.to_be_bytes());
     h.update(o.slot.to_be_bytes());
@@ -761,6 +842,15 @@ fn receipt_id(c: &Challenge, o: &RpcBetaObservation, issued: u64, expires: u64) 
     h.update(issued.to_be_bytes());
     h.update(expires.to_be_bytes());
     h.finalize().into()
+}
+
+/// Exact player-cell derivation shared with the SDK's Galley carrier.
+///
+/// Keeping this in the gate makes a persisted capability self-authenticating:
+/// a caller cannot ask a wallet to bind one Dregg signer while later naming a
+/// different player cell.
+pub fn canonical_player_cell(player: &Bytes32) -> Bytes32 {
+    dregg_types::CellId::derive_raw(player, blake3::hash(b"default").as_bytes()).0
 }
 
 fn put(out: &mut Vec<u8>, bytes: &[u8]) {
@@ -789,6 +879,8 @@ pub enum GateError {
     BadPubkeyLength,
     #[error("nonce must be a nonzero server CSPRNG value")]
     WeakNonce,
+    #[error("Dregg player public key must be nonzero")]
+    InvalidPlayer,
     #[error("nonce was already issued")]
     NonceAlreadyIssued,
     #[error("time arithmetic overflow")]
@@ -837,6 +929,8 @@ pub enum GateError {
     CapabilityExpired,
     #[error("capability receipt id collided with an issued receipt")]
     CapabilityIdCollision,
+    #[error("holding admission capacity is temporarily exhausted")]
+    AdmissionCapacity,
     #[error("capability already consumed")]
     CapabilityReplay,
     #[error("capability is not backed by a consumed challenge")]
@@ -859,7 +953,7 @@ pub enum ConsensusSourceError {
 mod tests {
     use super::*;
     use dregg_bridge::solana_trustless::LockProofTrust;
-    use dregg_governance::holding_weight::{GrantError, grant_weight};
+    use dregg_governance::holding_weight::{GrantError, binding_message, grant_weight};
     use ed25519_dalek::{Signer as _, SigningKey};
     use std::cell::RefCell;
 
@@ -920,9 +1014,15 @@ mod tests {
     }
     fn binding(key: &SigningKey, challenge: &Challenge) -> OwnerBinding {
         OwnerBinding {
-            voter: challenge.voter(),
+            voter: challenge.player(),
             sig: key.sign(&challenge.signing_message()).to_bytes(),
         }
+    }
+
+    fn player() -> Bytes32 {
+        SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes()
     }
 
     #[test]
@@ -944,20 +1044,80 @@ mod tests {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
         let mut gate = Gate::new();
-        let challenge = gate.issue(&c, wallet, [9; 32], 1000, 50).unwrap();
+        let challenge = gate.issue(&c, wallet, player(), [9; 32], 1000, 50).unwrap();
         let observed =
             validate_rpc_snapshot(&c, &challenge, &snapshot(&c, &challenge, wallet, 17)).unwrap();
         let cap = gate
             .admit_beta(&c, &challenge, &binding(&key, &challenge), observed, 51)
             .unwrap();
         assert_eq!(cap.trust(), TrustTier::BetaRpcAttested);
-        assert_eq!(cap.raw_balance(), 17);
+        assert_eq!(cap.player(), player());
+        assert_eq!(cap.player_cell(), canonical_player_cell(&player()));
         assert!(!cap.is_governance_weight_bearing());
         let mut forged = cap.clone();
-        forged.raw_balance += 1;
+        forged.snapshot_slot += 1;
         assert_eq!(gate.consume(&forged, 52), Err(GateError::ForgedCapability));
         assert_eq!(gate.consume(&cap, 52), Ok(()));
         assert_eq!(gate.consume(&cap, 53), Err(GateError::CapabilityReplay));
+    }
+
+    #[test]
+    fn wallet_binding_commits_the_exact_dregg_player_and_canonical_cell() {
+        let c = config();
+        let wallet_key = SigningKey::from_bytes(&[3; 32]);
+        let wallet = wallet_key.verifying_key().to_bytes();
+        let intended_player = player();
+        let attacker_player = SigningKey::from_bytes(&[0xA7; 32])
+            .verifying_key()
+            .to_bytes();
+        let mut gate = Gate::new();
+        let challenge = gate
+            .issue(&c, wallet, intended_player, [9; 32], 1000, 50)
+            .unwrap();
+
+        assert_eq!(challenge.player(), intended_player);
+        assert_eq!(
+            challenge.player_cell(),
+            canonical_player_cell(&intended_player)
+        );
+        let observation =
+            validate_rpc_snapshot(&c, &challenge, &snapshot(&c, &challenge, wallet, 1)).unwrap();
+        let wrong_player_binding = OwnerBinding {
+            voter: attacker_player,
+            sig: wallet_key.sign(&challenge.signing_message()).to_bytes(),
+        };
+        assert_eq!(
+            gate.admit_beta(&c, &challenge, &wrong_player_binding, observation, 51,),
+            Err(GateError::BadWalletSignature)
+        );
+    }
+
+    #[test]
+    fn wallet_consent_signature_cannot_cross_challenge_nonce_or_expiry() {
+        let c = config();
+        let wallet_key = SigningKey::from_bytes(&[3; 32]);
+        let wallet = wallet_key.verifying_key().to_bytes();
+        let mut gate = Gate::new();
+        let first = gate.issue(&c, wallet, player(), [9; 32], 1000, 50).unwrap();
+        let stale_signature = wallet_key.sign(&first.signing_message()).to_bytes();
+        let second = gate
+            .issue(&c, wallet, player(), [10; 32], 1000, 51)
+            .unwrap();
+        let observation =
+            validate_rpc_snapshot(&c, &second, &snapshot(&c, &second, wallet, 1)).unwrap();
+        assert_eq!(
+            gate.admit_beta(
+                &c,
+                &second,
+                &OwnerBinding {
+                    voter: player(),
+                    sig: stale_signature,
+                },
+                observation,
+                52,
+            ),
+            Err(GateError::BadWalletSignature)
+        );
     }
 
     #[test]
@@ -966,9 +1126,9 @@ mod tests {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
         let mut gate = Gate::new();
-        let challenge = gate.issue(&c, wallet, [9; 32], 1000, 50).unwrap();
+        let challenge = gate.issue(&c, wallet, player(), [9; 32], 1000, 50).unwrap();
         assert_eq!(
-            gate.issue(&c, wallet, [9; 32], 1000, 50),
+            gate.issue(&c, wallet, player(), [9; 32], 1000, 50),
             Err(GateError::NonceAlreadyIssued)
         );
         let observed =
@@ -1014,7 +1174,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
         let mut gate = Gate::new();
-        let challenge = gate.issue(&c, wallet, [9; 32], 1000, 50).unwrap();
+        let challenge = gate.issue(&c, wallet, player(), [9; 32], 1000, 50).unwrap();
         let mut s = snapshot(&c, &challenge, wallet, u64::MAX);
         s.endpoint_id = [99; 32];
         assert_eq!(
@@ -1082,7 +1242,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
         let mut gate = Gate::new();
-        let challenge = gate.issue(&c, wallet, [9; 32], 1000, 50).unwrap();
+        let challenge = gate.issue(&c, wallet, player(), [9; 32], 1000, 50).unwrap();
         let mut s = snapshot(&c, &challenge, wallet, 1);
         s.accounts.clear();
         assert_eq!(
@@ -1097,7 +1257,9 @@ mod tests {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
         let mut gate = Gate::new();
-        let challenge = gate.issue(&c, wallet, [9; 32], 12_345, 50).unwrap();
+        let challenge = gate
+            .issue(&c, wallet, player(), [9; 32], 12_345, 50)
+            .unwrap();
         let source = RecordingSource {
             response: snapshot(&c, &challenge, wallet, 7),
             seen: RefCell::new(Vec::new()),
@@ -1124,7 +1286,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
         let mut gate = Gate::new();
-        let challenge = gate.issue(&c, wallet, [9; 32], 1000, 50).unwrap();
+        let challenge = gate.issue(&c, wallet, player(), [9; 32], 1000, 50).unwrap();
 
         let mut s = snapshot(&c, &challenge, wallet, 1);
         s.requested_min_context_slot -= 1;
@@ -1171,7 +1333,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
         let mut gate = Gate::new();
-        let first = gate.issue(&c, wallet, [9; 32], 1000, 50).unwrap();
+        let first = gate.issue(&c, wallet, player(), [9; 32], 1000, 50).unwrap();
         let observed = validate_rpc_snapshot(&c, &first, &snapshot(&c, &first, wallet, 1)).unwrap();
 
         let mut mutated = first.clone();
@@ -1181,7 +1343,9 @@ mod tests {
             Err(GateError::ChallengeMutation)
         );
 
-        let second = gate.issue(&c, wallet, [10; 32], 2000, 51).unwrap();
+        let second = gate
+            .issue(&c, wallet, player(), [10; 32], 2000, 51)
+            .unwrap();
         assert_eq!(
             gate.admit_beta(&c, &second, &binding(&key, &second), observed, 52),
             Err(GateError::ObservationMismatch)

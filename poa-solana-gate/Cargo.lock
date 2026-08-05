@@ -3468,6 +3468,7 @@ dependencies = [
  "dregg-governance",
  "dregg-pay",
  "ed25519-dalek",
+ "serde",
  "sha2 0.10.9",
  "thiserror 2.0.19",
 ]
