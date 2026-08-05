@@ -66,6 +66,7 @@ import Dregg2.Circuit.Emit.PastaMsmWindowed
 import Dregg2.Circuit.Emit.PastaMsmSliced
 import Dregg2.Circuit.Emit.PastaFieldSound
 import Dregg2.Circuit.Emit.PastaAddSubSound
+import Dregg2.Circuit.Emit.PastaCurveSound
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
 import Dregg2.Circuit.Emit.MinaPhase2Chain
@@ -507,6 +508,14 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.PastaAddSubSound.fqAddSoundDesc)
   , ("pasta-fqsub-sound.json",
       Dregg2.Circuit.Emit.PastaAddSubSound.fqSubSoundDesc)
+    -- ⛑ 2026-08-05 — THE SOUND CURVE ROW, on both curves. `PastaCurveSound` composes the
+    -- six descriptors above into one RCB complete addition through the `SoundCore` bridge, so
+    -- a curve-op row is emitted by the compiler rather than by a `VmConstraint2` list. Routed
+    -- on arrival, not after: the six above spent two days unrouted and were named by hand.
+  , ("pasta-pallas-complete-add-sound.json",
+      Dregg2.Circuit.Emit.PastaCurveSound.pallasCompleteAddSoundDesc)
+  , ("pasta-vesta-complete-add-sound.json",
+      Dregg2.Circuit.Emit.PastaCurveSound.vestaCompleteAddSoundDesc)
   ]
 
 /- The routing table covers the checked-in directory exactly. A bare count is a
@@ -536,7 +545,7 @@ Both directions are gated outside Lean:
 -- `by-name/` through one-off drivers instead of this table. 102 = 91 real rows + those eleven,
 -- and it is now the DIRECTORY's count, not an increment: `--verify-by-name-routing` reconciles
 -- both directions, so the next drift is a named red rather than eleven private emitters.
-theorem byNameDescriptors_length : byNameDescriptors.length = 102 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 104 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
