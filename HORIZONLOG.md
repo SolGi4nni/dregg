@@ -1,5 +1,59 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (PHASE-2 AS A TREE) — **the 46-permutation residual was never an algebra and is no longer 45 witnesses either**: the whole transcript folds, and a fold node is CHEAPER than the leaf it eats
+
+`MinaBlockFqTranscript` §6.1 named it and said it was not built — *"a chain of 46 instances welded
+by input/output pin equality is the shape that closes it, and it is not built here."* Built:
+`Dregg2.Circuit.Emit.MinaPhase2Chain` + `circuit-prove/src/mina_phase2_chain_leaf.rs`, 8/8 green in
+release.
+
+⛑ **THE DEFECT THAT MADE THE OLD DESCRIPTOR UNCHAINABLE, and nobody had named it.** `linkPins`
+pinned the three incoming lanes, the absorbed element, the zero slot, and the **two squeezed**
+lanes. A Poseidon state has **three**, and the third (`allocAt 55 2 = 0`) was never exposed — so a
+chain welded on the deployed descriptor would have handed on a third of its state as a **free
+prover scalar**. `chainPins` pins eight blocks (`in(3) ++ out(3) ++ absorbed(2)`, 256 PIs), `in ++
+out` contiguous so a leaf re-exposes the continuity claim as one slice. Same `programAir qLimb
+absorbProg`, same 2048-row ROM, same 55x3 `fq_kimchi` constants — asserted row-for-row.
+
+⛑ **THE COST WAS NEVER A COST OF THE CHAIN.** Two numbers that had been quoted as walls:
+
+| quoted | measured |
+|---|---|
+| "75 900 rows / ~207 MB" | still true — **of one instance**, which is why nobody should build one |
+| the leaf | **12.5 s** |
+| a 2-to-1 fold node | **11.3 s** — *less than the leaf*, it verifies two constant-size proofs not a 2048x469 batch |
+| **the whole 46-link tree** | **~18 min** (46 leaves + 45 folds) |
+
+The 207 MB figure had been carried forward for weeks as if it priced the closure. It priced the
+thing you get by refusing to recurse.
+
+⛑ **STATE CARRIED INSIDE THE RECURSION, NOT RE-PINNED.** `fold_chain_links` `connect`s the left
+child's 96 outgoing limbs to the right child's 96 incoming limbs, both read from each child's own
+FRI-bound public targets. And because endpoints alone say nothing about *what* was absorbed, each
+leaf commits in-circuit to its absorbed pair and each fold folds an ordered transcript digest,
+compared host-side against the real tape. Root claim: `in_state(96) || out_state(96) || acc(8)`.
+
+⛑ **BOTH POLARITIES, RELEASE, GATE NAMED.** A skipped link is refused by the fold's `connect`
+(`WitnessConflict { WitnessId(570) }`) *and the honest join still folds*, so the refusal is the join
+not the link; a forged absorbed element is refused at the leaf by the PI pin with the ROM silent; a
+forged **third** outgoing lane is refused — the tamper the 7-block descriptor could not catch.
+`RecursionVk` stable across two honest folds.
+
+⚠ **THE BRIEF SAID THE CONSUMER WAS ALREADY BUILT. IT IS NOT.** `WRAP_FS_PROVED`'s nine
+`proof_bind` lanes pin `effect_vm_descriptor2_semantic_fingerprint` of a **descriptor's JSON bytes**;
+a recursion root has no descriptor, its identity is `recursion_vk_fingerprint` of a *proof*. And
+`turn/Cargo.toml:17-25` forbids the `dregg-circuit-prove` edge **by design** ("core turn is
+recursion-free by construction — the seL4 verifier-PD floor and the wasm/zkvm card"), so
+`mina_head_verifier.rs` is structurally unable to verify a root at all: it calls
+`verify_vm_descriptor2` twice over two flat descriptors, welded only by a host-recomputed blake3 of
+the declared PI vector. Wiring the tree in needs an injected fail-closed verifier trait (absence =
+**reject**, unlike `RecursiveWitnessProducer`'s benign absence) or a verify-only leaf crate. That is
+a dependency-firewall decision, not a rename — **ember's call, and the only thing still one
+instance short.**
+
+⚠ Found in passing, not mine: `mina_head_verifier.rs:698-708` asserts `err.contains("binds exactly
+20")` while the message interpolates `MINA_LC_PI_COUNT = 29` — stale since the 08-05 20→29 PI flip.
+
 ## ⚑⚑⚑⚑ AUGUST 5 (WRAP PUBLIC INPUT) — **Mina's own kimchi verifier accepts our proof at Mina's own 40-slot layout**, and the last named gap is layout-closed
 
 This morning's measurement was `Err(IncorrectPubicInputLength(40))` at our six public words, and `Ok`
