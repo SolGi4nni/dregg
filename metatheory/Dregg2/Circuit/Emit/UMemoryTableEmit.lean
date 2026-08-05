@@ -516,7 +516,7 @@ def wrapRow : TRowEnv :=
       else if c = UM_GAP_LIMB0 then 5
       else if c = UM_IS_NULL then 1
       else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 /-- ⚑ **REFUTATION ONE, ON THE EMITTED OBJECT.** Every gate of `umemoryTable` — the emitted list, not
 a transcription — vanishes on `wrapRow`, and the claimed prior serial it carries is ABOVE `2^30`
@@ -553,7 +553,7 @@ def padNullifierDelete : TRowEnv :=
       else if c = UM_PREV_VALUE then 9
       else if c = UM_SERIAL then 1
       else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 /-- ⚑ **REFUTATION TWO, ON THE EMITTED OBJECT.** "A nullifier-domain write installing `none` is
 UNSAT" is stated flat in the deleted comment and is true only of REAL rows. The tooth
@@ -590,7 +590,7 @@ def realNullifierDelete (isNull : ℤ) : TRowEnv :=
       else if c = UM_IS_REAL then 1
       else if c = UM_IS_NULL then isNull
       else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 theorem a_real_nullifier_delete_is_refused_either_way :
     ¬ umemoryTable.RowHolds (realNullifierDelete 1) true true ∧
@@ -606,7 +606,7 @@ def honestRow : TRowEnv :=
       else if c = UM_IS_REAL then 1
       else if c = UM_IS_NULL then 1
       else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 theorem honest_row_is_accepted : umemoryTable.RowHolds honestRow true true := by decide
 
@@ -618,7 +618,7 @@ theorem an_unwitnessed_gap_is_refused :
                    else if c = UM_SERIAL then 1
                    else if c = UM_IS_REAL then 1
                    else if c = UM_IS_NULL then 1
-                   else if c = UM_GAP then 1 else 0, fun _ => 0, fun _ => 0⟩)
+                   else if c = UM_GAP then 1 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩)
         true true := by decide
 
 /-- NON-VACUITY, the FALSE pole of the READ DISCIPLINE on the `Option`'s PRESENCE component — the
@@ -630,7 +630,7 @@ theorem a_read_inventing_presence_is_refused :
                    else if c = UM_SERIAL then 1
                    else if c = UM_IS_REAL then 1
                    else if c = UM_IS_NULL then 1
-                   else if c = UM_PRESENT then 1 else 0, fun _ => 0, fun _ => 0⟩)
+                   else if c = UM_PRESENT then 1 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩)
         true true := by decide
 
 /-! ### §4d — The residuals, stated as emission facts rather than prose. -/

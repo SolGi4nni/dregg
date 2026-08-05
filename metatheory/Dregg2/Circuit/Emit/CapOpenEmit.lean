@@ -171,7 +171,7 @@ structure CapOpenRowCanon (c : CapOpenCols) (env : VmRowEnv) (n : Nat) : Prop wh
 
 /-- The envelope is NON-VACUOUS: the all-zero row satisfies it at the transfer bit (`n = 1`). -/
 theorem capOpenRowCanon_satisfiable (c : CapOpenCols) :
-    CapOpenRowCanon c ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩ 1 :=
+    CapOpenRowCanon c ⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0⟩ 1 :=
   ⟨fun col => by norm_num, by norm_num [Nat.shiftLeft_eq]⟩
 
 /-- Boolean-gate exactness: `d·(d−1) ≡ 0 [ZMOD p]` + `d` canonical ⟹ the ℤ gate value IS `0`

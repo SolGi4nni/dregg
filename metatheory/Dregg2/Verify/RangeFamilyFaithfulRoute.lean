@@ -190,14 +190,14 @@ theorem familyTables_rangeFamilyFaithful (table : ThreeEntryTable) :
 rows/pub). This is the reusable lemma that lets an honest witness populate additional width tables
 harmlessly. -/
 theorem satisfied2_public_tf_congr {hash : List Int -> Int} {t1 t2 : VmTrace}
-    (hrows : t2.rows = t1.rows) (hpub : t2.pub = t1.pub)
+    (hrows : t2.rows = t1.rows) (hpub : t2.pub = t1.pub) (hchal : t2.chal = t1.chal)
     (hrange : t2.tf .range = t1.tf .range)
     (hmem : t2.tf .memory = t1.tf .memory)
     (hmap : t2.tf .mapOps = t1.tf .mapOps)
     (h : Satisfied2 hash publicDescriptor (fun _ => 0) (fun _ => ((0 : Int), 0)) [] t1) :
     Satisfied2 hash publicDescriptor (fun _ => 0) (fun _ => ((0 : Int), 0)) [] t2 := by
   have henv : ∀ i, envAt t2 i = envAt t1 i := by
-    intro i; simp only [envAt, hrows, hpub]
+    intro i; simp only [envAt, hrows, hpub, hchal]
   -- the per-constraint tf-congruence: `publicDescriptor`'s constraints read tf only at `.range`.
   have hcongr : ∀ (c : VmConstraint2), c ∈ publicDescriptor.constraints →
       ∀ (env : VmRowEnv) (isF isL : Bool),
@@ -241,9 +241,11 @@ theorem successor_family_statement_has_witness (hash : List Int -> Int) :
       successorEntries_wireBounded successorEntries_holds
     refine satisfied2_public_tf_congr (t1 := directTraceOf successorEntries)
       (t2 := withPublic successorEntries (familyTraceOf successorEntries))
-      ?_ ?_ ?_ ?_ ?_ hbase
+      ?_ ?_ ?_ ?_ ?_ ?_ hbase
     · simp [withPublic, familyTraceOf, directTraceOf]
     · simp [withPublic, familyTraceOf, directTraceOf]
+    · -- ⚑ `chal`: both traces default it, and this descriptor carries no `chalGate`.
+      simp [withPublic, familyTraceOf, directTraceOf]
     · -- `.range`: both `familyTables` and `traceTables` pin it to `rangeRows WIRE_BITS`.
       simp only [withPublic, familyTraceOf, familyTables, directTraceOf, traceTables]
     · -- `.memory`: empty in both.

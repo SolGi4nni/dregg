@@ -177,7 +177,11 @@ fn relation_accepts(
                 | VmConstraint2::MemOp(_)
                 | VmConstraint2::MapOp(_)
                 | VmConstraint2::UMemOp(_)
-                | VmConstraint2::ProofBind(_) => false,
+                | VmConstraint2::ProofBind(_)
+                // ⚑ A challenge gate needs the drawn randomness, which this row-local replay does
+                // not have. `false` REFUSES rather than accepting a gate it cannot evaluate — the
+                // reviewed descriptors carry none, and if one ever does this goes red.
+                | VmConstraint2::ChalGate(_) => false,
             };
             if !holds {
                 return false;

@@ -1312,6 +1312,7 @@ pub fn umem_proving_inputs_from_v1(
         name: "umem-turn-boundary".to_string(),
         trace_width: width,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

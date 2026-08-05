@@ -96,6 +96,10 @@ constraints). `isArithB c = true ↔ isArith c` (`isArithB_iff`). -/
 def isArithB : VmConstraint2 → Bool
   | .base _       => true
   | .windowGate _ => true
+  -- ⚑ A challenge gate IS an arithmetic constraint: it contributes a quotient residual (an
+  -- EXTENSION-field one, `assert_zero_ext`), unlike the bus kinds whose content is a multiset.
+  -- Matches `AirChecksSatisfied.isArith`.
+  | .chalGate _   => true
   | .lookup _     => false
   | .memOp _      => false
   | .mapOp _      => false

@@ -283,6 +283,7 @@ theorem nonArithArm_of_busModels {F : Type*} [Field F] [DecidableEq F]
         (mem_lookupsInto.mpr ⟨hc, rfl⟩)
   | base c₀ => exact hrest i hi _ hc hA (fun _ h => nomatch h)
   | windowGate w => exact hrest i hi _ hc hA (fun _ h => nomatch h)
+  | chalGate w => exact hrest i hi _ hc hA (fun _ h => nomatch h)
   | memOp m => exact hrest i hi _ hc hA (fun _ h => nomatch h)
   | mapOp m => exact hrest i hi _ hc hA (fun _ h => nomatch h)
   | umemOp m => exact hrest i hi _ hc hA (fun _ h => nomatch h)
@@ -329,6 +330,7 @@ theorem memOpsOf_eq_nil_of_lookupShape (d : EffectVmDescriptor2)
       exact absurd hl (fun h => nomatch h)
   | base c₀ => rfl
   | windowGate w => rfl
+  | chalGate w => rfl
   | lookup l => rfl
   | mapOp m => rfl
   | umemOp m => rfl
@@ -347,6 +349,7 @@ theorem mapOpsOf_eq_nil_of_lookupShape (d : EffectVmDescriptor2)
       exact absurd hl (fun h => nomatch h)
   | base c₀ => rfl
   | windowGate w => rfl
+  | chalGate w => rfl
   | lookup l => rfl
   | memOp m => rfl
   | umemOp m => rfl

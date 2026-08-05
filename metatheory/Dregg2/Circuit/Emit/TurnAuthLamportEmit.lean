@@ -427,7 +427,7 @@ structure AuthRowCanon (env : VmRowEnv) : Prop where
   cells : ∀ col : Nat, 0 ≤ env.loc col ∧ env.loc col < P
 
 /-- The envelope is NON-VACUOUS (the all-zero row satisfies it). -/
-theorem authRowCanon_satisfiable : AuthRowCanon ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩ :=
+theorem authRowCanon_satisfiable : AuthRowCanon ⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0⟩ :=
   ⟨fun _ => by constructor <;> norm_num [P]⟩
 
 /-- Difference-gate exactness: `a − b ≡ 0 [ZMOD p]` with both sides canonical ⟹ `a = b` over ℤ (the

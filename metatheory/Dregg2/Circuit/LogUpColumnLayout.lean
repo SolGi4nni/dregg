@@ -113,6 +113,7 @@ theorem lookupInto?_eq_some {tid : TableId} {c : VmConstraint2} {l : Lookup} :
   | umemOp m => simp [lookupInto?]
   | proofBind m => simp [lookupInto?]
   | windowGate w => simp [lookupInto?]
+  | chalGate w => simp [lookupInto?]
 
 /-- Membership in the extracted lookup family: exactly the declared `.lookup`s into `tid`. -/
 theorem mem_lookupsInto {d : EffectVmDescriptor2} {tid : TableId} {l : Lookup} :

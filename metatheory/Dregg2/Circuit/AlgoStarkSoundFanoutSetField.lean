@@ -590,6 +590,7 @@ theorem mapOpsOf_eq_nil_of_memShape (d : EffectVmDescriptor2)
     · exact absurd hm (fun h => nomatch h)
   | base c₀ => rfl
   | windowGate w => rfl
+  | chalGate w => rfl
   | lookup l => rfl
   | memOp m => rfl
   | umemOp m => rfl

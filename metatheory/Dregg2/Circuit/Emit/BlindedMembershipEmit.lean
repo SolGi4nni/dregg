@@ -466,9 +466,9 @@ theorem gBlind_tuple_width :
 
 -- Non-vacuity: the continuity body accepts a chained window and rejects an unchained one.
 #guard decide (gContWindow.eval
-  ⟨fun i => if i = gPAR then 7 else 0, fun i => if i = gCUR then 7 else 0, fun _ => 0⟩ = 0)
+  ⟨fun i => if i = gPAR then 7 else 0, fun i => if i = gCUR then 7 else 0, fun _ => 0, fun _ => 0⟩ = 0)
 #guard decide (¬ (gContWindow.eval
-  ⟨fun _ => 0, fun i => if i = gCUR then 7 else 0, fun _ => 0⟩ = 0))
+  ⟨fun _ => 0, fun i => if i = gCUR then 7 else 0, fun _ => 0, fun _ => 0⟩ = 0))
 -- Non-vacuity: a leftmost (pos 0) child arrangement satisfies child0..child3 (b0=b1=0 ⇒ c=cur/sibs),
 -- and a MIXED position (b0=1,b1=0 ⇒ pos 1 ⇒ c0=sib0,c1=cur,c2=sib1,c3=sib2) does too — the gates
 -- genuinely support general position, not only the leftmost slot.

@@ -117,6 +117,18 @@ fn wexpr_cols(e: &WindowExpr, out: &mut Vec<usize>) {
 /// through `sbCol`/`saCol`. Resolving them here too is what makes this agree with the Lean fixpoint
 /// theorem: measured over both wide registries, every surviving pin's column is in this set, exactly
 /// as `unforcedPins_dropUnforcedPins` says it must be.
+fn chal_cols(e: &dregg_circuit::descriptor_ir2::ChalExpr, out: &mut Vec<usize>) {
+    use dregg_circuit::descriptor_ir2::ChalExpr as CE;
+    match e {
+        CE::Loc(c) | CE::Nxt(c) => out.push(*c),
+        CE::Const(_) | CE::Chal(_) => {}
+        CE::Add(a, b) | CE::Mul(a, b) => {
+            chal_cols(a, out);
+            chal_cols(b, out);
+        }
+    }
+}
+
 fn forced_cols(d: &EffectVmDescriptor2) -> Vec<usize> {
     use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE};
     let mut out = Vec::new();
@@ -130,6 +142,10 @@ fn forced_cols(d: &EffectVmDescriptor2) -> Vec<usize> {
                 out.push(STATE_AFTER_BASE + *lo);
             }
             VmConstraint2::WindowGate(w) => wexpr_cols(&w.body, &mut out),
+            // ⚑ A challenge gate FORCES its trace columns exactly as a window gate does. Its
+            // `Chal(i)` leaves force nothing — a challenge is a verifier value, not a column — so
+            // this census must not invent one for them.
+            VmConstraint2::ChalGate(g) => chal_cols(&g.body, &mut out),
             VmConstraint2::Lookup(l) => {
                 for e in &l.tuple {
                     expr_cols(e, &mut out);

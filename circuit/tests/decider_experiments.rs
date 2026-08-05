@@ -177,6 +177,20 @@ fn window_vars(e: &WindowExpr, acc: &mut HashSet<usize>) {
 /// Every column read by any NON-chip constraint or bound to a PI (the "external sinks" of the
 /// chip-site graph). Every constraint form is covered so a site feeding a mem/map/umem op, a
 /// proof-bind, or a windowed gate is never misclassified as dead.
+fn chal_vars(e: &dregg_circuit::descriptor_ir2::ChalExpr, out: &mut HashSet<usize>) {
+    use dregg_circuit::descriptor_ir2::ChalExpr as CE;
+    match e {
+        CE::Loc(c) | CE::Nxt(c) => {
+            out.insert(*c);
+        }
+        CE::Const(_) | CE::Chal(_) => {}
+        CE::Add(a, b) | CE::Mul(a, b) => {
+            chal_vars(a, out);
+            chal_vars(b, out);
+        }
+    }
+}
+
 fn non_chip_sinks(desc: &EffectVmDescriptor2) -> HashSet<usize> {
     let mut sinks = HashSet::new();
     for k in &desc.constraints {
@@ -230,6 +244,9 @@ fn non_chip_sinks(desc: &EffectVmDescriptor2) -> HashSet<usize> {
                 }
             }
             VmConstraint2::WindowGate(w) => window_vars(&w.body, &mut sinks),
+            // ⚑ A challenge gate's SINKS are its trace columns; a `Chal(i)` leaf is a verifier
+            // value and reads no column, so it contributes none.
+            VmConstraint2::ChalGate(g) => chal_vars(&g.body, &mut sinks),
         }
     }
     sinks

@@ -196,6 +196,19 @@ def baseMults : VmConstraint → Nat
   | .boundary _ b  => eMults b
   | .piBinding _ _ _ => 0
 
+/-- Nonlinear multiplications in a challenge body (the `chal` leaf is a constant, so a product
+with it is linear — the same reason it costs no quotient degree). -/
+def cDeg : ChalExpr → Nat
+  | .loc _ | .nxt _ => 1
+  | .const _ | .chal _ => 0
+  | .add a b => max (cDeg a) (cDeg b)
+  | .mul a b => cDeg a + cDeg b
+
+def cMults : ChalExpr → Nat
+  | .loc _ | .nxt _ | .const _ | .chal _ => 0
+  | .add a b => cMults a + cMults b
+  | .mul a b => cMults a + cMults b + (if 0 < cDeg a ∧ 0 < cDeg b then 1 else 0)
+
 /-- Nonlinear multiplications in a v2 constraint. -/
 def c2Mults : VmConstraint2 → Nat
   | .base c       => baseMults c
@@ -205,6 +218,8 @@ def c2Mults : VmConstraint2 → Nat
   | .umemOp _     => 0
   | .proofBind _  => 0
   | .windowGate w => wMults w.body
+  -- ⚑ A challenge gate's nonlinear count is over TRACE columns only; a `chal` leaf is a constant.
+  | .chalGate w   => cMults w.body
 
 /-- Rows a table DECLARES (exact-public manifests only; other semantics declare no rows here). -/
 def tdRows (td : TableDef) : Nat :=
@@ -475,14 +490,16 @@ compiled evaluation (`#guard` — NO `Prop` is proved by these lines; §5 carrie
 -- crossover is k = 8, six k later than the AREA crossover at k = 2.
 #guard (List.map (fun k => (jsonBytes (productDesc k), jsonBytes (lanesK k)))
     [1, 2, 3, 4, 5, 6, 7, 8])
-  == [(612, 615), (644, 1079), (708, 1543), (860, 2007), (1184, 2476), (1816, 2948),
-      (3208, 3420), (6264, 3892)]
+  -- ⚑ +15 bytes per emitted descriptor since 2026-08-05: `,"challenges":0` in the header. Both
+  -- routes pay it once, so the CROSSOVER (k = 8) is unmoved — which is what this guard is about.
+  == [(627, 630), (659, 1094), (723, 1558), (875, 2022), (1199, 2491), (1831, 2963),
+      (3223, 3435), (6279, 3907)]
 
 -- And the gate-baked route for reference: ONE 2-state automaton already costs 8 columns / 14
 -- constraints / 4 nonlinear mults / 2188 wire bytes, with NO table at all. A `k`-fold gate-baked
 -- lane bank is `k` copies of that gate block: the per-machine gate cost NEVER amortizes, which is
 -- exactly what the table route removes (both table routes measure 0 nonlinear mults at every k).
-#guard jsonBytes DfaRoutingEmit.dfaRoutingDesc == 2188
+#guard jsonBytes DfaRoutingEmit.dfaRoutingDesc == 2203
 
 /-! ## §4b — THE SECOND DISCIPLINE, and the law FLIPS.
 
@@ -553,7 +570,7 @@ def lanesRunK (k : Nat) : EffectVmDescriptor2 :=
 
 -- Same flip in wire bytes: the product's run descriptor barely moves with `k`; the lanes' grows.
 #guard (List.map (fun k => (jsonBytes (productRunDesc k), jsonBytes (lanesRunK k))) [1, 2, 4, 8])
-  == [(648, 651), (648, 1147), (659, 2139), (674, 4152)]
+  == [(663, 666), (663, 1162), (674, 2154), (689, 4167)]
 
 /-! ## §5 — THE AREA LAW IS A THEOREM: the declared table PINS the trace length.
 
@@ -601,6 +618,7 @@ theorem tupOf_isSome (table : TableId) (row : Assignment) :
   | umemOp _ => rfl
   | proofBind _ => rfl
   | windowGate _ => rfl
+  | chalGate _ => rfl
 
 /-- The two selectors keep the same list length — the evaluated tuple carries no extra filtering. -/
 theorem filterMap_tupOf_length (table : TableId) (row : Assignment) (cs : List VmConstraint2) :

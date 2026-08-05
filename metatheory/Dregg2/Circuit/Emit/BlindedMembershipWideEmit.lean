@@ -603,18 +603,18 @@ theorem descriptor_has_complete_shape :
 
 -- Continuity non-vacuity: lane 0 accepts a chained window and rejects an unchained one.
 #guard decide ((wContWindow 0).eval
-  ⟨fun i => if i = wPAR 0 then 7 else 0, fun i => if i = wCUR 0 then 7 else 0, fun _ => 0⟩ = 0)
+  ⟨fun i => if i = wPAR 0 then 7 else 0, fun i => if i = wCUR 0 then 7 else 0, fun _ => 0, fun _ => 0⟩ = 0)
 #guard decide (¬ ((wContWindow 0).eval
-  ⟨fun _ => 0, fun i => if i = wCUR 0 then 7 else 0, fun _ => 0⟩ = 0))
+  ⟨fun _ => 0, fun i => if i = wCUR 0 then 7 else 0, fun _ => 0, fun _ => 0⟩ = 0))
 -- The emitted-level interior canary: a next row that copies the parent's lane 0 but drops its
 -- lane 7 satisfies the lane-0 window and FAILS the lane-7 window — the assignment class the
 -- deployed single-window continuity admits wholesale is refused by the wide block.
 #guard decide ((wContWindow 0).eval
   ⟨fun i => if i = wPAR 0 then 7 else if i = wPAR 7 then 9 else 0,
-   fun i => if i = wCUR 0 then 7 else 0, fun _ => 0⟩ = 0)
+   fun i => if i = wCUR 0 then 7 else 0, fun _ => 0, fun _ => 0⟩ = 0)
 #guard decide (¬ ((wContWindow 7).eval
   ⟨fun i => if i = wPAR 0 then 7 else if i = wPAR 7 then 9 else 0,
-   fun i => if i = wCUR 0 then 7 else 0, fun _ => 0⟩ = 0))
+   fun i => if i = wCUR 0 then 7 else 0, fun _ => 0, fun _ => 0⟩ = 0))
 
 /-! ## §6 — the byte-pinned wire golden (generated once via `#eval repr (emitVmJson2 …)`;
 the Rust decoder ingests THIS string at the coordinated cutover). -/

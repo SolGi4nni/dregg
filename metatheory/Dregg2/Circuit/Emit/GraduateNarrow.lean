@@ -450,7 +450,10 @@ theorem graduateV1Narrow_faithful (hash : List ℤ → ℤ) (d : EffectVmDescrip
     (hgrad : graduable d = true) :
     (∀ i, i < rows.length →
         satisfiedVm hash d (envOf rows pub i) (i == 0) (i + 1 == rows.length))
-      ↔ ∃ t : VmTrace, t.rows = rows ∧ t.pub = pub
+      -- ⚑ `t.chal = fun _ => 0` is an explicit CONJUNCT, exactly as in `graduateV1_faithful`: a v1
+      -- descriptor carries no `chalGate`, so the round trip is about a challenge-free witness and
+      -- says so rather than arranging it with a default.
+      ↔ ∃ t : VmTrace, t.rows = rows ∧ t.pub = pub ∧ t.chal = (fun _ => 0)
           ∧ ChipTableSoundNarrow hash (t.tf poseidon2narrow)
           ∧ t.tf .range = rangeRows BAL_LIMB_BITS
           ∧ Satisfied2 hash (graduateV1Narrow d (sitesFit_admitted (graduable_spec hgrad).2.1))
@@ -458,12 +461,17 @@ theorem graduateV1Narrow_faithful (hash : List ℤ → ℤ) (d : EffectVmDescrip
   constructor
   · intro h
     refine ⟨v2TraceOfNarrow d (sitesFit_admitted (graduable_spec hgrad).2.1) rows pub, rfl, rfl,
-      chipLogOfNarrow_sound hash d rows pub hgrad h, ?_,
+      rfl, chipLogOfNarrow_sound hash d rows pub hgrad h, ?_,
       graduateV1Narrow_complete hash d rows pub hgrad h⟩
     rw [v2TraceOfNarrow_tf]
     exact v2TFNarrow_range d _ rows
-  · rintro ⟨t, rfl, rfl, hchip, hrange, hsat⟩
-    exact graduateV1Narrow_sound hash d _ _ _ t hchip hrange hgrad hsat
+  · rintro ⟨t, rfl, rfl, hchal, hchip, hrange, hsat⟩
+    have := graduateV1Narrow_sound hash d _ _ _ t hchip hrange hgrad hsat
+    intro i hi
+    have henv : envAt t i = envOf t.rows t.pub i := by
+      simp only [envAt, envOf, hchal]
+    rw [← henv]
+    exact this i hi
 
 #assert_axioms go_of_siteLookupsNarrow
 #assert_axioms siteLookupsNarrow_sound

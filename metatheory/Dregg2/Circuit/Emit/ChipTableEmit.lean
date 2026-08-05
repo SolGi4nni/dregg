@@ -1035,7 +1035,7 @@ def selRow (arity isFact big s4 s5 s6 wide node8 : ℤ) (ins : List ℤ) : List 
     [0, isFact, big, s4, s5, s6, wide, node8])
 
 /-- A row vector, as a window (`nxt`/`pub` unused: this table is row-local). -/
-def rowEnv (row : List ℤ) : TRowEnv := ⟨fun c => row.getD c 0, fun _ => 0, fun _ => 0⟩
+def rowEnv (row : List ℤ) : TRowEnv := ⟨fun c => row.getD c 0, fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 #guard (selRow 0 0 0 0 0 0 0 0 (List.replicate 16 0)).length == CHIP_NODE8 + 1
 

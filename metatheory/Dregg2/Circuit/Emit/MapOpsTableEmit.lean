@@ -501,7 +501,7 @@ def openingFreeRow : TRowEnv :=
       else if c = MAP_B_DEC0 + 1 then 2
       else if c = MAP_B_DEC0 + 12 then NEG_INV15
       else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 /-- ⚑ **THE REFUTATION, ON THE EMITTED OBJECT.** Every one of the 91 emitted gates vanishes on a
 REAL (`is_real = 1`) AAFI row that opens NOTHING: its pre-root, post-root, both leaf digests, all
@@ -541,7 +541,7 @@ def reversedBracketRow : TRowEnv :=
       else if c = MAP_B_DEC0 + 1 then 2
       else if c = MAP_B_DEC0 + 12 then NEG_INV15
       else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 theorem a_reversed_bracket_is_refused :
     ¬ mapOpsTable.RowHolds reversedBracketRow true true := by decide
@@ -550,7 +550,7 @@ theorem a_reversed_bracket_is_refused :
 
 /-- The `openingFreeRow` with the `absent` op code substituted. -/
 def absentOpRow : TRowEnv :=
-  ⟨fun c => if c = MAP_OP then 2 else if c = MAP_IS_REAL then 1 else 0, fun _ => 0, fun _ => 0⟩
+  ⟨fun c => if c = MAP_OP then 2 else if c = MAP_IS_REAL then 1 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 /-- ⚑ **`absent` (op = 2) IS UNSAT IN THIS TABLE**, on the emitted gate list — so "absent is
 received by the map-ABSENT table" is a verdict of the membership gate rather than a routing
@@ -570,7 +570,7 @@ def padAafiRow : TRowEnv :=
       else if c = MAP_B_DEC0 + 1 then 2
       else if c = MAP_B_DEC0 + 12 then NEG_INV15
       else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 /-- ⚠ **THE AAFI ROW-LOCAL GATES CARRY NO `is_real` FACTOR.** The deleted arm's comment says the
 AAFI legs *"all ride `aafi_gate = is_real·is_aafi` (zero on op≤3), so op≤3 rows see NONE of these
@@ -607,7 +607,7 @@ def padReversedBracketRow : TRowEnv :=
       else if c = MAP_B_DEC0 + 1 then 2
       else if c = MAP_B_DEC0 + 12 then NEG_INV15
       else 0
-  , fun _ => 0, fun _ => 0⟩
+  , fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 theorem a_pad_row_still_owes_a_real_bracket :
     ¬ mapOpsTable.RowHolds padReversedBracketRow true true := by decide

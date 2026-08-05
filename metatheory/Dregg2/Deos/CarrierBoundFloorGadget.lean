@@ -642,7 +642,7 @@ private def forceBodyVal (g : VmConstraint2) (loc : Nat → ℤ) : ℤ :=
 -- uniform.
 private def uniformBodyVal (g : VmConstraint2) (locf nxtf : Nat → ℤ) : ℤ :=
   match g with
-  | .windowGate w => w.body.eval ⟨locf, nxtf, fun _ => 0⟩
+  | .windowGate w => w.body.eval ⟨locf, nxtf, fun _ => 0, fun _ => 0⟩
   | _ => 999
 #guard uniformBodyVal (caveatUniformGate (cavTagCol 0))
   (fun c => if c == cavTagCol 0 then 6 else 0)

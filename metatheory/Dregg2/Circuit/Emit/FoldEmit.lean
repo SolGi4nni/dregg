@@ -324,9 +324,9 @@ theorem removal_incr_body_zero_iff (env : VmRowEnv) :
 
 -- window non-vacuity: a removal→removal step with the right increment is OK; a wrong one fails.
 #guard decide (removalIncrBody.eval
-  ⟨fun i => if i = REMOVAL_COUNT_PLUS_ONE then 2 else 0, fun i => if i = REMOVAL_COUNT then 2 else 0, fun _ => 0⟩ = 0)
+  ⟨fun i => if i = REMOVAL_COUNT_PLUS_ONE then 2 else 0, fun i => if i = REMOVAL_COUNT then 2 else 0, fun _ => 0, fun _ => 0⟩ = 0)
 #guard decide (¬ (removalIncrBody.eval
-  ⟨fun i => if i = REMOVAL_COUNT_PLUS_ONE then 2 else 0, fun i => if i = REMOVAL_COUNT then 3 else 0, fun _ => 0⟩ = 0))
+  ⟨fun i => if i = REMOVAL_COUNT_PLUS_ONE then 2 else 0, fun i => if i = REMOVAL_COUNT then 3 else 0, fun _ => 0, fun _ => 0⟩ = 0))
 
 /-- **(A) `removal_count_plus_one` tooth.** The gate body is zero EXACTLY when the row is a summary row
 (`ROW_TYPE = 1`) OR the aux column IS `REMOVAL_COUNT + 1`. A removal row whose `REMOVAL_COUNT_PLUS_ONE`
@@ -374,10 +374,10 @@ theorem first_rc_body_zero_iff (a : Assignment) :
 -- (C) non-vacuity: a constant-count summary step OK; a summary step that bumps the count fails.
 #guard decide (rcCarryBody.eval
   ⟨fun i => if i = ROW_TYPE then 1 else if i = REMOVAL_COUNT then 2 else 0,
-   fun i => if i = REMOVAL_COUNT then 2 else 0, fun _ => 0⟩ = 0)
+   fun i => if i = REMOVAL_COUNT then 2 else 0, fun _ => 0, fun _ => 0⟩ = 0)
 #guard decide (¬ (rcCarryBody.eval
   ⟨fun i => if i = ROW_TYPE then 1 else if i = REMOVAL_COUNT then 2 else 0,
-   fun i => if i = REMOVAL_COUNT then 5 else 0, fun _ => 0⟩ = 0))
+   fun i => if i = REMOVAL_COUNT then 5 else 0, fun _ => 0, fun _ => 0⟩ = 0))
 -- (B) non-vacuity: RC = 0 accepted, RC = 3 rejected.
 #guard decide (firstRcBody.eval (fun _ => 0) = 0)
 #guard decide (¬ (firstRcBody.eval (fun i => if i = REMOVAL_COUNT then 3 else 0) = 0))

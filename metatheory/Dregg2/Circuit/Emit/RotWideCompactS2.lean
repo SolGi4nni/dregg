@@ -87,10 +87,20 @@ def refsC : VmConstraint → List Nat
   | .boundary _ b => refsE b
   | .piBinding _ col _ => [col]
 
+/-- Columns read by a `ChalExpr`. The `chal` leaf reads none — it is a verifier value, not a
+column — which is the same reason it costs no constraint degree. -/
+def refsChal : ChalExpr → List Nat
+  | .loc c | .nxt c => [c]
+  | .const _ | .chal _ => []
+  | .add a b | .mul a b => refsChal a ++ refsChal b
+
 /-- Every column a v2 constraint reads (mem/map/umem/proofBind through their SEMANTICALLY READ
 expressions — the same ones `holdsAt`/`memLog`/`mapLog` evaluate, plus the full 8-felt root
 lanes the wire realization recomposes). -/
 def refs2 : VmConstraint2 → List Nat
+  -- ⚑ A `chal` leaf reads NO column, so a challenge gate's column set is exactly its `loc`/`nxt`
+  -- leaves. Inventing a column for the challenge would over-count the forced set.
+  | .chalGate w => refsChal w.body
   | .base c => refsC c
   | .lookup l => l.tuple.flatMap refsE
   | .memOp m => refsE m.guard ++ refsE m.addr ++ refsE m.value ++ refsE m.prevValue
@@ -102,6 +112,7 @@ def refs2 : VmConstraint2 → List Nat
   | .proofBind m => refsE m.guard ++ refsE m.commit ++ refsE m.vk
       ++ (m.bound.map refsE).getD []
   | .windowGate w => refsW w.body
+  | .chalGate w => refsW w.body
 
 /-- The columns a hash site reads or writes. -/
 def refsSite (s : VmHashSite) : List Nat :=
@@ -161,8 +172,20 @@ def mapMapF (g : Nat → Nat) (m : MapOp) : MapOp :=
   , newRoot := (fun i => mapVarE g (m.newRoot i))
   , op := m.op }
 
+/-- Rewrite a `ChalExpr`'s COLUMN leaves through `g`. `chal i` is untouched. -/
+def mapChal (g : Nat → Nat) : ChalExpr → ChalExpr
+  | .loc c => .loc (g c)
+  | .nxt c => .nxt (g c)
+  | .const k => .const k
+  | .chal i => .chal i
+  | .add a b => .add (mapChal g a) (mapChal g b)
+  | .mul a b => .mul (mapChal g a) (mapChal g b)
+
 /-- Rewrite a v2 constraint through `g`. -/
 def mapC2 (g : Nat → Nat) : VmConstraint2 → VmConstraint2
+  -- ⚑ The challenge gate's COLUMNS remap; its `chal` leaves do not, because a challenge index is
+  -- not a column index. Remapping it would silently retarget the gate onto a different draw.
+  | .chalGate w => .chalGate { w with body := mapChal g w.body }
   | .base c => .base (mapC g c)
   | .lookup l => .lookup { table := l.table, tuple := l.tuple.map (mapVarE g) }
   | .memOp m => .memOp (mapMemF g m)
@@ -181,6 +204,7 @@ def mapC2 (g : Nat → Nat) : VmConstraint2 → VmConstraint2
       , vkPin := m.vkPin
       , bound := m.bound.map (mapVarE g) }
   | .windowGate w => .windowGate { body := mapVarW g w.body, onTransition := w.onTransition }
+  | .chalGate w => .windowGate { body := mapVarW g w.body, onTransition := w.onTransition }
 
 /-! ## §2 — the S2 dead-column geometry and the index map. -/
 
@@ -856,6 +880,7 @@ theorem memOpsOf_compactS2 (M : EffectVmDescriptor2) (bb laneBase : Nat) :
     | umemOp m => simpa [isS2, mapC2] using ih
     | proofBind m => simpa [isS2, mapC2] using ih
     | windowGate w => simpa [isS2, mapC2] using ih
+    | chalGate w => simpa [isS2, mapC2] using ih
 
 theorem mapOpsOf_compactS2 (M : EffectVmDescriptor2) (bb laneBase : Nat) :
     mapOpsOf (compactS2 M bb laneBase)
@@ -877,6 +902,7 @@ theorem mapOpsOf_compactS2 (M : EffectVmDescriptor2) (bb laneBase : Nat) :
     | umemOp m => simpa [isS2, mapC2] using ih
     | proofBind m => simpa [isS2, mapC2] using ih
     | windowGate w => simpa [isS2, mapC2] using ih
+    | chalGate w => simpa [isS2, mapC2] using ih
 
 /-- Per-row, per-op transport of the instrumented memory row. -/
 theorem opAt?_transport (g : Nat → Nat) (m : MemOp) (a aX : Assignment)
@@ -1125,6 +1151,7 @@ theorem compactS2_expand (permOut : List ℤ → List ℤ) (hash : List ℤ → 
     | umemOp m' => simp at hproj
     | proofBind m' => simp at hproj
     | windowGate w => simp at hproj
+    | chalGate w => simp at hproj
   have hmapRefs : ∀ m ∈ mapOpsOf M, ∀ r ∈ refs2 (.mapOp m), r ∉ dead := by
     intro m hm r hr
     obtain ⟨c, hcmem, hproj⟩ := List.mem_filterMap.mp hm
@@ -1141,6 +1168,7 @@ theorem compactS2_expand (permOut : List ℤ → List ℤ) (hash : List ℤ → 
     | umemOp m' => simp at hproj
     | proofBind m' => simp at hproj
     | windowGate w => simp at hproj
+    | chalGate w => simp at hproj
   have hml : memLog M tX = memLog (compactS2 M bb laneBase) t :=
     memLog_expand permOut M bb laneBase t hsub hmemRefs
   have hmpl : mapLog M tX = mapLog (compactS2 M bb laneBase) t :=
@@ -1203,6 +1231,7 @@ theorem compactS2_expand (permOut : List ℤ → List ℤ) (hash : List ℤ → 
       | umemOp m => simp [isS2] at hs2
       | proofBind m => simp [isS2] at hs2
       | windowGate w => simp [isS2] at hs2
+      | chalGate w => simp [isS2] at hs2
     · -- the kept constraints: transported through the index map
       have hs2f : isS2 bb c = false := by simpa using hs2
       have hkept : keptOk bb laneBase c = true := by

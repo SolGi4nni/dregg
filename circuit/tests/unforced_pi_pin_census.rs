@@ -146,6 +146,23 @@ struct Reads {
     last_only: Vec<usize>,
 }
 
+fn cexpr_cols(
+    e: &dregg_circuit::descriptor_ir2::ChalExpr,
+    loc: &mut Vec<usize>,
+    nxt: &mut Vec<usize>,
+) {
+    use dregg_circuit::descriptor_ir2::ChalExpr as CE;
+    match e {
+        CE::Loc(c) => loc.push(*c),
+        CE::Nxt(c) => nxt.push(*c),
+        CE::Const(_) | CE::Chal(_) => {}
+        CE::Add(a, b) | CE::Mul(a, b) => {
+            cexpr_cols(a, loc, nxt);
+            cexpr_cols(b, loc, nxt);
+        }
+    }
+}
+
 fn collect(d: &EffectVmDescriptor2) -> Reads {
     let mut r = Reads::default();
     for c in &d.constraints {
@@ -195,6 +212,16 @@ fn collect(d: &EffectVmDescriptor2) -> Reads {
             VmConstraint2::ProofBind(p) => {
                 for e in [&p.guard, &p.commit, &p.vk] {
                     expr_cols(e, &mut r.loc_all);
+                }
+            }
+            // ⚑ A challenge gate reads the SAME two row slices a window gate does, under the same
+            // guard. Its `Chal(i)` leaves read no column, so they enter no bucket — a census that
+            // invented one for them would over-count the forced set.
+            VmConstraint2::ChalGate(g) => {
+                if g.on_transition {
+                    cexpr_cols(&g.body, &mut r.loc_trans, &mut r.nxt_trans);
+                } else {
+                    cexpr_cols(&g.body, &mut r.loc_all, &mut r.nxt_all);
                 }
             }
             VmConstraint2::WindowGate(w) => {

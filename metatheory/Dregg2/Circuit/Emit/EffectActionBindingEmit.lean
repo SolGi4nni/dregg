@@ -216,8 +216,8 @@ theorem cWasBurnLo_zero_iff (a : Assignment) :
 /-! Non-vacuity witnesses (each gate ACCEPTS a satisfying row and REJECTS a violating one). -/
 
 -- continuity: agrees ⇒ 0; differs ⇒ ≠ 0.
-#guard decide ((contWindowBody 3).eval ⟨fun _ => 5, fun _ => 5, fun _ => 0⟩ = 0)
-#guard decide (¬ ((contWindowBody 3).eval ⟨fun _ => 5, fun i => if i = 3 then 9 else 5, fun _ => 0⟩ = 0))
+#guard decide ((contWindowBody 3).eval ⟨fun _ => 5, fun _ => 5, fun _ => 0, fun _ => 0⟩ = 0)
+#guard decide (¬ ((contWindowBody 3).eval ⟨fun _ => 5, fun i => if i = 3 then 9 else 5, fun _ => 0, fun _ => 0⟩ = 0))
 
 -- low-limb: 600 + 400 = 1000 + 0*2^32 ⇒ 0; 601 + 400 ≠ 1000 ⇒ ≠ 0.
 #guard decide (cLoBody.eval (fun i =>

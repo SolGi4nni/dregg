@@ -246,7 +246,7 @@ theorem encodePiBinding_not_complete :
     ∃ (env₀ env₁ : VmRowEnv) (col piIndex : Nat),
       env₀.loc col = env₀.pub piIndex ∧
       ¬ CellPiEveryRow env₁ col piIndex := by
-  refine ⟨⟨fun _ => 0, fun _ => 0, fun _ => 0⟩, ⟨fun _ => 1, fun _ => 0, fun _ => 0⟩, 0, 0,
+  refine ⟨⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0⟩, ⟨fun _ => 1, fun _ => 0, fun _ => 0, fun _ => 0⟩, 0, 0,
     rfl, ?_⟩
   simp only [CellPiEveryRow, Int.ModEq]
   omega

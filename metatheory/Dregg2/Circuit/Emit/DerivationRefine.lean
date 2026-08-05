@@ -607,7 +607,7 @@ theorem witTrace_not_satisfies :
 /-- **`sem_holds`** — `DerivationStepValid` is SATISFIABLE: the all-zero env (published conclusion the
 degenerate `hash [..] = 0`, every comparator/check inactive) witnesses it. -/
 theorem sem_holds :
-    DerivationStepValid (fun _ => (0 : ℤ)) ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩ := by
+    DerivationStepValid (fun _ => (0 : ℤ)) ⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0⟩ := by
   refine
     { publishedConclusionIsHeadFact := ?_, derivedHashPublished := ?_, bodyFactHashPublished := ?_,
       stateRootCommitted := ?_,

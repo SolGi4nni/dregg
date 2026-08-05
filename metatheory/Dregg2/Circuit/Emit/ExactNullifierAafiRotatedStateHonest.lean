@@ -166,6 +166,10 @@ theorem arithmeticConstraintCheck_sound (tf : TraceFamily) (env : VmRowEnv) (isF
       cases onTransition <;> cases isLast <;>
         simpa [arithmeticConstraintCheck, VmConstraint2.holdsAt, WindowConstraint.holdsAt]
           using h
+  -- ⚑ The challenge gate falls through `arithmeticConstraintCheck`'s `_ => false` arm: this
+  -- checker predates the kind and does NOT decide it, so a chal-gate-bearing descriptor is
+  -- REFUSED here rather than silently accepted. `simp … at h` closes the goal from `false = true`.
+  | chalGate w => simp [arithmeticConstraintCheck] at h
   | lookup l => simp [arithmeticConstraintCheck] at h
   | memOp m => simp [arithmeticConstraintCheck] at h
   | mapOp m => simp [arithmeticConstraintCheck] at h

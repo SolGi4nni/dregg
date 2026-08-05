@@ -134,8 +134,8 @@ theorem continuity_zero_iff (env : VmRowEnv) :
 
 -- Non-vacuity witnesses: the window ACCEPTS a linked window and REJECTS an unlinked one.
 #guard decide (contBody.eval ⟨fun i => if i = ACC then 7 else 0, fun i => if i = PREV then 7 else 0,
-    fun _ => 0⟩ = 0)
-#guard decide (¬ (contBody.eval ⟨fun _ => 0, fun i => if i = PREV then 7 else 0, fun _ => 0⟩ = 0))
+    fun _ => 0, fun _ => 0⟩ = 0)
+#guard decide (¬ (contBody.eval ⟨fun _ => 0, fun i => if i = PREV then 7 else 0, fun _ => 0, fun _ => 0⟩ = 0))
 
 -- Shape pins.
 #guard multiStepChainDesc.traceWidth == CHAIN_WIDTH

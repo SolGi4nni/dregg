@@ -213,8 +213,8 @@ theorem binary_gate_zero_iff (a : Assignment) :
     · exact Or.inr (by omega)
 
 -- Non-vacuity witnesses: continuity ACCEPTS a chained window, REJECTS an unchained one.
-#guard decide (contBodyW.eval ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩ = 0)
-#guard decide (¬ (contBodyW.eval ⟨fun i => if i = 5 then 3 else 0, fun _ => 0, fun _ => 0⟩ = 0))
+#guard decide (contBodyW.eval ⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0⟩ = 0)
+#guard decide (¬ (contBodyW.eval ⟨fun i => if i = 5 then 3 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩ = 0))
 -- Non-vacuity witnesses: the boolean gate ACCEPTS is_merkle=1, REJECTS is_merkle=2.
 #guard decide ((binaryGate IS_MERKLE).eval (fun i => if i = IS_MERKLE then 1 else 0) = 0)
 #guard decide (¬ ((binaryGate IS_MERKLE).eval (fun i => if i = IS_MERKLE then 2 else 0) = 0))
