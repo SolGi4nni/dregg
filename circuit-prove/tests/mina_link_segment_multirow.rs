@@ -29,7 +29,8 @@
 //! state row (`LightClientMinaLinkAir.LinkHashResidual`). A prover free to choose `OWNHASH` can
 //! fabricate a consistent chain of any length between any two `Fp` elements. What this removes is
 //! the freedom to be INCONSISTENT and the freedom to claim a depth without committing rows for it.
-//! `PICKLES_OK` — what makes a row a real block — is still a witness.
+//! `PICKLES_WITNESSED` (`PICKLES_OK` until 2026-08-05) — what makes a row a real block — is still a
+//! witness. Its sibling `WRAP_FS_PROVED` is not: see `circuit/tests/mina_lightclient_carrier_proves.rs`.
 //!
 //! ## ⚑ RUN IN RELEASE
 //!
