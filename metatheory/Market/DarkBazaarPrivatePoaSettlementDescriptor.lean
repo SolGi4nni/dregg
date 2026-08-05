@@ -1,25 +1,66 @@
 /-
-# PoA Dark Bazaar private settlement descriptor — transition-bound v3
+# PoA Dark Bazaar private settlement descriptor — anchored v4
 
-V2 bound the fixed hidden N=4/K=4 book proof to one receipt digest.  That was
-an identity join, not a settlement statement.  V3 keeps every v1 market tooth
-and adds a public settlement surface authored from the actual Lean judge:
+## What changed, and why the v3 public statement was 60% decoration
 
-* all eight lanes of the judge's input, successor, public-view and receipt
-  digests are independently public;
-* the exact public before/after escrow and custody scalars are public;
-* debit, credit, quote calculation and both per-asset conservation equations
-  are constraints, not prose;
-* every settlement scalar is range-constrained below 2^28 and the quote tick
-  below 2^20.  This is an explicit v3 family limit, chosen so every integer
-  consequence lies strictly inside BabyBear and cannot be satisfied by field
-  wraparound.
+V3 published fifty-five public inputs.  Thirty-two of them were the eight lanes
+each of the Lean judge's `input`, `successor`, `public_view` and `receipt`
+digests, and **no constraint of any kind named those columns**: not a gate body,
+not a boundary body, not a lookup tuple.  `hashSites` was `[]`.  They were tied
+to the trace by a `pi_binding` and to the circuit by nothing.  V3's own docblock
+said it "binds the exact input, successor, public-view, and receipt digests";
+`scripts/check-descriptor-anchor-inertness.py` measured thirty-three decorative
+anchors and was right.
 
-The private order book remains absent from the public vector and is hidden
-from the verifier by the Rust HidingFRI configuration.  The trace producer
-still receives the opening.  `ProverVisibilityGrade.verifierShieldedProducerVisible`
-is therefore a typed public grade fixed by the AIR; this file makes no
-house-blind or no-single-viewer claim.
+A verifier that checked the STARK against those public inputs — the ordinary
+thing a light client, an aggregator or a recursive verifier does — learned
+nothing whatsoever about them.  A prover could publish any thirty-two field
+elements alongside a completely honest book, clearing and settlement, and every
+gate still vanished.
+
+⚑ **Those digests are not derivable in this AIR, and that is a fact about them,
+not a budget.**  `Dregg2.Games.PathOfAngels.DarkBazaarJudgeWire.digestString`
+(`:738`) computes each one as `CommitmentTreeWide.hashTo8 domain (UTF-8 bytes of
+a canonical JSON string)` — `OutputWire.ofTransition` (`:752-758`) hashes
+`successor.toJson`, `input.claim.toJson`, and a JSON preimage that embeds the
+other three digests in hex.  Recomputing them in-circuit means running a JSON
+serializer and a several-hundred-byte sponge inside a four-row fixed-width
+BabyBear trace.  Absorbing them as chip *inputs* instead would be worse than
+leaving them alone: it would move the inertness census to zero while the values
+stayed free witnesses, which is precisely the co-occurrence-is-not-derivation
+laundering `LightClientAnchorConnectivity` refuses.
+
+So V4 stops publishing a statement this circuit cannot make, and publishes one
+it can:
+
+* the four judge-digest column blocks and their thirty-two pins are **DELETED**;
+* eight new `ANCHOR` lanes are published, and they are the **image**, under the
+  deployed Poseidon2 chip, of the rows this proof already exhibits — the private
+  book root, the clearing output, the ten settlement scalars and the visibility
+  grade.  Two staged arity-16 absorbs, forced by `chip_lookup_sound_N` exactly
+  as `DarkBazaarPrivateDescriptor.rootLookup` forces the book root.
+
+Every v1 market tooth and every v3 settlement tooth is retained: exact debit,
+exact credit, authored quote calculation, both per-asset conservation
+consequences, and the 2^28 / 2^20 range family that keeps every integer
+consequence strictly inside BabyBear.
+
+## Flag day
+
+`dark-bazaar-private-poa-settlement-n4k4::transition-v3` is GONE, replaced by
+`::anchored-v4`.  Trace width 496 → 480, public inputs 55 → 31.  The descriptor
+JSON re-emits and the verifying key rotates; no v3 proof, statement or public
+vector loads against v4, and none should.  The four judge digests keep being
+checked where they can actually be checked — host-side in
+`circuit-prove/src/dark_bazaar_private_poa_settlement.rs`, against a judge the
+verifier runs itself — and are no longer laundered through the proof's public
+inputs as though the AIR had attested them.
+
+The private order book remains absent from the public vector and hidden from the
+verifier by the Rust HidingFRI configuration.  The trace producer still receives
+the opening.  `ProverVisibilityGrade.verifierShieldedProducerVisible` is
+therefore a typed public grade fixed by the AIR; this file makes no house-blind
+or no-single-viewer claim.
 -/
 import Market.DarkBazaarPrivateDescriptor
 
@@ -27,14 +68,15 @@ namespace Market.DarkBazaarPrivatePoaSettlementDescriptor
 
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2
-  (EffectVmDescriptor2 Satisfied2 TraceFamily VmConstraint2 emitVmJson2)
+  (EffectVmDescriptor2 Satisfied2 TraceFamily VmConstraint2 TableId
+    ChipTableSoundN chipLookupTupleN chip_lookup_sound_N emitVmJson2)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Market.DarkBazaarPrivateDescriptor
 
 set_option autoImplicit false
 
-def VERSION : Nat := 3
+def VERSION : Nat := 4
 
 /-- Privacy is a statement field, not an adjective attached by a caller. -/
 inductive ProverVisibilityGrade where
@@ -82,7 +124,7 @@ def SettlementTransition.InRange (transition : SettlementTransition) : Prop :=
   transition.quoteTick < QUOTE_TICK_LIMIT ∧
   transition.quoteAmount < STATE_VALUE_LIMIT
 
-/-- The exact public transition relation enforced by the five v3 arithmetic
+/-- The exact public transition relation enforced by the five v4 arithmetic
 gates.  `pStar` and `vStar` are the already-proved v1 clearing output. -/
 def SettlementTransition.Valid (transition : SettlementTransition)
     (pStar vStar : Nat) : Prop :=
@@ -171,17 +213,25 @@ theorem SettlementTransition.valid_no_wrap_envelope
   · rw [← hamount]
     exact ha.trans hlimit
 
-/-! ## Column and public-input layout -/
+/-! ## Column and public-input layout
 
-def DIGEST_COUNT : Nat := 4
-def DIGEST_LANES : Nat := DIGEST_COUNT * DIGEST_WIDTH
-def JUDGE_DIGEST_BASE : Nat := Market.DarkBazaarPrivateDescriptor.TRACE_WIDTH
-def INPUT_DIGEST (lane : Nat) : Nat := JUDGE_DIGEST_BASE + lane
-def SUCCESSOR_DIGEST (lane : Nat) : Nat := JUDGE_DIGEST_BASE + 8 + lane
-def PUBLIC_VIEW_DIGEST (lane : Nat) : Nat := JUDGE_DIGEST_BASE + 16 + lane
-def RECEIPT_DIGEST (lane : Nat) : Nat := JUDGE_DIGEST_BASE + 24 + lane
+The thirty-two judge-digest columns v3 carried at 181..212 are gone.  In their
+place sit the sixteen columns of the two-stage settlement anchor: eight
+intermediate `HALF` lanes and the eight published `ANCHOR` lanes. -/
 
-def VISIBILITY : Nat := JUDGE_DIGEST_BASE + DIGEST_LANES
+/-- Stage-1 domain tag, ASCII `DBH1`, distinct from
+`DarkBazaarPrivateDescriptor.ROOT_DOMAIN_TAG` (`DBGR`). -/
+def HALF_DOMAIN_TAG : Int := 1145194545
+
+/-- Stage-2 domain tag, ASCII `DBA1`. -/
+def ANCHOR_DOMAIN_TAG : Int := 1145192753
+
+def HALF_BASE : Nat := Market.DarkBazaarPrivateDescriptor.TRACE_WIDTH
+def HALF (lane : Nat) : Nat := HALF_BASE + lane
+def ANCHOR_BASE : Nat := HALF_BASE + DIGEST_WIDTH
+def ANCHOR (lane : Nat) : Nat := ANCHOR_BASE + lane
+
+def VISIBILITY : Nat := ANCHOR_BASE + DIGEST_WIDTH
 def SCALAR_BASE : Nat := VISIBILITY + 1
 def SCALAR_COUNT : Nat := 10
 def SCALAR (field : Nat) : Nat := SCALAR_BASE + field
@@ -208,38 +258,70 @@ def QUOTE_TICK_BIT (bit : Nat) : Nat :=
 
 def TRACE_WIDTH : Nat :=
   RANGE_BIT_BASE + STATE_VALUE_BITS * STATE_RANGE_TARGETS + QUOTE_TICK_BITS
-def PI_BASE : Nat := 12
-def DIGEST_PI_BASE : Nat := PI_BASE
-def VISIBILITY_PI : Nat := DIGEST_PI_BASE + DIGEST_LANES
+
+def ANCHOR_PI_BASE : Nat := 12
+def VISIBILITY_PI : Nat := ANCHOR_PI_BASE + DIGEST_WIDTH
 def SCALAR_PI_BASE : Nat := VISIBILITY_PI + 1
 def PI_COUNT : Nat := SCALAR_PI_BASE + SCALAR_COUNT
 
 structure PublicStatement where
   privateBook : Market.DarkBazaarPrivateDescriptor.PublicStatement
-  inputDigest : Fin 8 → Int
-  successorDigest : Fin 8 → Int
-  publicViewDigest : Fin 8 → Int
-  receiptDigest : Fin 8 → Int
+  settlementAnchor : Fin 8 → Int
   visibility : ProverVisibilityGrade
   transition : SettlementTransition
 deriving DecidableEq, Repr
 
-def digestPins : List VmConstraint2 :=
-  (List.range 8).map (fun lane =>
-    .base (.piBinding .first (INPUT_DIGEST lane) (DIGEST_PI_BASE + lane))) ++
-  (List.range 8).map (fun lane =>
-    .base (.piBinding .first (SUCCESSOR_DIGEST lane) (DIGEST_PI_BASE + 8 + lane))) ++
-  (List.range 8).map (fun lane =>
-    .base (.piBinding .first (PUBLIC_VIEW_DIGEST lane) (DIGEST_PI_BASE + 16 + lane))) ++
-  (List.range 8).map (fun lane =>
-    .base (.piBinding .first (RECEIPT_DIGEST lane) (DIGEST_PI_BASE + 24 + lane)))
+/-! ## The settlement anchor — two staged absorbs on the deployed chip
+
+Twenty-one values constitute the settlement: the eight lanes of the private book
+root, the ten settlement scalars, the visibility grade, and the two clearing
+outputs `p*` and `V*`.  The deployed chip admits only
+`CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16]`, so twenty-one values plus
+domain separation is two absorbs, each at arity sixteen — the same arity the
+already-deployed `rootLookup` uses.
+
+Stage 1 takes the book root and the first six scalars; stage 2 takes stage 1's
+eight output lanes, the remaining four scalars, the visibility grade and the
+clearing.  Nothing is dropped and nothing is truncated: the published anchor is
+a function of all twenty-one. -/
+
+def halfInputExprs : List EmittedExpr :=
+  [c HALF_DOMAIN_TAG] ++
+    (List.range DIGEST_WIDTH).map (fun lane => v (ROOT lane)) ++
+    (List.range 6).map (fun field => v (SCALAR field)) ++
+    [c 0]
+
+def halfDigestCols : List Nat := (List.range DIGEST_WIDTH).map HALF
+
+def halfLookup : VmConstraint2 :=
+  .lookup ⟨TableId.poseidon2, chipLookupTupleN halfInputExprs halfDigestCols⟩
+
+def anchorInputExprs : List EmittedExpr :=
+  [c ANCHOR_DOMAIN_TAG] ++
+    (List.range DIGEST_WIDTH).map (fun lane => v (HALF lane)) ++
+    (List.range 4).map (fun field => v (SCALAR (6 + field))) ++
+    [v VISIBILITY, v PSTAR, v VSTAR]
+
+def anchorDigestCols : List Nat := (List.range DIGEST_WIDTH).map ANCHOR
+
+def anchorLookup : VmConstraint2 :=
+  .lookup ⟨TableId.poseidon2, chipLookupTupleN anchorInputExprs anchorDigestCols⟩
+
+/-- The two settlement absorbs, in stage order. -/
+def settlementHashLookups : List VmConstraint2 := [halfLookup, anchorLookup]
+
+/-! ## Public pins -/
+
+def anchorPins : List VmConstraint2 :=
+  (List.range DIGEST_WIDTH).map fun lane =>
+    .base (.piBinding .first (ANCHOR lane) (ANCHOR_PI_BASE + lane))
 
 def settlementPins : List VmConstraint2 :=
   [.base (.piBinding .first VISIBILITY VISIBILITY_PI)] ++
   (List.range SCALAR_COUNT).map fun field =>
     .base (.piBinding .first (SCALAR field) (SCALAR_PI_BASE + field))
 
-def v3PublicPins : List VmConstraint2 := digestPins ++ settlementPins
+def v4PublicPins : List VmConstraint2 := anchorPins ++ settlementPins
 
 def rangeBodiesFor (col bitBase bits : Nat) : List EmittedExpr :=
   recompose col (fun bit => bitBase + bit) bits ::
@@ -265,34 +347,48 @@ def settlementBodies : List EmittedExpr :=
   , sub (v QUOTE_AMOUNT)
       (mul (mul (v QUOTE_TICK) (add (v PSTAR) (c 1))) (v VSTAR)) ]
 
-def v3SemanticBodies : List EmittedExpr :=
+def v4SemanticBodies : List EmittedExpr :=
   privacyBody :: (rangeBodies ++ settlementBodies)
 
-/-- V3 is additive over the complete v1 relation.  The descriptor is authored
+/-- V4 is additive over the complete v1 relation.  The descriptor is authored
 here; Rust only interprets its emitted JSON. -/
 def darkBazaarPrivatePoaSettlementN4K4Descriptor : EffectVmDescriptor2 :=
-  { name := "dark-bazaar-private-poa-settlement-n4k4::transition-v3"
+  { name := "dark-bazaar-private-poa-settlement-n4k4::anchored-v4"
   , traceWidth := TRACE_WIDTH
   , piCount := PI_COUNT
   , tables := []
   , constraints := Market.DarkBazaarPrivateDescriptor.hashLookups ++
+      settlementHashLookups ++
       Market.DarkBazaarPrivateDescriptor.semanticBodies.map
         (fun body => .base (.gate body)) ++
-      v3SemanticBodies.map (fun body => .base (.gate body)) ++
-      Market.DarkBazaarPrivateDescriptor.publicPins ++ v3PublicPins ++
+      v4SemanticBodies.map (fun body => .base (.gate body)) ++
+      Market.DarkBazaarPrivateDescriptor.publicPins ++ v4PublicPins ++
       Market.DarkBazaarPrivateDescriptor.semanticBodies.map
         (fun body => .base (.boundary .last body)) ++
-      v3SemanticBodies.map (fun body => .base (.boundary .last body))
+      v4SemanticBodies.map (fun body => .base (.boundary .last body))
   , hashSites := []
   , ranges := [] }
 
 theorem descriptor_trace_width :
-    darkBazaarPrivatePoaSettlementN4K4Descriptor.traceWidth = 496 := rfl
+    darkBazaarPrivatePoaSettlementN4K4Descriptor.traceWidth = 480 := rfl
 
 theorem descriptor_pi_count :
-    darkBazaarPrivatePoaSettlementN4K4Descriptor.piCount = 55 := rfl
+    darkBazaarPrivatePoaSettlementN4K4Descriptor.piCount = 31 := rfl
 
-theorem digest_pins_length : digestPins.length = 32 := by decide
+/-- ⚑ The two settlement absorbs are at an arity the deployed chip AIR admits.
+At any other arity the lookup has no satisfying assignment and the descriptor is
+unprovable — `chipLookupTupleN`'s `hAdm` autoParam refuses to elaborate, so this
+is belt-and-braces on a condition already discharged at the construction site. -/
+theorem settlement_absorb_arities_are_admitted :
+    Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted halfInputExprs.length ∧
+    Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted anchorInputExprs.length := by
+  constructor <;> decide
+
+theorem half_absorb_is_arity_sixteen : halfInputExprs.length = 16 := by decide
+
+theorem anchor_absorb_is_arity_sixteen : anchorInputExprs.length = 16 := by decide
+
+theorem anchor_pins_length : anchorPins.length = 8 := by decide
 
 theorem settlement_pins_length : settlementPins.length = 11 := by decide
 
@@ -305,10 +401,18 @@ set_option maxRecDepth 100000 in
 theorem range_bodies_length : rangeBodies.length = 282 := by decide
 
 set_option maxRecDepth 100000 in
-theorem v3_semantic_bodies_length : v3SemanticBodies.length = 288 := by decide
+theorem v4_semantic_bodies_length : v4SemanticBodies.length = 288 := by decide
 
 theorem visibility_is_not_house_blind :
     PROVEN_VISIBILITY ≠ ProverVisibilityGrade.noSingleViewer := by decide
+
+/-- ⚑ **THE JUDGE DIGESTS ARE GONE FROM THE PUBLIC VECTOR.** V3 published 55;
+V4 publishes 31, and the 24 that survive from v3 are the ten scalars, the
+visibility grade and the twelve v1 lanes.  The difference is exactly the
+thirty-two unbindable digest lanes, replaced by eight derived anchor lanes. -/
+theorem v4_publishes_thirty_one_and_v3_published_fifty_five :
+    darkBazaarPrivatePoaSettlementN4K4Descriptor.piCount = 31 ∧
+    55 - 32 + 8 = 31 := by decide
 
 theorem v1_constraints_subset :
     ∀ constraint ∈
@@ -320,12 +424,12 @@ theorem v1_constraints_subset :
     List.mem_map] at member ⊢
   aesop
 
-theorem v3_public_pin_sound
+theorem v4_public_pin_sound
     {hash : List Int → Int} {a pis : Assignment} {tf : TraceFamily}
     (hsat : Satisfied2 hash darkBazaarPrivatePoaSettlementN4K4Descriptor
       dbM0 dbF0 [] (constTrace a pis tf))
     {col pi : Nat}
-    (member : VmConstraint2.base (.piBinding .first col pi) ∈ v3PublicPins) :
+    (member : VmConstraint2.base (.piBinding .first col pi) ∈ v4PublicPins) :
     a col ≡ pis pi [ZMOD BABYBEAR_MODULUS] := by
   have constraintMember :
       VmConstraint2.base (.piBinding .first col pi) ∈
@@ -337,11 +441,11 @@ theorem v3_public_pin_sound
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm,
     BABYBEAR_MODULUS] using row
 
-theorem v3_semantic_gate_vanishes
+theorem v4_semantic_gate_vanishes
     {hash : List Int → Int} {a pis : Assignment} {tf : TraceFamily}
     (hsat : Satisfied2 hash darkBazaarPrivatePoaSettlementN4K4Descriptor
       dbM0 dbF0 [] (constTrace a pis tf))
-    {body : EmittedExpr} (member : body ∈ v3SemanticBodies) :
+    {body : EmittedExpr} (member : body ∈ v4SemanticBodies) :
     body.eval a ≡ 0 [ZMOD BABYBEAR_MODULUS] := by
   have constraintMember : VmConstraint2.base (.gate body) ∈
       darkBazaarPrivatePoaSettlementN4K4Descriptor.constraints := by
@@ -353,13 +457,136 @@ theorem v3_semantic_gate_vanishes
     BABYBEAR_MODULUS] using row
 
 /-- The typed grade is an actual AIR gate. -/
-theorem visibility_gate_mem : privacyBody ∈ v3SemanticBodies := by
-  simp [v3SemanticBodies]
+theorem visibility_gate_mem : privacyBody ∈ v4SemanticBodies := by
+  simp [v4SemanticBodies]
 
 /-- All five exact transition equations are emitted as gates. -/
 theorem settlement_gate_mem (body : EmittedExpr) (member : body ∈ settlementBodies) :
-    body ∈ v3SemanticBodies := by
-  simp [v3SemanticBodies, member]
+    body ∈ v4SemanticBodies := by
+  simp [v4SemanticBodies, member]
+
+/-! ## §A — the anchor is DERIVED, not carried
+
+These are the positive statements that replace v3's thirty-two `pi_binding`s.
+They are the `DarkBazaarPrivateDescriptor.wide_root_lookup_sound` idiom, and the
+same lever — `chip_lookup_sound_N` against a `ChipTableSoundN` chip table — that
+`LightClientSolStakeFoldAir` uses to make Solana's published trust anchor the
+image of the stake rows rather than a number beside them. -/
+
+theorem half_lookup_mem :
+    halfLookup ∈ darkBazaarPrivatePoaSettlementN4K4Descriptor.constraints := by
+  simp [darkBazaarPrivatePoaSettlementN4K4Descriptor, settlementHashLookups]
+
+theorem anchor_lookup_mem :
+    anchorLookup ∈ darkBazaarPrivatePoaSettlementN4K4Descriptor.constraints := by
+  simp [darkBazaarPrivatePoaSettlementN4K4Descriptor, settlementHashLookups]
+
+/-- Stage 1: the eight `HALF` columns are the genuine permutation image of the
+domain tag, the eight book-root lanes and the first six settlement scalars. -/
+theorem half_lookup_sound
+    {hash : List Int → Int} {a pis : Assignment} {tf : TraceFamily}
+    (permOut : List Int → List Int)
+    (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
+    (hsat : Satisfied2 hash darkBazaarPrivatePoaSettlementN4K4Descriptor
+      dbM0 dbF0 [] (constTrace a pis tf)) :
+    halfDigestCols.map a = permOut (halfInputExprs.map (·.eval a)) := by
+  have hrow := hsat.rowConstraints 0 (by simp [constTrace]) halfLookup half_lookup_mem
+  have hlookup :
+      (chipLookupTupleN halfInputExprs halfDigestCols).map (·.eval a) ∈
+        tf TableId.poseidon2 := by
+    simpa [halfLookup, VmConstraint2.holdsAt,
+      Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt] using hrow
+  exact chip_lookup_sound_N permOut (tf TableId.poseidon2) hChip a
+    halfInputExprs halfDigestCols (by decide) hlookup
+
+/-- ⚑⚑ **THE PUBLISHED SETTLEMENT ANCHOR IS THE IMAGE OF THE EXHIBITED ROWS.**
+
+Stage 2: the eight `ANCHOR` columns — the ones `anchorPins` publishes as PI
+12..19 — are the genuine permutation image of stage 1's output, the remaining
+four settlement scalars, the visibility grade and the clearing `p*`/`V*`.
+Composed with `half_lookup_sound` and with
+`DarkBazaarPrivateDescriptor.wide_root_lookup_sound`, the published anchor is a
+function of the private book itself.
+
+⚠ This is the statement v3 could not make about any of its thirty-two digest
+lanes, and it is stronger than the connectivity census can see: the census
+measures co-occurrence, and co-occurrence would have been satisfied just as well
+by absorbing a free witness.  What makes this derivation is `chip_lookup_sound_N`
+forcing the whole `permOut` block column-for-column against a chip table whose
+rows the prover re-derives from the genuine permutation. -/
+theorem anchor_lookup_sound
+    {hash : List Int → Int} {a pis : Assignment} {tf : TraceFamily}
+    (permOut : List Int → List Int)
+    (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
+    (hsat : Satisfied2 hash darkBazaarPrivatePoaSettlementN4K4Descriptor
+      dbM0 dbF0 [] (constTrace a pis tf)) :
+    anchorDigestCols.map a = permOut (anchorInputExprs.map (·.eval a)) := by
+  have hrow := hsat.rowConstraints 0 (by simp [constTrace]) anchorLookup anchor_lookup_mem
+  have hlookup :
+      (chipLookupTupleN anchorInputExprs anchorDigestCols).map (·.eval a) ∈
+        tf TableId.poseidon2 := by
+    simpa [anchorLookup, VmConstraint2.holdsAt,
+      Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt] using hrow
+  exact chip_lookup_sound_N permOut (tf TableId.poseidon2) hChip a
+    anchorInputExprs anchorDigestCols (by decide) hlookup
+
+/-- …and the value the verifier reads out of the public vector is that image.
+Every published anchor lane equals the corresponding permutation output lane,
+modulo BabyBear.  A prover who wants a different published anchor must move a
+settlement row, the clearing, the book root or the visibility grade — or find a
+Poseidon2 collision. -/
+theorem published_anchor_is_the_permutation_image
+    {hash : List Int → Int} {a pis : Assignment} {tf : TraceFamily}
+    (permOut : List Int → List Int)
+    (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
+    (hsat : Satisfied2 hash darkBazaarPrivatePoaSettlementN4K4Descriptor
+      dbM0 dbF0 [] (constTrace a pis tf)) :
+    anchorDigestCols.map a = permOut (anchorInputExprs.map (·.eval a)) ∧
+    ∀ lane : Fin 8,
+      pis (ANCHOR_PI_BASE + lane.val) ≡ a (ANCHOR lane.val) [ZMOD BABYBEAR_MODULUS] := by
+  refine ⟨anchor_lookup_sound permOut hChip hsat, fun lane => ?_⟩
+  have hpin : VmConstraint2.base
+      (.piBinding .first (ANCHOR lane.val) (ANCHOR_PI_BASE + lane.val)) ∈ v4PublicPins := by
+    simp only [v4PublicPins, anchorPins, List.mem_append, List.mem_map, List.mem_range]
+    exact Or.inl ⟨lane.val, lane.isLt, rfl⟩
+  exact (v4_public_pin_sound hsat hpin).symm
+
+/-! ## §B — the visibility grade, and the one honest residue
+
+`VISIBILITY` is PI-bound and forced to the constant 1 by a ONE-COLUMN gate.  A
+one-column gate joins nothing, so a pure connectivity census scores the column a
+singleton and calls it decorative.  That verdict is a measurement artifact and
+the theorem below is why: the published grade is not merely *joined* to
+something, it is *equal to a constant* in every satisfying assignment, which is
+strictly more than any anchor in the light-client census can say.
+
+⚠ Do not read this as licence to pin an anchor to a constant and call it bound.
+It is meaningful here only because the grade IS a family constant — every proof
+of this descriptor carries the same one — and the AIR is what fixes it. -/
+
+/-- The published visibility grade is the constant 1, not a prover choice. -/
+theorem visibility_pi_is_forced_to_the_proven_grade
+    {hash : List Int → Int} {a pis : Assignment} {tf : TraceFamily}
+    (hsat : Satisfied2 hash darkBazaarPrivatePoaSettlementN4K4Descriptor
+      dbM0 dbF0 [] (constTrace a pis tf)) :
+    pis VISIBILITY_PI ≡ (PROVEN_VISIBILITY.code : Int) [ZMOD BABYBEAR_MODULUS] := by
+  have hgate := v4_semantic_gate_vanishes hsat visibility_gate_mem
+  have hpin : VmConstraint2.base
+      (.piBinding .first VISIBILITY VISIBILITY_PI) ∈ v4PublicPins := by
+    simp [v4PublicPins, settlementPins]
+  have hcol := v4_public_pin_sound hsat hpin
+  have hval : a VISIBILITY ≡ (PROVEN_VISIBILITY.code : Int) [ZMOD BABYBEAR_MODULUS] := by
+    have h := hgate
+    simp only [privacyBody, sub, neg, add, mul, v, c, EmittedExpr.eval] at h
+    simpa using h.add_right (PROVEN_VISIBILITY.code : Int)
+  exact hcol.symm.trans hval
+
+/-- The anchor absorbs the visibility grade, so the published anchor changes if
+the grade does.  Together with the gate above, the grade is both forced and
+welded rather than carried. -/
+theorem visibility_is_absorbed_by_the_anchor :
+    v VISIBILITY ∈ anchorInputExprs := by
+  simp [anchorInputExprs]
 
 #assert_axioms SettlementTransition.valid_exact_custody
 #assert_axioms SettlementTransition.valid_conserves_custody
@@ -367,17 +594,28 @@ theorem settlement_gate_mem (body : EmittedExpr) (member : body ∈ settlementBo
 #assert_axioms SettlementTransition.valid_no_wrap_envelope
 #assert_axioms descriptor_trace_width
 #assert_axioms descriptor_pi_count
-#assert_axioms digest_pins_length
+#assert_axioms settlement_absorb_arities_are_admitted
+#assert_axioms half_absorb_is_arity_sixteen
+#assert_axioms anchor_absorb_is_arity_sixteen
+#assert_axioms anchor_pins_length
 #assert_axioms settlement_pins_length
 #assert_axioms settlement_bodies_length
 #assert_axioms state_range_last_target_is_quote_amount
 #assert_axioms range_bodies_length
-#assert_axioms v3_semantic_bodies_length
+#assert_axioms v4_semantic_bodies_length
 #assert_axioms visibility_is_not_house_blind
+#assert_axioms v4_publishes_thirty_one_and_v3_published_fifty_five
 #assert_axioms v1_constraints_subset
-#assert_axioms v3_public_pin_sound
-#assert_axioms v3_semantic_gate_vanishes
+#assert_axioms v4_public_pin_sound
+#assert_axioms v4_semantic_gate_vanishes
 #assert_axioms visibility_gate_mem
 #assert_axioms settlement_gate_mem
+#assert_axioms half_lookup_mem
+#assert_axioms anchor_lookup_mem
+#assert_axioms half_lookup_sound
+#assert_axioms anchor_lookup_sound
+#assert_axioms published_anchor_is_the_permutation_image
+#assert_axioms visibility_pi_is_forced_to_the_proven_grade
+#assert_axioms visibility_is_absorbed_by_the_anchor
 
 end Market.DarkBazaarPrivatePoaSettlementDescriptor
