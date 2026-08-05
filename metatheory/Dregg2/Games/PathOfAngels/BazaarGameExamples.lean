@@ -19,6 +19,32 @@ double-listing, and the observation-only crown blocker.  The gameplay data is
 closed; authority and crown certification remain explicit abstract inputs.
 Facts which transit the existing native V1 fixture are named and accounted with
 `#assert_compiled`; generic Bazaar laws remain kernel-pinned in `BazaarGame`.
+
+## ⚑ Where the sponge runs, and where it does not
+
+Admission now hashes: `Judged.admissionChecks` recomputes `HiddenInstance.commit` and
+`HiddenInstance.runSeedFor`, both Poseidon2.  Reducing that decision in the KERNEL is
+not slow, it is infeasible — 47.6 GB and 68 minutes on one file, MEASURED; see the `⚑`
+note in `HiddenInstance`.  So this workbook evaluates the sponge only under COMPILED
+evaluation, in exactly three named theorems, and never in the kernel:
+
+* `live_run_seed_is_the_derived_draw` / `slot_commitment_is_the_committed_secret` —
+  the two named digests below ARE the two sponge outputs;
+* `run_is_admitted` — the whole of `admissionChecks`, which re-checks both of those
+  derivations against the fixture's own `active`/`runClaim`.
+
+`judged?` is then built through `Judged.judgeAdmitted`, which takes that admission as a
+proof argument rather than re-deciding it, and `judged_is_the_authoritative_judge`
+proves it is the same `Option JudgedRun` that `judgeActive` returns.  Everything after
+that point — the whole persistent deployment story and every hostile refusal — reduces
+in the kernel over literals, as it did before the run seed became derived.
+
+⚠ What this costs, stated plainly: those three facts, and therefore every `rfl` below
+them, rest on the Lean compiler rather than the kernel.  That is what `#assert_compiled`
+on all of them says out loud.  No configuration of this workbook kernel-checks a derived
+run seed: the one measurement anyone has is 47.6 GB of resident memory and 68 minutes of
+CPU on a single file, still climbing into a 48 GB cap when it was killed.  That is the
+whole reason the label is `#assert_compiled` and not `#assert_axioms`.
 -/
 import Dregg2.Games.PathOfAngels.BazaarGame
 
@@ -69,7 +95,6 @@ def federation : Digest32 := repeatedDigest 1
 def contentRoot : Digest32 := repeatedDigest 2
 def activation : Digest32 := repeatedDigest 3
 def contentSession : Digest32 := repeatedDigest 4
-def runSeed : Digest32 := repeatedDigest 5
 def actorRoot : Digest32 := repeatedDigest 6
 def playerKey : Digest32 := repeatedDigest 7
 def sellerDigest : Digest32 := repeatedDigest 17
@@ -118,13 +143,42 @@ refused — which is the whole point of the split, and this example is where it 
 exercised end to end.
 
 ⚠ These five sit ABOVE `mission` and are named there.  They used to be stated twice —
-once inline in `mission.runSeed`, once here — which is two shapes that agree today. -/
+once inline in `mission.runSeed`, once here — which is two shapes that agree today.
+
+⚑ `liveRunSeed` and `slotCommitment` are written as the exact BYTES of the two sponge
+outputs, and the two theorems below are what makes them the derivation rather than a
+fixture's own invention.  They are not a relaxation and they are not a second shape:
+`run_is_admitted` re-runs the *whole* of `admissionChecks`, including both derivation
+conjuncts, under compiled evaluation, so a wrong byte here turns that `native_decide`
+RED.  The reason the bytes cannot simply stay written as `HiddenInstance.runSeedFor
+draw missionContext` is that `SignalTriangulation.judge` reads seed bytes 0..2 to pick
+the puzzle, so every downstream `rfl` in this workbook would then reduce a Poseidon2
+permutation in the kernel — 47.6 GB and 68 minutes for one file, MEASURED; see the `⚑`
+note in `HiddenInstance`.  Compiled evaluation does the sponge; the kernel does not. -/
 def slotSecret : HiddenInstance.SlotSecret := ⟨repeatedDigest 91⟩
 def slot : EpochId := ⟨5⟩
 def draw : HiddenInstance.Draw :=
   { secret := slotSecret, slot := slot, playerKey := playerKey }
-def liveRunSeed : Digest32 := HiddenInstance.runSeedFor draw missionContext
-def slotCommitment : Digest32 := HiddenInstance.commit slotSecret slot
+
+def liveRunSeed : Digest32 := literalDigest
+  [230, 78, 212, 73, 42, 145, 205, 88, 75, 33, 92, 167, 8, 34, 207, 209,
+    12, 6, 76, 208, 127, 36, 89, 253, 134, 206, 238, 239, 176, 87, 109, 169]
+  (by decide)
+
+def slotCommitment : Digest32 := literalDigest
+  [171, 128, 137, 208, 12, 70, 9, 210, 94, 83, 45, 75, 141, 35, 71, 122,
+    146, 235, 81, 126, 187, 226, 13, 19, 199, 224, 101, 233, 66, 222, 93, 142]
+  (by decide)
+
+/-- The named seed IS the draw of the committed secret at this slot for this player. -/
+theorem live_run_seed_is_the_derived_draw :
+    liveRunSeed = HiddenInstance.runSeedFor draw missionContext := by
+  native_decide
+
+/-- The named commitment IS the commitment to that same secret at that same slot. -/
+theorem slot_commitment_is_the_committed_secret :
+    slotCommitment = HiddenInstance.commit slotSecret slot := by
+  native_decide
 
 def mission : MissionSpec where
   missionId
@@ -195,9 +249,26 @@ def runClaim : RunClaim where
   playerKey := playerKey
   claimedPreviousPlayerCounter := 0
 
+def submitted : SubmittedRun := .signal [.submit signalConfig.target]
+
+/-- Every authority and derivation check the judge performs on this journey, decided
+once by compiled evaluation.  This is the whole of `admissionChecks`, which is where
+`active.slotCommitment = commit …` and `active.runSeed = runSeedFor …` are checked, so
+this single fact is what makes `liveRunSeed`/`slotCommitment` above the derived values
+rather than named ones. -/
+theorem run_is_admitted : admissionChecks active carrier runClaim = true := by
+  native_decide
+
+/-- ⚑ Built through `judgeAdmitted` rather than `judgeActive` so that the kernel never
+re-decides `admissionChecks` — reducing that `dite` is the 47.6 GB Poseidon2 bomb.  The
+theorem immediately below proves this is the SAME `Option JudgedRun` the authoritative
+entry returns, so nothing here is a second judge. -/
 def judged? : Option JudgedRun :=
-  judgeActive active carrier runClaim
-    (.signal [.submit signalConfig.target])
+  judgeAdmitted active carrier runClaim submitted run_is_admitted
+
+theorem judged_is_the_authoritative_judge :
+    judged? = judgeActive active carrier runClaim submitted :=
+  (judgeActive_eq_judgeAdmitted active carrier runClaim submitted run_is_admitted).symm
 
 def optionSomeB {T : Type} : Option T → Bool
   | some _ => true
@@ -868,6 +939,10 @@ theorem sold_lot_double_list_refused :
 omit fixture in theorem eligible_origin_remains_observation_only :
     inspectEligible origin = .observationOnly origin .runtimeCrownProofMissing := rfl
 
+#assert_compiled live_run_seed_is_the_derived_draw
+#assert_compiled slot_commitment_is_the_committed_secret
+#assert_compiled run_is_admitted
+#assert_compiled judged_is_the_authoritative_judge
 #assert_compiled reward_is_mission_accepted
 #assert_compiled judged_available
 #assert_compiled judged_isSome

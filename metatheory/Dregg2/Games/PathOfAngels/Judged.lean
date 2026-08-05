@@ -259,32 +259,67 @@ def JudgedRun.receipt (judgedRun : JudgedRun) : RunReceipt :=
   | .salvage _ _ _ _ _ _ run _ => run.receipt
   | .blackBox _ _ _ _ _ _ run _ => run.receipt
 
+/-- The exact game tag and executable judge, run against an admission fact the caller
+already holds.  `judgeActive` below is `admissionChecks`-then-this and nothing else, so
+this is a factoring and not a second door: `hadmitted` is the very proposition the `dite`
+decides, and no inhabitant of `JudgedRun` can be built without one.
+
+⚑ Why it is separate.  `admissionChecks` mentions `HiddenInstance.commit` and
+`HiddenInstance.runSeedFor`, so *deciding* it evaluates two Poseidon2 sponges.  The
+elaborator refuses that (both are `@[irreducible]`) and the KERNEL, which ignores
+irreducibility, does it exponentially — MEASURED 47.6 GB / 68 min on one file; see the
+`⚑` note in `HiddenInstance`.  A caller that already proved admission by compiled
+evaluation therefore cannot use `judgeActive`, because reducing its `dite` recomputes
+exactly that decision.  Through this entry the admission is a *proof argument*, erased
+by reduction, and the judged run reduces at the cost of the game judge alone. -/
+def judgeAdmitted (active : ActiveRunState) (carrier : FinalizedCarrier)
+    (claim : RunClaim) (submitted : SubmittedRun)
+    (hadmitted : admissionChecks active carrier claim = true) : Option JudgedRun :=
+  match active.game, submitted with
+  | .signal config, .signal actions =>
+      match hjudged : SignalTriangulation.judge config active.world
+          (signalContext carrier) actions with
+      | some run => some ⟨.signal active carrier claim config hadmitted actions run hjudged⟩
+      | none => none
+  | .relay config, .relay actions =>
+      match hjudged : RelayRepair.judge config active.world (relayContext carrier) actions with
+      | some run => some ⟨.relay active carrier claim config hadmitted actions run hjudged⟩
+      | none => none
+  | .salvage config, .salvage actions =>
+      match hjudged : SalvageLock.judge config active.world (salvageContext carrier) actions with
+      | some run => some ⟨.salvage active carrier claim config hadmitted actions run hjudged⟩
+      | none => none
+  | .blackBox config, .blackBox actions =>
+      match hjudged : BlackBoxReconstruction.judge config active.world
+          (blackBoxContext carrier) actions with
+      | some run => some ⟨.blackBox active carrier claim config hadmitted actions run hjudged⟩
+      | none => none
+  | _, _ => none
+
 /-- The only constructor surface: checks first, exact game tag second, executable
 judge third.  Every failure returns `none`. -/
 def judgeActive (active : ActiveRunState) (carrier : FinalizedCarrier)
     (claim : RunClaim) (submitted : SubmittedRun) : Option JudgedRun :=
   if hadmitted : admissionChecks active carrier claim = true then
-    match active.game, submitted with
-    | .signal config, .signal actions =>
-        match hjudged : SignalTriangulation.judge config active.world
-            (signalContext carrier) actions with
-        | some run => some ⟨.signal active carrier claim config hadmitted actions run hjudged⟩
-        | none => none
-    | .relay config, .relay actions =>
-        match hjudged : RelayRepair.judge config active.world (relayContext carrier) actions with
-        | some run => some ⟨.relay active carrier claim config hadmitted actions run hjudged⟩
-        | none => none
-    | .salvage config, .salvage actions =>
-        match hjudged : SalvageLock.judge config active.world (salvageContext carrier) actions with
-        | some run => some ⟨.salvage active carrier claim config hadmitted actions run hjudged⟩
-        | none => none
-    | .blackBox config, .blackBox actions =>
-        match hjudged : BlackBoxReconstruction.judge config active.world
-            (blackBoxContext carrier) actions with
-        | some run => some ⟨.blackBox active carrier claim config hadmitted actions run hjudged⟩
-        | none => none
-    | _, _ => none
+    judgeAdmitted active carrier claim submitted hadmitted
   else none
+
+/-- The two entries are the same function wherever admission holds.  This is what
+stops `judgeAdmitted` from being a weaker surface: a caller who takes it has, by its
+own argument, everything `judgeActive` would have decided. -/
+theorem judgeActive_eq_judgeAdmitted (active : ActiveRunState)
+    (carrier : FinalizedCarrier) (claim : RunClaim) (submitted : SubmittedRun)
+    (hadmitted : admissionChecks active carrier claim = true) :
+    judgeActive active carrier claim submitted =
+      judgeAdmitted active carrier claim submitted hadmitted := by
+  simp [judgeActive, hadmitted]
+
+/-- Conversely, refusing admission refuses the run through either entry. -/
+theorem judgeActive_eq_none_of_not_admitted (active : ActiveRunState)
+    (carrier : FinalizedCarrier) (claim : RunClaim) (submitted : SubmittedRun)
+    (hrefused : admissionChecks active carrier claim ≠ true) :
+    judgeActive active carrier claim submitted = none := by
+  simp [judgeActive, hrefused]
 
 /-- Constructive inhabitation bridge for the first live game: any genuinely
 successful Signal judge under admitted active inputs produces an abstract
@@ -300,7 +335,7 @@ theorem judgeActive_signal_of_exact {active : ActiveRunState}
     ∃ run : JudgedRun,
       judgeActive active carrier claim (.signal actions) = some run ∧
       run.receipt = raw.receipt := by
-  simp only [judgeActive, hadmitted, ↓reduceDIte, hgame]
+  simp only [judgeActive, judgeAdmitted, hadmitted, ↓reduceDIte, hgame]
   split
   · rename_i found hfound
     rw [hfound] at hjudged
@@ -423,7 +458,7 @@ theorem judgeActive_wrong_game_refused (active : ActiveRunState)
     (config : SignalTriangulation.Config) (actions : List RelayRepair.Action)
     (hgame : active.game = .signal config) :
     judgeActive active carrier claim (.relay actions) = none := by
-  simp [judgeActive, hgame]
+  simp [judgeActive, judgeAdmitted, hgame]
 
 /-- Every inhabitant retains an equality to one concrete executable judge. -/
 theorem JudgedRun.has_executable_origin (run : JudgedRun) :
@@ -469,6 +504,8 @@ theorem JudgedRun.player_counter_positive (run : JudgedRun) :
   run.receipt.player_counter_positive
 
 #assert_axioms admissionChecks_eq_true_iff
+#assert_axioms judgeActive_eq_judgeAdmitted
+#assert_axioms judgeActive_eq_none_of_not_admitted
 #assert_axioms judgeActive_signal_of_exact
 #assert_axioms judgeActive_success_admitted
 #assert_axioms judgeActive_wrong_activation_refused
