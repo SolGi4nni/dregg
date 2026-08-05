@@ -1,6 +1,6 @@
 # Path of Angels: development map
 
-Status: live epoch 1 plus working design, 2026-08-04. This is a menu and dependency map for
+Status: live epoch 1, curator counter 4, plus working design, 2026-08-05. This is a menu and dependency map for
 co-creation with Sentyr, not a promise that every row becomes canon or ships in order.
 
 ## What epoch 1 actually establishes
@@ -8,33 +8,46 @@ co-creation with Sentyr, not a promise that every row becomes canon or ships in 
 This document began before the first release. The deployed beta now closes enough of the spine to
 distinguish implemented substrate from the option space below:
 
-- `beta.pathofangels.network` serves an authenticated, signed-content station with an Expedition
-  Officer slot, deck map, daily board, Field Records/Bazaar/Choir hatches, and one playable finite
-  game. Signal Triangulation consumes the Lean-emitted lookup table; the browser does not score it.
-  A curator-authenticated counter-2 successor containing Relay Repair and Salvage Lock as equally
-  literal finite tables is frozen and tested, but remains distinct from the active counter-1 site
-  until the content-only release ceremony promotes it.
+- `beta.pathofangels.network` serves an authenticated, signed-content station with six connected
+  organs: Field Drills, Expedition, Archive, Recorder, Crew, and Bazaar. Signal Triangulation,
+  Relay Repair, and Salvage Lock are playable finite games; each consumes an exact Lean-emitted
+  table and the browser does not score it. The Expedition and Archive demonstrators also regenerate
+  their complete Lean artifacts during the release gate. Curator counter 4 is live behind Basic
+  Auth, with separate evidence grades so a healthy local instrument cannot launder an unavailable
+  network authority path.
 - The PoA federation is distinct from public Dregg: three validators, threshold three, separate
   keys/storage/ports/deployment domain, no demo economy, required Lean authority and full-turn
   proving. Its finalized history converges across workhorse, hbox and persvati.
-- Lean owns the three emitted game state machines and their judged/canon boundaries. It also owns
-  Black Box Reconstruction, Containment Inspection, deck validation, daily mission selection,
-  accessibility commitments, the Field Archive, and the bounded Dark Bazaar settlement core;
-  those additional systems are not all activated browser content merely because their semantics
-  exist.
+- Lean owns the emitted game state machines and their judged/canon boundaries. It also owns Black
+  Box Reconstruction, Containment Inspection, deck validation, daily mission selection,
+  accessibility commitments, the Field Archive, owner-wide Attendant continuity, authenticated
+  crew field missions, and an operator-visible Poseidon-bound preference exercise. Those additional
+  systems are not activated browser content merely because their semantics exist; each still needs
+  its exact host codec, persistence, and authority bridge.
 - The curator, content-epoch rollback ratchet, extension route authentication, exact release gate,
-  content-addressed web staging and atomic web+node cutover are exercised rather than diagrammed.
+  content-addressed web staging, and atomic content-only cutover are exercised rather than
+  diagrammed. Counter 4 was reproduced from a sealed source snapshot, passed 136 web/runtime tests
+  including both large Lean regenerations, and was promoted without changing the running validator
+  binary or federation.
 - DrEX ingress signs distinct exact Lean-judge input and output digests and still refuses to crown a
-  claim because the finalized-state adapter is not wired. The native FFI executes the Lean judge,
-  but deliberately supplies no authority for caller-authored Canon or carrier fields. This is the
-  next meaningful end-to-end boundary, not a release checkbox to wave through.
+  claim because the finalized-state adapter is not wired. The curator likewise exports only a
+  semantic Signal review and hard-refuses promotion evidence until a node bridge reconstructs the
+  exact finalized `SignedTurn`, executor receipt, signer, and durable commit record. The preference
+  exercise is explicitly not described as DrEX, FHE, MPC, or proof-backed: its Poseidon semantics
+  are real, but its production portal and private/proved outer statement are not.
+- The browser now supports Wallet Standard and an explicit classic-provider seam for Solana
+  proof-of-holding admission against the exact `$DREGG` mint. Challenges and capabilities are
+  wallet-bound, short-lived, and fail closed. The current live validator predates those holder RPCs,
+  so the deployed panel is an honest preview rather than game authority; the next node ceremony
+  must ship and exercise that exact admission path before holder mechanics are called live.
 - Rooted transitive N=2 admission is proved and differentially tested, but the live node remains the
   fixed genesis committee until authenticated vouch rows are persisted and consumed.
 
 Epoch 1 is therefore a trustworthy field terminal and federation, not yet the whole “sealed beta
-station” constellation. The immediate expansion is promotion of the three-game successor, one
-finalized node-derived judged receipt reaching durable world/archive state, and that same receipt
-reaching an actually private Bazaar clearing path without weakening the existing refusal.
+station” constellation. The immediate expansion is one finalized node-derived judged receipt
+reaching durable world/archive state, activation of holder admission on a newly gated validator,
+and that same receipt reaching an actually private Bazaar clearing path without weakening the
+existing refusal.
 
 ## The opportunity
 

@@ -1,5 +1,62 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 5 (Path of Angels counter 4) — the six-organ ship terminal is LIVE; source breadth is not deployment authority
+
+`https://beta.pathofangels.network` now serves curator epoch 1 / counter 4 behind Basic Auth. The
+content-only v3 ceremony reproduced the signed POAG1 bundle from sealed content source commit
+`e0b283d8865d2ea1536f2b69bdc6a6f96521b1c3`, ran **136/136** web/runtime tests including byte-exact
+Lean regeneration of the Expedition and Archive demonstrators, staged immutable bytes, atomically
+swapped the Caddy pointer, and proved the authenticated public tree before finalizing. The active
+release receipt is `bcc193483b6a2a714b48faf874435dd89c1775810baf0fe5a7f216a3953f527a`; the web manifest is
+`43f89d6adb33227978ae521f5401669d6906a9e094c5e10eff1a479e831c14e9`; unauthenticated access is 401
+and `poa:eden` is 200. No pending cutover journal remains.
+
+The live surface is no longer one game plus decorative hatches. It exposes six separate organs —
+Field Drills, Expedition, Archive, Recorder, Crew, and Bazaar — and gives each an independent evidence
+grade. Signal Triangulation, Relay Repair, and Salvage Lock consume complete Lean-emitted finite tables;
+the browser carries no scoring twin. Expedition and Archive are large Lean-emitted demonstrators.
+Recorder replays exact public links but labels demo/node observation honestly. Crew and Bazaar expose
+designed destinations without pretending their source kernels have a live authority bridge. This
+separation is load-bearing: one healthy local artifact cannot turn an unavailable network receipt,
+holder RPC, or private settlement path green.
+
+The running federation and validator are deliberately unchanged: federation
+`4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a`, deployment
+`d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e`, node binary
+`a9858c0298fa5517ef9d845566f59258c3e39404571a6b1bca77990b9b9bfb9f`. The content source and old
+runtime source are independent sealed provenance roots. This closes the stale “counter 3 is blocked”
+status below: the curator trust root was explicitly reset and counters 3 then 4 were promoted through
+the exact-successor ratchet. It does **not** promote newer node APIs by association.
+
+The source-side engine widened substantially after the signed content snapshot. A single Lean event
+replay kernel now underlies platform aggregates; recovery audits a full journal before truncating its
+tail. Solana holding admission verifies the exact Token-2022 `$DREGG` mint, atomically issues a
+wallet-bound capability, enforces exact challenge/capability TTLs, and has Wallet Standard plus an
+explicit classic-provider seam. Owner-wide Attendant continuity prevents per-companion credit-ledger
+forks; Crew Field Mission provides authenticated multi-role route/budget semantics; a Poseidon2-bound
+crew preference exercise includes the concrete collision against its retired additive hash; and the
+curator exports semantic review while hard-refusing promotion until a node authority bridge supplies
+the exact finalized `SignedTurn`, executor receipt, signer, and durable commit record. These kernels
+compile and have hostile cases, but the active validator predates the holder routes and none of the
+new game kernels is live merely because it is in source.
+
+Privacy names remain deliberately unflattering where necessary. The crew preference exercise is
+operator-visible semantics, **not** DrEX/FHE/MPC/proof-backed voting. Dark Bazaar may crown nothing
+from a caller-authored carrier; production needs the finalized-state bridge, exact custody object,
+ciphertext/opening binding, conserving settlement, and the privacy grade actually exercised by the
+deployed operators. Galley Commons and the Bazaar game remain source review campaigns until their
+durable admission/CAS, deployment-pinned trust root, global output-nullifier, and complete example
+gates close. A red or unfinished example is not averaged into a green subsystem claim.
+
+Sentyr-facing source lives in the private repository `https://github.com/emberian/path-of-angels`;
+`alteron808` has a pending write invitation. It contains the game-facing Lean semantics, terminal,
+curator edge, selected YouTube/X companion, signed public artifacts, and product maps while excluding
+operator topology, secrets, and unrelated circuit WIP. The next operational rung is a new validator
+ceremony that actually serves holder admission and finalized game receipts, followed by one exact
+receipt reaching world/archive state and an honestly private Bazaar clearing path. The product rung is
+not “more infrastructure”: it is authored deck content, crew roles, recurring places, better Descent
+choices, and beta discoveries Sentyr may selectively promote into the show.
+
 ## ⚑⚑⚑ AUGUST 4 (in-AIR Kimchi verifier) — the ALU row became a MACHINE; the ROM that forces the program holds every STAGE and not the verifier
 
 `MinaWrapVerifierAir` proved that every row is the Pasta operation its selector names and that a
