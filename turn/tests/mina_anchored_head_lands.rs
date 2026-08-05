@@ -54,8 +54,8 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_turn::executor::mina_head_verifier::{
-    MINA_LC_PI_COUNT, MINA_LC_VERIFY_DESCRIPTOR, PI_ANCHOR_STATE_BASE, PI_BLOCK_LEN, PI_REQ_DEPTH,
-    PI_TIP_STATE_BASE, check_head_binding, key_lanes_u32,
+    MINA_LC_PI_COUNT, MINA_LC_VERIFY_DESCRIPTOR, PI_ANCHOR_H, PI_ANCHOR_STATE_BASE, PI_BLOCK_LEN,
+    PI_REQ_DEPTH, PI_SUB_COMMIT_BASE, PI_TIP_STATE_BASE, check_head_binding, key_lanes_u32,
 };
 
 // Trace column layout — pinned to `LightClientMinaAir`'s Lean `def`s.
@@ -68,12 +68,33 @@ const SEG_SLACK: usize = 5;
 const ANCH_SLACK: usize = 6;
 const DEPTH_SLACK: usize = 7;
 const LINK_OK: usize = 8;
-const PICKLES_OK: usize = 9;
+const PICKLES_WITNESSED: usize = 9;
 const CANON_OK: usize = 10;
 const BLOCK_LEN: usize = 11;
 const ANCHOR_STATE_0: usize = 12;
 const TIP_STATE_0: usize = 21;
-const MINA_LC_WIDTH: usize = 30;
+/// ⚑ 49, not 30. `7a4b8ab00` split `PICKLES_OK` into `PICKLES_WITNESSED` + `WRAP_FS_PROVED` and
+/// added the recursion carrier's two nine-lane blocks; this file kept building 30-wide rows, so
+/// every prove in it died as *"base row 0 width 30 is short of the PRODUCER-OWNED width 49"* — a
+/// SHAPE fault, which is neither pole. Both polarities in this file were dead from that morning.
+const MINA_LC_WIDTH: usize = 49;
+/// ⚑ The recursion carrier (col 30) and its two nine-lane blocks (31..40 program, 40..49 declared
+/// commitment) — `LightClientMinaAir.WRAP_FS_PROVED` / `SUB_VK` / `SUB_PI`.
+const WRAP_FS_PROVED: usize = 30;
+const SUB_VK_0: usize = 31;
+const SUB_PI_0: usize = 40;
+/// The nine `Faithful9` lanes of `dregg-pasta-fq-chainlink::v1`'s semantic fingerprint — the value
+/// the descriptor's `vk_pin` forces under `WRAP_FS_PROVED = 1`. Recomputed from that descriptor's
+/// own bytes by `circuit/tests/mina_transcript_carrier_binding.rs`, and by `dregg-turn` itself at
+/// verify time (`check_subproof_program_pin`); a literal here so a drift is a red, not a silence.
+const CHAINLINK_VK_LANES: [u32; 9] = [
+    40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485,
+];
+/// The nine lanes of the digest of that sub-proof's 256 public inputs on the block-539508 instance's
+/// 46th and last link — PI-bound at slots 20..28.
+const CHAINLINK_PI_LANES: [u32; 9] = [
+    76470648, 44150818, 361910605, 443692671, 242143308, 490185822, 240590146, 360276303, 4019771,
+];
 
 const TRACE_ROWS: usize = 8;
 
@@ -125,7 +146,7 @@ fn felt(v: i64) -> BabyBear {
 }
 
 /// The `TRACE_ROWS`-row trace (every row identical: the descriptor's gates are single-row and its
-/// pins are first-row, so replication is the FRI padding shape) plus the twenty public inputs.
+/// pins are first-row, so replication is the FRI padding shape) plus the thirty public inputs.
 fn trace_and_pis(
     h: Head,
     anchor: &[u8; 32],
@@ -145,21 +166,29 @@ fn trace_and_pis(
     r[ANCH_SLACK] = felt(h.submit_h as i64 - h.anchor_h as i64);
     r[DEPTH_SLACK] = felt(h.wit_depth - h.req_depth as i64);
     r[LINK_OK] = BabyBear::new(h.link_ok);
-    r[PICKLES_OK] = BabyBear::new(h.pickles_ok);
+    r[PICKLES_WITNESSED] = BabyBear::new(h.pickles_ok);
     r[CANON_OK] = BabyBear::new(h.canon_ok);
     r[BLOCK_LEN] = BabyBear::new(h.block_len);
     for i in 0..9 {
         r[ANCHOR_STATE_0 + i] = BabyBear::new(anchor_lanes[i]);
         r[TIP_STATE_0 + i] = BabyBear::new(tip_lanes[i]);
+        // ⚑ The recursion carrier's two blocks. `SUB_VK` is NOT the prover's to choose: the emitted
+        // `proof_bind` forces it to the chainlink fingerprint under the guard below.
+        r[SUB_VK_0 + i] = BabyBear::new(CHAINLINK_VK_LANES[i]);
+        r[SUB_PI_0 + i] = BabyBear::new(CHAINLINK_PI_LANES[i]);
     }
+    r[WRAP_FS_PROVED] = BabyBear::new(1);
 
     let mut pis = vec![BabyBear::new(0); MINA_LC_PI_COUNT];
     for i in 0..9 {
         pis[PI_ANCHOR_STATE_BASE + i] = BabyBear::new(anchor_lanes[i]);
         pis[PI_TIP_STATE_BASE + i] = BabyBear::new(tip_lanes[i]);
+        pis[PI_SUB_COMMIT_BASE + i] = BabyBear::new(CHAINLINK_PI_LANES[i]);
     }
     pis[PI_BLOCK_LEN] = BabyBear::new(h.block_len);
     pis[PI_REQ_DEPTH] = BabyBear::new(h.req_depth);
+    // ⚑ The anchor height, PUBLISHED since `adf5aa892` — read off the row, never asserted beside it.
+    pis[PI_ANCHOR_H] = BabyBear::new(h.anchor_h);
 
     (vec![r; TRACE_ROWS], pis)
 }
@@ -277,7 +306,13 @@ fn the_served_descriptor_is_the_lean_compiled_one() {
     // tip satisfied every emitted constraint; the only thing that caught it was a verifier reading
     // `PI[19]` and comparing it to 290 by hand, which is a convention and not a check. One lookup
     // on the table already declared closes it (`minaLcAir_forces_submit_within_the_segment`).
-    assert_eq!(d.constraints.len(), 50);
+    //
+    // ⚑ **50 -> 62, 2026-08-05, in two steps that this pin did not follow.** `7a4b8ab00` split
+    // `PICKLES_OK` and added the recursion seam: the `WRAP_FS_PROVED = 1` gate, ONE nine-lane
+    // `proof_bind`, and nine `SUB_PI` pins (+11). `adf5aa892` published the weak-subjectivity
+    // anchor's height and added its pin (+1). Byte source:
+    // `LightClientMinaAir.minaLcVerifyDesc_constraint_count`, which carries 62 as a proved `rfl`.
+    assert_eq!(d.constraints.len(), 62);
     // `range` at 24 bits (the slack teeth), `range_w29` (wire 98, the sixteen low lanes),
     // `range_w22` (wire 91, the two TOP lanes — the canonicality tooth).
     assert_eq!(d.tables.len(), 3);
