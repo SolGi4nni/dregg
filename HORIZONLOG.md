@@ -28,6 +28,15 @@ runtime source are independent sealed provenance roots. This closes the stale â€
 status below: the curator trust root was explicitly reset and counters 3 then 4 were promoted through
 the exact-successor ratchet. It does **not** promote newer node APIs by association.
 
+The first runtime-successor foundation is now committed separately in `dregg-infra` at `38878d4`.
+It pins an exact committed object graph rather than the dirty worktree, preserves the exact counter-4
+content/federation/genesis/routing receipt projection, canonical-binds every object to the bytes it
+hashes, and provisions only disabled-empty or bounded/O_NOFOLLOW-verified holding RPC state. It is
+**preparatory code, not a deployer**: all `check`/`stage`/`promote`/`finalize`/`rollback` actions hard
+refuse before creating state because there is not yet an authenticated stopped-copy compatibility
+producer, offline journal, all-stop executor, or rollback executor. Runtime+content hostile suites are
+25/25; no live runtime changed.
+
 The source-side engine widened substantially after the signed content snapshot. A single Lean event
 replay kernel now underlies platform aggregates; recovery audits a full journal before truncating its
 tail. Solana holding admission verifies the exact Token-2022 `$DREGG` mint, atomically issues a
@@ -35,18 +44,29 @@ wallet-bound capability, enforces exact challenge/capability TTLs, and has Walle
 explicit classic-provider seam. Owner-wide Attendant continuity prevents per-companion credit-ledger
 forks; Crew Field Mission provides authenticated multi-role route/budget semantics; a Poseidon2-bound
 crew preference exercise includes the concrete collision against its retired additive hash; and the
-curator exports semantic review while hard-refusing promotion until a node authority bridge supplies
-the exact finalized `SignedTurn`, executor receipt, signer, and durable commit record. These kernels
-compile and have hostile cases, but the active validator predates the holder routes and none of the
-new game kernels is live merely because it is in source.
+node now exports `POA-SIGNAL-NODE-ENVELOPE-V1`, a bearer-only bounded diagnostic reconstructed from one
+node's durable `SignedTurn`, executor receipt, Lean replay, and commit projection. The diagnostic
+verifies exact canonical bytes, roster membership, Ed25519, the self-carried ML-DSA signature, node
+signature, and judge result, but it is **not portable authority**: external deployment pinning, actor
+PQ-key enrollment, authenticated catalog-to-judge configuration, and quorum hybrid finality are four
+private immutable false flags. Curator promotion always hard-refuses and names all four. These kernels
+compile and have hostile cases, but the active validator predates the holder/diagnostic routes and none
+of the new game kernels is live merely because it is in source. Node envelope source commit:
+`c669b5b76`.
 
 Privacy names remain deliberately unflattering where necessary. The crew preference exercise is
 operator-visible semantics, **not** DrEX/FHE/MPC/proof-backed voting. Dark Bazaar may crown nothing
 from a caller-authored carrier; production needs the finalized-state bridge, exact custody object,
 ciphertext/opening binding, conserving settlement, and the privacy grade actually exercised by the
-deployed operators. Galley Commons and the Bazaar game remain source review campaigns until their
-durable admission/CAS, deployment-pinned trust root, global output-nullifier, and complete example
-gates close. A red or unfinished example is not averaged into a green subsystem claim.
+deployed operators. Galley Commons/Daily now source-ship as a trusted-host Lean beta (`db156caa4`):
+one callable deployment genesis spans Commons, Daily, and a deployment-global output registry; exact
+loads bind faithful full bytes/revision/root lineage; CAS facts are deployment-indexed and store-kind
+separated; coordinate and receipt-hash replay is refused across activations. Bazaar's opening-aware
+V1 semantic core also source-ships (`71a0567d0`): exact four-envelope same-opening book binding,
+dependent persistence, custody conservation, fixed supported shape, and expiry recovery all compile.
+Its runnable venue remains **NO-SHIP** until seven fixed trusted native externs and a durable restart
+decoder are implemented and pinned. `BazaarGameExamples.lean` remains untracked WIP; a red or unfinished
+example is not averaged into a green subsystem claim.
 
 Sentyr-facing source lives in the private repository `https://github.com/emberian/path-of-angels`;
 `alteron808` has a pending write invitation. It contains the game-facing Lean semantics, terminal,

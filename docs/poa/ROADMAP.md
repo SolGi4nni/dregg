@@ -21,9 +21,11 @@ distinguish implemented substrate from the option space below:
 - Lean owns the emitted game state machines and their judged/canon boundaries. It also owns Black
   Box Reconstruction, Containment Inspection, deck validation, daily mission selection,
   accessibility commitments, the Field Archive, owner-wide Attendant continuity, authenticated
-  crew field missions, and an operator-visible Poseidon-bound preference exercise. Those additional
-  systems are not activated browser content merely because their semantics exist; each still needs
-  its exact host codec, persistence, and authority bridge.
+  crew field missions, an operator-visible Poseidon-bound preference exercise, deployment-rooted
+  Galley Commons/Daily life, and an exact opening-aware Bazaar core. Those additional systems are
+  not activated browser content merely because their semantics exist. Galley still needs concrete
+  host codecs and atomic stores; Bazaar still needs its seven fixed native verifier/effect adapters
+  and durable restart decoder.
 - The curator, content-epoch rollback ratchet, extension route authentication, exact release gate,
   content-addressed web staging, and atomic content-only cutover are exercised rather than
   diagrammed. Counter 4 was reproduced from a sealed source snapshot, passed 136 web/runtime tests
@@ -31,10 +33,12 @@ distinguish implemented substrate from the option space below:
   binary or federation.
 - DrEX ingress signs distinct exact Lean-judge input and output digests and still refuses to crown a
   claim because the finalized-state adapter is not wired. The curator likewise exports only a
-  semantic Signal review and hard-refuses promotion evidence until a node bridge reconstructs the
-  exact finalized `SignedTurn`, executor receipt, signer, and durable commit record. The preference
-  exercise is explicitly not described as DrEX, FHE, MPC, or proof-backed: its Poseidon semantics
-  are real, but its production portal and private/proved outer statement are not.
+  semantic Signal review. A bearer-only node-envelope diagnostic now reconstructs exact canonical
+  `SignedTurn`, executor receipt, Lean replay, and durable commit projection from one node, but it
+  explicitly leaves external deployment pinning, actor PQ enrollment, authenticated mission/config
+  binding, and quorum hybrid finality false. Promotion therefore still hard-refuses. The preference
+  exercise is explicitly not described as DrEX, FHE, MPC, or proof-backed: its Poseidon semantics are
+  real, but its production portal and private/proved outer statement are not.
 - The browser now supports Wallet Standard and an explicit classic-provider seam for Solana
   proof-of-holding admission against the exact `$DREGG` mint. Challenges and capabilities are
   wallet-bound, short-lived, and fail closed. The current live validator predates those holder RPCs,
