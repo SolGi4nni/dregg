@@ -25,7 +25,9 @@ export const DEFAULT_DREGG_ADMISSION_ENDPOINTS = Object.freeze({
 });
 
 const RECEIPT_STORAGE_KEY = "poa.dregg.beta-holding-receipt.v1";
-const MAX_CHALLENGE_LIFETIME_SECONDS = 15 * 60;
+const RECEIPT_STORAGE_FORMAT = "poa-dregg-holding-session-v1";
+const MAX_CHALLENGE_LIFETIME_SECONDS = 300;
+const MAX_CAPABILITY_LIFETIME_SECONDS = 120;
 const CLOCK_SKEW_SECONDS = 30;
 const encoder = new TextEncoder();
 
@@ -38,6 +40,24 @@ const CAPABILITY_KEYS = Object.freeze([
   "receipt_id", "snapshot_slot", "trust", "wallet",
 ]);
 const STATUS_KEYS = Object.freeze([...CAPABILITY_KEYS, "state"].sort());
+const STORED_RECEIPT_KEYS = Object.freeze(["format", "receipt_id", "wallet"]);
+
+class HoldingBackendError extends Error {
+  constructor(status, code = null) {
+    super(`holding backend refused request (${status})`);
+    this.name = "HoldingBackendError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+class InactiveReceiptError extends Error {
+  constructor(state) {
+    super(`receipt ${state}`);
+    this.name = "InactiveReceiptError";
+    this.state = state;
+  }
+}
 
 function requiredText(name, value) {
   if (typeof value !== "string" || value.length === 0 || /\r|\n|[\u0000-\u001f]/u.test(value)) {
@@ -93,8 +113,8 @@ function validateOwnerBindingMessage(message, walletAddress) {
   }
 }
 
-function validateWindow(issuedAt, expiresAt, nowSeconds) {
-  if (expiresAt <= issuedAt || expiresAt - issuedAt > MAX_CHALLENGE_LIFETIME_SECONDS) {
+function validateWindow(issuedAt, expiresAt, nowSeconds, maximumLifetimeSeconds) {
+  if (expiresAt <= issuedAt || expiresAt - issuedAt > maximumLifetimeSeconds) {
     throw new Error("holding evidence is not short-lived");
   }
   if (issuedAt > nowSeconds + CLOCK_SKEW_SECONDS || expiresAt <= nowSeconds - CLOCK_SKEW_SECONDS) {
@@ -135,7 +155,12 @@ export function normalizeHoldingChallenge(payload, expected, nowMs = Date.now())
   }
   if (challenge.signingMessage.length === 0) throw new Error("holding challenge has an empty signing message");
   validateOwnerBindingMessage(challenge.signingMessage, challenge.walletAddress);
-  validateWindow(challenge.issuedAt, challenge.expiresAt, safeNowSeconds(nowMs));
+  validateWindow(
+    challenge.issuedAt,
+    challenge.expiresAt,
+    safeNowSeconds(nowMs),
+    MAX_CHALLENGE_LIFETIME_SECONDS,
+  );
   return Object.freeze(challenge);
 }
 
@@ -173,7 +198,7 @@ export function normalizeHoldingCapability(payload, expected, nowMs = Date.now()
       payload.governance_weight_bearing !== false) {
     throw new Error("holding capability has unsupported authority or bindings");
   }
-  validateWindow(issuedAt, expiresAt, safeNowSeconds(nowMs));
+  validateWindow(issuedAt, expiresAt, safeNowSeconds(nowMs), MAX_CAPABILITY_LIFETIME_SECONDS);
   return admissionCredential({ receiptId, walletAddress, snapshotSlot, issuedAt, expiresAt });
 }
 
@@ -192,7 +217,32 @@ export function normalizeHoldingStatus(payload, expected, nowMs = Date.now()) {
   const capabilityShape = { ...capabilityFields, format: DREGG_HOLDING_CAPABILITY_FORMAT };
   return Object.freeze({
     state,
-    credential: normalizeHoldingCapability(capabilityShape, { walletAddress: payload.wallet }, nowMs),
+    credential: normalizeHoldingCapability(
+      capabilityShape,
+      { walletAddress: expected.walletAddress },
+      nowMs,
+    ),
+  });
+}
+
+function encodeStoredReceipt(receiptId, walletAddress) {
+  return JSON.stringify({
+    format: RECEIPT_STORAGE_FORMAT,
+    receipt_id: base64Url32("receipt_id", receiptId),
+    wallet: normalizeSolanaPublicKey("wallet", walletAddress),
+  });
+}
+
+function decodeStoredReceipt(serialized) {
+  const payload = JSON.parse(requiredText("saved receipt", serialized));
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new TypeError("saved receipt must be an object");
+  }
+  exactKeys("saved receipt", payload, STORED_RECEIPT_KEYS);
+  if (payload.format !== RECEIPT_STORAGE_FORMAT) throw new Error("saved receipt has the wrong format");
+  return Object.freeze({
+    receiptId: base64Url32("receipt_id", payload.receipt_id),
+    walletAddress: normalizeSolanaPublicKey("wallet", payload.wallet),
   });
 }
 
@@ -216,7 +266,6 @@ function abbreviated(address) {
 async function jsonRequest(fetchImpl, url, {
   method = "GET",
   body,
-  allowUnknownReceipt = false,
 } = {}) {
   const response = await fetchImpl(url, {
     method,
@@ -226,11 +275,61 @@ async function jsonRequest(fetchImpl, url, {
     headers: Object.freeze({ Accept: "application/json", "Content-Type": "application/json" }),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  if (allowUnknownReceipt && response.status === 404) return null;
-  if (!response.ok) throw new Error(`holding backend refused request (${response.status})`);
   const contentType = response.headers?.get?.("content-type") ?? "";
+  if (!response.ok) {
+    let code = null;
+    if (contentType.toLowerCase().includes("application/json")) {
+      try {
+        const payload = await response.json();
+        if (payload && typeof payload === "object" && typeof payload.code === "string") code = payload.code;
+      } catch { /* Caddy/Axum refusals need not have the node error shape. */ }
+    }
+    throw new HoldingBackendError(response.status, code);
+  }
   if (!contentType.toLowerCase().includes("application/json")) throw new Error("holding backend did not return JSON");
   return response.json();
+}
+
+function isTransientBackendFailure(error) {
+  if (!(error instanceof HoldingBackendError)) return true;
+  return error.status === 429 || error.status >= 500;
+}
+
+function authenticationFailureMessage(error, savedReceiptRetained) {
+  let message;
+  if (error instanceof HoldingBackendError && error.status === 401) {
+    message = "The beta invitation session was refused. Re-enter the beta credentials and try again.";
+  } else if (error instanceof HoldingBackendError && error.code === "insufficient_dregg") {
+    message = "The finalized RPC check did not find the minimum $DREGG holding for this wallet.";
+  } else if (error instanceof HoldingBackendError && error.status === 429) {
+    message = "The holding service is rate-limited or busy. Wait briefly and try again.";
+  } else if (error instanceof HoldingBackendError && error.status >= 500) {
+    message = "The PoA node or finalized Solana RPC is temporarily unavailable. No access was granted.";
+  } else if (error instanceof HoldingBackendError && error.status === 410) {
+    message = "The wallet challenge expired before verification. Request a fresh challenge.";
+  } else {
+    message = "Wallet proof was cancelled, malformed, or refused. No access was granted.";
+  }
+  return savedReceiptRetained ? `${message} Your previously saved receipt was retained.` : message;
+}
+
+function receiptFailureMessage(error, retained) {
+  if (retained) {
+    if (error instanceof HoldingBackendError && error.status === 429) {
+      return "The holding service is rate-limited. Your wallet-bound receipt was retained; retry shortly.";
+    }
+    return "The PoA node could not check the saved receipt. It remains wallet-bound in this tab; retry when the service returns.";
+  }
+  if (error instanceof HoldingBackendError && error.status === 401) {
+    return "The beta invitation session was refused. The saved receipt was cleared and no access was granted.";
+  }
+  if (error instanceof InactiveReceiptError && error.state === "expired") {
+    return "The saved PoA receipt expired. Request fresh beta game admission.";
+  }
+  if (error instanceof InactiveReceiptError && error.state === "consumed") {
+    return "The saved PoA receipt was already consumed. Request fresh beta game admission.";
+  }
+  return "The saved PoA receipt was unknown or permanently refused. It was cleared and no access was granted.";
 }
 
 function safeStorage(storage) {
@@ -249,11 +348,17 @@ export function mountDreggAdmissionPanel(root, {
   fetchImpl = globalThis.fetch,
   storage = globalThis.sessionStorage,
   now = () => Date.now(),
+  setTimeoutImpl = globalThis.setTimeout,
+  clearTimeoutImpl = globalThis.clearTimeout,
+  classicProviderSource = [],
   onAdmissionChange = () => {},
 } = {}) {
   if (!root || typeof root.replaceChildren !== "function") throw new TypeError("panel root is required");
   if (!walletsRegistry || typeof walletsRegistry.get !== "function") throw new TypeError("Wallet Standard registry is required");
   if (typeof fetchImpl !== "function") throw new TypeError("fetch implementation is required");
+  if (typeof setTimeoutImpl !== "function" || typeof clearTimeoutImpl !== "function") {
+    throw new TypeError("credential expiry timers are required");
+  }
   const trustedOrigin = new URL(requiredText("origin", origin)).origin;
   const urls = Object.freeze({
     challenge: resolveSameOriginAdmissionEndpoint(endpoints.challenge, trustedOrigin),
@@ -298,10 +403,12 @@ export function mountDreggAdmissionPanel(root, {
   walletTitle.id = "dregg-wallet-list-title";
   const walletList = el(documentRef, "ul", "dregg-admission__wallet-list");
   const refreshButton = button(documentRef, "dregg-admission__secondary", "Refresh wallet list");
+  const retryReceiptButton = button(documentRef, "dregg-admission__secondary", "Retry saved receipt");
+  retryReceiptButton.hidden = true;
   const signingNote = el(documentRef, "p", "dregg-admission__signing-note",
     "Your wallet signs exact bytes supplied by the same-origin PoA node. This is a message signature, never a transaction.");
   signingNote.id = "dregg-admission-signing-note";
-  walletRegion.append(walletTitle, walletList, refreshButton, signingNote);
+  walletRegion.append(walletTitle, walletList, refreshButton, retryReceiptButton, signingNote);
   const sessionRegion = el(documentRef, "div", "dregg-admission__session");
   sessionRegion.hidden = true;
   const sessionTitle = el(documentRef, "h3", undefined, "Beta game admission active");
@@ -312,35 +419,86 @@ export function mountDreggAdmissionPanel(root, {
   panel.append(heading, intro, boundary, trustList, status, walletRegion, sessionRegion);
   root.replaceChildren(panel);
 
-  const state = { busy: false, credential: null, destroyed: false, wallets: [], receiptId: receiptStorage.get() };
+  let savedReceipt = null;
+  const savedReceiptText = receiptStorage.get();
+  if (savedReceiptText !== null) {
+    try { savedReceipt = decodeStoredReceipt(savedReceiptText); }
+    catch { receiptStorage.clear(); }
+  }
+  const state = {
+    busy: false,
+    credential: null,
+    destroyed: false,
+    wallets: [],
+    savedReceipt,
+    expiryTimer: null,
+  };
   const unsubscriptions = [];
   function setStatus(kind, message) { status.dataset.state = kind; status.textContent = message; }
+  function cancelCredentialExpiry() {
+    if (state.expiryTimer !== null) clearTimeoutImpl(state.expiryTimer);
+    state.expiryTimer = null;
+  }
   function setBusy(value) {
     state.busy = value;
     panel.setAttribute("aria-busy", String(value));
     refreshButton.disabled = value;
+    retryReceiptButton.disabled = value;
     logoutButton.disabled = value;
     for (const row of walletList.children ?? []) if (row.children?.[0]) row.children[0].disabled = value;
   }
   function showSignedOut({ notify = true } = {}) {
+    cancelCredentialExpiry();
     state.credential = null;
     walletRegion.hidden = false;
     sessionRegion.hidden = true;
     if (notify) onAdmissionChange(null);
   }
+  function credentialExpired(credential) {
+    return safeInteger("clock", now()) >= credential.expiresAt * 1000;
+  }
+  function expireCredential(receiptId) {
+    if (state.destroyed || state.credential?.receiptId !== receiptId) return false;
+    if (!credentialExpired(state.credential)) {
+      scheduleCredentialExpiry(state.credential);
+      return false;
+    }
+    receiptStorage.clear();
+    state.savedReceipt = null;
+    showSignedOut();
+    retryReceiptButton.hidden = true;
+    renderWallets();
+    setStatus("expired", "The short-lived PoA receipt expired. Request fresh beta game admission.");
+    return true;
+  }
+  function scheduleCredentialExpiry(credential) {
+    cancelCredentialExpiry();
+    const delay = Math.max(0, credential.expiresAt * 1000 - safeInteger("clock", now()));
+    state.expiryTimer = setTimeoutImpl(() => { expireCredential(credential.receiptId); }, delay);
+    state.expiryTimer?.unref?.();
+  }
   function showCredential(credential) {
+    if (credentialExpired(credential)) {
+      receiptStorage.clear();
+      state.savedReceipt = null;
+      showSignedOut();
+      retryReceiptButton.hidden = true;
+      setStatus("expired", "The short-lived PoA receipt expired. Request fresh beta game admission.");
+      return false;
+    }
     state.credential = credential;
-    state.receiptId = credential.receiptId;
     walletRegion.hidden = true;
     sessionRegion.hidden = false;
     sessionWallet.textContent = `Wallet ${abbreviated(credential.walletAddress)}`;
     sessionExpiry.textContent = `Short-lived access ends ${new Date(credential.expiresAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
     setStatus("admitted", "RPC-attested beta game receipt active. No governance authority granted.");
     onAdmissionChange(credential);
+    scheduleCredentialExpiry(credential);
+    return true;
   }
   function renderWallets() {
     if (state.destroyed) return [];
-    state.wallets = discoverDreggWallets(walletsRegistry);
+    state.wallets = discoverDreggWallets(walletsRegistry, classicProviderSource);
     walletList.replaceChildren(...state.wallets.map((wallet, index) => {
       const row = el(documentRef, "li");
       const safeName = typeof wallet.name === "string" && wallet.name.length > 0 && wallet.name.length <= 80
@@ -351,16 +509,20 @@ export function mountDreggAdmissionPanel(root, {
       row.append(connectButton);
       return row;
     }));
-    if (state.wallets.length === 0) setStatus("idle", "No compatible Solana message-signing wallet was discovered.");
-    else if (!state.credential && !state.busy) setStatus("idle", "Choose a wallet to request optional beta game admission.");
+    if (!state.savedReceipt && state.wallets.length === 0) {
+      setStatus("idle", "No compatible Solana message-signing wallet was discovered.");
+    } else if (!state.savedReceipt && !state.credential && !state.busy) {
+      setStatus("idle", "Choose a wallet to request optional beta game admission.");
+    }
     return state.wallets;
   }
 
   async function refreshSession() {
     if (state.destroyed || state.busy) return null;
-    const receiptId = state.receiptId ?? receiptStorage.get();
-    if (!receiptId) {
+    const binding = state.savedReceipt;
+    if (!binding) {
       showSignedOut({ notify: false });
+      retryReceiptButton.hidden = true;
       setStatus("idle", state.wallets.length
         ? "Choose a wallet to request optional beta game admission."
         : "No compatible Solana message-signing wallet was discovered.");
@@ -369,18 +531,24 @@ export function mountDreggAdmissionPanel(root, {
     setBusy(true);
     setStatus("working", "Checking saved PoA receipt status…");
     try {
-      const validReceiptId = base64Url32("receipt_id", receiptId);
-      const payload = await jsonRequest(fetchImpl, `${urls.statusPrefix}${encodeURIComponent(validReceiptId)}`, { allowUnknownReceipt: true });
-      if (payload === null) throw new Error("unknown receipt");
-      const result = normalizeHoldingStatus(payload, { receiptId: validReceiptId }, safeInteger("clock", now()));
-      if (!result.credential) throw new Error(`receipt ${result.state}`);
-      showCredential(result.credential);
+      const payload = await jsonRequest(
+        fetchImpl,
+        `${urls.statusPrefix}${encodeURIComponent(binding.receiptId)}`,
+      );
+      const result = normalizeHoldingStatus(payload, binding, safeInteger("clock", now()));
+      if (!result.credential) throw new InactiveReceiptError(result.state);
+      if (!showCredential(result.credential)) return null;
+      retryReceiptButton.hidden = true;
       return result.credential;
-    } catch {
-      receiptStorage.clear();
-      state.receiptId = null;
+    } catch (error) {
+      const retained = isTransientBackendFailure(error) && !(error instanceof InactiveReceiptError);
+      if (!retained) {
+        receiptStorage.clear();
+        state.savedReceipt = null;
+      }
       showSignedOut();
-      setStatus("refused", "Saved PoA receipt was unavailable, expired, or refused. No access was granted.");
+      retryReceiptButton.hidden = !retained;
+      setStatus(retained ? "deferred" : "refused", receiptFailureMessage(error, retained));
       return null;
     } finally { setBusy(false); }
   }
@@ -388,6 +556,7 @@ export function mountDreggAdmissionPanel(root, {
   async function authenticate(wallet) {
     if (state.destroyed || state.busy) return null;
     setBusy(true);
+    retryReceiptButton.hidden = true;
     setStatus("working", "Connecting wallet…");
     try {
       const session = await connectDreggWallet(wallet, { cluster: "solana:mainnet" });
@@ -413,22 +582,24 @@ export function mountDreggAdmissionPanel(root, {
         { walletAddress: session.address },
         safeInteger("clock", now()),
       );
-      state.receiptId = credential.receiptId;
-      receiptStorage.set(credential.receiptId);
-      showCredential(credential);
+      state.savedReceipt = Object.freeze({
+        receiptId: credential.receiptId,
+        walletAddress: credential.walletAddress,
+      });
+      receiptStorage.set(encodeStoredReceipt(credential.receiptId, credential.walletAddress));
+      if (!showCredential(credential)) return null;
       return credential;
-    } catch {
-      receiptStorage.clear();
-      state.receiptId = null;
+    } catch (error) {
       showSignedOut();
-      setStatus("refused", "Wallet proof was cancelled, unavailable, or refused. No access was granted.");
+      retryReceiptButton.hidden = !state.savedReceipt;
+      setStatus("refused", authenticationFailureMessage(error, Boolean(state.savedReceipt)));
       return null;
     } finally { setBusy(false); }
   }
 
   function logout() {
     receiptStorage.clear();
-    state.receiptId = null;
+    state.savedReceipt = null;
     showSignedOut();
     renderWallets();
     setStatus("idle", "Local PoA receipt forgotten. The node capability was not revoked, and your wallet may remain connected.");
@@ -436,6 +607,7 @@ export function mountDreggAdmissionPanel(root, {
   }
 
   refreshButton.addEventListener("click", renderWallets);
+  retryReceiptButton.addEventListener("click", () => { void refreshSession(); });
   logoutButton.addEventListener("click", logout);
   if (typeof walletsRegistry.on === "function") {
     for (const eventName of ["register", "unregister"]) {
@@ -447,10 +619,14 @@ export function mountDreggAdmissionPanel(root, {
   const ready = refreshSession();
   return Object.freeze({
     ready, authenticate, logout, refreshSession, refreshWallets: renderWallets,
-    getCredential: () => state.credential,
+    getCredential: () => {
+      if (state.credential && expireCredential(state.credential.receiptId)) return null;
+      return state.credential;
+    },
     getWallets: () => Object.freeze([...state.wallets]),
     destroy() {
       state.destroyed = true;
+      cancelCredentialExpiry();
       for (const unsubscribe of unsubscriptions) unsubscribe();
       root.replaceChildren();
     },

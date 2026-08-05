@@ -11,5 +11,6 @@ test("main mission surface mounts restrained optional admission below the games"
   assert.match(app, /mountDreggAdmissionPanel/u);
   assert.match(app, /getWalletStandardRegistry\(window\)/u);
   assert.match(app, /PoA wallet admission unavailable/u);
+  assert.doesNotMatch(app, /onAdmissionChange/u, "client receipt must not become local game authority");
   assert.doesNotMatch(html, /governance (?:enabled|active)|verified balance/iu);
 });

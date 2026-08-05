@@ -196,7 +196,7 @@ function chooseStandardAccount(wallet, connectResult, cluster) {
   return account;
 }
 
-/** Normalize Wallet Standard wallets and classic Wallet Adapter/Phantom providers. */
+/** Normalize Wallet Standard wallets and deliberately injected classic providers. */
 export async function connectDreggWallet(wallet, { cluster = "solana:mainnet" } = {}) {
   if (!wallet || typeof wallet !== "object") throw new TypeError("wallet is required");
   const standardConnect = wallet.features?.["standard:connect"]?.connect;
@@ -267,13 +267,24 @@ export async function createDreggVerificationRequest(walletSession, challenge) {
   });
 }
 
-/** Adapter over `getWallets()` from `@wallet-standard/app`; no vendor detection. */
-export function discoverDreggWallets(walletsRegistry) {
+/**
+ * Discover Wallet Standard wallets plus an explicit caller-owned classic source.
+ * The classic source may be an array or a function returning one; this module
+ * never guesses vendor globals such as `window.solana`.
+ */
+export function discoverDreggWallets(walletsRegistry, classicProviderSource = []) {
   if (!walletsRegistry || typeof walletsRegistry.get !== "function") {
     throw new TypeError("Wallet Standard registry with get() is required");
   }
-  return walletsRegistry.get().filter((wallet) =>
+  const standard = walletsRegistry.get().filter((wallet) =>
     typeof wallet.features?.["standard:connect"]?.connect === "function" &&
     typeof wallet.features?.["solana:signMessage"]?.signMessage === "function"
   );
+  const supplied = typeof classicProviderSource === "function"
+    ? classicProviderSource()
+    : classicProviderSource;
+  if (!Array.isArray(supplied)) throw new TypeError("classic provider source must yield an array");
+  const classic = supplied.filter((wallet) => wallet && typeof wallet === "object" &&
+    typeof wallet.connect === "function" && typeof wallet.signMessage === "function");
+  return [...new Set([...standard, ...classic])];
 }

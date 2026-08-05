@@ -104,7 +104,9 @@
 }
 
 .dregg-admission__status[data-state="admitted"] { color: var(--admission-signal); }
-.dregg-admission__status[data-state="refused"] { color: #e2a184; }
+.dregg-admission__status[data-state="deferred"] { color: #e0bc85; }
+.dregg-admission__status[data-state="refused"],
+.dregg-admission__status[data-state="expired"] { color: #e2a184; }
 
 .dregg-admission__wallet-list {
   display: grid;

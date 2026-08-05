@@ -159,6 +159,19 @@ test("Wallet Standard discovery is feature-based, not Phantom-specific", () => {
   assert.deepEqual(discoverDreggWallets({ get: () => [incompatible, compatible] }), [compatible]);
 });
 
+test("classic providers are discoverable only through an explicit injected source", () => {
+  const classic = {
+    name: "Explicit classic provider",
+    async connect() {},
+    async signMessage() {},
+  };
+  const registry = { get: () => [] };
+  assert.deepEqual(discoverDreggWallets(registry), []);
+  assert.deepEqual(discoverDreggWallets(registry, [classic]), [classic]);
+  assert.deepEqual(discoverDreggWallets(registry, () => [classic]), [classic]);
+  assert.throws(() => discoverDreggWallets(registry, () => classic), /yield an array/u);
+});
+
 test("wallet and voter bindings refuse malformed or non-32-byte base58 keys before signing", async () => {
   assert.throws(() => normalizeSolanaPublicKey("walletAddress", "not a key"), /base58/u);
   assert.throws(() => normalizeSolanaPublicKey("walletAddress", "111"), /32-byte/u);

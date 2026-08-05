@@ -24,6 +24,14 @@ const receiptId = bytesToBase64(new Uint8Array(32).fill(1))
 const signingBytes = buildDreggOwnerBindingMessage(walletAddress, DREGG_MINT);
 const signatureBytes = new Uint8Array(64).fill(1);
 
+function storedReceipt(wallet = walletAddress, receipt = receiptId) {
+  return JSON.stringify({
+    format: "poa-dregg-holding-session-v1",
+    receipt_id: receipt,
+    wallet,
+  });
+}
+
 const challenge = Object.freeze({
   format: DREGG_HOLDING_CHALLENGE_FORMAT,
   challenge_id: challengeId,
@@ -153,6 +161,11 @@ test("challenge validation binds exact wallet/mint/cluster/window and signing by
     ...challenge, signing_message_base64: bytesToBase64(wrongBinding),
   }, { walletAddress }, nowMs), /owner binding/u);
   assert.throws(() => normalizeHoldingChallenge({ ...challenge, expires_at: nowSeconds + 3600 }, { walletAddress }, nowMs), /short-lived/u);
+  assert.throws(() => normalizeHoldingChallenge({
+    ...challenge,
+    issued_at: nowSeconds,
+    expires_at: nowSeconds + 301,
+  }, { walletAddress }, nowMs), /short-lived/u);
 });
 
 test("capability yields game admission without exposing returned raw balance", () => {
@@ -167,6 +180,10 @@ test("capability yields game admission without exposing returned raw balance", (
   assert.throws(() => normalizeHoldingCapability({ ...capability(), raw_balance: "1" }, { walletAddress }, nowMs), /unexpected/u);
   assert.throws(() => normalizeHoldingCapability(capability({ governance_weight_bearing: true }), { walletAddress }, nowMs), /authority/u);
   assert.throws(() => normalizeHoldingCapability(capability({ trust: "consensus-proven" }), { walletAddress }, nowMs), /authority/u);
+  assert.throws(() => normalizeHoldingCapability(capability({
+    issued_at: nowSeconds,
+    expires_at: nowSeconds + 121,
+  }), { walletAddress }, nowMs), /short-lived/u);
 });
 
 test("panel mounts an accessible Wallet Standard choice and truthful boundary", async () => {
@@ -192,7 +209,7 @@ test("panel mounts an accessible Wallet Standard choice and truthful boundary", 
   assert.match(live.textContent, /Choose a wallet/u);
 });
 
-test("exact node wire signs once, sends no browser balance fields, and stores only receipt id", async () => {
+test("exact node wire signs once, sends no balance fields, and stores only wallet-bound receipt metadata", async () => {
   const { root } = fakeDom();
   const signatures = [];
   const wallet = standardWallet(signatures);
@@ -223,7 +240,11 @@ test("exact node wire signs once, sends no browser balance fields, and stores on
   assert.deepEqual(signatures[0], signingBytes);
   assert.equal(admitted.scope, DREGG_ADMISSION_SCOPE);
   assert.equal("rawBalance" in admitted, false);
-  assert.equal(storage.value(), receiptId);
+  assert.deepEqual(JSON.parse(storage.value()), {
+    format: "poa-dregg-holding-session-v1",
+    receipt_id: receiptId,
+    wallet: walletAddress,
+  });
   assert.ok(requests.every(({ url }) => new URL(url).origin === origin));
   assert.ok(requests.every(({ options }) => options.credentials === "same-origin" && options.redirect === "error"));
   const surface = all(root).map((node) => node.textContent).join("\n");
@@ -238,7 +259,7 @@ test("exact node wire signs once, sends no browser balance fields, and stores on
 
 test("saved receipt restores only through active status and unknown status fails closed", async () => {
   const { root } = fakeDom();
-  const storage = memoryStorage(receiptId);
+  const storage = memoryStorage(storedReceipt());
   let calls = 0;
   const controller = mountDreggAdmissionPanel(root, {
     walletsRegistry: { get: () => [standardWallet()] }, origin, now: () => nowMs, storage,
@@ -254,7 +275,7 @@ test("saved receipt restores only through active status and unknown status fails
   assert.equal("rawBalance" in restored, false);
 
   controller.logout();
-  storage.setItem("ignored", receiptId);
+  storage.setItem("ignored", storedReceipt());
   const unavailable = mountDreggAdmissionPanel(fakeDom().root, {
     walletsRegistry: { get: () => [standardWallet()] }, origin, now: () => nowMs, storage,
     fetchImpl: async () => response(404, { code: "unknown_receipt", message: "unknown" }),
@@ -262,6 +283,100 @@ test("saved receipt restores only through active status and unknown status fails
   assert.equal(await unavailable.ready, null);
   assert.equal(unavailable.getCredential(), null);
   assert.equal(storage.value(), null);
+});
+
+test("saved receipt is independently wallet-bound and response substitution fails closed", async () => {
+  const storage = memoryStorage(storedReceipt());
+  const controller = mountDreggAdmissionPanel(fakeDom().root, {
+    walletsRegistry: { get: () => [standardWallet()] }, origin, now: () => nowMs, storage,
+    fetchImpl: async () => response(200, status({ wallet: DREGG_MINT })),
+  });
+  assert.equal(await controller.ready, null);
+  assert.equal(controller.getCredential(), null);
+  assert.equal(storage.value(), storedReceipt(), "protocol drift retains the independently bound receipt for retry");
+});
+
+test("transient status refusal retains the wallet-bound receipt but permanent 4xx clears it", async () => {
+  const { root } = fakeDom();
+  const storage = memoryStorage(storedReceipt());
+  let nextResponse = response(429, { code: "rate_limited", message: "later" });
+  const controller = mountDreggAdmissionPanel(root, {
+    walletsRegistry: { get: () => [standardWallet()] }, origin, now: () => nowMs, storage,
+    fetchImpl: async () => nextResponse,
+  });
+  assert.equal(await controller.ready, null);
+  assert.equal(storage.value(), storedReceipt());
+  const retry = all(root).find((node) => node.tagName === "BUTTON" && node.textContent === "Retry saved receipt");
+  assert.equal(retry.hidden, false);
+  assert.match(all(root).find((node) => node.attributes.get("role") === "status").textContent, /retained/u);
+
+  nextResponse = response(502, { code: "rpc_refused", message: "later" });
+  assert.equal(await controller.refreshSession(), null);
+  assert.equal(storage.value(), storedReceipt());
+
+  nextResponse = response(503, { code: "rpc_unavailable", message: "later" });
+  assert.equal(await controller.refreshSession(), null);
+  assert.equal(storage.value(), storedReceipt());
+
+  nextResponse = response(410, { code: "expired", message: "gone" });
+  assert.equal(await controller.refreshSession(), null);
+  assert.equal(storage.value(), null);
+  assert.match(all(root).find((node) => node.attributes.get("role") === "status").textContent, /cleared/u);
+});
+
+test("credential expiry timer and on-read guard close local admission and notify null", async () => {
+  const { root } = fakeDom();
+  const storage = memoryStorage();
+  const notifications = [];
+  let currentMs = nowMs;
+  let scheduled = null;
+  const timers = {
+    setTimeoutImpl(callback, delay) {
+      scheduled = { callback, delay, unref() {} };
+      return scheduled;
+    },
+    clearTimeoutImpl(handle) { if (scheduled === handle) scheduled = null; },
+  };
+  const wallet = standardWallet();
+  const controller = mountDreggAdmissionPanel(root, {
+    walletsRegistry: { get: () => [wallet] }, origin, now: () => currentMs, storage,
+    onAdmissionChange: (value) => notifications.push(value),
+    ...timers,
+    fetchImpl: async (url) => new URL(url).pathname.endsWith("/challenge")
+      ? response(201, challenge)
+      : response(200, capability()),
+  });
+  await controller.ready;
+  const admitted = await controller.authenticate(wallet);
+  assert.equal(controller.getCredential(), admitted);
+  assert.equal(scheduled.delay, admitted.expiresAt * 1000 - currentMs);
+
+  currentMs = admitted.expiresAt * 1000;
+  assert.equal(controller.getCredential(), null, "on-read guard closes before timer delivery");
+  assert.equal(storage.value(), null);
+  assert.equal(notifications.at(-1), null);
+  assert.match(all(root).find((node) => node.attributes.get("role") === "status").textContent, /expired/u);
+
+  const secondStorage = memoryStorage();
+  const secondNotifications = [];
+  currentMs = nowMs;
+  scheduled = null;
+  const second = mountDreggAdmissionPanel(fakeDom().root, {
+    walletsRegistry: { get: () => [wallet] }, origin, now: () => currentMs, storage: secondStorage,
+    onAdmissionChange: (value) => secondNotifications.push(value),
+    ...timers,
+    fetchImpl: async (url) => new URL(url).pathname.endsWith("/challenge")
+      ? response(201, challenge)
+      : response(200, capability()),
+  });
+  await second.ready;
+  const secondCredential = await second.authenticate(wallet);
+  const expiryCallback = scheduled.callback;
+  currentMs = secondCredential.expiresAt * 1000;
+  expiryCallback();
+  assert.equal(second.getCredential(), null, "timer delivery closes admission without a read");
+  assert.equal(secondStorage.value(), null);
+  assert.equal(secondNotifications.at(-1), null);
 });
 
 test("unavailable or over-claiming node response leaves admission closed", async () => {
