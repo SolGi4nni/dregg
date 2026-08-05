@@ -1220,12 +1220,18 @@ mod tests {
                 prev_serial: expr(39),
                 kind: MemKind::Write,
             }),
+            // ⚑ EIGHT LANES, not one limb (schema 2 -> 3, 2026-08-05). This fixture's whole job is
+            // to exercise EVERY tag, so it must carry the op at the width the wire actually uses:
+            // a one-lane `commit`/`vk` here would round-trip a shape the decoder REFUSES
+            // (`NarrowProofBind`), and the length-prefixed sequence encoding would go untested.
+            // `vk_pin` is one literal per `vk` lane and `bound` one expression per `commit` lane —
+            // a pin of a different length is refused at admission, so the fixture matches lengths.
             VmConstraint2::ProofBind(ProofBindSpec {
                 guard: expr(40),
-                commit: expr(41),
-                vk: expr(42),
-                vk_pin: Some(-7),
-                bound: Some(expr(45)),
+                commit: (41..49).map(expr).collect(),
+                vk: (49..57).map(expr).collect(),
+                vk_pin: Some((-7..1).collect()),
+                bound: Some((57..65).map(expr).collect()),
             }),
             VmConstraint2::WindowGate(WindowGateSpec {
                 body: WindowExpr::Add(
@@ -1387,7 +1393,7 @@ mod tests {
     fn a_vacuous_range_entry_width_is_refused_by_the_json_door() {
         for bad in [31usize, 32, 63, 64, 128] {
             let json = format!(
-                r#"{{"ir":2,"name":"vacuous-range-entry","trace_width":8,"public_input_count":1,"tables":[],"constraints":[{{"t":"gate","body":{{"t":"var","v":0}}}}],"hash_sites":[],"ranges":[{{"wire":3,"bits":{bad}}}]}}"#
+                r#"{{"ir":2,"name":"vacuous-range-entry","trace_width":8,"public_input_count":1,"challenges":0,"tables":[],"constraints":[{{"t":"gate","body":{{"t":"var","v":0}}}}],"hash_sites":[],"ranges":[{{"wire":3,"bits":{bad}}}]}}"#
             );
             let err = parse_vm_descriptor2(&json)
                 .expect_err("a vacuous range entry must be refused at the JSON door");
@@ -1397,7 +1403,7 @@ mod tests {
             );
         }
         // 30 still parses — the deliberate non-refusal.
-        let json = r#"{"ir":2,"name":"honest-range-entry","trace_width":8,"public_input_count":1,"tables":[],"constraints":[{"t":"gate","body":{"t":"var","v":0}}],"hash_sites":[],"ranges":[{"wire":3,"bits":30}]}"#;
+        let json = r#"{"ir":2,"name":"honest-range-entry","trace_width":8,"public_input_count":1,"challenges":0,"tables":[],"constraints":[{"t":"gate","body":{"t":"var","v":0}}],"hash_sites":[],"ranges":[{"wire":3,"bits":30}]}"#;
         let d = parse_vm_descriptor2(json).expect("a 30-bit range entry must still parse");
         assert_eq!(d.ranges, vec![RangeSpec { wire: 3, bits: 30 }]);
     }
@@ -1414,13 +1420,14 @@ mod tests {
 
     #[test]
     fn equivalent_json_spelling_and_key_order_have_one_identity() {
-        let compact = r#"{"ir":2,"name":"codec-probe","trace_width":2,"public_input_count":1,"tables":[],"constraints":[{"t":"gate","body":{"t":"var","v":0}}],"hash_sites":[],"ranges":[]}"#;
+        let compact = r#"{"ir":2,"name":"codec-probe","trace_width":2,"public_input_count":1,"challenges":0,"tables":[],"constraints":[{"t":"gate","body":{"t":"var","v":0}}],"hash_sites":[],"ranges":[]}"#;
         let reordered = r#"
         {
           "ranges": [],
           "hash_sites": [],
           "constraints": [ { "t": "gate", "body": { "t": "var", "v": 0 } } ],
           "tables": [],
+          "challenges": 0,
           "public_input_count": 1,
           "trace_width": 2,
           "name": "codec-probe",
@@ -1505,8 +1512,14 @@ mod tests {
     }
 
     fn first_constraint_tag_offset(descriptor: &EffectVmDescriptor2) -> usize {
-        // magic + version + name(length+bytes) + widths + empty table count + constraint count
-        8 + 2 + 8 + descriptor.name.len() + 8 + 8 + 8 + 8
+        // magic + version + name(length+bytes) + trace_width + public_input_count + challenges
+        // + empty table count + constraint count.
+        // ⚑ `challenges` (schema 1 -> 2, 2026-08-05) sits between `public_input_count` and the
+        // table sequence, so every offset past it moved by eight. Left stale, the mutation below
+        // landed on the constraint COUNT instead of the first constraint's TAG and the decoder
+        // answered `InvalidLength` where the test claims `UnknownTag` — a byte-surgery falsifier
+        // that stops cutting where it says it cuts is not testing the refusal it names.
+        8 + 2 + 8 + descriptor.name.len() + 8 + 8 + 8 + 8 + 8
     }
 
     #[test]
@@ -1586,8 +1599,11 @@ mod tests {
         };
         let mut expected = EFFECT_VM_DESCRIPTOR2_CANONICAL_MAGIC.to_vec();
         expected.extend_from_slice(&EFFECT_VM_DESCRIPTOR2_CANONICAL_VERSION.to_le_bytes());
-        // name length, two scalar indices, then four sequence lengths.
-        expected.extend_from_slice(&[0; 56]);
+        // name length, THREE scalar indices, then four sequence lengths — eight `u64`s.
+        // ⚑ Three, not two: the challenge leaf (schema 1 -> 2, 2026-08-05) put
+        // `EffectVmDescriptor2.challenges` in the record between `public_input_count` and the
+        // table sequence, so the empty record grew one index and this pin grew eight bytes.
+        expected.extend_from_slice(&[0; 64]);
         assert_eq!(canonical(&descriptor), expected);
     }
 

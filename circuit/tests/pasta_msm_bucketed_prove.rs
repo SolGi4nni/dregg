@@ -105,7 +105,7 @@ const V2_SHA: &str = "b580a8f199a1acca7607429242342f55741aba43b5c41b18ab679caa06
 /// inputs `27 … 218` on the first row and threaded down the trace. The three toys pass through
 /// `bucketedRowDesc`, which did not move, and their SHAs are unchanged.
 const XIAGG_JSON: &str = include_str!("../descriptors/by-name/mina-xi-aggregate-msm.json");
-const XIAGG_SHA: &str = "db3d6a6349a4511e1149549f455c48dd927b431c9fb0bac696ceb9102359594f";
+const XIAGG_SHA: &str = "79eed980c54cc44f48839345f8758026453e3b7908995636b3f499232b1ec678";
 /// The four o1-labs goldens, emitted from the GATE CONSTANTS by `EmitCommitStages.lean goldlimbs`.
 /// Line 3 (0-indexed) is `MinaWrapAggregationGate.COMBINED_GOLD`.
 const MINA_GOLDS: &str = include_str!("fixtures/mina-commit-golds.txt");

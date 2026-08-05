@@ -976,40 +976,65 @@ mod tests {
         let mut forged_public = honest_public;
         forged_public[ANCHOR_PI_BASE] = forged_lane;
 
-        let refusal = match prove_vm_descriptor2_for_config(
-            &descriptor,
-            &forged_trace,
-            &forged_public,
-            &MemBoundaryWitness::default(),
-            &[],
-            &UMemBoundaryWitness::default(),
-            &config,
-        ) {
-            Err(why) => why,
-            Ok(forged_proof) => match verify_vm_descriptor2_with_config(
+        // ⚠ THE REFUSAL ARRIVES IN TWO SHAPES AND THIS TEST MUST SEE BOTH. In a
+        // release build the imbalance reaches the batch self-verify and comes back
+        // as `Err(IR v2 batch self-verify failed: LookupError("GlobalCumulativeMismatch(None):
+        // ir2_p2"))`. In a DEBUG build — which is how `cargo test` runs this — p3's
+        // `lookup::debug_util::assert_empty` recomputes every tuple's net multiplicity
+        // first and PANICS: `Lookup mismatch (global lookup 'ir2_p2'): tuple [...] has net
+        // multiplicity 2013265917`. Matching only the `Err` arm made this test red for a
+        // reason that is not the claim: the anchor IS refused, by the named bus, in both
+        // profiles. Reading only one shape is how a falsifier stops being able to fail for
+        // the right reason.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match prove_vm_descriptor2_for_config(
                 &descriptor,
-                &forged_proof,
+                &forged_trace,
                 &forged_public,
+                &MemBoundaryWitness::default(),
+                &[],
+                &UMemBoundaryWitness::default(),
                 &config,
             ) {
-                Err(why) => why,
-                Ok(()) => panic!(
-                    "a forged settlement anchor VERIFIED — the published anchor is not bound, \
-                     which is the v3 defect this family was rebuilt to close"
-                ),
-            },
+                Err(why) => Some(why),
+                Ok(forged_proof) => match verify_vm_descriptor2_with_config(
+                    &descriptor,
+                    &forged_proof,
+                    &forged_public,
+                    &config,
+                ) {
+                    Err(why) => Some(why),
+                    Ok(()) => None,
+                },
+            }
+        }));
+
+        let refusal = match outcome {
+            Ok(Some(why)) => why,
+            Ok(None) => panic!(
+                "a forged settlement anchor VERIFIED — the published anchor is not bound, \
+                 which is the v3 defect this family was rebuilt to close"
+            ),
+            Err(payload) => payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the forged anchor was refused by a panic carrying no message — the \
+                         mechanism cannot be read, so this falsifier cannot assert its claim"
+                    )
+                }),
         };
 
-        // ⚑ NAME THE MECHANISM, do not merely observe a refusal. Measured:
-        // `IR v2 batch self-verify failed: LookupError("GlobalCumulativeMismatch(None): ir2_p2")`
-        // — the Poseidon2 chip bus. The prover re-derives every chip table row's
-        // output lanes from the genuine permutation over the tuple's input block,
-        // so the forged output column is sent on the bus and matched by no row.
-        // Asserting the mechanism means a future change that refuses this for
-        // some UNRELATED reason cannot keep the test green while the binding
-        // silently rots.
+        // ⚑ NAME THE MECHANISM, do not merely observe a refusal — the Poseidon2 chip
+        // bus. The prover re-derives every chip table row's output lanes from the
+        // genuine permutation over the tuple's INPUT block, so the forged output column
+        // is sent on the bus and matched by no row. Asserting the mechanism means a
+        // future change that refuses this for some UNRELATED reason cannot keep the test
+        // green while the binding silently rots. Both shapes above name `ir2_p2`.
         assert!(
-            refusal.contains("ir2_p2") || refusal.contains("Lookup"),
+            refusal.contains("ir2_p2"),
             "the forged anchor must be refused BY THE CHIP BUS that derives it, \
              not incidentally; got: {refusal}"
         );

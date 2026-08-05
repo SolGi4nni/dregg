@@ -203,10 +203,10 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
     UMemWeldRow {
         key: "customVmDescriptor2R24",
         domain: 1,
-        splice: 277,
+        splice: 291,
         trace_width: 1778,
         pi_count: 98,
-        constraints: 609,
+        constraints: 623,
         name: "dregg-effectvm-custom-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -558,4 +558,4 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
 /// `registry_fp` (it replaces the deleted `WIDE_UMEM_WELD_REGISTRY_FP`, which was the
 /// sha256 of the deleted TSV).
 pub const UMEM_WELD_TABLE_FP: &str =
-    "2357c2313f7232628a8d2ddca1feea95d6529853b587f51163d00e31139c8adc";
+    "3bbfd78c5b794b5098f5dd26a7919c270cdcb81ed7b886d236b40467b597242a";

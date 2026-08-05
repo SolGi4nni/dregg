@@ -289,7 +289,7 @@ where
 mod tests {
     use super::*;
 
-    const TEST_DESCRIPTOR: &str = "{\"name\":\"descriptor-backend-seam-v1\",\"ir\":2,\"trace_width\":1,\"public_input_count\":1,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0}],\"hash_sites\":[],\"ranges\":[]}";
+    const TEST_DESCRIPTOR: &str = "{\"name\":\"descriptor-backend-seam-v1\",\"ir\":2,\"trace_width\":1,\"public_input_count\":1,\"challenges\":0,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0}],\"hash_sites\":[],\"ranges\":[]}";
 
     fn test_statement(value: u32) -> DescriptorStatement {
         DescriptorStatement::try_from_json(TEST_DESCRIPTOR, vec![value]).unwrap()

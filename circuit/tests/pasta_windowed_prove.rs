@@ -64,7 +64,7 @@ use std::time::Instant;
 /// The Lean-emitted windowed row descriptor.
 const DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-rcb-windowed.json");
 /// sha256 of `DESC_JSON` — a re-emit must announce itself, not slide under a green test.
-const DESC_SHA256: &str = "6c77c51a4b6a79100e4f8ff28dbb3d616d97b44c4c069e1afc4c844ea3cfa82a";
+const DESC_SHA256: &str = "7c1326f8c705aad8d9165bc97d7c2926a98b2d7ec0bdc756b85eaa36d8886aad";
 
 /// A Lean-emitted HONEST witness (`metatheory/EmitPastaWindowedTrace.lean`), 4 terms × 8 planes.
 /// Every cell comes from `PastaMsmWindowed.rowAsg`, the assignment whose acceptance by the emitted

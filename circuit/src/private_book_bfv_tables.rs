@@ -1637,7 +1637,7 @@ mod tests {
     ];
     const BFV_Q0_N8_DESCRIPTOR_HEADER: &str = concat!(
         "{\"name\":\"private-book-bfv-odd-ntt-butterfly-q0-n8::exact-48-v1\",",
-        "\"ir\":2,\"trace_width\":48,\"public_input_count\":0,"
+        "\"ir\":2,\"trace_width\":48,\"public_input_count\":0,\"challenges\":0,"
     );
     const LEAN_Q0_N8_ROWS: [[u32; 48]; 12] = [
         [
@@ -1749,7 +1749,7 @@ mod tests {
             .strip_prefix(BFV_Q0_N8_DESCRIPTOR_HEADER)
             .expect("q0/N8 descriptor header remains recognized");
         let alternate_json = format!(
-            "{{\n  \"public_input_count\" : 0,\n  \"trace_width\" : 48,\n  \
+            "{{\n  \"challenges\" : 0,\n  \"public_input_count\" : 0,\n  \"trace_width\" : 48,\n  \
              \"name\" : \"{BFV_Q0_N8_DESCRIPTOR_NAME}\",\n  \"ir\" : 2,\n  {body}\n"
         );
         assert_ne!(alternate_json, BFV_Q0_N8_DESCRIPTOR_JSON);

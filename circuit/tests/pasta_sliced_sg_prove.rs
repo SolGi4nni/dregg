@@ -74,19 +74,19 @@ use std::time::Instant;
 const REAL: [(&str, &str); 4] = [
     (
         include_str!("../descriptors/by-name/pasta-rcb-sg-slice-0-of-4.json"),
-        "deecffe1e52b7f4d3ab8807ce0827d9c71adb4021455c6ac81334a45e876b389",
+        "29b2eebe5c055d1d9a3f3980eecef003befe41eb40f7a1660071c457d62b1250",
     ),
     (
         include_str!("../descriptors/by-name/pasta-rcb-sg-slice-1-of-4.json"),
-        "9f33b67cd80375b1aec90281a8b3052cf2ba2c82ac114fd804b9b230d0b61274",
+        "c3d07ab7998396bf89dd48a878c93b2de9463262884a688a6a46d8de4a207bd2",
     ),
     (
         include_str!("../descriptors/by-name/pasta-rcb-sg-slice-2-of-4.json"),
-        "09223f01ba299f638d3eeea84312e6bf840dce47ebbe8b338dddbe87fed1fc3c",
+        "cf2ce34475dec88c2525115f098569edbcf58299cdc4268c855b4324ba985377",
     ),
     (
         include_str!("../descriptors/by-name/pasta-rcb-sg-slice-3-of-4.json"),
-        "28f669daf79dcd4694afb2d8be58c8d5c3c981136b52dd7df85f996409d19c03",
+        "877c7f283def83ded7ff0e2b50576fce0b5a87d5f2088fc4bdb0d0526fdc60e6",
     ),
 ];
 
@@ -94,19 +94,19 @@ const REAL: [(&str, &str); 4] = [
 const SMALL: [(&str, &str); 4] = [
     (
         include_str!("../descriptors/by-name/pasta-rcb-sg-slice-0-of-4-w8.json"),
-        "694e4e8b6cd18e32f1236d1b13eb02d0cd48079b437c0081312a0d310504071e",
+        "06a658e86c4a94921e1ae7194a52f24494fdb58d9bf2caeda117b89562da33d4",
     ),
     (
         include_str!("../descriptors/by-name/pasta-rcb-sg-slice-1-of-4-w8.json"),
-        "4b506a208e37d164b53a9e9a47ebf8bf3db0b0f1252729613cf6482525608c51",
+        "fdbe015acb7f07da94ff08b752e8b2f86648feb7e9e8e6dddb8e6173e50956c5",
     ),
     (
         include_str!("../descriptors/by-name/pasta-rcb-sg-slice-2-of-4-w8.json"),
-        "729ac4fb006d497824fcee3db6d2e9d5ee7bc3e37eb411ce4cdf657a2054af15",
+        "73170bb0714e8a28c9808c94ad9cae4a060472f008723fb834c65c42afda5ef4",
     ),
     (
         include_str!("../descriptors/by-name/pasta-rcb-sg-slice-3-of-4-w8.json"),
-        "28c823f1dd8db886ed08c9a79b0e667e098241f26edd049c358a627fa7208a8d",
+        "7e39efac6d245991f988832eef332711a0b1a9b9459b93e1e4bce3c8e41ddcfc",
     ),
 ];
 

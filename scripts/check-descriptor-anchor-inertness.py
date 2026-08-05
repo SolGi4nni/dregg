@@ -160,10 +160,27 @@ def analyze(d: dict) -> dict:
         elif t == "transition":
             relate({c["hi"], c["lo"]}, "transition", i)
         elif t in ("mem_op", "map_op", "umem_op", "proof_bind"):
+            # ⚑ EXPRESSION SEQUENCES COUNT, NOT JUST SCALAR SLOTS (fixed 2026-08-05). These four
+            # tags carry their operands as bare `values()`, and until today this walked only the
+            # values that are THEMSELVES an expression dict. `map_op`'s `root`/`new_root` were
+            # already 8-element LISTS, and on 2026-08-05 `proof_bind` widened its `commit`/`vk`/
+            # `bound` from one expression to a length-prefixed lane sequence — so every lane of
+            # every such operand was invisible here, and the columns they tie read as RELATED TO
+            # NOTHING. Measured the hour the widening landed: `dregg-mina-lightclient-verify::v1`
+            # jumped 18 -> 27 decorative anchors with no anchor having changed — the nine sub-proof
+            # commitment lanes are bound by ONE eight-lane `proof_bind` where nine narrow ones stood,
+            # and this loop could not see the new shape. ⚠ The `else` below refuses an unknown TAG;
+            # nothing refused a known tag whose PAYLOAD grew a sequence, which is the quieter half of
+            # the same hole. `vk_pin` is a list of INTEGERS (a pinned digest, not columns) and is
+            # skipped by the `isinstance(dict)` test on each item, deliberately.
             cols = set()
             for v in c.values():
                 if isinstance(v, dict) and "t" in v:
                     expr_cols(v, cols)
+                elif isinstance(v, list):
+                    for item in v:
+                        if isinstance(item, dict) and "t" in item:
+                            expr_cols(item, cols)
             relate(cols, t, i)
         else:
             raise ValueError(f"unknown constraint tag {t!r} — the IR grew a form this gate cannot read")

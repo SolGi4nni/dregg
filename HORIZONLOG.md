@@ -17165,3 +17165,72 @@ Two residuals the Fq-sponge rung (`9bb9c149b`) named about itself, closed and PR
   lane's work and the next reader should know whose it is. The descriptor **shape flag day is real and
   correct**: `ir:2` now REQUIRES `"challenges"`, and `pasta-fq-absorb.json` / `pasta-fq-round.json`
   refused to load until re-emitted — exactly the "make the old shape refuse" rule.
+
+## 2026-08-05 — THE EMITTER COULD NOT RUN, SO EVERY LANE BECAME AN EMITTER — 140 served descriptors were not the Lean object
+
+**One `rfl` was the whole outage.** `metatheory/EmitByName.lean` carried
+`theorem byNameDescriptors_length : byNameDescriptors.length = 92 := rfl` against **91 rows** — a
+lane bumped the pin and its row did not survive the shared tree. That file is the ONLY route to
+`circuit/descriptors/by-name/`, so `lake env lean --run EmitByName.lean` died on the pin,
+`scripts/emit_descriptors.py` exited 2 at emitter #9, and **nobody could re-emit anything.** Each
+lane then hand-drove its own file out of a private runner, which is how the goldens drifted apart.
+(`Dregg2/Circuit/Emit/AutomataflStepRefine.lean` was the second blocker, red at HEAD from the
+challenge-leaf `VmRowEnv.chal` widening; a one-line proof fix in the working tree clears it, and
+the emitters' whole 149-module import closure builds.)
+
+- **⚑ 140 of 187 served artifacts were not what Lean authored.** Measured by snapshotting
+  `circuit/descriptors/` and re-emitting the whole set from ONE authorized run:
+  - **125** differed *only* by a missing `"challenges"` key — the 2026-08-05 canonical schema 1→2
+    flag day. `descriptor_ir2.rs:1833` refuses an `ir:2` record without it, so **every one of those
+    125 REFUSED TO LOAD.** 61+ `circuit-prove` lib tests were red citing that refusal verbatim.
+  - **12** differed by exactly one byte — a trailing newline the redirect drivers left and the
+    canonical emitter does not write.
+  - **⚑ 1 differed in its RELATION.** `dregg-mina-lightclient-verify-v1.json` served **70**
+    constraints where Lean authors **62**: NINE narrow one-lane `proof_bind`s, each tying ONE limb
+    of an eight-felt commitment, in place of the ONE eight-lane bind the `ProofBind` widening
+    (schema 2→3) emits. Same wound in the two staged registry TSVs: `customVmDescriptor2R24` at
+    **578→592** and **608→622** constraints (+14 `pi_binding` rows, the seven extra lanes of each
+    vector). Those are the bytes production resolved.
+- **The eleven hand-driven descriptors are now ROWS of the table.** `mina-commit-{xi,pub,f,ft,agg,
+  ladder}`, `mina-xi-{aggregate-msm,endo-lift}` and `pasta-fq-{absorb,round,wraplink}` were checked
+  in and served with **no entry in the routing table at all** — outside `emit_descriptors.py`'s
+  recursive coverage check, so nothing could see them move. Routed; the pin is **102**, and it is
+  the DIRECTORY's count rather than an increment. `--verify-by-name-routing`: 102 routed / 102
+  checked in, both directions.
+- **Two writers of one file, deleted.** `scripts/regen-mina-commit-stages.sh` also wrote eight of
+  those descriptors; it now writes only the fifteen `circuit/tests/fixtures/` artifacts the
+  canonical driver structurally cannot install. `metatheory/EmitMinaLightClient.lean` is **DELETED** —
+  its header's stated reason for existing ("EmitByName is red") is the outage above, and its output
+  is the 70-constraint file.
+- **⚑ A GATE THAT COULD NOT READ THE NEW SHAPE, and it was the loud one.**
+  `check-descriptor-anchor-inertness.py` walked `proof_bind`/`map_op`/`mem_op`/`umem_op` operands
+  by taking `values()` that are *themselves* an expression dict — so a LIST-valued operand
+  contributed nothing. The widening turned nine bound commitment lanes into nine **decorative
+  anchors** (18 → 27) with no anchor having changed. Its `else` arm refuses an unknown TAG; nothing
+  refused a known tag whose PAYLOAD grew a sequence. Same under-read fixed in
+  `circuit-prove/tests/fold_claim_pin_liveness.rs`, where reading one lane of a bind declares a
+  live pin dead.
+- **A falsifier that could not fail for the right reason.**
+  `a_forged_settlement_anchor_that_satisfies_every_gate_is_refused` matched only the `Err` arm, but
+  in a debug build p3's `lookup::debug_util::assert_empty` **panics** on the imbalance first. The
+  anchor was refused, by the named `ir2_p2` chip bus, in both profiles — the test just could not see
+  one of the two shapes.
+- **⚠ NOT STAMPED, and here is the list instead.** `emit_descriptors.py` installs and stamps in one
+  step; `metatheory/Dregg2` is dirty with five lanes' edits, so the stamp it minted recorded
+  `source_dirty=true` — one `--verify-provenance` refuses outright. Taking it would replace a
+  truthful "26 by-name artifacts have no stamp row" with a blanket "this stamp is invalid", and
+  manufacture a provenance claim about a tree nobody reviewed. **A stamp would now cover 144 rows:**
+  `by_name_sha256` 76 → 102 (26 new) with 76 hashes moved, `descriptor_sha256` 40 moved of 71,
+  `fp_file_sha256` 2 moved, `table-airs_sha256` unchanged. Full accounting in the record-only row of
+  `docs/VK-REGEN-LOG.md`.
+- **RE-EMITS / RE-KEYS:** all 140 artifacts above, `circuit/src/effect_vm_descriptors.rs`'s `*_FP`
+  constants, `circuit/src/effect_vm/umem_weld_generated.rs`, and eleven sha256 pins in four
+  `circuit/tests/*.rs` (`pasta_windowed_prove`, `pasta_sliced_sg_prove` ×8,
+  `exact_nullifier_aafi_staged_ingestion`, `pasta_msm_bucketed_prove`'s `XIAGG_SHA`). Every welded
+  leg's `vk_hash` moves with them.
+- **⚠ STILL RED, NOT MINE:** `dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1` holds the
+  inertness gate red with **192 decorative anchors and no baseline row** — a sibling's brand-new
+  descriptor publishing 192 unbound public inputs, which is the shape this entry spent the day
+  removing elsewhere. `orb/Reactor/SerializeSanitize.lean`'s dead doc-ref, the `EPOCH-GOES-BACKWARDS`
+  pair at 2026-08-02/03, `dregg-node`'s missing PoA exports and `PathOfAngels.FiniteTables` are
+  likewise other lanes'.

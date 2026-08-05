@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
-# regen-mina-commit-stages.sh — re-emit every artifact `metatheory/EmitCommitStages.lean` produces.
+# regen-mina-commit-stages.sh — re-emit the WITNESS FIXTURES `metatheory/EmitCommitStages.lean`
+# produces. Its eight DESCRIPTORS are no longer here; `scripts/emit_descriptors.py` owns them.
 #
 #   scripts/regen-mina-commit-stages.sh [--check]
 #
 # ═══ WHY THIS EXISTS ═════════════════════════════════════════════════════════════════════════════
 # `EmitCommitStages.lean` is the renderer for the COMMITMENT-COMBINATION stage of the Mina wrap
-# verifier: eight descriptors under `circuit/descriptors/by-name/` and thirteen honest witness
-# fixtures under `circuit/tests/fixtures/`. It calls itself a SCRATCH executable in its own header,
-# and until 2026-08-05 that is exactly what it was to the tooling — absent from
-# `scripts/emit_descriptors.py`'s `EMITTERS`, absent from `check-emitter-routing.sh`'s allowlist,
-# and therefore an emitter a geometry flag day walks straight past. Twenty-one committed files whose
-# only re-derivation path was a human remembering twenty-one shell redirections out of a docstring.
+# verifier. It calls itself a SCRATCH executable in its own header, and until 2026-08-05 that is
+# exactly what it was to the tooling — absent from `scripts/emit_descriptors.py`'s `EMITTERS`,
+# absent from `check-emitter-routing.sh`'s allowlist, and therefore an emitter a geometry flag day
+# walks straight past. Twenty-one committed files whose only re-derivation path was a human
+# remembering twenty-one shell redirections out of a docstring.
 #
-# It cannot simply JOIN `EMITTERS`: the driver installs into `circuit/descriptors/` only (see
-# `guarded_paths()`), and thirteen of these twenty-one land in `circuit/tests/fixtures/`. So this is
-# the `regen:` shape the gate already recognises — one script that re-derives ALL of them, and a
-# `--check` mode that diffs without writing so a stale artifact is findable without a commit.
+# ⚑ 2026-08-05 — THE SPLIT. Eight of those twenty-one were `circuit/descriptors/by-name/*.json`, and
+# a descriptor with a private emitter is a descriptor outside the drift gate: `emit_descriptors.py`'s
+# recursive coverage check could not see them, so their served bytes and their Lean had no gate
+# between them at all. They are now rows of `metatheory/EmitByName.lean` and come out of the ONE
+# canonical emission with every other by-name artifact. This script keeps the FIFTEEN fixtures under
+# `circuit/tests/fixtures/`, which the canonical driver structurally cannot install (`guarded_paths()`
+# covers `circuit/descriptors/` only) — the `regen:` shape the emitter-routing gate already
+# recognises, with a `--check` mode that diffs without writing.
 #
-# ⚠ THE CONSUMERS ARE THE GATE, NOT THIS SCRIPT. `circuit/tests/mina_commit_stages_prove.rs`,
-# `circuit/tests/mina_xi_endo_weld.rs` and `circuit/tests/pasta_msm_bucketed_prove.rs` read these
-# bytes, and the last two carry sha256 pins (`XIAGG_SHA`). A re-emit that moves a byte reds those
-# tests until the pins are re-read; that is the intended failure mode, not an accident.
+# ⚠ THE CONSUMERS ARE STILL A GATE. `circuit/tests/mina_commit_stages_prove.rs`,
+# `circuit/tests/mina_xi_endo_weld.rs` and `circuit/tests/pasta_msm_bucketed_prove.rs` read both
+# halves, and the last two carry sha256 pins (`XIAGG_SHA`) on descriptor bytes this script no longer
+# writes. A canonical re-emit that moves a byte reds those tests until the pins are re-read; that is
+# the intended failure mode, not an accident.
 #
 # ⚠ THE `endo`/`aggmsm` ROWS COME FROM MODULES THAT WERE UNROOTED. `MinaWrapXiEndoLift` and
 # `MinaWrapXiAggregateMsm` reached no default lake target until the 2026-08-05 rooting sweep, so
@@ -44,27 +49,32 @@ trap 'rm -rf "$tmp"' EXIT
 # ── the emit table: <argv>  <destination-relative-path> ──────────────────────────────────────────
 # Kept HERE, next to the diff, rather than only in the emitter's docstring — a redirection written
 # in prose is a redirection nothing re-runs.
+# ⚑ 2026-08-05 — THE EIGHT DESCRIPTOR ROWS ARE GONE FROM THIS TABLE, and that is the point of the
+# change, not a subtraction. `mina-commit-{xi,pub,f,ft,agg,ladder}.json`, `mina-xi-aggregate-msm.json`
+# and `mina-xi-endo-lift.json` are now ROWS OF `metatheory/EmitByName.lean`, so
+# `scripts/emit_descriptors.py` — the ONE command that closes Lean→JSON→FP — emits them with every
+# other by-name artifact, gates them with the recursive coverage check, and re-pins their `*_FP`
+# constants. Two writers of one file is how the eight sat outside the drift gate while three Rust
+# tests read their bytes; a second writer that AGREES today is a second writer that disagrees later.
+# ⚠ Their trailing newline went with the redirect: `>` newline-terminates, the canonical driver does
+# not (and they are deliberately NOT in `BY_NAME_NEWLINE_TERMINATED`), so the eight lost one byte and
+# their sha256 pins moved once, here.
+#
+# What is left is exactly what `emit_descriptors.py` structurally CANNOT install: `guarded_paths()`
+# covers `circuit/descriptors/` only, and every row below lands in `circuit/tests/fixtures/`.
 EMITS=(
-  "xi           $DESC/mina-commit-xi.json"
   "xitrace      $FIX/mina-commit-xi-trace.txt"
   "xipis        $FIX/mina-commit-xi-pis.txt"
-  "pub          $DESC/mina-commit-pub.json"
   "pubtrace     $FIX/mina-commit-pub-trace.txt"
   "pubpis       $FIX/mina-commit-pub-pis.txt"
-  "f            $DESC/mina-commit-f.json"
   "ftrace       $FIX/mina-commit-f-trace.txt"
   "fpis         $FIX/mina-commit-f-pis.txt"
-  "ft           $DESC/mina-commit-ft.json"
   "fttrace      $FIX/mina-commit-ft-trace.txt"
   "ftpis        $FIX/mina-commit-ft-pis.txt"
-  "agg          $DESC/mina-commit-agg.json"
   "aggtrace     $FIX/mina-commit-agg-trace.txt"
   "aggpis       $FIX/mina-commit-agg-pis.txt"
-  "ladder       $DESC/mina-commit-ladder.json"
   "laddertrace  $FIX/mina-commit-ladder-trace.txt"
   "ladderpis    $FIX/mina-commit-ladder-pis.txt"
-  "aggmsm       $DESC/mina-xi-aggregate-msm.json"
-  "endo         $DESC/mina-xi-endo-lift.json"
   "endotrace    $FIX/mina-xi-endo-lift-trace.txt"
   "endopis      $FIX/mina-xi-endo-lift-pis.txt"
   "goldlimbs    $FIX/mina-commit-golds.txt"

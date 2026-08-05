@@ -37,7 +37,7 @@ const EXPECTED_NAME: &str = "faithful-note-spend-v3-plan::exact-aafi-fns3-rotate
 ///   pi_count      76 ->   76   — UNCHANGED. The nonet grows the committed region, not the
 ///                                public interface; a PI move here would be a different defect.
 ///   table ids                  — UNCHANGED (same five tables, same order).
-const EXPECTED_SHA256: &str = "2f557397423b48028adaebf0dc17b86560b4504c2e56ef24d9bf7322a69660b6";
+const EXPECTED_SHA256: &str = "4a89e7602bedcff4441d92959a86c57d961922fd063d85edbb978e7d9a1b915c";
 const EXPECTED_TABLE_IDS: [usize; 5] = [0, 9, 1, 84, 85];
 const EXPECTED_TRACE_WIDTH: usize = 3826;
 const EXPECTED_PUBLIC_INPUT_COUNT: usize = 76;

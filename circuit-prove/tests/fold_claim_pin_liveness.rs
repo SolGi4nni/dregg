@@ -178,7 +178,19 @@ fn forced_cols(d: &EffectVmDescriptor2) -> Vec<usize> {
                 }
             }
             VmConstraint2::ProofBind(p) => {
-                for e in [&p.guard, &p.commit, &p.vk] {
+                // ⚑ `commit`/`vk`/`bound` are LANE SEQUENCES since the 2026-08-05 widening
+                // (schema 2 -> 3): a bind ties an eight-felt commitment and an eight-felt vk,
+                // not one limb of each. Reading only the first lane would under-count the
+                // columns a bind forces, and this file's whole claim is that a pinned column
+                // is read by a NON-PIN constraint — so an under-read here declares a live
+                // pin dead. `bound` is optional and its lanes are read too.
+                expr_cols(&p.guard, &mut out);
+                for e in p
+                    .commit
+                    .iter()
+                    .chain(p.vk.iter())
+                    .chain(p.bound.iter().flatten())
+                {
                     expr_cols(e, &mut out);
                 }
             }

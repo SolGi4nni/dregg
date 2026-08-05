@@ -69,6 +69,20 @@ import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
 import Dregg2.Circuit.Emit.MinaPhase2Chain
+-- ⚑ 2026-08-05 — THE ELEVEN HAND-DRIVEN ROWS, ROUTED. Every descriptor below was checked into
+-- `by-name/` by a one-off `lake env lean --run` driver (`EmitPastaAlu.lean fqround|fqabsorb|fqlink`,
+-- `EmitLcTmp.lean`, and per-lane redirects) while `EmitByName.lean` itself could not run — its
+-- length pin said 92 against 91 rows, so `lake env lean --run EmitByName.lean` died on `rfl` and
+-- the WHOLE by-name surface was unemittable by anybody. Each lane then hand-transcribed its own
+-- file, which is precisely how a served descriptor stops being the Lean object (measured today:
+-- `dark-bazaar-private-poa-settlement` served 1330 constraints where Lean authors 984).
+-- Routing them here makes their bytes re-derivable from the ONE emit that produces every other
+-- by-name artifact.
+import Dregg2.Circuit.Emit.MinaWrapVerifierSponge
+import Dregg2.Circuit.Emit.MinaBlockFqTranscript
+import Dregg2.Circuit.Emit.MinaWrapCommitStages
+import Dregg2.Circuit.Emit.MinaWrapXiEndoLift
+import Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm
 import Dregg2.Circuit.Emit.PredicatesArithmeticEmit
 import Dregg2.Circuit.Emit.PredicatesGtEmit
 import Dregg2.Circuit.Emit.PredicatesInRangeEmit
@@ -248,6 +262,36 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
   -- welded on the wraplink hands a third of its state on as a free prover scalar.
   , ("pasta-fq-chainlink.json",
       Dregg2.Circuit.Emit.MinaPhase2Chain.chainDesc)
+    -- ⚑ THE WRAP-VERIFIER SPONGE PAIR AND THE WRAP LINK. Same `programAir qLimb` register file as
+    -- the chain link above; `roundDesc`/`absorbDesc` differ only in which ROM they run, and
+    -- `linkDesc` pins SEVEN boundary blocks (224 PIs) where `chainDesc` pins eight (256).
+  , ("pasta-fq-round.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierSponge.roundDesc)
+  , ("pasta-fq-absorb.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbDesc)
+  , ("pasta-fq-wraplink.json",
+      Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkDesc)
+    -- ⚑ THE SIX WRAP COMMITMENT-COMBINATION STAGES + THE ENDO LIFT + THE BUCKETED MSM.
+    -- `mina-commit-xi` is `::v2` — the ξ scalar vector's published surface went 64 → 256 PIs, and
+    -- because a NAME IS A KEY the descriptor's name moved with it rather than two shapes sharing
+    -- one key. `mina-xi-aggregate-msm` is the bucketed Pallas MSM at 219 PIs (`PI_COUNT + NC`),
+    -- the ξ-aggregate's in-circuit scalar multiplication.
+  , ("mina-commit-pub.json",
+      Dregg2.Circuit.Emit.MinaWrapCommitStages.publicCommDesc)
+  , ("mina-commit-f.json",
+      Dregg2.Circuit.Emit.MinaWrapCommitStages.fCommDesc)
+  , ("mina-commit-ft.json",
+      Dregg2.Circuit.Emit.MinaWrapCommitStages.ftCommDesc)
+  , ("mina-commit-agg.json",
+      Dregg2.Circuit.Emit.MinaWrapCommitStages.xiAggDesc)
+  , ("mina-commit-ladder.json",
+      Dregg2.Circuit.Emit.MinaWrapCommitStages.ladderDesc)
+  , ("mina-commit-xi.json",
+      Dregg2.Circuit.Emit.MinaWrapCommitStages.xiDesc)
+  , ("mina-xi-endo-lift.json",
+      Dregg2.Circuit.Emit.MinaWrapXiEndoLift.endoDesc)
+  , ("mina-xi-aggregate-msm.json",
+      Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm.xiAggMsmDesc)
   , ("predicate-arith-gt.json",
       Dregg2.Circuit.Emit.PredicatesGtEmit.predicateGtDesc)
   , ("predicate-arith-inrange.json",
@@ -399,7 +443,7 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- LAST-row value of a limb accumulator with boolean carries). That pair is the point — a swapped
     -- validator set with an IDENTICAL tally clears every denominator pin `solLcVerifyDesc` has and
     -- moves the root (`FoldScheme.same_tally_moves_the_root`, and the deployed-prover half in
-    -- `circuit-prove/tests/solana_stake_table_fold.rs`). ⚑ THE HASH WAS CHOSEN BY MEASUREMENT: the
+    -- `circuit/tests/solana_stake_table_fold.rs`). ⚑ THE HASH WAS CHOSEN BY MEASUREMENT: the
     -- SHA-256 shape of the same fact is 18,049,248 constraints / 12,831,336 columns at 703 live vote
     -- accounts (`LightClientSolanaAir` §6c) against a proved ceiling of 2,131 columns; this is 44
     -- columns and 58 constraints at ANY validator count, because the validators are ROWS and a
@@ -485,7 +529,14 @@ Both directions are gated outside Lean:
 -- ⚠ 91, not 89: this lane added `pasta-sbox-prog` + `pasta-sbox-prog-1k` (the register-file /
 -- instruction-ROM machine and its 2^10 instance). Same shared-line hazard as the note above — if
 -- the blame on this line is one lane's, the count is probably still short.
-theorem byNameDescriptors_length : byNameDescriptors.length = 92 := rfl
+-- ⚑ 2026-08-05 — 102, and the two numbers before it were BOTH wrong in the way this note warned
+-- about. The pin arrived at 92 against 91 ROWS: a lane bumped the count and its row did not
+-- survive the shared tree, so `rfl` failed and `lake env lean --run EmitByName.lean` — the ONLY
+-- route to `by-name/` — was dead for every lane at once. That is why eleven descriptors reached
+-- `by-name/` through one-off drivers instead of this table. 102 = 91 real rows + those eleven,
+-- and it is now the DIRECTORY's count, not an increment: `--verify-by-name-routing` reconciles
+-- both directions, so the next drift is a named red rather than eleven private emitters.
+theorem byNameDescriptors_length : byNameDescriptors.length = 102 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

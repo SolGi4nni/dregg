@@ -275,71 +275,71 @@ pub const DREGG_EFFECTVM_RECORD_V1_FP: &str =
 pub const DREGG_EFFECTVM_TRANSFER_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-transfer-ir2.json");
 pub const DREGG_EFFECTVM_TRANSFER_IR2_FP: &str =
-    "7e1ab68576f7a54785dae752085035528753eb567addafcc455074cbcb7c8c3f";
+    "ea1fc2fa8a2d8b9f63106ee845fb11eaf3a42a7dd29183643b8564b404ca6cbe";
 pub const DREGG_EFFECTVM_BURN_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-burn-ir2.json");
 pub const DREGG_EFFECTVM_BURN_IR2_FP: &str =
-    "f732611fccdbe342987fec08e87ffd576ab8b3d8dd9d7aee67d7b9df8f5c70eb";
+    "b968c6004da73e8cb811f81e5fa54289fb91afa38135d30d64ffec90168d87ab";
 pub const DREGG_EFFECTVM_MINT_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-mint-ir2.json");
 pub const DREGG_EFFECTVM_MINT_IR2_FP: &str =
-    "1deaa7c97b373bffa9333586b5249df71c1b070935955d074e8160281b97bbca";
+    "f7c5356c4fbbecf48f47b0ae9051419888c23113ba389f05ee5841bb9ccf83e4";
 pub const DREGG_EFFECTVM_NOTE_SPEND_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-note-spend-ir2.json");
 pub const DREGG_EFFECTVM_NOTE_SPEND_IR2_FP: &str =
-    "a42ad7545f9eb65914cbec22b9355528284315be385a680a18004fd1900e20c2";
+    "fdfeb039249f3fc966e3739f9b8d6b3a7317b7a6b20d905a3ef71276be72274e";
 pub const DREGG_EFFECTVM_NOTE_CREATE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-note-create-ir2.json");
 pub const DREGG_EFFECTVM_NOTE_CREATE_IR2_FP: &str =
-    "38b7187bba3542c531f70d0d00163b90e142bce9110721f24db403d214656cbf";
+    "eff8660e3f186af8b12f74358a84c8c89534e017bee439df5a194e056f9ac915";
 pub const DREGG_EFFECTVM_CELL_SEAL_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-cell-seal-ir2.json");
 pub const DREGG_EFFECTVM_CELL_SEAL_IR2_FP: &str =
-    "9096de2f8f2b829b10c461eacede288bfdd85b0fd509555cbb206b6fd3451bea";
+    "35d6d5085a76e355e852215710a2bb95480c7d7b7a4f75f560f8a1810cbda5c5";
 pub const DREGG_EFFECTVM_CELL_DESTROY_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-cell-destroy-ir2.json");
 pub const DREGG_EFFECTVM_CELL_DESTROY_IR2_FP: &str =
-    "ea1dec2287e522594fea348fb523e83faba968c22c96e25f6ee8f62ce82c05fa";
+    "db863d1ed2927b5aeb92064fb759a04aee0560ae93eed3e9dfd1e23879c6abe6";
 pub const DREGG_EFFECTVM_REFUSAL_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-refusal-ir2.json");
 pub const DREGG_EFFECTVM_REFUSAL_IR2_FP: &str =
-    "18a3512df5094d494811f2d26fc306c25bfa3f876d9d14e59e3ba209edcd3f32";
+    "509875971c342a221a74d7d2b1d703df50161497aee4ff93e6248d876a86e357";
 pub const DREGG_EFFECTVM_SET_PERMS_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-perms-ir2.json");
 pub const DREGG_EFFECTVM_SET_PERMS_IR2_FP: &str =
-    "5fec17684e790c1c422b1bc200895f89b18ea1bb07074158842e5953cc64080c";
+    "5366030bb36e029a9e6ed39d1162c5e6894f78924b517c5c117bf5ea799ebddc";
 pub const DREGG_EFFECTVM_SET_VK_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-vk-ir2.json");
 pub const DREGG_EFFECTVM_SET_VK_IR2_FP: &str =
-    "9621c65a2e16d9c28823e333efc1eef8ab3d6ed55904451098ace2584e8d86a3";
+    "d23196d925dfaafa83f9b2da2d43721422a62a92abcc8dc49da244c3a57e99db";
 pub const DREGG_EFFECTVM_EXERCISE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-exercise-ir2.json");
 pub const DREGG_EFFECTVM_EXERCISE_IR2_FP: &str =
-    "c47e9add936777bfb6bd39df85a24ae960be520235afff6440e24e421240eb32";
+    "5def105499b5b4edec7f2f15d86fb38185b9d05e222bd2dc748e40fae574ad05";
 pub const DREGG_EFFECTVM_PIPELINED_SEND_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-pipelined-send-ir2.json");
 pub const DREGG_EFFECTVM_PIPELINED_SEND_IR2_FP: &str =
-    "904f9c773aca65497a68348aa22224a1a16837ec511fe54519337ab657f30e3a";
+    "b4723f3fc00c084947655db2a2c929d1627726e3f28c311ce21ba5be2f2f57bd";
 pub const DREGG_EFFECTVM_REFRESH_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-refresh-ir2.json");
 pub const DREGG_EFFECTVM_REFRESH_IR2_FP: &str =
-    "aede347d2fe74a278cb609fe33f69dfdeb09151a905c110fd92cb9370d1ab005";
+    "e8c9baf141afc4148ee74fe8a7c7ebd7a8f7bc0dec7e52725b062c6b4cc9e733";
 pub const DREGG_EFFECTVM_INCREMENT_NONCE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-increment-nonce-ir2.json");
 pub const DREGG_EFFECTVM_INCREMENT_NONCE_IR2_FP: &str =
-    "7f5470169de5cc1d17c9ea90a251aabbbe558c8392a861103cca81305f65e7c3";
+    "90594e47dc5df57e36479464fea2ec7db73d4a641b8865eaf151a49f3063a69a";
 pub const DREGG_EFFECTVM_REVOKE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-revoke-ir2.json");
 pub const DREGG_EFFECTVM_REVOKE_IR2_FP: &str =
-    "d69b2ad8d1e9b13c84e909c36891f59d47a43b452e55859bdcf6fc9308a0affa";
+    "30e24435f7f789cb2f6a933f6d39b56e7af1b90c2bf0b9800081ce7e948036b3";
 pub const DREGG_EFFECTVM_INTRODUCE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-introduce-ir2.json");
 pub const DREGG_EFFECTVM_INTRODUCE_IR2_FP: &str =
-    "190521abaa1967847e23cbb8a2a332d6257ecc8d8ac05dbf52022d619f3fac34";
+    "3747bd7f8cd8cca3ad95078f2cb5381e4196f3e08e9d3724177f37911ac87bea";
 pub const DREGG_EFFECTVM_ATTENUATE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-attenuate-ir2.json");
 pub const DREGG_EFFECTVM_ATTENUATE_IR2_FP: &str =
-    "52d6d6f1c76ce3f8814cbb0f3c41e325cfb645bfc45ed1ef763b40131ba5f6fe";
+    "3160d063e394791931a2a822b9dc8808f7a1ba254e62718da48f2650e73df004";
 // GRADUATED (cap-crown): RevokeCapability (sel 24). The v2 leg of the cap-REMOVAL effect — a
 // held-membership map-read authenticated against the before cap_root + a ZERO-value remove-write
 // (the slot's rights deleted), NO submask (revoke deletes a slot, it does not narrow rights). Lean
@@ -348,7 +348,7 @@ pub const DREGG_EFFECTVM_ATTENUATE_IR2_FP: &str =
 pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-revoke-cap-ir2.json");
 pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_FP: &str =
-    "ddd66b7acb3003e5e26eaf38743c67462824c6a8cd975796c08a805fa54d4d53";
+    "fabd309f099ed22732e78f77da055711b8aa253c48911e639f0a084d55f4214b";
 // GRADUATED (Custom recursive-proof binding, sel 8): the runtime passthrough face graduated onto
 // IR-v2 PLUS the `proof_bind` op (`customProofBind`) that ties the row's `custom_proof_commitment`
 // to a VERIFYING external sub-proof of the recursion engine — the accumulator constraint the
@@ -357,43 +357,43 @@ pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_FP: &str =
 pub const DREGG_EFFECTVM_CUSTOM_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-custom-ir2.json");
 pub const DREGG_EFFECTVM_CUSTOM_IR2_FP: &str =
-    "a62201abd2e70814329a65bb4017be138a1e76830855e1bb8dc38f12687f8fe7";
+    "e3374141a2e66290fbd95486d7fc8a8620d8cae92c2771cbe3c58b57ce2e6697";
 pub const DREGG_EFFECTVM_SET_FIELD_DYN_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-dyn-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_DYN_IR2_FP: &str =
-    "d2aa3dd677765b4d2bba2c628651b9c6ba37dcdd86c9da00da44f3aa5a3260fa";
+    "992686af3c1c2e8d8751b208ccdbb5beb03fb34624754b7270b09b79b798fe13";
 pub const DREGG_EFFECTVM_SET_FIELD_0_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-0-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_0_IR2_FP: &str =
-    "e024ad19f58922252b7cdc70c274a4f6ed6f5f391adb77b08f46c2847f1cf0d8";
+    "f067d1d7ab59bf6170cd5906e20f775348173d626d65268cc0b14aba5eb3970d";
 pub const DREGG_EFFECTVM_SET_FIELD_1_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-1-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_1_IR2_FP: &str =
-    "cf45df10a15ff2d7c49650da9040e78e534dd07fe4cf21f09d5f6b7069e89d8b";
+    "e9a2f14a77640c844cbe934ef8f546f7faac401b34aa98a9a81b081ced0cf8b9";
 pub const DREGG_EFFECTVM_SET_FIELD_2_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-2-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_2_IR2_FP: &str =
-    "719752cb08ec7e181b94a8a766703fdec344fa75b03e6817145a2e54cebf491e";
+    "b54b24d8e56f6c7b9215cb4a4693cc51f3086f1b12c1b03c40c167ded223e240";
 pub const DREGG_EFFECTVM_SET_FIELD_3_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-3-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_3_IR2_FP: &str =
-    "bc42b993f8f40325eedb94d3d33989534b2445a37c80f2d496f6c756ef524007";
+    "ef84c352c4b1b8a9d4daa7bf7ec386ba0b912d2674f24ab4d8460afe06090a34";
 pub const DREGG_EFFECTVM_SET_FIELD_4_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-4-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_4_IR2_FP: &str =
-    "c24af7e38efb2241ba402ba72b13f02fffbb70a0ad951ef8b481e1fcf6b97cb3";
+    "561c8e4584913eaa4a2b116e12df063d3e3630c43a292b211598b3c642de10c9";
 pub const DREGG_EFFECTVM_SET_FIELD_5_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-5-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_5_IR2_FP: &str =
-    "5859dd8b048d1d89e30b10fa3e7c726c4f92126ef23464741d7ddf5b06002bfc";
+    "83438ea227e03e9b5a22b243c77b688c642b6633310d9ccf34c4ae7685cc49db";
 pub const DREGG_EFFECTVM_SET_FIELD_6_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-6-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_6_IR2_FP: &str =
-    "02671895e187cc6dee172d0baf9372332b1041f81b3d8da68d9b2053fa28c351";
+    "0b4ecfe5380384099d2051bfea99ffd10571b1a226d7ffa1f334041c248b4df1";
 pub const DREGG_EFFECTVM_SET_FIELD_7_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-7-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_7_IR2_FP: &str =
-    "e26003660a1bbc0072eac64296230c5fbe8afbecafb140f059ae7f6d082402c2";
+    "2a297d9e4c1e1f655fa8ca570fb57bd892f6611c793c48e073c2b0f8479c4266";
 
 // ==== selector index -> (descriptor name, const json, fingerprint) ====
 pub const SELECTOR_DESCRIPTORS: &[(usize, &str, &str, &str)] = &[
@@ -738,7 +738,7 @@ pub const ROTATION_LAYOUT_V3_STAGED_FP: &str =
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-rotation-state-v3-staged.json");
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_FP: &str =
-    "615b2ff7419634d7f4527009d8de88d73cc2f321b789aec6fc5586d7ade36891";
+    "c1cab43f12d4e39e8426ff5aa036a7ee2050acb027884709282ec551f7409e1e";
 
 /// The REGISTER-COUNT MEASUREMENT probes (`docs/ROTATION-CUTOVER.md` pre-gates): the same
 /// staged rotation probe emitted at R=24 and R=32 registers from the PARAMETRIC Lean
@@ -751,11 +751,11 @@ pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_FP: &str =
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_R24_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-rotation-state-v3-staged-r24.json");
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_R24_FP: &str =
-    "92bba2b7f1dca932e0cf06f78ad155b2afccc8f7b4e8740a31e803000a4e8c6a";
+    "360dcbf21daea44888b07d938ecb165b14670aa8242e56cd8c1f9d354a893077";
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_R32_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-rotation-state-v3-staged-r32.json");
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_R32_FP: &str =
-    "3afc1492e22949ed41f87a07f99e638a1d7f8684d6cc73a2bf7e4991231a8f82";
+    "4e6e0245e91e6f543d7abc0f35ee6cc5628ce29b508e47f82ad2824436ffeebf";
 
 /// The v3-staged registry (keyed by Lean def-name, the `V2_DESCRIPTORS` pattern). Entry 0
 /// is the deployed R=16 reference; entries 1-2 are the register-count measurement probes.
@@ -794,7 +794,7 @@ pub const ROTATION_CAVEAT_LAYOUT_V3_STAGED_FP: &str =
 pub const DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-rotation-caveat-v3-staged-r24.json");
 pub const DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_FP: &str =
-    "39d84d4af032e31380bf909b560d1924d2754ec023da0fb2dfee03de727f5112";
+    "538bf7ba0d7c1e49da90dc780803671f0aba5f0dd3cc010d75c954dc930d364d";
 
 /// The caveat-operand staged registry (kept SEPARATE from `V3_STAGED_DESCRIPTORS`
 /// so the three rotation-probe pins stay byte-frozen and their coverage walker
@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "c2bfb64b69ba5e099f1cc5c21cbfda157e464b9a15673bbee80849bf897f2f50";
+    "b5214cf3f4ca94cca546c81a37f81f36c65c40cb740253a81348a20f03732b05";
 
 /// The wire-name suffix marking a descriptor as the rotated+umem WELD
 /// ([`weld_umem_into_rotated_descriptor`]). A descriptor whose `name` ends with this is a STAGED
@@ -1274,7 +1274,7 @@ fn canonicity_splice_of(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> us
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "21a468846290eb2ff6475aa030ba978157795c820fd09a1fd0967a325ca6e48b";
+    "28e54a461a95cfc08327248acec0e262adcc6c10b5e066c7b3086ba67ed18c7b";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -3851,7 +3851,7 @@ mod tests {
                 // claim mean anything is the per-turn fold"); the subtraction made the descriptor
                 // stop contradicting it.
                 //
-                // Two pins survive, and ONLY because `UnforcedPiPins.forcedCols` counts a
+                // Two pins survived, and ONLY because `UnforcedPiPins.forcedCols` counts a
                 // `proof_bind`'s `commit`/`vk` references — a DECLARATION, not a constraint. They
                 // are as prover-chosen as the fourteen; that over-count is measured directly by
                 // `circuit/tests/unforced_pi_pin_census.rs::proof_bind_is_the_only_reader_of_the_custom_exposure_columns`.
@@ -3859,47 +3859,110 @@ mod tests {
                 // NOTHING GOT WEAKER. `piCount` is invariant under the subtraction, so all 16 slots
                 // are still published and the FOLD — which is where the binding has always lived —
                 // reads exactly what it read before. What is gone is the claim.
+                //
+                // ⚑ 2026-08-05: ALL SIXTEEN PINS ARE BACK, AND THE OVER-COUNT IS EXACTLY WHY —
+                // read that as an arithmetic consequence, not as a repair. The `ProofBind`
+                // widening (schema 2 → 3) made `commit`/`vk` LANE VECTORS, so the declaration now
+                // REFERENCES all sixteen exposure columns where it referenced two; `forcedCols`
+                // counts references; the subtraction therefore keeps sixteen. ⚠ NOT ONE OF THEM
+                // BECAME FORCED. A `proof_bind` still has no row denotation, `Ir2Air::eval` still
+                // `continue`s on it, `holdsAt` is still `trivial`, and all sixteen columns are
+                // still prover-chosen on both sides. The census test named above is what measures
+                // that, and it is unchanged. The count moved 2 → 16 because the declaration got
+                // wider, and calling any of the sixteen a weld would be the 2026-07-31 error
+                // recommitted at eight times the width.
                 assert_eq!(
                     base_pi_count, 62,
-                    "custom: rotated 46-PI + the 16 RESERVED custom exposure slots (46..61). The \
-                     slots survive the unforced-pin subtraction; only 14 of their pins do not."
+                    "custom: rotated 46-PI + the 16 RESERVED custom exposure slots (46..61)."
                 );
-                let expected: Vec<(usize, usize)> = vec![
-                    // commit limb 0 — the column the member's `proof_bind` names as `commit`
-                    (PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE, pi_base + 4),
-                    // VK limb 0 — the column the same `proof_bind` names as `vk`
-                    (PARAM_BASE + param::CUSTOM_VK_HASH_BASE, pi_base + 12),
-                ];
+                use crate::descriptor_ir2::ProofBindSpec;
+                use crate::lean_descriptor_air::LeanExpr;
+                let declared = d.constraints.iter().find_map(|c| match c {
+                    VmConstraint2::ProofBind(ProofBindSpec { commit, vk, .. }) => {
+                        Some((commit.clone(), vk.clone()))
+                    }
+                    _ => None,
+                });
+                // The surviving pins are DERIVED from the bind's own lane vectors rather than
+                // transcribed: the claim is "exactly the columns the `proof_bind` names, in
+                // published order", and the lanes are NOT contiguous (the wide-key layout puts
+                // lanes 4..7 far above the first four), so a hand-written column list would be a
+                // second copy of a layout that already moved once today.
+                let expected: Vec<(usize, usize)> = {
+                    let (commit, vk) = declared.clone().expect(
+                        "custom: the member must carry a `proof_bind` — its lane vectors are what \
+                         the surviving exposure pins are derived from",
+                    );
+                    let col_of = |e: &LeanExpr| match e {
+                        LeanExpr::Var(c) => *c,
+                        other => {
+                            panic!("custom: `proof_bind` lane is not a column read: {other:?}")
+                        }
+                    };
+                    commit
+                        .iter()
+                        .enumerate()
+                        .map(|(i, e)| (col_of(e), pi_base + 4 + i))
+                        .chain(
+                            vk.iter()
+                                .enumerate()
+                                .map(|(i, e)| (col_of(e), pi_base + 12 + i)),
+                        )
+                        .collect()
+                };
                 assert_eq!(
                     nullifier_pins, expected,
-                    "custom: EXACTLY the two limb-0 exposure pins survive — commit limb 0 at \
-                     PI[46] and program-VK limb 0 at PI[54], the two columns this member's \
-                     `proof_bind` declares. The other fourteen pinned columns nothing reads and \
-                     were dropped. If more reappear, check whether their columns became FORCED \
-                     before calling any of them a weld."
+                    "custom: EXACTLY the sixteen exposure pins survive, and they are EXACTLY the \
+                     sixteen columns this member's eight-lane `proof_bind` declares — commit lanes \
+                     at PI[46..53], program-VK lanes at PI[54..61]. If a pin survives whose column \
+                     the bind does NOT name, something else started forcing it and that is a \
+                     different claim; if one disappears, the declaration narrowed."
                 );
-                // …and the two that survived are exactly the `proof_bind`'s own columns, which is
-                // the only structural tie between the published exposure and the op the fold keys
-                // on. Asserted, not assumed: it is what `custom_commit_version` now classifies by.
+                // …and the sixteen that survived are exactly the `proof_bind`'s own columns, which
+                // is the only structural tie between the published exposure and the op the fold
+                // keys on. Asserted, not assumed: it is what `custom_commit_version` classifies by.
                 {
-                    use crate::descriptor_ir2::ProofBindSpec;
-                    use crate::lean_descriptor_air::LeanExpr;
-                    let declared = d.constraints.iter().find_map(|c| match c {
-                        VmConstraint2::ProofBind(ProofBindSpec { commit, vk, .. }) => {
-                            Some((commit.clone(), vk.clone()))
-                        }
-                        _ => None,
-                    });
+                    // ⚑ THE ANCHOR LANES, kept verbatim: lane 0 of each vector is the column the
+                    // rotated layout names and `custom_commit_version` classifies by. The two facts
+                    // ADDED are what the widening bought and what the narrow shape could not have
+                    // said: the vectors are at the deployed eight-lane width, and their eight lanes
+                    // are eight DISTINCT columns, so the bind ties an eight-felt commitment rather
+                    // than one limb repeated.
+                    let (commit, vk) = declared.expect(
+                        "custom: the member must carry a `proof_bind` — it is the only structural \
+                         tie between the published exposure and the op the fold keys on",
+                    );
                     assert_eq!(
-                        declared,
-                        Some((
-                            LeanExpr::Var(PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE),
-                            LeanExpr::Var(PARAM_BASE + param::CUSTOM_VK_HASH_BASE)
-                        )),
-                        "custom: the `proof_bind` must declare the SAME two columns the surviving \
-                         pins publish — that correspondence is all that connects the exposure to \
+                        (commit.first(), vk.first()),
+                        (
+                            Some(&LeanExpr::Var(PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE)),
+                            Some(&LeanExpr::Var(PARAM_BASE + param::CUSTOM_VK_HASH_BASE))
+                        ),
+                        "custom: the `proof_bind`'s lane 0 must be the anchor column the rotated \
+                         layout names — that correspondence is all that connects the exposure to \
                          the fold's re-proven sub-proof leaf"
                     );
+                    assert_eq!(
+                        (commit.len(), vk.len()),
+                        (
+                            crate::descriptor_ir2::PROOF_BIND_MIN_LANES,
+                            crate::descriptor_ir2::PROOF_BIND_MIN_LANES
+                        ),
+                        "custom: both lane vectors must be at the deployed eight-felt width; a \
+                         narrower bind ties a prefix of the objects it names"
+                    );
+                    for (what, lanes) in [("commit", &commit), ("vk", &vk)] {
+                        let mut seen: Vec<&LeanExpr> = Vec::new();
+                        for lane in lanes.iter() {
+                            assert!(
+                                !seen.contains(&lane),
+                                "custom: `proof_bind`'s {what} repeats a lane — eight slots holding \
+                                 fewer than eight distinct columns is a narrow bind wearing a wide \
+                                 shape"
+                            );
+                            seen.push(lane);
+                        }
+                    }
                 }
                 // The versioned boundary classifies THIS committed member as live v3 (and the
                 // retired commitment4/VK4 and commitment8/VK4 layouts as typed refusals).

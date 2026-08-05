@@ -163,20 +163,28 @@ declare -A UNROUTED_OK=(
   [EmitWrapFinDeferred.lean]="no-artifact|prints the three §15c‴ deferred words to stdout; they are typed INTO Lean (KimchiWrapMainCore's FIN_DEFERRED_CIP/_B/_XI) and discharged there by fin_deferred_words_are_the_derivation — no file"
 
   # ---- covered: the by-name route already re-emits these bytes off the SAME Lean def. -----------
-  # All four print `emitVmJson2` of a descriptor `EmitByName.lean` also renders, and `EmitByName` IS
+  # Each prints `emitVmJson2` of a descriptor `EmitByName.lean` also renders, and `EmitByName` IS
   # routed. They survive as focused runners because the by-name table's import closure is a strict
-  # superset of each of theirs — `EmitMinaLightClient.lean`'s own header records the day that
-  # mattered (2026-08-05: two sibling modules went red and took the WHOLE by-name surface with them).
+  # superset of each of theirs.
+  #
+  # ⚑ 2026-08-05 — `EmitMinaLightClient.lean` IS DELETED, and its output is the reason. It existed
+  # for one stated day: `EmitByName.lean` could not run (its length pin said 92 against 91 rows, so
+  # `rfl` failed and the whole by-name surface was unemittable), and a lane redirected this runner
+  # into `dregg-mina-lightclient-verify-v1.json` by hand. The Lean then moved underneath the file —
+  # `ProofBind` widened to eight lanes — and nothing re-ran the redirect, so production served 70
+  # constraints where Lean authored 62: NINE narrow one-lane `proof_bind`s, each tying ONE limb of
+  # an eight-felt commitment, in place of the one widened bind. The pin is fixed and the canonical
+  # emit re-derives that file, so a second route to those bytes is not a convenience, it is the
+  # mechanism. One renderer.
   [EmitMinaLink.lean]="covered:EmitByName.lean:minaLinkDesc|dregg-mina-lightclient-link-v1.json (EmitByName.lean:395)"
   [EmitSolStakeFold.lean]="covered:EmitByName.lean:solStakeFoldDesc|dregg-solana-stake-table-fold-v1.json (EmitByName.lean:418)"
-  [EmitMinaLightClient.lean]="covered:EmitByName.lean:minaLcVerifyDesc|dregg-mina-lightclient-{verify,link}-v1.json (EmitByName.lean:385,395); its own header names EmitByName as the CANONICAL route"
   # ⚠ A THIRD RENDERER OF THE SAME SIX, AND IT SHOULD BE DELETED. `EmitLcTmp.lean` prints
   # `<name>\\t<emitVmJson2 d>` for all six light-client descriptors, every one of which is a row of
   # `EmitByName.lean`'s table; it was untracked scratch until `dc5abe4ab` committed it. It writes to
   # STDOUT and commits nothing, so no flag day leaves an artifact behind through it — but greenfield
-  # prefers deleting the old thing to keeping both, and this tree already has `EmitMinaLightClient`
-  # covering the Mina pair with a stated reason. Classified rather than deleted only because it
-  # landed mid-session from another lane; the right end-state is one renderer.
+  # prefers deleting the old thing to keeping both. Classified rather than deleted only because it
+  # landed mid-session from another lane; the right end-state is one renderer, and the Mina half of
+  # that end-state landed above (`EmitMinaLightClient.lean` is gone).
   [EmitLcTmp.lean]="covered:EmitByName.lean:ethLcVerifyDesc|prints all six LC descriptors (eth/tm/solana/midnight/mina/mina-link) to stdout — every one a row of EmitByName.lean (:350,352,372,374,385,395); commits nothing"
   # ⚠ AND A FINDING THE CLASS DOES NOT CARRY. `EmitPastaAlu.lean` also renders `fqAluDesc` into
   # `circuit/descriptors/by-name/pasta-alu-fq-sound.json` — a committed, ROUTED descriptor with
@@ -196,7 +204,10 @@ declare -A UNROUTED_OK=(
   # `{discharge,vault}-sat-v3-staged.json` wound in this script's own header, twice over. Neither
   # can join `EMITTERS`: most of their output lands in `circuit/tests/fixtures/`, which
   # `emit_descriptors.py` structurally cannot install (see the note at the bottom).
-  [EmitCommitStages.lean]="regen:scripts/regen-mina-commit-stages.sh|23 artifacts: 8 by-name descriptors (mina-commit-{xi,pub,f,ft,agg,ladder}, mina-xi-{aggregate-msm,endo-lift}) + 14 trace/pis fixtures + mina-commit-golds.txt, read by mina_commit_stages_prove.rs, mina_xi_endo_weld.rs and pasta_msm_bucketed_prove.rs"
+  # ⚑ 2026-08-05 SPLIT: its 8 by-name DESCRIPTORS moved into `EmitByName.lean`'s routing table, so
+  # they now come out of `emit_descriptors.py` under the recursive coverage check like every other
+  # by-name artifact. Only the fixtures — which that driver structurally cannot install — remain here.
+  [EmitCommitStages.lean]="regen:scripts/regen-mina-commit-stages.sh|15 fixture artifacts under circuit/tests/fixtures/ (mina-commit-{xi,pub,f,ft,agg,ladder}-{trace,pis}.txt, mina-xi-endo-lift-{trace,pis}.txt, mina-commit-golds.txt), read by mina_commit_stages_prove.rs, mina_xi_endo_weld.rs and pasta_msm_bucketed_prove.rs; its 8 by-name descriptors are rows of EmitByName.lean"
   [EmitPastaBucketed.lean]="regen:scripts/regen-pasta-bucketed.sh|4 artifacts under circuit/tests/fixtures/pasta-msm-bucketed/, sha256-pinned in circuit/tests/pasta_msm_bucketed_prove.rs; MUST NOT be routed — it imports MinaWrapSrsG/MinaStepSrsG (32k/64k pinned points), the same reason EmitPastaBound is not routed"
 
   # ---- no-main: a library in the Emit* filename namespace, not an emitter. ----------------------

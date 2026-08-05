@@ -1154,11 +1154,18 @@ fn canonical_descriptor_json(descriptor: &EffectVmDescriptor2) -> Result<String,
         ));
     }
     let table = &descriptor.tables[0];
+    // ⚑ `"challenges"` is REQUIRED on the `ir:2` wire since 2026-08-05 and is written from the
+    // descriptor, never as a literal `0`: this serializer's output is fed straight back through
+    // `parse_vm_descriptor2`, so a hard-coded count would make a challenge-bearing descriptor
+    // round-trip into a DIFFERENT relation instead of refusing. The face check above admits only
+    // `window_gate` constraints, so today the value is always 0 — writing it from the field is what
+    // keeps that a fact about the input rather than an assumption baked into the wire.
     let mut out = format!(
-        "{{\"name\":\"{}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\"tables\":[{{\"id\":{},\"name\":\"main\",\"arity\":{},\"sem\":\"main\"}}],\"constraints\":[",
+        "{{\"name\":\"{}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\"challenges\":{},\"tables\":[{{\"id\":{},\"name\":\"main\",\"arity\":{},\"sem\":\"main\"}}],\"constraints\":[",
         descriptor.name,
         descriptor.trace_width,
         descriptor.public_input_count,
+        descriptor.challenges,
         table.id,
         table.arity,
     );
