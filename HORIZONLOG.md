@@ -17234,3 +17234,33 @@ the emitters' whole 149-module import closure builds.)
   removing elsewhere. `orb/Reactor/SerializeSanitize.lean`'s dead doc-ref, the `EPOCH-GOES-BACKWARDS`
   pair at 2026-08-02/03, `dregg-node`'s missing PoA exports and `PathOfAngels.FiniteTables` are
   likewise other lanes'.
+
+### ⚑ CORRECTION to the entry above, same day: the relation-level divergence is THREE sites, not one — and the emitter's briefed blocker was the wrong file
+
+The 140-file split I published was **124 / 12 / 2 / 2**, not 125 / 12 / 1 / 2. The classifier that
+produced the first number reported only a descriptor's FIRST changed field, so
+`dregg-effectvm-custom-ir2.json` was filed as "challenges only" when it had ALSO changed relation.
+Re-measured field by field:
+
+| site | served | Lean | what moved |
+|---|---|---|---|
+| `by-name/dregg-mina-lightclient-verify-v1.json` | 70 constraints | **62** | 9 narrow one-lane `proof_bind`s → 1 eight-lane bind |
+| `dregg-effectvm-custom-ir2.json` | `trace_width` 188 | **196** | narrow bind (`commit` col 72, `vk` col 68) → 8-lane bind, +8 columns |
+| `rotation-v3-staged-registry.tsv` — `customVmDescriptor2R24` | 578 constraints | **592** | +14 `pi_binding`, the seven extra lanes of each vector |
+| `rotation-wide-registry-staged.tsv` — `customVmDescriptor2R24` | 608 constraints | **622** | same |
+
+All four are one wound: **the served bytes tied ONE LIMB of an eight-felt commitment** and the eight-lane
+`ProofBind` is what the Lean authors. The other 136 are 124 challenges-only (each of which REFUSED
+TO LOAD) and 12 trailing-newline.
+
+⚠ **AND THE BLOCKER I WAS HANDED WAS NOT THE BLOCKER.** The brief said
+`scripts/emit_descriptors.py` could not complete because `Dregg2/Circuit/Emit/AutomataflStepRefine.lean`
+was red at HEAD. Measured: that module is imported by `Dregg2.lean` and three Automatafl siblings and
+by **nothing in the emitter's derived build set** (`--list-emitter-modules`, 149 modules), so its
+redness could not and did not stop the emit. The operative blocker was `EmitByName.lean`'s own length
+pin — `= 92` against 91 rows, which `lake env lean --run` reports as a plain `rfl` type mismatch. Both
+were true statements about a red tree; only one was load-bearing, and the difference is the whole day.
+`AutomataflStepRefine`'s repair is a one-line proof edit (`⟨rfl, rfl, rfl, fun _ => 0⟩` → `⟨rfl, rfl, rfl⟩`,
+the `VmRowEnv.chal` widening) sitting **uncommitted** in the shared tree with six identical siblings;
+it builds green, it is another lane's in-flight set, and it still blocks `lake build`'s default targets
+until that lane lands it.
