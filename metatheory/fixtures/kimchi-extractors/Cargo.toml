@@ -55,3 +55,11 @@ path = "pickles_p6_fq_export.rs"
 [[bin]]
 name = "step_vk_index_export"
 path = "step_vk_index_export.rs"
+
+# ⚑ 2026-08-05 — the `fp_kimchi` parameter + sponge dump the PHASE-1 (Fp) transcript leg is welded
+# against. `PastaPoseidon.mdsN`/`rcsN` carried 174 decimal literals that nothing had ever compared
+# to `static_params()`; this is the artifact that makes the comparison possible, and it is the Fp
+# twin of the `fq_kimchi` block `pickles_p6_fq_export` dumps.
+[[bin]]
+name = "fp_kimchi_export"
+path = "fp_kimchi_export.rs"

@@ -30,6 +30,7 @@ their `emitVmJson2` `#guard`s); this file only SERIALIZES them. Rust interprets;
 nothing. A descriptor reachable from here can never again disagree with its Lean author, because
 the artifact IS the Lean author's output.
 -/
+import Dregg2.Circuit.Emit.MinaPhase1Chain
 import Dregg2.Circuit.Emit.AccumulatorNonRevocationEmit
 import Dregg2.Circuit.Emit.AdjacencyMembershipEmit
 import Dregg2.Circuit.Emit.AdjacencyMembershipWideEmit
@@ -272,6 +273,18 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbDesc)
   , ("pasta-fq-wraplink.json",
       Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkDesc)
+    -- ⚑ 2026-08-05 — THE PHASE-1 (Fp) LEG. The SAME `programAir` at `pLimb` instead of `qLimb` and
+    -- the `fp_kimchi` constants instead of `fq_kimchi`; `MinaWrapVerifierSpongeFp
+    -- .the_deployed_fq_programs_are_this_one_at_fqParams` proves the two instruction streams are
+    -- one program at two parameter sets. `pasta-fp-chainlink` carries the SAME eight-block pin
+    -- layout (`MinaPhase2Chain.chainPins`, 256 PIs) and its link 26's OUTGOING LANE 1 is the
+    -- `fq_digest` phase 2's tape starts with — the weld that says WHOSE tape phase 2 absorbs.
+  , ("pasta-fp-round.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.fpRoundDesc)
+  , ("pasta-fp-absorb.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.fpAbsorbDesc)
+  , ("pasta-fp-chainlink.json",
+      Dregg2.Circuit.Emit.MinaPhase1Chain.chainDesc)
     -- ⚑ THE SIX WRAP COMMITMENT-COMBINATION STAGES + THE ENDO LIFT + THE BUCKETED MSM.
     -- `mina-commit-xi` is `::v2` — the ξ scalar vector's published surface went 64 → 256 PIs, and
     -- because a NAME IS A KEY the descriptor's name moved with it rather than two shapes sharing
@@ -508,10 +521,10 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.PastaAddSubSound.fqAddSoundDesc)
   , ("pasta-fqsub-sound.json",
       Dregg2.Circuit.Emit.PastaAddSubSound.fqSubSoundDesc)
-    -- ⛑ 2026-08-05 — THE SOUND CURVE ROW, on both curves. `PastaCurveSound` composes the
-    -- six descriptors above into one RCB complete addition through the `SoundCore` bridge, so
-    -- a curve-op row is emitted by the compiler rather than by a `VmConstraint2` list. Routed
-    -- on arrival, not after: the six above spent two days unrouted and were named by hand.
+    -- ⚑ 2026-08-05 — THE SOUND CURVE ROW, on both curves. `PastaCurveSound` composes the six
+    -- descriptors above into one RCB complete addition through the `SoundCore` bridge, so a
+    -- curve-op row is emitted by the compiler rather than by a `VmConstraint2` list. Routed on
+    -- arrival, not after: the six above spent two days unrouted and were named by hand.
   , ("pasta-pallas-complete-add-sound.json",
       Dregg2.Circuit.Emit.PastaCurveSound.pallasCompleteAddSoundDesc)
   , ("pasta-vesta-complete-add-sound.json",
@@ -545,7 +558,10 @@ Both directions are gated outside Lean:
 -- `by-name/` through one-off drivers instead of this table. 102 = 91 real rows + those eleven,
 -- and it is now the DIRECTORY's count, not an increment: `--verify-by-name-routing` reconciles
 -- both directions, so the next drift is a named red rather than eleven private emitters.
-theorem byNameDescriptors_length : byNameDescriptors.length = 104 := rfl
+-- ⚑ 2026-08-05 — 107 = 104 + the phase-1 (Fp) sponge trio: `pasta-fp-round`, `pasta-fp-absorb`
+-- and `pasta-fp-chainlink`. Same shared-line hazard as every note above: if the blame on this
+-- line is one lane's, the count is probably already short again.
+theorem byNameDescriptors_length : byNameDescriptors.length = 107 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

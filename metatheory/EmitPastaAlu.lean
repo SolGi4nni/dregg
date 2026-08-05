@@ -51,6 +51,7 @@ import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
 import Dregg2.Circuit.Emit.MinaWrapVerifierSponge
 import Dregg2.Circuit.Emit.MinaBlockFqTranscript
 import Dregg2.Circuit.Emit.MinaPhase2Chain
+import Dregg2.Circuit.Emit.MinaPhase1Chain
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.MinaWrapVerifierAir
@@ -142,6 +143,50 @@ def fqChainPisAllText : String :=
   String.intercalate "\n"
     ((List.range 46).map (fun j => render (Dregg2.Circuit.Emit.MinaPhase2Chain.chainPIs j))) ++ "\n"
 
+/-! ## ⚑ THE PHASE-1 (Fp) LEG (`MinaWrapVerifierSpongeFp`, `MinaPhase1Chain`).
+
+The SAME machine at `pLimb` and the `fp_kimchi` constants: one full round, a two-element absorption
+whose squeeze is `Core.hash fpParams [1,2]` (o1-labs' own `ArithmeticSponge` value, pinned in
+`metatheory/fp_kimchi_params.json`), and the 27-link chain that DERIVES `fq_digest` — the element
+phase 2's tape starts with and nothing used to derive.
+
+  lake env lean --run EmitPastaAlu.lean fpround        > ../circuit/descriptors/by-name/pasta-fp-round.json
+  lake env lean --run EmitPastaAlu.lean fproundtrace   > ../circuit/tests/fixtures/pasta-fp-round-trace.txt
+  lake env lean --run EmitPastaAlu.lean fproundpis     > ../circuit/tests/fixtures/pasta-fp-round-pis.txt
+  lake env lean --run EmitPastaAlu.lean fpabsorb       > ../circuit/descriptors/by-name/pasta-fp-absorb.json
+  lake env lean --run EmitPastaAlu.lean fpabsorbtrace  > ../circuit/tests/fixtures/pasta-fp-absorb-trace.txt
+  lake env lean --run EmitPastaAlu.lean fpabsorbpis    > ../circuit/tests/fixtures/pasta-fp-absorb-pis.txt
+  lake env lean --run EmitPastaAlu.lean fpchain        > ../circuit/descriptors/by-name/pasta-fp-chainlink.json
+  lake env lean --run EmitPastaAlu.lean fpchainpisall  > ../circuit/tests/fixtures/pasta-fp-chainlink-pis.txt
+  lake env lean --run EmitPastaAlu.lean fpchaintrace 26 > ../circuit/tests/fixtures/pasta-fp-chainlink-26-trace.txt
+-/
+
+def fpRoundTraceText : String :=
+  String.intercalate "\n"
+    (Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.fpRoundTrace.map render) ++ "\n"
+
+def fpRoundPisText : String :=
+  render Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.fpRoundPIs ++ "\n"
+
+def fpAbsorbTraceText : String :=
+  String.intercalate "\n"
+    (Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.fpAbsorbTrace.map render) ++ "\n"
+
+def fpAbsorbPisText : String :=
+  render Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.fpAbsorbPIs ++ "\n"
+
+def fpChainPisText (j : Nat) : String :=
+  render (Dregg2.Circuit.Emit.MinaPhase1Chain.chainPIs j) ++ "\n"
+
+def fpChainTraceText (j : Nat) : String :=
+  String.intercalate "\n"
+    ((Dregg2.Circuit.Emit.MinaPhase1Chain.chainTrace j).map render) ++ "\n"
+
+/-- All 27 links' public inputs, one line per link, in chain order. -/
+def fpChainPisAllText : String :=
+  String.intercalate "\n"
+    ((List.range 27).map (fun j => render (Dregg2.Circuit.Emit.MinaPhase1Chain.chainPIs j))) ++ "\n"
+
 def main (args : List String) : IO Unit :=
   match args with
   | ["fp"]         => IO.println (emitVmJson2 fpAluDesc)
@@ -166,8 +211,20 @@ def main (args : List String) : IO Unit :=
   | ["fqchainpisall"]  => IO.print fqChainPisAllText
   | ["fqchainpis", j]  => IO.print (fqChainPisText j.toNat!)
   | ["fqchaintrace", j] => IO.print (fqChainTraceText j.toNat!)
+  | ["fpround"]        => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.fpRoundDesc)
+  | ["fproundtrace"]   => IO.print fpRoundTraceText
+  | ["fproundpis"]     => IO.print fpRoundPisText
+  | ["fpabsorb"]       => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.fpAbsorbDesc)
+  | ["fpabsorbtrace"]  => IO.print fpAbsorbTraceText
+  | ["fpabsorbpis"]    => IO.print fpAbsorbPisText
+  | ["fpchain"]        => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaPhase1Chain.chainDesc)
+  | ["fpchainpisall"]  => IO.print fpChainPisAllText
+  | ["fpchainpis", j]  => IO.print (fpChainPisText j.toNat!)
+  | ["fpchaintrace", j] => IO.print (fpChainTraceText j.toNat!)
   | _              => IO.eprintln
       "usage: EmitPastaAlu.lean (fp|fq|trace|chaintrace|sbox|sboxtrace|sboxpis|long|longtrace\n\
        |fqround|fqroundtrace|fqroundpis|fqabsorb|fqabsorbtrace|fqabsorbpis\n\
        |fqlink|fqlinktrace|fqlinkpis\n\
-       |fqchain|fqchainpisall|fqchainpis <j>|fqchaintrace <j>)"
+       |fqchain|fqchainpisall|fqchainpis <j>|fqchaintrace <j>\n\
+       |fpround|fproundtrace|fproundpis|fpabsorb|fpabsorbtrace|fpabsorbpis\n\
+       |fpchain|fpchainpisall|fpchainpis <j>|fpchaintrace <j>)"

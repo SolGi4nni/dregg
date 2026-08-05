@@ -87,6 +87,20 @@ root = "MinaSgBench"
 name = "mina_chain_emit"
 root = "MinaChainEmit"
 
+# mina_fp_chain_emit — the PHASE-1 (Fp) twin: the `fp_kimchi` round and absorption fixtures plus
+# the 27 witnesses of block 539508's phase-1 transcript (`Dregg2.Circuit.Emit.MinaPhase1Chain`),
+# whose link 26 output lane 1 is the `fq_digest` the phase-2 chain absorbs as tape element 0.
+#
+# ⚠ COMPILED for the SAME measured reason as `mina_chain_emit`: one 2 048x469 trace costs
+# 9 min 20 s through Lean's interpreter.
+#
+#     lake build mina_fp_chain_emit
+#     ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 0   # the 3 tracked fixtures
+#     ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures     # …and all 27 links
+[[lean_exe]]
+name = "mina_fp_chain_emit"
+root = "MinaFpChainEmit"
+
 # Market/* — DrEX (Dragon's Egg Exchange): the Lean-first proof-carrying exchange tower
 # (namespace `Market`, composing with Dregg2.Intent + Dregg2.Intent.Ring). Root module
 # `Market` (./Market.lean) aggregates Market/*; also imported from the Dregg2 root so the
