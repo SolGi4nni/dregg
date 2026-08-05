@@ -1,0 +1,90 @@
+# recursion-closure-policy.tsv — THE RECURSION FIREWALL, AS DATA.
+#
+# Enforced by `scripts/check-recursion-closure.py` against `cargo metadata`'s
+# resolve, over NORMAL + BUILD edges (the library graph — what a consumer links).
+# `dev` edges are excluded; see that script's docstring for why that is not a
+# loophole and why the green control is itself the proof of it.
+#
+# Tab-separated.  Row kinds:
+#
+#   MARK      <pkg>                  <reason>
+#       A package that IS the recursion fork.  The `@recursion` group expands to
+#       every MARK row, so a NEW recursion crate is covered by every existing
+#       FORBID row the moment it is marked here.
+#
+#   FORBID    <crate>  <target>      <reason>
+#       No normal/build path from <crate> to <target>.  <target> may be `@recursion`.
+#
+#   REQUIRE   <crate>  <target>      <reason>
+#       There IS such a path.  ⚑ These rows are why this gate cannot be satisfied
+#       by deletion.  "nothing reaches the recursion fork" is trivially true of a
+#       tree that can no longer verify anything.
+#
+#   REQUIRE_DIRECT  <crate>  <target>  <reason>
+#       <crate> DECLARES <target> in its OWN manifest — one hop.  ⚑ Use this
+#       wherever the claim is about a VISIBLE edge, which is most of them: the
+#       first draft of this file wrote `REQUIRE dregg-node dregg-recursion-verify`
+#       and the gate's own red-proof refused to go red when that edge was deleted,
+#       because `dregg-node -> dregg-circuit-prove -> dregg-recursion-verify`
+#       satisfies the REACH through a path the node does not own.  The row was
+#       true and useless while reading as the capability check.
+#
+# ⚠ THIS IS NOT AN ALLOWLIST OF WHO MAY TAKE THE EDGE.  123 of 227 workspace
+# members legitimately reach the recursion fork (measured 2026-08-05) and a list
+# of those would be a snapshot that rots weekly, not a rule.  The firewall is the
+# set that must NOT — plus the small set that MUST.
+
+# ── the fork itself ──────────────────────────────────────────────────────────
+MARK	p3-recursion	The recursion fork's circuit/AIR types (rev fc3c6df).
+MARK	p3-circuit-prover	Carries BatchStarkProver::verify_all_tables — the actual recursive check, and the prover with it.
+MARK	dregg-circuit-prove	The heavy dregg prove surface: the IVC tower, the shielded prover, the custom proof-bind engine, the wgpu/pollster GPU backend.
+
+# ── the wall ─────────────────────────────────────────────────────────────────
+# ⚑ `dregg-turn` is THE claim this gate was written for.  turn/Cargo.toml:17-25
+# has forbidden this edge in prose since the prover extraction, and nothing
+# checked it; the comment's own two justifications (an seL4 verifier-PD floor
+# that builds no dregg crate, a wasm card that declares circuit-prove on purpose)
+# had both expired unnoticed.  What is still real is the cfg-brittleness argument
+# in TURN-PROVER-CRATE-EXTRACTION-DESIGN.md §0 plus the weight the ~50 crates
+# downstream of turn inherit.  The edge stays out; a consumer that WANTS recursion
+# verification takes `dregg-recursion-verify` explicitly, and turn fails the
+# effect CLOSED when no backend is injected.
+FORBID	dregg-turn	@recursion	Core turn is recursion-free. A consumer that wants root verification injects a MinaChainRootBackend (executor/mina_head_verifier.rs); turn REFUSES when none is.
+# The verify floor everything else stands on. If `dregg-circuit` ever took the
+# edge, every FORBID row below would fall in the same commit and the wall would
+# be gone in one move.
+FORBID	dregg-circuit	@recursion	The verify-level descriptor/PI floor. Its whole value is being the light crate ~200 members can depend on.
+FORBID	dregg-cell	@recursion	The cell/predicate substrate. A witnessed predicate is verified by an INJECTED verifier, never by linking a prover.
+FORBID	dregg-federation	@recursion	Consensus. The quorum path verifies; it does not prove.
+FORBID	dregg-persist	@recursion	The durable store. Nothing about writing a commit log needs the recursion fork.
+# ⚑ THE ROW THAT MAKES THE EXTRACTION REAL RATHER THAN COSMETIC.
+# `dregg-recursion-verify` exists to be the SMALL edge: a consumer takes it to
+# gain root VERIFICATION without the IVC tower, the shielded prover, the GPU
+# backend, dregg-lean-ffi, dregg-cell, dregg-commit, dregg-p3-pasta or p3-bn254.
+# It declares dregg-circuit-prove as a DEV-dependency (its seam test mints a real
+# fold, then consumes the root through the verify path) and that is fine — a dev
+# edge links into its own test binaries and nothing a consumer builds.  Promote
+# that dev-dep into [dependencies] and every consumer silently inherits the whole
+# tower while the crate's own tests behave identically.  This row is what notices.
+FORBID	dregg-recursion-verify	dregg-circuit-prove	The verify crate must stay the SMALL edge. Its circuit-prove dep is dev-only, on purpose.
+
+# ── the capability, asserted in the positive ─────────────────────────────────
+# ⚑ Without these rows the gate is satisfiable by deleting the feature. A firewall
+# check that only measures ABSENCE measures the cheap direction.
+REQUIRE_DIRECT	dregg-recursion-verify	p3-recursion	It must actually carry the FriRecursionConfig impl the orphan rule pins to the fork.
+REQUIRE_DIRECT	dregg-recursion-verify	p3-circuit-prover	verify_all_tables IS the recursive check. Without this edge the crate cannot verify a root at all.
+# ⚑ THE NODE'S CAPABILITY, AND ITS SILENCE IF LOST. `MinaAnchoredHeadStarkVerifier`
+# is constructed UNWIRED and refuses every Mina anchored head at refusal 0. If the
+# node's edge to the verify crate went away, the node would still build, still run,
+# and silently stop being able to verify a head — the UN-CALLED INITIALIZER shape.
+# DIRECT, because the whole operator rule is that the capability is a dependency you
+# can SEE. Reaching the crate through circuit-prove is not the node taking the edge.
+REQUIRE_DIRECT	dregg-node	dregg-recursion-verify	The node injects the P3MinaChainRootBackend. Lose this edge and the node refuses every Mina head, silently.
+# The config/fingerprint/verify entry points MOVED to the verify crate and are
+# re-exported from plonky3_recursion_impl::recursive. A verify-side COPY would be
+# the "two shapes that agree today" failure; this row says the move stayed a move.
+REQUIRE_DIRECT	dregg-circuit-prove	dregg-recursion-verify	The verify half was EXTRACTED, not copied. circuit-prove re-exports it.
+# The one row where the REACH is the point rather than the declaration: whatever the
+# node's manifest says, the code that actually runs `verify_all_tables` must be in
+# the node's link. This is the capability, stated at the closure level.
+REQUIRE	dregg-node	p3-circuit-prover	The node must LINK the recursive verifier itself, by whatever path.

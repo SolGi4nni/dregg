@@ -503,6 +503,34 @@ GATES=(
   "workspace-closure|180|python3 scripts/check-workspace-closure.py"
   "commit-self-contained|180|python3 scripts/check-workspace-closure.py --rev HEAD"
   "workspace-closure-red|600|python3 scripts/check-workspace-closure.py --self-test"
+  # ⚑ THE RECURSION FIREWALL, WHICH WAS PROSE UNTIL 2026-08-05. `turn/Cargo.toml:17-25` has
+  # forbidden the `dregg-circuit-prove` edge since the prover extraction and justified it with
+  # "the seL4 verifier-PD floor and the wasm/zkvm card" — a claim about the DEPENDENCY GRAPH,
+  # written in a comment, checked by nothing. No `deny.toml`, no `[bans]`, no `cargo tree` gate,
+  # no row in this file. The extraction design named the gate as its own acceptance criterion
+  # (§5 PR1) and it was never written.
+  # An unenforced firewall gets BELIEVED, and this one shaped code: `mina_head_verifier.rs`
+  # could not verify a recursion root at all — while a 46-leaf fold of Mina block 539508's whole
+  # phase-2 transcript sat proved and unreachable — because the comment said the edge was
+  # forbidden, and nobody could see that BOTH its justifications had expired (the seL4 verifier
+  # PDs build no dregg crate; `wasm/Cargo.toml` declares circuit-prove on purpose).
+  # The rule is now DATA (`scripts/recursion-closure-policy.tsv`) checked against `cargo
+  # metadata`'s resolve — this repo's own oracle for the class, ~15 gating defects deep, none of
+  # them broken code. It reads the LIBRARY graph (normal + build edges); `dev` is excluded, and
+  # the green control is the live proof of that filter, because `dregg-recursion-verify`
+  # dev-deps `dregg-circuit-prove` while being FORBIDden it in the library graph.
+  # ⚠ NOT AN ALLOWLIST OF WHO MAY: 123 of 227 members legitimately take the edge. The rows are
+  # the set that must NOT, plus REQUIRE/REQUIRE_DIRECT rows so the gate cannot be satisfied by
+  # DELETING the capability — "nothing reaches the recursion fork" is trivially true of a tree
+  # that can no longer verify anything.
+  # ~3s. Exit 3 (BLOCKED) when cargo emits no resolve: the gate DID NOT RUN, which is a failure
+  # but not a divergence. The -red row is not optional — the headline is a negative assertion —
+  # and it injects faults into the in-memory RESOLVE GRAPH, never the tree, so it cannot leave
+  # a shared tree disarmed. It caught a hole in its own first draft: `REQUIRE dregg-node
+  # dregg-recursion-verify` would not go red when that edge was deleted, because the node still
+  # REACHED the crate via `dregg-circuit-prove`. Hence REQUIRE_DIRECT.
+  "recursion-closure|180|python3 scripts/check-recursion-closure.py"
+  "recursion-closure-red|300|python3 scripts/check-recursion-closure.py --self-test"
   # The OpenTheory→Lean importer, RUN. `docs/opentheory-importer-poc/OTPoC.lean` replays a
   # real OpenTheory v6 article into Lean `Expr`s and hands each export to the KERNEL — and
   # until 2026-07-27 it was wired into NOTHING: `grep -rn 'opentheory|OTPoC' .github/ scripts/
