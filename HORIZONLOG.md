@@ -22,10 +22,18 @@ absorbProg`, same 2048-row ROM, same 55x3 `fq_kimchi` constants — asserted row
 | "75 900 rows / ~207 MB" | still true — **of one instance**, which is why nobody should build one |
 | the leaf | **12.5 s** |
 | a 2-to-1 fold node | **11.3 s** — *less than the leaf*, it verifies two constant-size proofs not a 2048x469 batch |
-| **the whole 46-link tree** | **~18 min** (46 leaves + 45 folds) |
+| **the whole 46-link tree** | **17.3 min, RUN** — 46 leaves + 45 folds, root verified |
 
 The 207 MB figure had been carried forward for weeks as if it priced the closure. It priced the
 thing you get by refusing to recurse.
+
+⛑ **AND IT RAN.** `the_whole_phase2_transcript_folds_into_one_claim`, **1037 s**, root verified,
+claim checked at both ends and in the middle: incoming state is the fresh Kimchi sponge, the ordered
+in-circuit transcript digest equals the host fold over the block's real 91-element tape, and the
+outgoing lanes truncate to `v' = 330305781815358857211111367912836029937` /
+`u' = 25455272712921947007977874297033672595`. Steady-state per link was **~9.5 s leaf + ~11.5 s
+fold**. **The state was carried by 45 x 96 in-circuit `connect`s, not re-pinned host-side** — which
+is the whole difference between 46 proofs and one claim.
 
 ⛑ **STATE CARRIED INSIDE THE RECURSION, NOT RE-PINNED.** `fold_chain_links` `connect`s the left
 child's 96 outgoing limbs to the right child's 96 incoming limbs, both read from each child's own

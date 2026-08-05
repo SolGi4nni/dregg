@@ -18,7 +18,7 @@
 //! * **§4** — `RecursionVk` determinism: an honest re-fold of the same chain mints the SAME
 //!   fingerprint. That is a shipped property (`recursion_vk_determinism.rs` calls it *"the light
 //!   client's distributed trust anchor"*) and this file must not break it.
-//! * **§5** — the whole 46-link chain. `#[ignore]`d only for wall-clock (~18 min); it is the point.
+//! * **§5** — the whole 46-link chain. RUN: 1037 s, root verified. `#[ignore]`d for wall-clock only.
 //!
 //! ## ⚑ RELEASE, DELIBERATELY
 //!
@@ -484,10 +484,12 @@ fn the_chain_folds_recursion_vk_is_deterministic() {
 /// 207 MB witness figure implied. That is the number the residual should always have been priced
 /// against.
 ///
-/// `#[ignore]`d for wall clock only (~18 min measured). Run it with:
+/// ⚑ **RUN, 2026-08-05: 1037 s (17.3 min), root verified**, steady state ~9.5 s leaf + ~11.5 s fold.
+///
+/// `#[ignore]`d for wall clock only. Run it with:
 /// `cargo test -p dregg-circuit-prove --release --test mina_phase2_chain_fold -- --ignored --nocapture`
 #[test]
-#[ignore = "the whole 46-link chain: ~18 min measured. Run explicitly with --ignored."]
+#[ignore = "the whole 46-link chain: 17.3 min measured (RUN, root verified). Explicit --ignored."]
 fn the_whole_phase2_transcript_folds_into_one_claim() {
     let pis = all_link_pis();
     let config = chain_config();
