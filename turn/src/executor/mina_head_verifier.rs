@@ -283,6 +283,16 @@ pub fn wraplink_pi_commitment(pis: &[u32]) -> [u8; 32] {
 /// carrier is not a bit: the prover must hold a second STARK whose public inputs digest to the nine
 /// lanes it published.
 pub fn check_transcript_binding(pis: &[u32], transcript_pis: &[u32]) -> Result<(), String> {
+    // The head arity is re-checked here rather than inherited from `check_head_binding`'s earlier
+    // call: this is a `pub` fail-closed check and a caller that reached it another way must get a
+    // refusal, not an index panic.
+    if pis.len() != MINA_LC_PI_COUNT {
+        return Err(format!(
+            "Mina anchored-head proof declared {} public inputs; {MINA_LC_VERIFY_DESCRIPTOR} binds \
+             exactly {MINA_LC_PI_COUNT}",
+            pis.len()
+        ));
+    }
     if transcript_pis.len() != MINA_WRAPLINK_PI_COUNT {
         return Err(format!(
             "the Fq-transcript sub-proof declared {} public inputs; \
