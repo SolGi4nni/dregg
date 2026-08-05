@@ -164,7 +164,11 @@ fn shape_of(desc: &EffectVmDescriptor2) -> Shape {
     let cover = manifest(desc, "pasta_msm_cover");
     let srs = manifest(desc, "pasta_msm_srs");
     let rows = sched.len();
-    assert_eq!(cover.len(), rows, "cover manifest length must be the height");
+    assert_eq!(
+        cover.len(),
+        rows,
+        "cover manifest length must be the height"
+    );
     assert_eq!(srs.len(), rows, "srs manifest length must be the height");
 
     let real: Vec<&Vec<u32>> = cover.iter().filter(|r| r[0] != 0).collect();
@@ -244,7 +248,7 @@ fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let mut dgt: u32 = 0;
 
     for (idx, (w, mode)) in sched.iter().enumerate() {
-        let (acc, src, gen, isterm, isstep, dbl, gidx) = match *mode {
+        let (acc, src, genp, isterm, isstep, dbl, gidx) = match *mode {
             Mode::Term(i) => (run, sh.gens[i], sh.gens[i], 1u32, 0u32, false, i as u32),
             Mode::Step => (tot, run, Pt::INFINITY, 0, 1, false, 0),
             Mode::Dbl => (tot, tot, Pt::INFINITY, 0, 0, true, 0),
@@ -261,9 +265,9 @@ fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         put_field(&mut row, TOTX + NUM_LIMBS, &tot.y);
         put_field(&mut row, TOTX + 2 * NUM_LIMBS, &tot.z);
         if isterm == 1 {
-            put_field(&mut row, GENX, &gen.x);
-            put_field(&mut row, GENX + NUM_LIMBS, &gen.y);
-            put_field(&mut row, GENX + 2 * NUM_LIMBS, &gen.z);
+            put_field(&mut row, GENX, &genp.x);
+            put_field(&mut row, GENX + NUM_LIMBS, &genp.y);
+            put_field(&mut row, GENX + 2 * NUM_LIMBS, &genp.z);
         }
         row[ISTERM] = BabyBear::new(isterm);
         row[ISSTEP] = BabyBear::new(isstep);
@@ -366,7 +370,9 @@ fn lean_artifacts_are_pinned() {
         assert_eq!(d.tables.len(), 3, "schedule, cover, srs");
         // ⚑ The prefix claim, checked on the ARTIFACT and not only in the kernel: the first 45
         // constraints are the windowed row template, so the curve arithmetic is not re-authored.
-        let windowed = parse(include_str!("../descriptors/by-name/pasta-rcb-windowed.json"));
+        let windowed = parse(include_str!(
+            "../descriptors/by-name/pasta-rcb-windowed.json"
+        ));
         assert_eq!(windowed.constraints.len(), 45);
         assert_eq!(
             &d.constraints[..45],
@@ -389,7 +395,10 @@ fn the_manifests_declare_the_fused_layout() {
         assert_eq!(sh.levels, (1 << c) - 1, "levels must be 2^c - 1");
         // the closed form `PastaMsmBucketed.fusedAdds` computes, on these very parameters.
         assert_eq!(sh.rows, sh.windows * (sh.c + sh.n + sh.levels));
-        assert!(sh.rows.is_power_of_two(), "the prover refuses a ragged height");
+        assert!(
+            sh.rows.is_power_of_two(),
+            "the prover refuses a ragged height"
+        );
         // every declared generator is a real curve point, and distinct from its neighbours.
         for (i, g) in sh.gens.iter().enumerate() {
             assert!(g.on_curve(), "SRS generator {i} is off-curve");
@@ -468,7 +477,10 @@ fn a_forged_commitment_is_refused() {
             z: read_field(trace.last().unwrap(), TOTX + 2 * NUM_LIMBS),
         };
         let forged = rcb_add(&honest, &sh.gens[0]);
-        assert!(!proj_eq(&honest, &forged), "the forgery must move the point");
+        assert!(
+            !proj_eq(&honest, &forged),
+            "the forgery must move the point"
+        );
 
         let mut bad = vec![BabyBear::new(0); PI_COUNT];
         for i in 0..NUM_LIMBS {
@@ -515,7 +527,10 @@ fn a_generator_folded_at_the_wrong_level_is_refused() {
         "a real generator folded one sweep level below its declared digit",
         || prove_and_verify(&desc, &trace, &pis),
     );
-    println!("  [ROUTE ] cover-manifest level moved {was} -> {}: REFUSED: {e:?}", was - 1);
+    println!(
+        "  [ROUTE ] cover-manifest level moved {was} -> {}: REFUSED: {e:?}",
+        was - 1
+    );
 }
 
 /// A term row consumes a DIFFERENT REAL Mina SRS generator than its index names — the substitution
