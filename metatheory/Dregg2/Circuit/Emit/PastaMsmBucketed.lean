@@ -1109,6 +1109,65 @@ the algorithm. Every layout comparison in §0b survives the correction unchanged
 theorem sound_and_emitted_share_a_row_count :
     soundAreaCells / SOUND_ROW_WIDTH = emittedAreaCells / WK := by decide
 
+/-! ## §6e — ⚑ THE FRI BLOWUP, MEASURED. `lb = 2` HOLDS ON THIS AIR, AND `lb = 1` DOES NOT.
+
+`IR2_FRI_LOG_BLOWUP = 6` is GLOBAL and stays global: 39 of the 99 parseable by-name goldens pull in
+the Poseidon2 chip, whose inline degree-7 `x⁷` S-box needs a degree-6 quotient a blowup of 4 cannot
+carry. **This descriptor declares no chip** — three exact-public tables and nothing else — so
+whether IT survives is a question for the prover, and
+`pasta_msm_bucketed_prove.rs::the_chip_free_bucketed_air_reaches_log_blowup_two` RUNS it.
+
+Measured on `dregg-pasta-msm-bucketed-vesta-c2` (64 rows × 612, release), at the security-PARITY
+rungs — conjectured `q·lb + 16 ≥ 130`, proven/Johnson `q·lb/2 + 16 ≥ 73`, asserted per rung rather
+than printed and trusted:
+
+  | `lb` | `q` | conj | proven | prove ms | verify ms | proof KiB |
+  |---|---|---|---|---|---|---|
+  | 6 | 19 | 130 | 73 | 1203.1 | 150.1 | 145.4 |
+  | 3 | 39 | 133 | 74 | 369.9 | 59.1 | 240.4 |
+  | **2** | **57** | **130** | **73** | **309.1** | **27.5** | **325.2** |
+  | 1 | 114 | — | — | **REFUSED AT PROVE** (`OodEvaluationMismatch`) | | |
+
+⚑ **`lb = 2` proves AND verifies**, at 3.9× the prove speed and 5.5× the verify speed of the
+deployed point, for 2.2× the wire. **`lb = 1` refuses**, so `2` is this AIR's floor and it was found
+by running it rather than by arguing from the degree ledger.
+
+⚠ **The timings are at 64 rows and do not extrapolate.** At this height the LDE is not what the
+prover spends its time on, so "3.9× faster" is a fact about a 64-row trace, not a prediction for a
+1,474,800-row one. What DOES carry to full width are the two structural consequences below, and
+they are the reason the rung matters at all.
+
+⚠ **AND NOTHING GLOBAL IS LANDED OR PROPOSED.** `prove_vm_descriptor2_with_config` is
+`doc(hidden)` and labelled measurement-only as POLICY — it is a genuine prover, it self-verifies
+before returning. The blocker on a real per-descriptor knob is elsewhere and is recorded in
+`descriptor_ir2.rs`: the recursion path reads `num_queries` from the inner proof structure and never
+pins it against a configured count, masked today only because every child runs 19. That is a
+finding for the recursion lane, not a change this file makes. -/
+
+/-- BabyBear's two-adicity — the exponent the trace-height ceiling is carved out of. -/
+def BABYBEAR_TWO_ADICITY : Nat := 27
+
+/-- The reachable trace height at a given log-blowup. -/
+def rowCeilingAt (logBlowup : Nat) : Nat := 2 ^ (BABYBEAR_TWO_ADICITY - logBlowup)
+
+/-- The deployed ceiling, restated from its two inputs rather than quoted. -/
+theorem deployed_row_ceiling : rowCeilingAt 6 = DREGG_MAX_ROWS := by decide
+
+/-- ⚑ **At `lb = 2` the ceiling is `2^25`, sixteen times the deployed one.** -/
+theorem lb2_row_ceiling : rowCeilingAt 2 = 33554432 ∧ rowCeilingAt 2 = 16 * rowCeilingAt 6 := by
+  constructor <;> decide
+
+/-- ⚑ **…and the full-width instance clears it with 22× to spare**, against the 1.42× it clears the
+deployed ceiling by. The row count was never the binding constraint at `lb = 2`; §7.1's area is. -/
+theorem fused_clears_the_lb2_ceiling_twentyfoldly :
+    22 * fusedAdds STEP_SRS FULL_BITS BEST_C < rowCeilingAt 2 := by decide
+
+/-- ⚑ **THE CONSEQUENCE THAT ACTUALLY MATTERS.** The prover materialises a low-degree extension
+`2^logBlowup ×` the trace, so dropping 6 → 2 divides the LDE by SIXTEEN. On the full-width
+instance that is the difference between ~231 GB and ~14 GB of extended trace — between no box and
+a box. This is the only lever on this workload that does not require a different algorithm. -/
+theorem lb2_lde_is_sixteen_times_smaller : 2 ^ 6 = 16 * 2 ^ 2 := by decide
+
 /-! ## §7 — ⚑ THE RESIDUALS, at CURRENT resolution.
 
 **7.1 — the row count is not the only axis, and this file does not pretend it is.** (§6d prices
@@ -1276,5 +1335,9 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms sound_rcb_is_over_a_hundredfold
 #assert_axioms sound_area_is_five_times_the_emitted
 #assert_axioms sound_and_emitted_share_a_row_count
+#assert_axioms deployed_row_ceiling
+#assert_axioms lb2_row_ceiling
+#assert_axioms fused_clears_the_lb2_ceiling_twentyfoldly
+#assert_axioms lb2_lde_is_sixteen_times_smaller
 
 end Dregg2.Circuit.Emit.PastaMsmBucketed
