@@ -237,14 +237,21 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          answer source. Internal callers must refuse; there is no Rust semantic fallback, and \
          caller-authored carrier/state must never be promoted to finality",
     ),
-    // ⚠ `dregg_poa_signal_slot_derive` BELONGS ON THIS LIST and is deliberately not on it yet.
-    // It is the per-run instance derivation (`HiddenInstance.commit` / `runSeedFor` /
-    // `SignalTriangulation.targetFromSeed`) that `node/src/poa_signal_adapter.rs` needs to
-    // PREPARE a scored run; `metatheory/` does not export it yet (2026-08-05), and this gate
-    // PANICS on every `--release` / `DREGG_REQUIRE_LEAN=1` build, so listing it now would red
-    // the whole tree for every lane over a gap none of them introduced. The cfg probe below is
-    // live, so the seam lights up the moment the export exists. ADD THIS ENTRY IN THE SAME
-    // COMMIT AS THE LEAN `@[export]` — see `poa_slot_derive_ffi.rs` for the required wire.
+    // ⚑ LANDED 2026-08-05, in the same commit as the Lean `@[export]`
+    // (`Dregg2/Games/PathOfAngels/SlotDeriveRuntime.lean`), exactly as the note that stood
+    // here required. It was off this list only while `metatheory/` had no such export, because
+    // this gate PANICS on every `--release` / `DREGG_REQUIRE_LEAN=1` build.
+    (
+        "dregg_poa_signal_slot_derive",
+        "the Path of Angels PER-RUN INSTANCE DERIVATION compiles out: the node cannot obtain \
+         `HiddenInstance.commit` / `runSeedFor` / `SignalTriangulation.targetFromSeed` for a slot \
+         and a player, so no SCORED Signal run can be prepared at all. This must stay a refusal \
+         and never a Rust fallback — `Judged.admissionChecks` re-derives both values and refuses \
+         on mismatch, which is a CHECK only if the node derived them INDEPENDENTLY, and a Rust \
+         copy of the Poseidon2-BabyBear sponge would be an unproven twin of a soundness function \
+         whose one-byte disagreement either refuses every run or serves an instance nobody \
+         committed to",
+    ),
     (
         "dregg_poa_records_project",
         "the Path of Angels RECORDS read model compiles out: rebuilding the finalized-run \
@@ -3242,26 +3249,17 @@ fn main() {
     // mismatch — which is only a CHECK if the node derived them independently, so the node must
     // derive, and it must derive by calling Lean. Absent, `poa_slot_derive_available()` is false and
     // every scored Signal run refuses at preparation; there is no Rust sponge to fall back to.
-    // ⚠ 2026-08-05: metatheory/ does not export this yet, so this probe is expected to be absent.
+    // ⚑ 2026-08-05: `Dregg2.Games.PathOfAngels.SlotDeriveRuntime` now exports it and it is in
+    // `Dregg2.FFI`'s import closure, so absence here is once again an ordinary stale-archive
+    // fault and `absent_export_warn` names the right remedy. The symbol is on
+    // REQUIRED_DECISION_EXPORTS above, so a `--release` / `DREGG_REQUIRE_LEAN=1` build refuses
+    // rather than silently compiling the seam's refusing arm.
     let poa_signal_slot_derive_present =
         archive_exports(&build_archive, "dregg_poa_signal_slot_derive");
     if poa_signal_slot_derive_present {
         println!("cargo:rustc-cfg=dregg_poa_signal_slot_derive_present");
     } else {
-        // Deliberately NOT `absent_export_warn`: that text tells the reader to re-splice the
-        // archive or fetch a HEAD-matching seed, and neither can help — `metatheory/` has no
-        // such `@[export]` to splice. Naming the wrong remedy is how an open gap gets filed as
-        // a stale-artifact problem and stops being looked at.
-        println!(
-            "cargo:warning=dregg-lean-ffi: `dregg_poa_signal_slot_derive` is not exported by \
-             metatheory/ (expected, 2026-08-05). The Path of Angels per-run instance derivation \
-             has no answer source, so every SCORED Signal run refuses at preparation \
-             (`poa_slot_derive_available()` == false). This is NOT a stale archive: re-splicing \
-             cannot fix it. It needs one Lean `@[export] dregg_poa_signal_slot_derive` over \
-             HiddenInstance.commit / runSeedFor / SignalTriangulation.targetFromSeed — the exact \
-             wire is in dregg-lean-ffi/src/poa_slot_derive_ffi.rs — plus this symbol added to \
-             REQUIRED_DECISION_EXPORTS in the same commit."
-        );
+        absent_export_warn("dregg_poa_signal_slot_derive");
     }
 
     // PATH OF ANGELS RECORDS READ MODEL: rebuilds the finalized-run projection from the retained
@@ -3778,6 +3776,9 @@ fn main() {
     }
     if poa_network_genesis_present {
         shim.define("DREGG_POA_NETWORK_GENESIS", None);
+    }
+    if poa_signal_slot_derive_present {
+        shim.define("DREGG_POA_SIGNAL_SLOT_DERIVE", None);
     }
     if poa_dark_bazaar_judge_present {
         shim.define("DREGG_POA_DARK_BAZAAR_JUDGE", None);

@@ -444,6 +444,21 @@ extern lean_object *dregg_poa_network_genesis(lean_object *input);
 #define DREGG_POA_NETWORK_GENESIS_WIRE_MAX_BYTES ((size_t)16777216u)
 #endif
 
+/* Path of Angels PER-RUN INSTANCE DERIVATION. `Judged.admissionChecks` re-derives the
+ * slot commitment and the run seed and refuses on mismatch, which is a CHECK only if the
+ * node derived them independently — so the node derives, and it derives by calling Lean.
+ * There is deliberately no Rust arithmetic on this path: `HiddenInstance.commit` and
+ * `runSeedFor` are a Poseidon2-BabyBear-w16 sponge, and a Rust twin of it would be an
+ * unproven second copy of a soundness function.
+ * ⚠ The request carries the curator's SLOT SECRET. These bytes are node-internal. */
+#ifdef DREGG_POA_SIGNAL_SLOT_DERIVE
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_SlotDeriveRuntime(uint8_t builtin);
+extern lean_object *dregg_poa_signal_slot_derive(lean_object *input);
+/* Matches MAX_POA_SLOT_DERIVE_WIRE_BYTES in poa_slot_derive_ffi.rs and
+ * SlotDeriveRuntime.WIRE_BYTE_LIMIT in Lean: the wire is a fixed handful of digests. */
+#define DREGG_POA_SLOT_DERIVE_WIRE_MAX_BYTES ((size_t)65536u)
+#endif
+
 /* Bounded four-order Dark Bazaar settlement evaluator. The only authorization
  * constructor lives behind its Lean descriptor check; this shim transports strings. */
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
@@ -1372,6 +1387,20 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(poagenres);
 #endif
+#ifdef DREGG_POA_SIGNAL_SLOT_DERIVE
+    /* ⚑ INITIALIZED, not merely linked. A module whose initializer never runs answers
+     * with an uninitialized closure the first time it is called; the derivation is on the
+     * scored-run preparation path, so a cold-start fault here is a silent refusal of every
+     * scored run rather than a loud one. */
+    lean_object *slotderiveres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_SlotDeriveRuntime(1);
+    if (!lean_io_result_is_ok(slotderiveres)) {
+        lean_io_result_show_error(slotderiveres);
+        lean_dec_ref(slotderiveres);
+        return 1;
+    }
+    lean_dec_ref(slotderiveres);
+#endif
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
     lean_object *bazaarres =
         initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(1);
@@ -1521,6 +1550,35 @@ size_t dregg_storage_content_root_str(const char *in_utf8, char *out, size_t out
     lean_object *res = dregg_storage_content_root(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_SIGNAL_SLOT_DERIVE
+/* Host-bounded string bridge for the per-run instance derivation. Zero-length output is
+ * Lean's semantic refusal; `(size_t)-1` is an unusable or over-limit host transport. */
+size_t dregg_poa_signal_slot_derive_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_SLOT_DERIVE_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_signal_slot_derive(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_SLOT_DERIVE_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
     memcpy(out, cstr, copy);
     out[copy] = '\0';

@@ -18,7 +18,20 @@ import Dregg2.Bridge.InterchainAdapterDecision
 import Dregg2.Games.AutomataflFFI
 import Dregg2.Games.MultiwayTugFFI
 import Dregg2.Games.PathOfAngels.NetworkJudge
+-- The per-run instance derivation, `dregg_poa_signal_slot_derive`. It is in the
+-- archive because `Judged.admissionChecks` requires the node to SUPPLY
+-- `commit(secret,slot)` and `runSeedFor(...)` so the judge can re-derive and refuse on
+-- mismatch — which is a check only if the node derived them independently. Absent, no
+-- scored Signal run can be PREPARED at all, and there is no Rust sponge to fall back
+-- to: a second copy of `HiddenInstance` in Rust would be an unproven twin of a
+-- soundness function.
+import Dregg2.Games.PathOfAngels.SlotDeriveRuntime
 import Dregg2.Games.PathOfAngels.NetworkGenesis
+-- The Records read model. It is in §1.3 rather than §1.5 because the public
+-- `/api/poa/records/{authority}` read routes through it: the node holds the
+-- persisted genesis blobs and finalized rows, and Lean alone decides what a
+-- landed run is. Absent, that route refuses; there is no Rust projection.
+import Dregg2.Games.PathOfAngels.RecordsRuntime
 import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime
 import Dregg2.Games.PathOfAngels.EventBatchRuntime
