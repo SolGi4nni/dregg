@@ -326,10 +326,23 @@ theorem forged_unsat {E : NoteSpendEngine} {LeafSat : ℤ → ℤ → Prop}
   exact hforge ⟨q, hq, hqc⟩
 
 /-- The note-spend-leaf predicate over `demoSpend` (the only verifying spend exposes digest
-`123`). -/
+`123`).
+
+⚑ `demoSpend.spendDigest` is a SCALAR, so this model never met the arity accident the seven
+`ProofEngine` siblings had to be moved off `demoEngine` to escape — `demoSpend` is the honest
+witness here and stays. `demoNLS_sat` is the companion that keeps the predicate from being false
+everywhere anyway, so the negative pole below refuses a VALUE for a reason that is stated rather
+than inferred from the width. -/
 def demoNLS : ℤ → ℤ → Prop :=
   fun _leafVk leafIdentity =>
     ∃ q : Bool, demoSpend.verify q = true ∧ demoSpend.spendDigest q = leafIdentity
+
+/-- **`demoNLS_sat` — THE PREDICATE IS SATISFIED AT THE HONEST DIGEST, so the pole below refuses a
+VALUE rather than everything.** Without it `forged_mint_hash_unsat_demo` is equally consistent with
+a leaf predicate that is FALSE EVERYWHERE — the shape the eight-lane `demoEngine` silently became at
+the seven scalar-commitment siblings. The negative pole's meaning depends on this lemma, so it is
+named. -/
+theorem demoNLS_sat : demoNLS 0 123 := ⟨true, rfl, rfl⟩
 
 theorem demoFloor : NoteSpendLeafFriFloor demoSpend demoNLS :=
   fun _leafVk _leafIdentity h => h
@@ -363,6 +376,7 @@ end Forged
 #assert_axioms honest_companion_fires
 #assert_axioms honest_backedAt
 #assert_axioms forged_unsat
+#assert_axioms demoNLS_sat
 #assert_axioms forged_mint_hash_unsat_demo
 
 end Dregg2.Circuit.BridgeBindingFromFold

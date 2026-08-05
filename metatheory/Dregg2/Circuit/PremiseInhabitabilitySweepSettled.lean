@@ -42,8 +42,13 @@ the sweep's own R18 correction was wrong:
 
   * **R5** — the nine `*LeafFriFloor` classes. The sweep machine-checked ONE (`Custom`) and reported
     the other eight as READ. §2 machine-checks all NINE against one shape (`LeafFloorShape`), each
-    identity by `Iff.rfl` — which is the actual check that the body is the same — and fires both
+    identity by `Iff.rfl` — which is the actual check that the body is the same — and fires THREE
     brackets at all nine. The eight are no longer "reasoned".
+    ⚑ 2026-08-05: the third bracket is new, and it is the one that earns the word. The upper bracket
+    (holds at a reachable commitment, antecedent satisfied) excludes only the EMPTY-ANTECEDENT mode;
+    `all_nine_leafFloors_refuted_at_an_unreachable_commitment` excludes the structural mode — the
+    same nine floors at the same engines are FALSE one value over, so the extraction is forced by
+    the VALUE — and `all_three_demo_verifiers_discriminate` excludes the total-verifier mode.
   * **R14** (`Circuit/AirSoundness.airChecks`) — genuinely parametric, and therefore BRACKETABLE
     rather than unknown. §6 proves the row's own flagged shape is a real hole: at ANY `openTr`
     whose opened tail is never `[]`, `airChecks` REJECTS EVERY proof, and `circuit_sound_via_fri`'s
@@ -103,7 +108,7 @@ universe u v
 open Dregg2.Circuit.PremiseInhabitability
   (Acc Empties Extracts RejectsAll AcceptsSome ofBool not_rejectsAll_of_acceptsSome
    empties_proves_anything not_of_empties_of_acceptsSome)
-open Dregg2.Circuit.PremiseInhabitabilitySweep (Discriminating CarrierLive oneLaneEngine)
+open Dregg2.Circuit.PremiseInhabitabilitySweep (Discriminating CarrierLive)
 
 set_option autoImplicit false
 
@@ -272,7 +277,7 @@ the body really is the same up to the engine projection — and both brackets fi
 
 section R5
 
-open Dregg2.Circuit.DescriptorIR2 (ProofEngine demoEngine)
+open Dregg2.Circuit.DescriptorIR2 (ProofEngine demoEngine oneLaneDemoEngine)
 open Dregg2.Circuit.DecoBackingAttack (DecoEngine demoDeco)
 open Dregg2.Circuit.BridgeBackingAttack (NoteSpendEngine demoSpend)
 
@@ -333,6 +338,39 @@ theorem leafFloorShape_is_free_when_unsatisfiable {D : Type} (P : Type) (verify 
     LeafFloorShape P verify digest ofCommit Sat :=
   fun a b hab => absurd hab (hno a b)
 
+/-- ⚑ **THE REFUTATION BRACKET, generically — what makes the upper bracket's witness FORCED.**
+
+`leafFloorShape_inhabited_nondegenerately` on its own only excludes ONE degenerate mode (the empty
+antecedent). It does not exclude the mode that actually bit here: a floor that holds for a
+STRUCTURAL reason — because the equation `digest q = ofCommit c` can never be tested, or is
+satisfied by something other than the value. The test for that is whether the SAME engine REFUTES
+the same floor at a commitment it cannot reach. If the floor held structurally it would hold at
+every `Sat`, this one included.
+
+So this is the theorem that earns the word "nondegenerately": at `c₁` unreachable, the floor is
+FALSE, hence at `c₀` reachable it is true BECAUSE OF THE VALUE. Note the antecedent
+`(fun _ c => c = c₁)` is satisfiable (at `(0, c₁)`), so the refutation is not itself the empty
+statement. -/
+theorem leafFloorShape_refuted_at_an_unreachable_commitment {D : Type} (P : Type)
+    (verify : P → Bool) (digest : P → D) (ofCommit : ℤ → D) (c₁ : ℤ)
+    (hunreach : ∀ q : P, verify q = true → digest q ≠ ofCommit c₁) :
+    ¬ LeafFloorShape P verify digest ofCommit (fun _ c => c = c₁) := by
+  intro h
+  obtain ⟨q, hq, hc⟩ := h 0 c₁ rfl
+  exact hunreach q hq hc
+
+/-- **AND ITS `hunreach` IS NOT VACUOUS EITHER** — a verifier that accepts nothing satisfies it for
+free, so the refutation must be read together with the engine's acceptance being live. Recorded so
+`leafFloorShape_refuted_at_an_unreachable_commitment` is not mistaken for
+`deadVerifier_empties_leafFloorShape` wearing a different name. -/
+theorem unreachable_hypothesis_is_free_at_a_dead_verifier {D : Type} (P : Type)
+    (verify : P → Bool) (digest : P → D) (ofCommit : ℤ → D) (c₁ : ℤ)
+    (hdead : ∀ q : P, verify q = false) :
+    ∀ q : P, verify q = true → digest q ≠ ofCommit c₁ := by
+  intro q hq
+  rw [hdead q] at hq
+  exact Bool.noConfusion hq
+
 /-! ### §2.1 — the nine identities, each by `Iff.rfl`.
 
 `Iff.rfl` is the machine-check: it typechecks only if the class body is DEFINITIONALLY the shape at
@@ -380,7 +418,39 @@ theorem noteSpendLeafFriFloor_is_the_shape (E : NoteSpendEngine) (Sat : ℤ → 
     Dregg2.Circuit.BridgeBindingFromFold.NoteSpendLeafFriFloor E Sat
       ↔ LeafFloorShape E.Proof E.verify E.spendDigest (fun c => c) Sat := Iff.rfl
 
-/-! ### §2.2 — both brackets, fired at all nine. -/
+/-! ### §2.2 — THREE brackets, fired at all nine.
+
+⚑ The nine floors are written down ONCE, as `AllNineLeafFloors` parameterised by the satisfaction
+predicate, so the positive and negative poles below are visibly THE SAME nine claims with nothing
+changed but the commitment VALUE. Two nine-conjunct blocks a reader has to diff would hide exactly
+that, and hiding exactly that is how the third bracket came to be missing. -/
+
+/-- The nine `*LeafFriFloor` classes at one satisfaction predicate, over the demo engine each of
+them meets: `oneLaneDemoEngine` for the seven whose leaf commitment is a scalar met as
+`[leafCommit]`, `demoDeco`/`demoSpend` for the two whose digest is itself a scalar. -/
+abbrev AllNineLeafFloors (Sat : ℤ → ℤ → Prop) : Prop :=
+  Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor oneLaneDemoEngine Sat
+    ∧ Dregg2.Circuit.FactoryBindingFromFold.FactoryLeafFriFloor oneLaneDemoEngine Sat
+    ∧ Dregg2.Circuit.HatcheryBindingFromFold.ContractLeafFriFloor oneLaneDemoEngine Sat
+    ∧ Dregg2.Circuit.MembershipBindingFromFold.MembershipLeafFriFloor oneLaneDemoEngine Sat
+    ∧ Dregg2.Circuit.SovereignBindingFromFold.SovereignLeafFriFloor oneLaneDemoEngine Sat
+    ∧ Dregg2.Circuit.DslBindingFromFold.DslLeafFriFloor oneLaneDemoEngine Sat
+    ∧ Dregg2.Circuit.BlindedMembershipBindingFromFold.BlindedLeafFriFloor oneLaneDemoEngine Sat
+    ∧ Dregg2.Circuit.DecoBindingFromFold.DecoLeafFriFloor demoDeco Sat
+    ∧ Dregg2.Circuit.BridgeBindingFromFold.NoteSpendLeafFriFloor demoSpend Sat
+
+/-- The POINTWISE negation — EVERY one of the nine is FALSE, which is strictly stronger than
+`¬ AllNineLeafFloors` (that would be satisfied by a single failing member). -/
+abbrev NoneOfTheNineLeafFloors (Sat : ℤ → ℤ → Prop) : Prop :=
+  (¬ Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor oneLaneDemoEngine Sat)
+    ∧ (¬ Dregg2.Circuit.FactoryBindingFromFold.FactoryLeafFriFloor oneLaneDemoEngine Sat)
+    ∧ (¬ Dregg2.Circuit.HatcheryBindingFromFold.ContractLeafFriFloor oneLaneDemoEngine Sat)
+    ∧ (¬ Dregg2.Circuit.MembershipBindingFromFold.MembershipLeafFriFloor oneLaneDemoEngine Sat)
+    ∧ (¬ Dregg2.Circuit.SovereignBindingFromFold.SovereignLeafFriFloor oneLaneDemoEngine Sat)
+    ∧ (¬ Dregg2.Circuit.DslBindingFromFold.DslLeafFriFloor oneLaneDemoEngine Sat)
+    ∧ (¬ Dregg2.Circuit.BlindedMembershipBindingFromFold.BlindedLeafFriFloor oneLaneDemoEngine Sat)
+    ∧ (¬ Dregg2.Circuit.DecoBindingFromFold.DecoLeafFriFloor demoDeco Sat)
+    ∧ (¬ Dregg2.Circuit.BridgeBindingFromFold.NoteSpendLeafFriFloor demoSpend Sat)
 
 /-- **R5 LOWER BRACKET AT ALL NINE.** At any engine whose leaf verifier rejects everything, EVERY
 one of the nine floors empties its in-circuit satisfaction predicate. None of the nine is free. -/
@@ -417,32 +487,115 @@ theorem deadVerifier_empties_all_nine_leafFloors
    deadVerifier_empties_leafFloorShape D.Proof D.verify D.paymentDigest (fun c => c) Sat hD,
    deadVerifier_empties_leafFloorShape N.Proof N.verify N.spendDigest (fun c => c) Sat hN⟩
 
-/-- **R5 UPPER BRACKET AT ALL NINE.** Each of the nine HOLDS with its antecedent SATISFIED at a demo
-engine with an accepting proof (`oneLaneEngine`, `demoDeco`, `demoSpend`). So none of the nine is an
-empty notion, and R5's UNKNOWN is about the deployed instantiation only.
-
-⚑ The seven `ProofEngine` floors moved off `DescriptorIR2.demoEngine` on 2026-08-05. Their leaf
-commitment is a SCALAR met as `[leafCommit]`, and `demoEngine` squeezes the deployed EIGHT lanes, so
-no scalar antecedent is satisfiable there at all — the witness is `oneLaneEngine`, one accepting
-proof exposing one commitment lane. DECO and the bridge note-spend keep scalar digests and keep
-their engines. -/
-theorem all_nine_leafFloors_inhabited_nondegenerately :
-    (Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor oneLaneEngine (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.FactoryBindingFromFold.FactoryLeafFriFloor oneLaneEngine (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.HatcheryBindingFromFold.ContractLeafFriFloor oneLaneEngine
-          (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.MembershipBindingFromFold.MembershipLeafFriFloor oneLaneEngine
-          (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.SovereignBindingFromFold.SovereignLeafFriFloor oneLaneEngine
-          (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.DslBindingFromFold.DslLeafFriFloor oneLaneEngine (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.BlindedMembershipBindingFromFold.BlindedLeafFriFloor oneLaneEngine
-          (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.DecoBindingFromFold.DecoLeafFriFloor demoDeco (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.BridgeBindingFromFold.NoteSpendLeafFriFloor demoSpend (fun _ c => c = 123))
-    ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = (123 : ℤ)) a b) := by
+/-- **R5 UPPER BRACKET AT ALL NINE — the floors HOLD at a REACHABLE commitment.** `123` is what the
+one accepting proof of each demo engine exposes, and every one of the nine floors delivers its
+extraction there with its antecedent SATISFIED. This is the positive pole ALONE; on its own it does
+NOT earn the word "nondegenerately", which is why it is not the theorem that carries the word. -/
+theorem all_nine_leafFloors_hold_at_a_reachable_commitment :
+    AllNineLeafFloors (fun _ c => c = 123)
+      ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = (123 : ℤ)) a b) := by
   refine ⟨⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩, ⟨0, 123, rfl⟩⟩ <;>
     exact fun _ _ hab => ⟨true, rfl, by rw [hab]; rfl⟩
+
+/-- **R5 REFUTATION BRACKET AT ALL NINE — the floors FAIL at an UNREACHABLE commitment.** Same nine
+classes, same three engines, ONE changed value: no verifying proof of `oneLaneDemoEngine` exposes
+`[456]` and no verifying attestation/spend of `demoDeco`/`demoSpend` exposes `456`, so every one of
+the nine is FALSE there. Its antecedent `(· = 456)` is satisfiable, so this is a refutation and not
+another free statement.
+
+⚑ **THIS IS THE BRACKET THAT MAKES THE UPPER ONE MEAN ANYTHING.** "The floor holds at `123`" is by
+itself consistent with the floor holding for a reason that has nothing to do with `123` — a floor
+true for a structural reason is true at every `Sat`, this one included. It is not. So the extraction
+each of the nine delivers is FORCED BY THE VALUE, which is the whole content of the R5 upper
+bracket and was never checked before. -/
+theorem all_nine_leafFloors_refuted_at_an_unreachable_commitment :
+    NoneOfTheNineLeafFloors (fun _ c => c = 456)
+      ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = (456 : ℤ)) a b) := by
+  have hE : ∀ q : oneLaneDemoEngine.Proof, oneLaneDemoEngine.verify q = true →
+      oneLaneDemoEngine.piCommit q ≠ (fun c : ℤ => [c]) 456 := by
+    intro q _ hc
+    exact absurd (show ([(123 : ℤ)] : List ℤ) = [(456 : ℤ)] from hc) (by decide)
+  have hD : ∀ q : demoDeco.Proof, demoDeco.verify q = true →
+      demoDeco.paymentDigest q ≠ (fun c : ℤ => c) 456 := by
+    intro q _ hc
+    exact absurd (show (123 : ℤ) = (456 : ℤ) from hc) (by decide)
+  have hN : ∀ q : demoSpend.Proof, demoSpend.verify q = true →
+      demoSpend.spendDigest q ≠ (fun c : ℤ => c) 456 := by
+    intro q _ hc
+    exact absurd (show (123 : ℤ) = (456 : ℤ) from hc) (by decide)
+  -- ⚑ ONE refutation term for the seven `ProofEngine` floors, not seven: they are the SAME shape at
+  -- the same engine (that is what the seven `*_is_the_shape` `Iff.rfl`s certify), so `exact` below
+  -- checking `r7` against all seven is itself the identity check, re-run.
+  have r7 : ¬ LeafFloorShape oneLaneDemoEngine.Proof oneLaneDemoEngine.verify
+      oneLaneDemoEngine.piCommit (fun c => [c]) (fun _ c => c = 456) :=
+    leafFloorShape_refuted_at_an_unreachable_commitment _ _ _ _ 456 hE
+  have rD : ¬ LeafFloorShape demoDeco.Proof demoDeco.verify demoDeco.paymentDigest
+      (fun c => c) (fun _ c => c = 456) :=
+    leafFloorShape_refuted_at_an_unreachable_commitment _ _ _ _ 456 hD
+  have rN : ¬ LeafFloorShape demoSpend.Proof demoSpend.verify demoSpend.spendDigest
+      (fun c => c) (fun _ c => c = 456) :=
+    leafFloorShape_refuted_at_an_unreachable_commitment _ _ _ _ 456 hN
+  exact ⟨⟨r7, r7, r7, r7, r7, r7, r7, rD, rN⟩, ⟨0, 456, rfl⟩⟩
+
+/-- **AND THE THIRD DEGENERATE MODE IS EXCLUDED TOO — the demo verifiers are DISCRIMINATING.** A
+floor whose engine accepts EVERYTHING discharges its extraction for free; `Discriminating` is the
+sweep's own name for "accepts something and rejects something", and all three demo engines have it
+(they accept `true` and reject `false`). Without this leg, "holds at `123`, fails at `456`" would
+still be consistent with an engine whose acceptance bit does no work. -/
+theorem all_three_demo_verifiers_discriminate :
+    Discriminating (ofBool oneLaneDemoEngine.verify)
+      ∧ Discriminating (ofBool demoDeco.verify)
+      ∧ Discriminating (ofBool demoSpend.verify) :=
+  ⟨⟨⟨true, rfl⟩, ⟨false, fun h => Bool.noConfusion h⟩⟩,
+   ⟨⟨true, rfl⟩, ⟨false, fun h => Bool.noConfusion h⟩⟩,
+   ⟨⟨true, rfl⟩, ⟨false, fun h => Bool.noConfusion h⟩⟩⟩
+
+/-- **R5 — INHABITED, AND INHABITED NON-DEGENERATELY, WITH THE WORD EARNED BY THE STATEMENT.**
+
+The three degenerate ways a floor `∀ vk c, Sat vk c → ∃ q, verify q ∧ digest q = ofCommit c` can
+hold without saying anything, and the conjunct that excludes each:
+
+  1. **Empty antecedent** — `Sat` unsatisfiable makes the floor free
+     (`leafFloorShape_is_free_when_unsatisfiable`). Excluded by conjuncts 2 and 4.
+  2. **Structural conclusion** — the extraction equation discharged by something other than the
+     value, in which case the floor holds at EVERY `Sat`. Excluded by conjunct 3: the same nine
+     floors at the same engines are FALSE one value over.
+  3. **Total verifier** — an engine accepting everything supplies the witness for free. Excluded by
+     conjuncts 5–7.
+
+⚑ **WHAT THIS REPLACED, said plainly so the name is not re-lost.** The theorem carried conjuncts 1
+and 2 only, and "nondegenerately" was doing the work of the missing five. That is the same defect
+class `index_word_is_register_count_independent` had — a name asserting the property its statement
+omitted, which `#assert_axioms` cannot see, because a true theorem about nothing has exactly the
+axiom profile of a true theorem about something.
+
+⚑ **ON THE ENGINE, since the record should not be misread.** The seven `ProofEngine` floors are
+instantiated at `DescriptorIR2.oneLaneDemoEngine`, not at `demoEngine`. `demoEngine.piCommit`
+squeezes the deployed EIGHT lanes (`123..130`) while these fold models meet the engine at the
+singleton `[leafCommit]` (`demoEngine_is_eight_lanes_oneLane_is_one` pins the two widths). At
+`demoEngine` the POSITIVE pole is not vacuous but outright UNPROVABLE — `[123..130] = [123]` is
+false — so the eight-lane instantiation breaks this theorem rather than emptying it. Where the width
+mismatch DOES manufacture a free pass is on the NEGATIVE poles in the nine sibling modules
+(`forged_*_unsat_demo`), whose refusals would hold BY ARITY and say nothing about the forged value;
+those are on `oneLaneDemoEngine` for that reason, each paired with a `demo*_sat` companion.
+
+⚠ A one-lane ENGINE MODEL is not a one-lane DESCRIPTOR seam. `PROOF_BIND_MIN_LANES` refuses a
+one-lane seam at every admission door; nothing here licenses one. -/
+theorem all_nine_leafFloors_inhabited_nondegenerately :
+    AllNineLeafFloors (fun _ c => c = 123)
+      ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = (123 : ℤ)) a b)
+      ∧ NoneOfTheNineLeafFloors (fun _ c => c = 456)
+      ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = (456 : ℤ)) a b)
+      ∧ Discriminating (ofBool oneLaneDemoEngine.verify)
+      ∧ Discriminating (ofBool demoDeco.verify)
+      ∧ Discriminating (ofBool demoSpend.verify) :=
+  ⟨all_nine_leafFloors_hold_at_a_reachable_commitment.1,
+   all_nine_leafFloors_hold_at_a_reachable_commitment.2,
+   all_nine_leafFloors_refuted_at_an_unreachable_commitment.1,
+   all_nine_leafFloors_refuted_at_an_unreachable_commitment.2,
+   all_three_demo_verifiers_discriminate.1,
+   all_three_demo_verifiers_discriminate.2.1,
+   all_three_demo_verifiers_discriminate.2.2⟩
 
 end R5
 
@@ -1236,7 +1389,7 @@ end R11
 |---|---|---|---|---|
 | R3 | `AggAirSound.FriExtract` | UNKNOWN at deployment, bracketed at `verify := fun _ => true` | **INSTANTIATED IN-TREE at a REJECTING verifier; acceptance DISCRIMINATING; antecedent DISCRIMINATING; floor FIRES.** Deployed-configuration verdict UNCHANGED (UNKNOWN). | `realChildAcc_discriminating`, `columnsCVS_discriminating`, `aggFriExtract_settled_at_a_real_rejecting_verifier`, `realCarriers_are_neither_degenerate_bracket` |
 | R4 | `GroundedApex.BindingExtract` | UNKNOWN; proved FREE on non-verifying aggregates | UNKNOWN at deployment, now **BRACKETED BOTH SIDES** — FREE where the binding proof fails, and outright FALSE at the EMPTY CHAIN wherever it verifies | `bindingExtract_at_the_empty_chain_empties_binding_acceptance`, `bindingExtract_at_the_empty_chain_is_false`, `bindingExtract_refutation_hypotheses_are_satisfiable`, `bindingExtract_bracketed` |
-| R5 | the nine `*LeafFriFloor` | UNKNOWN; ONE member machine-checked, eight READ | UNKNOWN at deployment, **ALL NINE machine-checked** — shape identity by `Iff.rfl`, both brackets fired | the nine `*_is_the_shape`, `deadVerifier_empties_all_nine_leafFloors`, `all_nine_leafFloors_inhabited_nondegenerately` |
+| R5 | the nine `*LeafFriFloor` | UNKNOWN; ONE member machine-checked, eight READ | UNKNOWN at deployment, **ALL NINE machine-checked** — shape identity by `Iff.rfl`, and THREE brackets fired: dead-verifier emptying, HOLDS at a reachable commitment with the antecedent satisfied, and FAILS at an unreachable one at the same engines (so the extraction is forced by the VALUE, not by structure), with all three demo verifiers `Discriminating` | the nine `*_is_the_shape`, `deadVerifier_empties_all_nine_leafFloors`, `all_nine_leafFloors_hold_at_a_reachable_commitment`, `all_nine_leafFloors_refuted_at_an_unreachable_commitment`, `all_three_demo_verifiers_discriminate`, `all_nine_leafFloors_inhabited_nondegenerately` |
 | R9 | `FriExtractNonCircular.TranscriptOfPolynomial` | UNKNOWN ("no deployed instantiation") | **INHABITABLE, non-degenerately** (antecedent satisfied), and **NOT FREE** (forces FRI acceptance). The `∀ w` form `friExtract_nonCircular` consumes is still OPEN and characterized. | `transcriptOfPolynomial_inhabited_nondegenerately`, `transcriptOfPolynomial_forces_fri_acceptance`, `friExtract_at_real_carriers_needs_the_forall_form` |
 | R10 | `AccumulatorNonRevocationComplete.Accepts` / `NonMemberWitness` | UNKNOWN ("not examined") | **SETTLED POSITIVELY — INHABITED and DISCRIMINATING.** No abstract verifier is involved; this row was never an emptied-premise site. | `accumAcc_acceptsSome`, `accumAcc_rejects_zero_at_matching_leaf`, `accumAcc_discriminating` |
 | R14 | `Circuit/AirSoundness.airChecks` | UNKNOWN, flagged | UNKNOWN at deployment, **BRACKETED with the falsifier written down**: a multi-row `openTr` makes `airChecks` reject everything and `CircuitSound` free for EVERY `applyEff`; a single-row opener gives a non-degenerate model with `FriProximity` holding | `airChecks_rejectsAll_of_multirow_opening`, `circuitSound_is_free_at_multirow_opening`, `airChecks_inhabited_nondegenerately`, `airChecks_bracketed` |
@@ -1271,6 +1424,8 @@ nothing about a deployed instantiation, because there is none to say anything ab
 #assert_axioms deadVerifier_empties_leafFloorShape
 #assert_axioms leafFloorShape_inhabited_nondegenerately
 #assert_axioms leafFloorShape_is_free_when_unsatisfiable
+#assert_axioms leafFloorShape_refuted_at_an_unreachable_commitment
+#assert_axioms unreachable_hypothesis_is_free_at_a_dead_verifier
 #assert_axioms customLeafFriFloor_is_the_shape
 #assert_axioms factoryLeafFriFloor_is_the_shape
 #assert_axioms contractLeafFriFloor_is_the_shape
@@ -1281,6 +1436,9 @@ nothing about a deployed instantiation, because there is none to say anything ab
 #assert_axioms decoLeafFriFloor_is_the_shape
 #assert_axioms noteSpendLeafFriFloor_is_the_shape
 #assert_axioms deadVerifier_empties_all_nine_leafFloors
+#assert_axioms all_nine_leafFloors_hold_at_a_reachable_commitment
+#assert_axioms all_nine_leafFloors_refuted_at_an_unreachable_commitment
+#assert_axioms all_three_demo_verifiers_discriminate
 #assert_axioms all_nine_leafFloors_inhabited_nondegenerately
 #assert_axioms accumAcc_acceptsSome
 #assert_axioms accumAcc_rejects_zero_at_matching_leaf

@@ -71,7 +71,7 @@ import Dregg2.Circuit.DslBackingAttack
 
 namespace Dregg2.Circuit.DslBindingFromFold
 
-open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding demoEngine)
+open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding oneLaneDemoEngine)
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
 open Dregg2.Circuit.CustomCarrierAttack
@@ -307,42 +307,45 @@ theorem forged_unsat {E : ProofEngine} {DslLeafSat : ℤ → ℤ → Prop}
   rw [hsat.connect] at hqc
   exact hforge ⟨q, hq, hqc⟩
 
-/-- ⚑ **A ONE-LANE toy engine for the forged pole.** `DescriptorIR2.demoEngine` now squeezes EIGHT
-lanes (`123..130`); a scalar fold claim `[c]` could never match it for ARITY reasons, so a rejection
-over it would say nothing about the VALUE and `demoDLS` would be false everywhere — a vacuous negative
-pole. `laneDemoEngine` squeezes exactly ONE lane, at `demoEngine`'s lead value `123`, so the refusal
-below is about the forged CLAIM and not about the width. -/
-def laneDemoEngine : ProofEngine where
-  Proof    := Bool
-  verify   := fun b => b
-  piCommit := fun _ => [(123 : ℤ)]
-  vkOf     := fun _ => [(45 : ℤ)]
+/-- The DSL-leaf predicate over `oneLaneDemoEngine` (the only verifying sub-proof commits to
+`123`).
 
-/-- The DSL-leaf predicate over `laneDemoEngine` (the only verifying sub-proof commits to
-`123`). -/
+⚑ **WHY THE ONE-LANE ENGINE AND NOT `demoEngine`.** This fold model's leaf commitment is ONE `ℤ`,
+while `demoEngine` squeezes the deployed EIGHT lanes — so a scalar claim can never equal its
+commitment, and a forged-VALUE pole stated there would be true BY ARITY, saying nothing about the
+forged value at all (`demoEngine_is_eight_lanes_oneLane_is_one` pins the two widths). Over
+`oneLaneDemoEngine` the refusal is about the value again.
+
+⚠ A one-lane ENGINE MODEL is not a one-lane DESCRIPTOR seam: a scalar-commitment fold is fairly
+modelled at one lane, but `PROOF_BIND_MIN_LANES` refuses a one-lane seam at every admission door.
+`demoDLS_sat` is the companion that keeps this predicate from being false everywhere. -/
 def demoDLS : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit =>
-    ∃ q : Bool, laneDemoEngine.verify q = true ∧ laneDemoEngine.piCommit q = [leafCommit]
+    ∃ q : Bool, oneLaneDemoEngine.verify q = true ∧ oneLaneDemoEngine.piCommit q = [leafCommit]
 
-theorem demoFloor : DslLeafFriFloor laneDemoEngine demoDLS :=
+theorem demoFloor : DslLeafFriFloor oneLaneDemoEngine demoDLS :=
   fun _leafVk _leafCommit h => h
 
-/-- The predicate is SATISFIABLE at the honest value — so the rejection below is about `999`, not
-about the shape of `demoDLS`. -/
+/-- **`demoDLS_sat` — THE PREDICATE IS SATISFIED AT THE HONEST VALUE, so the pole below refuses a
+VALUE rather than everything.** Without it `forged_rc_unsat_demo` is equally consistent with a leaf
+predicate that is FALSE EVERYWHERE — which is precisely what the eight-lane `demoEngine` silently
+became. The negative pole's meaning depends on this lemma, so it is named. -/
 theorem demoDLS_sat : demoDLS 0 123 := ⟨true, rfl, rfl⟩
 
 /-- The `DslBackingAttack` §A forgery lifted onto the fold: the published route-commitment is
 `999` (`deployed_admits_unwitnessed`'s unwitnessed leg value) — a claim NO verifying
 sub-proof exposes. -/
-def forgedFold : DslFold laneDemoEngine := { leafVk := 0, leafCommit := 999, rc := 999 }
+def forgedFold : DslFold oneLaneDemoEngine := { leafVk := 0, leafCommit := 999, rc := 999 }
 
 /-- **`forged_rc_unsat_demo` (NEGATIVE non-vacuity — the §A attack, INVERTED onto the
 fold).** The forged fold (published rc `999`, exactly the `deployed_admits_unwitnessed` leg's
 value, unbacked) does NOT satisfy: what the deployed AIR alone admitted, the aggregate
 REFUSES. -/
-theorem forged_rc_unsat_demo : ¬ SatDslFold laneDemoEngine demoDLS forgedFold := by
+theorem forged_rc_unsat_demo : ¬ SatDslFold oneLaneDemoEngine demoDLS forgedFold := by
   refine forged_unsat demoFloor (f := forgedFold) ?_
   rintro ⟨q, _hq, hc⟩
+  -- The one-lane engine commits to `[123]`; the forged claim is `[999]`. The refusal is about the
+  -- VALUE (paired with `demoDLS_sat`, which fires at `123`), not about the arity.
   have hc' : [(123 : ℤ)] = [(999 : ℤ)] := hc
   exact absurd hc' (by decide)
 
