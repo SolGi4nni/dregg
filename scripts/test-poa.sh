@@ -31,52 +31,19 @@ run() {
 cd "$repo_root"
 export LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-2}"
 
-poa_lean_targets=(
-  Dregg2.Games.PathOfAngels.Core
-  Dregg2.Games.PathOfAngels.PlayerCounters
-  Dregg2.Games.PathOfAngels.SignalTriangulation
-  Dregg2.Games.PathOfAngels.RelayRepair
-  Dregg2.Games.PathOfAngels.SalvageLock
-  Dregg2.Games.PathOfAngels.FiniteTables
-  Dregg2.Games.PathOfAngels.Judged
-  Dregg2.Games.PathOfAngels.Canon
-  Dregg2.Games.PathOfAngels.Emit
-  Dregg2.Games.PathOfAngels.DailyMission
-  Dregg2.Games.PathOfAngels.BlackBoxReconstruction
-  Dregg2.Games.PathOfAngels.ContainmentInspection
-  Dregg2.Games.PathOfAngels.DeckGraph
-  Dregg2.Games.PathOfAngels.DeckExpedition
-  Dregg2.Games.PathOfAngels.DeckGenerator
-  Dregg2.Games.PathOfAngels.CrewExpeditionAuthority
-  Dregg2.Games.PathOfAngels.Shipworks
-  Dregg2.Games.PathOfAngels.Cartography
-  Dregg2.Games.PathOfAngels.ExpeditionDemonstrator
-  Dregg2.Games.PathOfAngels.ExpeditionDemonstratorEmit
-  Dregg2.Games.PathOfAngels.AssistProfile
-  Dregg2.Games.PathOfAngels.DarkBazaar
-  Dregg2.Games.PathOfAngels.DarkBazaarJudgeWire
-  Dregg2.Games.PathOfAngels.DarkBazaarJudge
-  Dregg2.Games.PathOfAngels.FieldArchive
-  Dregg2.Games.PathOfAngels.ArchiveLab
-  Dregg2.Games.PathOfAngels.ArchiveLabDemonstrator
-  Dregg2.Games.PathOfAngels.ArchiveLabDemonstratorEmit
-  Dregg2.Games.PathOfAngels.CrewRelayExpedition
-  Dregg2.Games.PathOfAngels.CrewRelayExpeditionBoundary
-  Dregg2.Games.PathOfAngels.AttendantKernel
-  Dregg2.Games.PathOfAngels.EditorialRegistry
-  Dregg2.Games.PathOfAngels.EditorialRegistryBoundary
-  Dregg2.Games.PathOfAngels.NetworkJudgeWire
-  Dregg2.Games.PathOfAngels.NetworkJudge
-  Dregg2.Games.PathOfAngels.NetworkGenesisWire
-  Dregg2.Games.PathOfAngels.NetworkGenesis
-  Dregg2.Games.PathOfAngels.EventSourcing
-  Dregg2.Games.PathOfAngels.FinalizedRunEventAggregate
-  Dregg2.Games.PathOfAngels.HolderMechanics
-  Dregg2.Games.PathOfAngels.HolderMechanicsBoundary
-  Dregg2.Games.PathOfAngels.GalleyMaintenanceDaily
-  Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary
-  Market.DarkBazaarPrivatePoaDescriptor
-)
+# Discover the whole PoA Lean surface so a new game or aggregate cannot land
+# outside the proof-hygiene gate merely because somebody forgot this list.
+# `find` is deliberate: the sealed release tree has no `.git`, and a source
+# gate in a dirty development tree should see (and refuse on) red new modules.
+poa_lean_targets=()
+while IFS= read -r poa_lean_file; do
+  poa_lean_module="${poa_lean_file#metatheory/}"
+  poa_lean_module="${poa_lean_module%.lean}"
+  poa_lean_module="${poa_lean_module//\//.}"
+  poa_lean_targets+=("$poa_lean_module")
+done < <(find metatheory/Dregg2/Games/PathOfAngels -maxdepth 1 -type f \
+  -name '*.lean' -print | LC_ALL=C sort)
+poa_lean_targets+=(Market.DarkBazaarPrivatePoaDescriptor)
 run env AXIOM_GUARD_TARGETS="${poa_lean_targets[*]}" \
   scripts/axiom-hygiene-guard.sh "$repo_root"
 run bash -n scripts/check-poag1-artifacts.sh
