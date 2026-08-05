@@ -437,7 +437,10 @@ fn statement(pre: [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED]) -> WrapStateme
         sponge_digest_before_evaluations: std::array::from_fn(|i| {
             (200 + i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1
         }),
-        next_wrap_challenge_polynomial_commitment: (Pallas::generator() * Fq::from(7u64))
+        // ⚑ VESTA. This is the STEP proof's accumulator that the next WRAP consumes (Tick), not a
+        // Pallas point — see `WrapStatementScalars`. It was a Pallas point until 2026-08-05, which
+        // both parse gates accepted and which made openmina's `verify_zkapp` ABORT.
+        next_wrap_challenge_polynomial_commitment: (Vesta::generator() * Fp::from(7u64))
             .into_affine(),
         old_wrap_bulletproof_challenges: pre,
         step_old_bulletproof_challenges: (0..PROOFS_VERIFIED)
@@ -632,6 +635,30 @@ fn main() {
     let mut r5 = proof.clone();
     r5.evals.z.zeta.push(Fq::from(1u64));
     must_refuse("a wrap evaluation with 2 chunks", marshal(&r5, &prev, &st));
+
+    // ⚑ THE REGRESSION THIS EXISTS FOR. Until 2026-08-05 the next-wrap accumulator was typed
+    // `Pallas` here and openmina's `verify_zkapp` ABORTED on it — `Affine::<VestaParameters>::new`
+    // asserts on-curve — while BOTH parse gates passed the object, because the wire is two bare
+    // `BigInt`s and neither reader does the arithmetic. The type now says `Vesta`, so the mistake
+    // is unreachable through the type; this reconstructs it with `new_unchecked` so
+    // `MarshalError::OffCurve` is a refusal something exercises rather than a branch nobody runs.
+    let mut s6 = st.clone();
+    let stray = (Pallas::generator() * Fq::from(7u64)).into_affine();
+    // The same INTEGER coordinates read in the other base field — which is exactly what the wire
+    // does, since it carries 32 bytes and the group is decided by the reader. Pallas's base field
+    // modulus is the smaller of the pair, so `from_le_bytes_mod_order` is the identity here.
+    let reread = |v: &<Pallas as ark_ec::AffineRepr>::BaseField| {
+        use ark_ff::{BigInteger as _, PrimeField as _};
+        <Vesta as ark_ec::AffineRepr>::BaseField::from_le_bytes_mod_order(
+            &v.into_bigint().to_bytes_le(),
+        )
+    };
+    s6.next_wrap_challenge_polynomial_commitment =
+        Vesta::new_unchecked(reread(&stray.x), reread(&stray.y));
+    must_refuse(
+        "the next-wrap accumulator as a PALLAS point (the 08-05 defect)",
+        marshal(&proof, &prev, &s6),
+    );
 
     // ── an ARITY PROBE for Mina's reader, deliberately NOT a `*.o1js-proof.json` ──
     // The marshaller refuses a proof whose domain is not the Tock domain, because the recursion

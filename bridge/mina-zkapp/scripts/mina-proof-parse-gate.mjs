@@ -92,6 +92,100 @@ function parse(b64, maxProofsVerified) {
   }
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// ⚑ THE ON-CURVE PASS — the class NEITHER reader checks.
+//
+// `Pickles.proofOfBase64` and openmina's `binprot_read` both reconstruct a curve point from two
+// bare `BigInt`s and never ask whether the pair is a POINT. This gate measured that itself, in the
+// `curve-point-y-zeroed (off-curve)` line below, and then filed it as informative — a documented
+// wound, not a detected one. It cost a real defect: our marshaller emitted
+// `messages_for_next_wrap_proof.challenge_polynomial_commitment` as a PALLAS point where Mina reads
+// VESTA, both readers passed it, and `verify_zkapp` ABORTED THE PROCESS on
+// `Affine::<VestaParameters>::new`'s on-curve assertion (2026-08-05).
+//
+// So the check lives here now, and it is green-or-bust.
+//
+// WHICH CURVE EACH FIELD IS, measured against real block proofs (`mina_verdict`, on
+// `metatheory/fixtures/mina-blocks/devnet-540890` and `mainnet-541858`):
+//   * `statement.proof_state.messages_for_next_wrap_proof.challenge_polynomial_commitment` — the
+//     STEP proof's accumulator the next WRAP consumes, Tick ⇒ **VESTA**. openmina
+//     `proofs/accumulator_check.rs:44-53` (`Vesta::of_coordinates`) and
+//     `StatementProofState::try_from` (`proofs/step.rs`).
+//   * every other point in a wrap proof — `w_comm`, `z_comm`, `t_comm`, `lr`, `delta`, `sg`, and
+//     `messages_for_next_step_proof.challenge_polynomial_commitments` (`InnerCurve<Fp>`,
+//     `proofs/verification.rs:444`) — Tock ⇒ **PALLAS**.
+// Both curves are y^2 = x^3 + 5; only the base field differs, which is exactly why a wrong-group
+// value is invisible to anything that does not do the arithmetic.
+const PALLAS_P = 0x40000000000000000000000000000000224698fc094cf91b992d30ed00000001n;
+const VESTA_Q  = 0x40000000000000000000000000000000224698fc0994a8dd8c46eb2100000001n;
+const onCurve = (x, y, m) => x < m && y < m && (y * y - (x * x * x + 5n)) % m === 0n;
+
+/** Every `(0xHEX 0xHEX)` tuple in the sexp, with its offset. */
+function tuplesOf(sexp) {
+  const out = [];
+  const re = /\(0x([0-9A-F]{64}) 0x([0-9A-F]{64})\)/g;
+  let m;
+  while ((m = re.exec(sexp)) !== null) {
+    out.push({ at: m.index, x: BigInt('0x' + m[1]), y: BigInt('0x' + m[2]) });
+  }
+  return out;
+}
+
+/**
+ * ⚠ A `(0xA 0xB)` tuple is NOT necessarily a point. `evaluations` prints every `PointEvaluations`
+ * as the bare pair `(zeta zeta_omega)` — same grammar, two field elements, and the absent ones are
+ * `(0 0)`, which is on neither curve. So the check is REGION-SCOPED and says how many tuples it
+ * deliberately did not look at; a blanket sweep would be 100% false positives on a real proof, and
+ * a gate that cries wolf is one nobody reads.
+ *
+ * Returns {checked, skipped, vestaFound, bad}.
+ */
+function curveCheck(b64) {
+  const sexp = Buffer.from(b64, 'base64').toString('binary');
+  const tuples = tuplesOf(sexp);
+  const at = (needle, from = 0) => sexp.indexOf(needle, from);
+
+  const mfnw = at('messages_for_next_wrap_proof');
+  const mfns = at('messages_for_next_step_proof');
+  const mfnsEnd = mfns < 0 ? -1 : at('old_bulletproof_challenges', mfns);
+  const comms = at('(commitments(');
+  const evals = at('(evaluations(');
+  const bullet = at('(bulletproof(');
+
+  // The single Vesta field: the first tuple at or after `messages_for_next_wrap_proof(`.
+  const vestaAt = mfnw < 0 ? -1 : (tuples.find((t) => t.at > mfnw)?.at ?? -1);
+
+  const region = (t) => {
+    if (t.at === vestaAt) return ['Vesta', 'statement.proof_state.messages_for_next_wrap_proof.challenge_polynomial_commitment'];
+    if (mfns >= 0 && mfnsEnd > mfns && t.at > mfns && t.at < mfnsEnd)
+      return ['Pallas', `statement.messages_for_next_step_proof.challenge_polynomial_commitments[] @${t.at}`];
+    if (comms >= 0 && evals > comms && t.at > comms && t.at < evals)
+      return ['Pallas', `proof.commitments.{w_comm,z_comm,t_comm} @${t.at}`];
+    if (bullet >= 0 && t.at > bullet)
+      return ['Pallas', `proof.bulletproof.{lr,delta,challenge_polynomial_commitment} @${t.at}`];
+    return [null, null]; // an `evaluations` pair or a statement scalar — not a point
+  };
+
+  const bad = [];
+  let checked = 0;
+  let skipped = 0;
+  for (const t of tuples) {
+    const [expected, field] = region(t);
+    if (expected === null) {
+      skipped++;
+      continue;
+    }
+    checked++;
+    const onP = onCurve(t.x, t.y, PALLAS_P);
+    const onV = onCurve(t.x, t.y, VESTA_Q);
+    if (!(expected === 'Vesta' ? onV : onP)) {
+      bad.push({ field, expected, onPallas: onP, onVesta: onV });
+    }
+  }
+  return { checked, skipped, vestaFound: vestaAt >= 0, bad };
+}
+
 /** Mina's own PRINTER, the inverse of `proofOfBase64`. */
 function print(mlProof) {
   return bindings.Pickles.proofToBase64(mlProof);
@@ -143,6 +237,22 @@ for (const p of proofPaths) {
       `\n         ours: ${JSON.stringify(a.slice(Math.max(0, at - 40), at + 60))}` +
       `\n         mina: ${JSON.stringify(c.slice(Math.max(0, at - 40), at + 60))}`
     );
+  }
+
+  // ⚑ green-or-bust, on every proof, whatever the re-print said
+  const cc = curveCheck(b64);
+  if (!cc.vestaFound) {
+    failed++;
+    console.log(`[curve] ${name.padEnd(42)} RED — no \`messages_for_next_wrap_proof\` in the record; cannot say which point is the Vesta one`);
+  } else if (cc.bad.length === 0) {
+    console.log(`[curve] ${name.padEnd(42)} ${String(cc.checked).padStart(3)} points ALL ON THEIR EXPECTED CURVE (1 Vesta, ${cc.checked - 1} Pallas); ${cc.skipped} evaluation pairs not points, not checked`);
+  } else {
+    failed++;
+    console.log(`[curve] ${name.padEnd(42)} RED — ${cc.bad.length} of ${cc.checked} points are not on the curve Mina reads them as:`);
+    for (const b of cc.bad) {
+      console.log(`         ${b.field}`);
+      console.log(`           expected ${b.expected};  on Pallas = ${b.onPallas}, on Vesta = ${b.onVesta}`);
+    }
   }
 }
 
@@ -204,9 +314,21 @@ if (selfTest || proofPaths.length > 0) {
       const r = parse(b64, mpv);
       console.log(
         r.ok
-          ? `[info]  ${label.padEnd(42)} ACCEPTED by the parser — this is a VERIFIER's job, not the reader's`
+          ? `[info]  ${label.padEnd(42)} ACCEPTED by the parser — the reader does not do this arithmetic`
           : `[info]  ${label.padEnd(42)} refused by the parser: ${r.err.replace(/\s+/g, ' ').slice(0, 150)}`
       );
+      // ⚑ and the same input through OUR on-curve pass, which is the point of having one: whatever
+      // the reader does, a bent point must not get past this script.
+      const cc = curveCheck(b64);
+      const caught = cc.bad.length > 0;
+      if (label.startsWith('curve-point-y-zeroed')) {
+        if (!caught) {
+          failed++;
+          console.log(`[red]   ${'on-curve pass vs the bent point'.padEnd(42)} MISSED IT — the on-curve pass cannot go red`);
+        } else {
+          console.log(`[red]   ${'on-curve pass vs the bent point'.padEnd(42)} CAUGHT it: ${cc.bad[0].field} (expected ${cc.bad[0].expected})`);
+        }
+      }
     }
   }
 }

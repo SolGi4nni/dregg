@@ -208,8 +208,10 @@ fn main() {
     // whether the pair is a point. `StatementProofState::try_from` (step.rs) is where Mina decides,
     // and it decides by CONSTRUCTING an `Affine<VestaParameters>` — which panics off-curve rather
     // than erroring. So the group is not a convention to look up; it is measurable.
-    let on_curve = |x: &mina_p2p_messages::bigint::BigInt,
-                    y: &mina_p2p_messages::bigint::BigInt| {
+    fn on_curve(
+        x: &mina_p2p_messages::bigint::BigInt,
+        y: &mina_p2p_messages::bigint::BigInt,
+    ) -> (bool, bool) {
         let vesta = match (
             x.to_field::<mina_curves::pasta::Fq>(),
             y.to_field::<mina_curves::pasta::Fq>(),
@@ -225,17 +227,42 @@ fn main() {
             _ => false,
         };
         (vesta, pallas)
-    };
-    let ours = &proof
+    }
+    // The wrap statement carries TWO `challenge_polynomial` point fields, one line apart on the
+    // wire, ON DIFFERENT CURVES — and the wire cannot tell you which, because both are two bare
+    // `BigInt`s. Reported side by side against Mina's OWN bytes, because that is the only
+    // independent source there is for which group a field is read in.
+    let mfnw = &proof
         .statement
         .proof_state
         .messages_for_next_wrap_proof
         .challenge_polynomial_commitment;
-    let (v, p) = on_curve(&ours.0, &ours.1);
-    println!(
-        "\n[2b] statement.proof_state.messages_for_next_wrap_proof.challenge_polynomial_commitment"
+    let mfns = proof
+        .statement
+        .messages_for_next_step_proof
+        .challenge_polynomial_commitments
+        .iter()
+        .next()
+        .cloned();
+    println!("\n[2b] the two `challenge_polynomial` point fields, and the curve each is READ as");
+    println!("      messages_for_next_wrap_proof.challenge_polynomial_commitment   -> Vesta  (accumulator_check.rs:44-53; StatementProofState::try_from)");
+    println!("      messages_for_next_step_proof.challenge_polynomial_commitments[] -> Pallas (InnerCurve<Fp>, verification.rs:444)");
+    let report = |tag: &str, w: (bool, bool), s: Option<(bool, bool)>| {
+        println!(
+            "      {tag:<28} next_wrap: Vesta={} Pallas={}   next_step[0]: {}",
+            w.0,
+            w.1,
+            match s {
+                Some((v, p)) => format!("Vesta={v} Pallas={p}"),
+                None => "absent".to_string(),
+            }
+        );
+    };
+    report(
+        "OURS",
+        on_curve(&mfnw.0, &mfnw.1),
+        mfns.as_ref().map(|c| on_curve(&c.0, &c.1)),
     );
-    println!("      OURS  : on Vesta = {v}   on Pallas = {p}");
     for f in std::env::var("MINA_VERDICT_REAL_PROOFS")
         .unwrap_or_default()
         .split(':')
@@ -245,18 +272,28 @@ fn main() {
         let mut c = bytes.as_slice();
         let rp = PicklesProofProofsVerified2ReprStableV2::binprot_read(&mut c)
             .expect("openmina refused a real block proof");
-        let r = &rp
+        let w = &rp
             .statement
             .proof_state
             .messages_for_next_wrap_proof
             .challenge_polynomial_commitment;
-        let (v, p) = on_curve(&r.0, &r.1);
-        println!(
-            "      REAL  : on Vesta = {v}   on Pallas = {p}   ({})",
-            std::path::Path::new(f)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
+        let st = rp
+            .statement
+            .messages_for_next_step_proof
+            .challenge_polynomial_commitments
+            .iter()
+            .next()
+            .cloned();
+        report(
+            &format!(
+                "REAL {}",
+                std::path::Path::new(f)
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+            ),
+            on_curve(&w.0, &w.1),
+            st.as_ref().map(|c| on_curve(&c.0, &c.1)),
         );
     }
 

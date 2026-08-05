@@ -1,0 +1,144 @@
+# HANDOFF — the wrap public input, 40 words, and what stands between us and them
+
+**For the live wrap lanes** (W-FINALIZE's sponge, the step→wrap chain, the commitment stages, the
+bucketed MSM). Written 2026-08-05 by the lane that ran Mina's own verifiers on our artifacts; the
+verdicts are in `GOAL-MINA-SEMANTIC-LIGHTCLIENTS.md`, section 2026-08-05.
+
+## Why this list exists
+
+`kimchi::verifier::verify`, under the verifier index **Mina itself builds** from the 1796 bytes the
+devnet account holds, refuses our proof with its own words:
+
+```
+Err(IncorrectPubicInputLength(40))   "the public input is of an unexpected size (expected 40)"
+```
+
+and accepts it the moment the public input is 40 words long. **The public input is the only thing
+left between a proof of a Lean-emitted wrap rung and Mina's kimchi verifier at a key the chain
+holds.** The 28 commitments, the SRS, the domain, `zk_rows`, `prev_challenges`, the feature flags and
+the IPA opening already agree exactly (28/28).
+
+⚠ **Do not close it by padding.** The probe that padded to 40 with zeros is labelled a probe for a
+reason: **Pickles DERIVES all 40 from the statement** (`/Users/ember/dev/mina-rust/crates/ledger/src/proofs/public_input/prepared_statement.rs:53-182`,
+consumed at `verification.rs:886`) and gives a prover no way to supply them. A padded vector
+demonstrates the plumbing and proves nothing about the circuit.
+
+## ⚑ It is not "18 missing". It is 16 — and the count is not the blocker
+
+`shapeWrap.pubWords = 22` is `closingRows`' count only. `rungPub .close = pubWords + 2`
+(`KimchiWrapMainCore.lean:5216-5235`), because `w9_prev` ties Mina slot 12 and `w11_wraphack` ties
+Mina slot 11. **The emitted `w12_close` already carries 24.**
+
+⚠ **Two stale strings to fix while you are in there** (this lane did not edit the Lean — six of you
+are live in it):
+- `KimchiWrapMainCore.lean:5395` — *"upstream's `PRIMARY_LEN` is 40 and the **18**-word gap"*. It is 16.
+- `KimchiWrapMainCore.lean:1258-1259` and `:1306-1308` attribute slots 0–4 and 9 to **W-FINALIZE**.
+  Superseded by `KimchiWrapMain.lean:581-584` (2026-08-05): they are *consumed* by
+  **W-FTCOMM / W-COMBINE / W-BULLET**, and no wrap sub-circuit derives them at all.
+
+**Three deltas, and the count is the smallest of them:**
+
+1. **ORDER.** Our external slot `i` is Mina's slot `i` for **no** `i`. Our external 0 is β, which is
+   Mina's slot **5**. Slot order is the whole correctness question — a right value at a wrong index
+   is a wrong public input.
+2. **WIDTH.** The emitted `public_input_size` is `rungPub` (22/23/24), never 40. `WRAP_PRIMARY_LEN := 40`
+   exists at `KimchiWrapMainCore.lean:130` and **no emitted shape consumes it**.
+3. **INSTANCE.** The exposed values are this assembly's transcript over *fixture* commitments
+   (`ftcSVal := wrapFixtureQ 22 j` at `:1945-1947`, `combXiVal := wrapFixtureQ 30 0` at `:3562`,
+   `bullScalVal := wrapFixtureQ (40+j) 0` at `:4020-4023`), not any real proof's. The Lean says so
+   itself at `:1240`: *"THE PUBLIC VECTOR IS THIS ASSEMBLY'S, NOT MINA'S, AND THE DIFFERENCE IS STATED."*
+
+## Mina's 40, in order
+
+Authority: `prepared_statement.rs:53-182`. Arity 5 + 2 + 3 + 3 + **16** + 1 + 8 + 1 + 1 = 40; the 16
+is `bulletproof_challenges`, the **step** proof's IPA rounds, matching `shapeWrap.ipaRounds = 16`.
+
+| slot | word | kind |
+|---|---|---|
+| 0–4 | `combined_inner_product`, `b`, `zeta_to_srs_length`, `zeta_to_domain_size`, `perm` — each `.shifted` | full field |
+| 5–6 | `beta`, `gamma` | 128-bit challenge |
+| 7–9 | `alpha`, `zeta`, `xi` | 128-bit scalar challenge |
+| 10–12 | `sponge_digest_before_evaluations`, `messages_for_next_wrap_proof`, `messages_for_next_step_proof` | 255-bit digest |
+| 13–28 | `bulletproof_challenges[0..15]` | 128-bit each |
+| 29 | `branch_data` = `(domain_log2 << 2) \| proofs_verified` | 10 bits |
+| 30–37 | the eight kimchi feature flags | 1 bit each |
+| 38 | `uses_lookup` (OR of rc0, rc1, ffmul, xor, rot, lookup) | 1 bit |
+| 39 | the lookup challenge value, else `0` | 128 bits |
+
+⚑ **β and γ come BEFORE α, ζ, ξ** — the `// Challenge` block at `:106-110` precedes `// Scalar
+challenge` at `:112-117`. Our tree already learned this the hard way; it is recorded as a measured
+correction at `Dregg2/Bridge/MinaWrapPublicInput.lean:187-200`.
+
+## What we hold: 24 of the 40
+
+| ours | word | Mina slot | derived at |
+|---|---|---|---|
+| 0–3 | β, γ, α′, ζ′ prechallenges | 5, 6, 7, 8 | `w4_bind` |
+| 4 | `forkSqueeze` = `sponge_digest_before_evaluations` | 10 | `w4_bind` |
+| 5–20 | 16 `bullet_reduce` prechallenges | 13–28 | `w4_bind` |
+| 21 | `branchVars.packed` | 29 | `w4_bind` |
+| 22 | `messages_for_next_step_proof` | **12** | `w9_prev` (`:2240-2242`) |
+| 23 | `messages_for_next_wrap_proof` | **11** | `w11_wraphack` (`:2407-2408`, `:2426`) |
+
+⚠ At the **smoke** shape (`pubWords = 6`, `ipaRounds = 3`) `branch_data` is not exposed at all —
+slot 29 is absent. Anything testing against the smoke fixtures should know that.
+
+## The 16, with owners
+
+**Six to EXPOSE — none to compute.** `wrap_main` passes these through as `~advice`/`~plonk`/`~xi`
+(`wrap_main.ml:405-414`) and never checks them; what checks them is the *next* proof's W-FINALIZE.
+So the owner is the sub-circuit that **consumes** it:
+
+| slot | word | consumer | the cell that already exists |
+|---|---|---|---|
+| 0 | `combined_inner_product` | **W-BULLET** (`w11_bullet`, §24) | `:3872-3875`, `:3786` |
+| 1 | `b` | **W-BULLET** | `:3790`, `:4020-4023` |
+| 2 | `zeta_to_srs_length` | **W-FTCOMM** (`w8_ftcomm`, §17) | `ftcS` at `ftcScalarIdx = 1`, `:1940-1943` |
+| 3 | `zeta_to_domain_size` | **W-FTCOMM** | `ftcS` at `ftcScalarIdx = 2` |
+| 4 | `perm` | **W-FTCOMM** | `ftcS` at `ftcScalarIdx = 0`, `:1845` |
+| 9 | `xi` | **W-COMBINE** (`w10_combine`, §23) | `combXiV s sp`, `:3656`, all 46 endo ladders share it |
+
+**Ten to emit as CONSTANT ZERO — slots 30–39.** No sub-circuit owner, and there must not be one:
+`KimchiWrapMainCore.lean:1267-1268` records that upstream never constrains them either, and
+`:1276-1281` pins all ten to zero on a real devnet wrap proof
+(`MinaWrapPublicCommGate.PUBLIC_INPUT`, slot 29 = 67, slots 30–39 ten literal zeros) with the
+warning that tying them to variables would be **"defect class 5 wearing a public vector."**
+
+⚠ **One thing to settle first.** openmina's `to_public_input_cvar` **drops `feature_flags` entirely**
+(`prepared_statement.rs:204`) and pads with 9 × `bits(1)` + 1 × `bits(128)`, `Constant` when
+`hack_feature_flags = OptFlag::No`, **`Var` when `Maybe`**, `todo!()` when `Yes` — with upstream's own
+`// TODO: Find out how this padding works` at `:290`. Which one the side-loaded path passes is not
+settled in our tree and decides whether slots 30–39 are constants or variables.
+
+## ⚑ A design fork, not a defect — surface it before anyone starts
+
+`rungPub`'s own comment refuses the cheap win by name: *"W-COMBINE derives no NEW statement word …
+**A public word on `xi` here would be a fixture**"* (`KimchiWrapMainCore.lean:5231-5232`). That
+objection holds a **derivation** standard: a rung may expose only what it computes.
+
+Upstream's standard is weaker — slots 0–4 and 9 *are* free pass-throughs in `wrap_main`, checked by
+the next proof, never by this one. On the upstream standard, four of the six (2, 3, 4, 9) already
+have circuit-read cells and are a closing `Generic` half each. On this file's standard they are
+blocked until a *next* proof's W-FINALIZE exists.
+
+**Both are defensible and they give different work. It is the operator's call, not a lane's**, and it
+should be made before someone spends a night on the wrong one.
+
+## Files a lane will touch
+
+`metatheory/Dregg2/Circuit/Emit/KimchiWrapMainCore.lean` — `WRAP_PRIMARY_LEN` (:130), §10 census
+(:1238-1343), `exposedVars` (:1319), `closingRows` (:1340), `AUXW` (:939), `rungPub` (:5216),
+`exposedVarsAt` (:5240), `shapeWrap.pubWords` (:5399), and the ties at :2242 and :2426. §13's list is
+`metatheory/Dregg2/Circuit/Emit/KimchiWrapMain.lean:440-689`. Ground truth for the 40 stays
+`/Users/ember/dev/mina-rust/crates/ledger/src/proofs/public_input/prepared_statement.rs:53-182`.
+
+## How you will know it worked
+
+```
+cargo run --release --manifest-path metatheory/fixtures/pickles-extractors/Cargo.toml \
+  --bin mina_onchain_index_probe -- --vk <onchain-vk.json> --circuit <your-emission.json> --log2-domain 14
+```
+
+`[B]` stops saying `IncorrectPubicInputLength(40)` and starts saying `Ok` **on the circuit's own
+public vector, with no padding**. `[A]` must stay 28/28 against a key derived from that same
+emission, and `[C]`'s two word-moves must stay `OpenProof`.

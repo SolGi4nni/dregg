@@ -1858,3 +1858,74 @@ MINA_VERDICT_REAL_PROOFS=<real-block>.binprot  # adds the curve measurement agai
 cd bridge/mina-zkapp && node scripts/mina-proof-verify-gate.mjs \
   --pair onchain /tmp/marshal/marshalled.o1js-proof.json onchain-vk.json
 ```
+
+---
+
+## ⚑ 2026-08-05, same day, second pass — the curve defect FIXED and DETECTED, and the count corrected
+
+### The count was wrong in the section above: it is 16, not 18
+
+`shapeWrap.pubWords = 22` is `closingRows`' count only. `rungPub .close = pubWords + 2`
+(`KimchiWrapMainCore.lean:5216-5235`) — `w9_prev` ties Mina slot 12, `w11_wraphack` ties slot 11 —
+so **the emitted `w12_close` already carries 24 of the 40.** The full census, with an owner for each
+of the 16 and the three deltas that actually block (ORDER, WIDTH, INSTANCE — the count is the
+smallest of them), is `docs/HANDOFF-wrap-public-input-40.md`. ⚠ **The order is the real blocker:**
+our external slot `i` equals Mina's slot `i` for **no** `i` — our external 0 is β, which is Mina's
+slot 5.
+
+Two stale strings in the Lean, named for the lanes and not edited by this one (six are live in that
+file): `KimchiWrapMainCore.lean:5395` says 18; `:1258-1259`/`:1306-1308` attribute slots 0–4 and 9 to
+W-FINALIZE, superseded by `KimchiWrapMain.lean:581-584` — they are *consumed* by
+W-FTCOMM/W-COMBINE/W-BULLET and **no wrap sub-circuit derives them at all**.
+
+### The curve defect: fixed at the type, and now DETECTED by both gates
+
+`marshal.rs` typed `next_wrap_challenge_polynomial_commitment` as **Pallas**; Mina reads it as
+**Vesta**. Now `Vesta`, and the mirror field (`messages_for_next_step_proof.
+challenge_polynomial_commitments`, `InnerCurve<Fp>` at `verification.rs:444`) confirmed **Pallas** and
+left alone. After the fix, measured side by side against Mina's own bytes:
+
+```
+                             next_wrap            next_step[0]
+OURS                    Vesta=true Pallas=false   Vesta=false Pallas=true
+REAL devnet-540890      Vesta=true Pallas=false   Vesta=false Pallas=true
+REAL mainnet-541858     Vesta=true Pallas=false   Vesta=false Pallas=true
+```
+
+**Both gates now refuse the class, and both were shown to go red on the real historical artifact:**
+- Rust: `MarshalError::OffCurve { field, expected }` in `marshal.rs`, with the curve named because
+  the wire cannot tell you it. Exercised by a new must-refuse in `pickles_kimchi_marshal` —
+  *"the next-wrap accumulator as a PALLAS point (the 08-05 defect)"* — which reconstructs the
+  mistake through `new_unchecked` so the branch is a regression guard, not dead code.
+- JS: an **on-curve pass** in `mina-proof-parse-gate.mjs`, region-scoped (an `evaluations` pair prints
+  with the same grammar as a point and is not one — a blanket sweep is 44 false positives on a real
+  proof). On the corrected artifact: *58 points ALL ON THEIR EXPECTED CURVE (1 Vesta, 57 Pallas)*.
+  On the pre-fix artifact: **RED**, naming the field and printing *on Pallas = true, on Vesta = false*.
+  ⚑ The gate's own `curve-point-y-zeroed (off-curve)` line had measured this hole and filed it
+  **informative** — a documented wound, not a detected one. It is green-or-bust now.
+
+⚠ **The fix does not move the verdict**: `verify_zkapp` on the corrected artifact no longer aborts in
+`StatementProofState::try_from`, and now aborts one step later inside `expand_deferred`, with
+`accumulator_check` still `Ok(false)`. **Still REFUSE.** The statement is not a Pickles statement,
+and no amount of marshalling makes it one.
+
+### The drift: attributed to a commit, and the carried copies re-synced
+
+The wiring change is **`d0cf0426d`** — *"the public vector held the ENDO LIFT where the wrap
+statement holds the RAW PRECHALLENGE — twenty of twenty-two exposed words were the wrong object under
+the right name."* Per-commit diff of the harness copy across all six re-emissions: `d0cf0426d` is the
+**only** one that moved a wire (13 rows: 10 `Zero` probe rows and the 3 closing `Generic` rows 495–497,
+re-routing σ classes through the public rows); `8979a7b50`, `7ea63fe5d`, `472be0edd` and `1687b7f61`
+moved **witness and public VALUES only**.
+
+⚑ **So the key on devnet is not merely "an older circuit" — it is the circuit from before the commit
+that found its public words were the wrong object.** That is squarely on the critical path of the
+public-input gap, and the registration record now says so.
+
+`pickles-vk-derive`'s carried copies were three re-emissions behind (`7ea63fe5d`, `472be0edd`,
+`1687b7f61`); `dc33ceaa1`'s sync was one-shot, not a ratchet. **Re-synced from the harness copies,
+`cmp` GREEN on both.** ⚑ And the derived key **did not move**: the gate lists are byte-identical
+across the sync (`old['gates'] == new['gates']`), only witness and public values differed, and
+neither enters the 28 commitments. `w4_bind` derives
+`13798061594429054870758937373636515138052866933091369202769363653346084112884` before and after.
+The RED was real; the key it derives was never affected.

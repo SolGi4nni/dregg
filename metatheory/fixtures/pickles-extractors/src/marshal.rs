@@ -145,6 +145,16 @@ pub enum MarshalError {
     },
     /// A curve point is the point at infinity, whose `(x, y)` is `(0, 0)` and off the curve.
     PointAtInfinity { field: String },
+    /// A pair of coordinates that is not a point of the curve the wire field is READ as. ⚑ This is
+    /// the class the two parse gates cannot see: `binprot_read` and `Pickles.proofOfBase64` both
+    /// reconstruct the record from two bare `BigInt`s and never ask whether the pair is a point, so
+    /// an off-curve — or right-curve-wrong-group — value reaches Mina's verifier unremarked and
+    /// aborts it (`StatementProofState::try_from` builds curve points with `Affine::new`, which
+    /// ASSERTS). Refused here instead, naming the curve that was expected.
+    OffCurve {
+        field: String,
+        expected: &'static str,
+    },
     /// The step-side statement data does not have one entry per recursion slot.
     StepChallengeArity { got: usize, want: usize },
     /// The step proof carried no public-input evaluation, or carried it chunked.
@@ -181,6 +191,11 @@ impl std::fmt::Display for MarshalError {
             Self::PointAtInfinity { field } => {
                 write!(f, "{field}: point at infinity has no on-curve (x, y)")
             }
+            Self::OffCurve { field, expected } => write!(
+                f,
+                "{field}: the (x, y) pair is not a point of {expected}, which is the curve Mina reads \
+                 this field as"
+            ),
             Self::StepChallengeArity { got, want } => write!(
                 f,
                 "statement carries {got} step-side challenge vectors, proof has {want} recursion slots"
@@ -220,7 +235,23 @@ pub struct WrapStatementScalars {
     pub sponge_digest_before_evaluations: [u64; 4],
     /// The next wrap accumulator. `wrap.rs:700-724` builds it from the PREVIOUS step statement,
     /// before this proof exists, so it is not derivable from this proof's `sg`.
-    pub next_wrap_challenge_polynomial_commitment: Pallas,
+    ///
+    /// ⚑ **VESTA, NOT PALLAS, AND THIS WAS WRONG UNTIL 2026-08-05.** The two `challenge_polynomial`
+    /// fields of a wrap statement live on DIFFERENT curves and the wire cannot tell you which:
+    /// both are two bare `BigInt`s. `messages_for_next_wrap_proof.challenge_polynomial_commitment`
+    /// is the STEP proof's accumulator that the next WRAP consumes — Tick, i.e. **Vesta** — read as
+    /// `Vesta::of_coordinates` by `accumulator_check` (openmina `proofs/accumulator_check.rs:44-53`)
+    /// and built with `Affine::<VestaParameters>::new` by `StatementProofState::try_from`
+    /// (`proofs/step.rs`), which ASSERTS on-curve. `messages_for_next_step_proof.
+    /// challenge_polynomial_commitments` is the mirror — `InnerCurve<Fp>`, i.e. **Pallas**
+    /// (`proofs/verification.rs:444`) — and is correct below.
+    ///
+    /// MEASURED, not looked up: `mina_verdict` reads this field out of real block proofs
+    /// (`metatheory/fixtures/mina-blocks/devnet-540890`, `mainnet-541858`) and reports it on Vesta
+    /// and not on Pallas, while the value this marshaller used to emit was on Pallas and not on
+    /// Vesta. `verify_zkapp` did not return false on it — it ABORTED THE PROCESS. Neither parse
+    /// gate saw anything wrong, which is why [`MarshalError::OffCurve`] now exists.
+    pub next_wrap_challenge_polynomial_commitment: Vesta,
     /// The prechallenges of the two previous WRAP proofs. Checked against the proof.
     pub old_wrap_bulletproof_challenges: [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED],
     /// The prechallenges of the two previous STEP proofs. Not present in the kimchi proof at all.
@@ -288,10 +319,29 @@ fn bp(
 }
 
 /// A Pallas point as the wire's `(x, y)`. Refuses infinity — see the module header.
-fn point(field: &str, g: &Pallas) -> Result<(BigInt, BigInt), MarshalError> {
+/// A wire point, refusing both shapes a real one cannot have.
+///
+/// ⚑ `expected` is not decoration: the wire carries two bare `BigInt`s and the GROUP is decided by
+/// the READER, so a field's curve is a fact about Mina's code, not about the bytes. Naming it here
+/// is what makes a wrong-group value a refusal with an explanation rather than an abort inside
+/// arkworks two layers down.
+fn point<P: ark_ec::short_weierstrass::SWCurveConfig>(
+    field: &str,
+    expected: &'static str,
+    g: &ark_ec::short_weierstrass::Affine<P>,
+) -> Result<(BigInt, BigInt), MarshalError>
+where
+    P::BaseField: PrimeField,
+{
     if g.infinity {
         return Err(MarshalError::PointAtInfinity {
             field: field.to_string(),
+        });
+    }
+    if !g.is_on_curve() {
+        return Err(MarshalError::OffCurve {
+            field: field.to_string(),
+            expected,
         });
     }
     Ok((f_to_bigint(&g.x), f_to_bigint(&g.y)))
@@ -308,7 +358,7 @@ fn one_chunk(
             want: 1,
         });
     }
-    point(field, &c.chunks[0])
+    point(field, "Pallas", &c.chunks[0])
 }
 
 /// `ScalarChallenge::to_field` — the endo expansion the PROVER applied
@@ -431,6 +481,7 @@ pub fn marshal(
             PicklesProofProofsVerified2ReprStableV2MessagesForNextWrapProof {
                 challenge_polynomial_commitment: point(
                     "statement.proof_state.messages_for_next_wrap_proof.challenge_polynomial_commitment",
+                    "Vesta",
                     &st.next_wrap_challenge_polynomial_commitment,
                 )?,
                 old_bulletproof_challenges: PaddedSeq(std::array::from_fn(|i| {
@@ -457,6 +508,9 @@ pub fn marshal(
         }
         cpc.push(point(
             &format!("prev_challenges[{i}].comm.chunks[0]"),
+            // openmina reads these as `InnerCurve<Fp>` (`proofs/verification.rs:444`) — Pallas, the
+            // mirror of the Vesta field above. The two are one line apart on the wire.
+            "Pallas",
             &rc.comm.chunks[0],
         )?);
     }
@@ -528,7 +582,11 @@ pub fn marshal(
     }
     let mut t_comm: Vec<(BigInt, BigInt)> = Vec::with_capacity(T_CHUNKS);
     for (i, g) in c.t_comm.chunks.iter().enumerate() {
-        t_comm.push(point(&format!("commitments.t_comm.chunks[{i}]"), g)?);
+        t_comm.push(point(
+            &format!("commitments.t_comm.chunks[{i}]"),
+            "Pallas",
+            g,
+        )?);
     }
 
     let ev = &proof.evals;
@@ -549,8 +607,8 @@ pub fn marshal(
     let mut lr: Vec<((BigInt, BigInt), (BigInt, BigInt))> = Vec::with_capacity(op.lr.len());
     for (i, (l, r)) in op.lr.iter().enumerate() {
         lr.push((
-            point(&format!("proof.lr[{i}].0"), l)?,
-            point(&format!("proof.lr[{i}].1"), r)?,
+            point(&format!("proof.lr[{i}].0"), "Pallas", l)?,
+            point(&format!("proof.lr[{i}].1"), "Pallas", r)?,
         ));
     }
 
@@ -583,8 +641,8 @@ pub fn marshal(
             lr: lr.into(),
             z_1: f_to_bigint(&op.z1),
             z_2: f_to_bigint(&op.z2),
-            delta: point("proof.delta", &op.delta)?,
-            challenge_polynomial_commitment: point("proof.sg", &op.sg)?,
+            delta: point("proof.delta", "Pallas", &op.delta)?,
+            challenge_polynomial_commitment: point("proof.sg", "Pallas", &op.sg)?,
         },
     };
 
