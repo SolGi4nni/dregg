@@ -29,7 +29,14 @@ pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_MAGIC: [u8; 8] = *b"DREGGIR2";
 /// encodes and is refused outright by [`decode_canonical_effect_vm_descriptor2`] — never
 /// reinterpreted. Every semantic fingerprint changes, so every welded-leg `vk_hash` derived from
 /// these bytes rotates and every descriptor re-emits.
-pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_VERSION: u16 = 2;
+///
+/// ⚑ **BUMPED 2 → 3 on 2026-08-05** (the `ProofBind` widening, landed ON TOP of the challenge
+/// bump). Tag byte `5`'s body changed shape: `commit`, `vk`, `vk_pin` and `bound` are LENGTH-
+/// PREFIXED LANE SEQUENCES where they were single expressions / a single literal. A v2 record's
+/// `proof_bind` says a DIFFERENT relation under this reader — it ties one limb of an eight-felt
+/// object — so it is refused rather than decoded. Same consequence: every fingerprint moves, every
+/// welded-leg `vk_hash` rotates, every descriptor re-emits.
+pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_VERSION: u16 = 3;
 /// BLAKE3 derive-key context for semantic relation fingerprints.
 pub const EFFECT_VM_DESCRIPTOR2_FINGERPRINT_CONTEXT: &str =
     "dregg.effect-vm-descriptor2.semantic-relation.v1";
@@ -67,6 +74,14 @@ pub enum CanonicalDescriptorError {
     RecordTooLarge { len: usize, max: usize },
     /// A valid record was followed by unconsumed bytes.
     TrailingBytes(usize),
+    /// ⚑ A `proof_bind` declares fewer lanes than the objects it ties, or a pin that names fewer
+    /// lanes than its vector.
+    ///
+    /// The deployed commitment and program VK are eight felts each
+    /// (`PROOF_BIND_COMMIT_WIDTH`, `bytes32_to_8_limbs`). A narrower seam ties a LIMB, worth `2^31`
+    /// a lane against this repo's ~124-bit bar — which is exactly the shape the widening retired,
+    /// so the door that takes externally supplied records refuses it here.
+    NarrowProofBind { lanes: usize, min: usize },
     /// ⚑ A `range` table declares a width that refuses nothing at BabyBear.
     ///
     /// This decoder is the PROTOCOL-IDENTITY door and it takes externally supplied records, so it
@@ -132,6 +147,11 @@ impl fmt::Display for CanonicalDescriptorError {
                 write!(f, "canonical descriptor has {len} bytes, maximum is {max}")
             }
             Self::TrailingBytes(count) => write!(f, "{count} trailing canonical descriptor bytes"),
+            Self::NarrowProofBind { lanes, min } => write!(
+                f,
+                "proof_bind declares {lanes} lanes against a floor of {min}: the objects a \
+                 recursion seam ties are eight felts, and a narrower tie is worth 2^31 a lane"
+            ),
             Self::VacuousRangeWidth { bits, max } => write!(
                 f,
                 "range table declares bits {bits} >= {max}: the BabyBear field is below 2^31, so \
@@ -526,17 +546,24 @@ fn write_constraint(
                 bound,
             } = binding;
             write_lean_expr(writer, guard, 0)?;
-            write_lean_expr(writer, commit, 0)?;
-            write_lean_expr(writer, vk, 0)?;
+            // ⚑ LANE VECTORS in the FINGERPRINT (schema v3). A seam that ties four lanes and one
+            // that ties eight are different relations, and the digest says so.
+            writer.sequence("ProofBindSpec.commit", commit, |w, e| {
+                write_lean_expr(w, e, 0)
+            })?;
+            writer.sequence("ProofBindSpec.vk", vk, |w, e| write_lean_expr(w, e, 0))?;
             // ⚑ The seam's two declared halves, in the FINGERPRINT. A descriptor that drops its
             // program pin or its bound expression must move its canonical digest — otherwise the
             // registry could not tell a bound seam from a declarative one, and "the seam landed"
             // would be a claim about a file rather than about the committed object.
             match vk_pin {
                 None => writer.u8(0),
-                Some(v) => {
+                Some(p) => {
                     writer.u8(1);
-                    writer.i64(*v);
+                    writer.sequence("ProofBindSpec.vk_pin", p, |w, v| {
+                        w.i64(*v);
+                        Ok(())
+                    })?;
                 }
             }
             match bound {
@@ -546,7 +573,7 @@ fn write_constraint(
                 }
                 Some(b) => {
                     writer.u8(1);
-                    write_lean_expr(writer, b, 0)
+                    writer.sequence("ProofBindSpec.bound", b, |w, e| write_lean_expr(w, e, 0))
                 }
             }
         }
@@ -956,21 +983,34 @@ fn read_constraint(reader: &mut Reader<'_>) -> Result<VmConstraint2, CanonicalDe
             prev_serial: read_lean_expr(reader, 0)?,
             kind: read_mem_kind(reader)?,
         })),
-        5 => Ok(VmConstraint2::ProofBind(ProofBindSpec {
-            guard: read_lean_expr(reader, 0)?,
-            commit: read_lean_expr(reader, 0)?,
-            vk: read_lean_expr(reader, 0)?,
-            vk_pin: if reader.boolean()? {
-                Some(reader.i64()?)
-            } else {
-                None
-            },
-            bound: if reader.boolean()? {
-                Some(read_lean_expr(reader, 0)?)
-            } else {
-                None
-            },
-        })),
+        5 => {
+            let spec = ProofBindSpec {
+                guard: read_lean_expr(reader, 0)?,
+                commit: reader.sequence("ProofBindSpec.commit", |r| read_lean_expr(r, 0))?,
+                vk: reader.sequence("ProofBindSpec.vk", |r| read_lean_expr(r, 0))?,
+                vk_pin: if reader.boolean()? {
+                    Some(reader.sequence("ProofBindSpec.vk_pin", |r| r.i64())?)
+                } else {
+                    None
+                },
+                bound: if reader.boolean()? {
+                    Some(reader.sequence("ProofBindSpec.bound", |r| read_lean_expr(r, 0))?)
+                } else {
+                    None
+                },
+            };
+            // ⚑ THE PROTOCOL-IDENTITY DOOR's half of the width refusal. This decoder takes
+            // externally supplied records, so it applies the same floor the JSON door and
+            // `check_descriptor2` apply: a seam below `PROOF_BIND_MIN_LANES`, or a pin that names
+            // fewer lanes than the vector it pins, is REFUSED — never padded, never read as a
+            // prefix check.
+            spec.width_ok()
+                .map_err(|_| CanonicalDescriptorError::NarrowProofBind {
+                    lanes: spec.commit.len(),
+                    min: crate::descriptor_ir2::PROOF_BIND_MIN_LANES,
+                })?;
+            Ok(VmConstraint2::ProofBind(spec))
+        }
         6 => Ok(VmConstraint2::WindowGate(WindowGateSpec {
             body: read_window_expr(reader, 0)?,
             on_transition: reader.boolean()?,

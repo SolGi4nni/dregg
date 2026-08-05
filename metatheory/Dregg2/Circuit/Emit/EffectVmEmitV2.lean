@@ -1367,29 +1367,61 @@ def customV1Face : EffectVmDescriptor :=
   , hashSites   := []
   , ranges      := [] }
 
-/-- The Custom row's proof-binding op: when the Custom selector fires, the row's
-`custom_proof_commitment` column (`param[CUSTOM_COMMIT]`) and `custom_program_vk_hash` column
-(`param[CUSTOM_VK]`) bind to a VERIFYING external sub-proof of the recursion engine. -/
-def customProofBind : Dregg2.Circuit.DescriptorIR2.ProofBind :=
+/-- ⚑ **THE CUSTOM BINDING OP, AT EIGHT LANES** (the 2026-08-05 widening). The deployed objects are
+eight felts each — `custom_proof_pi_commitment` is the full `WideHash` squeeze
+(`PROOF_BIND_COMMIT_WIDTH = 8`) and `custom_program_vk_hash` is `bytes32_to_8_limbs` — but only the
+LOW four of each live in the `param` block. The HIGH four ride member-local TEETH columns, whose
+base differs between the un-rotated face and the rotated V3 member, so the op is parameterized by
+the two teeth bases rather than duplicated.
+
+Lane order is low limb first: `param[CUSTOM_COMMIT + 0..4]` then `commitHi + 0..4`, and the same
+for the VK. That is the order `custom_proof_pi_commitment`'s `to_felts()` produces and the order
+the fold's lane-by-lane `connect` walks. -/
+def customProofBindAt (commitHi vkHi : Nat) : Dregg2.Circuit.DescriptorIR2.ProofBind :=
   { guard  := .var SEL_CUSTOM
-  , commit := .var (prmCol CUSTOM_COMMIT)
-  , vk     := .var (prmCol CUSTOM_VK)
+  , commit := (List.range 4).map (fun k => .var (prmCol (CUSTOM_COMMIT + k)))
+                ++ (List.range 4).map (fun k => .var (commitHi + k))
+  , vk     := (List.range 4).map (fun k => .var (prmCol (CUSTOM_VK + k)))
+                ++ (List.range 4).map (fun k => .var (vkHi + k))
     -- ⚑ DECLARED UNPINNED, and this is the honest answer for Custom specifically. The row-local
     -- seam can pin a program and a commitment; Custom can supply NEITHER — it exists to dispatch an
     -- ARBITRARY registered cell program, and its commitment is `custom_proof_pi_commitment` of the
     -- sub-proof's public inputs, computed OFF-ROW. No expression over this row recomputes it; the
     -- binding is the fold's lane-by-lane `connect`. So `proofBindDeclarative customVmDescriptor2 = 1`
     -- and the residual is a COUNTED VALUE in the emitted bytes rather than a `True` nobody could see.
+    -- ⚑ What DID change on 2026-08-05 is the WIDTH of what the fold has to connect to: eight
+    -- declared lanes, not lane 0 with seven felts unnamed by any constraint.
   , vkPin  := none
   , bound  := none }
+
+/-- The un-rotated graduated face's commit-teeth base: the HIGH four commitment limbs, appended at
+the END of the graduated width (the V2 twin of `EffectVmEmitRotationV3.CUSTOM_COMMIT_TEETH_COL`). -/
+def CUSTOM_V2_COMMIT_TEETH_COL : Nat := (graduateV1 customV1Face).traceWidth
+
+/-- The un-rotated face's VK-teeth base: the HIGH four program-VK limbs, past the commit teeth. -/
+def CUSTOM_V2_VK_TEETH_COL : Nat := CUSTOM_V2_COMMIT_TEETH_COL + 4
+
+/-- The Custom row's proof-binding op on the UN-ROTATED graduated face. -/
+def customProofBind : Dregg2.Circuit.DescriptorIR2.ProofBind :=
+  customProofBindAt CUSTOM_V2_COMMIT_TEETH_COL CUSTOM_V2_VK_TEETH_COL
 
 /-- **`customVmDescriptor2`** — the graduated Custom descriptor PLUS the recursive-proof-binding
 leg: the runtime passthrough face graduated onto IR-v2, with the `proofBind` op that ties the
 row's commitment to a verifying external sub-proof (the accumulator constraint the per-row IR
-gained — `DescriptorIR2.ProofBind`). -/
+gained — `DescriptorIR2.ProofBind`).
+
+⚑ **FLAG DAY 2026-08-05 (+8 columns, 188 → 196).** The seam widened from one felt to eight lanes,
+so the face carries the HIGH four limbs of the commitment and of the program VK on eight appended
+teeth columns. A four-lane artifact no longer loads: `check_descriptor2` refuses a bind below
+`PROOF_BIND_MIN_LANES`. -/
 def customVmDescriptor2 : EffectVmDescriptor2 :=
   { graduateV1 customV1Face with
+    traceWidth  := (graduateV1 customV1Face).traceWidth + 8
     constraints := (graduateV1 customV1Face).constraints ++ [.proofBind customProofBind] }
+
+/-- ⚑ **THE UN-ROTATED CUSTOM SEAM IS AT THE LANE FLOOR** — eight lanes, equal on both halves, no
+truncated pin. This is the verdict the Rust admission door applies to the emitted bytes. -/
+theorem customProofBind_widthOk : customProofBind.widthOk = true := by decide
 
 /-- The Custom v1 face is graduable (so `graduateV1_sound`/`_complete`/`_faithful` apply to the
 passthrough leg). -/
@@ -1416,20 +1448,24 @@ theorem proofBindsOf_customVmDescriptor2 :
   rfl
 
 /-- **`customV2_binds_proof` — cap-crown analog for Custom, the circuit leg.** On an active Custom
-row of a `Satisfied2Custom` witness: the row's `custom_proof_commitment` column IS the public-input
-commitment of a VERIFYING external sub-proof, and its `custom_program_vk_hash` column is that
-proof's program VK. The v1 IR could express NEITHER — it recorded the commitment and trusted it. -/
+row of a `Satisfied2Custom` witness: the row's `custom_proof_commitment` LANES ARE the public-input
+commitment of a VERIFYING external sub-proof, and its `custom_program_vk_hash` LANES are that
+proof's program VK. The v1 IR could express NEITHER — it recorded the commitment and trusted it.
+
+⚑ **EIGHT LANES since 2026-08-05.** The equality is of lane VECTORS, so a sub-proof agreeing with
+the row on limb 0 and differing above it does not discharge this. -/
 theorem customV2_binds_proof (hash : List ℤ → ℤ)
     (E : Dregg2.Circuit.DescriptorIR2.ProofEngine)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2Custom hash E customVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
     (hactive : (envAt t i).loc (SEL_CUSTOM) = 1) :
-    E.boundTo ((envAt t i).loc (prmCol CUSTOM_COMMIT)) ((envAt t i).loc (prmCol CUSTOM_VK)) := by
+    E.boundTo (customProofBind.commit.map (·.eval (envAt t i).loc))
+      (customProofBind.vk.map (·.eval (envAt t i).loc)) := by
   have hm : customProofBind ∈ proofBindsOf customVmDescriptor2 := by
     rw [proofBindsOf_customVmDescriptor2]; exact List.mem_cons_self
-  have := proofBind_bound hash E customVmDescriptor2 hsat hm i hi (by simpa [customProofBind] using hactive)
-  simpa [customProofBind] using this
+  exact proofBind_bound hash E customVmDescriptor2 hsat hm i hi
+    (by simpa [customProofBind, customProofBindAt] using hactive)
 
 /-- **The bound commitment is DETERMINED (anti-forgery, the Custom anti-ghost).** Under the named
 engine binding, the program VK a Custom row attests is FORCED by its `custom_proof_commitment`: a
@@ -1444,13 +1480,12 @@ theorem customV2_proof_determined (hash : List ℤ → ℤ)
     (i : Nat) (hi : i < t.rows.length)
     (hactive : (envAt t i).loc (SEL_CUSTOM) = 1)
     (q : E.Proof) (hq : E.verify q = true)
-    (hqc : E.piCommit q = (envAt t i).loc (prmCol CUSTOM_COMMIT)) :
-    E.vkOf q = (envAt t i).loc (prmCol CUSTOM_VK) := by
+    (hqc : E.piCommit q = customProofBind.commit.map (·.eval (envAt t i).loc)) :
+    E.vkOf q = customProofBind.vk.map (·.eval (envAt t i).loc) := by
   have hm : customProofBind ∈ proofBindsOf customVmDescriptor2 := by
     rw [proofBindsOf_customVmDescriptor2]; exact List.mem_cons_self
-  have := proofBind_determined hash E hE customVmDescriptor2 hsat hm i hi
-    (by simpa [customProofBind] using hactive) q hq (by simpa [customProofBind] using hqc)
-  simpa [customProofBind] using this
+  exact proofBind_determined hash E hE customVmDescriptor2 hsat hm i hi
+    (by simpa [customProofBind, customProofBindAt] using hactive) q hq hqc
 
 /-! ## §8 — NEWLY EXPRESSIBLE II: SetField with a DYNAMIC slot index.
 

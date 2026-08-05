@@ -1918,15 +1918,18 @@ pub fn custom_commit_version(
     if d.public_input_count < lo + 2 * CUSTOM_COMMIT_WIDTH_V2 {
         return Err(unknown());
     }
-    let declares_the_anchors = d.constraints.iter().any(|c| {
-        matches!(
-            c,
-            VmConstraint2::ProofBind(ProofBindSpec {
-                commit: LeanExpr::Var(cc),
-                vk: LeanExpr::Var(vv),
-                ..
-            }) if *cc == commit_col0 && *vv == vk_col0
-        )
+    // ⚑ Since the 2026-08-05 widening the op names LANE VECTORS, so the classifier reads lane 0 of
+    // each — the anchor the exposure window is keyed on — and additionally requires the seam to be
+    // at the eight-lane width the deployed commitment actually has. A four-lane artifact fails here
+    // as well as at the loader.
+    let declares_the_anchors = d.constraints.iter().any(|c| match c {
+        VmConstraint2::ProofBind(ProofBindSpec { commit, vk, .. }) => {
+            commit.len() >= crate::descriptor_ir2::PROOF_BIND_MIN_LANES
+                && vk.len() == commit.len()
+                && matches!(commit.first(), Some(LeanExpr::Var(cc)) if *cc == commit_col0)
+                && matches!(vk.first(), Some(LeanExpr::Var(vv)) if *vv == vk_col0)
+        }
+        _ => false,
     });
     if !declares_the_anchors {
         return Err(unknown());
@@ -4719,8 +4722,15 @@ mod tests {
             let mut with_decl = anchors.clone();
             with_decl.push(VmConstraint2::ProofBind(ProofBindSpec {
                 guard: LeanExpr::Const(1),
-                commit: LeanExpr::Var(PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE),
-                vk: LeanExpr::Var(PARAM_BASE + param::CUSTOM_VK_HASH_BASE),
+                // ⚑ EIGHT LANES: the four param limbs then four teeth columns, the deployed shape.
+                commit: (0..4)
+                    .map(|k| LeanExpr::Var(PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k))
+                    .chain((0..4).map(|k| LeanExpr::Var(4096 + k)))
+                    .collect(),
+                vk: (0..4)
+                    .map(|k| LeanExpr::Var(PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k))
+                    .chain((0..4).map(|k| LeanExpr::Var(4100 + k)))
+                    .collect(),
                 // Custom declares both halves of the seam absent — see `ProofBindSpec`.
                 vk_pin: None,
                 bound: None,

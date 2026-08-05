@@ -103,7 +103,7 @@ universe u v
 open Dregg2.Circuit.PremiseInhabitability
   (Acc Empties Extracts RejectsAll AcceptsSome ofBool not_rejectsAll_of_acceptsSome
    empties_proves_anything not_of_empties_of_acceptsSome)
-open Dregg2.Circuit.PremiseInhabitabilitySweep (Discriminating CarrierLive)
+open Dregg2.Circuit.PremiseInhabitabilitySweep (Discriminating CarrierLive oneLaneEngine)
 
 set_option autoImplicit false
 
@@ -277,18 +277,25 @@ open Dregg2.Circuit.DecoBackingAttack (DecoEngine demoDeco)
 open Dregg2.Circuit.BridgeBackingAttack (NoteSpendEngine demoSpend)
 
 /-- **The `*LeafFriFloor` SHAPE, once.** `P` is the sub-proof type, `verify` its accepting bit, and
-`digest` the lane the leaf exposes (`piCommit` for seven of the nine, `paymentDigest` for DECO,
-`spendDigest` for the bridge note-spend). -/
-def LeafFloorShape (P : Type) (verify : P → Bool) (digest : P → ℤ) (Sat : ℤ → ℤ → Prop) : Prop :=
+`digest` the object the leaf exposes (`piCommit` for seven of the nine, `paymentDigest` for DECO,
+`spendDigest` for the bridge note-spend).
+
+⚑ **WIDENED 2026-08-05 with `ProofEngine.piCommit : Proof → List ℤ`.** The digest's codomain is now
+a parameter `D`, and `ofCommit` reads the model's SCALAR leaf-commitment into it. The seven
+`ProofEngine` floors carry ONE lane (`ofCommit = fun c => [c]`) while the deployed commitment is
+eight; DECO's `paymentDigest` and the bridge `spendDigest` are still scalars (`ofCommit = fun c => c`).
+The shape is otherwise unchanged. -/
+def LeafFloorShape {D : Type} (P : Type) (verify : P → Bool) (digest : P → D) (ofCommit : ℤ → D)
+    (Sat : ℤ → ℤ → Prop) : Prop :=
   ∀ leafVk leafCommit : ℤ, Sat leafVk leafCommit →
-    ∃ q : P, verify q = true ∧ digest q = leafCommit
+    ∃ q : P, verify q = true ∧ digest q = ofCommit leafCommit
 
 /-- The shape IS the instrument's `Extracts`, so everything in `PremiseInhabitability` applies. -/
-theorem leafFloorShape_iff_extracts (P : Type) (verify : P → Bool) (digest : P → ℤ)
-    (Sat : ℤ → ℤ → Prop) :
-    LeafFloorShape P verify digest Sat
+theorem leafFloorShape_iff_extracts {D : Type} (P : Type) (verify : P → Bool) (digest : P → D)
+    (ofCommit : ℤ → D) (Sat : ℤ → ℤ → Prop) :
+    LeafFloorShape P verify digest ofCommit Sat
       ↔ Extracts (fun p : ℤ × ℤ => Sat p.1 p.2)
-          (fun p (q : P) => verify q = true ∧ digest q = p.2) := by
+          (fun p (q : P) => verify q = true ∧ digest q = ofCommit p.2) := by
   constructor
   · intro h p hp; exact h p.1 p.2 hp
   · intro h a b hab; exact h (a, b) hab
@@ -296,27 +303,34 @@ theorem leafFloorShape_iff_extracts (P : Type) (verify : P → Bool) (digest : P
 /-- **THE LOWER BRACKET, generically.** A leaf verifier that rejects everything makes the floor
 EMPTY the in-circuit satisfaction predicate. So each of the nine is exactly as strong as the claim
 that its leaf verifier accepts something. -/
-theorem deadVerifier_empties_leafFloorShape (P : Type) (verify : P → Bool) (digest : P → ℤ)
+theorem deadVerifier_empties_leafFloorShape {D : Type} (P : Type) (verify : P → Bool)
+    (digest : P → D) (ofCommit : ℤ → D)
     (Sat : ℤ → ℤ → Prop) (hdead : ∀ q : P, verify q = false) :
-    Empties (LeafFloorShape P verify digest Sat) (fun p : ℤ × ℤ => Sat p.1 p.2) := by
+    Empties (LeafFloorShape P verify digest ofCommit Sat) (fun p : ℤ × ℤ => Sat p.1 p.2) := by
   intro h p hp
   obtain ⟨q, hq, -⟩ := h p.1 p.2 hp
   rw [hdead q] at hq
   exact Bool.noConfusion hq
 
-/-- **THE UPPER BRACKET, generically.** At any engine with ONE accepting proof the floor holds with
-its antecedent SATISFIED — a non-degenerate model, not the free one obtained by emptying the
-antecedent. -/
-theorem leafFloorShape_inhabited_nondegenerately (P : Type) (verify : P → Bool) (digest : P → ℤ)
-    (q₀ : P) (hq₀ : verify q₀ = true) :
-    LeafFloorShape P verify digest (fun _ c => c = digest q₀)
-      ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = digest q₀) a b) :=
-  ⟨fun _ _ hab => ⟨q₀, hq₀, hab.symm⟩, ⟨0, digest q₀, rfl⟩⟩
+/-- **THE UPPER BRACKET, generically.** At any engine with ONE accepting proof whose exposed object
+is REACHED by the model's scalar commitment (`hc₀`), the floor holds with its antecedent SATISFIED —
+a non-degenerate model, not the free one obtained by emptying the antecedent.
+
+⚑ `hc₀` is what the pre-widening statement got for free: when `digest q₀` was itself an `ℤ` the
+witnessing commitment was `digest q₀`. With a lane-vector digest the model must NAME the scalar its
+`ofCommit` sends there, and a width mismatch makes that unprovable rather than silently true. -/
+theorem leafFloorShape_inhabited_nondegenerately {D : Type} (P : Type) (verify : P → Bool)
+    (digest : P → D) (ofCommit : ℤ → D)
+    (q₀ : P) (hq₀ : verify q₀ = true) (c₀ : ℤ) (hc₀ : ofCommit c₀ = digest q₀) :
+    LeafFloorShape P verify digest ofCommit (fun _ c => c = c₀)
+      ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = c₀) a b) :=
+  ⟨fun _ _ hab => ⟨q₀, hq₀, by rw [hab, hc₀]⟩, ⟨0, c₀, rfl⟩⟩
 
 /-- The degenerate model, recorded so the previous theorem cannot be mistaken for it. -/
-theorem leafFloorShape_is_free_when_unsatisfiable (P : Type) (verify : P → Bool) (digest : P → ℤ)
+theorem leafFloorShape_is_free_when_unsatisfiable {D : Type} (P : Type) (verify : P → Bool)
+    (digest : P → D) (ofCommit : ℤ → D)
     (Sat : ℤ → ℤ → Prop) (hno : ∀ a b, ¬ Sat a b) :
-    LeafFloorShape P verify digest Sat :=
+    LeafFloorShape P verify digest ofCommit Sat :=
   fun a b hab => absurd hab (hno a b)
 
 /-! ### §2.1 — the nine identities, each by `Iff.rfl`.
@@ -327,42 +341,44 @@ makes the corresponding line fail to elaborate. -/
 
 theorem customLeafFriFloor_is_the_shape (E : ProofEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.piCommit Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat := Iff.rfl
 
 theorem factoryLeafFriFloor_is_the_shape (E : ProofEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.FactoryBindingFromFold.FactoryLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.piCommit Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat := Iff.rfl
 
 theorem contractLeafFriFloor_is_the_shape (E : ProofEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.HatcheryBindingFromFold.ContractLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.piCommit Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat := Iff.rfl
 
 theorem membershipLeafFriFloor_is_the_shape (E : ProofEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.MembershipBindingFromFold.MembershipLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.piCommit Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat := Iff.rfl
 
 theorem sovereignLeafFriFloor_is_the_shape (E : ProofEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.SovereignBindingFromFold.SovereignLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.piCommit Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat := Iff.rfl
 
 theorem dslLeafFriFloor_is_the_shape (E : ProofEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.DslBindingFromFold.DslLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.piCommit Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat := Iff.rfl
 
 theorem blindedLeafFriFloor_is_the_shape (E : ProofEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.BlindedMembershipBindingFromFold.BlindedLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.piCommit Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat := Iff.rfl
 
 /-- The DECO leaf exposes `paymentDigest`, not `piCommit` — the one place the "same body with the
-projection renamed" reading had to be checked rather than assumed. It IS the same shape. -/
+projection renamed" reading had to be checked rather than assumed. It IS the same shape.
+⚑ And it is one of the TWO whose digest stayed a scalar across the 2026-08-05 lane widening, so its
+`ofCommit` is the identity where the seven `ProofEngine` floors carry `fun c => [c]`. -/
 theorem decoLeafFriFloor_is_the_shape (E : DecoEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.DecoBindingFromFold.DecoLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.paymentDigest Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.paymentDigest (fun c => c) Sat := Iff.rfl
 
-/-- The bridge note-spend leaf exposes `spendDigest`. Same shape. -/
+/-- The bridge note-spend leaf exposes `spendDigest`. Same shape, scalar digest. -/
 theorem noteSpendLeafFriFloor_is_the_shape (E : NoteSpendEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.BridgeBindingFromFold.NoteSpendLeafFriFloor E Sat
-      ↔ LeafFloorShape E.Proof E.verify E.spendDigest Sat := Iff.rfl
+      ↔ LeafFloorShape E.Proof E.verify E.spendDigest (fun c => c) Sat := Iff.rfl
 
 /-! ### §2.2 — both brackets, fired at all nine. -/
 
@@ -391,36 +407,42 @@ theorem deadVerifier_empties_all_nine_leafFloors
         (fun p : ℤ × ℤ => Sat p.1 p.2)
       ∧ Empties (Dregg2.Circuit.BridgeBindingFromFold.NoteSpendLeafFriFloor N Sat)
         (fun p : ℤ × ℤ => Sat p.1 p.2) :=
-  ⟨deadVerifier_empties_leafFloorShape _ _ _ Sat hE,
-   deadVerifier_empties_leafFloorShape _ _ _ Sat hE,
-   deadVerifier_empties_leafFloorShape _ _ _ Sat hE,
-   deadVerifier_empties_leafFloorShape _ _ _ Sat hE,
-   deadVerifier_empties_leafFloorShape _ _ _ Sat hE,
-   deadVerifier_empties_leafFloorShape _ _ _ Sat hE,
-   deadVerifier_empties_leafFloorShape _ _ _ Sat hE,
-   deadVerifier_empties_leafFloorShape _ _ _ Sat hD,
-   deadVerifier_empties_leafFloorShape _ _ _ Sat hN⟩
+  ⟨deadVerifier_empties_leafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat hE,
+   deadVerifier_empties_leafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat hE,
+   deadVerifier_empties_leafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat hE,
+   deadVerifier_empties_leafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat hE,
+   deadVerifier_empties_leafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat hE,
+   deadVerifier_empties_leafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat hE,
+   deadVerifier_empties_leafFloorShape E.Proof E.verify E.piCommit (fun c => [c]) Sat hE,
+   deadVerifier_empties_leafFloorShape D.Proof D.verify D.paymentDigest (fun c => c) Sat hD,
+   deadVerifier_empties_leafFloorShape N.Proof N.verify N.spendDigest (fun c => c) Sat hN⟩
 
-/-- **R5 UPPER BRACKET AT ALL NINE.** Each of the nine HOLDS with its antecedent SATISFIED at the
-tree's own demo engines (`demoEngine`, `demoDeco`, `demoSpend`), all of which have an accepting
-proof. So none of the nine is an empty notion, and R5's UNKNOWN is about the deployed
-instantiation only. -/
+/-- **R5 UPPER BRACKET AT ALL NINE.** Each of the nine HOLDS with its antecedent SATISFIED at a demo
+engine with an accepting proof (`oneLaneEngine`, `demoDeco`, `demoSpend`). So none of the nine is an
+empty notion, and R5's UNKNOWN is about the deployed instantiation only.
+
+⚑ The seven `ProofEngine` floors moved off `DescriptorIR2.demoEngine` on 2026-08-05. Their leaf
+commitment is a SCALAR met as `[leafCommit]`, and `demoEngine` squeezes the deployed EIGHT lanes, so
+no scalar antecedent is satisfiable there at all — the witness is `oneLaneEngine`, one accepting
+proof exposing one commitment lane. DECO and the bridge note-spend keep scalar digests and keep
+their engines. -/
 theorem all_nine_leafFloors_inhabited_nondegenerately :
-    (Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor demoEngine (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.FactoryBindingFromFold.FactoryLeafFriFloor demoEngine (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.HatcheryBindingFromFold.ContractLeafFriFloor demoEngine (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.MembershipBindingFromFold.MembershipLeafFriFloor demoEngine
+    (Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor oneLaneEngine (fun _ c => c = 123)
+      ∧ Dregg2.Circuit.FactoryBindingFromFold.FactoryLeafFriFloor oneLaneEngine (fun _ c => c = 123)
+      ∧ Dregg2.Circuit.HatcheryBindingFromFold.ContractLeafFriFloor oneLaneEngine
           (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.SovereignBindingFromFold.SovereignLeafFriFloor demoEngine
+      ∧ Dregg2.Circuit.MembershipBindingFromFold.MembershipLeafFriFloor oneLaneEngine
           (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.DslBindingFromFold.DslLeafFriFloor demoEngine (fun _ c => c = 123)
-      ∧ Dregg2.Circuit.BlindedMembershipBindingFromFold.BlindedLeafFriFloor demoEngine
+      ∧ Dregg2.Circuit.SovereignBindingFromFold.SovereignLeafFriFloor oneLaneEngine
+          (fun _ c => c = 123)
+      ∧ Dregg2.Circuit.DslBindingFromFold.DslLeafFriFloor oneLaneEngine (fun _ c => c = 123)
+      ∧ Dregg2.Circuit.BlindedMembershipBindingFromFold.BlindedLeafFriFloor oneLaneEngine
           (fun _ c => c = 123)
       ∧ Dregg2.Circuit.DecoBindingFromFold.DecoLeafFriFloor demoDeco (fun _ c => c = 123)
       ∧ Dregg2.Circuit.BridgeBindingFromFold.NoteSpendLeafFriFloor demoSpend (fun _ c => c = 123))
     ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = (123 : ℤ)) a b) := by
   refine ⟨⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩, ⟨0, 123, rfl⟩⟩ <;>
-    exact fun _ _ hab => ⟨true, rfl, hab.symm⟩
+    exact fun _ _ hab => ⟨true, rfl, by rw [hab]; rfl⟩
 
 end R5
 

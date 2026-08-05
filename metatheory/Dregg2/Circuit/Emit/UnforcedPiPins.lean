@@ -560,35 +560,42 @@ theorem unforced_pin_row_admits_any_value
     rw [hall]; exact hbase
   | umemOp _ => trivial
   | proofBind m =>
-    -- ⚑ NO LONGER `trivial`: the seam READS four expressions, and a column outside all four
-    -- leaves every one of them — and therefore the whole row-local gate — unchanged.
+    -- ⚑ NO LONGER `trivial`, and the seam reads LANE VECTORS since 2026-08-05: a column outside
+    -- every lane leaves every lane — and therefore the whole row-local gate — unchanged.
     have href := hnotref _ hc rfl
     have hg : col ∉ refsE m.guard := fun hx => href (by simp only [refs2, List.mem_append]; tauto)
-    have hv : col ∉ refsE m.vk := fun hx => href (by simp only [refs2, List.mem_append]; tauto)
-    have hcm : col ∉ refsE m.commit := fun hx => href (by simp only [refs2, List.mem_append]; tauto)
     have eg : m.guard.eval env'.loc = m.guard.eval env.loc :=
       evalE_setCol m.guard env.loc col v hg
-    have ev : m.vk.eval env'.loc = m.vk.eval env.loc := evalE_setCol m.vk env.loc col v hv
-    have ecm : m.commit.eval env'.loc = m.commit.eval env.loc :=
-      evalE_setCol m.commit env.loc col v hcm
+    have ev : m.vk.map (fun e => e.eval env'.loc) = m.vk.map (fun e => e.eval env.loc) :=
+      List.map_congr_left (fun e he => evalE_setCol e env.loc col v (fun hx =>
+        href (by
+          simp only [refs2, List.mem_append]
+          exact Or.inl (Or.inr (List.mem_flatMap.mpr ⟨e, he, hx⟩)))))
+    have ecm : m.commit.map (fun e => e.eval env'.loc) = m.commit.map (fun e => e.eval env.loc) :=
+      List.map_congr_left (fun e he => evalE_setCol e env.loc col v (fun hx =>
+        href (by
+          simp only [refs2, List.mem_append]
+          exact Or.inl (Or.inl (Or.inr (List.mem_flatMap.mpr ⟨e, he, hx⟩))))))
     obtain ⟨h1, h2, h3⟩ := hbase
     show ProofBind.holdsAt env' m
     refine ⟨by rw [eg]; exact h1, ?_, ?_⟩
     · cases hvp : m.vkPin with
       | none => show True; trivial
-      | some x =>
+      | some vs =>
         rw [hvp] at h2
-        show m.guard.eval env'.loc * (m.vk.eval env'.loc - x) ≡ 0 [ZMOD 2013265921]
+        show zeroLanes (m.guard.eval env'.loc) (m.vk.map (fun e => e.eval env'.loc)) vs
         rw [eg, ev]; exact h2
     · cases hbd : m.bound with
       | none => show True; trivial
-      | some b =>
-        have hb : col ∉ refsE b := fun hx =>
-          href (by simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]; tauto)
-        have eb : b.eval env'.loc = b.eval env.loc := evalE_setCol b env.loc col v hb
+      | some bs =>
+        have eb : bs.map (fun e => e.eval env'.loc) = bs.map (fun e => e.eval env.loc) :=
+          List.map_congr_left (fun e he => evalE_setCol e env.loc col v (fun hx =>
+            href (by
+              simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]
+              exact Or.inr (List.mem_flatMap.mpr ⟨e, he, hx⟩))))
         rw [hbd] at h3
-        show m.guard.eval env'.loc * (m.commit.eval env'.loc - b.eval env'.loc)
-          ≡ 0 [ZMOD 2013265921]
+        show zeroLanes (m.guard.eval env'.loc) (m.commit.map (fun e => e.eval env'.loc))
+          (bs.map (fun e => e.eval env'.loc))
         rw [eg, ecm, eb]; exact h3
   | windowGate w =>
     have href := hnotref _ hc rfl
@@ -636,39 +643,43 @@ def registryUnforcedCount (R : List (String × EffectVmDescriptor2)) : Nat :=
 
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (v3Registry)
 
--- MEASURED 2026-07-31 on `v3Registry` (36 members), AFTER the rc FOLD: 607 pins, of which **15
--- bind nothing**. It was 159 on 2026-07-30; the 144 that left the census are the `withDfaRcPins`
--- DFA route-commitment quartet on each of the 36 members, and they left it by becoming FORCED —
--- `EffectVmEmitRotationV3.caveatV3SitesAt` now absorbs the carrier into the PUBLISHED caveat
--- commitment, so a chip site reads those columns. NOT by an exemption: `dropUnforcedPins` is
--- unchanged and still drops every pin whose column no non-pin constraint reads.
+-- MEASURED 2026-08-05 on `v3Registry` (36 members), AFTER the `ProofBind` WIDENING: 607 pins, of
+-- which **1 binds nothing**. It was 15 before the widening and 159 on 2026-07-30.
+-- ⚑ THE 14 THAT LEFT THE CENSUS TODAY are `custom`'s high commitment/VK limbs, and they left it by
+-- becoming FORCED: the seam used to name LIMB 0 of each eight-felt object, so fourteen of the
+-- sixteen published lanes were read by no constraint at all; it now names all sixteen. NOT an
+-- exemption — `dropUnforcedPins` is unchanged and still drops every pin whose column no non-pin
+-- constraint reads. (The 144 that left on 2026-07-31 were the `withDfaRcPins` DFA route-commitment
+-- quartet on each of the 36 members, absorbed into the published caveat commitment.)
 #guard v3Registry.length == 36
 #guard registryPinCount v3Registry == 607
-#guard registryUnforcedCount v3Registry == 15
+#guard registryUnforcedCount v3Registry == 1
 
--- The classes, per member. `transfer` is now **0** — its only unforced pins WERE the rc quartet.
--- `custom` carries 14: the limbs of the 8-felt program-VK / proof-commitment octets that
--- `proofBind` does NOT reach (it binds limb 0 of each). `mint` carries 1.
+-- The classes, per member. `transfer` is **0** — its only unforced pins WERE the rc quartet.
+-- ⚑ `custom` is now **0**: it carried 14 — the limbs of the 8-felt program-VK / proof-commitment
+-- octets the seam did NOT reach when it bound limb 0 of each — and the widened seam reaches every
+-- one. `mint` carries the last 1.
 #guard ((v3Registry.lookup "transferVmDescriptor2R24").map (fun M => (unforcedPins M).length))
   == some 0
 #guard ((v3Registry.lookup "customVmDescriptor2R24").map (fun M => (unforcedPins M).length))
-  == some 14
+  == some 0
 #guard ((v3Registry.lookup "mintVmDescriptor2R24").map (fun M => (unforcedPins M).length))
   == some 1
 -- ...and NO other member has an unforced pin left at all.
 #guard (v3Registry.filter (fun p => (unforcedPins p.2).length != 0)).map (·.1)
-  == ["mintVmDescriptor2R24", "customVmDescriptor2R24"]
+  == ["mintVmDescriptor2R24"]
 
 -- THE SUBTRACTION, executed on the registry object: zero unforced pins survive.
 #guard registryUnforcedCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 0
--- and it costs exactly the 15 pins, no others.
-#guard registryPinCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 607 - 15
--- ⚑ THE rc-FOLD DELTA, arithmetic and machine-checked: the emit now KEEPS 592 pins where it kept
--- 448 before (`607 - 159`), and the difference is EXACTLY four per member — the rc quartet, on all
--- 36. This is the line that would go red if a future edit restored the pins by exempting them
--- instead of by forcing their columns: an exemption would change `unforcedPins`, not this delta.
+-- and it costs exactly the 1 remaining pin, no others.
+#guard registryPinCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 606
+-- ⚑ THE KEPT-PIN DELTA, arithmetic and machine-checked: the emit now KEEPS 606 pins where it kept
+-- 448 before (`607 - 159`) — `4 * 36 = 144` from the rc fold plus ⚑ **14 from the ProofBind
+-- widening**, custom's high commitment/VK limbs. This is the line that would go red if a future edit
+-- restored pins by EXEMPTING them instead of by forcing their columns: an exemption would change
+-- `unforcedPins`, not this delta.
 #guard registryPinCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2)))
-  - (607 - 159) == 4 * v3Registry.length
+  - (607 - 159) == 158
 
 /-! ## §6 — ⚑ WHAT `forcedCols` OVER-COUNTS, MEASURED IN THE AUTHORING LANGUAGE.
 
@@ -727,17 +738,18 @@ def registryDeclarationOnlyCount (R : List (String × EffectVmDescriptor2)) : Na
 -- `proof_bind_is_the_only_reader_of_the_custom_exposure_columns` measures the SAME two on the
 -- emitted bytes of all three registries; this is that statement one stage upstream, where it can
 -- refuse an emit instead of describing one.
-#guard registryDeclarationOnlyCount v3Registry == 2
--- ⚑ AND IT IS INVARIANT UNDER THE SUBTRACTION — 2 before, 2 after. That is the whole content of
--- "the subtraction does not reach them": `registryUnforcedCount` goes 15 → 0 across the same map,
+#guard registryDeclarationOnlyCount v3Registry == 16
+-- ⚑ AND IT IS INVARIANT UNDER THE SUBTRACTION — 16 before, 16 after. That is the whole content of
+-- "the subtraction does not reach them": `registryUnforcedCount` goes 1 → 0 across the same map,
 -- because `dropUnforcedPins` removes exactly the pins `forcedCols` condemns, and `forcedCols` is
 -- what calls these two forced. A reader who assumed the subtraction cleans up after itself would
 -- write `== 0` here; it does not, and this guard is the difference between those two beliefs.
-#guard registryDeclarationOnlyCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 2
+#guard registryDeclarationOnlyCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 16
 #guard (v3Registry.filter (fun p => (declarationOnlyPins p.2).length != 0)).map (·.1)
   == ["customVmDescriptor2R24"]
 #guard ((v3Registry.lookup "customVmDescriptor2R24").map
-  (fun M => (declarationOnlyPins M).map (fun p => p.2.2))) == some [46, 54]
+  (fun M => (declarationOnlyPins M).map (fun p => p.2.2)))
+  == some [46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61]
 
 /-- The same surface with ONLY `.proofBind` dropped — `.umemOp` kept. -/
 def refs2NoProofBind : VmConstraint2 → List Nat
@@ -768,7 +780,7 @@ def declarationOnlyPinsNoProofBind (M : EffectVmDescriptor2) : List (VmRow × Na
 -- `== 2` above is attributable to `proofBind`. Stated as its own guard because an exclusion that
 -- silently condemned extra pins would make that number read as a `proofBind` measurement when it
 -- was really a umem one.
-#guard (v3Registry.map (fun p => (declarationOnlyPinsNoProofBind p.2).length)).foldl (· + ·) 0 == 2
+#guard (v3Registry.map (fun p => (declarationOnlyPinsNoProofBind p.2).length)).foldl (· + ·) 0 == 16
 
 #assert_axioms dropUnforcedPins_mem
 #assert_axioms filter_nonpin_dropUnforcedPins

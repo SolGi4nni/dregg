@@ -130,40 +130,50 @@ fn the_mina_carrier_pins_the_real_wraplink_program() {
 
     let mina = mina_desc();
     let binds = proof_binds(&mina);
+    // ⚑ 2026-08-05: ONE bind carrying nine LANES, where it was nine one-felt binds.
     assert_eq!(
         binds.len(),
-        STATE_LANES,
-        "the Mina light client declares one proof_bind per program lane"
+        1,
+        "the Mina light client declares one proof_bind, carrying every program lane"
     );
-
-    for (i, b) in binds.iter().enumerate() {
+    let b = binds[0];
+    assert_eq!(
+        b.guard,
+        LeanExpr::Var(WRAP_FS_PROVED),
+        "the bind is guarded by WRAP_FS_PROVED"
+    );
+    assert_eq!(b.vk.len(), STATE_LANES, "nine attested program lanes");
+    assert_eq!(
+        b.commit.len(),
+        STATE_LANES,
+        "nine declared commitment lanes"
+    );
+    for i in 0..STATE_LANES {
         assert_eq!(
-            b.guard,
-            LeanExpr::Var(WRAP_FS_PROVED),
-            "bind {i} is guarded by WRAP_FS_PROVED"
-        );
-        assert_eq!(
-            b.vk,
+            b.vk[i],
             LeanExpr::Var(SUB_VK_BASE + i),
-            "bind {i} attests program lane column {i}"
+            "lane {i} attests program lane column {i}"
         );
         assert_eq!(
-            b.commit,
+            b.commit[i],
             LeanExpr::Var(SUB_PI_BASE + i),
-            "bind {i}'s declared commitment is the PI-BOUND lane, not a free column"
-        );
-        assert_eq!(
-            b.vk_pin,
-            Some(lanes[i] as i64),
-            "bind {i}'s vk_pin must be lane {i} of the WRAPLINK fingerprint recomputed from \
-             pasta-fq-wraplink.json — a drift here means one descriptor was re-emitted and the \
-             other was not"
-        );
-        assert!(
-            !b.is_declarative(),
-            "bind {i} must not be the unpinned shape (ProofBind::is_declarative)"
+            "lane {i}'s declared commitment is the PI-BOUND lane, not a free column"
         );
     }
+    assert_eq!(
+        b.vk_pin.as_deref(),
+        Some(&lanes.iter().map(|l| *l as i64).collect::<Vec<i64>>()[..]),
+        "the vk_pin must be the nine lanes of the WRAPLINK fingerprint recomputed from \
+         pasta-fq-wraplink.json — a drift here means one descriptor was re-emitted and the \
+         other was not"
+    );
+    assert!(
+        !b.is_declarative(),
+        "the bind must not be the unpinned shape (ProofBind::is_declarative)"
+    );
+    // ⚑ AND IT IS NOT A PREFIX PIN: the declared program names every lane the seam attests.
+    b.width_ok()
+        .expect("the Mina seam must satisfy the lane discipline at admission");
 }
 
 /// ⚑ **NINE LANES, NOT ONE FELT — the number said out loud.** A single-felt program tie is worth
@@ -175,8 +185,9 @@ fn the_program_pin_is_nine_distinct_lanes() {
     let binds = proof_binds(&mina);
     let mut cols: Vec<usize> = binds
         .iter()
-        .map(|b| match b.vk {
-            LeanExpr::Var(c) => c,
+        .flat_map(|b| b.vk.iter())
+        .map(|e| match e {
+            LeanExpr::Var(c) => *c,
             _ => panic!("a program lane must be a column"),
         })
         .collect();

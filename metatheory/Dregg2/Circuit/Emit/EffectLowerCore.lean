@@ -330,15 +330,17 @@ def lowerChalLeg (c : ChalLeg) : List VmConstraint2 :=
   | .first      => refuseConstraints
   | .last       => refuseConstraints
 
-/-- ⚑ **A RECURSION-BIND leg → the target's `proofBind`** (2026-08-05). The three expressions are
-emitted through `emitExpr` — the same wire form every gate body takes — and the two DECLARED halves
-travel as they are. A leg that pins NEITHER (`BindLeg.mainRailOk = false`, the
-`ProofBind.isDeclarative` shape) lowers to the UNSATISFIABLE pair rather than being emitted as a
-seam that quantifies over every program: a compiled descriptor cannot declare an unpinned bind. -/
+/-- ⚑ **A RECURSION-BIND leg → the target's `proofBind`** (2026-08-05). The lane vectors are emitted
+lane by lane through `emitExpr` — the same wire form every gate body takes — and the declared pins
+travel as they are. A leg `BindLeg.mainRailOk` refuses lowers to the UNSATISFIABLE pair rather than
+being emitted: that covers the `ProofBind.isDeclarative` shape (pins neither program nor
+commitment, so its existential quantifies over every program), a seam NARROWER than
+`PROOF_BIND_MIN_LANES` (a limb tie, `2^31`), and a pin that names fewer lanes than the vector it
+pins. A compiled descriptor can declare none of the three. -/
 def lowerBindLeg (b : BindLeg) : List VmConstraint2 :=
   if b.mainRailOk then
-    [.proofBind ⟨emitExpr b.guard, emitExpr b.commit, emitExpr b.vk, b.vkPin,
-                 b.bound.map emitExpr⟩]
+    [.proofBind ⟨emitExpr b.guard, b.commit.map emitExpr, b.vk.map emitExpr, b.vkPin,
+                 b.bound.map (List.map emitExpr)⟩]
   else refuseConstraints
 
 /-- **One leg → its main-rail constraints.** A gate goes through the SAME `Head` normalizer the

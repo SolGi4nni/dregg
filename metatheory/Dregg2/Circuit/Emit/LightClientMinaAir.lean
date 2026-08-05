@@ -571,18 +571,22 @@ So the honest sentence is *"a dregg STARK checked one absorption of the Fq trans
 outputs this row's sub-proof commitment covers"*, and the carrier is named `WRAP_FS_PROVED`
 (Fiat–Shamir), not `PICKLES_WITNESSED`.
 
-## The mechanism, and why it is nine legs and not one
+## The mechanism: ONE leg, NINE LANES
 
-`DescriptorIR2.ProofBind`'s row-local half is three congruences and its `vkPin`/`bound`/`commit` are
-**ONE FELT EACH**. A single-felt program tie is worth `2^31` — below this repo's ~124-bit bar, and
-the containment the whole `CommitSurface` line exists to refuse. So the program is pinned **lane by
-lane**: nine `proofBind` legs, one per `Faithful9` lane of the sub-proof descriptor's semantic
-fingerprint, `8·29 + 24 = 256` bits exactly and the encoding machine-checked injective
-(`fieldToLanes9_injective`). A forger must match all nine.
+⚑ **2026-08-05 — the widening landed, and this descriptor is its first consumer.** What stood here
+read: *"`ProofBind`'s `vkPin`/`bound`/`commit` are ONE FELT EACH … so the program is pinned lane by
+lane: nine `proofBind` legs … This is NOT a substitute for widening `ProofBindSpec` itself — that
+widening is a separate lane's."* The widening is done. `ProofBind` carries LANE VECTORS, so the nine
+legs are ONE leg whose `vk` is the nine `SUB_VK` columns and whose `vkPin` is the nine `Faithful9`
+lanes of the sub-proof descriptor's semantic fingerprint — `8·29 + 24 = 256` bits exactly, the
+encoding machine-checked injective (`fieldToLanes9_injective`). A forger must still match all nine;
+what changed is that the descriptor SAYS SO IN ONE DECLARATION, and that a leg pinning a PREFIX of
+those lanes is now refused (`BindLeg.mainRailOk`) rather than being nine independent legs of which
+eight could quietly go missing.
 
-⚠ This is NOT a substitute for widening `ProofBindSpec` itself — that widening is a separate lane's
-and this file does not touch `descriptor_ir2.rs`. It is the nine-lane construction *at the existing
-IR*, and it is at the bar rather than below it, which is the part that matters.
+⚑ Note the FLOOR is eight and this object is NINE: eight BabyBear lanes cannot injectively carry 32
+bytes (247.26 bits against 256), so `Faithful9` is the honest encoding and the seam binds the width
+of ITS object, not of the custom commitment's.
 
 ⚑ **`bound` is `none`, and that is the STRONGER choice here, not a laxer one.** `bound` forces the
 `commit` EXPRESSION to equal a row-local expression, and exists because the deployed `customProofBind`
@@ -611,20 +615,23 @@ def WRAPLINK_VK_LANES : List ℤ :=
 /-- The `i`-th pinned program lane, as the `vkPin` literal the leg carries. -/
 def wraplinkVkLane (i : Nat) : ℤ := WRAPLINK_VK_LANES.getD i 0
 
-/-- ⚑ **ONE RECURSION-BIND LEG, at lane `i`.** Guard `WRAP_FS_PROVED`; the declared commitment is the
-PI-bound `SUB_PI i`; the attested program lane is the prover's `SUB_VK i`, pinned to the descriptor
-literal. -/
-def wrapBindLeg (i : Nat) : AirLeg :=
+/-- ⚑ **THE RECURSION-BIND LEG — ONE LEG, NINE LANES.** Guard `WRAP_FS_PROVED`; the declared
+commitment is the nine PI-bound `SUB_PI` columns; the attested program is the nine `SUB_VK` columns,
+pinned to the nine descriptor-fingerprint literals.
+
+⚑ Until 2026-08-05 this was `wrapBindLeg (i : Nat)` and NINE legs, because the IR's `commit`/`vk`/
+`vkPin` were one felt each. The lane vector is the same nine columns and the same nine literals; the
+difference is that the seam declares them as ONE object, and `BindLeg.mainRailOk` refuses a pin that
+names fewer lanes than the vector it pins. -/
+def wrapBindLeg : AirLeg :=
   .bind { guard := .var WRAP_FS_PROVED
-        , commit := .var (SUB_PI i)
-        , vk := .var (SUB_VK i)
-        , vkPin := some (wraplinkVkLane i)
+        , commit := (List.range 9).map (fun i => .var (SUB_PI i))
+        , vk := (List.range 9).map (fun i => .var (SUB_VK i))
+        , vkPin := some WRAPLINK_VK_LANES
         , bound := none }
 
-/-- The nine bind legs, written out so the emission pin below reduces with no fold. -/
-def wrapBindLegs : List AirLeg :=
-  [wrapBindLeg 0, wrapBindLeg 1, wrapBindLeg 2, wrapBindLeg 3, wrapBindLeg 4,
-   wrapBindLeg 5, wrapBindLeg 6, wrapBindLeg 7, wrapBindLeg 8]
+/-- The bind legs — now exactly one. -/
+def wrapBindLegs : List AirLeg := [wrapBindLeg]
 
 /-- The nine sub-proof-commitment PI pins (cols 40..48 → PI 20..28). -/
 def subPiPins : List AirLeg :=
@@ -742,20 +749,22 @@ theorem minaHeadAir_mainRailOk : minaHeadAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaHeadAir_pinsFit : minaHeadAir.pinsFit MINA_PI_COUNT = true := by rfl
 
-/-- The source carries 56 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
+/-- The source carries 48 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
 2 top-lane lookups + ⚑ 21 PI pins (the 21st is `ANCHOR_H`, 2026-08-05) + ⚑ the `WRAP_FS_PROVED` gate
-+ 9 `.bind` legs + 9 sub-proof PI pins.
++ ⚑ ONE nine-lane `.bind` leg (was nine one-felt legs before the widening) + 9 sub-proof PI pins.
 ⚑ A `.limbs` leg is ONE leg and EIGHT constraints — `minaLcVerifyDesc_constraint_count` is the
 number a dropped lane moves, and this one is not. -/
-theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 56 := by rfl
+theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 48 := by rfl
 
-/-- ⚑⚑ **NINE RECURSION BINDS, AND NONE OF THEM DECLARATIVE.** `bindCount` is the number a
-re-emission that dropped a sub-proof obligation would move while every other shape count sat still;
-`mainRailOk` (already `true` above) additionally decides that **no leg is the unpinned shape** —
-`BindLeg.mainRailOk` is FALSE exactly on `vkPin = none ∧ bound = none`, so a `true` verdict on this
-air block IS the statement that its recursion seams name a program. -/
+/-- ⚑⚑ **ONE RECURSION BIND, NINE LANES, AND NOT THE DECLARATIVE SHAPE.** `bindCount` is the number
+a re-emission that dropped the sub-proof obligation would move while every other shape count sat
+still; `mainRailOk` (already `true` above) additionally decides that the leg is neither the unpinned
+shape nor a narrow one — since the widening `BindLeg.mainRailOk` is FALSE on `vkPin = none ∧ bound =
+none`, on fewer lanes than `PROOF_BIND_MIN_LANES`, and on a pin that names fewer lanes than its
+vector. A `true` verdict on this air block IS the statement that its recursion seam names a program
+AT ITS FULL WIDTH. -/
 theorem minaHeadAir_bind_shape :
-    minaHeadAir.bindCount = 9
+    minaHeadAir.bindCount = 1
       ∧ (wrapBindLegs.all Dregg2.Circuit.EffectAirIR.AirLeg.mainRailOk) = true := by
   refine ⟨rfl, rfl⟩
 
@@ -818,43 +827,45 @@ theorem minaLcVerifyDesc_ranges : minaLcVerifyDesc.ranges = [] := rfl
 lower to EIGHT lookups each. ⚑ A dropped lane moves this number and nothing else does — which is why
 the count is pinned separately from the leg count. (`EffectLower.lowerLeg_ne_nil` is the general
 statement that no leg can vanish; this is the exact arithmetic at this descriptor.) -/
-theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 70 := rfl
+theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 62 := rfl
 
-/-- ⚑⚑ **THE NINE `proofBind` CONSTRAINTS, AS THE COMPILER EMITTED THEM** — the whole recursion
-declaration, on the bytes, at their emitted positions (52..60; 51 is the `WRAP_FS_PROVED` gate).
-⚑ Each index is ONE HIGHER than before 2026-08-05: the `ANCHOR_H` PI pin is emitted at 50.
+/-- ⚑⚑ **THE `proofBind` CONSTRAINT, AS THE COMPILER EMITTED IT** — the whole recursion declaration,
+on the bytes, at its emitted position (52; 51 is the `WRAP_FS_PROVED` gate).
+⚑ It was NINE constraints at 52..60 until the 2026-08-05 widening; it is ONE constraint carrying the
+same nine columns and nine literals as LANE VECTORS, and the eight positions it freed shift every
+constraint after it down by eight.
 
-This is the object the carrier's content IS. A leg that lost its `vkPin`, or whose `vk` drifted onto
-another column, or whose declared commitment stopped being the PI-bound lane, moves this `rfl`. -/
+This is the object the carrier's content IS. A leg that lost a `vkPin` lane, or whose `vk` drifted
+onto another column, or whose declared commitment stopped being the PI-bound lane, moves this
+`rfl`. -/
 theorem minaLcVerifyDesc_proof_binds :
-    (minaLcVerifyDesc.constraints.drop 52).take 9 =
-      [ .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 0), .var (SUB_VK 0),
-                    some (wraplinkVkLane 0), none⟩
-      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 1), .var (SUB_VK 1),
-                    some (wraplinkVkLane 1), none⟩
-      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 2), .var (SUB_VK 2),
-                    some (wraplinkVkLane 2), none⟩
-      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 3), .var (SUB_VK 3),
-                    some (wraplinkVkLane 3), none⟩
-      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 4), .var (SUB_VK 4),
-                    some (wraplinkVkLane 4), none⟩
-      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 5), .var (SUB_VK 5),
-                    some (wraplinkVkLane 5), none⟩
-      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 6), .var (SUB_VK 6),
-                    some (wraplinkVkLane 6), none⟩
-      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 7), .var (SUB_VK 7),
-                    some (wraplinkVkLane 7), none⟩
-      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 8), .var (SUB_VK 8),
-                    some (wraplinkVkLane 8), none⟩ ] := rfl
+    (minaLcVerifyDesc.constraints.drop 52).take 1 =
+      [ .proofBind ⟨.var WRAP_FS_PROVED
+                   , [.var (SUB_PI 0), .var (SUB_PI 1), .var (SUB_PI 2), .var (SUB_PI 3)
+                     , .var (SUB_PI 4), .var (SUB_PI 5), .var (SUB_PI 6), .var (SUB_PI 7)
+                     , .var (SUB_PI 8)]
+                   , [.var (SUB_VK 0), .var (SUB_VK 1), .var (SUB_VK 2), .var (SUB_VK 3)
+                     , .var (SUB_VK 4), .var (SUB_VK 5), .var (SUB_VK 6), .var (SUB_VK 7)
+                     , .var (SUB_VK 8)]
+                   , some WRAPLINK_VK_LANES, none⟩ ] := rfl
 
 /-- ⚑ **AND NOT ONE OF THEM IS DECLARATIVE, MEASURED ON THE EMITTED DESCRIPTOR.**
 `proofBindDeclarative` is the tree's census of recursion seams that pin neither program nor
 commitment — the shape whose existential quantifies over every program and every statement. This
 descriptor contributes NINE binds and ZERO to that census. -/
 theorem minaLcVerifyDesc_no_declarative_binds :
-    (Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).length = 9
+    (Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).length = 1
       ∧ Dregg2.Circuit.DescriptorIR2.proofBindDeclarative minaLcVerifyDesc = 0 := by
   refine ⟨rfl, rfl⟩
+
+/-- ⚑ **AND THE SEAM DECLARES NINE LANES ON BOTH HALVES, PINNED ON EVERY ONE.** The width verdict on
+the emitted object: `commit` and `vk` agree in length, the length is at or above the floor, and the
+`vkPin` names EXACTLY as many lanes as `vk` — a prefix pin would be refused here and unsatisfiable in
+the AIR. -/
+theorem minaLcVerifyDesc_bind_is_nine_lanes :
+    ((Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).all
+        (fun m => m.widthOk && m.commit.length == 9)) = true := by
+  rfl
 
 /-- ⚑ **THE PROGRAM PIN IS NINE LANES WIDE, AND THE NUMBER IS SAID OUT LOUD.** A single-felt tie is
 worth `2^31`; nine `Faithful9` lanes cover `8·29 + 24 = 256` bits exactly, and the lanes are
@@ -939,11 +950,12 @@ theorem minaLcVerifyDesc_pins :
       , .base (.piBinding VmRow.first REQ_DEPTH PI_REQ_DEPTH)
       , .base (.piBinding VmRow.first ANCHOR_H PI_ANCHOR_H) ] := rfl
 
-/-- ⚑ **THE NINE SUB-PROOF-COMMITMENT PINS** (constraints 61..69). Without these the commitment the
+/-- ⚑ **THE NINE SUB-PROOF-COMMITMENT PINS** (constraints 53..61; they were 61..69 before the
+2026-08-05 widening collapsed nine one-felt binds into one nine-lane bind). Without these the commitment the
 recursion existential quantifies over would be a hidden column and the consumer would have nothing to
 compare a sub-proof's public inputs against. -/
 theorem minaLcVerifyDesc_subpi_pins :
-    minaLcVerifyDesc.constraints.drop 61 =
+    minaLcVerifyDesc.constraints.drop 53 =
       [ .base (.piBinding VmRow.first (SUB_PI 0) (PI_SUB_PI 0))
       , .base (.piBinding VmRow.first (SUB_PI 1) (PI_SUB_PI 1))
       , .base (.piBinding VmRow.first (SUB_PI 2) (PI_SUB_PI 2))

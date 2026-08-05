@@ -13,7 +13,7 @@
 //!
 //! The rung that landed 2026-08-05: `PICKLES_OK` — a witnessed bit forced `= 1` with nothing
 //! computing it — became two columns. `PICKLES_WITNESSED` is the residue and is still a bit, named
-//! so. `WRAP_FS_PROVED` is not: its `= 1` guards **nine `proof_bind` constraints** pinning the row's
+//! so. `WRAP_FS_PROVED` is not: its `= 1` guards **one nine-lane `proof_bind` constraint** pinning the row's
 //! attested program, lane by lane, to the semantic fingerprint of `dregg-pasta-fq-wraplink::v1` —
 //! an AIR that EXISTS, PROVES (`pasta_fq_wrap_transcript_proves.rs`, 9/9 release) and whose fixture
 //! instance is Mina devnet block 539508's own phase-2 `fq_kimchi` transcript link.
@@ -168,17 +168,37 @@ fn the_served_descriptor_has_the_recursion_shape() {
     let d = desc();
     assert_eq!(d.trace_width, MINA_LC_WIDTH);
     assert_eq!(d.public_input_count, MINA_PI_COUNT);
+    // ⚑ 2026-08-05, the `ProofBind` widening: NINE one-felt binds collapsed into ONE nine-lane
+    // bind, so the constraint count drops by eight and the bind count is 1.
     assert_eq!(
         d.constraints.len(),
-        69,
-        "50 + the carrier gate + 9 binds + 9 pins"
+        61,
+        "50 + the carrier gate + 1 nine-lane bind + 9 pins"
     );
-    let binds = d
+    let binds: Vec<_> = d
         .constraints
         .iter()
-        .filter(|c| matches!(c, VmConstraint2::ProofBind(_)))
-        .count();
-    assert_eq!(binds, STATE_LANES, "one proof_bind per program lane");
+        .filter_map(|c| match c {
+            VmConstraint2::ProofBind(m) => Some(m),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        binds.len(),
+        1,
+        "one proof_bind, carrying every program lane"
+    );
+    assert_eq!(
+        binds[0].vk.len(),
+        STATE_LANES,
+        "the seam ties all nine program lanes — a prefix pin is refused at admission"
+    );
+    assert_eq!(binds[0].commit.len(), STATE_LANES);
+    assert_eq!(
+        binds[0].vk_pin.as_ref().map(Vec::len),
+        Some(STATE_LANES),
+        "the program pin names every lane"
+    );
 
     // ⚑ AND THE SUB-PROOF DESCRIPTOR IT NAMES IS ACTUALLY SERVED. A recursion bind to a program
     // this node cannot load would make the consumer's refusal unreachable — the fail-open shape.

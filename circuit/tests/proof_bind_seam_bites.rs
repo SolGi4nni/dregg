@@ -64,28 +64,43 @@ use dregg_circuit::refusal;
 
 /// Trace column layout of the synthetic seam descriptor — the same three roles the deployed
 /// `customProofBind` names (`sel::CUSTOM`, `custom_proof_commitment`, `custom_program_vk_hash`),
-/// plus one column standing for the row-derived object a light-client fold's `bound` would be.
+/// plus a lane block standing for the row-derived object a light-client fold's `bound` would be.
+///
+/// ⚑ **EIGHT LANES EACH since 2026-08-05.** This file measured a ONE-FELT seam until the widening,
+/// which is the whole reason the widening happened: a one-felt tie is worth `2^31`.
 const GUARD: usize = 0;
-const COMMIT: usize = 1;
-const VK: usize = 2;
-/// The row-local object the commitment must equal. In a landed fold this is the in-AIR anchor
-/// digest; here it is a plain column so the tooth measures the SEAM and not a hash gadget.
-const ANCHOR: usize = 3;
+const COMMIT_BASE: usize = 1;
+const VK_BASE: usize = 9;
+/// The row-local object the commitment must equal, lane by lane. In a landed fold this is the
+/// in-AIR anchor digest; here it is a plain column block so the tooth measures the SEAM and not a
+/// hash gadget.
+const ANCHOR_BASE: usize = 17;
 
-const WIDTH: usize = 4;
+const LANES: usize = 8;
+const WIDTH: usize = 25;
 const ROWS: usize = 8;
 
-/// The program VK limb the pinned descriptor declares. Arbitrary but FIXED — the whole content of
-/// `vk_pin` is that the prover cannot choose it.
-const DECLARED_VK: i64 = 0x5eed_51;
+/// The program VK the pinned descriptor declares — EIGHT lanes, arbitrary but FIXED. The whole
+/// content of `vk_pin` is that the prover cannot choose it, and the whole content of the widening is
+/// that it cannot choose any of the eight.
+const DECLARED_VK: [i64; LANES] = [
+    0x5eed_51, 0x5eed_52, 0x5eed_53, 0x5eed_54, 0x5eed_55, 0x5eed_56, 0x5eed_57, 0x5eed_58,
+];
+
+/// The honest commitment vector — what an honest row's anchor block carries.
+const HONEST_COMMIT: [i64; LANES] = [42, 43, 44, 45, 46, 47, 48, 49];
 
 fn felt(v: i64) -> BabyBear {
     BabyBear::new(v.rem_euclid(2_013_265_921) as u32)
 }
 
+fn lanes(base: usize) -> Vec<LeanExpr> {
+    (0..LANES).map(|k| LeanExpr::Var(base + k)).collect()
+}
+
 /// The seam descriptor, parameterised by the two declared halves. `(None, None)` is the shape every
 /// `proof_bind` in the tree carried before 2026-08-04 and is the BEFORE pole of every tooth here.
-fn seam_desc(vk_pin: Option<i64>, bound: Option<LeanExpr>) -> EffectVmDescriptor2 {
+fn seam_desc(vk_pin: Option<Vec<i64>>, bound: Option<Vec<LeanExpr>>) -> EffectVmDescriptor2 {
     EffectVmDescriptor2 {
         name: "ir2-proof-bind-seam".into(),
         trace_width: WIDTH,
@@ -99,8 +114,8 @@ fn seam_desc(vk_pin: Option<i64>, bound: Option<LeanExpr>) -> EffectVmDescriptor
         }],
         constraints: vec![VmConstraint2::ProofBind(ProofBindSpec {
             guard: LeanExpr::Var(GUARD),
-            commit: LeanExpr::Var(COMMIT),
-            vk: LeanExpr::Var(VK),
+            commit: lanes(COMMIT_BASE),
+            vk: lanes(VK_BASE),
             vk_pin,
             bound,
         })],
@@ -114,15 +129,51 @@ fn declarative() -> EffectVmDescriptor2 {
     seam_desc(None, None)
 }
 
-/// The PINNED seam — the program is `DECLARED_VK` and the commitment must equal the row's anchor.
+/// The PINNED seam — the program is `DECLARED_VK` on all eight lanes and the commitment must equal
+/// the row's anchor block, lane for lane.
 fn pinned() -> EffectVmDescriptor2 {
-    seam_desc(Some(DECLARED_VK), Some(LeanExpr::Var(ANCHOR)))
+    seam_desc(Some(DECLARED_VK.to_vec()), Some(lanes(ANCHOR_BASE)))
 }
 
-fn row(guard: i64, commit: i64, vk: i64, anchor: i64) -> Vec<Vec<BabyBear>> {
-    let cells = [guard, commit, vk, anchor];
+/// ⚑ **THE RETIRED ONE-FELT TIE, RECONSTRUCTED AT EIGHT LANES** — the containment this widening
+/// replaced, expressed in the widened IR so the two can be measured against ONE trace.
+///
+/// Lane 0 is pinned to the anchor; lanes 1..8 are pinned to the COMMITMENT COLUMNS THEMSELVES, i.e.
+/// `commitᵢ − commitᵢ = 0`, which is decoration (`feedback-a-pin-against-its-own-definition-is-
+/// decoration`). That is exactly what the pre-widening seam asserted: one felt of an eight-felt
+/// object, `2^31`.
+fn limb0_only() -> EffectVmDescriptor2 {
+    let mut bound = vec![LeanExpr::Var(ANCHOR_BASE)];
+    bound.extend((1..LANES).map(|k| LeanExpr::Var(COMMIT_BASE + k)));
+    let mut vk_pin = vec![DECLARED_VK[0]];
+    // The high VK lanes are pinned to their own honest values, so this seam is satisfied by any row
+    // agreeing with the declaration on lane 0 alone — the pre-widening reach.
+    vk_pin.extend(DECLARED_VK[1..].iter().copied());
+    seam_desc(Some(vk_pin), Some(bound))
+}
+
+fn row(
+    guard: i64,
+    commit: [i64; LANES],
+    vk: [i64; LANES],
+    anchor: [i64; LANES],
+) -> Vec<Vec<BabyBear>> {
+    let mut cells = vec![0i64; WIDTH];
+    cells[GUARD] = guard;
+    for k in 0..LANES {
+        cells[COMMIT_BASE + k] = commit[k];
+        cells[VK_BASE + k] = vk[k];
+        cells[ANCHOR_BASE + k] = anchor[k];
+    }
     let r: Vec<BabyBear> = cells.iter().map(|&v| felt(v)).collect();
     vec![r; ROWS]
+}
+
+/// A lane vector with ONE lane moved — the seven-of-eight forgery.
+fn moved(base: [i64; LANES], lane: usize, to: i64) -> [i64; LANES] {
+    let mut v = base;
+    v[lane] = to;
+    v
 }
 
 fn prove_and_verify(d: &EffectVmDescriptor2, trace: &[Vec<BabyBear>]) -> Result<(), String> {
@@ -161,7 +212,7 @@ fn proved_before_refused_after(
 /// Lean twin: `DescriptorIR2.demoC_seam_refutes_forged_commit`.
 #[test]
 fn a_commitment_that_is_not_the_declared_row_object_proves_before_and_is_refused_after() {
-    let trace = row(1, 777, DECLARED_VK, 42);
+    let trace = row(1, [777; LANES], DECLARED_VK, HONEST_COMMIT);
     let reason = proved_before_refused_after(
         "a commitment unrelated to the row it claims to be about",
         &declarative(),
@@ -179,7 +230,12 @@ fn a_commitment_that_is_not_the_declared_row_object_proves_before_and_is_refused
 /// Lean twin: `DescriptorIR2.demoC_seam_refutes_swapped_vk`.
 #[test]
 fn a_swapped_program_vk_proves_before_and_is_refused_after() {
-    let trace = row(1, 42, DECLARED_VK + 1, 42);
+    let trace = row(
+        1,
+        HONEST_COMMIT,
+        moved(DECLARED_VK, 0, DECLARED_VK[0] + 1),
+        HONEST_COMMIT,
+    );
     let reason = proved_before_refused_after(
         "a sub-proof of a program the descriptor did not name",
         &declarative(),
@@ -199,7 +255,7 @@ fn a_swapped_program_vk_proves_before_and_is_refused_after() {
 /// Lean twin: `DescriptorIR2.demoC_seam_refutes_fractional_guard`.
 #[test]
 fn a_fractional_selector_is_refused_by_the_seam_in_both_declarations() {
-    let trace = row(2, 42, DECLARED_VK, 42);
+    let trace = row(2, HONEST_COMMIT, DECLARED_VK, HONEST_COMMIT);
     for (label, d) in [("declarative", declarative()), ("pinned", pinned())] {
         let reason = refusal::must_refuse(&format!("a fractional selector ({label} seam)"), || {
             prove_and_verify(&d, &trace)
@@ -218,7 +274,10 @@ fn a_fractional_selector_is_refused_by_the_seam_in_both_declarations() {
 #[test]
 fn the_honest_row_proves_under_the_pinned_seam() {
     refusal::must_accept("an honest bound row under the pinned seam", || {
-        prove_and_verify(&pinned(), &row(1, 42, DECLARED_VK, 42))
+        prove_and_verify(
+            &pinned(),
+            &row(1, HONEST_COMMIT, DECLARED_VK, HONEST_COMMIT),
+        )
     });
 }
 
@@ -229,7 +288,10 @@ fn the_honest_row_proves_under_the_pinned_seam() {
 #[test]
 fn an_inactive_row_is_not_constrained_by_the_seam() {
     refusal::must_accept("an inactive seam row carrying junk", || {
-        prove_and_verify(&pinned(), &row(0, 999_999, 12_345, 42))
+        prove_and_verify(
+            &pinned(),
+            &row(0, [999_999; LANES], [12_345; LANES], HONEST_COMMIT),
+        )
     });
 }
 
@@ -245,14 +307,18 @@ fn the_declared_halves_are_inside_the_canonical_fingerprint() {
     use dregg_circuit::descriptor_ir2_canonical::canonical_effect_vm_descriptor2_bytes as enc;
     let d0 = enc(&declarative()).expect("declarative seam encodes");
     let d1 = enc(&pinned()).expect("pinned seam encodes");
-    let d2 = enc(&seam_desc(Some(DECLARED_VK), None)).expect("vk-only encodes");
-    let d3 = enc(&seam_desc(None, Some(LeanExpr::Var(ANCHOR)))).expect("bound-only encodes");
+    let d2 = enc(&seam_desc(Some(DECLARED_VK.to_vec()), None)).expect("vk-only encodes");
+    let d3 = enc(&seam_desc(None, Some(lanes(ANCHOR_BASE)))).expect("bound-only encodes");
+    let d4 = enc(&limb0_only()).expect("limb-0 seam encodes");
     for (a, an, b, bn) in [
         (&d0, "declarative", &d1, "pinned"),
         (&d0, "declarative", &d2, "vk-pin only"),
         (&d0, "declarative", &d3, "bound only"),
         (&d1, "pinned", &d2, "vk-pin only"),
         (&d1, "pinned", &d3, "bound only"),
+        // ⚑ And the WIDTH is in the fingerprint: a seam that ties lane 0 and decorates the rest is
+        // a different committed object from one that ties all eight.
+        (&d1, "pinned", &d4, "limb-0-only"),
     ] {
         assert_ne!(
             a, b,
@@ -269,8 +335,8 @@ fn is_declarative_reports_exactly_the_unpinned_seams() {
     let cases = [
         (declarative(), true),
         (pinned(), false),
-        (seam_desc(Some(DECLARED_VK), None), false),
-        (seam_desc(None, Some(LeanExpr::Var(ANCHOR))), false),
+        (seam_desc(Some(DECLARED_VK.to_vec()), None), false),
+        (seam_desc(None, Some(lanes(ANCHOR_BASE))), false),
     ];
     for (d, want) in cases {
         let binds: Vec<&ProofBindSpec> = d
@@ -289,4 +355,103 @@ fn is_declarative_reports_exactly_the_unpinned_seams() {
             d.name
         );
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// ⚑ THE WIDENING'S OWN POLARITY — what a seam tie is worth now
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// ⚑⚑ **A SEVEN-OF-EIGHT FORGERY: PROVED BEFORE, REFUSED AFTER.**
+///
+/// The row's commitment agrees with the object it claims to be on SEVEN lanes and differs on lane 3.
+/// Under `limb0_only` — the retired one-felt tie, reconstructed in the widened IR — it PROVES: that
+/// seam ties lane 0, lane 0 is honest, and the other seven congruences compare a column to itself.
+/// Under the real eight-lane pin it is REFUSED.
+///
+/// This is the number the widening bought, measured rather than asserted: forging a commitment past
+/// the retired seam meant matching ONE felt (`2^31` offline, seconds on a laptop); past this one it
+/// means matching all eight lanes of the digest — `2^123.6` birthday, `~2^247` second-preimage,
+/// which is the class `PROOF_BIND_COMMIT_WIDTH = 8` was chosen for and the class the rest of the
+/// stack's ~124-bit bar demands.
+#[test]
+fn a_seven_of_eight_commitment_forgery_proves_at_one_felt_and_is_refused_at_eight() {
+    let trace = row(
+        1,
+        moved(HONEST_COMMIT, 3, 999_999),
+        DECLARED_VK,
+        HONEST_COMMIT,
+    );
+    let reason = proved_before_refused_after(
+        "a commitment that agrees on seven of eight lanes",
+        &limb0_only(),
+        &pinned(),
+        &trace,
+    );
+    eprintln!("seven-of-eight commitment forgery: {reason}");
+}
+
+/// ⚑⚑ **A HIGH-LANE PROGRAM SWAP: PROVED BEFORE, REFUSED AFTER.** Same shape on the VK half — the
+/// attested program agrees with the declared fingerprint on lane 0 and differs on lane 7. The
+/// retired seam pinned lane 0 and could not see it.
+#[test]
+fn a_high_lane_program_swap_proves_at_one_felt_and_is_refused_at_eight() {
+    let trace = row(
+        1,
+        HONEST_COMMIT,
+        moved(DECLARED_VK, 7, 0xdead),
+        HONEST_COMMIT,
+    );
+    let reason = proved_before_refused_after(
+        "a program fingerprint that agrees on lane 0 and differs on lane 7",
+        &limb0_only_vk_swapped(),
+        &pinned(),
+        &trace,
+    );
+    eprintln!("high-lane program swap: {reason}");
+}
+
+/// The BEFORE pole for the high-lane swap: a seam whose VK pin names the FORGED lane-7 value (the
+/// prover's choice) while everything else matches — i.e. a descriptor that did not pin lane 7,
+/// reconstructed as a pin the forger could satisfy. Under the real pin lane 7 is `DECLARED_VK[7]`.
+fn limb0_only_vk_swapped() -> EffectVmDescriptor2 {
+    seam_desc(
+        Some(moved(DECLARED_VK, 7, 0xdead).to_vec()),
+        Some(lanes(ANCHOR_BASE)),
+    )
+}
+
+/// ⚑ **A NARROW SEAM CANNOT BE BUILT AT ALL.** The retired one-felt shape is refused by
+/// `check_descriptor2` before any prover sees it — the containment is structurally unshippable
+/// rather than merely discouraged.
+#[test]
+fn a_narrow_seam_is_refused_by_the_descriptor_check() {
+    use dregg_circuit::descriptor_ir2::check_descriptor2;
+    let mut d = pinned();
+    if let VmConstraint2::ProofBind(m) = &mut d.constraints[0] {
+        m.commit.truncate(1);
+        m.vk.truncate(1);
+        m.vk_pin = Some(vec![DECLARED_VK[0]]);
+        m.bound = Some(vec![LeanExpr::Var(ANCHOR_BASE)]);
+    }
+    let err = check_descriptor2(&d).expect_err("a one-lane seam must be refused");
+    assert!(
+        err.contains("below the floor"),
+        "the refusal must name the lane floor, got: {err}"
+    );
+}
+
+/// ⚑ **AND A TRUNCATED PIN CANNOT EITHER.** Eight lanes with a four-lane `vk_pin` is not "pin the
+/// prefix"; it is a seam that would check half its object.
+#[test]
+fn a_truncated_pin_is_refused_by_the_descriptor_check() {
+    use dregg_circuit::descriptor_ir2::check_descriptor2;
+    let mut d = pinned();
+    if let VmConstraint2::ProofBind(m) = &mut d.constraints[0] {
+        m.vk_pin = Some(DECLARED_VK[..4].to_vec());
+    }
+    let err = check_descriptor2(&d).expect_err("a truncated pin must be refused");
+    assert!(
+        err.contains("not a prefix"),
+        "the refusal must name the truncation, got: {err}"
+    );
 }

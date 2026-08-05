@@ -82,10 +82,15 @@ GENUINELY VERIFYING factory sub-proof exposing the pinned child-VK commitment. -
 leaf: a SATISFIED in-circuit factory-leaf verifier (pinned VK core `leafVk`, exposing child-VK
 commitment `leafCommit`) yields a GENUINELY VERIFYING factory sub-proof of engine `E` whose
 `piCommit` IS the exposed `leafCommit`. The factory instance of `AggAirSound.FriExtract` (one child
-of one node), NOT a new dregg axiom — see `factoryLeafFriFloor_of_aggFriExtract`. -/
+of one node), NOT a new dregg axiom — see `factoryLeafFriFloor_of_aggFriExtract`.
+
+⚑ **ONE LANE.** This fold model's leaf commitment is a SCALAR `ℤ`; `E.piCommit` is a lane VECTOR
+(2026-08-05), so the model meets the engine as the singleton `[leafCommit]`. The DEPLOYED
+`child_vk8` claim is EIGHT lanes — the model did not widen with it, it adapts at the engine
+boundary. -/
 def FactoryLeafFriFloor (E : ProofEngine) (FactoryLeafSat : ℤ → ℤ → Prop) : Prop :=
   ∀ leafVk leafCommit : ℤ, FactoryLeafSat leafVk leafCommit →
-    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = leafCommit
+    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [leafCommit]
 
 /-- The factory leaf's exposed segment projection: the leaf carries its child-VK commitment `x` in
 the ordered-digest lane `acc` (the other lanes are inert for a single-leaf wrap). -/
@@ -95,16 +100,22 @@ def segOfCommit (x : ℤ) : Seg := { firstOld := 0, lastNew := 0, count := 0, ac
 aggregation's per-child `FriExtract` over the factory engine — pinned VK core constant `leafPre`,
 the child exposing its child-VK commitment in `acc` — the factory-leaf floor follows. The binding's
 "the leaf verifies" half rests on the SAME in-circuit recursion-verifier soundness carrier
-`AggAirSound.agg_air_sound` discharges. -/
+`AggAirSound.agg_air_sound` discharges.
+
+⚑ **ONE LANE.** `Seg.acc` is a SCALAR, so the exposure projection names the single lane `lane q` the
+model's engine squeezes (`hlane : E.piCommit q = [lane q]`) — the assumption the pre-widening
+`piCommit : Proof → ℤ` made silently. -/
 theorem factoryLeafFriFloor_of_aggFriExtract
     (E : ProofEngine) (leafPre : ℤ) (ChildVerifierSat : ℤ → Seg → Prop)
+    (lane : E.Proof → ℤ) (hlane : ∀ q, E.piCommit q = [lane q])
     (hagg : FriExtract E.Proof E.verify (fun _ => leafPre)
-              (fun q => segOfCommit (E.piCommit q)) ChildVerifierSat) :
+              (fun q => segOfCommit (lane q)) ChildVerifierSat) :
     FactoryLeafFriFloor E (fun leafVk leafCommit => ChildVerifierSat leafVk (segOfCommit leafCommit)) := by
   intro leafVk leafCommit hcv
   obtain ⟨q, hq, _hvkc, hexp⟩ := hagg leafVk (segOfCommit leafCommit) hcv
   refine ⟨q, hq, ?_⟩
-  simpa [segOfCommit] using congrArg Seg.acc hexp
+  have hacc : lane q = leafCommit := by simpa [segOfCommit] using congrArg Seg.acc hexp
+  rw [hlane q, hacc]
 
 /-! ## §2 — the per-turn fold node + its satisfaction (the connect). -/
 
@@ -144,20 +155,23 @@ fold including the factory leaf — FORCES, for the leg's published `child_vk8` 
 The premise set is EXACTLY `{the FRI floor (= AggAirSound's carrier), the per-instance `hno`, the
 FRI-extraction factoring of the engine commitment + its structural vk-recovery, the connect (inside
 `hsat`)}` — the SAME set `custom_binding_from_fold` rests on; no staged-AIR carrier, no factory
-axiom. A forged claim with no backing sub-proof makes the aggregate UNSAT. -/
+axiom. A forged claim with no backing sub-proof makes the aggregate UNSAT.
+
+⚑ **ONE LANE.** `f.cv` is the model's SCALAR published claim, met as the singleton `[f.cv]` against
+the engine's lane vector; the deployed `child_vk8` octet is EIGHT lanes. -/
 theorem factory_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (FactoryLeafSat : ℤ → ℤ → Prop)
     (hfri : FactoryLeafFriFloor E FactoryLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : FactoryFold E)
     (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.cv → E.piCommit q = f.cv → ¬ EncColl hash enc p q)
+        E.piCommit p = [f.cv] → E.piCommit q = [f.cv] → ¬ EncColl hash enc p q)
     (hsat : SatFactoryFold E FactoryLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.cv) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.cv]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.cv → E.piCommit q = f.cv → E.vkOf p = E.vkOf q) := by
+        E.piCommit p = [f.cv] → E.piCommit q = [f.cv] → E.vkOf p = E.vkOf q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   refine ⟨⟨q, hq, hqc⟩, ?_⟩
@@ -174,12 +188,12 @@ theorem factory_binding_from_fold_or_collides
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (FactoryLeafSat : ℤ → ℤ → Prop)
     (hfri : FactoryLeafFriFloor E FactoryLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : FactoryFold E) (hsat : SatFactoryFold E FactoryLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.cv) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.cv]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.cv → E.piCommit q = f.cv →
+        E.piCommit p = [f.cv] → E.piCommit q = [f.cv] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
@@ -194,12 +208,15 @@ re-proved `validate_and_record` — a verifying factory sub-proof exposing the l
 `child_vk` IS a validating creation backing that leg (`hbacks`, the `factory_leaf_adapter`
 obligation) — a satisfying fold connected to the leg (`hcv`) DISCHARGES the exact staged backing
 predicate the attack file showed the deployed AIR omits. Deployed-intent PLUS the fold forces what
-deployed-intent alone provably cannot. -/
+deployed-intent alone provably cannot.
+
+⚑ **ONE LANE.** `childVkOf env` is the single-column `child_vk` witness value, met as `[childVkOf env]`
+against the engine's lane vector. -/
 theorem authorized_from_fold
     (F : FactoryEngine) (exhausted : ℤ → Prop) (env : VmRowEnv)
     (E : ProofEngine) (FactoryLeafSat : ℤ → ℤ → Prop)
     (hfri : FactoryLeafFriFloor E FactoryLeafSat)
-    (hbacks : ∀ q : E.Proof, E.verify q = true → E.piCommit q = childVkOf env →
+    (hbacks : ∀ q : E.Proof, E.verify q = true → E.piCommit q = [childVkOf env] →
         Authorized F exhausted env)
     (f : FactoryFold E) (hsat : SatFactoryFold E FactoryLeafSat f)
     (hcv : f.cv = childVkOf env) :
@@ -222,7 +239,7 @@ def honestFold (hash : List ℤ → ℤ) : FactoryFold (floorEngine hash) :=
 sub-proof exposes the exposed commitment. -/
 def honestFLS (hash : List ℤ → ℤ) : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit => ∃ q : ℤ × ℤ,
-    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = leafCommit
+    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = [leafCommit]
 
 theorem honestFloor (hash : List ℤ → ℤ) : FactoryLeafFriFloor (floorEngine hash) (honestFLS hash) :=
   fun _leafVk _leafCommit h => h
@@ -235,17 +252,19 @@ theorem honestSat (hash : List ℤ → ℤ) :
 /-- **`honest_companion_fires` (POSITIVE non-vacuity).** On the honest factory turn the binding
 FIRES: the published `child_vk8` claim is BACKED by a verifying factory sub-proof attesting a
 uniquely determined VK — unconditionally, at `Poseidon2Binding.Reference.refSponge`
-whose CR is PROVED (the FRI legs discharge definitionally on `floorEngine`). -/
+whose CR is PROVED (the FRI legs discharge definitionally on `floorEngine`).
+
+⚑ ONE LANE: `(honestFold refSponge).cv` is the model's scalar claim, met as `[·]`. -/
 theorem honest_companion_fires :
     (∃ q : ℤ × ℤ, (floorEngine refSponge).verify q = true ∧
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).cv) ∧
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).cv]) ∧
     (∀ p q : ℤ × ℤ, (floorEngine refSponge).verify p = true → (floorEngine refSponge).verify q = true →
-        (floorEngine refSponge).piCommit p = (honestFold refSponge).cv →
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).cv →
+        (floorEngine refSponge).piCommit p = [(honestFold refSponge).cv] →
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).cv] →
         (floorEngine refSponge).vkOf p = (floorEngine refSponge).vkOf q) :=
   factory_binding_from_fold (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestFLS refSponge)
     (honestFloor refSponge) (fun _p _ => rfl)
-    (by intro p q _ _ henc; injection henc)
+    (floorEngine_hvk refSponge)
     (honestFold refSponge)
     (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
     (honestSat refSponge)
@@ -261,34 +280,49 @@ a satisfying fold would PRODUCE a backing sub-proof — contradiction. The aggre
 circuit twin of `deployed_factory_turn_forged_child_vk_rejected`. -/
 theorem forged_unsat {E : ProofEngine} {FactoryLeafSat : ℤ → ℤ → Prop}
     (hfri : FactoryLeafFriFloor E FactoryLeafSat) {f : FactoryFold E}
-    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.cv) :
+    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.cv]) :
     ¬ SatFactoryFold E FactoryLeafSat f := by
   intro hsat
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   exact hforge ⟨q, hq, hqc⟩
 
-/-- The forged factory-leaf predicate over `demoEngine` (the only verifying sub-proof commits
+/-- ⚑ **A ONE-LANE toy engine for the forged pole.** `DescriptorIR2.demoEngine` now squeezes EIGHT
+lanes (`123..130`); a scalar fold claim `[c]` could never match it for ARITY reasons, so a rejection
+over it would say nothing about the VALUE and `demoFLS` would be false everywhere — a vacuous negative
+pole. `laneDemoEngine` squeezes exactly ONE lane, at `demoEngine`'s lead value `123`, so the refusal
+below is about the forged CLAIM and not about the width. -/
+def laneDemoEngine : ProofEngine where
+  Proof    := Bool
+  verify   := fun b => b
+  piCommit := fun _ => [(123 : ℤ)]
+  vkOf     := fun _ => [(45 : ℤ)]
+
+/-- The forged factory-leaf predicate over `laneDemoEngine` (the only verifying sub-proof commits
 to `123`). -/
 def demoFLS : ℤ → ℤ → Prop :=
-  fun _leafVk leafCommit => ∃ q : Bool, demoEngine.verify q = true ∧ demoEngine.piCommit q = leafCommit
+  fun _leafVk leafCommit =>
+    ∃ q : Bool, laneDemoEngine.verify q = true ∧ laneDemoEngine.piCommit q = [leafCommit]
 
-theorem demoFloor : FactoryLeafFriFloor demoEngine demoFLS :=
+theorem demoFloor : FactoryLeafFriFloor laneDemoEngine demoFLS :=
   fun _leafVk _leafCommit h => h
 
+/-- The predicate is SATISFIABLE at the honest value — so the rejection below is about `999`, not
+about the shape of `demoFLS`. -/
+theorem demoFLS_sat : demoFLS 0 123 := ⟨true, rfl, rfl⟩
+
 /-- The `FactoryBackingAttack` §A forgery lifted onto the fold: the published `child_vk8` claim is
-`999` (`forgedChildVkEnv`'s `child_vk`) — a commitment NO verifying sub-proof of `demoEngine`
-exposes. -/
-def forgedFold : FactoryFold demoEngine := { leafVk := 0, leafCommit := 999, cv := 999 }
+`999` (`forgedChildVkEnv`'s `child_vk`) — a commitment NO verifying sub-proof exposes. -/
+def forgedFold : FactoryFold laneDemoEngine := { leafVk := 0, leafCommit := 999, cv := 999 }
 
 /-- **`forged_childvk_unsat_demo` (NEGATIVE non-vacuity — the §A attack, INVERTED onto the fold).**
 The forged fold (published claim `999`, exactly `FactoryBackingAttack.childVk_forgedEnv`'s value,
 unbacked) does NOT satisfy: what the deployed AIR alone admitted
 (`deployed_admits_forged_child_vk`), the aggregate REFUSES. -/
-theorem forged_childvk_unsat_demo : ¬ SatFactoryFold demoEngine demoFLS forgedFold := by
+theorem forged_childvk_unsat_demo : ¬ SatFactoryFold laneDemoEngine demoFLS forgedFold := by
   refine forged_unsat demoFloor (f := forgedFold) ?_
   rintro ⟨q, _hq, hc⟩
-  have hc' : (123 : ℤ) = 999 := hc
+  have hc' : [(123 : ℤ)] = [(999 : ℤ)] := hc
   exact absurd hc' (by decide)
 
 end Forged
@@ -301,6 +335,7 @@ end Forged
 #assert_axioms authorized_from_fold
 #assert_axioms honest_companion_fires
 #assert_axioms forged_unsat
+#assert_axioms demoFLS_sat
 #assert_axioms forged_childvk_unsat_demo
 
 end Dregg2.Circuit.FactoryBindingFromFold

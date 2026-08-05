@@ -2637,9 +2637,12 @@ SECOND SQUEEZE BLOCK of the 8-felt `WideHash` commitment), appended at the END o
 member's graduated host width — the custom twin of the membership/sovereign teeth
 (`CarrierComposed.withMembershipTeethPinsAt`), placed IN the host so the generic wraps
 (`withDfaRcPins`, the gentian refuse weld, `wideAppend`) land past them with zero special-casing.
-Rust twin: `trace_rotated::CUSTOM_COMMIT_TEETH_BASE` (`#guard`-pinned to 1619 below). -/
-def CUSTOM_COMMIT_TEETH_COL : Nat :=
-  (v3OfWith customV1Face [.proofBind customProofBind]).traceWidth
+Rust twin: `trace_rotated::CUSTOM_COMMIT_TEETH_BASE` (`#guard`-pinned to 1619 below).
+
+⚑ Defined against `v3Of` and not `v3OfWith … [.proofBind …]` since 2026-08-05: the widened bind
+READS these columns, so defining the base in terms of a descriptor carrying it would be a
+definitional cycle. `v3OfWith` only appends constraints, so the two widths are the same number. -/
+def CUSTOM_COMMIT_TEETH_COL : Nat := (v3Of customV1Face).traceWidth
 
 /-- **The VK-epoch PI exposure for the rotated Custom member — the faithful carrier flag day.**
 Sixteen `.piBinding .first` constraints
@@ -2663,6 +2666,14 @@ faithful VK8; a legacy low4 carrier is refused at the Rust versioned boundary
 (`effect_vm_descriptors::require_custom_carrier_vk8`), never folded, padded, or silently widened. -/
 def CUSTOM_VK_TEETH_COL : Nat := CUSTOM_COMMIT_TEETH_COL + 4
 
+/-- ⚑ **THE ROTATED CUSTOM'S RECURSION SEAM, AT EIGHT LANES.** The low four limbs of each object sit
+in the `param` block; the high four ride the teeth columns this member appends. Before 2026-08-05
+this op named `param[CUSTOM_COMMIT]` and `param[CUSTOM_VK]` — LIMB 0 of each — while the sixteen
+`customPiExposure` pins published all eight of both: the descriptor exposed the whole digest and
+DECLARED one felt of it. Now the declaration is the same width as the exposure. -/
+def customV3ProofBind : Dregg2.Circuit.DescriptorIR2.ProofBind :=
+  customProofBindAt CUSTOM_COMMIT_TEETH_COL CUSTOM_VK_TEETH_COL
+
 def customPiExposure : List VmConstraint2 :=
   (List.range 4).map (fun k =>
     .base (.piBinding .first (prmCol (CUSTOM_COMMIT + k)) (46 + k)))
@@ -2683,7 +2694,7 @@ connect the custom sub-proof leaf. The `proofBind` row gate stays `True`; the bi
 enforced at the fold (see `customPiExposure`).
 This is THE last rotation-cohort member: with it the HONEST RESIDUE is EMPTY. -/
 def customV3 : EffectVmDescriptor2 :=
-  let d := v3OfWith customV1Face [.proofBind customProofBind]
+  let d := v3OfWith customV1Face [.proofBind customV3ProofBind]
   { d with
     traceWidth  := d.traceWidth + 8
     piCount     := d.piCount + 16
@@ -6996,13 +7007,13 @@ theorem revokeDelegationWriteV3_rejects_wrong_epoch (hash : List ℤ → ℤ)
 -- `RotatedKernelRefinementCapFamily.refreshDelegation_descriptorRefines_sat`.)
 
 /-- The rotated Custom declares EXACTLY the one proof-binding op (the rotated graduation
-contributes none; the extras add exactly `customProofBind`). -/
-theorem proofBindsOf_customV3 : proofBindsOf customV3 = [customProofBind] := by
+contributes none; the extras add exactly `customV3ProofBind`). -/
+theorem proofBindsOf_customV3 : proofBindsOf customV3 = [customV3ProofBind] := by
   have hbase : proofBindsOf (v3Of customV1Face) = [] := proofBindsOf_graduateV1 (rotateV3 customV1Face) _
   unfold proofBindsOf at hbase ⊢
-  -- `customV3.constraints = ((v3Of …).constraints ++ [proofBind customProofBind]) ++ customPiExposure`;
+  -- `customV3.constraints = ((v3Of …).constraints ++ [proofBind customV3ProofBind]) ++ customPiExposure`;
   -- the sixteen `customPiExposure` pins are all `.base (.piBinding …)`, contributing no proof-binds.
-  show (((v3Of customV1Face).constraints ++ [VmConstraint2.proofBind customProofBind])
+  show (((v3Of customV1Face).constraints ++ [VmConstraint2.proofBind customV3ProofBind])
       ++ customPiExposure).filterMap _ = _
   rw [List.filterMap_append, List.filterMap_append, hbase]
   rfl
@@ -7017,11 +7028,12 @@ theorem customV3_binds_proof (hash : List ℤ → ℤ)
     (hsat : Satisfied2Custom hash E customV3 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
     (hactive : (envAt t i).loc SEL_CUSTOM = 1) :
-    E.boundTo ((envAt t i).loc (prmCol CUSTOM_COMMIT)) ((envAt t i).loc (prmCol CUSTOM_VK)) := by
-  have hm : customProofBind ∈ proofBindsOf customV3 := by
+    E.boundTo (customV3ProofBind.commit.map (·.eval (envAt t i).loc))
+      (customV3ProofBind.vk.map (·.eval (envAt t i).loc)) := by
+  have hm : customV3ProofBind ∈ proofBindsOf customV3 := by
     rw [proofBindsOf_customV3]; exact List.mem_cons_self
-  have := proofBind_bound hash E customV3 hsat hm i hi (by simpa [customProofBind] using hactive)
-  simpa [customProofBind] using this
+  exact proofBind_bound hash E customV3 hsat hm i hi
+    (by simpa [customV3ProofBind, customProofBindAt] using hactive)
 
 #assert_axioms setFieldDynV3_memLog
 #assert_axioms setFieldDynV3_readback_genuine

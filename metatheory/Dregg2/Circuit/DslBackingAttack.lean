@@ -190,10 +190,13 @@ theorem dslFloorEngine_binding :
 the Poseidon2 sponge of an encoding of their public inputs (VK recoverable from the encoding) binds the
 program VK at every pair — unless THAT pair is a witnessed sponge collision. This is the
 route-commitment-chain factoring the `dregg-dfa-routing-v1` AIR's `SeedHash2to1`/`ChainedHash2to1`
-constraints realize, and it carries no floor. -/
+constraints realize, and it carries no floor.
+
+⚑ WIDENED 2026-08-05 with `ProofEngine.piCommit : Proof → List ℤ`: the factoring names the ONE lane
+this model's scalar sponge produces, while the deployed route-commitment is eight felts. -/
 theorem dslEngineBinding_of_route_commitment_factoring
     (hash : List ℤ → ℤ) (E : ProofEngine) (enc : E.Proof → List ℤ)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     {p q : E.Proof} (hp : E.verify p = true) (hq : E.verify q = true)
     (hpc : E.piCommit p = E.piCommit q) (hno : ¬ EncColl hash enc p q) :

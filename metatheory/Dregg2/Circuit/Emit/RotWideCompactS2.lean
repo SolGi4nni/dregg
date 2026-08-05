@@ -109,8 +109,8 @@ def refs2 : VmConstraint2 → List Nat
       ++ (List.ofFn m.root).flatMap refsE ++ (List.ofFn m.newRoot).flatMap refsE
   | .umemOp m => refsE m.guard ++ refsE m.key ++ refsE m.present ++ refsE m.value
       ++ refsE m.prevPresent ++ refsE m.prevValue ++ refsE m.prevSerial
-  | .proofBind m => refsE m.guard ++ refsE m.commit ++ refsE m.vk
-      ++ (m.bound.map refsE).getD []
+  | .proofBind m => refsE m.guard ++ m.commit.flatMap refsE ++ m.vk.flatMap refsE
+      ++ (m.bound.map (fun bs => bs.flatMap refsE)).getD []
   | .windowGate w => refsW w.body
 
 /-- The columns a hash site reads or writes. -/
@@ -195,13 +195,13 @@ def mapC2 (g : Nat → Nat) : VmConstraint2 → VmConstraint2
       prevValue := mapVarE g m.prevValue, prevSerial := mapVarE g m.prevSerial }
   | .proofBind m => .proofBind
       { guard := mapVarE g m.guard
-      , commit := mapVarE g m.commit
-      , vk := mapVarE g m.vk
+      , commit := m.commit.map (mapVarE g)
+      , vk := m.vk.map (mapVarE g)
         -- ⚑ the seam's two declared halves ride the remap: `vkPin` is a LITERAL carried unchanged;
         -- `bound` is an expression over the row and its columns must be renamed with everything
         -- else, or a compacted descriptor would bind a different column than it says.
       , vkPin := m.vkPin
-      , bound := m.bound.map (mapVarE g) }
+      , bound := m.bound.map (fun bs => bs.map (mapVarE g)) }
   | .windowGate w => .windowGate { body := mapVarW g w.body, onTransition := w.onTransition }
 
 /-! ## §2 — the S2 dead-column geometry and the index map. -/
@@ -465,6 +465,16 @@ theorem evalE_map_agree (g : Nat → Nat) (e : EmittedExpr) (a aX : Assignment)
     (mapVarE g e).eval a = e.eval aX := by
   rw [evalE_map]
   exact (evalE_congr e aX (fun c => a (g c)) h).symm
+
+/-- ⚑ **THE LANE-VECTOR TWIN of `evalE_map_agree`** (2026-08-05, the `ProofBind` widening). A
+recursion seam reads LISTS of expressions now, and a remap must carry every lane — not the first
+one with the rest silently agreeing. Stated over the whole list so the seam's transport is one
+rewrite per vector instead of one per felt. -/
+theorem evalE_map_agree_list (g : Nat → Nat) (es : List EmittedExpr) (a aX : Assignment)
+    (h : ∀ e ∈ es, ∀ r ∈ refsE e, aX r = a (g r)) :
+    (es.map (mapVarE g)).map (fun e => e.eval a) = es.map (fun e => e.eval aX) := by
+  rw [List.map_map]
+  exact List.map_congr_left (fun e he => evalE_map_agree g e a aX (h e he))
 
 /-- ⚑ The challenge-expression twin of `evalW_map_agree`. It needs the extra hypothesis
 `envX.chal = env.chal`: a column REMAP does not touch the verifier's drawn randomness, so the two
@@ -785,35 +795,44 @@ theorem holdsAt_transport (hash : List ℤ → ℤ) (g : Nat → Nat)
   | memOp m => trivial
   | umemOp m => trivial
   | proofBind m =>
-    -- ⚑ NO LONGER `trivial`. Each of the seam's evaluated expressions transports through
-    -- `evalE_map_agree`, exactly like a gate body; `vkPin` is a LITERAL and needs no transport.
+    -- ⚑ NO LONGER `trivial`, and since 2026-08-05 the seam reads LANE VECTORS: every lane
+    -- transports through `evalE_map_agree_list`, exactly like a gate body; `vkPin` is a literal
+    -- vector and needs no transport.
     have hg : (mapVarE g m.guard).eval E.loc = m.guard.eval EX.loc :=
       evalE_map_agree g m.guard E.loc EX.loc
         (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
-    have hv : (mapVarE g m.vk).eval E.loc = m.vk.eval EX.loc :=
-      evalE_map_agree g m.vk E.loc EX.loc
-        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
-    have hc : (mapVarE g m.commit).eval E.loc = m.commit.eval EX.loc :=
-      evalE_map_agree g m.commit E.loc EX.loc
-        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
+    have hv : (m.vk.map (mapVarE g)).map (fun e => e.eval E.loc)
+        = m.vk.map (fun e => e.eval EX.loc) :=
+      evalE_map_agree_list g m.vk E.loc EX.loc
+        (fun e he r hr => hloc r (by
+          simp only [refs2, List.mem_append]
+          exact Or.inl (Or.inr (List.mem_flatMap.mpr ⟨e, he, hr⟩))))
+    have hc : (m.commit.map (mapVarE g)).map (fun e => e.eval E.loc)
+        = m.commit.map (fun e => e.eval EX.loc) :=
+      evalE_map_agree_list g m.commit E.loc EX.loc
+        (fun e he r hr => hloc r (by
+          simp only [refs2, List.mem_append]
+          exact Or.inl (Or.inl (Or.inr (List.mem_flatMap.mpr ⟨e, he, hr⟩)))))
     obtain ⟨h1, h2, h3⟩ := h
     refine ⟨by rwa [hg] at h1, ?_, ?_⟩
     · cases hvp : m.vkPin with
       | none => show True; trivial
-      | some x =>
+      | some vs =>
         simp only [mapC2, hvp] at h2
-        show m.guard.eval EX.loc * (m.vk.eval EX.loc - x) ≡ 0 [ZMOD 2013265921]
+        show zeroLanes (m.guard.eval EX.loc) (m.vk.map (fun e => e.eval EX.loc)) vs
         rw [← hg, ← hv]; exact h2
     · cases hbd : m.bound with
       | none => show True; trivial
-      | some b =>
-        have hb : (mapVarE g b).eval E.loc = b.eval EX.loc :=
-          evalE_map_agree g b E.loc EX.loc
-            (fun r hr => hloc r (by
+      | some bs =>
+        have hb : (bs.map (mapVarE g)).map (fun e => e.eval E.loc)
+            = bs.map (fun e => e.eval EX.loc) :=
+          evalE_map_agree_list g bs E.loc EX.loc
+            (fun e he r hr => hloc r (by
               simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]
-              tauto))
+              exact Or.inr (List.mem_flatMap.mpr ⟨e, he, hr⟩)))
         simp only [mapC2, hbd, Option.map_some] at h3
-        show m.guard.eval EX.loc * (m.commit.eval EX.loc - b.eval EX.loc) ≡ 0 [ZMOD 2013265921]
+        show zeroLanes (m.guard.eval EX.loc) (m.commit.map (fun e => e.eval EX.loc))
+          (bs.map (fun e => e.eval EX.loc))
         rw [← hg, ← hc, ← hb]; exact h3
   | mapOp m =>
     intro hg

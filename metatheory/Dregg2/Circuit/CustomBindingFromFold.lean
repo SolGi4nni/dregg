@@ -59,7 +59,7 @@ import Dregg2.Circuit.CustomCarrierAttack
 
 namespace Dregg2.Circuit.CustomBindingFromFold
 
-open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding demoEngine)
+open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding oneLaneDemoEngine)
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
 open Dregg2.Circuit.CustomCarrierAttack
@@ -83,10 +83,14 @@ PI-commitment in the segment's `acc` lane. -/
 SATISFIED in-circuit custom-leaf verifier (pinned VK core `leafVk`, exposing custom PI-commitment
 `leafCommit`) yields a GENUINELY VERIFYING custom sub-proof of engine `E` whose `piCommit` IS the
 exposed `leafCommit`. This is the custom instance of `AggAirSound.FriExtract` (one child of one node),
-NOT a new dregg axiom — see `customLeafFriFloor_of_aggFriExtract`. -/
+NOT a new dregg axiom — see `customLeafFriFloor_of_aggFriExtract`.
+
+⚑ **ONE LANE.** This fold model's leaf commitment is a SCALAR `ℤ`; `E.piCommit` is a lane VECTOR
+(2026-08-05), so the model meets the engine as the singleton `[leafCommit]`. The DEPLOYED commitment
+is EIGHT lanes — the model did not widen with it, it adapts at the engine boundary. -/
 def CustomLeafFriFloor (E : ProofEngine) (CustomLeafSat : ℤ → ℤ → Prop) : Prop :=
   ∀ leafVk leafCommit : ℤ, CustomLeafSat leafVk leafCommit →
-    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = leafCommit
+    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [leafCommit]
 
 /-- The custom leaf's exposed segment projection: the leaf carries its custom PI-commitment `x` in the
 ordered-digest lane `acc` (the other lanes are inert for a single-leaf wrap). -/
@@ -96,16 +100,23 @@ def segOfCommit (x : ℤ) : Seg := { firstOld := 0, lastNew := 0, count := 0, ac
 aggregation's per-child `FriExtract` over the custom engine — pinned VK core constant `leafPre`, the
 child exposing its custom PI-commitment in `acc` (`segOfCommit ∘ piCommit`) — the custom-leaf floor
 `CustomLeafFriFloor` follows. So the binding's "the leaf verifies" half rests on the SAME in-circuit
-recursion-verifier soundness carrier `AggAirSound.agg_air_sound` discharges, not on a custom axiom. -/
+recursion-verifier soundness carrier `AggAirSound.agg_air_sound` discharges, not on a custom axiom.
+
+⚑ **ONE LANE.** `Seg.acc` is a SCALAR, so the exposure projection names the single lane `lane q` the
+model's engine squeezes (`hlane : E.piCommit q = [lane q]`) — the assumption the pre-widening
+`piCommit : Proof → ℤ` made silently. The deployed commitment is eight lanes; that width is a
+DESCRIPTOR-level fact, not this model's. -/
 theorem customLeafFriFloor_of_aggFriExtract
     (E : ProofEngine) (leafPre : ℤ) (ChildVerifierSat : ℤ → Seg → Prop)
+    (lane : E.Proof → ℤ) (hlane : ∀ q, E.piCommit q = [lane q])
     (hagg : FriExtract E.Proof E.verify (fun _ => leafPre)
-              (fun q => segOfCommit (E.piCommit q)) ChildVerifierSat) :
+              (fun q => segOfCommit (lane q)) ChildVerifierSat) :
     CustomLeafFriFloor E (fun leafVk leafCommit => ChildVerifierSat leafVk (segOfCommit leafCommit)) := by
   intro leafVk leafCommit hcv
   obtain ⟨q, hq, _hvkc, hexp⟩ := hagg leafVk (segOfCommit leafCommit) hcv
   refine ⟨q, hq, ?_⟩
-  simpa [segOfCommit] using congrArg Seg.acc hexp
+  have hacc : lane q = leafCommit := by simpa [segOfCommit] using congrArg Seg.acc hexp
+  rw [hlane q, hacc]
 
 /-! ## §2 — the per-turn fold node + its satisfaction (the connect). -/
 
@@ -147,20 +158,23 @@ which is DERIVED here, FLOOR-FREE, via `vk_determined_of_noEncColl` — NOT take
 
 **`StarkSoundCustom` does not appear.** A forged commitment with no backing sub-proof makes the
 aggregate UNSAT: the fold re-verifies the leaf (`hfri`) and the connect ties the commitment, so the
-binding cannot be conjured. -/
+binding cannot be conjured.
+
+⚑ **ONE LANE.** `f.c` is the model's SCALAR published PI, met as the singleton `[f.c]` against the
+engine's lane vector; the deployed `custom_proof_commitment` is EIGHT lanes. -/
 theorem custom_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (CustomLeafSat : ℤ → ℤ → Prop)
     (hfri : CustomLeafFriFloor E CustomLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : CustomFold E)
     (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.c → E.piCommit q = f.c → ¬ EncColl hash enc p q)
+        E.piCommit p = [f.c] → E.piCommit q = [f.c] → ¬ EncColl hash enc p q)
     (hsat : SatCustomFold E CustomLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.c) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.c]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.c → E.piCommit q = f.c → E.vkOf p = E.vkOf q) := by
+        E.piCommit p = [f.c] → E.piCommit q = [f.c] → E.vkOf p = E.vkOf q) := by
   -- the fold re-verifies the leaf (AggAirSound's FRI floor) and the connect ties its commitment to `c`.
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
@@ -179,12 +193,12 @@ theorem custom_binding_from_fold_or_collides
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (CustomLeafSat : ℤ → ℤ → Prop)
     (hfri : CustomLeafFriFloor E CustomLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : CustomFold E) (hsat : SatCustomFold E CustomLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.c) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.c]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.c → E.piCommit q = f.c →
+        E.piCommit p = [f.c] → E.piCommit q = [f.c] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
@@ -198,19 +212,23 @@ rather than `StarkSoundCustom`: a verifying aggregate forces that the effect-vm 
 `custom_proof_commitment` PI `f.c` is BACKED — `E.boundTo f.c v` for a UNIQUELY DETERMINED program VK
 `v` (every verifying sub-proof exposing `f.c` attests exactly `v`, the anti-ghost / forged-commitment
 rejection). The custom guarantee rests on the SAME floor as everything else (`FRI` via AggAirSound +
-the per-instance `hno`), not on a custom STARK carrier. -/
+the per-instance `hno`), not on a custom STARK carrier.
+
+⚑ **ONE LANE on the COMMITMENT side only.** `f.c` is the model's SCALAR published PI, met as `[f.c]`
+(the deployed one is EIGHT lanes). The determined program VK `v` is the ENGINE's own object and is a
+lane vector — nothing in this model constrains its width, so it stays `List ℤ`. -/
 theorem custom_companion_grounded
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (CustomLeafSat : ℤ → ℤ → Prop)
     (hfri : CustomLeafFriFloor E CustomLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : CustomFold E)
     (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.c → E.piCommit q = f.c → ¬ EncColl hash enc p q)
+        E.piCommit p = [f.c] → E.piCommit q = [f.c] → ¬ EncColl hash enc p q)
     (hsat : SatCustomFold E CustomLeafSat f) :
-    ∃ v : ℤ, E.boundTo f.c v ∧
-      (∀ q : E.Proof, E.verify q = true → E.piCommit q = f.c → E.vkOf q = v) := by
+    ∃ v : List ℤ, E.boundTo [f.c] v ∧
+      (∀ q : E.Proof, E.verify q = true → E.piCommit q = [f.c] → E.vkOf q = v) := by
   obtain ⟨⟨q, hq, hqc⟩, hdet⟩ :=
     custom_binding_from_fold E hash enc CustomLeafSat hfri hfactor hvk f hno hsat
   refine ⟨E.vkOf q, ⟨q, hq, hqc, rfl⟩, ?_⟩
@@ -231,23 +249,24 @@ def honestFold (hash : List ℤ → ℤ) : CustomFold (floorEngine hash) :=
 sub-proof exposes the exposed commitment (the in-circuit verifier's soundness-and-completeness). -/
 def honestCLS (hash : List ℤ → ℤ) : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit => ∃ q : ℤ × ℤ,
-    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = leafCommit
+    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = [leafCommit]
 
 /-- The honest custom-leaf FRI floor holds by identity (the predicate already names a backing proof). -/
 theorem honestFloor (hash : List ℤ → ℤ) : CustomLeafFriFloor (floorEngine hash) (honestCLS hash) :=
   fun _leafVk _leafCommit h => h
 
-/-- The engine's FRI factoring is definitional on `floorEngine` (`piCommit p = hash [p.1, p.2]`). -/
+/-- The engine's FRI factoring is definitional on `floorEngine` (`piCommit p = [hash [p.1, p.2]]` —
+the toy engine squeezes ONE lane). -/
 theorem honestFactor (hash : List ℤ → ℤ) :
-    ∀ p, (floorEngine hash).verify p = true → (floorEngine hash).piCommit p = hash [p.1, p.2] :=
+    ∀ p, (floorEngine hash).verify p = true → (floorEngine hash).piCommit p = [hash [p.1, p.2]] :=
   fun _p _ => rfl
 
-/-- The structural vk-recovery: a vk-headed encoding makes it cons-injectivity. -/
+/-- The structural vk-recovery: a vk-headed encoding makes it cons-injectivity (the toy engine's
+`vkOf p = [p.1]`, so the recovered scalar is re-wrapped). -/
 theorem honestHvk (hash : List ℤ → ℤ) :
     ∀ p q, (floorEngine hash).verify p = true → (floorEngine hash).verify q = true →
-      [p.1, p.2] = [q.1, q.2] → (floorEngine hash).vkOf p = (floorEngine hash).vkOf q := by
-  intro p q _ _ henc
-  injection henc with h1 _
+      [p.1, p.2] = [q.1, q.2] → (floorEngine hash).vkOf p = (floorEngine hash).vkOf q :=
+  floorEngine_hvk hash
 
 /-- The honest fold satisfies: the leaf is backed by `(7, 7)` and the connect is `rfl`. -/
 theorem honestSat (hash : List ℤ → ℤ) :
@@ -259,11 +278,14 @@ theorem honestSat (hash : List ℤ → ℤ) :
 companion FIRES: the published `custom_proof_commitment` PI `hash [7, 7]` is BACKED by a verifying
 sub-proof attesting a uniquely determined program VK — a real, non-vacuous firing, UNCONDITIONAL,
 at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED (the FRI legs discharge definitionally
-on `floorEngine`). -/
+on `floorEngine`).
+
+⚑ ONE LANE: `(honestFold refSponge).c` is the model's scalar leaf commitment, met as `[·]`. -/
 theorem honest_companion_fires :
-    ∃ v : ℤ, (floorEngine refSponge).boundTo (honestFold refSponge).c v ∧
+    ∃ v : List ℤ, (floorEngine refSponge).boundTo [(honestFold refSponge).c] v ∧
       (∀ q : ℤ × ℤ, (floorEngine refSponge).verify q = true →
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).c → (floorEngine refSponge).vkOf q = v) :=
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).c] →
+        (floorEngine refSponge).vkOf q = v) :=
   custom_companion_grounded (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestCLS refSponge)
     (honestFloor refSponge) (honestFactor refSponge) (honestHvk refSponge) (honestFold refSponge)
     (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
@@ -280,31 +302,49 @@ would PRODUCE a backing sub-proof — contradiction. The aggregate is UNSAT. Thi
 the Rust anti-ghost tooth: a forged commitment with no backing leaf is rejected by the fold itself. -/
 theorem forged_unsat {E : ProofEngine} {CustomLeafSat : ℤ → ℤ → Prop}
     (hfri : CustomLeafFriFloor E CustomLeafSat) {f : CustomFold E}
-    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.c) :
+    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.c]) :
     ¬ SatCustomFold E CustomLeafSat f := by
   intro hsat
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   exact hforge ⟨q, hq, hqc⟩
 
-/-- The forged custom-leaf predicate over `demoEngine` (the only verifying sub-proof commits to `123`). -/
-def demoCLS : ℤ → ℤ → Prop :=
-  fun _leafVk leafCommit => ∃ q : Bool, demoEngine.verify q = true ∧ demoEngine.piCommit q = leafCommit
+/-- The forged custom-leaf predicate over `oneLaneDemoEngine` (the only verifying sub-proof commits
+to `123`).
 
-theorem demoFloor : CustomLeafFriFloor demoEngine demoCLS :=
+⚑ **WHY THE ONE-LANE ENGINE AND NOT `demoEngine`.** This fold model's leaf commitment is ONE `ℤ`,
+while `demoEngine` squeezes the deployed EIGHT lanes — so a scalar claim can never equal its
+commitment, and a forged-VALUE pole stated there would be true BY ARITY, saying nothing about the
+forged value at all (`demoEngine_is_eight_lanes_oneLane_is_one` pins the two widths). Over
+`oneLaneDemoEngine` the refusal is about the value again.
+
+⚠ A one-lane ENGINE MODEL is not a one-lane DESCRIPTOR seam: a scalar-commitment fold is fairly
+modelled at one lane, but `PROOF_BIND_MIN_LANES` refuses a one-lane seam at every admission door.
+`demoCLS_sat` is the companion that keeps this predicate from being false everywhere. -/
+def demoCLS : ℤ → ℤ → Prop :=
+  fun _leafVk leafCommit =>
+    ∃ q : Bool, oneLaneDemoEngine.verify q = true ∧ oneLaneDemoEngine.piCommit q = [leafCommit]
+
+theorem demoFloor : CustomLeafFriFloor oneLaneDemoEngine demoCLS :=
   fun _leafVk _leafCommit h => h
 
-/-- A FORGED fold over `demoEngine`: the published `custom_proof_commitment` PI is `999`, a commitment
-NO verifying sub-proof of `demoEngine` exposes (the only verifying proof commits to `123`). -/
-def forgedFold : CustomFold demoEngine := { leafVk := 0, leafCommit := 999, c := 999 }
+/-- **`demoCLS_sat` — THE PREDICATE IS SATISFIED AT THE HONEST VALUE, so the pole below refuses a
+VALUE rather than everything.** Without it `forged_unsat_demo` is equally consistent with a leaf
+predicate that is FALSE EVERYWHERE — which is precisely what the eight-lane `demoEngine` silently
+became. The negative pole's meaning depends on this lemma, so it is named. -/
+theorem demoCLS_sat : demoCLS 0 123 := ⟨true, rfl, rfl⟩
+
+/-- A FORGED fold over `oneLaneDemoEngine`: the published `custom_proof_commitment` PI is `999`, a
+commitment NO verifying sub-proof exposes (the only verifying proof commits to `123`). -/
+def forgedFold : CustomFold oneLaneDemoEngine := { leafVk := 0, leafCommit := 999, c := 999 }
 
 /-- **`forged_unsat_demo` (NEGATIVE non-vacuity).** The forged fold (exposed PI `999`, unbacked) does
-NOT satisfy — the rejection is non-vacuous: `999` is genuinely beyond `demoEngine`'s reach, so no
+NOT satisfy — the rejection is non-vacuous: `999` is genuinely beyond the engine's reach, so no
 satisfying fold exists. -/
-theorem forged_unsat_demo : ¬ SatCustomFold demoEngine demoCLS forgedFold := by
+theorem forged_unsat_demo : ¬ SatCustomFold oneLaneDemoEngine demoCLS forgedFold := by
   refine forged_unsat demoFloor (f := forgedFold) ?_
   rintro ⟨q, _hq, hc⟩
-  have hc' : (123 : ℤ) = 999 := hc
+  have hc' : [(123 : ℤ)] = [(999 : ℤ)] := hc
   exact absurd hc' (by decide)
 
 end Forged
@@ -317,6 +357,7 @@ end Forged
 #assert_axioms custom_companion_grounded
 #assert_axioms honest_companion_fires
 #assert_axioms forged_unsat
+#assert_axioms demoCLS_sat
 #assert_axioms forged_unsat_demo
 
 end Dregg2.Circuit.CustomBindingFromFold

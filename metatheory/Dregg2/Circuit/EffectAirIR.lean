@@ -75,7 +75,7 @@ import Dregg2.Circuit.TableAirIR
 namespace Dregg2.Circuit.EffectAirIR
 
 open Dregg2.Circuit (Expr Constraint)
-open Dregg2.Circuit.DescriptorIR2 (TableId TableDef WindowExpr ChalExpr)
+open Dregg2.Circuit.DescriptorIR2 (TableId TableDef WindowExpr ChalExpr PROOF_BIND_MIN_LANES)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRow)
 open Dregg2.Circuit.TableAirIR (BusOp RowSel readsNext)
 
@@ -198,23 +198,38 @@ up the compiler (house law #1) or give up the seam. This is the source-language 
 ratchet down. A compiled AIR cannot say "bound to a verifying proof of SOME program about SOMETHING";
 the unpinned form remains reachable only from the hand-written Custom descriptor, whose whole job is
 to dispatch an arbitrary registered cell program. A leg that named neither would lower to the
-UNSATISFIABLE pair, never to silence. -/
+UNSATISFIABLE pair, never to silence.
+
+⚑ **AND IT IS A LANE VECTOR (2026-08-05).** `commit`/`vk`/`bound` were ONE expression each while
+the objects they tie are eight felts, so a compiled seam was worth `2^31`. They are lane lists now,
+and `mainRailOk` refuses a seam narrower than `DescriptorIR2.PROOF_BIND_MIN_LANES` as flatly as it
+refuses the unpinned shape — the containment cannot be re-shipped through the compiler. -/
 structure BindLeg where
   /-- The selector column/expression; the seam forces it boolean. -/
   guard  : Expr
-  /-- The row's sub-proof public-input commitment expression. -/
-  commit : Expr
-  /-- The row's sub-proof program-VK expression. -/
-  vk     : Expr
-  /-- ⚑ The DECLARED program VK literal this row recursion-binds to. -/
-  vkPin  : Option ℤ
-  /-- ⚑ The DECLARED row-local expression `commit` must equal. -/
-  bound  : Option Expr
+  /-- The row's sub-proof public-input commitment LANES, low limb first. -/
+  commit : List Expr
+  /-- The row's sub-proof program-VK LANES, low limb first; same length as `commit`. -/
+  vk     : List Expr
+  /-- ⚑ The DECLARED program VK LANES this row recursion-binds to, as literals. -/
+  vkPin  : Option (List ℤ)
+  /-- ⚑ The DECLARED row-local expressions the `commit` lanes must equal. -/
+  bound  : Option (List Expr)
 
-/-- ⚑ **The main rail's verdict on ONE bind leg**, and it is a REFUSAL of a shape rather than of a
-width: a bind that pins NEITHER the program nor the commitment is `ProofBind.isDeclarative`, whose
-existential quantifies over every program and every statement. The source cannot say it. -/
-def BindLeg.mainRailOk (b : BindLeg) : Bool := !(b.vkPin.isNone && b.bound.isNone)
+/-- ⚑ **The main rail's verdict on ONE bind leg** — two refusals, and both are the same lesson.
+
+*Shape*: a bind that pins NEITHER the program nor the commitment is `ProofBind.isDeclarative`, whose
+existential quantifies over every program and every statement.
+
+*Width*: a bind narrower than `PROOF_BIND_MIN_LANES` ties a LIMB of the object it names — `2^31` a
+lane against a ~124-bit bar — and a pin that names fewer lanes than the vector it pins is a
+truncation. The source cannot say either. -/
+def BindLeg.mainRailOk (b : BindLeg) : Bool :=
+  !(b.vkPin.isNone && b.bound.isNone)
+    && (b.vk.length == b.commit.length)
+    && decide (PROOF_BIND_MIN_LANES ≤ b.commit.length)
+    && (match b.vkPin with | none => true | some vs => vs.length == b.vk.length)
+    && (match b.bound with | none => true | some bs => bs.length == b.commit.length)
 
 /-- **A PI-PIN leg** — the (d) capability. `EffectSpec2`'s lowering could pin only FIRST-row PIs
 (the `PIBindsDigests` surface); a deployed boundary contract pins both ends. -/

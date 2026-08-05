@@ -92,10 +92,15 @@ predicate-transition leaf: a SATISFIED in-circuit DSL-leaf verifier (pinned VK c
 exposing PI-commitment claim `leafCommit`) yields a GENUINELY VERIFYING DSL sub-proof of
 engine `E` whose `piCommit` IS the exposed `leafCommit`. The dsl instance of
 `AggAirSound.FriExtract` (one child of one node), NOT a new dregg axiom — see
-`dslLeafFriFloor_of_aggFriExtract`. -/
+`dslLeafFriFloor_of_aggFriExtract`.
+
+⚑ **ONE LANE.** This fold model's leaf commitment is a SCALAR `ℤ`; `E.piCommit` is a lane VECTOR
+(2026-08-05), so the model meets the engine as the singleton `[leafCommit]`. The DEPLOYED rc carrier
+is FOUR felts and the aggregate commitment EIGHT lanes — the model did not widen with them, it adapts
+at the engine boundary. -/
 def DslLeafFriFloor (E : ProofEngine) (DslLeafSat : ℤ → ℤ → Prop) : Prop :=
   ∀ leafVk leafCommit : ℤ, DslLeafSat leafVk leafCommit →
-    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = leafCommit
+    ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [leafCommit]
 
 /-- The DSL leaf's exposed segment projection: the leaf carries its PI-commitment claim `x`
 in the ordered-digest lane `acc` (the other lanes are inert for a single-leaf wrap). -/
@@ -103,17 +108,23 @@ def segOfCommit (x : ℤ) : Seg := { firstOld := 0, lastNew := 0, count := 0, ac
 
 /-- **`dslLeafFriFloor_of_aggFriExtract` — the FRI floor IS AggAirSound's carrier.** Given the
 aggregation's per-child `FriExtract` over the DSL engine — pinned VK core constant `leafPre`,
-the child exposing its PI-commitment claim in `acc` — the dsl-leaf floor follows. -/
+the child exposing its PI-commitment claim in `acc` — the dsl-leaf floor follows.
+
+⚑ **ONE LANE.** `Seg.acc` is a SCALAR, so the exposure projection names the single lane `lane q` the
+model's engine squeezes (`hlane : E.piCommit q = [lane q]`) — the assumption the pre-widening
+`piCommit : Proof → ℤ` made silently. -/
 theorem dslLeafFriFloor_of_aggFriExtract
     (E : ProofEngine) (leafPre : ℤ) (ChildVerifierSat : ℤ → Seg → Prop)
+    (lane : E.Proof → ℤ) (hlane : ∀ q, E.piCommit q = [lane q])
     (hagg : FriExtract E.Proof E.verify (fun _ => leafPre)
-              (fun q => segOfCommit (E.piCommit q)) ChildVerifierSat) :
+              (fun q => segOfCommit (lane q)) ChildVerifierSat) :
     DslLeafFriFloor E
       (fun leafVk leafCommit => ChildVerifierSat leafVk (segOfCommit leafCommit)) := by
   intro leafVk leafCommit hcv
   obtain ⟨q, hq, _hvkc, hexp⟩ := hagg leafVk (segOfCommit leafCommit) hcv
   refine ⟨q, hq, ?_⟩
-  simpa [segOfCommit] using congrArg Seg.acc hexp
+  have hacc : lane q = leafCommit := by simpa [segOfCommit] using congrArg Seg.acc hexp
+  rw [hlane q, hacc]
 
 /-! ## §2 — the per-turn fold node + its satisfaction (the connect). -/
 
@@ -153,20 +164,23 @@ The premise set is EXACTLY the `custom_binding_from_fold` / `sovereign_binding_f
 set; the engine binding is `DslBackingAttack`'s §C repair
 (`dslEngineBinding_of_route_commitment_factoring` — the route-commitment IS a Poseidon2
 sponge of the DSL PIs, VK recoverable), consumed here rather than restated. A forged rc with
-no backing sub-proof makes the aggregate UNSAT. -/
+no backing sub-proof makes the aggregate UNSAT.
+
+⚑ **ONE LANE.** `f.rc` is the model's SCALAR published route-commitment, met as the singleton `[f.rc]`
+against the engine's lane vector; the deployed rc carrier is FOUR felts. -/
 theorem dsl_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (DslLeafSat : ℤ → ℤ → Prop)
     (hfri : DslLeafFriFloor E DslLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : DslFold E)
     (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.rc → E.piCommit q = f.rc → ¬ EncColl hash enc p q)
+        E.piCommit p = [f.rc] → E.piCommit q = [f.rc] → ¬ EncColl hash enc p q)
     (hsat : SatDslFold E DslLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.rc) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.rc]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.rc → E.piCommit q = f.rc → E.vkOf p = E.vkOf q) := by
+        E.piCommit p = [f.rc] → E.piCommit q = [f.rc] → E.vkOf p = E.vkOf q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   refine ⟨⟨q, hq, hqc⟩, ?_⟩
@@ -183,12 +197,12 @@ theorem dsl_binding_from_fold_or_collides
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (DslLeafSat : ℤ → ℤ → Prop)
     (hfri : DslLeafFriFloor E DslLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : DslFold E) (hsat : SatDslFold E DslLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.rc) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.rc]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.rc → E.piCommit q = f.rc →
+        E.piCommit p = [f.rc] → E.piCommit q = [f.rc] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
@@ -203,20 +217,22 @@ acceptance set — every verifying DSL sub-proof's exposed PI-commitment is a `V
 (`hbacks`, which holds definitionally for `Verifying c := ∃ q, verify q ∧ piCommit q = c`,
 the `CellProgram::verify_transition` acceptance set the attack file models) — a satisfying
 fold whose published rc is the leg's (`hrc`) DISCHARGES exactly the predicate
-`DslBackingAttack` showed the deployed AIR omits: the leg IS `DslWitnessed`. -/
+`DslBackingAttack` showed the deployed AIR omits: the leg IS `DslWitnessed`.
+
+⚑ **ONE LANE.** `DslWitnessed`/`leg.rc` are SCALAR (`DslBackingAttack` is unchanged), so `hbacks`
+names the lane a verifying sub-proof exposes: whenever its commitment IS the singleton `[c]`, `c` is a
+`Verifying` value. The deployed rc carrier is FOUR felts; this model carries one. -/
 theorem dslWitnessed_from_fold
     (E : ProofEngine) (DslLeafSat : ℤ → ℤ → Prop)
     (hfri : DslLeafFriFloor E DslLeafSat)
     (Verifying : ℤ → Prop)
-    (hbacks : ∀ q : E.Proof, E.verify q = true → Verifying (E.piCommit q))
+    (hbacks : ∀ (q : E.Proof) (c : ℤ), E.verify q = true → E.piCommit q = [c] → Verifying c)
     (f : DslFold E) (hsat : SatDslFold E DslLeafSat f)
     (leg : DeployedDfaLeg) (hrc : f.rc = leg.rc) :
     DslWitnessed Verifying leg := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect, hrc] at hqc
-  have hv := hbacks q hq
-  rw [hqc] at hv
-  exact hv
+  exact hbacks q leg.rc hq hqc
 
 /-! ## §4 — NON-VACUITY: the binding FIRES on an honest fold; the §A forgery is REJECTED. -/
 
@@ -231,7 +247,7 @@ def honestFold (hash : List ℤ → ℤ) : DslFold (floorEngine hash) :=
 sub-proof exposes the exposed claim. -/
 def honestDLS (hash : List ℤ → ℤ) : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit => ∃ q : ℤ × ℤ,
-    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = leafCommit
+    (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = [leafCommit]
 
 theorem honestFloor (hash : List ℤ → ℤ) :
     DslLeafFriFloor (floorEngine hash) (honestDLS hash) :=
@@ -244,17 +260,19 @@ theorem honestSat (hash : List ℤ → ℤ) :
 
 /-- **`honest_companion_fires` (POSITIVE non-vacuity).** On the honest Dfa-gated turn the
 binding FIRES: the published route-commitment is BACKED by a verifying DSL sub-proof
-attesting a uniquely determined predicate program — unconditionally, at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED. -/
+attesting a uniquely determined predicate program — unconditionally, at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED.
+
+⚑ ONE LANE: `(honestFold refSponge).rc` is the model's scalar route-commitment, met as `[·]`. -/
 theorem honest_companion_fires :
     (∃ q : ℤ × ℤ, (floorEngine refSponge).verify q = true ∧
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).rc) ∧
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).rc]) ∧
     (∀ p q : ℤ × ℤ, (floorEngine refSponge).verify p = true → (floorEngine refSponge).verify q = true →
-        (floorEngine refSponge).piCommit p = (honestFold refSponge).rc →
-        (floorEngine refSponge).piCommit q = (honestFold refSponge).rc →
+        (floorEngine refSponge).piCommit p = [(honestFold refSponge).rc] →
+        (floorEngine refSponge).piCommit q = [(honestFold refSponge).rc] →
         (floorEngine refSponge).vkOf p = (floorEngine refSponge).vkOf q) :=
   dsl_binding_from_fold (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestDLS refSponge)
     (honestFloor refSponge) (fun _p _ => rfl)
-    (by intro p q _ _ henc; injection henc)
+    (floorEngine_hvk refSponge)
     (honestFold refSponge)
     (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
     (honestSat refSponge)
@@ -265,10 +283,10 @@ non-vacuous: with `Verifying` = the floor engine's acceptance set, the honest Df
 theorem honest_dslWitnessed (hash : List ℤ → ℤ) :
     DslWitnessed
       (fun c => ∃ q : ℤ × ℤ,
-        (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = c)
+        (floorEngine hash).verify q = true ∧ (floorEngine hash).piCommit q = [c])
       ⟨(honestFold hash).rc, True⟩ :=
   dslWitnessed_from_fold (floorEngine hash) (honestDLS hash) (honestFloor hash)
-    _ (fun q hq => ⟨q, hq, rfl⟩) (honestFold hash) (honestSat hash)
+    _ (fun q c hq hc => ⟨q, hq, hc⟩) (honestFold hash) (honestSat hash)
     ⟨(honestFold hash).rc, True⟩ rfl
 
 end Honest
@@ -282,35 +300,50 @@ fold would PRODUCE a backing sub-proof — contradiction. The circuit twin of
 `deployed_dfa_turn_forged_rc_rejected`. -/
 theorem forged_unsat {E : ProofEngine} {DslLeafSat : ℤ → ℤ → Prop}
     (hfri : DslLeafFriFloor E DslLeafSat) {f : DslFold E}
-    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.rc) :
+    (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.rc]) :
     ¬ SatDslFold E DslLeafSat f := by
   intro hsat
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   exact hforge ⟨q, hq, hqc⟩
 
-/-- The DSL-leaf predicate over `demoEngine` (the only verifying sub-proof commits to
+/-- ⚑ **A ONE-LANE toy engine for the forged pole.** `DescriptorIR2.demoEngine` now squeezes EIGHT
+lanes (`123..130`); a scalar fold claim `[c]` could never match it for ARITY reasons, so a rejection
+over it would say nothing about the VALUE and `demoDLS` would be false everywhere — a vacuous negative
+pole. `laneDemoEngine` squeezes exactly ONE lane, at `demoEngine`'s lead value `123`, so the refusal
+below is about the forged CLAIM and not about the width. -/
+def laneDemoEngine : ProofEngine where
+  Proof    := Bool
+  verify   := fun b => b
+  piCommit := fun _ => [(123 : ℤ)]
+  vkOf     := fun _ => [(45 : ℤ)]
+
+/-- The DSL-leaf predicate over `laneDemoEngine` (the only verifying sub-proof commits to
 `123`). -/
 def demoDLS : ℤ → ℤ → Prop :=
   fun _leafVk leafCommit =>
-    ∃ q : Bool, demoEngine.verify q = true ∧ demoEngine.piCommit q = leafCommit
+    ∃ q : Bool, laneDemoEngine.verify q = true ∧ laneDemoEngine.piCommit q = [leafCommit]
 
-theorem demoFloor : DslLeafFriFloor demoEngine demoDLS :=
+theorem demoFloor : DslLeafFriFloor laneDemoEngine demoDLS :=
   fun _leafVk _leafCommit h => h
+
+/-- The predicate is SATISFIABLE at the honest value — so the rejection below is about `999`, not
+about the shape of `demoDLS`. -/
+theorem demoDLS_sat : demoDLS 0 123 := ⟨true, rfl, rfl⟩
 
 /-- The `DslBackingAttack` §A forgery lifted onto the fold: the published route-commitment is
 `999` (`deployed_admits_unwitnessed`'s unwitnessed leg value) — a claim NO verifying
-sub-proof of `demoEngine` exposes. -/
-def forgedFold : DslFold demoEngine := { leafVk := 0, leafCommit := 999, rc := 999 }
+sub-proof exposes. -/
+def forgedFold : DslFold laneDemoEngine := { leafVk := 0, leafCommit := 999, rc := 999 }
 
 /-- **`forged_rc_unsat_demo` (NEGATIVE non-vacuity — the §A attack, INVERTED onto the
 fold).** The forged fold (published rc `999`, exactly the `deployed_admits_unwitnessed` leg's
 value, unbacked) does NOT satisfy: what the deployed AIR alone admitted, the aggregate
 REFUSES. -/
-theorem forged_rc_unsat_demo : ¬ SatDslFold demoEngine demoDLS forgedFold := by
+theorem forged_rc_unsat_demo : ¬ SatDslFold laneDemoEngine demoDLS forgedFold := by
   refine forged_unsat demoFloor (f := forgedFold) ?_
   rintro ⟨q, _hq, hc⟩
-  have hc' : (123 : ℤ) = 999 := hc
+  have hc' : [(123 : ℤ)] = [(999 : ℤ)] := hc
   exact absurd hc' (by decide)
 
 end Forged
@@ -324,6 +357,7 @@ end Forged
 #assert_axioms honest_companion_fires
 #assert_axioms honest_dslWitnessed
 #assert_axioms forged_unsat
+#assert_axioms demoDLS_sat
 #assert_axioms forged_rc_unsat_demo
 
 end Dregg2.Circuit.DslBindingFromFold

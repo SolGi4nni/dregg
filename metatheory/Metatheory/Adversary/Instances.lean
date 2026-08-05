@@ -242,7 +242,13 @@ anti-ghost). The in-AIR crypto floor (the FRI leaf floor `hfri`, Poseidon2-CR `h
 factoring `hfactor`/`hvk`/`henc`) is FIXED at build — the standard-crypto carrier, not per-control.
 `*_binding_from_fold` IS each `holds`. Anti-vacuity: a forged (unbacked) fold is rejected by accept
 (`forged_unsat`) AND excluded by the invariant; the shipped `forged_*_unsat_demo` are the concrete
-inhabitants. -/
+inhabitants.
+
+⚑ **ONE LANE (2026-08-05).** `ProofEngine.piCommit`/`vkOf` are LANE VECTORS since the `ProofBind`
+widening; these fold models keep a SCALAR published commitment and meet the engine as the singleton
+`[f.c]` / `[hash (enc p)]`. The DEPLOYED custom commitment is EIGHT lanes — the models did not widen
+with it, they adapt at the engine boundary. The bridge and DECO engines
+(`NoteSpendEngine.spendDigest`, `DecoEngine.paymentDigest`) are still scalar and unchanged. -/
 
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.DescriptorIR2 (ProofEngine)
@@ -271,37 +277,37 @@ open Dregg2.Circuit.DecoBindingFromFold (DecoFold SatDecoFold DecoLeafFriFloor d
 /-- **`customCarrierDynamics`** — `custom_binding_from_fold` as a `GovernedDynamics`. -/
 def customCarrierDynamics (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (CustomLeafSat : ℤ → ℤ → Prop) (hfri : CustomLeafFriFloor E CustomLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q) :
     GovernedDynamics where
   Control := CustomFold E
   Outcome := CustomFold E
   run f := f
   accept f := SatCustomFold E CustomLeafSat f
-  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.c) ∧
+  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.c]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.c → E.piCommit q = f.c →
+      E.piCommit p = [f.c] → E.piCommit q = [f.c] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q)
   holds f h := custom_binding_from_fold_or_collides E hash enc CustomLeafSat hfri hfactor hvk f h
 
 /-- CUSTOM backing, via the ONE lemma. -/
 theorem custom_backing_via_schema (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (CustomLeafSat : ℤ → ℤ → Prop) (hfri : CustomLeafFriFloor E CustomLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : CustomFold E) (hsat : SatCustomFold E CustomLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.c) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.c]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.c → E.piCommit q = f.c →
+      E.piCommit p = [f.c] → E.piCommit q = [f.c] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) :=
   governed_holds (customCarrierDynamics E hash enc CustomLeafSat hfri hfactor hvk) f hsat
 
 /-- ANTI-VACUITY (custom): a forged (unbacked) fold is rejected by accept AND excluded by invariant. -/
 theorem customCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (CustomLeafSat : ℤ → ℤ → Prop) (hfri : CustomLeafFriFloor E CustomLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
-    (f : CustomFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.c) :
+    (f : CustomFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.c]) :
     ¬ (customCarrierDynamics E hash enc CustomLeafSat hfri hfactor hvk).accept f ∧
     ¬ (customCarrierDynamics E hash enc CustomLeafSat hfri hfactor hvk).invariant f :=
   ⟨Dregg2.Circuit.CustomBindingFromFold.forged_unsat hfri hforge, fun h => hforge h.1⟩
@@ -310,35 +316,35 @@ theorem customCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E
 
 def factoryCarrierDynamics (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (FactoryLeafSat : ℤ → ℤ → Prop) (hfri : FactoryLeafFriFloor E FactoryLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q) :
     GovernedDynamics where
   Control := FactoryFold E
   Outcome := FactoryFold E
   run f := f
   accept f := SatFactoryFold E FactoryLeafSat f
-  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.cv) ∧
+  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.cv]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.cv → E.piCommit q = f.cv →
+      E.piCommit p = [f.cv] → E.piCommit q = [f.cv] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q)
   holds f h := factory_binding_from_fold_or_collides E hash enc FactoryLeafSat hfri hfactor hvk f h
 
 theorem factory_backing_via_schema (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (FactoryLeafSat : ℤ → ℤ → Prop) (hfri : FactoryLeafFriFloor E FactoryLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : FactoryFold E) (hsat : SatFactoryFold E FactoryLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.cv) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.cv]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.cv → E.piCommit q = f.cv →
+      E.piCommit p = [f.cv] → E.piCommit q = [f.cv] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) :=
   governed_holds (factoryCarrierDynamics E hash enc FactoryLeafSat hfri hfactor hvk) f hsat
 
 theorem factoryCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (FactoryLeafSat : ℤ → ℤ → Prop) (hfri : FactoryLeafFriFloor E FactoryLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
-    (f : FactoryFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.cv) :
+    (f : FactoryFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.cv]) :
     ¬ (factoryCarrierDynamics E hash enc FactoryLeafSat hfri hfactor hvk).accept f ∧
     ¬ (factoryCarrierDynamics E hash enc FactoryLeafSat hfri hfactor hvk).invariant f :=
   ⟨Dregg2.Circuit.FactoryBindingFromFold.forged_unsat hfri hforge, fun h => hforge h.1⟩
@@ -347,35 +353,35 @@ theorem factoryCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : 
 
 def sovereignCarrierDynamics (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (SovereignLeafSat : ℤ → ℤ → Prop) (hfri : SovereignLeafFriFloor E SovereignLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q) :
     GovernedDynamics where
   Control := SovereignFold E
   Outcome := SovereignFold E
   run f := f
   accept f := SatSovereignFold E SovereignLeafSat f
-  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.kc) ∧
+  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.kc]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.kc → E.piCommit q = f.kc →
+      E.piCommit p = [f.kc] → E.piCommit q = [f.kc] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q)
   holds f h := sovereign_binding_from_fold_or_collides E hash enc SovereignLeafSat hfri hfactor hvk f h
 
 theorem sovereign_backing_via_schema (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (SovereignLeafSat : ℤ → ℤ → Prop) (hfri : SovereignLeafFriFloor E SovereignLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : SovereignFold E) (hsat : SatSovereignFold E SovereignLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.kc) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.kc]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.kc → E.piCommit q = f.kc →
+      E.piCommit p = [f.kc] → E.piCommit q = [f.kc] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) :=
   governed_holds (sovereignCarrierDynamics E hash enc SovereignLeafSat hfri hfactor hvk) f hsat
 
 theorem sovereignCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (SovereignLeafSat : ℤ → ℤ → Prop) (hfri : SovereignLeafFriFloor E SovereignLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
-    (f : SovereignFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.kc) :
+    (f : SovereignFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.kc]) :
     ¬ (sovereignCarrierDynamics E hash enc SovereignLeafSat hfri hfactor hvk).accept f ∧
     ¬ (sovereignCarrierDynamics E hash enc SovereignLeafSat hfri hfactor hvk).invariant f :=
   ⟨Dregg2.Circuit.SovereignBindingFromFold.forged_unsat hfri hforge, fun h => hforge h.1⟩
@@ -384,35 +390,35 @@ theorem sovereignCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc 
 
 def membershipCarrierDynamics (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (MembershipLeafSat : ℤ → ℤ → Prop) (hfri : MembershipLeafFriFloor E MembershipLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q) :
     GovernedDynamics where
   Control := MembershipFold E
   Outcome := MembershipFold E
   run f := f
   accept f := SatMembershipFold E MembershipLeafSat f
-  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.tup) ∧
+  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.tup]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.tup → E.piCommit q = f.tup →
+      E.piCommit p = [f.tup] → E.piCommit q = [f.tup] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q)
   holds f h := membership_binding_from_fold_or_collides E hash enc MembershipLeafSat hfri hfactor hvk f h
 
 theorem membership_backing_via_schema (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (MembershipLeafSat : ℤ → ℤ → Prop) (hfri : MembershipLeafFriFloor E MembershipLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : MembershipFold E) (hsat : SatMembershipFold E MembershipLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.tup) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.tup]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.tup → E.piCommit q = f.tup →
+      E.piCommit p = [f.tup] → E.piCommit q = [f.tup] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) :=
   governed_holds (membershipCarrierDynamics E hash enc MembershipLeafSat hfri hfactor hvk) f hsat
 
 theorem membershipCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (MembershipLeafSat : ℤ → ℤ → Prop) (hfri : MembershipLeafFriFloor E MembershipLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
-    (f : MembershipFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.tup) :
+    (f : MembershipFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.tup]) :
     ¬ (membershipCarrierDynamics E hash enc MembershipLeafSat hfri hfactor hvk).accept f ∧
     ¬ (membershipCarrierDynamics E hash enc MembershipLeafSat hfri hfactor hvk).invariant f :=
   ⟨Dregg2.Circuit.MembershipBindingFromFold.forged_unsat hfri hforge, fun h => hforge h.1⟩
@@ -421,35 +427,35 @@ theorem membershipCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc
 
 def dslCarrierDynamics (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (DslLeafSat : ℤ → ℤ → Prop) (hfri : DslLeafFriFloor E DslLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q) :
     GovernedDynamics where
   Control := DslFold E
   Outcome := DslFold E
   run f := f
   accept f := SatDslFold E DslLeafSat f
-  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.rc) ∧
+  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.rc]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.rc → E.piCommit q = f.rc →
+      E.piCommit p = [f.rc] → E.piCommit q = [f.rc] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q)
   holds f h := dsl_binding_from_fold_or_collides E hash enc DslLeafSat hfri hfactor hvk f h
 
 theorem dsl_backing_via_schema (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (DslLeafSat : ℤ → ℤ → Prop) (hfri : DslLeafFriFloor E DslLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : DslFold E) (hsat : SatDslFold E DslLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.rc) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.rc]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.rc → E.piCommit q = f.rc →
+      E.piCommit p = [f.rc] → E.piCommit q = [f.rc] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) :=
   governed_holds (dslCarrierDynamics E hash enc DslLeafSat hfri hfactor hvk) f hsat
 
 theorem dslCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (DslLeafSat : ℤ → ℤ → Prop) (hfri : DslLeafFriFloor E DslLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
-    (f : DslFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.rc) :
+    (f : DslFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.rc]) :
     ¬ (dslCarrierDynamics E hash enc DslLeafSat hfri hfactor hvk).accept f ∧
     ¬ (dslCarrierDynamics E hash enc DslLeafSat hfri hfactor hvk).invariant f :=
   ⟨Dregg2.Circuit.DslBindingFromFold.forged_unsat hfri hforge, fun h => hforge h.1⟩
@@ -458,35 +464,35 @@ theorem dslCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Pr
 
 def hatcheryCarrierDynamics (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (ContractLeafSat : ℤ → ℤ → Prop) (hfri : ContractLeafFriFloor E ContractLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q) :
     GovernedDynamics where
   Control := HatcheryFold E
   Outcome := HatcheryFold E
   run f := f
   accept f := SatHatcheryFold E ContractLeafSat f
-  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.ch) ∧
+  invariant f := (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.ch]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.ch → E.piCommit q = f.ch →
+      E.piCommit p = [f.ch] → E.piCommit q = [f.ch] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q)
   holds f h := hatchery_binding_from_fold_or_collides E hash enc ContractLeafSat hfri hfactor hvk f h
 
 theorem hatchery_backing_via_schema (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (ContractLeafSat : ℤ → ℤ → Prop) (hfri : ContractLeafFriFloor E ContractLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : HatcheryFold E) (hsat : SatHatcheryFold E ContractLeafSat f) :
-    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.ch) ∧
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.ch]) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-      E.piCommit p = f.ch → E.piCommit q = f.ch →
+      E.piCommit p = [f.ch] → E.piCommit q = [f.ch] →
         E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) :=
   governed_holds (hatcheryCarrierDynamics E hash enc ContractLeafSat hfri hfactor hvk) f hsat
 
 theorem hatcheryCarrier_bites (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (ContractLeafSat : ℤ → ℤ → Prop) (hfri : ContractLeafFriFloor E ContractLeafSat)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
-    (f : HatcheryFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.ch) :
+    (f : HatcheryFold E) (hforge : ¬ ∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = [f.ch]) :
     ¬ (hatcheryCarrierDynamics E hash enc ContractLeafSat hfri hfactor hvk).accept f ∧
     ¬ (hatcheryCarrierDynamics E hash enc ContractLeafSat hfri hfactor hvk).invariant f :=
   ⟨Dregg2.Circuit.HatcheryBindingFromFold.forged_unsat hfri hforge, fun h => hforge h.1⟩

@@ -60,7 +60,7 @@ as theorems rather than as a shrug, is the pair that brackets them:
   * `deadVerifier_empties_leafFloor` — at any instantiation whose verifier rejects everything, the
     floor FORCES the in-circuit subcircuit to be UNSATISFIABLE. So these floors are not free: they
     are exactly as strong as the claim that the leaf verifier accepts something.
-  * `leafFloor_inhabited_nondegenerately` — at `DescriptorIR2.demoEngine` the floor HOLDS with its
+  * `leafFloor_inhabited_nondegenerately` — at `oneLaneEngine` the floor HOLDS with its
     antecedent SATISFIED. So they are not empty notions either, and the UNKNOWN verdict is about the
     DEPLOYED instantiation specifically, not about the shape.
   * `bindingExtract_is_free_when_the_binding_proof_fails` — `BindingExtract` is TRIVIALLY TRUE on any
@@ -305,9 +305,18 @@ classes are one shape. They are stated over an ABSTRACT `verify` which the tree 
 the deployed verifier, so the deployed-acceptance check has no argument to run on and the verdict at
 deployment is genuinely UNKNOWN. Both brackets ARE settleable, and are settled here. -/
 
-/-- A verifier that rejects everything — the degenerate instantiation these floors do not exclude. -/
+/-- A verifier that rejects everything — the degenerate instantiation these floors do not exclude.
+⚑ `piCommit`/`vkOf` are LANE VECTORS since 2026-08-05; this model carries ONE lane where the
+deployed commitment carries eight. -/
 def deadEngine : ProofEngine :=
-  { Proof := Bool, verify := fun _ => false, piCommit := fun _ => 0, vkOf := fun _ => 0 }
+  { Proof := Bool, verify := fun _ => false, piCommit := fun _ => [0], vkOf := fun _ => [0] }
+
+/-- ⚑ **A ONE-LANE demo engine (2026-08-05).** `DescriptorIR2.demoEngine` squeezes the deployed
+EIGHT lanes, while this model's leaf commitment is a scalar the floor meets as the singleton
+`[leafCommit]` — so no scalar `Sat` can be satisfied against it. The upper bracket below is fired
+here instead: one accepting proof, exposing one commitment lane, at the width the model carries. -/
+def oneLaneEngine : ProofEngine :=
+  { Proof := Bool, verify := fun b => b, piCommit := fun _ => [123], vkOf := fun _ => [45] }
 
 /-- **The `*LeafFriFloor` family IS the `Extracts` shape**, so the whole instrument applies to it.
 Stated at `CustomBindingFromFold.CustomLeafFriFloor`; the other eight (`Factory`, `Contract`,
@@ -316,7 +325,7 @@ projection renamed, and `AggAirSound.FriExtract` is the same body over `Seg`. -/
 theorem customLeafFriFloor_iff_extracts (E : ProofEngine) (Sat : ℤ → ℤ → Prop) :
     Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor E Sat
       ↔ Extracts (fun p : ℤ × ℤ => Sat p.1 p.2)
-          (fun p (q : E.Proof) => E.verify q = true ∧ E.piCommit q = p.2) := by
+          (fun p (q : E.Proof) => E.verify q = true ∧ E.piCommit q = [p.2]) := by
   constructor
   · intro h p hp; exact h p.1 p.2 hp
   · intro h a b hab; exact h (a, b) hab
@@ -342,17 +351,21 @@ theorem deadEngine_leafFloor_forbids_satisfaction (Sat : ℤ → ℤ → Prop)
     ¬ Sat a b :=
   fun hab => deadVerifier_empties_leafFloor deadEngine Sat (fun _ => rfl) h (a, b) hab
 
-/-- **THE UPPER BRACKET — these floors are NOT empty notions.** At `DescriptorIR2.demoEngine` the
+/-- **THE UPPER BRACKET — these floors are NOT empty notions.** At `oneLaneEngine` the
 floor HOLDS with its antecedent SATISFIED — a non-degenerate model, not the cheap one obtained by
 making the antecedent unsatisfiable (which `leafFloor_is_free_when_unsatisfiable` records
 separately). So the UNKNOWN verdict for this family is about the DEPLOYED instantiation, which the
-tree never writes down, and not about the shape. -/
+tree never writes down, and not about the shape.
+
+⚑ The witnessing engine moved from `DescriptorIR2.demoEngine` to `oneLaneEngine` on 2026-08-05: the
+floor's leaf commitment is a scalar and meets `piCommit` as `[leafCommit]`, so an eight-lane engine
+admits no satisfied antecedent at all. Same claim, at the width this model carries. -/
 theorem leafFloor_inhabited_nondegenerately :
-    Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor demoEngine (fun _ c => c = 123)
+    Dregg2.Circuit.CustomBindingFromFold.CustomLeafFriFloor oneLaneEngine (fun _ c => c = 123)
       ∧ (∃ a b : ℤ, (fun (_ : ℤ) (c : ℤ) => c = 123) a b) := by
   constructor
   · intro a b hab
-    exact ⟨true, rfl, hab.symm⟩
+    exact ⟨true, rfl, by rw [hab]; rfl⟩
   · exact ⟨0, 123, rfl⟩
 
 /-- The degenerate satisfaction: an unsatisfiable subcircuit predicate makes the floor free. Recorded

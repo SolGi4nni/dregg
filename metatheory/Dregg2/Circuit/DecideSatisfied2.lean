@@ -102,21 +102,30 @@ congruences mirroring `ProofBind.holdsAt`: the guard is a bit, the attested prog
 DECLARED `vkPin`, the bound commitment is the DECLARED `bound`. ⚑ This arm used to be the constant
 `true`, which is what made every enumeration over a `proofBind`-carrying descriptor blind to the one
 kind that denoted nothing. -/
+def decideZeroLanes (g : ℤ) (xs ys : List ℤ) : Bool :=
+  (xs.length == ys.length) &&
+    (xs.zip ys).all (fun p => decide (g * (p.1 - p.2) ≡ 0 [ZMOD 2013265921]))
+
+theorem decideZeroLanes_iff (g : ℤ) (xs ys : List ℤ) :
+    decideZeroLanes g xs ys = true ↔ zeroLanes g xs ys := by
+  unfold decideZeroLanes zeroLanes
+  simp [Bool.and_eq_true, beq_iff_eq, List.all_eq_true, decide_eq_true_eq]
+
 def decideProofBind (env : VmRowEnv) (m : ProofBind) : Bool :=
   decide (m.guard.eval env.loc * (m.guard.eval env.loc - 1) ≡ 0 [ZMOD 2013265921]) &&
   (match m.vkPin with
-   | none   => true
-   | some v => decide (m.guard.eval env.loc * (m.vk.eval env.loc - v) ≡ 0 [ZMOD 2013265921])) &&
+   | none    => true
+   | some vs => decideZeroLanes (m.guard.eval env.loc) (m.vk.map (·.eval env.loc)) vs) &&
   (match m.bound with
-   | none   => true
-   | some b => decide (m.guard.eval env.loc * (m.commit.eval env.loc - b.eval env.loc)
-                 ≡ 0 [ZMOD 2013265921]))
+   | none    => true
+   | some bs => decideZeroLanes (m.guard.eval env.loc) (m.commit.map (·.eval env.loc))
+                  (bs.map (·.eval env.loc)))
 
 theorem decideProofBind_iff (env : VmRowEnv) (m : ProofBind) :
     decideProofBind env m = true ↔ ProofBind.holdsAt env m := by
   unfold decideProofBind ProofBind.holdsAt
   cases hv : m.vkPin <;> cases hb : m.bound <;>
-    simp [Bool.and_eq_true, decide_eq_true_eq, and_assoc]
+    simp [Bool.and_eq_true, decide_eq_true_eq, decideZeroLanes_iff, and_assoc]
 
 /-- **`decideConstraint2 mapDec hash tf env isFirst isLast c`** — the Boolean decision of one v2
 constraint's per-row denotation `c.holdsAt hash tf env isFirst isLast`. CASE-COMPLETE over the seven

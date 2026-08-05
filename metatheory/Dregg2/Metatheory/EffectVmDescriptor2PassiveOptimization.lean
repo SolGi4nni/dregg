@@ -289,38 +289,46 @@ theorem holdsAt_project (hash : List Int -> Int) (g : Nat -> Nat)
   | memOp m => trivial
   | umemOp m => trivial
   | proofBind m =>
-    -- ⚑ NO LONGER `trivial`: the seam's read expressions transport through the remap exactly like a
-    -- gate body; `vkPin` is a LITERAL and carries across unchanged.
+    -- ⚑ NO LONGER `trivial`, and LANE-WISE since 2026-08-05: every lane of the seam's read vectors
+    -- transports through the remap exactly like a gate body; `vkPin` is a literal vector and
+    -- carries across unchanged.
     have hg : (mapVarE g m.guard).eval E.loc = m.guard.eval EX.loc :=
       evalE_map_agree g m.guard E.loc EX.loc
         (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
-    have hv : (mapVarE g m.vk).eval E.loc = m.vk.eval EX.loc :=
-      evalE_map_agree g m.vk E.loc EX.loc
-        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
-    have hc : (mapVarE g m.commit).eval E.loc = m.commit.eval EX.loc :=
-      evalE_map_agree g m.commit E.loc EX.loc
-        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
+    have hv : (m.vk.map (mapVarE g)).map (fun e => e.eval E.loc)
+        = m.vk.map (fun e => e.eval EX.loc) :=
+      evalE_map_agree_list g m.vk E.loc EX.loc
+        (fun e he r hr => hloc r (by
+          simp only [refs2, List.mem_append]
+          exact Or.inl (Or.inr (List.mem_flatMap.mpr ⟨e, he, hr⟩))))
+    have hc : (m.commit.map (mapVarE g)).map (fun e => e.eval E.loc)
+        = m.commit.map (fun e => e.eval EX.loc) :=
+      evalE_map_agree_list g m.commit E.loc EX.loc
+        (fun e he r hr => hloc r (by
+          simp only [refs2, List.mem_append]
+          exact Or.inl (Or.inl (Or.inr (List.mem_flatMap.mpr ⟨e, he, hr⟩)))))
     obtain ⟨h1, h2, h3⟩ := h
     refine ⟨by rw [hg]; exact h1, ?_, ?_⟩
     · cases hvp : m.vkPin with
       | none => show True; trivial
-      | some x =>
+      | some vs =>
         rw [hvp] at h2
-        show (mapVarE g m.guard).eval E.loc * ((mapVarE g m.vk).eval E.loc - x)
-          ≡ 0 [ZMOD 2013265921]
+        show zeroLanes ((mapVarE g m.guard).eval E.loc)
+          ((m.vk.map (mapVarE g)).map (fun e => e.eval E.loc)) vs
         rw [hg, hv]; exact h2
     · cases hbd : m.bound with
       | none => show True; trivial
-      | some b =>
-        have hb : (mapVarE g b).eval E.loc = b.eval EX.loc :=
-          evalE_map_agree g b E.loc EX.loc
-            (fun r hr => hloc r (by
+      | some bs =>
+        have hb : (bs.map (mapVarE g)).map (fun e => e.eval E.loc)
+            = bs.map (fun e => e.eval EX.loc) :=
+          evalE_map_agree_list g bs E.loc EX.loc
+            (fun e he r hr => hloc r (by
               simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]
-              tauto))
+              exact Or.inr (List.mem_flatMap.mpr ⟨e, he, hr⟩)))
         rw [hbd] at h3
-        show (mapVarE g m.guard).eval E.loc
-            * ((mapVarE g m.commit).eval E.loc - (mapVarE g b).eval E.loc)
-          ≡ 0 [ZMOD 2013265921]
+        show zeroLanes ((mapVarE g m.guard).eval E.loc)
+          ((m.commit.map (mapVarE g)).map (fun e => e.eval E.loc))
+          ((bs.map (mapVarE g)).map (fun e => e.eval E.loc))
         rw [hg, hc, hb]; exact h3
   | mapOp m =>
     intro hguardC

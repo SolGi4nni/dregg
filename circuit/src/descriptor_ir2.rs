@@ -797,29 +797,93 @@ pub struct MapOpSpec {
 /// `EffectVmEmitRotationV3.customPiExposure`, eight `.piBinding .first` pins), and the fold
 /// connects those PIs to the custom sub-proof leaf's PI-commitment.
 ///
-/// ⚠ WIDTH: these are ONE felt each; the real commitment is eight
-/// (`circuit-prove/src/custom_proof_bind.rs::PROOF_BIND_COMMIT_WIDTH`). A `bound` tie is worth
-/// 2^31, not the 2^124 of the object it is a limb of. Descriptors needing the full digest in their
-/// public statement PI-bind the eight squeeze lanes; this pins the program.
+/// ⚑ **WIDENED 2026-08-05: one felt → LANE VECTORS.** The revision above shipped `commit`/`vk`/
+/// `bound` as ONE expression each and said so in this docblock — *"a `bound` tie is worth 2^31, not
+/// the 2^124 of the object it is a limb of"* — naming widening as the real fix and shipping the
+/// limb. The three fields carry the whole object now, and `Ir2Air::eval` asserts one congruence per
+/// lane. A seam tie is worth what the object is worth.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProofBindSpec {
     /// Selector guard (active iff it evaluates to 1). Forced boolean by the seam.
     pub guard: LeanExpr,
-    /// The `custom_proof_commitment` column (bound to a verifying sub-proof's PI commitment).
-    pub commit: LeanExpr,
-    /// The `custom_program_vk_hash` column (bound to that sub-proof's program VK).
-    pub vk: LeanExpr,
-    /// ⚑ The DECLARED program VK literal. `None` = the descriptor declares the program unpinned.
-    pub vk_pin: Option<i64>,
-    /// ⚑ The DECLARED row-local expression `commit` must equal. `None` = declared free-witnessed.
-    pub bound: Option<LeanExpr>,
+    /// The `custom_proof_commitment` LANES, low limb first (bound to a verifying sub-proof's PI
+    /// commitment). At least [`PROOF_BIND_MIN_LANES`] of them.
+    pub commit: Vec<LeanExpr>,
+    /// The `custom_program_vk_hash` LANES, low limb first (bound to that sub-proof's program VK).
+    /// Same length as `commit`.
+    pub vk: Vec<LeanExpr>,
+    /// ⚑ The DECLARED program VK literal LANES, one per `vk` lane. `None` = the descriptor declares
+    /// the program unpinned. A pin of a DIFFERENT length is not a prefix pin — it is refused at
+    /// admission and asserted unsatisfiable in the AIR.
+    pub vk_pin: Option<Vec<i64>>,
+    /// ⚑ The DECLARED row-local expressions the `commit` lanes must equal. `None` = declared
+    /// free-witnessed. Same length discipline as `vk_pin`.
+    pub bound: Option<Vec<LeanExpr>>,
 }
+
+/// ⚑ **THE LANE FLOOR of a recursion seam** — the felt count of the deployed objects a
+/// `proof_bind` ties. `circuit-prove/src/custom_proof_bind.rs::PROOF_BIND_COMMIT_WIDTH` is `8` (the
+/// full `WideHash` squeeze, ~124-bit birthday) and `custom_program_vk_hash` is
+/// `bytes32_to_8_limbs`, also eight. A narrower seam ties a LIMB — `2^31` a lane, below this repo's
+/// own ~124-bit bar — so it is REFUSED here rather than emitted with the number in a comment.
+///
+/// ⚠ A FLOOR, not a width. `dregg-mina-lightclient-verify::v1` ties a NINE-lane `Faithful9` program
+/// fingerprint, because eight BabyBear lanes cannot injectively carry 32 bytes (247.26 bits against
+/// 256). The Lean twin is `DescriptorIR2.PROOF_BIND_MIN_LANES`; `circuit-prove` pins the two
+/// constants against each other (`sdk/tests/wide_completeness_ledger.rs`).
+pub const PROOF_BIND_MIN_LANES: usize = 8;
 
 impl ProofBindSpec {
     /// A seam that pins NEITHER the program nor the commitment. Countable, so the number can
     /// ratchet down; the Lean twin is `DescriptorIR2.ProofBind.isDeclarative`.
     pub fn is_declarative(&self) -> bool {
         self.vk_pin.is_none() && self.bound.is_none()
+    }
+
+    /// The number of lanes this seam ties.
+    pub fn lanes(&self) -> usize {
+        self.commit.len()
+    }
+
+    /// ⚑ **THE WIDTH VERDICT** — the lanes agree in number, there are at least
+    /// [`PROOF_BIND_MIN_LANES`] of them, and each declared pin names exactly as many lanes as the
+    /// vector it pins. The Lean twin is `DescriptorIR2.ProofBind.widthOk`; this is applied at all
+    /// three admission doors (the JSON parser, the canonical decoder, `check_descriptor2`), so a
+    /// narrow or truncated seam cannot reach a prover from any direction.
+    pub fn width_ok(&self) -> Result<(), String> {
+        if self.commit.len() != self.vk.len() {
+            return Err(format!(
+                "proof_bind declares {} commit lanes and {} vk lanes; they must agree",
+                self.commit.len(),
+                self.vk.len()
+            ));
+        }
+        if self.commit.len() < PROOF_BIND_MIN_LANES {
+            return Err(format!(
+                "proof_bind declares {} lanes, below the floor of {PROOF_BIND_MIN_LANES}: a \
+                 narrower seam ties one limb of an eight-felt object and is worth 2^31 a lane",
+                self.commit.len()
+            ));
+        }
+        if let Some(p) = &self.vk_pin
+            && p.len() != self.vk.len()
+        {
+            return Err(format!(
+                "proof_bind vk_pin names {} lanes against {} vk lanes: a pin is not a prefix",
+                p.len(),
+                self.vk.len()
+            ));
+        }
+        if let Some(b) = &self.bound
+            && b.len() != self.commit.len()
+        {
+            return Err(format!(
+                "proof_bind bound names {} lanes against {} commit lanes: a pin is not a prefix",
+                b.len(),
+                self.commit.len()
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -1568,36 +1632,43 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
             c.expect(b',')?;
             c.expect_key("guard")?;
             let guard = parse_expr(c)?;
+            // ⚑ LANE ARRAYS since 2026-08-05 — the objects a seam ties are eight felts, and these
+            // were one expression each.
             c.expect(b',')?;
             c.expect_key("commit")?;
-            let commit = parse_expr(c)?;
+            let commit = parse_array(c, parse_expr)?;
             c.expect(b',')?;
             c.expect_key("vk")?;
-            let vk = parse_expr(c)?;
+            let vk = parse_array(c, parse_expr)?;
             // ⚑ The seam's two declared halves. Both are `null`-able: the Lean emitter renders
             // `Option.none` as a bare `null`, which is how a descriptor SAYS it cannot pin that
-            // half rather than leaving the reader to infer it.
+            // half rather than leaving the reader to infer it. When present they are lane arrays,
+            // one literal / one expression per lane.
             c.expect(b',')?;
             c.expect_key("vk_pin")?;
             let vk_pin = if c.try_null()? {
                 None
             } else {
-                Some(c.parse_int()?)
+                Some(parse_array(c, |c| c.parse_int())?)
             };
             c.expect(b',')?;
             c.expect_key("bound")?;
             let bound = if c.try_null()? {
                 None
             } else {
-                Some(parse_expr(c)?)
+                Some(parse_array(c, parse_expr)?)
             };
-            VmConstraint2::ProofBind(ProofBindSpec {
+            let spec = ProofBindSpec {
                 guard,
                 commit,
                 vk,
                 vk_pin,
                 bound,
-            })
+            };
+            // THE JSON DOOR's half of the width refusal. A four-lane artifact from before the
+            // widening does not load here; it is not padded and not reinterpreted.
+            spec.width_ok()?;
+            VmConstraint2::ProofBind(spec)
         }
         "window_gate" => {
             c.expect(b',')?;
@@ -2172,15 +2243,24 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
                 }
             }
             VmConstraint2::ProofBind(m) => {
-                // The proof-binding op declares the recursion binding; its columns must be in
-                // bounds. They are PUBLISHED as descriptor PIs (the rotated Custom member's eight
-                // `customPiExposure` pins) and bound to the verifying sub-proof's PI commitment /
-                // VK at the per-turn FOLD via the recursion argument — not by a row-local poly here.
-                for e in [&m.guard, &m.commit, &m.vk] {
+                // ⚑ THE WIDTH DISCIPLINE FIRST (2026-08-05). A seam narrower than
+                // `PROOF_BIND_MIN_LANES` ties one limb of an eight-felt object; a pin naming fewer
+                // lanes than its vector is a truncation, not a prefix check. Both are refused here,
+                // at the JSON door and at the canonical decoder — three independent doors, because
+                // this is the check whose absence made the retired seam worth 2^31.
+                m.width_ok().map_err(|e| format!("constraint {ci}: {e}"))?;
+                // The proof-binding op declares the recursion binding; every lane's columns must be
+                // in bounds. They are PUBLISHED as descriptor PIs (the rotated Custom member's
+                // sixteen `customPiExposure` pins) and bound to the verifying sub-proof's PI
+                // commitment / VK at the per-turn FOLD via the recursion argument.
+                chk(&m.guard, "proof_bind field", ci)?;
+                for e in m.commit.iter().chain(m.vk.iter()) {
                     chk(e, "proof_bind field", ci)?;
                 }
                 if let Some(b) = &m.bound {
-                    chk(b, "proof_bind bound", ci)?;
+                    for e in b {
+                        chk(e, "proof_bind bound", ci)?;
+                    }
                 }
             }
             VmConstraint2::WindowGate(g) => {
@@ -3765,18 +3845,44 @@ fn eval_row_local_constraints<AB, C>(
             // commitment is derived off-row and bound by the fold's lane-by-lane `connect`). An
             // absent pin is a VALUE here, countable by a gate — not the silence it replaced.
             //
+            // ⚑ ONE CONGRUENCE PER LANE (2026-08-05). `commit`/`vk`/`bound` were one expression
+            // each while the objects are eight felts, so the tie was worth 2^31. The arm now emits
+            // `1 + n + n` bodies against the Lean denotation's `1 + n + n` congruences.
+            //
+            // ⚠ A LENGTH MISMATCH IS UNSATISFIABLE, NOT A SHORTER CHECK. `zip` would silently
+            // check the prefix; `ProofBind.holdsAt`'s length conjunct makes the same shape FALSE in
+            // Lean, so the deployed evaluator asserts `1 = 0` instead. Every admission door refuses
+            // such a descriptor first — this is the belt under that brace, and it is what keeps the
+            // two languages' denotations equal rather than merely similar.
+            //
             // Emitted as its own `assert_zero`s rather than through the shared tail below,
-            // because the arm produces up to three bodies and the tail asserts exactly one.
+            // because the arm produces many bodies and the tail asserts exactly one.
             VmConstraint2::ProofBind(p) => {
                 let guard = p.guard.eval_expr::<AB>(local);
                 builder.assert_zero(guard.clone() * (guard.clone() - AB::Expr::ONE));
-                if let Some(v) = p.vk_pin {
-                    let vk = p.vk.eval_expr::<AB>(local);
-                    builder.assert_zero(guard.clone() * (vk - const_to_expr::<AB>(v)));
+                if p.commit.len() != p.vk.len() {
+                    builder.assert_zero(AB::Expr::ONE);
+                }
+                if let Some(pin) = &p.vk_pin {
+                    if pin.len() != p.vk.len() {
+                        builder.assert_zero(AB::Expr::ONE);
+                    }
+                    for (lane, v) in p.vk.iter().zip(pin.iter()) {
+                        builder.assert_zero(
+                            guard.clone() * (lane.eval_expr::<AB>(local) - const_to_expr::<AB>(*v)),
+                        );
+                    }
                 }
                 if let Some(b) = &p.bound {
-                    let commit = p.commit.eval_expr::<AB>(local);
-                    builder.assert_zero(guard * (commit - b.eval_expr::<AB>(local)));
+                    if b.len() != p.commit.len() {
+                        builder.assert_zero(AB::Expr::ONE);
+                    }
+                    for (lane, expected) in p.commit.iter().zip(b.iter()) {
+                        builder.assert_zero(
+                            guard.clone()
+                                * (lane.eval_expr::<AB>(local) - expected.eval_expr::<AB>(local)),
+                        );
+                    }
                 }
                 continue;
             }
@@ -4719,11 +4825,16 @@ pub fn read_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
                 }
             }
             VmConstraint2::ProofBind(p) => {
-                for x in [&p.guard, &p.commit, &p.vk] {
+                // ⚑ Every LANE is a read column since the widening — a seam that named limb 0
+                // touched one column and now touches the whole digest block.
+                e(&p.guard, &mut out);
+                for x in p.commit.iter().chain(p.vk.iter()) {
                     e(x, &mut out);
                 }
                 if let Some(b) = &p.bound {
-                    e(b, &mut out);
+                    for x in b {
+                        e(x, &mut out);
+                    }
                 }
             }
             VmConstraint2::WindowGate(g) => w(&g.body, &mut out),
@@ -9912,36 +10023,87 @@ mod tests {
     // The accumulator / recursive-proof-binding leg (proof_bind) — the Custom leg
     // ================================================================
 
-    /// The Lean `#guard`-pinned demo-custom golden (DescriptorIR2 §10c): the `proof_bind` grammar
-    /// (the row's commitment + vk columns, gated), byte-for-byte.
-    const DEMO_CUSTOM: &str = "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1},\"vk_pin\":45,\"bound\":{\"t\":\"const\",\"v\":123}}],\"hash_sites\":[],\"ranges\":[]}";
+    /// The Lean-pinned demo-custom golden (`DescriptorIR2.demoC_wire_golden`, §10c): the widened
+    /// `proof_bind` grammar — LANE ARRAYS for the commitment, the program VK, the program pin and
+    /// the bound expression — byte-for-byte.
+    const DEMO_CUSTOM: &str = "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":17,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":16},\"commit\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7}],\"vk\":[{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}],\"vk_pin\":[45,46,47,48,49,50,51,52],\"bound\":[{\"t\":\"const\",\"v\":123},{\"t\":\"const\",\"v\":124},{\"t\":\"const\",\"v\":125},{\"t\":\"const\",\"v\":126},{\"t\":\"const\",\"v\":127},{\"t\":\"const\",\"v\":128},{\"t\":\"const\",\"v\":129},{\"t\":\"const\",\"v\":130}]}],\"hash_sites\":[],\"ranges\":[]}";
 
-    /// The byte-pinned Lean proof-bind golden parses, decoding the accumulator constraint kind.
+    /// The byte-pinned Lean proof-bind golden parses, decoding the accumulator constraint kind at
+    /// EIGHT LANES.
     #[test]
     fn parses_lean_proof_bind_golden() {
         let d = parse_vm_descriptor2(DEMO_CUSTOM).expect("proof_bind golden must parse");
         assert_eq!(d.name, "demo-custom");
         assert_eq!(d.constraints.len(), 1);
-        assert!(matches!(
-            &d.constraints[0],
-            VmConstraint2::ProofBind(ProofBindSpec {
-                guard: LeanExpr::Var(2),
-                commit: LeanExpr::Var(0),
-                vk: LeanExpr::Var(1),
-                vk_pin: Some(45),
-                bound: Some(LeanExpr::Const(123)),
-            })
-        ));
+        let VmConstraint2::ProofBind(m) = &d.constraints[0] else {
+            panic!("the golden's one constraint is a proof_bind");
+        };
+        assert_eq!(m.guard, LeanExpr::Var(16));
+        assert_eq!(
+            m.commit,
+            (0..8).map(LeanExpr::Var).collect::<Vec<_>>(),
+            "the commitment is EIGHT lanes, not limb 0"
+        );
+        assert_eq!(m.vk, (8..16).map(LeanExpr::Var).collect::<Vec<_>>());
+        assert_eq!(
+            m.vk_pin.as_deref(),
+            Some(&(45..53).collect::<Vec<i64>>()[..])
+        );
+        assert_eq!(
+            m.bound.as_deref(),
+            Some(&(123..131).map(LeanExpr::Const).collect::<Vec<_>>()[..])
+        );
         // The binding rides the recursion argument, not a committed table — the descriptor
         // checks (no table for the accumulator kind) and round-trips.
         check_descriptor2(&d).expect("proof_bind golden must check");
+    }
+
+    /// ⚑ **A NARROW SEAM DOES NOT LOAD.** The retired one-felt shape — and any seam below
+    /// [`PROOF_BIND_MIN_LANES`] — is refused at the JSON door. This is the polarity that makes the
+    /// widening structural rather than a convention: a four-lane artifact cannot be padded in.
+    #[test]
+    fn narrow_proof_bind_refuses() {
+        let narrow = "{\"name\":\"narrow\",\"ir\":2,\"trace_width\":4,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":4,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":[{\"t\":\"var\",\"v\":0}],\"vk\":[{\"t\":\"var\",\"v\":1}],\"vk_pin\":[45],\"bound\":[{\"t\":\"const\",\"v\":123}]}],\"hash_sites\":[],\"ranges\":[]}";
+        let err = parse_vm_descriptor2(narrow).expect_err("a one-lane seam must refuse");
+        assert!(
+            err.contains("below the floor"),
+            "the refusal must name the lane floor, got: {err}"
+        );
+    }
+
+    /// ⚑ **A TRUNCATED PIN DOES NOT LOAD EITHER.** Eight lanes with a four-lane `vk_pin` is not
+    /// "pin the prefix" — it is a seam that would check half its object.
+    #[test]
+    fn truncated_proof_bind_pin_refuses() {
+        let mut lanes = String::new();
+        for k in 0..8 {
+            if k > 0 {
+                lanes.push(',');
+            }
+            lanes.push_str(&format!("{{\"t\":\"var\",\"v\":{k}}}"));
+        }
+        let mut vks = String::new();
+        for k in 8..16 {
+            if k > 8 {
+                vks.push(',');
+            }
+            vks.push_str(&format!("{{\"t\":\"var\",\"v\":{k}}}"));
+        }
+        let json = format!(
+            "{{\"name\":\"trunc\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\"challenges\":0,\"tables\":[{{\"id\":0,\"name\":\"main\",\"arity\":17,\"sem\":\"main\"}}],\"constraints\":[{{\"t\":\"proof_bind\",\"guard\":{{\"t\":\"var\",\"v\":16}},\"commit\":[{lanes}],\"vk\":[{vks}],\"vk_pin\":[45,46,47,48],\"bound\":null}}],\"hash_sites\":[],\"ranges\":[]}}"
+        );
+        let err = parse_vm_descriptor2(&json).expect_err("a truncated pin must refuse");
+        assert!(
+            err.contains("not a prefix"),
+            "the refusal must name the truncation, got: {err}"
+        );
     }
 
     /// A v1 wire (no `"ir"` key) carrying a `proof_bind` is REFUSED — the accumulator kind is
     /// v2-only, like every other new kind.
     #[test]
     fn proof_bind_in_v1_wire_refuses() {
-        let v1 = "{\"name\":\"x\",\"trace_width\":3,\"public_input_count\":0,\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1},\"vk_pin\":45,\"bound\":{\"t\":\"const\",\"v\":123}}],\"hash_sites\":[],\"ranges\":[]}";
+        let v1 = "{\"name\":\"x\",\"trace_width\":3,\"public_input_count\":0,\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":[{\"t\":\"var\",\"v\":0}],\"vk\":[{\"t\":\"var\",\"v\":1}],\"vk_pin\":null,\"bound\":null}],\"hash_sites\":[],\"ranges\":[]}";
         assert!(
             parse_vm_descriptor_any(v1).is_err(),
             "v1 wire carrying a proof_bind must refuse"
@@ -9967,26 +10129,39 @@ mod tests {
             .collect();
         assert_eq!(binds.len(), 1, "Custom carries exactly one proof binding");
         let m = binds[0];
-        // guard = sel::CUSTOM (8); commit = param CUSTOM_PROOF_COMMIT_BASE (PARAM_BASE+4 = 72);
-        // vk = param CUSTOM_VK_HASH_BASE (PARAM_BASE+0 = 68). (PARAM_BASE = STATE_BEFORE_BASE +
-        // state::SIZE = 54 + 14 = 68.)
+        // guard = sel::CUSTOM (8). ⚑ EIGHT LANES each since the widening: the low four commitment
+        // limbs at param CUSTOM_PROOF_COMMIT_BASE (PARAM_BASE+4 = 72), the low four VK limbs at
+        // param CUSTOM_VK_HASH_BASE (PARAM_BASE+0 = 68), and the high four of each on the member's
+        // teeth columns. (PARAM_BASE = STATE_BEFORE_BASE + state::SIZE = 54 + 14 = 68.)
         assert_eq!(
             m.guard,
             LeanExpr::Var(crate::effect_vm::columns::sel::CUSTOM)
         );
         assert_eq!(
-            m.commit,
-            LeanExpr::Var(
-                crate::effect_vm::columns::PARAM_BASE
-                    + crate::effect_vm::columns::param::CUSTOM_PROOF_COMMIT_BASE
-            )
+            m.lanes(),
+            PROOF_BIND_MIN_LANES,
+            "the deployed custom seam ties the FULL eight-felt commitment"
+        );
+        assert_eq!(m.vk.len(), m.commit.len());
+        assert_eq!(
+            m.commit[..4],
+            (0..4)
+                .map(|k| LeanExpr::Var(
+                    crate::effect_vm::columns::PARAM_BASE
+                        + crate::effect_vm::columns::param::CUSTOM_PROOF_COMMIT_BASE
+                        + k
+                ))
+                .collect::<Vec<_>>()[..]
         );
         assert_eq!(
-            m.vk,
-            LeanExpr::Var(
-                crate::effect_vm::columns::PARAM_BASE
-                    + crate::effect_vm::columns::param::CUSTOM_VK_HASH_BASE
-            )
+            m.vk[..4],
+            (0..4)
+                .map(|k| LeanExpr::Var(
+                    crate::effect_vm::columns::PARAM_BASE
+                        + crate::effect_vm::columns::param::CUSTOM_VK_HASH_BASE
+                        + k
+                ))
+                .collect::<Vec<_>>()[..]
         );
     }
 

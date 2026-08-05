@@ -57,16 +57,18 @@ set_option linter.unusedVariables false
 
 /-! ## §A — the forged trace: deployed `Satisfied2` accepts what staged `Satisfied2Staged` rejects.
 
-We reuse the in-tree demo descriptor `DescriptorIR2.demoC` (one `proofBind ⟨.var 2, .var 0, .var 1⟩`:
-guard = col 2, `custom_proof_commitment` = col 0, `custom_program_vk_hash` = col 1) and the toy
-recursion engine `DescriptorIR2.demoEngine` (the ONLY verifying proof exposes commitment `123` /
-vk `45`). The HONEST demo trace (`demoCTrace`, commit = 123) binds; the FORGED trace below sets the
-commitment column to `999` while keeping the selector ON. -/
+We reuse the in-tree demo descriptor `DescriptorIR2.demoC` (one `proofBind` at EIGHT LANES:
+guard = col 16, `custom_proof_commitment` = cols 0..7, `custom_program_vk_hash` = cols 8..15) and
+the toy recursion engine `DescriptorIR2.demoEngine` (the ONLY verifying proof exposes the vector
+`[123..130]` / `[45..52]`). The HONEST demo trace (`demoCTrace`) binds; the FORGED trace below moves
+ONE commitment lane while keeping the selector ON. -/
 
-/-- The forged Custom row: `custom_proof_commitment` (col 0) = `999` — a commitment NO verifying
-sub-proof of `demoEngine` exposes (the only verifying proof commits to `123`); `custom_program_vk_hash`
-(col 1) = `45`; the Custom selector (col 2) = `1` (the binding gate is ACTIVE). -/
-def forgedRow : Assignment := fun i => if i = 0 then 999 else if i = 1 then 45 else if i = 2 then 1 else 0
+/-- The forged Custom row: LANE 3 of `custom_proof_commitment` (col 3) = `999` — a commitment vector
+NO verifying sub-proof of `demoEngine` exposes; the other seven lanes and the whole program vector
+are honest; the Custom selector (col 16) = `1` (the binding gate is ACTIVE).
+⚑ Since the 2026-08-05 widening this is a SEVEN-OF-EIGHT forgery: the retired one-felt seam tied
+lane 0, which this row leaves untouched. -/
+def forgedRow : Assignment := fun i => if i = 3 then 999 else demoCRow i
 
 /-- The forged single-row witness: one main row, no auxiliary tables (proof binding rides the engine,
 not a committed table) — byte-for-byte the shape of `demoCTrace`, only the commitment column moved. -/
@@ -81,9 +83,8 @@ the descriptor DECLARES `bound = .const 123`; the guard is on. -/
 theorem deployed_proofBind_gate_refuses_forged (hash : List ℤ → ℤ) (tf : TraceFamily)
     (isFirst isLast : Bool) :
     ¬ VmConstraint2.holdsAt hash tf (envAt forgedTrace 0) isFirst isLast (.proofBind demoCBind) := by
-  show ¬ ProofBind.holdsAt (envAt forgedTrace 0)
-    (⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩ : ProofBind)
-  unfold ProofBind.holdsAt
+  show ¬ ProofBind.holdsAt (envAt forgedTrace 0) demoCBind
+  unfold ProofBind.holdsAt demoCBind
   decide
 
 /-- ⛑ **THE FORGED TRACE NO LONGER SATISFIES THE DEPLOYED `Satisfied2`.** This theorem used to be
@@ -106,12 +107,13 @@ theorem forged_not_staged :
   -- the staged proofBind row constraint at row 0:
   have hrow := h.rowConstraints 0 (by decide) (.proofBind demoCBind) (by simp [demoC, demoCBind])
   -- holdsAtStaged (.proofBind m) ≡ ProofBind.boundAt demoEngine (envAt forgedTrace 0) m
-  -- the guard (col 2 = 1) is active, so we obtain demoEngine.boundTo 999 45:
+  -- the guard (col 16 = 1) is active, so we obtain `demoEngine.boundTo` the forged lane vector:
   have hbound := hrow.1 (by decide)
   obtain ⟨p, hp, hpc, hpv⟩ := hbound
-  -- demoEngine.piCommit p ≡ 123, the commit column ≡ 999 (defeq); 123 = 999 is false.
-  have hcontra : (123 : ℤ) = 999 := hpc
-  exact absurd hcontra (by decide)
+  -- the engine's vector carries `126` at lane 3; the forged row carries `999`.
+  have hlane := congrArg (fun l : List ℤ => l.getD 3 (0 : ℤ)) hpc
+  simp only [demoCBind, demoEngine, forgedTrace, forgedRow, envAt] at hlane
+  exact absurd hlane (by decide)
 
 /-! ### ⚑ THE SEAM MOVED THE WITNESS, NOT THE THEOREM — read this before quoting either.
 
@@ -128,7 +130,9 @@ whole wound. -/
 
 /-- An engine with NO verifying proofs. `boundTo c v` is FALSE for every `(c, v)`. -/
 def deadEngine : ProofEngine :=
-  { Proof := Bool, verify := fun _ => false, piCommit := fun _ => 123, vkOf := fun _ => 45 }
+  { Proof := Bool, verify := fun _ => false
+  , piCommit := fun _ => (List.range 8).map (fun k => (123 + k : ℤ))
+  , vkOf := fun _ => (List.range 8).map (fun k => (45 + k : ℤ)) }
 
 /-- The HONEST demo trace fails the STAGED denotation over `deadEngine`: the active row demands a
 VERIFYING sub-proof and none exists. -/
@@ -234,14 +238,17 @@ witnessed collision of the deployed sponge. NO cryptographic hypothesis: an adve
 attested VK has, by construction, produced the collision. -/
 theorem vk_determined_or_encColl (hash : List ℤ → ℤ) (E : ProofEngine) (enc : E.Proof → List ℤ)
     -- FRI extraction: a VERIFYING proof's exposed PI-commitment IS the sponge of its genuine PIs.
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    -- ⚑ The commitment is a LANE VECTOR since 2026-08-05, so the factoring names the lane the
+    -- scalar sponge produces; a model whose squeeze is wider states this at its own width.
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     -- structural: the program VK is one of the committed public inputs (recoverable from `enc`).
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (p q : E.Proof) (hp : E.verify p = true) (hq : E.verify q = true)
     (hpc : E.piCommit p = E.piCommit q) :
     E.vkOf p = E.vkOf q ∨ EncColl hash enc p q := by
   have hh : hash (enc p) = hash (enc q) := by
-    rw [← hfactor p hp, ← hfactor q hq]; exact hpc
+    have := (hfactor p hp).symm.trans (hpc.trans (hfactor q hq))
+    injection this
   by_cases henc : enc p = enc q
   · exact Or.inl (hvk p q hp hq henc)
   · exact Or.inr ⟨henc, hh⟩
@@ -250,7 +257,7 @@ theorem vk_determined_or_encColl (hash : List ℤ → ℤ) (E : ProofEngine) (en
 refutable side condition at THAT pair. This is what the `*_binding_from_fold` carriers thread in
 place of the deleted floor. -/
 theorem vk_determined_of_noEncColl (hash : List ℤ → ℤ) (E : ProofEngine) (enc : E.Proof → List ℤ)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (enc p)])
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     {p q : E.Proof} (hp : E.verify p = true) (hq : E.verify q = true)
     (hpc : E.piCommit p = E.piCommit q) (hno : ¬ EncColl hash enc p q) :
@@ -262,15 +269,16 @@ PI encoding is vk-headed (`enc p = vkOf p :: tail p` — the program VK is the l
 the leaf wrap lays it), the structural `hvk` discharges internally (cons-injectivity), so the only
 hypotheses left are `hfactor` and the per-pair non-collision. -/
 theorem vk_determined_of_noEncColl_vkHeaded (hash : List ℤ → ℤ) (E : ProofEngine)
-    (tailEnc : E.Proof → List ℤ)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (E.vkOf p :: tailEnc p))
+    (tailEnc : E.Proof → List ℤ) (vkLanes : Nat)
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = [hash (E.vkOf p ++ tailEnc p)])
     {p q : E.Proof} (hp : E.verify p = true) (hq : E.verify q = true)
     (hpc : E.piCommit p = E.piCommit q)
-    (hno : ¬ EncColl hash (fun r => E.vkOf r :: tailEnc r) p q) :
+    (hlen : ∀ r, (E.vkOf r).length = vkLanes)
+    (hno : ¬ EncColl hash (fun r => E.vkOf r ++ tailEnc r) p q) :
     E.vkOf p = E.vkOf q := by
-  refine vk_determined_of_noEncColl hash E (fun r => E.vkOf r :: tailEnc r) hfactor ?_ hp hq hpc hno
+  refine vk_determined_of_noEncColl hash E (fun r => E.vkOf r ++ tailEnc r) hfactor ?_ hp hq hpc hno
   intro p' q' _ _ henc
-  injection henc with hvkeq _
+  exact List.append_inj_left henc ((hlen p').trans (hlen q').symm)
 
 /-! ### Non-vacuity: BOTH branches of the dichotomy are reachable, and neither is free.
 
@@ -279,8 +287,12 @@ the sponge of `[vk, statement]` — the FRI factoring holds BY CONSTRUCTION (`rf
 def floorEngine (hash : List ℤ → ℤ) : ProofEngine where
   Proof    := ℤ × ℤ
   verify   := fun _ => true
-  piCommit := fun p => hash [p.1, p.2]
-  vkOf     := fun p => p.1
+  -- ⚑ LANE VECTORS (2026-08-05). This toy engine's squeeze is ONE lane and its program identity one
+  -- lane; the deployed engine's are eight and nine. The dichotomy below is about the ENGINE
+  -- abstraction, so it is stated at whatever width the model carries — the eight-lane floor is a
+  -- DESCRIPTOR-level refusal (`PROOF_BIND_MIN_LANES`), not an engine-level one.
+  piCommit := fun p => [hash [p.1, p.2]]
+  vkOf     := fun p => [p.1]
 
 /-- The floor engine's vk-recovery is cons-injectivity. -/
 theorem floorEngine_hvk (hash : List ℤ → ℤ) :
@@ -288,6 +300,7 @@ theorem floorEngine_hvk (hash : List ℤ → ℤ) :
       [p.1, p.2] = [q.1, q.2] → (floorEngine hash).vkOf p = (floorEngine hash).vkOf q := by
   intro p q _ _ henc
   injection henc with h1 _
+  exact congrArg (fun x => [x]) h1
 
 /-- **The dichotomy FIRES on the floor engine with NO hypothesis at all** — the reduction is a
 theorem about the deployed sponge, not about an assumed one. -/
