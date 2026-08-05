@@ -591,8 +591,8 @@ the ladder's closing rung. ⚑ It is an INSTANCE of a general kernel-clean lemma
 evaluated literal — which is exactly what the false conjunct was, and why a rung change could
 falsify it in silence. The `+ 1` is `w9_prev`'s 23rd word. -/
 theorem the_emitted_public_vector_is_its_rungs_width :
-    (wrapPublicAt tChain .bind).length = shapeChain.pubWords
-    ∧ (wrapPublicAt tChain .prev).length = shapeChain.pubWords + 1 :=
+    (wrapPublicAt tChain .bind).length = WRAP_PRIMARY_LEN
+    ∧ (wrapPublicAt tChain .prev).length = WRAP_PRIMARY_LEN :=
   ⟨wrapPublicAt_length tChain .bind, wrapPublicAt_length tChain .prev⟩
 
 #assert_axioms the_emitted_public_vector_is_its_rungs_width
@@ -654,13 +654,13 @@ theorem the_emitted_public_vector_does_not_move_with_what_it_does_not_read :
 rung, with no inert public word. `KimchiWrapMain`'s placement refuses a declared public word no gate
 reads, so a nonempty accepted placement is evidence every exposed word is READ. -/
 theorem the_chained_assembly_places :
-    (refusalOf shapeChain shapeChain.pubWords (wrapGates (rungRows tChain .bind true)) == none)
-       = true
-    ∧ (placedOf shapeChain shapeChain.pubWords
+    (refusalOf shapeChain .bind (rungPub shapeChain .bind)
+        (wrapGates (rungRows tChain .bind true)) == none) = true
+    ∧ (placedOf shapeChain .bind (rungPub shapeChain .bind)
          (wrapGates (rungRows tChain .bind true))).length
-       = shapeChain.pubWords + (rungRows tChain .bind true).length
-    ∧ inertPublicWords shapeChain.pubWords
-        (wrapGates (rungRows tChain .bind true)) = [] := by
+       = WRAP_PRIMARY_LEN + (rungRows tChain .bind true).length
+    ∧ inertSlotsAt shapeChain .bind
+        (wrapGates (rungRows tChain .bind true)) = wrapInertOk shapeChain .bind := by
   native_decide
 
 #assert_compiled the_chained_assembly_places
@@ -897,7 +897,7 @@ theorem the_chain_climbs_past_bind_at_dreggs_own_step_key :
     ∧ (rungsUpto .combine).contains .key = true
     ∧ (rungsUpto .bullet).contains .key = true
     ∧ (rungsUpto .bind).contains .key = false
-    ∧ (refusalOf shapeChain (rungPub shapeChain .key)
+    ∧ (refusalOf shapeChain .key (rungPub shapeChain .key)
          (wrapGates (rungRows tChain .key true)) == none) = true
     ∧ regionEscape shapeChain chainRun .key (wrapGates (rungRows tChain .key true)) = none := by
   native_decide
@@ -1043,8 +1043,9 @@ def chainJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String 
   let rows := rungRows t k wired
   let p := rungPub t.sh k
   renderWrapCircuit name p (p + rows.length)
-    (placedOf t.sh p (wrapGates rows)) (wrapWitnessAt t k p rows)
+    (placedOf t.sh k p (wrapGates rows)) (wrapWitnessAt t k p rows)
     (if p == 0 then [] else wrapPublicAt t k) (rungProbeRows t k)
+    (if p == 0 then [] else wrapSlotsAt t.sh k) (if p == 0 then [] else wrapInertOk t.sh k)
 
 /-! ⚠ NO `#assert_namespace_axioms` HERE, and the absence is the honest label. Every theorem above
 rests on `Lean.ofReduceBool` — they are closed by compiled evaluation, not by the kernel — so a

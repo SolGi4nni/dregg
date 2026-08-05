@@ -193,7 +193,7 @@ theorem key_rung_is_a_ladder_step :
     (rungRows tKey .key true).length
       = (rungRows tKey .bind true).length + (keyRows tKey true).length
     ∧ (rungRows tKey .bind true).length < (rungRows tKey .key true).length
-    ∧ rungPub shapeSmoke .key = shapeSmoke.pubWords := by
+    ∧ rungPub shapeSmoke .key = WRAP_PRIMARY_LEN := by
   refine ⟨rfl, ?_, rfl⟩
   decide
 
@@ -211,10 +211,13 @@ theorem key_rung_control_differs_only_in_probes :
 /-- `placeChecked` ACCEPTS the `w5_key` rung and no public word is inert — the fail-closed placement
 still holds with W-KEY's 56 folds and its second sponge in the grid. -/
 theorem key_rung_places :
-    refusalOf shapeSmoke shapeSmoke.pubWords (wrapGates (rungRows tKey .key true)) = none
-    ∧ inertPublicWords shapeSmoke.pubWords (wrapGates (rungRows tKey .key true)) = []
-    ∧ (placedOf shapeSmoke shapeSmoke.pubWords (wrapGates (rungRows tKey .key true))).length
-        = shapeSmoke.pubWords + (rungRows tKey .key true).length := by
+    refusalOf shapeSmoke .key (rungPub shapeSmoke .key)
+        (wrapGates (rungRows tKey .key true)) = none
+    ∧ inertSlotsAt shapeSmoke .key (wrapGates (rungRows tKey .key true))
+        = wrapInertOk shapeSmoke .key
+    ∧ (placedOf shapeSmoke .key (rungPub shapeSmoke .key)
+        (wrapGates (rungRows tKey .key true))).length
+        = WRAP_PRIMARY_LEN + (rungRows tKey .key true).length := by
   refine ⟨rfl, rfl, rfl⟩
 
 /-- W-KEY's Poseidon rows come in 11-row permutations, and it adds NO curve gate — `choose_key` over
