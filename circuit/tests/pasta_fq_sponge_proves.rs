@@ -111,7 +111,11 @@ fn parse_pis(text: &str) -> Vec<BabyBear> {
         .split_whitespace()
         .map(|c| BabyBear::new(c.parse::<u32>().expect("PI is a u32 decimal")))
         .collect();
-    assert_eq!(pis.len(), 192, "three state lanes in, three out, 32 limbs each");
+    assert_eq!(
+        pis.len(),
+        192,
+        "three state lanes in, three out, 32 limbs each"
+    );
     pis
 }
 
@@ -266,10 +270,18 @@ fn the_full_round_proves_against_its_public_inputs() {
     // The fixture really is the program Lean says it is: 21 multiplies then 9 additions then
     // padding, and the register file — not the chain edge — carries every value.
     for (pc, row) in trace.iter().enumerate() {
-        assert_eq!(row[PC_COL].as_u32(), pc as u32, "row {pc} carries pc = {pc}");
+        assert_eq!(
+            row[PC_COL].as_u32(),
+            pc as u32,
+            "row {pc} carries pc = {pc}"
+        );
     }
-    let muls = (0..ROWS_PER_ROUND).filter(|&r| cell(r, SEL_MUL) == 1).count();
-    let adds = (0..ROWS_PER_ROUND).filter(|&r| cell(r, SEL_ADD) == 1).count();
+    let muls = (0..ROWS_PER_ROUND)
+        .filter(|&r| cell(r, SEL_MUL) == 1)
+        .count();
+    let adds = (0..ROWS_PER_ROUND)
+        .filter(|&r| cell(r, SEL_ADD) == 1)
+        .count();
     assert_eq!(
         (muls, adds),
         (21, 9),
@@ -303,7 +315,11 @@ fn the_full_round_proves_against_its_public_inputs() {
 
     // ⚑ THE HAND-OFF: the round's outputs land in R4, R5 and R0 — `the_allocation_hands_off`, on
     // the wire. The last row holds them, three padding instructions after the round finished.
-    assert_eq!(cell(29, WSEL_BASE), 1, "the last real instruction writes R0");
+    assert_eq!(
+        cell(29, WSEL_BASE),
+        1,
+        "the last real instruction writes R0"
+    );
     for i in 0..SK {
         assert_eq!(
             trace[30][reg_col(0) + i],
@@ -590,7 +606,10 @@ fn the_sponge_is_priced_per_instruction() {
         "committed width {committed}; one instruction commits {} bytes of trace",
         committed * 4
     );
-    println!("\n{:>12}  {:>12}  {:>12}", "instructions", "prove ms", "trace MiB");
+    println!(
+        "\n{:>12}  {:>12}  {:>12}",
+        "instructions", "prove ms", "trace MiB"
+    );
     for (n, ms) in [(32usize, small_ms), (2048usize, big_ms)] {
         println!(
             "{n:>12}  {ms:>12.1}  {:>12.2}",
@@ -604,9 +623,7 @@ fn the_sponge_is_priced_per_instruction() {
         (small_ms * 1000.0 / 32.0) / slope_us,
         small_ms - 32.0 * slope_us / 1000.0
     );
-    println!(
-        "⚠ two-point fit at 2^5/2^11; FRI is O(n log n), so this slope is a FLOOR at 2^19."
-    );
+    println!("⚠ two-point fit at 2^5/2^11; FRI is O(n log n), so this slope is a FLOOR at 2^19.");
 
     // ⚑ THE STAGE, RE-PRICED IN THE UNITS A ROUND ACTUALLY COSTS. The census
     // (`MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM`) counted 21 multiplies per round and omitted
