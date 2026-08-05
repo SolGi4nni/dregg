@@ -215,10 +215,14 @@ GATES=(
   # ⚑ DECORATIVE PUBLIC INPUTS — the class found BY HAND THREE TIMES before it was a gate.
   # A `pi_binding` ties a column to a public input and to NOTHING ELSE, so a descriptor can publish
   # a bank hash, an app hash, a target root, and never name that column in a gate body or a lookup
-  # tuple. `solLcVerifyDesc` does exactly that with eleven anchors; `LightClientSolanaAir` §6b says
+  # tuple. `solLcVerifyDesc` did exactly that with eleven anchors; `LightClientSolanaAir` §6b said
   # in PROSE that "the identical decomposition holds for the Midnight and Tendermint descriptors"
   # and prose is not a gate. Measured 2026-08-04 over all 84 served IR-v2 descriptors: 235
   # decorative anchors in 21 of them, 63 across the five light-client VERIFY descriptors.
+  # ⚑ THAT LAST NUMBER IS 62 NOW, AND SOLANA IS 10 (it went 11 → 19 → 10 in one day). The verify
+  # rung absorbed `dregg-solana-stake-table-fold::v1`, so its trust anchor is the fold's eight
+  # `.last` output lanes instead of nine `.first` limbs no constraint read. Read the baseline
+  # header before treating either move as a regression: COLUMN COUNT IS THE WRONG DENOMINATOR.
   # The check builds the column-connectivity graph (two columns adjacent iff ONE constraint names
   # both) and reds when a PI-bound column's component is a singleton it was not baselined as.
   # ⚠ An ARITY-1 RANGE LOOKUP READS A COLUMN AND JOINS IT TO NOTHING — Mina's eighteen 29/22-bit

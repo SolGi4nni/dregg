@@ -29,19 +29,29 @@ limbs DO carry lane lookups, and they are decorative all the same.
 
 ## ⚑ THE ANSWER, IN THE REGISTER THE MEASUREMENT SUPPORTS
 
-Seven served descriptors. **Two of them relate their published values to anything, and only one of
+Seven served descriptors. **Three of them relate their published values to anything, and only one of
 those two relates them to something the prover did not choose.**
 
 * the Mina LINK rung joins twenty published columns to a chain of WITNESSED lane values;
 * ⚑ the Solana STAKE-TABLE FOLD (2026-08-04) joins twelve to the output columns of two deployed
   Poseidon2 chip absorbs. Its published root is the IMAGE of the exhibited rows, not a value equal
   to another witness — which is the distinction this file's `minaLink_decorative_anchors` caveat was
-  written to keep visible, now on the other side of it.
+  written to keep visible, now on the other side of it;
+* ⚑⚑ and **the Solana VERIFY rung**, which absorbed that fold the same day: twelve of its
+  twenty-two published columns are the fold's, and the ten that are not are the bank root and the
+  slot.
 
-**The five VERIFY descriptors are unchanged: seventy-one decorative anchors, none of their literals
-moved.** No tripwire in this file fired, and that is the honest reading of this pass — the fold is a
-NEW rung beside them, not a repair of them. What repairing them costs is in
-`LightClientSolStakeFoldAir`'s §3.
+⚑⚑ **2026-08-04, SECOND PASS: THE SOLANA VERIFY RUNG ABSORBED THE FOLD, AND THREE THEOREMS IN THIS
+FILE WENT RED SAYING SO** (`sol_decorative_anchors`, `sol_anchors_are_unread`, the census). That is
+the mechanism, not a defect in it. Solana is `19 → 10` and the census `71 → 62`; the nine `.first`
+anchor-root limbs are gone and the light client's trust anchor is the fold's eight `.last` output
+lanes. A fourth, `sol_pinned_denominator_is_not_decorative`, stayed GREEN while ceasing to be about
+the denominator — its columns `[4,5,6,7]` are now `ROOT_IN 4..7` — and repointing it at `[37,38,39,40]`
+is the repair that a red would not have prompted.
+
+**The other four VERIFY descriptors are unchanged: fifty-two decorative anchors, none of their
+literals moved.** What repairing them costs is the same shape as what repairing Solana's cost: pick a
+commitment the prover can afford, and derive the anchor instead of publishing it.
 
 * **`dregg-eth-lightclient-verify::v1`** — `{0} / {1..3}{9} / {4} / {5} / {6} / {7} / {8} / {10}…{20}`.
   ELEVEN of eleven anchors inert, and UNREAD: no constraint of any kind names them, not even a width
@@ -286,46 +296,78 @@ theorem mid_round_and_era_bits_are_not_joined_to_the_published_round_and_era :
     isRelated LightClientMidnightAir.midLcVerifyDesc LightClientMidnightAir.ERA_OK = false := by
   decide
 
-/-- ⚑⚑ **SOLANA — THIS LITERAL SHRANK, AND THAT IS THE CENSUS DOING ITS JOB (2026-08-04).**
+/-- ⚑⚑⚑ **SOLANA — THIS LITERAL FIRED TWICE IN ONE DAY, AND THE SECOND TIME IT SHRANK BY NINE.**
 
-It read `[30 … 40]`: eleven decorative anchors, every published column a singleton. On 2026-08-04
-`LightClientSolanaAir` PI-bound the four TOTAL-STAKE limbs (`totalStakePins`) — the denominator the
-quorum chain divides by — and this `decide` went red, together with the census below and
-`LightClientSolanaAir` §6b's own two tripwires. Per this file's standing instruction ("EVERY THEOREM
-IS A TRIPWIRE MEANT TO GO RED … shrinking the literal is then the correct move"), the literal is
-shrunk rather than the statement weakened.
+Three readings, in order, because only the sequence makes the last one legible:
 
-Nineteen decorative anchors remain — columns 30..48, the NINE `ANCHOR_ROOT` limbs (widened from one
-31-bit column in the same commit), the nine `BANK_ROOT` limbs and `SLOT_COL`. **Cols 4..7 are PI-bound
-and NOT decorative**: they sit in the quorum component. So the count went 11 → 19 while the SHARE that
-is decorative fell — the anchor block got bigger because a 256-bit root stopped being one felt, and
-the four newly-published columns joined a component instead of forming singletons. A raw count is the
-wrong summary of this change; `sol_pinned_denominator_is_not_decorative` below is the right one. -/
+  * `[30 … 40]` — ELEVEN of eleven anchors decorative, every published column a singleton.
+  * `[30 … 48]` — NINETEEN. `totalStakePins` took four columns OUT of the decorative set (the first
+    columns in this census ever to leave it) while `ANCHOR_ROOT` widened from ONE 31-bit column to
+    nine limbs, putting eight unrelated ones IN. *A raw count is the wrong summary of that change*,
+    and the baseline header says so at length.
+  * ⚑ **`[69 … 78]` — TEN, and this time the count and the meaning move together.** The nine
+    `.first` anchor-root limbs are GONE — replaced by the stake-table fold's eight `.last` output
+    lanes, which sit in the one component that contains the whole trace — and the denominator is the
+    fold's accumulator. What remains decorative is the bank root (cols 69..77) and the slot (78).
+
+*The prover exhibits a sequence of stake-table rows, absorbing each into an arity-16 Poseidon2 chip
+row and accumulating its lamports; publishes the LAST row's eight-lane state as the light client's
+weak-subjectivity anchor and the LAST row's four-limb accumulator as the denominator; exhibits a
+rooted-stake numerator clearing `3·rooted > 2·total` against THAT denominator; sets three bits to 1;
+and separately exhibits ten public field elements.* The ten are what is left. -/
 theorem sol_decorative_anchors :
     decorativeAnchors LightClientSolanaAir.solLcVerifyDesc
-      = [30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48] := by
+      = [69, 70, 71, 72, 73, 74, 75, 76, 77, 78] := by
   decide
 
-/-- …and those nineteen are unread. -/
+/-- …and those ten are unread: no constraint of any kind names them, not even a width lookup. -/
 theorem sol_anchors_are_unread :
-    ∀ col ∈ [30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
+    ∀ col ∈ [69, 70, 71, 72, 73, 74, 75, 76, 77, 78],
       isRead LightClientSolanaAir.solLcVerifyDesc col = false := by
   decide
 
-/-- ⚑ **THE ONE THAT IS PUBLISHED AND JOINED.** Each of Solana's four total-stake limbs is PI-bound,
-READ, and RELATED — so none is decorative. This is the first column in the six-chain census that is
-both a published anchor and part of a real arithmetic component, and it is what the shrink above
-measures: the light client's denominator is now in its public statement.
+/-- ⚑⚑ **THE PUBLISHED TRUST ANCHOR IS RELATED — and this is the first anchor ROOT in the census that
+is.** Each of the eight `ANCHOR_ROOT` lanes (cols 29..36) is PI-bound, READ, and RELATED, so none is
+decorative. Mina-link's twenty joined columns were chained WITNESSES; these eight are the OUTPUT
+columns of a deployed Poseidon2 chip absorb whose input tuple carries the stake rows.
 
-⚠ Read it at its own resolution. CONNECTIVITY IS CO-OCCURRENCE, NOT DERIVATION (this file's standing
-caveat, and it binds here): the denominator being published stops the prover CHOOSING it. It does not
-make the stake TABLE derived — `STAKE_TABLE_OK` is still a witnessed carrier, and
-`LightClientSolanaAir` §6c prices why. -/
-theorem sol_pinned_denominator_is_not_decorative :
-    ∀ col ∈ [4, 5, 6, 7],
+⚠ The standing caveat still binds — connectivity is co-occurrence, not derivation. What upgrades
+THESE eight is `DescriptorIR2.chip_lookup_sound_N` at the emitted tuple plus
+`LightClientSolStakeFoldAir.FoldScheme.tableRoot_binds_or_collides`, and the number that governs is
+`2^123.63` (birthday, over `8 · 30.906891 = 247.26` bits) — **not** the `2^247.3` second-preimage
+figure for the same object. -/
+theorem sol_published_anchor_root_is_not_decorative :
+    ∀ col ∈ [29, 30, 31, 32, 33, 34, 35, 36],
+      isPiBound LightClientSolanaAir.solLcVerifyDesc col = true ∧
       isRead LightClientSolanaAir.solLcVerifyDesc col = true ∧
       isRelated LightClientSolanaAir.solLcVerifyDesc col = true ∧
       col ∉ decorativeAnchors LightClientSolanaAir.solLcVerifyDesc := by
+  decide
+
+/-- ⚑ **AND SO IS THE DENOMINATOR — at the FOLD'S ACCUMULATOR COLUMNS, which is where the literal
+had to move.** It read `[4, 5, 6, 7]`, the dedicated total-stake block. Those columns are now
+`ROOT_IN 4..7` and are read and related for a completely different reason, so the old statement stayed
+**TRUE while ceasing to be about the denominator** — the quietest way a tripwire dies. The
+denominator is cols 37..40. -/
+theorem sol_pinned_denominator_is_not_decorative :
+    ∀ col ∈ [37, 38, 39, 40],
+      isPiBound LightClientSolanaAir.solLcVerifyDesc col = true ∧
+      isRead LightClientSolanaAir.solLcVerifyDesc col = true ∧
+      isRelated LightClientSolanaAir.solLcVerifyDesc col = true ∧
+      col ∉ decorativeAnchors LightClientSolanaAir.solLcVerifyDesc := by
+  decide
+
+/-- ⚑⚑ **THE STATEMENT THE VERIFY RUNG COULD NOT MAKE UNTIL TODAY: its published anchor and its
+evidence are in ONE constraint together.** Every published root lane co-occurs, in a SINGLE
+constraint, with a pubkey lane and a stake limb — the second chip absorb's tuple. This is
+`solStakeFold_root_shares_a_constraint_with_the_stake_rows`, now true of the LIGHT CLIENT and not only
+of the standalone fold rung, because the light client absorbed the fold's legs. -/
+theorem sol_anchor_root_shares_a_constraint_with_the_stake_rows :
+    ∀ j ∈ [29, 30, 31, 32, 33, 34, 35, 36],
+      LightClientSolanaAir.solLcVerifyDesc.constraints.any (fun c =>
+        j ∈ relatedCols c
+          && LightClientSolanaAir.VOTER 8 ∈ relatedCols c
+          && LightClientSolanaAir.STAKE 0 ∈ relatedCols c) = true := by
   decide
 
 /-- ⚑ **MINA VERIFY: eighteen of twenty published values are decorative.** Columns 12..29 — the nine
@@ -434,27 +476,29 @@ theorem solStakeFold_denominator_shares_a_constraint_with_the_row_stakes :
 /-! ## §3 — the census, as one number. -/
 
 /-- ⚑ **THE ANSWER TO "HOW MANY OF OUR LIGHT CLIENTS RELATE THEIR CLAIMED BLOCK TO THE EVIDENCE THEY
-CHECK?"** Seventy-one decorative anchors across the five VERIFY descriptors; zero across the LINK
-rung. Still one of six.
+CHECK?"** Sixty-two decorative anchors across the five VERIFY descriptors; zero across the LINK rung
+and the FOLD rung. **Two of seven now, and one of them is a VERIFY descriptor.**
 
-⚑ **IT WAS 63, AND THE RISE IS NOT A REGRESSION — which is exactly why a bare count is a bad
-summary.** Solana went 11 → 19 on 2026-08-04 because its `ANCHOR_ROOT` stopped being ONE 31-bit
-column standing for a 256-bit SHA-256 root and became nine radix-`2^31` limbs: eight more published
-columns, none of them read, all of them singletons. In the same commit four columns LEFT the
-decorative set (the PI-bound total-stake limbs, `sol_pinned_denominator_is_not_decorative`) — the
-first columns in this census ever to do so. A number that moves the same direction for "we widened a
-root to bind it properly" and for "we published something and joined it to nothing" is measuring
-column count, not connectivity.
+⚑ **THE SEQUENCE, BECAUSE A SINGLE NUMBER IS A BAD SUMMARY AND THIS FILE HAS SAID SO TWICE.**
+`63 → 71 → 62`. The rise to 71 was Solana's `ANCHOR_ROOT` widening from ONE 31-bit column standing for
+a 256-bit SHA-256 root to nine radix-`2^31` limbs: eight more published columns, none of them read.
+The fall to 62 is those nine limbs being DELETED and replaced by the stake-table fold's eight `.last`
+output lanes, which are in the same component as the rows they commit to. **Column count moved the
+same direction for "we widened a root to bind it properly" and for "we published something and joined
+it to nothing"; it moved the RIGHT direction only when the root became derived.** Anyone tightening
+this gate should count BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the decorative SHARE, not columns.
 
-⚠ Read `minaLink_decorative_anchors`' own caveat before reading this as one-in-six SOUND: the link
-rung joins its publications to a chain of witnessed lane values, and nothing forces those values to be
-the Poseidon hashes of Mina blocks. Zero decorative anchors is the floor, not the ceiling. -/
-theorem the_five_verify_descriptors_carry_seventy_one_decorative_anchors :
+⚠ Read `minaLink_decorative_anchors`' own caveat before reading Solana's `[69 … 78]` as SOUND. Zero
+decorative anchors is the floor, not the ceiling, and Solana is not at zero: its bank root and slot
+are still carried by no gate, its `ED_OK` is still a witnessed carrier and its numerator is still a
+witnessed projection. What changed is that the DENOMINATOR and the TABLE it is a total of are now
+derived from rows the same proof commits to. -/
+theorem the_five_verify_descriptors_carry_sixty_two_decorative_anchors :
     (decorativeAnchors LightClientEthAir.ethLcVerifyDesc).length
       + (decorativeAnchors LightClientTendermintAir.tmLcVerifyDesc).length
       + (decorativeAnchors LightClientMidnightAir.midLcVerifyDesc).length
       + (decorativeAnchors LightClientSolanaAir.solLcVerifyDesc).length
-      + (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 71 ∧
+      + (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 62 ∧
     (decorativeAnchors LightClientMinaLinkAir.minaLinkDesc).length = 0 := by
   decide
 
@@ -471,6 +515,8 @@ theorem the_five_verify_descriptors_carry_seventy_one_decorative_anchors :
 #assert_axioms sol_decorative_anchors
 #assert_axioms sol_anchors_are_unread
 #assert_axioms sol_pinned_denominator_is_not_decorative
+#assert_axioms sol_published_anchor_root_is_not_decorative
+#assert_axioms sol_anchor_root_shares_a_constraint_with_the_stake_rows
 #assert_axioms minaVerify_decorative_anchors
 #assert_axioms minaVerify_state_lanes_are_read_but_never_joined
 #assert_axioms minaVerify_anchor_height_is_pinned_to_nothing
@@ -480,6 +526,6 @@ theorem the_five_verify_descriptors_carry_seventy_one_decorative_anchors :
 #assert_axioms solStakeFold_has_twelve_pi_bound_columns
 #assert_axioms solStakeFold_root_shares_a_constraint_with_the_stake_rows
 #assert_axioms solStakeFold_denominator_shares_a_constraint_with_the_row_stakes
-#assert_axioms the_five_verify_descriptors_carry_seventy_one_decorative_anchors
+#assert_axioms the_five_verify_descriptors_carry_sixty_two_decorative_anchors
 
 end Dregg2.Circuit.Emit.LightClientAnchorConnectivity

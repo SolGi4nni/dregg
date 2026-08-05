@@ -340,6 +340,24 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.LightClientEthAir.ethLcVerifyDesc)
   , ("dregg-tm-lightclient-verify-v1.json",
       Dregg2.Circuit.Emit.LightClientTendermintAir.tmLcVerifyDesc)
+    -- ⚑⚑ FLAG DAY 2026-08-04, SOLANA: `solLcVerifyDesc` is now COMPILER OUTPUT
+    -- (`EffectLower.lowerAir` of the `EffectAir` source `solLcVerifyAir`, no hand-written
+    -- `VmConstraint2` in its module; `solLcVerifyAir_mainRailOk = true` by `rfl`) and it is
+    -- **MULTI-ROW**: it ABSORBS `dregg-solana-stake-table-fold::v1`'s 44 columns from the SAME
+    -- source leg list (`foldLegs`, `sol_fold_block_is_the_shared_source`), one row per stake-table
+    -- entry. Trace width 49 → 79, PIs 23 → 22, constraints 63 → 103, declared tables 2 → 4.
+    -- `ANCHOR_ROOT` moved from NINE `.first` radix-2^31 limbs that no constraint read to the fold's
+    -- EIGHT `.last` output lanes, so the light client's trust anchor is the IMAGE of the rows
+    -- (2^123.63 birthday, over 8 · 30.906891 = 247.26 bits — NOT the 2^247.3 second-preimage
+    -- figure); the DENOMINATOR moved from four dedicated `.first` columns to the fold's accumulator
+    -- on the last row; and `STAKE_TABLE_OK` was DELETED because the fold computes what it asserted
+    -- (`LightClientSolStakeFoldAir.solLcAir_table_carrier_from_the_fold` discharges the bridge's
+    -- `stakeTableOk` from the emitted pin). ⚠ `dregg-solana-lightclient-verify-v1.json` RE-EMITS and
+    -- its VK ROTATES; both the width and the PI count move, so a stale row or PI vector REFUSES TO
+    -- LOAD. ⚠ Callers must now supply a POSEIDON2 root in PI[0..7]: `EpochStakeTable::root` is a
+    -- domain-separated SHA-256 and must be re-anchored to `dregg-solana-stake-table-root:v2` with
+    -- every `WeakSubjectivityAnchor.stake_table_root` re-derived. Until then a caller passing the
+    -- SHA root is refused at the pin. The FOLD rung's own bytes are UNCHANGED.
   , ("dregg-solana-lightclient-verify-v1.json",
       Dregg2.Circuit.Emit.LightClientSolanaAir.solLcVerifyDesc)
   , ("dregg-midnight-lightclient-verify-v1.json",
@@ -382,8 +400,10 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- `circuit/descriptors/by-name/dregg-solana-stake-table-fold-v1.json` and MINT a VK. The
     -- commitment is NOT `EpochStakeTable::root`'s SHA-256 — a consumer that wants them to agree must
     -- re-anchor that dregg-authored root onto this Poseidon2 frame and re-derive every
-    -- `WeakSubjectivityAnchor.stake_table_root`. Nothing existing changes shape in this commit;
-    -- `solLcVerifyDesc` is untouched, no VK rotates, nothing re-genesises.
+    -- `WeakSubjectivityAnchor.stake_table_root`. ⚑ SUPERSEDED SAME DAY: that sentence continued
+    -- "`solLcVerifyDesc` is untouched, no VK rotates" — it is no longer true and was never a reason.
+    -- The verify rung ABSORBED this fold's legs (see its routing note above); the two now share ONE
+    -- source list and this rung's own emitted bytes did not move.
   , ("dregg-solana-stake-table-fold-v1.json",
       Dregg2.Circuit.Emit.LightClientSolStakeFoldAir.solStakeFoldDesc)
     -- ⚑ THE LEAN-AUTHORED PASTA AIRs. `pasta-rcb-windowed.json` was checked in UNROUTED — its

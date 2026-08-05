@@ -72,8 +72,15 @@ satisfying witness must EXHIBIT the stake rows whose SHA-256 chain hits the pinn
     constraints / 12,831,336 columns**). ⚑ And the cheap path is not SHA at all: a Poseidon2 hash is
     ONE chip lookup in this stack. The full pricing, both hashes, and the two named things that stand
     in the way (the chip's 1-felt committed digest; the admitted absorb arities) are in
-    `LightClientSolanaAir` §6c. That section, not this bullet, is the live account of why
-    `STAKE_TABLE_OK` is still a carrier.
+    `LightClientSolanaAir` §6c.
+
+    ⚑⚑ **AND IT CLOSED THE SAME DAY, WHICH IS THE POINT.** `STAKE_TABLE_OK` is **DELETED**:
+    `dregg-solana-lightclient-verify::v1` is MULTI-ROW now and its `ANCHOR_ROOT` is the stake-table
+    fold's eight `.last` Poseidon2 output lanes (44 columns, 46 constraints, at ANY validator count).
+    Nothing about the SHA fold got cheaper — the commitment was RE-PICKED, because it is
+    dregg-authored. ⚠ This module's SHA fold is therefore no longer on the path to that binding; what
+    it still describes is `EpochStakeTable::root` AS DEPLOYED, and re-anchoring that root to
+    `dregg-solana-stake-table-root:v2` is what retires it.
   * RESIDUAL #4 (Ed25519/EC arc): `ED_OK` stays a hypothesis — the aggregate vote-signature soundness is
     the Ed25519 leaf, the EC arc, not folded here.
 

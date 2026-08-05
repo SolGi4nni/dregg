@@ -9,24 +9,37 @@
 #   scripts/check-descriptor-anchor-inertness.py --write-baseline
 # and say in the commit WHICH anchor became load-bearing and by what gate.
 #
-# ⚠⚠ ONE ROW WENT UP, ON PURPOSE, AND THE METRIC CANNOT SHOW WHY — 2026-08-04.
-# `dregg-solana-lightclient-verify::v1`: 11 → 19. Read before treating it as a regression.
+# ⚠⚠ ONE ROW WENT UP AND THEN DOWN AGAIN, BOTH ON PURPOSE, ON THE SAME DAY — 2026-08-04.
+# `dregg-solana-lightclient-verify::v1`: 11 → 19 → 10. Read the whole sequence before treating any
+# single step as a regression or as a win; a bare column count is a bad summary of both moves.
 #
-#   * FOUR columns LEFT the decorative set — the total-stake limbs (cols 4..7) are now PI-bound AND
-#     joined to the quorum chain (`LightClientSolanaAir.totalStakePins`). These are the FIRST columns
-#     in this census ever to stop being decorative. That is the improvement, and it makes the number
-#     go DOWN by four.
-#   * TWELVE columns joined it — `ANCHOR_ROOT` was ONE column holding a 256-bit SHA-256 stake-table
-#     root (i.e. compared at 31 bits, a colliding pair findable in 2^31) and is now NINE radix-2^31
-#     limbs binding the whole root; the +8 new limbs are decorative for exactly the reason the single
-#     column was. Net 11 - 4 + 8 = 19... and the remaining +4 is bookkeeping: the widened root shifted
-#     BANK_ROOT and SLOT_COL, which were already counted.
+#   * 11 → 19 (morning). FOUR columns LEFT the decorative set — the total-stake limbs became PI-bound
+#     AND joined to the quorum chain, the FIRST columns in this census ever to stop being decorative.
+#     TWELVE joined it: `ANCHOR_ROOT` was ONE column holding a 256-bit SHA-256 stake-table root (i.e.
+#     compared at 31 bits, a colliding pair findable in 2^31) and became NINE radix-2^31 limbs binding
+#     the whole root; the +8 new limbs were decorative for exactly the reason the single column was,
+#     and the shifted BANK_ROOT/SLOT_COL account for the rest. **The count rose because a hash stopped
+#     being truncated, not because a public input stopped being checked.**
 #
-# So the count rose because a hash stopped being truncated, not because a public input stopped being
-# checked. ⚑ THE METRIC IS COLUMN COUNT, AND COLUMN COUNT IS THE WRONG DENOMINATOR FOR "how much of
-# this proof's public statement is unbound" — widening a root to bind it properly and publishing
-# eight more unrelated values move it the same direction. Anyone tightening this gate should count
-# BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the decorative SHARE, not columns.
+#   * ⚑ 19 → 10 (this commit). The nine `.first` anchor-root limbs are DELETED. The descriptor
+#     absorbed `dregg-solana-stake-table-fold::v1` — it is MULTI-ROW now, one row per stake-table
+#     entry — and the light client's weak-subjectivity anchor is the fold's EIGHT `.last` output
+#     lanes, which sit in the component that contains the whole trace. The denominator is the fold's
+#     accumulator, `.last`-pinned, for the same reason. What remains decorative is the nine bank-root
+#     limbs and the slot: carried by the proof, read by no gate.
+#
+# ⚑ THE METRIC IS COLUMN COUNT, AND COLUMN COUNT IS THE WRONG DENOMINATOR FOR "how much of this
+# proof's public statement is unbound" — widening a root to bind it properly and publishing eight more
+# unrelated values move it the same direction. It moved the RIGHT direction only when the root became
+# DERIVED. Anyone tightening this gate should count BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the
+# decorative SHARE, not columns.
+#
+# ⚠ THIS FILE IS EDITED BY HAND FOR THAT ROW, NOT REGENERATED. `--write-baseline` would also mint
+# rows for `dark-bazaar-private-poa-n4k4::receipt8-v2` (8) and
+# `dark-bazaar-private-poa-settlement-n4k4::transition-v3` (33), which are UNLISTED at HEAD from
+# `e991ac622` and are a different lane's to baseline or bind. Blessing them from here would be
+# exactly the laundering this gate exists to refuse.
+#
 # The connectivity facts themselves are named theorems in
 # `metatheory/Dregg2/Circuit/Emit/LightClientAnchorConnectivity.lean`
 # (`sol_decorative_anchors`, `sol_pinned_denominator_is_not_decorative`).
@@ -45,7 +58,7 @@
 18	dregg-mina-lightclient-verify::v1
 19	dregg-presentation-freshness::summary-v1
 1	dregg-shielded-spend-pinned-root::v1
-19	dregg-solana-lightclient-verify::v1
+10	dregg-solana-lightclient-verify::v1
 1	dregg-temporal-predicate-gte::dsl-v1
 11	dregg-tm-lightclient-verify::v1
 12	faithful-note-spend-v2::exact-note16-root8-hiding

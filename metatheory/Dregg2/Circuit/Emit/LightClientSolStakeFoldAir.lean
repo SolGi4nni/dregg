@@ -164,30 +164,36 @@ open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg LookupLeg PiPinLeg LimbsLeg Wi
 open Dregg2.Circuit.TableAirIR (RowSel)
 open Dregg2.Circuit.DeployedCapTree (Digest8 Coll8)
 
-/-! ## §1 — the trace column layout (ONE ROW PER STAKE-TABLE ENTRY). -/
+/-! ## §1 — the trace column layout (ONE ROW PER STAKE-TABLE ENTRY).
+
+⚑⚑ **THE LAYOUT AND THE LEGS NOW LIVE IN `LightClientSolanaAir`, AND THAT IS NOT A MOVE FOR TIDINESS.**
+Since 2026-08-04 `dregg-solana-lightclient-verify::v1` ABSORBS this fold: its columns 0..43 are these
+columns, at these indices, and its source legs BEGIN with `foldLegs` — the SAME TERM this rung is
+built from (`sol_fold_block_is_the_shared_source`). Two descriptors reading one leg list cannot
+disagree about what a stake-table row is, which is the failure mode `CLAUDE.md` names as *"two shapes
+that agree today are two shapes that will disagree later"*, removed by construction rather than by a
+differential test.
+
+The names below are re-exports so this file's own theorems, and `circuit/tests/solana_stake_table_fold.rs`,
+read unchanged. -/
 
 /-- Lane `j` of the running eight-felt table root ENTERING this row. Columns 0..7. -/
-def ROOT_IN (j : Nat) : Nat := j
-/-- Lane `j` of this entry's vote-account pubkey — nine radix-`2^29` lanes (`8·29 + 24 = 256`).
-Columns 8..16. -/
-def VOTER (j : Nat) : Nat := 8 + j
-/-- Limb `i` of this entry's active stake, LSB-first, four 16-bit limbs = a `u64`. Columns 17..20.
-Same spelling as `LightClientSolanaAir.TOTAL_STK_LIMB`. -/
-def STAKE (i : Nat) : Nat := 17 + i
-/-- Lane `j` of the INTERMEDIATE state, after the row's first message block. Columns 21..28. -/
-def MID (j : Nat) : Nat := 21 + j
+abbrev ROOT_IN (j : Nat) : Nat := LightClientSolanaAir.ROOT_IN j
+/-- Lane `j` of this entry's vote-account pubkey. Columns 8..16. -/
+abbrev VOTER (j : Nat) : Nat := LightClientSolanaAir.VOTER j
+/-- Limb `i` of this entry's active stake, LSB-first. Columns 17..20. -/
+abbrev STAKE (i : Nat) : Nat := LightClientSolanaAir.STAKE i
+/-- Lane `j` of the INTERMEDIATE state. Columns 21..28. -/
+abbrev MID (j : Nat) : Nat := LightClientSolanaAir.MID j
 /-- Lane `j` of the running table root LEAVING this row. Columns 29..36. -/
-def ROOT_OUT (j : Nat) : Nat := 29 + j
-/-- Limb `i` of the running TOTAL active stake, LSB-first. Columns 37..40. Its LAST-row value is
-`PI_TOTAL_STAKE` — which is what stops the denominator being a number nobody folded. -/
-def ACC (i : Nat) : Nat := 37 + i
-/-- Carry `i` of the accumulator's limb addition, boolean-pinned on EVERY row. Columns 41..43.
-Only three: the top limb's addition may not carry out at all, and its 16-bit range lookup is what
-says so. -/
-def CARRY (i : Nat) : Nat := 41 + i
+abbrev ROOT_OUT (j : Nat) : Nat := LightClientSolanaAir.ROOT_OUT j
+/-- Limb `i` of the running TOTAL active stake, LSB-first. Columns 37..40. -/
+abbrev ACC (i : Nat) : Nat := LightClientSolanaAir.ACC i
+/-- Carry `i` of the accumulator's limb addition. Columns 41..43. -/
+abbrev CARRY (i : Nat) : Nat := LightClientSolanaAir.CARRY i
 
 /-- Main-trace width: `8 + 9 + 4 + 8 + 8 + 4 + 3`. -/
-def FOLD_WIDTH : Nat := 44
+abbrev FOLD_WIDTH : Nat := LightClientSolanaAir.FOLD_WIDTH
 
 /-- PI slot of table-root lane `j` (slots 0..7). -/
 def PI_TABLE_ROOT (j : Nat) : Nat := j
@@ -196,157 +202,33 @@ def PI_TOTAL_STAKE (i : Nat) : Nat := 8 + i
 /-- Number of public inputs. -/
 def FOLD_PI_COUNT : Nat := 12
 
-/-- The eight lanes of the running root entering a row. -/
-def rootInCols : List Nat := [ROOT_IN 0, ROOT_IN 1, ROOT_IN 2, ROOT_IN 3,
-                              ROOT_IN 4, ROOT_IN 5, ROOT_IN 6, ROOT_IN 7]
-/-- The eight lanes of the intermediate state. -/
-def midCols : List Nat := [MID 0, MID 1, MID 2, MID 3, MID 4, MID 5, MID 6, MID 7]
-/-- The eight lanes of the running root leaving a row. -/
-def rootOutCols : List Nat := [ROOT_OUT 0, ROOT_OUT 1, ROOT_OUT 2, ROOT_OUT 3,
-                               ROOT_OUT 4, ROOT_OUT 5, ROOT_OUT 6, ROOT_OUT 7]
-/-- The eight LOW pubkey lanes — the row's FIRST message block. -/
-def voterLowCols : List Nat := [VOTER 0, VOTER 1, VOTER 2, VOTER 3,
-                                VOTER 4, VOTER 5, VOTER 6, VOTER 7]
-
-/-! ### The declared range tables.
-
-Width-tagged custom tables (`.custom (64 + b)`), the mechanism the rest of this tree already uses.
-`range_w29` (id 98) and `range_w16` (id 85) are SHARED with `dregg-mina-lightclient-{verify,link}::v1`
-and `dregg-solana-lightclient-verify::v1` respectively; `range_w24` (id 93) is new here. -/
-
-/-- Pubkey lane width. **29 is the last wrap-free width at BabyBear**
-(`RangeFieldContainment.wrap_free_iff_le_29`); nothing here declares 30 or above and the compiler
-refuses one structurally (`LimbsLeg.mainRailOk`). -/
-def LANE_BITS : Nat := 29
-/-- The TOP pubkey lane's width: `8·29 + 24 = 256`, exactly a 32-byte pubkey and no more. -/
-def TOP_LANE_BITS : Nat := 24
+/-- Pubkey lane width. **29 is the last wrap-free width at BabyBear**. -/
+abbrev LANE_BITS : Nat := LightClientSolanaAir.LANE_BITS
+/-- The TOP pubkey lane's width: `8·29 + 24 = 256`. -/
+abbrev TOP_LANE_BITS : Nat := LightClientSolanaAir.TOP_LANE_BITS
 /-- Stake-limb width — four 16-bit limbs are exactly a `u64`. -/
-def STAKE_BITS : Nat := LightClientSolanaAir.SOL_LIMB_BITS
+abbrev STAKE_BITS : Nat := LightClientSolanaAir.SOL_LIMB_BITS
 
 /-- Width-tagged range table id. -/
-def rangeTid (bits : Nat) : TableId := .custom (64 + bits)
+abbrev rangeTid (bits : Nat) : TableId := LightClientSolanaAir.rangeTid bits
 
-def laneTable : TableDef := ⟨rangeTid LANE_BITS, "range_w29", 1, .rangeLimb LANE_BITS⟩
-def topLaneTable : TableDef := ⟨rangeTid TOP_LANE_BITS, "range_w24", 1, .rangeLimb TOP_LANE_BITS⟩
-def stakeTable : TableDef := ⟨rangeTid STAKE_BITS, "range_w16", 1, .rangeLimb STAKE_BITS⟩
+abbrev laneTable : TableDef := LightClientSolanaAir.laneTable
+abbrev topLaneTable : TableDef := LightClientSolanaAir.topLaneTable
+abbrev stakeTable : TableDef := LightClientSolanaAir.stakeTable
 
-/-- The FOLD's domain tag, lane 0 of the initial state — ASCII `SSTF` ("solana stake table fold"),
-the four-byte-tag convention the sibling accumulators use. Lanes 1..7 of the initial state are pinned
-to zero, so the seed is a constant the descriptor names rather than a value the prover picks. -/
-def FOLD_TAG : ℤ := 0x53535446
-
-/-! ## §2 — the SOURCE legs, in the framework's own algebra.
-
-Every inter-row law is a `WindowLeg` at `.transition` — the ONE `RowSel` where `nxt` is the genuine
-successor rather than the wrap row (`EffectAirIR.WindowLeg.mainRailOk`). The seeds are `.first`, the
-publications are `.last`, the boolean pins are `.all`. Nothing below is a `VmConstraint2`. -/
-
-open WindowExpr (loc nxt)
-
-/-- The arity-16 chip absorb tuple `[16, in₀ … in₁₅, out₀ … out₇]`, in SOURCE `Expr`.
-
-⚑ **16 is an ADMITTED absorb arity** (`ChipTableEmit.ARITIES = [0,2,3,4,7,11,16]`, the deployed
-degree-7 product `a·(a−2)·(a−3)·(a−4)·(a−7)·(a−11)·(a−16) = 0`). It is the `node8` full-width seed,
-the one arity at which all sixteen input lanes genuinely enter the preimage —
-`descriptor_ir2::chip_absorb_all_lanes` seeds `st[0..16]` from the inputs with no `seed456` blend and
-no arity tag stolen into lane 4. A descriptor at a NON-admitted arity is UNPROVABLE rather than
-merely inefficient, which is why the frame is 16 and not 13.
-
-`solStakeFold_chip_sites_are_arity_16` pins this on the emitted object. -/
-def chipTuple16 (ins : List Expr) (outs : List Nat) : List Expr :=
-  Expr.const 16 :: (ins ++ outs.map Expr.var)
-
-/-- **The row's FIRST message block** — `chipAbsorb16(ROOT_IN8 ‖ voter₀…voter₇) = MID8`. -/
-def absorbA : AirLeg :=
-  .lookup { table := TableId.poseidon2
-          , tuple := chipTuple16 ((rootInCols ++ voterLowCols).map Expr.var) midCols }
-
-/-- **The row's SECOND message block** — `chipAbsorb16(MID8 ‖ [voter₈, stake₀…stake₃, 0,0,0]) =
-ROOT_OUT8`. The three trailing zeros are `Expr.const 0`, i.e. STRUCTURE in the tuple and not
-witnessed columns, so the per-entry frame is a fixed sixteen felts. -/
-def absorbB : AirLeg :=
-  .lookup { table := TableId.poseidon2
-          , tuple := chipTuple16
-              (midCols.map Expr.var
-                ++ [Expr.var (VOTER 8), Expr.var (STAKE 0), Expr.var (STAKE 1),
-                    Expr.var (STAKE 2), Expr.var (STAKE 3),
-                    Expr.const 0, Expr.const 0, Expr.const 0])
-              rootOutCols }
-
-/-- **The seed** — lane 0 of the first row's running root is the domain tag. -/
-def firstRootTag : AirLeg :=
-  .window ⟨RowSel.first, .add (loc (ROOT_IN 0)) (.const (-FOLD_TAG))⟩
-
-/-- **The seed, lanes 1..7** — pinned to zero, so the initial state is fully named by the
-descriptor. -/
-def firstRootZero (j : Nat) : AirLeg := .window ⟨RowSel.first, loc (ROOT_IN j)⟩
-
-/-- **State continuity** — `ROOT_OUT[i] = ROOT_IN[i+1]`, one leg per lane. This is
-`EffectVmEmitTurnChainBinding.rootContinuity` at eight lanes. -/
-def rootContinuity (j : Nat) : AirLeg :=
-  .window ⟨RowSel.transition,
-    .add (loc (ROOT_OUT j)) (.mul (.const (-1)) (nxt (ROOT_IN j)))⟩
-
-/-- **`CARRY i` is boolean on EVERY row.** ⚑ `.all`, not `.transition`: a transition-scoped boolean
-pin is vacuous on the last row, which is exactly where an unbooleanised carry would hide the
-published total. -/
-def carryBoolean (i : Nat) : AirLeg :=
-  .window ⟨RowSel.all, .mul (loc (CARRY i)) (.add (loc (CARRY i)) (.const (-1)))⟩
+/-- The FOLD's domain tag, lane 0 of the initial state — ASCII `SSTF`. -/
+abbrev FOLD_TAG : ℤ := LightClientSolanaAir.FOLD_TAG
 
 /-- `2^16`, the limb radix. -/
-def RADIX : ℤ := 65536
+abbrev RADIX : ℤ := LightClientSolanaAir.RADIX
 
-/-- **Seed the tally** — on the first row `ACC = 0 + STAKE`, carrying: `ACC[i] + 2^16·C[i] = STAKE[i]
-+ C[i−1]` for `i < 3`, and `ACC[3] = STAKE[3] + C[2]` with no carry out (the 16-bit lookup on
-`ACC[3]` is what forbids one). -/
-def firstAcc (i : Nat) : AirLeg :=
-  .window ⟨RowSel.first,
-    if i = 0 then
-      .add (loc (ACC 0)) (.add (.mul (.const RADIX) (loc (CARRY 0)))
-        (.mul (.const (-1)) (loc (STAKE 0))))
-    else if i = 3 then
-      .add (loc (ACC 3)) (.add (.mul (.const (-1)) (loc (STAKE 3)))
-        (.mul (.const (-1)) (loc (CARRY 2))))
-    else
-      .add (loc (ACC i)) (.add (.mul (.const RADIX) (loc (CARRY i)))
-        (.add (.mul (.const (-1)) (loc (STAKE i))) (.mul (.const (-1)) (loc (CARRY (i - 1))))))⟩
+/-! ## §2 — the SOURCE legs, in the framework's own algebra. See `LightClientSolanaAir` §3a; every
+inter-row law is a `WindowLeg` at `.transition`, the seeds are `.first`, the boolean pins are `.all`,
+and nothing here is a `VmConstraint2`. -/
 
-/-- **Accumulate** — `ACC'[i] + 2^16·C'[i] = ACC[i] + STAKE'[i] + C'[i−1]` across a transition, with
-the top limb carrying out nowhere. ⚑ The mod-`p` reading is EXACT here and not by luck: every term is
-range-gated (`ACC`, `STAKE` below `2^16`, `C` boolean), so the body's integer value lies strictly
-inside `(−P, P)` and `≡ 0 [ZMOD P]` forces `= 0` over ℤ (`solStakeFold_acc_step_is_exact`). -/
-def accStep (i : Nat) : AirLeg :=
-  .window ⟨RowSel.transition,
-    if i = 0 then
-      .add (nxt (ACC 0)) (.add (.mul (.const RADIX) (nxt (CARRY 0)))
-        (.add (.mul (.const (-1)) (loc (ACC 0))) (.mul (.const (-1)) (nxt (STAKE 0)))))
-    else if i = 3 then
-      .add (nxt (ACC 3)) (.add (.mul (.const (-1)) (loc (ACC 3)))
-        (.add (.mul (.const (-1)) (nxt (STAKE 3))) (.mul (.const (-1)) (nxt (CARRY 2)))))
-    else
-      .add (nxt (ACC i)) (.add (.mul (.const RADIX) (nxt (CARRY i)))
-        (.add (.mul (.const (-1)) (loc (ACC i)))
-          (.add (.mul (.const (-1)) (nxt (STAKE i))) (.mul (.const (-1)) (nxt (CARRY (i - 1)))))))⟩
-
-/-- The eight LOW pubkey lanes as ONE `.limbs` leg at 29 bits. -/
-def voterLowLeg : AirLeg :=
-  .limbs { cols := voterLowCols, bits := LANE_BITS, table := rangeTid LANE_BITS }
-
-/-- The TOP pubkey lane, on the narrower 24-bit table — the leg that separates "well-formed 32-byte
-pubkey" from "any nine felts". -/
-def voterTopLeg : AirLeg :=
-  .lookup { table := rangeTid TOP_LANE_BITS, tuple := [Expr.var (VOTER 8)] }
-
-/-- The four stake limbs at 16 bits. -/
-def stakeLeg : AirLeg :=
-  .limbs { cols := [STAKE 0, STAKE 1, STAKE 2, STAKE 3], bits := STAKE_BITS
-         , table := rangeTid STAKE_BITS }
-
-/-- The four accumulator limbs at 16 bits — the leg that makes the running total a `u64` and forbids
-the top limb carrying out. -/
-def accLeg : AirLeg :=
-  .limbs { cols := [ACC 0, ACC 1, ACC 2, ACC 3], bits := STAKE_BITS
-         , table := rangeTid STAKE_BITS }
+abbrev absorbA : AirLeg := LightClientSolanaAir.absorbA
+abbrev absorbB : AirLeg := LightClientSolanaAir.absorbB
+abbrev foldLegs : List AirLeg := LightClientSolanaAir.foldLegs
 
 /-- The eight LAST-row root publications. ⚑ `.last`, so the published root is the END of the fold and
 not a value some row happens to carry. -/
@@ -373,20 +255,8 @@ def totalPins : List AirLeg :=
 absorbs, eight `.first` seeds, eight `.transition` continuities, three `.all` carry pins, four
 `.first` tally seeds, four `.transition` tally steps, and twelve PI pins. -/
 def solStakeFoldAir : EffectAir :=
-  { tables := [laneTable, topLaneTable, stakeTable]
-  , legs   :=
-      [ voterLowLeg, voterTopLeg, stakeLeg, accLeg
-      , absorbA, absorbB
-      , firstRootTag
-      , firstRootZero (ROOT_IN 1), firstRootZero (ROOT_IN 2), firstRootZero (ROOT_IN 3)
-      , firstRootZero (ROOT_IN 4), firstRootZero (ROOT_IN 5), firstRootZero (ROOT_IN 6)
-      , firstRootZero (ROOT_IN 7)
-      , rootContinuity 0, rootContinuity 1, rootContinuity 2, rootContinuity 3
-      , rootContinuity 4, rootContinuity 5, rootContinuity 6, rootContinuity 7
-      , carryBoolean 0, carryBoolean 1, carryBoolean 2
-      , firstAcc 0, firstAcc 1, firstAcc 2, firstAcc 3
-      , accStep 0, accStep 1, accStep 2, accStep 3 ]
-      ++ rootPins ++ totalPins }
+  { tables := LightClientSolanaAir.foldTables
+  , legs   := foldLegs ++ rootPins ++ totalPins }
 
 /-- ⚑ **THE COMPILER ACCEPTED EVERY LEG.** `mainRailOk` is the decidable verdict that each leg is
 EXPRESSIBLE on the deployed main rail — unit multiplicity, `.query` side, no `nxt` under `.all` /
@@ -407,6 +277,13 @@ def solStakeFoldDesc : EffectVmDescriptor2 :=
 theorem solStakeFoldDesc_width : solStakeFoldDesc.traceWidth = 44 := rfl
 theorem solStakeFoldDesc_piCount : solStakeFoldDesc.piCount = 12 := rfl
 theorem solStakeFoldAir_leg_count : solStakeFoldAir.legs.length = 45 := by decide
+
+/-- ⚑ **THE FOLD BLOCK OF THE LIGHT CLIENT IS THIS RUNG'S OWN LEG LIST.** Not a copy, not a
+differential test: the same term. A drift in either is a drift in both. -/
+theorem solStakeFold_shares_its_legs_with_the_light_client :
+    solStakeFoldAir.legs.take LightClientSolanaAir.foldLegs.length
+      = LightClientSolanaAir.solLcVerifyAir.legs.take LightClientSolanaAir.foldLegs.length := by
+  simp [solStakeFoldAir, LightClientSolanaAir.solLcVerifyAir, List.take_left']
 theorem solStakeFoldDesc_constraint_count : solStakeFoldDesc.constraints.length = 58 := by decide
 theorem solStakeFoldDesc_tables :
     solStakeFoldDesc.tables = [laneTable, topLaneTable, stakeTable] := rfl
