@@ -29,148 +29,23 @@ import Dregg2.Games.PathOfAngels.NetworkJudge
 import Dregg2.Games.PathOfAngels.FieldArchive
 import Dregg2.Games.PathOfAngels.AttendantKernel
 import Dregg2.Games.PathOfAngels.EditorialRegistry
+import Dregg2.Games.PathOfAngels.EventSourcing
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.FinalizedRunEventAggregate
 
 open Dregg2.Games.PathOfAngels
 open Dregg2.Games.PathOfAngels.NetworkJudgeWire
+open Dregg2.Games.PathOfAngels.EventSourcing
 
 set_option autoImplicit false
 
-/-! ## Minimal dense append kernel
+/-! ## One shared replay kernel
 
-This isolated module carries the smallest executable stream kernel needed for
-the second aggregate.  The shared generic `EventSourcing` module is being
-developed concurrently; keeping this kernel local lets the end-to-end PoA seam
-compile without taking ownership of that work.  The eventual cutover is a
-type-for-type replacement, not a semantic redesign. -/
-
-structure AggregateId where
-  namespaceId : Digest32
-  kind : Nat
-  key : Digest32
-deriving DecidableEq
-
-structure SchemaVersion where
-  value : Nat
-deriving DecidableEq, Repr
-
-structure StreamSpec where
-  aggregate : AggregateId
-  version : SchemaVersion
-  genesisHead : Digest32
-deriving DecidableEq
-
-structure EventStatement where
-  aggregate : AggregateId
-  version : SchemaVersion
-  sequence : Nat
-  predecessor : Digest32
-  payloadDigest : Digest32
-deriving DecidableEq
-
-structure EventEnvelope (Payload : Type) where
-  statement : EventStatement
-  payload : Payload
-  eventDigest : Digest32
-
-/-- Named deployment trust boundary.  Lean proves the sequencing rules
-parametrically; the durable adapter must supply faithful codecs and hashes. -/
-structure DigestBoundary (Payload : Type) where
-  payloadDigest : Payload → Digest32
-  eventDigest : EventStatement → Digest32
-
-structure Cursor where
-  aggregate : AggregateId
-  version : SchemaVersion
-  sequence : Nat
-  head : Digest32
-deriving DecidableEq
-
-def StreamSpec.genesisCursor (spec : StreamSpec) : Cursor where
-  aggregate := spec.aggregate
-  version := spec.version
-  sequence := 0
-  head := spec.genesisHead
-
-inductive StreamError where
-  | cursorAggregate
-  | cursorVersion
-  | wrongAggregate
-  | wrongVersion
-  | wrongSequence (expected actual : Nat)
-  | wrongPredecessor
-  | wrongPayloadDigest
-  | wrongEventDigest
-  | reducerRejected
-deriving DecidableEq, Repr
-
-structure ReplayState (State : Type) where
-  cursor : Cursor
-  projection : State
-deriving DecidableEq
-
-abbrev Reducer (State Payload : Type) := State → Payload → Option State
-
-/-- Validate and reduce one exact dense successor.  The returned cursor is only
-a CAS candidate; atomic persistence beside the finalized turn is an adapter
-obligation. -/
-def applyEvent {State Payload : Type} (spec : StreamSpec)
-    (digests : DigestBoundary Payload) (reduce : Reducer State Payload)
-    (before : ReplayState State) (event : EventEnvelope Payload) :
-    Except StreamError (ReplayState State) := do
-  if before.cursor.aggregate != spec.aggregate then throw .cursorAggregate
-  if before.cursor.version != spec.version then throw .cursorVersion
-  if event.statement.aggregate != spec.aggregate then throw .wrongAggregate
-  if event.statement.version != spec.version then throw .wrongVersion
-  let expected := before.cursor.sequence + 1
-  if event.statement.sequence != expected then
-    throw (.wrongSequence expected event.statement.sequence)
-  if event.statement.predecessor != before.cursor.head then throw .wrongPredecessor
-  if event.statement.payloadDigest != digests.payloadDigest event.payload then
-    throw .wrongPayloadDigest
-  if event.eventDigest != digests.eventDigest event.statement then throw .wrongEventDigest
-  let projection ← match reduce before.projection event.payload with
-    | none => throw .reducerRejected
-    | some projection => pure projection
-  pure {
-    cursor := {
-      aggregate := spec.aggregate
-      version := spec.version
-      sequence := event.statement.sequence
-      head := event.eventDigest
-    }
-    projection
-  }
-
-def replay {State Payload : Type} (spec : StreamSpec)
-    (digests : DigestBoundary Payload) (reduce : Reducer State Payload) :
-    ReplayState State → List (EventEnvelope Payload) → Except StreamError (ReplayState State)
-  | state, [] => .ok state
-  | state, event :: rest => do
-      let applied ← applyEvent spec digests reduce state event
-      replay spec digests reduce applied rest
-
-def rebuild {State Payload : Type} (spec : StreamSpec)
-    (digests : DigestBoundary Payload) (reduce : Reducer State Payload)
-    (initial : State) (events : List (EventEnvelope Payload)) :
-    Except StreamError (ReplayState State) :=
-  replay spec digests reduce { cursor := spec.genesisCursor, projection := initial } events
-
-def rebuildProjection {State Payload : Type} (spec : StreamSpec)
-    (digests : DigestBoundary Payload) (reduce : Reducer State Payload)
-    (initial : State) (events : List (EventEnvelope Payload)) : Except StreamError State :=
-  (rebuild spec digests reduce initial events).map ReplayState.projection
-
-theorem replay_deterministic {State Payload : Type} (spec : StreamSpec)
-    (digests : DigestBoundary Payload) (reduce : Reducer State Payload)
-    (start : ReplayState State) (events : List (EventEnvelope Payload))
-    (left right : ReplayState State)
-    (hl : replay spec digests reduce start events = .ok left)
-    (hr : replay spec digests reduce start events = .ok right) : left = right := by
-  rw [hl] at hr
-  exact Except.ok.inj hr
+Finalized runs instantiate the generic `EventSourcing` kernel directly.  The
+aggregate therefore shares exact sequence, predecessor, schema-version,
+payload-digest, event-digest, snapshot, and rebuild semantics with every other
+PoA aggregate.  Only the payload reducer below is game-specific. -/
 
 /-! ## Exact finalized carrier and durable payload -/
 
