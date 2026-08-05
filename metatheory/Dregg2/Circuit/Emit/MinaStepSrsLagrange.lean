@@ -142,10 +142,20 @@ def CORRECTION_XY : List Nat :=
 the STEP URS, i.e. `SRS::<Vesta>::create(DOMAIN_SIZE).h`. `wrap_verifier.ml:612-616`'s
 `x_hat blinding` adds this point, and `:433` scales it by `z_2`.
 
-⚑ It is ALSO a two-source value: `KimchiWrapMain.STEP_VK_XY` — dumped from a REAL `VerifierIndex`
-by `wrap_key_index_export.rs`, a different binary on a different day — carries this exact pair as
-its last six commitments, because a zero-polynomial commitment lands on the blinding base.
-`xhat_urs_h_is_in_the_real_verifier_index` is that pin. -/
+⚑ It is a two-source value, and the second source is `fixtures/kimchi-extractors/
+step_vk_index_export.rs` — a different binary on a different day — which **asserts in Rust** that the
+SRS it committed Mina's `step-transaction` key against has `srs.h` equal to this exact pair, and
+refuses to emit otherwise. So the step key and this Lagrange table are known to come from the SAME
+step URS rather than from two SRSs that merely have the same name.
+
+⚠ ⚑ **THE PREVIOUS SECOND SOURCE WAS A DANGLING NAME AND IS NOW A REAL ONE.** Until 2026-08-04 this
+docstring credited `xhat_urs_h_is_in_the_real_verifier_index` — *a theorem that was never written*;
+`grep` found the identifier in this comment and nowhere else in the repo. What it described was also
+an artefact rather than a tie: the old `STEP_VK_XY` carried this pair as five of its six singles
+only because that fixture was a generic-only test circuit whose Poseidon/CompleteAdd/VarBaseMul/
+EndoMul/EndoMulScalar selectors were the ZERO polynomial, and `verifier_index.rs:242-266` puts a
+zero selector on the blinding base through `mask_fixed`. Mina's real step key has none of those
+zeros, so the coincidence is gone — and what replaced it is a refusal in the extractor. -/
 def URS_H_XY : List Nat :=
 [
   4128018831155263258921677689761735101256426860488784731125497417640507220481, 22304269070532896717707344537995120070212833580943367087267197592645043797542

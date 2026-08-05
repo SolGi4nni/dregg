@@ -30,10 +30,12 @@ mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958d
 mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958dc05" }
 poly-commitment = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958dc05" }
 groupmap = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958dc05" }
-ark-ec = "0.4"
-ark-ff = "0.4"
-ark-poly = "0.4"
+ark-ec = "0.5"
+ark-ff = "0.5"
+ark-poly = "0.5"
 num-bigint = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Each extractor is its own binary. Named `[[bin]]` rather than `examples/` so
 # `check-dark-modules` sees a declaration without the files having to move — the whole
@@ -49,3 +51,7 @@ path = "reality_gate_poseidon_export.rs"
 [[bin]]
 name = "pickles_p6_fq_export"
 path = "pickles_p6_fq_export.rs"
+
+[[bin]]
+name = "step_vk_index_export"
+path = "step_vk_index_export.rs"
