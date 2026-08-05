@@ -1040,4 +1040,52 @@ def vestaHonestRow : List ℤ :=
 #assert_axioms rcb_columns_measured
 #assert_axioms sound_rcb_against_the_unsound_one
 
+/-! ## §9 — ⚑ THE `smul` LADDER: what is no longer blocked, and what now is.
+
+`MinaWrapXiScalarWeld` named "no sound `smul` core" alongside "no sound complete-add". Two different
+things wear that name and this file settles them differently.
+
+**The CONSTANT multiply** — `swCompleteAddGadget`'s `smulC` parameter, RCB's two `b3 = 15` ops — did
+not exist and now does (§3). That one is closed.
+
+**The scalar-mul LADDER** (`PastaScalarMul.ladderStep`, `[k]P`) is where an MSM row's price actually
+lives, and it is NOT closed. ⚑ **But it is no longer blocked by a TYPE obstruction.** `ladderStep`
+hardcodes `pallasCompleteAdd` and the `9×30` layout's `+234/+261/+288/+442` offsets; it needs
+exactly the parametrisation `swCompleteAddGadget` needed, and the `SoundCore` bridge supplies it —
+a sound step is two `swCompleteAddSoundLegs` calls at `RCB_FRESH` stride.
+
+⚑ **WHAT BLOCKS IT IS THE LAYOUT, AND THE NUMBER SAYS SO.** `PastaMsmAir.ladderGatesFrom_counts`
+proves the ladder is ROW-LOCAL: `66·n` gates and `884·n` FRESH COLUMNS, all in ONE row. On the sound
+gate a step is `2 · 4 284 = 8 568` constraints and `2 · 2 856 = 5 712` columns, so a 128-step GLV
+joint ladder is **731 136 columns in a single row** — against the deployed `pasta_derive_prove`
+measuring 2 131. The unsound ladder is `113 152` columns at the same depth: implausible already, and
+6.5× smaller.
+
+So a sound ladder needs the accumulator threaded ACROSS rows through an `AirLeg.window .transition`
+gate — a layout the existing ladder also lacks and has never had. That is a real next step and a
+buildable one; it is not a type obstruction, and it is not a cost estimate standing in for a
+constraint. -/
+
+/-- One sound ladder step = double + add = two chained complete adds. -/
+def SOUND_LADDER_STEP_CONSTRAINTS : Nat :=
+  2 * (12 * SOUND_MUL_MARGINAL + 2 * SOUND_SMUL_MARGINAL + 19 * SOUND_ADDSUB_MARGINAL)
+/-- …and its fresh columns. -/
+def SOUND_LADDER_STEP_COLUMNS : Nat := 2 * RCB_FRESH
+/-- The GLV joint ladder's depth (two ~128-bit halves, Shamir). -/
+def GLV_STEPS : Nat := 128
+
+/-- ⚑ **THE ROW-LOCALITY WALL, as a number rather than a worry.** -/
+theorem sound_ladder_does_not_fit_a_row :
+    SOUND_LADDER_STEP_CONSTRAINTS = 8568
+      ∧ SOUND_LADDER_STEP_COLUMNS = 5712
+      ∧ GLV_STEPS * SOUND_LADDER_STEP_COLUMNS = 731136
+      ∧ GLV_STEPS * SOUND_LADDER_STEP_CONSTRAINTS = 1096704
+      -- the unsound ladder at the same depth: `884 · n` fresh columns
+      -- (`PastaMsmAir.ladderGatesFrom_counts`), so the sound one is 6.46× wider.
+      ∧ 6 * (GLV_STEPS * 884) < GLV_STEPS * SOUND_LADDER_STEP_COLUMNS
+      ∧ GLV_STEPS * SOUND_LADDER_STEP_COLUMNS < 7 * (GLV_STEPS * 884) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+#assert_axioms sound_ladder_does_not_fit_a_row
+
 end Dregg2.Circuit.Emit.PastaCurveSound
