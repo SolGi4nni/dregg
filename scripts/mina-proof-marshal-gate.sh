@@ -14,11 +14,27 @@
 #
 #   2. `pickles_kimchi_marshal`  → PROOF_MARSHAL_RESULT=GREEN
 #      A Pallas wrap proof over the Lean-authored `wrap_main` sub-circuit padded to the 2^15 Tock
-#      domain, plus a Vesta step proof for `prev_evals`, both accepted by `kimchi::verifier::
-#      batch_verify`, marshalled to `PicklesProofProofsVerified2ReprStableV2`; then FOUR
-#      perturbations that must each move EXACTLY ONE NAMED WIRE FIELD, and FIVE input shapes that
-#      must each be REFUSED. Its own red path is inside the binary: an accepted refusal or a
-#      perturbation that moves the wrong field turns the sentinel RED.
+#      domain, plus a Vesta step proof (over MINA'S OWN SRS, two Tick recursion slots) for
+#      `prev_evals` AND for every deferred scalar of the statement, both accepted by
+#      `kimchi::verifier::batch_verify`, marshalled to `PicklesProofProofsVerified2ReprStableV2`;
+#      then FOUR perturbations that must each move EXACTLY ONE NAMED WIRE FIELD, and SEVEN input
+#      shapes that must each be REFUSED. Its own red path is inside the binary: an accepted
+#      refusal or a perturbation that moves the wrong field turns the sentinel RED.
+#
+#      ⚑ It then drives PICKLES' OWN LADDER and each rung's verdict is part of the sentinel:
+#        * GATE A — openmina's `accumulator_check` must return `Ok(true)` on the object, and must
+#          return `Ok(false)` on three tampers (a flipped challenge limb, the old `7·G` fill, and
+#          the accumulator displaced by +G). This is the check Pickles performs BEFORE it consults
+#          a key, and no circuit change affects it.
+#        * GATE B — openmina's `expand_deferred` must run, and the ξ it recomputes must EQUAL the
+#          one the step proof's own transcript squeezed. It compares nothing itself; the control
+#          proves that (scrambled `prev_evals` still returns `Ok`, with a different ξ).
+#        * `run_checks` — ⚠ TRANSCRIBED, not called; labelled as such in the output.
+#        * GATE C — the two message hashes, from Mina's own hashers, with a control showing the
+#          step hash binds the verification key's 28 points and the wrap hash does not.
+#        * TERMINAL — `PreparedStatement::to_public_input(40)`, the forty words Pickles will hand
+#          the wrap circuit, written to `wrap-public-input.json`. NOT a check we pass: the numbered
+#          blocker is printed there.
 #
 #   3. `mina-proof-parse-gate.mjs` → PROOF_PARSE_GATE=GREEN
 #      Both directories handed to `Pickles.proofOfBase64` — Mina's own OCaml reader, compiled into
@@ -68,7 +84,7 @@ run_sentinel() { # sentinel, log, cmd...
   "$@" >"$log" 2>&1
   if grep -qF "$sentinel" "$log"; then
     note "$sentinel"
-    grep -E '^\[(wrap|step|marshal|readback|perturb|refuse|parse|synthetic)\]' "$log" | sed 's/^/   /'
+    grep -E '^\[(wrap|step|srs|accum|marshal|readback|perturb|refuse|parse|synthetic|gate [ABC]|gate [ABC] control|checks|terminal)\]' "$log" | sed 's/^/   /'
     return 0
   fi
   red "$sentinel not printed by: $*"

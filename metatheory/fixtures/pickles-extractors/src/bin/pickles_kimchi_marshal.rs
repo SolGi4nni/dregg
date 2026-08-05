@@ -24,19 +24,36 @@
 //!    `t_comm` four real chunks padded to seven with infinity. MEASURED: that is what the first
 //!    run produced. The SRS is therefore built here at exactly `2^15`.
 //!
-//! 2. **A step-side kimchi proof.** A `step_main` rung from `pickles-stepmain-harness/fixtures/`
-//!    proved on Vesta, at its natural size. Its `ProofEvaluations` and `ft_eval1` ARE the wire
-//!    record's `prev_evals` — so that half of the object also comes out of a kimchi proof rather
-//!    than a counter.
+//! 2. **A step-side kimchi proof — over MINA'S OWN SRS, with TWO Tick recursion slots.** A
+//!    `step_main` rung from `pickles-stepmain-harness/fixtures/` proved on Vesta with
+//!    `get_srs::<Fp>()` (`SRS::<Vesta>::create(65536)`, `verifier/mod.rs:38-46`), which pins the
+//!    IPA to sixteen rounds. Its `ProofEvaluations` and `ft_eval1` ARE the wire record's
+//!    `prev_evals`, **and its Fiat–Shamir transcript is the whole of the statement's deferred
+//!    values** — α, β, γ, ζ, the sponge digest and the sixteen bulletproof prechallenges, read out
+//!    by `transcript::step_transcript` running `ProverProof::oracles` and then the IPA
+//!    prechallenge squeezes. Until 2026-08-05 all of those were `k(n) = n·0x9E3779B97F4A7C15 | 1`.
 //!
-//! 3. **The marshal**, then both encodings, then:
+//! 3. **The IPA accumulator, computed.** `transcript::accumulator` evaluates
+//!    `⟨b_poly_coefficients(u⃗), srs.g⟩` over the 65,536 Vesta generators and that becomes
+//!    `messages_for_next_wrap_proof.challenge_polynomial_commitment`. It was `Vesta::generator() *
+//!    7` until 2026-08-05, which every reader accepted and Mina's own `accumulator_check` refused
+//!    before it ever consulted a key.
+//!
+//! 4. **The marshal**, then both encodings, then:
 //!    * binprot `write → read → compare` (openmina's reader, which is not ours);
 //!    * the sexp, base64'd, for `bridge/mina-zkapp/scripts/mina-proof-parse-gate.mjs`, which
 //!      hands it to `Pickles.proofOfBase64` — **Mina's own OCaml reader** — and re-prints it with
 //!      `proofToBase64`;
 //!    * **four perturbations**, two of the proof and two of the statement, each reported as the
 //!      SET OF NAMED WIRE FIELDS that moved (`marshal::field_diff`), not as a byte offset;
-//!    * **five refusals**, each an input shape a real `Proofs_verified_2` cannot have.
+//!    * **seven refusals**, each an input shape a real `Proofs_verified_2` cannot have.
+//!
+//! 5. **`gates` — Pickles' own ladder, rung by rung**, because `verify_zkapp` is one `bool` over
+//!    five steps of which four are private. Gate A (`accumulator_check`) and Gate B
+//!    (`expand_deferred`) are **Mina's own functions**, run on our object, with controls that must
+//!    move the other way; `run_checks` is transcribed and SAYS SO; Gate C uses Mina's own hashers;
+//!    and the terminal rung emits the forty public words `PreparedStatement::to_public_input`
+//!    demands of the wrap circuit.
 //!
 //! ## ⚑ WHAT PARSING PROVES, WHICH IS VERY LITTLE
 //!
@@ -69,10 +86,10 @@ use groupmap::GroupMap;
 use kimchi::circuits::gate::{CircuitGate, GateType};
 use kimchi::circuits::wires::{GateWires, Wire, COLUMNS};
 use kimchi::proof::RecursionChallenge;
-use kimchi::prover_index::{testing::new_index_for_test_with_lookups, ProverIndex};
+use kimchi::prover_index::ProverIndex;
 use kimchi::verifier::{batch_verify, Context};
 use mina_curves::pasta::{
-    Fp, Fq, Pallas, PallasParameters, ProjectivePallas, Vesta, VestaParameters,
+    Fp, Fq, Pallas, PallasParameters, ProjectivePallas, ProjectiveVesta, Vesta, VestaParameters,
 };
 use mina_p2p_messages::binprot::BinProtRead;
 use mina_p2p_messages::v2::*;
@@ -83,10 +100,12 @@ use mina_poseidon::{
 use poly_commitment::{commitment::CommitmentCurve, ipa::OpeningProof, SRS as _};
 use serde::Deserialize;
 
+use pickles_reality_gate_export::gates;
 use pickles_reality_gate_export::marshal::{
     self, expand_prechallenge, marshal, PreChallenge, PrevStepEvals, WrapKimchiProof,
     WrapStatementScalars, PROOFS_VERIFIED, STEP_ROUNDS, WRAP_ROUNDS,
 };
+use pickles_reality_gate_export::transcript::{self, StepTranscript};
 use pickles_reality_gate_export::wire::{binprot_of_proof, sexp_of_proof};
 
 type WrapBase = DefaultFqSponge<PallasParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
@@ -225,7 +244,7 @@ fn pad_to<F: ark_ff::PrimeField>(
 fn prove_wrap() -> (
     WrapKimchiProof,
     [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED],
-    f64,
+    ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>,
 ) {
     let c = load(&sibling(
         "pickles-wrapmain-harness",
@@ -342,12 +361,40 @@ fn prove_wrap() -> (
         proof.proof.lr.len(),
         proof.prev_challenges.len()
     );
-    (proof, pre, secs)
+    (proof, pre, index)
 }
 
-/// The step-side proof, on Vesta, at its natural size. Only `evals`, `ft_eval1` and the
-/// public-input evaluation reach the wire.
-fn prove_step() -> PrevStepEvals {
+/// The step-side proof, on Vesta, **over Mina's own SRS**, and the real Fiat–Shamir transcript
+/// read back out of it.
+///
+/// ⚑ **The SRS is not ours and that is the point.** The deferred accumulator claim
+/// (`accumulator_check.rs:10-64`) is stated over `get_srs::<Fp>()` — `SRS::<Vesta>::create(65536)`
+/// — and a step proof folded over any other generator vector produces an `sg` that is a perfectly
+/// good curve point which Mina's arithmetic refuses. So the index is built with openmina's own SRS
+/// object rather than kimchi's test SRS, and this is also what pins the IPA to SIXTEEN rounds,
+/// which is what makes `b_poly_coefficients` of the challenges tile the 65,536 generators exactly.
+///
+/// ⚠ `new_index_for_test_with_lookups` cannot be used here: it hands back the precomputed test SRS
+/// for anything at or below `SERIALIZED_SRS_SIZE` (`prover_index.rs:225-232`), and whether that
+/// blob equals Mina's SRS is a question, not an assumption.
+///
+/// ⚑ **TWO recursion slots, and that is what closed the ξ fork.** Until 2026-08-05 this proved
+/// with `prev_challenges = 0` while the statement claimed two vectors of counters, and Pickles'
+/// `expand_deferred` recomputed a ξ that disagreed with the transcript's — MEASURED, and written
+/// up as a fork between kimchi's Fr-sponge and Pickles'. It was not. kimchi's Fr-sponge absorbs a
+/// `prev_challenge_digest` over the proof's OWN recursion challenges (`verifier.rs:289-299`) at
+/// exactly the position `expand_deferred` absorbs `challenges_digest` over the statement's
+/// (`step.rs:1997-2013`), and the evaluation orders are the same list (`plonk_sponge.rs:87` vs
+/// `util.rs:215-258`, both `z, generic, poseidon, complete_add, mul, emul, endomul_scalar, w,
+/// coefficients, s`). An empty vector against two counter vectors is not a protocol difference; it
+/// is a proof that does not have the recursion the statement says it has.
+fn prove_step(
+    srs: &poly_commitment::ipa::SRS<Vesta>,
+) -> (
+    PrevStepEvals,
+    StepTranscript,
+    Vec<[PreChallenge; STEP_ROUNDS]>,
+) {
     let c = load(&sibling(
         "pickles-stepmain-harness",
         "stepmain_smoke_r6_ft_eval0.json",
@@ -355,14 +402,29 @@ fn prove_step() -> PrevStepEvals {
     let gates = gates_of::<Fp>(&c);
     let witness = witness_of::<Fp>(&c);
     let mut index: ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>> =
-        new_index_for_test_with_lookups::<FULL_ROUNDS, Vesta>(
+        kimchi::prover_index::testing::new_index_for_test_with_lookups_and_custom_srs::<
+            FULL_ROUNDS,
+            Vesta,
+            poly_commitment::ipa::SRS<Vesta>,
+            _,
+        >(
             gates,
             c.public_input_size,
-            0,
+            PROOFS_VERIFIED,
             vec![],
             None,
             true,
-            None,
+            Some(transcript::TICK_SRS_LEN),
+            |d1, size| {
+                assert_eq!(
+                    size,
+                    transcript::TICK_SRS_LEN,
+                    "the Tick SRS is 2^16 generators"
+                );
+                let s = srs.clone();
+                s.get_lagrange_basis(d1);
+                s
+            },
             false,
         );
     index.compute_verifier_index_digest::<StepBase>();
@@ -373,12 +435,40 @@ fn prove_step() -> PrevStepEvals {
         .map(|s| Fp::from_str(s).unwrap())
         .collect();
 
+    // The two Tick recursion slots. Each slot's commitment is the commitment to the CHALLENGE
+    // POLYNOMIAL of its own challenges — the same object [`transcript::accumulator`] computes, on
+    // the same SRS — so `messages_for_next_step_proof.old_bulletproof_challenges` is a fact about
+    // this proof and not a caller's decoration.
+    let step_pre: Vec<[PreChallenge; STEP_ROUNDS]> = (0..PROOFS_VERIFIED)
+        .map(|j| {
+            std::array::from_fn(|i| {
+                let k = (j * STEP_ROUNDS + i) as u64;
+                [
+                    k.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+                    (k + 11).wrapping_mul(0xD1B5_4A32_D192_ED03) | 1,
+                ]
+            })
+        })
+        .collect();
+    let prev_slots: Vec<kimchi::proof::RecursionChallenge<Vesta>> = step_pre
+        .iter()
+        .map(|pre| {
+            let chals: Vec<Fp> = pre.iter().map(marshal::expand_step_prechallenge).collect();
+            let coeffs = poly_commitment::commitment::b_poly_coefficients(&chals);
+            let poly = ark_poly::univariate::DensePolynomial::from_coefficients_vec(coeffs);
+            let comm = index.srs.commit_non_hiding(&poly, 1);
+            kimchi::proof::RecursionChallenge::new(chals, comm)
+        })
+        .collect();
+
     let t0 = Instant::now();
-    let proof = marshal::StepKimchiProof::create::<StepBase, StepScalar, _>(
+    let proof = marshal::StepKimchiProof::create_recursive::<StepBase, StepScalar, _>(
         &group_map,
         witness,
         &[],
         &index,
+        prev_slots,
+        None,
         &mut rand::rngs::OsRng,
     )
     .expect("step prove");
@@ -395,29 +485,60 @@ fn prove_step() -> PrevStepEvals {
         &[ctx],
     )
     .expect("the step proof must verify too");
+
+    let tr = transcript::step_transcript(&proof, vk, &public);
     println!(
-        "[step] rows={} public={} proved in {secs:.1}s, batch_verify = Ok ; prev_evals will come from THIS proof",
-        c.num_rows, c.public_input_size
+        "[step] rows={} domain=2^{} max_poly_size=2^{} public={} prev_challenges={} proved in \
+         {secs:.1}s, batch_verify = Ok ; lr rounds={} ; prev_evals AND the statement's deferred \
+         values come from THIS proof",
+        c.num_rows,
+        tr.domain_log2,
+        (index.max_poly_size as f64).log2() as u32,
+        c.public_input_size,
+        proof.prev_challenges.len(),
+        proof.proof.lr.len(),
     );
-    marshal::prev_step_evals_from_proof(&proof).expect("step proof carries a public evaluation")
+    let prev = marshal::prev_step_evals_from_proof(&proof)
+        .expect("step proof carries a public evaluation");
+    (prev, tr, step_pre)
 }
 
 // ───────────────────────── the statement half ─────────────────────────
 
-/// The scalars `wrap_main` derives and we do not yet produce, made explicit so a perturbation of
-/// one is legible. `old_wrap_bulletproof_challenges` is NOT free: it must expand to the proof's.
-fn statement(pre: [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED]) -> WrapStatementScalars {
-    let k = |n: u64| -> PreChallenge {
-        [
-            n.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
-            (n + 1).wrapping_mul(0xD1B5_4A32_D192_ED03) | 1,
-        ]
-    };
+/// **The statement, from the step proof's own transcript.** Not a counter anywhere Pickles looks.
+///
+/// Until 2026-08-05 every scalar below was `k(n) = n·0x9E3779B97F4A7C15 | 1` and the accumulator
+/// was `7·G`. Both were legible and both were fiction; the accumulator one is refused by Mina
+/// arithmetically before any key is consulted (`accumulator_check.rs:10-64`). Provenance now:
+///
+/// | field | source |
+/// |---|---|
+/// | `alpha`, `zeta` | `RandomOracles::{alpha_chal, zeta_chal}` of the step proof |
+/// | `beta`, `gamma` | `RandomOracles::{beta, gamma}` — raw 128-bit squeezes, not lifted |
+/// | `sponge_digest_before_evaluations` | `OraclesResult::digest` — the Fq-sponge before evaluations |
+/// | `bulletproof_challenges` | the step proof's SIXTEEN IPA prechallenges, `ipa.rs:996-1010` |
+/// | `branch_domain_log2` | `log2` of the step proof's own evaluation domain |
+/// | `next_wrap_challenge_polynomial_commitment` | ⟨`b_poly_coefficients(u⃗)`, `srs.g`⟩ over Mina's SRS |
+/// | `old_wrap_bulletproof_challenges` | chosen, then CHECKED to expand to the wrap proof's `chals` |
+/// | `step_old_bulletproof_challenges` | ⚠ still chosen — see below |
+///
+/// ⚑ `step_old_bulletproof_challenges` is now bound too: the STEP proof carries two recursion
+/// slots whose challenges are exactly these, so `marshal` refuses a mismatch
+/// (`MarshalError::StepPreChallengeMismatch`) and `expand_deferred`'s `challenges_digest` is the
+/// same digest kimchi's Fr-sponge folded in when the proof was made. The prechallenge VALUES are
+/// chosen — we have one step proof, not a chain — but they are chosen once and then the proof is
+/// made about them, which is what "the statement describes this proof" means.
+fn statement(
+    pre: [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED],
+    tr: &StepTranscript,
+    accumulator: Vesta,
+    step_pre: Vec<[PreChallenge; STEP_ROUNDS]>,
+) -> WrapStatementScalars {
     WrapStatementScalars {
-        alpha: k(1),
-        beta: k(3),
-        gamma: k(5),
-        zeta: k(7),
+        alpha: tr.alpha,
+        beta: tr.beta,
+        gamma: tr.gamma,
+        zeta: tr.zeta,
         // Every real block wrap proof carries None here (no lookups).
         joint_combiner: None,
         feature_flags:
@@ -431,21 +552,18 @@ fn statement(pre: [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED]) -> WrapStateme
                 lookup: false,
                 runtime_tables: false,
             },
-        bulletproof_challenges: std::array::from_fn(|i| k(100 + i as u64)),
+        bulletproof_challenges: tr.bulletproof_challenges,
         branch_proofs_verified: PicklesBaseProofsVerifiedStableV1::N2,
-        branch_domain_log2: 14,
-        sponge_digest_before_evaluations: std::array::from_fn(|i| {
-            (200 + i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1
-        }),
-        // ⚑ VESTA. This is the STEP proof's accumulator that the next WRAP consumes (Tick), not a
-        // Pallas point — see `WrapStatementScalars`. It was a Pallas point until 2026-08-05, which
-        // both parse gates accepted and which made openmina's `verify_zkapp` ABORT.
-        next_wrap_challenge_polynomial_commitment: (Vesta::generator() * Fp::from(7u64))
-            .into_affine(),
+        branch_domain_log2: tr.domain_log2,
+        sponge_digest_before_evaluations: tr.sponge_digest,
+        // ⚑ VESTA, and now an actual multi-scalar multiplication. This is the STEP proof's
+        // accumulator that the next WRAP consumes (Tick), not a Pallas point — see
+        // `WrapStatementScalars`. It was a Pallas point until 2026-08-05, which both parse gates
+        // accepted and which made openmina's `verify_zkapp` ABORT; it was `7·G` until 2026-08-05,
+        // which every reader accepted and `accumulator_check` refused.
+        next_wrap_challenge_polynomial_commitment: accumulator,
         old_wrap_bulletproof_challenges: pre,
-        step_old_bulletproof_challenges: (0..PROOFS_VERIFIED)
-            .map(|j| std::array::from_fn(|i| k(400 + (j * STEP_ROUNDS + i) as u64)))
-            .collect(),
+        step_old_bulletproof_challenges: step_pre,
     }
 }
 
@@ -485,9 +603,59 @@ fn main() {
     let mut failed = 0usize;
 
     println!("== PROOFS WE PRODUCED ==");
-    let (proof, pre, _) = prove_wrap();
-    let prev = prove_step();
-    let st = statement(pre);
+    let (proof, pre, wrap_index) = prove_wrap();
+
+    // ⚑ Mina's own SRS object, not a rebuild of it. `get_srs::<Fp>()` is
+    // `SRS::<Vesta>::create(Fq::SRS_DEPTH)` (`verifier/mod.rs:38-46`), and the deferred accumulator
+    // claim is stated over exactly these 65,536 generators. The step proof below is folded over
+    // this object, so the identity `sg == ⟨b_poly_coefficients(u⃗), g⟩` is not "the same by
+    // construction" — it is the same points.
+    let t0 = Instant::now();
+    let srs = ledger::verifier::get_srs::<Fp>();
+    println!(
+        "[srs] openmina get_srs::<Fp>() = SRS<Vesta> with {} generators, built in {:.1}s",
+        srs.g.len(),
+        t0.elapsed().as_secs_f64()
+    );
+    assert_eq!(srs.g.len(), transcript::TICK_SRS_LEN);
+
+    let (prev, tr, step_pre) = prove_step(&srs);
+
+    // ── the accumulator, computed rather than asserted ──
+    println!("\n== GATE A INPUT — the IPA accumulator, computed ==");
+    let t0 = Instant::now();
+    let acc = transcript::accumulator(&srs, &tr.bulletproof_challenges);
+    let acc_secs = t0.elapsed().as_secs_f64();
+    // The IPA's final folded generator IS ⟨s(u⃗), g⟩. If that identity does not hold, either the
+    // challenges were read out of the wrong sponge position or the SRS is not the one the proof
+    // was folded over — and both produce a well-formed point.
+    let sg_is_acc = acc == tr.sg;
+    println!(
+        "[accum] ⟨b_poly_coefficients(u⃗), srs.g⟩ over {} generators in {acc_secs:.2}s ; \
+         equals the step proof's own opening.sg = {sg_is_acc}",
+        srs.g.len()
+    );
+    if !sg_is_acc {
+        failed += 1;
+    }
+    // Whose endo lift? kimchi's `squeeze_challenge` vs openmina's `limbs_to_field`, on all 16.
+    let endo_ok = tr
+        .bulletproof_challenges
+        .iter()
+        .all(transcript::endo_lift_agrees_with_mina);
+    println!(
+        "[accum] kimchi's endo lift == ledger::ScalarChallenge::limbs_to_field on all 16 challenges = {endo_ok}"
+    );
+    if !endo_ok {
+        failed += 1;
+    }
+    // The `b` identity `expand_deferred` will recompute (`step.rs:2044-2048`), from our side.
+    println!(
+        "[accum] b = b_poly(u⃗, ζ) + r·b_poly(u⃗, ζω) = {}",
+        gates::dec(&tr.b)
+    );
+
+    let st = statement(pre, &tr, acc, step_pre);
 
     println!("\n== MARSHAL ==");
     let wire = match marshal(&proof, &prev, &st) {
@@ -625,6 +793,16 @@ fn main() {
         marshal(&proof, &prev, &s3b),
     );
 
+    // ⚑ The Tick mirror, added with the ξ closure. Without this the statement could claim two
+    // step-side challenge vectors the step proof never folded, and ξ would silently diverge —
+    // which is exactly what it did until 2026-08-05.
+    let mut s3c = st.clone();
+    s3c.step_old_bulletproof_challenges[0][7][1] ^= 1;
+    must_refuse(
+        "step prechallenge != the STEP proof's chals",
+        marshal(&proof, &prev, &s3c),
+    );
+
     let mut r4 = proof.clone();
     r4.commitments.t_comm.chunks[2] = Pallas::zero();
     must_refuse(
@@ -679,6 +857,198 @@ fn main() {
         )
         .expect("write arity probe");
         println!("\n[probe] wrote {out_dir}/lr14.arity-probe.json — lr with 14 of 15 rounds, for Mina's reader");
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════════════
+    //  THE LADDER. Mina's literal verdict at each rung, and a control moving the other way.
+    // ═════════════════════════════════════════════════════════════════════════════════════
+    println!("\n== GATE A — accumulator_check (openmina's own, `pub`) ==");
+    let a = gates::gate_a(&srs, &wire);
+    println!("[gate A] accumulator_check(get_srs::<Fp>(), [our proof]) = {a:?}");
+    if a != Ok(true) {
+        failed += 1;
+    }
+    {
+        // Three controls, each an object a real Pickles proof cannot be. All must be refused.
+        let mut ctl = |label: &str, s: &WrapStatementScalars| match marshal(&proof, &prev, s) {
+            Err(e) => println!("[gate A control] {label:<44} marshaller refused first: {e}"),
+            Ok(w2) => {
+                let v = gates::gate_a(&srs, &w2);
+                let refused = v == Ok(false);
+                if !refused {
+                    failed += 1;
+                }
+                println!(
+                    "[gate A control] {label:<44} accumulator_check = {v:?}  REFUSED={refused}"
+                );
+            }
+        };
+        let mut c1 = st.clone();
+        c1.bulletproof_challenges[9][0] ^= 1;
+        ctl("one challenge limb flipped", &c1);
+        let mut c2 = st.clone();
+        c2.next_wrap_challenge_polynomial_commitment =
+            (Vesta::generator() * Fp::from(7u64)).into_affine();
+        ctl("the accumulator back to 7·G (the old fill)", &c2);
+        let mut c3 = st.clone();
+        c3.next_wrap_challenge_polynomial_commitment =
+            (ProjectiveVesta::from(acc) + Vesta::generator()).into_affine();
+        ctl("the accumulator displaced by +G", &c3);
+    }
+
+    println!("\n== GATE B — expand_deferred (openmina's own, `pub`) ==");
+    let dv = gates::gate_b(&wire);
+    match &dv {
+        Err(e) => {
+            failed += 1;
+            println!("[gate B] compute_deferred_values REFUSED: {e:?}");
+        }
+        Ok(d) => {
+            use gates::ShiftingValue as _;
+            let xi_ok = d.xi == tr.xi;
+            println!(
+                "[gate B] expand_deferred = Ok ; it recomputed ξ={:016x}{:016x} and our step \
+                 transcript squeezed ξ={:016x}{:016x} — AGREE={xi_ok}",
+                d.xi[1], d.xi[0], tr.xi[1], tr.xi[0],
+            );
+            // ⚑ Un-shifted. `expand_deferred` returns Pickles' SHIFTED encoding
+            // (`plonk_checks.rs:67-95`); comparing that against a raw transcript value would print
+            // a disagreement that is not there.
+            let b_ok = d.b.shifted_to_field() == tr.b;
+            let cip_ok = d.combined_inner_product.shifted_to_field() == tr.combined_inner_product;
+            println!(
+                "[gate B] b: expand_deferred={} transcript={} AGREE={b_ok}",
+                gates::dec(&d.b.shifted_to_field()),
+                gates::dec(&tr.b)
+            );
+            println!(
+                "[gate B] combined_inner_product: expand_deferred={} kimchi's oracles={} AGREE={cip_ok}",
+                gates::dec(&d.combined_inner_product.shifted_to_field()),
+                gates::dec(&tr.combined_inner_product)
+            );
+            // ⚑ All three GATE. This is the strongest statement available short of running the
+            // wrap circuit: Pickles' independent recomputation of every scalar it recomputes is
+            // BIT-IDENTICAL to the transcript of the step proof the statement claims to describe.
+            // A regression here means the statement has stopped being about a real proof.
+            if !xi_ok || !b_ok || !cip_ok {
+                failed += 1;
+            }
+            println!(
+                "[gate B] ⚑ it COMPARED NOTHING. The wire has no combined_inner_product, no b and \
+                 no xi field (`generated.rs:805-810`); `wrap_deferred_values.ml` has no assert and \
+                 `verification.rs:708` hands the recomputation straight on. A disagreement here \
+                 costs the PUBLIC INPUT, not the verdict."
+            );
+        }
+    }
+    {
+        // The control that makes the sentence above a measurement: scramble the evaluations
+        // Pickles derives ξ from, and watch it accept and produce a different ξ.
+        let mut e = prev.clone();
+        e.evals.w[0].zeta[0] += Fp::from(1u64);
+        let w2 = marshal(&proof, &e, &st).expect("marshal scrambled evals");
+        match (gates::gate_b(&w2), &dv) {
+            (Ok(d2), Ok(d1)) => println!(
+                "[gate B control] prev_evals.w[0].zeta += 1 → expand_deferred STILL Ok, ξ moved={} \
+                 (a recomputation, not a check)",
+                d2.xi != d1.xi
+            ),
+            (r, _) => println!("[gate B control] prev_evals perturbed → {r:?}"),
+        }
+    }
+
+    println!("\n== run_checks — ⚠ TRANSCRIBED from `verification.rs:557-675`, NOT called ==");
+    let wrap_vk = wrap_index.verifier_index.as_ref().expect("wrap vk");
+    for (name, ok) in gates::run_checks_transcribed(&wire, wrap_vk.domain.log_size_of_group) {
+        println!("[checks] {name:<48} {ok}");
+        if !ok {
+            failed += 1;
+        }
+    }
+
+    println!("\n== GATE C — the two message hashes (openmina's own hashers) ==");
+    let vk_evals = gates::vk_evals_of_wrap_index(wrap_vk);
+    let hashes = gates::gate_c(&wire, &vk_evals).expect("gate C");
+    println!(
+        "[gate C] hash(messages_for_next_step_proof) = {:?}\n[gate C] hash(messages_for_next_wrap_proof) = {:?}",
+        hashes.0, hashes.1
+    );
+    {
+        // Slot 12 hashes the VK's own 28 points. Move one and the hash must move — that is why a
+        // wrap proof is never portable between keys.
+        let mut moved = vk_evals.clone();
+        moved.sigma[0] = ledger::proofs::transaction::InnerCurve::<Fp>::of_affine(
+            (ProjectivePallas::from(moved.sigma[0].to_affine()) + Pallas::generator())
+                .into_affine(),
+        );
+        let h2 = gates::gate_c(&wire, &moved).expect("gate C moved");
+        let ok = h2.0 != hashes.0 && h2.1 == hashes.1;
+        if !ok {
+            failed += 1;
+        }
+        println!(
+            "[gate C control] sigma[0] += G → step hash MOVED={} wrap hash UNCHANGED={} (the step \
+             hash binds the key; the wrap hash does not)",
+            h2.0 != hashes.0,
+            h2.1 == hashes.1
+        );
+    }
+
+    println!("\n== TERMINAL — the forty public words Pickles demands of the wrap circuit ==");
+    if let Ok(d) = dv {
+        let words = gates::wrap_public_input(&wire, &vk_evals, d).expect("to_public_input");
+        let names = gates::wrap_public_input_slot_names();
+        println!(
+            "[terminal] to_public_input({}) produced {} field elements; the wrap verifier index \
+             `verifiers.rs:400` fixes `public = {}` and is NOT derived from the key",
+            gates::WRAP_PUBLIC_INPUT,
+            words.len(),
+            gates::WRAP_PUBLIC_INPUT
+        );
+        for (i, w) in words.iter().enumerate().take(13) {
+            let n = names.get(i).cloned().unwrap_or_default();
+            println!("[terminal]   [{i:2}] {n:<34} {}", gates::dec(w));
+        }
+        println!(
+            "[terminal]   [13..28] bulletproof_challenges (16, raw two-limb prechallenges)\n\
+             [terminal]   [29] branch_data = {}  [30..37] the eight feature flags  [38] uses_lookup \
+             [39] joint_combiner_or_zero",
+            gates::dec(&words[29])
+        );
+
+        // THE BLOCKER, with the numbers.
+        let circuit_public = load(&sibling(
+            "pickles-wrapmain-harness",
+            "wrapmain_smoke_w1_transcript.json",
+        ))
+        .public_input_size;
+        println!(
+            "[terminal] ⚑ BLOCKER, numbered: the wrap circuit proved above has public_input_size \
+             = {circuit_public}; Pickles will hand it {} words. Slots 0–4 and 9 \
+             (combined_inner_product, b, zeta_to_srs_length, zeta_to_domain_size, perm, xi) are \
+             `expand_deferred`'s RECOMPUTATION and are NOT on the wire at all, so no fixture can \
+             be right about them — they have to be what the emit path puts in the public words.",
+            words.len()
+        );
+
+        let mut js = String::from("{\n  \"npublic\": ");
+        js.push_str(&words.len().to_string());
+        js.push_str(",\n  \"slots\": [\n");
+        for (i, w) in words.iter().enumerate() {
+            js.push_str(&format!(
+                "    {{ \"i\": {i}, \"name\": \"{}\", \"value\": \"{}\" }}{}\n",
+                names
+                    .get(i)
+                    .cloned()
+                    .expect("every one of the forty words is named"),
+                gates::dec(w),
+                if i + 1 == words.len() { "" } else { "," }
+            ));
+        }
+        js.push_str("  ]\n}\n");
+        std::fs::write(format!("{out_dir}/wrap-public-input.json"), js)
+            .expect("write wrap public input");
+        println!("[terminal] wrote {out_dir}/wrap-public-input.json — the emit path's input");
     }
 
     // ───────────────── the summary the gate script reads ─────────────────

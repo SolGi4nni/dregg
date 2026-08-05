@@ -157,6 +157,14 @@ pub enum MarshalError {
     },
     /// The step-side statement data does not have one entry per recursion slot.
     StepChallengeArity { got: usize, want: usize },
+    /// The caller's step-side prechallenge does not endo-expand to the challenge the STEP PROOF
+    /// carries in that recursion slot. The Tick mirror of [`Self::PreChallengeMismatch`].
+    StepPreChallengeMismatch {
+        slot: usize,
+        round: usize,
+        from_statement: String,
+        from_proof: String,
+    },
     /// The step proof carried no public-input evaluation, or carried it chunked.
     PublicEval { got: Option<usize> },
 }
@@ -199,6 +207,17 @@ impl std::fmt::Display for MarshalError {
             Self::StepChallengeArity { got, want } => write!(
                 f,
                 "statement carries {got} step-side challenge vectors, proof has {want} recursion slots"
+            ),
+            Self::StepPreChallengeMismatch {
+                slot,
+                round,
+                from_statement,
+                from_proof,
+            } => write!(
+                f,
+                "step slot {slot} round {round}: the statement's prechallenge expands to \
+                 {from_statement}, the STEP proof carries {from_proof} — expand_deferred's \
+                 challenges_digest and kimchi's prev_challenge_digest would disagree, and ξ with them"
             ),
             Self::PublicEval { got } => match got {
                 None => write!(f, "step proof carries no public-input evaluation"),
@@ -265,6 +284,17 @@ pub struct PrevStepEvals {
     pub public_input: (Fp, Fp),
     pub ft_eval1: Fp,
     pub evals: ProofEvaluations<PointEvaluations<Vec<Fp>>>,
+    /// The step proof's own recursion challenges, endo-expanded, one vector per slot.
+    ///
+    /// ⚑ These are NOT decoration and they are NOT free. kimchi's Fr-sponge absorbs a
+    /// `prev_challenge_digest` over exactly these (`verifier.rs:289-299`) before it squeezes ξ and
+    /// r, and Pickles' `expand_deferred` absorbs a `challenges_digest` over
+    /// `messages_for_next_step_proof.old_bulletproof_challenges` at the same position
+    /// (`step.rs:1997-2013`). The two ξ agree **iff those two vectors are the same vector**. A step
+    /// proof with no recursion slots against a statement that claims two is the whole reason the
+    /// deferred values used to fork, and [`MarshalError::StepPreChallengeMismatch`] is what makes
+    /// that a refusal instead of a silent disagreement.
+    pub prev_chals: Vec<Vec<Fp>>,
 }
 
 /// Read the wire's `prev_evals` out of a step-side kimchi proof. `evals.public` is filled by
@@ -285,6 +315,11 @@ pub fn prev_step_evals_from_proof(step: &StepKimchiProof) -> Result<PrevStepEval
         public_input: (public.zeta[0], public.zeta_omega[0]),
         ft_eval1: step.ft_eval1,
         evals: step.evals.clone(),
+        prev_chals: step
+            .prev_challenges
+            .iter()
+            .map(|rc| rc.chals.clone())
+            .collect(),
     })
 }
 
@@ -361,6 +396,21 @@ fn one_chunk(
     point(field, "Pallas", &c.chunks[0])
 }
 
+/// The Tick mirror of [`expand_prechallenge`]: a 128-bit prechallenge lifted into `Fp` with
+/// **Vesta**'s endo coefficient, which is the lift `accumulator_check.rs:23-38` applies and the one
+/// a step proof's IPA challenges come out of.
+///
+/// ⚑ The two constants are different and the wire cannot tell you which a field wants — both sides
+/// are two bare limbs. Using the wrong one produces a field element every reader accepts and Mina's
+/// arithmetic refuses.
+pub fn expand_step_prechallenge(c: &PreChallenge) -> Fp {
+    let mut limbs = [0u64; 4];
+    limbs[..2].copy_from_slice(c);
+    let raw = Fp::from(ark_ff::BigInt::<4>(limbs));
+    let (_, endo_r) = <Vesta as KimchiCurve<FULL_ROUNDS>>::endos();
+    ScalarChallenge(raw).to_field(endo_r)
+}
+
 /// `ScalarChallenge::to_field` — the endo expansion the PROVER applied
 /// (`poseidon/src/sponge.rs:95`), with kimchi's own Pallas scalar endo coefficient.
 pub fn expand_prechallenge(c: &PreChallenge) -> Fq {
@@ -426,6 +476,37 @@ pub fn marshal(
             got: st.step_old_bulletproof_challenges.len(),
             want: PROOFS_VERIFIED,
         });
+    }
+    // ⚑ The Tick tie, added 2026-08-05. `messages_for_next_step_proof.old_bulletproof_challenges`
+    // is the vector `expand_deferred` folds into `challenges_digest` (`step.rs:1997-2013`) and
+    // kimchi's Fr-sponge folds into `prev_challenge_digest` (`verifier.rs:289-299`) at the SAME
+    // position of the SAME transcript. If the statement's copy is not the step proof's own, the
+    // two ξ diverge — silently, because the wire carries no ξ to disagree with.
+    if prev.prev_chals.len() != PROOFS_VERIFIED {
+        return Err(MarshalError::StepChallengeArity {
+            got: prev.prev_chals.len(),
+            want: PROOFS_VERIFIED,
+        });
+    }
+    for (i, chals) in prev.prev_chals.iter().enumerate() {
+        if chals.len() != STEP_ROUNDS {
+            return Err(MarshalError::RecursionChals {
+                index: i,
+                got: chals.len(),
+                want: STEP_ROUNDS,
+            });
+        }
+        for (j, chal) in chals.iter().enumerate() {
+            let expanded = expand_step_prechallenge(&st.step_old_bulletproof_challenges[i][j]);
+            if expanded != *chal {
+                return Err(MarshalError::StepPreChallengeMismatch {
+                    slot: i,
+                    round: j,
+                    from_statement: format!("{expanded}"),
+                    from_proof: format!("{chal}"),
+                });
+            }
+        }
     }
     for (i, rc) in proof.prev_challenges.iter().enumerate() {
         if rc.chals.len() != WRAP_ROUNDS {

@@ -74,7 +74,7 @@ use std::fmt::Write as _;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger, PrimeField};
 use base64::Engine as _;
-use mina_curves::pasta::{Fp, Pallas};
+use mina_curves::pasta::{Fp, Pallas, Vesta};
 use mina_p2p_messages::array::ArrayN16;
 use mina_p2p_messages::bigint::BigInt;
 use mina_p2p_messages::binprot::BinProtRead;
@@ -184,6 +184,30 @@ fn our_point(k: u64) -> (BigInt, BigInt) {
     )
 }
 
+/// `k·G` on **Vesta**, for the one field of a wrap statement that lives on the other curve.
+///
+/// ⚑ `messages_for_next_wrap_proof.challenge_polynomial_commitment` is the STEP proof's
+/// accumulator, which the next WRAP consumes — Tick, i.e. Vesta. Mina reads it with
+/// `Vesta::of_coordinates` (`accumulator_check.rs:44-53`) and builds it with
+/// `Affine::<VestaParameters>::new`, which ASSERTS on-curve. Every OTHER point in a
+/// `Proofs_verified_2` is Pallas, including its one-line neighbour
+/// `messages_for_next_step_proof.challenge_polynomial_commitments`, and the wire cannot tell you
+/// which: both are two bare `BigInt`s.
+///
+/// ⚠ This binary emitted a PALLAS point here until 2026-08-05. Both parse gates passed the object
+/// and openmina's `verify_zkapp` ABORTED THE PROCESS on it. `pickles_kimchi_marshal` was corrected
+/// the same day and this one was not, so the parse gate's on-curve pass — which is the check that
+/// finally sees this class — reported `synthetic.o1js-proof.json` RED at HEAD.
+fn our_vesta_point(k: u64) -> (BigInt, BigInt) {
+    let g = Vesta::generator();
+    let p = (g * Fp::from(k)).into_affine();
+    let (x, y) = p.xy().expect("k*G is not the identity");
+    (
+        BigInt::from_bytes(x.into_bigint().to_bytes_le().try_into().unwrap()),
+        BigInt::from_bytes(y.into_bigint().to_bytes_le().try_into().unwrap()),
+    )
+}
+
 fn our_fp(k: u64) -> BigInt {
     let v = Fp::from(k) * Fp::from(0x9E3779B97F4A7C15u64) + Fp::from(1u64);
     BigInt::from_bytes(v.into_bigint().to_bytes_le().try_into().unwrap())
@@ -259,7 +283,9 @@ fn synthetic_proof() -> PicklesProofProofsVerified2ReprStableV2 {
         )),
         messages_for_next_wrap_proof:
             PicklesProofProofsVerified2ReprStableV2MessagesForNextWrapProof {
-                challenge_polynomial_commitment: our_point(7),
+                // ⚑ VESTA, not Pallas — see [`our_vesta_point`]. Its one-line neighbour
+                // `messages_for_next_step_proof.challenge_polynomial_commitments` below IS Pallas.
+                challenge_polynomial_commitment: our_vesta_point(7),
                 old_bulletproof_challenges: PaddedSeq(std::array::from_fn(|j| {
                     PicklesReducedMessagesForNextProofOverSameFieldWrapChallengesVectorStableV2(
                         PaddedSeq(std::array::from_fn(|i| our_bp(300 + (j * 15 + i) as u64))),

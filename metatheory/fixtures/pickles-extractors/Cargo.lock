@@ -2226,6 +2226,7 @@ checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 name = "pickles-reality-gate-export"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ark-ec",
  "ark-ff",
  "ark-poly",
