@@ -214,6 +214,57 @@ lemma emits the same table as a proved one**, so design evidence cannot see proo
 "lanes do not build" created this gap; the axiom-hygiene gate closed it. Keep the gate, and build each
 lane's Lean before believing its numbers.
 
+### 2026-08-05 — the repair cycle, and M2
+
+Format v2 worked. Three **standing Agent lanes**, each with its own leased build lane, each required to
+show green. All three landed. Revival via SendMessage (Workflow sub-agents cannot be revived; Agent
+lanes can) meant refutations went back to the author with context intact instead of onto my pile.
+
+**M2 IS LANDED IN THE ARTIFACTS.** All three bundles moved from `transparent-beta-demo` to
+`committed-hidden-instance`; the catalog no longer carries `run_seed`. Curator-signed epoch 1
+counter 7 (`7fa056610`). What it bought, measured:
+
+| salvage-lock | public instance | hidden instance |
+|---|---:|---:|
+| information floor | 0 | **4** |
+| execution floor | 6 | **10** |
+| budget slack | 6 of 12 | **2 of 12** |
+
+Cycle 1 wrote the counterfactual down — *"a genuinely hidden board needs 10 turns and `action_limit`
+is 12; the budget is evidence of the game somebody meant to ship."* That is now the measured game.
+
+Also green: all 87 PoA Lean modules · `cargo build --release -p dregg-node` · the live validator
+upgraded to a binary carrying `dregg_poa_signal_slot_derive` (verified INSIDE the container).
+
+**Four lanes refused to take an easy green, unprompted.** Worth keeping as the standard:
+- refused to retype a test vector, because moving the Rust half alone "would turn a two-source gate
+  into a self-pin while going green";
+- refused to make fixture capabilities constructible, because it "would make the crown/authority
+  boundary decoration";
+- refused to re-type the Poseidon2 derivation in Rust — declared the FFI seam and failed closed;
+- refused to add `REQUIRED_DECISION_EXPORTS` before the `@[export]` existed, because that gate PANICS
+  on every release build and would have redded the tree for every lane.
+
+**⚑ My four mistakes, all one shape: I changed a thing and did not chase its mirrors.**
+1. Committed a caller without its callee → [[minted-caller-committed-callee-not]] (four instances in
+   one day, across four lanes — a property of the working style, not four accidents).
+2. Copied a build lane out from under a live agent, costing it a full cycle. `.leases/` existed and I
+   was not using it. Now leased.
+3. Wrote a flag day naming two deleted files, missing that the old manifest sha was pinned in three
+   other places including two Lean-emitted fixtures.
+4. Relayed a lane's incidental aside ("norm_num has no extensions") into a memory AND the next brief
+   in one step. It was false structurally and empirically; a lane with a build refuted it. Retraction
+   kept in [[minted-poseidon2-perm-is-a-reduction-bomb]] because the retraction is the useful artifact.
+
+**Gates that earned their keep, all on the first day they could go red:** axiom-hygiene caught a
+`sorry` three times; the curator schema contract refused a stale-vs-fresh mismatch that would have
+shipped signed; `poa-galley-content.py check` caught content drift the weld caused; the design gate
+ratchets on 4 WARN (from 14). A lane also proved its own new gate fires by breaking the wire and
+watching Lean refuse it.
+
+**M1 remains the milestone.** `latest_height` is still 0. The Galley ceremony is fully sequenced and
+its blocker (an unsigned envelope) is gone; the last step is a node carrying the curator schema fix.
+
 ### 2026-08-05 — lane opened. Federation collapsed to one validator; node rebuilt from HEAD (189 commits
   of PoA work reached the chain for the first time; `/api/poa/holding/challenge` 404 → 415). POAG1
   re-emitted for federation `70b7fa4c…`; **content signing BLOCKED on W5** (wrong curator key on hbox).
