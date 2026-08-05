@@ -271,6 +271,11 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-mina-lightclient-link::v1",
         MINA_LIGHTCLIENT_LINK_JSON,
     ),
+    // ⚑⚑ THE Fq-TRANSCRIPT SUB-PROOF the Mina verify rung recursion-binds to (2026-08-05). Served
+    // here because `mina_head_verifier::verify` VERIFIES a STARK over it before it accepts a head:
+    // a dispatch miss is a REJECTION of the turn, so a node built without this row refuses Mina
+    // heads rather than waving the carrier through.
+    ("dregg-pasta-fq-wraplink::v1", MINA_WRAPLINK_TRANSCRIPT_JSON),
     // ⚑ The Solana STAKE-TABLE FOLD: one row per stake-table entry. The eight-lane Poseidon2
     // commitment to the table and the u64 active-stake DENOMINATOR both come out of the SAME rows,
     // so a swapped validator set with an identical tally moves the root.
@@ -519,8 +524,21 @@ const MIDNIGHT_LIGHTCLIENT_VERIFY_JSON: &str =
 ///
 /// Its gates DERIVE the published `blockchain_length` (`BLOCK_LEN = ANCHOR_H + SEG_LEN`) and the
 /// witnessed depth (`WIT_DEPTH + SUBMIT_H = BLOCK_LEN`) rather than witnessing them, so the one
-/// field a truncated peer reply leaves standing is not settable. `LINK_OK`/`PICKLES_OK`/`CANON_OK`
-/// remain NAMED carriers on the undischarged IPA/FRI floor.
+/// field a truncated peer reply leaves standing is not settable.
+///
+/// ⚑⚑ **FLAG DAY 2026-08-05 — `PICKLES_OK` IS GONE.** Width 30 → 49, PIs 20 → 29, constraints
+/// 50 → 69; re-emit this file and rotate its VK (`turn`'s `MINA_LC_PI_COUNT` moves with it, and a
+/// pre-2026-08-05 `MinaHeadProofWire` no longer decodes). The old column split in two:
+///
+/// * `PICKLES_WITNESSED` — the residue, STILL A BIT, renamed so no reader takes it for a check;
+/// * ⚑ `WRAP_FS_PROVED` — **not a bit.** Its `= 1` guards NINE `proof_bind` constraints pinning the
+///   row's attested program, lane by lane, to the semantic fingerprint of
+///   [`MINA_WRAPLINK_TRANSCRIPT_JSON`], and PI-binds that sub-proof's public-input commitment. The
+///   consumer then VERIFIES a STARK over that descriptor, fail-closed, before accepting the head.
+///   A single-felt program tie would be worth `2^31`; nine `Faithful9` lanes are 256 bits.
+///
+/// `LINK_OK` and `PICKLES_WITNESSED` remain NAMED carriers on the undischarged IPA/FRI floor;
+/// `CANON_OK` has been derived since 2026-08-03.
 const MINA_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-lightclient-verify-v1.json");
 
@@ -540,9 +558,31 @@ const MINA_LIGHTCLIENT_VERIFY_JSON: &str =
 /// state row. That is `LightClientMinaLinkAir.LinkHashResidual`, it stays WITNESSED, and it is the
 /// non-native Pasta multiply — ~5e5 BabyBear constraints per block hash at the schoolbook limb
 /// construction. A prover free to choose `OWNHASH` can still fabricate a chain; what makes a row a
-/// real block is `PICKLES_OK`, also still a witness.
+/// real block is the Pickles verdict, which after 2026-08-05 is `PICKLES_WITNESSED` — still a
+/// witness, and now named so.
 const MINA_LIGHTCLIENT_LINK_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-lightclient-link-v1.json");
+
+/// ⚑⚑ `dregg-pasta-fq-wraplink::v1` — **THE SUB-PROOF THE MINA LIGHT CLIENT CONSUMES.**
+///
+/// Lean-authored (`Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkDesc`): the 2 048-instruction
+/// Kimchi `fq_kimchi` sponge program — register file plus instruction ROM, the 55×3 round constants
+/// as descriptor CELLS — pinned at seven boundary blocks, 469 columns and 224 public inputs.
+///
+/// ⚑ What a verifying STARK over it establishes, and it is narrower than "a Mina proof is valid":
+/// the final absorption of a phase-2 (`fq_kimchi`-over-Fq) Kimchi transcript, from the incoming
+/// three-lane sponge state its public inputs pin, absorbing the single element they pin, permuted
+/// once through the 55 rounds, lands on the two output lanes they pin. On the fixture instance those
+/// pins are **Mina devnet block 539508's own**, and the two output lanes' low 128 bits are the
+/// `v′`/`u′` that block's `proof.oracles(…)` returned — machine-checked in Lean
+/// (`the_machine_squeezes_the_real_blocks_v_and_u`) against a tape the extractor read from a proof
+/// o1-labs' `kimchi::verifier::verify::<Pallas, …>` accepts.
+///
+/// ⚠ NOT established: that the pinned incoming state is any particular block's. The 45 upstream
+/// permutations are this descriptor's public inputs, not its gates — 74 250 further rows ≈ 203 MB of
+/// witness. See `LightClientMinaAir` §2b, which states the residual with the number.
+const MINA_WRAPLINK_TRANSCRIPT_JSON: &str =
+    include_str!("../descriptors/by-name/pasta-fq-wraplink.json");
 
 /// ⚑ `dregg-solana-stake-table-fold::v1` — the Solana stake table, FOLDED, one row per entry.
 ///

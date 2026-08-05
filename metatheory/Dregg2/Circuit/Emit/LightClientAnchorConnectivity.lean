@@ -184,6 +184,23 @@ def windowCols : WindowExpr → List Nat
   | .add l r => windowCols l ++ windowCols r
   | .mul l r => windowCols l ++ windowCols r
 
+/-- ⚑ **THE COLUMNS A CHALLENGE BODY NAMES** (2026-08-05). `ChalExpr` is `WindowExpr` plus a `chal i`
+leaf, and that leaf is **NOT A COLUMN**: it is a value the VERIFIER draws after the trace is
+committed. Folding it in as a column would make every challenge gate join every other one through a
+phantom node and silently connect anchors that share nothing — the exact laundering this file exists
+to refuse. So `chal` contributes `[]`.
+
+⚠ This replaces `windowCols w.body` in the `.chalGate` arm, which did not typecheck (`w.body` is a
+`ChalExpr`) and left the whole module red once `TableAirIR` was rebuilt against the widened
+`VmRowEnv`. -/
+def chalCols : ChalExpr → List Nat
+  | .loc c   => [c]
+  | .nxt c   => [c]
+  | .const _ => []
+  | .chal _  => []
+  | .add l r => chalCols l ++ chalCols r
+  | .mul l r => chalCols l ++ chalCols r
+
 /-- ⚑ **THE COLUMNS ONE CONSTRAINT RELATES.** A `piBinding` contributes NOTHING on purpose: it ties a
 column to a PUBLIC INPUT, not to another column, so it cannot connect an anchor to the evidence. That
 asymmetry is the whole thing being measured. Every OTHER form contributes all the columns it reads —
@@ -195,6 +212,7 @@ def relatedCols : VmConstraint2 → List Nat
   | .base (.piBinding _ _ _) => []
   | .lookup l                => nub (l.tuple.flatMap exprCols)
   | .windowGate w            => nub (windowCols w.body)
+  | .chalGate w              => nub (chalCols w.body)
   | .memOp m                 => nub ((exprCols m.guard) ++ (exprCols m.addr) ++ (exprCols m.value) ++
                                      (exprCols m.prevValue) ++ (exprCols m.prevSerial))
   | .umemOp m                => nub ((exprCols m.guard) ++ (exprCols m.key) ++ (exprCols m.present) ++
@@ -388,6 +406,45 @@ theorem minaVerify_state_lanes_are_read_but_never_joined :
       isRelated LightClientMinaAir.minaLcVerifyDesc col = false := by
   decide
 
+/-! ### ⚑⚑ 2026-08-05 — THE RECURSION RUNG, MEASURED HERE RATHER THAN ASSUMED.
+
+`dregg-mina-lightclient-verify::v1` changed shape: width 30 → 49, PIs 20 → 29, constraints 50 → 69,
+because `PICKLES_OK` became `PICKLES_WITNESSED` plus `WRAP_FS_PROVED` and its nine `proof_bind`
+legs. The two theorems above were TRIPWIRES for exactly that kind of change and **they did not
+fire** — which is a result, not a non-event, and the reason is worth stating so nobody reads the
+unchanged `18` as "nothing happened":
+
+* the rung did not bind an EXISTING decorative anchor. The eighteen state lanes are still read only
+  by arity-1 range lookups and still joined to nothing;
+* it added NINE NEW published values — the sub-proof commitment lanes — and every one of them lands
+  JOINED, because a `proof_bind` relates its guard, its commitment and its vk column
+  (`relatedCols`'s `.proofBind` arm). **Nine public inputs added, zero decorative anchors added.**
+
+That is the honest delta, and the theorem below is what makes it a measurement. It is a NEW tripwire
+in the same direction as the others: it reds if a future edit publishes the commitment without
+joining it. -/
+
+/-- ⚑⚑ **THE NINE SUB-PROOF COMMITMENT LANES ARE PUBLISHED AND JOINED.** PI-bound (so a consumer can
+compare them against a sub-proof it verifies) and related (so they are not decoration). -/
+theorem minaVerify_subproof_commitment_is_published_and_joined :
+    ((List.range 9).all fun i =>
+        isPiBound LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)
+          && isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)) = true
+      ∧ LightClientMinaAir.minaLcVerifyDesc.piCount = 29
+      ∧ (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 18 := by
+  refine ⟨by decide, rfl, by decide⟩
+
+/-- ⚑ **AND THE GUARD IS IN THE SAME COMPONENT AS EVERY LANE IT GUARDS.** Nine binds, one guard —
+so the recursion carrier is not a bit sitting on its own island beside nine other bits. `WRAP_FS_PROVED`
+is NOT PI-bound (a carrier a verifier could set from outside the proof would be no carrier), which is
+why it never appears in the decorative census at all. -/
+theorem minaVerify_recursion_guard_is_joined_and_hidden :
+    isPiBound LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.WRAP_FS_PROVED = false
+      ∧ isRelated LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.WRAP_FS_PROVED = true
+      ∧ ((List.range 9).all fun i =>
+          isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_VK i)) = true := by
+  refine ⟨by decide, by decide, by decide⟩
+
 /-- ⚑ **THE ANCHOR HEIGHT AND THE ANCHOR HASH SHARE NO CONSTRAINT**, and the anchor height is pinned
 by nothing. `ANCHOR_H` (col 1) is joined only to the height arithmetic; it is not PI-bound, carries no
 range lookup, and no gate equates it to a literal. So "the published height is the PINNED anchor plus
@@ -518,6 +575,8 @@ theorem the_five_verify_descriptors_carry_sixty_two_decorative_anchors :
 #assert_axioms sol_published_anchor_root_is_not_decorative
 #assert_axioms sol_anchor_root_shares_a_constraint_with_the_stake_rows
 #assert_axioms minaVerify_decorative_anchors
+#assert_axioms minaVerify_subproof_commitment_is_published_and_joined
+#assert_axioms minaVerify_recursion_guard_is_joined_and_hidden
 #assert_axioms minaVerify_state_lanes_are_read_but_never_joined
 #assert_axioms minaVerify_anchor_height_is_pinned_to_nothing
 #assert_axioms minaLink_decorative_anchors

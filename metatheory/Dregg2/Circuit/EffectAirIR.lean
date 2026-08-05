@@ -180,6 +180,42 @@ def LimbsLeg.lookupCount (l : LimbsLeg) : Nat := l.cols.length
 /-- The magnitude this leg can represent: `2^(bits · limbs)`. -/
 def LimbsLeg.capacityBits (l : LimbsLeg) : Nat := l.bits * l.cols.length
 
+/-- ⚑ **A RECURSION-BIND leg — the (g) capability** (2026-08-05), and the one the Mina light client
+was BLOCKED on.
+
+`DescriptorIR2.ProofBind` is the target's recursion seam: a row declares that its `commit` column is
+the public-input commitment of a VERIFYING external sub-proof whose program VK is its `vk` column,
+and (since 2026-08-04) carries two DECLARED halves the row-local gate checks those columns against —
+`vkPin`, the program literal, and `bound`, the row expression the commitment must equal.
+
+⚠ Until this leg existed, **no COMPILED descriptor could emit one**: `AirLeg` had no constructor for
+it, so the only `proofBind`s in the tree were in hand-written `VmConstraint2` lists. A light client
+that wants its carrier to be the output of a sub-proof rather than a bit could therefore either give
+up the compiler (house law #1) or give up the seam. This is the source-language half.
+
+⚑ **AND IT REFUSES THE DECLARATIVE SHAPE.** `BindLeg.mainRailOk` is FALSE when both `vkPin` and
+`bound` are `none` — the shape `ProofBind.isDeclarative` counts and `proofBindDeclarative` exists to
+ratchet down. A compiled AIR cannot say "bound to a verifying proof of SOME program about SOMETHING";
+the unpinned form remains reachable only from the hand-written Custom descriptor, whose whole job is
+to dispatch an arbitrary registered cell program. A leg that named neither would lower to the
+UNSATISFIABLE pair, never to silence. -/
+structure BindLeg where
+  /-- The selector column/expression; the seam forces it boolean. -/
+  guard  : Expr
+  /-- The row's sub-proof public-input commitment expression. -/
+  commit : Expr
+  /-- The row's sub-proof program-VK expression. -/
+  vk     : Expr
+  /-- ⚑ The DECLARED program VK literal this row recursion-binds to. -/
+  vkPin  : Option ℤ
+  /-- ⚑ The DECLARED row-local expression `commit` must equal. -/
+  bound  : Option Expr
+
+/-- ⚑ **The main rail's verdict on ONE bind leg**, and it is a REFUSAL of a shape rather than of a
+width: a bind that pins NEITHER the program nor the commitment is `ProofBind.isDeclarative`, whose
+existential quantifies over every program and every statement. The source cannot say it. -/
+def BindLeg.mainRailOk (b : BindLeg) : Bool := !(b.vkPin.isNone && b.bound.isNone)
+
 /-- **A PI-PIN leg** — the (d) capability. `EffectSpec2`'s lowering could pin only FIRST-row PIs
 (the `PIBindsDigests` surface); a deployed boundary contract pins both ends. -/
 structure PiPinLeg where
@@ -209,6 +245,9 @@ inductive AirLeg where
   | limbs  (l : LimbsLeg)
   /-- ⚑ A CHALLENGE GATE — a two-row body that may read the verifier's drawn randomness. -/
   | chal   (c : ChalLeg)
+  /-- ⚑ A RECURSION BIND — the row's claim about an external sub-proof, with the program and the
+  commitment DECLARED so the claim is checkable. -/
+  | bind   (b : BindLeg)
 
 /-- **`EffectAir` — the AIR block an `EffectSpec2` carries beyond its flat guard gates.**
 
@@ -291,7 +330,7 @@ def LimbsLeg.mainRailOk (l : LimbsLeg) : Bool :=
   !l.cols.isEmpty && 0 < l.bits && l.bits ≤ 29
 
 /-- ⚑ **The main rail's verdict on ONE leg.** A `gate` and a `pin` always have an image; a
-`lookup`, a `window` and a `limbs` may not. -/
+`lookup`, a `window`, a `limbs`, a `chal` and a `bind` may not. -/
 def AirLeg.mainRailOk : AirLeg → Bool
   | .gate _   => true
   | .pin _    => true
@@ -299,6 +338,7 @@ def AirLeg.mainRailOk : AirLeg → Bool
   | .window w => w.mainRailOk
   | .limbs l  => l.mainRailOk
   | .chal c   => c.mainRailOk
+  | .bind b   => b.mainRailOk
 
 /-- Every declared PI pin indexes a slot the descriptor actually declares. A pin past `piCount`
 is a wire-format defect the Rust decoder would read as an out-of-range public input. -/
@@ -317,12 +357,12 @@ a denotation that quantifies over gates only. Same discipline, same shape. -/
 /-- The leg's kind tag — the discriminator the per-kind counts filter on. -/
 def AirLeg.kind : AirLeg → String
   | .gate _ => "gate" | .lookup _ => "lookup" | .window _ => "window" | .pin _ => "pin"
-  | .limbs _ => "limbs" | .chal _ => "chal"
+  | .limbs _ => "limbs" | .chal _ => "chal" | .bind _ => "bind"
 
 /-- Kind tags are collision-free: the tag determines the constructor's arm. -/
 theorem AirLeg.kind_of (l : AirLeg) :
     (l.kind = "gate") ∨ (l.kind = "lookup") ∨ (l.kind = "window") ∨ (l.kind = "pin")
-      ∨ (l.kind = "limbs") ∨ (l.kind = "chal") := by
+      ∨ (l.kind = "limbs") ∨ (l.kind = "chal") ∨ (l.kind = "bind") := by
   cases l <;> simp [AirLeg.kind]
 
 def EffectAir.kindCount   (air : EffectAir) (k : String) : Nat :=
@@ -332,6 +372,9 @@ def EffectAir.windowCount (air : EffectAir) : Nat := air.kindCount "window"
 def EffectAir.gateCount   (air : EffectAir) : Nat := air.kindCount "gate"
 def EffectAir.pinCount    (air : EffectAir) : Nat := air.kindCount "pin"
 def EffectAir.limbsCount  (air : EffectAir) : Nat := air.kindCount "limbs"
+/-- ⚑ The number of RECURSION BINDS the air block declares — the count a re-emission that dropped a
+sub-proof obligation would move while every other shape count sat still. -/
+def EffectAir.bindCount   (air : EffectAir) : Nat := air.kindCount "bind"
 def EffectAir.rangeCount  (air : EffectAir) : Nat := air.ranges.length
 def EffectAir.tableCount  (air : EffectAir) : Nat := air.tables.length
 

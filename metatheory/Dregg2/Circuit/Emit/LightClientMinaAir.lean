@@ -90,7 +90,7 @@ the gap as a theorem; `MINA_RANGE_BITS` documents the arithmetic.
 
 ## NAMED verified CARRIERS — ⚑ ONE OF THE THREE IS NO LONGER A WITNESS
 
-`LINK_OK` / `PICKLES_OK` / `CANON_OK` are the three results `LightClientMinaGate`'s wire gate takes
+`LINK_OK` / `PICKLES_WITNESSED` / `CANON_OK` are the three results `LightClientMinaGate`'s wire gate takes
 as `lk` / `pk` / `cn`. They shipped here as witnessed boolean columns forced `= 1` — pinned to the
 statement, so BENDING one is refused, but with **nothing in the circuit computing them**. §1a and §5a
 change that for the third:
@@ -107,7 +107,7 @@ change that for the third:
     ⚠ Note what the split does NOT buy: a prover free to choose each row's `OWNHASH` can fabricate a
     consistent chain of any length. What it removes is the freedom to be INCONSISTENT and the
     freedom to claim a depth without committing rows for it.
-  * `PICKLES_OK` — the per-block Pickles/Kimchi Wrap-proof result. STILL A WITNESS, and it is the
+  * `PICKLES_WITNESSED` — the per-block Pickles/Kimchi Wrap-proof result. STILL A WITNESS, and it is the
     expensive one by three orders of magnitude — see §1b. `Circuit/Emit/MinaRealBlockGate.lean`
     renders it on a real devnet block, natively.
   * `CANON_OK`   — ⚑ **DERIVED, for the two `Fp` elements this descriptor publishes.** Eighteen
@@ -130,7 +130,7 @@ gates a 255-bit Pasta element in one 30.9-bit column besides. It is in no descri
 §1a is its replacement at the representation BabyBear actually has: nine lanes.
 
 ⚠ So a STARK over this descriptor proves the ANCHORING / DEPTH / HEIGHT-DERIVATION logic AND the
-canonicality of the two published field elements, given `LINK_OK` and `PICKLES_OK`.
+canonicality of the two published field elements, given `LINK_OK` and `PICKLES_WITNESSED`.
 
 ## ⚑ §1b — WHAT AN IN-AIR PICKLES VERIFIER WOULD COST (measured, so the next rung is priced)
 
@@ -203,7 +203,7 @@ loses nothing. Injectivity is machine-checked (`lanes9ToField_fieldToLanes9`,
   `minaLcAir_complete` is the general statement; `minaLcAir_no_forgery` carries acceptance all the
   way to `MinaValidAt`.
 * REFUSE — FIVE named refusing witnesses, each a CONCRETE assignment, each `¬ airAccepts`:
-  `losing_fork_refused` (a shallower fork), `bent_proof_word_refused` (`PICKLES_OK = 0`),
+  `losing_fork_refused` (a shallower fork), `bent_proof_word_refused` (`PICKLES_WITNESSED = 0`),
   `forged_height_refused` (the free-`blockchain_length` liar), `observer_arithmetic_refused` (the
   deployed observer's unanchored subtraction), and ⚑ `shifted_anchor_refused` — the `+p` ANCHOR
   SUBSTITUTION, which `shifted_anchor_old_admits_new_rejects` shows the PRE-RUNG predicate accepted
@@ -224,7 +224,7 @@ same decomposition `check_head_binding` already computes.
 
 ## Scope — do NOT overclaim
 
-⚠ NOT "machine-checked Mina validity" and NOT "Mina-valid". `PICKLES_OK` rides the undischarged
+⚠ NOT "machine-checked Mina validity" and NOT "Mina-valid". `PICKLES_WITNESSED` rides the undischarged
 IPA/FRI floor via `MinaLeaf.picklesSound`, and a STARK over this descriptor inherits the
 undischarged FRI/STARK floor on the dregg side. What is proved is a refinement over the EMITTED
 object: `airAccepts` ⟹ `minaVerifyDecision` ⟹ (`mina_no_forgery`) ⟹ `MinaValidAt`.
@@ -249,6 +249,10 @@ import Dregg2.Bridge.LightClientMinaGate
 
 set_option autoImplicit false
 set_option maxHeartbeats 1600000
+-- ⚑ 2026-08-05: the leg list grew from 36 to 55 (the recursion carrier, nine `.bind` legs, nine
+-- sub-proof PI pins), and the shape counts fold over it. `set_option` does not cross an import, so
+-- this is stated here, in the file whose `rfl`s need it.
+set_option maxRecDepth 4000
 
 namespace Dregg2.Circuit.Emit.LightClientMinaAir
 
@@ -297,9 +301,16 @@ def DEPTH_SLACK : Nat := 7
 /-- **CARRIER** — the Poseidon parent-linkage fold RESULT over the exhibited segment; forced `= 1`.
 Derived (not trusted) in `LightClientMinaHashFold`. Witness. -/
 def LINK_OK : Nat := 8
-/-- **CARRIER** — the per-block Pickles/Kimchi Wrap-proof RESULT; forced `= 1`. Rides the
-undischarged IPA/FRI floor. Witness. -/
-def PICKLES_OK : Nat := 9
+/-- **CARRIER, AND THE NAME SAYS WHAT IT IS** — the per-block Pickles/Kimchi Wrap-proof RESULT;
+forced `= 1`. ⚑ **STILL A WITNESS, and renamed on 2026-08-05 from `PICKLES_WITNESSED` for that reason.**
+
+The old name read as a checked verdict. It never was one: nothing in this descriptor, or in any
+descriptor, computes a Pickles verification — §1b prices it at ≈10⁹ BabyBear constraints. What
+landed on 2026-08-05 is NOT this column becoming derived; it is a SECOND carrier
+(`WRAP_FS_PROVED`, §1c) whose `= 1` is unsatisfiable unless the row names a verifying dregg STARK
+over `dregg-pasta-fq-wraplink::v1`. This column is the residue: the part of the Mina Wrap verdict
+that is still testimony, named so a reader cannot mistake it for the proved part. -/
+def PICKLES_WITNESSED : Nat := 9
 /-- **CARRIER** — the state-row canonicality RESULT; forced `= 1`. Derived from the Lean-authored
 width gate `LightClientMinaHashFold.minaRowWidthGates`. Witness. -/
 def CANON_OK : Nat := 10
@@ -321,8 +332,32 @@ def ANCHOR_STATE (i : Nat) : Nat := 12 + i
 `Faithful9` key lanes. Columns 21..29, PI slots 9..17. -/
 def TIP_STATE (i : Nat) : Nat := 12 + STATE_LIMBS + i
 
-/-- Total main-trace width: 11 logic/carrier columns + the derived height + two nine-limb anchors. -/
-def MINA_LC_WIDTH : Nat := 12 + 2 * STATE_LIMBS
+/-- ⚑ **CARRIER — AND THE ONE THAT IS NOT A BIT** (col 30, added 2026-08-05). See §1c.
+
+`WRAP_FS_PROVED = 1` is the guard of NINE `proofBind` legs. Under it the descriptor forces the nine
+`SUB_VK` columns to the nine `Faithful9` lanes of the SEMANTIC FINGERPRINT of
+`dregg-pasta-fq-wraplink::v1` — literals in these emitted bytes, so not the prover's to choose — and
+the row's declared sub-proof commitment is the nine PI-BOUND `SUB_PI` lanes, which the consumer
+checks against the public inputs of a STARK it actually verifies. A row that sets this to 1 without a
+verifying wraplink proof is refused: in-AIR by the vk congruences if it names the wrong program, and
+at the consumer if it names no proof at all. -/
+def WRAP_FS_PROVED : Nat := 30
+
+/-- **The pinned sub-proof PROGRAM lane `i`** (cols 31..39) — a prover column, forced by the
+`proofBind` leg's `vkPin` to a descriptor literal. ⚑ It is a COLUMN and not a constant expression on
+purpose: a constant compared against its own definition is decoration
+(`feedback-a-pin-against-its-own-definition-is-decoration`); here the two sides are the witness
+generator's value and the emitted descriptor's bytes, which are independent sources. -/
+def SUB_VK (i : Nat) : Nat := 31 + i
+
+/-- **The declared sub-proof PUBLIC-INPUT COMMITMENT lane `i`** (cols 40..48, PI slots 20..28) — the
+nine `Faithful9` lanes of the digest of the wraplink sub-proof's 224 public inputs. PI-bound, so the
+commitment the recursion existential quantifies over is a PUBLIC value and not a free column. -/
+def SUB_PI (i : Nat) : Nat := 31 + STATE_LIMBS + i
+
+/-- Total main-trace width: 11 logic/carrier columns + the derived height + two nine-limb anchors
++ ⚑ the recursion carrier and its two nine-lane blocks. -/
+def MINA_LC_WIDTH : Nat := 31 + 2 * STATE_LIMBS
 
 /-- PI slot of anchor-state limb `i` (slots 0..8). -/
 def PI_ANCHOR_STATE (i : Nat) : Nat := i
@@ -332,8 +367,11 @@ def PI_TIP_STATE (i : Nat) : Nat := STATE_LIMBS + i
 def PI_BLOCK_LEN : Nat := 2 * STATE_LIMBS
 /-- PI slot 19: the Samasika depth policy met. -/
 def PI_REQ_DEPTH : Nat := 2 * STATE_LIMBS + 1
-/-- Number of public inputs: two nine-limb hashes + the height + the depth policy. -/
-def MINA_PI_COUNT : Nat := 2 * STATE_LIMBS + 2
+/-- ⚑ PI slots 20..28: the wraplink sub-proof's public-input commitment lanes. -/
+def PI_SUB_PI (i : Nat) : Nat := 2 * STATE_LIMBS + 2 + i
+/-- Number of public inputs: two nine-limb hashes + the height + the depth policy + ⚑ the nine-lane
+sub-proof commitment. -/
+def MINA_PI_COUNT : Nat := 3 * STATE_LIMBS + 2
 
 /-- The slack range width. ⚑ **24, AND THE CEILING IS THE FIELD, NOT THE WIRE.**
 
@@ -467,10 +505,116 @@ def depthSlackC : Constraint :=
 
 /-- **G6 — the linkage carrier**: `LINK_OK = 1`. -/
 def linkC : Constraint := ⟨.var LINK_OK, .const 1⟩
-/-- **G7 — the Pickles carrier**: `PICKLES_OK = 1`. -/
-def picklesC : Constraint := ⟨.var PICKLES_OK, .const 1⟩
+/-- **G7 — the witnessed Pickles residue**: `PICKLES_WITNESSED = 1`. -/
+def picklesC : Constraint := ⟨.var PICKLES_WITNESSED, .const 1⟩
 /-- **G8 — the canonicality carrier**: `CANON_OK = 1`. -/
 def canonC : Constraint := ⟨.var CANON_OK, .const 1⟩
+/-- **G9 — ⚑ the RECURSION carrier**: `WRAP_FS_PROVED = 1`. Unlike G7 this one has content: it is
+the guard of the nine `proofBind` legs of §2b, so setting it forces the row to name a verifying
+sub-proof of a PINNED program and to publish that sub-proof's commitment. -/
+def wrapFsC : Constraint := ⟨.var WRAP_FS_PROVED, .const 1⟩
+
+/-! ## §2b — ⚑⚑ THE RECURSION BIND: what `WRAP_FS_PROVED` costs a prover.
+
+## The claim, named exactly, before any theorem
+
+`dregg-pasta-fq-wraplink::v1` (`Circuit/Emit/MinaBlockFqTranscript.lean`) is a dregg AIR over the
+2 048-instruction Kimchi-`fq_kimchi` sponge program. What a verifying STARK over it establishes is
+this and nothing wider:
+
+> **The final absorption of a phase-2 (`fq_kimchi`-over-Fq) Kimchi transcript — starting from the
+> incoming three-lane sponge state its public inputs pin, absorbing the single element its public
+> inputs pin, and permuting once through the 55 `fq_kimchi` rounds whose constants are cells of that
+> descriptor — lands on the two output lanes its public inputs pin.**
+
+For the fixture instance those pins are **Mina devnet block 539508's own**: the incoming state is
+derived (never typed) from that block's 91-element phase-2 tape, and the two output lanes' low 128
+bits ARE the `v′`/`u′` `proof.oracles(…)` returned on it —
+`MinaBlockFqTranscript.the_machine_squeezes_the_real_blocks_v_and_u`, against a tape the extractor
+read from a proof `kimchi::verifier::verify::<Pallas,…>` accepts.
+
+⚠ **AND WHAT IT DOES NOT ESTABLISH — say it here, not in a footnote.**
+1. **NOT that the Pickles proof is valid.** The opening is not in circuit, and
+   `MinaWrapOpeningGate.opening_is_vacuous_when_sg_is_free` says a free `sg` makes the closing check
+   accept at every value. `PICKLES_WITNESSED` is the residue and it is still a bit.
+2. **NOT that the transcript is THIS row's tip's.** The 45 upstream permutations that determine the
+   incoming state are the sub-proof's WITNESSES, pinned as its public inputs, not its gates — 74 250
+   further emitted rows ≈ 203 MB of witness, which is the whole reason one of the 46 permutations is
+   emitted. Nothing in THIS descriptor gates `TIP_STATE` against the sub-proof's commitment either:
+   the two are published side by side.
+3. **NOT the accumulator.** `bridge/examples/mina_accumulator_discharge.rs` discharges it NATIVELY on
+   7 real block proofs; it is not part of this bind.
+
+So the honest sentence is *"a dregg STARK checked one absorption of the Fq transcript whose challenge
+outputs this row's sub-proof commitment covers"*, and the carrier is named `WRAP_FS_PROVED`
+(Fiat–Shamir), not `PICKLES_WITNESSED`.
+
+## The mechanism, and why it is nine legs and not one
+
+`DescriptorIR2.ProofBind`'s row-local half is three congruences and its `vkPin`/`bound`/`commit` are
+**ONE FELT EACH**. A single-felt program tie is worth `2^31` — below this repo's ~124-bit bar, and
+the containment the whole `CommitSurface` line exists to refuse. So the program is pinned **lane by
+lane**: nine `proofBind` legs, one per `Faithful9` lane of the sub-proof descriptor's semantic
+fingerprint, `8·29 + 24 = 256` bits exactly and the encoding machine-checked injective
+(`fieldToLanes9_injective`). A forger must match all nine.
+
+⚠ This is NOT a substitute for widening `ProofBindSpec` itself — that widening is a separate lane's
+and this file does not touch `descriptor_ir2.rs`. It is the nine-lane construction *at the existing
+IR*, and it is at the bar rather than below it, which is the part that matters.
+
+⚑ **`bound` is `none`, and that is the STRONGER choice here, not a laxer one.** `bound` forces the
+`commit` EXPRESSION to equal a row-local expression, and exists because the deployed `customProofBind`
+carries `commit` as a FREE column. Here `commit` is `.var (SUB_PI i)` — a **PI-BOUND** column. A
+`bound` congruence could only compare it to itself, which is decoration
+(`feedback-a-pin-against-its-own-definition-is-decoration`). The commitment is public, which is
+strictly more than being tied to another witness. -/
+
+/-- ⚑ **THE SUB-PROOF'S PROGRAM IDENTITY, AS NINE LANES — a real value, never a fabricated one.**
+
+These are the nine `Faithful9` key lanes of
+`effect_vm_descriptor2_semantic_fingerprint(dregg-pasta-fq-wraplink::v1)` — blake3 (derive-key,
+context `EFFECT_VM_DESCRIPTOR2_FINGERPRINT_CONTEXT`) over the descriptor's CANONICAL bytes. In this
+tree the descriptor IS the verifying key: `verify_vm_descriptor2(&desc, &proof, &pis)` takes no other
+key material, so the semantic fingerprint of the descriptor is exactly the program identity a
+recursion bind should name.
+
+⚠ **FLAG DAY, and it is a real coupling:** re-emitting `pasta-fq-wraplink.json` moves this literal
+and therefore re-emits and re-VKs THIS descriptor. That is intended — a light client must not keep
+accepting sub-proofs of a program that changed shape. `circuit/tests/mina_transcript_carrier_binding.rs`
+recomputes the fingerprint from the sibling descriptor's own bytes and asserts these nine numbers, so
+a drift is a RED and not a silence: two independent sources, which is what makes it a gate. -/
+def WRAPLINK_VK_LANES : List ℤ :=
+  [460719650, 491018495, 181487667, 118226689, 312849261, 6346964, 450127067, 318052623, 12172205]
+
+/-- The `i`-th pinned program lane, as the `vkPin` literal the leg carries. -/
+def wraplinkVkLane (i : Nat) : ℤ := WRAPLINK_VK_LANES.getD i 0
+
+/-- ⚑ **ONE RECURSION-BIND LEG, at lane `i`.** Guard `WRAP_FS_PROVED`; the declared commitment is the
+PI-bound `SUB_PI i`; the attested program lane is the prover's `SUB_VK i`, pinned to the descriptor
+literal. -/
+def wrapBindLeg (i : Nat) : AirLeg :=
+  .bind { guard := .var WRAP_FS_PROVED
+        , commit := .var (SUB_PI i)
+        , vk := .var (SUB_VK i)
+        , vkPin := some (wraplinkVkLane i)
+        , bound := none }
+
+/-- The nine bind legs, written out so the emission pin below reduces with no fold. -/
+def wrapBindLegs : List AirLeg :=
+  [wrapBindLeg 0, wrapBindLeg 1, wrapBindLeg 2, wrapBindLeg 3, wrapBindLeg 4,
+   wrapBindLeg 5, wrapBindLeg 6, wrapBindLeg 7, wrapBindLeg 8]
+
+/-- The nine sub-proof-commitment PI pins (cols 40..48 → PI 20..28). -/
+def subPiPins : List AirLeg :=
+  [ .pin ⟨VmRow.first, SUB_PI 0, PI_SUB_PI 0⟩
+  , .pin ⟨VmRow.first, SUB_PI 1, PI_SUB_PI 1⟩
+  , .pin ⟨VmRow.first, SUB_PI 2, PI_SUB_PI 2⟩
+  , .pin ⟨VmRow.first, SUB_PI 3, PI_SUB_PI 3⟩
+  , .pin ⟨VmRow.first, SUB_PI 4, PI_SUB_PI 4⟩
+  , .pin ⟨VmRow.first, SUB_PI 5, PI_SUB_PI 5⟩
+  , .pin ⟨VmRow.first, SUB_PI 6, PI_SUB_PI 6⟩
+  , .pin ⟨VmRow.first, SUB_PI 7, PI_SUB_PI 7⟩
+  , .pin ⟨VmRow.first, SUB_PI 8, PI_SUB_PI 8⟩ ]
 
 /-! ## §3 — ⚑ THE SOURCE AIR, and the descriptor as the COMPILER'S OUTPUT.
 
@@ -559,7 +703,10 @@ def minaHeadAir : EffectAir :=
       , topLaneLeg (TIP_STATE 8) ]
       ++ anchorStatePins ++ tipStatePins
       ++ [ .pin ⟨VmRow.first, BLOCK_LEN, PI_BLOCK_LEN⟩
-         , .pin ⟨VmRow.first, REQ_DEPTH, PI_REQ_DEPTH⟩ ] }
+         , .pin ⟨VmRow.first, REQ_DEPTH, PI_REQ_DEPTH⟩ ]
+      -- ⚑⚑ §2b — THE RECURSION CARRIER AND ITS NINE BINDS. The first leg in this file whose `= 1`
+      -- a prover cannot simply write down.
+      ++ [.gate wrapFsC] ++ wrapBindLegs ++ subPiPins }
 
 /-- ⚑ **THE VOCABULARY WAS ADEQUATE.** Every leg is main-rail expressible, decided on the emitted
 predicate — so no leg lowered to `EffectLower.refuseConstraints` and nothing was hand-written around
@@ -569,10 +716,21 @@ theorem minaHeadAir_mainRailOk : minaHeadAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaHeadAir_pinsFit : minaHeadAir.pinsFit MINA_PI_COUNT = true := by rfl
 
-/-- The source carries 36 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
-2 top-lane lookups + 20 PI pins. ⚑ A `.limbs` leg is ONE leg and EIGHT constraints — `minaLcVerifyDesc_constraint_count` is the
+/-- The source carries 55 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
+2 top-lane lookups + 20 PI pins + ⚑ the `WRAP_FS_PROVED` gate + 9 `.bind` legs + 9 sub-proof PI pins.
+⚑ A `.limbs` leg is ONE leg and EIGHT constraints — `minaLcVerifyDesc_constraint_count` is the
 number a dropped lane moves, and this one is not. -/
-theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 36 := by rfl
+theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 55 := by rfl
+
+/-- ⚑⚑ **NINE RECURSION BINDS, AND NONE OF THEM DECLARATIVE.** `bindCount` is the number a
+re-emission that dropped a sub-proof obligation would move while every other shape count sat still;
+`mainRailOk` (already `true` above) additionally decides that **no leg is the unpinned shape** —
+`BindLeg.mainRailOk` is FALSE exactly on `vkPin = none ∧ bound = none`, so a `true` verdict on this
+air block IS the statement that its recursion seams name a program. -/
+theorem minaHeadAir_bind_shape :
+    minaHeadAir.bindCount = 9
+      ∧ (wrapBindLegs.all Dregg2.Circuit.EffectAirIR.AirLeg.mainRailOk) = true := by
+  refine ⟨rfl, rfl⟩
 
 /-- ⚑ **THE LIMBED QUANTITIES ARE COUNTED, AND A DROPPED LANE MOVES A NUMBER.** Two nine-lane state
 hashes ⟹ two `.limbs` legs lowering to `8 + 8 = 16` per-limb range lookups (`totalRangeLookups`; this
@@ -582,7 +740,7 @@ gated separately and MORE NARROWLY, which is the whole gadget. -/
 theorem minaHeadAir_limbs_shape :
     minaHeadAir.limbsCount = 2 ∧ minaHeadAir.totalRangeLookups = 16
       ∧ minaHeadAir.maxLimbedCapacityBits = 232 := by
-  refine ⟨rfl, rfl, rfl, fun _ => 0⟩
+  refine ⟨rfl, rfl, rfl⟩
 
 /-- ⚑ **THE WIRE IDS THE DESCRIPTOR COMMITS**, so the Rust reader's width recovery
 (`descriptor_ir2.rs::range_bits_for`, `bits = tid − RANGE_W_TID_WIRE_BASE` with wire base 69) lands
@@ -591,7 +749,7 @@ bytes, hence the VK. -/
 theorem mina_range_table_wire_ids :
     (minaRangeTid MINA_LANE_BITS).wireId = 98 ∧ (minaRangeTid MINA_TOP_LANE_BITS).wireId = 91
       ∧ TableId.range.wireId = 2 := by
-  refine ⟨rfl, rfl, rfl, fun _ => 0⟩
+  refine ⟨rfl, rfl, rfl⟩
 
 /-- Both declared lane widths are WRAP-FREE at BabyBear, so neither lookup is the vacuous kind three
 shipped descriptors were. (`RangeFieldContainment.wrap_free_iff_le_29` is the general statement; this
@@ -629,11 +787,60 @@ theorem minaLcVerifyDesc_tables :
 theorem minaLcVerifyDesc_hashSites : minaLcVerifyDesc.hashSites = [] := rfl
 theorem minaLcVerifyDesc_ranges : minaLcVerifyDesc.ranges = [] := rfl
 
-/-- The compiler emitted 50 constraints from 36 legs: one per leg, except the two `.limbs` legs which
+/-- The compiler emitted 69 constraints from 55 legs: one per leg, except the two `.limbs` legs which
 lower to EIGHT lookups each. ⚑ A dropped lane moves this number and nothing else does — which is why
 the count is pinned separately from the leg count. (`EffectLower.lowerLeg_ne_nil` is the general
 statement that no leg can vanish; this is the exact arithmetic at this descriptor.) -/
-theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 50 := rfl
+theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 69 := rfl
+
+/-- ⚑⚑ **THE NINE `proofBind` CONSTRAINTS, AS THE COMPILER EMITTED THEM** — the whole recursion
+declaration, on the bytes, at their emitted positions (51..59; 50 is the `WRAP_FS_PROVED` gate).
+
+This is the object the carrier's content IS. A leg that lost its `vkPin`, or whose `vk` drifted onto
+another column, or whose declared commitment stopped being the PI-bound lane, moves this `rfl`. -/
+theorem minaLcVerifyDesc_proof_binds :
+    (minaLcVerifyDesc.constraints.drop 51).take 9 =
+      [ .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 0), .var (SUB_VK 0),
+                    some (wraplinkVkLane 0), none⟩
+      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 1), .var (SUB_VK 1),
+                    some (wraplinkVkLane 1), none⟩
+      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 2), .var (SUB_VK 2),
+                    some (wraplinkVkLane 2), none⟩
+      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 3), .var (SUB_VK 3),
+                    some (wraplinkVkLane 3), none⟩
+      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 4), .var (SUB_VK 4),
+                    some (wraplinkVkLane 4), none⟩
+      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 5), .var (SUB_VK 5),
+                    some (wraplinkVkLane 5), none⟩
+      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 6), .var (SUB_VK 6),
+                    some (wraplinkVkLane 6), none⟩
+      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 7), .var (SUB_VK 7),
+                    some (wraplinkVkLane 7), none⟩
+      , .proofBind ⟨.var WRAP_FS_PROVED, .var (SUB_PI 8), .var (SUB_VK 8),
+                    some (wraplinkVkLane 8), none⟩ ] := rfl
+
+/-- ⚑ **AND NOT ONE OF THEM IS DECLARATIVE, MEASURED ON THE EMITTED DESCRIPTOR.**
+`proofBindDeclarative` is the tree's census of recursion seams that pin neither program nor
+commitment — the shape whose existential quantifies over every program and every statement. This
+descriptor contributes NINE binds and ZERO to that census. -/
+theorem minaLcVerifyDesc_no_declarative_binds :
+    (Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).length = 9
+      ∧ Dregg2.Circuit.DescriptorIR2.proofBindDeclarative minaLcVerifyDesc = 0 := by
+  refine ⟨rfl, rfl⟩
+
+/-- ⚑ **THE PROGRAM PIN IS NINE LANES WIDE, AND THE NUMBER IS SAID OUT LOUD.** A single-felt tie is
+worth `2^31`; nine `Faithful9` lanes cover `8·29 + 24 = 256` bits exactly, and the lanes are
+DISTINCT columns so a forger must match all nine. This states the width as arithmetic rather than as
+a sentence in a docblock: the nine pinned literals are pairwise on distinct columns, every lane is a
+canonical `Faithful9` digit, and the reconstruction is the fingerprint's 256-bit value. -/
+theorem mina_program_pin_is_nine_lanes :
+    WRAPLINK_VK_LANES.length = 9
+      ∧ ((List.range 8).all fun i => decide (WRAPLINK_VK_LANES.getD i 0 < 2 ^ 29)) = true
+      ∧ WRAPLINK_VK_LANES.getD 8 0 < 2 ^ 24
+      ∧ (List.range 9).map SUB_VK = [31, 32, 33, 34, 35, 36, 37, 38, 39]
+      ∧ (List.range 9).map SUB_PI = [40, 41, 42, 43, 44, 45, 46, 47, 48] := by
+  refine ⟨rfl, rfl, ?_, rfl, rfl⟩
+  decide
 
 /-- ⚑ **THE SIXTEEN LANE LOOKUPS AND THE TWO TOP-LANE LOOKUPS, AT THEIR EMITTED POSITIONS.** `rfl` on
 a slice of the compiler's output: constraints 12..19 are the anchor's low lanes at 29 bits, 20 is the
@@ -680,7 +887,7 @@ theorem minaLcVerifyDesc_slack_lookups :
 write, in one `rfl`. Nine pinned-anchor limbs, nine verified-tip limbs, the DERIVED height, the depth
 policy met. A reordering, a dropped pin or a re-indexed slot moves this. -/
 theorem minaLcVerifyDesc_pins :
-    minaLcVerifyDesc.constraints.drop 30 =
+    (minaLcVerifyDesc.constraints.drop 30).take 20 =
       [ .base (.piBinding VmRow.first (ANCHOR_STATE 0) (PI_ANCHOR_STATE 0))
       , .base (.piBinding VmRow.first (ANCHOR_STATE 1) (PI_ANCHOR_STATE 1))
       , .base (.piBinding VmRow.first (ANCHOR_STATE 2) (PI_ANCHOR_STATE 2))
@@ -702,6 +909,21 @@ theorem minaLcVerifyDesc_pins :
       , .base (.piBinding VmRow.first BLOCK_LEN PI_BLOCK_LEN)
       , .base (.piBinding VmRow.first REQ_DEPTH PI_REQ_DEPTH) ] := rfl
 
+/-- ⚑ **THE NINE SUB-PROOF-COMMITMENT PINS** (constraints 60..68). Without these the commitment the
+recursion existential quantifies over would be a hidden column and the consumer would have nothing to
+compare a sub-proof's public inputs against. -/
+theorem minaLcVerifyDesc_subpi_pins :
+    minaLcVerifyDesc.constraints.drop 60 =
+      [ .base (.piBinding VmRow.first (SUB_PI 0) (PI_SUB_PI 0))
+      , .base (.piBinding VmRow.first (SUB_PI 1) (PI_SUB_PI 1))
+      , .base (.piBinding VmRow.first (SUB_PI 2) (PI_SUB_PI 2))
+      , .base (.piBinding VmRow.first (SUB_PI 3) (PI_SUB_PI 3))
+      , .base (.piBinding VmRow.first (SUB_PI 4) (PI_SUB_PI 4))
+      , .base (.piBinding VmRow.first (SUB_PI 5) (PI_SUB_PI 5))
+      , .base (.piBinding VmRow.first (SUB_PI 6) (PI_SUB_PI 6))
+      , .base (.piBinding VmRow.first (SUB_PI 7) (PI_SUB_PI 7))
+      , .base (.piBinding VmRow.first (SUB_PI 8) (PI_SUB_PI 8)) ] := rfl
+
 /-- Layout sanity, as theorems rather than guards: the two nine-lane anchors are contiguous,
 disjoint and inside the declared width, and nine base-`2^29` lanes cover a 256-bit value exactly
 (`8·29 + 24 = 256`). -/
@@ -709,15 +931,20 @@ theorem mina_layout_wellformed :
     ANCHOR_STATE 0 = 12 ∧ ANCHOR_STATE 8 = 20 ∧ TIP_STATE 0 = 21 ∧ TIP_STATE 8 = 29
       ∧ TIP_STATE 8 < MINA_LC_WIDTH ∧ BLOCK_LEN < ANCHOR_STATE 0
       ∧ PI_TIP_STATE 8 < PI_BLOCK_LEN ∧ PI_REQ_DEPTH < MINA_PI_COUNT
+      ∧ SUB_PI 8 < MINA_LC_WIDTH ∧ PI_SUB_PI 8 < MINA_PI_COUNT
+      ∧ MINA_LC_WIDTH = 49 ∧ MINA_PI_COUNT = 29
       ∧ 29 * (STATE_LIMBS - 1) + 24 = 256 := by
-  refine ⟨rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+  refine ⟨rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, ?_⟩ <;> decide
 
-/-- The three carriers are real hidden trace columns and none is PI-bound: a carrier a verifier could
-set from outside the proof would be no carrier at all. -/
+/-- The four carriers are real hidden trace columns and none is PI-bound: a carrier a verifier could
+set from outside the proof would be no carrier at all. ⚑ `WRAP_FS_PROVED` is hidden for the same
+reason, and its CONTENT is elsewhere — the nine `proofBind` legs it guards. -/
 theorem mina_carriers_hidden :
-    LINK_OK < MINA_LC_WIDTH ∧ PICKLES_OK < MINA_LC_WIDTH ∧ CANON_OK < MINA_LC_WIDTH
-      ∧ LINK_OK < BLOCK_LEN ∧ PICKLES_OK < BLOCK_LEN ∧ CANON_OK < BLOCK_LEN := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+    LINK_OK < MINA_LC_WIDTH ∧ PICKLES_WITNESSED < MINA_LC_WIDTH ∧ CANON_OK < MINA_LC_WIDTH
+      ∧ WRAP_FS_PROVED < MINA_LC_WIDTH
+      ∧ LINK_OK < BLOCK_LEN ∧ PICKLES_WITNESSED < BLOCK_LEN ∧ CANON_OK < BLOCK_LEN
+      ∧ ¬ (∃ i < STATE_LIMBS, WRAP_FS_PROVED = SUB_PI i) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ## §4 — non-vacuous per-gate lemmas (the SOURCE constraints bite, both directions).
 
@@ -742,9 +969,11 @@ theorem depthSlackC_holds_iff (a : Assignment) :
 
 theorem linkC_holds_iff (a : Assignment) : linkC.holds a ↔ a LINK_OK = 1 := Iff.rfl
 
-theorem picklesC_holds_iff (a : Assignment) : picklesC.holds a ↔ a PICKLES_OK = 1 := Iff.rfl
+theorem picklesC_holds_iff (a : Assignment) : picklesC.holds a ↔ a PICKLES_WITNESSED = 1 := Iff.rfl
 
 theorem canonC_holds_iff (a : Assignment) : canonC.holds a ↔ a CANON_OK = 1 := Iff.rfl
+
+theorem wrapFsC_holds_iff (a : Assignment) : wrapFsC.holds a ↔ a WRAP_FS_PROVED = 1 := Iff.rfl
 
 /-! ## §5 — `airAccepts`: the descriptor's acceptance predicate on one row.
 
@@ -772,6 +1001,9 @@ def verifyAccepts (a : Assignment) : Prop :=
   -- exactly why `SUBMIT_H ≤ BLOCK_LEN` was unforced.
   ∧ inRange a REQ_DEPTH
   ∧ linkC.holds a ∧ picklesC.holds a ∧ canonC.holds a
+  -- ⚑ G9, 2026-08-05: the recursion carrier. Its content is `bindAccepts`, not this gate — what
+  -- this gate buys is that the guard cannot be set to `0` to switch the nine seams off.
+  ∧ wrapFsC.holds a
 
 /-- ⚑ **THE PREDICATE AS IT WAS BEFORE THE `REQ_DEPTH` LOOKUP** — kept for exactly one purpose: to
 state, as a theorem rather than a claim, that a row with a NEGATIVE required depth used to be
@@ -805,9 +1037,28 @@ instance decLaneCanon (a : Assignment) (low : List Nat) (top : Nat) :
 instance decCanonAccepts (a : Assignment) : Decidable (canonAccepts a) := by
   unfold canonAccepts; infer_instance
 
-/-- **`airAccepts a`** — the emitted logic accepts row `a`: the verify arithmetic AND the derived
-canonicality of the anchor and tip state hashes. -/
-def airAccepts (a : Assignment) : Prop := verifyAccepts a ∧ canonAccepts a
+/-- ⚑⚑ **`bindAccepts a` — THE RECURSION SEAM'S ROW-LOCAL CONTENT**, exactly as
+`DescriptorIR2.ProofBind.holdsAt` denotes the nine emitted `proofBind` constraints: the guard is a
+bit, and under it every attested program lane equals the descriptor's pinned fingerprint lane.
+
+⚠ What this is NOT: evidence that a sub-proof exists or verifies. No row-local polynomial of any
+shape can see that — it is `Satisfied2Custom.proofBound`'s existential, off-row by construction, and
+the consumer's obligation (`turn/src/executor/mina_head_verifier.rs`, which VERIFIES a STARK over
+`dregg-pasta-fq-wraplink::v1` and refuses without one). What this IS: the row's claim about that
+sub-proof made CHECKABLE — the program is not the prover's to choose, and the commitment is public. -/
+def bindAccepts (a : Assignment) : Prop :=
+  (a WRAP_FS_PROVED * (a WRAP_FS_PROVED - 1) = 0)
+    ∧ ∀ i ∈ List.range STATE_LIMBS,
+        a WRAP_FS_PROVED * (a (SUB_VK i) - wraplinkVkLane i) = 0
+
+instance decBindAccepts (a : Assignment) : Decidable (bindAccepts a) := by
+  unfold bindAccepts; infer_instance
+
+/-- **`airAccepts a`** — the emitted logic accepts row `a`: the verify arithmetic, the derived
+canonicality of the anchor and tip state hashes, AND ⚑ the recursion seam's nine program-lane
+congruences. -/
+def airAccepts (a : Assignment) : Prop :=
+  verifyAccepts a ∧ canonAccepts a ∧ bindAccepts a
 
 /-- Acceptance is strictly stronger than the pre-rung predicate. (The converse is FALSE, and §7
 exhibits the witness rather than asserting it.) -/
@@ -925,8 +1176,35 @@ theorem mina_lane_canon_forces_canonical {a : Assignment} {low : List Nat} {top 
 theorem mina_anchor_and_tip_are_canonical {a : Assignment} (h : airAccepts a) :
     stateValue a anchorLowLanes (ANCHOR_STATE 8) < (pN : ℤ)
       ∧ stateValue a tipLowLanes (TIP_STATE 8) < (pN : ℤ) :=
-  ⟨(mina_lane_canon_forces_canonical rfl h.2.1).2,
-   (mina_lane_canon_forces_canonical rfl h.2.2).2⟩
+  ⟨(mina_lane_canon_forces_canonical rfl h.2.1.1).2,
+   (mina_lane_canon_forces_canonical rfl h.2.1.2).2⟩
+
+/-! ## §5b — ⚑⚑ THE RECURSION CARRIER'S CONTENT, FROM THE TRACE.
+
+Not a refinement over a witness relation: these read the emitted `proofBind` congruences and
+conclude a fact about the columns. -/
+
+/-- ⚑⚑ **AN ACCEPTED ROW ATTESTS THE PINNED PROGRAM, LANE BY LANE.** The gate `WRAP_FS_PROVED = 1`
+turns each seam's `guard·(vk − vkPin) = 0` into an EQUALITY, so all nine `SUB_VK` columns are the
+`Faithful9` lanes of `dregg-pasta-fq-wraplink::v1`'s semantic fingerprint. A row that names any other
+program — including one differing in a single lane — has no satisfying assignment.
+
+⚠ Read the scope: this says the row's DECLARED program is that one. That a sub-proof of it exists and
+verifies is off-row and is the consumer's check (`mina_head_verifier.rs`, fail-closed). -/
+theorem mina_bind_attests_the_pinned_program {a : Assignment} (h : airAccepts a) :
+    ∀ i ∈ List.range STATE_LIMBS, a (SUB_VK i) = wraplinkVkLane i := by
+  intro i hi
+  have hg : a WRAP_FS_PROVED = 1 := h.1.2.2.2.2.2.2.2.2.2.2.2.2
+  have hb := h.2.2.2 i hi
+  rw [hg] at hb
+  linarith
+
+/-- ⚑ **AND THE ATTESTATION IS NOT VACUOUS: the guard cannot be switched off.** A prover who would
+rather not name a sub-proof cannot set `WRAP_FS_PROVED = 0` — G9 forces it to `1`. Stated because a
+seam whose guard is free is a seam that is never active, which is the quietest way a recursion
+declaration becomes decoration. -/
+theorem mina_bind_guard_cannot_be_disarmed {a : Assignment} (h : airAccepts a) :
+    a WRAP_FS_PROVED = 1 := h.1.2.2.2.2.2.2.2.2.2.2.2.2
 
 /-- ⚑ **THE `+k·p` ALIAS FAMILY COLLAPSES**, at the lane encoding rather than at a `Nat`. Poseidon's
 `absorbAt` enters every input through `(state + x) % p`, so the sponge cannot distinguish `v` from
@@ -984,13 +1262,13 @@ theorem minaLcAir_sound (a : Assignment) (segLen anchorH submitH reqDepth : Nat)
     (hsl : a SEG_LEN = (segLen : ℤ)) (hah : a ANCHOR_H = (anchorH : ℤ))
     (hsh : a SUBMIT_H = (submitH : ℤ)) (hrd : a REQ_DEPTH = (reqDepth : ℤ))
     (hlk : a LINK_OK = (if linkB then (1 : ℤ) else 0))
-    (hpk : a PICKLES_OK = (if picklesB then (1 : ℤ) else 0))
+    (hpk : a PICKLES_WITNESSED = (if picklesB then (1 : ℤ) else 0))
     (hcn : a CANON_OK = (if canonB then (1 : ℤ) else 0))
     (hacc : airAccepts a) :
     minaVerifyDecision segLen anchorH submitH (anchorH + segLen - submitH) reqDepth
       linkB picklesB canonB = true := by
   obtain ⟨hbl, hwd, hss, ⟨hss0, _⟩, has, ⟨has0, _⟩, hds, ⟨hds0, _⟩, ⟨hrd0c, _⟩,
-    hlkC, hpkC, hcnC⟩ := hacc.1
+    hlkC, hpkC, hcnC, -⟩ := hacc.1
   rw [blockLenC_holds_iff] at hbl
   rw [witDepthC_holds_iff] at hwd
   rw [segSlackC_holds_iff] at hss
@@ -1050,7 +1328,7 @@ theorem minaLcAir_no_forgery (L : MinaLeaf) (ts : MinaTrustedState L) (u : MinaU
     (hsh : a SUBMIT_H = (u.submittedHeight : ℤ))
     (hrd : a REQ_DEPTH = (ts.confirmationDepth : ℤ))
     (hlk : a LINK_OK = (if linkOk L ts u then (1 : ℤ) else 0))
-    (hpk : a PICKLES_OK = (if picklesOk L u then (1 : ℤ) else 0))
+    (hpk : a PICKLES_WITNESSED = (if picklesOk L u then (1 : ℤ) else 0))
     (hcn : a CANON_OK = (if canonOk L u then (1 : ℤ) else 0))
     (hacc : airAccepts a) :
     MinaValidAt L ts u := by
@@ -1080,15 +1358,25 @@ theorem minaLcAir_complete (a : Assignment) (segLen anchorH submitH reqDepth : N
     (has : a ANCH_SLACK = (submitH : ℤ) - (anchorH : ℤ))
     (hds : a DEPTH_SLACK = (anchorH : ℤ) + (segLen : ℤ) - (submitH : ℤ) - (reqDepth : ℤ))
     (hlk : a LINK_OK = (if linkB then (1 : ℤ) else 0))
-    (hpk : a PICKLES_OK = (if picklesB then (1 : ℤ) else 0))
+    (hpk : a PICKLES_WITNESSED = (if picklesB then (1 : ℤ) else 0))
     (hcn : a CANON_OK = (if canonB then (1 : ℤ) else 0))
     (hfit : anchorH + segLen < 2 ^ MINA_RANGE_BITS)
     (hsub : reqDepth + submitH ≤ anchorH + segLen)
     (hcanon : canonAccepts a)
+    -- ⚑ THE NEW COMPLETENESS COST, NAMED: an honest prover must ALSO hold a verifying STARK over
+    -- `dregg-pasta-fq-wraplink::v1` and fill the nine `SUB_VK` lanes with its fingerprint. That is
+    -- a real obligation on the witness generator and it is stated as a hypothesis rather than
+    -- quietly assumed — `mina_wrap_fs_row_is_fillable` exhibits it discharged on the honest row.
+    (hwf : a WRAP_FS_PROVED = 1)
+    (hvk : ∀ i ∈ List.range STATE_LIMBS, a (SUB_VK i) = wraplinkVkLane i)
     (hdecT : minaVerifyDecision segLen anchorH submitH (anchorH + segLen - submitH) reqDepth
       linkB picklesB canonB = true) :
     airAccepts a := by
-  refine ⟨?_, hcanon⟩
+  have hbind : bindAccepts a := by
+    refine ⟨by rw [hwf]; ring, ?_⟩
+    intro i hi
+    rw [hwf, hvk i hi]; ring
+  refine ⟨?_, hcanon, hbind⟩
   unfold minaVerifyDecision at hdecT
   simp only [Bool.and_eq_true, decide_eq_true_eq] at hdecT
   obtain ⟨⟨⟨⟨⟨hseg, hanch⟩, _hdep⟩, hlk1⟩, hpk1⟩, hcn1⟩ := hdecT
@@ -1101,7 +1389,7 @@ theorem minaLcAir_complete (a : Assignment) (segLen anchorH submitH reqDepth : N
   have hsh0 : (0 : ℤ) ≤ (submitH : ℤ) := Int.natCast_nonneg submitH
   have hah0 : (0 : ℤ) ≤ (anchorH : ℤ) := Int.natCast_nonneg anchorH
   have hseg0 : (0 : ℤ) ≤ (segLen : ℤ) := Int.natCast_nonneg segLen
-  refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_, ?_, ?_, ?_⟩
   · rw [blockLenC_holds_iff, hblk, hah, hsl]
   · rw [witDepthC_holds_iff, hwd, hsh, hblk]; ring
   · rw [segSlackC_holds_iff, hss, hsl]; ring
@@ -1121,6 +1409,7 @@ theorem minaLcAir_complete (a : Assignment) (segLen anchorH submitH reqDepth : N
   · rw [linkC_holds_iff, hlk, hlk1]; norm_num
   · rw [picklesC_holds_iff, hpk, hpk1]; norm_num
   · rw [canonC_holds_iff, hcn, hcn1]; norm_num
+  · rw [wrapFsC_holds_iff, hwf]
 
 /-! ## §6b — ⚑⚑ `SUBMIT_H ≤ BLOCK_LEN`, FROM THE TRACE. The relation the AIR did not force.
 
@@ -1141,7 +1430,7 @@ it to 290 by hand — a convention, not a gate. One lookup on the already-declar
 first held and this was FALSE — see `mina_negative_req_depth_old_admits_new_rejects`. -/
 theorem minaLcAir_forces_nonneg_witnessed_depth (a : Assignment) (hacc : airAccepts a) :
     0 ≤ a WIT_DEPTH := by
-  obtain ⟨-, -, -, -, -, -, hds, ⟨hds0, -⟩, ⟨hrd0, -⟩, -, -, -⟩ := hacc.1
+  obtain ⟨-, -, -, -, -, -, hds, ⟨hds0, -⟩, ⟨hrd0, -⟩, -, -, -, -⟩ := hacc.1
   rw [depthSlackC_holds_iff] at hds
   linarith
 
@@ -1154,7 +1443,7 @@ update at all. -/
 theorem minaLcAir_forces_submit_within_the_segment (a : Assignment) (hacc : airAccepts a) :
     a SUBMIT_H ≤ a BLOCK_LEN := by
   have hd := minaLcAir_forces_nonneg_witnessed_depth a hacc
-  obtain ⟨-, hwd, -, -, -, -, -, -, -, -, -, -⟩ := hacc.1
+  obtain ⟨-, hwd, -, -, -, -, -, -, -, -, -, -, -⟩ := hacc.1
   rw [witDepthC_holds_iff] at hwd
   linarith
 
@@ -1205,7 +1494,7 @@ theorem mina_negative_req_depth_was_admitted :
     simp only [negativeReqDepthRow, rowOf, blockLenC, witDepthC, segSlackC, anchSlackC,
       depthSlackC, linkC, picklesC, canonC, Dregg2.Circuit.Constraint.holds, Expr.eval,
       SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK, DEPTH_SLACK,
-      LINK_OK, PICKLES_OK, CANON_OK, BLOCK_LEN, MINA_RANGE_BITS, List.getD,
+      LINK_OK, PICKLES_WITNESSED, CANON_OK, BLOCK_LEN, MINA_RANGE_BITS, List.getD,
       List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some] <;> norm_num
 
 /-- ⚑⚑ **AFTER: the served descriptor REFUSES it**, on the `REQ_DEPTH` tooth — `−1000 ∉ [0, 2^24)`.
@@ -1251,27 +1540,49 @@ Samasika `k = 290`. Derived tip 1300, derived witnessed depth 290 — the requir
 three carriers, INCLUDING `CANON_OK`, read `1`. -/
 def honestLogicCols : List ℤ := [300, 1000, 1010, 290, 290, 299, 10, 0, 1, 1, 1, 1300]
 
+/-- ⚑ **THE SUB-PROOF COMMITMENT THE HONEST ROW PUBLISHES** — the nine `Faithful9` lanes of the
+digest of `dregg-pasta-fq-wraplink::v1`'s **224 public inputs on the block-539508 instance**
+(`MinaBlockFqTranscript.linkPIs`): blake3, derive-key context
+`dregg.mina-lightclient.wraplink-subproof-pi-commitment.v1`, each public input absorbed as its
+canonical `u32` little-endian.
+
+⚠ These nine numbers are NOT constrained by any gate of this descriptor — they are PI-BOUND, which is
+the whole point: the consumer recomputes them from the sub-proof's own declared public inputs and
+refuses on a mismatch. They appear here so the honest row is a COMPLETE row and the emitted PI vector
+in `circuit/tests/mina_transcript_carrier_binding.rs` has something to be checked against.
+The Rust gate recomputes both this digest and the fingerprint above from the sibling descriptor's
+bytes; a drift in either is a RED. -/
+def WRAPLINK_PI_LANES : List ℤ :=
+  [282313402, 256674713, 393460165, 444143931, 180846534, 309962780, 68660474, 470919245, 9577120]
+
+/-- The nineteen columns the recursion carrier adds to a row: the guard, the nine pinned program
+lanes, and the nine published commitment lanes. -/
+def wrapBindCols : List ℤ := [1] ++ WRAPLINK_VK_LANES ++ WRAPLINK_PI_LANES
+
 /-- **THE HONEST ROW** — the logic columns above, the pinned anchor's nine lanes, the verified tip's
-nine lanes. ACCEPTED. -/
-def honestRow : Assignment := rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES)
+nine lanes, ⚑ and the recursion carrier's nineteen. ACCEPTED. -/
+def honestRow : Assignment :=
+  rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES ++ wrapBindCols)
 
 /-- ⚑ **THE SHIFTED-ANCHOR ROW** — byte-for-byte the honest row except that the pinned anchor's lanes
 are the `+p` alias. Every gate holds, every slack is in range, and every carrier bit reads `1`. -/
 def shiftedAnchorRow : Assignment :=
-  rowOf (honestLogicCols ++ SHIFTED_ANCHOR_LANES ++ DEVNET_TIP_LANES)
+  rowOf (honestLogicCols ++ SHIFTED_ANCHOR_LANES ++ DEVNET_TIP_LANES ++ wrapBindCols)
 
 /-- The row's logic columns, unfolded — shared by every §7 proof so the `List.getD` walk happens
 once per column rather than once per theorem. -/
 private theorem honest_verify_cols :
     verifyAccepts honestRow ∧ verifyAccepts shiftedAnchorRow := by
   constructor <;>
-  · refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_, ?_, ?_⟩ <;>
+  · refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_, ?_, ?_, ?_⟩ <;>
       simp only [blockLenC_holds_iff, witDepthC_holds_iff, segSlackC_holds_iff, anchSlackC_holds_iff,
         depthSlackC_holds_iff, linkC_holds_iff, picklesC_holds_iff, canonC_holds_iff,
+        wrapFsC_holds_iff,
         honestRow, shiftedAnchorRow, honestLogicCols, GENESIS_ANCHOR_LANES, SHIFTED_ANCHOR_LANES,
-        DEVNET_TIP_LANES, rowOf,
+        DEVNET_TIP_LANES, wrapBindCols, WRAPLINK_VK_LANES, WRAPLINK_PI_LANES, rowOf,
         SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK,
-        DEPTH_SLACK, LINK_OK, PICKLES_OK, CANON_OK, BLOCK_LEN, MINA_RANGE_BITS, List.getD,
+        DEPTH_SLACK, LINK_OK, PICKLES_WITNESSED, CANON_OK, WRAP_FS_PROVED, BLOCK_LEN,
+        MINA_RANGE_BITS, List.getD,
         List.cons_append, List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some] <;>
       norm_num
 
@@ -1279,7 +1590,17 @@ private theorem honest_verify_cols :
 canonicality lookups. Without this the rung would be satisfied by a descriptor that refuses
 everything, and the two real state hashes are exactly the values the gate must not refuse. -/
 theorem honest_row_accepted : airAccepts honestRow :=
-  ⟨honest_verify_cols.1, by decide⟩
+  ⟨honest_verify_cols.1, by decide, by decide⟩
+
+/-- ⚑⚑ **THE COMPLETENESS COST OF THE RECURSION CARRIER IS PAYABLE — exhibited, not assumed.**
+`minaLcAir_complete` now takes `hwf`/`hvk` as hypotheses; a rung whose completeness hypotheses no
+honest row discharges is a rung that refuses everything. This is them, discharged, on the row that
+carries the real devnet lanes. -/
+theorem mina_wrap_fs_row_is_fillable :
+    honestRow WRAP_FS_PROVED = 1
+      ∧ ∀ i ∈ List.range STATE_LIMBS, honestRow (SUB_VK i) = wraplinkVkLane i := by
+  refine ⟨by decide, ?_⟩
+  decide
 
 /-- The honest anchor's nine lanes recompose to the devnet genesis state hash — the decimal
 `LightClientMinaHashFold.DEVNET_GENESIS_STATE_HASH` records and `bridge/src/mina_observer.rs` decodes.
@@ -1320,7 +1641,7 @@ theorem losing_fork_refused : ¬ airAccepts losingForkRow := by
 
 /-- ⚑ **REFUSED — A BENT PROOF WORD.** Every height, depth and slack is the honest row's; only the
 Pickles carrier is `0`, which is what a block whose Wrap proof fails to verify AT ITS OWN state hash
-produces. The `PICKLES_OK = 1` gate refuses it. -/
+produces. The `PICKLES_WITNESSED = 1` gate refuses it. -/
 def bentProofRow : Assignment := rowOf [300, 1000, 1010, 290, 290, 299, 10, 0, 1, 0, 1, 1300]
 
 theorem bent_proof_word_refused : ¬ airAccepts bentProofRow := by
@@ -1329,7 +1650,7 @@ theorem bent_proof_word_refused : ¬ airAccepts bentProofRow := by
   -- and the three carriers in `verifyAccepts`.
   have hpk := h.1.2.2.2.2.2.2.2.2.2.2.1
   rw [picklesC_holds_iff] at hpk
-  simp only [bentProofRow, rowOf, PICKLES_OK, List.getD, List.getElem?_cons_zero,
+  simp only [bentProofRow, rowOf, PICKLES_WITNESSED, List.getD, List.getElem?_cons_zero,
     List.getElem?_cons_succ, Option.getD_some] at hpk
   norm_num at hpk
 
@@ -1378,16 +1699,66 @@ string and the `Faithful9`/`KeyLanes9` nonet gate admits it. It is refused ONLY 
 top-lane table — the one leg that separates "well-formed nonet" from "canonical Pasta element". -/
 theorem shifted_anchor_refused : ¬ airAccepts shiftedAnchorRow := by
   intro h
-  have htop := h.2.1.2.2
+  have htop := h.2.1.1.2.2
   revert htop
   decide
+
+/-! ### ⚑⚑ THE RECURSION CARRIER'S OWN FALSIFIER — a row that names the WRONG PROGRAM.
+
+A refusal that only shows the new tooth refusing has not shown the value was ever admitted. This row
+differs from the honest one in **one lane of one number**: `SUB_VK 0` is the wraplink fingerprint's
+lane 0 PLUS ONE. Every gate of the verify logic holds, every slack is in range, both state hashes are
+canonical, and all four carriers read `1` — the row is honest in every column the descriptor carried
+before 2026-08-05. -/
+
+/-- The forged program lanes: the real fingerprint with lane 0 bumped by one. -/
+def FORGED_VK_LANES : List ℤ :=
+  [460719651, 491018495, 181487667, 118226689, 312849261, 6346964, 450127067, 318052623, 12172205]
+
+/-- ⚑ **THE ROW THAT NAMES A DIFFERENT PROGRAM.** -/
+def forgedProgramRow : Assignment :=
+  rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES
+          ++ ([1] ++ FORGED_VK_LANES ++ WRAPLINK_PI_LANES))
+
+/-- ⚑ **BEFORE: everything this descriptor checked before the bind ACCEPTS it.** The pre-bind
+predicate is `verifyAccepts ∧ canonAccepts` — literally `airAccepts` minus the seam — and it is
+satisfied. So the forged program lane was, in the strict sense, admitted. -/
+theorem forged_program_was_admitted :
+    verifyAccepts forgedProgramRow ∧ canonAccepts forgedProgramRow := by
+  refine ⟨?_, by decide⟩
+  refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_, ?_, ?_, ?_⟩ <;>
+    simp only [blockLenC_holds_iff, witDepthC_holds_iff, segSlackC_holds_iff, anchSlackC_holds_iff,
+      depthSlackC_holds_iff, linkC_holds_iff, picklesC_holds_iff, canonC_holds_iff,
+      wrapFsC_holds_iff,
+      forgedProgramRow, honestLogicCols, GENESIS_ANCHOR_LANES, DEVNET_TIP_LANES,
+      FORGED_VK_LANES, WRAPLINK_PI_LANES, rowOf,
+      SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK,
+      DEPTH_SLACK, LINK_OK, PICKLES_WITNESSED, CANON_OK, WRAP_FS_PROVED, BLOCK_LEN,
+      MINA_RANGE_BITS, List.getD,
+      List.cons_append, List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some] <;>
+    norm_num
+
+/-- ⚑⚑ **AFTER: the emitted descriptor REFUSES it**, on the lane-0 `proofBind` congruence and nothing
+else. One lane of the program identity is enough — which is the point of pinning nine of them. -/
+theorem forged_program_refused : ¬ airAccepts forgedProgramRow := by
+  intro h
+  have hb := h.2.2.2 0 (by decide)
+  revert hb
+  decide
+
+/-- ⚑⚑⚑ **OLD ADMITS, NEW REJECTS — the recursion rung stated as one theorem.** The row every
+pre-2026-08-05 conjunct accepts is refused by the seam. This is the carrier stopping being a bit. -/
+theorem forged_program_old_admits_new_rejects :
+    (verifyAccepts forgedProgramRow ∧ canonAccepts forgedProgramRow)
+      ∧ ¬ airAccepts forgedProgramRow :=
+  ⟨forged_program_was_admitted, forged_program_refused⟩
 
 /-- ⚑⚑⚑ **OLD ADMITS, NEW REJECTS — the rung stated as one theorem.** The very same row that the
 PRE-RUNG predicate ACCEPTS (`verifyAccepts`: every gate, every slack, and `CANON_OK` witnessed `1` by
 a prover who simply set it) is REFUSED by the emitted descriptor. Nothing about the row changed; the
 carrier stopped being a bit somebody wrote down.
 
-This is the object the whole `PICKLES_OK`/`LINK_OK`/`CANON_OK` question is about, at the one carrier
+This is the object the whole `PICKLES_WITNESSED`/`LINK_OK`/`CANON_OK` question is about, at the one carrier
 whose content the descriptor's own columns can express. -/
 theorem shifted_anchor_old_admits_new_rejects :
     verifyAccepts shiftedAnchorRow ∧ ¬ airAccepts shiftedAnchorRow :=
@@ -1412,9 +1783,10 @@ theorem mina_air_discriminates :
       ∧ ¬ airAccepts bentProofRow
       ∧ ¬ airAccepts forgedHeightRow
       ∧ ¬ airAccepts unanchoredRow
-      ∧ ¬ airAccepts shiftedAnchorRow :=
+      ∧ ¬ airAccepts shiftedAnchorRow
+      ∧ ¬ airAccepts forgedProgramRow :=
   ⟨honest_row_accepted, losing_fork_refused, bent_proof_word_refused, forged_height_refused,
-   observer_arithmetic_refused, shifted_anchor_refused⟩
+   observer_arithmetic_refused, shifted_anchor_refused, forged_program_refused⟩
 
 /-! ## §8 — axiom hygiene, on the canonicality rung's load-bearing facts. -/
 
@@ -1433,6 +1805,20 @@ theorem mina_air_discriminates :
 #assert_axioms shifted_anchor_old_admits_new_rejects
 #assert_axioms the_top_lane_width_is_load_bearing
 #assert_axioms mina_air_discriminates
+-- ⚑⚑ THE RECURSION RUNG, 2026-08-05: `PICKLES_OK` was a bit and is now two objects — a witnessed
+-- residue named `PICKLES_WITNESSED`, and `WRAP_FS_PROVED`, whose `= 1` forces nine `proofBind`
+-- congruences against the pinned fingerprint of a sub-proof descriptor that EXISTS and PROVES.
+#assert_axioms minaHeadAir_bind_shape
+#assert_axioms minaLcVerifyDesc_proof_binds
+#assert_axioms minaLcVerifyDesc_no_declarative_binds
+#assert_axioms minaLcVerifyDesc_subpi_pins
+#assert_axioms mina_program_pin_is_nine_lanes
+#assert_axioms mina_bind_attests_the_pinned_program
+#assert_axioms mina_bind_guard_cannot_be_disarmed
+#assert_axioms mina_wrap_fs_row_is_fillable
+#assert_axioms forged_program_was_admitted
+#assert_axioms forged_program_refused
+#assert_axioms forged_program_old_admits_new_rejects
 -- ⚑⚑ THE CLOSURE, 2026-08-03: `SUBMIT_H ≤ BLOCK_LEN` was unforced because `REQ_DEPTH` carried NO
 -- range lookup. One leg on the already-declared table closes it, and the falsifier is exhibited
 -- both ways over a DEFINED pre-repair predicate rather than a remembered one.

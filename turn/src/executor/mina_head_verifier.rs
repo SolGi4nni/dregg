@@ -67,12 +67,74 @@
 //! 3. **The depth policy is floored.** PI 19 (the Samasika `k` the acceptance met) must be at least
 //!    [`MINA_MIN_CONFIRMATION_DEPTH`] = 290, Mina mainnet's `k`. A prover cannot discharge a
 //!    290-deep policy with a proof that met `k = 1`.
-//! 4. **The STARK.** `descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR)` (fail-closed `None` on a miss)
-//!    → `verify_vm_descriptor2` over all 20 public inputs. The descriptor's own gates then force
+//! 4. ⚑ **The declared sub-proof is the one presented.** [`check_transcript_binding`]: the head
+//!    proof's PI slots 20..28 must be the nine `Faithful9` lanes of
+//!    [`wraplink_pi_commitment`] of the supplied Fq-transcript public inputs. A head proof that
+//!    names sub-proof A and hands over sub-proof B is REFUSED.
+//! 5. ⚑⚑ **THE SUB-PROOF ITSELF IS VERIFIED.** `descriptor_by_name(MINA_WRAPLINK_DESCRIPTOR)`
+//!    (fail-closed `None`) → `verify_vm_descriptor2` over its 224 public inputs. **This is the step
+//!    that makes the carrier a proof rather than a bit** — see the section below.
+//! 6. **The STARK.** `descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR)` (fail-closed `None` on a miss)
+//!    → `verify_vm_descriptor2` over all 29 public inputs. The descriptor's own gates then force
 //!    `BLOCK_LEN = ANCHOR_H + SEG_LEN` and `WIT_DEPTH + SUBMIT_H = BLOCK_LEN` — the published
 //!    `blockchain_length` is DERIVED from the pinned anchor plus the exhibited segment, so the one
 //!    field a truncated peer reply leaves standing is not settable — plus the three ranged slack
-//!    teeth and the three carrier bits.
+//!    teeth, the carrier bits, and ⚑ the nine `proof_bind` congruences that force the row's attested
+//!    program to be `MINA_WRAPLINK_DESCRIPTOR`'s fingerprint, lane by lane.
+//!
+//! # ⚑⚑ 2026-08-05 — `PICKLES_OK` STOPPED BEING ONE THING, AND SAY EXACTLY WHICH HALF MOVED
+//!
+//! Until this change the descriptor published `PICKLES_OK`: a witnessed boolean forced `= 1`, with
+//! **nothing in any circuit computing it**. The honest sentence in this tree was *"dregg does not
+//! verify Mina's proof; it accepts a boolean saying someone did."*
+//!
+//! That column is now two:
+//!
+//! * **`PICKLES_WITNESSED`** — the residue, and STILL A BIT. It is renamed, not repaired: an in-AIR
+//!   Pickles verification is ≈10⁹ BabyBear constraints (`LightClientMinaAir` §1b), which is a
+//!   recursion problem and not a bigger circuit. Anyone reading `PICKLES_OK` as "checked" was
+//!   reading a name; the name no longer says that.
+//! * ⚑ **`WRAP_FS_PROVED`** — NOT a bit. Its `= 1` guards nine `proof_bind` constraints that pin the
+//!   row's attested program to `dregg-pasta-fq-wraplink::v1`'s semantic fingerprint lane by lane
+//!   (nine `Faithful9` lanes, 256 bits — a single-felt tie would be worth `2^31`, below this repo's
+//!   bar), and PI-bind the sub-proof's public-input commitment. **A prover cannot satisfy it without
+//!   holding a second dregg STARK that this verifier then runs.**
+//!
+//! **What that sub-proof establishes, precisely — and it is narrower than "Mina's proof is valid":**
+//! the final absorption of a phase-2 (`fq_kimchi`-over-Fq) Kimchi transcript — from the incoming
+//! three-lane sponge state its public inputs pin, absorbing the one element they pin, permuted once
+//! through the 55 `fq_kimchi` rounds whose constants are CELLS of that descriptor — lands on the two
+//! output lanes they pin. On the fixture instance those pins are **Mina devnet block 539508's own**,
+//! and the two output lanes' low 128 bits ARE the `v′`/`u′` that block's `proof.oracles(…)`
+//! returned, machine-checked in Lean against a tape read from a proof o1-labs'
+//! `kimchi::verifier::verify::<Pallas, …>` accepts.
+//!
+//! **What it does NOT establish — three things, each with its number:**
+//! 1. **Not Pickles validity.** The IPA opening is not in circuit at all, and
+//!    `MinaWrapOpeningGate.opening_is_vacuous_when_sg_is_free` shows a free `sg` makes the closing
+//!    check accept at every value. That conjunct is `PICKLES_WITNESSED` and it is testimony.
+//! 2. **Not that the transcript is THIS head's.** The 45 upstream permutations that determine the
+//!    pinned incoming state are the sub-proof's PUBLIC INPUTS, not its gates (74 250 further rows
+//!    ≈ 203 MB of witness), and no gate of the head descriptor relates `TIP_STATE` to the sub-proof
+//!    commitment — the two are published side by side. So a prover must exhibit a real Fq-transcript
+//!    proof, but nothing in-circuit forces it to be the right block's. **Closing this is the next
+//!    rung and it is a chain of 46 sponge instances welded by input/output pin equality, plus the
+//!    Fp phase-1 leg that ties `fq_digest` to the protocol state.**
+//! 3. **Not the accumulator.** `bridge/examples/mina_accumulator_discharge.rs` discharges it
+//!    NATIVELY over 7 real block proofs (27.4 s batched, a forged `sg` refused in each of 7 slots);
+//!    it is not part of this bind.
+//!
+//! ⚠ **THE REBUILT-CLAIM GAP IS INHERITED, and here is the form it takes.** The native accumulator
+//! oracle has a known nasty control: a claim REBUILT around tampered challenges still accepts,
+//! because the relation binds the *pair*. The in-circuit analogue here is exact and worse-sounding
+//! stated plainly: the sub-proof pins its incoming state, absorbed element and outputs as PUBLIC
+//! INPUTS, so a prover who recomputes a CONSISTENT quadruple — any state, any element, the genuine
+//! permutation of them — produces a verifying sub-proof. What the descriptor refuses is an
+//! INCONSISTENT one (a tampered absorbed element against unchanged output pins is refused by the
+//! boundary pin; a prover-chosen round constant by the ROM bus; a reordered permutation by the pc
+//! thread). What ties the quadruple to a particular block is the CONSUMER pinning those public
+//! inputs to a block it independently derived them from — which this verifier does **not** yet do,
+//! and that is residual (2) above, not a hidden assumption.
 //!
 //! # Named residuals — do NOT read past these
 //!
@@ -84,8 +146,8 @@
 //!   `keyToLanes9`: nine base-`2^29` lanes, `8·29+24 = 256` exactly, machine-checked left inverse)
 //!   and the comparison is made below. That is a real refusal — the turn dies — but a proof
 //!   consumed by any OTHER route would get the widths and not the equality.
-//! * **`LINK_OK` and `PICKLES_OK` are witnessed carriers**, not re-derived in-AIR; the Pickles
-//!   carrier rides the undischarged IPA/FRI floor. So this refuses a bent proof word only as
+//! * **`LINK_OK` and `PICKLES_WITNESSED` are witnessed carriers**, not re-derived in-AIR; the
+//!   Pickles residue rides the undischarged IPA/FRI floor. So this refuses a bent proof word only as
 //!   strongly as the witness generator is honest about those two bits. ⚑ `CANON_OK` is no longer
 //!   one of them for the anchor and the tip: `LightClientMinaAir` §1a derives their canonicality
 //!   from the emitted lookups (`mina_anchor_and_tip_are_canonical`), and
@@ -116,10 +178,27 @@ use dregg_circuit::faithful9::Faithful9;
 /// `EffectAir` source `minaHeadAir`, with no hand-written `VmConstraint2` (house law #1).
 pub const MINA_LC_VERIFY_DESCRIPTOR: &str = "dregg-mina-lightclient-verify::v1";
 
+/// ⚑ **THE FQ-TRANSCRIPT SUB-PROOF'S DESCRIPTOR.** Authored as
+/// `MinaBlockFqTranscript.linkDesc` — the 2 048-instruction Kimchi `fq_kimchi` sponge program with
+/// seven boundary pin blocks. This node VERIFIES a STARK over it before it accepts a Mina head; a
+/// dispatch miss is [`WitnessedPredicateError::Rejected`], never a skip.
+pub const MINA_WRAPLINK_DESCRIPTOR: &str = "dregg-pasta-fq-wraplink::v1";
+
+/// Public-input arity of [`MINA_WRAPLINK_DESCRIPTOR`] — seven 32-limb pin blocks (Lean
+/// `MinaBlockFqTranscript.LINK_PI_COUNT`).
+pub const MINA_WRAPLINK_PI_COUNT: usize = 224;
+
+/// Domain separation for the sub-proof public-input commitment the head descriptor publishes at PI
+/// slots 20..28. ⚑ Changing this string is a wire-format flag day for [`MinaHeadProofWire`] AND for
+/// `LightClientMinaAir.WRAPLINK_PI_LANES`; the two are gated against each other by
+/// `circuit/tests/mina_transcript_carrier_binding.rs`.
+pub const WRAPLINK_PI_COMMITMENT_CONTEXT: &str =
+    "dregg.mina-lightclient.wraplink-subproof-pi-commitment.v1";
+
 /// Number of public inputs the descriptor declares: nine pinned-anchor lanes, nine verified-tip
-/// lanes, the derived `blockchain_length`, the Samasika depth met. Pinned to
-/// `LightClientMinaAir.MINA_PI_COUNT`.
-pub const MINA_LC_PI_COUNT: usize = 20;
+/// lanes, the derived `blockchain_length`, the Samasika depth met, ⚑ and the nine-lane commitment
+/// to the Fq-transcript sub-proof's public inputs. Pinned to `LightClientMinaAir.MINA_PI_COUNT`.
+pub const MINA_LC_PI_COUNT: usize = 29;
 
 /// Lanes per 32-byte Mina state hash (`Faithful9`).
 pub const MINA_STATE_LANES: usize = 9;
@@ -133,6 +212,8 @@ pub const PI_BLOCK_LEN: usize = 2 * MINA_STATE_LANES;
 /// PI slot of the Samasika confirmation depth the acceptance met
 /// (`LightClientMinaAir.PI_REQ_DEPTH`).
 pub const PI_REQ_DEPTH: usize = 2 * MINA_STATE_LANES + 1;
+/// ⚑ PI slot of sub-proof-commitment lane `i` (`LightClientMinaAir.PI_SUB_PI`), slots 20..28.
+pub const PI_SUB_COMMIT_BASE: usize = 2 * MINA_STATE_LANES + 2;
 
 /// ⚑ **THE DEPTH FLOOR.** Mina mainnet's Samasika confirmation depth `k = 290`. The descriptor
 /// PUBLISHES which depth policy an acceptance met (PI 19) precisely so a consumer can refuse a
@@ -163,12 +244,64 @@ pub fn mina_head_predicate_vk() -> [u8; 32] {
 /// anchor / recorded tip below before the STARK runs — a prover cannot substitute its own PI vector
 /// because the descriptor binds all twenty and this verifier fixes eighteen of them from
 /// authoritative state.
+/// ⚑ **FLAG DAY 2026-08-05: THIS WIRE CARRIES TWO PROOFS.** The transcript fields are REQUIRED, so a
+/// pre-2026-08-05 blob fails to decode rather than being reinterpreted as "no sub-proof supplied" —
+/// the refusal is at the codec, which is the only place it cannot be forgotten.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct MinaHeadProofWire {
-    /// The twenty public inputs, in descriptor order.
+    /// The twenty-nine public inputs, in descriptor order.
     pub public_inputs: Vec<u32>,
     /// The IR-v2 batch proof over `MINA_LC_VERIFY_DESCRIPTOR`.
     pub proof: Ir2BatchProof<DreggStarkConfig>,
+    /// ⚑ The 224 public inputs of the Fq-transcript sub-proof, in `MINA_WRAPLINK_DESCRIPTOR` order.
+    pub transcript_public_inputs: Vec<u32>,
+    /// ⚑ The IR-v2 batch proof over `MINA_WRAPLINK_DESCRIPTOR`. **This node verifies it.**
+    pub transcript_proof: Ir2BatchProof<DreggStarkConfig>,
+}
+
+/// ⚑ **THE SUB-PROOF PUBLIC-INPUT COMMITMENT** the head descriptor PI-binds at slots 20..28: blake3
+/// derive-key over [`WRAPLINK_PI_COMMITMENT_CONTEXT`], absorbing the arity then every public input as
+/// its canonical `u32` little-endian.
+///
+/// The arity goes in first so a truncated PI vector is not a prefix collision — the class the
+/// `mina-tip` lane was bitten by at the peer-reply boundary, one layer down.
+pub fn wraplink_pi_commitment(pis: &[u32]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key(WRAPLINK_PI_COMMITMENT_CONTEXT);
+    h.update(&(pis.len() as u64).to_le_bytes());
+    for v in pis {
+        h.update(&v.to_le_bytes());
+    }
+    *h.finalize().as_bytes()
+}
+
+/// ⚑ **REFUSAL 4 — THE ROW'S DECLARED SUB-PROOF COMMITMENT IS THE SUPPLIED SUB-PROOF'S.**
+///
+/// The head descriptor's nine `proof_bind` constraints force the row's attested program to be
+/// `MINA_WRAPLINK_DESCRIPTOR`'s fingerprint, and PI-bind the commitment lanes. What no row-local
+/// polynomial can do is check that a sub-proof with THAT commitment exists — that is off-row by
+/// construction (`DescriptorIR2` §6c). This is that check, and it is the reason the head proof's
+/// carrier is not a bit: the prover must hold a second STARK whose public inputs digest to the nine
+/// lanes it published.
+pub fn check_transcript_binding(pis: &[u32], transcript_pis: &[u32]) -> Result<(), String> {
+    if transcript_pis.len() != MINA_WRAPLINK_PI_COUNT {
+        return Err(format!(
+            "the Fq-transcript sub-proof declared {} public inputs; \
+             {MINA_WRAPLINK_DESCRIPTOR} binds exactly {MINA_WRAPLINK_PI_COUNT}",
+            transcript_pis.len()
+        ));
+    }
+    let expected = key_lanes_u32(&wraplink_pi_commitment(transcript_pis));
+    for (i, want) in expected.iter().enumerate() {
+        let got = pis[PI_SUB_COMMIT_BASE + i];
+        if got != *want {
+            return Err(format!(
+                "sub-proof commitment lane {i} is {got}, but the supplied Fq-transcript sub-proof's \
+                 public inputs digest to {want}: the head proof declares a DIFFERENT sub-proof than \
+                 the one presented"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The nine `Faithful9` key lanes of a 32-byte value, as canonical `u32`s — the encoding the
@@ -323,7 +456,46 @@ impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
         // never the action.
         check_head_binding(commitment, &recorded_tip, &wire.public_inputs).map_err(reject)?;
 
-        // ── REFUSAL 4: the STARK over the Lean-compiled descriptor. Its own gates then force the
+        // ── ⚑⚑ REFUSAL 4: the head proof's DECLARED sub-proof is the one presented.
+        check_transcript_binding(&wire.public_inputs, &wire.transcript_public_inputs)
+            .map_err(reject)?;
+
+        // ── ⚑⚑ REFUSAL 5: **THE SUB-PROOF ITSELF.** This is the step that makes the light client
+        // consume a proof where it used to consume a bit. `descriptor_by_name` is fail-closed
+        // `None`; a node that cannot check the Fq transcript REFUSES the head rather than accepting
+        // the carrier on the prover's word.
+        let transcript_pis: Vec<BabyBear> = wire
+            .transcript_public_inputs
+            .iter()
+            .map(|v| BabyBear::new(*v))
+            .collect();
+        let transcript_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let desc = descriptor_by_name(MINA_WRAPLINK_DESCRIPTOR).ok_or_else(|| {
+                format!(
+                    "no descriptor dispatches for {MINA_WRAPLINK_DESCRIPTOR:?} (fail-closed): this \
+                     node cannot check the Mina Wrap proof's Fq transcript and therefore refuses \
+                     the head"
+                )
+            })?;
+            verify_vm_descriptor2(&desc, &wire.transcript_proof, &transcript_pis)
+        }));
+        match transcript_result {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => {
+                return Err(reject(format!(
+                    "the Mina Wrap Fq-transcript sub-proof rejected: {reason}"
+                )));
+            }
+            Err(_) => {
+                return Err(reject(
+                    "Mina Wrap Fq-transcript sub-proof decode/verify panicked (treated as \
+                     rejection)"
+                        .into(),
+                ));
+            }
+        }
+
+        // ── REFUSAL 6: the STARK over the Lean-compiled descriptor. Its own gates then force the
         // published `blockchain_length` to be the pinned anchor plus the EXHIBITED segment, the
         // witnessed depth to be measured to that derived tip, the three ranged slack teeth and the
         // three carrier bits. Decode + verify under `catch_unwind`: a malformed blob is a
@@ -382,7 +554,56 @@ mod tests {
         assert_eq!(PI_TIP_STATE_BASE, 9);
         assert_eq!(PI_BLOCK_LEN, 18);
         assert_eq!(PI_REQ_DEPTH, 19);
-        assert_eq!(MINA_LC_PI_COUNT, 20);
+        assert_eq!(PI_SUB_COMMIT_BASE, 20);
+        assert_eq!(MINA_LC_PI_COUNT, 29);
+    }
+
+    /// ⚑⚑ POSITIVE POLARITY FOR THE SUB-PROOF BINDING: a head proof that publishes the digest of
+    /// the sub-proof it presents BINDS. Without this the refusal below would be satisfied by a
+    /// check that refuses everything.
+    #[test]
+    fn a_head_declaring_the_sub_proof_it_presents_is_accepted() {
+        let sub: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        let pis = pis_with_sub(&[7u8; 32], &[3u8; 32], 290, &sub);
+        check_transcript_binding(&pis, &sub).expect("the declared sub-proof IS the presented one");
+    }
+
+    /// ⚑⚑ REFUSED: a head proof that names sub-proof A and hands over sub-proof B. This is the
+    /// refusal that makes `WRAP_FS_PROVED` cost the prover a second STARK rather than a bit — the
+    /// in-AIR binds pin the PROGRAM, and this pins WHICH instance of it.
+    #[test]
+    fn a_head_presenting_a_different_sub_proof_is_refused() {
+        let declared: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        let pis = pis_with_sub(&[7u8; 32], &[3u8; 32], 290, &declared);
+        let mut other = declared.clone();
+        other[0] += 1;
+        let err = check_transcript_binding(&pis, &other).unwrap_err();
+        assert!(
+            err.contains("DIFFERENT sub-proof"),
+            "the refusal must name the substitution: {err}"
+        );
+    }
+
+    /// ⚑ REFUSED: a sub-proof of the wrong arity. A truncated PI vector is the `mina-tip` shape one
+    /// layer down, and the commitment absorbs the arity first so it cannot be a prefix collision.
+    #[test]
+    fn a_sub_proof_of_the_wrong_arity_is_refused() {
+        let declared: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        let pis = pis_with_sub(&[7u8; 32], &[3u8; 32], 290, &declared);
+        let err = check_transcript_binding(&pis, &declared[..10]).unwrap_err();
+        assert!(err.contains("binds exactly"), "{err}");
+    }
+
+    /// The honest PI vector with the sub-proof commitment lanes filled from `sub`.
+    fn pis_with_sub(anchor: &[u8; 32], tip: &[u8; 32], k: u32, sub: &[u32]) -> Vec<u32> {
+        let mut pis = pis_for(anchor, tip, k);
+        for (i, v) in key_lanes_u32(&wraplink_pi_commitment(sub))
+            .iter()
+            .enumerate()
+        {
+            pis[PI_SUB_COMMIT_BASE + i] = *v;
+        }
+        pis
     }
 
     /// The honest PI vector for a head anchored at `anchor`, recording `tip`, at depth `k`.

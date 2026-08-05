@@ -40,6 +40,25 @@
 # `e991ac622` and are a different lane's to baseline or bind. Blessing them from here would be
 # exactly the laundering this gate exists to refuse.
 #
+# ⚑ 2026-08-05 — `dregg-mina-lightclient-verify::v1` CHANGED SHAPE AND ITS ROW DID NOT MOVE. Read
+# the two facts together, because the count alone hides both:
+#   * the descriptor went width 30 -> 49, PIs 20 -> 29, constraints 50 -> 69. `PICKLES_OK` — a
+#     witnessed bit forced `= 1` with nothing computing it — became `PICKLES_WITNESSED` (the residue,
+#     still a bit, renamed so nobody reads it as checked) plus `WRAP_FS_PROVED`, whose `= 1` guards
+#     NINE `proof_bind` constraints pinning the row's attested program to the semantic fingerprint of
+#     `dregg-pasta-fq-wraplink::v1`, lane by lane.
+#   * **NINE PUBLIC INPUTS ADDED, ZERO DECORATIVE ANCHORS ADDED.** The nine new PI columns are the
+#     sub-proof's public-input commitment lanes, and a `proof_bind` relates its guard, its commitment
+#     and its vk column — so all nine land JOINED. The row stays 18.
+# ⚠ AND SAY WHAT DID **NOT** HAPPEN: the eighteen are the anchor and tip state lanes, and this rung
+# did not bind one of them. They are still read only by arity-1 lane lookups and joined to nothing.
+# Binding them is a different rung (the Poseidon fold over Pasta `Fp`); this row is unmoved and the
+# honest reason is that the work that would move it was not done here.
+#
+# ⚑ `dregg-pasta-fq-wraplink::v1` is NEWLY SERVED (2026-08-05) and enters at ZERO — all 224 of its
+# public inputs sit in a single component spanning all 469 columns — so it gets no row, per the
+# "descriptors at zero are omitted" rule above rather than by omission.
+#
 # The connectivity facts themselves are named theorems in
 # `metatheory/Dregg2/Circuit/Emit/LightClientAnchorConnectivity.lean`
 # (`sol_decorative_anchors`, `sol_pinned_denominator_is_not_decorative`).
