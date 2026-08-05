@@ -1,5 +1,89 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (ξ STOPS BEING TOLD) — **the aggregate's scalars were the verifier's to be told; ξ is now COMPUTED from the block's own sponge and crosses to the chain on 32 shared felts** — and the aggregate's own digits are still a DESCRIPTOR parameter, which is where the next lane starts
+
+`MinaWrapXiAggregateMsm` §4 named the residual in its author's own words — *"the aggregate's scalar
+multiplication is now the trace's work; the aggregate's scalars are still the verifier's to be
+told"*, and *"the weld is a public-input equality between two descriptors and it is NOT built."*
+
+⛑ **BUILT, AND THE THIRD CONE WITH IT.** `Dregg2.Circuit.Emit.MinaWrapXiEndoLift` emits
+`ScalarChallenge(v′).to_field(endo_r)` (`sponge.rs:190-226`) **as an AIR** on the same
+`MinaWrapCommitMachine` the four commit stages ride: 64 rounds of double-and-conditional-±1, a
+128-place in-circuit bit decomposition, a closing `SC = v′` assertion, **1 160 instructions in a
+2 048-row trace**. `dregg-mina-xi-endo-lift::v1` **PROVED + VERIFIED, 2048x687, 8 371.9 ms**, and it
+is `PastaFieldSound` — the `fpMulCore` downgrade is NOT inherited.
+
+⛑ **ξ IS THE ENDO LIFT OF THE BLOCK'S OWN SQUEEZE.** `the_polyscale_is_the_endo_lift_of_the_squeeze`:
+`endoLiftQ lambdaPallas WRAP_V_CHAL = XI`, kernel `decide`. The left side is the value
+`MinaBlockFqTranscript`'s emitted 2 048-row Fq sponge ENDS ON (real `fq_kimchi` constants, a
+45-permutation-deep state derived from devnet block 539508's own 91-element phase-2 tape); the right
+is the polyscale `COMBINED_GOLD` was built from. **Until this line those two numbers had no relation
+in this tree: one came out of a sponge, the other was typed.** `endoLiftQ` is not a second
+implementation — it is `KimchiVerify.endoMap` at `ZMod qN`, the tree's only `to_field`.
+
+⛑ **THE WELD IS 32 FELTS, ELEMENTWISE, WITH NO DIGEST IN IT.**
+
+| link | width | kind |
+|---|---|---|
+| wraplink → endo lift | **16 felts / 128 bits** | PI equality (the whole `ScalarChallenge`; the other 16 input felts are pinned ZERO) |
+| endo lift → ξ chain | **32 felts / 255 bits** | PI equality — `the_endo_output_block_is_the_chain_input_block` |
+| ξ chain → aggregate | 47 scalars x 255 bits | ⚠ **DESCRIPTOR-to-descriptor**, not a wire tie |
+
+`any_single_moved_felt_breaks_the_weld` moves each of the 32 in turn: **32/32 refuse.** There is no
+birthday bound because there is nothing to collide — which is the whole reason it is stated on the
+limb LISTS. A one-felt tie between two descriptors is `2^31`, the shape the `proof_bind` seam
+already has, and it was not added here.
+
+⛑ **BOTH POLARITIES, RELEASE, WITH THE REFUSING GATE NAMED.** `circuit/tests/mina_xi_endo_weld.rs`,
+**12/12**:
+
+* forged lift output → **last-row PI pin**, `OodEvaluationMismatch { index: Some(0) }`;
+* forged prechallenge → **first-row PI pin**, same class (the ROM is silent about the challenge —
+  the transcript binding rests on the PIN, exactly as `MinaBlockFqTranscript` says of its own
+  absorbed value);
+* misplaced `endo_r` immediate → **the exact-public ROM bus**, literally
+  *"exact-public table pasta_commit_rom lookup multiset does not equal its Lean-emitted manifest
+  (2048 queries, 2048 rows)"*.
+
+⛑ **AND THE AGGREGATE'S DIGITS ARE READ BACK OUT OF ITS OWN MANIFEST.**
+`MinaWrapXiScalarWeld.the_declared_digits_are_the_orbit_of_the_wire_ξ` folds `T_COVER`'s 8 192 emitted
+rows — **keyed by each row's own generator index, not by position** — into 59 scalars and proves they
+are `(ξ⁰ … ξ⁴⁶, 0¹²)` for the ξ that crosses the wire. Rust recomputes the same thing in its own
+big-integer arithmetic off the emitted JSON: **47/47, 12/12 padding zero, 47 distinct.**
+
+⚠ **A DRAFTED REFUTATION WAS REFUTED, AND THAT IS THE USEFUL PART.** The first
+`a_relabelled_key_leaves_the_orbit` moved row 0's key — whose digit is 0, into an accumulator that
+was also 0 — and `decide` proved the *refutation* false. A tamper that changes nothing is not a
+tamper. `the_tampered_rows_are_what_they_are_claimed_to_be` now READS both moved rows first.
+
+⚠⚠ **WHAT IS STILL TOLD, AND IT IS A TYPE OBSTRUCTION, NOT A COST.** The aggregate's 47 scalars
+remain **descriptor constants**. `PastaMsmBucketed` §7.4: *"This descriptor's `piCount = 27` publishes
+only the output `C`; `u⃗` enters through `T_COVER`'s declared digits and is therefore a DESCRIPTOR
+PARAMETER, not a wire value."* **27 felts cannot hold one 32-limb scalar**, so a wire tie has no slot
+to go in and a digest-shaped one would be below the bar. The chain→aggregate link is therefore
+checked **once per (block, VK) by whoever reads the two artifacts**, and it costs that reader the 46
+multiplies the chain circuit exists to remove.
+
+⛑ **AND THE FIX NEEDS SIX WIRE VALUES, NOT FORTY-SEVEN — a fact the next lane should not have to
+rediscover.** `PastaMsmScalarDerive`'s tensor chain computes `s_i = ∏_j c_j^{bit_j(i)}`. At
+`c⃗ = (ξ³², ξ¹⁶, ξ⁸, ξ⁴, ξ², ξ)` that IS `ξ^i`, so the ξ-aggregate's digits become derived from a
+**six**-element challenge vector — `6 x 32 = 192` PI felts, five squarings from the ξ this cone
+already publishes. `the_squaring_basis_generates_the_orbit` + `six_squarings_cover_forty_seven_terms`.
+
+⚠ **THE `fpMulCore` DOWNGRADE IS UNCHANGED AND STILL OPEN.** The aggregate's rows are the unsound
+multiply; everything this lane added is `PastaFieldSound`. The blocker remains the IR lane's:
+`swCompleteAddGadget` takes gate CONSTRUCTORS while `PastaFieldSound`/`PastaAddSubSound` are
+`EffectAir`s lowered through `EffectLower.lowerAir`, so no sound complete-add and no sound `smul`
+core exist at all. ⛑ **When that bridge lands this weld carries over unchanged** — neither half
+mentions the row template's multiply.
+
+⚠ **MEASUREMENT HYGIENE.** The Rust run was taken with `DREGG_REQUIRE_LEAN=0` because the shared
+tree's FFI gate is RED from another lane: `Dregg2.Games.PathOfAngels.FiniteTables` is **unmodified in
+the working tree** and fails at HEAD (`1bb660e12`, whose own subject says *DOES NOT BUILD*) —
+`native_decide` evaluates `relayRefusalReasons_live` FALSE, plus two missing `Repr` instances. The
+degrade is irrelevant to the result (the prover is pure Rust and this test never calls Lean at
+runtime) but it is stated rather than absorbed.
+
 ## ⛑⛑⛑ AUGUST 5 (PHASE-2 AS A TREE) — **the 46-permutation residual was never an algebra and is no longer 45 witnesses either**: the whole transcript folds, and a fold node is CHEAPER than the leaf it eats
 
 `MinaBlockFqTranscript` §6.1 named it and said it was not built — *"a chain of 46 instances welded

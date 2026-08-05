@@ -49,7 +49,9 @@ Nothing below repairs these; they belong to `PastaMsmBucketed` and they travel w
    **recompose to the real ξ powers with no truncation** (`the_declared_digits_recompose`), so a
    window count that silently dropped the top bits of a 255-bit scalar is refuted rather than
    assumed. Deriving `ξ^i` from `ξ` in-circuit is `MinaWrapCommitStages.xiChainProg`'s 46 multiplies
-   — a DIFFERENT emitted object, and the two are not yet welded to each other. §4 prices that.
+   — a DIFFERENT emitted object, welded to a published `ξ` since 2026-08-05 by
+   `MinaWrapXiEndoLift` and `MinaWrapXiScalarWeld`. §4 says exactly which half of that is a WIRE
+   equality and which half is still a descriptor one.
 2. **The row template is `pallasCompleteAdd`.** Correct for this cone — the ξ-aggregate is a WRAP
    commitment combination over Pallas — but the Vesta swap `bucketedRowDescVesta` offers is not
    exercised here.
@@ -236,14 +238,30 @@ theorem a_dropped_term_misses_the_aggregate :
 
 Read this before citing anything above.
 
-⚑ **`ξ` ITSELF.** `SCAL` is the 47 powers as descriptor constants. `MinaWrapCommitStages.xiChainProg`
-computes those same 47 powers IN-CIRCUIT from `ξ` as a public input, in 46 Pasta multiplies at
-`qLimb` — but that is a SECOND emitted object, and nothing yet forces the powers the chain computes
-to be the digits this manifest declares. The weld is a public-input equality between two descriptors
-and it is NOT built. Until it is, this artifact scales by 47 numbers a verifier must be told.
+⚑ **`ξ` ITSELF — UPDATED 2026-08-05, and the update is PARTIAL. Read which half moved.**
 
-⚑ **AND `ξ` IS ITSELF A TRANSCRIPT OUTPUT.** Even welded to the chain, `ξ` enters as a public input;
-binding it to the Fq sponge's squeeze is `MinaWrapVerifierSponge`'s cone, not this one.
+`SCAL` is still the 47 powers as descriptor constants, and **that has not changed**: `T_COVER`'s
+manifest takes `scal` as a parameter, this descriptor's `piCount = 27` publishes only the output
+point `C`, and there is therefore NO PUBLIC-INPUT SLOT on this artifact for a computed scalar to
+equal. `PastaMsmBucketed` §7.4 names the obstruction and `PastaMsmScalarDerive`'s digit weld (§7.3)
+is the fix; it is not built.
+
+What DID move is everything upstream of the digits:
+
+  * `MinaWrapXiEndoLift` emits `ScalarChallenge(v′).to_field(endo_r)` AS AN AIR and proves its
+    output is o1-labs' own `ξ` on the block's own `v′` — which `MinaBlockFqTranscript`'s emitted
+    2 048-row Fq sponge squeezes from Mina devnet block 539508's 91-element phase-2 tape. **`ξ` is
+    computed now, from the transcript, not typed.**
+  * That descriptor's LAST-row pin and `MinaWrapCommitStages.xiDesc`'s FIRST-row pin are the SAME
+    32 public-input felts (`the_endo_output_block_is_the_chain_input_block`) — a wire equality at
+    255 bits, elementwise, no digest.
+  * `MinaWrapXiScalarWeld` reads THIS file's emitted `T_COVER` manifest as data, keyed by each row's
+    own generator index, and proves the 59 recomposed scalars are the orbit of that welded `ξ`.
+
+⚠ **So the honest reading of THIS artifact is now:** its 47 scalars are the orbit of a `ξ` that an
+emitted AIR derived from the block's own sponge — but they reach this descriptor as a
+DESCRIPTOR-TO-DESCRIPTOR equality a reader checks once per (block, VK), not as a wire value a batch
+checks per proof. The scalars are *derived*; they are not yet *on the wire*.
 
 ⚑ **THE UNSOUND MULTIPLY.** Stated in the header and repeated because it is the kind of thing that
 gets absorbed: these rows are `fpMulCore`, not `PastaFieldSound`. `PastaMsmBucketed` §6d prices the

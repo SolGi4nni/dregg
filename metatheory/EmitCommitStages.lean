@@ -7,12 +7,14 @@ SCRATCH executable: emit the COMMITMENT-COMBINATION stage descriptors and their 
   lake env lean --run EmitCommitStages.lean <name>pis    > ../circuit/tests/fixtures/<file>-pis.txt
 
 Names: `xi` (the ξ scalar vector), `pub` / `f` / `ft` / `agg` (the four group folds), `ladder`
-(the scalar-multiplication ladder). This file only RENDERS; it authors nothing — every descriptor is
-`EffectLower.lowerAir` of a Lean-authored `EffectAir` in
-`Dregg2.Circuit.Emit.MinaWrapCommitStages`.
+(the scalar-multiplication ladder), `endo` (⚑ the endomorphism lift `v′ ↦ ξ`, whose OUTPUT public
+inputs are `xi`'s INPUT public inputs). This file only RENDERS; it authors nothing — every
+descriptor is `EffectLower.lowerAir` of a Lean-authored `EffectAir` in
+`Dregg2.Circuit.Emit.MinaWrapCommitStages` / `MinaWrapXiEndoLift`.
 -/
 import Dregg2.Circuit.Emit.MinaWrapCommitStages
 import Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm
+import Dregg2.Circuit.Emit.MinaWrapXiEndoLift
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.MinaWrapCommitStages
@@ -28,6 +30,8 @@ def sizes : IO Unit := do
   IO.println s!"ft      instrs={(foldProg FT_TERMS).length} terms={FT_TERMS.length}"
   IO.println s!"agg     instrs={(foldProg XI_TERMS).length} terms={XI_TERMS.length}"
   IO.println s!"ladder  instrs={(ladderProg).length} planes={DEMO_PLANES} scalar={DEMO_SCALAR}"
+  IO.println s!"endo    instrs={(Dregg2.Circuit.Emit.MinaWrapXiEndoLift.endoProg).length} \
+real={(Dregg2.Circuit.Emit.MinaWrapXiEndoLift.endoSteps Dregg2.Circuit.Emit.MinaWrapXiEndoLift.V_CHAL).length}"
   IO.println s!"width   {Dregg2.Circuit.Emit.MinaWrapCommitMachine.CM_WIDTH}"
 
 def main (args : List String) : IO Unit :=
@@ -57,6 +61,12 @@ def main (args : List String) : IO Unit :=
   -- `the_xi_fold_is_o1_labs_aggregate` and its three siblings, plus
   -- `the_four_goldens_are_distinct` so they cannot all be satisfied by one collapsed constant.
   | ["aggmsm"]     => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm.xiAggMsmDesc)
+  -- ⚑ The endomorphism lift `ScalarChallenge(v′).to_field(endo_r)`, on the machine. Its OUTPUT half
+  -- is byte-for-byte `xipis`' INPUT half — `MinaWrapXiEndoLift.the_endo_output_block_is_the_chain_
+  -- input_block` — so these two fixtures are the weld's two sides and the Rust gate compares them.
+  | ["endo"]       => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapXiEndoLift.endoDesc)
+  | ["endotrace"]  => IO.print (renderRows Dregg2.Circuit.Emit.MinaWrapXiEndoLift.endoTrace)
+  | ["endopis"]    => IO.print (render Dregg2.Circuit.Emit.MinaWrapXiEndoLift.endoPIs ++ "\n")
   -- ⚑ The four o1-labs goldens as limb pairs, taken from the GATE CONSTANTS and never from any
   -- fold's own output. This is the anchor `circuit/tests/mina_commit_stages_prove.rs` recomputes
   -- against, so that test carries NO transcribed decimal: it reads the term points out of the
@@ -69,4 +79,5 @@ def main (args : List String) : IO Unit :=
       emit Dregg2.Circuit.Emit.MinaWrapGroupGate.FT_COMM_GOLD
       emit Dregg2.Circuit.Emit.MinaWrapAggregationGate.COMBINED_GOLD
   | _ => IO.eprintln
-      "usage: EmitCommitStages.lean (sizes|xi|pub|f|ft|agg|ladder)[trace|pis] | aggmsm | goldlimbs"
+      "usage: EmitCommitStages.lean (sizes|xi|pub|f|ft|agg|ladder|endo)[trace|pis] \
+| aggmsm | goldlimbs"
