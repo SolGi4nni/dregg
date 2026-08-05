@@ -1,13 +1,13 @@
 {
   "format":"POAG1",
   "schema_version":1,
-  "source_digest":"sha256:72a238fb051d975583d2e67ce1a016783ae640dcb44ad07c5cff71dfcaf82e9f",
+  "source_digest":"sha256:ec549695136e4312a174b59806ba96b5143e43900d4a45cfac5cf7c39bbd52b2",
   "authority":"Dregg2.Games.PathOfAngels",
   "artifacts":[
-    {"path":"schema.json","media_type":"application/schema+json","bytes":1142,"sha256":"sha256:4a17d808105ab70b004fc5faea46ded9d1f99a023c7ba108dc5be5a5b0765095","fnv1a64":"7f29631d47428a1d"},
-    {"path":"catalog.json","media_type":"application/json","bytes":5447,"sha256":"sha256:cbbe2fb562172e64511726f2b0f06aae8b925bc7c4d732d27a2940dfadcdd1bc","fnv1a64":"09aa9a685e19fdbf"},
-    {"path":"games/relay-repair.json","media_type":"application/json","bytes":18694,"sha256":"sha256:f81703ef04df64e650474a9d16e30e29d17d29b1ea572eb4d893c815ca2e9b38","fnv1a64":"cc681f7bb3397eff"},
-    {"path":"games/salvage-lock.json","media_type":"application/json","bytes":125619,"sha256":"sha256:3074c759550f6fface98e72f7b1b4f5d4f4dc53afbdb023db5202e9b24e4e2b6","fnv1a64":"6f262692508e3a2c"},
-    {"path":"games/signal-triangulation.json","media_type":"application/json","bytes":14021,"sha256":"sha256:c3a9603f84f1e5918c6a46f30c507a39b6c9d5fd57c9f3edec3b03597eec49bf","fnv1a64":"cbfac4aa9836a09d"}
+    {"path":"schema.json","media_type":"application/schema+json","bytes":1934,"sha256":"sha256:1c7839c14f6906dee81104c89bc9b0f1f5c8485dcaf740c1fdc37a16a3f574b8","fnv1a64":"a8a0768872713698"},
+    {"path":"catalog.json","media_type":"application/json","bytes":5508,"sha256":"sha256:2e85db1fbe2b670d2bbc210790e0b04be521a6cddfa65b9724c49aa2558b39f8","fnv1a64":"459dfb598fdc82ce"},
+    {"path":"games/relay-repair.json","media_type":"application/json","bytes":122003,"sha256":"sha256:7dc4bc9dd184d1c36ca1881d15b41c0c97a8293041bb9d7b756ff84daedab840","fnv1a64":"ec202953066d45d2"},
+    {"path":"games/salvage-lock.json","media_type":"application/json","bytes":635203,"sha256":"sha256:b989feb5272c3625d79b54c0399d491db8ee648b433719e5e1447e96f9c8522d","fnv1a64":"a65ebcc2789df952"},
+    {"path":"games/signal-triangulation.json","media_type":"application/json","bytes":52260,"sha256":"sha256:f1df848fd9e4dfac0bc56910d5f3cb4acbc5128a4458648c0c1de3d10afaa26f","fnv1a64":"e68cfdb4a49b3c7c"}
   ]
 }
