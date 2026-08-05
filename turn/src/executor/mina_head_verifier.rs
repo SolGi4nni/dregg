@@ -69,18 +69,25 @@
 //!    290-deep policy with a proof that met `k = 1`.
 //! 4. ⚑ **The declared sub-proof is the one presented.** [`check_transcript_binding`]: the head
 //!    proof's PI slots 20..28 must be the nine `Faithful9` lanes of
-//!    [`wraplink_pi_commitment`] of the supplied Fq-transcript public inputs. A head proof that
+//!    [`chainlink_pi_commitment`] of the supplied Fq-transcript public inputs. A head proof that
 //!    names sub-proof A and hands over sub-proof B is REFUSED.
-//! 5. ⚑⚑ **THE SUB-PROOF ITSELF IS VERIFIED.** `descriptor_by_name(MINA_WRAPLINK_DESCRIPTOR)`
-//!    (fail-closed `None`) → `verify_vm_descriptor2` over its 224 public inputs. **This is the step
+//! 5. ⚑⚑ **THE SUB-PROOF ITSELF IS VERIFIED.** `descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR)`
+//!    (fail-closed `None`) → `verify_vm_descriptor2` over its 256 public inputs. **This is the step
 //!    that makes the carrier a proof rather than a bit** — see the section below.
+//! 5b. ⚑⚑ **AND THE HEAD DESCRIPTOR'S PROGRAM PIN NAMES THAT SUB-PROOF.**
+//!    [`check_subproof_program_pin`] recomputes the dispatched sub-proof descriptor's semantic
+//!    fingerprint and requires the head descriptor's `vk_pin` cells to be its nine `Faithful9`
+//!    lanes. Until 2026-08-05 that agreement was asserted only by a test, and it had already gone
+//!    RED and stayed red — the head pinned `[460719650, …]` while the served sub-proof
+//!    fingerprinted to `[172082222, …]`, so the bind named a program no descriptor in this tree
+//!    has. A drift is now a refused head, not a red nobody read.
 //! 6. **The STARK.** `descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR)` (fail-closed `None` on a miss)
-//!    → `verify_vm_descriptor2` over all 29 public inputs. The descriptor's own gates then force
+//!    → `verify_vm_descriptor2` over all 30 public inputs. The descriptor's own gates then force
 //!    `BLOCK_LEN = ANCHOR_H + SEG_LEN` and `WIT_DEPTH + SUBMIT_H = BLOCK_LEN` — the published
 //!    `blockchain_length` is DERIVED from the pinned anchor plus the exhibited segment, so the one
 //!    field a truncated peer reply leaves standing is not settable — plus the three ranged slack
 //!    teeth, the carrier bits, and ⚑ the nine `proof_bind` congruences that force the row's attested
-//!    program to be `MINA_WRAPLINK_DESCRIPTOR`'s fingerprint, lane by lane.
+//!    program to be `MINA_CHAINLINK_DESCRIPTOR`'s fingerprint, lane by lane.
 //!
 //! # ⚑⚑ 2026-08-05 — `PICKLES_OK` STOPPED BEING ONE THING, AND SAY EXACTLY WHICH HALF MOVED
 //!
@@ -95,7 +102,7 @@
 //!   recursion problem and not a bigger circuit. Anyone reading `PICKLES_OK` as "checked" was
 //!   reading a name; the name no longer says that.
 //! * ⚑ **`WRAP_FS_PROVED`** — NOT a bit. Its `= 1` guards nine `proof_bind` constraints that pin the
-//!   row's attested program to `dregg-pasta-fq-wraplink::v1`'s semantic fingerprint lane by lane
+//!   row's attested program to `dregg-pasta-fq-chainlink::v1`'s semantic fingerprint lane by lane
 //!   (nine `Faithful9` lanes, 256 bits — a single-felt tie would be worth `2^31`, below this repo's
 //!   bar), and PI-bind the sub-proof's public-input commitment. **A prover cannot satisfy it without
 //!   holding a second dregg STARK that this verifier then runs.**
@@ -103,11 +110,19 @@
 //! **What that sub-proof establishes, precisely — and it is narrower than "Mina's proof is valid":**
 //! the final absorption of a phase-2 (`fq_kimchi`-over-Fq) Kimchi transcript — from the incoming
 //! three-lane sponge state its public inputs pin, absorbing the one element they pin, permuted once
-//! through the 55 `fq_kimchi` rounds whose constants are CELLS of that descriptor — lands on the two
-//! output lanes they pin. On the fixture instance those pins are **Mina devnet block 539508's own**,
-//! and the two output lanes' low 128 bits ARE the `v′`/`u′` that block's `proof.oracles(…)`
-//! returned, machine-checked in Lean against a tape read from a proof o1-labs'
-//! `kimchi::verifier::verify::<Pallas, …>` accepts.
+//! through the 55 `fq_kimchi` rounds whose constants are CELLS of that descriptor — lands on the
+//! **three** output lanes they pin. On the fixture instance those pins are **Mina devnet block
+//! 539508's own 46th and last link**, and outgoing lanes 0 and 1's low 128 bits ARE the `v′`/`u′`
+//! that block's `proof.oracles(…)` returned, machine-checked in Lean against a tape read from a
+//! proof o1-labs' `kimchi::verifier::verify::<Pallas, …>` accepts.
+//!
+//! ⚑ **THE THIRD LANE IS WHY THIS RUNG WAS RE-POINTED ON 2026-08-05.** It used to bind
+//! `dregg-pasta-fq-wraplink::v1`, whose seven pin blocks publish two of a Poseidon state's three
+//! outgoing lanes. Same program, fewer pins — and the consequence was in refusal 10, where the
+//! 46-link fold root's 96-limb outgoing state was compared against 64 pinned limbs and the third
+//! lane against nothing. `dregg-pasta-fq-chainlink::v1` publishes all three (256 PIs), and it is the
+//! descriptor the fold's leaves are actually proven over, so the weld is now whole-state and about
+//! the same object.
 //!
 //! **What it does NOT establish — three things, each with its number:**
 //! 1. **Not Pickles validity.** The IPA opening is not in circuit at all, and
@@ -117,9 +132,14 @@
 //!    pinned incoming state are the sub-proof's PUBLIC INPUTS, not its gates (74 250 further rows
 //!    ≈ 203 MB of witness), and no gate of the head descriptor relates `TIP_STATE` to the sub-proof
 //!    commitment — the two are published side by side. So a prover must exhibit a real Fq-transcript
-//!    proof, but nothing in-circuit forces it to be the right block's. **Closing this is the next
-//!    rung and it is a chain of 46 sponge instances welded by input/output pin equality, plus the
-//!    Fp phase-1 leg that ties `fq_digest` to the protocol state.**
+//!    proof, but nothing in-circuit forces it to be the right block's.
+//!    ⚑ **NARROWED 2026-08-05, AND SAY WHICH HALF.** The 46-instance chain this note called "the
+//!    next rung" is built (`circuit-prove/src/mina_phase2_chain_leaf.rs`) and refusals 7-10 make
+//!    this verifier consume its root: the sub-proof's pinned incoming state is no longer a free
+//!    prover choice, because the root's whole outgoing sponge state must equal the sub-proof's
+//!    pinned outgoing block and the root's incoming state must be `(0,0,0)`. **What is still open is
+//!    the Fp phase-1 leg that ties `fq_digest` to the protocol state** — until that lands, the chain
+//!    is anchored at a fresh sponge and at a tape commitment, but not at THIS head.
 //! 3. **Not the accumulator.** `bridge/examples/mina_accumulator_discharge.rs` discharges it
 //!    NATIVELY over 7 real block proofs (27.4 s batched, a forged `sg` refused in each of 7 slots);
 //!    it is not part of this bind.
@@ -168,7 +188,10 @@ use dregg_cell::predicate::{
 };
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
-use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
+use dregg_circuit::descriptor_ir2::{
+    DreggStarkConfig, EffectVmDescriptor2, Ir2BatchProof, verify_vm_descriptor2,
+};
+use dregg_circuit::descriptor_ir2_canonical::effect_vm_descriptor2_semantic_fingerprint;
 use dregg_circuit::faithful9::Faithful9;
 
 use super::mina_accumulator_oracle::{WireAccumulatorClaim, installed_mina_accumulator_oracle};
@@ -180,34 +203,63 @@ use super::mina_accumulator_oracle::{WireAccumulatorClaim, installed_mina_accumu
 /// `EffectAir` source `minaHeadAir`, with no hand-written `VmConstraint2` (house law #1).
 pub const MINA_LC_VERIFY_DESCRIPTOR: &str = "dregg-mina-lightclient-verify::v1";
 
-/// ⚑ **THE FQ-TRANSCRIPT SUB-PROOF'S DESCRIPTOR.** Authored as
-/// `MinaBlockFqTranscript.linkDesc` — the 2 048-instruction Kimchi `fq_kimchi` sponge program with
-/// seven boundary pin blocks. This node VERIFIES a STARK over it before it accepts a Mina head; a
-/// dispatch miss is [`WitnessedPredicateError::Rejected`], never a skip.
-pub const MINA_WRAPLINK_DESCRIPTOR: &str = "dregg-pasta-fq-wraplink::v1";
+/// ⚑ **THE FQ-TRANSCRIPT SUB-PROOF'S DESCRIPTOR.** Authored as `MinaPhase2Chain.chainDesc` — the
+/// 2 048-instruction Kimchi `fq_kimchi` sponge program with **eight** boundary pin blocks. This node
+/// VERIFIES a STARK over it before it accepts a Mina head; a dispatch miss is
+/// [`WitnessedPredicateError::Rejected`], never a skip.
+///
+/// ⚑⚑ **FLAG DAY 2026-08-05 — THIS WAS `dregg-pasta-fq-wraplink::v1` AND THE DIFFERENCE IS A WHOLE
+/// SPONGE LANE.** Both descriptors are the SAME `programAir qLimb absorbProg`
+/// (`MinaPhase2Chain.the_chain_air_extends_the_program_air`); they differ only in which boundary
+/// blocks they publish:
+///
+/// | descriptor | pin blocks | PIs | outgoing lanes exposed |
+/// |---|---|---|---|
+/// | `dregg-pasta-fq-wraplink::v1` | 7 (`in(3) ‖ absorbed(2) ‖ out(2)`) | 224 | **two of three** |
+/// | `dregg-pasta-fq-chainlink::v1` | 8 (`in(3) ‖ out(3) ‖ absorbed(2)`) | 256 | **three of three** |
+///
+/// A Poseidon state is three lanes (`MinaPhase2Chain.the_outgoing_lanes_are_registers_4_5_0`). Under
+/// the wraplink, [`check_chain_root_binding`]'s weld compared 64 of the fold root's 96 outgoing state
+/// limbs and the third lane was compared to **nothing**; under the chainlink it is all 96. And the
+/// chainlink is the descriptor the 46-leaf fold is actually built on
+/// (`circuit-prove/src/mina_phase2_chain_leaf.rs`), so `WRAP_FS_PROVED` attests a permutation OF the
+/// chain the root proves instead of a sibling permutation beside it.
+///
+/// **What re-emits:** `circuit/descriptors/by-name/dregg-mina-lightclient-verify-v1.json` (the nine
+/// `vk_pin` literals move to the chainlink fingerprint), and its VK — i.e. the descriptor bytes a
+/// head STARK is verified against — rotates with it. A pre-flag-day head proof no longer verifies.
+/// [`mina_head_predicate_vk`] is unchanged (it is a function of the HEAD descriptor's NAME, which did
+/// not move), so cell programs keep their pinned vk and simply stop having old proofs accepted.
+pub const MINA_CHAINLINK_DESCRIPTOR: &str = "dregg-pasta-fq-chainlink::v1";
 
-/// Public-input arity of [`MINA_WRAPLINK_DESCRIPTOR`] — seven 32-limb pin blocks (Lean
-/// `MinaBlockFqTranscript.LINK_PI_COUNT`).
-pub const MINA_WRAPLINK_PI_COUNT: usize = 224;
+/// Public-input arity of [`MINA_CHAINLINK_DESCRIPTOR`] — eight 32-limb pin blocks (Lean
+/// `MinaPhase2Chain.CHAIN_PI_COUNT`).
+pub const MINA_CHAINLINK_PI_COUNT: usize = 256;
 
 /// Limbs per Pasta field element in a phase-2 pin block (`PastaFieldSound.SK`).
 pub const PASTA_LIMBS: usize = 32;
 
-/// ⚑ PI offset of the sub-proof's FIRST OUTGOING sponge lane. Lean
-/// `MinaBlockFqTranscript.linkPins` lays the seven blocks out as
-/// `first r0 ‖ first r1 ‖ first r2 ‖ first r3 ‖ first r4 ‖ last r4 ‖ last r5` — three incoming
-/// state lanes, two absorbed elements, then the two lanes the permutation LANDS ON. So the
-/// outgoing pair is slots `160..224`, and that pair is what a recursion root must reproduce.
-pub const WRAPLINK_OUT_LANES_LO: usize = 5 * PASTA_LIMBS;
-/// Width of the sub-proof's outgoing pinned pair (two lanes).
-pub const WRAPLINK_OUT_LANES_WIDTH: usize = 2 * PASTA_LIMBS;
+/// ⚑ PI offset of the sub-proof's FIRST OUTGOING sponge lane. Lean `MinaPhase2Chain.chainPins` lays
+/// the eight blocks out as
+/// `first r0 ‖ first r1 ‖ first r2 ‖ last r4 ‖ last r5 ‖ last r0 ‖ first r3 ‖ first r4` — three
+/// incoming state lanes, then the THREE lanes the permutation lands on, then the two absorbed
+/// elements. So the outgoing state is slots `96..192`, contiguous, and it is exactly the 96-limb
+/// `out_state` a recursion root publishes (`mina_phase2_chain_leaf::OUT_PI_LO`).
+pub const CHAINLINK_OUT_LANES_LO: usize = 3 * PASTA_LIMBS;
+/// Width of the sub-proof's outgoing pinned state — a WHOLE three-lane Poseidon state.
+pub const CHAINLINK_OUT_LANES_WIDTH: usize = 3 * PASTA_LIMBS;
 
 /// Domain separation for the sub-proof public-input commitment the head descriptor publishes at PI
 /// slots 20..28. ⚑ Changing this string is a wire-format flag day for [`MinaHeadProofWire`] AND for
-/// `LightClientMinaAir.WRAPLINK_PI_LANES`; the two are gated against each other by
+/// `LightClientMinaAir.CHAINLINK_PI_LANES`; the two are gated against each other by
 /// `circuit/tests/mina_transcript_carrier_binding.rs`.
-pub const WRAPLINK_PI_COMMITMENT_CONTEXT: &str =
-    "dregg.mina-lightclient.wraplink-subproof-pi-commitment.v1";
+///
+/// ⚑ **IT MOVED WITH THE DESCRIPTOR ON 2026-08-05** (`wraplink-` → `chainlink-`). The arity is
+/// absorbed first, so a 224-PI commitment was never a prefix of a 256-PI one; the rename is the
+/// other half — a commitment minted for the seven-block program cannot be re-read as one for the
+/// eight-block program. There is no accepted second form.
+pub const CHAINLINK_PI_COMMITMENT_CONTEXT: &str =
+    "dregg.mina-lightclient.chainlink-subproof-pi-commitment.v1";
 
 /// Number of public inputs the descriptor declares: nine pinned-anchor lanes, nine verified-tip
 /// lanes, the derived `blockchain_length`, the Samasika depth met, ⚑ the nine-lane commitment
@@ -345,20 +397,20 @@ pub fn mina_head_predicate_vk() -> [u8; 32] {
 ///
 /// The public inputs travel as canonical `u32` BabyBear values and are CHECKED against the pinned
 /// anchor / recorded tip below before the STARK runs — a prover cannot substitute its own PI vector
-/// because the descriptor binds all twenty and this verifier fixes eighteen of them from
+/// because the descriptor binds all thirty and this verifier fixes twenty-eight of them from
 /// authoritative state.
 /// ⚑ **FLAG DAY 2026-08-05: THIS WIRE CARRIES TWO PROOFS.** The transcript fields are REQUIRED, so a
 /// pre-2026-08-05 blob fails to decode rather than being reinterpreted as "no sub-proof supplied" —
 /// the refusal is at the codec, which is the only place it cannot be forgotten.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct MinaHeadProofWire {
-    /// The twenty-nine public inputs, in descriptor order.
+    /// The thirty public inputs, in descriptor order.
     pub public_inputs: Vec<u32>,
     /// The IR-v2 batch proof over `MINA_LC_VERIFY_DESCRIPTOR`.
     pub proof: Ir2BatchProof<DreggStarkConfig>,
-    /// ⚑ The 224 public inputs of the Fq-transcript sub-proof, in `MINA_WRAPLINK_DESCRIPTOR` order.
+    /// ⚑ The 256 public inputs of the Fq-transcript sub-proof, in `MINA_CHAINLINK_DESCRIPTOR` order.
     pub transcript_public_inputs: Vec<u32>,
-    /// ⚑ The IR-v2 batch proof over `MINA_WRAPLINK_DESCRIPTOR`. **This node verifies it.**
+    /// ⚑ The IR-v2 batch proof over `MINA_CHAINLINK_DESCRIPTOR`. **This node verifies it.**
     pub transcript_proof: Ir2BatchProof<DreggStarkConfig>,
     /// ⚑⚑ **THE RECURSION ROOT OF THE 46-LINK PHASE-2 CHAIN**, postcard-serialised
     /// `BatchStarkProof<DreggRecursionConfig>` bytes.
@@ -402,6 +454,97 @@ pub struct MinaChainRootClaim {
 /// Width of one whole three-lane sponge state in the chain claim.
 pub const CHAIN_STATE_WIDTH: usize = 3 * PASTA_LIMBS;
 
+/// ⚑ **THE WELD IS WHOLE-STATE, ASSERTED AT COMPILE TIME.** The recursion root publishes a 96-limb
+/// sponge state and the chainlink sub-proof pins a 96-limb outgoing block; refusal 10 compares them
+/// limb for limb. Under the seven-block wraplink these two were 96 and 64, and the loop silently
+/// covered two thirds of the claim. This is the shape of that mistake made unrepresentable — a
+/// future re-point that narrows the sub-proof's exposed state fails to COMPILE rather than
+/// quietly leaving a lane free.
+const _: () = assert!(CHAINLINK_OUT_LANES_WIDTH == CHAIN_STATE_WIDTH);
+/// And the outgoing block must FIT: `96 + 96 <= 256`.
+const _: () =
+    assert!(CHAINLINK_OUT_LANES_LO + CHAINLINK_OUT_LANES_WIDTH <= MINA_CHAINLINK_PI_COUNT);
+
+/// ⚑⚑ **REFUSAL 5b — THE HEAD DESCRIPTOR'S PROGRAM PIN NAMES THE SUB-PROOF THIS NODE ACTUALLY
+/// VERIFIES.** Both descriptors are in hand at verify time, so this is checkable at RUNTIME, and
+/// after 2026-08-05 it is checked there.
+///
+/// # Why this exists, with the measurement
+///
+/// `WRAP_FS_PROVED = 1` guards nine `proof_bind` congruences that force the head row's `SUB_VK`
+/// columns to nine LITERALS baked into the head descriptor's own bytes. Whether those literals ARE
+/// the served sub-proof descriptor's semantic fingerprint was, until today, asserted **only** by
+/// `circuit/tests/mina_transcript_carrier_binding.rs`. And it had already stopped being true:
+/// `7a4b8ab00` wrote the wraplink fingerprint into Lean correctly, `75df624cf` re-emitted
+/// `pasta-fq-wraplink.json` and moved its bytes, and the literal did not follow. Measured
+/// 2026-08-05 the head descriptor pinned `[460719650, 491018495, …]` while the wraplink descriptor
+/// fingerprinted to `[172082222, 381973190, …]` — **the bind named a program no descriptor in this
+/// tree has**, and every head this node accepted was accepted with that pin satisfied by a prover's
+/// column and tied to nothing.
+///
+/// A pin whose only reader is a test is a pin a running node drifts past. This is the reader that
+/// runs on the node. A drift is now a REFUSED HEAD, not a red test somebody has not looked at.
+///
+/// ⚑ **THIS IS NOT A PIN AGAINST ITS OWN DEFINITION.** The two sides are the head descriptor's
+/// emitted `vk_pin` cells (from `LightClientMinaAir.CHAINLINK_VK_LANES`, through Lean) and a blake3
+/// fingerprint recomputed here over the SUB-PROOF descriptor's canonical bytes. Neither is derived
+/// from the other; they agree only if both artifacts were emitted from the same Lean tree.
+pub fn check_subproof_program_pin(
+    head_desc: &EffectVmDescriptor2,
+    sub_desc: &EffectVmDescriptor2,
+) -> Result<(), String> {
+    let fp = effect_vm_descriptor2_semantic_fingerprint(sub_desc).map_err(|e| {
+        format!(
+            "the {MINA_CHAINLINK_DESCRIPTOR} descriptor has no representable semantic fingerprint \
+             ({e}): this node cannot tell which program the head proof's recursion bind names"
+        )
+    })?;
+    let expected = key_lanes_u32(&fp);
+
+    let binds: Vec<&dregg_circuit::descriptor_ir2::ProofBindSpec> = head_desc
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            dregg_circuit::descriptor_ir2::VmConstraint2::ProofBind(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    if binds.len() != 1 {
+        return Err(format!(
+            "{MINA_LC_VERIFY_DESCRIPTOR} declares {} proof_bind constraints; this consumer requires \
+             exactly one (the nine-lane recursion bind). A head descriptor with a different seam \
+             shape is refused rather than partially checked",
+            binds.len()
+        ));
+    }
+    let pin = binds[0].vk_pin.as_deref().ok_or_else(|| {
+        format!(
+            "{MINA_LC_VERIFY_DESCRIPTOR}'s recursion bind declares NO program pin (`vk_pin: None`): \
+             the row's attested program would be the prover's to choose, so this node refuses the \
+             head rather than verifying a sub-proof of an unnamed program"
+        )
+    })?;
+    if pin.len() != MINA_STATE_LANES {
+        return Err(format!(
+            "{MINA_LC_VERIFY_DESCRIPTOR}'s recursion bind pins {} program lanes; a `Faithful9` \
+             program identity is {MINA_STATE_LANES}. A prefix pin is not a pin",
+            pin.len()
+        ));
+    }
+    for (i, want) in expected.iter().enumerate() {
+        if pin[i] != i64::from(*want) {
+            return Err(format!(
+                "{MINA_LC_VERIFY_DESCRIPTOR} pins program lane {i} at {}, but the descriptor this \
+                 node dispatches for {MINA_CHAINLINK_DESCRIPTOR} fingerprints to {want}: the head \
+                 descriptor's recursion bind names a DIFFERENT program than the sub-proof this node \
+                 verifies. One of the two was re-emitted and the other was not — refusing the head",
+                pin[i]
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// ⚑⚑ **THE INJECTED RECURSION-ROOT BACKEND — the seam, and the reason `dregg-turn` still has no
 /// `dregg-circuit-prove` edge.**
 ///
@@ -435,13 +578,13 @@ pub trait MinaChainRootBackend: Send + Sync + std::fmt::Debug {
 }
 
 /// ⚑ **THE SUB-PROOF PUBLIC-INPUT COMMITMENT** the head descriptor PI-binds at slots 20..28: blake3
-/// derive-key over [`WRAPLINK_PI_COMMITMENT_CONTEXT`], absorbing the arity then every public input as
+/// derive-key over [`CHAINLINK_PI_COMMITMENT_CONTEXT`], absorbing the arity then every public input as
 /// its canonical `u32` little-endian.
 ///
 /// The arity goes in first so a truncated PI vector is not a prefix collision — the class the
 /// `mina-tip` lane was bitten by at the peer-reply boundary, one layer down.
-pub fn wraplink_pi_commitment(pis: &[u32]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new_derive_key(WRAPLINK_PI_COMMITMENT_CONTEXT);
+pub fn chainlink_pi_commitment(pis: &[u32]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key(CHAINLINK_PI_COMMITMENT_CONTEXT);
     h.update(&(pis.len() as u64).to_le_bytes());
     for v in pis {
         h.update(&v.to_le_bytes());
@@ -452,7 +595,7 @@ pub fn wraplink_pi_commitment(pis: &[u32]) -> [u8; 32] {
 /// ⚑ **REFUSAL 4 — THE ROW'S DECLARED SUB-PROOF COMMITMENT IS THE SUPPLIED SUB-PROOF'S.**
 ///
 /// The head descriptor's nine `proof_bind` constraints force the row's attested program to be
-/// `MINA_WRAPLINK_DESCRIPTOR`'s fingerprint, and PI-bind the commitment lanes. What no row-local
+/// `MINA_CHAINLINK_DESCRIPTOR`'s fingerprint, and PI-bind the commitment lanes. What no row-local
 /// polynomial can do is check that a sub-proof with THAT commitment exists — that is off-row by
 /// construction (`DescriptorIR2` §6c). This is that check, and it is the reason the head proof's
 /// carrier is not a bit: the prover must hold a second STARK whose public inputs digest to the nine
@@ -468,14 +611,14 @@ pub fn check_transcript_binding(pis: &[u32], transcript_pis: &[u32]) -> Result<(
             pis.len()
         ));
     }
-    if transcript_pis.len() != MINA_WRAPLINK_PI_COUNT {
+    if transcript_pis.len() != MINA_CHAINLINK_PI_COUNT {
         return Err(format!(
             "the Fq-transcript sub-proof declared {} public inputs; \
-             {MINA_WRAPLINK_DESCRIPTOR} binds exactly {MINA_WRAPLINK_PI_COUNT}",
+             {MINA_CHAINLINK_DESCRIPTOR} binds exactly {MINA_CHAINLINK_PI_COUNT}",
             transcript_pis.len()
         ));
     }
-    let expected = key_lanes_u32(&wraplink_pi_commitment(transcript_pis));
+    let expected = key_lanes_u32(&chainlink_pi_commitment(transcript_pis));
     for (i, want) in expected.iter().enumerate() {
         let got = pis[PI_SUB_COMMIT_BASE + i];
         if got != *want {
@@ -570,12 +713,21 @@ pub fn check_head_binding(
 /// * **9 — the chain started from a FRESH Kimchi sponge.** A root whose `in_state` is anything
 ///   else proves a sentence about a transcript prefix nobody checked — the prover picked where
 ///   to start.
-/// * **10 ⚑⚑ THE WELD.** The root's outgoing lanes 0 and 1 ARE the sub-proof's two pinned
-///   outgoing lanes (`linkPins`' `last r4 ‖ last r5`, slots 160..224). This is what ties the
-///   recursion root to the head proof already being verified: the sub-proof's incoming sponge
-///   state stops being a free prover choice and becomes the output of a 46-link chain that
-///   started at (0,0,0). It is residual (2) of this module's header narrowing — **not closing**:
-///   nothing here relates either object to `TIP_STATE`, which still needs the Fp phase-1 leg.
+/// * **10 ⚑⚑ THE WELD — AND SINCE 2026-08-05 IT IS THE WHOLE SPONGE STATE.** The root's 96
+///   outgoing limbs ARE the sub-proof's pinned outgoing block (`chainPins`' `last r4 ‖ last r5 ‖
+///   last r0`, slots 96..192). This is what ties the recursion root to the head proof already being
+///   verified: the sub-proof's incoming sponge state stops being a free prover choice and becomes
+///   the output of a 46-link chain that started at (0,0,0).
+///
+///   ⚑ **UNDER THE SEVEN-BLOCK WRAPLINK THIS COMPARED 64 OF 96 LIMBS.** A Poseidon state is three
+///   lanes and `linkPins` published two, so `claim.out_state[64..96]` — the third lane — was
+///   compared against nothing at all, and a prover could hand the root any value there. The
+///   comparison below is unchanged in shape; what changed is that
+///   [`CHAINLINK_OUT_LANES_WIDTH`] is now the full [`CHAIN_STATE_WIDTH`], so the loop covers every
+///   limb of the claim rather than two thirds of it.
+///
+///   It is residual (2) of this module's header narrowing — **not closing**: nothing here relates
+///   either object to `TIP_STATE`, which still needs the Fp phase-1 leg.
 pub fn check_chain_root_binding(
     pinned: &[u8; 32],
     measured: &[u8; 32],
@@ -620,14 +772,14 @@ pub fn check_chain_root_binding(
     }
 
     // ── REFUSAL 10 ⚑⚑ THE WELD: the root LANDS ON the sub-proof's own outgoing lanes.
-    if transcript_pis.len() != MINA_WRAPLINK_PI_COUNT {
+    if transcript_pis.len() != MINA_CHAINLINK_PI_COUNT {
         return Err(format!(
             "the Fq-transcript sub-proof declared {} public inputs; \
-             {MINA_WRAPLINK_DESCRIPTOR} binds exactly {MINA_WRAPLINK_PI_COUNT}",
+             {MINA_CHAINLINK_DESCRIPTOR} binds exactly {MINA_CHAINLINK_PI_COUNT}",
             transcript_pis.len()
         ));
     }
-    let sub_out = &transcript_pis[WRAPLINK_OUT_LANES_LO..][..WRAPLINK_OUT_LANES_WIDTH];
+    let sub_out = &transcript_pis[CHAINLINK_OUT_LANES_LO..][..CHAINLINK_OUT_LANES_WIDTH];
     for (i, want) in sub_out.iter().enumerate() {
         let got = claim.out_state[i];
         if got != *want {
@@ -851,13 +1003,29 @@ impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
             .map(|v| BabyBear::new(*v))
             .collect();
         let transcript_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let desc = descriptor_by_name(MINA_WRAPLINK_DESCRIPTOR).ok_or_else(|| {
+            let desc = descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).ok_or_else(|| {
                 format!(
-                    "no descriptor dispatches for {MINA_WRAPLINK_DESCRIPTOR:?} (fail-closed): this \
+                    "no descriptor dispatches for {MINA_CHAINLINK_DESCRIPTOR:?} (fail-closed): this \
                      node cannot check the Mina Wrap proof's Fq transcript and therefore refuses \
                      the head"
                 )
             })?;
+            if desc.public_input_count != MINA_CHAINLINK_PI_COUNT {
+                return Err(format!(
+                    "the descriptor served for {MINA_CHAINLINK_DESCRIPTOR:?} declares {} public \
+                     inputs; this consumer's pin layout is {MINA_CHAINLINK_PI_COUNT}. Refusing an \
+                     ambiguous layout rather than reading the outgoing block off the wrong offsets",
+                    desc.public_input_count
+                ));
+            }
+            // ── ⚑⚑ REFUSAL 5b: the head descriptor's recursion bind names THIS program.
+            let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).ok_or_else(|| {
+                format!(
+                    "no descriptor dispatches for {MINA_LC_VERIFY_DESCRIPTOR:?} (fail-closed): \
+                     this node cannot check a Mina anchored head and therefore refuses one"
+                )
+            })?;
+            check_subproof_program_pin(&head, &desc)?;
             verify_vm_descriptor2(&desc, &wire.transcript_proof, &transcript_pis)
         }));
         match transcript_result {
@@ -940,6 +1108,63 @@ pub fn register_mina_head_verifier_with_chain_root(
 mod tests {
     use super::*;
 
+    /// ⚑⚑ **REFUSAL 5b, POLARITY ONE — the served head descriptor's program pin IS the served
+    /// sub-proof descriptor's fingerprint.** Both objects come from `descriptor_by_name`, so this is
+    /// the exact pair a node holds at verify time, not a reconstruction.
+    ///
+    /// ⚠ This is the check that was RED as a sibling test for hours on 2026-08-05 while every head
+    /// this node accepted carried a pin naming a program no descriptor in the tree had. It runs on
+    /// the node now.
+    #[test]
+    fn the_head_descriptors_program_pin_is_the_served_sub_proofs_fingerprint() {
+        let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
+        let sub =
+            descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).expect("sub-proof descriptor served");
+        assert_eq!(sub.public_input_count, MINA_CHAINLINK_PI_COUNT);
+        check_subproof_program_pin(&head, &sub)
+            .expect("the head's recursion bind must name the sub-proof this node dispatches");
+    }
+
+    /// ⚑⚑ **REFUSAL 5b, POLARITY TWO — a head descriptor pinned to some OTHER program is REFUSED,**
+    /// and the sibling used here is a real served descriptor, so the refusal is not staged against a
+    /// value nothing could produce. This is the shape a re-emission drift takes: one artifact moves,
+    /// the other does not, and the pin silently names a program nobody holds.
+    #[test]
+    fn a_head_pinned_to_a_different_program_is_refused() {
+        let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
+        let other = descriptor_by_name("dregg-mina-lightclient-link::v1")
+            .expect("the multi-row segment descriptor is served");
+        let e = check_subproof_program_pin(&head, &other)
+            .expect_err("a pin naming a different program must be REFUSED");
+        assert!(
+            e.contains("names a DIFFERENT program"),
+            "the refusal must name the substitution; got: {e}"
+        );
+    }
+
+    /// ⚑ And the two descriptors it compares are genuinely different objects, so the refusal above
+    /// is not an artefact of handing the same bytes twice.
+    #[test]
+    fn the_program_pin_refusal_is_not_vacuous() {
+        let sub =
+            descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).expect("sub-proof descriptor served");
+        let other = descriptor_by_name("dregg-mina-lightclient-link::v1").expect("served");
+        assert_ne!(
+            effect_vm_descriptor2_semantic_fingerprint(&sub).expect("representable"),
+            effect_vm_descriptor2_semantic_fingerprint(&other).expect("representable"),
+        );
+    }
+
+    /// ⚑⚑ **THE SEVEN-BLOCK WRAPLINK IS NOT SERVED, AND THAT IS A REFUSAL, NOT AN ABSENCE.** It
+    /// pinned two of a Poseidon state's three outgoing lanes, so a fold-root weld against it
+    /// compared 64 of 96 limbs. A node that could still resolve it by name is a node whose next
+    /// reader can pick the weaker object.
+    #[test]
+    fn the_superseded_wraplink_no_longer_dispatches() {
+        assert!(descriptor_by_name("dregg-pasta-fq-wraplink::v1").is_none());
+        assert!(descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).is_some());
+    }
+
     /// The vk is a function of the DESCRIPTOR NAME, so a VK-epoch flip that renames the descriptor
     /// moves the predicate identity with it rather than leaving a stale predicate dispatching to a
     /// new circuit.
@@ -975,7 +1200,7 @@ mod tests {
     /// check that refuses everything.
     #[test]
     fn a_head_declaring_the_sub_proof_it_presents_is_accepted() {
-        let sub: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        let sub: Vec<u32> = (0..MINA_CHAINLINK_PI_COUNT as u32).collect();
         let pis = pis_with_sub(&[7u8; 32], &[3u8; 32], 290, &sub);
         check_transcript_binding(&pis, &sub).expect("the declared sub-proof IS the presented one");
     }
@@ -985,7 +1210,7 @@ mod tests {
     /// in-AIR binds pin the PROGRAM, and this pins WHICH instance of it.
     #[test]
     fn a_head_presenting_a_different_sub_proof_is_refused() {
-        let declared: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        let declared: Vec<u32> = (0..MINA_CHAINLINK_PI_COUNT as u32).collect();
         let pis = pis_with_sub(&[7u8; 32], &[3u8; 32], 290, &declared);
         let mut other = declared.clone();
         other[0] += 1;
@@ -1000,7 +1225,7 @@ mod tests {
     /// layer down, and the commitment absorbs the arity first so it cannot be a prefix collision.
     #[test]
     fn a_sub_proof_of_the_wrong_arity_is_refused() {
-        let declared: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        let declared: Vec<u32> = (0..MINA_CHAINLINK_PI_COUNT as u32).collect();
         let pis = pis_with_sub(&[7u8; 32], &[3u8; 32], 290, &declared);
         let err = check_transcript_binding(&pis, &declared[..10]).unwrap_err();
         assert!(err.contains("binds exactly"), "{err}");
@@ -1009,7 +1234,7 @@ mod tests {
     /// The honest PI vector with the sub-proof commitment lanes filled from `sub`.
     fn pis_with_sub(anchor: &[u8; 32], tip: &[u8; 32], k: u32, sub: &[u32]) -> Vec<u32> {
         let mut pis = pis_for(anchor, tip, k);
-        for (i, v) in key_lanes_u32(&wraplink_pi_commitment(sub))
+        for (i, v) in key_lanes_u32(&chainlink_pi_commitment(sub))
             .iter()
             .enumerate()
         {
@@ -1182,12 +1407,13 @@ mod tests {
         }
     }
 
-    /// The 224 sub-proof PIs, with the two OUTGOING lanes filled from `out` (128 limbs of the
-    /// chain claim's outgoing state).
+    /// The 256 sub-proof PIs, with the WHOLE outgoing block filled from `out` (all 96 limbs of the
+    /// chain claim's outgoing state — under the seven-block wraplink this was 64 and the third lane
+    /// went unchecked).
     fn sub_pis_landing_on(out: &[u32]) -> Vec<u32> {
-        let mut pis: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
-        pis[WRAPLINK_OUT_LANES_LO..][..WRAPLINK_OUT_LANES_WIDTH]
-            .copy_from_slice(&out[..WRAPLINK_OUT_LANES_WIDTH]);
+        let mut pis: Vec<u32> = (0..MINA_CHAINLINK_PI_COUNT as u32).collect();
+        pis[CHAINLINK_OUT_LANES_LO..][..CHAINLINK_OUT_LANES_WIDTH]
+            .copy_from_slice(&out[..CHAINLINK_OUT_LANES_WIDTH]);
         pis
     }
 
@@ -1258,7 +1484,7 @@ mod tests {
     fn a_root_that_lands_elsewhere_than_the_sub_proof_is_refused() {
         let claim = honest_root_claim();
         let mut sub = sub_pis_landing_on(&claim.out_state);
-        sub[WRAPLINK_OUT_LANES_LO + 5] = sub[WRAPLINK_OUT_LANES_LO + 5].wrapping_add(1);
+        sub[CHAINLINK_OUT_LANES_LO + 5] = sub[CHAINLINK_OUT_LANES_LO + 5].wrapping_add(1);
         let err = check_chain_root_binding(&[9u8; 32], &[9u8; 32], &claim, &sub).unwrap_err();
         assert!(err.contains("does not LAND ON"), "{err}");
     }
@@ -1269,7 +1495,7 @@ mod tests {
     fn a_root_claim_of_the_wrong_width_is_refused() {
         let mut claim = honest_root_claim();
         claim.out_state.pop();
-        let sub: Vec<u32> = (0..MINA_WRAPLINK_PI_COUNT as u32).collect();
+        let sub: Vec<u32> = (0..MINA_CHAINLINK_PI_COUNT as u32).collect();
         let err = check_chain_root_binding(&[9u8; 32], &[9u8; 32], &claim, &sub).unwrap_err();
         assert!(err.contains("state limbs"), "{err}");
     }

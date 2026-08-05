@@ -238,8 +238,11 @@ fn non_chip_sinks(desc: &EffectVmDescriptor2) -> HashSet<usize> {
                     expr_vars(e, &mut sinks);
                 }
             }
+            // ⚑ Lane VECTORS since the 2026-08-05 `ProofBindSpec` widening; this arm did not follow
+            // and the file stopped compiling. Every lane of both vectors is a sink.
             VmConstraint2::ProofBind(m) => {
-                for e in [&m.guard, &m.commit, &m.vk] {
+                expr_vars(&m.guard, &mut sinks);
+                for e in m.commit.iter().chain(m.vk.iter()) {
                     expr_vars(e, &mut sinks);
                 }
             }

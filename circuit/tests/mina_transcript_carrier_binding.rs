@@ -7,47 +7,66 @@
 //! forced `= 1`, with nothing in the circuit computing it. Since 2026-08-05 it publishes two things
 //! instead — `PICKLES_WITNESSED` (the residue, still a bit, and named so) and `WRAP_FS_PROVED`,
 //! whose `= 1` is the guard of **nine `proof_bind` constraints** pinning the row's attested program
-//! lane by lane to the semantic fingerprint of `dregg-pasta-fq-wraplink::v1`.
+//! lane by lane to the semantic fingerprint of `dregg-pasta-fq-chainlink::v1`.
 //!
 //! A pinned literal is only a gate if the two sides come from independent places
 //! (`feedback-a-pin-against-its-own-definition-is-decoration`). Here they do:
 //!
 //! * side A — the nine `vk_pin` literals inside `dregg-mina-lightclient-verify-v1.json`, emitted by
-//!   Lean from `LightClientMinaAir.WRAPLINK_VK_LANES`;
-//! * side B — `effect_vm_descriptor2_semantic_fingerprint(pasta-fq-wraplink.json)`, recomputed here
+//!   Lean from `LightClientMinaAir.CHAINLINK_VK_LANES`;
+//! * side B — `effect_vm_descriptor2_semantic_fingerprint(pasta-fq-chainlink.json)`, recomputed here
 //!   from the SIBLING descriptor's own canonical bytes.
 //!
-//! If the wraplink descriptor is re-emitted and the Mina one is not, side B moves and this goes RED.
+//! If the chainlink descriptor is re-emitted and the Mina one is not, side B moves and this goes RED.
 //! That is the intended coupling: a light client must not keep accepting sub-proofs of a program
 //! that changed shape.
 //!
+//! ⚑⚑ **AND THAT IS NOT HYPOTHETICAL — IT HAPPENED, AND THIS FILE WAS THE ONLY THING THAT NOTICED.**
+//! `7a4b8ab00` wrote the (then-wraplink) fingerprint into Lean correctly. `75df624cf` re-emitted
+//! `pasta-fq-wraplink.json` — its subject line is *"140 served descriptors were not the Lean
+//! object"* — and moved its bytes; the Lean literal did not follow. From then until 2026-08-05 the
+//! head descriptor pinned `[460719650, 491018495, …]` while the served sub-proof fingerprinted to
+//! `[172082222, 381973190, …]`, so **the recursion bind named a program no descriptor in this tree
+//! has.** This test was RED the whole time and nothing else was.
+//!
+//! ⚑ That is why the pin now has a SECOND reader that runs on a node:
+//! `dregg_turn::executor::mina_head_verifier::check_subproof_program_pin` recomputes side B at
+//! verify time and REFUSES the head on a mismatch. A gate only a test can go red on is a gate a
+//! running node drifts past.
+//!
 //! ⚠ **SCOPE, said before the assertions.** Nothing here shows a Pickles proof is valid. What the
-//! wraplink sub-proof establishes is one absorption of a phase-2 `fq_kimchi` transcript — see
-//! `MinaBlockFqTranscript` §2b and the module docs of
+//! chainlink sub-proof establishes is one absorption of a phase-2 `fq_kimchi` transcript — see
+//! `MinaPhase2Chain` and `LightClientMinaAir` §2b, plus the module docs of
 //! `turn/src/executor/mina_head_verifier.rs`. This file gates the BINDING, not the cryptography.
 
 use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, parse_vm_descriptor2};
 use dregg_circuit::descriptor_ir2_canonical::effect_vm_descriptor2_semantic_fingerprint;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint};
 
-const LINK_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fq-wraplink.json");
-const LINK_PIS: &str = include_str!("fixtures/pasta-fq-wraplink-pis.txt");
+const LINK_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fq-chainlink.json");
+/// The 46 chain links' public-input vectors, one line each — TRACKED. Link 45 is the sub-proof the
+/// honest head names; the emit directory's per-link files are gitignored and must never be read.
+const CHAINLINK_ALL_PIS: &str = include_str!("fixtures/pasta-fq-chainlink-pis.txt");
+/// The number of links the phase-2 chain folds — one tracked PI line each.
+const CHAINLINK_LINKS: usize = 46;
 const MINA_LC_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-lightclient-verify-v1.json");
 
-/// The wraplink sub-proof's descriptor name, as the Mina AIR's docblock names it.
-const WRAPLINK_NAME: &str = "dregg-pasta-fq-wraplink::v1";
+/// The chainlink sub-proof's descriptor name, as the Mina AIR's docblock names it.
+const CHAINLINK_NAME: &str = "dregg-pasta-fq-chainlink::v1";
 
 /// Domain separation for the sub-proof public-input commitment the Mina row publishes. Changing
-/// this string is a wire-format flag day for `MinaHeadProofWire`.
-pub const WRAPLINK_PI_COMMITMENT_CONTEXT: &str =
-    "dregg.mina-lightclient.wraplink-subproof-pi-commitment.v1";
+/// this string is a wire-format flag day for `MinaHeadProofWire`. ⚑ It moved with the descriptor on
+/// 2026-08-05 (`wraplink-` → `chainlink-`), so a commitment minted for the seven-block program
+/// cannot be re-read as one for the eight-block program.
+pub const CHAINLINK_PI_COMMITMENT_CONTEXT: &str =
+    "dregg.mina-lightclient.chainlink-subproof-pi-commitment.v1";
 
-/// ⚑ The nine lanes `LightClientMinaAir.WRAPLINK_PI_LANES` transcribes. Lean cannot compute blake3,
+/// ⚑ The nine lanes `LightClientMinaAir.CHAINLINK_PI_LANES` transcribes. Lean cannot compute blake3,
 /// so the literal there is a transcription — and a transcription is only a gate if something
 /// recomputes it. This is that something.
-const LEAN_WRAPLINK_PI_LANES: [u64; 9] = [
-    282313402, 256674713, 393460165, 444143931, 180846534, 309962780, 68660474, 470919245, 9577120,
+const LEAN_CHAINLINK_PI_LANES: [u64; 9] = [
+    76470648, 44150818, 361910605, 443692671, 242143308, 490185822, 240590146, 360276303, 4019771,
 ];
 
 /// Column layout of `dregg-mina-lightclient-verify::v1` after the recursion rung.
@@ -80,13 +99,28 @@ pub fn key_lanes9(bytes: &[u8; 32]) -> [u64; 9] {
 /// ⚑ **THE SUB-PROOF PUBLIC-INPUT COMMITMENT.** blake3 derive-key over the context above, absorbing
 /// every public input as its canonical `u32` little-endian, in descriptor order. This is the value
 /// the Mina row PI-binds at slots 20..28 and the consumer recomputes from the sub-proof it verifies.
-pub fn wraplink_pi_commitment(pis: &[u32]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new_derive_key(WRAPLINK_PI_COMMITMENT_CONTEXT);
+pub fn chainlink_pi_commitment(pis: &[u32]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key(CHAINLINK_PI_COMMITMENT_CONTEXT);
     h.update(&(pis.len() as u64).to_le_bytes());
     for v in pis {
         h.update(&v.to_le_bytes());
     }
     *h.finalize().as_bytes()
+}
+
+/// Link 45's public inputs: the LAST line of the tracked 46-line aggregate.
+fn link45_pis() -> Vec<u32> {
+    let n = CHAINLINK_ALL_PIS.lines().count();
+    assert_eq!(
+        n, CHAINLINK_LINKS,
+        "the tracked chain-link PI aggregate carries {n} lines; the fold is {CHAINLINK_LINKS} links"
+    );
+    parse_pis(
+        CHAINLINK_ALL_PIS
+            .lines()
+            .nth(CHAINLINK_LINKS - 1)
+            .expect("checked non-empty above"),
+    )
 }
 
 fn parse_pis(text: &str) -> Vec<u32> {
@@ -96,7 +130,7 @@ fn parse_pis(text: &str) -> Vec<u32> {
 }
 
 fn link_desc() -> EffectVmDescriptor2 {
-    parse_vm_descriptor2(LINK_DESC_JSON).expect("wraplink descriptor parses")
+    parse_vm_descriptor2(LINK_DESC_JSON).expect("chainlink descriptor parses")
 }
 
 fn mina_desc() -> EffectVmDescriptor2 {
@@ -115,13 +149,13 @@ fn proof_binds(d: &EffectVmDescriptor2) -> Vec<&dregg_circuit::descriptor_ir2::P
 }
 
 /// ⚑ **THE PIN IS AGAINST AN INDEPENDENT SOURCE.** The nine `vk_pin` literals the Mina descriptor
-/// carries ARE the nine `Faithful9` lanes of the wraplink descriptor's semantic fingerprint,
+/// carries ARE the nine `Faithful9` lanes of the chainlink descriptor's semantic fingerprint,
 /// recomputed here from that descriptor's own canonical bytes.
 #[test]
-fn the_mina_carrier_pins_the_real_wraplink_program() {
+fn the_mina_carrier_pins_the_real_chainlink_program() {
     let link = link_desc();
     assert_eq!(
-        link.name, WRAPLINK_NAME,
+        link.name, CHAINLINK_NAME,
         "the sub-proof descriptor identity"
     );
 
@@ -163,8 +197,8 @@ fn the_mina_carrier_pins_the_real_wraplink_program() {
     assert_eq!(
         b.vk_pin.as_deref(),
         Some(&lanes.iter().map(|l| *l as i64).collect::<Vec<i64>>()[..]),
-        "the vk_pin must be the nine lanes of the WRAPLINK fingerprint recomputed from \
-         pasta-fq-wraplink.json — a drift here means one descriptor was re-emitted and the \
+        "the vk_pin must be the nine lanes of the CHAINLINK fingerprint recomputed from \
+         pasta-fq-chainlink.json — a drift here means one descriptor was re-emitted and the \
          other was not"
     );
     assert!(
@@ -229,31 +263,40 @@ fn the_program_pin_is_nine_distinct_lanes() {
 
 /// ⚑ **THE COMMITMENT THE MINA ROW PUBLISHES IS THE SUB-PROOF'S OWN PUBLIC INPUTS.**
 ///
-/// Printed as the Lean literal so `LightClientMinaAir.WRAPLINK_PI_LANES` is a transcription of a
+/// Printed as the Lean literal so `LightClientMinaAir.CHAINLINK_PI_LANES` is a transcription of a
 /// computed value and not a number somebody chose — and asserted against the emitted descriptor's
 /// PI arity so the two cannot drift in shape.
 #[test]
 fn the_published_commitment_covers_the_sub_proofs_public_inputs() {
     let link = link_desc();
-    let pis = parse_pis(LINK_PIS);
+    let pis = link45_pis();
     assert_eq!(
         pis.len(),
         link.public_input_count,
         "the fixture PI vector is the descriptor's declared arity"
     );
-    assert_eq!(pis.len(), 224, "seven 32-limb pin blocks");
+    assert_eq!(
+        pis.len(),
+        256,
+        "eight 32-limb pin blocks: in(3) ++ out(3) ++ absorbed(2)"
+    );
 
-    let digest = wraplink_pi_commitment(&pis);
+    let digest = chainlink_pi_commitment(&pis);
     let lanes = key_lanes9(&digest);
     assert_eq!(
-        lanes, LEAN_WRAPLINK_PI_LANES,
-        "LightClientMinaAir.WRAPLINK_PI_LANES is a TRANSCRIPTION of this digest; a mismatch means \
+        lanes, LEAN_CHAINLINK_PI_LANES,
+        "LightClientMinaAir.CHAINLINK_PI_LANES is a TRANSCRIPTION of this digest; a mismatch means \
          the sub-proof's public inputs, the commitment context, or the Lean literal moved"
     );
 
     // The Mina descriptor PI-binds nine columns for it, at slots 20..28.
     let mina = mina_desc();
-    assert_eq!(mina.public_input_count, 29, "20 + nine commitment lanes");
+    // ⚑ 30, not 29: `adf5aa892` appended `PI_ANCHOR_H` at slot 29. This literal said 29 for hours
+    // after that flip, which is the pin doing its job and nobody reading it.
+    assert_eq!(
+        mina.public_input_count, 30,
+        "20 + nine commitment lanes + the published anchor height"
+    );
     let pinned: Vec<(usize, usize)> = mina
         .constraints
         .iter()

@@ -271,15 +271,20 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-mina-lightclient-link::v1",
         MINA_LIGHTCLIENT_LINK_JSON,
     ),
-    // ⚑⚑ THE Fq-TRANSCRIPT SUB-PROOF the Mina verify rung recursion-binds to (2026-08-05). Served
-    // here because `mina_head_verifier::verify` VERIFIES a STARK over it before it accepts a head:
-    // a dispatch miss is a REJECTION of the turn, so a node built without this row refuses Mina
-    // heads rather than waving the carrier through.
-    ("dregg-pasta-fq-wraplink::v1", MINA_WRAPLINK_TRANSCRIPT_JSON),
-    // ⚑⚑ THE EIGHT-BLOCK CHAIN LINK (2026-08-05). The 46-link fold, the endo lift and the ξ chain
-    // were all PROVED against this descriptor and none of them could reach it by name — it was
-    // emitted, checked in, and served to nobody. Serving it is what lets a consumer dispatch the
-    // chain the fold is actually about instead of the one-permutation wraplink beside it.
+    // ⚑⚑ THE Fq-TRANSCRIPT SUB-PROOF the Mina verify rung recursion-binds to. Served here because
+    // `mina_head_verifier::verify` VERIFIES a STARK over it before it accepts a head: a dispatch
+    // miss is a REJECTION of the turn, so a node built without this row refuses Mina heads rather
+    // than waving the carrier through.
+    //
+    // ⚑⚑ 2026-08-05 — THIS IS THE EIGHT-BLOCK CHAIN LINK, AND `dregg-pasta-fq-wraplink::v1` IS NO
+    // LONGER SERVED AT ALL. The 46-link fold, the endo lift and the ξ chain were all PROVED against
+    // the chainlink and none of them could reach it by name; the head verifier, meanwhile, bound the
+    // seven-block wraplink beside it. Both halves of that are now one name. The wraplink descriptor
+    // is still EMITTED and checked in (`EmitByName.lean` routes it; `pasta_fq_wrap_transcript_proves`
+    // and `mina_xi_endo_weld` read its bytes with `include_str!`), but nothing dispatches it by name
+    // any more, and a served descriptor no consumer resolves is the same wound in the other
+    // direction. A pre-flag-day proof identity is answered `None` and REFUSED rather than
+    // reinterpreted under a program that pins one fewer sponge lane.
     (
         "dregg-pasta-fq-chainlink::v1",
         MINA_CHAINLINK_TRANSCRIPT_JSON,
@@ -541,7 +546,7 @@ const MIDNIGHT_LIGHTCLIENT_VERIFY_JSON: &str =
 /// * `PICKLES_WITNESSED` — the residue, STILL A BIT, renamed so no reader takes it for a check;
 /// * ⚑ `WRAP_FS_PROVED` — **not a bit.** Its `= 1` guards NINE `proof_bind` constraints pinning the
 ///   row's attested program, lane by lane, to the semantic fingerprint of
-///   [`MINA_WRAPLINK_TRANSCRIPT_JSON`], and PI-binds that sub-proof's public-input commitment. The
+///   [`MINA_CHAINLINK_TRANSCRIPT_JSON`], and PI-binds that sub-proof's public-input commitment. The
 ///   consumer then VERIFIES a STARK over that descriptor, fail-closed, before accepting the head.
 ///   A single-felt program tie would be worth `2^31`; nine `Faithful9` lanes are 256 bits.
 ///
@@ -571,31 +576,12 @@ const MINA_LIGHTCLIENT_VERIFY_JSON: &str =
 const MINA_LIGHTCLIENT_LINK_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-lightclient-link-v1.json");
 
-/// ⚑⚑ `dregg-pasta-fq-wraplink::v1` — **THE SUB-PROOF THE MINA LIGHT CLIENT CONSUMES.**
-///
-/// Lean-authored (`Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkDesc`): the 2 048-instruction
-/// Kimchi `fq_kimchi` sponge program — register file plus instruction ROM, the 55×3 round constants
-/// as descriptor CELLS — pinned at seven boundary blocks, 469 columns and 224 public inputs.
-///
-/// ⚑ What a verifying STARK over it establishes, and it is narrower than "a Mina proof is valid":
-/// the final absorption of a phase-2 (`fq_kimchi`-over-Fq) Kimchi transcript, from the incoming
-/// three-lane sponge state its public inputs pin, absorbing the single element they pin, permuted
-/// once through the 55 rounds, lands on the two output lanes they pin. On the fixture instance those
-/// pins are **Mina devnet block 539508's own**, and the two output lanes' low 128 bits are the
-/// `v′`/`u′` that block's `proof.oracles(…)` returned — machine-checked in Lean
-/// (`the_machine_squeezes_the_real_blocks_v_and_u`) against a tape the extractor read from a proof
-/// o1-labs' `kimchi::verifier::verify::<Pallas, …>` accepts.
-///
-/// ⚠ NOT established: that the pinned incoming state is any particular block's. The 45 upstream
-/// permutations are this descriptor's public inputs, not its gates — 74 250 further rows ≈ 203 MB of
-/// witness. See `LightClientMinaAir` §2b, which states the residual with the number.
-const MINA_WRAPLINK_TRANSCRIPT_JSON: &str =
-    include_str!("../descriptors/by-name/pasta-fq-wraplink.json");
-
 /// ⚑⚑ `dregg-pasta-fq-chainlink::v1` — **THE EIGHT-BLOCK LINK THE 46-LINK FOLD IS BUILT ON**, served
-/// from 2026-08-05. Lean-authored (`Dregg2.Circuit.Emit.MinaPhase2Chain.chainDesc`).
+/// from 2026-08-05 and CONSUMED by `turn::executor::mina_head_verifier` from the same day.
+/// Lean-authored (`Dregg2.Circuit.Emit.MinaPhase2Chain.chainDesc`).
 ///
-/// The SAME 2 048-instruction `fq_kimchi` sponge program as [`MINA_WRAPLINK_TRANSCRIPT_JSON`] —
+/// The SAME 2 048-instruction `fq_kimchi` sponge program as `dregg-pasta-fq-wraplink::v1` (emitted,
+/// checked in, and deliberately NOT served — see the dispatch-table note) —
 /// `MinaPhase2Chain.the_chain_air_extends_the_program_air` states both airs as
 /// `programAir qLimb absorbProg ++ <pins>` — differing ONLY in the boundary pin blocks:
 ///
@@ -612,12 +598,19 @@ const MINA_WRAPLINK_TRANSCRIPT_JSON: &str =
 /// `the_whole_phase2_transcript_folds_into_one_claim` can fold 46 of these over block 539508's real
 /// 91-element phase-2 tape and mean something.
 ///
-/// ⚠ **SERVED IS NOT CONSUMED.** Serving this row makes the chainlink dispatchable by name; it does
-/// NOT re-point the Mina head verifier, which still recursion-binds
-/// `dregg-pasta-fq-wraplink::v1` (`turn::executor::mina_head_verifier::MINA_WRAPLINK_DESCRIPTOR`)
-/// and therefore still attests ONE permutation with two of three lanes pinned. Re-pointing
-/// `LightClientMinaAir.WRAPLINK_VK_LANES` at this descriptor's fingerprint is the next step and it
-/// rotates the head VK; see that module's `WRAPLINK_VK_LANES` docblock for the flag day.
+/// ⚑⚑ **AND SINCE 2026-08-05 IT IS CONSUMED, NOT MERELY SERVED.**
+/// `turn::executor::mina_head_verifier::MINA_CHAINLINK_DESCRIPTOR` is THIS name:
+/// `LightClientMinaAir.CHAINLINK_VK_LANES` pins this descriptor's fingerprint, so `WRAP_FS_PROVED`
+/// attests a permutation of the chain the 46-leaf fold proves, and `check_chain_root_binding`'s weld
+/// compares the fold root's whole 96-limb outgoing sponge state instead of 64 of it.
+///
+/// **The flag day that bought it:** `dregg-mina-lightclient-verify-v1.json` re-emitted (nine
+/// `vk_pin` literals moved), and with it the head descriptor's VK — a pre-flag-day
+/// `MinaHeadProofWire` no longer verifies, and its `transcript_public_inputs` arity moved 224 → 256.
+/// The sub-proof PI-commitment context moved with it
+/// (`dregg.mina-lightclient.wraplink-…` → `…chainlink-subproof-pi-commitment.v1`), so an old
+/// commitment cannot be re-read under the new program. `mina_head_predicate_vk()` is UNCHANGED (it
+/// is a function of the HEAD descriptor's NAME), so cell programs keep their pinned vk.
 const MINA_CHAINLINK_TRANSCRIPT_JSON: &str =
     include_str!("../descriptors/by-name/pasta-fq-chainlink.json");
 

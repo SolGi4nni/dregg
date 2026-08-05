@@ -44,14 +44,23 @@ use dregg_recursion_verify::verify::{
 };
 use dregg_turn::executor::{
     MinaChainRootBackend, MinaChainRootClaim, check_chain_root_binding,
-    mina_head_verifier::{MINA_WRAPLINK_PI_COUNT, WRAPLINK_OUT_LANES_LO, WRAPLINK_OUT_LANES_WIDTH},
+    mina_head_verifier::{
+        CHAINLINK_OUT_LANES_LO, CHAINLINK_OUT_LANES_WIDTH, MINA_CHAINLINK_PI_COUNT,
+    },
 };
 
 /// The 46 Lean-emitted chain-link public-input vectors, one line per link, in chain order.
 const CHAIN_PIS_ALL: &str = include_str!("../../circuit/tests/fixtures/pasta-fq-chainlink-pis.txt");
-/// The DEPLOYED `dregg-pasta-fq-wraplink::v1` instance's 224 public inputs — the sub-proof a Mina
-/// anchored head already presents and this node already verifies.
+/// The SEVEN-block `dregg-pasta-fq-wraplink::v1` instance's 224 public inputs. ⚑ Since 2026-08-05
+/// this is NOT the sub-proof a Mina anchored head presents — the head verifier binds the eight-block
+/// chainlink, whose link-45 line lives in [`CHAIN_PIS_ALL`]. It is kept here as an INDEPENDENT
+/// second emission of the same closing squeeze, so §1's agreement is a two-source fact and not a
+/// slice of one file compared against another slice of itself.
 const WRAPLINK_PIS: &str = include_str!("../../circuit/tests/fixtures/pasta-fq-wraplink-pis.txt");
+/// The seven-block layout's PI offset for its FIRST published outgoing lane (`in(3) ‖ absorbed(2) ‖
+/// out(2)`), and the width it publishes: TWO lanes where the chainlink publishes three.
+const WRAPLINK_OUT_LANES_LO: usize = 5 * 32;
+const WRAPLINK_OUT_LANES_WIDTH: usize = 2 * 32;
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // The backend a host injects. Byte-for-byte the body of `node/src/mina_chain_root_backend.rs`;
@@ -110,11 +119,7 @@ fn wraplink_pis() -> Vec<u32> {
         .split_whitespace()
         .map(|c| c.parse::<u32>().expect("PI is a u32 decimal"))
         .collect();
-    assert_eq!(
-        pis.len(),
-        MINA_WRAPLINK_PI_COUNT,
-        "seven 32-limb pin blocks"
-    );
+    assert_eq!(pis.len(), 7 * 32, "seven 32-limb pin blocks");
     pis
 }
 
@@ -153,12 +158,24 @@ fn link_trace(j: usize) -> Vec<Vec<BabyBear>> {
     t
 }
 
-/// The 224 sub-proof PIs with the two outgoing lanes replaced by `out`'s first 64 limbs — the
-/// wraplink instance a root over links `0..=k` would close, for a `k` that is not 45.
+/// Link 45's public inputs — the sub-proof a Mina anchored head presents since 2026-08-05.
+fn chainlink_pis() -> Vec<u32> {
+    all_link_pis()[CHAIN_LINKS - 1]
+        .iter()
+        .map(|v| v.as_u32())
+        .collect()
+}
+
+/// The 256 sub-proof PIs with the WHOLE outgoing block replaced by `out`'s 96 limbs — the chainlink
+/// instance a root over links `0..=k` would close, for a `k` that is not 45.
+///
+/// ⚑ 96, not 64. Under the seven-block wraplink this rewrote two of three sponge lanes and the third
+/// was neither written here nor compared by `check_chain_root_binding`, so a `k != 45` root and the
+/// honest one were indistinguishable in a third of the state.
 fn sub_pis_landing_on(out: &[u32]) -> Vec<u32> {
-    let mut pis = wraplink_pis();
-    pis[WRAPLINK_OUT_LANES_LO..][..WRAPLINK_OUT_LANES_WIDTH]
-        .copy_from_slice(&out[..WRAPLINK_OUT_LANES_WIDTH]);
+    let mut pis = chainlink_pis();
+    pis[CHAINLINK_OUT_LANES_LO..][..CHAINLINK_OUT_LANES_WIDTH]
+        .copy_from_slice(&out[..CHAINLINK_OUT_LANES_WIDTH]);
     pis
 }
 
@@ -167,46 +184,79 @@ fn sub_pis_landing_on(out: &[u32]) -> Vec<u32> {
 //      the expensive tests below are about anything.
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-/// ⚑⚑ **THE 46-LINK CHAIN LANDS EXACTLY WHERE THE DEPLOYED SUB-PROOF LANDS.**
+/// ⚑⚑ **THE 46-LINK CHAIN LANDS EXACTLY WHERE THE PRESENTED SUB-PROOF LANDS — ALL THREE LANES.**
 ///
-/// `dregg-turn`'s refusal 10 requires a root's outgoing lanes 0/1 to BE the Fq-transcript
-/// sub-proof's two pinned outgoing lanes. That requirement is only meaningful if the honest
-/// objects agree — and they do, limb for limb, read from the two TRACKED public-input fixtures:
-/// `MinaPhase2Chain`'s link 45 and `MinaBlockFqTranscript`'s deployed wrap link are the same
-/// closing squeeze of the same block.
+/// `dregg-turn`'s refusal 10 requires a root's 96 outgoing limbs to BE the Fq-transcript sub-proof's
+/// pinned outgoing block. Since 2026-08-05 that sub-proof is the EIGHT-block chainlink and the
+/// requirement is a whole-sponge-state identity; the offsets are checked here so a layout drift
+/// (`OUT_PI_LO` vs `CHAINLINK_OUT_LANES_LO`) is a named red rather than a silent mis-slice.
+///
+/// ⚑ **AND THE SEVEN-BLOCK SIBLING STILL CORROBORATES, ON THE TWO LANES IT PUBLISHES.** That is the
+/// half of this test with independent-source content: `MinaPhase2Chain`'s link 45 and
+/// `MinaBlockFqTranscript`'s wrap link are separate emissions of the same closing squeeze of the
+/// same block, and they agree limb for limb on lanes 0 and 1. ⚑ **The third lane has no second
+/// source — because the wraplink never published it. That is the whole reason this rung was
+/// re-pointed:** under the old binding, `claim.out_state[64..96]` was compared against nothing.
 ///
 /// ⚑ AND THE CHAIN STARTS AT (0,0,0), which is refusal 9's expectation. Without both halves the
 /// weld would be a check that can never pass on honest input — the other way to be vacuous.
 #[test]
-fn the_chains_last_link_lands_on_the_deployed_sub_proofs_pins() {
+fn the_chains_last_link_lands_on_the_presented_sub_proofs_pins() {
     let chain = all_link_pis();
     let wrap = wraplink_pis();
+    let sub = chainlink_pis();
     let last = &chain[CHAIN_LINKS - 1];
 
     let chain_out: Vec<u32> = last[OUT_PI_LO..OUT_PI_LO + STATE_WIDTH]
         .iter()
         .map(|v| v.as_u32())
         .collect();
+
+    // The identity the weld rests on: the consumer's outgoing-block offsets ARE the leaf's.
+    assert_eq!(
+        (CHAINLINK_OUT_LANES_LO, CHAINLINK_OUT_LANES_WIDTH),
+        (OUT_PI_LO, STATE_WIDTH),
+        "the consumer reads the sub-proof's outgoing block at different offsets than the leaf \
+         publishes it — one of the two layouts moved"
+    );
+    assert_eq!(sub.len(), MINA_CHAINLINK_PI_COUNT);
+    assert_eq!(
+        &chain_out[..],
+        &sub[CHAINLINK_OUT_LANES_LO..][..CHAINLINK_OUT_LANES_WIDTH],
+        "link 45's outgoing state is not what the presented sub-proof pins"
+    );
+
+    // ⚑ THE INDEPENDENT SOURCE: the seven-block emission agrees on the two lanes it publishes.
     assert_eq!(
         &chain_out[..WRAPLINK_OUT_LANES_WIDTH],
         &wrap[WRAPLINK_OUT_LANES_LO..][..WRAPLINK_OUT_LANES_WIDTH],
-        "link 45's outgoing lanes 0/1 are not the deployed wrap link's pinned outgoing pair — \
-         the weld `dregg-turn` enforces could never pass on honest input"
+        "link 45's outgoing lanes 0/1 are not the seven-block wrap link's pinned outgoing pair — \
+         two independent emissions of the same squeeze disagree"
     );
+
     assert!(
         chain[0][..STATE_WIDTH].iter().all(|v| v.as_u32() == 0),
         "the chain must start from a FRESH Kimchi sponge (refusal 9's expectation)"
     );
-    // Non-vacuity: the two lanes are not all-zero, so the equality above is checking something.
+    // Non-vacuity: the state is not all-zero, so the equalities above are checking something — and
+    // say it about the THIRD lane specifically, which is the one the re-point bought.
     assert!(
         chain_out[..WRAPLINK_OUT_LANES_WIDTH]
             .iter()
             .any(|v| *v != 0),
         "the outgoing pair is all-zero; the equality is checking nothing"
     );
+    assert!(
+        chain_out[WRAPLINK_OUT_LANES_WIDTH..]
+            .iter()
+            .any(|v| *v != 0),
+        "the THIRD outgoing lane is all-zero; the lane this re-point added to the weld would be \
+         checking nothing"
+    );
     println!(
-        "\n§1 ⚑⚑ link 45's outgoing pair == the deployed wrap link's pinned pair \
-         ({WRAPLINK_OUT_LANES_WIDTH} limbs), and link 0 starts at (0,0,0)."
+        "\n§1 ⚑⚑ link 45's outgoing state == the presented sub-proof's pinned block \
+         ({CHAINLINK_OUT_LANES_WIDTH} limbs, all three lanes); the seven-block sibling \
+         corroborates on {WRAPLINK_OUT_LANES_WIDTH}; link 0 starts at (0,0,0)."
     );
 }
 
@@ -225,7 +275,7 @@ fn a_root_landing_one_limb_away_is_refused_without_any_fold() {
         out_state: out.clone(),
         transcript_acc: vec![0u32; 8],
     };
-    let sub = wraplink_pis();
+    let sub = chainlink_pis();
     check_chain_root_binding(&[1u8; 32], &[1u8; 32], &claim, &sub)
         .expect("the honest pair must BIND");
 
@@ -334,7 +384,7 @@ fn the_extracted_fingerprint_is_still_deterministic() {
 /// ⚑⚑⚑ **THE WHOLE 46-LINK ROOT, WELDED TO THE DEPLOYED SUB-PROOF'S OWN PINS.**
 ///
 /// The full weld: fold all 46 links, then require the root to bind against the DEPLOYED
-/// `pasta-fq-wraplink::v1` public inputs unmodified — no `sub_pis_landing_on` rewrite. What that
+/// `pasta-fq-chainlink::v1` link-45 public inputs unmodified — no `sub_pis_landing_on` rewrite. What that
 /// says, read end to end: *the sponge state the head's sub-proof consumes is the output of a
 /// 46-link chain that started at (0,0,0) and absorbed block 539508's ordered tape* — the residual
 /// this module's header narrows, exercised rather than described.
@@ -369,7 +419,7 @@ fn the_whole_chain_root_binds_to_the_deployed_sub_proof() {
         .expect("the 46-link root must verify through the node's path");
 
     // ⚑ THE DEPLOYED SUB-PROOF'S OWN PINS, UNMODIFIED.
-    check_chain_root_binding(&anchor.0, &measured, &claim, &wraplink_pis())
+    check_chain_root_binding(&anchor.0, &measured, &claim, &chainlink_pis())
         .expect("the whole-chain root must BIND to the deployed wrap link's pins");
 
     println!("\n═══ ⚑⚑⚑ THE WHOLE PHASE-2 CHAIN ROOT, CONSUMED BY THE NODE'S PATH ═══");

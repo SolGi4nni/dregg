@@ -209,8 +209,13 @@ fn collect(d: &EffectVmDescriptor2) -> Reads {
                     expr_cols(e, &mut r.loc_all);
                 }
             }
+            // ⚑ `commit`/`vk` are LANE VECTORS since the 2026-08-05 `ProofBindSpec` widening (they
+            // were one `LeanExpr` each). This arm did not follow and the whole census stopped
+            // COMPILING — a gate that cannot build cannot go red. Every lane of both vectors is
+            // counted, so a nine-lane seam contributes nine columns and not one.
             VmConstraint2::ProofBind(p) => {
-                for e in [&p.guard, &p.commit, &p.vk] {
+                expr_cols(&p.guard, &mut r.loc_all);
+                for e in p.commit.iter().chain(p.vk.iter()) {
                     expr_cols(e, &mut r.loc_all);
                 }
             }
