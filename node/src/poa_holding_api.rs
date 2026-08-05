@@ -34,10 +34,14 @@ use crate::signed_turn_validation::ValidatedSignedTurn;
 use crate::state::NodeState;
 
 /// V1 intentionally remains unread: it did not bind a capability to a Dregg
-/// player and therefore can never authorize sponsorship.
+/// player and therefore can never authorize sponsorship. V2 is read only for
+/// an exact one-time migration into the append-only V3 lineage.
 const ADMISSION_STATE_KEY: &str = "poa_dregg_holding_admission_v2";
-const ADMISSION_STATE_VERSION: u16 = 2;
+const ADMISSION_STATE_ANCHOR_KEY: &str = "poa_dregg_holding_admission_anchor_v3";
+const ADMISSION_STATE_VERSION: u16 = 3;
 const MAX_ADMISSION_STATE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_ADMISSION_JOURNAL_RECORDS: usize = 8192;
+const ADMISSION_JOURNAL_DOMAIN: &[u8] = b"path-of-angels/dregg-holding/admission-journal/v3\0";
 // Bound the live blob independently of traffic volume. Expired rows are pruned,
 // but live authority is never evicted by unrelated traffic: at capacity the
 // newcomer is refused and can retry after the short TTL.
@@ -864,7 +868,10 @@ async fn authorize_poa_holding_finalization_at_v1(
     let durable = admission
         .load()
         .map_err(PoaHoldingFinalizationError::Store)?;
-    let capability = durable
+    let lineage = durable
+        .replay_journal()
+        .map_err(PoaHoldingFinalizationError::Store)?;
+    let capability = lineage
         .capabilities
         .get(&capability_receipt_id)
         .cloned()
@@ -879,8 +886,8 @@ async fn authorize_poa_holding_finalization_at_v1(
         return Err(PoaHoldingFinalizationError::CapabilityExpired);
     }
 
-    let challenge = durable.challenges.get(&capability.challenge_id());
-    let challenge_backed = durable
+    let challenge = lineage.challenges.get(&capability.challenge_id());
+    let challenge_backed = lineage
         .spent_challenges
         .contains(&capability.challenge_id())
         && challenge.is_some_and(|challenge| {
@@ -1005,13 +1012,20 @@ impl std::fmt::Display for PoaHoldingFinalizationError {
 
 impl std::error::Error for PoaHoldingFinalizationError {}
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct DurableAdmissionState {
+    /// Bounded working indexes. These may forget expired rows, but every row
+    /// must be an exact projection of `journal` and may never invent authority.
     challenges: BTreeMap<Bytes32, Challenge>,
     used_nonces: BTreeSet<Bytes32>,
     spent_challenges: BTreeSet<Bytes32>,
     capabilities: BTreeMap<Bytes32, HoldingCapability>,
     spent_capabilities: BTreeSet<Bytes32>,
+    /// Canonical append-only authority lineage. Unlike the working indexes,
+    /// this is never TTL-pruned. At its explicit ceiling admission refuses;
+    /// unrelated traffic may not evict the evidence behind an old receipt.
+    journal: Vec<AdmissionJournalRecord>,
+    journal_head: Bytes32,
 }
 
 impl DurableAdmissionState {
@@ -1035,12 +1049,240 @@ impl DurableAdmissionState {
                     .any(|capability| capability.challenge_id() == *id)
         });
     }
+
+    fn replay_journal(&self) -> Result<AdmissionJournalProjection, String> {
+        if self.journal.len() > MAX_ADMISSION_JOURNAL_RECORDS {
+            return Err("durable admission journal exceeds its record ceiling".to_owned());
+        }
+        let mut projection = AdmissionJournalProjection::default();
+        let mut previous = [0; 32];
+        for (index, record) in self.journal.iter().enumerate() {
+            let ordinal = u64::try_from(index)
+                .map_err(|_| "durable admission journal ordinal overflow".to_owned())?;
+            if record.ordinal != ordinal {
+                return Err("durable admission journal ordinal is not dense".to_owned());
+            }
+            if record.previous_digest != previous {
+                return Err("durable admission journal predecessor mismatch".to_owned());
+            }
+            let expected =
+                admission_journal_digest(record.ordinal, record.previous_digest, &record.event)?;
+            if record.digest != expected {
+                return Err("durable admission journal digest mismatch".to_owned());
+            }
+            match &record.event {
+                AdmissionJournalEvent::ChallengeIssued { challenge } => {
+                    if projection.challenges.contains_key(&challenge.id())
+                        || !projection.used_nonces.insert(challenge.nonce())
+                    {
+                        return Err(
+                            "durable admission journal reissues a challenge or nonce".to_owned()
+                        );
+                    }
+                    projection
+                        .challenges
+                        .insert(challenge.id(), challenge.clone());
+                }
+                AdmissionJournalEvent::CapabilityIssued {
+                    challenge_id,
+                    capability,
+                } => {
+                    let Some(challenge) = projection.challenges.get(challenge_id) else {
+                        return Err(
+                            "durable admission journal capability precedes its challenge"
+                                .to_owned(),
+                        );
+                    };
+                    if capability.challenge_id() != *challenge_id
+                        || capability.player() != challenge.player()
+                        || capability.player_cell() != challenge.player_cell()
+                        || capability.wallet() != challenge.wallet()
+                        || capability.issued_at() < challenge.issued_at()
+                        || capability.issued_at() > challenge.expires_at()
+                    {
+                        return Err(
+                            "durable admission journal capability/challenge binding mismatch"
+                                .to_owned(),
+                        );
+                    }
+                    if !projection.spent_challenges.insert(*challenge_id) {
+                        return Err(
+                            "durable admission journal spends one challenge twice".to_owned()
+                        );
+                    }
+                    if projection
+                        .capabilities
+                        .insert(capability.receipt_id(), capability.clone())
+                        .is_some()
+                    {
+                        return Err(
+                            "durable admission journal reissues a capability receipt".to_owned()
+                        );
+                    }
+                }
+            }
+            previous = record.digest;
+        }
+        if self.journal_head != previous {
+            return Err("durable admission journal head mismatch".to_owned());
+        }
+        Ok(projection)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let projection = self.replay_journal()?;
+        for (id, challenge) in &self.challenges {
+            if projection.challenges.get(id) != Some(challenge) {
+                return Err("live challenge index invents or mutates authority".to_owned());
+            }
+        }
+        for (id, capability) in &self.capabilities {
+            if projection.capabilities.get(id) != Some(capability) {
+                return Err("live capability index invents or mutates authority".to_owned());
+            }
+        }
+        let expected_nonces = self.challenges.values().map(Challenge::nonce).collect();
+        if self.used_nonces != expected_nonces {
+            return Err("live nonce index is not the exact challenge projection".to_owned());
+        }
+        let expected_spent_challenges = projection
+            .spent_challenges
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.challenges.contains_key(id)
+                    || self
+                        .capabilities
+                        .values()
+                        .any(|capability| capability.challenge_id() == *id)
+            })
+            .collect();
+        if self.spent_challenges != expected_spent_challenges {
+            return Err(
+                "live spent-challenge index is not the exact lineage projection".to_owned(),
+            );
+        }
+        if !self
+            .spent_capabilities
+            .iter()
+            .all(|id| projection.capabilities.contains_key(id))
+        {
+            return Err("live spent-capability index invents authority".to_owned());
+        }
+        Ok(())
+    }
+
+    fn append(&mut self, event: AdmissionJournalEvent) -> Result<(), String> {
+        if self.journal.len() >= MAX_ADMISSION_JOURNAL_RECORDS {
+            return Err("durable admission journal capacity exhausted".to_owned());
+        }
+        let ordinal = u64::try_from(self.journal.len())
+            .map_err(|_| "durable admission journal ordinal overflow".to_owned())?;
+        let digest = admission_journal_digest(ordinal, self.journal_head, &event)?;
+        self.journal.push(AdmissionJournalRecord {
+            ordinal,
+            previous_digest: self.journal_head,
+            event,
+            digest,
+        });
+        self.journal_head = digest;
+        Ok(())
+    }
+
+    fn historical_challenge(&self, id: &Bytes32) -> Result<Option<Challenge>, String> {
+        Ok(self.replay_journal()?.challenges.get(id).cloned())
+    }
+
+    fn historical_capability(&self, id: &Bytes32) -> Result<Option<HoldingCapability>, String> {
+        Ok(self.replay_journal()?.capabilities.get(id).cloned())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum AdmissionJournalEvent {
+    ChallengeIssued {
+        challenge: Challenge,
+    },
+    CapabilityIssued {
+        challenge_id: Bytes32,
+        capability: HoldingCapability,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct AdmissionJournalRecord {
+    ordinal: u64,
+    previous_digest: Bytes32,
+    event: AdmissionJournalEvent,
+    digest: Bytes32,
+}
+
+#[derive(Default)]
+struct AdmissionJournalProjection {
+    challenges: BTreeMap<Bytes32, Challenge>,
+    used_nonces: BTreeSet<Bytes32>,
+    spent_challenges: BTreeSet<Bytes32>,
+    capabilities: BTreeMap<Bytes32, HoldingCapability>,
+}
+
+fn admission_journal_digest(
+    ordinal: u64,
+    previous_digest: Bytes32,
+    event: &AdmissionJournalEvent,
+) -> Result<Bytes32, String> {
+    // The event bytes are postcard's deterministic struct/enum encoding. The
+    // explicit domain, ordinal, predecessor and length make concatenation
+    // unambiguous; load additionally demands byte-exact envelope re-encoding.
+    let event_bytes = postcard::to_stdvec(event)
+        .map_err(|error| format!("journal event encode failed: {error}"))?;
+    let event_len =
+        u64::try_from(event_bytes.len()).map_err(|_| "journal event length overflow".to_owned())?;
+    let mut hash = Sha256::new();
+    hash.update(ADMISSION_JOURNAL_DOMAIN);
+    hash.update(ordinal.to_be_bytes());
+    hash.update(previous_digest);
+    hash.update(event_len.to_be_bytes());
+    hash.update(event_bytes);
+    Ok(hash.finalize().into())
 }
 
 #[derive(Serialize, Deserialize)]
 struct DurableAdmissionEnvelope {
     version: u16,
     state: DurableAdmissionState,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DurableAdmissionStateV2 {
+    challenges: BTreeMap<Bytes32, Challenge>,
+    used_nonces: BTreeSet<Bytes32>,
+    spent_challenges: BTreeSet<Bytes32>,
+    capabilities: BTreeMap<Bytes32, HoldingCapability>,
+    spent_capabilities: BTreeSet<Bytes32>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DurableAdmissionEnvelopeV2 {
+    version: u16,
+    state: DurableAdmissionStateV2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct DurableAdmissionAnchor {
+    version: u16,
+    journal_len: u64,
+    journal_head: Bytes32,
+}
+
+impl DurableAdmissionAnchor {
+    fn from_state(state: &DurableAdmissionState) -> Result<Self, String> {
+        Ok(Self {
+            version: ADMISSION_STATE_VERSION,
+            journal_len: u64::try_from(state.journal.len())
+                .map_err(|_| "durable admission journal length overflow".to_owned())?,
+            journal_head: state.journal_head,
+        })
+    }
 }
 
 struct RedbAdmissionStore {
@@ -1058,26 +1300,155 @@ impl RedbAdmissionStore {
             .get_config(ADMISSION_STATE_KEY)
             .map_err(|error| error.to_string())?
         else {
+            if self.load_anchor()?.is_some() {
+                return Err("durable admission state is missing behind its anchor".to_owned());
+            }
             return Ok(DurableAdmissionState::default());
         };
         if bytes.len() > MAX_ADMISSION_STATE_BYTES {
             return Err("durable admission state exceeds its size ceiling".to_owned());
         }
-        let envelope: DurableAdmissionEnvelope =
+        if let Ok(envelope) = postcard::from_bytes::<DurableAdmissionEnvelope>(&bytes) {
+            if envelope.version == ADMISSION_STATE_VERSION {
+                let canonical = postcard::to_stdvec(&envelope)
+                    .map_err(|error| format!("encode failed: {error}"))?;
+                if canonical != bytes {
+                    return Err("durable admission state is not canonically encoded".to_owned());
+                }
+                envelope.state.validate()?;
+                self.validate_or_advance_anchor(&envelope.state)?;
+                return Ok(envelope.state);
+            }
+        }
+
+        let legacy: DurableAdmissionEnvelopeV2 =
             postcard::from_bytes(&bytes).map_err(|error| format!("decode failed: {error}"))?;
-        if envelope.version != ADMISSION_STATE_VERSION {
+        if legacy.version != 2 {
             return Err(format!(
                 "unsupported durable admission version {}",
-                envelope.version
+                legacy.version
             ));
         }
-        Ok(envelope.state)
+        if self.load_anchor()?.is_some() {
+            return Err("legacy admission state cannot replace an anchored V3 lineage".to_owned());
+        }
+        let canonical = postcard::to_stdvec(&legacy)
+            .map_err(|error| format!("legacy encode failed: {error}"))?;
+        if canonical != bytes {
+            return Err("legacy durable admission state is not canonically encoded".to_owned());
+        }
+        let migrated = Self::migrate_v2(legacy.state)?;
+        self.save(&migrated)?;
+        Ok(migrated)
     }
 
-    fn save(&self, state: DurableAdmissionState) -> Result<(), String> {
+    fn migrate_v2(legacy: DurableAdmissionStateV2) -> Result<DurableAdmissionState, String> {
+        let DurableAdmissionStateV2 {
+            challenges,
+            used_nonces,
+            spent_challenges,
+            capabilities,
+            spent_capabilities,
+        } = legacy;
+        if used_nonces != challenges.values().map(Challenge::nonce).collect() {
+            return Err("legacy durable admission nonce index is inconsistent".to_owned());
+        }
+        if !spent_capabilities
+            .iter()
+            .all(|id| capabilities.contains_key(id))
+        {
+            return Err("legacy durable admission spent capability is unknown".to_owned());
+        }
+        let mut migrated = DurableAdmissionState::default();
+        for challenge in challenges.values() {
+            migrated.append(AdmissionJournalEvent::ChallengeIssued {
+                challenge: challenge.clone(),
+            })?;
+        }
+        for capability in capabilities.values() {
+            if !spent_challenges.contains(&capability.challenge_id()) {
+                return Err("legacy capability has no spent challenge".to_owned());
+            }
+            migrated.append(AdmissionJournalEvent::CapabilityIssued {
+                challenge_id: capability.challenge_id(),
+                capability: capability.clone(),
+            })?;
+        }
+        migrated.challenges = challenges;
+        migrated.used_nonces = used_nonces;
+        migrated.spent_challenges = spent_challenges;
+        migrated.capabilities = capabilities;
+        migrated.spent_capabilities = spent_capabilities;
+        migrated.validate()?;
+        Ok(migrated)
+    }
+
+    fn load_anchor(&self) -> Result<Option<DurableAdmissionAnchor>, String> {
+        let Some(bytes) = self
+            .store
+            .get_config(ADMISSION_STATE_ANCHOR_KEY)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
+        let anchor: DurableAdmissionAnchor = postcard::from_bytes(&bytes)
+            .map_err(|error| format!("admission anchor decode failed: {error}"))?;
+        let canonical = postcard::to_stdvec(&anchor)
+            .map_err(|error| format!("admission anchor encode failed: {error}"))?;
+        if canonical != bytes || anchor.version != ADMISSION_STATE_VERSION {
+            return Err("durable admission anchor is noncanonical or unsupported".to_owned());
+        }
+        Ok(Some(anchor))
+    }
+
+    fn store_anchor(&self, anchor: DurableAdmissionAnchor) -> Result<(), String> {
+        let bytes = postcard::to_stdvec(&anchor)
+            .map_err(|error| format!("admission anchor encode failed: {error}"))?;
+        self.store
+            .set_config(ADMISSION_STATE_ANCHOR_KEY, &bytes)
+            .map_err(|error| error.to_string())
+    }
+
+    fn validate_or_advance_anchor(&self, state: &DurableAdmissionState) -> Result<(), String> {
+        let current = DurableAdmissionAnchor::from_state(state)?;
+        let Some(anchor) = self.load_anchor()? else {
+            // Empty legacy databases and the narrow crash window after the
+            // first V3 state write acquire their anchor from the fully audited
+            // journal, never from an unaudited live snapshot.
+            self.store_anchor(current)?;
+            return Ok(());
+        };
+        if anchor == current {
+            return Ok(());
+        }
+        if anchor.journal_len > current.journal_len {
+            return Err("durable admission state rolled back behind its anchor".to_owned());
+        }
+        let anchored_head = if anchor.journal_len == 0 {
+            [0; 32]
+        } else {
+            let index = usize::try_from(anchor.journal_len - 1)
+                .map_err(|_| "durable admission anchor length overflow".to_owned())?;
+            state
+                .journal
+                .get(index)
+                .map(|record| record.digest)
+                .ok_or_else(|| "durable admission state rolled back behind its anchor".to_owned())?
+        };
+        if anchored_head != anchor.journal_head {
+            return Err("durable admission state diverges from its anchored prefix".to_owned());
+        }
+        // `save` writes the complete audited state first and its anchor second.
+        // A crash between those commits is recovered only when the old anchor
+        // is an exact prefix of the new valid lineage.
+        self.store_anchor(current)
+    }
+
+    fn save(&self, state: &DurableAdmissionState) -> Result<(), String> {
+        state.validate()?;
         let bytes = postcard::to_stdvec(&DurableAdmissionEnvelope {
             version: ADMISSION_STATE_VERSION,
-            state,
+            state: state.clone(),
         })
         .map_err(|error| format!("encode failed: {error}"))?;
         if bytes.len() > MAX_ADMISSION_STATE_BYTES {
@@ -1085,16 +1456,21 @@ impl RedbAdmissionStore {
         }
         self.store
             .set_config(ADMISSION_STATE_KEY, &bytes)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        self.store_anchor(DurableAdmissionAnchor::from_state(state)?)
     }
 
     fn mutate<T>(
         &mut self,
-        change: impl FnOnce(&mut DurableAdmissionState) -> T,
+        change: impl FnOnce(&mut DurableAdmissionState) -> Result<T, String>,
     ) -> Result<T, String> {
         let mut state = self.load()?;
-        let result = change(&mut state);
-        self.save(state)?;
+        let original_journal = state.journal.clone();
+        let result = change(&mut state)?;
+        if !state.journal.starts_with(&original_journal) {
+            return Err("durable admission journal mutation or rollback refused".to_owned());
+        }
+        self.save(&state)?;
         Ok(result)
     }
 }
@@ -1109,26 +1485,35 @@ impl AdmissionStore for RedbAdmissionStore {
     ) -> Result<ChallengeIssue, Self::Error> {
         self.mutate(|state| {
             state.prune_expired(challenge.issued_at());
+            let projection = state.replay_journal()?;
             // Live issued authority is never evicted by unrelated traffic.
             // At capacity the newcomer loses and can retry after expiry.
-            if state.challenges.len() >= MAX_LIVE_CHALLENGES {
-                return ChallengeIssue::CapacityExceeded;
+            if state.challenges.len() >= MAX_LIVE_CHALLENGES
+                || state.journal.len() >= MAX_ADMISSION_JOURNAL_RECORDS
+            {
+                return Ok(ChallengeIssue::CapacityExceeded);
             }
-            if !state.used_nonces.insert(nonce) || state.challenges.contains_key(&challenge.id()) {
-                return ChallengeIssue::Replay;
+            if projection.used_nonces.contains(&nonce)
+                || projection.challenges.contains_key(&challenge.id())
+            {
+                return Ok(ChallengeIssue::Replay);
             }
             let challenge_id = challenge.id();
+            state.append(AdmissionJournalEvent::ChallengeIssued {
+                challenge: challenge.clone(),
+            })?;
+            state.used_nonces.insert(nonce);
             state.challenges.insert(challenge_id, challenge);
-            ChallengeIssue::Issued
+            Ok(ChallengeIssue::Issued)
         })
     }
 
     fn challenge(&self, id: &Bytes32) -> Result<Option<Challenge>, Self::Error> {
-        Ok(self.load()?.challenges.get(id).cloned())
+        self.load()?.historical_challenge(id)
     }
 
     fn challenge_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error> {
-        Ok(self.load()?.spent_challenges.contains(id))
+        Ok(self.load()?.replay_journal()?.spent_challenges.contains(id))
     }
 
     fn issue_capability_once(
@@ -1138,30 +1523,37 @@ impl AdmissionStore for RedbAdmissionStore {
     ) -> Result<CapabilityIssue, Self::Error> {
         self.mutate(|state| {
             state.prune_expired(capability.issued_at());
-            if !state.challenges.contains_key(&challenge_id) {
-                return CapabilityIssue::UnknownChallenge;
+            let projection = state.replay_journal()?;
+            if !projection.challenges.contains_key(&challenge_id) {
+                return Ok(CapabilityIssue::UnknownChallenge);
             }
-            if state.spent_challenges.contains(&challenge_id) {
-                return CapabilityIssue::ChallengeReplay;
+            if projection.spent_challenges.contains(&challenge_id) {
+                return Ok(CapabilityIssue::ChallengeReplay);
             }
             if capability.challenge_id() != challenge_id {
-                return CapabilityIssue::ChallengeMismatch;
+                return Ok(CapabilityIssue::ChallengeMismatch);
             }
-            if state.capabilities.len() >= MAX_LIVE_CAPABILITIES {
-                return CapabilityIssue::CapacityExceeded;
+            if state.capabilities.len() >= MAX_LIVE_CAPABILITIES
+                || state.journal.len() >= MAX_ADMISSION_JOURNAL_RECORDS
+            {
+                return Ok(CapabilityIssue::CapacityExceeded);
             }
             let id = capability.receipt_id();
-            if state.capabilities.contains_key(&id) {
-                return CapabilityIssue::CapabilityCollision;
+            if projection.capabilities.contains_key(&id) {
+                return Ok(CapabilityIssue::CapabilityCollision);
             }
+            state.append(AdmissionJournalEvent::CapabilityIssued {
+                challenge_id,
+                capability: capability.clone(),
+            })?;
             state.spent_challenges.insert(challenge_id);
             state.capabilities.insert(id, capability);
-            CapabilityIssue::Issued
+            Ok(CapabilityIssue::Issued)
         })
     }
 
     fn capability(&self, id: &Bytes32) -> Result<Option<HoldingCapability>, Self::Error> {
-        Ok(self.load()?.capabilities.get(id).cloned())
+        self.load()?.historical_capability(id)
     }
 
     fn capability_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error> {
@@ -1410,10 +1802,8 @@ mod tests {
     #[tokio::test]
     async fn durable_store_prunes_expired_rows_without_disturbing_live_status() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = Arc::new(
-            dregg_persist::PersistentStore::open(&dir.path().join("admission.redb"))
-                .expect("store"),
-        );
+        let path = dir.path().join("admission.redb");
+        let store = Arc::new(dregg_persist::PersistentStore::open(&path).expect("store"));
         let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
         let key = SigningKey::from_bytes(&[3; 32]);
         let wallet = key.verifying_key().to_bytes();
@@ -1457,7 +1847,7 @@ mod tests {
             gate.issue(&config, wallet, player, [10; 32], 2000, 1000)
                 .expect("current challenge")
         };
-        let durable = RedbAdmissionStore::new(store)
+        let durable = RedbAdmissionStore::new(Arc::clone(&store))
             .load()
             .expect("durable state");
         assert_eq!(durable.challenges.len(), 1);
@@ -1466,6 +1856,279 @@ mod tests {
         assert!(durable.capabilities.is_empty());
         assert!(durable.spent_challenges.is_empty());
         assert!(durable.spent_capabilities.is_empty());
+        assert_eq!(durable.journal.len(), 3);
+
+        let lineage = durable.replay_journal().expect("complete lineage");
+        assert_eq!(
+            lineage.challenges.get(&old_challenge.id()),
+            Some(&old_challenge)
+        );
+        assert_eq!(
+            lineage.capabilities.get(&old_capability.receipt_id()),
+            Some(&old_capability)
+        );
+        assert!(lineage.spent_challenges.contains(&old_challenge.id()));
+
+        // Expiring the live cache must not turn an issued receipt into an
+        // unknown one or reopen its consumed challenge, including after the
+        // redb process image is closed and reopened.
+        drop(durable);
+        drop(store);
+        let reopened = Arc::new(dregg_persist::PersistentStore::open(&path).expect("reopen"));
+        let reopened_gate = Gate::with_store(RedbAdmissionStore::new(Arc::clone(&reopened)));
+        assert!(matches!(
+            reopened_gate
+                .capability_status(&old_capability.receipt_id(), 1000)
+                .expect("historical status"),
+            CapabilityStatus::Expired(capability) if capability == old_capability
+        ));
+        assert_eq!(
+            reopened_gate.preflight_beta(&config, &old_challenge, &binding, 11),
+            Err(GateError::ChallengeReplay)
+        );
+    }
+
+    #[test]
+    fn admission_journal_refuses_state_rollback_and_frame_corruption() {
+        let store = Arc::new(dregg_persist::PersistentStore::open_in_memory().expect("store"));
+        let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
+        let wallet = SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes();
+        let player = SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes();
+        let first = Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)))
+            .issue(&config, wallet, player, [9; 32], 1000, 10)
+            .expect("first challenge");
+        let old_state = store
+            .get_config(ADMISSION_STATE_KEY)
+            .expect("old state read")
+            .expect("old state");
+        let old_anchor = store
+            .get_config(ADMISSION_STATE_ANCHOR_KEY)
+            .expect("old anchor read")
+            .expect("old anchor");
+
+        Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)))
+            .issue(&config, wallet, player, [10; 32], 1001, 11)
+            .expect("second challenge");
+        let latest_state = store
+            .get_config(ADMISSION_STATE_KEY)
+            .expect("latest state read")
+            .expect("latest state");
+        let latest_anchor = store
+            .get_config(ADMISSION_STATE_ANCHOR_KEY)
+            .expect("anchor read")
+            .expect("anchor");
+
+        // `save` orders the atomic redb state replacement before the anchor
+        // replacement. Simulate a crash in that one inter-transaction window:
+        // recovery may advance the old anchor only because it is an exact
+        // prefix of the fully decoded, canonically rehashed new journal.
+        store
+            .set_config(ADMISSION_STATE_ANCHOR_KEY, &old_anchor)
+            .expect("simulate pre-anchor crash");
+        RedbAdmissionStore::new(Arc::clone(&store))
+            .load()
+            .expect("exact state extension recovers its lagging anchor");
+        assert_eq!(
+            store
+                .get_config(ADMISSION_STATE_ANCHOR_KEY)
+                .expect("recovered anchor read")
+                .expect("recovered anchor"),
+            latest_anchor
+        );
+
+        store
+            .set_config(ADMISSION_STATE_KEY, &old_state)
+            .expect("simulate state-only rollback");
+        let rollback = RedbAdmissionStore::new(Arc::clone(&store))
+            .load()
+            .expect_err("state behind monotonic anchor must refuse");
+        assert!(rollback.contains("rolled back"), "{rollback}");
+
+        store
+            .set_config(ADMISSION_STATE_KEY, &latest_state)
+            .expect("restore latest state");
+        store
+            .set_config(ADMISSION_STATE_ANCHOR_KEY, &latest_anchor)
+            .expect("restore latest anchor");
+        let mut envelope: DurableAdmissionEnvelope =
+            postcard::from_bytes(&latest_state).expect("decode latest envelope");
+        assert_eq!(
+            envelope.state.journal[0].event,
+            AdmissionJournalEvent::ChallengeIssued { challenge: first }
+        );
+        envelope.state.journal[0].digest[0] ^= 1;
+        let corrupted = postcard::to_stdvec(&envelope).expect("encode corruption");
+        store
+            .set_config(ADMISSION_STATE_KEY, &corrupted)
+            .expect("install corrupt frame");
+        let corruption = RedbAdmissionStore::new(store)
+            .load()
+            .expect_err("corrupt journal frame must refuse");
+        assert!(corruption.contains("digest mismatch"), "{corruption}");
+    }
+
+    #[test]
+    fn admission_journal_refuses_reorder_and_live_index_invention() {
+        let store = Arc::new(dregg_persist::PersistentStore::open_in_memory().expect("store"));
+        let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
+        let wallet = SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes();
+        let player = SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes();
+        for (nonce, now) in [([9; 32], 10), ([10; 32], 11)] {
+            Gate::with_store(RedbAdmissionStore::new(Arc::clone(&store)))
+                .issue(&config, wallet, player, nonce, 1000, now)
+                .expect("challenge");
+        }
+        let bytes = store
+            .get_config(ADMISSION_STATE_KEY)
+            .expect("state read")
+            .expect("state");
+        let mut envelope: DurableAdmissionEnvelope =
+            postcard::from_bytes(&bytes).expect("decode state");
+        envelope.state.journal.swap(0, 1);
+        store
+            .set_config(
+                ADMISSION_STATE_KEY,
+                &postcard::to_stdvec(&envelope).expect("encode reorder"),
+            )
+            .expect("install reorder");
+        assert!(
+            RedbAdmissionStore::new(Arc::clone(&store))
+                .load()
+                .expect_err("reordered journal must refuse")
+                .contains("ordinal")
+        );
+
+        let mut envelope: DurableAdmissionEnvelope =
+            postcard::from_bytes(&bytes).expect("decode clean state");
+        let invented = Gate::new()
+            .issue(&config, wallet, player, [88; 32], 1000, 12)
+            .expect("detached challenge");
+        envelope
+            .state
+            .challenges
+            .insert(invented.id(), invented.clone());
+        envelope.state.used_nonces.insert(invented.nonce());
+        store
+            .set_config(
+                ADMISSION_STATE_KEY,
+                &postcard::to_stdvec(&envelope).expect("encode invention"),
+            )
+            .expect("install invention");
+        assert!(
+            RedbAdmissionStore::new(store)
+                .load()
+                .expect_err("live snapshot invention must refuse")
+                .contains("invents")
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_v2_migrates_only_complete_live_authority_into_v3_lineage() {
+        let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
+        let key = SigningKey::from_bytes(&[3; 32]);
+        let wallet = key.verifying_key().to_bytes();
+        let player = SigningKey::from_bytes(&[0x51; 32])
+            .verifying_key()
+            .to_bytes();
+        let mut source = Gate::new();
+        let challenge = source
+            .issue(&config, wallet, player, [9; 32], 1000, 10)
+            .expect("challenge");
+        let observation = validate_rpc_snapshot(
+            &config,
+            &challenge,
+            &FakeRpc {
+                endpoint_id: [8; 32],
+                wallet,
+                amount: 17,
+                slot: 1000,
+            }
+            .holding_snapshot(challenge.clone())
+            .await
+            .expect("snapshot"),
+        )
+        .expect("observation");
+        let binding = dregg_governance::holding_weight::OwnerBinding {
+            voter: challenge.player(),
+            sig: key.sign(&challenge.signing_message()).to_bytes(),
+        };
+        let capability = source
+            .admit_beta(&config, &challenge, &binding, observation, 11)
+            .expect("capability");
+        let legacy = DurableAdmissionEnvelopeV2 {
+            version: 2,
+            state: DurableAdmissionStateV2 {
+                challenges: BTreeMap::from([(challenge.id(), challenge.clone())]),
+                used_nonces: BTreeSet::from([challenge.nonce()]),
+                spent_challenges: BTreeSet::from([challenge.id()]),
+                capabilities: BTreeMap::from([(capability.receipt_id(), capability.clone())]),
+                spent_capabilities: BTreeSet::new(),
+            },
+        };
+        let store = Arc::new(dregg_persist::PersistentStore::open_in_memory().expect("store"));
+        store
+            .set_config(
+                ADMISSION_STATE_KEY,
+                &postcard::to_stdvec(&legacy).expect("legacy encode"),
+            )
+            .expect("legacy install");
+        let migrated = RedbAdmissionStore::new(Arc::clone(&store))
+            .load()
+            .expect("migration");
+        assert_eq!(migrated.journal.len(), 2);
+        assert_eq!(
+            migrated
+                .historical_challenge(&challenge.id())
+                .expect("challenge lookup"),
+            Some(challenge)
+        );
+        assert_eq!(
+            migrated
+                .historical_capability(&capability.receipt_id())
+                .expect("capability lookup"),
+            Some(capability)
+        );
+        assert!(
+            store
+                .get_config(ADMISSION_STATE_ANCHOR_KEY)
+                .expect("anchor read")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn admission_journal_capacity_refuses_without_evicting_its_prefix() {
+        let config = GateConfig::path_of_angels_mainnet([7; 32], [8; 32]);
+        let challenge = Gate::new()
+            .issue(
+                &config,
+                SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes(),
+                SigningKey::from_bytes(&[0x51; 32])
+                    .verifying_key()
+                    .to_bytes(),
+                [9; 32],
+                1000,
+                10,
+            )
+            .expect("challenge");
+        let event = AdmissionJournalEvent::ChallengeIssued { challenge };
+        let mut state = DurableAdmissionState::default();
+        state.append(event.clone()).expect("first frame");
+        let first = state.journal[0].clone();
+        state
+            .journal
+            .resize(MAX_ADMISSION_JOURNAL_RECORDS, first.clone());
+        let before = state.journal.clone();
+        assert_eq!(
+            state.append(event),
+            Err("durable admission journal capacity exhausted".to_owned())
+        );
+        assert_eq!(state.journal, before);
+        assert_eq!(state.journal[0], first);
     }
 
     #[tokio::test]
