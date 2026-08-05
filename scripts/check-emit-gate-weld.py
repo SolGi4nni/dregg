@@ -126,10 +126,90 @@ def collect_artifact_pins() -> dict[str, list[tuple[Path, str]]]:
     return pins
 
 
+def _short(v: object, width: int = 96) -> str:
+    s = json.dumps(v, sort_keys=True) if not isinstance(v, str) else repr(v)
+    return s if len(s) <= width else s[: width - 1] + "…"
+
+
+def drift_cause(rust_payload: str, pin_payload: str) -> str:
+    """A one-line, GROUPABLE key for why a pair drifted — the set of differing top-level fields."""
+    try:
+        rj, pj = json.loads(rust_payload), json.loads(pin_payload)
+    except json.JSONDecodeError:
+        return "unparseable"
+    if not (isinstance(rj, dict) and isinstance(pj, dict)):
+        return "not-objects"
+    ks = sorted(k for k in set(rj) | set(pj) if rj.get(k) != pj.get(k))
+    return ", ".join(f"`{k}`" for k in ks) if ks else "serialisation only (same parsed object)"
+
+
+def drift_detail(rust_payload: str, pin_payload: str) -> str:
+    """Name WHAT differs, not how many constraints each side has.
+
+    ⚑ 2026-08-05 — THE REPORT WAS UNREADABLE AND READ AS A BUG IN THE GATE. It printed
+    `(Rust: 5 constraints / pin: 5 constraints)` — the SAME number twice, on all 15 drifted
+    pairs — because the comparison is BYTE equality and the constraint count is a coarse
+    summary that agrees right up until it does not. A reader sees two identical numbers under
+    the word DRIFTED and concludes the reporter is printing one side twice; the actual finding
+    (all 15 differ by ONE top-level field, `challenges`, which the Lean emission gained and the
+    Rust goldens have not) was invisible in the output and took a hand-written differ to see.
+
+    A gate must state the fact it reds on. This walks the two objects and names the first
+    structural difference: keys only one side has, then the first field whose value differs.
+    """
+    try:
+        rj, pj = json.loads(rust_payload), json.loads(pin_payload)
+    except json.JSONDecodeError:
+        return (
+            f"    bytes differ and at least one side is not parseable JSON "
+            f"(Rust {len(rust_payload)} B / pin {len(pin_payload)} B).\n"
+        )
+    if not (isinstance(rj, dict) and isinstance(pj, dict)):
+        return "    bytes differ; the payloads are not both JSON objects.\n"
+
+    lines: list[str] = []
+    only_pin = sorted(set(pj) - set(rj))
+    only_rust = sorted(set(rj) - set(pj))
+    if only_pin:
+        lines.append(
+            f"    FIELD(S) THE PIN HAS AND THE RUST GOLDEN DOES NOT: {', '.join(only_pin)}\n"
+            f"      -> the Lean emission GAINED a wire field; the golden predates it.\n"
+        )
+    if only_rust:
+        lines.append(
+            f"    FIELD(S) THE RUST GOLDEN HAS AND THE PIN DOES NOT: {', '.join(only_rust)}\n"
+            f"      -> the Lean emission DROPPED a wire field; the golden still carries it.\n"
+        )
+    changed = [k for k in sorted(set(rj) & set(pj)) if rj[k] != pj[k]]
+    for k in changed[:3]:
+        if k == "constraints" and isinstance(rj[k], list) and isinstance(pj[k], list):
+            lines.append(
+                f"    `constraints` differ: {len(rj[k])} (Rust) vs {len(pj[k])} (pin)"
+                + ("; SAME COUNT, so the difference is INSIDE a constraint\n"
+                   if len(rj[k]) == len(pj[k]) else "\n")
+            )
+            continue
+        lines.append(
+            f"    `{k}` differs:\n"
+            f"      Rust: {_short(rj[k])}\n"
+            f"      pin : {_short(pj[k])}\n"
+        )
+    if len(changed) > 3:
+        lines.append(f"    …and {len(changed) - 3} further differing field(s).\n")
+    if not lines:
+        # Same parsed object, different bytes: key ORDER, whitespace, or number formatting.
+        lines.append(
+            "    the two parse to the SAME object — the difference is purely serialisation\n"
+            "    (key order, whitespace, or number formatting). Re-copy the emitted bytes.\n"
+        )
+    return "".join(lines)
+
+
 def main() -> int:
     lean_pins = collect_lean_pins()
     artifact_pins = collect_artifact_pins()
     failures: list[str] = []
+    drift_causes: dict[str, int] = {}
     checked = 0
     unpinned: list[str] = []
     rust_names: set[str] = set()
@@ -160,20 +240,15 @@ def main() -> int:
             # Named on both sides but the bytes differ: the drifted pair.
             lf = pins[0][0].relative_to(ROOT)
             pin_payload = pins[0][1]
-            try:
-                rj, lj = json.loads(payload), json.loads(pin_payload)
-                detail = (
-                    f" (Rust: {len(rj.get('constraints', []))} constraints"
-                    f" / pin: {len(lj.get('constraints', []))} constraints)"
-                )
-            except json.JSONDecodeError:
-                detail = ""
+            cause = drift_cause(payload, pin_payload)
+            drift_causes[cause] = drift_causes.get(cause, 0) + 1
             failures.append(
-                f"  DRIFTED: `{name}`{detail}\n"
+                f"  DRIFTED: `{name}`\n"
                 f"    Rust golden: {rel}\n"
                 f"    Pin:         {lf}\n"
-                f"    The Rust gate is green against STALE bytes — it certifies a descriptor\n"
-                f"    the Lean emission no longer produces."
+                + drift_detail(payload, pin_payload)
+                + "    The Rust gate is green against STALE bytes — it certifies a descriptor\n"
+                  "    the Lean emission no longer produces."
             )
 
     print(f"check-emit-gate-weld: {checked} Rust goldens checked against "
@@ -213,6 +288,23 @@ def main() -> int:
     if failures:
         print("\nWELD FAILURES:")
         print("\n\n".join(failures))
+        # ⚑ ONE CAUSE OR MANY — say which, on the same screen as the verdict. 15 pairs drifting for
+        # 15 reasons is 15 pieces of work; 15 drifting for ONE reason is one flag day whose Rust
+        # side was not re-copied, and the two read identically in a list of 15 blocks.
+        if len(drift_causes) == 1 and sum(drift_causes.values()) == len(failures):
+            cause, n = next(iter(drift_causes.items()))
+            print(
+                f"\ncheck-emit-gate-weld: FAIL — {n} drifted pair(s), ALL {n} differing in exactly "
+                f"the same field(s): {cause}.\n"
+                f"  That is ONE flag day whose Rust goldens were not re-copied, not {n} separate\n"
+                f"  regressions. Re-emit the Lean and paste the bytes into the goldens."
+            )
+        else:
+            spread = ", ".join(f"{c} x{n}" for c, n in sorted(drift_causes.items()))
+            print(
+                f"\ncheck-emit-gate-weld: FAIL — {len(failures)} drifted pair(s) across "
+                f"{len(drift_causes)} distinct cause(s): {spread}."
+            )
         return 1
     if unpinned:
         return 1

@@ -73,11 +73,27 @@ if [ -n "$REV" ]; then
   NEW_LABEL="$REV ($(echo "$SHA" | cut -c1-12), clean extract)"
 fi
 
+# ── ⛑ 2026-08-05 — THE BASE RESOLVER FELL THROUGH TO `HEAD`, AND `HEAD` IS NOT A BASE. ───────────
+# This loop read `for cand in origin/main main HEAD`. With neither `origin/main` nor `main` — a bare
+# clone, a detached CI checkout, a `git archive` extract — it picked `HEAD` and graded HEAD against
+# HEAD. `scripts/bare-clone-repro-gate.sh` builds EXACTLY that context on purpose (a fresh clone
+# with no remote-tracking branch), and any consumer running `--rev HEAD` there compared a commit to
+# itself: `UNCHANGED`, exit 0, forever, on any delta whatsoever. A gate whose base is its own subject
+# cannot go red, and this one's whole job is to REFUSE a re-genesis.
+#
+# `HEAD` is gone from the chain, and the two fall-through paths below now REFUSE (exit 2, the
+# setup-error code — distinct from 0 PASS and from 4 GEOMETRY-WIDEN-REFUSED) instead of `exit 0`.
+# A skip that greens is indistinguishable from a check that passed, and the caller sees only the
+# code.
+#
+# ⚠ `DRIFT_TAXONOMY_BASE_REF` is still honoured verbatim and can still be set to `HEAD` — that is a
+# deliberate, typed-out choice by a caller who wants working-tree-vs-HEAD, which IS a real question.
+# What is gone is arriving there by ACCIDENT, from an empty ref namespace, with nothing said.
 resolve_base() {
   if [ -n "${DRIFT_TAXONOMY_BASE_REF:-}" ]; then
     echo "$DRIFT_TAXONOMY_BASE_REF"; return 0
   fi
-  for cand in origin/main main HEAD; do
+  for cand in origin/main main; do
     if git -C "$ROOT" rev-parse --verify --quiet "$cand^{commit}" >/dev/null; then
       echo "$cand"; return 0
     fi
@@ -86,15 +102,38 @@ resolve_base() {
 }
 
 if ! BASE="$(resolve_base)"; then
-  echo "check-drift-taxonomy: no base ref resolvable (set DRIFT_TAXONOMY_BASE_REF); skipping." >&2
-  exit 0
+  cat >&2 <<'MSG'
+check-drift-taxonomy: BLOCKED — no base ref (neither origin/main nor main resolves here).
+  This is a bare clone / detached checkout with an empty ref namespace. There is nothing to
+  classify a delta AGAINST, and this gate used to fall through to HEAD and grade HEAD against
+  itself: UNCHANGED, exit 0, on any delta whatsoever.
+  Set DRIFT_TAXONOMY_BASE_REF to the ref that trunk ships today. Setting it to HEAD is allowed
+  and means "working tree vs HEAD" — say so on purpose; do not arrive there by accident.
+MSG
+  exit 2
 fi
 
-# Does the base ref even carry the descriptor subpath? (A fresh repo / a ref before
-# the descriptors existed → nothing to diff against; treat as a clean skip.)
+# Does the base ref even carry the descriptor subpath? A base with no descriptors is a BLINDED
+# READ, not a small tree: the classifier would see every member as ADDED. This used to `exit 0`
+# ("nothing to diff; skipping") — the same fail-open in a second place, and the one that fires on
+# a shallow clone whose base commit predates `circuit/descriptors`.
 if ! git -C "$ROOT" cat-file -e "$BASE:$SUBPATH" 2>/dev/null; then
-  echo "check-drift-taxonomy: $BASE has no $SUBPATH (nothing to diff); skipping." >&2
-  exit 0
+  echo "check-drift-taxonomy: BLOCKED — base ref '$BASE' has no $SUBPATH, so there is no cohort to" >&2
+  echo "  classify against. Point DRIFT_TAXONOMY_BASE_REF at a ref that carries the descriptors." >&2
+  exit 2
+fi
+
+# ── SELF-COMPARISON. Even with a base that resolves, `--rev <r>` where <r> IS the base grades a
+# commit against itself. That is the `HEAD`-fallback defect reached by a second road, and it is
+# silent in exactly the same way.
+if [ -n "$REV" ]; then
+  BASE_SHA="$(git -C "$ROOT" rev-parse --verify --quiet "$BASE^{commit}" || true)"
+  if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" = "$SHA" ]; then
+    echo "check-drift-taxonomy: BLOCKED — base '$BASE' and --rev '$REV' are the same commit" >&2
+    echo "  ($(echo "$SHA" | cut -c1-12)). Classifying a commit against itself is UNCHANGED by" >&2
+    echo "  construction; it is not evidence that nothing drifted." >&2
+    exit 2
+  fi
 fi
 
 echo "check-drift-taxonomy: classifying $SUBPATH delta  ($BASE -> $NEW_LABEL)..."

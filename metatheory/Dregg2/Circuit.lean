@@ -20,12 +20,22 @@ Boundary: Conservation and ObsAdvance are pure arithmetic (both directions prove
 Authority is a {0,1} bit-equation (both directions proved). ChainLink full list-equality
 cannot be reconstructed from scalars alone; it is carried as a decidable `chainOk` indicator
 (defined to be the spec predicate). The obligation that the Rust prover's CR-hash digest
-binds to this indicator — the §8 binding law, once flagged `-- PRIMITIVE:` — is now
-DISCHARGED, reduced to `HashCR` (the standard hash collision-resistance floor) in
-`section DigestBinding`: modelling the digest as a collision-resistant hash of the
-length-framed chain trace, `chain_digest_binds` proves it determines the trace uniquely and
-`chain_digest_binds_chainOk` proves it therefore determines the `chainOk` value — a hash
-collision is the ONLY way two chains with different `chainOk` share a digest. Residual: `HashCR`.
+binds to this indicator — the §8 binding law, once flagged `-- PRIMITIVE:` — is DISCHARGED on the
+KEYED-ROM floor in `Dregg2.Circuit.ChainDigestRomBinding`: `chain_digest_binds_rom` bounds every
+query-bounded trace-equivocator's advantage on `keyedRom_hard` (a proved birthday bound, no
+refutable hypothesis), and `chainDigestRom_indicator_break` transports a `chainOk`-equivocation
+into a win of that game. Residual: `keyedRom_hard`, which is PROVED — not an assumed carrier.
+
+⛑ CORRECTED 2026-08-05. This paragraph said the binding was "reduced to `HashCR`" by
+`chain_digest_binds` and `chain_digest_binds_chainOk`. **Both theorems were DELETED on 2026-07-24**
+and this file records that at §RomDigestBinding below — while continuing to cite them here as live,
+six times over. They were deleted because each carried `HashCR` (pure injectivity of a compressing
+digest), which `hashCR_false_of_compressing` proves FALSE for every compressing digest: a citation
+of a REFUTED premise, in the header of a rooted module, surviving eleven days of builds because
+nothing gates prose. `HashCR` is not the residual and has not been since; the successors are named
+above. What survives deterministically in THIS file is only the extractor pair
+`distinct_traces_break_hashcr` / `digest_collision_is_hash_collision`, whose conclusions are
+`¬ HashCR` — they WITNESS the refutation rather than assume the floor.
 -/
 -- Not the `Mathlib.Tactic` umbrella: this file's proofs use core simp/decide
 -- plus `ring` + `push_cast` only. This module sits INSIDE the compiled
@@ -135,8 +145,10 @@ def cAuthority : Constraint :=
   { lhs := .var vAuthBit, rhs := .const 1 }
 
 /-- **ChainLink gate:** `chainOk = 1` (the post-log is `turn :: pre-log`). The indicator is
-bound by the chain digest in a real circuit — that binding is now the theorem
-`chain_digest_binds_chainOk` (reduced to `HashCR`); here `chainOk` is the decidable witness. -/
+bound by the chain digest in a real circuit — that binding is `chainDigestRom_indicator_break` /
+`chain_digest_binds_rom` (`Dregg2.Circuit.ChainDigestRomBinding`, on the proved keyed-ROM floor);
+here `chainOk` is the decidable witness. ⛑ this cited the deleted `chain_digest_binds_chainOk`
+"(reduced to `HashCR`)" until 2026-08-05; see the header. -/
 def cChainLink : Constraint :=
   { lhs := .var vChainOk, rhs := .const 1 }
 
@@ -197,10 +209,11 @@ theorem authority_iff (s : ChainedState) (t : Turn) (s' : ChainedState) :
 
 /-- **ChainLink: gate ↔ conjunct** (via the decidable indicator). The indicator is *defined*
 to be the spec predicate, so both directions close; the §8 binding of the digest to this
-indicator is now the theorem `chain_digest_binds_chainOk` (reduced to `HashCR`). -/
+indicator is `chainDigestRom_indicator_break` / `chain_digest_binds_rom`, on the proved keyed-ROM
+floor. ⛑ this named the deleted `chain_digest_binds_chainOk` until 2026-08-05. -/
 theorem chainlink_iff (s : ChainedState) (t : Turn) (s' : ChainedState) :
     cChainLink.holds (encode s t s') ↔ chainP s t s' := by
-  -- (§8 binding of the digest to this indicator: now `chain_digest_binds_chainOk`, reduced to `HashCR`.)
+  -- (§8 binding of the digest to this indicator: `chainDigestRom_indicator_break`, keyed-ROM floor.)
   unfold Constraint.holds cChainLink chainP
   simp only [Expr.eval, enc_vChainOk, propBit]
   by_cases hc : s'.log = t :: s.log
@@ -268,9 +281,13 @@ theorem cexec_satisfies_circuit {s s' : ChainedState} {t : Turn}
 For a verifier implemented as `decide (satisfied kernelCircuit (encode s t s'))`, the law
 `verifyStep = true → fullStepInv` is `(bridge …).mp ∘ of_decide_eq_true`. The formerly
 `-- PRIMITIVE:` obligation — that the Rust prover's CR-hash digest binds to the `chainOk`/
-field wires — is now DISCHARGED in `section DigestBinding`: `chain_digest_binds_chainOk`
-reduces that §8 cryptographic seam to `HashCR` (a hash collision is the only way one digest
-serves two chains with different `chainOk`). No assumed §8 law remains — only the hash floor. -/
+field wires — is DISCHARGED in `Dregg2.Circuit.ChainDigestRomBinding`:
+`chainDigestRom_indicator_break` turns a `chainOk`-equivocation into a `chainDigestRomGame` win and
+`chain_digest_binds_rom` bounds every query-bounded prover's advantage on the PROVED `keyedRom_hard`
+floor. No assumed §8 law remains. ⛑ this said "`chain_digest_binds_chainOk` reduces that §8
+cryptographic seam to `HashCR` … only the hash floor" until 2026-08-05: that theorem was deleted
+2026-07-24 and `HashCR` is REFUTED for every compressing digest, so the sentence named a discharge
+that did not exist against a floor that cannot hold. See the header. -/
 theorem verify_law_derivable (s : ChainedState) (t : Turn) (s' : ChainedState)
     [Decidable (satisfied kernelCircuit (encode s t s'))]
     (h : decide (satisfied kernelCircuit (encode s t s')) = true) :
@@ -292,13 +309,24 @@ theorem verify_complete (s : ChainedState) (t : Turn) (s' : ChainedState)
 decidable `chainOk` indicator. The one seam that stayed cryptographic — flagged `-- PRIMITIVE:` — was
 "the Rust prover's CR-hash digest BINDS to that indicator" (`ChainedState.log`'s digest is
 `CryptoKernel.hash log`, per `StepComplete`). We close it exactly as `Crypto.IdentityCommitment` closes
-the id-commitment: model the digest as a collision-resistant hash `H` (the SAME `HashCR` carrier the
-Hermine/identity arguments ride) applied to an INJECTIVELY length-framed chain trace. Then the digest
-determines the trace uniquely (`chain_digest_binds`), hence determines any indicator of the trace and in
-particular `chainOk` (`chain_digest_binds_chainOk`); two chains with a shared digest but different
-`chainOk` are precisely a hash collision (`digest_collision_is_hash_collision`), breaking `HashCR`. So
-the §8 binding is a THEOREM, and the only irreducible object is `HashCR` — the hash floor, no fresh
-`…Hard` carrier. -/
+the id-commitment: model the digest as a hash `H` (the imported `CommitReveal` carrier) applied to an
+INJECTIVELY length-framed chain trace, so that two chains with a shared digest but different `chainOk`
+are precisely a hash collision (`digest_collision_is_hash_collision`).
+
+⛑ CORRECTED 2026-08-05 — READ THIS BEFORE READING THE SECTION. The paragraph continued: "the digest
+determines the trace uniquely (`chain_digest_binds`), hence determines any indicator … in particular
+`chainOk` (`chain_digest_binds_chainOk`) … So the §8 binding is a THEOREM, and the only irreducible
+object is `HashCR`." **Neither theorem exists.** Both were deleted 2026-07-24 for carrying `HashCR`,
+which `hashCR_false_of_compressing` proves FALSE for every compressing digest — so "the only
+irreducible object is `HashCR`" describes a floor that is not irreducible but REFUTED, and an
+argument resting on it is vacuous, not residual.
+
+WHAT THIS SECTION ACTUALLY CONTAINS, and it is deliberately less: the framing (`chainTraceDigest`,
+`traceChainOk`), the wire identification `traceChainOk_eq_wire`, and the two EXTRACTORS
+`distinct_traces_break_hashcr` / `digest_collision_is_hash_collision`, whose conclusions are shaped
+`¬ HashCR` — they exhibit the refutation rather than consume the floor. The BINDING itself lives in
+`Dregg2.Circuit.ChainDigestRomBinding` (`chain_digest_binds_rom`, `chainDigestRom_indicator_break`)
+on the proved keyed-ROM floor, which is the successor and the thing to cite. -/
 
 section DigestBinding
 
@@ -374,7 +402,8 @@ theorem chainOk_ne_imp_trace_ne (tr tr' : List Turn × Turn × List Turn)
 
 /-- **`traceChainOk` IS the `vChainOk` wire.** The trace indicator on `(s.log, t, s'.log)`, as a {0,1}
 field element, equals the `encode … vChainOk` wire value `propBit (s'.log = t :: s.log)`. So
-`chain_digest_binds_chainOk` binds precisely the ChainLink wire that `chainlink_iff`/`bridge` consume. -/
+`chainDigestRom_indicator_break` binds precisely the ChainLink wire that `chainlink_iff`/`bridge`
+consume. ⛑ this named the deleted `chain_digest_binds_chainOk` until 2026-08-05; see the header. -/
 theorem traceChainOk_eq_wire (s : ChainedState) (t : Turn) (s' : ChainedState) :
     boolBit (traceChainOk (s.log, t, s'.log)) = encode s t s' vChainOk := by
   rw [enc_vChainOk]
