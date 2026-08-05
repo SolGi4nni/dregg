@@ -342,6 +342,7 @@ globs = [
   "Dregg2.Games.PathOfAngels.CrewExpeditionAuthority",  # 14 ax, 18 comp
   "Dregg2.Games.PathOfAngels.CrewFieldMission",  # 4 ax, 30 comp
   "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime",  # 3 ax, 23 comp
+  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntimeBoundary",  # 18 ax
   "Dregg2.Games.PathOfAngels.CrewRelayExpedition",  # 6 ax, 28 comp
   "Dregg2.Games.PathOfAngels.CrewRelayExpeditionBoundary",  # 20 ax
   "Dregg2.Games.PathOfAngels.DeckGenerator",  # 22 ax, 5 comp
@@ -368,10 +369,11 @@ globs = [
   "Dregg2.Games.PathOfAngels.PoaCrewPreferenceDrExExercise",  # 5 ax, 22 comp
   "Dregg2.Games.PathOfAngels.PrivateReconChoir",  # 17 ax
   "Dregg2.Games.PathOfAngels.PrivateReconChoirExamples",  # 4 ax, 16 comp
-  "Dregg2.Games.PathOfAngels.SalvageCrate",  # 3 ax, 10 comp
+  "Dregg2.Games.PathOfAngels.SalvageCrate",  # 6 ax, 12 comp
   "Dregg2.Games.PathOfAngels.SalvageCrateExamples",  # 2 ax, 4 comp
   "Dregg2.Games.PathOfAngels.ShipExpeditionSeason",  # 4 ax, 4 comp
   "Dregg2.Games.PathOfAngels.ShipExpeditionSeasonBoundary",  # 10 ax
+  "Dregg2.Games.PathOfAngels.ShipInstrumentPanel",  # 9 ax, 7 comp
   "Dregg2.Games.PathOfAngels.ShipLifeProgression",  # 12 ax, 11 comp
   "Dregg2.Games.PathOfAngels.ShipLifeProgressionBoundary",  # 13 ax
   "Dregg2.Games.PathOfAngels.Shipworks",  # 23 ax, 22 comp
