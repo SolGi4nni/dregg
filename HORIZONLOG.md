@@ -112,6 +112,27 @@ assembly's transcript over FIXTURE commitments. That is item 3 of
 `docs/HANDOFF-wrap-public-input-40.md`'s three deltas, INSTANCE, and it is untouched here. **This is
 not a Pickles-valid statement and not a Mina-valid proof.**
 
+⚠ ⚑ **AND A BLOCKER THIS PASS SURFACED THAT IS NOT THIS PASS'S: `w12_close` HAS BECOME TOO
+EXPENSIVE TO EMIT.** The fixture refresh this layout needs runs the whole smoke ladder, and it does
+not get past the top rung. Two things were measured and they are NOT the same size:
+
+  * **MINE, and repaired (`99fab5523`).** `wrapEnvAt`/`wrapPublicAt` rebuilt the (slot, variable)
+    association INSIDE their map. At the dense vector that was 8 rebuilds per consumer; at Mina's
+    forty it is 40, and `exposedVarsAt _ .close` runs `whSpongeC` — three whole
+    `hash_messages_for_next_wrap_proof` sponges. Two consumers, so **16 sponge runs became 80**.
+    `slotVarTable` is the shared term now and both callers bind it once. Nothing emitted moves.
+  * **NOT MINE, and open.** The hoist did not make the rung emit: post-hoist `w12_close` was still
+    unwritten **17 minutes** after `w11_wraphack`. The last COMPLETE `w12_close` (06:31 today, 2260
+    rows, `pub 8`) is `w11_wraphack + 2 rows` — so it predates the 2026-08-05 change that made
+    `.close` extend `.bullet` rather than `.wraphack` (`KimchiWrapMainPins10`'s own docblock says
+    so). That rung now carries W-COMBINE's and W-BULLET's ladders AND their environments.
+
+⚑ **THE SHAPE OF IT: NOBODY RE-EMITTED, SO NOTHING MEASURED IT.** The rung's row-count pins moved to
+`rungRows_close_is_a_ladder`, general and kernel-clean, and the placement/region legs moved to the
+emit-time refusal — both good changes. But the LADDER's cost is only observable by running the
+emitter, and between that change landing and this pass no full smoke ladder was run. A rung whose
+pins are all affordable and whose EMISSION is not still blocks every fixture the harnesses read.
+
 ⚠ **THE ORDER AT 5–8 IS β γ α ζ, AND §10's CENSUS SAID `alpha, beta, gamma`.** That was the stale
 order `MinaWrapPublicInput` had already corrected on 2026-07-30 against block 539508's own binprot
 bytes — `Wrap.Statement.to_data` lays the `challenge` bucket down before the `scalar_challenge` one.
