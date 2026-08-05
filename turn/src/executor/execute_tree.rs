@@ -17,6 +17,101 @@ pub(super) struct StagedRateLimitState {
     sums: HashMap<RateLimitSumKey, u64>,
 }
 
+#[cfg(test)]
+mod sender_identity_tests {
+    use super::*;
+    use dregg_cell::Preconditions;
+    use dregg_cell::predicate::{
+        PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
+        WitnessedPredicateRegistry, WitnessedPredicateVerifier,
+    };
+    use std::sync::Arc;
+
+    const VK: [u8; 32] = [0x56; 32];
+    const ACTOR_KEY: [u8; 32] = [0xA7; 32];
+    const SIGNATURE_FIRST_HALF: [u8; 32] = [0x51; 32];
+
+    struct ExactActorVerifier;
+
+    impl WitnessedPredicateVerifier for ExactActorVerifier {
+        fn name(&self) -> &'static str {
+            "exact-actor"
+        }
+
+        fn kind(&self) -> WitnessedPredicateKind {
+            WitnessedPredicateKind::Custom { vk_hash: VK }
+        }
+
+        fn verify(
+            &self,
+            _commitment: &[u8; 32],
+            input: &PredicateInput<'_>,
+            proof_bytes: &[u8],
+        ) -> Result<(), WitnessedPredicateError> {
+            if matches!(input, PredicateInput::Sender(pk) if **pk == ACTOR_KEY)
+                && proof_bytes == b"actor-proof"
+            {
+                Ok(())
+            } else {
+                Err(WitnessedPredicateError::Rejected {
+                    kind_name: "exact-actor",
+                    reason: "sender is not the acting cell key".into(),
+                })
+            }
+        }
+    }
+
+    fn witnessed_sender_action(target: CellId) -> Action {
+        let mut preconditions = Preconditions::default();
+        preconditions.witnessed.push(WitnessedPredicate::custom(
+            VK,
+            [0xC0; 32],
+            InputRef::Sender,
+            0,
+        ));
+        Action {
+            target,
+            method: [0; 32],
+            args: vec![],
+            // These are SIGNATURE BYTES, deliberately different from ACTOR_KEY.
+            authorization: Authorization::Signature(SIGNATURE_FIRST_HALF, [0x52; 32]),
+            preconditions,
+            effects: vec![],
+            may_delegate: crate::action::DelegationMode::None,
+            commitment_mode: crate::action::CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![crate::action::WitnessBlob::proof(b"actor-proof".to_vec())],
+        }
+    }
+
+    #[test]
+    fn witnessed_sender_is_actor_cell_key_never_signature_bytes() {
+        let target = Cell::new([0x22; 32], [0; 32]);
+        let action = witnessed_sender_action(target.id());
+        let mut registry = WitnessedPredicateRegistry::empty();
+        registry.register_custom(VK, Arc::new(ExactActorVerifier));
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.set_witnessed_registry(registry);
+
+        executor
+            .check_preconditions(&action, &target, Some(ACTOR_KEY), &[])
+            .expect("the acting cell key is the witnessed sender");
+
+        assert!(
+            executor
+                .check_preconditions(&action, &target, Some(SIGNATURE_FIRST_HALF), &[])
+                .is_err(),
+            "an Ed25519 signature half must never be accepted as sender identity"
+        );
+        assert!(
+            executor
+                .check_preconditions(&action, &target, None, &[])
+                .is_err(),
+            "a missing acting cell must fail closed"
+        );
+    }
+}
+
 enum RateLimitDebit {
     Count(RateLimitCounterKey),
     Sum(RateLimitSumKey, u64),
@@ -687,7 +782,13 @@ impl TurnExecutor {
 
         // Check preconditions (including witnessed clauses — Block 3.5).
         let _pf_precond = super::turn_profile::Instant::now();
-        self.check_preconditions(action, target_cell, &path)?;
+        // `EvalContext::sender` is the ACTING cell's public key, not bytes
+        // extracted from the action authorization.  In particular,
+        // `Authorization::Signature` stores the two halves of a 64-byte
+        // Ed25519 signature; neither half is a public key.  Keep the
+        // precondition context identical to the later cell-program context.
+        let sender_pk = ledger.get(parent_cell).map(|cell| *cell.public_key());
+        self.check_preconditions(action, target_cell, sender_pk, &path)?;
         if _pf {
             super::turn_profile::accum(super::turn_profile::Phase::f_precond, _pf_precond);
         }
@@ -1374,27 +1475,10 @@ impl TurnExecutor {
         &self,
         action: &Action,
         target_cell: &Cell,
+        sender_pk: Option<[u8; 32]>,
         path: &[usize],
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let preconditions = &action.preconditions;
-        let sender_pk = match &action.authorization {
-            Authorization::Signature(pk, _) => Some(*pk),
-            Authorization::Bearer(bp) => match &bp.delegation_proof {
-                crate::action::DelegationProofData::SignedDelegation { delegator_pk, .. } => {
-                    Some(*delegator_pk)
-                }
-                _ => None,
-            },
-            Authorization::CapTpDelivered { sender_pk, .. } => Some(*sender_pk),
-            // The hybrid variant's ed25519 half is the SAME 64-byte signature the
-            // classical `Signature` stored as two halves, so its first 32 bytes are
-            // byte-identical to what `Signature(pk, _)` carried — sender-precondition
-            // extraction is behavior-preserving after the sign_action hybrid flip.
-            Authorization::HybridSignature { ed25519, .. } => {
-                <[u8; 32]>::try_from(&ed25519[..32]).ok()
-            }
-            _ => None,
-        };
         let ctx = EvalContext {
             block_height: self.block_height,
             timestamp: self.current_timestamp,

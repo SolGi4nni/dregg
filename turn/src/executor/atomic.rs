@@ -1680,7 +1680,9 @@ impl TurnExecutor {
             }
 
             // 3. Preconditions.
-            if let Err((err, _)) = self.check_preconditions(action, &target_cell, &path) {
+            let sender_pk = ledger.get(&mixed_turn.agent).map(|cell| *cell.public_key());
+            if let Err((err, _)) = self.check_preconditions(action, &target_cell, sender_pk, &path)
+            {
                 journal.rollback(
                     ledger,
                     &self.bridged_nullifiers,

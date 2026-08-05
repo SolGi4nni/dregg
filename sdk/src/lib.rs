@@ -162,6 +162,7 @@ pub mod hints_onboarding;
 pub mod identity;
 pub mod job_escrow;
 pub mod mnemonic;
+pub mod poa_galley;
 pub mod poa_signal;
 pub mod polis;
 pub mod privacy;
