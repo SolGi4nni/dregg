@@ -1,5 +1,63 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (THE SIX PASS-THROUGH WORDS STOP BEING FIXTURES) — **`wrap_main` reads slots 0–4 and 9 out of its PUBLIC INPUT now, not out of six free witnesses, and the values are Mina's own `expand_deferred` output** — and the emitted vector agrees with `to_public_input(40)` at 16 of 40, which names the next lane's work exactly
+
+`docs/HANDOFF-wrap-public-input-40.md` closed ORDER and WIDTH and left **INSTANCE**: *"the exposed
+values are this assembly's transcript over fixture commitments, not any real proof's."* Closed for
+the six words it was about. Commit `9413a4bd3`.
+
+⛑ **THE FORK WAS NOT A FORK.** `wrapInertOk`'s docblock stated a design fork — a DERIVATION standard
+on which the six stay unread until a next proof's W-FINALIZE exists, against UPSTREAM'S on which
+they are free pass-throughs — and called it the operator's. **Pickles recomputes all six and
+substitutes them** (`expand_deferred`, consumed at `verification.rs:886`), so the derivation horn
+describes a proof nobody intends to hand to Pickles.
+
+⛑ **A THIRD CATEGORY, BECAUSE TWO WERE ANSWERING DIFFERENT QUESTIONS.** `WRAP_PASSTHROUGH_SLOTS`
+sits beside PINNED and UNPINNED: **24 constrained + 6 read + 10 dead**. `WRAP_UNPINNED_SLOTS` drops
+16 → 10. Six words `ft_comm`, `Split_commitments.combine` and `check_bulletproof` all READ were
+filed under "nothing reads these", and `wraphack_closes_every_pinned_statement_word`'s old
+`PINNED != UNPINNED` over the forty is FALSE now — not a stale count, a missing category.
+
+⛑ **IT REMOVES SIX FREE WITNESSES.** A prover could choose `perm`, `ξ`, `b` and the rest. A public
+word is handed to the verifier.
+
+⛑ **THE RNG HAD TO BE SEEDED FIRST, AND THAT IS THE LOAD-BEARING PART.** `pickles_kimchi_marshal`
+proved with `OsRng`, so every run produced a different step proof and a different forty: a Lean
+constant carrying them was stale on the next run and the loop (run → read → bake → re-emit) had **no
+fixed point at all**. Both provers draw from a seeded `StdRng` now; two consecutive runs are
+byte-identical in `wrap-public-input.json`, `marshalled.binprot` and the o1js proof.
+
+⛑ **WHAT MINA'S OWN VERIFIER SAYS** — `mina_onchain_index_probe`, release, on `w11_bullet` (3691
+rows, public 40, domain 2^14, all six tied), key derived from this emission:
+
+| `--vk` | [A] | [B] `kimchi::verifier::verify` | [C] |
+|---|---|---|---|
+| this emission's key | **28/28** | **`Ok` — MINA'S OWN VERIFIER ACCEPTED IT** | REFUSED 40/40 |
+| a mismatched key | 1/28 | **`Err(OpenProof)`** *"the opening proof failed to verify"* | REFUSED 40/40 |
+
+⚠ **[C] IS THE VECTOR LEG AND PROVES NOTHING ABOUT THE SIX.** It was already 40/40 when they were
+inert — moving any public word moves the public commitment. The discriminating instrument is the
+harness's polarity (5) SIGMA leg, and the exhaustive one is `inertSlotsAt = wrapInertOk` read off
+the emitted gates.
+
+⛑ **AND HERE IS THE NEXT LANE'S WORK, MEASURED RATHER THAN GUESSED.** At `w12_close` the emitted
+public vector agrees with `PreparedStatement::to_public_input(40)` at **16 of 40** — slots 0, 1, 2,
+3, 4, 9 (the six, exactly) and 30–39 (the ten zeros). **The other 24 are the words this circuit
+DERIVES from its own transcript, which runs over FIXTURE commitments rather than over the step proof
+those forty words came from.** So `kimchi::verifier::verify` accepts and **Pickles would not**:
+a real wrap proof's slots 5–8, 10 and 13–28 are the step proof's own challenges, asserted equal
+in-circuit. Closing that means the wrap assembly's sponge absorbing the REAL step proof's
+commitments — a bigger object than this pass, and the one that stands between us and Pickles.
+
+⚠ **A RED THIS PASS FOUND AND DID NOT CAUSE.**
+`KimchiStepWrapChain.the_bend_moves_every_transcript_derived_public_word` was **already failing at
+HEAD**: `wrapPublicAt` has been indexed by MINA'S SLOT since the layout commit while the theorem
+still read `(List.range 21)`, `exposedVars`' POSITION indexing from when the vector was dense. Those
+agree for no index — eight slots in `range 21` are ones `w4_bind` does not derive and are ZERO in
+both emissions, so a conjunct asserted a zero differs from itself. Restated over
+`wrapSlotsAt … .bind` with `branch_data` excluded by SLOT.
+
+
 ## ⛑⛑⛑ AUGUST 5 (THE AGGREGATE'S CHALLENGE GOES ON THE WIRE) — **the ξ-aggregate had no PI slot for a computed scalar; it now publishes the SIX-VALUE SQUARING BASIS on 192 felts, welded elementwise to the chain's own, and `T_COVER`'s 7 552 digits are the TENSOR IMAGE of those felts** — and the digits are still descriptor data, which is where the next lane starts
 
 The previous entry closed with the fix already priced and not built:
