@@ -1,5 +1,86 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 5 (WRAP PUBLIC INPUT) — **Mina's own kimchi verifier accepts our proof at Mina's own 40-slot layout**, and the last named gap is layout-closed
+
+This morning's measurement was `Err(IncorrectPubicInputLength(40))` at our six public words, and `Ok`
+at six words plus thirty-four zeros **we chose**. That second line was a probe about plumbing. The
+emission is now `WRAP_PRIMARY_LEN = 40` wide at every rung from `w4_bind` up, **in Pickles' own slot
+order**, and the probe reads:
+
+| `--vk` | [A] commitments | [B] `kimchi::verifier::verify` | [C] all forty slot-moves |
+|---|---|---|---|
+| the key derived from THIS emission | **28 / 28** | **`Ok` — accepted** | REFUSED **40/40** |
+| the key devnet holds (`3406194937…`) | 4 / 28 | `Err(OpenProof)` | REFUSED 40/40 |
+
+**No padding leg remains** — the emission IS forty words, so `[B']` is deleted rather than
+relabelled, and `[C]` moved from two hand-picked words to all forty.
+
+⚑ **22 VS 24 WAS NEITHER CANDIDATE.** `pubWords = 22` is the width of `exposedVars`, what the
+CLOSING rung derives; `exposedVarsAt` appends slot 12 at `w9_prev` and slot 11 at `w11_wraphack`, so
+`22 + 1 + 1 = 24 = WRAP_PINNED_SLOTS.length`. No slot was missing, `pubWords` counts exactly what it
+says, and **this was pure layout — not one new derivation.**
+
+⚑ **AND IT WAS LAYOUT AND NOTHING ELSE, MEASURED.** The six values `w4_bind` derives are
+byte-identical before and after; only their slots moved (0..5 → 5,6,7,8,10,13), and the row count
+moved 498 → 532, exactly the +34 public rows.
+
+⚑ **NOT PADDED TO PASS, AND THE MECHANISM IS THE POINT.** `placeChecked`'s H2 — no public word may
+be inert — is STRICTER THAN MINA'S OWN CIRCUIT: `Spec.packed_typ`'s `Constant` case
+(`composition_types/spec.ml:312-330`) keeps the underlying `Typ` to allocate the slot, replaces
+`check` with `return ()` and hands the body a `Cvar.Constant`, so ten of the forty are allocated,
+unread and unchecked UPSTREAM. `placeCheckedWith` takes the unread set as a DECLARATION;
+`placeChecked` is that at `[]`, so nothing that used it changed. `wrapInertOk` is a function of
+Mina's census and the rung — never of the emitted gates — and every rung pins
+`inertSlotsAt = wrapInertOk` as an **equality**, both directions, with the emitter re-running it at
+the wrap shape where the kernel cannot reach.
+
+⚑ **THE HARNESS MEASURES THE 24-VS-40 SPLIT INSTEAD OF ASSERTING IT.** Polarity (5) now has two legs
+that move in opposite directions. The VECTOR leg (move the verifier's claim) refuses at every one of
+the forty, because a public row is a `Generic` gate `1·w0[i] = pub_i` and the negated public
+polynomial is added to the quotient. The SIGMA leg (flip the CELL *and* the claim) refuses only where
+a copy class reaches a cell the circuit reads — so it refuses at every DERIVED slot and **accepts at
+every declared-unread one**. A derived slot that accepted, or an unread slot that refused, is red.
+
+⚑ **THE HARNESS, IN RELEASE, ON THE AFFECTED RUNGS.** Seven rungs green on all five polarities so
+far — `w4_bind`, `w5_key`, `w6_xhat`, `w7_split`, `w8_ftcomm`, `w9_prev`, `w11_wraphack` — and the
+ladder is legible in polarity (5)'s own line: `w4_bind`..`w8_ftcomm` derive **6** of Mina's forty at
+`[5,6,7,8,10,13]`, `w9_prev` derives **7** with slot **12** joining, `w11_wraphack` **8** with slot
+**11**. At each, the sigma leg refuses at the derived slots it sampled and accepts at the unread
+ones. (At the SMOKE shape only six base words exist — `ipaRounds = 3` and slot 29 is not exposed at
+all — so a smoke emission demonstrates the LAYOUT, not the closed 24.)
+
+⚠ **AND THE THING KIMCHI CANNOT TELL US, said at the resolution measured.** `kimchi::verifier::verify`
+takes forty field elements and does not know what any of them MEAN. `[B] = Ok` says the vector is
+Mina's width, that our derived values sit at Pickles' positions, and that Mina's own verifier under
+a key it rebuilt accepts a proof of the circuit. It does NOT say those values are what
+`prepared_statement` would derive from a real statement — the exposed values are still this
+assembly's transcript over FIXTURE commitments. That is item 3 of
+`docs/HANDOFF-wrap-public-input-40.md`'s three deltas, INSTANCE, and it is untouched here. **This is
+not a Pickles-valid statement and not a Mina-valid proof.**
+
+⚠ **THE ORDER AT 5–8 IS β γ α ζ, AND §10's CENSUS SAID `alpha, beta, gamma`.** That was the stale
+order `MinaWrapPublicInput` had already corrected on 2026-07-30 against block 539508's own binprot
+bytes — `Wrap.Statement.to_data` lays the `challenge` bucket down before the `scalar_challenge` one.
+The emitted object was right by luck of the transcript's squeeze order, which is exactly the shape of
+this module's worst bug: **the right object under the right name at the wrong slot moves nothing a
+width signature can see.** `the_challenge_slots_are_the_transcript_order` now checks the two readings
+agree and exhibits the schedule positions — 37, 38 adjacent, 41 after `z_comm`, 56 after `t_comm` —
+that make β/γ the `challenge` pair.
+
+⚠ **THE DEVNET VERIFICATION KEY IS STALE, AND THE SECOND ROW OF THE TABLE IS THAT FACT MEASURED.**
+Forty public rows instead of six shifts every gate row, so the account's 1796 bytes no longer
+describe the circuit. The new `w4_bind` key hashes `3188784766…`. **Re-registration is a devnet
+transaction and is the operator's.**
+
+⚠ **AND THE SIX PASS-THROUGHS ARE A FORK, LEFT OPEN.** Slots 0–4 and 9 carry ZERO and are declared
+unread. Their owner is NOT W-FINALIZE — the first draft of this work said so and
+`docs/HANDOFF-wrap-public-input-40.md` had already read it at source: `wrap_main` READS all six
+(`combined_inner_product`/`b` in `check_bulletproof`, the three `plonk` scalars in `ft_comm`, `xi` in
+`Split_commitments.combine`) and CHECKS none; the checker is the NEXT proof's `finalize_other_proof`.
+Four of the six already have circuit-read cells and are one closing `Generic` half away. Exposing
+them is right on upstream's standard and blocked on a derivation standard. Both are defensible, they
+give different work, and picking one inside a layout change would have been a taste call nobody made.
+
 ## ⚑⚑⚑⚑ AUGUST 5 (W-FINSPONGE) — **Poseidon 137 of 261 → 259 of 261**, and the memo four docblocks called a kernel theorem did not exist
 
 `w11_finsponge` is the **fifteenth** rung and it EMITS and PROVES: 5 434 rows, PI 7, 152 σ-only
