@@ -66,6 +66,10 @@ pub mod poa_dark_bazaar_ffi;
 #[path = "poa_galley_ffi.rs"]
 pub mod poa_galley_ffi;
 
+/// Lean-owned post-finality planner for atomic, replayable Path of Angels event batches.
+#[path = "poa_event_batch_ffi.rs"]
+pub mod poa_event_batch_ffi;
+
 pub use bridge_lc_ffi::{
     eth_committee_rotation_available, eth_committee_rotation_wire, eth_lc_verify_available,
     eth_lc_verify_wire, mina_account_opening_wire, mina_account_state_ok_available,

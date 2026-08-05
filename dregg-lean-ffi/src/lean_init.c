@@ -457,6 +457,15 @@ extern lean_object *dregg_poa_galley_daily_judge(lean_object *input);
 extern lean_object *dregg_poa_galley_daily_sponsor_judge(lean_object *input, lean_object *seal);
 #endif
 
+/* Post-finality, multi-stream EventBatch planner. The native host constructs the duplicated
+ * authority envelope from its commit record and game-judge result; this bridge transports the
+ * exact canonical bytes and never promotes a network caller's alleged authority. */
+#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(uint8_t builtin);
+extern lean_object *dregg_poa_event_batch_runtime_plan(lean_object *input);
+#define DREGG_POA_EVENT_BATCH_RUNTIME_WIRE_MAX_BYTES ((size_t)67108864u)
+#endif
+
 /* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
  * (`Dregg2.Circuit.FriLedger.friLedgerFFI`): decodes the wire
  * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (eight decimal
@@ -1118,6 +1127,16 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(galleyres);
 #endif
+#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+    lean_object *batchres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(1);
+    if (!lean_io_result_is_ok(batchres)) {
+        lean_io_result_show_error(batchres);
+        lean_dec_ref(batchres);
+        return 1;
+    }
+    lean_dec_ref(batchres);
+#endif
     /* NOTE: DREGG_GRAIN_R3_VERIFY needs NO module initializer here — `dregg_grain_r3_verify`'s
      * generated C is self-contained (static-const string literals + a lazy once-cell), and calling
      * `initialize_Dregg2_Dregg2_Grain_R3Verify` would drag its Mathlib-tactic import closure's
@@ -1289,6 +1308,33 @@ size_t dregg_poa_galley_daily_sponsor_judge_str(
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_GALLEY_DAILY_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+size_t dregg_poa_event_batch_runtime_plan_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_EVENT_BATCH_RUNTIME_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_event_batch_runtime_plan(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_EVENT_BATCH_RUNTIME_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;

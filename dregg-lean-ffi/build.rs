@@ -264,6 +264,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          sponsorship must remain disabled; no Rust code may synthesize this verdict",
     ),
     (
+        "dregg_poa_event_batch_runtime_plan",
+        "the Path of Angels finalized EventBatch planner compiles out: exact world/coordinate, \
+         ordered multi-stream predecessor chaining, payload/projection commitments and the \
+         Lean-authored batch digest have no answer source. Persistence must refuse; Rust may not \
+         construct a PreparedPoaEventBatchV2 from caller-authored fields",
+    ),
+    (
         "dregg_deleg_admit",
         "the DELEGATED TOOL/MCP-ACCESS admission verdict has no answer source: the SDK tool \
          gateway, the starbridge tool-access-delegation app and the dreggnet offerings session \
@@ -2296,6 +2303,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_sponsor_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_plan_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_trustline_step_present)");
 
@@ -3223,6 +3231,13 @@ fn main() {
     } else {
         absent_export_warn("dregg_poa_galley_daily_sponsor_judge");
     }
+    let poa_event_batch_runtime_plan_present =
+        archive_exports(&build_archive, "dregg_poa_event_batch_runtime_plan");
+    if poa_event_batch_runtime_plan_present {
+        println!("cargo:rustc-cfg=dregg_poa_event_batch_runtime_plan_present");
+    } else {
+        absent_export_warn("dregg_poa_event_batch_runtime_plan");
+    }
 
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
     // `@[export] dregg_{eth,tm,mpt}_lc_verify` symbols (the extracted, Lean-verified foreign-chain
@@ -3615,6 +3630,9 @@ fn main() {
     }
     if poa_galley_daily_sponsor_judge_present {
         shim.define("DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE", None);
+    }
+    if poa_event_batch_runtime_plan_present {
+        shim.define("DREGG_POA_EVENT_BATCH_RUNTIME_PLAN", None);
     }
     // DELEGATED TOOL-ACCESS ADMISSION: `DREGG_DELEG_ADMIT` gates BOTH the extern decl and the `_str`
     // bridge in `lean_init.c` (no module initializer — `Dregg2.Apps.DelegAdmit` is Init-only and its

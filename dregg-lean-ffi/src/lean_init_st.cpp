@@ -105,6 +105,9 @@ lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(uint8_t
 #if defined(DREGG_POA_GALLEY_DAILY_JUDGE) || defined(DREGG_POA_GALLEY_DAILY_SPONSOR_JUDGE)
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_GalleyMaintenanceDailyRuntime(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(uint8_t builtin);
+#endif
 }
 
 /* dregg_ffi_init_st — the single-threaded init for the executor-in-a-constrained-host
@@ -206,6 +209,18 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(galleyres);
+    }
+#endif
+#ifdef DREGG_POA_EVENT_BATCH_RUNTIME_PLAN
+    {
+        lean_object *batchres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(1);
+        if (!lean_io_result_is_ok(batchres)) {
+            lean_io_result_show_error(batchres);
+            lean_dec_ref(batchres);
+            return 1;
+        }
+        lean_dec_ref(batchres);
     }
 #endif
     lean_io_mark_end_initialization();

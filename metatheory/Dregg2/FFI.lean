@@ -21,6 +21,7 @@ import Dregg2.Games.PathOfAngels.NetworkJudge
 import Dregg2.Games.PathOfAngels.NetworkGenesis
 import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime
+import Dregg2.Games.PathOfAngels.EventBatchRuntime
 import Dregg2.Apps.DelegAdmit
 
 -- §1.4 Post-quantum cores.
