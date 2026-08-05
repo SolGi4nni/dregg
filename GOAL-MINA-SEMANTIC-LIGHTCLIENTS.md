@@ -1929,3 +1929,50 @@ across the sync (`old['gates'] == new['gates']`), only witness and public values
 neither enters the 28 commitments. `w4_bind` derives
 `13798061594429054870758937373636515138052866933091369202769363653346084112884` before and after.
 The RED was real; the key it derives was never affected.
+
+---
+
+## ⚑⚑ 2026-08-05, third pass — **THE PUBLIC INPUT IS IN MINA'S SLOT LAYOUT, AND MINA'S KIMCHI VERIFIER ACCEPTS**
+
+The named gap #4 above — *"THE PUBLIC INPUT IS THE REAL WALL"* — is closed as a LAYOUT gap. The
+emission is `WRAP_PRIMARY_LEN = 40` wide at every rung from `w4_bind` up, in Pickles' own slot order,
+and the acceptance is at the circuit's own vector with **nothing padded**.
+
+```
+mina_onchain_index_probe --circuit wrapmain_smoke_w4_bind.json --log2-domain 14   (release)
+
+  --vk = key DERIVED from this emission     [A] 28/28   [B] Ok            [C] 40/40 refused
+  --vk = the key devnet holds               [A]  4/28   [B] Err(OpenProof) [C] 40/40 refused
+```
+
+`[B']` is DELETED, not relabelled: the emission is already forty words, so there is nothing left to
+pad, and `[C]` moved from two hand-picked words to all forty.
+
+**22 vs 24 was neither candidate.** `pubWords = 22` is the width of `exposedVars`, what the CLOSING
+rung derives; `exposedVarsAt` appends slot 12 at `w9_prev` and slot 11 at `w11_wraphack`.
+`22 + 1 + 1 = 24`. **Pure layout — not one new derivation**, and the six derived values are
+byte-identical before and after, with the row count moving 498 → 532, exactly the +34 public rows.
+
+**The drift named above is settled**: both carried copies of `wrapmain_smoke_w4_bind.json` /
+`w3_branch.json` now come from ONE emission.
+
+⚠ **THE DEVNET REGISTRATION IS STALE AND THAT IS THE SECOND ROW OF THE TABLE.** Forty public rows
+instead of six shifts every gate row, so the account's 1796 bytes no longer describe the circuit. The
+new `w4_bind` key hashes `3188784766661697483171188289432725486872584657562879441369053845609461086197`.
+**Re-registering is a devnet transaction — outward-facing and irreversible — so it is the operator's.**
+
+⚠ **WHAT KIMCHI CANNOT TELL US.** `kimchi::verifier::verify` takes forty field elements and does not
+know what any of them mean. `[B] = Ok` says the vector is Mina's width, that our derived values sit
+at Pickles' positions, and that Mina's own verifier under a key it rebuilt accepts a proof of the
+circuit. It does NOT say those values are what `prepared_statement` derives from a real statement —
+they are still this assembly's transcript over FIXTURE commitments. **Not a Pickles-valid statement
+and not a Mina-valid proof.** The Pickles layer's own blockers (the marshaller's curve defect,
+`expand_deferred`, `accumulator_check`) are unchanged by this pass.
+
+⚠ **AND THE SIX PASS-THROUGHS ARE AN OPEN FORK, not a hole this pass left.** Slots 0–4 and 9 carry
+zero and are DECLARED unread. `wrap_main` READS all six and CHECKS none — the checker is the next
+proof's `finalize_other_proof` — and four of them already have circuit-read cells here. Exposing them
+is right on upstream's standard and blocked on a derivation standard; both are defensible and give
+different work. `docs/HANDOFF-wrap-public-input-40.md` states it; it is a taste call and it is the
+operator's.
+
