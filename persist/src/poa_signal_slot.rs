@@ -290,7 +290,7 @@ impl PersistentStore {
         let encoded = postcard::to_stdvec(&record)
             .map_err(|error| integrity(format!("cannot encode PoA slot record: {error}")))?;
 
-        let write = self.database().begin_write()?;
+        let write = self.db.begin_write()?;
         let status = {
             let mut slots = write.open_table(POA_SIGNAL_SLOT_V1)?;
             let key = slot_key(authority_id, slot);
@@ -332,7 +332,7 @@ impl PersistentStore {
         authority_id: [u8; 32],
         slot: u64,
     ) -> Result<Option<PoaInstalledSlotV1>> {
-        let read = self.database().begin_read()?;
+        let read = self.db.begin_read()?;
         let slots = read.open_table(POA_SIGNAL_SLOT_V1)?;
         let key = slot_key(authority_id, slot);
         let Some(found) = slots.get(key.as_slice())? else {
@@ -352,7 +352,7 @@ impl PersistentStore {
         &self,
         authority_id: [u8; 32],
     ) -> Result<Option<PoaInstalledSlotV1>> {
-        let read = self.database().begin_read()?;
+        let read = self.db.begin_read()?;
         let open = read.open_table(POA_SIGNAL_OPEN_SLOT_V1)?;
         let Some(slot) = open.get(authority_id.as_slice())? else {
             return Ok(None);
@@ -364,7 +364,7 @@ impl PersistentStore {
     /// Structural audit: every open-slot pointer resolves, and every stored record
     /// is readable and self-consistent with its key.
     pub fn audit_poa_signal_slots_v1(&self) -> Result<()> {
-        let read = self.database().begin_read()?;
+        let read = self.db.begin_read()?;
         let slots = read.open_table(POA_SIGNAL_SLOT_V1)?;
         for entry in slots.iter()? {
             let (key, value) = entry?;

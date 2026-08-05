@@ -252,7 +252,7 @@ fn derive_live_instance(
         .map_err(SignalAdapterError::LeanTransport)?
         .ok_or(SignalAdapterError::LeanRejected)?;
 
-    #[derive(Deserialize)]
+    #[derive(Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
     struct DeriveReplyDto {
         format: String,
@@ -1732,7 +1732,11 @@ mod tests {
             request.previous_player_counter,
             context.carrier.current_player_counter
         );
-        assert_eq!(request.run_seed, context.config.mission.run_seed);
+        // ⚠ The request no longer states a run seed — that was the hole. What it
+        // states about the instance is the slot it was played in and the commitment
+        // the opening showed, and both must name the node's own slot state.
+        assert_eq!(request.slot, context.slot_state.slot);
+        assert_eq!(request.slot_commitment, context.slot_state.commitment);
         assert_eq!(request.expected_world_sequence, context.world.sequence);
         assert_eq!(request.expected_canon_revision, context.canon.revision);
         assert_eq!(request.actions, vec![SignalCodeDto::from(claim().code())]);
