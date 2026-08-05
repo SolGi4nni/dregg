@@ -64,8 +64,8 @@ samples.
 
 34 × 255-bit RCB ladders per instance of the relation (2×15 `lr` + the aggregate + `u_base` + `sg`
 + `h`) ≈ 13 s of kernel at §6.1's 0.19 s/ladder unit; `delta` enters with coefficient 1 and costs
-no ladder. The sponge continuation is ~50 Poseidon permutations, `#guard`-evaluated as
-`MinaRealBlockTranscript`'s are. Ten instances of the relation plus the transcript: **153 s /
+no ladder. The sponge continuation is ~50 Poseidon permutations, evaluated by the COMPILER — as
+`MinaRealBlockTranscript`'s are, and as these were when they were `#guard`s. Ten instances of the relation plus the transcript: **153 s /
 14.3 GB peak RSS measured on hbox** (`lake build`; 174 s standalone on a loaded box) — the
 prediction and the measurement agree, which is what makes the 5h extrapolation in §6.1 worth
 anything.
@@ -77,8 +77,19 @@ emitting: `[gt6]` is `residual.is_zero()`, and `[gt7]` re-runs it at `z1 + 1` an
 `combined + G` and requires BOTH to be non-zero. `[gt8]` asserts (A). All of it sits behind
 `kimchi::verifier::verify = Ok(())` and `SRS::verify = true` on the same object.
 
-Axiom-clean: `by decide` and `#guard`; no `sorry`, no `native_decide`. NEW file. NOT imported by
-the `Dregg2` root, per house practice for gates. Import line:
+## Axiom hygiene — ⚠ CORRECTED 2026-08-05, because the old line was FALSE-BY-OMISSION
+
+`#assert_namespace_axioms` pins **26 theorems kernel-clean**, and **9 are `except`ed** as
+`native_decide` + `#assert_compiled`: the IPA-transcript replay and its non-vacuity controls.
+
+⚠ This header used to read *"Axiom-clean: `by decide` and `#guard`; no `sorry`, no `native_decide`"*.
+Every clause was literally true and the sentence was misleading, because the nine `#guard`s ran the
+**same unsafe compiled evaluator `native_decide` runs on** — the file was already trusting the
+compiler for the whole sponge replay, and the phrase "no `native_decide`" read as though it were not.
+Converting them changed no trust; it made the trust COUNTABLE, and it is counted in the `except`
+clause at the end of the file. No `sorry`. Zero `#guard`s.
+
+NEW file. NOT imported by the `Dregg2` root, per house practice for gates. Import line:
 `import Dregg2.Circuit.Emit.MinaWrapOpeningGate`
 -/
 
@@ -301,8 +312,15 @@ def wrapPhase1State : SpongeSt :=
   let s5 := absorbMany fpParams s4 TCOMM_XY
   (challenge fpParams s5).1
 
-/-! It IS the transcript's phase-1 state: its digest is the `FQ_DIGEST` phase 2 chains on. -/
-#guard Dregg2.Circuit.Emit.PastaPoseidonFq.digestInto fpParams wrapPhase1State qN == FQ_DIGEST
+/-- ⚑ **IT IS THE TRANSCRIPT'S PHASE-1 STATE**: its digest is the `FQ_DIGEST` phase 2 chains on.
+
+⚠ `native_decide`, and it says so. This was a `#guard` until 2026-08-05, which ran the SAME unsafe
+compiled evaluator with the name, the term and the axiom record deleted — so nothing is trusted here
+that was not trusted before, and `#assert_compiled` now makes that trust COUNTABLE. -/
+theorem the_phase1_state_digests_to_the_transcript_digest :
+    (Dregg2.Circuit.Emit.PastaPoseidonFq.digestInto fpParams wrapPhase1State qN == FQ_DIGEST)
+      = true := by native_decide
+#assert_compiled the_phase1_state_digests_to_the_transcript_digest
 
 /-- `absorb_fr` on the Pallas Fq-sponge (`sponge.rs:221-252`). Pallas's scalar modulus `q`
 EXCEEDS its base modulus `p`, so the branch taken is the one that splits: absorb the high bits,
@@ -366,27 +384,61 @@ def ipaTranscript (cipS : Nat) (rounds : List (List Nat)) (dxy : List Nat) :
 /-- `challenge_fq()`'s output — the group map's preimage, a FULL `Fp` element. -/
 def T_FQ : Nat := 28506219073229703934904942026880877226428838281173670526112543109172136437102
 
-/-! ⚑ **THE RESULT**: `t`, all 15 IPA prechallenges and `c′` of a REAL Mina block's opening
-argument fall out of the sponge the block's own transcript leaves behind. -/
-#guard ipaTranscript CIP_SHIFTED LR_XY DELTA_XY == (T_FQ, IPA_PRECHALS, C_PRE)
+/-- ⚑ **THE RESULT**: `t`, all 15 IPA prechallenges and `c′` of a REAL Mina block's opening
+argument fall out of the sponge the block's own transcript leaves behind.
 
-/-! Non-vacuity, one per stage of the stream. -/
--- the absorbed `combined_inner_product` is inside the transcript: move it and `t` moves
-#guard (ipaTranscript (CIP_SHIFTED + 1) LR_XY DELTA_XY).1 != T_FQ
--- an IPA round point moves its own challenge and every later one, but not `t`
-#guard (ipaTranscript CIP_SHIFTED (LR_XY.set 0 ((LR_XY.getD 0 []).set 0 0)) DELTA_XY).1 == T_FQ
-#guard (ipaTranscript CIP_SHIFTED (LR_XY.set 0 ((LR_XY.getD 0 []).set 0 0)) DELTA_XY).2.1
-    != IPA_PRECHALS
--- the LAST round is read too (a fold that stopped early would pass the first control)
-#guard (ipaTranscript CIP_SHIFTED (LR_XY.set 14 ((LR_XY.getD 14 []).set 3 0)) DELTA_XY).2.1
-    != IPA_PRECHALS
--- `delta` is absorbed AFTER the rounds: it moves `c′` and leaves the 15 prechallenges alone
-#guard (ipaTranscript CIP_SHIFTED LR_XY (DELTA_XY.set 0 0)).2.1 == IPA_PRECHALS
-#guard (ipaTranscript CIP_SHIFTED LR_XY (DELTA_XY.set 0 0)).2.2 != C_PRE
--- and the split absorb of `absorb_fr` is the right one: absorbing `cip` unsplit is a DIFFERENT
--- transcript, so `sponge.rs`'s `q > p` branch is load-bearing rather than cosmetic
-#guard (let s := absorbMany fpParams wrapPhase1State [CIP_SHIFTED]
-        (squeeze1 fpParams s).2) != T_FQ
+⚠ These eight were `#guard`s until 2026-08-05. Each is `native_decide` — the SAME unsafe compiled
+evaluator a `#guard` already ran — now carrying a name, a term and an axiom record. -/
+theorem the_ipa_transcript_replays_the_blocks_own_opening :
+    (ipaTranscript CIP_SHIFTED LR_XY DELTA_XY == (T_FQ, IPA_PRECHALS, C_PRE)) = true := by
+  native_decide
+#assert_compiled the_ipa_transcript_replays_the_blocks_own_opening
+
+/-! ⚑ Non-vacuity, one per stage of the stream. Without these the replay above would be satisfied by
+a sponge that ignored most of its input. -/
+
+/-- The absorbed `combined_inner_product` is INSIDE the transcript: move it and `t` moves. -/
+theorem moving_the_inner_product_moves_t :
+    ((ipaTranscript (CIP_SHIFTED + 1) LR_XY DELTA_XY).1 != T_FQ) = true := by native_decide
+#assert_compiled moving_the_inner_product_moves_t
+
+/-- An IPA round point moves its own challenge and every later one, but NOT `t` — `t` is squeezed
+before the rounds are absorbed, and this is that ordering as a fact. -/
+theorem a_round_point_leaves_t_alone :
+    ((ipaTranscript CIP_SHIFTED (LR_XY.set 0 ((LR_XY.getD 0 []).set 0 0)) DELTA_XY).1 == T_FQ)
+      = true := by native_decide
+#assert_compiled a_round_point_leaves_t_alone
+
+/-- …and DOES move the prechallenges. -/
+theorem a_round_point_moves_the_prechallenges :
+    ((ipaTranscript CIP_SHIFTED (LR_XY.set 0 ((LR_XY.getD 0 []).set 0 0)) DELTA_XY).2.1
+      != IPA_PRECHALS) = true := by native_decide
+#assert_compiled a_round_point_moves_the_prechallenges
+
+/-- ⚑ The LAST round is read too — a fold that stopped early would pass the first control and fail
+this one. -/
+theorem the_last_ipa_round_is_absorbed :
+    ((ipaTranscript CIP_SHIFTED (LR_XY.set 14 ((LR_XY.getD 14 []).set 3 0)) DELTA_XY).2.1
+      != IPA_PRECHALS) = true := by native_decide
+#assert_compiled the_last_ipa_round_is_absorbed
+
+/-- `delta` is absorbed AFTER the rounds, so it leaves the 15 prechallenges alone… -/
+theorem delta_leaves_the_prechallenges_alone :
+    ((ipaTranscript CIP_SHIFTED LR_XY (DELTA_XY.set 0 0)).2.1 == IPA_PRECHALS) = true := by
+  native_decide
+#assert_compiled delta_leaves_the_prechallenges_alone
+
+/-- …and moves `c′`. -/
+theorem delta_moves_c_prime :
+    ((ipaTranscript CIP_SHIFTED LR_XY (DELTA_XY.set 0 0)).2.2 != C_PRE) = true := by native_decide
+#assert_compiled delta_moves_c_prime
+
+/-- ⚑ **AND THE SPLIT ABSORB IS THE RIGHT ONE.** Absorbing `cip` UNSPLIT is a different transcript,
+so `sponge.rs`'s `q > p` branch is load-bearing rather than cosmetic. -/
+theorem the_split_absorb_of_absorb_fr_is_load_bearing :
+    ((let s := absorbMany fpParams wrapPhase1State [CIP_SHIFTED]
+      (squeeze1 fpParams s).2) != T_FQ) = true := by native_decide
+#assert_compiled the_split_absorb_of_absorb_fr_is_load_bearing
 
 /-- **`derived_ipa_challenges`** — the 15 prechallenges endo-lift to the `chal` the relation
 scales `L` and `R` by. -/
@@ -627,6 +679,19 @@ theorem tamper_u_base_sign :
     isInfM pN (openingResidual C Z1 Z2 CHAL CHAL_INV COMBINED_GOLD
       (U_BASE.1, (pN - U_BASE.2.1 % pN) % pN, U_BASE.2.2) SG DELTA) = false := by decide
 
+-- ⚑ The nine `except`ed theorems are the IPA-transcript replay and its non-vacuity controls. They
+-- were `#guard`s until 2026-08-05, which ran the SAME unsafe compiled evaluator with the name, the
+-- term and the axiom record DELETED — invisible to this very assertion. As `native_decide` +
+-- `#assert_compiled` the trust is identical and now COUNTABLE: it appears here, by name, as nine
+-- theorems this namespace does not claim kernel-clean. That is the point of the conversion.
+-- ⚠ Not `decide`: the replay is ~100 Poseidon permutations over 255-bit `Fp`, which is where the
+-- kernel stops reaching and the compiled evaluator does not.
 #assert_namespace_axioms Dregg2.Circuit.Emit.MinaWrapOpeningGate
+  except the_phase1_state_digests_to_the_transcript_digest
+    the_ipa_transcript_replays_the_blocks_own_opening
+    moving_the_inner_product_moves_t a_round_point_leaves_t_alone
+    a_round_point_moves_the_prechallenges the_last_ipa_round_is_absorbed
+    delta_leaves_the_prechallenges_alone delta_moves_c_prime
+    the_split_absorb_of_absorb_fr_is_load_bearing
 
 end Dregg2.Circuit.Emit.MinaWrapOpeningGate

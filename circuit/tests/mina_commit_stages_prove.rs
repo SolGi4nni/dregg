@@ -18,30 +18,47 @@
 //! | stage | terms | what the AIR checks |
 //! |---|---|---|
 //! | ξ scalar vector | 47 powers | `PI_out = PI_in^46` over the Pallas SCALAR field, 46 multiplies |
-//! | `public_comm` | 41 | the affine fold of 40 Lagrange bases at negated public inputs, + the `mask_custom` blinder |
+//! | `public_comm` | **31** (41 nominal) | the affine fold of the Lagrange bases with a NON-ZERO public input, + the `mask_custom` blinder |
 //! | `f_comm` | 1 | `linearization.index_terms` is EMPTY on the wrap side |
 //! | `ft_comm` | 8 points | `chunk(f) − Σ_j ζ^{srs·j}(ζⁿ−1) · t_j` |
 //! | ξ-aggregate | 47 | `Σ ξⁱ Cᵢ`, `combine_commitments`' own list and order |
 //! | ladder | 1 × 8 planes | double-and-add with an in-circuit bit decomposition and a closing `SC = s` assert |
 //!
-//! ⚑ **THE GOLDENS ARE o1-LABS'.** Every fold's public inputs are asserted against the value
-//! `MinaWrapGroupGate` / `MinaWrapAggregationGate` / `MinaWrapPublicCommGate` already carry from
-//! Mina devnet block **539508**, each of which is `by decide`-checked in Lean against o1-labs'
-//! own `PolyComm::multi_scalar_mul` output. So a green here is a green against Mina's arithmetic,
-//! not against ours.
+//! ⚑ **`public_comm` IS 31 AND NOT 41 BECAUSE THIS TEST FOUND A DEFECT.** Ten of the block's forty
+//! public inputs are ZERO; a zero scalar makes the term the point at infinity, which `toAff` reads
+//! as `(0,0)` — not on Pallas. The 41-term fold reached o1-labs' value ANYWAY, and only because ten
+//! is EVEN. §2 has the full account; `MinaWrapCommitStages.an_odd_identity_count_misses_the_golden`
+//! is the refutation in Lean.
+//!
+//! ⚑ **THE GOLDENS ARE o1-LABS', AND NOTHING HERE TRANSCRIBES THEM.** The anchor is
+//! `fixtures/mina-commit-golds.txt`, emitted by `EmitCommitStages.lean goldlimbs` off the GATE
+//! CONSTANTS (`PUBLIC_COMM_GOLD` / `F_COMM_GOLD` / `FT_COMM_GOLD` / `COMBINED_GOLD`), each `by
+//! decide`-checked in Lean against o1-labs' own `PolyComm::multi_scalar_mul` on Mina devnet block
+//! **539508**. §2 reads the term points out of each descriptor's INSTRUCTION ROM, folds them in this
+//! file's own arithmetic, and lands on that anchor — 87/87 term points, counted. So a green here is
+//! a green against Mina's arithmetic, not against ours, and not against a decimal someone typed.
 //!
 //! ## ⚠ WHAT THIS DOES NOT SHOW — read before reading any green
 //!
 //! The four FOLD descriptors take `sᵢ·Bᵢ` as given: their ROM immediates are the PRE-SCALED points.
 //! The scalar multiplication that produces them is `ladderDesc`, and it runs at **8 planes, not
 //! 255**. `MinaWrapCommitStages.full_width_ladder_price` prices the full-width stages at
-//! 378 561 / 9 465 / 85 177 / 444 809 instructions. So:
+//! 378 561 / 9 465 / 85 177 / 444 809 instructions. So, **of the descriptors in THIS file**:
 //!
 //!   * the SCALAR VECTOR is checked in-AIR at full fidelity (46 real multiplies);
-//!   * the GROUP FOLD is checked in-AIR at full term count (41 / 1 / 8 / 47 real points);
+//!   * the GROUP FOLD is checked in-AIR at full term count (31 / 1 / 8 / 47 real points);
 //!   * the SCALAR MULTIPLICATION joining them is demonstrated at 8 planes and priced at 255.
 //!
-//! Nothing here is "the ξ-aggregate is verified in-AIR".
+//! **Nothing in this file is "the ξ-aggregate is verified in-AIR".**
+//!
+//! ⚑ **THAT CLAIM NOW HAS A HOME, AND IT IS NOT HERE.**
+//! `Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm` emits the same 47-term aggregate on
+//! `PastaMsmBucketed`'s fused running sum — generators UNSCALED, the 47 ξ powers entering as DIGITS
+//! at `nbits = 255`, 8 192 rows — and
+//! `pasta_msm_bucketed_prove.rs::the_mina_xi_aggregate_scales_inside_the_circuit` proves it on the
+//! deployed prover against `COMBINED_GOLD`. ⚠ It buys that with a DOWNGRADE that must not be
+//! absorbed: those rows are denominated in the **unsound `fpMulCore`**, where every descriptor in
+//! this file is `PastaFieldSound`.
 //!
 //! ⚑ **RELEASE, DELIBERATELY.** Algebraic refusals are `debug_assert` PANICS in debug and clean
 //! `Err(...)` in release; a refusal test that passes only in debug is testing the assertion.
@@ -812,6 +829,13 @@ fn the_commitment_machine_is_priced() {
 
     // The Lean census (`MinaWrapCommitStages.full_width_ladder_price`), restated so a drift on
     // either side reds here.
+    //
+    // ⚑ These term counts are the NOMINAL ones, and deliberately so: this table prices what a
+    // FULL-WIDTH stage would cost, where every term gets its own 255-plane ladder whether or not
+    // its scalar happens to be zero in this particular block. The EMITTED `public_comm` fold runs
+    // 31 terms (§2), because a zero scalar makes an affine term the point at infinity; that is a
+    // property of block 539508's public inputs, not of the stage, and pricing the stage by it would
+    // understate every other block.
     const FULL: &[(&str, usize, usize)] = &[
         ("public_comm", 41, 378_561),
         ("f_comm", 1, 9_465),
