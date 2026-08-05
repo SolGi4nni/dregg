@@ -90,6 +90,18 @@ const WINDOWED_SHA: &str = "7c1326f8c705aad8d9165bc97d7c2926a98b2d7ec0bdc756b85e
 const V2_JSON: &str = include_str!("fixtures/pasta-msm-bucketed/pasta-msm-bucketed-vesta-c2.json");
 const V2_SHA: &str = "b580a8f199a1acca7607429242342f55741aba43b5c41b18ab679caa0621706e";
 
+/// ⚑ **THE ξ-AGGREGATE OF A REAL MINA BLOCK, on this layout.** Emitted by
+/// `EmitCommitStages.lean aggmsm` from `Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm.xiAggMsmDesc` =
+/// `bucketedRowDesc 59 255 2 GENS SCAL`. It belongs to the COMMITMENT-STAGES campaign, not to this
+/// file's demonstration family, and it lives here because the witness producer above is what fills
+/// it. Unlike the three toys it is FULL-WIDTH: `nbits = 255`, 47 real block commitments (+12
+/// inert padding terms), 8 192 rows.
+const XIAGG_JSON: &str = include_str!("../descriptors/by-name/mina-xi-aggregate-msm.json");
+const XIAGG_SHA: &str = "807be347312fe4388f7f42ac99540cdbf52553a13a787d2712177a2a38470c4b";
+/// The four o1-labs goldens, emitted from the GATE CONSTANTS by `EmitCommitStages.lean goldlimbs`.
+/// Line 3 (0-indexed) is `MinaWrapAggregationGate.COMBINED_GOLD`.
+const MINA_GOLDS: &str = include_str!("fixtures/mina-commit-golds.txt");
+
 const C2_SHA: &str = "5798a59c1957a2ef19f087540b1d9ec382d15d83d897b9cc75e055317fbe0a53";
 const C3_SHA: &str = "535d48f303041185156b41ec91b1ca1fd1ecea166507c89df7704f08b2927ad1";
 
@@ -853,4 +865,155 @@ fn the_chip_free_bucketed_air_reaches_log_blowup_two() {
          the 2^25 row ceiling and the ~16x LDE saving are not available and \
          PastaMsmBucketed's headroom paragraph must be retracted"
     );
+}
+
+// =============================================================================================
+// (h) ⚑ THE ξ-AGGREGATE OF MINA DEVNET BLOCK 539508, SCALED INSIDE THE CIRCUIT
+//
+// This is the instance the commitment-stages campaign needed and could not get from its own
+// machine. `MinaWrapCommitStages.xiAggDesc` folds the same 47 commitments at full term count, but
+// its ROM immediates are PRE-SCALED by `MinaWrapGroupGate.smul` — a Lean reference function, not a
+// gate — so what it forces is "these 47 hardcoded points, added in this order, give this hardcoded
+// point". Here the generators enter UNSCALED and the 47 powers of the block's real ξ enter as
+// DIGITS, at the full 255-bit scalar width. `T_COVER`'s permutation makes `ξⁱ·Cᵢ` the trace's work.
+//
+// ⚠ The anchor is not this file's arithmetic and not the trace's own output: it is
+// `MinaWrapAggregationGate.COMBINED_GOLD`, o1-labs' `PolyComm::multi_scalar_mul` output for that
+// block, emitted straight off the gate constant. No decimal is transcribed here.
+//
+// ⚠ `reference_msm` above is NOT usable on this instance — it loops `0..s` unary over the scalar,
+// which is fine at `nbits = 4` and impossible at 255. The golden IS the reference.
+// =============================================================================================
+
+/// The `COMBINED_GOLD` line of the Lean-emitted golden anchor, as an affine point.
+fn mina_combined_gold() -> Pt {
+    let line = MINA_GOLDS
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .nth(3)
+        .expect("the golden anchor carries four points; the xi-aggregate is the fourth");
+    let v: Vec<u64> = line
+        .split_whitespace()
+        .map(|c| c.parse::<u64>().expect("limb is a decimal"))
+        .collect();
+    assert_eq!(v.len(), 64, "32 x-limbs then 32 y-limbs");
+    let field = |l: &[u64]| {
+        let mut w = [0u64; 4];
+        for (i, b) in l.iter().enumerate() {
+            assert!(*b < 256, "limb out of its 8-bit range");
+            w[i / 8] |= *b << (8 * (i % 8));
+        }
+        U256(w)
+    };
+    Pt {
+        x: field(&v[..32]),
+        y: field(&v[32..]),
+        z: U256::ONE,
+    }
+}
+
+#[test]
+fn the_mina_xi_aggregate_scales_inside_the_circuit() {
+    assert_eq!(
+        sha256_hex(XIAGG_JSON.as_bytes()),
+        XIAGG_SHA,
+        "the xi-aggregate descriptor was re-emitted; re-read the Lean and re-pin"
+    );
+    let desc = parse(XIAGG_JSON);
+    assert_eq!(
+        desc.name, "dregg-pasta-msm-bucketed-pallas-n59b255-c2::v1",
+        "n and nbits are in the name since 2026-08-05"
+    );
+    let sh = shape_of(&desc);
+    assert_eq!(sh.rows, 8192, "128 windows of 64 rows");
+    assert_eq!(
+        sh.n, 59,
+        "47 real block commitments + 12 inert padding terms"
+    );
+    assert_eq!(sh.windows, 128, "ceil(255/2)");
+    assert_eq!(sh.c, 2);
+    assert_eq!(sh.levels, 3, "2^c - 1");
+
+    // ⚑ THE SCALARS ARE FULL-WIDTH. Recompose term 1's declared digits and check it is a real
+    // 255-bit scalar and not something that fits in a window or two — this is the difference
+    // between "the aggregate scales in-circuit" and "a toy scales in-circuit".
+    let mut top = 0usize;
+    for w in 0..sh.windows {
+        if sh.digits[w][1] != 0 {
+            top = (sh.windows - w) * sh.c;
+            break;
+        }
+    }
+    assert!(
+        top > 250,
+        "xi^1 should occupy ~255 bits of declared digits, got {top}"
+    );
+
+    let (trace, pis) = honest_trace(&sh);
+    let got = Pt {
+        x: read_field(trace.last().unwrap(), TOTX),
+        y: read_field(trace.last().unwrap(), TOTX + NUM_LIMBS),
+        z: read_field(trace.last().unwrap(), TOTX + 2 * NUM_LIMBS),
+    };
+    let gold = mina_combined_gold();
+    assert!(
+        on_curve_at(&P_PASTA, &gold),
+        "o1-labs' aggregate is a real Pallas point"
+    );
+    assert!(
+        proj_eq_at(&P_PASTA, &got, &gold),
+        "the in-circuit accumulation did not reach o1-labs' aggregate for block 539508"
+    );
+
+    let t0 = Instant::now();
+    prove_and_verify(&desc, &trace, &pis).unwrap_or_else(|e| {
+        panic!(
+            "the LEAN-AUTHORED AIR refused an honest xi-aggregate witness: {e}\n\
+             (fix the WITNESS, never the AIR)"
+        )
+    });
+    println!(
+        "\n  [ξ-AGGREGATE] Mina devnet block 539508, 47 commitments at nbits=255, \n\
+           {} rows x {} cols, {} constraints -> the trace REACHES o1-labs' COMBINED_GOLD, \n\
+           PROVED + VERIFIED in {:.1} ms. The scalar multiplication is INSIDE the circuit.",
+        sh.rows,
+        WK,
+        desc.constraints.len(),
+        t0.elapsed().as_secs_f64() * 1e3
+    );
+}
+
+/// ⚑ …and a forged aggregate is refused. The arithmetic cannot see this one — every row still adds
+/// correctly — so the 27 PI bindings are the only thing that can object. Same displacement, same
+/// encoding idiom, as `a_forged_commitment_is_refused` above.
+#[test]
+fn a_forged_mina_xi_aggregate_is_refused() {
+    let desc = parse(XIAGG_JSON);
+    let sh = shape_of(&desc);
+    let (trace, pis) = honest_trace(&sh);
+
+    let honest = Pt {
+        x: read_field(trace.last().unwrap(), TOTX),
+        y: read_field(trace.last().unwrap(), TOTX + NUM_LIMBS),
+        z: read_field(trace.last().unwrap(), TOTX + 2 * NUM_LIMBS),
+    };
+    let forged = complete_add(&P_PASTA, &honest, &sh.gens[0]);
+    assert!(
+        !proj_eq_at(&P_PASTA, &honest, &forged),
+        "the forgery must move the point"
+    );
+
+    let mut bad = vec![BabyBear::new(0); PI_COUNT];
+    for i in 0..NUM_LIMBS {
+        bad[i] = BabyBear::new(forged.x.limb30(i));
+        bad[NUM_LIMBS + i] = BabyBear::new(forged.y.limb30(i));
+        bad[2 * NUM_LIMBS + i] = BabyBear::new(forged.z.limb30(i));
+    }
+    assert_ne!(bad, pis, "the forged PI vector must differ");
+
+    let e = must_refuse(
+        "the Mina xi-aggregate claimed as C + G, honest trace",
+        || prove_and_verify(&desc, &trace, &bad),
+    );
+    println!("\n  [FORGED ξ-AGGREGATE] claimed COMBINED_GOLD + G -> REFUSED: {e:?}");
 }
