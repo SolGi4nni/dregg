@@ -765,6 +765,103 @@ theorem runRowsAt_is_the_program_one : runRowsAt pN pLimb = runRows := by
         List.cons.injEq, true_and]
       exact ih _ _
 
+/-! ### §10c — ⚑ THE GENERATOR HAS TO TERMINATE, AND THE CLOSURE ONE DOES NOT.
+
+⚑ **THE DEFECT, DERIVED FROM THE DEFINITIONS.** `RegFile` is `Nat → Nat` and `stepRegsAt N st I` is
+a CLOSURE whose body re-reads `st` on every application. Nothing memoises. So the cost of the value
+standing in a register at instruction depth `d` is not `d` — reading it re-evaluates the write that
+produced it, whose two operands re-evaluate THEIR writes, and the dataflow DAG is unfolded as a
+TREE. Kimchi's S-box alone is four chained multiplies, each reading its predecessor twice.
+
+One round (30 instructions) unfolds fine — `roundTrace` emits in about four seconds. The 55-round
+absorption does not: 1 652 instructions were still running after **412 CPU-minutes** and left a
+zero-byte fixture. That is not a slow machine, it is the wrong asymptotics, and it is why this
+rung's absorption had never been proved.
+
+⚑ **AND IT IS A DEFECT OF THE WITNESS GENERATOR, NOT OF THE AIR.** Not one gate, one column, one
+constraint or one descriptor byte changes below. The register file becomes a `List Nat` of `NREG`
+entries, which Lean evaluates STRICTLY: each write costs one `opResultAt`, each read is an index,
+and the whole run is linear.
+
+⚑ **IT IS ALSO NOT A SECOND GENERATOR.** `regsOf_stepVecAt` proves the strict step IS `stepRegsAt`
+seen through `regsOf`, and `runRowsVecAt_is_runRowsAt` lifts that to whole programs. So every
+denotation §5–§7 established — up to `the_absorb_program_squeezes_the_kimchi_hash` — transfers to
+the emitted artifact by REWRITING, not by being re-established on a copy. A generator that agreed
+with the semantics only on the cases someone checked is exactly the shape this campaign keeps
+finding; there is no case-check here. -/
+
+/-- Read register `r` out of a concrete `NREG`-entry file. Out-of-range reads are `0`, which is what
+makes `regsOf` total and the step lemma hypothesis-free. -/
+def readVec (rs : List Nat) (r : Nat) : Nat := if r < NREG then rs.getD r 0 else 0
+
+/-- A concrete register file, viewed as the `RegFile` every theorem above is stated over. -/
+def regsOf (rs : List Nat) : RegFile := readVec rs
+
+/-- ⚑ **THE STRICT STEP.** The written value is computed ONCE, in a `let`, and the six entries are
+built eagerly. That single `let` is the whole difference from `stepRegsAt`. -/
+def stepVecAt (N : Nat) (rs : List Nat) (I : Instr) : List Nat :=
+  let z := opResultAt N I.op (readVec rs I.xr) (yValue (regsOf rs) I)
+  let g : Nat → Nat := fun r => if I.wr < NREG ∧ r = I.wr then z else readVec rs r
+  [g 0, g 1, g 2, g 3, g 4, g 5]
+
+/-- ⚑ **AND THE STRICT STEP IS `stepRegsAt`**, at every register index — including the out-of-range
+ones, where both sides are `0` because `I.wr < NREG` and `r ≥ NREG` cannot both name the same
+register. -/
+theorem regsOf_stepVecAt (N : Nat) (rs : List Nat) (I : Instr) :
+    regsOf (stepVecAt N rs I) = stepRegsAt N (regsOf rs) I := by
+  funext r
+  match r with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | 3 => rfl
+  | 4 => rfl
+  | 5 => rfl
+  | (n + 6) =>
+      have h1 : ¬ (I.wr < NREG ∧ n + 6 = I.wr) := by unfold NREG; omega
+      have h2 : ¬ (n + 6 < NREG) := by unfold NREG; omega
+      simp [regsOf, readVec, stepRegsAt, h1, h2]
+
+/-- Run a whole program on the strict file. -/
+def runProgVecAt (N : Nat) (rs : List Nat) : List Instr → List Nat
+  | [] => rs
+  | I :: rest => runProgVecAt N (stepVecAt N rs I) rest
+
+/-- ⚑ **AND RUNNING IT IS `runProgAt`.** -/
+theorem regsOf_runProgVecAt (N : Nat) : ∀ (prog : List Instr) (rs : List Nat),
+    regsOf (runProgVecAt N rs prog) = runProgAt N (regsOf rs) prog := by
+  intro prog
+  induction prog with
+  | nil => intro rs; rfl
+  | cons I rest ih =>
+      intro rs
+      show regsOf (runProgVecAt N (stepVecAt N rs I) rest)
+        = runProgAt N (stepRegsAt N (regsOf rs) I) rest
+      rw [← regsOf_stepVecAt]
+      exact ih _
+
+/-- The trace, generated over the strict file. The ROW generator is `rowAsgAt` — unchanged, the same
+one `rowAsgAt_is_the_program_one` welds to the Fp machine's. -/
+def runRowsVecAt (N : Nat) (pl : Nat → ℤ) (rs : List Nat) (pc : Nat) : List Instr → List (List ℤ)
+  | [] => []
+  | I :: rest =>
+      ((List.range PROG_WIDTH).map (rowAsgAt N pl (regsOf rs) pc I))
+        :: runRowsVecAt N pl (stepVecAt N rs I) (pc + 1) rest
+
+/-- ⚑ **THE EMITTED TRACE IS THE ONE `runRowsAt` DEFINES**, row for row and cell for cell. This is
+the theorem that lets §10a and §10b below emit from the strict generator while every statement about
+what the trace MEANS continues to be a statement about `runRowsAt`. -/
+theorem runRowsVecAt_is_runRowsAt (N : Nat) (pl : Nat → ℤ) :
+    ∀ (prog : List Instr) (rs : List Nat) (pc : Nat),
+      runRowsVecAt N pl rs pc prog = runRowsAt N pl (regsOf rs) pc prog := by
+  intro prog
+  induction prog with
+  | nil => intro rs pc; rfl
+  | cons I rest ih =>
+      intro rs pc
+      simp only [runRowsVecAt, runRowsAt, List.cons.injEq, true_and]
+      rw [ih, regsOf_stepVecAt]
+
 /-! ### §10a — the round instance's witness. -/
 
 /-- Three full-width Fq state lanes, so every limb of every operand block is exercised on row 0. -/
@@ -775,13 +872,43 @@ def ROUND_S2 : Nat := PastaField.Ref.fqAdd PastaField.Ref.X PastaField.Ref.Y
 def roundInit : RegFile := fun r =>
   if r = 0 then ROUND_S0 else if r = 1 then ROUND_S1 else if r = 2 then ROUND_S2 else 0
 
-def roundTrace : List (List ℤ) := runRowsAt qN qLimb roundInit 0 roundProg
+/-- The same initial state as a concrete six-entry file. -/
+def roundInitVec : List Nat := [ROUND_S0, ROUND_S1, ROUND_S2, 0, 0, 0]
+
+theorem regsOf_roundInitVec : regsOf roundInitVec = roundInit := by
+  funext r
+  match r with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | 3 => rfl
+  | 4 => rfl
+  | 5 => rfl
+  | (n + 6) =>
+      have h : ¬ (n + 6 < NREG) := by unfold NREG; omega
+      simp [regsOf, readVec, roundInit, h]
+
+def roundTrace : List (List ℤ) := runRowsVecAt qN qLimb roundInitVec 0 roundProg
+
+/-- ⚑ **AND THE EMITTED ROUND TRACE IS `runRowsAt`'s.** -/
+theorem roundTrace_is_the_program_run :
+    roundTrace = runRowsAt qN qLimb roundInit 0 roundProg := by
+  rw [roundTrace, runRowsVecAt_is_runRowsAt, regsOf_roundInitVec]
+
+/-- The register file the round program ends in, run strictly. -/
+def roundOutVec : List Nat := runProgVecAt qN roundInitVec round0Instrs
 
 /-- The output state the machine reaches, computed by the interpreter — never asserted. -/
 def roundOut : List Nat :=
-  tripleList ( runProgAt qN roundInit round0Instrs 4
-             , runProgAt qN roundInit round0Instrs 5
-             , runProgAt qN roundInit round0Instrs 0 )
+  [regsOf roundOutVec 4, regsOf roundOutVec 5, regsOf roundOutVec 0]
+
+theorem roundOut_is_the_program_output :
+    roundOut = tripleList ( runProgAt qN roundInit round0Instrs 4
+                          , runProgAt qN roundInit round0Instrs 5
+                          , runProgAt qN roundInit round0Instrs 0 ) := by
+  have h : regsOf roundOutVec = runProgAt qN roundInit round0Instrs := by
+    rw [roundOutVec, regsOf_runProgVecAt, regsOf_roundInitVec]
+  simp only [roundOut, tripleList, h]
 
 /-- ⚑ **THE EMITTED ROUND'S OUTPUT IS THE KIMCHI ROUND OF ITS INPUT.** Not a `decide` at a point:
 this is `roundSchedule_is_the_kimchi_round` instantiated, so the emitted artifact inherits a
@@ -789,8 +916,9 @@ statement that holds at every state. -/
 theorem the_emitted_round_output_is_the_kimchi_round :
     roundOut = PastaPoseidonFq.Core.round fqParams (rcsQ.getD 0 [])
       [roundInit 0, roundInit 1, roundInit 2] :=
-  (congrArg tripleList (schedule_at_alloc_0 qN mQ (rQ 0) roundInit)).trans
-    (roundSchedule_is_the_kimchi_round 0 (roundInit 0) (roundInit 1) (roundInit 2))
+  roundOut_is_the_program_output.trans
+    ((congrArg tripleList (schedule_at_alloc_0 qN mQ (rQ 0) roundInit)).trans
+      (roundSchedule_is_the_kimchi_round 0 (roundInit 0) (roundInit 1) (roundInit 2)))
 
 /-- …and the pinned input state is the three full-width lanes the witness starts from. -/
 theorem the_round_input_state :
@@ -823,17 +951,48 @@ def ABSORB_X1 : Nat := 2
 def absorbInit : RegFile := fun r =>
   if r = 3 then ABSORB_X0 else if r = 4 then ABSORB_X1 else 0
 
-def absorbTrace : List (List ℤ) := runRowsAt qN qLimb absorbInit 0 absorbProg
+/-- The fresh sponge with the two values already in their source registers, concretely. -/
+def absorbInitVec : List Nat := [0, 0, 0, ABSORB_X0, ABSORB_X1, 0]
+
+theorem regsOf_absorbInitVec : regsOf absorbInitVec = absorbInit := by
+  funext r
+  match r with
+  | 0 => rfl
+  | 1 => rfl
+  | 2 => rfl
+  | 3 => rfl
+  | 4 => rfl
+  | 5 => rfl
+  | (n + 6) =>
+      have h : ¬ (n + 6 < NREG) := by unfold NREG; omega
+      simp [regsOf, readVec, absorbInit, h]
+
+def absorbTrace : List (List ℤ) := runRowsVecAt qN qLimb absorbInitVec 0 absorbProg
+
+/-- ⚑ **AND THE EMITTED 2 048-ROW ABSORPTION TRACE IS `runRowsAt`'s** — the trace §7's denotation
+is a statement about. Without this theorem the strict generator would be a second, unproved
+implementation and every soundness statement above would stop reaching the artifact. -/
+theorem absorbTrace_is_the_program_run :
+    absorbTrace = runRowsAt qN qLimb absorbInit 0 absorbProg := by
+  rw [absorbTrace, runRowsVecAt_is_runRowsAt, regsOf_absorbInitVec]
+
+/-- The register file the absorption ends in, run strictly. -/
+def absorbOutVec : List Nat := runProgVecAt qN absorbInitVec absorbCore
 
 /-- The squeezed lane, computed by the interpreter. -/
-def absorbOut : Nat := runProgAt qN absorbInit absorbCore (allocAt PastaPoseidon.rounds 0)
+def absorbOut : Nat := regsOf absorbOutVec (allocAt PastaPoseidon.rounds 0)
+
+theorem absorbOut_is_the_program_output :
+    absorbOut = runProgAt qN absorbInit absorbCore (allocAt PastaPoseidon.rounds 0) := by
+  rw [absorbOut, absorbOutVec, regsOf_runProgVecAt, regsOf_absorbInitVec]
 
 /-- ⚑ **THE EMITTED ABSORPTION'S OUTPUT IS `Core.hash fqParams [1, 2]`** — the Kimchi Fq sponge's
 own answer, for the pair `PastaPoseidonFq` pinned against the upstream state machine. Proved from
 the general theorem, so nothing here is a re-checked constant. -/
 theorem the_emitted_absorb_output_is_the_kimchi_hash :
     absorbOut = PastaPoseidonFq.Core.hash fqParams [ABSORB_X0, ABSORB_X1] :=
-  the_absorb_program_squeezes_the_kimchi_hash absorbInit rfl rfl rfl (by decide) (by decide)
+  absorbOut_is_the_program_output.trans
+    (the_absorb_program_squeezes_the_kimchi_hash absorbInit rfl rfl rfl (by decide) (by decide))
 
 def absorbPIs : List ℤ :=
   (List.range SK).map (fun _ => (0 : ℤ)) ++ (List.range SK).map (fun _ => (0 : ℤ))
@@ -896,6 +1055,15 @@ theorem the_absorb_pins_a_fresh_sponge :
 #assert_axioms arithAsgAt_is_the_program_one
 #assert_axioms rowAsgAt_is_the_program_one
 #assert_axioms runRowsAt_is_the_program_one
+#assert_axioms regsOf_stepVecAt
+#assert_axioms regsOf_runProgVecAt
+#assert_axioms runRowsVecAt_is_runRowsAt
+#assert_axioms regsOf_roundInitVec
+#assert_axioms roundTrace_is_the_program_run
+#assert_axioms roundOut_is_the_program_output
+#assert_axioms regsOf_absorbInitVec
+#assert_axioms absorbTrace_is_the_program_run
+#assert_axioms absorbOut_is_the_program_output
 #assert_axioms the_emitted_round_output_is_the_kimchi_round
 #assert_axioms round0Instrs_is_roundAt_0
 #assert_axioms the_round_input_state

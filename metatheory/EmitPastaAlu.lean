@@ -24,9 +24,22 @@ what it computes.
   lake env lean --run EmitPastaAlu.lean sbox      > ../circuit/descriptors/by-name/pasta-sbox-prog.json
   lake env lean --run EmitPastaAlu.lean sboxtrace > ../circuit/tests/fixtures/pasta-sbox-prog-trace.txt
   lake env lean --run EmitPastaAlu.lean sboxpis   > ../circuit/tests/fixtures/pasta-sbox-prog-pis.txt
+
+⚑ **AND THE Fq TRANSCRIPT SPONGE** (`MinaWrapVerifierSponge`): one full Kimchi round over the REAL
+`fq_kimchi` constants at `qLimb`, and a two-element ABSORPTION — 55 rounds — whose output public
+input is `PastaPoseidonFq.Core.hash fqParams [1,2]`, the digest o1-labs' own `ArithmeticSponge`
+returns.
+
+  lake env lean --run EmitPastaAlu.lean fqround       > ../circuit/descriptors/by-name/pasta-fq-round.json
+  lake env lean --run EmitPastaAlu.lean fqroundtrace  > ../circuit/tests/fixtures/pasta-fq-round-trace.txt
+  lake env lean --run EmitPastaAlu.lean fqroundpis    > ../circuit/tests/fixtures/pasta-fq-round-pis.txt
+  lake env lean --run EmitPastaAlu.lean fqabsorb      > ../circuit/descriptors/by-name/pasta-fq-absorb.json
+  lake env lean --run EmitPastaAlu.lean fqabsorbtrace > ../circuit/tests/fixtures/pasta-fq-absorb-trace.txt
+  lake env lean --run EmitPastaAlu.lean fqabsorbpis   > ../circuit/tests/fixtures/pasta-fq-absorb-pis.txt
 -/
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
+import Dregg2.Circuit.Emit.MinaWrapVerifierSponge
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.MinaWrapVerifierAir
@@ -71,6 +84,24 @@ def longTraceText : String :=
 def sboxPisText : String :=
   render Dregg2.Circuit.Emit.MinaWrapVerifierProgram.sboxPIs ++ "\n"
 
+/-- ⚑ The Fq SPONGE runs: one full Kimchi round and a two-element absorption, filled by
+`MinaWrapVerifierSponge.runRowsAt` at `qN`/`qLimb` — the SAME row generator as the Fp machine
+(`rowAsgAt_is_the_program_one`), from the instruction list. No cell is asserted from what the
+program was supposed to do; every one is computed from the inputs. -/
+def fqRoundTraceText : String :=
+  String.intercalate "\n"
+    (Dregg2.Circuit.Emit.MinaWrapVerifierSponge.roundTrace.map render) ++ "\n"
+
+def fqRoundPisText : String :=
+  render Dregg2.Circuit.Emit.MinaWrapVerifierSponge.roundPIs ++ "\n"
+
+def fqAbsorbTraceText : String :=
+  String.intercalate "\n"
+    (Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbTrace.map render) ++ "\n"
+
+def fqAbsorbPisText : String :=
+  render Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbPIs ++ "\n"
+
 def main (args : List String) : IO Unit :=
   match args with
   | ["fp"]         => IO.println (emitVmJson2 fpAluDesc)
@@ -82,5 +113,12 @@ def main (args : List String) : IO Unit :=
   | ["sboxpis"]    => IO.print sboxPisText
   | ["long"]       => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapVerifierProgram.longDesc)
   | ["longtrace"]  => IO.print longTraceText
+  | ["fqround"]       => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapVerifierSponge.roundDesc)
+  | ["fqroundtrace"]  => IO.print fqRoundTraceText
+  | ["fqroundpis"]    => IO.print fqRoundPisText
+  | ["fqabsorb"]      => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbDesc)
+  | ["fqabsorbtrace"] => IO.print fqAbsorbTraceText
+  | ["fqabsorbpis"]   => IO.print fqAbsorbPisText
   | _              => IO.eprintln
-      "usage: EmitPastaAlu.lean (fp|fq|trace|chaintrace|sbox|sboxtrace|sboxpis|long|longtrace)"
+      "usage: EmitPastaAlu.lean (fp|fq|trace|chaintrace|sbox|sboxtrace|sboxpis|long|longtrace\n\
+       |fqround|fqroundtrace|fqroundpis|fqabsorb|fqabsorbtrace|fqabsorbpis)"
