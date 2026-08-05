@@ -1,0 +1,14 @@
+# The 46 Lean-emitted chain-link witnesses: ~150 MB of trace text against a repository whose
+# largest tracked file is 10 MB. GENERATED, not tracked — emit them with the COMPILED exe
+# (`lake env lean --run` costs 9m20s PER LINK, measured 2026-08-05):
+#
+#     cd metatheory && lake build mina_chain_emit \
+#       && ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink
+#
+# The 46 PUBLIC-INPUT vectors are tracked one directory up
+# (`../pasta-fq-chainlink-pis.txt`) — they are small, and they are the objects the fold's
+# continuity claim is about, so §0 of `mina_phase2_chain_fold.rs` runs with no emit at all.
+link-*-trace.txt
+link-*-pis.txt
+chainlink-pis.txt
+pasta-fq-chainlink.json

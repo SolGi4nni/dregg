@@ -50,6 +50,7 @@ import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
 import Dregg2.Circuit.Emit.MinaWrapVerifierSponge
 import Dregg2.Circuit.Emit.MinaBlockFqTranscript
+import Dregg2.Circuit.Emit.MinaPhase2Chain
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.MinaWrapVerifierAir
@@ -122,6 +123,25 @@ def fqLinkTraceText : String :=
 def fqLinkPisText : String :=
   render Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkPIs ++ "\n"
 
+/-! ## ⚑ THE 46-LINK CHAIN (`MinaPhase2Chain`).
+
+The WHOLE phase-2 transcript, one witness per permutation. The descriptor is emitted once
+(`fqchain`); each link's 256 public inputs and 2 048-row trace are emitted by index, so the 46
+traces (~150 MB) are generated into a scratch directory rather than tracked. The PI vectors ARE
+small enough to track, and they are the objects the fold's continuity claim is about. -/
+
+def fqChainPisText (j : Nat) : String :=
+  render (Dregg2.Circuit.Emit.MinaPhase2Chain.chainPIs j) ++ "\n"
+
+def fqChainTraceText (j : Nat) : String :=
+  String.intercalate "\n"
+    ((Dregg2.Circuit.Emit.MinaPhase2Chain.chainTrace j).map render) ++ "\n"
+
+/-- All 46 links' public inputs, one line per link, in chain order. -/
+def fqChainPisAllText : String :=
+  String.intercalate "\n"
+    ((List.range 46).map (fun j => render (Dregg2.Circuit.Emit.MinaPhase2Chain.chainPIs j))) ++ "\n"
+
 def main (args : List String) : IO Unit :=
   match args with
   | ["fp"]         => IO.println (emitVmJson2 fpAluDesc)
@@ -142,7 +162,12 @@ def main (args : List String) : IO Unit :=
   | ["fqlink"]        => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkDesc)
   | ["fqlinktrace"]   => IO.print fqLinkTraceText
   | ["fqlinkpis"]     => IO.print fqLinkPisText
+  | ["fqchain"]        => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaPhase2Chain.chainDesc)
+  | ["fqchainpisall"]  => IO.print fqChainPisAllText
+  | ["fqchainpis", j]  => IO.print (fqChainPisText j.toNat!)
+  | ["fqchaintrace", j] => IO.print (fqChainTraceText j.toNat!)
   | _              => IO.eprintln
       "usage: EmitPastaAlu.lean (fp|fq|trace|chaintrace|sbox|sboxtrace|sboxpis|long|longtrace\n\
        |fqround|fqroundtrace|fqroundpis|fqabsorb|fqabsorbtrace|fqabsorbpis\n\
-       |fqlink|fqlinktrace|fqlinkpis)"
+       |fqlink|fqlinktrace|fqlinkpis\n\
+       |fqchain|fqchainpisall|fqchainpis <j>|fqchaintrace <j>)"

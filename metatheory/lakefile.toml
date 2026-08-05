@@ -65,6 +65,22 @@ root = "PolisGovernor"
 name = "mina_sg_bench"
 root = "MinaSgBench"
 
+# mina_chain_emit — the 46 witnesses of block 539508's phase-2 Fq transcript
+# (`Dregg2.Circuit.Emit.MinaPhase2Chain`), the input to the recursion tree in
+# `circuit-prove/src/mina_phase2_chain_leaf.rs`.
+#
+# ⚠ COMPILED FOR A REASON, and the reason is measured: one 2 048x469 trace costs 9 min 20 s
+# through `lake env lean --run` (Lean's INTERPRETER), so 46 links would be seven hours of
+# RENDERING — a codegen cost mistaken for a cost of the chain. Same objects, `leanc`.
+#
+# ⚠ DELIBERATELY NOT IN `defaultTargets`, like `mina_sg_bench`: it drags the whole Pasta sponge
+# cone through C codegen. Build it explicitly:
+#     lake build mina_chain_emit
+#     ./.lake/build/bin/mina_chain_emit ../circuit/tests/fixtures/pasta-fq-chainlink
+[[lean_exe]]
+name = "mina_chain_emit"
+root = "MinaChainEmit"
+
 # Market/* — DrEX (Dragon's Egg Exchange): the Lean-first proof-carrying exchange tower
 # (namespace `Market`, composing with Dregg2.Intent + Dregg2.Intent.Ring). Root module
 # `Market` (./Market.lean) aggregates Market/*; also imported from the Dregg2 root so the

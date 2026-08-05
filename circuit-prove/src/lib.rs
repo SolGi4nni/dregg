@@ -66,6 +66,10 @@ pub mod merge_pool;
 /// fixture hash suite, plus the CHECKED `MultiField32Challenger` replica whose
 /// per-permutation sponge states the Pasta fixture publishes.
 pub mod mina_pasta_fixture_suite;
+/// ⚑ The 46-permutation Fq transcript of Mina devnet block 539508 as a RECURSION TREE: the
+/// Lean-authored `dregg-pasta-fq-chainlink::v1` leaf, and the fold that carries the sponge state
+/// from link to link INSIDE the recursion.
+pub mod mina_phase2_chain_leaf;
 pub mod mpt_holding_leaf;
 pub mod note_spend_leaf_adapter;
 pub mod packed_interleaved_merkle;
