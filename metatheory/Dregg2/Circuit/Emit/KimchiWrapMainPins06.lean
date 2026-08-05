@@ -97,8 +97,10 @@ theorem split_rung_extends_xhat :
 /-- `placeChecked` ACCEPTS the `w7_split` rung and no public word is inert — the fail-closed
 placement, at the new top rung rather than at the one below it. -/
 theorem split_rung_places_and_exposes_every_public_word :
-    refusalOf shapeSmoke shapeSmoke.pubWords (wrapGates (rungRows tKey .split true)) = none
-    ∧ inertPublicWords shapeSmoke.pubWords (wrapGates (rungRows tKey .split true)) = [] := by
+    refusalOf shapeSmoke .split (rungPub shapeSmoke .split)
+        (wrapGates (rungRows tKey .split true)) = none
+    ∧ inertSlotsAt shapeSmoke .split (wrapGates (rungRows tKey .split true))
+        = wrapInertOk shapeSmoke .split := by
   refine ⟨rfl, rfl⟩
 
 /-- ⚑ **WHAT `scale_fast2`'s TOP-BIT ZERO ACTUALLY BUYS — IN THE KERNEL, NOT IN PROSE.**

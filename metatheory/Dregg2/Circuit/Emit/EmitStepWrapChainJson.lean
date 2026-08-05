@@ -40,8 +40,8 @@ def emitChainRung (dir pfx : String) (t : WrapData) (k : Rung) (both : Bool) : I
   let p := rungPub t.sh k
   let gs := wrapGates rowsW
   let gu := wrapGates rowsU
-  if refusalOf t.sh p gs != none then
-    throw (IO.userError s!"placeChecked REFUSED at {pfx}_{k.tag}: {repr (refusalOf t.sh p gs)}")
+  if refusalOf t.sh k p gs != none then
+    throw (IO.userError s!"placeChecked REFUSED at {pfx}_{k.tag}: {repr (refusalOf t.sh k p gs)}")
   -- ⚑ **THE §17b CAPS' OBLIGATION, HERE TOO.** This driver emits `.transcript` and `.bind`, both
   -- below the three-block wall, so the check is satisfied by every rung it currently writes — which
   -- is the reason to install it now rather than the reason to skip it: the day a lane adds a rung at
@@ -60,11 +60,13 @@ def emitChainRung (dir pfx : String) (t : WrapData) (k : Rung) (both : Bool) : I
   let pub := if p == 0 then [] else wrapPublicAt t k
   let probes := rungProbeRows t k
   IO.FS.writeFile s!"{dir}/{pfx}_{k.tag}.json"
-    (renderWrapCircuit s!"{pfx}_{k.tag}" p (p + rowsW.length) (placedOf t.sh p gs) wit pub probes)
+    (renderWrapCircuit s!"{pfx}_{k.tag}" p (p + rowsW.length) (placedOf t.sh k p gs) wit pub probes
+      (if p == 0 then [] else wrapSlotsAt t.sh k) (if p == 0 then [] else wrapInertOk t.sh k))
   if both then
     IO.FS.writeFile s!"{dir}/{pfx}_{k.tag}_unwired.json"
-      (renderWrapCircuit s!"{pfx}_{k.tag}_UNWIRED" p (p + rowsU.length) (placedOf t.sh p gu) wit
-        pub probes)
+      (renderWrapCircuit s!"{pfx}_{k.tag}_UNWIRED" p (p + rowsU.length) (placedOf t.sh k p gu) wit
+        pub probes (if p == 0 then [] else wrapSlotsAt t.sh k)
+        (if p == 0 then [] else wrapInertOk t.sh k))
   IO.println s!"  {pfx}_{k.tag}: {rowsW.length} rows, pub {p}, {probes.length} probes"
   pure rowsW.length
 

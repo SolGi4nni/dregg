@@ -63,13 +63,25 @@ that turns "rejected" into "rejected BY THE WIRE". -/
 /-! The placement is ACCEPTED — no `auxOverlapsPublic`, no `referenceInGap`, no `inertPublicWord`.
 ⚑ That last one is the real gate: a wrap statement word no gate reads REFUSES here rather than
 sitting inert in the public vector. -/
-#guard refusalOf shapeSmoke shapeSmoke.pubWords gatesW == none
-#guard placedW.length == shapeSmoke.pubWords + nRowsW
-#guard inertPublicWords shapeSmoke.pubWords gatesW == []
+#guard refusalOf shapeSmoke .bind (rungPub shapeSmoke .bind) gatesW == none
+#guard placedW.length == WRAP_PRIMARY_LEN + nRowsW
+-- ⚑ …and the slots left unread are EXACTLY the rung's declaration — Mina's own sixteen plus the two
+-- pinned slots `w9_prev` and `w11_wraphack` derive. An equality, so a slot silently added to or
+-- dropped from `w4_bind`'s derivation is red in either direction.
+theorem bind_rung_leaves_unread_exactly_what_it_declares :
+    inertSlotsAt shapeSmoke .bind gatesW = wrapInertOk shapeSmoke .bind
+    ∧ refusalOf shapeSmoke .bind (rungPub shapeSmoke .bind) gatesW = none
+    -- ⚑ and the six slots it DOES derive are read — the other direction of the same equality,
+    -- exhibited so "no inert word" is not the only thing said.
+    ∧ (wrapSlotsAt shapeSmoke .bind).all
+        (fun i => !((inertSlotsAt shapeSmoke .bind gatesW).contains i)) = true := by
+  refine ⟨rfl, rfl, rfl⟩
+
+#assert_axioms bind_rung_leaves_unread_exactly_what_it_declares
 
 /-! The witness grid is 15 columns of `pubWords + nRows`. -/
 #guard gridW.length == 15
-#guard (gridW.getD 0 []).length == shapeSmoke.pubWords + nRowsW
+#guard (gridW.getD 0 []).length == WRAP_PRIMARY_LEN + nRowsW
 
 /-! ### §12c — DEFECT CLASS 1/6: the `EndoMulScalar` SEEDS are PINNED.
 
@@ -171,7 +183,7 @@ harness can deserialise. A violation of any of these is a JSON the Rust prover w
 time rather than a circuit it would refuse — which is why it is checked here and not there. -/
 theorem bind_rung_is_well_formed_for_the_harness :
     placedW.all (fun g => g.wires.length == K_PERMUTS) = true
-    ∧ gridW.all (fun col => col.length == shapeSmoke.pubWords + nRowsW) = true
+    ∧ gridW.all (fun col => col.length == WRAP_PRIMARY_LEN + nRowsW) = true
     ∧ placedW.all (fun g => g.kind.ordinal < 7) = true := by
   refine ⟨rfl, rfl, rfl⟩
 

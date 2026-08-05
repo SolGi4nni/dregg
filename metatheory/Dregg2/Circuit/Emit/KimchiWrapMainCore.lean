@@ -129,6 +129,15 @@ structure WrapShape where
 say `public: 40`. Two independent sources. `MinaWrapPublicInput` carries the slot-by-slot layout. -/
 def WRAP_PRIMARY_LEN : Nat := 40
 
+/-- Mina's slot for `messages_for_next_step_proof` — the `Field.Assert.equal` of
+`wrap_main.ml:350-351`, which W-PREV emits. §10's census and
+`Dregg2.Bridge.MinaWrapPublicInput.publicInputWords` are the two sources. -/
+def WRAP_SLOT_MSG_NEXT_STEP : Nat := 12
+
+/-- Mina's slot for `messages_for_next_wrap_proof` — the closing
+`hash_messages_for_next_wrap_proof` squeeze (`wrap_main.ml:421-431`), which W-WRAPHACK emits. -/
+def WRAP_SLOT_MSG_NEXT_WRAP : Nat := 11
+
 /-! ## §2 — the transcript SCHEDULE, from source.
 
 `wrap_verifier.ml:516-646` then `check_bulletproof` (`:383-437`), in upstream's own order. Each
@@ -921,22 +930,22 @@ object. Checked at every legal `first_zero`. -/
 /-! ## §6 — the whole assembly: variable space, rows, environment, placement, witness. -/
 
 /-- ⚑ The lowest `external` id the circuit allocates for itself. Public words are
-`external 0 .. pubWords-1` (Snarky's own numbering), so `placeChecked`'s H1 cannot fire and its H2
-— an inert public word — is the real gate on the closing rung.
+`external 0 .. WRAP_PRIMARY_LEN-1` — **MINA'S forty slots**, in Mina's own numbering — so
+`placeChecked`'s H1 cannot fire and its H2, an inert public word, is the real gate on the closing
+rungs.
 
-⚑ **THE `+ 1` IS `w9_prev`'s PUBLIC WORD, RESERVED AT EVERY RUNG AND EXPOSED AT ONE.**
-`wrap_main.ml:350-351` ties `messages_for_next_step_proof` to the witnessed previous statement, and
-W-PREV is the rung that emits it — so `rungPub` is `pubWords` up to `w8_ftcomm` and `pubWords + 1` at
-`w9_prev`, and slot `pubWords` sits in `placeChecked`'s DEAD GAP below it. That is deliberate and it
-is the fail-closed choice: exposing the word earlier would put a public word on a variable no row of
-that rung derives — defect class 5 wearing a public vector — and `placeChecked` refuses any gate
-that touches the gap, so the reservation cannot be used by accident.
+⚑ **THIS USED TO BE `pubWords + 2`, AND THE `+ 2` WAS A DEAD GAP.** When the public vector was this
+assembly's own dense one, the two slots above it were RESERVED (so the aux ids started above them)
+and any gate that touched them was refused as `referenceInGap`; that is how a rung was stopped from
+exposing a word it does not derive. With the vector in MINA'S layout there is no gap left to
+reserve: every rung declares all forty and the same refusal is now H2's, at the exact Mina slot.
+`prev_rung_places_and_the_rung_below_it_does_not` and
+`wraphack_rung_places_and_the_rung_below_it_does_not` still exhibit both refusals — at slots 12 and
+11 rather than at `pubWords` and `pubWords + 1`, which is the same fact said in Mina's coordinates.
 
-⚑ **AND THE `+ 2` IS `w11_wraphack`'s**, reserved the same way and for the same reason: wrap
-statement word 11 is the closing `hash_messages_for_next_wrap_proof` squeeze (`wrap_main.ml:421-431`,
-§19), and below that rung no row reads the cell it would be tied to. `wraphack_rung_places_and_the_
-rung_below_it_does_not` exhibits the refusal at slot `pubWords + 1`. -/
-def AUXW (s : WrapShape) : Nat := s.pubWords + 2
+⚠ Every circuit variable id therefore moves by `40 - (pubWords + 2)`. Nothing emitted moves with it:
+`place` maps VARIABLES to cells through their equivalence classes, and an id is only an identity. -/
+def AUXW (_s : WrapShape) : Nat := WRAP_PRIMARY_LEN
 
 def baseSp (s : WrapShape) : Nat := AUXW s
 /-- the challenge region starts after the sponge; sized by the trace. -/
@@ -1242,7 +1251,7 @@ circuits have `PRIMARY_LEN = WRAP_PRIMARY_LEN = 40`. `MinaWrapPublicInput` carri
 layout, measured against a devnet block. Of those 40, this rung DERIVES:
 
     slot   word                                    here
-    5–8    plonk.{alpha, beta, gamma, zeta}        ✅ the transcript's own four challenge squeezes,
+    5–8    plonk.{beta, gamma, alpha, zeta}        ✅ the transcript's own four challenge squeezes,
                                                       as RAW 128-bit prechallenges (`spec.ml:384-386`,
                                                       `Packed_bits (x, Challenge.length)`), which is
                                                       exactly what `assert_eq_plonk`
@@ -1269,6 +1278,24 @@ layout, measured against a devnet block. Of those 40, this rung DERIVES:
 
 **22 of 40 through `w8_ftcomm`, 23 at `w9_prev`, 24 at `w11_wraphack`.**
 
+⚑ **AND `pubWords = 22` AGAINST `WRAP_PINNED_SLOTS.length = 24` IS THAT LADDER, NOT A SHORTFALL.**
+`pubWords` is the width of `exposedVars` — the words the CLOSING rung derives — and the last two
+pinned slots are derived by rungs ABOVE it: `exposedVarsAt` appends slot 12 at `.prev` and slot 11 at
+`.wraphack`, and `rungPub` widens by exactly one and then two to carry them. So `22 + 1 + 1 = 24`,
+and the terminal rung emits all twenty-four. Neither "two pinned slots are not emitted" nor
+"`pubWords` counts something else": `pubWords` counts the BASE, the ladder counts the rest.
+
+⚑ **THE ORDER AT 5–8 IS β, γ, α, ζ — AND THE FIRST DRAFT OF THIS TABLE SAID `alpha, beta, gamma`.**
+`Wrap.Statement.to_data` (`composition_types.ml:826-880`) lays the `challenge` bucket down before the
+`scalar_challenge` one, so β and γ come first and α third;
+`Dregg2.Bridge.MinaWrapPublicInput.publicInputWords` carries the same order as a MEASURED correction
+against block 539508's own binprot bytes (2026-07-30). This assembly's `exposedVars` is indexed by
+the TRANSCRIPT's squeeze order — β (`wrap_verifier.ml:620`), γ (`:621`), α (`:624`), ζ (`:631`) —
+which is the SAME order, so `wrapSlots` maps word `i` to slot `5 + i` with no permutation. That the
+two agree is a fact to be checked, not a coincidence to be assumed: `the_challenge_slots_are_the_
+transcript_order` is where it is checked, and a rotation here is precisely the defect that puts the
+wrong object under the right name and moves nothing a width signature can see.
+
 ⚠ ⚑ **AND 40 IS NOT THE DENOMINATOR — 24 IS, AND THE OTHER SIXTEEN ARE NOT THIS FILE'S WORK.**
 `wrap_main` is HANDED forty words and CONSTRAINS twenty-four of them. Slots 0–4 and 9 are deferred
 values it passes straight through as `~advice` / `~plonk` / `~xi` (`wrap_main.ml:405-414`) and never
@@ -1282,12 +1309,13 @@ class 5 wearing a public vector. So the honest reading of a `PI 24 vs 40` delta 
 **6 W-FINALIZE + 10 constant-or-dead**, and this rung is the last of the 24.
 
 ⚑ **AND EACH NEW WORD IS EXPOSED AT ONE RUNG, NOT AT ALL OF THEM.** `closingRows` emits `pubWords`
-halves at `w4_bind`, `prevRows` emits the 23rd and `whRows` the 24th; `AUXW` reserves BOTH extra
-slots at every rung so that below their rungs they sit in `placeChecked`'s DEAD GAP. That is the
-difference between a public word a rung derives and one it inherits: exposing word 12 at `w4_bind`,
-or word 11 at `w9_prev`, would tie it to a cell nothing in that rung reads.
-`prev_rung_places_and_the_rung_below_it_does_not` and
-`wraphack_rung_places_and_the_rung_below_it_does_not` exhibit both refusals. -/
+halves at `w4_bind`, `prevRows` emits slot 12 and `whRows` slot 11; every rung declares all forty,
+and below their rungs those two slots sit in `wrapInertOk` — so a rung that exposed them early would
+tie a public word to a cell nothing in that rung reads, and `placeCheckedWith` refuses it under the
+DECLARATION of the rung above. That is the difference between a public word a rung derives and one
+it inherits. `prev_rung_places_and_the_rung_below_it_does_not` and
+`wraphack_rung_places_and_the_rung_below_it_does_not` exhibit both refusals, now naming slot 12 and
+slot 11 rather than `pubWords` and `pubWords + 1`. -/
 
 /-- ⚑ **WHICH OF `WRAP_PRIMARY_LEN`'s FORTY SLOTS `wrap_main` ACTUALLY PINS**, read at source and
 listed so a `PI ours-vs-mina` delta cannot be read as a to-do list. -/
@@ -1300,6 +1328,16 @@ def WRAP_PINNED_SLOTS : List Nat :=
   ++ [29]                                         -- branch_data (:189-199)
 
 def WRAP_PINNED_WORDS : Nat := WRAP_PINNED_SLOTS.length
+
+/-- ⚑ **THE SIXTEEN SLOTS `wrap_main` LEAVES UNREAD, as indices** — the complement of
+`WRAP_PINNED_SLOTS` in `WRAP_PRIMARY_LEN`, written down rather than computed from the emission,
+because it is what the emission is CHECKED AGAINST (`wrapInertOk`). `WRAP_UNPINNED` below is the
+same sixteen by reason and by owner. -/
+def WRAP_UNPINNED_SLOTS : List Nat :=
+  [0, 1, 2, 3, 4]                                 -- cip · b · ζ^srs_len · ζ^dom · perm — ~advice/~plonk
+  ++ [9]                                          -- xi — ~xi (wrap_main.ml:409)
+  ++ (List.range 8).map (fun j => 30 + j)         -- Spec.T.Constant padding
+  ++ [38, 39]                                     -- the dead lookup Opt
 
 /-- …and the sixteen it does not pin, by REASON and by OWNER. -/
 def WRAP_UNPINNED : List String :=
@@ -1335,12 +1373,33 @@ def exposedVars (t : WrapData) : List PVar :=
   ++ [ (branchVars s (baseBr s t.sp)).packed ]
   |>.take s.pubWords
 
-/-- One closing `Generic` half per public word: `external i = v`. This is the row that makes the
-public word a READ one, so `placeChecked`'s `inertPublicWord` cannot fire silently. -/
+/-- ⚑ **THE SLOT MAP** — MINA'S OWN statement slot for each word `exposedVars` produces, in
+`exposedVars`' order and truncated by the SAME `.take s.pubWords`, so the two lists are pointwise a
+(variable, slot) pair by construction and cannot drift in length.
+
+⚠ This is the object the whole layout turns on. A slot map is exactly the artefact whose failure
+mode is silent: swap two entries and every gate still places, every rung still proves, and the
+circuit commits to a different statement. The three instruments that see it are §10's census
+(read at source), `the_challenge_slots_are_the_transcript_order` (the β/γ/α order, against the
+transcript's own squeeze order) and `MinaWrapPublicInput`'s width signature on a real block. -/
+def wrapSlots (s : WrapShape) : List Nat :=
+  ([5, 6, 7, 8]                                   -- β γ α ζ, `assert_eq_plonk`
+   ++ [10]                                        -- sponge_digest_before_evaluations, the FORK
+   ++ (List.range (min s.ipaRounds (nChals s - 5))).map (fun r => 13 + r)
+   ++ [29]                                        -- branch_data
+  ).take s.pubWords
+
+/-- One closing `Generic` half per public word: `external <mina slot> = v`. This is the row that
+makes the public word a READ one, so `placeChecked`'s `inertPublicWord` cannot fire silently.
+
+⚑ **THE SLOT, NOT THE INDEX.** This row used to tie `external i` for `i < pubWords` — a DENSE public
+vector of this assembly's own devising, which is why a proof of it needed a public input Mina does
+not compute. It now ties MINA'S slot, so the emitted vector sits in the layout
+`Pickles.prepared_statement` builds and `kimchi::verifier::verify` reads under a side-loaded wrap
+index. -/
 def closingRows (t : WrapData) : List WRow :=
-  packHalves ((List.range t.sh.pubWords).map (fun i =>
-    (([ some (.external i : PVar), some ((exposedVars t).getD i (.external 0)), none
-      ] : List (Option PVar)), cEq)))
+  packHalves (((wrapSlots t.sh).zip (exposedVars t)).map (fun sv =>
+    (([ some (.external sv.1 : PVar), some sv.2, none ] : List (Option PVar)), cEq)))
 
 /-! ## §15 — ⚑ **W-XHAT**: `wrap_verifier.ml:539-616`, the public-input MSM.
 
@@ -2237,9 +2296,10 @@ def prevRows (t : WrapData) (wired : Bool) : List WRow :=
     (List.range XHAT_PREVS).map (fun p =>
       let v := prevW s sp (PREV_PER_PROOF_WORDS * p + PREV_SHOULD_FINALIZE)
       ([some v, some v, some v], cBool))
-  -- (2) the public tie (`:350-351`) — `w9_prev`'s own public word, at slot `pubWords`.
+  -- (2) the public tie (`:350-351`) — `w9_prev`'s own public word, at MINA'S slot 12.
   let pubTie : List (List (Option PVar) × List Int) :=
-    [ ([some (.external s.pubWords : PVar), some (prevW s sp PREV_MSG_NEXT_STEP), none], cEq) ]
+    [ ([some (.external WRAP_SLOT_MSG_NEXT_STEP : PVar), some (prevW s sp PREV_MSG_NEXT_STEP), none]
+      , cEq) ]
   -- (3) `assert_on_curve` on each `prev_step_accs` point, over the transcript's `sg_old` cells.
   let curveHalves : List (List (Option PVar) × List Int) :=
     (List.range s.prevs).flatMap (fun p =>
@@ -2404,8 +2464,10 @@ def whDigestVar (a : SpAcc) : PVar := ((a.evs.filter (fun e => !e.isAbs)).getD 0
 /-- …and its value. -/
 def whDigestVal (a : SpAcc) : Nat := ((a.evs.filter (fun e => !e.isAbs)).getD 0 default).val
 
-/-- ⚑ The public slot word 11 lands in: this assembly's 24th, one above `w9_prev`'s. -/
-def WH_PUB_SLOT (s : WrapShape) : Nat := s.pubWords + 1
+/-- ⚑ The public slot word 11 lands in — **MINA'S slot 11**, which is where
+`hash_messages_for_next_wrap_proof`'s closing squeeze belongs. (This was `pubWords + 1`, the top of
+this assembly's own dense vector, until the layout moved to Mina's.) -/
+def WH_PUB_SLOT (_s : WrapShape) : Nat := WRAP_SLOT_MSG_NEXT_WRAP
 
 /-- **W-WRAPHACK's ROWS.** Three sponges — whose `init` rows pin each fresh opening state to zero,
 i.e. the front pad at `WH_MLMB = 2` — and then the ties that make each sponge's INPUT and OUTPUT
@@ -5209,30 +5271,19 @@ theorem rungRows_lengths_are_the_sum_of_their_parts (t : WrapData) (wired : Bool
   · rw [rungRows_close_is_a_ladder t wired]
     simp [List.length_append, Nat.add_assoc]
 
-/-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it — and `pubWords + 1` at
-`w9_prev`, whose own row ties `messages_for_next_step_proof` (`wrap_main.ml:350-351`). ⚑ The extra
-slot is RESERVED in `AUXW` at every rung, so below `w9_prev` it sits in `placeChecked`'s dead gap and
-any gate that touched it would be refused rather than silently absorbed. -/
-def rungPub (s : WrapShape) : Rung → Nat
-  | .finalize => s.pubWords + 1
-  -- ⚑ W-FINSPONGE derives no NEW wrap statement word either: ξ (slot 9) is a value `wrap_main`
-  -- passes through as `~plonk` and never checks (§10's census), and what this rung derives are the
-  -- PREVIOUS statement's deferred words, which are not wrap public words at all.
-  | .finsponge => s.pubWords + 1
-  | .bind => s.pubWords
-  | .key => s.pubWords
-  | .xhat => s.pubWords
-  | .split => s.pubWords
-  | .ftcomm => s.pubWords
-  | .prev => s.pubWords + 1
-  -- ⚑ `w11_wraphack` adds the LAST pinned statement word — slot 11 — and `w12_close` inherits it.
-  | .wraphack => s.pubWords + 2
-  | .close => s.pubWords + 2
-  -- ⚑ W-COMBINE derives no NEW statement word — `xi` (slot 9) is W-FINALIZE's, per §10's census —
-  -- so it inherits `w9_prev`'s 23 and adds none. A public word on `xi` here would be a fixture.
-  | .combine => s.pubWords + 1
-  | .bullet => s.pubWords + 1
-  | _ => 0
+/-- ⚑ **Rung `k`'s public-input size is MINA'S, or ZERO.** A rung below the closing one has no
+public vector at all; every rung from `w4_bind` up declares `WRAP_PRIMARY_LEN = 40` — the width
+`Impls.Wrap.input ()` allocates and the width `make_zkapp_verifier_index` hands
+`kimchi::verifier::verify` for a side-loaded wrap key.
+
+⚠ **THIS IS NOT PADDING, AND THE DIFFERENCE IS MECHANICAL.** What changes with the rung is not the
+WIDTH but which of Mina's slots carry a value this rung DERIVES: `wrapSlotsAt` says which, and
+`wrapInertOk` declares the rest to `placeCheckedWith`, which refuses any slot left unread that the
+declaration did not name. Widening to 40 with a vector of our own choosing would be exactly the
+"6 words + 34 zeros" probe — it establishes plumbing and nothing else. -/
+def rungPub (_s : WrapShape) : Rung → Nat
+  | .transcript | .challenges | .branch => 0
+  | _ => WRAP_PRIMARY_LEN
 
 /-- The variables rung `k` exposes as public words. ⚑ `w9_prev` appends ONE — packed statement word
 `PREV_MSG_NEXT_STEP`, the MSM's entry 64 — and no rung below it may, because below `w6_xhat` no row
@@ -5247,6 +5298,41 @@ def exposedVarsAt (t : WrapData) (k : Rung) : List PVar :=
     | .wraphack | .close =>
         [prevW t.sh t.sp PREV_MSG_NEXT_STEP, whDigestVar (whSpongeC t)]
     | _ => [])
+
+/-- **`wrapSlotsAt`** — Mina's slot for each of `exposedVarsAt t k`'s words, in that list's order.
+The base is `wrapSlots`; the ladder appends slot 12 where W-PREV's own row ties it and slot 11 where
+W-WRAPHACK's does. Pointwise with `exposedVarsAt` by construction. -/
+def wrapSlotsAt (s : WrapShape) (k : Rung) : List Nat :=
+  wrapSlots s ++ (match k with
+    | .prev | .finalize | .finsponge | .combine | .bullet => [WRAP_SLOT_MSG_NEXT_STEP]
+    | .wraphack | .close => [WRAP_SLOT_MSG_NEXT_STEP, WRAP_SLOT_MSG_NEXT_WRAP]
+    | _ => [])
+
+/-- ⚑ **THE DECLARED UNREAD SET — what this rung says it does NOT derive, and the thing
+`placeCheckedWith` checks the emission against.**
+
+Two parts, both DECLARATIONS and neither read off the emitted gates:
+
+  * `WRAP_UNPINNED_SLOTS` — the sixteen `wrap_main` itself leaves unread. Six are deferred values it
+    passes through as `~advice`/`~plonk`/`~xi` (`wrap_main.ml:405-414`), whose checker is
+    W-FINALIZE; ten are `Spec.T.Constant` padding and the dead lookup `Opt`, which
+    `Spec.packed_typ` ALLOCATES and hands the body a `Cvar.Constant` for
+    (`composition_types/spec.ml:312-330`), so nothing upstream reads them either.
+  * the PINNED slots this rung has not reached — 12 below `w9_prev`, 11 below `w11_wraphack`. That
+    is the reservation the old `AUXW` dead gap used to carry, said at Mina's slot.
+
+⚠ **AND THE CHECK IS AN EQUALITY, NOT A SUBSET, WHERE IT IS PINNED.** `wrapInertOk` alone would
+only stop the emission from leaving MORE unread than declared; the per-rung theorems state
+`inertPublicWords 40 gates = wrapInertOk`, so a rung that quietly stopped deriving a slot it
+declares, or started deriving one it does not, is red either way. -/
+def wrapInertOk (s : WrapShape) (k : Rung) : List Nat :=
+  (List.range WRAP_PRIMARY_LEN).filter (fun i =>
+    WRAP_UNPINNED_SLOTS.contains i
+    || (WRAP_PINNED_SLOTS.contains i && !((wrapSlotsAt s k).contains i)))
+
+/-- Slot `i`'s variable at rung `k`, or `none` where this rung derives nothing for it. -/
+def slotVarAt (t : WrapData) (k : Rung) (i : Nat) : Option PVar :=
+  ((wrapSlotsAt t.sh k).zip (exposedVarsAt t k)).lookup i
 
 /-- ⚑ **THE ENVIRONMENT IS THE RUNG'S, NOT THE FILE'S.** `xhatEnv` carries every accumulator point
 and every slope of §15's ladders, and each of those is three `qInv`s deep. Folding it into one
@@ -5274,21 +5360,35 @@ def circuitEnvAt (t : WrapData) (k : Rung) : VarEnv :=
 /-- The closing rung's environment — what `w8_ftcomm` sees, i.e. everything. -/
 def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .prev
 
-/-- The full environment: the circuit's variables, then the public words, whose values are READ OUT
-of the circuit env at the exposed variables — so a public word and the variable its closing row ties
-it to hold ONE value by construction, exactly as a copy class does. -/
+/-- The full environment: the circuit's variables, then the forty public words, whose values are
+READ OUT of the circuit env at the exposed variables — so a public word and the variable its closing
+row ties it to hold ONE value by construction, exactly as a copy class does.
+
+⚠ ⚑ **WHAT SITS AT THE SIXTEEN THIS RUNG DOES NOT DERIVE, AND WHAT THAT IS AND IS NOT.** A ZERO.
+For the ten `Spec.T.Constant` / dead-lookup slots that IS the value a real devnet wrap proof carries
+(`MinaWrapPublicInput.the_tail_is_padding_and_branch_data`, over `MinaWrapPublicCommGate.
+PUBLIC_INPUT`), so those ten are right rather than merely accepted. For the six deferred slots — 0–4
+and 9 — a zero is a PLACEHOLDER for a value this assembly does not compute: `expand_deferred`'s
+outputs, whose in-circuit checker is W-FINALIZE. The circuit reads neither set, so a verifier accepts
+any value at all there, and saying so is the point: those six are the honest residue of the layout
+and are named as such by `wrapInertOk`, by the per-rung inertness equalities and by the emission's
+own printout. Filling them with derived values is W-FINALIZE's work, not a padding decision. -/
 def wrapEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   let ce := circuitEnvAt t k
   let ix := envIndex ce
   ce ++ (List.range (rungPub t.sh k)).map (fun i =>
-    ((.external i : PVar), envLookupAt ix ((exposedVarsAt t k).getD i (.external 0))))
+    ((.external i : PVar), match slotVarAt t k i with
+                           | some v => envLookupAt ix v
+                           | none => (0 : Int)))
 
 def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .prev
 
 def wrapPublicAt (t : WrapData) (k : Rung) : List Int :=
   let ix := envIndex (circuitEnvAt t k)
   (List.range (rungPub t.sh k)).map (fun i =>
-    envLookupAt ix ((exposedVarsAt t k).getD i (.external 0)))
+    match slotVarAt t k i with
+    | some v => envLookupAt ix v
+    | none => (0 : Int))
 
 /-- **`wrapPublicAt_length`** — a rung's public vector is exactly that rung's declared width, for
 EVERY `WrapData` and EVERY `Rung`. General and kernel-clean, in the idiom of `rungRows_is_a_ladder`:
@@ -5313,16 +5413,28 @@ def wrapWitnessAt (t : WrapData) (k : Rung) (pubSize : Nat) (rows : List WRow) :
             { kind := ri.1.kind, permVars := ri.1.perm, coeffs := ri.1.coeffs }
           ++ ri.1.advice.map (fun cv => ((⟨pubSize + ri.2, cv.1⟩ : Cell), cv.2))))
 
-/-- **THE FAIL-CLOSED PLACEMENT.** `placeChecked`, never `place`. -/
-def placedOf (s : WrapShape) (pubSize : Nat) (gs : List PGate) : List PlacedGate :=
-  match placeChecked ⟨pubSize, AUXW s⟩ gs with
+/-- **THE FAIL-CLOSED PLACEMENT.** `placeCheckedWith`, never `place`.
+
+⚑ The rung is an argument now, and it is the DECLARATION side of H2: `wrapInertOk s k` names the
+slots this rung says it leaves unread, and the placement refuses any OTHER inert slot. Passing the
+rung is what keeps the refusal rung-shaped — `w8_ftcomm` under `w9_prev`'s declaration is still
+refused, at slot 12. -/
+def placedOf (s : WrapShape) (k : Rung) (pubSize : Nat) (gs : List PGate) : List PlacedGate :=
+  match placeCheckedWith ⟨pubSize, AUXW s⟩ (wrapInertOk s k) gs with
   | .ok p => p
   | .error _ => []
 
-def refusalOf (s : WrapShape) (pubSize : Nat) (gs : List PGate) : Option PlaceRefusal :=
-  match placeChecked ⟨pubSize, AUXW s⟩ gs with
+def refusalOf (s : WrapShape) (k : Rung) (pubSize : Nat) (gs : List PGate) : Option PlaceRefusal :=
+  match placeCheckedWith ⟨pubSize, AUXW s⟩ (wrapInertOk s k) gs with
   | .ok _ => none
   | .error e => some e
+
+/-- ⚑ **THE UNREAD SET, MEASURED.** What the emitted gates of rung `k` actually leave unread among
+Mina's forty. The per-rung pins state this EQUALS `wrapInertOk s k`; it is a separate definition
+because one side must be read off the EMISSION and the other must be a declaration, and collapsing
+them is how this check would stop being able to go red. -/
+def inertSlotsAt (s : WrapShape) (k : Rung) (gs : List PGate) : List Nat :=
+  inertPublicWords (rungPub s k) gs
 
 /-- Rung `k`'s absolute probe rows, in schedule order. -/
 def rungProbeRows (t : WrapData) (k : Rung) : List Nat :=
@@ -5346,10 +5458,17 @@ private def renderGate (g : PlacedGate) : String :=
        ++ qs "coeffs" ++ ":" ++ renderIntList g.coeffs ++ "}"
 
 def renderWrapCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedGate)
-    (w : List (List Int)) (pub : List Int) (probes : List Nat) : String :=
+    (w : List (List Int)) (pub : List Int) (probes : List Nat)
+    (derivedSlots unreadSlots : List Nat) : String :=
   "{" ++ qs "name" ++ ":" ++ qs name ++ ","
        ++ qs "public_input_size" ++ ":" ++ toString pubSize ++ ","
        ++ qs "public_input" ++ ":" ++ renderIntList pub ++ ","
+       -- ⚑ **THE SLOT CENSUS TRAVELS WITH THE CIRCUIT.** Which of Mina's forty this emission
+       -- DERIVES, and which it declares unread. A Rust gate that had to guess the split would be
+       -- testing its own guess; these two lists are what makes the harness's public-input polarity
+       -- a measurement of the 24-vs-40 shape instead of an assertion about it.
+       ++ qs "derived_slots" ++ ":" ++ renderNatList derivedSlots ++ ","
+       ++ qs "unread_slots" ++ ":" ++ renderNatList unreadSlots ++ ","
        ++ qs "num_rows" ++ ":" ++ toString numRows ++ ","
        ++ qs "probe_rows" ++ ":" ++ renderNatList probes ++ ","
        ++ qs "gates" ++ ":[" ++ String.intercalate "," (gs.map renderGate) ++ "],"
@@ -5376,8 +5495,9 @@ def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :
   let rows := rungRows t k wired
   let p := rungPub t.sh k
   renderWrapCircuit name p (p + rows.length)
-    (placedOf t.sh p (wrapGates rows)) (wrapWitnessAt t k p rows)
+    (placedOf t.sh k p (wrapGates rows)) (wrapWitnessAt t k p rows)
     (if p == 0 then [] else wrapPublicAt t k) (rungProbeRows t k)
+    (if p == 0 then [] else wrapSlotsAt t.sh k) (if p == 0 then [] else wrapInertOk t.sh k)
 
 /-! ## §8 — the committed shape.
 
@@ -5392,8 +5512,10 @@ def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :
   * `branches = 5` — a wrap instance compiled for a five-rule step circuit. ⚑ There is no canonical
     value: `wrap_main` is per-zkApp (`wrap_main.ml:96-101`), which is the whole reason Mina's two
     blobs are a shape reference and not a byte target.
-  * `pubWords = 22` — §10's census; upstream's `PRIMARY_LEN` is 40 and the 18-word gap is named
-    there by sub-circuit. -/
+  * `pubWords = 22` — §10's census: the words the CLOSING rung derives. The emitted vector is
+    `WRAP_PRIMARY_LEN = 40` wide at every rung from `w4_bind` up, in Mina's slot order; `w9_prev`
+    adds slot 12 and `w11_wraphack` slot 11, which is the 22 → 24 ladder, and the remaining sixteen
+    are `WRAP_UNPINNED_SLOTS`. -/
 def shapeWrap : WrapShape :=
   { prevs := 2, ipaRounds := 16, wComms := 15, tComms := 7, emsRows := 8
   , branches := 5, pubWords := 22, xhatTerms := XHAT_TERMS_FULL

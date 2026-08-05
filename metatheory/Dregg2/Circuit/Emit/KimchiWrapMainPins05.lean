@@ -148,8 +148,10 @@ theorem xhat_rung_is_a_ladder_step_and_places :
     ∧ (((rungRows tKey .xhat true).zip (rungRows tKey .xhat false)).filter
         (fun p => p.1.perm != p.2.perm)).length
         = ((rungRows tKey .xhat true).filter (fun r => r.probe)).length
-    ∧ refusalOf shapeSmoke shapeSmoke.pubWords (wrapGates (rungRows tKey .xhat true)) = none
-    ∧ inertPublicWords shapeSmoke.pubWords (wrapGates (rungRows tKey .xhat true)) = [] := by
+    ∧ refusalOf shapeSmoke .xhat (rungPub shapeSmoke .xhat)
+        (wrapGates (rungRows tKey .xhat true)) = none
+    ∧ inertSlotsAt shapeSmoke .xhat (wrapGates (rungRows tKey .xhat true))
+        = wrapInertOk shapeSmoke .xhat := by
   refine ⟨rfl, ?_, rfl, rfl, rfl⟩
   decide
 

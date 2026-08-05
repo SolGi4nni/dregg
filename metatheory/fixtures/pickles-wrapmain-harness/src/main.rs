@@ -24,7 +24,11 @@
 //                  `Branch_data.Checked.pack` (`wrap_main.ml:164-199`) — the wrap-specific
 //                  selection sub-circuit, which has no step-side analogue at all
 //   w4_bind        the closing ties: the wrap statement words this assembly DERIVES become public
-//                  words through `placeChecked`, so a word no gate reads REFUSES
+//                  words through `placeCheckedWith`, so a word no gate reads REFUSES.
+//                  ⚑ THE VECTOR IS FORTY WIDE AND IN MINA'S SLOT ORDER — `WRAP_PRIMARY_LEN`, what
+//                  `Impls.Wrap.input ()` allocates and what `make_zkapp_verifier_index` hands
+//                  `kimchi::verifier::verify`. Which of the forty this rung derives travels with
+//                  the circuit as `derived_slots`; the rest as `unread_slots`
 //   w5_key         W-KEY: `choose_key` (`wrap_verifier.ml:189-204`) as a one-hot fold over the
 //                  per-branch step keys - which are `Inner_curve.constant`, so it is Generic
 //                  arithmetic and not a curve MSM - plus the INDEX SPONGE (`:521-530`), whose
@@ -81,9 +85,14 @@
 //   (3) NOT-ADJACENCY — the SAME flips on the UNWIRED control (identical rows, byte-identical
 //                     witness, probe rows in NO sigma class) are ACCEPTED;
 //   (4) NON-VACUITY — an unread advice-cell flip is ACCEPTED;
-//   (5) PUBLIC INPUT (w4/w9) — the honest proof verified against a tampered public vector is
-//                     REJECTED, and flipping public cell (i,0) AND telling the verifier the new
-//                     value is STILL REJECTED, by the copy-permutation alone, at i=0 and i=last.
+//   (5) PUBLIC INPUT (w4 and up) — TWO legs that move in OPPOSITE directions across Mina's forty
+//                     slots. The VECTOR leg (move the verifier's claim alone) is REJECTED at every
+//                     slot, derived or not: a public row is a `Generic` gate `1*w0[i] = pub_i` and
+//                     the negated public polynomial is added to the quotient. The SIGMA leg (flip
+//                     the CELL and tell the verifier the new value) is REJECTED at every DERIVED
+//                     slot and ACCEPTED at every declared-unread one — which MEASURES the 24-vs-40
+//                     census instead of asserting it. An unread slot that refused, or a derived
+//                     slot that accepted, is a red.
 //
 // disable_gates_checks=true: a sigma desync is rejected by the PROOF (the permutation argument's
 // z-polynomial), not by a debug assert.
@@ -200,6 +209,14 @@ struct CircuitJson {
     /// Absolute rows of the sigma-ONLY probes. Emitted WITH the circuit so the tampers aim at what
     /// the Lean schedule produced, not at a hand-copied constant a drift would invalidate.
     probe_rows: Vec<usize>,
+    /// ⚑ Which of MINA'S forty statement slots this emission DERIVES, and which it declares
+    /// unread. Emitted WITH the circuit for the same reason `probe_rows` is: a Rust gate that had
+    /// to guess the split would be testing its own guess. `default` so a `pubSize = 0` rung, which
+    /// carries neither, still parses.
+    #[serde(default)]
+    derived_slots: Vec<usize>,
+    #[serde(default)]
+    unread_slots: Vec<usize>,
     gates: Vec<GateJson>,
     witness: Vec<Vec<String>>,
 }
@@ -362,6 +379,12 @@ fn run_lengths(c: &CircuitJson, typ: u64) -> Vec<usize> {
 /// Which probe rows to tamper. Every probe at small scale; at scale a spread SAMPLE, because each
 /// tamper is a full prove. The sample always contains the FIRST and the LAST probe plus evenly
 /// spaced interior ones, and the chosen rows are printed.
+/// Mina's own wrap statement width — `Impls.Wrap.input ()` allocates forty and
+/// `make_zkapp_verifier_index` hands `kimchi::verifier::verify` forty. The Lean emission carries it
+/// in `public_input_size`; this constant is the INDEPENDENT source the emission is checked against,
+/// so a silently narrowed emission is a red rather than a self-consistent smaller circuit.
+const MINA_WRAP_PRIMARY_LEN: usize = 40;
+
 fn probe_sample(probes: &[usize], budget: usize) -> Vec<usize> {
     if probes.len() <= budget {
         return probes.to_vec();
@@ -468,28 +491,87 @@ fn run_rung(dir: &Path, tag: &str, rung: &str, budget: usize) -> RungOutcome {
     );
     println!("[4 NONVACU  ] unread advice cell (col 12, row {p0}) flip ACCEPTED (non-vacuity)");
 
-    // (5) PUBLIC INPUT, when the rung has one.
+    // (5) PUBLIC INPUT, when the rung has one — and at MINA'S LAYOUT it has two legs that move in
+    // OPPOSITE directions, which is the whole point of running it slot by slot.
+    //
+    //   · THE VECTOR LEG binds at EVERY one of the forty. A public row is a `Generic` gate
+    //     `1·w0[i] = pub_i`, and the negated public polynomial is added to the quotient, so moving
+    //     the verifier's claim alone breaks row `i` whether or not any other gate reads it.
+    //   · THE SIGMA LEG discriminates. Flip the CELL and tell the verifier the new value and the
+    //     row is satisfied again; what refuses is the copy-permutation, and only a slot this rung
+    //     DERIVES is in a class with a cell the circuit reads. So a derived slot REFUSES and an
+    //     unread slot ACCEPTS — and that acceptance is the 24-vs-40 split MEASURED at the prover
+    //     rather than asserted in a comment. An unread slot that refused here would mean the split
+    //     is not what the emission says it is.
     if wired.public_input_size > 0 {
-        let mut bad = pub_w.clone();
-        bad[0] += Fq::from(1u64);
-        assert!(
-            prove_and_verify(&iw, &gm, build_witness(&wired), &bad).is_err(),
-            "[FALSIFICATION] {rung}: honest proof ACCEPTED against a tampered public vector"
+        assert_eq!(
+            wired.public_input_size, MINA_WRAP_PRIMARY_LEN,
+            "{rung}: the emission must be Mina's own statement width"
         );
         assert!(
-            prove_and_verify(&iw, &gm, tamper(&wired, 0, 0), &bad).is_err(),
-            "[FALSIFICATION] {rung}: public cell (0,0) flip WITH a matching public vector ACCEPTED - the public word is not wired in"
+            !wired.derived_slots.is_empty(),
+            "{rung}: a rung with a public vector must declare which slots it derives"
         );
-        let last = wired.public_input_size - 1;
-        let mut bad_last = pub_w.clone();
-        bad_last[last] += Fq::from(1u64);
-        assert!(
-            prove_and_verify(&iw, &gm, tamper(&wired, 0, last), &bad_last).is_err(),
-            "[FALSIFICATION] {rung}: public cell ({last},0) flip WITH a matching public vector ACCEPTED"
+        assert_eq!(
+            wired.derived_slots.len() + wired.unread_slots.len(),
+            MINA_WRAP_PRIMARY_LEN,
+            "{rung}: derived + unread must be exactly Mina's forty"
         );
+
+        // the vector leg, at both ends of each set
+        let mut vector_probed = 0usize;
+        for &i in [
+            wired.derived_slots[0],
+            wired.derived_slots[wired.derived_slots.len() - 1],
+            wired.unread_slots[0],
+            wired.unread_slots[wired.unread_slots.len() - 1],
+        ]
+        .iter()
+        {
+            let mut bad = pub_w.clone();
+            bad[i] += Fq::from(1u64);
+            assert!(
+                prove_and_verify(&iw, &gm, build_witness(&wired), &bad).is_err(),
+                "[FALSIFICATION] {rung}: honest proof ACCEPTED against a public vector moved at slot {i}"
+            );
+            vector_probed += 1;
+        }
+
+        // ⚑ SAMPLED, not exhaustive, and the sampling is spread across each set rather than taken
+        // from its head: one `prove_and_verify` is a full kimchi proof, and 40 of them per rung
+        // across 15 rungs at wrap scale is minutes of nothing new. `probe_sample` is the same
+        // spread the wiring polarity uses.
+        let derived_s = probe_sample(&wired.derived_slots, budget.min(4).max(2));
+        let unread_s = probe_sample(&wired.unread_slots, budget.min(4).max(2));
+
+        // the sigma leg, at every sampled derived slot: REFUSE
+        for &i in &derived_s {
+            let mut bad = pub_w.clone();
+            bad[i] += Fq::from(1u64);
+            assert!(
+                prove_and_verify(&iw, &gm, tamper(&wired, 0, i), &bad).is_err(),
+                "[FALSIFICATION] {rung}: DERIVED slot {i} — cell flip WITH a matching public vector ACCEPTED, so the slot is not wired to anything the circuit reads"
+            );
+        }
+        // …and at the unread ones: ACCEPT. The control that makes the line above a measurement.
+        let mut unread_accepted = 0usize;
+        for &i in &unread_s {
+            let mut bad = pub_w.clone();
+            bad[i] += Fq::from(1u64);
+            assert!(
+                prove_and_verify(&iw, &gm, tamper(&wired, 0, i), &bad).is_ok(),
+                "[FALSIFICATION] {rung}: UNREAD slot {i} — cell flip WITH a matching public vector REFUSED, so the declared unread set is wrong"
+            );
+            unread_accepted += 1;
+        }
         println!(
-            "[5 PUBLIC   ] {} public words: a tampered public vector REJECTED, and the sigma leg (flip cell (i,0) AND tell the verifier) REJECTED at i=0 and i={last}",
-            wired.public_input_size
+            "[5 PUBLIC   ] {} Mina slots ({} derived {:?}, {} declared unread): VECTOR leg REJECTS at {vector_probed}/4 sampled; SIGMA leg REJECTS at derived {:?} and ACCEPTS at unread {:?} ({unread_accepted} of them)",
+            wired.public_input_size,
+            wired.derived_slots.len(),
+            wired.derived_slots,
+            wired.unread_slots.len(),
+            derived_s,
+            unread_s
         );
     }
 
@@ -723,26 +805,58 @@ mod wrapmain_tests {
         }
     }
 
+    /// ⚑ **THE PUBLIC VECTOR IS MINA'S FORTY, AND THE TWO LEGS MOVE IN OPPOSITE DIRECTIONS.**
+    /// See the `(5)` block in `run_rung` for why: the VECTOR leg binds every slot (each public row
+    /// is a `Generic` gate `1·w0[i] = pub_i`), while the SIGMA leg binds only slots this rung
+    /// DERIVES. The unread half ACCEPTING is not a weakness being tolerated — it is the
+    /// measurement that the emission's 24-vs-40 census is the truth about the circuit.
     #[test]
     fn public_input_binds_and_is_wired_in() {
         for rung in ["w4_bind", "w5_key", "w9_prev", "w11_wraphack", "w12_close"] {
             let f = fixture(rung);
-            assert!(
-                f.wired.public_input_size > 0,
-                "{rung} must carry public words"
+            assert_eq!(
+                f.wired.public_input_size, MINA_WRAP_PRIMARY_LEN,
+                "{rung} must carry MINA'S statement width"
             );
-            let mut bad = f.public.clone();
-            bad[0] += Fq::from(1u64);
-            assert!(
-                prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &bad).is_err(),
-                "{rung}: the honest proof was ACCEPTED against a tampered public vector"
+            assert_eq!(
+                f.wired.derived_slots.len() + f.wired.unread_slots.len(),
+                MINA_WRAP_PRIMARY_LEN,
+                "{rung}: derived + unread must be exactly Mina's forty"
             );
-            for i in [0usize, f.wired.public_input_size - 1] {
+            // the VECTOR leg — every sampled slot, derived or not
+            for i in [
+                f.wired.derived_slots[0],
+                f.wired.unread_slots[0],
+                MINA_WRAP_PRIMARY_LEN - 1,
+            ] {
+                let mut bad = f.public.clone();
+                bad[i] += Fq::from(1u64);
+                assert!(
+                    prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &bad).is_err(),
+                    "{rung}: the honest proof was ACCEPTED against a public vector moved at slot {i}"
+                );
+            }
+            // the SIGMA leg — REFUSE at derived, ACCEPT at unread
+            for &i in &[
+                f.wired.derived_slots[0],
+                f.wired.derived_slots[f.wired.derived_slots.len() - 1],
+            ] {
                 let mut b = f.public.clone();
                 b[i] += Fq::from(1u64);
                 assert!(
                     prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, 0, i), &b).is_err(),
-                    "{rung}: public cell ({i},0) flip WITH a matching public vector ACCEPTED - the word is not wired in"
+                    "{rung}: DERIVED slot {i} — cell flip WITH a matching public vector ACCEPTED, so the word is not wired in"
+                );
+            }
+            for &i in &[
+                f.wired.unread_slots[0],
+                f.wired.unread_slots[f.wired.unread_slots.len() - 1],
+            ] {
+                let mut b = f.public.clone();
+                b[i] += Fq::from(1u64);
+                assert!(
+                    prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, 0, i), &b).is_ok(),
+                    "{rung}: UNREAD slot {i} — cell flip WITH a matching public vector REFUSED, so the declared unread set is wrong"
                 );
             }
         }
@@ -770,10 +884,18 @@ mod wrapmain_tests {
         let c8 = gate_census(&w8);
         let c9 = gate_census(&w9);
         assert!(w9.num_rows > w8.num_rows, "the ladder is monotone");
+        // ⚑ THE WIDTH IS MINA'S AT BOTH — what grows is the DERIVED set, by exactly one slot, and
+        // the slot is 12: `messages_for_next_step_proof`, the `Field.Assert.equal` of `:350-351`.
+        assert_eq!(w9.public_input_size, w8.public_input_size);
+        assert_eq!(w9.public_input_size, MINA_WRAP_PRIMARY_LEN);
         assert_eq!(
-            w9.public_input_size,
-            w8.public_input_size + 1,
-            "w9 must expose exactly one more public word than every rung below it"
+            w9.derived_slots.len(),
+            w8.derived_slots.len() + 1,
+            "w9 must derive exactly one more Mina slot than every rung below it"
+        );
+        assert!(
+            w9.derived_slots.contains(&12) && !w8.derived_slots.contains(&12),
+            "the slot w9 adds must be Mina's 12"
         );
         assert_eq!(w9.public_input.len(), w9.public_input_size);
         for k in [2usize, 3, 4, 5, 6] {
@@ -824,8 +946,8 @@ mod wrapmain_tests {
             );
         }
         assert_eq!(
-            w5.public_input_size, w4.public_input_size,
-            "index_digest is not a wrap statement word; the public vector must not grow"
+            w5.derived_slots, w4.derived_slots,
+            "index_digest is not a wrap statement word; the derived slot set must not grow"
         );
         assert_eq!(
             w5.probe_rows.len(),
@@ -886,7 +1008,7 @@ mod wrapmain_tests {
             assert_eq!(*n, 8, "EndoMulScalar run {i} is {n} rows, not one chain");
         }
         assert_eq!(
-            w11.public_input_size, w10.public_input_size,
+            w11.derived_slots, w10.derived_slots,
             "W-FINSPONGE derives no NEW wrap statement word - it derives the PREVIOUS statement's"
         );
         // ⚑ 42 sigma-only probes per instance, and every one is accounted for: 2 per
@@ -988,8 +1110,14 @@ mod wrapmain_tests {
         }
         assert_eq!(w2.public_input_size, 0);
         assert_eq!(w3.public_input_size, 0);
-        assert!(w4.public_input_size > 0, "w4 is the closing rung");
+        assert_eq!(
+            w4.public_input_size, MINA_WRAP_PRIMARY_LEN,
+            "w4 is the closing rung and turns MINA'S forty-slot statement on"
+        );
         assert_eq!(w4.public_input.len(), w4.public_input_size);
+        // ⚑ and the six the SMOKE shape derives sit where Pickles reads them: β γ α ζ at 5-8, the
+        // fork digest at 10, the first bulletproof prechallenge at 13.
+        assert_eq!(w4.derived_slots, vec![5usize, 6, 7, 8, 10, 13]);
         // ⚑ `placeChecked` refuses an inert public word, so a nonempty public vector that placed
         // at all is evidence every declared word is READ by some gate.
         assert_eq!(

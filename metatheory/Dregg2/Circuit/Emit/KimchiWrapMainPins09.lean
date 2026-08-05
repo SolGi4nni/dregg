@@ -33,6 +33,79 @@ set_option maxHeartbeats 4000000
 
 /-! ### §21a — ⚑ THE PINS ON W-WRAPHACK, and the one that is the point. -/
 
+/-! ### §21a′ — ⚑ **THE SLOT MAP.** The public vector sits in MINA'S layout, and these are the
+checks that it is Mina's and not a forty-wide vector of our own devising. -/
+
+/-- ⚑ **THE FOUR CHALLENGE SLOTS ARE THE TRANSCRIPT'S OWN SQUEEZE ORDER, β γ α ζ.**
+
+This is the pin the §10 census names, and it exists because a rotation here is the exact defect the
+module has already shipped once: **an object of the right kind under the right name at the wrong
+slot, moving nothing any width signature can see** — all four are 128-bit challenges, so a swap of β
+and α changes the committed statement and NOTHING else visibly.
+
+Two independent readings must agree and both are exhibited:
+
+  * MINA'S side — `Wrap.Statement.to_data` (`composition_types.ml:826-880`) lays the `challenge`
+    bucket (β, γ) down BEFORE the `scalar_challenge` bucket (α, ζ). That reading is
+    `Dregg2.Bridge.MinaWrapPublicInput.publicInputWords`, itself a MEASURED correction against block
+    539508's binprot bytes (2026-07-30), and it puts β at 5, γ at 6, α at 7, ζ at 8.
+  * OURS — `schedule`'s four `.chal` squeezes are β (`wrap_verifier.ml:620`), γ (`:621`), α (`:624`),
+    ζ (`:631`) in that order, and `exposedVars` indexes the chains by it.
+
+So `wrapSlots` is `5 + i` on the first four, and the last conjunct is the ORDER's own control: the
+transcript's four squeezes ARE in that order, exhibited from the schedule rather than asserted. -/
+theorem the_challenge_slots_are_the_transcript_order :
+    (wrapSlots shapeSmoke).take 4 = [5, 6, 7, 8]
+    ∧ (wrapSlots shapeWrap).take 4 = [5, 6, 7, 8]
+    ∧ ((schedule shapeWrap).filter (fun e => match e with | .sq .chal => true | _ => false)).length
+        = nChals shapeWrap
+    -- ⚑ AND THE GAP STRUCTURE IS THE EVIDENCE, not the naming. The schedule positions of the first
+    -- four `chal` squeezes: β and γ are BACK TO BACK (`wrap_verifier.ml:620-621`, positions 37/38,
+    -- nothing absorbed between them), α comes only after `z_comm`'s two absorbs (`:623-624`,
+    -- position 41) and ζ after `t_comm`'s fourteen (`:630-631`, position 56). That adjacency is
+    -- exactly what makes the first two the `challenge` bucket and α/ζ `scalar_challenge`s — the
+    -- split `Wrap.Statement.to_data` orders slots 5-8 on.
+    ∧ (List.range 60).filter (fun i =>
+        match (schedule shapeWrap).getD i default with | .sq .chal => true | _ => false)
+       = [37, 38, 41, 56] := by
+  refine ⟨rfl, rfl, rfl, ?_⟩
+  rfl
+
+/-- ⚑ **AND THE WHOLE MAP IS MINA'S**, at both committed shapes: every slot the ladder derives is a
+PINNED one, the map is injective, and at the terminal rung the derived set IS
+`WRAP_PINNED_SLOTS` — twenty-four of forty, in Pickles' own positions.
+
+The middle conjunct is what stops a silent collision: two derived words tied to ONE public cell
+would merge two σ classes and place, prove and commit without a word of complaint. -/
+theorem the_slot_map_is_minas :
+    (wrapSlotsAt shapeWrap .close).all (fun i => WRAP_PINNED_SLOTS.contains i) = true
+    ∧ (wrapSlotsAt shapeWrap .close).dedup.length = (wrapSlotsAt shapeWrap .close).length
+    ∧ (wrapSlotsAt shapeWrap .close).length = WRAP_PINNED_WORDS
+    ∧ ((List.range WRAP_PRIMARY_LEN).filter
+        (fun i => (wrapSlotsAt shapeWrap .close).contains i)) = WRAP_PINNED_SLOTS
+    -- …and the SMOKE shape derives a strict SUBSET of them — six of the twenty-four — which is why
+    -- a smoke-shape emission is a layout demonstration and not a closed statement.
+    ∧ (wrapSlotsAt shapeSmoke .bind) = [5, 6, 7, 8, 10, 13]
+    ∧ (wrapSlotsAt shapeSmoke .close).all (fun i => WRAP_PINNED_SLOTS.contains i) = true := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THE DECLARED-UNREAD SET IS THE COMPLEMENT, AND IT SHRINKS UP THE LADDER.** `w4_bind` admits
+to Mina's sixteen plus slots 11 and 12; `w9_prev` gives back 12; `w11_wraphack` gives back 11 and
+lands on exactly Mina's sixteen. A ladder that stopped moving here would be a ladder that stopped
+deriving. -/
+theorem the_declared_unread_set_shrinks_to_minas_sixteen :
+    (wrapInertOk shapeWrap .bind).length = 18
+    ∧ (wrapInertOk shapeWrap .prev).length = 17
+    ∧ (wrapInertOk shapeWrap .wraphack).length = 16
+    ∧ (wrapInertOk shapeWrap .close).length = 16
+    ∧ ((List.range WRAP_PRIMARY_LEN).filter
+        (fun i => (wrapInertOk shapeWrap .close).contains i)) = WRAP_UNPINNED_SLOTS := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+#assert_axioms the_challenge_slots_are_the_transcript_order
+#assert_axioms the_slot_map_is_minas
+#assert_axioms the_declared_unread_set_shrinks_to_minas_sixteen
+
 /-- ⚑ **THE TAPE IS `to_field_elements`'s, AND THE ORDER IS THE FACT.**
 `composition_types.ml:411-418` flattens the old bulletproof challenges FIRST and appends the
 commitment's `[x; y]` LAST. The last conjunct is the red control: the same 32 values in the step
@@ -144,15 +217,18 @@ theorem wraphack_word_11_is_a_digest_not_a_challenge :
 
 /-- The rung's own public word: slot 11, tied to the closing sponge's squeeze. -/
 theorem wraphack_public_word_11_is_the_closing_squeeze :
-    rungPub shapeSmoke .wraphack = shapeSmoke.pubWords + 2
-    ∧ (exposedVarsAt tWh .wraphack).getD (WH_PUB_SLOT shapeSmoke) default
-        = whDigestVar (whSpongeC tWh)
+    rungPub shapeSmoke .wraphack = WRAP_PRIMARY_LEN
+    ∧ slotVarAt tWh .wraphack (WH_PUB_SLOT shapeSmoke)
+        = some (whDigestVar (whSpongeC tWh))
+    ∧ WH_PUB_SLOT shapeSmoke = WRAP_SLOT_MSG_NEXT_WRAP
+    ∧ slotVarAt tWh .prev WRAP_SLOT_MSG_NEXT_WRAP = none
     -- ⚠ the VALUE at that slot is `wraphack_digest_is_the_statement_word`'s third conjunct, stated
     -- there and not here: `wrapPublicAt` runs `envIndex` over `circuitEnvAt … .wraphack`, which
     -- carries every accumulator point and slope of §15's MSM, and reducing it blew 4 000 000
     -- heartbeats. That is the measurement the `circuitEnvAt` docblock above is about.
-    ∧ (exposedVarsAt tWh .wraphack).length = shapeSmoke.pubWords + 2 := by
-  refine ⟨rfl, rfl, rfl⟩
+    ∧ (exposedVarsAt tWh .wraphack).length = shapeSmoke.pubWords + 2
+    ∧ (wrapSlotsAt shapeSmoke .wraphack).length = shapeSmoke.pubWords + 2 := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- The `w11_wraphack` rung is a strict superset of `w9_prev`, its length is the sum of its parts,
 and the WIRED and UNWIRED emissions differ ONLY in the probe rows' permutation columns. -/
@@ -169,13 +245,16 @@ theorem wraphack_rung_extends_prev :
 inert — and `w9_prev` is REFUSED at that size, because no `w9_prev` gate reads slot `pubWords + 1`.
 That is what makes `AUXW`'s second reserved slot a gate rather than a comment. -/
 theorem wraphack_rung_places_and_the_rung_below_it_does_not :
-    refusalOf shapeSmoke (rungPub shapeSmoke .wraphack)
+    refusalOf shapeSmoke .wraphack (rungPub shapeSmoke .wraphack)
         (wrapGates (rungRows tWh .wraphack true)) = none
-    ∧ inertPublicWords (rungPub shapeSmoke .wraphack)
-        (wrapGates (rungRows tWh .wraphack true)) = []
-    ∧ inertPublicWords (rungPub shapeSmoke .wraphack)
-        (wrapGates (rungRows tWh .prev true)) = [WH_PUB_SLOT shapeSmoke] := by
-  refine ⟨rfl, rfl, rfl⟩
+    ∧ inertSlotsAt shapeSmoke .wraphack (wrapGates (rungRows tWh .wraphack true))
+        = wrapInertOk shapeSmoke .wraphack
+    ∧ inertPublicWordsBeyond (rungPub shapeSmoke .wraphack) (wrapInertOk shapeSmoke .wraphack)
+        (wrapGates (rungRows tWh .prev true)) = [WH_PUB_SLOT shapeSmoke]
+    ∧ refusalOf shapeSmoke .wraphack (rungPub shapeSmoke .wraphack)
+        (wrapGates (rungRows tWh .prev true))
+        = some (.inertPublicWord WRAP_SLOT_MSG_NEXT_WRAP) := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
 
 /-- ⚑ **THE TWENTY-FOUR ARE DERIVED, AND TWENTY-FOUR IS NOT FORTY.** `WRAP_PINNED_SLOTS` is what
 `wrap_main` actually constrains; `WRAP_UNPINNED` is the rest, by REASON and by owner. A run that
@@ -186,8 +265,15 @@ theorem wraphack_closes_every_pinned_statement_word :
     ∧ WRAP_PINNED_SLOTS.length = 24
     ∧ WRAP_PRIMARY_LEN - WRAP_PINNED_WORDS = 16
     ∧ WRAP_UNPINNED.length = 4
-    ∧ rungPub shapeSmoke .wraphack = shapeSmoke.pubWords + 2 := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+    ∧ rungPub shapeSmoke .wraphack = WRAP_PRIMARY_LEN
+    -- ⚑ **THE TWO LISTS PARTITION MINA'S FORTY.** `WRAP_UNPINNED_SLOTS` is written down rather
+    -- than computed, so this is two independent readings of `wrap_main` agreeing, not a definition
+    -- unfolding: sixteen slots, disjoint from the twenty-four, and together exactly `range 40`.
+    ∧ WRAP_UNPINNED_SLOTS.length = 16
+    ∧ (WRAP_PINNED_SLOTS ++ WRAP_UNPINNED_SLOTS).dedup.length = WRAP_PRIMARY_LEN
+    ∧ ((List.range WRAP_PRIMARY_LEN).all
+        (fun i => WRAP_PINNED_SLOTS.contains i != WRAP_UNPINNED_SLOTS.contains i)) = true := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- ⚠ ⚑ **THE CENSUS DID NOT MOVE, AND `sg_old`'s ENTRY IS REWRITTEN RATHER THAN STRUCK.**
 W-WRAPHACK gives `sg_old` a real consumer — it is hashed into packed statement words 55/56, which the

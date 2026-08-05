@@ -539,19 +539,49 @@ def inertPublicWords (pubSize : Nat) (gates : List PGate) : List Nat :=
   let read := publicWordsRead pubSize gates
   (List.range pubSize).filter (fun i => !(read.getD i false))
 
-/-- **THE FAIL-CLOSED PLACEMENT ENTRY.** Same placement, or a REFUSAL naming the incoherence. A
-circuit that means to have public inputs calls THIS; `place` stays available for the raw pass (and is
-what every `pubSize = 0` fixture uses), but a `pubSize > 0` caller that reaches for it is opting out
-of both checks in the open. -/
-def placeChecked (c : Contract) (gates : List PGate) :
+/-- **H2, RELATIVE TO A DECLARED UNREAD SET.** The inert words a caller did NOT declare.
+
+⚑ **WHY THIS EXISTS, and why it is not a hole in H2.** `placeChecked` below is
+`placeCheckedWith … []`, so H2 as written is "no public word may be inert" — and that is STRICTER
+THAN MINA'S OWN WRAP CIRCUIT. `Impls.Wrap.input ()` builds the 40-word wrap statement through
+`Spec.packed_typ`, whose `Constant` case (`composition_types/spec.ml:312-330`) keeps the underlying
+`Typ.t` — *"we do use the underlying [Typ.t] to make sure that we allocate public inputs
+correctly"* — while replacing `check` with `return ()` AND handing the circuit body a
+`Cvar.Constant` instead of the allocated variable. So those slots are ALLOCATED, READ BY NOTHING and
+CHECKED BY NOTHING, upstream, by construction. A placement that refuses them refuses `wrap_main`.
+
+⚠ The declared set is an INPUT, never read off the gates: `inertOk` says which slots the caller
+CLAIMS to leave unread, and the check is that the gates leave unread NO MORE THAN THAT. A caller
+that derived `inertOk` from `inertPublicWords` of the same gates would have written a check that
+cannot go red — that is the laundering this signature exists to make visible, and the wrap side's
+`wrapInertOk` is a function of Mina's own census and the rung, not of the emitted rows. -/
+def inertPublicWordsBeyond (pubSize : Nat) (inertOk : List Nat) (gates : List PGate) : List Nat :=
+  (inertPublicWords pubSize gates).filter (fun i => !(inertOk.contains i))
+
+/-- **THE FAIL-CLOSED PLACEMENT ENTRY, WITH THE DECLARED UNREAD SET.** Same placement, or a REFUSAL
+naming the incoherence. `placeChecked` is this at `inertOk = []`. -/
+def placeCheckedWith (c : Contract) (inertOk : List Nat) (gates : List PGate) :
     Except PlaceRefusal (List PlacedGate) :=
   if c.auxBase < c.pubSize then .error (.auxOverlapsPublic c.auxBase c.pubSize)
   else match (externalRefs gates).find? (fun i => c.pubSize ≤ i && i < c.auxBase) with
     | some i => .error (.referenceInGap i)
     | none =>
-      match (inertPublicWords c.pubSize gates).head? with
+      match (inertPublicWordsBeyond c.pubSize inertOk gates).head? with
       | some i => .error (.inertPublicWord i)
       | none => .ok (place c.pubSize gates)
+
+/-- **THE FAIL-CLOSED PLACEMENT ENTRY.** Same placement, or a REFUSAL naming the incoherence. A
+circuit that means to have public inputs calls THIS; `place` stays available for the raw pass (and is
+what every `pubSize = 0` fixture uses), but a `pubSize > 0` caller that reaches for it is opting out
+of both checks in the open. Declares NO slot unread, so H2 bites on every inert word. -/
+def placeChecked (c : Contract) (gates : List PGate) :
+    Except PlaceRefusal (List PlacedGate) :=
+  placeCheckedWith c [] gates
+
+/-- **The strict entry IS the general one at an empty declaration** — so nothing that reads
+`placeChecked` is reading a different function than the wrap side's widened caller. -/
+theorem placeChecked_is_placeCheckedWith_nil (c : Contract) (gates : List PGate) :
+    placeChecked c gates = placeCheckedWith c [] gates := rfl
 
 /-! ### §4b.1 — the refusals BITE, and the `pubSize = 0` path is untouched. -/
 
@@ -596,6 +626,43 @@ def piProbeGates : List PGate :=
 -- A reference in the DEAD GAP (neither public nor declared-aux) refuses too.
 #guard match placeChecked ⟨2, 5⟩ piProbeGates with
        | .error (.referenceInGap 2) => true | _ => false
+
+/-! ### §4b.2 — ⚑ **THE DECLARED UNREAD SET IS A DECLARATION, AND IT STILL BITES.**
+
+The three legs that make `placeCheckedWith` a gate rather than a waiver, stated as named theorems
+because each is a fact the wrap side's 40-word layout leans on. -/
+
+/-- **A DECLARED slot may be inert; an UNDECLARED one still refuses; and declaring a slot the
+circuit DOES read changes nothing.** The middle leg is the whole content: declaring 3 and 4 does not
+buy 5, and the refusal names 5 — so a caller whose declaration is short of its emission is refused
+at exactly the slot it forgot. -/
+theorem declared_inert_is_allowed_and_undeclared_still_refuses :
+    placeCheckedWith ⟨6, 10⟩ [3, 4, 5] piProbeGates = .ok (place 6 piProbeGates)
+    ∧ (match placeCheckedWith ⟨6, 10⟩ [3, 4] piProbeGates with
+       | .error (.inertPublicWord 5) => true | _ => false) = true
+    ∧ placeCheckedWith ⟨3, 10⟩ [0, 1, 2] piProbeGates = .ok (place 3 piProbeGates) := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- **AND THE DECLARATION CANNOT MANUFACTURE A PLACEMENT.** H1 and the dead-gap refusal are
+untouched by it — an `inertOk` naming every slot in sight does not buy either. -/
+theorem the_declaration_does_not_reach_h1_or_the_gap :
+    (match placeCheckedWith ⟨3, 0⟩ (List.range 40) piProbeGates with
+     | .error (.auxOverlapsPublic 0 3) => true | _ => false) = true
+    ∧ (match placeCheckedWith ⟨2, 5⟩ (List.range 40) piProbeGates with
+       | .error (.referenceInGap 2) => true | _ => false) = true := by
+  refine ⟨rfl, rfl⟩
+
+/-- **`inertPublicWordsBeyond` REPORTS the shortfall**, so an emission's declaration can be diffed
+against its gates rather than only accepted or refused. -/
+theorem the_shortfall_is_reportable :
+    inertPublicWordsBeyond 6 [3, 4] piProbeGates = [5]
+    ∧ inertPublicWordsBeyond 6 [3, 4, 5] piProbeGates = []
+    ∧ inertPublicWordsBeyond 6 [] piProbeGates = [3, 4, 5] := by
+  refine ⟨rfl, rfl, rfl⟩
+
+#assert_axioms declared_inert_is_allowed_and_undeclared_still_refuses
+#assert_axioms the_declaration_does_not_reach_h1_or_the_gap
+#assert_axioms the_shortfall_is_reportable
 
 #assert_axioms caseA_wires_match_o1js
 #assert_axioms caseB_wires_match_o1js

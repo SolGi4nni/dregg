@@ -88,13 +88,18 @@ prev_proof_state.messages_for_next_step_proof` (`wrap_main.ml:350-351`) as the t
 own public word and packed statement word `PREV_MSG_NEXT_STEP` — and the rung's public size is one
 more than every rung below it. -/
 theorem prev_ties_messages_for_next_step_proof_to_a_public_word :
-    hasHalf prRows [some (.external shapeSmoke.pubWords : PVar),
+    hasHalf prRows [some (.external WRAP_SLOT_MSG_NEXT_STEP : PVar),
                     some (prevW shapeSmoke tPrev.sp PREV_MSG_NEXT_STEP), none] cEq = true
-    ∧ rungPub shapeSmoke .prev = shapeSmoke.pubWords + 1
-    ∧ rungPub shapeSmoke .ftcomm = shapeSmoke.pubWords
-    ∧ (exposedVarsAt tPrev .prev).getD shapeSmoke.pubWords (.external 0)
-        = prevW shapeSmoke tPrev.sp PREV_MSG_NEXT_STEP := by
-  refine ⟨rfl, rfl, rfl, rfl⟩
+    -- ⚑ the WIDTH is Mina's at every rung; what moves is WHICH SLOT is derived.
+    ∧ rungPub shapeSmoke .prev = WRAP_PRIMARY_LEN
+    ∧ rungPub shapeSmoke .ftcomm = WRAP_PRIMARY_LEN
+    ∧ slotVarAt tPrev .prev WRAP_SLOT_MSG_NEXT_STEP
+        = some (prevW shapeSmoke tPrev.sp PREV_MSG_NEXT_STEP)
+    -- …and `w8_ftcomm` derives NOTHING there, which is the other half of the same fact.
+    ∧ slotVarAt tPrev .ftcomm WRAP_SLOT_MSG_NEXT_STEP = none
+    ∧ (wrapSlotsAt shapeSmoke .prev).contains WRAP_SLOT_MSG_NEXT_STEP = true
+    ∧ (wrapSlotsAt shapeSmoke .ftcomm).contains WRAP_SLOT_MSG_NEXT_STEP = false := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- ⚑ **…AND THAT PUBLIC WORD IS NOT A PUBLIC FIXTURE.** The cell it ties is packed word 54, which
 the MSM reads as entry 64 — at the committed wrap shape by construction, and at the SMOKE shape
@@ -159,12 +164,18 @@ theorem prev_rung_extends_ftcomm :
 no cell for slot `pubWords`, so `inertPublicWord` fires. That is the leg that makes the reservation
 a gate rather than a comment. -/
 theorem prev_rung_places_and_the_rung_below_it_does_not :
-    refusalOf shapeSmoke (rungPub shapeSmoke .prev) (wrapGates (rungRows tPrev .prev true)) = none
-    ∧ inertPublicWords (rungPub shapeSmoke .prev)
-        (wrapGates (rungRows tPrev .prev true)) = []
-    ∧ inertPublicWords (rungPub shapeSmoke .prev)
-        (wrapGates (rungRows tPrev .ftcomm true)) = [shapeSmoke.pubWords] := by
-  refine ⟨rfl, rfl, rfl⟩
+    refusalOf shapeSmoke .prev (rungPub shapeSmoke .prev)
+        (wrapGates (rungRows tPrev .prev true)) = none
+    ∧ inertSlotsAt shapeSmoke .prev (wrapGates (rungRows tPrev .prev true))
+        = wrapInertOk shapeSmoke .prev
+    -- ⚑ THE REFUSAL, at MINA'S slot: `w8_ftcomm`'s gates under `w9_prev`'s DECLARATION leave slot
+    -- 12 unread, and 12 is not in that declaration.
+    ∧ inertPublicWordsBeyond (rungPub shapeSmoke .prev) (wrapInertOk shapeSmoke .prev)
+        (wrapGates (rungRows tPrev .ftcomm true)) = [WRAP_SLOT_MSG_NEXT_STEP]
+    ∧ refusalOf shapeSmoke .prev (rungPub shapeSmoke .prev)
+        (wrapGates (rungRows tPrev .ftcomm true))
+        = some (.inertPublicWord WRAP_SLOT_MSG_NEXT_STEP) := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
 
 /-- ⚠ ⚑ **THE CENSUS DID NOT MOVE, AND THE ENTRY IS REWRITTEN RATHER THAN DELETED.** W-PREV names
 the MSM's scalars and constrains three of the 67 — one to a public word, two to bits. The other 64

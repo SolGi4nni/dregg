@@ -87,6 +87,12 @@ struct CircuitJson {
     public_input_size: usize,
     public_input: Vec<String>,
     num_rows: usize,
+    /// Which of MINA'S forty statement slots the Lean emission DERIVES, and which it declares
+    /// unread. Carried with the circuit so this binary reports the split rather than guessing it.
+    #[serde(default)]
+    derived_slots: Vec<usize>,
+    #[serde(default)]
+    unread_slots: Vec<usize>,
     gates: Vec<GateJson>,
     witness: Vec<Vec<String>>,
 }
@@ -199,6 +205,13 @@ fn main() {
         c.num_rows,
         target_rows - c.num_rows,
         c.public_input_size
+    );
+    println!(
+        "  layout   : {} slots DERIVED {:?}; {} declared UNREAD {:?}",
+        c.derived_slots.len(),
+        c.derived_slots,
+        c.unread_slots.len(),
+        c.unread_slots
     );
 
     let mut index: ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>> =
@@ -355,7 +368,7 @@ fn main() {
             &group_map, ours, &proof, &public,
         );
     println!(
-        "\n[B control] kimchi::verifier::verify(OUR index, our public input of {} words)",
+        "\n[B control] kimchi::verifier::verify(OUR index, our public input of {} words in MINA'S slot order)",
         public.len()
     );
     match &control {
@@ -375,60 +388,75 @@ fn main() {
         Err(e) => println!("      = Err({e:?})\n      Mina's own words: \"{e}\""),
     }
 
-    // And the same call with a public input padded to the length Mina's index demands, so the
-    // FIRST refusal does not hide whatever comes after it. Labelled: the padding words are zeros
-    // this circuit never committed to, so a rejection here is expected and is not news; it is run
-    // so the length error is not the only thing anyone can say about this pair.
-    let mut padded = public.clone();
-    padded.resize(minas.public, Fq::from(0u64));
-    let after =
-        verify::<FULL_ROUNDS, Pallas, WrapBase, WrapScalar, OpeningProof<Pallas, FULL_ROUNDS>>(
-            &group_map, &minas, &proof, &padded,
-        );
-    println!(
-        "\n[B'] the same, with the public input ZERO-PADDED to {} words (a probe past the length check;",
-        minas.public
+    // ⚑ **THE LENGTH PROBE IS GONE, AND ITS ABSENCE IS THE RESULT.** This binary used to run a
+    // second call with the public input ZERO-PADDED from our own 6 words up to Mina's 40, labelled
+    // a probe because *we* chose the 34 added words. The emission is now `WRAP_PRIMARY_LEN` wide in
+    // Pickles' own slot order, so [B] above IS the 40-word call and there is nothing left to pad.
+    assert_eq!(
+        public.len(),
+        minas.public,
+        "the emission must already be Mina's own statement width — there is no padding leg left"
     );
-    println!("     the added words are not values this circuit committed to)");
-    match &after {
-        Ok(()) => println!("      = Ok"),
-        Err(e) => println!("      = Err({e:?})\n      Mina's own words: \"{e}\""),
-    }
 
     // ── (C) the falsifiers ────────────────────────────────────────────────────────────────────
-    // ⚑ An acceptance that cannot go red is not an acceptance. [B'] says Mina's index accepts this
-    // proof at a 40-word public input; that is only worth saying if the SAME call refuses when a
-    // word of that vector moves. Both falsifiers are VERIFIER-side — same proof, same index, one
-    // field element changed — because a prover-side tamper tests our prover, not Mina's verifier.
+    // ⚑ An acceptance that cannot go red is not an acceptance. [B] says Mina's index accepts this
+    // proof at a 40-word public input in Mina's layout; that is only worth saying if the SAME call
+    // refuses when a word of that vector moves. VERIFIER-side — same proof, same index, one field
+    // element changed — because a prover-side tamper tests our prover, not Mina's verifier.
+    //
+    // ⚠ THIS LEG DOES NOT DISCRIMINATE DERIVED FROM UNREAD, and saying so is the point. Each public
+    // row is a `Generic` gate `1·w0[i] = pub_i` and the negated public polynomial is added to the
+    // quotient, so moving the verifier's CLAIM alone breaks row `i` whether or not another gate
+    // reads it. What separates the 24 from the 16 is the PROVER-side leg — flip the cell and the
+    // claim together — and that lives in `pickles-wrapmain-harness`'s polarity (5), not here.
     println!(
-        "\n[C] falsifiers — the same proof and the same Mina-built index, one public word moved"
+        "\n[C] falsifiers — the same proof and the same Mina-built index, one public word moved,"
     );
-    for (what, idx) in [
-        ("word 0 (a word the circuit committed to)", 0usize),
-        ("word 39 (one of the padding zeros)", minas.public - 1),
-    ] {
-        let mut bad = padded.clone();
+    println!("    at EVERY one of Mina's forty slots");
+    let mut refused = 0usize;
+    let mut accepted: Vec<usize> = Vec::new();
+    for idx in 0..minas.public {
+        let mut bad = public.clone();
         bad[idx] += Fq::from(1u64);
         let r =
             verify::<FULL_ROUNDS, Pallas, WrapBase, WrapScalar, OpeningProof<Pallas, FULL_ROUNDS>>(
                 &group_map, &minas, &proof, &bad,
             );
         match &r {
-            Ok(()) => println!(
-                "      {what}: ⚠ STILL ACCEPTED — [B'] does not bind this word; do not quote it"
-            ),
-            Err(e) => println!("      {what}: REFUSED, Err({e:?})  \"{e}\""),
+            Ok(()) => accepted.push(idx),
+            Err(_) => refused += 1,
         }
     }
-    // A third red is already on the record and is not re-run here: with the CURRENT (drifted)
-    // w4_bind emission, whose key differs from the chain's in 3 of 7 sigma commitments, this same
-    // [B'] call returns `OpenProof`. So the acceptance discriminates the key as well as the words.
+    println!("      REFUSED at {refused} / {} slots", minas.public);
+    if accepted.is_empty() {
+        println!("      accepted at none — every slot of the vector binds this proof");
+    } else {
+        println!(
+            "      ⚠ STILL ACCEPTED at {accepted:?} — [B] does not bind those words; do not quote it"
+        );
+    }
+    // One `Err` variant, printed in full, so the refusal is legible rather than merely counted.
+    {
+        let mut bad = public.clone();
+        bad[0] += Fq::from(1u64);
+        if let Err(e) =
+            verify::<FULL_ROUNDS, Pallas, WrapBase, WrapScalar, OpeningProof<Pallas, FULL_ROUNDS>>(
+                &group_map, &minas, &proof, &bad,
+            )
+        {
+            println!("      slot 0 moved: Err({e:?})  \"{e}\"");
+        }
+    }
+    // A third red is already on the record and is not re-run here: with a w4_bind emission whose
+    // key differs from the chain's in 3 of 7 sigma commitments, this same call returns `OpenProof`.
+    // So the acceptance discriminates the key as well as the words.
 
     println!(
-        "\nPROBE_RESULT same_index={} control={} mina_6words={} mina_40words={}",
+        "\nPROBE_RESULT same_index={} control={} mina_40words={} falsifiers_refused={}/{}",
         same_index,
         control.is_ok(),
         verdict.is_ok(),
-        after.is_ok()
+        refused,
+        minas.public
     );
 }

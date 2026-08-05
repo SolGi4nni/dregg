@@ -53,8 +53,8 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   let _ ← force rowsW.length s!"{k.tag} rows"
   let gs := wrapGates rowsW
   let gu := wrapGates rowsU
-  let placed := placedOf t.sh p gs
-  let placedU := placedOf t.sh p gu
+  let placed := placedOf t.sh k p gs
+  let placedU := placedOf t.sh k p gu
   let t1 ← IO.monoMsNow
   -- ⚑ ONE witness, used for BOTH circuits. That is what makes the UNWIRED emission a CONTROL: the
   -- rows, the gate types, the coefficients and every witness cell are byte-identical, and the ONLY
@@ -65,16 +65,43 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   let wit := wrapWitnessAt t k p rowsW
   let probes := rungProbeRows t k
   let pub := if p == 0 then [] else wrapPublicAt t k
+  let ds := if p == 0 then [] else wrapSlotsAt t.sh k
+  let us := if p == 0 then [] else wrapInertOk t.sh k
   let jw := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}" p (p + rowsW.length) placed wit pub probes
+              ds us
   let ju := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}_UNWIRED" p (p + rowsU.length) placedU wit
-              pub probes
+              pub probes ds us
   -- ⚠ A REFUSAL IS LOUD, AND IT LANDS BEFORE THE WRITE. `placeChecked` returning `.error` yields
   -- the empty placement, which would otherwise ship as a zero-gate circuit the harness "proves".
   -- ⚑ Both refusals used to fire AFTER `writeAtomic`, which is not fail-closed at all: the artifact
   -- the refusal is about was already on disk under its real name, and a reader of the emit
   -- directory cannot tell it from a good one.
   if placed.length != p + rowsW.length || placedU.length != p + rowsU.length then
-    throw (IO.userError s!"placeChecked REFUSED at {k.tag}: {repr (refusalOf t.sh p gs)}")
+    throw (IO.userError s!"placeChecked REFUSED at {k.tag}: {repr (refusalOf t.sh k p gs)}")
+  -- ⚑ **THE SLOT MAP'S OWN OBLIGATIONS, DISCHARGED AT EVERY EMISSION.** A slot map is the artefact
+  -- whose failure is silent — a duplicate, an out-of-range index or a length that has drifted from
+  -- `exposedVarsAt` all place, prove and commit to a DIFFERENT statement. None of the three can
+  -- reach a written file.
+  if p != 0 then
+    let sl := wrapSlotsAt t.sh k
+    if sl.length != (exposedVarsAt t k).length then
+      throw (IO.userError s!"⚑ SLOT MAP LENGTH at {k.tag}: {sl.length} slots for \
+        {(exposedVarsAt t k).length} exposed variables. The zip would DROP words silently.")
+    if sl.any (fun i => WRAP_PRIMARY_LEN ≤ i) then
+      throw (IO.userError s!"⚑ SLOT MAP RANGE at {k.tag}: {sl} leaves Mina's own \
+        PRIMARY_LEN {WRAP_PRIMARY_LEN}.")
+    if sl.dedup.length != sl.length then
+      throw (IO.userError s!"⚑ SLOT MAP COLLISION at {k.tag}: {sl} names one slot twice, so two \
+        derived words would be tied to ONE public cell.")
+    -- ⚑ …and the emission's unread set IS the rung's declaration, both directions. `wrapInertOk`
+    -- alone only bounds it above; this is the equality, at the emitted shape, where the kernel pins
+    -- reach only the smoke one.
+    let measured := inertSlotsAt t.sh k gs
+    if measured != wrapInertOk t.sh k then
+      throw (IO.userError s!"⚑ THE UNREAD SET IS NOT THE DECLARATION at {k.tag}: the gates leave \
+        {measured} unread, the rung declares {wrapInertOk t.sh k}. A slot in the first and not the \
+        second is a public fixture; one in the second and not the first is a slot this rung derives \
+        and does not admit to. Refusing rather than emitting it.")
   -- ⚑ **THE §17b CAPS' OBLIGATION, DISCHARGED AT EVERY EMISSION.** `baseWh`, `baseFin` and
   -- `baseComb` are stacked on shape-determined CAPS rather than on the regions' actual sizes,
   -- because W-FINALIZE's size is `finStride`/`finSpSize` — computed by RUNNING the program builder,
@@ -93,7 +120,9 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   writeAtomic s!"{dir}/wrapmain_{tag}_{k.tag}.json" jw
   writeAtomic s!"{dir}/wrapmain_{tag}_{k.tag}_unwired.json" ju
   let t2 ← IO.monoMsNow
-  IO.println s!"  {k.tag}: {rowsW.length} rows, pub {p}, {probes.length} probes  \
+  IO.println s!"  {k.tag}: {rowsW.length} rows, pub {p} \
+    (derived {(wrapSlotsAt t.sh k).length} at slots {wrapSlotsAt t.sh k}; \
+     unread {(wrapInertOk t.sh k).length}), {probes.length} probes  \
     (place {t1 - t0} ms, witness+render {t2 - t1} ms)"
   pure (rowsW.length, probes.length)
 
@@ -176,7 +205,12 @@ def main : IO Unit := do
       it. Re-run `lake env lean --run Dregg2/Circuit/Emit/EmitWrapFinDeferred.lean`.")
   IO.println s!"emitting wrap_main tag={tag} shape={repr s}"
   IO.println s!"  items={nItems s} squeezes={nSqueezes s} chals={nChals s} \
-    PRIMARY_LEN(mina)={WRAP_PRIMARY_LEN} pubWords(here)={s.pubWords}"
+    PRIMARY_LEN(mina)={WRAP_PRIMARY_LEN} pubWords(base)={s.pubWords}"
+  IO.println s!"  public layout: MINA'S — 40 slots, base at {wrapSlots s}, \
+    +12 at w9_prev, +11 at w11_wraphack; pinned {WRAP_PINNED_SLOTS}"
+  IO.println s!"  ⚠ ZERO and UNREAD at {WRAP_UNPINNED_SLOTS}: slots 30-39 are what a real devnet \
+    wrap proof carries; slots 0-4 and 9 are `expand_deferred`'s outputs, which W-FINALIZE derives \
+    and this ladder does not"
   IO.println s!"  x_hat MSM: {xhN s} entries, {xhTotalChunks s} five-bit chunks, \
     {(xhLadders s).length} ladders, widths={(xhSel s).map xhatBits}"
   IO.println s!"  x_hat (DERIVED, absorbed at wrap_verifier.ml:617) = {xhatOut s.xhatTerms}"

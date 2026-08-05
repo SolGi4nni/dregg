@@ -38,11 +38,11 @@ def rowsW : List WRow := rungRows tW .bind true
 def rowsUW : List WRow := rungRows tW .bind false
 def nRowsW : Nat := rowsW.length
 def gatesW : List PGate := wrapGates rowsW
-def placedW : List PlacedGate := placedOf shapeSmoke shapeSmoke.pubWords gatesW
+def placedW : List PlacedGate := placedOf shapeSmoke .bind (rungPub shapeSmoke .bind) gatesW
 /-- ⚑ At `.bind`, not at the closing rung: `rowsW` IS the `w4_bind` row list, and asking for the
 `w6_xhat` environment here would make every §12 guard reduce §15's ladders for cells no `w4_bind`
 row has. That is the measurement that cost this module its build. -/
-def gridW : List (List Int) := wrapWitnessAt tW .bind shapeSmoke.pubWords rowsW
+def gridW : List (List Int) := wrapWitnessAt tW .bind (rungPub shapeSmoke .bind) rowsW
 
 /-- The real proof's absorb/squeeze schedule (`verifier.rs:159-283`): the tape, β, γ, `z_comm`, α′,
 `t_comm`, ζ′, digest. -/
@@ -115,6 +115,8 @@ def xhHasConstRow (vx vy : PVar) (p : Nat × Nat) : Bool :=
 /-- The smoke instance's W-SPLIT rows, materialised once so the pins share one term. -/
 def spRows : List WRow := splitRows tKey true
 
+
+
 /-- W-PREV's own row-set at the smoke shape. ⚑ Same `WrapData` as §14b/§15f/§16b's — the rungs share
 one shape and one sponge trajectory; a second `mkWrap` here would re-run the whole transcript. -/
 def tPrev : WrapData := tKey
@@ -134,6 +136,16 @@ def hasHalf (rows : List WRow) (vs : List (Option PVar)) (c : List Int) : Bool :
 def ftcRecompose (bs : List Nat) : Nat := bs.foldl (fun a b => 2 * a + b) 0
 
 def tWh : WrapData := tPrev
+
+/-- ⚑ **`w12_close`'s WHOLE ROW LIST AND ITS GATES, MATERIALISED ONCE** — the same discipline
+`xhRows`/`spRows` follow, and it stopped being optional when `.bullet` came under `.close`
+(2026-08-05). §22a's pin names the length, the placement, the inert-word check and the region escape;
+each of those spelled `rungRows tWh .close true` inline is a SEPARATE evaluation of a rung that now
+runs `bullData` — 34 + 33 endo ladders and a 51-chunk `scale_fast` — and `combData`'s 46 more. Four
+evaluations of that, plus a second `wrapGates` walk each time, is §7's "computed and discarded" in a
+new place. -/
+def clRows : List WRow := rungRows tWh .close true
+def clGates : List PGate := wrapGates clRows
 
 /-- ⚑ **THE SAME 32 VALUES WITH THE COMMITMENT ABSORBED FIRST** — the order the STEP side uses and
 this one does not. It exists only as the red control below; nothing emits it. -/

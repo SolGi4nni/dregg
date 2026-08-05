@@ -125,8 +125,10 @@ theorem ftcomm_rung_extends_split_and_places :
     (rungRows tKey .ftcomm true).length
       = (rungRows tKey .split true).length + (ftcRows tKey true).length
     ∧ (rungRows tKey .split true).length < (rungRows tKey .ftcomm true).length
-    ∧ refusalOf shapeSmoke shapeSmoke.pubWords (wrapGates (rungRows tKey .ftcomm true)) = none
-    ∧ inertPublicWords shapeSmoke.pubWords (wrapGates (rungRows tKey .ftcomm true)) = [] := by
+    ∧ refusalOf shapeSmoke .ftcomm (rungPub shapeSmoke .ftcomm)
+        (wrapGates (rungRows tKey .ftcomm true)) = none
+    ∧ inertSlotsAt shapeSmoke .ftcomm (wrapGates (rungRows tKey .ftcomm true))
+        = wrapInertOk shapeSmoke .ftcomm := by
   refine ⟨rfl, ?_, rfl, rfl⟩
   decide
 

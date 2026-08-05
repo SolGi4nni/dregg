@@ -130,7 +130,19 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
   * **W3 `branch`** — §9. `One_hot_vector.of_index`, `Pseudo.choose`, `Util.ones_vector`, and
     `Branch_data.Checked.pack` — the wrap-specific selection sub-circuit, `Generic` only.
   * **W4 `bind`** — §10. The closing ties: the wrap statement words this assembly DERIVES become
-    public words through `placeChecked`, so a word no gate reads REFUSES.
+    public words through `placeCheckedWith`, so a word no gate reads REFUSES.
+    ⚑ **AND THE VECTOR SITS IN MINA'S SLOT LAYOUT.** `rungPub` is `WRAP_PRIMARY_LEN = 40` at every
+    rung from here up — `Impls.Wrap.input ()`'s own width — and `wrapSlots`/`wrapSlotsAt` put each
+    derived word at the slot `Pickles.prepared_statement` reads it from: β γ α ζ at 5–8, the fork
+    digest at 10, `messages_for_next_wrap_proof` at 11 (`w11_wraphack`),
+    `messages_for_next_step_proof` at 12 (`w9_prev`), the sixteen bulletproof prechallenges at
+    13–28, `branch_data` at 29. The remaining sixteen are `WRAP_UNPINNED_SLOTS`, declared to the
+    placement rather than left to be discovered: the ten `Spec.T.Constant`/dead-lookup slots that
+    `Spec.packed_typ` ALLOCATES and hands the body a `Cvar.Constant` for
+    (`composition_types/spec.ml:312-330`) — so upstream reads them no more than we do — and the six
+    deferred words 0–4 and 9, whose in-circuit checker is W-FINALIZE. ⚠ Those six carry ZERO here
+    and that is a NAMED HOLE, not a padding choice: a verifier accepts anything at a slot nothing
+    reads, and filling them with derived values is W-FINALIZE's work.
   * **W5 `key`** — §14. ⚑ **`choose_key` AND THE INDEX SPONGE**, i.e. the sub-circuit that makes the
     transcript's INPUT derived. `wrap_verifier.ml:189-204` folds the per-branch step keys against the
     SAME one-hot vector §9 already emits — and because `wrap_main.ml:218-219` passes them through
@@ -588,7 +600,8 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      for the rung**. ⚑ **It closes the public vector.** Wrap statement word 11 is the closing
      sponge's squeeze, and with it **every one of the twenty-four statement words `wrap_main` pins
      is derived** (`WRAP_PINNED_SLOTS`; the other sixteen of forty are W-FINALIZE's six deferred
-     values and ten constant-or-dead slots, `WRAP_UNPINNED`). Packed statement words 55 and 56 stop
+     values and ten constant-or-dead slots, `WRAP_UNPINNED`) — and derived AT MINA'S SLOT, since the
+     emitted vector is forty wide in Pickles' own order from `w4_bind` up. Packed statement words 55 and 56 stop
      being fixtures and become the two prev-proof squeezes, which is what gives `old_bp_chals` its
      only consumer and `prev_step_accs` a second one.
      The sizing notes this entry carried were RIGHT and are kept: absorption order is **all old
@@ -698,9 +711,10 @@ measurement that sizes it. None of them is a value this file fakes and calls der
 -- `bulletproof_success` off `bullData` instead of writing `1`, so the pin that it is `1` is a pin
 -- about `bullData` and inherits its instrument. ⚑ That is the trade and it is the right way round:
 -- a kernel-clean pin against a constant this file chose said less than a compiled pin against
--- `equal_g`'s actual verdict. `close_rung_extends_bullet` (§22a) is the same trade one step out:
--- `rungRows tWh .close true` now CONTAINS `bulletRows`, so its length, placement and region-escape
--- legs reduce `bullData` too. They are the same facts they always were about a longer row list.
+-- `equal_g`'s actual verdict. ⚠ `close_rung_extends_bullet` (§22a) went the OTHER way and is
+-- kernel-clean: its placement and region-escape legs were unaffordable once the rung contained
+-- `bulletRows`, so they moved to the emit-time refusal (which runs them at every emission and stops
+-- on either) and what stayed is general over every `WrapData` and every polarity.
 --
 -- The four §20b‴ pins rest on it because they read slots of a **1732-op `Array FOp`** program whose
 -- inputs come through `finZW0`'s 1047-op probe, and in `whnf` an `Array` is its `List` model:
@@ -712,7 +726,6 @@ measurement that sizes it. None of them is a value this file fakes and calls der
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMain
   except bullet_solves_g_on_curve_and_equal_g_is_one
          close_witness_is_the_bullet_verdict
-         close_rung_extends_bullet
          fin_deferred_words_are_the_derivation
          finsponge_legs_take_both_field_equal_branches
          finsponge_assert_reds_if_the_other_block_claims_should_finalize
