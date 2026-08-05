@@ -1,0 +1,241 @@
+/-
+# Dregg2.Circuit.Emit.PiDeclarationDeployed — the FIRST deployed member routed through the gate.
+
+`Emit.PiDeclaration` is the mechanism; `Circuit.PiDeclarationBite` is its armed refusal. Neither
+is worth anything until a REAL descriptor is made to pass through it, because a side condition no
+emitted object carries is decoration.
+
+This file declares every one of the 50 published public inputs of the deployed narrow member
+`burnVmDescriptor2R24` (`dregg-effectvm-burn-v1-rot24-v3-staged`, `v3Registry`), and the
+declaration is CHECKED against the descriptor: `burnDecl_admitted` does not elaborate unless the
+15 `.bound` entries name pins the member really carries, on the rows it really carries them, at
+columns something other than the pin really reads — and unless the other **35** slots are declared
+transcript-only with a written reason.
+
+## What the 35 are, and why this file exists
+
+They are 70% of what this member publishes. Before this file, the tree recorded nothing about
+them: not that they were deliberate, not that they were forgotten, not which. The reasons below
+are the record, and each one is now load-bearing in a specific way — a slot declared
+transcript-only carries `PiDeclaration.transcriptOnly_admits_any_value`, i.e. the machine-checked
+statement that the AIR admits ANY value there and a light client reading it is reading the
+producer's word.
+
+⚑ **`TURN_HASH` (33..36) is declared transcript-only UNDER PROTEST, and its reason says so.** It
+is the one slot in this file whose honest disposition is `.bound` and cannot yet be: there is no
+trace carrier for the turn hash anywhere in the rotated geometry (`grep turn_hash
+circuit/src/effect_vm/trace_rotated.rs` → zero hits; `columns.rs`'s `aux_off` has no entry), so
+`.bound` has no column to name. The declaration records the debt where the debt is, instead of
+leaving the slot silent. The conversion is a caveat-region flag day and is written up in
+`docs/PI-DISPOSITION.md`.
+
+## Cost note (why one member and not 57)
+
+`manifestAdmitted` recomputes `forcedCols` — a `flatMap refs2` over all 302 constraints — once per
+declaration. On this member that is affordable in the kernel. Routing the whole registry through
+it is a `native_decide`-scale job and belongs with the emit that regenerates the registry, not
+here.
+
+## Axiom hygiene
+
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}.
+-/
+import Dregg2.Circuit.Emit.PiDeclaration
+import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
+
+namespace Dregg2.Circuit.Emit.PiDeclarationDeployed
+
+open Dregg2.Circuit.DescriptorIR2
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRow)
+open Dregg2.Circuit.Emit.PiDeclaration
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (v3Registry)
+
+set_option autoImplicit false
+set_option linter.unusedVariables false
+set_option maxRecDepth 40000
+set_option maxHeartbeats 4000000
+
+/-- The deployed burn member, resolved by KEY out of the registry the emit produces. (A display
+name is not a key — `reference-a-display-name-is-not-a-key`; the fallback is the empty descriptor,
+which has `piCount = 0` and would make every claim below FAIL rather than pass vacuously.) -/
+def burnM : EffectVmDescriptor2 :=
+  (v3Registry.lookup "burnVmDescriptor2R24").getD
+    { name := "MISSING-burnVmDescriptor2R24", traceWidth := 0, piCount := 0, tables := []
+    , constraints := [], hashSites := [], ranges := [] }
+
+/-- Non-vacuity: the lookup RESOLVED. Without this the manifest below could be admitted against
+the empty fallback (`piCount = 0` makes `piSlotsCovered` trivially true), which is the shape a
+registry rename would silently produce. -/
+theorem burnM_resolved : burnM.piCount = 50 ∧ burnM.constraints.length = 302 := by decide
+
+/-! ### The reasons, in one place.
+
+Each is a claim about WHY a binding is not wanted, and each is checkable by a reader against the
+code it names. Three distinct kinds appear, and the difference matters:
+
+* **VERIFIER-SUPPLIED COMPARAND** — the verifier CHOOSES the value and hands it to the proof
+  (block height, the per-cell caps). Binding it to the trace would be circular; the check that
+  matters is off-AIR and is named.
+* **RETIRED** — the effect that fed the slot no longer exists. The slot is a zero sentinel the PI
+  layout has not yet compacted away. These are the ones that should be DELETED, and the reason
+  says so; they are transcript-only only until the layout compaction lane runs.
+* **CARRIED BY A WIDER BINDING** — the value IS forced, at a different width or a different slot,
+  and this slot is a narrower shadow. -/
+
+private def rVerifierHeight : String :=
+  "VERIFIER-SUPPLIED COMPARAND: the federation block height the verifier chooses and hands to the \
+   proof. Binding it to the trace would be circular — the trace cannot know the verifier's clock. \
+   The committed-height side IS bound (rotated pin 44 -> the AFTER block's B_COMMITTED_HEIGHT \
+   limb, RotationLayout.committed_height_not_prover_chosen); this slot is the comparand it is \
+   compared AGAINST."
+
+private def rCustomCaps : String :=
+  "VERIFIER-SUPPLIED COMPARAND: the cell program's declared max_custom_effects, read by the \
+   verifier from the registered cell program. The burn member carries no custom effect, so the \
+   sum-check this would gate has nothing to range over."
+
+private def rCustomCount : String :=
+  "RETIRED ON THIS MEMBER: the sigma s_custom == PI[CUSTOM_EFFECT_COUNT] sum-check exists only for \
+   members with a custom selector. burnVmDescriptor2R24 has none, so there is no in-trace sum to \
+   bind and the slot is the zero sentinel."
+
+private def rApprovedHandoffs : String :=
+  "RETIRED (VERB-LOCKSTEP): ValidateHandoff is not an effect any more. pi.rs says the slot stays \
+   at the empty-tree sentinel until the PI-layout compaction lane. This slot should be DELETED, \
+   not bound — it is case (b) of the disposition question, and the reason is here so the \
+   compaction lane can find it."
+
+private def rNetDelta : String :=
+  "CARRIED BY A WIDER BINDING: the net balance delta is recomputable from the balance limbs, and \
+   INIT_BAL_LO/HI and FINAL_BAL_LO/HI are all four pinned on this member (PI 20..23 -> cols \
+   54/55/76/77). A verifier that wants the delta subtracts the bound limbs; this slot is a \
+   narrower shadow of a binding that already holds."
+
+private def rCommitLane : String :=
+  "CARRIED BY A WIDER BINDING: lane 0 of the 8-felt commitment is pinned (PI 0 -> col 66 / PI 8 -> \
+   col 88, the rotated state_commit carriers). Lanes 1..7 ride the WIDE 16-pin tail on the wide \
+   registry member; on this narrow member they are not published-and-forced, and the executor's \
+   anchoring loop supplies them."
+
+private def rEffectsHash : String :=
+  "NOT ANCHORED AT ANY WIDTH ON THIS MEMBER — and pi.rs says so at BURN_TARGET_PI: the only \
+   carrier the burn target reaches is compute_effects_hash, and the deployed descriptor binds \
+   none of PI[EFFECTS_HASH_BASE..+4]. Declared transcript-only because that is the TRUE state, \
+   not because it is the right one. Whoever anchors this must anchor the 8 limbs."
+
+private def rEffectsGlobal : String :=
+  "EXECUTOR-TRUSTED SHARED PI (Stage 7-gamma.0a): the whole-call_forest effects hash is a \
+   turn-level value no per-cell trace can see. The cross-proof match loop \
+   (turn/src/executor/proof_verify.rs) enforces agreement ACROSS the bundle; nothing binds it to \
+   the turn. gamma.1 was to make this algebraic and did not land."
+
+private def rTurnHash : String :=
+  "UNDER PROTEST — this one wants to be .bound and cannot be yet. There is no trace carrier for \
+   the turn hash anywhere in the rotated geometry, so .bound has no column to name. MEASURED: six \
+   producers fill this 4-felt slot with three different conventions (four felts in \
+   turn-prover/src/proven_receipt.rs:127, ONE felt in turn-prover/src/rotation_witness.rs:166 and \
+   circuit-prove/src/joint_turn_aggregation.rs, none at all on the sdk full_turn_proof production \
+   path) and rotation_witness.rs's own comment relies on the absence: 'the EffectVm AIRs do not \
+   constrain TURN_HASH, so overriding the carried prefix slot and proving against the edited PI \
+   yields a still-valid proof binding the chosen id'. See docs/PI-DISPOSITION.md."
+
+/-! ### The manifest. -/
+
+/-- Every published slot of `burnVmDescriptor2R24`, dispositioned. 15 bound, 35 transcript-only. -/
+def burnDecl : PiManifest :=
+  -- OLD_COMMIT[0..8] — lane 0 pinned to the rotated BEFORE state_commit carrier.
+  [ ⟨0, "OLD_COMMIT[0]", .bound .first 66⟩ ]
+  ++ ((List.range 7).map fun i => ⟨1 + i, s!"OLD_COMMIT[{1 + i}]", .transcriptOnly rCommitLane⟩)
+  -- NEW_COMMIT[0..8] — lane 0 pinned to the rotated AFTER state_commit carrier.
+  ++ [ ⟨8, "NEW_COMMIT[0]", .bound .last 88⟩ ]
+  ++ ((List.range 7).map fun i => ⟨9 + i, s!"NEW_COMMIT[{1 + i}]", .transcriptOnly rCommitLane⟩)
+  -- EFFECTS_HASH[0..4] — anchored at no width on this member.
+  ++ ((List.range 4).map fun i => ⟨16 + i, s!"EFFECTS_HASH[{i}]", .transcriptOnly rEffectsHash⟩)
+  -- the four balance limbs — all bound.
+  ++ [ ⟨20, "INIT_BAL_LO", .bound .first 54⟩
+     , ⟨21, "INIT_BAL_HI", .bound .first 55⟩
+     , ⟨22, "FINAL_BAL_LO", .bound .last 76⟩
+     , ⟨23, "FINAL_BAL_HI", .bound .last 77⟩
+     , ⟨24, "NET_DELTA_MAG", .transcriptOnly rNetDelta⟩
+     , ⟨25, "NET_DELTA_SIGN", .transcriptOnly rNetDelta⟩
+     , ⟨26, "CURRENT_BLOCK_HEIGHT", .transcriptOnly rVerifierHeight⟩
+     , ⟨27, "MAX_CUSTOM_EFFECTS", .transcriptOnly rCustomCaps⟩
+     , ⟨28, "CUSTOM_EFFECT_COUNT", .transcriptOnly rCustomCount⟩ ]
+  ++ ((List.range 4).map fun i =>
+        ⟨29 + i, s!"APPROVED_HANDOFFS[{i}]", .transcriptOnly rApprovedHandoffs⟩)
+  ++ ((List.range 4).map fun i => ⟨33 + i, s!"TURN_HASH[{i}]", .transcriptOnly rTurnHash⟩)
+  ++ ((List.range 4).map fun i =>
+        ⟨37 + i, s!"EFFECTS_HASH_GLOBAL[{i}]", .transcriptOnly rEffectsGlobal⟩)
+  ++ [ ⟨41, "ACTOR_NONCE", .bound .first 56⟩
+     -- the four appended ROTATED pins.
+     , ⟨42, "rot::OLD_COMMIT", .bound .first 376⟩
+     , ⟨43, "rot::NEW_COMMIT", .bound .last 627⟩
+     , ⟨44, "rot::COMMITTED_HEIGHT", .bound .last 470⟩
+     , ⟨45, "rot::CAVEAT_COMMIT", .bound .last 734⟩
+     -- the dsl route-commitment quartet: FORCED since the rc-FOLD flag day (absorbed into the
+     -- published caveat commitment), which is why these four survive `dropUnforcedPins`.
+     , ⟨46, "dsl::RC[0]", .bound .last 729⟩
+     , ⟨47, "dsl::RC[1]", .bound .last 730⟩
+     , ⟨48, "dsl::RC[2]", .bound .last 731⟩
+     , ⟨49, "dsl::RC[3]", .bound .last 732⟩ ]
+
+/-- ⚑ **THE ADOPTION.** The gate accepts the deployed member under this declaration — so the
+mechanism is applied to a real emitted object, not only to a fixture. Every `.bound` entry below
+was CHECKED against the descriptor's own constraint list and against `forcedCols`. -/
+theorem burnDecl_admitted : manifestAdmitted burnM burnDecl = true := by decide
+
+/-- The descriptor, routed through the gate. `withPiManifest_eq` makes this `rfl`-equal to the
+member the registry already carries: adopting the gate moves no emitted byte. -/
+def burnMDeclared : EffectVmDescriptor2 :=
+  withPiManifest burnM burnDecl burnDecl_admitted
+
+theorem burnMDeclared_eq : burnMDeclared = burnM := rfl
+
+/-! ### What the declaration now lets the tree SAY. -/
+
+/-- The producer's obligations, DERIVED — 15 `(slot, row, column)` triples. This is the fourth
+source of the four-source problem replaced by a projection of the first. -/
+theorem burnDecl_producer_obligations_count :
+    (producerObligations burnDecl).length = 15 := by decide
+
+/-- The transcript-only class, counted and REPORTED rather than silently permitted. -/
+theorem burnDecl_transcript_only_count :
+    (transcriptOnlySlots burnDecl).length = 35 := by decide
+
+/-- Every transcript-only entry carries a non-empty reason. (`declAdmitted` already forces this;
+stated separately so the count above cannot be met by 35 empty strings.) -/
+theorem burnDecl_reasons_are_written :
+    (transcriptOnlySlots burnDecl).all (fun e => !e.2.2.isEmpty) = true := by decide
+
+/-- 15 + 35 = 50: the two classes PARTITION what this member publishes, with no residual. -/
+theorem burnDecl_partitions :
+    (producerObligations burnDecl).length + (transcriptOnlySlots burnDecl).length
+      = burnM.piCount := by decide
+
+/-- ⚑ **`TURN_HASH` is in the transcript-only class, by name.** The one fact this whole lane is
+about, stated where it cannot be lost: on the deployed burn member, the four felts a stranger
+would read to learn WHICH TURN THIS IS are read by no constraint. -/
+theorem turn_hash_is_transcript_only :
+    ((transcriptOnlySlots burnDecl).map (fun e => e.1)).filter
+        (fun k => k == 33 || k == 34 || k == 35 || k == 36)
+      = [33, 34, 35, 36] := by decide
+
+/-- …and therefore the AIR admits ANY value in `PI[33]` — the machine-checked cost of the class,
+instantiated on a deployed member. -/
+theorem turn_hash_slot_admits_any_value (hash : List ℤ → ℤ) (v : ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash burnM minit mfin maddrs t) :
+    Satisfied2 hash burnM minit mfin maddrs { t with pub := setPubAt t.pub 33 v } :=
+  transcriptOnly_admits_any_value (slot := "TURN_HASH[0]") (reason := rTurnHash) hash v
+    burnDecl_admitted (by decide) h
+
+#assert_axioms burnM_resolved
+#assert_axioms burnDecl_admitted
+#assert_axioms burnDecl_producer_obligations_count
+#assert_axioms burnDecl_transcript_only_count
+#assert_axioms burnDecl_reasons_are_written
+#assert_axioms burnDecl_partitions
+#assert_axioms turn_hash_is_transcript_only
+#assert_axioms turn_hash_slot_admits_any_value
+
+end Dregg2.Circuit.Emit.PiDeclarationDeployed
