@@ -34,11 +34,40 @@
 # DERIVED. Anyone tightening this gate should count BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the
 # decorative SHARE, not columns.
 #
-# ⚠ THIS FILE IS EDITED BY HAND FOR THAT ROW, NOT REGENERATED. `--write-baseline` would also mint
-# rows for `dark-bazaar-private-poa-n4k4::receipt8-v2` (8) and
-# `dark-bazaar-private-poa-settlement-n4k4::transition-v3` (33), which are UNLISTED at HEAD from
-# `e991ac622` and are a different lane's to baseline or bind. Blessing them from here would be
-# exactly the laundering this gate exists to refuse.
+# ⚠ THIS FILE IS EDITED BY HAND FOR THAT ROW, NOT REGENERATED.
+#
+# ⚑ 2026-08-05 — THE TWO DARK BAZAAR ROWS WERE NEVER MINTED, AND NEITHER NEEDS TO BE. The note that
+# stood here said `--write-baseline` would mint rows for `dark-bazaar-private-poa-n4k4::receipt8-v2`
+# (8) and `dark-bazaar-private-poa-settlement-n4k4::transition-v3` (33), and that blessing them from
+# here would be exactly the laundering this gate exists to refuse. It was right. Both were BOUND or
+# DELETED instead, so both leave the census at zero rather than entering it:
+#
+#   * `::transition-v3` -> `::anchored-v4`. Its 33 split into two unlike halves and the split is the
+#     whole repair. THIRTY-TWO were the lanes of the judge's input / successor / public-view /
+#     receipt digests, UNREAD — no gate body, boundary body or lookup tuple named those columns —
+#     while the descriptor's docblock said it "binds" them. They hash canonical JSON strings
+#     (`DarkBazaarJudgeWire.digestString`), so no AIR over that four-row fixed-width trace can derive
+#     them; publishing them was a statement the circuit could not make, and absorbing them as chip
+#     INPUTS would have zeroed this census while leaving them free witnesses. They are DELETED, and
+#     eight ANCHOR lanes are published in their place — the image, under the deployed Poseidon2 chip,
+#     of the book root, the clearing, the ten settlement scalars and the visibility grade, forced by
+#     `chip_lookup_sound_N` the way `solStakeFold_root_shares_a_constraint_with_the_stake_rows`
+#     forces Solana's. The THIRTY-THIRD was the visibility grade, forced to the constant 1 by a
+#     one-column gate: a measurement artifact of "a unary gate joins nothing", not an unbound value,
+#     and now stated positively as `visibility_pi_is_forced_to_the_proven_grade`.
+#     Public inputs 55 -> 31, width 496 -> 480. VK rotates.
+#
+#   * `::receipt8-v2` is DELETED outright. Its 8 were the same unbindable receipt digest, and the
+#     anchoring mechanism does NOT transfer: v2's whole public surface beyond those eight lanes is
+#     the v1 statement, already published and already chip-derived, so an anchor over it would be
+#     redundancy dressed as a binding. Its own Lean docblock had said the pins "do not by themselves
+#     prove that the receipt is the output of the PoA state machine". A family whose only reason to
+#     exist is publishing a value nothing can check does not get a baseline row; it stops.
+#
+# ⚑ AND SAY WHAT THE COLUMN COUNT WOULD HAVE HIDDEN, per this file's own warning above. Counting
+# columns, v4 "removed 32 and added 8" — but the eight are the first published value in this family
+# that the circuit DERIVES, and the thirty-two were the entire settlement identity claim. The
+# decorative SHARE of that proof's public statement went 33/55 = 60% to 0/31.
 #
 # ⚑ 2026-08-05 — `dregg-mina-lightclient-verify::v1` CHANGED SHAPE AND ITS ROW DID NOT MOVE. Read
 # the two facts together, because the count alone hides both:

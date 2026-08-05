@@ -43,7 +43,12 @@ while IFS= read -r poa_lean_file; do
   poa_lean_targets+=("$poa_lean_module")
 done < <(find metatheory/Dregg2/Games/PathOfAngels -maxdepth 1 -type f \
   -name '*.lean' -print | LC_ALL=C sort)
-poa_lean_targets+=(Market.DarkBazaarPrivatePoaDescriptor)
+# `Market.DarkBazaarPrivatePoaDescriptor` (the `receipt8-v2` family) was DELETED 2026-08-05:
+# its eight published receipt-digest lanes were pinned to columns no constraint named, and the
+# anchoring repair that fixed the settlement family does not transfer to a public surface that
+# is otherwise entirely the already-derived v1 statement. The settlement descriptor supersedes
+# it and carries the axiom-hygiene pins now.
+poa_lean_targets+=(Market.DarkBazaarPrivatePoaSettlementDescriptor)
 run env AXIOM_GUARD_TARGETS="${poa_lean_targets[*]}" \
   scripts/axiom-hygiene-guard.sh "$repo_root"
 run bash -n scripts/check-poag1-artifacts.sh

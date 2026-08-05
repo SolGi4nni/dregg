@@ -102,7 +102,6 @@ import Dregg2.Games.PrivateRaidAssignmentDescriptor
 import Dregg2.Games.PrivateShuffleDescriptor
 import Dregg2.Games.PrivateShuffleFairDescriptor
 import Market.DarkBazaarPrivateDescriptor
-import Market.DarkBazaarPrivatePoaDescriptor
 import Market.DarkBazaarPrivatePoaSettlementDescriptor
 -- The fixed q0/N8 exact-public BFV NTT butterfly stage descriptors (`stage{0,1,2}Descriptor`, the
 -- three four-row per-stage LogUp relations). Emitted here so `by-name/*bfv*butterfly*stage*-exact-
@@ -271,9 +270,7 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding.turnChainBindingDescriptor)
   , ("dark-bazaar-private-n4k4.json",
       Market.DarkBazaarPrivateDescriptor.darkBazaarPrivateN4K4Descriptor)
-  , ("dark-bazaar-private-poa-n4k4-v2.json",
-      Market.DarkBazaarPrivatePoaDescriptor.darkBazaarPrivatePoaN4K4Descriptor)
-  , ("dark-bazaar-private-poa-settlement-n4k4-v3.json",
+  , ("dark-bazaar-private-poa-settlement-n4k4-v4.json",
       Market.DarkBazaarPrivatePoaSettlementDescriptor.darkBazaarPrivatePoaSettlementN4K4Descriptor)
   , ("private-book-bfv-slice-o0-c0-q0-k0.json",
       Market.PrivateBookBfvSliceDescriptor.privateBookBfvSliceDescriptor)

@@ -97,11 +97,10 @@ import Market.WideCommitBoundary
 import Market.ShieldedRingEndpointDescriptor
 import Market.WideCarrierSameOpening
 import Market.Fxc4ConsequenceBinding
--- ⚑ 2026-08-05 — ROOTED, because they were a SEALED LETTER. Both PoA Dark Bazaar descriptor
--- modules were imported by `EmitByName.lean` and by nothing else, and `EmitByName` is not a
--- `lean_lib` in `lakefile.toml` — so their `#assert_axioms` ran in NO `lake build`, including the
--- ones asserting the served descriptors' trace width and PI count. That is the same
+-- ⚑ 2026-08-05 — ROOTED, because it was a SEALED LETTER. The PoA Dark Bazaar settlement
+-- descriptor was imported by `EmitByName.lean` and by nothing else, and `EmitByName` is not a
+-- `lean_lib` in `lakefile.toml` — so its `#assert_axioms` ran in NO `lake build`, including the
+-- ones asserting the served descriptor's trace width and PI count. That is the same
 -- gating-defaults-to-silence wound the lakefile's own 23-orphan sweep block documents, one
--- directory over. The settlement module's v3→v4 anchor repair would have been equally unbuilt.
-import Market.DarkBazaarPrivatePoaDescriptor
+-- directory over. The v3→v4 anchor repair would have been equally unbuilt.
 import Market.DarkBazaarPrivatePoaSettlementDescriptor
