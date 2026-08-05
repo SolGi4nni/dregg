@@ -10,7 +10,7 @@ told"*, and *"the weld is a public-input equality between two descriptors and it
 `ScalarChallenge(v′).to_field(endo_r)` (`sponge.rs:190-226`) **as an AIR** on the same
 `MinaWrapCommitMachine` the four commit stages ride: 64 rounds of double-and-conditional-±1, a
 128-place in-circuit bit decomposition, a closing `SC = v′` assertion, **1 160 instructions in a
-2 048-row trace**. `dregg-mina-xi-endo-lift::v1` **PROVED + VERIFIED, 2048x687, 8 371.9 ms**, and it
+2 048-row trace**. `dregg-mina-xi-endo-lift::v1` **PROVED + VERIFIED, 2048x687, 7 577.6 ms**, and it
 is `PastaFieldSound` — the `fpMulCore` downgrade is NOT inherited.
 
 ⛑ **ξ IS THE ENDO LIFT OF THE BLOCK'S OWN SQUEEZE.** `the_polyscale_is_the_endo_lift_of_the_squeeze`:
@@ -25,9 +25,16 @@ implementation — it is `KimchiVerify.endoMap` at `ZMod qN`, the tree's only `t
 
 | link | width | kind |
 |---|---|---|
-| wraplink → endo lift | **16 felts / 128 bits** | PI equality (the whole `ScalarChallenge`; the other 16 input felts are pinned ZERO) |
+| 46th chain link → endo lift | **16 felts / 128 bits** | PI equality (the whole `ScalarChallenge`; the other 16 input felts are pinned ZERO) |
 | endo lift → ξ chain | **32 felts / 255 bits** | PI equality — `the_endo_output_block_is_the_chain_input_block` |
 | ξ chain → aggregate | 47 scalars x 255 bits | ⚠ **DESCRIPTOR-to-descriptor**, not a wire tie |
+
+⚑ **AND THE FIRST LINK WELDS TO THE EIGHT-BLOCK DESCRIPTOR, DELIBERATELY.** `MinaPhase2Chain` found
+that `MinaBlockFqTranscript.linkPins` exposes only TWO of a Poseidon state's THREE outgoing lanes —
+*"the successor's third lane would be a free prover scalar"* — so §4 welds to
+`dregg-pasta-fq-chainlink::v1`'s 46th link (`chainPins`, `in(3) ++ out(3) ++ absorbed(2)`, 256 PIs)
+and keeps the seven-block artifact only as a corroboration. `the_two_emissions_agree_on_the_squeeze`
+checks all 32 felts; **the weld itself never stands on the descriptor with the free lane.**
 
 `any_single_moved_felt_breaks_the_weld` moves each of the 32 in turn: **32/32 refuse.** There is no
 birthday bound because there is nothing to collide — which is the whole reason it is stated on the
@@ -35,7 +42,7 @@ limb LISTS. A one-felt tie between two descriptors is `2^31`, the shape the `pro
 already has, and it was not added here.
 
 ⛑ **BOTH POLARITIES, RELEASE, WITH THE REFUSING GATE NAMED.** `circuit/tests/mina_xi_endo_weld.rs`,
-**12/12**:
+**13/13**:
 
 * forged lift output → **last-row PI pin**, `OodEvaluationMismatch { index: Some(0) }`;
 * forged prechallenge → **first-row PI pin**, same class (the ROM is silent about the challenge —

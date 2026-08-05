@@ -19,14 +19,19 @@
 //! > multiplication is now the trace's work; the aggregate's scalars are still the verifier's to be
 //! > told.
 //!
-//! The cone behind ξ is a sponge. `MinaBlockFqTranscript.the_machine_squeezes_the_real_blocks_v_and_u`
-//! proves an emitted 2 048-row Fq-sponge AIR ends on Mina devnet block **539508**'s own `v′` and
-//! `u′` — `dregg-pasta-fq-wraplink::v1`, real `fq_kimchi` constants, a 45-permutation-deep state
-//! derived from the block's 91-element phase-2 tape. The step from `v′` to ξ is
+//! The cone behind ξ is a sponge, and the whole of it is now emitted:
+//! `MinaPhase2Chain.the_whole_phase2_transcript_folds_into_one_claim` proves **46 links** of
+//! `dregg-pasta-fq-chainlink::v1` over Mina devnet block **539508**'s real 91-element phase-2 tape,
+//! ending on that block's own `v′` and `u′`. The step from `v′` to ξ is
 //! `ScalarChallenge::to_field(endo_r)` (`sponge.rs:190-226`), and **this file's descriptor is that
 //! step as an AIR**: 64 rounds of double-and-conditional-±1, a 128-place in-circuit bit
 //! decomposition, and a closing `SC = v′` assertion that makes the bits the bits OF the published
 //! prechallenge.
+//!
+//! ⚠ **§4 WELDS TO THE 46th CHAIN LINK, NOT TO `dregg-pasta-fq-wraplink::v1`.** The seven-block
+//! wraplink descriptor exposes only TWO of a Poseidon state's THREE outgoing lanes
+//! (`MinaPhase2Chain`: *"the successor's third lane would be a free prover scalar"*). Welding to it
+//! would inherit that seam; it is kept here only as a corroboration.
 //!
 //! ## ⚑ THE WELD, AND ITS WIDTH
 //!
@@ -72,10 +77,6 @@ use dregg_circuit::descriptor_ir2::{
 
 const CM_WIDTH: usize = 687;
 const SK: usize = 32;
-const REG_BASE: usize = 226;
-/// The Lean register allocation (`MinaWrapXiEndoLift` §2 / `MinaWrapCommitStages` §2).
-const R_VP: usize = 1;
-const R_OUT: usize = 2;
 
 const ENDO_DESC: &str = include_str!("../descriptors/by-name/mina-xi-endo-lift.json");
 const ENDO_TRACE: &str = include_str!("fixtures/mina-xi-endo-lift-trace.txt");
@@ -83,16 +84,28 @@ const ENDO_PIS: &str = include_str!("fixtures/mina-xi-endo-lift-pis.txt");
 const CHAIN_DESC: &str = include_str!("../descriptors/by-name/mina-commit-xi.json");
 const CHAIN_PIS: &str = include_str!("fixtures/mina-commit-xi-pis.txt");
 const AGG_DESC: &str = include_str!("../descriptors/by-name/mina-xi-aggregate-msm.json");
-/// `dregg-pasta-fq-wraplink::v1`'s public inputs — the emitted Fq sponge whose lane-0 squeeze is the
-/// block's own `v′` (`MinaBlockFqTranscript.the_machine_squeezes_the_real_blocks_v_and_u`).
+/// ⚑ **THE 46th AND LAST LINK OF `dregg-pasta-fq-chainlink::v1`** — the descriptor
+/// `the_whole_phase2_transcript_folds_into_one_claim` folds 46 of, over Mina devnet block 539508's
+/// real 91-element phase-2 tape. Its outgoing state is the block's terminal squeeze.
+///
+/// ⚠ **THIS IS DELIBERATELY NOT `pasta-fq-wraplink-pis.txt`.** `MinaPhase2Chain` §"WHY THE OLD
+/// DESCRIPTOR COULD NOT BE CHAINED": `MinaBlockFqTranscript.linkPins` pins SEVEN blocks and exposes
+/// only TWO of a Poseidon state's THREE outgoing lanes — *"the successor's third lane would be a
+/// free prover scalar and the chain would prove nothing about the transcript."* `chainPins` pins
+/// EIGHT (`in(3) ++ out(3) ++ absorbed(2)`, 256 PIs). A weld to the seven-block descriptor would
+/// inherit that seam, so this file welds to the eight-block one.
+const CHAINLINK_PIS: &str = include_str!("fixtures/pasta-fq-chainlink/link-45-pis.txt");
+
+/// The seven-block descriptor's PIs, kept ONLY as a corroboration that the two emissions agree on
+/// the squeeze — never as the weld's own side.
 const WRAPLINK_PIS: &str = include_str!("fixtures/pasta-fq-wraplink-pis.txt");
 
-/// The PI block index at which the wraplink descriptor publishes its RAW lane-0 squeeze.
-const WRAPLINK_V_BLOCK: usize = 5;
+/// `chainPins`' layout is `in(3) ++ out(3) ++ absorbed(2)`, so outgoing lane 0 — the `v′` lane — is
+/// block 3, at `[3·SK, 4·SK)`.
+const CHAINLINK_V_BLOCK: usize = 3;
 
-fn reg_col(r: usize) -> usize {
-    REG_BASE + r * SK
-}
+/// The PI block index at which the SEVEN-block wraplink descriptor publishes its raw lane-0 squeeze.
+const WRAPLINK_V_BLOCK: usize = 5;
 
 // ---------------------------------------------------------------------------------------------
 // §0 — the fixtures, and the arithmetic this file does for itself.
@@ -112,6 +125,7 @@ fn no_fixture_is_empty() {
         ("chain desc", CHAIN_DESC),
         ("chain pis", CHAIN_PIS),
         ("aggregate desc", AGG_DESC),
+        ("chainlink link-45 pis", CHAINLINK_PIS),
         ("wraplink pis", WRAPLINK_PIS),
     ] {
         assert!(
@@ -121,7 +135,7 @@ fn no_fixture_is_empty() {
         );
         n += 1;
     }
-    assert_eq!(n, 7);
+    assert_eq!(n, 8);
     println!("\n§0 all {n} fixtures non-empty");
 }
 
@@ -351,7 +365,7 @@ fn the_endo_lift_proves_and_verifies() {
 
 /// ⚑ **THE PIN REFUSES A DIFFERENT LIFTED SCALAR.** The output half of the public inputs moved by
 /// one limb, inside the 8-bit range. The refusing gate is the LAST-ROW PI BINDING (`pinPair`'s
-/// `R_OUT` limbs) — the descriptor's ROM says nothing about the lifted value, so this is the pin
+/// last-row limbs) — the descriptor's ROM says nothing about the lifted value, so this is the pin
 /// and not the bus, and a `OodEvaluationMismatch` is what a PI pin's boundary constraint produces.
 #[test]
 fn a_forged_lift_output_is_refused() {
@@ -665,32 +679,44 @@ fn the_declared_orbit_is_forty_seven_distinct_scalars() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// §4 — the third cone: ξ traced back to the sponge squeeze the wraplink AIR performs.
+// §4 — the third cone: ξ traced back to the squeeze the 46-link chain ends on.
 // ---------------------------------------------------------------------------------------------
 
-/// ⚑⚑ **THE ENDO LIFT'S INPUT IS THE WRAPLINK SPONGE'S PUBLISHED SQUEEZE, TRUNCATED.**
+/// ⚑⚑ **THE ENDO LIFT'S INPUT IS THE CHAIN'S TERMINAL SQUEEZE, TRUNCATED.**
 ///
-/// `dregg-pasta-fq-wraplink::v1` publishes its RAW lane-0 squeeze as public-input block 5, 32 limbs.
+/// `dregg-pasta-fq-chainlink::v1`'s 46th link publishes its outgoing state IN FULL — three lanes,
+/// `chainPins`' blocks 3/4/5 — and lane 0 is the block's terminal squeeze.
 /// `challenge()` (`sponge.rs:265-277`) keeps the two least-significant 64-bit limbs, so `v′` is that
 /// value's low 128 bits — and this file's endo descriptor consumes exactly those 16 felts, with its
 /// remaining 16 input felts pinned to ZERO so a 255-bit value cannot be fed in as a challenge.
 ///
-/// **This is the last link.** With it, ξ is: the block's 91-element phase-2 tape → an emitted Fq
-/// sponge → `v′` → an emitted endo lift → ξ → an emitted 46-multiply chain → `ξ⁴⁶`, and the
+/// ⚠ **WHY THE 46th CHAIN LINK AND NOT THE WRAPLINK.** `MinaPhase2Chain` found that
+/// `MinaBlockFqTranscript.linkPins` exposes only TWO of a Poseidon state's THREE outgoing lanes, so
+/// *"the successor's third lane would be a free prover scalar and the chain would prove nothing
+/// about the transcript."* Welding to that descriptor would inherit the seam. `the_two_emissions_
+/// agree_on_the_squeeze` below keeps the seven-block artifact as a CORROBORATION and not as a side
+/// of the weld.
+///
+/// **This is the last link.** With it, ξ is: the block's 91-element phase-2 tape → 46 emitted Fq
+/// sponge links → `v′` → an emitted endo lift → ξ → an emitted 46-multiply chain → `ξ⁴⁶`, and the
 /// aggregate's declared digits are that ξ's orbit. Every arrow but the last is a public-input
 /// equality between two emitted artifacts.
 #[test]
-fn the_endo_input_is_the_wraplink_squeeze_truncated() {
+fn the_endo_input_is_the_chain_terminal_squeeze_truncated() {
     let endo_pis = parse_pis(ENDO_PIS);
-    let link_pis = parse_pis(WRAPLINK_PIS);
-    assert_eq!(link_pis.len(), 224, "the wraplink publishes 7 limb blocks");
+    let link_pis = parse_pis(CHAINLINK_PIS);
+    assert_eq!(
+        link_pis.len(),
+        8 * SK,
+        "the chain link publishes 8 limb blocks -- in(3) ++ out(3) ++ absorbed(2)"
+    );
 
-    let raw = &link_pis[WRAPLINK_V_BLOCK * SK..(WRAPLINK_V_BLOCK + 1) * SK];
+    let raw = &link_pis[CHAINLINK_V_BLOCK * SK..(CHAINLINK_V_BLOCK + 1) * SK];
     let mut matched = 0usize;
     for i in 0..16 {
         assert_eq!(
             endo_pis[i], raw[i],
-            "the endo lift's input felt {i} is the wraplink squeeze's felt {i}"
+            "the endo lift's input felt {i} is the chain's terminal squeeze felt {i}"
         );
         matched += 1;
     }
@@ -718,10 +744,36 @@ fn the_endo_input_is_the_wraplink_squeeze_truncated() {
         big_bitlen(&raw_big)
     );
     println!(
-        "\n§4 endo input = wraplink squeeze low-128: v' = {} ({} bits) out of raw {} bits",
+        "\n§4 endo input = chain link 45's terminal squeeze low-128: v' = {} ({} bits) out of raw \
+         {} bits",
         big_dec(&v),
         big_bitlen(&v),
         big_bitlen(&raw_big)
+    );
+}
+
+/// ⚑ **AND THE TWO EMISSIONS AGREE ON THE SQUEEZE.** The seven-block `dregg-pasta-fq-wraplink::v1`
+/// and the eight-block `dregg-pasta-fq-chainlink::v1` are the same `programAir qLimb absorbProg`
+/// with different boundary pins, so their published lane-0 squeezes must be the same 32 felts. This
+/// is a CORROBORATION — the weld above stands on the chain link, which pins the third lane the
+/// seven-block descriptor left free.
+#[test]
+fn the_two_emissions_agree_on_the_squeeze() {
+    let link_pis = parse_pis(CHAINLINK_PIS);
+    let wrap_pis = parse_pis(WRAPLINK_PIS);
+    assert_eq!(
+        wrap_pis.len(),
+        7 * SK,
+        "the wraplink publishes 7 limb blocks"
+    );
+    let chain_v = &link_pis[CHAINLINK_V_BLOCK * SK..(CHAINLINK_V_BLOCK + 1) * SK];
+    let wrap_v = &wrap_pis[WRAPLINK_V_BLOCK * SK..(WRAPLINK_V_BLOCK + 1) * SK];
+    assert_eq!(
+        chain_v, wrap_v,
+        "the two boundary emissions of the SAME program must publish the same squeeze"
+    );
+    println!(
+        "§4b the 7-block and 8-block emissions agree on all {SK} squeeze felts (corroboration only)"
     );
 }
 
@@ -745,7 +797,9 @@ fn the_census() {
         agg.name, 8192, agg.trace_width, agg.public_input_count, "UNSOUND fpMulCore"
     );
     println!("  weld endo->chain : 32 felts / 255 bits, elementwise, no digest");
-    println!("  weld link->endo  : 16 felts / 128 bits, elementwise (the whole challenge)");
+    println!(
+        "  weld chain->endo : 16 felts / 128 bits, elementwise (the whole challenge), off the\n                     8-block chainlink whose THIRD outgoing lane is pinned"
+    );
     println!("  weld chain->agg  : DESCRIPTOR-TO-DESCRIPTOR, 47 scalars x 255 bits");
     println!("                     (the aggregate has 27 PIs; there is no wire slot for a scalar)");
 }
