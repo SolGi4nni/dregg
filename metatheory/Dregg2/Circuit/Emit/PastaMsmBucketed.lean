@@ -1132,20 +1132,40 @@ from 33 to ≈`1.6 · 10^4`. **So `1,474,800` rows is the geometry of the unsoun
 is priced against the same gate — but it does mean the sound object is ~`10^3` further out, and no
 layout choice reaches it.
 
-**7.3 — the digits are declared, and the weld that derives them is BUILT.**
-`T_COVER`'s manifest carries `scalarDigitC scal …` as a descriptor parameter, so this descriptor is
-scalar-specialised. `PastaMsmScalarDerive.deriveRowDesc` already recomputes `s_i` from the block's
-IPA challenges ON THE WIRE and is proved at `4 × 1024 × 2131`; welding it here replaces the
-declared digit with a derived one and makes ONE verifying key check ANY Mina accumulator.
+**7.3 — ⚑ THE DIGITS ARE DECLARED, AND "DECLARED" HERE DOES NOT MEAN "FREE". A correction.**
+
+It is natural — and it was said to this lane in exactly these words — to read a declared digit as
+*"a witness nothing constrains"*. **That is false of this construction, and the difference matters
+because it changes which lane owns the fix.**
+
+`T_COVER` is `TableSem.exactPublicRows`, so its manifest is VERIFIER-KNOWN data carried inside the
+descriptor, and `DescriptorIR2.PublicLookupBalanced` demands the trace's lookup log be a `Perm` of
+it. A term row's `(WIN+1, GIDX+1, DGT)` must therefore be one of the declared triples, and
+collectively exactly the declared multiset — so **a prover cannot choose a digit at all.** The
+deployed prover says so directly: `a_generator_folded_at_the_wrong_level_is_refused` moves ONE
+row's `DGT` by one and the refusal is
+`exact-public table pasta_msm_cover lookup multiset does not equal its Lean-emitted manifest`.
+
+What IS true is narrower and is a DEPLOYABILITY limit rather than a soundness one: `coverManifest`
+takes `scal` as a descriptor PARAMETER, so the descriptor — and therefore the verifying key — is a
+function of the scalar vector. **One VK per Mina block.** That is what the weld to
+`PastaMsmScalarDerive` buys: its `deriveRowDesc` recomputes `s_i = ∏_j c_j^{bit_j(i)}` from the
+challenge vector ON THE WIRE and is proved at `4 × 1024 × 2131`, so welding it replaces the
+declared digit with a derived one and makes ONE key check ANY accumulator.
 
 ⚑ And the weld is CHEAPER in this layout than where it lives now, by construction. §6.3 of that
 file measures its derivation block at 62.5% of everything committed, because the derivation is
 repeated once per ROW and the bit-plane scan gives each term `planes = 256` rows. This layout gives
 each term `windowsOf 255 13 = 20` rows. The redundancy factor drops 256 → 20.
 
-⚑ **What is NOT stale in that file's §6.3, and the brief that sent me here had it half right.**
-`TableBusOp::Provide` does exist and IS emitted — but only in the TABLE-AIR arm
-(`descriptor_ir2.rs:3687`, reached from `Ir2Air::LeanTable`). The MAIN descriptor path still calls
+⚠ The cost, so the next lane prices it rather than discovers it: the derive rung is 1,309
+constraints at width 2,131 against this row's 91 at 612. Welded, a row carries both, so the
+descriptor goes to roughly 1,400 constraints and 2,700 columns — and §7.1's committed-area wall
+moves with the width, not with the row count.
+
+⚑ **What is NOT stale in `PastaMsmScalarDerive` §6.3, and the brief that sent me here had it half
+right.** `TableBusOp::Provide` does exist and IS emitted — but only in the TABLE-AIR arm
+(`descriptor_ir2.rs`, reached from `Ir2Air::LeanTable`). The MAIN descriptor path still calls
 `LookupBus::lookup_key` with multiplicity one and never `table_entry`, so a `provide` dual of
 `Lookup` for an `EffectVmDescriptor2` is still absent. §6.3's parenthetical was true about the main
 arm and wrong about the mechanism, and the mechanism is in a vocabulary the main descriptor cannot
