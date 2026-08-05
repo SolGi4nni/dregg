@@ -960,42 +960,68 @@ structure TrustedInitialization (id : Digest32) where
 
 namespace TrustedRuntimePortal
 
-/-- Authenticate the deployment-control credential carried by `wire`. -/
-@[extern "dregg_poa_bazaar_admit_authority"]
-opaque admitAuthority (id : Digest32) (wire : ByteArray) :
-  IO (Option (AuthorityAdmission id))
+/-- Authenticate the deployment-control credential carried by `wire`.
+
+No checked native producer is installed yet.  Refusal here is deliberate: an
+unimplemented authority portal must not acquire a C shim that knows the erased
+layout of `AuthorityAdmission`. -/
+def admitAuthority (_id : Digest32) (_wire : ByteArray) :
+    IO (Option (AuthorityAdmission _id)) :=
+  pure none
 
 /-- Authenticate/provision the empty durable registry for this exact authority. -/
-@[extern "dregg_poa_bazaar_admit_genesis"]
-opaque admitGenesis {id : Digest32} (authority : DeploymentAuthority id)
-    (wire : ByteArray) : IO (Option (GenesisAdmission authority))
+def admitGenesis {id : Digest32} (authority : DeploymentAuthority id)
+    (_wire : ByteArray) : IO (Option (GenesisAdmission authority)) :=
+  pure none
 
-/-- Admit one exact decoded durable image after the store has authenticated it. -/
-@[extern "dregg_poa_bazaar_admit_durable_load"]
-opaque admitDurableLoad (registry : DeploymentRegistry) (state : BazaarGameState)
-    (wire : ByteArray) : IO (Option (DurableLoadAdmission registry state))
+/-- Private checked primitive.  Native code can report only whether the exact
+canonical image of this already-materialized typed state equals the fully
+replayed durable journal tail.  It does not reconstruct typed state.  The
+dependent admission object never crosses the ABI. -/
+@[extern "dregg_poa_bazaar_admit_durable_load_checked"]
+private opaque admitDurableLoadChecked (registry : DeploymentRegistry)
+    (state : BazaarGameState) (wire : ByteArray) : IO Bool
+
+/-- Authenticate one already-materialized typed in-memory replay against the
+exact durable journal tail.  This does not decode or reconstruct a registry or
+game state after process restart; callers must have replayed those typed values
+through a separate trusted path before this final tail check can admit them. -/
+def admitDurableLoad (registry : DeploymentRegistry) (state : BazaarGameState)
+    (wire : ByteArray) : IO (Option (DurableLoadAdmission registry state)) := do
+  if ← admitDurableLoadChecked registry state wire then
+    pure (some ⟨()⟩)
+  else
+    pure none
+
+/-- Private checked primitive.  Native code can report only whether the exact
+Lean-emitted request won one serialized, replay-audited, durable CAS. -/
+@[extern "dregg_poa_bazaar_perform_cas_checked"]
+private opaque performCasChecked (request : RuntimeCasRequest) : IO Bool
 
 /-- Execute the exact request as one atomic durable compare-and-swap. -/
-@[extern "dregg_poa_bazaar_perform_cas"]
-opaque performCas (request : RuntimeCasRequest) :
-  IO (Option (PersistenceAdmission request))
+def performCas (request : RuntimeCasRequest) :
+    IO (Option (PersistenceAdmission request)) := do
+  if ← performCasChecked request then
+    pure (some ⟨()⟩)
+  else
+    pure none
 
 /-- Verify the exact signed envelope statement against its wire evidence. -/
-@[extern "dregg_poa_bazaar_admit_envelope"]
-opaque admitEnvelope (statement : EnvelopeStatement) (wire : ByteArray) :
-  IO (Option (EnvelopeAdmission statement))
+def admitEnvelope (statement : EnvelopeStatement) (_wire : ByteArray) :
+    IO (Option (EnvelopeAdmission statement)) :=
+  pure none
 
 /-- Verify that this exact ciphertext statement opens to this exact V1 order. -/
-@[extern "dregg_poa_bazaar_admit_same_opening"]
-opaque admitSameOpening (statement : EnvelopeStatement) (order : PrivateOrder)
-    (wire : ByteArray) : IO (Option (SameOpeningAdmission statement order))
+def admitSameOpening (statement : EnvelopeStatement) (order : PrivateOrder)
+    (_wire : ByteArray) : IO (Option (SameOpeningAdmission statement order)) :=
+  pure none
 
 /-- Verify crown/provenance evidence for the exact custody tuple. -/
-@[extern "dregg_poa_bazaar_admit_crown"]
-opaque admitCrown {id : Digest32} (authority : DeploymentAuthority id)
+def admitCrown {id : Digest32} (authority : DeploymentAuthority id)
     (origin : SalvageOrigin) (seller : ParticipantId) (note : AssetInput)
-    (sourceRoot : Digest32) (wire : ByteArray) :
-    IO (Option (CrownAdmission authority origin seller note sourceRoot))
+    (sourceRoot : Digest32) (_wire : ByteArray) :
+    IO (Option (CrownAdmission authority origin seller note sourceRoot)) :=
+  pure none
 
 def provisionAuthority (id : Digest32)
     (_receipt : AuthorityAdmission id) : DeploymentAuthority id :=

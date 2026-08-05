@@ -2329,6 +2329,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_world_activation_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_world_activation_authorizes_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_activated_content_authorize_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_bazaar_runtime_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_trustline_step_present)");
 
@@ -3293,6 +3294,38 @@ fn main() {
         absent_export_warn("dregg_poa_activated_content_authorize");
     }
 
+    // PATH OF ANGELS PERSISTENT BAZAAR: all codec/equality helpers form one
+    // indivisible typed ABI. The actual dependent admissions are constructed
+    // by Lean wrappers around two private checked-Bool native primitives.
+    let poa_bazaar_runtime_exports = [
+        "dregg_poa_bazaar_runtime_request_codec_valid",
+        "dregg_poa_bazaar_runtime_request_expected_present",
+        "dregg_poa_bazaar_runtime_request_expected_encode",
+        "dregg_poa_bazaar_runtime_request_replacement_encode",
+        "dregg_poa_bazaar_runtime_request_encode",
+        "dregg_poa_bazaar_runtime_state_from_game_encode",
+        "dregg_poa_bazaar_runtime_durable_load_valid",
+        "dregg_poa_bazaar_runtime_state_key_validate",
+        "dregg_poa_bazaar_runtime_fixture",
+    ];
+    let poa_bazaar_runtime_count = poa_bazaar_runtime_exports
+        .iter()
+        .filter(|symbol| archive_exports(&build_archive, symbol))
+        .count();
+    if poa_bazaar_runtime_count != 0 && poa_bazaar_runtime_count != poa_bazaar_runtime_exports.len()
+    {
+        panic!(
+            "SECURITY: partial PoA Bazaar runtime ABI ({poa_bazaar_runtime_count}/{} exports); refusing an incoherent codec/admission boundary",
+            poa_bazaar_runtime_exports.len()
+        );
+    }
+    let poa_bazaar_runtime_present = poa_bazaar_runtime_count == poa_bazaar_runtime_exports.len();
+    if poa_bazaar_runtime_present {
+        println!("cargo:rustc-cfg=dregg_poa_bazaar_runtime_present");
+    } else {
+        absent_export_warn("dregg_poa_bazaar_runtime_request_encode");
+    }
+
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
     // `@[export] dregg_{eth,tm,mpt}_lc_verify` symbols (the extracted, Lean-verified foreign-chain
     // admission decisions from `Dregg2.Bridge.LightClient{Eth,Tendermint,Mpt}Gate`). Present ⇒ gate
@@ -3696,6 +3729,9 @@ fn main() {
     }
     if poa_activated_content_authorize_present {
         shim.define("DREGG_POA_ACTIVATED_CONTENT_AUTHORIZE", None);
+    }
+    if poa_bazaar_runtime_present {
+        shim.define("DREGG_POA_BAZAAR_RUNTIME", None);
     }
     // DELEGATED TOOL-ACCESS ADMISSION: `DREGG_DELEG_ADMIT` gates BOTH the extern decl and the `_str`
     // bridge in `lean_init.c` (no module initializer — `Dregg2.Apps.DelegAdmit` is Init-only and its

@@ -8,30 +8,47 @@ use std::sync::{Arc, Barrier};
 
 use dregg_lean_ffi::poa_bazaar_restart_portal::DurableBazaarHeadStore as RegisteredDurableBazaarHeadStore;
 use portal::{
-    BazaarCasOutcome, BazaarCasRequest, BazaarRestartError, CanonicalStateBytes,
-    DurableBazaarHeadStore, MAX_CANONICAL_STATE_BYTES,
+    BazaarCasOutcome, BazaarCasRequest, BazaarRestartError, BazaarStoreIdentity,
+    CanonicalStateBytes, CasFault, DurableBazaarHeadStore,
 };
 
-const REQUEST_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.cas-request.v1";
-const HEAD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.durable-head.v1";
+const HEAD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.durable-head.v2";
+const JOURNAL_RECORD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.journal-record.v2";
 
 struct ScratchDir(PathBuf);
 
 impl ScratchDir {
     fn new(label: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
+        let temp_root = fs::canonicalize(std::env::temp_dir())
+            .expect("canonicalize the existing system temp directory");
+        let path = temp_root.join(format!(
             "dregg-poa-bazaar-{label}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&path).expect("create isolated Bazaar test directory");
+        make_private(&path, 0o700);
         Self(path)
     }
 
     fn path(&self) -> &Path {
         &self.0
     }
+}
+
+#[cfg(unix)]
+fn make_private(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[cfg(not(unix))]
+fn make_private(_path: &Path, _mode: u32) {}
+
+fn write_private(path: &Path, bytes: &[u8]) {
+    fs::write(path, bytes).unwrap();
+    make_private(path, 0o600);
 }
 
 impl Drop for ScratchDir {
@@ -44,17 +61,37 @@ fn state(bytes: &[u8]) -> CanonicalStateBytes {
     CanonicalStateBytes::new(bytes.to_vec()).expect("bounded non-empty state")
 }
 
-fn reseal_request(mut bytes: Vec<u8>) -> Vec<u8> {
+fn reseal_head(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes.truncate(bytes.len() - 32);
-    let checksum = blake3::derive_key(REQUEST_CHECKSUM_DOMAIN, &bytes);
+    let identity: [u8; 32] = bytes[10..42].try_into().unwrap();
+    let checksum = identity_bound_digest(HEAD_CHECKSUM_DOMAIN, &identity, &bytes);
     bytes.extend_from_slice(&checksum);
     bytes
 }
 
-fn reseal_head(mut bytes: Vec<u8>) -> Vec<u8> {
-    bytes.truncate(bytes.len() - 32);
-    let checksum = blake3::derive_key(HEAD_CHECKSUM_DOMAIN, &bytes);
-    bytes.extend_from_slice(&checksum);
+fn identity_bound_digest(domain: &str, identity: &[u8; 32], bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(domain);
+    hasher.update(identity);
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
+fn reseal_first_journal_sequence(mut bytes: Vec<u8>, sequence: u64) -> Vec<u8> {
+    let header_len = 8 + 2 + 32 + 32;
+    let identity: [u8; 32] = bytes[10..42].try_into().unwrap();
+    let record_len =
+        u32::from_be_bytes(bytes[header_len..header_len + 4].try_into().unwrap()) as usize;
+    let record_start = header_len + 4;
+    let record_end = record_start + record_len;
+    let sequence_start = record_start + 8 + 2;
+    bytes[sequence_start..sequence_start + 8].copy_from_slice(&sequence.to_be_bytes());
+    let checksum_start = record_end - 32;
+    let checksum = identity_bound_digest(
+        JOURNAL_RECORD_CHECKSUM_DOMAIN,
+        &identity,
+        &bytes[record_start..checksum_start],
+    );
+    bytes[checksum_start..record_end].copy_from_slice(&checksum);
     bytes
 }
 
@@ -66,78 +103,131 @@ fn production_restart_portal_is_registered_and_opens_an_empty_store() {
 }
 
 #[test]
-fn fixed_request_codec_roundtrips_genesis_and_successor_exactly() {
-    let genesis = BazaarCasRequest::new(None, state(b"lean-state-v1:genesis"));
-    let genesis_wire = genesis.to_wire_bytes();
-    assert_eq!(
-        BazaarCasRequest::from_wire_bytes(&genesis_wire).unwrap(),
-        genesis
-    );
-    assert_eq!(genesis_wire, genesis.to_wire_bytes());
+fn deployment_identity_cannot_be_added_after_state_or_rebound() {
+    let legacy = ScratchDir::new("identity-missing-with-state");
+    let legacy_store = DurableBazaarHeadStore::open(legacy.path()).unwrap();
+    legacy_store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"unbound-state")))
+        .unwrap();
+    assert!(matches!(
+        DurableBazaarHeadStore::open_bound(legacy.path(), BazaarStoreIdentity::test(0x11)),
+        Err(BazaarRestartError::UnsafePath(
+            "store identity is absent beside existing durable state"
+        ))
+    ));
 
-    let successor = BazaarCasRequest::new(
-        Some(state(b"lean-state-v1:genesis")),
-        state(b"lean-state-v1:revision-2\0with-full-tail"),
-    );
-    let successor_wire = successor.to_wire_bytes();
-    assert_eq!(
-        BazaarCasRequest::from_wire_bytes(&successor_wire).unwrap(),
-        successor
-    );
-    assert_eq!(successor_wire, successor.to_wire_bytes());
+    let bound = ScratchDir::new("identity-rebind");
+    DurableBazaarHeadStore::open_bound(bound.path(), BazaarStoreIdentity::test(0x22)).unwrap();
+    assert!(matches!(
+        DurableBazaarHeadStore::open_bound(bound.path(), BazaarStoreIdentity::test(0x23)),
+        Err(BazaarRestartError::UnsafePath(
+            "store identity does not match pinned deployment"
+        ))
+    ));
 }
 
 #[test]
-fn request_decoder_refuses_checksum_version_option_length_trailing_and_bounds_lies() {
-    let request = BazaarCasRequest::new(Some(state(b"before")), state(b"after"));
-    let original = request.to_wire_bytes();
+fn embedded_identity_refuses_coherent_cross_store_journal_and_head_swaps() {
+    let first = ScratchDir::new("identity-swap-first");
+    let second = ScratchDir::new("identity-swap-second");
+    let first_store =
+        DurableBazaarHeadStore::open_bound(first.path(), BazaarStoreIdentity::test(0x41)).unwrap();
+    let second_store =
+        DurableBazaarHeadStore::open_bound(second.path(), BazaarStoreIdentity::test(0x42)).unwrap();
+    first_store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"first-store-state")))
+        .unwrap();
+    second_store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"second-store-state")))
+        .unwrap();
 
-    let mut bad_checksum = original.clone();
-    bad_checksum[18] ^= 1;
+    let second_journal = fs::read(second.path().join("bazaar-cas-v1.journal")).unwrap();
+    fs::copy(
+        first.path().join("bazaar-cas-v1.journal"),
+        second.path().join("bazaar-cas-v1.journal"),
+    )
+    .unwrap();
+    fs::copy(
+        first.path().join("bazaar-head-v1.bin"),
+        second.path().join("bazaar-head-v1.bin"),
+    )
+    .unwrap();
     assert!(matches!(
-        BazaarCasRequest::from_wire_bytes(&bad_checksum),
-        Err(BazaarRestartError::InvalidWire("checksum"))
-    ));
-
-    let mut bad_version = original.clone();
-    bad_version[9] = 2;
-    assert!(matches!(
-        BazaarCasRequest::from_wire_bytes(&reseal_request(bad_version)),
-        Err(BazaarRestartError::InvalidWire("request version"))
-    ));
-
-    let genesis = BazaarCasRequest::new(None, state(b"after")).to_wire_bytes();
-    let mut bad_option = genesis;
-    bad_option[10] = 1;
-    assert!(matches!(
-        BazaarCasRequest::from_wire_bytes(&reseal_request(bad_option)),
+        second_store.load(),
         Err(BazaarRestartError::InvalidWire(
-            "request expected tag/length mismatch"
+            "journal store identity mismatch"
         ))
     ));
 
-    let mut trailing = original.clone();
-    trailing.truncate(trailing.len() - 32);
-    trailing.push(0x99);
-    let checksum = blake3::derive_key(REQUEST_CHECKSUM_DOMAIN, &trailing);
-    trailing.extend_from_slice(&checksum);
+    write_private(
+        &second.path().join("bazaar-cas-v1.journal"),
+        &second_journal,
+    );
     assert!(matches!(
-        BazaarCasRequest::from_wire_bytes(&trailing),
-        Err(BazaarRestartError::InvalidWire("request trailing bytes"))
-    ));
-
-    let mut oversized = original;
-    // replacement length begins after magic/version/tag/expected-length.
-    oversized[15..19].copy_from_slice(&((MAX_CANONICAL_STATE_BYTES as u32) + 1).to_be_bytes());
-    assert!(matches!(
-        BazaarCasRequest::from_wire_bytes(&reseal_request(oversized)),
+        second_store.load(),
         Err(BazaarRestartError::InvalidWire(
-            "canonical state exceeds maximum"
+            "head store identity mismatch"
+        ))
+    ));
+}
+
+#[test]
+fn legacy_unbound_durable_formats_refuse_explicitly() {
+    let journal = ScratchDir::new("legacy-journal");
+    let journal_store =
+        DurableBazaarHeadStore::open_bound(journal.path(), BazaarStoreIdentity::test(0x51))
+            .unwrap();
+    write_private(&journal.path().join("bazaar-cas-v1.journal"), b"POAJNL01");
+    assert!(matches!(
+        journal_store.load(),
+        Err(BazaarRestartError::InvalidWire(
+            "legacy journal format lacks embedded store identity"
         ))
     ));
 
-    assert!(BazaarCasRequest::from_wire_bytes(b"tiny").is_err());
-    assert!(CanonicalStateBytes::new(Vec::new()).is_err());
+    let head = ScratchDir::new("legacy-head");
+    let head_store =
+        DurableBazaarHeadStore::open_bound(head.path(), BazaarStoreIdentity::test(0x52)).unwrap();
+    write_private(&head.path().join("bazaar-head-v1.bin"), b"POAHEAD1");
+    assert!(matches!(
+        head_store.load(),
+        Err(BazaarRestartError::InvalidWire(
+            "legacy head format lacks embedded store identity"
+        ))
+    ));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_temp_alias_refuses_while_its_canonical_target_is_accepted() {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let alias_root = std::env::temp_dir();
+    let canonical_root = fs::canonicalize(&alias_root).unwrap();
+    assert_ne!(
+        alias_root, canonical_root,
+        "macOS temp root should expose its /var alias"
+    );
+    let alias_path = alias_root.join(format!(
+        "dregg-poa-bazaar-macos-alias-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&alias_path).unwrap();
+    make_private(&alias_path, 0o700);
+    let canonical_path = fs::canonicalize(&alias_path).unwrap();
+
+    assert!(matches!(
+        DurableBazaarHeadStore::open(&alias_path),
+        Err(BazaarRestartError::UnsafePath(_))
+    ));
+    assert_eq!(
+        DurableBazaarHeadStore::open(&canonical_path)
+            .unwrap()
+            .load()
+            .unwrap(),
+        None
+    );
+    fs::remove_dir_all(&canonical_path).unwrap();
 }
 
 #[test]
@@ -264,7 +354,8 @@ fn corrupt_head_and_sticky_recovery_lock_fail_closed() {
 
     let head = scratch.path().join("bazaar-head-v1.bin");
     let mut corrupt = fs::read(&head).unwrap();
-    corrupt[15] ^= 1;
+    // Corrupt the payload, not the embedded store identity metadata.
+    corrupt[46] ^= 1;
     fs::write(&head, corrupt).unwrap();
     assert!(matches!(
         store.load(),
@@ -275,7 +366,7 @@ fn corrupt_head_and_sticky_recovery_lock_fail_closed() {
     // holding the create-new lock. The next writer refuses; it never steals.
     let locked = ScratchDir::new("locked");
     let locked_store = DurableBazaarHeadStore::open(locked.path()).unwrap();
-    fs::write(locked.path().join("bazaar-head-v1.lock"), b"stale\n").unwrap();
+    write_private(&locked.path().join("bazaar-head-v1.lock"), b"stale\n");
     assert!(matches!(
         locked_store.compare_and_swap(&BazaarCasRequest::new(None, state(b"candidate"))),
         Err(BazaarRestartError::Busy)
@@ -294,7 +385,7 @@ fn durable_head_decoder_refuses_resealed_version_length_and_trailing_lies() {
     let original = fs::read(&head_path).unwrap();
 
     let mut version = original.clone();
-    version[9] = 2;
+    version[9] = 3;
     fs::write(&head_path, reseal_head(version)).unwrap();
     assert!(matches!(
         store.load(),
@@ -302,7 +393,7 @@ fn durable_head_decoder_refuses_resealed_version_length_and_trailing_lies() {
     ));
 
     let mut empty = original.clone();
-    empty[10..14].copy_from_slice(&0u32.to_be_bytes());
+    empty[42..46].copy_from_slice(&0u32.to_be_bytes());
     fs::write(&head_path, reseal_head(empty)).unwrap();
     assert!(matches!(
         store.load(),
@@ -312,7 +403,8 @@ fn durable_head_decoder_refuses_resealed_version_length_and_trailing_lies() {
     let mut trailing = original;
     trailing.truncate(trailing.len() - 32);
     trailing.push(0x99);
-    let checksum = blake3::derive_key(HEAD_CHECKSUM_DOMAIN, &trailing);
+    let identity: [u8; 32] = trailing[10..42].try_into().unwrap();
+    let checksum = identity_bound_digest(HEAD_CHECKSUM_DOMAIN, &identity, &trailing);
     trailing.extend_from_slice(&checksum);
     fs::write(&head_path, trailing).unwrap();
     assert!(matches!(
@@ -321,23 +413,37 @@ fn durable_head_decoder_refuses_resealed_version_length_and_trailing_lies() {
     ));
 }
 
-#[cfg(unix)]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios"
+))]
 #[test]
-fn store_refuses_a_symlink_root() {
+fn store_refuses_a_symlink_ancestor() {
     use std::os::unix::fs::symlink;
 
     let scratch = ScratchDir::new("symlink-parent");
     let target = scratch.path().join("target");
     fs::create_dir(&target).unwrap();
+    make_private(&target, 0o700);
+    let nested = target.join("nested");
+    fs::create_dir(&nested).unwrap();
+    make_private(&nested, 0o700);
     let link = scratch.path().join("link");
     symlink(&target, &link).unwrap();
     assert!(matches!(
-        DurableBazaarHeadStore::open(&link),
-        Err(BazaarRestartError::UnsafePath("root is a symlink"))
+        DurableBazaarHeadStore::open(link.join("nested")),
+        Err(BazaarRestartError::UnsafePath(_))
     ));
 }
 
-#[cfg(unix)]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios"
+))]
 #[test]
 fn durable_load_refuses_a_symlink_head_even_when_the_target_is_valid() {
     use std::os::unix::fs::symlink;
@@ -353,6 +459,334 @@ fn durable_load_refuses_a_symlink_head_even_when_the_target_is_valid() {
     symlink(&target, &head).unwrap();
     assert!(matches!(
         store.load(),
-        Err(BazaarRestartError::UnsafePath("head is a symlink"))
+        Err(BazaarRestartError::UnsafePath(_))
+    ));
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios"
+))]
+#[test]
+fn store_refuses_permissive_root_and_wrong_expected_owner() {
+    use std::os::unix::fs::MetadataExt;
+
+    let permissive = ScratchDir::new("permissive-root");
+    make_private(permissive.path(), 0o755);
+    assert!(matches!(
+        DurableBazaarHeadStore::open(permissive.path()),
+        Err(BazaarRestartError::UnsafePath(
+            "root permissions are not private"
+        ))
+    ));
+
+    let wrong_owner = ScratchDir::new("wrong-owner");
+    let actual = fs::metadata(wrong_owner.path()).unwrap().uid();
+    assert!(matches!(
+        DurableBazaarHeadStore::open_with_expected_owner(
+            wrong_owner.path(),
+            actual.wrapping_add(1)
+        ),
+        Err(BazaarRestartError::UnsafePath(
+            "root owner does not match trusted runtime user"
+        ))
+    ));
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios"
+))]
+#[test]
+fn store_refuses_permissive_head_journal_and_lock_files() {
+    let head_scratch = ScratchDir::new("head-mode");
+    let head_store = DurableBazaarHeadStore::open(head_scratch.path()).unwrap();
+    head_store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"private-head")))
+        .unwrap();
+    make_private(&head_scratch.path().join("bazaar-head-v1.bin"), 0o644);
+    assert!(matches!(
+        head_store.load(),
+        Err(BazaarRestartError::UnsafePath(
+            "store entry permissions are not private"
+        ))
+    ));
+
+    let journal_scratch = ScratchDir::new("journal-mode");
+    let journal_store = DurableBazaarHeadStore::open(journal_scratch.path()).unwrap();
+    journal_store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"private-journal")))
+        .unwrap();
+    make_private(&journal_scratch.path().join("bazaar-cas-v1.journal"), 0o644);
+    assert!(matches!(
+        journal_store.load(),
+        Err(BazaarRestartError::UnsafePath(
+            "store entry permissions are not private"
+        ))
+    ));
+
+    let lock_scratch = ScratchDir::new("lock-mode");
+    let lock_store = DurableBazaarHeadStore::open(lock_scratch.path()).unwrap();
+    let lock = lock_scratch.path().join("bazaar-head-v1.lock");
+    write_private(&lock, b"stale\n");
+    make_private(&lock, 0o644);
+    assert!(matches!(
+        lock_store.compare_and_swap(&BazaarCasRequest::new(None, state(b"candidate"))),
+        Err(BazaarRestartError::UnsafePath(
+            "store entry permissions are not private"
+        ))
+    ));
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios"
+))]
+#[test]
+fn head_journal_and_lock_each_refuse_hardlink_aliases() {
+    let head_scratch = ScratchDir::new("head-hardlink");
+    let head_store = DurableBazaarHeadStore::open(head_scratch.path()).unwrap();
+    head_store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"hardlink-head")))
+        .unwrap();
+    fs::hard_link(
+        head_scratch.path().join("bazaar-head-v1.bin"),
+        head_scratch.path().join("head-alias"),
+    )
+    .unwrap();
+    assert!(matches!(
+        head_store.load(),
+        Err(BazaarRestartError::UnsafePath(
+            "store entry link count is not one"
+        ))
+    ));
+
+    let journal_scratch = ScratchDir::new("journal-hardlink");
+    let journal_store = DurableBazaarHeadStore::open(journal_scratch.path()).unwrap();
+    journal_store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"hardlink-journal")))
+        .unwrap();
+    fs::hard_link(
+        journal_scratch.path().join("bazaar-cas-v1.journal"),
+        journal_scratch.path().join("journal-alias"),
+    )
+    .unwrap();
+    assert!(matches!(
+        journal_store.load(),
+        Err(BazaarRestartError::UnsafePath(
+            "store entry link count is not one"
+        ))
+    ));
+
+    let lock_scratch = ScratchDir::new("lock-hardlink");
+    let lock_store = DurableBazaarHeadStore::open(lock_scratch.path()).unwrap();
+    let lock = lock_scratch.path().join("bazaar-head-v1.lock");
+    write_private(&lock, b"stale\n");
+    fs::hard_link(&lock, lock_scratch.path().join("lock-alias")).unwrap();
+    assert!(matches!(
+        lock_store.compare_and_swap(&BazaarCasRequest::new(None, state(b"candidate"))),
+        Err(BazaarRestartError::UnsafePath(
+            "store entry link count is not one"
+        ))
+    ));
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios"
+))]
+#[test]
+fn pathname_inode_substitution_is_detected_even_with_identical_bytes() {
+    let scratch = ScratchDir::new("inode-substitution");
+    let store = DurableBazaarHeadStore::open(scratch.path()).unwrap();
+    store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"same-byte-head")))
+        .unwrap();
+    assert!(matches!(
+        store.detect_head_inode_substitution(),
+        Err(BazaarRestartError::UnsafePath(
+            "store entry inode changed during operation"
+        ))
+    ));
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios"
+))]
+#[test]
+fn configured_root_rename_and_inode_substitution_is_detected() {
+    let scratch = ScratchDir::new("root-inode-substitution");
+    let root = scratch.path().join("store");
+    fs::create_dir(&root).unwrap();
+    make_private(&root, 0o700);
+    let store = DurableBazaarHeadStore::open(&root).unwrap();
+    store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"anchored-head")))
+        .unwrap();
+
+    let moved = scratch.path().join("moved-store");
+    fs::rename(&root, &moved).unwrap();
+    fs::create_dir(&root).unwrap();
+    make_private(&root, 0o700);
+    assert!(matches!(
+        store.load(),
+        Err(BazaarRestartError::UnsafePath(
+            "configured root inode changed during operation"
+        ))
+    ));
+}
+
+#[test]
+fn every_uncertain_write_stage_preserves_a_sticky_recovery_lock() {
+    for fault in [
+        CasFault::AfterJournalWrite,
+        CasFault::AfterJournalSync,
+        CasFault::AfterHeadRename,
+    ] {
+        let scratch = ScratchDir::new(&format!("fault-{fault:?}"));
+        let store = DurableBazaarHeadStore::open(scratch.path()).unwrap();
+        let request = BazaarCasRequest::new(None, state(b"fault-injected-head"));
+        assert!(matches!(
+            store.compare_and_swap_with_fault(&request, fault),
+            Err(BazaarRestartError::IndeterminateCommit(_))
+        ));
+        assert!(scratch.path().join("bazaar-head-v1.lock").exists());
+        assert!(matches!(
+            store.compare_and_swap(&request),
+            Err(BazaarRestartError::Busy)
+        ));
+    }
+}
+
+#[test]
+fn synced_journal_crash_refuses_until_validated_recovery_then_continues_exactly() {
+    let scratch = ScratchDir::new("recover-synced-journal");
+    let store = DurableBazaarHeadStore::open_bound(scratch.path(), BazaarStoreIdentity::test(0x31))
+        .unwrap();
+    let first = state(b"canonical-lean-state-1");
+    let request = BazaarCasRequest::new(None, first.clone());
+    assert!(matches!(
+        store.compare_and_swap_with_fault(&request, CasFault::AfterJournalSync),
+        Err(BazaarRestartError::IndeterminateCommit(_))
+    ));
+    assert!(matches!(
+        store.load(),
+        Err(BazaarRestartError::InvalidWire(
+            "journal has records but head cache is absent"
+        ))
+    ));
+    assert!(matches!(
+        store.compare_and_swap(&request),
+        Err(BazaarRestartError::Busy)
+    ));
+
+    let recovered = store
+        .recover_sticky_head(|wire| Ok(wire == first.as_bytes()))
+        .unwrap();
+    assert_eq!(recovered.record_count, 1);
+    assert_eq!(recovered.recovered_head, first);
+    assert!(!scratch.path().join("bazaar-head-v1.lock").exists());
+    assert_eq!(store.load().unwrap(), Some(first.clone()));
+
+    let second = state(b"canonical-lean-state-2");
+    assert!(matches!(
+        store
+            .compare_and_swap(&BazaarCasRequest::new(Some(first), second.clone()))
+            .unwrap(),
+        BazaarCasOutcome::Applied { current, .. } if current == second
+    ));
+}
+
+#[test]
+fn recovery_refuses_corrupt_or_divergent_journal_and_keeps_sticky_lock() {
+    for (label, mutate) in [("corrupt", false), ("resealed-divergent-sequence", true)] {
+        let scratch = ScratchDir::new(&format!("recover-{label}"));
+        let store =
+            DurableBazaarHeadStore::open_bound(scratch.path(), BazaarStoreIdentity::test(0x52))
+                .unwrap();
+        let request = BazaarCasRequest::new(None, state(b"canonical-tail"));
+        assert!(matches!(
+            store.compare_and_swap_with_fault(&request, CasFault::AfterJournalSync),
+            Err(BazaarRestartError::IndeterminateCommit(_))
+        ));
+        let journal_path = scratch.path().join("bazaar-cas-v1.journal");
+        let mut journal = fs::read(&journal_path).unwrap();
+        if mutate {
+            journal = reseal_first_journal_sequence(journal, 1);
+        } else {
+            let last = journal.len() - 1;
+            journal[last] ^= 1;
+        }
+        fs::write(&journal_path, journal).unwrap();
+
+        assert!(store.recover_sticky_head(|_| Ok(true)).is_err());
+        assert!(scratch.path().join("bazaar-head-v1.lock").exists());
+        assert!(matches!(
+            store.compare_and_swap(&request),
+            Err(BazaarRestartError::Busy)
+        ));
+    }
+}
+
+#[test]
+fn recovery_refuses_noncanonical_tail_and_keeps_sticky_lock() {
+    let scratch = ScratchDir::new("recover-noncanonical");
+    let store = DurableBazaarHeadStore::open_bound(scratch.path(), BazaarStoreIdentity::test(0x73))
+        .unwrap();
+    let request = BazaarCasRequest::new(None, state(b"rust-opaque-but-not-lean-canonical"));
+    assert!(matches!(
+        store.compare_and_swap_with_fault(&request, CasFault::AfterJournalSync),
+        Err(BazaarRestartError::IndeterminateCommit(_))
+    ));
+    assert!(matches!(
+        store.recover_sticky_head(|_| Ok(false)),
+        Err(BazaarRestartError::InvalidWire(
+            "journal replacement is not a canonical Lean StateKey"
+        ))
+    ));
+    assert!(scratch.path().join("bazaar-head-v1.lock").exists());
+}
+
+#[test]
+fn replay_audits_every_record_and_refuses_reordered_history() {
+    let scratch = ScratchDir::new("reordered-journal");
+    let first = state(b"journal-state-1");
+    let second = state(b"journal-state-2");
+    let store = DurableBazaarHeadStore::open(scratch.path()).unwrap();
+    store
+        .compare_and_swap(&BazaarCasRequest::new(None, first.clone()))
+        .unwrap();
+    store
+        .compare_and_swap(&BazaarCasRequest::new(Some(first), second))
+        .unwrap();
+
+    let journal_path = scratch.path().join("bazaar-cas-v1.journal");
+    let journal = fs::read(&journal_path).unwrap();
+    let header_len = 8 + 2 + 32 + 32;
+    let first_len =
+        u32::from_be_bytes(journal[header_len..header_len + 4].try_into().unwrap()) as usize;
+    let first_end = header_len + 4 + first_len;
+    let mut reordered = Vec::with_capacity(journal.len());
+    reordered.extend_from_slice(&journal[..header_len]);
+    reordered.extend_from_slice(&journal[first_end..]);
+    reordered.extend_from_slice(&journal[header_len..first_end]);
+    fs::write(&journal_path, reordered).unwrap();
+
+    assert!(matches!(
+        store.load(),
+        Err(BazaarRestartError::InvalidWire(
+            "journal sequence is not contiguous"
+        ))
     ));
 }

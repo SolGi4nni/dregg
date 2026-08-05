@@ -488,6 +488,126 @@ extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_ActivatedContent
 extern lean_object *dregg_poa_activated_content_authorize(lean_object *input);
 #endif
 
+/* Persistent Bazaar runtime. Lean owns every typed codec and constructs both
+ * dependent admissions; native code returns only a checked Bool after exact
+ * hash-chained-journal CAS or replay-tail comparison. */
+#ifdef DREGG_POA_BAZAAR_RUNTIME
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_BazaarGameRuntime(uint8_t builtin);
+extern uint8_t dregg_poa_bazaar_runtime_request_codec_valid(lean_object *request);
+extern uint8_t dregg_poa_bazaar_runtime_request_expected_present(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_request_expected_encode(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_request_replacement_encode(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_request_encode(lean_object *request);
+extern lean_object *dregg_poa_bazaar_runtime_state_from_game_encode(lean_object *state);
+extern uint8_t dregg_poa_bazaar_runtime_durable_load_valid(
+    lean_object *registry, lean_object *state, lean_object *wire);
+extern uint8_t dregg_poa_bazaar_runtime_state_key_validate(lean_object *wire);
+extern lean_object *dregg_poa_bazaar_runtime_fixture(lean_object *command);
+extern int32_t dregg_poa_bazaar_native_perform_cas(
+    uint8_t expected_present,
+    const uint8_t *expected, size_t expected_len,
+    const uint8_t *replacement, size_t replacement_len);
+extern int32_t dregg_poa_bazaar_native_durable_load_matches(
+    const uint8_t *canonical, size_t canonical_len);
+#define DREGG_POA_BAZAAR_STATE_WIRE_MAX_BYTES ((size_t)16777216u)
+
+static lean_object *dregg_poa_bazaar_io_bool(uint8_t value) {
+    return lean_io_result_mk_ok(lean_box(value != 0));
+}
+
+static lean_object *dregg_poa_bazaar_io_error(const char *message) {
+    return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(message)));
+}
+
+/* Checked primitive for `TrustedRuntimePortal.performCas`. Each helper gets its
+ * own owned reference; the raw extern consumes the original exactly once. */
+lean_object *dregg_poa_bazaar_perform_cas_checked(lean_object *request) {
+    lean_inc(request);
+    uint8_t codec_valid = dregg_poa_bazaar_runtime_request_codec_valid(request);
+    if (!codec_valid) {
+        lean_dec(request);
+        return dregg_poa_bazaar_io_bool(0);
+    }
+
+    lean_inc(request);
+    uint8_t expected_present =
+        dregg_poa_bazaar_runtime_request_expected_present(request);
+    lean_inc(request);
+    lean_object *expected =
+        dregg_poa_bazaar_runtime_request_expected_encode(request);
+    lean_inc(request);
+    lean_object *replacement =
+        dregg_poa_bazaar_runtime_request_replacement_encode(request);
+    lean_dec(request);
+
+    size_t expected_size = lean_string_size(expected);
+    size_t replacement_size = lean_string_size(replacement);
+    if (expected_size == 0 || replacement_size == 0) {
+        lean_dec(expected);
+        lean_dec(replacement);
+        return dregg_poa_bazaar_io_error("Bazaar codec returned an invalid Lean string");
+    }
+    size_t expected_len = expected_size - 1;
+    size_t replacement_len = replacement_size - 1;
+    if (expected_len > DREGG_POA_BAZAAR_STATE_WIRE_MAX_BYTES ||
+        replacement_len == 0 ||
+        replacement_len > DREGG_POA_BAZAAR_STATE_WIRE_MAX_BYTES ||
+        ((!expected_present) != (expected_len == 0))) {
+        lean_dec(expected);
+        lean_dec(replacement);
+        return dregg_poa_bazaar_io_bool(0);
+    }
+
+    int32_t result = dregg_poa_bazaar_native_perform_cas(
+        expected_present,
+        (const uint8_t *)lean_string_cstr(expected), expected_len,
+        (const uint8_t *)lean_string_cstr(replacement), replacement_len);
+    lean_dec(expected);
+    lean_dec(replacement);
+    if (result < 0) {
+        return dregg_poa_bazaar_io_error("Bazaar durable CAS failed closed");
+    }
+    return dregg_poa_bazaar_io_bool(result == 1);
+}
+
+/* Checked primitive for an already-materialized in-memory replay. This is not
+ * a typed restart decoder: Lean validates the registry/state/wire equations,
+ * and native code independently replays the journal and compares its tail. */
+lean_object *dregg_poa_bazaar_admit_durable_load_checked(
+    lean_object *registry, lean_object *state, lean_object *wire) {
+    lean_inc(registry);
+    lean_inc(state);
+    lean_inc(wire);
+    uint8_t typed_valid = dregg_poa_bazaar_runtime_durable_load_valid(
+        registry, state, wire);
+    if (!typed_valid) {
+        lean_dec(registry);
+        lean_dec(state);
+        lean_dec(wire);
+        return dregg_poa_bazaar_io_bool(0);
+    }
+
+    lean_inc(state);
+    lean_object *canonical = dregg_poa_bazaar_runtime_state_from_game_encode(state);
+    lean_dec(registry);
+    lean_dec(state);
+    lean_dec(wire);
+    size_t canonical_size = lean_string_size(canonical);
+    if (canonical_size <= 1 ||
+        canonical_size - 1 > DREGG_POA_BAZAAR_STATE_WIRE_MAX_BYTES) {
+        lean_dec(canonical);
+        return dregg_poa_bazaar_io_bool(0);
+    }
+    int32_t result = dregg_poa_bazaar_native_durable_load_matches(
+        (const uint8_t *)lean_string_cstr(canonical), canonical_size - 1);
+    lean_dec(canonical);
+    if (result < 0) {
+        return dregg_poa_bazaar_io_error("Bazaar journal replay failed closed");
+    }
+    return dregg_poa_bazaar_io_bool(result == 1);
+}
+#endif
+
 /* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
  * (`Dregg2.Circuit.FriLedger.friLedgerFFI`): decodes the wire
  * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (eight decimal
@@ -1180,6 +1300,16 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(activatedcontentres);
 #endif
+#ifdef DREGG_POA_BAZAAR_RUNTIME
+    lean_object *bazaarpersistres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_BazaarGameRuntime(1);
+    if (!lean_io_result_is_ok(bazaarpersistres)) {
+        lean_io_result_show_error(bazaarpersistres);
+        lean_dec_ref(bazaarpersistres);
+        return 1;
+    }
+    lean_dec_ref(bazaarpersistres);
+#endif
     /* NOTE: DREGG_GRAIN_R3_VERIFY needs NO module initializer here — `dregg_grain_r3_verify`'s
      * generated C is self-contained (static-const string literals + a lazy once-cell), and calling
      * `initialize_Dregg2_Dregg2_Grain_R3Verify` would drag its Mathlib-tactic import closure's
@@ -1465,6 +1595,52 @@ size_t dregg_poa_activated_content_authorize_str(
     memcpy(out, cstr, copy);
     out[copy] = '\0';
     lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_BAZAAR_RUNTIME
+size_t dregg_poa_bazaar_state_key_validate_str(
+    const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap < 2) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len == 0 || input_len > DREGG_POA_BAZAAR_STATE_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    uint8_t valid = dregg_poa_bazaar_runtime_state_key_validate(
+        lean_mk_string(in_utf8));
+    out[0] = valid ? '1' : '0';
+    out[1] = '\0';
+    return 1;
+}
+
+size_t dregg_poa_bazaar_runtime_fixture_str(
+    const char *command_utf8, char *out, size_t out_cap) {
+    if (command_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *result = dregg_poa_bazaar_runtime_fixture(
+        lean_mk_string(command_utf8));
+    if (!lean_io_result_is_ok(result)) {
+        out[0] = '\0';
+        lean_dec_ref(result);
+        return (size_t)-1;
+    }
+    lean_object *value = lean_io_result_get_value(result);
+    size_t value_size = lean_string_size(value);
+    if (value_size == 0 || value_size - 1 > 64) {
+        out[0] = '\0';
+        lean_dec_ref(result);
+        return (size_t)-1;
+    }
+    size_t full = value_size - 1;
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, lean_string_cstr(value), copy);
+    out[copy] = '\0';
+    lean_dec_ref(result);
     return full;
 }
 #endif

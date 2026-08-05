@@ -83,6 +83,14 @@ pub mod poa_activated_content_ffi;
 #[path = "poa_bazaar_restart_portal.rs"]
 pub mod poa_bazaar_restart_portal;
 
+/// Lean-owned canonical Bazaar codec plus journal-backed checked persistence boundary.
+#[path = "poa_bazaar_runtime_ffi.rs"]
+pub mod poa_bazaar_runtime_ffi;
+
+#[path = "poa_bazaar_native_callbacks.rs"]
+#[cfg(all(lean_lib_present, dregg_poa_bazaar_runtime_present))]
+mod poa_bazaar_native_callbacks;
+
 pub use bridge_lc_ffi::{
     eth_committee_rotation_available, eth_committee_rotation_wire, eth_lc_verify_available,
     eth_lc_verify_wire, mina_account_opening_wire, mina_account_state_ok_available,

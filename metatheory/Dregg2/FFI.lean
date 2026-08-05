@@ -24,6 +24,7 @@ import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime
 import Dregg2.Games.PathOfAngels.EventBatchRuntime
 import Dregg2.Games.PathOfAngels.WorldActivation
 import Dregg2.Games.PathOfAngels.ActivatedContentRuntime
+import Dregg2.Games.PathOfAngels.BazaarGameRuntime
 import Dregg2.Apps.DelegAdmit
 
 -- §1.4 Post-quantum cores.

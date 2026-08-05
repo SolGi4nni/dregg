@@ -115,6 +115,9 @@ lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_WorldActivation(uint8_t
 #ifdef DREGG_POA_ACTIVATED_CONTENT_AUTHORIZE
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_ActivatedContentRuntime(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_BAZAAR_RUNTIME
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_BazaarGameRuntime(uint8_t builtin);
+#endif
 }
 
 /* dregg_ffi_init_st — the single-threaded init for the executor-in-a-constrained-host
@@ -253,6 +256,18 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(activatedcontentres);
+    }
+#endif
+#ifdef DREGG_POA_BAZAAR_RUNTIME
+    {
+        lean_object *bazaarpersistres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_BazaarGameRuntime(1);
+        if (!lean_io_result_is_ok(bazaarpersistres)) {
+            lean_io_result_show_error(bazaarpersistres);
+            lean_dec_ref(bazaarpersistres);
+            return 1;
+        }
+        lean_dec_ref(bazaarpersistres);
     }
 #endif
     lean_io_mark_end_initialization();
