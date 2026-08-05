@@ -57,12 +57,15 @@
 // `PastaMsmBucketed` §7.2 says so out loud rather than letting the row counts read as sound ones.
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, TableSem, parse_vm_descriptor2_unsound_oversized,
-    prove_vm_descriptor2, verify_vm_descriptor2,
+    DreggStarkConfig, EffectVmDescriptor2, MemBoundaryWitness, TableSem,
+    parse_vm_descriptor2_unsound_oversized, prove_vm_descriptor2, prove_vm_descriptor2_with_config,
+    verify_vm_descriptor2, verify_vm_descriptor2_with_config,
 };
+use dregg_circuit::pasta_msm::{complete_add, on_curve_at, proj_eq_at};
 use dregg_circuit::pasta_windowed_witness::{
-    NUM_LIMBS, Pt, U256, fill_row, proj_eq, rcb_add, read_field,
+    NUM_LIMBS, P_PASTA, Pt, Q_PASTA, U256, fill_row_at, read_field,
 };
+use dregg_circuit::plonky3_prover::create_config_with_fri_full;
 use dregg_circuit::refusal::must_refuse;
 use sha2::{Digest, Sha256};
 use std::time::Instant;
@@ -83,8 +86,12 @@ const C3_JSON: &str = include_str!("fixtures/pasta-msm-bucketed/pasta-msm-bucket
 const WINDOWED_JSON: &str = include_str!("fixtures/pasta-msm-bucketed/pasta-rcb-windowed.json");
 const WINDOWED_SHA: &str = "7c1326f8c705aad8d9165bc97d7c2926a98b2d7ec0bdc756b85eaa36d8886aad";
 
-const C2_SHA: &str = "d618c807b5fe03e763f924729cd5f4cacb337f21a54a254ac81de5ce26678974";
-const C3_SHA: &str = "41031882676ee1f914a48c43881dbc06a51492753f8c4c8c50ca37454993a425";
+/// ⚑ THE VESTA/STEP INSTANCE — the curve the deferred accumulator actually lives on.
+const V2_JSON: &str = include_str!("fixtures/pasta-msm-bucketed/pasta-msm-bucketed-vesta-c2.json");
+const V2_SHA: &str = "254dcc4dad109a23ea5a3947e680360bfb1e3719f731f4ef2d2bea59d2ab5b3a";
+
+const C2_SHA: &str = "7fb69f71ab235db03648ca784c05cabd0e78d23df552ac497605430edd2db056";
+const C3_SHA: &str = "90d3e81c1b7f8f3859c4393afc5e892c98491ae2ff116cbe5dd78e340fba2b2c";
 
 // ---------------------------------------------------------------------------------------------
 // The Lean row layout (`PastaMsmBucketed` §1), restated so a drift in either side reds HERE rather
@@ -157,6 +164,11 @@ fn pt_of_manifest_row(row: &[u32]) -> Pt {
 // ---------------------------------------------------------------------------------------------
 
 struct Shape {
+    /// ⚑ The COORDINATE modulus this instance's arithmetic is reduced at — `P_PASTA` for the
+    /// Pallas/Wrap leg, `Q_PASTA` for the **Vesta/Step** leg the accumulator actually lives on.
+    /// Read off the descriptor NAME, so a witness cannot be filled at the wrong prime for the
+    /// gadget the descriptor emitted.
+    m: U256,
     rows: usize,
     n: usize,
     windows: usize,
@@ -169,6 +181,16 @@ struct Shape {
 }
 
 fn shape_of(desc: &EffectVmDescriptor2) -> Shape {
+    let m = if desc.name.contains("-vesta-") {
+        Q_PASTA
+    } else if desc.name.contains("-pallas-") {
+        P_PASTA
+    } else {
+        panic!(
+            "descriptor {} names no curve; refusing to guess a modulus",
+            desc.name
+        )
+    };
     let sched = manifest(desc, "pasta_msm_schedule");
     let cover = manifest(desc, "pasta_msm_cover");
     let srs = manifest(desc, "pasta_msm_srs");
@@ -198,6 +220,7 @@ fn shape_of(desc: &EffectVmDescriptor2) -> Shape {
         digits[r[0] as usize - 1][r[1] as usize - 1] = r[2];
     }
     Shape {
+        m,
         rows,
         n,
         windows,
@@ -263,7 +286,7 @@ fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
             Mode::Dbl => (tot, tot, Pt::INFINITY, 0, 0, true, 0),
         };
 
-        let mut row = fill_row(&acc, &src, true, dbl);
+        let mut row = fill_row_at(&sh.m, &acc, &src, true, dbl);
         assert_eq!(row.len(), WINDOWED_W);
         row.resize(WK, BabyBear::new(0));
 
@@ -287,7 +310,7 @@ fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         trace.push(row);
 
         // advance the two threads and the sweep counter exactly as the emitted window gates say.
-        let out = rcb_add(&acc, &src);
+        let out = complete_add(&sh.m, &acc, &src);
         match *mode {
             Mode::Term(_) => run = out,
             Mode::Step => {
@@ -316,7 +339,7 @@ fn honest_trace(sh: &Shape) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         y: read_field(last, TOTX + NUM_LIMBS),
         z: read_field(last, TOTX + 2 * NUM_LIMBS),
     };
-    assert!(proj_eq(&claimed, &tot) || claimed == tot);
+    assert!(proj_eq_at(&sh.m, &claimed, &tot) || claimed == tot);
 
     let pis: Vec<BabyBear> = (0..PI_COUNT).map(|i| last[TOTX + i]).collect();
     (trace, pis)
@@ -335,9 +358,9 @@ fn reference_msm(sh: &Shape) -> Pt {
         }
         let mut term = Pt::INFINITY;
         for _ in 0..s {
-            term = rcb_add(&term, &sh.gens[i]);
+            term = complete_add(&sh.m, &term, &sh.gens[i]);
         }
-        acc = rcb_add(&acc, &term);
+        acc = complete_add(&sh.m, &acc, &term);
     }
     acc
 }
@@ -366,14 +389,21 @@ fn lean_artifacts_are_pinned() {
         WINDOWED_SHA,
         "the inherited row template was re-emitted; re-read the Lean and re-pin"
     );
-    for (json, want, c) in [(C2_JSON, C2_SHA, 2usize), (C3_JSON, C3_SHA, 3)] {
+    for (json, want, c, curve) in [
+        (C2_JSON, C2_SHA, 2usize, "pallas"),
+        (C3_JSON, C3_SHA, 3, "pallas"),
+        (V2_JSON, V2_SHA, 2, "vesta"),
+    ] {
         assert_eq!(
             sha256_hex(json.as_bytes()),
             want,
             "descriptor c={c} was re-emitted; re-read the Lean and re-pin"
         );
         let d = parse(json);
-        assert_eq!(d.name, format!("dregg-pasta-msm-bucketed-c{c}::v1"));
+        // ⚑ THE CURVE IS IN THE NAME. A descriptor that emitted one curve's gadget under the
+        // other's name is a wrong-curve proof no shape check catches, so the name is load-bearing
+        // and `shape_of` reads the witness modulus straight off it.
+        assert_eq!(d.name, format!("dregg-pasta-msm-bucketed-{curve}-c{c}::v1"));
         assert_eq!(d.trace_width, WK);
         assert_eq!(d.public_input_count, PI_COUNT);
         assert_eq!(
@@ -390,11 +420,23 @@ fn lean_artifacts_are_pinned() {
             45,
             "windowedRowDesc = rowGates (42) ++ threadGates (3)"
         );
-        assert_eq!(
-            &d.constraints[..42],
-            &windowed.constraints[..42],
-            "bucketedRowDesc_extends_rowGates is FALSE of the emitted bytes"
-        );
+        // ⚑ Only the PALLAS instance inherits `rowGates` byte for byte — that is the whole point
+        // of `rowGatesWith` being a parameter. The Vesta instance's 42 row-local gates are
+        // `rowGatesWith vestaCompleteAdd`, reduced at `q`, and MUST differ; asserting equality
+        // there would be asserting a wrong-curve proof.
+        if curve == "pallas" {
+            assert_eq!(
+                &d.constraints[..42],
+                &windowed.constraints[..42],
+                "bucketedRowDesc_extends_rowGates is FALSE of the emitted bytes"
+            );
+        } else {
+            assert_ne!(
+                &d.constraints[..42],
+                &windowed.constraints[..42],
+                "the {curve} instance carries the PALLAS row template — wrong-curve emission"
+            );
+        }
         // ⚑ …and the REFUTATION, on the bytes: the windowed descriptor's own 3 thread gates are
         // NOT inherited, because they say `nxt ACC = loc OUT` UNCONDITIONALLY and this layout's
         // `ACC` is a SELECT over two accumulators. Asserting the negative is the point — the first
@@ -408,13 +450,43 @@ fn lean_artifacts_are_pinned() {
     }
 }
 
+/// ⚑ **THE TWO CURVES EMIT DIFFERENT GATES, on the bytes.** `PastaMsmBucketed` proves
+/// `pallas_and_vesta_primes_differ` in the kernel and deliberately stops there: deciding the
+/// 42-gate list inequality means evaluating 81 cross-products at 255-bit coefficients, which buys
+/// nothing this check does not. Here it is where it is cheap — and it is the assertion that would
+/// catch an emitter wired to the wrong `AddGadget`, which is the only way a Vesta-named descriptor
+/// could carry Pallas arithmetic.
+#[test]
+fn the_two_curves_are_not_the_same_air() {
+    let p = parse(C2_JSON);
+    let v = parse(V2_JSON);
+    assert_eq!(p.trace_width, v.trace_width, "same layout");
+    assert_eq!(p.constraints.len(), v.constraints.len(), "same shape");
+    assert_ne!(
+        &p.constraints[..42],
+        &v.constraints[..42],
+        "the Pallas and Vesta rows reduce at the same prime — one AddGadget is wired wrong"
+    );
+    // …and everything ABOVE the row template is curve-independent, which is what makes the
+    // layout one object rather than two.
+    assert_eq!(
+        &p.constraints[42..],
+        &v.constraints[42..],
+        "the routing and threads must not depend on the curve"
+    );
+}
+
 // =============================================================================================
 // (b) the shape the manifests declare is the shape the layout predicts
 // =============================================================================================
 
 #[test]
 fn the_manifests_declare_the_fused_layout() {
-    for (json, c, n) in [(C2_JSON, 2usize, 27usize), (C3_JSON, 3, 54)] {
+    for (json, c, n) in [
+        (C2_JSON, 2usize, 27usize),
+        (C3_JSON, 3, 54),
+        (V2_JSON, 2, 27),
+    ] {
         let sh = shape_of(&parse(json));
         assert_eq!(sh.c, c, "doublings per window must be c");
         assert_eq!(sh.n, n);
@@ -427,7 +499,10 @@ fn the_manifests_declare_the_fused_layout() {
         );
         // every declared generator is a real curve point, and distinct from its neighbours.
         for (i, g) in sh.gens.iter().enumerate() {
-            assert!(g.on_curve(), "SRS generator {i} is off-curve");
+            assert!(
+                on_curve_at(&sh.m, g),
+                "SRS generator {i} is off-curve for this descriptor's curve"
+            );
         }
         assert_ne!(sh.gens[0], sh.gens[1]);
         // every declared digit is a real c-bit digit (`coverManifest_digits_are_c_bit`).
@@ -445,7 +520,11 @@ fn the_manifests_declare_the_fused_layout() {
 
 #[test]
 fn the_honest_bucketed_msm_proves_and_verifies() {
-    for (json, label) in [(C2_JSON, "c=2, n=27"), (C3_JSON, "c=3, n=54")] {
+    for (json, label) in [
+        (C2_JSON, "pallas c=2, n=27"),
+        (C3_JSON, "pallas c=3, n=54"),
+        (V2_JSON, "VESTA/Step c=2, n=27"),
+    ] {
         let desc = parse(json);
         let sh = shape_of(&desc);
         let (trace, pis) = honest_trace(&sh);
@@ -459,7 +538,7 @@ fn the_honest_bucketed_msm_proves_and_verifies() {
             z: read_field(trace.last().unwrap(), TOTX + 2 * NUM_LIMBS),
         };
         assert!(
-            proj_eq(&want, &got),
+            proj_eq_at(&sh.m, &want, &got),
             "[{label}] the bucketed trace disagrees with the term-by-term sum"
         );
 
@@ -491,7 +570,11 @@ fn the_honest_bucketed_msm_proves_and_verifies() {
 
 #[test]
 fn a_forged_commitment_is_refused() {
-    for (json, label) in [(C2_JSON, "c=2"), (C3_JSON, "c=3")] {
+    for (json, label) in [
+        (C2_JSON, "pallas c=2"),
+        (C3_JSON, "pallas c=3"),
+        (V2_JSON, "VESTA/Step c=2"),
+    ] {
         let desc = parse(json);
         let sh = shape_of(&desc);
         let (trace, pis) = honest_trace(&sh);
@@ -502,9 +585,9 @@ fn a_forged_commitment_is_refused() {
             y: read_field(trace.last().unwrap(), TOTX + NUM_LIMBS),
             z: read_field(trace.last().unwrap(), TOTX + 2 * NUM_LIMBS),
         };
-        let forged = rcb_add(&honest, &sh.gens[0]);
+        let forged = complete_add(&sh.m, &honest, &sh.gens[0]);
         assert!(
-            !proj_eq(&honest, &forged),
+            !proj_eq_at(&sh.m, &honest, &forged),
             "the forgery must move the point"
         );
 
@@ -572,7 +655,7 @@ fn a_substituted_real_generator_is_refused() {
         .find(|&i| trace[i][ISTERM].as_u32() == 1 && trace[i][GIDX].as_u32() == 0)
         .expect("a term row consuming generator 0");
     let substitute = sh.gens[1];
-    assert!(substitute.on_curve() && substitute != sh.gens[0]);
+    assert!(on_curve_at(&sh.m, &substitute) && substitute != sh.gens[0]);
     put_field(&mut trace[victim], GENX, &substitute.x);
     put_field(&mut trace[victim], GENX + NUM_LIMBS, &substitute.y);
     put_field(&mut trace[victim], GENX + 2 * NUM_LIMBS, &substitute.z);

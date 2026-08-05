@@ -30,9 +30,10 @@ refuses a non-power-of-two base trace and a permutation manifest's length IS the
 -/
 import Dregg2.Circuit.Emit.PastaMsmBucketed
 import Dregg2.Circuit.Emit.MinaWrapSrsG
+import Dregg2.Circuit.Emit.MinaStepSrsG
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
-open Dregg2.Circuit.Emit.PastaMsmBucketed (bucketedRowDesc)
+open Dregg2.Circuit.Emit.PastaMsmBucketed (bucketedRowDesc bucketedRowDescVesta)
 
 /-- The demonstration scalars: reproducible, no randomness in a build artifact. ⚠ REDUCED BELOW
 `2 ^ (c · W)` — a scalar wider than the windows cover would have its top bits silently dropped by
@@ -54,5 +55,14 @@ def main (args : List String) : IO Unit := do
   let nbits := (args[1]?).bind String.toNat? |>.getD 4
   let c     := (args[2]?).bind String.toNat? |>.getD 2
   let w     := Dregg2.Circuit.Emit.PastaMsmBucketed.windowsOf nbits c
-  IO.println (emitVmJson2
-    (bucketedRowDesc n nbits c Dregg2.Circuit.Emit.MinaWrapSrsG.SRS_G (SCAL n (2 ^ (c * w)))))
+  let scal  := SCAL n (2 ^ (c * w))
+  -- ⚑ THE CURVE IS PART OF THE COMMAND, because it is part of the object. `vesta` takes the
+  -- STEP/Tick generators (`MinaStepSrsG`, the 65,536 points `accumulator_check` runs against);
+  -- anything else takes the WRAP/Tock ones. Emitting the wrong pair is a silent wrong-curve proof,
+  -- so the generator list is chosen HERE, next to the gadget, and never defaulted.
+  if args[3]? == some "vesta" then
+    IO.println (emitVmJson2
+      (bucketedRowDescVesta n nbits c Dregg2.Circuit.Emit.MinaStepSrsG.SRS_G scal))
+  else
+    IO.println (emitVmJson2
+      (bucketedRowDesc n nbits c Dregg2.Circuit.Emit.MinaWrapSrsG.SRS_G scal))

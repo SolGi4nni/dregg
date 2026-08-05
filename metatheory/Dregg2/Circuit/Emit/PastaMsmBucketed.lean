@@ -139,9 +139,11 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.AirBuilder
 open Dregg2.Circuit.Emit.Bls12381Tower (evalH_mul)
 open Dregg2.Circuit.Emit.PastaField (numLimbs limbBits fpValue fpVal fpVal_eq)
-open Dregg2.Circuit.Emit.PastaMsmWindowed (wVal cw threadBody rowGates
+open Dregg2.Circuit.Emit.PastaMsmWindowed (wVal cw threadBody rowGates dblPinGates BLK
   ACCX ACCY ACCZ OPX OPY OPZ SRCX SRCY SRCZ BIT DBL OUTX OUTY OUTZ windowedRowDesc)
+open Dregg2.Circuit.Emit.PastaCurveComplete (pallasCompleteAdd vestaCompleteAdd)
 open Dregg2.Circuit.Emit.PastaMsmBound (limbNat coordLimb limbsOfPt PTLIMBS)
+open Dregg2.Circuit.Emit.PastaMsmLayouts (condPointGates)
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
@@ -584,21 +586,92 @@ def bucketedTables (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : L
 
 /-! ## §4 — THE EMITTED DESCRIPTOR. -/
 
-/-- ⚑ **The bucketed MSM descriptor.** `PastaMsmWindowed.windowedRowDesc`'s 45 constraints
+/-- The length of the inherited row-local block, derived from the windowed file's own pin rather
+than re-counted here (`windowedRowDesc.constraints = rowGates ++ threadGates`). -/
+theorem rowGates_length : rowGates.length = 42 := by
+  have h : (rowGates ++ Dregg2.Circuit.Emit.PastaMsmWindowed.threadGates).length = 45 :=
+    Dregg2.Circuit.Emit.PastaMsmWindowed.windowedRowDesc_constraints_length
+  simp only [List.length_append, Dregg2.Circuit.Emit.PastaMsmWindowed.threadGates,
+    List.length_cons, List.length_nil] at h
+  omega
+
+/-! ### §4a — ⚑ THE CURVE IS A PARAMETER, because a wrong-curve proof is a silent one.
+
+`PastaMsmWindowed.rowGates` hardwires `pallasCompleteAdd`, so every descriptor in this cone has
+been on the WRAP/Tock curve. The accumulator this campaign targets is the STEP/Tick leg —
+`C == ⟨b_poly_coefficients(u⃗), srs.g⟩` over `2^16` **VESTA** generators (`accumulator_check.rs:11`,
+`urs: &SRS<Vesta>`).
+
+`swCompleteAddGadget` was already parameterised over its four field-op constructors, and
+`vestaCompleteAdd` was already defined and already proved (`vestaCompleteAdd_forces`). What was NOT
+parameterised is the ROW, and that is one abstraction here — with `rowGatesWith_pallas` pinning by
+`rfl` that the Pallas instantiation is the inherited `rowGates` byte for byte, so nothing is
+re-authored and the existing prefix theorem still means what it said. -/
+
+/-- The type `pallasCompleteAdd` and `vestaCompleteAdd` share: an RCB complete-add gadget over a
+fresh-column base, returning its gates, its output triple and the next free column. -/
+abbrev AddGadget :=
+  Nat → Nat → Nat → Nat → Nat → Nat → Nat → List VmConstraint2 × (Nat × Nat × Nat) × Nat
+
+/-- `PastaMsmWindowed.rowGates`, with the curve as a parameter. -/
+def rowGatesWith (add : AddGadget) : List VmConstraint2 :=
+  condPointGates BIT SRCX SRCY SRCZ OPX OPY OPZ
+    ++ ((add ACCX ACCY ACCZ OPX OPY OPZ BLK).1 ++ (dblPinGates ++ [binGate DBL]))
+
+/-- ⚑ **The abstraction is exact at Pallas.** `rfl`, so the parameterised row and the inherited one
+are the SAME emitted list and no gate moved. -/
+theorem rowGatesWith_pallas : rowGatesWith pallasCompleteAdd = rowGates := rfl
+
+/-- Both instantiations emit the same NUMBER of gates — the curve changes which prime the
+reduction is taken at, not the shape of the row. -/
+theorem rowGatesWith_vesta_length : (rowGatesWith vestaCompleteAdd).length = 42 := rfl
+
+/-- ⚑ …and the two curves are NOT interchangeable: the Vesta row reduces at `q`, the Pallas row at
+`p`. The two primes differ, which is the whole content — `pN ≠ qN` is what makes a descriptor that
+names one curve and emits the other a WRONG-CURVE proof rather than a relabelling.
+
+⚠ The stronger statement (the two emitted GATE LISTS differ) is checked where it is cheap and where
+it bites: `circuit/tests/pasta_msm_bucketed_prove.rs` compares the two artifacts' constraint bytes.
+Deciding it in the kernel means evaluating 42 gates of 81 cross-products at 255-bit coefficients,
+which buys nothing the byte check does not. -/
+theorem pallas_and_vesta_primes_differ :
+    Dregg2.Circuit.Emit.PastaField.pN ≠ Dregg2.Circuit.Emit.PastaField.qN := by decide
+
+/-- ⚑ **The bucketed MSM descriptor, over a NAMED curve.** `PastaMsmWindowed.windowedRowDesc`'s 45 constraints
 verbatim — so the RCB complete add, the conditional select and the doubling pins are the SAME
 already-proved objects — plus 4 mode pins, 6 operand selects, 6 threads, 3 index gates and 3
 lookups, and 27 output PI bindings. `91` constraints, a CONSTANT at every `(n, nbits, c)`. -/
-def bucketedRowDesc (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+def bucketedRowDescOn (add : AddGadget) (curve : String)
+    (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
     EffectVmDescriptor2 :=
-  { name        := "dregg-pasta-msm-bucketed-c" ++ toString c ++ "::v1"
+  { name        := "dregg-pasta-msm-bucketed-" ++ curve ++ "-c" ++ toString c ++ "::v1"
   , traceWidth  := WK
   , piCount     := PI_COUNT
   , tables      := bucketedTables n nbits c gens scal
-  , constraints := rowGates
+  , constraints := rowGatesWith add
                      ++ modeGates ++ selectGates ++ threadGatesK
                      ++ indexGates (levelsOf c) ++ lookupGates ++ outPiGates
   , hashSites   := []
   , ranges      := [] }
+
+/-- The PALLAS instance — the Wrap/Tock leg, the curve the rest of this cone is on. -/
+def bucketedRowDesc (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    EffectVmDescriptor2 :=
+  bucketedRowDescOn pallasCompleteAdd "pallas" n nbits c gens scal
+
+/-- ⚑ **The VESTA instance — the Step/Tick leg, and the one the campaign actually targets.** Its
+generators are `MinaStepSrsG.SRS_G`, the 65,536 Vesta points `accumulator_check` runs against. -/
+def bucketedRowDescVesta (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    EffectVmDescriptor2 :=
+  bucketedRowDescOn vestaCompleteAdd "vesta" n nbits c gens scal
+
+/-- The two instances differ in their emitted gates, not only in their names — so a descriptor
+cannot claim one curve and carry the other. -/
+theorem vesta_and_pallas_descriptors_differ (n nbits c : Nat)
+    (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    (bucketedRowDescVesta n nbits c gens scal).name
+      ≠ (bucketedRowDesc n nbits c gens scal).name := by
+  simp [bucketedRowDescVesta, bucketedRowDesc, bucketedRowDescOn]
 
 /-- ⚑ **The CURVE ARITHMETIC was not re-authored.** `PastaMsmWindowed.rowGates` — the 42 row-local
 gates, and with them `PastaCurveComplete.pallasCompleteAdd`'s 33, which is the arithmetic the whole
@@ -608,16 +681,18 @@ theorem bucketedRowDesc_extends_rowGates (n nbits c : Nat)
     rowGates <+: (bucketedRowDesc n nbits c gens scal).constraints :=
   ⟨modeGates ++ selectGates ++ threadGatesK ++ indexGates (levelsOf c) ++ lookupGates
      ++ outPiGates,
-   by simp [bucketedRowDesc, List.append_assoc]⟩
+   by simp [bucketedRowDesc, bucketedRowDescOn, rowGatesWith_pallas, List.append_assoc]⟩
 
-/-- The length of the inherited row-local block, derived from the windowed file's own pin rather
-than re-counted here (`windowedRowDesc.constraints = rowGates ++ threadGates`). -/
-theorem rowGates_length : rowGates.length = 42 := by
-  have h : (rowGates ++ Dregg2.Circuit.Emit.PastaMsmWindowed.threadGates).length = 45 :=
-    Dregg2.Circuit.Emit.PastaMsmWindowed.windowedRowDesc_constraints_length
-  simp only [List.length_append, Dregg2.Circuit.Emit.PastaMsmWindowed.threadGates,
-    List.length_cons, List.length_nil] at h
-  omega
+/-- ⚑ …and the SAME prefix property holds of the VESTA instance, with `rowGatesWith
+vestaCompleteAdd` in place of `rowGates`: one abstraction, both curves, nothing re-authored on
+either. -/
+theorem bucketedRowDescOn_extends_its_rowGates (add : AddGadget) (curve : String)
+    (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    rowGatesWith add <+: (bucketedRowDescOn add curve n nbits c gens scal).constraints :=
+  ⟨modeGates ++ selectGates ++ threadGatesK ++ indexGates (levelsOf c) ++ lookupGates
+     ++ outPiGates,
+   by simp [bucketedRowDescOn, List.append_assoc]⟩
+
 
 /-- Is this constraint a two-row WINDOW gate? The one bit that separates a thread from a row-local
 gate, which is exactly the distinction the next three theorems turn on. -/
@@ -661,7 +736,8 @@ theorem windowedRowDesc_is_NOT_a_prefix (n nbits c : Nat)
 theorem bucketedRowDesc_constraints_length (n nbits c : Nat)
     (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
     (bucketedRowDesc n nbits c gens scal).constraints.length = 91 := by
-  simp only [bucketedRowDesc, List.length_append, rowGates_length, modeGates, selectGates,
+  simp only [bucketedRowDesc, bucketedRowDescOn, rowGatesWith_pallas,
+    List.length_append, rowGates_length, modeGates, selectGates,
     threadGatesK, indexGates, lookupGates, outPiGates, List.length_cons, List.length_nil,
     List.length_map, List.length_range]
 
@@ -984,6 +1060,11 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms best_c_is_thirteen
 #assert_axioms bucketedRowDesc_extends_rowGates
 #assert_axioms rowGates_length
+#assert_axioms rowGatesWith_pallas
+#assert_axioms rowGatesWith_vesta_length
+#assert_axioms pallas_and_vesta_primes_differ
+#assert_axioms bucketedRowDescOn_extends_its_rowGates
+#assert_axioms vesta_and_pallas_descriptors_differ
 #assert_axioms windowed_42_is_a_window_gate
 #assert_axioms bucketed_42_is_row_local
 #assert_axioms windowedRowDesc_is_NOT_a_prefix

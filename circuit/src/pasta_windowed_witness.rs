@@ -364,6 +364,57 @@ pub fn sub_mod_p(x: &U256, y: &U256) -> (U256, u8) {
     }
 }
 
+// -------------------------------------------------------------------------------------------
+// ⚑ THE SAME FOUR OPS AT AN ARBITRARY PASTA PRIME.
+//
+// `divrem_by` was already modulus-generic; only its callers were not. These four exist so that
+// `rcb_add_witness_at` can be ONE sequence serving BOTH curves — Pallas (`p`, the Wrap/Tock
+// commitment curve) and Vesta (`q`, the Step/Tick curve the deferred accumulator lives on,
+// `accumulator_check.rs:11`). The `_p` forms above are now thin wrappers, so there is no second
+// transcription of Algorithm 7 to drift against the first.
+// -------------------------------------------------------------------------------------------
+
+/// `(x·y mod m, x·y div m)` — the reduced product and the `f*MulHead` quotient witness, at `m`.
+pub fn mul_mod_at(m: &U256, x: &U256, y: &U256) -> (U256, U256) {
+    debug_assert!(*x < *m && *y < *m);
+    let (q, r) = divrem_by(&mul_wide(x, y), m);
+    (r, q)
+}
+
+/// `(k·x mod m, k·x div m)` — the reduced constant-multiple and the `f*SMulHead` quotient, at `m`.
+pub fn smul_mod_at(m: &U256, k: u64, x: &U256) -> (U256, U256) {
+    debug_assert!(*x < *m);
+    let (q, r) = divrem_by(&mul_wide(&U256::from_u64(k), x), m);
+    (r, q)
+}
+
+/// `((x+y) mod m, carry)` — `carry = 1` exactly when `x + y ≥ m`, the `f*AddHead` witness.
+pub fn add_mod_at(m: &U256, x: &U256, y: &U256) -> (U256, u8) {
+    debug_assert!(*x < *m && *y < *m);
+    let (sum, overflow) = x.adc(y);
+    debug_assert!(!overflow, "x + y < 2m < 2^256");
+    if sum >= *m {
+        let (r, borrow) = sum.sbb(m);
+        debug_assert!(!borrow);
+        (r, 1)
+    } else {
+        (sum, 0)
+    }
+}
+
+/// `((x−y) mod m, borrow)` — `borrow = 1` exactly when `x < y`, the `f*SubHead` witness.
+pub fn sub_mod_at(m: &U256, x: &U256, y: &U256) -> (U256, u8) {
+    debug_assert!(*x < *m && *y < *m);
+    let (diff, borrow) = x.sbb(y);
+    if borrow {
+        let (r, overflow) = diff.adc(m);
+        debug_assert!(overflow, "wrapped difference plus m re-crosses 2^256");
+        (r, 1)
+    } else {
+        (diff, 0)
+    }
+}
+
 /// `x⁻¹ mod p` for `0 < x < p`, by the binary extended Euclid (Kaliski) algorithm — `O(512)`
 /// shift/add steps, against `O(2^255)` for a Fermat exponentiation through [`mul_mod_p`].
 ///
@@ -546,8 +597,25 @@ impl RcbWitness {
 /// The `let` sequence below is line-for-line the 33-element gate list of `swCompleteAddGadget`;
 /// the `q`/`b` index on each line is the witness slot that gate names.
 pub fn rcb_add_witness(p1: &Pt, p2: &Pt) -> RcbWitness {
+    rcb_add_witness_at(&P_PASTA, p1, p2)
+}
+
+/// ⚑ **[`rcb_add_witness`] AT AN ARBITRARY PASTA PRIME** — the one transcription of Algorithm 7,
+/// serving both curves. `m = P_PASTA` is Pallas (Wrap/Tock); `m = Q_PASTA` is **Vesta**, the
+/// Step/Tick curve the deferred accumulator lives on, and the operand of
+/// `PastaMsmBucketed.bucketedRowDescVesta`.
+///
+/// ⚠ The gate list this fills is `swCompleteAddGadget` instantiated at the MATCHING cores —
+/// `fp*Core` at `p`, `fq*Core` at `q`. Filling a Vesta trace against a Pallas descriptor produces
+/// a witness the prover refuses, which is the failure mode you want: the curves are not
+/// interchangeable and nothing here silently reduces at the wrong prime.
+pub fn rcb_add_witness_at(m: &U256, p1: &Pt, p2: &Pt) -> RcbWitness {
     let (x1, y1, z1) = (p1.x, p1.y, p1.z);
     let (x2, y2, z2) = (p2.x, p2.y, p2.z);
+    let mul_mod_p = |a: &U256, b: &U256| mul_mod_at(m, a, b);
+    let add_mod_p = |a: &U256, b: &U256| add_mod_at(m, a, b);
+    let sub_mod_p = |a: &U256, b: &U256| sub_mod_at(m, a, b);
+    let smul_mod_p = |k: u64, a: &U256| smul_mod_at(m, k, a);
 
     let (t0a, q0) = mul_mod_p(&x1, &x2); //  1  mul  X1 X2   -> t0a  q0
     let (t1a, q1) = mul_mod_p(&y1, &y2); //  7  mul  Y1 Y2   -> t1a  q1
@@ -652,13 +720,20 @@ pub fn read_point(row: &[BabyBear], base_x: usize, base_y: usize, base_z: usize)
 /// `bit == true` (the Lean `dblPinGates` pin exactly that); this is asserted rather than silently
 /// repaired, because a mismatch means the SCHEDULE is wrong.
 pub fn fill_row(acc: &Pt, src: &Pt, bit: bool, dbl: bool) -> Vec<BabyBear> {
+    fill_row_at(&P_PASTA, acc, src, bit, dbl)
+}
+
+/// ⚑ **[`fill_row`] AT AN ARBITRARY PASTA PRIME.** Same cells, same offsets; only the modulus the
+/// intermediates and their quotient/carry witnesses are reduced at changes. Pair it with the
+/// descriptor emitted at the MATCHING curve.
+pub fn fill_row_at(m: &U256, acc: &Pt, src: &Pt, bit: bool, dbl: bool) -> Vec<BabyBear> {
     if dbl {
         assert!(src == acc, "a DBL=1 row must have SRC == ACC (dblPinHead)");
         assert!(bit, "a DBL=1 row must have BIT == 1 (dblBitHead)");
     }
     // The selector's output: `condRef bit SRC`.
     let op = if bit { *src } else { Pt::INFINITY };
-    let w = rcb_add_witness(acc, &op);
+    let w = rcb_add_witness_at(m, acc, &op);
 
     let mut row = vec![BabyBear::new(0); TRACE_WIDTH];
     for (idx, v) in w.vals.iter().enumerate() {
