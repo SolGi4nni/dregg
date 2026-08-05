@@ -1187,14 +1187,25 @@ ranges, no carry pins — and that at `p_babybear` that gate holds at every oper
 felt-sound encodings exist: `PastaFieldSound` (8-bit limbs, `SK = 32`, **253** constraints and 190
 declared columns for one multiply) and `PastaAddSubSound` (**160** constraints, 128 declared).
 
-⚑ **BUT THERE IS NO SOUND COMPLETE ADD, AND IT IS NOT MERELY UNBUILT — IT IS A TYPE OBSTRUCTION.**
-`swCompleteAddGadget` takes gate CONSTRUCTORS (`Nat → Nat → Nat → Nat → VmConstraint2`); the sound
-replacements are `EffectAir`s lowered through `EffectLower.lowerAir` into 253/160-constraint
-DESCRIPTORS. They cannot be passed to the gadget. A sound complete add is a new emitter, and the
-`AddGadget` parameter §4a introduces does NOT reach it — §4a swaps the PRIME, not the ENCODING.
+⚑ **THE TYPE OBSTRUCTION IS BROKEN AND THE SOUND COMPLETE ADD EXISTS (2026-08-05).** This section
+said: *"`swCompleteAddGadget` takes gate CONSTRUCTORS (`Nat → Nat → Nat → Nat → VmConstraint2`); the
+sound replacements are `EffectAir`s lowered through `EffectLower.lowerAir` … They cannot be passed
+to the gadget."* That reading was right about the types and one bullet short of the reason: the
+blocking leg is not arity, it is that five of a sound multiply's 68 legs are `AirLeg.limbs` — range
+LOOKUPS against a table the AIR must DECLARE — and the gadget's return type has no channel for a
+`TableDef`. `Dregg2.Circuit.Emit.PastaCurveSound` widens the core's return type to `List AirLeg`,
+hoists the tables to the composed AIR, and runs `lowerAir` once; `pallasCompleteAddSound_forces` and
+`vestaCompleteAddSound_forces` chain the 33 leg blocks' DEPLOYED (`P ∣ body`) satisfaction into the
+RCB formula mod the real prime.
 
-The price is recorded in the tree, and this file restates it as theorems because of where it
-currently lives:
+⚑ **AND THE `smul` GAP BELOW IS CLOSED, WHICH MOVES THE PRICE.** `PastaCurveSound.smulCore` is a
+real constant-multiply: LINEAR, so its reduction quotient is ONE column rather than a 32-limb block,
+and it costs `96` constraints and `32` columns — not the multiply's `189` and `94`. The estimate
+below priced it at the multiply's shape "by assumption"; the assumption was worth **93 constraints
+and 62 columns per constant-multiply**, and §6d′ replaces the estimate with the measurement.
+
+The estimates that were on record, and this file restates them as theorems because of where they
+lived:
 
 ⚠ **`Dregg2.lean`'s import comment carries `33 → 4,470` constraints (135×) and `442 → 2,980`
 columns (6.7×) for one complete add, and that is the ONLY place those numbers exist** — no theorem,
@@ -1239,27 +1250,93 @@ theorem sound_rcb_readings_disagree :
 def UNSOUND_RCB_GATES : Nat := 33
 
 /-- ⚑ **The sound complete add is between 117× and 136× the emitted one.** Both bounds, because
-one of the two marginals is wrong and this file does not know which. -/
+one of the two marginals is wrong and this file does not know which. ⚑ §6d′ settles it: the
+MEASURED figure is `4 476`, so `136×` is the live bound and `117×` was never reachable. -/
 theorem sound_rcb_is_over_a_hundredfold :
     117 * UNSOUND_RCB_GATES ≤ soundRcbConstraintsLow
     ∧ soundRcbConstraintsHigh ≤ 136 * UNSOUND_RCB_GATES := by
   constructor <;> decide
 
-/-- ⚑ **THE LAYOUT ON THE SOUND GATE.** `Dregg2.lean` prices the COLUMN blow-up at `442 → 2,980`
-(6.7×). A row is one complete add, so the width goes with it: `612 → ~3,150`, and the committed
-area of the full-width instance goes from `9.03 · 10^8` cells to `4.65 · 10^9` — **18.6 GB of main
-trace before any low-degree extension**, against `3.6 GB` on the emitted gate.
+/-! ### §6d′ — ⚑ THE MEASUREMENT, and what it does to the estimate.
 
-The ROW count does not move: it is an algorithmic quantity and `fused_at_step` is unchanged. What
-moves is the cost OF a row, and it moves by 5.1×. -/
-def SOUND_ROW_WIDTH : Nat := 3150
+Every number above is an ESTIMATE assembled from per-op marginals. `PastaCurveSound` builds the
+object, and `pallasCompleteAddSoundDesc_constraint_count` reads the price off it:
+
+    MEASURED   4 476 constraints,  3 048 declared columns   (both curves)
+    estimated  4 470 constraints,  2 856 + 192 = 3 048      ← after the two corrections
+
+⚠ **The estimate lands within 0.13% BY TWO COMPENSATING ERRORS OF OPPOSITE SIGN, and that is the
+reading a single close number hides.** `soundRcbConstraintsHigh = 14·189 + 19·96` prices BOTH
+constant-multiplies at the multiply's marginal (over by `2 · (189 − 96) = 186`) and omits the six
+INPUT limb blocks entirely (`6 · 32 = 192`). `192 − 186 = +6`. A reader who took `4 470` as
+confirmed by `4 476` would have carried both errors forward.
+
+⚑ **AND `sound_rcb_readings_disagree`'s 13.6% spread is SETTLED IN FAVOUR OF `High`.** `96` is the
+right marginal for an add/sub and `64` is not: the result block's 32 range lookups are what the NEXT
+op's `hx`/`hy` hypothesis consumes, so dropping them leaves `addsub_gates_force_congruence` with no
+premise. `SOUND_ADDSUB_FILE` is retained below only as the refuted reading.
+
+⚑ **THE COLUMN FIGURE IS THE ONE THAT MOVED.** `2 980 → 2 856`, `124 = 2 · 62` fewer — exactly the
+two constant-multiplies' 62-wide carry blocks that a linear identity does not need. So
+`SOUND_ROW_WIDTH = 3 150` is HIGH by 102 and §7.1's committed-area figure moves with it. -/
+
+/-- The MEASURED marginal of a sound constant-multiply — `PastaCurveSound.SOUND_SMUL_MARGINAL`,
+restated here so §6d's arithmetic has it. -/
+def SOUND_SMUL_MEASURED : Nat := 96
+/-- The six input limb blocks a STANDALONE row declares and a CHAINED row does not. -/
+def SOUND_INPUT_BLOCKS : Nat := 192
+/-- The measured price of one standalone sound RCB complete add. -/
+def soundRcbConstraintsMeasured : Nat :=
+  SOUND_INPUT_BLOCKS + 12 * SOUND_MUL_MARGINAL + 2 * SOUND_SMUL_MEASURED
+    + 19 * SOUND_ADDSUB_DREGG2
+
+/-- ⚑ **THE MEASURED FIGURE, reproduced from its own inputs**, and equal to
+`PastaCurveSound.pallasCompleteAddSoundDesc_constraint_count`. -/
+theorem sound_rcb_measured : soundRcbConstraintsMeasured = 4476 := by decide
+
+/-- ⚑ **THE TWO ERRORS, AND THAT THEY CANCEL TO 6.** Named because the near-agreement is the trap. -/
+theorem the_estimate_is_right_for_two_wrong_reasons :
+    soundRcbConstraintsHigh = 4470
+      ∧ 2 * (SOUND_MUL_MARGINAL - SOUND_SMUL_MEASURED) = 186
+      ∧ SOUND_INPUT_BLOCKS = 192
+      ∧ soundRcbConstraintsHigh + SOUND_INPUT_BLOCKS
+          - 2 * (SOUND_MUL_MARGINAL - SOUND_SMUL_MEASURED) = soundRcbConstraintsMeasured := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE LAYOUT ON THE SOUND GATE, MEASURED.**
+
+⚠ This was `3 150`, an estimate from `Dregg2.lean`'s `442 → 2 980` column figure. The BUILT row is
+`PastaCurveSound.RCB_WIDTH = 3 048` — `102` narrower, because the estimate charged both constant-
+multiplies for a multiply-shaped `32 + 62` witness where a linear identity needs `1 + 31`. The
+estimate is DELETED rather than kept beside the measurement.
+
+A row is one complete add, so the committed area of the full-width instance is
+`1 474 800 × 3 048 = 4.495 · 10^9` cells — **~18.0 GB of main trace before any low-degree
+extension**, against `9.03 · 10^8` cells (~3.6 GB) on the emitted gate.
+
+⚑ **AND SAY THE SMALL NUMBER PLAINLY: the `smul` repair moves this by 3.2%, not by an order of
+magnitude.** `18.6 → 18.0 GB`. The area is a price on the ENCODING, and the encoding is what
+`SB = 8, SK = 32` fixes; closing an assumed price on two of thirty-three ops was never going to move
+it far, and the honest report of the repair is the constraint count (`4 470 → 4 476`, two
+compensating errors corrected) plus the fact that a curve row now FORCES something at all.
+
+⚠ **The ratio it was reported at is also wrong in the flattering direction.**
+`sound_area_is_five_times_the_emitted` claimed `5× < ratio < 6×`; at the measured width it is
+`3 048 / 612 = 4.98×`, so the theorem below is the corrected one and the old statement is FALSE.
+That is the ratchet doing its job — the measurement made a named theorem go red. -/
+def SOUND_ROW_WIDTH : Nat := 3048
 def soundAreaCells : Nat := fusedAdds STEP_SRS FULL_BITS BEST_C * SOUND_ROW_WIDTH
 def emittedAreaCells : Nat := fusedAdds STEP_SRS FULL_BITS BEST_C * WK
 
-/-- The sound layout's committed area, and the factor it costs over the emitted one. -/
-theorem sound_area_is_five_times_the_emitted :
-    5 * emittedAreaCells < soundAreaCells ∧ soundAreaCells < 6 * emittedAreaCells := by
-  constructor <;> decide
+/-- ⚑ **The sound layout's committed area is between 4× and 5× the emitted one** — `4.98×`, which
+is BELOW the `5× < r < 6×` the estimate reported. Both bounds stated so the correction is a fact
+about the objects and not a sentence. -/
+theorem sound_area_is_just_under_five_times_the_emitted :
+    4 * emittedAreaCells < soundAreaCells
+      ∧ soundAreaCells < 5 * emittedAreaCells
+      ∧ SOUND_ROW_WIDTH = 3048
+      ∧ 3150 - SOUND_ROW_WIDTH = 102 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ …and the row count is IDENTICAL, which is the point: soundness is a price on the row, not on
 the algorithm. Every layout comparison in §0b survives the correction unchanged. -/
@@ -1336,17 +1413,22 @@ a box proves it. The four-way cut `PastaMsmSliced` exists for is therefore still
 real; what this file retracts is the claim that the ceiling FORCES a cut, and the claim that a
 bucketed layout is inexpressible.
 
-**7.2 — the gate these rows are denominated in is the UNSOUND one, unchanged.** ⚑ §6d now prices
-it — and finds the tree's only statement of that price is an import comment whose two inputs
-disagree by 13.6%.
+**7.2 — the gate these rows are denominated in is the UNSOUND one, unchanged.** ⚑ §6d′ now prices
+the sound alternative FROM THE BUILT OBJECT rather than from an estimate.
 Every row here is one RCB complete add over `PastaField.fpMulCore`: one degree-2 gate of 81
 cross-products, no limb ranges, no carry pins, `pastaLimbRange` emitted nowhere — so at
 `p_babybear` its nine quotient limbs are free and the gate holds at every operand triple
-(`PastaField` §6.4). A multiply sound at BabyBear is ≈`10^3` constraints, taking a complete add
-from 33 to ≈`1.6 · 10^4`. **So `1,474,800` rows is the geometry of the unsound object**, exactly as
-`PastaMsmSliced`'s `1,056,896` is. That does not soften the comparison — every layout in the table
-is priced against the same gate — but it does mean the sound object is ~`10^3` further out, and no
-layout choice reaches it.
+(`PastaField` §6.4).
+
+⚠ **This paragraph used to say a sound multiply is ≈`10^3` constraints, taking a complete add from
+33 to ≈`1.6 · 10^4`. Both figures are RETIRED and both were high.** They were estimates for a
+13-bit/20-limb shape nobody built. The built objects are `253` for a standalone multiply and
+**`4 476`** for a standalone complete add (`PastaCurveSound`, proved and measured on both curves) —
+`135.6×` the emitted row, not `~10^3×`. **So `1,474,800` rows is still the geometry of the unsound
+object**, exactly as `PastaMsmSliced`'s `1,056,896` is, and the sound object is `~10^2` further out
+rather than `~10^3`. That does not soften the comparison — every layout in the table is priced
+against the same gate — but the distance to the sound one is two orders, not three, and no layout
+choice reaches it either way.
 
 **7.3 — ⚑ THE DIGITS ARE DECLARED, AND "DECLARED" HERE DOES NOT MEAN "FREE". A correction.**
 
@@ -1490,7 +1572,9 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms sound_rcb_reproduces_the_in_tree_figure
 #assert_axioms sound_rcb_readings_disagree
 #assert_axioms sound_rcb_is_over_a_hundredfold
-#assert_axioms sound_area_is_five_times_the_emitted
+#assert_axioms sound_area_is_just_under_five_times_the_emitted
+#assert_axioms sound_rcb_measured
+#assert_axioms the_estimate_is_right_for_two_wrong_reasons
 #assert_axioms sound_and_emitted_share_a_row_count
 #assert_axioms deployed_row_ceiling
 #assert_axioms lb2_row_ceiling

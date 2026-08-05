@@ -235,11 +235,31 @@ in the unsound `fpMulCore`**, where `MinaWrapXiEndoLift` and every descriptor in
 `MinaWrapCommitStages` are `PastaFieldSound`. Nothing here repairs that, nothing here spreads it,
 and the weld above does not make the aggregate's arithmetic sound — it makes its SCALARS derived.
 
-The blocker is a TYPE obstruction and not a cost: `swCompleteAddGadget` takes gate CONSTRUCTORS
-while `PastaFieldSound`/`PastaAddSubSound` are `EffectAir`s lowered through `EffectLower.lowerAir`,
-so no sound complete-add and no sound `smul` core exist in this tree at all. ⚑ **When that bridge
-lands, this weld carries over unchanged** — §2 reads `T_COVER`'s manifest and §1 reads the shared PI
-block, and neither mentions the row template's multiply. -/
+⚑ **THE BLOCKER IS RETIRED (2026-08-05), AND THIS WELD DID CARRY OVER UNCHANGED.** It read:
+
+> *"The blocker is a TYPE obstruction and not a cost: `swCompleteAddGadget` takes gate CONSTRUCTORS
+> while `PastaFieldSound`/`PastaAddSubSound` are `EffectAir`s lowered through
+> `EffectLower.lowerAir`, so no sound complete-add and no sound `smul` core exist in this tree at
+> all."*
+
+The type reading was right and one bullet short of the reason. The blocking leg is not arity: it is
+that five of a sound multiply's 68 legs are `AirLeg.limbs` — range LOOKUPS against a table the AIR
+must DECLARE — and `swCompleteAddGadget`'s return type has no channel for a `TableDef`
+(`pallasCompleteAddDesc` carries `tables := []`). So even a widened `… → List VmConstraint2` would
+emit lookups against nothing, and dropping them to fit would drop the SOUNDNESS: the byte-ranges are
+`felt_gates_force_congruence`'s hypotheses, not its packaging.
+
+`Dregg2.Circuit.Emit.PastaCurveSound` is the bridge — a `SoundCore` is a leg block plus a declared
+witness width, the tables are hoisted to the composed AIR, and `lowerAir` runs once. The sound
+`smul` core did not exist at all and now does, at 96 constraints rather than the multiply's 189.
+Both curves: `pallasCompleteAddSound_forces`, `vestaCompleteAddSound_forces`, **4 476 constraints /
+3 048 columns**, `#assert_axioms`-clean, and refusing the nonzero-ℤ-body pole in release
+(`circuit/tests/pasta_curve_row_felt_soundness.rs`).
+
+⚠ **What this does NOT retire is the sentence above it**: the ξ-aggregate's own rows are still
+`fpMulCore`-denominated, because nothing has re-emitted them onto the sound core. The bridge makes
+that a migration rather than an impossibility, and §7.2 of `PastaMsmBucketed` records the standing
+verdict on whether this cone should be migrated at all. -/
 
 #assert_axioms the_shared_boundary_decodes_to_the_polyscale
 #assert_axioms the_cover_rows_are_the_descriptors_own_table
