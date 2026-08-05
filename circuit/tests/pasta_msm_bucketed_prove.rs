@@ -726,3 +726,124 @@ fn a_relabelled_window_is_refused() {
     });
     println!("  [ROUTE ] a relabelled window: REFUSED: {e:?}");
 }
+
+// =============================================================================================
+// (f) ⚑ THE FRI BLOWUP — THIS AIR IS CHIP-FREE, SO lb=2 IS LEGAL FOR IT
+//
+// `IR2_FRI_LOG_BLOWUP = 6` is GLOBAL and stays global: 39 of the 99 parseable by-name goldens pull
+// in the Poseidon2 chip, whose inline degree-7 x⁷ S-box needs a degree-6 quotient that a blowup of
+// 4 cannot carry, so they REFUSE at lb=2 (`fri_blowup_global_knob_survey.rs`, and the correction in
+// `descriptor_ir2.rs`'s `ir2_config` docblock). **This descriptor declares no chip** — three
+// exact-public tables and nothing else — so the question is whether IT survives, and the sweep
+// below RUNS it rather than arguing it.
+//
+// Why it matters more here than anywhere else in the registry: the row ceiling is
+// `TWO_ADICITY (27) − log_blowup`, so `2^21` at lb=6 and `2^25` at lb=2 — 16× the reachable trace
+// height. And the LDE the prover materialises is `2^log_blowup ×` the trace, so the full-width
+// instance's ~3.6 GB of main trace becomes ~14 GB at lb=2 against ~231 GB at lb=6. That is the
+// difference between a box and no box, and it is the ONLY lever on this workload that does not
+// require a different algorithm.
+//
+// ⚠ THE SECURITY PARITY LINE IS HELD, NOT TRADED. Each `(lb, q)` below keeps
+// `q·lb + query_pow ≥ 130` (conjectured) and `q·lb/2 + query_pow ≥ 73` (proven/Johnson) — the same
+// line `ir2_config`'s own docblock names. What moves is prove time, memory and wire; never the
+// claimed security.
+//
+// ⚠ AND THIS LANDS NO GLOBAL CHANGE. `prove_vm_descriptor2_with_config` is `#[doc(hidden)]` and
+// labelled measurement-only as POLICY (it is a genuine prover — it self-verifies before returning).
+// Shipping a real per-descriptor knob is blocked on something else entirely, recorded at
+// `descriptor_ir2.rs`: the recursion path reads `num_queries` from the inner proof structure and
+// never pins it against a configured count, which is masked today only because every child runs 19.
+// That is the finding, and it is not this lane's to fix.
+
+/// The security-parity rungs, as `pasta_sbox_program_proves.rs` uses them.
+const FRI_PARITY: &[(usize, usize)] = &[(6, 19), (3, 39), (2, 57), (1, 114)];
+
+fn config_at(log_blowup: usize, num_queries: usize) -> DreggStarkConfig {
+    create_config_with_fri_full(
+        log_blowup,
+        /* log_final_poly_len */ 0,
+        /* max_log_arity */ 3,
+        num_queries,
+        /* commit_pow */ 0,
+        /* query_pow */ 16,
+    )
+}
+
+#[test]
+fn the_chip_free_bucketed_air_reaches_log_blowup_two() {
+    let desc = parse(V2_JSON);
+    assert!(
+        desc.tables.iter().all(|t| t.id > 9),
+        "a reserved table id would mean a chip after all"
+    );
+    let sh = shape_of(&desc);
+    let (trace, pis) = honest_trace(&sh);
+
+    // the deployed point must reproduce before any other rung means anything.
+    prove_and_verify(&desc, &trace, &pis).expect("cold: the deployed config must prove");
+
+    println!(
+        "\n  FRI sweep on dregg-pasta-msm-bucketed-vesta-c2 ({} rows x {} cols, chip-free):",
+        sh.rows, WK
+    );
+    println!(
+        "  {:>3} {:>4} {:>6} {:>7} {:>10} {:>10} {:>10}",
+        "lb", "q", "conj", "proven", "prove ms", "verify ms", "proof KiB"
+    );
+    let mut reached_lb2 = false;
+    for (lb, q) in FRI_PARITY {
+        let cfg = config_at(*lb, *q);
+        let t0 = Instant::now();
+        let proof = match prove_vm_descriptor2_with_config(
+            &desc,
+            &trace,
+            &pis,
+            &MemBoundaryWitness::default(),
+            &[],
+            &cfg,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("  {lb:>3} {q:>4}   REFUSED AT PROVE: {e}");
+                continue;
+            }
+        };
+        let prove_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let t1 = Instant::now();
+        let verdict = verify_vm_descriptor2_with_config(&desc, &proof, &pis, &cfg);
+        let verify_ms = t1.elapsed().as_secs_f64() * 1e3;
+        let kib = postcard::to_allocvec(&proof).expect("serialize").len() as f64 / 1024.0;
+        match verdict {
+            Ok(()) => {
+                println!(
+                    "  {lb:>3} {q:>4} {:>6} {:>7} {prove_ms:>10.1} {verify_ms:>10.1} {kib:>10.1}",
+                    q * lb + 16,
+                    q * lb / 2 + 16
+                );
+                if *lb == 2 {
+                    reached_lb2 = true;
+                }
+            }
+            Err(e) => println!("  {lb:>3} {q:>4}   REFUSED AT VERIFY: {e:?}"),
+        }
+        // the parity line is a property of the rung, asserted rather than printed and trusted.
+        assert!(
+            q * lb + 16 >= 130,
+            "rung (lb={lb}, q={q}) is below conjectured 130"
+        );
+        assert!(
+            q * lb / 2 + 16 >= 73,
+            "rung (lb={lb}, q={q}) is below proven 73"
+        );
+    }
+
+    // ⚑ THE CLAIM UNDER TEST. A chip-bearing descriptor cannot do this; this one can, and that is
+    // what makes the row ceiling 2^25 rather than 2^21 for the full-width instance.
+    assert!(
+        reached_lb2,
+        "the chip-free bucketed AIR did NOT prove+verify at log_blowup = 2 — \
+         the 2^25 row ceiling and the ~16x LDE saving are not available and \
+         PastaMsmBucketed's headroom paragraph must be retracted"
+    );
+}
