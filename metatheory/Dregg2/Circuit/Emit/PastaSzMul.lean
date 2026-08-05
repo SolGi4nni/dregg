@@ -52,13 +52,13 @@ the main-trace commitment — that is `62/2^124 ≈ 2^-118.1`.
 | **algebraic gates** | **63** | **1** |
 | total constraints | **253** | **191** |
 | constraint degree in the trace | 2 | **2** |
-| multiplication nodes in the emitted bodies | **2 016** | **158** |
+| multiplication nodes in the emitted bodies | **2 206** | **222** |
 
 ⚑ **Say the honest numbers, not the flattering ones.** The columns and the range lookups do NOT
 improve: the carry polynomial `H` is the same 62 carries and they are still range-bounded, because
 lifting `e = (X − 2^SB)·H` from `𝔽_p[X]` to `ℤ[X]` needs the same per-coefficient felt-fitting
 bound the schoolbook needed. So the total constraint count falls by only 1.32×. What falls by
-**63×** is the GATE count and by **12.8×** the arithmetic the prover and verifier evaluate per row
+**63×** is the GATE count and by **9.94×** the arithmetic the prover and verifier evaluate per row
 — which is the `O(limbs²) → O(limbs)` the verdict named, and it is a statement about the emitted
 expression DAG, not about the constraint array's length.
 
@@ -94,16 +94,21 @@ coefficient gates have. `sz_body_is_degree_two` states that, on the emitted expr
 `#assert_axioms`-clean; no `sorry`/`admit`/`native_decide`. Facts are NAMED THEOREMS.
 -/
 import Dregg2.Circuit.Emit.PastaFieldSound
+import Dregg2.Circuit.OodQuotientConsistency
 
 namespace Dregg2.Circuit.Emit.PastaSzMul
 
 open Dregg2.Circuit (Assignment Expr Constraint)
 open Dregg2.Circuit.DescriptorIR2
-open Dregg2.Circuit.EffectAirIR
-open Dregg2.Circuit.Emit.EffectLowerCore
+open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg LimbsLeg ChalLeg)
+open Dregg2.Circuit.Emit.EffectLower (lowerAir)
 open Dregg2.Circuit.Emit.PastaFieldSound
 
 set_option autoImplicit false
+-- The Horner chains are `SK = 32` and `NG − 1 = 62` deep; the elaborator's default 512 is not
+-- enough to unfold them. This is a recursion BUDGET, not a proof weakening: every fact below is
+-- still `decide`d by the kernel.
+set_option maxRecDepth 40000
 
 /-! ## §1 — the shared schema, and the challenge index. -/
 
@@ -273,16 +278,43 @@ def chalMuls : ChalExpr → Nat
   | .add a b => chalMuls a + chalMuls b
   | .mul a b => 1 + chalMuls a + chalMuls b
 
-/-- ⚑ **THE REAL `O(limbs²) → O(limbs)`: 2 016 multiplication nodes become 158.**
+/-- Multiplication nodes in a SOURCE gate body — the schoolbook's own measure, so the two sides of
+the comparison are counted by the same rule on the same kind of object. -/
+def exprMuls : Expr → Nat
+  | .var _ | .const _ => 0
+  | .add a b => exprMuls a + exprMuls b
+  | .mul a b => 1 + exprMuls a + exprMuls b
 
-The schoolbook's 63 coefficient bodies contain `SK²` products for the convolution and `SK²` for
-`Q·P` — `2·32² = 2 048` in the worst case, `2 016` as emitted (the `qp` leg's `p_j` are constants,
-and the antidiagonals at the ends are short). The Schwartz–Zippel body is five Horner chains
-(`31·4 = 124` for `A, B, Q, R`, `31` for `H`… plus the three products and the `(z − 2^SB)` factor)
-= **158**. `12.8×` less arithmetic per row, at the same constraint degree.
+/-- The schoolbook's total, over its 63 emitted coefficient bodies. -/
+def schoolbookMuls : Nat :=
+  (List.range NG).foldl
+    (fun acc m => acc + exprMuls (PastaFieldSound.coefExpr PastaFieldSound.X_BASE
+      PastaFieldSound.Y_BASE PastaFieldSound.Z_BASE PastaFieldSound.Q_BASE PastaFieldSound.C_BASE
+      pLimb m)) 0
 
-⚠ This is the honest form of the claim. It is not `253 → 1`, and it is not a column saving. -/
-theorem sz_arithmetic_is_linear : chalMuls (szBody pLimb) = 158 := by decide
+/-- ⚑ **THE REAL `O(limbs²) → O(limbs)`, MEASURED ON BOTH EMITTED OBJECTS: 2 206 → 222.**
+
+The schoolbook's 63 coefficient bodies carry `SK² = 1 024` convolution products, `SK² = 1 024` more
+for `Q·P`, and the carry-chain scalings and sign multiplications on top. The Schwartz–Zippel body is
+six Horner chains — `31` each for `A, B, Q, R` and the modulus, `61` for the carry polynomial `H` —
+plus six structural products. **9.94× less arithmetic per row, at the same constraint degree.**
+
+⚠ This is the honest form of the claim, and the numbers are the ones the objects HAVE rather than
+the ones a narrative wants: it is not `253 → 1`, it is not a column saving, and the ratio is 9.94×
+rather than the order of magnitude the naive reading of `O(L²) → O(L)` suggests — because the
+linear term still has six chains in it. ⓘ A hand derivation of the schoolbook side gave 2 110 and
+was 96 low; both sides are now `decide`d on the emitted expressions rather than counted by hand,
+which is the only reason the figure is trustworthy. -/
+theorem sz_arithmetic_is_linear : chalMuls (szBody pLimb) = 222 := by decide
+
+theorem schoolbook_arithmetic_is_quadratic : schoolbookMuls = 2206 := by decide
+
+/-- The comparison, as one statement. -/
+theorem sz_arithmetic_ratio :
+    schoolbookMuls = 2206 ∧ chalMuls (szBody pLimb) = 222
+      ∧ 9 * chalMuls (szBody pLimb) < schoolbookMuls
+      ∧ schoolbookMuls < 10 * chalMuls (szBody pLimb) :=
+  ⟨schoolbook_arithmetic_is_quadratic, sz_arithmetic_is_linear, by decide, by decide⟩
 
 /-- ⚑ **DEGREE 2, unchanged — the win is not bought back in the quotient.** The Horner chains in
 the challenge are `isChallengeOnly` or trace-linear; the body's trace degree is 2, exactly the
@@ -392,5 +424,22 @@ theorem sz_exceptional_set_is_small {K : Type*} [CommRing K] [IsDomain K] [Decid
     (Res : Polynomial K) :
     (Dregg2.Circuit.OodQuotientConsistency.exceptionalSet Res).card ≤ Res.natDegree :=
   Dregg2.Circuit.OodQuotientConsistency.exceptionalSet_card_le Res
+
+/-! ## §7 — axiom hygiene. -/
+
+#assert_axioms szMulAir_mainRailOk
+#assert_axioms fpSzMulDesc_constraint_count
+#assert_axioms fqSzMulDesc_constraint_count
+#assert_axioms fpSzMulDesc_declares_one_challenge
+#assert_axioms fpSzMulDesc_chalGateCount
+#assert_axioms gate_collapse
+#assert_axioms width_and_lookups_unchanged
+#assert_axioms sz_arithmetic_is_linear
+#assert_axioms schoolbook_arithmetic_is_quadratic
+#assert_axioms sz_arithmetic_ratio
+#assert_axioms sz_body_is_degree_two
+#assert_axioms sz_batch_is_degree_two
+#assert_axioms SZ_SOUNDNESS_NUMERATOR_eq
+#assert_axioms sz_denominator_exceeds_2_pow_123
 
 end Dregg2.Circuit.Emit.PastaSzMul
