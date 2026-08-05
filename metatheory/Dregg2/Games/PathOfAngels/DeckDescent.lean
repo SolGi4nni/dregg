@@ -20,6 +20,14 @@ carry it out — reduced to a machine whose whole reachable state space is emitt
 whose instance is a per-run hidden draw, and whose every design property below is
 a theorem over the transition this file exports.
 
+## The shaft forks
+
+⚑ 2026-08-05, second pass.  The first shaft was a straight line, so "route
+commitment" was only *paying twice* — there was no option a descent could close
+behind it.  There is now a junction: the mouth chamber has two children, and a
+body that commits to one spur pays two units of air to be standing at the other.
+`sweepLine` is the transcript that visits both, and it costs the entire budget.
+
 ## The four properties this design is accountable for
 
 1. **Two incomparable budgets.**  `AIR` is the clock and `SHORING` is the supply.
@@ -29,21 +37,21 @@ a theorem over the transition this file exports.
    spends a unit of air on it, or until a body walks into it.  `shore` may be
    spent blind, so the real fork is *air to learn* against *supply to not need
    to*.
-3. **Route commitment.**  Depth is a ratchet paid twice: every chamber entered is
-   a chamber that must be crossed again on the way out, and an unshored flood
-   damages on both crossings.
+3. **Route commitment.**  Two kinds, and the junction is what adds the second.
+   Every chamber entered must be crossed again on the way out, and an unshored
+   flood damages on both crossings; and beyond the mouth the shaft *branches*, so
+   choosing a spur puts the other one two units of air away.
 4. **Extraction is the point.**  A relic in the sling is worth nothing; a relic
    through the hatch is the find.  Damage lowers carrying capacity, and a
    crossing that overruns it leaves the deepest relic on the deck.
 
 ## What the budget is sized for
 
-`AIR = 9` is not slack.  It is simultaneously the cost of the cautious line on
-the worst instance (shore blind, descend, lift, shore blind, descend, lift,
-ascend, ascend, extract) and the cost of the greedy line on the best one
-(descend, lift, descend, descend, lift the deep relic, ascend, ascend, ascend,
-extract).  `budget_binds_on_the_cautious_line` and
-`budget_binds_on_the_greedy_line` are those two facts.
+`AIR = 9` is not slack.  THREE different lines cost exactly nine and no fewer:
+the cautious line down the west spur, the same line down the east spur, and the
+sweep that takes the mouth relic out of the plan and visits both spurs instead.
+The first two bank on every board because they read no bit; the sweep banks on
+one board in eight because it reads three.  Same budget, opposite wagers.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
@@ -74,47 +82,102 @@ abbrev BASE_CAPACITY : Nat := 3
 relics.  One relic is a walk; two is an expedition. -/
 abbrev BANK_TARGET : Nat := 2
 
-/-! ## The deck -/
+/-! ## The deck
 
-/-- Three chambers on one shaft.  `Chamber.depth` is also the number of crossings
-each way, which is the whole of the extraction-debt arithmetic. -/
+A rooted tree, not a line.  The hatch has one child — the mouth — and the mouth
+has two: the west spur and the east spur.  Every edge is walked in both
+directions, so `Node.parent` is the only way back up and there is no shortcut
+between spurs. -/
+
+/-- The three chambers.  `mouth` is the one every descent passes through; `west`
+and `east` are the spurs it opens onto. -/
 inductive Chamber where
-  | upper
-  | middle
-  | deep
+  | mouth
+  | west
+  | east
 deriving Repr, DecidableEq
 
-def allChambers : List Chamber := [.upper, .middle, .deep]
+def allChambers : List Chamber := [.mouth, .west, .east]
 
 theorem allChambers_complete (c : Chamber) : c ∈ allChambers := by
   cases c <;> simp [allChambers]
 
-def Chamber.depth : Chamber → Nat
-  | .upper => 1
-  | .middle => 2
-  | .deep => 3
+/-- Where a body can be: through the hatch, or in a chamber. -/
+inductive Node where
+  | hatch
+  | inside (chamber : Chamber)
+deriving Repr, DecidableEq
 
-/-- The chamber lying immediately below a depth, when there is one. -/
-def chamberBelow (depth : Nat) : Option Chamber :=
-  match depth with
-  | 0 => some .upper
-  | 1 => some .middle
-  | 2 => some .deep
+def allNodes : List Node :=
+  Node.hatch :: allChambers.map Node.inside
+
+theorem allNodes_complete (n : Node) : n ∈ allNodes := by
+  cases n with
+  | hatch => simp [allNodes]
+  | inside c => cases c <;> simp [allNodes, allChambers]
+
+/-- Climbing.  Total, and the hatch is its own parent only in the sense that
+`ascend` is refused there — see `surface_refuses_ascend`. -/
+def Node.parent : Node → Node
+  | .hatch => .hatch
+  | .inside .mouth => .hatch
+  | .inside .west => .inside .mouth
+  | .inside .east => .inside .mouth
+
+/-- The child on the main line: hatch to mouth, mouth to west.  The spurs are
+leaves. -/
+def Node.mainChild : Node → Option Chamber
+  | .hatch => some .mouth
+  | .inside .mouth => some .west
+  | .inside .west => none
+  | .inside .east => none
+
+/-- The child on the spur.  It exists at exactly one node, and that is the whole
+of the junction. -/
+def Node.eastChild : Node → Option Chamber
+  | .inside .mouth => some .east
   | _ => none
 
-/-- The chamber a body at `depth` is standing in. -/
-def chamberAt (depth : Nat) : Option Chamber :=
-  match depth with
-  | 1 => some .upper
-  | 2 => some .middle
-  | 3 => some .deep
-  | _ => none
+/-- Crossings between a node and the hatch — the extraction debt owed from here. -/
+def Node.debt : Node → Nat
+  | .hatch => 0
+  | .inside .mouth => 1
+  | .inside .west => 2
+  | .inside .east => 2
 
-theorem chamberBelow_depth (c : Chamber) : chamberBelow (c.depth - 1) = some c := by
-  cases c <;> rfl
+def Chamber.debt (c : Chamber) : Nat := (Node.inside c).debt
 
-theorem chamberAt_depth (c : Chamber) : chamberAt c.depth = some c := by
-  cases c <;> rfl
+/-- The junction is real: the mouth has two distinct children, and they are the
+only two chambers that are not the mouth. -/
+theorem mouth_is_a_junction :
+    (Node.inside Chamber.mouth).mainChild = some Chamber.west ∧
+    (Node.inside Chamber.mouth).eastChild = some Chamber.east ∧
+    Chamber.west ≠ Chamber.east := by
+  refine ⟨rfl, rfl, by decide⟩
+
+/-- Only the mouth forks: everywhere else the spur action has no target, so the
+nine-action alphabet collapses to the ordinary six away from the junction. -/
+theorem only_the_mouth_forks (n : Node) (h : n ≠ Node.inside Chamber.mouth) :
+    n.eastChild = none := by
+  cases n with
+  | hatch => rfl
+  | inside c => cases c <;> first | rfl | exact absurd rfl h
+
+/-- The spurs are leaves, so a body in one is two units of air from the other.
+This is the commitment: it is not that the other spur is forbidden, it is that
+reaching it costs the budget the run was going to spend on coming home. -/
+theorem spurs_are_leaves :
+    (Node.inside Chamber.west).mainChild = none ∧
+    (Node.inside Chamber.west).eastChild = none ∧
+    (Node.inside Chamber.east).mainChild = none ∧
+    (Node.inside Chamber.east).eastChild = none := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
+
+theorem crossing_between_spurs_costs_two :
+    (Node.inside Chamber.west).parent = Node.inside Chamber.mouth ∧
+    (Node.inside Chamber.east).parent = Node.inside Chamber.mouth ∧
+    Chamber.west.debt = 2 ∧ Chamber.east.debt = 2 := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
 
 /-! ## What a chamber is, and what a player knows about it -/
 
@@ -158,23 +221,23 @@ def freshChamber : ChamberState := { lore := .dark, relicTaken := false }
 /-- The three chambers, stored as named fields rather than a list so that
 `DecidableEq` and `decide` stay cheap. -/
 structure Deck where
-  upper : ChamberState
-  middle : ChamberState
-  deep : ChamberState
+  mouth : ChamberState
+  west : ChamberState
+  east : ChamberState
 deriving Repr, DecidableEq
 
 def freshDeck : Deck :=
-  { upper := freshChamber, middle := freshChamber, deep := freshChamber }
+  { mouth := freshChamber, west := freshChamber, east := freshChamber }
 
 def Deck.get (d : Deck) : Chamber → ChamberState
-  | .upper => d.upper
-  | .middle => d.middle
-  | .deep => d.deep
+  | .mouth => d.mouth
+  | .west => d.west
+  | .east => d.east
 
 def Deck.set (d : Deck) : Chamber → ChamberState → Deck
-  | .upper, s => { d with upper := s }
-  | .middle, s => { d with middle := s }
-  | .deep, s => { d with deep := s }
+  | .mouth, s => { d with mouth := s }
+  | .west, s => { d with west := s }
+  | .east, s => { d with east := s }
 
 theorem Deck.get_set_same (d : Deck) (c : Chamber) (s : ChamberState) :
     (d.set c s).get c = s := by
@@ -183,17 +246,17 @@ theorem Deck.get_set_same (d : Deck) (c : Chamber) (s : ChamberState) :
 /-! ## The instance -/
 
 /-- One instance: which chambers flood.  Eight of them, and the descriptor names
-none. -/
+none of them — it names both successors of every row that consults one. -/
 structure Board where
-  upper : Passage
-  middle : Passage
-  deep : Passage
+  mouth : Passage
+  west : Passage
+  east : Passage
 deriving Repr, DecidableEq
 
 def Board.get (b : Board) : Chamber → Passage
-  | .upper => b.upper
-  | .middle => b.middle
-  | .deep => b.deep
+  | .mouth => b.mouth
+  | .west => b.west
+  | .east => b.east
 
 /-- The passage bit read back as the lore a look would establish. -/
 def Board.lore (b : Board) (c : Chamber) : Lore :=
@@ -202,14 +265,14 @@ def Board.lore (b : Board) (c : Chamber) : Lore :=
   | .flooded => .flooded
 
 def boardTable : List Board :=
-  [ { upper := .sound,   middle := .sound,   deep := .sound }
-  , { upper := .sound,   middle := .sound,   deep := .flooded }
-  , { upper := .sound,   middle := .flooded, deep := .sound }
-  , { upper := .sound,   middle := .flooded, deep := .flooded }
-  , { upper := .flooded, middle := .sound,   deep := .sound }
-  , { upper := .flooded, middle := .sound,   deep := .flooded }
-  , { upper := .flooded, middle := .flooded, deep := .sound }
-  , { upper := .flooded, middle := .flooded, deep := .flooded } ]
+  [ { mouth := .sound,   west := .sound,   east := .sound }
+  , { mouth := .sound,   west := .sound,   east := .flooded }
+  , { mouth := .sound,   west := .flooded, east := .sound }
+  , { mouth := .sound,   west := .flooded, east := .flooded }
+  , { mouth := .flooded, west := .sound,   east := .sound }
+  , { mouth := .flooded, west := .sound,   east := .flooded }
+  , { mouth := .flooded, west := .flooded, east := .sound }
+  , { mouth := .flooded, west := .flooded, east := .flooded } ]
 
 theorem boardTable_length : boardTable.length = 8 := rfl
 
@@ -241,10 +304,10 @@ def boardFromRunSeed? (runSeed : Digest32) : Option Board := do
   let (a, s₁) ← SeedDraw.drawBelow? 2 (by decide) runSeed.bytes
   let (b, s₂) ← SeedDraw.drawBelow? 2 (by decide) s₁
   let (c, _) ← SeedDraw.drawBelow? 2 (by decide) s₂
-  some { upper := passageOfDraw a, middle := passageOfDraw b, deep := passageOfDraw c }
+  some { mouth := passageOfDraw a, west := passageOfDraw b, east := passageOfDraw c }
 
 def boardFromRunSeed (runSeed : Digest32) : Board :=
-  (boardFromRunSeed? runSeed).getD { upper := .sound, middle := .sound, deep := .sound }
+  (boardFromRunSeed? runSeed).getD { mouth := .sound, west := .sound, east := .sound }
 
 /-- A bound of 2 divides 256, so `ceilingFor 2 = 256` and no byte is ever
 rejected: three draws always succeed off a 32-byte seed.  The `getD` fallback in
@@ -261,50 +324,60 @@ theorem draw_below_two_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
 /-- The sling.  Which chambers' relics are in hand — a set, not a count, because
 the receipt names the relics and a forced drop must name which one fell. -/
 structure Sling where
-  upper : Bool
-  middle : Bool
-  deep : Bool
+  mouth : Bool
+  west : Bool
+  east : Bool
 deriving Repr, DecidableEq
 
-def emptySling : Sling := { upper := false, middle := false, deep := false }
+def emptySling : Sling := { mouth := false, west := false, east := false }
 
 def Sling.holds (s : Sling) : Chamber → Bool
-  | .upper => s.upper
-  | .middle => s.middle
-  | .deep => s.deep
+  | .mouth => s.mouth
+  | .west => s.west
+  | .east => s.east
 
 def Sling.add (s : Sling) : Chamber → Sling
-  | .upper => { s with upper := true }
-  | .middle => { s with middle := true }
-  | .deep => { s with deep := true }
+  | .mouth => { s with mouth := true }
+  | .west => { s with west := true }
+  | .east => { s with east := true }
 
 def Sling.drop (s : Sling) : Chamber → Sling
-  | .upper => { s with upper := false }
-  | .middle => { s with middle := false }
-  | .deep => { s with deep := false }
+  | .mouth => { s with mouth := false }
+  | .west => { s with west := false }
+  | .east => { s with east := false }
 
 def Sling.count (s : Sling) : Nat :=
-  (if s.upper then 1 else 0) + (if s.middle then 1 else 0) + (if s.deep then 1 else 0)
+  (if s.mouth then 1 else 0) + (if s.west then 1 else 0) + (if s.east then 1 else 0)
 
 theorem Sling.count_le_three (s : Sling) : s.count ≤ 3 := by
-  obtain ⟨u, m, d⟩ := s
-  cases u <;> cases m <;> cases d <;> decide
+  obtain ⟨m, w, e⟩ := s
+  cases m <;> cases w <;> cases e <;> decide
 
-/-- The deepest relic in the sling.  This is the one the deck takes when a
-crossing overruns capacity: what you reached furthest for is what you lose. -/
-def Sling.deepest (s : Sling) : Option Chamber :=
-  if s.deep then some .deep
-  else if s.middle then some .middle
-  else if s.upper then some .upper
+/-- What the deck takes when a crossing overruns capacity: whatever was reached
+furthest for.  The spurs are equally far, so the tie is broken west-then-east and
+that order is DECLARED here rather than falling out of a field ordering. -/
+def Sling.forfeit (s : Sling) : Option Chamber :=
+  if s.west then some .west
+  else if s.east then some .east
+  else if s.mouth then some .mouth
   else none
 
-theorem Sling.deepest_some_of_count (s : Sling) (h : 0 < s.count) :
-    (s.deepest).isSome = true := by
-  obtain ⟨u, m, d⟩ := s
-  cases u <;> cases m <;> cases d <;> revert h <;> decide
+/-- ⚑ What the deck takes is what the run reached furthest for: nothing still in
+the sling is deeper than the relic forfeited.  Stated over every chamber the
+sling holds, not just the one that fell. -/
+theorem Sling.forfeit_is_deepest (s : Sling) (c held : Chamber)
+    (h : s.forfeit = some c) (hheld : s.holds held = true) : held.debt ≤ c.debt := by
+  obtain ⟨m, w, e⟩ := s
+  revert h hheld
+  cases c <;> cases held <;> cases m <;> cases w <;> cases e <;> decide
+
+theorem Sling.forfeit_some_of_count (s : Sling) (h : 0 < s.count) :
+    (s.forfeit).isSome = true := by
+  obtain ⟨m, w, e⟩ := s
+  cases m <;> cases w <;> cases e <;> revert h <;> decide
 
 structure State where
-  depth : Nat
+  position : Node
   air : Nat
   shoring : Nat
   damage : Nat
@@ -314,7 +387,7 @@ structure State where
 deriving Repr, DecidableEq
 
 def initialState : State where
-  depth := 0
+  position := .hatch
   air := AIR
   shoring := SHORING
   damage := 0
@@ -330,36 +403,65 @@ def turnsUsed (s : State) : Nat := AIR - s.air
 /-! ## Optimistic completability — the honest "not yet provably dead" predicate
 
 A run under hidden information cannot be told it is dead unless it is dead on
-*every* instance still consistent with what it has seen.  `reachableBankB` is
+*every* board still consistent with what it has seen.  `reachableBankB` is
 therefore computed against the most generous continuation: every dark chamber is
-assumed sound.  A state it refuses is one no board can rescue. -/
+assumed sound, so no crossing costs anything.  A state it refuses is one no board
+rescues. -/
 
-/-- Depths of the chambers whose relic is still on the deck, shallowest first.
-`allChambers` is in depth order and `filter` preserves it, so `take n` is the
-cheapest `n` of them. -/
-def untakenDepths (s : State) : List Nat :=
-  (allChambers.filter (fun c => !(s.deck.get c).relicTaken)).map Chamber.depth
+/-- Crossings between two nodes of the shaft.  Enumerated rather than derived:
+the tree has four nodes and an explicit table cannot drift from the topology the
+transition walks. -/
+def Node.dist : Node → Node → Nat
+  | .hatch,         .hatch        => 0
+  | .hatch,         .inside c     => c.debt
+  | .inside c,      .hatch        => c.debt
+  | .inside .mouth, .inside .mouth => 0
+  | .inside .mouth, .inside .west  => 1
+  | .inside .mouth, .inside .east  => 1
+  | .inside .west,  .inside .mouth => 1
+  | .inside .east,  .inside .mouth => 1
+  | .inside .west,  .inside .west  => 0
+  | .inside .east,  .inside .east  => 0
+  | .inside .west,  .inside .east  => 2
+  | .inside .east,  .inside .west  => 2
+
+theorem Node.dist_self (n : Node) : n.dist n = 0 := by
+  cases n with
+  | hatch => rfl
+  | inside c => cases c <;> rfl
+
+/-- ⚑ The junction, priced.  Standing in one spur, the other is two crossings
+away — the same two crossings the run needs to come home.  This is the number
+that makes a spur choice a commitment rather than a label. -/
+theorem the_other_spur_costs_the_way_home :
+    (Node.inside Chamber.west).dist (.inside Chamber.east) = 2 ∧
+    (Node.inside Chamber.west).dist .hatch = 2 := by
+  refine ⟨rfl, rfl⟩
+
+/-- Air spent walking `seq` in order from `p` and then coming home. -/
+def walkCost (p : Node) (seq : List Chamber) : Nat :=
+  let stepped := seq.foldl
+    (fun (acc : Nat × Node) c => (acc.1 + acc.2.dist (.inside c), Node.inside c)) (0, p)
+  stepped.1 + stepped.2.dist .hatch
+
+/-- Every ordered visit plan over the still-untaken chambers that collects
+exactly `need` of them. -/
+def visitPlans (s : State) (need : Nat) : List (List Chamber) :=
+  let avail := allChambers.filter (fun c => !(s.deck.get c).relicTaken)
+  if need = 1 then avail.map (fun a => [a])
+  else avail.flatMap (fun a => (avail.filter (fun b => b != a)).map (fun b => [a, b]))
 
 /-- Air needed to bank the target from here, on the most favourable board still
-consistent with what the run has seen: every dark chamber sound, so no crossing
-costs anything, and the shallowest untaken relics chosen.
-
-The plan it prices is: descend to the deepest chosen chamber, lift each chosen
-relic, climb back to the hatch, extract.  Chambers already above the body cost
-only their lift, because the climb passes through them anyway.  A run this
-refuses is one no board rescues. -/
+consistent with what the run has seen: the cheapest ordered walk that collects
+the relics still needed and ends at the hatch, plus one lift each and the
+extraction. -/
 def cheapestBank (s : State) : Nat :=
-  let need := BANK_TARGET - s.sling.count
   if BANK_TARGET ≤ s.sling.count then
-    s.depth + 1                          -- climb out and come through the hatch
+    s.position.dist .hatch + 1
   else
-    let avail := untakenDepths s
-    if avail.length < need then
-      AIR + 1                            -- not enough relics left anywhere
-    else
-      let deepest := (avail.take need).foldl Nat.max 0
-      let reach := Nat.max s.depth deepest
-      (reach - s.depth) + need + reach + 1
+    let need := BANK_TARGET - s.sling.count
+    (visitPlans s need).foldl
+      (fun best seq => Nat.min best (walkCost s.position seq + need + 1)) (AIR + 1)
 
 /-- Can this state still bank the target, on the most favourable board still
 consistent with it?  Capacity is the hard wall: no continuation restores it. -/
@@ -378,15 +480,22 @@ def doomedB (s : State) : Bool := !s.banked && !reachableBankB s
 /-! ## Actions -/
 
 inductive Action where
-  /-- Spend one air reading the passage of the chamber below.  The oracle row. -/
+  /-- Spend one air reading the passage of the chamber on the main line below. -/
   | survey
-  /-- Spend one air and one shoring making the chamber below safe.  Legal on a
-  dark chamber as well as a known flood: supply may be spent instead of the air a
-  look would cost, and that trade is the second budget's whole reason to exist. -/
+  /-- The same look, down the spur.  Legal only at the junction. -/
+  | surveyEast
+  /-- Spend one air and one shoring making the main-line chamber below safe.
+  Legal on a dark chamber as well as a known flood: supply may be spent instead
+  of the air a look would cost, and that trade is the second budget's whole
+  reason to exist. -/
   | shore
-  /-- Spend one air going down.  A dark chamber resolves on the way in — the
-  second oracle row — and an unshored flood costs a point of damage. -/
+  | shoreEast
+  /-- Spend one air going down the main line.  A dark chamber resolves on the way
+  in, and an unshored flood costs a point of damage. -/
   | descend
+  /-- ⚑ The commitment.  From the junction this enters the east spur, and a body
+  in one spur is two crossings from the other. -/
+  | descendEast
   /-- Spend one air taking this chamber's relic. -/
   | lift
   /-- Spend one air climbing.  The chamber being left is crossed a second time,
@@ -397,85 +506,89 @@ inductive Action where
 deriving Repr, DecidableEq
 
 def allActions : List Action :=
-  [.survey, .shore, .descend, .lift, .ascend, .extract]
+  [.survey, .surveyEast, .shore, .shoreEast, .descend, .descendEast, .lift, .ascend,
+   .extract]
 
 theorem allActions_complete (a : Action) : a ∈ allActions := by
   cases a <;> simp [allActions]
 
+/-- Which chamber an action reaches for, from a given node.  The spur variants
+resolve to `none` everywhere but the junction, which is why the nine-action
+alphabet is an ordinary six away from it. -/
+def Action.target : Action → Node → Option Chamber
+  | .surveyEast, n => n.eastChild
+  | .shoreEast, n => n.eastChild
+  | .descendEast, n => n.eastChild
+  | .survey, n => n.mainChild
+  | .shore, n => n.mainChild
+  | .descend, n => n.mainChild
+  | _, _ => none
+
 /-- A crossing that costs a body.  Damage rises by one, capacity falls by one,
-and if the sling no longer fits, the DEEPEST relic is left on the deck. -/
+and if the sling no longer fits, the deck keeps what was reached furthest for. -/
 def takeDamage (s : State) : State :=
   let damage := s.damage + 1
   let cap := BASE_CAPACITY - damage
   let sling :=
     if cap < s.sling.count then
-      match s.sling.deepest with
+      match s.sling.forfeit with
       | some c => s.sling.drop c
       | none => s.sling
     else s.sling
   { s with damage, sling }
 
-/-- Crossing `c` with lore `l`: pay a body if it floods, otherwise pass. -/
+/-- Crossing a chamber with lore `l`: pay a body if it floods, otherwise pass. -/
 def cross (s : State) (l : Lore) : State :=
   if l.damaging then takeDamage s else s
 
-/-! ### The five deterministic openness predicates
-
-Each conjunct below is read back out of an accepted action by a theorem in the
-next section, so the refusal reasons the emitted table carries are exactly the
-negations of these and not a second opinion about them. -/
-
 /-- The action-specific half of openness.  `liveB` and the clock are factored out
 into `openB` below so that "a run that is over spends nothing" and "every action
-costs air" are each ONE conjunct in ONE place, and the structural theorems read
-them back without a per-action tactic. -/
-def openKindB (s : State) : Action → Bool
-  | .survey =>
-      match chamberBelow s.depth with
+costs air" are each ONE conjunct in ONE place. -/
+def openKindB (s : State) (a : Action) : Bool :=
+  match a with
+  | .survey | .surveyEast =>
+      match a.target s.position with
       | none => false
       | some c => decide ((s.deck.get c).lore = Lore.dark)
-  | .shore =>
+  | .shore | .shoreEast =>
       decide (0 < s.shoring) &&
-      match chamberBelow s.depth with
-      | none => false
-      | some c =>
-          decide ((s.deck.get c).lore = Lore.dark ∨ (s.deck.get c).lore = Lore.flooded)
-  | .descend =>
-      match chamberBelow s.depth with
-      | none => false
-      | some _ => true
+      (match a.target s.position with
+       | none => false
+       | some c =>
+           decide ((s.deck.get c).lore = Lore.dark ∨ (s.deck.get c).lore = Lore.flooded))
+  | .descend | .descendEast =>
+      (match a.target s.position with
+       | none => false
+       | some _ => true)
   | .lift =>
-      match chamberAt s.depth with
-      | none => false
-      | some c =>
-          !(s.deck.get c).relicTaken && decide (s.sling.count + 1 ≤ capacity s)
-  | .ascend => decide (0 < s.depth)
-  | .extract => decide (s.depth = 0) && decide (BANK_TARGET ≤ s.sling.count)
+      (match s.position with
+       | .hatch => false
+       | .inside c =>
+           !(s.deck.get c).relicTaken && decide (s.sling.count + 1 ≤ capacity s))
+  | .ascend => decide (s.position ≠ Node.hatch)
+  | .extract =>
+      decide (s.position = Node.hatch) && decide (BANK_TARGET ≤ s.sling.count)
 
 /-- Openness, in three conjuncts that never move: the run is still live, the
 clock has a unit left, and the action itself applies here. -/
 def openB (s : State) (a : Action) : Bool :=
   liveB s && decide (0 < s.air) && openKindB s a
 
-/-! ### The transition
-
-`stepB` takes the board because two of its six rows consult it.  The emitter
-never sees a board: it emits the row as `resolve` with both successors named. -/
-
 /-- The raw effect of an action, with openness already decided.  Every branch
 spends exactly one unit of air, which is why `step_spends_exactly_one_air` is a
-single uniform proof rather than six. -/
-def transitionB (b : Board) (s : State) : Action → Option State
-  | .survey =>
-      match chamberBelow s.depth with
+single uniform proof rather than nine. -/
+def transitionB (b : Board) (s : State) (a : Action) : Option State :=
+  match a with
+  | .survey | .surveyEast =>
+      match a.target s.position with
       | none => none
       | some c =>
           let cs := s.deck.get c
           some { s with
             air := s.air - 1
             deck := s.deck.set c { cs with lore := b.lore c } }
-  | .shore =>
-      match chamberBelow s.depth with
+  | .shore | .shoreEast =>
+      match a.target s.position with
       | none => none
       | some c =>
           let cs := s.deck.get c
@@ -483,8 +596,8 @@ def transitionB (b : Board) (s : State) : Action → Option State
             air := s.air - 1
             shoring := s.shoring - 1
             deck := s.deck.set c { cs with lore := Lore.shored } }
-  | .descend =>
-      match chamberBelow s.depth with
+  | .descend | .descendEast =>
+      match a.target s.position with
       | none => none
       | some c =>
           let cs := s.deck.get c
@@ -492,22 +605,22 @@ def transitionB (b : Board) (s : State) : Action → Option State
           let lore := if cs.lore = Lore.dark then b.lore c else cs.lore
           some (cross { s with
             air := s.air - 1
-            depth := s.depth + 1
+            position := Node.inside c
             deck := s.deck.set c { cs with lore } } lore)
   | .lift =>
-      match chamberAt s.depth with
-      | none => none
-      | some c =>
+      match s.position with
+      | .hatch => none
+      | .inside c =>
           let cs := s.deck.get c
           some { s with
             air := s.air - 1
             sling := s.sling.add c
             deck := s.deck.set c { cs with relicTaken := true } }
   | .ascend =>
-      match chamberAt s.depth with
-      | none => none
-      | some c =>
-          some (cross { s with air := s.air - 1, depth := s.depth - 1 }
+      match s.position with
+      | .hatch => none
+      | .inside c =>
+          some (cross { s with air := s.air - 1, position := s.position.parent }
             (s.deck.get c).lore)
   | .extract =>
       some { s with air := s.air - 1, banked := true }
@@ -532,7 +645,7 @@ about without unfolding them again. -/
 
 theorem takeDamage_air (s : State) : (takeDamage s).air = s.air := rfl
 theorem takeDamage_shoring (s : State) : (takeDamage s).shoring = s.shoring := rfl
-theorem takeDamage_depth (s : State) : (takeDamage s).depth = s.depth := rfl
+theorem takeDamage_position (s : State) : (takeDamage s).position = s.position := rfl
 theorem takeDamage_damage (s : State) : (takeDamage s).damage = s.damage + 1 := rfl
 
 theorem cross_air (s : State) (l : Lore) : (cross s l).air = s.air := by
@@ -545,9 +658,9 @@ theorem cross_shoring (s : State) (l : Lore) : (cross s l).shoring = s.shoring :
   · exact takeDamage_shoring s
   · rfl
 
-theorem cross_depth (s : State) (l : Lore) : (cross s l).depth = s.depth := by
+theorem cross_position (s : State) (l : Lore) : (cross s l).position = s.position := by
   unfold cross; split
-  · exact takeDamage_depth s
+  · exact takeDamage_position s
   · rfl
 
 theorem cross_damage_ge (s : State) (l : Lore) : s.damage ≤ (cross s l).damage := by
@@ -601,11 +714,11 @@ theorem step_spends_exactly_one_air (b : Board) (s s' : State) (a : Action)
   have hair := step_some_air b s s' a h
   have ht := step_eq_transition b s s' a h
   cases a <;> simp only [transitionB] at ht
-  case survey | shore | lift =>
+  case survey | surveyEast | shore | shoreEast | lift =>
     split at ht
     · exact absurd ht (by simp)
     · simp only [Option.some.injEq] at ht; subst ht; simp; omega
-  case descend | ascend =>
+  case descend | descendEast | ascend =>
     split at ht
     · exact absurd ht (by simp)
     · simp only [Option.some.injEq] at ht; subst ht
@@ -633,11 +746,11 @@ theorem step_shoring_never_rises (b : Board) (s s' : State) (a : Action)
     (h : stepB b s a = some s') : s'.shoring ≤ s.shoring := by
   have ht := step_eq_transition b s s' a h
   cases a <;> simp only [transitionB] at ht
-  case survey | shore | lift =>
+  case survey | surveyEast | shore | shoreEast | lift =>
     split at ht
     · exact absurd ht (by simp)
     · simp only [Option.some.injEq] at ht; subst ht; simp
-  case descend | ascend =>
+  case descend | descendEast | ascend =>
     split at ht
     · exact absurd ht (by simp)
     · simp only [Option.some.injEq] at ht; subst ht
@@ -651,11 +764,11 @@ theorem step_damage_never_falls (b : Board) (s s' : State) (a : Action)
     (h : stepB b s a = some s') : s.damage ≤ s'.damage := by
   have ht := step_eq_transition b s s' a h
   cases a <;> simp only [transitionB] at ht
-  case survey | shore | lift =>
+  case survey | surveyEast | shore | shoreEast | lift =>
     split at ht
     · exact absurd ht (by simp)
     · simp only [Option.some.injEq] at ht; subst ht; simp
-  case descend | ascend =>
+  case descend | descendEast | ascend =>
     split at ht
     · exact absurd ht (by simp)
     · simp only [Option.some.injEq] at ht; subst ht
@@ -697,25 +810,33 @@ theorem shoreless_refuses_shore (b : Board) (s : State) (h : s.shoring = 0) :
     stepB b s .shore = none := by
   exact not_open_refuses b s .shore (by simp [openB, openKindB, h])
 
-theorem surface_refuses_ascend (b : Board) (s : State) (h : s.depth = 0) :
+theorem surface_refuses_ascend (b : Board) (s : State) (h : s.position = Node.hatch) :
     stepB b s .ascend = none := by
   exact not_open_refuses b s .ascend (by simp [openB, openKindB, h])
 
-theorem chamberBelow_none_of_deep (depth : Nat) (h : 3 ≤ depth) :
-    chamberBelow depth = none := by
-  unfold chamberBelow
-  split
-  · omega
-  · omega
-  · omega
-  · rfl
+/-- ⚑ **A spur has no spur.**  The east actions are refused everywhere but the
+junction, so the fork exists at exactly one node and a run cannot slide sideways
+between spurs. -/
+theorem only_the_junction_accepts_the_spur (b : Board) (s : State)
+    (h : s.position ≠ Node.inside Chamber.mouth) :
+    stepB b s .descendEast = none ∧ stepB b s .surveyEast = none ∧
+      stepB b s .shoreEast = none := by
+  have hnone : s.position.eastChild = none := only_the_mouth_forks s.position h
+  refine ⟨not_open_refuses b s .descendEast ?_, not_open_refuses b s .surveyEast ?_,
+    not_open_refuses b s .shoreEast ?_⟩
+  · simp [openB, openKindB, Action.target, hnone]
+  · simp [openB, openKindB, Action.target, hnone]
+  · simp [openB, openKindB, Action.target, hnone]
 
-theorem floor_refuses_descend (b : Board) (s : State) (h : 3 ≤ s.depth) :
+/-- A leaf refuses the main line too, so the spurs are ends and not corridors. -/
+theorem a_spur_refuses_going_deeper (b : Board) (s : State) (c : Chamber)
+    (hpos : s.position = Node.inside c) (hleaf : c ≠ Chamber.mouth) :
     stepB b s .descend = none := by
-  exact not_open_refuses b s .descend
-    (by simp [openB, openKindB, chamberBelow_none_of_deep s.depth h])
+  have hnone : s.position.mainChild = none := by
+    rw [hpos]; cases c <;> first | rfl | exact absurd rfl hleaf
+  exact not_open_refuses b s .descend (by simp [openB, openKindB, Action.target, hnone])
 
-theorem inside_refuses_extract (b : Board) (s : State) (h : s.depth ≠ 0) :
+theorem inside_refuses_extract (b : Board) (s : State) (h : s.position ≠ Node.hatch) :
     stepB b s .extract = none := by
   exact not_open_refuses b s .extract (by simp [openB, openKindB, h])
 
@@ -726,12 +847,16 @@ theorem short_sling_refuses_extract (b : Board) (s : State)
   exact not_open_refuses b s .extract
     (by simp [openB, openKindB, Nat.not_le.mpr h])
 
+theorem hatch_refuses_lift (b : Board) (s : State) (h : s.position = Node.hatch) :
+    stepB b s .lift = none := by
+  exact not_open_refuses b s .lift (by simp [openB, openKindB, h])
+
 /-- A chamber already emptied refuses a second lift, so a relic is a relic and
 not a renewable meter. -/
 theorem emptied_chamber_refuses_lift (b : Board) (s : State) (c : Chamber)
-    (hat : chamberAt s.depth = some c) (h : (s.deck.get c).relicTaken = true) :
+    (hpos : s.position = Node.inside c) (h : (s.deck.get c).relicTaken = true) :
     stepB b s .lift = none := by
-  exact not_open_refuses b s .lift (by simp [openB, openKindB, hat, h])
+  exact not_open_refuses b s .lift (by simp [openB, openKindB, hpos, h])
 
 /-- Over capacity, the sling refuses.  This is the rule that makes damage a
 carrying constraint rather than a score. -/
@@ -740,28 +865,28 @@ theorem full_sling_refuses_lift (b : Board) (s : State)
   refine not_open_refuses b s .lift ?_
   simp only [openB, openKindB, Bool.and_eq_false_iff]
   right
-  cases hat : chamberAt s.depth with
-  | none => rfl
-  | some c => simp [Nat.not_le.mpr h]
+  cases hpos : s.position with
+  | hatch => rfl
+  | inside c => simp [Nat.not_le.mpr h]
 
-/-- A chamber whose passage is already established refuses a second look: a
-survey buys information, and information already bought is not for sale. -/
+/-- A chamber whose passage is already established refuses a second look. -/
 theorem known_chamber_refuses_survey (b : Board) (s : State) (c : Chamber)
-    (hbelow : chamberBelow s.depth = some c) (h : (s.deck.get c).lore ≠ Lore.dark) :
+    (hbelow : s.position.mainChild = some c) (h : (s.deck.get c).lore ≠ Lore.dark) :
     stepB b s .survey = none := by
-  exact not_open_refuses b s .survey (by simp [openB, openKindB, hbelow, h])
+  exact not_open_refuses b s .survey
+    (by simp [openB, openKindB, Action.target, hbelow, h])
 
 /-- A shored chamber refuses a second shoring, so supply cannot be burned to no
 effect and the two-unit budget really is two decisions. -/
 theorem shored_chamber_refuses_shore (b : Board) (s : State) (c : Chamber)
-    (hbelow : chamberBelow s.depth = some c)
+    (hbelow : s.position.mainChild = some c)
     (h : (s.deck.get c).lore = Lore.shored) :
     stepB b s .shore = none := by
   refine not_open_refuses b s .shore ?_
   simp only [openB, openKindB, Bool.and_eq_false_iff]
   right
   right
-  simp [hbelow, h]
+  simp [Action.target, hbelow, h]
 
 /-! ## Replay -/
 
@@ -818,24 +943,24 @@ structure Config where
   mission : MissionSpec
   /-- The relic each chamber holds.  Declared in the config, checked against the
   mission's allowlist by `relics_declared`, so a run cannot invent a relic. -/
-  upperRelic : RelicId
-  middleRelic : RelicId
-  deepRelic : RelicId
+  mouthRelic : RelicId
+  westRelic : RelicId
+  eastRelic : RelicId
   reward : Contribution
   reward_accepted : mission.acceptsContribution reward = true
-  relics_distinct : upperRelic ≠ middleRelic ∧ middleRelic ≠ deepRelic ∧
-    upperRelic ≠ deepRelic
+  relics_distinct : mouthRelic ≠ westRelic ∧ westRelic ≠ eastRelic ∧
+    mouthRelic ≠ eastRelic
   relics_declared :
-    upperRelic ∈ mission.allowedRelics ∧ middleRelic ∈ mission.allowedRelics ∧
-    deepRelic ∈ mission.allowedRelics
+    mouthRelic ∈ mission.allowedRelics ∧ westRelic ∈ mission.allowedRelics ∧
+    eastRelic ∈ mission.allowedRelics
   /-- ⚑ The played board is the one the precommitted seed draws.  A host cannot
   re-flood the deck after reading the transcript. -/
   board_eq : board = boardFromRunSeed mission.runSeed
 
 def Config.relicOf (cfg : Config) : Chamber → RelicId
-  | .upper => cfg.upperRelic
-  | .middle => cfg.middleRelic
-  | .deep => cfg.deepRelic
+  | .mouth => cfg.mouthRelic
+  | .west => cfg.westRelic
+  | .east => cfg.eastRelic
 
 /-- The relics a sling brings through the hatch. -/
 def Config.bankedRelics (cfg : Config) (s : Sling) : Finset RelicId :=
@@ -911,13 +1036,22 @@ theorem judged_board_is_the_drawn_board (cfg : Config) :
 
 def byte (n : Nat) : Fin 256 := ⟨n % 256, Nat.mod_lt _ (by omega)⟩
 
+/-- The transcript alphabet.  One code per action, spur variants distinct from
+their main-line twins, so a receipt records WHICH spur a run committed to. -/
 def actionCode : Action → Nat
   | .survey => 0
-  | .shore => 1
-  | .descend => 2
-  | .lift => 3
-  | .ascend => 4
-  | .extract => 5
+  | .surveyEast => 1
+  | .shore => 2
+  | .shoreEast => 3
+  | .descend => 4
+  | .descendEast => 5
+  | .lift => 6
+  | .ascend => 7
+  | .extract => 8
+
+theorem actionCode_injective (a a' : Action) (h : actionCode a = actionCode a') :
+    a = a' := by
+  cases a <;> cases a' <;> simp_all [actionCode]
 
 def actionAt (actions : List Action) (i : Nat) : Nat :=
   match actions[i]? with
@@ -1039,66 +1173,72 @@ def playsOutB (b : Board) (acts : List Action) : Bool :=
   | none => false
   | some s => s.banked
 
-/-- The cautious line: buy safety with supply rather than time, twice, and take
-the two shallow relics.  Nine actions, and it works on every board because it
-never reads a bit. -/
-def cautiousLine : List Action :=
+/-- The cautious line down the WEST spur: buy safety with supply rather than
+time, twice.  Nine actions, and it works on every board because it reads no
+bit. -/
+def cautiousWestLine : List Action :=
   [.shore, .descend, .lift, .shore, .descend, .lift, .ascend, .ascend, .extract]
 
-/-- The greedy line: walk in blind, skip the middle relic, and reach for the deep
-one.  Nine actions, and it works only where the shaft is sound. -/
-def greedyLine : List Action :=
-  [.descend, .lift, .descend, .descend, .lift, .ascend, .ascend, .ascend, .extract]
+/-- The same discipline down the EAST spur.  Also nine, also board-independent —
+so the spur choice is a genuine choice and not a right answer. -/
+def cautiousEastLine : List Action :=
+  [.shore, .descend, .lift, .shoreEast, .descendEast, .lift, .ascend, .ascend,
+   .extract]
 
-theorem cautious_line_is_the_whole_budget : cautiousLine.length = AIR := by decide
-theorem greedy_line_is_the_whole_budget : greedyLine.length = AIR := by decide
+/-- ⚑ The sweep: leave the mouth relic where it is, walk in blind, and take BOTH
+spurs.  Nine actions again — the two extra crossings between spurs are paid for
+by not shoring and not lifting at the mouth — and it reads all three bits. -/
+def sweepLine : List Action :=
+  [.descend, .descend, .lift, .ascend, .descendEast, .lift, .ascend, .ascend,
+   .extract]
 
-/-- ⚑ **Every instance is winnable.**  The cautious line banks on all eight
-boards — it reads no bit, so no draw can refuse it — and the gate's
-`unwinnable-instance` FAIL therefore cannot fire. -/
+theorem every_line_is_the_whole_budget :
+    cautiousWestLine.length = AIR ∧ cautiousEastLine.length = AIR ∧
+      sweepLine.length = AIR := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- ⚑ **Every instance is winnable, down either spur.**  Both cautious lines bank
+on all eight boards, so no draw is a dead mission and the spur choice is never
+forced. -/
 theorem every_board_can_be_banked :
-    ∀ i : Fin 8, playsOutB (boardAt i) cautiousLine = true := by
+    (∀ i : Fin 8, playsOutB (boardAt i) cautiousWestLine = true) ∧
+    (∀ i : Fin 8, playsOutB (boardAt i) cautiousEastLine = true) := by
+  refine ⟨?_, ?_⟩
+  · native_decide
+  · native_decide
+
+/-- ⚑ **The budget binds on the cautious lines.** -/
+theorem budget_binds_on_the_cautious_lines :
+    cautiousWestLine.length = AIR ∧ cautiousEastLine.length = AIR ∧
+      ∀ i : Fin 8, playsOutB (boardAt i) cautiousWestLine = true := by
+  refine ⟨by decide, by decide, ?_⟩
   native_decide
 
-/-- ⚑ **The budget binds on the cautious line.**  Nine actions is exactly what
-the board-independent line costs, and `AIR` is nine. -/
-theorem budget_binds_on_the_cautious_line :
-    cautiousLine.length = AIR ∧
-      ∀ i : Fin 8, playsOutB (boardAt i) cautiousLine = true := by
-  refine ⟨by decide, ?_⟩
+/-- ⚑ **And on the sweep, from the other side.**  Visiting both spurs costs
+exactly the same nine actions, and banks on exactly one board in eight — the
+sound one.  Same budget, opposite wager. -/
+theorem sweep_costs_the_budget_and_banks_on_one_board :
+    sweepLine.length = AIR ∧
+    playsOutB (boardAt 0) sweepLine = true ∧
+    (∀ i : Fin 8, i ≠ 0 → playsOutB (boardAt i) sweepLine = false) := by
+  refine ⟨by decide, by native_decide, ?_⟩
   native_decide
 
-/-- ⚑ **The budget binds on the greedy line too**, from the other side: reaching
-the deep relic on a sound shaft also costs exactly nine. -/
-theorem budget_binds_on_the_greedy_line :
-    playsOutB (boardAt 0) greedyLine = true ∧ greedyLine.length = AIR := by
-  refine ⟨?_, by decide⟩
-  native_decide
-
-/-- ⚑ **And the greedy line is a bet on the whole shaft.**  It banks on exactly
-one of the eight boards — the sound one — so the same nine actions are a certain
-two relics or nothing at all depending on a draw the player cannot see.  That is
-the wager the second budget exists to buy out of. -/
-theorem greedy_line_banks_only_on_a_sound_shaft :
-    playsOutB (boardAt 0) greedyLine = true ∧
-      ∀ i : Fin 8, i ≠ 0 → playsOutB (boardAt i) greedyLine = false := by
-  refine ⟨by native_decide, ?_⟩
-  native_decide
-
-/-- ⚑ **The two budgets are incomparable.**  On the same board the cautious line
-spends the whole supply and no damage; the greedy line spends no supply and no
-damage but banks on one board in eight.  Neither cost vector dominates the
-other, and no action converts air into shoring or shoring into air. -/
+/-- ⚑ **The two budgets are incomparable.**  The cautious lines spend the whole
+supply and no body; the sweep spends no supply and, on the board where it works,
+no body either — but it wagers three hidden bits to do it.  Neither cost vector
+dominates the other, and no action converts air into shoring or shoring into
+air. -/
 def lineCost (b : Board) (acts : List Action) : Option (Nat × Nat × Nat) :=
   match replayB b initialState acts with
   | none => none
   | some s => some (AIR - s.air, SHORING - s.shoring, s.damage)
 
 theorem budgets_are_incomparable :
-    lineCost (boardAt 0) cautiousLine = some (9, 2, 0) ∧
-    lineCost (boardAt 7) cautiousLine = some (9, 2, 0) ∧
-    lineCost (boardAt 0) greedyLine = some (9, 0, 0) ∧
-    playsOutB (boardAt 7) greedyLine = false := by
+    lineCost (boardAt 0) cautiousWestLine = some (9, 2, 0) ∧
+    lineCost (boardAt 7) cautiousWestLine = some (9, 2, 0) ∧
+    lineCost (boardAt 0) sweepLine = some (9, 0, 0) ∧
+    playsOutB (boardAt 7) sweepLine = false := by
   native_decide
 
 /-! ### Forks, doom, and the scout decision
@@ -1120,8 +1260,7 @@ def forksAtB (b : Board) (s : State) : Bool :=
     | none => false
     | some t => doomedB t)
 
-/-- Every state reachable in at most `fuel` accepted actions.  Bounded and
-deduplicated, so the enumeration is a finite compiled computation. -/
+/-- Every state reachable in at most `fuel` accepted actions. -/
 def reachableWithin (b : Board) : Nat → List State
   | 0 => [initialState]
   | fuel + 1 =>
@@ -1139,30 +1278,26 @@ def doomCount (b : Board) : Nat :=
 def familyTotal (f : Board → Nat) : Nat :=
   (List.finRange 8).foldl (fun acc i => acc + f (boardAt i)) 0
 
-/-- ⚑ **Every board offers an outcome-changing fork.**  This is precisely the
-property the old Descent did not have across sixteen maps, stated here over all
-eight boards and every state reachable inside the budget. -/
+/-- ⚑ **Every board offers an outcome-changing fork.** -/
 theorem every_board_forks : ∀ i : Fin 8, 0 < forkCount (boardAt i) := by
   native_decide
 
-/-- ⚑ **Every board can be lost.**  Failure is reachable, not merely
-representable. -/
+/-- ⚑ **Every board can be lost.** -/
 theorem every_board_can_be_lost : ∀ i : Fin 8, 0 < doomCount (boardAt i) := by
   native_decide
 
-/-- The measured shape of the family, so the descriptor's size and the gate's
-counts are stated numbers rather than surprises: 2319 reachable states carrying
-757 outcome-changing forks and 1342 doomed states. -/
+/-- The measured shape of the family, per board and summed.  These are the
+numbers `scripts/poa-design-gate.py` must independently arrive at from the
+emitted table; they are stated here so a disagreement is loud. -/
 theorem family_shape_is_measured :
-    familyTotal (fun b => (reachableStates b).length) = 2319 ∧
-    familyTotal forkCount = 757 ∧
-    familyTotal doomCount = 1342 := by
+    familyTotal (fun b => (reachableStates b).length) = 3905 ∧
+    familyTotal forkCount = 1145 ∧
+    familyTotal doomCount = 2059 := by
   native_decide
 
-/-- The scout decision, named.  From the hatch on a flooded shaft, walking in
+/-- The scout decision, named.  From the hatch on a flooded mouth, walking in
 blind costs a point of damage that nothing in a descent restores; looking first
-and shoring first both cost a unit of air and no body.  That is the whole trade,
-and it is why `survey` is not decoration. -/
+and shoring blind both cost a unit of air and no body. -/
 theorem walking_in_blind_costs_a_body :
     (match stepB (boardAt 4) initialState .descend with
       | none => none
@@ -1175,11 +1310,11 @@ theorem walking_in_blind_costs_a_body :
       | some t => some t.damage) = some 0 := by
   native_decide
 
-/-- ⚑ **Extraction debt, and the deck's cut.**  Walk in blind on a flooded upper
-chamber, take both shallow relics, and turn round: the second crossing of the
-same flood is the second point of damage, capacity falls to one, and the deck
-keeps the deeper of the two.  The run reaches the hatch holding one relic — with
-air to spare and no way to use it. -/
+/-- ⚑ **Extraction debt, and the deck's cut.**  Walk in blind on a flooded mouth,
+take the mouth and west relics, and turn round: the second crossing of the same
+flood is the second point of damage, capacity falls to one, and the deck keeps
+the relic reached furthest for.  The run reaches the hatch holding one — with air
+to spare and no way to use it. -/
 def blindGrabLine : List Action :=
   [.descend, .lift, .descend, .lift, .ascend, .ascend]
 
@@ -1187,17 +1322,17 @@ theorem the_deck_keeps_what_you_could_not_carry :
     (match replayB (boardAt 4) initialState blindGrabLine with
       | none => false
       | some s =>
-          decide (s.depth = 0) && decide (s.damage = 2) && decide (capacity s = 1) &&
-          decide (s.sling.count = 1) && decide (0 < s.air) && doomedB s) = true := by
+          decide (s.position = Node.hatch) && decide (s.damage = 2) &&
+          decide (capacity s = 1) && decide (s.sling.count = 1) &&
+          decide (0 < s.air) && doomedB s) = true := by
   native_decide
 
-/-- The same six actions on a sound shaft come home with both.  The difference is
-three hidden bits and nothing else, which is what makes them worth buying. -/
+/-- The same six actions on a sound shaft come home with both. -/
 theorem a_sound_shaft_keeps_both_relics :
     (match replayB (boardAt 0) initialState blindGrabLine with
       | none => false
       | some s =>
-          decide (s.depth = 0) && decide (s.damage = 0) &&
+          decide (s.position = Node.hatch) && decide (s.damage = 0) &&
           decide (s.sling.count = 2) && reachableBankB s) = true := by
   native_decide
 
@@ -1207,33 +1342,46 @@ def familyStateCount : Nat :=
   (List.finRange 8).foldl (fun acc i => acc + (reachableWithin (boardAt i) AIR).length) 0
 
 #assert_axioms allChambers_complete
-#assert_axioms allActions_complete
-#assert_axioms chamberBelow_depth
-#assert_axioms chamberAt_depth
+#assert_axioms allNodes_complete
+#assert_axioms mouth_is_a_junction
+#assert_axioms only_the_mouth_forks
+#assert_axioms spurs_are_leaves
+#assert_axioms crossing_between_spurs_costs_two
 #assert_axioms Deck.get_set_same
 #assert_axioms boardTable_nodup
 #assert_axioms boardAt_mem
 #assert_axioms boardAt_injective
 #assert_axioms draw_below_two_never_rejects
 #assert_axioms Sling.count_le_three
-#assert_axioms Sling.deepest_some_of_count
+#assert_axioms Sling.forfeit_is_deepest
+#assert_axioms actionCode_injective
+#assert_axioms Sling.forfeit_some_of_count
+#assert_axioms allActions_complete
+#assert_axioms Node.dist_self
+#assert_axioms the_other_spur_costs_the_way_home
 #assert_axioms takeDamage_capacity
 #assert_axioms step_some_open
 #assert_axioms step_some_live
 #assert_axioms step_some_air
+#assert_axioms step_some_kind
+#assert_axioms step_eq_transition
 #assert_axioms step_spends_exactly_one_air
+#assert_axioms step_air_le_of_le
 #assert_axioms step_turns_advance
 #assert_axioms step_shoring_never_rises
 #assert_axioms step_damage_never_falls
 #assert_axioms step_capacity_never_rises
+#assert_axioms not_open_refuses
 #assert_axioms doomed_refuses_everything
 #assert_axioms banked_refuses_everything
 #assert_axioms airless_refuses_everything
 #assert_axioms shoreless_refuses_shore
 #assert_axioms surface_refuses_ascend
-#assert_axioms floor_refuses_descend
+#assert_axioms only_the_junction_accepts_the_spur
+#assert_axioms a_spur_refuses_going_deeper
 #assert_axioms inside_refuses_extract
 #assert_axioms short_sling_refuses_extract
+#assert_axioms hatch_refuses_lift
 #assert_axioms emptied_chamber_refuses_lift
 #assert_axioms full_sling_refuses_lift
 #assert_axioms known_chamber_refuses_survey
@@ -1245,6 +1393,7 @@ def familyStateCount : Nat :=
 #assert_axioms terminalOutput_none_without_bank
 #assert_axioms terminalOutput_is_mission_accepted
 #assert_axioms terminalOutput_names_exact_artifact
+#assert_axioms terminalOutput_canonical
 #assert_axioms step_eq_stepB
 #assert_axioms replay_eq_replayB
 #assert_axioms judged_board_is_the_drawn_board
@@ -1252,13 +1401,11 @@ def familyStateCount : Nat :=
 #assert_axioms judge_receipt_binds_transcript
 #assert_axioms judged_run_banked
 #assert_axioms judged_run_within_budget
-#assert_axioms cautious_line_is_the_whole_budget
-#assert_axioms greedy_line_is_the_whole_budget
+#assert_axioms every_line_is_the_whole_budget
 
 #assert_compiled every_board_can_be_banked
-#assert_compiled budget_binds_on_the_cautious_line
-#assert_compiled budget_binds_on_the_greedy_line
-#assert_compiled greedy_line_banks_only_on_a_sound_shaft
+#assert_compiled budget_binds_on_the_cautious_lines
+#assert_compiled sweep_costs_the_budget_and_banks_on_one_board
 #assert_compiled budgets_are_incomparable
 #assert_compiled every_board_forks
 #assert_compiled every_board_can_be_lost
