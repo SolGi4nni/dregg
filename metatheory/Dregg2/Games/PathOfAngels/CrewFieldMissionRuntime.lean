@@ -1,0 +1,1211 @@
+/-
+# CrewFieldMissionRuntime — canonical expedition admission and salvage authority
+
+This is the callable authority between an activated authored content pack, the
+complete `CrewFieldMission` transcript, and a durable expedition event stream.
+The caller supplies no outcome, contribution, beta candidate, or salvage list:
+all of them are derived from the activated field session and content bindings.
+
+There are deliberately two salvage namespaces.  Ordinary parts are authored
+mechanical inventory and may produce bounded market-mint authorizations.  A
+`ContentContract.RelicId` is beta/canon provenance: it produces custody data,
+never a market mint or trade authority.  The two constructors cannot be
+relabelled by a caller.
+
+`ReplayAuthority.verify` is the cryptographic trust boundary.  A production
+activation MUST pin it to the exact `CrewFieldMission.Config` and implement it
+by consuming a `CanonicalRunAdmission` and calling
+`admitCombinedFieldRecord?`; it must not be an accept-all predicate.  The
+runtime still reconstructs the entire raw record, checks every roster seat,
+counter, observation, decision, route, extraction and activated outcome before
+invoking that boundary.  The durable host owns the predecessor state and must
+CAS the emitted successor atomically.  These are the only two host seams.
+-/
+import Lean.Data.Json
+import Mathlib.Data.List.Sort
+import Dregg2.Circuit.CommitmentTreeWide
+import Dregg2.Games.PathOfAngels.ContentContract
+import Dregg2.Games.PathOfAngels.CrewFieldMission
+import Dregg2.Games.PathOfAngels.Emit
+import Dregg2.Tactics
+
+namespace Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime
+
+open Lean
+open Dregg2.Games.PathOfAngels
+open Dregg2.Games.PathOfAngels.CrewRelayExpedition
+
+set_option autoImplicit false
+
+abbrev INPUT_FORMAT : String := "POA-CREW-FIELD-RUN-IN-1"
+abbrev STATE_FORMAT : String := "POA-CREW-FIELD-STATE-1"
+abbrev OUTPUT_FORMAT : String := "POA-CREW-FIELD-RUN-OUT-1"
+abbrev WIRE_BYTE_LIMIT : Nat := 1024 * 1024
+abbrev MAX_RUNS : Nat := 4096
+abbrev MAX_PART_RULES : Nat := 64
+abbrev MAX_PART_QUANTITY : Nat := 64
+
+/-! ## Activated content bridge -/
+
+structure PartId where
+  value : Nat
+deriving Repr, DecidableEq
+
+structure RouteBinding where
+  field : CrewFieldMission.Route
+  content : ContentContract.RouteId
+deriving DecidableEq
+
+structure ArtifactBinding where
+  field : ArtifactRef
+  content : ContentContract.ArtifactId
+deriving DecidableEq
+
+structure RelicBinding where
+  field : RelicId
+  content : ContentContract.RelicId
+deriving DecidableEq
+
+structure OrdinarySalvageRule where
+  route : CrewFieldMission.Route
+  extraction : CrewFieldMission.ExtractionChoice
+  part : PartId
+  quantity : Nat
+deriving DecidableEq
+
+def OrdinarySalvageRule.key (rule : OrdinarySalvageRule) :
+    CrewFieldMission.Route × CrewFieldMission.ExtractionChoice × PartId :=
+  (rule.route, rule.extraction, rule.part)
+
+structure RawActivation where
+  activationId : Digest32
+  contentDigest : Digest32
+  fieldSession : CrewFieldMission.SessionDigest
+  briefings : List CrewFieldMission.BriefingAssignment
+  content : ContentContract.RawContent
+  routeBindings : List RouteBinding
+  artifactBindings : List ArtifactBinding
+  relicBindings : List RelicBinding
+  ordinarySalvage : List OrdinarySalvageRule
+  replayVerifierId : Digest32
+deriving DecidableEq
+
+/-- This boundary is trusted only for signature verification and exact replay
+against the pinned field configuration.  It receives the complete reconstructed
+record, never a caller-selected digest. -/
+structure ReplayAuthority where
+  id : Digest32
+  verify : CrewFieldMission.RawCombinedFieldRecord → Bool
+
+def routeBindingByField? : List RouteBinding → CrewFieldMission.Route →
+    Option RouteBinding
+  | [], _ => none
+  | binding :: bindings, route =>
+      if binding.field = route then some binding else routeBindingByField? bindings route
+
+def artifactBindingByField? : List ArtifactBinding → ArtifactRef →
+    Option ArtifactBinding
+  | [], _ => none
+  | binding :: bindings, artifact =>
+      if binding.field = artifact then some binding
+      else artifactBindingByField? bindings artifact
+
+def relicBindingByField? : List RelicBinding → RelicId → Option RelicBinding
+  | [], _ => none
+  | binding :: bindings, relic =>
+      if binding.field = relic then some binding else relicBindingByField? bindings relic
+
+def contentOutcomeBy? : List ContentContract.RouteOutcome → ContentContract.RouteId →
+    ContentContract.ExtractionChoice → Option ContentContract.RouteOutcome
+  | [], _, _ => none
+  | outcome :: outcomes, route, extraction =>
+      if outcome.route = route ∧ outcome.extraction = extraction then some outcome
+      else contentOutcomeBy? outcomes route extraction
+
+def toContentExtraction : CrewFieldMission.ExtractionChoice →
+    ContentContract.ExtractionChoice
+  | .returnNow => .returnNow
+  | .descendFurther => .descendFurther
+
+def fieldRelicsToContent? (bindings : List RelicBinding) : List RelicId →
+    Option (List ContentContract.RelicId)
+  | [] => some []
+  | relic :: relics => do
+      let binding ← relicBindingByField? bindings relic
+      let rest ← fieldRelicsToContent? bindings relics
+      some (binding.content :: rest)
+
+def contributionAlignedB (bindings : List RelicBinding) (field : RawContribution)
+    (content : ContentContract.Contribution) : Bool :=
+  match fieldRelicsToContent? bindings field.relics with
+  | none => false
+  | some relics =>
+      decide (field.intel = content.intel) &&
+      decide (field.supplies = content.supplies) &&
+      decide (field.cohesion = content.cohesion) &&
+      decide (field.influence = content.influence) &&
+      decide (field.score = content.score) &&
+      decide (relics = content.relics)
+
+def fieldOutcomeAlignedB (raw : RawActivation)
+    (field : CrewFieldMission.RouteOutcomeSpec) : Bool :=
+  match routeBindingByField? raw.routeBindings field.route with
+  | none => false
+  | some routeBinding =>
+    match contentOutcomeBy? raw.content.outcomes routeBinding.content
+        (toContentExtraction field.extraction) with
+    | none => false
+    | some contentOutcome =>
+      match artifactBindingByField? raw.artifactBindings field.featuredArtifact with
+      | none => false
+      | some artifactBinding =>
+          decide (field.operationalCost = contentOutcome.operationalCost) &&
+          decide (artifactBinding.content = contentOutcome.featuredArtifact) &&
+          contributionAlignedB raw.relicBindings field.outcome.contribution
+            contentOutcome.contribution
+
+def briefingAlignedB (raw : RawActivation) : Bool :=
+  decide (raw.briefings.length = CrewFieldMission.CREW_SIZE) &&
+  decide (raw.briefings.map CrewFieldMission.BriefingAssignment.seat =
+    raw.fieldSession.roster.map Seat.id) &&
+  decide (raw.content.briefings.length = CrewFieldMission.CREW_SIZE) &&
+  (raw.briefings.zip raw.content.briefings).all fun pair =>
+    let field := pair.1
+    let content := pair.2
+    decide (field.observation.role = content.role) &&
+    match field.observation.supportedRoute?, content.recommendedRoute with
+    | none, none => true
+    | some route, some routeId =>
+        match routeBindingByField? raw.routeBindings route with
+        | none => false
+        | some binding => decide (binding.content = routeId)
+    | _, _ => false
+
+def ordinaryRulesValidB (raw : RawActivation) : Bool :=
+  decide (raw.ordinarySalvage.length ≤ MAX_PART_RULES) &&
+  decide (raw.ordinarySalvage.map OrdinarySalvageRule.key).Nodup &&
+  decide (raw.ordinarySalvage.map (fun rule => rule.part)).Nodup &&
+  raw.ordinarySalvage.all fun rule =>
+    decide (0 < rule.quantity ∧ rule.quantity ≤ MAX_PART_QUANTITY) &&
+    decide ((routeBindingByField? raw.routeBindings rule.route).isSome) &&
+    decide (rule.part.value ∉ raw.content.relics.map (fun relic => relic.id.value))
+
+def activationValidB (raw : RawActivation) : Bool :=
+  ContentContract.contentValidB raw.content &&
+  decide (raw.activationId = raw.fieldSession.policy.mission.activationDigest) &&
+  decide (raw.contentDigest = raw.fieldSession.policy.mission.contentRoot) &&
+  decide (raw.fieldSession.federationId = raw.fieldSession.policy.mission.federationId) &&
+  decide (raw.fieldSession.contentSession = raw.fieldSession.policy.mission.contentSession) &&
+  decide (raw.fieldSession.missionEpoch = raw.fieldSession.policy.mission.epoch) &&
+  decide (raw.fieldSession.missionId = raw.fieldSession.policy.mission.missionId) &&
+  decide (raw.fieldSession.roster.length = CrewFieldMission.CREW_SIZE) &&
+  decide (raw.fieldSession.roster.map Seat.role = ContentContract.exactRoles) &&
+  decide (raw.fieldSession.roster.map (fun seat => seat.credential.value) =
+    raw.content.officers.map (fun officer => officer.credential.value)) &&
+  decide (raw.routeBindings.map RouteBinding.field =
+    [.maintenanceSpine, .signalGallery, .sealedNave]) &&
+  decide (raw.routeBindings.map RouteBinding.content = ContentContract.routeIds raw.content) &&
+  decide (raw.artifactBindings.map ArtifactBinding.field).Nodup &&
+  decide ((raw.artifactBindings.map ArtifactBinding.field).toFinset =
+    raw.fieldSession.policy.allowedBeta) &&
+  decide (raw.artifactBindings.map ArtifactBinding.content =
+    ContentContract.artifactIds raw.content) &&
+  decide (raw.relicBindings.map RelicBinding.field).Nodup &&
+  decide ((raw.relicBindings.map RelicBinding.field).toFinset =
+    raw.fieldSession.policy.mission.allowedRelics) &&
+  decide (raw.relicBindings.map RelicBinding.content = ContentContract.relicIds raw.content) &&
+  briefingAlignedB raw &&
+  raw.fieldSession.routeOutcomes.all (fieldOutcomeAlignedB raw) &&
+  ordinaryRulesValidB raw
+
+/-- Private construction pins the replay function to this activation. -/
+structure Activation where
+  private mk ::
+  raw : RawActivation
+  private replay : ReplayAuthority
+  valid : activationValidB raw = true
+  verifierExact : replay.id = raw.replayVerifierId
+
+def activate? (raw : RawActivation) (replay : ReplayAuthority) : Option Activation :=
+  if hvalid : activationValidB raw = true then
+    if hexact : replay.id = raw.replayVerifierId then
+      some ⟨raw, replay, hvalid, hexact⟩
+    else none
+  else none
+
+/-! ## Strict proof-erased command and durable state -/
+
+structure TraceWire where
+  sequence : Nat
+  seat : Nat
+  previousCounter : Nat
+  counter : Nat
+  observation : String
+  observedRoute : String
+  decision : String
+  decidedRoute : String
+  extraction : String
+  command : String
+  seatSignature : CrewFieldMission.SignatureBytes
+  handoffSignature : CrewFieldMission.SignatureBytes
+deriving DecidableEq
+
+structure ContributionWire where
+  intel : Nat
+  supplies : Nat
+  cohesion : Nat
+  influence : Nat
+  score : Nat
+  relics : List Nat
+deriving DecidableEq
+
+def ContributionWire.ofRaw (raw : RawContribution) : ContributionWire where
+  intel := raw.intel
+  supplies := raw.supplies
+  cohesion := raw.cohesion
+  influence := raw.influence
+  score := raw.score
+  relics := raw.relics.map RelicId.value
+
+structure CommandWire where
+  activationId : Digest32
+  sequence : Nat
+  predecessor : Digest32
+  admission : Nat
+  actor : Digest32
+  officerSeat : Nat
+  claimedRoute : String
+  claimedExtraction : String
+  claimedContribution : ContributionWire
+  claimedFeaturedArtifact : Nat
+  transcript : List TraceWire
+deriving DecidableEq
+
+structure StateWire where
+  activationId : Digest32
+  sequence : Nat
+  head : Digest32
+  nextAdmission : Nat
+  consumedRuns : List Digest32
+deriving DecidableEq
+
+def StateWire.validB (activation : Activation) (state : StateWire) : Bool :=
+  decide (state.activationId = activation.raw.activationId) &&
+  decide (state.sequence ≤ MAX_RUNS) &&
+  decide (state.nextAdmission = state.sequence + 1) &&
+  decide (state.consumedRuns.length = state.sequence) &&
+  decide state.consumedRuns.Nodup
+
+def initialState (activation : Activation) (genesisHead : Digest32) : StateWire where
+  activationId := activation.raw.activationId
+  sequence := 0
+  head := genesisHead
+  nextAdmission := 1
+  consumedRuns := []
+
+private def routeFromString? : String → Option CrewFieldMission.Route
+  | "maintenance-spine" => some .maintenanceSpine
+  | "signal-gallery" => some .signalGallery
+  | "sealed-nave" => some .sealedNave
+  | _ => none
+
+private def routeString : CrewFieldMission.Route → String
+  | .maintenanceSpine => "maintenance-spine"
+  | .signalGallery => "signal-gallery"
+  | .sealedNave => "sealed-nave"
+
+private def extractionFromString? : String → Option CrewFieldMission.ExtractionChoice
+  | "return-now" => some .returnNow
+  | "descend-further" => some .descendFurther
+  | _ => none
+
+private def extractionString : CrewFieldMission.ExtractionChoice → String
+  | .returnNow => "return-now"
+  | .descendFurther => "descend-further"
+
+private def commandFromString? : String → Option CrewRelayExpedition.Command
+  | "chart-pressure-route" => some .chartPressureRoute
+  | "mark-salvage-route" => some .markSalvageRoute
+  | "brace-transit" => some .braceTransit
+  | "overdrive-cargo-lift" => some .overdriveCargoLift
+  | "quiet-anomaly" => some .quietAnomaly
+  | "screen-recovery" => some .screenRecovery
+  | "bank-supplies" => some .bankSupplies
+  | "secure-cache" => some .secureCache
+  | _ => none
+
+private def commandString : CrewRelayExpedition.Command → String
+  | .chartPressureRoute => "chart-pressure-route"
+  | .markSalvageRoute => "mark-salvage-route"
+  | .braceTransit => "brace-transit"
+  | .overdriveCargoLift => "overdrive-cargo-lift"
+  | .quietAnomaly => "quiet-anomaly"
+  | .screenRecovery => "screen-recovery"
+  | .bankSupplies => "bank-supplies"
+  | .secureCache => "secure-cache"
+  | .abort => "abort"
+  | .restart => "restart"
+
+private def observationFromWire? (wire : TraceWire) :
+    Option CrewFieldMission.PrivateObservation := do
+  match wire.observation with
+  | "pathfinder" => return .pathfinder (← routeFromString? wire.observedRoute)
+  | "engineer" => return .engineer (← routeFromString? wire.observedRoute)
+  | "containment" => return .containment (← routeFromString? wire.observedRoute)
+  | "quartermaster-closing" =>
+      if wire.observedRoute = "none" then return .quartermaster .closing else none
+  | "quartermaster-stable" =>
+      if wire.observedRoute = "none" then return .quartermaster .stable else none
+  | _ => none
+
+private def decisionFromWire? (wire : TraceWire) : Option CrewFieldMission.Decision := do
+  let route ← routeFromString? wire.decidedRoute
+  let command ← commandFromString? wire.command
+  match wire.decision with
+  | "specialist" =>
+      if wire.extraction = "none" then return .specialist route command else none
+  | "finalize" =>
+      return .finalize route (← extractionFromString? wire.extraction) command
+  | _ => none
+
+def TraceWire.toSemantic? (activation : Activation) : TraceWire →
+    Option CrewFieldMission.HandoffTrace
+  | wire => do
+      let seat ← seatById? activation.raw.fieldSession.roster ⟨wire.seat⟩
+      let observation ← observationFromWire? wire
+      let decision ← decisionFromWire? wire
+      some {
+        sequence := wire.sequence
+        seat
+        previousCounter := wire.previousCounter
+        counter := wire.counter
+        observation
+        decision
+        seatSignature := ⟨wire.seatSignature⟩
+        signature := ⟨wire.handoffSignature⟩
+      }
+
+private def expectedObservation? (activation : Activation) (seat : SeatId) :
+    Option CrewFieldMission.PrivateObservation := do
+  let assignment ← CrewFieldMission.briefingBySeat? activation.raw.briefings seat
+  some assignment.observation
+
+private def tracesStructurallyValidB (activation : Activation)
+    (traces : List CrewFieldMission.HandoffTrace) : Bool :=
+  decide (traces.length = CrewFieldMission.CREW_SIZE) &&
+  decide (traces.map CrewFieldMission.HandoffTrace.sequence =
+    List.range CrewFieldMission.CREW_SIZE) &&
+  decide (traces.map (fun trace => trace.seat) = activation.raw.fieldSession.roster) &&
+  traces.all (fun trace =>
+    decide (expectedObservation? activation trace.seat.id = some trace.observation) &&
+    decide (trace.previousCounter = trace.seat.initialCounter) &&
+    decide (trace.counter = trace.seat.initialCounter + 1) &&
+    CrewFieldMission.decisionRoleExactB trace.seat.role trace.decision) &&
+  match traces.getLast? with
+  | none => false
+  | some finalTrace =>
+    match finalTrace.observation, finalTrace.decision with
+    | .quartermaster window, .finalize route extraction command =>
+        decide (command.strategy? = some extraction.strategy) &&
+        traces.all (fun trace =>
+          decide (trace.decision.command.strategy? = some extraction.strategy)) &&
+        match extraction with
+        | .returnNow => decide (2 ≤ CrewFieldMission.recommendationCount traces route)
+        | .descendFurther =>
+            decide (CrewFieldMission.recommendationCount traces route = 3) &&
+            decide (CrewFieldMission.evidenceCount traces route = 3) &&
+            decide (window = .stable)
+    | _, _ => false
+
+private def finalCounters (traces : List CrewFieldMission.HandoffTrace) :
+    List CrewFieldMission.SeatCounter :=
+  traces.map fun trace => ⟨trace.seat.id, trace.counter⟩
+
+private def deriveRecord? (activation : Activation) (command : CommandWire) :
+    Option CrewFieldMission.RawCombinedFieldRecord := do
+  let traces ← command.transcript.mapM (TraceWire.toSemantic? activation)
+  if tracesStructurallyValidB activation traces ≠ true then none
+  let finalTrace ← traces.getLast?
+  let (route, extraction) ← match finalTrace.decision with
+    | .finalize route extraction _ => some (route, extraction)
+    | _ => none
+  if command.claimedRoute ≠ routeString route then none
+  if command.claimedExtraction ≠ extractionString extraction then none
+  let spec ← CrewFieldMission.routeOutcomeBy? activation.raw.fieldSession.routeOutcomes
+    route extraction
+  if command.claimedContribution ≠ ContributionWire.ofRaw spec.outcome.contribution then none
+  let artifactBinding ← artifactBindingByField? activation.raw.artifactBindings
+    spec.featuredArtifact
+  if command.claimedFeaturedArtifact ≠ artifactBinding.content.value then none
+  let strategy := extraction.strategy
+  let totalCost := CrewFieldMission.mandatorySpecialistSpend extraction + spec.operationalCost
+  if activation.raw.fieldSession.operationalBudget < totalCost then none
+  let snapshot : CrewFieldMission.StateSnapshot := {
+    phase := .extracted
+    sequence := CrewFieldMission.CREW_SIZE
+    nextSeat := CrewFieldMission.CREW_SIZE
+    counters := finalCounters traces
+    strategy := some strategy
+    operationalBudgetRemaining := activation.raw.fieldSession.operationalBudget - totalCost
+    transcript := traces
+  }
+  let root : CrewFieldMission.StateRoot := ⟨activation.raw.fieldSession, snapshot⟩
+  some {
+    session := activation.raw.fieldSession
+    route
+    extraction
+    strategy
+    routeOperationalCost := spec.operationalCost
+    totalOperationalCost := totalCost
+    transcript := traces
+    finalCounters := finalCounters traces
+    finalRoot := root
+    outcome := spec.outcome
+    featuredBeta := spec.featuredArtifact
+  }
+
+/-! ## Derived settlement output -/
+
+structure OrdinaryMintAuthorization where
+  part : PartId
+  quantity : Nat
+  recipient : Digest32
+  marketEligible : Bool
+deriving DecidableEq
+
+structure RelicCustodyAuthorization where
+  relic : ContentContract.RelicId
+  destination : ContentContract.CustodyLocation
+  marketEligible : Bool
+  directTradeAllowed : Bool
+deriving DecidableEq
+
+structure ReceiptWire where
+  activationId : Digest32
+  replayVerifierId : Digest32
+  admission : Nat
+  actor : Digest32
+  route : String
+  extraction : String
+  runDigest : Digest32
+  predecessor : Digest32
+  successor : Digest32
+  contribution : ContributionWire
+  featuredArtifact : Nat
+  ordinaryMints : List OrdinaryMintAuthorization
+  relicCustody : List RelicCustodyAuthorization
+deriving DecidableEq
+
+structure OutputWire where
+  state : StateWire
+  receipt : ReceiptWire
+deriving DecidableEq
+
+private def ordinaryMints (activation : Activation) (record :
+    CrewFieldMission.RawCombinedFieldRecord) (actor : Digest32) :
+    List OrdinaryMintAuthorization :=
+  (activation.raw.ordinarySalvage.filter fun rule =>
+    decide (rule.route = record.route ∧ rule.extraction = record.extraction)).map fun rule =>
+      ⟨rule.part, rule.quantity, actor, true⟩
+
+private def relicCustody? (activation : Activation) (record :
+    CrewFieldMission.RawCombinedFieldRecord) : Option (List RelicCustodyAuthorization) :=
+  record.outcome.contribution.relics.mapM fun relic => do
+    let binding ← relicBindingByField? activation.raw.relicBindings relic
+    let contentRelic ← ContentContract.relicById? activation.raw.content.relics binding.content
+    let plan ← ContentContract.custodyByRelic? activation.raw.content.custodyPlans binding.content
+    if contentRelic.marketEligible ≠ false then none
+    if plan.directTradeAllowed ≠ false then none
+    if plan.destination = .market then none
+    some ⟨binding.content, plan.destination, false, false⟩
+
+private def byte (n : Nat) : Fin 256 := ⟨n % 256, Nat.mod_lt _ (by decide)⟩
+private def u32le (n : Nat) : List (Fin 256) :=
+  [byte n, byte (n / 256), byte (n / 65536), byte (n / 16777216)]
+private def stringBytes (value : String) : List Nat :=
+  value.toUTF8.toList.map UInt8.toNat
+
+/-- Faithful eight-lane result of the Lean-authored wide commitment primitive. -/
+def digestString (domain : Nat) (value : String) : Digest32 :=
+  let lanes := Dregg2.Circuit.CommitmentTreeWide.hashTo8 domain (stringBytes value)
+  { bytes := (List.ofFn (fun lane : Fin 8 => u32le (lanes.getD lane.val 0))).flatten
+    length_eq := by simp [u32le] }
+
+abbrev RUN_DIGEST_DOMAIN : Nat := 0x504f4158
+abbrev SUCCESSOR_DIGEST_DOMAIN : Nat := 0x504f4159
+
+private def signatureNatList (signature : CrewFieldMission.SignatureBytes) : List Nat :=
+  signature.bytes.map Fin.val
+
+private def jsonString (value : String) : String := String.quote value
+private def jsonArray (values : List String) : String :=
+  "[" ++ String.intercalate "," values ++ "]"
+private def natArray (values : List Nat) : String :=
+  jsonArray (values.map toString)
+
+def ContributionWire.toJson (wire : ContributionWire) : String :=
+  "{\"intel\":" ++ toString wire.intel ++
+    ",\"supplies\":" ++ toString wire.supplies ++
+    ",\"cohesion\":" ++ toString wire.cohesion ++
+    ",\"influence\":" ++ toString wire.influence ++
+    ",\"score\":" ++ toString wire.score ++
+    ",\"relics\":" ++ natArray wire.relics ++ "}"
+
+def TraceWire.toJson (wire : TraceWire) : String :=
+  "{\"sequence\":" ++ toString wire.sequence ++
+    ",\"seat\":" ++ toString wire.seat ++
+    ",\"previous_counter\":" ++ toString wire.previousCounter ++
+    ",\"counter\":" ++ toString wire.counter ++
+    ",\"observation\":" ++ jsonString wire.observation ++
+    ",\"observed_route\":" ++ jsonString wire.observedRoute ++
+    ",\"decision\":" ++ jsonString wire.decision ++
+    ",\"decided_route\":" ++ jsonString wire.decidedRoute ++
+    ",\"extraction\":" ++ jsonString wire.extraction ++
+    ",\"command\":" ++ jsonString wire.command ++
+    ",\"seat_signature\":" ++ natArray (signatureNatList wire.seatSignature) ++
+    ",\"handoff_signature\":" ++ natArray (signatureNatList wire.handoffSignature) ++ "}"
+
+def CommandWire.toJson (wire : CommandWire) : String :=
+  "{\"format\":" ++ jsonString INPUT_FORMAT ++
+    ",\"activation_id\":" ++ jsonString (Emit.bytes32Hex wire.activationId) ++
+    ",\"sequence\":" ++ toString wire.sequence ++
+    ",\"predecessor\":" ++ jsonString (Emit.bytes32Hex wire.predecessor) ++
+    ",\"admission\":" ++ toString wire.admission ++
+    ",\"actor\":" ++ jsonString (Emit.bytes32Hex wire.actor) ++
+    ",\"officer_seat\":" ++ toString wire.officerSeat ++
+    ",\"claimed_route\":" ++ jsonString wire.claimedRoute ++
+    ",\"claimed_extraction\":" ++ jsonString wire.claimedExtraction ++
+    ",\"claimed_contribution\":" ++ wire.claimedContribution.toJson ++
+    ",\"claimed_featured_artifact\":" ++ toString wire.claimedFeaturedArtifact ++
+    ",\"transcript\":" ++ jsonArray (wire.transcript.map TraceWire.toJson) ++ "}"
+
+def StateWire.toJson (wire : StateWire) : String :=
+  "{\"format\":" ++ jsonString STATE_FORMAT ++
+    ",\"activation_id\":" ++ jsonString (Emit.bytes32Hex wire.activationId) ++
+    ",\"sequence\":" ++ toString wire.sequence ++
+    ",\"head\":" ++ jsonString (Emit.bytes32Hex wire.head) ++
+    ",\"next_admission\":" ++ toString wire.nextAdmission ++
+    ",\"consumed_runs\":" ++ jsonArray (wire.consumedRuns.map fun digest =>
+      jsonString (Emit.bytes32Hex digest)) ++ "}"
+
+private def runDigest (command : CommandWire) : Digest32 :=
+  digestString RUN_DIGEST_DOMAIN command.toJson
+
+private def successorDigest (state : StateWire) (command : CommandWire)
+    (run : Digest32) : Digest32 :=
+  digestString SUCCESSOR_DIGEST_DOMAIN
+    (state.toJson ++ command.toJson ++ Emit.bytes32Hex run)
+
+inductive Refusal where
+  | invalidState
+  | wrongActivation
+  | staleCursor
+  | admissionReplay
+  | unauthorizedOfficer
+  | invalidTranscript
+  | replayRefused
+  | custodyRefused
+deriving Repr, DecidableEq
+
+/-- Pure Lean admission.  The host must atomically CAS `state.head` to the
+emitted successor and persist the complete receipt before exposing a mint. -/
+def judge (activation : Activation) (state : StateWire) (command : CommandWire) :
+    Except Refusal OutputWire := do
+  if state.validB activation ≠ true then throw .invalidState
+  if command.activationId ≠ activation.raw.activationId then throw .wrongActivation
+  if command.sequence ≠ state.sequence ∨ command.predecessor ≠ state.head then
+    throw .staleCursor
+  if command.admission ≠ state.nextAdmission then throw .admissionReplay
+  let officer ← match seatById? activation.raw.fieldSession.roster ⟨command.officerSeat⟩ with
+    | none => throw .unauthorizedOfficer
+    | some seat => pure seat
+  if command.actor ≠ officer.playerKey then throw .unauthorizedOfficer
+  let record ← match deriveRecord? activation command with
+    | none => throw .invalidTranscript
+    | some record => pure record
+  if activation.replay.verify record ≠ true then throw .replayRefused
+  let run := runDigest command
+  if run ∈ state.consumedRuns then throw .admissionReplay
+  let custody ← match relicCustody? activation record with
+    | none => throw .custodyRefused
+    | some custody => pure custody
+  let successor := successorDigest state command run
+  let after : StateWire := {
+    activationId := state.activationId
+    sequence := state.sequence + 1
+    head := successor
+    nextAdmission := state.nextAdmission + 1
+    consumedRuns := state.consumedRuns ++ [run]
+  }
+  if after.validB activation ≠ true then throw .invalidState
+  let artifactBinding ← match artifactBindingByField? activation.raw.artifactBindings
+      record.featuredBeta with
+    | none => throw .invalidTranscript
+    | some binding => pure binding
+  let receipt : ReceiptWire := {
+    activationId := activation.raw.activationId
+    replayVerifierId := activation.raw.replayVerifierId
+    admission := command.admission
+    actor := command.actor
+    route := routeString record.route
+    extraction := extractionString record.extraction
+    runDigest := run
+    predecessor := state.head
+    successor
+    contribution := ContributionWire.ofRaw record.outcome.contribution
+    featuredArtifact := artifactBinding.content.value
+    ordinaryMints := ordinaryMints activation record command.actor
+    relicCustody := custody
+  }
+  pure ⟨after, receipt⟩
+
+/-! ## Canonical bounded JSON ABI
+
+The runtime is deliberately parameterized by an already-pinned `Activation`.
+Neither verifier functions nor authored tables travel over the public wire.
+The host passes canonical predecessor-state bytes and canonical command bytes;
+Lean returns canonical successor/receipt bytes only after `judge` accepts.
+-/
+
+private def exactKeys (j : Json) (allowed : List String) : Except String Unit := do
+  let object ← j.getObj?
+  if object.size == allowed.length && allowed.all object.contains then pure ()
+  else throw "missing or unknown field"
+
+private def objectNat (j : Json) (key : String) (limit : Nat := 2 ^ 64 - 1) :
+    Except String Nat := do
+  let value ← j.getObjValAs? Nat key
+  if value ≤ limit then pure value else throw "integer exceeds wire bound"
+
+private def objectDigest (j : Json) (key : String) : Except String Digest32 := do
+  let spelling ← j.getObjValAs? String key
+  match Emit.parseBytes32Hex? spelling with
+  | some digest => pure digest
+  | none => throw "digest must be exactly 64 lowercase hexadecimal digits"
+
+private def parseNatList (j : Json) (lengthLimit valueLimit : Nat) :
+    Except String (List Nat) := do
+  let values := (← j.getArr?).toList
+  if values.length > lengthLimit then throw "list exceeds wire bound"
+  values.mapM fun value => do
+    let n ← value.getNat?
+    if n ≤ valueLimit then pure n else throw "list integer exceeds wire bound"
+
+private def signatureBytes? (values : List Nat) :
+    Option CrewFieldMission.SignatureBytes := do
+  let bytes ← values.mapM fun value => if h : value < 256 then some ⟨value, h⟩ else none
+  if h : bytes.length = CrewFieldMission.SIGNATURE_BYTE_LENGTH then some ⟨bytes, h⟩
+  else none
+
+private def parseSignature (j : Json) : Except String CrewFieldMission.SignatureBytes := do
+  let values ← parseNatList j CrewFieldMission.SIGNATURE_BYTE_LENGTH 255
+  match signatureBytes? values with
+  | some signature => pure signature
+  | none => throw "signature must contain exactly 64 bytes"
+
+private def parseContribution (j : Json) : Except String ContributionWire := do
+  exactKeys j ["intel", "supplies", "cohesion", "influence", "score", "relics"]
+  pure {
+    intel := ← objectNat j "intel" METRIC_LIMIT
+    supplies := ← objectNat j "supplies" METRIC_LIMIT
+    cohesion := ← objectNat j "cohesion" METRIC_LIMIT
+    influence := ← objectNat j "influence" METRIC_LIMIT
+    score := ← objectNat j "score" METRIC_LIMIT
+    relics := ← parseNatList (← j.getObjVal? "relics") RELIC_LIMIT (2 ^ 64 - 1)
+  }
+
+private def parseTrace (j : Json) : Except String TraceWire := do
+  exactKeys j ["sequence", "seat", "previous_counter", "counter", "observation",
+    "observed_route", "decision", "decided_route", "extraction", "command",
+    "seat_signature", "handoff_signature"]
+  pure {
+    sequence := ← objectNat j "sequence" CrewFieldMission.CREW_SIZE
+    seat := ← objectNat j "seat" (CrewFieldMission.CREW_SIZE - 1)
+    previousCounter := ← objectNat j "previous_counter" PLAYER_COUNTER_MODULUS
+    counter := ← objectNat j "counter" PLAYER_COUNTER_MODULUS
+    observation := ← j.getObjValAs? String "observation"
+    observedRoute := ← j.getObjValAs? String "observed_route"
+    decision := ← j.getObjValAs? String "decision"
+    decidedRoute := ← j.getObjValAs? String "decided_route"
+    extraction := ← j.getObjValAs? String "extraction"
+    command := ← j.getObjValAs? String "command"
+    seatSignature := ← parseSignature (← j.getObjVal? "seat_signature")
+    handoffSignature := ← parseSignature (← j.getObjVal? "handoff_signature")
+  }
+
+private def parseTranscript (j : Json) : Except String (List TraceWire) := do
+  let values := (← j.getArr?).toList
+  if values.length != CrewFieldMission.CREW_SIZE then
+    throw "field transcript must contain exactly four handoffs"
+  values.mapM parseTrace
+
+private def parseCommandJson (j : Json) : Except String CommandWire := do
+  exactKeys j ["format", "activation_id", "sequence", "predecessor", "admission",
+    "actor", "officer_seat", "claimed_route", "claimed_extraction",
+    "claimed_contribution", "claimed_featured_artifact", "transcript"]
+  if (← j.getObjValAs? String "format") != INPUT_FORMAT then throw "wrong input format"
+  pure {
+    activationId := ← objectDigest j "activation_id"
+    sequence := ← objectNat j "sequence" MAX_RUNS
+    predecessor := ← objectDigest j "predecessor"
+    admission := ← objectNat j "admission" (MAX_RUNS + 1)
+    actor := ← objectDigest j "actor"
+    officerSeat := ← objectNat j "officer_seat" (CrewFieldMission.CREW_SIZE - 1)
+    claimedRoute := ← j.getObjValAs? String "claimed_route"
+    claimedExtraction := ← j.getObjValAs? String "claimed_extraction"
+    claimedContribution := ← parseContribution (← j.getObjVal? "claimed_contribution")
+    claimedFeaturedArtifact := ← objectNat j "claimed_featured_artifact"
+    transcript := ← parseTranscript (← j.getObjVal? "transcript")
+  }
+
+private def parseDigestList (j : Json) : Except String (List Digest32) := do
+  let values := (← j.getArr?).toList
+  if values.length > MAX_RUNS then throw "run history exceeds wire bound"
+  values.mapM fun value => do
+    let spelling ← value.getStr?
+    match Emit.parseBytes32Hex? spelling with
+    | some digest => pure digest
+    | none => throw "run digest must be exactly 64 lowercase hexadecimal digits"
+
+private def parseStateJson (j : Json) : Except String StateWire := do
+  exactKeys j ["format", "activation_id", "sequence", "head", "next_admission",
+    "consumed_runs"]
+  if (← j.getObjValAs? String "format") != STATE_FORMAT then throw "wrong state format"
+  pure {
+    activationId := ← objectDigest j "activation_id"
+    sequence := ← objectNat j "sequence" MAX_RUNS
+    head := ← objectDigest j "head"
+    nextAdmission := ← objectNat j "next_admission" (MAX_RUNS + 1)
+    consumedRuns := ← parseDigestList (← j.getObjVal? "consumed_runs")
+  }
+
+def canonicalDecode {T : Type} (parse : Json → Except String T) (encode : T → String)
+    (bytes : String) : Option T :=
+  match Json.parse bytes with
+  | .error _ => none
+  | .ok json =>
+      match parse json with
+      | .error _ => none
+      | .ok value => if encode value = bytes then some value else none
+
+def decodeCommandWithLimit (limit : Nat) (bytes : String) : Option CommandWire :=
+  if bytes.length ≤ limit then canonicalDecode parseCommandJson CommandWire.toJson bytes
+  else none
+
+def decodeCommand (bytes : String) : Option CommandWire :=
+  decodeCommandWithLimit WIRE_BYTE_LIMIT bytes
+
+def decodeStateWithLimit (limit : Nat) (bytes : String) : Option StateWire :=
+  if bytes.length ≤ limit then canonicalDecode parseStateJson StateWire.toJson bytes else none
+
+def decodeState (bytes : String) : Option StateWire :=
+  decodeStateWithLimit WIRE_BYTE_LIMIT bytes
+
+theorem canonicalDecode_reencodes {T : Type} (parse : Json → Except String T)
+    (encode : T → String) {bytes : String} {value : T}
+    (accepted : canonicalDecode parse encode bytes = some value) : encode value = bytes := by
+  simp only [canonicalDecode] at accepted
+  split at accepted <;> try contradiction
+  split at accepted <;> try contradiction
+  split at accepted <;> try contradiction
+  rename_i equal
+  cases accepted
+  exact equal
+
+theorem decodeCommand_reencodes {bytes : String} {command : CommandWire}
+    (accepted : decodeCommand bytes = some command) : command.toJson = bytes := by
+  simp only [decodeCommand, decodeCommandWithLimit] at accepted
+  split at accepted
+  · exact canonicalDecode_reencodes parseCommandJson CommandWire.toJson accepted
+  · contradiction
+
+theorem decodeState_reencodes {bytes : String} {state : StateWire}
+    (accepted : decodeState bytes = some state) : state.toJson = bytes := by
+  simp only [decodeState, decodeStateWithLimit] at accepted
+  split at accepted
+  · exact canonicalDecode_reencodes parseStateJson StateWire.toJson accepted
+  · contradiction
+
+private def custodyLocationJson : ContentContract.CustodyLocation → String
+  | .atEncounter encounter =>
+      "{\"kind\":\"at-encounter\",\"encounter\":" ++ toString encounter.value ++ "}"
+  | .crewCarried => "{\"kind\":\"crew-carried\",\"encounter\":0}"
+  | .quarantine => "{\"kind\":\"quarantine\",\"encounter\":0}"
+  | .archive => "{\"kind\":\"archive\",\"encounter\":0}"
+  | .market => "{\"kind\":\"market\",\"encounter\":0}"
+
+private def OrdinaryMintAuthorization.toJson (mint : OrdinaryMintAuthorization) : String :=
+  "{\"kind\":\"ordinary-part\",\"part\":" ++ toString mint.part.value ++
+    ",\"quantity\":" ++ toString mint.quantity ++
+    ",\"recipient\":" ++ jsonString (Emit.bytes32Hex mint.recipient) ++
+    ",\"market_eligible\":" ++ toString mint.marketEligible ++ "}"
+
+private def RelicCustodyAuthorization.toJson (custody : RelicCustodyAuthorization) : String :=
+  "{\"kind\":\"provenance-relic\",\"relic\":" ++ toString custody.relic.value ++
+    ",\"destination\":" ++ custodyLocationJson custody.destination ++
+    ",\"market_eligible\":" ++ toString custody.marketEligible ++
+    ",\"direct_trade_allowed\":" ++ toString custody.directTradeAllowed ++ "}"
+
+def ReceiptWire.toJson (receipt : ReceiptWire) : String :=
+  "{\"activation_id\":" ++ jsonString (Emit.bytes32Hex receipt.activationId) ++
+    ",\"replay_verifier_id\":" ++ jsonString (Emit.bytes32Hex receipt.replayVerifierId) ++
+    ",\"admission\":" ++ toString receipt.admission ++
+    ",\"actor\":" ++ jsonString (Emit.bytes32Hex receipt.actor) ++
+    ",\"route\":" ++ jsonString receipt.route ++
+    ",\"extraction\":" ++ jsonString receipt.extraction ++
+    ",\"run_digest\":" ++ jsonString (Emit.bytes32Hex receipt.runDigest) ++
+    ",\"predecessor\":" ++ jsonString (Emit.bytes32Hex receipt.predecessor) ++
+    ",\"successor\":" ++ jsonString (Emit.bytes32Hex receipt.successor) ++
+    ",\"contribution\":" ++ receipt.contribution.toJson ++
+    ",\"featured_artifact\":" ++ toString receipt.featuredArtifact ++
+    ",\"ordinary_mints\":" ++ jsonArray (receipt.ordinaryMints.map
+      OrdinaryMintAuthorization.toJson) ++
+    ",\"relic_custody\":" ++ jsonArray (receipt.relicCustody.map
+      RelicCustodyAuthorization.toJson) ++ "}"
+
+def OutputWire.toJson (output : OutputWire) : String :=
+  "{\"format\":" ++ jsonString OUTPUT_FORMAT ++
+    ",\"state\":" ++ output.state.toJson ++
+    ",\"receipt\":" ++ output.receipt.toJson ++ "}"
+
+/-- Exact host ABI: pinned activation + canonical durable state bytes +
+canonical command bytes -> canonical successor/receipt bytes. -/
+def process (activation : Activation) (stateBytes commandBytes : String) : Option String := do
+  let state ← decodeState stateBytes
+  let command ← decodeCommand commandBytes
+  match judge activation state command with
+  | .error _ => none
+  | .ok output => some output.toJson
+
+/-! ## Executable activation and hostile cases -/
+
+private def fixtureDigest (value : Nat) : Digest32 where
+  bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
+  length_eq := by simp
+
+private def fixtureSignature : CrewFieldMission.SignatureBytes where
+  bytes := List.replicate CrewFieldMission.SIGNATURE_BYTE_LENGTH 0
+  length_eq := by simp [CrewFieldMission.SIGNATURE_BYTE_LENGTH]
+
+private def fixtureContentOfficers : List ContentContract.OfficerSeat :=
+  [ ⟨⟨0⟩, ⟨10⟩, .pathfinder⟩
+  , ⟨⟨1⟩, ⟨11⟩, .engineer⟩
+  , ⟨⟨2⟩, ⟨12⟩, .containment⟩
+  , ⟨⟨3⟩, ⟨13⟩, .quartermaster⟩ ]
+
+private def fixtureContentBriefings : List ContentContract.BriefingShape :=
+  [ ⟨.pathfinder, .mappedRoute, some ⟨1⟩, .privateUntilSignedHandoff⟩
+  , ⟨.engineer, .structurallySoundRoute, some ⟨1⟩, .privateUntilSignedHandoff⟩
+  , ⟨.containment, .hazardClearRoute, some ⟨1⟩, .privateUntilSignedHandoff⟩
+  , ⟨.quartermaster, .extractionWindow, none, .privateUntilSignedHandoff⟩ ]
+
+private def fixtureContentArtifacts : List ContentContract.ArtifactSpec :=
+  [ ⟨⟨20⟩, none⟩, ⟨⟨21⟩, none⟩, ⟨⟨22⟩, none⟩ ]
+
+private def fixtureContentEncounters : List ContentContract.EncounterSpec :=
+  [ { id := ⟨10⟩, room := DeckGraph.fixtureRoomB.id,
+      routes := [⟨0⟩, ⟨1⟩, ⟨2⟩], betaArtifacts := [⟨20⟩] }
+  , { id := ⟨11⟩, room := DeckGraph.fixtureRoomC.id,
+      routes := [⟨0⟩], betaArtifacts := [⟨20⟩] }
+  , { id := ⟨12⟩, room := DeckGraph.fixtureRoomD.id,
+      routes := [⟨1⟩], betaArtifacts := [⟨21⟩] }
+  , { id := ⟨13⟩, room := DeckGraph.fixtureExtraction.id,
+      routes := [⟨2⟩], betaArtifacts := [⟨22⟩] } ]
+
+private def contentRoute : CrewFieldMission.Route → ContentContract.RouteId
+  | .maintenanceSpine => ⟨0⟩
+  | .signalGallery => ⟨1⟩
+  | .sealedNave => ⟨2⟩
+
+private def contentArtifact : CrewFieldMission.Route → ContentContract.ArtifactId
+  | .maintenanceSpine => ⟨20⟩
+  | .signalGallery => ⟨21⟩
+  | .sealedNave => ⟨22⟩
+
+private def contentRelics (relics : List RelicId) : List ContentContract.RelicId :=
+  relics.map fun relic => ⟨relic.value⟩
+
+private def fixtureContentOutcomes : List ContentContract.RouteOutcome :=
+  CrewFieldMission.fixtureRouteOutcomes.map fun spec => {
+    route := contentRoute spec.route
+    extraction := toContentExtraction spec.extraction
+    operationalCost := spec.operationalCost
+    agreement := ContentContract.requiredAgreement (toContentExtraction spec.extraction)
+    featuredArtifact := contentArtifact spec.route
+    contribution := {
+      intel := spec.outcome.contribution.intel
+      supplies := spec.outcome.contribution.supplies
+      cohesion := spec.outcome.contribution.cohesion
+      influence := spec.outcome.contribution.influence
+      score := spec.outcome.contribution.score
+      relics := contentRelics spec.outcome.contribution.relics
+    }
+    recovery := if spec.extraction = .returnNow then ⟨40⟩ else ⟨41⟩
+  }
+
+private def fixtureRuntimeContent : ContentContract.RawContent := {
+  ContentContract.fixtureContent with
+  officers := fixtureContentOfficers
+  briefings := fixtureContentBriefings
+  encounters := fixtureContentEncounters
+  artifacts := fixtureContentArtifacts
+  outcomes := fixtureContentOutcomes
+  relics := [⟨⟨447⟩, ⟨12⟩, true, false, none⟩]
+  custodyPlans := [⟨⟨447⟩, .atEncounter ⟨12⟩, .quarantine,
+    .fullCrewUnanimity, false⟩]
+  promotionHooks :=
+    [ ⟨.place ⟨50⟩, none⟩
+    , ⟨.artifact ⟨20⟩, none⟩
+    , ⟨.relic ⟨447⟩, none⟩ ]
+  contributionBudget := {
+    intel := 8, supplies := 4, cohesion := 6, influence := 0, score := 79,
+    relicAllowlist := [⟨447⟩]
+  }
+}
+
+private theorem fixture_runtime_content_valid :
+    ContentContract.contentValidB fixtureRuntimeContent = true := by
+  native_decide
+
+private def fixtureRawActivation : RawActivation where
+  activationId := CrewFieldMission.fixtureRawConfig.policy.mission.activationDigest
+  contentDigest := CrewFieldMission.fixtureRawConfig.policy.mission.contentRoot
+  fieldSession := CrewFieldMission.fixtureRawConfig.sessionDigest
+  briefings := CrewFieldMission.fixtureBriefings
+  content := fixtureRuntimeContent
+  routeBindings :=
+    [ ⟨.maintenanceSpine, ⟨0⟩⟩
+    , ⟨.signalGallery, ⟨1⟩⟩
+    , ⟨.sealedNave, ⟨2⟩⟩ ]
+  artifactBindings :=
+    [ ⟨CrewFieldMission.fixtureMaintenanceArtifact, ⟨20⟩⟩
+    , ⟨CrewFieldMission.fixtureSignalArtifact, ⟨21⟩⟩
+    , ⟨CrewFieldMission.fixtureNaveArtifact, ⟨22⟩⟩ ]
+  relicBindings := [⟨DeckExpedition.fixtureRelic, ⟨447⟩⟩]
+  ordinarySalvage :=
+    [ ⟨.maintenanceSpine, .returnNow, ⟨900⟩, 2⟩
+    , ⟨.signalGallery, .descendFurther, ⟨901⟩, 1⟩ ]
+  replayVerifierId := fixtureDigest 222
+
+private theorem fixture_activation_valid : activationValidB fixtureRawActivation = true := by
+  native_decide
+
+/-! Fixture-only.  Production is required to call the pinned field replay
+authority described at the top of this file.  The hostile cases below exercise
+all checks owned by this runtime on both sides of that seam. -/
+private def fixtureReplayAuthority : ReplayAuthority where
+  id := fixtureRawActivation.replayVerifierId
+  verify record :=
+    decide (record.session = fixtureRawActivation.fieldSession) &&
+    decide (record.transcript.length = CrewFieldMission.CREW_SIZE)
+
+private def fixtureActivation : Activation :=
+  ⟨fixtureRawActivation, fixtureReplayAuthority, fixture_activation_valid, rfl⟩
+
+private def fixtureTrace (seat : Nat) (observation observedRoute command : String)
+    (decision : String) (decidedRoute extraction : String) : TraceWire :=
+  let rosterSeat := fixtureRawActivation.fieldSession.roster.getD seat
+    CrewRelayExpedition.fixtureSeat0
+  {
+    sequence := seat
+    seat
+    previousCounter := rosterSeat.initialCounter
+    counter := rosterSeat.initialCounter + 1
+    observation
+    observedRoute
+    decision
+    decidedRoute
+    extraction
+    command
+    seatSignature := fixtureSignature
+    handoffSignature := fixtureSignature
+  }
+
+private def fixtureSafeTranscript : List TraceWire :=
+  [ fixtureTrace 0 "pathfinder" "signal-gallery" "chart-pressure-route"
+      "specialist" "maintenance-spine" "none"
+  , fixtureTrace 1 "engineer" "signal-gallery" "brace-transit"
+      "specialist" "maintenance-spine" "none"
+  , fixtureTrace 2 "containment" "signal-gallery" "quiet-anomaly"
+      "specialist" "maintenance-spine" "none"
+  , fixtureTrace 3 "quartermaster-stable" "none" "bank-supplies"
+      "finalize" "maintenance-spine" "return-now" ]
+
+private def fixtureDeepTranscript : List TraceWire :=
+  [ fixtureTrace 0 "pathfinder" "signal-gallery" "mark-salvage-route"
+      "specialist" "signal-gallery" "none"
+  , fixtureTrace 1 "engineer" "signal-gallery" "overdrive-cargo-lift"
+      "specialist" "signal-gallery" "none"
+  , fixtureTrace 2 "containment" "signal-gallery" "screen-recovery"
+      "specialist" "signal-gallery" "none"
+  , fixtureTrace 3 "quartermaster-stable" "none" "secure-cache"
+      "finalize" "signal-gallery" "descend-further" ]
+
+private def fixtureGenesis : StateWire := initialState fixtureActivation (fixtureDigest 223)
+
+private def fixtureSafeCommand : CommandWire where
+  activationId := fixtureRawActivation.activationId
+  sequence := 0
+  predecessor := fixtureGenesis.head
+  admission := 1
+  actor := CrewRelayExpedition.fixtureSeat0.playerKey
+  officerSeat := 0
+  claimedRoute := "maintenance-spine"
+  claimedExtraction := "return-now"
+  claimedContribution := ContributionWire.ofRaw
+    (CrewFieldMission.fixtureOutcome .maintenanceSpine .returnNow).contribution
+  claimedFeaturedArtifact := 20
+  transcript := fixtureSafeTranscript
+
+private def fixtureDeepCommand : CommandWire := {
+  fixtureSafeCommand with
+  claimedRoute := "signal-gallery"
+  claimedExtraction := "descend-further"
+  claimedContribution := ContributionWire.ofRaw
+    (CrewFieldMission.fixtureOutcome .signalGallery .descendFurther).contribution
+  claimedFeaturedArtifact := 21
+  transcript := fixtureDeepTranscript
+}
+
+private def fixtureSafeResult : Except Refusal OutputWire :=
+  judge fixtureActivation fixtureGenesis fixtureSafeCommand
+
+private def fixtureDeepResult : Except Refusal OutputWire :=
+  judge fixtureActivation fixtureGenesis fixtureDeepCommand
+
+def honestOrdinarySalvageB : Bool :=
+  match fixtureSafeResult with
+  | .error _ => false
+  | .ok output => decide (
+      output.receipt.ordinaryMints =
+        [⟨⟨900⟩, 2, CrewRelayExpedition.fixtureSeat0.playerKey, true⟩] ∧
+      output.receipt.relicCustody = [])
+
+theorem honest_complete_run_emits_one_ordinary_salvage_authorization :
+    honestOrdinarySalvageB = true := by
+  native_decide
+
+def deepTaxonomyB : Bool :=
+  match fixtureDeepResult with
+  | .error _ => false
+  | .ok output => decide (
+      output.receipt.ordinaryMints =
+        [⟨⟨901⟩, 1, CrewRelayExpedition.fixtureSeat0.playerKey, true⟩] ∧
+      output.receipt.relicCustody =
+        [⟨⟨447⟩, .quarantine, false, false⟩])
+
+theorem deep_run_separates_exchangeable_parts_from_nonmarket_relic_custody :
+    deepTaxonomyB = true := by
+  native_decide
+
+def replayRefusedB : Bool :=
+  match fixtureSafeResult with
+  | .error _ => false
+  | .ok first => decide (judge fixtureActivation first.state fixtureSafeCommand =
+      .error .staleCursor)
+
+theorem hostile_same_admission_and_run_cannot_replay : replayRefusedB = true := by
+  native_decide
+
+theorem hostile_cross_activation_command_refused :
+    judge fixtureActivation fixtureGenesis
+      { fixtureSafeCommand with activationId := fixtureDigest 250 } =
+        .error .wrongActivation := by
+  native_decide
+
+theorem hostile_forged_route_refused :
+    judge fixtureActivation fixtureGenesis
+      { fixtureSafeCommand with claimedRoute := "sealed-nave" } =
+        .error .invalidTranscript := by
+  native_decide
+
+theorem hostile_forged_outcome_refused :
+    judge fixtureActivation fixtureGenesis
+      { fixtureSafeCommand with claimedContribution :=
+          { fixtureSafeCommand.claimedContribution with score := 999 } } =
+        .error .invalidTranscript := by
+  native_decide
+
+theorem hostile_actor_who_is_not_the_selected_officer_refused :
+    judge fixtureActivation fixtureGenesis
+      { fixtureSafeCommand with actor := CrewRelayExpedition.fixtureSeat1.playerKey } =
+        .error .unauthorizedOfficer := by
+  native_decide
+
+theorem hostile_truncated_crew_transcript_refused :
+    judge fixtureActivation fixtureGenesis
+      { fixtureSafeCommand with transcript := fixtureSafeTranscript.take 3 } =
+        .error .invalidTranscript := by
+  native_decide
+
+theorem hostile_wrong_replay_authority_id_refused :
+    activate? fixtureRawActivation { fixtureReplayAuthority with id := fixtureDigest 251 } =
+      none := by
+  native_decide
+
+private def hostileMarketContent : ContentContract.RawContent := {
+  fixtureRuntimeContent with
+  relics := [{ (fixtureRuntimeContent.relics.getD 0
+    ⟨⟨447⟩, ⟨12⟩, true, false, none⟩) with marketEligible := true }]
+}
+
+private def hostileTradeContent : ContentContract.RawContent := {
+  fixtureRuntimeContent with
+  custodyPlans := [{ (fixtureRuntimeContent.custodyPlans.getD 0
+    ⟨⟨447⟩, .atEncounter ⟨12⟩, .quarantine, .fullCrewUnanimity, false⟩) with
+      directTradeAllowed := true }]
+}
+
+theorem hostile_canon_relic_market_activation_refused :
+    activate? { fixtureRawActivation with content := hostileMarketContent }
+      fixtureReplayAuthority = none := by
+  native_decide
+
+theorem hostile_canon_relic_direct_trade_activation_refused :
+    activate? { fixtureRawActivation with content := hostileTradeContent }
+      fixtureReplayAuthority = none := by
+  native_decide
+
+private def callerAuthoredMintBytes : String :=
+  (fixtureSafeCommand.toJson.dropEnd 1).toString ++
+    ",\"ordinary_mints\":[{\"part\":999,\"quantity\":64}]}"
+
+theorem hostile_caller_authored_salvage_field_refused_by_strict_codec :
+    decodeCommand callerAuthoredMintBytes = none := by
+  native_decide
+
+theorem strict_command_roundtrip :
+    decodeCommand fixtureSafeCommand.toJson = some fixtureSafeCommand := by
+  native_decide
+
+theorem strict_state_roundtrip :
+    decodeState fixtureGenesis.toJson = some fixtureGenesis := by
+  native_decide
+
+theorem callable_entrypoint_emits_the_exact_successful_receipt :
+    process fixtureActivation fixtureGenesis.toJson fixtureSafeCommand.toJson =
+      fixtureSafeResult.toOption.map OutputWire.toJson := by
+  native_decide
+
+#assert_axioms canonicalDecode_reencodes
+#assert_axioms decodeCommand_reencodes
+#assert_axioms decodeState_reencodes
+#assert_compiled fixture_runtime_content_valid
+#assert_compiled fixture_activation_valid
+#assert_compiled honest_complete_run_emits_one_ordinary_salvage_authorization
+#assert_compiled deep_run_separates_exchangeable_parts_from_nonmarket_relic_custody
+#assert_compiled hostile_same_admission_and_run_cannot_replay
+#assert_compiled hostile_cross_activation_command_refused
+#assert_compiled hostile_forged_route_refused
+#assert_compiled hostile_forged_outcome_refused
+#assert_compiled hostile_actor_who_is_not_the_selected_officer_refused
+#assert_compiled hostile_truncated_crew_transcript_refused
+#assert_compiled hostile_wrong_replay_authority_id_refused
+#assert_compiled hostile_canon_relic_market_activation_refused
+#assert_compiled hostile_canon_relic_direct_trade_activation_refused
+#assert_compiled hostile_caller_authored_salvage_field_refused_by_strict_codec
+#assert_compiled strict_command_roundtrip
+#assert_compiled strict_state_roundtrip
+#assert_compiled callable_entrypoint_emits_the_exact_successful_receipt
+
+end Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime
