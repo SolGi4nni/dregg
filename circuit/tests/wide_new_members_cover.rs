@@ -836,6 +836,7 @@ fn retired_v1_wide_geometry_is_version_refused() {
         name: "transferVmDescriptor2R24Wide-legacy-v1".to_string(),
         trace_width: v1_width,
         public_input_count: pi,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

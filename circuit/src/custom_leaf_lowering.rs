@@ -848,6 +848,7 @@ pub fn lower_cellprogram(program: &CellProgram) -> Result<Lowered, String> {
             name: format!("custom-leaf::{}", desc.name),
             trace_width: width,
             public_input_count: desc.public_input_count,
+            challenges: 0,
             tables: vec![],
             constraints,
             hash_sites: vec![],

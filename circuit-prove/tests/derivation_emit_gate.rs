@@ -440,6 +440,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-derivation-v1".to_string(),
         trace_width: DERIV_TRACE_WIDTH,
         public_input_count: DERIVATION_PI_COUNT,
+        challenges: 0,
         tables: vec![],
         constraints: cs,
         hash_sites: vec![],

@@ -654,10 +654,10 @@ excludes it. Drop `marksRangeCellsAt` from the family and the transport theorem 
 def demoTwoRow : Assignment := fun c => if c = 0 then 2 else if c = 9 then 2 else 0
 
 #guard linComb (packTermsAt 3 0 MARKS_CELL (MARKS_FELT 3)) demoTwoRow = 0   -- pack gate: SATISFIED
-#guard (marksDecode 3 ⟨demoTwoRow, demoTwoRow, demoTwoRow⟩).markAt ⟨0, 0⟩ = false
-#guard packCell (marksCode (marksDecode 3 ⟨demoTwoRow, demoTwoRow, demoTwoRow⟩) 3) 0 = 0
+#guard (marksDecode 3 ⟨demoTwoRow, demoTwoRow, demoTwoRow, fun _ => 0⟩).markAt ⟨0, 0⟩ = false
+#guard packCell (marksCode (marksDecode 3 ⟨demoTwoRow, demoTwoRow, demoTwoRow, fun _ => 0⟩) 3) 0 = 0
 #guard demoTwoRow (MARKS_FELT 3 0)
-  ≠ packCell (marksCode (marksDecode 3 ⟨demoTwoRow, demoTwoRow, demoTwoRow⟩) 3) 0
+  ≠ packCell (marksCode (marksDecode 3 ⟨demoTwoRow, demoTwoRow, demoTwoRow, fun _ => 0⟩) 3) 0
 -- and the `{0,1}` gate is EXACTLY what refuses it.
 #guard (memberExpr (MARKS_CELL 0) [0, 1]).eval demoTwoRow ≠ 0
 
@@ -690,9 +690,9 @@ def demoMarks3Forge : Assignment := fun c => if c = 0 then 1 else if c = 9 then 
 #guard (sumExpr (((packTermsAt 3 0 MARKS_CELL (MARKS_FELT 3)).filter
   (fun t => t.1 != 0)).map varTerm)).eval demoMarks3Forge ≠ 0
 -- the decoded indicator of that genuine row IS the one-mark board, and its pack is the felt.
-#guard (marksDecode 3 ⟨demoMarks3Loc, demoMarks3Loc, demoMarks3Loc⟩).markAt ⟨0, 0⟩ = true
-#guard (marksDecode 3 ⟨demoMarks3Loc, demoMarks3Loc, demoMarks3Loc⟩).markAt ⟨1, 0⟩ = false
-#guard packCell (marksCode (marksDecode 3 ⟨demoMarks3Loc, demoMarks3Loc, demoMarks3Loc⟩) 3) 0 = 1
+#guard (marksDecode 3 ⟨demoMarks3Loc, demoMarks3Loc, demoMarks3Loc, fun _ => 0⟩).markAt ⟨0, 0⟩ = true
+#guard (marksDecode 3 ⟨demoMarks3Loc, demoMarks3Loc, demoMarks3Loc, fun _ => 0⟩).markAt ⟨1, 0⟩ = false
+#guard packCell (marksCode (marksDecode 3 ⟨demoMarks3Loc, demoMarks3Loc, demoMarks3Loc, fun _ => 0⟩) 3) 0 = 1
 
 /-! ## §8 — Axiom hygiene: everything rests only on the kernel triple. -/
 

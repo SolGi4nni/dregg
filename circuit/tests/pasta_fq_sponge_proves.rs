@@ -75,14 +75,20 @@ const FULL_ROUNDS: usize = 55;
 /// The machine this extends, so "same committed width" is read off the artifacts.
 const SBOX_MACHINE_COMMITTED: usize = 1037;
 
-/// ⚑ **THE UPSTREAM DIGEST.** `PastaPoseidonFq` §4 pins
-/// `Core.hash fqParams [1,2]` to this value, and that number was produced by
-/// `ArithmeticSponge::<Fq, PlonkSpongeConstantsKimchi, 55>::new(fq_kimchi::static_params())`
-/// absorbing `[1,2]` and squeezing once — the o1-labs implementation itself, not a
-/// re-transcription. The Lean side proves the emitted program's squeeze IS `Core.hash fqParams
-/// [1,2]`; this constant is what makes that a claim about a NUMBER rather than about a name.
-const KIMCHI_FQ_HASH_1_2: &str =
-    "18721052396410244253982636774728806624181288577958764574163425862396352099420";
+/// ⚑ **THE o1-labs ARTIFACT, not a transcription.** Until 2026-08-05 the upstream digest was a
+/// DECIMAL LITERAL in this file and a `#guard` in `PastaPoseidonFq` §4 — two places a human had
+/// typed the same number, neither of them a check that it came from upstream.
+///
+/// This is the artifact `metatheory/fixtures/kimchi-extractors/pickles_p6_fq_export.rs` produced by
+/// calling `mina_poseidon::pasta::fq_kimchi::static_params()` and driving
+/// `ArithmeticSponge::<Fq, PlonkSpongeConstantsKimchi, 55>` at o1-labs `proof-systems`
+/// `f6d958dc05`. §9 reads the constants and the digests OUT of it and refuses unless they are the
+/// cells of the EMITTED descriptor and the limbs of the EMITTED public inputs.
+const O1_LABS_FQ_KIMCHI_JSON: &str = include_str!("../../metatheory/kimchi_p6_prev2_proof.json");
+
+/// The `source` string the extractor stamps, and the rev it names. A dump from a different rev is
+/// a different object and must not silently satisfy this gate.
+const PINNED_PROOF_SYSTEMS_REV: &str = "f6d958dc05";
 
 fn reg_col(r: usize) -> usize {
     REG_BASE + r * SK
@@ -176,6 +182,109 @@ fn decimal_to_limbs(s: &str, n: usize) -> Vec<u32> {
     }
     assert_eq!(digits, vec![0], "the value fits in {n} limbs");
     out
+}
+
+/// ⚑ **THE PROVENANCE GATE.** Parses the o1-labs dump and REFUSES unless six independent conditions
+/// hold — the standard `step_vk_index_export.rs` set for Mina's released VK blob, at this object.
+/// Returns `(mds[9], round_constants[165], kats, antivalues)`.
+fn o1_labs_fq_kimchi() -> (
+    Vec<String>,
+    Vec<String>,
+    std::collections::BTreeMap<String, String>,
+    std::collections::BTreeMap<String, String>,
+) {
+    let v: serde_json::Value =
+        serde_json::from_str(O1_LABS_FQ_KIMCHI_JSON).expect("the o1-labs dump is JSON");
+
+    // (1) the dump names the pinned upstream rev, and the file it read the constants out of.
+    let source = v["source"].as_str().expect("the dump carries a `source`");
+    assert!(
+        source.contains("o1-labs/proof-systems") && source.contains(PINNED_PROOF_SYSTEMS_REV),
+        "the dump is not o1-labs proof-systems @ {PINNED_PROOF_SYSTEMS_REV}: {source}"
+    );
+    let fq_source = v["fq_kimchi"]["source"]
+        .as_str()
+        .expect("the fq_kimchi block carries its own `source`");
+    assert!(
+        fq_source.contains("fq_kimchi.rs")
+            && fq_source.contains("ArithmeticSponge")
+            && fq_source.contains(PINNED_PROOF_SYSTEMS_REV),
+        "the constants did not come from `poseidon/src/pasta/fq_kimchi.rs` at the pinned rev: \
+         {fq_source}"
+    );
+
+    // (2) the same run asserted o1-labs' OWN verifier accepted the proof it dumped, and that an
+    // independent Fq-sponge replay reproduced `proof.oracles(...)`. A dump from a run that did not
+    // is a dump of numbers.
+    assert_eq!(
+        v["real_verifier_accepts"].as_bool(),
+        Some(true),
+        "the extractor did not assert `kimchi::verifier::verify` accepted"
+    );
+    assert_eq!(
+        v["fq_sponge_replay_matches_oracles"].as_bool(),
+        Some(true),
+        "the extractor did not assert its Fq-sponge replay reproduced the real oracles"
+    );
+
+    // (3) the shape `PlonkSpongeConstantsKimchi` forces: a 3x3 MDS and 55 rounds of 3.
+    let mds: Vec<String> = v["fq_kimchi"]["mds"]
+        .as_array()
+        .expect("mds")
+        .iter()
+        .map(|x| x.as_str().unwrap().to_string())
+        .collect();
+    let rcs: Vec<String> = v["fq_kimchi"]["round_constants"]
+        .as_array()
+        .expect("round_constants")
+        .iter()
+        .map(|x| x.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(mds.len(), 9, "the MDS is 3x3");
+    assert_eq!(
+        rcs.len(),
+        3 * FULL_ROUNDS,
+        "{FULL_ROUNDS} full rounds of three constants"
+    );
+
+    // (4) every constant is a canonical Fq element — 32 8-bit limbs and no more.
+    for c in mds.iter().chain(rcs.iter()) {
+        let _ = decimal_to_limbs(c, SK);
+    }
+
+    // (5) the KAT table and the double-permute anti-values are both present, and the anti-value of
+    // a pair DIFFERS from its digest — otherwise the negative pin would be vacuous.
+    let mut kats = std::collections::BTreeMap::new();
+    for k in v["fq_kimchi"]["kats"].as_array().expect("kats") {
+        kats.insert(
+            k["name"].as_str().unwrap().to_string(),
+            k["digest"].as_str().unwrap().to_string(),
+        );
+    }
+    let mut anti = std::collections::BTreeMap::new();
+    for a in v["fq_kimchi"]["double_permute_antivalues"]
+        .as_array()
+        .expect("antivalues")
+    {
+        anti.insert(
+            a["name"].as_str().unwrap().to_string(),
+            a["double_permuted"].as_str().unwrap().to_string(),
+        );
+    }
+    assert_eq!(kats.len(), 12, "twelve KATs, at both input parities");
+    assert_eq!(anti.len(), 5, "five double-permute anti-values");
+
+    // (6) the two `fq_kimchi` constants are genuinely NOT the `fp_kimchi` ones. The K3 audit named
+    // reading `static_params()` off the wrong module as the failure mode; `mdsN[0][0]` is
+    // `fp_kimchi`'s first MDS entry and must not appear here.
+    const FP_KIMCHI_MDS_00: &str =
+        "12035446894107573964500871153637039653510326950134440362813193268448863222019";
+    assert!(
+        !mds.contains(&FP_KIMCHI_MDS_00.to_string()),
+        "the dump carries `fp_kimchi`'s MDS -- `static_params()` was read off the wrong module"
+    );
+
+    (mds, rcs, kats, anti)
 }
 
 fn round_desc() -> EffectVmDescriptor2 {
@@ -549,12 +658,20 @@ fn the_absorption_proves_and_its_squeeze_is_the_upstream_kimchi_digest() {
     assert_eq!(pis[4 * SK].as_u32(), 2, "x1 = 2");
     assert!((1..SK).all(|i| pis[4 * SK + i].as_u32() == 0));
 
-    // ⚑ THE DIGEST, RECOMPOSED FROM THE UPSTREAM DECIMAL rather than transcribed as limbs.
-    let expected = decimal_to_limbs(KIMCHI_FQ_HASH_1_2, SK);
+    // ⚑ THE DIGEST, READ OUT OF THE o1-labs DUMP and recomposed — no decimal is typed here.
+    let (_, _, kats, anti) = o1_labs_fq_kimchi();
+    let upstream = kats.get("pair12").expect("the dump carries the [1,2] KAT");
+    let expected = decimal_to_limbs(upstream, SK);
     let got: Vec<u32> = (0..SK).map(|i| pis[5 * SK + i].as_u32()).collect();
     assert_eq!(
         got, expected,
         "the emitted squeeze public inputs must be the limbs of the upstream Kimchi Fq digest"
+    );
+    // …and NOT the double-permuting sponge's, which is the defect this pair exists to catch.
+    let anti_limbs = decimal_to_limbs(anti.get("pair12").expect("anti-value"), SK);
+    assert_ne!(
+        got, anti_limbs,
+        "the emitted squeeze is what a DOUBLE-PERMUTING sponge returns on [1,2]"
     );
 
     prove_and_verify(&d, &trace, &pis)
@@ -562,8 +679,104 @@ fn the_absorption_proves_and_its_squeeze_is_the_upstream_kimchi_digest() {
     println!(
         "\n§7 ⚑ ONE AIR INSTANCE PROVES A KIMCHI SPONGE ABSORPTION.\n  \
          fresh state (0,0,0) -> absorb [1,2] -> {FULL_ROUNDS} full rounds -> squeeze lane 0\n  \
-         = {KIMCHI_FQ_HASH_1_2}\n  \
+         = {upstream}\n  \
+         (read from o1-labs' own `static_params()` dump, not transcribed)\n  \
          2048 rows, 192 public inputs, PROVED and VERIFIED in release."
+    );
+}
+
+/// ⚑⚑ **§9 — THE WELD TO o1-labs IS A CHECK ON THE EMITTED ARTIFACT, NOT A TRANSCRIBED CONSTANT.**
+///
+/// ⚠ **THE DEFECT THIS CLOSES.** The 55x3 `fq_kimchi` round constants and the 3x3 MDS live in
+/// `PastaPoseidonFq` §0 as decimal literals, and the digests lived in §4 as `#guard`s and here as a
+/// `const &str`. All of it was *copied* — correctly, as it turns out — from
+/// `metatheory/kimchi_p6_prev2_proof.json`, which `pickles_p6_fq_export.rs` produced by calling
+/// `mina_poseidon::pasta::fq_kimchi::static_params()`. **Nothing compared the copy to the source.**
+/// A single wrong digit in 174 numbers would have produced a self-consistent tree: the Lean would
+/// prove the program computes ITS constants, the harness would pin the bytes of ITS digest, every
+/// gate would be green, and the object would not be Kimchi's sponge.
+///
+/// The check below is the one the step-VK extractor makes against Mina's released blob: read the
+/// upstream artifact, then refuse unless the numbers are the cells of the EMITTED descriptor.
+///
+/// ⚑ **AND THE DESCRIPTOR IS THE RIGHT PLACE TO LOOK.** The round constants and MDS coefficients
+/// are IMMEDIATES, so they are instruction-ROM tuple entries — descriptor cells the prover cannot
+/// choose (§3, §4a). Checking them here checks what the verifier will actually enforce, not what a
+/// source file says.
+#[test]
+fn the_emitted_rom_carries_o1_labs_own_fq_kimchi_constants() {
+    let (mds, rcs, kats, _) = o1_labs_fq_kimchi();
+    let d = absorb_desc();
+    let rom = rom_rows(&d);
+
+    // The immediate is the last 32 cells of the 55-cell instruction word.
+    // `ROM_ARITY = 1 + 4 + 3*NREG + SK = 55`: a key, the four instruction fields, the eighteen
+    // operand one-hots, then the 32 immediate limbs.
+    let imm_of = |instr: usize| -> Vec<u32> { rom[instr][23..55].to_vec() };
+    // Within a round: 12 S-box multiplies, then three MDS rows of six instructions each. A row is
+    // `out := a*m0`, `d := b*m1`, `out += d`, `d := c*m2`, `out += d`, `out += rc` — so the three
+    // coefficients sit at offsets 0, 1, 3 of the row and the round constant at offset 5.
+    // The absorption's ROM is offset by the two absorb instructions.
+    let base = |r: usize, row: usize| 2 + ROWS_PER_ROUND * r + 12 + 6 * row;
+
+    let mut checked = 0usize;
+    for r in 0..FULL_ROUNDS {
+        for row in 0..3 {
+            for (k, off) in [0usize, 1, 3].iter().enumerate() {
+                assert_eq!(
+                    imm_of(base(r, row) + off),
+                    decimal_to_limbs(&mds[3 * row + k], SK),
+                    "round {r}, MDS row {row}, coefficient {k}: the emitted immediate is not \
+                     o1-labs' `static_params().mds[{row}][{k}]`"
+                );
+                checked += 1;
+            }
+            assert_eq!(
+                imm_of(base(r, row) + 5),
+                decimal_to_limbs(&rcs[3 * r + row], SK),
+                "round {r}, lane {row}: the emitted immediate is not o1-labs' \
+                 `static_params().round_constants[{r}][{row}]`"
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(
+        checked,
+        FULL_ROUNDS * 12,
+        "9 MDS coefficients and 3 round constants per round, {FULL_ROUNDS} rounds"
+    );
+
+    // ⚑ NON-VACUITY OF THE CHECK ITSELF. If `imm_of` read a block of zeros, or if the 165 round
+    // constants happened to be equal, the loop above would pass while saying nothing. Both are
+    // refuted here: the constants are 55*3 DISTINCT values and none is zero.
+    let mut seen = std::collections::BTreeSet::new();
+    for c in &rcs {
+        assert_ne!(c, "0", "a round constant is zero");
+        assert!(seen.insert(c.clone()), "round constant {c} repeats");
+    }
+    assert_eq!(seen.len(), 3 * FULL_ROUNDS);
+    // …and a round constant is NOT an MDS coefficient, so the two families cannot have been
+    // matched against each other.
+    for c in &rcs {
+        assert!(
+            !mds.contains(c),
+            "a round constant is also an MDS coefficient"
+        );
+    }
+
+    println!(
+        "\n§9 ⚑ THE WELD TO o1-labs, ON THE ARTIFACT.\n  \
+         {} immediates of `pasta-fq-absorb.json`'s instruction ROM checked against\n  \
+         `mina_poseidon::pasta::fq_kimchi::static_params()` @ o1-labs proof-systems \
+         {PINNED_PROOF_SYSTEMS_REV}\n  \
+         ({} MDS coefficients x {FULL_ROUNDS} rounds + {} round constants), all EQUAL.\n  \
+         and the emitted squeeze recomposes to that dump's own [1,2] KAT:\n  \
+         {}\n  \
+         Nothing in this test is a transcribed decimal.",
+        checked,
+        9,
+        3 * FULL_ROUNDS,
+        kats.get("pair12").unwrap()
     );
 }
 

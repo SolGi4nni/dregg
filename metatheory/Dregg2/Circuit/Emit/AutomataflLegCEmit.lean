@@ -824,7 +824,7 @@ def forkRow : Assignment := rowOf (
      , (cWaitingOutBit 5 0, 1), (cWaitingOutBit 5 1, 1) ])
 
 /-- The row as a `VmRowEnv` (the decode reads `loc` only). -/
-def envOf (a : Assignment) : VmRowEnv := ⟨a, a, a⟩
+def envOf (a : Assignment) : VmRowEnv := ⟨a, a, a, fun _ => 0⟩
 
 /-- Does every GATE of a family vanish on this row? (`piBinding`s carry no polynomial and are
 skipped; `gateCount` below shows the answer is not vacuously `true`.) -/

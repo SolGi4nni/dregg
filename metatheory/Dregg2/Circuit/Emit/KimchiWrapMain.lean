@@ -693,7 +693,14 @@ measurement that sizes it. None of them is a value this file fakes and calls der
 -- fails, and a fact that BECOMES kernel-clean ALSO fails and forces the pin back up).
 --
 -- `bullet_solves_g_on_curve_and_equal_g_is_one` (§24c) rests on `native_decide` because `bullData`
--- does not whnf inside the heartbeat budget.
+-- does not whnf inside the heartbeat budget. `close_witness_is_the_bullet_verdict` (§22a) rests on
+-- it for the SAME reason and not a new one: since 2026-08-05 `closeEnv` COMPUTES
+-- `bulletproof_success` off `bullData` instead of writing `1`, so the pin that it is `1` is a pin
+-- about `bullData` and inherits its instrument. ⚑ That is the trade and it is the right way round:
+-- a kernel-clean pin against a constant this file chose said less than a compiled pin against
+-- `equal_g`'s actual verdict. `close_rung_extends_bullet` (§22a) is the same trade one step out:
+-- `rungRows tWh .close true` now CONTAINS `bulletRows`, so its length, placement and region-escape
+-- legs reduce `bullData` too. They are the same facts they always were about a longer row list.
 --
 -- The four §20b‴ pins rest on it because they read slots of a **1732-op `Array FOp`** program whose
 -- inputs come through `finZW0`'s 1047-op probe, and in `whnf` an `Array` is its `List` model:
@@ -704,6 +711,8 @@ measurement that sizes it. None of them is a value this file fakes and calls der
 -- Nothing else in this namespace is compiler-trusted.
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMain
   except bullet_solves_g_on_curve_and_equal_g_is_one
+         close_witness_is_the_bullet_verdict
+         close_rung_extends_bullet
          fin_deferred_words_are_the_derivation
          finsponge_legs_take_both_field_equal_branches
          finsponge_assert_reds_if_the_other_block_claims_should_finalize

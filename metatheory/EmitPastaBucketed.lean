@@ -39,7 +39,17 @@ open Dregg2.Circuit.Emit.PastaMsmBucketed (bucketedRowDesc)
 `scalarDigitC`, and the trace would then prove a DIFFERENT MSM than the one the caller meant. -/
 def SCAL (n m : Nat) : List Nat := (List.range n).map (fun i => (7 + 13 * i) % m)
 
+/-- ⚑ `--windowed` emits the INHERITED row template alongside, into this campaign's OWN fixture
+directory. `circuit/descriptors/by-name/pasta-rcb-windowed.json` already exists and is the same
+object — but a by-name artifact is a SHARED file on the descriptor-drift gate's hot path, and on
+2026-08-05 a sibling lane's `challenges` wire field made every one of them refuse to load until
+they are re-emitted. A test that compares its own prefix against a shared artifact inherits that
+lane's flag days; owning the comparand is what `circuit/tests/fixtures/pasta-sg-bound/` does and
+this follows it. -/
 def main (args : List String) : IO Unit := do
+  if args[0]? == some "--windowed" then
+    IO.println (emitVmJson2 Dregg2.Circuit.Emit.PastaMsmWindowed.windowedRowDesc)
+    return
   let n     := (args[0]?).bind String.toNat? |>.getD 27
   let nbits := (args[1]?).bind String.toNat? |>.getD 4
   let c     := (args[2]?).bind String.toNat? |>.getD 2

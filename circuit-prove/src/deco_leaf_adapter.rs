@@ -223,6 +223,7 @@ pub fn deco_to_descriptor2() -> Result<EffectVmDescriptor2, String> {
         name: "deco-commitment-leaf::dregg-deco-stripe-v1".to_string(),
         trace_width: BASE_WIDTH + 3 * (CHIP_OUT_LANES - 1),
         public_input_count: DECO_CLAIM_LEN,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

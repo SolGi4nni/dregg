@@ -7,9 +7,16 @@ of `PastaMsmLayouts` §7.3.
 **Lean-authored AIR.** Every gate here is a `def` returning `VmConstraint2`; every theorem is
 about the ACTUALLY EMITTED list. Rust hand-writes no constraint, no `Builder` gadget and no
 `air_accepts` predicate — it parses the emitted descriptor, fills trace CELLS and runs the
-deployed prover. The curve arithmetic is **not re-authored**: `bucketedRowDesc_extends_windowed`
-proves `PastaMsmWindowed.windowedRowDesc`'s 45 constraints are still a PREFIX, so the RCB complete
-add in every row is the same `PastaCurveComplete.pallasCompleteAdd` the whole cone already uses.
+deployed prover. The curve arithmetic is **not re-authored**: `bucketedRowDesc_extends_rowGates`
+proves `PastaMsmWindowed.rowGates`'s 42 row-local gates are a PREFIX, so the RCB complete add in
+every row is the same `PastaCurveComplete.pallasCompleteAdd` the whole cone already uses.
+
+⚑ **And the 3 gates that do NOT come along are named, not dropped quietly.**
+`windowedRowDesc = rowGates ++ threadGates`, and those three say `nxt ACC = loc OUT`
+UNCONDITIONALLY — one accumulator advancing every row. A bucketed layout cannot have that; `ACC`
+here is a SELECT over two accumulators. `windowedRowDesc_is_NOT_a_prefix` is the refutation, and
+it exists because the first draft of this file inherited the full descriptor and the deployed
+prover refused an HONEST witness at row 8 with `failed constraints = [#42,#43,#44]`.
 
 ## §A — the refusal this file retracts, quoted, and why it was wrong
 
@@ -132,7 +139,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.AirBuilder
 open Dregg2.Circuit.Emit.Bls12381Tower (evalH_mul)
 open Dregg2.Circuit.Emit.PastaField (numLimbs limbBits fpValue fpVal fpVal_eq)
-open Dregg2.Circuit.Emit.PastaMsmWindowed (wVal cw threadBody
+open Dregg2.Circuit.Emit.PastaMsmWindowed (wVal cw threadBody rowGates
   ACCX ACCY ACCZ OPX OPY OPZ SRCX SRCY SRCZ BIT DBL OUTX OUTY OUTZ windowedRowDesc)
 open Dregg2.Circuit.Emit.PastaMsmBound (limbNat coordLimb limbsOfPt PTLIMBS)
 
@@ -580,35 +587,83 @@ def bucketedTables (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : L
 /-- ⚑ **The bucketed MSM descriptor.** `PastaMsmWindowed.windowedRowDesc`'s 45 constraints
 verbatim — so the RCB complete add, the conditional select and the doubling pins are the SAME
 already-proved objects — plus 4 mode pins, 6 operand selects, 6 threads, 3 index gates and 3
-lookups, and 27 output PI bindings. `94` constraints, a CONSTANT at every `(n, nbits, c)`. -/
+lookups, and 27 output PI bindings. `91` constraints, a CONSTANT at every `(n, nbits, c)`. -/
 def bucketedRowDesc (n nbits c : Nat) (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
     EffectVmDescriptor2 :=
   { name        := "dregg-pasta-msm-bucketed-c" ++ toString c ++ "::v1"
   , traceWidth  := WK
   , piCount     := PI_COUNT
   , tables      := bucketedTables n nbits c gens scal
-  , constraints := windowedRowDesc.constraints
+  , constraints := rowGates
                      ++ modeGates ++ selectGates ++ threadGatesK
                      ++ indexGates (levelsOf c) ++ lookupGates ++ outPiGates
   , hashSites   := []
   , ranges      := [] }
 
-/-- ⚑ **Nothing was re-authored.** The windowed row template — and with it
-`PastaCurveComplete.pallasCompleteAdd`'s 33 gates, which is the curve arithmetic the whole cone
-shares — is still a PREFIX of the emitted list. -/
-theorem bucketedRowDesc_extends_windowed (n nbits c : Nat)
+/-- ⚑ **The CURVE ARITHMETIC was not re-authored.** `PastaMsmWindowed.rowGates` — the 42 row-local
+gates, and with them `PastaCurveComplete.pallasCompleteAdd`'s 33, which is the arithmetic the whole
+cone shares — is a PREFIX of the emitted list. -/
+theorem bucketedRowDesc_extends_rowGates (n nbits c : Nat)
     (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
-    windowedRowDesc.constraints <+: (bucketedRowDesc n nbits c gens scal).constraints :=
+    rowGates <+: (bucketedRowDesc n nbits c gens scal).constraints :=
   ⟨modeGates ++ selectGates ++ threadGatesK ++ indexGates (levelsOf c) ++ lookupGates
      ++ outPiGates,
    by simp [bucketedRowDesc, List.append_assoc]⟩
 
+/-- The length of the inherited row-local block, derived from the windowed file's own pin rather
+than re-counted here (`windowedRowDesc.constraints = rowGates ++ threadGates`). -/
+theorem rowGates_length : rowGates.length = 42 := by
+  have h : (rowGates ++ Dregg2.Circuit.Emit.PastaMsmWindowed.threadGates).length = 45 :=
+    Dregg2.Circuit.Emit.PastaMsmWindowed.windowedRowDesc_constraints_length
+  simp only [List.length_append, Dregg2.Circuit.Emit.PastaMsmWindowed.threadGates,
+    List.length_cons, List.length_nil] at h
+  omega
+
+/-- Is this constraint a two-row WINDOW gate? The one bit that separates a thread from a row-local
+gate, which is exactly the distinction the next three theorems turn on. -/
+def isWindow : VmConstraint2 → Bool
+  | .windowGate _ => true
+  | _ => false
+
+/-- At index 42 the WINDOWED descriptor has a window gate — the first of the three accumulator
+thread constraints. -/
+theorem windowed_42_is_a_window_gate :
+    (windowedRowDesc.constraints[42]?).map isWindow = some true := rfl
+
+/-- At index 42 the BUCKETED descriptor has a ROW-LOCAL gate (`binGate ISTERM`). -/
+theorem bucketed_42_is_row_local (n nbits c : Nat)
+    (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    ((bucketedRowDesc n nbits c gens scal).constraints[42]?).map isWindow = some false := rfl
+
+/-- ⚑ **THE ONE PIECE OF `windowedRowDesc` THAT DOES NOT SURVIVE, refuted rather than dropped
+quietly.** `windowedRowDesc = rowGates ++ threadGates`, and `PastaMsmWindowed.threadGates` says
+`nxt ACC = loc OUT` UNCONDITIONALLY — one accumulator, advancing every row. That is precisely what
+a bucketed layout cannot have: `ACC` here is a SELECT over two accumulators (§2b) and each advances
+only in the modes that touch it.
+
+So the FULL windowed descriptor is not a prefix, and this is the proof. It is here because the
+first draft of this file inherited `windowedRowDesc` whole and the DEPLOYED PROVER caught it on an
+HONEST witness: `constraints not satisfied on row 8: failed constraints = [#42, #43, #44]` —
+exactly those three gates, at the first TERM→STEP transition. Consecutive term rows satisfy the
+unconditional thread BY ACCIDENT, which is why the refusal surfaced eight rows in rather than at
+row 0, and why a smaller demonstration could have missed it entirely. -/
+theorem windowedRowDesc_is_NOT_a_prefix (n nbits c : Nat)
+    (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
+    ¬ (windowedRowDesc.constraints <+: (bucketedRowDesc n nbits c gens scal).constraints) := by
+  rintro ⟨t, ht⟩
+  have hlen : 42 < windowedRowDesc.constraints.length := by
+    rw [Dregg2.Circuit.Emit.PastaMsmWindowed.windowedRowDesc_constraints_length]; omega
+  have h2 := bucketed_42_is_row_local n nbits c gens scal
+  rw [← ht, List.getElem?_append_left hlen, windowed_42_is_a_window_gate] at h2
+  exact absurd h2 (by simp)
+
 /-- The emitted constraint count, and it does not depend on the size of the MSM. -/
 theorem bucketedRowDesc_constraints_length (n nbits c : Nat)
     (gens : List (Nat × Nat × Nat)) (scal : List Nat) :
-    (bucketedRowDesc n nbits c gens scal).constraints.length = 94 := by
-  simp [bucketedRowDesc, modeGates, selectGates, threadGatesK, indexGates, lookupGates, outPiGates,
-    Dregg2.Circuit.Emit.PastaMsmWindowed.windowedRowDesc_constraints_length]
+    (bucketedRowDesc n nbits c gens scal).constraints.length = 91 := by
+  simp only [bucketedRowDesc, List.length_append, rowGates_length, modeGates, selectGates,
+    threadGatesK, indexGates, lookupGates, outPiGates, List.length_cons, List.length_nil,
+    List.length_map, List.length_range]
 
 /-- The three declared tables, and their arities. -/
 theorem bucketedRowDesc_tables (n nbits c : Nat)
@@ -841,7 +896,11 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms fused_le_bucketed
 #assert_axioms c_le_levels
 #assert_axioms best_c_is_thirteen
-#assert_axioms bucketedRowDesc_extends_windowed
+#assert_axioms bucketedRowDesc_extends_rowGates
+#assert_axioms rowGates_length
+#assert_axioms windowed_42_is_a_window_gate
+#assert_axioms bucketed_42_is_row_local
+#assert_axioms windowedRowDesc_is_NOT_a_prefix
 #assert_axioms bucketedRowDesc_constraints_length
 #assert_axioms bucketedRowDesc_columns_in_bounds
 #assert_axioms bucketedRowDesc_pi_indices_in_bounds

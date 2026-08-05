@@ -13,15 +13,23 @@
 use std::fmt;
 
 use crate::descriptor_ir2::{
-    EffectVmDescriptor2, LookupSpec, MapKind, MapOpSpec, MemKind, MemOpSpec, ProofBindSpec,
-    TableDef2, TableSem, UMemOpSpec, VACUOUS_RANGE_BITS, VmConstraint2, WindowExpr, WindowGateSpec,
+    ChalExpr, ChalGateSpec, EffectVmDescriptor2, LookupSpec, MapKind, MapOpSpec, MemKind,
+    MemOpSpec, ProofBindSpec, TableDef2, TableSem, UMemOpSpec, VACUOUS_RANGE_BITS, VmConstraint2,
+    WindowExpr, WindowGateSpec,
 };
 use crate::lean_descriptor_air::{HashInput, LeanExpr, RangeSpec, VmConstraint, VmHashSite, VmRow};
 
 /// Eight-byte discriminator for canonical DescriptorIR-v2 records.
 pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_MAGIC: [u8; 8] = *b"DREGGIR2";
 /// Schema version of the fixed record defined in this module.
-pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_VERSION: u16 = 1;
+///
+/// ⚑ **BUMPED 1 → 2 on 2026-08-05** (the challenge leaf). Two things changed in the record: the
+/// descriptor header now carries its DECLARED CHALLENGE COUNT, and `VmConstraint2` gained the
+/// `ChalGate` kind at tag byte `7`. A v1 record therefore decodes to a DIFFERENT relation than it
+/// encodes and is refused outright by [`decode_canonical_effect_vm_descriptor2`] — never
+/// reinterpreted. Every semantic fingerprint changes, so every welded-leg `vk_hash` derived from
+/// these bytes rotates and every descriptor re-emits.
+pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_VERSION: u16 = 2;
 /// BLAKE3 derive-key context for semantic relation fingerprints.
 pub const EFFECT_VM_DESCRIPTOR2_FINGERPRINT_CONTEXT: &str =
     "dregg.effect-vm-descriptor2.semantic-relation.v1";
@@ -362,6 +370,71 @@ fn write_window_expr(
     }
 }
 
+/// ⚑ Canonical encoding of a [`ChalExpr`]. Tags `0..=4` are byte-identical to
+/// [`write_window_expr`]'s so the shared fragment encodes the same way in both grammars; tag `5`
+/// is the CHALLENGE LEAF and carries its index. The leaf is therefore INSIDE the semantic
+/// fingerprint: two descriptors that differ only in which challenge a gate reads have different
+/// fingerprints.
+fn write_chal_expr(
+    writer: &mut Writer,
+    expression: &ChalExpr,
+    depth: usize,
+) -> Result<(), CanonicalDescriptorError> {
+    let child_depth = next_depth(depth)?;
+    match expression {
+        ChalExpr::Loc(column) => {
+            writer.u8(0);
+            writer.index("ChalExpr::Loc.column", *column)
+        }
+        ChalExpr::Nxt(column) => {
+            writer.u8(1);
+            writer.index("ChalExpr::Nxt.column", *column)
+        }
+        ChalExpr::Const(value) => {
+            writer.u8(2);
+            writer.i64(*value);
+            Ok(())
+        }
+        ChalExpr::Add(left, right) => {
+            writer.u8(3);
+            write_chal_expr(writer, left, child_depth)?;
+            write_chal_expr(writer, right, child_depth)
+        }
+        ChalExpr::Mul(left, right) => {
+            writer.u8(4);
+            write_chal_expr(writer, left, child_depth)?;
+            write_chal_expr(writer, right, child_depth)
+        }
+        // ⚑ THE CHALLENGE LEAF.
+        ChalExpr::Chal(index) => {
+            writer.u8(5);
+            writer.index("ChalExpr::Chal.index", *index)
+        }
+    }
+}
+
+fn read_chal_expr(
+    reader: &mut Reader<'_>,
+    depth: usize,
+) -> Result<ChalExpr, CanonicalDescriptorError> {
+    let child_depth = next_depth(depth)?;
+    match reader.u8()? {
+        0 => Ok(ChalExpr::Loc(reader.index("ChalExpr::Loc.column")?)),
+        1 => Ok(ChalExpr::Nxt(reader.index("ChalExpr::Nxt.column")?)),
+        2 => Ok(ChalExpr::Const(reader.i64()?)),
+        3 => Ok(ChalExpr::Add(
+            Box::new(read_chal_expr(reader, child_depth)?),
+            Box::new(read_chal_expr(reader, child_depth)?),
+        )),
+        4 => Ok(ChalExpr::Mul(
+            Box::new(read_chal_expr(reader, child_depth)?),
+            Box::new(read_chal_expr(reader, child_depth)?),
+        )),
+        5 => Ok(ChalExpr::Chal(reader.index("ChalExpr::Chal.index")?)),
+        tag => Err(unknown("ChalExpr", tag)),
+    }
+}
+
 fn write_constraint(
     writer: &mut Writer,
     constraint: &VmConstraint2,
@@ -487,6 +560,15 @@ fn write_constraint(
             writer.u8(u8::from(*on_transition));
             Ok(())
         }
+        // ⚑ THE CHALLENGE GATE — tag 7, a VALUE in the canonical bytes and therefore in the
+        // semantic fingerprint. A descriptor that gained a challenge gate cannot fingerprint-match
+        // the one that did not.
+        VmConstraint2::ChalGate(gate) => {
+            writer.u8(7);
+            write_chal_expr(writer, &gate.body, 0)?;
+            writer.u8(u8::from(gate.on_transition));
+            Ok(())
+        }
     }
 }
 
@@ -539,6 +621,7 @@ pub fn canonical_effect_vm_descriptor2_bytes(
         name,
         trace_width,
         public_input_count,
+        challenges,
         tables,
         constraints,
         hash_sites,
@@ -556,6 +639,10 @@ pub fn canonical_effect_vm_descriptor2_bytes(
         "EffectVmDescriptor2.public_input_count",
         *public_input_count,
     )?;
+    // ⚑ The DECLARED CHALLENGE COUNT is inside the fingerprint. It is `0` on every descriptor
+    // served before the challenge leaf existed — a value, so the number is countable rather than
+    // absent, and the schema-v2 bump is what stops a v1 record being read as if it said `0`.
+    writer.index("EffectVmDescriptor2.challenges", *challenges)?;
     writer.sequence("EffectVmDescriptor2.tables", tables, write_table)?;
     writer.sequence(
         "EffectVmDescriptor2.constraints",
@@ -888,6 +975,10 @@ fn read_constraint(reader: &mut Reader<'_>) -> Result<VmConstraint2, CanonicalDe
             body: read_window_expr(reader, 0)?,
             on_transition: reader.boolean()?,
         })),
+        7 => Ok(VmConstraint2::ChalGate(ChalGateSpec {
+            body: read_chal_expr(reader, 0)?,
+            on_transition: reader.boolean()?,
+        })),
         tag => Err(unknown("VmConstraint2", tag)),
     }
 }
@@ -951,6 +1042,7 @@ pub fn decode_canonical_effect_vm_descriptor2(
         name: reader.string("EffectVmDescriptor2.name")?,
         trace_width: reader.index("EffectVmDescriptor2.trace_width")?,
         public_input_count: reader.index("EffectVmDescriptor2.public_input_count")?,
+        challenges: reader.index("EffectVmDescriptor2.challenges")?,
         tables: reader.sequence("EffectVmDescriptor2.tables", read_table)?,
         constraints: reader.sequence("EffectVmDescriptor2.constraints", read_constraint)?,
         hash_sites: reader.sequence("EffectVmDescriptor2.hash_sites", read_hash_site)?,
@@ -1115,6 +1207,7 @@ mod tests {
             name: "all-variant-descriptor-λ".to_owned(),
             trace_width: 4_096,
             public_input_count: 73,
+            challenges: 0,
             tables,
             constraints,
             hash_sites: vec![VmHashSite {
@@ -1360,6 +1453,7 @@ mod tests {
             name: "hostile".to_owned(),
             trace_width: 2,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::WindowGate(WindowGateSpec {
                 body: WindowExpr::Const(7),
@@ -1444,6 +1538,7 @@ mod tests {
             name: String::new(),
             trace_width: 0,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![],
             hash_sites: vec![],

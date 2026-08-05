@@ -195,6 +195,7 @@ fn build_umem_form(
         name: name.to_string(),
         trace_width: width,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],
@@ -408,6 +409,7 @@ fn nullifier_read_desc() -> EffectVmDescriptor2 {
         name: "nullifier-fresh-umem".to_string(),
         trace_width: 7,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::UMemOp(UMemOpSpec {
             guard: LeanExpr::Var(6),

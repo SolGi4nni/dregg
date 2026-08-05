@@ -75,7 +75,7 @@ use serde::Deserialize;
 use kimchi::{
     circuits::{
         gate::{CircuitGate, GateType},
-        wires::{GateWires, Wire, COLUMNS},
+        wires::{GateWires, Wire, COLUMNS, PERMUTS},
     },
     proof::{ProverProof, RecursionChallenge},
     prover_index::{testing::new_index_for_test_with_lookups, ProverIndex},
@@ -237,6 +237,17 @@ fn main() {
             .cloned()
             .unwrap_or_else(|| "/tmp/stepwrap_chain.json".to_string()),
     );
+    // ⚑ W-KEY's half, written BESIDE the tape and by the same run — see §4b. It is a separate Lean
+    // MODULE only because `KimchiWrapMainCore` (where `keyConst` lives) sits BELOW the fixture in
+    // the import graph and cannot see it; it is not a separate SOURCE.
+    let key_out = PathBuf::from(args.get(3).cloned().unwrap_or_else(|| {
+        lean_out
+            .parent()
+            .map(|d| d.join("KimchiStepWrapChainKey.lean"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/KimchiStepWrapChainKey.lean"))
+            .to_string_lossy()
+            .to_string()
+    }));
 
     println!("== export-step-tape: the STEP proof's OWN phase-1 Fq tape ==");
     println!("   circuit = {}", circuit_path.display());
@@ -334,6 +345,92 @@ fn main() {
     };
 
     let vk_digest: Fq = vk.digest::<BaseSponge>();
+
+    // ---- 4b. ⚑ **THE 56 `index_to_field_elements` COORDINATES OF THIS VERY INDEX.**
+    //
+    // The wrap circuit's W-KEY (`wrap_verifier.ml:522-537`) absorbs the CHOSEN step key's 28 index
+    // commitments and ties the squeeze to the transcript's FIRST absorbed word — which is
+    // `vk_digest`, three lines above. So the wrap circuit cannot verify this step proof unless the
+    // key it commits to IS this index. Until 2026-08-05 dregg's wrap committed to Mina's
+    // `step-transaction` key (a different circuit, 17 806 rows) while this tape drove the
+    // transcript, and that one row is what stopped the chain at `w4_bind`.
+    //
+    // ⚑ **THIS IS EMITTED BY THE SAME BINARY, FROM THE SAME `vk`, IN THE SAME RUN AS THE TAPE.** A
+    // separate key exporter would be a second source that can go stale against the first — and this
+    // fixture ALREADY WAS stale: `KimchiStepWrapChainFixture.lean` at HEAD described a 3 541-row
+    // circuit while `stepmain_smoke_r8_finalize.json` had been re-emitted twice (3 555, then 3 391),
+    // so its `STEP_VKDIGEST` was the digest of a circuit that no longer existed. One binary, one
+    // `vk`, one run: the preimage identity below is then true by CONSTRUCTION and not by hygiene.
+    assert!(
+        vk.range_check0_comm.is_none()
+            && vk.range_check1_comm.is_none()
+            && vk.foreign_field_add_comm.is_none()
+            && vk.foreign_field_mul_comm.is_none()
+            && vk.xor_comm.is_none()
+            && vk.rot_comm.is_none()
+            && vk.lookup_index.is_none(),
+        "`VerifierIndex::digest` would absorb more than the 28 Pickles index points, so the 56 \
+         coordinates below would be a PREFIX of the digest preimage wearing the name of all of it"
+    );
+    assert_eq!(vk.sigma_comm.len(), PERMUTS, "Plonk_types.Permuts.n");
+    assert_eq!(vk.coefficients_comm.len(), COLUMNS, "Plonk_types.Columns.n");
+    let mut index_xy: Vec<Fq> = vec![];
+    let mut n_inf: usize = 0;
+    let mut inf_at: Vec<String> = vec![];
+    {
+        let mut push = |c: &PolyComm<Vesta>, label: String| {
+            assert_eq!(c.chunks.len(), 1, "{label}: a chunked index commitment");
+            if c.chunks[0].infinity {
+                n_inf += 1;
+                inf_at.push(label);
+            }
+            index_xy.extend(comm_xy(c));
+        };
+        for (j, cm) in vk.sigma_comm.iter().enumerate() {
+            push(cm, format!("sigma_comm[{j}]"));
+        }
+        for (j, cm) in vk.coefficients_comm.iter().enumerate() {
+            push(cm, format!("coefficients_comm[{j}]"));
+        }
+        for (cm, name) in [
+            (&vk.generic_comm, "generic_comm"),
+            (&vk.psm_comm, "psm_comm"),
+            (&vk.complete_add_comm, "complete_add_comm"),
+            (&vk.mul_comm, "mul_comm"),
+            (&vk.emul_comm, "emul_comm"),
+            (&vk.endomul_scalar_comm, "endomul_scalar_comm"),
+        ] {
+            push(cm, name.to_string());
+        }
+    }
+    assert_eq!(index_xy.len(), 2 * (PERMUTS + COLUMNS + 6));
+    // ⚑ THE PREIMAGE IDENTITY. A fresh Fq sponge over exactly those 56 words IS the index digest —
+    // so the list is the digest's preimage and not a second copy of some coordinates.
+    {
+        let mut kr = BaseSponge::new(mina_poseidon::pasta::fq_kimchi::static_params());
+        kr.absorb_fq(&index_xy);
+        assert_eq!(
+            dq(&kr.digest_fq()),
+            dq(&vk_digest),
+            "absorbing the 56 index_to_field_elements coordinates is NOT the index digest"
+        );
+    }
+    // ⚠ `index_to_field_elements` flattens the identity as the FAKE POINT (0,0), which is off
+    // `y² = x³ + 5`; W-COMBINE folds the 28 points with the INCOMPLETE `Ops.add_fast`, so ONE
+    // identity commitment puts `combined_polynomial`/`p_prime`/`q`/`cq`/`lhs` off the curve and
+    // leaves `bulletproof_success` with no satisfying witness. That is exactly what kimchi's
+    // `create_circuit(0,5)` test key did (seven of 28). REFUSE rather than emit such a key.
+    assert_eq!(
+        n_inf,
+        0,
+        "{n_inf} of this step index's 28 commitments are the point at infinity ({}) — \
+         W-COMBINE's add_fast fold has no witness over a key like that",
+        inf_at.join(", ")
+    );
+    println!(
+        "[KEY  ] 56 index_to_field_elements coords; {n_inf} of 28 at infinity; \
+         56-coord replay == VerifierIndex::digest == the tape's first word : true"
+    );
     let prevcomm_xy: Vec<Fq> = prev_challenges
         .iter()
         .flat_map(|rc| comm_xy(&rc.comm))
@@ -789,6 +886,69 @@ end Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 
     std::fs::write(&lean_out, &l).expect("write lean");
     println!("[WROTE] {}", lean_out.display());
+
+    // ---- W-KEY's module: the 56 coordinates, alone, below `KimchiWrapMainCore` in the graph ----
+    let mut k = String::new();
+    k.push_str(&format!(
+        r#"/-
+# KimchiStepWrapChainKey — GENERATED. DO NOT EDIT.
+
+Written by `metatheory/fixtures/pickles-chain-harness/src/bin/export_step_tape.rs`, in the SAME RUN
+that wrote `KimchiStepWrapChainFixture` — from the SAME `VerifierIndex`.
+
+⚑ **DREGG'S OWN STEP CIRCUIT'S VERIFICATION KEY**, flattened to the 56 Fq coordinates
+`Pickles_base.Side_loaded_verification_key.index_to_field_elements` produces
+(`side_loaded_verification_key.ml:159-183`): 7 `sigma_comm`, 15 `coefficients_comm`, then
+`generic_comm`, `psm_comm`, `complete_add_comm`, `mul_comm`, `emul_comm`, `endomul_scalar_comm`.
+
+⚑ **WHY THIS IS A MODULE OF ITS OWN.** `KimchiWrapMainCore.keyConst` — the per-branch step-key table
+`choose_key` (`wrap_verifier.ml:189-204`) folds — sits BELOW `KimchiStepWrapChainFixture` in the
+import graph, so it cannot see the tape module. This is a second MODULE and not a second SOURCE: one
+binary, one `VerifierIndex`, one run.
+
+⚑ **THE PREIMAGE IDENTITY, ASSERTED IN RUST BEFORE THIS FILE WAS WRITTEN.** A fresh
+`DefaultFqSponge<VestaParameters>` fed exactly these 56 words reproduces
+`VerifierIndex::digest::<BaseSponge>()`, which is `KimchiStepWrapChainFixture.STEP_VKDIGEST`, which
+is the FIRST WORD of the phase-1 tape `kimchi::verifier` itself absorbed for the accepted proof. So
+committing to these 56 numbers and absorbing that digest are the same act, and
+`KimchiStepWrapChain.the_chain_climbs_past_bind_at_dreggs_own_step_key` re-derives the identity in
+Lean rather than trusting this sentence.
+
+⚑ **AND NONE OF THE 28 POINTS IS THE IDENTITY** — asserted in Rust, refusing to emit otherwise.
+`index_to_field_elements` flattens infinity as the fake point `(0,0)`, which is off `y² = x³ + 5`,
+and W-COMBINE folds these 28 with the INCOMPLETE `Ops.add_fast`; one identity commitment leaves
+`bulletproof_success` with no satisfying witness. kimchi's own `create_circuit(0,5)` test key had
+seven, which is the defect this whole line of work walked out of.
+
+  step circuit : {}
+  rows         : {}
+  public words : {}
+  points at infinity : 0 of 28
+-/
+
+namespace Dregg2.Circuit.Emit.KimchiStepWrapChainKey
+
+"#,
+        c.name, c.num_rows, c.public_input_size
+    ));
+    k.push_str("/-- The 56 coordinates, `index_to_field_elements` order. -/\ndef STEP_OWN_VK_XY : List Nat :=\n[\n");
+    for (i, chunk) in index_xy.chunks(4).enumerate() {
+        let last = (i + 1) * 4 >= index_xy.len();
+        k.push_str("  ");
+        k.push_str(&chunk.iter().map(dq).collect::<Vec<_>>().join(", "));
+        k.push_str(if last { "\n" } else { ",\n" });
+    }
+    k.push_str("]\n\n");
+    k.push_str(&format!(
+        "/-- The digest RUST KIMCHI computed for that index — the same number\n\
+         `KimchiStepWrapChainFixture.STEP_VKDIGEST` carries, re-stated here so this module stands\n\
+         alone below the fixture and `chain_key_module_agrees_with_the_tape` can tie the two. -/\n\
+         def STEP_OWN_VK_DIGEST : Nat := {}\n\n",
+        dq(&vk_digest)
+    ));
+    k.push_str("end Dregg2.Circuit.Emit.KimchiStepWrapChainKey\n");
+    std::fs::write(&key_out, &k).expect("write key lean");
+    println!("[WROTE] {}", key_out.display());
 
     // ---- the JSON sidecar ----
     let j = serde_json::json!({

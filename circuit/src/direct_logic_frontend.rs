@@ -680,6 +680,7 @@ pub fn compile_logic_program(
         name,
         trace_width,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![TableDef2 {
             id: TID_MAIN,
             name: "main".to_string(),

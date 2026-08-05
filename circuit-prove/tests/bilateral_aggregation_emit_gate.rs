@@ -200,6 +200,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-bilateral-aggregation-v3".to_string(),
         trace_width: AGG_WIDTH,
         public_input_count: OUTER_PI_COUNT,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

@@ -313,6 +313,247 @@ def runtimeCasRequestToWireValue (request : RuntimeCasRequest) : WireValue :=
 def runtimeCasRequestToCanonicalJson (request : RuntimeCasRequest) : String :=
   (runtimeCasRequestToWireValue request).toJson
 
+/-! ## Canonical command-event payloads
+
+These payloads retain computational command inputs, never opaque authority,
+crown, envelope, opening, or settlement proof constructors.  Unlike the
+`StateKey` recognizer below, this decoder returns a typed command: command
+replay, rather than decoding a caller-authored state snapshot, reconstructs the
+private machine state.
+-/
+
+abbrev REPLAY_EVENT_FORMAT : String := "POA-BAZAAR-COMMAND-EVENT-1"
+
+private def replayContextValue (context : ReplayContext) : WireValue :=
+  .node "replay-context" [.digest context.deploymentId,
+    .digest context.storeIdentity]
+
+private def replayGenesisValue (genesis : ReplayGenesisEvent) : WireValue :=
+  .node "replay-genesis" [.digest genesis.authority,
+    lotKeyValue genesis.lot, observableStateValue genesis.market,
+    .nat genesis.originCounter]
+
+def replayCommandEventToWireValue (context : ReplayContext)
+    (event : ReplayCommandEvent) : WireValue :=
+  match event with
+  | .initialize genesis => .node REPLAY_EVENT_FORMAT
+      [replayContextValue context, .node "command.initialize"
+        [replayGenesisValue genesis]]
+  | .advanceClock => .node REPLAY_EVENT_FORMAT
+      [replayContextValue context, .node "command.advance-clock" []]
+
+def replayCommandEventToCanonicalJson (context : ReplayContext)
+    (event : ReplayCommandEvent) : String :=
+  (replayCommandEventToWireValue context event).toJson
+
+private def decodeNat : WireValue → Option Nat
+  | .nat value => if value ≤ WIRE_U64_MAX then some value else none
+  | _ => none
+
+private def decodeDigest : WireValue → Option Digest32
+  | .digest value => some value
+  | _ => none
+
+private def decodeParticipant : WireValue → Option ParticipantId
+  | .node "participant" [value] => return ⟨← decodeDigest value⟩
+  | _ => none
+
+private def decodeAssetRef : WireValue → Option AssetRef
+  | .node "asset.relic" [value] => return .relic ⟨← decodeNat value⟩
+  | .node "asset.supplies" [] => some .supplies
+  | .node "asset.intel" [] => some .intel
+  | .node "asset.munitions" [] => some .munitions
+  | .node "asset.propellant" [] => some .propellant
+  | _ => none
+
+private def decodeReceiptKey : WireValue → Option ReceiptKey
+  | .node "receipt-key" [federation, session, epoch, player, counter] =>
+      return {
+        federationId := ← decodeDigest federation
+        contentSession := ← decodeDigest session
+        contentEpoch := ⟨← decodeNat epoch⟩
+        playerKey := ← decodeDigest player
+        playerCounter := ← decodeNat counter
+      }
+  | _ => none
+
+private def decodeOriginKey : WireValue → Option OriginKey
+  | .node "origin-key" [receipt, content, activation, relic] =>
+      return {
+        receipt := ← decodeReceiptKey receipt
+        contentRoot := ← decodeDigest content
+        activationDigest := ← decodeDigest activation
+        relic := ⟨← decodeNat relic⟩
+      }
+  | _ => none
+
+private def decodeAssetInput : WireValue → Option AssetInput
+  | .node "asset-input" [nullifier, owner, asset, amount] =>
+      return {
+        nullifier := ⟨← decodeDigest nullifier⟩
+        owner := ← decodeParticipant owner
+        asset := ← decodeAssetRef asset
+        amount := ← decodeNat amount
+      }
+  | _ => none
+
+private def decodeLotKey : WireValue → Option LotKey
+  | .node "lot-key" [authority, source, origin, seller, note] =>
+      return {
+        authority := ← decodeDigest authority
+        sourceRoot := ← decodeDigest source
+        origin := ← decodeOriginKey origin
+        seller := ← decodeParticipant seller
+        note := ← decodeAssetInput note
+      }
+  | _ => none
+
+private def decodePriceSchedule : WireValue → Option PriceSchedule
+  | .node "price-schedule" [bucketsWire, quoteTickWire] => do
+      let buckets ← decodeNat bucketsWire
+      let quoteTick ← decodeNat quoteTickWire
+      if hbuckets : 0 < buckets then
+        if hquote : 0 < quoteTick then
+          some ⟨buckets, hbuckets, quoteTick, hquote⟩
+        else none
+      else none
+  | _ => none
+
+private def decodeClearingOutput : WireValue → Option ClearingOutput
+  | .node "clearing-output" [bucket, volume] =>
+      return ⟨← decodeNat bucket, ← decodeNat volume⟩
+  | _ => none
+
+private def decodeBatchKey : WireValue → Option BatchKey
+  | .node "batch-key" [federation, session, epoch, batch, source] =>
+      return {
+        federationId := ← decodeDigest federation
+        contentSession := ← decodeDigest session
+        contentEpoch := ⟨← decodeNat epoch⟩
+        batchId := ⟨← decodeNat batch⟩
+        sourceRoot := ← decodeDigest source
+      }
+  | _ => none
+
+private def decodeCanonicalSet {T : Type} [DecidableEq T]
+    (limit : Nat) (decode : WireValue → Option T) : WireValue → Option (Finset T)
+  | .node "set" (.nat declared :: fields) => do
+      if declared != fields.length ∨ fields.length > limit then none else
+      let values ← fields.mapM fun field => do
+        let .text bytes := field | none
+        decode (← canonicalDecode bytes)
+      let result := values.toFinset
+      if result.card = values.length then some result else none
+  | _ => none
+
+private def decodeIdentity : WireValue → Option StableMarketIdentity
+  | .node "market-identity" [federation, content, activation, session, epoch,
+      sellerWire, buyerWire, baseWire, quoteWire] => do
+      let seller ← decodeParticipant sellerWire
+      let buyer ← decodeParticipant buyerWire
+      let baseAsset ← decodeAssetRef baseWire
+      let quoteAsset ← decodeAssetRef quoteWire
+      if hparties : seller ≠ buyer then
+        if hassets : baseAsset ≠ quoteAsset then
+          some {
+            federationId := ← decodeDigest federation
+            contentRoot := ← decodeDigest content
+            activationDigest := ← decodeDigest activation
+            contentSession := ← decodeDigest session
+            contentEpoch := ⟨← decodeNat epoch⟩
+            seller
+            buyer
+            parties_distinct := hparties
+            baseAsset
+            quoteAsset
+            assets_distinct := hassets
+          }
+        else none
+      else none
+  | _ => none
+
+private def decodePolicy : WireValue → Option MarketPolicy
+  | .node "market-policy" [pricing, orders, quantity, publicInputs, outputs] =>
+      return {
+        pricing := ← decodePriceSchedule pricing
+        maxOrders := ← decodeNat orders
+        maxOrderQuantity := ← decodeNat quantity
+        maxPublicAssetInputs := ← decodeNat publicInputs
+        allowedOutputs := ← decodeCanonicalSet MAX_ALLOWED_OUTPUTS
+          decodeClearingOutput outputs
+      }
+  | _ => none
+
+private def decodeObservableState : WireValue → Option ObservableState
+  | .node "observable-state" [identity, policy, baseEscrow, quoteEscrow,
+      buyerBase, sellerQuote, baseNotes, quoteNotes, assetNullifiers,
+      orderNullifiers, batches] =>
+      return {
+        identity := ← decodeIdentity identity
+        policy := ← decodePolicy policy
+        baseEscrow := ← decodeNat baseEscrow
+        quoteEscrow := ← decodeNat quoteEscrow
+        buyerBaseCustody := ← decodeNat buyerBase
+        sellerQuoteCustody := ← decodeNat sellerQuote
+        baseEscrowNotes := ← decodeCanonicalSet MAX_ESCROW_NOTES decodeAssetInput baseNotes
+        quoteEscrowNotes := ← decodeCanonicalSet MAX_ESCROW_NOTES decodeAssetInput quoteNotes
+        consumedAssetNullifiers := ← decodeCanonicalSet MAX_COLLECTION
+          (fun wire => return ⟨← decodeDigest wire⟩) assetNullifiers
+        consumedOrderNullifiers := ← decodeCanonicalSet MAX_COLLECTION
+          (fun wire => return ⟨← decodeDigest wire⟩) orderNullifiers
+        consumedBatches := ← decodeCanonicalSet MAX_COLLECTION decodeBatchKey batches
+      }
+  | _ => none
+
+private def decodeReplayContext : WireValue → Option ReplayContext
+  | .node "replay-context" [deployment, store] =>
+      return ⟨← decodeDigest deployment, ← decodeDigest store⟩
+  | _ => none
+
+private def decodeReplayGenesis : WireValue → Option ReplayGenesisEvent
+  | .node "replay-genesis" [authority, lot, market, counter] =>
+      return {
+        authority := ← decodeDigest authority
+        lot := ← decodeLotKey lot
+        market := ← decodeObservableState market
+        originCounter := ← decodeNat counter
+      }
+  | _ => none
+
+private def decodeReplayCommandValue : WireValue → Option (ReplayContext × ReplayCommandEvent)
+  | .node format [contextWire, .node "command.initialize" [genesisWire]] => do
+      if format != REPLAY_EVENT_FORMAT then none else
+      return (← decodeReplayContext contextWire, .initialize (← decodeReplayGenesis genesisWire))
+  | .node format [contextWire, .node "command.advance-clock" []] => do
+      if format != REPLAY_EVENT_FORMAT then none else
+      return (← decodeReplayContext contextWire, .advanceClock)
+  | _ => none
+
+def decodeReplayCommandEvent (bytes : String) :
+    Option (ReplayContext × ReplayCommandEvent) := do
+  let decoded ← canonicalDecode bytes
+  let result ← decodeReplayCommandValue decoded
+  if replayCommandEventToCanonicalJson result.1 result.2 = bytes then
+    some result
+  else none
+
+theorem decodeReplayCommandEvent_reencodes {bytes : String}
+    {result : ReplayContext × ReplayCommandEvent}
+    (accepted : decodeReplayCommandEvent bytes = some result) :
+    replayCommandEventToCanonicalJson result.1 result.2 = bytes := by
+  cases decoded : canonicalDecode bytes with
+  | none => simp [decodeReplayCommandEvent, decoded] at accepted
+  | some wire =>
+      cases parsed : decodeReplayCommandValue wire with
+      | none => simp [decodeReplayCommandEvent, decoded, parsed] at accepted
+      | some candidate =>
+          by_cases exact :
+              replayCommandEventToCanonicalJson candidate.1 candidate.2 = bytes
+          · simp [decodeReplayCommandEvent, decoded, parsed, exact] at accepted
+            subst result
+            exact exact
+          · simp [decodeReplayCommandEvent, decoded, parsed, exact] at accepted
+
 /-! ## Exact schema recognizer -/
 
 private def natB : WireValue → Bool
@@ -580,6 +821,14 @@ def durableLoadWireValidB (registry : DeploymentRegistry)
         decide (registry.authority = state.authority) &&
         stateKeyMatchesCanonicalJsonB state.key text
 
+def journaledRuntimeCasRequestCodecValidB
+    (request : JournaledRuntimeCasRequest) : Bool :=
+  runtimeCasRequestCodecValidB request.cas &&
+    match decodeReplayCommandEvent
+      (replayCommandEventToCanonicalJson request.context request.event) with
+    | some decoded => decide (decoded = (request.context, request.event))
+    | none => false
+
 /-! ## Native ABI helpers
 
 These exports never construct an admission.  The C implementation of the two
@@ -608,6 +857,41 @@ def requestReplacementEncodeExport (request : RuntimeCasRequest) : String :=
 @[export dregg_poa_bazaar_runtime_request_encode]
 def requestEncodeExport (request : RuntimeCasRequest) : String :=
   runtimeCasRequestToCanonicalJson request
+
+@[export dregg_poa_bazaar_runtime_journaled_request_codec_valid]
+def journaledRequestCodecValidExport
+    (request : JournaledRuntimeCasRequest) : Bool :=
+  journaledRuntimeCasRequestCodecValidB request
+
+@[export dregg_poa_bazaar_runtime_journaled_expected_present]
+def journaledExpectedPresentExport
+    (request : JournaledRuntimeCasRequest) : Bool :=
+  request.cas.expected.isSome
+
+@[export dregg_poa_bazaar_runtime_journaled_expected_encode]
+def journaledExpectedEncodeExport
+    (request : JournaledRuntimeCasRequest) : String :=
+  request.cas.expected.map stateKeyToCanonicalJson |>.getD ""
+
+@[export dregg_poa_bazaar_runtime_journaled_replacement_encode]
+def journaledReplacementEncodeExport
+    (request : JournaledRuntimeCasRequest) : String :=
+  stateKeyToCanonicalJson request.cas.replacement
+
+@[export dregg_poa_bazaar_runtime_journaled_event_encode]
+def journaledEventEncodeExport
+    (request : JournaledRuntimeCasRequest) : String :=
+  replayCommandEventToCanonicalJson request.context request.event
+
+@[export dregg_poa_bazaar_runtime_journaled_deployment_encode]
+def journaledDeploymentEncodeExport
+    (request : JournaledRuntimeCasRequest) : String :=
+  Emit.bytes32Hex request.context.deploymentId
+
+@[export dregg_poa_bazaar_runtime_journaled_store_encode]
+def journaledStoreEncodeExport
+    (request : JournaledRuntimeCasRequest) : String :=
+  Emit.bytes32Hex request.context.storeIdentity
 
 @[export dregg_poa_bazaar_runtime_state_from_game_encode]
 def stateFromGameEncodeExport (state : BazaarGameState) : String :=
@@ -729,6 +1013,64 @@ def fixtureGenesisRequest : RuntimeCasRequest := ⟨none, fixtureState1⟩
 def fixtureSuccessorRequest : RuntimeCasRequest := ⟨some fixtureState1, fixtureState2⟩
 def fixtureStaleRequest : RuntimeCasRequest := ⟨some fixtureState1, fixtureState3⟩
 
+def fixtureReplayContext : ReplayContext :=
+  ⟨repeatedDigest 88, repeatedDigest 23⟩
+
+def fixtureReplayGenesis : ReplayGenesisEvent where
+  authority := repeatedDigest 88
+  lot := fixtureLot
+  market := fixtureMarket
+  originCounter := 1
+
+private def replayAcceptedB : Except ReplayRefusal ReplayApplied → Bool
+  | .ok _ => true
+  | .error _ => false
+
+private def replayValueOfAccepted
+    (result : Except ReplayRefusal ReplayApplied)
+    (accepted : replayAcceptedB result = true) : ReplayApplied :=
+  match h : result with
+  | .ok value => value
+  | .error _ => False.elim (by simp [replayAcceptedB] at accepted)
+
+private def replayRefusalB (expected : ReplayRefusal) :
+    Except ReplayRefusal ReplayApplied → Bool
+  | .error actual => decide (actual = expected)
+  | .ok _ => false
+
+def fixtureReplayGenesisResult := replayCommand fixtureReplayContext none
+  (.initialize fixtureReplayGenesis)
+
+theorem fixture_replay_genesis_accepts :
+    replayAcceptedB fixtureReplayGenesisResult = true := by
+  native_decide
+
+def fixtureReplayGenesisApplied : ReplayApplied :=
+  replayValueOfAccepted fixtureReplayGenesisResult fixture_replay_genesis_accepts
+
+def fixtureReplayAdvanceResult := replayCommand fixtureReplayContext
+  (some fixtureReplayGenesisApplied.machine) .advanceClock
+
+theorem fixture_replay_advance_accepts :
+    replayAcceptedB fixtureReplayAdvanceResult = true := by
+  native_decide
+
+def fixtureReplayAdvanceApplied : ReplayApplied :=
+  replayValueOfAccepted fixtureReplayAdvanceResult fixture_replay_advance_accepts
+
+theorem fixture_replay_event_codec_is_canonical :
+    decodeReplayCommandEvent
+      (replayCommandEventToCanonicalJson fixtureReplayContext
+        (.initialize fixtureReplayGenesis)) =
+      some (fixtureReplayContext, .initialize fixtureReplayGenesis) := by
+  native_decide
+
+theorem fixture_cross_deployment_event_refuses :
+    replayRefusalB .deploymentMismatch
+      (replayCommand ⟨repeatedDigest 99, repeatedDigest 23⟩ none
+        (.initialize fixtureReplayGenesis)) = true := by
+  native_decide
+
 theorem fixture_state_codec_is_canonical : stateKeyCodecValidB fixtureState2 = true := by
   native_decide
 
@@ -749,23 +1091,35 @@ theorem fixture_request_substitution_changes_wire :
 #assert_compiled fixture_request_codec_is_canonical
 #assert_compiled fixture_state_trailing_byte_refuses
 #assert_compiled fixture_request_substitution_changes_wire
+#assert_compiled fixture_replay_genesis_accepts
+#assert_compiled fixture_replay_advance_accepts
+#assert_compiled fixture_replay_event_codec_is_canonical
+#assert_compiled fixture_cross_deployment_event_refuses
 
 @[export dregg_poa_bazaar_runtime_fixture]
 def fixtureFFI (command : String) : IO String := do
   match command with
   | "genesis" =>
-      let result ← TrustedRuntimePortal.performCas fixtureGenesisRequest
+      let result ← TrustedRuntimePortal.performJournaledCas
+        fixtureReplayGenesisApplied.journaledRequest
       pure (if result.isSome then "applied" else "refused")
   | "successor" =>
-      let result ← TrustedRuntimePortal.performCas fixtureSuccessorRequest
+      let result ← TrustedRuntimePortal.performJournaledCas
+        fixtureReplayAdvanceApplied.journaledRequest
       pure (if result.isSome then "applied" else "refused")
   | "stale" =>
-      let result ← TrustedRuntimePortal.performCas fixtureStaleRequest
+      let result ← TrustedRuntimePortal.performJournaledCas
+        fixtureReplayAdvanceApplied.journaledRequest
       pure (if result.isSome then "applied" else "refused")
+  | "admit-replayed" =>
+      let wire := (stateKeyToCanonicalJson fixtureReplayAdvanceApplied.machine.key).toUTF8
+      let deployment ← fixtureReplayAdvanceApplied.machine.admitDurable wire
+      pure (if deployment.isSome then "admitted" else "refused")
   | _ => pure "refused"
 
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeStateKey_reencodes
 #assert_axioms decodeRuntimeCasRequest_reencodes
+#assert_axioms decodeReplayCommandEvent_reencodes
 
 end Dregg2.Games.PathOfAngels.BazaarGameRuntime

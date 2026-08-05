@@ -119,6 +119,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-ivc-state-transition-v2".to_string(),
         trace_width: IVC_WIDTH,
         public_input_count: 4,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             ivc_perrow_lookup(),

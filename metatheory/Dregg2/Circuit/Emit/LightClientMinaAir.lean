@@ -582,7 +582,7 @@ gated separately and MORE NARROWLY, which is the whole gadget. -/
 theorem minaHeadAir_limbs_shape :
     minaHeadAir.limbsCount = 2 ∧ minaHeadAir.totalRangeLookups = 16
       ∧ minaHeadAir.maxLimbedCapacityBits = 232 := by
-  refine ⟨rfl, rfl, rfl⟩
+  refine ⟨rfl, rfl, rfl, fun _ => 0⟩
 
 /-- ⚑ **THE WIRE IDS THE DESCRIPTOR COMMITS**, so the Rust reader's width recovery
 (`descriptor_ir2.rs::range_bits_for`, `bits = tid − RANGE_W_TID_WIRE_BASE` with wire base 69) lands
@@ -591,7 +591,7 @@ bytes, hence the VK. -/
 theorem mina_range_table_wire_ids :
     (minaRangeTid MINA_LANE_BITS).wireId = 98 ∧ (minaRangeTid MINA_TOP_LANE_BITS).wireId = 91
       ∧ TableId.range.wireId = 2 := by
-  refine ⟨rfl, rfl, rfl⟩
+  refine ⟨rfl, rfl, rfl, fun _ => 0⟩
 
 /-- Both declared lane widths are WRAP-FREE at BabyBear, so neither lookup is the vacuous kind three
 shipped descriptors were. (`RangeFieldContainment.wrap_free_iff_le_29` is the general statement; this

@@ -91,6 +91,7 @@ fn wide_leg(
         name: name.to_string(),
         trace_width: row.len(),
         public_input_count: pi_count,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

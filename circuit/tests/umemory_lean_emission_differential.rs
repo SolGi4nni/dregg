@@ -94,6 +94,7 @@ fn umem_desc() -> EffectVmDescriptor2 {
         name: "umemory-lean-emission-differential".to_string(),
         trace_width: 5,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             // A nullifier INSERT (serial 1): a WRITE installing a PRESENT cell — the one shape the

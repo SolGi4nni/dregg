@@ -732,6 +732,7 @@ fn to_real_descriptor2(d: &Descriptor2) -> EffectVmDescriptor2 {
         name: "ir2-real-eval-oracle".to_string(),
         trace_width: BOUND_W,
         public_input_count: 0,
+        challenges: 0,
         tables: Vec::new(),
         constraints,
         hash_sites: Vec::new(),
@@ -870,6 +871,7 @@ fn real_range_desc(bits: usize) -> EffectVmDescriptor2 {
         name: "ir2-bus-range".to_string(),
         trace_width: 4,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![TableDef2 {
             id: REAL_TID_RANGE,
             name: "range".to_string(),
@@ -907,6 +909,7 @@ fn real_chip_desc() -> EffectVmDescriptor2 {
         name: "ir2-bus-chip".to_string(),
         trace_width: 2 + 1 + (out_lanes - 1), // a,b, out0, 7 lanes = 10 cols
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::Lookup(LookupSpec {
             table: TID_P2,
@@ -925,6 +928,7 @@ fn real_mem_desc() -> EffectVmDescriptor2 {
         name: "ir2-bus-mem".to_string(),
         trace_width: 8,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![TableDef2 {
             id: REAL_TID_RANGE,
             name: "range".to_string(),
@@ -975,6 +979,7 @@ fn real_map_desc(op: RealMapKind) -> EffectVmDescriptor2 {
         name: "ir2-bus-map".to_string(),
         trace_width: 18,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Const(1),
@@ -4115,6 +4120,7 @@ fn boundary_pi_real_desc(arms: &[BaseArm]) -> EffectVmDescriptor2 {
         name: "ir2-boundary-pi-arms".to_string(),
         trace_width: 4,
         public_input_count: 2,
+        challenges: 0,
         tables: Vec::new(),
         constraints,
         hash_sites: Vec::new(),

@@ -44,8 +44,17 @@ SAME code at different constants. There is no second schedule to get wrong.
 * `fq_kimchi_params_shape` — 3×3 MDS, 55×3 round constants, all reduced mod `qN`, and the Fq
   constants are DIFFERENT elements from the Fp ones (a mis-wired `static_params()` would show).
 * `core_is_Ref_at_Fp` — the parametric core at `⟨pN, mdsN, rcsN⟩` IS `PastaPoseidon.Ref.hash`.
-* **12 KATs at BOTH parities** (`#guard`, kernel-evaluated) plus **5 double-permute anti-values**
-  aimed at precisely the defect above, in the field where it has never been tested.
+* **12 KATs at BOTH parities** (`fq_kimchi_kats_odd_lengths` / `fq_kimchi_kats_even_lengths`) plus
+  **5 double-permute anti-values** aimed at precisely the defect above, in the field where it has
+  never been tested — and the anti-values are proved REACHABLE, so they are not arbitrary wrong
+  numbers.
+* ⚑ **AND THE SAME CONSTANTS RECOMPUTE A REAL MINA BLOCK'S TRANSCRIPT.**
+  `MinaBlockFqTranscript.the_fq_sponge_reproduces_the_real_blocks_challenges` drives this exact
+  `Core` over the 91-element phase-2 tape of Mina devnet block 539508's Wrap proof and reproduces
+  the `v′`/`u′` that block's `proof.oracles(...)` returned. That is a second, INDEPENDENT artifact
+  (a different extractor, a different proof, openmina's own `BlockVerifier`) agreeing with the same
+  55×3 constants — the strongest weld available to this file, and the one a KAT dump alone cannot
+  give.
 * **β, γ, α′, ζ′ and the phase-1 digest of a REAL Kimchi proof are RE-DERIVED end-to-end** from
   the verifier index digest and the commitments — `fq_phase1_derivation`. Nothing in this chain is
   consumed as given, and tampering one absorbed coordinate breaks all five.
@@ -60,9 +69,12 @@ security of the transcript is the random-oracle assumption every Fiat–Shamir v
 
 ## Axiom hygiene
 
-`#assert_namespace_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`, no
-`native_decide`. KATs are `#guard` (kernel evaluation) for the same reason K3's are: the `decide`
-proof-term path overflows on a 255-bit 55-round permutation.
+`#assert_namespace_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}) except for the nine
+facts that are Kimchi permutations of a 255-bit state, where the `decide` proof-term path overflows;
+those are `native_decide` + **`#assert_compiled`** and are listed in the `except` clause at §8.
+**No `#guard` and no `sorry`.** ⚠ The nine were `#guard`s until 2026-08-05, which ran the SAME
+compiled evaluator with the name, the term and the axiom record deleted — `#assert_namespace_axioms`
+reported "22 theorems pinned kernel-clean" over a file whose load-bearing content it could not see.
 
 NEW standalone file. Import line for the root (do NOT edit `Dregg2.lean` from a lane):
 `import Dregg2.Circuit.Emit.PastaPoseidonFq`
@@ -368,84 +380,131 @@ theorem fq_kimchi_params_shape :
     ∧ (rcsQ.getD 0 []).getD 0 0 ≠ (PastaPoseidon.rcsN.getD 0 []).getD 0 0 := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
-/-! ## §4 — KATs from the UPSTREAM state machine, at BOTH parities.
+/-! ## §4 — KATs from the UPSTREAM state machine, at BOTH parities. **NAMED, not `#guard`ed.**
 
 Every digest below is `ArithmeticSponge::<Fq, PlonkSpongeConstantsKimchi, 55>::new(fq_kimchi::
 static_params())` absorbing the listed input and squeezing once — emitted by the pinned crate
 itself. The Fp side's defect lived exclusively on the EVEN-length branch and survived because only
-odd lengths were pinned, so the even cases here are not decoration. -/
+odd lengths were pinned, so the even cases here are not decoration.
 
--- ── ODD / EMPTY lengths ───────────────────────────────────────────────────────────────────
-#guard Core.hash fqParams [] ==
-  26325059344545057748124945118392691172837215831371382611854451789945431713217
-#guard Core.hash fqParams [0] ==
-  26325059344545057748124945118392691172837215831371382611854451789945431713217
-#guard Core.hash fqParams [1] ==
-  13189085232650461469786277088668109216693728272262170952039893171694580724395
-#guard Core.hash fqParams [2] ==
-  4419303945845157744159758084355306177416703765988732842939109222653625224467
-#guard Core.hash fqParams [0, 1, 2] ==
-  24229636043088023164352695052079205223039147058005460278984885560343414166028
-#guard Core.hash fqParams [1, 2, 3, 4, 5] ==
-  13043790258791821049485126195889120638786343835967141999305139966024207407373
-#guard Core.hash fqParams [28948022309329048855892746252171976963363056481941647379679742748393362948096] ==
-  2154422495404313473247411845988928517930424795898901133071705314262744375252
+⚑ **CONVERTED 2026-08-05 (`#guard` → theorem).** These were 24 `#guard`s. A `#guard` runs the same
+`unsafe evalExpr` compiled evaluator a `native_decide` theorem runs on, with the name, the term and
+the axiom record deleted — so it did not avoid trusting the compiler, it trusted it SILENTLY, and
+`#assert_namespace_axioms` at the foot of this file was structurally blind to twenty-four facts it
+appeared to be pinning. Each is now a named theorem carrying `#assert_compiled`, except the two the
+KERNEL reaches, which are strictly stronger than the guards ever were.
 
--- ── ⚑ EVEN lengths — the branch that carried the Fp defect, pinned here from day one. ────
-#guard Core.hash fqParams [1, 2] ==
-  18721052396410244253982636774728806624181288577958764574163425862396352099420
-#guard Core.hash fqParams [1, 2, 3, 4] ==
-  10548331239688853043624428163645335175925296096989521598278492390051779492732
-#guard Core.hash fqParams [1, 2, 3, 4, 5, 6] ==
-  7563263910086235198391941660715396326985699080245613808193765676624064193085
-#guard Core.hash fqParams [28948022309329048855892746252171976963363056481941647379679742748393362948096, 28948022309329048855892746252171976963363056481941647379679742748393362948096] ==
-  11544428215580289604551264829361632469035298129476897551105612137499483869661
-#guard Core.hash fqParams [123456789, 987654321] ==
-  9878618038240754897677923366540827108825360566670582413059581961759570810669
+⚑ **AND THE UPSTREAM SIDE IS NOW CHECKED AGAINST THE EMITTED ARTIFACT.** The numbers below and the
+`fq_kimchi` constants in §0 were both dumped by `kimchi-extractors/pickles_p6_fq_export.rs` into
+`metatheory/kimchi_p6_prev2_proof.json`; until 2026-08-05 nothing compared the JSON to what this
+file says. `circuit/tests/pasta_fq_sponge_proves.rs` §9 now refuses unless all 165 round constants
+and 9 MDS entries appear as ROM IMMEDIATES of the EMITTED descriptor at the schedule position round
+`r` requires, and unless the emitted squeeze public inputs recompose to the JSON's own KAT. -/
 
--- ── ⚑ THE NEGATIVE PINS: precisely what a DOUBLE-PERMUTING sponge emits on these inputs. ──
--- Computed by applying one extra `poseidon_block_cipher` to the correctly-absorbed state, in the
--- pinned crate. If the extra permutation is ever reintroduced — by a reordered clause, a
--- restructured recursion, or a lane counter off by one — these go RED and say which input.
-#guard Core.hash fqParams [1, 2] !=
-  3170593086853830768532189807024303553461463947271563310549775434172634144728
-#guard Core.hash fqParams [1, 2, 3, 4] !=
-  4544906238549610484921403691351334248803012048633885977019407114368544285254
-#guard Core.hash fqParams [1, 2, 3, 4, 5, 6] !=
-  13181764166427026197103271254520178497440230483350717125070645835612011212504
-#guard Core.hash fqParams [28948022309329048855892746252171976963363056481941647379679742748393362948096, 28948022309329048855892746252171976963363056481941647379679742748393362948096] !=
-  12229202881959248390627943901581203666916523903108756662721402355176898079285
-#guard Core.hash fqParams [123456789, 987654321] !=
-  3241126756328601023111163188084379890129369141722373541596090256721588144297
+/-- ⚑ **THE ODD / EMPTY-LENGTH KATs.** -/
+theorem fq_kimchi_kats_odd_lengths :
+    Core.hash fqParams [] =
+      26325059344545057748124945118392691172837215831371382611854451789945431713217
+    ∧ Core.hash fqParams [0] =
+      26325059344545057748124945118392691172837215831371382611854451789945431713217
+    ∧ Core.hash fqParams [1] =
+      13189085232650461469786277088668109216693728272262170952039893171694580724395
+    ∧ Core.hash fqParams [2] =
+      4419303945845157744159758084355306177416703765988732842939109222653625224467
+    ∧ Core.hash fqParams [0, 1, 2] =
+      24229636043088023164352695052079205223039147058005460278984885560343414166028
+    ∧ Core.hash fqParams [1, 2, 3, 4, 5] =
+      13043790258791821049485126195889120638786343835967141999305139966024207407373
+    ∧ Core.hash fqParams
+        [28948022309329048855892746252171976963363056481941647379679742748393362948096] =
+      2154422495404313473247411845988928517930424795898901133071705314262744375252 := by
+  native_decide
 
--- And that those anti-values are REACHABLE, not arbitrary wrong numbers: one extra permutation
--- of the correctly-absorbed state reproduces each of them exactly.
-#guard (Core.perm fqParams (Core.absorbAll fqParams [0, 0, 0] [1, 2])).getD 0 0 ==
-  3170593086853830768532189807024303553461463947271563310549775434172634144728
-#guard (Core.perm fqParams (Core.absorbAll fqParams [0, 0, 0] [1, 2, 3, 4])).getD 0 0 ==
-  4544906238549610484921403691351334248803012048633885977019407114368544285254
-#guard (Core.perm fqParams (Core.absorbAll fqParams [0, 0, 0] [28948022309329048855892746252171976963363056481941647379679742748393362948096, 28948022309329048855892746252171976963363056481941647379679742748393362948096])).getD 0 0 ==
-  12229202881959248390627943901581203666916523903108756662721402355176898079285
+/-- ⚑ **THE EVEN-LENGTH KATs** — the branch that carried the Fp double-permute defect, pinned in
+this field from day one. -/
+theorem fq_kimchi_kats_even_lengths :
+    Core.hash fqParams [1, 2] =
+      18721052396410244253982636774728806624181288577958764574163425862396352099420
+    ∧ Core.hash fqParams [1, 2, 3, 4] =
+      10548331239688853043624428163645335175925296096989521598278492390051779492732
+    ∧ Core.hash fqParams [1, 2, 3, 4, 5, 6] =
+      7563263910086235198391941660715396326985699080245613808193765676624064193085
+    ∧ Core.hash fqParams
+        [28948022309329048855892746252171976963363056481941647379679742748393362948096,
+         28948022309329048855892746252171976963363056481941647379679742748393362948096] =
+      11544428215580289604551264829361632469035298129476897551105612137499483869661
+    ∧ Core.hash fqParams [123456789, 987654321] =
+      9878618038240754897677923366540827108825360566670582413059581961759570810669 := by
+  native_decide
 
--- The structural statement, independent of any constant: a full final rate block leaves exactly
--- ONE closing permutation.
-#guard Core.absorbAll fqParams [0, 0, 0] [1, 2] ==
-  Core.perm fqParams (Core.absorbAt fqParams (Core.absorbAt fqParams [0, 0, 0] 0 1) 1 2)
-#guard Core.absorbAll fqParams [0, 0, 0] [1, 2] !=
-  Core.perm fqParams (Core.perm fqParams
-    (Core.absorbAt fqParams (Core.absorbAt fqParams [0, 0, 0] 0 1) 1 2))
+/-- ⚑ **THE NEGATIVE PINS: precisely what a DOUBLE-PERMUTING sponge emits on these inputs.**
+Computed by applying one extra `poseidon_block_cipher` to the correctly-absorbed state, in the
+pinned crate. If the extra permutation is ever reintroduced — by a reordered clause, a restructured
+recursion, or a lane counter off by one — this goes RED and says which input. -/
+theorem the_double_permute_antivalues_are_not_the_digests :
+    Core.hash fqParams [1, 2] ≠
+      3170593086853830768532189807024303553461463947271563310549775434172634144728
+    ∧ Core.hash fqParams [1, 2, 3, 4] ≠
+      4544906238549610484921403691351334248803012048633885977019407114368544285254
+    ∧ Core.hash fqParams [1, 2, 3, 4, 5, 6] ≠
+      13181764166427026197103271254520178497440230483350717125070645835612011212504
+    ∧ Core.hash fqParams
+        [28948022309329048855892746252171976963363056481941647379679742748393362948096,
+         28948022309329048855892746252171976963363056481941647379679742748393362948096] ≠
+      12229202881959248390627943901581203666916523903108756662721402355176898079285
+    ∧ Core.hash fqParams [123456789, 987654321] ≠
+      3241126756328601023111163188084379890129369141722373541596090256721588144297 := by
+  native_decide
 
--- The raw permutation of the state `[1, 0, 0]`, from the crate: its lane 0 IS `hash [1]`, which is
--- what "absorb into lane 0, then squeeze" means, and lanes 1/2 pin the rest of the state.
-#guard Core.perm fqParams [1, 0, 0] ==
-  [13189085232650461469786277088668109216693728272262170952039893171694580724395,
-   4933355072282896023051937577395502873295134167635951382676348198808027320493,
-   3805719862504768349544045440509040285513700084124059569693828031712016981101]
--- non-vacuity: a tampered input does not reproduce the `triple012` gold
-#guard Core.hash fqParams [0, 1, 3] !=
-  24229636043088023164352695052079205223039147058005460278984885560343414166028
--- the S-box spot check (α = 7), in the Fq modulus
-#guard Core.sbox fqParams 2 == 128
+/-- …and those anti-values are REACHABLE, not arbitrary wrong numbers: one extra permutation of the
+correctly-absorbed state reproduces each of them exactly. Without this the negative pins would be
+five numbers no implementation could ever have produced. -/
+theorem the_double_permute_antivalues_are_reachable :
+    (Core.perm fqParams (Core.absorbAll fqParams [0, 0, 0] [1, 2])).getD 0 0 =
+      3170593086853830768532189807024303553461463947271563310549775434172634144728
+    ∧ (Core.perm fqParams (Core.absorbAll fqParams [0, 0, 0] [1, 2, 3, 4])).getD 0 0 =
+      4544906238549610484921403691351334248803012048633885977019407114368544285254
+    ∧ (Core.perm fqParams (Core.absorbAll fqParams [0, 0, 0]
+        [28948022309329048855892746252171976963363056481941647379679742748393362948096,
+         28948022309329048855892746252171976963363056481941647379679742748393362948096])).getD 0 0 =
+      12229202881959248390627943901581203666916523903108756662721402355176898079285 := by
+  native_decide
+
+/-- ⚑ **A FULL FINAL RATE BLOCK LEAVES EXACTLY ONE CLOSING PERMUTATION** — and this one the KERNEL
+reaches. The guard it replaces was an instance of a purely STRUCTURAL fact about `absorbFrom`'s lane
+counter: on `[x₀, x₁]` from a fresh sponge the recursion reaches its `[]` clause with the rate full
+and supplies one `perm`. Nothing about the constants enters, so it is `rfl` at every pair and at
+every `Params` — strictly stronger than the closed instance the `#guard` checked. -/
+theorem a_full_final_rate_block_leaves_one_permutation (P : Params) (x₀ x₁ : Nat) :
+    Core.absorbAll P [0, 0, 0] [x₀, x₁]
+      = Core.perm P (Core.absorbAt P (Core.absorbAt P [0, 0, 0] 0 x₀) 1 x₁) := rfl
+
+/-- …and the DOUBLE permutation is a different state, which is the half that needs the constants. -/
+theorem two_permutations_is_a_different_state :
+    Core.absorbAll fqParams [0, 0, 0] [1, 2] ≠
+      Core.perm fqParams (Core.perm fqParams
+        (Core.absorbAt fqParams (Core.absorbAt fqParams [0, 0, 0] 0 1) 1 2)) := by
+  native_decide
+
+/-- The raw permutation of the state `[1, 0, 0]`, from the crate: its lane 0 IS `hash [1]`, which is
+what "absorb into lane 0, then squeeze" means, and lanes 1/2 pin the rest of the state — the two
+lanes a digest-only KAT never looks at. -/
+theorem the_raw_permutation_of_lane_zero_one :
+    Core.perm fqParams [1, 0, 0] =
+      [13189085232650461469786277088668109216693728272262170952039893171694580724395,
+       4933355072282896023051937577395502873295134167635951382676348198808027320493,
+       3805719862504768349544045440509040285513700084124059569693828031712016981101] := by
+  native_decide
+
+/-- Non-vacuity: a tampered input does not reproduce the `[0,1,2]` gold. -/
+theorem a_tampered_triple_does_not_reproduce_the_gold :
+    Core.hash fqParams [0, 1, 3] ≠
+      24229636043088023164352695052079205223039147058005460278984885560343414166028 := by
+  native_decide
+
+/-- The S-box spot check (α = 7) in the Fq modulus — and the KERNEL reaches this one, so it is a
+`rfl` rather than a compiled evaluation. -/
+theorem the_fq_sbox_is_the_seventh_power_at_two : Core.sbox fqParams 2 = 128 := rfl
 
 /-! ## §5 — The `DefaultFqSponge` state machine (`poseidon/src/sponge.rs:317-410`).
 
@@ -591,11 +650,18 @@ def fqPhase1 : Nat × Nat × Nat × Nat × Nat :=
   let (s6, zetaChal) := challenge fqParams s5
   (beta, gamma, alphaChal, zetaChal, digestInto fqParams s6 pN)
 
-/-! ⚑ **THE RESULT: β and γ are DERIVED, not carried.** All five phase-1 outputs of the real proof
-fall out of the Fq-state sponge over the real commitments. (`#guard`: 28 permutations of a 255-bit
-state — the `decide` proof-term path is what K3 measured as overflowing, so this is the same
-kernel-evaluation instrument its gold vectors use.) -/
-#guard fqPhase1 == (BETA_N, GAMMA_N, ALPHA_CHAL, ZETA_CHAL, FQDIGEST)
+/-- ⚑ **`fq_phase1_derivation` — THE RESULT: β and γ are DERIVED, not carried.** All five phase-1
+outputs of the real proof fall out of the Fq-state sponge over the real commitments.
+
+⚠ **THIS FILE'S OWN HEADER HAS CITED THIS NAME SINCE THE FILE WAS WRITTEN** — *"β, γ, α′, ζ′ and the
+phase-1 digest of a REAL Kimchi proof are RE-DERIVED end-to-end … `fq_phase1_derivation`"* — and
+until 2026-08-05 there was no such declaration: the fact was a `#guard`, and the citation pointed at
+nothing. That is precisely the shape a name-as-claim is supposed to catch. It is a theorem now.
+
+28 permutations of a 255-bit state, so the `decide` proof-term path overflows and this rests on the
+compiled evaluator; `#assert_compiled` says so out loud, which the `#guard` did not. -/
+theorem fq_phase1_derivation :
+    fqPhase1 = (BETA_N, GAMMA_N, ALPHA_CHAL, ZETA_CHAL, FQDIGEST) := by native_decide
 
 /-- Non-vacuity, aimed at each stage of the tape. Perturbing the index digest, a prev-challenge
 commitment coordinate, a witness commitment coordinate, `z_comm` or `t_comm` must move the
@@ -610,22 +676,28 @@ def fqPhase1With (tape zc tc : List Nat) : Nat × Nat × Nat × Nat × Nat :=
   let (s6, zetaChal) := challenge fqParams s5
   (beta, gamma, alphaChal, zetaChal, digestInto fqParams s6 pN)
 
-#guard fqPhase1With fqTape ZCOMM_XY TCOMM_XY == fqPhase1
--- a tampered index digest moves β (and therefore everything)
-#guard fqPhase1With (fqTape.set 0 0) ZCOMM_XY TCOMM_XY != fqPhase1
--- a tampered PREV-CHALLENGE commitment coordinate moves β: the recursion commitments are inside
--- the transcript, not beside it
-#guard fqPhase1With (fqTape.set 1 0) ZCOMM_XY TCOMM_XY != fqPhase1
-#guard fqPhase1With (fqTape.set 4 0) ZCOMM_XY TCOMM_XY != fqPhase1
--- a tampered witness commitment coordinate moves β
-#guard fqPhase1With (fqTape.set 36 0) ZCOMM_XY TCOMM_XY != fqPhase1
--- `z_comm` is absorbed AFTER β and γ: it moves α′ and ζ′ and the digest, and leaves β, γ alone
-#guard ((fqPhase1With fqTape (ZCOMM_XY.set 0 0) TCOMM_XY).1,
-        (fqPhase1With fqTape (ZCOMM_XY.set 0 0) TCOMM_XY).2.1) == (BETA_N, GAMMA_N)
-#guard (fqPhase1With fqTape (ZCOMM_XY.set 0 0) TCOMM_XY).2.2.1 != ALPHA_CHAL
--- `t_comm` is absorbed after α′: it moves ζ′ only
-#guard (fqPhase1With fqTape ZCOMM_XY (TCOMM_XY.set 13 0)).2.2.1 == ALPHA_CHAL
-#guard (fqPhase1With fqTape ZCOMM_XY (TCOMM_XY.set 13 0)).2.2.2.1 != ZETA_CHAL
+/-- The parameterised run agrees with `fqPhase1` at the real tape — `rfl`, because it IS `fqPhase1`
+with the three pieces abstracted. The kernel reaches this without permuting anything, so the
+controls below are controls on the same object and not on a second one. -/
+theorem fqPhase1With_at_the_real_tape : fqPhase1With fqTape ZCOMM_XY TCOMM_XY = fqPhase1 := rfl
+
+/-- ⚑ **THE TAMPER CONTROLS, AS ONE NAMED THEOREM.** Perturbing the index digest, either
+prev-challenge commitment coordinate, or a witness commitment coordinate moves β and therefore
+everything downstream; `z_comm` is absorbed AFTER β and γ, so it moves α′ and leaves β, γ EXACTLY
+alone; `t_comm` is absorbed after α′, so it moves ζ′ only. The upstream-order claim in §6's docblock
+is that pair of *unchanged* clauses, not the *changed* ones — a control that only ever moves things
+cannot tell a transcript order from a hash. -/
+theorem fq_phase1_tamper_controls :
+    fqPhase1With (fqTape.set 0 0) ZCOMM_XY TCOMM_XY ≠ fqPhase1
+    ∧ fqPhase1With (fqTape.set 1 0) ZCOMM_XY TCOMM_XY ≠ fqPhase1
+    ∧ fqPhase1With (fqTape.set 4 0) ZCOMM_XY TCOMM_XY ≠ fqPhase1
+    ∧ fqPhase1With (fqTape.set 36 0) ZCOMM_XY TCOMM_XY ≠ fqPhase1
+    ∧ ((fqPhase1With fqTape (ZCOMM_XY.set 0 0) TCOMM_XY).1,
+       (fqPhase1With fqTape (ZCOMM_XY.set 0 0) TCOMM_XY).2.1) = (BETA_N, GAMMA_N)
+    ∧ (fqPhase1With fqTape (ZCOMM_XY.set 0 0) TCOMM_XY).2.2.1 ≠ ALPHA_CHAL
+    ∧ (fqPhase1With fqTape ZCOMM_XY (TCOMM_XY.set 13 0)).2.2.1 = ALPHA_CHAL
+    ∧ (fqPhase1With fqTape ZCOMM_XY (TCOMM_XY.set 13 0)).2.2.2.1 ≠ ZETA_CHAL := by
+  native_decide
 
 /-- **`fq_challenge_widths`** — β and γ are the RAW 128-bit squeezes (`squeeze_order`'s `false`
 flags), and so are the α′/ζ′ PRECHALLENGES before the endomorphism lifts them. This is the shape
@@ -648,6 +720,31 @@ theorem fq_challenge_widths :
    derivation is the Step (Vesta-committed) phase-1. Running it as the Wrap phase-2 Fr-sponge needs
    a real Wrap fixture, which still does not exist in this tree (`PicklesRecursion` §Z). -/
 
+/-! ## §8 — AXIOM PINS.
+
+⚑ Every fact this file asserts is now a NAMED THEOREM. The nine below rest on the compiled
+evaluator — each is between 1 and 28 Kimchi permutations of a 255-bit state, where the `decide`
+proof-term path overflows — and `#assert_compiled` makes that trust countable. As `#guard`s they
+rested on the same evaluator with no name, no term and no axiom record, and
+`#assert_namespace_axioms` reported them nowhere. -/
+
+#assert_compiled fq_kimchi_kats_odd_lengths
+#assert_compiled fq_kimchi_kats_even_lengths
+#assert_compiled the_double_permute_antivalues_are_not_the_digests
+#assert_compiled the_double_permute_antivalues_are_reachable
+#assert_compiled two_permutations_is_a_different_state
+#assert_compiled the_raw_permutation_of_lane_zero_one
+#assert_compiled a_tampered_triple_does_not_reproduce_the_gold
+#assert_compiled fq_phase1_derivation
+#assert_compiled fq_phase1_tamper_controls
+
+-- The rest are kernel-clean, including two that the guards had no right to be weaker than:
+-- `a_full_final_rate_block_leaves_one_permutation` (now GENERAL, at every `Params` and every pair)
+-- and `the_fq_sbox_is_the_seventh_power_at_two`.
 #assert_namespace_axioms Dregg2.Circuit.Emit.PastaPoseidonFq
+  except fq_kimchi_kats_odd_lengths fq_kimchi_kats_even_lengths
+    the_double_permute_antivalues_are_not_the_digests the_double_permute_antivalues_are_reachable
+    two_permutations_is_a_different_state the_raw_permutation_of_lane_zero_one
+    a_tampered_triple_does_not_reproduce_the_gold fq_phase1_derivation fq_phase1_tamper_controls
 
 end Dregg2.Circuit.Emit.PastaPoseidonFq

@@ -199,6 +199,7 @@ pub fn membership_tuple_to_descriptor2() -> Result<EffectVmDescriptor2, String> 
         name: "membership-leaf::sender_membership_v1".to_string(),
         trace_width: MEMBERSHIP_TUPLE_WIDTH,
         public_input_count: MEMBERSHIP_TUPLE_WIDTH,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

@@ -260,6 +260,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-committed-threshold::poseidon2-v2".to_string(),
         trace_width: CT_WIDTH,
         public_input_count: 2,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

@@ -184,6 +184,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-predicate-arith-ge::threshold-v1".to_string(),
         trace_width: PRED_WIDTH,
         public_input_count: 2,
+        challenges: 0,
         tables: vec![TableDef2 {
             id: TID_RANGE,
             name: "range".to_string(),

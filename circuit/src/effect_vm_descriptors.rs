@@ -4624,6 +4624,7 @@ mod tests {
                 name: name.to_string(),
                 trace_width: CUSTOM_VK_TEETH_BASE + 4,
                 public_input_count: pi_count,
+                challenges: 0,
                 tables: vec![],
                 constraints,
                 hash_sites: vec![],

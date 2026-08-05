@@ -131,6 +131,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dfa-routing-toggle-2state::poseidon2-v1".to_string(),
         trace_width: DFA_WIDTH,
         public_input_count: 4,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             chip_lookup(&[CURRENT, SYMBOL, NEXT, ZERO_LANE], ENTRY_HASH),

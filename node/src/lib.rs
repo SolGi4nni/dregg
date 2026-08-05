@@ -93,6 +93,7 @@ mod operator_turn_receipt_head_e2e;
 mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
+pub mod poa_compact_ceremony;
 pub(crate) mod poa_galley_api;
 pub mod poa_holding_api;
 pub mod poa_signal_adapter;
@@ -380,6 +381,66 @@ pub enum Command {
         /// Caller-owned expected activation counter (rollback refusal).
         #[arg(long)]
         expected_activation_counter: u64,
+    },
+
+    /// Export the exact checkpoint/prefix statement for a PoA compaction quorum ceremony.
+    PoaCompactPreview {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        deployment_manifest: PathBuf,
+        #[arg(long)]
+        main_data_dir: PathBuf,
+        /// Optional signed append-only committee rotation history.
+        #[arg(long)]
+        trust_history: Option<PathBuf>,
+        /// Exact independently pinned lowercase-hex head of trust-history.
+        #[arg(long)]
+        trust_history_head: Option<String>,
+        #[arg(long)]
+        height: u64,
+        #[arg(long)]
+        output: PathBuf,
+    },
+
+    /// Reconstruct a PoA compaction preview on this validator's replica and hybrid-sign it.
+    PoaCompactSign {
+        #[arg(long)]
+        data_dir: PathBuf,
+        /// Absolute, or relative to data-dir.
+        #[arg(long, default_value = "node.key")]
+        key_file: PathBuf,
+        #[arg(long)]
+        deployment_manifest: PathBuf,
+        #[arg(long)]
+        main_data_dir: PathBuf,
+        #[arg(long)]
+        trust_history: Option<PathBuf>,
+        #[arg(long)]
+        trust_history_head: Option<String>,
+        #[arg(long)]
+        preview: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+
+    /// Verify an enrolled hybrid quorum and atomically commit the exact PoA compaction preview.
+    PoaCompactFinalize {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        deployment_manifest: PathBuf,
+        #[arg(long)]
+        main_data_dir: PathBuf,
+        #[arg(long)]
+        trust_history: Option<PathBuf>,
+        #[arg(long)]
+        trust_history_head: Option<String>,
+        #[arg(long)]
+        preview: PathBuf,
+        /// One share file per validator. Duplicate signers are refused.
+        #[arg(long = "share", required = true)]
+        shares: Vec<PathBuf>,
     },
 
     /// Check if the node is running and show sync state.
@@ -870,6 +931,81 @@ pub async fn run(cli: Cli) {
                 }
             }
         }
+        Command::PoaCompactPreview {
+            data_dir,
+            deployment_manifest,
+            main_data_dir,
+            trust_history,
+            trust_history_head,
+            height,
+            output,
+        } => match poa_compact_ceremony::export_poa_compact_preview(
+            &data_dir,
+            &deployment_manifest,
+            &main_data_dir,
+            trust_history.as_deref(),
+            trust_history_head.as_deref(),
+            height,
+            &output,
+        ) {
+            Ok(()) => println!("{}", output.display()),
+            Err(error) => {
+                eprintln!("PoA compact preview refused: {error}");
+                std::process::exit(1);
+            }
+        },
+        Command::PoaCompactSign {
+            data_dir,
+            key_file,
+            deployment_manifest,
+            main_data_dir,
+            trust_history,
+            trust_history_head,
+            preview,
+            output,
+        } => match poa_compact_ceremony::sign_poa_compact_preview(
+            &data_dir,
+            &key_file,
+            &deployment_manifest,
+            &main_data_dir,
+            trust_history.as_deref(),
+            trust_history_head.as_deref(),
+            &preview,
+            &output,
+        ) {
+            Ok(()) => println!("{}", output.display()),
+            Err(error) => {
+                eprintln!("PoA compact signature refused: {error}");
+                std::process::exit(1);
+            }
+        },
+        Command::PoaCompactFinalize {
+            data_dir,
+            deployment_manifest,
+            main_data_dir,
+            trust_history,
+            trust_history_head,
+            preview,
+            shares,
+        } => match poa_compact_ceremony::finalize_poa_compact_preview(
+            &data_dir,
+            &deployment_manifest,
+            &main_data_dir,
+            trust_history.as_deref(),
+            trust_history_head.as_deref(),
+            &preview,
+            &shares,
+        ) {
+            Ok(report) => println!(
+                "{}",
+                serde_json::to_string_pretty(&report)
+                    .expect("PoA compact result is JSON-serializable")
+            ),
+            Err(error) => {
+                eprintln!("PoA compact finalization refused: {error}");
+                std::process::exit(1);
+            }
+        },
         Command::Status { port } => check_status(port).await,
         Command::MudClient { player_seed } => {
             #[cfg(feature = "deos-host")]
@@ -1402,9 +1538,29 @@ async fn run_node(
     // serves. See `install_verified_pq_cores` for why this is one call and not 180 inline lines.
     install_verified_pq_cores();
 
+    // Derive PoA compact trust BEFORE opening redb. A positive-floor store cannot bootstrap its
+    // own trust from the anchors it carries: the exact deployment/genesis descriptor (and any
+    // append-only, predecessor-quorum-signed rotation history) is the independent root. Generic or
+    // never-compacted nodes need no PoA environment; a compacted PoA node with missing pins refuses
+    // inside `PersistentStore::open` rather than silently accepting its self-carried roster.
+    let poa_compact_trust = match poa_compact_ceremony::load_runtime_poa_compact_policy_from_env(
+        &data_path,
+    ) {
+        Ok(policy) => policy,
+        Err(error) => {
+            error!(%error, "failed to derive authenticated PoA compaction trust before store open");
+            std::process::exit(1);
+        }
+    };
+
     // Initialize node state with configurable key file.
     let has_peers = !peers.is_empty();
-    let node_state = match state::NodeState::new_with_key_file(&data_path, peers, key_file) {
+    let node_state = match state::NodeState::new_with_key_file_and_poa_compact_trust(
+        &data_path,
+        peers,
+        key_file,
+        poa_compact_trust.as_ref().map(|context| context.policy()),
+    ) {
         Ok(s) => s,
         Err(e) => {
             error!("failed to initialize node state: {e}");

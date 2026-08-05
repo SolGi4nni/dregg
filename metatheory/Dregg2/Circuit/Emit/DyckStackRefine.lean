@@ -939,6 +939,7 @@ theorem holdsAt_of_dc2 {hash : List ℤ → ℤ} {tf : TraceFamily} {env : VmRow
   | umemOp _     => exact True.intro
   | proofBind m  => exact (decideProofBind_iff env m).mp h
   | windowGate w => exact (decideWindow_iff env l w).mp h
+  | chalGate w   => exact (decideChal_iff env l w).mp h
 
 /-- The whole `rowConstraints` leg from a single Boolean decision. -/
 theorem witRowConstraints {hash : List ℤ → ℤ} {t : VmTrace}

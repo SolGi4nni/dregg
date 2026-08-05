@@ -527,7 +527,7 @@ def demoLoc2 : Assignment := fun c =>
 def demoLoc2Forge : Assignment := fun c =>
   if c = 0 then 1 else if c = 1 then 2 else if c = 2 then 3 else if c = 4 then 99 else 0
 /-- Env carrying the genuine row (nxt/pub unused by the pack gate). -/
-def demoEnv2 : VmRowEnv := ⟨demoLoc2, demoLoc2, demoLoc2⟩
+def demoEnv2 : VmRowEnv := ⟨demoLoc2, demoLoc2, demoLoc2, fun _ => 0⟩
 
 -- The emitted pack gate on the GENUINE row vanishes (the transport is satisfiable) …
 #guard (sumExpr (((packTerms 2 0).filter (fun t => t.1 != 0)).map varTerm)).eval demoLoc2 = 0

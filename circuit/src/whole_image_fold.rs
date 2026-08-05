@@ -236,6 +236,7 @@ pub fn whole_image_fold_descriptor() -> EffectVmDescriptor2 {
         name: "dregg-whole-image-fold-v1".to_string(),
         trace_width: WIF_WIDTH,
         public_input_count: 2 * HEAP_DIGEST_W,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

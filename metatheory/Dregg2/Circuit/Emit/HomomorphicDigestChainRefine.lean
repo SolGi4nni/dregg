@@ -70,7 +70,11 @@ set_option autoImplicit false
 /-! ## §0 — The whole-trace step chain. -/
 
 /-- The two-row window of an adjacent pair of main rows (`pub` rides along unchanged). -/
-def windowOf (pub a b : Assignment) : VmRowEnv := { loc := a, nxt := b, pub := pub }
+def windowOf (pub a b : Assignment) : VmRowEnv :=
+  -- ⚑ `chal := zeroAsg` matches `envAt` on a challenge-free trace (`VmTrace.chal` defaults to the
+  -- all-zero assignment), which is what keeps `envAt_eq_windowOf` a `rfl`. This descriptor declares
+  -- no `chalGate`, so the field is never read (`challengeCount_eq_zero_of_no_chalGate`).
+  { loc := a, nxt := b, pub := pub, chal := fun _ => 0 }
 
 /-- The whole-trace fold chain, structurally: starting from accumulator row `prev`, every
 adjacent row pair satisfies the per-step fold bundle `foldStepHolds` (the §3 bundle of

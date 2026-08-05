@@ -65,9 +65,9 @@ theorem key_index_has_no_identity_and_is_on_vesta :
 /-- The index sponge is 56 absorbs and ONE squeeze — `wrap_verifier.ml:524-530`'s `Array.iter … ~f:
 Sponge.absorb` then `Sponge.squeeze_field`, at rate 2, which is 28 permutations. -/
 theorem key_sponge_schedule :
-    ((keySponge shapeSmoke tKey.sp).evs.filter (fun e => e.isAbs)).length = KEY_COORDS
-    ∧ ((keySponge shapeSmoke tKey.sp).evs.filter (fun e => !e.isAbs)).length = 1
-    ∧ ((keySponge shapeSmoke tKey.sp).evs.filter (fun e => e.didPerm)).length = 28 := by
+    ((keySponge shapeSmoke tKey.sp KEY_REAL_BRANCH).evs.filter (fun e => e.isAbs)).length = KEY_COORDS
+    ∧ ((keySponge shapeSmoke tKey.sp KEY_REAL_BRANCH).evs.filter (fun e => !e.isAbs)).length = 1
+    ∧ ((keySponge shapeSmoke tKey.sp KEY_REAL_BRANCH).evs.filter (fun e => e.didPerm)).length = 28 := by
   refine ⟨?_, ?_, ?_⟩ <;> rfl
 
 /-- ⚑⚑ **THE REALITY GATE, AND THE POINT OF THE WHOLE RUNG.** Driving THIS FILE'S OWN Fq sponge
@@ -78,20 +78,20 @@ over the 56 coordinates of **Mina's `step-transaction` verification key**, in
 
 ⚑ **So the wrap transcript's first absorbed item is DERIVED here, not fixtured.** -/
 theorem key_digest_is_the_index_digest :
-    keyDigestVal shapeSmoke tKey.sp = STEP_VK_DIGEST := by rfl
+    keyDigestVal shapeSmoke tKey.sp KEY_REAL_BRANCH = STEP_VK_DIGEST := by rfl
 
 /-- …and it is the value the TRANSCRIPT absorbs first (`wrap_verifier.ml:537`), so `RC_DIGEST` is no
 longer standing in for anything: the tie row in `keyRows` puts the two in one σ class and this puts
 them at one value. -/
 theorem key_digest_is_the_transcript_input :
-    itemVal T_DIGEST 0 = keyDigestVal shapeSmoke tKey.sp := by rfl
+    itemVal T_DIGEST 0 = keyDigestVal shapeSmoke tKey.sp KEY_REAL_BRANCH := by rfl
 
 /-- ⚑ **RED CONTROL — the digest is a function of EVERY coordinate.** Bending any one of the 56
 inputs by `+1` moves it: the first, one in `coefficients_comm`, one in the six singles, and the last.
 Without this the theorem above is a number agreeing with a number. -/
 theorem key_digest_bends_at_every_probed_coordinate :
     [0, 20, 41, 55].all (fun k =>
-      keyDigestValOf (keySpongeBent shapeSmoke tKey.sp k 1) != STEP_VK_DIGEST) = true := by rfl
+      keyDigestValOf (keySpongeBent shapeSmoke tKey.sp KEY_REAL_BRANCH k 1) != STEP_VK_DIGEST) = true := by rfl
 
 /-- ⚑ **AND THE ONE-HOT SELECTION MATTERS.** `choose_key` at a DIFFERENT branch produces a different
 key and therefore a different `index_digest`; the real key is at `KEY_REAL_BRANCH` and
@@ -103,6 +103,68 @@ theorem key_selection_is_the_branch_selection :
     ∧ (List.range KEY_COORDS).all (fun k => keyConst KEY_REAL_BRANCH k == STEP_VK_XY.getD k 0) = true
     ∧ ((List.range KEY_COORDS).filter (fun k => keyConst 0 k != STEP_VK_XY.getD k 0)).length = 56 := by
   refine ⟨rfl, rfl, ?_, ?_⟩ <;> decide
+
+/-- ⚑⚑ **THE INDEX SPONGE ABSORBS THE SELECTED BRANCH'S KEY, AND UNTIL 2026-08-05 IT DID NOT.**
+`keySchedule` took no branch at all: it absorbed `keyConst KEY_REAL_BRANCH` while `keyEnv`'s one-hot
+fold outputs `keyConst t.br.idx` and `keyRows`' `sealHalves` ties the two — so W-KEY was satisfiable
+at branch 1 and NOWHERE ELSE, and `choose_key`'s whole five-entry fold was decoration. This says the
+sponge's `k`-th absorbed word is the SELECTED branch's `k`-th coordinate, at every branch. -/
+theorem key_sponge_absorbs_the_selected_branch :
+    (List.range shapeSmoke.branches).all (fun i =>
+      (List.range KEY_COORDS).all (fun k =>
+        ((keySponge shapeSmoke tKey.sp i).evs.getD k default).word == keyConst i k)) = true := by
+  decide
+
+/-- ⚑ **RED CONTROL FOR THAT: the digest MOVES with the branch selection.** Five branches, five
+distinct `index_digest`s — so the one-hot selection reaches the transcript's first absorbed word and
+a wrap circuit cannot verify a step proof made against a key it did not choose. Without this,
+`key_sponge_absorbs_the_selected_branch` is consistent with a sponge that reads the branch and
+throws it away. -/
+theorem key_digest_moves_with_the_branch_selection :
+    ((List.range shapeSmoke.branches).map (fun i =>
+      keyDigestVal shapeSmoke tKey.sp i)).eraseDups.length = shapeSmoke.branches := by
+  decide
+
+/-- ⚑ **AND THE LAYOUT DOES NOT MOVE WITH IT.** Every base above `w5_key` is `baseKeySp + nKeySpVars`,
+so a branch-dependent sponge WIDTH would slide the whole variable space under a branch selection.
+`runSpongeQ` allocates per EVENT, and `keySchedule i` has the same events at every `i`; this is that
+fact, measured across the branches rather than argued. -/
+theorem key_sponge_width_is_branch_independent :
+    (List.range shapeSmoke.branches).all (fun i =>
+      (keySponge shapeSmoke tKey.sp i).next == nKeySpVars shapeSmoke tKey.sp) = true := by
+  decide
+
+/-- ⚑⚑ **DREGG'S OWN STEP RULE IS IN `step_keys`, AND IT IS A DIFFERENT RULE FROM MINA'S.**
+`KEY_CHAIN_BRANCH` holds the 56 `index_to_field_elements` coordinates of
+`stepmain_smoke_r8_finalize`'s verifier index, and its digest is
+`KimchiStepWrapChainKey.STEP_OWN_VK_DIGEST` — which the Rust exporter derived from the SAME
+`VerifierIndex`, in the SAME run, that produced the tape whose first word it is.
+
+⚠ The disjointness leg is the one that makes this a check: not one of the 56 coordinates is shared
+with Mina's `step-transaction` key, so "dregg's branch" and "Mina's branch" are not the same key
+under two names. -/
+theorem chain_step_rule_is_a_second_real_key :
+    (List.range KEY_COORDS).all (fun k =>
+      keyConst KEY_CHAIN_BRANCH k
+        == Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.getD k 0) = true
+    ∧ keyDigestVal shapeSmoke tKey.sp KEY_CHAIN_BRANCH
+        = Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_DIGEST
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_DIGEST ≠ STEP_VK_DIGEST
+    ∧ ((List.range KEY_COORDS).filter (fun k =>
+        STEP_VK_XY.contains
+          (Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.getD k 0))).length = 0 := by
+  refine ⟨?_, rfl, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **AND NO COMMITMENT OF DREGG'S OWN KEY IS THE IDENTITY EITHER** — the property W-COMBINE's
+incomplete `Ops.add_fast` fold needs, which kimchi's `create_circuit(0,5)` test key did NOT have
+(seven of 28). Asserted in Rust before the module was written and re-derived here. -/
+theorem chain_step_key_has_no_identity_and_is_on_vesta :
+    (Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.filter (fun x => x == 0)).length = 0
+    ∧ (List.range KEY_POINTS).all (fun p =>
+        onCurveQ (Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.getD (2 * p) 0,
+                  Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.getD (2 * p + 1) 0))
+       = true := by
+  refine ⟨?_, ?_⟩ <;> decide
 
 /-- ⚑ **DEFECT CLASS 1 IN A NEW PLACE: the index sponge's INITIAL STATE IS PINNED.**
 `Sponge.create sponge_params` (`wrap_verifier.ml:522`) starts at the zero state. Leaving those three

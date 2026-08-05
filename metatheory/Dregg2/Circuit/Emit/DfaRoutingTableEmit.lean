@@ -462,7 +462,7 @@ def demoRoutingDesc : EffectVmDescriptor2 := tableRoutingDesc DEMO_NAME demoTbl
 
 -- THE WIRE GOLDEN: byte-pinned (the Rust `parse` ingests THIS string; `exact_public_rows` arm).
 #guard emitVmJson2 demoRoutingDesc ==
-  "{\"name\":\"dregg-dfa-routing-table::exact-public-v1\",\"ir\":2,\"trace_width\":3,\"public_input_count\":2,\"tables\":[{\"id\":35,\"name\":\"dfa_transition_table\",\"arity\":3,\"sem\":\"exact_public_rows\",\"rows\":[[0,1,1]]}],\"constraints\":[{\"t\":\"lookup\",\"table\":35,\"tuple\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2}]},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":2,\"pi_index\":1}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-dfa-routing-table::exact-public-v1\",\"ir\":2,\"trace_width\":3,\"public_input_count\":2,\"challenges\":0,\"tables\":[{\"id\":35,\"name\":\"dfa_transition_table\",\"arity\":3,\"sem\":\"exact_public_rows\",\"rows\":[[0,1,1]]}],\"constraints\":[{\"t\":\"lookup\",\"table\":35,\"tuple\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2}]},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":2,\"pi_index\":1}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- Shape pins.
 #guard demoRoutingDesc.traceWidth == TRT_WIDTH

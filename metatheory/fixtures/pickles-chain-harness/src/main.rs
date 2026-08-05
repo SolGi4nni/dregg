@@ -71,9 +71,17 @@ type ScalarSponge = DefaultFrSponge<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>
 type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
 
 /// The rungs the chain emits. Same ladder as `pickles-wrapmain-harness`, driven by a different
-/// tape. `w5_key` is deliberately absent: its index sponge derives the digest of a *wrap* VK from
-/// `KimchiWrapMain`'s own `STEP_VK_XY` literal, and a sibling owns that lane.
-const RUNGS: [&str; 2] = ["w1_transcript", "w4_bind"];
+/// tape.
+///
+/// ⚑ **`w5_key` JOINED ON 2026-08-05, AND IT IS THE POINT.** It was absent because `keyRows`'
+/// closing `digestTie` is a `Field.Assert.equal` joining the index sponge's squeeze to the
+/// transcript's FIRST absorbed word, and the wrap circuit committed to MINA's `step-transaction`
+/// verification key while this tape is dregg's own step proof's. Two different circuits, one
+/// unsatisfiable row, and `.key` sits in `rungsUpto` of every rung above `w4_bind` — so that ONE
+/// row was the whole ceiling, not W-COMBINE and not W-BULLET. `step_keys` is a per-branch vector of
+/// the compiled step rules' keys (`wrap_main.ml:98-101`), so dregg's step rule took an entry beside
+/// Mina's and `choose_key` selects it. This harness proving `w5_key` on Pallas is the climb.
+const RUNGS: [&str; 3] = ["w1_transcript", "w4_bind", "w5_key"];
 
 #[derive(Deserialize, Clone, PartialEq, Eq)]
 struct GateJson {
@@ -339,9 +347,17 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
 
 /// ⚑ (6) and (7): the chain's own controls, at the closing rung where the derived words are PUBLIC.
 fn run_chain_controls(dir: &Path) {
-    let honest = load_path(&dir.join("chain_w4_bind.json"));
-    let bent = load_path(&dir.join("chainbent_w4_bind.json"));
-    let unread = load_path(&dir.join("chainunread_w4_bind.json"));
+    for rung in ["w4_bind", "w5_key"] {
+        run_chain_controls_at(dir, rung);
+    }
+}
+
+/// ⚑ The two controls, at ONE rung. Run at `w5_key` too since 2026-08-05: a control that only ever
+/// ran at the rung below the climb would say nothing about the rung the climb reached.
+fn run_chain_controls_at(dir: &Path, rung: &str) {
+    let honest = load_path(&dir.join(format!("chain_{rung}.json")));
+    let bent = load_path(&dir.join(format!("chainbent_{rung}.json")));
+    let unread = load_path(&dir.join(format!("chainunread_{rung}.json")));
 
     // (6) POSITIVE. Bending one Fq coordinate of the step proof's `w_comm` must move the wrap
     // circuit's derived public words. Same SHAPE (it is the same assembly), different VALUES.
@@ -370,7 +386,7 @@ fn run_chain_controls(dir: &Path) {
         .filter(|(a, b)| a != b)
         .count();
     println!(
-        "[6 CHAIN +  ] bending ONE Fq coordinate of the step proof's w_comm MOVES {moved}/{} wrap public words",
+        "[6 CHAIN +  ] {rung}: bending ONE Fq coordinate of the step proof's w_comm MOVES {moved}/{} wrap public words",
         honest.public_input.len()
     );
 
@@ -379,7 +395,7 @@ fn run_chain_controls(dir: &Path) {
     let ib = index_for(&bent);
     prove_and_verify(&ib, &gm, build_witness(&bent), &public_of(&bent))
         .unwrap_or_else(|e| panic!("[FATAL] the BENT-step chained circuit did not prove: {e}"));
-    println!("[6 CHAIN +  ] ...and the moved circuit still proves with verify()==true");
+    println!("[6 CHAIN +  ] {rung}: ...and the moved circuit still proves with verify()==true");
 
     // (7) NEGATIVE. Bending a part of the SAME step proof that phase 1 does not absorb must leave
     // the emission BYTE-IDENTICAL. If this ever fails, (6) was about the proof's existence rather
@@ -401,8 +417,8 @@ fn run_chain_controls(dir: &Path) {
         "[FALSIFICATION] bending z_1/z_2/ft_eval1/delta/sg changed the emitted witness"
     );
     println!(
-        "[7 CHAIN -  ] bending z_1/z_2/ft_eval1/delta/sg (Fp scalars and non-phase-1 points of the \
-         SAME proof) leaves the wrap circuit BYTE-IDENTICAL"
+        "[7 CHAIN -  ] {rung}: bending z_1/z_2/ft_eval1/delta/sg (Fp scalars and non-phase-1 points \
+         of the SAME proof) leaves the wrap circuit BYTE-IDENTICAL"
     );
 }
 

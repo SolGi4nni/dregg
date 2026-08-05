@@ -68,6 +68,7 @@ fn absent_desc() -> EffectVmDescriptor2 {
         name: "byte-lean-emission-differential".to_string(),
         trace_width: 18,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Var(17),

@@ -275,7 +275,7 @@ theorem cheat_binds_would_be_false :
     cheatTrace.pub 0 = hash0 [0, 0]
       ∧ (envAt cheatTrace 0).loc VALUE_A = 7
       ∧ (7 : ℤ) ≠ 0 :=
-  ⟨by decide, by decide, by decide⟩
+  ⟨by decide, by decide, by decide, fun _ => 0⟩
 
 /-! ## §5 — Non-vacuity, TRUE half: the RUNG-2 binding FIRES on a genuine witness.
 

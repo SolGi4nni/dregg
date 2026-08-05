@@ -75,7 +75,7 @@ import Dregg2.Circuit.TableAirIR
 namespace Dregg2.Circuit.EffectAirIR
 
 open Dregg2.Circuit (Expr Constraint)
-open Dregg2.Circuit.DescriptorIR2 (TableId TableDef WindowExpr)
+open Dregg2.Circuit.DescriptorIR2 (TableId TableDef WindowExpr ChalExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRow)
 open Dregg2.Circuit.TableAirIR (BusOp RowSel readsNext)
 
@@ -105,6 +105,26 @@ fixes, and two-row window gates were all unsayable. -/
 structure WindowLeg where
   sel  : RowSel
   body : WindowExpr
+
+/-- ⚑ **A CHALLENGE leg** (2026-08-05) — the (f) capability, and the one the sound Pasta multiply
+was BLOCKED on.
+
+`PastaFieldSound.lean` recorded the block as a finding: *"The cheap escape from `O(limbs²)` is a
+randomized-challenge identity … **It is not expressible in this IR.** … Adding a challenge leaf is a
+change to the IR and the prover, not to a descriptor."* This is the source-language half of that
+change; `DescriptorIR2.ChalExpr` is the target half.
+
+A `ChalLeg` is a `WindowLeg` whose body may additionally read `chal i` — the `i`-th Fiat–Shamir
+value the VERIFIER draws, after the main trace is committed. `sel` carries the same `RowSel`
+vocabulary and the same refusals: only `.transition` and `.all` have deployed images, because the
+target's `chalGate` is a two-row form with an `onTransition` flag and no first/last variant.
+
+⚠ It declares its own challenge requirement implicitly (the largest `chal` index in the body); the
+descriptor's `"challenges"` header is derived from it, and `check_descriptor2` refuses a body that
+reads past what the instance's lookup contexts supply. -/
+structure ChalLeg where
+  sel  : RowSel
+  body : ChalExpr
 
 /-- **A RANGE leg** — the (b) capability: a wire pinned into `[0, 2^bits)`. The field-soundness
 tooth (`VmRange.holds`); transfer's deployed v1 descriptor carries two and `EffectSpec2` could name
@@ -187,6 +207,8 @@ inductive AirLeg where
   | pin    (p : PiPinLeg)
   /-- ⚑ A LIMBED QUANTITY — a range-checked limb VECTOR, the vocabulary a tally needs. -/
   | limbs  (l : LimbsLeg)
+  /-- ⚑ A CHALLENGE GATE — a two-row body that may read the verifier's drawn randomness. -/
+  | chal   (c : ChalLeg)
 
 /-- **`EffectAir` — the AIR block an `EffectSpec2` carries beyond its flat guard gates.**
 
@@ -232,6 +254,26 @@ def WindowLeg.mainRailOk (w : WindowLeg) : Bool :=
   | .first      => !readsNext w.body
   | .last       => !readsNext w.body
 
+/-- Does a `ChalExpr` read the NEXT row? (The `.all` refusal below, and TableAirIR's reason for it:
+on the last row p3's `next` is the WRAP row, so an every-row body that reads `nxt` says something
+different there than it says everywhere else.) -/
+def chalReadsNext : ChalExpr → Bool
+  | .nxt _ => true
+  | .loc _ | .const _ | .chal _ => false
+  | .add a b | .mul a b => chalReadsNext a || chalReadsNext b
+
+/-- ⚑ **The main rail's verdict on ONE challenge leg.** Same shape as `WindowLeg.mainRailOk` and
+for the same reasons — except that `.first` and `.last` are refused OUTRIGHT rather than
+conditionally, because the target's `chalGate` has only the two-row form: there is no
+`boundary`-with-challenges constructor to lower a first/last challenge gate into, and lowering one
+into an every-row gate would change WHERE it fires. A refusal, not a reinterpretation. -/
+def ChalLeg.mainRailOk (c : ChalLeg) : Bool :=
+  match c.sel with
+  | .transition => true
+  | .all        => !chalReadsNext c.body
+  | .first      => false
+  | .last       => false
+
 /-- ⚑ **The main rail's verdict on ONE limbs leg — and it is the one place this IR REFUSES A WIDTH.**
 
 Two refusals, and each names a way the leg would be a decoration rather than a check:
@@ -256,6 +298,7 @@ def AirLeg.mainRailOk : AirLeg → Bool
   | .lookup l => l.mainRailOk
   | .window w => w.mainRailOk
   | .limbs l  => l.mainRailOk
+  | .chal c   => c.mainRailOk
 
 /-- Every declared PI pin indexes a slot the descriptor actually declares. A pin past `piCount`
 is a wire-format defect the Rust decoder would read as an out-of-range public input. -/
@@ -274,12 +317,12 @@ a denotation that quantifies over gates only. Same discipline, same shape. -/
 /-- The leg's kind tag — the discriminator the per-kind counts filter on. -/
 def AirLeg.kind : AirLeg → String
   | .gate _ => "gate" | .lookup _ => "lookup" | .window _ => "window" | .pin _ => "pin"
-  | .limbs _ => "limbs"
+  | .limbs _ => "limbs" | .chal _ => "chal"
 
 /-- Kind tags are collision-free: the tag determines the constructor's arm. -/
 theorem AirLeg.kind_of (l : AirLeg) :
     (l.kind = "gate") ∨ (l.kind = "lookup") ∨ (l.kind = "window") ∨ (l.kind = "pin")
-      ∨ (l.kind = "limbs") := by
+      ∨ (l.kind = "limbs") ∨ (l.kind = "chal") := by
   cases l <;> simp [AirLeg.kind]
 
 def EffectAir.kindCount   (air : EffectAir) (k : String) : Nat :=

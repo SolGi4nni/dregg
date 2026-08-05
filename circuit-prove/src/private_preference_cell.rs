@@ -408,6 +408,7 @@ mod tests {
             name: "custom-direct-ir2-vk8-leg-standin".to_string(),
             trace_width,
             public_input_count: DIRECT_LEG_PI_COUNT,
+            challenges: 0,
             tables: vec![],
             constraints,
             hash_sites: vec![],

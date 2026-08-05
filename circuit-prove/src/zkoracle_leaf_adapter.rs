@@ -342,6 +342,7 @@ pub fn zkoracle_to_descriptor2(n_limbs: usize) -> Result<EffectVmDescriptor2, St
         name: "zkoracle-content-commitment-leaf::dregg-zkoracle-v1".to_string(),
         trace_width: group(steps) + CHIP_OUT_LANES,
         public_input_count: ZKORACLE_CLAIM_LEN,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

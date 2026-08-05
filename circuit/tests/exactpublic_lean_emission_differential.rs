@@ -84,6 +84,7 @@ fn two_table_desc() -> EffectVmDescriptor2 {
         name: "exactpublic-lean-emission-differential".to_string(),
         trace_width: 4,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![
             TableDef2 {
                 id: TID_A,
@@ -247,9 +248,11 @@ fn the_deployed_instance_round_trips_through_the_lean_emission() {
 #[test]
 fn every_committed_capacity_cell_is_caught() {
     let desc = two_table_desc();
-    let (air, main_rows, prep_rows) =
-        exact_public_instance_for(&desc, TID_A).expect("declared");
-    assert!(ir2_air_gates_accept(&air, &main_rows, &prep_rows), "baseline");
+    let (air, main_rows, prep_rows) = exact_public_instance_for(&desc, TID_A).expect("declared");
+    assert!(
+        ir2_air_gates_accept(&air, &main_rows, &prep_rows),
+        "baseline"
+    );
 
     let mut undetected: Vec<usize> = Vec::new();
     for row in 0..main_rows.len() {
@@ -294,9 +297,11 @@ fn every_committed_capacity_cell_is_caught() {
 #[test]
 fn the_preprocessed_sweep_pins_the_undetected_set_exactly() {
     let desc = two_table_desc();
-    let (air, main_rows, prep_rows) =
-        exact_public_instance_for(&desc, TID_A).expect("declared");
-    assert!(ir2_air_gates_accept(&air, &main_rows, &prep_rows), "baseline");
+    let (air, main_rows, prep_rows) = exact_public_instance_for(&desc, TID_A).expect("declared");
+    assert!(
+        ir2_air_gates_accept(&air, &main_rows, &prep_rows),
+        "baseline"
+    );
 
     let mut detected: Vec<(usize, usize)> = Vec::new();
     let mut undetected: Vec<(usize, usize)> = Vec::new();
@@ -419,8 +424,7 @@ fn a_manifest_whose_capacity_does_not_cover_the_queries_is_refused() {
 #[test]
 fn a_forged_capacity_column_violates_the_pin_at_the_deployed_evaluator() {
     let desc = two_table_desc();
-    let (air, main_rows, prep_rows) =
-        exact_public_instance_for(&desc, TID_A).expect("declared");
+    let (air, main_rows, prep_rows) = exact_public_instance_for(&desc, TID_A).expect("declared");
 
     let mut forged = main_rows.clone();
     forged[0][0] = forged[0][0] + BabyBear::ONE;
@@ -463,7 +467,11 @@ fn the_id_field_separates_two_tables_sharing_one_bus() {
     // Sanity: they really are on ONE bus now, and they really are different tables.
     let (air_a, _, prep_a) = exact_public_instance_for(&desc, TID_A).expect("A");
     let (air_b, _, prep_b) = exact_public_instance_for(&desc, TID_B).expect("B");
-    let bus_of = |a: &Ir2Air| a.lean_table_air().expect("Lean table").interactions[0].bus.clone();
+    let bus_of = |a: &Ir2Air| {
+        a.lean_table_air().expect("Lean table").interactions[0]
+            .bus
+            .clone()
+    };
     assert_eq!(bus_of(&air_a), "ir2_exact_public_a2");
     assert_eq!(bus_of(&air_a), bus_of(&air_b), "ONE bus, two tables");
     assert_ne!(
@@ -601,8 +609,7 @@ fn the_co_batch_pooling_hazard_is_preserved_not_widened() {
 #[test]
 fn the_pin_gate_is_unreachable_as_a_prover_refusal_and_that_is_structural() {
     let desc = two_table_desc();
-    let (air, main_rows, prep_rows) =
-        exact_public_instance_for(&desc, TID_A).expect("declared");
+    let (air, main_rows, prep_rows) = exact_public_instance_for(&desc, TID_A).expect("declared");
 
     // The two matrices the deployed assembler builds AGREE by construction, column for column.
     for (row, (m, p)) in main_rows.iter().zip(prep_rows.iter()).enumerate() {

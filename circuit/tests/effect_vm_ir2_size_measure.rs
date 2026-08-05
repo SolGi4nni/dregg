@@ -189,6 +189,7 @@ fn ir2_umem_vs_map_size_probe() {
         name: "probe-map-write".to_string(),
         trace_width: 19,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Var(18),
@@ -234,6 +235,7 @@ fn ir2_umem_vs_map_size_probe() {
         name: "probe-umem-write".to_string(),
         trace_width: 4,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             VmConstraint2::UMemOp(UMemOpSpec {
@@ -296,6 +298,7 @@ fn ir2_umem_vs_map_size_probe() {
         name: "probe-absent".to_string(),
         trace_width: 18,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Var(17),
@@ -472,6 +475,7 @@ fn ir2_setfielddyn_mem_to_umem_conversion() {
         name: "setfielddyn-mem-interior".to_string(),
         trace_width: 4,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             VmConstraint2::MemOp(dregg_circuit::descriptor_ir2::MemOpSpec {
@@ -513,6 +517,7 @@ fn ir2_setfielddyn_mem_to_umem_conversion() {
         name: "setfielddyn-umem-interior".to_string(),
         trace_width: 4,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             VmConstraint2::UMemOp(UMemOpSpec {
@@ -613,6 +618,7 @@ fn ir2_mapop_interior_to_umem_chip_drop() {
         name: "clist-mapop-interior".to_string(),
         trace_width: 20,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             VmConstraint2::MapOp(MapOpSpec {
@@ -669,6 +675,7 @@ fn ir2_mapop_interior_to_umem_chip_drop() {
         name: "clist-umem-interior".to_string(),
         trace_width: 6,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             VmConstraint2::UMemOp(UMemOpSpec {
@@ -795,6 +802,7 @@ fn ir2_umem_cohort_vs_general_boundary_size() {
         .to_string(),
         trace_width: 3,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![
             TableDef2 {
                 id: TID_UMEMORY,

@@ -583,6 +583,232 @@ def WindowConstraint.toJson (w : WindowConstraint) : String :=
   "{\"t\":\"window_gate\",\"on_transition\":" ++ (if w.onTransition then "true" else "false") ++
   ",\"body\":" ++ w.body.toJson ++ "}"
 
+/-! ### §2.6 — ⚑ `ChalExpr`: the CHALLENGE LEAF (2026-08-05).
+
+## The verdict this kind exists to retire
+
+`PastaFieldSound.lean` §"The alternative that is NOT available, and that is a finding" said, of the
+Schwartz–Zippel route to a foreign-field multiply:
+
+> *"**It is not expressible in this IR.** The constraint expression grammars are closed:
+> `lean_descriptor_air.rs::LeanExpr` is `Var | Const | Add | Mul` and `DescriptorIR2.WindowExpr` is
+> `Loc | Nxt | Const | Add | Mul`. There is no challenge leaf … Adding a challenge leaf is a change
+> to the IR and the prover, not to a descriptor."*
+
+Every sentence of that was true and the last one is the instruction. This is that change. The
+randomness was never missing — LogUp draws two field elements per lookup context — it was WALLED:
+`Ir2RowLocalBuilder.permutation_randomness` returned `&[]` and no grammar had a leaf to read it
+with. `ChalExpr` is `WindowExpr` plus the one leaf, and `VmConstraint2.chalGate` is the constraint
+that carries it.
+
+## ⚑ The Fiat–Shamir story, READ off the deployed transcript, not assumed
+
+`p3-batch-stark/src/prover.rs` runs, in this order:
+
+```
+  transcript.observe_main(&main_commit, &pub_vals);        // the WITNESS is committed
+  transcript.observe_preprocessed(…);
+  let challenges_per_instance = transcript.sample_perm_challenges(&all_lookups, &lookup_gadget);
+```
+
+so **every entry of `permutation_randomness()` is sampled after the main-trace commitment**. A
+prover therefore fixes its witness before it learns the challenge, which is exactly the hypothesis
+Schwartz–Zippel needs. The values are `SC::Challenge = BinomialExtensionField<BabyBear, 4>`,
+`|K| = p⁴ ≈ 2^124.0`, so a degree-`d` residual survives a random draw with probability `≤ d/2^124`
+(`ChalSchwartzZippel.chalGate_forces_polynomial`, and the concrete numerator is the residual's
+degree in the challenge, not in the trace).
+
+⚠ **The challenges are the LogUp α/β of this instance's lookup contexts, re-read.** They are
+uniform and independent of the committed trace, which is all Schwartz–Zippel asks; the two
+arguments compose by a union bound. Two consequences a caller must respect and that
+`chalIndicesDistinctOk` makes checkable: global-bus challenges are SHARED BY BUS NAME across
+instances, so two entries of the slice may be EQUAL, and the index→bus correspondence is not
+stable under descriptor edits. A gate that needs `k` INDEPENDENT challenges may not assume
+`chal i ≠ chal j`; a gate that needs one uniform value may use any index.
+
+⚠ **Degree: a challenge is DEGREE ZERO.** `p3-air/src/symbolic/variable.rs:67-72` gives
+`ExtEntry::Challenge` `degree_multiple() = 0` — a challenge is a constant for quotient sizing. So a
+Horner chain of length `L` over challenges raises the constraint degree by NOTHING, and a
+`chalGate` whose body is degree 2 in the trace columns is a degree-2 constraint however many
+challenge multiplications it contains. That is the property that makes the whole construction
+cheap, and `ChalExpr.traceDegree` is its authoring-language twin.
+
+## The refusal, and why it is not a fallback
+
+The number of challenges an instance receives is `2 · (its lookup-context count)`, which
+`check_descriptor2` computes from the AIR itself and refuses against. The deployed evaluator
+carries a SECOND, fail-CLOSED backstop: when the randomness slice is shorter than the declared
+count it emits `assert_zero(1)` — an unsatisfiable constraint — rather than reading a zero. An
+absent challenge REFUSES; it does not evaluate the gate at the origin. -/
+
+/-- ⚑ **A two-row arithmetic expression WITH A CHALLENGE LEAF.** `WindowExpr` plus `chal i`, the
+`i`-th verifier-drawn Fiat–Shamir value (`permutation_randomness()[i]`). Strictly generalizes
+`WindowExpr`: `WindowExpr.loc c` is `ChalExpr.loc c` (`ofWindow`, and `ofWindow_eval` proves the
+denotations agree), so nothing that could be said before has become unsayable. -/
+inductive ChalExpr where
+  /-- Current-row column `c`. -/
+  | loc   (c : Nat)
+  /-- Next-row column `c`. -/
+  | nxt   (c : Nat)
+  /-- A field constant. -/
+  | const (k : ℤ)
+  /-- ⚑ **THE CHALLENGE LEAF** — the `i`-th verifier challenge, drawn AFTER the main-trace
+  commitment. Degree ZERO in the trace: it is a constant the prover cannot choose. -/
+  | chal  (i : Nat)
+  | add   (a b : ChalExpr)
+  | mul   (a b : ChalExpr)
+  deriving Repr, DecidableEq
+
+/-- Embed a `WindowExpr`: the challenge-free fragment is exactly `WindowExpr`. -/
+def ChalExpr.ofWindow : WindowExpr → ChalExpr
+  | .loc c   => .loc c
+  | .nxt c   => .nxt c
+  | .const k => .const k
+  | .add a b => .add (ChalExpr.ofWindow a) (ChalExpr.ofWindow b)
+  | .mul a b => .mul (ChalExpr.ofWindow a) (ChalExpr.ofWindow b)
+
+/-- Evaluate a `ChalExpr` against a row window, reading challenges from `env.chal`. This is the
+BASE-LANE instance of the deployed check (see `VmRowEnv.chal`); `evalIn` is the faithful one. -/
+def ChalExpr.eval (env : VmRowEnv) : ChalExpr → ℤ
+  | .loc c   => env.loc c
+  | .nxt c   => env.nxt c
+  | .const k => k
+  | .chal i  => env.chal i
+  | .add a b => a.eval env + b.eval env
+  | .mul a b => a.eval env * b.eval env
+
+/-- ⚑ **The FAITHFUL denotation — over an arbitrary carrier.** The deployed challenge lives in
+`BinomialExtensionField<BabyBear, 4>` and the deployed assert is `ExtensionBuilder::assert_zero_ext`,
+so the honest denotation evaluates in a commutative ring `K` that the row's integers map into. The
+Schwartz–Zippel bound is stated here, against `|K|`, so the deployed `2^124` and the base-lane
+`2^31` are two INSTANCES of one theorem rather than two claims. -/
+def ChalExpr.evalIn {K : Type*} [CommRing K] (env : VmRowEnv) (z : Nat → K) : ChalExpr → K
+  | .loc c   => ((env.loc c : ℤ) : K)
+  | .nxt c   => ((env.nxt c : ℤ) : K)
+  | .const k => ((k : ℤ) : K)
+  | .chal i  => z i
+  | .add a b => a.evalIn env z + b.evalIn env z
+  | .mul a b => a.evalIn env z * b.evalIn env z
+
+/-- The base-lane `eval` IS `evalIn` at `K = ℤ` with the row's own challenge slice. -/
+theorem ChalExpr.eval_eq_evalIn (env : VmRowEnv) (e : ChalExpr) :
+    e.eval env = e.evalIn (K := ℤ) env env.chal := by
+  induction e <;> simp [ChalExpr.eval, ChalExpr.evalIn, *]
+
+/-- The embedding is denotation-preserving: `WindowExpr` is the challenge-free fragment. -/
+theorem ChalExpr.ofWindow_eval (env : VmRowEnv) (w : WindowExpr) :
+    (ChalExpr.ofWindow w).eval env = w.eval env := by
+  induction w <;> simp [ChalExpr.ofWindow, ChalExpr.eval, WindowExpr.eval, *]
+
+/-- The maximum column index referenced (over both row tags), if any. Bounds-checked by
+`check_descriptor2` exactly like `WindowExpr.max_var`. -/
+def ChalExpr.maxVar : ChalExpr → Option Nat
+  | .loc c | .nxt c => some c
+  | .const _ | .chal _ => none
+  | .add a b | .mul a b =>
+      match a.maxVar, b.maxVar with
+      | some x, some y => some (max x y)
+      | some x, none   => some x
+      | none,   some y => some y
+      | none,   none   => none
+
+/-- ⚑ **The declared challenge requirement of one expression**: `1 + (largest `chal` index)`, or
+`0` when the expression reads no challenge. This is the number the descriptor DECLARES on the wire
+and `check_descriptor2` refuses against — not a silence, a value. -/
+def ChalExpr.chalCount : ChalExpr → Nat
+  | .loc _ | .nxt _ | .const _ => 0
+  | .chal i  => i + 1
+  | .add a b | .mul a b => max a.chalCount b.chalCount
+
+/-- ⚑ **The TRACE degree — the quotient-sizing twin of `degree_multiple`.** A challenge leaf is
+DEGREE ZERO (`p3-air/src/symbolic/variable.rs:70`: `ExtEntry::Challenge => 0`), so an arbitrarily
+long Horner chain over challenges costs nothing in constraint degree. This is the authoring-language
+statement of the fact the whole construction stands on. -/
+def ChalExpr.traceDegree : ChalExpr → Nat
+  | .loc _ | .nxt _ => 1
+  | .const _ | .chal _ => 0
+  | .add a b => max a.traceDegree b.traceDegree
+  | .mul a b => a.traceDegree + b.traceDegree
+
+/-- The CHALLENGE-ONLY fragment: an expression built from challenges and constants alone, reading
+no trace column. A Horner evaluation of the challenge's powers is exactly this. -/
+def ChalExpr.isChallengeOnly : ChalExpr → Bool
+  | .loc _ | .nxt _ => false
+  | .const _ | .chal _ => true
+  | .add a b | .mul a b => a.isChallengeOnly && b.isChallengeOnly
+
+/-- ⚑ **A pure-challenge expression is DEGREE ZERO.** The nontrivial half of `traceDegree`, and the
+fact the whole construction stands on: reading a challenge, and multiplying challenges together to
+any depth, never raises the constraint degree. So an `L`-deep Horner chain in the challenge is free,
+and the deployed twin is `p3-air`'s `ExtEntry::Challenge => degree_multiple() = 0`. -/
+theorem ChalExpr.traceDegree_eq_zero_of_challengeOnly :
+    ∀ e : ChalExpr, e.isChallengeOnly = true → e.traceDegree = 0
+  | .const _, _ => rfl
+  | .chal _, _ => rfl
+  | .add a b, h => by
+      simp only [ChalExpr.isChallengeOnly, Bool.and_eq_true] at h
+      simp [ChalExpr.traceDegree, traceDegree_eq_zero_of_challengeOnly a h.1,
+        traceDegree_eq_zero_of_challengeOnly b h.2]
+  | .mul a b, h => by
+      simp only [ChalExpr.isChallengeOnly, Bool.and_eq_true] at h
+      simp [ChalExpr.traceDegree, traceDegree_eq_zero_of_challengeOnly a h.1,
+        traceDegree_eq_zero_of_challengeOnly b h.2]
+
+/-- **A challenge gate is degree 2 however deep its challenge arithmetic runs.** The shape every
+Schwartz–Zippel identity here has: a product of two trace-linear factors, each scaled by an
+arbitrary challenge-only coefficient. THIS is the statement that `253 → 1` constraints does not buy
+itself back in quotient degree. -/
+theorem ChalExpr.traceDegree_mul_challengeOnly (u v : ChalExpr) (c d : ChalExpr)
+    (hc : c.isChallengeOnly = true) (hd : d.isChallengeOnly = true)
+    (hu : u.traceDegree = 1) (hv : v.traceDegree = 1) :
+    (ChalExpr.mul (.mul c u) (.mul d v)).traceDegree = 2 := by
+  simp [ChalExpr.traceDegree, hu, hv,
+    traceDegree_eq_zero_of_challengeOnly c hc, traceDegree_eq_zero_of_challengeOnly d hd]
+
+/-- Wire-render a `ChalExpr`. The `loc`/`nxt`/`const`/`add`/`mul` nodes are byte-identical to
+`WindowExpr.toJson`; `chal` is the new tag and the Rust decoder mirrors it. -/
+def ChalExpr.toJson : ChalExpr → String
+  | .loc c   => "{\"t\":\"loc\",\"c\":" ++ toString c ++ "}"
+  | .nxt c   => "{\"t\":\"nxt\",\"c\":" ++ toString c ++ "}"
+  | .const k => "{\"t\":\"const\",\"v\":" ++ (if k < 0 then "-" ++ toString (-k) else toString k) ++ "}"
+  | .chal i  => "{\"t\":\"chal\",\"i\":" ++ toString i ++ "}"
+  | .add l r => "{\"t\":\"add\",\"l\":" ++ l.toJson ++ ",\"r\":" ++ r.toJson ++ "}"
+  | .mul l r => "{\"t\":\"mul\",\"l\":" ++ l.toJson ++ ",\"r\":" ++ r.toJson ++ "}"
+
+/-- ⚑ **A CHALLENGE GATE**: the polynomial `body` — over the current row, the next row, and the
+verifier's challenges — must vanish. `onTransition` has the same meaning as in `WindowConstraint`.
+
+The deployed evaluator asserts this through `ExtensionBuilder::assert_zero_ext` (the challenge is an
+extension-field element, so the whole body is), which is the same seam the LogUp gadget's own
+constraints ride. -/
+structure ChalConstraint where
+  body         : ChalExpr
+  onTransition : Bool
+  deriving Repr
+
+/-- The challenge gate holds on a row window (base-lane instance; `holdsIn` is the faithful one). -/
+def ChalConstraint.holdsAt (env : VmRowEnv) (isLast : Bool) (w : ChalConstraint) : Prop :=
+  if w.onTransition then
+    isLast = false → w.body.eval env ≡ 0 [ZMOD 2013265921]
+  else
+    w.body.eval env ≡ 0 [ZMOD 2013265921]
+
+/-- ⚑ **The faithful denotation of a challenge gate** — the body vanishes IN `K` at the drawn
+challenge point. This is what `assert_zero_ext` checks, and it is the hypothesis every
+Schwartz–Zippel conclusion is drawn from. -/
+def ChalConstraint.holdsIn {K : Type*} [CommRing K] (env : VmRowEnv) (z : Nat → K)
+    (isLast : Bool) (w : ChalConstraint) : Prop :=
+  if w.onTransition then isLast = false → w.body.evalIn env z = 0
+  else w.body.evalIn env z = 0
+
+/-- The challenge requirement of a gate. -/
+def ChalConstraint.chalCount (w : ChalConstraint) : Nat := w.body.chalCount
+
+/-- Wire-render a `ChalConstraint`. -/
+def ChalConstraint.toJson (w : ChalConstraint) : String :=
+  "{\"t\":\"chal_gate\",\"on_transition\":" ++ (if w.onTransition then "true" else "false") ++
+  ",\"body\":" ++ w.body.toJson ++ "}"
+
 /-- The v2 constraint: v1 embedded whole, plus the three new ROW-LOCAL kinds, the UNIVERSAL memory
 op (`umemOp`, additive: no shipped descriptor emits it until the rotation), the accumulator /
 recursive-proof-binding op (`proofBind`, the Custom leg), and the two-row `windowGate` (the
@@ -595,6 +821,9 @@ inductive VmConstraint2 where
   | umemOp     (m : UMemOp)
   | proofBind  (m : ProofBind)
   | windowGate (w : WindowConstraint)
+  /-- ⚑ **A CHALLENGE GATE** (2026-08-05) — a two-row polynomial that may also read the verifier's
+  Fiat–Shamir challenges. The kind that makes a Schwartz–Zippel identity expressible; see §2.6. -/
+  | chalGate   (w : ChalConstraint)
   deriving Repr
 
 /-- The v2 descriptor: name, main-trace width, PI count, the declared tables, the constraints,
@@ -636,6 +865,10 @@ structure VmTrace where
   rows : List Assignment
   pub  : Assignment
   tf   : TraceFamily
+  /-- ⚑ The verifier's drawn Fiat–Shamir challenges (`permutation_randomness()`), read by
+  `chalGate` bodies. Defaults to all-zero so every existing `VmTrace` literal is unchanged; a
+  challenge-free descriptor's denotation never mentions it (`challengeCount_eq_zero_of_no_chalGate`). -/
+  chal : Assignment := fun _ => 0
 
 /-- Canonical field representatives carried by an `exactPublicRows` manifest,
 viewed in the integer denotation used by `VmTrace`. -/
@@ -676,7 +909,8 @@ def zeroAsg : Assignment := fun _ => 0
 
 /-- The row window at main-row `i`: current row, next row, public inputs. -/
 def envAt (t : VmTrace) (i : Nat) : VmRowEnv :=
-  { loc := t.rows.getD i zeroAsg, nxt := t.rows.getD (i + 1) zeroAsg, pub := t.pub }
+  { loc := t.rows.getD i zeroAsg, nxt := t.rows.getD (i + 1) zeroAsg, pub := t.pub
+  , chal := t.chal }
 
 /-- A lookup holds on a row iff its evaluated tuple IS a row of its table. (The LogUp argument
 the Rust assembly runs proves exactly this multiset-supported membership for every occurrence.) -/
@@ -916,6 +1150,7 @@ def VmConstraint2.holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : Vm
   | .umemOp _     => True
   | .proofBind m  => m.holdsAt env
   | .windowGate w => w.holdsAt env isLast
+  | .chalGate w   => w.holdsAt env isLast
 
 /-- **The v2 denotation.** A multi-table witness satisfies a v2 descriptor (relative to the
 declared memory boundary: initial image `minit`, claimed final image `mfin`, declared address
@@ -2082,6 +2317,44 @@ def VmConstraint2.toJson : VmConstraint2 → String
   | .umemOp m     => m.toJson
   | .proofBind m  => m.toJson
   | .windowGate w => w.toJson
+  | .chalGate w   => w.toJson
+
+/-- ⚑ **THE DECLARED CHALLENGE COUNT of a descriptor** — the number of `permutation_randomness()`
+entries its `chalGate`s read, `0` for every descriptor that carries none.
+
+This is the number that goes on the wire as `"challenges":N` and into the canonical fingerprint. It
+is DERIVED from the constraints rather than being a free field, so it cannot disagree with them; and
+it is emitted on EVERY descriptor, so an IR-v2 descriptor without the key is the OLD shape and the
+Rust decoder refuses it rather than reading a zero. `check_descriptor2` refuses when this exceeds
+the challenges the instance's lookup contexts will actually supply. -/
+def challengeCount (d : EffectVmDescriptor2) : Nat :=
+  d.constraints.foldl (fun acc c => match c with
+    | .chalGate w => max acc w.chalCount
+    | _ => acc) 0
+
+/-- The census twin of `proofBindDeclarative`: how many `chalGate`s a descriptor carries. Counted
+in the authoring language so the number is checkable one stage upstream of the bytes. -/
+def chalGateCount (d : EffectVmDescriptor2) : Nat :=
+  (d.constraints.filter (fun c => match c with | .chalGate _ => true | _ => false)).length
+
+/-- **A challenge-free descriptor declares zero challenges.** The property that makes this kind
+ADDITIVE: every descriptor served before this kind existed emits `"challenges":0`, and its
+denotation never reads `VmRowEnv.chal`. -/
+theorem challengeCount_eq_zero_of_no_chalGate (d : EffectVmDescriptor2)
+    (h : ∀ c ∈ d.constraints, ∀ w, c ≠ .chalGate w) : challengeCount d = 0 := by
+  have : ∀ (l : List VmConstraint2) (acc : Nat), (∀ c ∈ l, ∀ w, c ≠ .chalGate w) →
+      l.foldl (fun acc c => match c with | .chalGate w => max acc w.chalCount | _ => acc) acc
+        = acc := by
+    intro l
+    induction l with
+    | nil => intro acc _; rfl
+    | cons a t ih =>
+        intro acc hl
+        have ha : ∀ w, a ≠ .chalGate w := hl a (List.mem_cons_self ..)
+        have ht : ∀ c ∈ t, ∀ w, c ≠ .chalGate w := fun c hc => hl c (List.mem_cons_of_mem _ hc)
+        cases a <;> simp only [List.foldl_cons] <;> try exact ih acc ht
+        · exact absurd rfl (ha _)
+  exact this d.constraints 0 h
 
 /-- **`emitVmJson2`** — the canonical v2 wire string: versioned (`"ir":2`), tables declared,
 constraints in v2 grammar, v1 hash-site/range carriers preserved. -/
@@ -2089,6 +2362,12 @@ def emitVmJson2 (d : EffectVmDescriptor2) : String :=
   "{\"name\":\"" ++ d.name ++ "\",\"ir\":" ++ toString IR_VERSION ++
   ",\"trace_width\":" ++ toString d.traceWidth ++
   ",\"public_input_count\":" ++ toString d.piCount ++
+  -- ⚑ FLAG DAY 2026-08-05: the DECLARED CHALLENGE COUNT is a value on EVERY descriptor, `0` for
+  -- every one served before the challenge leaf existed. It is emitted here rather than left absent
+  -- so that a `chalGate` descriptor is countable by a gate; and because the Rust decoder
+  -- `expect_key`s it positionally, an `"ir":2` descriptor WITHOUT this key REFUSES TO LOAD rather
+  -- than being reinterpreted as declaring zero. Every committed descriptor JSON/TSV re-emits.
+  ",\"challenges\":" ++ toString (challengeCount d) ++
   ",\"tables\":" ++ jsonArray TableDef.toJson d.tables ++
   ",\"constraints\":" ++ jsonArray VmConstraint2.toJson d.constraints ++
   ",\"hash_sites\":" ++ hashSitesToJson d.hashSites ++
@@ -2115,7 +2394,93 @@ def demoV2 : EffectVmDescriptor2 :=
 -- kind exercised; the chip params are the REAL babyBearD4W16 pins). The Rust v2 decoder's
 -- grammar is THIS string's grammar; v1 strings (no `"ir"` key) parse as version 1 unchanged.
 #guard emitVmJson2 demoV2 ==
-  "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":25,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0}],\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":[{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":25,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0}],\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":[{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}"
+
+/-! ### §10a″ — ⚑ THE CHALLENGE LEAF: wire golden, TRUE witness, and TWO red controls.
+
+`demoChal` is the Schwartz–Zippel shape in miniature: two 2-limb vectors `a = (col 0, col 1)` and
+`b = (col 2, col 3)`, compared by evaluating both as polynomials at the verifier's challenge —
+
+    (a₀ + z·a₁) − (b₀ + z·b₁) = 0.
+
+One constraint decides a two-coefficient equality. The three theorems below are the three things a
+new constraint kind has to be able to do, and none of them is a `#guard`:
+
+* `demoChal_true_witness` — an honest witness (`a = b`) satisfies it AT EVERY CHALLENGE;
+* ⚑ `demoChal_red_control` — **an honest-looking witness with `a ≠ b` FAILS**, so the kind can go
+  red. This is the control the gate would be decoration without;
+* ⚑ `demoChal_exceptional_point_accepts` — and the honest bound, said out loud: at the ONE bad
+  challenge the residual's root, the gate ACCEPTS a false claim. That is not a defect, it is the
+  Schwartz–Zippel error term, and the reason the deployed challenge is drawn from a `2^124`
+  extension after the trace is committed rather than chosen by the prover. -/
+
+/-- The challenge-leaf demo: one `chalGate` comparing two 2-limb vectors at the challenge. -/
+def demoChal : EffectVmDescriptor2 :=
+  { name := "demo-chal", traceWidth := 4, piCount := 0
+  , tables := [mainTableDef 4]
+  , constraints :=
+      [ .chalGate ⟨.add (.add (.loc 0) (.mul (.chal 0) (.loc 1)))
+                        (.mul (.const (-1))
+                              (.add (.loc 2) (.mul (.chal 0) (.loc 3)))), false⟩ ]
+  , hashSites := [], ranges := [] }
+
+/-- The demo DECLARES one challenge — a value on the wire, counted by `challengeCount`. -/
+theorem demoChal_challengeCount : challengeCount demoChal = 1 := rfl
+
+/-- And it declares exactly one gate of the new kind. -/
+theorem demoChal_chalGateCount : chalGateCount demoChal = 1 := rfl
+
+/-- ⚑ **THE `chal_gate` WIRE GOLDEN, as a named theorem** (the Rust decoder's `"chal_gate"` arm
+parses THIS string's grammar, and the `{"t":"chal","i":N}` leaf is the new node). Note
+`"challenges":1` in the header: the declared count is a VALUE the decoder checks the body against,
+so a descriptor cannot read a challenge it did not declare. -/
+theorem demoChal_wire_golden : emitVmJson2 demoChal =
+    "{\"name\":\"demo-chal\",\"ir\":2,\"trace_width\":4,\"public_input_count\":0,\"challenges\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":4,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"chal_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"chal\",\"i\":0},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"chal\",\"i\":0},\"r\":{\"t\":\"loc\",\"c\":3}}}}}}],\"hash_sites\":[],\"ranges\":[]}" := by
+  native_decide
+
+/-- The demo's single gate, named so the poles below can speak about it. -/
+def demoChalGate : ChalConstraint :=
+  ⟨.add (.add (.loc 0) (.mul (.chal 0) (.loc 1)))
+        (.mul (.const (-1)) (.add (.loc 2) (.mul (.chal 0) (.loc 3)))), false⟩
+
+/-- **TRUE WITNESS — an honest prover passes AT EVERY CHALLENGE.** When the two vectors agree
+coefficientwise the residual polynomial is identically zero, so no challenge can refute it. Stated
+over an arbitrary carrier `K`, which is where the deployed quartic extension lives. -/
+theorem demoChal_true_witness {K : Type*} [CommRing K] (a₀ a₁ : ℤ) (z : Nat → K) (isLast : Bool)
+    (env : VmRowEnv)
+    (h0 : env.loc 0 = a₀) (h1 : env.loc 1 = a₁)
+    (h2 : env.loc 2 = a₀) (h3 : env.loc 3 = a₁) :
+    ChalConstraint.holdsIn env z isLast demoChalGate := by
+  simp only [ChalConstraint.holdsIn, demoChalGate, ChalExpr.evalIn, h0, h1, h2, h3,
+    if_neg (Bool.false_ne_true)]
+  ring
+
+/-- ⚑ **THE RED CONTROL — A DISHONEST WITNESS FAILS.** Two vectors differing in the CONSTANT
+coefficient alone, at the challenge `z = 1`: the gate evaluates to the difference and REFUSES. A
+constraint kind that could not produce this line would be decoration; this is the line. -/
+theorem demoChal_red_control :
+    ¬ ChalConstraint.holdsIn (K := ℤ)
+        { loc := fun c => if c = 0 then 7 else if c = 2 then 5 else 0
+        , nxt := fun _ => 0, pub := fun _ => 0 }
+        (fun _ => 1) false demoChalGate := by
+  simp [ChalConstraint.holdsIn, demoChalGate, ChalExpr.evalIn]
+
+/-- ⚑ **AND THE ERROR TERM, SAID OUT LOUD.** The same FALSE claim (`a ≠ b`) is ACCEPTED at the one
+challenge that is a root of the residual: with `a = (7,1)`, `b = (5,3)` the residual is
+`2 − 2z`, which vanishes at `z = 1`. This is Schwartz–Zippel's exceptional set, exhibited rather
+than described — one point out of `|K|`, and `|K| = 2^124` at the deployed quartic extension
+because the challenge is drawn from `permutation_randomness()` AFTER the main-trace commitment.
+A gate whose soundness is quoted without this pole is quoting the wrong number. -/
+theorem demoChal_exceptional_point_accepts :
+    ChalConstraint.holdsIn (K := ℤ)
+      { loc := fun c => if c = 0 then 7 else if c = 1 then 1 else if c = 2 then 5 else 3
+      , nxt := fun _ => 0, pub := fun _ => 0 }
+      (fun _ => 1) false demoChalGate
+    ∧ ¬ ChalConstraint.holdsIn (K := ℤ)
+        { loc := fun c => if c = 0 then 7 else if c = 1 then 1 else if c = 2 then 5 else 3
+        , nxt := fun _ => 0, pub := fun _ => 0 }
+        (fun _ => 2) false demoChalGate := by
+  constructor <;> simp [ChalConstraint.holdsIn, demoChalGate, ChalExpr.evalIn]
 
 /-! ### §10a′ — exact-public LogUp contents: emitted identity + both-polarity replay. -/
 
@@ -2128,7 +2493,7 @@ def demoPublic : EffectVmDescriptor2 :=
   , hashSites := [], ranges := [] }
 
 #guard emitVmJson2 demoPublic ==
-  "{\"name\":\"demo-exact-public\",\"ir\":2,\"trace_width\":2,\"public_input_count\":0,\"tables\":[{\"id\":25,\"name\":\"demo_public\",\"arity\":2,\"sem\":\"exact_public_rows\",\"rows\":[[1,10],[2,20],[3,30],[4,40]]}],\"constraints\":[{\"t\":\"lookup\",\"table\":25,\"tuple\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"demo-exact-public\",\"ir\":2,\"trace_width\":2,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":25,\"name\":\"demo_public\",\"arity\":2,\"sem\":\"exact_public_rows\",\"rows\":[[1,10],[2,20],[3,30],[4,40]]}],\"constraints\":[{\"t\":\"lookup\",\"table\":25,\"tuple\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}"
 
 def publicRow (a b : Nat) : Assignment := fun column =>
   if column = 0 then Int.ofNat a else if column = 1 then Int.ofNat b else 0
@@ -2296,7 +2661,7 @@ def demoU : EffectVmDescriptor2 :=
 -- `descriptor_ir2.rs` decoder's `umem_op` arm + `umemory`/`umem_boundary` table sems parse
 -- THIS string's grammar; mirrored as `DEMO_UMEM` in its tests).
 #guard emitVmJson2 demoU ==
-  "{\"name\":\"demo-umem\",\"ir\":2,\"trace_width\":4,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":4,\"sem\":\"main\"},{\"id\":6,\"name\":\"umemory\",\"arity\":8,\"sem\":\"umemory\"},{\"id\":7,\"name\":\"umem_boundary\",\"arity\":7,\"sem\":\"umem_boundary\"}],\"constraints\":[{\"t\":\"umem_op\",\"kind\":\"write\",\"domain\":3,\"guard\":{\"t\":\"const\",\"v\":1},\"key\":{\"t\":\"var\",\"v\":0},\"present\":{\"t\":\"const\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":1},\"prev_present\":{\"t\":\"const\",\"v\":0},\"prev_value\":{\"t\":\"const\",\"v\":0},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"umem_op\",\"kind\":\"read\",\"domain\":3,\"guard\":{\"t\":\"const\",\"v\":1},\"key\":{\"t\":\"var\",\"v\":1},\"present\":{\"t\":\"const\",\"v\":0},\"value\":{\"t\":\"const\",\"v\":0},\"prev_present\":{\"t\":\"const\",\"v\":0},\"prev_value\":{\"t\":\"const\",\"v\":0},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"umem_op\",\"kind\":\"write\",\"domain\":0,\"guard\":{\"t\":\"const\",\"v\":1},\"key\":{\"t\":\"var\",\"v\":2},\"present\":{\"t\":\"const\",\"v\":1},\"value\":{\"t\":\"var\",\"v\":3},\"prev_present\":{\"t\":\"const\",\"v\":0},\"prev_value\":{\"t\":\"const\",\"v\":0},\"prev_serial\":{\"t\":\"const\",\"v\":0}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"demo-umem\",\"ir\":2,\"trace_width\":4,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":4,\"sem\":\"main\"},{\"id\":6,\"name\":\"umemory\",\"arity\":8,\"sem\":\"umemory\"},{\"id\":7,\"name\":\"umem_boundary\",\"arity\":7,\"sem\":\"umem_boundary\"}],\"constraints\":[{\"t\":\"umem_op\",\"kind\":\"write\",\"domain\":3,\"guard\":{\"t\":\"const\",\"v\":1},\"key\":{\"t\":\"var\",\"v\":0},\"present\":{\"t\":\"const\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":1},\"prev_present\":{\"t\":\"const\",\"v\":0},\"prev_value\":{\"t\":\"const\",\"v\":0},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"umem_op\",\"kind\":\"read\",\"domain\":3,\"guard\":{\"t\":\"const\",\"v\":1},\"key\":{\"t\":\"var\",\"v\":1},\"present\":{\"t\":\"const\",\"v\":0},\"value\":{\"t\":\"const\",\"v\":0},\"prev_present\":{\"t\":\"const\",\"v\":0},\"prev_value\":{\"t\":\"const\",\"v\":0},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"umem_op\",\"kind\":\"write\",\"domain\":0,\"guard\":{\"t\":\"const\",\"v\":1},\"key\":{\"t\":\"var\",\"v\":2},\"present\":{\"t\":\"const\",\"v\":1},\"value\":{\"t\":\"var\",\"v\":3},\"prev_present\":{\"t\":\"const\",\"v\":0},\"prev_value\":{\"t\":\"const\",\"v\":0},\"prev_serial\":{\"t\":\"const\",\"v\":0}}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- The new table ids stay collision-free with the five EPOCH ids + the submask table (5).
 #guard ([TableId.main, .poseidon2, .range, .memory, .mapOps, .custom 0,
@@ -2431,7 +2796,7 @@ def demoC : EffectVmDescriptor2 :=
 -- Rust `descriptor_ir2.rs` decoder's `proof_bind` arm parses THIS string's grammar; mirrored as
 -- `DEMO_CUSTOM` in its tests).
 #guard emitVmJson2 demoC ==
-  "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1},\"vk_pin\":45,\"bound\":{\"t\":\"const\",\"v\":123}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1},\"vk_pin\":45,\"bound\":{\"t\":\"const\",\"v\":123}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-- A TOY recursion engine: the proof carrier is `Bool` (`true` = the one honest sub-proof), the
 verifier accepts exactly `true`, and a verifying proof exposes commitment `123` / vk `45`. (The

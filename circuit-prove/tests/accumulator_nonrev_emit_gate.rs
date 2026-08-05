@@ -230,6 +230,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-accumulator-nonrev-emit-v2".to_string(),
         trace_width: WIDTH,
         public_input_count: PI_COUNT,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

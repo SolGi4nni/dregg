@@ -196,6 +196,7 @@ theorem holdsAt_of_hardenConstraint (hash : List ℤ → ℤ) (tf : TraceFamily)
   | umemOp m => exact id
   | proofBind m => exact id
   | windowGate w => exact id
+  | chalGate w => exact id
 
 /-- **THE REFINEMENT.** A witness satisfying the HARDENED descriptor satisfies the original one, so
 every theorem already proved about a member still describes the hardened member's accepted

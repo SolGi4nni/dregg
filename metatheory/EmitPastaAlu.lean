@@ -36,10 +36,20 @@ returns.
   lake env lean --run EmitPastaAlu.lean fqabsorb      > ../circuit/descriptors/by-name/pasta-fq-absorb.json
   lake env lean --run EmitPastaAlu.lean fqabsorbtrace > ../circuit/tests/fixtures/pasta-fq-absorb-trace.txt
   lake env lean --run EmitPastaAlu.lean fqabsorbpis   > ../circuit/tests/fixtures/pasta-fq-absorb-pis.txt
+
+⚑ **AND THE REAL MINA BLOCK'S TRANSCRIPT LINK** (`MinaBlockFqTranscript`): the SAME 2 048-instruction
+program, pinned at seven blocks instead of six, whose input state and absorbed element are the 91st
+link of the phase-2 (`fq_kimchi`) absorption tape of the Wrap proof of Mina devnet block 539508, and
+whose two output lanes' low 128 bits are the `v′`/`u′` that block's `proof.oracles(...)` returned.
+
+  lake env lean --run EmitPastaAlu.lean fqlink       > ../circuit/descriptors/by-name/pasta-fq-wraplink.json
+  lake env lean --run EmitPastaAlu.lean fqlinktrace  > ../circuit/tests/fixtures/pasta-fq-wraplink-trace.txt
+  lake env lean --run EmitPastaAlu.lean fqlinkpis    > ../circuit/tests/fixtures/pasta-fq-wraplink-pis.txt
 -/
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
 import Dregg2.Circuit.Emit.MinaWrapVerifierSponge
+import Dregg2.Circuit.Emit.MinaBlockFqTranscript
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.MinaWrapVerifierAir
@@ -102,6 +112,16 @@ def fqAbsorbTraceText : String :=
 def fqAbsorbPisText : String :=
   render Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbPIs ++ "\n"
 
+/-- ⚑ The REAL BLOCK's link: the same `absorbProg`, filled from the register file
+`MinaBlockFqTranscript.linkInitVec` — three state lanes DERIVED from the block's own 91-element
+phase-2 tape, the tape's last element, and the zero second absorb slot. No cell is asserted. -/
+def fqLinkTraceText : String :=
+  String.intercalate "\n"
+    (Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkTrace.map render) ++ "\n"
+
+def fqLinkPisText : String :=
+  render Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkPIs ++ "\n"
+
 def main (args : List String) : IO Unit :=
   match args with
   | ["fp"]         => IO.println (emitVmJson2 fpAluDesc)
@@ -119,6 +139,10 @@ def main (args : List String) : IO Unit :=
   | ["fqabsorb"]      => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbDesc)
   | ["fqabsorbtrace"] => IO.print fqAbsorbTraceText
   | ["fqabsorbpis"]   => IO.print fqAbsorbPisText
+  | ["fqlink"]        => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkDesc)
+  | ["fqlinktrace"]   => IO.print fqLinkTraceText
+  | ["fqlinkpis"]     => IO.print fqLinkPisText
   | _              => IO.eprintln
       "usage: EmitPastaAlu.lean (fp|fq|trace|chaintrace|sbox|sboxtrace|sboxpis|long|longtrace\n\
-       |fqround|fqroundtrace|fqroundpis|fqabsorb|fqabsorbtrace|fqabsorbpis)"
+       |fqround|fqroundtrace|fqroundpis|fqabsorb|fqabsorbtrace|fqabsorbpis\n\
+       |fqlink|fqlinktrace|fqlinkpis)"

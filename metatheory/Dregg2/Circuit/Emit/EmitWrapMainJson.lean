@@ -84,12 +84,11 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   -- into the block below is the aliasing the layout exists to refuse.
   match regionEscape t.sh t.sp k gs with
   | some i =>
-    let (b, n) := rungRegion t.sh t.sp k
     throw (IO.userError s!"⚑ REGION CAP ESCAPED at {k.tag}: a gate references external {i}, which \
-      is neither below the three blocks ({baseWh t.sh t.sp}) nor inside {k.tag}'s own block \
-      [{b}, {b + n}). Two sub-circuits' variable regions would alias — `placeChecked` would see one \
-      variable where two were meant and merge two σ classes that were never meant to meet. \
-      Refusing rather than emitting it; see §17b.")
+      is neither below the three blocks ({baseWh t.sh t.sp}) nor inside ANY block {k.tag} declares \
+      ({repr (rungRegions t.sh t.sp k)}, as (base, cap) pairs). Two sub-circuits' variable regions \
+      would alias — `placeChecked` would see one variable where two were meant and merge two σ \
+      classes that were never meant to meet. Refusing rather than emitting it; see §17b.")
   | none => pure ()
   writeAtomic s!"{dir}/wrapmain_{tag}_{k.tag}.json" jw
   writeAtomic s!"{dir}/wrapmain_{tag}_{k.tag}_unwired.json" ju

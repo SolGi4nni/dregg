@@ -114,6 +114,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "merkle-membership-depth2-4ary::poseidon2-v1".to_string(),
         trace_width: MEMBERSHIP_WIDTH,
         public_input_count: 1,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             chip4_lookup([LEAF, SIB0A, SIB0B, SIB0C], PARENT0),

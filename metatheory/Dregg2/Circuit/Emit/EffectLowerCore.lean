@@ -318,6 +318,17 @@ leg lowers to the UNSATISFIABLE pair, never to silence. -/
 def lowerLimbsLeg (l : LimbsLeg) : List VmConstraint2 :=
   if l.mainRailOk then l.cols.map (fun c => .lookup ⟨l.table, [.var c]⟩) else refuseConstraints
 
+/-- ⚑ **A CHALLENGE leg → the target's `chalGate`** (2026-08-05). `.transition` and `.all` map onto
+the target's `onTransition` flag; `.first`/`.last` have NO image (the target's challenge form is
+two-row only) and lower to the UNSATISFIABLE pair rather than being quietly relocated to an
+every-row gate. `ChalLeg.mainRailOk` is the same verdict, decidable, one stage earlier. -/
+def lowerChalLeg (c : ChalLeg) : List VmConstraint2 :=
+  match c.sel with
+  | .transition => [.chalGate ⟨c.body, true⟩]
+  | .all        => if chalReadsNext c.body then refuseConstraints else [.chalGate ⟨c.body, false⟩]
+  | .first      => refuseConstraints
+  | .last       => refuseConstraints
+
 /-- **One leg → its main-rail constraints.** A gate goes through the SAME `Head` normalizer the
 spec's own `guardGates` do — the source has one gate language, not two. -/
 def lowerLeg : AirLeg → List VmConstraint2
@@ -326,6 +337,7 @@ def lowerLeg : AirLeg → List VmConstraint2
   | .window w => lowerWindowLeg w
   | .pin p    => [lowerPiPinLeg p]
   | .limbs l  => lowerLimbsLeg l
+  | .chal c   => lowerChalLeg c
 
 /-- **The air block's constraints, IN THE ORDER THE SOURCE DECLARED THEM.**
 

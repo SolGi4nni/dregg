@@ -90,6 +90,7 @@ fn seam_desc(vk_pin: Option<i64>, bound: Option<LeanExpr>) -> EffectVmDescriptor
         name: "ir2-proof-bind-seam".into(),
         trace_width: WIDTH,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![TableDef2 {
             id: 0,
             name: "main".into(),

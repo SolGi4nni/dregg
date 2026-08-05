@@ -216,6 +216,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-garbled-evaluation-extended-dsl-v1".to_string(),
         trace_width: GARBLED_WIDTH,
         public_input_count: PI_COUNT,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

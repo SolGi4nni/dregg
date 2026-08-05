@@ -146,6 +146,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "quantified-absence-quotient-accumulator::babybear4-v1".to_string(),
         trace_width: QACC_WIDTH,
         public_input_count: QACC_PI_COUNT,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

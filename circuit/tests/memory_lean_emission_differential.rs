@@ -63,6 +63,7 @@ fn mem_desc() -> EffectVmDescriptor2 {
         name: "memory-lean-emission-differential".to_string(),
         trace_width: 5,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MemOp(MemOpSpec {
             guard: LeanExpr::Var(4),

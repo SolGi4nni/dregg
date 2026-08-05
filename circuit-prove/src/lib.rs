@@ -38,6 +38,7 @@ pub mod custom_proof_bind;
 pub mod dark_amm_private;
 pub mod dark_bazaar_private;
 pub mod dark_bazaar_private_poa;
+pub mod dark_bazaar_private_poa_settlement;
 pub mod deco_leaf_adapter;
 pub mod descent_census;
 /// The MINA-facing terminal config — `DreggOuterConfig`'s twin over Pasta.

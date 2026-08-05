@@ -107,6 +107,7 @@ pub fn insert_tail_claim_pins(
         name: desc.name.clone(),
         trace_width: desc.trace_width,
         public_input_count: desc.public_input_count + shift,
+        challenges: 0,
         tables: desc.tables.clone(),
         constraints,
         hash_sites: desc.hash_sites.clone(),
@@ -137,7 +138,8 @@ mod tests {
         let desc = EffectVmDescriptor2 {
             name: "twin-test".into(),
             trace_width: 10,
-            public_input_count: 5, // 3 narrow + 2 "anchors" at 3..5
+            public_input_count: 5,
+            challenges: 0, // 3 narrow + 2 "anchors" at 3..5
             tables: vec![],
             constraints: vec![
                 pin(VmRow::First, 0, 0),

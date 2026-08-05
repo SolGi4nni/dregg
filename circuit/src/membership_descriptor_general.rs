@@ -208,6 +208,7 @@ pub fn membership_descriptor_of_depth(depth: usize) -> EffectVmDescriptor2 {
         name: format!("merkle-membership::poseidon2-binary-general-depth{depth}"),
         trace_width: MEMBERSHIP_GENERAL_WIDTH,
         public_input_count: MEMBERSHIP_GENERAL_PI_COUNT,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

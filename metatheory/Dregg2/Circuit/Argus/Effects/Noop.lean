@@ -285,8 +285,8 @@ descriptor, not `skipDescriptor`). -/
 theorem noop_skipDescriptor_unsound_without_freeze :
     ∃ (hash : List ℤ → ℤ) (env : VmRowEnv) (k k' : RecordKernelState),
       satisfiedVm hash skipDescriptor env true true ∧ k' ≠ k := by
-  refine ⟨fun _ => 0, ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩, kN, kNempty, ?_, ?_⟩
-  · exact skipDescriptor_satisfied_any (fun _ => 0) ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩ true true
+  refine ⟨fun _ => 0, ⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0⟩, kN, kNempty, ?_, ?_⟩
+  · exact skipDescriptor_satisfied_any (fun _ => 0) ⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0⟩ true true
   · -- `kN` and `kNempty` differ: `kN`'s ledger holds 30 at `(0,0)`, the empty kernel holds 0.
     intro hcontra
     have hbal : kNempty.bal 0 0 = kN.bal 0 0 := by rw [hcontra]

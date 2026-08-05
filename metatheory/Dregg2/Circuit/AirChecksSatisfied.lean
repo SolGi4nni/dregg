@@ -120,6 +120,21 @@ def arithResidual (env : VmRowEnv) (isFirst isLast : Bool) : VmConstraint2 → �
       match w.onTransition with
       | true  => (match isLast with | true => 0 | false => w.body.eval env)
       | false => w.body.eval env
+  -- ⚑ THE CHALLENGE GATE (2026-08-05). Same guard shape as `windowGate`, and a REAL residual, not
+  -- a `0`: `ChalExpr.eval` reads the row window and `env.chal`, so the bridge below reaches it
+  -- guard-for-guard exactly as it reaches a window gate.
+  --
+  -- ⚠ FIDELITY, said here rather than left to a reader: the DEPLOYED residual is an
+  -- EXTENSION-field one (`assert_zero_ext` over `BinomialExtensionField<BabyBear,4>`, because the
+  -- challenge is an extension element). This ℤ-valued function is its BASE-LANE instance — the
+  -- same restriction `VmRowEnv.chal` names. The bridge is therefore honest about the SHAPE of the
+  -- check and understates its soundness (`2^31` here against the deployed `2^124`); a caller
+  -- quoting a Schwartz–Zippel bound must take it from `ChalConstraint.holdsIn` over the real
+  -- carrier, not from this arm.
+  | .chalGate w                     =>
+      match w.onTransition with
+      | true  => (match isLast with | true => 0 | false => w.body.eval env)
+      | false => w.body.eval env
   | .lookup _                       => 0
   | .memOp _                        => 0
   | .mapOp _                        => 0
@@ -133,6 +148,9 @@ them — they need the NAMED carriers. -/
 def isArith : VmConstraint2 → Prop
   | .base _       => True
   | .windowGate _ => True
+  -- ⚑ A challenge gate IS a quotient constraint (an extension-field one), so its row-local
+  -- denotation is forced by its residual exactly as a window gate's is.
+  | .chalGate _   => True
   | .lookup _     => False
   | .memOp _      => False
   | .mapOp _      => False
@@ -207,6 +225,14 @@ theorem arithResidual_zero_forces_holdsAt (hash : List ℤ → ℤ) (tf : TraceF
                 intro h; exact absurd h (by simp)
   | windowGate w =>
       simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt]
+      cases hw : w.onTransition with
+      | true =>
+          cases isLast with
+          | true  => intro h; exact absurd h (by simp)
+          | false => intro _; simpa [arithResidual, hw] using h0
+      | false => simpa [arithResidual, hw] using h0
+  | chalGate w =>
+      simp only [VmConstraint2.holdsAt, ChalConstraint.holdsAt]
       cases hw : w.onTransition with
       | true =>
           cases isLast with

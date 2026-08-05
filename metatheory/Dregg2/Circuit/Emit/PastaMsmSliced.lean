@@ -762,6 +762,7 @@ theorem sliceDeclAccept_forces (lo w L i : Nat) (T : WTrace) (pv : Nat → ℤ)
   | umemOp _ => rfl
   | proofBind _ => rfl
   | windowGate _ => rfl
+  | chalGate _ => rfl
 
 /-! ### §5c.3 — the forcing: what the 29 put ON THE WIRE. -/
 

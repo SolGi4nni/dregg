@@ -374,7 +374,7 @@ def constW : List ℤ → List ℤ := fun _ => List.replicate 8 0
 /-- The all-zero row. -/
 def zLoc : Assignment := fun _ => 0
 /-- The all-zero witnessing row. -/
-def zEnv : VmRowEnv := ⟨zLoc, zLoc, zLoc⟩
+def zEnv : VmRowEnv := ⟨zLoc, zLoc, zLoc, fun _ => 0⟩
 
 /-- **`const_wideChain8` — a row whose sixty-three carriers ARE the genuine chain.** With the constant
 width-8 permutation every carrier is `replicate 8 0`, which IS `constW` of the site inputs — so the

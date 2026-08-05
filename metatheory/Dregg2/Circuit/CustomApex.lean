@@ -71,6 +71,7 @@ def VmConstraint2.holdsAtStaged (E : ProofEngine) (hash : List ℤ → ℤ) (tf 
   | .mapOp m      => VmConstraint2.holdsAt hash tf env isFirst isLast (.mapOp m)
   | .umemOp x     => VmConstraint2.holdsAt hash tf env isFirst isLast (.umemOp x)
   | .windowGate w => VmConstraint2.holdsAt hash tf env isFirst isLast (.windowGate w)
+  | .chalGate w   => VmConstraint2.holdsAt hash tf env isFirst isLast (.chalGate w)
 
 /-- The staged gate is STRONGER than the deployed gate: a constraint holding under the staged AIR holds
 under the deployed AIR (the deployed `proofBind` gate is `True`; every other arm is identical). So a
@@ -87,6 +88,7 @@ theorem holdsAtStaged_imp_holdsAt (E : ProofEngine) (hash : List ℤ → ℤ) (t
   | mapOp m => exact h
   | umemOp x => exact h
   | windowGate w => exact h
+  | chalGate w => exact h
 
 /-- `m ∈ proofBindsOf d` ⟹ the constraint `.proofBind m` is one of `d`'s declared constraints. -/
 theorem proofBind_mem_constraints {d : EffectVmDescriptor2} {m : ProofBind}

@@ -49,7 +49,7 @@ def emitChainRung (dir pfx : String) (t : WrapData) (k : Rung) (both : Bool) : I
   match regionEscape t.sh t.sp k gs with
   | some i =>
     throw (IO.userError s!"⚑ REGION CAP ESCAPED at {pfx}_{k.tag}: a gate references external {i}, \
-      outside {k.tag}'s own block {repr (rungRegion t.sh t.sp k)} and not below the wall \
+      outside every block {k.tag} declares {repr (rungRegions t.sh t.sp k)} and not below the wall \
       {baseWh t.sh t.sp}. Refusing rather than emitting it; see `KimchiWrapMainCore` §17b.")
   | none => pure ()
   -- ⚠ ⚑ RUNG-EXPLICIT. These read `wrapWitness t p rowsW` / `wrapPublic t` until 2026-08-04; those
@@ -75,14 +75,28 @@ def main : IO Unit := do
   IO.println s!"  step circuit : {Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_CIRCUIT}"
   IO.println s!"  shape        : {repr shapeChain}"
   IO.println s!"  tape words   : {chainTape.length}  (schedule {(chainSchedule shapeChain).length} events)"
+  IO.println s!"  step key     : branch {tChain.br.idx} of step_keys, index digest \
+{keyDigestVal shapeChain chainRun tChain.br.idx}"
+  IO.println s!"  tape word 0  : {(chainRun.evs.getD 0 default).word}"
   let _ ← emitChainRung dir "chain" tChain .transcript true
   let _ ← emitChainRung dir "chain" tChain .bind true
+  -- ⚑ **THE CLIMB.** `w5_key` was unemittable on this tape until 2026-08-05: `keyRows`' `digestTie`
+  -- welded the index sponge's squeeze to the transcript's first absorbed word, and the wrap
+  -- circuit committed to MINA's `step-transaction` key while this tape is dregg's own step proof's.
+  -- `KEY_CHAIN_BRANCH` puts dregg's step rule in `step_keys` and `chainBranch` selects it, so the
+  -- row now has an honest witness — see `the_chain_climbs_past_bind_at_dreggs_own_step_key`.
+  let _ ← emitChainRung dir "chain" tChain .key true
   let _ ← emitChainRung dir "chainbent" tChainBent .bind false
   let _ ← emitChainRung dir "chainunread" tChainUnread .bind false
+  let _ ← emitChainRung dir "chainbent" tChainBent .key false
+  let _ ← emitChainRung dir "chainunread" tChainUnread .key false
   -- ⚑ A LOUD refusal if the two controls collapsed into each other. The harness checks this too,
   -- but a driver that wrote a file it knew was wrong would be the worse failure.
-  if wrapPublicAt tChainBent .bind == wrapPublicAt tChain .bind then
-    throw (IO.userError "the BENT emission's public vector equals the honest one - no chain")
-  if wrapPublicAt tChainUnread .bind != wrapPublicAt tChain .bind then
-    throw (IO.userError "the UNREAD-bend emission's public vector moved - the tape is not the input")
+  for k in [Rung.bind, Rung.key] do
+    if wrapPublicAt tChainBent k == wrapPublicAt tChain k then
+      throw (IO.userError s!"the BENT emission's public vector equals the honest one at {k.tag} \
+        - no chain")
+    if wrapPublicAt tChainUnread k != wrapPublicAt tChain k then
+      throw (IO.userError s!"the UNREAD-bend emission's public vector moved at {k.tag} \
+        - the tape is not the input")
   IO.println s!"wrote {dir}/chain_*.json, chainbent_w4_bind.json, chainunread_w4_bind.json"

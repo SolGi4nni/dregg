@@ -1999,7 +1999,8 @@ mod tests {
         assert!(parse_table_air_family("[]").is_err(), "no members");
         assert!(parse_table_air_family("[1]").is_err(), "not an object");
         // A truncated member is refused rather than silently dropped.
-        let one = &EXACT_PUBLIC_TABLE_AIR_FAMILY_JSON[..EXACT_PUBLIC_TABLE_AIR_FAMILY_JSON.len() / 2];
+        let one =
+            &EXACT_PUBLIC_TABLE_AIR_FAMILY_JSON[..EXACT_PUBLIC_TABLE_AIR_FAMILY_JSON.len() / 2];
         assert!(parse_table_air_family(one).is_err(), "truncated");
     }
 }

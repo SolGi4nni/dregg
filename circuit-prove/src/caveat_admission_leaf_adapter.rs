@@ -414,6 +414,7 @@ pub fn caveat_admission_to_descriptor2() -> EffectVmDescriptor2 {
         name: "caveat-admission-leaf::bignum_decidable_atoms_v1".to_string(),
         trace_width: TRACE_WIDTH,
         public_input_count: CAVEAT_PI_COUNT,
+        challenges: 0,
         tables: vec![TableDef2 {
             id: TID_RANGE,
             name: "range".to_string(),

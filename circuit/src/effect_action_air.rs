@@ -363,6 +363,7 @@ pub fn effect_action_to_descriptor2(
         name: format!("effect-action-leaf::{}", schema.kind_name),
         trace_width: width,
         public_input_count: pi_count,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

@@ -450,6 +450,7 @@ pub fn note_spend_to_descriptor2() -> Result<EffectVmDescriptor2, String> {
         name: format!("note-spend-leaf::{}", src.name),
         trace_width: width,
         public_input_count: NOTE_SPEND_CLAIM_LEN,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

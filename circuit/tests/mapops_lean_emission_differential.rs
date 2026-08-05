@@ -79,6 +79,7 @@ fn map_desc() -> EffectVmDescriptor2 {
         name: "map-ops-lean-emission-differential".to_string(),
         trace_width: 19,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Var(18),
@@ -425,6 +426,7 @@ fn a_lying_read_is_refused_by_the_assembler_and_the_gate_is_reached_only_by_muta
         name: "map-ops-lying-read".to_string(),
         trace_width: 19,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Var(18),

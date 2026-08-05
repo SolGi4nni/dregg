@@ -166,6 +166,7 @@ pub fn sovereign_authority_to_descriptor2() -> Result<EffectVmDescriptor2, Strin
         name: "sovereign-authority-leaf::sovereign_authority_v1".to_string(),
         trace_width: AUTHORITY_TUPLE_WIDTH,
         public_input_count: AUTHORITY_TUPLE_WIDTH,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

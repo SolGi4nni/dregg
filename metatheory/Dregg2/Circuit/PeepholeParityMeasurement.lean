@@ -152,6 +152,23 @@ def nlWindow : WindowExpr → Nat
   | .mul x y =>
       nlWindow x + nlWindow y + (if 0 < exprDegree x ∧ 0 < exprDegree y then 1 else 0)
 
+/-- ⚑ Degree of a `ChalExpr` in the TRACE — a `chal` leaf is a constant (degree 0), matching
+`DescriptorIR2.ChalExpr.traceDegree` and `p3-air`'s `ExtEntry::Challenge => degree_multiple() = 0`. -/
+def chalDegree : ChalExpr → Nat
+  | .loc _ | .nxt _ => 1
+  | .const _ | .chal _ => 0
+  | .add x y => max (chalDegree x) (chalDegree y)
+  | .mul x y => chalDegree x + chalDegree y
+
+/-- ⚑ Nonlinear multiplications in a challenge gate's body. A multiplication by a challenge-only
+factor is NOT nonlinear here, because the challenge is a constant the prover cannot choose — which
+is exactly why an `SK`-deep Horner chain in the challenge is free. -/
+def nlChal : ChalExpr → Nat
+  | .loc _ | .nxt _ | .const _ | .chal _ => 0
+  | .add x y => nlChal x + nlChal y
+  | .mul x y =>
+      nlChal x + nlChal y + (if 0 < chalDegree x ∧ 0 < chalDegree y then 1 else 0)
+
 /-- Nonlinear multiplications in a hand-emitted gate body. -/
 def nlEmitted : EmittedExpr → Nat
   | .var _ | .const _ => 0
@@ -164,6 +181,10 @@ construction: the forms with no polynomial body (PI pins, continuity transitions
 memory / map / umem ops, proof binds) carry no multiplication and contribute 0. -/
 def nlConstraint : VmConstraint2 → Nat
   | .windowGate w => nlWindow w.body
+  -- ⚑ A challenge gate's nonlinear count is over its trace columns only: a `chal` leaf is a
+  -- CONSTANT (degree 0, `ChalExpr.traceDegree`), so a Horner chain in the challenge contributes
+  -- no nonlinear multiplication to this census — the same reason it costs no quotient degree.
+  | .chalGate w => nlChal w.body
   | .base (.gate body) => nlEmitted body
   | .base (.boundary _ body) => nlEmitted body
   | .base (.transition _ _) => 0

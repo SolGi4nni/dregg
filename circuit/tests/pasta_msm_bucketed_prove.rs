@@ -74,8 +74,17 @@ use std::time::Instant;
 const C2_JSON: &str = include_str!("fixtures/pasta-msm-bucketed/pasta-msm-bucketed-c2.json");
 const C3_JSON: &str = include_str!("fixtures/pasta-msm-bucketed/pasta-msm-bucketed-c3.json");
 
-const C2_SHA: &str = "91ef77e2258042f597c6dbc2e5a6c9b7307357d9cdb2df54d2cc3196a39ecd34";
-const C3_SHA: &str = "577bfe4912ce4a85282a6f3aabecfdb0b8ede19ade744cfa72bd982c68265ac9";
+/// ⚑ The INHERITED row template, emitted into THIS campaign's own fixture directory rather than
+/// read from `circuit/descriptors/by-name/`. Same object, but a by-name artifact sits on the
+/// descriptor-drift gate's hot path and belongs to every lane at once: on 2026-08-05 a sibling
+/// lane's new `challenges` wire field made every committed by-name descriptor refuse to load until
+/// re-emitted, and a prefix check that reads one inherits that lane's flag days. Owning the
+/// comparand is what `circuit/tests/fixtures/pasta-sg-bound/` already does.
+const WINDOWED_JSON: &str = include_str!("fixtures/pasta-msm-bucketed/pasta-rcb-windowed.json");
+const WINDOWED_SHA: &str = "7c1326f8c705aad8d9165bc97d7c2926a98b2d7ec0bdc756b85eaa36d8886aad";
+
+const C2_SHA: &str = "d618c807b5fe03e763f924729cd5f4cacb337f21a54a254ac81de5ce26678974";
+const C3_SHA: &str = "41031882676ee1f914a48c43881dbc06a51492753f8c4c8c50ca37454993a425";
 
 // ---------------------------------------------------------------------------------------------
 // The Lean row layout (`PastaMsmBucketed` §1), restated so a drift in either side reds HERE rather
@@ -84,7 +93,7 @@ const C3_SHA: &str = "577bfe4912ce4a85282a6f3aabecfdb0b8ede19ade744cfa72bd982c68
 
 const WK: usize = 612;
 const PI_COUNT: usize = 27;
-const CONSTRAINTS: usize = 94;
+const CONSTRAINTS: usize = 91;
 
 const RUNX: usize = 525;
 const TOTX: usize = 552;
@@ -352,6 +361,11 @@ fn prove_and_verify(
 
 #[test]
 fn lean_artifacts_are_pinned() {
+    assert_eq!(
+        sha256_hex(WINDOWED_JSON.as_bytes()),
+        WINDOWED_SHA,
+        "the inherited row template was re-emitted; re-read the Lean and re-pin"
+    );
     for (json, want, c) in [(C2_JSON, C2_SHA, 2usize), (C3_JSON, C3_SHA, 3)] {
         assert_eq!(
             sha256_hex(json.as_bytes()),
@@ -365,19 +379,31 @@ fn lean_artifacts_are_pinned() {
         assert_eq!(
             d.constraints.len(),
             CONSTRAINTS,
-            "45 windowed + 4 mode + 6 select + 6 thread + 3 index + 3 lookup + 27 PI"
+            "42 row-local + 4 mode + 6 select + 6 thread + 3 index + 3 lookup + 27 PI"
         );
         assert_eq!(d.tables.len(), 3, "schedule, cover, srs");
-        // ⚑ The prefix claim, checked on the ARTIFACT and not only in the kernel: the first 45
-        // constraints are the windowed row template, so the curve arithmetic is not re-authored.
-        let windowed = parse(include_str!(
-            "../descriptors/by-name/pasta-rcb-windowed.json"
-        ));
-        assert_eq!(windowed.constraints.len(), 45);
+        // ⚑ The prefix claim, checked on the ARTIFACT and not only in the kernel: the first 42
+        // constraints are `PastaMsmWindowed.rowGates`, so the curve arithmetic is not re-authored.
+        let windowed = parse(WINDOWED_JSON);
         assert_eq!(
-            &d.constraints[..45],
-            &windowed.constraints[..],
-            "bucketedRowDesc_extends_windowed is FALSE of the emitted bytes"
+            windowed.constraints.len(),
+            45,
+            "windowedRowDesc = rowGates (42) ++ threadGates (3)"
+        );
+        assert_eq!(
+            &d.constraints[..42],
+            &windowed.constraints[..42],
+            "bucketedRowDesc_extends_rowGates is FALSE of the emitted bytes"
+        );
+        // ⚑ …and the REFUTATION, on the bytes: the windowed descriptor's own 3 thread gates are
+        // NOT inherited, because they say `nxt ACC = loc OUT` UNCONDITIONALLY and this layout's
+        // `ACC` is a SELECT over two accumulators. Asserting the negative is the point — the first
+        // draft DID inherit them and the deployed prover refused an HONEST witness at row 8 with
+        // `failed constraints = [#42,#43,#44]`, exactly those three.
+        assert_ne!(
+            &d.constraints[42..45],
+            &windowed.constraints[42..45],
+            "the unconditional accumulator thread must NOT survive into a bucketed layout"
         );
     }
 }

@@ -164,22 +164,45 @@ and then the three pairwise disjointness facts, which follow from those by arith
 W-WRAPHACK's region, the very one whose docblock carried the concession. -/
 theorem no_rung_holds_two_colliding_regions (s : WrapShape) (sp : SpAcc) (x : Nat) :
     ALL_RUNGS.length = 15
+    -- ⚑ **THE `≤ 1` CONJUNCT IS GONE, 2026-08-05, AND ITS RETIREMENT IS THE POINT.** It counted
+    -- block owners per rung and was already marked "kept, no longer load-bearing"; then `w12_close`
+    -- legitimately acquired two (`.wraphack` and `.combine`, because `.bullet` is under `.close`)
+    -- and the count would have REFUSED it. A check that has stopped being load-bearing and starts
+    -- refusing correct designs is worse than one that is absent. What replaced it is `rungRegions`
+    -- DECLARING each block a rung may allocate in, plus the disjointness below — so two blocks in
+    -- one rung are safe and an UNDECLARED block is still a refusal.
     ∧ (∀ k ∈ ALL_RUNGS,
-        ((rungsUpto k).filter (fun r => COLLIDING_REGION_OWNERS.contains r)).length ≤ 1)
+        (rungRegions s sp k).length ≤ COLLIDING_REGION_OWNERS.length)
     ∧ baseFin s sp = baseWh s sp + WH_REGION_CAP s
     ∧ baseComb s sp = baseFin s sp + FIN_REGION_CAP s
     ∧ ¬(inBlock (baseWh s sp) (WH_REGION_CAP s) x ∧ inBlock (baseFin s sp) (FIN_REGION_CAP s) x)
     ∧ ¬(inBlock (baseFin s sp) (FIN_REGION_CAP s) x ∧ inBlock (baseComb s sp) (COMB_REGION_CAP s) x)
     ∧ ¬(inBlock (baseWh s sp) (WH_REGION_CAP s) x ∧ inBlock (baseComb s sp) (COMB_REGION_CAP s) x) := by
-  refine ⟨by decide, by decide, rfl, rfl, ?_, ?_, ?_⟩ <;>
-    simp only [inBlock, baseComb, baseFin] <;> omega
+  refine ⟨by decide, ?_, rfl, rfl, ?_, ?_, ?_⟩
+  · intro k _
+    cases k <;> simp [rungRegions, COLLIDING_REGION_OWNERS]
+  all_goals simp only [inBlock, baseComb, baseFin]
+  all_goals omega
 
-/-- ⚑ RED CONTROL for the ladder leg: a rung that DID hold two block owners fails the same test, so
-the ∀ is a measurement of the ladder and not a vacuous truth about a list of singletons. -/
-theorem two_colliding_regions_in_one_rung_would_be_caught :
-    (([Rung.transcript, .prev, .wraphack, .finalize].filter
-        (fun r => COLLIDING_REGION_OWNERS.contains r)).length ≤ 1) = False := by
-  decide
+/-- ⚑⚑ **THE LIST FORM IS THE SINGLE-BLOCK FORM WHEREVER THERE IS ONE BLOCK**, so nothing below
+`w12_close` changed meaning when `rungRegion` became `rungRegions`. General over the wall, the block
+and the gates — not an instance — because that is what makes it a statement about the GENERALIZATION
+rather than about the two rungs someone checked. -/
+theorem region_escape_list_is_the_single_block_one (wall b n : Nat) (gs : List PGate) :
+    regionEscapeInAny wall [(b, n)] gs = regionEscapeIn wall b n gs := by
+  simp [regionEscapeInAny, regionEscapeIn, List.any]
+
+/-- ⚑ **AND `w12_close` IS THE RUNG THAT NEEDED IT**: it holds two block owners, declares two blocks,
+and every other rung declares at most one. The middle conjunct is what a `rungRegions` that forgot
+W-COMBINE would falsify — and forgetting it is exactly the failure the old single-block form made
+unavoidable. -/
+theorem close_declares_both_of_its_blocks (s : WrapShape) (sp : SpAcc) :
+    ((rungsUpto .close).filter (fun r => COLLIDING_REGION_OWNERS.contains r)).length = 2
+    ∧ rungRegions s sp .close
+        = [(baseWh s sp, WH_REGION_CAP s), (baseComb s sp, COMB_REGION_CAP s)]
+    ∧ ((ALL_RUNGS.filter (fun k => (rungRegions s sp k).length > 1))) = [Rung.close] := by
+  refine ⟨by decide, rfl, ?_⟩
+  simp [ALL_RUNGS, rungRegions]
 
 /-- ⚑⚑ **RED CONTROL FOR THE DISJOINTNESS ITSELF, AND IT IS THE LAYOUT THIS REPAIR DELETED.** Take
 the same three caps and re-stack them the way `baseWh`, `baseFin` and `baseComb` were written until

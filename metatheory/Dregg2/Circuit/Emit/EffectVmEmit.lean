@@ -261,11 +261,39 @@ The running `EffectVmP3Air::eval` reads three slices: `local` (current row), `ne
 and `pi` (public values). We model each as a column→`ℤ` map (PART-III's `Int` field model), so
 the EffectVM IR reuses the proven `EmittedExpr.eval` and the algebraic forms. -/
 
-/-- A row environment: the current row `loc`, the next row `nxt`, and the public inputs `pub`. -/
+/-- A row environment: the current row `loc`, the next row `nxt`, the public inputs `pub`, and
+⚑ the VERIFIER CHALLENGES `chal`.
+
+## ⚑ 2026-08-05 — the challenge slice, and why it is a fourth slice and not a fourth column
+
+`chal k` is the `k`-th element of the deployed builder's `PermutationAirBuilder::permutation_-
+randomness()` — a Fiat–Shamir value the VERIFIER draws, not a value the prover writes. It is a
+fourth slice because it is a fourth STAGE: `p3-batch-stark/src/prover.rs` observes the main-trace
+commitment and the public values (`transcript.observe_main`) BEFORE it calls
+`transcript.sample_perm_challenges`, so every entry of this slice is sampled after the witness is
+committed. That ordering is the whole soundness story of a challenge leaf and it is a property of
+the deployed transcript, not an assumption made here.
+
+⚠ It reads `0` by default, so a descriptor that declares no `chalGate` is unaffected — its
+denotation never mentions the field. That default is NOT a fallback inside a challenge gate: the
+deployed evaluator REFUSES (emits an unsatisfiable constraint) when the randomness slice is
+shorter than the descriptor's declared challenge count, rather than substituting a zero.
+
+⚠ And a fidelity note that must be said out loud: the deployed challenge is an element of
+`BinomialExtensionField<BabyBear, 4>`, four ordered base lanes (`ExtFieldChallenge.ExtElem`), and
+`Assignment = Nat → ℤ` carries ONE. This field is therefore the BASE-LANE instance of the deployed
+check. The general-carrier denotation (`ChalExpr.evalIn`, over any commutative ring) is the
+faithful one, and the Schwartz–Zippel bound is stated there against `|K|` — which is `2^124` at the
+deployed quartic extension and `2^31` here. Quoting the base-lane number as the soundness of a
+deployed challenge gate would be quoting the wrong one. -/
 structure VmRowEnv where
   loc : Assignment
   nxt : Assignment
   pub : Assignment
+  /-- ⚑ The verifier's Fiat–Shamir challenges (`permutation_randomness()`), read by
+  `DescriptorIR2.ChalExpr.chal`. Defaults to the all-zero assignment so every existing
+  `{ loc := _, nxt := _, pub := _ }` construction is unchanged. -/
+  chal : Assignment := fun _ => 0
 
 /-! ## §2 — `VmGate`: a per-row arithmetic gate over the EffectVM layout.
 

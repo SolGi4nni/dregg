@@ -237,6 +237,18 @@ fn shifted_terminal_constraint(
                 "terminal descriptor acquired an unsupported stateful constraint".to_owned(),
             );
         }
+        // ⚑ A challenge gate is REFUSED here rather than column-shifted. Shifting it would be
+        // mechanical (the body's `Loc`/`Nxt` leaves shift like a window gate's, and `Chal` leaves
+        // do not shift at all — a challenge is not a column), but the fused terminal's challenge
+        // SUPPLY is a different instance's lookup-context count, and a gate silently carried into
+        // an instance with fewer contexts would hit the evaluator's fail-closed arm and produce a
+        // proof that cannot verify. Refuse loudly at the fusion instead.
+        VmConstraint2::ChalGate(_) => {
+            return Err(
+                "terminal descriptor acquired a chal_gate; the fused instance's challenge supply                  is not the slice's, so the gate must be re-declared rather than shifted"
+                    .to_owned(),
+            );
+        }
     };
     Ok(Some(shifted))
 }
@@ -466,6 +478,7 @@ pub fn descriptor() -> Result<EffectVmDescriptor2, String> {
         name: "private-book-bfv-terminal-fused-o0-c0-q0-k0::exact-private-v1".to_owned(),
         trace_width: TRACE_WIDTH,
         public_input_count: PUBLIC_INPUT_COUNT,
+        challenges: 0,
         tables: terminal_descriptor.tables,
         constraints,
         hash_sites: vec![],

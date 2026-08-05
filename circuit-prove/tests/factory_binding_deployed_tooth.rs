@@ -391,6 +391,7 @@ fn deployed_factory_witness_on_unpinned_leg_is_refused() {
         name: "factory-unpinned-deployed-shape-standin".to_string(),
         trace_width: n_pis,
         public_input_count: n_pis,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

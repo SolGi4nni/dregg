@@ -1360,8 +1360,7 @@ private def authorizedNextTick {authorityId : Digest32}
 
 /-- An authority can advance only the private state's canonical clock by one
 checked u64 step.  There is no caller-supplied `Nat` timestamp. -/
-private def proposeAdvanceClock {authorityId : Digest32}
-    (_authority : DeploymentAuthority authorityId)
+private def proposeAdvanceClockById (authorityId : Digest32)
     (state : BazaarGameState) : Except Refusal BazaarGameState :=
   if authorityId ≠ state.authority then .error .wrongAuthority
   else match state.current with
@@ -1375,6 +1374,14 @@ private def proposeAdvanceClock {authorityId : Digest32}
       | none => .error .clockExhausted
       | some next => .ok { state with tick := next }
 
+/-- The live authority-bearing clock command and historical replay share one
+computational reducer.  The replay side never constructs an authority token:
+it supplies only the deployment id authenticated by the durable journal. -/
+private def proposeAdvanceClock {authorityId : Digest32}
+    (_authority : DeploymentAuthority authorityId)
+    (state : BazaarGameState) : Except Refusal BazaarGameState :=
+  proposeAdvanceClockById authorityId state
+
 /-- Once an active round reaches its expiry, the general clock verb cannot
 consume the successor reserved for custody return.  This check precedes the
 counter-successor lookup, so it also refuses a hostile loaded max-u64 state by
@@ -1387,7 +1394,8 @@ private theorem advanceClock_active_at_or_after_expiry_refused
     (current : state.current = some round)
     (expired : round.schedule.expiresAt ≤ state.tick.val) :
     proposeAdvanceClock authority state = .error .activeRoundRequiresExpiry := by
-  simp [proposeAdvanceClock, authorityExact, current, expired]
+  simp [proposeAdvanceClock, proposeAdvanceClockById, authorityExact,
+    current, expired]
 
 private theorem wireSafe_expiry_has_tick_successor
     (state : BazaarGameState) (round : Round)
@@ -2156,6 +2164,229 @@ def settleRound (live : DurableDeployment)
   match live with
   | ⟨registry, state, _headExact, _revisionExact, _authorityExact⟩ =>
       preparePersistence registry state (proposeSettleRound authority receipt state)
+
+/-! ## Authenticated command-event replay
+
+The restart log does not serialize `DeploymentAuthority`, crown certificates,
+envelope authorizations, same-opening witnesses, or settlement proofs.  Those
+objects are evidence consumed by the live transition which produced a
+successful CAS; they are not computational state.  Instead the genesis event
+retains the exact proof-erased projection which the initialized game continues
+to read, and successor events name canonical reducers.
+
+`ReplayMachine` deliberately has a private constructor and does not expose its
+private registry or game state.  Pure decoding can therefore produce only a
+candidate replay.  The existing checked durable-load portal remains the sole
+way to turn a reconstruction into a player-command-bearing
+`DurableDeployment`, after byte equality with the authenticated journal tail.
+-/
+
+structure ReplayContext where
+  deploymentId : Digest32
+  storeIdentity : Digest32
+deriving DecidableEq
+
+/-- Replayable projection of a successful deployment initialization.  It
+contains no opaque admission or proof object. -/
+structure ReplayGenesisEvent where
+  authority : Digest32
+  lot : LotKey
+  market : ObservableState
+  originCounter : Nat
+deriving DecidableEq
+
+inductive ReplayCommandEvent where
+  | initialize (genesis : ReplayGenesisEvent)
+  | advanceClock
+deriving DecidableEq
+
+inductive ReplayRefusal where
+  | expectedGenesis
+  | duplicateGenesis
+  | deploymentMismatch
+  | invalidGenesis
+  | transition (reason : Refusal)
+deriving DecidableEq, Repr
+
+/-- Every equation formerly supplied by the proof-carrying initialization
+inputs, restated over the exact projection retained by the event. -/
+def ReplayGenesisEvent.validB (context : ReplayContext)
+    (genesis : ReplayGenesisEvent) : Bool :=
+  decide (genesis.authority = context.deploymentId) &&
+    decide (genesis.lot.authority = genesis.authority) &&
+    decide (genesis.originCounter < PLAYER_COUNTER_MODULUS) &&
+    observableV1MarketShapeB genesis.market &&
+    decide (genesis.market.identity.federationId =
+      genesis.lot.origin.receipt.federationId) &&
+    decide (genesis.market.identity.contentRoot = genesis.lot.origin.contentRoot) &&
+    decide (genesis.market.identity.activationDigest =
+      genesis.lot.origin.activationDigest) &&
+    decide (genesis.market.identity.contentSession =
+      genesis.lot.origin.receipt.contentSession) &&
+    decide (genesis.market.identity.contentEpoch =
+      genesis.lot.origin.receipt.contentEpoch) &&
+    decide (genesis.market.identity.seller = genesis.lot.seller) &&
+    decide (genesis.market.identity.baseAsset = .relic genesis.lot.origin.relic) &&
+    decide (genesis.lot.note.owner = genesis.lot.seller) &&
+    decide (genesis.lot.note.asset = .relic genesis.lot.origin.relic) &&
+    decide (genesis.lot.note.amount = 1) &&
+    decide (genesis.lot.note ∈ genesis.market.baseEscrowNotes) &&
+    decide (genesis.lot.note.nullifier ∉ genesis.market.consumedAssetNullifiers)
+
+structure ReplayMachine where
+  private mk ::
+  context : ReplayContext
+  sequence : Nat
+  private registry : DeploymentRegistry
+  private state : BazaarGameState
+  private head_exact : registry.head = some state.key
+  private revision_exact : registry.revision = state.registryRevision
+  private authority_exact : registry.authority = state.authority
+
+def ReplayMachine.key (machine : ReplayMachine) : StateKey :=
+  machine.state.key
+
+def ReplayMachine.registryRevision (machine : ReplayMachine) : PlayerCounter :=
+  machine.registry.revision
+
+private def ReplayMachine.asDurable (machine : ReplayMachine) : DurableDeployment :=
+  ⟨machine.registry, machine.state, machine.head_exact,
+    machine.revision_exact, machine.authority_exact⟩
+
+structure ReplayApplied where
+  event : ReplayCommandEvent
+  request : RuntimeCasRequest
+  machine : ReplayMachine
+
+/-- Exact event-bearing request admitted by the v3 command journal.  Its
+constructor is private: the only producer is a successful application by the
+Lean replay machine. -/
+structure JournaledRuntimeCasRequest where
+  private mk ::
+  context : ReplayContext
+  event : ReplayCommandEvent
+  cas : RuntimeCasRequest
+
+def ReplayApplied.journaledRequest (applied : ReplayApplied) :
+    JournaledRuntimeCasRequest :=
+  ⟨applied.machine.context, applied.event, applied.request⟩
+
+private def replayInitialize (context : ReplayContext)
+    (genesis : ReplayGenesisEvent) : Except ReplayRefusal ReplayApplied :=
+  if genesis.authority ≠ context.deploymentId then
+    .error .deploymentMismatch
+  else if genesis.validB context ≠ true then
+    .error .invalidGenesis
+  else match checkedPlayerCounter genesis.originCounter with
+    | none => .error .invalidGenesis
+    | some originCounter =>
+      let revision : PlayerCounter := ⟨1, by decide⟩
+      let state : BazaarGameState := {
+        authority := context.deploymentId
+        registryRevision := revision
+        inventory := Inventory.singletonMaker genesis.lot
+        market := genesis.market
+        current := none
+        history := []
+        tick := zeroPlayerCounter
+        nextRound := originCounter
+        consumedOrigins := {genesis.lot.origin}
+        consumedSettlements := ∅
+      }
+      let registry : DeploymentRegistry := {
+        authority := context.deploymentId
+        revision
+        head := some state.key
+        consumedOrigins := {genesis.lot.origin}
+      }
+      let machine : ReplayMachine := {
+        context
+        sequence := 1
+        registry
+        state
+        head_exact := rfl
+        revision_exact := rfl
+        authority_exact := rfl
+      }
+      .ok {
+        event := .initialize genesis
+        request := ⟨none, state.key⟩
+        machine
+      }
+
+private def ReplayMachine.advanceCandidate (machine : ReplayMachine) :
+    Except Refusal PersistenceCandidate :=
+  preparePersistence machine.registry machine.state
+    (proposeAdvanceClockById machine.context.deploymentId machine.state)
+
+/-- The historical clock reducer is definitionally the same reducer used by
+the authority-bearing live command. -/
+theorem ReplayMachine.advanceCandidate_eq_live (machine : ReplayMachine)
+    (authority : DeploymentAuthority machine.context.deploymentId) :
+    machine.advanceCandidate = advanceClock machine.asDurable authority := by
+  rfl
+
+private def ReplayMachine.advance (machine : ReplayMachine) :
+    Except ReplayRefusal ReplayApplied :=
+  match machine.advanceCandidate with
+  | .error refusal => .error (.transition refusal)
+  | .ok candidate =>
+      match candidate with
+      | ⟨_predecessor, registry, state, headExact, revisionExact, authorityExact⟩ =>
+        .ok {
+          event := .advanceClock
+          request := candidate.request
+          machine := {
+            context := machine.context
+            sequence := machine.sequence + 1
+            registry
+            state
+            head_exact := headExact
+            revision_exact := revisionExact
+            authority_exact := authorityExact
+          }
+        }
+
+def replayCommand (context : ReplayContext) (before : Option ReplayMachine)
+    (event : ReplayCommandEvent) : Except ReplayRefusal ReplayApplied :=
+  match before, event with
+  | none, .initialize genesis => replayInitialize context genesis
+  | none, .advanceClock => .error .expectedGenesis
+  | some _, .initialize _ => .error .duplicateGenesis
+  | some machine, .advanceClock =>
+      if machine.context ≠ context then .error .deploymentMismatch
+      else machine.advance
+
+/-- Final typed admission after fresh replay.  Event decoding alone cannot
+produce a live deployment; the native primitive independently replays the
+durable journal and compares its exact tail with `machine.key`. -/
+def ReplayMachine.admitDurable (machine : ReplayMachine) (wire : ByteArray) :
+    IO (Option DurableDeployment) := do
+  let some receipt ← TrustedRuntimePortal.admitDurableLoad
+      machine.registry machine.state wire
+    | pure none
+  let load := TrustedRuntimePortal.confirmDurableLoad
+    machine.registry machine.state receipt machine.head_exact
+      machine.revision_exact machine.authority_exact
+  pure (some (DurableDeployment.ofUpstream load))
+
+namespace TrustedRuntimePortal
+
+/-- Native code persists the exact Lean-emitted command payload beside the
+CAS coordinates.  It remains a checked Bool boundary; the dependent
+persistence admission is constructed here, never in Rust or C. -/
+@[extern "dregg_poa_bazaar_perform_journaled_cas_checked"]
+private opaque performJournaledCasChecked
+    (request : JournaledRuntimeCasRequest) : IO Bool
+
+def performJournaledCas (request : JournaledRuntimeCasRequest) :
+    IO (Option (PersistenceAdmission request.cas)) := do
+  if ← performJournaledCasChecked request then
+    pure (some ⟨()⟩)
+  else
+    pure none
+
+end TrustedRuntimePortal
 
 private theorem settleRound_success_moves_exact_lot_and_consumes_receipt
     {authorityId : Digest32} {authority : DeploymentAuthority authorityId}

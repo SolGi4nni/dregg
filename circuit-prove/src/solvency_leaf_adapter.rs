@@ -231,6 +231,7 @@ pub fn solvency_to_descriptor2() -> EffectVmDescriptor2 {
         name: "solvency-leaf::dregg-reserve-covers-liabilities-v1".to_string(),
         trace_width: width,
         public_input_count: SOLVENCY_CLAIM_LEN,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

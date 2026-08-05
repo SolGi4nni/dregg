@@ -29,6 +29,7 @@ import Dregg2.Circuit.Emit.PastaPoseidonFq
 import Dregg2.Circuit.Emit.MinaRealBlockTranscript
 import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
 import Dregg2.Circuit.Emit.KimchiWrapMainField
+import Dregg2.Circuit.Emit.KimchiStepWrapChainKey
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 open Dregg2.Circuit.Emit.KimchiTarget (KGateType K_PERMUTS)
@@ -478,6 +479,31 @@ structure SpAcc where
 
 instance : Inhabited SpAcc :=
   ⟨{ evs := [], st := [], stN := [], mode := .absorbed 0, next := 0 }⟩
+
+/-- ⚑ **THE ABSORBED WORD'S VALUE, READ OFF THE EMITTED TRACE** — the value-layer twin of the
+`(sp.evs.filter (·.isAbs && ·.tag == tag)).wordV` that every consuming sub-circuit already uses for
+its VARIABLE, and the single source both layers now share.
+
+⚠ **THIS EXISTS BECAUSE THE TWO LAYERS DISAGREED, AND THE DISAGREEMENT WAS INVISIBLE HERE.**
+`combPtVal`, `bullCipVal`, `bullLrVal`, `bullDeltaVal`, `prevEnv`'s `assert_on_curve` intermediates
+and `whSpongeP`'s tape all answered with `itemVal` — `PastaPoseidonFq`'s borrowed
+`create_circuit(0,5)` proof — **whatever tape drove the `WrapData`**. For a `WrapData` whose `sp` is
+`runSpongeQ … (schedule s) …` that is invisible, because `schedule` absorbs `itemVal`: value and
+variable agree by coincidence of source, not by construction. For `KimchiStepWrapChain.tChain`,
+whose `sp` is driven by dregg's own step proof's tape, they DISAGREED — a `.combine` emission would
+have folded one proof's commitments over cells holding another's, and its honest witness would fail
+`CompleteAdd`. `bullCipVal tChain` was `102000317`, a `wrapFixtureQ` filler, against an absorbed
+`combined_inner_product` of 24039349238365581886618386413466944030470576020951420730767724460078234281349.
+
+Reading the trace makes the agreement STRUCTURAL: the value a gadget computes over and the cell it
+computes in are one object, for every `WrapData`, including one whose tape is bent. It is
+byte-neutral wherever `sp` came from `schedule` — which is every previously emitted rung — so
+nothing below re-emits. -/
+def absVal (sp : SpAcc) (tag i : Nat) : Nat :=
+  ((sp.evs.filter (fun e => e.isAbs && e.tag == tag)).getD i default).word
+
+/-- …and the pair, at item `2i`/`2i+1`, which is how every commitment family is read. -/
+def absPtVal (sp : SpAcc) (tag i : Nat) : Nat × Nat := (absVal sp tag (2 * i), absVal sp tag (2 * i + 1))
 
 /-- Fresh sponge variable. -/
 private def fresh (base i : Nat) : PVar := .external (base + i)
@@ -1095,23 +1121,48 @@ def STEP_VK_XY : List Nat :=
   4129260839752076466596086431914048517141014770261954927508289257654980391346, 26308296295204227453552650644860782362357850810154305358229728558512579255099, 24502611438695320232273002947412396906059627211521155699290420437119200351654, 27688738592432713487369312650930096659220848921637869873729171969431898187759
 ]
 
-/-- ⚑ Which entry of `step_keys` holds the REAL key. `wrap_main.ml:98-101` makes `step_keys` a
-per-branch vector of the compiled STEP rules' verification keys; only one of them exists in this
-tree, so the others are named fixtures. `mkWrapWith` witnesses branch `min 1 (branches − 1)`, and
+/-- ⚑ Which entry of `step_keys` holds **MINA'S `step-transaction`** key. `wrap_main.ml:98-101`
+makes `step_keys` a per-branch vector of the compiled STEP rules' verification keys, and this tree
+now has TWO of them. `mkWrapWith` witnesses branch `min 1 (branches − 1)`, and
 `key_digest_is_the_index_digest` below is what would RED if the selection ever moved off it. -/
 def KEY_REAL_BRANCH : Nat := 1
 
-/-- Branch `i`'s coordinate `k`. ⚠ Only `KEY_REAL_BRANCH` is real; §2d names the rest. -/
+/-- ⚑⚑ **AND WHICH ENTRY HOLDS DREGG'S OWN STEP RULE** — `stepmain_smoke_r8_finalize`, the circuit
+`KimchiStepMain` assembles and `EmitStepMainJson` emits, whose accepted Vesta proof drives
+`KimchiStepWrapChain`'s transcript.
+
+⚑ **THIS BRANCH IS WHAT MAKES THE TWO HALVES COMPOSE, AND IT IS `choose_key`'s OWN MECHANISM.**
+`keyRows`' closing `digestTie` welds the index sponge's squeeze to the transcript's FIRST absorbed
+word, so a wrap circuit can only verify a step proof whose verifier index is the key it committed
+to. Before 2026-08-05 there was exactly one real entry — Mina's — while the chain's tape was
+dregg's, and that single row is why `KimchiStepWrapChain` stopped at `w4_bind`: not W-COMBINE, not
+W-BULLET. Two step rules in one `step_keys` vector is not a workaround for that; it is what
+`step_keys` IS. -/
+def KEY_CHAIN_BRANCH : Nat := 2
+
+/-- Branch `i`'s coordinate `k`. ⚠ `KEY_REAL_BRANCH` and `KEY_CHAIN_BRANCH` are real compiled step
+rules; §2d names the rest. -/
 def keyConst (i k : Nat) : Nat :=
-  if i == KEY_REAL_BRANCH then STEP_VK_XY.getD k 0 else wrapFixture (64 + i) k
+  if i == KEY_REAL_BRANCH then STEP_VK_XY.getD k 0
+  else if i == KEY_CHAIN_BRANCH then
+    Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.getD k 0
+  else wrapFixture (64 + i) k
 
 /-- Item tag for an index-sponge coordinate. -/
 def T_INDEXPT : Nat := 9
 
-/-- The index sponge's schedule: 56 absorbs of the CHOSEN key, then one full squeeze
-(`Sponge.squeeze_field`, `wrap_verifier.ml:530`). -/
-def keySchedule : List Ev :=
-  (List.range KEY_COORDS).map (fun k => Ev.abs T_INDEXPT (keyConst KEY_REAL_BRANCH k))
+/-- The index sponge's schedule at branch `i`: 56 absorbs of the CHOSEN key, then one full squeeze
+(`Sponge.squeeze_field`, `wrap_verifier.ml:530`).
+
+⚠ ⚑ **THIS TOOK NO BRANCH UNTIL 2026-08-05, AND THAT WAS A LATENT DEFECT, NOT ONLY A LIMITATION.**
+It absorbed `keyConst KEY_REAL_BRANCH` unconditionally while `keyEnv`'s one-hot fold outputs
+`keyConst t.br.idx`, and `keyRows`' `sealHalves` ties the two together — so W-KEY had a satisfying
+witness ONLY at `t.br.idx = KEY_REAL_BRANCH`. Every `WrapData` in the tree happened to select
+branch 1, so the whole `choose_key` fold was decoration: a one-hot selector over five entries whose
+sponge ignored the selection. `key_sponge_absorbs_the_selected_branch` is the pin that it no longer
+does, and `key_digest_moves_with_the_branch_selection` is the red control. -/
+def keySchedule (i : Nat) : List Ev :=
+  (List.range KEY_COORDS).map (fun k => Ev.abs T_INDEXPT (keyConst i k))
   ++ [ Ev.sq .full ]
 
 /-- W-KEY's accumulator variables: `acc k i = Σ_{j ≤ i} bⱼ · C_{j,k}`. -/
@@ -1127,20 +1178,20 @@ def nKeyAccVars (s : WrapShape) : Nat := KEY_COORDS * s.branches
 def baseKey (s : WrapShape) (sp : SpAcc) : Nat := baseBr s sp + nBranchVars s
 def baseKeySp (s : WrapShape) (sp : SpAcc) : Nat := baseKey s sp + nKeyAccVars s
 
-/-- The index sponge's trajectory. `bt` is out of range, so no word is bent. -/
-def keySponge (s : WrapShape) (sp : SpAcc) : SpAcc :=
-  runSpongeQ (baseKeySp s sp) keySchedule (KEY_COORDS + 1) 0
+/-- The index sponge's trajectory at branch `i`. `bt` is out of range, so no word is bent. -/
+def keySponge (s : WrapShape) (sp : SpAcc) (i : Nat) : SpAcc :=
+  runSpongeQ (baseKeySp s sp) (keySchedule i) (KEY_COORDS + 1) 0
 
 /-- …and one with coordinate `k` bent by `+d`, for the red control. -/
-def keySpongeBent (s : WrapShape) (sp : SpAcc) (k d : Nat) : SpAcc :=
-  runSpongeQ (baseKeySp s sp) keySchedule k (qAdd (keyConst KEY_REAL_BRANCH k) d)
+def keySpongeBent (s : WrapShape) (sp : SpAcc) (i k d : Nat) : SpAcc :=
+  runSpongeQ (baseKeySp s sp) (keySchedule i) k (qAdd (keyConst i k) d)
 
 /-- `index_digest`'s VARIABLE — the squeeze's source cell. -/
-def keyDigestVar (s : WrapShape) (sp : SpAcc) : PVar :=
-  (((keySponge s sp).evs.filter (fun e => !e.isAbs)).getD 0 default).srcV
+def keyDigestVar (s : WrapShape) (sp : SpAcc) (i : Nat) : PVar :=
+  (((keySponge s sp i).evs.filter (fun e => !e.isAbs)).getD 0 default).srcV
 /-- …and its VALUE. -/
-def keyDigestVal (s : WrapShape) (sp : SpAcc) : Nat :=
-  (((keySponge s sp).evs.filter (fun e => !e.isAbs)).getD 0 default).val
+def keyDigestVal (s : WrapShape) (sp : SpAcc) (i : Nat) : Nat :=
+  (((keySponge s sp i).evs.filter (fun e => !e.isAbs)).getD 0 default).val
 def keyDigestValOf (a : SpAcc) : Nat :=
   ((a.evs.filter (fun e => !e.isAbs)).getD 0 default).val
 
@@ -1152,7 +1203,7 @@ def keyRows (t : WrapData) (wired : Bool) : List WRow :=
   let s := t.sh
   let kv := keyVars s (baseKey s t.sp)
   let bv := branchVars s (baseBr s t.sp)
-  let ks := keySponge s t.sp
+  let ks := keySponge s t.sp t.br.idx
   let b := s.branches
   -- `Vector.map2 … ~f:(fun b key → g * (b :> t))` then `Vector.reduce_exn ~f:(+)`, per coordinate.
   let foldHalves : List (List (Option PVar) × List Int) :=
@@ -1170,7 +1221,7 @@ def keyRows (t : WrapData) (wired : Bool) : List WRow :=
       ([some (kv.acc k (b - 1)), some ((ks.evs.getD k default).wordV), none], cEq))
   -- ⚑ AND THE TIE THAT CLOSES §2c's FIRST ENTRY: `absorb sponge Field index_digest` (`:537`).
   let digestTie : List (List (Option PVar) × List Int) :=
-    [ ([some (keyDigestVar s t.sp), some ((t.sp.evs.getD 0 default).wordV), none], cEq) ]
+    [ ([some (keyDigestVar s t.sp t.br.idx), some ((t.sp.evs.getD 0 default).wordV), none], cEq) ]
   transcriptRowsQ (baseKeySp s t.sp) ks wired
   ++ packHalves (foldHalves ++ sealHalves ++ digestTie)
 
@@ -1179,7 +1230,7 @@ chosen coordinate after it, which is what a one-hot fold over constants computes
 def keyEnv (t : WrapData) : VarEnv :=
   let s := t.sh
   let kv := keyVars s (baseKey s t.sp)
-  spongeEnv (baseKeySp s t.sp) (keySponge s t.sp)
+  spongeEnv (baseKeySp s t.sp) (keySponge s t.sp t.br.idx)
   ++ (List.range KEY_COORDS).flatMap (fun k =>
       (List.range s.branches).map (fun i =>
         (kv.acc k i, ((if t.br.idx ≤ i then keyConst t.br.idx k else 0 : Nat) : Int))))
@@ -1377,8 +1428,15 @@ def xhLadders (s : WrapShape) : List Nat :=
 15/16 the fold output, 17/18 the `Cond_add` sum, 19 `−yT`. -/
 def XH_STRIDE : Nat := 20
 
+/-- ⚑ The key sponge's VARIABLE COUNT. Branch-independent by construction: `keySchedule i` has the
+same 56 absorbs and one squeeze at every `i`, and `runSpongeQ` allocates per EVENT and not per
+value. `key_sponge_width_is_branch_independent` pins it across all five branches, because every base
+above `w5_key` is built on this number and a branch-dependent one would move the whole layout under
+a branch selection. -/
+def nKeySpVars (s : WrapShape) (sp : SpAcc) : Nat := (keySponge s sp KEY_REAL_BRANCH).next
+
 /-- The x_hat region starts after the key sponge, so nothing below `w6_xhat` moves. -/
-def baseXh (s : WrapShape) (sp : SpAcc) : Nat := baseKeySp s sp + (keySponge s sp).next
+def baseXh (s : WrapShape) (sp : SpAcc) : Nat := baseKeySp s sp + nKeySpVars s sp
 def xhBaseB (s : WrapShape) (sp : SpAcc) : Nat := baseXh s sp + XH_STRIDE * xhN s
 def xhBaseC (s : WrapShape) (sp : SpAcc) : Nat :=
   xhBaseB s sp + 2 * (xhTotalChunks s + xhN s)
@@ -2199,8 +2257,12 @@ def prevEnv (t : WrapData) : VarEnv :=
   let s := t.sh
   let sp := t.sp
   (List.range PREV_WORDS).map (fun w => (prevW s sp w, (prevWordVal w : Int)))
+  -- ⚑ `assert_on_curve`'s intermediates are `sgOldVar`'s OWN square and cube, so the value must come
+  -- from `sp` — `absVal`, not `itemVal`. Under `itemVal` these three rows were satisfied only for a
+  -- `schedule`-driven tape; on a chained one the cube of the borrowed proof's abscissa sat in a cell
+  -- whose `cMul` factors were the chained one's, and `cOnCurveQ` had no witness.
   ++ (List.range s.prevs).flatMap (fun p =>
-      let x := itemVal T_SGOLD (2 * p)
+      let x := absVal sp T_SGOLD (2 * p)
       [ (prevSq s sp p 0, (qMul x x : Int))
       , (prevSq s sp p 1, (qMul (qMul x x) x : Int)) ])
 
@@ -2322,9 +2384,17 @@ shape arithmetic, so a cap with slack here would be slack nothing needs.
 the block ends where W-CLOSE's cell does. -/
 def WH_REGION_CAP (s : WrapShape) : Nat := nWhVars s + 1
 
-/-- Previous proof `p`'s sponge (`wrap_main.ml:341-348`). -/
+/-- Previous proof `p`'s sponge (`wrap_main.ml:341-348`).
+
+⚑ Its `sg_old` pair is `absPtVal t.sp T_SGOLD p` — the TRANSCRIPT's own absorbed cells, per `absVal`.
+`KimchiWrapMainField.whSgOld` (which reads `PastaPoseidonFq.PREVCOMM_XY` directly) survives only as
+`prevWordVal`'s source, because `KimchiWrapMainField` is BELOW this file in the import graph and
+cannot see `SpAcc` at all. ⚠ **Residual, named:** the 57 packed previous-statement words that
+`prevWordVal` feeds are a FREE WITNESS upstream (`wrap_main.ml:226-256` checks `old_bp_chals` with
+no `typ` of any kind) and are memoized into `WrapShape.xhatXY`, so routing them through a tape would
+make the shape depend on the transcript. That is a design fork, not this repair. -/
 def whSpongeP (t : WrapData) (p : Nat) : SpAcc :=
-  whSpongeOf (whBaseP t.sh t.sp p) (whTape (whOldChals p) (whSgOld p))
+  whSpongeOf (whBaseP t.sh t.sp p) (whTape (whOldChals p) (absPtVal t.sp T_SGOLD p))
 /-- …and the CLOSING one (`wrap_main.ml:421-431`), whose squeeze is wrap statement word 11. -/
 def whSpongeC (t : WrapData) : SpAcc :=
   whSpongeOf (whBaseC t.sh t.sp) (whTape whNewChals whSg)
@@ -2374,13 +2444,30 @@ def whEnv (t : WrapData) : VarEnv :=
 `Boolean.Assert.is_true b` is `assert_equal (b :> Field.t) Field.one`: **ONE R1CS constraint**, one
 `Generic` half here.
 
-⚠ **AND ITS INPUT IS W-BULLET'S, WHICH THIS FILE DOES NOT ASSEMBLE.** So the cell this rung pins to
-1 is a free witness until §13 item 6 lands, and the honest statement of what the rung buys is
-narrow: the wrap circuit REFUSES a witness in which `bulletproof_success` is anything but 1, which
-is the difference between an opening check whose verdict is ignored and one whose verdict is
-required. It is not a claim that the opening is checked — `equal_g` is not in this circuit at all.
-Emitting it anyway is right for the same reason `wrap_main` writes it: the assert is the closing
-tie, and a `check_bulletproof` whose result nothing asserts is a check that does not refuse. -/
+✅ **AND ITS INPUT IS W-BULLET'S — TIED SINCE 2026-08-05.** The cell this rung pins to 1 used to be a
+FREE WITNESS that `closeEnv` simply set to `1`, so the rung asserted a fact about a variable nothing
+computed. It is now σ-tied to `bullEqV s sp 12` — `equal_g`'s `Boolean.all` output, W-BULLET's own
+verdict — and `closeEnv` **COMPUTES** it as `bullLhs t v == bullRhs t v` off `bullData` rather than
+writing `1`. So the two-row rung now says: *the opening equation's verdict is this cell, and this
+cell is 1.* If `equal_g` ever landed on 0 the `cConst 1` half would have NO satisfying witness and the
+rung would refuse — which is exactly what it could not do while the witness was a constant.
+
+⚠ **WHAT THAT STILL DOES NOT BUY, AND SAYING OTHERWISE WOULD BE THE WHOLE DEFECT.** `equal_g`
+refuses no on-curve substitution: `G`, `z₁` and `z₂` reach `check_bulletproof` through
+`Openings.Bulletproof.typ` with NO binder anywhere in `wrap_main` (§24's own note), so for any `lhs`
+on the curve a prover can solve for a `G` that closes the opening. The equation constrains the TRIPLE
+and pins none of its three legs; what binds them is the NEXT proof's `finalize_other_proof`. So this
+is "the verdict of a check that refuses little is now required" — not "the opening is checked".
+
+⚑ **THE PRECONDITION THIS RUNG NEEDED, AND IT IS NOW MET.** `rungsUpto .close` holds TWO block
+owners — `.wraphack` and `.combine` — because `.bullet` is under `.close`. `rungRegion` used to
+return ONE `(base, cap)` per rung, so every gate W-BULLET contributes (all in the `baseComb` block)
+would have been a region escape against W-WRAPHACK's block and `EmitWrapMainJson` would have REFUSED
+the rung. `rungRegions` returns a LIST and `w12_close` DECLARES both blocks; the escape check still
+bites on anything outside both, and §17b already proves the blocks pairwise disjoint for every `x`,
+so this is a generalization and not a relaxation. `no_rung_holds_two_colliding_regions`'s `≤ 1`
+conjunct is retired with it — it was already marked "kept, no longer load-bearing", and keeping a
+count that now refuses a legitimate rung would be worse than deleting it. -/
 
 /-- The closing region: one cell, and it is the LAST cell of W-WRAPHACK's block (§17b). -/
 def baseClose (s : WrapShape) (sp : SpAcc) : Nat := baseWh s sp + nWhVars s
@@ -2394,16 +2481,6 @@ theorem close_is_the_last_cell_of_the_wraphack_block (s : WrapShape) (sp : SpAcc
 
 /-- `bulletproof_success` — `check_bulletproof`'s `` `Success `` (`wrap_verifier.ml:436`). -/
 def bpSuccessVar (s : WrapShape) (sp : SpAcc) : PVar := .external (baseClose s sp)
-
-/-- **W-CLOSE's ROWS.** `Boolean.Assert.is_true bulletproof_success`, and a σ-only probe so the
-rung's own cell is testable by the harness rather than merely present. -/
-def closeRows (t : WrapData) (wired : Bool) : List WRow :=
-  let v := bpSuccessVar t.sh t.sp
-  packHalves [ ([some v, none, none], cConst 1) ]
-  ++ [ probeRow wired v (whDigestVar (whSpongeC t)) ]
-
-/-- W-CLOSE's variable environment: the honest witness satisfies the assert. -/
-def closeEnv (t : WrapData) : VarEnv := [ (bpSuccessVar t.sh t.sp, (1 : Int)) ]
 
 /-! ## §19 — ⚑ **W-FINALIZE**: `finalize_other_proof`, and the fact that decides it.
 
@@ -3484,18 +3561,25 @@ and bound by W-FINALIZE. It is `< 2^ENDO_BITS` because the ladder's counter reco
 that many bits; a wider value would make `Field.Assert.equal !n_acc scalar` unsatisfiable. -/
 def combXiVal : Nat := wrapFixtureQ 30 0 % 2 ^ ENDO_BITS
 
-/-- Commitment `k`'s VALUE, in `wrap_verifier.ml:687-706`'s flat order. -/
+/-- Commitment `k`'s VALUE, in `wrap_verifier.ml:687-706`'s flat order.
+
+⚑ **EVERY TRANSCRIPT SLOT READS `t.sp`, THE SAME PLACE `combPtVar`'s `absW` READS THE VARIABLE.**
+Four of the seven cases below are the transcript's own absorbed words, and until 2026-08-05 they
+answered with `itemVal` regardless of the tape — see `absVal`. `x_hat` is one of them: `schedule`
+absorbs `s.xhatXY`, so `absVal t.sp T_XHAT` IS `s.xhatXY` for a `schedule`-driven `WrapData`, and is
+the step proof's own public-input commitment for a chained one. The three that do not read the
+transcript are named: `ftcOut` is §17's output and `kc` is W-KEY's sealed coordinates. -/
 def combPtVal (t : WrapData) (k : Nat) : Nat × Nat :=
   let s := t.sh
+  let sp := t.sp
   let kc : Nat → Nat × Nat := fun c => (keyConst t.br.idx c, keyConst t.br.idx (c + 1))
-  if k < s.prevs then (itemVal T_SGOLD (2 * k), itemVal T_SGOLD (2 * k + 1))
-  else if k == s.prevs then s.xhatXY
+  if k < s.prevs then absPtVal sp T_SGOLD k
+  else if k == s.prevs then absPtVal sp T_XHAT 0
   else if k == s.prevs + 1 then ftcOut t
-  else if k == s.prevs + 2 then (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
+  else if k == s.prevs + 2 then absPtVal sp T_ZCOMM 0
   else if k < s.prevs + 3 + KEY_SINGLES then kc (44 + 2 * (k - s.prevs - 3))
   else if k < s.prevs + 3 + KEY_SINGLES + s.wComms then
-    let j := k - s.prevs - 3 - KEY_SINGLES
-    (itemVal T_WCOMM (2 * j), itemVal T_WCOMM (2 * j + 1))
+    absPtVal sp T_WCOMM (k - s.prevs - 3 - KEY_SINGLES)
   else if k < s.prevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS then
     kc (14 + 2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms))
   else kc (2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms - KEY_COLS))
@@ -3910,7 +3994,7 @@ def enN (t : WrapData) (m e : Nat) : PVar :=
 /-- The transcript's `combined_inner_product` cell — `absorb_shifted` at `:395`, ONE item. -/
 def bullCipV (t : WrapData) : PVar :=
   ((t.sp.evs.filter (fun e => e.isAbs && e.tag == T_CIP)).getD 0 default).wordV
-def bullCipVal (t : WrapData) : Nat := itemVal T_CIP 0
+def bullCipVal (t : WrapData) : Nat := absVal t.sp T_CIP 0
 /-- `t`, the FULL field squeeze `group_map` consumes (`:402-403`) — its SOURCE cell, so the sponge
 state and the group map's input are one σ class. -/
 def bullTV (t : WrapData) : PVar :=
@@ -3927,8 +4011,11 @@ def bullDeltaV (t : WrapData) : PVar × PVar :=
   let w : Nat → PVar := fun i =>
     ((t.sp.evs.filter (fun e => e.isAbs && e.tag == T_DELTA)).getD i default).wordV
   (w 0, w 1)
-def bullLrVal (r j : Nat) : Nat × Nat := (itemVal T_LR (4 * r + 2 * j), itemVal T_LR (4 * r + 2 * j + 1))
-def bullDeltaVal : Nat × Nat := (itemVal T_DELTA 0, itemVal T_DELTA 1)
+/-- ⚑ **RUNG-DATA-EXPLICIT.** These took no `WrapData` at all until 2026-08-05, which is what made
+the borrowed-proof defect structural rather than accidental: a nullary value function CANNOT follow
+the tape. They now read `t.sp`, exactly where `bullLrV`/`bullDeltaV` read the variable. -/
+def bullLrVal (t : WrapData) (r j : Nat) : Nat × Nat := absPtVal t.sp T_LR (2 * r + j)
+def bullDeltaVal (t : WrapData) : Nat × Nat := absPtVal t.sp T_DELTA 0
 
 /-- The three free scalars and the free commitment. ⚠ FIXTURES, and named as such: `advice.b` is
 wrap statement slot 1 (W-FINALIZE's), `z₁`/`z₂` and `challenge_polynomial_commitment` are
@@ -4004,8 +4091,8 @@ def bullData (t : WrapData) : BullData :=
   let rd := (List.range s.ipaRounds).foldl
     (fun (st : List (Nat × Nat) × List EndoDataQ × List (Nat × Nat)) r =>
       let pre := bullChalVal t (2 * r)
-      let l := bullLrVal r 0
-      let rr := bullLrVal r 1
+      let l := bullLrVal t r 0
+      let rr := bullLrVal t r 1
       let res := endoInvPtQ l pre
       let e0 := runEndoQ res pre
       let e1 := runEndoQ rr pre
@@ -4024,7 +4111,7 @@ def bullData (t : WrapData) : BullData :=
   let ec := runEndoQ q (bullChalVal t (2 * s.ipaRounds))
   -- ⚑ `lhs` FIRST, then the solve, then `rhs` — a chain and not a cycle, because `G` enters only
   -- through `gb` and nothing on the `lhs` side reads it.
-  let lhs := addAQ (ec.accs.getLastD (0, 0)) bullDeltaVal
+  let lhs := addAQ (ec.accs.getLastD (0, 0)) (bullDeltaVal t)
   let g := bullSolveG u XHAT_H lhs (bullScalVal 0) (bullScalVal 1) (bullScalVal 2)
   let gb := addAQ g (bu.accs.getLastD (0, 0))
   let z1g := sfLadderQ gb (bullScalVal 1)
@@ -4077,8 +4164,8 @@ def bullOcVar (t : WrapData) (v : BullData) (i : Nat) : PVar × PVar :=
   else bullResV s t.sp (i - 2 * s.ipaRounds - 1)
 def bullOcVal (t : WrapData) (v : BullData) (i : Nat) : Nat × Nat :=
   let s := t.sh
-  if i < 2 * s.ipaRounds then bullLrVal (i / 2) (i % 2)
-  else if i == 2 * s.ipaRounds then bullDeltaVal
+  if i < 2 * s.ipaRounds then bullLrVal t (i / 2) (i % 2)
+  else if i == 2 * s.ipaRounds then bullDeltaVal t
   else if i == 3 * s.ipaRounds + 1 then v.g
   else v.res.getD (i - 2 * s.ipaRounds - 1) (0, 0)
 
@@ -4187,7 +4274,7 @@ def bulletRows (t : WrapData) (wired : Bool) : List WRow :=
   let enBaseVal : Nat → Nat × Nat := fun m =>
     if m == 2 * R then bullQ t v
     else if m % 2 == 0 then v.res.getD (m / 2) (0, 0)
-    else bullLrVal (m / 2) 1
+    else bullLrVal t (m / 2) 1
   -- (1) the pins: `Generators.h`, every ladder's `n₀ = 0` and `φ(t)`'s abscissa, and the four
   --     `scale_fast` counters' zero seeds.
   let pins : List WRow :=
@@ -4246,7 +4333,7 @@ def bulletRows (t : WrapData) (wired : Bool) : List WRow :=
     , probeRow wired (bullQV s sp).1 (bullQV s sp).2 ]
     ++ enLadderRows t v (2 * R) (enBase (2 * R)) (enBaseVal (2 * R))
     ++ [ caRowQ (enAccV s sp (2 * R) ENDO_BLOCKS) (bullDeltaV t) (bullLhsV s sp)
-           (caWitnessQ (bullCq t v).1 (bullCq t v).2 bullDeltaVal.1 bullDeltaVal.2)
+           (caWitnessQ (bullCq t v).1 (bullCq t v).2 (bullDeltaVal t).1 (bullDeltaVal t).2)
        , probeRow wired (bullLhsV s sp).1 (bullLhsV s sp).2 ]
   -- (7) `rhs = z₁·(G + b_u) + z₂·H`, then `equal_g`.
   let rhsRows : List WRow :=
@@ -4283,7 +4370,7 @@ def bulletEnv (t : WrapData) : VarEnv :=
   let enBaseVal : Nat → Nat × Nat := fun m =>
     if m == 2 * R then bullQ t v
     else if m % 2 == 0 then v.res.getD (m / 2) (0, 0)
-    else bullLrVal (m / 2) 1
+    else bullLrVal t (m / 2) 1
   (List.range 43).map (fun i => (bullGm s sp i, (v.gm.getD i 0 : Int)))
   ++ [ ((bullHV s sp).1, (XHAT_H.1 : Int)), ((bullHV s sp).2, (XHAT_H.2 : Int))
      , ((bullGV s sp).1, ((bullG t v).1 : Int)), ((bullGV s sp).2, ((bullG t v).2 : Int))
@@ -4336,6 +4423,30 @@ def bulletEnv (t : WrapData) : VarEnv :=
       , (bullEqV s sp (o+4), (qMul d iv : Int)), (bullEqV s sp (o+5), (qMul d bit : Int)) ])
   ++ [ (bullEqV s sp 12,
         ((if bullLhs t v == bullRhs t v then 1 else 0 : Nat) : Int)) ]
+
+/-! ### §22b — ⚑ **W-CLOSE'S ROWS AND ENVIRONMENT LIVE HERE**, after §24, because they now read
+W-BULLET's `bullEqV`/`bullData`. §22's base, cell and cap theorem stay where the block arithmetic is;
+only the two definitions that acquired a W-BULLET dependency moved. -/
+
+/-- **W-CLOSE's ROWS.** `Boolean.Assert.is_true bulletproof_success`, and a σ-only probe so the
+rung's own cell is testable by the harness rather than merely present. -/
+def closeRows (t : WrapData) (wired : Bool) : List WRow :=
+  let v := bpSuccessVar t.sh t.sp
+  -- ⚑ the σ-TIE: `bulletproof_success` IS `equal_g`'s `Boolean.all` output, one class, then the
+  -- assert. Two halves, one `Generic` double gate.
+  packHalves [ ([some v, some (bullEqV t.sh t.sp 12), none], cEq)
+             , ([some v, none, none], cConst 1) ]
+  ++ [ probeRow wired v (whDigestVar (whSpongeC t)) ]
+
+/-- W-CLOSE's variable environment. ⚑ **COMPUTED, NOT ASSERTED**: `bulletproof_success`'s witness is
+`equal_g`'s own verdict off `bullData`, the same expression `bulletEnv` gives `bullEqV s sp 12`. It
+read `(1 : Int)` until 2026-08-05, which made the rung's `cConst 1` a statement about a constant this
+file wrote. -/
+def closeEnv (t : WrapData) : VarEnv :=
+  let v := bullData t
+  [ (bpSuccessVar t.sh t.sp,
+     ((if bullLhs t v == bullRhs t v then 1 else 0 : Nat) : Int)) ]
+
 
 /-! ## §20 — ⚑ **W-FINSPONGE**: `finalize_other_proof`'s SPONGE HALF, and the three legs it closes.
 
@@ -4399,9 +4510,13 @@ prover who moves a column to satisfy one of them moves ξ and breaks the other.
 `Boolean.Assert.any [finalized; not should_finalize]` is §19's row and `finalized` is now the AND of
 four legs. Block 1's packed word 53 IS `should_finalize = 1` (§19 measured it), so block 1 must
 satisfy **all four** — which means its `combined_inner_product`, `b` and `xi` words are no longer
-free fixtures. They are `FIN_DEFERRED_*`, a MEMO WITH A KERNEL OBLIGATION in the shape of
-`WrapShape.xhatXY`: `fin_deferred_words_are_the_derivation` closes them by `rfl` against the very
+free fixtures. They are `FIN_DEFERRED_*`, a MEMO WITH A PROOF OBLIGATION in the shape of
+`WrapShape.xhatXY`: `fin_deferred_words_are_the_derivation` (`…Pins12`) closes them against the very
 program and sponge this rung emits, and `EmitWrapMainJson` REFUSES to emit a disagreeing tree.
+⚠ That theorem was named HERE and in three other docblocks for a day before anyone wrote it, and
+what they promised — `rfl`, in the kernel — was never reachable: the derivation is two sponges and a
+**1732**-op `Array FOp` program, and `whnf` models an `Array` as a `List`. It is `native_decide` +
+`#assert_compiled`, at the smoke shape; the wrap shape is covered by the emitter's refusal.
 
 **WHAT RE-EMITS:** everything from `w6_xhat` up at the WRAP shape — packed words 27, 28 and 37 are
 x_hat entries 32/33, 34/35 and 47, so `xhatOut 67` moves and with it the absorbed `x_hat`, every
@@ -4920,8 +5035,13 @@ def rungsUpto : Rung → List Rung
   | .prev       => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev]
   | .wraphack   => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
                     .wraphack]
+  -- ⚑⚑ `.combine` and `.bullet` JOINED 2026-08-05. `w12_close` asserts `bulletproof_success`, and
+  -- `bulletproof_success` IS `equal_g`'s output — a rung that asserts a verdict without the rows
+  -- that compute it asserts a free witness. This is the FIRST rung to hold two block owners
+  -- (`.wraphack` and `.combine`); `rungRegions .close` declares both, which is the precondition
+  -- §22 measured and §17b now meets.
   | .close      => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
-                    .wraphack, .close]
+                    .combine, .bullet, .wraphack, .close]
   | .finalize   => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
                     .finalize]
   | .finsponge  => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
@@ -4946,14 +5066,29 @@ is no longer what makes the layout sound — it names the three block OWNERS, on
 `no_rung_holds_two_colliding_regions` still measures the ladder against it. -/
 def COLLIDING_REGION_OWNERS : List Rung := [ .wraphack, .finalize, .combine ]
 
-/-- ⚑ **THE BLOCK RUNG `k` MAY ALLOCATE IN** — its base and its CAP (§17b). A rung at or below
-`w9_prev` owns none of the three and everything it touches is below `baseWh`, which is what the `0`
-says: for those rungs the whole three-block space is out of bounds. -/
-def rungRegion (s : WrapShape) (sp : SpAcc) : Rung → Nat × Nat
-  | .wraphack | .close     => (baseWh s sp, WH_REGION_CAP s)
-  | .finalize | .finsponge => (baseFin s sp, FIN_REGION_CAP s)
-  | .combine  | .bullet    => (baseComb s sp, COMB_REGION_CAP s)
-  | _                      => (baseWh s sp, 0)
+/-- ⚑ **THE BLOCKS RUNG `k` MAY ALLOCATE IN** — each as a base and a CAP (§17b). A rung at or below
+`w9_prev` owns none of the three and everything it touches is below `baseWh`, which is what the empty
+list says: for those rungs the whole three-block space is out of bounds.
+
+⚑⚑ **THIS RETURNS A LIST SINCE 2026-08-05, AND THAT IS WHAT LETS A RUNG OWN TWO BLOCKS.** It returned
+ONE `(base, cap)`, which was sound only while no `rungsUpto` held two block owners — and that was in
+turn the reason `w12_close` could not contain `.bullet`, so `bpSuccessVar` stayed a fresh cell
+`closeEnv` sets to 1 instead of W-BULLET's own verdict. The generalization is NOT a relaxation: what
+made a single block safe was `regionEscapeIn`'s membership test, and what makes a list of blocks safe
+is the same test against each of them, over blocks §17b already proves PAIRWISE DISJOINT for every
+`x` (`no_rung_holds_two_colliding_regions`). A rung that reaches into a block it does NOT declare is
+still a refusal, which is the aliasing this layout exists to catch. -/
+def rungRegions (s : WrapShape) (sp : SpAcc) : Rung → List (Nat × Nat)
+  | .wraphack              => [(baseWh s sp, WH_REGION_CAP s)]
+  | .finalize | .finsponge => [(baseFin s sp, FIN_REGION_CAP s)]
+  | .combine               => [(baseComb s sp, COMB_REGION_CAP s)]
+  -- ⚑ `w12_close` holds W-WRAPHACK's block (its own cell is that block's last, §22) AND — since the
+  -- `bpSuccessVar` tie — W-COMBINE's, because `.bullet` is under `.close` and W-BULLET allocates in
+  -- the `baseComb` block. Two DECLARED blocks, disjoint by §17b, and the escape check still bites on
+  -- anything outside both.
+  | .close                 => [(baseWh s sp, WH_REGION_CAP s), (baseComb s sp, COMB_REGION_CAP s)]
+  | .bullet                => [(baseComb s sp, COMB_REGION_CAP s)]
+  | _                      => []
 
 /-- ⚑⚑ **THE CAPS' FAIL-CLOSED LEG — THE WHOLE REASON A CAP IS HONEST RATHER THAN A GUESS.** The
 first external id rung `k`'s gates reference that is neither below the three blocks nor inside `k`'s
@@ -4965,19 +5100,26 @@ rung that reached into a sibling's block are both a `some i` here, and the secon
 escape DOWNWARD is the aliasing this layout exists to refuse, and a max-index check would not see it.
 
 ⚠ `k`'s gates are the gates of the WHOLE rung — every rung at or below it — which is what makes the
-lower bound `baseWh s sp` rather than `k`'s own base. That is sound because no `rungsUpto` holds two
-block owners (`no_rung_holds_two_colliding_regions`); if one ever does, this refuses it, which is the
-correct answer for a rung whose two blocks would then both be live and only one of them declared.
+lower bound `baseWh s sp` rather than `k`'s own base. A rung whose `rungsUpto` holds two block owners
+must DECLARE both in `rungRegions`; one it does not declare is still a `some i`, which is the correct
+answer and the reason the list form is not a weakening.
 
-⚑ It is stated over an ARBITRARY `(wall, b, n)` and instantiated, so the red control is expressible:
+⚑ It is stated over an ARBITRARY `(wall, bs)` and instantiated, so the red control is expressible:
 `region_escape_bites_on_the_emitted_gates` runs the SAME function over the SAME emitted gates at a
 zero-width block and at a sibling's block, and gets a `some` both times. A refusal nothing has ever
 been shown to fire is not a gate. -/
 def regionEscapeIn (wall b n : Nat) (gs : List PGate) : Option Nat :=
   (externalRefs gs).find? (fun i => !(i < wall || (b ≤ i && i < b + n)))
 
+/-- …and the list form: an id is legal iff it is below the wall or inside ONE OF the declared blocks.
+⚑ At a single-block rung this is `regionEscapeIn` exactly (`region_escape_list_is_the_single_block_one`),
+so nothing below `w12_close` changed meaning. -/
+def regionEscapeInAny (wall : Nat) (bs : List (Nat × Nat)) (gs : List PGate) : Option Nat :=
+  (externalRefs gs).find? (fun i =>
+    !(i < wall || bs.any (fun bn => bn.1 ≤ i && i < bn.1 + bn.2)))
+
 def regionEscape (s : WrapShape) (sp : SpAcc) (k : Rung) (gs : List PGate) : Option Nat :=
-  regionEscapeIn (baseWh s sp) (rungRegion s sp k).1 (rungRegion s sp k).2 gs
+  regionEscapeInAny (baseWh s sp) (rungRegions s sp k) gs
 
 
 /-- Rung `k`'s rows: the own-rows of every rung at or below it, concatenated in schedule order.
@@ -5002,9 +5144,19 @@ theorem rungRows_is_a_ladder (t : WrapData) (wired : Bool) :
     ∧ rungRows t .split wired = rungRows t .xhat wired ++ rungOwn t wired .split
     ∧ rungRows t .ftcomm wired = rungRows t .split wired ++ rungOwn t wired .ftcomm
     ∧ rungRows t .prev wired = rungRows t .ftcomm wired ++ rungOwn t wired .prev
-    ∧ rungRows t .wraphack wired = rungRows t .prev wired ++ rungOwn t wired .wraphack
-    ∧ rungRows t .close wired = rungRows t .wraphack wired ++ rungOwn t wired .close :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    ∧ rungRows t .wraphack wired = rungRows t .prev wired ++ rungOwn t wired .wraphack :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **`w12_close` HANGS OFF `w11_bullet`, NOT OFF `w11_wraphack`, SINCE 2026-08-05** — which is
+what "`.bullet` is under `.close`" means as a fact about the emitted row list rather than as a
+sentence. It is `.bullet`'s rows, then W-WRAPHACK's own, then W-CLOSE's own, in `wrap_main`'s order:
+`incrementally_verify_proof` (`:412`), `hash_messages_for_next_wrap_proof` (`:421-431`), then
+`Boolean.Assert.is_true bulletproof_success`. Still `rfl`, still general over every `WrapData` and
+every polarity — a rung that quietly dropped W-COMBINE's or W-BULLET's rows would red here and not
+in a shape instance. -/
+theorem rungRows_close_is_a_ladder (t : WrapData) (wired : Bool) :
+    rungRows t .close wired
+      = rungRows t .bullet wired ++ rungOwn t wired .wraphack ++ rungOwn t wired .close := rfl
 
 /-- …and `w10_finalize` is `w9_prev` plus W-FINALIZE's own row-set, by the same `rfl`. ⚑ Stated
 separately rather than as an eleventh conjunct above because `.finalize` and `.wraphack` both hang
@@ -5041,8 +5193,9 @@ theorem rungRows_lengths_are_the_sum_of_their_parts (t : WrapData) (wired : Bool
     ∧ (rungRows t .wraphack wired).length
       = (rungRows t .prev wired).length + (rungOwn t wired .wraphack).length
     ∧ (rungRows t .close wired).length
-      = (rungRows t .wraphack wired).length + (rungOwn t wired .close).length := by
-  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10⟩ := rungRows_is_a_ladder t wired
+      = (rungRows t .bullet wired).length + (rungOwn t wired .wraphack).length
+        + (rungOwn t wired .close).length := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9⟩ := rungRows_is_a_ladder t wired
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · simp [h1]
   · simp [h2]
@@ -5053,7 +5206,8 @@ theorem rungRows_lengths_are_the_sum_of_their_parts (t : WrapData) (wired : Bool
   · simp [h7]
   · simp [h8]
   · simp [h9]
-  · simp [h10]
+  · rw [rungRows_close_is_a_ladder t wired]
+    simp [List.length_append, Nat.add_assoc]
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it — and `pubWords + 1` at
 `w9_prev`, whose own row ties `messages_for_next_step_proof` (`wrap_main.ml:350-351`). ⚑ The extra
@@ -5111,7 +5265,8 @@ def circuitEnvAt (t : WrapData) (k : Rung) : VarEnv :=
       | .finalize => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ finEnv t
       | .finsponge => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ finEnv t ++ finSpEnv t
       | .wraphack => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ whEnv t
-      | .close => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ whEnv t ++ closeEnv t
+      | .close => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ combEnv t ++ bulletEnv t
+                  ++ whEnv t ++ closeEnv t
       | .combine => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ combEnv t
       | .bullet => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ combEnv t ++ bulletEnv t
       | _ => [])

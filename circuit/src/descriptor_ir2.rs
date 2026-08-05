@@ -565,6 +565,11 @@ const KEY_HI_MAX: u64 = 15;
 /// The `hash_fact` domain-separation marker (`poseidon2::hash_fact` state[5]).
 const FACT_MARK: u32 = 0xFACF;
 
+/// ⚑ How many Fiat–Shamir challenges the LogUp gadget draws per lookup context (`α` for the
+/// running sum, `β` for combining the tuple). `p3_lookup::LogUp::num_challenges()`; the
+/// challenge-supply refusal in [`check_descriptor2`] is denominated in it.
+const LOGUP_CHALLENGES_PER_CONTEXT: usize = 2;
+
 // ============================================================================
 // The v2 descriptor mirror (Lean `EffectVmDescriptor2`, decoded from `emitVmJson2`)
 // ============================================================================
@@ -929,6 +934,142 @@ where
     }
 }
 
+/// ⚑ **A two-row arithmetic expression WITH A CHALLENGE LEAF** (Lean `DescriptorIR2.ChalExpr`).
+///
+/// [`WindowExpr`] plus `Chal(i)` — the `i`-th element of
+/// [`p3_air::PermutationAirBuilder::permutation_randomness`], a Fiat–Shamir value the VERIFIER
+/// draws. This is the leaf whose absence `PastaFieldSound.lean` recorded as
+/// *"Schwartz–Zippel … is not expressible in this IR … Adding a challenge leaf is a change to the
+/// IR and the prover, not to a descriptor."* This is that change.
+///
+/// ## The Fiat–Shamir story, read off the deployed transcript
+///
+/// `p3-batch-stark/src/prover.rs` calls `transcript.observe_main(&main_commit, &pub_vals)` —
+/// committing the whole main trace and the public values — and only THEN
+/// `transcript.sample_perm_challenges(...)`. So every value this leaf can read was sampled after
+/// the witness was fixed. That ordering is the hypothesis Schwartz–Zippel needs, and it is a
+/// property of the deployed prover rather than an assumption made here.
+///
+/// The values are `SC::Challenge = BinomialExtensionField<BabyBear, 4>`, `|K| ≈ 2^124`, so a
+/// degree-`d` residual survives a random draw with probability `≤ d / 2^124`. The gate is therefore
+/// evaluated with [`p3_air::ExtensionBuilder::assert_zero_ext`], not `assert_zero`.
+///
+/// ## ⚑ Degree: a challenge is DEGREE ZERO
+///
+/// `p3-air/src/symbolic/variable.rs:67-72` gives `ExtEntry::Challenge` a `degree_multiple()` of
+/// `0` — a challenge is a constant for quotient sizing. So an `L`-deep Horner chain over the
+/// challenge raises the constraint degree by NOTHING, and a body that is degree 2 in the trace
+/// columns stays a degree-2 constraint however much challenge arithmetic it contains. That is the
+/// property that makes replacing `2L−1` schoolbook coefficient gates by ONE identity actually
+/// cheaper rather than a quotient-degree trade.
+///
+/// ## ⚠ What a caller may and may not assume about the indices
+///
+/// The slice is the LogUp `(α, β)` pair of each of this instance's lookup contexts, re-read. Every
+/// entry is uniform and independent of the committed trace, which is all Schwartz–Zippel asks. But
+/// GLOBAL bus challenges are shared by bus name across instances, so two entries MAY BE EQUAL, and
+/// the index→bus correspondence is not stable under descriptor edits. A gate needing one uniform
+/// value may use any index; a gate needing `k` INDEPENDENT values may not assume they differ.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChalExpr {
+    /// Current-row column `c`.
+    Loc(usize),
+    /// Next-row column `c`.
+    Nxt(usize),
+    /// A signed integer constant.
+    Const(i64),
+    /// ⚑ **THE CHALLENGE LEAF** — `permutation_randomness()[i]`, drawn after the main-trace
+    /// commitment. Degree zero in the trace.
+    Chal(usize),
+    /// Field addition.
+    Add(Box<ChalExpr>, Box<ChalExpr>),
+    /// Field multiplication.
+    Mul(Box<ChalExpr>, Box<ChalExpr>),
+}
+
+impl ChalExpr {
+    /// Evaluate as an `AB::ExprEF` polynomial over the current row, the next row, and the drawn
+    /// challenges. Mirrors Lean `ChalExpr.evalIn` exactly: base-field column reads are lifted into
+    /// the extension, the challenge leaf reads the randomness slice.
+    ///
+    /// `challenges` is `builder.permutation_randomness()` already mapped into `AB::ExprEF`. The
+    /// caller is responsible for having REFUSED a descriptor whose declared count exceeds its
+    /// length; see [`eval_row_local_constraints`], which emits an unsatisfiable constraint rather
+    /// than reading past the end.
+    pub(crate) fn eval_expr_ext<AB>(
+        &self,
+        local: &[AB::Var],
+        next: &[AB::Var],
+        challenges: &[AB::ExprEF],
+    ) -> AB::ExprEF
+    where
+        AB: AirBuilder + p3_air::ExtensionBuilder,
+        AB::F: PrimeField32,
+    {
+        match self {
+            ChalExpr::Loc(i) => AB::ExprEF::from(Into::<AB::Expr>::into(local[*i])),
+            ChalExpr::Nxt(i) => AB::ExprEF::from(Into::<AB::Expr>::into(next[*i])),
+            ChalExpr::Const(c) => AB::ExprEF::from(const_to_expr::<AB>(*c)),
+            // ⚑ THE LEAF. Bounds-checked at decode (`check_descriptor2`) and fail-CLOSED at eval.
+            ChalExpr::Chal(i) => challenges[*i].clone(),
+            ChalExpr::Add(a, b) => {
+                a.eval_expr_ext::<AB>(local, next, challenges)
+                    + b.eval_expr_ext::<AB>(local, next, challenges)
+            }
+            ChalExpr::Mul(a, b) => {
+                a.eval_expr_ext::<AB>(local, next, challenges)
+                    * b.eval_expr_ext::<AB>(local, next, challenges)
+            }
+        }
+    }
+
+    /// The maximum column index referenced (over both row tags), if any. Lean `ChalExpr.maxVar`.
+    pub(crate) fn max_var(&self) -> Option<usize> {
+        match self {
+            ChalExpr::Loc(i) | ChalExpr::Nxt(i) => Some(*i),
+            ChalExpr::Const(_) | ChalExpr::Chal(_) => None,
+            ChalExpr::Add(a, b) | ChalExpr::Mul(a, b) => match (a.max_var(), b.max_var()) {
+                (Some(x), Some(y)) => Some(x.max(y)),
+                (Some(x), None) | (None, Some(x)) => Some(x),
+                (None, None) => None,
+            },
+        }
+    }
+
+    /// ⚑ The DECLARED challenge requirement: `1 + (largest `Chal` index)`, or `0`. Lean
+    /// `ChalExpr.chalCount`. This is the number the descriptor carries on the wire as
+    /// `"challenges"` and that `check_descriptor2` refuses against.
+    pub fn chal_count(&self) -> usize {
+        match self {
+            ChalExpr::Loc(_) | ChalExpr::Nxt(_) | ChalExpr::Const(_) => 0,
+            ChalExpr::Chal(i) => i + 1,
+            ChalExpr::Add(a, b) | ChalExpr::Mul(a, b) => a.chal_count().max(b.chal_count()),
+        }
+    }
+
+    /// The TRACE degree (Lean `ChalExpr.traceDegree`) — challenge leaves count ZERO, matching
+    /// `SymbolicVariableExt::degree_multiple` for `ExtEntry::Challenge`.
+    pub fn trace_degree(&self) -> usize {
+        match self {
+            ChalExpr::Loc(_) | ChalExpr::Nxt(_) => 1,
+            ChalExpr::Const(_) | ChalExpr::Chal(_) => 0,
+            ChalExpr::Add(a, b) => a.trace_degree().max(b.trace_degree()),
+            ChalExpr::Mul(a, b) => a.trace_degree() + b.trace_degree(),
+        }
+    }
+}
+
+/// ⚑ **A CHALLENGE GATE** (Lean `DescriptorIR2.ChalConstraint`): the polynomial `body` — over the
+/// current row, the next row, AND the verifier's Fiat–Shamir challenges — must vanish, in the
+/// EXTENSION field. `on_transition` has the same meaning as [`WindowGateSpec`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChalGateSpec {
+    /// The challenge-carrying two-row polynomial body.
+    pub body: ChalExpr,
+    /// Assert only on the transition (`true`) vs. every row (`false`).
+    pub on_transition: bool,
+}
+
 /// A windowed constraint (Lean `DescriptorIR2.WindowConstraint`): the polynomial `body` (over
 /// the current+next row) must vanish. `on_transition = true` ⇒ asserted only on the transition
 /// (every row but the last — the Rust `builder.when_transition()` arm); `false` ⇒ asserted on
@@ -962,6 +1103,10 @@ pub enum VmConstraint2 {
     /// AND next rows, asserted on the transition or every row). The aggregation AIR's two
     /// running cumulatives are this kind.
     WindowGate(WindowGateSpec),
+    /// ⚑ **A CHALLENGE GATE** (2026-08-05) — a two-row polynomial that may also read the
+    /// verifier's Fiat–Shamir challenges, asserted in the EXTENSION field. The kind that makes a
+    /// Schwartz–Zippel identity expressible; see [`ChalExpr`].
+    ChalGate(ChalGateSpec),
 }
 
 /// The Rust mirror of Lean's `EffectVmDescriptor2` (decoded from `emitVmJson2`).
@@ -973,6 +1118,15 @@ pub struct EffectVmDescriptor2 {
     pub trace_width: usize,
     /// Number of public-input slots.
     pub public_input_count: usize,
+    /// ⚑ **THE DECLARED CHALLENGE COUNT** (wire key `"challenges"`, Lean
+    /// `DescriptorIR2.challengeCount`) — how many `permutation_randomness()` entries this
+    /// descriptor's `ChalGate`s read. `0` for every descriptor served before the challenge leaf
+    /// existed, and emitted on ALL of them: it is a value a gate can count, not a silence.
+    ///
+    /// ⚑ FLAG DAY 2026-08-05: because the decoder `expect_key`s this positionally, an `"ir":2`
+    /// descriptor WITHOUT the key REFUSES TO LOAD rather than being reinterpreted as declaring
+    /// zero. Every committed descriptor JSON and both staged registry TSVs re-emit.
+    pub challenges: usize,
     /// The declared tables.
     pub tables: Vec<TableDef2>,
     /// The constraint list (v2 grammar).
@@ -1223,6 +1377,53 @@ pub(crate) fn parse_window_expr(c: &mut JsonCursor) -> Result<WindowExpr, String
     Ok(expr)
 }
 
+/// ⚑ Decode a [`ChalExpr`] (Lean `ChalExpr.toJson`). Byte-identical to
+/// [`parse_window_expr`]'s grammar plus the one new leaf `{"t":"chal","i":N}`.
+pub(crate) fn parse_chal_expr(c: &mut JsonCursor) -> Result<ChalExpr, String> {
+    c.expect(b'{')?;
+    c.expect_key("t")?;
+    let tag = c.parse_string()?;
+    let expr = match tag.as_str() {
+        "loc" => {
+            c.expect(b',')?;
+            c.expect_key("c")?;
+            ChalExpr::Loc(parse_usize(c, "chal loc col")?)
+        }
+        "nxt" => {
+            c.expect(b',')?;
+            c.expect_key("c")?;
+            ChalExpr::Nxt(parse_usize(c, "chal nxt col")?)
+        }
+        "const" => {
+            c.expect(b',')?;
+            c.expect_key("v")?;
+            ChalExpr::Const(c.parse_int_field()?)
+        }
+        // ⚑ THE CHALLENGE LEAF.
+        "chal" => {
+            c.expect(b',')?;
+            c.expect_key("i")?;
+            ChalExpr::Chal(parse_usize(c, "chal index")?)
+        }
+        "add" | "mul" => {
+            c.expect(b',')?;
+            c.expect_key("l")?;
+            let l = parse_chal_expr(c)?;
+            c.expect(b',')?;
+            c.expect_key("r")?;
+            let r = parse_chal_expr(c)?;
+            if tag == "add" {
+                ChalExpr::Add(Box::new(l), Box::new(r))
+            } else {
+                ChalExpr::Mul(Box::new(l), Box::new(r))
+            }
+        }
+        other => return Err(format!("unknown chal expr tag \"{other}\"")),
+    };
+    c.expect(b'}')?;
+    Ok(expr)
+}
+
 fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
     c.expect(b'{')?;
     c.expect_key("t")?;
@@ -1410,6 +1611,19 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
                 on_transition,
             })
         }
+        // ⚑ THE CHALLENGE GATE (Lean `ChalConstraint.toJson`).
+        "chal_gate" => {
+            c.expect(b',')?;
+            c.expect_key("on_transition")?;
+            let on_transition = c.parse_bool()?;
+            c.expect(b',')?;
+            c.expect_key("body")?;
+            let body = parse_chal_expr(c)?;
+            VmConstraint2::ChalGate(ChalGateSpec {
+                body,
+                on_transition,
+            })
+        }
         v1tag => VmConstraint2::Base(parse_vm_constraint_body(c, v1tag)?),
     };
     c.expect(b'}')?;
@@ -1458,6 +1672,7 @@ fn parse_vm_descriptor_any_with(mut c: JsonCursor<'_>) -> Result<AnyVmDescriptor
     let mut ir: Option<usize> = None;
     let mut trace_width: Option<usize> = None;
     let mut public_input_count: Option<usize> = None;
+    let mut challenges: Option<usize> = None;
     let mut tables: Vec<TableDef2> = Vec::new();
     let mut constraints: Option<Vec<VmConstraint2>> = None;
     let mut hash_sites: Vec<VmHashSite> = Vec::new();
@@ -1473,6 +1688,10 @@ fn parse_vm_descriptor_any_with(mut c: JsonCursor<'_>) -> Result<AnyVmDescriptor
             "public_input_count" => {
                 public_input_count = Some(parse_usize(&mut c, "public_input_count")?)
             }
+            // ⚑ THE DECLARED CHALLENGE COUNT (flag day 2026-08-05). Required on every `"ir":2`
+            // descriptor and REFUSED on a v1 one, so the old shape cannot be reinterpreted as
+            // declaring zero — it fails to load.
+            "challenges" => challenges = Some(parse_usize(&mut c, "challenges")?),
             "tables" => tables = parse_array(&mut c, parse_table_def)?,
             "constraints" => constraints = Some(parse_array(&mut c, parse_constraint2)?),
             "hash_sites" => hash_sites = parse_array(&mut c, parse_hash_site)?,
@@ -1506,6 +1725,12 @@ fn parse_vm_descriptor_any_with(mut c: JsonCursor<'_>) -> Result<AnyVmDescriptor
             if !tables.is_empty() {
                 return Err("v1 descriptor (no \"ir\") declares tables".to_string());
             }
+            if challenges.is_some() {
+                return Err(
+                    "v1 descriptor (no \"ir\") declares \"challenges\"; the challenge leaf is v2-only"
+                        .to_string(),
+                );
+            }
             let mut v1 = Vec::with_capacity(constraints.len());
             for k in constraints {
                 match k {
@@ -1530,6 +1755,12 @@ fn parse_vm_descriptor_any_with(mut c: JsonCursor<'_>) -> Result<AnyVmDescriptor
             name,
             trace_width,
             public_input_count,
+            // ⚑ MANDATORY on v2. A descriptor emitted before the challenge leaf existed has no
+            // `"challenges"` key and lands HERE, refusing to load — which is the point: it is not
+            // silently reinterpreted as declaring zero challenges, it is re-emitted.
+            challenges: challenges.ok_or(
+                "ir:2 descriptor missing \"challenges\" (pre-2026-08-05 shape; re-emit it)",
+            )?,
             tables,
             constraints,
             hash_sites,
@@ -1778,8 +2009,13 @@ impl MainLayout {
 /// exact structural check `prove_vm_descriptor2`/`verify_vm_descriptor2` run first. Used by the
 /// [`crate::descriptor_by_name`] dispatch round-trip to assert every dispatched descriptor is
 /// well-formed without leaking the private `MainLayout`.
-#[cfg(test)]
-pub(crate) fn check_descriptor2_wellformed(desc: &EffectVmDescriptor2) -> Result<(), String> {
+///
+/// ⚑ UN-`cfg(test)`-ed 2026-08-05. It was reachable only from inside the crate, so an INTEGRATION
+/// test could not ask the deployed admission check anything — which is how a refusal ends up being
+/// asserted against a re-implementation of itself. It is the same call `prove_vm_descriptor2` and
+/// `verify_vm_descriptor2` make first; exposing it costs nothing and lets the challenge-leaf red
+/// control (`circuit/tests/chal_leaf_bites.rs`) drive the REAL gate.
+pub fn check_descriptor2_wellformed(desc: &EffectVmDescriptor2) -> Result<(), String> {
     check_descriptor2(desc).map(|_| ())
 }
 
@@ -1959,8 +2195,88 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
                     ));
                 }
             }
+            VmConstraint2::ChalGate(g) => {
+                // Same column discipline as `window_gate`.
+                if let Some(m) = g.body.max_var()
+                    && m >= w
+                {
+                    return Err(format!(
+                        "constraint {ci}: chal_gate body references column {m} >= \
+                             trace_width {w}"
+                    ));
+                }
+                // ⚑ And the challenge discipline: a body may not read a challenge the descriptor
+                // did not DECLARE. The declared count is on the wire, so this is a check between
+                // two independent statements of the same number, not a constant against its own
+                // definition.
+                if g.body.chal_count() > desc.challenges {
+                    return Err(format!(
+                        "constraint {ci}: chal_gate reads challenge index {} but the descriptor \
+                         declares only {} (\"challenges\")",
+                        g.body.chal_count() - 1,
+                        desc.challenges
+                    ));
+                }
+            }
         }
     }
+
+    // ========================================================================
+    // ⚑ THE CHALLENGE-SUPPLY REFUSAL (2026-08-05)
+    // ========================================================================
+    //
+    // A `ChalGate` reads `permutation_randomness()`, whose length is
+    // `LogUp::num_challenges() * (this instance's lookup-context count)` — two per context, all
+    // sampled after `observe_main`. Every bus-bearing constraint the Main arm carries emits at
+    // least one interaction (`lookup_key` for the four lookup buses, `send` for the mem/map/umem
+    // logs), and the range decompositions emit more on top. So `2 * (bus constraints)` is a sound
+    // LOWER BOUND on the supply, and refusing above it means a served descriptor can never reach
+    // the evaluator's fail-closed backstop.
+    //
+    // ⚠ It is a lower bound and deliberately so: it is computed from the DESCRIPTOR, before the
+    // AIR exists, so it cannot depend on the layout it is about to build. A descriptor that needs
+    // more challenges than its own lookups guarantee declares more lookups.
+    let bus_constraints = desc
+        .constraints
+        .iter()
+        .filter(|k| {
+            matches!(
+                k,
+                VmConstraint2::Lookup(_)
+                    | VmConstraint2::MemOp(_)
+                    | VmConstraint2::MapOp(_)
+                    | VmConstraint2::UMemOp(_)
+            )
+        })
+        .count();
+    let guaranteed_challenges = LOGUP_CHALLENGES_PER_CONTEXT * bus_constraints;
+    if desc.challenges > guaranteed_challenges {
+        return Err(format!(
+            "{}: declares {} challenge(s) but its {bus_constraints} bus-bearing constraint(s) \
+             guarantee only {guaranteed_challenges} (LogUp draws \
+             {LOGUP_CHALLENGES_PER_CONTEXT} per lookup context)",
+            desc.name, desc.challenges
+        ));
+    }
+    // And the declared count must be EXACTLY what the bodies need — it is derived in Lean
+    // (`DescriptorIR2.challengeCount`), so a wire value that disagrees is a corrupted or
+    // hand-edited descriptor, not a looser declaration.
+    let needed = desc
+        .constraints
+        .iter()
+        .map(|k| match k {
+            VmConstraint2::ChalGate(g) => g.body.chal_count(),
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0);
+    if needed != desc.challenges {
+        return Err(format!(
+            "{}: declares {} challenge(s) but its chal_gate bodies need exactly {needed}",
+            desc.name, desc.challenges
+        ));
+    }
+
     MainLayout::build(desc)
 }
 
@@ -3355,15 +3671,47 @@ where
 /// DESCRIPTOR (`recursive_witness_bundle.rs:148`), not over the symbolic constraints; no proof
 /// bytes are checked in; and `get_symbolic_constraints` has no caller in `src/`. Prover and
 /// verifier both come from here, so they moved together.
-fn eval_row_local_constraints<AB>(
+///
+/// ## ⚑ The challenge arm and its FAIL-CLOSED refusal (2026-08-05)
+///
+/// `VmConstraint2::ChalGate` reads `builder.permutation_randomness()`. Three facts make that sound:
+///
+/// 1. **The values are post-commitment.** `p3-batch-stark`'s prover observes the main-trace
+///    commitment and the public values BEFORE it samples them, so the prover fixes its witness
+///    without knowing them. That is the Schwartz–Zippel hypothesis, and it is the deployed
+///    transcript's property, not an assumption.
+/// 2. **The slice can be too short in exactly one pass, and that pass discards constraints.**
+///    `Lookups::from_air` extracts bus interactions under `AirLayout::from_air`, which leaves
+///    `num_permutation_challenges = 0`. Every pass that CONSUMES constraints — the symbolic
+///    quotient-degree pass, the LogUp trace builder, the prover and verifier folders, the debug
+///    checker — is handed the real count.
+/// 3. **So a short slice REFUSES rather than reading a zero.** When
+///    `permutation_randomness().len() < desc.challenges` this arm emits `assert_zero(ONE)`, an
+///    unsatisfiable constraint. A proof produced or accepted under an inadequate challenge supply
+///    cannot verify. `check_descriptor2` refuses the same descriptor one stage earlier, at decode;
+///    this is the backstop, and it is closed, not open. Substituting `ExprEF::ZERO` — the pattern
+///    `eval_table_expr` uses for an out-of-range `Shr` — would have evaluated the identity AT THE
+///    ORIGIN, which a prover can satisfy for free.
+///
+/// ⚠ `chal_gate` is a CALLER-SUPPLIED arm rather than an inline one, because the extension-field
+/// assert needs `ExtensionBuilder + PermutationAirBuilder` and `Ir2UniAir` rides `p3-uni-stark`,
+/// whose folders implement neither. Splitting the WALK would have made the emission order — which
+/// IS the folding order, and which a foreign verifier reproduces — an artifact of two functions.
+/// So the walk stays single and the one arm that needs more capability is passed in. The uni-stark
+/// caller supplies a FAIL-CLOSED arm (an unsatisfiable constraint), and `Ir2UniAir::new` has
+/// already refused every descriptor that carries a `ChalGate`, so it is unreachable there rather
+/// than silently skipped.
+fn eval_row_local_constraints<AB, C>(
     desc: &EffectVmDescriptor2,
     builder: &mut AB,
     local: &[AB::Var],
     next: &[AB::Var],
     pv: &[AB::Expr],
+    mut chal_gate: C,
 ) where
     AB: AirBuilder,
     AB::F: PrimeField32,
+    C: FnMut(&mut AB, &ChalGateSpec, &[AB::Var], &[AB::Var]),
 {
     for k in &desc.constraints {
         // `(selector, body)`. `None` means the WHOLE domain — no multiplier at all, so the
@@ -3432,6 +3780,16 @@ fn eval_row_local_constraints<AB>(
                 }
                 continue;
             }
+            // ⚑ THE CHALLENGE GATE (Lean `DescriptorIR2.ChalConstraint.holdsIn`). Asserted in the
+            // EXTENSION field, because the challenge is an extension element — the same seam the
+            // LogUp gadget's own constraints ride (`ExtensionBuilder::assert_zero_ext`).
+            //
+            // The selector is folded in as an extension multiplication rather than through the
+            // shared base-field tail below, which asserts an `AB::Expr`.
+            VmConstraint2::ChalGate(g) => {
+                chal_gate(builder, g, local, next);
+                continue;
+            }
             // The bus-bearing kinds carry no row-local algebra — their content is the multiset /
             // lookup argument, emitted by the caller that HAS a bus.
             VmConstraint2::Lookup(_)
@@ -3462,7 +3820,44 @@ where
                 let pv: Vec<AB::Expr> = builder.public_values().iter().map(|&v| v.into()).collect();
 
                 // -- The row-local constraints, in DESCRIPTOR LIST ORDER. --
-                eval_row_local_constraints(desc, builder, &local, &next, &pv);
+                //
+                // ⚑ The challenge arm (2026-08-05). See `eval_row_local_constraints`'s header for
+                // why it arrives as a closure, and `ChalExpr` for the Fiat–Shamir story.
+                let declared_challenges = desc.challenges;
+                eval_row_local_constraints(
+                    desc,
+                    builder,
+                    &local,
+                    &next,
+                    &pv,
+                    |b: &mut AB, g: &ChalGateSpec, loc: &[AB::Var], nxt: &[AB::Var]| {
+                        let challenges: Vec<AB::ExprEF> = b
+                            .permutation_randomness()
+                            .iter()
+                            .map(|&r| r.into())
+                            .collect();
+                        if challenges.len() < declared_challenges {
+                            // FAIL CLOSED, never `ExprEF::ZERO`. The only pass that reaches here
+                            // with a short slice is `Lookups::from_air`'s interaction extraction,
+                            // which runs under `AirLayout::from_air` (challenge count 0) and
+                            // DISCARDS every constraint it sees; each pass that keeps constraints
+                            // — the symbolic quotient sizing, the LogUp trace builder, the prover
+                            // and verifier folders, the debug checker — is handed the real slice.
+                            // Substituting a zero would have evaluated the identity AT THE ORIGIN,
+                            // which a prover satisfies for free. `check_descriptor2` refuses the
+                            // same descriptor one stage earlier; this is the closed backstop.
+                            b.assert_zero(AB::Expr::ONE);
+                            return;
+                        }
+                        let body = g.body.eval_expr_ext::<AB>(loc, nxt, &challenges);
+                        if g.on_transition {
+                            let sel: AB::ExprEF = b.is_transition().into();
+                            b.assert_zero_ext(sel * body);
+                        } else {
+                            b.assert_zero_ext(body);
+                        }
+                    },
+                );
 
                 // -- Chip lookups: each declared tuple queried on the chip bus, every row. --
                 let p2 = LookupBus::new(BUS_P2);
@@ -3793,6 +4188,10 @@ impl Ir2UniAir {
                 VmConstraint2::MapOp(_) => "map_op",
                 VmConstraint2::UMemOp(_) => "umem_op",
                 VmConstraint2::ProofBind(_) => "proof_bind",
+                // ⚑ A challenge gate needs `permutation_randomness()`, which is drawn per LOOKUP
+                // CONTEXT — a uni-stark instance with no bus has none, so the descriptor is
+                // refused here rather than proved against an empty challenge slice.
+                VmConstraint2::ChalGate(_) => "chal_gate",
             };
             return Err(format!(
                 "{}: constraint {i} is `{kind}`, which needs the multi-table assembly \
@@ -3855,7 +4254,20 @@ where
         // THE SAME walk `Ir2Air::Main` runs — not a second implementation of it. `Ir2UniAir` is
         // `Ir2Air::Main` MINUS the bus, and `new` has already refused every descriptor for which
         // that subtraction would silently drop a constraint, so there is nothing here to skip.
-        eval_row_local_constraints(&self.desc, builder, &local, &next, &pv);
+        eval_row_local_constraints(
+            &self.desc,
+            builder,
+            &local,
+            &next,
+            &pv,
+            // ⚑ FAIL CLOSED. `Ir2UniAir::new` refuses a `ChalGate` descriptor outright (a
+            // uni-stark instance has no lookup contexts and therefore no challenges), so this arm
+            // is unreachable — and if that refusal is ever weakened, the proof stops verifying
+            // rather than the constraint quietly disappearing.
+            |b: &mut AB, _g: &ChalGateSpec, _l: &[AB::Var], _n: &[AB::Var]| {
+                b.assert_zero(AB::Expr::ONE);
+            },
+        );
     }
 }
 
@@ -4253,6 +4665,19 @@ pub fn read_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
             }
         }
     }
+    // ⚑ The challenge-gate walker. A `Chal(i)` leaf reads NO trace column, so it contributes
+    // nothing here — which is the point: a challenge is not a column, and a census of "which
+    // columns does a constraint force" must not invent one for it.
+    fn ce(x: &ChalExpr, out: &mut Vec<usize>) {
+        match x {
+            ChalExpr::Loc(c) | ChalExpr::Nxt(c) => out.push(*c),
+            ChalExpr::Const(_) | ChalExpr::Chal(_) => {}
+            ChalExpr::Add(a, b) | ChalExpr::Mul(a, b) => {
+                ce(a, out);
+                ce(b, out);
+            }
+        }
+    }
     let mut out: Vec<usize> = Vec::new();
     for c in &desc.constraints {
         // Every arm below DESTRUCTURES; this function authors nothing. (`law1_enforcement_gate`
@@ -4302,6 +4727,7 @@ pub fn read_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
                 }
             }
             VmConstraint2::WindowGate(g) => w(&g.body, &mut out),
+            VmConstraint2::ChalGate(g) => ce(&g.body, &mut out),
         }
     }
     for h in &desc.hash_sites {
@@ -7860,6 +8286,7 @@ mod tests {
             name: "ir2-test".to_string(),
             trace_width: 31,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![TableDef2 {
                 id: TID_RANGE,
                 name: "range".to_string(),
@@ -8047,6 +8474,7 @@ mod tests {
             name: "ir2-narrow".to_string(),
             trace_width: 3,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::Lookup(LookupSpec {
                 table: TID_P2_NARROW,
@@ -8082,6 +8510,7 @@ mod tests {
             name: "ir2-wide".to_string(),
             trace_width: 3 + (CHIP_OUT_LANES - 1),
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::Lookup(LookupSpec {
                 table: TID_P2,
@@ -8115,6 +8544,7 @@ mod tests {
             name: "ir2-state16".to_string(),
             trace_width: 2 * POSEIDON2_WIDTH,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![TableDef2 {
                 id: TID_P2_STATE16,
                 name: "poseidon2_state16_chip".to_string(),
@@ -8210,6 +8640,7 @@ mod tests {
             name: "ir2-range16".to_string(),
             trace_width: 1,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![TableDef2 {
                 id: tid,
                 name: "range_w16".to_string(),
@@ -8311,6 +8742,7 @@ mod tests {
             name: "ir2-three-range-widths".to_string(),
             trace_width: 3,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![
                 TableDef2 {
                     id: tid29,
@@ -8520,6 +8952,7 @@ mod tests {
             name: "hw-splice-deployed".to_string(),
             trace_width: 126,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Const(1),
@@ -8722,6 +9155,7 @@ mod tests {
             name: "ir2-wide-test".to_string(),
             trace_width: 1 + CHIP_WIDE_ARITY + CHIP_OUT_LANES,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::Lookup(LookupSpec {
                 table: TID_P2,
@@ -8791,6 +9225,7 @@ mod tests {
             name: "ir2-node8-test".to_string(),
             trace_width: 1 + CHIP_NODE8_ARITY + CHIP_OUT_LANES,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::Lookup(LookupSpec {
                 table: TID_P2,
@@ -9041,6 +9476,7 @@ mod tests {
             name: "ir2-map-write".to_string(),
             trace_width: 19,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Var(18),
@@ -9098,6 +9534,7 @@ mod tests {
             name: "ir2-map-insert".to_string(),
             trace_width: 19,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Var(18),
@@ -9145,6 +9582,7 @@ mod tests {
             name: "ir2-map-insert-readback".to_string(),
             trace_width: 19,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Var(18),
@@ -9198,6 +9636,7 @@ mod tests {
             name: "ir2-map-insert-present".to_string(),
             trace_width: 19,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Var(18),
@@ -9246,6 +9685,7 @@ mod tests {
             name: "ir2-map-aafi-insert".to_string(),
             trace_width: 19,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Var(18),
@@ -9713,6 +10153,7 @@ mod tests {
             name: "ir2-umem-test".to_string(),
             trace_width: 5,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![
                 // The nullifier INSERT (serial 1).
@@ -9828,6 +10269,7 @@ mod tests {
             name: "ir2-umem-cohort-test".to_string(),
             trace_width: 3,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![
                 TableDef2 {
                     id: TID_UMEMORY,
@@ -10173,6 +10615,7 @@ mod tests {
             name: "ir2-absent-test".to_string(),
             trace_width: 18,
             public_input_count: 0,
+            challenges: 0,
             tables: vec![],
             constraints: vec![VmConstraint2::MapOp(MapOpSpec {
                 guard: LeanExpr::Var(17),

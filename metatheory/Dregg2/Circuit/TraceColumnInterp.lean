@@ -126,6 +126,21 @@ noncomputable def windowExprPoly (t : VmTrace) : WindowExpr → Polynomial BabyB
   | .add a b => windowExprPoly t a + windowExprPoly t b
   | .mul a b => windowExprPoly t a * windowExprPoly t b
 
+/-- ⚑ The challenge-gate composition. A `chal i` leaf interpolates to the CONSTANT polynomial
+`C (t.chal i)` — the challenge is fixed across the whole domain (one Fiat–Shamir draw per proof),
+which is exactly `p3-air`'s `ExtEntry::Challenge => degree_multiple() = 0` in the interpolation
+picture: it contributes no degree because it is not a column.
+
+⚠ Base-lane, like `arithResidual`: the deployed composition is over the quartic extension. See
+`AirChecksSatisfied.arithResidual`'s `chalGate` arm for the fidelity note. -/
+noncomputable def chalExprPoly (t : VmTrace) : ChalExpr → Polynomial BabyBear
+  | .loc col => colPoly t col
+  | .nxt col => nextShift t (colPoly t col)
+  | .const k => C (k : BabyBear)
+  | .chal i => C ((t.chal i : Int) : BabyBear)
+  | .add a b => chalExprPoly t a + chalExprPoly t b
+  | .mul a b => chalExprPoly t a * chalExprPoly t b
+
 theorem exprPoly_eval (t : VmTrace) (hcap : t.rows.length ≤ domainSize)
     (i : Nat) (hi : i < t.rows.length) (e : EmittedExpr) :
     (exprPoly t e).eval (rowPt i) = (((e.eval (envAt t i).loc : Int)) : BabyBear) := by
@@ -144,6 +159,17 @@ theorem windowExprPoly_eval (t : VmTrace) (hcap : t.rows.length ≤ domainSize)
   | const k => simp [windowExprPoly, WindowExpr.eval]
   | add a b iha ihb => simp [windowExprPoly, WindowExpr.eval, iha, ihb]
   | mul a b iha ihb => simp [windowExprPoly, WindowExpr.eval, iha, ihb]
+
+theorem chalExprPoly_eval (t : VmTrace) (hcap : t.rows.length ≤ domainSize)
+    (i : Nat) (hi : i < t.rows.length) (e : ChalExpr) :
+    (chalExprPoly t e).eval (rowPt i) = (((e.eval (envAt t i) : Int)) : BabyBear) := by
+  induction e with
+  | loc col => exact colPoly_eval t col hcap i hi
+  | nxt col => exact nextShift_colPoly_eval t col hcap i hi
+  | const k => simp [chalExprPoly, ChalExpr.eval]
+  | chal j => simp [chalExprPoly, ChalExpr.eval, envAt]
+  | add a b iha ihb => simp [chalExprPoly, ChalExpr.eval, iha, ihb]
+  | mul a b iha ihb => simp [chalExprPoly, ChalExpr.eval, iha, ihb]
 
 /-! ## Guard selectors and the arithmetic constraint composition -/
 
@@ -186,6 +212,9 @@ noncomputable def constraintPoly (_d : EffectVmDescriptor2) (t : VmTrace) :
   | .windowGate w =>
       if w.onTransition then (1 - lastSelector t) * windowExprPoly t w.body
       else windowExprPoly t w.body
+  | .chalGate w =>
+      if w.onTransition then (1 - lastSelector t) * chalExprPoly t w.body
+      else chalExprPoly t w.body
   | .lookup _ => 0
   | .memOp _ => 0
   | .mapOp _ => 0
@@ -245,6 +274,12 @@ theorem constraintPoly_eval_eq_arithResidual
           simp [constraintPoly, arithResidual, hw, hlast, eval_sub, eval_mul, eval_one,
             lastSelector_eval t hcap i hi, boolScalar,
             windowExprPoly_eval t hcap i hi]
+  | chalGate w =>
+      cases hw : w.onTransition <;>
+        cases hlast : (i + 1 == t.rows.length) <;>
+          simp [constraintPoly, arithResidual, hw, hlast, eval_sub, eval_mul, eval_one,
+            lastSelector_eval t hcap i hi, boolScalar,
+            chalExprPoly_eval t hcap i hi]
   | lookup l => exact absurd hc (by simp [isArith])
   | memOp m => exact absurd hc (by simp [isArith])
   | mapOp m => exact absurd hc (by simp [isArith])

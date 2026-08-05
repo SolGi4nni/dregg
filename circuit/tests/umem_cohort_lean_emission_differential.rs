@@ -54,6 +54,7 @@ fn cohort_desc() -> EffectVmDescriptor2 {
         name: "umem-cohort-lean-emission-differential".to_string(),
         trace_width: 3,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![
             TableDef2 {
                 id: TID_UMEMORY,

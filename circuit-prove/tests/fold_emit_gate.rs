@@ -217,6 +217,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-fold-step-v2".to_string(),
         trace_width: FOLD_WIDTH,
         public_input_count: 6,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

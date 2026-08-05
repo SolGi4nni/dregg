@@ -60,10 +60,19 @@ absorb move nothing.
   `ft_comm` at `w8_ftcomm` (§17) — and the census kept them, because emitting a value the prover
   still hands over freely changes the SHAPE of the prover's reach and not its size. The rest still
   need W-COMBINE / W-FINALIZE / W-BULLET.
-* ⚑ And neither emitted sub-circuit is in THIS file's object. Everything below emits at
-  `Rung.bind` (`w4_bind`), and `rungRows _ .bind _` stops at `closingRows` — `keyRows`,
-  `xhatRows`, `splitRows` and `ftcRows` are not in the row list. §1 says what that costs on the
-  `x_hat` slot specifically, and `chain_xhat_is_the_step_proofs_not_the_msm_output` exhibits it.
+* ⚑ **THE CEILING IS `w5_key` SINCE 2026-08-05, AND MOVING IT WAS THE WHOLE JOB.** Everything here
+  used to stop at `Rung.bind` (`w4_bind`) — not for want of rows, but because `keyRows`' closing
+  `digestTie` welds the index sponge's squeeze to the transcript's FIRST absorbed word, the wrap
+  circuit committed to **Mina's** `step-transaction` verification key, and this tape is **dregg's
+  own** step proof's. Two different circuits, one unsatisfiable `Field.Assert.equal`, and `.key` is
+  in `rungsUpto` of every rung above `w4_bind` — so that single row was the ceiling, not W-COMBINE
+  and not W-BULLET. `step_keys` is a per-branch vector of the compiled step rules' keys
+  (`wrap_main.ml:98-101`), so dregg's step rule now takes an entry beside Mina's
+  (`KimchiWrapMain.KEY_CHAIN_BRANCH`) and `chainBranch` selects it.
+  `the_chain_climbs_past_bind_at_dreggs_own_step_key` is the tie; the Pallas harness proves the
+  1 999-row `chain_w5_key` with `verify() == true`. `xhatRows`, `splitRows` and `ftcRows` are still
+  not in the row list. §1 says what that costs on the `x_hat` slot specifically, and
+  `chain_xhat_is_the_step_proofs_not_the_msm_output` exhibits it.
 * The opening — `equal_g`, `verified`, the accumulator check — is not in the wrap circuit at all,
   and `verified` remains a witnessed boolean.
 * The reality gate below is closed by `native_decide`: 28 Poseidon permutations of 255-bit states,
@@ -502,8 +511,20 @@ every row emitter, the placement and the renderer exactly as that file wrote the
 `baseCh`/`baseBr` are computed from `t.sp`, the downstream variable bases follow the chained trace
 automatically. -/
 
+/-- ⚑⚑ **THE BRANCH IS `KEY_CHAIN_BRANCH`, AND THAT IS WHAT MAKES THE CHAIN CLIMB.** `choose_key`
+(`wrap_verifier.ml:189-204`) one-hot folds `step_keys` — `wrap_main.ml:98-101`'s per-branch vector of
+the compiled STEP rules' verification keys — and `keyRows`' closing `digestTie` welds the resulting
+index digest to the transcript's FIRST absorbed word. This tape's first word is
+`STEP_VKDIGEST`, the verifier-index digest of `stepmain_smoke_r8_finalize`, so the branch this
+`WrapData` selects has to be the one holding THAT rule's key. It is, and `KimchiWrapMainPins04`'s
+`chain_step_rule_is_a_second_real_key` is where the key itself is pinned.
+
+⚑ And the selection carries a second correction with it: `fz = widths.getD 2 = 2`, so
+`Branch_data.proofs_verified` packs as `N2` (`[1,1]`, `Field.pack = 3`) rather than the `N1` the old
+`min 1 (branches − 1)` produced — which is the honest value for a wrap whose step rule carries
+`STEP_PREV_CHALLENGES = 2` accumulators and whose tape has two `sg_old` points on it. -/
 def chainBranch : BranchData :=
-  runBranch shapeChain (min 1 (shapeChain.branches - 1))
+  runBranch shapeChain KEY_CHAIN_BRANCH
     ((List.range shapeChain.branches).map (fun i => min 2 i))
     ((List.range shapeChain.branches).map (fun _ => 16))
 
@@ -555,7 +576,9 @@ seconds: the tamper claim is TRUE, the shape claim is TRUE, the negative control
 the width was false. A conjunction that fails tells you nothing about which half failed; each
 conjunct is now its own named theorem, so the next such move names itself.
 
-⚑ **AND THE RUNG IS `.bind`.** §0b: everything this file emits is at `Rung.bind` (`w4_bind`), and the
+⚑ **AND THE RUNG IS EXPLICIT.** §0b: this file's four emitted-vector facts are at `Rung.bind`
+(`w4_bind`), which is the rung they were measured on and the rung §10 pairs them with; `w5_key` is
+emitted and proved beside it since the climb, and its own control figures are the harness's. The
 old theorem already paired its public vector with `rungRows _ .bind true`. Pairing `.bind` rows with a
 `.prev` public vector was never the intended statement. `wrapPublicAt _ .bind` is, and it puts the
 vector, the rows, the placement and §10's JSON on one single rung. The aliases are DELETED rather than
@@ -658,8 +681,8 @@ theorem the_chained_control_differs_only_in_the_placement :
 
 #assert_compiled the_chained_control_differs_only_in_the_placement
 
-/-! ## §11 — ⚑ ABSORPTION vs CONSUMPTION, MEASURED — and the two things that still block the
-stronger claim.
+/-! ## §11 — ⚑ ABSORPTION vs CONSUMPTION, MEASURED — and the two things that USED to block the
+stronger claim, both closed 2026-08-05.
 
 §0b's honest sentence has been *"the step proof's commitments enter as **sponge inputs**, not as
 curve points a sub-circuit consumes."* W-COMBINE (`w10_combine`, §23) and W-BULLET (`w11_bullet`,
@@ -674,25 +697,37 @@ wrote. Driven by `tChain`, that class holds a coordinate of **dregg's own step p
 would read the same cell the sponge absorbed — a GATE READING IT, not a tape seeing it. The
 theorems below exhibit that, slot by slot, at the committed shape.
 
-⚠ **AND THE VALUE LAYER DOES NOT — IT IS STILL THE BORROWED FIXTURE.** `combPtVal`, `bullCipVal`,
-`bullLrVal` and `bullDeltaVal` answer with `KimchiWrapMain.itemVal`, `PastaPoseidonFq`'s
-`create_circuit(0,5)` proof, *regardless of which tape drives the `WrapData`*. For `tWrap` that is
-invisible, because `schedule` absorbs `itemVal` — value and variable agree by coincidence of
-source. For `tChain` they DISAGREE, so an emitted `.combine` would carry a fold whose accumulator
-was computed from one proof's commitments over cells holding another's, and its honest witness
-would fail `CompleteAdd`. **This is the first blocker and it is a two-line one:** those four `Val`
-functions must read the absorbed word from `t.sp` — the same place their `V` twins read the
-variable — which is byte-neutral for `tWrap` by construction. It is not done here because §23/§24
-are W-COMBINE/W-BULLET's file and three lanes are live in it; it is pinned below so it goes RED the
-moment it is done.
+✅ **AND THE VALUE LAYER NOW DOES TOO — CLOSED 2026-08-05.** `combPtVal`, `bullCipVal`, `bullLrVal`
+and `bullDeltaVal` answered with `KimchiWrapMain.itemVal`, `PastaPoseidonFq`'s
+`create_circuit(0,5)` proof, *regardless of which tape drove the `WrapData`* — invisible for
+`tWrap`, because `schedule` absorbs `itemVal` and the two agreed by coincidence of source; for
+`tChain` they DISAGREED, so an emitted `.combine` would have carried a fold whose accumulator was
+computed from one proof's commitments over cells holding another's, and its honest witness would
+have failed `CompleteAdd`. `KimchiWrapMainCore.absVal` is the repair — one function reading
+`(sp.evs.filter (·.isAbs && ·.tag == tag)).word`, the value half of the very filter the `V` twins
+use — and `prevEnv`'s `assert_on_curve` intermediates and `whSpongeP`'s tape were the same defect in
+two more places. `bullLrVal`/`bullDeltaVal` took no `WrapData` AT ALL, which is what made this
+structural rather than accidental: a nullary value function cannot follow a tape.
+`the_consuming_rungs_values_are_the_chains_own_proof` states the agreement and
+`…_are_no_longer_the_borrowed_proofs` states the disagreement with the fixture, so a "repair" that
+moved both layers onto the fixture would red.
 
-⚠ **AND `rungsUpto .combine` CONTAINS `.key`, WHICH THIS TAPE FALSIFIES.** `keyRows`' `digestTie`
-is a `Field.Assert.equal` joining the index sponge's squeeze to the transcript's FIRST absorbed
-word. The squeeze is the digest of `KimchiWrapMain`'s `STEP_VK_XY` literal — a *wrap* VK; the
-chain's first absorbed word is `STEP_VKDIGEST`, dregg's own STEP verifier index. They differ, so
-the honest witness fails that row and no rung above `w4_bind` can be emitted on this tape at all.
-**That is a sibling's lane** (the real step key), not a thing to work around, and the theorem below
-states it as the refutable fact it is: it goes red exactly when the key becomes real.
+✅ **AND `rungsUpto .combine` CONTAINS `.key`, WHICH THIS TAPE NO LONGER FALSIFIES.** `keyRows`'
+`digestTie` is a `Field.Assert.equal` joining the index sponge's squeeze to the transcript's FIRST
+absorbed word. It squeezed the digest of Mina's `step-transaction` index while the chain's first
+absorbed word is `STEP_VKDIGEST`, dregg's own step verifier index — so the honest witness failed
+that row and no rung above `w4_bind` was emittable on this tape at all.
+
+⚑ **THE FIX WAS NOT "MAKE THE STEP KEY REAL", AND THAT DISTINCTION COST A DAY.** `1687b7f61` DID
+make it real — it replaced kimchi's degenerate `create_circuit(0,5)` test index (seven commitments
+at infinity, an off-curve `lhs`, `bulletproof_success` with no witness) with o1-labs' released
+`step-transaction` blob. That closed a different defect and left this row exactly as unsatisfiable
+as it was: **a real key is not the RIGHT key.** What closes it is that `step_keys` is a per-branch
+VECTOR of the compiled step rules' verification keys, so dregg's own rule takes an entry beside
+Mina's and `choose_key` selects it — which is `choose_key`'s own mechanism and not a workaround for
+it. Before this, the five-entry one-hot fold was decoration: `keySchedule` absorbed
+`KEY_REAL_BRANCH`'s key whatever branch was selected, so W-KEY had a witness at branch 1 and nowhere
+else. `KimchiWrapMainPins04.key_sponge_absorbs_the_selected_branch` is the pin that it no longer is.
 
 ⚑ **AND ONE FAMILY IS ABSORBED AND READ BY NOTHING, EVEN AT `w11_bullet`.** `t_comm`. §17's
 `ft_comm` ladders run over `ftcTVal` — doublings of SRS Lagrange bases — in cells of their own; no
@@ -776,61 +811,205 @@ theorem chain_bullet_would_read_the_absorbed_cells :
 
 #assert_compiled chain_bullet_would_read_the_absorbed_cells
 
-/-- **`the_consuming_rungs_values_are_still_the_borrowed_proofs`** — ⚑ BLOCKER ONE, stated so it is
-falsifiable rather than described. Every `Val` above answers with `KimchiWrapMain.itemVal` — the
-borrowed `create_circuit(0,5)` proof — while its `V` twin reads `tChain`'s own class. The second
-half of each conjunct is what makes this a diagnosis and not a complaint: the value IS `itemVal`'s,
-exactly, so the repair is to source it from `t.sp` and nothing else changes.
+/-- **`the_consuming_rungs_values_are_the_chains_own_proof`** — ⚑ **BLOCKER ONE, CLOSED 2026-08-05,
+AND ITS PREDECESSOR FIRED ON THE WAY OUT.**
 
-⚠ This theorem GOES RED when that repair lands, and that is its job. -/
-theorem the_consuming_rungs_values_are_still_the_borrowed_proofs :
-    combPtVal tChain 0 ≠ (chainAbsVal T_SGOLD 0, chainAbsVal T_SGOLD 1)
-    ∧ combPtVal tChain 0 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
-    ∧ combPtVal tChain (shapeChain.prevs + 2) ≠ (chainAbsVal T_ZCOMM 0, chainAbsVal T_ZCOMM 1)
-    ∧ combPtVal tChain (shapeChain.prevs + 2) = (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
+The theorem that stood here was `the_consuming_rungs_values_are_still_the_borrowed_proofs`, and it
+said the opposite of this one: every `Val` above answered with `KimchiWrapMain.itemVal` — the
+borrowed `create_circuit(0,5)` proof — *whatever tape drove the `WrapData`*, while its `V` twin read
+`tChain`'s own σ class. Invisible for `tWrap`, because `schedule` absorbs `itemVal` and the two
+agreed by coincidence of source; for `tChain` they DISAGREED, so a `.combine` emission would have
+folded one proof's commitments over cells holding another's and failed `CompleteAdd`.
+
+⚠ It was written to GO RED when the repair landed, and it did: the arity change on
+`bullLrVal`/`bullDeltaVal` (they took no `WrapData` at all — which is what made the defect
+structural rather than accidental) turned it into a type error, `#assert_compiled` caught the
+resulting `sorryAx`, and the build refused. **That is the mechanism working, and it is why the
+pin was worth writing.**
+
+`KimchiWrapMainCore.absVal` is the repair: one function, reading `(sp.evs.filter (·.isAbs && ·.tag
+== tag)).word`, which is the value half of the very filter the `V` twins use for the variable. Value
+and variable are now ONE object for every `WrapData`, and this states that at every slot the census
+names — including `x_hat`, which `schedule` absorbs as `s.xhatXY` and this tape absorbs as the step
+proof's own public-input commitment. -/
+theorem the_consuming_rungs_values_are_the_chains_own_proof :
+    combPtVal tChain 0 = (chainAbsVal T_SGOLD 0, chainAbsVal T_SGOLD 1)
+    ∧ combPtVal tChain (shapeChain.prevs + 2) = (chainAbsVal T_ZCOMM 0, chainAbsVal T_ZCOMM 1)
     ∧ combPtVal tChain (shapeChain.prevs + 3 + KEY_SINGLES)
-        ≠ (chainAbsVal T_WCOMM 0, chainAbsVal T_WCOMM 1)
-    ∧ combPtVal tChain shapeChain.prevs ≠ (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
-    ∧ bullCipVal tChain ≠ chainAbsVal T_CIP 0
-    ∧ bullDeltaVal ≠ (chainAbsVal T_DELTA 0, chainAbsVal T_DELTA 1)
-    ∧ bullLrVal 0 0 ≠ (chainAbsVal T_LR 0, chainAbsVal T_LR 1) := by
+        = (chainAbsVal T_WCOMM 0, chainAbsVal T_WCOMM 1)
+    ∧ combPtVal tChain shapeChain.prevs = (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
+    ∧ bullCipVal tChain = chainAbsVal T_CIP 0
+    ∧ bullDeltaVal tChain = (chainAbsVal T_DELTA 0, chainAbsVal T_DELTA 1)
+    ∧ bullLrVal tChain 0 0 = (chainAbsVal T_LR 0, chainAbsVal T_LR 1) := by
   native_decide
 
-#assert_compiled the_consuming_rungs_values_are_still_the_borrowed_proofs
+#assert_compiled the_consuming_rungs_values_are_the_chains_own_proof
 
-/-- **`the_chain_cannot_climb_past_bind_until_the_step_key_is_real`** — ⚑ BLOCKER TWO, and it is a
-SIBLING'S and not this lane's. `keyRows`' closing `digestTie` puts the index sponge's squeeze and the
-transcript's first absorbed word in one σ class; here those are the digest of a *wrap* verifier index
-and the digest of dregg's own *step* one. `.key` is in `rungsUpto` of every rung above `w4_bind`, so
-this single row is why the chain stops where it stops — not W-COMBINE, not W-BULLET.
+/-- **`the_consuming_rungs_values_are_no_longer_the_borrowed_proofs`** — ⚑ the same fact from the
+other side, which is the half that would catch a repair that made the two layers agree by moving
+BOTH onto the fixture. Every slot above now differs from what `itemVal` answers, and `itemVal` is
+unchanged: it is still `PastaPoseidonFq`'s borrowed proof, still what `schedule` absorbs, still
+byte-neutral for `tWrap`. The disagreement is the point. -/
+theorem the_consuming_rungs_values_are_no_longer_the_borrowed_proofs :
+    combPtVal tChain 0 ≠ (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
+    ∧ combPtVal tChain (shapeChain.prevs + 2) ≠ (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
+    ∧ bullCipVal tChain ≠ itemVal T_CIP 0
+    ∧ bullDeltaVal tChain ≠ (itemVal T_DELTA 0, itemVal T_DELTA 1)
+    ∧ combPtVal (mkWrap shapeChain) 0 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
+    ∧ bullCipVal (mkWrap shapeChain) = itemVal T_CIP 0
+    ∧ bullDeltaVal (mkWrap shapeChain) = (itemVal T_DELTA 0, itemVal T_DELTA 1) := by
+  native_decide
 
-⚠ It goes RED when `STEP_VK_XY` becomes dregg's own step key, which is exactly when the chain should
-climb.
+#assert_compiled the_consuming_rungs_values_are_no_longer_the_borrowed_proofs
 
-⚑ **AND IT DID, ON 2026-08-04, AND THE RED WAS NOT NOTICED FOR A DAY.** `d6683dd54` — the harvest
-commit that landed three lanes' work unbuilt — swapped `STEP_VK_XY` to Mina's real
-`step-transaction` index and added `KimchiWrapMain.STEP_VK_DIGEST` for it, whose own docblock says
-in as many words *"It is NOT `PastaPoseidonFq.VKDIGEST` any more"*. `KimchiWrapMainPins04` was
-updated to the new constant; THIS call site was not, so the third conjunct compared the real key's
-index digest against the digest of the **degenerate seven-identity test index** it replaced, and
-`native_decide` evaluated the theorem FALSE.
+/-- **`the_chain_climbs_past_bind_at_dreggs_own_step_key`** — ⚑⚑ **BLOCKER TWO, CLOSED 2026-08-05.
+THE HEADLINE OF THIS FILE.**
 
-⚠ The repair is the constant, NOT the number: `STEP_VK_DIGEST` is
-`verifier_index.digest::<BaseSponge>()` as RUST KIMCHI computes it for that key, re-derived a third
-time by the extractor's independent `absorb_fq` replay. Pasting the value this file's own sponge
-prints would have made the pin a statement about its own definition. -/
-theorem the_chain_cannot_climb_past_bind_until_the_step_key_is_real :
+Its predecessor, `the_chain_cannot_climb_past_bind_until_the_step_key_is_real`, said: `keyRows`'
+closing `digestTie` puts the index sponge's squeeze and the transcript's FIRST absorbed word in one
+σ class, `.key` is in `rungsUpto` of every rung above `w4_bind`, and here those two words were the
+digests of **two different circuits** — so that single row, not W-COMBINE and not W-BULLET, was why
+the chain stopped where it stopped.
+
+⚠ **AND THE REASON IT KEPT BLOCKING IS NOT THE ONE THAT WAS EXPECTED.** The brief that opened this
+work said the blocker had lifted because "the step key is now real" — `1687b7f61` replaced kimchi's
+degenerate `create_circuit(0,5)` test index with o1-labs' released `step-transaction` blob. That is
+true and it fixed a different defect (seven commitments at infinity, an off-curve `lhs`, a
+`bulletproof_success` with no witness). It did NOT unblock this row, and measured, the theorem was
+still TRUE: `keyDigestVal` was Mina's `step-transaction` digest and the tape's first word was
+`stepmain_smoke_r8_finalize`'s. **A real key is not the same as the RIGHT key** — the wrap circuit
+has to commit to the index of the very proof its transcript is verifying.
+
+⚑ **WHAT ACTUALLY CLOSES IT.** `step_keys` is a per-branch VECTOR of the compiled step rules'
+verification keys (`wrap_main.ml:98-101`), and `choose_key` one-hot selects from it. So dregg's own
+step rule takes an entry — `KEY_CHAIN_BRANCH` — beside Mina's, and this `WrapData` selects it. The
+56 coordinates come from `KimchiStepWrapChainKey`, written by the SAME binary, from the SAME
+`VerifierIndex`, in the SAME run that wrote this file's tape: the preimage identity is by
+construction, not by hygiene.
+
+⚑ **AND `w5_key` IS THE FIRST RUNG THAT WAS EVER EMITTABLE ON A NON-`schedule` TAPE.** The last two
+conjuncts say the rung PLACES and that its σ classes are sound at the committed shape, so "the tie
+holds" is not a statement about two numbers with no circuit behind them. -/
+theorem the_chain_climbs_past_bind_at_dreggs_own_step_key :
     (chainRun.evs.getD 0 default).word = STEP_VKDIGEST
-    ∧ keyDigestVal shapeChain chainRun ≠ STEP_VKDIGEST
-    ∧ keyDigestVal shapeChain chainRun = STEP_VK_DIGEST
-    ∧ keyDigestVal shapeChain chainRun
-        ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST
+    ∧ keyDigestVal shapeChain chainRun chainBranch.idx = STEP_VKDIGEST
+    ∧ chainBranch.idx = KEY_CHAIN_BRANCH
     ∧ (rungsUpto .combine).contains .key = true
     ∧ (rungsUpto .bullet).contains .key = true
-    ∧ (rungsUpto .bind).contains .key = false := by
+    ∧ (rungsUpto .bind).contains .key = false
+    ∧ (refusalOf shapeChain (rungPub shapeChain .key)
+         (wrapGates (rungRows tChain .key true)) == none) = true
+    ∧ regionEscape shapeChain chainRun .key (wrapGates (rungRows tChain .key true)) = none := by
   native_decide
 
-#assert_compiled the_chain_cannot_climb_past_bind_until_the_step_key_is_real
+#assert_compiled the_chain_climbs_past_bind_at_dreggs_own_step_key
+
+/-- **`the_chain_would_not_climb_at_any_other_step_key`** — ⚑ the RED CONTROL, and without it the
+theorem above is one number agreeing with another. The `digestTie` row is a `Field.Assert.equal`, so
+what "the chain climbs" MEANS is that the index sponge's squeeze equals the transcript's first word;
+this says that holds at `KEY_CHAIN_BRANCH` and at NO OTHER branch of `step_keys` — including
+`KEY_REAL_BRANCH`, Mina's `step-transaction` key, which is the branch the chain was pinned to until
+today and the exact reason it stopped at `w4_bind`. -/
+theorem the_chain_would_not_climb_at_any_other_step_key :
+    ((List.range shapeChain.branches).filter (fun i =>
+        keyDigestVal shapeChain chainRun i == (chainRun.evs.getD 0 default).word))
+      = [KEY_CHAIN_BRANCH]
+    ∧ keyDigestVal shapeChain chainRun KEY_REAL_BRANCH ≠ STEP_VKDIGEST
+    ∧ keyDigestVal shapeChain chainRun KEY_REAL_BRANCH = STEP_VK_DIGEST
+    ∧ STEP_VKDIGEST ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST := by
+  native_decide
+
+#assert_compiled the_chain_would_not_climb_at_any_other_step_key
+
+/-- **`the_chain_key_is_the_tapes_own_preimage`** — ⚑ the Lean-side re-derivation of what the Rust
+exporter asserted before it wrote either module: absorbing exactly the 56 `index_to_field_elements`
+coordinates of dregg's step index produces the digest that is the FIRST WORD of the phase-1 tape
+`kimchi::verifier` ran on the accepted proof. Committing to those 56 numbers and absorbing that word
+are one act.
+
+⚠ The `.getD 0` leg is not decoration: it reads the tape's head off `chainTape` itself, so the
+identity is against the object §3's reality gate consumes and not against a constant that happens to
+sit beside it. -/
+theorem the_chain_key_is_the_tapes_own_preimage :
+    Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_DIGEST = STEP_VKDIGEST
+    ∧ chainTape.getD 0 0 = STEP_VKDIGEST
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.length = KEY_COORDS
+    ∧ (List.range KEY_COORDS).all (fun k =>
+        keyConst KEY_CHAIN_BRANCH k
+          == Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.getD k 0) = true := by
+  native_decide
+
+#assert_compiled the_chain_key_is_the_tapes_own_preimage
+
+/-- **`the_chain_stops_at_xhat_because_the_msm_is_over_a_fixture`** — ⚑⚑ **THE NEXT NAMED ROW, and it
+is `w6_xhat`'s LAST one.** Stated as precisely as its two predecessors, and refutable the same way.
+
+`xhatRows`' closing `caRowQ` writes its OUTPUT into `xw` — the transcript's own absorbed `T_XHAT` σ
+classes — so the emitted circuit CONSTRAINS the absorbed `x_hat` pair to equal
+`Ops.add_fast (negate (MSM fold)) Generators.h` (`wrap_verifier.ml:539-617`, the `x_hat blinding`).
+On a `schedule`-driven `WrapData` that holds by construction, because `schedule` absorbs
+`s.xhatXY = xhatOut s.xhatTerms` — the fold's own output. **On this tape it does not**, because §1's
+override absorbs `STEP_PUBCOMM_XY`, the public-input commitment kimchi's verifier actually ran on,
+and the fold is over `xhatScalar i = prevWordVal (xhatWordOf i)` — a NAMED FIXTURE.
+
+⚑ **AND THIS IS A DIFFERENT KIND OF BLOCKER FROM THE KEY, WHICH IS WHY IT IS WORTH SEPARATING.** The
+key was a wrong CONSTANT: the wrap circuit committed to another circuit's index, and giving
+`step_keys` dregg's own entry fixed it with no new arithmetic. This one is a wrong FUNCTION. To make
+`x_hat` the step proof's real public-input commitment the MSM has to run over dregg's step proof's
+OWN public input against the step SRS Lagrange basis — `STEP_PUBLIC = 12` terms, not
+`XHAT_TERMS_FULL = 67`, because 67 is Mina's `step-transaction` statement width and 12 is
+`stepmain_smoke_r8_finalize`'s. So `shapeChain.xhatTerms = shapeWrap.xhatTerms` — §1's deliberate
+copy — is itself the thing that has to go, and `chain_shape_is_the_measured_step_shape`'s
+`shapeChain = shapeWrap` conjunct goes with it. That is correct rather than costly: a `WrapShape` for
+verifying dregg's step rule genuinely has that rule's statement width.
+
+⚠ **`.xhat` is in `rungsUpto` of `.split`, `.ftcomm`, `.prev`, `.combine` and `.bullet`**, so this
+one row is the ceiling for all five — exactly as `.key` was the ceiling for everything above
+`w4_bind`. The families W-COMBINE and W-BULLET would read (`z_comm`, 15 `w_comm`,
+`combined_inner_product`, 32 `lr`, `delta`) are NOT what blocks them.
+
+⚑ It goes RED when the MSM computes this proof's own public-input commitment. -/
+theorem the_chain_stops_at_xhat_because_the_msm_is_over_a_fixture :
+    chainXhatAbsorbed = [STEP_PUBCOMM_XY.getD 0 0, STEP_PUBCOMM_XY.getD 1 0]
+    ∧ chainXhatAbsorbed ≠ [shapeChain.xhatXY.1, shapeChain.xhatXY.2]
+    ∧ shapeChain.xhatXY = xhatOut shapeChain.xhatTerms
+    ∧ shapeChain.xhatTerms = XHAT_TERMS_FULL
+    ∧ XHAT_TERMS_FULL ≠ STEP_PUBLIC
+    ∧ (rungsUpto .split).contains .xhat = true
+    ∧ (rungsUpto .ftcomm).contains .xhat = true
+    ∧ (rungsUpto .prev).contains .xhat = true
+    ∧ (rungsUpto .combine).contains .xhat = true
+    ∧ (rungsUpto .bullet).contains .xhat = true := by
+  native_decide
+
+#assert_compiled the_chain_stops_at_xhat_because_the_msm_is_over_a_fixture
+
+/-- **`the_combine_and_bullet_families_are_not_what_blocks_them`** — ⚑ the complement, so the row
+above is a DIAGNOSIS and not merely a blocker. Every commitment family W-COMBINE's 47-term fold and
+W-BULLET's ladders read is, on this tape, the chain's own absorbed σ class holding the chain's own
+value — variable AND value, since `absVal`. If `w6_xhat` were passed, nothing in those two rungs
+would be reading a borrowed proof.
+
+⚠ `x_hat` itself is the exception and is stated as one: its slot is the absorbed cell like the
+others, but the cell's VALUE is the step proof's commitment while the fold that must produce it is
+over a fixture — which is the row above, in the value layer. -/
+theorem the_combine_and_bullet_families_are_not_what_blocks_them :
+    ((List.range shapeChain.prevs).all (fun p =>
+        combPtVal tChain p == (chainAbsVal T_SGOLD (2 * p), chainAbsVal T_SGOLD (2 * p + 1)))) = true
+    ∧ combPtVal tChain (shapeChain.prevs + 2) = (chainAbsVal T_ZCOMM 0, chainAbsVal T_ZCOMM 1)
+    ∧ ((List.range shapeChain.wComms).all (fun j =>
+        combPtVal tChain (shapeChain.prevs + 3 + KEY_SINGLES + j)
+          == (chainAbsVal T_WCOMM (2 * j), chainAbsVal T_WCOMM (2 * j + 1)))) = true
+    ∧ bullCipVal tChain = chainAbsVal T_CIP 0
+    ∧ ((List.range shapeChain.ipaRounds).all (fun r => (List.range 2).all (fun j =>
+        bullLrVal tChain r j
+          == (chainAbsVal T_LR (4 * r + 2 * j), chainAbsVal T_LR (4 * r + 2 * j + 1))))) = true
+    ∧ bullDeltaVal tChain = (chainAbsVal T_DELTA 0, chainAbsVal T_DELTA 1)
+    ∧ combPtVal tChain shapeChain.prevs = (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
+    ∧ combPtVal tChain shapeChain.prevs ≠ shapeChain.xhatXY := by
+  native_decide
+
+#assert_compiled the_combine_and_bullet_families_are_not_what_blocks_them
 
 /-- **`t_comm_is_absorbed_and_read_by_nothing`** — ⚑ the one commitment family for which
 "absorbed, not consumed" is still the WHOLE story, and the census's `t_comm` entry is therefore not

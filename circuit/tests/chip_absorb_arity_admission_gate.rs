@@ -866,6 +866,7 @@ fn each_mode_bites_on_its_own() {
             name: "synthetic".into(),
             trace_width: 1,
             public_input_count: 0,
+            challenges: 0,
             tables: Vec::new(),
             constraints: vec![VmConstraint2::Lookup(LookupSpec {
                 table: TID_P2,

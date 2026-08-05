@@ -65,6 +65,7 @@ fn manifest_desc() -> EffectVmDescriptor2 {
         name: "ir2-preprocessed-sweep-harness".to_string(),
         trace_width: 2,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![TableDef2 {
             id: TID,
             name: "manifest".to_string(),

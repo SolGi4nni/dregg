@@ -80,6 +80,23 @@ theorem decideWindow_iff (env : VmRowEnv) (isLast : Bool) (w : WindowConstraint)
   · simp only [ht, if_false]
     simp
 
+/-- ⚑ **`decideChal env isLast w`** — the `.chalGate` arm. Identical guard structure to
+`decideWindow`; the body is a `ChalExpr`, which additionally reads `env.chal`. Decidable because the
+drawn challenge slice is part of the row environment (the verifier's value, carried in the witness),
+not an oracle. -/
+def decideChal (env : VmRowEnv) (isLast : Bool) (w : ChalConstraint) : Bool :=
+  if w.onTransition then isLast || decide (w.body.eval env ≡ 0 [ZMOD 2013265921])
+  else decide (w.body.eval env ≡ 0 [ZMOD 2013265921])
+
+theorem decideChal_iff (env : VmRowEnv) (isLast : Bool) (w : ChalConstraint) :
+    decideChal env isLast w = true ↔ w.holdsAt env isLast := by
+  unfold decideChal ChalConstraint.holdsAt
+  by_cases ht : w.onTransition
+  · simp only [ht, if_true]
+    cases isLast <;> simp
+  · simp only [ht, if_false]
+    simp
+
 /-- **`decideProofBind env m`** — the `.proofBind` arm: the ROW-LOCAL recursion seam. Decidable
 congruences mirroring `ProofBind.holdsAt`: the guard is a bit, the attested program VK is the
 DECLARED `vkPin`, the bound commitment is the DECLARED `bound`. ⚑ This arm used to be the constant
@@ -115,6 +132,10 @@ def decideConstraint2 (mapDec : VmRowEnv → MapOp → Bool) (hash : List ℤ �
   | .umemOp _     => true
   | .proofBind m  => decideProofBind env m
   | .windowGate w => decideWindow env isLast w
+  -- ⚑ The challenge gate decides exactly like a window gate: same guard, same `≡ 0 [ZMOD p]`
+  -- body, with `ChalExpr.eval` reading the row's challenge slice. Decidable because the challenge
+  -- slice is part of the witness, not an oracle.
+  | .chalGate w   => decideChal env isLast w
 
 /-- **`decideConstraint2_iff`** — one v2 constraint is decided, under the oracle's faithfulness.
 For EVERY `VmConstraint2 c`: `decideConstraint2 … c = true ↔ c.holdsAt hash tf env isFirst isLast`.
@@ -132,6 +153,7 @@ theorem decideConstraint2_iff (mapDec : VmRowEnv → MapOp → Bool) (hash : Lis
   | umemOp _     => simp [decideConstraint2, VmConstraint2.holdsAt]
   | proofBind m  => exact decideProofBind_iff env m
   | windowGate w => exact decideWindow_iff env isLast w
+  | chalGate w   => exact decideChal_iff env isLast w
 
 /-! ## §2 — the per-row constraint conjunct (over the whole main trace). -/
 

@@ -3035,9 +3035,9 @@ theorem noteSpendV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 -- BOTH POLARITIES of the soundness tooth, executable on the toy environment: a row whose
 -- param0 equals PI[46] PASSES the pin; a tampered one FAILS it. (`decEnv` toy: param col 68
 -- carries `n`, PI 46 carries `p`.)
-#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 46 then 5 else 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 46 then 5 else 0, fun _ => 0⟩;
         decide (env.loc NULLIFIER_PARAM_COL = env.pub ROT_NULLIFIER_PI))   -- match ⇒ pin holds
-#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 46 then 9 else 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 46 then 9 else 0, fun _ => 0⟩;
         decide (env.loc NULLIFIER_PARAM_COL ≠ env.pub ROT_NULLIFIER_PI))   -- mismatch ⇒ pin REJECTS
 
 /-! ## §5.NC — the noteCreate KERNEL-SET GROW-GATE (the deployment-real COMMITMENTS set-insert).
@@ -4263,9 +4263,9 @@ theorem mintP1_rejects_wrong_credit (hash : List ℤ → ℤ) (env : VmRowEnv) (
 -- sa NONCE = STATE_AFTER_BASE(76) + NONCE(2) = 78). A ticked row (after = before + 1, s_noop = 0)
 -- HOLDS the tick gate; a forged passthrough (after = before) FAILS it. (Mirrors transfer's
 -- `gNonce` adversarial #guards — the `−(1 − selector)` term makes passthrough UNSAT off NoOp.)
-#guard (let env : VmRowEnv := ⟨fun c => if c == 56 then 5 else if c == 78 then 6 else 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 56 then 5 else if c == 78 then 6 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide ((EffectVmEmitTransfer.gNonce).eval env.loc = 0))   -- tick (5→6) ⇒ gate holds
-#guard (let env : VmRowEnv := ⟨fun c => if c == 56 then 5 else if c == 78 then 5 else 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 56 then 5 else if c == 78 then 5 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide ((EffectVmEmitTransfer.gNonce).eval env.loc ≠ 0))   -- passthrough (5→5) ⇒ gate REJECTS
 -- The corrected WRITE/CREDIT gates read `prmCol 1` (NEW_VALUE / value_lo = col PARAM_BASE+1 = 69),
 -- NOT `prmCol 0` (FIELD_INDEX / MINT_HASH = col 68). Positional witness + both polarities.
@@ -4273,16 +4273,16 @@ theorem mintP1_rejects_wrong_credit (hash : List ℤ → ℤ) (env : VmRowEnv) (
 -- setField WRITE (selector-gated by s_set_field = col SEL_SET_FIELD_COL = 2): on the ACTIVE row
 -- (s_set_field = 1), field0_after (saCol FIELD_BASE = 79) == param1 (69). Match holds; mismatch
 -- rejects. On a NoOp row (s_set_field = 0) the gate VANISHES (third guard).
-#guard (let env : VmRowEnv := ⟨fun c => if c == 2 then 1 else if c == 79 then 7 else if c == 69 then 7 else 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 2 then 1 else if c == 79 then 7 else if c == 69 then 7 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide ((gFieldWriteP1 0).eval env.loc = 0))   -- active + (field0_after == param1) ⇒ holds
-#guard (let env : VmRowEnv := ⟨fun c => if c == 2 then 1 else if c == 79 then 7 else if c == 69 then 9 else 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 2 then 1 else if c == 79 then 7 else if c == 69 then 9 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide ((gFieldWriteP1 0).eval env.loc ≠ 0))   -- active + (field0_after ≠ param1) ⇒ REJECTS
-#guard (let env : VmRowEnv := ⟨fun c => if c == 79 then 7 else if c == 69 then 9 else 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 79 then 7 else if c == 69 then 9 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide ((gFieldWriteP1 0).eval env.loc = 0))   -- NoOp (s_set_field = 0) ⇒ gate VANISHES
 -- mint CREDIT: bal_lo_after (76) == bal_lo_before (54) + param1 (69). Honest credit holds; wrong rejects.
-#guard (let env : VmRowEnv := ⟨fun c => if c == 54 then 100 else if c == 76 then 130 else if c == 69 then 30 else 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 54 then 100 else if c == 76 then 130 else if c == 69 then 30 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide (gBalLoCreditP1.eval env.loc = 0))   -- 130 == 100 + 30 ⇒ holds
-#guard (let env : VmRowEnv := ⟨fun c => if c == 54 then 100 else if c == 76 then 999 else if c == 69 then 30 else 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 54 then 100 else if c == 76 then 999 else if c == 69 then 30 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide (gBalLoCreditP1.eval env.loc ≠ 0))   -- 999 ≠ 100 + 30 ⇒ REJECTS
 
 /-! ### The RECORD-FORCING PIN (the deployment-soundness close for the 7 binds-but-unforced effects).
@@ -5550,9 +5550,9 @@ theorem refusalFieldsWriteV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 #guard afterFieldsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 251 + 36
 -- BOTH POLARITIES of the write tooth's GUARD on the toy environment: the write fires under the refusal
 -- selector (col 52 = 1) and is inert without it (the gate contributes nothing on a non-refusal pad row).
-#guard (let env : VmRowEnv := ⟨fun c => if c == 52 then 1 else 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 52 then 1 else 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide (refusalFieldsWriteOp.guard.eval env.loc = 1))    -- selector fires ⇒ write asserted
-#guard (let env : VmRowEnv := ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩;
+#guard (let env : VmRowEnv := ⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0⟩;
         decide (refusalFieldsWriteOp.guard.eval env.loc ≠ 1))    -- no selector ⇒ map-op inert
 
 /-- **`setProgramV3`** — the LIVE rotated SetProgram (the ordered mid-session program-install effect, the
@@ -5962,10 +5962,10 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 -- tw+47+29; with tw = 186 that is col 262; PI 46 carries the recomputed post felt). A row whose AFTER
 -- limb equals PI[46] PASSES the pin; a frozen / wrong one FAILS it (the forgery is rejected).
 #guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
-        let env : VmRowEnv := ⟨fun c => if c == tw + B_SPAN + off then 1 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0⟩;
+        let env : VmRowEnv := ⟨fun c => if c == tw + B_SPAN + off then 1 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0, fun _ => 0⟩;
         decide (env.loc (tw + B_SPAN + off) = env.pub 46))   -- sealed (1) == PI[46] ⇒ pin holds
 #guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
-        let env : VmRowEnv := ⟨fun c => if c == tw + B_SPAN + off then 0 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0⟩;
+        let env : VmRowEnv := ⟨fun c => if c == tw + B_SPAN + off then 0 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0, fun _ => 0⟩;
         decide (env.loc (tw + B_SPAN + off) ≠ env.pub 46))   -- frozen-Live (0) ≠ sealed PI[46] ⇒ pin REJECTS
 
 /-! ## §v12 — THE DIRECT CARRIER-OCTET PI PINS (factory `child_vk` · hatchery `contract_hash`).

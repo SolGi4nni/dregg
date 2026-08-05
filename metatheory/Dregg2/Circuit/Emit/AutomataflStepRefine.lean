@@ -90,6 +90,7 @@ deriving instance DecidableEq for ProofBind
 deriving instance DecidableEq for VmConstraint
 deriving instance DecidableEq for WindowExpr
 deriving instance DecidableEq for WindowConstraint
+deriving instance DecidableEq for ChalConstraint
 deriving instance DecidableEq for VmConstraint2
 
 /-! ## §1 — Field-denotation glue (identical in shape to `DyckStackRefine` §0). -/
@@ -5738,7 +5739,7 @@ theorem moved_parts_of_sat (hsat : Satisfied2 hash automataflStepDesc minit mfin
   · rw [hmval]; constructor
     · intro hp
       rcases hoffB with h|h <;> rcases htibB with h1|h1 <;> rcases htvB with h2|h2 <;>
-        rw [h, h1, h2] at hp ⊢ <;> first | exact ⟨rfl, rfl, rfl⟩ | (exfalso; revert hp; norm_num)
+        rw [h, h1, h2] at hp ⊢ <;> first | exact ⟨rfl, rfl, rfl, fun _ => 0⟩ | (exfalso; revert hp; norm_num)
     · rintro ⟨h1, h2, h3⟩; rw [h1, h2, h3]; norm_num
 
 /-! ### §4.17b — the reference GUARD discharged, and the LEG-A CAPSTONE. -/

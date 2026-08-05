@@ -468,6 +468,7 @@ pub fn shielded_ring_clear_descriptor(n: usize) -> EffectVmDescriptor2 {
         name: format!("shielded-ring-clear-{n}"),
         trace_width: width,
         public_input_count: lo.claim_len(),
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

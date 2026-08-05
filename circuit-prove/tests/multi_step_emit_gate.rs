@@ -115,6 +115,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "multi-step-accumulated-hash-chain::poseidon2-v1".to_string(),
         trace_width: CHAIN_WIDTH,
         public_input_count: 2,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             chip2_lookup(PREV, DERIVED, ACC, LANE_BASE),

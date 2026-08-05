@@ -158,6 +158,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-presentation-freshness::summary-v1".to_string(),
         trace_width: PRES_WIDTH,
         public_input_count: PI_COUNT,
+        challenges: 0,
         tables: vec![TableDef2 {
             id: TID_RANGE,
             name: "range".to_string(),

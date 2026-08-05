@@ -1077,6 +1077,21 @@ impl NodeState {
         peers: Vec<String>,
         key_file: &str,
     ) -> Result<Self, String> {
+        Self::new_with_key_file_and_poa_compact_trust(data_dir, peers, key_file, None)
+    }
+
+    /// Construct a node while supplying the independently authenticated Path of Angels
+    /// compaction policy derived from the exact deployment/genesis descriptor.
+    ///
+    /// A positive-floor PoA store can only reopen through this entry.  Passing `None` keeps the
+    /// generic-node behavior, but [`PersistentStore::open`] itself refuses any positive compaction
+    /// floor, so omission can never silently downgrade verification of stored anchors.
+    pub fn new_with_key_file_and_poa_compact_trust(
+        data_dir: &Path,
+        peers: Vec<String>,
+        key_file: &str,
+        poa_compact_trust: Option<&dregg_persist::PoaCompactTrustPolicyV1>,
+    ) -> Result<Self, String> {
         // A node exists ⇒ its verified coordination gates are armed. See
         // [`crate::install_verified_distributed_gates`] for why this cannot live only in `run()`.
         crate::install_verified_distributed_gates();
@@ -1090,7 +1105,11 @@ impl NodeState {
         crate::install_verified_executor_oracles();
         let db_path = data_dir.join("dregg.redb");
         let store = Arc::new(
-            PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?,
+            match poa_compact_trust {
+                Some(policy) => PersistentStore::open_with_poa_compact_trust_v1(&db_path, policy),
+                None => PersistentStore::open(&db_path),
+            }
+            .map_err(|e| format!("failed to open store: {e}"))?,
         );
         // Boot crash-recovery: a torn/poisoned commit-log tail (e.g. a process
         // killed between the input-turn config write and the commit-record txn, or

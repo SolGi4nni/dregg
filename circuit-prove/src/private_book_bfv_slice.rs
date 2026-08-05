@@ -529,6 +529,7 @@ pub fn audit_row_local_constraints(
             VmConstraint2::MapOp(_) => "map-op",
             VmConstraint2::UMemOp(_) => "umem-op",
             VmConstraint2::ProofBind(_) => "proof-bind",
+            VmConstraint2::ChalGate(_) => "chal-gate",
         }
     ))
 }

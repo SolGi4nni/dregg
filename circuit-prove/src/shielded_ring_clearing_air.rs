@@ -851,6 +851,7 @@ pub fn shielded_ring_clear_descriptor() -> EffectVmDescriptor2 {
         name: "shielded-ring-clear-2-endpoint-wide".into(),
         trace_width: FINAL_TRACE_WIDTH,
         public_input_count: RING_ENDPOINT_PUBLIC_LEN,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

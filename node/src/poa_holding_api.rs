@@ -22,7 +22,9 @@ use axum::{Json, Router};
 use base64::Engine as _;
 use poa_solana_gate::{
     AdmissionStore, Bytes32, CapabilityIssue, CapabilityStatus, CapabilityUse, Challenge,
-    ChallengeIssue, Commitment, DREGG_MINT_BASE58, Gate, GateConfig, GateError, HoldingCapability,
+    ChallengeIssue, Commitment, ConsensusAdmissionCheckpoint, ConsensusCapabilityIssue,
+    ConsensusHoldingCapability, ConsensusPrivilegeReservation, ConsensusReservationIssue,
+    ConsensusReservationReceipt, DREGG_MINT_BASE58, Gate, GateConfig, GateError, HoldingCapability,
     RpcAccountSet, RpcTokenAccount, TrustTier, decode_pubkey, encode_pubkey, validate_rpc_snapshot,
 };
 use serde::{Deserialize, Serialize};
@@ -53,6 +55,14 @@ const MAX_REQUEST_BYTES: usize = 4096;
 const MAX_RPC_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const RPC_URL_ENV: &str = "DREGG_POA_SOLANA_RPC_URL";
 const ENDPOINT_ID_DOMAIN: &[u8] = b"poa-solana-rpc-endpoint-v1";
+const CONSENSUS_AUTHORITY_STATE_KEY: &str = "poa_dregg_consensus_authority_v1";
+const CONSENSUS_AUTHORITY_VERSION: u16 = 1;
+const CONSENSUS_AUTHORITY_JOURNAL_DOMAIN: &[u8] =
+    b"path-of-angels/dregg-holding/consensus-authority-journal/v1\0";
+const MAX_CONSENSUS_AUTHORITY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_CONSENSUS_AUTHORITY_RECORDS: usize = 8192;
+const MAX_CONSENSUS_RESERVATIONS: usize = 4096;
+const MAX_CONSENSUS_CAPABILITIES: usize = 4096;
 
 type RpcFuture<T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send>>;
 
@@ -1283,6 +1293,259 @@ impl DurableAdmissionAnchor {
             journal_head: state.journal_head,
         })
     }
+}
+
+/// Separate lineage for consensus-grade authority. Keeping it outside the V3
+/// beta blob avoids silently reinterpreting any already-issued RPC capability.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct DurableConsensusAuthorityState {
+    reservations: BTreeMap<Bytes32, ConsensusReservationReceipt>,
+    reservation_by_challenge: BTreeMap<Bytes32, Bytes32>,
+    reservation_by_nullifier: BTreeMap<Bytes32, Bytes32>,
+    capabilities: BTreeMap<Bytes32, ConsensusHoldingCapability>,
+    capability_by_reservation: BTreeMap<Bytes32, Bytes32>,
+    observed_time_floor: u64,
+    journal: Vec<ConsensusAuthorityJournalRecord>,
+    journal_head: Bytes32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum ConsensusAuthorityJournalEvent {
+    ReservationIssued {
+        reservation: ConsensusPrivilegeReservation,
+    },
+    CapabilityIssued {
+        reservation_id: Bytes32,
+        capability: ConsensusHoldingCapability,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ConsensusAuthorityJournalRecord {
+    ordinal: u64,
+    previous_digest: Bytes32,
+    observed_time_floor: u64,
+    event: ConsensusAuthorityJournalEvent,
+    digest: Bytes32,
+}
+
+#[derive(Default)]
+struct ConsensusAuthorityProjection {
+    reservations: BTreeMap<Bytes32, ConsensusReservationReceipt>,
+    reservation_by_challenge: BTreeMap<Bytes32, Bytes32>,
+    reservation_by_nullifier: BTreeMap<Bytes32, Bytes32>,
+    capabilities: BTreeMap<Bytes32, ConsensusHoldingCapability>,
+    capability_by_reservation: BTreeMap<Bytes32, Bytes32>,
+    observed_time_floor: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DurableConsensusAuthorityEnvelope {
+    version: u16,
+    state: DurableConsensusAuthorityState,
+}
+
+impl DurableConsensusAuthorityState {
+    fn replay_journal(&self) -> Result<ConsensusAuthorityProjection, String> {
+        if self.journal.len() > MAX_CONSENSUS_AUTHORITY_RECORDS {
+            return Err("consensus authority journal exceeds its record ceiling".to_owned());
+        }
+        let mut projection = ConsensusAuthorityProjection::default();
+        let mut previous = [0; 32];
+        for (index, record) in self.journal.iter().enumerate() {
+            let ordinal = u64::try_from(index)
+                .map_err(|_| "consensus authority journal ordinal overflow".to_owned())?;
+            if record.ordinal != ordinal || record.previous_digest != previous {
+                return Err("consensus authority journal is not a dense hash chain".to_owned());
+            }
+            if record.observed_time_floor < projection.observed_time_floor {
+                return Err("consensus authority observed-time floor moved backwards".to_owned());
+            }
+            let expected = consensus_authority_journal_digest(
+                record.ordinal,
+                record.previous_digest,
+                record.observed_time_floor,
+                &record.event,
+            )?;
+            if record.digest != expected {
+                return Err("consensus authority journal digest mismatch".to_owned());
+            }
+            projection.observed_time_floor = record.observed_time_floor;
+            match &record.event {
+                ConsensusAuthorityJournalEvent::ReservationIssued { reservation } => {
+                    let id = reservation.reservation_id();
+                    if projection.reservations.contains_key(&id)
+                        || projection
+                            .reservation_by_challenge
+                            .contains_key(&reservation.challenge_id())
+                        || projection
+                            .reservation_by_nullifier
+                            .contains_key(&reservation.privilege_nullifier())
+                    {
+                        return Err(
+                            "consensus authority reissues a reservation/challenge/nullifier"
+                                .to_owned(),
+                        );
+                    }
+                    let receipt = ConsensusReservationReceipt::from_durable_record(
+                        reservation.clone(),
+                        ConsensusAdmissionCheckpoint {
+                            journal_len: ordinal
+                                .checked_add(1)
+                                .ok_or_else(|| "consensus checkpoint length overflow".to_owned())?,
+                            journal_head: record.digest,
+                            observed_time_floor: record.observed_time_floor,
+                        },
+                    );
+                    projection
+                        .reservation_by_challenge
+                        .insert(reservation.challenge_id(), id);
+                    projection
+                        .reservation_by_nullifier
+                        .insert(reservation.privilege_nullifier(), id);
+                    projection.reservations.insert(id, receipt);
+                }
+                ConsensusAuthorityJournalEvent::CapabilityIssued {
+                    reservation_id,
+                    capability,
+                } => {
+                    let Some(receipt) = projection.reservations.get(reservation_id) else {
+                        return Err(
+                            "consensus capability precedes its exact reservation".to_owned()
+                        );
+                    };
+                    if capability.reservation() != receipt.reservation()
+                        || capability.trust() != TrustTier::ConsensusVerified
+                        || capability.wallet() != receipt.reservation().wallet()
+                        || capability.player() != receipt.reservation().player()
+                        || capability.player_cell() != receipt.reservation().player_cell()
+                        || capability.federation_id() != receipt.reservation().federation_id()
+                        || projection
+                            .capability_by_reservation
+                            .insert(*reservation_id, capability.receipt_id())
+                            .is_some()
+                        || projection
+                            .capabilities
+                            .insert(capability.receipt_id(), capability.clone())
+                            .is_some()
+                    {
+                        return Err(
+                            "consensus capability/reservation binding is not one-to-one".to_owned()
+                        );
+                    }
+                }
+            }
+            previous = record.digest;
+        }
+        if self.journal_head != previous
+            || self.observed_time_floor != projection.observed_time_floor
+        {
+            return Err("consensus authority journal head/time floor mismatch".to_owned());
+        }
+        Ok(projection)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let projection = self.replay_journal()?;
+        if self.reservations != projection.reservations
+            || self.reservation_by_challenge != projection.reservation_by_challenge
+            || self.reservation_by_nullifier != projection.reservation_by_nullifier
+            || self.capabilities != projection.capabilities
+            || self.capability_by_reservation != projection.capability_by_reservation
+        {
+            return Err("consensus authority indexes are not exact journal projections".to_owned());
+        }
+        Ok(())
+    }
+
+    fn append(
+        &mut self,
+        observed_time_floor: u64,
+        event: ConsensusAuthorityJournalEvent,
+    ) -> Result<ConsensusAdmissionCheckpoint, String> {
+        if self.journal.len() >= MAX_CONSENSUS_AUTHORITY_RECORDS {
+            return Err("consensus authority journal capacity exhausted".to_owned());
+        }
+        if observed_time_floor < self.observed_time_floor {
+            return Err("consensus authority clock rollback refused".to_owned());
+        }
+        let ordinal = u64::try_from(self.journal.len())
+            .map_err(|_| "consensus authority journal ordinal overflow".to_owned())?;
+        let digest = consensus_authority_journal_digest(
+            ordinal,
+            self.journal_head,
+            observed_time_floor,
+            &event,
+        )?;
+        self.journal.push(ConsensusAuthorityJournalRecord {
+            ordinal,
+            previous_digest: self.journal_head,
+            observed_time_floor,
+            event,
+            digest,
+        });
+        self.journal_head = digest;
+        self.observed_time_floor = observed_time_floor;
+        Ok(ConsensusAdmissionCheckpoint {
+            journal_len: ordinal
+                .checked_add(1)
+                .ok_or_else(|| "consensus checkpoint length overflow".to_owned())?,
+            journal_head: digest,
+            observed_time_floor,
+        })
+    }
+}
+
+fn consensus_authority_journal_digest(
+    ordinal: u64,
+    previous_digest: Bytes32,
+    observed_time_floor: u64,
+    event: &ConsensusAuthorityJournalEvent,
+) -> Result<Bytes32, String> {
+    let event_bytes = postcard::to_stdvec(event)
+        .map_err(|error| format!("consensus journal event encode failed: {error}"))?;
+    let mut hash = Sha256::new();
+    hash.update(CONSENSUS_AUTHORITY_JOURNAL_DOMAIN);
+    hash.update(ordinal.to_be_bytes());
+    hash.update(previous_digest);
+    hash.update(observed_time_floor.to_be_bytes());
+    hash.update(
+        u64::try_from(event_bytes.len())
+            .map_err(|_| "consensus journal event length overflow".to_owned())?
+            .to_be_bytes(),
+    );
+    hash.update(event_bytes);
+    Ok(hash.finalize().into())
+}
+
+fn consensus_reservation_static_eq(
+    left: &ConsensusPrivilegeReservation,
+    right: &ConsensusPrivilegeReservation,
+) -> bool {
+    left.reservation_id() == right.reservation_id()
+        && left.challenge_id() == right.challenge_id()
+        && left.wallet() == right.wallet()
+        && left.player() == right.player()
+        && left.player_cell() == right.player_cell()
+        && left.federation_id() == right.federation_id()
+        && left.intent() == right.intent()
+        && left.privilege_nullifier() == right.privilege_nullifier()
+}
+
+fn consensus_capability_static_eq(
+    left: &ConsensusHoldingCapability,
+    right: &ConsensusHoldingCapability,
+) -> bool {
+    left.receipt_id() == right.receipt_id()
+        && consensus_reservation_static_eq(left.reservation(), right.reservation())
+        && left.evidence_grade() == right.evidence_grade()
+        && left.token_account() == right.token_account()
+        && left.token_program() == right.token_program()
+        && left.evidence_digest() == right.evidence_digest()
+        && left.anchor_epoch() == right.anchor_epoch()
+        && left.anchor_stake_table_root() == right.anchor_stake_table_root()
+        && left.require_poh() == right.require_poh()
+        && left.external_checkpoint() == right.external_checkpoint()
 }
 
 struct RedbAdmissionStore {

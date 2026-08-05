@@ -192,6 +192,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         name: "dregg-temporal-predicate-gte::dsl-v1".to_string(),
         trace_width: TRACE_WIDTH,
         public_input_count: 4,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

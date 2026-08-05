@@ -75,6 +75,7 @@ pub fn delegate_binding_descriptor() -> EffectVmDescriptor2 {
         name: DELEGATE_V2_NAME.to_string(),
         trace_width: DELEGATE_SCOPE_LIMBS,
         public_input_count: DELEGATE_SCOPE_LIMBS,
+        challenges: 0,
         tables: vec![],
         constraints,
         hash_sites: vec![],

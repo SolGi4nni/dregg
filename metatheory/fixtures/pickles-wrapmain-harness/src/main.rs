@@ -889,10 +889,16 @@ mod wrapmain_tests {
             w11.public_input_size, w10.public_input_size,
             "W-FINSPONGE derives no NEW wrap statement word - it derives the PREVIOUS statement's"
         );
+        // ⚑ 42 sigma-only probes per instance, and every one is accounted for: 2 per
+        // `to_field_checked` chain (`tfcRowsQ` probes `n_8`/`a_8` and `lift`/`b_8`) x 19 chains,
+        // one after each of the three squeezes (`transcriptRowsQ` drops one per squeeze — the
+        // challenge sponge squeezes once, the finalize sponge twice), and one on the rung's own
+        // `cip_actual`/`b_actual` pair. ⚠ MEASURED, not derived: the first draft of this line
+        // asserted `+ 2` from the sponge probes alone and was wrong by 82.
         assert_eq!(
             w11.probe_rows.len(),
-            w10.probe_rows.len() + 2,
-            "one sigma-only probe per instance, on the two `Field.equal` outputs"
+            w10.probe_rows.len() + 2 * (2 * 19 + 3 + 1),
+            "42 sigma-only probes per instance: 19 lift chains x2, 3 squeezes, 1 leg pair"
         );
         assert_eq!(
             w11.gates.len(),
