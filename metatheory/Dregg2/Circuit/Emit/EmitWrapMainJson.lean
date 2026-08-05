@@ -203,7 +203,24 @@ def main : IO Unit := do
       {(FIN_DEFERRED_CIP, FIN_DEFERRED_B, FIN_DEFERRED_XI)} but `finSpDerivedWords` says {fd}. \
       W-FINSPONGE would emit a `Boolean.all` no witness satisfies — refusing rather than emitting \
       it. Re-run `lake env lean --run Dregg2/Circuit/Emit/EmitWrapFinDeferred.lean`.")
+  -- ⚑ **THE `nKeySpVars` HOIST'S OBLIGATION, DISCHARGED AT EVERY EMISSION.** `nKeySpVars` is the
+  -- closed form `KEY_SP_VARS` since 2026-08-05, because it read `(keySponge …).next` and `baseXh`
+  -- — hence every base address above `w5_key` — rebuilt that 28-permutation sponge on every cell
+  -- reference: 57.7 ms per `combSlot`, measured, and 33 m 52 s for `w12_close`. The general `rfl`
+  -- does not elaborate (`whnf` forces the lanes; still running at 400M heartbeats), and the kernel
+  -- pins in §14b reach only the SMOKE shape. This is the leg that covers `shapeWrap` and any
+  -- `DREGG_WM`-supplied shape: run the trajectory ONCE — 19 ms against an emission measured in
+  -- minutes — and REFUSE when the closed form is not what the sponge allocates. A hoist whose
+  -- equality is checked nowhere at the shape being emitted is a rewrite nobody can audit.
+  let t := mkWrap s
+  let spAlloc := (keySponge s t.sp KEY_REAL_BRANCH).next
+  if nKeySpVars s t.sp != spAlloc then
+    throw (IO.userError s!"⚑ nKeySpVars IS NOT THE INDEX SPONGE'S ALLOCATION: the closed form says \
+      {nKeySpVars s t.sp} and `keySponge` allocates {spAlloc}. `baseXh` and every base \
+      above it would name cells the key sponge also owns — two sub-circuits aliasing in a base \
+      address, which is the class §17b exists to refuse. Refusing rather than emitting it.")
   IO.println s!"emitting wrap_main tag={tag} shape={repr s}"
+  IO.println s!"  index sponge allocates {spAlloc} cells = nKeySpVars (the hoist, checked here)"
   IO.println s!"  items={nItems s} squeezes={nSqueezes s} chals={nChals s} \
     PRIMARY_LEN(mina)={WRAP_PRIMARY_LEN} pubWords(base)={s.pubWords}"
   IO.println s!"  public layout: MINA'S — 40 slots, base at {wrapSlots s}, \
@@ -214,7 +231,6 @@ def main : IO Unit := do
   IO.println s!"  x_hat MSM: {xhN s} entries, {xhTotalChunks s} five-bit chunks, \
     {(xhLadders s).length} ladders, widths={(xhSel s).map xhatBits}"
   IO.println s!"  x_hat (DERIVED, absorbed at wrap_verifier.ml:617) = {xhatOut s.xhatTerms}"
-  let t := mkWrap s
   let _ ← force t.sp.evs.length "sponge events"
   for k in [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind, Rung.key, Rung.xhat,
            Rung.split, Rung.ftcomm, Rung.prev, Rung.wraphack, Rung.close, Rung.finalize,

@@ -128,11 +128,32 @@ theorem key_digest_moves_with_the_branch_selection :
 /-- ⚑ **AND THE LAYOUT DOES NOT MOVE WITH IT.** Every base above `w5_key` is `baseKeySp + nKeySpVars`,
 so a branch-dependent sponge WIDTH would slide the whole variable space under a branch selection.
 `runSpongeQ` allocates per EVENT, and `keySchedule i` has the same events at every `i`; this is that
-fact, measured across the branches rather than argued. -/
+fact, measured across the branches rather than argued.
+
+⚑ **AND IT STOPPED BEING PARTLY A PIN AGAINST ITS OWN DEFINITION ON 2026-08-05.** While `nKeySpVars`
+WAS `(keySponge _ _ KEY_REAL_BRANCH).next`, the `i = 1` conjunct compared a term with itself and only
+the other four branches carried information. `nKeySpVars` is now the closed form `KEY_SP_VARS`
+(`3 + 3·KEY_SP_PERMS + 2·KEY_COORDS`, a cost hoist — see its docblock for what it bought and for the
+general `rfl` that is NOT available), so all five conjuncts measure a RUN TRAJECTORY against an
+INDEPENDENT count. This is the kernel leg of that hoist's discharge. -/
 theorem key_sponge_width_is_branch_independent :
     (List.range shapeSmoke.branches).all (fun i =>
       (keySponge shapeSmoke tKey.sp i).next == nKeySpVars shapeSmoke tKey.sp) = true := by
   decide
+
+/-- ⚑ **…AND THE HALF THAT IS GENERAL, GENERALLY.** The count reads neither the shape nor the
+transcript: `keySchedule i` is the same 56 absorbs and one squeeze at every shape, and only the
+sponge's BASE — which `next` does not touch — depends on `s`/`sp`. That was a prose claim in
+`nKeySpVars`'s docblock while it was the trajectory; as the closed form it is a theorem, over
+arbitrary shapes and arbitrary sponges, by `rfl`.
+
+⚠ It is the WEAKER half on purpose, and the docblock says so: this fixes `nKeySpVars` to one number,
+and `key_sponge_width_is_branch_independent` says WHICH number at the smoke shape. What covers
+`shapeWrap` — where the kernel cannot reduce the trajectory — is `EmitWrapMainJson`'s refusal, which
+runs the sponge at whatever shape is being emitted and STOPS on disagreement. -/
+theorem key_sponge_width_is_the_same_at_every_shape
+    (s₁ s₂ : WrapShape) (sp₁ sp₂ : SpAcc) :
+    nKeySpVars s₁ sp₁ = nKeySpVars s₂ sp₂ := rfl
 
 /-- ⚑⚑ **DREGG'S OWN STEP RULE IS IN `step_keys`, AND IT IS A DIFFERENT RULE FROM MINA'S.**
 `KEY_CHAIN_BRANCH` holds the 56 `index_to_field_elements` coordinates of

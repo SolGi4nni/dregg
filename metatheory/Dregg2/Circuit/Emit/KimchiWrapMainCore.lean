@@ -1494,12 +1494,60 @@ def xhLadders (s : WrapShape) : List Nat :=
 15/16 the fold output, 17/18 the `Cond_add` sum, 19 `−yT`. -/
 def XH_STRIDE : Nat := 20
 
+/-- The index sponge's permutations at rate 2 — the same arithmetic §21 spells for
+`hash_messages_for_next_wrap_proof`: one per odd absorb after the opening pair, plus the squeeze's
+(the 56th absorb leaves the state at `Absorbed 2`, so the squeeze permutes). -/
+def KEY_SP_PERMS : Nat := (KEY_COORDS - 1) / 2 + 1
+/-- …and the variables `runSpongeQ` allocates for it: three state cells, three per permutation and
+two per absorb. Identical in shape to `WH_VARS`, because it is the same allocator on a longer tape. -/
+def KEY_SP_VARS : Nat := 3 + 3 * KEY_SP_PERMS + 2 * KEY_COORDS
+
 /-- ⚑ The key sponge's VARIABLE COUNT. Branch-independent by construction: `keySchedule i` has the
 same 56 absorbs and one squeeze at every `i`, and `runSpongeQ` allocates per EVENT and not per
 value. `key_sponge_width_is_branch_independent` pins it across all five branches, because every base
 above `w5_key` is built on this number and a branch-dependent one would move the whole layout under
-a branch selection. -/
-def nKeySpVars (s : WrapShape) (sp : SpAcc) : Nat := (keySponge s sp KEY_REAL_BRANCH).next
+a branch selection.
+
+⚠ ⚑ **AND IT IS THE CLOSED FORM SINCE 2026-08-05, WHICH IS A COST FACT AND NOT A LAYOUT ONE.** It
+read `(keySponge s sp KEY_REAL_BRANCH).next`. `baseXh` IS this number, and **every** base address
+above `w5_key` is built on `baseXh`: `xhBase*`, `basePrev`, `baseFtc`, `baseWh`, `baseFin`,
+`baseComb`, `baseBull`, `baseClose`. Each of those recomputes its whole chain on **every cell
+reference** — `combSlot`, `bV`, `whBaseP`, `finEvVar`, `xA` — and `baseComb` alone unfolds that chain
+into **three** `baseXh` evaluations, because `nFtcVars` is `ftcBaseO − baseFtc` and both sides walk
+down to it.
+
+⚑ **MEASURED, at the smoke shape, in the interpreter that actually emits** (`ProbeAddr`, 100 calls
+each): `nKeySpVars` **19.3 ms**, `baseKeySp` — everything BELOW the sponge — **0.03 ms**, `baseXh`
+**19.1 ms**, `baseComb` **57.3 ms**, `combSlot` **57.7 ms**. **One cell reference cost 57.7 ms**, and
+it was three runs of the 28-permutation index sponge: 1 540 Fq Poseidon rounds plus `permStatesQ`'s
+quadratic `acc ++ [·]`, for a number that is `199` at every shape and every branch.
+
+That is why `w12_close` took **33 m 52 s** at the smoke shape for 4 326 rows, ~11× what it cost before
+it absorbed W-COMBINE and W-BULLET: those two contribute **2 034** of those rows (4 286 circuit rows,
+less `.prev`'s 1 613, less W-WRAPHACK's own 637 and W-CLOSE's 2), every one of them carrying about ten
+`combSlot`/`bV` references, and `rungRows`/`circuitEnvAt` are evaluated five times over per emission.
+This is the file's own measured lesson a fourth time (§7's `let`-above-the-`match`, §19's `finAll`,
+`fnEm`'s `modifyGet`): **a value that costs a traversal must be BOUND, not re-derived per use.**
+
+⚠ ⚑ **AND THE GENERAL `rfl` IS NOT AVAILABLE HERE — SAID PLAINLY RATHER THAN ROUNDED AWAY.** The
+statement this hoist wants is `nKeySpVars s sp = (keySponge s sp KEY_REAL_BRANCH).next` for EVERY
+shape and sponge, in the idiom of `rungRows_is_a_ladder` and `finAll_is_the_recomputation`. It does
+not elaborate: `whnf` forces the sponge's lanes through `midN`, and the proof was still running at
+**400 000 000 heartbeats and ten minutes**. So the equality is discharged the way this file already
+discharges `xhatXY`, which is out of the kernel's reach for the same kind of reason, and on three
+legs rather than one:
+
+  * **the kernel, at the smoke shape and at all five branches** —
+    `key_sponge_width_is_branch_independent` (§14b) is now a trajectory measured against an
+    INDEPENDENT count rather than partly against itself;
+  * **the kernel, generally, for the half that IS general** —
+    `key_sponge_width_is_the_same_at_every_shape` says this number does not read its arguments, which
+    is the claim the paragraph above used to make in prose;
+  * ⚑ **`EmitWrapMainJson`, at EVERY emission and at whatever shape is being emitted** — it runs the
+    trajectory once (19 ms) and REFUSES when the two disagree. That is the leg that covers `shapeWrap`
+    and any `DREGG_WM`-supplied shape, and it is the only one that could ever go red on a shape
+    nobody wrote a pin for. -/
+def nKeySpVars (_s : WrapShape) (_sp : SpAcc) : Nat := KEY_SP_VARS
 
 /-- The x_hat region starts after the key sponge, so nothing below `w6_xhat` moves. -/
 def baseXh (s : WrapShape) (sp : SpAcc) : Nat := baseKeySp s sp + nKeySpVars s sp

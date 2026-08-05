@@ -1,5 +1,79 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (THE WRAP LADDER STOPS RE-RUNNING ITS OWN SPONGE) — **every base address above `w5_key` computed the index sponge's allocation count by RUNNING the 28-permutation sponge, on every cell reference; the whole 15-rung smoke ladder went from ≥1 h 45 m unfinished to 5 m 08 s, and all 30 artifacts are byte-identical**
+
+`nKeySpVars` was `(keySponge s sp KEY_REAL_BRANCH).next`. `baseXh` IS that number, and **every** base
+above `w5_key` is built on `baseXh` — `xhBase*`, `basePrev`, `baseFtc`, `baseWh`, `baseFin`,
+`baseComb`, `baseBull`, `baseClose`. Each recomputes its whole chain per cell reference, and
+`baseComb` unfolds it into **three** `baseXh` evaluations (`nFtcVars` is `ftcBaseO − baseFtc`, and
+both sides walk down to it).
+
+⚑ **THE KERNEL NEVER NOTICED, WHICH IS WHY IT SURVIVED.** `whnf` is lazy about the sponge's lanes, so
+`wraphack_sponge_allocation`'s `rfl` sibling costs nothing. **The interpreter is strict**, and
+`lake env lean --run …EmitWrapMainJson.lean` is the interpreter — so each evaluation ran 28 Fq
+Poseidon permutations (1 540 rounds) plus `permStatesQ`'s quadratic `acc ++ [x]`, for a number that is
+**199** at every shape and every branch.
+
+⛑ **MEASURED, smoke shape, in the interpreter that emits, 100 calls each** (`ProbeAddr`):
+
+| per call | before | after |
+|---|---|---|
+| `nKeySpVars` | 19.25 ms | 0.00 ms |
+| `baseKeySp` (everything BELOW the sponge) | 0.03 ms | 0.03 ms |
+| `baseXh` | 19.06 ms | 0.03 ms |
+| `baseComb` | 57.34 ms | 0.16 ms |
+| **`combSlot` — ONE cell reference** | **57.72 ms** | **0.16 ms** — 361× |
+
+W-COMBINE and W-BULLET contribute **2 034** of `w12_close`'s 4 286 circuit rows at about ten
+references each, and `rungRows`/`circuitEnvAt` are evaluated five times over per rung. That is where
+the 33 m 52 s went.
+
+⛑ **THE EMISSION**, same box, same 30 artifacts, smoke:
+
+| | before | after |
+|---|---|---|
+| ladder through `w9_prev` | 17 min | 2 m 43 s |
+| `w11_wraphack` | 20 min cumulative | 2 m 50 s cumulative |
+| **`w12_close`** | **33 m 52 s** | **44.3 s** (place 14 955 ms + witness/render 29 309 ms) |
+| whole 15-rung ladder | **≥1 h 45 m, unfinished** | **5 m 08 s** |
+
+⛑ **THE EMITTED OBJECT DID NOT MOVE.** Two emissions, before and after: **26/26 comparable
+`wrapmain_smoke_*.json` byte-identical** (`cmp`), and `ProbeAddr`'s address witnesses unchanged to the
+number. ⚑ A byte-identical `w12_close` covers W-COMBINE's and W-BULLET's rows too, because
+`close_rung_extends_bullet` makes `.close` contain them.
+
+⚠ ⚑ **AND THE GENERAL `rfl` IS NOT AVAILABLE, WHICH IS SAID RATHER THAN ROUNDED AWAY.** The statement
+this hoist wants is `nKeySpVars s sp = (keySponge s sp KEY_REAL_BRANCH).next` for every shape and
+sponge, in the idiom of `rungRows_is_a_ladder` and `finAll_is_the_recomputation`. **It does not
+elaborate** — `whnf` forces the lanes through `midN`, and the proof was still running at
+**400 000 000 heartbeats and ten minutes**. So it is discharged the way this file already discharges
+`xhatXY`, on three legs: `key_sponge_width_is_branch_independent` (kernel, smoke shape, all five
+branches — and it stopped being *partly* a pin against its own definition, since the `i = 1` conjunct
+used to compare a term with itself); `key_sponge_width_is_the_same_at_every_shape` (kernel, general,
+`rfl`, for the half that is general); and **`EmitWrapMainJson` REFUSES at every emission** when the
+closed form is not what the sponge allocates — 19 ms, and the only leg that covers `shapeWrap` or a
+`DREGG_WM`-supplied shape. `#assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMain`: **232**
+kernel-clean, up from 231.
+
+⛑ **AND THE FIXTURE REFRESH IS DONE, FROM ONE EMISSION.** All 30 `wrapmain_smoke_*` copied from a
+single run (12:04:28 .. 12:07:38), every rung at Mina's width (0 below `w4_bind`, **40** from
+`w4_bind` up — the committed set was still on the old dense 6/7/8 vector). `close_rung_contains_bullet`
+**GREEN** (`w12_close` 4 326 rows ⊃ `w11_bullet` 3 687, per-family floors hold), the
+`MINA_WRAP_PRIMARY_LEN` width assertion **GREEN**, the five top rungs prove with both public-input
+legs — VECTOR rejects at 4/4 sampled slots, SIGMA rejects at the derived ones and accepts at the
+unread ones, which is the 24-vs-40 split measured at the prover. ⚑ **And the
+`mina-vk-derivation-gate.sh` drift is settled**: `pickles-vk-derive`'s carried `w3_branch`/`w4_bind`
+were `415d1545…`/`c5bb4cc6…` against the harness's `a056acf7…`/`cf2667b5…`; both copies now come from
+this one emission and `cmp` agrees.
+
+⚠ **WHAT IS STILL EXPENSIVE, NAMED AND NOT FIXED HERE.** `w12_close`'s remaining 44 s is `place` and
+`witness+render`, not addresses. And `emitRung` still evaluates `rungRows t k true` **twice** (once as
+`rowsW`, once inside `rungProbeRows`) and `circuitEnvAt t k` **twice** (`wrapEnvAt` and
+`wrapPublicAt`), and `circuitEnvAt _ .close` runs `bullData` twice because `closeEnv` re-derives the
+whole opening chain for ONE bit. That is a further ~2× on a rung that now costs under a minute; it is
+a real recompute and it is left standing deliberately rather than bundled into a hoist whose equality
+would need its own theorem.
+
 ## ⛑⛑⛑ AUGUST 5 (ξ STOPS BEING TOLD) — **the aggregate's scalars were the verifier's to be told; ξ is now COMPUTED from the block's own sponge and crosses to the chain on 32 shared felts** — and the aggregate's own digits are still a DESCRIPTOR parameter, which is where the next lane starts
 
 `MinaWrapXiAggregateMsm` §4 named the residual in its author's own words — *"the aggregate's scalar
