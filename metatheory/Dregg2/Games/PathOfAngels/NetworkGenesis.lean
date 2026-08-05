@@ -365,8 +365,13 @@ abbrev FIXTURE_SIGNAL_DIGEST : String :=
   "c3a9603f84f1e5918c6a46f30c507a39b6c9d5fd57c9f3edec3b03597eec49bf"
 abbrev FIXTURE_CURATOR_KEY : String :=
   "a3e630900af50a8701387c9ab528e3db23a5650c3e1ff3b4b3ee09aa42c65e23"
+/-- ⚠ RE-PINNED 2026-08-05.  The Signal config the genesis ceremony authorizes changed
+bytes when `Emit.signalMission` took its run seed as a PARAMETER and the template began
+carrying `Emit.UNBOUND_RUN_SEED` — the hidden-instance split.  This value was recomputed
+with `sha256sum` over the exact UTF-8 bytes Lean emits for `fixtureConfigJson`, an
+independent implementation from `sha256Wire?`, which is what makes the pin a gate. -/
 abbrev FIXTURE_CONFIG_SHA256 : String :=
-  "09509f00ace2908a3fa06c641361255a752c30669da0874b87e8265f4f53a1bf"
+  "6decc86fa8bb65030068ee4031e791f110e9779898d9b037146df19f461f9f58"
 abbrev FIXTURE_CANON_SHA256 : String :=
   "aad848fbf40d82d3efb1f6f5fe6ea1fb7704bccc839710f0202951ec4ebd667a"
 

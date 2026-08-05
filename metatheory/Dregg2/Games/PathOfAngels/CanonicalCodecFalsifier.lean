@@ -48,7 +48,9 @@ point: the coverage gap becomes uneven BY DESIGN AND VISIBLE instead of uneven b
 theorem), so deriving `Canonical` for it must FAIL. -/
 @[linter_calibration]
 structure SealBearingWire where
-  seal : Digest32
+  -- ⚠ NOT `seal`: `seal` is a reserved token in Lean 4.30 (it is a command), so a
+  -- structure field of that name is a PARSE error, not a name clash.
+  sealDigest : Digest32
 deriving DecidableEq
 
 #assert_derive_refuses SealBearingWire
@@ -61,7 +63,11 @@ contains `sorryAx`" as a REFUSAL, because Lean recovers from a failed `by` block
 inserting `sorryAx` — without that check the falsifier would pass on the wrong evidence.
 -/
 
-/-- DELIBERATE: an off-by-one reader. `read (toJson a)` is `.ok (a+1)`, never `.ok a`,
+/-! ⚠ A custom `elab` command does not take a `/-- -/` doc comment — the parser is
+still expecting a DECLARATION when it reaches the command token, which is a parse
+error, not a name clash.  Module doc instead.
+
+DELIBERATE: an off-by-one reader. `read (toJson a)` is `.ok (a+1)`, never `.ok a`,
 so the law field has no inhabitant and `rfl` cannot close it. If this command ever stops
 throwing, the law field has gone vacuous (or `#assert_term_refused` has gone blind). -/
 #assert_term_refused (
@@ -71,7 +77,11 @@ throwing, the law field has gone vacuous (or `#assert_term_refused` has gone bli
      read := fun j => (Dregg2.Canonical.natRead 64 j).map (· + 1)
      read_toJson := by intro a _; rfl } : Dregg2.Canonical.FieldCodec Nat))
 
-/-- DELIBERATE: a reader that drops the bound the writer's `ok` advertises. `ok` claims
+/-! ⚠ A custom `elab` command does not take a `/-- -/` doc comment — the parser is
+still expecting a DECLARATION when it reaches the command token, which is a parse
+error, not a name clash.  Module doc instead.
+
+DELIBERATE: a reader that drops the bound the writer's `ok` advertises. `ok` claims
 every `Nat` is fine while `read` refuses anything over 64, so the law is FALSE (take
 `a = 65`) and no proof exists. Calibrates that the law really ties `ok` to `read`. -/
 #assert_term_refused (
@@ -81,7 +91,11 @@ every `Nat` is fine while `read` refuses anything over 64, so the law is FALSE (
      read := Dregg2.Canonical.natRead 64
      read_toJson := by intro a _; rfl } : Dregg2.Canonical.FieldCodec Nat))
 
-/-- POSITIVE CONTROL for F2, through the SAME probe. `#assert_term_refused` is a pure
+/-! ⚠ A custom `elab` command does not take a `/-- -/` doc comment — the parser is
+still expecting a DECLARATION when it reaches the command token, which is a parse
+error, not a name clash.  Module doc instead.
+
+POSITIVE CONTROL for F2, through the SAME probe. `#assert_term_refused` is a pure
 rejector, so it cannot detect its own blindness: if the probe broke and started reporting
 every term refused, both fixtures above would look perfect. This is the same codec shape
 with an honest reader; it must elaborate, and it is checked by the dual command rather than

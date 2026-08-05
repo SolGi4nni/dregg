@@ -337,7 +337,7 @@ def deriveCanonicalFor (structName : Name) : CommandElabM Unit := do
   unless isStructure env structName do
     throwError "Canonical: {structName} is not a structure. The handler derives a canonical \
       record codec; a sum type's wire tag is a CHOSEN thing and stays hand-written."
-  unless (getParentStructures env structName).isEmpty do
+  unless (getStructureParentInfo env structName).isEmpty do
     throwError "Canonical: {structName} extends a parent structure. The derived reader builds \
       the value with an anonymous constructor, which does not see a flattened parent. Flatten \
       the record or hand-write this codec."
@@ -387,14 +387,22 @@ def deriveCanonicalFor (structName : Name) : CommandElabM Unit := do
   for i in (List.range (n - 1)).reverse do
     wfTerm ← `(term| Dregg2.Canonical.fieldOk ($(projId i) $vId) && $wfTerm)
   elabCommand (← `(command| def $wfId ($vId : $tyId) : Bool := $wfTerm))
-  -- renderCanon : RIGHT-nested `++`, matching how `++` already associates in every
-  -- hand-written PoA encoder, so byte-identity is a definitional question and not a
-  -- `String.append_assoc` rewriting exercise.
-  let mut renderTerm : Term ← `(term| "}")
-  for i in idxs.reverse do
-    let sep := if i == 0 then "{\"" else ",\""
-    let lit : Term := ⟨(Syntax.mkStrLit (sep ++ keys[i]! ++ "\":")).raw⟩
-    renderTerm ← `(term| $lit ++ Dregg2.Canonical.fieldRender ($(projId i) $vId) ++ $renderTerm)
+  -- renderCanon : LEFT-nested `++`, because `++` IS `infixl:65` in Lean 4 and every
+  -- hand-written PoA encoder therefore associates LEFT.
+  -- ⚠ FIXED 2026-08-05.  This was built right-nested under a comment asserting the
+  -- opposite, and `CanonicalCodecDayWire.renderCanon_eq_toJson` — the whole point of the
+  -- handler, the theorem that makes the encoder swap a no-op on the BYTES — could not be
+  -- closed by `rfl`.  `String.append` is not definitionally associative over VARIABLE
+  -- fields, so the nesting has to MATCH the shipped encoder; agreeing with it up to
+  -- `String.append_assoc` is exactly what does not reduce.
+  let sepLit : Nat → Term := fun i =>
+    ⟨(Syntax.mkStrLit ((if i == 0 then "{\"" else ",\"") ++ keys[i]! ++ "\":")).raw⟩
+  let mut renderTerm : Term ←
+    `(term| $(sepLit 0) ++ Dregg2.Canonical.fieldRender ($(projId 0) $vId))
+  for i in idxs.drop 1 do
+    renderTerm ←
+      `(term| $renderTerm ++ $(sepLit i) ++ Dregg2.Canonical.fieldRender ($(projId i) $vId))
+  renderTerm ← `(term| $renderTerm ++ "}")
   elabCommand (← `(command| def $renderId ($vId : $tyId) : String := $renderTerm))
   -- readRow : ONE literal-row pattern pins key spelling, key ORDER and arity at once — which is
   -- strictly more than the hand-written `exactKeys`, a SET check that leaves order to the

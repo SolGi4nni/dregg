@@ -421,6 +421,24 @@ def signalRulesRow (target : SignalTriangulation.Code) : String :=
 
 def signalRulesTable : List String := signalAllCodes.map signalRulesRow
 
+/-- Decode a rendered class character back to the `solved` bit its class carries.
+`none` for a character `class_alphabet` does not name — a `?` cell decodes to a
+REFUSAL, not to `false`, so a silent fold cannot survive the decode either. -/
+def signalClassSolved? (c : Char) : Option Bool :=
+  match SIGNAL_CLASS_ALPHABET.toList.findIdx? (fun a => a == c) with
+  | some i => (signalClassPairs[i]?).map fun pair => pair.1 == 3
+  | none => none
+
+/-- The cell an emitted descriptor actually carries at (target, guess): row indexed by
+the target's position in `rules.codes`, column by the guess's — exactly the lookup
+`transition.on_submit` (`"rules.table[instance][guess]"`) tells a client to perform.
+This reads the EMITTED table; it does not recompute `signalClassChar`. -/
+def signalRulesCell (target guess : SignalTriangulation.Code) : Option Char :=
+  match signalAllCodes.findIdx? (fun c => c == target),
+        signalAllCodes.findIdx? (fun c => c == guess) with
+  | some r, some c => (signalRulesTable[r]?).bind fun row => row.toList[c]?
+  | _, _ => none
+
 theorem signalClassPairs_length : signalClassPairs.length = 9 := by
   native_decide
 
@@ -445,20 +463,60 @@ theorem signal_every_row_solves_at_exactly_its_own_index :
       = true := by
   native_decide
 
-/-- The class a cell names agrees with the actual step transition from every open
-state, not merely with a separately rendered equality test. -/
-theorem signalClass_matches_step (cfg : SignalTriangulation.Config)
+/-- The kernel fact underneath the table.  ⚠ RENAMED 2026-08-05: this carried the name
+`signalClass_matches_step` and a docstring claiming the emitted cell agrees with the
+kernel step, while its statement mentioned neither `signalRulesTable` nor
+`signalClassChar` nor the descriptor.  It is a fact about `SignalTriangulation` alone,
+and it is now named that.  The claim the old name made is
+`signalRulesCell_matches_step` below, and it is proved. -/
+theorem step_solved_is_exact_three (cfg : SignalTriangulation.Config)
     (s : SignalTriangulation.State) (guess : SignalTriangulation.Code)
     (hopen : SignalTriangulation.openB s = true) :
     (SignalTriangulation.step cfg s (.submit guess)).map (·.solved) =
       some ((SignalTriangulation.feedback cfg.target guess).exact == 3) := by
   simp [SignalTriangulation.step, hopen]
 
+/-- Over the WHOLE 216-by-216 domain, the cell the emitted table carries — read the way
+a client reads it, and decoded through the emitted alphabet — is exactly the kernel's
+own `solved` bit.  Finite and total, so it is `native_decide`; the ∀-form below carries
+it off the list. -/
+theorem signalRulesTable_cells_decode_to_the_kernel_bit :
+    (signalAllCodes.all fun t => signalAllCodes.all fun g =>
+      (signalRulesCell t g).bind signalClassSolved? ==
+        some ((SignalTriangulation.feedback t g).exact == 3)) = true := by
+  native_decide
+
+theorem signalRulesCell_decodes_to_the_kernel_bit
+    (target guess : SignalTriangulation.Code) :
+    (signalRulesCell target guess).bind signalClassSolved? =
+      some ((SignalTriangulation.feedback target guess).exact == 3) := by
+  have h := signalRulesTable_cells_decode_to_the_kernel_bit
+  simp only [List.all_eq_true] at h
+  have hrow := h target (signalAllCodes_complete target)
+  simp only [List.all_eq_true] at hrow
+  simpa using hrow guess (signalAllCodes_complete guess)
+
+/-- ⚑ **The emitted cell IS the rule.**  What a client reads out of `rules.table` at
+(its instance row, its guess column) and decodes through `class_alphabet` is exactly
+the `solved` bit `SignalTriangulation.step` computes, from every open state.  This is
+the statement the descriptor's `transition.on_submit` clause promises, made about the
+actually emitted table rather than about `feedback` on its own. -/
+theorem signalRulesCell_matches_step (cfg : SignalTriangulation.Config)
+    (s : SignalTriangulation.State) (guess : SignalTriangulation.Code)
+    (hopen : SignalTriangulation.openB s = true) :
+    (SignalTriangulation.step cfg s (.submit guess)).map (·.solved) =
+      (signalRulesCell cfg.target guess).bind signalClassSolved? := by
+  rw [signalRulesCell_decodes_to_the_kernel_bit]
+  exact step_solved_is_exact_three cfg s guess hopen
+
 #assert_compiled signalAllCodes_length
 #assert_compiled signalAllCodes_nodup
 #assert_axioms signalAllCodes_complete
 #assert_axioms signalRulesTable_length
-#assert_axioms signalClass_matches_step
+#assert_axioms step_solved_is_exact_three
+#assert_compiled signalRulesTable_cells_decode_to_the_kernel_bit
+#assert_compiled signalRulesCell_decodes_to_the_kernel_bit
+#assert_compiled signalRulesCell_matches_step
 #assert_compiled signalClassPairs_length
 #assert_compiled signalClassPairs_complete
 #assert_compiled signal_every_row_solves_at_exactly_its_own_index
@@ -548,7 +606,8 @@ private def demoSlot : EpochId := ⟨11⟩
 /-- The live seed a run would draw.  `mission` is the template the catalog carries,
 so every published value is fixed and only the secret moves. -/
 private def demoLiveSeed (mission : MissionSpec) (tag : Nat) : Digest32 :=
-  HiddenInstance.runSeedFor ⟨demoSecret tag, demoSlot, demoPlayer⟩ mission.context
+  HiddenInstance.runSeedFor ⟨demoSecret tag, demoSlot, demoPlayer⟩
+    (HiddenInstance.MissionContext.ofMission mission)
 
 private def relayStateJson (board : RelayRepair.Board) (state : RelayRepair.State) : String :=
   "    {\"id\":" ++ jsonString (FiniteTables.relayStateId state) ++
@@ -920,6 +979,20 @@ def signalMission (runSeed : Digest32)
     artifact_matches := rfl
     allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
 
+/-- The draw context of a Signal mission does not depend on its run seed.  Stated on
+the ACTUAL emitter and over OPEN digests, so a caller that needs it does not have to
+close a `rfl` that would evaluate a digest to check it — which is what a node fixture
+deriving its own live seed would otherwise be asking the kernel to do. -/
+theorem signalMission_context_ignores_the_run_seed
+    (runSeed runSeed' federationId sourceDigest contentDigest contentRoot
+      activationDigest : Digest32) :
+    HiddenInstance.MissionContext.ofMission
+        (signalMission runSeed federationId sourceDigest contentDigest contentRoot
+          activationDigest) =
+      HiddenInstance.MissionContext.ofMission
+        (signalMission runSeed' federationId sourceDigest contentDigest contentRoot
+          activationDigest) := rfl
+
 theorem signalReward_accepted (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     (signalMission runSeed federationId sourceDigest contentDigest contentRoot
@@ -964,6 +1037,7 @@ theorem signalDescriptor_does_not_determine_the_target :
           (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 2) := by
   native_decide
 
+#assert_axioms signalMission_context_ignores_the_run_seed
 #assert_axioms signalReward_accepted
 #assert_axioms signalConfig_target_from_live_seed
 #assert_compiled signalDescriptor_does_not_determine_the_target
@@ -1143,14 +1217,31 @@ def salvageConfig? (runSeed : Digest32)
             contentDigest contentRoot activationDigest
           seed_eq := hseed.symm }
 
-/-- ⚑ **The artifact does not determine the board.**  Eight demonstration secrets
-against the same published template draw more than one of the ninety boards. -/
+/-- The board demonstration secret `tag` draws against the published salvage template.
+`none` means that secret's byte stream was exhausted before the four consuming draws
+finished, which names no board at all. -/
+private def demoSalvageBoard? (tag : Nat) : Option Nat :=
+  (SalvageLock.seedFromRunSeed?
+    (demoLiveSeed (salvageMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+      (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)).map Fin.val
+
+/-- ⚑ **The artifact does not determine the board.**
+
+⚠ RESTATED 2026-08-05, because the previous form was VACUOUS-COMPATIBLE.  It compared
+`Option Nat` values and asked only that the deduped list not be a singleton — which a
+mix of `none` and `some` satisfies.  It therefore passed even if every RESOLVING secret
+drew the SAME board, provided one secret exhausted its stream.
+
+What is stated now leaves no room for that: every one of the eight demonstration
+secrets RESOLVES, so no `none` can stand in for a difference, AND the boards they
+resolve to are at least two distinct ones.
+
+(The relay twin `relayDescriptor_does_not_determine_the_board` was checked for the same
+defect and does not have it: `RelayRepair.boardFromRunSeed` is total, so its list is
+`List Nat` with no `none` to launder.) -/
 theorem salvageDescriptor_does_not_determine_the_board :
-    (((List.range 8).map fun tag =>
-      (SalvageLock.seedFromRunSeed?
-        (demoLiveSeed (salvageMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
-          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)).map
-            Fin.val).eraseDups.length != 1) = true := by
+    ((List.range 8).all fun tag => (demoSalvageBoard? tag).isSome) = true ∧
+      2 ≤ ((List.range 8).filterMap demoSalvageBoard?).eraseDups.length := by
   native_decide
 
 def salvagePreview (runSeed : Digest32)

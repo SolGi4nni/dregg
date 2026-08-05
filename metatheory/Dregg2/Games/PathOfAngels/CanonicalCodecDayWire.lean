@@ -82,10 +82,14 @@ set_option autoImplicit false
 
 /-! ## Byte identity with the shipped encoder
 
-Proved for all values, by `rfl`. It reduces because the derived renderer is built RIGHT-nested,
-exactly how `++` already associates in every hand-written PoA encoder — so the two sides differ
-only by `fieldRender` versus `toString`, which is delta/projection reduction through the
-`HasFieldCodec Nat` instance and needs no string-append reasoning at all. -/
+Proved for all values, by `rfl`. It reduces because the derived renderer is built LEFT-nested,
+which is how `++` (an `infixl:65`) already associates in every hand-written PoA encoder — so the
+two sides differ only by `fieldRender` versus `toString`, which is delta/projection reduction
+through the `HasFieldCodec Nat` instance and needs no string-append reasoning at all.
+
+⚠ The handler emitted a RIGHT-nested render until 2026-08-05, under a comment claiming that was
+what `++` does. It is not, `String.append` is not definitionally associative over variable
+fields, and this `rfl` was the thing that went red. -/
 theorem renderCanon_eq_toJson (day : DayWire) :
     DayWire.renderCanon day = DayWire.toJson day := by
   cases day

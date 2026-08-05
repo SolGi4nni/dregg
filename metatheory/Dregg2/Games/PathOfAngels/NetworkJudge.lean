@@ -57,6 +57,10 @@ def preStateChecks (input : SemanticInput) : Bool :=
   decide (input.world.sequence < WIRE_NAT_LIMIT) &&
   decide (input.canon.revision < WIRE_NAT_LIMIT)
 
+/-- ⚠ The three slot fields come from `input.slotState`, which is NODE state — not
+from `input.request`, which is the client's.  `admissionChecks` then requires the
+commitment to be the commitment OF that secret and the run seed to be the derivation
+FROM it, so neither the node nor the client can name the instance after the fact. -/
 def activeOf (input : SemanticInput) : ActiveRunState := {
   game := .signal input.config
   federationId := input.canon.federationId
@@ -64,19 +68,26 @@ def activeOf (input : SemanticInput) : ActiveRunState := {
   activationDigest := input.canon.activationDigest
   contentSession := input.canon.contentSession
   contentEpoch := input.canon.contentEpoch
+  slot := input.slot
+  slotSecret := input.slotSecret
+  slotCommitment := input.slotCommitment
   runSeed := input.config.mission.runSeed
   world := input.canon.world
   playerCounters := input.canon.playerCounters
 }
 
+/-- ⚠ `runSeed` is gone from the claim and `target` is gone from the config claim.
+What a client asserts about its instance is now exactly two values it legitimately
+holds — the slot it played in, and the commitment its opening showed it. -/
 def claimOf (input : SemanticInput) : RunClaim := {
-  config := .signal input.config.target input.config.mission input.config.reward
+  config := .signal input.config.mission input.config.reward
   federationId := input.request.federationId
   contentRoot := input.request.contentRoot
   activationDigest := input.request.activationDigest
   contentSession := input.request.contentSession
   contentEpoch := ⟨input.request.contentEpoch⟩
-  runSeed := input.request.runSeed
+  slot := ⟨input.request.slot⟩
+  slotCommitment := input.request.slotCommitment
   actorRoot := input.request.actorRoot
   playerKey := input.request.playerKey
   claimedPreviousPlayerCounter := input.request.previousPlayerCounter
@@ -410,6 +421,72 @@ def replayAgainstSuccessorInputWire : SignalInputWire := {
 theorem fixture_replay_against_successor_refused :
     processSignalWire replayAgainstSuccessorInputWire.toJson = none := by
   native_decide
+
+/-! ### The hidden-instance teeth
+
+Each input below is the ACCEPTED one with exactly one value moved, so nothing but that
+value is doing the refusing.  The general reason each is refused for is a theorem in
+`Judged` (`judgeActive_uncommitted_secret_refused`, `judgeActive_wrong_commitment_refused`,
+`judgeActive_wrong_slot_refused`, `judgeActive_underived_seed_refused`); what these add is
+that the refusals are REACHABLE through the whole decode → reconstruct → settle path, not
+merely stateable about an `ActiveRunState` nothing constructs. -/
+
+/-- A node that published one commitment and then judged against a different slot
+secret.  This is the "choose the instance after seeing the transcript" move. -/
+def swappedSlotSecretInputWire : SignalInputWire := {
+  fixtureInputWire with
+  slotState := { fixtureInputWire.slotState with secret := fixtureActorRoot }
+}
+
+theorem fixture_swapped_slot_secret_refused :
+    processSignalWire swappedSlotSecretInputWire.toJson = none := by
+  native_decide
+
+/-- A client claiming a commitment the node did not publish for this slot. -/
+def wrongSlotCommitmentInputWire : SignalInputWire := {
+  fixtureInputWire with
+  request := { fixtureInputWire.request with slotCommitment := fixtureActorRoot }
+}
+
+theorem fixture_wrong_slot_commitment_refused :
+    processSignalWire wrongSlotCommitmentInputWire.toJson = none := by
+  native_decide
+
+/-- A client claiming a different slot from the one the node opened. -/
+def wrongSlotInputWire : SignalInputWire := {
+  fixtureInputWire with
+  request := { fixtureInputWire.request with slot := fixtureInputWire.request.slot + 1 }
+}
+
+theorem fixture_wrong_claimed_slot_refused :
+    processSignalWire wrongSlotInputWire.toJson = none := by
+  native_decide
+
+/-- ⚑ **The seed nobody gets to choose.**  This input is internally CONSISTENT — the
+config is exactly what `Emit.signalConfig` renders for `Emit.UNBOUND_RUN_SEED`, its target
+is `targetFromSeed` of that seed, `exactEmittedSignalConfig` accepts it, and the submitted
+action solves it — and it is REFUSED, because that seed is not `HiddenInstance.runSeedFor`
+of the committed slot secret for this player.  This is the falsifier for the claim that
+`UNBOUND_RUN_SEED` cannot be played. -/
+def unboundSeedConfig : SignalTriangulation.Config :=
+  Emit.signalConfig Emit.UNBOUND_RUN_SEED fixtureFederationId fixtureSourceDigest
+    fixtureContentDigest fixtureContentRoot fixtureActivationDigest
+
+def unboundSeedInputWire : SignalInputWire := {
+  fixtureInputWire with
+  config := SignalConfigWire.ofSemantic unboundSeedConfig
+  request := { fixtureInputWire.request with
+    actions := [CodeWire.ofSemantic unboundSeedConfig.target] }
+}
+
+theorem fixture_unbound_run_seed_refused :
+    processSignalWire unboundSeedInputWire.toJson = none := by
+  native_decide
+
+#assert_compiled fixture_swapped_slot_secret_refused
+#assert_compiled fixture_wrong_slot_commitment_refused
+#assert_compiled fixture_wrong_claimed_slot_refused
+#assert_compiled fixture_unbound_run_seed_refused
 
 #assert_axioms Settlement.receipt_applied
 #assert_axioms Settlement.canon_records_receipt

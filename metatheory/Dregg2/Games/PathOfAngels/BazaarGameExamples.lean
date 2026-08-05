@@ -111,6 +111,21 @@ def missionContext : HiddenInstance.MissionContext where
   federationId := federation
   contentSession := contentSession
 
+/-- ⚠ The fixture's run seed is DERIVED.  `Judged.admissionChecks` requires
+`active.runSeed` to be exactly `HiddenInstance.runSeedFor` of the committed slot
+secret, this slot and this player, so a fixture that names a seed of its own is
+refused — which is the whole point of the split, and this example is where it is
+exercised end to end.
+
+⚠ These five sit ABOVE `mission` and are named there.  They used to be stated twice —
+once inline in `mission.runSeed`, once here — which is two shapes that agree today. -/
+def slotSecret : HiddenInstance.SlotSecret := ⟨repeatedDigest 91⟩
+def slot : EpochId := ⟨5⟩
+def draw : HiddenInstance.Draw :=
+  { secret := slotSecret, slot := slot, playerKey := playerKey }
+def liveRunSeed : Digest32 := HiddenInstance.runSeedFor draw missionContext
+def slotCommitment : Digest32 := HiddenInstance.commit slotSecret slot
+
 def mission : MissionSpec where
   missionId
   artifact
@@ -122,8 +137,10 @@ def mission : MissionSpec where
   -- The mission a judge holds carries the LIVE seed.  `MissionContext` is the
   -- projection the draw reads and it excludes `runSeed`, so this is a derivation
   -- and not a cycle — `HiddenInstance.context_ignores_the_run_seed`.
-  runSeed := HiddenInstance.runSeedFor
-    { secret := ⟨repeatedDigest 91⟩, slot := ⟨5⟩, playerKey := playerKey } missionContext
+  -- ⚠ It names `liveRunSeed`, NOT a second inline copy of the draw: the secret and the
+  -- slot are stated once, above, and the fixture below has to agree with THIS value or
+  -- `admissionChecks` refuses.
+  runSeed := liveRunSeed
   budget
   allowedRelics := {relic}
   privacy := .public
@@ -140,18 +157,6 @@ def signalConfig : SignalTriangulation.Config where
   reward
   reward_accepted := reward_is_mission_accepted
   target_eq := rfl
-
-/-- ⚠ The fixture's run seed is now DERIVED.  `Judged.admissionChecks` requires
-`active.runSeed` to be exactly `HiddenInstance.runSeedFor` of the committed slot
-secret, this slot and this player, so a fixture that names a seed of its own is
-refused — which is the whole point of the split, and this example is where it is
-exercised end to end. -/
-def slotSecret : HiddenInstance.SlotSecret := ⟨repeatedDigest 91⟩
-def slot : EpochId := ⟨5⟩
-def draw : HiddenInstance.Draw :=
-  { secret := slotSecret, slot := slot, playerKey := playerKey }
-def liveRunSeed : Digest32 := HiddenInstance.runSeedFor draw missionContext
-def slotCommitment : Digest32 := HiddenInstance.commit slotSecret slot
 
 def active : ActiveRunState where
   game := .signal signalConfig

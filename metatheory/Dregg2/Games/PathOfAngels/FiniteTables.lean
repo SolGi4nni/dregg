@@ -111,9 +111,10 @@ def relayStateIdsUniqueB (board : RelayRepair.Board)
     (stateId : RelayRepair.State → String) : Bool :=
   ((relayStates board).map stateId).Nodup
 
-/-- The complete refusal vocabulary, and every one of the five fires on a reachable
-state of the emitted board — `relayRefusalReasonsLiveB`.  A refusal a run can never
-provoke is a badge no client can earn. -/
+/-- The complete refusal vocabulary.  A reason no run of the emitted FAMILY can ever
+provoke would be a badge no client can earn; `relayRefusalReasons_family_live` is
+that check, and `relayRefusalReasons_live_per_board` measures which boards provoke
+which — they do NOT all provoke all five. -/
 def relayRefusalVocabulary : List String :=
   ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
 
@@ -134,11 +135,18 @@ def relayRefusalReasonsCompleteB (board : RelayRepair.Board) : Bool :=
     | none, some _ => true
     | _, _ => false
 
-/-- Every declared reason is provoked by some reachable (state, action) pair. -/
-def relayRefusalReasonsLiveB (board : RelayRepair.Board) : Bool :=
-  relayRefusalVocabulary.all fun reason =>
+/-- Which declared reasons a run against THIS board can actually provoke. -/
+def relayLiveRefusalReasons (board : RelayRepair.Board) : List String :=
+  relayRefusalVocabulary.filter fun reason =>
     (relayTransitions board).any fun transition =>
       relayRefusalReason board transition.state transition.action == some reason
+
+/-- Every declared reason is provoked by some reachable (state, action) pair OF THE
+FAMILY.  ⚠ Not of every board: see `relayRefusalReasons_live_per_board`. -/
+def relayRefusalReasonsFamilyLiveB : Bool :=
+  relayRefusalVocabulary.all fun reason =>
+    (List.finRange 8).any fun i =>
+      (relayLiveRefusalReasons (RelayRepair.boardAt i)).contains reason
 
 /-- Conversely, no row invents a reason outside the vocabulary. -/
 def relayRefusalReasonsDeclaredB (board : RelayRepair.Board) : Bool :=
@@ -185,8 +193,31 @@ theorem relayRefusalReasons_complete :
     ∀ i : Fin 8, relayRefusalReasonsCompleteB (RelayRepair.boardAt i) = true := by
   native_decide
 
-theorem relayRefusalReasons_live :
-    ∀ i : Fin 8, relayRefusalReasonsLiveB (RelayRepair.boardAt i) = true := by
+/-- ⚑ **REFUTED AND RESTATED.**  The claim carried here until 2026-08-05 was that
+every one of the five declared reasons is provoked on every one of the eight boards.
+It is FALSE, and `native_decide` said so: boards 0 and 6 carry enough spares that no
+reachable (state, action) pair can ever refuse with `"no-spares"`.  The vector below
+is the measurement, not a restatement of the hope.
+`RESTATED` rather than weakened for convenience — the property that matters is that
+the emitted vocabulary is exercised by the emitted FAMILY (no reason is a badge no
+run can earn) and that no board invents a reason outside it
+(`relayRefusalReasons_declared`).  Which reasons a PARTICULAR board can provoke is a
+fact about that board's spare budget, and stating it per board is the strongest true
+form. -/
+theorem relayRefusalReasons_live_per_board :
+    ((List.finRange 8).map fun i => relayLiveRefusalReasons (RelayRepair.boardAt i)) =
+      [ ["solved", "turn-limit", "already-installed", "stranded"]
+      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+      , ["solved", "turn-limit", "already-installed", "stranded"]
+      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"] ] := by
+  native_decide
+
+/-- No declared reason is dead across the whole emitted family. -/
+theorem relayRefusalReasons_family_live : relayRefusalReasonsFamilyLiveB = true := by
   native_decide
 
 theorem relayRefusalReasons_declared :
@@ -222,7 +253,8 @@ theorem relayTransitions_count (i : Fin 8) :
 #assert_compiled relayTable_closed
 #assert_compiled relayStates_nodup
 #assert_compiled relayRefusalReasons_complete
-#assert_compiled relayRefusalReasons_live
+#assert_compiled relayRefusalReasons_live_per_board
+#assert_compiled relayRefusalReasons_family_live
 #assert_compiled relayRefusalReasons_declared
 #assert_compiled relayStateIds_unique
 #assert_compiled relayStateCounts_pinned
@@ -390,7 +422,7 @@ inductive ParametricRow where
   | advance (next : SalvageLock.State)
   /-- A second exposure: the judge supplies one bit and the run takes one of these. -/
   | resolve (onMatch onMismatch : SalvageLock.State)
-deriving DecidableEq, Repr
+deriving DecidableEq
 
 /-- The row for a (state, action) pair.  It mentions no seed. -/
 def salvageParametricRow (state : SalvageLock.State) (action : SalvageLock.Action) :

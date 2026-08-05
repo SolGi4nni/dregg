@@ -625,9 +625,9 @@ def replay (config : Config) : State → List Command → Except Error State
 
 theorem replay_append (config : Config) (state : State)
     (left right : List Command) :
-    replay config state (left ++ right) = do
+    replay config state (left ++ right) = (do
       let middle ← replay config state left
-      replay config middle right := by
+      replay config middle right) := by
   induction left generalizing state with
   | nil => rfl
   | cons command commands ih =>

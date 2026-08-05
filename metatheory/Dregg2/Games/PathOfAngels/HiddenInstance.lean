@@ -80,6 +80,24 @@ termination could drift.
 `SeedDraw.drawBelow?` is the only draw used.  `SalvageCrate.unbiasedIndex?`
 cannot stream — `find?` then modulo re-reads the same byte — and nothing here
 calls it.
+
+## ⚑ `commit`, `runSeedFor` and `practiceRunSeed` are `@[irreducible]`, and why
+
+MEASURED 2026-08-05, on hbox: `BazaarGameExamples` carried
+`archived := by simp [archive, acquire]`, whose goal reaches `judgeActive` and therefore
+`admissionChecks`, which mentions both functions.  With a run seed that was a literal
+digest that `simp` was cheap.  With a DERIVED one it dragged seventeen Poseidon2
+permutations through Lean's INTERPRETER: **47.6 GB resident and 68 minutes of CPU on one
+file**, climbing into the 48 GB cgroup cap.
+
+That is a property of the whole design, not of that one proof: every future `simp`,
+`rfl` or `decide` that happens to reach a live seed would do the same, and it would look
+like a slow build rather than a mistake.  `@[irreducible]` makes the elaborator treat a
+draw as opaque — which is what it is, a sponge output — while `native_decide`, `#eval`
+and the compiled export evaluate it exactly as before, because irreducibility is an
+elaborator notion and the compiler ignores it.  ⚠ The KERNEL also ignores it, so a plain
+`by decide` over a live seed is still a bomb; there is none in the tree and there should
+never be one.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
@@ -158,10 +176,10 @@ abbrev LANE_ACCEPT : Nat := 2013265920
 abbrev LANE_FIBRE : Nat := 7864320
 
 theorem lane_accept_is_whole_byte_classes : LANE_ACCEPT = 256 * LANE_FIBRE := by
-  norm_num
+  decide
 
 theorem lane_accept_is_the_field_minus_one : LANE_ACCEPT + 1 = P := by
-  norm_num [P]
+  decide
 
 /-- One byte per accepted lane; the single aliasing value refuses rather than
 folding.  `none` is not a failure mode a caller has to handle specially — the
@@ -216,7 +234,7 @@ abbrev DERIVE_DOMAIN : Nat := 0x504F4144
 
 theorem domains_are_distinct_and_canonical :
     COMMIT_DOMAIN ≠ DERIVE_DOMAIN ∧ COMMIT_DOMAIN < P ∧ DERIVE_DOMAIN < P := by
-  refine ⟨by norm_num, by norm_num [P], by norm_num [P]⟩
+  refine ⟨by decide, by decide, by decide⟩
 
 /-- Which stream a draw is.  The tag enters the sponge preimage, so a practice
 instance is not a judged instance for any input: `practice_is_not_judged` is the
@@ -260,7 +278,7 @@ tells a reader nothing about any particular run beyond which slot it belongs to.
 
 Its binding strength is the sponge capacity, eight lanes, about 248 bits: roughly
 2^124 to find a colliding secret.  That is the number to quote, not 2^248. -/
-def commit (secret : SlotSecret) (slot : EpochId) : Digest32 :=
+@[irreducible] def commit (secret : SlotSecret) (slot : EpochId) : Digest32 :=
   digestOfStream (laneBytes (squeeze
     (absorbAll initialState
       (pad RATE [COMMIT_DOMAIN, slot.value % P, 0, 0, 0, 0, 0, 0]
@@ -288,7 +306,13 @@ structure MissionContext where
   contentSession : Digest32
 deriving DecidableEq
 
-def MissionSpec.context (mission : MissionSpec) : MissionContext where
+/-- ⚠ This is NOT `MissionSpec.context` and must not be renamed to it.  `MissionSpec`
+lives in `Dregg2.Games.PathOfAngels`; a `MissionSpec.context` declared inside THIS
+namespace has the full name `…HiddenInstance.MissionSpec.context`, which generalized
+field notation on a `MissionSpec` value cannot resolve, so every `mission.context`
+in the tree fails to elaborate.  That exact shape was the hard compile break of the
+previous cycle.  One name, spelled out at every call site. -/
+def MissionContext.ofMission (mission : MissionSpec) : MissionContext where
   missionId := mission.missionId
   epoch := mission.epoch
   federationId := mission.federationId
@@ -298,7 +322,8 @@ def MissionSpec.context (mission : MissionSpec) : MissionContext where
 seed leaves it unchanged.  This is the statement that the derivation is
 well-founded, made about the actual projection rather than asserted in prose. -/
 theorem context_ignores_the_run_seed (mission : MissionSpec) (seed : Digest32) :
-    ({ mission with runSeed := seed } : MissionSpec).context = mission.context := rfl
+    MissionContext.ofMission { mission with runSeed := seed } =
+      MissionContext.ofMission mission := rfl
 
 def headerBlock (purpose : Purpose) (slot : EpochId) (ctx : MissionContext) : List Nat :=
   pad RATE
@@ -326,14 +351,14 @@ and therefore what `SignalTriangulation.Config.target_eq`,
 `SalvageLock.Config.seed_eq` and `RelayRepair.Config.board_eq` bind their
 instance to.  The kernels did not have to change: what changed is that the seed
 they read is no longer a published constant. -/
-def runSeedFor (draw : Draw) (ctx : MissionContext) : Digest32 :=
+@[irreducible] def runSeedFor (draw : Draw) (ctx : MissionContext) : Digest32 :=
   digestOfStream (streamFor .judged draw.secret.value draw.slot ctx draw.playerKey)
 
 /-- The rehearsal seed a browser draws for ITSELF.  There is no secret and no
 slot: a client picks `clientSeed`, the `practice` tag separates the stream, and
 the resulting instance is a real instance of the same family that no judge will
 ever score. -/
-def practiceRunSeed (clientSeed : Digest32) (ctx : MissionContext) : Digest32 :=
+@[irreducible] def practiceRunSeed (clientSeed : Digest32) (ctx : MissionContext) : Digest32 :=
   digestOfStream (streamFor .practice clientSeed ⟨0⟩ ctx clientSeed)
 
 /-! ## Fixtures
@@ -405,8 +430,8 @@ carries is fixed here — mission, federation, content session, slot, player —
 the run seed still moves when the secret does.  This is the statement the old
 `signalTarget_literal` could not make, because there the seed WAS the artifact. -/
 theorem published_context_does_not_determine_the_run_seed :
-    runSeedFor ⟨secretA, slotSeven, alice⟩ fixtureMission.context ≠
-      runSeedFor ⟨secretB, slotSeven, alice⟩ fixtureMission.context := by
+    runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
+      runSeedFor ⟨secretB, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) := by
   native_decide
 
 /-- **Per player.**  Two players in the same slot, under the same secret, draw
@@ -415,29 +440,29 @@ this choice is that two scores are draws from one distribution rather than
 attempts at one puzzle; the benefit is that the first finisher cannot hand the
 answer to the rest of the slot. -/
 theorem two_players_draw_different_instances :
-    runSeedFor ⟨secretA, slotSeven, alice⟩ fixtureMission.context ≠
-      runSeedFor ⟨secretA, slotSeven, bob⟩ fixtureMission.context := by
+    runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
+      runSeedFor ⟨secretA, slotSeven, bob⟩ (MissionContext.ofMission fixtureMission) := by
   native_decide
 
 /-- **Per slot.**  The same player in two slots draws two instances, so yesterday
 does not answer today. -/
 theorem two_slots_draw_different_instances :
-    runSeedFor ⟨secretA, slotSeven, alice⟩ fixtureMission.context ≠
-      runSeedFor ⟨secretA, slotEight, alice⟩ fixtureMission.context := by
+    runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
+      runSeedFor ⟨secretA, slotEight, alice⟩ (MissionContext.ofMission fixtureMission) := by
   native_decide
 
 /-- **Practice is not the live game.**  Handing the practice draw the slot secret
 itself — the most favourable possible confusion — still does not reproduce a
 judged seed, because the purpose tag is in the preimage. -/
 theorem practice_is_not_judged :
-    practiceRunSeed secretA.value fixtureMission.context ≠
-      runSeedFor ⟨secretA, ⟨0⟩, secretA.value⟩ fixtureMission.context := by
+    practiceRunSeed secretA.value (MissionContext.ofMission fixtureMission) ≠
+      runSeedFor ⟨secretA, ⟨0⟩, secretA.value⟩ (MissionContext.ofMission fixtureMission) := by
   native_decide
 
 /-- The commitment does not repeat the run seed: publishing it is not publishing
 a value one draw away from the instance. -/
 theorem commitment_is_not_the_seed :
-    commit secretA slotSeven ≠ runSeedFor ⟨secretA, slotSeven, alice⟩ fixtureMission.context := by
+    commit secretA slotSeven ≠ runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) := by
   native_decide
 
 /-! ## Generic draws over a derived stream

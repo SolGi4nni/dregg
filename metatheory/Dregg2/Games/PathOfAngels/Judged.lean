@@ -154,7 +154,7 @@ def admissionChecks (active : ActiveRunState) (carrier : FinalizedCarrier)
     active.runSeed =
       HiddenInstance.runSeedFor
         { secret := active.slotSecret, slot := active.slot, playerKey := carrier.playerKey }
-        active.game.mission.context ∧
+        (HiddenInstance.MissionContext.ofMission active.game.mission) ∧
     claim.actorRoot = carrier.actorRoot ∧
     claim.playerKey = carrier.playerKey ∧
     claim.claimedPreviousPlayerCounter = carrier.currentPlayerCounter.val ∧
@@ -187,7 +187,7 @@ theorem admissionChecks_eq_true_iff (active : ActiveRunState)
       active.runSeed =
         HiddenInstance.runSeedFor
           { secret := active.slotSecret, slot := active.slot, playerKey := carrier.playerKey }
-          active.game.mission.context ∧
+          (HiddenInstance.MissionContext.ofMission active.game.mission) ∧
       claim.actorRoot = carrier.actorRoot ∧
       claim.playerKey = carrier.playerKey ∧
       claim.claimedPreviousPlayerCounter = carrier.currentPlayerCounter.val ∧
@@ -384,7 +384,7 @@ theorem judgeActive_underived_seed_refused (active : ActiveRunState)
     (h : active.runSeed ≠
       HiddenInstance.runSeedFor
         { secret := active.slotSecret, slot := active.slot, playerKey := carrier.playerKey }
-        active.game.mission.context) :
+        (HiddenInstance.MissionContext.ofMission active.game.mission)) :
     judgeActive active carrier claim submitted = none := by
   simp [judgeActive, admissionChecks, h]
 

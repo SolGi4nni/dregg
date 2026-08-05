@@ -433,7 +433,8 @@ theorem step_appends_exactly_one_checked_run {federationId : Digest32}
       rw [hs] at h
       injection h with heq
       subst heq
-      exact ⟨checked, hs, rfl⟩
+      refine ⟨checked, ?_, rfl⟩
+      simp [hs]
 
 /-! ## Projection -/
 

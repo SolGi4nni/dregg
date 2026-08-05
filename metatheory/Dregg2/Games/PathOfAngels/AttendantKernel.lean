@@ -1743,11 +1743,39 @@ def fixtureMissionSpec (missionId : MissionId) (artifactId : ArtifactId)
   artifact_matches := rfl
   allowed_relics_bounded := le_trans reward.relics_bounded (by decide)
 
+/-! ### The fixtures' slot, and why their run seeds are DERIVED
+
+⚠ `fixtureSupplySpec` and `fixtureIntelSpec` used to carry hand-picked run seeds
+(`digestByte 81`, `digestByte 83`).  They cannot any more: `Judged.admissionChecks`
+refuses any active state whose run seed is not exactly `HiddenInstance.runSeedFor` of
+the committed slot secret, this slot and this player, so a picked seed would make every
+settlement fixture below refuse rather than settle — and the whole hostile-path suite
+would go quietly vacuous while still reading green.
+
+ONE secret serves both missions: `missionId` is in the draw preimage, so the two
+missions still draw different instances from it. -/
+
+def fixtureSlot : EpochId := ⟨5⟩
+def fixtureSlotSecret : HiddenInstance.SlotSecret := ⟨digestByte 79⟩
+def fixtureSlotCommitment : Digest32 := HiddenInstance.commit fixtureSlotSecret fixtureSlot
+
+/-- A mission whose run seed is the live draw for `(fixtureSlotSecret, fixtureSlot,
+fixtureOwner)`.  The template's own seed is irrelevant to the context the draw reads —
+`HiddenInstance.context_ignores_the_run_seed` — so it is handed the zero byte and
+immediately replaced. -/
+def fixtureDerivedMissionSpec (missionId : MissionId) (artifactId : ArtifactId)
+    (reward : Contribution) : MissionSpec :=
+  fixtureMissionSpec missionId artifactId
+    (HiddenInstance.runSeedFor ⟨fixtureSlotSecret, fixtureSlot, fixtureOwner⟩
+      (HiddenInstance.MissionContext.ofMission
+        (fixtureMissionSpec missionId artifactId (digestByte 0) reward)))
+    reward
+
 def fixtureSupplySpec : MissionSpec :=
-  fixtureMissionSpec fixtureSupplyMission ⟨80⟩ (digestByte 81) supplyContribution
+  fixtureDerivedMissionSpec fixtureSupplyMission ⟨80⟩ supplyContribution
 
 def fixtureIntelSpec : MissionSpec :=
-  fixtureMissionSpec fixtureIntelMission ⟨82⟩ (digestByte 83) intelContribution
+  fixtureDerivedMissionSpec fixtureIntelMission ⟨82⟩ intelContribution
 
 def fixtureSignalConfig (mission : MissionSpec) (reward : Contribution)
     (accepted : mission.acceptsContribution reward = true) : SignalTriangulation.Config where
@@ -1902,6 +1930,9 @@ def fixtureActive (config : SignalTriangulation.Config)
   activationDigest := fixtureActivation
   contentSession := fixtureSession
   contentEpoch := ⟨1⟩
+  slot := fixtureSlot
+  slotSecret := fixtureSlotSecret
+  slotCommitment := fixtureSlotCommitment
   runSeed := config.mission.runSeed
   world := canon.world
   playerCounters := canon.playerCounters
@@ -1924,7 +1955,8 @@ def fixtureClaim (config : SignalTriangulation.Config)
   activationDigest := fixtureActivation
   contentSession := fixtureSession
   contentEpoch := ⟨1⟩
-  runSeed := config.mission.runSeed
+  slot := fixtureSlot
+  slotCommitment := fixtureSlotCommitment
   actorRoot := fixtureActorRoot
   playerKey := fixtureOwner
   claimedPreviousPlayerCounter := (fixtureCarrier canon).currentPlayerCounter.val

@@ -181,6 +181,26 @@ structure CanonStateWire where
   curatorCounter : Nat
 deriving DecidableEq
 
+/-- ⚠ **This object carries the curator's slot SECRET.**  It is node-held state, it
+is never a client claim, and `SignalInputWire` is the node→Lean transport only: these
+bytes must not leave the node.  No output wire, descriptor or catalog renders a slot
+secret, and `Emit` has no function that could.
+
+The judge is handed the secret because it RE-DERIVES the run seed rather than
+trusting one.  `Judged.admissionChecks` requires `commitment` to be
+`HiddenInstance.commit secret slot`, and the live `runSeed` to be
+`HiddenInstance.runSeedFor` of that same secret, slot and player — so a node that
+published one commitment and then judged against a different secret is refused. -/
+structure SlotStateWire where
+  slot : Nat
+  secret : Digest32
+  commitment : Digest32
+deriving DecidableEq
+
+/-- ⚠ `runSeed` is GONE from the request.  A client that could state the live run
+seed could compute its own instance, which is the whole hole.  What a client states
+instead is the slot it played in and the commitment its run opening showed it; the
+judge compares both against node state and derives the seed itself. -/
 structure SignalRequestWire where
   missionId : Nat
   federationId : Digest32
@@ -188,7 +208,8 @@ structure SignalRequestWire where
   activationDigest : Digest32
   contentSession : Digest32
   contentEpoch : Nat
-  runSeed : Digest32
+  slot : Nat
+  slotCommitment : Digest32
   actorRoot : Digest32
   playerKey : Digest32
   previousPlayerCounter : Nat
@@ -216,6 +237,7 @@ structure SignalInputWire where
   world : WorldStateWire
   canon : CanonStateWire
   carrier : FinalizedCarrierWire
+  slotState : SlotStateWire
   request : SignalRequestWire
 deriving DecidableEq
 
@@ -372,13 +394,19 @@ def SignalRequestWire.toJson (r : SignalRequestWire) : String :=
     ",\"activation_digest\":" ++ jsonString (Emit.bytes32Hex r.activationDigest) ++
     ",\"content_session\":" ++ jsonString (Emit.bytes32Hex r.contentSession) ++
     ",\"content_epoch\":" ++ toString r.contentEpoch ++
-    ",\"run_seed\":" ++ jsonString (Emit.bytes32Hex r.runSeed) ++
+    ",\"slot\":" ++ toString r.slot ++
+    ",\"slot_commitment\":" ++ jsonString (Emit.bytes32Hex r.slotCommitment) ++
     ",\"actor_root\":" ++ jsonString (Emit.bytes32Hex r.actorRoot) ++
     ",\"player_key\":" ++ jsonString (Emit.bytes32Hex r.playerKey) ++
     ",\"previous_player_counter\":" ++ toString r.previousPlayerCounter ++
     ",\"expected_world_sequence\":" ++ toString r.expectedWorldSequence ++
     ",\"expected_canon_revision\":" ++ toString r.expectedCanonRevision ++
     ",\"actions\":" ++ jsonArray (r.actions.map CodeWire.toJson) ++ "}"
+
+def SlotStateWire.toJson (s : SlotStateWire) : String :=
+  "{\"slot\":" ++ toString s.slot ++
+    ",\"secret\":" ++ jsonString (Emit.bytes32Hex s.secret) ++
+    ",\"commitment\":" ++ jsonString (Emit.bytes32Hex s.commitment) ++ "}"
 
 def FinalizedCarrierWire.toJson (c : FinalizedCarrierWire) : String :=
   "{\"federation_id\":" ++ jsonString (Emit.bytes32Hex c.federationId) ++
@@ -396,6 +424,7 @@ def SignalInputWire.toJson (input : SignalInputWire) : String :=
     ",\"world\":" ++ input.world.toJson ++
     ",\"canon\":" ++ input.canon.toJson ++
     ",\"carrier\":" ++ input.carrier.toJson ++
+    ",\"slot_state\":" ++ input.slotState.toJson ++
     ",\"request\":" ++ input.request.toJson ++ "}"
 
 /-! ## Strict syntax parsers -/
@@ -558,9 +587,17 @@ private def parseActions (j : Json) : Except String (List CodeWire) := do
   if values.length > WIRE_ACTION_LIMIT then throw "Signal transcript exceeds turn limit"
   values.mapM parseCode
 
+private def parseSlotState (j : Json) : Except String SlotStateWire := do
+  exactKeys j ["slot", "secret", "commitment"]
+  pure {
+    slot := ← objectNat j "slot"
+    secret := ← objectDigest j "secret"
+    commitment := ← objectDigest j "commitment"
+  }
+
 private def parseRequest (j : Json) : Except String SignalRequestWire := do
   exactKeys j ["mission_id", "federation_id", "content_root", "activation_digest",
-    "content_session", "content_epoch", "run_seed", "actor_root", "player_key",
+    "content_session", "content_epoch", "slot", "slot_commitment", "actor_root", "player_key",
     "previous_player_counter", "expected_world_sequence", "expected_canon_revision", "actions"]
   pure {
     missionId := ← objectNat j "mission_id" WIRE_ID_LIMIT
@@ -569,7 +606,8 @@ private def parseRequest (j : Json) : Except String SignalRequestWire := do
     activationDigest := ← objectDigest j "activation_digest"
     contentSession := ← objectDigest j "content_session"
     contentEpoch := ← objectNat j "content_epoch"
-    runSeed := ← objectDigest j "run_seed"
+    slot := ← objectNat j "slot"
+    slotCommitment := ← objectDigest j "slot_commitment"
     actorRoot := ← objectDigest j "actor_root"
     playerKey := ← objectDigest j "player_key"
     previousPlayerCounter := ← objectNat j "previous_player_counter"
@@ -593,7 +631,7 @@ private def parseCarrier (j : Json) : Except String FinalizedCarrierWire := do
   }
 
 private def parseInputJson (j : Json) : Except String SignalInputWire := do
-  exactKeys j ["format", "config", "world", "canon", "carrier", "request"]
+  exactKeys j ["format", "config", "world", "canon", "carrier", "slot_state", "request"]
   let format ← j.getObjValAs? String "format"
   if format != INPUT_FORMAT then throw "wrong Signal input format"
   pure {
@@ -601,6 +639,7 @@ private def parseInputJson (j : Json) : Except String SignalInputWire := do
     world := ← parseWorld (← j.getObjVal? "world")
     canon := ← parseCanon (← j.getObjVal? "canon")
     carrier := ← parseCarrier (← j.getObjVal? "carrier")
+    slotState := ← parseSlotState (← j.getObjVal? "slot_state")
     request := ← parseRequest (← j.getObjVal? "request")
   }
 
@@ -878,11 +917,19 @@ def FinalizedCarrierWire.toSemantic? (c : FinalizedCarrierWire) : Option Finaliz
     currentPlayerCounter
   }
 
+/-- ⚠ `slot`, `slotSecret` and `slotCommitment` are node-held state carried through
+from `SlotStateWire`.  They are what lets `NetworkJudge.activeOf` build an
+`ActiveRunState` the admission gate can check: without the secret there is nothing to
+re-derive the run seed from, and a judge that cannot re-derive it is a judge that
+trusts a supplied one. -/
 structure SemanticInput where
   config : SignalTriangulation.Config
   world : WorldState
   canon : CanonState
   carrier : FinalizedCarrier
+  slot : EpochId
+  slotSecret : HiddenInstance.SlotSecret
+  slotCommitment : Digest32
   request : SignalRequestWire
 
 /-- The portion of semantic input independent of Canon's curated set proofs.  The
@@ -893,45 +940,20 @@ def SignalInputWire.toSemantic? (input : SignalInputWire) : Option SemanticInput
   let world ← input.world.toSemantic?
   let canon ← input.canon.toSemantic?
   let carrier ← input.carrier.toSemantic?
+  if input.slotState.slot > WIRE_NAT_LIMIT then none else
   if _worldExact : world = canon.world then
-    some { config, world, canon, carrier, request := input.request }
+    some {
+      config, world, canon, carrier
+      slot := ⟨input.slotState.slot⟩
+      slotSecret := ⟨input.slotState.secret⟩
+      slotCommitment := input.slotState.commitment
+      request := input.request
+    }
   else none
 
 def decodeSignalInputSemantic (bytes : String) : Option SemanticInput := do
   let wire ← decodeSignalInput bytes
   wire.toSemantic?
-
-def SemanticInput.active (input : SemanticInput) : ActiveRunState where
-  game := .signal input.config
-  federationId := input.canon.federationId
-  contentRoot := input.canon.contentRoot
-  activationDigest := input.canon.activationDigest
-  contentSession := input.canon.contentSession
-  contentEpoch := input.canon.contentEpoch
-  runSeed := input.config.mission.runSeed
-  world := input.world
-  playerCounters := input.canon.playerCounters
-
-def SignalRequestWire.toRunClaim? (request : SignalRequestWire)
-    (config : SignalTriangulation.Config) : Option RunClaim := do
-  if request.contentEpoch > WIRE_NAT_LIMIT then none else
-  some {
-    config := .signal config.target config.mission config.reward
-    federationId := request.federationId
-    contentRoot := request.contentRoot
-    activationDigest := request.activationDigest
-    contentSession := request.contentSession
-    contentEpoch := ⟨request.contentEpoch⟩
-    runSeed := request.runSeed
-    actorRoot := request.actorRoot
-    playerKey := request.playerKey
-    claimedPreviousPlayerCounter := request.previousPlayerCounter
-  }
-
-def SignalRequestWire.toSubmittedRun? (request : SignalRequestWire) : Option SubmittedRun := do
-  if request.actions.length > WIRE_ACTION_LIMIT then none else
-  let codes ← request.actions.mapM CodeWire.toSemantic?
-  some (.signal (codes.map SignalTriangulation.Action.submit))
 
 /-! ## Successor and semantic-receipt wire -/
 
@@ -1337,6 +1359,11 @@ abbrev FIXTURE_PLAYER_HEX : String :=
   "5555555555555555555555555555555555555555555555555555555555555555"
 abbrev FIXTURE_CURATOR_HEX : String :=
   "6666666666666666666666666666666666666666666666666666666666666666"
+/-- A DEMONSTRATION slot secret.  It is a fixture value and is not a deployment
+secret: a deployment secret never enters this module, and there is no function here
+that would render one into an artifact. -/
+abbrev FIXTURE_SLOT_SECRET_HEX : String :=
+  "7777777777777777777777777777777777777777777777777777777777777777"
 
 def fixtureFederationId : Digest32 := digestOrZero FIXTURE_FEDERATION_HEX
 def fixtureSourceDigest : Digest32 := digestOrZero FIXTURE_SOURCE_HEX
@@ -1347,16 +1374,44 @@ def fixtureActorRoot : Digest32 := digestOrZero FIXTURE_ACTOR_HEX
 def fixturePlayerKey : Digest32 := digestOrZero FIXTURE_PLAYER_HEX
 def fixtureCuratorKey : Digest32 := digestOrZero FIXTURE_CURATOR_HEX
 
-/-- A stand-in LIVE run seed for the wire fixtures.  In deployment this value is
-`HiddenInstance.runSeedFor` of the committed slot secret and a client never sees
-it; a fixture only needs a seed that is not `Emit.UNBOUND_RUN_SEED`, so the
-derivation is not re-run here.  ⚠ There is no `Emit.signalTarget` to reach for
-any more: the target below is `targetFromSeed` of THIS seed. -/
-def fixtureRunSeed : Digest32 := digestOrZero FIXTURE_CONTENT_HEX
+def fixtureSlotSecret : HiddenInstance.SlotSecret := ⟨digestOrZero FIXTURE_SLOT_SECRET_HEX⟩
+def fixtureSlot : EpochId := ⟨9⟩
+
+/-- The published per-slot commitment, computed — not asserted.  `admissionChecks`
+requires `active.slotCommitment = HiddenInstance.commit active.slotSecret active.slot`,
+so a fixture that stated a commitment by hand would simply be refused. -/
+def fixtureSlotCommitment : Digest32 := HiddenInstance.commit fixtureSlotSecret fixtureSlot
+
+/-- The draw context of the Signal mission, taken off the TEMPLATE mission — the one
+whose run seed is `Emit.UNBOUND_RUN_SEED` — so that the seed below does not depend on
+itself.  `HiddenInstance.context_ignores_the_run_seed` is why that is the same context
+the live mission carries, and `fixtureMissionContext_is_the_live_context` checks it on
+this exact fixture rather than trusting the general lemma to have been applied. -/
+def fixtureMissionContext : HiddenInstance.MissionContext :=
+  HiddenInstance.MissionContext.ofMission
+    (Emit.signalMission Emit.UNBOUND_RUN_SEED fixtureFederationId fixtureSourceDigest
+      fixtureContentDigest fixtureContentRoot fixtureActivationDigest)
+
+/-- ⚠ The fixture's LIVE run seed is now DERIVED, not a stand-in constant.  It has to
+be: `Judged.admissionChecks` refuses any active state whose run seed is not exactly
+`HiddenInstance.runSeedFor` of the committed slot secret, this slot and this player, so
+a hand-picked seed would make every fixture below refuse rather than settle.  A client
+never sees this value; the fixture computes it because it is playing the node's part. -/
+def fixtureRunSeed : Digest32 :=
+  HiddenInstance.runSeedFor ⟨fixtureSlotSecret, fixtureSlot, fixturePlayerKey⟩
+    fixtureMissionContext
 
 def fixtureConfig : SignalTriangulation.Config :=
   Emit.signalConfig fixtureRunSeed fixtureFederationId fixtureSourceDigest
     fixtureContentDigest fixtureContentRoot fixtureActivationDigest
+
+/-- The context the seed was drawn against is the context the LIVE mission carries, so
+the derivation above is not a cycle dressed up.  It is an instance of
+`Emit.signalMission_context_ignores_the_run_seed`, which is the general fact; stating
+it here pins that the fixture actually applied it. -/
+theorem fixtureMissionContext_is_the_live_context :
+    HiddenInstance.MissionContext.ofMission fixtureConfig.mission = fixtureMissionContext :=
+  Emit.signalMission_context_ignores_the_run_seed _ _ _ _ _ _ _
 
 def fixtureCanon : CanonState :=
   CanonState.empty fixtureFederationId fixtureContentRoot fixtureActivationDigest
@@ -1379,7 +1434,8 @@ def fixtureRequestWire : SignalRequestWire where
   activationDigest := fixtureActivationDigest
   contentSession := fixtureConfig.mission.contentSession
   contentEpoch := fixtureConfig.mission.epoch.value
-  runSeed := fixtureConfig.mission.runSeed
+  slot := fixtureSlot.value
+  slotCommitment := fixtureSlotCommitment
   actorRoot := fixtureActorRoot
   playerKey := fixturePlayerKey
   previousPlayerCounter := 0
@@ -1387,11 +1443,19 @@ def fixtureRequestWire : SignalRequestWire where
   expectedCanonRevision := 0
   actions := [CodeWire.ofSemantic fixtureConfig.target]
 
+def fixtureSlotStateWire : SlotStateWire where
+  slot := fixtureSlot.value
+  secret := fixtureSlotSecret.value
+  commitment := fixtureSlotCommitment
+
 def fixtureInput : SemanticInput where
   config := fixtureConfig
   world := WorldState.empty
   canon := fixtureCanon
   carrier := fixtureCarrier
+  slot := fixtureSlot
+  slotSecret := fixtureSlotSecret
+  slotCommitment := fixtureSlotCommitment
   request := fixtureRequestWire
 
 def fixtureInputWire : SignalInputWire where
@@ -1408,6 +1472,7 @@ def fixtureInputWire : SignalInputWire where
     playerKey := fixtureCarrier.playerKey
     currentPlayerCounter := fixtureCarrier.currentPlayerCounter.val
   }
+  slotState := fixtureSlotStateWire
   request := fixtureRequestWire
 
 def fixtureInputBytes : String := fixtureInputWire.toJson
@@ -1546,6 +1611,7 @@ theorem fixture_output_refuses_trailing_bytes :
     decodeSignalOutput (fixtureOutputBytes ++ "\n") = none := by
   native_decide
 
+#assert_axioms fixtureMissionContext_is_the_live_context
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeSignalInput_reencodes
 #assert_axioms decodeSignalInput_accepted_bytes_injective
