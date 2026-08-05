@@ -560,13 +560,13 @@ def FIN_LIVE_BLOCK : Nat := 1
 /-- `Shifted_value.Type2.of_field` of the derived `combined_inner_product` — the fold
 `combine ζ + r · combine ζω` less `2^255`. -/
 def FIN_DEFERRED_CIP : Nat :=
-  0
+  4857158271292408557281056036660614491754856669200588147767679856725592753148
 /-- …and of the derived `b` — `challenge_polynomial ζ + r · challenge_polynomial ζω`. -/
 def FIN_DEFERRED_B : Nat :=
-  0
+  28330105504083176040027493772472798527582808498455566309518982263548590077294
 /-- …and the RAW 128-bit ξ′, the finalize sponge's first squeeze. -/
 def FIN_DEFERRED_XI : Nat :=
-  0
+  259774092307581287184427570446174477728
 
 /-- ⚑ Word `w`'s WITNESSED VALUE — a named fixture, exactly as `exists ~request:Req.Proof_state` is a
 free witness upstream. ⚠ **EXCEPT AT 55 AND 56**, which `wrap_main.ml:340-348` computes (§15c″), and
