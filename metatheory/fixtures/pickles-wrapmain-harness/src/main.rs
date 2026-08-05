@@ -117,6 +117,14 @@
 //                  ONE constraint, and its input is W-BULLET's - so what it buys is that a witness
 //                  whose opening FAILED is refused, not that the opening is checked here.
 //
+// ⚠ ⚑ **THE COMMITTED FIXTURES PREDATE THE MINA SLOT LAYOUT AND MUST BE RE-EMITTED.** They carry
+// `public_input_size: 6` and no `derived_slots`; this harness now REQUIRES Mina's forty. The first
+// assertion of polarity (5) says so in its own words ("the emission must be Mina's own statement
+// width"), and that red is the correct one — do NOT add a compatibility branch for the old shape,
+// re-emit. A full smoke ladder is ~45 min at `w12_close` and above, which is why this note exists
+// rather than a half-updated fixture directory: mixing two emissions in one directory is worse
+// than a red, because every cross-rung ladder assertion silently compares different circuits.
+//
 // REGENERATE the fixtures (only when the Lean assembly changes):
 //   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMain \
 //     && DREGG_WM=smoke lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean \
