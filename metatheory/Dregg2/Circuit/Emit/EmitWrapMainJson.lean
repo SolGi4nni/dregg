@@ -23,7 +23,7 @@ Then:
     cargo run --release --manifest-path metatheory/fixtures/pickles-wrapmain-harness/Cargo.toml \
       -- /tmp/pickles-wrapmain wrap
 -/
-import Dregg2.Circuit.Emit.KimchiWrapMain
+import Dregg2.Circuit.Emit.KimchiWrapMainCore
 
 open Dregg2.Circuit.Emit.KimchiWrapMain
 open Dregg2.Circuit.Emit.KimchiPlacement
@@ -140,6 +140,19 @@ def main : IO Unit := do
     throw (IO.userError s!"⚑ xhatXY IS NOT THE MSM'S OUTPUT: shape carries {s.xhatXY} but \
       `xhatOut {s.xhatTerms}` is {xhatOut s.xhatTerms}. The transcript would absorb a value no row \
       computes — refusing rather than emitting it.")
+  -- ⚑ **THE §15c‴ MEMO'S OBLIGATION, DISCHARGED AT EVERY EMISSION.** `FIN_DEFERRED_CIP/_B/_XI`
+  -- are the three deferred words the finalizing block carries, and `xhatScalar` reads them, so a
+  -- wrong triple would put a scalar into the x_hat MSM that no row of W-FINSPONGE computes and make
+  -- `Boolean.Assert.any [finalized; not should_finalize]` unsatisfiable in the rung that emits it.
+  -- The kernel closes this at BOTH committed shapes (`fin_deferred_words_are_the_derivation`); this
+  -- covers a `DREGG_WM`-supplied one, and it costs one evaluation of a program the emission runs
+  -- anyway.
+  let fd := finSpDerivedWords (mkWrap s)
+  if (FIN_DEFERRED_CIP, FIN_DEFERRED_B, FIN_DEFERRED_XI) != fd then
+    throw (IO.userError s!"⚑ FIN_DEFERRED_* IS NOT THE DERIVATION: the memo carries \
+      {(FIN_DEFERRED_CIP, FIN_DEFERRED_B, FIN_DEFERRED_XI)} but `finSpDerivedWords` says {fd}. \
+      W-FINSPONGE would emit a `Boolean.all` no witness satisfies — refusing rather than emitting \
+      it. Re-run `lake env lean --run Dregg2/Circuit/Emit/EmitWrapFinDeferred.lean`.")
   IO.println s!"emitting wrap_main tag={tag} shape={repr s}"
   IO.println s!"  items={nItems s} squeezes={nSqueezes s} chals={nChals s} \
     PRIMARY_LEN(mina)={WRAP_PRIMARY_LEN} pubWords(here)={s.pubWords}"
@@ -150,7 +163,7 @@ def main : IO Unit := do
   let _ ← force t.sp.evs.length "sponge events"
   for k in [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind, Rung.key, Rung.xhat,
            Rung.split, Rung.ftcomm, Rung.prev, Rung.wraphack, Rung.close, Rung.finalize,
-           Rung.combine, Rung.bullet] do
+           Rung.finsponge, Rung.combine, Rung.bullet] do
     let _ ← emitRung dir tag t k
     pure ()
   IO.println s!"wrote {dir}/wrapmain_{tag}_*.json"

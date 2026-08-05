@@ -189,6 +189,13 @@ globs = [
   "Dregg2.Circuit.Emit.EmitStepFragmentJson",
   "Dregg2.Circuit.Emit.EmitStepMainJson",
   "Dregg2.Circuit.Emit.EmitWrapMainJson",
+  # ⚑ The §15c‴ memo's BOOTSTRAP. It prints `finSpDerivedWords` so `FIN_DEFERRED_CIP/_B/_XI`
+  # can be typed in; the OBLIGATION that they are that triple is discharged by
+  # `fin_deferred_words_are_the_derivation` (kernel `rfl`) and `EmitWrapMainJson`'s refusal.
+  # It was an unlisted orphan and therefore never compiled -- while it was the only way to
+  # repair the memo that `d6683dd54` left at three zeros, which made every wrap emission
+  # REFUSE. A bootstrap nothing builds is a bootstrap nobody can run.
+  "Dregg2.Circuit.Emit.EmitWrapFinDeferred",
 ]
 
 # DivergenceToothGuards — the first-divergence / tooth-combinator statement cone plus the Mina
