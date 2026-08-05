@@ -607,9 +607,26 @@ theorem xiAir_mainRailOk : xiAir.mainRailOk = true := by
 def xiDesc : EffectVmDescriptor2 :=
   lowerAir "dregg-mina-xi-scalar-vector::v1" CM_WIDTH PI64 [] xiAir
 
+/-- ⚑ **THE LIMB VECTOR IS MEMOISED, AND THAT IS NOT COSMETIC.** `qLimb j` is a 255-bit shift, and
+`mulAsg` queries it thousands of times per emitted column. On the `pN` path `pLimb` is a CONSTANT
+the compiler can cache; passed as a parameter to `runRowsAt` it is an indirect call with no caching,
+and the `qN` trace stopped finishing. The table is an ARGUMENT to `limbTable` for the same reason
+`materialize` takes one. -/
+def limbTable (l : List ℤ) : Nat → ℤ := fun j => l.getD j 0
+
+def qLimbFast : Nat → ℤ :=
+  limbTable ((List.range 80).map Dregg2.Circuit.Emit.PastaFieldSound.qLimb)
+
+/-- ⚑ **AND IT IS THE SAME VECTOR.** Below 80 by evaluation; at and above 80 both are `0`, because
+`qN < 2^255 < 2^(8·80)`. A memoisation that quietly changed a gate constant would make the emitted
+trace refuse against its own descriptor, so this is checked rather than trusted. -/
+theorem qLimbFast_agrees_below_80 :
+    ((List.range 80).all
+      fun j => decide (qLimbFast j = Dregg2.Circuit.Emit.PastaFieldSound.qLimb j)) = true := by
+  decide
+
 def xiTrace : List (List ℤ) :=
-  runRowsAt PastaField.qN Dregg2.Circuit.Emit.PastaFieldSound.qLimb
-    (initRegs TX XI) (witsOf xiProg) 0 (instrs xiProg)
+  runRowsAt PastaField.qN qLimbFast (initRegs TX XI) (witsOf xiProg) 0 (instrs xiProg)
 
 def xiPIs : List ℤ := piPair XI XI_46
 
@@ -635,8 +652,13 @@ theorem foldAir_mainRailOk (terms : List Aff) : (foldAir terms).mainRailOk = tru
 def foldDesc (name : String) (terms : List Aff) : EffectVmDescriptor2 :=
   lowerAir name CM_WIDTH PI64 [] (foldAir terms)
 
+/-- ⚠ `p` is bound ONCE. `witsOf (foldProg terms)` closes over a recomputation of `foldProg`, and
+`foldProg` runs the whole reference fold — 41 modular inverses for `public_comm` — so a witness
+lookup per row made trace generation quadratic in the fold's own cost. Measured: the 1 024-row
+aggregate did not finish in four minutes. -/
 def foldTrace (terms : List Aff) : List (List ℤ) :=
-  runRows (initRegs ZERO 0) (witsOf (foldProg terms)) 0 (instrs (foldProg terms))
+  let p := foldProg terms
+  runRows (initRegs ZERO 0) (witsOf p) 0 (instrs p)
 
 def foldPIs (terms : List Aff) : List ℤ := piPair (sumOut terms).1 (sumOut terms).2
 
@@ -686,7 +708,8 @@ def ladderDesc : EffectVmDescriptor2 :=
   lowerAir "dregg-mina-scalar-mul-ladder::v1" CM_WIDTH PI64 [] ladderAir
 
 def ladderTrace : List (List ℤ) :=
-  runRows (initRegs ZERO 0) (witsOf ladderProg) 0 (instrs ladderProg)
+  let p := ladderProg
+  runRows (initRegs ZERO 0) (witsOf p) 0 (instrs p)
 
 def ladderRef : Aff := termOut SIGMA6_AFF SIGMA6_AFF.1 SIGMA6_AFF.2 DEMO_SCALAR DEMO_PLANES
 def ladderPIs : List ℤ := piPair ladderRef.1 ladderRef.2
@@ -711,5 +734,6 @@ def ladderPIs : List ℤ := piPair ladderRef.1 ladderRef.2
 #assert_axioms xiAir_mainRailOk
 #assert_axioms foldAir_mainRailOk
 #assert_axioms ladderAir_mainRailOk
+#assert_axioms qLimbFast_agrees_below_80
 
 end Dregg2.Circuit.Emit.MinaWrapCommitStages

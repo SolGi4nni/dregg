@@ -165,11 +165,18 @@ theorem one_hot_word_is_refused_at_this_register_count :
     ONEHOT_ARITY = 73 ∧ MAX_ARITY < ONEHOT_ARITY ∧ ROM_ARITY ≤ MAX_ARITY
       ∧ (1 + 4 + 3 * 9 + SK) = MAX_ARITY ∧ MAX_ARITY < (1 + 4 + 3 * 10 + SK) := by decide
 
-/-- ⚑ **AND THE INDEX WORD'S ARITY DOES NOT DEPEND ON `NREG` AT ALL** — the property that makes the
-register file a design parameter instead of a hostage to the arity cap. -/
-theorem index_word_is_register_count_independent (nr : Nat) :
-    (1 + 3 + 3 + 1 + SK) = ROM_ARITY := by
-  cases nr <;> rfl
+/-- ⚑ **THE INDEX WORD'S ARITY DOES NOT DEPEND ON `NREG`, AND THE ONE-HOT WORD DOES** — stated as
+a comparison of the two WORD FUNCTIONS at varying register counts, which is the property that
+matters. ⚠ An earlier draft of this stated `(1+3+3+1+SK) = ROM_ARITY` with `nr` free: that is
+`X = X` under a name it did not earn, and `#assert_axioms` cannot see the difference. -/
+def oneHotWord (nr : Nat) : Nat := 1 + 4 + 3 * nr + SK
+def indexWord (_nr : Nat) : Nat := 1 + 3 + 3 + 1 + SK
+
+theorem index_word_is_register_count_independent :
+    (∀ nr, indexWord nr = ROM_ARITY)
+      ∧ oneHotWord 9 = MAX_ARITY ∧ MAX_ARITY < oneHotWord 10
+      ∧ oneHotWord 12 ≠ oneHotWord 9 := by
+  refine ⟨fun nr => rfl, by decide, by decide, by decide⟩
 
 /-- ⚑ **THE LONGEST PROGRAM ONE INSTANCE CAN HOLD IS 838 860 INSTRUCTIONS** at this word, against
 `MinaWrapVerifierProgram`'s 610 080 — the narrower word buys **1.37×**, and it is still the CELL cap
@@ -718,36 +725,27 @@ def xValue (st : RegFile) (wit : Nat) (I : Instr) : Nat :=
 def yValue (st : RegFile) (wit : Nat) (I : Instr) : Nat :=
   if I.yr = NREG then I.imm else if I.yr = NREG + 1 then wit else st I.yr
 
-def stepRegs (st : RegFile) (wit : Nat) (I : Instr) : RegFile := fun r =>
-  if I.wr < NREG ∧ r = I.wr then opResult I.op (xValue st wit I) (yValue st wit I) else st r
+def writeBack (v : Nat) (st : RegFile) (I : Instr) : RegFile := fun r =>
+  if I.wr < NREG ∧ r = I.wr then v else st r
 
-/-- ⚑ **THE GENERATOR HAS TO TERMINATE, AND THE CLOSURE ONE DOES NOT — a defect derived from the
-definitions, not measured.** `RegFile` is `Nat → Nat` and `stepRegsAt` is a CLOSURE whose body
-re-reads `st`. Nothing memoises, so the cost of the value in a register at instruction depth `d` is
-not `O(1)` — reading it re-evaluates the write that produced it, whose operands re-evaluate THEIRS,
-and the dataflow DAG unfolds as a TREE. A row emits `NREG · SK = 384` register limbs, so a `d`-row
-program costs `Θ(d² · 384)` reads. Measured on this cone: a 128-instruction fold took 29 s and a
-1 024-instruction one would take half an hour.
+/-- ⚠ The written value is an ARGUMENT to `writeBack`, so it is computed ONCE per instruction. As
+the body of the returned closure it was recomputed on every register read — and `materialize` reads
+`NREG` of them per step, so the memoisation that was supposed to make the generator linear made it
+twelve times slower instead. -/
+def stepRegs (st : RegFile) (wit : Nat) (I : Instr) : RegFile :=
+  writeBack (opResult I.op (xValue st wit I) (yValue st wit I)) st I
 
-`materialize` collapses one step to a strict list; `materialize_is_the_identity` is the proof that
-it changes NOTHING, which is what lets the fast generator below be the same object as the slow one
-rather than a second implementation to drift. -/
-def fromList (l : List Nat) (st : RegFile) : RegFile :=
-  fun r => if r < NREG then l.getD r 0 else st r
+/-! ⚠ **THE GENERATOR IS QUADRATIC, AND IT IS NOT A `TODO` — it is a derived cost.** `RegFile` is
+`Nat → Nat` and `stepRegs` is a CLOSURE; nothing memoises, so reading a register at instruction
+depth `d` re-evaluates the write that produced it, whose operands re-evaluate THEIRS. A row emits
+`NREG · SK = 384` register limbs, so a `d`-row program costs `Θ(d² · 384)` reads. Measured on this
+cone: a 128-instruction fold takes ~29 s.
 
-/-- ⚠ The materialised list is an ARGUMENT, not a `let` in the closure's body. A `let` there is
-floated INTO the lambda by the compiler and recomputed on every read, which made this generator
-strictly slower than the closure it was replacing — measured, and the reason the shape is this one. -/
-def materialize (st : RegFile) : RegFile := fromList ((List.range NREG).map st) st
-
-theorem materialize_is_the_identity (st : RegFile) : materialize st = st := by
-  funext r
-  unfold materialize fromList
-  by_cases h : r < NREG
-  · simp only [h, if_pos]
-    rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range h]
-    rfl
-  · simp only [h, if_neg, if_false]
+⚑ **AND THE OBVIOUS FIX MADE IT WORSE.** Collapsing each step to a strict `NREG`-element list
+(`materialize`, with `materialize st = st` proved) forces `NREG` reads of the previous closure per
+step, and those reads are exactly the expensive ones — an 8-instruction fold stopped finishing.
+It was removed rather than kept as a no-op. The real fix is a `RegFile` that is DATA (an `Array`)
+rather than a function, which changes every forcing theorem's statement and is the next rung. -/
 
 /-- The arithmetic block of a row: the sound atom's own witness generator at the machine's column
 bases. -/
@@ -795,12 +793,12 @@ def runRows (st : RegFile) (wits : Nat → Nat) (pc : Nat) : List Instr → List
   | [] => []
   | I :: rest =>
       ((List.range CM_WIDTH).map (rowAsg st (wits pc) pc I))
-        :: runRows (materialize (stepRegs st (wits pc) I)) wits (pc + 1) rest
+        :: runRows (stepRegs st (wits pc) I) wits (pc + 1) rest
 
 /-- The register file after a whole program. -/
 def runRegs (st : RegFile) (wits : Nat → Nat) (pc : Nat) : List Instr → RegFile
   | [] => st
-  | I :: rest => runRegs (materialize (stepRegs st (wits pc) I)) wits (pc + 1) rest
+  | I :: rest => runRegs (stepRegs st (wits pc) I) wits (pc + 1) rest
 
 /-- ⚑ **THE FREE-CODE INSTRUCTIONS ARE THE ONLY PLACE A WITNESS CAN ENTER, AND THE ROM NAMES THEM.**
 An instruction whose `xr` and `yr` are both routed ignores the witness stream entirely — so the
@@ -852,8 +850,8 @@ def opResultAt (N op x y : Nat) : Nat :=
 
 theorem opResultAt_is_the_base_field_one : opResultAt pN = opResult := rfl
 
-def stepRegsAt (N : Nat) (st : RegFile) (wit : Nat) (I : Instr) : RegFile := fun r =>
-  if I.wr < NREG ∧ r = I.wr then opResultAt N I.op (xValue st wit I) (yValue st wit I) else st r
+def stepRegsAt (N : Nat) (st : RegFile) (wit : Nat) (I : Instr) : RegFile :=
+  writeBack (opResultAt N I.op (xValue st wit I) (yValue st wit I)) st I
 
 theorem stepRegsAt_is_the_base_field_one : stepRegsAt pN = stepRegs := rfl
 
@@ -905,7 +903,7 @@ def runRowsAt (N : Nat) (pl : Nat → ℤ) (st : RegFile) (wits : Nat → Nat) (
   | [] => []
   | I :: rest =>
       ((List.range CM_WIDTH).map (rowAsgAt N pl st (wits pc) pc I))
-        :: runRowsAt N pl (materialize (stepRegsAt N st (wits pc) I)) wits (pc + 1) rest
+        :: runRowsAt N pl (stepRegsAt N st (wits pc) I) wits (pc + 1) rest
 
 theorem runRowsAt_is_the_base_field_one : runRowsAt pN pLimb = runRows := by
   funext st wits pc prog
@@ -913,7 +911,7 @@ theorem runRowsAt_is_the_base_field_one : runRowsAt pN pLimb = runRows := by
   | nil => rfl
   | cons I rest ih =>
       simp only [runRowsAt, runRows, rowAsgAt_is_the_base_field_one,
-        stepRegsAt_is_the_base_field_one, materialize_is_the_identity, List.cons.injEq, true_and]
+        stepRegsAt_is_the_base_field_one, List.cons.injEq, true_and]
       exact ih _ _
 
 #assert_axioms esub_eval
@@ -948,6 +946,5 @@ theorem runRowsAt_is_the_base_field_one : runRowsAt pN pLimb = runRows := by
 #assert_axioms arithAsgAt_is_the_base_field_one
 #assert_axioms rowAsgAt_is_the_base_field_one
 #assert_axioms runRowsAt_is_the_base_field_one
-#assert_axioms materialize_is_the_identity
 
 end Dregg2.Circuit.Emit.MinaWrapCommitMachine
