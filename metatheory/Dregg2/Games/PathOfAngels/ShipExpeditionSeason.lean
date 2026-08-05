@@ -561,6 +561,9 @@ private def fixturePlan : ShiftPlan where
 
 private def fixtureRuntimeState : CrewFieldMissionRuntime.StateWire where
   activationId := fixtureIdentity.activationDigest
+  -- The authored activation digest does not cover the roster, so the durable
+  -- state carries the computed crew binding as the other half of its key.
+  rosterBinding := CrewFieldMissionRuntime.rosterBindingOf fixturePlan.selectedCrew
   sequence := 1
   head := digestFilled 20
   nextAdmission := 2

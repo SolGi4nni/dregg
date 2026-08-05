@@ -20,6 +20,18 @@ runtime still reconstructs the entire raw record, checks every roster seat,
 counter, observation, decision, route, extraction and activated outcome before
 invoking that boundary.  The durable host owns the predecessor state and must
 CAS the emitted successor atomically.  These are the only two host seams.
+
+⚑ The durable key is the **pair** `(activation_id, roster_binding)`, not
+`activation_id` alone.  `activation_id` is the digest of the authored activation
+envelope and `MissionSpec` has no roster field, so two crews with disjoint
+wallet keys share one `activation_id` — see
+`hostile_rekeyed_roster_shares_the_authored_activation_id`, which is a fact
+about the authored identity and is expected to stay true.  `roster_binding` is
+computed by `rosterBindingOf` over every seat field and is pinned in
+`activationValidB`, so it cannot be chosen by a caller.  A host that keys its
+store on `activation_id` alone does not corrupt state — `StateWire.validB`
+refuses the mismatch — but it does deny service to every crew after the first,
+so key on the pair.
 -/
 import Lean.Data.Json
 import Mathlib.Data.List.Sort
@@ -44,6 +56,69 @@ abbrev WIRE_BYTE_LIMIT : Nat := 1024 * 1024
 abbrev MAX_RUNS : Nat := 4096
 abbrev MAX_PART_RULES : Nat := 64
 abbrev MAX_PART_QUANTITY : Nat := 64
+
+/-! ## Digest primitive
+
+Defined before the activation predicate because the crew identity that predicate
+pins is a *computed* digest of the roster, not a caller-supplied claim. -/
+
+private def byte (n : Nat) : Fin 256 := ⟨n % 256, Nat.mod_lt _ (by decide)⟩
+private def u32le (n : Nat) : List (Fin 256) :=
+  [byte n, byte (n / 256), byte (n / 65536), byte (n / 16777216)]
+private def stringBytes (value : String) : List Nat :=
+  value.toUTF8.toList.map UInt8.toNat
+
+/-- Faithful eight-lane result of the Lean-authored wide commitment primitive. -/
+def digestString (domain : Nat) (value : String) : Digest32 :=
+  let lanes := Dregg2.Circuit.CommitmentTreeWide.hashTo8 domain (stringBytes value)
+  { bytes := (List.ofFn (fun lane : Fin 8 => u32le (lanes.getD lane.val 0))).flatten
+    length_eq := by simp [u32le] }
+
+abbrev RUN_DIGEST_DOMAIN : Nat := 0x504f4158
+abbrev SUCCESSOR_DIGEST_DOMAIN : Nat := 0x504f4159
+abbrev ROSTER_BINDING_DOMAIN : Nat := 0x504f415a
+
+/-! ## Crew identity
+
+`MissionSpec.activationDigest` is the digest of the authored, detached activation
+envelope; the roster is **not** part of it — `MissionSpec` (`Core.lean`) has no
+roster field, and the roster lives one level out, in `SessionDigest.roster`.
+`judge` authorizes a command by comparing `command.actor` against
+`Seat.playerKey`, so the player keys are load-bearing for authorization and were
+constrained by nothing: two activations differing only in their four
+`playerKey`s were both valid under `activationValidB` and carried the *same*
+`activationId`.  A durable host keyed by `activation_id` would therefore serve
+one state stream — one `consumedRuns` ledger — to two distinct crews.
+
+`rosterBindingOf` closes that by deriving a second, *computed* identity over
+every field of every seat.  It is pinned in `activationValidB` and carried in
+`StateWire`, so the durable key is the pair and a state minted for one crew is
+refused under another's activation.  See
+`hostile_rekeyed_roster_shares_the_authored_activation_id` for the collision
+that motivates it and `hostile_rekeyed_crew_cannot_use_the_authored_crews_state`
+for the refusal that closes it. -/
+
+private def crewRoleCode : CrewRole → Nat
+  | .pathfinder => 0
+  | .engineer => 1
+  | .containment => 2
+  | .quartermaster => 3
+
+/-- Canonical preimage of one seat.  Every field is included: the seat id and
+role fix the seating, `credential` the authored officer, `playerKey` the wallet
+`judge` authorizes against, and `initialCounter` the replay origin. -/
+def seatBindingJson (seat : Seat) : String :=
+  "{\"seat\":" ++ toString seat.id.value ++
+    ",\"player_key\":\"" ++ Emit.bytes32Hex seat.playerKey ++ "\"" ++
+    ",\"credential\":" ++ toString seat.credential.value ++
+    ",\"role\":" ++ toString (crewRoleCode seat.role) ++
+    ",\"initial_counter\":" ++ toString seat.initialCounter ++ "}"
+
+/-- Computed crew identity.  Never a caller claim: `activationValidB` pins the
+activation's declared `rosterBinding` against this function of the roster. -/
+def rosterBindingOf (roster : List Seat) : Digest32 :=
+  digestString ROSTER_BINDING_DOMAIN
+    ("[" ++ String.intercalate "," (roster.map seatBindingJson) ++ "]")
 
 /-! ## Activated content bridge -/
 
@@ -79,6 +154,10 @@ def OrdinarySalvageRule.key (rule : OrdinarySalvageRule) :
 
 structure RawActivation where
   activationId : Digest32
+  /-- Computed crew identity; `activationValidB` pins it to `rosterBindingOf
+  fieldSession.roster`, so it cannot be chosen by the caller.  It is the second
+  half of the durable key — `activationId` alone does not separate two crews. -/
+  rosterBinding : Digest32
   contentDigest : Digest32
   fieldSession : CrewFieldMission.SessionDigest
   briefings : List CrewFieldMission.BriefingAssignment
@@ -193,6 +272,7 @@ def ordinaryRulesValidB (raw : RawActivation) : Bool :=
 def activationValidB (raw : RawActivation) : Bool :=
   ContentContract.contentValidB raw.content &&
   decide (raw.activationId = raw.fieldSession.policy.mission.activationDigest) &&
+  decide (raw.rosterBinding = rosterBindingOf raw.fieldSession.roster) &&
   decide (raw.contentDigest = raw.fieldSession.policy.mission.contentRoot) &&
   decide (raw.fieldSession.federationId = raw.fieldSession.policy.mission.federationId) &&
   decide (raw.fieldSession.contentSession = raw.fieldSession.policy.mission.contentSession) &&
@@ -283,6 +363,10 @@ deriving DecidableEq
 
 structure StateWire where
   activationId : Digest32
+  /-- The crew half of the durable key.  Present so a host that keys its store
+  by `activation_id` alone cannot silently hand one crew another crew's stream:
+  `validB` refuses the mismatch. -/
+  rosterBinding : Digest32
   sequence : Nat
   head : Digest32
   nextAdmission : Nat
@@ -291,6 +375,7 @@ deriving DecidableEq
 
 def StateWire.validB (activation : Activation) (state : StateWire) : Bool :=
   decide (state.activationId = activation.raw.activationId) &&
+  decide (state.rosterBinding = activation.raw.rosterBinding) &&
   decide (state.sequence ≤ MAX_RUNS) &&
   decide (state.nextAdmission = state.sequence + 1) &&
   decide (state.consumedRuns.length = state.sequence) &&
@@ -298,6 +383,7 @@ def StateWire.validB (activation : Activation) (state : StateWire) : Bool :=
 
 def initialState (activation : Activation) (genesisHead : Digest32) : StateWire where
   activationId := activation.raw.activationId
+  rosterBinding := activation.raw.rosterBinding
   sequence := 0
   head := genesisHead
   nextAdmission := 1
@@ -519,21 +605,6 @@ private def relicCustody? (activation : Activation) (record :
     if plan.destination = .market then none
     some ⟨binding.content, plan.destination, false, false⟩
 
-private def byte (n : Nat) : Fin 256 := ⟨n % 256, Nat.mod_lt _ (by decide)⟩
-private def u32le (n : Nat) : List (Fin 256) :=
-  [byte n, byte (n / 256), byte (n / 65536), byte (n / 16777216)]
-private def stringBytes (value : String) : List Nat :=
-  value.toUTF8.toList.map UInt8.toNat
-
-/-- Faithful eight-lane result of the Lean-authored wide commitment primitive. -/
-def digestString (domain : Nat) (value : String) : Digest32 :=
-  let lanes := Dregg2.Circuit.CommitmentTreeWide.hashTo8 domain (stringBytes value)
-  { bytes := (List.ofFn (fun lane : Fin 8 => u32le (lanes.getD lane.val 0))).flatten
-    length_eq := by simp [u32le] }
-
-abbrev RUN_DIGEST_DOMAIN : Nat := 0x504f4158
-abbrev SUCCESSOR_DIGEST_DOMAIN : Nat := 0x504f4159
-
 private def signatureNatList (signature : CrewFieldMission.SignatureBytes) : List Nat :=
   signature.bytes.map Fin.val
 
@@ -582,6 +653,7 @@ def CommandWire.toJson (wire : CommandWire) : String :=
 def StateWire.toJson (wire : StateWire) : String :=
   "{\"format\":" ++ jsonString STATE_FORMAT ++
     ",\"activation_id\":" ++ jsonString (Emit.bytes32Hex wire.activationId) ++
+    ",\"roster_binding\":" ++ jsonString (Emit.bytes32Hex wire.rosterBinding) ++
     ",\"sequence\":" ++ toString wire.sequence ++
     ",\"head\":" ++ jsonString (Emit.bytes32Hex wire.head) ++
     ",\"next_admission\":" ++ toString wire.nextAdmission ++
@@ -632,6 +704,7 @@ def judge (activation : Activation) (state : StateWire) (command : CommandWire) 
   let successor := successorDigest state command run
   let after : StateWire := {
     activationId := state.activationId
+    rosterBinding := state.rosterBinding
     sequence := state.sequence + 1
     head := successor
     nextAdmission := state.nextAdmission + 1
@@ -768,11 +841,12 @@ private def parseDigestList (j : Json) : Except String (List Digest32) := do
     | none => throw "run digest must be exactly 64 lowercase hexadecimal digits"
 
 private def parseStateJson (j : Json) : Except String StateWire := do
-  exactKeys j ["format", "activation_id", "sequence", "head", "next_admission",
-    "consumed_runs"]
+  exactKeys j ["format", "activation_id", "roster_binding", "sequence", "head",
+    "next_admission", "consumed_runs"]
   if (← j.getObjValAs? String "format") != STATE_FORMAT then throw "wrong state format"
   pure {
     activationId := ← objectDigest j "activation_id"
+    rosterBinding := ← objectDigest j "roster_binding"
     sequence := ← objectNat j "sequence" MAX_RUNS
     head := ← objectDigest j "head"
     nextAdmission := ← objectNat j "next_admission" (MAX_RUNS + 1)
@@ -969,6 +1043,7 @@ private theorem fixture_runtime_content_valid :
 
 private def fixtureRawActivation : RawActivation where
   activationId := CrewFieldMission.fixtureRawConfig.policy.mission.activationDigest
+  rosterBinding := rosterBindingOf CrewFieldMission.fixtureRawConfig.roster
   contentDigest := CrewFieldMission.fixtureRawConfig.policy.mission.contentRoot
   fieldSession := CrewFieldMission.fixtureRawConfig.sessionDigest
   briefings := CrewFieldMission.fixtureBriefings
@@ -1182,6 +1257,89 @@ theorem strict_state_roundtrip :
     decodeState fixtureGenesis.toJson = some fixtureGenesis := by
   native_decide
 
+/-! ### The two-crews-one-key collision, and the binding that closes it
+
+`activationId` is pinned only against `fieldSession.policy.mission.activationDigest`
+— a field of the same caller-supplied record — and `MissionSpec` carries no
+roster.  The seating that `judge` authorizes against therefore sat outside the
+activation's identity entirely.  The fixtures below substitute the four wallet
+keys and change nothing else. -/
+
+private def rekeyedRoster : List Seat :=
+  CrewFieldMission.fixtureRawConfig.roster.map fun seat =>
+    { seat with playerKey := fixtureDigest (200 + seat.id.value) }
+
+private def rekeyedSession : CrewFieldMission.SessionDigest :=
+  { CrewFieldMission.fixtureRawConfig.sessionDigest with roster := rekeyedRoster }
+
+private def rekeyedRawActivation : RawActivation :=
+  { fixtureRawActivation with
+    fieldSession := rekeyedSession
+    rosterBinding := rosterBindingOf rekeyedRoster }
+
+/-- Guard against a falsifier that has stopped falsifying: the substitution must
+really have happened, and must have moved *only* the player keys. -/
+def rekeySubstitutionRealB : Bool :=
+  decide (rekeyedRoster ≠ CrewFieldMission.fixtureRawConfig.roster) &&
+  decide (rekeyedRoster.map Seat.playerKey ≠
+    CrewFieldMission.fixtureRawConfig.roster.map Seat.playerKey) &&
+  decide (rekeyedRoster.map Seat.id =
+    CrewFieldMission.fixtureRawConfig.roster.map Seat.id) &&
+  decide (rekeyedRoster.map Seat.role =
+    CrewFieldMission.fixtureRawConfig.roster.map Seat.role) &&
+  decide (rekeyedRoster.map Seat.credential =
+    CrewFieldMission.fixtureRawConfig.roster.map Seat.credential) &&
+  decide (rekeyedRoster.map Seat.initialCounter =
+    CrewFieldMission.fixtureRawConfig.roster.map Seat.initialCounter)
+
+theorem rekeyed_crew_is_a_real_substitution_of_the_player_keys_alone :
+    rekeySubstitutionRealB = true := by native_decide
+
+/-- The substituted crew is *admitted*, not rejected.  Without this the
+collision below would be about an activation nothing accepts. -/
+theorem rekeyed_crew_activation_is_valid :
+    activationValidB rekeyedRawActivation = true := by native_decide
+
+/-- ⚑ The collision.  Two crews with disjoint wallet keys, both valid, carry the
+same authored activation identity.  A durable host keyed by `activation_id`
+alone would serve one state stream — one `consumedRuns` ledger — to both.  This
+statement is expected to stay true: `activationDigest` is the digest of the
+authored envelope and the roster is not in it.  It is the reason
+`rosterBinding` exists. -/
+theorem hostile_rekeyed_roster_shares_the_authored_activation_id :
+    rekeyedRawActivation.activationId = fixtureRawActivation.activationId := rfl
+
+/-- The computed binding is what separates them. -/
+theorem rekeyed_roster_changes_the_computed_crew_binding :
+    rekeyedRawActivation.rosterBinding ≠ fixtureRawActivation.rosterBinding := by
+  native_decide
+
+private def rekeyedActivation : Activation :=
+  ⟨rekeyedRawActivation, fixtureReplayAuthority, rekeyed_crew_activation_is_valid, rfl⟩
+
+/-- The refusal, decomposed so the *cause* is named: the authored crew's genesis
+state still matches on `activation_id` — the old key really does still collide —
+and is refused solely because the roster binding disagrees. -/
+def crossCrewStateRefusedOnRosterB : Bool :=
+  decide (fixtureGenesis.activationId = rekeyedActivation.raw.activationId) &&
+  decide (fixtureGenesis.rosterBinding ≠ rekeyedActivation.raw.rosterBinding) &&
+  decide (StateWire.validB rekeyedActivation fixtureGenesis = false)
+
+theorem cross_crew_state_refused_only_by_the_roster_binding :
+    crossCrewStateRefusedOnRosterB = true := by native_decide
+
+/-- End to end: a substituted officer, presenting the authored crew's durable
+state, cannot consume that crew's admission. -/
+private def rekeyedActorCommand : CommandWire :=
+  { fixtureSafeCommand with
+    actor := (rekeyedRoster.getD 0 CrewRelayExpedition.fixtureSeat0).playerKey }
+
+def crossCrewRunRefusedB : Bool :=
+  decide (judge rekeyedActivation fixtureGenesis rekeyedActorCommand = .error .invalidState)
+
+theorem hostile_substituted_crew_cannot_consume_the_authored_crews_admission :
+    crossCrewRunRefusedB = true := by native_decide
+
 theorem callable_entrypoint_emits_the_exact_successful_receipt :
     process fixtureActivation fixtureGenesis.toJson fixtureSafeCommand.toJson =
       fixtureSafeResult.toOption.map OutputWire.toJson := by
@@ -1190,6 +1348,14 @@ theorem callable_entrypoint_emits_the_exact_successful_receipt :
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeCommand_reencodes
 #assert_axioms decodeState_reencodes
+-- `rfl` closes this one, but `CrewFieldMission.fixturePolicy` was itself built with
+-- `native_decide`, so the statement inherits that axiom and pins in the compiled tier.
+#assert_compiled hostile_rekeyed_roster_shares_the_authored_activation_id
+#assert_compiled rekeyed_crew_is_a_real_substitution_of_the_player_keys_alone
+#assert_compiled rekeyed_crew_activation_is_valid
+#assert_compiled rekeyed_roster_changes_the_computed_crew_binding
+#assert_compiled cross_crew_state_refused_only_by_the_roster_binding
+#assert_compiled hostile_substituted_crew_cannot_consume_the_authored_crews_admission
 #assert_compiled fixture_runtime_content_valid
 #assert_compiled fixture_activation_valid
 #assert_compiled honest_complete_run_emits_one_ordinary_salvage_authorization

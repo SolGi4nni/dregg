@@ -336,7 +336,7 @@ globs = [
   "Dregg2.Games.PathOfAngels.ContentContract",  # 17 ax, 8 comp
   "Dregg2.Games.PathOfAngels.CrewExpeditionAuthority",  # 14 ax, 18 comp
   "Dregg2.Games.PathOfAngels.CrewFieldMission",  # 4 ax, 30 comp
-  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime",  # 3 ax, 17 comp
+  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime",  # 3 ax, 23 comp
   "Dregg2.Games.PathOfAngels.CrewRelayExpedition",  # 6 ax, 28 comp
   "Dregg2.Games.PathOfAngels.CrewRelayExpeditionBoundary",  # 20 ax
   "Dregg2.Games.PathOfAngels.DeckGenerator",  # 22 ax, 5 comp
