@@ -36,13 +36,14 @@ pub fn build_captp_turn_delivered(
     recipient_key: &SigningKey,
 ) -> Turn {
     let effects = vec![effect];
-    // The agent for the signing message is the same as the action target
-    // (gateway-mirrors-cell). This matches what the executor recomputes.
+    // Bind the exact actor passed into the Turn. The common gateway case still
+    // has agent == target, but a caller cannot substitute a different actor
+    // after the recipient signs.
     let federation_id = [0u8; 32];
     let signing_msg = Authorization::captp_delivered_signing_message_for_federation(
         &federation_id,
         &handoff_cert.nonce,
-        &target,
+        &agent,
         &target,
         nonce,
         &effects,
@@ -190,5 +191,73 @@ mod tests {
             turn.call_forest.roots[0].action.authorization,
             Authorization::CapTpDelivered { .. }
         ));
+    }
+
+    #[test]
+    fn signing_builder_binds_the_exact_passed_agent_not_the_target() {
+        let agent_key = SigningKey::from_bytes(&[7u8; 32]);
+        let agent = CellId::derive_raw(&agent_key.public_key().0, &[0u8; 32]);
+        let target = CellId::from_bytes([2u8; 32]);
+        assert_ne!(agent, target, "the test must distinguish actor from target");
+        let introducer_key = SigningKey::from_bytes(&[8u8; 32]);
+        let cert = HandoffCertificate::create(
+            &introducer_key,
+            dregg_captp::FederationId(introducer_key.public_key().0),
+            dregg_captp::FederationId([0u8; 32]),
+            target,
+            agent_key.public_key().0,
+            dregg_cell::permissions::AuthRequired::None,
+            None,
+            None,
+            None,
+            [9u8; 32],
+        );
+        let effect = Effect::EmitEvent {
+            cell: target,
+            event: dregg_turn::action::Event {
+                topic: symbol("captp.actor-binding"),
+                data: vec![],
+            },
+        };
+        let turn = build_captp_turn_delivered(
+            agent,
+            target,
+            effect.clone(),
+            3,
+            cert.clone(),
+            introducer_key.public_key().0,
+            &agent_key,
+        );
+        let Authorization::CapTpDelivered {
+            sender_pk,
+            sender_signature,
+            ..
+        } = &turn.call_forest.roots[0].action.authorization
+        else {
+            panic!("builder must emit CapTpDelivered")
+        };
+        let signature = dregg_types::Signature(*sender_signature);
+        let honest = Authorization::captp_delivered_signing_message_for_federation(
+            &[0u8; 32],
+            &cert.nonce,
+            &agent,
+            &target,
+            3,
+            std::slice::from_ref(&effect),
+        );
+        let old_target_as_agent = Authorization::captp_delivered_signing_message_for_federation(
+            &[0u8; 32],
+            &cert.nonce,
+            &target,
+            &target,
+            3,
+            std::slice::from_ref(&effect),
+        );
+        let public_key = dregg_types::PublicKey(*sender_pk);
+        assert!(dregg_types::verify(&public_key, &honest, &signature));
+        assert!(
+            !dregg_types::verify(&public_key, &old_target_as_agent, &signature),
+            "signature must not retain the retired target-as-agent preimage"
+        );
     }
 }

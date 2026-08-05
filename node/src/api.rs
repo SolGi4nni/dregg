@@ -8984,6 +8984,8 @@ async fn post_compose_proofs(
 struct BearerAuthRequest {
     /// JSON-serialized BearerCapProof (the delegation chain proof).
     bearer_proof: serde_json::Value,
+    /// Hex-encoded 32-byte cell ID that will actually exercise the bearer.
+    actor_cell: String,
     /// Hex-encoded 32-byte target cell ID.
     target_cell: String,
 }
@@ -8992,6 +8994,34 @@ struct BearerAuthRequest {
 struct BearerAuthResponse {
     authorized: bool,
     error: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BearerAuthCoordinatesError {
+    MalformedCellId,
+    ProofTargetMismatch,
+}
+
+/// Parse the exact actor named by a bearer-auth request and bind the request's
+/// target coordinate to the target committed inside the proof. Keeping this
+/// structural check separate makes it testable without pretending it is an
+/// authorization decision; only `verify_bearer_cap` may return `authorized`.
+fn validated_bearer_auth_actor(
+    req: &BearerAuthRequest,
+    proof_target: &CellId,
+) -> Result<CellId, BearerAuthCoordinatesError> {
+    let actor_cell = CellId(
+        hex_decode_32_result(&req.actor_cell)
+            .map_err(|_| BearerAuthCoordinatesError::MalformedCellId)?,
+    );
+    let requested_target = CellId(
+        hex_decode_32_result(&req.target_cell)
+            .map_err(|_| BearerAuthCoordinatesError::MalformedCellId)?,
+    );
+    if &requested_target != proof_target {
+        return Err(BearerAuthCoordinatesError::ProofTargetMismatch);
+    }
+    Ok(actor_cell)
 }
 
 /// POST /turns/bearer-auth — verify a bearer capability delegation chain.
@@ -9010,15 +9040,29 @@ async fn post_bearer_auth(
 
     // Deserialize the BearerCapProof from the request JSON.
     let bearer_proof: dregg_turn::BearerCapProof =
-        serde_json::from_value(req.bearer_proof).map_err(|_| StatusCode::BAD_REQUEST)?;
+        serde_json::from_value(req.bearer_proof.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let _target_cell =
-        hex_decode_32_result(&req.target_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let actor_cell = match validated_bearer_auth_actor(&req, &bearer_proof.target) {
+        Ok(actor_cell) => actor_cell,
+        Err(BearerAuthCoordinatesError::MalformedCellId) => {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        Err(BearerAuthCoordinatesError::ProofTargetMismatch) => {
+            return Ok(Json(BearerAuthResponse {
+                authorized: false,
+                error: Some(
+                    "bearer proof target does not match the requested target cell".to_string(),
+                ),
+            }));
+        }
+    };
 
     let executor = crate::executor_setup::new_verify_executor(&s);
 
-    // Call the executor's verify_bearer_cap with an empty path (top-level check).
-    match executor.verify_bearer_cap(&bearer_proof, &s.ledger, &[]) {
+    // This endpoint may call a result `authorized` only for an exact named
+    // actor. SignedDelegation binds bearer_pk to that ledger cell's public key;
+    // the anonymous proof variant retains its anonymous semantics.
+    match executor.verify_bearer_cap(&bearer_proof, &s.ledger, &actor_cell, &[]) {
         Ok(_) => Ok(Json(BearerAuthResponse {
             authorized: true,
             error: None,
@@ -10943,6 +10987,42 @@ mod tests {
         assert_eq!(input.len(), 64);
         assert_eq!(hex_decode_32(&input), None);
         assert!(hex_decode_32_result(&input).is_err());
+    }
+
+    #[test]
+    fn bearer_auth_request_requires_an_explicit_actor_cell() {
+        let actorless = serde_json::json!({
+            "bearer_proof": {},
+            "target_cell": "22".repeat(32),
+        });
+        assert!(
+            serde_json::from_value::<BearerAuthRequest>(actorless).is_err(),
+            "the endpoint schema must not admit an actorless authorization request"
+        );
+    }
+
+    #[test]
+    fn bearer_auth_coordinates_bind_exact_actor_and_proof_target() {
+        let actor = CellId::from_bytes([0x11; 32]);
+        let proof_target = CellId::from_bytes([0x22; 32]);
+        let honest = BearerAuthRequest {
+            bearer_proof: serde_json::Value::Null,
+            actor_cell: "11".repeat(32),
+            target_cell: "22".repeat(32),
+        };
+        assert_eq!(
+            validated_bearer_auth_actor(&honest, &proof_target),
+            Ok(actor)
+        );
+
+        let substituted_target = BearerAuthRequest {
+            target_cell: "33".repeat(32),
+            ..honest
+        };
+        assert_eq!(
+            validated_bearer_auth_actor(&substituted_target, &proof_target),
+            Err(BearerAuthCoordinatesError::ProofTargetMismatch)
+        );
     }
 
     #[test]

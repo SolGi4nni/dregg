@@ -132,6 +132,7 @@ impl TurnExecutor {
             self.verify_captp_delivered(
                 action,
                 target_cell,
+                actor_cell_id,
                 handoff_cert,
                 introducer_pk,
                 sender_pk,
@@ -152,7 +153,8 @@ impl TurnExecutor {
             // capability; it RETURNS the inherited facet mask so we don't re-scan
             // the ledger for the same `delegator_pk` here (the SignedDelegation
             // path; `None` for the anonymous StarkDelegation path).
-            let inherited_facet = self.verify_bearer_cap(bearer_proof, ledger, path)?;
+            let inherited_facet =
+                self.verify_bearer_cap(bearer_proof, ledger, actor_cell_id, path)?;
 
             // Enforce bearer facet: if the bearer proof has an allowed_effects mask,
             // verify that all effects in the action are within it.
@@ -311,6 +313,7 @@ impl TurnExecutor {
         &self,
         action: &Action,
         target_cell: &Cell,
+        actor_cell_id: &CellId,
         handoff_cert: &dregg_captp::HandoffCertificate,
         introducer_pk: &[u8; 32],
         sender_pk: &[u8; 32],
@@ -322,11 +325,31 @@ impl TurnExecutor {
         // this side has no swiss table, and the c-list is the faithful analogue.
         ledger: &Ledger,
     ) -> Result<(), (TurnError, Vec<usize>)> {
-        // 1. Sender pk must match the certificate's recipient pk.
+        // 1. Sender pk must match the certificate's recipient pk AND the
+        // actual acting cell's public key. A valid recipient signature is not
+        // authority for an unrelated Turn.agent: the executor's actor is the
+        // ledger cell selected by the enclosing turn/call-tree traversal.
         if sender_pk != &handoff_cert.recipient_pk {
             return Err((
                 TurnError::InvalidAuthorization {
                     reason: "captp-delivered: sender_pk does not match cert.recipient_pk"
+                        .to_string(),
+                },
+                path.to_vec(),
+            ));
+        }
+        let actor_cell = ledger.get(actor_cell_id).ok_or_else(|| {
+            (
+                TurnError::InvalidAuthorization {
+                    reason: "captp-delivered: acting cell is absent from the ledger".to_string(),
+                },
+                path.to_vec(),
+            )
+        })?;
+        if sender_pk != actor_cell.public_key() {
+            return Err((
+                TurnError::InvalidAuthorization {
+                    reason: "captp-delivered: sender_pk does not match the acting cell public key"
                         .to_string(),
                 },
                 path.to_vec(),
@@ -401,23 +424,15 @@ impl TurnExecutor {
         }
 
         // 4. Verify the sender signature over the canonical CapTP-delivery message.
-        let agent_for_msg = path
-            .first()
-            .copied()
-            .map(|_| action.target) // path-driven; sender binds to action.target as below
-            .unwrap_or(action.target);
-        // Currently the message binds target only; agent is enforced via the Turn-level path.
-        let _ = agent_for_msg;
-        // The signing message binds: federation_id, cert.nonce, agent (= target_cell of this
-        // action's immediate frame), action.target, turn_nonce, and serialized effects.
-        // We use action.target as both "agent" and "target" here because at the
-        // wire-construction site the agent cell IS the gateway and the action's
-        // target IS the cell being mutated. The wire builder computes this exact
-        // message; the executor recomputes it from the on-chain Turn.
+        // The signing message binds: federation_id, cert.nonce, actual actor cell,
+        // action.target, turn_nonce, and serialized effects.
+        // `actor_cell_id` is the ACTUAL actor threaded by the executor; using
+        // action.target here admitted a recipient signature for one actor into
+        // a turn naming another actor whenever actor != target.
         let message = Authorization::captp_delivered_signing_message_for_federation(
             &self.local_federation_id,
             &handoff_cert.nonce,
-            &action.target,
+            actor_cell_id,
             &action.target,
             turn_nonce,
             &action.effects,
@@ -992,9 +1007,9 @@ impl TurnExecutor {
                         effects_mask,
                     )
                 }
-                Authorization::Bearer(proof) => {
-                    self.verify_bearer_cap(proof, ledger, path).map(|_| ())
-                }
+                Authorization::Bearer(proof) => self
+                    .verify_bearer_cap(proof, ledger, actor_cell_id, path)
+                    .map(|_| ()),
                 Authorization::Stealth { .. } => {
                     self.verify_stealth_authorization(action, target_cell, path, turn_nonce)
                 }
@@ -1566,18 +1581,20 @@ impl TurnExecutor {
 
     /// Verify a bearer capability proof: the parallel authorization path for capabilities
     /// NOT in the actor's c-list but proven via delegation chain.
-    /// Verify a bearer capability proof.
     ///
     /// On success returns the delegator's INHERITED facet mask
     /// (`Some(delegator_cap.allowed_effects)`) for the SignedDelegation path,
     /// or `None` when there is no delegator-side facet / for the anonymous
-    /// StarkDelegation path. The caller reuses this to compute the effective
+    /// StarkDelegation path. Signed delegations additionally bind their named
+    /// `bearer_pk` to `actor_cell_id`; anonymous STARK delegations remain
+    /// anonymous. The caller reuses this to compute the effective
     /// facet WITHOUT re-scanning the ledger for the same `delegator_pk` (the
     /// delegator cell + its capability are already located here).
     pub fn verify_bearer_cap(
         &self,
         proof: &crate::action::BearerCapProof,
         ledger: &Ledger,
+        actor_cell_id: &CellId,
         path: &[usize],
     ) -> Result<Option<u32>, (TurnError, Vec<usize>)> {
         use crate::action::DelegationProofData;
@@ -1644,6 +1661,32 @@ impl TurnExecutor {
                 signature,
                 bearer_pk,
             } => {
+                // Signed delegation names a concrete bearer. Bind that key to
+                // the actual actor selected by the enclosing Turn execution;
+                // otherwise anyone could replay a delegation issued to B while
+                // executing as unrelated cell A. This check is deliberately in
+                // this variant only: the anonymous STARK variant does not reveal
+                // a bearer key and remains anonymous.
+                let actor_cell = ledger.get(actor_cell_id).ok_or_else(|| {
+                    (
+                        TurnError::BearerCapInvalidProof {
+                            target: proof.target,
+                            reason: "acting cell is absent from the ledger".to_string(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                if bearer_pk != actor_cell.public_key() {
+                    return Err((
+                        TurnError::BearerCapInvalidProof {
+                            target: proof.target,
+                            reason:
+                                "signed delegation bearer_pk does not match the acting cell public key"
+                                    .to_string(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
                 let message = Self::compute_bearer_delegation_message(
                     &proof.target,
                     &proof.permissions,

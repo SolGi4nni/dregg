@@ -401,7 +401,7 @@ fn captp_delivered_loop_closes_executor_accepts_and_commits() {
     // Build a ledger with the target cell. Permissions are wide-open since
     // CapTpDelivered authorizes the action without consulting permissions.
     let mut ledger = Ledger::new();
-    let mut target = Cell::remote_stub_with_id(target_cell);
+    let mut target = Cell::remote_stub_with_id_pk_balance(target_cell, bob_sk.public_key().0, 0);
     target.permissions = Permissions {
         send: P::None,
         receive: P::None,
@@ -459,7 +459,7 @@ fn captp_delivered_rejects_wrong_sender_signature() {
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
-    let (alice_sk, alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
+    let (alice_sk, alice_pk, alice_fed, bob_sk, bob_pk, _swiss, swiss_num) =
         make_delivery_setup(target_cell, target_fed);
 
     let cert = HandoffCertificate::create(
@@ -504,7 +504,7 @@ fn captp_delivered_rejects_wrong_sender_signature() {
     );
 
     let mut ledger = Ledger::new();
-    let mut target = Cell::remote_stub_with_id(target_cell);
+    let mut target = Cell::remote_stub_with_id_pk_balance(target_cell, bob_pk.0, 0);
     target.permissions = Permissions {
         send: P::None,
         receive: P::None,
@@ -543,7 +543,7 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
-    let (alice_sk, _alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
+    let (alice_sk, _alice_pk, alice_fed, bob_sk, bob_pk, _swiss, swiss_num) =
         make_delivery_setup(target_cell, target_fed);
 
     let cert = HandoffCertificate::create(
@@ -601,7 +601,7 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
     );
 
     let mut ledger = Ledger::new();
-    let mut target = Cell::remote_stub_with_id(target_cell);
+    let mut target = Cell::remote_stub_with_id_pk_balance(target_cell, bob_pk.0, 0);
     target.permissions = Permissions {
         send: P::None,
         receive: P::None,

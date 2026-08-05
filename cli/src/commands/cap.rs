@@ -126,20 +126,14 @@ async fn export(
         &federation_id,
     );
     let proof_json = proof.to_node_json();
+    let actor_cell = bearer::default_actor_cell(&public_key);
+    let verify_request = bearer::auth_request(&proof_json, &actor_cell, cell_id);
 
     // 6. Verify against the node (the live half of the tooth). The executor
     //    recomputes the identical delegation message and checks the signature,
     //    expiry, and ledger cap-lookup; we surface its structured verdict.
     let spinner = ctx.spinner("Verifying bearer capability against node...");
-    let verify_outcome = post_json(
-        cfg,
-        "/api/turns/bearer-auth",
-        &serde_json::json!({
-            "bearer_proof": proof_json,
-            "target_cell": cell_id,
-        }),
-    )
-    .await;
+    let verify_outcome = post_json(cfg, "/api/turns/bearer-auth", &verify_request).await;
     spinner.finish_and_clear();
 
     // 7. The canonical sturdy reference: dregg://<fed>/<cell>/<swiss>, three
@@ -166,6 +160,7 @@ async fn export(
             "federation_id": hex::encode(federation_id),
             "federation_source": fed_source,
             "delegator_pubkey": hex::encode(public_key),
+            "actor_cell": hex::encode(actor_cell),
             "bearer_proof": proof_json,
             "node_verification": verify_json,
         }));
@@ -439,6 +434,33 @@ mod bearer {
         Ok(out)
     }
 
+    /// The active identity's canonical acting cell: the same
+    /// `CellId::derive_raw(public_key, blake3("default"))` recipe enforced by
+    /// signed-turn ingress. Kept dependency-light here in lockstep with the
+    /// CLI's existing local bearer-wire mirror.
+    pub fn default_actor_cell(public_key: &[u8; 32]) -> [u8; 32] {
+        let token_id = *blake3::hash(b"default").as_bytes();
+        let mut preimage = Vec::with_capacity(64);
+        preimage.extend_from_slice(public_key);
+        preimage.extend_from_slice(&token_id);
+        blake3::derive_key("dregg-cell-id-v1", &preimage)
+    }
+
+    /// Exact request schema consumed by `/turns/bearer-auth`. The endpoint is
+    /// a verifier, so this contains an already-built proof plus the concrete
+    /// actor and target coordinates and expects only an authorization verdict.
+    pub fn auth_request(
+        proof_json: &serde_json::Value,
+        actor_cell: &[u8; 32],
+        target_cell: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "bearer_proof": proof_json,
+            "actor_cell": hex::encode(actor_cell),
+            "target_cell": target_cell,
+        })
+    }
+
     /// A fresh 32-byte swiss number (the sturdy-ref bearer secret).
     pub fn fresh_swiss() -> Result<[u8; 32], Box<dyn std::error::Error>> {
         let mut swiss = [0u8; 32];
@@ -644,13 +666,41 @@ mod bearer {
 
 #[cfg(test)]
 mod tests {
-    use super::bearer::{BearerCapProof, DreggUri, Permissions, compute_delegation_message};
+    use super::bearer::{
+        BearerCapProof, DreggUri, Permissions, auth_request, compute_delegation_message,
+        default_actor_cell,
+    };
     use ed25519_dalek::SigningKey;
 
     fn test_key() -> (SigningKey, [u8; 32]) {
         let sk = SigningKey::from_bytes(&[7u8; 32]);
         let pk = sk.verifying_key().to_bytes();
         (sk, pk)
+    }
+
+    #[test]
+    fn bearer_auth_actor_is_the_active_identity_default_cell() {
+        let (_, public_key) = test_key();
+        let token_id = *blake3::hash(b"default").as_bytes();
+        let mut bytes = Vec::with_capacity(64);
+        bytes.extend_from_slice(&public_key);
+        bytes.extend_from_slice(&token_id);
+        let independently_derived = blake3::derive_key("dregg-cell-id-v1", &bytes);
+        assert_eq!(default_actor_cell(&public_key), independently_derived);
+        assert_ne!(default_actor_cell(&public_key), public_key);
+    }
+
+    #[test]
+    fn bearer_auth_request_names_exact_actor_and_target_without_mint_fields() {
+        let proof = serde_json::json!({"proof": "already-built"});
+        let actor = [0xA5; 32];
+        let target = "b6".repeat(32);
+        let request = auth_request(&proof, &actor, &target);
+        assert_eq!(request["bearer_proof"], proof);
+        assert_eq!(request["actor_cell"], "a5".repeat(32));
+        assert_eq!(request["target_cell"], target);
+        assert!(request.get("node_id").is_none());
+        assert!(request.get("secret").is_none());
     }
 
     /// GOLDEN-VECTOR LOCK: the CLI's replicated delegation message must equal
