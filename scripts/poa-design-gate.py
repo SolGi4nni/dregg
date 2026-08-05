@@ -54,6 +54,117 @@ class Refusal(Exception):
     """The descriptor is outside what this analyser can honestly model."""
 
 
+# ---------------------------------------------------------------------------
+# hidden-instance contract
+# ---------------------------------------------------------------------------
+#
+# Every POAG1 game descriptor now declares where its instance comes from and
+# declares that the artifact does not contain one.  The checks below are the
+# reason this tool stopped reporting a decorative execution floor: a descriptor
+# that still states its own answer FAILS here rather than earning a WARN and a
+# baseline entry.
+#
+# The old shape is refused rather than reinterpreted.  `target`, `run_seed`,
+# `instance.selected`, `instance.seed_byte` and `actions[].glyph_id` each named
+# the live instance; a descriptor carrying any of them is the pre-split bundle
+# and must be re-emitted, not analysed.
+
+BANNED_TOP_LEVEL = {
+    "target": "states the hidden code outright",
+    "run_seed": "determines the instance through the public derivation",
+    "outcomes": "tabulates feedback against one target, which IS the target",
+}
+BANNED_INSTANCE_KEYS = {
+    "selected": "names which board of the family is live",
+    "seed_byte": "names the byte of the published run seed that draws the board",
+}
+BANNED_ACTION_KEYS = {
+    "glyph_id": "names the glyph sealed under a plate",
+    "glyph_label": "names the glyph sealed under a plate",
+}
+
+DISCLOSURES = {"oracle-only", "per-run-open"}
+
+
+def check_instance_contract(doc: dict, rep: Report) -> str:
+    """Refuse the pre-split shape; return the declared disclosure.
+
+    A FAIL here is the point.  This used to be `instance-secret-published`, a WARN
+    with a baseline entry beside it, which is how a game whose execution floor was
+    one guess stayed green for as long as it did.
+    """
+    name = doc.get("game_id", "?")
+    stale = []
+    for key, why in BANNED_TOP_LEVEL.items():
+        if key in doc:
+            stale.append(f"`{key}` ({why})")
+    inst = doc.get("instance")
+    if isinstance(inst, dict):
+        for key, why in BANNED_INSTANCE_KEYS.items():
+            if key in inst:
+                stale.append(f"`instance.{key}` ({why})")
+    sm = doc.get("state_machine")
+    if isinstance(sm, dict):
+        for action in sm.get("actions", []):
+            for key, why in BANNED_ACTION_KEYS.items():
+                if key in action:
+                    stale.append(f"`state_machine.actions[].{key}` ({why})")
+                    break
+            else:
+                continue
+            break
+    if stale:
+        rep.find(name, "instance-secret-published", FAIL,
+                 "the descriptor the client fetches states its own instance",
+                 f"{name}.json carries {', '.join(stale)}.  This is the pre-split "
+                 f"POAG1 shape: the instance was derived from a published run seed, "
+                 f"so the execution floor was one action against an information floor "
+                 f"of several and the deduction was decorative.  The bundle on disk "
+                 f"predates the split and must be RE-EMITTED from Lean "
+                 f"(`scripts/check-poag1-artifacts.sh`); this gate refuses to "
+                 f"reinterpret it as a hidden-instance descriptor.")
+        raise Refusal("pre-split descriptor: instance is published (see the FAIL above)")
+
+    if not isinstance(inst, dict):
+        raise Refusal("descriptor carries no `instance` declaration; a game that does "
+                      "not say where its instance comes from cannot be scored")
+    # Relay nests its declaration under `instance.draw`; hidden games carry it flat.
+    decl = inst.get("draw") if "boards" in inst else inst
+    if not isinstance(decl, dict):
+        raise Refusal("`instance` declaration is malformed")
+    if decl.get("kind") != "per-run-hidden-draw":
+        raise Refusal(f"instance kind {decl.get('kind')!r} is not a per-run hidden draw")
+    disclosure = decl.get("disclosure")
+    if disclosure not in DISCLOSURES:
+        raise Refusal(f"instance disclosure {disclosure!r} is not one of "
+                      f"{sorted(DISCLOSURES)}")
+    if doc.get("security", {}).get("instance_visibility") != disclosure:
+        raise Refusal("security.instance_visibility disagrees with the instance "
+                      "declaration")
+
+    commitment = decl.get("commitment", {})
+    if commitment.get("published_in") != "slot-opening":
+        raise Refusal("the instance commitment is not published in the slot opening; "
+                      "without one the operator can choose the instance after the run")
+    bits = commitment.get("binding_bits")
+    if not isinstance(bits, int) or bits < 100:
+        raise Refusal(f"declared commitment binding is {bits} bits")
+    if decl.get("operator_knows_instance") is not True:
+        raise Refusal("the declaration does not admit that the operator knows the "
+                      "instance; that residual is real and must be stated")
+
+    rep.find(name, "instance-committed-not-published", INFO,
+             "the instance is committed to and drawn per run, not carried in the artifact",
+             f"the descriptor declares a {disclosure} instance drawn by "
+             f"{decl.get('derivation_module')} from a slot secret whose commitment is "
+             f"published in the slot opening and opened after the slot closes.  "
+             f"Binding is {bits} bits (the sponge capacity, not the output width).  "
+             f"⚠ `operator_knows_instance` is true: whoever holds the slot secret "
+             f"knows every player's instance in advance.  That is a real residual and "
+             f"removing it needs an unpredictable beacon, not a wire change.")
+    return disclosure
+
+
 class Report:
     def __init__(self) -> None:
         self.games: list[dict] = []
@@ -120,7 +231,14 @@ def orbits(elements, generators):
 # ---------------------------------------------------------------------------
 
 class DeductionGame:
-    """A descriptor carrying `outcomes` : guess -> feedback for one pinned target."""
+    """A descriptor carrying `rules`: the COMPLETE (target, guess) -> class oracle.
+
+    The pre-split shape carried `outcomes`, a 216-row table of feedback against one
+    pinned target with the solving row flagged — the answer written out.  What is
+    read here is the whole function, which states every rule and distinguishes no
+    instance.  `check_instance_contract` has already refused the old shape by the
+    time this runs.
+    """
 
     def __init__(self, doc: dict, rep: Report) -> None:
         self.doc = doc
@@ -134,12 +252,27 @@ class DeductionGame:
             raise Refusal(f"unmodelled present_semantics {sem!r}")
         if doc["feedback"]["solved_when_exact"] != self.bands:
             raise Refusal("solved_when_exact disagrees with the band count")
-        self.codes = [tuple(c) for c in
-                      itertools.product(range(self.alphabet), repeat=self.bands)]
+        rules = doc.get("rules")
+        if not isinstance(rules, dict):
+            raise Refusal("descriptor carries no `rules` block; a deduction game whose "
+                          "instance is hidden must publish the whole oracle or the "
+                          "client has no rules at all")
+        self.codes = [tuple(c) for c in rules["codes"]]
         self.index = {c: i for i, c in enumerate(self.codes)}
         self.n = len(self.codes)
+        if len(self.index) != self.n:
+            raise Refusal("rules.codes contains a duplicate")
+        domain = self.alphabet ** self.bands
+        if self.n != domain:
+            raise Refusal(f"rules.codes has {self.n} codes for a "
+                          f"{self.alphabet}^{self.bands} = {domain} domain")
+        self.alphabet_chars = rules["class_alphabet"]
+        self.declared_classes = rules["classes"]
+        self.table_rows = rules["table"]
+        if len(self.table_rows) != self.n:
+            raise Refusal(f"rules.table has {len(self.table_rows)} rows for {self.n} codes")
 
-    # -- rule model, then differential against every emitted row ------------
+    # -- rule model, then differential against every emitted CELL -----------
     def feedback(self, target, guess):
         exact = sum(1 for i in range(self.bands) if target[i] == guess[i])
         ct, cg = Counter(target), Counter(guess)
@@ -147,39 +280,65 @@ class DeductionGame:
         return exact, total - exact
 
     def build(self) -> None:
-        self.fb = [[0] * self.n for _ in range(self.n)]
-        self.cls_id: dict[tuple[int, int], int] = {}
+        """Decode the emitted table.  `fb` comes from the ARTIFACT, not the model —
+        the model is then checked against every cell of it."""
+        self.cls_id = {}
+        for i, cls in enumerate(self.declared_classes):
+            pair = (cls["exact"], cls["present"])
+            if pair in self.cls_id:
+                raise Refusal(f"rules.classes declares {pair} twice")
+            if cls["solved"] != (cls["exact"] == self.bands):
+                raise Refusal(f"rules.classes {pair} disagrees with solved_when_exact")
+            self.cls_id[pair] = i
+        self.classes = len(self.cls_id)
+        char_id = {c: i for i, c in enumerate(self.alphabet_chars[:self.classes])}
+        self.fb = []
+        for r, row in enumerate(self.table_rows):
+            if len(row) != self.n:
+                raise Refusal(f"rules.table row {r} has {len(row)} cells for {self.n} codes")
+            decoded = []
+            for c in row:
+                if c not in char_id:
+                    raise Refusal(f"rules.table row {r} names class {c!r}, which is "
+                                  f"outside the declared alphabet")
+                decoded.append(char_id[c])
+            self.fb.append(decoded)
+        win = [i for i, cls in enumerate(self.declared_classes) if cls["solved"]]
+        if len(win) != 1:
+            raise Refusal(f"{len(win)} declared classes are solving; expected exactly one")
+        self.win = win[0]
+
+    def differential(self) -> None:
+        """The reconstructed rules must reproduce every one of the n^2 emitted cells.
+
+        This is a strictly stronger differential than the pre-split one, which
+        checked n rows against one target.  It has to be: the table is now the only
+        statement of the rules the client ever sees.
+        """
+        bad = []
         for t in self.codes:
             row = self.fb[self.index[t]]
             for g in self.codes:
-                pair = self.feedback(t, g)
-                cid = self.cls_id.setdefault(pair, len(self.cls_id))
-                row[self.index[g]] = cid
-        self.win = self.cls_id[(self.bands, 0)]
-        self.classes = len(self.cls_id)
-
-    def differential(self) -> None:
-        """The reconstructed rules must reproduce the emitted table byte for byte."""
-        target = tuple(self.doc["target"])
-        emitted = {}
-        for row in self.doc["outcomes"]:
-            emitted[tuple(row["guess"])] = (row["exact"], row["present"], row["solved"])
-        if len(emitted) != self.n:
-            raise Refusal(f"outcomes table has {len(emitted)} distinct guesses, "
-                          f"expected the complete {self.n}-row domain")
-        bad = []
-        for g in self.codes:
-            e, p = self.feedback(target, g)
-            want = (e, p, g == target)
-            if emitted[g] != want:
-                bad.append((g, emitted[g], want))
+                want = self.cls_id.get(self.feedback(t, g))
+                if want is None or row[self.index[g]] != want:
+                    bad.append((t, g, row[self.index[g]], want))
+                    if len(bad) > 3:
+                        break
+            if bad:
+                break
         if bad:
             raise Refusal(
-                f"reconstructed rules disagree with the emitted table on {len(bad)} "
-                f"row(s); first: guess={bad[0][0]} emitted={bad[0][1]} model={bad[0][2]}")
-        solved_rows = [tuple(r["guess"]) for r in self.doc["outcomes"] if r["solved"]]
-        if solved_rows != [target]:
-            raise Refusal(f"solved rows {solved_rows} are not exactly the target {target}")
+                f"reconstructed rules disagree with the emitted table; first: "
+                f"target={bad[0][0]} guess={bad[0][1]} emitted={bad[0][2]} "
+                f"model={bad[0][3]}")
+        # Every row solves at exactly one column, and that column is its own index.
+        # A row that solved somewhere else would name a different instance.
+        for t in self.codes:
+            row = self.fb[self.index[t]]
+            solving = [g for g in self.codes if row[self.index[g]] == self.win]
+            if solving != [t]:
+                raise Refusal(f"row {t} solves at {solving}, not at exactly itself: the "
+                              f"table distinguishes a row and therefore names an instance")
 
     # -- verified symmetry group -------------------------------------------
     def symmetry_generators(self):
@@ -357,11 +516,6 @@ class DeductionGame:
                       if o["worst_case_optimal"] is not None]
         optimum = min(achievable) if achievable else None
 
-        target = tuple(self.doc["target"])
-        target_realized = sorted({self.feedback(target, g) for g in self.codes})
-        target_orbit = next(o for o in code_orbits if target in o)
-        target_shape = shape_name(target_orbit[0])
-
         # instance families are the ORBITS, so the grouping is the verified group's,
         # not a hand-picked signature.
         family = []
@@ -397,16 +551,14 @@ class DeductionGame:
                      f"domain.  Unrealizable: {unrealizable}.  A client that renders one "
                      f"badge per declared class ships a badge no run can earn.")
 
-        if self.doc["security"]["target_visibility"] == "public" and "target" in self.doc:
-            rep.find(self.name, "instance-secret-published", WARN,
-                     "the hidden instance is published in the descriptor the client fetches",
-                     f"`target` = {list(target)} is a top-level field of "
-                     f"{self.name}.json, and `outcomes` marks the solving row "
-                     f"`solved: true`.  Information floor {info_tight} describes a game "
-                     f"whose target is hidden; as emitted the execution floor is 1 guess "
-                     f"and the deduction is decorative.  This is consistent with the "
-                     f"declared `transparent-beta-demo` classification — it is a design "
-                     f"fact to decide about, not a leak to patch quietly.")
+        rep.find(self.name, "instance-hidden-floor-is-real", INFO,
+                 f"a player who reads the artifact still needs {optimum} guesses in the "
+                 f"worst case, against an information floor of {info_tight}",
+                 f"the descriptor publishes the complete {self.n}-by-{self.n} oracle and "
+                 f"no row of it is distinguished, so reading it buys the rules and not "
+                 f"the code.  The execution floor as emitted was 1 while `target` was a "
+                 f"field; it is now the exact minimax value {optimum}, which is what "
+                 f"`action_limit = {self.budget}` was always sized for.")
 
         dead_openers = [o for o in opener_values if not o["within_budget"]]
         if dead_openers:
@@ -479,8 +631,13 @@ class DeductionGame:
             "information_floor_loose": info_loose,
             "information_floor_tight": info_tight,
             "worst_case_optimal": optimum,
-            "execution_floor_as_designed": 1,
-            "execution_floor_as_emitted": 1 if "target" in self.doc else None,
+            # The floor a player can GUARANTEE given the descriptor they fetch.  With
+            # `target` published this was 1; with the whole oracle published and no row
+            # distinguished it is the minimax value.  `_lucky` keeps the other number
+            # visible so nothing is hidden by the rename.
+            "execution_floor_as_designed": optimum,
+            "execution_floor_as_emitted": optimum,
+            "execution_floor_lucky": 1,
             "budget_binds": optimum is not None and optimum >= self.budget,
             "budget_slack": None if optimum is None else self.budget - optimum,
             "opener_classes": len(code_orbits),
@@ -488,8 +645,6 @@ class DeductionGame:
             "opener_analysis": opener_values,
             "dead_openers": sum(o["size"] for o in dead_openers),
             "reference_policies": policies,
-            "pinned_instance": {"target": list(target), "class": target_shape,
-                                "feedback_classes_realizable": len(target_realized)},
             "instance_families": family,
             "seed_bias": bias,
         }
@@ -851,6 +1006,403 @@ class MachineGame:
 
 
 # ---------------------------------------------------------------------------
+# backend 3 — parametric machines: a row names BOTH successors of one oracle bit
+# ---------------------------------------------------------------------------
+
+class ParametricMachineGame:
+    """A machine that states the rules without the instance.
+
+    A first exposure is deterministic.  A second consults one bit — did these two
+    plates carry the same glyph — and the row names `on_match` AND `on_mismatch`,
+    so the table is the rules and the bit is the whole instance.  Nothing in the
+    descriptor says which branch a given run will take.
+
+    The floor reported here is therefore the floor against an adversary who may
+    answer any way still consistent with some board, which is what a player who has
+    read the entire artifact actually faces.
+    """
+
+    VERDICTS = {"refuse", "accept", "resolve"}
+
+    def __init__(self, doc: dict, rep: Report) -> None:
+        self.doc = doc
+        self.rep = rep
+        self.name = doc["game_id"]
+        sm = doc["state_machine"]
+        self.sm = sm
+        self.states = {s["id"]: s for s in sm["states"]}
+        self.actions = [a["id"] for a in sm["actions"]]
+        self.action_meta = {a["id"]: a for a in sm["actions"]}
+        self.initial = sm["initial_state"]
+        self.budget = doc["action_limit"]
+        self.trans = {}
+        for t in sm["transitions"]:
+            key = (t["state"], t["action"])
+            if key in self.trans:
+                raise Refusal(f"duplicate transition row for {key}")
+            self.trans[key] = t
+
+    def totality(self) -> None:
+        want = len(self.states) * len(self.actions)
+        if len(self.trans) != want:
+            raise Refusal(f"parametric table is not total: {len(self.trans)} rows, "
+                          f"expected {want}")
+        for (s, a), t in self.trans.items():
+            verdict = t["verdict"]
+            if verdict not in self.VERDICTS:
+                raise Refusal(f"{s}/{a} has unknown verdict {verdict!r}")
+            if verdict == "refuse":
+                if not t["reason"]:
+                    raise Refusal(f"{s}/{a} refuses without a named reason")
+                if t["next"] or t["on_match"] or t["on_mismatch"]:
+                    raise Refusal(f"{s}/{a} refuses but names a successor")
+            elif verdict == "accept":
+                if t["reason"] is not None:
+                    raise Refusal(f"{s}/{a} accepts but carries a reason")
+                if t["next"] not in self.states:
+                    raise Refusal(f"{s}/{a} accepts into unknown state {t['next']}")
+                if t["on_match"] or t["on_mismatch"]:
+                    raise Refusal(f"{s}/{a} is deterministic but names oracle branches")
+            else:
+                if t["next"] is not None or t["reason"] is not None:
+                    raise Refusal(f"{s}/{a} resolves but also names a plain successor")
+                for branch in ("on_match", "on_mismatch"):
+                    if t[branch] not in self.states:
+                        raise Refusal(f"{s}/{a} {branch} is an unknown state")
+                if t["on_match"] == t["on_mismatch"]:
+                    raise Refusal(f"{s}/{a} resolves to the same state either way, so "
+                                  f"the oracle bit is not consulted and the row should "
+                                  f"be an accept")
+
+    def successors(self, s, a):
+        t = self.trans[(s, a)]
+        if t["verdict"] == "refuse":
+            return []
+        if t["verdict"] == "accept":
+            return [t["next"]]
+        return [t["on_match"], t["on_mismatch"]]
+
+    def differential(self) -> None:
+        """Rebuild every row from the declared state view and refuse on disagreement.
+
+        The rule is small enough to state: refuse if solved, out of turns, already
+        cleared or already exposed; otherwise a first exposure exposes, and a second
+        either clears both plates or clears neither.  Nothing in it mentions a board,
+        which is the property being checked.
+        """
+        for (sid, aid), t in self.trans.items():
+            view = self.states[sid]["view"]
+            slot = self.action_meta[aid]["slot"]
+            cleared, exposed, turns = set(view["cleared"]), view["exposed"], view["turns"]
+            if len(cleared) == len(self.actions):
+                want, reason = "refuse", "solved"
+            elif turns >= self.budget:
+                want, reason = "refuse", "turn-limit"
+            elif slot in cleared:
+                want, reason = "refuse", "cleared-slot"
+            elif exposed == slot:
+                want, reason = "refuse", "already-exposed"
+            elif exposed is None:
+                want, reason = "accept", None
+            else:
+                want, reason = "resolve", None
+            if t["verdict"] != want:
+                raise Refusal(f"rebuilt rule says {sid}/{aid} is {want}, emitted "
+                              f"{t['verdict']}")
+            if want == "refuse" and t["reason"] != reason:
+                raise Refusal(f"{sid}/{aid} refuses as {t['reason']!r}, rebuilt "
+                              f"{reason!r}")
+            if want == "accept":
+                nv = self.states[t["next"]]["view"]
+                if (set(nv["cleared"]), nv["exposed"], nv["turns"]) != \
+                        (cleared, slot, turns + 1):
+                    raise Refusal(f"{sid}/{aid} accepts into a state that is not that "
+                                  f"exposure")
+            if want == "resolve":
+                mv = self.states[t["on_match"]]["view"]
+                xv = self.states[t["on_mismatch"]]["view"]
+                if set(mv["cleared"]) != cleared | {slot, exposed}:
+                    raise Refusal(f"{sid}/{aid} on_match does not clear both plates")
+                if set(xv["cleared"]) != cleared:
+                    raise Refusal(f"{sid}/{aid} on_mismatch clears something")
+                if mv["turns"] != turns + 1 or xv["turns"] != turns + 1:
+                    raise Refusal(f"{sid}/{aid} branches disagree with the clock")
+                if mv["exposed"] is not None or xv["exposed"] is not None:
+                    raise Refusal(f"{sid}/{aid} leaves a plate exposed after resolving")
+
+    def automorphisms(self):
+        """Permutations of the actions that extend to a state bijection preserving
+        every verdict, reason and branch.  With the board hidden these should be ALL
+        of them: that the opening is a free choice is the hiding, not a defect."""
+        found = []
+        acts = self.actions
+        for perm in itertools.permutations(range(len(acts))):
+            pi = {acts[i]: acts[perm[i]] for i in range(len(acts))}
+            phi = {self.initial: self.initial}
+            queue = deque([self.initial])
+            ok = True
+            while queue and ok:
+                s = queue.popleft()
+                ps = phi[s]
+                if self.states[s]["terminal"] != self.states[ps]["terminal"]:
+                    ok = False
+                    break
+                for a in acts:
+                    t, pt = self.trans[(s, a)], self.trans[(ps, pi[a])]
+                    if t["verdict"] != pt["verdict"] or t["reason"] != pt["reason"]:
+                        ok = False
+                        break
+                    for key in ("next", "on_match", "on_mismatch"):
+                        nxt, pnxt = t[key], pt[key]
+                        if nxt is None and pnxt is None:
+                            continue
+                        if nxt is None or pnxt is None:
+                            ok = False
+                            break
+                        if nxt in phi:
+                            if phi[nxt] != pnxt:
+                                ok = False
+                                break
+                        else:
+                            phi[nxt] = pnxt
+                            queue.append(nxt)
+                    if not ok:
+                        break
+            if ok:
+                found.append(pi)
+        return found
+
+    def analyse(self) -> dict:
+        rep = self.rep
+        self.totality()
+        self.differential()
+
+        reachable = {self.initial}
+        queue = deque([self.initial])
+        while queue:
+            s = queue.popleft()
+            for a in self.actions:
+                for n in self.successors(s, a):
+                    if n not in reachable:
+                        reachable.add(n)
+                        queue.append(n)
+        unreachable = sorted(set(self.states) - reachable)
+
+        terminal = {s for s in self.states if self.states[s]["terminal"]}
+        solved = {s for s in self.states if self.states[s]["view"].get("solved") is True}
+        rewarded = terminal & reachable
+
+        longest = {}
+        for s in sorted(reachable, key=lambda x: -self.states[x]["view"]["turns"]):
+            best = 0
+            for a in self.actions:
+                for n in self.successors(s, a):
+                    best = max(best, 1 + longest.get(n, 0))
+            longest[s] = best
+        worst_play = longest[self.initial]
+
+        # A run is LOST when the clock runs out unsolved.  Under a hidden board an
+        # unlucky-but-consistent oracle can force that, which is what makes the
+        # budget mean something.
+        exhausted = {s for s in reachable
+                     if self.states[s]["view"]["turns"] >= self.budget and s not in terminal}
+
+        live_reasons = Counter()
+        for s in reachable:
+            for a in self.actions:
+                t = self.trans[(s, a)]
+                if t["verdict"] == "refuse":
+                    live_reasons[t["reason"]] += 1
+        declared = {t["reason"] for t in self.trans.values() if t["reason"]}
+        dead_reasons = sorted(declared - set(live_reasons))
+
+        autos = self.automorphisms()
+        gens = [(lambda p: (lambda a: p[a]))(p) for p in autos]
+        opener_orbits = orbits(self.actions, gens)
+
+        resolve_rows = sum(1 for t in self.trans.values() if t["verdict"] == "resolve")
+        accept_rows = sum(1 for t in self.trans.values() if t["verdict"] == "accept")
+        refuse_rows = sum(1 for t in self.trans.values() if t["verdict"] == "refuse")
+
+        if unreachable:
+            rep.find(self.name, "unreachable-state", WARN,
+                     f"{len(unreachable)} emitted state(s) are unreachable",
+                     f"e.g. {unreachable[:5]}")
+        mism = sorted((terminal ^ solved) & reachable)
+        if mism:
+            rep.find(self.name, "terminal-solved-divergence", FAIL,
+                     "terminal and solved disagree on a reachable state", f"{mism[:5]}")
+
+        if len(opener_orbits) == 1:
+            rep.find(self.name, "opening-is-a-free-choice", INFO,
+                     "every opening plate is equivalent, and under a hidden board that "
+                     "is the hiding rather than a defect",
+                     f"the exact automorphism group of the emitted machine has "
+                     f"{len(autos)} elements and acts transitively on all "
+                     f"{len(self.actions)} plates.  Before the split this was a WARN, "
+                     f"because the descriptor carried `glyph_id` and the plates were "
+                     f"only nominally symmetric: a client could see which two matched. "
+                     f"With the board out of the wire the symmetry is real, and a first "
+                     f"exposure genuinely cannot be better or worse than another.")
+        if dead_reasons:
+            rep.find(self.name, "dead-refusal-reason", WARN,
+                     f"{len(dead_reasons)} refusal reason(s) never fire", f"{dead_reasons}")
+        if resolve_rows == 0:
+            rep.find(self.name, "no-oracle-row", FAIL,
+                     "no row of the machine consults the instance",
+                     "every transition is deterministic, so the instance cannot affect "
+                     "play and the game has no hidden information at all.")
+
+        return {
+            "game": self.name,
+            "kind": "parametric-machine",
+            "engine_module": self.doc["engine_module"],
+            "action_limit": self.budget,
+            "states": len(self.states),
+            "reachable_states": len(reachable),
+            "unreachable_states": unreachable,
+            "actions": len(self.actions),
+            "transitions": len(self.trans),
+            "accept_rows": accept_rows,
+            "refuse_rows": refuse_rows,
+            "oracle_rows": resolve_rows,
+            "refusal_reasons": dict(sorted(live_reasons.items())),
+            "dead_refusal_reasons": dead_reasons,
+            "rewarded_states": len(rewarded),
+            "exhausted_states": len(exhausted),
+            "can_lose": bool(exhausted),
+            "worst_case_any_legal_play": worst_play,
+            "automorphism_group_order": len(autos),
+            "opener_classes": len(opener_orbits),
+            "openers_total": len(self.actions),
+            "opener_orbits": opener_orbits,
+            # filled in by the seed-family pass, which owns the adversarial floor
+            "information_floor_loose": None,
+            "information_floor_tight": None,
+            "execution_floor_as_designed": None,
+            "execution_floor_as_emitted": None,
+            "worst_case_optimal": None,
+            "budget_binds": None,
+            "budget_slack": None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# backend 4 — a FAMILY of machines, one per instance, none of them marked live
+# ---------------------------------------------------------------------------
+
+class MachineFamilyGame:
+    """Relay Repair after the split: all eight board machines, no `selected`.
+
+    Relay is a perfect-information puzzle — a player has to read the damage report
+    to play at all — so its instance is disclosed to its own player at run start
+    through the run opening.  The family stays public because the family is the
+    rules; what left the wire is which member is live.
+
+    Each machine is analysed by the deterministic backend, so nothing about the
+    per-board measurement is re-derived here.
+    """
+
+    def __init__(self, doc: dict, rep: Report) -> None:
+        self.doc = doc
+        self.rep = rep
+        self.name = doc["game_id"]
+        self.sm = doc["state_machine"]
+        self.machines = self.sm["machines"]
+        self.budget = doc["action_limit"]
+
+    def analyse(self) -> dict:
+        rep = self.rep
+        modulus = self.doc["instance"]["modulus"]
+        if len(self.machines) != modulus:
+            raise Refusal(f"{len(self.machines)} machines for a modulus of {modulus}")
+        per_board, sink = [], Report()
+        for index, machine in enumerate(self.machines):
+            if machine["board"] != index:
+                raise Refusal(f"machine {index} is out of order")
+            sub = dict(self.doc)
+            sub["state_machine"] = {
+                "initial_state": self.sm["initial_state"],
+                "actions": self.sm["actions"],
+                "states": machine["states"],
+                "transitions": machine["transitions"],
+            }
+            per_board.append(MachineGame(sub, sink).analyse())
+
+        floors = [b["execution_floor_as_emitted"] for b in per_board]
+        if any(f is None for f in floors):
+            dead = [i for i, f in enumerate(floors) if f is None]
+            rep.find(self.name, "unwinnable-instance", FAIL,
+                     f"{len(dead)} board(s) in the family cannot be solved at all",
+                     f"boards {dead} have no accepted path to a reward, so a run that "
+                     f"draws one is refused from its first action.")
+            raise Refusal(f"boards {dead} are unwinnable")
+        worst = max(floors)
+        losable = [i for i, b in enumerate(per_board) if b["can_lose"]]
+        forks = [b["outcome_forks"] for b in per_board]
+
+        if worst > self.budget:
+            rep.find(self.name, "budget-below-optimum", FAIL,
+                     "action_limit is below the shortest solution of some instance",
+                     f"board floors {floors} against action_limit {self.budget}.")
+        elif worst == self.budget:
+            rep.find(self.name, "budget-binds-exactly", INFO,
+                     "the action budget binds exactly on every instance of the family",
+                     f"every board's shortest win is {worst} == action_limit "
+                     f"{self.budget}; slack 0 whichever board a run draws.")
+        else:
+            rep.find(self.name, "budget-slack", WARN,
+                     f"the budget never binds ({self.budget - worst} spare)",
+                     f"worst board floor {worst}, action_limit {self.budget}.")
+
+        if len(set(floors)) == 1 and len(set(forks)) == 1:
+            rep.find(self.name, "family-may-be-uniform", INFO,
+                     "every board costs the same and forks the same number of times",
+                     f"floors {floors}, outcome forks {forks}.  Equal cost is not the "
+                     f"same as equal shape — `relay_instance_family` measures which "
+                     f"routes each board can pay for — but a family whose members are "
+                     f"indistinguishable by cost gives a returning player less than the "
+                     f"draw suggests.")
+
+        if not losable:
+            rep.find(self.name, "cannot-lose", WARN, "no instance of the family can be lost",
+                     "every reachable state on every board can still reach a reward.")
+
+        return {
+            "game": self.name,
+            "kind": "machine-family",
+            "engine_module": self.doc["engine_module"],
+            "action_limit": self.budget,
+            "instances": len(per_board),
+            "states": sum(b["states"] for b in per_board),
+            "reachable_states": sum(b["reachable_states"] for b in per_board),
+            "actions": per_board[0]["actions"],
+            "transitions": sum(b["transitions"] for b in per_board),
+            "per_board_states": [b["states"] for b in per_board],
+            "per_board_floor": floors,
+            "per_board_can_lose": [b["can_lose"] for b in per_board],
+            "per_board_outcome_forks": forks,
+            "per_board_opener_classes": [b["opener_classes"] for b in per_board],
+            "information_floor_loose": 0,
+            "information_floor_tight": 0,
+            "execution_floor_as_designed": worst,
+            "execution_floor_as_emitted": worst,
+            "worst_case_optimal": worst,
+            "worst_case_any_legal_play": max(b["worst_case_any_legal_play"]
+                                             for b in per_board),
+            "budget_binds": worst >= self.budget,
+            "budget_slack": self.budget - worst,
+            "can_lose": bool(losable),
+            "doomed_states": sum(b["doomed_states"] for b in per_board),
+            "opener_classes": max(b["opener_classes"] for b in per_board),
+            "openers_total": max(b["openers_total"] for b in per_board),
+            "outcome_forks": sum(forks),
+            "automorphism_group_order": max(b["automorphism_group_order"]
+                                            for b in per_board),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Salvage-specific seed-family analysis (rebuilt model, differentially checked)
 # ---------------------------------------------------------------------------
 
@@ -1007,88 +1559,120 @@ def salvage_pairing_from_transitions(doc: dict) -> list[tuple[int, int]]:
 
 
 def salvage_seed_family(doc: dict, rep: Report, summary: dict) -> None:
-    """The board is drawn from `run_seed` by four consuming draws over the 90 boards
-    that carry two copies of each of three glyphs.  Rebuild it, differentially check
-    the pinned one against BOTH the emitted action table and the emitted transitions,
-    then ask what the seed actually changes."""
+    """What the hidden board costs, measured against the family the artifact declares.
+
+    ⚠ This function used to open `run_seed`, rebuild the ONE drawn board, and check
+    it against `glyph_id` and against the successors.  Both of those inputs are gone
+    — that was the leak — so what is read now is `practice.boards`, the whole family
+    a browser rehearses against, and the floor is computed against an adversary who
+    may answer any way still consistent with SOME member of it.
+    """
     name = doc["game_id"]
     slots, glyphs = 6, 3
-    seed_space = list(range(90))
-    pinned, digits = salvage_seed_from_run_seed(doc["run_seed"])
-    if pinned is None:
-        raise Refusal(f"the pinned run_seed exhausts its bytes after {len(digits)} of "
-                      f"4 draws; no board is determined")
-
-    pairs, row = salvage_board(pinned)
-    emitted = {a["slot"]: a["glyph_id"] for a in doc["state_machine"]["actions"]}
-    model = {s: row[s] for s in range(slots)}
-    if emitted != model:
-        raise Refusal(f"rebuilt glyph board {model} disagrees with the emitted action "
-                      f"table {emitted} for seed {pinned} (drawn from run_seed "
-                      f"{doc['run_seed'][:16]}...).  Re-emit the descriptor from Lean.")
-    from_transitions = salvage_pairing_from_transitions(doc)
-    if from_transitions != pairs:
-        raise Refusal(f"the emitted transition table pairs {from_transitions} while the "
-                      f"rebuilt board pairs {pairs}: the action rows and the successors "
-                      f"describe different boards")
+    practice = doc.get("practice")
+    if not isinstance(practice, dict):
+        raise Refusal("salvage descriptor carries no `practice` block; a client that "
+                      "cannot draw a rehearsal instance has no offline mode, and this "
+                      "gate has no family to measure against")
+    if practice.get("scored") is not False:
+        raise Refusal("the practice block does not declare itself unscored")
+    boards_raw = practice["boards"]
+    if len(boards_raw) != practice["instance_space"]:
+        raise Refusal(f"practice block emits {len(boards_raw)} boards for a declared "
+                      f"space of {practice['instance_space']}")
 
     families = defaultdict(list)
     boards = set()
-    for seed in seed_space:
-        seed_pairs, seed_row = salvage_board(seed)
-        families[tuple(seed_pairs)].append(seed)
-        boards.add(tuple(seed_row))
-        counts = sorted(Counter(seed_row).values())
+    for seed, row in enumerate(boards_raw):
+        if len(row) != slots:
+            raise Refusal(f"practice board {seed} is not {slots} plates")
+        counts = sorted(Counter(row).values())
         if counts != [2, 2, 2]:
-            raise Refusal(f"seed {seed} rebuilds to {seed_row}, which is not two of "
-                          f"each glyph")
+            raise Refusal(f"practice board {seed} is {row}, which is not two of each "
+                          f"of {glyphs} glyphs")
+        pairs = []
+        for glyph in sorted(set(row)):
+            a, b = [i for i, x in enumerate(row) if x == glyph]
+            pairs.append((a, b))
+        families[tuple(sorted(pairs))].append(seed)
+        boards.add(tuple(row))
 
-    summary["seed_space"] = len(seed_space)
-    summary["pinned_seed"] = pinned
-    summary["seed_draws"] = digits
-    summary["distinct_pairings_over_seed_space"] = len(families)
-    summary["distinct_boards_over_seed_space"] = len(boards)
-    summary["pairing"] = [list(p) for p in pairs]
-    summary["glyph_populations"] = sorted(Counter(row).values())
+    if len(boards) != len(boards_raw):
+        raise Refusal(f"the practice family names {len(boards)} distinct boards in "
+                      f"{len(boards_raw)} slots: some instance is drawn twice as often "
+                      f"as the rest")
 
     hidden_worst, matchings = hidden_pairing_worst_case(slots)
-    summary["counterfactual_hidden_boards"] = matchings
-    summary["counterfactual_hidden_worst_case"] = hidden_worst
+    labellings = {len(v) for v in families.values()}
+
+    summary["instance_space"] = len(boards_raw)
+    summary["distinct_pairings_over_instance_space"] = len(families)
+    summary["distinct_boards_over_instance_space"] = len(boards)
+    summary["perfect_matchings"] = matchings
+    summary["labellings_per_matching"] = sorted(labellings)
+    summary["information_floor_loose"] = ceil_log(matchings, 2)
+    summary["information_floor_tight"] = ceil_log(matchings, 2)
+    summary["execution_floor_as_designed"] = hidden_worst
+    summary["execution_floor_as_emitted"] = hidden_worst
+    summary["worst_case_optimal"] = hidden_worst
+    summary["budget_binds"] = hidden_worst >= doc["action_limit"]
+    summary["budget_slack"] = doc["action_limit"] - hidden_worst
 
     if len(families) < matchings:
-        rep.find(name, "seed-underdetermines-board", WARN,
-                 f"the {len(seed_space)} seeds reach only {len(families)} of the "
+        rep.find(name, "family-underdetermines-board", WARN,
+                 f"the {len(boards_raw)} instances reach only {len(families)} of the "
                  f"{matchings} perfect matchings",
-                 f"a seed space that cannot name every matching hands some boards to "
+                 f"a family that cannot name every matching hands some boards to "
                  f"nobody, and a player who knows the reachable set starts with "
                  f"information the design did not mean to give.")
+    elif labellings != {glyphs * 2}:
+        rep.find(name, "uneven-glyph-labelling", WARN,
+                 "some matchings carry more glyph labellings than others",
+                 f"labelling counts per matching: {sorted(labellings)}.  An uneven "
+                 f"count makes a glyph name weak evidence about the pairing.")
     else:
-        rep.find(name, "seed-names-the-board", INFO,
-                 f"the seed space is exactly the {len(boards)} two-of-each boards, over "
-                 f"all {matchings} perfect matchings",
-                 f"`run_seed` is drawn by four consuming rejection-sampled draws "
-                 f"(bounds 5, 3, 3, 2 -> digits {digits}) into board {pinned} of "
-                 f"{len(seed_space)}, whose pairing is {[list(p) for p in pairs]} and "
-                 f"whose row is {row}.  Each of the {matchings} matchings is carried by "
-                 f"{len(seed_space) // len(families)} seeds — its 3! glyph "
-                 f"relabellings — so a glyph name says nothing about the pairing beyond "
-                 f"agreement with a glyph already seen.  There is no memory-free "
-                 f"routine: `pair = slot mod {glyphs}` is wrong on "
+        rep.find(name, "family-covers-every-matching", INFO,
+                 f"the instance space is exactly the {len(boards)} two-of-each boards, "
+                 f"over all {matchings} perfect matchings",
+                 f"each matching is carried by {sorted(labellings)[0]} instances — its "
+                 f"3! glyph relabellings — so a glyph name says nothing about the "
+                 f"pairing beyond agreement with a glyph already seen.  There is no "
+                 f"memory-free routine: `pair = slot mod {glyphs}` is wrong on "
                  f"{matchings - 1} of the {matchings} matchings.")
 
-    rep.find(name, "budget-sized-for-a-board-that-is-not-hidden", INFO,
-             f"the budget fits a genuinely hidden board ({hidden_worst} turns) but the "
-             f"emitted board needs {summary['execution_floor_as_emitted']}",
+    budget = doc["action_limit"]
+    verdict = ("binds exactly" if hidden_worst == budget
+               else f"leaves {budget - hidden_worst} spare")
+    # The same budget verdict every other backend emits.  Dropping it here because
+    # the floor improved would be a gate quietly losing a way to go red.
+    if hidden_worst > budget:
+        rep.find(name, "budget-below-optimum", FAIL,
+                 "action_limit is below the proven worst case against a hidden board",
+                 f"worst case {hidden_worst} > action_limit {budget}: some instances "
+                 f"cannot be cleared at all.")
+    elif hidden_worst == budget:
+        rep.find(name, "budget-binds-exactly", INFO,
+                 "the action budget binds exactly under optimal play",
+                 f"worst case {hidden_worst} == action_limit {budget}; slack 0.")
+    else:
+        rep.find(name, "budget-slack", WARN,
+                 f"the action budget does not bind ({budget - hidden_worst} spare)",
+                 f"worst case {hidden_worst} against action_limit {budget}.  The slack "
+                 f"was {budget - summary.get('_pre_split_floor', 6)} before the split "
+                 f"and is {budget - hidden_worst} now, so the budget went from mostly "
+                 f"decorative to nearly binding — but a run that plays optimally still "
+                 f"cannot be forced to spend the last {budget - hidden_worst} turns.")
+    rep.find(name, "hidden-board-floor", INFO,
+             f"a player who has read the whole artifact still needs {hidden_worst} "
+             f"exposures in the worst case; the budget {verdict}",
              f"against a uniformly drawn one of the {matchings} perfect matchings of "
-             f"{slots} plates, a perfect-memory player facing an adaptive adversary "
-             f"needs {hidden_worst} turns in the worst case — which is what "
-             f"`action_limit = {doc['action_limit']}` looks sized for.  The board IS "
-             f"now drawn from that family, so the {hidden_worst} is the honest cost of "
-             f"the game underneath; the emitted descriptor still publishes the instance "
-             f"(see `instance-secret-published`), so a player who reads it needs "
-             f"{summary['execution_floor_as_emitted']}.  Closing that gap is a wire "
-             f"change — a commitment to the board plus per-exposure openings — not a "
-             f"budget change.")
+             f"{slots} plates, a perfect-memory player facing an adversary who answers "
+             f"any way still consistent with some board needs {hidden_worst} turns.  "
+             f"⚠ The pre-split descriptor published the board in `glyph_id` and in its "
+             f"successors, so a player who read it needed 6 and this {hidden_worst} was "
+             f"reported only as a counterfactual.  It is now the measured floor: the "
+             f"emitted table names both branches of every second exposure and nothing "
+             f"in the artifact says which one a run will take.")
 
 
 def simple_paths(edges, source, sink):
@@ -1128,7 +1712,7 @@ def relay_instance_family(doc: dict, rep: Report, summary: dict) -> None:
     if inst is None:
         raise Refusal("relay-repair no longer declares an `instance`; this gate "
                       "cannot tell what the run seed selects")
-    want = {"seed_byte", "modulus", "selected", "source", "sink", "boards"}
+    want = {"modulus", "source", "sink", "draw", "boards"}
     if set(inst) != want:
         raise Refusal(f"instance block carries {sorted(inst)}, expected {sorted(want)}")
 
@@ -1151,69 +1735,69 @@ def relay_instance_family(doc: dict, rep: Report, summary: dict) -> None:
         if any(c < 1 for c in board["costs"].values()):
             raise Refusal(f"board {index} prices a link below one spare")
 
-    byte = int(doc["run_seed"][2 * inst["seed_byte"]:2 * inst["seed_byte"] + 2], 16)
-    if byte % inst["modulus"] != inst["selected"]:
-        raise Refusal(f"run_seed byte {inst['seed_byte']} = {byte} selects board "
-                      f"{byte % inst['modulus']}, but the descriptor claims "
-                      f"{inst['selected']}")
-    board = boards[inst["selected"]]
-    costs, crate = board["costs"], board["spares"]
+    # ⚠ `selected` and `seed_byte` are gone, so there is no drawn board to rebuild
+    # against.  The differential now runs over EVERY machine in the family: each
+    # board's declared pricing must reproduce every state view and every row of its
+    # own machine, so no member of the family is analysed on trust.
+    machines = {m["board"]: m for m in doc["state_machine"]["machines"]}
+    if sorted(machines) != list(range(len(boards))):
+        raise Refusal(f"the emitted machines cover {sorted(machines)}, not every board")
 
-    def route_cost(links):
-        return sum(costs[l] for l in links)
+    for index, board in enumerate(boards):
+        costs, crate = board["costs"], board["spares"]
+        machine = machines[index]
 
-    def solved_by(installed):
-        return any(all(l in installed for l in r) for r in routes)
+        def route_cost(links, costs=costs):
+            return sum(costs[l] for l in links)
 
-    def completable(installed, turns, spares):
-        for r in routes:
-            missing = [l for l in r if l not in installed]
-            if len(missing) + turns <= budget and route_cost(missing) <= spares:
-                return True
-        return False
+        def solved_by(installed):
+            return any(all(l in installed for l in r) for r in routes)
 
-    # -- differential 1: every emitted state view is what the board implies --------
-    facts = {}
-    for state in doc["state_machine"]["states"]:
-        view = state["view"]
-        installed = set(view["installed"])
-        if not installed <= action_ids:
-            raise Refusal(f"state {state['id']} installs an unknown link")
-        spares = crate - route_cost(installed)
-        solved = solved_by(installed)
-        stranded = not solved and not completable(installed, view["turns"], spares)
-        got = (state["terminal"], view["solved"], view["spares"], view["stranded"])
-        model = (solved, solved, spares, stranded)
-        if got != model:
-            raise Refusal(
-                f"rebuilt board disagrees with emitted state {state['id']}: "
-                f"(terminal, solved, spares, stranded) emitted={got} model={model}")
-        facts[state["id"]] = (installed, view["turns"], spares, solved, stranded)
+        def completable(installed, turns, spares, costs=costs):
+            for r in routes:
+                missing = [l for l in r if l not in installed]
+                if len(missing) + turns <= budget and route_cost(missing, costs) <= spares:
+                    return True
+            return False
 
-    # -- differential 2: every emitted row is what the rule implies ----------------
-    for t in doc["state_machine"]["transitions"]:
-        installed, turns, spares, solved, stranded = facts[t["state"]]
-        link = t["action"]
-        legal = (not solved and turns < budget and not stranded
-                 and link not in installed and costs[link] <= spares)
-        if legal != (t["verdict"] == "accept"):
-            raise Refusal(f"rebuilt rule disagrees with emitted row {t['state']}/"
-                          f"{link}: model says {'accept' if legal else 'refuse'}")
-        if legal:
-            nxt = facts[t["next"]]
-            if nxt[0] != installed | {link} or nxt[1] != turns + 1:
-                raise Refusal(f"row {t['state']}/{link} accepts into {t['next']}, "
-                              f"which is not that install")
-        else:
-            claim = {"solved": solved, "turn-limit": turns >= budget,
-                     "already-installed": link in installed,
-                     "no-spares": costs[link] > spares, "stranded": stranded}
-            if t["reason"] not in claim:
-                raise Refusal(f"row {t['state']}/{link} refuses with unmodelled "
-                              f"reason {t['reason']!r}")
-            if not claim[t["reason"]]:
-                raise Refusal(f"row {t['state']}/{link} refuses as {t['reason']!r}, "
-                              f"which is false of that state")
+        facts = {}
+        for state in machine["states"]:
+            view = state["view"]
+            installed = set(view["installed"])
+            if not installed <= action_ids:
+                raise Refusal(f"board {index} state {state['id']} installs an unknown link")
+            spares = crate - route_cost(installed)
+            solved = solved_by(installed)
+            stranded = not solved and not completable(installed, view["turns"], spares)
+            got = (state["terminal"], view["solved"], view["spares"], view["stranded"])
+            model = (solved, solved, spares, stranded)
+            if got != model:
+                raise Refusal(
+                    f"board {index}: rebuilt pricing disagrees with emitted state "
+                    f"{state['id']}: (terminal, solved, spares, stranded) "
+                    f"emitted={got} model={model}")
+            facts[state["id"]] = (installed, view["turns"], spares, solved, stranded)
+
+        for t in machine["transitions"]:
+            installed, turns, spares, solved, stranded = facts[t["state"]]
+            link = t["action"]
+            legal = (not solved and turns < budget and not stranded
+                     and link not in installed and costs[link] <= spares)
+            if legal != (t["verdict"] == "accept"):
+                raise Refusal(f"board {index}: rebuilt rule disagrees with emitted row "
+                              f"{t['state']}/{link}")
+            if legal:
+                nxt = facts[t["next"]]
+                if nxt[0] != installed | {link} or nxt[1] != turns + 1:
+                    raise Refusal(f"board {index}: row {t['state']}/{link} accepts into "
+                                  f"{t['next']}, which is not that install")
+            else:
+                claim = {"solved": solved, "turn-limit": turns >= budget,
+                         "already-installed": link in installed,
+                         "no-spares": costs[link] > spares, "stranded": stranded}
+                if t["reason"] not in claim or not claim[t["reason"]]:
+                    raise Refusal(f"board {index}: row {t['state']}/{link} refuses as "
+                                  f"{t['reason']!r}, which is not true of that state")
 
     # -- what the seed space actually contains ------------------------------------
     def signature(b):
@@ -1228,41 +1812,39 @@ def relay_instance_family(doc: dict, rep: Report, summary: dict) -> None:
     distinct_classes = len(set(shapes))
 
     summary["board_space"] = len(boards)
-    summary["selected_board"] = inst["selected"]
     summary["routes_source_to_sink"] = [list(r) for r in routes]
-    summary["selected_route_costs"] = {"|".join(r): route_cost(r) for r in routes}
-    summary["selected_crate"] = crate
     summary["distinct_instances_expressible"] = distinct_boards
     summary["distinct_instance_classes"] = distinct_classes
     summary["unwinnable_boards"] = unwinnable
-    summary["seed_consumed"] = True
+    summary["information_floor_loose"] = ceil_log(distinct_classes, 2)
+    summary["information_floor_tight"] = 0
 
     if unwinnable:
-        rep.find(name, "unwinnable-seed", FAIL,
-                 f"{len(unwinnable)} board(s) in the seed space cannot be solved at all",
+        rep.find(name, "unwinnable-instance", FAIL,
+                 f"{len(unwinnable)} board(s) in the family cannot be solved at all",
                  f"boards {unwinnable} price every {inst['source']}->{inst['sink']} "
                  f"route above their own crate, so a run that draws one is refused from "
-                 f"the first action.  The emitted machine only ever shows board "
-                 f"{inst['selected']}; this is visible only from the whole table.")
+                 f"the first action.  Before the split only one board was ever live and "
+                 f"this was invisible; every board is now reachable by some run.")
 
     if distinct_classes == 1:
-        rep.find(name, "seed-inert", WARN,
+        rep.find(name, "instance-inert", WARN,
                  f"all {len(boards)} boards leave the same routes affordable",
-                 f"the seed repriced the links but never changed which of the "
+                 f"the draw reprices the links but never changes which of the "
                  f"{len(routes)} routes a player can pay for, so the board is "
-                 f"decoration and one memorised line clears every seed.")
+                 f"decoration and one memorised line clears every instance.")
 
-    rep.find(name, "instance-published-by-design", INFO,
-             "the damage board is published in the descriptor, and for this game that "
-             "is the design",
-             f"`instance` states the crate ({crate} spares), the per-link cost, and all "
-             f"{len(boards)} boards the seed can select; run_seed byte "
-             f"{inst['seed_byte']} = 0x{byte:02x} selects board {inst['selected']}.  "
-             f"Relay Repair is a routing puzzle, not a deduction game: the damage report "
-             f"is the material the player reasons over, and hiding it would make the "
-             f"read a guess.  What the seed hides is nothing; what it changes is which "
-             f"of {len(routes)} routes can be paid for — "
-             f"{distinct_classes} distinct affordable-route shapes over "
+    rep.find(name, "instance-opened-to-its-own-player", INFO,
+             "the damage board is disclosed per run, to its own player, and no longer "
+             "printed once for everyone",
+             f"`instance` states the graph, the crate and the per-link cost of all "
+             f"{len(boards)} boards — that is the RULES, and Relay Repair is a routing "
+             f"puzzle rather than a deduction game, so hiding the report would make the "
+             f"read a guess.  ⚠ What is GONE is `selected` and `seed_byte`: the pair "
+             f"that named which board was live and which published byte drew it.  A run "
+             f"learns its own board from the slot opening at start, and learns nothing "
+             f"about anyone else's, because the draw takes the player key.  The family "
+             f"offers {distinct_classes} distinct affordable-route shapes over "
              f"{distinct_boards} distinct boards.")
 
 
@@ -1437,44 +2019,39 @@ def render(report: Report, out) -> None:
                   f"{g['states']} states ({g['reachable_states']} reachable), "
                   f"{g['actions']} actions, {g['transitions']} rows") + "\n")
             w(bar("totality", "every (state, action) has exactly one row") + "\n")
-            w(bar("verdicts",
-                  f"{g['accept_rows']} accept / {g['refuse_rows']} refuse") + "\n")
-            w(bar("refusal reasons",
-                  ", ".join(f"{k}:{v}" for k, v in g["refusal_reasons"].items())) + "\n")
-            w(bar("distinguishable instances",
-                  f"{g['distinguishable_instances']}  -> information floor "
-                  f"{g['information_floor_tight']}") + "\n")
+            verdicts = f"{g.get('accept_rows', 0)} accept / {g.get('refuse_rows', 0)} refuse"
+            if g.get("oracle_rows"):
+                verdicts += f" / {g['oracle_rows']} oracle-resolved"
+            w(bar("verdicts", verdicts) + "\n")
+            if "refusal_reasons" in g:
+                w(bar("refusal reasons",
+                      ", ".join(f"{k}:{v}" for k, v in g["refusal_reasons"].items())) + "\n")
+            w(bar("instance disclosure", f"{g.get('instance_disclosure', '?')}") + "\n")
+            w(bar("information floor", f"{g['information_floor_tight']}") + "\n")
             w(bar("execution floor",
-                  f"{g['execution_floor_as_emitted']}  (shortest accepted win)") + "\n")
+                  f"{g['execution_floor_as_emitted']}  (guaranteed, given the "
+                  f"descriptor the client fetches)") + "\n")
             w(bar("worst case, optimal play",
                   f"{g['worst_case_optimal']}   worst legal play: "
                   f"{g['worst_case_any_legal_play']}") + "\n")
             w(bar("action budget",
                   f"{g['action_limit']}   binds: {g['budget_binds']}   "
                   f"slack: {g['budget_slack']}") + "\n")
-            w(bar("can the run be lost?",
-                  f"{g['can_lose']}   doomed states: {g['doomed_states']} "
-                  f"({g['doomed_still_accepting']} still accept actions)") + "\n")
-            w(bar("forks",
-                  f"outcome-changing: {g['outcome_forks']}   "
-                  f"turn-count-changing: {g['turn_count_forks']}   "
-                  f"consequence-free: {g['consequence_free_choices']}") + "\n")
-            w(bar("automorphism group order", f"{g['automorphism_group_order']}") + "\n")
+            w(bar("can the run be lost?", f"{g.get('can_lose')}") + "\n")
+            if "outcome_forks" in g:
+                w(bar("outcome-changing forks", f"{g['outcome_forks']}") + "\n")
+            w(bar("automorphism group order",
+                  f"{g.get('automorphism_group_order', '?')}") + "\n")
             w(bar("opener classes",
                   f"{g['opener_classes']} of {g['openers_total']} legal openers") + "\n")
-            w(bar("dead actions", f"{g['dead_actions'] or 'none'}") + "\n")
-            w(bar("dominated (state, action)",
-                  f"{g['dominated_state_action_pairs']}   globally dominated: "
-                  f"{g['globally_dominated_actions'] or 'none'}") + "\n")
-            for k in ("seed_space", "pinned_seed", "seed_draws",
-                      "distinct_pairings_over_seed_space",
-                      "distinct_boards_over_seed_space", "pairing",
-                      "counterfactual_hidden_boards",
-                      "counterfactual_hidden_worst_case",
-                      "board_space", "selected_board", "selected_crate",
-                      "routes_source_to_sink", "selected_route_costs",
-                      "distinct_instance_classes", "unwinnable_boards",
-                      "distinct_instances_expressible", "seed_consumed"):
+            for k in ("instance_space", "distinct_pairings_over_instance_space",
+                      "distinct_boards_over_instance_space", "perfect_matchings",
+                      "labellings_per_matching", "exhausted_states",
+                      "board_space", "instances", "per_board_states", "per_board_floor",
+                      "per_board_can_lose", "per_board_outcome_forks",
+                      "routes_source_to_sink", "distinct_instance_classes",
+                      "unwinnable_boards", "distinct_instances_expressible",
+                      "dead_actions", "globally_dominated_actions"):
                 if k in g:
                     w(bar(k.replace("_", " "), f"{g[k]}") + "\n")
 
@@ -1512,17 +2089,30 @@ def _wrap(text, width):
 
 # ---------------------------------------------------------------------------
 
-BACKENDS = {"outcomes": DeductionGame, "state_machine": MachineGame}
+def pick_backend(doc: dict):
+    """Dispatch on the SHAPE, so a descriptor cannot pick its own analyser by id."""
+    if "rules" in doc:
+        return DeductionGame
+    sm = doc.get("state_machine")
+    if not isinstance(sm, dict):
+        raise Refusal(f"{doc.get('game_id')} carries no analysable shape")
+    if "machines" in sm:
+        return MachineFamilyGame
+    if any(t.get("verdict") == "resolve" for t in sm.get("transitions", [])):
+        return ParametricMachineGame
+    raise Refusal(f"{doc.get('game_id')} carries a deterministic single machine with no "
+                  f"oracle row and no board family: it has no hidden information, so "
+                  f"there is nothing for a commitment to bind")
 
 
 def analyse_doc(doc: dict, rep: Report) -> dict:
     if doc.get("format") != "POAG1-GAME":
         raise Refusal(f"{doc.get('game_id')} is not a POAG1-GAME descriptor")
-    kinds = [k for k in BACKENDS if k in doc]
-    if len(kinds) != 1:
-        raise Refusal(f"{doc.get('game_id')} carries {kinds or 'no'} analysable shape; "
-                      f"this gate models exactly one of {sorted(BACKENDS)}")
-    summary = BACKENDS[kinds[0]](doc, rep).analyse()
+    # First, and before anything is measured: does the artifact state its own
+    # answer?  If it does, every floor below it is a floor of one.
+    disclosure = check_instance_contract(doc, rep)
+    summary = pick_backend(doc)(doc, rep).analyse()
+    summary["instance_disclosure"] = disclosure
     if doc["game_id"] == "salvage-lock":
         salvage_seed_family(doc, rep, summary)
     if doc["game_id"] == "relay-repair":

@@ -139,6 +139,41 @@ theorem applyEvent_success_cursor {State Payload : Type} (spec : StreamSpec)
       after.state.cursor.version = spec.version :=
   ⟨after.aggregate_exact, after.version_exact⟩
 
+/-- ⚑ THE REDUCER IS THE SEMANTICS.  An accepted event's successor projection is
+EXACTLY the supplied reducer's answer on the predecessor projection.
+
+Without this law every theorem proved about a `Reducer` is a theorem about a
+function the emitted bytes need not have called: `applyEvent` could publish any
+projection at all and every `reduce_*` lemma downstream would stay green.  A wire
+codec that exports a judge needs this to carry its reducer facts to its output —
+see `GalleyMaintenanceDailyRuntime.judge_command_projection_is_reduce`.
+
+Refutation to watch: give `applyEvent` a successor it did not get from `reduce`
+(e.g. `projection := bonus projection`) and this goes red immediately. -/
+theorem applyEvent_projection_is_reduce {State Payload : Type} (spec : StreamSpec)
+    (digests : DigestBoundary Payload) (reduce : Reducer State Payload)
+    (before : ReplayState State) (event : EventEnvelope Payload)
+    (after : AppliedEvent spec State)
+    (accepted : applyEvent spec digests reduce before event = .ok after) :
+    reduce before.projection event.payload = some after.state.projection := by
+  cases hreduce : reduce before.projection event.payload with
+  | none =>
+      exfalso
+      simp only [applyEvent, hreduce, bind, Except.bind, throw, throwThe,
+        MonadExceptOf.throw] at accepted
+      repeat' split at accepted
+      all_goals simp at accepted
+  | some projection =>
+      simp only [applyEvent, hreduce, bind, Except.bind, pure, Except.pure, throw, throwThe,
+        MonadExceptOf.throw] at accepted
+      repeat' split at accepted
+      all_goals first
+        | (simp at accepted
+           done)
+        | (simp only [Except.ok.injEq] at accepted
+           subst accepted
+           rfl)
+
 def replay {State Payload : Type} (spec : StreamSpec)
     (digests : DigestBoundary Payload) (reduce : Reducer State Payload) :
     ReplayState State → List (EventEnvelope Payload) → Except Error (ReplayState State)
@@ -379,6 +414,7 @@ theorem fixture_snapshot_is_cache_equivalent :
 #assert_axioms replay_append
 #assert_axioms replay_deterministic
 #assert_axioms applyEvent_success_cursor
+#assert_axioms applyEvent_projection_is_reduce
 #assert_axioms replay_success_cursor
 #assert_axioms snapshot_cache_equivalence
 #assert_axioms fixture_snapshot_is_cache_equivalent

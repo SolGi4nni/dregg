@@ -123,7 +123,8 @@ export function loadRelayRepairDescriptor(game, authority) {
   const descriptor = loadFiniteTableDescriptor(game, authority, {
     name: "Relay Repair",
     gameId: "relay-repair",
-    ruleset: "relay-v2",
+    ruleset: "relay-v3",
+    disclosure: "per-run-open",
     engineModule: "Dregg2.Games.PathOfAngels.RelayRepair",
     actionLimit: 3,
     maxActionLimit: 3,

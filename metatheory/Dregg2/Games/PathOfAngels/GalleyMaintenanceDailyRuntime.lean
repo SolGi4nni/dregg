@@ -1,13 +1,27 @@
 /-
-# Galley Maintenance Daily — strict replay runtime and network wire
+# Galley Maintenance Daily — THE Galley state machine, its wire, and its judge
 
-This module is the runnable, deliberately narrow public-service slice of
-`GalleyMaintenanceDaily`.  Lean is the only transition judge.  A request carries
+⚑ THERE WAS A TWIN AND IT IS GONE (2026-08-05).  Until this commit there were two
+Lean state machines named "Galley": this module's `reduce`, which is what
+`@[export dregg_poa_galley_daily_judge]` runs and therefore the whole shipped
+semantics, and `GalleyMaintenanceDaily.reduce` (ballot / authored procedure /
+scarce commons / one finalized world output) plus `GalleyCommons` (settled-credit
+commons economy) — ~5,100 lines with zero `@[export]`, no Rust call site, and a
+capability/CAS tower whose contracts had no inhabitant anywhere in the tree.  The
+two shared exactly one identifier, `MAX_LOCAL_SERVICE`, and no type, relation or
+theorem.  The dark side is DELETED; the constant now lives here, where the wire
+that uses it lives.  See `docs/poa/GALLEY-LAYER-CONTRACT.md` §0 for what proof
+coverage went with it.
+
+Lean is the only transition judge.  A request carries
 the complete bounded event prefix, its claimed projection, one viewer, and
 either no command or one opaque action token previously authored by this judge.
 Lean replays the prefix from genesis, compares the complete projection, creates
 the next event statement and both digests, applies it through `EventSourcing`,
 and emits the complete successor projection, view, receipt, and replay witness.
+`judge_command_projection_is_reduce` proves that the projection the judge
+publishes is the one `reduce` returned, so the reducer facts below are facts
+about the emitted bytes rather than about a function the export need not call.
 
 The holder sponsor path is beta eligibility, not consensus holdings power.  Its
 opaque authority records an RPC-attested binary holder class, exact signer/player
@@ -24,7 +38,7 @@ that authority and therefore cannot execute a sponsor command.
 import Lean.Data.Json
 import Mathlib.Data.List.Sort
 import Dregg2.Circuit.CommitmentTreeWide
-import Dregg2.Games.PathOfAngels.GalleyMaintenanceDaily
+import Dregg2.Games.PathOfAngels.EventSourcing
 import Dregg2.Games.PathOfAngels.Emit
 import Dregg2.Tactics
 
@@ -43,7 +57,13 @@ abbrev STREAM_VERSION : Nat := 1
 abbrev WIRE_NAT_LIMIT : Nat := 2 ^ 64 - 1
 abbrev WIRE_BYTE_LIMIT : Nat := 1024 * 1024
 abbrev MAX_EVENTS : Nat := 64
-abbrev MAX_LOCAL_SERVICE : Nat := GalleyMaintenanceDaily.MAX_LOCAL_SERVICE
+/-- The type cap on one player's local-service score.  It used to be defined in
+the deleted `GalleyMaintenanceDaily` kernel and re-exported here, which was the
+twin's only remaining tether; it is now defined where the wire that bounds
+`publicService` / `sponsorService` / `localService` against it lives.  Value
+unchanged (100), so every emitted policy, fixture and pinned digest is
+arithmetically identical. -/
+abbrev MAX_LOCAL_SERVICE : Nat := 100
 abbrev MAX_SPONSOR_SEQUENCE_TTL : Nat := 4
 
 private def jsonString (value : String) : String := String.quote value
@@ -976,6 +996,155 @@ is structurally unavailable rather than represented by a caller-provided Boolean
 def judgeFFI (bytes : String) : String :=
   (judgeBytesWithAuthority? bytes 0 none).getD ""
 
+/-! ## ⚑ The weld: the judge publishes the reducer's answer, not its own
+
+`reduce_preserves_advantage_anchors` and `reduce_holder_sponsor_bounded` are
+facts about `reduce`.  Nothing used to connect `reduce` to the bytes
+`judgeFFI` returns: the judge obtains its successor through
+`EventSourcing.applyEvent` and could have published any projection at all with
+every reducer-level theorem still green.  These three theorems close that, over
+the ACTUAL exported objects (`judgeInput?`, `InputWire`, `OutputWire`, `reduce`)
+and with no hypothesis beyond "the judge accepted", which every `/status` poll
+and every command satisfies.
+
+⚑ REFUTATION.  Replace `let after := applied.state` in the command branch with
+anything that is not the reducer's successor — e.g.
+`{ applied.state with projection := { applied.state.projection with
+localServiceTotal := applied.state.projection.localServiceTotal + 1 } }`, a
+service bonus the reducer never granted — and `judge_command_projection_is_reduce`
+goes red.  Measured against HEAD before this commit, that mutation passed every
+other check in this file: `fixture_public_command_accepted` only tests `.isSome`,
+`fixture_public_output_redecodes` re-decodes the tampered projection happily, and
+`fixture_beta_sponsor_accepted_without_advantage` inspects only the four anchors.
+-/
+
+private theorem validatedPrefix?_claimed {input : InputWire}
+    {state : EventSourcing.ReplayState ProjectionWire}
+    (accepted : validatedPrefix? input = some state) :
+    state.projection = input.claimedProjection := by
+  simp only [validatedPrefix?, bind, Option.bind] at accepted
+  repeat' (first | split at accepted | simp only [] at accepted)
+  all_goals first
+    | (simp at accepted
+       done)
+    | (simp_all
+       done)
+
+/-- The projection the judge publishes for an accepted command is EXACTLY
+`reduce`'s successor of the claimed projection the caller supplied. -/
+theorem judge_command_projection_is_reduce {inputBytes : String} {input : InputWire}
+    {now : Nat} {authority : Option AdmittedBetaSponsor} {output : OutputWire}
+    {event : EventWire}
+    (accepted : judgeInput? inputBytes input now authority = some output)
+    (emitted : output.event = some event) :
+    reduce input.policy input.claimedProjection event.payload = some output.projection := by
+  unfold judgeInput? at accepted
+  cases hbefore : validatedPrefix? input with
+  | none =>
+      simp only [hbefore, bind, Option.bind] at accepted
+      simp at accepted
+  | some before =>
+      simp only [hbefore, bind, Option.bind] at accepted
+      by_cases hview : input.mode = "view"
+      · rw [if_pos hview] at accepted
+        split at accepted
+        · simp at accepted
+        · simp only [Option.some.injEq] at accepted
+          subst accepted
+          simp only [outputOf] at emitted
+          simp at emitted
+      · rw [if_neg hview] at accepted
+        by_cases hcmd : input.mode = "command"
+        · rw [if_pos hcmd] at accepted
+          cases hpayload : commandPayload? input before now authority with
+          | none =>
+              simp only [hpayload] at accepted
+              simp at accepted
+          | some payload =>
+              simp only [hpayload] at accepted
+              cases happly : EventSourcing.applyEvent (streamSpec input.policy) digestBoundary
+                  (reduce input.policy) before
+                  (nextEvent input.policy before payload).toSemantic with
+              | error e =>
+                  simp only [happly, Except.toOption] at accepted
+                  simp at accepted
+              | ok applied =>
+                  simp only [happly, Except.toOption, Option.some.injEq] at accepted
+                  subst accepted
+                  simp only [outputOf, Option.some.injEq] at emitted
+                  subst emitted
+                  rw [← validatedPrefix?_claimed hbefore]
+                  exact EventSourcing.applyEvent_projection_is_reduce (streamSpec input.policy)
+                    digestBoundary (reduce input.policy) before
+                    (nextEvent input.policy before payload).toSemantic applied happly
+        · rw [if_neg hcmd] at accepted
+          simp at accepted
+
+/-- A view answer moves nothing: with no emitted event the published projection
+is byte-identically the caller's claimed projection. -/
+theorem judge_view_projection_is_claimed {inputBytes : String} {input : InputWire}
+    {now : Nat} {authority : Option AdmittedBetaSponsor} {output : OutputWire}
+    (accepted : judgeInput? inputBytes input now authority = some output)
+    (noEvent : output.event = none) :
+    output.projection = input.claimedProjection := by
+  unfold judgeInput? at accepted
+  cases hbefore : validatedPrefix? input with
+  | none =>
+      simp only [hbefore, bind, Option.bind] at accepted
+      simp at accepted
+  | some before =>
+      simp only [hbefore, bind, Option.bind] at accepted
+      by_cases hview : input.mode = "view"
+      · rw [if_pos hview] at accepted
+        split at accepted
+        · simp at accepted
+        · simp only [Option.some.injEq] at accepted
+          subst accepted
+          simp only [outputOf]
+          exact validatedPrefix?_claimed hbefore
+      · rw [if_neg hview] at accepted
+        by_cases hcmd : input.mode = "command"
+        · rw [if_pos hcmd] at accepted
+          cases hpayload : commandPayload? input before now authority with
+          | none =>
+              simp only [hpayload] at accepted
+              simp at accepted
+          | some payload =>
+              simp only [hpayload] at accepted
+              cases happly : EventSourcing.applyEvent (streamSpec input.policy) digestBoundary
+                  (reduce input.policy) before
+                  (nextEvent input.policy before payload).toSemantic with
+              | error e =>
+                  simp only [happly, Except.toOption] at accepted
+                  simp at accepted
+              | ok applied =>
+                  simp only [happly, Except.toOption, Option.some.injEq] at accepted
+                  subst accepted
+                  simp only [outputOf] at noEvent
+                  simp at noEvent
+        · rw [if_neg hcmd] at accepted
+          simp at accepted
+
+/-- ⚑ The consumer-facing form.  `docs/poa/GALLEY-LAYER-CONTRACT.md` §2.6 tells a
+consumer it may rely on the four advantage anchors being carried unchanged across
+an accepted transition.  Until this theorem that was a claim about `reduce`, which
+no consumer can see; this states it about the emitted `OutputWire` against the
+caller's own `claimed_projection`, for BOTH modes. -/
+theorem judge_output_preserves_advantage_anchors {inputBytes : String} {input : InputWire}
+    {now : Nat} {authority : Option AdmittedBetaSponsor} {output : OutputWire}
+    (accepted : judgeInput? inputBytes input now authority = some output) :
+    output.projection.powerRoot = input.claimedProjection.powerRoot ∧
+      output.projection.lootRoot = input.claimedProjection.lootRoot ∧
+      output.projection.canonRoot = input.claimedProjection.canonRoot ∧
+      output.projection.canonRevision = input.claimedProjection.canonRevision := by
+  cases hevent : output.event with
+  | none =>
+      rw [judge_view_projection_is_claimed accepted hevent]
+      exact ⟨rfl, rfl, rfl, rfl⟩
+  | some event =>
+      exact reduce_preserves_advantage_anchors input.policy input.claimedProjection
+        output.projection event.payload (judge_command_projection_is_reduce accepted hevent)
+
 theorem receiptOf_has_no_advantage_delta (event : EventWire) :
     (receiptOf event).powerDelta = 0 ∧ (receiptOf event).lootDelta = 0 ∧
       (receiptOf event).canonRevisionDelta = 0 := by
@@ -1384,6 +1553,9 @@ theorem hostile_tiny_byte_limit_refused :
 #assert_axioms decodePolicy_reencodes
 #assert_axioms reduce_preserves_advantage_anchors
 #assert_axioms reduce_holder_sponsor_bounded
+#assert_axioms judge_command_projection_is_reduce
+#assert_axioms judge_view_projection_is_claimed
+#assert_axioms judge_output_preserves_advantage_anchors
 #assert_axioms AdmittedBetaSponsor.no_chamber_power
 #assert_axioms receiptOf_has_no_advantage_delta
 #assert_axioms no_authority_cannot_form_holder_payload

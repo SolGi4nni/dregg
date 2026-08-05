@@ -22,6 +22,7 @@ import Lean.Data.Json
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SignalTriangulation
 import Dregg2.Games.PathOfAngels.FiniteTables
+import Dregg2.Games.PathOfAngels.HiddenInstance
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.Emit
@@ -339,31 +340,28 @@ private def taggedBytes32 (tag : List Nat) : Digest32 where
 def signalContentSession : Digest32 :=
   taggedBytes32 [80, 79, 65, 45, 83, 73, 71, 45, 49]
 
-/-- The complete precommitted run seed.  The unused 29 bytes are zero by
-construction, so a host cannot grind them after seeing the play transcript. -/
-def signalRunSeed : Digest32 where
-  bytes := List.ofFn fun i : Fin 32 =>
-    match i.val with
-    | 0 => ⟨2, by decide⟩
-    | 1 => ⟨4, by decide⟩
-    | 2 => ⟨1, by decide⟩
-    | _ => 0
-  length_eq := by simp
+/-! ## The instance is drawn per run, and no artifact carries it
 
-/-- The first beta mission's intercepted signal is derived by the authoritative
-Lean function from the exact precommitted seed above. -/
-def signalTarget : SignalTriangulation.Code :=
-  SignalTriangulation.targetFromSeed signalRunSeed
+⚠ `signalRunSeed`, `signalTarget`, `signalTarget_from_runSeed` and
+`signalTarget_literal` are GONE, and so are `relayRunSeed`, `relayBoardIndex`,
+`relayBoard`, `salvageRunSeed` and `salvageSeed` below.
 
-theorem signalTarget_from_runSeed :
-    signalTarget = SignalTriangulation.targetFromSeed signalRunSeed := rfl
+Deleting the descriptor's `"target"` field alone would have closed nothing.  The
+run seed was published in the descriptor AND in the catalog, and
+`targetFromSeed` is public: a reader computed `[2,4,1]` either way.  The seed had
+to stop being a constant, so it did.  `MissionSpec.runSeed` is now supplied per
+run by `HiddenInstance.runSeedFor` from a slot secret the curator commits to
+before the slot opens and opens after it closes.
 
-theorem signalTarget_literal :
-    signalTarget = { low := 2, mid := 4, high := 1 } := by
-  native_decide
+Missions rendered into an artifact therefore carry `UNBOUND_RUN_SEED`, which is
+not a seed and draws nothing.  A judge that is handed it produces the instance of
+the all-zero seed, which is why `Judged.admissionChecks` requires the live seed to
+equal the derivation and refuses this value outright. -/
 
-#assert_axioms signalTarget_from_runSeed
-#assert_compiled signalTarget_literal
+/-- The run-seed slot of a template mission: thirty-two zero bytes, meaning "no
+live draw has happened".  It is emitted nowhere; it exists so `MissionSpec` stays
+total in the catalog. -/
+def UNBOUND_RUN_SEED : Digest32 := taggedBytes32 []
 
 /-- Every legal three-band submission, in stable low/mid/high lexicographic order. -/
 def signalAllCodes : List SignalTriangulation.Code :=
@@ -382,128 +380,175 @@ theorem signalAllCodes_complete (code : SignalTriangulation.Code) :
   rcases code with ⟨low, mid, high⟩
   simp [signalAllCodes]
 
-structure SignalRow where
-  guess : SignalTriangulation.Code
-  exact : Nat
-  present : Nat
-  solved : Bool
-deriving DecidableEq, Repr
+/-! ### The rules, as the WHOLE oracle
 
-/-- One row is computed by the authoritative Lean feedback function. -/
-def signalRow (target guess : SignalTriangulation.Code) : SignalRow :=
-  let f := SignalTriangulation.feedback target guess
-  { guess := guess, exact := f.exact, present := f.present, solved := f.exact == 3 }
+The old descriptor carried `outcomes`: 216 rows of feedback against ONE target,
+with the solving row flagged.  That table is the answer written out.
 
-def signalRows (target : SignalTriangulation.Code) : List SignalRow :=
-  signalAllCodes.map (signalRow target)
+What is emitted instead is the complete function — a 216 by 216 table of feedback
+classes, row indexed by target and column by guess.  It states every rule and
+distinguishes no instance: every row solves at exactly its own index
+(`signal_every_row_solves_at_exactly_its_own_index`), so the table is symmetric
+under which row is live.  A real run learns one class per guess from the judge; a
+practice run reads its own row, because it chose it.
 
-theorem signalRows_length (target : SignalTriangulation.Code) :
-    (signalRows target).length = 216 := by
-  simp [signalRows, signalAllCodes]
+Rows are strings over `class_alphabet`, one character per cell.  A cell the class
+list cannot name renders `?`, and `validateSignalDescriptor` refuses it, so a
+silent fold is impossible. -/
 
-/-- Every emitted row is literally the output of the Lean rules oracle for one
-member of the complete 216-code domain. -/
-theorem signalRows_spec (target : SignalTriangulation.Code) (row : SignalRow)
-    (h : row ∈ signalRows target) :
-    ∃ guess, guess ∈ signalAllCodes ∧
-      row.guess = guess ∧
-      row.exact = (SignalTriangulation.feedback target guess).exact ∧
-      row.present = (SignalTriangulation.feedback target guess).present ∧
-      row.solved = ((SignalTriangulation.feedback target guess).exact == 3) := by
-  simp only [signalRows, List.mem_map] at h
-  obtain ⟨guess, hguess, rfl⟩ := h
-  exact ⟨guess, hguess, rfl, rfl, rfl, rfl⟩
+/-- The realizable feedback classes, generated in canonical `(exact, present)`
+order and filtered by realizability against an all-distinct target — the richest
+instance, which is why filtering against it does not lose a class.
+`signalClassPairs_complete` is the check over the whole 216-by-216 domain. -/
+def signalClassPairs : List (Nat × Nat) :=
+  ((List.range 4).flatMap fun e => (List.range 4).map fun p => (e, p)).filter fun c =>
+    signalAllCodes.any fun g =>
+      let f := SignalTriangulation.feedback { low := 0, mid := 1, high := 2 } g
+      f.exact == c.1 && f.present == c.2
 
-/-- The row's solved bit agrees with the actual step transition from every open
+abbrev SIGNAL_CLASS_ALPHABET : String := "0123456789"
+
+/-- The character naming a feedback class.  `?` for a class the list cannot name;
+the validator refuses that character, so the failure is loud rather than folded. -/
+def signalClassChar (f : SignalTriangulation.Feedback) : Char :=
+  match signalClassPairs.findIdx? (fun c => c.1 == f.exact && c.2 == f.present) with
+  | some i => SIGNAL_CLASS_ALPHABET.toList.getD i '?'
+  | none => '?'
+
+def signalRulesRow (target : SignalTriangulation.Code) : String :=
+  String.ofList (signalAllCodes.map fun g =>
+    signalClassChar (SignalTriangulation.feedback target g))
+
+def signalRulesTable : List String := signalAllCodes.map signalRulesRow
+
+theorem signalClassPairs_length : signalClassPairs.length = 9 := by
+  native_decide
+
+/-- No cell of the emitted table is `?`: the nine classes name every feedback the
+rules can produce over the complete 216-by-216 domain. -/
+theorem signalClassPairs_complete :
+    (signalAllCodes.all fun t => signalAllCodes.all fun g =>
+      signalClassPairs.contains
+        ((SignalTriangulation.feedback t g).exact,
+         (SignalTriangulation.feedback t g).present)) = true := by
+  native_decide
+
+theorem signalRulesTable_length : signalRulesTable.length = 216 := by
+  simp [signalRulesTable, signalAllCodes]
+
+/-- ⚑ Every row of the emitted table solves at exactly one column, and that column
+is the row's own index.  The table therefore names no instance: it is the whole
+function, and no field of it distinguishes the live row. -/
+theorem signal_every_row_solves_at_exactly_its_own_index :
+    (signalAllCodes.all fun t =>
+      (signalAllCodes.filter fun g => (SignalTriangulation.feedback t g).exact == 3).length == 1)
+      = true := by
+  native_decide
+
+/-- The class a cell names agrees with the actual step transition from every open
 state, not merely with a separately rendered equality test. -/
-theorem signalRow_matches_step (cfg : SignalTriangulation.Config)
+theorem signalClass_matches_step (cfg : SignalTriangulation.Config)
     (s : SignalTriangulation.State) (guess : SignalTriangulation.Code)
     (hopen : SignalTriangulation.openB s = true) :
     (SignalTriangulation.step cfg s (.submit guess)).map (·.solved) =
-      some (signalRow cfg.target guess).solved := by
-  simp [SignalTriangulation.step, hopen, signalRow, SignalTriangulation.feedback]
+      some ((SignalTriangulation.feedback cfg.target guess).exact == 3) := by
+  simp [SignalTriangulation.step, hopen]
 
 #assert_compiled signalAllCodes_length
 #assert_compiled signalAllCodes_nodup
 #assert_axioms signalAllCodes_complete
-#assert_axioms signalRows_length
-#assert_axioms signalRows_spec
-#assert_axioms signalRow_matches_step
+#assert_axioms signalRulesTable_length
+#assert_axioms signalClass_matches_step
+#assert_compiled signalClassPairs_length
+#assert_compiled signalClassPairs_complete
+#assert_compiled signal_every_row_solves_at_exactly_its_own_index
 
 private def signalCodeJson (c : SignalTriangulation.Code) : String :=
   "[" ++ toString c.low.val ++ "," ++ toString c.mid.val ++ "," ++
     toString c.high.val ++ "]"
 
-private def signalRowJson (r : SignalRow) : String :=
-  "    {\"guess\":" ++ signalCodeJson r.guess ++
-    ",\"exact\":" ++ toString r.exact ++
-    ",\"present\":" ++ toString r.present ++
-    ",\"solved\":" ++ (if r.solved then "true" else "false") ++ "}"
+private def signalClassJson (c : Nat × Nat) : String :=
+  "{\"exact\":" ++ toString c.1 ++ ",\"present\":" ++ toString c.2 ++
+    ",\"solved\":" ++ jsonBool (c.1 == 3) ++ "}"
+
+/-- The declaration every hidden-instance descriptor carries in place of its
+instance.  It states WHERE the instance comes from and what a client must verify
+before a run is scored; it states no value from which one can be computed.
+
+The per-slot commitment itself is NOT in this artifact and cannot be: the bundle
+is signed once per content epoch and slots open afterwards.  It is published per
+slot in the run opening, whose shape `schemaJson` pins, and a client refuses a run
+whose opening does not carry a curator-signed commitment for the slot it claims. -/
+private def instanceDeclarationJson (disclosure : String) : String :=
+  "{\"kind\":\"per-run-hidden-draw\"" ++
+  ",\"derivation_module\":\"Dregg2.Games.PathOfAngels.HiddenInstance\"" ++
+  ",\"disclosure\":" ++ jsonString disclosure ++
+  ",\"commitment\":{\"published_in\":\"slot-opening\",\"domain\":\"POAC\"," ++
+    "\"preimage\":[\"domain\",\"slot\",\"slot_secret\"]," ++
+    "\"binding_bits\":124,\"opened_after\":\"slot-close\"}" ++
+  ",\"draw\":{\"domain\":\"POAD\"," ++
+    "\"preimage\":[\"domain\",\"purpose\",\"slot\",\"mission_id\",\"epoch\"," ++
+      "\"slot_secret\",\"federation_id\",\"content_session\",\"player_key\"]," ++
+    "\"purposes\":{\"judged\":1,\"practice\":2}}" ++
+  ",\"sponge\":{\"permutation\":\"poseidon2-babybear-w16\",\"width\":16,\"rate\":8," ++
+    "\"capacity\":8,\"lane_bytes\":1,\"lane_reject_at_or_above\":2013265920," ++
+    "\"squeeze_blocks\":6}" ++
+  ",\"practice\":{\"seed\":\"client-chosen\",\"scored\":false," ++
+    "\"purpose_tag\":2,\"transcript_field\":\"mode\"}" ++
+  ",\"operator_knows_instance\":true}"
 
 def signalDescriptorJson : String :=
   "{\n" ++
   "  \"format\":\"POAG1-GAME\",\n" ++
   "  \"schema_version\":1,\n" ++
   "  \"game_id\":\"signal-triangulation\",\n" ++
-  "  \"ruleset\":\"signal-v1\",\n" ++
+  "  \"ruleset\":\"signal-v2\",\n" ++
   "  \"engine_module\":\"Dregg2.Games.PathOfAngels.SignalTriangulation\",\n" ++
   "  \"action_limit\":" ++ toString SignalTriangulation.MAX_TURNS ++ ",\n" ++
-  "  \"run_seed\":" ++ jsonString (bytes32Hex signalRunSeed) ++ ",\n" ++
-  "  \"target\":" ++ signalCodeJson signalTarget ++ ",\n" ++
-  "  \"security\":{\"classification\":\"transparent-beta-demo\"," ++
-    "\"target_visibility\":\"public\",\"competitive_rewards\":false," ++
+  "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
+    "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
   "  \"state\":{\"fields\":[\"turns\",\"solved\",\"last_feedback\"]},\n" ++
   "  \"action\":{\"tag\":\"submit\",\"code\":{\"bands\":3,\"alphabet\":6}},\n" ++
   "  \"feedback\":{\"exact_max\":3,\"present_max\":3,\"exact_plus_present_max\":3," ++
     "\"present_semantics\":\"multiplicity_intersection_minus_exact\",\"solved_when_exact\":3},\n" ++
   "  \"transition\":{\"open_when\":{\"solved\":false,\"turns_lt\":5}," ++
-    "\"on_submit\":{\"lookup\":\"outcomes.guess\",\"turns\":\"increment\"," ++
-    "\"solved\":\"row.solved\",\"last_feedback\":[\"row.exact\",\"row.present\"]}," ++
+    "\"on_submit\":{\"lookup\":\"rules.table[instance][guess]\",\"turns\":\"increment\"," ++
+    "\"solved\":\"class.solved\",\"last_feedback\":[\"class.exact\",\"class.present\"]}," ++
     "\"refuse_when\":[\"solved\",\"turns_gte_action_limit\"]},\n" ++
   "  \"output\":{\"requires\":\"solved\",\"contribution\":\"mission_reward\",\"artifact\":\"mission_artifact\"},\n" ++
-  "  \"outcomes\":" ++ jsonPrettyArray ((signalRows signalTarget).map signalRowJson) ++ "\n" ++
+  "  \"rules\":{\"class_alphabet\":" ++ jsonString SIGNAL_CLASS_ALPHABET ++
+    ",\"classes\":" ++ jsonArray (signalClassPairs.map signalClassJson) ++
+    ",\"codes\":" ++ jsonArray (signalAllCodes.map signalCodeJson) ++
+    ",\"table\":" ++ jsonPrettyArray (signalRulesTable.map fun row => "    " ++ jsonString row) ++
+    "}\n" ++
   "}\n"
 
 /-! ## Finite-table descriptors -/
 
-def relayRunSeed : Digest32 :=
-  taggedBytes32 [82, 69, 76, 65, 89, 45, 49]
+/-! ### Two demonstration secrets, and what they refute
 
-/-- The Salvage run seed lives in `SalvageLock` because the BOARD is drawn from it;
-`Emit` only re-exports it under the name the descriptor uses.  ⚠ Its bytes CHANGED:
-`53 41 4c 56 41 47 45 2d 31` (`SALVAGE-1`, the shape `relayRunSeed` already has)
-where they were `02 53 41 …`.  The dropped leading `2` selected the deleted board's
-seed and named nothing else. -/
-def salvageRunSeed : Digest32 := SalvageLock.PINNED_RUN_SEED
+The descriptor is a constant.  Proving "a constant does not depend on the seed" is
+`rfl` and says nothing, so the claim is made the other way round: with everything
+an artifact carries held FIXED — mission, federation, content session, slot,
+player — two slot secrets draw two different instances.  A reader of the artifact
+therefore cannot name the instance, not even up to the domain.
 
-def salvageSeed : Fin SalvageLock.SEED_SPACE := FiniteTables.salvagePinnedSeed
+These are demonstration values.  They are not the deployment's secrets: a
+deployment secret never enters this module, and there is no function here that
+would render one. -/
 
-/-- Not a literal pinned against its own definition: the claim is that the four
-consuming draws over the run seed RESOLVE, so `salvageSeed` is a drawn board index
-and not the `getD` fallback. -/
-theorem salvageSeed_resolved :
-    SalvageLock.seedFromRunSeed? salvageRunSeed = some salvageSeed :=
-  FiniteTables.salvagePinnedSeed_resolved
+private def demoSecret (tag : Nat) : HiddenInstance.SlotSecret :=
+  ⟨taggedBytes32 [68, 69, 77, 79, tag]⟩
 
-#assert_compiled salvageSeed_resolved
+private def demoPlayer : Digest32 := taggedBytes32 [80, 76, 65, 89, 69, 82]
+private def demoSlot : EpochId := ⟨11⟩
 
-/-- The damage board the precommitted relay seed draws.  `RelayRepair.Config.board_eq`
-requires exactly this board, so the judge cannot be handed a repriced relay. -/
-def relayBoardIndex : Fin 8 := RelayRepair.boardFromRunSeed relayRunSeed
-
-def relayBoard : RelayRepair.Board := RelayRepair.boardAt relayBoardIndex
-
-theorem relayBoardIndex_literal : relayBoardIndex = 2 := by
-  native_decide
-
-/-- Two independent sources agree: the board the run seed draws is the board the
-finite-table counts in `FiniteTables` are pinned against. -/
-theorem relayBoard_is_the_pinned_board : relayBoard = FiniteTables.relayEmittedBoard := by
-  native_decide
-
-#assert_compiled relayBoardIndex_literal
-#assert_compiled relayBoard_is_the_pinned_board
+/-- The live seed a run would draw.  `mission` is the template the catalog carries,
+so every published value is fixed and only the secret moves. -/
+private def demoLiveSeed (mission : MissionSpec) (tag : Nat) : Digest32 :=
+  HiddenInstance.runSeedFor ⟨demoSecret tag, demoSlot, demoPlayer⟩ mission.context
 
 private def relayStateJson (board : RelayRepair.Board) (state : RelayRepair.State) : String :=
   "    {\"id\":" ++ jsonString (FiniteTables.relayStateId state) ++
@@ -538,39 +583,50 @@ private def relayBoardJson (index : Nat) (board : RelayRepair.Board) : String :=
       jsonString (FiniteTables.relayActionId action) ++ ":" ++
         toString (RelayRepair.cost board action)) ++ "}}"
 
-/-- The whole seed space, not merely the drawn board: a client can show the draw, and
-the design gate can check that every board is solvable and that the seed changes which
-routes are affordable.  Publishing it is the design — the damage report is the material
-a routing puzzle is played over. -/
+/-- The whole board FAMILY and no draw.  ⚠ `seed_byte` and `selected` are GONE:
+they said which board was live, and the run seed they were answerable to was
+published beside them, so between them they printed the instance twice.
+
+Relay is a perfect-information puzzle — its player has to read the damage report
+to play at all — so its instance is DISCLOSED, to its own player, at run start,
+through the run opening.  What the split changes is that it is disclosed per run
+instead of printed once for everyone, which is what kills the memorised line.  The
+family stays public because the family is the rules. -/
 private def relayInstanceJson : String :=
-  "{\"seed_byte\":0,\"modulus\":8,\"selected\":" ++ toString relayBoardIndex.val ++
+  "{\"modulus\":8" ++
     ",\"source\":\"alpha\",\"sink\":\"omega\"" ++
+    ",\"draw\":" ++ instanceDeclarationJson "per-run-open" ++
     ",\"boards\":" ++ jsonPrettyArray
       ((List.finRange 8).map fun index =>
         relayBoardJson index.val (RelayRepair.boardAt index)) ++
     "}"
 
+private def relayMachineJson (index : Fin 8) : String :=
+  let board := RelayRepair.boardAt index
+  let states := FiniteTables.relayStates board
+  let transitions := FiniteTables.relayTransitions board
+  "    {\"board\":" ++ toString index.val ++
+    ",\"states\":" ++ jsonPrettyArray (states.map (relayStateJson board)) ++
+    ",\"transitions\":" ++
+      jsonPrettyArray (transitions.map (relayTransitionJson board)) ++ "}"
+
 def relayDescriptorJson : String :=
-  let states := FiniteTables.relayStates relayBoard
-  let transitions := FiniteTables.relayTransitions relayBoard
   "{\n" ++
   "  \"format\":\"POAG1-GAME\",\n" ++
   "  \"schema_version\":1,\n" ++
   "  \"game_id\":\"relay-repair\",\n" ++
-  "  \"ruleset\":\"relay-v2\",\n" ++
+  "  \"ruleset\":\"relay-v3\",\n" ++
   "  \"engine_module\":\"Dregg2.Games.PathOfAngels.RelayRepair\",\n" ++
   "  \"action_limit\":" ++ toString RelayRepair.MAX_TURNS ++ ",\n" ++
-  "  \"run_seed\":" ++ jsonString (bytes32Hex relayRunSeed) ++ ",\n" ++
-  "  \"security\":{\"classification\":\"transparent-beta-demo\"," ++
-    "\"target_visibility\":\"public\",\"competitive_rewards\":false," ++
+  "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
+    "\"instance_visibility\":\"per-run-open\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
   "  \"instance\":" ++ relayInstanceJson ++ ",\n" ++
   "  \"state_machine\":{\n" ++
   "    \"initial_state\":" ++ jsonString (FiniteTables.relayStateId RelayRepair.initialState) ++ ",\n" ++
-  "    \"states\":" ++ jsonPrettyArray (states.map (relayStateJson relayBoard)) ++ ",\n" ++
   "    \"actions\":" ++ jsonPrettyArray (FiniteTables.relayActions.map relayActionJson) ++ ",\n" ++
-  "    \"transitions\":" ++
-    jsonPrettyArray (transitions.map (relayTransitionJson relayBoard)) ++ "\n" ++
+  "    \"machines\":" ++
+    jsonPrettyArray ((List.finRange 8).map relayMachineJson) ++ "\n" ++
   "  },\n" ++
   "  \"output\":{\"requires\":\"terminal\",\"contribution\":\"mission_reward\"," ++
     "\"artifact\":\"mission_artifact\"}\n" ++
@@ -588,76 +644,128 @@ private def salvageStateJson (state : SalvageLock.State) : String :=
     ",\"turns\":" ++ toString state.turns ++
     ",\"solved\":" ++ jsonBool (SalvageLock.solvedB state) ++ "}}"
 
-private def salvageActionJson (seed : Fin SalvageLock.SEED_SPACE)
-    (action : SalvageLock.Action) : String :=
-  let slot := SalvageLock.actionSlot action
-  let glyph := SalvageLock.glyphAt seed slot
+/-- ⚠ `glyph_id` and `glyph_label` are GONE.  They named the glyph under each
+plate, which is the whole board.  Removing them alone would have hidden nothing —
+the successors said which exposures clear — which is why the transition rows below
+changed shape at the same time. -/
+private def salvageActionJson (action : SalvageLock.Action) : String :=
   "    {\"id\":" ++ jsonString (FiniteTables.salvageActionId action) ++
     ",\"label\":" ++ jsonString (FiniteTables.salvageActionLabel action) ++
-    ",\"slot\":" ++ toString slot.val ++
-    ",\"glyph_id\":" ++ toString glyph.val ++
-    ",\"glyph_label\":" ++ jsonString (FiniteTables.salvageGlyphLabel glyph) ++ "}"
+    ",\"slot\":" ++ toString (SalvageLock.actionSlot action).val ++ "}"
 
-private def salvageTransitionJson (transition : FiniteTables.SalvageTransition) : String :=
-  let nextId := transition.next.map FiniteTables.salvageStateId
-  let reason := FiniteTables.salvageRefusalReason transition.state transition.action
-  "    {\"state\":" ++ jsonString (FiniteTables.salvageStateId transition.state) ++
-    ",\"action\":" ++ jsonString (FiniteTables.salvageActionId transition.action) ++
-    ",\"verdict\":" ++ jsonString (if nextId.isSome then "accept" else "refuse") ++
-    ",\"next\":" ++ (match nextId with | none => "null" | some id => jsonString id) ++
-    ",\"reason\":" ++ (match reason with | none => "null" | some value => jsonString value) ++ "}"
+/-- A parametric row.  `refuse` carries a reason and no successor; `accept` is a
+first exposure and carries one; `resolve` is a second exposure and carries BOTH,
+so the row states the rule and the judge's single bit states the instance. -/
+private def salvageTransitionJson (transition : FiniteTables.ParametricTransition) : String :=
+  let stateId := jsonString (FiniteTables.salvageStateId transition.state)
+  let actionId := jsonString (FiniteTables.salvageActionId transition.action)
+  let head :=
+    "    {\"state\":" ++ stateId ++ ",\"action\":" ++ actionId ++ ",\"verdict\":"
+  match transition.row with
+  | .refuse reason =>
+      head ++ "\"refuse\",\"reason\":" ++ jsonString reason ++
+        ",\"next\":null,\"on_match\":null,\"on_mismatch\":null}"
+  | .advance next =>
+      head ++ "\"accept\",\"reason\":null,\"next\":" ++
+        jsonString (FiniteTables.salvageStateId next) ++
+        ",\"on_match\":null,\"on_mismatch\":null}"
+  | .resolve onMatch onMismatch =>
+      head ++ "\"resolve\",\"reason\":null,\"next\":null,\"on_match\":" ++
+        jsonString (FiniteTables.salvageStateId onMatch) ++
+        ",\"on_mismatch\":" ++ jsonString (FiniteTables.salvageStateId onMismatch) ++ "}"
+
+/-- The whole ninety-board FAMILY, emitted so a browser can answer its OWN
+practice run without carrying a second copy of `pairsOf` and `glyphNamesOf`.
+
+Publishing the family is not publishing the instance.  The family was already
+public — "six plates carrying two copies of each of three glyphs" determines it
+completely, and `SalvageLock.seed_space_is_exactly_the_two_of_each_boards` proves
+the ninety are exactly those boards.  What a reader cannot do is say which one a
+given run drew.
+
+A practice run picks a row here under a client-chosen seed and answers its own
+match queries from it.  A judged run never touches this block: its bit comes from
+the judge. -/
+private def salvagePracticeBoardsJson : String :=
+  jsonPrettyArray ((List.finRange SalvageLock.SEED_SPACE).map fun seed =>
+    "    " ++ jsonArray ((SalvageLock.boardRow seed).map (toString ·.val)))
 
 def salvageDescriptorJson : String :=
-  let states := FiniteTables.salvageStates salvageSeed
+  let states := FiniteTables.salvageParametricStates
   let actions := FiniteTables.salvageActions
-  let transitions := FiniteTables.salvageTransitions salvageSeed
+  let transitions := FiniteTables.salvageParametricTransitions
   "{\n" ++
   "  \"format\":\"POAG1-GAME\",\n" ++
   "  \"schema_version\":1,\n" ++
   "  \"game_id\":\"salvage-lock\",\n" ++
-  "  \"ruleset\":\"salvage-v1\",\n" ++
+  "  \"ruleset\":\"salvage-v2\",\n" ++
   "  \"engine_module\":\"Dregg2.Games.PathOfAngels.SalvageLock\",\n" ++
   "  \"action_limit\":" ++ toString SalvageLock.MAX_TURNS ++ ",\n" ++
-  "  \"run_seed\":" ++ jsonString (bytes32Hex salvageRunSeed) ++ ",\n" ++
-  "  \"security\":{\"classification\":\"transparent-beta-demo\"," ++
-    "\"target_visibility\":\"public\",\"competitive_rewards\":false," ++
+  "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
+    "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
   "  \"state_machine\":{\n" ++
   "    \"initial_state\":" ++ jsonString (FiniteTables.salvageStateId SalvageLock.initialState) ++ ",\n" ++
   "    \"states\":" ++ jsonPrettyArray (states.map salvageStateJson) ++ ",\n" ++
-  "    \"actions\":" ++ jsonPrettyArray (actions.map (salvageActionJson salvageSeed)) ++ ",\n" ++
+  "    \"actions\":" ++ jsonPrettyArray (actions.map salvageActionJson) ++ ",\n" ++
   "    \"transitions\":" ++ jsonPrettyArray (transitions.map salvageTransitionJson) ++ "\n" ++
   "  },\n" ++
+  "  \"practice\":{\"instance_space\":" ++ toString SalvageLock.SEED_SPACE ++
+    ",\"instance_shape\":\"two copies of each of three glyphs over six plates\"" ++
+    ",\"scored\":false" ++
+    ",\"boards\":" ++ salvagePracticeBoardsJson ++ "},\n" ++
   "  \"output\":{\"requires\":\"terminal\",\"contribution\":\"mission_reward\"," ++
     "\"artifact\":\"mission_artifact\"}\n" ++
   "}\n"
 
 /-! Strict schema checks for the exact finite-table wire. -/
 
-private def validateFiniteDescriptorCommon (extra : List String) (j : Json) :
-    Except String Json := do
-  exactKeys j (["format", "schema_version", "game_id", "ruleset", "engine_module",
-    "action_limit", "run_seed", "security", "state_machine", "output"] ++ extra)
-  let security ← j.getObjVal? "security"
-  exactKeys security ["classification", "target_visibility", "competitive_rewards",
-    "economic_rewards"]
-  let machine ← j.getObjVal? "state_machine"
-  exactKeys machine ["initial_state", "states", "actions", "transitions"]
-  let output ← j.getObjVal? "output"
-  exactKeys output ["requires", "contribution", "artifact"]
-  pure machine
+/-! ⚠ `run_seed` is no longer a descriptor key and `target_visibility` is no longer
+a security key; `instance` is now required of every game.  The validators below
+refuse the old shape rather than reinterpreting it, so a stale artifact fails to
+load instead of being read as a hidden-instance one. -/
 
-private def validateTransitionObjects (machine : Json) : Except String Unit := do
+/-- The instance declaration is schema, not a free-form annex.  A descriptor that
+carries no declaration, or one whose commitment or draw block has drifted, is a
+parse error — this is the field that says the answer is elsewhere, so it is not
+allowed to be optional. -/
+private def validateInstanceDeclaration (block : Json) (disclosure : String) :
+    Except String Unit := do
+  exactKeys block ["kind", "derivation_module", "disclosure", "commitment", "draw",
+    "sponge", "practice", "operator_knows_instance"]
+  if (← block.getObjValAs? String "kind") != "per-run-hidden-draw" then
+    throw "POAG1 instance declaration is not a per-run hidden draw"
+  if (← block.getObjValAs? String "disclosure") != disclosure then
+    throw s!"POAG1 instance disclosure is not {disclosure}"
+  exactKeys (← block.getObjVal? "commitment")
+    ["published_in", "domain", "preimage", "binding_bits", "opened_after"]
+  exactKeys (← block.getObjVal? "draw") ["domain", "preimage", "purposes"]
+  exactKeys (← block.getObjVal? "sponge")
+    ["permutation", "width", "rate", "capacity", "lane_bytes",
+     "lane_reject_at_or_above", "squeeze_blocks"]
+  exactKeys (← block.getObjVal? "practice")
+    ["seed", "scored", "purpose_tag", "transcript_field"]
+
+private def validateHiddenSecurity (j : Json) (visibility : String) :
+    Except String Unit := do
+  let security ← j.getObjVal? "security"
+  exactKeys security ["classification", "instance_visibility", "competitive_rewards",
+    "economic_rewards"]
+  if (← security.getObjValAs? String "instance_visibility") != visibility then
+    throw s!"POAG1 descriptor does not declare instance_visibility {visibility}"
+
+private def validateRelayTransitions (machine : Json) : Except String Unit := do
   let transitions ← (machine.getObjVal? "transitions") >>= Json.getArr?
   for transition in transitions do
     exactKeys transition ["state", "action", "verdict", "next", "reason"]
 
-/-- The relay instance block is schema, not a free-form annex: exactly the six keys,
-exactly one board object per seed class, and every board pricing exactly the emitted
-links.  A board added, dropped, renamed or left unpriced is a parse error. -/
+/-- ⚠ `seed_byte` and `selected` are refused, not ignored.  A relay descriptor that
+still names a drawn board is the old shape and must not load. -/
 private def validateRelayInstance (document : Json) : Except String Unit := do
   let block ← document.getObjVal? "instance"
-  exactKeys block ["seed_byte", "modulus", "selected", "source", "sink", "boards"]
+  exactKeys block ["modulus", "source", "sink", "draw", "boards"]
+  validateInstanceDeclaration (← block.getObjVal? "draw") "per-run-open"
   let modulus ← block.getObjValAs? Nat "modulus"
   let boards ← (block.getObjVal? "boards") >>= Json.getArr?
   if boards.size != modulus then
@@ -669,28 +777,84 @@ private def validateRelayInstance (document : Json) : Except String Unit := do
 
 def validateRelayDescriptor (bytes : String) : Except String Unit := do
   let document ← Json.parse bytes
-  let machine ← validateFiniteDescriptorCommon ["instance"] document
+  -- Relay's declaration lives inside `instance.draw`, so the outer instance block
+  -- is checked by `validateRelayInstance` and the common check is told the shape.
+  exactKeys document ["format", "schema_version", "game_id", "ruleset", "engine_module",
+    "action_limit", "security", "instance", "state_machine", "output"]
+  validateHiddenSecurity document "per-run-open"
   validateRelayInstance document
-  let states ← (machine.getObjVal? "states") >>= Json.getArr?
-  for state in states do
-    exactKeys state ["id", "terminal", "view"]
-    exactKeys (← state.getObjVal? "view")
-      ["installed", "spares", "turns", "solved", "stranded"]
+  let machine ← document.getObjVal? "state_machine"
+  exactKeys machine ["initial_state", "actions", "machines"]
+  exactKeys (← document.getObjVal? "output") ["requires", "contribution", "artifact"]
   let actions ← (machine.getObjVal? "actions") >>= Json.getArr?
   for action in actions do
     exactKeys action ["id", "label", "from", "to"]
-  validateTransitionObjects machine
+  let machines ← (machine.getObjVal? "machines") >>= Json.getArr?
+  if machines.size != 8 then
+    throw s!"POAG1 relay emits {machines.size} board machines, expected 8"
+  for board in machines do
+    exactKeys board ["board", "states", "transitions"]
+    let states ← (board.getObjVal? "states") >>= Json.getArr?
+    for state in states do
+      exactKeys state ["id", "terminal", "view"]
+      exactKeys (← state.getObjVal? "view")
+        ["installed", "spares", "turns", "solved", "stranded"]
+    validateRelayTransitions board
 
 def validateSalvageDescriptor (bytes : String) : Except String Unit := do
-  let machine ← validateFiniteDescriptorCommon [] (← Json.parse bytes)
+  let document ← Json.parse bytes
+  exactKeys document ["format", "schema_version", "game_id", "ruleset", "engine_module",
+    "action_limit", "security", "instance", "state_machine", "practice", "output"]
+  validateHiddenSecurity document "oracle-only"
+  validateInstanceDeclaration (← document.getObjVal? "instance") "oracle-only"
+  let practice ← document.getObjVal? "practice"
+  exactKeys practice ["instance_space", "instance_shape", "scored", "boards"]
+  let space ← practice.getObjValAs? Nat "instance_space"
+  let boards ← (practice.getObjVal? "boards") >>= Json.getArr?
+  if boards.size != space then
+    throw s!"POAG1 salvage practice block emits {boards.size} boards for a space of {space}"
+  let machine ← document.getObjVal? "state_machine"
+  exactKeys machine ["initial_state", "states", "actions", "transitions"]
+  exactKeys (← document.getObjVal? "output") ["requires", "contribution", "artifact"]
   let states ← (machine.getObjVal? "states") >>= Json.getArr?
   for state in states do
     exactKeys state ["id", "terminal", "view"]
     exactKeys (← state.getObjVal? "view") ["cleared", "exposed", "turns", "solved"]
   let actions ← (machine.getObjVal? "actions") >>= Json.getArr?
   for action in actions do
-    exactKeys action ["id", "label", "slot", "glyph_id", "glyph_label"]
-  validateTransitionObjects machine
+    -- No `glyph_id`: an action row that carries one is the old shape and refuses.
+    exactKeys action ["id", "label", "slot"]
+  let transitions ← (machine.getObjVal? "transitions") >>= Json.getArr?
+  for transition in transitions do
+    exactKeys transition ["state", "action", "verdict", "reason", "next",
+      "on_match", "on_mismatch"]
+
+/-- Signal's descriptor is validated the same way, with the rules table checked for
+the one thing that could silently fold: an unnameable class rendering as `?`. -/
+def validateSignalDescriptor (bytes : String) : Except String Unit := do
+  let document ← Json.parse bytes
+  exactKeys document ["format", "schema_version", "game_id", "ruleset", "engine_module",
+    "action_limit", "security", "instance", "state", "action", "feedback", "transition",
+    "output", "rules"]
+  validateHiddenSecurity document "oracle-only"
+  validateInstanceDeclaration (← document.getObjVal? "instance") "oracle-only"
+  let rules ← document.getObjVal? "rules"
+  exactKeys rules ["class_alphabet", "classes", "codes", "table"]
+  let alphabet ← rules.getObjValAs? String "class_alphabet"
+  let classes ← (rules.getObjVal? "classes") >>= Json.getArr?
+  for cls in classes do
+    exactKeys cls ["exact", "present", "solved"]
+  let codes ← (rules.getObjVal? "codes") >>= Json.getArr?
+  let table ← (rules.getObjVal? "table") >>= Json.getArr?
+  if table.size != codes.size then
+    throw s!"POAG1 signal rules table has {table.size} rows for {codes.size} codes"
+  let allowed := (alphabet.toList.take classes.size)
+  for row in table do
+    let text ← row.getStr?
+    if text.length != codes.size then
+      throw "POAG1 signal rules row is not one cell per code"
+    if !text.toList.all (fun c => allowed.contains c) then
+      throw "POAG1 signal rules table names a class outside the declared alphabet"
 
 theorem relayDescriptor_exact_schema : validateRelayDescriptor relayDescriptorJson = .ok () := by
   native_decide
@@ -699,8 +863,13 @@ theorem salvageDescriptor_exact_schema :
     validateSalvageDescriptor salvageDescriptorJson = .ok () := by
   native_decide
 
+theorem signalDescriptor_exact_schema :
+    validateSignalDescriptor signalDescriptorJson = .ok () := by
+  native_decide
+
 #assert_compiled relayDescriptor_exact_schema
 #assert_compiled salvageDescriptor_exact_schema
+#assert_compiled signalDescriptor_exact_schema
 
 def signalBudget : ContributionBudget :=
   { intel := ⟨25, by decide⟩
@@ -730,7 +899,11 @@ def signalArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
     sourceDigest := sourceDigest
     contentDigest := contentDigest }
 
-def signalMission (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+/-- ⚠ `runSeed` is now a PARAMETER.  Missions rendered into the catalog are given
+`UNBOUND_RUN_SEED`; a judge is given `HiddenInstance.runSeedFor draw mission`.
+There is no longer a mission whose seed is a constant of this module. -/
+def signalMission (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     MissionSpec :=
   { missionId := ⟨1⟩
     artifact := signalArtifact sourceDigest contentDigest
@@ -739,7 +912,7 @@ def signalMission (federationId sourceDigest contentDigest contentRoot activatio
     contentRoot := contentRoot
     activationDigest := activationDigest
     contentSession := signalContentSession
-    runSeed := signalRunSeed
+    runSeed := runSeed
     budget := signalBudget
     allowedRelics := {⟨1⟩}
     privacy := .public
@@ -747,43 +920,59 @@ def signalMission (federationId sourceDigest contentDigest contentRoot activatio
     artifact_matches := rfl
     allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
 
-theorem signalReward_accepted
+theorem signalReward_accepted (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    (signalMission federationId sourceDigest contentDigest contentRoot activationDigest).acceptsContribution
-      signalReward = true := by
+    (signalMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).acceptsContribution signalReward = true := by
   apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
   constructor
   · exact signalReward_within
   · simp [signalMission, signalReward]
 
-def signalConfig
+def signalConfig (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     SignalTriangulation.Config :=
-  { target := signalTarget
-    mission := signalMission federationId sourceDigest contentDigest contentRoot activationDigest
-    reward := signalReward
-    reward_accepted := signalReward_accepted federationId sourceDigest contentDigest contentRoot
+  { target := SignalTriangulation.targetFromSeed runSeed
+    mission := signalMission runSeed federationId sourceDigest contentDigest contentRoot
       activationDigest
+    reward := signalReward
+    reward_accepted := signalReward_accepted runSeed federationId sourceDigest contentDigest
+      contentRoot activationDigest
     target_eq := rfl }
 
-theorem signalConfig_uses_precommitted_seed
+/-- The judged target is the one the LIVE seed draws, for whatever seed the judge
+was handed.  The kernel binding did not change; the seed did. -/
+theorem signalConfig_target_from_live_seed (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    (signalConfig federationId sourceDigest contentDigest contentRoot activationDigest).mission.runSeed =
-      signalRunSeed := rfl
-
-theorem signalConfig_target_from_precommitted_seed
-    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    (signalConfig federationId sourceDigest contentDigest contentRoot activationDigest).target =
+    (signalConfig runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).target =
       SignalTriangulation.targetFromSeed
-        (signalConfig federationId sourceDigest contentDigest contentRoot activationDigest).mission.runSeed := rfl
+        (signalConfig runSeed federationId sourceDigest contentDigest contentRoot
+          activationDigest).mission.runSeed := rfl
+
+/-- ⚑ **The artifact does not determine the code.**  Everything a client fetches is
+held fixed here — the same template mission, the same federation, the same content
+session, the same slot, the same player — and two slot secrets still draw two
+different targets.  This is the statement `signalTarget_literal` could not make,
+because there the published seed WAS the answer. -/
+theorem signalDescriptor_does_not_determine_the_target :
+    SignalTriangulation.targetFromSeed
+        (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 1) ≠
+      SignalTriangulation.targetFromSeed
+        (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 2) := by
+  native_decide
 
 #assert_axioms signalReward_accepted
-#assert_axioms signalConfig_uses_precommitted_seed
-#assert_axioms signalConfig_target_from_precommitted_seed
+#assert_axioms signalConfig_target_from_live_seed
+#assert_compiled signalDescriptor_does_not_determine_the_target
 
-def signalPreview
-    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) : Option WorldState :=
-  applyContribution (signalMission federationId sourceDigest contentDigest contentRoot activationDigest)
+def signalPreview (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option WorldState :=
+  applyContribution
+    (signalMission runSeed federationId sourceDigest contentDigest contentRoot activationDigest)
     signalReward
     WorldState.empty
 
@@ -816,7 +1005,8 @@ def relayArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
     sourceDigest
     contentDigest }
 
-def relayMission (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+def relayMission (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     MissionSpec :=
   { missionId := ⟨2⟩
     artifact := relayArtifact sourceDigest contentDigest
@@ -825,7 +1015,7 @@ def relayMission (federationId sourceDigest contentDigest contentRoot activation
     contentRoot
     activationDigest
     contentSession := relayContentSession
-    runSeed := relayRunSeed
+    runSeed := runSeed
     budget := relayBudget
     allowedRelics := {⟨2⟩}
     privacy := .public
@@ -833,35 +1023,52 @@ def relayMission (federationId sourceDigest contentDigest contentRoot activation
     artifact_matches := rfl
     allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
 
-theorem relayReward_accepted
+theorem relayReward_accepted (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    (relayMission federationId sourceDigest contentDigest contentRoot activationDigest).acceptsContribution
-      relayReward = true := by
+    (relayMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).acceptsContribution relayReward = true := by
   apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
   exact ⟨relayReward_within, by simp [relayMission, relayReward]⟩
 
-def relayConfig
+def relayConfig (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     RelayRepair.Config :=
-  { board := relayBoard
-    mission := relayMission federationId sourceDigest contentDigest contentRoot activationDigest
-    reward := relayReward
-    reward_accepted := relayReward_accepted federationId sourceDigest contentDigest contentRoot
+  { board := RelayRepair.boardAt (RelayRepair.boardFromRunSeed runSeed)
+    mission := relayMission runSeed federationId sourceDigest contentDigest contentRoot
       activationDigest
+    reward := relayReward
+    reward_accepted := relayReward_accepted runSeed federationId sourceDigest contentDigest
+      contentRoot activationDigest
     board_eq := rfl }
 
-/-- The judged board is the emitted board, and both are the one the precommitted seed
-draws.  A host cannot judge a run on a cheaper relay than the client was shown. -/
-theorem relayConfig_board_is_emitted
+/-- The judged board is the one the LIVE seed draws.  A host still cannot reprice
+the relay after a transcript; what changed is that the client is not shown which
+board is live until its own run opens. -/
+theorem relayConfig_board_is_the_live_draw (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    (relayConfig federationId sourceDigest contentDigest contentRoot activationDigest).board =
-      RelayRepair.boardAt (RelayRepair.boardFromRunSeed relayRunSeed) := rfl
+    (relayConfig runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).board =
+      RelayRepair.boardAt (RelayRepair.boardFromRunSeed runSeed) := rfl
 
-#assert_axioms relayConfig_board_is_emitted
+/-- ⚑ **The artifact does not determine the board.**  Eight demonstration secrets
+against the same published template draw more than one board, so the emitted
+family of eight is not a family of one wearing eight hats. -/
+theorem relayDescriptor_does_not_determine_the_board :
+    (((List.range 8).map fun tag =>
+      (RelayRepair.boardFromRunSeed
+        (demoLiveSeed (relayMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)).val).eraseDups.length
+      != 1) = true := by
+  native_decide
 
-def relayPreview
-    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) : Option WorldState :=
-  applyContribution (relayMission federationId sourceDigest contentDigest contentRoot activationDigest)
+#assert_axioms relayConfig_board_is_the_live_draw
+#assert_compiled relayDescriptor_does_not_determine_the_board
+
+def relayPreview (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option WorldState :=
+  applyContribution
+    (relayMission runSeed federationId sourceDigest contentDigest contentRoot activationDigest)
     relayReward WorldState.empty
 
 def salvageContentSession : Digest32 :=
@@ -893,7 +1100,8 @@ def salvageArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
     sourceDigest
     contentDigest }
 
-def salvageMission (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+def salvageMission (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     MissionSpec :=
   { missionId := ⟨3⟩
     artifact := salvageArtifact sourceDigest contentDigest
@@ -902,7 +1110,7 @@ def salvageMission (federationId sourceDigest contentDigest contentRoot activati
     contentRoot
     activationDigest
     contentSession := salvageContentSession
-    runSeed := salvageRunSeed
+    runSeed := runSeed
     budget := salvageBudget
     allowedRelics := {⟨3⟩}
     privacy := .public
@@ -910,32 +1118,53 @@ def salvageMission (federationId sourceDigest contentDigest contentRoot activati
     artifact_matches := rfl
     allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
 
-theorem salvageReward_accepted
+theorem salvageReward_accepted (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    (salvageMission federationId sourceDigest contentDigest contentRoot activationDigest).acceptsContribution
-      salvageReward = true := by
+    (salvageMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).acceptsContribution salvageReward = true := by
   apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
   exact ⟨salvageReward_within, by simp [salvageMission, salvageReward]⟩
 
-def salvageConfig
+/-- An `Option`, because a live seed whose byte stream is exhausted before the four
+consuming draws finish names NO board.  That case refuses rather than folding to
+board zero — the same discipline `SeedDraw` applies one level down. -/
+def salvageConfig? (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    SalvageLock.Config :=
-  { seed := salvageSeed
-    mission := salvageMission federationId sourceDigest contentDigest contentRoot activationDigest
-    reward := salvageReward
-    reward_accepted := salvageReward_accepted federationId sourceDigest contentDigest contentRoot
-      activationDigest
-    seed_eq := salvageSeed_resolved.symm }
+    Option SalvageLock.Config :=
+  match hseed : SalvageLock.seedFromRunSeed? runSeed with
+  | none => none
+  | some seed =>
+      some
+        { seed := seed
+          mission := salvageMission runSeed federationId sourceDigest contentDigest contentRoot
+            activationDigest
+          reward := salvageReward
+          reward_accepted := salvageReward_accepted runSeed federationId sourceDigest
+            contentDigest contentRoot activationDigest
+          seed_eq := hseed.symm }
 
-def salvagePreview
-    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) : Option WorldState :=
-  applyContribution (salvageMission federationId sourceDigest contentDigest contentRoot activationDigest)
+/-- ⚑ **The artifact does not determine the board.**  Eight demonstration secrets
+against the same published template draw more than one of the ninety boards. -/
+theorem salvageDescriptor_does_not_determine_the_board :
+    (((List.range 8).map fun tag =>
+      (SalvageLock.seedFromRunSeed?
+        (demoLiveSeed (salvageMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)).map
+            Fin.val).eraseDups.length != 1) = true := by
+  native_decide
+
+def salvagePreview (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option WorldState :=
+  applyContribution
+    (salvageMission runSeed federationId sourceDigest contentDigest contentRoot activationDigest)
     salvageReward WorldState.empty
 
 #assert_axioms relayReward_within
 #assert_axioms relayReward_accepted
 #assert_axioms salvageReward_within
 #assert_axioms salvageReward_accepted
+#assert_compiled salvageDescriptor_does_not_determine_the_board
 
 structure GameContentDigests where
   signal : Digest32
@@ -944,7 +1173,8 @@ structure GameContentDigests where
 deriving DecidableEq
 
 private def missionCatalogJson (mission : MissionSpec) (title engineModule ruleset : String)
-    (actionLimit : Nat) (allowedRelics : List RelicId) (descriptorPath : String) : String :=
+    (actionLimit : Nat) (allowedRelics : List RelicId) (descriptorPath : String)
+    (disclosure : String) : String :=
   "    {\"mission_id\":" ++ toString mission.missionId.value ++
   ",\"title\":" ++ jsonString title ++
   ",\"engine_module\":" ++ jsonString engineModule ++
@@ -959,7 +1189,14 @@ private def missionCatalogJson (mission : MissionSpec) (title engineModule rules
   ",\"activation\":{\"state\":\"detached-signature-required\"," ++
     "\"digest_source\":\"POA-CONTENT-EPOCH-SIGNATURE-V1\"}" ++
   ",\"content_session\":" ++ jsonString (bytes32Hex mission.contentSession) ++
-  ",\"run_seed\":" ++ jsonString (bytes32Hex mission.runSeed) ++
+  /- ⚠ `run_seed` is GONE from the catalog.  It named the instance of every game
+  to anyone who fetched the bundle, which is the hole this split closes; a value
+  that changes per run cannot live in an artifact signed once per content epoch.
+  What is published instead is where the seed comes from. -/
+  ",\"instance\":{\"binding\":\"per-run-hidden-draw\",\"disclosure\":" ++
+    jsonString disclosure ++
+    ",\"derivation_module\":\"Dregg2.Games.PathOfAngels.HiddenInstance\"" ++
+    ",\"commitment_published_in\":\"slot-opening\"}" ++
   ",\"budget\":" ++ contributionBudgetJson mission.budget ++
   ",\"allowed_relics\":" ++ jsonArray (allowedRelics.map (toString ·.value)) ++
   ",\"descriptor_path\":" ++ jsonString descriptorPath ++
@@ -969,7 +1206,6 @@ private def previewFixtureJson (id : String) (mission : MissionSpec) (reward : C
     (relics : List RelicId) (preview : Option WorldState) : String :=
   "    {\"id\":" ++ jsonString id ++
   ",\"mission_id\":" ++ toString mission.missionId.value ++
-  ",\"run_seed\":" ++ jsonString (bytes32Hex mission.runSeed) ++
   ",\"base_world\":" ++ worldStateJsonWith WorldState.empty [] [] ++
   ",\"contribution\":" ++ contributionJsonWithRelics reward relics ++
   ",\"preview_world\":" ++
@@ -983,24 +1219,25 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
   finished manifest, so it cannot occur inside that manifest without a hash cycle.
   Runtime activation replaces this zero only after signature verification. -/
   let inactiveActivation : Digest32 := taggedBytes32 []
-  let signal := signalMission federationId sourceDigest digests.signal contentRoot inactiveActivation
-  let relay := relayMission federationId sourceDigest digests.relay contentRoot inactiveActivation
-  let salvage := salvageMission federationId sourceDigest digests.salvage contentRoot inactiveActivation
+  let unbound := UNBOUND_RUN_SEED
+  let signal := signalMission unbound federationId sourceDigest digests.signal contentRoot inactiveActivation
+  let relay := relayMission unbound federationId sourceDigest digests.relay contentRoot inactiveActivation
+  let salvage := salvageMission unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation
   let missions :=
     [ missionCatalogJson signal "Signal Triangulation"
-        "Dregg2.Games.PathOfAngels.SignalTriangulation" "signal-v1"
-        SignalTriangulation.MAX_TURNS [⟨1⟩] "games/signal-triangulation.json"
+        "Dregg2.Games.PathOfAngels.SignalTriangulation" "signal-v2"
+        SignalTriangulation.MAX_TURNS [⟨1⟩] "games/signal-triangulation.json" "oracle-only"
     , missionCatalogJson relay "Relay Repair" "Dregg2.Games.PathOfAngels.RelayRepair"
-        "relay-v2" RelayRepair.MAX_TURNS [⟨2⟩] "games/relay-repair.json"
+        "relay-v3" RelayRepair.MAX_TURNS [⟨2⟩] "games/relay-repair.json" "per-run-open"
     , missionCatalogJson salvage "Salvage Lock" "Dregg2.Games.PathOfAngels.SalvageLock"
-        "salvage-v1" SalvageLock.MAX_TURNS [⟨3⟩] "games/salvage-lock.json" ]
+        "salvage-v2" SalvageLock.MAX_TURNS [⟨3⟩] "games/salvage-lock.json" "oracle-only" ]
   let fixtures :=
     [ previewFixtureJson "signal-solved-preview-v1" signal signalReward [⟨1⟩]
-        (signalPreview federationId sourceDigest digests.signal contentRoot inactiveActivation)
+        (signalPreview unbound federationId sourceDigest digests.signal contentRoot inactiveActivation)
     , previewFixtureJson "relay-solved-preview-v1" relay relayReward [⟨2⟩]
-        (relayPreview federationId sourceDigest digests.relay contentRoot inactiveActivation)
+        (relayPreview unbound federationId sourceDigest digests.relay contentRoot inactiveActivation)
     , previewFixtureJson "salvage-solved-preview-v1" salvage salvageReward [⟨3⟩]
-        (salvagePreview federationId sourceDigest digests.salvage contentRoot inactiveActivation) ]
+        (salvagePreview unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation) ]
   "{\n" ++
   "  \"format\":\"POAG1-CATALOG\",\n" ++
   "  \"schema_version\":1,\n" ++
@@ -1029,6 +1266,29 @@ def schemaJson : String :=
     "\"domain\":\"pathofangels.network/activation-digest/v1\\u0000\"," ++
     "\"framing\":\"schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64\"," ++
     "\"location\":\"detached verified activation; excluded from manifest preimage\"},\n" ++
+  /- The instance a game is played against is derived per run and appears in no
+  artifact.  What a client must be handed before a scored run, and what it must
+  refuse without, is pinned here.  The bundle is signed once per content epoch and
+  slots open afterwards, so a per-slot commitment cannot live inside it: it is
+  published in the slot opening below, curator-signed, and a client that accepts a
+  run without one has no binding at all. -/
+  "    \"slot_opening\":{\"required\":[\"slot\",\"mission_id\",\"commitment\"," ++
+    "\"curator_pubkey\",\"signature\"]," ++
+    "\"commitment\":{\"algorithm\":\"poseidon2-babybear-w16\"," ++
+      "\"domain\":\"POAC\",\"preimage\":\"domain || slot || slot_secret\"," ++
+      "\"binding_bits\":124}," ++
+    "\"opened_after_close\":[\"slot\",\"slot_secret\"]," ++
+    "\"verify\":\"commit(slot_secret, slot) == commitment\"," ++
+    "\"missing_opening\":\"refuse\"},\n" ++
+  "    \"run_instance\":{\"derivation_module\":\"Dregg2.Games.PathOfAngels.HiddenInstance\"," ++
+    "\"function\":\"runSeedFor(draw, mission)\"," ++
+    "\"preimage\":\"POAD || purpose || slot || mission_id || epoch || slot_secret " ++
+      "|| federation_id || content_session || player_key\"," ++
+    "\"purposes\":{\"judged\":1,\"practice\":2}," ++
+    "\"published_anywhere\":false," ++
+    "\"operator_knows_instance\":true," ++
+    "\"practice\":{\"seed\":\"client-chosen\",\"scored\":false," ++
+      "\"transcript_field\":\"mode\",\"judge_accepts\":false}},\n" ++
   "    \"unknown_fields\":\"reject\",\n" ++
   "    \"unknown_artifacts\":\"reject\"\n" ++
   "  }\n" ++

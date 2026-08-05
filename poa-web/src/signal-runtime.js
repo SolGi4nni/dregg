@@ -1,11 +1,52 @@
 import { ArtifactRefusal, sha256Hex } from "./poag1.js";
 
+/**
+ * Signal Triangulation after the instance/rules split.
+ *
+ * ⚠ What this file no longer reads, because the descriptor no longer carries it:
+ * `target`, `run_seed`, and `outcomes`. The first stated the code outright, the
+ * second determined it through the public derivation, and the third tabulated
+ * feedback against one target — which IS the target. A descriptor carrying any
+ * of them is the pre-split shape and is refused rather than reinterpreted.
+ *
+ * What it reads instead is `rules`: the complete 216-by-216 oracle, every target
+ * against every guess. That states every rule and distinguishes no instance —
+ * every row solves at exactly its own index — so a client can hold the whole
+ * rulebook and still not know the code.
+ *
+ * Two run modes, and they are not interchangeable:
+ *
+ *   PRACTICE  the client picks its own instance out of `rules.codes` and answers
+ *             its own guesses from the table. Nothing about this touches the live
+ *             instance and nothing about it is scored. The pick is deliberately
+ *             NOT the Lean practice derivation: reproducing `HiddenInstance` here
+ *             would be a second copy of the rules in JavaScript, and a local
+ *             uniform pick over an emitted array is a lookup, not a rule.
+ *
+ *   JUDGED    the client knows nothing. It sends a guess and the host — which
+ *             holds the live run seed derived from the committed slot secret —
+ *             returns the class id. The client checks the id is one the
+ *             descriptor declares and renders it. It never derives feedback, and
+ *             it cannot, because it does not have the code.
+ *
+ * `mode` is in the canonical replay, so a practice transcript is structurally a
+ * different object from a judged one and no amount of relabelling turns one into
+ * the other.
+ */
+
 const SIGNAL_FORMAT = "POAG1-GAME";
 const ENGINE = "Dregg2.Games.PathOfAngels.SignalTriangulation";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const HEX_32 = /^[0-9a-f]{64}$/;
 const PALETTE = ["#9bd8bf", "#d6e779", "#dcac62", "#a9cbd6", "#bb9dd1", "#d2786c"];
 const CONTENT_ROOT_DOMAIN = new TextEncoder().encode("path-of-angels/content-root/v1\0");
+
+/** Fields that named the live instance in the pre-split bundle. */
+const BANNED_FIELDS = Object.freeze({
+  target: "states the hidden code outright",
+  run_seed: "determines the instance through the public derivation",
+  outcomes: "tabulates feedback against one target, which is the target",
+});
 
 function refuse(condition, code, message) {
   if (!condition) throw new ArtifactRefusal(code, message);
@@ -47,11 +88,56 @@ export async function contentRoot(files) {
 }
 
 /**
- * Compile the 216 Lean-computed rows into a read-only lookup table. JavaScript
- * never derives exact/present/solved feedback.
+ * The instance declaration every hidden-instance descriptor carries in place of
+ * its instance. This is checked before anything else: a descriptor that does not
+ * say where its instance comes from cannot be played for a score, and one that
+ * still carries the instance is the old bundle.
+ */
+export function loadInstanceDeclaration(game, expectedDisclosure, at) {
+  for (const [field, why] of Object.entries(BANNED_FIELDS)) {
+    refuse(!(field in game), "instance-published", `${at} carries \`${field}\`, which ${why}; this is the pre-split POAG1 shape and must be re-emitted`);
+  }
+  const block = game.instance;
+  exactKeys(block, ["kind", "derivation_module", "disclosure", "commitment", "draw", "sponge", "practice", "operator_knows_instance"], `${at} instance`);
+  refuse(block.kind === "per-run-hidden-draw", "instance-kind", `${at} instance is not a per-run hidden draw`);
+  refuse(block.disclosure === expectedDisclosure, "instance-disclosure", `${at} instance disclosure is not ${expectedDisclosure}`);
+  exactKeys(block.commitment, ["published_in", "domain", "preimage", "binding_bits", "opened_after"], `${at} instance commitment`);
+  refuse(block.commitment.published_in === "slot-opening", "instance-commitment", `${at} does not publish its commitment in the slot opening`);
+  refuse(integer(block.commitment.binding_bits, 100, 512), "instance-commitment", `${at} declares an implausible commitment binding`);
+  exactKeys(block.draw, ["domain", "preimage", "purposes"], `${at} instance draw`);
+  exactKeys(block.sponge, ["permutation", "width", "rate", "capacity", "lane_bytes", "lane_reject_at_or_above", "squeeze_blocks"], `${at} instance sponge`);
+  exactKeys(block.practice, ["seed", "scored", "purpose_tag", "transcript_field"], `${at} instance practice`);
+  refuse(block.practice.scored === false, "instance-practice", `${at} declares practice runs scored`);
+  return Object.freeze({
+    disclosure: block.disclosure,
+    derivationModule: block.derivation_module,
+    bindingBits: block.commitment.binding_bits,
+    // Stated, not hidden: whoever holds the slot secret knows every instance.
+    operatorKnowsInstance: block.operator_knows_instance === true,
+  });
+}
+
+/**
+ * A curator-signed slot opening. Without one there is no commitment, and without
+ * a commitment the host could choose the instance after seeing the transcript, so
+ * a judged run refuses to start.
+ */
+export function loadSlotOpening(opening, mission, at = "slot opening") {
+  exactKeys(opening, ["slot", "mission_id", "commitment", "curator_pubkey", "signature"], at);
+  refuse(integer(opening.slot, 0, Number.MAX_SAFE_INTEGER), "opening-slot", `${at}.slot is invalid`);
+  refuse(opening.mission_id === mission.missionId, "opening-mission", `${at} is for a different mission`);
+  refuse(typeof opening.commitment === "string" && HEX_32.test(opening.commitment), "opening-commitment", `${at}.commitment is invalid`);
+  refuse(typeof opening.curator_pubkey === "string" && HEX_32.test(opening.curator_pubkey), "opening-curator", `${at}.curator_pubkey is invalid`);
+  refuse(typeof opening.signature === "string" && /^[0-9a-f]{128}$/.test(opening.signature), "opening-signature", `${at}.signature is invalid`);
+  return Object.freeze({ ...opening });
+}
+
+/**
+ * Compile the emitted oracle into a read-only lookup table. JavaScript never
+ * derives exact/present/solved feedback: it decodes what Lean wrote.
  */
 export function loadSignalDescriptor(game, mission, contentEpoch) {
-  exactKeys(game, ["format", "schema_version", "game_id", "ruleset", "engine_module", "action_limit", "run_seed", "target", "security", "state", "action", "feedback", "transition", "output", "outcomes"], "Signal descriptor");
+  exactKeys(game, ["format", "schema_version", "game_id", "ruleset", "engine_module", "action_limit", "security", "instance", "state", "action", "feedback", "transition", "output", "rules"], "Signal descriptor");
   refuse(game.format === SIGNAL_FORMAT && game.schema_version === 1, "signal-format", "unsupported Signal descriptor");
   refuse(
     contentEpoch?.schema === mission.activation.digestSource &&
@@ -60,18 +146,18 @@ export function loadSignalDescriptor(game, mission, contentEpoch) {
     "signal-activation",
     "Signal mission requires an authenticated matching content epoch",
   );
-  refuse(game.game_id === "signal-triangulation" && game.ruleset === "signal-v1" && game.engine_module === ENGINE, "signal-identity", "Signal descriptor identity is invalid");
+  refuse(game.game_id === "signal-triangulation" && game.ruleset === "signal-v2" && game.engine_module === ENGINE, "signal-identity", "Signal descriptor identity is invalid");
   refuse(integer(game.action_limit, 1, 32) && game.action_limit === mission.actionLimit, "signal-action-limit", "descriptor and catalog action limits disagree");
-  refuse(typeof game.run_seed === "string" && HEX_32.test(game.run_seed) && game.run_seed === mission.runSeed, "signal-run-seed", "descriptor and mission run_seed disagree");
-  exactKeys(game.security, ["classification", "target_visibility", "competitive_rewards", "economic_rewards"], "Signal security");
+  exactKeys(game.security, ["classification", "instance_visibility", "competitive_rewards", "economic_rewards"], "Signal security");
   refuse(
-    game.security.classification === "transparent-beta-demo" &&
-      game.security.target_visibility === "public" &&
+    game.security.classification === "committed-hidden-instance" &&
+      game.security.instance_visibility === "oracle-only" &&
       game.security.competitive_rewards === false &&
       game.security.economic_rewards === false,
     "signal-security",
-    "Signal v1 must remain a transparent, public-target, zero-reward beta demo",
+    "Signal v2 must remain a committed, oracle-only, zero-reward beta demo",
   );
+  const declaration = loadInstanceDeclaration(game, "oracle-only", "Signal descriptor");
 
   exactKeys(game.action, ["tag", "code"], "Signal action");
   refuse(game.action.tag === "submit", "signal-action", "unsupported Signal action");
@@ -80,7 +166,6 @@ export function loadSignalDescriptor(game, mission, contentEpoch) {
   const alphabet = game.action.code.alphabet;
   refuse(integer(bands, 1, 8) && integer(alphabet, 2, 16), "signal-domain", "Signal code domain is invalid");
   const validCode = (code) => Array.isArray(code) && code.length === bands && code.every((value) => integer(value, 0, alphabet - 1));
-  refuse(validCode(game.target), "signal-target", "Signal target is outside the emitted code domain");
 
   exactKeys(game.state, ["fields"], "Signal state");
   exactArray(game.state.fields, ["turns", "solved", "last_feedback"], "Signal state fields");
@@ -91,26 +176,64 @@ export function loadSignalDescriptor(game, mission, contentEpoch) {
   exactKeys(game.transition.open_when, ["solved", "turns_lt"], "Signal open_when");
   refuse(game.transition.open_when.solved === false && game.transition.open_when.turns_lt === game.action_limit, "signal-open", "unsupported Signal open condition");
   exactKeys(game.transition.on_submit, ["lookup", "turns", "solved", "last_feedback"], "Signal on_submit");
-  refuse(game.transition.on_submit.lookup === "outcomes.guess" && game.transition.on_submit.turns === "increment" && game.transition.on_submit.solved === "row.solved", "signal-transition", "unsupported Signal transition dispatch");
-  exactArray(game.transition.on_submit.last_feedback, ["row.exact", "row.present"], "Signal last_feedback projection");
+  refuse(game.transition.on_submit.lookup === "rules.table[instance][guess]" && game.transition.on_submit.turns === "increment" && game.transition.on_submit.solved === "class.solved", "signal-transition", "unsupported Signal transition dispatch");
+  exactArray(game.transition.on_submit.last_feedback, ["class.exact", "class.present"], "Signal last_feedback projection");
   exactArray(game.transition.refuse_when, ["solved", "turns_gte_action_limit"], "Signal refusal conditions");
   exactKeys(game.output, ["requires", "contribution", "artifact"], "Signal output");
   refuse(game.output.requires === "solved" && game.output.contribution === "mission_reward" && game.output.artifact === "mission_artifact", "signal-output", "unsupported Signal output projection");
 
+  // ---- the oracle ---------------------------------------------------------
+  exactKeys(game.rules, ["class_alphabet", "classes", "codes", "table"], "Signal rules");
   const domainSize = alphabet ** bands;
-  refuse(Array.isArray(game.outcomes) && game.outcomes.length === domainSize, "outcome-count", `Signal outcomes must contain the complete ${domainSize}-row domain`);
-  const outcomes = new Map();
-  for (const [index, row] of game.outcomes.entries()) {
-    exactKeys(row, ["guess", "exact", "present", "solved"], `Signal outcomes[${index}]`);
-    refuse(validCode(row.guess), "outcome-guess", `Signal outcomes[${index}] has an invalid guess`);
-    refuse(integer(row.exact, 0, game.feedback.exact_max) && integer(row.present, 0, game.feedback.present_max), "outcome-feedback", `Signal outcomes[${index}] feedback is out of bounds`);
-    refuse(row.exact + row.present <= bands, "outcome-feedback", `Signal outcomes[${index}] total feedback exceeds the code width`);
-    refuse(typeof row.solved === "boolean" && row.solved === (row.exact === game.feedback.solved_when_exact), "outcome-solved", `Signal outcomes[${index}] solved bit contradicts the emitted terminal threshold`);
-    const key = codeKey(row.guess);
-    refuse(!outcomes.has(key), "duplicate-outcome", `Signal outcome ${key} is duplicated`);
-    outcomes.set(key, Object.freeze({ exact: row.exact, present: row.present, solved: row.solved }));
-  }
-  refuse(outcomes.size === domainSize, "outcome-domain", "Signal outcome table is not a complete finite domain");
+  refuse(Array.isArray(game.rules.codes) && game.rules.codes.length === domainSize, "rules-domain", `Signal rules must name the complete ${domainSize}-code domain`);
+  const codes = game.rules.codes.map((code, index) => {
+    refuse(validCode(code), "rules-code", `Signal rules codes[${index}] is outside the emitted domain`);
+    return Object.freeze([...code]);
+  });
+  const codeIndex = new Map();
+  codes.forEach((code, index) => {
+    const key = codeKey(code);
+    refuse(!codeIndex.has(key), "rules-code", `Signal rules codes contains ${key} twice`);
+    codeIndex.set(key, index);
+  });
+
+  const classes = game.rules.classes.map((row, index) => {
+    exactKeys(row, ["exact", "present", "solved"], `Signal rules classes[${index}]`);
+    refuse(integer(row.exact, 0, bands) && integer(row.present, 0, bands), "rules-class", `Signal rules classes[${index}] is out of bounds`);
+    refuse(row.exact + row.present <= bands, "rules-class", `Signal rules classes[${index}] exceeds the code width`);
+    refuse(typeof row.solved === "boolean" && row.solved === (row.exact === game.feedback.solved_when_exact), "rules-class", `Signal rules classes[${index}] solved bit contradicts the terminal threshold`);
+    return Object.freeze({ exact: row.exact, present: row.present, solved: row.solved });
+  });
+  const solvedIds = classes.map((row, index) => (row.solved ? index : -1)).filter((index) => index >= 0);
+  refuse(solvedIds.length === 1, "rules-class", "Signal rules must declare exactly one solving class");
+  const solvedClassId = solvedIds[0];
+
+  const alphabetChars = game.rules.class_alphabet;
+  refuse(typeof alphabetChars === "string" && alphabetChars.length >= classes.length, "rules-alphabet", "Signal rules class alphabet is too short");
+  const charId = new Map([...alphabetChars.slice(0, classes.length)].map((char, index) => [char, index]));
+  refuse(charId.size === classes.length, "rules-alphabet", "Signal rules class alphabet repeats a character");
+
+  refuse(Array.isArray(game.rules.table) && game.rules.table.length === domainSize, "rules-table", `Signal rules table must have one row per code`);
+  const table = game.rules.table.map((row, index) => {
+    refuse(typeof row === "string" && row.length === domainSize, "rules-table", `Signal rules table[${index}] is not one cell per code`);
+    const decoded = new Uint8Array(domainSize);
+    for (let column = 0; column < domainSize; column += 1) {
+      const id = charId.get(row[column]);
+      refuse(id !== undefined, "rules-table", `Signal rules table[${index}] names a class outside the declared alphabet`);
+      decoded[column] = id;
+    }
+    // The property that makes this table instance-free: each row solves at
+    // exactly its own index. A row that solved elsewhere would name an instance.
+    let solvedAt = -1;
+    for (let column = 0; column < domainSize; column += 1) {
+      if (decoded[column] === solvedClassId) {
+        refuse(solvedAt < 0, "rules-table", `Signal rules table[${index}] solves at more than one guess`);
+        solvedAt = column;
+      }
+    }
+    refuse(solvedAt === index, "rules-table", `Signal rules table[${index}] solves at ${solvedAt}, not at itself: the table distinguishes a row and therefore names an instance`);
+    return decoded;
+  });
 
   const symbols = Object.freeze(Array.from({ length: alphabet }, (_, id) => Object.freeze({
     id,
@@ -125,10 +248,15 @@ export function loadSignalDescriptor(game, mission, contentEpoch) {
     alphabet,
     maxTurns: game.action_limit,
     symbols,
-    outcomes,
+    codes: Object.freeze(codes),
+    codeIndex,
+    classes: Object.freeze(classes),
+    solvedClassId,
+    table: Object.freeze(table),
+    instance: declaration,
     security: Object.freeze({
       classification: game.security.classification,
-      targetVisibility: game.security.target_visibility,
+      instanceVisibility: game.security.instance_visibility,
       competitiveRewards: game.security.competitive_rewards,
       economicRewards: game.security.economic_rewards,
     }),
@@ -142,14 +270,14 @@ export function loadSignalDescriptor(game, mission, contentEpoch) {
   });
 }
 
-export function createSignalRun(descriptor) {
+function baseRun(descriptor, mode, extra) {
   return Object.freeze({
     schema: "POAG1-SIGNAL-TRANSCRIPT",
+    mode,
     gameId: descriptor.gameId,
     missionId: descriptor.missionId,
     federationId: descriptor.mission.federationId,
     contentSession: descriptor.mission.contentSession,
-    runSeed: descriptor.mission.runSeed,
     contentRoot: descriptor.mission.contentRoot,
     contentEpoch: descriptor.mission.contentEpoch,
     curatorCounter: descriptor.mission.curatorCounter,
@@ -159,16 +287,58 @@ export function createSignalRun(descriptor) {
     turns: Object.freeze([]),
     solved: false,
     exhausted: false,
+    ...extra,
   });
 }
 
-export function submitSignalGuess(descriptor, run, guess) {
+/**
+ * A rehearsal against an instance the client chose for itself.
+ *
+ * `pick` is a client-chosen index into the emitted code list. It defaults to a
+ * uniform draw from the platform CSPRNG. This is NOT the Lean practice
+ * derivation and must not be made into it: reproducing `HiddenInstance` here
+ * would put a second copy of the rules in JavaScript, and there is nothing to
+ * gain, because a practice instance is answerable to nobody.
+ */
+export function createPracticeRun(descriptor, pick) {
+  let index = pick;
+  if (index === undefined) {
+    const draw = new Uint32Array(1);
+    crypto.getRandomValues(draw);
+    index = draw[0] % descriptor.codes.length;
+  }
+  refuse(integer(index, 0, descriptor.codes.length - 1), "practice-instance", "practice instance index is outside the emitted code domain");
+  return baseRun(descriptor, "practice", {
+    practiceInstance: index,
+    // Deliberately present and deliberately local: a practice run knows its own
+    // answer, which is exactly why it is not scored.
+    practiceCode: descriptor.codes[index],
+    slot: null,
+    slotCommitment: null,
+  });
+}
+
+/**
+ * A scored run. The client learns nothing here: no code, no seed, no row index.
+ * It carries the slot it opened in and the commitment it was shown, which is
+ * what its transcript will be judged against.
+ */
+export function createJudgedRun(descriptor, opening) {
+  const checked = loadSlotOpening(opening, descriptor.mission);
+  return baseRun(descriptor, "judged", {
+    practiceInstance: null,
+    practiceCode: null,
+    slot: checked.slot,
+    slotCommitment: checked.commitment,
+  });
+}
+
+function checkSubmission(descriptor, run, guess) {
   refuse(run?.schema === "POAG1-SIGNAL-TRANSCRIPT", "run-shape", "invalid Signal transcript state");
   refuse(
     run.gameId === descriptor.gameId && run.missionId === descriptor.missionId &&
       run.federationId === descriptor.mission.federationId &&
       run.contentSession === descriptor.mission.contentSession &&
-      run.runSeed === descriptor.mission.runSeed &&
       run.contentRoot === descriptor.mission.contentRoot &&
       run.contentEpoch === descriptor.mission.contentEpoch &&
       run.curatorCounter === descriptor.mission.curatorCounter &&
@@ -176,35 +346,70 @@ export function submitSignalGuess(descriptor, run, guess) {
       run.activatedManifest === descriptor.mission.activatedManifest &&
       run.security === descriptor.security,
     "run-domain",
-    "Signal transcript is bound to a different mission, federation, content session, or run seed",
+    "Signal transcript is bound to a different mission, federation, content session, or epoch",
   );
   refuse(!run.solved && !run.exhausted, "run-terminal", "Signal run is already terminal");
   refuse(Array.isArray(guess) && guess.length === descriptor.codeLength && guess.every((id) => integer(id, 0, descriptor.alphabet - 1)), "guess-shape", "Signal guess is invalid");
-  const row = descriptor.outcomes.get(codeKey(guess));
-  refuse(row, "missing-transition", "Lean artifact contains no transition for this Signal guess");
-  const turns = Object.freeze([...run.turns, Object.freeze({ guess: Object.freeze([...guess]), ...row })]);
+  const index = descriptor.codeIndex.get(codeKey(guess));
+  refuse(index !== undefined, "missing-transition", "Lean artifact contains no column for this Signal guess");
+  return index;
+}
+
+function applyClass(descriptor, run, guess, classId) {
+  const row = descriptor.classes[classId];
+  refuse(row !== undefined, "oracle-class", "the oracle returned a class the descriptor does not declare");
+  const turns = Object.freeze([...run.turns, Object.freeze({ guess: Object.freeze([...guess]), classId, exact: row.exact, present: row.present, solved: row.solved })]);
   return Object.freeze({ ...run, turns, solved: row.solved, exhausted: !row.solved && turns.length >= descriptor.maxTurns });
 }
 
-export function replaySignal(descriptor, guesses) {
-  return guesses.reduce((run, guess) => submitSignalGuess(descriptor, run, guess), createSignalRun(descriptor));
+/** Practice: read the client's own row of the emitted oracle. */
+export function submitPracticeGuess(descriptor, run, guess) {
+  refuse(run?.mode === "practice", "run-mode", "submitPracticeGuess called on a judged run");
+  const column = checkSubmission(descriptor, run, guess);
+  return applyClass(descriptor, run, guess, descriptor.table[run.practiceInstance][column]);
 }
 
+/**
+ * Judged: the class id comes from the host, which holds the live run seed. The
+ * client checks the id is declared and applies it; it does not and cannot derive
+ * it. After the slot closes and the secret is opened, every answer in the
+ * transcript is recomputable by anyone, which is what makes the host answerable.
+ */
+export function submitJudgedGuess(descriptor, run, guess, classId) {
+  refuse(run?.mode === "judged", "run-mode", "submitJudgedGuess called on a practice run");
+  checkSubmission(descriptor, run, guess);
+  refuse(integer(classId, 0, descriptor.classes.length - 1), "oracle-class", "the oracle returned an undeclared class id");
+  return applyClass(descriptor, run, guess, classId);
+}
+
+export function replayPractice(descriptor, pick, guesses) {
+  return guesses.reduce((run, guess) => submitPracticeGuess(descriptor, run, guess), createPracticeRun(descriptor, pick));
+}
+
+/**
+ * `mode` is the first field after the format tag, so a practice transcript and a
+ * judged one are different objects at the byte level and no relabelling turns one
+ * into the other. A practice run also has no slot and no commitment, so there is
+ * nothing for a judge to check it against.
+ */
 export function canonicalReplay(run) {
   return JSON.stringify({
     format: run.schema,
+    mode: run.mode,
     game_id: run.gameId,
     mission_id: run.missionId,
     federation_id: run.federationId,
     content_session: run.contentSession,
-    run_seed: run.runSeed,
     content_root: run.contentRoot,
     content_epoch: run.contentEpoch,
     curator_counter: run.curatorCounter,
     activation_digest: run.activationDigest,
     activated_manifest: run.activatedManifest,
+    slot: run.slot,
+    slot_commitment: run.slotCommitment,
+    practice_instance: run.practiceInstance,
     security: run.security,
-    turns: run.turns.map((turn) => ({ guess: turn.guess, exact: turn.exact, present: turn.present, solved: turn.solved })),
+    turns: run.turns.map((turn) => ({ guess: turn.guess, class_id: turn.classId, exact: turn.exact, present: turn.present, solved: turn.solved })),
     solved: run.solved,
     exhausted: run.exhausted,
   });

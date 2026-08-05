@@ -17,6 +17,7 @@ import Dregg2.Games.PathOfAngels.RelayRepair
 import Dregg2.Games.PathOfAngels.SalvageLock
 import Dregg2.Games.PathOfAngels.BlackBoxReconstruction
 import Dregg2.Games.PathOfAngels.PlayerCounters
+import Dregg2.Games.PathOfAngels.HiddenInstance
 
 namespace Dregg2.Games.PathOfAngels
 
@@ -36,20 +37,28 @@ def ActiveGame.mission : ActiveGame → MissionSpec
   | .salvage config => config.mission
   | .blackBox config => config.mission
 
-/-- Proof fields are omitted, but every semantic config field is retained.  This
-is the exact claim compared at the dispatch boundary. -/
+/-- Proof fields are omitted, and — ⚠ CHANGED — so are the INSTANCE fields.
+
+`signal` used to carry `target : Code` and `salvage` a `seed : Fin SEED_SPACE`.
+A `RunClaim` is supplied by the game request, so requiring the client to state the
+instance required the client to KNOW the instance, which is the hole this split
+closes.  The instance is derived inside admission from the slot secret; the claim
+states only what a player legitimately has.
+
+`mission` is retained and it still carries `runSeed`, but a claim never supplies a
+mission: `admissionChecks` compares the claim against `active.game.configClaim`,
+and `active` is assembled by the node from authenticated state. -/
 inductive GameConfigClaim where
-  | signal (target : SignalTriangulation.Code) (mission : MissionSpec)
-      (reward : Contribution)
+  | signal (mission : MissionSpec) (reward : Contribution)
   | relay (mission : MissionSpec) (reward : Contribution)
-  | salvage (seed : Fin SalvageLock.SEED_SPACE) (mission : MissionSpec) (reward : Contribution)
+  | salvage (mission : MissionSpec) (reward : Contribution)
   | blackBox (mission : MissionSpec) (reward : Contribution)
 deriving DecidableEq
 
 def ActiveGame.configClaim : ActiveGame → GameConfigClaim
-  | .signal config => .signal config.target config.mission config.reward
+  | .signal config => .signal config.mission config.reward
   | .relay config => .relay config.mission config.reward
-  | .salvage config => .salvage config.seed config.mission config.reward
+  | .salvage config => .salvage config.mission config.reward
   | .blackBox config => .blackBox config.mission config.reward
 
 /-- Runtime state selected from the authenticated active catalog.  Domain fields
@@ -62,6 +71,15 @@ structure ActiveRunState where
   activationDigest : Digest32
   contentSession : Digest32
   contentEpoch : EpochId
+  /-- The beacon slot this run belongs to. -/
+  slot : EpochId
+  /-- The curator's secret for `slot`.  It reaches this structure from node state,
+  never from a request, and no emitter renders it. -/
+  slotSecret : HiddenInstance.SlotSecret
+  /-- The commitment published in the slot opening.  Admission requires it to be
+  the commitment OF `slotSecret`, so a node that swapped the secret after
+  publishing cannot judge against the swapped one. -/
+  slotCommitment : Digest32
   runSeed : Digest32
   world : WorldState
   playerCounters : PlayerCounterTable
@@ -87,7 +105,12 @@ structure RunClaim where
   activationDigest : Digest32
   contentSession : Digest32
   contentEpoch : EpochId
-  runSeed : Digest32
+  /-- ⚠ `runSeed` is GONE from the claim.  A client that could state the live run
+  seed could compute its own instance, which is exactly what it must not be able
+  to do.  What it states instead is the slot it played in and the commitment it
+  was shown when its run opened. -/
+  slot : EpochId
+  slotCommitment : Digest32
   actorRoot : Digest32
   playerKey : Digest32
   claimedPreviousPlayerCounter : Nat
@@ -125,7 +148,13 @@ def admissionChecks (active : ActiveRunState) (carrier : FinalizedCarrier)
     claim.activationDigest = carrier.activationDigest ∧
     claim.contentSession = carrier.contentSession ∧
     claim.contentEpoch = carrier.contentEpoch ∧
-    claim.runSeed = active.runSeed ∧
+    claim.slot = active.slot ∧
+    claim.slotCommitment = active.slotCommitment ∧
+    active.slotCommitment = HiddenInstance.commit active.slotSecret active.slot ∧
+    active.runSeed =
+      HiddenInstance.runSeedFor
+        { secret := active.slotSecret, slot := active.slot, playerKey := carrier.playerKey }
+        active.game.mission.context ∧
     claim.actorRoot = carrier.actorRoot ∧
     claim.playerKey = carrier.playerKey ∧
     claim.claimedPreviousPlayerCounter = carrier.currentPlayerCounter.val ∧
@@ -152,7 +181,13 @@ theorem admissionChecks_eq_true_iff (active : ActiveRunState)
       claim.activationDigest = carrier.activationDigest ∧
       claim.contentSession = carrier.contentSession ∧
       claim.contentEpoch = carrier.contentEpoch ∧
-      claim.runSeed = active.runSeed ∧
+      claim.slot = active.slot ∧
+      claim.slotCommitment = active.slotCommitment ∧
+      active.slotCommitment = HiddenInstance.commit active.slotSecret active.slot ∧
+      active.runSeed =
+        HiddenInstance.runSeedFor
+          { secret := active.slotSecret, slot := active.slot, playerKey := carrier.playerKey }
+          active.game.mission.context ∧
       claim.actorRoot = carrier.actorRoot ∧
       claim.playerKey = carrier.playerKey ∧
       claim.claimedPreviousPlayerCounter = carrier.currentPlayerCounter.val ∧
@@ -315,9 +350,41 @@ theorem judgeActive_wrong_epoch_refused (active : ActiveRunState)
     judgeActive active carrier claim submitted = none := by
   simp [judgeActive, admissionChecks, h]
 
-theorem judgeActive_wrong_seed_refused (active : ActiveRunState)
+theorem judgeActive_wrong_slot_refused (active : ActiveRunState)
     (carrier : FinalizedCarrier) (claim : RunClaim) (submitted : SubmittedRun)
-    (h : claim.runSeed ≠ active.runSeed) :
+    (h : claim.slot ≠ active.slot) :
+    judgeActive active carrier claim submitted = none := by
+  simp [judgeActive, admissionChecks, h]
+
+/-- A run played against a commitment the node did not publish for this slot is
+refused: the client's opening and the node's active state must be the same one. -/
+theorem judgeActive_wrong_commitment_refused (active : ActiveRunState)
+    (carrier : FinalizedCarrier) (claim : RunClaim) (submitted : SubmittedRun)
+    (h : claim.slotCommitment ≠ active.slotCommitment) :
+    judgeActive active carrier claim submitted = none := by
+  simp [judgeActive, admissionChecks, h]
+
+/-- ⚑ **The commitment binds the secret that is actually judged.**  A node that
+published one commitment and then judged against a different slot secret is
+refused, so "choose the instance after seeing the transcript" is not a move
+available to the operator. -/
+theorem judgeActive_uncommitted_secret_refused (active : ActiveRunState)
+    (carrier : FinalizedCarrier) (claim : RunClaim) (submitted : SubmittedRun)
+    (h : active.slotCommitment ≠ HiddenInstance.commit active.slotSecret active.slot) :
+    judgeActive active carrier claim submitted = none := by
+  simp [judgeActive, admissionChecks, h]
+
+/-- ⚑ **The played instance is the derived one.**  The active run seed — which is
+what every kernel binds its target, board or seed to — must be exactly
+`runSeedFor` of the committed secret, this slot and THIS player.  A seed supplied
+from anywhere else, including the `UNBOUND_RUN_SEED` a catalog template carries,
+is refused. -/
+theorem judgeActive_underived_seed_refused (active : ActiveRunState)
+    (carrier : FinalizedCarrier) (claim : RunClaim) (submitted : SubmittedRun)
+    (h : active.runSeed ≠
+      HiddenInstance.runSeedFor
+        { secret := active.slotSecret, slot := active.slot, playerKey := carrier.playerKey }
+        active.game.mission.context) :
     judgeActive active carrier claim submitted = none := by
   simp [judgeActive, admissionChecks, h]
 
@@ -409,7 +476,10 @@ theorem JudgedRun.player_counter_positive (run : JudgedRun) :
 #assert_axioms judgeActive_inactive_activation_refused
 #assert_axioms judgeActive_wrong_session_refused
 #assert_axioms judgeActive_wrong_epoch_refused
-#assert_axioms judgeActive_wrong_seed_refused
+#assert_axioms judgeActive_wrong_slot_refused
+#assert_axioms judgeActive_wrong_commitment_refused
+#assert_axioms judgeActive_uncommitted_secret_refused
+#assert_axioms judgeActive_underived_seed_refused
 #assert_axioms judgeActive_wrong_player_refused
 #assert_axioms judgeActive_wrong_actor_root_refused
 #assert_axioms judgeActive_stale_counter_refused

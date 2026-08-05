@@ -623,6 +623,32 @@ def decodeSignalInputWithLimit (byteLimit : Nat) (bytes : String) : Option Signa
 def decodeSignalInput (bytes : String) : Option SignalInputWire :=
   decodeSignalInputWithLimit WIRE_BYTE_LIMIT bytes
 
+/-! ### Standalone Canon and config blobs
+
+Persistence stores the retained genesis Canon and the active mission config as
+their own exact byte blobs, not only as members of a Signal input.  A reader
+that has those bytes must be able to decode them under the identical canonical
+seal, rather than re-wrapping them in a synthetic request — that re-wrapping is
+how a non-canonical stored blob would get silently canonicalized on the way in.
+Both entry points are the same `canonicalDecode` over the same private parsers,
+so acceptance here and acceptance inside `decodeSignalInput` cannot drift. -/
+
+def decodeCanonStateWithLimit (byteLimit : Nat) (bytes : String) : Option CanonStateWire :=
+  if bytes.length ≤ byteLimit then
+    canonicalDecode parseCanon CanonStateWire.toJson bytes
+  else none
+
+def decodeCanonState (bytes : String) : Option CanonStateWire :=
+  decodeCanonStateWithLimit WIRE_BYTE_LIMIT bytes
+
+def decodeSignalConfigWithLimit (byteLimit : Nat) (bytes : String) : Option SignalConfigWire :=
+  if bytes.length ≤ byteLimit then
+    canonicalDecode parseConfig SignalConfigWire.toJson bytes
+  else none
+
+def decodeSignalConfig (bytes : String) : Option SignalConfigWire :=
+  decodeSignalConfigWithLimit WIRE_BYTE_LIMIT bytes
+
 theorem canonicalDecode_reencodes {T : Type} (parse : Json → Except String T)
     (encode : T → String) {bytes : String} {value : T}
     (accepted : canonicalDecode parse encode bytes = some value) : encode value = bytes := by
@@ -645,6 +671,20 @@ theorem decodeSignalInput_reencodes {bytes : String} {input : SignalInputWire}
 theorem decodeSignalInput_refuses_oversized (bytes : String)
     (oversized : WIRE_BYTE_LIMIT < bytes.length) : decodeSignalInput bytes = none := by
   simp [decodeSignalInput, decodeSignalInputWithLimit, Nat.not_le.mpr oversized]
+
+theorem decodeCanonState_reencodes {bytes : String} {canon : CanonStateWire}
+    (accepted : decodeCanonState bytes = some canon) : canon.toJson = bytes := by
+  simp only [decodeCanonState, decodeCanonStateWithLimit] at accepted
+  split at accepted
+  · exact canonicalDecode_reencodes parseCanon CanonStateWire.toJson accepted
+  · contradiction
+
+theorem decodeSignalConfig_reencodes {bytes : String} {config : SignalConfigWire}
+    (accepted : decodeSignalConfig bytes = some config) : config.toJson = bytes := by
+  simp only [decodeSignalConfig, decodeSignalConfigWithLimit] at accepted
+  split at accepted
+  · exact canonicalDecode_reencodes parseConfig SignalConfigWire.toJson accepted
+  · contradiction
 
 /-- The strict decoder is injective on accepted byte strings, independent of any
 host JSON implementation. -/
@@ -1307,9 +1347,16 @@ def fixtureActorRoot : Digest32 := digestOrZero FIXTURE_ACTOR_HEX
 def fixturePlayerKey : Digest32 := digestOrZero FIXTURE_PLAYER_HEX
 def fixtureCuratorKey : Digest32 := digestOrZero FIXTURE_CURATOR_HEX
 
+/-- A stand-in LIVE run seed for the wire fixtures.  In deployment this value is
+`HiddenInstance.runSeedFor` of the committed slot secret and a client never sees
+it; a fixture only needs a seed that is not `Emit.UNBOUND_RUN_SEED`, so the
+derivation is not re-run here.  ⚠ There is no `Emit.signalTarget` to reach for
+any more: the target below is `targetFromSeed` of THIS seed. -/
+def fixtureRunSeed : Digest32 := digestOrZero FIXTURE_CONTENT_HEX
+
 def fixtureConfig : SignalTriangulation.Config :=
-  Emit.signalConfig fixtureFederationId fixtureSourceDigest fixtureContentDigest
-    fixtureContentRoot fixtureActivationDigest
+  Emit.signalConfig fixtureRunSeed fixtureFederationId fixtureSourceDigest
+    fixtureContentDigest fixtureContentRoot fixtureActivationDigest
 
 def fixtureCanon : CanonState :=
   CanonState.empty fixtureFederationId fixtureContentRoot fixtureActivationDigest
@@ -1338,7 +1385,7 @@ def fixtureRequestWire : SignalRequestWire where
   previousPlayerCounter := 0
   expectedWorldSequence := 0
   expectedCanonRevision := 0
-  actions := [CodeWire.ofSemantic Emit.signalTarget]
+  actions := [CodeWire.ofSemantic fixtureConfig.target]
 
 def fixtureInput : SemanticInput where
   config := fixtureConfig
@@ -1418,7 +1465,7 @@ def fixtureReceiptWire : SignalReceiptWire where
   preWorld := fixtureInputWire.world
   postWorld := fixturePostWorldWire
   contribution := fixtureInputWire.config.reward
-  transcriptDigest := SignalTriangulation.transcriptDigest [.submit Emit.signalTarget]
+  transcriptDigest := SignalTriangulation.transcriptDigest [.submit fixtureConfig.target]
 
 def fixtureOutputWire : SignalOutputWire where
   receipt := fixtureReceiptWire
@@ -1508,6 +1555,8 @@ theorem fixture_output_refuses_trailing_bytes :
 #assert_axioms decodeSignalOutput_refuses_oversized
 #assert_axioms CanonStateWire.ofSemantic_refuses_receipt_capacity
 #assert_axioms CanonStateWire.ofSemantic_refuses_player_capacity
+#assert_axioms decodeCanonState_reencodes
+#assert_axioms decodeSignalConfig_reencodes
 #assert_compiled fixture_input_roundtrip
 #assert_compiled fixture_input_refuses_tight_byte_cap
 #assert_compiled fixture_input_semantic_inhabited

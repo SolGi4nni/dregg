@@ -28,14 +28,23 @@ INDEPENDENTLY ENUMERATED domains — every one of the 6^6 candidate partner func
 and every one of the 3^6 candidate glyph rows — so the construction cannot satisfy
 them by agreeing with itself.
 
-⚠ What this does NOT do.  The emitted POAG1 finite table still publishes the board:
-in the `glyph_id` of every action row, and — unavoidably in that wire — in the
-transition table itself, whose successors say which exposures clear.  A player who
-fetches the descriptor reads the instance off it either way, so removing `glyph_id`
-would silence a gate without hiding anything.  Seeding the board makes the run seed
-load-bearing, kills the memory-free universal routine, and gives the hidden game a
-real instance underneath; ACTUALLY hiding it needs a different wire (a commitment to
-the board plus per-exposure openings judged in Lean), which is not built here.
+## The board is no longer in the wire
+
+The paragraph that used to stand here said the emitted table still published the
+board twice — in each action row's `glyph_id`, and in the successors, which say
+which exposures clear — and that hiding it needed "a different wire (a commitment
+to the board plus per-exposure openings)".  That wire is built.
+
+`Emit` now renders `FiniteTables.salvageParametricTransitions`: a first exposure
+is deterministic, and a second names BOTH successors, `on_match` and
+`on_mismatch`.  One bit per second exposure comes from the judge, which holds the
+live run seed; `FiniteTables.salvage_parametric_table_is_the_kernel` is the
+refinement over all ninety boards.  `MissionSpec.runSeed` itself is now derived
+per run from a committed slot secret (`HiddenInstance.runSeedFor`), so nothing a
+client fetches determines the board.
+
+This kernel did not change.  `Config.seed_eq` still binds the played board to
+`mission.runSeed`; what changed is that the seed is no longer published.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
@@ -135,26 +144,15 @@ def seedFromRunSeed? (runSeed : Digest32) : Option (Fin SEED_SPACE) :=
             show _ < 90
             omega⟩
 
-/-- The complete precommitted run seed for the beta Salvage mission: the tag spells
-`SALVAGE-1`, and the remaining bytes are zero by construction, so a host cannot grind
-them after seeing a transcript.  It lives here rather than in `Emit` because the
-BOARD — and therefore the entire finite table — is derived from it.
+/-! ⚠ `PINNED_RUN_SEED` is GONE.  It spelled `SALVAGE-1`, it was published in the
+descriptor and the catalog, and it therefore named the board to anyone who read
+either.  A precommitted constant stops a host grinding the seed after a
+transcript; it does not stop a player computing the answer before the run, which
+is the property a hidden board needs.  The live seed is now
+`HiddenInstance.runSeedFor`, drawn per (slot, mission, player) from a slot secret
+the descriptor commits to and does not contain.
 
-⚠ The leading `2` byte this constant used to carry is GONE.  Its only function was
-`(runSeed.bytes.getD 0 0) % 3 = 2` under the deleted board, i.e. it selected old seed
-2; it named nothing and it would have read as a version or domain byte to the next
-person.  Removing it also makes the shipped fixture DISTINGUISH the two draw shapes:
-the consuming draws read bytes `S`, `A`, `L`, `V` and land on board 68, while a draw
-with no cursor would read `S` four times and land on 71.  With the leading `2` in
-place both shapes landed on 52 and the fixture was blind to the difference. -/
-def PINNED_RUN_SEED : Digest32 where
-  bytes := List.ofFn fun i : Fin 32 =>
-    match ([83, 65, 76, 86, 65, 71, 69, 45, 49] : List Nat)[i.val]? with
-    | some n => ⟨n % 256, Nat.mod_lt _ (by decide)⟩
-    | none => 0
-  length_eq := by simp
-
-/-! ### What the seed space actually is
+### What the seed space actually is
 
 Checked against independently enumerated domains rather than against `pairsOf` /
 `boardRow` restated: `allMatchings` filters all 6^6 candidate partner functions by

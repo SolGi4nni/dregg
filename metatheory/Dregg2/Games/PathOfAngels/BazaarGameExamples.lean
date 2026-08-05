@@ -104,6 +104,13 @@ def budget : ContributionBudget where
   score := 1
   relics := ⟨1, by decide⟩
 
+/-- Everything the draw reads, fixed before the seed exists. -/
+def missionContext : HiddenInstance.MissionContext where
+  missionId := missionId
+  epoch := ⟨1⟩
+  federationId := federation
+  contentSession := contentSession
+
 def mission : MissionSpec where
   missionId
   artifact
@@ -112,7 +119,11 @@ def mission : MissionSpec where
   contentRoot
   activationDigest := activation
   contentSession
-  runSeed
+  -- The mission a judge holds carries the LIVE seed.  `MissionContext` is the
+  -- projection the draw reads and it excludes `runSeed`, so this is a derivation
+  -- and not a cycle — `HiddenInstance.context_ignores_the_run_seed`.
+  runSeed := HiddenInstance.runSeedFor
+    { secret := ⟨repeatedDigest 91⟩, slot := ⟨5⟩, playerKey := playerKey } missionContext
   budget
   allowedRelics := {relic}
   privacy := .public
@@ -124,11 +135,23 @@ theorem reward_is_mission_accepted : mission.acceptsContribution reward = true :
   native_decide
 
 def signalConfig : SignalTriangulation.Config where
-  target := SignalTriangulation.targetFromSeed runSeed
+  target := SignalTriangulation.targetFromSeed mission.runSeed
   mission
   reward
   reward_accepted := reward_is_mission_accepted
   target_eq := rfl
+
+/-- ⚠ The fixture's run seed is now DERIVED.  `Judged.admissionChecks` requires
+`active.runSeed` to be exactly `HiddenInstance.runSeedFor` of the committed slot
+secret, this slot and this player, so a fixture that names a seed of its own is
+refused — which is the whole point of the split, and this example is where it is
+exercised end to end. -/
+def slotSecret : HiddenInstance.SlotSecret := ⟨repeatedDigest 91⟩
+def slot : EpochId := ⟨5⟩
+def draw : HiddenInstance.Draw :=
+  { secret := slotSecret, slot := slot, playerKey := playerKey }
+def liveRunSeed : Digest32 := HiddenInstance.runSeedFor draw missionContext
+def slotCommitment : Digest32 := HiddenInstance.commit slotSecret slot
 
 def active : ActiveRunState where
   game := .signal signalConfig
@@ -137,7 +160,10 @@ def active : ActiveRunState where
   activationDigest := activation
   contentSession := contentSession
   contentEpoch := ⟨1⟩
-  runSeed := runSeed
+  slot := slot
+  slotSecret := slotSecret
+  slotCommitment := slotCommitment
+  runSeed := liveRunSeed
   world := WorldState.empty
   playerCounters := PlayerCounterTable.empty
 
@@ -158,7 +184,8 @@ def runClaim : RunClaim where
   activationDigest := activation
   contentSession := contentSession
   contentEpoch := ⟨1⟩
-  runSeed := runSeed
+  slot := slot
+  slotCommitment := slotCommitment
   actorRoot := actorRoot
   playerKey := playerKey
   claimedPreviousPlayerCounter := 0

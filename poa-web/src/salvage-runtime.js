@@ -35,21 +35,18 @@ function salvageView(value, actionLimit, at) {
   return Object.freeze({ cleared: Object.freeze(cleared), exposed, turns: value.turns, solved: value.solved });
 }
 
+/**
+ * ⚠ `glyph_id` and `glyph_label` are GONE, and are now REFUSED by
+ * `refuseStaleShape` in the shared loader. They named the glyph sealed under
+ * each plate, which is the whole board. An action row is now presentation only.
+ */
 function salvageAction(value, at) {
-  exactKeys(value, ["id", "label", "slot", "glyph_id", "glyph_label"], at);
+  exactKeys(value, ["id", "label", "slot"], at);
   identifier(value.id, "salvage-action", `${at}.id is invalid`);
   const actionSlot = slot(value.slot, `${at}.slot`);
   refuse(value.id === ACTION_IDS[actionSlot], "salvage-action", `${at}.id disagrees with its slot`);
-  boundedInteger(value.glyph_id, 0, 2, "salvage-glyph", `${at}.glyph_id is invalid`);
   refuse(label(value.label, `${at}.label`) === `Expose plate ${actionSlot}`, "salvage-action", `${at}.label disagrees with its slot`);
-  refuse(label(value.glyph_label, `${at}.glyph_label`) === `glyph-${value.glyph_id}`, "salvage-glyph", `${at}.glyph_label disagrees with its glyph id`);
-  return {
-    id: value.id,
-    label: value.label,
-    slot: actionSlot,
-    glyphId: value.glyph_id,
-    glyphLabel: value.glyph_label,
-  };
+  return { id: value.id, label: value.label, slot: actionSlot };
 }
 
 /** Decode Salvage Lock's authenticated Lean-emitted legal-state closure. */
@@ -57,12 +54,13 @@ export function loadSalvageLockDescriptor(game, authority) {
   const descriptor = loadFiniteTableDescriptor(game, authority, {
     name: "Salvage Lock",
     gameId: "salvage-lock",
-    ruleset: "salvage-v1",
+    ruleset: "salvage-v2",
+    disclosure: "oracle-only",
     engineModule: "Dregg2.Games.PathOfAngels.SalvageLock",
     actionLimit: 12,
     maxActionLimit: 12,
-    stateCount: 164,
-    maxStates: 164,
+    stateCount: 632,
+    maxStates: 632,
     maxActions: SLOT_COUNT,
     refusalReasons: REFUSALS,
     parseView: salvageView,

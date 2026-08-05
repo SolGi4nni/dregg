@@ -14,7 +14,6 @@ semantic command; it cannot affect score, resources, safety, mastery, or canon.
 -/
 import Dregg2.Games.PathOfAngels.ShipLifeProgression
 import Dregg2.Games.PathOfAngels.OfficerLogbook
-import Dregg2.Games.PathOfAngels.GalleyMaintenanceDaily
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.NightWatchCampaign
@@ -179,7 +178,7 @@ structure TaskRule where
   failureHealth : HealthEffect
   successEvidence : Nat
   failureEvidence : Nat
-  localService : Fin (GalleyMaintenanceDaily.MAX_LOCAL_SERVICE + 1)
+  localService : Fin (GalleyMaintenanceDailyRuntime.MAX_LOCAL_SERVICE + 1)
   betaDiscovery : Option ContentContract.ArtifactId
   discoveryEvidenceRequired : Nat
   taskContentId : Digest32
@@ -335,7 +334,7 @@ structure LogbookEntry where
   masteryBefore : MasteryRow
   masteryAfter : MasteryRow
   galleyLocalService : Option
-    (Fin (GalleyMaintenanceDaily.MAX_LOCAL_SERVICE + 1))
+    (Fin (GalleyMaintenanceDailyRuntime.MAX_LOCAL_SERVICE + 1))
   betaProposal : Option BetaCanonProposal
   progression : ProgressionEffect
   terminalContentId : Digest32

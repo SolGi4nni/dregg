@@ -1,11 +1,7 @@
 {
   "accepted": [
     "salvage-lock/budget-slack",
-    "salvage-lock/doomed-but-open",
-    "salvage-lock/instance-secret-published",
-    "salvage-lock/single-opener-class",
     "signal-triangulation/degenerate-instance-family",
-    "signal-triangulation/instance-secret-published",
     "signal-triangulation/losing-opener-class",
     "signal-triangulation/unreachable-feedback-class"
   ]

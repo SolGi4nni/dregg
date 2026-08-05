@@ -158,49 +158,74 @@ theorem relayTransition_spec (board : RelayRepair.Board) (transition : RelayTran
   obtain ⟨state, _hstate, action, _haction, rfl⟩ := h
   rfl
 
-/-- The emitted board: the one `Emit.relayRunSeed` selects (`Emit.relayBoardIndex`). -/
-abbrev relayEmittedBoard : RelayRepair.Board := RelayRepair.boardAt 2
+/-! ### The WHOLE board family, not one drawn board
 
-theorem relayTable_closed : relayTableClosedB relayEmittedBoard = true := by
+⚠ `relayEmittedBoard := RelayRepair.boardAt 2` is GONE, and with it the eight
+theorems that held only of it.  It named the board `Emit.relayRunSeed` drew, and
+the run seed was published, so pinning that board pinned the answer.  Relay's
+instance is now drawn per run from a slot secret (`HiddenInstance.runSeedFor`),
+so there is no emitted board — the descriptor carries all eight machines and the
+run opening names which one is live.
+
+Relay is a perfect-information puzzle: its player must read the damage report to
+play at all, so the instance is DISCLOSED to its own player at run start.  What
+changed is that it is disclosed per run rather than printed once for everyone,
+which is what kills the memorised line.
+
+Every property below is now quantified over the whole family, which is strictly
+stronger than the pinned-board versions it replaces. -/
+
+theorem relayTable_closed : ∀ i : Fin 8, relayTableClosedB (RelayRepair.boardAt i) = true := by
   native_decide
 
-theorem relayStates_nodup : relayStatesNodupB relayEmittedBoard = true := by
+theorem relayStates_nodup : ∀ i : Fin 8, relayStatesNodupB (RelayRepair.boardAt i) = true := by
   native_decide
 
 theorem relayRefusalReasons_complete :
-    relayRefusalReasonsCompleteB relayEmittedBoard = true := by
+    ∀ i : Fin 8, relayRefusalReasonsCompleteB (RelayRepair.boardAt i) = true := by
   native_decide
 
-theorem relayRefusalReasons_live : relayRefusalReasonsLiveB relayEmittedBoard = true := by
+theorem relayRefusalReasons_live :
+    ∀ i : Fin 8, relayRefusalReasonsLiveB (RelayRepair.boardAt i) = true := by
   native_decide
 
 theorem relayRefusalReasons_declared :
-    relayRefusalReasonsDeclaredB relayEmittedBoard = true := by
+    ∀ i : Fin 8, relayRefusalReasonsDeclaredB (RelayRepair.boardAt i) = true := by
   native_decide
 
 theorem relayStateIds_unique :
-    relayStateIdsUniqueB relayEmittedBoard relayStateId = true := by
+    ∀ i : Fin 8, relayStateIdsUniqueB (RelayRepair.boardAt i) relayStateId = true := by
   native_decide
 
-theorem relayStates_count : (relayStates relayEmittedBoard).length = 25 := by
+/-- Per-board closure sizes.  They are NOT all equal: the crate and the pricing
+change how much of the panel lattice is reachable, so a client cannot be told one
+number.  Board 2 is 25, which is the value the deleted `relayStates_count` pinned. -/
+def relayStateCounts : List Nat :=
+  (List.finRange 8).map fun i => (relayStates (RelayRepair.boardAt i)).length
+
+theorem relayStateCounts_pinned : relayStateCounts = [26, 19, 25, 18, 18, 22, 26, 25] := by
   native_decide
 
-theorem relayTransitions_count : (relayTransitions relayEmittedBoard).length = 125 := by
-  native_decide
+/-- The emitted row count of a board is its state count times the five links; no
+separate pin is needed because `relayTransitions_length` proves it for every board. -/
+theorem relayTransitions_count (i : Fin 8) :
+    (relayTransitions (RelayRepair.boardAt i)).length =
+      (relayStates (RelayRepair.boardAt i)).length * 5 := by
+  simp [relayTransitions_length, relayActions_length]
 
 #assert_axioms relayActions_length
 #assert_axioms relayActions_complete
 #assert_axioms relayStep_eq_source
 #assert_axioms relayTransitions_length
 #assert_axioms relayTransition_spec
+#assert_axioms relayTransitions_count
 #assert_compiled relayTable_closed
 #assert_compiled relayStates_nodup
 #assert_compiled relayRefusalReasons_complete
 #assert_compiled relayRefusalReasons_live
 #assert_compiled relayRefusalReasons_declared
 #assert_compiled relayStateIds_unique
-#assert_compiled relayStates_count
-#assert_compiled relayTransitions_count
+#assert_compiled relayStateCounts_pinned
 
 /-! ## Salvage Lock -/
 
@@ -236,18 +261,6 @@ theorem salvageActions_length : salvageActions.length = 6 := by
 theorem salvageActions_complete (action : SalvageLock.Action) : action ∈ salvageActions := by
   cases action with
   | expose slot => simp [salvageActions]
-
-/-- The seed the pinned run seed draws its board from.  No literal is written here:
-the value is whatever the four consuming draws return, and
-`salvagePinnedSeed_resolved` is the compiled statement that they returned something
-rather than falling through to the `getD`.  Pinning a literal instead would be a
-constant checked against its own definition. -/
-def salvagePinnedSeed : Fin SalvageLock.SEED_SPACE :=
-  (SalvageLock.seedFromRunSeed? SalvageLock.PINNED_RUN_SEED).getD ⟨0, by decide⟩
-
-theorem salvagePinnedSeed_resolved :
-    SalvageLock.seedFromRunSeed? SalvageLock.PINNED_RUN_SEED = some salvagePinnedSeed := by
-  native_decide
 
 /-- Salvage's source transition parameterized only by the semantically relevant
 seed; MissionSpec and reward proofs do not influence play. -/
@@ -326,26 +339,6 @@ theorem salvageTransition_spec (seed : Fin SalvageLock.SEED_SPACE) (transition :
   obtain ⟨state, _hstate, action, _haction, rfl⟩ := h
   rfl
 
-theorem salvageStates_nodup_pinned : salvageStatesNodupB salvagePinnedSeed = true := by
-  native_decide
-
-theorem salvageTable_closed_pinned : salvageTableClosedB salvagePinnedSeed = true := by
-  native_decide
-
-theorem salvageRefusalReasons_complete_pinned :
-    salvageRefusalReasonsCompleteB salvagePinnedSeed = true := by
-  native_decide
-
-theorem salvageStateIds_unique_pinned :
-    salvageStateIdsUniqueB salvagePinnedSeed salvageStateId = true := by
-  native_decide
-
-theorem salvageStates_count_pinned : (salvageStates salvagePinnedSeed).length = 164 := by
-  native_decide
-
-theorem salvageTransitions_count_pinned : (salvageTransitions salvagePinnedSeed).length = 984 := by
-  native_decide
-
 /-- One seed per perfect matching: the fifteen with a canonical glyph labelling
 (`seed % 6 = 0`).  The glyph names cannot change the closure — `salvageStep` only
 ever compares two glyphs for equality — so these fifteen cover the whole seed space
@@ -353,11 +346,9 @@ for any question about the machine's SHAPE. -/
 def salvagePairingRepresentatives : List (Fin SalvageLock.SEED_SPACE) :=
   (List.finRange SalvageLock.SEED_SPACE).filter fun seed => seed.val % 6 == 0
 
-/-- ⚑ The emitted table's SHAPE does not leak the board.  Every one of the fifteen
-matchings yields the same 164 states and 984 transitions, all state ids distinct and
-the table closed, so a client cannot read the instance off the descriptor's size or
-its refusal pattern — only off its contents, which it does publish (see the
-`SalvageLock` header). -/
+/-- Every seed's own machine has the same size and the same hygiene.  Kept because
+it is what makes the size of a per-seed table uninformative; it is no longer what
+the wire carries. -/
 theorem salvage_machine_shape_is_seed_independent :
     (salvagePairingRepresentatives.length == 15 &&
       (salvagePairingRepresentatives.all (fun seed =>
@@ -369,18 +360,160 @@ theorem salvage_machine_shape_is_seed_independent :
         salvageRefusalReasonsCompleteB seed))) = true := by
   native_decide
 
+/-! ### The PARAMETRIC machine — the rules without the board
+
+⚠ `salvagePinnedSeed` and its six pinned theorems are GONE.  They described the
+table of ONE board, and that table stated the board twice over: once in each
+action row's `glyph_id`, and once — unavoidably in a tabulated machine — in the
+successors, because which second exposure clears is exactly which plates pair.
+The `SalvageLock` header said removing `glyph_id` alone would silence a gate
+without hiding anything, and it was right.
+
+What is emitted now carries no board at all.  A first exposure is deterministic
+and needs no instance.  A second exposure consults ONE bit — did the two plates
+carry the same glyph — and the row names BOTH successors, `on_match` and
+`on_mismatch`.  The bit comes from the judge, which holds the live run seed; the
+client renders the branch it is told and learns exactly one bit per exposure,
+which is what a memory game is supposed to cost.
+
+`salvage_parametric_table_is_the_kernel` is the refinement: for EVERY one of the
+ninety seeds and every row of the emitted closure, the parametric row instantiated
+at the true match bit IS `salvageStep`.  The table is the rules; the bit is the
+instance. -/
+
+/-- A row of the emitted parametric machine. -/
+inductive ParametricRow where
+  /-- The rules refuse regardless of the board.  Every one of Salvage's four
+  refusal reasons is board-independent, which is why a refusal leaks nothing. -/
+  | refuse (reason : String)
+  /-- A first exposure: deterministic, no oracle consulted. -/
+  | advance (next : SalvageLock.State)
+  /-- A second exposure: the judge supplies one bit and the run takes one of these. -/
+  | resolve (onMatch onMismatch : SalvageLock.State)
+deriving DecidableEq, Repr
+
+/-- The row for a (state, action) pair.  It mentions no seed. -/
+def salvageParametricRow (state : SalvageLock.State) (action : SalvageLock.Action) :
+    ParametricRow :=
+  let slot := SalvageLock.actionSlot action
+  match salvageRefusalReason state action with
+  | some reason => .refuse reason
+  | none =>
+      match state.exposed with
+      | none => .advance { state with exposed := some slot, turns := state.turns + 1 }
+      | some first =>
+          .resolve
+            { cleared := insert slot (insert first state.cleared)
+              exposed := none, turns := state.turns + 1 }
+            { cleared := state.cleared, exposed := none, turns := state.turns + 1 }
+
+/-- The single bit a judge supplies for a second exposure.  This is the ONLY place
+the board enters play. -/
+def salvageMatchB (seed : Fin SalvageLock.SEED_SPACE) (state : SalvageLock.State)
+    (action : SalvageLock.Action) : Bool :=
+  match state.exposed with
+  | none => false
+  | some first =>
+      SalvageLock.glyphAt seed first ==
+        SalvageLock.glyphAt seed (SalvageLock.actionSlot action)
+
+/-- Instantiate a parametric row at an oracle bit. -/
+def salvageParametricApply (row : ParametricRow) (matched : Bool) : Option SalvageLock.State :=
+  match row with
+  | .refuse _ => none
+  | .advance next => some next
+  | .resolve onMatch onMismatch => some (if matched then onMatch else onMismatch)
+
+def salvageParametricSuccessors (state : SalvageLock.State) (action : SalvageLock.Action) :
+    List SalvageLock.State :=
+  match salvageParametricRow state action with
+  | .refuse _ => []
+  | .advance next => [next]
+  | .resolve onMatch onMismatch => [onMatch, onMismatch]
+
+/-- The closure under BOTH oracle answers.  It is a strict over-approximation of
+any single board's reachable set — some answer sequences are consistent with no
+board at all — and that is the point: its size and shape say nothing about which
+board is live. -/
+def salvageParametricClosure : Nat → List SalvageLock.State
+  | 0 => [SalvageLock.initialState]
+  | n + 1 =>
+      let states := salvageParametricClosure n
+      (states ++ states.flatMap fun state =>
+        salvageActions.flatMap (salvageParametricSuccessors state)).eraseDups
+
+def salvageParametricStates : List SalvageLock.State :=
+  salvageParametricClosure SalvageLock.MAX_TURNS
+
+structure ParametricTransition where
+  state : SalvageLock.State
+  action : SalvageLock.Action
+  row : ParametricRow
+deriving DecidableEq
+
+def salvageParametricTransitions : List ParametricTransition :=
+  salvageParametricStates.flatMap fun state =>
+    salvageActions.map fun action =>
+      { state, action, row := salvageParametricRow state action }
+
+def salvageParametricClosedB : Bool :=
+  let states := salvageParametricStates
+  salvageParametricTransitions.all fun transition =>
+    (salvageParametricSuccessors transition.state transition.action).all fun next =>
+      decide (next ∈ states)
+
+def salvageParametricStatesNodupB : Bool := salvageParametricStates.Nodup
+
+def salvageParametricStateIdsUniqueB : Bool :=
+  (salvageParametricStates.map salvageStateId).Nodup
+
+/-- ⚑ **The refinement.**  For every one of the ninety boards and every emitted
+row, the parametric row instantiated at that board's match bit is exactly the
+kernel transition.  The emitted table is therefore the complete rules and the
+oracle bit is the complete instance: nothing else passes between them. -/
+def salvageParametricRefinesB (seed : Fin SalvageLock.SEED_SPACE) : Bool :=
+  salvageParametricStates.all fun state =>
+    salvageActions.all fun action =>
+      salvageParametricApply (salvageParametricRow state action)
+          (salvageMatchB seed state action) ==
+        salvageStep seed state action
+
+theorem salvage_parametric_table_is_the_kernel :
+    ((List.finRange SalvageLock.SEED_SPACE).all salvageParametricRefinesB) = true := by
+  native_decide
+
+/-- The emitted closure is closed, duplicate-free and uniquely identified.  The
+counts are here because a client is told them and must be able to refuse a table
+of a different size; they are NOT a property of any board. -/
+theorem salvage_parametric_table_is_well_formed :
+    (salvageParametricClosedB && salvageParametricStatesNodupB &&
+      salvageParametricStateIdsUniqueB) = true := by
+  native_decide
+
+theorem salvageParametricStates_count : salvageParametricStates.length = 632 := by
+  native_decide
+
+theorem salvageParametricTransitions_count : salvageParametricTransitions.length = 3792 := by
+  native_decide
+
+/-- The parametric closure strictly contains every single board's reachable set:
+a client that fetched a 164-state table could ask which board has 164 reachable
+states, and this one cannot be asked that. -/
+theorem parametric_closure_covers_every_board :
+    ((List.finRange SalvageLock.SEED_SPACE).all fun seed =>
+      (salvageStates seed).all fun state => salvageParametricStates.contains state) = true := by
+  native_decide
+
 #assert_axioms salvageActions_length
 #assert_axioms salvageActions_complete
 #assert_axioms salvageStep_eq_source
 #assert_axioms salvageTransitions_length
 #assert_axioms salvageTransition_spec
-#assert_compiled salvagePinnedSeed_resolved
-#assert_compiled salvageStates_nodup_pinned
-#assert_compiled salvageTable_closed_pinned
-#assert_compiled salvageRefusalReasons_complete_pinned
-#assert_compiled salvageStateIds_unique_pinned
-#assert_compiled salvageStates_count_pinned
-#assert_compiled salvageTransitions_count_pinned
 #assert_compiled salvage_machine_shape_is_seed_independent
+#assert_compiled salvage_parametric_table_is_the_kernel
+#assert_compiled salvage_parametric_table_is_well_formed
+#assert_compiled salvageParametricStates_count
+#assert_compiled salvageParametricTransitions_count
+#assert_compiled parametric_closure_covers_every_board
 
 end Dregg2.Games.PathOfAngels.FiniteTables

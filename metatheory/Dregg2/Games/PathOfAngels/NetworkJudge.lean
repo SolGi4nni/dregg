@@ -26,12 +26,16 @@ set_option autoImplicit false
 /-! ## Exact active Signal projection -/
 
 /-- Rebuild the only Signal configuration this boundary accepts.  The five
-authenticated identities remain variable, but every game-semantic field comes
-from the Lean emitter: mission/artifact ids, epoch/session/seed, budget, privacy,
-ballot, target, reward, and allowed relics. -/
+authenticated identities remain variable, and so — ⚠ NOW — does the run seed: it
+is drawn per run from the committed slot secret, so the emitter cannot supply it
+and this boundary carries the candidate's own.  Every other game-semantic field
+still comes from the Lean emitter: mission/artifact ids, epoch, session, budget,
+privacy, ballot, reward, allowed relics.  The TARGET is no longer among them,
+because it is no longer a constant: it is `targetFromSeed` of whatever live seed
+`Judged.admissionChecks` proved was the derived one. -/
 def emittedSignalConfig (config : SignalTriangulation.Config) :
     SignalTriangulation.Config :=
-  Emit.signalConfig config.mission.federationId
+  Emit.signalConfig config.mission.runSeed config.mission.federationId
     config.mission.artifact.sourceDigest config.mission.artifact.contentDigest
     config.mission.contentRoot config.mission.activationDigest
 
@@ -376,7 +380,7 @@ theorem fixture_wrong_action_refused :
 def multipleActionsInputWire : SignalInputWire := {
   fixtureInputWire with
   request := { fixtureInputWire.request with
-    actions := [CodeWire.ofSemantic Emit.signalTarget, CodeWire.ofSemantic Emit.signalTarget] }
+    actions := [CodeWire.ofSemantic fixtureConfig.target, CodeWire.ofSemantic fixtureConfig.target] }
 }
 
 theorem fixture_multiple_actions_refused :
