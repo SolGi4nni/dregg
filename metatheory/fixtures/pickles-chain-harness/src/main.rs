@@ -97,9 +97,19 @@ struct CircuitJson {
     public_input: Vec<String>,
     num_rows: usize,
     probe_rows: Vec<usize>,
+    /// ⚑ Which of MINA'S forty statement slots the Lean emission DERIVES, and which it declares
+    /// unread. Emitted WITH the circuit so a Rust gate tests the split rather than its own guess.
+    #[serde(default)]
+    derived_slots: Vec<usize>,
+    #[serde(default)]
+    unread_slots: Vec<usize>,
     gates: Vec<GateJson>,
     witness: Vec<Vec<String>>,
 }
+
+/// Mina's own wrap statement width (`Impls.Wrap.input ()`), as an INDEPENDENT source the emission
+/// is checked against rather than read off it.
+const MINA_WRAP_PRIMARY_LEN: usize = 40;
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
@@ -320,25 +330,58 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
     );
     println!("[4 NONVACU  ] unread advice cell (col 12, row {p0}) flip ACCEPTED (non-vacuity)");
 
+    // (5) PUBLIC INPUT, at MINA'S forty slots — two legs that move in OPPOSITE directions. The
+    // VECTOR leg (move the verifier's claim) binds every slot, because each public row is a
+    // `Generic` gate `1*w0[i] = pub_i`. The SIGMA leg (flip the cell AND the claim) binds only
+    // slots a copy class reaches, i.e. the ones this rung DERIVES — so it refuses there and
+    // ACCEPTS at the declared-unread ones, which measures the census rather than asserting it.
     if wired.public_input_size > 0 {
-        let mut bad = pub_w.clone();
-        bad[0] += Fq::from(1u64);
-        assert!(
-            prove_and_verify(&iw, &gm, build_witness(&wired), &bad).is_err(),
-            "[FALSIFICATION] {rung}: honest proof ACCEPTED against a tampered public vector"
+        assert_eq!(
+            wired.public_input_size, MINA_WRAP_PRIMARY_LEN,
+            "{rung}: the emission must be Mina's own statement width"
         );
-        let last = wired.public_input_size - 1;
-        for i in [0usize, last] {
+        assert_eq!(
+            wired.derived_slots.len() + wired.unread_slots.len(),
+            MINA_WRAP_PRIMARY_LEN,
+            "{rung}: derived + unread must be exactly Mina's forty"
+        );
+        for i in [wired.derived_slots[0], wired.unread_slots[0]] {
+            let mut bad = pub_w.clone();
+            bad[i] += Fq::from(1u64);
+            assert!(
+                prove_and_verify(&iw, &gm, build_witness(&wired), &bad).is_err(),
+                "[FALSIFICATION] {rung}: honest proof ACCEPTED against a public vector moved at slot {i}"
+            );
+        }
+        let d = [
+            wired.derived_slots[0],
+            wired.derived_slots[wired.derived_slots.len() - 1],
+        ];
+        for i in d {
             let mut b = pub_w.clone();
             b[i] += Fq::from(1u64);
             assert!(
                 prove_and_verify(&iw, &gm, tamper(&wired, 0, i), &b).is_err(),
-                "[FALSIFICATION] {rung}: public cell ({i},0) flip WITH a matching public vector ACCEPTED"
+                "[FALSIFICATION] {rung}: DERIVED slot {i} — cell flip WITH a matching public vector ACCEPTED"
+            );
+        }
+        let u = [
+            wired.unread_slots[0],
+            wired.unread_slots[wired.unread_slots.len() - 1],
+        ];
+        for i in u {
+            let mut b = pub_w.clone();
+            b[i] += Fq::from(1u64);
+            assert!(
+                prove_and_verify(&iw, &gm, tamper(&wired, 0, i), &b).is_ok(),
+                "[FALSIFICATION] {rung}: UNREAD slot {i} — cell flip WITH a matching public vector REFUSED"
             );
         }
         println!(
-            "[5 PUBLIC   ] {} public words: tampered public vector REJECTED, sigma leg REJECTED at i=0 and i={last}",
-            wired.public_input_size
+            "[5 PUBLIC   ] {} Mina slots ({} derived {:?}): VECTOR leg REJECTS; SIGMA leg REJECTS at derived {d:?} and ACCEPTS at unread {u:?}",
+            wired.public_input_size,
+            wired.derived_slots.len(),
+            wired.derived_slots
         );
     }
 
@@ -516,16 +559,28 @@ mod chain_tests {
         let c = load("chain_w4_bind");
         let i = index_for(&c);
         let p = public_of(&c);
-        assert!(c.public_input_size > 0);
+        assert_eq!(c.public_input_size, MINA_WRAP_PRIMARY_LEN);
         let mut bad = p.clone();
         bad[0] += Fq::from(1u64);
         assert!(prove_and_verify(&i, &gm, build_witness(&c), &bad).is_err());
-        for k in [0usize, c.public_input_size - 1] {
+        // the SIGMA leg: REFUSE where the rung derives, ACCEPT where it declares unread.
+        for k in [
+            c.derived_slots[0],
+            c.derived_slots[c.derived_slots.len() - 1],
+        ] {
             let mut b = p.clone();
             b[k] += Fq::from(1u64);
             assert!(
                 prove_and_verify(&i, &gm, tamper(&c, 0, k), &b).is_err(),
-                "public cell ({k},0) flip WITH a matching public vector ACCEPTED"
+                "DERIVED slot ({k},0) flip WITH a matching public vector ACCEPTED"
+            );
+        }
+        for k in [c.unread_slots[0], c.unread_slots[c.unread_slots.len() - 1]] {
+            let mut b = p.clone();
+            b[k] += Fq::from(1u64);
+            assert!(
+                prove_and_verify(&i, &gm, tamper(&c, 0, k), &b).is_ok(),
+                "UNREAD slot ({k},0) flip WITH a matching public vector REFUSED"
             );
         }
     }
