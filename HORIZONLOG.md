@@ -1,5 +1,138 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 5 (W-FINSPONGE) — **Poseidon 137 of 261 → 259 of 261**, and the memo four docblocks called a kernel theorem did not exist
+
+`w11_finsponge` is the **fifteenth** rung and it EMITS and PROVES: 5 434 rows, PI 7, 152 σ-only
+probes, `verify() == true` on Pallas, five polarities. Census
+`Zero 601 · Generic 2220 · Poseidon 1848 · CompleteAdd 20 · VarBaseMul 281 · EndoMul 0 ·
+EndoMulScalar 464`, **168 Poseidon runs and every one exactly 11 rows, 58 `EndoMulScalar` runs and
+every one exactly 8.**
+
+⚑ **THE RUNG'S OWN DELTA IS 122 `(Poseidon × 11, Zero)` BLOCKS.** Per instance the nested
+challenge-digest sponge over the 30 flattened old bulletproof challenges takes **15** permutations
+(the rate-2 machine permutes before absorbs 3, 5, …, 29 — that is 14 — and once more for the squeeze,
+which arrives at `Absorbed 2`), and the 91-element finalize sponge takes **46** (45 during the
+absorbs, one for the FIRST squeeze; the second reads lane 1 of that SAME permutation, which is
+`finalize_sponge_squeezes_share_one_permutation` and is why it is 46 and not 47). **61 per instance,
+122 at `prevs = 2` — and `prevs = 2` at BOTH committed shapes**, so the wrap-scale figure is this
+figure. Against Mina's `wrap-transaction`'s 261: **259.**
+
+⚠ **THE TWO THAT REMAIN ARE NOT ATTRIBUTED.** Naming a residual is the whole discipline here; 259/261
+is not "essentially all of it" and the last two blocks belong to some sub-circuit nobody has named.
+
+⚑ **`fin_deferred_words_are_the_derivation` WAS CITED FOUR TIMES AND DID NOT EXIST.**
+`KimchiWrapMainCore`, `KimchiWrapMainField`, `EmitWrapFinDeferred` and `EmitWrapMainJson` all named
+it; three said it closed **"by `rfl` IN THE KERNEL"**. `grep` found four citations and no `theorem`.
+The `FIN_DEFERRED_CIP/_B/_XI` memo's only live discharge was `EmitWrapMainJson`'s runtime refusal —
+a real fail-closed gate, and not what the docblocks described. ⚠ **And a kernel `rfl` was never
+available**: the derivation is two sponges plus a **1 732-op** `Array FOp` program per instance, and
+in `whnf` an `Array` is its `List` model — `KimchiWrapFinalizeSpongeGate` had already measured a
+~200-op program of that shape failing to reduce `.size` alone at 1 000 000 heartbeats. It lands as
+`native_decide` + `#assert_compiled` and the four docblocks now say so. A citation of a kernel proof
+that is really a compiled evaluation is a `#guard`'s laundering spread over four files.
+
+**NEW `KimchiWrapMainPins12`** — two kernel-clean, four compiled, split so the confession does not
+swallow the clean ones. The kernel half is the invariant rather than a count:
+`poseidon_block_is_eleven_rows_and_one_signature` is **general over every input triple, every output
+triple and every round tape** — 11 Poseidon rows, coefficients `poseidonRowCoeffsQ` in order, closed
+by ONE `Zero` carrying `probe := false`, no probe inside the block. Mina's own `(Poseidon × 11, Zero)`
+family, as a theorem no future rung can emit half-open past.
+
+⚑ **THE THREE LEGS ARE CONSTRAINTS, MEASURED BOTH WAYS.**
+`finsponge_legs_take_both_field_equal_branches`: on the block that claims `should_finalize` all three
+differences are 0 and `xi_correct`/`b_correct`/`combined_inner_product_correct` are all 1; on the
+other block all three differences are **NONZERO** and all three bits are 0. Both branches of
+`Field.equal` live in ONE emission, so no leg is a constant 1 — the defect `d7d0a150e` shipped with a
+hardcoded witness, green at every σ-pin while the prover said
+`Prover("rest of division by vanishing polynomial")`.
+
+⚠ **THE FOURTEEN-RUNG CENSUS WAS BLIND TO IT BY CONSTRUCTION.** `wrapmain-shape-diff.mjs` — the gate
+that IS this epoch's scoreboard — had 14 entries in `RUNGS` and no `w11_finsponge` branch, so the
+union it prefix-strips was 122 Poseidon blocks short of the emission no matter what the emitter did.
+Added (`w9_prev → w10_finalize → w11_finsponge`), `--self-test` 8/8 green.
+`wrapmain-region-conformance.mjs` carried a flat *"`w11_finsponge` … has NO emitted artifact — the
+emitter produces 14 rungs, not 15"*, false at HEAD; retired.
+
+⚠ **WHAT IS NOT MEASURED, AND IT IS THE NEXT THING.** The full census is a **wrap**-shape gate and
+this ran at **smoke**, so `12550/15122 = 83.0%` is NOT re-measured. The pending flag day is still
+pending: `FIN_DEFERRED_*` moved `xhatOut 67`, so every `wrapmain_wrap_*.json` from `w6_xhat` up
+re-emits. ⚑ Smoke is unaffected and that is now MEASURED rather than asserted — **22 of 22** rungs
+below the new one re-emitted **byte-identical** to the committed fixtures. ⚠ And one thing to watch
+when the wrap census does run: this rung adds **304 `EndoMulScalar` rows** (19 chains × 8 × 2, the
+same at both shapes) on top of a family measured at 368 against Mina's 536. Whether that lands under,
+at, or over is arithmetic I will not publish without the emission behind it — R3 will print it.
+
+⚠ **THIS COMMIT ALSO CARRIES A SIBLING'S FINISHED `HORIZONLOG` ENTRY** (the step→wrap chain past
+`w4_bind`, below). `git commit --only` takes a path's whole worktree content; the entry was complete
+prose and is theirs. `KimchiWrapMainCore.lean` was left OUT of my commits for the same reason — that
+file is mid-edit by the same lane and my one docblock correction there waits in the worktree.
+
+## ⚑⚑⚑⚑ AUGUST 5 — the step→wrap chain CLIMBS past `w4_bind`; `w5_key` proves on Pallas
+
+`chain_w5_key` — **1 999 rows, `verify() == true` on Pallas in 1.15 s**, five polarities, 8/110
+sigma-only probes rejecting a col-0 desync and the same flips accepted on the unwired control. The
+transcript is dregg's own step proof's phase-1 Fq tape and the wrap circuit now **commits to that
+proof's own verifier index**. The control pair holds at the new rung: **21 of 22** public words move
+under a one-coordinate bend of the step proof's `w_comm` at BOTH `w4_bind` and `w5_key`, and the
+unread-bend emission is byte-identical at both.
+
+⚑ **THE BRIEF'S PREMISE WAS FALSE, AND MEASURING IT WAS THE FIRST HOUR.** `the_chain_cannot_climb_
+past_bind_until_the_step_key_is_real` was supposed to be refutable because `1687b7f61` made
+`STEP_VK_XY` real. Measured: it was still TRUE. `1687b7f61` replaced kimchi's degenerate
+`create_circuit(0,5)` test index with o1-labs' released **`step-transaction`** blob — which fixed a
+real and different defect (seven commitments at infinity ⇒ an off-curve `lhs` ⇒ `bulletproof_success`
+with no witness) and left this row exactly as unsatisfiable. `keyRows`' `digestTie` welds the index
+sponge's squeeze to the transcript's FIRST absorbed word; the squeeze was Mina's step-transaction
+digest (`4681608…`) and the tape's first word was `stepmain_smoke_r8_finalize`'s (`9293130…`).
+**A real key is not the RIGHT key.** `.key` is in `rungsUpto` of every rung above `w4_bind`, so that
+one row was the whole ceiling — not W-COMBINE, not W-BULLET.
+
+⚑ **WHAT CLOSES IT IS `choose_key`'s OWN MECHANISM.** `step_keys` is a per-branch VECTOR of the
+compiled step rules' verification keys (`wrap_main.ml:98-101`). dregg's step rule takes an entry
+beside Mina's — `KEY_CHAIN_BRANCH = 2` — and `chainBranch` selects it.
+
+⚠ **AND THE FIVE-ENTRY ONE-HOT FOLD WAS DECORATION UNTIL TODAY.** `keySchedule` took no branch at
+all: it absorbed `keyConst KEY_REAL_BRANCH` while `keyEnv`'s fold outputs `keyConst t.br.idx` and
+`sealHalves` ties the two — so **W-KEY had a satisfying witness at branch 1 and nowhere else**, and
+every `WrapData` in the tree happened to select branch 1, so nothing ever saw it.
+`key_sponge_absorbs_the_selected_branch` and `key_digest_moves_with_the_branch_selection` (five
+branches, five distinct digests) are the pins; both kernel-clean.
+
+⚠⚠ **THE CHAIN FIXTURE WAS STALE BY TWO CIRCUIT REVISIONS AND NOTHING DETECTED IT.**
+`KimchiStepWrapChainFixture.lean` said `STEP_ROWS := 3541` while `stepmain_smoke_r8_finalize.json`
+had been re-emitted twice (`9525085e6` → 3 555, `c14a9cf01` → 3 391). Its `STEP_VKDIGEST` was the
+digest of a circuit that no longer existed, so "the transcript is dregg's OWN step proof" was true of
+a circuit two revisions back. The whole fixture is regenerated on the current 3 391-row circuit, and
+the exporter now emits the tape and the 56 `index_to_field_elements` coordinates **from the same
+`VerifierIndex`, in the same run** — one binary, so the preimage identity is by construction and a
+second key exporter cannot drift against it. 0 of 28 points at infinity.
+
+⚑ **AND THE VALUE LAYER WAS THE BORROWED PROOF, WHATEVER TAPE DROVE IT.** `combPtVal`, `bullCipVal`,
+`bullLrVal`, `bullDeltaVal`, `prevEnv`'s `assert_on_curve` intermediates and `whSpongeP`'s tape all
+answered with `itemVal` — `PastaPoseidonFq`'s `create_circuit(0,5)` proof. Invisible for a
+`schedule`-driven `WrapData` (value and variable agreed by coincidence of source); on the chain
+`bullCipVal` was `102000317`, a `wrapFixtureQ` filler, against an absorbed `combined_inner_product`
+of `24039349…`. `bullLrVal`/`bullDeltaVal` took **no `WrapData` at all**, which is what made it
+structural: a nullary value function cannot follow a tape. One repair — `absVal`, reading the value
+half of the very filter the `V` twins read the variable from. Byte-neutral for `tWrap`: Pins04/08/09
+/11/12 all green unchanged. The pin written to fire when it landed **did fire** (`#assert_compiled`
+caught the `sorryAx` and the build refused), which is the mechanism working.
+
+⚠ **Named residual, with its precondition measured.** `w12_close` still sets `bpSuccessVar` from a
+fresh cell rather than σ-tying it to `bullEqV s sp 12`, and the tie needs `.bullet` under `.close`.
+The tie is one row; what it hits is `regionEscape`, which returns ONE `(base, cap)` per rung — so
+every W-BULLET gate (all in the `baseComb` block) would be a `some i` against `rungRegion .close`'s
+W-WRAPHACK block and `EmitWrapMainJson` would REFUSE the rung. `no_rung_holds_two_colliding_regions`'
+`≤ 1` conjunct also goes false, but that one is already legacy — §17b's three caps make the blocks
+disjoint for EVERY `x`. Precondition: `rungRegion` returns a LIST and `regionEscape` accepts any of
+them. That is a generalization of §17b, soundness already proved, and it belongs to §17b's owner.
+
+⚠ Still not a Mina-valid proof and still not a soundness result. `WRAP_UNCONSUMED` keeps all eight
+entries; `t_comm` remains the one family absorbed and read by nothing; the opening (`equal_g`,
+`verified`, the accumulator check) is not in this circuit. The reality gate is closed by
+`native_decide` — 28 Poseidon permutations of a 255-bit state — and `#assert_compiled` is the
+confession.
+
 ## ⚑⚑⚑ AUGUST 5 — the Fq Kimchi sponge PROVES; the blocker was the witness generator, not the AIR
 
 `dregg-pasta-fq-absorb::v1` — fresh sponge `(0,0,0)`, absorb `[1,2]`, 55 full rounds, squeeze lane 0 —
@@ -16505,3 +16638,88 @@ and "hbox is triple-booked" were the same sampling artifact read in opposite dir
   `MemoryMax=103079215104` = 96 GiB and `memory.events: oom 149 / oom_kill 86`, and measured
   persvati `~/dregg-build` at 449-450 GB against the 611 GB in the sweep header). Olean counts are
   file counts: they say how many modules a tree has elaborated, not that they are current for HEAD.
+
+## 2026-08-05 — THE Fq SPONGE RECOMPUTES A REAL MINA BLOCK'S TRANSCRIPT, and the o1-labs weld stops being a typed decimal
+
+Two residuals the Fq-sponge rung (`9bb9c149b`) named about itself, closed and PRICED.
+
+- **⚑ THE WELD WAS A COPY NOTHING CHECKED — not a fabrication, which is worse in one way and
+  better in another.** The 55×3 `fq_kimchi` round constants, the 3×3 MDS and the twelve KAT digests
+  were all *correctly* copied out of `metatheory/kimchi_p6_prev2_proof.json`, which
+  `kimchi-extractors/pickles_p6_fq_export.rs` produced by calling
+  `mina_poseidon::pasta::fq_kimchi::static_params()` at o1-labs `f6d958dc05`. **Nothing compared the
+  copy to the source.** One wrong digit in 174 numbers would have produced a *self-consistent* tree:
+  Lean proving the program computes ITS constants, the harness pinning the bytes of ITS digest,
+  every gate green, and the object not being Kimchi's sponge.
+  `pasta_fq_sponge_proves.rs` §9 now reads the dump and refuses unless **all 660 immediates of the
+  EMITTED `pasta-fq-absorb.json` instruction ROM** are those constants at the schedule position round
+  `r` requires — six independent provenance conditions first, the standard `step_vk_index_export.rs`
+  set. All 660 MATCH. The `KIMCHI_FQ_HASH_1_2` decimal literal is GONE; §7's expected digest is read
+  out of the dump.
+- **⚑ AND `#guard` → THEOREM in `PastaPoseidonFq`: 35 → 0.** `#assert_namespace_axioms` had been
+  reporting "22 theorems pinned kernel-clean" over a file whose load-bearing content — every KAT,
+  every anti-value, the whole real-proof β/γ/α′/ζ′ derivation — it was structurally blind to. Now 25
+  kernel-clean + 9 `#assert_compiled`. ⚠ **The header had cited `fq_phase1_derivation` as a theorem
+  name since the file was written and there was no such declaration**; it was a `#guard`. That is
+  exactly the name-as-claim failure, found by converting rather than by reading. Two guards were
+  upgrades, not renames: `a_full_final_rate_block_leaves_one_permutation` is now `rfl` at **every**
+  `Params` and every pair, and `the_fq_sbox_is_the_seventh_power_at_two` is kernel-reachable.
+- **⚑⚑ THE GENERATOR GAP, CLOSED AT ONE LINK AND PRICED AT THE REST.**
+  `MinaWrapVerifierSponge` §9: *"neither fixes that the values came from a Kimchi transcript."* A
+  Mina block's proof is the **Wrap** proof, Pallas-committed, so its **phase-2 sponge is `fq_kimchi`
+  over `ZMod qN` — this machine's constants** — and its outputs are `v′` (polyscale) / `u′`
+  (evalscale). `mina_real_block_proof.json` already carried that block's 91-element phase-2 tape;
+  nothing had ever run our sponge over it.
+  `the_fq_sponge_reproduces_the_real_blocks_challenges`: the EXISTING `PastaPoseidonFq.Core`,
+  nothing adjusted, absorbs the tape and squeezes **exactly** the `v_chal`/`u_chal`
+  `proof.oracles(...)` returned on **mina devnet block 539508** — a second, INDEPENDENT artifact
+  (different extractor, different proof, openmina's own `BlockVerifier` + `accumulator_check` +
+  o1-labs' `kimchi::verifier::verify`, all `assert!`ed) agreeing with the same 55×3 constants. A KAT
+  dump alone cannot give that.
+- **ON THE MACHINE**: `pasta-fq-wraplink::v1` is `absorbProg` VERBATIM — same 2 048 instructions,
+  same instruction ROM (asserted row-for-row against `pasta-fq-absorb.json`, so §9's constant check
+  covers it) — at SEVEN pin blocks instead of six, because one permutation yields TWO challenges and
+  pinning only `v′` leaves `u′` a claim about a register nothing reads. Its 224 emitted public
+  inputs are a state **45 permutations deep in the block's own tape** (DERIVED in Lean, never
+  typed), the tape's 91st element, and two raw squeezes whose low 128 bits ARE `v′` and `u′`.
+- **⚠ 1 OF THE BLOCK'S 46 PHASE-2 PERMUTATIONS IS IN THE AIR.** Said before the result, not after
+  it. All 46 is 75 900 rows ≈ **207 MB** of witness against a repository whose largest tracked file
+  is 10 MB. The other 45 are `PastaPoseidonFq.Core`, which
+  `the_permutation_program_computes_the_kimchi_permutation` proves this program computes at EVERY
+  state — so the residual is **45 witnesses, not an algebra**, and a chain of 46 instances welded by
+  input/output pin equality is the shape that closes it. Not built.
+- **THE CHAIN CLOSES WITHOUT TRUSTING THE TRANSCRIPTION.** The Lean carries the 91-element tape as
+  literals, but a wrong element cannot produce the right `v′`/`u′`, and BOTH ends of the AIR instance
+  (the absorbed element, both challenges) are checked in Rust against
+  `mina_real_block_proof.json` — an artifact Lean cannot influence.
+- **WHICH GATE REFUSES WHAT, measured on a real transcript** (`pasta_fq_wrap_transcript_proves.rs`,
+  release): the **ROM bus** refuses an `fq_kimchi` constant used at the wrong round; the **pc
+  thread** (`OodEvaluationMismatch`) refuses a reorder; **the PI pins** refuse the transcript itself
+  — the incoming state, the absorbed element and both challenges — and the ROM is SILENT about every
+  one of those, because absorbed values are register operands with zero immediates. `!err.contains
+  ("exact-public")` is asserted on each of those three, so "the pin is what binds the transcript" is
+  a measurement and not a reading.
+- **⚑ `the_absorb_program_permutes_the_absorbed_state` DELETES a hypothesis and SUBSUMES the old
+  theorem.** `the_absorb_program_computes_the_kimchi_sponge` needed `st 0 = st 1 = st 2 = 0` and two
+  canonicity bounds. A transcript link starts 45 permutations deep, so the fresh hypothesis had to
+  go — and it turned out never to have been load-bearing: the machine reduces mod `qN` on the add,
+  which is what `Core.absorbAt` does.
+- **THE CENSUS, TO THE FIGURE.** `the_permutation_opcode_split_exactly`: a permutation is **1 650
+  ops = 1 155 mul + 495 add**, and the ratio is bracketed inside `(1.428, 1.429)` — the census is low
+  by **42.9%**, not the 43% the docblocks rounded to. The 148-permutation stage is 244 200
+  instructions, **40.0%** of one ROM.
+- **UNMET, named:** the tape facts are `native_decide` + `#assert_compiled` (46 Kimchi permutations
+  of a 255-bit state; the `decide` proof-term path overflows) — a confession, not a certificate.
+  This is one stage of six: the five MSM stages need curve arithmetic that is not programmed, and
+  `v′`/`u′` are consumed by them. The endomorphism lift `v′ ↦ v` is not here.
+- **⚠ SWEPT, AND SAID OUT LOUD.** Every file of this lane landed inside two SIBLING commits
+  (`cf2a0dc41`, `dc5abe4ab`) that took the whole worktree — the `--only`/`add -A` hazard, content
+  intact, history NOT rewritten.
+- **⚠ AND THE LEAN TREE WAS RED AT HEAD FOR ~50 MINUTES, blocking every lane**, from the challenge-leaf
+  IR extension: `EffectLowerCore.lean` referenced `ChalLeg`/`chalReadsNext` without adding them to its
+  EXPLICIT `open Dregg2.Circuit.EffectAirIR (…)` list, and `lowerLeg_ne_nil` was missing its `| chal`
+  case. Repaired here (two names + a four-branch case split; every branch of `lowerChalLeg` is
+  non-empty by construction, so the completion carries no design choice). Named because it is not this
+  lane's work and the next reader should know whose it is. The descriptor **shape flag day is real and
+  correct**: `ir:2` now REQUIRES `"challenges"`, and `pasta-fq-absorb.json` / `pasta-fq-round.json`
+  refused to load until re-emitted — exactly the "make the old shape refuse" rule.

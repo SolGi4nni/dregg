@@ -40,7 +40,8 @@ open Dregg2.Circuit.Emit.AirBuilder
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv VmRange)
 open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
 open Dregg2.Circuit.EffectAirIR
-  (EffectAir AirLeg LookupLeg WindowLeg RangeLeg PiPinLeg LimbsLeg exprIsOne)
+  (EffectAir AirLeg ChalLeg BindLeg LookupLeg WindowLeg RangeLeg PiPinLeg LimbsLeg exprIsOne
+   chalReadsNext)
 open Dregg2.Circuit.TableAirIR (BusOp RowSel readsNext)
 
 set_option autoImplicit false
@@ -329,6 +330,17 @@ def lowerChalLeg (c : ChalLeg) : List VmConstraint2 :=
   | .first      => refuseConstraints
   | .last       => refuseConstraints
 
+/-- ⚑ **A RECURSION-BIND leg → the target's `proofBind`** (2026-08-05). The three expressions are
+emitted through `emitExpr` — the same wire form every gate body takes — and the two DECLARED halves
+travel as they are. A leg that pins NEITHER (`BindLeg.mainRailOk = false`, the
+`ProofBind.isDeclarative` shape) lowers to the UNSATISFIABLE pair rather than being emitted as a
+seam that quantifies over every program: a compiled descriptor cannot declare an unpinned bind. -/
+def lowerBindLeg (b : BindLeg) : List VmConstraint2 :=
+  if b.mainRailOk then
+    [.proofBind ⟨emitExpr b.guard, emitExpr b.commit, emitExpr b.vk, b.vkPin,
+                 b.bound.map emitExpr⟩]
+  else refuseConstraints
+
 /-- **One leg → its main-rail constraints.** A gate goes through the SAME `Head` normalizer the
 spec's own `guardGates` do — the source has one gate language, not two. -/
 def lowerLeg : AirLeg → List VmConstraint2
@@ -338,6 +350,7 @@ def lowerLeg : AirLeg → List VmConstraint2
   | .pin p    => [lowerPiPinLeg p]
   | .limbs l  => lowerLimbsLeg l
   | .chal c   => lowerChalLeg c
+  | .bind b   => lowerBindLeg b
 
 /-- **The air block's constraints, IN THE ORDER THE SOURCE DECLARED THEM.**
 
@@ -354,6 +367,8 @@ theorem lowerLeg_ne_nil (l : AirLeg) : lowerLeg l ≠ [] := by
   cases l with
   | gate c => simp [lowerLeg]
   | pin p => simp [lowerLeg]
+  | bind b =>
+      by_cases h : b.mainRailOk <;> simp [lowerLeg, lowerBindLeg, h, refuseConstraints]
   | lookup l =>
       by_cases h : l.mainRailOk <;> simp [lowerLeg, lowerLookupLeg, h, refuseConstraints]
   | limbs l =>
@@ -367,6 +382,18 @@ theorem lowerLeg_ne_nil (l : AirLeg) : lowerLeg l ≠ [] := by
           simp at h
         simp [lowerLeg, lowerLimbsLeg, h, hne]
       · simp [lowerLeg, lowerLimbsLeg, h, refuseConstraints]
+  | chal c =>
+      -- ⚑ The CHALLENGE leg (2026-08-05). Every branch of `lowerChalLeg` is non-empty by
+      -- construction: `.transition` and the reads-next-free `.all` emit one `chalGate`, and the
+      -- three refusing branches emit the two-element `refuseConstraints`. So the floor holds
+      -- without any hypothesis, and a challenge leg cannot be the one that vanishes silently.
+      cases hs : c.sel
+      case transition => simp [lowerLeg, lowerChalLeg, hs]
+      case all =>
+        by_cases h : chalReadsNext c.body <;>
+          simp [lowerLeg, lowerChalLeg, hs, h, refuseConstraints]
+      case first => simp [lowerLeg, lowerChalLeg, hs, refuseConstraints]
+      case last => simp [lowerLeg, lowerChalLeg, hs, refuseConstraints]
   | window w =>
       cases hs : w.sel
       case all =>

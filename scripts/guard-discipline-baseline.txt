@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15393 guards across 1161 modules (2424 .lean files scanned).
+# TOTAL 15358 guards across 1160 modules (2450 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -33,6 +33,7 @@
 # BASELINE-PROVENANCE 83a7dce86-DIRTY 15395→15394 (-1) DECREASED — last guard retired by 7ea63fe5d (doc-refs sweep); the bulk 31 -> 1 was f2fc52c39 (light-client tally became a limb vector) — 1 -> 0
 # BASELINE-PROVENANCE 3c8e2f7af-DIRTY 15394→15393 (-1) DECREASED — the Solana light client's byte-golden emitVmJson2 #guard became the named theorem solLcVerifyDesc_emits_golden_json (#assert_compiled — it is the ~11 KB string the kernel cannot reach, same honest outcome as EffectLower.transferLoweredDesc_emits_golden_json), landed with the descriptor absorbing dregg-solana-stake-table-fold::v1; the module's row is RETIRED, not raised, and it should never reacquire one
 # BASELINE-PROVENANCE b6609c257-DIRTY 15393→15393 (+0) LEVEL — KimchiWrapMain split into Core/Fixture/Pins01-11 + umbrella: the 47 guards redistribute (Core 1, Pins01 8, Pins03 38), TOTAL unchanged at 15393 -- the split converted nothing and lost nothing
+# BASELINE-PROVENANCE 6daf5d8c6-DIRTY 15393→15358 (-35) DECREASED — PastaPoseidonFq: 35 guards -> 11 named theorems (9 #assert_compiled, 2 kernel-clean, one of them generalised to every Params and every pair). The docblock had cited fq_phase1_derivation as a theorem name since the file was written; it was a #guard and now exists.
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -479,7 +480,6 @@
 44	Dregg2/Circuit/Emit/PastaMsmSliced.lean
 25	Dregg2/Circuit/Emit/PastaMsmWindowed.lean
 34	Dregg2/Circuit/Emit/PastaPoseidon.lean
-35	Dregg2/Circuit/Emit/PastaPoseidonFq.lean
 14	Dregg2/Circuit/Emit/PastaScalarMul.lean
 1	Dregg2/Circuit/Emit/PastaScalarPrime.lean
 10	Dregg2/Circuit/Emit/PastaSpongeWeld.lean
