@@ -105,6 +105,13 @@ pub mod private_attested_clearing;
 #[cfg(feature = "private-attested-clearing")]
 pub mod private_bfv_attested_clearing;
 
+/// Operator-visible Path of Angels Bazaar opening portal.  It binds the exact
+/// four authenticated BFV openings, V1 book identity, exchange parties, and
+/// ordinary-salvage UnitKeys without claiming house blindness or replacing the
+/// Lean V1 clearing authorization.
+#[cfg(feature = "private-attested-clearing")]
+pub mod poa_bazaar_opening_portal;
+
 /// Typed apex from the complete private BFV/HidingFRI/quorum verifier into the
 /// existing atomic market + provenance-carrying game asset consequence.
 #[cfg(all(feature = "private-attested-clearing", feature = "fhegg-settlement"))]

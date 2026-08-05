@@ -117,6 +117,11 @@ path = "tests/poa_dark_bazaar_protocol.rs"
 required-features = ["private-attested-clearing"]
 
 [[test]]
+name = "poa_bazaar_opening_portal"
+path = "tests/poa_bazaar_opening_portal.rs"
+required-features = ["private-attested-clearing"]
+
+[[test]]
 name = "private_clearing_crown_consequence"
 path = "tests/private_clearing_crown_consequence.rs"
 required-features = ["private-clearing"]
