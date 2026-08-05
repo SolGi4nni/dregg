@@ -42,11 +42,24 @@ O(n log n).
 workload (130 conjectured / 73 proven bits held at every point): lb=6 1145 ms / 513.2 KiB, lb=3 348
 / 870.4, lb=2 246 / 1191.7, lb=1 251 / 2208.4 — ~4-4.6x faster and 16x less LDE at lb=2, 2.32x the
 wire, and lb=1 buys nothing over lb=2. The blocker on a GLOBAL drop is the frozen degree ledger
-(`ir2_degree_budget`): `chip = 7` (the inline x^7 S-box) and `setFieldDynVmDescriptor2 main = 8`
-give `log_quotient_degree = 3`, so global lb<3 is below their floor. This machine declares no
-Poseidon2 chip (max degree 3) and PROVES AND VERIFIES at lb=2 and lb=1 — so the per-descriptor
-override is available for a reason that is a property of the descriptor, not a policy. **Nothing was
-landed: `IR2_FRI_LOG_BLOWUP` is unchanged at 6.**
+(`ir2_degree_budget`): `chip = 7` (the inline x^7 S-box) gives `log_quotient_degree = 3`, so global
+lb<3 is below its floor. The sibling registry-wide lane MEASURED that as a refusal —
+`OodEvaluationMismatch { index: Some(1) }` on **38 of 91 by-name goldens**; the lowest rung the
+whole registry reaches is **(3,39)**, which `ir2_config`'s docblock did not name.
+
+⚑ **RECOMMENDATION: (c) LEAVE IT — and this lane's first draft said (b), on its own workload
+alone.** The registry-wide measurement overturned it: on the axis this system optimizes, wire bytes
+and verify ms for light clients, (6,19) wins on EVERY measured descriptor by 2.0-2.4x on both, and
+no descriptor in the registry today needs the memory. The per-descriptor override also carries a
+hazard this lane did not know about — the recursion path reads `num_queries` from the inner proof
+structure (`recursion/src/pcs/fri/verifier.rs:1378`) and never pins it against a configured count,
+masked only because every child runs 19 queries. **The named trigger that flips it to (b)** is a
+descriptor above 2^21 rows: the in-AIR Kimchi verifier is exactly that, and it is chip-free — this
+machine declares no Poseidon2 chip (max degree 3) and PROVES AND VERIFIES at lb=2 AND lb=1. Close
+the recursion residual first. **Nothing was landed: `IR2_FRI_LOG_BLOWUP` is unchanged at 6**; the
+only change is `ir2_config`'s docblock, which named (2,57)/(1,114) as reachable and called a
+two-QUERY-column parity "parity" (per-fold 109->118, commit eps_C 71->77, and eps_C BINDS BELOW
+Johnson at the deployed wrap, so the low-blowup rung is STRONGER on the binding column).
 
 ⚠ NAMED FOLLOW-UPS THIS LANE DID NOT TAKE.
   * `scripts/emit_descriptors.py --verify-by-name-routing` is **FAIL on 15 UNSTAMPED descriptors**,
@@ -61,7 +74,7 @@ landed: `IR2_FRI_LOG_BLOWUP` is unchanged at 6.**
   * `dark-bazaar-private-poa-settlement-n4k4-v3.json` on disk DIFFERS from its Lean emission
     (checked over all 91 `EmitByName` rows; the other 90 match).
 
-Commits: `e7cae7eae`, `dd9a4585a`, `2390a5a80`, `8087faf5b`.
+Commits: `e7cae7eae`, `dd9a4585a`, `2390a5a80`, `8087faf5b`, `7ff050855`; the sibling FRI lane's `5022a2f23`, `f23b8b395`.
 
 
 ## ⚑⚑⚑ AUGUST 4 (step→wrap chain, RE-MEASURED at HEAD) — the figure is UNCHANGED at 21 of 22, the owed re-emission is DONE and BYTE-IDENTICAL, and `t_comm` is the only absorbed family nothing reads
