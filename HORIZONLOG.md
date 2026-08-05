@@ -121,11 +121,23 @@ not get past the top rung. Two things were measured and they are NOT the same si
     forty it is 40, and `exposedVarsAt _ .close` runs `whSpongeC` — three whole
     `hash_messages_for_next_wrap_proof` sponges. Two consumers, so **16 sponge runs became 80**.
     `slotVarTable` is the shared term now and both callers bind it once. Nothing emitted moves.
-  * **NOT MINE, and open.** The hoist did not make the rung emit: post-hoist `w12_close` was still
-    unwritten **17 minutes** after `w11_wraphack`. The last COMPLETE `w12_close` (06:31 today, 2260
-    rows, `pub 8`) is `w11_wraphack + 2 rows` — so it predates the 2026-08-05 change that made
+  * **NOT MINE, and open.** ⚠ **THE FIRST DRAFT OF THIS LINE SAID "the hoist did not make the rung
+    emit, still unwritten 17 minutes after `w11_wraphack`" — AND A LONGER OBSERVATION FALSIFIED IT.**
+    It emitted, at **33 m 52 s** (`w11_wraphack` 10:42:16 → `w12_close` 11:16:08). Seventeen minutes
+    was a reading of a run in progress written up as a verdict about it; the honest instrument was
+    to wait. Pre-hoist the same gap was **>44 min and never completed** before the process was
+    killed, so the hoist did restore completion — and the rung still costs **~34 min against ~3
+    before**, which is the part that is not mine. The last `w12_close` at the old cost (06:31 today,
+    2260 rows, `pub 8`) is `w11_wraphack + 2 rows`, so it predates the 2026-08-05 change making
     `.close` extend `.bullet` rather than `.wraphack` (`KimchiWrapMainPins10`'s own docblock says
     so). That rung now carries W-COMBINE's and W-BULLET's ladders AND their environments.
+
+⚑ **AND THE SAME UN-RE-EMITTED LADDER HID A SECOND, SHARPER THING.** The committed fixtures carry
+`w12_close` at **2260 rows against `w11_bullet`'s 3654** — a SUBSET of what `close_rung_extends_bullet`
+says it must contain — and the wrapmain harness's own ladder diagram still drew `w12_close` on a
+branch separate from `w11_bullet`. **No test compared the two.** A kernel-clean theorem on the new
+spine, a fixture set on the old one, and a diagram describing neither, all green together.
+`close_rung_contains_bullet` is that missing comparison and is RED on the committed fixtures.
 
 ⚑ **THE SHAPE OF IT: NOBODY RE-EMITTED, SO NOTHING MEASURED IT.** The rung's row-count pins moved to
 `rungRows_close_is_a_ladder`, general and kernel-clean, and the placement/region legs moved to the
