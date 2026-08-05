@@ -107,6 +107,41 @@ pub struct FinalizedFaithfulRootWeld<'a> {
     pub finalized_spends: &'a [crate::FinalizedFaithfulSpendInput],
 }
 
+/// Unforgeable proof that one Galley candidate is being derived from the
+/// finalized-turn writer's already-validated receipt/faithful/executor weld.
+///
+/// This is deliberately a capability, not another caller-authored finality
+/// carrier.  Only this module can construct it, and the production constructor
+/// belongs at the point inside [`PersistentStore::commit_finalized_turn_welded`]
+/// where the exact receipt and its carrying record have passed the central
+/// writer's checks.  The Galley authority module may read the coordinates only
+/// to re-bind its independently authenticated `SignedTurn`; it cannot mint,
+/// clone, serialize, or retain this proof across transactions.
+pub(crate) struct ValidatedPoaGalleyFinalityWeldV1 {
+    ordinal: u64,
+    block_id: [u8; 32],
+    turn_hash: [u8; 32],
+    receipt_hash: [u8; 32],
+}
+
+impl ValidatedPoaGalleyFinalityWeldV1 {
+    pub(crate) fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    pub(crate) fn block_id(&self) -> [u8; 32] {
+        self.block_id
+    }
+
+    pub(crate) fn turn_hash(&self) -> [u8; 32] {
+        self.turn_hash
+    }
+
+    pub(crate) fn receipt_hash(&self) -> [u8; 32] {
+        self.receipt_hash
+    }
+}
+
 /// The public accumulator input carried by one finalized `NoteSpend`.
 ///
 /// `value` is already public in the deployed note-spend statement.  Persisting
@@ -131,6 +166,14 @@ enum ReceiptWeldMode<'a> {
     AppendOrVerify { index: u64, encoded: &'a [u8] },
     /// Require a byte-identical row that predates this transaction.
     ExistingExact { index: u64, encoded: &'a [u8] },
+}
+
+/// Raw, caller-untrusted Galley material retained only until the central writer
+/// has validated the exact receipt, faithful edge, and executor projection.
+/// It is never itself authority and never crosses a persistence boundary.
+struct PoaGalleyRawWeld<'a> {
+    signed_turn: &'a dregg_turn::SignedTurn,
+    receipt: &'a dregg_turn::TurnReceipt,
 }
 
 enum ExactFnspV3Weld {
@@ -1043,7 +1086,8 @@ impl PersistentStore {
     /// Bare finalized-turn apex with one authoritative PoA Signal transition
     /// welded into the commit-log transaction.  Production federation callers
     /// use the stronger faithful-root/executor-state variants below.
-    pub fn commit_finalized_turn_with_poa_signal(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn commit_finalized_turn_with_poa_signal(
         &self,
         expected_ordinal: u64,
         record: &CommitRecord,
@@ -1067,10 +1111,23 @@ impl PersistentStore {
         .map(|outcome| outcome.outcome)
     }
 
+    /// Cross-crate fixture apex for restart-audit and atomicity tests only.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn commit_finalized_turn_with_poa_signal_for_test(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        poa_signal: &crate::PreparedPoaSignalTransitionV1,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_poa_signal(expected_ordinal, record, poa_signal)
+    }
+
     /// Bare finalized-turn apex with one native-Lean-authored generic PoA event
     /// welded into the commit-log transaction. Rust validates only storage
     /// framing and commit coordinates; game acceptance remains Lean-owned.
-    pub fn commit_finalized_turn_with_poa_event(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn commit_finalized_turn_with_poa_event(
         &self,
         expected_ordinal: u64,
         record: &CommitRecord,
@@ -1092,6 +1149,18 @@ impl PersistentStore {
             None,
         )
         .map(|outcome| outcome.outcome)
+    }
+
+    /// Cross-crate fixture apex for legacy V1 event atomicity tests only.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn commit_finalized_turn_with_poa_event_for_test(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        poa_event: &crate::PreparedPoaEventEnvelopeV1,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_poa_event(expected_ordinal, record, poa_event)
     }
 
     /// [`Self::commit_finalized_turn`] PLUS arbitrary config blobs written to
@@ -1418,6 +1487,118 @@ impl PersistentStore {
             Some(poa_batch),
             poa_holding,
         )
+    }
+
+    /// Commit one sealed Galley transition at the finalized-turn apex.
+    ///
+    /// This crate-private Galley durability adapter consumes the opaque carrier
+    /// produced by the persistence-owned Galley authority braid;
+    /// callers never receive or supply its inner `PreparedPoaEventBatchV2`.
+    /// The existing central writer remains the single semantic path:
+    ///
+    /// * a fresh turn re-audits the exact current signed world under the same
+    ///   redb writer, then applies the durable stream-head CAS before commit;
+    /// * an idempotent retry re-audits the batch's historical signed-world
+    ///   prefix and requires the stored manifest/event bytes to be exact; and
+    /// * the generic receipt, faithful/executor state, event journal, and heads
+    ///   commit together or the sole writer is dropped without mutation.
+    ///
+    /// `PreparedPoaGalleyEventBatchV1` is cloneable only so a caller can retain
+    /// the exact sealed retry carrier across an uncertain commit response.  It
+    /// exposes no constructor or inner-batch accessor outside this crate.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_galley(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+        poa_galley: crate::PreparedPoaGalleyEventBatchV1,
+    ) -> Result<CommitOutcome> {
+        let poa_batch = poa_galley.into_event_batch();
+        self.commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_event_batch(
+            expected_ordinal,
+            record,
+            note_commitments,
+            receipt_index,
+            encoded_receipt,
+            faithful,
+            executor_state,
+            &poa_batch,
+            None,
+        )
+    }
+
+    /// Production Galley public-play apex.
+    ///
+    /// The caller supplies the genuine lower `SignedTurn` and `TurnReceipt`,
+    /// plus the same faithful/executor welds required by every finalized turn.
+    /// It cannot supply a policy, world, action token, prepared finality, or
+    /// EventBatch. Those are derived only after the central writer has staged
+    /// and rechecked the exact finalized receipt and consensus projections.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_poa_galley_public_perform_v1(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        signed_turn: &dregg_turn::SignedTurn,
+        receipt: &dregg_turn::TurnReceipt,
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+    ) -> Result<CommitOutcome> {
+        if !faithful.envelope.verify_hybrid(
+            faithful.author_committee,
+            faithful.author_ml_dsa_committee,
+            1,
+        ) {
+            return Err(StoreError::Integrity(
+                "faithful note-root author hybrid signature failed".to_string(),
+            ));
+        }
+        if !faithful.attested_root.has_any_valid_committee_signature(
+            faithful.author_committee,
+            faithful.author_ml_dsa_committee,
+        ) {
+            return Err(StoreError::Integrity(
+                "faithful note-root attestation has no valid author signature".to_string(),
+            ));
+        }
+        validate_faithful_commit_coordinates(record, &faithful)?;
+        let encoded_receipt = postcard::to_stdvec(receipt)
+            .map_err(|error| StoreError::Serialization(error.to_string()))?;
+        if receipt.receipt_hash() != record.receipt_hash {
+            return Err(StoreError::Integrity(
+                "Galley raw receipt hash disagrees with carrying commit".to_string(),
+            ));
+        }
+        self.commit_finalized_turn_welded_with_raw_galley(
+            expected_ordinal,
+            record,
+            &[],
+            note_commitments,
+            Some(ReceiptWeldMode::AppendOrVerify {
+                index: receipt_index,
+                encoded: &encoded_receipt,
+            }),
+            Some(faithful),
+            None,
+            Some(executor_state),
+            &[],
+            None,
+            None,
+            None,
+            None,
+            Some(PoaGalleyRawWeld {
+                signed_turn,
+                receipt,
+            }),
+        )
+        .map(|outcome| outcome.outcome)
     }
 
     /// The faithful-root apex plus the exact FNSP-v3 durable append/head CAS.
@@ -1912,6 +2093,53 @@ impl PersistentStore {
         poa_batch: Option<&crate::PreparedPoaEventBatchV2>,
         poa_holding: Option<&crate::PreparedPoaHoldingConsumptionV1>,
     ) -> Result<WeldedCommitOutcome> {
+        self.commit_finalized_turn_welded_with_raw_galley(
+            expected_ordinal,
+            record,
+            burns,
+            note_commitments,
+            receipt_entry,
+            faithful,
+            exact_fnsp_v3,
+            executor_state,
+            config_blobs,
+            poa_signal,
+            poa_event,
+            poa_batch,
+            poa_holding,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_finalized_turn_welded_with_raw_galley(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        burns: &[(u8, [u8; 32], [u8; 32])],
+        note_commitments: &[[u8; 32]],
+        receipt_entry: Option<ReceiptWeldMode<'_>>,
+        faithful: Option<FinalizedFaithfulRootWeld<'_>>,
+        exact_fnsp_v3: Option<ExactFnspV3Weld>,
+        executor_state: Option<&crate::FinalizedExecutorConsensusState>,
+        config_blobs: &[(&str, &[u8])],
+        poa_signal: Option<&crate::PreparedPoaSignalTransitionV1>,
+        poa_event: Option<&crate::PreparedPoaEventEnvelopeV1>,
+        poa_batch: Option<&crate::PreparedPoaEventBatchV2>,
+        poa_holding: Option<&crate::PreparedPoaHoldingConsumptionV1>,
+        poa_galley: Option<PoaGalleyRawWeld<'_>>,
+    ) -> Result<WeldedCommitOutcome> {
+        if poa_galley.is_some()
+            && (poa_signal.is_some()
+                || poa_event.is_some()
+                || poa_batch.is_some()
+                || poa_holding.is_some())
+        {
+            return Err(StoreError::Integrity(
+                "raw Galley finalization cannot be combined with caller-prepared PoA welds"
+                    .to_string(),
+            ));
+        }
         if poa_event.is_some() && poa_batch.is_some() {
             return Err(StoreError::Integrity(
                 "finalized turn cannot weld both a PoA V1 event and V2 event batch".to_string(),
@@ -2017,18 +2245,26 @@ impl PersistentStore {
                                     &existing,
                                     poa_event,
                                 )?;
-                                crate::poa_event_batch_v2::verify_replayed_poa_event_batch_in(
-                                    &write_txn,
-                                    expected_ordinal,
-                                    &existing,
-                                    poa_batch,
-                                )?;
-                                crate::poa_holding_consumption::verify_replayed_poa_holding_consumption_in(
-                                    &write_txn,
-                                    expected_ordinal,
-                                    &existing,
-                                    poa_holding,
-                                )?;
+                                if poa_galley.is_none() {
+                                    if let Some(poa_batch) = poa_batch {
+                                        crate::poa_world_activation::require_poa_historical_world_exact_in(
+                                                &write_txn,
+                                                poa_batch.coordinate().world(),
+                                            )?;
+                                    }
+                                    crate::poa_event_batch_v2::verify_replayed_poa_event_batch_in(
+                                        &write_txn,
+                                        expected_ordinal,
+                                        &existing,
+                                        poa_batch,
+                                    )?;
+                                    crate::poa_holding_consumption::verify_replayed_poa_holding_consumption_in(
+                                        &write_txn,
+                                        expected_ordinal,
+                                        &existing,
+                                        poa_holding,
+                                    )?;
+                                }
                                 crate::per_cell_receipt_heads::verify_replayed_per_cell_receipt_heads_in(
                                     &write_txn,
                                     &existing,
@@ -2077,6 +2313,85 @@ impl PersistentStore {
                                         faithful.finalized_spends,
                                         false,
                                     )?;
+                                }
+                                if let Some(raw_galley) = poa_galley.as_ref() {
+                                    let faithful = faithful.as_ref().ok_or_else(|| {
+                                        StoreError::Integrity(
+                                            "raw Galley replay omitted its faithful finality weld"
+                                                .to_string(),
+                                        )
+                                    })?;
+                                    if executor_state.is_none() {
+                                        return Err(StoreError::Integrity(
+                                            "raw Galley replay omitted its executor-state weld"
+                                                .to_string(),
+                                        ));
+                                    }
+                                    let receipt_entry =
+                                        receipt_entry.as_ref().ok_or_else(|| {
+                                            StoreError::Integrity(
+                                                "raw Galley replay omitted its exact receipt weld"
+                                                    .to_string(),
+                                            )
+                                        })?;
+                                    let (_, encoded_receipt) = receipt_entry.entry();
+                                    let canonical_raw = postcard::to_stdvec(raw_galley.receipt)
+                                        .map_err(|error| {
+                                            StoreError::Serialization(error.to_string())
+                                        })?;
+                                    if canonical_raw.as_slice() != encoded_receipt {
+                                        return Err(StoreError::Integrity(
+                                            "raw Galley receipt differs from the exact replayed receipt"
+                                                .to_string(),
+                                        ));
+                                    }
+                                    let stored_batch = crate::poa_event_batch_v2::load_poa_event_batch_v2_in(
+                                            &write_txn,
+                                            expected_ordinal,
+                                        )?
+                                        .ok_or_else(|| {
+                                            StoreError::Integrity(
+                                                "raw Galley replay invented a batch for a generic finalized turn"
+                                                    .to_string(),
+                                            )
+                                        })?;
+                                    let activated = crate::poa_activated_content::prepare_historical_poa_galley_policy_v1_in(
+                                            &write_txn,
+                                            stored_batch.coordinate().world(),
+                                        )?;
+                                    let policy = crate::AuthenticatedPoaGalleyPolicyV1::from_activated_content(activated)?;
+                                    let finality = ValidatedPoaGalleyFinalityWeldV1 {
+                                        ordinal: existing.ordinal,
+                                        block_id: existing.block_id,
+                                        turn_hash: existing.turn_hash,
+                                        receipt_hash: existing.receipt_hash,
+                                    };
+                                    let finalized = crate::poa_galley_authority::derive_poa_finalized_public_perform_v1(
+                                            &policy,
+                                            &finality,
+                                            raw_galley.signed_turn,
+                                            raw_galley.receipt,
+                                            record,
+                                        )?;
+                                    if finalized.coordinate() != stored_batch.coordinate() {
+                                        return Err(StoreError::Integrity(
+                                            "raw Galley replay finality coordinate differs from stored batch"
+                                                .to_string(),
+                                        ));
+                                    }
+                                    crate::poa_event_batch_v2::verify_replayed_poa_event_batch_in(
+                                        &write_txn,
+                                        expected_ordinal,
+                                        &existing,
+                                        Some(&stored_batch),
+                                    )?;
+                                    crate::poa_holding_consumption::verify_replayed_poa_holding_consumption_in(
+                                        &write_txn,
+                                        expected_ordinal,
+                                        &existing,
+                                        None,
+                                    )?;
+                                    let _ = faithful;
                                 }
                                 let (committed_head, replayed_core_id) = match exact_fnsp_v3
                                     .as_ref()
@@ -2429,6 +2744,57 @@ impl PersistentStore {
                 );
             }
 
+            if let Some(raw_galley) = poa_galley.as_ref() {
+                if faithful.is_none() || executor_state.is_none() {
+                    return Err(StoreError::Integrity(
+                        "raw Galley commit requires faithful and executor-state welds".to_string(),
+                    ));
+                }
+                let receipt_entry = receipt_entry.as_ref().ok_or_else(|| {
+                    StoreError::Integrity(
+                        "raw Galley commit omitted its exact receipt weld".to_string(),
+                    )
+                })?;
+                let (_, encoded_receipt) = receipt_entry.entry();
+                let canonical_raw = postcard::to_stdvec(raw_galley.receipt)
+                    .map_err(|error| StoreError::Serialization(error.to_string()))?;
+                if canonical_raw.as_slice() != encoded_receipt {
+                    return Err(StoreError::Integrity(
+                        "raw Galley receipt differs from the staged exact receipt".to_string(),
+                    ));
+                }
+                let activated =
+                    crate::poa_activated_content::prepare_active_poa_galley_policy_v1_in(
+                        &write_txn,
+                    )?;
+                let policy =
+                    crate::AuthenticatedPoaGalleyPolicyV1::from_activated_content(activated)?;
+                let finality = ValidatedPoaGalleyFinalityWeldV1 {
+                    ordinal: stored_record.ordinal,
+                    block_id: stored_record.block_id,
+                    turn_hash: stored_record.turn_hash,
+                    receipt_hash: stored_record.receipt_hash,
+                };
+                let finalized =
+                    crate::poa_galley_authority::derive_poa_finalized_public_perform_v1(
+                        &policy,
+                        &finality,
+                        raw_galley.signed_turn,
+                        raw_galley.receipt,
+                        &stored_record,
+                    )?;
+                let sealed = self
+                    .prepare_poa_galley_public_event_batch_v1_in(&write_txn, &policy, finalized)?;
+                let batch = sealed.into_event_batch();
+                validate_poa_v2_batch_authority(&stored_record, encoded_receipt, &batch, None)?;
+                crate::poa_event_batch_v2::stage_fresh_poa_event_batch_in(
+                    &write_txn,
+                    assigned,
+                    &stored_record,
+                    &batch,
+                )?;
+            }
+
             if let Some(poa_signal) = poa_signal {
                 crate::poa_signal_state::stage_fresh_poa_signal_transition_in(
                     &write_txn,
@@ -2446,6 +2812,10 @@ impl PersistentStore {
                 )?;
             }
             if let Some(poa_batch) = poa_batch {
+                crate::poa_world_activation::require_poa_active_world_exact_in(
+                    &write_txn,
+                    poa_batch.coordinate().world(),
+                )?;
                 crate::poa_event_batch_v2::stage_fresh_poa_event_batch_in(
                     &write_txn,
                     assigned,
@@ -3666,6 +4036,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::PersistentStore;
     use dregg_cell::Cell;
+    use ed25519_dalek::Signer as _;
+    use sha2::{Digest as _, Sha256};
 
     struct FaithfulSigner {
         ed: dregg_types::SigningKey,
@@ -3818,6 +4190,372 @@ pub(crate) mod tests {
         out.receipt_hash = [0x80 + ordinal as u8; 32];
         out.ledger_root = [0x90 + ordinal as u8; 32];
         out
+    }
+
+    struct GalleyFaithfulFixture {
+        signer: FaithfulSigner,
+        initial_anchor: Option<FaithfulNoteRootAnchorV1>,
+        envelope: FaithfulNoteRootEnvelopeV1,
+        attested: StoredAttestedRoot,
+        spent: Vec<FinalizedNullifierRecord>,
+        finalized_spends: Vec<crate::FinalizedFaithfulSpendInput>,
+    }
+
+    impl GalleyFaithfulFixture {
+        fn weld(&self) -> FinalizedFaithfulRootWeld<'_> {
+            FinalizedFaithfulRootWeld {
+                initial_anchor: self.initial_anchor.as_ref(),
+                envelope: &self.envelope,
+                author_committee: std::slice::from_ref(&self.signer.ed_pk),
+                author_ml_dsa_committee: std::slice::from_ref(&self.signer.pq_pk),
+                attested_root: &self.attested,
+                spent_nullifiers: &self.spent,
+                finalized_spends: &self.finalized_spends,
+            }
+        }
+    }
+
+    fn galley_faithful_fixture(
+        store: &PersistentStore,
+        record: &CommitRecord,
+        spend_seed: Option<u8>,
+    ) -> GalleyFaithfulFixture {
+        let signer = FaithfulSigner::new(0x76);
+        let fresh_segment = store
+            .faithful_note_root_head()
+            .expect("faithful head")
+            .is_none();
+        let (anchor, edge) = plan_test_edge(store, record.height, record.block_id, &[]);
+        let envelope = signer.sign_edge(edge.clone());
+        let spent = spend_seed
+            .map(|seed| {
+                vec![FinalizedNullifierRecord {
+                    nullifier: [seed; 32],
+                    value: u64::from(seed),
+                }]
+            })
+            .unwrap_or_default();
+        let finalized_spends = test_finalized_spend_inputs(store, &anchor, &spent);
+        let attested = if spent.is_empty() {
+            test_attested(&signer, record, &edge)
+        } else {
+            let successor = store
+                .plan_faithful_nullifier_successor(&spent)
+                .expect("faithful nullifier successor");
+            test_attested_with_nullifier_root(&signer, record, &edge, successor)
+        };
+        GalleyFaithfulFixture {
+            signer,
+            initial_anchor: fresh_segment.then_some(anchor),
+            envelope,
+            attested,
+            spent,
+            finalized_spends,
+        }
+    }
+
+    fn galley_hex(bytes: [u8; 32]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn galley_world(root: u8) -> crate::PoaWorldIdentityV2 {
+        crate::PoaWorldIdentityV2::new([2; 32], [root; 32], [0x52; 32], [0x53; 32], 7)
+            .expect("Galley world")
+    }
+
+    fn galley_policy_json() -> Vec<u8> {
+        format!(
+            "{{\"deployment_id\":\"{}\",\"federation_id\":\"{}\",\"daily_id\":\"{}\",\"genesis_head\":\"{}\",\"dregg_mint\":5,\"snapshot_slot\":6,\"content_epoch\":7,\"event_id\":\"{}\",\"rules_digest\":\"{}\",\"public_activity_id\":\"{}\",\"scene_content_id\":\"{}\",\"public_action_content_id\":\"{}\",\"sponsor_action_content_id\":\"{}\",\"complete_content_id\":\"{}\",\"public_service\":3,\"sponsor_service\":2,\"service_target\":10,\"power_root\":\"{}\",\"loot_root\":\"{}\",\"canon_root\":\"{}\",\"canon_revision\":18}}",
+            galley_hex([1; 32]),
+            galley_hex([2; 32]),
+            galley_hex([3; 32]),
+            galley_hex([4; 32]),
+            galley_hex([9; 32]),
+            galley_hex([10; 32]),
+            galley_hex([10; 32]),
+            galley_hex([11; 32]),
+            galley_hex([12; 32]),
+            galley_hex([13; 32]),
+            galley_hex([14; 32]),
+            galley_hex([15; 32]),
+            galley_hex([16; 32]),
+            galley_hex([17; 32]),
+        )
+        .into_bytes()
+    }
+
+    fn galley_genesis_projection_json() -> Vec<u8> {
+        format!(
+            "{{\"sequence\":0,\"public_players\":[],\"sponsors\":[],\"spent_grant_nullifiers\":[],\"public_play_count\":0,\"sponsorship_count\":0,\"local_service_total\":0,\"power_root\":\"{}\",\"loot_root\":\"{}\",\"canon_root\":\"{}\",\"canon_revision\":18}}",
+            galley_hex([15; 32]),
+            galley_hex([16; 32]),
+            galley_hex([17; 32]),
+        )
+        .into_bytes()
+    }
+
+    fn galley_policy(world: crate::PoaWorldIdentityV2) -> crate::AuthenticatedPoaGalleyPolicyV1 {
+        crate::AuthenticatedPoaGalleyPolicyV1::from_verified_content_inclusion(
+            world,
+            galley_policy_json(),
+            galley_genesis_projection_json(),
+        )
+        .expect("authenticated Galley policy fixture")
+    }
+
+    fn galley_native_available() -> bool {
+        dregg_lean_ffi::poa_world_activation_ffi::poa_world_activation_available()
+            && dregg_lean_ffi::poa_activated_content_ffi::poa_activated_content_runtime_available()
+            && dregg_lean_ffi::poa_galley_ffi::poa_galley_daily_available()
+            && dregg_lean_ffi::poa_event_batch_ffi::poa_event_batch_runtime_available()
+            && dregg_lean_ffi::poa_event_batch_ffi::poa_event_batch_initial_heads_digest_available()
+    }
+
+    fn raw_galley_policy_json(epoch: u64, public_action: u8) -> String {
+        format!(
+            concat!(
+                "{{\"deployment_id\":\"{}\",\"federation_id\":\"{}\",",
+                "\"daily_id\":\"{}\",\"genesis_head\":\"{}\",\"dregg_mint\":5,",
+                "\"snapshot_slot\":6,\"content_epoch\":{},\"event_id\":\"{}\",",
+                "\"rules_digest\":\"{}\",\"public_activity_id\":\"{}\",",
+                "\"scene_content_id\":\"{}\",\"public_action_content_id\":\"{}\",",
+                "\"sponsor_action_content_id\":\"{}\",\"complete_content_id\":\"{}\",",
+                "\"public_service\":3,\"sponsor_service\":2,\"service_target\":10,",
+                "\"power_root\":\"{}\",\"loot_root\":\"{}\",\"canon_root\":\"{}\",",
+                "\"canon_revision\":18}}"
+            ),
+            galley_hex([1; 32]),
+            galley_hex([1; 32]),
+            galley_hex([3; 32]),
+            galley_hex([4; 32]),
+            epoch,
+            galley_hex([9; 32]),
+            galley_hex([10; 32]),
+            galley_hex([10; 32]),
+            galley_hex([11; 32]),
+            galley_hex([public_action; 32]),
+            galley_hex([13; 32]),
+            galley_hex([14; 32]),
+            galley_hex([15; 32]),
+            galley_hex([16; 32]),
+            galley_hex([17; 32]),
+        )
+    }
+
+    fn raw_galley_manifest_json(session: u8, epoch: u64, policy_json: &str) -> Vec<u8> {
+        let policy_digest: [u8; 32] = Sha256::digest(policy_json.as_bytes()).into();
+        let quoted_policy = serde_json::to_string(policy_json).expect("quoted Galley policy");
+        format!(
+            concat!(
+                "{{\"format\":\"POA-ACTIVATED-CONTENT-MANIFEST-1\",",
+                "\"scope\":{{\"federation_id\":\"{}\",\"content_session\":\"{}\",",
+                "\"content_epoch\":{}}},\"legacy_whole_pack_sha256\":null,",
+                "\"components\":[{{\"name\":\"poa.galley-maintenance-daily.policy.v1\",",
+                "\"sha256\":\"{}\",\"bytes_utf8\":{}}}]}}"
+            ),
+            galley_hex([1; 32]),
+            galley_hex([session; 32]),
+            epoch,
+            galley_hex(policy_digest),
+            quoted_policy,
+        )
+        .into_bytes()
+    }
+
+    fn raw_galley_world_bundle(
+        activation: u8,
+        session: u8,
+        epoch: u64,
+        public_action: u8,
+    ) -> (crate::PoaWorldIdentityV2, Vec<u8>) {
+        let policy = raw_galley_policy_json(epoch, public_action);
+        let manifest = raw_galley_manifest_json(session, epoch, &policy);
+        let world = crate::PoaWorldIdentityV2::new(
+            [1; 32],
+            Sha256::digest(&manifest).into(),
+            [activation; 32],
+            [session; 32],
+            epoch,
+        )
+        .expect("raw Galley world");
+        (world, manifest)
+    }
+
+    fn install_raw_galley_world_and_content(
+        store: &PersistentStore,
+        world: crate::PoaWorldIdentityV2,
+        manifest: Vec<u8>,
+    ) {
+        assert!(install_active_poa_world(store, world));
+        store
+            .install_poa_activated_content_v1(manifest)
+            .expect("authenticated Galley content install");
+    }
+
+    fn advance_raw_galley_world_and_content(
+        store: &PersistentStore,
+        world: crate::PoaWorldIdentityV2,
+        manifest: Vec<u8>,
+    ) {
+        advance_active_poa_world(store, world);
+        store
+            .install_poa_activated_content_v1(manifest)
+            .expect("successor authenticated Galley content install");
+    }
+
+    fn raw_galley_signer_for(seed: u8) -> [u8; 32] {
+        ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+            .verifying_key()
+            .to_bytes()
+    }
+
+    fn raw_galley_signer() -> [u8; 32] {
+        raw_galley_signer_for(0x41)
+    }
+
+    fn raw_galley_player_cell_for(seed: u8) -> [u8; 32] {
+        dregg_turn::poa_galley_carrier::galley_player_cell(&raw_galley_signer_for(seed)).0
+    }
+
+    fn raw_galley_player_cell() -> [u8; 32] {
+        raw_galley_player_cell_for(0x41)
+    }
+
+    fn raw_galley_turn_material_for(
+        world: &crate::PoaWorldIdentityV2,
+        ordinal: u64,
+        previous_receipt_hash: Option<[u8; 32]>,
+        action_token: [u8; 32],
+        action_content_id: [u8; 32],
+        signer_seed: u8,
+    ) -> (
+        dregg_turn::SignedTurn,
+        dregg_turn::TurnReceipt,
+        CommitRecord,
+    ) {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[signer_seed; 32]);
+        let signer = dregg_types::PublicKey(key.verifying_key().to_bytes());
+        let mut turn = dregg_turn::poa_galley_carrier::galley_player_command_turn(
+            &signer.0,
+            8 + ordinal,
+            previous_receipt_hash,
+            dregg_turn::poa_galley_carrier::GalleyPlayerCommandV1::Perform {
+                action_token: dregg_turn::poa_galley_carrier::GalleyActionToken::from_bytes(
+                    action_token,
+                ),
+                action_content_id,
+            },
+        );
+        turn.call_forest.hash();
+        let turn_hash = turn.hash();
+        let signed = dregg_turn::SignedTurn {
+            turn,
+            signature: dregg_types::Signature(key.sign(&turn_hash).to_bytes()),
+            signer,
+            pq_signature: Vec::new(),
+            pq_signer: Vec::new(),
+        };
+        let dregg_turn::Effect::EmitEvent { cell, event } =
+            &signed.turn.call_forest.roots[0].action.effects[0]
+        else {
+            panic!("raw Galley fixture is an exact EmitEvent")
+        };
+        let effect_hash = signed.turn.call_forest.roots[0].action.effects[0].hash();
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash,
+            forest_hash: signed.turn.call_forest.compute_hash(),
+            pre_state_hash: [0x33_u8.wrapping_add(ordinal as u8); 32],
+            post_state_hash: [0x43_u8.wrapping_add(ordinal as u8); 32],
+            effects_hash: *blake3::hash(&effect_hash).as_bytes(),
+            action_count: 1,
+            previous_receipt_hash,
+            agent: signed.turn.agent,
+            federation_id: world.federation_id(),
+            emitted_events: vec![dregg_turn::EmittedEvent {
+                cell: *cell,
+                topic: event.topic,
+                data: event.data.clone(),
+            }],
+            finality: dregg_turn::Finality::Final,
+            ..dregg_turn::TurnReceipt::default()
+        };
+        let mut record = faithful_commit_record(ordinal, [0x35_u8.wrapping_add(ordinal as u8); 32]);
+        record.turn_hash = turn_hash;
+        record.creator = signed.turn.agent.0;
+        record.receipt_hash = receipt.receipt_hash();
+        (signed, receipt, record)
+    }
+
+    fn raw_galley_turn_material(
+        world: &crate::PoaWorldIdentityV2,
+        ordinal: u64,
+        previous_receipt_hash: Option<[u8; 32]>,
+        action_token: [u8; 32],
+        action_content_id: [u8; 32],
+    ) -> (
+        dregg_turn::SignedTurn,
+        dregg_turn::TurnReceipt,
+        CommitRecord,
+    ) {
+        raw_galley_turn_material_for(
+            world,
+            ordinal,
+            previous_receipt_hash,
+            action_token,
+            action_content_id,
+            0x41,
+        )
+    }
+
+    fn galley_turn_material(
+        world: crate::PoaWorldIdentityV2,
+        ordinal: u64,
+        previous_receipt_hash: Option<[u8; 32]>,
+    ) -> (
+        CommitRecord,
+        Vec<u8>,
+        crate::FinalizedTurnCoordinateV2,
+        [u8; 32],
+    ) {
+        let signer = [0x65; 32];
+        let actor_root = [0x64_u8.wrapping_add(ordinal as u8); 32];
+        let player_cell =
+            dregg_cell::CellId::derive_raw(&signer, blake3::hash(b"default").as_bytes()).0;
+        let mut commit = faithful_commit_record(ordinal, [0x61_u8.wrapping_add(ordinal as u8); 32]);
+        commit.creator = player_cell;
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash: commit.turn_hash,
+            forest_hash: [0x66_u8.wrapping_add(ordinal as u8); 32],
+            pre_state_hash: actor_root,
+            post_state_hash: [0x68_u8.wrapping_add(ordinal as u8); 32],
+            timestamp: 1_700_000_000 + i64::try_from(ordinal).expect("test ordinal fits i64"),
+            agent: dregg_cell::CellId(player_cell),
+            federation_id: world.federation_id(),
+            finality: dregg_turn::Finality::Final,
+            previous_receipt_hash,
+            ..Default::default()
+        };
+        commit.receipt_hash = receipt.receipt_hash();
+        let encoded = postcard::to_stdvec(&receipt).expect("canonical Galley receipt");
+        let coordinate = crate::FinalizedTurnCoordinateV2::new(
+            world,
+            ordinal,
+            commit.block_id,
+            commit.turn_hash,
+            commit.receipt_hash,
+            actor_root,
+            signer,
+        )
+        .expect("Galley finalized coordinate");
+        (commit, encoded, coordinate, player_cell)
+    }
+
+    fn poa_batch_head_count(store: &PersistentStore) -> u64 {
+        let read = store.db.begin_read().expect("read transaction");
+        read.open_table(crate::poa_event_batch_v2::POA_EVENT_BATCH_HEADS_V2)
+            .expect("PoA batch heads")
+            .len()
+            .expect("PoA batch head count")
     }
 
     /// The activation executor's signing key. After activation EVERY appended receipt row must be
@@ -4131,18 +4869,13 @@ pub(crate) mod tests {
         capability: u8,
         player: u8,
     ) -> crate::PreparedPoaHoldingConsumptionV1 {
-        crate::PreparedPoaHoldingConsumptionV1::new(
+        crate::PreparedPoaHoldingConsumptionV1::new_for_legacy_event_test(
             [capability; 32],
             [player; 32],
             [player.wrapping_add(1); 32],
-            record.ordinal,
-            record.turn_hash,
-            record.receipt_hash,
-            event.event_digest(),
-            0,
+            record,
+            event,
             event.stream_digest(),
-            event.sequence(),
-            event.event_digest(),
         )
         .expect("prepared holding consumption")
     }
@@ -4156,6 +4889,7 @@ pub(crate) mod tests {
         coordinate_federation: [u8; 32],
     ) -> (CommitRecord, Vec<u8>, crate::PreparedPoaEventBatchV2) {
         let mut record = record(0, 0, vec![]);
+        record.block_id = [0xA0; 32];
         let receipt = dregg_turn::TurnReceipt {
             turn_hash: record.turn_hash,
             pre_state_hash: receipt_actor_root,
@@ -4174,11 +4908,11 @@ pub(crate) mod tests {
             [0xA1; 32],
             [0xA2; 32],
             [0xA3; 32],
-            b"beta-1".to_vec(),
+            1,
         )
         .expect("world");
         let coordinate = crate::FinalizedTurnCoordinateV2::new(
-            world,
+            world.clone(),
             record.ordinal,
             record.block_id,
             record.turn_hash,
@@ -4187,18 +4921,13 @@ pub(crate) mod tests {
             coordinate_signer,
         )
         .expect("coordinate");
-        let stream = crate::PoaBatchStreamIdV2::new(
-            coordinate_federation,
-            b"galley-daily".to_vec(),
-            [0xA4; 32],
-            b"galley-v2".to_vec(),
-        )
-        .expect("stream");
+        let stream = crate::PoaBatchStreamIdV2::new(world, 1, [0xA4; 32], 1).expect("stream");
         let semantic_predecessor = [0xA6; 32];
         let genesis_projection = vec![0xAB];
         let predecessor = crate::PoaBatchStreamHeadV2::genesis(
             stream.clone(),
             semantic_predecessor,
+            [0xAD; 32],
             genesis_projection.clone(),
         )
         .expect("genesis head");
@@ -4211,7 +4940,9 @@ pub(crate) mod tests {
             [0xA7; 32],
             [0xA8; 32],
             vec![0xA9],
+            [0xAE; 32],
             vec![0xAA],
+            Some(predecessor.projection_digest()),
             Some(genesis_projection),
         )
         .expect("event");
@@ -4225,27 +4956,665 @@ pub(crate) mod tests {
         (record, encoded, batch)
     }
 
+    /// Rebuild the single-event authority fixture under another exact world while retaining all
+    /// finalized receipt coordinates. This is deliberately a *well-shaped* substitution: replay
+    /// must reject it because it is not the byte-exact batch durably committed at this ordinal,
+    /// not merely because a stream forgot to follow the substituted coordinate.
+    fn remap_poa_v2_fixture_world(
+        batch: &crate::PreparedPoaEventBatchV2,
+        world: crate::PoaWorldIdentityV2,
+    ) -> crate::PreparedPoaEventBatchV2 {
+        assert_eq!(batch.events().len(), 1, "fixture has one event");
+        let coordinate = batch.coordinate();
+        let remapped_coordinate = crate::FinalizedTurnCoordinateV2::new(
+            world.clone(),
+            coordinate.commit_ordinal(),
+            coordinate.block_id(),
+            coordinate.turn_hash(),
+            coordinate.receipt_hash(),
+            coordinate.actor_root(),
+            coordinate.signer(),
+        )
+        .expect("remapped coordinate");
+        let event = &batch.events()[0];
+        let remapped_stream = crate::PoaBatchStreamIdV2::new(
+            world,
+            event.stream().kind(),
+            event.stream().key(),
+            event.stream().schema_version(),
+        )
+        .expect("remapped stream");
+        let genesis_projection = event
+            .genesis_projection()
+            .expect("fixture carries genesis projection")
+            .to_vec();
+        let genesis_projection_digest = event
+            .genesis_projection_digest()
+            .expect("fixture carries genesis projection digest");
+        let predecessor = crate::PoaBatchStreamHeadV2::genesis(
+            remapped_stream.clone(),
+            event.semantic_predecessor(),
+            genesis_projection_digest,
+            genesis_projection.clone(),
+        )
+        .expect("remapped genesis head");
+        let remapped_event = crate::PreparedPoaBatchEventV2::new(
+            event.event_index(),
+            remapped_stream,
+            event.sequence(),
+            predecessor.digest(),
+            event.semantic_predecessor(),
+            event.event_digest(),
+            event.payload_digest(),
+            event.payload().to_vec(),
+            event.successor_projection_digest(),
+            event.successor_projection().to_vec(),
+            Some(genesis_projection_digest),
+            Some(genesis_projection),
+        )
+        .expect("remapped event");
+        crate::PreparedPoaEventBatchV2::new(
+            remapped_coordinate,
+            b"lean-authoritative-statement".to_vec(),
+            batch.batch_digest(),
+            vec![remapped_event],
+        )
+        .expect("remapped batch")
+    }
+
     fn exact_poa_v2_holding(
-        record: &CommitRecord,
         batch: &crate::PreparedPoaEventBatchV2,
         player: [u8; 32],
         player_cell: [u8; 32],
     ) -> crate::PreparedPoaHoldingConsumptionV1 {
-        let event = &batch.events()[0];
         crate::PreparedPoaHoldingConsumptionV1::new(
             [0xAD; 32],
+            [0xAE; 32],
             player,
             player_cell,
-            record.ordinal,
-            record.turn_hash,
-            record.receipt_hash,
-            batch.batch_digest(),
-            event.event_index(),
-            event.stream_digest(),
-            event.sequence(),
-            event.event_digest(),
+            [0xAF; 32],
+            [0xB0; 32],
+            batch,
+            0,
         )
         .expect("holding")
+    }
+
+    fn install_active_poa_world(store: &PersistentStore, world: crate::PoaWorldIdentityV2) -> bool {
+        if !dregg_lean_ffi::poa_world_activation_ffi::poa_world_activation_available() {
+            return false;
+        }
+        let curator = ed25519_dalek::SigningKey::from_bytes(&[0xC7; 32]);
+        let statement = crate::PoaWorldActivationStatementV1::new(
+            world,
+            1,
+            [0; 32],
+            crate::PoaWorldActivationKindV1::Advance,
+            None,
+        )
+        .expect("bootstrap world statement");
+        let signature = curator
+            .sign(&statement.signing_message().expect("world signing message"))
+            .to_bytes();
+        let envelope = crate::SignedPoaWorldActivationEnvelopeV1::new(
+            statement,
+            curator.verifying_key().to_bytes(),
+            signature,
+        )
+        .expect("signed bootstrap world");
+        store
+            .install_poa_world_curator_pin_v1(curator.verifying_key().to_bytes())
+            .expect("curator pin");
+        store
+            .install_poa_world_activation_v1(envelope)
+            .expect("native-Lean-authorized active world");
+        true
+    }
+
+    fn advance_active_poa_world(store: &PersistentStore, world: crate::PoaWorldIdentityV2) {
+        let predecessor = store
+            .load_poa_active_world_v1()
+            .expect("active-world load")
+            .expect("active-world head");
+        let curator = ed25519_dalek::SigningKey::from_bytes(&[0xC7; 32]);
+        let statement = crate::PoaWorldActivationStatementV1::new(
+            world,
+            predecessor.counter() + 1,
+            predecessor.prepared().record().envelope_digest(),
+            crate::PoaWorldActivationKindV1::Advance,
+            None,
+        )
+        .expect("successor world statement");
+        let signature = curator
+            .sign(&statement.signing_message().expect("world signing message"))
+            .to_bytes();
+        let envelope = crate::SignedPoaWorldActivationEnvelopeV1::new(
+            statement,
+            curator.verifying_key().to_bytes(),
+            signature,
+        )
+        .expect("signed successor world");
+        store
+            .install_poa_world_activation_v1(envelope)
+            .expect("native-Lean-authorized successor world");
+    }
+
+    #[test]
+    fn poa_galley_commit_adapter_commits_replays_historical_world_and_refuses_omission() {
+        if !galley_native_available() {
+            return;
+        }
+        let store = PersistentStore::open_in_memory().expect("store");
+        let world_v1 = galley_world(0x51);
+        assert!(install_active_poa_world(&store, world_v1.clone()));
+        let policy = galley_policy(world_v1.clone());
+        let (record, receipt, coordinate, player_cell) =
+            galley_turn_material(world_v1.clone(), 0, None);
+        let sealed = store
+            .prepare_poa_galley_public_event_batch_for_commit_test(&policy, coordinate, player_cell)
+            .expect("sealed Galley batch");
+        let exact_retry = sealed.clone();
+        let faithful = galley_faithful_fixture(&store, &record, None);
+        let executor = crate::FinalizedExecutorConsensusState::default();
+
+        let fresh = store
+            .commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_galley(
+                0,
+                &record,
+                &[],
+                0,
+                &receipt,
+                faithful.weld(),
+                &executor,
+                sealed,
+            )
+            .expect("fresh Galley commit");
+        assert!(fresh.freshly_committed);
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.receipt_chain_len().unwrap(), 1);
+        assert!(store.load_poa_event_batch_v2(0).unwrap().is_some());
+        assert_eq!(poa_batch_head_count(&store), 1);
+
+        let world_v2 = crate::PoaWorldIdentityV2::new(
+            world_v1.federation_id(),
+            [0x59; 32],
+            [0x5a; 32],
+            [0x5b; 32],
+            world_v1.content_epoch() + 1,
+        )
+        .expect("successor Galley world");
+        advance_active_poa_world(&store, world_v2);
+        let replay = store
+            .commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_galley(
+                0,
+                &record,
+                &[],
+                0,
+                &receipt,
+                faithful.weld(),
+                &executor,
+                exact_retry,
+            )
+            .expect("exact W1 retry after W2 rotation");
+        assert!(!replay.freshly_committed);
+
+        let omitted = store
+            .commit_finalized_turn_with_faithful_root_and_executor_state(
+                0,
+                &record,
+                &[],
+                0,
+                &receipt,
+                faithful.weld(),
+                &executor,
+            )
+            .expect_err("a replay cannot omit its Galley batch");
+        assert!(omitted.to_string().contains("omitted its PoA V2 batch"));
+    }
+
+    #[test]
+    fn poa_galley_commit_adapter_wrong_current_world_rolls_back_every_weld() {
+        if !galley_native_available() {
+            return;
+        }
+        let store = PersistentStore::open_in_memory().expect("store");
+        let world_v1 = galley_world(0x52);
+        assert!(install_active_poa_world(&store, world_v1.clone()));
+        let policy = galley_policy(world_v1.clone());
+        let (record, receipt, coordinate, player_cell) =
+            galley_turn_material(world_v1.clone(), 0, None);
+        let sealed = store
+            .prepare_poa_galley_public_event_batch_for_commit_test(&policy, coordinate, player_cell)
+            .expect("sealed Galley batch");
+
+        let world_v2 = crate::PoaWorldIdentityV2::new(
+            world_v1.federation_id(),
+            [0x5c; 32],
+            [0x5d; 32],
+            [0x5e; 32],
+            world_v1.content_epoch() + 1,
+        )
+        .expect("successor Galley world");
+        advance_active_poa_world(&store, world_v2);
+
+        let faithful = galley_faithful_fixture(&store, &record, Some(0xe1));
+        let executor = crate::FinalizedExecutorConsensusState::default();
+        let error = store
+            .commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_galley(
+                0,
+                &record,
+                &[],
+                0,
+                &receipt,
+                faithful.weld(),
+                &executor,
+                sealed,
+            )
+            .expect_err("stale world must abort the sole writer");
+        assert!(error.to_string().contains("active world"));
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert!(store.commit_record_at(0).unwrap().is_none());
+        assert_eq!(store.receipt_chain_len().unwrap(), 0);
+        assert!(store.load_poa_event_batch_v2(0).unwrap().is_none());
+        assert_eq!(poa_batch_head_count(&store), 0);
+        assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+        assert!(store.faithful_note_root_head().unwrap().is_none());
+    }
+
+    #[test]
+    fn poa_galley_commit_adapter_concurrent_stale_stream_head_rolls_back_later_turn() {
+        if !galley_native_available() {
+            return;
+        }
+        let store = PersistentStore::open_in_memory().expect("store");
+        let world = galley_world(0x53);
+        assert!(install_active_poa_world(&store, world.clone()));
+        let policy = galley_policy(world.clone());
+        let (record0, receipt0, coordinate0, player_cell0) =
+            galley_turn_material(world.clone(), 0, None);
+        let (record1, receipt1, coordinate1, player_cell1) =
+            galley_turn_material(world, 1, Some(record0.receipt_hash));
+
+        // Both candidates are prepared from sequence zero. Only one may win
+        // the durable stream-head CAS.
+        let batch0 = store
+            .prepare_poa_galley_public_event_batch_for_commit_test(
+                &policy,
+                coordinate0,
+                player_cell0,
+            )
+            .expect("first Galley batch");
+        let stale_batch1 = store
+            .prepare_poa_galley_public_event_batch_for_commit_test(
+                &policy,
+                coordinate1,
+                player_cell1,
+            )
+            .expect("concurrent Galley batch");
+        let faithful0 = galley_faithful_fixture(&store, &record0, None);
+        let executor0 = crate::FinalizedExecutorConsensusState::default();
+        store
+            .commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_galley(
+                0,
+                &record0,
+                &[],
+                0,
+                &receipt0,
+                faithful0.weld(),
+                &executor0,
+                batch0,
+            )
+            .expect("first Galley commit");
+
+        let faithful1 = galley_faithful_fixture(&store, &record1, Some(0xe2));
+        let executor1 = crate::FinalizedExecutorConsensusState::default();
+        store
+            .commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_galley(
+                1,
+                &record1,
+                &[],
+                1,
+                &receipt1,
+                faithful1.weld(),
+                &executor1,
+                stale_batch1,
+            )
+            .expect_err("concurrent stale stream head must abort");
+
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert!(store.commit_record_at(1).unwrap().is_none());
+        assert_eq!(store.receipt_chain_len().unwrap(), 1);
+        assert!(store.load_poa_event_batch_v2(1).unwrap().is_none());
+        assert_eq!(poa_batch_head_count(&store), 1);
+        assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+    }
+
+    #[test]
+    fn poa_galley_commit_adapter_refuses_invented_batch_on_exact_turn_replay() {
+        if !galley_native_available() {
+            return;
+        }
+        let store = PersistentStore::open_in_memory().expect("store");
+        let world = galley_world(0x54);
+        assert!(install_active_poa_world(&store, world.clone()));
+        let policy = galley_policy(world.clone());
+        let (record, receipt, coordinate, player_cell) = galley_turn_material(world, 0, None);
+        let invented = store
+            .prepare_poa_galley_public_event_batch_for_commit_test(&policy, coordinate, player_cell)
+            .expect("candidate Galley batch");
+        let faithful = galley_faithful_fixture(&store, &record, None);
+        let executor = crate::FinalizedExecutorConsensusState::default();
+
+        store
+            .commit_finalized_turn_with_faithful_root_and_executor_state(
+                0,
+                &record,
+                &[],
+                0,
+                &receipt,
+                faithful.weld(),
+                &executor,
+            )
+            .expect("generic finalized turn without Galley");
+        let error = store
+            .commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_galley(
+                0,
+                &record,
+                &[],
+                0,
+                &receipt,
+                faithful.weld(),
+                &executor,
+                invented,
+            )
+            .expect_err("an exact retry cannot invent a Galley batch");
+        assert!(error.to_string().contains("invented a PoA V2 batch"));
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.receipt_chain_len().unwrap(), 1);
+        assert!(store.load_poa_event_batch_v2(0).unwrap().is_none());
+        assert_eq!(poa_batch_head_count(&store), 0);
+    }
+
+    #[test]
+    fn poa_galley_raw_apex_commits_and_replays_stored_w1_bytes_after_w2_rotation() {
+        if !galley_native_available() {
+            return;
+        }
+        let store = PersistentStore::open_in_memory().expect("store");
+        let (world_v1, manifest_v1) = raw_galley_world_bundle(0x51, 0x52, 1, 19);
+        install_raw_galley_world_and_content(&store, world_v1.clone(), manifest_v1);
+        let policy_v1 = store
+            .load_authenticated_poa_galley_policy_v1()
+            .expect("authenticated W1 policy");
+        let action_token = store
+            .offered_poa_galley_public_token_for_commit_test(
+                &policy_v1,
+                raw_galley_signer(),
+                raw_galley_player_cell(),
+            )
+            .expect("native W1 action token");
+        let (signed, receipt, record) =
+            raw_galley_turn_material(&world_v1, 0, None, action_token, [19; 32]);
+        let faithful = galley_faithful_fixture(&store, &record, None);
+        let executor = crate::FinalizedExecutorConsensusState::default();
+
+        let fresh = store
+            .commit_finalized_poa_galley_public_perform_v1(
+                0,
+                &record,
+                &[],
+                0,
+                &signed,
+                &receipt,
+                faithful.weld(),
+                &executor,
+            )
+            .expect("fresh raw Galley commit");
+        assert!(fresh.freshly_committed);
+        let stored_before_rotation = store
+            .load_poa_event_batch_v2(0)
+            .expect("batch load")
+            .expect("stored raw Galley batch");
+
+        let (world_v2, _) = raw_galley_world_bundle(0x53, 0x54, 2, 29);
+        advance_active_poa_world(&store, world_v2);
+        let replay = store
+            .commit_finalized_poa_galley_public_perform_v1(
+                0,
+                &record,
+                &[],
+                0,
+                &signed,
+                &receipt,
+                faithful.weld(),
+                &executor,
+            )
+            .expect("historical raw W1 replay after W2 rotation");
+        assert!(!replay.freshly_committed);
+        assert_eq!(
+            store.load_poa_event_batch_v2(0).unwrap().unwrap(),
+            stored_before_rotation,
+            "retry retains the historical signed-world batch exactly",
+        );
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.receipt_chain_len().unwrap(), 1);
+        assert_eq!(poa_batch_head_count(&store), 1);
+    }
+
+    #[test]
+    fn poa_galley_raw_apex_rejects_stale_world_carrier_and_rolls_back_every_weld() {
+        if !galley_native_available() {
+            return;
+        }
+        let store = PersistentStore::open_in_memory().expect("store");
+        let (world_v1, manifest_v1) = raw_galley_world_bundle(0x61, 0x62, 1, 19);
+        install_raw_galley_world_and_content(&store, world_v1.clone(), manifest_v1);
+        let policy_v1 = store
+            .load_authenticated_poa_galley_policy_v1()
+            .expect("authenticated W1 policy");
+        let token_v1 = store
+            .offered_poa_galley_public_token_for_commit_test(
+                &policy_v1,
+                raw_galley_signer(),
+                raw_galley_player_cell(),
+            )
+            .expect("native W1 token");
+        let (signed_v1, receipt_v1, record) =
+            raw_galley_turn_material(&world_v1, 0, None, token_v1, [19; 32]);
+
+        // The successor world authenticates a different public action member.
+        // The stale SignedTurn carries no caller-selected world for persistence
+        // to trust; the one-writer apex must derive W2 and reject the W1 action.
+        let (world_v2, manifest_v2) = raw_galley_world_bundle(0x63, 0x64, 2, 29);
+        advance_raw_galley_world_and_content(&store, world_v2, manifest_v2);
+        let faithful = galley_faithful_fixture(&store, &record, Some(0xe3));
+        let executor = crate::FinalizedExecutorConsensusState::default();
+        store
+            .commit_finalized_poa_galley_public_perform_v1(
+                0,
+                &record,
+                &[],
+                0,
+                &signed_v1,
+                &receipt_v1,
+                faithful.weld(),
+                &executor,
+            )
+            .expect_err("stale W1 carrier must not authorize a W2 event");
+
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert!(store.commit_record_at(0).unwrap().is_none());
+        assert_eq!(store.receipt_chain_len().unwrap(), 0);
+        assert!(store.load_poa_event_batch_v2(0).unwrap().is_none());
+        assert_eq!(poa_batch_head_count(&store), 0);
+        assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+        assert!(store.faithful_note_root_head().unwrap().is_none());
+    }
+
+    #[test]
+    fn poa_galley_raw_apex_rejects_invalid_signature_after_staging_and_rolls_back() {
+        if !galley_native_available() {
+            return;
+        }
+        let store = PersistentStore::open_in_memory().expect("store");
+        let (world, manifest) = raw_galley_world_bundle(0x71, 0x72, 1, 19);
+        install_raw_galley_world_and_content(&store, world.clone(), manifest);
+        let policy = store
+            .load_authenticated_poa_galley_policy_v1()
+            .expect("authenticated policy");
+        let token = store
+            .offered_poa_galley_public_token_for_commit_test(
+                &policy,
+                raw_galley_signer(),
+                raw_galley_player_cell(),
+            )
+            .expect("native action token");
+        let (mut signed, receipt, record) =
+            raw_galley_turn_material(&world, 0, None, token, [19; 32]);
+        signed.signature = dregg_types::Signature([0; 64]);
+        let faithful = galley_faithful_fixture(&store, &record, Some(0xe4));
+        let executor = crate::FinalizedExecutorConsensusState::default();
+        store
+            .commit_finalized_poa_galley_public_perform_v1(
+                0,
+                &record,
+                &[],
+                0,
+                &signed,
+                &receipt,
+                faithful.weld(),
+                &executor,
+            )
+            .expect_err("forged raw SignedTurn must fail inside the commit writer");
+
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert_eq!(store.receipt_chain_len().unwrap(), 0);
+        assert!(store.load_poa_event_batch_v2(0).unwrap().is_none());
+        assert_eq!(poa_batch_head_count(&store), 0);
+        assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+        assert!(store.faithful_note_root_head().unwrap().is_none());
+    }
+
+    #[test]
+    fn poa_galley_raw_apex_refuses_replay_invention_and_extends_heads_in_writer() {
+        if !galley_native_available() {
+            return;
+        }
+
+        // First, a generic finalized turn cannot acquire Galley history later
+        // merely because its retry presents a valid signed Galley carrier.
+        let generic = PersistentStore::open_in_memory().expect("generic store");
+        let (generic_world, generic_manifest) = raw_galley_world_bundle(0x81, 0x82, 1, 19);
+        install_raw_galley_world_and_content(&generic, generic_world.clone(), generic_manifest);
+        let generic_policy = generic
+            .load_authenticated_poa_galley_policy_v1()
+            .expect("generic policy");
+        let generic_token = generic
+            .offered_poa_galley_public_token_for_commit_test(
+                &generic_policy,
+                raw_galley_signer(),
+                raw_galley_player_cell(),
+            )
+            .expect("generic token");
+        let (generic_signed, generic_receipt, generic_record) =
+            raw_galley_turn_material(&generic_world, 0, None, generic_token, [19; 32]);
+        let generic_receipt_bytes =
+            postcard::to_stdvec(&generic_receipt).expect("canonical receipt");
+        let generic_faithful = galley_faithful_fixture(&generic, &generic_record, None);
+        let executor = crate::FinalizedExecutorConsensusState::default();
+        generic
+            .commit_finalized_turn_with_faithful_root_and_executor_state(
+                0,
+                &generic_record,
+                &[],
+                0,
+                &generic_receipt_bytes,
+                generic_faithful.weld(),
+                &executor,
+            )
+            .expect("generic finalized commit");
+        let invention = generic
+            .commit_finalized_poa_galley_public_perform_v1(
+                0,
+                &generic_record,
+                &[],
+                0,
+                &generic_signed,
+                &generic_receipt,
+                generic_faithful.weld(),
+                &executor,
+            )
+            .expect_err("raw retry cannot invent Galley history");
+        assert!(invention.to_string().contains("invented a batch"));
+        assert!(generic.load_poa_event_batch_v2(0).unwrap().is_none());
+
+        // Then prove that fresh raw turns do not expose a caller-side planning
+        // gap: each transaction reads the latest stream head and plans the next
+        // event under that same writer snapshot.
+        let store = PersistentStore::open_in_memory().expect("extension store");
+        let (world, manifest) = raw_galley_world_bundle(0x83, 0x84, 1, 19);
+        install_raw_galley_world_and_content(&store, world.clone(), manifest);
+        let policy = store
+            .load_authenticated_poa_galley_policy_v1()
+            .expect("extension policy");
+        let token0 = store
+            .offered_poa_galley_public_token_for_commit_test(
+                &policy,
+                raw_galley_signer(),
+                raw_galley_player_cell(),
+            )
+            .expect("sequence-zero token");
+        let (signed0, receipt0, record0) =
+            raw_galley_turn_material(&world, 0, None, token0, [19; 32]);
+        let faithful0 = galley_faithful_fixture(&store, &record0, None);
+        store
+            .commit_finalized_poa_galley_public_perform_v1(
+                0,
+                &record0,
+                &[],
+                0,
+                &signed0,
+                &receipt0,
+                faithful0.weld(),
+                &executor,
+            )
+            .expect("first in-writer plan");
+
+        let policy = store
+            .load_authenticated_poa_galley_policy_v1()
+            .expect("same active policy");
+        let token1 = store
+            .offered_poa_galley_public_token_for_commit_test(
+                &policy,
+                raw_galley_signer_for(0x42),
+                raw_galley_player_cell_for(0x42),
+            )
+            .expect("sequence-one token");
+        let (signed1, receipt1, record1) =
+            raw_galley_turn_material_for(&world, 1, None, token1, [19; 32], 0x42);
+        let faithful1 = galley_faithful_fixture(&store, &record1, None);
+        store
+            .commit_finalized_poa_galley_public_perform_v1(
+                1,
+                &record1,
+                &[],
+                1,
+                &signed1,
+                &receipt1,
+                faithful1.weld(),
+                &executor,
+            )
+            .expect("second in-writer plan extends current head");
+
+        let second = store
+            .load_poa_event_batch_v2(1)
+            .expect("second batch load")
+            .expect("second batch");
+        assert_eq!(second.events().len(), 1);
+        assert_eq!(second.events()[0].sequence(), 2);
+        assert_eq!(store.commit_cursor().unwrap(), 2);
+        assert_eq!(store.receipt_chain_len().unwrap(), 2);
+        assert_eq!(poa_batch_head_count(&store), 1);
     }
 
     #[test]
@@ -4288,18 +5657,18 @@ pub(crate) mod tests {
         );
         let player_cell =
             dregg_cell::CellId::derive_raw(&signer, blake3::hash(b"default").as_bytes()).0;
-        let exact = exact_poa_v2_holding(&record, &batch, signer, player_cell);
+        let exact = exact_poa_v2_holding(&batch, signer, player_cell);
         validate_poa_v2_batch_authority(&record, &encoded, &batch, Some(&exact)).unwrap();
         assert!(exact.matches_poa_batch(&batch));
 
-        let altered_player = exact_poa_v2_holding(&record, &batch, [0xD4; 32], player_cell);
+        let altered_player = exact_poa_v2_holding(&batch, [0xD4; 32], player_cell);
         assert!(
             validate_poa_v2_batch_authority(&record, &encoded, &batch, Some(&altered_player),)
                 .is_err()
         );
         assert!(!altered_player.matches_poa_batch(&batch));
 
-        let altered_cell = exact_poa_v2_holding(&record, &batch, signer, [0xD5; 32]);
+        let altered_cell = exact_poa_v2_holding(&batch, signer, [0xD5; 32]);
         assert!(
             validate_poa_v2_batch_authority(&record, &encoded, &batch, Some(&altered_cell),)
                 .is_err()
@@ -4316,9 +5685,12 @@ pub(crate) mod tests {
         let (record, encoded, batch) = poa_v2_authority_fixture(
             signer, signer, actor_root, actor_root, federation, federation,
         );
+        if !install_active_poa_world(&store, batch.coordinate().world().clone()) {
+            return;
+        }
         let player_cell =
             dregg_cell::CellId::derive_raw(&signer, blake3::hash(b"default").as_bytes()).0;
-        let holding = exact_poa_v2_holding(&record, &batch, signer, player_cell);
+        let holding = exact_poa_v2_holding(&batch, signer, player_cell);
 
         let commit = || {
             store.commit_finalized_turn_welded(
@@ -4346,20 +5718,176 @@ pub(crate) mod tests {
             store.load_poa_event_batch_v2(0).unwrap(),
             Some(batch.clone())
         );
-        assert_eq!(
-            store
-                .load_poa_holding_consumption(&holding.capability_receipt_id())
-                .unwrap()
-                .unwrap()
-                .turn_hash(),
-            record.turn_hash
-        );
+        let stored_holding = store
+            .load_poa_holding_consumption(&holding.capability_receipt_id())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored_holding.turn_hash(), record.turn_hash);
+        assert_eq!(stored_holding.holder_wallet(), [0xAE; 32]);
+        assert_eq!(stored_holding.action_token(), [0xAF; 32]);
+        assert_eq!(stored_holding.beneficiary_player_id(), [0xB0; 32]);
+
+        let redirected_intent = crate::PreparedPoaHoldingConsumptionV1::new(
+            holding.capability_receipt_id(),
+            holding.holder_wallet(),
+            signer,
+            player_cell,
+            [0xC1; 32],
+            [0xC2; 32],
+            &batch,
+            0,
+        )
+        .expect("redirected intent");
+        let redirected_error = match store.commit_finalized_turn_welded(
+            0,
+            &record,
+            &[],
+            &[],
+            Some(ReceiptWeldMode::AppendOrVerify {
+                index: 0,
+                encoded: &encoded,
+            }),
+            None,
+            None,
+            None,
+            &[],
+            None,
+            None,
+            Some(&batch),
+            Some(&redirected_intent),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("replay may not redirect action or beneficiary"),
+        };
+        assert!(redirected_error.to_string().contains("byte-identical"));
         assert!(
             store.commit_finalized_turn(0, &record).is_err(),
             "replay may not omit its receipt, V2 batch, or holding weld"
         );
         store.audit_poa_event_batch_store_v2().unwrap();
         store.audit_poa_holding_consumptions().unwrap();
+
+        let committed_world = batch.coordinate().world();
+        let successor_world = crate::PoaWorldIdentityV2::new(
+            committed_world.federation_id(),
+            [0xF2; 32],
+            [0xF3; 32],
+            [0xF4; 32],
+            committed_world.content_epoch() + 1,
+        )
+        .unwrap();
+        advance_active_poa_world(&store, successor_world.clone());
+        assert!(
+            !commit().unwrap().outcome.freshly_committed,
+            "a current node must rebuild an exact W1 batch after legitimate activation of W2"
+        );
+
+        let substituted_w2 = remap_poa_v2_fixture_world(&batch, successor_world);
+        let substituted_w2_holding = exact_poa_v2_holding(&substituted_w2, signer, player_cell);
+        assert!(
+            store
+                .commit_finalized_turn_welded(
+                    0,
+                    &record,
+                    &[],
+                    &[],
+                    Some(ReceiptWeldMode::AppendOrVerify {
+                        index: 0,
+                        encoded: &encoded,
+                    }),
+                    None,
+                    None,
+                    None,
+                    &[],
+                    None,
+                    None,
+                    Some(&substituted_w2),
+                    Some(&substituted_w2_holding),
+                )
+                .is_err(),
+            "an authenticated W2 coordinate cannot replace the byte-exact W1 replay"
+        );
+
+        let forged_w0 =
+            crate::PoaWorldIdentityV2::new(federation, [0xD2; 32], [0xD3; 32], [0xD4; 32], 1)
+                .unwrap();
+        let substituted_w0 = remap_poa_v2_fixture_world(&batch, forged_w0);
+        let substituted_w0_holding = exact_poa_v2_holding(&substituted_w0, signer, player_cell);
+        assert!(
+            store
+                .commit_finalized_turn_welded(
+                    0,
+                    &record,
+                    &[],
+                    &[],
+                    Some(ReceiptWeldMode::AppendOrVerify {
+                        index: 0,
+                        encoded: &encoded,
+                    }),
+                    None,
+                    None,
+                    None,
+                    &[],
+                    None,
+                    None,
+                    Some(&substituted_w0),
+                    Some(&substituted_w0_holding),
+                )
+                .is_err(),
+            "a well-shaped but never-activated world cannot replay a finalized W1 batch"
+        );
+    }
+
+    #[test]
+    fn poa_v2_central_writer_refuses_absent_or_wrong_active_world() {
+        let signer = [0xE4; 32];
+        let actor_root = [0xE5; 32];
+        let federation = [0xE6; 32];
+        let (record, encoded, batch) = poa_v2_authority_fixture(
+            signer, signer, actor_root, actor_root, federation, federation,
+        );
+        let commit = |store: &PersistentStore| {
+            store.commit_finalized_turn_welded(
+                0,
+                &record,
+                &[],
+                &[],
+                Some(ReceiptWeldMode::AppendOrVerify {
+                    index: 0,
+                    encoded: &encoded,
+                }),
+                None,
+                None,
+                None,
+                &[],
+                None,
+                None,
+                Some(&batch),
+                None,
+            )
+        };
+
+        let absent = PersistentStore::open_in_memory().unwrap();
+        assert!(commit(&absent).is_err());
+        assert_eq!(absent.commit_cursor().unwrap(), 0);
+        assert!(absent.load_poa_event_batch_v2(0).unwrap().is_none());
+
+        let wrong = PersistentStore::open_in_memory().unwrap();
+        let expected = batch.coordinate().world();
+        let wrong_world = crate::PoaWorldIdentityV2::new(
+            expected.federation_id(),
+            [0xF1; 32],
+            expected.activation_digest(),
+            expected.content_session(),
+            expected.content_epoch(),
+        )
+        .unwrap();
+        if !install_active_poa_world(&wrong, wrong_world) {
+            return;
+        }
+        assert!(commit(&wrong).is_err());
+        assert_eq!(wrong.commit_cursor().unwrap(), 0);
+        assert!(wrong.load_poa_event_batch_v2(0).unwrap().is_none());
     }
 
     #[test]
@@ -4503,18 +6031,8 @@ pub(crate) mod tests {
         let store = PersistentStore::open_in_memory().unwrap();
         let record = record(0, 0, vec![]);
         let event = poa_event(&store, &record);
-        let mismatched = crate::PreparedPoaHoldingConsumptionV1::new(
-            [0x73; 32],
-            [0x33; 32],
-            [0x34; 32],
-            record.ordinal,
-            record.turn_hash,
-            record.receipt_hash,
-            event.event_digest(),
-            0,
-            [0xEE; 32],
-            event.sequence(),
-            event.event_digest(),
+        let mismatched = crate::PreparedPoaHoldingConsumptionV1::new_for_legacy_event_test(
+            [0x73; 32], [0x33; 32], [0x34; 32], &record, &event, [0xEE; 32],
         )
         .unwrap();
         let error = match store.commit_finalized_turn_welded(

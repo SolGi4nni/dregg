@@ -7,9 +7,16 @@ authors.workspace = true
 license.workspace = true
 description = "The node's one durable store: commit log, checkpoints, blocklace, forever digests"
 
+[features]
+default = []
+# Cross-crate node fixtures deliberately build malformed historical rows to
+# prove restart audit fail-closed behavior. Never enable this in a shipped node.
+test-support = []
+
 [dependencies]
 redb = "2"
 serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 blake3 = "1"
 sha2 = { workspace = true }
@@ -22,6 +29,7 @@ dregg-circuit = { path = "../circuit" }
 dregg-turn = { path = "../turn" }
 dregg-blocklace = { path = "../blocklace" }
 dregg-federation = { path = "../federation" }
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -41,16 +41,15 @@ const FRAME_SEAL_LEN: usize = 32;
 
 pub const MAX_POA_BATCH_EVENTS_V2: usize = 4096;
 pub const MAX_POA_BATCH_COMPONENT_BYTES_V2: usize = 16 * 1024 * 1024;
-pub const MAX_POA_BATCH_TAG_BYTES_V2: usize = 4096;
 pub const MAX_POA_BATCH_FRAME_BYTES_V2: usize = 64 * 1024 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PoaWorldIdentityV2 {
     federation_id: [u8; 32],
     content_root: [u8; 32],
     activation_digest: [u8; 32],
     content_session: [u8; 32],
-    content_epoch: Vec<u8>,
+    content_epoch: u64,
 }
 
 impl PoaWorldIdentityV2 {
@@ -59,16 +58,17 @@ impl PoaWorldIdentityV2 {
         content_root: [u8; 32],
         activation_digest: [u8; 32],
         content_session: [u8; 32],
-        content_epoch: Vec<u8>,
+        content_epoch: u64,
     ) -> Result<Self> {
-        validate_tag(&content_epoch, "PoA content epoch")?;
-        Ok(Self {
+        let world = Self {
             federation_id,
             content_root,
             activation_digest,
             content_session,
             content_epoch,
-        })
+        };
+        world.validate()?;
+        Ok(world)
     }
 
     pub const fn federation_id(&self) -> [u8; 32] {
@@ -87,12 +87,20 @@ impl PoaWorldIdentityV2 {
         self.content_session
     }
 
-    pub fn content_epoch(&self) -> &[u8] {
-        &self.content_epoch
+    pub const fn content_epoch(&self) -> u64 {
+        self.content_epoch
     }
 
     fn validate(&self) -> Result<()> {
-        validate_tag(&self.content_epoch, "PoA content epoch")
+        if self.federation_id == [0; 32]
+            || self.content_root == [0; 32]
+            || self.activation_digest == [0; 32]
+            || self.content_session == [0; 32]
+            || self.content_epoch == 0
+        {
+            return Err(integrity("PoA world identity has a zero component"));
+        }
+        Ok(())
     }
 }
 
@@ -118,8 +126,7 @@ impl FinalizedTurnCoordinateV2 {
         actor_root: [u8; 32],
         signer: [u8; 32],
     ) -> Result<Self> {
-        world.validate()?;
-        Ok(Self {
+        let coordinate = Self {
             world,
             commit_ordinal,
             block_id,
@@ -127,7 +134,9 @@ impl FinalizedTurnCoordinateV2 {
             receipt_hash,
             actor_root,
             signer,
-        })
+        };
+        coordinate.validate()?;
+        Ok(coordinate)
     }
 
     pub const fn commit_ordinal(&self) -> u64 {
@@ -166,9 +175,14 @@ impl FinalizedTurnCoordinateV2 {
 
     fn validate(&self) -> Result<()> {
         self.world.validate()?;
-        if self.actor_root == [0; 32] || self.signer == [0; 32] {
+        if self.block_id == [0; 32]
+            || self.turn_hash == [0; 32]
+            || self.receipt_hash == [0; 32]
+            || self.actor_root == [0; 32]
+            || self.signer == [0; 32]
+        {
             return Err(integrity(
-                "PoA V2 finalized coordinate has a zero actor root or signer",
+                "PoA V2 finalized coordinate has a zero identity component",
             ));
         }
         Ok(())
@@ -185,21 +199,21 @@ impl FinalizedTurnCoordinateV2 {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PoaBatchStreamIdV2 {
-    namespace_id: [u8; 32],
-    kind: Vec<u8>,
+    world: PoaWorldIdentityV2,
+    kind: u64,
     key: [u8; 32],
-    schema_version: Vec<u8>,
+    schema_version: u64,
 }
 
 impl PoaBatchStreamIdV2 {
     pub fn new(
-        namespace_id: [u8; 32],
-        kind: Vec<u8>,
+        world: PoaWorldIdentityV2,
+        kind: u64,
         key: [u8; 32],
-        schema_version: Vec<u8>,
+        schema_version: u64,
     ) -> Result<Self> {
         let stream = Self {
-            namespace_id,
+            world,
             kind,
             key,
             schema_version,
@@ -210,32 +224,38 @@ impl PoaBatchStreamIdV2 {
 
     pub fn digest(&self) -> [u8; 32] {
         let encoded = postcard::to_stdvec(self).expect("validated PoA V2 stream identity");
-        sha256_domain(b"dregg-poa-event-batch-stream-v2\0", &encoded)
+        sha256_domain(b"dregg-poa-event-batch-world-stream-v2\0", &encoded)
     }
 
-    pub const fn namespace_id(&self) -> [u8; 32] {
-        self.namespace_id
+    pub const fn world(&self) -> &PoaWorldIdentityV2 {
+        &self.world
     }
 
-    pub fn kind(&self) -> &[u8] {
-        &self.kind
+    pub const fn kind(&self) -> u64 {
+        self.kind
     }
 
     pub const fn key(&self) -> [u8; 32] {
         self.key
     }
 
-    pub fn schema_version(&self) -> &[u8] {
-        &self.schema_version
+    pub const fn schema_version(&self) -> u64 {
+        self.schema_version
     }
 
     fn validate(&self) -> Result<()> {
-        validate_tag(&self.kind, "PoA aggregate kind")?;
-        validate_tag(&self.schema_version, "PoA schema version")
+        self.world.validate()?;
+        if self.kind == 0 || self.key == [0; 32] || self.schema_version == 0 {
+            return Err(integrity("PoA V2 stream identity has a zero component"));
+        }
+        Ok(())
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Durable CAS authority.  This public read carrier deliberately implements
+/// neither `Serialize` nor `Deserialize`; serde would otherwise bypass the
+/// crate-private validated constructors despite the private fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PoaBatchStreamHeadV2 {
     stream: PoaBatchStreamIdV2,
     sequence: u64,
@@ -249,16 +269,43 @@ impl PoaBatchStreamHeadV2 {
     /// aggregate stream.  A Lean authority adapter uses its digest as the
     /// first event's expected storage predecessor; persistence still refuses
     /// it if a durable head for the stream already exists.
-    pub fn genesis(
+    pub(crate) fn genesis(
         stream: PoaBatchStreamIdV2,
         semantic_head: [u8; 32],
+        projection_digest: [u8; 32],
         projection: Vec<u8>,
     ) -> Result<Self> {
         let head = Self {
             stream,
             sequence: 0,
             semantic_head,
-            projection_digest: sha256(&projection),
+            projection_digest,
+            projection,
+        };
+        head.validate()?;
+        Ok(head)
+    }
+
+    /// Construct the exact native successor head whose framed digest is
+    /// supplied to the Lean planner as authenticated event authority.  This
+    /// stays crate-private: only sealed persistence adapters may manufacture
+    /// native CAS authority, and callers cannot use sequence zero as a second
+    /// genesis path.
+    pub(crate) fn successor(
+        stream: PoaBatchStreamIdV2,
+        sequence: u64,
+        semantic_head: [u8; 32],
+        projection_digest: [u8; 32],
+        projection: Vec<u8>,
+    ) -> Result<Self> {
+        if sequence == 0 {
+            return Err(integrity("PoA V2 successor head has zero sequence"));
+        }
+        let head = Self {
+            stream,
+            sequence,
+            semantic_head,
+            projection_digest,
             projection,
         };
         head.validate()?;
@@ -295,30 +342,65 @@ impl PoaBatchStreamHeadV2 {
     fn validate(&self) -> Result<()> {
         self.stream.validate()?;
         validate_component(&self.projection, "PoA projection")?;
-        if self.projection_digest != sha256(&self.projection) {
-            return Err(integrity("PoA V2 projection digest mismatch"));
+        if self.semantic_head == [0; 32] || self.projection_digest == [0; 32] {
+            return Err(integrity("PoA V2 stream head has a zero semantic digest"));
         }
         Ok(())
     }
 
     fn encode(&self) -> Result<Vec<u8>> {
         self.validate()?;
-        encode_frame(HEAD_MAGIC, b"dregg-poa-event-batch-head-frame-v2\0", self)
+        encode_frame(
+            HEAD_MAGIC,
+            b"dregg-poa-event-batch-head-frame-v2\0",
+            &PoaBatchStreamHeadWireV2::from(self),
+        )
     }
 
     fn decode(bytes: &[u8]) -> Result<Self> {
-        let head: Self = decode_frame(
+        let wire: PoaBatchStreamHeadWireV2 = decode_frame(
             bytes,
             HEAD_MAGIC,
             b"dregg-poa-event-batch-head-frame-v2\0",
             "PoA V2 head",
         )?;
+        let head = Self {
+            stream: wire.stream,
+            sequence: wire.sequence,
+            semantic_head: wire.semantic_head,
+            projection_digest: wire.projection_digest,
+            projection: wire.projection,
+        };
         head.validate()?;
         Ok(head)
     }
 }
 
+/// Private serde image for the native stream-head frame.  Keeping this type
+/// private preserves durable decoding without exposing a downstream authority
+/// constructor on [`PoaBatchStreamHeadV2`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PoaBatchStreamHeadWireV2 {
+    stream: PoaBatchStreamIdV2,
+    sequence: u64,
+    semantic_head: [u8; 32],
+    projection_digest: [u8; 32],
+    projection: Vec<u8>,
+}
+
+impl From<&PoaBatchStreamHeadV2> for PoaBatchStreamHeadWireV2 {
+    fn from(head: &PoaBatchStreamHeadV2) -> Self {
+        Self {
+            stream: head.stream.clone(),
+            sequence: head.sequence,
+            semantic_head: head.semantic_head,
+            projection_digest: head.projection_digest,
+            projection: head.projection.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedPoaBatchEventV2 {
     event_index: u32,
     stream: PoaBatchStreamIdV2,
@@ -328,13 +410,15 @@ pub struct PreparedPoaBatchEventV2 {
     event_digest: [u8; 32],
     payload_digest: [u8; 32],
     payload: Vec<u8>,
+    successor_projection_digest: [u8; 32],
     successor_projection: Vec<u8>,
+    genesis_projection_digest: Option<[u8; 32]>,
     genesis_projection: Option<Vec<u8>>,
 }
 
 impl PreparedPoaBatchEventV2 {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         event_index: u32,
         stream: PoaBatchStreamIdV2,
         sequence: u64,
@@ -343,7 +427,9 @@ impl PreparedPoaBatchEventV2 {
         event_digest: [u8; 32],
         payload_digest: [u8; 32],
         payload: Vec<u8>,
+        successor_projection_digest: [u8; 32],
         successor_projection: Vec<u8>,
+        genesis_projection_digest: Option<[u8; 32]>,
         genesis_projection: Option<Vec<u8>>,
     ) -> Result<Self> {
         let event = Self {
@@ -355,7 +441,9 @@ impl PreparedPoaBatchEventV2 {
             event_digest,
             payload_digest,
             payload,
+            successor_projection_digest,
             successor_projection,
+            genesis_projection_digest,
             genesis_projection,
         };
         event.validate()?;
@@ -402,8 +490,16 @@ impl PreparedPoaBatchEventV2 {
         &self.successor_projection
     }
 
+    pub const fn successor_projection_digest(&self) -> [u8; 32] {
+        self.successor_projection_digest
+    }
+
     pub fn genesis_projection(&self) -> Option<&[u8]> {
         self.genesis_projection.as_deref()
+    }
+
+    pub const fn genesis_projection_digest(&self) -> Option<[u8; 32]> {
+        self.genesis_projection_digest
     }
 
     fn validate(&self) -> Result<()> {
@@ -415,14 +511,36 @@ impl PreparedPoaBatchEventV2 {
         }
         validate_component(&self.payload, "PoA event payload")?;
         validate_component(&self.successor_projection, "PoA successor projection")?;
+        if self.expected_predecessor_head_digest == [0; 32]
+            || self.semantic_predecessor == [0; 32]
+            || self.event_digest == [0; 32]
+            || self.payload_digest == [0; 32]
+            || self.successor_projection_digest == [0; 32]
+        {
+            return Err(integrity(
+                "PoA V2 event has a zero semantic or predecessor digest",
+            ));
+        }
         if let Some(genesis) = &self.genesis_projection {
             validate_component(genesis, "PoA genesis projection")?;
+        }
+        match (
+            self.genesis_projection_digest,
+            self.genesis_projection.as_ref(),
+        ) {
+            (Some(digest), Some(_)) if digest != [0; 32] => {}
+            (None, None) => {}
+            _ => {
+                return Err(integrity(
+                    "PoA V2 genesis projection and semantic digest disagree",
+                ));
+            }
         }
         Ok(())
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedPoaEventBatchV2 {
     coordinate: FinalizedTurnCoordinateV2,
     lean_statement: Vec<u8>,
@@ -480,7 +598,7 @@ impl PoaEventBatchHistoryV2 {
 }
 
 impl PreparedPoaEventBatchV2 {
-    pub fn new(
+    pub(crate) fn new(
         coordinate: FinalizedTurnCoordinateV2,
         lean_statement: Vec<u8>,
         batch_digest: [u8; 32],
@@ -511,6 +629,9 @@ impl PreparedPoaEventBatchV2 {
     fn validate(&self) -> Result<()> {
         self.coordinate.validate()?;
         validate_component(&self.lean_statement, "Lean PoA batch statement")?;
+        if self.batch_digest == [0; 32] {
+            return Err(integrity("PoA V2 batch digest is zero"));
+        }
         if self.events.is_empty() || self.events.len() > MAX_POA_BATCH_EVENTS_V2 {
             return Err(integrity("PoA V2 batch must contain 1..=4096 events"));
         }
@@ -521,11 +642,11 @@ impl PreparedPoaEventBatchV2 {
             if event.event_index != expected {
                 return Err(integrity("PoA V2 event indices are not dense and ordered"));
             }
-            if event.stream.namespace_id != self.coordinate.world.federation_id {
-                return Err(integrity("PoA V2 event belongs to another federation"));
+            if event.stream.world != self.coordinate.world {
+                return Err(integrity("PoA V2 event belongs to another world"));
             }
         }
-        let wire = postcard::to_stdvec(self)?;
+        let wire = postcard::to_stdvec(&PreparedPoaEventBatchWireV2::from(self))?;
         if wire.len() > MAX_POA_BATCH_FRAME_BYTES_V2 {
             return Err(integrity("PoA V2 prepared batch exceeds total wire bound"));
         }
@@ -533,7 +654,108 @@ impl PreparedPoaEventBatchV2 {
     }
 }
 
+/// Private serde image for one prepared event.  The public authority carrier
+/// deliberately implements neither `Serialize` nor `Deserialize`: field
+/// privacy is not a type wall when serde can construct the value directly.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PreparedPoaBatchEventWireV2 {
+    event_index: u32,
+    stream: PoaBatchStreamIdV2,
+    sequence: u64,
+    expected_predecessor_head_digest: [u8; 32],
+    semantic_predecessor: [u8; 32],
+    event_digest: [u8; 32],
+    payload_digest: [u8; 32],
+    payload: Vec<u8>,
+    successor_projection_digest: [u8; 32],
+    successor_projection: Vec<u8>,
+    genesis_projection_digest: Option<[u8; 32]>,
+    genesis_projection: Option<Vec<u8>>,
+}
+
+impl From<&PreparedPoaBatchEventV2> for PreparedPoaBatchEventWireV2 {
+    fn from(event: &PreparedPoaBatchEventV2) -> Self {
+        Self {
+            event_index: event.event_index,
+            stream: event.stream.clone(),
+            sequence: event.sequence,
+            expected_predecessor_head_digest: event.expected_predecessor_head_digest,
+            semantic_predecessor: event.semantic_predecessor,
+            event_digest: event.event_digest,
+            payload_digest: event.payload_digest,
+            payload: event.payload.clone(),
+            successor_projection_digest: event.successor_projection_digest,
+            successor_projection: event.successor_projection.clone(),
+            genesis_projection_digest: event.genesis_projection_digest,
+            genesis_projection: event.genesis_projection.clone(),
+        }
+    }
+}
+
+impl TryFrom<PreparedPoaBatchEventWireV2> for PreparedPoaBatchEventV2 {
+    type Error = StoreError;
+
+    fn try_from(event: PreparedPoaBatchEventWireV2) -> Result<Self> {
+        Self::new(
+            event.event_index,
+            event.stream,
+            event.sequence,
+            event.expected_predecessor_head_digest,
+            event.semantic_predecessor,
+            event.event_digest,
+            event.payload_digest,
+            event.payload,
+            event.successor_projection_digest,
+            event.successor_projection,
+            event.genesis_projection_digest,
+            event.genesis_projection,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PreparedPoaEventBatchWireV2 {
+    coordinate: FinalizedTurnCoordinateV2,
+    lean_statement: Vec<u8>,
+    batch_digest: [u8; 32],
+    events: Vec<PreparedPoaBatchEventWireV2>,
+}
+
+impl From<&PreparedPoaEventBatchV2> for PreparedPoaEventBatchWireV2 {
+    fn from(batch: &PreparedPoaEventBatchV2) -> Self {
+        Self {
+            coordinate: batch.coordinate.clone(),
+            lean_statement: batch.lean_statement.clone(),
+            batch_digest: batch.batch_digest,
+            events: batch.events.iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl TryFrom<PreparedPoaEventBatchWireV2> for PreparedPoaEventBatchV2 {
+    type Error = StoreError;
+
+    fn try_from(batch: PreparedPoaEventBatchWireV2) -> Result<Self> {
+        let events = batch
+            .events
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>>>()?;
+        Self::new(
+            batch.coordinate,
+            batch.lean_statement,
+            batch.batch_digest,
+            events,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PoaEventBatchManifestWireV2 {
+    prepared: PreparedPoaEventBatchWireV2,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PoaEventBatchManifestV2 {
     prepared: PreparedPoaEventBatchV2,
 }
@@ -541,26 +763,39 @@ struct PoaEventBatchManifestV2 {
 impl PoaEventBatchManifestV2 {
     fn encode(&self) -> Result<Vec<u8>> {
         self.prepared.validate()?;
+        let wire = PoaEventBatchManifestWireV2 {
+            prepared: PreparedPoaEventBatchWireV2::from(&self.prepared),
+        };
         encode_frame(
             MANIFEST_MAGIC,
             b"dregg-poa-event-batch-manifest-frame-v2\0",
-            self,
+            &wire,
         )
     }
 
     fn decode(bytes: &[u8]) -> Result<Self> {
-        let manifest: Self = decode_frame(
+        let manifest: PoaEventBatchManifestWireV2 = decode_frame(
             bytes,
             MANIFEST_MAGIC,
             b"dregg-poa-event-batch-manifest-frame-v2\0",
             "PoA V2 batch manifest",
         )?;
-        manifest.prepared.validate()?;
-        Ok(manifest)
+        let prepared: PreparedPoaEventBatchV2 = manifest.prepared.try_into()?;
+        prepared.validate()?;
+        Ok(Self { prepared })
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PoaBatchEventEnvelopeWireV2 {
+    coordinate: FinalizedTurnCoordinateV2,
+    event: PreparedPoaBatchEventWireV2,
+    predecessor_head: Vec<u8>,
+    successor_head: Vec<u8>,
+    storage_payload_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PoaBatchEventEnvelopeV2 {
     coordinate: FinalizedTurnCoordinateV2,
     event: PreparedPoaBatchEventV2,
@@ -585,6 +820,11 @@ impl PoaBatchEventEnvelopeV2 {
     fn validate(&self) -> Result<()> {
         self.coordinate.validate()?;
         self.event.validate()?;
+        if self.event.stream.world != self.coordinate.world {
+            return Err(integrity(
+                "PoA V2 event coordinate disagrees with its world-scoped stream",
+            ));
+        }
         if self.storage_payload_digest != sha256(&self.event.payload) {
             return Err(integrity("PoA V2 event storage payload digest mismatch"));
         }
@@ -597,6 +837,7 @@ impl PoaBatchEventEnvelopeV2 {
             || predecessor.digest() != self.event.expected_predecessor_head_digest
             || predecessor.semantic_head != self.event.semantic_predecessor
             || successor.semantic_head != self.event.event_digest
+            || successor.projection_digest != self.event.successor_projection_digest
             || successor.projection != self.event.successor_projection
         {
             return Err(integrity("PoA V2 event predecessor/successor mismatch"));
@@ -606,16 +847,34 @@ impl PoaBatchEventEnvelopeV2 {
 
     fn encode(&self) -> Result<Vec<u8>> {
         self.validate()?;
-        encode_frame(EVENT_MAGIC, b"dregg-poa-event-batch-event-frame-v2\0", self)
+        let wire = PoaBatchEventEnvelopeWireV2 {
+            coordinate: self.coordinate.clone(),
+            event: PreparedPoaBatchEventWireV2::from(&self.event),
+            predecessor_head: self.predecessor_head.clone(),
+            successor_head: self.successor_head.clone(),
+            storage_payload_digest: self.storage_payload_digest,
+        };
+        encode_frame(
+            EVENT_MAGIC,
+            b"dregg-poa-event-batch-event-frame-v2\0",
+            &wire,
+        )
     }
 
     fn decode(bytes: &[u8]) -> Result<Self> {
-        let event: Self = decode_frame(
+        let wire: PoaBatchEventEnvelopeWireV2 = decode_frame(
             bytes,
             EVENT_MAGIC,
             b"dregg-poa-event-batch-event-frame-v2\0",
             "PoA V2 batch event",
         )?;
+        let event = Self {
+            coordinate: wire.coordinate,
+            event: wire.event.try_into()?,
+            predecessor_head: wire.predecessor_head,
+            successor_head: wire.successor_head,
+            storage_payload_digest: wire.storage_payload_digest,
+        };
         event.validate()?;
         Ok(event)
     }
@@ -632,6 +891,36 @@ pub(crate) fn initialize_poa_event_batch_tables_v2_in(write: &WriteTransaction) 
     let _ = write.open_table(POA_EVENT_BATCH_EVENTS_V2)?;
     let _ = write.open_table(POA_EVENT_BATCH_HEADS_V2)?;
     Ok(())
+}
+
+pub(crate) fn load_poa_event_batch_v2_in(
+    write: &WriteTransaction,
+    commit_ordinal: u64,
+) -> Result<Option<PreparedPoaEventBatchV2>> {
+    let manifests = write.open_table(POA_EVENT_BATCH_MANIFESTS_V2)?;
+    manifests
+        .get(commit_ordinal)?
+        .map(|bytes| {
+            PoaEventBatchManifestV2::decode(bytes.value()).map(|manifest| manifest.prepared)
+        })
+        .transpose()
+}
+
+pub(crate) fn audit_poa_event_batch_store_v2_in(write: &WriteTransaction) -> Result<()> {
+    let manifests = write.open_table(POA_EVENT_BATCH_MANIFESTS_V2)?;
+    let events = write.open_table(POA_EVENT_BATCH_EVENTS_V2)?;
+    let heads = write.open_table(POA_EVENT_BATCH_HEADS_V2)?;
+    let commits = write.open_table(tables::COMMIT_LOG)?;
+    let metadata = write.open_table(tables::METADATA)?;
+    let compacted_ids = write.open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)?;
+    validate_tables(
+        &manifests,
+        &events,
+        &heads,
+        &commits,
+        &metadata,
+        &compacted_ids,
+    )
 }
 
 /// Stage one complete batch.  The caller must keep this in the generic commit
@@ -755,6 +1044,11 @@ fn plan_batch(
                     let head = PoaBatchStreamHeadV2::genesis(
                         prepared.stream.clone(),
                         prepared.semantic_predecessor,
+                        prepared.genesis_projection_digest.ok_or_else(|| {
+                            integrity(
+                                "new PoA V2 stream omitted its Lean genesis projection digest",
+                            )
+                        })?,
                         genesis_projection,
                     )?;
                     let bytes = head.encode()?;
@@ -771,14 +1065,13 @@ fn plan_batch(
                 "PoA V2 batch stream sequence/predecessor CAS mismatch",
             ));
         }
-        let successor = PoaBatchStreamHeadV2 {
-            stream: prepared.stream.clone(),
-            sequence: prepared.sequence,
-            semantic_head: prepared.event_digest,
-            projection_digest: sha256(&prepared.successor_projection),
-            projection: prepared.successor_projection.clone(),
-        };
-        successor.validate()?;
+        let successor = PoaBatchStreamHeadV2::successor(
+            prepared.stream.clone(),
+            prepared.sequence,
+            prepared.event_digest,
+            prepared.successor_projection_digest,
+            prepared.successor_projection.clone(),
+        )?;
         let successor_bytes = successor.encode()?;
         let stored = PoaBatchEventEnvelopeV2 {
             coordinate: candidate.coordinate.clone(),
@@ -803,6 +1096,86 @@ fn plan_batch(
             .map(|(stream, (_, bytes))| (stream, bytes))
             .collect(),
     })
+}
+
+fn load_poa_event_batch_history_v2_from_tables(
+    events_table: &impl ReadableTable<&'static [u8; 12], &'static [u8]>,
+    heads: &impl ReadableTable<&'static [u8; 32], &'static [u8]>,
+    stream: &PoaBatchStreamIdV2,
+) -> Result<Option<PoaEventBatchHistoryV2>> {
+    stream.validate()?;
+    let mut envelopes = Vec::new();
+    for entry in events_table.iter()? {
+        let (_, bytes) = entry?;
+        let envelope = PoaBatchEventEnvelopeV2::decode(bytes.value())?;
+        if envelope.event.stream == *stream {
+            envelopes.push(envelope);
+        }
+    }
+
+    let stream_key = stream.digest();
+    let published = heads.get(&stream_key)?;
+    if envelopes.is_empty() {
+        if published.is_some() {
+            return Err(integrity("PoA V2 stream head has no replay events"));
+        }
+        return Ok(None);
+    }
+    let published =
+        published.ok_or_else(|| integrity("PoA V2 replay events have no published head"))?;
+    let published = PoaBatchStreamHeadV2::decode(published.value())?;
+    if published.stream != *stream {
+        return Err(integrity("PoA V2 stream digest aliases another stream"));
+    }
+
+    let genesis = envelopes[0].predecessor()?;
+    if genesis.stream != *stream || genesis.sequence != 0 {
+        return Err(integrity("PoA V2 replay does not begin at stream genesis"));
+    }
+    let mut expected_predecessor = envelopes[0].predecessor_head.clone();
+    let mut prior_coordinate: Option<(u64, u32)> = None;
+    let mut recorded = Vec::with_capacity(envelopes.len());
+    for envelope in envelopes {
+        if envelope.predecessor_head != expected_predecessor {
+            return Err(integrity("PoA V2 replay stream has a broken edge"));
+        }
+        let coordinate = (
+            envelope.coordinate.commit_ordinal,
+            envelope.event.event_index,
+        );
+        if prior_coordinate.is_some_and(|prior| prior >= coordinate) {
+            return Err(integrity(
+                "PoA V2 replay finalized coordinates do not increase",
+            ));
+        }
+        expected_predecessor = envelope.successor_head.clone();
+        prior_coordinate = Some(coordinate);
+        recorded.push(PoaRecordedBatchEventV2 {
+            coordinate: envelope.coordinate,
+            event: envelope.event,
+        });
+    }
+    let final_successor = PoaBatchStreamHeadV2::decode(&expected_predecessor)?;
+    if final_successor != published {
+        return Err(integrity(
+            "PoA V2 replay final successor is not the published head",
+        ));
+    }
+    Ok(Some(PoaEventBatchHistoryV2 {
+        stream: stream.clone(),
+        genesis_head: genesis,
+        events: recorded,
+        current_head: published,
+    }))
+}
+
+pub(crate) fn load_poa_event_batch_history_v2_in(
+    write: &WriteTransaction,
+    stream: &PoaBatchStreamIdV2,
+) -> Result<Option<PoaEventBatchHistoryV2>> {
+    let events = write.open_table(POA_EVENT_BATCH_EVENTS_V2)?;
+    let heads = write.open_table(POA_EVENT_BATCH_HEADS_V2)?;
+    load_poa_event_batch_history_v2_from_tables(&events, &heads, stream)
 }
 
 impl PersistentStore {
@@ -845,73 +1218,10 @@ impl PersistentStore {
         &self,
         stream: &PoaBatchStreamIdV2,
     ) -> Result<Option<PoaEventBatchHistoryV2>> {
-        stream.validate()?;
         let read = self.db.begin_read()?;
         let events_table = read.open_table(POA_EVENT_BATCH_EVENTS_V2)?;
-        let mut envelopes = Vec::new();
-        for entry in events_table.iter()? {
-            let (_, bytes) = entry?;
-            let envelope = PoaBatchEventEnvelopeV2::decode(bytes.value())?;
-            if envelope.event.stream == *stream {
-                envelopes.push(envelope);
-            }
-        }
-
         let heads = read.open_table(POA_EVENT_BATCH_HEADS_V2)?;
-        let stream_key = stream.digest();
-        let published = heads.get(&stream_key)?;
-        if envelopes.is_empty() {
-            if published.is_some() {
-                return Err(integrity("PoA V2 stream head has no replay events"));
-            }
-            return Ok(None);
-        }
-        let published =
-            published.ok_or_else(|| integrity("PoA V2 replay events have no published head"))?;
-        let published = PoaBatchStreamHeadV2::decode(published.value())?;
-        if published.stream != *stream {
-            return Err(integrity("PoA V2 stream digest aliases another stream"));
-        }
-
-        let genesis = envelopes[0].predecessor()?;
-        if genesis.stream != *stream || genesis.sequence != 0 {
-            return Err(integrity("PoA V2 replay does not begin at stream genesis"));
-        }
-        let mut expected_predecessor = envelopes[0].predecessor_head.clone();
-        let mut prior_coordinate: Option<(u64, u32)> = None;
-        let mut recorded = Vec::with_capacity(envelopes.len());
-        for envelope in envelopes {
-            if envelope.predecessor_head != expected_predecessor {
-                return Err(integrity("PoA V2 replay stream has a broken edge"));
-            }
-            let coordinate = (
-                envelope.coordinate.commit_ordinal,
-                envelope.event.event_index,
-            );
-            if prior_coordinate.is_some_and(|prior| prior >= coordinate) {
-                return Err(integrity(
-                    "PoA V2 replay finalized coordinates do not increase",
-                ));
-            }
-            expected_predecessor = envelope.successor_head.clone();
-            prior_coordinate = Some(coordinate);
-            recorded.push(PoaRecordedBatchEventV2 {
-                coordinate: envelope.coordinate,
-                event: envelope.event,
-            });
-        }
-        let final_successor = PoaBatchStreamHeadV2::decode(&expected_predecessor)?;
-        if final_successor != published {
-            return Err(integrity(
-                "PoA V2 replay final successor is not the published head",
-            ));
-        }
-        Ok(Some(PoaEventBatchHistoryV2 {
-            stream: stream.clone(),
-            genesis_head: genesis,
-            events: recorded,
-            current_head: published,
-        }))
+        load_poa_event_batch_history_v2_from_tables(&events_table, &heads, stream)
     }
 
     pub fn audit_poa_event_batch_store_v2(&self) -> Result<()> {
@@ -1219,13 +1529,6 @@ fn decode_frame<T: for<'de> Deserialize<'de> + Serialize>(
     Ok(decoded)
 }
 
-fn validate_tag(bytes: &[u8], what: &str) -> Result<()> {
-    if bytes.is_empty() || bytes.len() > MAX_POA_BATCH_TAG_BYTES_V2 {
-        return Err(integrity(format!("{what} has invalid length")));
-    }
-    Ok(())
-}
-
 fn validate_component(bytes: &[u8], what: &str) -> Result<()> {
     if bytes.is_empty() || bytes.len() > MAX_POA_BATCH_COMPONENT_BYTES_V2 {
         return Err(integrity(format!("{what} has invalid length")));
@@ -1268,13 +1571,17 @@ mod tests {
     }
 
     fn world() -> PoaWorldIdentityV2 {
-        PoaWorldIdentityV2::new([1; 32], [2; 32], [3; 32], [4; 32], vec![1]).unwrap()
+        PoaWorldIdentityV2::new([1; 32], [2; 32], [3; 32], [4; 32], 1).unwrap()
     }
 
     fn coordinate(ordinal: u64) -> FinalizedTurnCoordinateV2 {
+        coordinate_in_world(ordinal, world())
+    }
+
+    fn coordinate_in_world(ordinal: u64, world: PoaWorldIdentityV2) -> FinalizedTurnCoordinateV2 {
         let record = record(ordinal);
         FinalizedTurnCoordinateV2::new(
-            world(),
+            world,
             ordinal,
             record.block_id,
             record.turn_hash,
@@ -1286,7 +1593,11 @@ mod tests {
     }
 
     fn stream(kind: u8, key: u8) -> PoaBatchStreamIdV2 {
-        PoaBatchStreamIdV2::new([1; 32], vec![kind], [key; 32], vec![1]).unwrap()
+        stream_in_world(world(), kind, key)
+    }
+
+    fn stream_in_world(world: PoaWorldIdentityV2, kind: u8, key: u8) -> PoaBatchStreamIdV2 {
+        PoaBatchStreamIdV2::new(world, u64::from(kind), [key; 32], 1).unwrap()
     }
 
     fn first_event(
@@ -1299,6 +1610,7 @@ mod tests {
         let head = PoaBatchStreamHeadV2::genesis(
             stream.clone(),
             [genesis; 32],
+            [genesis.wrapping_add(1); 32],
             genesis_projection.clone(),
         )
         .unwrap();
@@ -1311,23 +1623,41 @@ mod tests {
             [event; 32],
             [event.wrapping_add(1); 32],
             vec![b'e', event],
+            [event.wrapping_add(2); 32],
             vec![b'p', event],
+            Some(head.projection_digest()),
             Some(genesis_projection),
         )
         .unwrap()
     }
 
     fn batch(ordinal: u64) -> PreparedPoaEventBatchV2 {
+        batch_in_world(ordinal, world())
+    }
+
+    fn batch_in_world(ordinal: u64, world: PoaWorldIdentityV2) -> PreparedPoaEventBatchV2 {
         PreparedPoaEventBatchV2::new(
-            coordinate(ordinal),
+            coordinate_in_world(ordinal, world.clone()),
             b"lean:event-batch-v2".to_vec(),
             [0xaa; 32],
             vec![
-                first_event(0, stream(2, 20), 30, 40),
-                first_event(1, stream(10, 21), 31, 41),
+                first_event(0, stream_in_world(world.clone(), 2, 20), 30, 40),
+                first_event(1, stream_in_world(world, 10, 21), 31, 41),
             ],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn public_stream_head_has_no_serde_authority_constructor() {
+        trait AmbiguousIfDeserialize<Marker> {
+            fn assert_not_deserializable() {}
+        }
+        impl<T: ?Sized> AmbiguousIfDeserialize<()> for T {}
+        struct ImplementsDeserialize;
+        impl<T: ?Sized + serde::de::DeserializeOwned> AmbiguousIfDeserialize<ImplementsDeserialize> for T {}
+
+        <PoaBatchStreamHeadV2 as AmbiguousIfDeserialize<_>>::assert_not_deserializable();
     }
 
     #[test]
@@ -1336,8 +1666,82 @@ mod tests {
         events[1].event_index = 4;
         assert!(PreparedPoaEventBatchV2::new(coordinate(0), vec![1], [2; 32], events).is_err());
         let mut events = batch(0).events;
-        events[1].stream.namespace_id = [99; 32];
+        events[1].stream.world.activation_digest = [99; 32];
         assert!(PreparedPoaEventBatchV2::new(coordinate(0), vec![1], [2; 32], events).is_err());
+    }
+
+    #[test]
+    fn v2_world_and_stream_identity_components_are_nonzero() {
+        assert!(PoaWorldIdentityV2::new([0; 32], [2; 32], [3; 32], [4; 32], 1).is_err());
+        assert!(PoaWorldIdentityV2::new([1; 32], [0; 32], [3; 32], [4; 32], 1).is_err());
+        assert!(PoaWorldIdentityV2::new([1; 32], [2; 32], [0; 32], [4; 32], 1).is_err());
+        assert!(PoaWorldIdentityV2::new([1; 32], [2; 32], [3; 32], [0; 32], 1).is_err());
+        assert!(PoaWorldIdentityV2::new([1; 32], [2; 32], [3; 32], [4; 32], 0).is_err());
+        assert!(PoaBatchStreamIdV2::new(world(), 0, [1; 32], 1).is_err());
+        assert!(PoaBatchStreamIdV2::new(world(), 1, [0; 32], 1).is_err());
+        assert!(PoaBatchStreamIdV2::new(world(), 1, [1; 32], 0).is_err());
+        assert!(
+            FinalizedTurnCoordinateV2::new(world(), 0, [0; 32], [2; 32], [3; 32], [4; 32], [5; 32])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn v2_successor_head_builder_refuses_a_second_genesis_path() {
+        assert!(
+            PoaBatchStreamHeadV2::successor(stream(1, 9), 0, [10; 32], [11; 32], vec![12],)
+                .is_err()
+        );
+        assert!(
+            PoaBatchStreamHeadV2::successor(stream(1, 9), 1, [10; 32], [11; 32], vec![12],).is_ok()
+        );
+    }
+
+    #[test]
+    fn v2_stream_digest_commits_activation_session_and_epoch() {
+        let base = world();
+        let activation = PoaWorldIdentityV2::new([1; 32], [2; 32], [9; 32], [4; 32], 1).unwrap();
+        let session = PoaWorldIdentityV2::new([1; 32], [2; 32], [3; 32], [9; 32], 1).unwrap();
+        let epoch = PoaWorldIdentityV2::new([1; 32], [2; 32], [3; 32], [4; 32], 2).unwrap();
+        let base = stream_in_world(base, 2, 20).digest();
+        assert_ne!(stream_in_world(activation, 2, 20).digest(), base);
+        assert_ne!(stream_in_world(session, 2, 20).digest(), base);
+        assert_ne!(stream_in_world(epoch, 2, 20).digest(), base);
+    }
+
+    #[test]
+    fn v2_rollback_world_cannot_reuse_current_stream_or_head() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let current_world = PoaWorldIdentityV2::new([1; 32], [2; 32], [3; 32], [4; 32], 2).unwrap();
+        let current = batch_in_world(0, current_world.clone());
+        let write = store.db.begin_write().unwrap();
+        initialize_poa_event_batch_tables_v2_in(&write).unwrap();
+        stage_fresh_poa_event_batch_in(&write, 0, &record(0), &current).unwrap();
+        write.commit().unwrap();
+
+        let rollback_world = world();
+        let mut reused_event = current.events[0].clone();
+        assert!(
+            PreparedPoaEventBatchV2::new(
+                coordinate_in_world(1, rollback_world.clone()),
+                vec![1],
+                [2; 32],
+                vec![reused_event.clone()],
+            )
+            .is_err()
+        );
+
+        reused_event.stream = stream_in_world(rollback_world.clone(), 2, 20);
+        let rollback = PreparedPoaEventBatchV2::new(
+            coordinate_in_world(1, rollback_world),
+            vec![1],
+            [2; 32],
+            vec![reused_event],
+        )
+        .unwrap();
+        let write = store.db.begin_write().unwrap();
+        assert!(stage_fresh_poa_event_batch_in(&write, 1, &record(1), &rollback).is_err());
+        write.abort().unwrap();
     }
 
     #[test]
@@ -1387,7 +1791,7 @@ mod tests {
             stream: first.stream.clone(),
             sequence: 1,
             semantic_head: first.event_digest,
-            projection_digest: sha256(&first.successor_projection),
+            projection_digest: first.successor_projection_digest,
             projection: first.successor_projection.clone(),
         };
         let second = PreparedPoaBatchEventV2::new(
@@ -1399,7 +1803,9 @@ mod tests {
             [41; 32],
             [42; 32],
             vec![2],
+            [43; 32],
             vec![3],
+            None,
             None,
         )
         .unwrap();

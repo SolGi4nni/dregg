@@ -224,6 +224,10 @@ impl PoaProjectionCursorV1 {
 
 /// Structurally prepared append emitted only after native Lean has judged the
 /// game event and produced its exact successor projection.
+///
+/// ```compile_fail
+/// let _raw_constructor = dregg_persist::PreparedPoaEventEnvelopeV1::new;
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedPoaEventEnvelopeV1 {
     aggregate: PoaAggregateIdV1,
@@ -243,8 +247,9 @@ pub struct PreparedPoaEventEnvelopeV1 {
 }
 
 impl PreparedPoaEventEnvelopeV1 {
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         aggregate: PoaAggregateIdV1,
         schema_version: Vec<u8>,
         sequence: u64,

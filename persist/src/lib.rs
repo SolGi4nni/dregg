@@ -44,11 +44,15 @@ pub mod image_builder;
 pub mod ledger_store;
 pub mod note_tree;
 pub mod per_cell_receipt_heads;
+pub mod poa_activated_content;
 pub mod poa_authority_export;
+pub mod poa_event_batch_plan;
 pub mod poa_event_batch_v2;
 pub mod poa_event_store;
+pub mod poa_galley_authority;
 pub mod poa_holding_consumption;
 pub mod poa_signal_state;
+pub mod poa_world_activation;
 pub mod poseidon2_note_tree;
 pub mod private_dependent_turns;
 pub mod promise_resolutions;
@@ -101,22 +105,38 @@ pub use per_cell_receipt_heads::{
     DurablePerCellReceiptHead, MAX_PER_CELL_RECEIPT_HEADS_V1, MAX_PER_CELL_RECEIPT_LIVE_RECORDS_V1,
     PER_CELL_RECEIPT_HEAD_INDEX_VERSION_V1, PerCellReceiptHeadRecovery,
 };
+pub use poa_activated_content::{
+    PoaActivatedContentInstallOutcomeV1, PoaActivatedContentInstallStatusV1,
+};
 pub use poa_authority_export::PoaAuthorityCommitSnapshotV1;
+pub use poa_event_batch_plan::{
+    PoaEventBatchInitialHeadOriginV2, PoaEventBatchPlanAuthorityV2,
+    PoaEventBatchPlanEventAuthorityV2, PoaEventBatchPlanInitialHeadV2,
+    prepare_poa_event_batch_v2_from_lean_plan,
+};
 pub use poa_event_batch_v2::{
     FinalizedTurnCoordinateV2, MAX_POA_BATCH_COMPONENT_BYTES_V2, MAX_POA_BATCH_EVENTS_V2,
-    MAX_POA_BATCH_FRAME_BYTES_V2, MAX_POA_BATCH_TAG_BYTES_V2, PoaBatchStreamHeadV2,
-    PoaBatchStreamIdV2, PoaEventBatchHistoryV2, PoaRecordedBatchEventV2, PoaWorldIdentityV2,
-    PreparedPoaBatchEventV2, PreparedPoaEventBatchV2,
+    MAX_POA_BATCH_FRAME_BYTES_V2, PoaBatchStreamHeadV2, PoaBatchStreamIdV2, PoaEventBatchHistoryV2,
+    PoaRecordedBatchEventV2, PoaWorldIdentityV2, PreparedPoaBatchEventV2, PreparedPoaEventBatchV2,
 };
 pub use poa_event_store::{
     MAX_POA_EVENT_COMPONENT_BYTES_V1, MAX_POA_EVENT_TAG_BYTES_V1, PoaAggregateIdV1,
     PoaEventEnvelopeV1, PoaEventHeadV1, PoaEventHistoryV1, PoaProjectionCursorV1,
     PreparedPoaEventEnvelopeV1,
 };
+pub use poa_galley_authority::{
+    AuthenticatedPoaGalleyPolicyV1, PreparedPoaFinalizedTurnAuthorityV1,
+    PreparedPoaGalleyEventBatchV1,
+};
 pub use poa_holding_consumption::{PoaHoldingConsumptionV1, PreparedPoaHoldingConsumptionV1};
 pub use poa_signal_state::{
     MAX_POA_SIGNAL_WIRE_BYTES_V1, PoaSignalGenesisInitOutcome, PoaSignalHeadV1,
     PoaSignalTransitionV1, PreparedPoaSignalTransitionV1,
+};
+pub use poa_world_activation::{
+    PoaActiveWorldHeadV1, PoaWorldActivationKindV1, PoaWorldActivationRecordV1,
+    PoaWorldActivationStatementV1, PreparedPoaWorldActivationV1,
+    SignedPoaWorldActivationEnvelopeV1,
 };
 pub use poseidon2_note_tree::Poseidon2NoteTree;
 pub use private_dependent_turns::{
@@ -936,6 +956,8 @@ impl PersistentStore {
             poa_event_store::initialize_poa_event_tables_in(&write_txn)?;
             poa_event_batch_v2::initialize_poa_event_batch_tables_v2_in(&write_txn)?;
             poa_holding_consumption::initialize_poa_holding_consumption_tables_in(&write_txn)?;
+            poa_world_activation::initialize_poa_world_activation_tables_v1_in(&write_txn)?;
+            poa_activated_content::initialize_poa_activated_content_tables_v1_in(&write_txn)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
             // Compacted turn block-ids (the no-double-apply carrier for

@@ -226,9 +226,13 @@ impl PoaSignalHeadV1 {
 }
 
 /// Adapter-prepared successor material consumed by the atomic finalized-turn
-/// weld. Authority fields are private so callers cannot mutate the candidate
-/// after construction, but this type is only a storage envelope: constructing
-/// it does not authenticate the adapter, finality context, or Lean verdict.
+/// weld. Authority fields and raw construction are private; external callers
+/// can obtain one only from an opaque native-Lean acceptance carrier. Finality
+/// is established separately by the receipt/executor commit apex.
+///
+/// ```compile_fail
+/// let _raw_constructor = dregg_persist::PreparedPoaSignalTransitionV1::new;
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedPoaSignalTransitionV1 {
     authority_id: [u8; 32],
@@ -245,7 +249,7 @@ impl PreparedPoaSignalTransitionV1 {
     ///
     /// This checks byte bounds only. The caller must derive the authority and
     /// predecessor from finalized state and validate the exact Lean verdict.
-    pub fn new(
+    pub(crate) fn new(
         authority_id: [u8; 32],
         expected_predecessor_head_digest: [u8; 32],
         successor_world_sequence: u64,
@@ -279,6 +283,71 @@ impl PreparedPoaSignalTransitionV1 {
         })
     }
 
+    /// Prepare a transition from an opaque native-Lean acceptance carrier.
+    ///
+    /// The carrier binds the output to the exact `judge_input`; its private
+    /// fields make caller-authored output bytes unrepresentable here.  This
+    /// boundary also checks that the persistence projection is exactly the
+    /// successor projection present in those Lean-authored bytes.  Finality is
+    /// still established only by the receipt/executor commit apex.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_lean_accepted(
+        authority_id: [u8; 32],
+        expected_predecessor_head_digest: [u8; 32],
+        successor_world_sequence: u64,
+        successor_canon_revision: u64,
+        successor_canon: Vec<u8>,
+        judge_input: Vec<u8>,
+        accepted: dregg_lean_ffi::poa_ffi::AcceptedPoaSignalOutput,
+    ) -> Result<Self> {
+        if !accepted.was_judged_for(&judge_input) {
+            return Err(integrity(
+                "PoA Signal Lean acceptance does not belong to the supplied judge input",
+            ));
+        }
+        validate_accepted_projection(
+            authority_id,
+            successor_world_sequence,
+            successor_canon_revision,
+            &successor_canon,
+            &judge_input,
+            accepted.as_str().as_bytes(),
+        )?;
+        Self::new(
+            authority_id,
+            expected_predecessor_head_digest,
+            successor_world_sequence,
+            successor_canon_revision,
+            successor_canon,
+            judge_input,
+            accepted.into_string().into_bytes(),
+        )
+    }
+
+    /// Raw construction for cross-crate corruption/atomicity fixtures only.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_for_test(
+        authority_id: [u8; 32],
+        expected_predecessor_head_digest: [u8; 32],
+        successor_world_sequence: u64,
+        successor_canon_revision: u64,
+        successor_canon: Vec<u8>,
+        judge_input: Vec<u8>,
+        judge_output: Vec<u8>,
+    ) -> Result<Self> {
+        Self::new(
+            authority_id,
+            expected_predecessor_head_digest,
+            successor_world_sequence,
+            successor_canon_revision,
+            successor_canon,
+            judge_input,
+            judge_output,
+        )
+    }
+
     /// Authority this candidate advances.
     pub const fn authority_id(&self) -> [u8; 32] {
         self.authority_id
@@ -308,6 +377,59 @@ impl PreparedPoaSignalTransitionV1 {
     pub fn judge_output(&self) -> &[u8] {
         &self.judge_output
     }
+}
+
+fn validate_accepted_projection(
+    authority_id: [u8; 32],
+    successor_world_sequence: u64,
+    successor_canon_revision: u64,
+    successor_canon: &[u8],
+    judge_input: &[u8],
+    judge_output: &[u8],
+) -> Result<()> {
+    let input: serde_json::Value = serde_json::from_slice(judge_input)
+        .map_err(|error| integrity(format!("PoA Signal judge input is not JSON: {error}")))?;
+    for path in [
+        "/canon/federation_id",
+        "/carrier/federation_id",
+        "/request/federation_id",
+    ] {
+        let encoded = input
+            .pointer(path)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| integrity(format!("PoA Signal judge input lacks {path}")))?;
+        let decoded = dregg_types::parse_hex32(encoded)
+            .ok_or_else(|| integrity(format!("PoA Signal {path} is not a digest")))?;
+        if decoded != authority_id {
+            return Err(integrity(format!(
+                "PoA Signal judge input {path} does not name the prepared authority"
+            )));
+        }
+    }
+
+    let output: serde_json::Value = serde_json::from_slice(judge_output)
+        .map_err(|error| integrity(format!("PoA Signal Lean output is not JSON: {error}")))?;
+    let output_sequence = output
+        .pointer("/successor_world/sequence")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| integrity("PoA Signal Lean output lacks successor world sequence"))?;
+    let output_revision = output
+        .pointer("/successor_canon/revision")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| integrity("PoA Signal Lean output lacks successor Canon revision"))?;
+    if output_sequence != successor_world_sequence || output_revision != successor_canon_revision {
+        return Err(integrity(
+            "PoA Signal persistence coordinates differ from the native Lean successor",
+        ));
+    }
+    let projected: serde_json::Value = serde_json::from_slice(successor_canon)
+        .map_err(|error| integrity(format!("PoA Signal successor Canon is not JSON: {error}")))?;
+    if output.pointer("/successor_canon") != Some(&projected) {
+        return Err(integrity(
+            "PoA Signal persisted Canon differs from the native Lean successor",
+        ));
+    }
+    Ok(())
 }
 
 /// Immutable typed record for one finalized Signal transition.
@@ -1369,6 +1491,44 @@ mod tests {
         let store = PersistentStore::open_in_memory().unwrap();
         store.initialize_poa_signal_head(&genesis()).unwrap();
         store
+    }
+
+    #[test]
+    fn lean_accepted_projection_must_match_authority_coordinates_and_canon() {
+        let input = include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json");
+        let output =
+            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-output-v1.json");
+        let input_json: serde_json::Value = serde_json::from_slice(input).unwrap();
+        let output_json: serde_json::Value = serde_json::from_slice(output).unwrap();
+        let authority =
+            dregg_types::parse_hex32(input_json["carrier"]["federation_id"].as_str().unwrap())
+                .unwrap();
+        let sequence = output_json["successor_world"]["sequence"].as_u64().unwrap();
+        let revision = output_json["successor_canon"]["revision"].as_u64().unwrap();
+        let canon = serde_json::to_vec(&output_json["successor_canon"]).unwrap();
+
+        validate_accepted_projection(authority, sequence, revision, &canon, input, output).unwrap();
+        assert!(
+            validate_accepted_projection([0xff; 32], sequence, revision, &canon, input, output,)
+                .is_err()
+        );
+        assert!(
+            validate_accepted_projection(authority, sequence + 1, revision, &canon, input, output,)
+                .is_err()
+        );
+        let mut wrong_canon: serde_json::Value = serde_json::from_slice(&canon).unwrap();
+        wrong_canon["curator_counter"] = serde_json::json!(revision + 10);
+        assert!(
+            validate_accepted_projection(
+                authority,
+                sequence,
+                revision,
+                &serde_json::to_vec(&wrong_canon).unwrap(),
+                input,
+                output,
+            )
+            .is_err()
+        );
     }
 
     #[test]
