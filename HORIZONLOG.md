@@ -1,5 +1,83 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (WHOSE TAPE) — **the phase-1 (Fp) transcript leg is a circuit**: the 46-link phase-2 chain absorbed an `fq_digest` nothing derived, and 27 links of `dregg-pasta-fp-chainlink::v1` now derive it — welded **32/32 felts, elementwise, no digest, no birthday bound**
+
+The phase-2 fold ends on Mina devnet block 539508's real `v′`/`u′` — and its tape's **element 0 is
+`fq_digest`**, which existed in the tree only as a `decide`/`#guard` over a `Nat` reference. So the
+chain proved *a tape absorbs to the published challenges* **without proving whose tape.** `fq_digest`
+is phase 1's OUTPUT. It is now a circuit.
+
+⛑ **THE PROGRAM IS NOT FORKED, IT IS GENERALISED — and the deployed one is an INSTANCE.**
+`MinaWrapVerifierSpongeFp` lifts `roundAt`/`permInstrs`/`absorbCore` to an arbitrary
+`PastaPoseidonFq.Params`; `the_deployed_fq_programs_are_this_one_at_fqParams` proves **by `rfl`** that
+`MinaWrapVerifierSponge.absorbCore` **is** `absorbCoreP fqParams`. The DENOTATION goes the same way:
+`the_permutation_program_computes_gen` / `the_absorb_program_permutes_gen` hold at every `Params` with
+a positive modulus, every register file, no hypotheses — and `the_deployed_fq_denotation_is_this_one`
+exhibits the theorem **all 46 phase-2 links rest on** as the instance. `programAir`'s `pl`
+parametricity was the whole of the field change; the Fp ALU polarities already existed.
+
+⛑⛑ **THE WELD, AND ITS STRENGTH SAID OUT LOUD.**
+
+| | phase-1 `dregg-pasta-fp-chainlink::v1` link 26 | phase-2 `dregg-pasta-fq-chainlink::v1` link 0 |
+|---|---|---|
+| PI slice | `[4·SK, 5·SK)` = `[128, 160)` — outgoing lane 1 | `[6·SK, 7·SK)` = `[192, 224)` — `absorbed[0]` |
+
+**32/32 felts equal, 32/32 load-bearing** (moving any one limb breaks it). Both sides publish at
+`SK = 32` eight-bit limbs, so a verifier compares two slices and does **no arithmetic** — **no digest,
+therefore no birthday bound.** A one-felt tie would have been `2^31`, below this repo's own ~124-bit
+bar. Kernel-clean: `the_wire_blocks_are_equal` is `congrArg` over ONE compiled value equality.
+
+⛑ **27 IS DERIVED, NOT COUNTED.** `the_pairs_are_the_absorb_schedule` proves at EVERY `Params` and
+EVERY segment that the rate-2 sponge's own absorb/squeeze schedule chunks a segment into `pairsOf`:
+**19 + 1 + 7**. ⚑ γ and the digest cost **no link** — `squeeze` from `Squeezed 1` reads lane 1 without
+permuting — which is why the **eight-block** chainlink layout (all THREE outgoing lanes) is *required*
+here and not merely tidy: a two-lane descriptor could not even state this result.
+
+⛑ **THE `fp_kimchi` CONSTANTS WERE 174 LITERALS NOTHING HAD EVER CHECKED.** `PastaPoseidon.mdsN`/
+`rcsN` — the same hole the Fq lane found. `fixtures/kimchi-extractors/fp_kimchi_export.rs` is the
+missing extractor, `metatheory/fp_kimchi_params.json` its output (o1-labs `proof-systems`
+`f6d958dc05`, via `static_params()`), and `pasta_fp_sponge_proves.rs` §9 checks **660/660** emitted
+ROM immediates against it. §12 measures the twin fact on the artifacts: **2048/2048** instruction
+words identical in fields `0..23`, exactly **660** immediates differ.
+
+⛑ **PRICED FIRST, AS ASKED: `pack_to_fields` DOES NOT DOMINATE — AND IS NOT ON THIS PATH.**
+`Bridge.MinaStateHashPackPrice`, named theorems. (1) Phase 1 absorbs **whole field elements** —
+`absorb_g` pushes `x` then `y` as base-field elements — so the tape is 53 `Fp` elements and **not one
+bit is packed**. (2) Where it does live, the STATE-HASH preimage: 38 fields + **819 chunks / 2 381
+bits** → **49** elements → **26** permutations → **42 900** rows, against **1 638** for the packing —
+**3.8%**, bracketed in the kernel. ⚑ `the_packing_control_flow_reads_only_the_width`: `packStep`'s
+branch is a function of `(n, accN)` and **never of the value**, so it is a STRAIGHT-LINE program —
+no branch, no bit-decomposition rung, no chip. ⚑ **781 of the 819 chunks are ONE BIT**; the other 38
+have `n % 8 == 0`, so the injectivity side is booleanity plus high-limbs-are-zero and the nibble
+machinery is not on the path.
+
+⛑ **BOTH POLARITIES, RELEASE, REFUSING GATE NAMED — `pasta_fp_sponge_proves` 12/12.**
+
+| tamper | refusing gate | result |
+|---|---|---|
+| forged absorbed value | boundary **PIN** (asserted NOT `exact-public`) | REFUSED |
+| round 7's constant at round 3 | the **ROM BUS** (`multiset does not equal its Lean-emitted manifest`) | REFUSED |
+| two rows swapped, multiset unchanged | the **pc THREAD** | REFUSED |
+| forged `fq_digest` PI / trace cell | the boundary pin | 2/2 REFUSED |
+
+⚠ **A DRAFTED FALSIFIER WAS REFUTED, AND THAT IS THE USEFUL PART.** The first
+`a_tampered_witness_coordinate_moves_the_digest` aimed at link 18's SECOND slot — the odd tail's
+**padding zero**. Moving a zero into a zero; `native_decide` proved the claim FALSE.
+`the_tamper_targets_are_real_tape_elements` now CHECKS both controls hit non-zero tape elements.
+
+⚠ **WHAT IS STILL DECLARED.** Nothing checks the 53 absorbed coordinates ARE the commitments they
+claim to be — no curve check, no `public_comm` binding; the IPA `msm == 0` floor is unmoved. Nor that
+the verifier-index digest (tape element 0) is the VK's. Deriving `fq_digest` removes a **carrier**; it
+does not verify Mina. The tape-specific facts are `native_decide` + `#assert_compiled`; the general
+step and the pairing schedule are kernel.
+
+⚠ **RE-EMITS:** three NEW by-name descriptors (`pasta-fp-{round,absorb,chainlink}.json`), byte-checked
+against `EmitByName.lean`'s own output (107 rows). Nothing existing moves — **no VK rotation, no
+re-genesis.** `PROVENANCE.json` left UNSTAMPED: the canonical emitter refuses to stamp while
+`metatheory/Dregg2` is dirty from sibling lanes, so the three join the operator's existing list.
+`dregg-pasta-fp-chainlink::v1` **is served** from `descriptor_by_name()`; round and absorb stay
+unrouted like their Fq twins. Commits `7c8257776` (Lean) + `d8caf1c90` (surface).
+
 ## ⛑⛑⛑ AUGUST 5 (THE MISSING PRIMITIVE) — **`assert_equal` exists**: a zero-row union-find over `PVar` composed at `circuitPositions`, and a merged placement is PROVED to be `place` of the renamed gate list — so the old naming-a-variable style is the special case and every existing byte pin transfers
 
 The lane that wrote the first non-`wrap_main` circuit named it: *"`mergeRoots` is the seam where an
