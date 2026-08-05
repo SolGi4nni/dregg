@@ -36,9 +36,10 @@
         <nav>
           <a href="#overview" class="active" data-route="overview"><i>01</i><span>Deck watch</span></a>
           <a href="#missions" data-route="missions"><i>02</i><span>Daily board</span></a>
-          <a href="#records" data-route="records"><i>03</i><span>Field records</span></a>
-          <a href="#bazaar" data-route="bazaar"><i>04</i><span>Dark Bazaar</span></a>
-          <a href="#choir" data-route="choir"><i>05</i><span>The Choir</span></a>
+          <a href="#crew" data-route="crew"><i>03</i><span>Crew muster</span></a>
+          <a href="#records" data-route="records"><i>04</i><span>Field records</span></a>
+          <a href="#bazaar" data-route="bazaar"><i>05</i><span>Dark Bazaar</span></a>
+          <a href="#choir" data-route="choir"><i>06</i><span>The Choir</span></a>
         </nav>
         <button class="curator-key" id="curator-open" type="button">
           <span>CURATOR ACCESS</span><small>content console</small>
@@ -112,6 +113,10 @@
               <p class="microcopy" id="world-preview-note">Authenticating the emitted contribution preview. Current ship state is never inferred from this display.</p>
             </article>
           </div>
+
+          <section id="platform-terminal" class="platform-terminal" aria-label="Ship operations terminal" aria-live="polite">
+            <p class="platform-loading">Reading installed ship instruments…</p>
+          </section>
         </section>
 
         <section class="view" id="view-missions" data-view="missions">
@@ -173,6 +178,43 @@
           </div>
         </section>
 
+        <section class="view" id="view-crew" data-view="crew">
+          <div class="view-heading">
+            <div><p class="eyebrow">EXPEDITION LOCK // LOCAL ROSTER</p><h1>Crew muster</h1></div>
+            <p class="watch-copy">A role is a way through a problem. It is not yet a persistent character, asset, or rank.</p>
+          </div>
+          <div class="crew-layout">
+            <article class="panel crew-manifest">
+              <div class="panel-head">
+                <div><div class="panel-label">DEMONSTRATOR ROSTER</div><h2>Four stations below deck</h2></div>
+                <span class="quiet-chip">LOCAL ONLY</span>
+              </div>
+              <p class="crew-intro">The expedition instrument can compose these roles into a local run. This terminal has no persistent officer profile, crew custody object, progression receipt, or injury ledger.</p>
+              <div id="crew-systems" aria-live="polite"><p class="platform-loading">Reading crew instrument…</p></div>
+              <div class="crew-actions">
+                <a class="primary-link" href="./labs/expedition-lab.html">Enter expedition lab</a>
+                <a class="secondary-link" href="#records">Inspect evidence grades</a>
+              </div>
+            </article>
+            <aside class="crew-side">
+              <article class="panel crew-boundary">
+                <div class="panel-label">WHAT PERSISTS</div>
+                <h2>Nothing yet</h2>
+                <p>A completed lab route produces an exact local transcript. It does not bind a wallet, mint an officer, alter the ship, or create salvage custody.</p>
+              </article>
+              <article class="panel crew-boundary crew-boundary--future">
+                <div class="panel-label">LOCKED SYSTEMS</div>
+                <dl>
+                  <div><dt>Officer identity</dt><dd>not exposed</dd></div>
+                  <div><dt>Equipment</dt><dd>no owned assets</dd></div>
+                  <div><dt>Injury / recovery</dt><dd>lab-local only</dd></div>
+                  <div><dt>Crew relay</dt><dd>no settlement path</dd></div>
+                </dl>
+              </article>
+            </aside>
+          </div>
+        </section>
+
         <section class="view" id="view-records" data-view="records">
           <div class="view-heading"><div><p class="eyebrow">BETA FIELD CANON // PROMOTION PENDING</p><h1>Things the ship may contain</h1></div><p class="watch-copy">Expeditions leave exact records. The series decides which discoveries survive into history.</p></div>
           <div class="records-layout">
@@ -190,6 +232,15 @@
               <a class="record-row record-link" href="./labs/flight-recorder.html"><time>REPLAY</time><div><b>Flight Recorder</b><span>follow the public predecessor wake</span></div><em>→</em></a>
             </div>
           </div>
+          <section class="evidence-register-shell" aria-labelledby="evidence-register-title">
+            <div class="platform-heading">
+              <div><p class="panel-label">EVIDENCE REGISTER // DISTINCT GRADES</p><h2 id="evidence-register-title">What each green light actually means</h2></div>
+              <p class="platform-heading__copy">Content authentication, table provenance, replay continuity, and settlement are separate claims. None upgrades another.</p>
+            </div>
+            <div id="evidence-register" class="evidence-register" aria-live="polite">
+              <p class="platform-loading">Reading evidence grades…</p>
+            </div>
+          </section>
         </section>
 
         <section class="view" id="view-bazaar" data-view="bazaar">
@@ -198,6 +249,15 @@
             <div class="organ-sigil">◇</div><div><p class="mission-code">DREX / THRESHOLD HALL</p><h2>The market is present. Settlement is not yet linked to this federation.</h2><p>Expedition salvage will enter as exact owned assets. Sealed orders, threshold clearing, and same-opening proofs will become available only when the PoA committee reports ready.</p></div>
             <dl><div><dt>Your salvage</dt><dd>none recorded</dd></div><div><dt>Privacy grade</dt><dd>not active</dd></div><div><dt>Committee</dt><dd>awaiting PoA devnet</dd></div></dl>
           </div>
+          <section class="bazaar-inspection" aria-labelledby="bazaar-inspection-title">
+            <div class="platform-heading">
+              <div><p class="panel-label">MARKET READINESS // FAIL CLOSED</p><h2 id="bazaar-inspection-title">Four things a bazaar needs</h2></div>
+              <p class="platform-heading__copy">The concourse opens only when inventory, privacy, clearing, and settlement all have their own authority.</p>
+            </div>
+            <div id="bazaar-gates" class="bazaar-gates" aria-live="polite">
+              <p class="platform-loading">Inspecting market gates…</p>
+            </div>
+          </section>
         </section>
 
         <section class="view" id="view-choir" data-view="choir">

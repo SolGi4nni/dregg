@@ -12,6 +12,11 @@ import { loadSalvageLockDescriptor } from "./salvage-runtime.js";
 import { launchCatalogMission } from "./mission-launcher.js";
 import { mountDreggAdmissionPanel } from "./dregg-admission-panel.js";
 import { getWalletStandardRegistry } from "./wallet-standard-registry.js";
+import {
+  buildPlatformModel,
+  loadPlatformEvidence,
+  mountPlatformTerminal,
+} from "./platform-terminal.js";
 
 const byId = (id) => document.getElementById(id);
 const state = {
@@ -23,6 +28,8 @@ const state = {
   signal: null,
   run: null,
   draft: [],
+  platformEvidence: Object.freeze({}),
+  contentAuthority: Object.freeze({ state: "pending" }),
 };
 
 const missionCopy = Object.freeze({
@@ -109,6 +116,14 @@ function markAuthority(bundle) {
   byId("footer-authority").textContent = `POAG1 ${short} // CONTENT EPOCH ${bundle.contentEpoch.contentEpoch}.${bundle.contentEpoch.counter}`;
   byId("rules-authority").textContent = `POAG1 ${short}`;
   byId("curator-artifact").value = bundle.manifestDigest;
+  state.contentAuthority = Object.freeze({
+    state: "ready",
+    manifestDigest: bundle.manifestDigest,
+    epoch: bundle.contentEpoch.contentEpoch,
+    counter: bundle.contentEpoch.counter,
+    missionCount: state.missions.length,
+  });
+  renderPlatform();
 }
 
 function sealAuthority(error) {
@@ -127,6 +142,30 @@ function sealAuthority(error) {
   state.finiteController = null;
   byId("finite-game").hidden = true;
   disableSignal();
+  state.contentAuthority = Object.freeze({
+    state: "refused",
+    reason: error instanceof ArtifactRefusal ? error.code : "mission-authority",
+  });
+  renderPlatform();
+}
+
+function renderPlatform() {
+  const model = buildPlatformModel({
+    contentAuthority: state.contentAuthority,
+    evidence: state.platformEvidence,
+  });
+  mountPlatformTerminal({
+    home: byId("platform-terminal"),
+    register: byId("evidence-register"),
+    crew: byId("crew-systems"),
+    bazaar: byId("bazaar-gates"),
+  }, model);
+}
+
+async function initializePlatformEvidence() {
+  renderPlatform();
+  state.platformEvidence = await loadPlatformEvidence({ baseUrl: location.href });
+  renderPlatform();
 }
 
 function disableSignal() {
@@ -303,6 +342,7 @@ function escapeHtml(value) {
 async function boot() {
   initializeChrome();
   initializeDreggAdmission();
+  const platformEvidence = initializePlatformEvidence();
   try {
     const bundle = await loadPOAG1({
       baseUrl: new URL("./artifacts/poag1/", location.href),
@@ -336,6 +376,7 @@ async function boot() {
   } catch (error) {
     sealAuthority(error);
   } finally {
+    await platformEvidence;
     byId("app").setAttribute("aria-busy", "false");
   }
 }

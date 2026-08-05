@@ -66,6 +66,61 @@ curator activation, complete catalog, and every descriptor validate. All play is
 still visibly `LOCAL // UNSETTLED`: a browser transcript is not a RunReceipt and
 does not grant score, contribution, salvage, ranking, or canon status.
 
+## Ship platform and evidence grades
+
+The overview is also the ship's between-episode terminal. It joins six visible
+organs without pretending they share one authority:
+
+- **Field drills** consume curator-signed POAG1 content. That signature says
+  which rules were offered; it is not a receipt for a player's run.
+- **Crew expedition** and **Archive intake** read the small, byte-pinned
+  provenance manifests for their Lean-emitted finite tables. The multi-megabyte
+  tables stay lazy until their respective labs open.
+- **Flight Recorder** checks the configured public predecessor/successor chain.
+  The current source is an explicitly labeled three-transition rehearsal, and
+  linked replay is never presented as consensus finality.
+- **Crew muster** makes the local expedition roles legible while stating that
+  officer identity, custody, injury, and progression are not persistent yet.
+- **Dark Bazaar** exposes inventory, private-order, clearing, and settlement as
+  four independent locked gates. A decorative market cannot make any of them
+  true.
+
+`src/platform-terminal.js` is a projection over these existing sources. It does
+not sign, score, settle, promote canon, or invent a browser fallback. Every
+source is loaded and graded independently, so one refusal cannot be hidden by a
+different green instrument or erase healthy evidence from the page.
+
+## The game as a DrEX pressure harness
+
+The locked organs describe engineering contracts, not a promise that UI work
+has completed them. Platform depth should open only as Dregg/DrEX can supply the
+corresponding receipt:
+
+| Game organ | Player loop | Capability required before it can persist |
+| --- | --- | --- |
+| Watch cycle | rotating drills, one clean run, crew upkeep | authenticated cycle definition, replay protection, settled RunReceipt |
+| Officer | role, loadout, injury, recovery, reputation | wallet-bound but privacy-conscious profile capability and versioned state transition |
+| Expedition | assemble a crew, cross a deck, extract or withdraw | Lean-authored joint state machine, participant signatures, exact contribution and custody output |
+| Field archive | compare evidence, form a beta record, seek promotion | artifact lineage, curator capability, supersession and alpha/beta provenance |
+| Bazaar | list salvage, submit a sealed order, clear, exchange | owned inventory, private order commitment, same-opening proof, threshold clearing, atomic settlement receipt |
+| Choir | answer a ship-scale question with bounded influence | eligibility snapshot, ballot privacy where promised, tally proof, quorum/weight policy, finalized outcome receipt |
+| Flight Recorder | inspect what the public system can prove happened | canonical event coordinates, digest continuity, availability window, explicit finality source |
+
+This division is deliberate. Lean should own the state machines, admissibility
+rules, contribution algebra, market/ballot policy, and receipt predicates.
+Rust and the node should transport, persist, prove, and serve those decisions;
+the browser should render them and fail closed. The PoA devnet becomes useful
+when a second node can independently replay and verify these exact transitions,
+not merely when the primary server can display them.
+
+The deeper game can therefore grow outward—crew quarters, cooperative deck
+sorties, salvage collections, research plans, auctions, recovery clocks, and
+eventually Aspect companions—without collapsing everything into token voting.
+Each loop starts local, gains an exact receipt, then gains federation and private
+settlement only when those layers exist. Fictional discoveries remain beta
+records until the curator deliberately promotes an exact artifact into the
+series archive.
+
 `tests/mission-launch-browser.html` is the real-DOM controller harness for the
 exact candidate Relay/Salvage bytes. Serve the repository root, open that path,
 and require `body[data-status="pass"]`. It deliberately does not pretend the

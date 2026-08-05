@@ -235,6 +235,63 @@ button:disabled { opacity: .32; cursor: not-allowed; }
 .empty-orbit span { position: absolute; left: 50%; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
 .choir-wait p { color: var(--dim); font: 14px var(--serif); }
 
+/* ── Integrated ship terminal / platform evidence ─────────────────────── */
+.platform-terminal, .evidence-register-shell, .bazaar-inspection { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.platform-loading { margin: 0; padding: 18px; color: var(--dim); border: 1px dashed var(--line); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
+.platform-heading { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin-bottom: 15px; }
+.platform-heading h2 { margin: 5px 0 0; font: 30px/1.05 var(--serif); }
+.platform-heading__copy { max-width: 500px; margin: 0; color: var(--dim); font: 13px/1.45 var(--serif); text-align: right; }
+.platform-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.platform-card { min-height: 226px; display: grid; grid-template-rows: auto auto 1fr auto auto; gap: 11px; padding: 17px; border: 1px solid var(--line); background: linear-gradient(145deg, rgba(12,31,32,.92), rgba(5,16,18,.88)); box-shadow: inset 0 1px rgba(255,255,255,.015); }
+.platform-card--ready { border-color: rgba(155,216,191,.26); }
+.platform-card--locked, .platform-card--refused { background: linear-gradient(145deg, rgba(42,24,24,.28), rgba(5,16,18,.88)); }
+.platform-card__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.platform-card__head .panel-label { margin: 0; }
+.platform-card__state { color: var(--dim); font-size: 6.5px; letter-spacing: .12em; }
+.platform-card--ready .platform-card__state { color: var(--mint); }
+.platform-card--locked .platform-card__state, .platform-card--refused .platform-card__state { color: var(--red); }
+.platform-card__title { margin: 0; font: 22px/1.05 var(--serif); }
+.platform-card__copy { margin: 0; color: var(--soft); font: 12.5px/1.45 var(--serif); }
+.platform-card__link, .primary-link, .secondary-link { display: inline-flex; width: fit-content; min-height: 34px; align-items: center; color: var(--mint); text-decoration: none; font-size: 8px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
+.platform-card__link:hover, .platform-card__link:focus-visible, .primary-link:hover, .primary-link:focus-visible, .secondary-link:hover, .secondary-link:focus-visible { color: var(--acid); outline: none; text-decoration: underline; text-underline-offset: 5px; }
+.platform-grade { display: grid; grid-template-columns: max-content 1fr; gap: 8px; align-items: baseline; padding: 9px 10px; border-left: 2px solid var(--grade, var(--dim)); background: rgba(0,0,0,.14); }
+.platform-grade--mint { --grade: var(--mint); }
+.platform-grade--amber { --grade: var(--amber); }
+.platform-grade--blue { --grade: #86b7c8; }
+.platform-grade--red { --grade: var(--red); }
+.platform-grade--dim { --grade: #526760; }
+.platform-grade__label { color: var(--grade); font-size: 7px; letter-spacing: .1em; }
+.platform-grade__detail { color: var(--dim); font-size: 7.5px; line-height: 1.35; }
+
+.evidence-register { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.evidence-row { min-height: 132px; display: grid; grid-template-rows: auto 1fr; gap: 10px; padding: 13px; border: 1px solid var(--line); background: rgba(7,20,22,.78); }
+.evidence-row__name { color: var(--soft); font: 15px var(--serif); }
+.evidence-row .platform-grade { display: flex; flex-direction: column; align-items: flex-start; }
+
+.crew-layout { display: grid; grid-template-columns: minmax(520px, 1.4fr) minmax(260px, .7fr); gap: 14px; }
+.crew-manifest, .crew-boundary { padding: 20px; }
+.crew-intro, .crew-boundary p { color: var(--soft); font: 14px/1.5 var(--serif); }
+.crew-roster { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; margin: 22px 0 14px; }
+.crew-role { min-height: 130px; display: grid; align-content: space-between; padding: 13px; border: 1px solid var(--line); background: radial-gradient(circle at 50% 0, rgba(155,216,191,.08), transparent 65%); }
+.crew-role__index { color: var(--dim); font-size: 7px; }
+.crew-role b { color: var(--mint); font-size: 8px; letter-spacing: .1em; }
+.crew-role small { color: var(--dim); font-size: 7px; }
+.crew-facts { margin: 0; }
+.crew-facts div, .crew-boundary dl div { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 8px; }
+.crew-actions { display: flex; align-items: center; gap: 18px; margin-top: 16px; }
+.primary-link { min-height: 38px; padding: 0 13px; color: var(--ink); background: var(--mint); }
+.primary-link:hover, .primary-link:focus-visible { color: var(--ink); background: var(--acid); text-decoration: none; }
+.crew-side { display: flex; flex-direction: column; gap: 14px; }
+.crew-boundary { min-height: 180px; }
+.crew-boundary h2 { font-size: 28px; }
+.crew-boundary--future { background: linear-gradient(145deg, rgba(45,27,23,.33), rgba(8,22,23,.88)); }
+
+.bazaar-gates { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 9px; }
+.bazaar-gate { min-height: 130px; display: grid; grid-template-rows: 1fr auto auto; gap: 8px; padding: 15px; border: 1px solid rgba(210,120,108,.24); background: linear-gradient(145deg, rgba(63,28,25,.18), rgba(7,19,20,.85)); }
+.bazaar-gate__glyph { color: var(--red); font: 27px var(--serif); opacity: .6; }
+.bazaar-gate b { font: 16px var(--serif); }
+.bazaar-gate small { color: var(--red); font-size: 7px; letter-spacing: .08em; text-transform: uppercase; }
+
 footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; color: #496059; border-top: 1px solid var(--line); background: rgba(5,14,16,.92); font-size: 7px; letter-spacing: .1em; }
 .curator-dialog { width: min(840px, calc(100vw - 30px)); padding: 0; color: var(--text); border: 1px solid var(--line-bright); background: #091719; box-shadow: 0 30px 100px rgba(0,0,0,.7); }
 .curator-dialog::backdrop { background: rgba(0,5,6,.78); backdrop-filter: blur(4px); }
@@ -259,6 +316,10 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
   .condition-panel { grid-column: 1 / -1; }
   .locked-organ { grid-template-columns: 100px 1fr; }
   .locked-organ dl { grid-column: 1 / -1; }
+  .platform-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .evidence-register { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .crew-roster { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .bazaar-gates { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -266,7 +327,7 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
   .topbar { padding: 0 14px; }
   .ship-mark small, .top-status > span:not(.status-lamp) { display: none; }
   .rail { grid-row: 3; z-index: 12; padding: 0; border: 0; border-top: 1px solid var(--line); background: rgba(6,16,18,.97); }
-  .rail nav { height: 46px; display: grid; grid-template-columns: repeat(5,1fr); }
+  .rail nav { height: 46px; display: grid; grid-template-columns: repeat(6,1fr); }
   .rail nav a { min-height: 46px; display: flex; justify-content: center; padding: 0; }
   .rail nav a i { display: none; }
   .rail nav a span { font-size: 7px; }
@@ -278,7 +339,7 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
   .view-heading { display: block; }
   .view-heading h1 { font-size: 38px; }
   .watch-copy { margin-top: 15px; }
-  .overview-grid, .mission-layout, .records-layout, .choir-grid { grid-template-columns: 1fr; }
+  .overview-grid, .mission-layout, .records-layout, .choir-grid, .crew-layout { grid-template-columns: 1fr; }
   .mission-selector { grid-template-columns: 1fr; }
   .mission-tab { min-height: 48px; }
   .officer-card, .deck-panel { grid-row: auto; }
@@ -296,6 +357,13 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
   .organ-sigil { width: 80px; height: 80px; }
   .locked-organ h2 { font-size: 29px; }
   .console-grid { grid-template-columns: 1fr; }
+  .platform-heading { display: block; }
+  .platform-heading__copy { margin-top: 10px; text-align: left; }
+  .platform-grid, .evidence-register, .bazaar-gates { grid-template-columns: 1fr; }
+  .platform-card { min-height: 0; }
+  .crew-roster { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .crew-role { min-height: 105px; }
+  .platform-grade { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
