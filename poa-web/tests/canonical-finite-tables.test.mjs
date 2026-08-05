@@ -62,8 +62,10 @@ test("canonical Lean-emitted Relay and Salvage bytes match the strict web consum
   };
   const relay = loadRelayRepairDescriptor(relayJson, finiteTableAuthority(mission("relay-repair", `sha256:${"b".repeat(64)}`)));
   const salvage = loadSalvageLockDescriptor(salvageJson, finiteTableAuthority(mission("salvage-lock", `sha256:${"c".repeat(64)}`)));
-  assert.deepEqual([relay.states.length, relay.actions.length, relay.transitions.length], [15, 4, 60]);
+  assert.deepEqual([relay.states.length, relay.actions.length, relay.transitions.length], [25, 5, 125]);
   assert.deepEqual([salvage.states.length, salvage.actions.length, salvage.transitions.length], [164, 6, 984]);
-  assert.equal(relay.initialState, "relay:0:4:0");
+  assert.equal(relay.initialState, "relay:0:0");
+  assert.equal(relay.instance.selected, 2);
+  assert.equal(relay.instance.board.spares, 6);
   assert.equal(salvage.initialState, "salvage:0:none:0");
 });

@@ -44,37 +44,81 @@ export function relayFixture() {
     { id: "alpha-gamma", label: "Install Alpha-Gamma", from: "alpha", to: "gamma" },
     { id: "beta-delta", label: "Install Beta-Delta", from: "beta", to: "delta" },
     { id: "gamma-delta", label: "Install Gamma-Delta", from: "gamma", to: "delta" },
+    { id: "delta-omega", label: "Install Delta-Omega", from: "delta", to: "omega" },
   ];
-  const states = Array.from({ length: 15 }, (_, index) => ({
-    id: `r${index}`,
-    terminal: index === 14,
-    view: {
-      installed: index === 1 ? ["alpha-beta"] : index === 14 ? ["alpha-beta", "beta-delta"] : [],
-      spares: index === 0 ? 4 : index === 14 ? 2 : 3,
-      turns: index === 0 ? 0 : index === 14 ? 2 : 1,
-      solved: index === 14,
-    },
-  }));
-  const dispatch = (state, action) => {
-    if (state === "r0" && action === "alpha-beta") return { next: "r1" };
-    if (state === "r0" && action === "alpha-gamma") return { next: "r2" };
-    if (state === "r1" && action === "beta-delta") return { next: "r14" };
-    if (state === "r2") return { next: `r${3 + actions.findIndex((candidate) => candidate.id === action)}` };
-    if (state === "r3") return { next: `r${7 + actions.findIndex((candidate) => candidate.id === action)}` };
-    if (state === "r4" && action !== "gamma-delta") return { next: `r${11 + actions.findIndex((candidate) => candidate.id === action)}` };
-    if (state === "r14") return { next: null, reason: "solved" };
-    if (state === "r1" && action === "alpha-beta") return { next: null, reason: "already-installed" };
-    return { next: null, reason: "turn-limit" };
+  // A spanning dispatch over 25 ids: every state is reachable, r14 is the only
+  // terminal, and each refusal reason in the vocabulary is provoked somewhere.
+  const children = {
+    r0: ["r1", "r2", null, null, null],
+    r1: [null, "r3", "r14", "r4", "r5"],
+    r2: ["r6", "r7", "r8", "r9", "r10"],
+    r3: ["r11", "r12", "r13", "r15", "r16"],
+    r4: ["r17", "r18", "r19", "r20", "r21"],
+    r5: ["r22", "r23", "r24", null, null],
   };
+  const shallow = new Set(["r0", "r1", "r2", "r3", "r4", "r5", "r14", "r6", "r7", "r8", "r9", "r10"]);
+  const depth = (id) => {
+    if (id === "r0") return 0;
+    if (id === "r1" || id === "r2") return 1;
+    return shallow.has(id) ? 2 : 3;
+  };
+  const states = Array.from({ length: 25 }, (_, index) => {
+    const id = `r${index}`;
+    const solved = id === "r14";
+    return {
+      id,
+      terminal: solved,
+      view: {
+        installed: id === "r1" ? ["alpha-beta"] : solved ? ["alpha-beta", "beta-delta"] : [],
+        spares: solved ? 2 : 6 - depth(id),
+        turns: depth(id),
+        solved,
+        stranded: id === "r6",
+      },
+    };
+  });
+  const reason = (state, index) => {
+    if (state === "r14") return "solved";
+    if (state === "r1" && index === 0) return "already-installed";
+    if (state === "r5") return "no-spares";
+    if (state === "r6") return "stranded";
+    return "turn-limit";
+  };
+  const dispatch = (state, action) => {
+    const index = actions.findIndex((candidate) => candidate.id === action);
+    const next = (children[state] ?? [])[index] ?? null;
+    return next === null ? { next: null, reason: reason(state, index) } : { next };
+  };
+  const board = (index) => ({
+    index,
+    spares: 6,
+    costs: {
+      "alpha-beta": 1 + (index % 3),
+      "alpha-gamma": 1 + ((index + 1) % 3),
+      "beta-delta": 2,
+      "gamma-delta": 1 + ((index + 2) % 3),
+      "delta-omega": 1,
+    },
+  });
   return {
     format: "POAG1-GAME",
     schema_version: 1,
     game_id: "relay-repair",
-    ruleset: "relay-v1",
+    ruleset: "relay-v2",
     engine_module: "Dregg2.Games.PathOfAngels.RelayRepair",
-    action_limit: 4,
+    action_limit: 3,
     run_seed: THREE,
     security: security(),
+    // THREE's first byte is 0x33 = 51, and 51 % 8 = 3, so the published draw is
+    // the one the run seed makes.  The loader refuses any other `selected`.
+    instance: {
+      seed_byte: 0,
+      modulus: 8,
+      selected: 3,
+      source: "alpha",
+      sink: "omega",
+      boards: Array.from({ length: 8 }, (_, index) => board(index)),
+    },
     state_machine: { initial_state: "r0", states, actions, transitions: rows(states, actions, dispatch) },
     output: output(),
   };

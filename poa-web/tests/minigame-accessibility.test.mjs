@@ -67,7 +67,7 @@ test("Relay mounts native labeled buttons, a live region, and keyboard focus mov
   const nodes = all(root);
   const buttons = nodes.filter((node) => node.tagName === "BUTTON" && node.dataset.action);
   const live = nodes.find((node) => node.attributes.get("role") === "status");
-  assert.equal(buttons.length, 4);
+  assert.equal(buttons.length, 5);
   assert.ok(buttons.every((button) => button.attributes.has("aria-label")));
   assert.equal(live.attributes.get("aria-live"), "polite");
   assert.equal(buttons[0].tabIndex, 0);

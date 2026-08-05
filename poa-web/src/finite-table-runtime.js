@@ -77,7 +77,7 @@ function validateSecurity(value, at) {
 export function loadFiniteTableDescriptor(game, authorityInput, spec) {
   exactKeys(game, [
     "format", "schema_version", "game_id", "ruleset", "engine_module", "action_limit",
-    "run_seed", "security", "state_machine", "output",
+    "run_seed", "security", "state_machine", "output", ...(spec.extraKeys ?? []),
   ], `${spec.name} descriptor`);
   refuse(game.format === FORMAT && game.schema_version === 1, "table-format", `${spec.name} format is unsupported`);
   refuse(
@@ -97,6 +97,8 @@ export function loadFiniteTableDescriptor(game, authorityInput, spec) {
     "table-output",
     `${spec.name} output projection is unsupported`,
   );
+
+  const instance = spec.parseInstance ? spec.parseInstance(game, `${spec.name} instance`) : null;
 
   const machine = game.state_machine;
   exactKeys(machine, ["initial_state", "states", "actions", "transitions"], `${spec.name} state_machine`);
@@ -174,6 +176,7 @@ export function loadFiniteTableDescriptor(game, authorityInput, spec) {
     actionLimit: game.action_limit,
     runSeed: game.run_seed,
     security,
+    instance,
     authority,
     initialState: machine.initial_state,
     states: Object.freeze(states),

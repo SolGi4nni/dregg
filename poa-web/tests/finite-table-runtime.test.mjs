@@ -127,8 +127,24 @@ test("authority, reward policy, action limit, and state/action domains fail clos
   assert.throws(() => loadRelay(rewarded), { code: "table-security" });
 
   const limit = relayFixture();
-  limit.action_limit = 3;
+  limit.action_limit = 2;
   assert.throws(() => loadRelay(limit), { code: "table-action-limit" });
+
+  const drawn = relayFixture();
+  drawn.instance.selected = 4;
+  assert.throws(() => loadRelay(drawn), { code: "relay-instance-draw" });
+
+  const unpriced = relayFixture();
+  delete unpriced.instance.boards[3].costs["delta-omega"];
+  assert.throws(() => loadRelay(unpriced), { code: "table-field" });
+
+  const free = relayFixture();
+  free.instance.boards[3].costs["delta-omega"] = 0;
+  assert.throws(() => loadRelay(free), { code: "relay-instance" });
+
+  const annex = relayFixture();
+  annex.instance.tampered = true;
+  assert.throws(() => loadRelay(annex), { code: "table-field" });
 
   const actions = salvageFixture();
   actions.state_machine.actions[0].id = "slot-5";
