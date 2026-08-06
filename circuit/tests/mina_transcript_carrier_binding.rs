@@ -395,6 +395,17 @@ fn segment_desc() -> EffectVmDescriptor2 {
 /// * side B — `effect_vm_descriptor2_semantic_fingerprint(dregg-mina-lightclient-link-v1.json)`,
 ///   recomputed here from the SIBLING descriptor's own canonical bytes.
 ///
+/// ⚠⚠ **AND ONE OF THESE IS CURRENTLY THE OTHER LANE'S RED — READ THIS BEFORE "FIXING" IT.**
+/// Measured 2026-08-06: `pasta-fq-chainlink.json`, `dregg-mina-lightclient-link-v1.json` and
+/// `mina-xi-endo-lift.json` are all UNCOMMITTED-MODIFIED in the shared tree by a sibling lane's
+/// re-emit batch, and the chainlink's fingerprint moves from `[40589529, 494773874, …]` (the bytes
+/// at HEAD, which `LightClientMinaAir.CHAINLINK_VK_LANES` pins) to `[158847877, 496723774, …]`. So
+/// against a WORKING TREE that has picked up that batch this test is RED, and against HEAD it is
+/// GREEN. **The pin is correct as committed and must move WITH the descriptor, in the commit that
+/// lands it** — it is not this file's to chase, and chasing it would pin HEAD to bytes HEAD does not
+/// have. That is the whole shape of the drift the wraplink already caused: the two halves must move
+/// together or the head names a program no descriptor in this tree has.
+///
 /// If the segment descriptor is re-emitted and the head is not, side B moves and this goes RED —
 /// exactly the drift that already happened once with the wraplink and was caught by nothing else.
 /// The runtime reader is `mina_head_verifier::check_subproof_program_pin` at

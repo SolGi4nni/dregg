@@ -146,7 +146,7 @@ const DEVNET_TIP_LANES: [u32; 9] = [
 /// semantic fingerprint. `mina_transcript_carrier_binding.rs` recomputes these from that
 /// descriptor's own bytes; here they are the row a prover must fill.
 const CHAINLINK_VK_LANES: [u32; 9] = [
-    158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666,
+    40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485,
 ];
 /// `LightClientMinaAir.CHAINLINK_PI_LANES` — the nine lanes of the digest of the chainlink
 /// sub-proof's 256 public inputs on the block-539508 instance's 46th and last link.

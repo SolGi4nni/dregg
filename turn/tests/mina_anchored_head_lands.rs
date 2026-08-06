@@ -123,7 +123,7 @@ const LINK_VK_LANES: [u32; 9] = [
 /// own bytes by `circuit/tests/mina_transcript_carrier_binding.rs`, and by `dregg-turn` itself at
 /// verify time (`check_subproof_program_pin`); a literal here so a drift is a red, not a silence.
 const CHAINLINK_VK_LANES: [u32; 9] = [
-    158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666,
+    40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485,
 ];
 /// The nine lanes of the digest of that sub-proof's 256 public inputs on the block-539508 instance's
 /// 46th and last link — PI-bound at slots 20..28.

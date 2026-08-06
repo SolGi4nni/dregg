@@ -903,7 +903,7 @@ said so and nothing else did, so `MinaAnchoredHeadStarkVerifier::verify` now rec
 dispatched sub-proof's fingerprint and REFUSES the head on a mismatch. A pin whose only reader is a
 test is a pin a node can drift past. -/
 def CHAINLINK_VK_LANES : List ℤ :=
-  [158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666]
+  [40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485]
 
 /-- The `i`-th pinned program lane, as the `vkPin` literal the leg carries. -/
 def chainlinkVkLane (i : Nat) : ℤ := CHAINLINK_VK_LANES.getD i 0
@@ -2602,7 +2602,7 @@ before 2026-08-05. -/
 
 /-- The forged program lanes: the real fingerprint with lane 0 bumped by one. -/
 def FORGED_VK_LANES : List ℤ :=
-  [158847878, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666]
+  [40589530, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT PROGRAM.** -/
 def forgedProgramRow : Assignment :=
