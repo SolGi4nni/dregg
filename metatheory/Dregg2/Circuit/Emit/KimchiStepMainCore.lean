@@ -5846,11 +5846,23 @@ def circuitEnv (t : StepData) : VarEnv :=
      -- "no in-circuit source" means; the nine one-bit words get no entry because no row reads them.
      , (vStmtWrapMsgs s, (STMT_WRAPMSG_VAL : Int))
      , (vStmtLookup s, (STMT_LOOKUP_VAL : Int)) ]
-  -- ⚑ §24 — the STEP statement's padding block and its `messages_for_next_wrap_proof.(0)`. Bound on
-  -- every shape (an unbound id would read `0` and a `0` in a `hi` slot is a value, not an absence);
-  -- on a shape that carries no statement no row and no public word reads them.
-  ++ (List.range PP_WORDS).map (fun j => (vStmtDummy s j, (stmtDummyVal j : Int)))
-  ++ [ (vStmtWrapMsg0 s, ((13 + 5000011 * PP_WORDS) % pN : Int)) ]
+  -- ⚑ §24 — the STEP statement's padding block and its `messages_for_next_wrap_proof.(0)`.
+  --
+  -- ⚠ ⚑ **BOUND ONLY ON A SHAPE THAT CARRIES A STATEMENT, AND THE FIRST DRAFT BOUND THEM ALWAYS.**
+  -- The reasoning for binding unconditionally was "an unbound id would read `0`, and a `0` in a
+  -- `hi` slot is a value, not an absence" — true, and irrelevant on a shape where no row and no
+  -- public word names the id at all. What it actually did was put 33 entries into `shapeSmoke`'s
+  -- environment that nothing reads, which
+  -- `KimchiStepProverChoice.the_grid_never_reads_twentytwo_smoke_environment_cells` counts: 22
+  -- became 55. ⚑ **That module is rooted OUTSIDE `KimchiStepMain`'s import cone**, so the
+  -- 3 089-job umbrella build was green while it was red — the per-file-green-hides-a-red-umbrella
+  -- class, caught by building the consumers rather than by the theorem's own module.
+  --
+  -- The repair is the one the count asked for and not a wider constant: a cell that belongs to the
+  -- step statement does not exist in a shape that publishes no statement.
+  ++ (if !carriesStatement s then [] else
+        (List.range PP_WORDS).map (fun j => (vStmtDummy s j, (stmtDummyVal j : Int)))
+        ++ [ (vStmtWrapMsg0 s, ((13 + 5000011 * PP_WORDS) % pN : Int)) ])
   ++ aEnvOf (baseFin s t.ft) t.fin.fp.prog t.fin.vals
 
 /-- The full environment: the circuit's variables, then the `pubWords` public words, whose values

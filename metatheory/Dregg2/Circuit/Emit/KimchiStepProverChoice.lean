@@ -542,7 +542,17 @@ theorem the_step_prover_choice_census :
           (fun o => match o with | .aeq _ _ => true | _ => false)) = 17
      ∧ occAt occStep (vDHi shapeStep 0) = 0
      ∧ occAt occStep (vDHi shapeStep 1) = 2
-     ∧ occAt occStep (vStmtWrapMsgs shapeStep) = 1
+     -- ⚑ **TWO SINCE §24, AND THE SECOND READER IS THE POINT.** This was 1: the wrap statement's
+     -- word 11, read only by the x_hat ladder. `messages_for_next_wrap_proof.(1)` is now also STEP
+     -- statement slot 66 — one cell with two consumers, which is upstream's own identity
+     -- (`step_main.ml:85` substitutes `verify_one`'s argument into the wrap statement it builds, and
+     -- `:364-366` is where that argument is witnessed). A second cell would be two objects where the
+     -- protocol has one, and `KimchiStepStatementPins
+     -- .the_step_statements_wrap_message_is_the_wrap_statements_word_eleven` refuses that. ⚠ The
+     -- PADDING block's `messages_for_next_wrap_proof.(0)` has its own cell and its own single
+     -- reader, which is the conjunct below — so "two" here cannot be a collision.
+     ∧ occAt occStep (vStmtWrapMsgs shapeStep) = 2
+     ∧ occAt occStep (vStmtWrapMsg0 shapeStep) = 1
      ∧ occAt occStep (vStmtLookup shapeStep) = 1
      ∧ ((List.range 9).all (fun k => occAt occStep (vStmtFlag shapeStep k) == 0)) = true
      ∧ occAt occStep (bpZ1 shapeStep) = 1
