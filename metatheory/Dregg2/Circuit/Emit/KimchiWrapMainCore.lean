@@ -23,6 +23,7 @@ measured emitting fall to 13.6 s.
 
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiCircuitJson
 import Dregg2.Circuit.Emit.WitnessBuilder
 import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.PastaPoseidonFq
@@ -38,6 +39,7 @@ import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 open Dregg2.Circuit.Emit.KimchiTarget (KGateType K_PERMUTS)
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson
 open Dregg2.Circuit.Emit.WitnessBuilder
   (VarEnv GateWitness gridAt envIndex envLookupAt gateVarWitnessAt compose)
 open Dregg2.Circuit.Emit.PastaField (pN qN)
@@ -110,18 +112,29 @@ structure WrapShape where
   `WRAP_PRIMARY_LEN = 40`; §10 carries the slot-by-slot census of which 40 and which of them this
   rung derives. Setting this to 40 with undERIVED words would be a public vector of fixtures. -/
   pubWords : Nat
-  /-- ⚑ How many of `wrap_verifier.ml:539-548`'s **67** public-input entries the x_hat MSM emits
-  (§15). At the committed wrap shape this IS `XHAT_TERMS_FULL` and `xhatSel` is the identity; the
-  smoke shape emits a NAMED spread that reaches all three widths and both partitions. It is NOT a
-  claim that the statement has fewer words — `xhatBits` is over all 67 either way. -/
-  xhatTerms : Nat
+  /-- ⚑ **WHICH x_hat MSM ENTRIES THIS SHAPE EMITS — the SELECTION, not a count** (§15).
+
+  At the committed wrap shape this is `xhatSel XHAT_TERMS_FULL = List.range 67`, i.e.
+  `wrap_verifier.ml:539-548`'s own entry list in its own order; the smoke shape carries a NAMED
+  spread that reaches all three widths and both partitions; and the shape that verifies **dregg's own
+  step proof** carries `XHAT_OWN_SEL`, twelve entries of a disjoint index space whose bases are the
+  step SRS's Lagrange basis at THIS proof's domain.
+
+  ⚠ ⚑ **IT WAS `xhatTerms : Nat` AND THAT COULD NOT SURVIVE A SECOND ENTRY SPACE.** A count names a
+  selection only through `xhatSel`, which is Mina's packed statement's; so `xhatTerms := 12` read
+  like "this proof's twelve public inputs" and meant "Mina's named spread of twelve", with no diff
+  at any call site. That is `mkWrap`'s `nItems + 1` sentinel again — one number, two meanings, which
+  at smoke scale lands harmlessly and at wrap scale zeroes a real word. The selection is now the
+  field, so a shape says which entries it means. `EmitWrapMainJson` refuses a selection that leaves
+  the entry space or names an index twice. -/
+  xhatEntries : List Nat
   /-- ⚑ **THE PAIR `wrap_verifier.ml:617` ABSORBS** — §15's MSM output, carried in the SHAPE rather
   than recomputed inside `schedule`.
 
   ⚠ This is a MEMO WITH A PROOF OBLIGATION, not a fixture, and the difference is enforced in two
   places: `xhat_smoke_shape_absorbs_the_msm_output` closes it by `rfl` IN THE KERNEL for the smoke
   shape, and `EmitWrapMainJson` REFUSES to emit a COMMITTED shape whose `xhatXY` is not
-  `xhatOut xhatTerms`. A wrong pair cannot reach a proved circuit. ⚑ A `DREGG_WM`-supplied shape is
+  `xhatOutOf xhatEntries`. A wrong pair cannot reach a proved circuit. ⚑ A `DREGG_WM`-supplied shape is
   a different case and the refusal does NOT cover it: a comma spec of naturals cannot carry two Fq
   coordinates, so `parseShape` DERIVES the pair and it agrees by construction. Saying the refusal
   covers that path too would be describing a branch that cannot go red.
@@ -349,9 +362,9 @@ def wrapFixture (tag i : Nat) : Nat := (11 + 1000003 * (17 * tag + i)) % qN
 
 /-- Item `i` of tag `t`'s VALUE.
 
-⚠ ⚑ **TAG 2 (`x_hat`) IS NO LONGER HERE.** At `w6_xhat` the absorbed `x_hat` pair is `xhatOut
-s.xhatTerms` — §15's MSM output — and `schedule` reads it directly, because `itemVal` has no shape
-to read it with. `RC_XHAT` survives only as `xhat_derived_is_not_the_old_fixture`'s red control: the
+⚠ ⚑ **TAG 2 (`x_hat`) IS NO LONGER HERE.** At `w6_xhat` the absorbed `x_hat` pair is
+`xhatOutOf s.xhatEntries` — §15's MSM output — and `schedule` reads it directly, because `itemVal`
+has no shape to read it with. `RC_XHAT` survives only as `xhat_derived_is_not_the_old_fixture`'s red control: the
 value the transcript used to absorb, kept so the change is exhibited rather than merely asserted. -/
 def itemVal (t i : Nat) : Nat :=
   match t with
@@ -1655,7 +1668,7 @@ Read end to end at source. `x_hat` is built in five movements and this file emit
     whatever `reduce_lincom` chose. -/
 
 /-- The entries this shape emits (`xhatSel`), and the projections the layout indexes by. -/
-def xhSel (s : WrapShape) : List Nat := xhatSel s.xhatTerms
+def xhSel (s : WrapShape) : List Nat := s.xhatEntries
 def xhN (s : WrapShape) : Nat := (xhSel s).length
 def xhAt (s : WrapShape) (k : Nat) : Nat := (xhSel s).getD k 0
 def xhChunks (s : WrapShape) (k : Nat) : Nat := xhatChunksAt (xhAt s k)
@@ -5786,35 +5799,32 @@ def rungProbeRows (t : WrapData) (k : Rung) : List Nat :=
 
 /-! ### The renderer — the same JSON the pickles harnesses parse. -/
 
-private def qs (s : String) : String := "\"" ++ s ++ "\""
-private def renderCell (c : Cell) : String := "[" ++ toString c.row ++ "," ++ toString c.col ++ "]"
-private def renderWires (ws : List Cell) : String :=
-  "[" ++ String.intercalate "," (ws.map renderCell) ++ "]"
-private def renderIntList (xs : List Int) : String :=
-  "[" ++ String.intercalate "," (xs.map (fun i => qs (toString i))) ++ "]"
-private def renderNatList (xs : List Nat) : String :=
-  "[" ++ String.intercalate "," (xs.map toString) ++ "]"
-private def renderGate (g : PlacedGate) : String :=
-  "{" ++ qs "typ" ++ ":" ++ toString g.kind.ordinal ++ ","
-       ++ qs "wires" ++ ":" ++ renderWires g.wires ++ ","
-       ++ qs "coeffs" ++ ":" ++ renderIntList g.coeffs ++ "}"
+/-! ⚑ **ONE RENDERER.** `renderWrapCircuit` and its six private helpers are DELETED. The three
+field groups this side needs — `public_input`, the slot census and `probe_rows` — are `Option`
+fields of the `KimchiCircuit` VALUE, and `renderCircuit_wrap_is_the_open_coded_shape` pins over
+EVERY argument that `KimchiCircuitJson.renderCircuit` emits the chain `renderWrapCircuit` emitted.
 
-def renderWrapCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedGate)
-    (w : List (List Int)) (pub : List Int) (probes : List Nat)
-    (derivedSlots unreadSlots : List Nat) : String :=
-  "{" ++ qs "name" ++ ":" ++ qs name ++ ","
-       ++ qs "public_input_size" ++ ":" ++ toString pubSize ++ ","
-       ++ qs "public_input" ++ ":" ++ renderIntList pub ++ ","
-       -- ⚑ **THE SLOT CENSUS TRAVELS WITH THE CIRCUIT.** Which of Mina's forty this emission
-       -- DERIVES, and which it declares unread. A Rust gate that had to guess the split would be
-       -- testing its own guess; these two lists are what makes the harness's public-input polarity
-       -- a measurement of the 24-vs-40 shape instead of an assertion about it.
-       ++ qs "derived_slots" ++ ":" ++ renderNatList derivedSlots ++ ","
-       ++ qs "unread_slots" ++ ":" ++ renderNatList unreadSlots ++ ","
-       ++ qs "num_rows" ++ ":" ++ toString numRows ++ ","
-       ++ qs "probe_rows" ++ ":" ++ renderNatList probes ++ ","
-       ++ qs "gates" ++ ":[" ++ String.intercalate "," (gs.map renderGate) ++ "],"
-       ++ qs "witness" ++ ":[" ++ String.intercalate "," (w.map renderIntList) ++ "]}"
+⚑ **THE SLOT CENSUS TRAVELS WITH THE CIRCUIT.** Which of Mina's forty this emission DERIVES, and
+which it declares unread. A Rust gate that had to guess the split would be testing its own guess;
+these two lists are what makes the harness's public-input polarity a measurement of the 24-vs-40
+shape instead of an assertion about it. They are ONE field (`slots := some (derived, unread)`)
+because a circuit declaring half a census is worse than one declaring none.
+
+⚠ `wrapCircuit` below passes `some []` — `some`, not `none` — for a `pubSize = 0` rung's public
+vector and slot census. Those rungs emit `"public_input":[]`, `"derived_slots":[]`,
+`"unread_slots":[]`, keys and all, and have since this file's first emission. -/
+
+/-- Rung `k`'s circuit, as a VALUE. -/
+def wrapCircuit (t : WrapData) (k : Rung) (wired : Bool) (name : String)
+    : KimchiCircuitJson.KimchiCircuit :=
+  let rows := rungRows t k wired
+  let p := rungPub t.sh k
+  { name := name, pubSize := p, numRows := p + rows.length
+  , gates := placedOf t.sh k p (wrapGates rows), witness := wrapWitnessAt t k p rows
+  , publicInput := some (if p == 0 then [] else wrapPublicAt t k)
+  , slots := some (if p == 0 then [] else wrapSlotsAt t.sh k,
+                   if p == 0 then [] else wrapInertOk t.sh k)
+  , probeRows := some (rungProbeRows t k) }
 
 /-! ⚠ ⚑ **`wrapWitness` AND `wrapPublic` ARE DELETED, and the deletion is the point.** They were
 rung-blind aliases — "the closing rung's …, kept for callers that do not carry a `Rung`" — and "the
@@ -5834,12 +5844,7 @@ Every caller now carries its rung: `wrapPublicAt t k` / `wrapWitnessAt t k`. See
 `KimchiStepWrapChain` §9a. Do not reintroduce a rung-blind alias for these. -/
 
 def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :=
-  let rows := rungRows t k wired
-  let p := rungPub t.sh k
-  renderWrapCircuit name p (p + rows.length)
-    (placedOf t.sh k p (wrapGates rows)) (wrapWitnessAt t k p rows)
-    (if p == 0 then [] else wrapPublicAt t k) (rungProbeRows t k)
-    (if p == 0 then [] else wrapSlotsAt t.sh k) (if p == 0 then [] else wrapInertOk t.sh k)
+  renderCircuit (wrapCircuit t k wired name)
 
 /-! ## §8 — the committed shape.
 
@@ -5860,7 +5865,7 @@ def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :
     are `WRAP_UNPINNED_SLOTS`. -/
 def shapeWrap : WrapShape :=
   { prevs := 2, ipaRounds := 16, wComms := 15, tComms := 7, emsRows := 8
-  , branches := 5, pubWords := 22, xhatTerms := XHAT_TERMS_FULL
+  , branches := 5, pubWords := 22, xhatEntries := xhatSel XHAT_TERMS_FULL
   -- ⚑ `xhatOut XHAT_TERMS_FULL`, and `EmitWrapMainJson` re-derives it and REFUSES on disagreement
   -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far
   -- more reduced. ⚠ The file's ONE `native_decide` is §24's
@@ -5912,8 +5917,9 @@ def shapeSmoke : WrapShape :=
   -- been five 255-bit-or-parity entries and no 128-bit ladder at all. ⚑ Entry 64 is here because
   -- `w9_prev` exposes its packed word as a PUBLIC one, and a public word whose cell the MSM never
   -- reads is a public fixture.
-  , xhatTerms := 5
-  -- ⚑ `xhatOut 5`, closed by `rfl` IN THE KERNEL by `xhat_smoke_shape_absorbs_the_msm_output`.
+  , xhatEntries := xhatSel 5
+  -- ⚑ `xhatOutOf (xhatSel 5)`, closed by `rfl` IN THE KERNEL by
+  -- `xhat_smoke_shape_absorbs_the_msm_output`.
   , xhatXY :=
       (16939429680523055563406117440808118430703004205774435970856079172456077167531,
        12956915833716130635753754766705188581923939059745973521002626957608324504831) }

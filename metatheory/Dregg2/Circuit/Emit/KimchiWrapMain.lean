@@ -206,7 +206,7 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     w12_close           2252        7983*      24    wrap_main.ml:419-420
 
 ⚠ ⚑ **THE SMOKE COLUMN MOVED AT `w9_prev` FOR THE THREE RUNGS BELOW IT, AND NOT BECAUSE THEY
-CHANGED.** `shapeSmoke.xhatTerms` went 4 → 5 so that the smoke MSM reaches entry 64 — the packed
+CHANGED.** `shapeSmoke.xhatEntries` went `xhatSel 4` → `xhatSel 5` so that the smoke MSM reaches entry 64 — the packed
 word `w9_prev` exposes publicly — which adds one 51-chunk ladder: `w6_xhat` 1170 → 1286, and
 `w7_split`/`w8_ftcomm` carry it. The WRAP column is unmoved below `w9_prev`, because at the
 committed shape `xhatSel` was already the identity over all 67 entries.

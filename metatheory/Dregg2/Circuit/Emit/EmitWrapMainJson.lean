@@ -27,6 +27,7 @@ import Dregg2.Circuit.Emit.KimchiWrapMainCore
 
 open Dregg2.Circuit.Emit.KimchiWrapMain
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson (renderCircuit)
 
 /-- Pin a pure `let` in place before an `IO.monoMsNow`, so a phase split cannot report `0 ms` for
 the phase that actually ran. -/
@@ -67,10 +68,14 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   let pub := if p == 0 then [] else wrapPublicAt t k
   let ds := if p == 0 then [] else wrapSlotsAt t.sh k
   let us := if p == 0 then [] else wrapInertOk t.sh k
-  let jw := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}" p (p + rowsW.length) placed wit pub probes
-              ds us
-  let ju := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}_UNWIRED" p (p + rowsU.length) placedU wit
-              pub probes ds us
+  let jw := renderCircuit { name := s!"wrapmain_{tag}_{k.tag}", pubSize := p
+                          , numRows := p + rowsW.length, gates := placed, witness := wit
+                          , publicInput := some pub, slots := some (ds, us)
+                          , probeRows := some probes }
+  let ju := renderCircuit { name := s!"wrapmain_{tag}_{k.tag}_UNWIRED", pubSize := p
+                          , numRows := p + rowsU.length, gates := placedU, witness := wit
+                          , publicInput := some pub, slots := some (ds, us)
+                          , probeRows := some probes }
   -- ⚠ A REFUSAL IS LOUD, AND IT LANDS BEFORE THE WRITE. `placeChecked` returning `.error` yields
   -- the empty placement, which would otherwise ship as a zero-gate circuit the harness "proves".
   -- ⚑ Both refusals used to fire AFTER `writeAtomic`, which is not fail-closed at all: the artifact
@@ -131,17 +136,21 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
 
 ⚑ **`xhatXY` IS DERIVED HERE, NOT PARSED**, and that is the only honest option: the pair is two
 Fq coordinates and a comma spec of naturals has no independent source for them. So a
-`DREGG_WM`-supplied shape gets `xhatOut xhatTerms` by construction and `main`'s memo refusal
-cannot fire on this path — it is live for the two COMMITTED shapes, which are the shapes anything
+`DREGG_WM`-supplied shape gets `xhatOutOf` its own selection by construction and `main`'s memo
+refusal cannot fire on this path — it is live for the COMMITTED shapes, which are the shapes anything
 actually emits, and where the pair is written down and could disagree.
 
-⚠ Before this, `parseShape` still built the seven-field record and did not compile at all once §15
-added `xhatXY`, so the whole emit path was red — the two committed shapes included. -/
+⚠ ⚑ **THE EIGHTH FIELD IS STILL A COUNT, AND IT STILL MEANS MINA'S ENTRY SPACE.** `WrapShape` now
+carries the SELECTION, and a comma spec of naturals cannot carry `XHAT_OWN_SEL`; so this path builds
+`xhatSel h` and nothing else. A shape verifying dregg's own step proof is not reachable through
+`DREGG_WM` and is not meant to be — it is `KimchiStepWrapChain.shapeChain`, which names its entries.
+Saying the spec covered both would be describing a branch that cannot be taken. -/
 def parseShape (spec : String) : Option WrapShape :=
   match (spec.splitOn ",").map String.toNat? with
   | [some a, some b, some c, some d, some e, some f, some g, some h] =>
       some { prevs := a, ipaRounds := b, wComms := c, tComms := d, emsRows := e
-           , branches := f, pubWords := g, xhatTerms := h, xhatXY := xhatOut h }
+           , branches := f, pubWords := g, xhatEntries := xhatSel h
+           , xhatXY := xhatOutOf (xhatSel h) }
   | _ => none
 
 def main : IO Unit := do
@@ -173,20 +182,32 @@ def main : IO Unit := do
   -- ⚑ A shape whose x_hat MSM has no `Add_with_correction` entry has no correction reduce and no
   -- `~init`, so the fold would start from a variable nothing defines. Refuse rather than emit it.
   if (xhLadders s).isEmpty then
-    throw (IO.userError s!"degenerate shape: xhatTerms {s.xhatTerms} selects no ladder entry")
-  if s.xhatTerms > XHAT_TERMS_FULL then
-    throw (IO.userError s!"xhatTerms {s.xhatTerms} exceeds wrap_verifier's own entry count \
-      {XHAT_TERMS_FULL}")
+    throw (IO.userError s!"degenerate shape: xhatEntries {s.xhatEntries} selects no ladder entry")
+  -- ⚑ **THE SELECTION'S OWN OBLIGATIONS.** An index past the entry space reads a `getD` default —
+  -- `(0,0)`, kimchi's flattening of infinity, off `y² = x³ + 5` — as a BASE, and a repeated index
+  -- gives one entry two ladders over one variable block. Both place, both prove nothing.
+  if s.xhatEntries.any (fun i => i ≥ XHAT_ENTRY_SPACE) then
+    throw (IO.userError s!"⚑ xhatEntries LEAVES THE ENTRY SPACE: {s.xhatEntries} names an index \
+      ≥ {XHAT_ENTRY_SPACE} (Mina's {XHAT_TERMS_FULL} packed-statement entries, then this \
+      pipeline's own step proof's {XHAT_OWN_TERMS}). Its base would be the `getD` default.")
+  if s.xhatEntries.dedup.length != s.xhatEntries.length then
+    throw (IO.userError s!"⚑ xhatEntries NAMES AN ENTRY TWICE: {s.xhatEntries}.")
+  -- ⚑ …and it does not STRADDLE the two spaces. They have different bases, different scalar
+  -- sources and different widths; one MSM over both is an MSM over no proof's public input.
+  if s.xhatEntries.any xhatIsOwn && s.xhatEntries.any (fun i => !xhatIsOwn i) then
+    throw (IO.userError s!"⚑ xhatEntries STRADDLES TWO ENTRY SPACES: {s.xhatEntries} mixes Mina's \
+      packed-statement entries with this pipeline's own step proof's. The fold would run over two \
+      Lagrange bases at two domains.")
   -- ⚑ **THE MEMO'S OBLIGATION, DISCHARGED AT EVERY EMISSION.** `WrapShape.xhatXY` carries the pair
   -- `wrap_verifier.ml:617` absorbs so that a dozen kernel theorems do not each re-reduce the MSM.
   -- That is only sound if the pair IS the MSM's output, and this is where any shape — committed or
   -- `DREGG_WM`-supplied — is refused when it is not. The smoke shape's copy is additionally closed
   -- by `rfl` in the kernel (`xhat_smoke_shape_absorbs_the_msm_output`); this covers the wrap shape,
   -- which is 1805 five-bit chunks and out of the kernel's reach without `native_decide`.
-  if s.xhatXY != xhatOut s.xhatTerms then
+  if s.xhatXY != xhatOutOf s.xhatEntries then
     throw (IO.userError s!"⚑ xhatXY IS NOT THE MSM'S OUTPUT: shape carries {s.xhatXY} but \
-      `xhatOut {s.xhatTerms}` is {xhatOut s.xhatTerms}. The transcript would absorb a value no row \
-      computes — refusing rather than emitting it.")
+      `xhatOutOf {s.xhatEntries}` is {xhatOutOf s.xhatEntries}. The transcript would absorb a value \
+      no row computes — refusing rather than emitting it.")
   -- ⚑ **THE §15c‴ MEMO'S OBLIGATION, DISCHARGED AT EVERY EMISSION.** `FIN_DEFERRED_CIP/_B/_XI`
   -- are the three deferred words the finalizing block carries, and `xhatScalar` reads them, so a
   -- wrong triple would put a scalar into the x_hat MSM that no row of W-FINSPONGE computes and make
@@ -230,7 +251,7 @@ def main : IO Unit := do
     and this ladder does not"
   IO.println s!"  x_hat MSM: {xhN s} entries, {xhTotalChunks s} five-bit chunks, \
     {(xhLadders s).length} ladders, widths={(xhSel s).map xhatBits}"
-  IO.println s!"  x_hat (DERIVED, absorbed at wrap_verifier.ml:617) = {xhatOut s.xhatTerms}"
+  IO.println s!"  x_hat (DERIVED, absorbed at wrap_verifier.ml:617) = {xhatOutOf s.xhatEntries}"
   let _ ← force t.sp.evs.length "sponge events"
   for k in [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind, Rung.key, Rung.xhat,
            Rung.split, Rung.ftcomm, Rung.prev, Rung.wraphack, Rung.close, Rung.finalize,

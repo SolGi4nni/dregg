@@ -43,10 +43,13 @@
 
 use std::fmt::Write as _;
 
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger, Field, PrimeField, Zero};
+use ark_poly::EvaluationDomain as _;
 use mina_curves::pasta::{Fp, Fq, Vesta};
 use mina_poseidon::FqSponge as _;
 use poly_commitment::commitment::{absorb_commitment, PolyComm};
+use poly_commitment::SRS as _;
 
 use kimchi::circuits::wires::{COLUMNS, PERMUTS};
 use kimchi::proof::RecursionChallenge;
@@ -121,6 +124,16 @@ fn comm_xy(c: &PolyComm<Vesta>) -> Vec<Fq> {
 
 fn lean_nat_list(name: &str, doc: &str, xs: &[Fq]) -> String {
     let parts: Vec<String> = xs.iter().map(dq).collect();
+    format!(
+        "/-- {doc} -/\ndef {name} : List Nat :=\n  [{}]\n\n",
+        parts.join(", ")
+    )
+}
+
+/// The same, for a list of **Fp** scalars — the step proof's own public input, which is the one
+/// place a scalar rather than a coordinate crosses into a Lean list.
+fn lean_nat_list_fp(name: &str, doc: &str, xs: &[Fp]) -> String {
+    let parts: Vec<String> = xs.iter().map(dp).collect();
     format!(
         "/-- {doc} -/\ndef {name} : List Nat :=\n  [{}]\n\n",
         parts.join(", ")
@@ -482,6 +495,118 @@ pub fn export(inp: StepTapeInputs<'_>) -> StepTapeOut {
         "the sourced census is not sg_old + w_comm + z_comm + t_comm + lr + delta"
     );
 
+    // ─────── ⚑ THE x_hat MSM's OWN INPUTS — this proof's public input, this proof's DOMAIN ───────
+    //
+    // `wrap_verifier.ml:539-616` builds `x_hat` as an MSM over the verified proof's public input
+    // against `lagrange ~domain srs i`, negates it (`:610`) and adds `Generators.h` (`:612-616`).
+    // kimchi's own prologue (`verifier.rs:834-857`, transcribed at `transcript::public_comm`) is
+    // the same object: `mask_custom(MSM(L, −public_input), 1)` = `−Σ pᵢ·Lᵢ + h`.
+    //
+    // ⚠ ⚑ **THE DOMAIN IS THE TRAP, AND IT IS EXACTLY THE `lr` DEFECT'S CLASS.** A Lagrange basis
+    // is a function of the DOMAIN, and `MinaStepSrsLagrange.LAGRANGE_XY` is taken at
+    // `2^Common.Max_degree.step_log2 = 65536` — Mina's `step-transaction` domain. This proof's
+    // domain is `2^{}`. Bases from the wrong domain are on-curve, are genuine SRS Lagrange
+    // commitments, and reproduce NOTHING — `onCurveQ` is structurally incapable of noticing, which
+    // is why the check below is the RE-DERIVATION and not a curve predicate.
+    let domain_log2 = vk.domain.log_size_of_group as usize;
+    assert_eq!(
+        1usize << domain_log2,
+        vk.domain.size(),
+        "domain.log_size_of_group does not describe domain.size()"
+    );
+    assert_eq!(
+        public_comm.chunks.len(),
+        1,
+        "x_hat is chunked ({} chunks) — the wrap circuit absorbs ONE pair",
+        public_comm.chunks.len()
+    );
+    assert_eq!(
+        public_input.len(),
+        vk.public,
+        "public input width {} != verifier index public {}",
+        public_input.len(),
+        vk.public
+    );
+    let lgr = vk.srs().get_lagrange_basis(vk.domain);
+    let mut lagrange_pts: Vec<Vesta> = Vec::new();
+    let mut lagrange_xy: Vec<Fq> = Vec::new();
+    for (i, c) in lgr.iter().take(public_input.len()).enumerate() {
+        assert_eq!(c.chunks.len(), 1, "lagrange basis {i} is chunked");
+        let g = c.chunks[0];
+        assert!(
+            !g.infinity && g.is_on_curve(),
+            "lagrange basis {i} is not a Vesta point"
+        );
+        lagrange_pts.push(g);
+        lagrange_xy.extend(comm_xy(c));
+    }
+    assert_eq!(lagrange_pts.len(), public_input.len());
+    let urs_h = vk.srs().blinding_commitment();
+    assert!(
+        !urs_h.infinity && urs_h.is_on_curve(),
+        "the SRS blinding base is not a Vesta point"
+    );
+    let (hx, hy) = xy(&urs_h);
+
+    // `lagrange_with_correction`'s second component: `negate (pow2pow g actual_shift)` with
+    // `actual_shift = Ops.bits_per_chunk * Ops.chunks_needed ~num_bits:input_length`
+    // (`wrap_verifier.ml:247-291`). Every entry here is a full `Field.size_in_bits = 255` scalar —
+    // this proof's public input is 12 unconstrained Fp elements, not a packed Pickles statement —
+    // so `chunks_needed 255 = 51` and `actual_shift = 255` for all of them. Doubling 255 times in
+    // a group of order `p` is scaling by `2^255 mod p`, which is what `two_to_255` is.
+    const XHAT_OWN_BITS: usize = 255;
+    const BITS_PER_CHUNK: usize = 5;
+    let own_chunks = (XHAT_OWN_BITS + BITS_PER_CHUNK - 1) / BITS_PER_CHUNK;
+    let own_shift = BITS_PER_CHUNK * own_chunks;
+    assert_eq!((own_chunks, own_shift), (51, 255));
+    let two_to_own_shift: Fp = Fp::from(2u64).pow([own_shift as u64]);
+    let mut correction_xy: Vec<Fq> = Vec::new();
+    for g in &lagrange_pts {
+        let c = (-(g.into_group() * two_to_own_shift)).into_affine();
+        assert!(
+            !c.infinity && c.is_on_curve(),
+            "a correction point is degenerate"
+        );
+        let (cx, cy) = xy(&c);
+        correction_xy.push(cx);
+        correction_xy.push(cy);
+    }
+
+    // ⚑ THE RE-DERIVATION. Not "the bases are plausible" — the MSM the Lean circuit will emit,
+    // evaluated here over the exported bases and the exported scalars, IS the pair the transcript
+    // absorbed at `wrap_verifier.ml:617`. A base from the wrong domain, a scalar in the wrong
+    // order, or a missing blinding add all fail HERE rather than three layers downstream.
+    {
+        let mut acc = <Vesta as AffineRepr>::Group::zero();
+        for (p, g) in public_input.iter().zip(lagrange_pts.iter()) {
+            acc += g.into_group() * *p;
+        }
+        let redone = (-acc + urs_h.into_group()).into_affine();
+        assert_eq!(
+            xy(&redone),
+            xy(&public_comm.chunks[0]),
+            "−Σ pᵢ·Lᵢ + h is NOT the public-input commitment the transcript absorbed"
+        );
+    }
+    // …and the negative control for the trap: the domain-65536 basis this tree already holds does
+    // NOT reproduce it. Stated as an inequality on the first base, because that is the object a
+    // copy-paste would take.
+    {
+        let wrong = vk.srs().get_lagrange_basis_from_domain_size(1 << 16)[0].chunks[0];
+        assert_ne!(
+            xy(&wrong),
+            xy(&lagrange_pts[0]),
+            "the step domain and Mina's step-transaction domain share a Lagrange basis — the \
+             domain trap this export exists to close would be undetectable"
+        );
+    }
+    println!(
+        "[XHAT ] domain 2^{domain_log2}; {} Lagrange bases + {} corrections + h; \
+         −Σ pᵢ·Lᵢ + h == public_comm : true (and the 2^16-domain basis differs)",
+        lagrange_pts.len(),
+        correction_xy.len() / 2
+    );
+
     // ───────────────────── the fixture module ─────────────────────
     let mut l = String::new();
     l.push_str(&format!(
@@ -700,7 +825,6 @@ def STEP_UNREAD_FT_EVAL1_FP : Nat := {}
 def STEP_UNREAD_DELTA_XY : List Nat := [{}, {}]
 def STEP_UNREAD_SG_XY : List Nat := [{}, {}]
 
-end Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 "#,
         dp(&beta),
         dp(&gamma),
@@ -735,6 +859,66 @@ end Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
         dq(&usx),
         dq(&usy),
     ));
+
+    // ───────── ⚑ the x_hat MSM's own inputs, as Lean lists ─────────
+    l.push_str(&format!(
+        r#"/-! ## ⚑ THE `x_hat` MSM'S OWN INPUTS — this proof's public input against THIS PROOF'S
+DOMAIN's Lagrange basis.
+
+`wrap_verifier.ml:539-616` computes `x_hat` as `−Σ pᵢ·Lᵢ + Generators.h`, and `:617` absorbs it.
+kimchi's own verifier prologue (`verifier.rs:834-857`) computes the SAME object as
+`mask_custom(MSM(L, −public_input), 1)` — which is why `STEP_PUBCOMM_XY` above and the MSM over the
+three lists below are one value and not two. **The exporter asserts that equality in Rust before
+writing this file**, so a base from the wrong domain cannot reach Lean.
+
+⚠ ⚑ **THE DOMAIN IS THE TRAP.** A Lagrange basis is a function of the DOMAIN.
+`MinaStepSrsLagrange.LAGRANGE_XY` is taken at `2^Common.Max_degree.step_log2 = 65536`, Mina's
+`step-transaction` domain; **this** proof's domain is `2^{}`. Bases from the wrong domain are
+on-curve, are genuine SRS Lagrange commitments of the same SRS, and reproduce nothing — the same
+shape as `lrPointQ i = xhatBase (5 + i % 50)`, which `onCurveQ` was structurally incapable of
+noticing. The exporter therefore checks the RE-DERIVATION, and additionally asserts that the
+2^16-domain basis differs from this one.
+
+⚠ **THE WIDTHS ARE ALL 255 AND THAT IS NOT A CHOICE.** These twelve scalars are unconstrained `Fp`
+elements of a Lean-emitted kimchi circuit — NOT the packed `Types.Step.Statement` a Pickles step
+rule carries, whose 57 words expand to 67 entries at widths 255/128/1. So every entry takes the
+`Add_with_correction` path at `chunks_needed 255 = 51` chunks, `actual_shift = 255`, and there is no
+`Cond_add` entry at all. -/
+
+/-- `log2` of the step proof's own evaluation domain — the wire's `branch_data.domain_log2`, and
+`(domain_log2 <<< 2) ||| proofs_verified` is Mina's public-input slot 29. -/
+def STEP_DOMAIN_LOG2 : Nat := {}
+
+"#,
+        domain_log2, domain_log2
+    ));
+    l.push_str(&lean_nat_list_fp(
+        "STEP_PUBLIC_IN",
+        "⚑ The step proof's OWN public input — the `Fp` scalars the MSM scales, in index order. \
+         `stepmain_smoke_r8_finalize.json`'s `public_input`, as the prover consumed it.",
+        public_input,
+    ));
+    l.push_str(&lean_nat_list(
+        "STEP_LAGRANGE_XY",
+        "⚑ `lagrange ~domain srs i` for `i < STEP_PUBLIC` at **this proof's** domain, `(x,y)` each \
+         — Vesta points of Mina's own `SRS::<Vesta>::create(65536)`, taken at `2^STEP_DOMAIN_LOG2` \
+         and NOT at the `2^16` `MinaStepSrsLagrange` uses.",
+        &lagrange_xy,
+    ));
+    l.push_str(&lean_nat_list(
+        "STEP_XHAT_CORRECTION_XY",
+        "⚑ `lagrange_with_correction`'s second component, `negate (pow2pow g 255)`, one per entry \
+         (`wrap_verifier.ml:247-291`). It cancels `scale_fast2`'s `+2^actual_bits_used` exactly.",
+        &correction_xy,
+    ));
+    l.push_str(&lean_nat_list(
+        "STEP_URS_H_XY",
+        "⚑ `Generators.h` — the SRS blinding base `x_hat blinding` adds (`wrap_verifier.ml:612-616`) \
+         and `mask_custom` adds on the verifier side. Same SRS as `MinaStepSrsLagrange.URS_H_XY`, \
+         which is a two-source pin rather than a second copy.",
+        &[hx, hy],
+    ));
+    l.push_str("end Dregg2.Circuit.Emit.KimchiStepWrapChainFixture\n");
 
     // ───────────────────── W-KEY's module ─────────────────────
     let mut k = String::new();

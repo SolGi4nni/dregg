@@ -81,7 +81,19 @@ type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
 /// row was the whole ceiling, not W-COMBINE and not W-BULLET. `step_keys` is a per-branch vector of
 /// the compiled step rules' keys (`wrap_main.ml:98-101`), so dregg's step rule took an entry beside
 /// Mina's and `choose_key` selects it. This harness proving `w5_key` on Pallas is the climb.
-const RUNGS: [&str; 3] = ["w1_transcript", "w4_bind", "w5_key"];
+/// ⚑⚑ **`w6_xhat` JOINED ON 2026-08-06, AND IT IS A DIFFERENT KIND OF CLIMB FROM `w5_key`'s.**
+/// `w5_key` was blocked by a wrong CONSTANT — the wrap circuit committed to Mina's
+/// `step-transaction` index while this tape is dregg's own step proof's — and giving `step_keys`
+/// dregg's own entry fixed it with no new arithmetic. `w6_xhat` was blocked by a wrong FUNCTION:
+/// `xhatRows`' closing `caRowQ` ties the absorbed `x_hat` pair to the MSM's output, and the MSM ran
+/// over Mina's packed `Types.Step.Statement` — 67 entries whose scalars are a named fixture and
+/// belong to no proof — while this tape's `x_hat` is the public-input commitment
+/// `kimchi::verifier` computed for dregg's own step proof. The MSM now runs over THIS proof's
+/// twelve `Fp` public inputs against the step SRS's Lagrange basis **at this proof's own domain**
+/// (2^12, not `MinaStepSrsLagrange`'s 2^16), so the row has an honest witness. This harness proving
+/// `w6_xhat` on Pallas is that climb; `w7_split` is the new ceiling and it is structural — dregg's
+/// step proof has no packed statement for `split_field` to be about.
+const RUNGS: [&str; 4] = ["w1_transcript", "w4_bind", "w5_key", "w6_xhat"];
 
 #[derive(Deserialize, Clone, PartialEq, Eq)]
 struct GateJson {
@@ -390,7 +402,7 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
 
 /// ⚑ (6) and (7): the chain's own controls, at the closing rung where the derived words are PUBLIC.
 fn run_chain_controls(dir: &Path) {
-    for rung in ["w4_bind", "w5_key"] {
+    for rung in ["w4_bind", "w5_key", "w6_xhat"] {
         run_chain_controls_at(dir, rung);
     }
 }

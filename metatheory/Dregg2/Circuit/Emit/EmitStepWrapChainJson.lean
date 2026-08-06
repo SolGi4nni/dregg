@@ -28,6 +28,7 @@ import Dregg2.Circuit.Emit.KimchiStepWrapChain
 
 open Dregg2.Circuit.Emit.KimchiStepWrapChain
 open Dregg2.Circuit.Emit.KimchiWrapMain
+open Dregg2.Circuit.Emit.KimchiCircuitJson (renderCircuit)
 
 /-- Emit one rung of one `WrapData`, both polarities, refusing loudly if `placeChecked` did.
 
@@ -63,13 +64,20 @@ def emitChainRung (dir pfx : String) (t : WrapData) (k : Rung) (both : Bool) : I
   let pub := if p == 0 then [] else wrapPublicAt t k
   let probes := rungProbeRows t k
   IO.FS.writeFile s!"{dir}/{pfx}_{k.tag}.json"
-    (renderWrapCircuit s!"{pfx}_{k.tag}" p (p + rowsW.length) (placedOf t.sh k p gs) wit pub probes
-      (if p == 0 then [] else wrapSlotsAt t.sh k) (if p == 0 then [] else wrapInertOk t.sh k))
+    (renderCircuit { name := s!"{pfx}_{k.tag}", pubSize := p, numRows := p + rowsW.length
+                   , gates := placedOf t.sh k p gs, witness := wit
+                   , publicInput := some pub
+                   , slots := some (if p == 0 then [] else wrapSlotsAt t.sh k,
+                                    if p == 0 then [] else wrapInertOk t.sh k)
+                   , probeRows := some probes })
   if both then
     IO.FS.writeFile s!"{dir}/{pfx}_{k.tag}_unwired.json"
-      (renderWrapCircuit s!"{pfx}_{k.tag}_UNWIRED" p (p + rowsU.length) (placedOf t.sh k p gu) wit
-        pub probes (if p == 0 then [] else wrapSlotsAt t.sh k)
-        (if p == 0 then [] else wrapInertOk t.sh k))
+      (renderCircuit { name := s!"{pfx}_{k.tag}_UNWIRED", pubSize := p
+                     , numRows := p + rowsU.length, gates := placedOf t.sh k p gu, witness := wit
+                     , publicInput := some pub
+                     , slots := some (if p == 0 then [] else wrapSlotsAt t.sh k,
+                                      if p == 0 then [] else wrapInertOk t.sh k)
+                     , probeRows := some probes })
   IO.println s!"  {pfx}_{k.tag}: {rowsW.length} rows, pub {p}, {probes.length} probes"
   pure rowsW.length
 
@@ -83,6 +91,29 @@ def main : IO Unit := do
   IO.println s!"  step key     : branch {tChain.br.idx} of step_keys, index digest \
 {keyDigestVal shapeChain chainRun tChain.br.idx}"
   IO.println s!"  tape word 0  : {(chainRun.evs.getD 0 default).word}"
+  IO.println s!"  x_hat MSM    : {shapeChain.xhatEntries.length} entries \
+{shapeChain.xhatEntries}, widths {shapeChain.xhatEntries.map xhatBits}"
+  IO.println s!"  x_hat        : {shapeChain.xhatXY}"
+  IO.println s!"  branch_data  : domain_log2 {chainBranch.dl}, packed {chainBranch.packedV} \
+(mina slot 29 = {Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 29 0})"
+  -- ⚑ **THE MEMO'S OBLIGATION, DISCHARGED AT EVERY EMISSION — the chain side's copy of
+  -- `EmitWrapMainJson`'s refusal.** `shapeChain.xhatXY` is written as `STEP_PUBCOMM_XY`'s own words,
+  -- so it is the value `kimchi::verifier` absorbed by construction; what is NOT free is that the
+  -- twelve-entry fold PRODUCES it. `xhatRows`' closing `caRowQ` constrains the absorbed pair to the
+  -- fold's output, so a disagreement here is a rung with no honest witness.
+  if shapeChain.xhatXY != xhatOutOf shapeChain.xhatEntries then
+    throw (IO.userError s!"⚑ xhatXY IS NOT THE MSM'S OUTPUT: shapeChain carries \
+      {shapeChain.xhatXY} but `xhatOutOf {shapeChain.xhatEntries}` is \
+      {xhatOutOf shapeChain.xhatEntries}. Refusing rather than emitting it.")
+  -- ⚑ …and the absorbed pair IS the commitment kimchi's own verifier computed for this proof. The
+  -- two are one obligation only while `xhatXY` is written from `STEP_PUBCOMM_XY`; a future literal
+  -- would split them, so both are checked.
+  let pubcomm := (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 0 0,
+                  Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 1 0)
+  if shapeChain.xhatXY != pubcomm then
+    throw (IO.userError s!"⚑ THE ABSORBED x_hat IS NOT THIS PROOF'S PUBLIC-INPUT COMMITMENT: \
+      {shapeChain.xhatXY} vs {pubcomm}. The reality \
+      gate would be about a tape kimchi never ran on.")
   let _ ← emitChainRung dir "chain" tChain .transcript true
   let _ ← emitChainRung dir "chain" tChain .bind true
   -- ⚑ **THE CLIMB.** `w5_key` was unemittable on this tape until 2026-08-05: `keyRows`' `digestTie`
@@ -91,17 +122,29 @@ def main : IO Unit := do
   -- `KEY_CHAIN_BRANCH` puts dregg's step rule in `step_keys` and `chainBranch` selects it, so the
   -- row now has an honest witness — see `the_chain_climbs_past_bind_at_dreggs_own_step_key`.
   let _ ← emitChainRung dir "chain" tChain .key true
+  -- ⚑ **THE SECOND CLIMB, 2026-08-06.** `w6_xhat` was unemittable on this tape for a DIFFERENT
+  -- reason from `w5_key`'s: not a wrong constant but a wrong FUNCTION. `xhatRows`' closing `caRowQ`
+  -- ties the absorbed `x_hat` pair to the MSM's output, and the MSM ran over Mina's packed
+  -- `Types.Step.Statement` — 67 entries whose scalars belong to no proof — while this tape's
+  -- `x_hat` is the commitment `kimchi::verifier` computed for dregg's own step proof. The MSM is
+  -- now over THIS proof's twelve public inputs against its own domain's Lagrange basis, so the row
+  -- has an honest witness. See `the_chain_climbs_past_xhat_at_its_own_public_input_commitment`;
+  -- `w7_split` is the new ceiling and `the_chain_stops_at_split_because_there_is_no_packed_
+  -- statement` says why it is structural rather than pending.
+  let _ ← emitChainRung dir "chain" tChain .xhat true
   let _ ← emitChainRung dir "chainbent" tChainBent .bind false
   let _ ← emitChainRung dir "chainunread" tChainUnread .bind false
   let _ ← emitChainRung dir "chainbent" tChainBent .key false
   let _ ← emitChainRung dir "chainunread" tChainUnread .key false
+  let _ ← emitChainRung dir "chainbent" tChainBent .xhat false
+  let _ ← emitChainRung dir "chainunread" tChainUnread .xhat false
   -- ⚑ A LOUD refusal if the two controls collapsed into each other. The harness checks this too,
   -- but a driver that wrote a file it knew was wrong would be the worse failure.
-  for k in [Rung.bind, Rung.key] do
+  for k in [Rung.bind, Rung.key, Rung.xhat] do
     if wrapPublicAt tChainBent k == wrapPublicAt tChain k then
       throw (IO.userError s!"the BENT emission's public vector equals the honest one at {k.tag} \
         - no chain")
     if wrapPublicAt tChainUnread k != wrapPublicAt tChain k then
       throw (IO.userError s!"the UNREAD-bend emission's public vector moved at {k.tag} \
         - the tape is not the input")
-  IO.println s!"wrote {dir}/chain_*.json, chainbent_w4_bind.json, chainunread_w4_bind.json"
+  IO.println s!"wrote {dir}/chain_*.json plus the bent/unread controls at w4_bind, w5_key and w6_xhat"

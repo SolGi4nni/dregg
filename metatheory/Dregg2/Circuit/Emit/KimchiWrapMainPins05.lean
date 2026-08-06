@@ -47,7 +47,7 @@ fixture with a good docstring. (The wrap shape's copy is discharged by `EmitWrap
 at every emission; 1805 chunks is out of the kernel's reach, and §24's is the file's one
 `native_decide`.) -/
 theorem xhat_smoke_shape_absorbs_the_msm_output :
-    shapeSmoke.xhatXY = xhatOut shapeSmoke.xhatTerms := by rfl
+    shapeSmoke.xhatXY = xhatOutOf shapeSmoke.xhatEntries := by rfl
 
 /-- ⚑ **AND IT IS A DIFFERENT OBJECT FROM THE ONE THIS FILE USED TO ABSORB.** `RC_XHAT` is a real
 accepted proof's public-input commitment, which stood in for `x_hat` through five rungs. The derived
