@@ -597,7 +597,21 @@ mod wrapmain_tests {
     /// The fixture subset actually PROVED in CI: the bottom rung, the closing rung, and the top
     /// one. w2/w3 are read for their census without proving, because each prove is seconds and the
     /// ladder pins (`KimchiWrapMain` §12b, §14b) already establish that they are supersets.
-    const COMMITTED: [&str; 13] = [
+    /// The rungs whose honest witness PROVES on Pallas against this step proof.
+    ///
+    /// ⚠⚑ **IT WAS THIRTEEN UNTIL 2026-08-06 AND IT IS TEN, AND THE THREE THAT LEFT ARE A MEASURED
+    /// FINDING RATHER THAN A REGRESSION.** `KimchiWrapMain.xhatScalar` used to read a NAMED FIXTURE
+    /// for the previous step statement's 57 packed words, with three override arms answering
+    /// W-FINSPONGE's derived `combined_inner_product`/`b`/`xi` and two answering W-WRAPHACK's two
+    /// `hash_messages_for_next_wrap_proof` squeezes. Every tie those rungs emit therefore held BY
+    /// CONSTRUCTION: the statement contained the derivation because the emitter put it there.
+    ///
+    /// The step proof publishes its own `Types.Step.Statement` now
+    /// (`KimchiStepWrapChainFixture.STEP_PUBLIC_IN`, 67 entries over 57 words), the overrides are
+    /// gone, and six of those words are NOT the values the wrap circuit derives for them. So the
+    /// three rungs that read them have no satisfying witness, and the prover says so —
+    /// `Prover("rest of division by vanishing polynomial")`, measured, not predicted.
+    const COMMITTED: [&str; 10] = [
         "w1_transcript",
         "w4_bind",
         "w5_key",
@@ -606,12 +620,24 @@ mod wrapmain_tests {
         "w8_ftcomm",
         "w9_prev",
         "w10_finalize",
-        "w11_finsponge",
-        "w11_wraphack",
-        "w12_close",
         "w10_combine",
         "w11_bullet",
     ];
+
+    /// ⚑⚑ **THE THREE RUNGS THE PUBLISHED STEP STATEMENT BLOCKS — ASSERTED AS REFUSALS, NOT
+    /// DELETED.** Each contains `finSpRows` or `whRows`, the two emitters whose rows tie a packed
+    /// statement word to a value the wrap circuit computes. Removing them from `COMMITTED` and
+    /// saying nothing would be exactly the disarming this file exists to prevent, so
+    /// `the_statement_blocked_rungs_do_not_prove` REQUIRES each to be rejected: if the step proof is
+    /// re-proved with a statement carrying the derived words, that test goes RED and this list has to
+    /// shrink. A blocked list that can only grow is not a record of a gap; it is a place to hide one.
+    ///
+    /// ⚠ The repair is a STEP-SIDE FIXPOINT and it is not paid here — each of the six words is an
+    /// x_hat MSM entry, so writing the derivation into the statement moves `x_hat`, which moves every
+    /// challenge below it, which moves the derivation. See
+    /// `KimchiWrapMainField.the_published_statement_does_not_carry_the_derived_words` and
+    /// `KimchiWrapMain.finsponge_has_no_witness_on_the_published_statement`.
+    const STATEMENT_BLOCKED: [&str; 3] = ["w11_finsponge", "w11_wraphack", "w12_close"];
 
     struct Fixture {
         wired: CircuitJson,
@@ -640,6 +666,27 @@ mod wrapmain_tests {
             gm: wrap::group_map(),
             public,
         }
+    }
+
+    /// ⚑ The blocked three, stated as the refusal they are. Both directions are live: a rung that
+    /// starts proving reds here (the list must shrink), and a rung that stops proving reds in
+    /// `honest_rungs_verify` (the list may not grow silently).
+    #[test]
+    fn the_statement_blocked_rungs_do_not_prove() {
+        for rung in STATEMENT_BLOCKED {
+            let f = fixture(rung);
+            let r = prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &f.public);
+            assert!(
+                r.is_err(),
+                "{rung}: the honest witness PROVED. The published step statement now carries the \
+                 words this rung derives — move it into COMMITTED and shrink STATEMENT_BLOCKED."
+            );
+        }
+        assert_eq!(
+            COMMITTED.len() + STATEMENT_BLOCKED.len(),
+            13,
+            "a rung left the harness entirely instead of moving between the two lists"
+        );
     }
 
     #[test]
@@ -737,9 +784,23 @@ mod wrapmain_tests {
     /// is a `Generic` gate `1·w0[i] = pub_i`), while the SIGMA leg binds only slots this rung
     /// DERIVES. The unread half ACCEPTING is not a weakness being tolerated — it is the
     /// measurement that the emission's 24-vs-40 census is the truth about the circuit.
+    ///
+    /// ⚠⚑ **THE SAMPLE MOVED OFF `w11_wraphack` AND `w12_close` ON 2026-08-06 AND THE REASON IS
+    /// STRUCTURAL, NOT A CONVENIENCE.** Both legs prove: the vector leg needs a proof to be REJECTED
+    /// against a moved vector and the sigma leg needs one ACCEPTED at an unread slot. A rung whose
+    /// honest witness does not prove at all cannot say anything either way, so keeping the two
+    /// `STATEMENT_BLOCKED` rungs here would have turned a measurement into a tautology on one side
+    /// and a false alarm on the other. `w10_combine` and `w11_bullet` replace them — same span of
+    /// the ladder, both above `w9_prev`, both proving — and the assertion below refuses a sample
+    /// that ever names a blocked rung again.
     #[test]
     fn public_input_binds_and_is_wired_in() {
-        for rung in ["w4_bind", "w5_key", "w9_prev", "w11_wraphack", "w12_close"] {
+        for rung in ["w4_bind", "w5_key", "w9_prev", "w10_combine", "w11_bullet"] {
+            assert!(
+                COMMITTED.contains(&rung),
+                "{rung}: sampled here but not in COMMITTED — a rung that does not prove cannot \
+                 exhibit either leg"
+            );
             let f = fixture(rung);
             assert_eq!(
                 f.wired.public_input_size, MINA_WRAP_PRIMARY_LEN,

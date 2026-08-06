@@ -266,52 +266,35 @@ def XHAT_PREVS : Nat := 2
 /-- **67** — every entry `wrap_verifier.ml:539-548` produces. -/
 def XHAT_TERMS_FULL : Nat := XHAT_PER_PROOF * XHAT_PREVS + 1 + XHAT_PREVS
 
-/-! ### §15a′ — ⚑ **DREGG'S OWN STEP PROOF'S ENTRIES, IN AN INDEX SPACE OF THEIR OWN.**
+/-! ### §15a′ — ⚑⚑ **THERE IS ONE ENTRY SPACE SINCE 2026-08-06, AND IT IS MINA'S SIXTY-SEVEN.**
 
 `wrap_verifier.ml:539-548`'s expansion of a Pickles `Types.Step.Statement` produces the 67 entries
-`0 … XHAT_TERMS_FULL − 1` above. **dregg's own step rule is not a Pickles step rule.**
-`stepmain_smoke_r8_finalize` is a Lean-emitted kimchi circuit whose public input is
-`KimchiStepWrapChainFixture.STEP_PUBLIC = 12` unconstrained `Fp` elements — no `per_proof` blocks, no
-`split_field` pairs, no `should_finalize`. So its `x_hat` MSM has TWELVE entries, each a full
-`Field.size_in_bits` scalar, and the 67-entry table is not a description of it.
+`0 … XHAT_TERMS_FULL − 1` above, and **dregg's own step rule now publishes exactly that object**.
+`KimchiStepWrapChainFixture.STEP_PUBLIC = 67`, `STEP_XHAT_BITS` is the exporter's own reading of the
+57 words' expansion (15 at 255, 40 at 128, 12 at 1), and `STEP_PUBLIC_IN` is the packed statement the
+prover handed `kimchi::verifier`. So this file's table and dregg's step proof's public input are one
+list, and the `xhat*` accessors read it directly.
 
-⚑ **THEY TAKE NEW INDICES RATHER THAN REUSING `0 … 11`, AND THAT IS THE WHOLE DESIGN.** Every
-`xhat*` function here is keyed by a GLOBAL entry index and `xhatSel` maps a COUNT to a selection.
-Letting a count mean "Mina's first n" at one shape and "dregg's first n" at another is exactly the
-class `mkWrap`'s `nItems + 1` sentinel belonged to — an index that means one thing at one shape and
-another at another, which read as harmless at smoke scale and zeroed a real absorbed word at wrap
-scale. A DISJOINT index space cannot be read two ways, and `xhat_own_entries_are_disjoint_from_minas`
-says so as a theorem rather than as this paragraph.
+⚠ ⚑ **`XHAT_OWN_BASE` / `XHAT_OWN_TERMS` / `XHAT_OWN_SEL` / `xhatIsOwn` / `xhatOwnIdx` ARE DELETED,
+AND KEEPING THEM WOULD HAVE BEEN THE DEFECT.** They existed because the step rule proved a
+twelve-word unconstrained public input — no `per_proof` blocks, no `split_field` pairs, no
+`should_finalize` — so a 67-entry table was not a description of it and a DISJOINT index space was
+the honest way to carry both. With a real statement there is nothing to carry twice: dregg's entries
+**are** Mina's 67, and two index spaces that agree are two index spaces that will disagree later.
 
-⚠ ⚑ **AND THE BASES ARE NOT `MinaStepSrsLagrange`'s, BECAUSE A LAGRANGE BASIS IS A FUNCTION OF THE
-DOMAIN.** That module's `LAGRANGE_XY` is taken at `2 ^ STEP_LOG2 = 65536`, Mina's `step-transaction`
-domain. This proof's domain is `2 ^ STEP_DOMAIN_LOG2 = 4096`. Bases from the wrong domain are
-on-curve, are genuine SRS Lagrange commitments **of the same SRS**, and reproduce nothing — the same
-shape as `lrPointQ i = xhatBase (5 + i % 50)`, which `onCurveQ` was structurally incapable of
-noticing. `xhat_own_bases_are_not_minas_domains` is the inequality that would catch a copy-paste, and
-`the_own_xhat_msm_is_this_proofs_public_input_commitment` is the re-derivation that catches
-everything else. -/
+⚠ ⚑ **AND THE BASES FOLLOWED THE DOMAIN, BECAUSE A LAGRANGE BASIS IS A FUNCTION OF THE DOMAIN.**
+`MinaStepSrsLagrange.LAGRANGE_XY` is taken at `2 ^ STEP_LOG2 = 65536`, Mina's `step-transaction`
+domain; this proof's is `2 ^ STEP_DOMAIN_LOG2`. Bases from the wrong domain are on-curve, are genuine
+SRS Lagrange commitments **of the same SRS**, and reproduce nothing — the same shape as
+`lrPointQ i = xhatBase (5 + i % 50)`, which `onCurveQ` was structurally incapable of noticing.
+`the_xhat_msm_is_this_proofs_public_input_commitment` is the re-derivation that catches it and
+`xhat_bases_are_not_minas_step_transaction_domains` is the inequality that catches a copy-paste. -/
 
-/-- Where dregg's own step proof's entries begin. -/
-def XHAT_OWN_BASE : Nat := XHAT_TERMS_FULL
-/-- How many there are — this proof's public-input width. -/
-def XHAT_OWN_TERMS : Nat := Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC
-/-- One past the last legal entry index in EITHER space. -/
-def XHAT_ENTRY_SPACE : Nat := XHAT_OWN_BASE + XHAT_OWN_TERMS
-/-- ⚑ The selection a `WrapShape` verifying **dregg's own step rule** carries. -/
-def XHAT_OWN_SEL : List Nat := (List.range XHAT_OWN_TERMS).map (· + XHAT_OWN_BASE)
-/-- Entry `i` is dregg's own step proof's rather than Mina's packed statement's. -/
-def xhatIsOwn (i : Nat) : Bool := decide (XHAT_OWN_BASE ≤ i)
-/-- …and its position within this proof's public input. -/
-def xhatOwnIdx (i : Nat) : Nat := i - XHAT_OWN_BASE
-
-/-- ⚑ Entry `i`'s packed bit width. -/
+/-- ⚑ Entry `i`'s packed bit width — `wrap_verifier.ml:542-548`'s expansion of
+`Types.Step.Statement.spec 2 15`. `xhat_entry_widths_are_the_exporters` pins the whole table against
+`STEP_XHAT_BITS`, which the Rust exporter computed off the same statement by its own route. -/
 def xhatBits (i : Nat) : Nat :=
-  -- ⚑ An own entry is an unconstrained `Fp` public input, so `Field.size_in_bits` is its width and
-  -- not a bound. Stated as its own arm even though the `i ≥ 64` arm below would answer the same:
-  -- an arm that is right by falling through is an arm that stops being right silently.
-  if xhatIsOwn i then WQ_FIELD
-  else if i ≥ XHAT_PER_PROOF * XHAT_PREVS then WQ_FIELD    -- the three trailing `B Digest`s
+  if i ≥ XHAT_PER_PROOF * XHAT_PREVS then WQ_FIELD        -- the three trailing `B Digest`s
   else
     let j := i % XHAT_PER_PROOF
     if j < 10 then (if j % 2 == 0 then WQ_FIELD else WQ_BOOL)  -- 5 × `B Field` → (value, parity)
@@ -359,20 +342,18 @@ def xhatSel (n : Nat) : List Nat :=
 `MinaStepSrsLagrange` holds them; `MinaStepSrsLagrangePin` proves the SRS construction that produced
 them reproduces Mina's devnet SRS coordinate for coordinate. Nothing here owns a literal. -/
 
-/-- Entry `i`'s base — `lagrange ~domain srs i` / `lagrange_with_correction`'s first component.
+/-- Entry `i`'s base — `lagrange ~domain srs i` / `lagrange_with_correction`'s first component, at
+**this step proof's own domain**.
 
-⚠ ⚑ **THE `~domain` ARGUMENT IS WHAT THE TWO ARMS DIFFER IN, AND IT IS INVISIBLE TO EVERY CURVE
-CHECK.** Both arms are Vesta Lagrange commitments of the SAME `SRS::<Vesta>::create(65536)`; they
-are taken at DIFFERENT domains — `2 ^ MinaStepSrsLagrange.STEP_LOG2 = 65536` for Mina's
-`step-transaction` rule, `2 ^ STEP_DOMAIN_LOG2 = 4096` for this pipeline's own step proof. Reading
-one for the other is on-curve, well-formed and wrong. -/
+⚠ ⚑ **THE `~domain` ARGUMENT IS THE TRAP, AND IT IS INVISIBLE TO EVERY CURVE CHECK.**
+`MinaStepSrsLagrange.LAGRANGE_XY` is the same `SRS::<Vesta>::create(65536)`'s Lagrange basis taken at
+`2 ^ MinaStepSrsLagrange.STEP_LOG2 = 65536`, Mina's `step-transaction` domain; this proof's is
+`2 ^ STEP_DOMAIN_LOG2`. Reading one for the other is on-curve, is a genuine SRS Lagrange commitment,
+and reproduces nothing. Until 2026-08-06 this function had a second arm reading Mina's table, and
+that arm is gone with `xhatIsOwn`: there is one domain here because there is one step proof. -/
 def xhatBase (i : Nat) : Nat × Nat :=
-  if xhatIsOwn i then
-    (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LAGRANGE_XY.getD (2 * xhatOwnIdx i) 0,
-     Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LAGRANGE_XY.getD (2 * xhatOwnIdx i + 1) 0)
-  else
-  (Dregg2.Circuit.Emit.MinaStepSrsLagrange.LAGRANGE_XY.getD (2 * i) 0,
-   Dregg2.Circuit.Emit.MinaStepSrsLagrange.LAGRANGE_XY.getD (2 * i + 1) 0)
+  (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LAGRANGE_XY.getD (2 * i) 0,
+   Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LAGRANGE_XY.getD (2 * i + 1) 0)
 
 /-- Where entry `i`'s correction sits in `CORRECTION_XY`, which is indexed over the
 `Add_with_correction` partition only. -/
@@ -381,19 +362,16 @@ def xhatCorrIdx (i : Nat) : Nat :=
 
 /-- Entry `i`'s correction — `negate (pow2pow g actual_shift)`, `wrap_verifier.ml:255-256`.
 
-⚠ The own arm indexes by `xhatOwnIdx` and NOT by `xhatCorrIdx`: that function counts the non-one-bit
-entries below `i` across the WHOLE index space, which for an own entry is all 55 of Mina's ladders
-plus its own predecessors — a number that would run off the end of either table. Every own entry is
-`Add_with_correction`, so its own position is its correction's position. -/
+⚠ ⚑ **INDEXED BY `xhatCorrIdx`, NOT BY `i`, AND THE FIXTURE IS BUILT THAT WAY.**
+`STEP_XHAT_CORRECTION_XY` runs over the `Add_with_correction` PARTITION only — **55** entries, not
+67 — because the twelve one-bit slots take `` `Cond_add `` (`:573-577`), run no ladder and have no
+correction. Reading it at `i` would slide every correction past slot 1 by the number of one-bit
+entries below it, which is on-curve and cancels nothing. -/
 def xhatCorr (i : Nat) : Nat × Nat :=
-  if xhatIsOwn i then
-    (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_CORRECTION_XY.getD
-        (2 * xhatOwnIdx i) 0,
-     Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_CORRECTION_XY.getD
-        (2 * xhatOwnIdx i + 1) 0)
-  else
-  (Dregg2.Circuit.Emit.MinaStepSrsLagrange.CORRECTION_XY.getD (2 * xhatCorrIdx i) 0,
-   Dregg2.Circuit.Emit.MinaStepSrsLagrange.CORRECTION_XY.getD (2 * xhatCorrIdx i + 1) 0)
+  (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_CORRECTION_XY.getD
+      (2 * xhatCorrIdx i) 0,
+   Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_CORRECTION_XY.getD
+      (2 * xhatCorrIdx i + 1) 0)
 
 /-- `Generators.h` — the STEP URS's blinding base, which `x_hat blinding` adds. -/
 def XHAT_H : Nat × Nat :=
@@ -487,6 +465,19 @@ def xhatWordOf (i : Nat) : Nat :=
     let b := i / XHAT_PER_PROOF
     let j := i % XHAT_PER_PROOF
     PREV_PER_PROOF_WORDS * b + (if j < 10 then j / 2 else j - 5)
+
+/-- ⚑ **`xhatWordOf` INVERTED — word `w`'s FIRST entry.** On a `` `Field `` word that is the value
+half and `w`'s parity half is the next index; on every other word it is the word's only entry.
+Written in closed form rather than as a search over `xhatWordOf`'s fibre: the search is 67 tests per
+call and `prevWordVal` is read once per statement word per emitted row.
+`prev_entry_map_inverts_the_expansion` is the round trip. -/
+def xhatEntryOf (w : Nat) : Nat :=
+  if w ≥ PREV_PER_PROOF_WORDS * XHAT_PREVS then
+    XHAT_PER_PROOF * XHAT_PREVS + (w - PREV_PER_PROOF_WORDS * XHAT_PREVS)
+  else
+    let b := w / PREV_PER_PROOF_WORDS
+    let k := w % PREV_PER_PROOF_WORDS
+    XHAT_PER_PROOF * b + (if k < 5 then 2 * k else k + 5)
 
 /-- Word `w`'s width under `pack_basic` (`spec.ml:374-392`). ⚑ `WQ_FIELD` on a `B Field` word is
 `Field.size_in_bits` and is not a bound: `qN < 2^255`, so reducing an Fq element mod `2^255` is the
@@ -582,8 +573,8 @@ def used to name `PastaPoseidonFq.PREVCOMM_XY` and `itemVal T_SGOLD` used to nam
 sentence above was true by coincidence of two literals. On 2026-08-05 `RC_SGOLD` moved to the step
 proof this pipeline is actually about and this one did not — instantly making the emitted §21 rows
 (which read the TRANSCRIPT cells, `absPtVal t.sp T_SGOLD p`) hash a different `sg_old` from the one
-`prevWordVal` packs into statement words 55/56 and the x_hat MSM consumes. `wraphack_digest_is_the_statement_word`
-is the pin that would have gone red for it. Two defs holding one object is the defect; both now
+`prevWordVal` packs into statement words 55/56 and the x_hat MSM consumes.
+`wraphack_digest_is_the_emitted_squeeze` is the pin that would have gone red for it. Two defs holding one object is the defect; both now
 resolve through `KimchiStepWrapChainFixture.STEP_PREVCOMM_XY`. -/
 def whSgOld (p : Nat) : Nat × Nat :=
   ((Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY).getD (2 * p)
@@ -630,13 +621,27 @@ should_finalize]`. Once **all four** legs are emitted (`KimchiWrapMain` §20), t
 honest previous statement does, and a fixture there makes the rung unsatisfiable rather than strict.
 
 ⚑ **SO THESE THREE ARE A MEMO WITH A PROOF OBLIGATION, in the shape of `WrapShape.xhatXY` and for
-the same reason.** `xhatScalar` needs the values (words 27, 28 and 37 are x_hat entries 32/33, 34/35
-and 47) and the derivation that produces them is a 91-element Fq sponge plus a 1200-op straight-line
-program, which lives two modules above this one. ⚠ They are NOT fixtures:
+the same reason.** The derivation that produces them is a 91-element Fq sponge plus a 1200-op
+straight-line program, which lives two modules above this one. ⚠ They are NOT fixtures:
 `KimchiWrapMain.fin_deferred_words_are_the_derivation` (`…Pins12`) closes them against
 `finSpDerivedWords` — the very function `finSpRows` builds its witness from — and
 `EmitWrapMainJson` REFUSES to emit a tree where they disagree. A value that cannot reach a proved
 circuit while wrong is a memo; one that can is a fixture.
+
+⚠⚑ **AND SINCE 2026-08-06 THEY NO LONGER REACH `xhatScalar`, WHICH IS THE POINT AND ALSO THE
+FINDING.** `prevWordVal` used to answer with this triple at words 27, 28 and 37 — x_hat entries
+32/33, 34/35 and 47 — so the statement the MSM consumed CONTAINED the derivation by construction.
+The scalars are the step proof's own published `Types.Step.Statement` now, and that statement does
+**not** carry these three values. `the_published_statement_does_not_carry_the_derived_words` states
+which words and refuses the claim that it does.
+
+⚠ **THE PRICE, SAID PLAINLY.** `w12_finsponge`'s `Field.equal` legs on the finalizing block have no
+satisfying witness on `stepmain_step_r8_finalize`: an honest previous statement carries the derived
+`combined_inner_product`, `b` and `xi`, and this one carries synthetic words at those slots. It is
+UNDONE WORK on the STEP side, not a theorem of this model — the step proof has to be re-proved with a
+statement whose block-1 deferred words are the wrap's own derivation, and that is a FIXPOINT, because
+those words are x_hat entries and moving them moves every challenge below them. Nothing at or below
+`w4_bind` is affected: the three words are absorbed nowhere and are read only by W-FINSPONGE.
 
 ⚠ ⚑ **AND UNTIL 2026-08-05 THAT THEOREM DID NOT EXIST — this paragraph said it "closes them by
 `rfl` IN THE KERNEL" and three other docblocks agreed with it.** `grep` over the tree found four
@@ -647,9 +652,10 @@ program of the same shape does not reduce `.size` alone at 1,000,000 heartbeats
 (`KimchiWrapFinalizeSpongeGate`). A kernel `rfl` was never available here; claiming one for four
 docblocks is the same laundering as a `#guard`, spread over four files.
 
-⚠ **AND ONLY ONE BLOCK GETS THEM, WHICH IS WHAT KEEPS THE ASSERT FALSIFIABLE.** Block 0's
-`should_finalize` is 0, so it keeps its `a^9` fixtures, runs all three `Field.equal` gadgets at
-NONZERO differences and takes the `(d⁻¹, 0)` branch. Deriving both blocks would leave
+⚠ **ONLY ONE BLOCK EVER GOT THEM, WHICH IS WHAT KEPT THE ASSERT FALSIFIABLE**, and with a published
+statement NEITHER block carries them. Block 0's `should_finalize` is 0, so its three `Field.equal`
+gadgets still run at NONZERO differences and take the `(d⁻¹, 0)` branch — that half is unchanged and
+is what a repair must preserve: a step statement carrying the derivation in BOTH blocks would leave
 `(1 − finalized)·should_finalize = 0` with no failing instance the emitter can produce. -/
 
 /-- ⚑ The block that claims `should_finalize`. Measured at both committed shapes: block 1's packed
@@ -661,54 +667,51 @@ def FIN_LIVE_BLOCK : Nat := 1
 /-- `Shifted_value.Type2.of_field` of the derived `combined_inner_product` — the fold
 `combine ζ + r · combine ζω` less `2^255`. -/
 def FIN_DEFERRED_CIP : Nat :=
-  4857158271292408557281056036660614491754856669200588147767679856725592753148
+  10742481956508484414461324644563643284499330972958261991466391374195412245280
 /-- …and of the derived `b` — `challenge_polynomial ζ + r · challenge_polynomial ζω`. -/
 def FIN_DEFERRED_B : Nat :=
-  28330105504083176040027493772472798527582808498455566309518982263548590077294
+  1652019457232851511929345484207094574373269249791287408713807329851805585096
 /-- …and the RAW 128-bit ξ′, the finalize sponge's first squeeze. -/
 def FIN_DEFERRED_XI : Nat :=
-  259774092307581287184427570446174477728
+  328188568881711558850681563153200103698
 
-/-- ⚑ Word `w`'s WITNESSED VALUE — a named fixture, exactly as `exists ~request:Req.Proof_state` is a
-free witness upstream. ⚠ **EXCEPT AT 55 AND 56**, which `wrap_main.ml:340-348` computes (§15c″), and
-at the finalizing block's words 0, 1 and 10, which `finalize_other_proof` CHECKS (§15c‴).
+/-- ⚑⚑ **ENTRY `i`'s SCALAR IS MEASURED SINCE 2026-08-06 — it is the value the prover handed
+`kimchi::verifier`.** `STEP_PUBLIC_IN` is `stepmain_step_r8_finalize.json`'s `public_input` as the
+accepted proof consumed it, which `wrap_verifier.ml:539-548` reads as the expansion of a packed
+`Types.Step.Statement`. There is nothing left to stand in for: the fixture that used to sit here was
+`prevWordVal`'s `a^9` mixer over `exists ~request:Req.Proof_state`, and a mixer is only honest while
+no proof's public input is available.
 
-⚑ **THE NINTH POWER IS NOT DECORATION, AND THE OLD `/ 7` WAS THE SAME LESSON, MEASURED AGAIN.**
-`wrapFixtureQ 34 w = 11 + 1000003·(578 + w)` never wraps `qN`, so it is a ~29-bit integer whose
-parity is `w mod 2` — and every one-bit entry sits at an odd `i`, so the raw mixer gives all twelve
-`Cond_add` entries the same bit, the mux's `~else_` branch has no honest witness at all, and half of
-what `w6_xhat` exercises is quietly dead. A `/ 7` was the previous patch for the previous shape of
-this bug. `a^9` is the smallest odd power of a 29-bit value that WRAPS `qN` (`9 × 29 > 255`), so it
-is four `qMul`s — cheap enough for the kernel, where a `qInv` here cost 57 × 260 recursion levels and
-blew `maxRecDepth` outright — and a 254-bit `B Digest` is what a digest actually looks like.
-⚠ Reduction to `prevWordWidth` happens AFTER, so the twenty challenge words are 128-bit and the two
-`B Bool`s are bits. `xhat_cond_add_takes_both_branches` and `xhat_smoke_selection_covers_every_path`
-are the pins that keep it fixed; both go red under the raw mixer. -/
-def prevWordVal (w : Nat) : Nat :=
-  if PREV_MSG_NEXT_STEP < w && w < PREV_WORDS then whPrevDigest (w - PREV_MSG_NEXT_STEP - 1)
-  else if w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK then FIN_DEFERRED_CIP
-  else if w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1 then FIN_DEFERRED_B
-  else if w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10 then FIN_DEFERRED_XI
-  else
-    let a := wrapFixtureQ 34 w
-    let a2 := qMul a a
-    let a4 := qMul a2 a2
-    qMul (qMul a4 a4) a % 2 ^ prevWordWidth w
-
-/-- ⚑ **ENTRY `i`'s SCALAR — the packed image of a statement word, not a draw of its own.**
-`split_field` (`wrap_main.ml:69-81`) is `y = (x − is_odd)/2`, `is_odd = x mod 2`; every other entry
-IS its word. -/
+⚠ ⚑ **AND `split_field`'s DERIVATION IS GONE WITH IT — THE PAIR IS PUBLISHED.** This used to compute
+`v / 2` and `v % 2` from one word, which made `wrap_main.ml:80`'s `2·y + is_odd = x` an identity on
+two cells this file had just built. Both halves are separate PUBLISHED entries now, so the
+recomposition is a fact about the step proof's own public input, and
+`split_field_halves_are_published_bits` measures what is left to measure rather than restating a
+definition. -/
 def xhatScalar (i : Nat) : Nat :=
-  -- ⚑ **AN OWN ENTRY IS NOT A PACKED WORD AND IS NOT A FIXTURE.** It is the value the prover handed
-  -- `kimchi::verifier` as public input `xhatOwnIdx i` of the accepted step proof, read off the
-  -- circuit JSON the prover consumed. `prevWordVal`'s `x^9` mixer stands in for `exists
-  -- ~request:Req.Proof_state`, which is a free witness upstream; there is nothing to stand in for
-  -- here, because the value is measured.
-  if xhatIsOwn i then Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.getD
-                        (xhatOwnIdx i) 0
-  else
-  let v := prevWordVal (xhatWordOf i)
-  if xhatIsSplitHi i then v / 2 else if xhatIsSplitLo i then v % 2 else v
+  Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.getD i 0
+
+/-- ⚑⚑ **PACKED WORD `w`'s VALUE, RECOMPOSED FROM THE PUBLISHED ENTRIES.** `wrap_verifier.ml:542-548`
+expands a `` `Field `` word into `(value, parity)` and leaves every other word alone; this inverts
+that, so the 57 statement words and the 67 published entries are ONE object read two ways rather than
+two constructions that must be kept in step.
+
+⚠ ⚑ **IT WAS A NAMED FIXTURE (`a^9`) WITH THREE OVERRIDES UNTIL 2026-08-06, AND KEEPING IT WOULD HAVE
+BEEN THE `whSgOld` DEFECT AGAIN.** The overrides existed to give W-WRAPHACK's two digests and
+W-FINSPONGE's three deferred values a statement word to be equal to. With `xhatScalar` reading
+`STEP_PUBLIC_IN`, a `prevWordVal` that still answered `FIN_DEFERRED_CIP` at word 27 would be a SECOND
+copy of the statement disagreeing with the one the MSM consumes — the exact shape that kept
+`xhatOut 67` unchanged while `RC_SGOLD` moved, and a green gate was the evidence.
+
+⚠⚑ **WHAT THAT COSTS IS REAL AND IS NAMED, NOT ABSORBED.** The published statement's words 27, 28,
+37, 54, 55 and 56 are NOT the values the wrap circuit derives for them, so the ties at `w9_prev`,
+`w11_wraphack` and `w12_finsponge` have no satisfying witness on this step proof.
+`the_published_statement_does_not_carry_the_derived_words` states exactly which six and refuses the
+claim that it does; §15c‴ prices the repair. It is undone work on the STEP side, not a theorem of
+this model. -/
+def prevWordVal (w : Nat) : Nat :=
+  let i := xhatEntryOf w
+  if xhatIsSplitHi i then 2 * xhatScalar i + xhatScalar (i + 1) else xhatScalar i
 
 /-- `scale_fast2'`'s `s_div_2` (`plonk_curve_ops.ml:271-283`). -/
 def xhatSDiv2 (i : Nat) : Nat := xhatScalar i / 2
@@ -1292,68 +1295,80 @@ theorem xhat_smoke_selection_covers_every_path :
 theorem xhat_full_selection_is_every_entry :
     xhatSel XHAT_TERMS_FULL = List.range XHAT_TERMS_FULL := by decide
 
-/-! ### §15a″ — ⚑ **DREGG'S OWN STEP PROOF'S `x_hat`, AND THE ONE THEOREM THAT MAKES IT REAL.** -/
+/-! ### §15a″ — ⚑ **THE STEP PROOF'S `x_hat`, AND THE ONE THEOREM THAT MAKES IT REAL.** -/
 
-/-- ⚑ **THE INDEX SPACES ARE DISJOINT.** Everything below rests on `xhatIsOwn` partitioning the
-entry index, so it is a theorem and not a convention: `xhatSel`'s reach — Mina's packed-statement
-entries — and `XHAT_OWN_SEL` share no index, and `XHAT_OWN_SEL` is twelve consecutive entries of the
-declared width. A future selection that overlapped would silently give one entry two bases. -/
-theorem xhat_own_entries_are_disjoint_from_minas :
-    XHAT_OWN_SEL.all (fun i => xhatIsOwn i) = true
-  ∧ (List.range XHAT_TERMS_FULL).all (fun i => !xhatIsOwn i) = true
-  ∧ XHAT_OWN_SEL.all (fun i => !(List.range XHAT_TERMS_FULL).contains i) = true
-  ∧ XHAT_OWN_SEL.length = XHAT_OWN_TERMS
-  ∧ XHAT_OWN_TERMS = 12
-  ∧ XHAT_OWN_SEL.map xhatBits = List.replicate 12 WQ_FIELD
-  ∧ XHAT_OWN_SEL.map xhatChunksAt = List.replicate 12 51
-  -- ⚑ …and NO own entry takes the `Cond_add` path, which is what "no packed statement" means here.
-  ∧ (XHAT_OWN_SEL.filter (fun i => xhatChunksAt i == 0)) = [] := by decide
+/-- ⚑ **THE WIDTH TABLE HAS A SECOND SOURCE, AND IT IS THE PROOF'S OWN.** `xhatBits` is this file's
+transcription of `wrap_verifier.ml:542-548` over `Types.Step.Statement.spec 2 15`;
+`STEP_XHAT_BITS` is the Rust exporter's `step_statement_slot_bits`, computed off the statement it
+published and used there to refuse writing the fixture if a word did not fit its slot. Two
+transcriptions of the same OCaml, and the fixture is where the SCALARS come from — so a width table
+that drifted from the exporter's would range-check the published words at the wrong width and still
+accept. -/
+theorem xhat_entry_widths_are_the_exporters :
+    (List.range XHAT_TERMS_FULL).map xhatBits
+      = Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_BITS
+  ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_BITS.length = XHAT_TERMS_FULL
+  ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC = XHAT_TERMS_FULL
+  ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.length = XHAT_TERMS_FULL
+  ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LAGRANGE_XY.length = 2 * XHAT_TERMS_FULL
+  -- ⚑ …and the correction table is the PARTITION's length, 55, not 67.
+  ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_CORRECTION_XY.length = 2 * 55 := by
+  decide
 
-/-- ⚑⚑ **THE MSM OVER THIS PROOF'S OWN PUBLIC INPUT IS THIS PROOF'S OWN `x_hat`.**
+/-- ⚑⚑ **THE 67-ENTRY MSM IS THIS PROOF'S OWN `x_hat`.**
 
-`wrap_verifier.ml:539-616` in full — the correction reduce, twelve `scale_fast2'` ladders over the
-step SRS's Lagrange basis **at this proof's domain**, `Inner_curve.negate`, and the `x_hat blinding`
-add — evaluated on dregg's own step proof's twelve public-input scalars, IS the negated public-input
-commitment `kimchi::verifier` computed for that proof (`verifier.rs:834-857`) and absorbed at
+`wrap_verifier.ml:539-616` in full — the correction reduce over the 55-entry `Add_with_correction`
+partition, the `scale_fast2'` ladders and `Cond_add` selects over the step SRS's Lagrange basis **at
+this proof's domain**, `Inner_curve.negate`, and the `x_hat blinding` add — evaluated on dregg's own
+step proof's published `Types.Step.Statement`, IS the negated public-input commitment
+`kimchi::verifier` computed for that proof (`verifier.rs:834-857`) and absorbed at
 `wrap_verifier.ml:617` as the transcript's `x_hat` block.
 
-⚑ **THIS IS THE STATEMENT `w6_xhat` HAS NEVER HAD.** The 67-entry MSM's output is a point over
-scalars that are a NAMED FIXTURE standing in for `exists ~request:Req.Proof_state`, so its value
-reproduces nothing and could not: there is no proof whose public input those scalars are. These
-twelve are a real accepted proof's, and the fold lands on the pair its verifier absorbed.
+⚑ **THIS IS THE STATEMENT `w6_xhat` HAS NEVER HAD AT THE COMMITTED SHAPE.** Until 2026-08-06 the 67
+scalars were a NAMED FIXTURE standing in for `exists ~request:Req.Proof_state`, so the fold's output
+reproduced nothing and could not — there was no proof whose public input those scalars were. A
+twelve-entry side table over a second index space got the identity for a step rule that published
+twelve unconstrained words; this gets it for the 67 the wrap circuit actually expands.
 
-⚠ `native_decide`: twelve 51-chunk ladders, three `qInv` per step. `#assert_compiled` is the
+⚠ `native_decide`: 55 ladders at up to 51 chunks, three `qInv` per step. `#assert_compiled` is the
 confession, per `docs/GUARD-DISCIPLINE.md`. The same identity is asserted a SECOND time, in Rust and
 in arkworks' own group arithmetic, by `tape.rs` before it writes the fixture — so this is two
 implementations agreeing on one point, not one implementation agreeing with itself. -/
-theorem the_own_xhat_msm_is_this_proofs_public_input_commitment :
-    xhatOutOf XHAT_OWN_SEL
+theorem the_xhat_msm_is_this_proofs_public_input_commitment :
+    xhatOutOf (List.range XHAT_TERMS_FULL)
       = (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 0 0,
          Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 1 0) := by
   native_decide
 
-#assert_compiled the_own_xhat_msm_is_this_proofs_public_input_commitment
+#assert_compiled the_xhat_msm_is_this_proofs_public_input_commitment
 
-/-- ⚑ **THE RED CONTROL FOR THE DOMAIN TRAP, AND IT IS THE ONE `onCurveQ` CANNOT BE.**
+/-- ⚑ **THE NON-VACUITY OF THE DOMAIN TRAP** — the two tables really are different points.
 
-The bases are Vesta Lagrange commitments of the same SRS at a DIFFERENT domain, so every curve
-predicate this file owns is satisfied by both. What separates them is which points they are and what
-the fold produces. Both halves are here: the first base differs, and the MSM read over Mina's
-domain-65536 bases — same scalars, same corrections would not even be the right partition, so this
-uses the honest substitution of just the base table — does not land on the commitment.
+`MinaStepSrsLagrange.LAGRANGE_XY` holds Vesta Lagrange commitments of the SAME
+`SRS::<Vesta>::create(65536)` at Mina's `step-transaction` domain, so `onCurveQ`, the width census
+and every other predicate this file owns is satisfied by BOTH tables — that is the whole trap, and
+it is the same shape as `lrPointQ i = xhatBase (5 + i % 50)`. This says the substitution a reader
+might make is a real substitution: not one of the 67 bases, and not one of the 55 corrections,
+coincides with the 65536-domain table at the same index.
 
-⚠ Stated over `xhatBase` rather than over the two constant lists, because the substitution a reader
-would actually make is at the accessor. -/
-theorem xhat_own_bases_are_not_minas_domains :
-    xhatBase XHAT_OWN_BASE ≠ xhatBase 0
-  ∧ (List.range XHAT_OWN_TERMS).all (fun k =>
-      xhatBase (XHAT_OWN_BASE + k) != xhatBase k) = true
-  ∧ xhatOutOf (List.range XHAT_OWN_TERMS)
-      ≠ (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 0 0,
-         Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 1 0) := by
-  native_decide
-
-#assert_compiled xhat_own_bases_are_not_minas_domains
+⚠ **WHAT CATCHES THE SUBSTITUTION IS `the_xhat_msm_is_this_proofs_public_input_commitment`, NOT
+THIS.** The MSM lands on the commitment kimchi absorbed only for the right domain's basis; swap the
+table and that theorem reds. This one exists so "it would red" is not resting on two tables that
+might have been equal. -/
+theorem xhat_bases_are_not_minas_step_transaction_domains :
+    (List.range XHAT_TERMS_FULL).all (fun i =>
+      xhatBase i != (Dregg2.Circuit.Emit.MinaStepSrsLagrange.LAGRANGE_XY.getD (2 * i) 0,
+                     Dregg2.Circuit.Emit.MinaStepSrsLagrange.LAGRANGE_XY.getD (2 * i + 1) 0))
+      = true
+  ∧ (List.range 55).all (fun k =>
+      (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_CORRECTION_XY.getD (2 * k) 0,
+       Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_XHAT_CORRECTION_XY.getD (2 * k + 1) 0)
+        != (Dregg2.Circuit.Emit.MinaStepSrsLagrange.CORRECTION_XY.getD (2 * k) 0,
+            Dregg2.Circuit.Emit.MinaStepSrsLagrange.CORRECTION_XY.getD (2 * k + 1) 0)) = true
+  -- ⚑ …and neither comparison is against a `getD` default: both of Mina's tables are long enough.
+  ∧ decide (2 * XHAT_TERMS_FULL ≤ Dregg2.Circuit.Emit.MinaStepSrsLagrange.LAGRANGE_XY.length) = true
+  ∧ decide (2 * 55 ≤ Dregg2.Circuit.Emit.MinaStepSrsLagrange.CORRECTION_XY.length) = true := by
+  decide
 
 /-- ⚑ **`Generators.h` IS ONE POINT WITH TWO SOURCES.** `XHAT_H` comes from
 `xhat_lagrange_export.rs`'s `SRS::<Vesta>::create(2^16)`; `STEP_URS_H_XY` comes from
@@ -1366,19 +1381,24 @@ theorem xhat_blinding_base_has_two_sources :
               Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_URS_H_XY.getD 1 0)
   ∧ onCurveQ XHAT_H := by decide
 
-/-- ⚑ The own entries' bases and corrections are on Vesta, and the corrections are the SHIFT the
-ladders actually use — `negate (pow2pow g 255)` against `xhatActualBits = 5 · 51 = 255`. A
-correction computed at the wrong shift is on-curve and cancels nothing. -/
-theorem xhat_own_bases_and_corrections_are_sound :
-    XHAT_OWN_SEL.all (fun i => onCurveQ (xhatBase i)) = true
-  ∧ XHAT_OWN_SEL.all (fun i => onCurveQ (xhatCorr i)) = true
-  ∧ XHAT_OWN_SEL.all (fun i =>
+/-- ⚑ **EVERY CORRECTION IS THE SHIFT ITS OWN LADDER USES** — `negate (pow2pow g actual_shift)`
+against that entry's `xhatActualBits`, which is **255** for a 255-bit slot and **130** (not 128) for
+a 128-bit one. A correction computed at the wrong shift is on-curve, is a genuine SRS object, and
+cancels nothing; `xhat_correction_shift_matches_the_ladder` says the two FORMULAS agree and this says
+the fifty-five published POINTS do.
+
+⚠ The one-bit entries are excluded by the filter and not by an arm: they take `` `Cond_add ``, have
+no ladder and have no correction, which is why the table is 55 long. -/
+theorem xhat_corrections_are_the_ladders_own_shift :
+    ((List.range XHAT_TERMS_FULL).filter (fun i => xhatChunksAt i != 0)).all (fun i =>
       xhatCorr i
         == negAQ ((List.range (xhatActualBits i)).foldl (fun P _ => dblAQ P) (xhatBase i))) = true
-  ∧ XHAT_OWN_SEL.all (fun i => decide (xhatActualBits i = 255)) = true := by
+  ∧ ((List.range XHAT_TERMS_FULL).filter (fun i => xhatChunksAt i != 0)).length = 55
+  ∧ (((List.range XHAT_TERMS_FULL).filter (fun i => xhatChunksAt i != 0)).map xhatActualBits).eraseDups
+      = [255, 130] := by
   native_decide
 
-#assert_compiled xhat_own_bases_and_corrections_are_sound
+#assert_compiled xhat_corrections_are_the_ladders_own_shift
 
 /-! ### §15c″ — ⚑ **W-PREV'S PINS ON THE VALUE LAYER** (`wrap_main.ml:201-256`). -/
 
@@ -1416,24 +1436,91 @@ theorem prev_word_widths_are_the_entry_widths :
       else decide (xhatBits i = prevWordWidth (xhatWordOf i))) = true := by
   decide
 
-/-- ⚑ **`split_field`'s RECOMPOSITION IS AN IDENTITY ON THE WITNESS.** `wrap_main.ml:80` asserts
-`2·y + is_odd = x`; before `w9_prev` this file DEFINED `x` as `2·y + is_odd` from two independent
-draws, so the assert could not fail and `w7_split` pinned nothing. Now `x` is the statement word and
-the two halves are its image, so the equation is a fact about the packed statement — over ℕ, not
-merely mod `qN`, because `prevWordVal < qN < 2^255`. -/
-theorem split_field_recomposes_the_statement_word :
-    ((List.range XHAT_TERMS_FULL).filter xhatIsSplitHi).all (fun i =>
-      decide (2 * xhatScalar i + xhatScalar (i + 1) = prevWordVal (xhatWordOf i))) = true := by
+/-- ⚑ **`xhatEntryOf` IS `xhatWordOf`'s SECTION**, in both directions that matter: every word maps
+back to an entry that maps forward to it, and on a `` `Field `` word that entry is the VALUE half —
+so `prevWordVal`'s `2·hi + lo` reads the pair and not a pair shifted by one.
+
+⚑ It is what lets `prevWordVal` be a closed form rather than a 67-test search over `xhatWordOf`'s
+fibre, which is read once per statement word per emitted row. -/
+theorem prev_entry_map_inverts_the_expansion :
+    (List.range PREV_WORDS).all (fun w => xhatWordOf (xhatEntryOf w) == w) = true
+  ∧ (List.range PREV_WORDS).all (fun w =>
+      xhatIsSplitHi (xhatEntryOf w) == decide (w < PREV_PER_PROOF_WORDS * XHAT_PREVS
+                                               && w % PREV_PER_PROOF_WORDS < 5)) = true
+  ∧ (List.range PREV_WORDS).all (fun w => !xhatIsSplitLo (xhatEntryOf w)) = true
+  ∧ ((List.range XHAT_TERMS_FULL).filter xhatIsSplitHi).all (fun i =>
+      xhatEntryOf (xhatWordOf i) == i) = true := by
   decide
 
-/-- …and the halves are `split_field`'s own, not some other decomposition: the parity is the low bit
-and the value is the floor-half. -/
-theorem split_field_halves_are_the_gadgets_own :
+/-- ⚑⚑ **`split_field`'s TWO HALVES ARE PUBLISHED, SO THE RECOMPOSITION STOPPED BEING A DERIVATION.**
+`wrap_main.ml:80` asserts `2·y + is_odd = x`. Before `w9_prev` this file drew `y` and `is_odd`
+independently and DEFINED `x` as their recomposition, so the assert could not fail. At `w9_prev` `x`
+became a packed statement word and the halves became `v / 2` and `v % 2` — better, and still a
+derivation this file performed. Since 2026-08-06 both halves are separate entries of the step
+proof's own `public_input`, and `prevWordVal` is what reads them BACK.
+
+⚠ **SO THE EQUATION IS NOW DEFINITIONAL AND THIS THEOREM DOES NOT STATE IT.** `prevWordVal w` IS
+`2·hi + lo`; asserting that would be a pin against its own definition. What is a fact about the
+published data is stated instead: every parity half really is a BIT, so `Boolean.typ`'s check has an
+honest witness and `xhatBits`' `WQ_BOOL` is a description rather than a truncation; every
+recomposition fits `Field.size_in_bits`, so `w7_split`'s equation holds over ℕ and not merely mod
+`qN`; and both bit values occur, so neither `Cond_add` arm is dead. A statement whose halves were
+derived could not fail any of these. -/
+theorem split_field_halves_are_published_bits :
     ((List.range XHAT_TERMS_FULL).filter xhatIsSplitLo).all (fun i =>
-      decide (xhatScalar i = prevWordVal (xhatWordOf i) % 2)) = true
+      decide (xhatScalar i < 2)) = true
   ∧ ((List.range XHAT_TERMS_FULL).filter xhatIsSplitHi).all (fun i =>
-      decide (xhatScalar i = prevWordVal (xhatWordOf i) / 2)) = true := by
+      decide (2 * xhatScalar i + xhatScalar (i + 1) < 2 ^ WQ_FIELD)) = true
+  ∧ (((List.range XHAT_TERMS_FULL).filter xhatIsSplitLo).map xhatScalar).eraseDups.length = 2 := by
   decide
+
+/-- ⚑⚑⚑ **THE STEP STATEMENT IS PUBLISHED, AND IT DOES NOT CARRY THE WORDS THE WRAP CIRCUIT DERIVES.
+THIS IS UNDONE WORK ON THE STEP SIDE, STATED AS A REFUSAL SO IT CANNOT BE MISREAD AS CLOSED.**
+
+Three sub-circuits of `wrap_main` tie a packed statement word to a value the wrap circuit computes:
+
+  * **W-FINSPONGE** (`wrap_main.ml:258-338`) — `finalize_other_proof` recomputes the finalizing
+    block's `combined_inner_product`, `b` and `xi`, packed words `27·FIN_LIVE_BLOCK + {0, 1, 10}`,
+    and `Field.equal`s each against the statement's;
+  * **W-WRAPHACK** (`wrap_main.ml:340-348`) — the two `hash_messages_for_next_wrap_proof` squeezes
+    ARE packed words 55 and 56;
+  * **W-PREV** (`wrap_main.ml:350-351`) — packed word 54 is `Field.Assert.equal`-tied to Mina's
+    public slot 12.
+
+Until 2026-08-06 `prevWordVal` ANSWERED WITH THOSE DERIVATIONS at exactly those six words, so all
+three ties held by construction and none of them was a question. The scalars are the step proof's own
+`STEP_PUBLIC_IN` now, and this measures what that costs: **six words disagree**, and the emitted rows
+above `w9_prev` have no satisfying witness on this step proof.
+
+⚠ **THE REPAIR IS A STEP-SIDE FIXPOINT AND IT IS NOT PRICED AWAY.** The step proof must be re-proved
+with a `Types.Step.Statement` whose six words are the wrap's own derivation — and each of those words
+is an x_hat MSM entry, so re-proving moves `x_hat`, which moves every challenge below it, which moves
+the derivation. Upstream Pickles closes that loop by construction; this pipeline has to bake it. That
+is the next item, and it is the whole of what stands between `w9_prev` and the top of the ladder.
+
+⚑ **WHAT IS NOT AFFECTED, MEASURED RATHER THAN ASSERTED.** None of the six is absorbed by the
+transcript and none is read at or below `w4_bind`, which is why the twenty-two slots that rung
+derives are unmoved — the last two conjuncts say the six words are exactly the derived ones and that
+the other 51 carry the published statement unaltered. -/
+theorem the_published_statement_does_not_carry_the_derived_words :
+    prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK) ≠ FIN_DEFERRED_CIP
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1) ≠ FIN_DEFERRED_B
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10) ≠ FIN_DEFERRED_XI
+  -- ⚑ …and the six are the ONLY words at issue: every other packed word is a published entry and
+  -- nothing in this file claims a value for it.
+  ∧ ((List.range PREV_WORDS).filter (fun w =>
+      w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK
+      || w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1
+      || w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10
+      || w == PREV_MSG_NEXT_STEP || w == PREV_MSG_NEXT_STEP + 1
+      || w == PREV_MSG_NEXT_STEP + 2)).length = 6
+  ∧ PREV_WORDS - 6 = 51
+  -- ⚑ …and what the statement DOES carry there, exhibited rather than only denied: three small
+  -- structured numerals where three Fq derivations belong. A reader can see the gap's shape.
+  ∧ (prevWordVal PREV_MSG_NEXT_STEP.succ, prevWordVal (PREV_MSG_NEXT_STEP + 2))
+      = (160000365, 77001823)
+  ∧ decide (prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10) < 2 ^ WQ_CHAL) = true := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 set_option maxRecDepth 1000000 in
 /-- ⚑ **THE SCALARS MOVED.** The red control for `w9_prev`, kept for the same reason
@@ -1577,14 +1664,16 @@ wall a third of the way along.
 
 ⚠ **`#assert_compiled` under each is the confession, not a certificate** (`docs/GUARD-DISCIPLINE.md`)
 — it passes only if the proof rests on a `native_decide` oracle and nothing worse, and it ERRORS on a
-kernel-clean proof, so none of the three can launder a weaker fact downward. And the headline of the
-three, `the_own_xhat_msm_is_this_proofs_public_input_commitment`, is additionally asserted by a
-SECOND implementation in arkworks' own group arithmetic — `tape.rs` refuses to write the fixture
-unless `−Σ pᵢ·Lᵢ + h` is the commitment `kimchi::verifier` absorbed. Two implementations, one point.
-That is what makes the compiled evaluation here a cross-check rather than a single trusted run. -/
+kernel-clean proof, so neither can launder a weaker fact downward. And the headline,
+`the_xhat_msm_is_this_proofs_public_input_commitment`, is additionally asserted by a SECOND
+implementation in arkworks' own group arithmetic — `tape.rs` refuses to write the fixture unless
+`−Σ pᵢ·Lᵢ + h` is the commitment `kimchi::verifier` absorbed. Two implementations, one point. That is
+what makes the compiled evaluation here a cross-check rather than a single trusted run.
+
+⚑ The list is SHORTER since 2026-08-06: `xhat_bases_are_not_minas_step_transaction_domains` compares
+two constant tables and closes in the kernel now that it no longer has to run a fold. -/
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMainField except
-  the_own_xhat_msm_is_this_proofs_public_input_commitment
-  xhat_own_bases_are_not_minas_domains
-  xhat_own_bases_and_corrections_are_sound
+  the_xhat_msm_is_this_proofs_public_input_commitment
+  xhat_corrections_are_the_ladders_own_shift
 
 end Dregg2.Circuit.Emit.KimchiWrapMainField

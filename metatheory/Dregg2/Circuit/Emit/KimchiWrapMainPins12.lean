@@ -129,28 +129,52 @@ theorem fin_deferred_words_are_the_derivation :
     finSpDerivedWords tW = (FIN_DEFERRED_CIP, FIN_DEFERRED_B, FIN_DEFERRED_XI) := by
   native_decide
 
-/-- ⚑⚑ **THE THREE LEGS, AND BOTH BRANCHES OF EVERY `Field.equal` LIVE.**
+/-- ⚑⚑⚑ **W-FINSPONGE HAS NO SATISFYING WITNESS ON THE PUBLISHED STEP STATEMENT, AND THAT IS THE
+STATEMENT OF THIS THEOREM RATHER THAN A CAVEAT ATTACHED TO A GREEN ONE.**
 
 `finalize_other_proof` is `Boolean.all [xi_correct; b_correct; combined_inner_product_correct;
-plonk_checks_passed]` and W-FINSPONGE emits the first three. This is the measurement that they are
-CONSTRAINTS and not decorations:
+plonk_checks_passed]`, W-FINSPONGE emits the first three, and `wrap_main.ml:335` asserts
+`(1 − finalized)·should_finalize = 0`. Measured on `stepmain_step_r8_finalize`'s own public input:
 
-* on `FIN_LIVE_BLOCK` — the block whose packed word 53 IS `should_finalize = 1` — all three
-  differences are **zero**, the three bits are **one**, `finalized` is **one**, and the emitted
-  assert `(1 − finalized)·should_finalize` is **zero**. That block's `combined_inner_product`, `b`
-  and `xi` are the DERIVED words, so the legs are satisfied by a derivation and not by a fixture.
-* on the other block all three differences are **NONZERO** and all three bits are **zero**, so the
-  gadget's `(d⁻¹, 0)` branch is exercised by the same emission. ⚑ This is the conjunct that keeps
-  the rung falsifiable: `d7d0a150e` shipped a §19 whose `Field.equal` witness was HARDCODED to the
-  agreeing answer, and every σ-pin and both ladder theorems stayed green while the prover said
-  `Prover("rest of division by vanishing polynomial")`. A leg that can only be 1 is not a leg. -/
-theorem finsponge_legs_take_both_field_equal_branches :
-    finSpLegsAt FIN_LIVE_BLOCK = (1, 1, 1, 1, 0)
-    ∧ finSpDiffsAt FIN_LIVE_BLOCK = (0, 0, 0)
+* `FIN_LIVE_BLOCK` — the block whose packed word 53 IS `should_finalize = 1` — has all three
+  differences **NONZERO**, all three bits **zero**, `finalized` **zero**, and therefore the emitted
+  assert evaluates to **`1 · 1 = 1 ≠ 0`**. The rung is **UNSATISFIABLE**.
+* the other block is unchanged: `should_finalize = 0`, so its own assert is 0 whatever its legs say.
+
+⚠ ⚑ **WHAT CHANGED ON 2026-08-06 AND WHY THE OLD THEOREM WAS WEAKER THAN IT LOOKED.** This used to
+read `finSpLegsAt FIN_LIVE_BLOCK = (1,1,1,1,0)` and `finSpDiffsAt FIN_LIVE_BLOCK = (0,0,0)` — the
+finalizing block's legs PASS. They passed because `KimchiWrapMainField.prevWordVal` had three
+override arms answering `FIN_DEFERRED_CIP/_B/_XI` at exactly words 27, 28 and 37: the statement
+CONTAINED the derivation because this file put it there. `xhatScalar` reads the step proof's own
+`STEP_PUBLIC_IN` now, the overrides are gone, and the legs are a question for the first time.
+
+⚠ **THE ANSWER IS NO, AND IT IS UNDONE WORK ON THE STEP SIDE, NOT A THEOREM OF THIS MODEL.** The step
+proof has to be re-proved with a `Types.Step.Statement` whose finalizing block carries the wrap's own
+`combined_inner_product`, `b` and `xi` — and that is a FIXPOINT, because those three words are x_hat
+MSM entries 32/33, 34/35 and 47, so writing them moves `x_hat`, which moves every challenge below it,
+which moves the derivation. Upstream Pickles closes that loop by construction. Until it is closed
+here, everything at or above `w12_finsponge` is an emission that will not prove, and this theorem is
+where that is written down — with `KimchiWrapMainField.the_published_statement_does_not_carry_the
+_derived_words` naming all six words at issue.
+
+⚑ **WHAT IS PRESERVED IS THE FALSIFIABILITY, and it is why the `(d⁻¹, 0)` branch conjuncts stay.**
+`d7d0a150e` shipped a §19 whose `Field.equal` witness was HARDCODED to the agreeing answer, and every
+σ-pin and both ladder theorems stayed green while the prover said `Prover("rest of division by
+vanishing polynomial")`. A leg that can only be 1 is not a leg — and a leg that can only be 0 is not
+one either, which is what the last conjunct is for: `finSpLegsAt` reaches `1` in its fifth component
+here, so the tuple is not a constant zero. -/
+theorem finsponge_has_no_witness_on_the_published_statement :
+    finSpLegsAt FIN_LIVE_BLOCK = (0, 0, 0, 0, 1)
+    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).1 ≠ 0
+    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).2.1 ≠ 0
+    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).2.2 ≠ 0
     ∧ finSpLegsAt (1 - FIN_LIVE_BLOCK) = (0, 0, 0, 0, 0)
     ∧ (finSpDiffsAt (1 - FIN_LIVE_BLOCK)).1 ≠ 0
     ∧ (finSpDiffsAt (1 - FIN_LIVE_BLOCK)).2.1 ≠ 0
-    ∧ (finSpDiffsAt (1 - FIN_LIVE_BLOCK)).2.2 ≠ 0 := by
+    ∧ (finSpDiffsAt (1 - FIN_LIVE_BLOCK)).2.2 ≠ 0
+    -- ⚑ …and this is the emitted assert, evaluated: `(1 − finalized)·should_finalize = 1`.
+    ∧ (let l := finSpLegsAt FIN_LIVE_BLOCK
+       qMul (qSub 1 l.2.2.2.1) (finBlockVal FIN_LIVE_BLOCK PREV_SHOULD_FINALIZE) = 1) := by
   native_decide
 
 /-- ⚑ **AND THE ASSERT CAN STILL GO RED.** `(1 − finalized)·should_finalize = 0` holds on the
@@ -194,7 +218,7 @@ theorem finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks :
 -- kernel above, which is the split `cip_lift_…` exists to make: a confession that swallows
 -- kernel-clean conjuncts loses their pin.
 #assert_compiled fin_deferred_words_are_the_derivation
-#assert_compiled finsponge_legs_take_both_field_equal_branches
+#assert_compiled finsponge_has_no_witness_on_the_published_statement
 #assert_compiled finsponge_assert_reds_if_the_other_block_claims_should_finalize
 #assert_compiled finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks
 

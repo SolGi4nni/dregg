@@ -349,10 +349,16 @@ fn run_chain_controls_at(dir: &Path, rung: &str) {
         bent.witness, honest.witness,
         "the bend must move the witness too"
     );
+    // ⚠ ⚑ **THIS COUNTED `Option::iter()` AND THEREFORE PRINTED `1/40` FOREVER.** `public_input` is
+    // an `Option<Vec<String>>`, and iterating the OPTION yields one item — the whole vector — so the
+    // filter compared two `Vec`s once and the headline number was "one word moved" whatever moved.
+    // The `assert_ne!` above was doing all the work; the figure beside it was decoration. It reads
+    // the vectors themselves now: at `w4_bind` the honest answer is **21 of 40** — every derived
+    // slot except 29, `branch_data`, which comes out of `runBranch` and not through the sponge.
     let moved = honest
-        .public_input
+        .public_strings()
         .iter()
-        .zip(bent.public_input.iter())
+        .zip(bent.public_strings().iter())
         .filter(|(a, b)| a != b)
         .count();
     println!(

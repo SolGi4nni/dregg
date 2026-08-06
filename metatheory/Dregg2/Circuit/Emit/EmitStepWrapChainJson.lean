@@ -86,40 +86,40 @@ def main : IO Unit := do
   IO.FS.createDirAll dir
   IO.println "emitting the CHAINED wrap rungs — the transcript is dregg's OWN step proof's tape"
   IO.println s!"  step circuit : {Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_CIRCUIT}"
-  IO.println s!"  shape        : {repr shapeChain}"
-  IO.println s!"  tape words   : {chainTape.length}  (schedule {(chainSchedule shapeChain).length} events)"
+  IO.println s!"  shape        : {repr shapeWrap}"
+  IO.println s!"  tape words   : {chainTape.length}  (schedule {(schedule shapeWrap).length} events)"
   IO.println s!"  step key     : branch {tChain.br.idx} of step_keys, index digest \
-{keyDigestVal shapeChain chainRun tChain.br.idx}"
-  IO.println s!"  tape word 0  : {(chainRun.evs.getD 0 default).word}"
-  IO.println s!"  x_hat MSM    : {shapeChain.xhatEntries.length} entries \
-{shapeChain.xhatEntries}, widths {shapeChain.xhatEntries.map xhatBits}"
-  IO.println s!"  x_hat        : {shapeChain.xhatXY}"
-  IO.println s!"  branch_data  : domain_log2 {chainBranch.dl}, packed {chainBranch.packedV} \
+{keyDigestVal shapeWrap tChain.sp tChain.br.idx}"
+  IO.println s!"  tape word 0  : {(tChain.sp.evs.getD 0 default).word}"
+  IO.println s!"  x_hat MSM    : {shapeWrap.xhatEntries.length} entries \
+{shapeWrap.xhatEntries}, widths {shapeWrap.xhatEntries.map xhatBits}"
+  IO.println s!"  x_hat        : {shapeWrap.xhatXY}"
+  IO.println s!"  branch_data  : domain_log2 {tChain.br.dl}, packed {tChain.br.packedV} \
 (mina slot 29 = {Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 29 0})"
   -- ⚑ **THE MEMO'S OBLIGATION, DISCHARGED AT EVERY EMISSION — the chain side's copy of
-  -- `EmitWrapMainJson`'s refusal.** `shapeChain.xhatXY` is written as `STEP_PUBCOMM_XY`'s own words,
+  -- `EmitWrapMainJson`'s refusal.** `shapeWrap.xhatXY` is written as `STEP_PUBCOMM_XY`'s own words,
   -- so it is the value `kimchi::verifier` absorbed by construction; what is NOT free is that the
-  -- twelve-entry fold PRODUCES it. `xhatRows`' closing `caRowQ` constrains the absorbed pair to the
+  -- sixty-seven-entry fold PRODUCES it. `xhatRows`' closing `caRowQ` constrains the absorbed pair to the
   -- fold's output, so a disagreement here is a rung with no honest witness.
-  if shapeChain.xhatXY != xhatOutOf shapeChain.xhatEntries then
-    throw (IO.userError s!"⚑ xhatXY IS NOT THE MSM'S OUTPUT: shapeChain carries \
-      {shapeChain.xhatXY} but `xhatOutOf {shapeChain.xhatEntries}` is \
-      {xhatOutOf shapeChain.xhatEntries}. Refusing rather than emitting it.")
+  if shapeWrap.xhatXY != xhatOutOf shapeWrap.xhatEntries then
+    throw (IO.userError s!"⚑ xhatXY IS NOT THE MSM'S OUTPUT: shapeWrap carries \
+      {shapeWrap.xhatXY} but `xhatOutOf {shapeWrap.xhatEntries}` is \
+      {xhatOutOf shapeWrap.xhatEntries}. Refusing rather than emitting it.")
   -- ⚑ …and the absorbed pair IS the commitment kimchi's own verifier computed for this proof. The
   -- two are one obligation only while `xhatXY` is written from `STEP_PUBCOMM_XY`; a future literal
   -- would split them, so both are checked.
   let pubcomm := (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 0 0,
                   Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 1 0)
-  if shapeChain.xhatXY != pubcomm then
+  if shapeWrap.xhatXY != pubcomm then
     throw (IO.userError s!"⚑ THE ABSORBED x_hat IS NOT THIS PROOF'S PUBLIC-INPUT COMMITMENT: \
-      {shapeChain.xhatXY} vs {pubcomm}. The reality \
+      {shapeWrap.xhatXY} vs {pubcomm}. The reality \
       gate would be about a tape kimchi never ran on.")
   let _ ← emitChainRung dir "chain" tChain .transcript true
   let _ ← emitChainRung dir "chain" tChain .bind true
   -- ⚑ **THE CLIMB.** `w5_key` was unemittable on this tape until 2026-08-05: `keyRows`' `digestTie`
   -- welded the index sponge's squeeze to the transcript's first absorbed word, and the wrap
   -- circuit committed to MINA's `step-transaction` key while this tape is dregg's own step proof's.
-  -- `KEY_CHAIN_BRANCH` puts dregg's step rule in `step_keys` and `chainBranch` selects it, so the
+  -- `KEY_CHAIN_BRANCH` puts dregg's step rule in `step_keys` and `mkWrapWith` selects it, so the
   -- row now has an honest witness — see `the_chain_climbs_past_bind_at_dreggs_own_step_key`.
   let _ ← emitChainRung dir "chain" tChain .key true
   -- ⚑ **THE SECOND CLIMB, 2026-08-06.** `w6_xhat` was unemittable on this tape for a DIFFERENT
@@ -127,7 +127,7 @@ def main : IO Unit := do
   -- ties the absorbed `x_hat` pair to the MSM's output, and the MSM ran over Mina's packed
   -- `Types.Step.Statement` — 67 entries whose scalars belong to no proof — while this tape's
   -- `x_hat` is the commitment `kimchi::verifier` computed for dregg's own step proof. The MSM is
-  -- now over THIS proof's twelve public inputs against its own domain's Lagrange basis, so the row
+  -- now over THIS proof's own published statement against its own domain's Lagrange basis, so the row
   -- has an honest witness. See `the_chain_climbs_past_xhat_at_its_own_public_input_commitment`;
   -- `w7_split` is the new ceiling and `the_chain_stops_at_split_because_there_is_no_packed_
   -- statement` says why it is structural rather than pending.

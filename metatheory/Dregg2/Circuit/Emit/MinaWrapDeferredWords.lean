@@ -66,36 +66,36 @@ set_option autoImplicit false
 in Mina's own slot order. Every entry is an `Fq` element (the wrap circuit's native field). -/
 def WRAP_PUBLIC_INPUT_MEASURED : List Nat :=
   [
-   17853397841088578480202080303499014035278977716958063557119920129082309957260, --  0  combined_inner_product
-   12739888842309207534091425353583998188163281518320948377792104546338412110838, --  1  b
-   7477821968235133351585759997918320384254307475289224122839872568708231431743, --  2  zeta_to_srs_length
-   23725051551995007719557349703536679185533310854205554633186812896811546925419, --  3  zeta_to_domain_size
-   9966961354183771804738757095466468792368521517964796358158237352008651038186, --  4  perm
-   336819938413325329981945542361537535527, --  5  beta
-   301773632846652009264305409763264750691, --  6  gamma
-   334306109329888718020655168762574774969, --  7  alpha
-   254226528067014735595769619822460047256, --  8  zeta
-   72474516456632914040223727365116917687, --  9  xi
-   21450545041088004338614507661020296648540350816091064060281493452798556615112, -- 10  sponge_digest_before_evaluations
-   25612570258246328235858219599273012839086897239973528151180483087604277905676, -- 11  messages_for_next_wrap_proof(hash)
+   1117645832111364878683857204788714449840860772346495449428610585539693137167, --  0  combined_inner_product
+   21777777234232217860821360887121611618288927319335688664328246535554721523720, --  1  b
+   8149239663751596801662678693302821294394998295243361602830765183121890662110, --  2  zeta_to_srs_length
+   13754637000960282899699529053766972504264385824296256138307852822773767922204, --  3  zeta_to_domain_size
+   8593722480541502673495264527951508995759096174473186282076668487031666439767, --  4  perm
+   193434172244141145548481111131525554009, --  5  beta
+   14611295132465104478110401651760541530, --  6  gamma
+   128824226505427250820816902487251758556, --  7  alpha
+   49764862543162710842432820270994491928, --  8  zeta
+   238028948094493284007588209949128471000, --  9  xi
+   13363709624839189624729053474885468137854461440653564568955298336522016580644, -- 10  sponge_digest_before_evaluations
+   14487526077498829597225611381866255782252406825040604733580765573935450872395, -- 11  messages_for_next_wrap_proof(hash)
    2140974966619622776015189267648243586732098598200249976162061600531359395435, -- 12  messages_for_next_step_proof(hash)
-   43440679090433342790717231036103319751, -- 13  bulletproof_challenges[0]
-   159871513622212350691186369335606675316, -- 14  bulletproof_challenges[1]
-   962743386387366916774289331060705050, -- 15  bulletproof_challenges[2]
-   273858029292759791725903059481999225153, -- 16  bulletproof_challenges[3]
-   292180102619314355719866970179013635098, -- 17  bulletproof_challenges[4]
-   319469193404228149180737215550880612798, -- 18  bulletproof_challenges[5]
-   284313125179930214690187993706165395921, -- 19  bulletproof_challenges[6]
-   183349093622806894596917376882576772074, -- 20  bulletproof_challenges[7]
-   3941280121819340727648662202357373584, -- 21  bulletproof_challenges[8]
-   101257438246071410678222368775985856883, -- 22  bulletproof_challenges[9]
-   17035966843420603734672745150767118841, -- 23  bulletproof_challenges[10]
-   332171974856053173894620108115052303872, -- 24  bulletproof_challenges[11]
-   123230034923903420198656213132686272923, -- 25  bulletproof_challenges[12]
-   43504330646941042286520760880403210487, -- 26  bulletproof_challenges[13]
-   68455490590829331266352434146543880339, -- 27  bulletproof_challenges[14]
-   137147997093325831460008313241464000781, -- 28  bulletproof_challenges[15]
-   51, -- 29  branch_data((domain_log2<<2)|proofs_verified)
+   193413021763088679378346223800452572014, -- 13  bulletproof_challenges[0]
+   211497503736393113809876588853595421377, -- 14  bulletproof_challenges[1]
+   65562840999573818458670249776743061639, -- 15  bulletproof_challenges[2]
+   95996046518973242036019614846661742708, -- 16  bulletproof_challenges[3]
+   73907839716720835025479147802246695639, -- 17  bulletproof_challenges[4]
+   77623633289130501347820137490767714972, -- 18  bulletproof_challenges[5]
+   280492384813645995475067781368985441736, -- 19  bulletproof_challenges[6]
+   55371934463937073510985154106716719151, -- 20  bulletproof_challenges[7]
+   300077920515855457750918930666510292264, -- 21  bulletproof_challenges[8]
+   274182238000232084153684845036035137968, -- 22  bulletproof_challenges[9]
+   331563109375578417372038715052717228647, -- 23  bulletproof_challenges[10]
+   10319218948555694921762899643910912343, -- 24  bulletproof_challenges[11]
+   117679627433170027353577543684584321946, -- 25  bulletproof_challenges[12]
+   155875792560497771807557655150773723741, -- 26  bulletproof_challenges[13]
+   167894599541559745617214839948604366193, -- 27  bulletproof_challenges[14]
+   271258881347124905993567886492750457261, -- 28  bulletproof_challenges[15]
+   59, -- 29  branch_data((domain_log2<<2)|proofs_verified)
    0, -- 30  feature_flags.range_check0
    0, -- 31  feature_flags.range_check1
    0, -- 32  feature_flags.foreign_field_add
@@ -144,18 +144,33 @@ theorem the_measurement_is_forty_reduced_words :
 
 /-- ⚑ **`the_width_signature_is_minas_own_layout`** -- THE OBJECT CHECK, slot by slot.
 
-Every challenge slot is under `2^128` and every field slot is over `2^250`. This is what separates
-"the right number at the right index" from "the right name over the wrong object": exposing the
-255-bit endo lift where `spec.ml` packs the raw prechallenge moves no index and no count, and this
-inequality is the only instrument in the file that sees it. The two sets are disjoint and together
-with slots 29-39 they exhaust the forty. -/
+This is what separates "the right number at the right index" from "the right name over the wrong
+object": exposing the 255-bit endo lift where `spec.ml` packs the raw prechallenge moves no index and
+no count, and this inequality is the only instrument in the file that sees it. The two sets are
+disjoint and together with slots 29-39 they exhaust the forty.
+
+⚑ **THE DISCRIMINATING BOUND IS `2^128`, AND IT IS NOW STATED AS SUCH.** A packed
+`Challenge`/`Scalar Challenge`/`Bulletproof_challenge` is `Challenge.length = 128` bits, so `2^128 ≤
+x` is exactly "x cannot be one" -- leg 2 is the check the docblock above has always described.
+
+⚠ ⚑ **THE MARGIN LEG MOVED FROM `2^250` TO `2^249` ON 2026-08-06, AND LEG 4 IS WHY THAT IS NOT A
+WIDENED PIN.** The re-baked forty came off `stepmain_step_r8_finalize`, and its slot 0
+(`combined_inner_product`, `Shifted_value.Type1`) is a **250-bit** field element -- one bit under the
+old threshold. `2^250` was a comfortable margin, not a property of the object, and a margin that
+happens to hold on one sample is a coincidence dressed as a check. So the margin is kept, one bit
+lower, and leg 4 NAMES how many slots sit in the bit that was given up: exactly one. A second slot
+falling below reds here rather than being absorbed by a further nudge. -/
 theorem the_width_signature_is_minas_own_layout :
     CHALLENGE_SLOTS.all (fun i =>
       decide (WRAP_PUBLIC_INPUT_MEASURED.getD i 0 < 2 ^ 128)) = true
     ∧ FIELD_SLOTS.all (fun i =>
-      decide (2 ^ 250 < WRAP_PUBLIC_INPUT_MEASURED.getD i 0)) = true
+      decide (2 ^ 128 ≤ WRAP_PUBLIC_INPUT_MEASURED.getD i 0)) = true
+    ∧ FIELD_SLOTS.all (fun i =>
+      decide (2 ^ 249 < WRAP_PUBLIC_INPUT_MEASURED.getD i 0)) = true
+    ∧ (FIELD_SLOTS.filter (fun i =>
+        decide (WRAP_PUBLIC_INPUT_MEASURED.getD i 0 < 2 ^ 250))).length = 1
     ∧ CHALLENGE_SLOTS.length = 21 ∧ FIELD_SLOTS.length = 8 := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- **`the_deferred_six_are_the_named_slots`** -- the six accessors are slots 0, 1, 2, 3, 4 and 9,
 and no two of them coincide. The second half is the anti-vacuity: six aliases of one number would
@@ -181,13 +196,20 @@ proof. -/
 theorem zeta_to_srs_length_and_zeta_to_domain_size_differ :
     DEF_ZETA_TO_SRS_LENGTH ≠ DEF_ZETA_TO_DOMAIN_SIZE := by decide
 
-/-- **`branch_data_is_two_proofs_at_domain_log2_twelve`** -- slot 29 DECOMPOSED rather than quoted.
-`(domain_log2 <<< 2) ||| proofs_verified` with `N2 = 0b11` (`prepared_statement.rs:131-139`), so 51
-says two recursion slots at a 2^12 step domain -- which is what the marshaller builds. A `51` that
-matched nothing would be a number in a dump. -/
-theorem branch_data_is_two_proofs_at_domain_log2_twelve :
-    WRAP_PUBLIC_INPUT_MEASURED.getD 29 0 = 12 * 4 + 3
-    ∧ WRAP_PUBLIC_INPUT_MEASURED.getD 29 0 = 51 := by
+/-- **`branch_data_is_two_proofs_at_domain_log2_fourteen`** -- slot 29 DECOMPOSED rather than quoted.
+`(domain_log2 <<< 2) ||| proofs_verified` with `N2 = 0b11` (`prepared_statement.rs:131-139`), so 59
+says two recursion slots at a 2^14 step domain -- which is what the marshaller builds. A `59` that
+matched nothing would be a number in a dump.
+
+⚠ ⚑ **IT WAS 51 AT `2^12` UNTIL 2026-08-06, AND THE MOVE IS THE STEP CIRCUIT'S.** The forty are
+`PreparedStatement::to_public_input(40)` on whatever step proof the marshaller made; that proof is
+`stepmain_step_r8_finalize` now — 10 347 rows at 67 public words, so its evaluation domain is `2^14`
+where `stepmain_smoke_r8_finalize` sat at `2^12`. `KimchiWrapMain.mkWrapWith` reads
+`KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2` for the same reason, so this number and the one the
+assembly DERIVES follow one source and cannot drift apart silently. -/
+theorem branch_data_is_two_proofs_at_domain_log2_fourteen :
+    WRAP_PUBLIC_INPUT_MEASURED.getD 29 0 = 14 * 4 + 3
+    ∧ WRAP_PUBLIC_INPUT_MEASURED.getD 29 0 = 59 := by
   refine ⟨?_, ?_⟩ <;> decide
 
 /-- **`the_tail_is_ten_zeros`** -- the eight feature flags, `uses_lookup` and the lookup value. The

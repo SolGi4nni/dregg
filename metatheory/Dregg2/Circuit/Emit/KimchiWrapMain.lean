@@ -578,9 +578,13 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      then TWO squeezes out of ONE permutation at lanes 0 and 1. `xi_correct` (`:895-902`),
      `b_correct` (`:1015-1026`, over `compute_challenges`' fifteen 128-bit lifts) and
      `combined_inner_product_correct` (`:951-1009`, a 47-entry Horner fold in ξ per point) are three
-     real `Field.equal` gadgets, and `finsponge_legs_take_both_field_equal_branches` measures BOTH of
-     the gadget's branches live in one emission — the finalizing block at difference 0, the other at
-     a nonzero difference — so no leg is a constant 1.
+     real `Field.equal` gadgets. ⚠⚑ **AND SINCE 2026-08-06 NONE OF THE THREE IS SATISFIED**:
+     `finsponge_has_no_witness_on_the_published_statement` measures both blocks at NONZERO
+     differences, so `(1 − finalized)·should_finalize` is `1` on the finalizing block and this rung
+     is UNSATISFIABLE on `stepmain_step_r8_finalize`. It passed while `prevWordVal` had override arms
+     answering `FIN_DEFERRED_*` at the three words — the statement contained the derivation because
+     this file put it there — and the step proof publishes its own statement now. That is undone work
+     on the STEP side and a fixpoint; the theorem is where it is written down.
      ⛑ **AND IT IS WHERE WRAP'S LARGEST REMAINING GATE GAP WAS.** The census that motivated this
      rung read **137 `(Poseidon × 11, Zero)` blocks of Mina's 261**; the two sponges are **61 per
      instance and 122 at `prevs = 2`** (`finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks`,
@@ -588,11 +592,12 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      so that is the wrap-scale figure too. ⚠ The residual TWO blocks are not this sponge's and are
      not yet attributed; and the `Zero` overshoot grows with the win, because each block ends in its
      own `Zero` and each squeeze is followed by a σ-only probe.
-     ⚠ **WHAT IT COSTS: three packed statement words stop being fixtures.** The finalizing block's
-     `combined_inner_product`, `b` and `xi` are now `FIN_DEFERRED_*`, a memo closed by
-     `fin_deferred_words_are_the_derivation` and refused at every emission. Those are x_hat MSM
-     entries 32/33, 34/35 and 47, so `xhatOut 67` moves and **every `wrapmain_wrap_*.json` from
-     `w6_xhat` up re-emits**. The SMOKE shape does not move (`xhatSel 5` selects none of them).
+     ⚠ **WHAT IT COSTS: three packed statement words that the step proof does not carry.** The
+     finalizing block's `combined_inner_product`, `b` and `xi` are `FIN_DEFERRED_*`, a memo closed by
+     `fin_deferred_words_are_the_derivation` and refused at every emission — but those are DERIVED
+     values, and the published statement's words 27, 28 and 37 are not them. They reach `xhatScalar`
+     no longer; `KimchiWrapMainField.the_published_statement_does_not_carry_the_derived_words` names
+     all six words at issue across this rung, `w11_wraphack` and `w9_prev`.
      ⚠ **AND THE `EndoMulScalar` DIVERGENCE IS THIS RUNG'S SHAPE, NOT ITS COUNT.** Mina's blob has
      `EndoMulScalar × 120` twice — `compute_challenges` (`:1012-1013`) lifting all fifteen
      bulletproof challenges in ONE unbroken run, once per instance — plus `×24` twice and `×16` six
@@ -736,12 +741,17 @@ measurement that sizes it. None of them is a value this file fakes and calls der
 -- `fin_deferred_words_are_the_derivation` closed "by `rfl` IN THE KERNEL" while no such theorem
 -- existed at all; it exists now, and it is compiled, and the docblocks say so.
 -- Nothing else in this namespace is compiler-trusted.
+-- ⚑ `wraphack_digest_is_the_emitted_squeeze` joined them on 2026-08-06. Its first three legs used to
+-- close by kernel `rfl` — because `prevWordVal` had an override arm making one side of the equation
+-- the other side's definition, so nothing had to reduce. With the statement PUBLISHED the equation
+-- is real, and reducing sixteen Poseidon permutations against a numeral overflows the kernel stack.
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMain
   except bullet_solves_g_on_curve_and_equal_g_is_one
          close_witness_is_the_bullet_verdict
          fin_deferred_words_are_the_derivation
-         finsponge_legs_take_both_field_equal_branches
+         finsponge_has_no_witness_on_the_published_statement
          finsponge_assert_reds_if_the_other_block_claims_should_finalize
          finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks
+         wraphack_digest_is_the_emitted_squeeze
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

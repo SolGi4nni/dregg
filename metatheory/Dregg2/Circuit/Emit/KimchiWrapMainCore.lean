@@ -2678,9 +2678,9 @@ with W-PREV. **This rung is word 11 and nothing else is left.**
 
 **Does:** word 11 becomes a public word this circuit DERIVES, so every one of `wrap_main`'s
 twenty-four pinned statement words is derived; packed words 55 and 56 stop being fixtures and become
-squeezes (§15c″ is the value side of that, and `wraphack_digest_is_the_statement_word` is the pin
-that the two agree); `old_bp_chals` acquires its only consumer; and `prev_step_accs` acquires a
-second one.
+squeezes (⚠ — see below: since 2026-08-06 they are squeezes the PUBLISHED statement does not carry,
+which `wraphack_digest_is_the_emitted_squeeze` states as a refusal); `old_bp_chals` acquires its
+only consumer; and `prev_step_accs` acquires a second one.
 
 **Does not:** `sg_old` does NOT leave `WRAP_UNCONSUMED`. Hashing a free witness into a statement word
 that an MSM over free scalars consumes, whose output is itself absorbed and unconsumed, does not
@@ -5939,11 +5939,19 @@ def shapeWrap : WrapShape :=
   -- moved, `xhatOut 67` was UNCHANGED — because `whSgOld` was a SECOND copy of `sg_old` still
   -- reading `PastaPoseidonFq.PREVCOMM_XY`, so the emitted §21 rows (which read the transcript's
   -- cells) and the packed words the MSM consumes had come apart. A green refusal check was
-  -- evidence of the defect, not of its absence. **WHAT RE-EMITS:** every `wrapmain_wrap_*.json`.
-  -- The SMOKE shape's pair is again unmoved — `xhatSel 5` selects none of entries 65/66.
+  -- evidence of the defect, not of its absence.
+  -- ⚑⚑ **AND ON 2026-08-06 IT STOPPED BEING A LITERAL PAIR AT ALL.** The MSM's scalars are the step
+  -- proof's own published `Types.Step.Statement` (`STEP_PUBLIC_IN`) against its own domain's
+  -- Lagrange basis, so the fold's output IS the public-input commitment `kimchi::verifier` computed
+  -- for that proof — `KimchiWrapMainField.the_xhat_msm_is_this_proofs_public_input_commitment`.
+  -- Written as the fixture's own words rather than as two numerals so the memo and the value it
+  -- must equal have ONE source and a re-export moves both; `EmitWrapMainJson` still re-derives
+  -- `xhatOutOf` and REFUSES on disagreement. **WHAT RE-EMITS:** every `wrapmain_wrap_*.json` AND
+  -- every `wrapmain_smoke_*.json` — the smoke pair moved too this time, because the base table and
+  -- every scalar moved and `xhatSel 5` selects from the same 67.
   , xhatXY :=
-      (4022490419696914974552329481440292907479784771610225258625532911088680787709,
-       10670339750370241841725935164004242674693458148521342109140844533550760005700) }
+      (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 0 0,
+       Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBCOMM_XY.getD 1 0) }
 
 /-- A small shape for the in-CI `#guard`s (the committed one is emitted by the driver). -/
 def shapeSmoke : WrapShape :=
@@ -5958,9 +5966,12 @@ def shapeSmoke : WrapShape :=
   -- reads is a public fixture.
   , xhatEntries := xhatSel 5
   -- ⚑ `xhatOutOf (xhatSel 5)`, closed by `rfl` IN THE KERNEL by
-  -- `xhat_smoke_shape_absorbs_the_msm_output`.
+  -- `xhat_smoke_shape_absorbs_the_msm_output`. ⚠ It MOVED on 2026-08-06: the bases are the step
+  -- proof's own domain's now and every scalar is a published statement word, so a five-entry subset
+  -- of the same 67 is a different point. Unlike the four previous moves, this one is NOT confined to
+  -- the wrap shape — all thirty smoke rungs re-emit.
   , xhatXY :=
-      (16939429680523055563406117440808118430703004205774435970856079172456077167531,
-       12956915833716130635753754766705188581923939059745973521002626957608324504831) }
+      (451248160371249392551674732251582055375504469355824347021701436595532393133,
+       12949190268820875210097164267897441826420200650509082217547608746165978449665) }
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

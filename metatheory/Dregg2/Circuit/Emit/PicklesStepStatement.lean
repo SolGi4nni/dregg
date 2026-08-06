@@ -1,11 +1,13 @@
 /-
 # Dregg2.Circuit.Emit.PicklesStepStatement — `Types.Step.Statement`, DERIVED, not transcribed.
 
-⚑ **WHAT THIS MODULE IS FOR.** `KimchiStepWrapChain`'s
-`the_chain_stops_at_split_because_there_is_no_packed_statement` says the wrap ladder above `w6_xhat`
+⚑ **WHAT THIS MODULE IS FOR.** `KimchiStepWrapChain`'s retired
+`the_chain_stops_at_split_because_there_is_no_packed_statement` said the wrap ladder above `w6_xhat`
 reads the packed words of a `Types.Step.Statement` and *"dregg's step proof has no such statement —
-its public input is twelve unconstrained `Fp` elements."* The repair is on the STEP side: the step
-circuit's public input has to **be** a step statement. This module is the statement's SHAPE, derived
+its public input is twelve unconstrained `Fp` elements."* The repair was on the STEP side: the step
+circuit's public input has to **be** a step statement. ⚑ **It is, since 2026-08-06** — the ceiling
+moved to `the_chain_stops_at_the_statements_derived_words`, which is about six WORDS and not about
+the object's shape. This module is the statement's SHAPE, derived
 from the OCaml spec and cross-checked against openmina's Rust, so that neither the step emitter nor
 the wrap-side x_hat table has to carry a transcribed constant.
 

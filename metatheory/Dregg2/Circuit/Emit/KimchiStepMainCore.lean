@@ -4746,8 +4746,8 @@ def finProgOf (W : FinWire) (C : FinCfg) : FinProg :=
 
 /-! ## ⚑⚑ §24 — **THE PUBLIC INPUT IS A `Types.Step.Statement`.**
 
-`KimchiStepWrapChain.the_chain_stops_at_split_because_there_is_no_packed_statement` named this as the
-one thing the wrap ladder above `w6_xhat` cannot be given from the wrap side: *"`w7_split` emits
+`KimchiStepWrapChain`'s retired `the_chain_stops_at_split_because_there_is_no_packed_statement` named
+this as the one thing the wrap ladder above `w6_xhat` could not be given from the wrap side: *"`w7_split` emits
 `split_field`'s `2·hi + is_odd = x` over the packed words of `Types.Step.Statement`
 (`composition_types.ml:1453-1459`), and `w9_prev`, `w11_wraphack` and `w13_finsponge` all read that
 same 57-word object … So there is no 12-entry `split_field` to emit — the gadget is upstream's

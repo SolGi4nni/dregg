@@ -207,11 +207,12 @@ shape as `lrPointQ i = xhatBase (5 + i % 50)`, which `onCurveQ` was structurally
 noticing. The exporter therefore checks the RE-DERIVATION, and additionally asserts that the
 2^16-domain basis differs from this one.
 
-⚠ **THE WIDTHS ARE ALL 255 AND THAT IS NOT A CHOICE.** These twelve scalars are unconstrained `Fp`
-elements of a Lean-emitted kimchi circuit — NOT the packed `Types.Step.Statement` a Pickles step
-rule carries, whose 57 words expand to 67 entries at widths 255/128/1. So every entry takes the
-`Add_with_correction` path at `chunks_needed 255 = 51` chunks, `actual_shift = 255`, and there is no
-`Cond_add` entry at all. -/
+⚠ ⚑ **THE WIDTHS ARE NOT UNIFORM, AND `STEP_XHAT_BITS` IS WHERE THEY ARE.** These scalars ARE the
+packed `Types.Step.Statement` a Pickles step rule carries: `wrap_verifier.ml:542-548` expands its 57
+words into 67 entries at **15 at 255 bits, 40 at 128, 12 at 1**. The twelve one-bit entries take
+`` `Cond_add `` (`:573-577`) and run NO ladder, so `STEP_XHAT_CORRECTION_XY` below is indexed over
+the **55**-entry `Add_with_correction` partition and not over all 67. The exporter refuses to write
+this file if a published word does not fit its slot. -/
 
 /-- `log2` of the step proof's own evaluation domain — the wire's `branch_data.domain_log2`, and
 `(domain_log2 <<< 2) ||| proofs_verified` is Mina's public-input slot 29. -/

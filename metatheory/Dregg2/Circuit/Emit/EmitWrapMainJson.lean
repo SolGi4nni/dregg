@@ -186,18 +186,20 @@ def main : IO Unit := do
   -- ⚑ **THE SELECTION'S OWN OBLIGATIONS.** An index past the entry space reads a `getD` default —
   -- `(0,0)`, kimchi's flattening of infinity, off `y² = x³ + 5` — as a BASE, and a repeated index
   -- gives one entry two ladders over one variable block. Both place, both prove nothing.
-  if s.xhatEntries.any (fun i => i ≥ XHAT_ENTRY_SPACE) then
+  if s.xhatEntries.any (fun i => i ≥ XHAT_TERMS_FULL) then
     throw (IO.userError s!"⚑ xhatEntries LEAVES THE ENTRY SPACE: {s.xhatEntries} names an index \
-      ≥ {XHAT_ENTRY_SPACE} (Mina's {XHAT_TERMS_FULL} packed-statement entries, then this \
-      pipeline's own step proof's {XHAT_OWN_TERMS}). Its base would be the `getD` default.")
+      ≥ {XHAT_TERMS_FULL}, `wrap_verifier.ml:542-548`'s own expansion of the packed \
+      `Types.Step.Statement`. Its base would be the `getD` default.")
   if s.xhatEntries.dedup.length != s.xhatEntries.length then
     throw (IO.userError s!"⚑ xhatEntries NAMES AN ENTRY TWICE: {s.xhatEntries}.")
-  -- ⚑ …and it does not STRADDLE the two spaces. They have different bases, different scalar
-  -- sources and different widths; one MSM over both is an MSM over no proof's public input.
-  if s.xhatEntries.any xhatIsOwn && s.xhatEntries.any (fun i => !xhatIsOwn i) then
-    throw (IO.userError s!"⚑ xhatEntries STRADDLES TWO ENTRY SPACES: {s.xhatEntries} mixes Mina's \
-      packed-statement entries with this pipeline's own step proof's. The fold would run over two \
-      Lagrange bases at two domains.")
+  -- ⚑ …and the step proof it is about publishes exactly that many words. Until 2026-08-06 there
+  -- were TWO entry spaces here — Mina's 67 and a disjoint twelve for a step rule that published
+  -- unconstrained `Fp` elements — and this guard refused a selection that straddled them. There is
+  -- one space now, so the straddle check is replaced by the fact that made it unnecessary.
+  if Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC != XHAT_TERMS_FULL then
+    throw (IO.userError s!"⚑ THE STEP PROOF DOES NOT PUBLISH A PACKED STATEMENT: \
+      STEP_PUBLIC is {Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC} against \
+      {XHAT_TERMS_FULL} entries. `xhatScalar` would read `getD` defaults into the MSM.")
   -- ⚑ **THE MEMO'S OBLIGATION, DISCHARGED AT EVERY EMISSION.** `WrapShape.xhatXY` carries the pair
   -- `wrap_verifier.ml:617` absorbs so that a dozen kernel theorems do not each re-reduce the MSM.
   -- That is only sound if the pair IS the MSM's output, and this is where any shape — committed or
