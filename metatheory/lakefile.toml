@@ -324,11 +324,19 @@ globs = [
   # so the marginal cost is these 46 modules themselves (4-25 s each, two outliers at ~100 s:
   # `ArchiveLabDemonstratorEmit`, `CrewFieldMissionRuntime`).
   #
-  # ⚠ FIVE OF THEM CARRY A ROOT `def main` (`ArchiveLabDemonstrator`, `ArchiveLabDemonstratorEmit`,
-  # `ExpeditionDemonstratorEmit`, `NightWatchLoop`, `NightWatchLoopWire`). That is why this is a
-  # direct `globs` list and not a re-export aggregate: an aggregate importing two of them is a
-  # duplicate `main`, the same reason recorded for the Pickles drivers above. A `globs` entry
-  # compiles each as its OWN module, so the `main`s never meet.
+  # ⚠ TWO OF THEM CARRY A ROOT `def main` (`ArchiveLabDemonstratorEmit`, `ExpeditionDemonstratorEmit`).
+  # That is why this is a direct `globs` list and not a re-export aggregate: an aggregate importing
+  # both is a duplicate `main`, the same reason recorded for the Pickles drivers above. A `globs`
+  # entry compiles each as its OWN module, so the `main`s never meet.
+  #
+  # ⚠ CORRECTED 2026-08-05. This line read "FIVE OF THEM", naming `ArchiveLabDemonstrator`,
+  # `NightWatchLoop` and `NightWatchLoopWire` as well. None of those three has a `def main`. The
+  # miscount came from a `grep "def main"` matching `def maintenanceProcedure`,
+  # `def maintenanceContribution` and `def maintenanceOfCode?` — a substring, not the declaration.
+  # Verified at HEAD with `grep -lE '^\s*def main\b' *.lean` over the whole PathOfAngels directory:
+  # exactly three modules carry one, and the third is `EmitMain`, rooted in the block above.
+  # The `globs` shape was and remains correct; only its stated justification was wrong. A false
+  # comment that justifies a structural choice is how the next reader inherits the error.
   "Dregg2.Games.PathOfAngels.ActivatedContentExamples",  # 15 comp
   "Dregg2.Games.PathOfAngels.ArchiveLab",  # 17 ax
   "Dregg2.Games.PathOfAngels.ArchiveLabDemonstrator",  # 20 comp
