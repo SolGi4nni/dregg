@@ -2,9 +2,11 @@
 //!
 //! ## ⛑⛑ STATUS FIRST, because every other sentence here describes a mechanism rather than a result
 //!
-//! **This fold has never produced a root.** Measured 2026-08-06 on a 96 GB box: ONE
-//! [`prove_accumulator_segment`] call — a single 8-row leaf wrap — reached a **73.3 GB peak memory
-//! footprint** and was killed. The cause is the descriptor's WIDTH: `mina_phase2_chain_leaf` folds
+//! **This fold has never produced a root.** Measured 2026-08-06: ONE [`prove_accumulator_segment`]
+//! call — a single 8-row leaf wrap — reached a **68.3 GiB peak memory footprint**
+//! (`73,344,091,528` bytes, **71% of a 96 GiB box**; `73.3 GB` in decimal units, and both are
+//! written down because a unit slip is how a figure drifts into a flattering one) and was killed.
+//! The cause is the descriptor's WIDTH: `mina_phase2_chain_leaf` folds
 //! 46 leaves and 45 folds in 1,037 s over a **469**-column descriptor, and the accumulator segment
 //! is **3,048** — the flat `RCB_WIDTH` the sound row costs. `the_leaf_wrap_width_is_the_measured_wall`
 //! in `tests/mina_accumulator_fold.rs` keeps that ratio in the tree.

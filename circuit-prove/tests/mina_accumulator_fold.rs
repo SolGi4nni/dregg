@@ -36,11 +36,16 @@
 //!
 //! ## ⛑⛑ THE THREE PROVING TESTS DO NOT RUN, AND "SLOW" IS THE FLATTERING HALF
 //!
-//! Measured 2026-08-06 on a 96 GB box, `/usr/bin/time -l` on the release binary: ONE recursion leaf
-//! wrap of ONE 8-row segment reached a **peak memory footprint of 73.3 GB** (`73,344,091,528` bytes)
-//! and was killed before finishing; an earlier run under normal co-tenant load was SIGKILLed by the
-//! OOM killer. So these three are `#[ignore]`d for a **measured memory wall**, not for being slow,
-//! and calling them slow would be the flattering member of a pair.
+//! Measured 2026-08-06, `/usr/bin/time -l` on the release binary: ONE recursion leaf wrap of ONE
+//! 8-row segment reached a **peak memory footprint of 68.3 GiB** — `73,344,091,528` bytes, **71% of
+//! a 96 GiB box** — and was killed before finishing; an earlier run under normal co-tenant load was
+//! SIGKILLed by the OOM killer. So these three are `#[ignore]`d for a **measured memory wall**, not
+//! for being slow, and calling them slow would be the flattering member of a pair.
+//!
+//! ⚠ That figure is `73.3 GB` in DECIMAL units and both are written down, because the first draft of
+//! `the_leaf_wrap_width_is_the_measured_wall` compared the decimal number against a binary threshold
+//! and went red. Quoting one member of a unit pair is the same shape of error as quoting the
+//! flattering member of a bound pair.
 //!
 //! ⚑ **AND THE CAUSE IS THE WIDTH, WHICH IS THE SAME WALL ONE RAIL UP.**
 //! `PastaLadderThread` cured the ROW-LOCAL wall — a sound ladder was `731,136` columns in one row —
@@ -150,7 +155,7 @@ fn the_rungs_resolve_to_the_lean_artifacts() {
 /// ⛑⛑ **THE MEASURED WALL, KEPT IN THE TREE SO IT MOVES WHEN THE WIDTH DOES.**
 ///
 /// The three proving tests above are `#[ignore]`d because ONE recursion leaf wrap of ONE 8-row
-/// segment reached a **73.3 GB peak memory footprint** on a 96 GB box (2026-08-06,
+/// segment reached a **68.3 GiB peak memory footprint** — 71% of a 96 GiB box (2026-08-06,
 /// `/usr/bin/time -l`). The cause is the descriptor's WIDTH, and this is that ratio as an assertion:
 /// the phase-2 chain — which folds 46 leaves and 45 folds in 1,037 s in production — runs over a
 /// **469**-column descriptor, and the accumulator segment is **3,048**.
@@ -182,9 +187,19 @@ fn the_leaf_wrap_width_is_the_measured_wall() {
          ratio ever drops below 6x, the wrap is worth re-measuring",
         a.trace_width
     );
-    // 73.3 GB — stated as a number so a later run can be compared against it rather than against a
-    // memory of it.
-    assert!(MEASURED_LEAF_PEAK_BYTES > 70 * 1024 * 1024 * 1024);
+    // ⚑ 68.3 GiB. Stated in BOTH unit systems and asserted in both, because the first draft of this
+    // assertion compared the DECIMAL figure (73.3 GB) against a BINARY threshold (70 GiB) and went
+    // red — a unit slip is exactly how a memory figure drifts into a flattering one.
+    assert!(
+        MEASURED_LEAF_PEAK_BYTES > 73 * 1_000_000_000,
+        "73.3 GB decimal"
+    );
+    assert!(
+        MEASURED_LEAF_PEAK_BYTES > 68 * 1024 * 1024 * 1024,
+        "68.3 GiB binary"
+    );
+    // …and that is 71% of a 96 GiB box, which is why a co-tenant run met the OOM killer.
+    assert!(MEASURED_LEAF_PEAK_BYTES * 10 > 7 * 96 * 1024 * 1024 * 1024);
 }
 
 /// ⚑ **POLARITY 1 — THE CHAIN FOLDS, AND THE ROOT'S CLAIM IS THE WHOLE CHAIN'S.**
@@ -194,7 +209,7 @@ fn the_leaf_wrap_width_is_the_measured_wall() {
 /// `when_last_row` gates FORCE that terminal point to be the identity, so the discharge is in the
 /// AIR rather than in a host read.
 #[test]
-#[ignore = "MEASURED WALL, not slowness: one leaf wrap peaked at 73.3 GB (see the header)"]
+#[ignore = "MEASURED WALL, not slowness: one leaf wrap peaked at 68.3 GiB (see the header)"]
 fn the_split_chain_folds_and_the_root_carries_both_endpoints() {
     let cfg = accumulator_config();
     let segs = segments();
@@ -240,7 +255,7 @@ fn the_split_chain_folds_and_the_root_carries_both_endpoints() {
 /// This is the test that would go green if the carry were replaced by re-pinned public inputs, and
 /// it is why the carry is not a re-pin.
 #[test]
-#[ignore = "MEASURED WALL, not slowness: one leaf wrap peaked at 73.3 GB (see the header)"]
+#[ignore = "MEASURED WALL, not slowness: one leaf wrap peaked at 68.3 GiB (see the header)"]
 fn the_fold_refuses_two_segments_that_do_not_chain() {
     let cfg = accumulator_config();
     let segs = segments();
@@ -272,7 +287,7 @@ fn the_fold_refuses_two_segments_that_do_not_chain() {
 /// the discharge is forced by that one leaf's own AIR. Stated because a fold that only ever ran at
 /// depth ≥ 2 would leave the base case untested.
 #[test]
-#[ignore = "MEASURED WALL, not slowness: this exact test peaked at 73.3 GB (see the header)"]
+#[ignore = "MEASURED WALL, not slowness: this exact test peaked at 68.3 GiB (see the header)"]
 fn a_one_segment_chain_is_the_final_rung() {
     let cfg = accumulator_config();
     let t = full_trace();
