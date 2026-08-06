@@ -1370,17 +1370,23 @@ def execute (before : State) (command : Command) : Option (AcceptedTransition be
               | cons payload rest => simp [events, numberEvents] at hevents
             some ⟨events, after, hne, hreplay⟩
 
-theorem execute_replays_exactly {before : State} {command : Command}
-    {transition : AcceptedTransition before command}
-    (_h : execute before command = some transition) :
+/-- The replay guarantee is carried by `AcceptedTransition`'s FIELD, so every
+inhabitant of the type has it whether or not `execute` produced it.  This used to
+be stated with a hypothesis `execute before command = some transition` that the
+proof ignored, under the name `execute_replays_exactly` — a name claiming
+something about `execute` that the term never used.  `execute` is the only
+producer of this type in this module; that is the fact doing the work, and it is
+structural, not a theorem this statement proves. -/
+theorem accepted_transition_carries_its_exact_replay {before : State} {command : Command}
+    (transition : AcceptedTransition before command) :
     replay before transition.events = some transition.after :=
   transition.replay_exact
 
-theorem replay_deterministic (before : State) (events : List EventEnvelope)
-    (left right : State) (hl : replay before events = some left)
-    (hr : replay before events = some right) : left = right := by
-  rw [hl] at hr
-  exact Option.some.inj hr
+/- `replay_deterministic` used to sit here: "if `replay b e = some l` and
+`replay b e = some r` then `l = r`".  That is true of every Lean function applied
+twice to the same arguments and says nothing about `replay`, this reducer, or
+event sourcing.  DELETED rather than renamed — there is no non-trivial
+determinism fact to state, because `replay` is a function. -/
 
 theorem choice_receipt_uses_exact_delta (receipt : ChoiceReceipt) :
     receipt.delta = receipt.choice.delta := receipt.delta_exact
@@ -1564,7 +1570,17 @@ private def fixtureEnrollment (state : State) (role : CrewRole)
   predecessorSequence := state.sequence
 }⟩
 
-theorem hostile_handoff_authority_substitutions_are_refused :
+/-- Five per-field rechecks in `applyHandoff`, each exercised with an admission
+over the SAME mutated carrier, so the generic `carrier != admission` gate is not
+what refuses them.
+
+⚠ This was named `hostile_handoff_authority_substitutions_are_refused` and
+carried a sixth conjunct pairing a route-mutated carrier with the UNMUTATED
+carrier's admission.  That conjunct tested nothing about routes: it is caught by
+`carrier != admission.authenticatedCarrier`, exactly like any other mutation
+would be.  The route and consent fields have their own theorem below, and it
+records that they are NOT independently rechecked. -/
+theorem hostile_handoff_field_substitutions_are_refused :
     let briefed := (execute fixtureAfterMaintenance
       (.deliverBriefing .engineer fixtureEngineer)).get (by native_decide) |>.after
     let good := fixtureCarrier briefed .engineer .maintenanceSpine true
@@ -1575,13 +1591,39 @@ theorem hostile_handoff_authority_substitutions_are_refused :
       { good.body.predecessor with sequence := good.body.predecessor.sequence + 1 } } }
     let badPack := { good with body := { good.body with content :=
       { good.body.content with packDigest := fixtureDigest 255 } } }
-    let badAction := { good with body := { good.body with recommendedRoute := .sealedNave } }
     execute briefed (.recordHandoff badSigner (fixtureAdmission badSigner)) = none ∧
     execute briefed (.recordHandoff badRecipient (fixtureAdmission badRecipient)) = none ∧
     execute briefed (.recordHandoff badCounter (fixtureAdmission badCounter)) = none ∧
     execute briefed (.recordHandoff badRoot (fixtureAdmission badRoot)) = none ∧
-    execute briefed (.recordHandoff badPack (fixtureAdmission badPack)) = none ∧
-    execute briefed (.recordHandoff badAction (fixtureAdmission good)) = none := by
+    execute briefed (.recordHandoff badPack (fixtureAdmission badPack)) = none := by
+  native_decide
+
+/-- ⚠ MEASURED, not a refusal: `applyHandoff` rechecks world, content, mission,
+session, seat, signer, recipient, the counter chain, the predecessor root, the
+briefing and single-use — and never looks at `recommendedRoute` or `deepConsent`.
+Both are copied straight onto the receipt (`applyHandoff`), and both are
+load-bearing: `specialistSupport` gates `applyRoute`, and `unanimousDeepB` gates
+all three deep terminals.  Change either in the carrier and hand in an admission
+over that same carrier, and the reducer records the changed value.
+
+This is not a soundness hole — `HandoffAdmission` is `private mk ::` over the
+WHOLE `SignedHandoffCarrier`, so nothing outside this module can mint one, and
+the last two conjuncts show a carrier the admission does not cover is refused.
+It is stated as an accepted-and-recorded fact rather than hidden inside a
+refusal, because the reducer's own coverage stops at the admission here. -/
+theorem handoff_route_and_deep_consent_are_bound_only_by_the_admission :
+    let briefed := (execute fixtureAfterMaintenance
+      (.deliverBriefing .engineer fixtureEngineer)).get (by native_decide) |>.after
+    let good := fixtureCarrier briefed .engineer .maintenanceSpine true
+    let otherRoute := { good with body := { good.body with recommendedRoute := .sealedNave } }
+    let otherConsent := { good with body := { good.body with deepConsent := false } }
+    (execute briefed (.recordHandoff otherRoute (fixtureAdmission otherRoute))).map
+      (fun accepted => accepted.after.handoffs.map HandoffReceipt.recommendedRoute) =
+        some [.sealedNave] ∧
+    (execute briefed (.recordHandoff otherConsent (fixtureAdmission otherConsent))).map
+      (fun accepted => accepted.after.handoffs.map HandoffReceipt.deepConsent) = some [false] ∧
+    execute briefed (.recordHandoff otherRoute (fixtureAdmission good)) = none ∧
+    execute briefed (.recordHandoff otherConsent (fixtureAdmission good)) = none := by
   native_decide
 
 theorem mechanical_draft_requires_exact_opaque_activation_to_debrief :
@@ -1771,10 +1813,41 @@ theorem exact_engineer_reenrollment_requires_both_later_day_recovery_steps :
     (execute recovered (.enrollNextWatch engineerAfter)).isSome := by
   native_decide
 
-theorem finalized_days_are_zero_based_and_recovery_is_strictly_later :
+/-- The GENERAL fact the old `finalized_days_are_zero_based_and_recovery_is_strictly_later`
+name claimed and did not have: it only checked that two private fixture constants
+differ by one, while the enforcement is the `recoveryVisit` guard inside
+`applyServing`, which was proven nowhere.
+
+For EVERY state and EVERY serving receipt: once the watch is `debriefed`, a day
+that is not strictly after the mission day cannot be served.  `galleyVisit` needs
+`phase = .galley`, `recoveryVisit` needs the strict inequality, and `applyServing`
+refuses when neither holds.  No fixture, no `native_decide`, no host time. -/
+theorem recovery_serving_requires_a_strictly_later_finalized_day
+    (state : State) (receipt : ServingReceipt)
+    (hphase : state.phase = .debriefed)
+    (hday : receipt.day.dayIndex ≤ state.policy.raw.missionDay.dayIndex) :
+    applyServing state receipt = none := by
+  unfold applyServing
+  cases hexpected : expectedServingReceipt? state receipt.day receipt.visitor receipt.choice with
+  | none => simp
+  | some expected =>
+      simp only [hphase]
+      cases hrecovery : state.recovery <;> simp_all
+
+/-- The falsifier for the floor above plus the fixture constants the private
+recovery fixtures rely on.  The gate is SATISFIABLE (the next finalized day is
+served) and REFUTABLE (the mission day itself is refused, with a rotation-correct
+recovery serving so the refusal is the day gate and not the rotation). -/
+theorem the_strictly_later_day_gate_refuses_the_mission_day_and_admits_the_next :
     rotationForDay 0 = .pressureWeather ∧
-    fixtureDay.dayIndex = 5 ∧ fixtureRecoveryDay.dayIndex = fixtureDay.dayIndex + 1 := by
-  decide
+    fixtureDay.dayIndex = 5 ∧ fixtureRecoveryDay.dayIndex = fixtureDay.dayIndex + 1 ∧
+    rotationForDay fixtureDay.dayIndex = ServingChoiceId.rotation .wrappedFruit ∧
+    ServingChoiceId.tag .wrappedFruit = .recovery ∧
+    execute fixtureDeepDebriefed
+      (.claimServing fixtureDay fixtureEngineer .wrappedFruit) = none ∧
+    (execute fixtureDeepDebriefed
+      (.claimServing fixtureRecoveryDay fixtureEngineer .blueTray)).isSome := by
+  native_decide
 
 private def fixtureDailySaturation : List Command :=
   (List.range MAX_COMMONS_VISITS).map fun index =>
@@ -1794,8 +1867,337 @@ theorem different_pack_digest_forces_policy_inequality (left right : Policy)
   intro hpolicy
   exact hpack (congrArg (fun policy => policy.raw.content.packDigest) hpolicy)
 
-#assert_axioms execute_replays_exactly
-#assert_axioms replay_deterministic
+/-! ## A design instrument over the authored watch
+
+`Policy` has no public producer, so this lives beside the fixtures rather than in
+its own module: nothing outside this file can build a `State` to walk.
+
+Everything below walks the REAL machine.  Every successor is `execute`, every
+refusal is `choicePreconditionB`, every terminal is the one a state actually
+committed into `outcome` or the one `expectedOutcomeReceipt?` offers.  There is
+deliberately no second cost model, because `ChoiceDelta` is NOT a sufficient
+statistic for a choice and an analysis over the delta rows alone calls two live
+actions dead:
+
+* `misventRelief` ⟨1,1,1,0,∅,false⟩ is worse than `replaySharedIntervals`
+  ⟨1,1,0,1,{artifact},false⟩ on every cost axis, and is the only choice that does
+  not advance `encounterIndex` (`plannedPayloads?`).  It is a retry, not a move —
+  and it is the ONE place any budget in this module ever bites.
+* `ignoreMovingClearance` ties `markMovingClearance` on all four costs and on
+  `causesInjury`, and is weakly worse only in artifacts, which can never hurt
+  (`canSpendB` refuses only non-allowlisted ones).  They diverge in `updateFlags`:
+  `navigationDebt` versus `entryMarked`, and `expectedTerminalId?` reads
+  `navigationDebt` FIRST, ahead of every authored row.
+
+SCOPE — and the names say it.  The prelude is the fixture one: the galley visit,
+the seven maintenance steps, and four handoffs that all recommend the same route
+with the same deep consent.  Six roots, one per (route, consent).  That is the
+permissive setting for every route-sensitive gate here (`specialistSupport` is 3
+of 3, `unanimousDeepB` holds exactly when consent is set), but it is one prelude
+and not the whole `Policy` space, and nothing below claims otherwise.
+
+The alphabet walked is `choose` and `extract`.  The enumeration is NOT
+bounded-depth: `night_watch_reachable_set_is_closed_under_choose_and_extract`
+proves the list contains all six roots and is closed under one step of every
+command in that alphabet, so it is the exact reachable set for that alphabet from
+those roots. -/
+
+private def allChoiceIds : List ChoiceId :=
+  [ .markMovingClearance, .observeSecondMovement, .ignoreMovingClearance
+  , .braceObservedRhythm, .overdriveTruss, .withdrawAtTruss
+  , .replaySharedIntervals, .commitPrivateIntervals, .misventRelief
+  , .triangulateFullSequence, .preserveRawTrace, .moveBeforeRepeat
+  , .screenCorridor, .waitMovementCycle, .abandonShoal
+  , .performTwoRoleHandoff, .recordClosedThreshold, .withdrawFromThreshold
+  , .exchangeCalibrationBlock, .photographCradle, .leaveCavityUntouched ]
+
+private def allExtractionChoices : List ExtractionChoice := [.returnNow, .descendFurther]
+
+private def allTerminalIds : List TerminalId :=
+  [ .authored .maintenanceReturn, .authored .maintenanceDeep
+  , .authored .signalReturn, .authored .signalDeep
+  , .authored .sealedReturn, .authored .sealedDeep
+  , .mechanicalDraft .maintenanceReturnInjured, .mechanicalDraft .maintenanceWithdrawn
+  , .mechanicalDraft .signalReturnPartial, .mechanicalDraft .signalCorridorLost
+  , .mechanicalDraft .sealedReturnClosed ]
+
+/-- Nothing below can be an accident of a hand-written list that missed a
+constructor: each enumeration is proven to contain every inhabitant of its type
+by case analysis, not by counting. -/
+theorem choice_extraction_and_terminal_enumerations_are_complete :
+    (∀ choice : ChoiceId, choice ∈ allChoiceIds) ∧
+    (∀ choice : ExtractionChoice, choice ∈ allExtractionChoices) ∧
+    (∀ terminal : TerminalId, terminal ∈ allTerminalIds) := by
+  refine ⟨fun choice => ?_, fun choice => ?_, fun terminal => ?_⟩
+  · cases choice <;> decide
+  · cases choice <;> decide
+  · cases terminal <;> rename_i outcome <;> cases outcome <;> decide
+
+private def containsState (states : List State) (state : State) : Bool :=
+  states.any fun other => decide (other = state)
+
+/-- One step of the watch alphabet, through `execute` — never through a
+re-derived transition. -/
+private def stepFrom (state : State) : List State :=
+  (allChoiceIds.filterMap fun choice => (execute state (.choose choice)).map (·.after)) ++
+  (allExtractionChoices.filterMap fun choice => (execute state (.extract choice)).map (·.after))
+
+private def freshFrom (seen : List State) (frontier : List State) : List State :=
+  frontier.foldl (fun acc state =>
+    (stepFrom state).foldl (fun acc' next =>
+      if containsState seen next || containsState acc' next then acc' else acc' ++ [next]) acc) []
+
+/-- Breadth-first layers, deduplicated against every earlier layer, so a state's
+layer index is its exact minimum command distance from a root. -/
+private def bfsLayers : Nat → List State → List State → List (List State)
+  | 0, _, _ => []
+  | fuel + 1, seen, frontier =>
+      if frontier.isEmpty then []
+      else frontier :: bfsLayers fuel (seen ++ freshFrom seen frontier) (freshFrom seen frontier)
+
+private def routeRoot? (route : Route) (consent : Bool) : Option State := do
+  let ready ← fixtureRouteReady? route consent
+  let committed ← execute ready (.commitRoute route)
+  some committed.after
+
+private def routeConsentGrid : List (Route × Bool) :=
+  [ (.maintenanceSpine, true), (.maintenanceSpine, false)
+  , (.signalGallery, true), (.signalGallery, false)
+  , (.sealedNave, true), (.sealedNave, false) ]
+
+private def nightWatchRoots : List State :=
+  routeConsentGrid.filterMap fun pair => routeRoot? pair.1 pair.2
+
+private def nightWatchLayers : List (List State) :=
+  bfsLayers 40 nightWatchRoots nightWatchRoots
+
+private def nightWatchReachable : List State := nightWatchLayers.flatten
+
+private def encounterStates : List State :=
+  nightWatchReachable.filter fun state => decide (state.phase = .encounters)
+
+/-- `filterMap` dropped nothing: all six (route, consent) preludes reach a
+committed route, in grid order, each after exactly seventeen events — the galley
+visit, seven maintenance steps, four briefings, four handoffs and the route
+commitment, one event apiece. -/
+theorem every_route_and_consent_prelude_commits_after_seventeen_events :
+    nightWatchRoots.length = 6 ∧
+    nightWatchRoots.map State.route = routeConsentGrid.map (fun pair => some pair.1) ∧
+    nightWatchRoots.all (fun state => decide (state.sequence = 17)) = true := by
+  native_decide
+
+/-- ⚑ THE COMPLETENESS CLAIM every result below rests on.  The enumerated list
+contains all six roots and every `execute`-successor of every state in it under
+the whole `choose`/`extract` alphabet.  A set containing the roots and closed
+under the transition relation contains everything reachable from the roots, so
+these are exhaustive results and not depth-limited ones. -/
+theorem night_watch_reachable_set_is_closed_under_choose_and_extract :
+    nightWatchRoots.all (fun state => containsState nightWatchReachable state) = true ∧
+    (nightWatchReachable.flatMap stepFrom).all
+      (fun state => containsState nightWatchReachable state) = true ∧
+    nightWatchLayers.map List.length = [6, 18, 54, 105, 138, 96, 62, 62, 62, 56, 44, 25, 13] ∧
+    nightWatchReachable.length = 741 ∧
+    (nightWatchReachable.foldl (fun acc state =>
+      if containsState acc state then acc else acc ++ [state]) []).length = 741 := by
+  native_decide
+
+/-! ### 1 — terminal reachability -/
+
+private def reachableTerminals : List TerminalId :=
+  allTerminalIds.filter fun terminal =>
+    nightWatchReachable.any fun state =>
+      state.outcome.any fun receipt => decide (receipt.terminal = terminal)
+
+private def offeredTerminals : List TerminalId :=
+  allTerminalIds.filter fun terminal =>
+    nightWatchReachable.any fun state =>
+      allExtractionChoices.any fun choice =>
+        (expectedOutcomeReceipt? state choice).any fun receipt =>
+          decide (receipt.terminal = terminal)
+
+private def terminalsForRoute (route : Route) : List TerminalId :=
+  allTerminalIds.filter fun terminal =>
+    nightWatchReachable.any fun state =>
+      decide (state.route = some route) &&
+        state.outcome.any fun receipt => decide (receipt.terminal = terminal)
+
+/-- ANSWER: no terminal is unreachable.  All eleven — six authored rows and five
+mechanical drafts — are both offered by `expectedOutcomeReceipt?` from a reachable
+state and actually committed into some reachable state's `outcome`, and the three
+routes partition them 4/4/3 with no terminal crossing a route. -/
+theorem every_terminal_is_reachable_and_the_routes_partition_them :
+    reachableTerminals = allTerminalIds ∧
+    offeredTerminals = allTerminalIds ∧
+    terminalsForRoute .maintenanceSpine =
+      [ .authored .maintenanceReturn, .authored .maintenanceDeep
+      , .mechanicalDraft .maintenanceReturnInjured
+      , .mechanicalDraft .maintenanceWithdrawn ] ∧
+    terminalsForRoute .signalGallery =
+      [ .authored .signalReturn, .authored .signalDeep
+      , .mechanicalDraft .signalReturnPartial, .mechanicalDraft .signalCorridorLost ] ∧
+    terminalsForRoute .sealedNave =
+      [ .authored .sealedReturn, .authored .sealedDeep
+      , .mechanicalDraft .sealedReturnClosed ] := by
+  native_decide
+
+/-! ### 2 — dead choices -/
+
+private def liveChoices : List ChoiceId :=
+  allChoiceIds.filter fun choice =>
+    nightWatchReachable.any fun state => (execute state (.choose choice)).isSome
+
+private def deadChoices : List ChoiceId :=
+  allChoiceIds.filter fun choice =>
+    !nightWatchReachable.any fun state => (execute state (.choose choice)).isSome
+
+/-- ANSWER: no choice is dead.  All twenty-one authored choices are accepted by
+`execute` from some reachable state — including the two a cost-row analysis
+would have retired. -/
+theorem no_authored_choice_is_dead_in_the_reachable_watch :
+    liveChoices = allChoiceIds ∧ deadChoices = [] ∧ allChoiceIds.length = 21 := by
+  native_decide
+
+/-- Why a `ChoiceDelta` analysis would have been wrong.  `misventRelief` is
+dominated on every cost axis by `replaySharedIntervals` and is still the only way
+to stay on an encounter; `ignoreMovingClearance` ties `markMovingClearance` on all
+four costs and on injury, differs only by an artifact it does not take, and sets a
+DIFFERENT flag — which is the flag `expectedTerminalId?` consults first. -/
+theorem cost_row_domination_does_not_survive_the_real_transition :
+    let atIntervals := (runCommands
+      ((fixtureRouteReady? .maintenanceSpine true).get (by native_decide))
+      [.commitRoute .maintenanceSpine, .choose .observeSecondMovement,
+       .choose .braceObservedRhythm]).get (by native_decide)
+    let retried := (execute atIntervals (.choose .misventRelief)).get (by native_decide) |>.after
+    let advanced := (execute atIntervals
+      (.choose .replaySharedIntervals)).get (by native_decide) |>.after
+    let entry := (fixtureRouteReady? .maintenanceSpine true).get (by native_decide)
+    let committed := (execute entry (.commitRoute .maintenanceSpine)).get (by native_decide) |>.after
+    let ignored := (execute committed
+      (.choose .ignoreMovingClearance)).get (by native_decide) |>.after
+    let marked := (execute committed
+      (.choose .markMovingClearance)).get (by native_decide) |>.after
+    (ChoiceId.delta .misventRelief).turnCost = (ChoiceId.delta .replaySharedIntervals).turnCost ∧
+    (ChoiceId.delta .misventRelief).operationalCost =
+      (ChoiceId.delta .replaySharedIntervals).operationalCost ∧
+    (ChoiceId.delta .replaySharedIntervals).supplyCost <
+      (ChoiceId.delta .misventRelief).supplyCost ∧
+    (ChoiceId.delta .misventRelief).clueIntel <
+      (ChoiceId.delta .replaySharedIntervals).clueIntel ∧
+    retried.encounterIndex = atIntervals.encounterIndex ∧
+    advanced.encounterIndex = atIntervals.encounterIndex + 1 ∧
+    (execute retried (.choose .replaySharedIntervals)).isSome ∧
+    (ChoiceId.delta .ignoreMovingClearance).turnCost =
+      (ChoiceId.delta .markMovingClearance).turnCost ∧
+    (ChoiceId.delta .ignoreMovingClearance).operationalCost =
+      (ChoiceId.delta .markMovingClearance).operationalCost ∧
+    (ChoiceId.delta .ignoreMovingClearance).supplyCost =
+      (ChoiceId.delta .markMovingClearance).supplyCost ∧
+    (ChoiceId.delta .ignoreMovingClearance).clueIntel =
+      (ChoiceId.delta .markMovingClearance).clueIntel ∧
+    (ChoiceId.delta .ignoreMovingClearance).causesInjury =
+      (ChoiceId.delta .markMovingClearance).causesInjury ∧
+    ignored.flags.navigationDebt = true ∧ ignored.flags.entryMarked = false ∧
+    marked.flags.entryMarked = true ∧ marked.flags.navigationDebt = false := by
+  native_decide
+
+/-! ### 3 — which budgets bind -/
+
+/-- A budget binds at a state/choice pair exactly when zeroing that ONE counter
+turns a refusal into an acceptance.  Zeroing a counter can only move
+`choicePreconditionB` through its `canSpendB` clause — no other part of the
+predicate reads a spend counter — so this isolates the budget without restating
+the gate.  (`choicePreconditionB`, not `execute`: `execute` also runs
+`applyExtraction`, which reads `clueIntel` through `expectedTerminalId?`, and an
+`execute`-based probe reports a clue-intel binding that is really a terminal
+re-selection.) -/
+private def choicesRefusedSolelyBy (relax : State → State) : List ChoiceId :=
+  allChoiceIds.filter fun choice =>
+    nightWatchReachable.any fun state =>
+      !choicePreconditionB state choice && choicePreconditionB (relax state) choice
+
+/-- ANSWER: one of the four budgets binds.  `SUPPLY_SPEND_LIMIT = 8` refuses
+`misventRelief` — the retry — on a path every other gate admits.  The turn,
+operational and clue-intel budgets never refuse anything the rest of the gate
+would have taken. -/
+theorem only_the_supply_limit_ever_refuses_an_otherwise_admitted_choice :
+    choicesRefusedSolelyBy (fun state => { state with suppliesSpent := 0 }) = [.misventRelief] ∧
+    choicesRefusedSolelyBy (fun state => { state with turnsSpent := 0 }) = [] ∧
+    choicesRefusedSolelyBy (fun state => { state with operationalSpent := 0 }) = [] ∧
+    choicesRefusedSolelyBy (fun state => { state with clueIntel := 0 }) = [] := by
+  native_decide
+
+/-- The stronger form of the same answer: three of the four `canSpendB` clauses
+never EVALUATE to false anywhere in the reachable watch — over every
+encounter-phase state and every choice, not merely the currently-gated ones.  A
+clause that never fires cannot change the reachable set, so `TURN_BUDGET`,
+`OPERATIONAL_BUDGET` and `CLUE_INTEL_LIMIT` are inert at these values.  The
+fourth conjunct is the falsifier: the supply clause DOES fire.  The fifth is the
+extraction-side operational check in `applyExtraction`, which also never fires. -/
+theorem three_of_four_budget_clauses_never_fire_in_the_reachable_watch :
+    encounterStates.all (fun state => allChoiceIds.all fun choice =>
+      decide (state.turnsSpent + choice.delta.turnCost ≤ TURN_BUDGET)) = true ∧
+    encounterStates.all (fun state => allChoiceIds.all fun choice =>
+      decide (state.operationalSpent + choice.delta.operationalCost ≤ OPERATIONAL_BUDGET)) = true ∧
+    encounterStates.all (fun state => allChoiceIds.all fun choice =>
+      decide (state.clueIntel + choice.delta.clueIntel ≤ CLUE_INTEL_LIMIT)) = true ∧
+    encounterStates.all (fun state => allChoiceIds.all fun choice =>
+      decide (state.suppliesSpent + choice.delta.supplyCost ≤ SUPPLY_SPEND_LIMIT)) = false ∧
+    nightWatchReachable.all (fun state => allExtractionChoices.all fun choice =>
+      (expectedOutcomeReceipt? state choice).all fun receipt =>
+        decide (state.operationalSpent + receipt.terminalOperationalCost
+          ≤ OPERATIONAL_BUDGET)) = true := by
+  native_decide
+
+/-- The headroom behind that answer, as numbers a designer can retune against:
+the maxima actually attained, first over encounter-phase states (where choices are
+priced) and then over the whole reachable watch (where extraction costs land).
+`SUPPLY_SPEND_LIMIT` is the only one reached; the turn budget of 18 tops out at
+13, the clue-intel limit of 12 at 5. -/
+theorem watch_counter_maxima_show_which_budgets_are_reached :
+    (encounterStates.foldl (fun bound state => max bound state.turnsSpent) 0,
+     encounterStates.foldl (fun bound state => max bound state.operationalSpent) 0,
+     encounterStates.foldl (fun bound state => max bound state.suppliesSpent) 0,
+     encounterStates.foldl (fun bound state => max bound state.clueIntel) 0) = (11, 10, 8, 4) ∧
+    (nightWatchReachable.foldl (fun bound state => max bound state.turnsSpent) 0,
+     nightWatchReachable.foldl (fun bound state => max bound state.operationalSpent) 0,
+     nightWatchReachable.foldl (fun bound state => max bound state.suppliesSpent) 0,
+     nightWatchReachable.foldl (fun bound state => max bound state.clueIntel) 0) =
+       (13, 18, 8, 5) ∧
+    (TURN_BUDGET, OPERATIONAL_BUDGET, SUPPLY_SPEND_LIMIT, CLUE_INTEL_LIMIT) = (18, 20, 8, 12) := by
+  native_decide
+
+/-! ### 4 — execution floors -/
+
+private def watchCommandFloor (terminal : TerminalId) : Option Nat :=
+  nightWatchLayers.findIdx? fun layer =>
+    layer.any fun state => state.outcome.any fun receipt => decide (receipt.terminal = terminal)
+
+private def terminalFloorTable : List (TerminalId × Option Nat) :=
+  allTerminalIds.map fun terminal => (terminal, watchCommandFloor terminal)
+
+/-- ANSWER: the shortest accepted `choose`/`extract` sequence from a
+committed-route root to each terminal.  Add the seventeen prelude commands from
+`initialState fixturePolicy` (one event apiece, pinned above) for the floor from
+a cold start: 19 for the two two-command drafts, 20, 21, and 22 for the sealed
+authored rows.  The three cheapest are early exits that need no `extract` at all —
+a `choose` carrying its own `extractionResolved` — which is why they undercut
+every authored row by two commands. -/
+theorem watch_command_floors_to_every_terminal_from_the_route_roots :
+    terminalFloorTable =
+      [ (.authored .maintenanceReturn, some 4)
+      , (.authored .maintenanceDeep, some 4)
+      , (.authored .signalReturn, some 4)
+      , (.authored .signalDeep, some 4)
+      , (.authored .sealedReturn, some 5)
+      , (.authored .sealedDeep, some 5)
+      , (.mechanicalDraft .maintenanceReturnInjured, some 4)
+      , (.mechanicalDraft .maintenanceWithdrawn, some 2)
+      , (.mechanicalDraft .signalReturnPartial, some 4)
+      , (.mechanicalDraft .signalCorridorLost, some 3)
+      , (.mechanicalDraft .sealedReturnClosed, some 2) ] := by
+  native_decide
+
+#assert_axioms accepted_transition_carries_its_exact_replay
 #assert_axioms choice_receipt_uses_exact_delta
 #assert_axioms outcome_receipt_relics_are_exactly_allowlisted
 #assert_axioms outcome_receipt_is_within_pack_budget
@@ -1804,8 +2206,11 @@ theorem different_pack_digest_forces_policy_inequality (left right : Policy)
 #assert_axioms witness_thread_is_not_carried
 #assert_axioms treatment_locks_exact_engineer
 #assert_axioms treatment_does_not_lock_other_role
+#assert_axioms recovery_serving_requires_a_strictly_later_finalized_day
+#assert_axioms choice_extraction_and_terminal_enumerations_are_complete
 #assert_compiled maintenanceContribution_validates_exactly
-#assert_compiled hostile_handoff_authority_substitutions_are_refused
+#assert_compiled hostile_handoff_field_substitutions_are_refused
+#assert_compiled handoff_route_and_deep_consent_are_bound_only_by_the_admission
 #assert_compiled mechanical_draft_requires_exact_opaque_activation_to_debrief
 #assert_compiled extraction_injury_prefix_cannot_bypass_or_reorder_injury
 #assert_compiled choice_injury_prefix_cannot_bypass_or_reorder_injury
@@ -1819,8 +2224,17 @@ theorem different_pack_digest_forces_policy_inequality (left right : Policy)
 #assert_compiled deep_terminal_requires_both_clue_threshold_and_exact_evidence
 #assert_compiled formerly_dominated_choices_change_real_terminal_availability
 #assert_compiled exact_engineer_reenrollment_requires_both_later_day_recovery_steps
-#assert_axioms finalized_days_are_zero_based_and_recovery_is_strictly_later
+#assert_compiled the_strictly_later_day_gate_refuses_the_mission_day_and_admits_the_next
 #assert_compiled commons_visit_bound_rolls_over_per_finalized_daily_aggregate
 #assert_axioms different_pack_digest_forces_policy_inequality
+#assert_compiled every_route_and_consent_prelude_commits_after_seventeen_events
+#assert_compiled night_watch_reachable_set_is_closed_under_choose_and_extract
+#assert_compiled every_terminal_is_reachable_and_the_routes_partition_them
+#assert_compiled no_authored_choice_is_dead_in_the_reachable_watch
+#assert_compiled cost_row_domination_does_not_survive_the_real_transition
+#assert_compiled only_the_supply_limit_ever_refuses_an_otherwise_admitted_choice
+#assert_compiled three_of_four_budget_clauses_never_fire_in_the_reachable_watch
+#assert_compiled watch_counter_maxima_show_which_budgets_are_reached
+#assert_compiled watch_command_floors_to_every_terminal_from_the_route_roots
 
 end Dregg2.Games.PathOfAngels.NightWatchLoop
