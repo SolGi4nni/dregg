@@ -15,22 +15,50 @@ This module closes it by exhibiting one:
   by a named authored config, and `activate?` accepts it.  `Config.mk` is private, so
   `activate?` is the only route; `campaign_config_constructor_is_private` proves that,
   which is what makes the activation theorem load-bearing rather than decorative.
+* `fixture_activation_admits` — the same for `Activation`, which is the object the
+  judge actually takes: a slot secret that OPENS the config's published commitment, a
+  run seed that RE-DERIVES, and the drawn hazard schedule that follows.
 * A four-watch campaign replayed to an EXACT state: a success, a meaningful failure, a
-  recovery, and a galley watch that levels a seat up and wraps the hazard cycle.
+  recovery, and a galley watch that levels a seat up.
 * Refusal theorems that each assert the exact `Error` constructor AND pin the reason,
   by exhibiting the minimal neighbouring command that IS accepted.  A refusal that
   fires through a different check than its name says is a defect this project has been
   bitten by repeatedly; every refusal below is isolated to one changed field.
 
+## ⚑ The four rolls are DRAWN, and the campaign was re-derived around them
+
+The old fixture published `hazardCycle = [70, 10, 55]`, so its four outcomes were
+authored.  They are now drawn: shifts 0–3 of this fixture's run seed give
+**106, 1, 185, 253**, and `the_derived_hazard_schedule_is_the_four_rolls_the_run_seed_gives`
+pins exactly that list against the actual sponge.
+
+The four risk thresholds were then re-expressed at the new width — a threshold is out
+of 256 now, not 100 — at the SAME odds the fixture always had: 40/100 → `102`, 60/100 →
+`154`, 30/100 → `77`, 20/100 → `51`.  Under the drawn rolls those four thresholds give
+a success, a meaningful failure, a recovery and a galley level-up: the same story, and
+NOT a story the thresholds were bent to reach.  One rule did have to move: the
+deliberately unaffordable survey sat at 50/100, and at the drawn roll of 106 that arm
+would have failed and its refusal would have gone unreachable, so its threshold is
+`100` — with a derived roll, a rule that wants to demonstrate its success arm has to be
+authored against the roll it will meet.
+
 Everything here is authored and judged in Lean.  No Rust participates: the kernel, the
 config, the commands and the expected outcomes are all Lean terms, and the pins below
 say exactly which of them the kernel checked and which the compiled evaluator did.
 
-⚑ Two structural facts about `NightWatchCampaign` that shape this file.  `Config.mk`
-and `State.mk` are both `private`, so from an importing module neither a config nor a
-state can be written down as a literal.  A config is obtained through `activate?`; a
-state is pinned through `StateView` + `state_view_is_injective`, which names all ten
-`State` fields and proves that naming them names the state.
+⚑ Three structural facts about `NightWatchCampaign` that shape this file.  `Config.mk`,
+`Activation.mk` and `State.mk` are all `private`, so from an importing module none of
+them can be written down as a literal.  A config is obtained through `activate?`, an
+activation through `admitActivation?`, and a state is pinned through `StateView` +
+`state_view_is_injective`, which names all ten `State` fields and proves that naming
+them names the state.
+
+⚑ Everything that touches `fixtureActivation` is `native_decide` and pinned
+`#assert_compiled`, because reaching a live run seed with the KERNEL's evaluator runs
+`Poseidon2BabyBearW16.perm` under `whnf` — measured at 47.6 GB and 68 minutes for one
+file.  The `#assert_axioms` group below is exactly the facts stated over authored
+literals, and `#assert_compiled` REFUSES a kernel-clean declaration, so the split is
+checked rather than asserted.
 -/
 import Dregg2.Games.PathOfAngels.NightWatchCampaign
 import Dregg2.Tactics
@@ -117,21 +145,55 @@ def quartermasterSeat : CrewRelayExpedition.Seat where
 def fixtureRoster : List CrewRelayExpedition.Seat :=
   [pathfinderSeat, engineerSeat, containmentSeat, quartermasterSeat]
 
+/-! ## The slot, its secret, and the run this campaign is
+
+The curator draws a slot secret off-line and publishes `commit secret slot` in the
+config; the node derives the run seed for the officer who owns the run and hands both
+to the kernel, which re-derives them.  ⚠ `fixtureSecret` exists because a FIXTURE needs
+one; in a deployment it never leaves node state and no emitter renders it. -/
+
+def fixtureSecret : HiddenInstance.SlotSecret := ⟨digest 90⟩
+def fixtureSlot : EpochId := ⟨7⟩
+def fixtureMissionId : MissionId := ⟨4242⟩
+
+/-- The commitment the config publishes.  A function of the secret and the slot alone:
+it names which slot a run belongs to and nothing about any roll. -/
+def fixtureCommitment : Digest32 := HiddenInstance.commit fixtureSecret fixtureSlot
+
+/-- The pathfinder holds the run; the four watches below are stood by the other three
+officers, which is the point — the run's owner is not the officer on watch. -/
+def fixtureRunOwner : Digest32 := digest 10
+
+/-- Written out rather than taken from `missionContextOf`, so the equality
+`admitActivation?` checks is a real comparison of two independently written values. -/
+def fixtureMissionContext : HiddenInstance.MissionContext where
+  missionId := fixtureMissionId
+  epoch := ⟨7⟩
+  federationId := digest 1
+  contentSession := digest 2
+
+def fixtureRunSeed : Digest32 :=
+  HiddenInstance.runSeedFor
+    { secret := fixtureSecret, slot := fixtureSlot, playerKey := fixtureRunOwner }
+    fixtureMissionContext
+
 /-! ## The authored task table
 
-`hazardAt config shift = hazardCycle.getD (shift % hazardCycle.length) 0` and
-`success := decide (rule.riskThreshold ≤ roll)`, so with `hazardCycle = [70, 10, 55]`
-the outcome of every watch is fully determined by its shift.  The thresholds below are
-chosen so the four-watch campaign demonstrates, in order: a success, a *meaningful
-failure*, a real recovery, and a galley success at the wrapped hazard index. -/
+`hazardAt activation shift` reads the DRAWN schedule and `success := decide
+(rule.riskThreshold ≤ roll)`, with a roll out of `HAZARD_FACES = 256`.  The rolls this
+fixture's run seed gives for shifts 0–3 are `106, 1, 185, 253`
+(`the_derived_hazard_schedule_is_the_four_rolls_the_run_seed_gives`), and the four
+thresholds below are the fixture's original percentages re-expressed in 256ths.  Under
+those rolls the campaign demonstrates, in order: a success, a *meaningful failure*, a
+real recovery, and a galley success that levels a seat up. -/
 
-/-- Shift 0 (roll 70) succeeds at threshold 40.  Authors a beta discovery whose evidence
-bar is met, so this watch is the one that proposes canon. -/
+/-- Shift 0 (roll 106) succeeds at threshold 102 — 60% odds, as before.  Authors a beta
+discovery whose evidence bar is met, so this watch is the one that proposes canon. -/
 def coolantBalanceRule : TaskRule where
   station := .engineSpine
   task := .coolantBalance
   role := .engineer
-  riskThreshold := 40
+  riskThreshold := 102
   successContribution := ⟨3, 0, 2, 0, 5⟩
   failureContribution := ⟨0, 0, 1, 0, 1⟩
   successEffects := { spendSupplies := 2, gainPropellant := 6, gainMorale := 3 }
@@ -147,13 +209,14 @@ def coolantBalanceRule : TaskRule where
   successContentId := digest 61
   failureContentId := digest 62
 
-/-- Shift 1 (roll 10) FAILS at threshold 60.  It authors a discovery with a zero evidence
-bar, so the only thing withholding canon on this watch is the failure itself. -/
+/-- Shift 1 FAILS: the drawn roll is 1, against threshold 154 — 40% odds, as before.  It
+authors a discovery with a zero evidence bar, so the only thing withholding canon on
+this watch is the failure itself. -/
 def inspectSealRule : TaskRule where
   station := .containment
   task := .inspectSeal
   role := .containment
-  riskThreshold := 60
+  riskThreshold := 154
   successContribution := ⟨4, 1, 0, 0, 6⟩
   failureContribution := ⟨0, 0, 1, 0, 2⟩
   successEffects := { gainSupplies := 5 }
@@ -169,14 +232,14 @@ def inspectSealRule : TaskRule where
   successContentId := digest 64
   failureContentId := digest 65
 
-/-- Shift 2 (roll 55) succeeds at threshold 30 and heals the wounds shift 1 inflicted.
-Its discovery bar (100) is above the evidence the campaign can reach, so it is the
-control showing the *gate*, not the success flag, is what withholds canon here. -/
+/-- Shift 2 (roll 185) succeeds at threshold 77 — 70% odds — and heals the wounds shift 1
+inflicted.  Its discovery bar (100) is above the evidence the campaign can reach, so it
+is the control showing the *gate*, not the success flag, is what withholds canon here. -/
 def recoveryRoundRule : TaskRule where
   station := .infirmary
   task := .recoveryRound
   role := .containment
-  riskThreshold := 30
+  riskThreshold := 77
   successContribution := ⟨0, 0, 5, 0, 8⟩
   failureContribution := ⟨0, 0, 0, 0, 1⟩
   successEffects := { spendSupplies := 4, gainMorale := 2 }
@@ -192,13 +255,13 @@ def recoveryRoundRule : TaskRule where
   successContentId := digest 70
   failureContentId := digest 71
 
-/-- Shift 3 wraps the hazard cycle back to index 0 (roll 70) and succeeds at threshold 20.
-The only `.galley` rule, so the only one whose `localService` reaches a logbook entry. -/
+/-- Shift 3 (roll 253) succeeds at threshold 51 — 80% odds.  The only `.galley` rule, so
+the only one whose `localService` reaches a logbook entry. -/
 def rationAuditRule : TaskRule where
   station := .galley
   task := .rationAudit
   role := .quartermaster
-  riskThreshold := 20
+  riskThreshold := 51
   successContribution := ⟨0, 4, 3, 0, 12⟩
   failureContribution := ⟨0, 0, 0, 0, 1⟩
   successEffects := { spendPropellant := 1, gainSupplies := 9, gainMorale := 2 }
@@ -214,14 +277,19 @@ def rationAuditRule : TaskRule where
   successContentId := digest 73
   failureContentId := digest 74
 
-/-- A valid authored rule the ship cannot afford: its success arm spends more propellant
+/-- A valid authored rule the ship cannot afford: its SUCCESS arm spends more propellant
 than the campaign ever holds.  It exists to make `.insufficientResources` reachable from
-the SAME config, so that refusal is demonstrated on the fixture rather than asserted. -/
+the SAME config, so that refusal is demonstrated on the fixture rather than asserted.
+
+⚠ Threshold `100`, not the 128 that would preserve its old 50% odds: shift 0's drawn
+roll is 106, and the refusal only fires if the roll selects the unaffordable arm.  With
+a published cycle any threshold would have done; with a derived roll the rule has to be
+authored against the roll it will meet. -/
 def unaffordableSurveyRule : TaskRule where
   station := .signalGallery
   task := .traceSignal
   role := .pathfinder
-  riskThreshold := 50
+  riskThreshold := 100
   successContribution := ⟨6, 0, 0, 0, 4⟩
   failureContribution := ⟨0, 0, 0, 0, 1⟩
   successEffects := { spendPropellant := 999999 }
@@ -243,21 +311,24 @@ real refusal rather than a statement about an unreachable bound.
 `(.bridge, .plotDrift)` is deliberately left unauthored so `.unknownTask` is reachable. -/
 def fixtureRawConfig : RawConfig where
   schemaVersion := 1
+  missionId := fixtureMissionId
   progression := fixtureProgression
   logStream := fixtureLogStream
+  slot := fixtureSlot
+  slotCommitment := fixtureCommitment
   roster := fixtureRoster
   rules :=
     [coolantBalanceRule, inspectSealRule, recoveryRoundRule, rationAuditRule,
      unaffordableSurveyRule]
-  hazardCycle := [70, 10, 55]
   initialResources := ⟨120, 40, 60, 50⟩
   maxShifts := 4
 
 /-! ## `configValidB` is satisfiable — the theorem this module exists for
 
-Every conjunct of the fifteen-clause floor at `NightWatchCampaign.lean:216` holds of
-`fixtureRawConfig`.  Compiled evaluation, not the kernel: the floor decides `Nodup` over
-four 32-byte digests and five rule keys, which the compiler settles in milliseconds. -/
+Every conjunct of the twelve-clause `configValidB` floor holds of `fixtureRawConfig`.
+Compiled evaluation, not the kernel: the floor decides `Nodup` over four 32-byte digests
+and five rule keys, and the config now carries a sponge commitment, which the compiled
+evaluator settles in milliseconds and the kernel would not. -/
 
 theorem fixture_config_valid : configValidB fixtureRawConfig = true := by
   native_decide
@@ -284,15 +355,111 @@ theorem fixture_config_raw : fixtureConfig.raw = fixtureRawConfig := by
   injection h with h
   exact (congrArg NightWatchCampaign.Config.raw h).symm
 
+/-! ## The run activation — the object the judge actually takes
+
+The node assembles a `RawActivation` from its own state and `admitActivation?` refuses
+unless the commitment OPENS to the secret and the run seed RE-DERIVES from it.  Every
+theorem from here down runs the real sponge under `native_decide`. -/
+
+def fixtureDraw : RawActivation where
+  slot := fixtureSlot
+  slotSecret := fixtureSecret
+  slotCommitment := fixtureCommitment
+  playerKey := fixtureRunOwner
+  mission := fixtureMissionContext
+  runSeed := fixtureRunSeed
+
+def fixtureActivation? : Option Activation := admitActivation? fixtureConfig fixtureDraw
+
+theorem fixture_activation_admits : fixtureActivation?.isSome = true := by
+  native_decide
+
+/-- The first `NightWatchCampaign.Activation` in the repository. -/
+def fixtureActivation : Activation := fixtureActivation?.get fixture_activation_admits
+
+/-- ⚑ The hazard is no longer in the config: these four rolls exist nowhere in the
+published document, and this pins them against the actual Poseidon2 sponge.  Change the
+secret, the slot, the player or the mission context and this list moves. -/
+theorem the_derived_hazard_schedule_is_the_four_rolls_the_run_seed_gives :
+    fixtureActivation.schedule = [106, 1, 185, 253] ∧
+    (List.range 4).map (hazardAt fixtureActivation) = [106, 1, 185, 253] := by
+  native_decide
+
+/-- **Per player, on one published config.**  The same slot, the same secret, the same
+mission — a different seated officer owning the run draws a different schedule, so one
+finished run tells the next officer nothing. -/
+theorem the_schedule_moves_with_the_run_owner :
+    hazardSchedule
+        (HiddenInstance.runSeedFor
+          { secret := fixtureSecret, slot := fixtureSlot, playerKey := digest 10 }
+          fixtureMissionContext) 4 = [106, 1, 185, 253] ∧
+    hazardSchedule
+        (HiddenInstance.runSeedFor
+          { secret := fixtureSecret, slot := fixtureSlot, playerKey := digest 11 }
+          fixtureMissionContext) 4 = [85, 229, 138, 23] := by
+  native_decide
+
+/-- **The commitment is not the schedule.**  What the config publishes is one digest
+that is not the seed, and a different secret gives a different schedule — so a reader
+of the descriptor holds nothing a roll can be computed from. -/
+theorem the_published_commitment_is_not_the_seed_the_schedule_comes_from :
+    fixtureCommitment ≠ fixtureRunSeed ∧
+    hazardSchedule
+        (HiddenInstance.runSeedFor
+          { secret := ⟨digest 91⟩, slot := fixtureSlot, playerKey := fixtureRunOwner }
+          fixtureMissionContext) 4 ≠ fixtureActivation.schedule := by
+  native_decide
+
+/-- ⚑ The secret is the whole authority.  A caller holding everything the config
+publishes — slot, commitment, mission, player — and the WRONG secret cannot be admitted,
+whether it claims the published commitment (the commitment does not open) or its own
+(the commitment is not the config's).  The identical draw with the right secret IS
+admitted, which is `fixture_activation_admits`. -/
+theorem an_activation_under_the_wrong_secret_is_refused :
+    admitActivation? fixtureConfig { fixtureDraw with slotSecret := ⟨digest 91⟩ } = none ∧
+    admitActivation? fixtureConfig
+      { fixtureDraw with
+        slotSecret := ⟨digest 91⟩
+        slotCommitment := HiddenInstance.commit ⟨digest 91⟩ fixtureSlot } = none := by
+  native_decide
+
+/-- The other three bindings: another slot, another mission context, and an owner who
+holds no seat.  ⚠ The unseated owner carries the run seed CORRECTLY derived for its own
+key, so the only check it fails is `rosterHolds` — a node cannot draw a schedule against
+an arbitrary key of its choosing, and the refusal is that and not a stale seed. -/
+def unseatedOwnerDraw : RawActivation :=
+  { fixtureDraw with
+    playerKey := digest 99
+    runSeed := HiddenInstance.runSeedFor
+      { secret := fixtureSecret, slot := fixtureSlot, playerKey := digest 99 }
+      fixtureMissionContext }
+
+theorem an_activation_that_does_not_bind_to_the_config_is_refused :
+    admitActivation? fixtureConfig { fixtureDraw with slot := ⟨8⟩ } = none ∧
+    admitActivation? fixtureConfig
+      { fixtureDraw with mission := { fixtureMissionContext with missionId := ⟨4243⟩ } } = none ∧
+    admitActivation? fixtureConfig unseatedOwnerDraw = none ∧
+    unseatedOwnerDraw.runSeed =
+      HiddenInstance.runSeedFor
+        { secret := unseatedOwnerDraw.slotSecret, slot := unseatedOwnerDraw.slot
+          playerKey := unseatedOwnerDraw.playerKey } unseatedOwnerDraw.mission ∧
+    rosterHolds fixtureRawConfig (digest 99) = false := by
+  native_decide
+
 /-! ## Constructor teeth
 
-These are what make the activation theorem load-bearing.  If either constructor were
-made public, a downstream module could mint a `Config` that never crossed `configValidB`
-(or a `State` that never crossed `judge`), and `fixture_config_activates` would stop
-being the only route in.  Both declarations turn red on that change. -/
+These are what make the activation theorems load-bearing.  If any constructor were made
+public, a downstream module could mint a `Config` that never crossed `configValidB`, an
+`Activation` whose schedule came from nowhere, or a `State` that never crossed `judge`,
+and the theorems above would stop being the only route in.  All three declarations turn
+red on that change. -/
 
 theorem campaign_config_constructor_is_private : True := by
   fail_if_success (have _constructor := @NightWatchCampaign.Config.mk)
+  trivial
+
+theorem campaign_activation_constructor_is_private : True := by
+  fail_if_success (have _constructor := @NightWatchCampaign.Activation.mk)
   trivial
 
 theorem campaign_state_constructor_is_private : True := by
@@ -364,30 +531,31 @@ def cmd (index : Nat) (action : Action) : Command where
   nullifier := digest (200 + index)
   action
 
-/-- Shift 0: the engineer balances coolant.  Roll 70 ≥ threshold 40, so it SUCCEEDS. -/
+/-- Shift 0: the engineer balances coolant.  Drawn roll 106 ≥ threshold 102, so it
+SUCCEEDS — by four, on a roll nobody could have read off the config. -/
 def watchOne : List Command :=
   [ cmd 0 (.claimOfficer (digest 11) ⟨1⟩)
   , cmd 1 (.chooseTask .engineSpine .coolantBalance)
   , cmd 2 .resolve
   , cmd 3 .debrief ]
 
-/-- Shift 1: containment inspects a seal.  Roll 10 < threshold 60, so it FAILS — and a
-meaningful failure is not an error: it still moves resources, wounds the officer, earns
-evidence and mastery, appends a logbook entry, and advances the shift. -/
+/-- Shift 1: containment inspects a seal.  Drawn roll 1 < threshold 154, so it FAILS —
+and a meaningful failure is not an error: it still moves resources, wounds the officer,
+earns evidence and mastery, appends a logbook entry, and advances the shift. -/
 def watchTwo : List Command :=
   [ cmd 4 (.claimOfficer (digest 12) ⟨2⟩)
   , cmd 5 (.chooseTask .containment .inspectSeal)
   , cmd 6 .resolve
   , cmd 7 .debrief ]
 
-/-- Shift 2: the same officer recovers in the infirmary.  Roll 55 ≥ threshold 30. -/
+/-- Shift 2: the same officer recovers in the infirmary.  Drawn roll 185 ≥ threshold 77. -/
 def watchThree : List Command :=
   [ cmd 8 (.claimOfficer (digest 12) ⟨2⟩)
   , cmd 9 (.chooseTask .infirmary .recoveryRound)
   , cmd 10 .resolve
   , cmd 11 .debrief ]
 
-/-- Shift 3: the quartermaster audits rations.  The hazard index wraps to 0 (roll 70). -/
+/-- Shift 3: the quartermaster audits rations.  Drawn roll 253 ≥ threshold 51. -/
 def watchFour : List Command :=
   [ cmd 12 (.claimOfficer (digest 13) ⟨3⟩)
   , cmd 13 (.chooseTask .galley .rationAudit)
@@ -397,7 +565,7 @@ def watchFour : List Command :=
 def campaign : List Command := watchOne ++ watchTwo ++ watchThree ++ watchFour
 
 def runFrom (commands : List Command) : Except Error State :=
-  replay fixtureConfig (initialState fixtureConfig) commands
+  replay fixtureActivation (initialState fixtureActivation) commands
 
 /-! ## The exact expected logbook
 
@@ -413,8 +581,8 @@ def entryOne : LogbookEntry where
   station := .engineSpine
   task := .coolantBalance
   success := true
-  hazardRoll := 70
-  riskThreshold := 40
+  hazardRoll := 106
+  riskThreshold := 102
   contribution := ⟨3, 0, 2, 0, 5⟩
   worldEffects := { spendSupplies := 2, gainPropellant := 6, gainMorale := 3 }
   resourcesBefore := ⟨120, 40, 60, 50⟩
@@ -439,8 +607,8 @@ def entryTwo : LogbookEntry where
   station := .containment
   task := .inspectSeal
   success := false
-  hazardRoll := 10
-  riskThreshold := 60
+  hazardRoll := 1
+  riskThreshold := 154
   contribution := ⟨0, 0, 1, 0, 2⟩
   worldEffects := { spendSupplies := 3, spendMorale := 4, gainMunitions := 1 }
   resourcesBefore := ⟨126, 40, 58, 53⟩
@@ -465,8 +633,8 @@ def entryThree : LogbookEntry where
   station := .infirmary
   task := .recoveryRound
   success := true
-  hazardRoll := 55
-  riskThreshold := 30
+  hazardRoll := 185
+  riskThreshold := 77
   contribution := ⟨0, 0, 5, 0, 8⟩
   worldEffects := { spendSupplies := 4, gainMorale := 2 }
   resourcesBefore := ⟨126, 41, 55, 49⟩
@@ -491,8 +659,8 @@ def entryFour : LogbookEntry where
   station := .galley
   task := .rationAudit
   success := true
-  hazardRoll := 70
-  riskThreshold := 20
+  hazardRoll := 253
+  riskThreshold := 51
   contribution := ⟨0, 4, 3, 0, 12⟩
   worldEffects := { spendPropellant := 1, gainSupplies := 9, gainMorale := 2 }
   resourcesBefore := ⟨126, 41, 51, 51⟩
@@ -524,7 +692,7 @@ def resolvedOne : ResolvedShift where
   shift := 0
   officer := engineerSeat
   rule := coolantBalanceRule
-  hazardRoll := 70
+  hazardRoll := 106
   success := true
   contribution := ⟨3, 0, 2, 0, 5⟩
   worldEffects := { spendSupplies := 2, gainPropellant := 6, gainMorale := 3 }
@@ -578,11 +746,7 @@ def viewAfterCampaign : StateView where
   consumedActions := (campaign.map Command.nullifier).toFinset
 
 theorem initial_state_is_the_authored_initial_condition :
-    view (initialState fixtureConfig) = viewInitial := by
-  native_decide
-
-theorem hazard_cycle_is_deterministic_and_wraps_at_the_cycle_length :
-    [0, 1, 2, 3, 4, 5].map (hazardAt fixtureConfig) = [70, 10, 55, 70, 10, 55] := by
+    view (initialState fixtureActivation) = viewInitial := by
   native_decide
 
 /-! ## One complete watch, replayed and proved
@@ -894,11 +1058,11 @@ theorem an_unaffordable_spend_refuses_insufficientResources_only_at_resolve :
 /-- A claimed semantic outcome is refused; the same command carrying only UI holder
 metadata is accepted, on the real fixture. -/
 theorem a_caller_authored_outcome_is_refused_while_holder_metadata_is_erased :
-    judgeSubmitted fixtureConfig (initialState fixtureConfig)
+    judgeSubmitted fixtureActivation (initialState fixtureActivation)
         { command := cmd 0 (.claimOfficer (digest 11) ⟨1⟩)
         , claimedContribution := some ⟨9, 9, 9, 9, 9⟩ }
       = .error .callerAuthoredOutcome ∧
-    (judgeSubmitted fixtureConfig (initialState fixtureConfig)
+    (judgeSubmitted fixtureActivation (initialState fixtureActivation)
         { command := cmd 0 (.claimOfficer (digest 11) ⟨1⟩)
         , holder := some { eligible := true, affordance := none } }).toOption.isSome
       = true := by
@@ -936,11 +1100,17 @@ asserted. -/
 #assert_compiled fixture_activate_isSome
 #assert_compiled fixture_config_activates
 #assert_compiled fixture_config_raw
+#assert_compiled fixture_activation_admits
+#assert_compiled the_derived_hazard_schedule_is_the_four_rolls_the_run_seed_gives
+#assert_compiled the_schedule_moves_with_the_run_owner
+#assert_compiled the_published_commitment_is_not_the_seed_the_schedule_comes_from
+#assert_compiled an_activation_under_the_wrong_secret_is_refused
+#assert_compiled an_activation_that_does_not_bind_to_the_config_is_refused
 #assert_axioms campaign_config_constructor_is_private
+#assert_axioms campaign_activation_constructor_is_private
 #assert_axioms campaign_state_constructor_is_private
 #assert_axioms state_view_is_injective
 #assert_compiled initial_state_is_the_authored_initial_condition
-#assert_compiled hazard_cycle_is_deterministic_and_wraps_at_the_cycle_length
 #assert_compiled one_complete_watch_claims_the_authored_engineer_seat
 #assert_compiled one_complete_watch_assigns_the_authored_coolant_rule
 #assert_compiled one_complete_watch_resolves_to_the_exact_resolved_shift

@@ -21,25 +21,60 @@ game for the same fiction, and it is unreachable by construction — its `Policy
 needs a `ContentMembershipAdmission` that has no public producer.  See its docblock
 for the disposition question.
 
-**This module is the one connected to a player**, and it was chosen for exactly one
-reason: it is publicly constructible.  `activate?` is a public smart constructor
-over a plain `RawConfig`, so a host can build a `Config` without anyone widening an
-authority boundary.  Its boundary is `NightWatchCampaignWire` (canonical JSON +
-`@[export dregg_poa_night_watch_campaign_judge]`) and its proof that the kernel
+**This module is the one connected to a player.**  Its boundary is
+`NightWatchCampaignWire` (canonical JSON + `@[export
+dregg_poa_night_watch_campaign_judge]`, ⚠ still MOUNTED NOWHERE), the authenticated
+route to a `Config` is `NightWatchCampaignAdmission`, and its proof that the kernel
 actually runs is `NightWatchCampaignExamples`.
 
-⚠ **Two things that are true today and should not surprise a reader.**
+## ⚑ 2026-08-05 — the two authority holes this kernel used to have, and the flag day
 
-1. `hazardAt` is fully deterministic and public — `hazardCycle.getD (shift % len) 0`
-   with `success := riskThreshold ≤ roll`.  There is no hidden state and no
-   randomness, so a player who can read the config can compute every future roll.
-   Shipping a config as a public curator-signed manifest component would therefore
-   publish the whole solution, which is the wound `HiddenInstance.lean` exists to
-   close.  That question is open; do not emit a config component until it is settled.
-2. The judge takes its config from the caller's bytes and checks only that it is
-   STRUCTURALLY valid, never that it is AUTHENTIC.  The host must supply the config
-   from its own authenticated state.  See the wire's docblock.
+**1. The hazard was PUBLISHED.**  `hazardAt` read `hazardCycle.getD (shift % len) 0`
+off the config, so anyone holding the config could compute every future roll, and
+publishing the config as a curator-signed manifest component would have published
+the whole solution.  That is exactly the wound `HiddenInstance.lean` exists to close,
+and deleting the field alone would have closed NOTHING — the same trap that module
+records for `signal-triangulation.json`.
+
+So `hazardCycle` LEFT `RawConfig` and the roll is DRAWN, per run, off the hidden
+instance: the config publishes the rules and a per-slot COMMITMENT, and the schedule
+comes from `HiddenInstance.runSeedFor` through the sponge chain below.  Nobody
+without the slot secret can predict a roll, and the schedule moves with the secret,
+the slot and the player (`NightWatchCampaignExamples` exhibits all three).
+
+**2. The config was whatever the caller handed over.**  `activate?` checks that a
+config is STRUCTURALLY valid; it has never checked that it is AUTHENTIC, and it still
+does not.  What changed is that there is now a producer which does:
+`NightWatchCampaignAdmission.authorizeCampaignConfigForWorld?` locates
+`poa.night-watch-campaign.config.v1` inside a curator-signed activated manifest whose
+root IS the active world's `contentRoot`, and only that route yields a config bound
+to a world.  `activate?` stays public — a config is not authority, a
+`WorldScopedCampaignConfigMember` is.
+
+**The `Activation` is the object every entry point now takes**, and it is the
+`Judged.admissionChecks` discipline for this organ (`SlotDeriveRuntime.lean:14-24`):
+the node derives the slot commitment and the run seed independently — through the
+live `dregg_poa_signal_slot_derive` export — and `admitActivation?` RE-DERIVES both
+and refuses on mismatch.  That is a check only because the node derived them itself;
+a node that shipped a placeholder and let the kernel fill it in would be asking the
+kernel to compute the answer rather than to verify the one the player was served.
+
+**Flag day.**  `RawConfig` lost `hazardCycle` and gained `missionId`, `slot` and
+`slotCommitment`; `riskThreshold` is now out of `HAZARD_FACES = 256`, not 100;
+`MAX_HAZARD_CYCLE` is gone; `judge`, `replay`, `initialState` and `hazardAt` take an
+`Activation`, not a `Config`.  Every `POA-NIGHT-WATCH-CAMPAIGN-CONFIG-1` document
+re-emits, every manifest carrying one re-hashes, and the world whose `contentRoot`
+is that manifest root is re-activated.  Old config bytes REFUSE to decode: the key
+set is exact and `hazard_cycle` is no longer a key.
+
+⚑ `HiddenInstance.commit` and `runSeedFor` are `@[irreducible]` because
+`Poseidon2BabyBearW16.perm` reduces exponentially (measured: 47.6 GB, 68 minutes for
+one file).  Nothing here unfolds them, nothing here proves a fact about a CONCRETE
+seed by `decide`/`rfl`, and every theorem below about the derivation is general —
+both sides are the same opaque application.  The concrete facts live in
+`NightWatchCampaignExamples` under `native_decide` and are pinned `#assert_compiled`.
 -/
+import Dregg2.Games.PathOfAngels.HiddenInstance
 import Dregg2.Games.PathOfAngels.ShipLifeProgression
 import Dregg2.Games.PathOfAngels.OfficerLogbook
 import Dregg2.Tactics
@@ -54,7 +89,6 @@ set_option maxRecDepth 100000
 set_option maxHeartbeats 2000000
 
 abbrev MAX_RULES : Nat := 32
-abbrev MAX_HAZARD_CYCLE : Nat := 64
 abbrev MAX_SHIFTS : Nat := 4096
 abbrev MAX_HISTORY : Nat := 4096
 abbrev MAX_RESOURCE : Nat := 1000000
@@ -62,6 +96,168 @@ abbrev MAX_EVIDENCE : Nat := 1000000
 abbrev MAX_WOUNDS : Nat := 100
 abbrev MAX_STRAIN : Nat := 100
 abbrev MASTERY_LEVEL_SIZE : Nat := 10
+
+/-! ## The hazard schedule, drawn from the hidden instance
+
+⚑ **The stream-length problem, and why there is no cap here.**  A run seed is 32
+bytes.  A rejection-sampled draw below 100 has ceiling `256 - 256 % 100 = 200`, so it
+consumes about 1.28 bytes *in expectation* — roughly 24 draws out of one seed, and an
+expectation is not a bound.  Against `MAX_SHIFTS = 4096` that seed exhausts mid
+schedule and the draw returns `none`, which would refuse that player's run: a liveness
+failure landing on some players and not others.  Capping `maxShifts` at whatever a
+seed happens to serve would leave a number in the kernel that reads as design intent
+and is really a byte budget.
+
+Two things remove the problem instead, and each is a theorem below.
+
+* **The stream is squeezed as long as the schedule needs.**  `hazardBlock` is the
+  `HiddenInstance` sponge again — same `absorbAll`/`squeeze`/`digestBlocks`/
+  `digestOfStream`/`laneBytes`/`SQUEEZE_BLOCKS`, a new domain tag, and the block index
+  in the header — and `Digest32` carries its own `length_eq`, so `hazardBytes` is
+  exactly `32 * blocks` bytes for ANY block count, with no reference to what the sponge
+  computed.  `hazardBlocksFor` asks for exactly the blocks the shift count needs.
+* **The draw is exact-width, so it never rejects.**  `HAZARD_FACES = 256` and
+  `SeedDraw.ceilingFor 256 = 256`: every byte is below the ceiling, so
+  `drawing_below_the_face_count_consumes_exactly_one_byte` — one byte in, one roll out,
+  no rejection to be unlucky with.  That is why a roll is out of 256 rather than out of
+  100: 100 does not divide any power of two, so a percentage roll cannot have a
+  consumption bound at all, only an expectation.  The authored `riskThreshold` is
+  therefore in 256ths (60% odds is `102`, not `40`).
+
+`hazard_schedule_has_exactly_one_roll_per_shift` is the totality statement: for EVERY
+seed and EVERY shift count — no bound, no side condition — the schedule has exactly one
+roll per shift.  The rejection `SeedDraw` still performs is not dead code; it is what
+makes the 256 case a theorem rather than a coincidence.
+
+The one residual, named: `HiddenInstance.laneByte?` drops the single aliasing lane
+value (`P - 1`, one lane in 2^31), and `digestOfStream` zero-fills if a block loses more
+than sixteen of its forty-eight squeezed lanes.  That is a property of the sponge this
+module reuses rather than one it introduces, and it costs at most a non-uniform byte in
+an event of probability under 2^-500 — it can never shorten the schedule, because the
+digest's length is a proof field, not a measurement. -/
+
+/-- `"POAH"` — the hazard-schedule chain, kept apart from `HiddenInstance`'s `"POAC"`
+commitment and `"POAD"` derivation domains. -/
+abbrev HAZARD_DOMAIN : Nat := 0x504F4148
+
+/-- The lane modulus of the deployed sponge; a header lane must be canonical. -/
+abbrev HAZARD_LANE_MODULUS : Nat := Dregg2.Circuit.Poseidon2BabyBearW16.P
+
+/-- A roll is a byte.  256 is the ONLY interesting property: it is the exact width of
+the stream `SeedDraw` consumes, so a draw below it can never reject. -/
+abbrev HAZARD_FACES : Nat := 256
+
+theorem the_hazard_domain_is_distinct_from_the_commit_and_derive_domains :
+    HAZARD_DOMAIN ≠ HiddenInstance.COMMIT_DOMAIN ∧
+    HAZARD_DOMAIN ≠ HiddenInstance.DERIVE_DOMAIN ∧
+    HAZARD_DOMAIN < HAZARD_LANE_MODULUS := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- One 32-byte chain block off the run seed, indexed.  This is `HiddenInstance.commit`'s
+shape with the hazard domain and a block index: absorb a header block and the seed's four
+rate blocks, squeeze `SQUEEZE_BLOCKS`, project lanes to bytes, take 32. -/
+def hazardBlock (seed : Digest32) (index : Nat) : Digest32 :=
+  HiddenInstance.digestOfStream (HiddenInstance.laneBytes
+    (HiddenInstance.squeeze
+      (HiddenInstance.absorbAll HiddenInstance.initialState
+        (HiddenInstance.pad HiddenInstance.RATE
+            [HAZARD_DOMAIN, index % HAZARD_LANE_MODULUS, 0, 0, 0, 0, 0, 0]
+          :: HiddenInstance.digestBlocks seed))
+      HiddenInstance.SQUEEZE_BLOCKS))
+
+/-- The chained byte stream: block 0, then block 1, and so on. -/
+def hazardBytes (seed : Digest32) : Nat → List (Fin 256)
+  | 0 => []
+  | index + 1 => hazardBytes seed index ++ (hazardBlock seed index).bytes
+
+/-- How many chain blocks a shift count needs — `⌈shifts / 32⌉`, where 32 is the width
+of a `Digest32`.  Derived from the need, not chosen: this is the number that would have
+been a cap. -/
+def hazardBlocksFor (shifts : Nat) : Nat := (shifts + 31) / 32
+
+def hazardStream (seed : Digest32) (shifts : Nat) : List (Fin 256) :=
+  hazardBytes seed (hazardBlocksFor shifts)
+
+/-- `count` consuming draws off the stream.  The `none` arm is what an exhausted stream
+would take; `drawRolls_length` proves the caller below never reaches it. -/
+def drawRolls : Nat → List (Fin 256) → List (Fin HAZARD_FACES)
+  | 0, _ => []
+  | count + 1, bytes =>
+      match SeedDraw.drawBelow? HAZARD_FACES (by decide) bytes with
+      | none => []
+      | some (roll, rest) => roll :: drawRolls count rest
+
+/-- **The schedule.**  One roll per shift, drawn off the seed's chained stream. -/
+def hazardSchedule (seed : Digest32) (shifts : Nat) : List Nat :=
+  (drawRolls shifts (hazardStream seed shifts)).map Fin.val
+
+/-- At the exact stream width the draw accepts every byte: `ceilingFor 256 = 256`, so
+the rejection branch is unreachable and one draw consumes exactly one byte.  This is
+the fact that turns "about 1.28 bytes in expectation" into a length. -/
+theorem drawing_below_the_face_count_consumes_exactly_one_byte
+    (byte : Fin 256) (rest : List (Fin 256)) :
+    SeedDraw.drawBelow? HAZARD_FACES (by decide) (byte :: rest) = some (byte, rest) := by
+  have below : byte.val < SeedDraw.ceilingFor HAZARD_FACES := by
+    show byte.val < 256 - 256 % 256
+    rw [Nat.mod_self, Nat.sub_zero]
+    exact byte.isLt
+  simp only [SeedDraw.drawBelow?]
+  rw [if_pos below]
+  exact congrArg (fun value => some (value, rest))
+    (Fin.ext (Nat.mod_eq_of_lt byte.isLt))
+
+/-- The stream length is a count of digests, not a measurement of the sponge: every
+block contributes exactly 32 bytes because `Digest32` carries that as a proof field. -/
+theorem hazard_stream_is_thirty_two_bytes_per_block (seed : Digest32) (blocks : Nat) :
+    (hazardBytes seed blocks).length = 32 * blocks := by
+  induction blocks with
+  | zero => rfl
+  | succ blocks ih =>
+      have width : (hazardBlock seed blocks).bytes.length = 32 :=
+        (hazardBlock seed blocks).length_eq
+      have split : (hazardBytes seed (blocks + 1)).length
+          = (hazardBytes seed blocks).length + (hazardBlock seed blocks).bytes.length := by
+        simp [hazardBytes]
+      rw [split, ih, width]
+      omega
+
+theorem hazard_stream_supplies_at_least_one_byte_per_shift (seed : Digest32)
+    (shifts : Nat) : shifts ≤ (hazardStream seed shifts).length := by
+  rw [hazardStream, hazard_stream_is_thirty_two_bytes_per_block]
+  unfold hazardBlocksFor
+  omega
+
+theorem drawRolls_length (count : Nat) (bytes : List (Fin 256))
+    (enough : count ≤ bytes.length) : (drawRolls count bytes).length = count := by
+  induction count generalizing bytes with
+  | zero => rfl
+  | succ count ih =>
+      cases bytes with
+      | nil => exact absurd enough (by simp only [List.length_nil]; omega)
+      | cons byte rest =>
+          have shorter : count ≤ rest.length := by
+            simp only [List.length_cons] at enough
+            omega
+          have step : drawRolls (count + 1) (byte :: rest) = byte :: drawRolls count rest := by
+            rw [drawRolls, drawing_below_the_face_count_consumes_exactly_one_byte]
+          rw [step, List.length_cons, ih rest shorter]
+
+/-- **Totality, for every seed and every shift count.**  No bound, no side condition,
+no `none`: the schedule always has exactly one roll per shift, so no run can be refused
+for running out of stream. -/
+theorem hazard_schedule_has_exactly_one_roll_per_shift (seed : Digest32) (shifts : Nat) :
+    (hazardSchedule seed shifts).length = shifts := by
+  rw [hazardSchedule, List.length_map]
+  exact drawRolls_length shifts (hazardStream seed shifts)
+    (hazard_stream_supplies_at_least_one_byte_per_shift seed shifts)
+
+/-- Every roll is a face, by the type the draw returns. -/
+theorem every_hazard_roll_is_below_the_face_count (seed : Digest32) (shifts : Nat) :
+    ∀ roll ∈ hazardSchedule seed shifts, roll < HAZARD_FACES := by
+  intro roll member
+  simp only [hazardSchedule, List.mem_map] at member
+  obtain ⟨drawn, _, value⟩ := member
+  exact value ▸ drawn.isLt
 
 /-! ## Authored campaign vocabulary -/
 
@@ -270,8 +466,12 @@ def contributionBoundedB (value : ContributionDelta) : Bool :=
   [value.intel, value.supplies, value.cohesion, value.influence,
     value.score].all fun amount => decide (amount ≤ METRIC_LIMIT)
 
+/-- ⚠ `riskThreshold` is in 256ths, not percent: the roll it is compared against is a
+byte, because that is the width at which the draw never rejects (see the hazard
+section).  Sixty-percent odds are `102`, not `40`.  `HAZARD_FACES` itself is admitted
+so that "cannot succeed" is authorable; `0` is "cannot fail". -/
 def taskRuleValidB (rule : TaskRule) : Bool :=
-  decide (rule.riskThreshold ≤ 100) &&
+  decide (rule.riskThreshold ≤ HAZARD_FACES) &&
     contributionBoundedB rule.successContribution &&
     contributionBoundedB rule.failureContribution &&
     rule.successEffects.boundedB && rule.failureEffects.boundedB &&
@@ -280,13 +480,20 @@ def taskRuleValidB (rule : TaskRule) : Bool :=
     decide (rule.failureEvidence ≤ MAX_EVIDENCE) &&
     decide (rule.discoveryEvidenceRequired ≤ MAX_EVIDENCE)
 
+/-- The curator's published campaign.  ⚠ There is no `hazardCycle`: what is published
+is the per-slot COMMITMENT, and the rolls are drawn per run from the secret that opens
+it.  `missionId`, `slot` and `slotCommitment` are what bind a run's derivation to this
+document — `NightWatchCampaign.ActivationBinds` refuses an activation that names any
+other slot, commitment or mission context. -/
 structure RawConfig where
   schemaVersion : Nat
+  missionId : MissionId
   progression : ShipLifeProgression.ProgressionIdentity
   logStream : EventBatch.StreamId
+  slot : EpochId
+  slotCommitment : Digest32
   roster : List Seat
   rules : List TaskRule
-  hazardCycle : List Nat
   initialResources : ShipResources
   maxShifts : Nat
 deriving DecidableEq
@@ -301,12 +508,16 @@ def configValidB (raw : RawConfig) : Bool :=
     decide (raw.rules ≠ []) && decide (raw.rules.length ≤ MAX_RULES) &&
     decide (raw.rules.map TaskRule.key).Nodup &&
     raw.rules.all taskRuleValidB &&
-    decide (raw.hazardCycle ≠ []) &&
-    decide (raw.hazardCycle.length ≤ MAX_HAZARD_CYCLE) &&
-    raw.hazardCycle.all (fun roll => decide (roll < 100)) &&
     raw.initialResources.boundedB &&
     decide (0 < raw.maxShifts ∧ raw.maxShifts ≤ MAX_SHIFTS)
 
+/-- ⚠ Structural validity, and NOTHING about authenticity — `activate?` is happy to
+activate a config a player wrote.  The authenticated producer is
+`NightWatchCampaignAdmission.authorizeCampaignConfigForWorld?`, which locates these
+exact bytes inside a curator-signed manifest whose root is the active world's
+`contentRoot`.  This constructor stays public because a `Config` confers no authority
+on its own: nothing can be judged without an `Activation`, and an `Activation` needs a
+secret that opens the config's own published commitment. -/
 structure Config where
   private mk ::
   raw : RawConfig
@@ -314,6 +525,120 @@ structure Config where
 
 def activate? (raw : RawConfig) : Option Config :=
   if valid : configValidB raw = true then some ⟨raw, valid⟩ else none
+
+/-- Activation reports the config it was given, so a caller that authenticated the
+BYTES has authenticated the `Config`.  Without this, the admission witness could bind
+its proof fields to a config nobody checked. -/
+theorem activate_preserves_the_raw_config {raw : RawConfig} {config : Config}
+    (accepted : activate? raw = some config) : config.raw = raw := by
+  by_cases valid : configValidB raw = true
+  · unfold activate? at accepted
+    rw [dif_pos valid] at accepted
+    injection accepted with accepted
+    exact (congrArg Config.raw accepted).symm
+  · unfold activate? at accepted
+    rw [dif_neg valid] at accepted
+    exact Option.noConfusion accepted
+
+/-! ## The run activation — the hidden instance, re-derived rather than believed
+
+`RawActivation` is what the NODE assembles from its own state: the slot secret it
+drew off-line, the commitment it published, the player the run belongs to, the mission
+context, and the run seed it derived through `dregg_poa_signal_slot_derive`.  None of
+it is a player claim, and `ActivationBinds` re-derives the two values that matter.
+
+The residual, stated: whoever holds the slot secret knows every schedule for the slot
+in advance, and may choose which of the four seated officers owns a run — so a node can
+pick among at most four schedules.  That is `HiddenInstance`'s operator-hiding residual
+narrowed to this organ, not a new one, and it is UNDONE WORK: removing it needs a
+beacon feeding the slot secret. -/
+
+structure RawActivation where
+  slot : EpochId
+  slotSecret : HiddenInstance.SlotSecret
+  slotCommitment : Digest32
+  playerKey : Digest32
+  mission : HiddenInstance.MissionContext
+  runSeed : Digest32
+deriving DecidableEq
+
+/-- The mission context a config determines.  It is DERIVED, so an activation cannot
+grind the run seed by naming a context of its own — `ActivationBinds` requires equality
+with this. -/
+def missionContextOf (config : Config) : HiddenInstance.MissionContext where
+  missionId := config.raw.missionId
+  epoch := config.raw.progression.contentEpoch
+  federationId := config.raw.progression.federationId
+  contentSession := config.raw.progression.contentSession
+
+/-- Does the roster seat this player key? -/
+def rosterHolds (raw : RawConfig) (playerKey : Digest32) : Bool :=
+  raw.roster.any fun seat => decide (seat.playerKey = playerKey)
+
+/-- Every equality admission checks.  The last two are the RE-DERIVATIONS: the node
+supplied a commitment and a seed, and the kernel recomputes both from the secret.  The
+first four pin the derivation's inputs to the signed config, so the only freedom left
+is which seated officer owns the run. -/
+def ActivationBinds (config : Config) (draw : RawActivation) : Prop :=
+  draw.slot = config.raw.slot ∧
+  draw.slotCommitment = config.raw.slotCommitment ∧
+  draw.mission = missionContextOf config ∧
+  rosterHolds config.raw draw.playerKey = true ∧
+  draw.slotCommitment = HiddenInstance.commit draw.slotSecret draw.slot ∧
+  draw.runSeed =
+    HiddenInstance.runSeedFor
+      { secret := draw.slotSecret, slot := draw.slot, playerKey := draw.playerKey }
+      draw.mission
+
+instance (config : Config) (draw : RawActivation) : Decidable (ActivationBinds config draw) := by
+  unfold ActivationBinds
+  infer_instance
+
+/-- ⚑ The judged object.  `private mk ::`, so the only way to hold one is
+`admitActivation?`, and therefore every judged watch has a schedule that came out of a
+secret opening the config's published commitment. -/
+structure Activation where
+  private mk ::
+  config : Config
+  draw : RawActivation
+  schedule : List Nat
+  slot_exact : draw.slot = config.raw.slot
+  commitment_exact : draw.slotCommitment = config.raw.slotCommitment
+  mission_exact : draw.mission = missionContextOf config
+  player_seated : rosterHolds config.raw draw.playerKey = true
+  commitment_opens : draw.slotCommitment = HiddenInstance.commit draw.slotSecret draw.slot
+  seed_derived : draw.runSeed =
+    HiddenInstance.runSeedFor
+      { secret := draw.slotSecret, slot := draw.slot, playerKey := draw.playerKey }
+      draw.mission
+  schedule_derived : schedule = hazardSchedule draw.runSeed config.raw.maxShifts
+
+def admitActivation? (config : Config) (draw : RawActivation) : Option Activation :=
+  if binds : ActivationBinds config draw then
+    some ⟨config, draw, hazardSchedule draw.runSeed config.raw.maxShifts,
+      binds.1, binds.2.1, binds.2.2.1, binds.2.2.2.1, binds.2.2.2.2.1, binds.2.2.2.2.2, rfl⟩
+  else none
+
+theorem admitted_activation_carries_the_config_it_was_admitted_against
+    {config : Config} {draw : RawActivation} {activation : Activation}
+    (accepted : admitActivation? config draw = some activation) :
+    activation.config = config ∧ activation.draw = draw := by
+  by_cases binds : ActivationBinds config draw
+  · unfold admitActivation? at accepted
+    rw [dif_pos binds] at accepted
+    injection accepted with accepted
+    exact ⟨(congrArg Activation.config accepted).symm,
+      (congrArg Activation.draw accepted).symm⟩
+  · unfold admitActivation? at accepted
+    rw [dif_neg binds] at accepted
+    exact Option.noConfusion accepted
+
+/-- The schedule an activation carries is exactly one roll per shift of its own
+config, so the ceiling and the schedule cannot disagree. -/
+theorem an_activation_has_one_roll_per_authored_shift (activation : Activation) :
+    activation.schedule.length = activation.config.raw.maxShifts := by
+  rw [activation.schedule_derived]
+  exact hazard_schedule_has_exactly_one_roll_per_shift _ _
 
 /-! ## Derived shift state -/
 
@@ -470,20 +795,48 @@ structure State where
   consumedActions : Finset Digest32
 deriving DecidableEq
 
-def initialState (config : Config) : State where
+def initialState (activation : Activation) : State where
   sequence := 0
   shift := 0
-  resources := config.raw.initialResources
+  resources := activation.config.raw.initialResources
   evidence := 0
-  health := config.raw.roster.map fun seat => ⟨seat.id, 0, 0, 0⟩
+  health := activation.config.raw.roster.map fun seat => ⟨seat.id, 0, 0, 0⟩
   mastery := []
   phase := .idle
   history := []
   intents := []
   consumedActions := ∅
 
-def hazardAt (config : Config) (shift : Nat) : Nat :=
-  config.raw.hazardCycle.getD (shift % config.raw.hazardCycle.length) 0
+/-- The roll of a shift.  It reads the drawn schedule; the `0` is the out-of-range
+default and `every_shift_below_the_ceiling_reads_a_drawn_roll` says it is never the
+answer for a shift the campaign can be at. -/
+def hazardAt (activation : Activation) (shift : Nat) : Nat :=
+  (activation.schedule[shift]?).getD 0
+
+theorem every_shift_below_the_ceiling_reads_a_drawn_roll (activation : Activation)
+    (shift : Nat) (below : shift < activation.config.raw.maxShifts) :
+    activation.schedule[shift]? = some (hazardAt activation shift) := by
+  have index : shift < activation.schedule.length := by
+    rw [an_activation_has_one_roll_per_authored_shift]
+    exact below
+  rw [List.getElem?_eq_getElem index]
+  simp only [hazardAt, List.getElem?_eq_getElem index, Option.getD_some]
+
+/-- And the roll is a face, so a `riskThreshold` of `HAZARD_FACES` cannot be met. -/
+theorem every_roll_a_watch_can_read_is_below_the_face_count (activation : Activation)
+    (shift : Nat) (below : shift < activation.config.raw.maxShifts) :
+    hazardAt activation shift < HAZARD_FACES := by
+  have index : shift < activation.schedule.length := by
+    rw [an_activation_has_one_roll_per_authored_shift]
+    exact below
+  have member : hazardAt activation shift ∈ activation.schedule := by
+    have read := every_shift_below_the_ceiling_reads_a_drawn_roll activation shift below
+    rw [List.getElem?_eq_getElem index] at read
+    have value : activation.schedule[shift] = hazardAt activation shift :=
+      Option.some.inj read
+    exact value ▸ List.getElem_mem index
+  rw [activation.schedule_derived] at member
+  exact every_hazard_roll_is_below_the_face_count _ _ _ member
 
 inductive Action where
   | claimOfficer (actor : Digest32) (seat : SeatId)
@@ -563,12 +916,12 @@ theorem the_two_recovery_counters_agree (rule : TaskRule) (success : Bool)
       before.recoveryObserved +
         (progressionOf rule success before (before.apply effect)).recoveryObserved := rfl
 
-private def resolveAssigned (config : Config) (state : State)
+private def resolveAssigned (activation : Activation) (state : State)
     (officer : Seat) (rule : TaskRule) : Except Error State := do
   let healthBefore ← match healthFor? state.health officer.id with
     | none => throw .missingHealth
     | some health => pure health
-  let roll := hazardAt config state.shift
+  let roll := hazardAt activation state.shift
   let success := decide (rule.riskThreshold ≤ roll)
   let contribution := if success then rule.successContribution else rule.failureContribution
   let effects := if success then rule.successEffects else rule.failureEffects
@@ -617,7 +970,7 @@ private def resolveAssigned (config : Config) (state : State)
     health := setHealth state.health healthAfter
     phase := .awaitingDebrief resolved }
 
-private def debriefResolved (config : Config) (state : State)
+private def debriefResolved (activation : Activation) (state : State)
     (resolved : ResolvedShift) : Except Error State := do
   if state.history.length ≥ MAX_HISTORY then throw .historyLimit
   let masteryBefore := masteryFor state.mastery resolved.officer.id resolved.rule.station
@@ -655,7 +1008,7 @@ private def debriefResolved (config : Config) (state : State)
     terminalContentId
   }
   let intent : EventIntent := {
-    stream := config.raw.logStream
+    stream := activation.config.raw.logStream
     expectedSequence := state.history.length + 1
     entry
   }
@@ -666,80 +1019,95 @@ private def debriefResolved (config : Config) (state : State)
     history := state.history ++ [entry]
     intents := state.intents ++ [intent] }
 
-private def applyAction (config : Config) (state : State)
+private def applyAction (activation : Activation) (state : State)
     (action : Action) : Except Error State :=
   match action, state.phase with
   | .claimOfficer actor seatId, .idle => do
-      if state.shift ≥ config.raw.maxShifts then throw .shiftLimit
-      let officer ← match findSeat? config.raw.roster seatId with
+      if state.shift ≥ activation.config.raw.maxShifts then throw .shiftLimit
+      let officer ← match findSeat? activation.config.raw.roster seatId with
         | none => throw .unknownOfficer
         | some officer => pure officer
       if actor ≠ officer.playerKey then throw .officerActorMismatch
       pure { state with phase := .claimed officer }
   | .chooseTask station task, .claimed officer => do
-      let rule ← match findRule? config.raw.rules station task with
+      let rule ← match findRule? activation.config.raw.rules station task with
         | none => throw .unknownTask
         | some rule => pure rule
       if officer.role ≠ rule.role then throw .roleMismatch
       pure { state with phase := .assigned officer rule }
-  | .resolve, .assigned officer rule => resolveAssigned config state officer rule
-  | .debrief, .awaitingDebrief resolved => debriefResolved config state resolved
+  | .resolve, .assigned officer rule => resolveAssigned activation state officer rule
+  | .debrief, .awaitingDebrief resolved => debriefResolved activation state resolved
   | _, _ => .error .wrongPhase
 
 /-- The canonical semantic judge.  Sequence and nullifier advance even for a
-meaningful risk failure, but never for a refused command. -/
-def judge (config : Config) (state : State) (command : Command) :
+meaningful risk failure, but never for a refused command.
+
+⚠ It takes an `Activation`, not a `Config`: there is no way to judge a watch whose
+hazard schedule did not come out of a secret opening the config's own commitment. -/
+def judge (activation : Activation) (state : State) (command : Command) :
     Except Error State := do
   if command.sequence ≠ state.sequence then throw .wrongSequence
   if command.nullifier ∈ state.consumedActions then throw .replayedAction
-  let next ← applyAction config state command.action
+  let next ← applyAction activation state command.action
   pure { next with
     sequence := state.sequence + 1
     consumedActions := insert command.nullifier state.consumedActions }
 
-def judgeSubmitted (config : Config) (state : State)
+def judgeSubmitted (activation : Activation) (state : State)
     (submitted : SubmittedCommand) : Except Error State :=
   match submitted.admit? with
   | none => .error .callerAuthoredOutcome
-  | some command => judge config state command
+  | some command => judge activation state command
 
-theorem holder_status_cannot_change_transition (config : Config) (state : State)
+theorem holder_status_cannot_change_transition (activation : Activation) (state : State)
     (command : Command) (left right : Option HolderPresentation) :
-    judgeSubmitted config state { command, holder := left } =
-      judgeSubmitted config state { command, holder := right } := rfl
+    judgeSubmitted activation state { command, holder := left } =
+      judgeSubmitted activation state { command, holder := right } := rfl
 
-def replay (config : Config) : State → List Command → Except Error State
+def replay (activation : Activation) : State → List Command → Except Error State
   | state, [] => .ok state
   | state, command :: commands => do
-      let next ← judge config state command
-      replay config next commands
+      let next ← judge activation state command
+      replay activation next commands
 
-theorem replay_append (config : Config) (state : State)
+theorem replay_append (activation : Activation) (state : State)
     (left right : List Command) :
-    replay config state (left ++ right) = (do
-      let middle ← replay config state left
-      replay config middle right) := by
+    replay activation state (left ++ right) = (do
+      let middle ← replay activation state left
+      replay activation middle right) := by
   induction left generalizing state with
   | nil => rfl
   | cons command commands ih =>
       simp only [List.cons_append, replay]
-      cases judge config state command <;> simp [ih]
+      cases judge activation state command <;> simp [ih]
 
-theorem replay_deterministic (config : Config) (state : State)
+theorem replay_deterministic (activation : Activation) (state : State)
     (commands : List Command) {left right : State}
-    (hl : replay config state commands = .ok left)
-    (hr : replay config state commands = .ok right) : left = right := by
+    (hl : replay activation state commands = .ok left)
+    (hr : replay activation state commands = .ok right) : left = right := by
   rw [hl] at hr
   exact Except.ok.inj hr
 
-theorem caller_claimed_outcome_is_refused (config : Config) (state : State)
+theorem caller_claimed_outcome_is_refused (activation : Activation) (state : State)
     (command : Command) (claimed : ContributionDelta) :
-    judgeSubmitted config state {
+    judgeSubmitted activation state {
       command
       claimedContribution := some claimed
     } = .error .callerAuthoredOutcome := by
   rfl
 
+#assert_axioms the_hazard_domain_is_distinct_from_the_commit_and_derive_domains
+#assert_axioms drawing_below_the_face_count_consumes_exactly_one_byte
+#assert_axioms hazard_stream_is_thirty_two_bytes_per_block
+#assert_axioms hazard_stream_supplies_at_least_one_byte_per_shift
+#assert_axioms drawRolls_length
+#assert_axioms hazard_schedule_has_exactly_one_roll_per_shift
+#assert_axioms every_hazard_roll_is_below_the_face_count
+#assert_axioms activate_preserves_the_raw_config
+#assert_axioms admitted_activation_carries_the_config_it_was_admitted_against
+#assert_axioms an_activation_has_one_roll_per_authored_shift
+#assert_axioms every_shift_below_the_ceiling_reads_a_drawn_roll
+#assert_axioms every_roll_a_watch_can_read_is_below_the_face_count
 #assert_axioms officer_health_counts_the_recovery_that_happened
 #assert_axioms a_recovery_that_moves_no_health_does_not_move_the_recovery_counter
 #assert_axioms a_recovery_that_moves_health_increments_the_recovery_counter
