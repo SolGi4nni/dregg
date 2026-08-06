@@ -471,7 +471,7 @@ async function runSettle() {
   if (s && s.accepted) {
     const proven = !!(s.proof && s.proof.present);
     logReceipt('settle', proven, (proven ? 'settled · proven' : 'committed · proof pending') + ' · turn ' + (s.turnHash || '').slice(0, 14) + '…', 'live node ' + (s.node || ''));
-  } else if (s && !s.busy) logReceipt('settle', false, s.nodeUp === false ? 'no live node — clear kept local' : 'turn not accepted', s.error || '');
+  } else if (s && !s.busy) logReceipt('settle', false, s.nodeUp === false ? 'no live node — clear kept local' : 'node up · not landed (' + (s.stage || 'settle') + ')', s.error || '');
 }
 
 function ClearingResult({ res }) {
@@ -572,8 +572,12 @@ function WorldView({ r }) {
 
 // ── the settle result: the full proof-receipt, read back from the node ──
 function SettleResult({ s }) {
-  if (!s.nodeUp) return html`<div class="settle warn"><b>No live node reachable</b> (${s.error || 'offline'}). The clearing above is the real verified solver, but it did not land on a node this run. <span class="hint">start one: dregg-node run --port 8420 --enable-faucet --prove-turns</span></div>`;
-  if (!s.accepted) return html`<div class="settle warn">Node rejected the settlement turn: ${s.error || 'unknown'}</div>`;
+  // GENUINELY offline: the node did not answer /status. Only this — a reachable
+  // node that merely could not complete the settle is NEVER shown as "offline".
+  if (s.nodeUp === false) return html`<div class="settle warn"><b>No live node reachable</b> (${s.error || 'offline'}). The clearing above is the real verified solver, but it did not land on a node this run. <span class="hint">start one: dregg-node run --port 8420 --enable-faucet --prove-turns</span></div>`;
+  // Reachable node, settle did not complete — name the stage and the real cause,
+  // and keep it VISIBLY distinct from a finalized settlement (this is not it).
+  if (!s.accepted) return html`<div class="settle warn"><b>Node is up — settlement not landed</b> (${s.stage || 'settle'}): ${s.error || 'unknown'}.${s.faucetDisabled ? html` <span class="hint">this node runs without a faucet; fund the settle operator out of band, or point the terminal at a --enable-faucet dev node.</span>` : ''} <span class="hint">The clearing above is the real verified solver and stands; it was not finalized on-chain this run.</span></div>`;
   const proof = s.proof || {}, rc = s.receipt || {};
   const proven = !!(proof.present || rc.hasProof);
   const h = s.turnHash || '';

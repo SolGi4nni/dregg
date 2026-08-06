@@ -310,9 +310,9 @@ async function settleOnLiveNode(cleared) {
     return;
   }
 
-  if (!r.nodeUp) {
-    // Honest fallback: no live node → the clearing above is the verified solver
-    // (drex_clear); it did NOT land on a node ledger this run.
+  if (r.nodeUp === false) {
+    // GENUINELY offline: the node did not answer /status. Only this is "offline" —
+    // a reachable node that merely could not settle is handled below, never here.
     step('node', 'Settle on the LIVE node — no node reachable (local matcher only)',
       { badge: 'LOCAL fallback', state: 'fail',
         d: `no dregg node at ${r.node || 'the configured address'} (${r.error || 'unreachable'}).\n`
@@ -323,8 +323,11 @@ async function settleOnLiveNode(cleared) {
     return;
   }
   if (!r.accepted) {
-    step('node', 'Settle on the LIVE node — turn not accepted', { badge: 'REAL node', state: 'fail',
-      d: `node ${r.node} rejected the settlement turn: ${r.error || 'unknown'}` });
+    // Reachable node, settle did not land — name the STAGE and real cause. This is
+    // NOT "offline" and NOT a finalized settlement; the verified clearing stands.
+    step('node', `Settle on the LIVE node — not landed (${r.stage || 'settle'})`, { badge: 'REAL node', state: 'fail',
+      d: `node ${r.node} is up but the settle did not land: ${r.error || 'unknown'}`
+       + (r.faucetDisabled ? '\n  (this node runs without a faucet; fund the settle operator out of band, or use a --enable-faucet dev node)' : '') });
     setStepper(2, { failIdx: 2 });
     return;
   }

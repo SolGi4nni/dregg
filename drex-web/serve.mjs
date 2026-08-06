@@ -122,13 +122,51 @@ async function nodeGet(pathname) {
 // A committed turn costs computrons, drawn against the operator cell's balance
 // (the turn `fee` sets the budget). On a dev node the faucet tops the operator
 // up so the settlement turn has budget. Materializes the cell if absent.
+// A faucet grant that REPORTS its outcome. The old version swallowed everything
+// with `.catch(()=>{})`, so a 404 (faucet DISABLED) and a 429 (rate-limited) both
+// read as success and the caller blamed a downstream "underfunded" on nothing it
+// could name. Three outcomes, three fixes, three returns.
 async function nodeFaucet(cell, amount) {
-  try {
-    await fetch(NODE + '/api/faucet', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: cell, amount }),
-    });
-  } catch (_e) { /* faucet may be disabled; the submit will report the real error */ }
+  let r;
+  try { r = await fetch(NODE + '/api/faucet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipient: cell, amount }) }); }
+  catch (e) { return { ok: false, error: 'faucet fetch failed: ' + (e && e.message || e) }; }
+  if (r.status === 404) return { ok: false, disabled: true };       // node started WITHOUT --enable-faucet
+  if (r.status === 429) return { ok: false, rateLimited: true };
+  let j = {}; try { j = await r.json(); } catch (_e) {}
+  if (j.success) return { ok: true, turnHash: j.turn_hash };
+  const err = String(j.error || ('http ' + r.status));
+  return { ok: false, rateLimited: /rate limit/i.test(err), error: err };
+}
+
+// Is the node answering? This is the ONLY probe in the settle path allowed to
+// conclude `{ nodeUp:false }`. A node that answers /status is up — reporting a
+// reachable node that merely could not settle as "offline" is the same absence-
+// dressed-as-verdict the drex_routing gate work killed.
+async function nodeReachable() {
+  try { const r = await fetch(NODE + '/status', { signal: AbortSignal.timeout(4000) }); return r.ok; }
+  catch (_e) { return false; }
+}
+
+// Fund the settle operator (the node's own agent cell) up to `need`, robustly.
+// Destinations are NOT pre-faucetted: a Transfer to a missing cell is auto-
+// provisioned by finalization (`provision_transfer_destinations`, node/src/api.rs),
+// so the old zero-amount dest touches were unnecessary AND, as a burst against the
+// per-IP faucet limiter, they starved the operator grant — which then surfaced as a
+// bogus "operator underfunded" on a node whose faucet was fine.
+async function ensureOperatorFunded(operator, need) {
+  let id = await nodeGet('/api/node/identity');
+  const have = () => (id && Number(id.agent_balance) || 0);
+  if (have() >= need) return { funded: true, have: have() };
+  const grant = Math.min(10000, need + 500);
+  const f = await nodeFaucet(operator, grant);
+  if (f.disabled) return { funded: false, disabled: true, have: have() };
+  if (!f.ok && !f.rateLimited) return { funded: false, error: f.error, have: have() };
+  for (let i = 0; i < 24; i++) {
+    await new Promise(x => setTimeout(x, 500));
+    id = await nodeGet('/api/node/identity');
+    if (have() >= need) return { funded: true, have: have() };
+  }
+  return { funded: false, rateLimited: !!f.rateLimited, have: have() };
 }
 
 // Encode a small unsigned int as a decimal string the node's parse_field_element
@@ -137,10 +175,16 @@ const felt = (n) => String(Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.fl
 
 // Build the ONE settlement turn from the cleared batch and land it on the node.
 async function settleOnNode(cleared) {
-  const bearer = await nodeUnlock();
+  // (0) REACHABILITY — the one and only place `nodeUp:false` is legitimate. Past
+  //     here the node is up, and every failure says WHY, never "offline".
+  if (!(await nodeReachable())) return { nodeUp: false, node: NODE };
+  const fail = (stage, error, extra = {}) => ({ nodeUp: true, accepted: false, node: NODE, stage, error, ...extra });
+
+  let bearer;
+  try { bearer = await nodeUnlock(); } catch (e) { return fail('unlock', e.message); }
   const ident = await nodeGet('/api/node/identity');
   const operator = ident && ident.agent_cell;
-  if (!operator) throw new Error('node identity has no agent cell');
+  if (!operator) return fail('identity', 'node is up but its identity carries no agent cell');
 
   const legs = (cleared.ring && cleared.ring.legs) || [];
   const conserved = (cleared.conservation || []).reduce((s, c) => s + (Number(c.in) || 0), 0);
@@ -190,12 +234,12 @@ async function settleOnNode(cleared) {
   }
   const settledTotal = fills.reduce((s, f) => s + f.amount, 0);
 
-  // Each destination cell must EXIST before value can move into it (Transfer rejects an
-  // unmaterialized destination). A zero-amount faucet materializes it withOUT consuming
-  // the per-cell rate limit (node/src/api.rs: "A zero amount … does not consume the
-  // per-cell faucet limit"). Idempotent — a trader cell only needs to exist once.
-  const dests = fills.length ? fills.map((f) => f.cell) : [SETTLE_CELL];
-  await Promise.all(dests.map((c) => nodeFaucet(c, 0)));
+  // Destination cells are NOT pre-materialized. An earlier comment here claimed
+  // "Transfer rejects an unmaterialized destination" — that is FALSE: finalization
+  // auto-provisions any missing destination cell deterministically from the
+  // Transfer's source (`provision_transfer_destinations`, node/src/api.rs). The
+  // zero-amount touch was unnecessary and, as a burst, tripped the per-IP faucet
+  // limiter and starved the operator grant below.
 
   // Build the settlement turn: one Transfer per cleared fill + a batch EmitEvent. A
   // batch with NO fills (nothing cleared) still lands one committed+proven turn: a
@@ -210,22 +254,26 @@ async function settleOnNode(cleared) {
   // on a dev node, so keep the fee modest).
   const fee = 800 + 350 * effects.length;
   const need = fee + settledTotal + (fills.length ? 0 : 1);
-  if ((ident.agent_balance || 0) < need) {
-    await nodeFaucet(operator, 10000);
-    const re = await nodeGet('/api/node/identity');
-    if (re && (re.agent_balance || 0) < need) {
-      throw new Error(`operator cell underfunded (have ${re.agent_balance}, need ${need}); faucet is rate-limited — retry in ~1 min`);
-    }
+
+  const fund = await ensureOperatorFunded(operator, need);
+  if (!fund.funded) {
+    if (fund.disabled) return fail('fund',
+      `this node has the faucet DISABLED (started without --enable-faucet); the settle operator ${operator.slice(0, 12)}… holds ${fund.have} and needs ${need}. On a hardened/live node the operator is funded out of band — which is why the OPEN tier settles on a --enable-faucet dev node, not the live PoA node.`,
+      { operator, need, faucetDisabled: true });
+    if (fund.rateLimited) return fail('fund',
+      `operator underfunded (have ${fund.have}, need ${need}); the per-cell faucet is 1 grant/min and this batch needs more than one — retry in ~1 min or shrink the book`,
+      { operator, need });
+    return fail('fund', `could not fund the settle operator: ${fund.error || 'unknown'}`, { operator, need });
   }
 
   const submit = await fetch(NODE + '/turn/submit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer },
     body: JSON.stringify({ agent: operator, nonce: 0, fee, memo: 'drex_clear', actions: [{ effects }] }),
-  }).then((r) => r.json());
+  }).then((r) => r.json()).catch((e) => ({ accepted: false, error: 'submit failed: ' + (e && e.message || e) }));
 
   if (!submit.accepted || !submit.turn_hash) {
-    return { nodeUp: true, accepted: false, operator, error: submit.error || 'turn not accepted', submit };
+    return fail('submit', submit.error || 'turn not accepted', { operator, submit });
   }
   const turnHash = submit.turn_hash;
 
@@ -556,9 +604,13 @@ http.createServer(async (req, res) => {
         const result = await settleOnNode(cleared);
         send(res, 200, JSON.stringify(result), MIME['.json']);
       } catch (e) {
-        // Node unreachable / unlock failed → the UI falls back to the labeled
-        // local matcher path. This is the honest blocker surface, not a fake.
-        send(res, 200, JSON.stringify({ nodeUp: false, node: NODE, error: e.message }), MIME['.json']);
+        // settleOnNode is throw-free by construction (structured outcome per
+        // reachable-node failure). Reaching here is an UNEXPECTED internal error —
+        // do NOT assert `nodeUp:false` and blame the node for a bug here. Re-probe.
+        const up = await nodeReachable();
+        send(res, 200, JSON.stringify(up
+          ? { nodeUp: true, accepted: false, node: NODE, stage: 'internal', error: e.message }
+          : { nodeUp: false, node: NODE, error: e.message }), MIME['.json']);
       }
     });
     return;
