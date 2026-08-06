@@ -421,8 +421,30 @@ key type. One epoch, one re-genesis.
   `circuit/src/effect_vm/trace_rotated.rs:1459` (wound #20 — a public system-wide constant whose
   key domain is attacker-writable via `RevokeDelegation`; **the single worst site in the
   catalogue** by blast radius).
-* `turn/src/umem.rs:1162,1193,1208` — V1 codec **deleted**, V2 `UAddrV2`/`UValV2` armed, endianness
-  flipped to LE (§2.5). Free today because V1 is staged and `umem_witness_enabled` is unflipped.
+* `turn/src/umem.rs:1149,1169,1205` — V1 codec (`umem_fold_bytes_v1` / `umem_key_addr_v1` /
+  `umem_val_felt_v1`) **deleted**, V2 `UAddrV2`/`UValV2` armed on the wire, endianness flipped to
+  LE (§2.5).
+
+  > ⚠ **CORRECTED 2026-08-06 — the parenthetical that stood here was stale in BOTH halves.** It
+  > read *"Free today because V1 is staged and `umem_witness_enabled` is unflipped."* Neither
+  > clause survives reading the code.
+  >
+  > * **`umem_witness_enabled` is ON.** It is `AtomicBool::new(true)` in all three `TurnExecutor`
+  >   constructors (`turn/src/executor/mod.rs:1293`, `:1376`, `:1429`) and the field's own doc at
+  >   `:1172` says so out loud: *"ON by default (the umem VK EPOCH — G4)."*
+  > * **V1 is not merely staged.** `umem_cohort_proving_inputs_from` — which calls
+  >   `umem_proving_inputs_from_v1` — has eight production call sites:
+  >   `sdk/src/full_turn_proof.rs:1385,1635,1773,3586` and
+  >   `turn-prover/src/rotation_witness.rs:443,536,629`, plus the multi-domain twin at `:725`.
+  >   Its width-7 row layout (`key · present · value · prev_present · prev_value · prev_serial ·
+  >   guard`) is what the committed umem-cohort registries back.
+  >
+  > **What IS still free, stated narrowly:** the V2 **address** endianness flip.
+  > `UAddrV2::from_key` has no production caller (pinned by
+  > `umem_v2_address_is_big_endian_the_one_divergence_from_the_canonical_le_codec`). V2's **value**
+  > encoding acquired one on 2026-08-06 — `turn/src/umem.rs`'s `admit_value_v2`, the producer's
+  > value-injectivity gate — but that caller only ever COMPARES `UValV2`s and never emits their
+  > limbs, so re-orienting the value payload is still free too. Emitting either is this stage.
 * `turn/src/rotation_witness.rs:346` `iroot` — the receipt-log MMR leaf **and** its 1-felt root.
 * `turn/src/executor/proof_verify.rs:3371,3401,3412` + `verifier/src/lib.rs:466,480` +
   `turn/src/conditional.rs:816` + `node/src/mcp/proof.rs:200,204` +

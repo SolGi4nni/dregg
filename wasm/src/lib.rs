@@ -645,22 +645,39 @@ pub fn generate_predicate_proof(
 
     // Compute fact hash from attribute key.
     //
-    // ⚑ CLASS (A), NAMED NOT MIGRATED (2026-08-01 `hash_bytes` caller sweep). `fact_hash`
-    // becomes `FactBinding::predicate_sym`, which lands in column `PREDICATE_SYM = 5` of the
-    // DEPLOYED golden `circuit/descriptors/by-name/predicate-arith*.json` and feeds the arity-7
-    // chip lookup producing `FACT_HASH` (col 9) and thence `PI_FACT_COMMITMENT`. Two attribute
-    // keys sharing this felt produce proofs about THE SAME fact: a predicate proved over
-    // `"credit_score"` verifies as a proof over whatever key collides with it — an attribute
-    // substitution, at 2^15.4534 (~44,900 evaluations) for a pair the attacker names, 2^30.91
-    // against a fixed deployed key.
+    // ⚑ RECLASSIFIED (C)-AT-HEAD, 2026-08-06 — this was (A) and the (A) was a manufactured wound.
     //
-    // Why not widened here: the sink is ONE deployed AIR column. Column 5 carries no
-    // pi_binding, no gate and no range in the golden — the AIR treats the image as an opaque
-    // free felt and never recomputes it — so nothing in-circuit checks this Rust, but the
-    // COLUMN is one felt wide, and a `[BabyBear; 8]` fact identity is a descriptor reshape
-    // (width, chip arity, PI count) i.e. Lean emit work + a VK rotation, not a host change.
-    // ⚠ Also: `wasm` does not compile at HEAD (a sibling lane owns it), so this site is
-    // classified and left untouched rather than edited blind.
+    // `fact_hash` becomes `FactBinding::predicate_sym`, which lands in column `PREDICATE_SYM = 5`
+    // of the DEPLOYED golden `circuit/descriptors/by-name/predicate-arith*.json` and feeds the
+    // arity-7 chip lookup producing `FACT_HASH` (col 9) and thence `PI_FACT_COMMITMENT`. The
+    // 2026-08-01 sweep called that (A) and priced an attribute substitution at 2^15.4534. Read the
+    // consuming code and that gain is ZERO:
+    //
+    //   * `verify_predicate_proof` (this file) takes `fact_commitment: u32` from its CALLER and
+    //     pins the PIs to `[threshold, fact_commitment]`. It never recomputes anything from an
+    //     attribute key.
+    //   * It could not: leg 2 forces `fact_commitment = hash_4_to_1([fact_hash, state_root,
+    //     blinding, 0])` with a SECRET per-showing `blinding` drawn below, which is what makes two
+    //     showings unlinkable. Without an opening of that blinding no verifier can tie a claimed
+    //     key to the commitment at ANY felt width.
+    //   * The only consumer ships the key beside the proof as a plaintext string
+    //     (`extension/src/background.ts:2061`, `key: pf.key`). Relabelling it costs nothing, so an
+    //     attribute substitution never needed a collision in the first place.
+    //
+    // ⚠ Say the real defect rather than the flattering one: the fact IDENTITY is UNBOUND at the
+    // verifier. That is a bigger hole than a narrow felt and widening the felt does not touch it.
+    //
+    // FLIP CONDITION — the first verifier that recomputes `predicate_sym` from a claimed attribute
+    // key makes this (A). At that moment the sink is ONE deployed AIR column (column 5 carries no
+    // pi_binding, no gate and no range in the golden — the AIR treats the image as an opaque free
+    // felt), so an 8-lane fact identity is a descriptor reshape (width, chip arity, PI count):
+    // Lean emit work plus a VK rotation, not a host change.
+    //
+    // ⓘ The sweep's other stated reason — "`wasm` does not compile at HEAD" — was FALSE. Measured
+    // 2026-08-06: `cargo check --manifest-path wasm/Cargo.toml --target wasm32-unknown-unknown`
+    // finishes in 2m00s with four warnings and zero errors. `wasm` is excluded from the cargo
+    // workspace (see `Cargo.toml`'s own comment), so `cargo check --workspace` never reaches it —
+    // which is how that claim survived a green tree. Do not repeat it without re-measuring.
     let fact_hash = poseidon2::hash_bytes(attribute_key.as_bytes());
     let state_root_bb = BabyBear::new(state_root);
 
@@ -1872,19 +1889,34 @@ pub fn prove_anonymous_membership(
 
     // Compute the blinded leaf: Poseidon2(agent_id_hash, blinding)
     //
-    // ⚑ CLASS (A) — the RING-MEMBERSHIP identity, and the whole surface below it is one felt
-    // wide (2026-08-01 sweep). `agent_id_hash` is a 32-byte agent id squeezed to ~30.906891
-    // bits, so two distinct agent ids share a `blinded_leaf` for any blinding, and `set_root`
-    // (`hash_many(member_hashes)` below) is a `Vec<BabyBear>` fold over the same narrow images
-    // — a ring member can be swapped for a colliding id without moving the published root.
-    // Cost: 2^15.4534 for a chosen pair, 2^30.91 against a fixed victim id.
+    // ⚑ RECLASSIFIED (C)-AT-HEAD, 2026-08-06 — the 2026-08-01 sweep called this (A); there is no
+    // gate a collision could make accept.
     //
-    // ⚠ The `MembershipResult` fields (`blinded_leaf: u32`, `set_root: u32`) are the actual
-    // width ceiling here, not this call: even `hash_bytes_8` would be truncated on the way out.
-    // Fixing this is a wasm-surface reshape (u32 → an 8-lane hex, as `presentation_tag_full_hex`
-    // already does for the tag), and `wasm` does not compile at HEAD — a sibling lane owns it.
-    // Classified, not edited blind. Note the honest asymmetry already recorded above: the
-    // presentation TAG was widened to a 256-bit BLAKE3 field; the IDENTITY it tags was not.
+    // The felt IS narrow, and that part of the old note stands: `agent_id_hash` squeezes a 32-byte
+    // agent id to ~30.906891 bits, so two distinct ids share a `blinded_leaf` for any blinding and
+    // `set_root` (`hash_many(member_hashes)` below) folds the same narrow images. But a bound is a
+    // price on an ATTACK, and this surface has no verifier to attack:
+    //
+    //   * `prove_anonymous_membership` emits NO PROOF. `proof_size` below is a hand-computed
+    //     estimate and the line beside it says "in a real system this would be a STARK" —
+    //     `audits/AUDIT-wasm.md:151` recorded exactly that.
+    //   * There is no `verify_anonymous_membership` anywhere in the tree.
+    //   * The one consumer copies `set_root` into a report field
+    //     (`extension/src/background.ts:6165`, `result.eligibility`) that nothing checks.
+    //
+    // So "a ring member can be swapped for a colliding id without moving the published root" is
+    // true and buys nothing: no party consults the root. Quoting 2^15.4534 here prices a search
+    // nobody would run.
+    //
+    // FLIP CONDITION, and it is the whole reason this stays written down: when the ring proof
+    // becomes a REAL STARK with a verifier that re-folds the member set, this felt IS the binding
+    // and the site is (A) that day. ⚠ And the sink then is NOT an AIR column — it is
+    // `MembershipResult { blinded_leaf: u32, set_root: u32 }`, a `#[derive(Serialize)]` struct
+    // declared fifty lines below this call, plus its TS shape at `extension/src/types.ts:912`.
+    // That is a HOST reshape (u32 → an 8-lane hex, exactly as `presentation_tag_full_hex` already
+    // does for the tag). Do not defer it as Lean's; nothing about it needs an emit. The asymmetry
+    // recorded above is still the honest summary: the presentation TAG was widened to a 256-bit
+    // BLAKE3 field; the IDENTITY it tags was not.
     let agent_id_hash = poseidon2::hash_bytes(&agent_id_bytes);
     let blinded_leaf = poseidon2::hash_2_to_1(agent_id_hash, blinding);
 

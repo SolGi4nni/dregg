@@ -250,6 +250,23 @@ pub extern "C" fn dreggcf_nullifier(note: u64) -> u64 {
 /// the Lean `Nat` the portal returns is unbounded, so nothing forces a scalar at all. Widening
 /// the Rust return alone desynchronises the shim. Owner: the executor-PD portal.
 ///
+/// ⓘ **Both halves of that re-verified at source, 2026-08-06** (a relayed blocker is not a read
+/// one). `metatheory/Dregg2/Crypto/PortalFloor.lean:255-256` declares
+/// `@[extern "dregg_hmac_sha256"] opaque hmacSha256Extern : Nat → Nat → Nat` — the return really
+/// is an unbounded `Nat`, so the 64-bit cap really is the shim's `lean_uint64_to_nat` and the
+/// 31-bit cap really is this line's `as_u32()`. Two independent, both removable.
+///
+/// ⚠ **And the reason a REPAIR cannot be exhibited in-tree, measured rather than assumed:** this
+/// crate cannot host a host `cargo test` harness. Reproduced 2026-08-06 —
+/// `cargo test` in this directory dies at `error[E0152]: duplicate lang item in crate 'alloc' …
+/// 'owned_box'`, exactly the limitation this file's own module banner records ("a `staticlib`-only
+/// `no_std` crate with alloc-heavy `no_std` deps cannot host a std `cargo test` harness … hence the
+/// C selftest is the executed witness"). So an OLD-ADMITS / NEW-REJECTS pair for a widened tag has
+/// nowhere in this workspace to run, and the widening must land with a C-selftest vector, not with
+/// a Rust test. That is the actual cost of the repair and it is why it is a portal-owner item
+/// rather than a sweep item — NOT because the bound is acceptable. It is not: a MAC truncated to
+/// `2^30.91` is a MAC at `2^30.91`.
+///
 /// # Safety
 /// `msg` must point to `msg_len` readable bytes (or null iff `msg_len==0`).
 #[no_mangle]

@@ -1238,15 +1238,111 @@ pub struct UmemProvingInputsV1 {
 /// SDK/IVC prover can be handed a real boundary instead of `UMemBoundaryWitness::default()`.
 ///
 /// `Err` if the address codec collides (two distinct `UKey`s lowering to the same
-/// `(domain, key)` felt — caught so the strict-increasing boundary stays sound) or the trace is
-/// empty.
+/// `(domain, key)` felt — caught so the strict-increasing boundary stays sound), if the VALUE
+/// codec collides at one address (see [`admit_value_v2`]), or the trace is empty.
 pub fn umem_proving_inputs_v1(witness: &UmemTurnWitness) -> Result<UmemProvingInputsV1, String> {
     umem_proving_inputs_from_v1(&witness.pre, &witness.ops)
 }
 
-/// [`umem_proving_inputs`] over an explicit `(pre projection, op trace)` — the form callers use
+/// **THE VALUE HALF OF THE PRODUCER'S INJECTIVITY GATE — and the production caller of the
+/// faithful UMEM-V2 codec.**
+///
+/// [`umem_proving_inputs_from_v1`] has gated ADDRESS injectivity since it was written: two
+/// distinct `UKey`s lowering to one `(domain, key)` felt is refused, "else the boundary's
+/// strict-increasing requirement (and the multiset balance) is unsound". The same felt-plane
+/// argument applies to the OTHER coordinate and was not gated at all, so this is the missing
+/// half of an existing gate rather than a new policy.
+///
+/// # What the felt plane cannot see
+///
+/// [`umem_val_felt_v1`] lowers `Option<&UVal>` to `(present, value)`, TWO felts, and it is
+/// many-to-one on the source in three independent ways:
+///
+/// 1. **Variant erasure, cost 0.** `Some(Bytes32(b))` and `Some(UmemRef(b))` share the arm
+///    `(ONE, fold_bytes32(b))` — literally the same match arm. They are not the same value:
+///    [`UVal::UmemRef`]'s own doc says it "names another umem rather than a field element" and
+///    [`open_through_umem_ref`] treats its bytes as a CHILD UMEM'S COMMITTED ROOT. So a plain
+///    32-byte field element and a claimed child-umem root are indistinguishable in the committed
+///    trace. Every other variant collapses through `serde_json` into one Horner fold, so
+///    `Int`/`U64`/`Bool`/`Blob` separate only by whatever their JSON happens to be.
+/// 2. **The `+p` chunk alias, cost 0.** `fold_bytes32` is `hash_many(bytes32_to_8_limbs(b))` and
+///    `bytes32_to_8_limbs` is a per-4-byte-chunk `u32 % p` projection with `2p < 2^32`, so for
+///    53.1% of chunk values `v` and `v + p` are DIFFERENT bytes with an IDENTICAL limb —
+///    constructed by one addition, no search. `cap_root::fold_bytes32`'s own doc states this.
+/// 3. **The one-felt squeeze, `2^15.45`.** Even with an injective encoder the image is one
+///    BabyBear: `log2 p = 30.906891`, so a birthday collision over unaliased preimages costs
+///    `2^(30.906891/2) = 2^15.4534` ≈ 44,900 evaluations. COLLISION, not second preimage — the
+///    producer of a trace chooses both sides.
+///
+/// # Why that matters, stated at the resolution the code supports
+///
+/// The umem AIR decides a fact about FELT ROWS: that the trace is a consistent offline-checked
+/// memory over `(domain, key)`. The host then reads those rows back as TYPED SOURCES — and
+/// [`reify_cell`] genuinely dispatches on the variant (`expect_bytes32`, `expected Int`,
+/// `expected U64`). That inference step is sound only if the lowering is injective ON THE SOURCES
+/// THIS TRACE CONTAINS. Where it is not, a read-after-write that the AIR certifies as consistent
+/// can be a `Bytes32` write answered by a `UmemRef` read.
+///
+/// ⚠ **This is a producer-side refusal, so it is an HONESTY gate, not a soundness one, and the
+/// address half above has exactly the same character.** A prover who does not call the producer
+/// is not stopped by it. What it does buy is that no trace the deployed cohort generators
+/// ([`umem_cohort_proving_inputs_from`], [`umem_cohort_multidomain_proving_inputs_from`]) hand to
+/// `prove_vm_descriptor2_umem` can carry an alias the committed rows cannot express — the
+/// producer refuses instead of emitting rows whose source reading is ambiguous. Closing it on the
+/// VERIFYING side is the wire widening, which is a Lean emit epoch and is priced in the UMEM-V2
+/// section below.
+///
+/// # Distinctness is V2's, deliberately
+///
+/// The gate's notion of "two distinct sources" is [`UValV2`] equality — presence, variant tag,
+/// exact byte length, exact `u16` payload limbs — not an ad-hoc one. That is the same object the
+/// future wire epoch commits, so this refuses exactly the pairs that epoch will separate, and it
+/// cannot drift from it.
+///
+/// ⚠ It takes the ENCODING and deliberately **not** V2's `UMEM_V2_MAX_BLOB_BYTES` ceiling — see
+/// [`UValV2::encode_canonical`] for why inheriting it would have turned this collision fix into an
+/// availability cliff on any cell with a large `Program` or `VerificationKey` plane. This gate
+/// therefore refuses **only** aliases: it never refuses on size, and it can only turn an
+/// already-emittable trace into an error, never the reverse.
+fn admit_value_v2(
+    by_cell: &mut BTreeMap<((u32, u32), (u32, u32)), UValV2>,
+    addr: (u32, BabyBear),
+    source: Option<&UVal>,
+) -> Result<(), String> {
+    let faithful = UValV2::encode_canonical(source);
+    let (present, value) = umem_val_felt_v1(source);
+    let coord = (
+        (addr.0, addr.1.as_u32()),
+        (present.as_u32(), value.as_u32()),
+    );
+    match by_cell.get(&coord) {
+        Some(prev) if prev != &faithful => Err(format!(
+            "umem producer: VALUE codec collision at (domain {}, key {}) — two DISTINCT sources \
+             lower to the one-felt cell (present {}, value {}): V2 variant {} / {} source bytes \
+             against V2 variant {} / {} source bytes. The committed row cannot tell them apart, \
+             so a read of one would be certified against a write of the other.",
+            addr.0,
+            addr.1.as_u32(),
+            present.as_u32(),
+            value.as_u32(),
+            prev.variant(),
+            prev.source_byte_len(),
+            faithful.variant(),
+            faithful.source_byte_len(),
+        )),
+        _ => {
+            by_cell.insert(coord, faithful);
+            Ok(())
+        }
+    }
+}
+
+/// [`umem_proving_inputs_v1`] over an explicit `(pre projection, op trace)` — the form callers use
 /// to append the caller-owned index-domain receipt write ([`receipt_op`]) to the witness ops
-/// before lowering.
+/// before lowering. **This is the function the deployed cohort generators route through**
+/// ([`umem_cohort_proving_inputs_from`], [`umem_cohort_multidomain_proving_inputs_from`]), reached
+/// in production from `sdk/src/full_turn_proof.rs` and `turn-prover/src/rotation_witness.rs`, so
+/// both injectivity gates below sit on every umem leg the deployed prover is handed.
 pub fn umem_proving_inputs_from_v1(
     pre: &UProjection,
     ops: &[UmemOp],
@@ -1260,6 +1356,9 @@ pub fn umem_proving_inputs_from_v1(
     // unsound. Fail closed on a collision.
     let mut by_addr: BTreeMap<(u32, u32), UKey> = BTreeMap::new();
     let mut touched: BTreeMap<UKey, (u32, BabyBear)> = BTreeMap::new();
+    // The VALUE half of the same gate — see [`admit_value_v2`] for what the felt plane cannot
+    // see and why the distinctness relation is the faithful V2 encoding's.
+    let mut by_cell: BTreeMap<((u32, u32), (u32, u32)), UValV2> = BTreeMap::new();
     for op in ops {
         let (d, key) = umem_key_addr_v1(&op.key);
         match by_addr.get(&(d, key.as_u32())) {
@@ -1275,7 +1374,14 @@ pub fn umem_proving_inputs_from_v1(
                 by_addr.insert((d, key.as_u32()), op.key.clone());
             }
         }
+        // Both endpoints of every row ride the felt plane, so both are admitted.
+        admit_value_v2(&mut by_cell, (d, key), op.val.as_ref())?;
+        admit_value_v2(&mut by_cell, (d, key), op.prev_val.as_ref())?;
         touched.entry(op.key.clone()).or_insert((d, key));
+    }
+    // ...and so does each touched address's PRE-state cell, which becomes `boundary.init_vals`.
+    for (k, (d, key)) in &touched {
+        admit_value_v2(&mut by_cell, (*d, *key), pre.get(k))?;
     }
 
     // One `UMemOp::Write` constraint per touched domain, guarded by its own indicator column.
@@ -1367,38 +1473,12 @@ pub fn umem_proving_inputs_from_v1(
     })
 }
 
-/// Compatibility name for the deployed scalar UMEM proving inputs. New code
-/// which deliberately targets that wire epoch should prefer
-/// [`UmemProvingInputsV1`].
-pub type UmemProvingInputs = UmemProvingInputsV1;
-
-/// Compatibility wrapper for the deployed scalar address codec. The explicit
-/// [`umem_key_addr_v1`] name is preferred in new call sites so a one-felt
-/// address can never be mistaken for the faithful V2 source encoding.
-pub fn umem_key_addr(k: &UKey) -> (u32, BabyBear) {
-    umem_key_addr_v1(k)
-}
-
-/// Compatibility wrapper for the deployed scalar value codec. The explicit
-/// [`umem_val_felt_v1`] name is preferred in new call sites.
-pub fn umem_val_felt(v: Option<&UVal>) -> (BabyBear, BabyBear) {
-    umem_val_felt_v1(v)
-}
-
-/// Compatibility wrapper for the deployed scalar boundary producer. The
-/// explicit [`umem_proving_inputs_v1`] name is preferred in new call sites.
-pub fn umem_proving_inputs(witness: &UmemTurnWitness) -> Result<UmemProvingInputsV1, String> {
-    umem_proving_inputs_v1(witness)
-}
-
-/// Compatibility wrapper for the deployed scalar boundary producer. The
-/// explicit [`umem_proving_inputs_from_v1`] name is preferred in new call sites.
-pub fn umem_proving_inputs_from(
-    pre: &UProjection,
-    ops: &[UmemOp],
-) -> Result<UmemProvingInputsV1, String> {
-    umem_proving_inputs_from_v1(pre, ops)
-}
+// The five `umem_*` / `UmemProvingInputs` compatibility aliases that stood here (a type alias
+// plus four one-line forwards to the `_v1` names) are DELETED. Measured 2026-08-06: they had
+// ZERO consumers between them except one test import, which now names `umem_proving_inputs_from_v1`
+// directly. This repo's rule is that a no-op kept for compatibility is worse than one that does
+// something, because the next reader trusts it — and here the un-suffixed spellings were exactly
+// the ones a new call site would reach for while believing the width question was settled.
 
 // ============================================================================
 // UMEM-V2 FAITHFUL SOURCE MODEL
@@ -1413,6 +1493,41 @@ pub fn umem_proving_inputs_from(
 // canonical-construction wall, and serde derive would bypass presence/tag/
 // length/padding validation. Phase B must introduce an explicitly validated
 // protocol decoder together with its versioned wire schema.
+//
+// ⚑ V2 HAS A PRODUCTION CALLER AS OF 2026-08-06, AND IT IS NOT THE WIRE.
+//
+// `admit_value_v2` (above) is it: the deployed producer `umem_proving_inputs_from_v1` — the ONE
+// function both deployed cohort generators call — now decides "are these two sources the same
+// value?" by `UValV2` equality, and REFUSES a trace in which two distinct V2 sources land on one
+// `(address, present, value)` felt cell. Until then V2 was a faithful codec with no caller, i.e.
+// it was protecting nothing; the test file that says so in its own docblock is
+// `turn/tests/umem_v2_faithful_codec.rs`.
+//
+// ⚑ WHAT ADOPTING V2 ON THE WIRE COSTS — priced, not deferred as unpriceable.
+//
+// The producer role above cost no emit because a REFUSAL is always in the host's gift: it changes
+// no accepted trace's rows. Making the VERIFIER see V2's limbs is a different act, and it is a
+// Lean-authored AIR change plus a VK epoch. The bill, read off the code rather than estimated:
+//
+//   * `DescriptorIR2`'s `UMemOp` — `circuit/src/descriptor_ir2.rs:688` `UMemOpSpec` types `key`,
+//     `value`, `prev_value` as ONE `LeanExpr` each. V2 is 22 `u16` address limbs and a
+//     4-limb-header + variable payload value. The Lean side (`Dregg2/Circuit/DescriptorIR2.lean`
+//     and the `EffectVmEmitUMemCohort` / `EffectVmEmitUMemCohortMulti` emitters) is the author of
+//     that shape; Rust only consumes it. So this is Lean work, not a Rust widening.
+//   * The row geometry moves from width 7 (single-domain cohort: `key · present · value ·
+//     prev_present · prev_value · prev_serial · guard`) to width `22 + header + payload + guard`,
+//     and the multi-domain cohort's `6 + #domains` moves with it. A variable-length value payload
+//     cannot back ONE committed VK, so the value limbs need a FIXED chunk ceiling chosen in Lean
+//     — that choice is the real design content of the epoch, not the encoding.
+//   * Re-emit: `circuit/descriptors/umem-cohort-*-staged-registry.tsv` and every registry row
+//     that carries a `UMemOp`, then the VK, then a `VK-REGEN-LOG` row, then a re-genesis.
+//   * The ENDIANNESS flip rides the same epoch: `UAddrV2::from_key` reads its source through
+//     `bytes32_to_u16_be` while the canonical codec (`docs/DESIGN-canonical-byte-felt-codec.md`
+//     §2.5, `dregg_codec::Limbs16`, the deployed `exact_nullifier_aafi::raw_to_u16_le`) is
+//     little-endian. Pinned by `umem_v2_address_is_big_endian_the_one_divergence_from_the_canonical_le_codec`.
+//     ⚠ That test's stated reason #3 for the flip being free — "V2 has no production caller" — is
+//     now FALSE for values (the gate above) and still TRUE for addresses (`UAddrV2::from_key` has
+//     no production caller). Flipping the address endianness today still costs nothing.
 
 /// UMEM-V2 fixed address width: domain tag + variant tag + one exact 32-byte
 /// source + one exact 64-bit argument block.
@@ -1682,9 +1797,32 @@ pub struct UValV2 {
 }
 
 impl UValV2 {
-    /// Encode an optional source value without reduction or type erasure.
+    /// Encode an optional source value without reduction or type erasure, subject to the
+    /// [`UMEM_V2_MAX_BLOB_BYTES`] admission.
     pub fn try_from_value(value: Option<&UVal>) -> Result<Self, UmemV2Error> {
         validate_v2_value_bound(value)?;
+        Ok(Self::encode_canonical(value))
+    }
+
+    /// **The canonical encoding WITHOUT the blob ceiling** — the same bytes
+    /// [`UValV2::try_from_value`] produces, minus its size admission.
+    ///
+    /// The two are deliberately separate concerns and this split exists so a caller cannot
+    /// acquire one by asking for the other:
+    ///
+    /// * the CANONICAL ENCODING is what makes two sources distinguishable (presence, variant tag,
+    ///   exact byte length, exact `u16` payload limbs);
+    /// * [`UMEM_V2_MAX_BLOB_BYTES`] is a **host-model replay ceiling** — its own doc says it
+    ///   "bounds allocation and gives the circuit epoch a stable chunking limit" for
+    ///   [`UmemBoundaryV2::from_full_image`], which materialises a whole image.
+    ///
+    /// ⚠ **The producer's value gate ([`admit_value_v2`]) MUST NOT inherit that ceiling**, and
+    /// this is the reason the split is not cosmetic: `project_cell` stores a cell's `Program` and
+    /// `VerificationKey` planes as `json(...)` → `UVal::Blob`, neither of which is bounded by
+    /// 64 KiB. Routing the deployed producer through `try_from_value` would therefore have made a
+    /// SOUNDNESS gate refuse honest turns on any cell with a large program or VK — an availability
+    /// cliff introduced by a fix for a collision. The gate needs the encoding, not the ceiling.
+    pub fn encode_canonical(value: Option<&UVal>) -> Self {
         let (presence, variant, source): (u16, UValVariantV2, Vec<u8>) = match value {
             None => (0, UValVariantV2::Absent, Vec::new()),
             Some(UVal::Present) => (1, UValVariantV2::Present, Vec::new()),
@@ -1695,13 +1833,16 @@ impl UValV2 {
             Some(UVal::Blob(v)) => (1, UValVariantV2::Blob, v.clone()),
             Some(UVal::UmemRef(v)) => (1, UValVariantV2::UmemRef, v.to_vec()),
         };
-        let source_byte_len = u32::try_from(source.len()).expect("V2 value bound fits u32");
-        Ok(Self {
+        // A umem value at or past 4 GiB is not a reachable input (it would have to be a single
+        // `UVal` already materialised in the projection); fail loudly rather than truncate the
+        // length limb, which would alias two sources.
+        let source_byte_len = u32::try_from(source.len()).expect("a umem value fits u32 bytes");
+        Self {
             presence,
             variant: variant as u16,
             source_byte_len,
             payload: pack_bytes_u16_be(&source),
-        })
+        }
     }
 
     pub const fn presence(&self) -> u16 {
@@ -2082,7 +2223,7 @@ pub struct UmemCohortProvingInputs {
 /// **THE FIXED-COHORT TRACE GENERATOR** — bridge one effect-leg's umem op trace into the FIXED
 /// per-effect cohort form the deployed-form umem prover ([`prove_vm_descriptor2_umem`]) accepts.
 ///
-/// The producer's per-turn form ([`umem_proving_inputs_from`]) yields a variable-width
+/// The producer's per-turn form ([`umem_proving_inputs_from_v1`]) yields a variable-width
 /// (`6 + #domains`) descriptor with one guard column per domain — which CANNOT back a single
 /// committed VK. The FIXED cohort is single-domain width-7. This generator reuses the producer's
 /// row + boundary derivation (so the cohort rows are byte-identical to the single-domain

@@ -608,7 +608,19 @@ pub fn wire_commit_8_chip(pre_limbs: &[BabyBear], iroot: BabyBear) -> [BabyBear;
 /// its companion lives, because the argument is not reconstructible from the line):
 /// `storage::bucket_commitment::fold_leaves` and `starbridge-apps/site-host`'s `content_root`,
 /// whose `coll = hash_bytes(key)` is a heap collection id while the key itself is bound
-/// injectively inside the 8-felt object/asset digest that rides into `wire_commit_8`'s `pre`.
+/// injectively inside the 8-felt object/asset digest that rides into `wire_commit_8`'s `pre`;
+/// and — since 2026-08-03 — `sandstorm_bridge::cell::var_coll`, whose companion is
+/// `var_leaf_digest8` (a `hash_bytes_8` image over `DOMAIN ‖ len(key) ‖ key ‖ value`, spread
+/// across the entry's eight lane leaves), so `var_coll` decides only WHERE a leaf sits.
+///
+/// ⚠ **(B) means "no FORGERY", not "no cost".** All three of those sites address a sorted heap by
+/// the narrow felt, and `heap_root::assert_addr_unique` **panics** on two leaves sharing an
+/// address — fail-closed, but a panic. `sandstorm_bridge` already priced that residual as
+/// availability. `storage::bucket_commitment::verify_opening` had it reachable from an UNTRUSTED
+/// `Deserialize`-derived `ObjectOpening`, i.e. an unauthenticated remote abort at the same
+/// `2^15.4534`; it now refuses an ambiguous leaf list at leg (0) instead
+/// (`storage/tests/bucket_opening_coll_collision_dos.rs`). When classifying a site (B), say what
+/// the collision DOES buy, not merely what it does not.
 ///
 /// **LEFT, not security-bearing:** the two `hash_bytes(DOMAIN)` tags in those same two folds —
 /// compile-time constants with no free parameter, so no search exists at any price and the
@@ -618,10 +630,59 @@ pub fn wire_commit_8_chip(pre_limbs: &[BabyBear], iroot: BabyBear) -> [BabyBear;
 /// its own definition, with the cost and the owner: `exec_lean::nullifier::addr_of` (the
 /// `MapAbsent` IMT key; **Lean emit work**, and ⚑ it needs the base-2^29 NONET — a KEY needs
 /// injectivity over 256 bits and eight lanes carry 247.26, so **`2^123.63` is a hash-NODE figure
-/// and does not transfer**), `wasm`'s `fact_hash` → column `PREDICATE_SYM` of the deployed
-/// `predicate-arith*` goldens, `sandstorm_bridge::cell::{var_addr, var_value_felt}` (whose whole
-/// `/var` ROOT is one felt, so widening only the leaves would be a containment below the bar),
-/// and the sel4 `crypto-floor` portal returns.
+/// and does not transfer**), and the two sel4 `crypto-floor` portal returns
+/// (`dreggcf_blake3_to_field`, `dreggcf_keyed_mac`), whose width is the `uint64_t` C ABI in
+/// `sel4/dregg-pd/executor-pd/scripts/crypto-floor.c` and the Lean portal declaration.
+///
+/// # ⚑ RE-CENSUSED 2026-08-06 — the sweep is COMPLETE, and three of its entries were STALE
+///
+/// An independent grep-zero re-census resolved every non-comment `hash_bytes` token in the tree
+/// to a definition (two definitions are this one and its byte-verbatim out-of-workspace twin at
+/// `sel4/…/crypto-floor/src/poseidon2.rs:261`; there are no re-exports and no aliased imports).
+/// It found **the same eleven production call sites and no others**, so the caller list above is
+/// exhaustive. Three entries needed correcting.
+///
+/// **1. `sandstorm_bridge::cell::{var_addr, var_value_felt}` no longer exist** — the `/var` repair
+/// landed 2026-08-03 and those two functions are gone; the module now spreads a `hash_bytes_8`
+/// leaf digest over eight lane leaves. Moved to the (B) list above.
+///
+/// **2. ⚠ THE STATED BLOCKER ON BOTH `wasm` SITES WAS FALSE.** They were left with *"`wasm` does
+/// not compile at HEAD — a sibling lane owns it"*. Measured 2026-08-06:
+/// `cargo check --manifest-path wasm/Cargo.toml --target wasm32-unknown-unknown` finishes in
+/// **2m00s, four warnings, zero errors** (`wasm` is excluded from the workspace by
+/// `Cargo.toml`'s own comment, so `cargo check --workspace` never reaches it — which is why a
+/// green tree looked consistent with the claim).
+///
+/// **3. …and with that premise gone, neither `wasm` site is (A). Both are (C) AT HEAD, and
+/// saying otherwise manufactures a wound.** Re-derived from the consuming code:
+///
+/// * `generate_predicate_proof`'s `fact_hash` → `FactBinding::predicate_sym` → column
+///   `PREDICATE_SYM = 5`. **Nothing anywhere maps an attribute key to that felt.**
+///   `verify_predicate_proof(proof_json, threshold, fact_commitment)` takes `fact_commitment` as a
+///   caller-supplied `u32`, and the descriptor's leg 2 blinds it with a secret per-showing
+///   `blinding`, so no verifier can recompute `hash_bytes(key)` even in principle; the extension
+///   ships the attribute key beside the proof as a **plaintext string**
+///   (`extension/src/background.ts:2061`). An attacker who wants a proof to read as being about a
+///   different attribute renames that string — cost 0, no collision required. Widening this felt
+///   would close nothing. ⚠ **Say the real defect instead of the flattering one: the fact
+///   IDENTITY is unbound at the verifier, at any felt width.** Flip condition: the first verifier
+///   that recomputes `predicate_sym` from a claimed key makes this (A), and the sink is then the
+///   deployed column — Lean emit work plus a VK rotation.
+/// * `prove_anonymous_membership`'s `agent_id_hash` / `set_root`: **there is no verifier in the
+///   tree at all.** The function emits no proof — `proof_size` is a hand-computed estimate and
+///   the body says "in a real system this would be a STARK" (already recorded at
+///   `audits/AUDIT-wasm.md:151`) — and its consumer stores `set_root` into a report field
+///   (`extension/src/background.ts:6165`) that nothing checks. No gate exists that a collision
+///   could make accept. Flip condition: when the ring proof becomes a real STARK with a verifier
+///   that re-folds the member set, the identity felt IS the binding — and note the sink then is
+///   this crate's own `#[derive(Serialize)] struct MembershipResult { blinded_leaf: u32, … }`,
+///   declared fifty lines below the call, i.e. a HOST reshape and not an AIR one. It must not be
+///   deferred as if it were Lean's.
+///
+/// **Net: no (A) site remains that Rust alone can close.** Every survivor is (B), (C), or behind
+/// a Lean emit / a C ABI — which is exactly why a blanket migration of this function's callers
+/// would be wrong, and why this function survives rather than being deleted in favour of
+/// [`hash_bytes_8`].
 ///
 /// ⓘ **The squeeze has NO in-AIR counterpart** — measured across `metatheory/` and
 /// `circuit/descriptors/` twice, on 2026-08-01. `BytesLanes.lean` stops at the PREIMAGE and

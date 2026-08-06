@@ -225,6 +225,42 @@ pub fn open(content: &BucketContent, key: &str) -> Option<ObjectOpening> {
 /// A flipped object byte fails (1); a tampered root or a doctored leaf list
 /// fails (2).
 pub fn verify_opening(op: &ObjectOpening) -> bool {
+    // (0) FAIL-CLOSED on an ambiguous leaf list, BEFORE folding it.
+    //
+    // ⚑ Added 2026-08-06, and it is the concrete gain a `hash_bytes` collision buys at THIS site.
+    // The (B) note in `fold_leaves` is correct that a colliding `coll` cannot FORGE an opening —
+    // the key is bound a second time inside `object_leaf`, which leg (1) recomputes. What it does
+    // buy is a **panic**: `fold_leaves` hands `((coll, i), limb)` entries to
+    // `compute_heap_root_entries` → `CanonicalHeapTree::new` → `assert_addr_unique`
+    // (`circuit/src/heap_root.rs:552,297-313`), which **panics** on two leaves sharing an address.
+    // Two keys colliding under the one-felt `hash_bytes` produce exactly that, eight times over.
+    //
+    // `ObjectOpening` derives `Deserialize`, so `op.leaves` is UNTRUSTED wire input. That made
+    // this an unauthenticated remote panic in the trustless-read path, priced at the same
+    // `2^15.4534` (~44,900 Poseidon2 evaluations, milliseconds) as everything else this felt
+    // touches — a COLLISION, since the attacker mints both keys. Exhibited by
+    // `storage/tests/bucket_opening_coll_collision_dos.rs`.
+    //
+    // The honest fix is a refusal, not a `catch_unwind`: an opening whose leaf list is ambiguous
+    // is not a valid opening. Note this cannot refuse an honest bucket — `content_root` folds the
+    // same way, so a bucket holding a colliding key pair could never have been committed.
+    {
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::poseidon2::hash_bytes;
+        use std::collections::BTreeMap;
+
+        // Both shapes are refused, for the same reason: after `heap_addr(coll, i)` the two
+        // entries are indistinguishable. A REPEATED key (two leaves claiming one name) and two
+        // DISTINCT keys sharing the collection felt produce the identical duplicated address.
+        let mut by_coll: BTreeMap<u32, &String> = BTreeMap::new();
+        for (key, _) in &op.leaves {
+            let coll: BabyBear = hash_bytes(key.as_bytes());
+            if by_coll.insert(coll.as_u32(), key).is_some() {
+                return false;
+            }
+        }
+    }
+
     // (1) the served bytes must reproduce the leaf the opening claims at `key`.
     let recomputed = object_leaf(&op.key, &op.object);
     let Some((_, listed_leaf)) = op.leaves.iter().find(|(k, _)| k == &op.key) else {

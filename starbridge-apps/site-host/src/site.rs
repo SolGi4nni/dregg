@@ -198,6 +198,18 @@ pub mod poseidon2 {
             // a Merkle PATH through this heap (rather than the whole limb vector) would address
             // the leaf by `coll` alone and make it (A). Sibling with the identical argument and
             // the identical shape: `storage/src/bucket_commitment.rs`'s `fold_leaves`.
+            //
+            // ⓘ What the collision DOES buy, and why this site needs no repair where the sibling
+            // did (2026-08-06). Two paths colliding here land eight entries on the same
+            // `heap_addr(coll, i)` coordinates, and `heap_root::assert_addr_unique` PANICS on a
+            // duplicated address — refusing to publish an ambiguous root, which is the correct
+            // fail-closed producer behaviour. `storage`'s twin had the SAME fold reachable from
+            // `verify_opening`, whose `ObjectOpening` is `Deserialize`-derived UNTRUSTED input, so
+            // there it was an unauthenticated remote abort and now refuses at a leg-(0) check.
+            // There is no such verifier here: `content_root` is only ever called on the host's own
+            // `SiteContent`, never on a stranger's leaf list. If one is ever added, it must not
+            // fold a supplied list before checking it — see
+            // `storage/tests/bucket_opening_coll_collision_dos.rs`.
             let coll = hash_bytes(path.as_bytes());
             for (i, &limb) in d8.iter().enumerate() {
                 entries.push(((coll, BabyBear::new(i as u32)), limb));

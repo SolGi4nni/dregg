@@ -341,12 +341,25 @@ fn full_image_size_and_host_cost_smoke() {
 /// 2. Flipping it is **not** byte-safe, so it is not Stage-0/1 work — it changes every V2 address
 ///    limb. The plan files the flip under Stage 4 (with the V1 codec deletion and the V2 arming),
 ///    one re-genesis, and this test is what will fail and point at the flip when it happens.
-/// 3. Flipping it is nonetheless **free**, and this test records the evidence: V2 has no production
-///    caller. `UAddrV2`/`UValV2`/`UmemOpV2`/`UmemBoundaryV2`/`from_full_image` appear in exactly one
-///    file outside `turn/src/umem.rs` — this test file. The armed `umem_witness_enabled` lane runs
-///    the **V1** codec (`umem_key_addr_v1` / `umem_val_felt_v1`), not this one.
+/// 3. Flipping it is nonetheless **free**, and this test records the evidence — but the evidence
+///    NARROWED on 2026-08-06 and the old blanket form ("V2 has no production caller") is no longer
+///    true. What holds today, stated at the granularity the code supports:
 ///
-/// Do the flip before V2 arms, and delete this test when you do.
+///    * **`UAddrV2` still has no production caller.** `UAddrV2::from_key` /
+///      `UmemOpV2` / `UmemBoundaryV2` / `from_full_image` appear in exactly one file outside
+///      `turn/src/umem.rs` — this one. So flipping the ADDRESS endianness, which is what this test
+///      pins, costs nothing.
+///    * **`UValV2` DOES have a production caller now**: `turn/src/umem.rs`'s `admit_value_v2`, the
+///      value-injectivity gate inside the deployed producer `umem_proving_inputs_from_v1` (reached
+///      from `sdk/src/full_turn_proof.rs` and `turn-prover/src/rotation_witness.rs` through the two
+///      cohort generators). That caller only ever COMPARES `UValV2`s for equality and never emits
+///      their limbs, so re-orienting the value payload is still free — but "no caller" is not the
+///      reason any more, and the next author must not read it as one.
+///
+///    The armed `umem_witness_enabled` lane still runs the **V1** codec on the wire
+///    (`umem_key_addr_v1` / `umem_val_felt_v1`); V2's role today is admission, not representation.
+///
+/// Do the flip before V2 arms ON THE WIRE, and delete this test when you do.
 #[test]
 fn umem_v2_address_is_big_endian_the_one_divergence_from_the_canonical_le_codec() {
     // A source with distinguishable halves in every pair, so LE and BE cannot coincide.

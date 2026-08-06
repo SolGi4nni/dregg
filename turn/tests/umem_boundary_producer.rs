@@ -26,7 +26,7 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, prove_vm_descriptor2_umem, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_turn::umem::{disciplined, fold, receipt_op, umem_proving_inputs_from};
+use dregg_turn::umem::{disciplined, fold, receipt_op, umem_proving_inputs_from_v1};
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::Turn,
@@ -164,7 +164,7 @@ fn producer_yields_real_boundary_the_umem_prover_accepts() {
     let mut ops = witness.ops.clone();
     ops.push(receipt_op(0, receipt_hash));
 
-    let inputs = umem_proving_inputs_from(&witness.pre, &ops)
+    let inputs = umem_proving_inputs_from_v1(&witness.pre, &ops)
         .expect("the producer derives umem proving inputs from the real witness");
 
     // The produced boundary is REAL — non-`default`, spanning the turn's touched domains.
@@ -215,7 +215,8 @@ fn producer_boundary_tampered_write_refuses() {
     let (witness, receipt_hash) = real_turn();
     let mut ops = witness.ops.clone();
     ops.push(receipt_op(0, receipt_hash));
-    let mut inputs = umem_proving_inputs_from(&witness.pre, &ops).expect("producer derives inputs");
+    let mut inputs =
+        umem_proving_inputs_from_v1(&witness.pre, &ops).expect("producer derives inputs");
 
     // Tamper the FIRST guarded row's installed value: the multiset balance must refuse (the
     // read/boundary entries no longer cancel). Column 2 is the installed `value`.

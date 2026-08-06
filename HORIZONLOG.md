@@ -1,5 +1,150 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 6 (THE OTHER COORDINATE) — the umem producer gated its ADDRESS codec and never its VALUE codec, so a `Bytes32` write could be read back as a `UmemRef` at **cost 0**; and the `hash_bytes` sweep's last two (A)s rested on a blocker that was **FALSE**
+
+Two halves of one unfinished repair. In both, the honest answer came out the opposite way from
+the standing note — one wound was bigger than recorded, two were not wounds at all.
+
+### 1. ⛑ V1's value codec is many-to-one three ways, and the first two cost NOTHING
+
+`umem_proving_inputs_from_v1` is the ONE function both deployed universal-memory cohort
+generators route through, reached in production from `sdk/src/full_turn_proof.rs:1385,1635,1773,
+3586` and `turn-prover/src/rotation_witness.rs:443,536,629,725`. Since it was written it has
+refused a trace whose distinct `UKey`s lower to one `(domain, key)` felt, and it says why at the
+site: *"else the boundary's strict-increasing requirement (and the multiset balance) is unsound."*
+**The identical argument applies to the other coordinate of the same row and was not gated at
+all.**
+
+- ⛑ **VARIANT ERASURE, cost 0, no search.** `Some(Bytes32(b))` and `Some(UmemRef(b))` share ONE
+  match arm in `umem_val_felt_v1`: `(ONE, fold_bytes32(b))`. They are not the same value —
+  `UVal::UmemRef`'s own doc says its bytes are "the child's sorted-Poseidon2 root" and
+  `open_through_umem_ref` consumes them as a CHILD UMEM'S COMMITTED ROOT. So a writer of an
+  arbitrary 32-byte field element could have it read back as a committed child root, and
+  `reify_cell` genuinely dispatches on the variant (`expect_bytes32`, `expected Int`).
+- **THE `+p` CHUNK ALIAS, cost 0, one addition.** `fold_bytes32` is
+  `hash_many(bytes32_to_8_limbs(b))`; that encoder is a per-4-byte-chunk `u32 % p` projection and
+  `2p < 2^32`.
+- **THE ONE-FELT SQUEEZE, 2^15.4534.** `log2 p = 30.906891`, birthday over the image. ⚠ **COLLISION,
+  not second preimage** — the producer of a trace chooses BOTH sides. Quoting `2^30.91` here would
+  be the flattering half of that pair.
+
+**UMEM-V2 IS ADOPTED, AND THE ROLE IS ADMISSION RATHER THAN REPRESENTATION.** `admit_value_v2`
+decides "are these two sources the same value?" by `UValV2` equality — presence, variant tag, exact
+byte length, exact `u16` payload limbs — so the producer refuses exactly the pairs the future wire
+epoch will separate and cannot drift from it. That is the production caller V2 did not have; the
+test file that said so in its own docblock is corrected **narrowly**, because `UAddrV2` still has
+none and the LE endianness flip it pins is still free.
+
+⚠ **AND IT IS AN HONESTY GATE, NOT A SOUNDNESS ONE** — the address half it mirrors has exactly the
+same character. A prover who declines to call the producer is not stopped by it. Written at the
+site rather than left for a reader to work out.
+
+**PRICED, NOT DEFERRED — what adopting V2 ON THE WIRE costs.** `UMemOpSpec`
+(`circuit/src/descriptor_ir2.rs:688`) types `key`/`value`/`prev_value` as ONE `LeanExpr` each and
+its author is Lean (`EffectVmEmitUMemCohort` / `…CohortMulti`). V2 is 22 address limbs plus a
+4-limb header and a payload, so the single-domain cohort leaves width 7, **a fixed payload ceiling
+must be CHOSEN IN LEAN** (a variable-length value cannot back one committed VK), the
+`circuit/descriptors/umem-cohort-*-staged-registry.tsv` rows and the VK re-emit, and the LE flip
+rides the same epoch. That choice is the design content of the epoch; the encoding is not.
+
+⚠ **AN AVAILABILITY DECISION MADE ON PURPOSE.** The gate takes V2's ENCODING and **not** its
+`UMEM_V2_MAX_BLOB_BYTES` ceiling: `project_cell` stores a cell's `Program` and `VerificationKey`
+planes as unbounded `json(...)` blobs, so inheriting the ceiling would have made a collision fix
+refuse honest turns. Split out as `UValV2::encode_canonical` and pinned by a test, because the
+next author will otherwise "unify" them back.
+
+**DELETED:** the five `umem_*` / `UmemProvingInputs` compatibility aliases — measured zero
+consumers between them but one test import.
+
+### 2. ⛑ Two of the three (A)s left standing by the `hash_bytes` sweep were not wounds
+
+An independent grep-zero re-census resolved every non-comment `hash_bytes` token in the tree to a
+definition and found **the same eleven production sites and no others** — the sweep's list is
+exhaustive. Three of its entries were stale.
+
+- `sandstorm_bridge::cell::{var_addr, var_value_felt}` **no longer exist**; the `/var` repair landed
+  08-03. Moved to (B), with its companion named (`var_leaf_digest8`).
+- ⚠ **THE STATED BLOCKER ON BOTH `wasm` SITES WAS FALSE.** They were left because *"`wasm` does not
+  compile at HEAD"*. Measured: `cargo check --manifest-path wasm/Cargo.toml --target
+  wasm32-unknown-unknown` → **2m00s, four warnings, ZERO errors.** `wasm` is excluded from the
+  cargo workspace, which is exactly how that claim survived a green tree for five days.
+- ⛑ **…and with the premise gone, NEITHER wasm site is (A). Both are (C) AT HEAD.**
+  `verify_predicate_proof` takes `fact_commitment` as a caller-supplied `u32` and leg 2 blinds it
+  with a secret per-showing scalar, so **nothing maps an attribute key to `predicate_sym`** — and
+  the extension ships the key beside the proof as PLAINTEXT (`background.ts:2061`), so an attribute
+  substitution never needed a collision. `prove_anonymous_membership` emits no proof and has **no
+  verifier anywhere in the tree**; its consumer copies `set_root` into a report field nothing
+  checks. ⚠ Say the real defect instead of the flattering one: the fact IDENTITY is unbound at the
+  verifier **at any felt width**. Both keep a named FLIP CONDITION, and the ring one records that
+  its sink is `MembershipResult { … : u32 }`, a **HOST** reshape, not Lean's — so it cannot be
+  deferred as if it were.
+
+**NET: no (A) site remains that Rust alone can close.** Every survivor is (B), (C), or behind a
+Lean emit (`exec_lean::nullifier::addr_of`) or a C ABI (the two sel4 `crypto-floor` portal
+returns). **That is why a blanket migration would be wrong and why `hash_bytes` survives.**
+
+The two sel4 entries keep their classification with the blocker RE-READ rather than relayed:
+`PortalFloor.lean:255-256` really does declare an unbounded `Nat` return, so the 64-bit cap is the
+shim's `lean_uint64_to_nat` and the 31-bit cap is `as_u32()` — two independent losses, both
+removable. And the reason no exhibit can ship beside the fix is measured, not assumed: `cargo test`
+in that crate dies at `error[E0152]: duplicate lang item … owned_box`, so the widening must land
+with a C-selftest vector. ⚠ That is a COST, not a reason a `2^30.91` macaroon MAC tag is acceptable.
+
+### 3. ⛑ A (B) site's concrete gain was an unauthenticated remote PANIC
+
+The (B) argument at `storage::bucket_commitment::fold_leaves` is **correct** — `object_leaf` binds
+the key a second time at eight lanes, so a colliding `coll` cannot forge an opening, and calling it
+a forgery would be inventing a wound. But `verify_opening` re-folded an UNTRUSTED,
+`Deserialize`-derived `ObjectOpening` straight into `compute_heap_root_entries` →
+`assert_addr_unique`, which **panics** on two leaves sharing an address. Two object keys colliding
+under the one-felt `hash_bytes` produce that eight times over, at the same `2^15.4534`. Leg (0) now
+refuses an ambiguous leaf list — a REFUSAL, not a `catch_unwind` — and it cannot refuse an honest
+bucket because `content_root` folds the same way.
+
+### What re-emits
+
+**Nothing.** No descriptor, no VK, no schema epoch (still 23), no re-genesis, and therefore **no
+`VK-REGEN-LOG` row**: both gates only ever REFUSE, changing no accepted trace's rows and no
+committed root. The wire adoption that *would* re-emit is priced above and is deliberately not
+landed here.
+
+⚠ **Corrected in passing:** `docs/DESIGN-canonical-byte-felt-codec.md`'s Stage-4 line said the umem
+codec flip was *"free today because V1 is staged and `umem_witness_enabled` is unflipped."* Stale in
+both halves — the flag is `AtomicBool::new(true)` in all three `TurnExecutor` constructors
+(`turn/src/executor/mod.rs:1293,1376,1429`) and its own field doc says *"ON by default"*, and V1 has
+eight production call sites. What is still free is stated narrowly in its place.
+
+### GREEN — counts read off the `Summary` line, exit codes read directly
+
+* `cargo nextest run -p dregg-turn --test umem_v1_value_alias_old_admits_new_rejects --test
+  umem_v2_faithful_codec --test umem_boundary_producer --no-fail-fast` (local) →
+  **`Summary [0.511s] 20 tests run: 20 passed, 0 skipped`**, `EXIT=0`. That set includes the
+  PRE-EXISTING `umem_boundary_producer` pair, which drives a real multi-verb turn through the
+  production `TurnExecutor` and proves it at the deployed `prove_vm_descriptor2_umem` — the
+  completeness pole for the new gate.
+* Same two exhibit binaries on hbox (`scripts/hbuild hcargo`) →
+  **`Summary [0.440s] 18 tests run: 18 passed, 0 skipped`**, `pbuild: VERDICT outcome=PASS
+  status=0`, `EXIT=0`.
+* `cargo nextest run -p dregg-storage --test bucket_opening_coll_collision_dos --no-capture` →
+  **`Summary [1.672s] 3 tests run: 3 passed, 0 skipped`**, `EXIT=0`; and all **12** pre-existing
+  `bucket_commitment::tests` pass under the new leg (0) (hbox, `VERDICT outcome=PASS status=0`).
+
+**MEASURED SEARCHES, and they are DETERMINISTIC — the same counts on both boxes.** umem
+value-squeeze collision: **93,582 evaluations** (456.67 ms laptop / 529.62 ms hbox). Bucket `coll`
+collision: **50,604 evaluations** (773.19 ms laptop / 445.45 ms hbox). The evaluation counts are
+byte-identical across the two machines because the corpora are enumerated, not sampled; only the
+wall-clock differs. ⚠ Each is nonetheless ONE draw, so they are evidence the search TERMINATES
+CHEAPLY, not a check of the bound: the derived birthday figure is `2^15.4534 ≈ 44,900` and the
+expected number of draws is `sqrt(pi*p/2) ≈ 56,235`. Said at the `eprintln!` too, so the numbers
+cannot be quoted later as if they had confirmed the arithmetic.
+
+⚠ **And the exhibits assert more than "the digests differ".** The umem halves assert the retired
+rows AND boundary are **byte-identical** between the honest and the aliased trace — a proof over one
+is a proof over the other — and the storage half asserts the retired fold **aborts** while the new
+leg **returns `false`**. Each file also carries an anti-vacuity pole: V2 round-trips every source it
+separates, and `object_leaf` is asserted to still split the colliding key pair (if that ever stops
+holding, the site is no longer (B) and the test says so).
+
 ## ⚑⚑⚑ AUGUST 6 (WHAT A REFUSAL COSTS) — the MCP tools were the last callers keeping a refused turn's fee, and what kept it alive is that it was argued as **fee POLICY**: the charge reached **live node RAM and NOTHING else**, on a surface whose cipherclerk is unlocked *because there is no remote attacker*. **Measured: RAM `(9 500 000, 1)` against a durable image reading `(10 000 000, 0)`.**
 
 ### Reachability first, because an unreachable charge is a finding and not a wound
