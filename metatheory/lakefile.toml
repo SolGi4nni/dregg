@@ -368,6 +368,13 @@ globs = [
   # them would run in NO target — which is precisely the 46-orphan wound recorded above, and rooting
   # it in the same breath as landing it is the only way that wound does not reopen.
   "Dregg2.Games.PathOfAngels.NightWatchCampaignWire",  # 10 ax, 21 comp
+  # ⚑ 2026-08-05 — the first `Config` value in this repository's history lives here.
+  # `NightWatchCampaign`'s six pins were all `∀ config : Config, …` and NO VALUE OF `Config` HAD
+  # EVER BEEN CONSTRUCTED ANYWHERE — the "parametric theorems over an uninhabited premise" class
+  # that cost the Galley kernel 5,111 lines. `fixture_config_activates` is the satisfiability
+  # witness for `configValidB`, and the kernel has now been RUN: sixteen commands, four strict
+  # watch cycles, an exact terminal state. Unrooted, that witness would prove it in no target.
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignExamples",  # 15 ax, 26 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoop",  # 13 ax, 15 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoopExamples",  # 4 ax, 4 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoopRuntime",  # 8 ax
