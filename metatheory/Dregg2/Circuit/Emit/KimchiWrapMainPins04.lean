@@ -80,11 +80,22 @@ over the 56 coordinates of **Mina's `step-transaction` verification key**, in
 theorem key_digest_is_the_index_digest :
     keyDigestVal shapeSmoke tKey.sp KEY_REAL_BRANCH = STEP_VK_DIGEST := by rfl
 
-/-- …and it is the value the TRANSCRIPT absorbs first (`wrap_verifier.ml:537`), so `RC_DIGEST` is no
-longer standing in for anything: the tie row in `keyRows` puts the two in one σ class and this puts
-them at one value. -/
+/-- ⚑⚑ **…AND THE TRANSCRIPT'S FIRST WORD IS THE SELECTED BRANCH'S DIGEST — WHICH IS DREGG'S OWN
+STEP KEY'S SINCE 2026-08-06.** `keyRows`' tie row puts `RC_DIGEST` and `choose_key`'s squeeze in one
+σ class; this puts them at one VALUE, at the branch `mkWrapWith` actually witnesses.
+
+⚠ ⚑ **IT USED TO NAME `KEY_REAL_BRANCH` AND THAT IS WHY THE CHAIN STOPPED AT `w4_bind`.** Mina's
+`step-transaction` digest and dregg's step proof's tape are two different circuits' objects, and a
+`Field.Assert.equal` between them has no satisfying witness at all. The third leg is the one that
+would red if the selection slid back: the two digests are NOT the same number, so this is a claim
+about which branch and not only about which value. -/
 theorem key_digest_is_the_transcript_input :
-    itemVal T_DIGEST 0 = keyDigestVal shapeSmoke tKey.sp KEY_REAL_BRANCH := by rfl
+    itemVal T_DIGEST 0 = keyDigestVal shapeSmoke tKey.sp KEY_CHAIN_BRANCH
+    ∧ tKey.br.idx = KEY_CHAIN_BRANCH
+    ∧ keyDigestVal shapeSmoke tKey.sp KEY_CHAIN_BRANCH
+        ≠ keyDigestVal shapeSmoke tKey.sp KEY_REAL_BRANCH := by
+  refine ⟨rfl, rfl, ?_⟩
+  decide
 
 /-- ⚑ **RED CONTROL — the digest is a function of EVERY coordinate.** Bending any one of the 56
 inputs by `+1` moves it: the first, one in `coefficients_comm`, one in the six singles, and the last.
@@ -94,12 +105,16 @@ theorem key_digest_bends_at_every_probed_coordinate :
       keyDigestValOf (keySpongeBent shapeSmoke tKey.sp KEY_REAL_BRANCH k 1) != STEP_VK_DIGEST) = true := by rfl
 
 /-- ⚑ **AND THE ONE-HOT SELECTION MATTERS.** `choose_key` at a DIFFERENT branch produces a different
-key and therefore a different `index_digest`; the real key is at `KEY_REAL_BRANCH` and
-`mkWrapWith` witnesses exactly that branch. If the witnessed branch ever moved off it, the reality
-gate above would red rather than quietly digest a fixture. -/
+key and therefore a different `index_digest`. Both committed shapes witness `KEY_CHAIN_BRANCH` —
+dregg's own compiled step rule — and `key_digest_is_the_transcript_input` is what would red if the
+witnessed branch ever moved, rather than the emission quietly digesting a key its tape is not about.
+
+⚠ Legs three and four are about the KEY TABLE and not about the selection: `KEY_REAL_BRANCH` still
+holds Mina's 56 coordinates exactly, and an unfilled branch shares none of them. Both stay true
+whichever entry is selected, which is why they are stated separately from the first two. -/
 theorem key_selection_is_the_branch_selection :
-    tKey.br.idx = KEY_REAL_BRANCH
-    ∧ (mkWrap shapeWrap).br.idx = KEY_REAL_BRANCH
+    tKey.br.idx = KEY_CHAIN_BRANCH
+    ∧ (mkWrap shapeWrap).br.idx = KEY_CHAIN_BRANCH
     ∧ (List.range KEY_COORDS).all (fun k => keyConst KEY_REAL_BRANCH k == STEP_VK_XY.getD k 0) = true
     ∧ ((List.range KEY_COORDS).filter (fun k => keyConst 0 k != STEP_VK_XY.getD k 0)).length = 56 := by
   refine ⟨rfl, rfl, ?_, ?_⟩ <;> decide

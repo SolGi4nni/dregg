@@ -990,12 +990,19 @@ teeth the old one had by accident:
   * the six commitment tags agree **and** the tape is not the borrowed proof's
     (`STEP_PREVCOMM_XY ≠ PastaPoseidonFq.PREVCOMM_XY`), so "agree by both moving onto the fixture"
     is exactly what still goes red;
-  * the two item tables still **differ at `T_DIGEST` and `T_XHAT`**, which is the chain's override
-    and the reason `tChain` is a different object from `mkWrap shapeChain` at all. `T_DIGEST` is
-    Mina's `step-transaction` key digest in the wrap assembly (§14's `choose_key` anchor) and this
-    proof's own index digest here; `T_XHAT` is §15's MSM output there and the public-input
-    commitment kimchi absorbed here. A repair that collapsed the chain into the wrap would make
-    those two agree, and this refuses it. -/
+  * the two item tables still **differ at `T_XHAT`** — §15's 67-entry MSM output there, the
+    public-input commitment kimchi absorbed here.
+
+⚑⚑ **AND THE `T_DIGEST` LEG IS INVERTED SINCE 2026-08-06, FOR THE SECOND TIME AND THE SAME REASON.**
+It used to require the two item tables to DISAGREE at `T_DIGEST`, because `RC_DIGEST` was Mina's
+`step-transaction` key digest while this tape's first word is dregg's own step rule's. That
+disagreement was never a property worth keeping: it was `keyRows`' `digestTie` having no satisfying
+witness, written down as a control. `mkWrapWith` now selects `KEY_CHAIN_BRANCH`, so the wrap
+assembly absorbs the digest of the key it committed to and the two tables agree.
+
+⚠ The teeth are kept by naming the collapse that is still refused. `itemVal T_DIGEST 0` must NOT be
+`STEP_VK_DIGEST` — a "repair" that moved the chain back onto Mina's key, or left the wrap on it,
+reds here — and the branch the committed `WrapData` selects is stated rather than assumed. -/
 theorem the_consuming_rungs_and_the_wrap_read_one_step_proof :
     combPtVal tChain 0 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
     ∧ combPtVal tChain (shapeChain.prevs + 2) = (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
@@ -1013,8 +1020,10 @@ theorem the_consuming_rungs_and_the_wrap_read_one_step_proof :
     -- absorbs and comparing it against `RC_XHAT` would be a control over two dead functions. What
     -- the wrap assembly absorbs is `shapeWrap.xhatXY`, the 67-entry fold's output, and THAT is what
     -- this tape's `x_hat` differs from.
-    ∧ (chainItemVal T_DIGEST 0 == itemVal T_DIGEST 0) = false
+    ∧ (chainItemVal T_DIGEST 0 == itemVal T_DIGEST 0) = true
     ∧ (chainItemVal T_DIGEST 0 == STEP_VKDIGEST) = true
+    ∧ (itemVal T_DIGEST 0 == STEP_VK_DIGEST) = false
+    ∧ (mkWrap shapeWrap).br.idx = KEY_CHAIN_BRANCH
     ∧ chainXhatAbsorbed ≠ wrapXhatAbsorbed
     ∧ wrapXhatAbsorbed = [shapeWrap.xhatXY.1, shapeWrap.xhatXY.2] := by
   native_decide

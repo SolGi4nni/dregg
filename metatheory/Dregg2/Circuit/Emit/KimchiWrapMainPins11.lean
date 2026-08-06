@@ -81,14 +81,30 @@ theorem comb_fold_runs_backwards_and_ends_on_sg_old :
     ∧ ((List.range (combSteps shapeWrap)).map (combIdx shapeWrap)).length = 46 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
-/-- ⚑ **BOTH ARMS OF `Inner_curve.if_` ARE LIVE IN THE HONEST WITNESS.** `mkWrapWith` witnesses
-branch 1 at widths `[0,1,2,…]`, so `first_zero = 1` and `Vector.rev (ones_vector ~first_zero:1 2)`
-is `[0, 1]` — one `sg_old` kept and one dropped. A `keep` that were constant would make the mux
-dead weight and the rung's own distinguishing feature untested. -/
-theorem comb_mux_takes_both_branches :
-    (List.range MASK_N).map (combKeepVal (mkWrap shapeSmoke)) = [0, 1]
-    ∧ (List.range MASK_N).map (combKeepVal (mkWrap shapeWrap)) = [0, 1] := by
-  refine ⟨?_, ?_⟩ <;> decide
+/-- ⚑⚑ **THE MUX KEEPS BOTH `sg_old`, BECAUSE THE SELECTED RULE HAS TWO ACCUMULATORS.**
+`mkWrapWith` witnesses `KEY_CHAIN_BRANCH` at widths `[0,1,2,…]`, so `first_zero = 2` and
+`Vector.rev (ones_vector ~first_zero:2 2)` is `[1, 1]`. That is the honest witness for a step rule
+carrying `STEP_PREV_CHALLENGES = 2` accumulators over a tape with two `sg_old` points on it — and it
+is the same `fz` that packs `proofs_verified` as `N2` in Mina's public slot 29.
+
+⚠ ⚑ **SAY WHAT MOVED AND WHAT IT COSTS.** Until 2026-08-06 this assembly selected branch 1, `keep`
+was `[0, 1]`, one `sg_old` was dropped, and the emitted witness ran the `Inner_curve.if_` mux BOTH
+ways. It does not any more: at the committed selection the `~else_` ROW's arm is not exercised by the
+emission. Restating this theorem as `[1, 1]` and stopping there would have deleted a falsifier and
+called it a repair, so the third leg is the one that keeps it one — `keep` is a function OF THE
+BRANCH's width, exhibited at `KEY_REAL_BRANCH`'s, and not a constant the gadget could be replaced by.
+The arm the committed emission no longer witnesses is named here rather than left to be rediscovered. -/
+theorem comb_mux_keep_is_the_branch_selections :
+    (List.range MASK_N).map (combKeepVal (mkWrap shapeSmoke)) = [1, 1]
+    ∧ (List.range MASK_N).map (combKeepVal (mkWrap shapeWrap)) = [1, 1]
+    ∧ (List.range MASK_N).map
+        (combKeepVal { sh := shapeWrap, sp := (mkWrap shapeWrap).sp
+                     , br := runBranch shapeWrap KEY_REAL_BRANCH
+                               ((List.range shapeWrap.branches).map (fun i => min 2 i))
+                               ((List.range shapeWrap.branches).map (fun _ => 16)) })
+        = [0, 1]
+    ∧ (mkWrap shapeWrap).br.fz = 2 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **ALL 46 LADDERS' COUNTERS LAND ON ONE CELL.** `Field.Assert.equal !n_acc scalar`
 (`scalar_challenge.ml:305`) is emitted as a σ class rather than as a row, which is upstream's shape

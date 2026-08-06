@@ -316,23 +316,33 @@ kimchi computes it for Mina's `step-transaction` key, which `key_digest_is_the_i
 re-derives from the 56 coordinates through THIS FILE's own Fq sponge, and which the extractor re-derives a third time by an independent `absorb_fq`
 replay. Two implementations, three computations, one number.
 
-⚠ It is NOT `PastaPoseidonFq.VKDIGEST` any more, and the split is the point: that constant is the
+⚠ It is NOT `PastaPoseidonFq.VKDIGEST`, and the split is the point: that constant is the
 verifier-index digest of the accepted proof §12a's reality gate replays, and the two coincided only
-while `STEP_VK_XY` was that proof's index. `wrap_verifier.ml:537` absorbs the STEP KEY's digest, so
-this is the object the transcript's first word must be. -/
+while `STEP_VK_XY` was that proof's index.
+
+⚠ ⚑ **AND IT IS NOT `RC_DIGEST` EITHER SINCE 2026-08-06.** `wrap_verifier.ml:537` absorbs the digest
+of the key `choose_key` SELECTED, and this assembly selects `KEY_CHAIN_BRANCH`. This number is
+`KEY_REAL_BRANCH`'s, which is the branch `key_digest_moves_with_the_branch_selection` exhibits as
+the one the tape does NOT admit. -/
 def STEP_VK_DIGEST : Nat := 4681608191240531986877886841186183594145822800262795016763288444525244254540
 
-/-- ⚑ …and the STEP KEY's verifier-index digest, which is `wrap_verifier.ml:537`'s first absorbed
-item. ⚑ **AT `w5_key` THIS IS NO LONGER A FIXTURE**: §14 emits `choose_key`
-(`wrap_main.ml:215-220`) and the index sponge (`wrap_verifier.ml:521-530`) over the 56 coordinates of
-Mina's `step-transaction` key, and `key_digest_is_the_index_digest` pins the derivation's output to
-this value. Below `w5_key` it is still a witnessed constant, which is what §2c now says.
+/-- ⚑⚑ **THE TRANSCRIPT'S FIRST ABSORBED WORD IS DREGG'S OWN STEP KEY'S DIGEST SINCE 2026-08-06.**
+`wrap_verifier.ml:537` absorbs `index_digest` of the key `choose_key` selected, and this assembly
+selects `KEY_CHAIN_BRANCH` — dregg's own compiled step rule — so the word here is that rule's
+`VerifierIndex::digest::<BaseSponge>()`.
 
-⚠ **IT USED TO BE `PastaPoseidonFq.VKDIGEST` AND THAT WAS A CONFLATION.** That constant is the
-verifier-index digest of the accepted proof §12a replays; it stood here only because `STEP_VK_XY`
-was, until 2026-08-04, that proof's own (degenerate, seven-identity) index. §14's header says what
-broke and what re-emitted. -/
-def RC_DIGEST : Nat := STEP_VK_DIGEST
+⚑ **IT IS `KimchiStepWrapChainFixture.STEP_VKDIGEST` AND NOT `KimchiStepWrapChainKey
+.STEP_OWN_VK_DIGEST`, AND THE DISTINCTION IS THE GATE.** The fixture's copy is read off the PROOF
+(`verifier.rs:162-163`, the digest kimchi's own verifier absorbed); the key module's copy is
+re-derived in-circuit by `keySponge` over the 56 `index_to_field_elements` coordinates. Two
+INDEPENDENT sources for one number, welded by `keyRows`' closing `digestTie` — which is a gate, and
+which reading either one twice would have made decoration.
+
+⚠ **WHAT RE-EMITS:** everything above `w4_bind`. `index_digest` is the FIRST absorbed word, so
+β/γ/α/ζ, the fork digest, all sixteen IPA prechallenges and every derived public word move.
+`STEP_VK_DIGEST` survives as `KEY_REAL_BRANCH`'s digest — the branch this assembly no longer
+selects and `key_digest_moves_with_the_branch_selection` still exhibits. -/
+def RC_DIGEST : Nat := Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_VKDIGEST
 
 /-! ### §2d — **THE FIXTURES, NAMED — AND THE LIST IS NOW SHORT.**
 
@@ -959,6 +969,31 @@ def maskBit (n k j : Nat) : Nat := if n - 1 - j < k then 1 else 0
 rather than against a sibling transcription — two INDEPENDENT sources, one of them off the wire. -/
 def branchDataPacked (pvBits domainLog2 : Nat) : Nat := pvBits + 4 * domainLog2
 
+/-! ### ⚑ **WHICH ENTRY OF `step_keys` EACH COMPILED STEP RULE HOLDS.**
+
+`wrap_main.ml:98-101` makes `step_keys` a per-branch vector of the compiled STEP rules'
+verification keys, and this tree has TWO of them. The two indices live HERE, above `mkWrapWith`,
+because the committed `WrapData` selects one of them; §14 is where the keys themselves are. -/
+
+/-- ⚑ Mina's `step-transaction` key's entry. ⚠ **This assembly no longer selects it.**
+`key_digest_moves_with_the_branch_selection` is where it is still exercised, and
+`chain_step_rule_is_a_second_real_key` is where its coordinates are pinned apart from dregg's. -/
+def KEY_REAL_BRANCH : Nat := 1
+
+/-- ⚑⚑ **AND WHICH ENTRY HOLDS DREGG'S OWN STEP RULE** — the circuit `KimchiStepMain` assembles and
+`EmitStepMainJson` emits, whose accepted Vesta proof drives this transcript.
+
+⚑ **THIS BRANCH IS WHAT MAKES THE TWO HALVES COMPOSE, AND IT IS `choose_key`'s OWN MECHANISM.**
+`keyRows`' closing `digestTie` welds the index sponge's squeeze to the transcript's FIRST absorbed
+word, so a wrap circuit can only verify a step proof whose verifier index is the key it committed
+to. Before 2026-08-05 there was exactly one real entry — Mina's — while the tape was dregg's, and
+that single row is why `KimchiStepWrapChain` stopped at `w4_bind`: not W-COMBINE, not W-BULLET. Two
+step rules in one `step_keys` vector is not a workaround for that; it is what `step_keys` IS.
+
+⚑ **AND SINCE 2026-08-06 `mkWrapWith` SELECTS IT** — the chain's setting is the assembly's, which
+is what collapsed `shapeChain` into `shapeWrap`. -/
+def KEY_CHAIN_BRANCH : Nat := 2
+
 /-- The evaluated branch selection. -/
 structure BranchData where
   idx : Nat
@@ -1088,14 +1123,35 @@ structure WrapData where
 
 instance : Inhabited WrapData := ⟨{ sh := default, sp := default, br := default }⟩
 
-/-- The committed branch instance: index 1 of `branches`, widths `[0,1,2,…]`, domains all log2 16
-(`Common.Max_degree.step_log2`). -/
+/-- The committed branch instance: `KEY_CHAIN_BRANCH` of `branches`, widths `[0,1,2,…]`, and the
+per-branch STEP domain `Branch_data.domain_log2` packs.
+
+⚑⚑ **THE SELECTION MOVED OFF `min 1 (branches − 1)` ON 2026-08-06, AND IT IS THE FIRST OF THE TWO
+EDITS THAT MADE THIS ASSEMBLY DERIVE MINA'S FORTY.** `keyRows`' closing `digestTie` welds
+`choose_key`'s index-sponge squeeze to the transcript's first absorbed word, which is `RC_DIGEST` —
+dregg's own step key's digest. A wrap `WrapData` selecting Mina's `step-transaction` entry has no
+satisfying witness for that row on this tape, whatever anything downstream does, because the digest
+is absorbed BEFORE β.
+
+⚑ Two derived words follow the selection and neither is decoration:
+
+  * `fz = widths.getD 2 = 2`, so `Branch_data.proofs_verified` packs as `N2` (`[1,1]`,
+    `Field.pack = 3`) — the honest value for a step rule carrying
+    `STEP_PREV_CHALLENGES = 2` accumulators and a tape with two `sg_old` points on it;
+  * `logs.getD KEY_CHAIN_BRANCH = STEP_DOMAIN_LOG2`, the domain `kimchi::verifier` proved that rule
+    at. **Every entry used to be `16`** — `Common.Max_degree.step_log2`, Mina's `step-transaction`
+    domain and the SRS depth, which is right for `KEY_REAL_BRANCH` and describes a different
+    circuit here. `branchDataPacked` is `4·domain_log2 + Field.pack mask`, so this is Mina's public
+    slot 29 and nothing else in the vector reads it. -/
 def mkWrapWith (s : WrapShape) (bt bw : Nat) : WrapData :=
   { sh := s
   , sp := runSpongeQ (baseSp s) (schedule s) bt bw
-  , br := runBranch s (min 1 (s.branches - 1))
+  , br := runBranch s (min KEY_CHAIN_BRANCH (s.branches - 1))
             ((List.range s.branches).map (fun i => min 2 i))
-            ((List.range s.branches).map (fun _ => 16)) }
+            ((List.range s.branches).map (fun i =>
+              if i == KEY_CHAIN_BRANCH then
+                Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2
+              else 16)) }
 
 /-- The HONEST instance — `mkWrapWith` at a bend index that cannot name any event.
 
@@ -1282,25 +1338,6 @@ def STEP_VK_XY : List Nat :=
   6112345133339187774424965719472681942223308075989306910616908574075076689837, 27349563440527400850628712495340704438886226561321588757627527101101858081586, 7460570426237314259837285873223905596811295885898345835344619846043062276989, 9878879395752744355402770915411675925276816629622263160718393689597676814917,
   4129260839752076466596086431914048517141014770261954927508289257654980391346, 26308296295204227453552650644860782362357850810154305358229728558512579255099, 24502611438695320232273002947412396906059627211521155699290420437119200351654, 27688738592432713487369312650930096659220848921637869873729171969431898187759
 ]
-
-/-- ⚑ Which entry of `step_keys` holds **MINA'S `step-transaction`** key. `wrap_main.ml:98-101`
-makes `step_keys` a per-branch vector of the compiled STEP rules' verification keys, and this tree
-now has TWO of them. `mkWrapWith` witnesses branch `min 1 (branches − 1)`, and
-`key_digest_is_the_index_digest` below is what would RED if the selection ever moved off it. -/
-def KEY_REAL_BRANCH : Nat := 1
-
-/-- ⚑⚑ **AND WHICH ENTRY HOLDS DREGG'S OWN STEP RULE** — `stepmain_smoke_r8_finalize`, the circuit
-`KimchiStepMain` assembles and `EmitStepMainJson` emits, whose accepted Vesta proof drives
-`KimchiStepWrapChain`'s transcript.
-
-⚑ **THIS BRANCH IS WHAT MAKES THE TWO HALVES COMPOSE, AND IT IS `choose_key`'s OWN MECHANISM.**
-`keyRows`' closing `digestTie` welds the index sponge's squeeze to the transcript's FIRST absorbed
-word, so a wrap circuit can only verify a step proof whose verifier index is the key it committed
-to. Before 2026-08-05 there was exactly one real entry — Mina's — while the chain's tape was
-dregg's, and that single row is why `KimchiStepWrapChain` stopped at `w4_bind`: not W-COMBINE, not
-W-BULLET. Two step rules in one `step_keys` vector is not a workaround for that; it is what
-`step_keys` IS. -/
-def KEY_CHAIN_BRANCH : Nat := 2
 
 /-- Branch `i`'s coordinate `k`. ⚠ `KEY_REAL_BRANCH` and `KEY_CHAIN_BRANCH` are real compiled step
 rules; §2d names the rest. -/
@@ -3841,10 +3878,12 @@ simplification this file made:
     CONSTANT and emits no row. ⚠ Recorded rather than emitted: writing a row for it would be this
     file inventing a constraint `wrap_main` does not have.
 
-⚑ So the mux is emitted exactly TWICE, at the fold's last two steps, and — because
-`mkWrapWith` witnesses branch 1 with widths `[0,1,2,…]`, so `first_zero = 1` — the two carry
-`keep = 0` and `keep = 1`. **Both arms of `Inner_curve.if_` are live in the honest witness**, which
-`comb_mux_takes_both_branches` pins.
+⚑ So the mux is emitted exactly TWICE, at the fold's last two steps. ⚠ **Since 2026-08-06 both
+carry `keep = 1`** — `mkWrapWith` witnesses `KEY_CHAIN_BRANCH` with widths `[0,1,2,…]`, so
+`first_zero = 2` and `ones_vector` is all ones, which is what `proofs_verified = N2` MEANS for a step
+rule with two accumulators. The `~else_` arm is therefore not exercised by the committed emission;
+`comb_mux_keep_is_the_branch_selections` says both halves of that plainly and exhibits `[0, 1]` at
+`KEY_REAL_BRANCH`'s width, so `keep` is still measured to be a function of the selection.
 
 ## ⚑ THE DEFECT CLASSES, INSIDE THIS SUB-CIRCUIT
 

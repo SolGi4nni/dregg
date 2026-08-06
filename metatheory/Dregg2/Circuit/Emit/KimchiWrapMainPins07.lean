@@ -111,13 +111,22 @@ theorem ftc_gate_census :
 
 /-- ⚑ **THE FIRST LADDER'S BASE IS W-KEY'S SEALED OUTPUT, NOT A CONSTANT.** `sigma_comm.(6)` is
 index-sponge coordinates 12 and 13, so `ft_comm` reads the variables §14's one-hot fold produced.
-This is the σ tie that makes W-FTCOMM depend on the branch selection rather than on a literal. -/
+This is the σ tie that makes W-FTCOMM depend on the branch selection rather than on a literal.
+
+⚑ **AND ITS VALUE IS DREGG'S OWN STEP KEY'S SINCE 2026-08-06** — `mkWrapWith` selects
+`KEY_CHAIN_BRANCH`, so the point `ft_comm`'s first ladder scales is `STEP_OWN_VK_XY`'s. The third
+leg is what makes the second one a measurement of the SELECTION rather than of the table: Mina's
+`step-transaction` key's coordinates 12/13 are a different point, and reading them here would red. -/
 theorem ftc_first_base_is_the_chosen_keys_sigma_comm_last :
     ftcBaseVar tKey 0
       = ((keyVars shapeSmoke (baseKey shapeSmoke tKey.sp)).acc 12 (shapeSmoke.branches - 1),
          (keyVars shapeSmoke (baseKey shapeSmoke tKey.sp)).acc 13 (shapeSmoke.branches - 1))
-    ∧ ftcSigmaLast tKey = (STEP_VK_XY.getD 12 0, STEP_VK_XY.getD 13 0) := by
-  refine ⟨rfl, rfl⟩
+    ∧ ftcSigmaLast tKey
+        = (Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.getD 12 0,
+           Dregg2.Circuit.Emit.KimchiStepWrapChainKey.STEP_OWN_VK_XY.getD 13 0)
+    ∧ ftcSigmaLast tKey ≠ (STEP_VK_XY.getD 12 0, STEP_VK_XY.getD 13 0) := by
+  refine ⟨rfl, rfl, ?_⟩
+  decide
 
 /-- The `w8_ftcomm` rung is a strict superset of `w7_split`, and `placeChecked` accepts it with no
 inert public word. -/
