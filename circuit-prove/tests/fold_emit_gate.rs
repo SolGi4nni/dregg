@@ -42,7 +42,7 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 foldDesc` emits (pinned by the `#guard` in
 /// `FoldEmit.lean`). If Lean's emitter drifts, that `#guard` fails; if this literal drifts, the
 /// `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"dregg-fold-step-v2","ir":2,"trace_width":21,"public_input_count":6,"tables":[],"constraints":[{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"var","v":11},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":3}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":11}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":7},{"t":"var","v":7},{"t":"var","v":8},{"t":"var","v":9},{"t":"var","v":10},{"t":"const","v":0},{"t":"const","v":64207},{"t":"const","v":1},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":1},{"t":"var","v":14},{"t":"var","v":15},{"t":"var","v":16},{"t":"var","v":17},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20}]},{"t":"pi_binding","row":"first","col":3,"pi_index":0},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":3}}}},{"t":"pi_binding","row":"first","col":4,"pi_index":1},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}},"r":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":12}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":5}},"r":{"t":"const","v":-1}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"mul","l":{"t":"loc","c":0},"r":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}}},{"t":"boundary","row":"first","body":{"t":"var","v":5}},{"t":"pi_binding","row":"last","col":13,"pi_index":4},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":13},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":13}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":13}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"last","col":5,"pi_index":2},{"t":"pi_binding","row":"last","col":6,"pi_index":3},{"t":"pi_binding","row":"last","col":2,"pi_index":4}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"dregg-fold-step-v2","ir":2,"trace_width":21,"public_input_count":6,"challenges":0,"tables":[],"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"var","v":0}}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}}},{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"var","v":11},"r":{"t":"var","v":11}}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":11}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":3}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":11}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":7},{"t":"var","v":7},{"t":"var","v":8},{"t":"var","v":9},{"t":"var","v":10},{"t":"const","v":0},{"t":"const","v":64207},{"t":"const","v":1},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":1},{"t":"var","v":14},{"t":"var","v":15},{"t":"var","v":16},{"t":"var","v":17},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20}]},{"t":"pi_binding","row":"first","col":3,"pi_index":0},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":3}}}},{"t":"pi_binding","row":"first","col":4,"pi_index":1},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}},"r":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":12}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":5}},"r":{"t":"const","v":-1}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"mul","l":{"t":"loc","c":0},"r":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}}},{"t":"boundary","row":"first","body":{"t":"var","v":5}},{"t":"pi_binding","row":"last","col":13,"pi_index":4},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":13},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":13}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":13}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"last","col":5,"pi_index":2},{"t":"pi_binding","row":"last","col":6,"pi_index":3},{"t":"pi_binding","row":"last","col":2,"pi_index":4}],"hash_sites":[],"ranges":[]}"#;
 
 // --- Trace column layout (must match `FoldEmit.lean` §1). ---
 const ROW_TYPE: usize = 0;
@@ -101,6 +101,22 @@ fn one_minus(v: usize) -> LeanExpr {
 fn gate(body: LeanExpr) -> VmConstraint2 {
     VmConstraint2::Base(VmConstraint::Gate(body))
 }
+/// The booleanity body `v·(v−1)` **in the corpus normal form** — `1·(v·v) + (−1)·v`.
+///
+/// ⚑ Not a spelling preference: `AirNormalForm.lean` rule 1 says every TERM carries its
+/// coefficient, so a unit coefficient is `mul(const 1, …)` and never a bare product, and rule 2
+/// flattens the product of sums. `foldDesc`'s two binary gates were compiled into that form and
+/// this twin kept rendering the un-normalised `mul(v, add(v, −1))`, which `LeanExpr`'s structural
+/// `PartialEq` reads as a DIFFERENT polynomial. Writing the bare form here is a RED.
+fn binary_nf(v: usize) -> LeanExpr {
+    LeanExpr::add(
+        LeanExpr::mul(
+            LeanExpr::Const(1),
+            LeanExpr::mul(LeanExpr::Var(v), LeanExpr::Var(v)),
+        ),
+        LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(v)),
+    )
+}
 fn pib(row: VmRow, col: usize, pi_index: usize) -> VmConstraint2 {
     VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index })
 }
@@ -137,14 +153,8 @@ fn fact_lookup() -> VmConstraint2 {
 fn hand_built_desc() -> EffectVmDescriptor2 {
     let constraints = vec![
         // row_type_binary, hash_valid_binary
-        gate(LeanExpr::mul(
-            LeanExpr::Var(ROW_TYPE),
-            LeanExpr::add(LeanExpr::Var(ROW_TYPE), LeanExpr::Const(-1)),
-        )),
-        gate(LeanExpr::mul(
-            LeanExpr::Var(HASH_VALID),
-            LeanExpr::add(LeanExpr::Var(HASH_VALID), LeanExpr::Const(-1)),
-        )),
+        gate(binary_nf(ROW_TYPE)),
+        gate(binary_nf(HASH_VALID)),
         // membership_root_matches: (1-ROW_TYPE)*(MEMBERSHIP_ROOT-OLD_ROOT)
         gate(LeanExpr::mul(
             one_minus(ROW_TYPE),

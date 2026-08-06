@@ -2,8 +2,8 @@
 //!
 //! Validates the `emit-from-Lean` pattern end-to-end on the DFA-routing family: the descriptor is
 //! AUTHORED in Lean (`metatheory/Dregg2/Circuit/Emit/DfaRoutingEmit.lean`, `dfaRoutingDesc`) and
-//! its wire string is byte-pinned there (`emitVmJson2` `#guard`). This test embeds that EXACT
-//! string ([`GOLDEN_JSON`]) and:
+//! its wire string is byte-pinned there (`emitVmJson2` `#guard`). This test READS those EXACT
+//! bytes ([`GOLDEN_JSON`]) and:
 //!
 //!   1. DECODES it via [`parse_vm_descriptor2`] and asserts the decode equals an independently
 //!      hand-built `EffectVmDescriptor2` (Lean emit ≡ Rust builder — a byte drift on either side
@@ -46,7 +46,16 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 dfaRoutingDesc` emits (pinned by the `#guard`
 /// in `DfaRoutingEmit.lean`). If Lean's emitter drifts, that `#guard` fails; if this literal drifts,
 /// the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"dfa-routing-toggle-2state::poseidon2-v1","ir":2,"trace_width":8,"public_input_count":4,"tables":[],"constraints":[{"t":"lookup","table":8,"tuple":[{"t":"const","v":4},{"t":"var","v":0},{"t":"var","v":1},{"t":"var","v":2},{"t":"var","v":6},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":3}]},{"t":"lookup","table":8,"tuple":[{"t":"const","v":2},{"t":"var","v":7},{"t":"var","v":3},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":4}]},{"t":"gate","body":{"t":"var","v":6}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":5},"r":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":1},"r":{"t":"add","l":{"t":"var","v":1},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"add","l":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}},"r":{"t":"mul","l":{"t":"const","v":-2},"r":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"var","v":1}}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":7},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":4}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"first","col":7,"pi_index":2},{"t":"pi_binding","row":"last","col":2,"pi_index":1},{"t":"pi_binding","row":"last","col":4,"pi_index":3}],"hash_sites":[],"ranges":[]}"#;
+/// ⚑ **THE EMITTED ARTIFACT ITSELF, NOT A COPY OF IT (2026-08-06).** This was an inline
+/// `r#"…"#` transcription of the Lean `#guard` bytes, and the `challenges` flag day
+/// (2026-08-05) broke it along with 27 siblings: the artifact under
+/// `circuit/descriptors/` was re-emitted, the literal was not, and
+/// `parse_vm_descriptor2` refused it with `ir:2 descriptor missing "challenges"`. An
+/// inline golden is a copy that no re-emit reaches, so every flag day breaks exactly
+/// that set again — the fix is to have no copy. `check-emit-gate-weld.py` still gates
+/// the literals that remain (the descriptors with no checked-in artifact to name), and
+/// `check-descriptor-drift.sh` gates this file against its Lean author.
+const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/dfa-routing.json");
 
 // --- Trace column layout (must match `DfaRoutingEmit.lean` §1). ---
 const CURRENT: usize = 0;

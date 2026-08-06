@@ -19,7 +19,7 @@
 //!
 //! The descriptor is AUTHORED in Lean
 //! (`metatheory/Dregg2/Circuit/Emit/PresentationEmit.lean`, `presentationFreshnessDesc`) and its
-//! wire string is byte-pinned there (`emitVmJson2` `#guard`). This test embeds that EXACT string
+//! wire string is byte-pinned there (`emitVmJson2` `#guard`). This test READS those EXACT bytes
 //! ([`GOLDEN_JSON`]) and:
 //!
 //!   1. DECODES it via [`parse_vm_descriptor2`] and asserts the decode equals an independently
@@ -63,7 +63,16 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 presentationFreshnessDesc` emits (pinned by
 /// the `#guard` in `PresentationEmit.lean`). If Lean's emitter drifts, that `#guard` fails; if this
 /// literal drifts, the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"dregg-presentation-freshness::summary-v1","ir":2,"trace_width":23,"public_input_count":20,"tables":[{"id":2,"name":"range","arity":1,"sem":"range","bits":30}],"constraints":[{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2},{"t":"pi_binding","row":"first","col":3,"pi_index":3},{"t":"pi_binding","row":"first","col":4,"pi_index":4},{"t":"pi_binding","row":"first","col":5,"pi_index":5},{"t":"pi_binding","row":"first","col":6,"pi_index":6},{"t":"pi_binding","row":"first","col":7,"pi_index":7},{"t":"pi_binding","row":"first","col":8,"pi_index":8},{"t":"pi_binding","row":"first","col":9,"pi_index":9},{"t":"pi_binding","row":"first","col":10,"pi_index":10},{"t":"pi_binding","row":"first","col":11,"pi_index":11},{"t":"pi_binding","row":"first","col":12,"pi_index":12},{"t":"pi_binding","row":"first","col":13,"pi_index":13},{"t":"pi_binding","row":"first","col":14,"pi_index":14},{"t":"pi_binding","row":"first","col":15,"pi_index":15},{"t":"pi_binding","row":"first","col":16,"pi_index":16},{"t":"pi_binding","row":"first","col":17,"pi_index":17},{"t":"pi_binding","row":"first","col":18,"pi_index":18},{"t":"pi_binding","row":"first","col":19,"pi_index":19},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":21}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":20}}},"r":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":19}}}},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":21}},"r":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":22}}},"r":{"t":"const","v":-1006632960}}},{"t":"lookup","table":2,"tuple":[{"t":"var","v":21}]},{"t":"lookup","table":2,"tuple":[{"t":"var","v":22}]},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":21}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":20}}},"r":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":19}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":21}},"r":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":22}}},"r":{"t":"const","v":-1006632960}}}],"hash_sites":[],"ranges":[]}"#;
+/// ⚑ **THE EMITTED ARTIFACT ITSELF, NOT A COPY OF IT (2026-08-06).** This was an inline
+/// `r#"…"#` transcription of the Lean `#guard` bytes, and the `challenges` flag day
+/// (2026-08-05) broke it along with 27 siblings: the artifact under
+/// `circuit/descriptors/` was re-emitted, the literal was not, and
+/// `parse_vm_descriptor2` refused it with `ir:2 descriptor missing "challenges"`. An
+/// inline golden is a copy that no re-emit reaches, so every flag day breaks exactly
+/// that set again — the fix is to have no copy. `check-emit-gate-weld.py` still gates
+/// the literals that remain (the descriptors with no checked-in artifact to name), and
+/// `check-descriptor-drift.sh` gates this file against its Lean author.
+const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/presentation-freshness.json");
 
 // --- Trace column layout (must match `PresentationEmit.lean` §1). ---
 const FEDERATION_ROOT: usize = 0;

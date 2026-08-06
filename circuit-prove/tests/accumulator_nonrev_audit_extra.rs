@@ -39,7 +39,16 @@ const ACC_AUX: usize = 36;
 const WIDTH: usize = 40;
 
 // The exact golden the Lean file byte-pins (copied from the shipped gate).
-const GOLDEN_JSON: &str = include_str!("accumulator_nonrev_golden.json");
+/// ⚑ **THE EMITTED ARTIFACT ITSELF, NOT A COPY OF IT (2026-08-06).** This was an inline
+/// `r#"…"#` transcription of the Lean `#guard` bytes, and the `challenges` flag day
+/// (2026-08-05) broke it along with 27 siblings: the artifact under
+/// `circuit/descriptors/` was re-emitted, the literal was not, and
+/// `parse_vm_descriptor2` refused it with `ir:2 descriptor missing "challenges"`. An
+/// inline golden is a copy that no re-emit reaches, so every flag day breaks exactly
+/// that set again — the fix is to have no copy. `check-emit-gate-weld.py` still gates
+/// the literals that remain (the descriptors with no checked-in artifact to name), and
+/// `check-descriptor-drift.sh` gates this file against its Lean author.
+const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/accumulator-nonrev.json");
 
 fn make_hash(seed: u32) -> BabyBear {
     hash_many(&[BabyBear::new(seed), BabyBear::new(0xCAFE)])

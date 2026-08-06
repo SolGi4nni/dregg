@@ -5,7 +5,7 @@
 //!
 //! The descriptor is AUTHORED in Lean (`metatheory/Dregg2/Circuit/Emit/MerkleMembershipEmit.lean`,
 //! `merkleMembershipDesc`) and its wire string is byte-pinned there (`emitVmJson2` `#guard`). This
-//! test embeds that EXACT string ([`GOLDEN_JSON`]), and:
+//! test READS those EXACT bytes ([`GOLDEN_JSON`]), and:
 //!
 //!   1. DECODES it via [`parse_vm_descriptor2`] and asserts the decode equals an independently
 //!      hand-built `EffectVmDescriptor2` (Lean emit ≡ Rust builder — a byte drift on either side
@@ -38,7 +38,16 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 merkleMembershipDesc` emits (pinned by the
 /// `#guard` in `MerkleMembershipEmit.lean`). If Lean's emitter drifts, that `#guard` fails; if this
 /// literal drifts, the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"merkle-membership-depth2-4ary::poseidon2-v1","ir":2,"trace_width":10,"public_input_count":1,"tables":[],"constraints":[{"t":"lookup","table":8,"tuple":[{"t":"const","v":4},{"t":"var","v":0},{"t":"var","v":1},{"t":"var","v":2},{"t":"var","v":3},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":4}]},{"t":"lookup","table":8,"tuple":[{"t":"const","v":4},{"t":"var","v":5},{"t":"var","v":6},{"t":"var","v":7},{"t":"var","v":8},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":9}]},{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":5}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"t":"pi_binding","row":"first","col":9,"pi_index":0},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"const","v":1},"r":{"t":"var","v":5}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}}],"hash_sites":[],"ranges":[]}"#;
+/// ⚑ **THE EMITTED ARTIFACT ITSELF, NOT A COPY OF IT (2026-08-06).** This was an inline
+/// `r#"…"#` transcription of the Lean `#guard` bytes, and the `challenges` flag day
+/// (2026-08-05) broke it along with 27 siblings: the artifact under
+/// `circuit/descriptors/` was re-emitted, the literal was not, and
+/// `parse_vm_descriptor2` refused it with `ir:2 descriptor missing "challenges"`. An
+/// inline golden is a copy that no re-emit reaches, so every flag day breaks exactly
+/// that set again — the fix is to have no copy. `check-emit-gate-weld.py` still gates
+/// the literals that remain (the descriptors with no checked-in artifact to name), and
+/// `check-descriptor-drift.sh` gates this file against its Lean author.
+const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/merkle-membership-depth2.json");
 
 // --- Trace column layout (must match `MerkleMembershipEmit.lean` §1). ---
 const LEAF: usize = 0;

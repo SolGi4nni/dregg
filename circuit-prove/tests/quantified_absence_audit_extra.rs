@@ -31,7 +31,16 @@ const QACC_WIDTH: usize = 28;
 const PI_ACC0: usize = 0;
 
 // Byte-identical to QuantifiedAbsenceEmit.lean's emitVmJson2 #guard.
-const GOLDEN_JSON: &str = include_str!("quantified_absence_golden.json");
+/// ⚑ **THE EMITTED ARTIFACT ITSELF, NOT A COPY OF IT (2026-08-06).** This was an inline
+/// `r#"…"#` transcription of the Lean `#guard` bytes, and the `challenges` flag day
+/// (2026-08-05) broke it along with 27 siblings: the artifact under
+/// `circuit/descriptors/` was re-emitted, the literal was not, and
+/// `parse_vm_descriptor2` refused it with `ir:2 descriptor missing "challenges"`. An
+/// inline golden is a copy that no re-emit reaches, so every flag day breaks exactly
+/// that set again — the fix is to have no copy. `check-emit-gate-weld.py` still gates
+/// the literals that remain (the descriptors with no checked-in artifact to name), and
+/// `check-descriptor-drift.sh` gates this file against its Lean author.
+const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/quantified-absence.json");
 
 fn limbs(e: ExtElem) -> [BabyBear; 4] {
     e.0

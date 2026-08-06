@@ -45,8 +45,34 @@ ROOT = Path(__file__).resolve().parent.parent
 GATES_DIR = ROOT / "circuit-prove" / "tests"
 LEAN_DIRS = [ROOT / "metatheory" / "Dregg2" / "Circuit" / "Emit", ROOT / "metatheory"]
 
+# ⚑ 2026-08-06 — THE SCAN WAS TEST-ONLY, AND THE COPY THAT WAS ACTUALLY BROKEN WAS IN `src/`.
+# `zkoracle-prove/src/zk_leg.rs` carries an inline `dfa-routing-injection-3state::poseidon2-v1`
+# golden on the PRODUCTION injection-leg path (`injection_descriptor()` -> `.expect(…)`), and the
+# `challenges` flag day left it stale — so `prove_injection_leg`/`verify_injection_leg` PANIC at
+# HEAD. This gate could not see it (`GATES_DIR` only), and its own INFO block therefore listed that
+# descriptor as having "NO Rust-side counterpart" while a Rust-side counterpart was panicking two
+# directories away. A weld gate that scans only tests measures where the goldens are TIDY, not
+# where they are LOAD-BEARING. Every `.rs` under a `src/` tree is scanned now, on the same terms.
+SRC_SKIP_DIRS = {"target", ".git", "node_modules", "vendor", "docs", ".cache", ".lake", "metatheory"}
+
 # Rust raw-string literals that look like a descriptor JSON object.
 RUST_RAW = re.compile(r'r#"(\{.*?\})"#', re.DOTALL)
+
+# `include_str!("…json")` — a golden that is not a COPY at all. These need no weld: the file they
+# name IS an authoritative pin (a `circuit/descriptors/**` artifact, drift-gated against Lean), so
+# there are not two bytes to disagree. Counted and printed so a SHRINKING `checked` number cannot
+# read as lost coverage — the population moves from "checked copies" to "no copy to check", which
+# is the direction of the fix.
+RUST_INCLUDE = re.compile(r'include_str!\(\s*"([^"]+\.json)"\s*\)')
+
+# How many descriptor literals under a `src/` tree currently have NO authoritative pin. MEASURED
+# 2026-08-06 at 66 the hour the src/ scan was added: 58 in `circuit/src/lean_descriptor_air.rs`
+# (synthetic `#[cfg(test)]` descriptors — `dregg-dropRefA-v2`, `dregg-boundary-decode-v0`, … — that
+# exercise the interpreter and are not emitted by anything), 3 in `circuit/src/descriptor_ir2.rs`
+# (`demo-exact-public`, `batch-exact-a/b`), 2 in `descriptor_ir2_canonical.rs`, 3 in
+# `dregg-lean-ffi/src/circuit_differential.rs`. It is a RATCHET, not an amnesty: it may shrink and
+# may not grow.
+SRC_UNPINNED_BASELINE = 66
 
 # A Lean string literal (double-quoted, backslash escapes), possibly spanning lines.
 LEAN_STR = re.compile(r'"((?:[^"\\]|\\.)*)"', re.DOTALL)
@@ -205,6 +231,30 @@ def drift_detail(rust_payload: str, pin_payload: str) -> str:
     return "".join(lines)
 
 
+def src_tree_files() -> list[Path]:
+    """Every `.rs` under a `src/` tree in the repo — the load-bearing half of the scan.
+
+    Same skip list as the law-#1 ratchet's walker, and the same reason: `target/`, the vendored
+    forks and the `docs/` byte-copies hold no first-party compiled Rust, and `metatheory/` is the
+    authoring language rather than a consumer of its own bytes."""
+    out: list[Path] = []
+    stack = [ROOT]
+    while stack:
+        d = stack.pop()
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for p in entries:
+            if p.is_dir():
+                if p.name in SRC_SKIP_DIRS or p.name.startswith("."):
+                    continue
+                stack.append(p)
+            elif p.suffix == ".rs" and "/src/" in p.as_posix():
+                out.append(p)
+    return sorted(out)
+
+
 def main() -> int:
     lean_pins = collect_lean_pins()
     artifact_pins = collect_artifact_pins()
@@ -212,14 +262,25 @@ def main() -> int:
     drift_causes: dict[str, int] = {}
     checked = 0
     unpinned: list[str] = []
+    unpinned_src: list[str] = []
     rust_names: set[str] = set()
 
     # EVERY test in the directory, not just `*_emit_gate.rs` — the `*_audit_extra` /
     # `*_audit_*` teeth embed the same goldens and rot identically (found: the fold
     # audit-extra still carried the pre-fix 17-constraint descriptor after the gate
     # itself was re-welded).
-    for rf in sorted(GATES_DIR.glob("*.rs")):
+    scanned = sorted(GATES_DIR.glob("*.rs")) + src_tree_files()
+    include_backed: list[str] = []
+    for rf in scanned:
         text = rf.read_text(encoding="utf-8", errors="replace")
+        for m in RUST_INCLUDE.finditer(text):
+            target = (rf.parent / m.group(1)).resolve()
+            if target.is_file() and descriptor_name(
+                target.read_text(encoding="utf-8", errors="replace")
+            ):
+                include_backed.append(
+                    f"  {rf.relative_to(ROOT)} -> {target.relative_to(ROOT)}"
+                )
         for m in RUST_RAW.finditer(text):
             payload = m.group(1)
             name = descriptor_name(payload)
@@ -230,10 +291,11 @@ def main() -> int:
             rel = rf.relative_to(ROOT)
             pins = lean_pins.get(name, []) + artifact_pins.get(name, [])
             if not pins:
-                unpinned.append(
+                line = (
                     f"  {rel}: `{name}` has NO pin anywhere (no Lean #guard, no "
                     f"circuit/descriptors artifact) — the gate certifies only itself"
                 )
+                (unpinned if rf.parent == GATES_DIR else unpinned_src).append(line)
                 continue
             if any(payload == p for _, p in pins):
                 continue
@@ -253,7 +315,14 @@ def main() -> int:
 
     print(f"check-emit-gate-weld: {checked} Rust goldens checked against "
           f"{sum(len(v) for v in lean_pins.values())} Lean #guard pins + "
-          f"{sum(len(v) for v in artifact_pins.values())} descriptor artifacts.")
+          f"{sum(len(v) for v in artifact_pins.values())} descriptor artifacts "
+          f"({len(scanned)} .rs files: {len(list(GATES_DIR.glob('*.rs')))} in "
+          f"{GATES_DIR.relative_to(ROOT)} + the repo's src/ trees).")
+    if include_backed:
+        print(f"\n{len(include_backed)} golden(s) are `include_str!` of an emitted artifact — NO "
+              f"copy exists, so there is nothing to weld:")
+        for line in include_backed:
+            print(line)
 
     # ARM THE GATE. If the extraction found ZERO Rust goldens there is nothing to weld,
     # and every check below vacuously "passes" — the gate would print PASS having verified
@@ -285,6 +354,35 @@ def main() -> int:
     if unpinned:
         print("\nUNPINNED goldens:")
         print("\n".join(unpinned))
+    # ⚑ THE `src/` UNPINNED POPULATION IS RATCHETED, NOT FAILED — and the reason is not mercy.
+    # Widening the scan to `src/` (above) surfaced 66 of these, 58 of them synthetic
+    # `#[cfg(test)]` fixtures in `circuit/src/lean_descriptor_air.rs` with names like
+    # `dregg-dropRefA-v2` that no emitter ever produced and none should. Failing on them would
+    # make this gate RED as its steady state, which is how the thing it is actually watching for
+    # — a DRIFTED pair, named on both sides, bytes apart — stops being read. Drift in `src/` fails
+    # exactly like drift in `tests/`; an unpinned `src/` literal is counted, printed, and may not
+    # GROW. A new one is a new golden nothing authoritative backs, and that is the wound.
+    if len(unpinned_src) > SRC_UNPINNED_BASELINE:
+        print(
+            f"\nUNPINNED goldens in src/ trees: {len(unpinned_src)}, ABOVE the ratchet of "
+            f"{SRC_UNPINNED_BASELINE}:"
+        )
+        print("\n".join(unpinned_src))
+        print(
+            f"\ncheck-emit-gate-weld: FAIL — {len(unpinned_src) - SRC_UNPINNED_BASELINE} NEW "
+            f"unpinned golden(s) under a src/ tree.\n"
+            "  A descriptor literal in production Rust that no Lean #guard and no checked-in\n"
+            "  artifact reproduces certifies only itself. Emit it and `include_str!` the artifact,\n"
+            "  or byte-copy the Lean #guard. Lower the ratchet when you retire one."
+        )
+        return 1
+    if unpinned_src:
+        print(
+            f"\nINFO — {len(unpinned_src)} unpinned golden(s) under src/ trees "
+            f"(ratchet {SRC_UNPINNED_BASELINE}, may not grow); mostly `#[cfg(test)]` fixtures:"
+        )
+        for line in unpinned_src:
+            print(line)
     if failures:
         print("\nWELD FAILURES:")
         print("\n\n".join(failures))
