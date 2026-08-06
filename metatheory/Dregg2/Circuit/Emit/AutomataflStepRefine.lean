@@ -4273,7 +4273,7 @@ theorem colPin_of_sat (hsat : Satisfied2 hash automataflStepDesc minit mfin madd
     (envAt t i).loc 206 = 1 := by
   have hg := astep_gate hsat i hi (g := headToExpr ((Head.lin 1 COL_C).addConst (-COL_RULE))) (by decide)
   rw [show (headToExpr ((Head.lin 1 COL_C).addConst (-COL_RULE))).eval (envAt t i).loc
-      = (envAt t i).loc 206 + -1 from by canon_head_eval_closed [headToExpr]] at hg
+      = (envAt t i).loc 206 + -1 from by canon_head_eval [headToExpr]] at hg
   exact eq_of_modEq_canon (canon_loc hc i _) canon_one ((gate_modEq_iff (by ring)).mp hg)
 
 /-- **The `ox` offset equality.** `ox − 2·sgt·xmove·posx + sgt·xmove == 0`, i.e. the `x` offset is the
@@ -4289,7 +4289,7 @@ theorem ox_of_sat (hsat : Satisfied2 hash automataflStepDesc minit mfin maddrs t
     (by decide)
   rw [show (headToExpr (((Head.lin 1 OX_C).addProd (-2) [SGT_IB, XMOVE_IB, X_POS]).addProd 1 [SGT_IB, XMOVE_IB])).eval (envAt t i).loc
       = (envAt t i).loc 207 + -2*((envAt t i).loc 152*(envAt t i).loc 194*(envAt t i).loc 59)
-        + (envAt t i).loc 152*(envAt t i).loc 194 from by canon_head_eval_closed [headToExpr]] at hg
+        + (envAt t i).loc 152*(envAt t i).loc 194 from by canon_head_eval [headToExpr]] at hg
   exact (gate_modEq_iff (by ring)).mp hg
 
 /-- **The `oy` offset equality (`col = 1`).** The `push_f`-expanded `oy` gate, with the column rule

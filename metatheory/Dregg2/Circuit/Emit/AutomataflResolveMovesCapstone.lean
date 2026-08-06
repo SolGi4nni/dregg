@@ -420,7 +420,7 @@ theorem cv2ValN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit 
     have hg := rgateHN hsat i hi hmem
     have hE : (headToExpr (NGen.cv2Head n which)).eval e.loc
         = e.loc (NGen.cCv2 n which) + (-1) * e.loc (NGen.cCv1 n which)
-          + e.loc (NGen.cCv1 n which) * e.loc (NGen.cOccIncl n which) := by canon_head_eval [headToExpr]
+          + e.loc (NGen.cCv1 n which) * e.loc (NGen.cOccIncl n which) := by canon_head_eval [headToExpr, NGen.cv2Head]
     rw [hE] at hg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
     rcases hcv1B with a | a <;> rcases hoccI with c | c <;> rw [a, c] <;>
@@ -452,7 +452,7 @@ theorem carryV3ArithN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) 
   have hg := rgateHN hsat i hi hmem
   have hE : (headToExpr (NGen.carryV3Head n which)).eval e.loc
       = e.loc (NGen.cCarryV3 n which) + (-1) * e.loc (NGen.cCv2 n which)
-        + e.loc (NGen.cCv2 n which) * e.loc (NGen.cNonLeaveV2 n which) := by canon_head_eval [headToExpr]
+        + e.loc (NGen.cCv2 n which) * e.loc (NGen.cNonLeaveV2 n which) := by canon_head_eval [headToExpr, NGen.carryV3Head]
   rw [hE] at hg
   have hcarry : e.loc (NGen.cCarryV3 n which)
       = e.loc (NGen.cCv2 n which) - e.loc (NGen.cCv2 n which) * e.loc (NGen.cNonLeaveV2 n which) := by
@@ -1187,7 +1187,7 @@ theorem midV4CellN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
       = (envAt t i).loc (NGen.cMidV4 n c)
         + (-1) * ((envAt t i).loc (NGen.cResolvableV2 n) * (envAt t i).loc (NGen.cWBoardV4 n c))
         + (-1) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.cResolvableV2 n) * (envAt t i).loc (NGen.old n c) := by canon_head_eval [headToExpr]
+        + (envAt t i).loc (NGen.cResolvableV2 n) * (envAt t i).loc (NGen.old n c) := by canon_head_eval [headToExpr, NGen.midV4CellHead]
   rw [hE] at hg
   exact (gate_modEq_iff (by ring)).mp hg
 
@@ -1267,7 +1267,7 @@ theorem writeCellV4N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) m
         + (envAt t i).loc (NGen.carryV4Col n 0) * (envAt t i).loc (NGen.wDstV2Row n 0 (c / n))
             * (envAt t i).loc (NGen.wDstV2Col n 0 (c % n)) * (envAt t i).loc (NGen.carryV4Col n 1)
             * (envAt t i).loc (NGen.wDstV2Row n 1 (c / n)) * (envAt t i).loc (NGen.wDstV2Col n 1 (c % n))
-            * (envAt t i).loc (NGen.particleCol n 1) := by canon_head_eval [headToExpr]
+            * (envAt t i).loc (NGen.particleCol n 1) := by canon_head_eval [headToExpr, NGen.writeCellV4Head]
   rw [hshape] at hg
   exact (gate_modEq_iff (by ring)).mp hg
 

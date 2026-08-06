@@ -567,7 +567,9 @@ theorem hand_multiplications_30 :
         intro j _
         simp [nlConstraint, Dregg2.Circuit.Emit.FieldDeltaRangeEmit.gate,
           Dregg2.Circuit.Emit.FieldDeltaRangeEmit.boolBody,
-          Dregg2.Circuit.Emit.FieldDeltaRangeEmit.esub, nlEmitted, emitDegree])
+          Dregg2.Circuit.Emit.FieldDeltaRangeEmit.esub, Dregg2.Circuit.GateExpr.gBoolEnc2,
+          Dregg2.Circuit.GateExpr.render, Dregg2.Circuit.GateExpr.toEmitted,
+          nlEmitted, emitDegree])
     simpa [Dregg2.Circuit.Emit.FieldDeltaRangeEmit.booleanGates,
       Dregg2.Circuit.Emit.FieldDeltaRangeEmit.RESULT_BITS] using hmap
   have htrans : nlConstraint Dregg2.Circuit.Emit.FieldDeltaRangeEmit.transitionGate = 0 := by

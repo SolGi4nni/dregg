@@ -117,7 +117,10 @@ theorem continuityAt (hsat : Satisfied2 hash membership4aryDesc minit mfin maddr
   simp only [gContinuity, VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true] at h
   have hz : gContWindow.eval (envAt t j) ≡ 0 [ZMOD 2013265921] := h hnl
   have hkey : (envAt t j).nxt gCUR ≡ (envAt t j).loc gPAR [ZMOD 2013265921] :=
-    (gate_modEq_iff (by simp only [gContWindow, WindowExpr.eval]; ring)).mp hz
+    (gate_modEq_iff (by
+      simp only [gContWindow, Dregg2.Circuit.GateExpr.gThread, Dregg2.Circuit.GateExpr.render,
+        Dregg2.Circuit.GateExpr.toWindow, Dregg2.Circuit.GateExpr.WLeaf.expr, WindowExpr.eval]
+      ring)).mp hz
   have hj1 : j + 1 < t.rows.length := by
     simp only [beq_eq_false_iff_ne] at hnl
     omega

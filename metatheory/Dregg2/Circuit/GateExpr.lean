@@ -651,11 +651,10 @@ does not care which of the two renderings is in force, so the next rendering cha
 without touching a proof. -/
 
 /-- ⚑ Discharge `(r H).eval a = <polynomial>` for the rail's own renderer `r` (`headToExpr`).
-`+ground` handles the fully closed heads; the builder unfoldings handle the ones whose COLUMN INDICES
-are still symbolic (`Head.lin 1 (ONE n)` at a variable `n`), which `+ground` alone cannot reduce. -/
+`+ground` EVALUATES the ground subterms, which is what a head built by a `List.foldl` over a
+`List.range n` needs before its term list is visible at all. -/
 macro "canon_head_eval" "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
-  `(tactic| simp +ground (maxSteps := 4000000) [$rs,*,
-      Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
+  `(tactic| simp +ground (maxSteps := 40000000) [$rs,*, Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
       Dregg2.Circuit.GateExpr.gFoldExprs, Dregg2.Circuit.GateExpr.gTermToExpr,
       Dregg2.Circuit.GateExpr.gVarsProd, Dregg2.Circuit.GateExpr.GHead.zero,
       Dregg2.Circuit.GateExpr.GHead.c, Dregg2.Circuit.GateExpr.GHead.lin,
@@ -664,9 +663,24 @@ macro "canon_head_eval" "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
       Dregg2.Circuit.GateExpr.GHead.append,
       Dregg2.Exec.CircuitEmit.EmittedExpr.eval] <;> ring)
 
-/-- ⚑ The FULLY CLOSED variant. On a head whose every coefficient and column is a literal, `+ground`
-alone reduces the rendering, and `only` keeps `simp` off the emitted polynomial — which matters: the
-20-bit score-comparison heads blow past four million rewrite steps under the full simp set. -/
+/-- ⚑ The SAME reduction without ground evaluation — for the rails whose column functions are
+defined through a thirty-deep offset chain (`AutomataflResolveEmit`'s `cFork`, `cEqBit`, …). Ground-
+evaluating those blows simp's step budget, and it is not needed: the head is a chain of
+`Head.lin`/`addLin`/`addProd`, so the builder unfoldings alone expose its term list. -/
+macro "canon_head_eval_plain" "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
+  `(tactic| simp (maxSteps := 4000000) [$rs,*, Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
+      Dregg2.Circuit.GateExpr.gFoldExprs, Dregg2.Circuit.GateExpr.gTermToExpr,
+      Dregg2.Circuit.GateExpr.gVarsProd, Dregg2.Circuit.GateExpr.GHead.zero,
+      Dregg2.Circuit.GateExpr.GHead.c, Dregg2.Circuit.GateExpr.GHead.lin,
+      Dregg2.Circuit.GateExpr.GHead.addLin, Dregg2.Circuit.GateExpr.GHead.addProd,
+      Dregg2.Circuit.GateExpr.GHead.addConst, Dregg2.Circuit.GateExpr.GHead.scale,
+      Dregg2.Circuit.GateExpr.GHead.append,
+      Dregg2.Exec.CircuitEmit.EmittedExpr.eval] <;> ring)
+
+/-- ⚑ The FULLY CLOSED variant: `+ground` alone reduces the rendering, and `only` — with the head
+BUILDERS deliberately absent from the set — keeps `simp` off the emitted polynomial. That matters at
+exactly two sites: the 20-bit score-comparison heads diverge past forty million rewrite steps under
+either of the other two forms, and close in seconds under this one. -/
 macro "canon_head_eval_closed" "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
   `(tactic| simp +ground (maxSteps := 8000000) only [$rs,*,
       Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
@@ -674,13 +688,10 @@ macro "canon_head_eval_closed" "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tacti
       Dregg2.Circuit.GateExpr.gVarsProd,
       Dregg2.Exec.CircuitEmit.EmittedExpr.eval] <;> ring)
 
-/-- ⚑ The same reduction AT A HYPOTHESIS — for the extraction sites that read a gate's satisfaction
-out of a membership proof. These used to write the emitted body as a LITERAL `EmittedExpr` and rely
-on it being defeq to the head's rendering; the literal is now the renderer's business, so the sites
-let unification supply it and reduce here. -/
+/-- ⚑ The reduction AT A HYPOTHESIS — for the extraction sites that read a gate's satisfaction out of
+a membership proof rather than pinning the emitted body as a literal. -/
 macro "canon_head_at" h:ident "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
-  `(tactic| simp +ground (maxSteps := 4000000) [$rs,*,
-      Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
+  `(tactic| simp +ground (maxSteps := 40000000) [$rs,*, Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
       Dregg2.Circuit.GateExpr.gFoldExprs, Dregg2.Circuit.GateExpr.gTermToExpr,
       Dregg2.Circuit.GateExpr.gVarsProd, Dregg2.Circuit.GateExpr.GHead.zero,
       Dregg2.Circuit.GateExpr.GHead.c, Dregg2.Circuit.GateExpr.GHead.lin,

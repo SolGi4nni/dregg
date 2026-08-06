@@ -96,7 +96,7 @@ theorem ge0_9N_of_sat (hsat : Satisfied2 hash d minit mfin maddrs t)
         + (-1) * e.loc (bit0 + 0) + (-2) * e.loc (bit0 + 1) + (-4) * e.loc (bit0 + 2)
         + (-8) * e.loc (bit0 + 3) + (-16) * e.loc (bit0 + 4) + (-32) * e.loc (bit0 + 5)
         + (-64) * e.loc (bit0 + 6) + (-128) * e.loc (bit0 + 7)
-        + (-256) * e.loc (bit0 + 8) := by canon_head_eval [headToExpr]
+        + (-256) * e.loc (bit0 + 8) := by canon_head_eval [headToExpr, forcedGe0Term]
   rw [hE] at hg
   have hmod : (2 * e.loc ib * (e.loc val - 1) + e.loc ib - (e.loc val - 1) - 1)
       ≡ S [ZMOD 2013265921] := by

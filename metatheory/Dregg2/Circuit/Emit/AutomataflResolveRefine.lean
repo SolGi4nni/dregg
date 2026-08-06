@@ -178,7 +178,7 @@ theorem oneHot_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin m
   have hsum : e.loc s0 + e.loc s1 = 1 := by
     have hg := rgateH hsat i hi hs
     have hE : (headToExpr (((Head.c (-1)).addLin 1 s0).addLin 1 s1)).eval e.loc
-        = e.loc s0 + e.loc s1 + (-1) := by canon_head_eval [headToExpr]
+        = e.loc s0 + e.loc s1 + (-1) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     have := (gate_modEq_iff (x := e.loc s0 + e.loc s1 + -1)
       (a := e.loc s0 + e.loc s1) (b := 1) (by ring)).mp hg
@@ -190,7 +190,7 @@ theorem oneHot_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin m
     -- renderer KEEPS it (`mul(const 0, sel0)`) where the elided one dropped it. The polynomial is
     -- unchanged; the emitted body is not.
     have hE : (headToExpr (((Head.lin 0 s0).addLin 1 s1).addLin (-1) idx)).eval e.loc
-        = e.loc s1 + (-1) * e.loc idx := by canon_head_eval [headToExpr]
+        = e.loc s1 + (-1) * e.loc idx := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     exact eq_of_modEq_canon (canon_loc hc i _) (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)
   exact ⟨hidx ▸ b1, hidx, by omega⟩
@@ -201,7 +201,7 @@ theorem one_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin madd
     (envAt t i).loc ONE = 1 := by
   have hg := rgateH hsat i hi (h := (Head.lin 1 ONE).addConst (-1)) (mem_resolve_onePin 2)
   have hE : (headToExpr ((Head.lin 1 ONE).addConst (-1))).eval (envAt t i).loc
-      = (envAt t i).loc ONE + (-1) := by canon_head_eval [headToExpr]
+      = (envAt t i).loc ONE + (-1) := by canon_head_eval_plain [headToExpr]
   rw [hE] at hg
   exact eq_of_modEq_canon (canon_loc hc i _) canon_one ((gate_modEq_iff (by ring)).mp hg)
 
@@ -271,7 +271,7 @@ theorem autoPinR_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin
       = e.loc (selAutoRow 0) * e.loc (selAutoCol 0) * e.loc (old 0)
         + e.loc (selAutoRow 0) * e.loc (selAutoCol 1) * e.loc (old 1)
         + e.loc (selAutoRow 1) * e.loc (selAutoCol 0) * e.loc (old 2)
-        + e.loc (selAutoRow 1) * e.loc (selAutoCol 1) * e.loc (old 3) + (-3) := by canon_head_eval [headToExpr, autoPinHead]
+        + e.loc (selAutoRow 1) * e.loc (selAutoCol 1) * e.loc (old 3) + (-3) := by canon_head_eval_plain [headToExpr, autoPinHead, NN, List.range, List.range.loop, List.foldl, AUTO_CODE]
   have hAuto := rgateH hsat i hi (h := autoPinHead) (mem_resolve_of_mem_autoRead (ar_autoPin 2))
   rw [hEval, hr0, hr1, hc0, hc1] at hAuto
   rcases hay with ay | ay <;> rcases hax with ax | ax
@@ -340,12 +340,14 @@ structure MoveGates (b : Nat) : Prop where
   srR1   : cg (gBin (cSelRow1 b)) ∈ automataflResolveDesc.constraints
   srRs   : cgH (((Head.c (-1)).addLin 1 (cSelRow0 b)).addLin 1 (cSelRow1 b))
              ∈ automataflResolveDesc.constraints
-  srRi   : cgH ((Head.lin 1 (cSelRow1 b)).addLin (-1) (cFy b)) ∈ automataflResolveDesc.constraints
+  srRi   : cgH (((Head.lin 0 (cSelRow0 b)).addLin 1 (cSelRow1 b)).addLin (-1) (cFy b))
+             ∈ automataflResolveDesc.constraints
   srC0   : cg (gBin (cSelCol0 b)) ∈ automataflResolveDesc.constraints
   srC1   : cg (gBin (cSelCol1 b)) ∈ automataflResolveDesc.constraints
   srCs   : cgH (((Head.c (-1)).addLin 1 (cSelCol0 b)).addLin 1 (cSelCol1 b))
              ∈ automataflResolveDesc.constraints
-  srCi   : cgH ((Head.lin 1 (cSelCol1 b)).addLin (-1) (cFx b)) ∈ automataflResolveDesc.constraints
+  srCi   : cgH (((Head.lin 0 (cSelCol0 b)).addLin 1 (cSelCol1 b)).addLin (-1) (cFx b))
+             ∈ automataflResolveDesc.constraints
   srcRd  : cgH (sourceReadHead b) ∈ automataflResolveDesc.constraints
 
 /-- STRUCTURED extraction (was `by constructor <;> decide` over the concrete 379-list): each field is
@@ -414,7 +416,7 @@ theorem coord01_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin 
   have hbit : e.loc lo = 0 ∨ e.loc lo = 1 := bin_of_gate (rgate hsat i hi hb) (canon_loc hc i _)
   have hg := rgateH hsat i hi hp
   have hE : (headToExpr ((Head.lin 1 col).addLin (-1) lo)).eval e.loc
-      = e.loc col + (-1) * e.loc lo := by canon_head_eval [headToExpr]
+      = e.loc col + (-1) * e.loc lo := by canon_head_eval_plain [headToExpr]
   rw [hE] at hg
   have heq : e.loc col = e.loc lo :=
     eq_of_modEq_canon (canon_loc hc i _) (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)
@@ -465,7 +467,7 @@ theorem validMove_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
     have hg := rgateH hsat i hi mg.rook
     have hE : (headToExpr (rookAlignHead b)).eval e.loc
         = e.loc (cFx b) * e.loc (cFy b) + (-1) * (e.loc (cFx b) * e.loc (cTy b))
-          + (-1) * (e.loc (cTx b) * e.loc (cFy b)) + e.loc (cTx b) * e.loc (cTy b) := by canon_head_eval [headToExpr, rookAlignHead]
+          + (-1) * (e.loc (cTx b) * e.loc (cFy b)) + e.loc (cTx b) * e.loc (cTy b) := by canon_head_eval_plain [headToExpr, rookAlignHead]
     rw [hE] at hg
     have hmod : (e.loc (cFx b) - e.loc (cTx b)) * (e.loc (cFy b) - e.loc (cTy b))
         ≡ 0 [ZMOD 2013265921] := (gate_modEq_iff (by ring)).mp hg
@@ -481,7 +483,7 @@ theorem validMove_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
         = e.loc (cDsq b) + (-1) * (e.loc (cFx b) * e.loc (cFx b))
           + 2 * (e.loc (cFx b) * e.loc (cTx b)) + (-1) * (e.loc (cTx b) * e.loc (cTx b))
           + (-1) * (e.loc (cFy b) * e.loc (cFy b)) + 2 * (e.loc (cFy b) * e.loc (cTy b))
-          + (-1) * (e.loc (cTy b) * e.loc (cTy b)) := by canon_head_eval [headToExpr, dsqHead]
+          + (-1) * (e.loc (cTy b) * e.loc (cTy b)) := by canon_head_eval_plain [headToExpr, dsqHead]
     rw [hE] at hg
     exact sqdist_pure (canon_loc hc i _) hfx htx hfy hty hg
   have hdnz : ¬ ((e.loc (cDsq b)) ≡ 0 [ZMOD 2013265921]) := by
@@ -499,7 +501,7 @@ theorem validMove_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
         = e.loc (cFa b) + (-1) * (e.loc (cFx b) * e.loc (cFx b))
           + 2 * (e.loc (cFx b) * e.loc AX_C) + (-1) * (e.loc AX_C * e.loc AX_C)
           + (-1) * (e.loc (cFy b) * e.loc (cFy b)) + 2 * (e.loc (cFy b) * e.loc AY_C)
-          + (-1) * (e.loc AY_C * e.loc AY_C) := by canon_head_eval [headToExpr, autoDistHead]
+          + (-1) * (e.loc AY_C * e.loc AY_C) := by canon_head_eval_plain [headToExpr, autoDistHead]
     rw [hE] at hg
     exact sqdist_pure (canon_loc hc i _) hfx hax hfy hay hg
   have hfanz : ¬ ((e.loc (cFa b)) ≡ 0 [ZMOD 2013265921]) := by
@@ -517,7 +519,7 @@ theorem validMove_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
         = e.loc (cTa b) + (-1) * (e.loc (cTx b) * e.loc (cTx b))
           + 2 * (e.loc (cTx b) * e.loc AX_C) + (-1) * (e.loc AX_C * e.loc AX_C)
           + (-1) * (e.loc (cTy b) * e.loc (cTy b)) + 2 * (e.loc (cTy b) * e.loc AY_C)
-          + (-1) * (e.loc AY_C * e.loc AY_C) := by canon_head_eval [headToExpr, autoDistHead]
+          + (-1) * (e.loc AY_C * e.loc AY_C) := by canon_head_eval_plain [headToExpr, autoDistHead]
     rw [hE] at hg
     exact sqdist_pure (canon_loc hc i _) htx hax hty hay hg
   have htanz : ¬ ((e.loc (cTa b)) ≡ 0 [ZMOD 2013265921]) := by
@@ -580,7 +582,7 @@ theorem sourceRead_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mf
         + (-1) * (e.loc (cSelRow0 b) * e.loc (cSelCol0 b) * e.loc (old 0))
         + (-1) * (e.loc (cSelRow0 b) * e.loc (cSelCol1 b) * e.loc (old 1))
         + (-1) * (e.loc (cSelRow1 b) * e.loc (cSelCol0 b) * e.loc (old 2))
-        + (-1) * (e.loc (cSelRow1 b) * e.loc (cSelCol1 b) * e.loc (old 3)) := by canon_head_eval [headToExpr, sourceReadHead]
+        + (-1) * (e.loc (cSelRow1 b) * e.loc (cSelCol1 b) * e.loc (old 3)) := by canon_head_eval [headToExpr, sourceReadHead, cSelRow, cSelCol, cSelRow0, cSelRow1, cSelCol0, cSelCol1]
   rw [hE, hr0, hr1, hc0, hc1] at hg
   rcases hfy with hy | hy <;> rcases hfx with hx | hx
   · refine ⟨0, 0, by norm_num [NN], by norm_num [NN], by rw [hx]; rfl, by rw [hy]; rfl, ?_⟩
@@ -690,7 +692,7 @@ theorem ge0_9_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin ma
         + (-1) * e.loc (bit0 + 0) + (-2) * e.loc (bit0 + 1) + (-4) * e.loc (bit0 + 2)
         + (-8) * e.loc (bit0 + 3) + (-16) * e.loc (bit0 + 4) + (-32) * e.loc (bit0 + 5)
         + (-64) * e.loc (bit0 + 6) + (-128) * e.loc (bit0 + 7)
-        + (-256) * e.loc (bit0 + 8) := by canon_head_eval [headToExpr]
+        + (-256) * e.loc (bit0 + 8) := by canon_head_eval [headToExpr, forcedGe0Term]
   rw [hE] at hg
   have hmod : (2 * e.loc ib * (e.loc val - 1) + e.loc ib - (e.loc val - 1) - 1)
       ≡ S [ZMOD 2013265921] := by
@@ -708,7 +710,7 @@ theorem eqPin_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin ma
   set e := envAt t i with he
   have hg := rgateH hsat i hi gp.pin
   have hE : (headToExpr (((Head.lin 1 eqCol).addLin 1 neqCol).addConst (-1))).eval e.loc
-      = e.loc eqCol + e.loc neqCol + (-1) := by canon_head_eval [headToExpr]
+      = e.loc eqCol + e.loc neqCol + (-1) := by canon_head_eval_plain [headToExpr]
   rw [hE] at hg
   have hmod := (gate_modEq_iff (x := e.loc eqCol + e.loc neqCol + -1)
     (a := e.loc eqCol) (b := 1 - e.loc neqCol) (by ring)).mp hg
@@ -825,7 +827,7 @@ theorem iv_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddr
           [cFx b, cTx b]).addProd (-1) [cTx b, cTx b])).eval e.loc
         = e.loc (cIvDsq o) + (-1) * (e.loc (cFx b) * e.loc (cFx b))
           + 2 * (e.loc (cFx b) * e.loc (cTx b))
-          + (-1) * (e.loc (cTx b) * e.loc (cTx b)) := by canon_head_eval [headToExpr]
+          + (-1) * (e.loc (cTx b) * e.loc (cTx b)) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     exact sq1d_pure (canon_loc hc i _) hfx htx hg
   have hbnd : -999 ≤ e.loc (cIvDsq o) ∧ e.loc (cIvDsq o) ≤ 999 := by
@@ -866,8 +868,8 @@ theorem occ_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin madd
     have hg := rgateH hsat i hi hk
     rw [hE] at hg
     exact eq_of_modEq_canon (canon_loc hc i _) canon_zero ((gate_modEq_iff (by ring)).mp hg)
-  have hs0 : e.loc (cSeg o 0) = 0 := hseg 0 og.seg0 rfl
-  have hs1 : e.loc (cSeg o 1) = 0 := hseg 1 og.seg1 rfl
+  have hs0 : e.loc (cSeg o 0) = 0 := hseg 0 og.seg0 (by canon_head_eval_plain [headToExpr, segHead])
+  have hs1 : e.loc (cSeg o 1) = 0 := hseg 1 og.seg1 (by canon_head_eval [headToExpr, segHead])
   have hmsum : e.loc (cMsum o) = 0 := by
     have hg := rgateH hsat i hi og.msum
     have hE : (headToExpr (msumHead o)).eval e.loc
@@ -1000,7 +1002,7 @@ theorem ge0_5_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin ma
         (forcedGe0Term ((Head.lin 1 val).addConst (-1)) ib))).eval e.loc
       = 2 * (e.loc ib * e.loc val) + (-2) * e.loc ib + e.loc ib + (-1) * e.loc val
         + (-1) * e.loc (bit0 + 0) + (-2) * e.loc (bit0 + 1) + (-4) * e.loc (bit0 + 2)
-        + (-8) * e.loc (bit0 + 3) + (-16) * e.loc (bit0 + 4) := by canon_head_eval [headToExpr]
+        + (-8) * e.loc (bit0 + 3) + (-16) * e.loc (bit0 + 4) := by canon_head_eval [headToExpr, forcedGe0Term]
   rw [hE] at hg
   have hmod : (2 * e.loc ib * (e.loc val - 1) + e.loc ib - (e.loc val - 1) - 1)
       ≡ S [ZMOD 2013265921] := by
@@ -1033,7 +1035,7 @@ theorem eqCoords_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin
           |>.addProd (-1) [yb, yb])).eval e.loc
         = e.loc (cEqDsq ec) + (-1) * (e.loc xa * e.loc xa) + 2 * (e.loc xa * e.loc xb)
           + (-1) * (e.loc xb * e.loc xb) + (-1) * (e.loc ya * e.loc ya)
-          + 2 * (e.loc ya * e.loc yb) + (-1) * (e.loc yb * e.loc yb) := by canon_head_eval [headToExpr]
+          + 2 * (e.loc ya * e.loc yb) + (-1) * (e.loc yb * e.loc yb) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     exact sqdist_pure (canon_loc hc i _) h1 h3 h2 h4 hg
   have hbnd : -999 ≤ e.loc (cEqDsq ec) ∧ e.loc (cEqDsq ec) ≤ 999 := by
@@ -1089,7 +1091,7 @@ theorem selection_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
     have hE : (headToExpr (((Head.lin 1 cFork).addLin (-1) (cEqBit (eqBase 0))).addProd 1
           [cEqBit (eqBase 0), cEqBit (eqBase 1)])).eval e.loc
         = e.loc cFork + (-1) * e.loc (cEqBit (eqBase 0))
-          + e.loc (cEqBit (eqBase 0)) * e.loc (cEqBit (eqBase 1)) := by canon_head_eval [headToExpr]
+          + e.loc (cEqBit (eqBase 0)) * e.loc (cEqBit (eqBase 1)) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
     rcases hff with a | a <;> rcases htt with b | b <;> rw [a, b] <;>
@@ -1097,7 +1099,7 @@ theorem selection_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
   have hnff : e.loc cNeqFf = 1 - e.loc (cEqBit (eqBase 0)) := by
     have hg := rgateH hsat i hi (h := ((Head.lin 1 cNeqFf).addLin 1 (cEqBit (eqBase 0))).addConst (-1)) (mem_selection_idx 2 1 (by decide))
     have hE : (headToExpr (((Head.lin 1 cNeqFf).addLin 1 (cEqBit (eqBase 0))).addConst (-1))).eval
-        e.loc = e.loc cNeqFf + e.loc (cEqBit (eqBase 0)) + (-1) := by canon_head_eval [headToExpr]
+        e.loc = e.loc cNeqFf + e.loc (cEqBit (eqBase 0)) + (-1) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
     rcases hff with a | a <;> rw [a] <;> exact ⟨by norm_num, by norm_num⟩
@@ -1105,7 +1107,7 @@ theorem selection_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
     have hg := rgateH hsat i hi (h := (Head.lin (-1) cCol1).addProd 1 [cEqBit (eqBase 1), cNeqFf]) (mem_selection_idx 2 2 (by decide))
     have hE : (headToExpr ((Head.lin (-1) cCol1).addProd 1
         [cEqBit (eqBase 1), cNeqFf])).eval e.loc
-        = (-1) * e.loc cCol1 + e.loc (cEqBit (eqBase 1)) * e.loc cNeqFf := by canon_head_eval [headToExpr]
+        = (-1) * e.loc cCol1 + e.loc (cEqBit (eqBase 1)) * e.loc cNeqFf := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
     rcases hff with a | a <;> rcases htt with b | b <;> rw [hnff, a, b] <;>
@@ -1113,7 +1115,7 @@ theorem selection_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
   have hcol2 : e.loc cCol2 = e.loc cCol1 * e.loc cAnz := by
     have hg := rgateH hsat i hi (h := (Head.lin (-1) cCol2).addProd 1 [cCol1, cAnz]) (mem_selection_idx 2 3 (by decide))
     have hE : (headToExpr ((Head.lin (-1) cCol2).addProd 1 [cCol1, cAnz])).eval e.loc
-        = (-1) * e.loc cCol2 + e.loc cCol1 * e.loc cAnz := by canon_head_eval [headToExpr]
+        = (-1) * e.loc cCol2 + e.loc cCol1 * e.loc cAnz := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
     rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
@@ -1121,7 +1123,7 @@ theorem selection_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
   have hcollv : e.loc cCollide = e.loc cCol2 * e.loc cBnz := by
     have hg := rgateH hsat i hi (h := (Head.lin (-1) cCollide).addProd 1 [cCol2, cBnz]) (mem_selection_idx 2 4 (by decide))
     have hE : (headToExpr ((Head.lin (-1) cCollide).addProd 1 [cCol2, cBnz])).eval e.loc
-        = (-1) * e.loc cCollide + e.loc cCol2 * e.loc cBnz := by canon_head_eval [headToExpr]
+        = (-1) * e.loc cCollide + e.loc cCol2 * e.loc cBnz := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
     rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
@@ -1135,7 +1137,7 @@ theorem selection_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
     have hE : (headToExpr (((((Head.lin 1 cSurv).addConst (-1)).addLin 1 cFork).addLin 1
         cCollide).addProd (-1) [cFork, cCollide])).eval e.loc
         = e.loc cSurv + e.loc cFork + e.loc cCollide
-          + (-1) * (e.loc cFork * e.loc cCollide) + (-1) := by canon_head_eval [headToExpr]
+          + (-1) * (e.loc cFork * e.loc cCollide) + (-1) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
     rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
@@ -1900,7 +1902,7 @@ theorem prodN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mf
   set e := envAt t i with he
   have hgg := rgateHN hsat i hi hg
   have hE : (headToExpr ((Head.lin (-1) out).addProd 1 [a, b])).eval e.loc
-      = (-1) * e.loc out + e.loc a * e.loc b := by canon_head_eval [headToExpr]
+      = (-1) * e.loc out + e.loc a * e.loc b := by canon_head_eval_plain [headToExpr]
   rw [hE] at hgg
   refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hgg)).symm
   rcases ha with h | h <;> rcases hb with h' | h' <;> rw [h, h'] <;>
@@ -1915,7 +1917,7 @@ theorem notBitN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit 
   set e := envAt t i with he
   have hgg := rgateHN hsat i hi hg
   have hE : (headToExpr (((Head.lin 1 out).addLin 1 col).addConst (-1))).eval e.loc
-      = e.loc out + e.loc col + (-1) := by canon_head_eval [headToExpr]
+      = e.loc out + e.loc col + (-1) := by canon_head_eval_plain [headToExpr]
   rw [hE] at hgg
   refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hgg)
   rcases hb with h | h <;> rw [h] <;> exact ⟨by norm_num, by norm_num⟩
@@ -1954,7 +1956,7 @@ theorem selectionN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
           (NGen.cEqBit n (NGen.eqBase n 0))).addProd 1
           [NGen.cEqBit n (NGen.eqBase n 0), NGen.cEqBit n (NGen.eqBase n 1)])).eval e.loc
         = e.loc (NGen.cFork n) + (-1) * e.loc (NGen.cEqBit n (NGen.eqBase n 0))
-          + e.loc (NGen.cEqBit n (NGen.eqBase n 0)) * e.loc (NGen.cEqBit n (NGen.eqBase n 1)) := by canon_head_eval [headToExpr]
+          + e.loc (NGen.cEqBit n (NGen.eqBase n 0)) * e.loc (NGen.cEqBit n (NGen.eqBase n 1)) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
     rcases hff with a | a <;> rcases htt with b | b <;> rw [a, b] <;>
@@ -1965,7 +1967,7 @@ theorem selectionN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
       (mem_selection_idx n 1 (show (1:Nat) < 6 by decide))
     have hE : (headToExpr (((Head.lin 1 (NGen.cNeqFf n)).addLin 1
         (NGen.cEqBit n (NGen.eqBase n 0))).addConst (-1))).eval e.loc
-        = e.loc (NGen.cNeqFf n) + e.loc (NGen.cEqBit n (NGen.eqBase n 0)) + (-1) := by canon_head_eval [headToExpr]
+        = e.loc (NGen.cNeqFf n) + e.loc (NGen.cEqBit n (NGen.eqBase n 0)) + (-1) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
     rcases hff with a | a <;> rw [a] <;> exact ⟨by norm_num, by norm_num⟩
@@ -1977,7 +1979,7 @@ theorem selectionN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
     have hE : (headToExpr ((Head.lin (-1) (NGen.cCol1 n)).addProd 1
         [NGen.cEqBit n (NGen.eqBase n 1), NGen.cNeqFf n])).eval e.loc
         = (-1) * e.loc (NGen.cCol1 n)
-          + e.loc (NGen.cEqBit n (NGen.eqBase n 1)) * e.loc (NGen.cNeqFf n) := by canon_head_eval [headToExpr]
+          + e.loc (NGen.cEqBit n (NGen.eqBase n 1)) * e.loc (NGen.cNeqFf n) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
     rcases hff with a | a <;> rcases htt with b | b <;> rw [hnff, a, b] <;>
@@ -1988,7 +1990,7 @@ theorem selectionN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
       (mem_selection_idx n 3 (show (3:Nat) < 6 by decide))
     have hE : (headToExpr ((Head.lin (-1) (NGen.cCol2 n)).addProd 1
         [NGen.cCol1 n, NGen.cAnz n])).eval e.loc
-        = (-1) * e.loc (NGen.cCol2 n) + e.loc (NGen.cCol1 n) * e.loc (NGen.cAnz n) := by canon_head_eval [headToExpr]
+        = (-1) * e.loc (NGen.cCol2 n) + e.loc (NGen.cCol1 n) * e.loc (NGen.cAnz n) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
     rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
@@ -1999,7 +2001,7 @@ theorem selectionN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
       (mem_selection_idx n 4 (show (4:Nat) < 6 by decide))
     have hE : (headToExpr ((Head.lin (-1) (NGen.cCollide n)).addProd 1
         [NGen.cCol2 n, NGen.cBnz n])).eval e.loc
-        = (-1) * e.loc (NGen.cCollide n) + e.loc (NGen.cCol2 n) * e.loc (NGen.cBnz n) := by canon_head_eval [headToExpr]
+        = (-1) * e.loc (NGen.cCollide n) + e.loc (NGen.cCol2 n) * e.loc (NGen.cBnz n) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
     rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
@@ -2016,7 +2018,7 @@ theorem selectionN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
         (NGen.cFork n)).addLin 1 (NGen.cCollide n)).addProd (-1)
         [NGen.cFork n, NGen.cCollide n])).eval e.loc
         = e.loc (NGen.cSurv n) + e.loc (NGen.cFork n) + e.loc (NGen.cCollide n)
-          + (-1) * (e.loc (NGen.cFork n) * e.loc (NGen.cCollide n)) + (-1) := by canon_head_eval [headToExpr]
+          + (-1) * (e.loc (NGen.cFork n) * e.loc (NGen.cCollide n)) + (-1) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
     rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
@@ -2048,7 +2050,7 @@ theorem carryN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit m
   have hcv : e.loc carry = e.loc sa1 - e.loc sa1 * e.loc occ := by
     have hgg := rgateHN hsat i hi hq
     have hE : (headToExpr (((Head.lin 1 carry).addProd (-1) [sa1]).addProd 1 [sa1, occ])).eval e.loc
-        = e.loc carry + (-1) * e.loc sa1 + e.loc sa1 * e.loc occ := by canon_head_eval [headToExpr]
+        = e.loc carry + (-1) * e.loc sa1 + e.loc sa1 * e.loc occ := by canon_head_eval_plain [headToExpr]
     rw [hE] at hgg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hgg)
     rcases hsurv with a | a <;> rcases hnz with b | b <;> rcases hocc with c | c <;>
@@ -2217,7 +2219,7 @@ theorem oneN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfi
     (envAt t i).loc (NGen.ONE n) = 1 := by
   have hg := rgateHN hsat i hi (h := (Head.lin 1 (NGen.ONE n)).addConst (-1)) (mem_resolve_onePin n)
   have hE : (headToExpr ((Head.lin 1 (NGen.ONE n)).addConst (-1))).eval (envAt t i).loc
-      = (envAt t i).loc (NGen.ONE n) + (-1) := by canon_head_eval [headToExpr]
+      = (envAt t i).loc (NGen.ONE n) + (-1) := by canon_head_eval_plain [headToExpr]
   rw [hE] at hg
   exact eq_of_modEq_canon (canon_loc hc i _) canon_one ((gate_modEq_iff (by ring)).mp hg)
 
@@ -2251,7 +2253,7 @@ theorem eqPinN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit m
   set e := envAt t i with he
   have hg := rgateHN hsat i hi gp
   have hE : (headToExpr (((Head.lin 1 eqCol).addLin 1 neqCol).addConst (-1))).eval e.loc
-      = e.loc eqCol + e.loc neqCol + (-1) := by canon_head_eval [headToExpr]
+      = e.loc eqCol + e.loc neqCol + (-1) := by canon_head_eval_plain [headToExpr]
   rw [hE] at hg
   have hmod := (gate_modEq_iff (x := e.loc eqCol + e.loc neqCol + -1)
     (a := e.loc eqCol) (b := 1 - e.loc neqCol) (by ring)).mp hg
@@ -2295,7 +2297,7 @@ theorem ge0_9N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit m
         + (-1) * e.loc (bit0 + 0) + (-2) * e.loc (bit0 + 1) + (-4) * e.loc (bit0 + 2)
         + (-8) * e.loc (bit0 + 3) + (-16) * e.loc (bit0 + 4) + (-32) * e.loc (bit0 + 5)
         + (-64) * e.loc (bit0 + 6) + (-128) * e.loc (bit0 + 7)
-        + (-256) * e.loc (bit0 + 8) := by canon_head_eval [headToExpr]
+        + (-256) * e.loc (bit0 + 8) := by canon_head_eval [headToExpr, forcedGe0Term]
   rw [hE] at hg
   have hmod : (2 * e.loc ib * (e.loc val - 1) + e.loc ib - (e.loc val - 1) - 1)
       ≡ S [ZMOD 2013265921] := by
@@ -2335,7 +2337,7 @@ theorem ge0_5N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit m
         (forcedGe0Term ((Head.lin 1 val).addConst (-1)) ib))).eval e.loc
       = 2 * (e.loc ib * e.loc val) + (-2) * e.loc ib + e.loc ib + (-1) * e.loc val
         + (-1) * e.loc (bit0 + 0) + (-2) * e.loc (bit0 + 1) + (-4) * e.loc (bit0 + 2)
-        + (-8) * e.loc (bit0 + 3) + (-16) * e.loc (bit0 + 4) := by canon_head_eval [headToExpr]
+        + (-8) * e.loc (bit0 + 3) + (-16) * e.loc (bit0 + 4) := by canon_head_eval [headToExpr, forcedGe0Term]
   rw [hE] at hg
   have hmod : (2 * e.loc ib * (e.loc val - 1) + e.loc ib - (e.loc val - 1) - 1)
       ≡ S [ZMOD 2013265921] := by
@@ -2468,7 +2470,7 @@ theorem ivN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin
           [NGen.cFx n b, NGen.cTx n b]).addProd (-1) [NGen.cTx n b, NGen.cTx n b])).eval e.loc
         = e.loc (NGen.cIvDsq n o) + (-1) * (e.loc (NGen.cFx n b) * e.loc (NGen.cFx n b))
           + 2 * (e.loc (NGen.cFx n b) * e.loc (NGen.cTx n b))
-          + (-1) * (e.loc (NGen.cTx n b) * e.loc (NGen.cTx n b)) := by canon_head_eval [headToExpr]
+          + (-1) * (e.loc (NGen.cTx n b) * e.loc (NGen.cTx n b)) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     exact sq1dN_pure (canon_loc hc i _) hfx htx (by nlinarith [hwin]) hg
   have hbnd : -999 ≤ e.loc (NGen.cIvDsq n o) ∧ e.loc (NGen.cIvDsq n o) ≤ 999 := by
@@ -2536,7 +2538,7 @@ theorem eqCoordsN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) mini
           |>.addProd (-1) [yb, yb])).eval e.loc
         = e.loc (NGen.cEqDsq n ec) + (-1) * (e.loc xa * e.loc xa) + 2 * (e.loc xa * e.loc xb)
           + (-1) * (e.loc xb * e.loc xb) + (-1) * (e.loc ya * e.loc ya)
-          + 2 * (e.loc ya * e.loc yb) + (-1) * (e.loc yb * e.loc yb) := by canon_head_eval [headToExpr]
+          + 2 * (e.loc ya * e.loc yb) + (-1) * (e.loc yb * e.loc yb) := by canon_head_eval_plain [headToExpr]
     rw [hE] at hg
     exact sqdistN_pure (canon_loc hc i _) bxa bxb bya byb (by nlinarith [hwin]) hg
   have hbnd : -999 ≤ e.loc (NGen.cEqDsq n ec) ∧ e.loc (NGen.cEqDsq n ec) ≤ 999 := by
@@ -2701,7 +2703,7 @@ theorem validMoveN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
     have hg := rgateHN hsat i hi (hmv (vm_rook n b))
     have hE : (headToExpr (NGen.rookAlignHead n b)).eval e.loc
         = e.loc (NGen.cFx n b) * e.loc (NGen.cFy n b) + (-1) * (e.loc (NGen.cFx n b) * e.loc (NGen.cTy n b))
-          + (-1) * (e.loc (NGen.cTx n b) * e.loc (NGen.cFy n b)) + e.loc (NGen.cTx n b) * e.loc (NGen.cTy n b) := by canon_head_eval [headToExpr]
+          + (-1) * (e.loc (NGen.cTx n b) * e.loc (NGen.cFy n b)) + e.loc (NGen.cTx n b) * e.loc (NGen.cTy n b) := by canon_head_eval [headToExpr, NGen.rookAlignHead]
     rw [hE] at hg
     have hmod : (e.loc (NGen.cFx n b) - e.loc (NGen.cTx n b)) * (e.loc (NGen.cFy n b) - e.loc (NGen.cTy n b))
         ≡ 0 [ZMOD 2013265921] := (gate_modEq_iff (by ring)).mp hg
@@ -2717,7 +2719,7 @@ theorem validMoveN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
         = e.loc (NGen.cDsq n b) + (-1) * (e.loc (NGen.cFx n b) * e.loc (NGen.cFx n b))
           + 2 * (e.loc (NGen.cFx n b) * e.loc (NGen.cTx n b)) + (-1) * (e.loc (NGen.cTx n b) * e.loc (NGen.cTx n b))
           + (-1) * (e.loc (NGen.cFy n b) * e.loc (NGen.cFy n b)) + 2 * (e.loc (NGen.cFy n b) * e.loc (NGen.cTy n b))
-          + (-1) * (e.loc (NGen.cTy n b) * e.loc (NGen.cTy n b)) := by canon_head_eval [headToExpr]
+          + (-1) * (e.loc (NGen.cTy n b) * e.loc (NGen.cTy n b)) := by canon_head_eval [headToExpr, NGen.dsqHead]
     rw [hE] at hg
     exact sqdistN_pure (canon_loc hc i _) bfx btx bfy bty (by nlinarith [hwin]) hg
   have hdnz : ¬ ((e.loc (NGen.cDsq n b)) ≡ 0 [ZMOD 2013265921]) := by
@@ -2734,7 +2736,7 @@ theorem validMoveN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
         = e.loc (NGen.cFa n b) + (-1) * (e.loc (NGen.cFx n b) * e.loc (NGen.cFx n b))
           + 2 * (e.loc (NGen.cFx n b) * e.loc (NGen.AX_C n)) + (-1) * (e.loc (NGen.AX_C n) * e.loc (NGen.AX_C n))
           + (-1) * (e.loc (NGen.cFy n b) * e.loc (NGen.cFy n b)) + 2 * (e.loc (NGen.cFy n b) * e.loc (NGen.AY_C n))
-          + (-1) * (e.loc (NGen.AY_C n) * e.loc (NGen.AY_C n)) := by canon_head_eval [headToExpr]
+          + (-1) * (e.loc (NGen.AY_C n) * e.loc (NGen.AY_C n)) := by canon_head_eval [headToExpr, NGen.autoDistHead]
     rw [hE] at hg
     exact sqdistN_pure (canon_loc hc i _) bfx bax bfy bay (by nlinarith [hwin]) hg
   have hfanz : ¬ ((e.loc (NGen.cFa n b)) ≡ 0 [ZMOD 2013265921]) := by
@@ -2751,7 +2753,7 @@ theorem validMoveN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
         = e.loc (NGen.cTa n b) + (-1) * (e.loc (NGen.cTx n b) * e.loc (NGen.cTx n b))
           + 2 * (e.loc (NGen.cTx n b) * e.loc (NGen.AX_C n)) + (-1) * (e.loc (NGen.AX_C n) * e.loc (NGen.AX_C n))
           + (-1) * (e.loc (NGen.cTy n b) * e.loc (NGen.cTy n b)) + 2 * (e.loc (NGen.cTy n b) * e.loc (NGen.AY_C n))
-          + (-1) * (e.loc (NGen.AY_C n) * e.loc (NGen.AY_C n)) := by canon_head_eval [headToExpr]
+          + (-1) * (e.loc (NGen.AY_C n) * e.loc (NGen.AY_C n)) := by canon_head_eval [headToExpr, NGen.autoDistHead]
     rw [hE] at hg
     exact sqdistN_pure (canon_loc hc i _) btx bax bty bay (by nlinarith [hwin]) hg
   have htanz : ¬ ((e.loc (NGen.cTa n b)) ≡ 0 [ZMOD 2013265921]) := by

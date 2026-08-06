@@ -44,6 +44,7 @@ open Dregg2.Games.Automatafl (Board Coord Particle Move occluded interior)
 
 set_option autoImplicit false
 set_option maxHeartbeats 1000000
+set_option maxRecDepth 100000
 
 /-! ## §1 — The gate bundle for the occlusion READ columns.
 
@@ -58,12 +59,16 @@ structure OccReadGates (b o ob : Nat) : Prop where
   ety1 : cg (gBin (cEty o 1)) ∈ automataflResolveDesc.constraints
   etys : cgH (((Head.c (-1)).addLin 1 (cEty o 0)).addLin 1 (cEty o 1))
            ∈ automataflResolveDesc.constraints
-  etyi : cgH ((Head.lin 1 (cEty o 1)).addLin (-1) (cTy b)) ∈ automataflResolveDesc.constraints
+  -- ⚑ The one-hot INDEX head carries the `j = 0` term at coefficient ZERO; the canonical renderer
+  -- keeps it, so the head named here is the head the emitter builds.
+  etyi : cgH (((Head.lin 0 (cEty o 0)).addLin 1 (cEty o 1)).addLin (-1) (cTy b))
+           ∈ automataflResolveDesc.constraints
   etx0 : cg (gBin (cEtx o 0)) ∈ automataflResolveDesc.constraints
   etx1 : cg (gBin (cEtx o 1)) ∈ automataflResolveDesc.constraints
   etxs : cgH (((Head.c (-1)).addLin 1 (cEtx o 0)).addLin 1 (cEtx o 1))
            ∈ automataflResolveDesc.constraints
-  etxi : cgH ((Head.lin 1 (cEtx o 1)).addLin (-1) (cTx b)) ∈ automataflResolveDesc.constraints
+  etxi : cgH (((Head.lin 0 (cEtx o 0)).addLin 1 (cEtx o 1)).addLin (-1) (cTx b))
+           ∈ automataflResolveDesc.constraints
   efr0 : cgH (efromHead b o 0) ∈ automataflResolveDesc.constraints
   efr1 : cgH (efromHead b o 1) ∈ automataflResolveDesc.constraints
   eto0 : cgH (etoHead o 0) ∈ automataflResolveDesc.constraints
@@ -75,9 +80,12 @@ structure OccReadGates (b o ob : Nat) : Prop where
   os1  : cg (gBin (cOsrc o 1)) ∈ automataflResolveDesc.constraints
   osS  : cgH ((Head.lin (-1) (cOg o)).addLin 1 (cOsrc o 0) |>.addLin 1 (cOsrc o 1))
            ∈ automataflResolveDesc.constraints
-  osI  : cgH ((((Head.lin 0 (cOsrc o 0)).addLin 1 (cOsrc o 1)).addProd (-1)
+  -- ⚑ `oneHotGatedConstraints` closes with `.addProd (-idx.const) [gate]`, i.e. a term at
+  -- coefficient ZERO when the index head has no constant. The elided renderer dropped it; the
+  -- canonical one WRITES it (`mul(const 0, cOg)`), so the head named here has four product terms.
+  osI  : cgH (((((Head.lin 0 (cOsrc o 0)).addLin 1 (cOsrc o 1)).addProd (-1)
               [cOg o, cIv o, cFy ob]).addProd (-1) [cOg o, cFx ob] |>.addProd 1
-              [cOg o, cIv o, cFx ob]) ∈ automataflResolveDesc.constraints
+              [cOg o, cIv o, cFx ob]).addProd 0 [cOg o]) ∈ automataflResolveDesc.constraints
 
 /-- The `eq_scalar` bundles pinning the two passable comparisons. -/
 structure PassGates (b o ob : Nat) : Prop where
@@ -328,8 +336,8 @@ theorem lineReadsVert_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit
     rcases hfx with h | h <;> rw [h] <;> norm_num
   have hline : e.loc (cLine o k) = e.loc (old (k * NN + (e.loc (cFx b)).toNat)) := by
     rcases hk2 with h | h <;> subst h
-    · exact hval 0 (by norm_num) rg.lin0 rfl
-    · exact hval 1 (by norm_num) rg.lin1 rfl
+    · exact hval 0 (by norm_num) rg.lin0 (by canon_head_eval [headToExpr, lineHead])
+    · exact hval 1 (by norm_num) rg.lin1 (by canon_head_eval [headToExpr, lineHead])
   have hxlt : (e.loc (cFx b)).toNat < NN := by
     rcases hfx with h | h <;> rw [h] <;> simp [NN]
   have hidxK : k * NN + (e.loc (cFx b)).toNat < KK := by
@@ -392,8 +400,8 @@ theorem lineReadsHoriz_of_sat (hsat : Satisfied2 hash automataflResolveDesc mini
     rcases hfy with h | h <;> rw [h] <;> norm_num
   have hline : e.loc (cLine o k) = e.loc (old ((e.loc (cFy b)).toNat * NN + k)) := by
     rcases hk2 with h | h <;> subst h
-    · exact hval 0 (by norm_num) rg.lin0 rfl
-    · exact hval 1 (by norm_num) rg.lin1 rfl
+    · exact hval 0 (by norm_num) rg.lin0 (by canon_head_eval [headToExpr, lineHead])
+    · exact hval 1 (by norm_num) rg.lin1 (by canon_head_eval [headToExpr, lineHead])
   have hylt : (e.loc (cFy b)).toNat < NN := by
     rcases hfy with h | h <;> rw [h] <;> simp [NN]
   have hidxK : (e.loc (cFy b)).toNat * NN + k < KK := by
@@ -488,7 +496,7 @@ theorem osrc_arith (hsat : Satisfied2 hash automataflResolveDesc minit mfin madd
   have hg := rgateH hsat i hi rg.osI
   have hE : (headToExpr ((((Head.lin 0 (cOsrc o 0)).addLin 1 (cOsrc o 1)).addProd (-1)
         [cOg o, cIv o, cFy ob]).addProd (-1) [cOg o, cFx ob] |>.addProd 1
-        [cOg o, cIv o, cFx ob])).eval e.loc
+        [cOg o, cIv o, cFx ob] |>.addProd 0 [cOg o])).eval e.loc
       = e.loc (cOsrc o 1) + (-1) * (e.loc (cOg o) * e.loc (cIv o) * e.loc (cFy ob))
         + (-1) * (e.loc (cOg o) * e.loc (cFx ob))
         + e.loc (cOg o) * e.loc (cIv o) * e.loc (cFx ob) := by canon_head_eval [headToExpr]
@@ -766,8 +774,8 @@ theorem lineRange_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfi
     rcases hivb with h | h <;> rcases hfx with x | x <;> rcases hfy with y | y <;>
       rw [h, bc0, bc1, br0, br1, x, y] <;> constructor <;> nlinarith [B0.1, B0.2, B1.1, B1.2, B2.1, B2.2, B3.1, B3.2]
   rcases hk2 with h | h <;> subst h
-  · exact hval 0 (by norm_num) rg.lin0 rfl
-  · exact hval 1 (by norm_num) rg.lin1 rfl
+  · exact hval 0 (by norm_num) rg.lin0 (by canon_head_eval [headToExpr, lineHead])
+  · exact hval 1 (by norm_num) rg.lin1 (by canon_head_eval [headToExpr, lineHead])
 
 /-- The `occ` bit column, related to the semantic masked sum: `occ = 1 ↔ 1 ≤ msumVal (segVal …) …`.
 The `seg` columns ARE `segVal` (the between-mask), `cMsum` IS `msumVal`, and `occ` IS the threshold —
@@ -785,11 +793,13 @@ theorem occ_col_iff_msumVal (hsat : Satisfied2 hash automataflResolveDesc minit 
   have hs0 : e.loc (cSeg o 0) = 0 := by
     have hg := rgateH hsat i hi og.seg0
     exact eq_of_modEq_canon (canon_loc hc i _) canon_zero
-      (show (headToExpr (segHead o 0)).eval e.loc ≡ 0 [ZMOD 2013265921] from hg)
+      (by simpa only [show (headToExpr (segHead o 0)).eval (envAt t i).loc
+              = (envAt t i).loc (cSeg o 0) from by canon_head_eval [headToExpr, segHead]] using hg)
   have hs1 : e.loc (cSeg o 1) = 0 := by
     have hg := rgateH hsat i hi og.seg1
     exact eq_of_modEq_canon (canon_loc hc i _) canon_zero
-      (show (headToExpr (segHead o 1)).eval e.loc ≡ 0 [ZMOD 2013265921] from hg)
+      (by simpa only [show (headToExpr (segHead o 1)).eval (envAt t i).loc
+              = (envAt t i).loc (cSeg o 1) from by canon_head_eval [headToExpr, segHead]] using hg)
   -- cMsum = 0 (masked sum over the empty mask), from the msum gate with seg columns 0
   have hcmsum0 : e.loc (cMsum o) = 0 := by
     have hg := rgateH hsat i hi og.msum

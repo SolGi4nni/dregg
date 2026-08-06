@@ -64,7 +64,9 @@ theorem eqBody_eval (a : Assignment) (l r : EmittedExpr) :
 
 theorem choose_eval (a : Assignment) (b l r : EmittedExpr) :
     (choose b l r).eval a = l.eval a + b.eval a * (r.eval a - l.eval a) := by
-  simp only [choose, add, mul, sub, neg, c, EmittedExpr.eval]
+  simp only [choose, add, mul, sub, neg, c, Dregg2.Circuit.GateExpr.gMux,
+    Dregg2.Circuit.GateExpr.render, Dregg2.Circuit.GateExpr.toEmitted,
+    Dregg2.Circuit.GateExpr.render_ofEmitted, EmittedExpr.eval]
   ring
 
 theorem choose_eval_zero {a : Assignment} {b l r : EmittedExpr} (hb : b.eval a = 0) :
