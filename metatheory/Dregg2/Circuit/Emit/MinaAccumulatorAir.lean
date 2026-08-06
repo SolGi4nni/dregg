@@ -111,7 +111,7 @@ open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 WindowExpr VmConstraint2)
 open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg WindowLeg PiPinLeg)
 open Dregg2.Circuit.TableAirIR (RowSel)
 open Dregg2.Circuit.Emit.PastaField (qN)
-open Dregg2.Circuit.Emit.PastaFieldSound (SK sVal qLimb)
+open Dregg2.Circuit.Emit.PastaFieldSound (SK NG sVal qLimb)
 open Dregg2.Circuit.Emit.PastaCurve (CZm)
 open Dregg2.Circuit.Emit.PastaCurveComplete (curveB3)
 open Dregg2.Circuit.Emit.PastaCurveSound
@@ -292,22 +292,139 @@ theorem the_full_width_sum_needs_the_fold :
     ∧ 1000 * DREGG_MAX_ROWS < segCells 1474800 := by
   refine ⟨by decide, by decide⟩
 
-/-- ⚑ **THE ROUTING RESIDUAL, PRICED.** Forcing the addend of row `r` to be a DECLARED SRS generator
-is an exact-public lookup whose tuple is the generator index plus the point's limbs. In the sound
-encoding a projective point is `3 · 32 = 96` limbs, so the tuple is `97` wide against the deployed
-`MAX_EXACT_PUBLIC_ARITY = 64`: **the routing table does not fit one declared table at this
-encoding.** `PastaMsmBucketed.split_srs_cells_fit` already took the same medicine one layout over —
-split the limbs across two tables keyed by the same index — and `49 + 49` clears the cap. Said as a
-number so the residual is a work item and not a mood. -/
+/-- ⚑ **THE ROUTING RESIDUAL — REFUSED AT HEAD, BUT THE CAP IS NOT A PRICE.**
+
+Forcing the addend of row `r` to be a DECLARED SRS generator is an exact-public lookup whose tuple
+is the generator index plus the point's limbs. In the sound encoding a projective point is
+`3 · 32 = 96` limbs, so the tuple is `97` wide against the deployed `MAX_EXACT_PUBLIC_ARITY = 64`
+(`circuit/src/descriptor_ir2.rs:531`), and `check_descriptor2` refuses it (`:2135`). **That refusal
+is real and nothing should be designed as though it were not.**
+
+⚠ **BUT THE EARLIER DRAFT OF THIS DOCBLOCK CALLED 64 A PRICE, AND IT IS NOT ONE.** Read at source
+2026-08-06: the constant's ONLY other use is a drift guard whose own message says the remedy —
+*"the emitted exact-public family covers {family_len} arities but this file admits
+{MAX_EXACT_PUBLIC_ARITY}; re-emit `dregg-ir2-exact-public-v1.json` or re-pin the cap"*
+(`descriptor_ir2.rs:6737-6742`). So 64 is **the number of members in a checked-in JSON artifact**,
+pinned on both sides so the two cannot drift. It is exact as that, and it bounds no resource: the
+committed object is `next_pow2(distinct) × (arity + 2)` preprocessed cells in ONE instance
+(`ExactPublicManifest::of` at `:3370`, `prep_width` at `:3386`), and at `2^16` distinct generators
+a 97-wide table is **6 488 064** cells — 26 MB, one instance.
+
+⚑ It was introduced (`dc285da37`, 2026-07-22) under a comment justifying ROWS and CELLS — *"each row
+becomes one batch instance, so bound the grammar before allocation"* — which is an argument about
+instance count, and arity does not scale instance count. Its two siblings in that comment have since
+moved by `2^14×` and `2^13×`; 64 has never been touched. `a-cost-verdict-outlives-its-premise`.
+
+⚠ **AND THE REMEDY THIS DOCBLOCK USED TO PRESCRIBE IS THE MORE EXPENSIVE ONE** —
+see `the_split_remedy_costs_more_than_the_wide_table`. -/
 theorem the_routing_tuple_does_not_fit_one_table :
     MAX_EP_ARITY < 1 + 3 * SK
     ∧ 1 + (3 * SK) / 2 < MAX_EP_ARITY
     ∧ 1 + 3 * SK = 97 := by
   refine ⟨by decide, by decide, by decide⟩
 
+/-- The preprocessed width an exact-public table of arity `a` commits: the table id, `a` value
+columns, and the pinned multiplicity (`ExactPublicManifest::prep_width`, `descriptor_ir2.rs:3386`).
+Written here so the comparison below is against the deployed geometry rather than against a guess. -/
+def epPrepWidth (a : Nat) : Nat := a + 2
+
+/-- ⚑⚑ **THE SPLIT REMEDY COSTS MORE THAN THE WIDE TABLE IT AVOIDS.**
+
+This file used to prescribe `PastaMsmBucketed.split_srs_cells_fit`'s medicine — split the 96 limbs
+across two tables keyed by the same index, `49 + 49`, clearing the arity cap. Over the same `2^16`
+distinct generators that costs `2 · 2^16 · 51 = 6 684 672` preprocessed cells against the single
+97-wide table's `2^16 · 99 = 6 488 064`: **196 608 cells MORE**, because each half pays its own
+`table_id` and `multiplicity` column. It also costs a second batch instance, a second bus, a second
+FRI opening set — and a soundness leg the wide table does not have, since **nothing forces the two
+halves keyed by index `r` to name limbs of the SAME generator.**
+
+⚠ And the citation was transplanted across two caps that share no mechanism: `split_srs_cells_fit`
+is a theorem about `MAX_EXACT_PUBLIC_CELLS`, not about the ARITY cap this file is blocked by. -/
+theorem the_split_remedy_costs_more_than_the_wide_table :
+    STEP_SRS * epPrepWidth (1 + 3 * SK) = 6488064
+    ∧ 2 * (STEP_SRS * epPrepWidth (1 + (3 * SK) / 2)) = 6684672
+    ∧ STEP_SRS * epPrepWidth (1 + 3 * SK)
+        < 2 * (STEP_SRS * epPrepWidth (1 + (3 * SK) / 2)) := by
+  refine ⟨by decide, by decide, by decide⟩
+
 /-- The SRS the routing would have to cover, and the fact the fold's leaf count is set by the
 segment height rather than by the generator count. -/
 theorem the_step_srs_is_two_to_the_sixteen : STEP_SRS = 2 ^ 16 := by decide
+
+/-! ### ⚑⚑ §4.1 — WHERE THE 3 048 COLUMNS GO, AND WHICH OF THEM CROSS A ROW BOUNDARY.
+
+The fold's bill is paid in COLUMNS: `circuit-prove/tests/mina_accumulator_leaf_anatomy.rs` measures
+the leaf wrap's in-circuit verifier at **2 878 067 ops** for this 3 048-column descriptor against
+**248 555** for the 469-column `pasta-fq-chainlink::v1` that folds 46 leaves in production — and the
+same measurement's ROW sweep moves the figure by **0.5% across 1 → 8 inner rows**. So the width is
+the whole bill and the height is free, and the question this section answers is not "how big is the
+row" but **"how much of the row is scratch that only exists because 33 SSA ops share one row."**
+
+Every number below is `decide`d from the layout definitions the descriptor is emitted from — not a
+second copy of them. -/
+
+/-- The six INPUT blocks: `ACC_X/Y/Z ‖ ADD_X/Y/Z`, `SK` limbs each. -/
+def censusInputs : Nat := 6 * SK
+/-- The 33 SSA intermediates, `SK` limbs each (`vBase`). -/
+def censusSSA : Nat := 33 * SK
+/-- The 12 MULTIPLY witnesses: `SK` quotient limbs then `NG - 1` carries each (`mWit`). -/
+def censusMul : Nat := 12 * (SK + (NG - 1))
+/-- The 2 CONSTANT-MULTIPLY witnesses, `SK` columns each (`sWit`). -/
+def censusSmul : Nat := 2 * SK
+/-- The 19 ADD/SUB witnesses, `SK` columns each (`aWit`). -/
+def censusAddSub : Nat := 19 * SK
+
+/-- ⚑ **THE COLUMN CENSUS.** Five blocks, each named, summing to the width the descriptor declares.
+A layout change that moved a stride would move one of these five numbers rather than only the total,
+which is what makes this a census and not a restatement of `rcb_width_eq`. -/
+theorem the_column_census :
+    censusInputs = 192 ∧ censusSSA = 1056 ∧ censusMul = 1128 ∧ censusSmul = 64
+    ∧ censusAddSub = 608
+    ∧ censusInputs + censusSSA + censusMul + censusSmul + censusAddSub = RCB_WIDTH
+    ∧ accSegDesc.traceWidth = RCB_WIDTH
+    ∧ accFinalDesc.traceWidth = RCB_WIDTH := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide, rfl, rfl⟩
+
+/-- ⚑ **THE CARRIES ALONE ARE BETWEEN A FIFTH AND A QUARTER OF THE ROW.** `12 · (NG − 1) = 744`
+columns exist only to carry a 256-bit schoolbook product's partial sums. Said separately from
+`censusMul` because the quotient limbs and the carries are different work and a narrower encoding
+moves them differently.
+
+⚠ The bracket is two-sided on purpose. This theorem's first draft asserted `4 · 744 > RCB_WIDTH`
+— "a quarter of the row" rounded UP — and the kernel refused it: `2 976 < 3 048`. A one-sided bound
+on a fraction is exactly where a flattering round survives, so both sides are stated. -/
+theorem the_multiply_carries_are_seven_hundred_forty_four :
+    12 * (NG - 1) = 744
+    ∧ 4 * (12 * (NG - 1)) < RCB_WIDTH
+    ∧ 5 * (12 * (NG - 1)) > RCB_WIDTH := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- ⚑⚑ **ONLY 288 OF THE 3 048 COLUMNS CROSS A ROW BOUNDARY — THE OTHER 2 760 ARE SCRATCH.**
+
+The six input blocks are read by the row's own gadget and by the 96 `.transition` threads; the three
+output blocks `OUT_X/OUT_Y/OUT_Z` are pinned on `.last` and threaded forward. **Nothing else in the
+row is visible outside it.** `9.4%` of the width is the row's interface and `90.6%` is intermediates
+that exist because one complete addition is one row.
+
+⚑ This is the number that says the narrowing is a LAYOUT change and not a soundness change: a row
+carrying ONE SSA op instead of 33 does not have to hold the other 32 ops' scratch, and every
+constraint `swCompleteAddSoundLegs` emits is a statement about a single op's operands and output.
+`PastaLadderThread` made exactly this move one rail down — the row-local ladder was 731 136 columns
+in one row before depth became rows — and the emitted width has been flat at `RCB_WIDTH` ever since,
+which is precisely why the bill moved up a rail instead of going away. -/
+theorem the_row_boundary_is_two_hundred_eighty_eight :
+    censusInputs + 3 * SK = 288
+    ∧ RCB_WIDTH - (censusInputs + 3 * SK) = 2760
+    ∧ 10 * (censusInputs + 3 * SK) < RCB_WIDTH := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- …and the three output blocks live INSIDE the scratch region rather than in a reserved band, so
+the `288` above counts distinct columns rather than a reserved prefix. `OUT_X/Y/Z` are `vBase`
+slots 26 / 29 / 32 — the gadget's own SSA results, pinned where they land. -/
+theorem the_outputs_are_scratch_slots :
+    OUT_X = vBase IN_BASE 26 ∧ OUT_Y = vBase IN_BASE 29 ∧ OUT_Z = vBase IN_BASE 32
+    ∧ IN_BASE ≤ OUT_X ∧ OUT_Z + SK ≤ RCB_WIDTH := by
+  refine ⟨rfl, rfl, rfl, by decide, by decide⟩
 
 /-! ## §5 — ⚑ THE VESTA TWIN OF THE THREADED INDUCTION.
 
@@ -501,6 +618,11 @@ theorem the_two_exhibits_differ_in_one_cell :
 #assert_axioms the_two_descriptors_differ
 #assert_axioms the_full_width_sum_needs_the_fold
 #assert_axioms the_routing_tuple_does_not_fit_one_table
+#assert_axioms the_split_remedy_costs_more_than_the_wide_table
+#assert_axioms the_column_census
+#assert_axioms the_multiply_carries_are_seven_hundred_forty_four
+#assert_axioms the_row_boundary_is_two_hundred_eighty_eight
+#assert_axioms the_outputs_are_scratch_slots
 #assert_axioms rowV_forces
 #assert_axioms threadedLadderV_forces
 #assert_axioms terminalAccumulator_forces

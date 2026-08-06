@@ -1,7 +1,29 @@
-//! ⚑⚑ **THE ACCUMULATOR CHAIN'S FOLD — WRITTEN, AND BLOCKED BY A MEASURED WIDTH WALL.**
+//! ⚑⚑ **THE ACCUMULATOR CHAIN'S FOLD — IT PRODUCES A ROOT.**
 //!
-//! ⛑ Read the "THE THREE PROVING TESTS DO NOT RUN" section below before citing this file for
-//! anything. The fold is built and its non-proving teeth pass; **it has never produced a root.**
+//! ## ⛑⛑ RESULT FIRST, and it replaces "it has never produced a root"
+//!
+//! Measured 2026-08-06, `/usr/bin/time -l`, release, 96 GiB box. Both proving polarities RUN:
+//!
+//! | test                                              | wall     | maxrss              | peak footprint       |
+//! |---------------------------------------------------|----------|---------------------|----------------------|
+//! | `a_one_segment_chain_is_the_final_rung`            | 223.36 s | 48.85 GiB / 52.45 GB | 117.93 GiB / 126.63 GB |
+//! | `the_split_chain_folds_and_the_root_carries_both_endpoints` | 500.37 s | 61.35 GiB / 65.87 GB | 118.30 GiB / 127.03 GB |
+//!
+//! The second is **two leaves and one `cb.connect` fold**, and its root carries segment A's
+//! incoming accumulator, segment B's outgoing one, and `claim.is_identity()` on that outgoing
+//! point — the whole chain's endpoints, from a proof that exists.
+//!
+//! ⚠ **TWO METRICS, TWO UNIT SYSTEMS, AND THEY ARE NOT INTERCHANGEABLE.** `maxrss` and `peak memory
+//! footprint` differ by 2.4× here: the first is what stayed resident, the second is what was charged
+//! including compressed pages. The footprint EXCEEDS physical RAM. **This fits only because macOS
+//! compresses**; a Linux box at 96 GiB with no swap headroom meets the OOM killer on the way up, and
+//! the run was visibly memory-stalled throughout (500 s wall against 263 s user and 608 s sys).
+//!
+//! ⚑ **AND THE 68.3 GiB THAT STOOD IN THIS HEADER WAS NOT A PEAK.** It was labelled "peak memory
+//! footprint" of a run that was *killed before finishing* — the high-water mark of a climb that had
+//! not stopped climbing. Both completed runs reach ~118 GiB, 1.7× higher. **A killed run's
+//! high-water mark bounds nothing from above**, and quoting it as a peak understated the wall in
+//! the flattering direction — the same shape of error as quoting one member of a unit pair.
 //!
 //! ## Substrate, said out loud (HOUSE LAW #1)
 //!
@@ -34,37 +56,54 @@
 //! this test would go GREEN and every other test in this file would stay green — which is what
 //! makes it the load-bearing one.
 //!
-//! ## ⛑⛑ THE THREE PROVING TESTS DO NOT RUN, AND "SLOW" IS THE FLATTERING HALF
+//! ## ⛑ THE THREE PROVING TESTS STAY `#[ignore]`d — FOR ~10 MINUTES AND ~118 GiB, NOT FOR "SLOW"
 //!
-//! Measured 2026-08-06, `/usr/bin/time -l` on the release binary: ONE recursion leaf wrap of ONE
-//! 8-row segment reached a **peak memory footprint of 68.3 GiB** — `73,344,091,528` bytes, **71% of
-//! a 96 GiB box** — and was killed before finishing; an earlier run under normal co-tenant load was
-//! SIGKILLed by the OOM killer. So these three are `#[ignore]`d for a **measured memory wall**, not
-//! for being slow, and calling them slow would be the flattering member of a pair.
+//! They run, and they are `#[ignore]`d because a default `cargo test` must not commit a developer's
+//! box to a ten-minute run that pushes its memory into compression. Each `#[ignore]` reason now
+//! carries the measured wall and the measured wall-clock rather than a word.
 //!
-//! ⚠ That figure is `73.3 GB` in DECIMAL units and both are written down, because the first draft of
-//! `the_leaf_wrap_width_is_the_measured_wall` compared the decimal number against a binary threshold
-//! and went red. Quoting one member of a unit pair is the same shape of error as quoting the
-//! flattering member of a bound pair.
+//! ## ⚑⚑ THE COST LAW, MEASURED WITH A CONTROL — COLUMNS, NOT CELLS, AND NOT ROWS
 //!
-//! ⚑ **AND THE CAUSE IS THE WIDTH, WHICH IS THE SAME WALL ONE RAIL UP.**
-//! `PastaLadderThread` cured the ROW-LOCAL wall — a sound ladder was `731,136` columns in one row —
-//! by making depth into rows at a flat `RCB_WIDTH = 3,048`. The recursion wrap now hits that 3,048:
-//! `mina_phase2_chain_leaf` folds **46 leaves + 45 folds in 1,037 s** over a **469**-column
-//! descriptor, and this one is **6.5×** wider, with the in-circuit verifier's cost scaling in the
-//! inner trace's width. `the_leaf_wrap_width_is_the_measured_wall` keeps that ratio in the tree so
-//! it moves when the width does.
-//!
-//! ⚠ **So the accumulator chain is NOT folded end to end today.** The fold is written, its layout
-//! and rung teeth pass, and the mechanism it uses is the one `mina_phase2_chain_leaf` already runs
-//! in production — but nothing here has produced a root, and no sentence in this repo should say it
-//! has. What IS demonstrated is the single-instance AIR: `circuit/tests/mina_accumulator_air_proves.rs`,
-//! 9/9 in release, both polarities, refusing gates named by index.
-//!
-//! Run the two that do work with:
+//! The previous draft attributed the wall to the descriptor's **3,048** columns against the phase-2
+//! chainlink's **469** — an inference from a ratio, taken while the two also differed by 256× in
+//! ROWS, with only one of the two named. `tests/mina_accumulator_leaf_anatomy.rs` separates them by
+//! BUILDING the leaf-wrap verification circuit without proving it (~20 s, ~2 GiB for five wraps):
 //!
 //! ```text
-//! cargo test -p dregg-circuit-prove --release --test mina_accumulator_fold -- --nocapture
+//!  in_cols  rows      wrap ops    witness         npo       horner   wrap LDE cells
+//!      469  2048       248,555    383,938      68,777      127,547      932,916,224
+//!     3048     1     2,862,507  4,532,901     795,215    1,575,100   14,911,873,024
+//!     3048     8     2,878,069  4,548,539     795,215    1,575,100   14,911,873,024
+//! ```
+//!
+//! **Eight times the inner ROWS moves the wrap circuit by 0.5%** and its committed cells not at all;
+//! **6.5× the inner COLUMNS, at 1/256th the rows, costs 11.6× the ops and 16.0× the cells.** The
+//! in-circuit verifier pays `Q · W` per commitment round — one Poseidon2-W16 permutation per 8
+//! opened base coefficients, one `HornerAcc` per opened COLUMN per opening point — at
+//! `INNER_FRI_NUM_QUERIES = 19`. Rows enter only as Merkle depth and fold-phase count.
+//!
+//! ⚑ The cells account for the peak, which is what makes this a model and not a correlation:
+//! `14,911,873,024 × 4 B = 59.6 GB / 55.5 GiB` of committed LDE at `IR2_INNER_LOG_BLOWUP = 6` (64×),
+//! against the ~118 GiB footprint once quotient chunks, Merkle trees and working copies are added.
+//!
+//! ⚑ **SO "TALLER, NO WIDER" IS NOT A MITIGATION — IT IS FREE, AND SPLITTING A CHAIN INTO MORE
+//! SEGMENTS IS A PURE LOSS.** This file's own exhibit is the demonstration: the 8-row chain as ONE
+//! segment costs 223 s, and split into two costs 500 s for the same eight additions.
+//! `the_leaf_wrap_cost_tracks_columns_and_not_rows` keeps both halves in the tree.
+//!
+//! ## ⚑ AND THE NARROWING THAT WOULD MAKE THIS ORDINARY — 446 COLUMNS
+//!
+//! `MinaAccumulatorAir.the_row_boundary_is_two_hundred_eighty_eight` establishes that only **288**
+//! of the 3,048 columns cross a row boundary; the other 2,760 are scratch that exists because 33 SSA
+//! ops share ONE row. A row carrying one op needs its witness plus the DAG's live set, whose peak is
+//! 11 values: `11 × 32 + 94 = 446`, at 33× the rows — **under the 469 that already folds 46 leaves
+//! and 45 folds in 1,037 s.** See `the_narrowing_target_is_four_hundred_forty_six_columns`. That is
+//! `PastaLadderThread`'s own move one rail further down, and it is Lean authoring, not a knob.
+//!
+//! Run everything, including the three that prove (~20 min, ~118 GiB peak footprint):
+//!
+//! ```text
+//! cargo test -p dregg-circuit-prove --release --test mina_accumulator_fold -- --include-ignored --nocapture
 //! ```
 
 use dregg_circuit::field::BabyBear;
@@ -152,32 +191,58 @@ fn the_rungs_resolve_to_the_lean_artifacts() {
     assert_eq!(b.constraints.len(), a.constraints.len() + 64);
 }
 
-/// ⛑⛑ **THE MEASURED WALL, KEPT IN THE TREE SO IT MOVES WHEN THE WIDTH DOES.**
+/// ⛑⛑ **THE COST LAW, MEASURED WITH A CONTROL — AND THE CONTROL IS THE HALF THAT WAS MISSING.**
 ///
-/// The three proving tests above are `#[ignore]`d because ONE recursion leaf wrap of ONE 8-row
-/// segment reached a **68.3 GiB peak memory footprint** — 71% of a 96 GiB box (2026-08-06,
-/// `/usr/bin/time -l`). The cause is the descriptor's WIDTH, and this is that ratio as an assertion:
-/// the phase-2 chain — which folds 46 leaves and 45 folds in 1,037 s in production — runs over a
-/// **469**-column descriptor, and the accumulator segment is **3,048**.
+/// The previous draft of this test asserted a RATIO — 3,048 columns against the phase-2 chain's
+/// 469 — and inferred the cause from it. An inference from a ratio is not a law: a 6.5× width and a
+/// 256× row difference were both present and only one of them was named. Both are now separated,
+/// by `tests/mina_accumulator_leaf_anatomy.rs`, which BUILDS the leaf-wrap verification circuit
+/// (without proving it, so the whole sweep costs ~20 s and 2 GiB) and censuses it:
 ///
-/// ⚑ This is the SAME wall `PastaLadderThread` cured one rail down, arriving one rail up. The
-/// row-local sound ladder was `731,136` columns in a single row; threading made the depth into rows
-/// at a flat `RCB_WIDTH = 3,048`. The recursion wrap builds an in-circuit verifier whose cost scales
-/// in the inner trace's width, so 3,048 is now the number that binds.
+/// ```text
+///  in_cols  rows      wrap ops    witness      npo         alu      horner   wrap LDE cells
+///      469  2048       248,555    383,938   68,777     155,421     127,547      932,916,224
+///     3048     1     2,862,507  4,532,901  795,215   1,772,030   1,575,100   14,911,873,024
+///     3048     2     2,878,065  4,548,535  795,215   1,787,587   1,575,100   14,911,873,024
+///     3048     4     2,878,067  4,548,537  795,215   1,787,588   1,575,100   14,911,873,024
+///     3048     8     2,878,069  4,548,539  795,215   1,787,589   1,575,100   14,911,873,024
+/// ```
 ///
-/// The ways out are all real work and none is a tuning knob: a NARROWER sound encoding (the 8-bit
-/// limb choice is what makes a Pasta coordinate 32 columns), a two-stage wrap that shrinks the
-/// segment before the recursion sees it, or a segment whose trace is taller and no wider so the
-/// fixed per-wrap cost amortises. Naming them is not doing them.
+/// ⚑ **ROWS ARE FREE AND COLUMNS ARE THE WHOLE BILL.** Eight times the inner rows moves the wrap
+/// circuit by **0.5%** (2,862,507 → 2,878,069) and does not move the committed cells at all, while
+/// 6.5× the inner columns — at **1/256th** the rows — costs **11.6×** the wrap ops and **16.0×** the
+/// committed cells. The mechanism is that the in-circuit verifier pays `Q · W` per commitment
+/// round: one Poseidon2-W16 permutation per 8 opened base coefficients and one `HornerAcc` per
+/// opened COLUMN per opening point (`recursion/src/pcs/mmcs.rs`, `pcs/fri/verifier.rs`), at
+/// `INNER_FRI_NUM_QUERIES = 19`. Rows enter only as Merkle depth and fold-phase count.
 ///
-/// If this assertion ever goes red because `RCB_WIDTH` moved, re-measure the wrap before assuming
+/// ⚑ …and the committed cells ACCOUNT FOR THE MEASURED PEAK, which is what makes this a model
+/// rather than a correlation: 14,911,873,024 BabyBear cells × 4 bytes = **59.6 GB / 55.5 GiB**
+/// against a measured **68.3 GiB** peak — 81% of it, with quotient chunks, Merkle trees and working
+/// copies the remainder. The wrap's own tables are LDE'd at `IR2_INNER_LOG_BLOWUP = 6`, i.e. 64×,
+/// because `create_recursion_config_with_fri` sets the MINTING blowup and the in-circuit verifier's
+/// blowup from one argument.
+///
+/// ⚑ **SO "A SEGMENT THAT IS TALLER AND NO WIDER" IS NOT A MITIGATION — IT IS FREE, AND IT WAS
+/// ALREADY BEING PAID FOR.** Splitting the 8-row exhibit into two 4-row segments buys nothing and
+/// costs an extra 68 GiB-class wrap. The leaf should carry every row it can.
+///
+/// If this assertion goes red because `RCB_WIDTH` moved, re-run the anatomy sweep before assuming
 /// the wall moved with it.
 #[test]
-fn the_leaf_wrap_width_is_the_measured_wall() {
+fn the_leaf_wrap_cost_tracks_columns_and_not_rows() {
     /// `MinaPhase2Chain`'s chain-link descriptor width, the one that DOES fold in production.
     const PHASE2_WIDTH: usize = 469;
-    /// The measured peak of one accumulator leaf wrap, in bytes.
+    /// The measured peak of one accumulator leaf wrap, in bytes (2026-08-06, `/usr/bin/time -l`).
     const MEASURED_LEAF_PEAK_BYTES: u64 = 73_344_091_528;
+
+    // --- the measured wrap-circuit sizes, from tests/mina_accumulator_leaf_anatomy.rs ---------
+    /// Wrap-circuit ops for the 469-column chainlink leaf, at 2,048 inner rows.
+    const CHAINLINK_WRAP_OPS: u64 = 248_555;
+    /// …and for the 3,048-column accumulator segment, at 1 inner row.
+    const ACC_WRAP_OPS_1_ROW: u64 = 2_862_507;
+    /// …and at 8 inner rows. Eight times the rows.
+    const ACC_WRAP_OPS_8_ROWS: u64 = 2_878_069;
 
     let a = accumulator_descriptor(Rung::Interior).expect("segment descriptor");
     assert_eq!(a.trace_width, 3048);
@@ -187,6 +252,23 @@ fn the_leaf_wrap_width_is_the_measured_wall() {
          ratio ever drops below 6x, the wrap is worth re-measuring",
         a.trace_width
     );
+
+    // ⚑ THE CONTROL. Eight times the inner rows must not move the wrap circuit by even 1%. If this
+    // ever fails, the cost law changed and "make the leaf taller" stopped being free.
+    assert!(
+        ACC_WRAP_OPS_8_ROWS - ACC_WRAP_OPS_1_ROW < ACC_WRAP_OPS_1_ROW / 100,
+        "8x the inner ROWS moved the wrap circuit by {} ops out of {ACC_WRAP_OPS_1_ROW} — the cost \
+         law measured on 2026-08-06 says rows are free",
+        ACC_WRAP_OPS_8_ROWS - ACC_WRAP_OPS_1_ROW
+    );
+
+    // ⚑ THE TREATMENT. 6.5x the inner COLUMNS, at 1/256th the rows, costs >10x the wrap circuit.
+    assert!(
+        ACC_WRAP_OPS_8_ROWS > 10 * CHAINLINK_WRAP_OPS,
+        "the accumulator wrap is {ACC_WRAP_OPS_8_ROWS} ops against the chainlink's \
+         {CHAINLINK_WRAP_OPS} — the width term is what this file exists to name"
+    );
+
     // ⚑ 68.3 GiB. Stated in BOTH unit systems and asserted in both, because the first draft of this
     // assertion compared the DECIMAL figure (73.3 GB) against a BINARY threshold (70 GiB) and went
     // red — a unit slip is exactly how a memory figure drifts into a flattering one.
@@ -202,14 +284,104 @@ fn the_leaf_wrap_width_is_the_measured_wall() {
     assert!(MEASURED_LEAF_PEAK_BYTES * 10 > 7 * 96 * 1024 * 1024 * 1024);
 }
 
-/// ⚑ **POLARITY 1 — THE CHAIN FOLDS, AND THE ROOT'S CLAIM IS THE WHOLE CHAIN'S.**
+/// ⚑⚑ **WHERE A FOLDABLE ACCUMULATOR LEAF WOULD COME FROM — 446 COLUMNS, DERIVED FROM THE EMITTED
+/// GADGET'S OWN SSA LISTING.**
+///
+/// ⚠ This is a DERIVATION, not a measurement, and it is labelled as one everywhere it is used: no
+/// such descriptor exists and nothing here proves one would be sound. What it is not is a mood — it
+/// is the arithmetic that says whether narrowing lands in the class that already folds.
+///
+/// `MinaAccumulatorAir.the_row_boundary_is_two_hundred_eighty_eight` establishes in Lean that only
+/// **288** of the 3,048 columns cross a row boundary: six input blocks in, three output blocks out.
+/// The other **2,760** are scratch that exists solely because `swCompleteAddSoundLegs`' 33 SSA ops
+/// share ONE row. A row carrying one op instead of 33 needs the op's witness plus whatever the SSA
+/// DAG has LIVE at that point — and the peak live set of that DAG, walked over the listing at
+/// `PastaCurveSound.lean:419-451` (12 mul + 2 smul + 14 add + 5 sub, which
+/// `the_op_kind_census_matches_the_lean_listing` below pins), is **11** 256-bit values:
+///
+/// ```text
+///   row = 11 live values × SK(32) + max witness(94, the multiply's 32 quotient + 62 carries) = 446
+/// ```
+///
+/// ⚑ **446 against the 469 that folds 46 leaves and 45 folds in 1,037 s.** Threading one rail
+/// further down — the same move `PastaLadderThread` made when it took the row-local ladder from
+/// 731,136 columns in one row to 3,048 columns over rows — lands the accumulator leaf BELOW the
+/// width class that is already in production, at 33× the rows, which the cost law above measures as
+/// free. That is the shape of the fix, and it is Lean authoring work on a new AIR plus a multi-row
+/// re-proof of `vestaCompleteAddSound_forces`, not a knob.
+///
+/// ⚠ And it is NOT a soundness relaxation: every constraint the gadget emits is already a statement
+/// about ONE op's operands and output. What changes is which row they sit on.
+#[test]
+fn the_narrowing_target_is_four_hundred_forty_six_columns() {
+    /// `PastaFieldSound.SK` — limbs in a 256-bit value at the sound 8-bit encoding.
+    const SK: usize = 32;
+    /// `SK + (NG - 1)` — a multiply witness: 32 quotient limbs then 62 carries. The widest witness.
+    const MUL_WITNESS: usize = 94;
+    /// Peak simultaneously-live 256-bit values in the 33-op complete-addition DAG.
+    const PEAK_LIVE: usize = 11;
+    /// The width that folds in production.
+    const PHASE2_WIDTH: usize = 469;
+
+    let narrowed = PEAK_LIVE * SK + MUL_WITNESS;
+    assert_eq!(narrowed, 446);
+    assert!(
+        narrowed < PHASE2_WIDTH,
+        "a one-op-per-row sound RCB is {narrowed} columns against the {PHASE2_WIDTH} that already \
+         folds — the narrowing lands INSIDE the foldable class, which is the whole point of stating \
+         it as a number"
+    );
+
+    let a = accumulator_descriptor(Rung::Interior).expect("segment descriptor");
+    assert!(
+        a.trace_width > 6 * narrowed,
+        "…and it is {:.1}x narrower than what is emitted today",
+        a.trace_width as f64 / narrowed as f64
+    );
+}
+
+/// The op-kind census the 446 above is derived from, taken from the Lean gadget's own listing
+/// (`PastaCurveSound.swCompleteAddSoundLegs`, whose docblock states `12 mul + 2 smul + 14 add +
+/// 5 sub`). Pinned here because the derived width depends on the DAG having exactly this shape, and
+/// a silently re-ordered gadget would leave the 446 quoting a listing that had moved.
+///
+/// ⚠ Both sides of this are the SAME source today — the Lean docblock and this constant — so it is
+/// a tripwire on the derivation, not two independent measurements of the gadget.
+#[test]
+fn the_op_kind_census_matches_the_lean_listing() {
+    const MUL: usize = 12;
+    const SMUL: usize = 2;
+    const ADD: usize = 14;
+    const SUB: usize = 5;
+    assert_eq!(MUL + SMUL + ADD + SUB, 33, "the gadget is 33 SSA ops");
+
+    // …and those 33 ops' witness columns are what `MinaAccumulatorAir.the_column_census` counts:
+    // 12 * 94 + 2 * 32 + 19 * 32 = 1,800, with 19 = ADD + SUB.
+    assert_eq!(ADD + SUB, 19);
+    assert_eq!(MUL * 94 + SMUL * 32 + (ADD + SUB) * 32, 1800);
+    // …plus 33 SSA value blocks and six input blocks: the emitted width.
+    assert_eq!(1800 + 33 * 32 + 6 * 32, 3048);
+}
+
+/// ⚑⚑ **POLARITY 1 — THE CHAIN FOLDS. MEASURED 2026-08-06: 500.37 s, AND IT PASSES.**
 ///
 /// Two leaves and one fold. The root exposes `A.acc_in ‖ B.acc_out` — the point the chain started
 /// from and the point it ended on — and B was proved against the descriptor whose 64
 /// `when_last_row` gates FORCE that terminal point to be the identity, so the discharge is in the
 /// AIR rather than in a host read.
+///
+/// | metric                    | binary     | decimal   |
+/// |---------------------------|------------|-----------|
+/// | wall clock                | 500.37 s   | 500.37 s  |
+/// | maximum resident set size | 61.35 GiB  | 65.87 GB  |
+/// | peak memory footprint     | 118.30 GiB | 127.03 GB |
+///
+/// ⚑ The 96 limbs crossing the seam cross it through `cb.connect`, in-circuit. That the assertions
+/// below hold on a proof that EXISTS is what separates this from a described mechanism — and
+/// `the_fold_refuses_two_segments_that_do_not_chain` is the other half, without which a green here
+/// would be equally green if the connect loop were deleted.
 #[test]
-#[ignore = "MEASURED WALL, not slowness: one leaf wrap peaked at 68.3 GiB (see the header)"]
+#[ignore = "RUNS: 500 s, 118.3 GiB peak footprint / 61.4 GiB maxrss — ignored for cost, not failure"]
 fn the_split_chain_folds_and_the_root_carries_both_endpoints() {
     let cfg = accumulator_config();
     let segs = segments();
@@ -254,8 +426,11 @@ fn the_split_chain_folds_and_the_root_carries_both_endpoints() {
 ///
 /// This is the test that would go green if the carry were replaced by re-pinned public inputs, and
 /// it is why the carry is not a re-pin.
+/// ⚑ Measured 2026-08-06: **249.88 s / 50.12 GiB maxrss / 117.83 GiB peak footprint**, and the
+/// refusal is a `WitnessConflict` on one witness slot — `204` against `1`. That is the `cb.connect`
+/// objecting by name: two expressions forced to one slot with different values.
 #[test]
-#[ignore = "MEASURED WALL, not slowness: one leaf wrap peaked at 68.3 GiB (see the header)"]
+#[ignore = "RUNS: 250 s, 117.8 GiB peak footprint / 50.1 GiB maxrss — ignored for cost, not failure"]
 fn the_fold_refuses_two_segments_that_do_not_chain() {
     let cfg = accumulator_config();
     let segs = segments();
@@ -273,21 +448,89 @@ fn the_fold_refuses_two_segments_that_do_not_chain() {
          and this tooth would prove nothing"
     );
 
-    let r = fold_accumulator_segments(&leaf, &leaf, &cfg);
+    // ⚑ **AND WHAT DISAGREES MUST BE UNABLE TO BE A RANGE REFUSAL.** A falsifier whose moved value
+    // left the declared width would be refused by a limb lookup, and the refusal would say nothing
+    // about the connect. So: at least one limb the connect ties differs with BOTH sides nonzero,
+    // and every limb on both endpoints is inside the declared 8-bit width.
+    let differing: Vec<usize> = (0..POINT_WIDTH)
+        .filter(|&k| claim.acc_in[k] != claim.acc_out[k])
+        .collect();
     assert!(
-        r.is_err(),
+        !differing.is_empty(),
+        "the two endpoints must differ somewhere the connect looks"
+    );
+    assert!(
+        differing
+            .iter()
+            .any(|&k| claim.acc_in[k] != BabyBear::new(0) && claim.acc_out[k] != BabyBear::new(0)),
+        "at least one connected limb must differ with BOTH sides NONZERO — a falsifier that only \
+         ever moved a zero into a zero is the class `a-falsifier-that-stopped-falsifying` records"
+    );
+    for k in 0..POINT_WIDTH {
+        for (side, v) in [("acc_in", claim.acc_in[k]), ("acc_out", claim.acc_out[k])] {
+            assert!(
+                v.0 < 256,
+                "{side} limb {k} is {} — outside the declared 8-bit limb width, so a RANGE LOOKUP \
+                 could be what refuses below and the refusal would not be about the connect",
+                v.0
+            );
+        }
+    }
+
+    let r = fold_accumulator_segments(&leaf, &leaf, &cfg);
+    let err = r.err().expect(
         "folding a segment with itself connects `5G` to `G` — there is no satisfying assignment, \
          so there must be no parent proof. A fold that accepts this is re-pinning public inputs \
-         rather than carrying state."
+         rather than carrying state.",
     );
-    println!("fold refused the unchained pair: {:?}", r.err());
+    println!("fold refused the unchained pair: {err}");
+
+    // ⚑ **THE REFUSAL MUST NAME THE CONNECT, NOT A BUS AND NOT A SHAPE.** `cb.connect` forces two
+    // expressions onto one witness slot; an unsatisfiable connect surfaces as a `WitnessConflict`
+    // naming that slot and the two values. Asserted because `is_err()` alone was satisfied equally
+    // by a fold that refused for a reason having nothing to do with the carry.
+    assert!(
+        err.contains("WitnessConflict"),
+        "the refusal must be the connect's own — a witness forced to two values — but it was: {err}"
+    );
+    // …and NOT one of `require_accumulator_claim`'s layout refusals, which fire BEFORE the connect
+    // is ever built and would make this test green with the connect loop deleted.
+    assert!(
+        !err.contains("claim lane(s)") && !err.contains("carries no expose_claim instance"),
+        "the fold refused on CLAIM LAYOUT, before the connect existed — this tooth would then be \
+         green with the `cb.connect` loop deleted: {err}"
+    );
 }
 
+/// ⚑⚑ **A ROOT. MEASURED 2026-08-06: 223.36 s, AND IT COMPLETES.**
+///
 /// A single-segment chain is the deterministic case: it is the FINAL rung and there is no fold, so
 /// the discharge is forced by that one leaf's own AIR. Stated because a fold that only ever ran at
-/// depth ≥ 2 would leave the base case untested.
+/// depth ≥ 2 would leave the base case untested — and it is the first thing in this cone to
+/// produce a root at all.
+///
+/// `/usr/bin/time -l`, release, 8-row `dregg-mina-accumulator-final::v1`, 96 GiB box:
+///
+/// | metric                         | binary      | decimal    |
+/// |--------------------------------|-------------|------------|
+/// | wall clock                     | 223.36 s    | 223.36 s   |
+/// | maximum resident set size      | 48.85 GiB   | 52.45 GB   |
+/// | peak memory footprint          | 117.93 GiB  | 126.63 GB  |
+///
+/// ⚠ **BOTH UNITS AND BOTH METRICS.** The units because this file's own first draft compared a
+/// decimal figure against a binary threshold. The METRICS because they differ by 2.4× here and a
+/// reader who takes one for the other is wrong by that much: `maxrss` is what stayed resident,
+/// `peak memory footprint` is what was charged including compressed pages. The footprint EXCEEDS
+/// physical RAM — this run fits only because macOS compresses, and a Linux box with no swap
+/// headroom at 96 GiB would meet the OOM killer on the way up.
+///
+/// ⚑ **AND THE 68.3 GiB IN THIS FILE'S EARLIER HEADER WAS NOT A PEAK.** It was labelled "peak
+/// memory footprint" of a run that was *killed before finishing*, which makes it a WAYPOINT — the
+/// high-water mark of a climb that had not stopped climbing. The completed run's footprint is
+/// **117.9 GiB**, 1.7× higher. A killed run's high-water mark bounds nothing from above, and
+/// quoting it as a peak understates the wall in the flattering direction.
 #[test]
-#[ignore = "MEASURED WALL, not slowness: this exact test peaked at 68.3 GiB (see the header)"]
+#[ignore = "SLOW (223 s) and 117.9 GiB peak footprint / 48.9 GiB maxrss — but it COMPLETES; see the docblock"]
 fn a_one_segment_chain_is_the_final_rung() {
     let cfg = accumulator_config();
     let t = full_trace();

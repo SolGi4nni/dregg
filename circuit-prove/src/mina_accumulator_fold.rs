@@ -1,25 +1,77 @@
-//! ⚑⚑ **THE DEFERRED IPA ACCUMULATOR CHAIN, AS A RECURSION TREE — BUILT, AND NOT YET RUN.**
+//! ⚑⚑ **THE DEFERRED IPA ACCUMULATOR CHAIN, AS A RECURSION TREE — AND THE LEAF NOW PRODUCES A
+//! ROOT.**
 //!
 //! ## ⛑⛑ STATUS FIRST, because every other sentence here describes a mechanism rather than a result
 //!
-//! **This fold has never produced a root.** Measured 2026-08-06: ONE [`prove_accumulator_segment`]
-//! call — a single 8-row leaf wrap — reached a **68.3 GiB peak memory footprint**
-//! (`73,344,091,528` bytes, **71% of a 96 GiB box**; `73.3 GB` in decimal units, and both are
-//! written down because a unit slip is how a figure drifts into a flattering one) and was killed.
-//! The cause is the descriptor's WIDTH: `mina_phase2_chain_leaf` folds
-//! 46 leaves and 45 folds in 1,037 s over a **469**-column descriptor, and the accumulator segment
-//! is **3,048** — the flat `RCB_WIDTH` the sound row costs. `the_leaf_wrap_width_is_the_measured_wall`
-//! in `tests/mina_accumulator_fold.rs` keeps that ratio in the tree.
+//! **Measured 2026-08-06, and this replaces the "never produced a root" that stood here.** The
+//! one-segment chain — [`prove_accumulator_fold`] over a single 8-row `-final` segment, so the
+//! discharge is forced by that leaf's own AIR — **completes and yields a root**:
 //!
-//! ⚑ It is the same wall `PastaLadderThread` cured one rail DOWN, arriving one rail UP: the
-//! row-local ladder was 731,136 columns in one row, threading made depth into rows at 3,048, and the
-//! recursion wrap's in-circuit verifier scales in the inner trace's width. So the layout that made
-//! the AIR fit is the layout that makes the FOLD not.
+//! | metric                    | binary     | decimal   |
+//! |---------------------------|------------|-----------|
+//! | wall clock                | 223.36 s   | 223.36 s  |
+//! | maximum resident set size | 48.85 GiB  | 52.45 GB  |
+//! | peak memory footprint     | 117.93 GiB | 126.63 GB |
 //!
-//! What IS demonstrated, and where: the single-instance AIR, both polarities, in release, with the
+//! (`/usr/bin/time -l`, release, 96 GiB box; `tests/mina_accumulator_fold.rs::
+//! a_one_segment_chain_is_the_final_rung`.)
+//!
+//! ⚠ **AND THE 68.3 GiB THAT STOOD HERE WAS NOT A PEAK.** It was the high-water mark of a run that
+//! was *killed before finishing* — a waypoint on a climb that had not stopped climbing. The
+//! completed run's footprint is 1.7× higher. A killed run bounds nothing from above.
+//!
+//! ⚠ Two metrics AND two unit systems, because `maxrss` and `peak memory footprint` differ by 2.4×
+//! here: the first is what stayed resident, the second is what was charged including compressed
+//! pages. The footprint EXCEEDS physical RAM — this fits only because macOS compresses, and a Linux
+//! box at 96 GiB without swap headroom meets the OOM killer on the way up.
+//!
+//! ## ⚑⚑ THE COST LAW, MEASURED WITH A CONTROL — COLUMNS, NOT CELLS, AND NOT ROWS
+//!
+//! `tests/mina_accumulator_leaf_anatomy.rs` builds the leaf-wrap verification circuit **without
+//! proving it** (~20 s, ~2 GiB for the whole sweep) and censuses it:
+//!
+//! ```text
+//!  in_cols  rows      wrap ops    witness         npo       horner   wrap LDE cells
+//!      469  2048       248,555    383,938      68,777      127,547      932,916,224
+//!     3048     1     2,862,507  4,532,901     795,215    1,575,100   14,911,873,024
+//!     3048     8     2,878,069  4,548,539     795,215    1,575,100   14,911,873,024
+//! ```
+//!
+//! **Eight times the inner ROWS moves the wrap circuit by 0.5% and its committed cells not at
+//! all**; 6.5× the inner COLUMNS, at 1/256th the rows, costs 11.6× the ops and 16.0× the cells. The
+//! in-circuit verifier pays `Q · W` per commitment round — one Poseidon2-W16 permutation per 8
+//! opened base coefficients, one `HornerAcc` per opened COLUMN per opening point — at
+//! `INNER_FRI_NUM_QUERIES = 19`. Rows enter only as Merkle depth and fold-phase count.
+//!
+//! ⚑ And the cells account for the peak, which is what makes it a model rather than a correlation:
+//! `14,911,873,024 × 4 B = 59.6 GB / 55.5 GiB` of committed LDE (the wrap's own tables are blown up
+//! 64× — `IR2_INNER_LOG_BLOWUP = 6`), against a 117.9 GiB footprint once quotient chunks, Merkle
+//! trees and working copies are added.
+//!
+//! ⚑ **SO "TALLER, NO WIDER" IS NOT A MITIGATION — IT IS FREE, AND SPLITTING A CHAIN INTO MORE
+//! SEGMENTS IS A PURE LOSS.** A leaf should carry every row the inner prover accepts; each extra
+//! segment buys nothing and costs a whole wrap.
+//!
+//! ## ⚑ WHERE THE 3,048 COLUMNS GO, AND WHAT A FOLDABLE LEAF WOULD LOOK LIKE
+//!
+//! `MinaAccumulatorAir.the_column_census` names the five blocks — 192 inputs, 1,056 SSA values,
+//! 1,128 multiply witnesses, 64 constant-multiply, 608 add/sub — and
+//! `the_row_boundary_is_two_hundred_eighty_eight` establishes that **only 288 of the 3,048 cross a
+//! row boundary**. The other 2,760 are scratch that exists solely because
+//! `swCompleteAddSoundLegs`' 33 SSA ops share ONE row.
+//!
+//! A row carrying one op instead of 33 needs that op's witness plus the DAG's live set, whose peak
+//! is 11 values: `11 × 32 + 94 = **446** columns` at 33× the rows —
+//! **below the 469 that already folds 46 leaves and 45 folds in 1,037 s**, and rows are free. That
+//! is `PastaLadderThread`'s own move, one rail further down: it took the row-local ladder from
+//! 731,136 columns in one row to 3,048 over rows, and 3,048 is what now binds the recursion.
+//! It is Lean authoring plus a multi-row re-proof of `vestaCompleteAddSound_forces` — **not a knob,
+//! and not a soundness relaxation**, since every constraint the gadget emits is already a statement
+//! about one op's operands and output. `the_narrowing_target_is_four_hundred_forty_six_columns`
+//! keeps the derivation in the tree.
+//!
+//! Also demonstrated, and where: the single-instance AIR, both polarities, in release, with the
 //! refusing gates named by constraint index — `circuit/tests/mina_accumulator_air_proves.rs`, 9/9.
-//! Everything below is the fold's mechanism, written against the one
-//! `mina_phase2_chain_leaf` already runs in production. Do not read it as a result.
 //!
 //! ## Substrate, said out loud (HOUSE LAW #1)
 //!
