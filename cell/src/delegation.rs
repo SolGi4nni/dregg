@@ -148,17 +148,41 @@ impl DelegatedRef {
         now.saturating_sub(self.refreshed_at) > self.max_staleness
     }
 
-    /// Check if a specific capability is available in the snapshot.
-    pub fn has_capability(&self, target: &CellId) -> bool {
-        self.snapshot.iter().any(|cap| &cap.target == target)
-    }
-
-    /// Get capabilities for a specific target from the snapshot.
-    pub fn capabilities_for(&self, target: &CellId) -> Vec<&CapabilityRef> {
+    /// Every LIVE ([`CapabilityRef::is_live_at`]) capability in this snapshot
+    /// that targets `target`, in snapshot order.
+    ///
+    /// ⚑ **This takes a height, and the height is not optional.** The predicates
+    /// this replaced — `has_capability(target)` and `capabilities_for(target)` —
+    /// matched on TARGET EQUALITY ALONE. A snapshot is a verbatim copy of the
+    /// parent's c-list entries, `expires_at` and `permissions` included, so a
+    /// frozen (`Impossible`) or lapsed capability sat in the snapshot conferring
+    /// full cross-cell authority through every check shaped around the c-list —
+    /// where the same capability was correctly refused by
+    /// [`crate::CapabilitySet::has_access_at`].
+    ///
+    /// Snapshot staleness (revocation being EVENTUAL, bounded by
+    /// `max_staleness`) is a genuine property of this design and is unaffected:
+    /// liveness here reads fields the snapshot itself carries, needing no
+    /// contact with the parent and no freshness assumption.
+    pub fn live_capabilities_at<'a>(
+        &'a self,
+        target: &CellId,
+        current_height: u64,
+    ) -> impl Iterator<Item = &'a CapabilityRef> + 'a {
+        let target = *target;
         self.snapshot
             .iter()
-            .filter(|cap| &cap.target == target)
-            .collect()
+            .filter(move |cap| cap.target == target && cap.is_live_at(current_height))
+    }
+
+    /// Is `target` NAMED anywhere in this snapshot, live or not?
+    ///
+    /// ⚠ **Presence, not authority.** This is the raw structural query — it is
+    /// the right tool for "did the refresh pick the new grant up?" and the wrong
+    /// tool for every authorization decision. Authority goes through
+    /// [`crate::Cell::resolve_authority_at`].
+    pub fn names_target(&self, target: &CellId) -> bool {
+        self.snapshot.iter().any(|cap| &cap.target == target)
     }
 
     /// Number of capabilities in this snapshot.

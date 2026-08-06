@@ -158,18 +158,9 @@ fn main() {
         "  Delegation snapshot: {} capabilities",
         delegation.snapshot.len()
     );
-    println!(
-        "  - has Service A: {}",
-        delegation.has_capability(&svc_a_id)
-    );
-    println!(
-        "  - has Service B: {}",
-        delegation.has_capability(&svc_b_id)
-    );
-    println!(
-        "  - has Service C: {}",
-        delegation.has_capability(&svc_c_id)
-    );
+    println!("  - has Service A: {}", delegation.names_target(&svc_a_id));
+    println!("  - has Service B: {}", delegation.names_target(&svc_b_id));
+    println!("  - has Service C: {}", delegation.names_target(&svc_c_id));
     println!("  Refreshed at: {}", delegation.refreshed_at);
     println!("  Delegation epoch: {}", delegation.delegation_epoch);
     println!();
@@ -295,10 +286,7 @@ fn main() {
         "  Snapshot updated: {} capabilities",
         delegation.snapshot.len()
     );
-    println!(
-        "  - has Service D: {}",
-        delegation.has_capability(&svc_d_id)
-    );
+    println!("  - has Service D: {}", delegation.names_target(&svc_d_id));
     println!("  Refreshed at: {}", delegation.refreshed_at);
 
     // Now child can use Service D.

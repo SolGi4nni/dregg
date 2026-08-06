@@ -135,6 +135,23 @@ pub struct CapabilityRef {
 }
 
 impl CapabilityRef {
+    /// ⚑ **THE liveness predicate for a capability — wherever it is stored.**
+    ///
+    /// A capability confers authority at `current_height` iff it is neither
+    /// frozen ([`AuthRequired::Impossible`]) nor lapsed (`expires_at` passed).
+    /// Both legs are intrinsic to the cap: they are readable off the struct with
+    /// no lookup, no freshness argument, and no reference to WHICH set holds it.
+    ///
+    /// It is a method on `CapabilityRef` — not on `CapabilitySet` — precisely
+    /// because a cell has TWO stores that hold `CapabilityRef`s (its own c-list
+    /// and a [`crate::delegation::DelegatedRef`] snapshot), and a liveness rule
+    /// written per-store drifts. Every authority path routes through
+    /// [`crate::Cell::resolve_authority_at`], which applies THIS to both.
+    pub fn is_live_at(&self, current_height: u64) -> bool {
+        self.permissions != AuthRequired::Impossible
+            && self.expires_at.is_none_or(|exp| current_height <= exp)
+    }
+
     /// This capability's **credential-revocation nullifier** — the accumulator
     /// key the revocation gate checks for non-membership. Equal to
     /// [`crate::derivation::cred_nul`]`(&self.provenance)`; a revoke of THIS cap
@@ -659,11 +676,23 @@ impl CapabilitySet {
     /// A capability with `permissions: Impossible` is treated as revoked/frozen.
     /// A capability whose `expires_at` is less than `current_height` is treated as expired.
     pub fn has_access_at(&self, target: &CellId, current_height: u64) -> bool {
-        self.refs.iter().any(|r| {
-            &r.target == target
-                && r.permissions != AuthRequired::Impossible
-                && r.expires_at.is_none_or(|exp| current_height <= exp)
-        })
+        self.live_at(target, current_height).next().is_some()
+    }
+
+    /// Every LIVE ([`CapabilityRef::is_live_at`]) capability in this set that
+    /// targets `target`, in slot order. The c-list half of the single authority
+    /// resolution point ([`crate::Cell::resolve_authority_at`]) — and the shared
+    /// body of [`Self::has_access_at`] / [`Self::permits_effect_at`], so those
+    /// two cannot drift apart on what "live" means.
+    pub fn live_at<'a>(
+        &'a self,
+        target: &CellId,
+        current_height: u64,
+    ) -> impl Iterator<Item = &'a CapabilityRef> + 'a {
+        let target = *target;
+        self.refs
+            .iter()
+            .filter(move |r| r.target == target && r.is_live_at(current_height))
     }
 
     /// Like [`has_access_at`], but additionally requires that some held,
@@ -683,25 +712,16 @@ impl CapabilitySet {
         current_height: u64,
         effect_bit: EffectMask,
     ) -> bool {
-        self.refs.iter().any(|r| {
-            &r.target == target
-                && r.permissions != AuthRequired::Impossible
-                && r.expires_at.is_none_or(|exp| current_height <= exp)
-                && crate::facet::is_effect_permitted(r.allowed_effects, effect_bit)
-        })
+        self.live_at(target, current_height)
+            .any(|r| crate::facet::is_effect_permitted(r.allowed_effects, effect_bit))
     }
 
-    /// Diagnostic: the union of `allowed_effects` facets across the held caps
-    /// referencing `target` (a `None`-facet cap contributes [`EFFECT_ALL`]).
-    /// Used only to populate the `allowed_mask` field of a `FacetViolation`.
-    pub fn effect_mask_union_for(&self, target: &CellId) -> EffectMask {
-        self.refs
-            .iter()
-            .filter(|r| &r.target == target && r.permissions != AuthRequired::Impossible)
-            .fold(0u32, |acc, r| {
-                acc | r.allowed_effects.unwrap_or(crate::facet::EFFECT_ALL)
-            })
-    }
+    // `effect_mask_union_for` lived here: a c-list-only union used to fill the
+    // `allowed_mask` of a `FacetViolation`. It is DELETED rather than kept
+    // alongside `HeldAuthority::effect_mask_union`, which unions over both
+    // authority stores. Two mask helpers that agree on c-list-only cells and
+    // disagree on snapshot-bearing ones is exactly how the facet check and the
+    // presence check came to disagree in the first place.
 
     /// Attenuate a capability: produce a slot-free [`AttenuatedCap`] with narrower permissions.
     ///
@@ -1002,6 +1022,116 @@ impl CapabilitySet {
 impl Default for CapabilitySet {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// ⚑ Which of a cell's **TWO** authority stores produced a held capability.
+///
+/// A cell confers cross-cell authority from two places — its own c-list
+/// ([`crate::Cell::capabilities`]) and a delegation snapshot
+/// ([`crate::Cell::delegation`]). Every check that reasoned about "the c-list"
+/// alone was structurally blind to the second one; naming the source in the
+/// type is what stops the next check from being written that way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthoritySource {
+    /// The holder's own c-list — the cap has a membership witness in the
+    /// holder's canonical cap tree.
+    Clist,
+    /// A delegation snapshot ([`crate::delegation::DelegatedRef`]). The cap is
+    /// a FROZEN COPY of some ancestor's c-list entry: it is **not** in the
+    /// holder's own cap tree, so no consumed-cap membership witness exists for
+    /// it against this holder.
+    DelegationSnapshot,
+}
+
+/// A live, authority-conferring capability paired with the store it came from.
+#[derive(Clone, Copy, Debug)]
+pub struct HeldCap<'a> {
+    /// The capability. Guaranteed [`CapabilityRef::is_live_at`] at the height
+    /// it was resolved for.
+    pub cap: &'a CapabilityRef,
+    /// Which of the two stores produced it.
+    pub source: AuthoritySource,
+}
+
+/// ⚑ The authority a cell holds over one target at one height — the result of
+/// **the single authority resolution point**,
+/// [`crate::Cell::resolve_authority_at`].
+///
+/// The three variants are exhaustive and mutually exclusive, which is the whole
+/// point: the old shape returned `Option<&CapabilityRef>` and collapsed "the
+/// actor owns the target, so no cap bounds it" together with "the actor's
+/// authority came from a store I did not look in" into the same `None` — and an
+/// amplification check keyed on that `None` silently skipped itself.
+#[derive(Clone, Debug)]
+pub enum HeldAuthority<'a> {
+    /// The actor **is** the target. Self-authority is inherent and unbounded:
+    /// there is no capability to attenuate against, so a `granted ≤ held` check
+    /// has nothing to compare and is correctly vacuous here.
+    SelfOwned,
+    /// Authority derives from concrete capabilities, already liveness-filtered
+    /// and ordered c-list-first-then-snapshot. **Never empty** in this variant —
+    /// an empty resolution is [`Self::NoneHeld`].
+    Caps(Vec<HeldCap<'a>>),
+    /// No live authority from either store.
+    NoneHeld,
+}
+
+impl<'a> HeldAuthority<'a> {
+    /// Does the actor hold ANY authority over the target (self-ownership
+    /// included)? The presence leg — the successor of the old
+    /// `has_access_including_delegation_at` body.
+    pub fn confers_any(&self) -> bool {
+        !matches!(self, HeldAuthority::NoneHeld)
+    }
+
+    /// The resolved capabilities, or an empty slice for [`Self::SelfOwned`] /
+    /// [`Self::NoneHeld`].
+    pub fn caps(&self) -> &[HeldCap<'a>] {
+        match self {
+            HeldAuthority::Caps(caps) => caps,
+            _ => &[],
+        }
+    }
+
+    /// The capability an exercise is BOUNDED BY — the first live one, c-list
+    /// entries before snapshot-borne ones, so a holder that has the authority
+    /// in its own c-list is bounded by exactly the entry it was bounded by
+    /// before this resolver existed.
+    ///
+    /// `None` means "no capability bounds this", which after resolution is
+    /// **only** [`Self::SelfOwned`] or [`Self::NoneHeld`] — and callers must
+    /// distinguish those two by matching the variant, never by testing this for
+    /// `None`.
+    pub fn bounding_cap(&self) -> Option<HeldCap<'a>> {
+        self.caps().first().copied()
+    }
+
+    /// Does some held capability admit `effect_bit` through its facet mask?
+    /// Self-ownership admits every effect (no facet restricts an owner).
+    pub fn permits_effect(&self, effect_bit: EffectMask) -> bool {
+        match self {
+            HeldAuthority::SelfOwned => true,
+            HeldAuthority::Caps(caps) => caps
+                .iter()
+                .any(|h| crate::facet::is_effect_permitted(h.cap.allowed_effects, effect_bit)),
+            HeldAuthority::NoneHeld => false,
+        }
+    }
+
+    /// The union of the resolved caps' facet masks (a `None`-facet cap
+    /// contributes [`crate::facet::EFFECT_ALL`]). Diagnostic only — it fills the
+    /// `allowed_mask` of a facet-violation error, and unlike the c-list-only
+    /// predecessor it reports the snapshot-borne facets too, so the error names
+    /// the mask that actually refused.
+    pub fn effect_mask_union(&self) -> EffectMask {
+        match self {
+            HeldAuthority::SelfOwned => crate::facet::EFFECT_ALL,
+            HeldAuthority::Caps(caps) => caps.iter().fold(0u32, |acc, h| {
+                acc | h.cap.allowed_effects.unwrap_or(crate::facet::EFFECT_ALL)
+            }),
+            HeldAuthority::NoneHeld => 0,
+        }
     }
 }
 

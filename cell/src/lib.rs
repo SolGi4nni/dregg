@@ -89,7 +89,8 @@ pub use blueprint::{
     vault_cell_program, vault_factory_descriptor, vault_state_constraints,
 };
 pub use capability::{
-    AttenuatedCap, CapabilityCaveat, CapabilityRef, CapabilitySet, is_attenuation,
+    AttenuatedCap, AuthoritySource, CapabilityCaveat, CapabilityRef, CapabilitySet, HeldAuthority,
+    HeldCap, is_attenuation,
 };
 pub use cell::{
     Cell, CellConfig, CellMode, CellPqIdentity, CellPqIdentityError, ML_DSA_65_PUBLIC_KEY_LEN,

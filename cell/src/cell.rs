@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::capability::CapabilitySet;
+use crate::capability::{AuthoritySource, CapabilitySet, HeldAuthority, HeldCap};
 use crate::delegation::DelegatedRef;
 use crate::id::CellId;
 use crate::lifecycle::{CellLifecycle, LifecycleTransitionError};
@@ -736,6 +736,76 @@ impl Cell {
     #[inline]
     pub fn public_key(&self) -> &[u8; 32] {
         &self.public_key
+    }
+
+    /// ⚑ **THE authority resolution point.** What authority does this cell hold
+    /// over `target` at `current_height`, from **every** store that can confer
+    /// it?
+    ///
+    /// A cell has two such stores and they are not interchangeable:
+    ///
+    /// * [`Self::capabilities`] — its own c-list; and
+    /// * [`Self::delegation`] — a [`DelegatedRef`] snapshot, a frozen verbatim
+    ///   copy of an ancestor's c-list installed by `SpawnWithDelegation`,
+    ///   `RefreshDelegation`, or the executor's `SnapshotRefresh` chain walk.
+    ///
+    /// # Why this exists
+    ///
+    /// The snapshot is a SECOND AUTHORITY SOURCE, and every check written in the
+    /// shape "look in the c-list" was blind to it. That blindness had two
+    /// distinct expressions, both of which this resolver closes at the root:
+    ///
+    /// 1. **Liveness was per-store.** The c-list applied
+    ///    [`crate::CapabilityRef::is_live_at`]; the snapshot applied target
+    ///    equality alone. An expired or `Impossible` capability that the parent
+    ///    could no longer exercise still conferred full cross-cell authority
+    ///    through a child's snapshot. Here, both stores are filtered by the same
+    ///    predicate.
+    /// 2. **A lookup that missed the snapshot returned `None`, and `None` read
+    ///    as "unbounded".** `verify_bearer_cap` gated presence on a
+    ///    delegation-aware check and then bounded the grant with a c-list-only
+    ///    lookup; for snapshot-borne authority that lookup found nothing, and
+    ///    the entire `granted ≤ held` + facet-attenuation block was skipped.
+    ///    [`HeldAuthority`] has no such `None`: self-authority and no-authority
+    ///    are distinct variants, and `Caps` is never empty.
+    ///
+    /// # Ordering
+    ///
+    /// C-list entries come first, then snapshot-borne ones. So a holder whose
+    /// authority is c-list-borne is bounded by exactly the entry that bounded it
+    /// before — this resolver only ever ADDS the previously-invisible caps to
+    /// the end, and only after liveness filtering. Every difference it makes is
+    /// a refusal that did not happen before.
+    pub fn resolve_authority_at(&self, target: &CellId, current_height: u64) -> HeldAuthority<'_> {
+        // A cell implicitly holds the strongest capability over itself. The
+        // alternative — requiring an explicit c-list entry to one's own id —
+        // forces every newly-created cell to insert a self-grant before it can
+        // be bound into a bearer cap. Treat self-access as inherent.
+        if self.id == *target {
+            return HeldAuthority::SelfOwned;
+        }
+        let caps: Vec<HeldCap<'_>> = self
+            .capabilities
+            .live_at(target, current_height)
+            .map(|cap| HeldCap {
+                cap,
+                source: AuthoritySource::Clist,
+            })
+            .chain(
+                self.delegation
+                    .iter()
+                    .flat_map(|d| d.live_capabilities_at(target, current_height))
+                    .map(|cap| HeldCap {
+                        cap,
+                        source: AuthoritySource::DelegationSnapshot,
+                    }),
+            )
+            .collect();
+        if caps.is_empty() {
+            HeldAuthority::NoneHeld
+        } else {
+            HeldAuthority::Caps(caps)
+        }
     }
 
     /// Construct a hosted cell whose ML-DSA identity is committed at birth.

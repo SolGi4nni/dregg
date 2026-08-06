@@ -535,19 +535,28 @@ impl TurnExecutor {
         //     `Authorization::Bearer` short-circuits the same lattice and pays for it:
         //     `verify_bearer_cap` locates the delegator's cell, requires it to actually
         //     hold the capability (`BearerCapDelegatorLacksCapability`), and checks
-        //     `granted ≤ held` against that REAL c-list entry. CapTpDelivered owes exactly
+        //     `granted ≤ held` against a REAL held entry. CapTpDelivered owes exactly
         //     the same proof. `dregg_captp::validate_handoff` reads `held` from the target
         //     federation's swiss entry; the executor has no swiss table, and its faithful
         //     analogue is the ledger — the introducer must OWN the target cell, or hold a
-        //     (non-expired) capability over it.
+        //     LIVE (non-`Impossible`, non-expired) capability over it.
+        //
+        //     ⚠ HISTORY, because this paragraph is the justification text for §5c and it
+        //     used to cite a check that did not always run. When it was written, the bearer
+        //     path resolved `held` from the delegator's C-LIST ONLY while gating presence
+        //     on a predicate that ALSO accepted a delegation snapshot — so for
+        //     snapshot-borne authority `held` came back `None` and the entire
+        //     `granted ≤ held` block was skipped. The analogy is sound now because both
+        //     paths resolve through `Cell::resolve_authority_at`, the single point that
+        //     answers for BOTH authority stores.
         //
         //     Same lattice as everywhere else: `is_narrower_or_equal` + `is_facet_attenuation`,
         //     pinned Rust↔Lean by `captp/tests/handoff_lattice_differential.rs`. Nothing
         //     here relaxes §5b — this is an ADDITIONAL refusal, never a new admission.
         let held_cap = if *target_cell.public_key() == *introducer_pk {
             // The cell's own owner. Self-authority over one's own cell is inherent (the
-            // same rule `has_access_including_delegation_at` encodes), so there is no
-            // c-list entry to attenuate against; §5b's floor check still applies.
+            // same rule `Cell::resolve_authority_at` encodes as `SelfOwned`), so there is
+            // no capability to attenuate against; §5b's floor check still applies.
             None
         } else {
             let introducer_cell = ledger.cell_by_pubkey(introducer_pk).ok_or_else(|| {
@@ -559,11 +568,12 @@ impl TurnExecutor {
                     path.to_vec(),
                 )
             })?;
-            if !Self::has_access_including_delegation_at(
-                introducer_cell,
-                &action.target,
-                self.block_height,
-            ) {
+            // ONE resolution, BOTH authority stores, liveness-filtered — and the
+            // presence gate reads off it, so the gate and the bound can no longer
+            // name different capabilities (which is exactly how the bearer sibling
+            // came to skip its amplification check).
+            let held = introducer_cell.resolve_authority_at(&action.target, self.block_height);
+            if !held.confers_any() {
                 return Err((
                     TurnError::CapTpIntroducerLacksCapability {
                         introducer: introducer_cell.id(),
@@ -572,12 +582,7 @@ impl TurnExecutor {
                     path.to_vec(),
                 ));
             }
-            introducer_cell
-                .capabilities
-                .capabilities_for(&action.target)
-                .into_iter()
-                .find(|cap| cap.permissions != AuthRequired::Impossible)
-                .cloned()
+            held.bounding_cap().map(|h| h.cap.clone())
         };
 
         if let Some(cap) = held_cap {
@@ -1723,11 +1728,29 @@ impl TurnExecutor {
                         path.to_vec(),
                     )
                 })?;
-                if !Self::has_access_including_delegation_at(
-                    delegator_cell,
-                    &proof.target,
-                    self.block_height,
-                ) {
+                // ⚑ ONE resolution of the delegator's authority, from BOTH
+                // stores, liveness-filtered — and the presence gate is read off
+                // that same resolution rather than computed separately.
+                //
+                // What was here before: presence was gated on
+                // `has_access_including_delegation_at` (which accepts
+                // self-ownership OR a delegation snapshot), and then `held` was
+                // looked up in `delegator_cell.capabilities` ALONE. For a
+                // delegator whose authority over the target was snapshot-borne,
+                // that lookup returned `None` and the whole amplification block
+                // below — `granted ≤ held`, the facet attenuation, the consumed
+                // witness — was SKIPPED, after which `verify_authorization`
+                // returns `Ok(())` without ever reaching the permission
+                // lattice. A delegator holding a narrow, faceted, snapshot-borne
+                // capability could sign a bearer proof granting `None`
+                // permissions and an unrestricted facet, and it was admitted.
+                //
+                // `HeldAuthority` has no `None` to conflate: `SelfOwned` (the
+                // one genuinely unbounded case — the delegator owns the target,
+                // so there is no capability to attenuate against) and
+                // `NoneHeld` are different variants, and `Caps` is never empty.
+                let held = delegator_cell.resolve_authority_at(&proof.target, self.block_height);
+                if !held.confers_any() {
                     return Err((
                         TurnError::BearerCapDelegatorLacksCapability {
                             delegator: delegator_cell.id(),
@@ -1736,16 +1759,18 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
-                let delegator_cap = delegator_cell
-                    .capabilities
-                    .capabilities_for(&proof.target)
-                    .into_iter()
-                    .find(|cap| cap.permissions != AuthRequired::Impossible);
+                // C-list entries sort before snapshot-borne ones, so a
+                // c-list-borne delegator is bounded by exactly the entry that
+                // bounded it before — except that an EXPIRED entry can no
+                // longer be the one chosen, which the old
+                // `.find(|c| c.permissions != Impossible)` did not exclude.
+                let delegator_cap = held.bounding_cap();
                 // The delegator's INHERITED facet — exactly what the caller would
                 // otherwise re-scan the ledger to recompute. Hoisted here so the
                 // delegator cell + capability are located ONCE.
-                let inherited_facet = delegator_cap.as_ref().and_then(|cap| cap.allowed_effects);
-                if let Some(cap) = delegator_cap {
+                let inherited_facet = delegator_cap.and_then(|h| h.cap.allowed_effects);
+                if let Some(held_cap) = delegator_cap {
+                    let cap = held_cap.cap;
                     if !proof.permissions.is_narrower_or_equal(&cap.permissions) {
                         return Err((
                             TurnError::BearerCapAmplification {
@@ -1783,18 +1808,46 @@ impl TurnExecutor {
                         }
                     }
 
-                    // Authorization passed — the DELEGATOR's c-list capability
-                    // is the consumed authority (the bearer proof derives from
-                    // it; non-amplification was just checked against it).
-                    // Record its witness against the delegator's pre-state
-                    // c-list (cap Phase C).
-                    self.record_consumed_cap_witness(
-                        delegator_cell.id(),
-                        &delegator_cell.capabilities,
-                        cap,
-                        path,
-                        crate::turn::ConsumedCapAuthPath::BearerSignedDelegation,
-                    );
+                    // Authorization passed — the DELEGATOR's capability is the
+                    // consumed authority (the bearer proof derives from it;
+                    // non-amplification was just checked against it). Record its
+                    // witness against the delegator's pre-state c-list (cap
+                    // Phase C) — but ONLY for a c-list-borne cap. A
+                    // snapshot-borne cap is a frozen copy of an ANCESTOR's
+                    // entry and by construction has no membership path in THIS
+                    // holder's canonical cap tree; asking for one produced a
+                    // "leaf not found" warning and no witness. The source tag
+                    // makes that structural, not a log line.
+                    if held_cap.source == dregg_cell::AuthoritySource::Clist {
+                        self.record_consumed_cap_witness(
+                            delegator_cell.id(),
+                            &delegator_cell.capabilities,
+                            cap,
+                            path,
+                            crate::turn::ConsumedCapAuthPath::BearerSignedDelegation,
+                        );
+                    }
+                } else if !matches!(held, dregg_cell::HeldAuthority::SelfOwned) {
+                    // Reaching here means the grant is about to be admitted with
+                    // NOTHING bounding it while the delegator does not own the
+                    // target — which is precisely the hole this function had.
+                    //
+                    // `bounding_cap()` is `None` only for `SelfOwned` (inherent,
+                    // unbounded, and correctly unchecked) or `NoneHeld` (refused
+                    // above), so this arm is unreachable through the resolver as
+                    // written. It is a REFUSAL rather than a `debug_assert!`
+                    // because the failure mode it guards is "an unbounded bearer
+                    // grant is admitted", a `debug_assert!` is compiled out of
+                    // release, and the thing that must not happen in release is
+                    // exactly that. Fail closed; a future resolver change gets a
+                    // rejected turn, not a silent re-opening.
+                    return Err((
+                        TurnError::BearerCapDelegatorLacksCapability {
+                            delegator: delegator_cell.id(),
+                            target: proof.target,
+                        },
+                        path.to_vec(),
+                    ));
                 }
                 Ok(inherited_facet)
             }

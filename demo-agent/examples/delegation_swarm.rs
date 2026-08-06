@@ -392,7 +392,7 @@ fn main() {
             i,
             service_ids.len() + 1
         );
-        assert!(delegation.has_capability(&new_svc_id));
+        assert!(delegation.names_target(&new_svc_id));
     }
 
     println!(

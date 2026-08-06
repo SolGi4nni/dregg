@@ -3788,25 +3788,21 @@ impl TurnExecutor {
         let Some(actor_cell) = ledger.get(actor) else {
             return false;
         };
-        let height = self.block_height;
+        // Resolve authority ONCE, through the single point — this used to be a
+        // fourth hand-rolled merge of the two stores with its own liveness rule
+        // (it happened to check `expires_at` on both, which the executor's own
+        // presence predicate did not).
         actor_cell
-            .capabilities
-            .capabilities_for(well)
-            .into_iter()
-            .chain(
-                actor_cell
-                    .delegation
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|d| d.capabilities_for(well)),
-            )
-            .any(|c| {
+            .resolve_authority_at(well, self.block_height)
+            .caps()
+            .iter()
+            .any(|h| {
                 // (b) CONTROL-GRADE: a full open cap (the node-cap analog),
-                // not an attenuated weaker grant.
-                c.permissions == dregg_cell::AuthRequired::None
-                    && c.expires_at.map_or(true, |exp| height <= exp)
+                // not an attenuated weaker grant. (Liveness — non-expired and
+                // not `Impossible` — is already discharged by the resolver.)
+                h.cap.permissions == dregg_cell::AuthRequired::None
                     // (a) the EFFECT_MINT facet.
-                    && dregg_cell::is_effect_permitted(c.allowed_effects, dregg_cell::EFFECT_MINT)
+                    && dregg_cell::is_effect_permitted(h.cap.allowed_effects, dregg_cell::EFFECT_MINT)
             })
     }
 
@@ -4179,32 +4175,28 @@ impl TurnExecutor {
 
     // ─── Shared helpers ──────────────────────────────────────────────────────
 
-    /// Height-aware check: does the cell have a non-expired capability to the target?
+    /// Height-aware PRESENCE check: does the cell hold any LIVE authority over
+    /// the target — from its own c-list **or** from a delegation snapshot?
     ///
-    /// Uses `has_access_at` to filter out capabilities whose `expires_at` has passed.
+    /// A thin reading of [`Cell::resolve_authority_at`], which is the one place
+    /// both authority stores are consulted and the one place liveness
+    /// (`Impossible`-free, non-expired — [`dregg_cell::CapabilityRef::is_live_at`])
+    /// is applied. Self-access is inherent.
+    ///
+    /// ⚠ This docblock previously claimed the function "uses `has_access_at` to
+    /// filter out capabilities whose `expires_at` has passed." That was true of
+    /// the DIRECT branch only. The delegation branch called
+    /// `DelegatedRef::has_capability`, which was `snapshot.iter().any(|cap|
+    /// &cap.target == target)` — target equality and nothing else — so an
+    /// expired or `Impossible` capability in a snapshot conferred cross-cell
+    /// authority through this predicate and through all six of its consumers.
     pub(super) fn has_access_including_delegation_at(
         cell: &Cell,
         target: &CellId,
         current_height: u64,
     ) -> bool {
-        // A cell implicitly holds the strongest capability over itself. The
-        // alternative — requiring an explicit c-list entry to one's own id —
-        // forces every newly-created cell to insert a self-grant before it
-        // can be bound into a bearer cap. Treat self-access as inherent.
-        if cell.id() == *target {
-            return true;
-        }
-        // Direct capability (height-aware)
-        if cell.capabilities.has_access_at(target, current_height) {
-            return true;
-        }
-        // Delegated capability (from snapshot)
-        if let Some(ref delegation) = cell.delegation {
-            if delegation.has_capability(target) {
-                return true;
-            }
-        }
-        false
+        cell.resolve_authority_at(target, current_height)
+            .confers_any()
     }
 
     /// FACET-aware sibling of [`has_access_including_delegation_at`]: the actor
@@ -4223,30 +4215,15 @@ impl TurnExecutor {
         current_height: u64,
         effect_bit: dregg_cell::EffectMask,
     ) -> bool {
-        // A cell implicitly holds the full-facet capability over itself
-        // (`actor == src` in `authorizedB`): no facet restricts an owner.
-        if cell.id() == *target {
-            return true;
-        }
-        // Direct capability, facet-checked.
-        if cell
-            .capabilities
-            .permits_effect_at(target, current_height, effect_bit)
-        {
-            return true;
-        }
-        // Delegated capability (from snapshot), facet-checked. Mirrors the
-        // presence semantics of the delegation branch above (target match,
-        // non-revoked) plus the facet admission.
-        if let Some(ref delegation) = cell.delegation {
-            if delegation.capabilities_for(target).iter().any(|cap| {
-                cap.permissions != dregg_cell::AuthRequired::Impossible
-                    && dregg_cell::is_effect_permitted(cap.allowed_effects, effect_bit)
-            }) {
-                return true;
-            }
-        }
-        false
+        // Same resolution as the presence sibling — so the two can no longer
+        // disagree about which capabilities exist, only about whether one of
+        // them carries the facet. (They used to differ on more than that: this
+        // one checked `Impossible` on snapshot caps and the presence sibling
+        // did not, while NEITHER checked snapshot expiry.) Self-ownership
+        // admits every effect — no facet restricts an owner (`actor == src` in
+        // `authorizedB`).
+        cell.resolve_authority_at(target, current_height)
+            .permits_effect(effect_bit)
     }
 
     /// Walk the delegation chain from `start_cell` upward (via `cell.delegate`)
@@ -4330,9 +4307,13 @@ impl TurnExecutor {
                         // c-list, not a single exercised slot; report 0.
                         cap_slot: 0,
                         attempted_effect: action_name.to_string(),
+                        // Report the union over BOTH authority stores — a
+                        // snapshot-borne facet violation used to be reported
+                        // with a c-list-only mask, which named a mask that had
+                        // nothing to do with the refusal.
                         allowed_mask: actor_cell
-                            .capabilities
-                            .effect_mask_union_for(target_cell_id),
+                            .resolve_authority_at(target_cell_id, self.block_height)
+                            .effect_mask_union(),
                     },
                     path.to_vec(),
                 ));

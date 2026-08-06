@@ -917,7 +917,7 @@ fn test_full_delegation_and_revocation() {
     );
     let delegation = child_cell.delegation.as_ref().unwrap();
     assert!(
-        delegation.has_capability(&target_id),
+        delegation.names_target(&target_id),
         "child should have delegated capability to target"
     );
 
@@ -967,7 +967,7 @@ fn test_full_delegation_and_revocation() {
     let child_cell = ledger.get(&child_id).unwrap();
     let delegation = child_cell.delegation.as_ref().unwrap();
     assert!(
-        !delegation.has_capability(&new_target_id),
+        !delegation.names_target(&new_target_id),
         "child's stale snapshot should NOT include parent's new cap"
     );
 
@@ -993,7 +993,7 @@ fn test_full_delegation_and_revocation() {
     let child_cell = ledger.get(&child_id).unwrap();
     let delegation = child_cell.delegation.as_ref().unwrap();
     assert!(
-        delegation.has_capability(&new_target_id),
+        delegation.names_target(&new_target_id),
         "after refresh, child should have the new cap"
     );
 

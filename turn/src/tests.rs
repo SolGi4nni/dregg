@@ -6178,9 +6178,9 @@ fn test_spawn_with_delegation_child_gets_parent_caps() {
     assert_eq!(delegation.delegation_epoch, 0);
 
     // Child can see all 3 parent capabilities.
-    assert!(delegation.has_capability(&target_a_id));
-    assert!(delegation.has_capability(&target_b_id));
-    assert!(delegation.has_capability(&target_c_id));
+    assert!(delegation.names_target(&target_a_id));
+    assert!(delegation.names_target(&target_b_id));
+    assert!(delegation.names_target(&target_c_id));
 }
 
 #[test]
@@ -6387,7 +6387,7 @@ fn test_refresh_delegation_updates_snapshot() {
             .delegation
             .as_ref()
             .unwrap()
-            .has_capability(&target_b_id)
+            .names_target(&target_b_id)
     );
 
     // Child refreshes delegation.
@@ -6452,8 +6452,8 @@ fn test_refresh_delegation_updates_snapshot() {
     // Now child has target_b in snapshot.
     let child = ledger.get(&child_id).unwrap();
     let delegation = child.delegation.as_ref().unwrap();
-    assert!(delegation.has_capability(&target_a_id));
-    assert!(delegation.has_capability(&target_b_id));
+    assert!(delegation.names_target(&target_a_id));
+    assert!(delegation.names_target(&target_b_id));
     assert_eq!(delegation.snapshot.len(), 2);
     assert_eq!(delegation.refreshed_at, 2000);
 }
