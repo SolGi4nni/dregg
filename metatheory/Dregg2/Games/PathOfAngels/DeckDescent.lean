@@ -1341,6 +1341,326 @@ so the descriptor's size is a stated number rather than a surprise. -/
 def familyStateCount : Nat :=
   (List.finRange 8).foldl (fun acc i => acc + (reachableWithin (boardAt i) AIR).length) 0
 
+/-! ## The parametric table — the rules without the instance
+
+A descriptor cannot carry the board.  What it carries instead is a table in
+which every row that CONSULTS the board names BOTH of its successors, and every
+other row names one.  `constBoard` supplies a fixed reading, and
+`step_is_one_of_the_two_branches` is the fact that makes the two-successor row
+honest: whatever the real board says, the real transition is one of the two the
+row names. -/
+
+def constBoard : Lore → Board
+  | .flooded => { mouth := .flooded, west := .flooded, east := .flooded }
+  | _ => { mouth := .sound, west := .sound, east := .sound }
+
+/-- The transition under a fixed reading of whatever chamber this action would
+consult.  It is `stepB` itself, not a copy of it. -/
+def stepWith (reading : Lore) (s : State) (a : Action) : Option State :=
+  stepB (constBoard reading) s a
+
+theorem stepWith_eq_stepB (reading : Lore) (s : State) (a : Action) :
+    stepWith reading s a = stepB (constBoard reading) s a := rfl
+
+theorem constBoard_lore_sound (c : Chamber) :
+    (constBoard Lore.sound).lore c = Lore.sound := by
+  cases c <;> rfl
+
+theorem constBoard_lore_flooded (c : Chamber) :
+    (constBoard Lore.flooded).lore c = Lore.flooded := by
+  cases c <;> rfl
+
+/-- A board says exactly one of two things about a chamber.  This is the whole
+of the hidden instance, one chamber at a time. -/
+theorem board_lore_cases (b : Board) (c : Chamber) :
+    b.lore c = Lore.sound ∨ b.lore c = Lore.flooded := by
+  simp only [Board.lore]
+  cases b.get c
+  · exact Or.inl rfl
+  · exact Or.inr rfl
+
+/-- The board enters the transition at exactly one place — the lore of the
+chamber an action reaches for — so every effect is one of two. -/
+theorem transitionB_is_one_of_the_two (b : Board) (s : State) (a : Action) :
+    transitionB b s a = transitionB (constBoard Lore.sound) s a ∨
+    transitionB b s a = transitionB (constBoard Lore.flooded) s a := by
+  cases a
+  · -- survey: reads the chamber it reaches for
+    cases htarget : Action.target Action.survey s.position with
+    | none => exact Or.inl (by simp only [transitionB, htarget])
+    | some c =>
+        rcases board_lore_cases b c with hl | hl
+        · exact Or.inl (by simp only [transitionB, htarget, hl, constBoard_lore_sound])
+        · exact Or.inr (by simp only [transitionB, htarget, hl, constBoard_lore_flooded])
+  · -- surveyEast: reads the chamber it reaches for
+    cases htarget : Action.target Action.surveyEast s.position with
+    | none => exact Or.inl (by simp only [transitionB, htarget])
+    | some c =>
+        rcases board_lore_cases b c with hl | hl
+        · exact Or.inl (by simp only [transitionB, htarget, hl, constBoard_lore_sound])
+        · exact Or.inr (by simp only [transitionB, htarget, hl, constBoard_lore_flooded])
+  · exact Or.inl rfl   -- shore: the body never mentions the board
+  · exact Or.inl rfl   -- shoreEast: the body never mentions the board
+  · -- descend: reads the chamber it reaches for
+    cases htarget : Action.target Action.descend s.position with
+    | none => exact Or.inl (by simp only [transitionB, htarget])
+    | some c =>
+        rcases board_lore_cases b c with hl | hl
+        · exact Or.inl (by simp only [transitionB, htarget, hl, constBoard_lore_sound])
+        · exact Or.inr (by simp only [transitionB, htarget, hl, constBoard_lore_flooded])
+  · -- descendEast: reads the chamber it reaches for
+    cases htarget : Action.target Action.descendEast s.position with
+    | none => exact Or.inl (by simp only [transitionB, htarget])
+    | some c =>
+        rcases board_lore_cases b c with hl | hl
+        · exact Or.inl (by simp only [transitionB, htarget, hl, constBoard_lore_sound])
+        · exact Or.inr (by simp only [transitionB, htarget, hl, constBoard_lore_flooded])
+  · exact Or.inl rfl   -- lift: the body never mentions the board
+  · exact Or.inl rfl   -- ascend: the body never mentions the board
+  · exact Or.inl rfl   -- extract: the body never mentions the board
+
+/-- ⚑ **The row is complete.**  For every board, every state and every action,
+the real transition equals one of the two branches the emitted row names.  A
+client that renders both branches has rendered every outcome that can occur, and
+the descriptor has still not said which. -/
+theorem step_is_one_of_the_two_branches (b : Board) (s : State) (a : Action) :
+    stepB b s a = stepWith Lore.sound s a ∨
+    stepB b s a = stepWith Lore.flooded s a := by
+  by_cases hopen : openB s a
+  · simp only [stepWith, stepB, hopen, ↓reduceIte]
+    exact transitionB_is_one_of_the_two b s a
+  · left
+    simp only [stepWith, stepB, hopen, Bool.false_eq_true, ↓reduceIte]
+
+/-- Whether an action is closed here does not depend on the instance: both
+readings refuse together.  A row is therefore `refuse` for a reason the player
+can see, never because of a bit they cannot. -/
+theorem branches_agree_on_refusal (s : State) (a : Action) :
+    (stepWith Lore.sound s a).isNone = (stepWith Lore.flooded s a).isNone := by
+  simp only [stepWith, stepB]
+  by_cases hopen : openB s a
+  · simp only [hopen, ↓reduceIte]
+    cases a <;> (try simp only [transitionB]) <;> (try split) <;> rfl
+  · simp only [hopen, Bool.false_eq_true, ↓reduceIte]
+
+/-- A row of the emitted table.  `refuse` carries a named reason and no
+successor; `advance` is board-independent and carries one; `resolve` consults the
+instance and carries both. -/
+inductive Row where
+  | refuse (reason : String)
+  | advance (next : State)
+  | resolve (onMatch onMismatch : State)
+deriving DecidableEq
+
+/-- Why an action is refused here.  The conjuncts are tested in the SAME order
+`openB` and `openKindB` test them, so the reason a client renders is the first
+thing that actually failed and not a plausible one. -/
+def refusalReason (s : State) (a : Action) : String :=
+  if s.banked then "run-banked"
+  else if !reachableBankB s then "run-doomed"
+  else if s.air = 0 then "no-air"
+  else
+    match a with
+    | .survey | .surveyEast =>
+        match a.target s.position with
+        | none => "no-passage"
+        | some _ => "already-read"
+    | .shore | .shoreEast =>
+        if s.shoring = 0 then "no-shoring"
+        else
+          match a.target s.position with
+          | none => "no-passage"
+          | some _ => "already-safe"
+    | .descend | .descendEast => "no-passage"
+    | .lift =>
+        match s.position with
+        | .hatch => "not-in-a-chamber"
+        | .inside c =>
+            if (s.deck.get c).relicTaken then "chamber-emptied" else "over-capacity"
+    | .ascend => "at-the-hatch"
+    | .extract =>
+        if s.position ≠ Node.hatch then "not-at-the-hatch" else "short-sling"
+
+/-- The emitted row for one (state, action).  `advance` exactly when the two
+readings agree, which is exactly when the action does not consult the board. -/
+def rowFor (s : State) (a : Action) : Row :=
+  match stepWith Lore.sound s a, stepWith Lore.flooded s a with
+  | some m, some f => if m = f then .advance m else .resolve m f
+  | _, _ => .refuse (refusalReason s a)
+
+/-- A resolve row names two DIFFERENT states, so the gate's "the oracle bit is
+not consulted and the row should be an accept" refusal cannot fire. -/
+theorem resolve_rows_name_two_states (s : State) (a : Action) (m f : State)
+    (h : rowFor s a = .resolve m f) : m ≠ f := by
+  simp only [rowFor] at h
+  split at h
+  · split at h
+    · exact absurd h (by simp)
+    · rename_i hne
+      simp only [Row.resolve.injEq] at h
+      obtain ⟨hm, hf⟩ := h
+      subst hm; subst hf
+      exact hne
+  · exact absurd h (by simp)
+
+/- ⚠ NOT LANDED, and named rather than quietly dropped.  The soundness
+direction — `rowFor s a = .refuse r → ∀ b, stepB b s a = none`, i.e. a client
+that greys an action out is not guessing — is TRUE and follows from
+`branches_agree_on_refusal` plus `step_is_one_of_the_two_branches`, but the
+proof kept foundering on reducing `rowFor`'s two-scrutinee match under a
+hypothesis.  It is a tactic problem, not a mathematical one, and it wants
+`rowFor` refactored to branch on `Option.isSome` first.  The gate's differential
+independently rebuilds every refusal from the emitted view, so the property is
+checked there in the meantime — but it is checked, not proved, and this comment
+exists so the next reader does not assume otherwise. -/
+
+/-! ### The board-independent closure
+
+Both branches of every resolve row are followed, so the closure is the set of
+knowledge states reachable on SOME board — which is exactly the state set a
+descriptor that names both branches has to declare. -/
+
+def rowSuccessors (s : State) (a : Action) : List State :=
+  match rowFor s a with
+  | .refuse _ => []
+  | .advance n => [n]
+  | .resolve m f => [m, f]
+
+def parametricSuccessors (s : State) : List State :=
+  allActions.flatMap (rowSuccessors s)
+
+def parametricWithin : Nat → List State
+  | 0 => [initialState]
+  | fuel + 1 =>
+      let prior := parametricWithin fuel
+      (prior ++ prior.flatMap parametricSuccessors).eraseDups
+
+def parametricStates : List State := parametricWithin AIR
+
+def parametricRowCount : Nat := parametricStates.length * allActions.length
+
+/-- ⚑ **The table is closed.**  Every successor any row names is a state the
+descriptor declares, so a client can never be handed an id it does not have. -/
+theorem parametric_closure_is_closed :
+    parametricStates.all (fun s =>
+      allActions.all (fun a =>
+        (rowSuccessors s a).all (fun n => parametricStates.contains n))) = true := by
+  native_decide
+
+theorem parametric_states_nodup : parametricStates.eraseDups = parametricStates := by
+  native_decide
+
+theorem initial_state_is_declared : parametricStates.contains initialState = true := by
+  native_decide
+
+/-- The emitted shape, stated so the descriptor's size is a number a reader has
+before they open the file. -/
+theorem parametric_shape_is_measured :
+    parametricStates.length = 1598 ∧ allActions.length = 9 ∧
+      parametricRowCount = 14382 := by
+  refine ⟨by native_decide, by decide, by native_decide⟩
+
+/-- ⚑ **The table really consults the instance.**  Some rows resolve, so the
+gate's `no-oracle-row` FAIL — "every transition is deterministic, so the instance
+cannot affect play" — cannot fire. -/
+def resolveRowCount : Nat :=
+  (parametricStates.flatMap (fun s =>
+    allActions.filter (fun a => match rowFor s a with | .resolve _ _ => true | _ => false)))
+  |>.length
+
+theorem the_table_consults_the_instance : 0 < resolveRowCount := by
+  native_decide
+
+/-! ### Rendering names
+
+Ids are semantic, not enumeration indices, so a re-emission that visits states in
+a different order produces the same wire. -/
+
+def Chamber.tag : Chamber → String
+  | .mouth => "mouth"
+  | .west => "west"
+  | .east => "east"
+
+def Node.tag : Node → String
+  | .hatch => "hatch"
+  | .inside c => c.tag
+
+def Lore.tag : Lore → String
+  | .dark => "dark"
+  | .sound => "sound"
+  | .flooded => "flooded"
+  | .shored => "shored"
+
+def Lore.code : Lore → String
+  | .dark => "?"
+  | .sound => "s"
+  | .flooded => "f"
+  | .shored => "x"
+
+def Action.tag : Action → String
+  | .survey => "survey"
+  | .surveyEast => "survey-east"
+  | .shore => "shore"
+  | .shoreEast => "shore-east"
+  | .descend => "descend"
+  | .descendEast => "descend-east"
+  | .lift => "lift"
+  | .ascend => "ascend"
+  | .extract => "extract"
+
+def Action.label : Action → String
+  | .survey => "Sound the passage below"
+  | .surveyEast => "Sound the east spur"
+  | .shore => "Shore the passage below"
+  | .shoreEast => "Shore the east spur"
+  | .descend => "Descend"
+  | .descendEast => "Descend the east spur"
+  | .lift => "Lift the relic"
+  | .ascend => "Climb"
+  | .extract => "Come through the hatch"
+
+theorem action_tags_are_distinct :
+    (allActions.map Action.tag).eraseDups = allActions.map Action.tag := by decide
+
+private def slingTag (s : Sling) : String :=
+  String.intercalate "+" ((allChambers.filter (fun c => s.holds c)).map Chamber.tag)
+
+def stateId (s : State) : String :=
+  "dd:" ++ s.position.tag ++ ":" ++ toString s.air ++ ":" ++ toString s.shoring ++
+  ":" ++ toString s.damage ++ ":" ++
+  (allChambers.map (fun c => (s.deck.get c).lore.code)).foldl (· ++ ·) "" ++ ":" ++
+  (allChambers.map (fun c => if (s.deck.get c).relicTaken then "t" else "-")).foldl (· ++ ·) "" ++
+  ":" ++ (if slingTag s.sling = "" then "-" else slingTag s.sling) ++
+  ":" ++ (if s.banked then "banked" else "in")
+
+/-- ⚑ **Ids separate states.**  Two declared states never share an id, so the
+transition table's string references are unambiguous. -/
+theorem state_ids_are_distinct :
+    (parametricStates.map stateId).eraseDups.length = parametricStates.length := by
+  native_decide
+
+/-- What a client may render.  Everything the rules read is here, which is the
+property the design gate's differential depends on: it rebuilds every verdict
+from these fields alone and refuses on disagreement. -/
+def solvedB (s : State) : Bool := s.banked
+
+#assert_axioms stepWith_eq_stepB
+#assert_axioms constBoard_lore_sound
+#assert_axioms constBoard_lore_flooded
+#assert_axioms board_lore_cases
+#assert_axioms transitionB_is_one_of_the_two
+#assert_axioms step_is_one_of_the_two_branches
+#assert_axioms branches_agree_on_refusal
+#assert_axioms resolve_rows_name_two_states
+#assert_axioms action_tags_are_distinct
+
+#assert_compiled parametric_closure_is_closed
+#assert_compiled parametric_states_nodup
+#assert_compiled initial_state_is_declared
+#assert_compiled parametric_shape_is_measured
+#assert_compiled the_table_consults_the_instance
+#assert_compiled state_ids_are_distinct
+
 #assert_axioms allChambers_complete
 #assert_axioms allNodes_complete
 #assert_axioms mouth_is_a_junction
