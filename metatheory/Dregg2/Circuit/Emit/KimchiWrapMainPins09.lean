@@ -203,7 +203,7 @@ ONE term; against a numeral it has to reduce sixteen Poseidon permutations and o
 theorem wraphack_digest_is_the_emitted_squeeze :
     whDigestVal (whSpongeP tWh 0) = whPrevDigest 0
     ∧ whDigestVal (whSpongeP tWh 1) = whPrevDigest 1
-    ∧ whDigestVal (whSpongeC tWh) = whCloseDigest
+    ∧ whDigestVal (whSpongeC tWh) = whCloseDigest tWh.sh
     -- ⚑ …and the published statement does NOT carry them.
     ∧ whPrevDigest 0 ≠ prevWordVal (PREV_MSG_NEXT_STEP + 1)
     ∧ whPrevDigest 1 ≠ prevWordVal (PREV_MSG_NEXT_STEP + 2) := by
@@ -236,6 +236,88 @@ theorem wraphack_digest_bends_at_every_probed_input :
     ∧ (whPrevDigest 0 == whPrevDigest 1) = false := by
   refine ⟨rfl, rfl, rfl, rfl, rfl⟩
 
+/-- ⚑⚑⚑ **THE CLOSING SPONGE REPRODUCES MINA'S OWN SLOT 11, ON MINA'S OWN INPUTS.**
+
+`whNewChals` was `wrapFixtureQ 42` until 2026-08-06 — a NAMED FIXTURE standing for
+`new_bulletproof_challenges` — and §22a's own docblock concluded from that fixture that **"slot 11 is
+blocked on W-FINALIZE's bulletproof challenges and on nothing else, so no amount of step-side
+re-baking moves it."** This theorem is what refutes that, and it does it the only way a claim about
+Mina can be settled: by handing this tree's own sponge Mina's own preimage.
+
+`MinaWrapDeferredWords.WRAP_MSG_NEXT_WRAP_PRECHALS` is the thirty RAW prechallenges
+`pickles_kimchi_marshal` put in `messages_for_next_wrap_proof.old_bulletproof_challenges`; `liftValQ`
+is `Scalar_challenge.to_field_checked` at `ENDO_Q`, i.e. `compute_challenges`; `whSg` is the step
+proof's `openings_proof.challenge_polynomial_commitment`. Hash them with `whDigestOf` — this file's
+`hash_messages_for_next_wrap_proof`, front pad, tape order and all — and the result is
+`WRAP_PUBLIC_INPUT_MEASURED.getD 11 0` **to the digit**, a number openmina's own
+`MessagesForNextWrapProof::hash` produced from a `PreparedStatement::to_public_input(40)` we did not
+write.
+
+⚑ **SO THE SHAPE IS NOT WHAT BLOCKS SLOT 11.** The sponge, the lift, the instance-major flattening,
+the commitment-last order and the fresh opening state are all right; what disagrees is the
+step statement's own words 11–25 / 38–52, which `stepmain_step_r8_finalize` carries as small
+synthetic numerals. That relocates slot 11 into exactly the class words 55/56 and slot 12 are already
+in — a step-side statement gap — and out of the class "a wrap sub-circuit that was never assembled".
+
+⚠ **THE RED CONTROLS ARE THE POINT, because one number agreeing with one number is not a gate.**
+Bending one prechallenge, dropping the lift (absorbing the raw prechallenges instead), and moving the
+commitment by one each break the identity. The third is what says `whSg` is load-bearing rather than
+decorative; the second is what says the endo lift is. -/
+theorem wraphack_closing_sponge_reproduces_minas_slot_eleven :
+    whDigestOf
+        ((Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_MSG_NEXT_WRAP_PRECHALS).map
+          (liftValQ shapeWrap)) whSg
+      = Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 11 0
+    -- ⚑ …and it is the SAME lift `whNewChal` applies, at the same width.
+    ∧ CHAL_BITS shapeWrap = WQ_CHAL ∧ shapeWrap.emsRows = shapeSmoke.emsRows
+    -- ⚠ bend one prechallenge…
+    ∧ whDigestOf
+        (((Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_MSG_NEXT_WRAP_PRECHALS).set 0 1).map
+          (liftValQ shapeWrap)) whSg
+        ≠ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 11 0
+    -- ⚠ …drop the endo lift…
+    ∧ whDigestOf Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_MSG_NEXT_WRAP_PRECHALS whSg
+        ≠ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 11 0
+    -- ⚠ …and move the commitment.
+    ∧ whDigestOf
+        ((Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_MSG_NEXT_WRAP_PRECHALS).map
+          (liftValQ shapeWrap)) (qAdd whSg.1 1, whSg.2)
+        ≠ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 11 0 := by
+  native_decide
+
+#assert_compiled wraphack_closing_sponge_reproduces_minas_slot_eleven
+
+/-- ⚑⚑ **AND THE VECTOR THE CLOSING SPONGE ABSORBS IS THE ONE §20 ALREADY EMITS — AGREEMENT, NOT
+COINCIDENCE.**
+
+`whNewChals` and `finSpRows` step (4) are TWO constructions of `compute_challenges`' output: the
+first is the closing sponge's tape, the second is fifteen `to_field_checked` chains per instance whose
+`lift` cell `chainEnv` fills. Two constructions of one object is how a tie holds by accident — it is
+precisely what `prevWordVal`'s override arms did to W-FINSPONGE and W-WRAPHACK, where one side of an
+equation was the other side's definition and nothing had to reduce. So this reads the EMITTED
+environment at the EMITTED variable and asks whether the number there is the number the sponge
+absorbs, per instance and per round, and it checks the index arithmetic (`k / WH_ROUNDS`,
+`k % WH_ROUNDS`) against the emission's own nested loop rather than restating it.
+
+⚠ The last two legs are the anti-vacuity, and each is a different way the first leg could pass while
+meaning nothing: a `contains` that accepts anything is not a check, so the same variable with the
+value off by one must NOT be found; and the two instances' round-0 lift cells must be DIFFERENT
+VARIABLES, because if the two instances' chain blocks aliased, thirty legs would be ranging over
+fifteen cells.
+
+⚠ `native_decide`: `finSpEnvW` is downstream of `finSpDataW`, the 1732-op programs §20b‴ already
+confesses to. -/
+theorem wraphack_new_challenges_are_the_finsponge_lifts :
+    ((List.range (WH_MLMB * WH_ROUNDS)).all (fun k =>
+      finSpEnvW.contains
+        (finSpChalLiftVar (k / WH_ROUNDS) (k % WH_ROUNDS), (whNewChal tW.sh k : Int)))) = true
+    ∧ (whNewChals tW.sh).length = WH_MLMB * WH_ROUNDS
+    ∧ finSpEnvW.contains (finSpChalLiftVar 0 0, (whNewChal tW.sh 0 + 1 : Int)) = false
+    ∧ finSpChalLiftVar 0 0 ≠ finSpChalLiftVar 1 0 := by
+  native_decide
+
+#assert_compiled wraphack_new_challenges_are_the_finsponge_lifts
+
 /-- ⚑ **WORD 11's OBJECT, CHECKED AGAINST A REAL DEVNET WRAP PROOF — not its slot.**
 
 This module has already shipped the other mistake once: twenty exposed words carried the 255-bit
@@ -255,8 +337,8 @@ theorem wraphack_word_11_is_a_digest_not_a_challenge :
         = false
     ∧ decide (Dregg2.Circuit.Emit.MinaWrapPublicCommGate.PUBLIC_INPUT.getD 11 0 < 2 ^ WQ_CHAL)
         = false
-    ∧ decide (whCloseDigest < 2 ^ WQ_CHAL) = false
-    ∧ decide (whCloseDigest < qN) = true := by
+    ∧ decide (whCloseDigest shapeWrap < 2 ^ WQ_CHAL) = false
+    ∧ decide (whCloseDigest shapeWrap < qN) = true := by
   refine ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- The rung's own public word: slot 11, tied to the closing sponge's squeeze. -/

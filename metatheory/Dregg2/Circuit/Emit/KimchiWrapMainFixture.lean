@@ -205,4 +205,15 @@ def finSpDiffsAt (p : Nat) : Nat × Nat × Nat :=
 /-- W-FINSPONGE's OWN emitted rows at the smoke shape — the rung's row-set, not the ladder's. -/
 def finSpRowsW : List WRow := rungOwn tW true .finsponge
 
+/-- ⚑ **W-FINSPONGE's EMITTED ENVIRONMENT**, materialised once. `finSpEnv` rebuilds `finSpAll`
+internally, so a pin that reads it inline pays for the 1732-op programs a second time. -/
+def finSpEnvW : VarEnv := finSpEnv tW
+
+/-- ⚑ The cell §20 puts instance `p`'s `compute_challenges` lift for round `k` into — `finSpRows`
+step (4)'s own chain variable, addressed exactly as the emission addresses it. This is the OTHER
+construction of the vector §21's closing sponge absorbs, and having two is why
+`wraphack_new_challenges_are_the_finsponge_lifts` exists. -/
+def finSpChalLiftVar (p k : Nat) : PVar :=
+  (finSpChain tW.sh (finSpDataW.getD p default) k).lift
+
 end Dregg2.Circuit.Emit.KimchiWrapMain

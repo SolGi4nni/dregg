@@ -666,6 +666,26 @@ mod wrapmain_tests {
     /// native **Fq** — they enter only through `Other_field`, which is not assembled. See
     /// `KimchiWrapMainField.the_published_statement_does_not_carry_the_derived_words` and
     /// `KimchiWrapMain.finsponge_has_no_witness_on_the_published_statement`.
+    ///
+    /// ⚑ **AND THE LIST DID NOT SHRINK ON 2026-08-06 WHEN SLOT 11's DERIVATION LANDED — WHICH IS
+    /// WORTH SAYING, BECAUSE THE OBVIOUS READING IS THAT IT SHOULD HAVE.** `whNewChals` stopped
+    /// being `wrapFixtureQ 42` and became `compute_challenges` of the previous statement's own
+    /// packed words `27·p + 11 … 25`, and `KimchiWrapMain
+    /// .wraphack_closing_sponge_reproduces_minas_slot_eleven` shows this tree's own closing sponge
+    /// landing on the marshaller's slot 11 TO THE DIGIT once it is handed Mina's own thirty
+    /// prechallenges. None of that touches what BLOCKS these rungs. Per rung, measured:
+    ///
+    ///   * `w11_finsponge` — the three `Field.equal` legs on the finalizing block, against packed
+    ///     words 27, 28 and 37 (`finsponge_has_no_witness_on_the_published_statement`).
+    ///   * `w11_wraphack` — `whRows`' tie joining each prev-proof squeeze to packed words 55/56,
+    ///     which the step statement carries as `160000365` / `77001823`
+    ///     (`wraphack_digest_is_the_emitted_squeeze`, legs 4 and 5). ⚠ NOT the closing sponge, which
+    ///     is tied only to the rung's own public slot and is satisfiable at any value.
+    ///   * `w12_close` — inherits `w11_wraphack`'s rows by `close_rung_extends_bullet`.
+    ///
+    /// **A derivation gap and a satisfiability gap are two things.** This pass closed the first at
+    /// slot 11 and left the second exactly where it was; a list that shrank here would have been
+    /// claiming otherwise.
     const STATEMENT_BLOCKED: [&str; 3] = ["w11_finsponge", "w11_wraphack", "w12_close"];
 
     /// ⚑ The gate that keeps `SMOKE_SWEEP` true. A comment saying "this set may only name rungs in

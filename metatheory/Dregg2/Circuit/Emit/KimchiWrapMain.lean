@@ -584,7 +584,11 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      is UNSATISFIABLE on `stepmain_step_r8_finalize`. It passed while `prevWordVal` had override arms
      answering `FIN_DEFERRED_*` at the three words — the statement contained the derivation because
      this file put it there — and the step proof publishes its own statement now. That is undone work
-     on the STEP side and a fixpoint; the theorem is where it is written down.
+     on the STEP side and it is **NOT a fixpoint**: `the_deferred_derivation_does_not_read_the_words
+     _it_checks` (§20c) computes the transitive input cone of the two values this rung derives, over
+     its own 1732-op emitted program, and the three cells it checks are absent from it — no transcript
+     squeeze reaches §19 or §20 at all. Three strata, one pass. This line said "and a fixpoint" until
+     2026-08-06, superseded the same day by a theorem in its own tree.
      ⛑ **AND IT IS WHERE WRAP'S LARGEST REMAINING GATE GAP WAS.** The census that motivated this
      rung read **137 `(Poseidon × 11, Zero)` blocks of Mina's 261**; the two sponges are **61 per
      instance and 122 at `prevs = 2`** (`finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks`,
@@ -633,6 +637,22 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      `openings_proof.challenge_polynomial_commitment` whatever they are, and word 11 is its squeeze
      either way. What W-FINALIZE and W-OPENINGS would add is that those 32 cells stop being free
      witnesses, and §21 says that in its own header rather than banking it here.
+     ✅ ⚑ **AND SINCE 2026-08-06 THE THIRTY ARE DERIVED AND THE FIXTURE IS GONE.** `whNewChals` was
+     `wrapFixtureQ 42`; it is `compute_challenges` — `liftValQ` of the previous statement's packed
+     words `27·p + 11 … 25` — which is the SAME vector §20's `finSpRows` step (4) already emits
+     fifteen `to_field_checked` chains for, and `wraphack_new_challenges_are_the_finsponge_lifts`
+     reads §20's emitted environment to say the two constructions hold one value.
+     ⚑ **AND THE CLOSING SPONGE REPRODUCES MINA'S OWN SLOT 11 ON MINA'S OWN INPUTS**
+     (`wraphack_closing_sponge_reproduces_minas_slot_eleven`): handed the thirty prechallenges
+     `pickles_kimchi_marshal` put in `messages_for_next_wrap_proof`, `whDigestOf ∘ liftValQ` lands on
+     `WRAP_PUBLIC_INPUT_MEASURED.getD 11 0` to the digit. So slot 11's shape is settled and its
+     blocker is the STEP statement's words 11–25 / 38–52, which `stepmain_step_r8_finalize` carries
+     as synthetic numerals — the same class as words 55/56, not a missing wrap sub-circuit.
+     ⚠ **WHAT IS STILL OPEN IS THE SOUNDNESS HALF, and it is a LADDER REBASE.** `whRows` ties the
+     closing sponge's last two absorbs and its squeeze and leaves the thirty challenge absorbs free.
+     Joining them to §20's chain lifts puts `.finsponge` under `.wraphack` — which is upstream's own
+     order (`finalize_other_proof` at `:329`, `hash_messages_for_next_wrap_proof` at `:341`) and is
+     the repair; emitting a second copy of the fifteen chains inside `whRows` is not.
      ⚠ **AND THE `mlmb < 2` PAD IS NOT EMITTED**: `WH_MLMB = WH_PADDED = 2` fixes every opening
      state at `Sponge.create`'s zeros. The other case needs `Dummy.Ipa.Wrap.challenges_computed`
      (`dummy.ml:30-35`), an OCaml random-oracle draw with no independent source in this tree, and
@@ -763,7 +783,16 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          -- the emitted forty, and slot 12's disagreement with the step assembly's outer hash.
          -- Both are comparisons over emitted vectors, not kernel objects. Shaped to shrink:
          -- it ASSERTS both disagreements, so closing either one reds it.
-         the_two_slots_close_does_not_reach_are_a_fixture_and_a_step_digest
+         -- ⚑ RENAMED 2026-08-06 (`…_are_a_fixture_and_a_step_digest`): slot 11's half of that name
+         -- was the fixture claim this pass refuted, and a name is a claim.
+         the_two_slots_that_disagree_with_minas_forty_are_both_step_statement_words
+         -- ⚑ Joined 2026-08-06 with slot 11's derivation. The first hands this file's own
+         -- `hash_messages_for_next_wrap_proof` Mina's thirty prechallenges and lands on the
+         -- marshaller's slot 11 — sixteen Poseidon permutations against a numeral, which is the
+         -- same wall `wraphack_digest_is_the_emitted_squeeze` hit. The second reads
+         -- `finSpEnvW`, downstream of the 1732-op programs §20b‴ already confesses to.
+         wraphack_closing_sponge_reproduces_minas_slot_eleven
+         wraphack_new_challenges_are_the_finsponge_lifts
          -- ⚑ Same commit. It reads the wrap-hack tape's LENGTH and CONTENT against the emitted
          -- statement vector — 32 absorbed words over two blocks, compared entry-for-entry.
          -- Not a kernel object either. NOTE for whoever extends this list: add ONLY the name

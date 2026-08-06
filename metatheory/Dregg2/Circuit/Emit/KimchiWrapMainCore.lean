@@ -2758,9 +2758,44 @@ no `typ` of any kind) and are memoized into `WrapShape.xhatXY`, so routing them 
 make the shape depend on the transcript. That is a design fork, not this repair. -/
 def whSpongeP (t : WrapData) (p : Nat) : SpAcc :=
   whSpongeOf (whBaseP t.sh t.sp p) (whTape (whOldChals p) (absPtVal t.sp T_SGOLD p))
+
+/-- ⚑⚑⚑ **`new_bulletproof_challenges`, DERIVED — and it was a `wrapFixtureQ 42` FIXTURE until
+2026-08-06.**
+
+`finalize_other_proof` (`wrap_main.ml:258-338`) returns `compute_challenges ~scalar chals`, i.e.
+`Scalar_challenge.to_field_checked` of each of the fifteen `Bulletproof_challenge` prechallenges of
+instance `p`'s block — packed words `27·p + 11 … 27·p + 25`. §20's `finSpRows` step (4) ALREADY EMITS
+those fifteen chains per instance (`tfcRowsQ … (prevW … (finBlockWord p (FIN_W_CHAL + k)))`), and
+`chainEnv` puts `liftValQ s (finBlockVal p (FIN_W_CHAL + k))` in the chain's `lift` cell. So the
+value the closing sponge must absorb is a value this assembly already computes; only the module
+graph stopped it being written, because `liftValQ` is `…Core`'s and the fixture was `…Field`'s.
+
+⚑ **AND THE FLATTENING IS INSTANCE-MAJOR** — `composition_types.ml:411-418` is
+`Vector.to_array old_bulletproof_challenges |> Array.concat_map ~f:Vector.to_array`, so tape position
+`WH_ROUNDS · p + k` is instance `p`'s round `k`. `2 · 15 = 30 = WH_MLMB · WH_ROUNDS`, the length the
+sponge's schedule already fixed.
+
+⚠ **WHAT THIS DOES AND DOES NOT CLOSE, said here rather than banked.** It closes the DERIVATION gap:
+the closing digest is no longer a hash of a fixture, and
+`wraphack_closing_sponge_reproduces_minas_slot_eleven` (§21a) measures that the shape is Mina's to
+the digit, on Mina's own preimage. It does NOT close the SOUNDNESS
+gap: `whRows` ties the sponge's last two absorbs to `sgOldVar` and its squeeze to slot 11, and the
+THIRTY challenge absorbs are tied to nothing, so they remain free witness cells. Tying them means
+joining them to §20's `finSpChain … k |>.lift` — which makes `.wraphack` contain `.finsponge` and is
+a LADDER REBASE, not a row addition. Emitting a second copy of the fifteen chains inside `whRows`
+would be two constructions of one object, which is the defect this file spends §12 refusing. -/
+def whNewChal (s : WrapShape) (k : Nat) : Nat :=
+  liftValQ s (finBlockVal (k / WH_ROUNDS) (FIN_W_CHAL + k % WH_ROUNDS))
+def whNewChals (s : WrapShape) : List Nat :=
+  (List.range (WH_MLMB * WH_ROUNDS)).map (whNewChal s)
+
+/-- ⚑ **WRAP STATEMENT WORD 11** — `messages_for_next_wrap_proof_digest`, the value
+`wrap_main.ml:421-431` `Field.Assert.equal`s. -/
+def whCloseDigest (s : WrapShape) : Nat := whDigestOf (whNewChals s) whSg
+
 /-- …and the CLOSING one (`wrap_main.ml:421-431`), whose squeeze is wrap statement word 11. -/
 def whSpongeC (t : WrapData) : SpAcc :=
-  whSpongeOf (whBaseC t.sh t.sp) (whTape whNewChals whSg)
+  whSpongeOf (whBaseC t.sh t.sp) (whTape (whNewChals t.sh) whSg)
 
 /-- A wrap-hack sponge's squeeze — the cell it is read out of… -/
 def whDigestVar (a : SpAcc) : PVar := ((a.evs.filter (fun e => !e.isAbs)).getD 0 default).srcV
@@ -3333,10 +3368,8 @@ def finColVal (p k j : Nat) : Nat := wrapFixtureQ (40 + 2 * p + j) k
 /-- `evals.public_input.0` — `p(ζ)`, likewise witnessed. -/
 def finPZetaVal (p : Nat) : Nat := wrapFixtureQ (44 + p) 0
 
-/-- Instance `p`'s packed statement word `w` of its own 27-word block. -/
-def finBlockWord (p w : Nat) : Nat := PREV_PER_PROOF_WORDS * p + w
-/-- …and its VALUE. -/
-def finBlockVal (p w : Nat) : Nat := prevWordVal (finBlockWord p w)
+-- ⚑ `finBlockWord` / `finBlockVal` are in `KimchiWrapMainField`, below `prevWordVal`, since
+-- 2026-08-06: §21's closing sponge is defined ABOVE this point and needs to name a packed word.
 
 /-- The cells §19's program reads. Every one is a variable ANOTHER rung's rows define, or a witness
 cell this rung's own region owns. -/
@@ -4942,13 +4975,9 @@ def T_FINOLD : Nat := 11
 /-- A word of the finalize sponge's own 91-element tape. -/
 def T_FINTAPE : Nat := 12
 
-/-- Packed per-proof word indices this rung reads by NAME (`composition_types.ml:1268-1276`). -/
-def FIN_W_CIP : Nat := 0
-def FIN_W_B : Nat := 1
-def FIN_W_DIGEST : Nat := 5
-def FIN_W_XI : Nat := 10
-/-- …and where the fifteen `B Bulletproof_challenge` words start. -/
-def FIN_W_CHAL : Nat := 11
+-- ⚑ `FIN_W_CIP` / `FIN_W_B` / `FIN_W_DIGEST` / `FIN_W_XI` / `FIN_W_CHAL` are in
+-- `KimchiWrapMainField` since 2026-08-06, for the same reason `finBlockVal` is: §21 reads
+-- `FIN_W_CHAL + k` and §21 is defined two thousand lines above this rung.
 
 /-- `evals.ft_eval1` — a `Req.Evals` witness upstream (`wrap_main.ml:262-268`), so a NAMED FIXTURE
 here for the same reason §19's evaluation columns are. -/

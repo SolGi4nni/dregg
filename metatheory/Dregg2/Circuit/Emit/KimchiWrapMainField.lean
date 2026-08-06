@@ -585,10 +585,13 @@ def whSgOld (p : Nat) : Nat × Nat :=
 /-- ⚑ **PACKED STATEMENT WORD `55 + p`** — `prev_statement.messages_for_next_wrap_proof.(p)`. -/
 def whPrevDigest (p : Nat) : Nat := whDigestOf (whOldChals p) (whSgOld p)
 
-/-- `new_bulletproof_challenges` — `finalize_other_proof`'s output (`wrap_main.ml:258-338`), i.e.
-**W-FINALIZE's**, which this file does not assemble (§13 item 7). Free here, and named as free. -/
-def whNewChal (k : Nat) : Nat := wrapFixtureQ 42 k
-def whNewChals : List Nat := (List.range (WH_MLMB * WH_ROUNDS)).map whNewChal
+/-! ⚑ **`whNewChal` / `whNewChals` / `whCloseDigest` LEFT THIS FILE ON 2026-08-06 AND THE REASON IS
+THE IMPORT DIRECTION, not taste.** They were `wrapFixtureQ 42` — a NAMED FIXTURE standing for
+`new_bulletproof_challenges` — and the real vector is `compute_challenges`' fifteen 128-bit lifts per
+instance, which is `liftValQ` over `finBlockVal`. `liftValQ` lives in `KimchiWrapMainCore`, which
+imports THIS file, so the derivation cannot be written here at all. It is in `…Core` §21, next to the
+closing sponge that consumes it. `finBlockWord` / `finBlockVal` came the other way for the same
+reason: they are `prevWordVal` arithmetic and belong with it. -/
 
 /-- `openings_proof.challenge_polynomial_commitment` — `exists (Openings.Bulletproof.typ …)` at
 `wrap_main.ml:357-383`. ⚠ Its `Inner_curve.typ` `assert_on_curve` is **W-OPENINGS's** row, not §21's,
@@ -607,10 +610,6 @@ pair is not merely "from a real proof" — it is the accumulator the next proof'
 def whSg : Nat × Nat :=
   ( Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_SG_XY.getD 0 (wrapFixtureQ 43 0)
   , Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_SG_XY.getD 1 (wrapFixtureQ 43 1) )
-
-/-- ⚑ **WRAP STATEMENT WORD 11** — `messages_for_next_wrap_proof_digest`, the value
-`wrap_main.ml:421-431` `Field.Assert.equal`s. -/
-def whCloseDigest : Nat := whDigestOf whNewChals whSg
 
 /-! ### §15c‴ — ⚑ **W-FINSPONGE's VALUE LAYER**: three deferred words that are NOT witnessed either.
 
@@ -715,6 +714,29 @@ this model. -/
 def prevWordVal (w : Nat) : Nat :=
   let i := xhatEntryOf w
   if xhatIsSplitHi i then 2 * xhatScalar i + xhatScalar (i + 1) else xhatScalar i
+
+/-! ### §15b‴ — the per-proof block's OWN word indices.
+
+⚑ **THESE MOVED DOWN FROM `…Core` ON 2026-08-06, and the move is what let slot 11's derivation be
+written at all.** They are `prevWordVal` arithmetic and nothing else — `finBlockVal` is one
+application of it — so `…Core`'s §21 can name a packed word of a per-proof block ABOVE the point
+where §19/§20 are defined, which is where the closing wrap-hack sponge needs it. Read at
+`composition_types.ml:1268-1276`. -/
+
+/-- Packed per-proof word indices `wrap_main` reads by NAME (`composition_types.ml:1268-1276`). -/
+def FIN_W_CIP : Nat := 0
+def FIN_W_B : Nat := 1
+def FIN_W_DIGEST : Nat := 5
+def FIN_W_XI : Nat := 10
+/-- …and where the fifteen `B Bulletproof_challenge` words start. ⚑ `FIN_W_CHAL + k` for
+`k < WH_ROUNDS` is the prechallenge `compute_challenges` lifts, per instance — the vector
+`finalize_other_proof` returns and `hash_messages_for_next_wrap_proof` closes over. -/
+def FIN_W_CHAL : Nat := 11
+
+/-- Instance `p`'s packed statement word `w` of its own 27-word block. -/
+def finBlockWord (p w : Nat) : Nat := PREV_PER_PROOF_WORDS * p + w
+/-- …and its VALUE. -/
+def finBlockVal (p w : Nat) : Nat := prevWordVal (finBlockWord p w)
 
 /-- `scale_fast2'`'s `s_div_2` (`plonk_curve_ops.ml:271-283`). -/
 def xhatSDiv2 (i : Nat) : Nat := xhatScalar i / 2

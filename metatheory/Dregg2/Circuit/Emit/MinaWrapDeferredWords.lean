@@ -108,6 +108,60 @@ def WRAP_PUBLIC_INPUT_MEASURED : List Nat :=
    0  -- 39  joint_combiner_or_zero
   ]
 
+/-! ## §1b -- ⚑ SLOT 11's PREIMAGE, so one of the forty stops being an opaque number
+
+Slot 11 is `MessagesForNextWrapProof::hash()` (`gates.rs:272-284`), and openmina computes it over
+exactly two things: the record's `challenge_polynomial_commitment` and its `old_bulletproof_challenges`
+-- `Vector (Vector Fq 15) 2`, flattened. `pickles_kimchi_marshal` puts
+`old_wrap_bulletproof_challenges` there (`pickles_kimchi_marshal.rs:634`), and those are the
+DETERMINISTIC prechallenges the wrap proof was made about (`:336-344`): limbs
+`k·0x9E3779B97F4A7C15 | 1` and `(k+7)·0xBF58476D1CE4E5B9 | 1`, little-endian, `k = 15·p + j`. They are
+then endo-expanded by the prover's own `ScalarChallenge::to_field` (`marshal.rs:416-422`) before the
+hash sees them.
+
+⚑ **WHY THE PREIMAGE IS WORTH BAKING AND WHY IT IS NOT A SECOND SPELLING.** The list below is a
+transcription of a generator, and a transcription can be wrong; what makes it a MEASUREMENT is that
+`KimchiWrapMain.wraphack_closing_sponge_reproduces_minas_slot_eleven` hashes it with THIS tree's own
+sponge and lift and lands on slot 11 to the digit. A wrong transcription moves the digest. So the
+forty's eleventh entry is now checked against its own inputs by two implementations rather than
+carried as an opaque constant -- which is what turns "slot 11 disagrees" from a mood into a located
+fact about WHICH input disagrees.
+
+⚠ These are the RAW 128-bit prechallenges, not the lifts. The lift is
+`Scalar_challenge.to_field_checked` at `ENDO_Q`, i.e. `KimchiWrapMain.liftValQ`, and keeping the raw
+form here is what lets that lift be the thing under test. -/
+def WRAP_MSG_NEXT_WRAP_PRECHALS : List Nat :=
+  [ 78974591495854773213676270960737517569, 333315509510218643319316488156567206933
+  , 247374060603644049906241865699500029995, 161432611697069456548507475463561507903
+  , 75491162790494863135432853006494330965, 329832080804858733222626326128614468713
+  , 243890631898284139827998447745256843391, 157949182991709546451817313435608769683
+  , 72007734085134953057189435052251144361, 326348652099498823144382908174371282109
+  , 240407203192924229731308285717304105171, 154465754286349636373573895481365583079
+  , 68524305379775042960499273024298406141, 322865223394138913047692746146418543889
+  , 236923774487564319653064867763060918567
+  , 150982325580989726276883733453412844859, 65040876674415132882255855070055219537
+  , 319381794688779002969449328192175357285, 233440345782204409556374705735108180347
+  , 147498896875629816198640315499169658255, 61557447969055222785565693042102481317
+  , 315898365983419092891205910237932170681, 229956917076844499478131287780864993743
+  , 144015468170269906101950153471216920035, 58074019263695312707322275087859294713
+  , 312414937278059182794515748209979432461, 226473488371484589381441125752912255523
+  , 140532039464909996023706735516973733431, 54590590558335402610632113059906556493
+  , 308931508572699272716272330255736245857 ]
+
+/-- ⚑ **THIRTY OF THEM, TWO VECTORS OF FIFTEEN, EACH A 128-BIT PRECHALLENGE AND ALL DISTINCT.**
+The width is the object check `the_width_signature_is_minas_own_layout` runs on the forty, applied to
+slot 11's preimage: a lift where a prechallenge belongs is the classic defect and nothing but the
+width sees it. `Nodup` is the anti-vacuity -- thirty aliases of one number would satisfy
+`KimchiWrapMain.wraphack_closing_sponge_reproduces_minas_slot_eleven` just as well and mean nothing.
+⚠ That pin cannot live in this file: it needs `whDigestOf` and `liftValQ`, which are five modules
+above it, and this file is imported BY them. -/
+theorem the_slot_eleven_preimage_is_thirty_distinct_prechallenges :
+    WRAP_MSG_NEXT_WRAP_PRECHALS.length = 30
+    ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.all (fun x => decide (x < 2 ^ 128)) = true
+    ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.all (fun x => decide (2 ^ 125 < x)) = true
+    ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.Nodup := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
 /-! ## §2 -- the six `wrap_main` READS and never DERIVES
 
 `wrap_main.ml:405-414` passes these through as `~advice` / `~plonk` / `~xi`. It reads all six --
