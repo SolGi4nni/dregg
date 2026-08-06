@@ -1,5 +1,90 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑ AUGUST 6 (PI AUTHORITY) — the "live liveness bug" was never live, the executor comparison four docblocks credited had no caller, and the eleven dead slots are decided and priced (`f6a490eae`)
+
+Three named wounds, and the shape of the answer was different for each.
+
+### 1. The five one-felt `TURN_HASH` writes: **unreachable**, and now compiler-provably so
+
+The brief called them a live liveness break — five producers writing one felt at
+`pi::TURN_HASH_BASE` where every reader compares four, so honest legs get refused by
+`dregg_verifier::check_receipt_pi_binding` and `turn::conditional`. Verified at source instead:
+every one sits behind `if let Some(tid) = turn_id`, and **every call site in the tree passes
+`None`** — 28 for `mint_rotated_participant_leg`, 3 for `finalized_turn_from_full_turn` (one of
+them production, `node::turn_proving`'s finalized-turn retention), 12 across the four
+welded/custom minters in `joint_turn_aggregation`. The write never executed.
+
+So the knob is **deleted** rather than widened: the parameter is gone from ten functions and
+forty-three call sites, and `cargo check --workspace --all-targets` is green, which makes the
+unreachability a type fact rather than a census. It was a landmine — its own docblock invited
+joint-turn callers to pass `Some(tid)`, and the readers all want four felts from
+`canonical_32_to_felts_4`. A future shared identity threads `[BabyBear; 4]`.
+
+⚠ **`ast-grep` has two blind spots that cost me a wrong claim mid-pass.** `f($$$)` does not match
+a path-qualified `a::b::f($$$)`, and it does not descend into `assert!(…)` macro bodies. Five call
+sites hid in exactly those, and one of them made me write "has no caller" about a function
+`node/src/turn_proving.rs` calls. The conclusion survived (that caller passes `None` too), the
+stated proof did not. **Cross-check a call census with grep, or the count is a floor.**
+
+### 2. `verify_proof_carrying_turn_bundle{,_with_ledger}`: **deleted**
+
+Zero reachable callers; `_with_ledger` had none and was the only caller of the plain form. Eleven
+grep hits were two definitions, one internal call and **eight doc comments** asserting they were
+live. This was the only executor-side `PI[TURN_HASH] == Turn::hash()` comparison in the tree,
+which is exactly why four docblocks described an enforcement that did not run.
+
+**The Σδ=0 gate's fate, stated:** the per-asset DECIDER is untouched —
+`check_per_asset_conservation_by_asset`, routing through the installed `ConservationOracle`, stays
+and stays live on the executor path. What died is the ledger-free BUNDLE FRAMING around it. Nothing
+wants it: no wire type carries a bundle of per-cell PI vectors to a verifier, and the one
+`Vec<Vec<BabyBear>>` in the tree (`sdk::full_turn_proof`'s `leg_pis`) is prover-side, compared
+against the witness's own `expected_net_delta`. If such an artifact is ever put on the wire, the
+decision is already verified; only the decode was here.
+
+### 3. The eleven dead PI slots: **stop publishing**, all eleven, priced at one VK rotation
+
+`docs/PI-DISPOSITION.md` §6 records the per-slot decision. Reproduced independently: offsets 26,
+27, 28, 29..32 and 37..40 carry **zero** `pi_binding`s in both deployed registries (57 wide, 60 v3).
+
+⚑ **`MAX_CUSTOM_EFFECTS` is the one that teaches something: reconstructing it correctly buys
+nothing.** The published felt is the library default 4 on both sides, and its documented source
+(`cell.program.max_custom_effects`) does not exist — the declaration is
+`SovereignRegistration::max_custom_effects` on the ledger. The cap IS enforced, off-circuit, from
+the verifier's own ledger, which is strictly stronger than a felt no constraint reads. Removal is
+the honest fix; plumbing would have been theatre.
+
+Priced, not deferred: **one VK rotation for all eleven**, because `pi.rs`'s offsets are a cascade
+and removing any single slot shifts every later one. Wide registry Σ piCount 3,821 → 3,205 (−616
+felts); v3 3,012 → 2,363; `transferVmDescriptor2R24` 68 → 57. Step list, the two Lean theorems that
+break *by arithmetic* (`turn_hash_is_transcript_only` hard-codes 33..36), and the four fingerprints
+that re-key are in §6. `CANONICAL_STATE_SCHEMA_EPOCH` stays 23 — a rotation, not a re-genesis.
+
+### Eight docblocks corrected, not four
+
+Beyond the four that credited the deleted bundle verifier: three separate places
+(`pi.rs`, `cell/src/ledger.rs`, `enforce_custom_proof_count_committed`) credit an AIR sum-check
+`Σ s_custom == PI[CUSTOM_EFFECT_COUNT]` — **"Group 7" does not exist**;
+`columns::aux_off::CUSTOM_COUNT_ACC` is declared and filled and read by no constraint. And
+`sdk`'s `bind_turn_identity_pi` priced the parked `TURN_HASH` pin as "an emit + a VK rotation + a
+re-genesis": not a re-genesis, and per `docs/DESIGN-pi-authority.md` §3 the cutover is **dropped**,
+not parked. An inflated estimate in a docblock is how a cost becomes a constraint, so the number
+is corrected even though the verdict is "don't".
+
+**Nothing re-emits. No `VK-REGEN-LOG` row** — that log has already recorded two transitions that
+never happened.
+
+### Named for next, both measured here, neither landed
+
+* **`execute_atomic` / `execute_atomic_sovereign` are unreachable** — no caller outside
+  `turn/src/executor/atomic.rs`, only `#[cfg(test)]` in-module. It matters because that path
+  FORWARDS prover-supplied PIs and reads `extract_net_delta` off them: if it were live, `NET_DELTA`
+  would be a prover-chosen input to the conservation gate. ~1000 lines in a file a sibling lane may
+  be in, so it is named rather than bundled.
+* **`enforce_custom_proof_entry_binding` (`proof_verify.rs`) is `pub(super)` with only
+  `#[cfg(test)]` callers** — already dead at HEAD, `dead_code`-warning, and it is the *companion*
+  weld the entry-binding docblocks pair with the live one. Another gating-defaults-to-silence
+  instance, found in passing.
+
 ## ⛑⛑⛑ AUGUST 6 (WHOSE VERIFIER INDEX) — the last free element of the phase-1 tape, derived at the number it was priced with: **28 more links, no new AIR**
 
 `MinaPhase1TapeBinding` §8 residual 1 named its own closure and named it exactly:
