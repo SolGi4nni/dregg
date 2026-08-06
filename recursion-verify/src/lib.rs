@@ -68,6 +68,7 @@
 //! `wgpu`/`pollster`/`bytemuck` GPU backend, `dregg-lean-ffi`, `dregg-cell`, `dregg-commit`,
 //! `dregg-p3-pasta` or `p3-bn254`. `tests/dependency_closure.rs` asserts both poles.
 
+pub mod accumulator_root;
 pub mod chain_root;
 pub mod config;
 pub mod verify;

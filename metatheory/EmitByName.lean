@@ -69,6 +69,7 @@ import Dregg2.Circuit.Emit.PastaFieldSound
 import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.PastaCurveSound
 import Dregg2.Circuit.Emit.PastaLadderThread
+import Dregg2.Circuit.Emit.MinaAccumulatorAir
 -- ⚑ ROUTED as of 2026-08-05 (it spent one commit imported-but-withheld while its row-local layout
 -- was threaded). Two rows: the threaded conjunction and its unthreaded twin.
 import Dregg2.Circuit.Emit.MinaWrapConjunctionAir
@@ -542,6 +543,19 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.PastaLadderThread.pallasThreadDesc)
   , ("pasta-vesta-rcb-thread.json",
       Dregg2.Circuit.Emit.PastaLadderThread.vestaThreadDesc)
+    -- ⚑ 2026-08-06 — THE DEFERRED IPA ACCUMULATOR CHECK, IN A CIRCUIT. The threaded sound VESTA
+    -- row with its two endpoints published (`in ‖ out`, 96 limbs each, contiguous so a fold node
+    -- connects them with `cb.connect`), and — in the `-final` artifact — the 64 `.last`-row window
+    -- gates that force the terminal accumulator to be the point at infinity. That last block IS
+    -- `pasta_msm::is_identity` as a constraint, i.e. the leg `Ipa.Step.accumulator_check` performs
+    -- and `bridge/src/mina_accumulator_discharge.rs` performs NATIVELY. The pair is the
+    -- OLD-ADMITS/NEW-REJECTS exhibit: a chain that does not vanish proves under `-seg` and is
+    -- refused under `-final`. `MinaAccumulatorAir.accumulator_discharge_forced` is what the
+    -- emitted constraints force; the ADDEND ROUTING is the named residual (§4 prices it).
+  , ("mina-accumulator-seg.json",
+      Dregg2.Circuit.Emit.MinaAccumulatorAir.accSegDesc)
+  , ("mina-accumulator-final.json",
+      Dregg2.Circuit.Emit.MinaAccumulatorAir.accFinalDesc)
     -- ⚑ 2026-08-05 — THE CONJUNCTION, THREADED, AND ITS UNTHREADED TWIN. The row withheld below
     -- lands here: the b-polynomial's 15 rounds are 15 ROWS carried by 448 `.transition` legs, so
     -- the width is 2 536 at every round count and the artifact is 4 157 constraints instead of
@@ -598,7 +612,7 @@ Both directions are gated outside Lean:
 -- an emission and not a Rust-side edit of a parsed descriptor.
 -- Same shared-line hazard as every note above: if the blame on this line is one lane's, the count
 -- is probably already short again.
-theorem byNameDescriptors_length : byNameDescriptors.length = 111 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 113 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

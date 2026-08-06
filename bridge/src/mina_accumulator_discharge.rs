@@ -122,6 +122,19 @@ pub enum DischargeError {
         /// what `dregg_mina_deferral_ok` returned
         gate: String,
     },
+    /// ⚑ An in-circuit accumulator fold ROOT was offered for this claim, and the chain it proves
+    /// does not START at this claim's commitment. See [`root_entry_binds_claim`].
+    RootClaimMismatch {
+        /// which of the 96 sound-encoding limbs first disagreed
+        lane: usize,
+        /// what the claim's `C` carries there
+        want: u32,
+        /// what the root published there
+        got: u32,
+    },
+    /// The root's published entry accumulator is not 96 lanes, so it is not a projective Vesta
+    /// point in the sound encoding and nothing can be compared against it.
+    RootClaimShape(String),
 }
 
 impl std::fmt::Display for DischargeError {
@@ -143,6 +156,14 @@ impl std::fmt::Display for DischargeError {
                 f,
                 "the verified gate disagreed with the MSM (computed {computed}, gate {gate:?})"
             ),
+            DischargeError::RootClaimMismatch { lane, want, got } => write!(
+                f,
+                "the accumulator fold root does not start at this claim's commitment: sound-\
+                 encoding lane {lane} is {got}, the claim carries {want}"
+            ),
+            DischargeError::RootClaimShape(m) => {
+                write!(f, "the accumulator fold root's entry point: {m}")
+            }
         }
     }
 }
@@ -528,6 +549,86 @@ pub fn forge_commitment(claim: &AccumulatorClaim, by: &Pt) -> AccumulatorClaim {
     c
 }
 
+// =================================================================================================
+// ⚑ THE SEAM TO THE IN-CIRCUIT CHECK — whose claim is the chain the circuit proved?
+// =================================================================================================
+
+/// Limbs per Pasta field element in the sound encoding (`PastaFieldSound.SK`).
+pub const SOUND_SK: usize = 32;
+/// A projective point is `3 · SOUND_SK` limbs — the width
+/// `Dregg2.Circuit.Emit.MinaAccumulatorAir` publishes at `PI[0..95]` and the width a fold node
+/// carries with `cb.connect`.
+pub const SOUND_POINT_LIMBS: usize = 3 * SOUND_SK;
+
+/// The 32 little-endian 8-bit limbs of a reduced coordinate — `PastaFieldSound.limbAt`, which is
+/// what `rcbSoundRow` writes into a trace cell and therefore what a segment publishes.
+fn sound_limbs(v: &U256) -> [u32; SOUND_SK] {
+    let mut out = [0u32; SOUND_SK];
+    for (j, slot) in out.iter_mut().enumerate() {
+        *slot = u32::from((v.0[j / 8] >> (8 * (j % 8))) as u8);
+    }
+    out
+}
+
+/// ⚑ **THE 96 LANES A CLAIM'S COMMITMENT OCCUPIES AS THE CHAIN'S ENTRY ACCUMULATOR.**
+///
+/// Read the batched discharge as a running sum and the claim IS the initial accumulator:
+///
+/// ```text
+///     acc_0 = C  ;  acc_{r+1} = acc_r + A_r  ;  acc_n = O
+/// ```
+///
+/// so `C` in projective form `(x : y : 1)` is what `MinaAccumulatorAir`'s first-row pins publish.
+/// `z = 1` is not a convention chosen here: [`parse_claims`] builds every commitment with
+/// `z: U256::ONE`, and the sound encoding of `1` is `[1, 0, …, 0]`.
+pub fn claim_entry_limbs(claim: &AccumulatorClaim) -> [u32; SOUND_POINT_LIMBS] {
+    let mut out = [0u32; SOUND_POINT_LIMBS];
+    out[..SOUND_SK].copy_from_slice(&sound_limbs(&claim.comm.x));
+    out[SOUND_SK..2 * SOUND_SK].copy_from_slice(&sound_limbs(&claim.comm.y));
+    out[2 * SOUND_SK..].copy_from_slice(&sound_limbs(&claim.comm.z));
+    out
+}
+
+/// ⚑⚑ **REFUSE UNLESS THE CIRCUIT'S CHAIN STARTS AT *THIS* CLAIM.**
+///
+/// An accumulator fold root publishes `acc_in(96) ‖ acc_out(96)`
+/// (`dregg_recursion_verify::accumulator_root`). A verified root with a vanishing `acc_out` says
+/// *"some chain of complete additions, starting at the point I published, reached infinity"* — and
+/// **which point that is** is the whole difference between *some* claim discharging and *this
+/// block's* claim discharging.
+///
+/// This is that comparison: **96 lanes, elementwise, no digest and therefore no birthday bound** —
+/// the shape `LightClientMinaAir`'s `TIP_STATE` seam already takes, and the shape the `ANCHOR_STATE`
+/// lanes are refused at. It is a REFUSAL made by the consumer, not a gate; say it that way.
+///
+/// ⚠ And say what it still does not reach. Binding `acc_in` to the claim does NOT bind the ADDENDS
+/// to the SRS — the routing residual `MinaAccumulatorAir` §4 prices — nor does it relate the claim
+/// to a tracked head. A caller that holds `C` from this block's
+/// `messages_for_next_wrap_proof.challenge_polynomial_commitment` and calls this has closed the
+/// first of those three, and only the first.
+///
+/// `root_acc_in` is the root's published entry block as plain canonical field values, so this
+/// crate needs no recursion edge to make the comparison
+/// (`scripts/check-recursion-closure.py` stays as it is).
+pub fn root_entry_binds_claim(
+    root_acc_in: &[u32],
+    claim: &AccumulatorClaim,
+) -> Result<(), DischargeError> {
+    if root_acc_in.len() != SOUND_POINT_LIMBS {
+        return Err(DischargeError::RootClaimShape(format!(
+            "{} lane(s), expected {SOUND_POINT_LIMBS} (three coordinates of {SOUND_SK} limbs)",
+            root_acc_in.len()
+        )));
+    }
+    let want = claim_entry_limbs(claim);
+    for (lane, (&got, &w)) in root_acc_in.iter().zip(want.iter()).enumerate() {
+        if got != w {
+            return Err(DischargeError::RootClaimMismatch { lane, want: w, got });
+        }
+    }
+    Ok(())
+}
+
 /// The Vesta generator `(−1, 2)`, for building forgeries.
 pub fn vesta_generator() -> Pt {
     let q = PastaCurve::Vesta.base();
@@ -798,6 +899,76 @@ mod tests {
             dregg_lean_ffi::bridge_lc_ffi::run_mina_deferral_ok("n=65536;k=16;c=16;d=1").unwrap(),
             "1"
         );
+    }
+
+    /// ⚑ **THE SOUND ENCODING IS THE ONE THE AIR PUBLISHES** — 32 little-endian bytes per
+    /// coordinate, and `z = 1` really is `[1, 0, …]`. If this drifted, the seam below would compare
+    /// two encodings of the same point and refuse an honest root.
+    #[test]
+    fn the_entry_limbs_are_the_sound_encoding() {
+        let claims = embedded_claims().expect("claims");
+        let l = claim_entry_limbs(&claims[0]);
+        assert_eq!(l.len(), 96);
+        // z = 1
+        assert_eq!(l[64], 1);
+        assert!(l[65..].iter().all(|&b| b == 0), "z is (1, 0, ..., 0)");
+        // every lane is a byte
+        assert!(l.iter().all(|&b| b < 256));
+        // and the x block really recomposes to C.x
+        let x = claims[0].comm.x;
+        for j in 0..32usize {
+            assert_eq!(l[j], u32::from((x.0[j / 8] >> (8 * (j % 8))) as u8));
+        }
+    }
+
+    /// ⚑⚑ **BOTH POLARITIES OF THE CLAIM-TO-ROOT SEAM.**
+    ///
+    /// A root that starts at this claim's `C` is accepted; a root displaced in ANY ONE of the 96
+    /// lanes is refused, and the refusal names the lane. Every one of the seven real block claims
+    /// drives it, and every claim is checked to refuse against every OTHER claim — so the seam is
+    /// discriminating between real Mina commitments, not merely between a value and a scribble.
+    #[test]
+    fn the_root_entry_seam_binds_the_claim_in_both_polarities() {
+        let claims = embedded_claims().expect("claims");
+        assert_eq!(claims.len(), 7);
+
+        for c in &claims {
+            let honest = claim_entry_limbs(c);
+            root_entry_binds_claim(&honest, c).expect("an honest root entry must be accepted");
+
+            // one displaced lane, anywhere in the 96
+            for lane in [0usize, 1, 31, 32, 63, 64, 95] {
+                let mut bad = honest;
+                bad[lane] = (bad[lane] + 1) % 256;
+                assert_ne!(bad[lane], honest[lane], "the tamper must MOVE the lane");
+                match root_entry_binds_claim(&bad, c) {
+                    Err(DischargeError::RootClaimMismatch { lane: got, .. }) => {
+                        assert_eq!(got, lane, "the refusal must name the lane that moved")
+                    }
+                    other => panic!("a displaced entry lane was not refused: {other:?}"),
+                }
+            }
+        }
+
+        // ⚑ and it discriminates between REAL claims: no block's root entry satisfies another's.
+        for (i, a) in claims.iter().enumerate() {
+            for (j, b) in claims.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                assert!(
+                    root_entry_binds_claim(&claim_entry_limbs(a), b).is_err(),
+                    "claim {i}'s entry point satisfied claim {j}'s bind — the seam is not \
+                     discriminating between real Mina commitments"
+                );
+            }
+        }
+
+        // a shape fault is its own variant, not a mismatch
+        assert!(matches!(
+            root_entry_binds_claim(&[0u32; 95], &claims[0]),
+            Err(DischargeError::RootClaimShape(_))
+        ));
     }
 
     /// The bucketed-vs-naive numbers, at the two widths this campaign quotes.
