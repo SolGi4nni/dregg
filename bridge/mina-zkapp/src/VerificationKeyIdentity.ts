@@ -219,9 +219,24 @@ export function vkNotion(id: string): VkNotion {
 
 export type ResolvedVk = {
   notion: VkNotion;
-  /** The current value, or `null` when the producer has not been run in this
-   *  checkout. NEVER a default — an absent artifact is absent. */
+  /** The current value, or `null` when neither the producer nor its emitted pin
+   *  is present. NEVER a default — an absent artifact is absent. */
   hash: bigint | null;
+  /**
+   * Where `hash` came from.
+   *
+   * ⚑ AND WHY BOTH ARE ACCEPTABLE SOURCES. `.fullchain/` IS GITIGNORED. The key
+   * rings are hours of Pickles compiles and no clone has them, while
+   * `dregg-chain-pins.json` IS TRACKED. Resolving only from the ring would make
+   * this whole registry unusable on every machine but the one that compiled the
+   * chain — and the gate around it would go RED for having no artifacts rather
+   * than for a defect, which is the vacuous-red class this tree has paid for.
+   * So the pin is a legitimate source and the DIFFERENCE IS RECORDED: `producer`
+   * means the value was recomputed from the ring that produced it, `mirror-only`
+   * means it is the emitted literal and NOTHING HAS CHECKED IT against the ring
+   * in this checkout.
+   */
+  source: 'producer' | 'mirror-only' | 'none';
   /** Why `hash` is null, or '' when it is not. */
   absent: string;
   /** Set when `mirrorPath` disagrees with `valuePath`: this notion is ONE object
@@ -229,6 +244,9 @@ export type ResolvedVk = {
    *  `check_subproof_program_pin` closes by recomputing rather than trusting a
    *  literal, and it is why the mirror is read at all. */
   drift: string;
+  /** Set when `source === 'mirror-only'`: what is NOT established here, so a
+   *  transcript cannot be read as if the pin had been checked. */
+  unverified: string;
 };
 
 /**
@@ -291,43 +309,68 @@ export function resolveVkNotions(appRoot: string, opts: VkResolveOpts = {}): Res
     const j = readJson(resolve(appRoot, rel));
     return opts.perturb === undefined || j === null ? j : opts.perturb(rel, j);
   };
-  return KNOWN_VK_NOTIONS.map((notion) => {
-    const j = load(notion.valuePath);
-    if (j === null)
+  const valueOf = (rel: string, field: (j: any) => string | undefined): bigint | null => {
+    const j = load(rel);
+    if (j === null) return null;
+    const raw = field(j);
+    if (raw === undefined || raw === null || String(raw).length === 0) return null;
+    return BigInt(String(raw));
+  };
+  return KNOWN_VK_NOTIONS.map((notion): ResolvedVk => {
+    const fromProducer = valueOf(notion.valuePath, notion.valueField);
+    const fromMirror =
+      notion.mirrorPath !== null && notion.mirrorField !== null
+        ? valueOf(notion.mirrorPath, notion.mirrorField)
+        : null;
+
+    //  BOTH present — the real recompute, and the only place drift can be seen.
+    if (fromProducer !== null && fromMirror !== null)
       return {
         notion,
-        hash: null,
-        absent: `${notion.valuePath} does not exist — run: ${notion.producer}`,
-        drift: '',
+        hash: fromProducer,
+        source: 'producer',
+        absent: '',
+        unverified: '',
+        drift:
+          fromMirror === fromProducer
+            ? ''
+            : `${notion.mirrorPath} pins ${fromMirror} but its PRODUCER ${notion.valuePath} ` +
+              `now holds ${fromProducer}. ONE OBJECT, DRIFTED: a re-emission moved the key and ` +
+              `the pin did not follow. Re-run: ${notion.producer}`,
       };
-    const raw = notion.valueField(j);
-    if (raw === undefined || raw === null || String(raw).length === 0)
+
+    //  Producer only (or no mirror declared).
+    if (fromProducer !== null)
+      return { notion, hash: fromProducer, source: 'producer', absent: '', unverified: '', drift: '' };
+
+    //  ⚑ MIRROR ONLY. The normal state of any clone: `.fullchain/` is gitignored
+    //  and `dregg-chain-pins.json` is tracked. The key is still IDENTIFIABLE, so
+    //  every refusal still names it; what is unavailable is the recompute, and
+    //  saying so is the difference between a caveat and a silence.
+    if (fromMirror !== null)
       return {
         notion,
-        hash: null,
-        absent: `${notion.valuePath} exists but carries no key hash where one was expected`,
+        hash: fromMirror,
+        source: 'mirror-only',
+        absent: '',
         drift: '',
+        unverified:
+          `read from the emitted pin ${notion.mirrorPath}; its PRODUCER ` +
+          `${notion.valuePath} is not in this checkout, so NOTHING HERE HAS CHECKED the pin ` +
+          `against the ring it came from. To check it: ${notion.producer}`,
       };
-    const hash = BigInt(String(raw));
-    let drift = '';
-    if (notion.mirrorPath !== null && notion.mirrorField !== null) {
-      const m = load(notion.mirrorPath);
-      if (m === null) {
-        drift = `${notion.mirrorPath} does not exist, so nothing mirrors the producer`;
-      } else {
-        const mr = notion.mirrorField(m);
-        if (mr === undefined || String(mr).length === 0) {
-          drift = `${notion.mirrorPath} carries no value for this notion`;
-        } else if (BigInt(String(mr)) !== hash) {
-          drift =
-            `${notion.mirrorPath} pins ${String(mr)} but its PRODUCER ` +
-            `${notion.valuePath} now holds ${hash.toString()}. ONE OBJECT, DRIFTED: a ` +
-            're-emission moved the key and the pin did not follow. Re-run: ' +
-            notion.producer;
-        }
-      }
-    }
-    return { notion, hash, absent: '', drift };
+
+    return {
+      notion,
+      hash: null,
+      source: 'none',
+      absent:
+        `neither ${notion.valuePath}` +
+        (notion.mirrorPath === null ? '' : ` nor ${notion.mirrorPath}`) +
+        ` carries a value — run: ${notion.producer}`,
+      drift: '',
+      unverified: '',
+    };
   });
 }
 

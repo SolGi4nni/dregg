@@ -66,7 +66,12 @@ for (const r of resolved) {
   console.log(`     side       ${n.side}`);
   console.log(`     consumer   ${n.consumer}`);
   console.log(`     value      ${r.hash === null ? `ABSENT — ${r.absent}` : r.hash}`);
-  console.log(`     from       ${n.valuePath}`);
+  console.log(
+    `     from       ${
+      r.source === 'mirror-only' ? `${n.mirrorPath} (pin only)` : n.valuePath
+    }`,
+  );
+  if (r.unverified) console.log(`     ⚠ UNCHECKED ${r.unverified}`);
   if (n.caveat) console.log(`     ⚠ ${n.caveat}`);
   console.log('');
 }
@@ -122,7 +127,15 @@ for (const r of resolved) {
     continue;
   }
   if (r.hash === null) {
-    console.log(`  ·  ${r.notion.id}: producer absent — ${r.absent}`);
+    console.log(`  ·  ${r.notion.id}: neither side present — ${r.absent}`);
+    continue;
+  }
+  if (r.source === 'mirror-only') {
+    // ⚑ NOT A FAILURE, AND NOT A SILENCE. `.fullchain/` is gitignored, so this is
+    // the state of every clone that did not compile the chain itself. Reddening
+    // here would make the leg a machine-detector rather than a drift-detector —
+    // the vacuous-red class. Saying what went unchecked is the whole obligation.
+    console.log(`  ⚠  ${r.notion.id}: ${r.unverified}`);
     continue;
   }
   check(
@@ -255,6 +268,18 @@ if (SELF_TEST) {
   const w = resolved.find((r) => r.notion.id === WANT)!;
   if (w.hash === null) {
     bad('self-test: the wanted key is absent, so the drift probe cannot run');
+  } else if (w.source !== 'producer') {
+    // ⚑ SAY IT LOUDLY RATHER THAN PASS QUIETLY. Drift is only observable where
+    // BOTH the pin and its producing key ring exist, and `.fullchain/` is
+    // gitignored — so on any checkout that did not compile the chain, [2]'s red
+    // path is UNPROVEN here. That is a fact about this machine, not a defect,
+    // and a transcript must not read as if the red-proof had run.
+    console.log(
+      '  ⚠  self-test: [2]\'s DRIFT CHECK IS UNPROVEN ON THIS MACHINE. It needs the key ring\n' +
+        `     (${w.notion.valuePath}) beside the pin, and \`.fullchain/\` is gitignored. Run\n` +
+        `     \`${w.notion.producer}\` on a box that has the chain, then re-run --self-test.\n` +
+        '     Everything else below did run.',
+    );
   } else {
     const perturbed = resolveVkNotions(APP, {
       perturb: (rel, j) =>
