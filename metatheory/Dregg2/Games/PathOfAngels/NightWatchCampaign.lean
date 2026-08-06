@@ -174,6 +174,11 @@ structure OfficerHealth where
   recoveryObserved : Nat
 deriving DecidableEq, Repr
 
+/-- `recoveryObserved` counts the recovery that HAPPENED, not the one that was asked
+for.  Wounds and strain are Nat, so a recovery offered to an officer with nothing to
+recover truncates away and moves no health; the condition below is exactly the one
+`progressionOf` reports per watch, and `the_two_recovery_counters_agree` proves the
+running row counter and the per-watch figure cannot disagree. -/
 def OfficerHealth.apply (before : OfficerHealth) (effect : HealthEffect) :
     OfficerHealth :=
   let wounds := min MAX_WOUNDS
@@ -184,7 +189,52 @@ def OfficerHealth.apply (before : OfficerHealth) (effect : HealthEffect) :
     wounds
     strain
     recoveryObserved := before.recoveryObserved +
-      if effect.woundsRecovered + effect.strainRecovered > 0 then 1 else 0 }
+      if wounds < before.wounds || strain < before.strain then 1 else 0 }
+
+theorem officer_health_counts_the_recovery_that_happened
+    (before : OfficerHealth) (effect : HealthEffect) :
+    (before.apply effect).recoveryObserved =
+      before.recoveryObserved +
+        (if (before.apply effect).wounds < before.wounds ||
+            (before.apply effect).strain < before.strain then 1 else 0) := rfl
+
+/-- A recovery that moves neither wounds nor strain leaves the counter alone. -/
+theorem a_recovery_that_moves_no_health_does_not_move_the_recovery_counter
+    (before : OfficerHealth) (effect : HealthEffect)
+    (wounds : (before.apply effect).wounds = before.wounds)
+    (strain : (before.apply effect).strain = before.strain) :
+    (before.apply effect).recoveryObserved = before.recoveryObserved := by
+  rw [officer_health_counts_the_recovery_that_happened, wounds, strain]
+  simp
+
+/-- The other direction, which is what stops the counter from being a constant zero: a
+recovery that DOES move wounds or strain still increments by exactly one. -/
+theorem a_recovery_that_moves_health_increments_the_recovery_counter
+    (before : OfficerHealth) (effect : HealthEffect)
+    (moved : (before.apply effect).wounds < before.wounds ∨
+      (before.apply effect).strain < before.strain) :
+    (before.apply effect).recoveryObserved = before.recoveryObserved + 1 := by
+  have observed : ((before.apply effect).wounds < before.wounds ||
+      (before.apply effect).strain < before.strain) = true := by
+    rcases moved with h | h
+    · simp [h]
+    · simp [h]
+  rw [officer_health_counts_the_recovery_that_happened, observed]
+  simp
+
+/-- The concrete divergence the condition above closes: an unhurt officer offered a
+two-wound three-strain recovery keeps every field it had, counter included. -/
+theorem an_unhurt_officer_offered_a_recovery_moves_nothing_at_all :
+    OfficerHealth.apply ⟨⟨0⟩, 0, 0, 0⟩
+        { woundsRecovered := 2, strainRecovered := 3 } = ⟨⟨0⟩, 0, 0, 0⟩ := by
+  decide
+
+/-- The same recovery offered to an officer who has something to recover heals and is
+counted, so the two theorems above are demonstrated on the same effect. -/
+theorem a_wounded_officer_offered_the_same_recovery_heals_and_is_counted :
+    OfficerHealth.apply ⟨⟨0⟩, 2, 3, 0⟩
+        { woundsRecovered := 2, strainRecovered := 3 } = ⟨⟨0⟩, 0, 0, 1⟩ := by
+  decide
 
 def OfficerHealth.progressionView (health : OfficerHealth) :
     ShipLifeProgression.DerivedHealthView where
@@ -487,7 +537,6 @@ inductive Error where
   | unknownTask
   | roleMismatch
   | insufficientResources
-  | resourceBound
   | evidenceBound
   | missingHealth
   | historyLimit
@@ -503,6 +552,17 @@ private def progressionOf (rule : TaskRule) (success : Bool)
   recoveryObserved :=
     if after.wounds < before.wounds || after.strain < before.strain then 1 else 0
 
+/-- Two recovery counters exist — the running one on the officer row, maintained by
+`OfficerHealth.apply`, and the per-watch one `progressionOf` derives by comparing before
+against after — and this says they read the same fact, so the row advances by exactly
+what the watch reports.  While `OfficerHealth.apply` counted the ATTEMPT rather than the
+EFFECT, the two disagreed on every recovery that recovered nothing. -/
+theorem the_two_recovery_counters_agree (rule : TaskRule) (success : Bool)
+    (before : OfficerHealth) (effect : HealthEffect) :
+    (before.apply effect).recoveryObserved =
+      before.recoveryObserved +
+        (progressionOf rule success before (before.apply effect)).recoveryObserved := rfl
+
 private def resolveAssigned (config : Config) (state : State)
     (officer : Seat) (rule : TaskRule) : Except Error State := do
   let healthBefore ← match healthFor? state.health officer.id with
@@ -514,10 +574,13 @@ private def resolveAssigned (config : Config) (state : State)
   let effects := if success then rule.successEffects else rule.failureEffects
   let healthEffect := if success then rule.successHealth else rule.failureHealth
   let evidenceGain := if success then rule.successEvidence else rule.failureEvidence
+  -- No bound re-check follows this: `apply?` ends `if !after.boundedB then none else
+  -- some after`, so `resourcesAfter` is bounded by construction and the `none` arm is the
+  -- only reachable refusal.  That is
+  -- `NightWatchCampaignExamples.worldEffects_apply_returns_only_bounded_resources`.
   let resourcesAfter ← match effects.apply? state.resources with
     | none => throw .insufficientResources
     | some resources => pure resources
-  if !resourcesAfter.boundedB then throw .resourceBound
   if MAX_EVIDENCE < state.evidence + evidenceGain then throw .evidenceBound
   let evidenceAfter := state.evidence + evidenceGain
   let healthAfter := healthBefore.apply healthEffect
@@ -677,6 +740,12 @@ theorem caller_claimed_outcome_is_refused (config : Config) (state : State)
     } = .error .callerAuthoredOutcome := by
   rfl
 
+#assert_axioms officer_health_counts_the_recovery_that_happened
+#assert_axioms a_recovery_that_moves_no_health_does_not_move_the_recovery_counter
+#assert_axioms a_recovery_that_moves_health_increments_the_recovery_counter
+#assert_axioms an_unhurt_officer_offered_a_recovery_moves_nothing_at_all
+#assert_axioms a_wounded_officer_offered_the_same_recovery_heals_and_is_counted
+#assert_axioms the_two_recovery_counters_agree
 #assert_axioms event_intent_has_no_finality
 #assert_axioms holder_presentation_erased
 #assert_axioms holder_status_cannot_change_transition

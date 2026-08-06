@@ -707,6 +707,46 @@ theorem the_recovery_watch_healed_the_wounds_the_failure_inflicted :
     entryThree.progression.recoveryObserved = 1 := by
   decide
 
+/-! ## The two recovery counters, on the fixture
+
+`OfficerHealth.apply` maintains a running `recoveryObserved` on the officer row and
+`progressionOf` reports a per-watch `recoveryObserved` by comparing before against after.
+`NightWatchCampaign.the_two_recovery_counters_agree` proves they agree for every officer
+and every effect; the two theorems below exhibit that agreement on the shipped fixture,
+in the two cases that used to separate them. -/
+
+/-- The campaign's four watches observed exactly one recovery between them — watch three
+— and the roster's running counters hold exactly one, on the seat that recovered. -/
+theorem the_campaign_recovery_counters_agree_watch_by_watch_and_in_total :
+    campaignHistory.map (fun entry => entry.progression.recoveryObserved) = [0, 0, 1, 0] ∧
+    viewAfterCampaign.health.map OfficerHealth.recoveryObserved = [0, 0, 1, 0] ∧
+    (campaignHistory.map (fun entry => entry.progression.recoveryObserved)).sum =
+      (viewAfterCampaign.health.map OfficerHealth.recoveryObserved).sum ∧
+    (viewAfterCampaign.health.map OfficerHealth.recoveryObserved).sum = 1 := by
+  decide
+
+/-- The no-op recovery, end to end through `judge` on the shipped fixture: seat `⟨2⟩`
+takes the infirmary round at shift 0, before anything has hurt them.  The watch succeeds
+and the recovery arm fires, but `wounds` and `strain` are already 0 and Nat subtraction
+truncates, so no health moves — and NEITHER counter counts it.  The officer row used to
+report 1 here while the watch reported 0. -/
+def unhurtRecoveryWatch : List Command :=
+  [ cmd 0 (.claimOfficer (digest 12) ⟨2⟩)
+  , cmd 1 (.chooseTask .infirmary .recoveryRound)
+  , cmd 2 .resolve
+  , cmd 3 .debrief ]
+
+theorem an_unhurt_officers_recovery_watch_succeeds_and_moves_neither_health_nor_counter :
+    recoveryRoundRule.successHealth = { woundsRecovered := 2, strainRecovered := 1 } ∧
+    (runFrom unhurtRecoveryWatch).map (fun state => state.history.map
+        (fun entry => (entry.success, entry.healthBefore, entry.healthAfter,
+          entry.progression.recoveryObserved)))
+      = .ok [(true, ⟨0, 0, false, 0⟩, ⟨0, 0, false, 0⟩, 0)] ∧
+    (runFrom unhurtRecoveryWatch).map
+        (fun state => state.health.map OfficerHealth.recoveryObserved)
+      = .ok [0, 0, 0, 0] := by
+  native_decide
+
 theorem mastery_is_keyed_by_seat_and_station_not_by_seat_alone :
     viewAfterCampaign.mastery.filter (fun row => decide (row.seat = ⟨2⟩))
       = [⟨⟨2⟩, .containment, 3, 0⟩, ⟨⟨2⟩, .infirmary, 9, 0⟩] := by
@@ -864,14 +904,15 @@ theorem a_caller_authored_outcome_is_refused_while_holder_metadata_is_erased :
       = true := by
   native_decide
 
-/-! ## One arm of `resolveAssigned` cannot fire
+/-! ## Why `resolveAssigned` does not re-check the resource bound
 
-`resolveAssigned` (`NightWatchCampaign.lean:489-492`) obtains `resourcesAfter` from
-`WorldEffects.apply?` and then re-checks `if !resourcesAfter.boundedB then throw
-.resourceBound`.  `apply?` already returns `none` on an unbounded result — and `none`
-is mapped to `.insufficientResources` one line earlier — so the theorem below shows
-`.resourceBound` is unreachable from that call site.  This is not fixture-specific: it
-holds for every `WorldEffects` and every `ShipResources`. -/
+`resolveAssigned` obtains `resourcesAfter` from `WorldEffects.apply?` and then does
+nothing further to it: `apply?` ends `if !after.boundedB then none else some after`, and
+that `none` is already mapped to `.insufficientResources`.  The theorem below is the
+reason no second check is needed, and it is not fixture-specific — it holds for every
+`WorldEffects` and every `ShipResources`, so no config can author a way past it.  A
+`.resourceBound` refusal constructor used to sit after that call; it could never fire,
+and it is gone from `Error` and from the wire's `allErrors`. -/
 
 theorem worldEffects_apply_returns_only_bounded_resources
     {effect : WorldEffects} {before after : ShipResources}
@@ -915,6 +956,8 @@ asserted. -/
 #assert_axioms the_discovery_gate_withholds_canon_below_the_authored_evidence_bar
 #assert_compiled the_only_beta_proposal_names_the_authored_artifact_and_the_evidence_that_earned_it
 #assert_axioms the_recovery_watch_healed_the_wounds_the_failure_inflicted
+#assert_axioms the_campaign_recovery_counters_agree_watch_by_watch_and_in_total
+#assert_compiled an_unhurt_officers_recovery_watch_succeeds_and_moves_neither_health_nor_counter
 #assert_axioms mastery_is_keyed_by_seat_and_station_not_by_seat_alone
 #assert_axioms mastery_levels_up_at_the_authored_level_size
 #assert_axioms only_the_galley_watch_carries_a_local_service_figure

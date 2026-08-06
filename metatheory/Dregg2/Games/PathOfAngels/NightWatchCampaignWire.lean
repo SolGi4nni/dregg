@@ -262,7 +262,6 @@ def errorName : NightWatchCampaign.Error → String
   | .unknownTask => "unknown_task"
   | .roleMismatch => "role_mismatch"
   | .insufficientResources => "insufficient_resources"
-  | .resourceBound => "resource_bound"
   | .evidenceBound => "evidence_bound"
   | .missingHealth => "missing_health"
   | .historyLimit => "history_limit"
@@ -271,7 +270,7 @@ def errorName : NightWatchCampaign.Error → String
 def allErrors : List NightWatchCampaign.Error :=
   [ .wrongSequence, .replayedAction, .shiftLimit, .wrongPhase, .unknownOfficer
   , .officerActorMismatch, .unknownTask, .roleMismatch, .insufficientResources
-  , .resourceBound, .evidenceBound, .missingHealth, .historyLimit
+  , .evidenceBound, .missingHealth, .historyLimit
   , .callerAuthoredOutcome ]
 
 theorem allErrors_is_exhaustive (error : NightWatchCampaign.Error) : error ∈ allErrors := by
