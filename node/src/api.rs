@@ -5297,9 +5297,25 @@ async fn post_submit_encrypted_turn(
             }))
         }
         Err(reason) => {
-            // Drop the (unused) journal; the executor already restored its own
-            // mutations on rejection.
-            s.ledger.commit_restore_point();
+            // ⚑ ROLL BACK. The comment that used to sit here — "the executor already restored its own
+            // mutations on rejection" — is FALSE for phase 1, and `commit_restore_point()` kept the
+            // damage.
+            //
+            // `apply_encrypted_turn` maps `Rejected` straight to `Err` with no restoration, and
+            // `execute.rs`'s PHASE 1 (fee debit + nonce tick) is never rolled back by the executor
+            // itself. So a rejected encrypted turn KEPT its fee debit and nonce tick in live node RAM
+            // while writing nothing durable.
+            //
+            // ⚠ That is precisely the RAM-only anti-spam charge `blocklace_sync.rs:10229` forbids in so
+            // many words, and by the argument at `:7571-7586` it is an attested-root divergence: the
+            // charge survives in RAM until this node restarts and then vanishes, while a peer that did
+            // not restart keeps it — and `canonical_ledger_root` hashes the whole cell.
+            //
+            // ⓘ Both other ingresses already get this right, which is what makes this one an outlier
+            // rather than a policy: `execute_finalized_turn` discards its isolated `exec_ledger`
+            // candidate on `Rejected`, and `stage_signed_turn_admission` (`/turns/submit`) calls
+            // `rollback_restore_point()` unconditionally. A refusal is free on both.
+            s.ledger.rollback_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
             drop(s);
