@@ -22,6 +22,7 @@ import Lean.Data.Json
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SignalTriangulation
 import Dregg2.Games.PathOfAngels.FiniteTables
+import Dregg2.Games.PathOfAngels.BlackBoxReconstruction
 import Dregg2.Games.PathOfAngels.HiddenInstance
 import Dregg2.Tactics
 
@@ -778,6 +779,77 @@ def salvageDescriptorJson : String :=
     "\"artifact\":\"mission_artifact\"}\n" ++
   "}\n"
 
+/-! ## Black Box Reconstruction — the ORACLE wire
+
+Signal publishes a code-by-code feedback table; Salvage publishes a machine whose
+second exposures name both branches.  Black Box can use neither shape.  Its state
+is the SET of pairs a run has asked, so a total `(state, action)` table would have
+`2^25` rows and cannot be written down at all.
+
+What is small is the thing that actually matters: the ORACLE.  120 instances by 25
+probes is 3000 cells, and those cells ARE the rules.  So the descriptor publishes
+the complete question-and-answer function and says nothing whatever about which row
+a given run drew — the client learns every rule and no instance.
+
+`blackBox_table_is_the_kernel` reads the cells back out of the RENDERED descriptor
+and compares each one against `BlackBoxReconstruction.hitB`, so the emitted table is
+a projection of the kernel and not a second copy of the rules. -/
+
+private def blackBoxProbes :
+    List (BlackBoxReconstruction.Slot × BlackBoxReconstruction.Fragment) :=
+  BlackBoxReconstruction.allSlots.flatMap fun slot =>
+    BlackBoxReconstruction.allFragments.map fun fragment => (slot, fragment)
+
+private def blackBoxProbeId
+    (probe : BlackBoxReconstruction.Slot × BlackBoxReconstruction.Fragment) : String :=
+  "probe-" ++ toString probe.1.val ++ "-" ++ toString probe.2.val
+
+private def blackBoxProbeJson
+    (probe : BlackBoxReconstruction.Slot × BlackBoxReconstruction.Fragment) : String :=
+  "    {\"id\":" ++ jsonString (blackBoxProbeId probe) ++
+    ",\"label\":" ++ jsonString ("Ask whether fragment " ++ toString probe.2.val ++
+      " belongs at position " ++ toString probe.1.val) ++
+    ",\"slot\":" ++ toString probe.1.val ++
+    ",\"fragment\":" ++ toString probe.2.val ++ "}"
+
+/-- One instance's answers to every probe, in `blackBoxProbes` order. -/
+private def blackBoxOracleRow (order : Fin BlackBoxReconstruction.ORDER_SPACE) : String :=
+  String.mk (blackBoxProbes.map fun probe =>
+    if BlackBoxReconstruction.hitB order probe then '1' else '0')
+
+private def blackBoxOracleTableJson : String :=
+  jsonPrettyArray ((List.finRange BlackBoxReconstruction.ORDER_SPACE).map fun order =>
+    "    " ++ jsonString (blackBoxOracleRow order))
+
+def blackBoxDescriptorJson : String :=
+  "{\n" ++
+  "  \"format\":\"POAG1-GAME\",\n" ++
+  "  \"schema_version\":1,\n" ++
+  "  \"game_id\":\"black-box-reconstruction\",\n" ++
+  "  \"ruleset\":\"blackbox-v2\",\n" ++
+  "  \"engine_module\":\"Dregg2.Games.PathOfAngels.BlackBoxReconstruction\",\n" ++
+  "  \"action_limit\":" ++ toString BlackBoxReconstruction.MAX_TURNS ++ ",\n" ++
+  "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
+    "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
+    "\"economic_rewards\":false},\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
+  "  \"oracle\":{\n" ++
+  "    \"instance_space\":" ++ toString BlackBoxReconstruction.ORDER_SPACE ++ ",\n" ++
+  "    \"instance_shape\":\"a permutation of five fragments over five positions\",\n" ++
+  "    \"required_per_instance\":" ++ toString BlackBoxReconstruction.SLOT_COUNT ++ ",\n" ++
+  "    \"settles\":\"slot-and-fragment\",\n" ++
+  "    \"class_alphabet\":\"01\",\n" ++
+  "    \"classes\":[{\"id\":\"mismatch\",\"solving\":false}," ++
+    "{\"id\":\"match\",\"solving\":true}],\n" ++
+  "    \"probes\":" ++ jsonPrettyArray (blackBoxProbes.map blackBoxProbeJson) ++ ",\n" ++
+  "    \"table\":" ++ blackBoxOracleTableJson ++ "\n" ++
+  "  },\n" ++
+  "  \"refusals\":[\"solved\",\"turn-limit\",\"repeated-probe\",\"settled-slot\"," ++
+    "\"settled-fragment\"],\n" ++
+  "  \"output\":{\"requires\":\"terminal\",\"contribution\":\"mission_reward\"," ++
+    "\"artifact\":\"mission_artifact\"}\n" ++
+  "}\n"
+
 /-! Strict schema checks for the exact finite-table wire. -/
 
 /-! ⚠ `run_seed` is no longer a descriptor key and `target_visibility` is no longer
@@ -888,6 +960,58 @@ def validateSalvageDescriptor (bytes : String) : Except String Unit := do
     exactKeys transition ["state", "action", "verdict", "reason", "next",
       "on_match", "on_mismatch"]
 
+/-- Black Box publishes an `oracle` block instead of a `state_machine`: its state
+space is a subset lattice and no total transition table exists for it.  The key set
+is pinned exactly, like every other descriptor here. -/
+def validateBlackBoxDescriptor (bytes : String) : Except String Unit := do
+  let document ← Json.parse bytes
+  exactKeys document ["format", "schema_version", "game_id", "ruleset", "engine_module",
+    "action_limit", "security", "instance", "oracle", "refusals", "output"]
+  validateHiddenSecurity document "oracle-only"
+  validateInstanceDeclaration (← document.getObjVal? "instance") "oracle-only"
+  exactKeys (← document.getObjVal? "output") ["requires", "contribution", "artifact"]
+  let oracle ← document.getObjVal? "oracle"
+  exactKeys oracle ["instance_space", "instance_shape", "required_per_instance",
+    "settles", "class_alphabet", "classes", "probes", "table"]
+  let space ← oracle.getObjValAs? Nat "instance_space"
+  if space != BlackBoxReconstruction.ORDER_SPACE then
+    throw s!"POAG1 black-box declares an instance space of {space}"
+  let probes ← (oracle.getObjVal? "probes") >>= Json.getArr?
+  if probes.size != blackBoxProbes.length then
+    throw s!"POAG1 black-box emits {probes.size} probes"
+  for probe in probes do
+    exactKeys probe ["id", "label", "slot", "fragment"]
+  let classes ← (oracle.getObjVal? "classes") >>= Json.getArr?
+  if classes.size != 2 then
+    throw s!"POAG1 black-box emits {classes.size} observation classes, expected 2"
+  for cls in classes do
+    exactKeys cls ["id", "solving"]
+  let table ← (oracle.getObjVal? "table") >>= Json.getArr?
+  if table.size != space then
+    throw s!"POAG1 black-box emits {table.size} oracle rows for a space of {space}"
+
+/-- ⚑ **The emitted oracle is the kernel's, cell by cell.**  This reads the table
+back out of the RENDERED descriptor — the bytes a client actually fetches — and
+compares all 3000 cells against `BlackBoxReconstruction.hitB`.  Without it the
+artifact would be an unchecked second statement of the rules. -/
+def blackBoxTableRefinesKernel : Except String Unit := do
+  let document ← Json.parse blackBoxDescriptorJson
+  let oracle ← document.getObjVal? "oracle"
+  let table ← (oracle.getObjVal? "table") >>= Json.getArr?
+  for order in List.finRange BlackBoxReconstruction.ORDER_SPACE do
+    match table[order.val]? with
+    | none => throw s!"POAG1 black-box table has no row {order.val}"
+    | some cell =>
+        let row ← cell.getStr?
+        let chars := row.toList
+        if chars.length != blackBoxProbes.length then
+          throw s!"POAG1 black-box row {order.val} is {chars.length} cells wide"
+        for pair in blackBoxProbes.zip chars do
+          let emitted := pair.2 == '1'
+          if emitted != BlackBoxReconstruction.hitB order pair.1 then
+            throw s!"POAG1 black-box cell ({order.val}, {blackBoxProbeId pair.1}) \
+              disagrees with the kernel"
+
 /-- Signal's descriptor is validated the same way, with the rules table checked for
 the one thing that could silently fold: an unnameable class rendering as `?`. -/
 def validateSignalDescriptor (bytes : String) : Except String Unit := do
@@ -918,6 +1042,13 @@ def validateSignalDescriptor (bytes : String) : Except String Unit := do
 theorem relayDescriptor_exact_schema : validateRelayDescriptor relayDescriptorJson = .ok () := by
   native_decide
 
+theorem blackBoxDescriptor_exact_schema :
+    validateBlackBoxDescriptor blackBoxDescriptorJson = .ok () := by
+  native_decide
+
+theorem blackBox_table_is_the_kernel : blackBoxTableRefinesKernel = .ok () := by
+  native_decide
+
 theorem salvageDescriptor_exact_schema :
     validateSalvageDescriptor salvageDescriptorJson = .ok () := by
   native_decide
@@ -928,6 +1059,8 @@ theorem signalDescriptor_exact_schema :
 
 #assert_compiled relayDescriptor_exact_schema
 #assert_compiled salvageDescriptor_exact_schema
+#assert_compiled blackBoxDescriptor_exact_schema
+#assert_compiled blackBox_table_is_the_kernel
 #assert_compiled signalDescriptor_exact_schema
 
 def signalBudget : ContributionBudget :=
@@ -1423,6 +1556,28 @@ def canonicalPins (federationId sourceDigest contentRoot : Digest32) (digests : 
       , salvage.pin hashes.salvage
       , signal.pin hashes.signal ]
   | _ => []
+
+/-- ⚑ THE SIXTH ARTIFACT LANDMINE, DISARMED.
+
+`canonicalPins` matches a LITERAL five-element list and falls through to `[]`.
+So adding a sixth artifact — a fourth game — would not fail to compile; it would
+silently emit a manifest **pinning nothing**, and the first thing to notice would
+be a byte comparison somewhere downstream, if anything noticed at all.
+
+This theorem is the detector. It relates the pin list to the artifact list rather
+than to a literal `5`, so the moment `canonicalArtifacts` grows and the match
+falls through, `0 = 6` fails and the BUILD goes red at the site of the mistake.
+
+Do not "fix" a failure here by changing the expected length. Widen the match in
+`canonicalPins` so every artifact is pinned, then this closes again by itself. -/
+theorem canonicalPins_pins_every_canonical_artifact
+    (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)
+    (hashes : ArtifactHashes) :
+    (canonicalPins federationId sourceDigest contentRoot digests hashes).length
+      = (canonicalArtifacts federationId sourceDigest contentRoot digests).length := by
+  rfl
+
+#assert_axioms canonicalPins_pins_every_canonical_artifact
 
 def manifestFor (sourceDigestString : String)
     (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)

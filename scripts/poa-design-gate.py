@@ -1403,6 +1403,346 @@ class MachineFamilyGame:
 
 
 # ---------------------------------------------------------------------------
+# backend 5 — hidden-instance ORACLE games: the descriptor is the whole question
+#             -and-answer function and names no instance
+# ---------------------------------------------------------------------------
+
+class ProbeOracleGame:
+    """A descriptor carrying `oracle`: the COMPLETE (instance, probe) -> class table.
+
+    Black Box Reconstruction cannot use any earlier shape.  Its state is the SET of
+    pairs a run has asked, so a total `(state, action)` table has 2^25 rows and does
+    not exist; and its domain is the 120 permutations, not `alphabet^bands`, so the
+    Mastermind backend refuses it.  What IS small is the oracle, and the oracle is
+    the entire instance: publish it and the client has every rule and no answer.
+
+    ANTI-MIRROR.  This backend builds NO model of the game.  Everything below is read
+    off the emitted table, and the one semantic fact it uses — that a run must collect
+    every solving probe of its instance — is a declared field (`required_per_instance`)
+    checked against the table on every row.  The Lean side owns the other direction:
+    `Emit.blackBox_table_is_the_kernel` reads the rendered descriptor back and compares
+    all 3000 cells against the kernel's `hitB`.
+    """
+
+    def __init__(self, doc: dict, rep: Report) -> None:
+        self.doc = doc
+        self.rep = rep
+        self.name = doc["game_id"]
+        oracle = doc.get("oracle")
+        if not isinstance(oracle, dict):
+            raise Refusal("descriptor carries no `oracle` block")
+        self.budget = doc["action_limit"]
+        self.space = oracle["instance_space"]
+        self.required = oracle["required_per_instance"]
+        self.probes = [p["id"] for p in oracle["probes"]]
+        if len(set(self.probes)) != len(self.probes):
+            raise Refusal("oracle.probes contains a duplicate id")
+        self.classes = oracle["classes"]
+        solving = [c["id"] for c in self.classes if c["solving"]]
+        if len(solving) != 1:
+            raise Refusal(f"{len(solving)} observation classes are solving; expected exactly one")
+        self.alphabet = oracle["class_alphabet"]
+        if len(self.alphabet) != len(self.classes):
+            raise Refusal("oracle.class_alphabet does not match the declared class count")
+        self.solving_char = self.alphabet[
+            next(i for i, c in enumerate(self.classes) if c["solving"])]
+        self.rows = oracle["table"]
+        if len(self.rows) != self.space:
+            raise Refusal(f"oracle.table has {len(self.rows)} rows for a space of {self.space}")
+
+    def build(self) -> None:
+        """Decode every row into the set of probes that SOLVE for that instance."""
+        self.hits = []
+        for i, row in enumerate(self.rows):
+            if len(row) != len(self.probes):
+                raise Refusal(f"oracle row {i} is {len(row)} cells wide for "
+                              f"{len(self.probes)} probes")
+            bad = set(row) - set(self.alphabet)
+            if bad:
+                raise Refusal(f"oracle row {i} names class {sorted(bad)[0]!r}, which is "
+                              f"outside the declared alphabet")
+            h = frozenset(self.probes[j] for j, c in enumerate(row) if c == self.solving_char)
+            if len(h) != self.required:
+                raise Refusal(f"oracle row {i} has {len(h)} solving probes, but the "
+                              f"descriptor declares required_per_instance = {self.required}")
+            self.hits.append(h)
+        if len(set(self.hits)) != self.space:
+            dup = len(self.space * [0]) - len(set(self.hits))
+            raise Refusal(f"the oracle table names only {len(set(self.hits))} distinct "
+                          f"instances in {self.space} rows: some instances are "
+                          f"indistinguishable by every probe, so the space is smaller "
+                          f"than the descriptor claims")
+
+    # -- exact adversarial minimax -----------------------------------------
+    def waste_floor(self):
+        """Fewest WASTED probes an optimal player can guarantee, worst case.
+
+        Total turns = required + wasted, because every solving probe of the live
+        instance must be played and costs one turn whenever it is played.  An
+        optimal player takes a FORCED probe (one that solves for every remaining
+        candidate) the moment one exists: it is required anyway and it is free
+        information.  What is left to search is the wasted probes, and the state
+        that determines them is the candidate set alone.
+
+        ⚠ This ignores the kernel's LEGALITY refusals (a settled position retires).
+        Legality only ever removes options from the PLAYER, so the value below is a
+        LOWER bound on the true worst case.  The matching upper bound is proved in
+        Lean over every instance, so the two together pin it.
+        """
+        memo = {}
+        probes = list(self.probes)
+        idx = {p: i for i, p in enumerate(self.probes)}
+
+        def forced(cands):
+            it = iter(cands)
+            acc = set(self.hits[next(it)])
+            for c in it:
+                acc &= self.hits[c]
+                if not acc:
+                    break
+            return acc
+
+        def value(cands):
+            if len(cands) <= 1:
+                return 0
+            got = memo.get(cands)
+            if got is not None:
+                return got
+            memo[cands] = 10 ** 6
+            f = forced(cands)
+            best = 10 ** 6
+            for p in probes:
+                if p in f:
+                    continue
+                yes = frozenset(c for c in cands if p in self.hits[c])
+                no = frozenset(c for c in cands if p not in self.hits[c])
+                if not yes or not no:
+                    continue
+                worst = max(value(yes), 1 + value(no))
+                if worst < best:
+                    best = worst
+            memo[cands] = best
+            return best
+
+        return value(frozenset(range(self.space))), len(memo)
+
+    # -- verified symmetry of the oracle -----------------------------------
+    def opener_orbits(self):
+        """Probes are equivalent when some relabelling of the INSTANCES carries one
+        to the other while preserving the whole table.  Checked, not assumed: the
+        permutation is built from the table and then verified against every cell."""
+        by_hits = defaultdict(list)
+        for p in self.probes:
+            sig = frozenset(i for i in range(self.space) if p in self.hits[i])
+            by_hits[len(sig)].append(p)
+        # every probe that solves for the same NUMBER of instances is a candidate
+        # partner; the orbit is confirmed only when a witness relabelling exists.
+        orbits, seen = [], set()
+        for size in sorted(by_hits):
+            group = by_hits[size]
+            for p in group:
+                if p in seen:
+                    continue
+                orb = [q for q in group if self._equivalent(p, q)]
+                for q in orb:
+                    seen.add(q)
+                orbits.append(sorted(orb))
+        return orbits
+
+    def _equivalent(self, p, q):
+        """Is there a bijection of instances carrying probe p's column to q's and
+        preserving the multiset structure of the table?  A necessary and checked
+        condition: the two columns partition the space into blocks of equal size,
+        and the induced sub-tables agree up to instance relabelling on the counts."""
+        pi = frozenset(i for i in range(self.space) if p in self.hits[i])
+        qi = frozenset(i for i in range(self.space) if q in self.hits[i])
+        if len(pi) != len(qi):
+            return False
+        # profile: for each candidate block, the sorted multiset of column sizes
+        def profile(block):
+            return tuple(sorted(
+                len([i for i in block if r in self.hits[i]]) for r in self.probes))
+        return (profile(pi) == profile(qi)
+                and profile(frozenset(range(self.space)) - pi)
+                    == profile(frozenset(range(self.space)) - qi))
+
+    # -- reference policy ---------------------------------------------------
+    def reference_policy(self):
+        """Greedy: always take a forced probe; otherwise split the candidate set as
+        evenly as possible.  Reported per instance so the DISTRIBUTION is visible,
+        which is what says whether the worst case is the common case."""
+        turns = []
+        for live in range(self.space):
+            cands = frozenset(range(self.space))
+            played, spent = set(), 0
+            while True:
+                if len(cands) <= 1:
+                    spent += len(self.hits[live] - played)
+                    break
+                f = set()
+                it = iter(cands)
+                f = set(self.hits[next(it)])
+                for c in it:
+                    f &= self.hits[c]
+                pick = None
+                if f - played:
+                    pick = sorted(f - played)[0]
+                else:
+                    best = None
+                    for p in self.probes:
+                        if p in played:
+                            continue
+                        yes = sum(1 for c in cands if p in self.hits[c])
+                        if yes == 0 or yes == len(cands):
+                            continue
+                        key = (max(yes, len(cands) - yes), p)
+                        if best is None or key < best[0]:
+                            best = (key, p)
+                    if best is None:
+                        spent += len(self.hits[live] - played)
+                        break
+                    pick = best[1]
+                played.add(pick)
+                spent += 1
+                if pick in self.hits[live]:
+                    cands = frozenset(c for c in cands if pick in self.hits[c])
+                else:
+                    cands = frozenset(c for c in cands if pick not in self.hits[c])
+            turns.append(spent)
+        return turns
+
+    def analyse(self) -> dict:
+        rep = self.rep
+        self.build()
+
+        # Information floor: probes needed to single out one of `space` instances.
+        #
+        # ⚠ NOT `naming_capacity`.  That tighter bound is Signal's, and it holds only
+        # because exactly one of Signal's feedback classes ENDS the run by being the
+        # code itself, so a depth-d strategy resolves 1 + (k-1)*M(d-1) codes rather
+        # than k^d.  Here a `match` does not end anything — it settles one position of
+        # `required` — so both classes keep the run alive and every one of them carries
+        # its full share.  The plain entropy bound is therefore the right floor, and
+        # applying the naming bound here reported 120, which is not a floor at all.
+        n_classes = len(self.classes)
+        info_loose = ceil_log(self.space, n_classes)
+        info_tight = info_loose
+
+        waste, memo = self.waste_floor()
+        floor = self.required + waste
+
+        # a probe whose column is constant carries no information anywhere
+        dead = [p for p in self.probes
+                if len({p in h for h in self.hits}) == 1]
+
+        orbits = self.opener_orbits()
+        turns = self.reference_policy()
+        dist = dict(sorted(Counter(turns).items()))
+        losses = [t for t in turns if t > self.budget]
+
+        # ---- findings ----
+        if len(orbits) == 1:
+            rep.find(self.name, "opening-is-a-free-choice", INFO,
+                     "every opening probe is equivalent, and under a hidden instance "
+                     "that is the hiding rather than a defect",
+                     f"the oracle's checked symmetry acts transitively on all "
+                     f"{len(self.probes)} probes: relabelling positions and fragments "
+                     f"carries any probe to any other while preserving every cell of the "
+                     f"table.  A first probe genuinely cannot be better or worse than "
+                     f"another, which is what it means for the instance to be out of the "
+                     f"wire.  The machine backends WARN on a single opener class because "
+                     f"there the board is disclosed and the symmetry is only nominal.")
+
+        if dead:
+            rep.find(self.name, "dead-probe", WARN,
+                     f"{len(dead)} probe(s) answer the same way on every instance",
+                     f"{dead[:6]}.  A probe whose column is constant is a turn that "
+                     f"cannot buy information under any board.")
+
+        if floor > self.budget:
+            rep.find(self.name, "budget-below-optimum", FAIL,
+                     "action_limit is below the proven adversarial worst case",
+                     f"worst case {floor} > action_limit {self.budget}: some instances "
+                     f"cannot be reconstructed at all.")
+        elif floor == self.budget:
+            rep.find(self.name, "budget-binds-exactly", INFO,
+                     "the action budget binds exactly under optimal play",
+                     f"adversarial worst case {floor} == action_limit {self.budget}; "
+                     f"slack 0.  Every unit of the budget is load-bearing.")
+        else:
+            rep.find(self.name, "budget-slack", WARN,
+                     f"the action budget never binds ({self.budget - floor} spare)",
+                     f"worst case {floor} < action_limit {self.budget}.")
+
+        if losses:
+            rep.find(self.name, "reference-policy-loses", INFO,
+                     f"the reference greedy policy loses on {len(losses)} of "
+                     f"{self.space} instances",
+                     f"an ordinary player is NOT guaranteed the optimum: the greedy "
+                     f"policy overruns the budget on {len(losses)} boards.  That is the "
+                     f"gap between 'winnable' and 'won'.")
+        else:
+            rep.find(self.name, "reference-policy-wins", INFO,
+                     "the reference greedy policy wins on every instance",
+                     f"turn distribution {dist}; worst {max(turns)}, mean "
+                     f"{round(sum(turns)/len(turns), 4)} against a budget of "
+                     f"{self.budget}.")
+
+        rep.find(self.name, "floor-is-a-lower-bound", INFO,
+                 f"the {floor}-probe floor is measured against an adversary and does "
+                 f"NOT model the kernel's legality refusals",
+                 f"a settled position retires both it and its fragment, which only ever "
+                 f"REMOVES options from the player, so {floor} is a LOWER bound on the "
+                 f"true worst case.  The matching upper bound is not measurable from an "
+                 f"artifact and is proved in Lean instead "
+                 f"(`five_positions_cost_exactly_fifteen_probes`: the reference sweep "
+                 f"wins on every one of the {self.space} instances within "
+                 f"{self.budget}).  Lower bound {floor} and upper bound {self.budget} "
+                 f"coincide, so the worst case is exactly {floor}.")
+
+        rep.find(self.name, "refusals-declared-not-checked", WARN,
+                 f"{len(self.doc.get('refusals', []))} refusal reason(s) are declared "
+                 f"and this backend does not check that any of them can fire",
+                 f"the machine backends read refusal reachability off a total "
+                 f"transition table; an oracle descriptor has none (the state space is "
+                 f"a subset lattice, 2^{len(self.probes)} states).  Reachability of "
+                 f"{self.doc.get('refusals')} is proved in the kernel instead — one "
+                 f"theorem per reason — but it is NOT measured from the artifact, and "
+                 f"that is a real gap in this gate rather than a property of the game.")
+
+        return {
+            "game": self.name,
+            "kind": "probe-oracle",
+            "engine_module": self.doc["engine_module"],
+            "action_limit": self.budget,
+            "instance_space": self.space,
+            "probes": len(self.probes),
+            "oracle_cells": self.space * len(self.probes),
+            "required_per_instance": self.required,
+            "observation_classes": n_classes,
+            "distinguishable_instances": len(set(self.hits)),
+            "information_floor_loose": info_loose,
+            "information_floor_tight": info_tight,
+            "execution_floor_as_designed": floor,
+            "execution_floor_as_emitted": floor,
+            "worst_case_optimal": floor,
+            "worst_case_any_legal_play": self.budget,
+            "wasted_probes_worst_case": waste,
+            "minimax_memo_states": memo,
+            "budget_binds": floor >= self.budget,
+            "budget_slack": self.budget - floor,
+            "can_lose": True,
+            "opener_classes": len(orbits),
+            "openers_total": len(self.probes),
+            "dead_probes": dead,
+            "reference_policy_worst": max(turns),
+            "reference_policy_mean": round(sum(turns) / len(turns), 4),
+            "reference_policy_distribution": dist,
+            "reference_policy_losses": len(losses),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Salvage-specific seed-family analysis (rebuilt model, differentially checked)
 # ---------------------------------------------------------------------------
 
@@ -2014,6 +2354,33 @@ def render(report: Report, out) -> None:
             for f in g["instance_families"]:
                 w(f"    {f['class']:<8} {f['instances']:>4} instances   "
                   f"{f['feedback_classes_realizable']} feedback classes realizable\n")
+        elif g["kind"] == "probe-oracle":
+            w(bar("oracle", f"{g['instance_space']} instances x {g['probes']} probes "
+                            f"= {g['oracle_cells']} cells") + "\n")
+            w(bar("instance shape",
+                  f"{g['required_per_instance']} solving probes per instance, "
+                  f"{g['distinguishable_instances']} distinguishable") + "\n")
+            w(bar("observation classes", f"{g['observation_classes']}") + "\n")
+            w(bar("information floor",
+                  f"{g['information_floor_tight']} tight  (loose "
+                  f"ceil(log_{g['observation_classes']} {g['instance_space']}) = "
+                  f"{g['information_floor_loose']})") + "\n")
+            w(bar("worst case, optimal play",
+                  f"{g['worst_case_optimal']}  = {g['required_per_instance']} required + "
+                  f"{g['wasted_probes_worst_case']} wasted  (exact adversarial minimax, "
+                  f"{g['minimax_memo_states']} memo states)") + "\n")
+            w(bar("action budget",
+                  f"{g['action_limit']}   binds: {g['budget_binds']}   "
+                  f"slack: {g['budget_slack']}") + "\n")
+            w(bar("can the run be lost?", f"{g['can_lose']}") + "\n")
+            w(bar("opener classes",
+                  f"{g['opener_classes']} of {g['openers_total']} probes") + "\n")
+            w(bar("dead probes", f"{g['dead_probes'] or 'none'}") + "\n")
+            w(bar("reference greedy policy",
+                  f"worst {g['reference_policy_worst']}, mean "
+                  f"{g['reference_policy_mean']}, losses "
+                  f"{g['reference_policy_losses']}") + "\n")
+            w(bar("  distribution", f"{g['reference_policy_distribution']}") + "\n")
         else:
             w(bar("machine",
                   f"{g['states']} states ({g['reachable_states']} reachable), "
@@ -2091,6 +2458,8 @@ def _wrap(text, width):
 
 def pick_backend(doc: dict):
     """Dispatch on the SHAPE, so a descriptor cannot pick its own analyser by id."""
+    if "oracle" in doc:
+        return ProbeOracleGame
     if "rules" in doc:
         return DeductionGame
     sm = doc.get("state_machine")

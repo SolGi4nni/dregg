@@ -57,6 +57,7 @@ def emitDescriptors (dir : System.FilePath) : IO Unit := do
   writeAtomic (dir / "games" / "relay-repair.json") relayDescriptorJson
   writeAtomic (dir / "games" / "salvage-lock.json") salvageDescriptorJson
   writeAtomic (dir / "games" / "signal-triangulation.json") signalDescriptorJson
+  writeAtomic (dir / "games" / "black-box-reconstruction.json") blackBoxDescriptorJson
 
 def requiredGameDigests : IO GameContentDigests := do
   pure {
