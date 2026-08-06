@@ -325,7 +325,10 @@ pub fn export(inp: StepTapeInputs<'_>) -> StepTapeOut {
     assert_ne!(b_gamma, gamma, "bending w_comm[0].x left gamma fixed");
     assert_ne!(b_alpha, alpha_chal, "bending w_comm[0].x left alpha' fixed");
     assert_ne!(b_zeta, zeta_chal, "bending w_comm[0].x left zeta' fixed");
-    assert_ne!(b_digest, digest, "bending w_comm[0].x left the digest fixed");
+    assert_ne!(
+        b_digest, digest,
+        "bending w_comm[0].x left the digest fixed"
+    );
     println!(
         "[RED + ] bending tape word {bent_idx} (w_comm[0].x, an Fq coordinate of the STEP proof) \
          moves beta, gamma, alpha', zeta' AND the digest"
@@ -368,7 +371,10 @@ pub fn export(inp: StepTapeInputs<'_>) -> StepTapeOut {
     unread_tape.extend_from_slice(&pubcomm_xy);
     unread_tape.extend_from_slice(&u_wcomm);
     assert_eq!(u_wcomm, wcomm_xy, "the unread bend changed w_comm");
-    assert_eq!(unread_tape, tape, "the unread bend changed the phase-1 tape");
+    assert_eq!(
+        unread_tape, tape,
+        "the unread bend changed the phase-1 tape"
+    );
     assert_ne!(unread_proof.proof.z1, z1);
     assert_ne!(unread_proof.proof.z2, z2);
     assert_ne!(unread_proof.ft_eval1, ft_eval1);
