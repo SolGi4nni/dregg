@@ -80,9 +80,18 @@ export type VkNotion = {
    *  from a `valuePath` that names a file NOTHING WRITES. The author of this
    *  registry got that wrong on the first pass (the shrink pins land in
    *  `.fullchain/uniform-claim-shrink/`, not `.fullchain/`), and only noticed by
-   *  reading the producer. So the gate reads it too: the source must exist and
-   *  must mention the artifact it is credited with writing. Two independent
-   *  places, which is the difference between a gate and a decoration.
+   *  reading the producer. So the gate reads it too — leg [1b] of
+   *  `vk-identity-gate.ts`.
+   *
+   *  ⚠ AND IT CHECKS EXISTENCE, NOT AUTHORSHIP. This docblock read "the source must
+   *  exist and must mention the artifact it is credited with writing", which the
+   *  gate has never done and which the paragraph below says is not obtainable
+   *  anyway: both key rings are written through a TEMPLATE and the shrink pins
+   *  through a composed directory, so there is no literal to compare. Corrected
+   *  2026-08-06 rather than left standing — a docblock that describes a check the
+   *  code does not run is the same sin as a name that describes a proof that is not
+   *  there, and it is worse here because it reads like the second independent
+   *  source that would make this a gate.
    *
    *  `null` when NOTHING IN THE TREE WRITES `valuePath` — which is a real state
    *  and worth printing rather than papering over: `devnet-foreign-vk-
