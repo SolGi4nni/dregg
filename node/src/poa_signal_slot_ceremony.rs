@@ -218,7 +218,26 @@ pub fn initialize_poa_signal_slot(
     );
     let envelope = SignedPoaSlotOpeningEnvelopeV1::new(statement, curator_key, signature);
 
-    let store = PersistentStore::open(&args.data_dir)
+    // ⚠ `data_dir` is a DIRECTORY; the store is the `dregg.redb` inside it. This
+    // read `PersistentStore::open(&args.data_dir)` — handing redb the directory —
+    // and `Database::create` on a directory fails with "Is a directory", so
+    // `init-poa-signal-slot` COULD NOT INSTALL A SLOT AT ALL. Step 3 of the
+    // three-step ceremony had never run, which is the whole reason no Signal slot
+    // was ever open and every scored run refused.
+    //
+    // It survived because nothing exercised it against a real data directory: the
+    // module's tests covered secret parsing, the statement encoding and the
+    // absent-export refusal, all of which stop before the store. And the failure
+    // mode was worse than an error — pointed at a path that does not exist,
+    // `Database::create` CREATES a fresh empty redb there and the install then
+    // refuses with "PoA curator pin is not installed", a plausible operator
+    // diagnosis against a phantom store that is not the node's.
+    //
+    // `poa_signal_genesis` and `poa_galley_genesis` both join `dregg.redb`; this is
+    // now the same path expression. `the_install_writes_into_the_data_dir_s_own_store`
+    // reopens `dregg.redb` afterwards and fails unless the slot landed in the store
+    // the node actually runs on.
+    let store = PersistentStore::open(&args.data_dir.join("dregg.redb"))
         .map_err(|error| format!("cannot open the PoA node store: {error}"))?;
     let status = store
         .install_poa_signal_slot_v1(&envelope, secret)
@@ -376,6 +395,106 @@ mod tests {
                 "44".repeat(32),
                 "bc".repeat(32)
             )
+        );
+    }
+
+    /// The whole of step 3, against a real data directory: preview the commitment
+    /// through Lean, mint a curator signature over the preview's exact statement
+    /// bytes, write the envelope document an operator would hand over, install it,
+    /// and then REOPEN `dregg.redb` and find the slot there.
+    ///
+    /// ⚠ The reopen is the point. `initialize_poa_signal_slot` used to hand redb
+    /// the data DIRECTORY, which cannot be opened, so this command had never once
+    /// installed anything. A test that only asserted `Ok(Installed)` would not have
+    /// caught the near-miss either: pointed at a path that does not exist, redb
+    /// happily creates a store, and an install into a phantom file looks identical
+    /// from the return value. Reopening the store the NODE runs on is what
+    /// distinguishes them.
+    ///
+    /// ⚠ PANICS without the linked Lean archive rather than skipping — the
+    /// commitment here is derived, not asserted.
+    #[test]
+    fn the_install_writes_into_the_data_dir_s_own_store() {
+        use dregg_persist::PoaSlotInstallStatusV1;
+        use ed25519_dalek::{Signer as _, SigningKey};
+
+        assert!(
+            dregg_lean_ffi::poa_slot_derive_ffi::poa_slot_derive_available(),
+            "step 3 cannot be exercised without the linked Lean slot-derivation export"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("node-0");
+        fs::create_dir_all(&data_dir).unwrap();
+        let database = data_dir.join("dregg.redb");
+
+        let curator = SigningKey::from_bytes(&[0x3c; 32]);
+        {
+            let store = PersistentStore::open(&database).unwrap();
+            store
+                .install_poa_world_curator_pin_v1(curator.verifying_key().to_bytes())
+                .unwrap();
+        }
+
+        let authority = [0xa4u8; 32];
+        let secret = [0x5cu8; 32];
+        let secret_file = dir.path().join("slot.secret");
+        fs::write(&secret_file, hex(&secret)).unwrap();
+
+        let commitment = derive_commitment(secret, 1).expect("Lean derives the commitment");
+        let statement = PoaSlotOpeningStatementV1::new(authority, 1, 1, commitment);
+        let signature = curator.sign(&statement.signing_message().unwrap());
+        let envelope_path = dir.path().join("slot-opening.json");
+        fs::write(
+            &envelope_path,
+            serde_json::to_vec_pretty(&EnvelopeDocument {
+                schema: ENVELOPE_SCHEMA.to_owned(),
+                statement: StatementDocument {
+                    schema: dregg_persist::POA_SLOT_OPENING_STATEMENT_SCHEMA_V1.to_owned(),
+                    authority_id: hex(&authority),
+                    mission_id: 1,
+                    slot: 1,
+                    commitment: hex(&commitment),
+                },
+                curator_key: hex(&curator.verifying_key().to_bytes()),
+                signature: hex(&signature.to_bytes()),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let args = PoaSlotOpeningArgs {
+            data_dir: data_dir.clone(),
+            authority_id: hex(&authority),
+            mission_id: 1,
+            slot: 1,
+            secret_file,
+        };
+        let report = initialize_poa_signal_slot(&args, &envelope_path)
+            .expect("a curator-signed opening whose secret opens it must install");
+        assert_eq!(report.status, PoaSlotInstallStatusV1::Installed);
+        assert_eq!(report.commitment, hex(&commitment));
+
+        // The store the node runs on — not one this command may have created
+        // beside it. Scoped, because redb is single-writer and the retry below is
+        // a second open of the same file: exactly the constraint that makes this an
+        // OFFLINE ceremony against a stopped node.
+        {
+            let reopened = PersistentStore::open(&database).unwrap();
+            let open = reopened
+                .load_poa_signal_open_slot_v1(authority)
+                .unwrap()
+                .expect("the installed slot must be readable from the node's own store");
+            assert_eq!(open.slot(), 1);
+            assert_eq!(open.commitment(), commitment);
+            assert_eq!(open.secret(), secret);
+        }
+
+        // Re-running a ceremony is not an error; substituting one is.
+        assert_eq!(
+            initialize_poa_signal_slot(&args, &envelope_path)
+                .unwrap()
+                .status,
+            PoaSlotInstallStatusV1::AlreadyInstalled
         );
     }
 
