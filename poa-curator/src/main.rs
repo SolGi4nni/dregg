@@ -22,6 +22,8 @@ usage:
   poa-curator preview-epoch --manifest PATH --deployment PATH [--pin PATH --signature PATH --epoch N --counter N]
   poa-curator sign-companion --secret PATH --pin PATH --manifest PATH --deployment PATH --content-signature PATH --content-epoch N --content-counter N --draft PATH --output PATH
   poa-curator verify-companion --pin PATH --manifest PATH --deployment PATH --content-signature PATH --content-epoch N --content-counter N --input PATH
+  poa-curator sign-world-activation --secret PATH --pin PATH --preview PATH --output PATH
+  poa-curator verify-world-activation --pin PATH --envelope PATH
   poa-curator signal-replay --bundle PATH
   poa-curator signal-review --bundle PATH
   poa-curator promotion-inbox --bundle PATH --manifest PATH --deployment PATH --pin PATH --signature PATH --epoch N --counter N
@@ -37,6 +39,15 @@ flags are supplied and verify against the exact bundle and deployment.
 after the same curator key, POAG1 bytes, content epoch and PoA deployment have
 all been verified. It refuses to overwrite its output. `verify-companion`
 repeats the complete ceremony without reading a secret key.
+
+`sign-world-activation` signs the `signing_message` of a
+POA-WORLD-ACTIVATION-PREVIEW-V1 emitted by `dregg-node
+poa-galley-world-preview`. It does NOT trust the preview's printed message: it
+re-derives the canonical statement bytes from the preview's structured fields
+and refuses if the two disagree, so a curator cannot sign bytes nobody
+re-derived. It also refuses a secret that does not derive the pin, a preview
+addressed to another curator, and any statement the store would refuse to
+install. `verify-world-activation` repeats the check without a secret key.
 
 `signal-replay` is read-only. It checks a caller-supplied sealed wire chain,
 reruns every transition through native Lean, and prints one machine-readable
@@ -75,11 +86,64 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         "preview-epoch" => command_preview_epoch(&flags),
         "sign-companion" => command_sign_companion(&flags),
         "verify-companion" => command_verify_companion(&flags),
+        "sign-world-activation" => command_sign_world_activation(&flags),
+        "verify-world-activation" => command_verify_world_activation(&flags),
         "signal-replay" => command_signal_replay(&flags),
         "signal-review" => command_signal_review(&flags),
         "promotion-inbox" => command_promotion_inbox(&flags),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
+}
+
+fn command_sign_world_activation(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(flags, &["secret", "pin", "preview", "output"], &[])?;
+    let secret_path = flag_path(flags, "secret")?;
+    let pin_path = flag_path(flags, "pin")?;
+    let preview_path = flag_path(flags, "preview")?;
+    let output = flag_path(flags, "output")?;
+
+    let secret = load_secret_key(&secret_path)?;
+    let pin = CuratorKeyPin::load(&pin_path).map_err(|error| error.to_string())?;
+    let pin_key = pin.public_key().map_err(|error| error.to_string())?;
+    let preview =
+        poa_curator::world_activation::load_preview(&preview_path).map_err(|e| e.to_string())?;
+    let signed = poa_curator::world_activation::sign_world_activation(&secret, &pin_key, &preview)
+        .map_err(|error| error.to_string())?;
+    // Verify the emitted document the way an operator would, before it exists on
+    // disk: a envelope this tool cannot check is one the node discovers at install.
+    poa_curator::world_activation::verify_world_activation(&pin_key, &signed.envelope)
+        .map_err(|error| format!("self-verification failed: {error}"))?;
+
+    let mut bytes = serde_json::to_vec_pretty(&signed.envelope).map_err(|e| e.to_string())?;
+    bytes.push(b'\n');
+    atomic_write_new(&output, &bytes, 0o644)?;
+    println!(
+        "signed world activation counter {} ({}): {}",
+        signed.envelope.counter,
+        signed.envelope.kind,
+        output.display()
+    );
+    println!("  signing_message_sha256 {}", signed.signing_message_sha256);
+    Ok(())
+}
+
+fn command_verify_world_activation(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(flags, &["pin", "envelope"], &[])?;
+    let pin_path = flag_path(flags, "pin")?;
+    let envelope_path = flag_path(flags, "envelope")?;
+
+    let pin = CuratorKeyPin::load(&pin_path).map_err(|error| error.to_string())?;
+    let pin_key = pin.public_key().map_err(|error| error.to_string())?;
+    let envelope =
+        poa_curator::world_activation::load_envelope(&envelope_path).map_err(|e| e.to_string())?;
+    let sha = poa_curator::world_activation::verify_world_activation(&pin_key, &envelope)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "world activation counter {} ({}) verifies against the pin",
+        envelope.counter, envelope.kind
+    );
+    println!("  signing_message_sha256 {sha}");
+    Ok(())
 }
 
 fn command_sign_companion(flags: &BTreeMap<String, String>) -> Result<(), String> {

@@ -9,6 +9,7 @@
 pub mod authority_export;
 pub mod companion;
 pub mod signal_replay;
+pub mod world_activation;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
@@ -1214,13 +1215,37 @@ impl DeploymentBoundBundle<'_> {
                             "mission {mission_id} descriptor security is not an object"
                         ))
                     })?;
+                    // ⚠ `target_visibility` is GONE. It described how visible the
+                    // published ANSWER was, back when there was a published answer;
+                    // the descriptor now declares how visible the per-run INSTANCE
+                    // is. The key set is pinned exactly so a stale descriptor
+                    // refuses instead of being read as a hidden-instance one.
+                    require_exact_object_keys(
+                        security,
+                        &[
+                            "classification",
+                            "instance_visibility",
+                            "competitive_rewards",
+                            "economic_rewards",
+                        ],
+                        "mission descriptor security",
+                    )
+                    .map_err(CuratorError::Catalog)?;
+                    if security.get("classification").and_then(Value::as_str)
+                        != Some("committed-hidden-instance")
+                    {
+                        return Err(CuratorError::Catalog(format!(
+                            "mission {mission_id} descriptor is not classified as a committed \
+                             hidden instance"
+                        )));
+                    }
                     let visibility = security
-                        .get("target_visibility")
+                        .get("instance_visibility")
                         .and_then(Value::as_str)
                         .filter(|value| !value.is_empty())
                         .ok_or_else(|| {
                             CuratorError::Catalog(format!(
-                                "mission {mission_id} descriptor security lacks target_visibility"
+                                "mission {mission_id} descriptor security lacks instance_visibility"
                             ))
                         })?;
                     Some(visibility.to_owned())
