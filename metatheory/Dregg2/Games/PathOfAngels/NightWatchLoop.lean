@@ -16,6 +16,40 @@ ledger, and recovery requires a strictly later finalized day.
 This is beta gameplay only.  The three portable relic candidates remain quarantined
 and non-market.  The environmental witness thread is evidence, never custody.
 Holder status and token balance do not occur in the state or transition vocabulary.
+
+## ⚑ STATUS 2026-08-05 — this is NOT the shipped night watch, and it is unreachable
+
+There are two Path-of-Angels state machines with "Night Watch" in the name.  They
+share **no type, no relation and no theorem** — only the name.
+
+* **`NightWatchCampaign`** is the one that SHIPS: officers, stations, authored
+  tasks, hazard, resources, evidence, wounds, mastery.  It has a canonical JSON
+  boundary (`NightWatchCampaignWire`), an `@[export]`, and a proved four-command
+  watch (`NightWatchCampaignExamples`).
+* **This module** is a different game for the same fiction: rotations, a commons
+  serving economy, encounters, routes, extraction terminals, debriefs, recovery.
+
+**Nothing here can be reached from outside this file.**  `Policy` is `private mk ::`
+and requires a `ContentMembershipAdmission`, which is also `private mk ::` and whose
+only construction site in the entire repository is `fixturePolicy` below.  So
+`initialState` — the sole public producer of a `State` — has no callable argument,
+and every theorem in `NightWatchLoopWire` about `preparePublic` quantifies over a
+type no importer can instantiate.  `NightWatchLoopExamples` says so in its own
+docblock.  The sealing is deliberate; the consequence that no player can reach any
+of this is the unpaid bill.
+
+**But the content is NOT dead, and that is measured, not assumed.**  The analyses
+below enumerate 741 reachable states in 13 layers, proved *closed* under one
+`execute` step of the whole `choose`/`extract` alphabet — not depth-capped.  All 21
+authored choices are live and all 11 terminals reachable.  What is inert is three
+of the four budgets.
+
+So the disposition is a real decision, not a cleanup: either this gets an
+authenticated admission producer (the `ActivatedContent.authorizeEmbeddedGalleyPolicyForWorld?`
+shape, which is what makes Galley's policy reachable) or it is deleted.  It should
+not simply sit here unreachable — a second kernel nobody can enter is exactly the
+shape that cost the Galley 5,111 lines.  Whichever way it goes, this docblock is
+the record that it was chosen and not forgotten.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.CrewRelayExpedition

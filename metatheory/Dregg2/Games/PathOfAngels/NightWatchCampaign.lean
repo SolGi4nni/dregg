@@ -11,6 +11,34 @@ an `EventBatch.FinalizedTurnCoordinate`, event digest, batch digest, and durable
 append receipt.  The existing EventBatch authority must supply those later.
 Holder presentation is accepted only as UI metadata and is erased before the
 semantic command; it cannot affect score, resources, safety, mastery, or canon.
+
+## ⚑ STATUS 2026-08-05 — this is the shipped night watch
+
+Two Path-of-Angels state machines carry "Night Watch" in the name and share **no
+type, no relation and no theorem**.  `NightWatchLoop` (4,400 lines: rotations, a
+commons serving economy, encounters, routes, extraction terminals) is a different
+game for the same fiction, and it is unreachable by construction — its `Policy`
+needs a `ContentMembershipAdmission` that has no public producer.  See its docblock
+for the disposition question.
+
+**This module is the one connected to a player**, and it was chosen for exactly one
+reason: it is publicly constructible.  `activate?` is a public smart constructor
+over a plain `RawConfig`, so a host can build a `Config` without anyone widening an
+authority boundary.  Its boundary is `NightWatchCampaignWire` (canonical JSON +
+`@[export dregg_poa_night_watch_campaign_judge]`) and its proof that the kernel
+actually runs is `NightWatchCampaignExamples`.
+
+⚠ **Two things that are true today and should not surprise a reader.**
+
+1. `hazardAt` is fully deterministic and public — `hazardCycle.getD (shift % len) 0`
+   with `success := riskThreshold ≤ roll`.  There is no hidden state and no
+   randomness, so a player who can read the config can compute every future roll.
+   Shipping a config as a public curator-signed manifest component would therefore
+   publish the whole solution, which is the wound `HiddenInstance.lean` exists to
+   close.  That question is open; do not emit a config component until it is settled.
+2. The judge takes its config from the caller's bytes and checks only that it is
+   STRUCTURALLY valid, never that it is AUTHENTIC.  The host must supply the config
+   from its own authenticated state.  See the wire's docblock.
 -/
 import Dregg2.Games.PathOfAngels.ShipLifeProgression
 import Dregg2.Games.PathOfAngels.OfficerLogbook
