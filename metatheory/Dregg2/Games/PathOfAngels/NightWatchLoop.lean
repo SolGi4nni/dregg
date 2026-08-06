@@ -1879,8 +1879,9 @@ deliberately no second cost model, because `ChoiceDelta` is NOT a sufficient
 statistic for a choice and an analysis over the delta rows alone calls two live
 actions dead:
 
-* `misventRelief` ⟨1,1,1,0,∅,false⟩ is worse than `replaySharedIntervals`
-  ⟨1,1,0,1,{artifact},false⟩ on every cost axis, and is the only choice that does
+* `misventRelief` ⟨1,1,1,0,∅,false⟩ is dominated by `replaySharedIntervals`
+  ⟨1,1,0,1,{artifact},false⟩ — no better on any axis, strictly worse in supply and
+  in clue intel, and it takes no artifact — yet it is the only choice that does
   not advance `encounterIndex` (`plannedPayloads?`).  It is a retry, not a move —
   and it is the ONE place any budget in this module ever bites.
 * `ignoreMovingClearance` ties `markMovingClearance` on all four costs and on
