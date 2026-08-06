@@ -139,7 +139,7 @@ pub(super) async fn tool_grant_capability(params: &Value, state: &NodeState) -> 
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
@@ -267,7 +267,7 @@ pub(super) async fn tool_revoke_capability(params: &Value, state: &NodeState) ->
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
@@ -429,7 +429,7 @@ pub(super) async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolR
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
@@ -790,7 +790,7 @@ pub(super) async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) 
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
@@ -1207,7 +1207,7 @@ pub(super) async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {

@@ -275,7 +275,7 @@ pub(super) async fn tool_create_cell_from_factory_effect(
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     let new_cell_id = dregg_cell::CellId::derive_raw(&owner_pubkey, &token_id);
     let new_cell_hex = hex_encode(&new_cell_id.0);
@@ -379,6 +379,13 @@ pub(super) async fn run_starbridge_action(
     // signature placed by the starbridge-apps builder).
     let signed_action = s.cclerk.sign_action(action, &federation_id);
 
+    // ⚑ Open the application window BEFORE the two stub inserts below, not at
+    // the `mcp_execute` call: those writes are part of this turn's attempt, and
+    // if the turn is refused they are RAM-only cells no other node holds. There
+    // is deliberately no `return` between here and the execute (see
+    // `mcp_begin_turn`'s contract).
+    mcp_begin_turn(&mut s);
+
     // Make sure the action's target cell exists in the ledger.
     let target = signed_action.target;
     // (The returned pre-state tuple fed the retired v1 attestation and nothing else;
@@ -445,7 +452,7 @@ pub(super) async fn run_starbridge_action(
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {

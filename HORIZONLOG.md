@@ -1,5 +1,113 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 6 (WHAT A REFUSAL COSTS) — the MCP tools were the last callers keeping a refused turn's fee, and what kept it alive is that it was argued as **fee POLICY**: the charge reached **live node RAM and NOTHING else**, on a surface whose cipherclerk is unlocked *because there is no remote attacker*. **Measured: RAM `(9 500 000, 1)` against a durable image reading `(10 000 000, 0)`.**
+
+### Reachability first, because an unreachable charge is a finding and not a wound
+
+`pub mod mcp;` carries no `cfg`. `Command::Mcp { data_dir, federation_peers } => run_mcp(..)`
+(`node/src/lib.rs:1394`) is an ordinary subcommand of the default `dregg-node` binary. MCP is
+**stdio-only** — nothing in `api.rs` routes to it, and `dregg_node::mcp` has no consumer outside the
+crate but one test. So this is NOT the pg-drainer's `#![cfg(feature = "pg-mirror-live")]` shape. It
+ships, and it opens the same data dir `dregg-node init` writes.
+
+### The measurement
+
+`TurnExecutor::execute`'s PHASE 1 (fee debit + nonce tick) is outside the effect journal by design,
+so a `Rejected` return hands the caller a debited, nonce-bumped ledger and **undoing it is the
+caller's job**. Three ingresses already did it: `execute_finalized_turn` discards its isolated
+`exec_ledger` candidate, `stage_signed_turn_admission` (`/turns/submit`) calls
+`rollback_restore_point()` unconditionally, and `/turns/submit-encrypted` was repaired the same day
+(`bc002ae85`).
+
+The mutating `node/src/mcp/handlers_*` sites did not. **The standing note said ten. There are
+TWELVE, and two are not the shape the note described:**
+
+- ten bare `executor.execute(&turn, &mut s.ledger)`;
+- `tool_submit_turn`'s `execute_via_producer`;
+- ⚑ `run_starbridge_action`'s two `ensure_cell_in_ledger` **stub inserts**, which land ~60 lines
+  BEFORE the execute and were unguarded outright — a refusal left cells no other node holds;
+- ⚑ `tool_fulfill_intent`'s verified settle edge, whose payer and recipient write-backs are two
+  separate `update_with` calls (`intent/src/fulfillment.rs`, step 5). An `Err` between them left the
+  payer **debited and the recipient uncredited** — the fee wound's shape with value destroyed
+  instead of a fee.
+
+### Why it was never a fee question
+
+- **The charge reaches nothing durable.** `node/src/mcp` writes **no `CommitRecord`** — only
+  `blocklace_sync`'s finalized path does — and never calls `checkpoint_ledger`:
+  `NodeState::persist_on_shutdown` has exactly one caller, `lib.rs:2798`, inside `run_node`, and
+  `NodeState` has no `Drop`. So the debit lived in live node RAM and in nothing else. It survives
+  until the process exits and then vanishes, while a peer that did not restart keeps it, and
+  `canonical_ledger_root` hashes the whole cell — the attested-root split
+  `blocklace_sync.rs:7571-7586` and `:10229` argue out in so many words.
+- **The DoS reading does not rescue it.** `run_mcp` force-unlocks the cipherclerk *because* "MCP
+  stdio mode runs as a single-user CLI — no remote attacker scenario applies" (`lib.rs:2887`), and
+  the debited cell is the node operator's own. Charging the operator to slow the operator is not a
+  defence.
+
+So of the two answers the question admits — *make the charge reach durable state the way every other
+node's does*, or *refuse before phase 1* — only the second exists here, and it is what every other
+ingress already does.
+
+### What landed
+
+ONE gate in `node/src/mcp/mod.rs` — `mcp_execute`, `mcp_execute_via_producer`, and
+`mcp_apply_to_ledger` for the one mutating path that is not a `Turn` — arms a restore point,
+executes, and commits-or-rolls-back (`settle_mcp_turn`; the non-`Committed` non-`Rejected` arms roll
+back too, since every caller renders them as a refusal). `mcp_begin_turn` opens the window early for
+the one handler with pre-execution writes, and the arm is idempotent (`has_restore_point()`) so the
+gate reuses that journal instead of discarding it.
+
+**Nothing re-emits.** No wire format, no schema (still epoch 23), no VK, no descriptor, no
+re-genesis: this deletes a mutation that never reached a durable artifact.
+
+### The exhibit — RED first, on a scratch copy, never the shared tree
+
+`node/src/mcp/refused_turn_is_free_e2e.rs` drives real tools through `dispatch_tool` and compares
+live RAM against the **two sources `NodeState::new` composes at boot** — the durable ledger
+checkpoint and `cell_overlay_since` above it. One path against its own durable image, not two code
+paths against each other. The overlay is asserted **empty**, and that emptiness is half the finding.
+
+With `settle_mcp_turn` reverted to the pre-fix behaviour (keep the mutation on every arm) **in a
+scratch clone at HEAD**, both exhibits go red with the divergence printed:
+
+```
+a_refused_mcp_submit_turn…  left: (9500000, 1)   right: (10000000, 0)   # fee 500_000 + nonce tick
+a_refused_mcp_grant…        left: (9990000, 1)   right: (10000000, 0)   # the hardcoded fee 10_000
+Summary [10.614s] 4 tests run: 2 passed, 2 failed, 708 skipped
+```
+
+and green at the fix, `6 tests run: 6 passed, 706 skipped` (persvati `fnsp-v3-state`,
+`pbuild: VERDICT outcome=PASS`). `an_accepted_mcp_turn_still_charges_and_still_commits` passes in
+BOTH runs, which is what stops a blanket rollback from passing by deleting the feature.
+
+### ⚠ WHAT IS NOT CLOSED, and it is the larger half
+
+A **committed** MCP turn is still an application no other node performs. It mutates `s.ledger` in RAM
+and **durably appends its receipt** (the `set_receipt_persist` sink armed at `node/src/state.rs:948`)
+while writing no `CommitRecord` and no ledger checkpoint. So an MCP restart leaves a durable receipt
+chain whose head names turns the reconstructed ledger does not reflect — the same RAM-only class as
+the refused charge, one arm over. `tool_create_agent`'s bare `s.ledger.insert_cell` (no turn at all)
+is in the same class.
+
+This is a genuine fork about what the MCP surface IS, and it is **stated rather than picked**:
+
+1. **Admission-staging client.** Stage and roll back unconditionally like
+   `stage_signed_turn_admission`, then hand the `SignedTurn` to consensus. This is what the repo's
+   own law already says — *"consensus finalization is the sole authoritative application at every
+   committee size"* — but `run_mcp` runs no blocklace loop, so under it every MCP tool becomes
+   read-only in a single-process session.
+2. **Durable local applier.** Checkpoint after each committed turn. Then the mutation is durable on
+   THIS node while still carrying no `CommitRecord` — a checkpoint at a height nothing else backs.
+
+⚠ Do not read the gate above as having answered this. It answers only what a REFUSAL costs.
+
+### One more thing the reading turned up, not fixed here
+
+The "ONE producer gate" (#171) is **1-of-11** on this surface: only `tool_submit_turn` routes through
+`execute_via_producer`; the other ten execute on a bare Rust `TurnExecutor`, so the verified Lean
+executor is authoritative for none of them. Closing that needs the producer to cover those verbs.
+
 ## ⛑⛑⛑ AUGUST 6 (WHOSE HEAD) — the verified receipt-chain leg was deciding on **64 bits of a 256-bit head at a cost of one XOR**; the head now crosses whole, and the delegation-snapshot authority question is **DECIDED, not deferred**
 
 Two findings on the `exec-lean` marshalling boundary — the seam where the deployed node hands the

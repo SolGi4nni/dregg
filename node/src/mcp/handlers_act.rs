@@ -232,13 +232,7 @@ pub(super) async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpTo
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let lean_producer_enabled = s.lean_producer_enabled;
-    let exec_result = crate::executor_setup::execute_via_producer(
-        &executor,
-        &turn,
-        &mut s.ledger,
-        lean_producer_enabled,
-    );
+    let exec_result = mcp_execute_via_producer(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
@@ -465,17 +459,26 @@ pub(super) async fn tool_fulfill_intent(params: &Value, state: &NodeState) -> Mc
     // The extra `TurnExecutor` supplies the ANCHOR context only: the receipt's
     // `{pre,post}_state_hash` is `dregg_turn::state_commit::consensus_state_commitment`, which
     // binds this node's LIVE accumulator roots. It decides nothing about the payment.
+    //
+    // ⚑ Under the application gate, like every other mutating MCP tool. This
+    // edge writes the payer's post-balance and the recipient's through TWO
+    // separate `update_with` calls and returns `Err` if the second fails
+    // (`intent/src/fulfillment.rs`, step 5) — so a refusal used to leave the
+    // payer debited and the recipient uncredited in live node RAM, with nothing
+    // durable to match it.
     let anchor_executor = crate::executor_setup::new_verify_executor(&s);
-    let result = dregg_intent::fulfillment::execute_fulfillment_flow_verified(
-        &intent,
-        &fulfillment_with_preds,
-        &anchor_executor,
-        &mut s.ledger,
-        payer_cell,
-        recipient_cell,
-        current_height,
-        current_height,
-    );
+    let result = mcp_apply_to_ledger(&mut s, |ledger| {
+        dregg_intent::fulfillment::execute_fulfillment_flow_verified(
+            &intent,
+            &fulfillment_with_preds,
+            &anchor_executor,
+            ledger,
+            payer_cell,
+            recipient_cell,
+            current_height,
+            current_height,
+        )
+    });
 
     match result {
         Ok(receipt) => {
@@ -938,7 +941,7 @@ pub(super) async fn tool_captp_deliver(params: &Value, state: &NodeState) -> Mcp
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
@@ -1212,7 +1215,7 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     let (committed, rejection) = match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {

@@ -292,7 +292,7 @@ pub(super) async fn tool_private_transfer(params: &Value, state: &NodeState) -> 
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let exec_result = mcp_execute(&mut s, &executor, &turn);
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {

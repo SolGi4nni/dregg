@@ -102,6 +102,12 @@ mod protocol;
 /// has committed — the state a faucet grant leaves behind.
 #[cfg(test)]
 mod receipt_head_e2e;
+/// Does a REFUSED MCP turn still charge? `execute`'s PHASE 1 is unjournaled, so
+/// the caller owns the undo — and these eleven were the last callers that did
+/// not perform it. Drives the refusal live and compares live RAM against the
+/// durable image the node rebuilds at boot.
+#[cfg(test)]
+mod refused_turn_is_free_e2e;
 mod tools_def;
 
 // Re-import every submodule namespace so the shared helpers below, the
@@ -169,6 +175,147 @@ fn nibble(b: u8) -> Option<u8> {
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
     }
+}
+
+// =============================================================================
+// THE ONE MCP APPLICATION GATE
+// =============================================================================
+
+/// Execute a turn against the LIVE node ledger under a restore point, keeping
+/// the mutation only if it committed. Every mutating MCP tool goes through this
+/// or [`mcp_execute_via_producer`]; none of them calls `executor.execute(&turn,
+/// &mut s.ledger)` directly any more.
+///
+/// ⚑ WHY. `TurnExecutor::execute`'s PHASE 1 (fee debit + nonce tick) is
+/// deliberately outside the effect journal, so a `Rejected` return hands the
+/// caller a ledger that is ALREADY debited and bumped — undoing it is the
+/// CALLER's job, and the callers do not agree. Eleven MCP tools armed no restore
+/// point and simply dropped the state guard on their rejection arm, so a refused
+/// MCP turn kept the debit and the nonce tick in live node RAM.
+///
+/// That is not a fee-policy question, which is the framing that kept it alive:
+///
+///   * The charge reaches NO durable state on any node. `node::mcp` writes no
+///     `CommitRecord` (only `blocklace_sync`'s finalized path does) and never
+///     calls `checkpoint_ledger` — `NodeState::persist_on_shutdown` is called
+///     from `run_node` only, never from `run_mcp`. So the debit survives until
+///     this process exits and then vanishes, while a peer that did not restart
+///     keeps it, and `canonical_ledger_root` hashes the whole cell. That is an
+///     attested-root split, by the argument written out at
+///     `blocklace_sync.rs:7571-7586` and `:10229`.
+///   * The anti-DoS reading does not rescue it. `run_mcp` force-unlocks the
+///     cipherclerk precisely because "MCP stdio mode runs as a single-user CLI —
+///     no remote attacker scenario applies" (`lib.rs:2887`), and the cell being
+///     debited is the node operator's own. Charging the operator to slow the
+///     operator is not a defence.
+///
+/// So MCP refuses for free, like every other ingress: `execute_finalized_turn`
+/// discards its isolated `exec_ledger` candidate on `Rejected`,
+/// `stage_signed_turn_admission` (`/turns/submit`) calls
+/// `rollback_restore_point()` unconditionally, and `/turns/submit-encrypted`
+/// rolls back on its rejection arm.
+///
+/// ⚠ NAMED RESIDUAL, NOT CLOSED HERE — a COMMITTED MCP turn is still an
+/// application no other node performs. It mutates `s.ledger` in RAM and DURABLY
+/// appends its receipt (the `set_receipt_persist` sink armed in `state.rs`)
+/// while writing no `CommitRecord` and no ledger checkpoint. A restart of the
+/// MCP process therefore leaves a durable receipt chain whose head names turns
+/// the reconstructed ledger does not reflect. Resolving that is a decision about
+/// what the MCP surface IS (an authoritative applier, or an admission-staging
+/// client that hands turns to consensus like `/turns/submit` does) and is
+/// recorded in `HORIZONLOG.md`, not silently picked here.
+pub(super) fn mcp_execute(
+    s: &mut crate::state::NodeStateInner,
+    executor: &dregg_turn::TurnExecutor,
+    turn: &Turn,
+) -> dregg_turn::TurnResult {
+    arm_mcp_turn(s);
+    let result = executor.execute(turn, &mut s.ledger);
+    settle_mcp_turn(s, result)
+}
+
+/// Open the guarded window EARLY, for a handler that writes to `s.ledger`
+/// BEFORE it executes — today only `handlers_apps::run_starbridge_action`, whose
+/// two `ensure_cell_in_ledger` stubs would otherwise survive a refusal as
+/// RAM-only cells the durable image never holds.
+///
+/// ⚠ A handler that calls this MUST reach [`mcp_execute`] on every path, or it
+/// leaves an armed restore point behind — and `Ledger::begin_restore_point`
+/// rolls back an existing one before arming, so the NEXT tool call would undo
+/// this one's committed work. Do not put a `return` between this and the
+/// execute.
+pub(super) fn mcp_begin_turn(s: &mut crate::state::NodeStateInner) {
+    arm_mcp_turn(s);
+}
+
+/// Idempotent arm: a handler that opened the window early keeps ITS journal
+/// (which holds the pre-execution writes), rather than having the gate discard
+/// it. Re-arming would `rollback` first and lose exactly those writes.
+fn arm_mcp_turn(s: &mut crate::state::NodeStateInner) {
+    if !s.ledger.has_restore_point() {
+        s.ledger.begin_restore_point();
+    }
+}
+
+/// [`mcp_execute`] through the ONE producer gate (#171) — the verified Lean
+/// executor is authoritative for the covered set and the Rust `TurnExecutor` is
+/// the demoted differential reference.
+///
+/// ⚠ Only `handlers_act::tool_submit_turn` routes here; the other ten sites
+/// still execute on a bare Rust `TurnExecutor`, so the "one producer gate" is
+/// 1-of-11 on this surface. Closing that is a separate change (the Lean producer
+/// has to cover those verbs) and is not what this gate is about.
+pub(super) fn mcp_execute_via_producer(
+    s: &mut crate::state::NodeStateInner,
+    executor: &dregg_turn::TurnExecutor,
+    turn: &Turn,
+) -> dregg_turn::TurnResult {
+    let lean_producer_enabled = s.lean_producer_enabled;
+    arm_mcp_turn(s);
+    let result = crate::executor_setup::execute_via_producer(
+        executor,
+        turn,
+        &mut s.ledger,
+        lean_producer_enabled,
+    );
+    settle_mcp_turn(s, result)
+}
+
+/// The same contract for the ONE mutating MCP path that is not a `Turn`:
+/// `handlers_act::tool_fulfill_intent`'s verified settle edge
+/// (`dregg_intent::fulfillment::execute_fulfillment_flow_verified`). It writes
+/// the payer's post-balance and the recipient's in two separate `update_with`
+/// calls and returns `Err` if the second fails — leaving the payer debited and
+/// the recipient uncredited in live node RAM, which is the fee wound's shape
+/// with value destroyed instead of a fee. The mutation now survives only if the
+/// flow reports success.
+pub(super) fn mcp_apply_to_ledger<T, E>(
+    s: &mut crate::state::NodeStateInner,
+    f: impl FnOnce(&mut dregg_cell::Ledger) -> Result<T, E>,
+) -> Result<T, E> {
+    arm_mcp_turn(s);
+    let outcome = f(&mut s.ledger);
+    if outcome.is_ok() {
+        s.ledger.commit_restore_point();
+    } else {
+        s.ledger.rollback_restore_point();
+    }
+    outcome
+}
+
+/// Keep the mutation iff the turn committed. The non-`Committed`, non-`Rejected`
+/// arms (`ProofPending` &c.) roll back too: they are not applications either, and
+/// every MCP caller renders them as a refusal.
+fn settle_mcp_turn(
+    s: &mut crate::state::NodeStateInner,
+    result: dregg_turn::TurnResult,
+) -> dregg_turn::TurnResult {
+    if result.is_committed() {
+        s.ledger.commit_restore_point();
+    } else {
+        s.ledger.rollback_restore_point();
+    }
+    result
 }
 
 #[cfg(test)]
