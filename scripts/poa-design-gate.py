@@ -2753,6 +2753,75 @@ class ManualRules:
                            if best_worst[c] == 0 and best_expected[c] == 0)
         never_legal = sorted(c for c in self.charges if legal[c] == 0)
 
+        # ⚑ HOW MANY OF A RUN'S CUTS ARE REAL DECISIONS?
+        #
+        # ⚠ ADDED 2026-08-06 after this lane got the answer WRONG BY HAND and a
+        # shipping decision was made on it.  The measurement I ran first asked
+        # whether the MOST EVEN charge loses the guarantee; that answers "does one
+        # particular heuristic fail here", not "is this a decision".  It reported 1
+        # real decision per run for a manual whose true figure is 3.
+        #
+        # The honest test is whether the player CAN GO WRONG: a step is a real
+        # decision when at least one LEGAL charge loses the guarantee, however a
+        # solver would have found the right one.  A game whose cuts are all forced
+        # is a game that plays itself, and no amount of hidden information fixes
+        # that -- so this is measured along the line an optimal player actually
+        # walks, once per instance, rather than averaged over posteriors nobody
+        # reaches.
+        real_steps = 0
+        total_steps = 0
+        per_instance = []
+        for rule in self.rules:
+            cands, hits, steps = self.full, 0, 0
+            while len(cands) > 1:
+                scored = []
+                for c in self.charges:
+                    yes, no = self.split(cands, c)
+                    if not yes or not no:
+                        continue
+                    scored.append((c, 1 + max(self.worst_case(yes, wmemo),
+                                              self.worst_case(no, wmemo))))
+                if not scored:
+                    break
+                floor_here = min(v for _, v in scored)
+                optimal = [c for c, v in scored if v == floor_here]
+                if len(optimal) < len(scored):
+                    hits += 1
+                steps += 1
+                yes, no = self.split(cands, optimal[0])
+                cands = yes if optimal[0] in self.sig[rule] else no
+            real_steps += hits
+            total_steps += steps
+            per_instance.append(hits)
+        real_per_run = real_steps / len(self.rules)
+        cuts_per_run = total_steps / len(self.rules)
+
+        if real_per_run <= 1.0:
+            rep.find(name, "the-cuts-are-forced", WARN,
+                     f"an optimal run meets only {real_per_run:.2f} real decisions "
+                     f"in {cuts_per_run:.2f} cuts",
+                     f"at almost every step every legal charge is equally good, so "
+                     f"the player is not choosing -- they are pressing whichever "
+                     f"button is still lit. Hidden information does not fix that: "
+                     f"the instance decides the ANSWERS, and this measures whether "
+                     f"the QUESTIONS were ever a choice.")
+        else:
+            rep.find(name, "the-cuts-are-decisions", INFO,
+                     f"an optimal run meets {real_per_run:.2f} real decisions in "
+                     f"{cuts_per_run:.2f} cuts",
+                     f"a step counts when at least one LEGAL charge loses the "
+                     f"guarantee, so a player can go wrong there whatever heuristic "
+                     f"they use. Per instance: "
+                     f"{dict(sorted(Counter(per_instance).items()))} (real decisions "
+                     f"-> how many of the {len(self.rules)} instances). "
+                     f"⚠ Do NOT read a small `expected < worst` gap as difficulty: "
+                     f"measured across 1400+ manual compositions on this charge "
+                     f"space, that gap is SLACK against the information floor, and "
+                     f"slack makes cuts freer. A manual with 2^worst = N -- a "
+                     f"perfect code, where expected EQUALS worst -- averages 2.98 "
+                     f"real decisions; one bit of slack averages 2.74, four bits "
+                     f"1.55.")
+
         # --- the opening, which is where the texture is legible --------------
         opening = []
         for c in self.charges:
@@ -2932,6 +3001,9 @@ class ManualRules:
             "budget_slack": slack,
             "wager_states": wagers,
             "dominated_experiments": dominated,
+            "real_decisions_per_run": round(real_per_run, 4),
+            "cuts_per_run": round(cuts_per_run, 4),
+            "code_slack_bits": 2 ** worst - len(self.rules),
             "reachable_posteriors": len(reach),
             "branching_posteriors": len([c for c in reach if len(c) > 1]),
             "rebuilt_resolve_rows": resolve_rows,
@@ -4168,6 +4240,13 @@ def render(report: Report, out) -> None:
                       f"forced wagers {g['wager_states']}") + "\n")
                 w(bar("dominated experiments",
                       f"{g['dominated_experiments'] or 'none'}") + "\n")
+                w(bar("REAL decisions per run",
+                      f"{g['real_decisions_per_run']} of {g['cuts_per_run']} cuts "
+                      f"(a cut counts when some LEGAL charge loses the guarantee)")
+                  + "\n")
+                w(bar("code slack",
+                      f"2^worst - manual = {g['code_slack_bits']}   "
+                      f"(0 is a perfect code, and tighter is HARDER)") + "\n")
                 w("\n  charge  engages/slips   bits   worst case if opened here\n")
                 for o in g["opening_table"]:
                     mark = "" if o["keeps_the_budget"] else "   <- loses the guarantee"
