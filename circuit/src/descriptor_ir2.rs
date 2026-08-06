@@ -3879,9 +3879,16 @@ fn eval_row_local_constraints<AB, C>(
             VmConstraint2::ProofBind(p) => {
                 let guard = p.guard.eval_expr::<AB>(local);
                 builder.assert_zero(guard.clone() * (guard.clone() - AB::Expr::ONE));
-                if p.commit.len() != p.vk.len() {
-                    builder.assert_zero(AB::Expr::ONE);
-                }
+                // ⚑ **THE FOURTH COPY OF A COUPLING THAT WAS AN ARTIFACT — 2026-08-06.** This arm
+                // asserted `1 = 0` whenever `commit.len() != vk.len()`, alongside the same
+                // conjunct in `ProofBindSpec::width_ok`, `DescriptorIR2.ProofBind.widthOk` and
+                // `EffectAirIR.BindLeg.mainRailOk`. Three were the doors and THIS was the decision:
+                // with the doors relaxed and this left in place, a well-formed seam loads, checks,
+                // emits — and the honest trace is UNSATISFIABLE, which is exactly how the Mina
+                // state-hash seam first failed to prove. `commit` is the width of the SENTENCE, `vk`
+                // of the PROGRAM IDENTITY; a 54-lane statement against a nine-lane `Faithful9`
+                // fingerprint is well-formed. Below, `zip` is the only length-sensitive operation
+                // left, and both pins have their OWN length check against the vector they pin.
                 if let Some(pin) = &p.vk_pin {
                     if pin.len() != p.vk.len() {
                         builder.assert_zero(AB::Expr::ONE);
