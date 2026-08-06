@@ -8348,8 +8348,10 @@ async fn post_faucet(
 
     // Consensus FINALIZATION is the single authoritative application of a turn at
     // EVERY committee size — the SAME `execute_finalized_turn` runs on every node
-    // and provisions any missing cells DETERMINISTICALLY from the finalized
-    // turn's own data (see `provision_transfer_destinations`). So this endpoint
+    // and provisions any missing cells DETERMINISTICALLY from the finalized turn
+    // AND ITS OWN PRE-STATE — not from the turn alone; the stub's asset is read
+    // off the Transfer's source cell (see `provision_transfer_destinations`,
+    // whose docblock carries the uniformity argument). So this endpoint
     // advances NO authoritative state for a funded grant: creating the recipient
     // here would be LOCAL-ONLY (peers never see it) and, worse, NON-UNIFORM (the
     // submitter would mint a canonical `with_balance(pk, …)` cell while peers

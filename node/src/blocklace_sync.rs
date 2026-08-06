@@ -8449,10 +8449,22 @@ async fn execute_finalized_turn(
     // UNIFORM CROSS-NODE APPLICATION: a finalized Transfer must execute the SAME on
     // every node so each emits the same attested root AND the same ledger content.
     // No node has the destination's pre-image (the recipient's public key is not
-    // carried over consensus), so provisioning is driven SOLELY by the finalized
-    // turn's data via `provision_transfer_destinations`, which is byte-deterministic:
-    // every node inserts the IDENTICAL zero-balance stub for each missing Transfer
-    // destination. This is what makes the finalized application provably uniform —
+    // carried over consensus), so the landing site is materialized locally by
+    // `provision_transfer_destinations`.
+    //
+    // ⚑ THAT FUNCTION IS DETERMINISTIC IN (TURN, PRE-STATE) — NOT IN THE TURN ALONE.
+    // This paragraph said "driven SOLELY by the finalized turn's data … every node
+    // inserts the IDENTICAL zero-balance stub" until 2026-08-06, and the code has
+    // read the SOURCE cell out of the LOCAL LEDGER since the stub gained an asset:
+    // a Transfer is a single-asset move, so a landing site minted in any other
+    // asset is refused by the executor's own same-asset guard. The uniformity
+    // argument never needed the stronger claim — the executor consumes exactly the
+    // same pair, so nodes agreeing on the pre-state provision AND execute
+    // identically, while a node that disagrees was already going to compute a
+    // different post-state. `provision_transfer_destinations` carries the
+    // absent-source case and names the two-node test that drives it.
+    //
+    // This is what makes the finalized application uniform —
     // not "the submitter created it out of band and peers approximate it" (which
     // would leave divergent cell content the attested root cannot see, since
     // `dregg_persist::canonical_ledger_root` hashes `postcard(cell)` — the WHOLE
@@ -8535,10 +8547,13 @@ async fn execute_finalized_turn(
             let _ = exec_ledger.remove(&id);
             let _ = exec_ledger.insert_cell(claimed);
         }
-        // Provision Transfer destinations on the CLONE the FFI executes against
-        // (byte-deterministic — the identical zero-stub every node inserts). The
-        // pre→post diff below classifies each provisioned+credited destination as
-        // a created cell, so the overlay installs it on the authoritative ledger.
+        // Provision Transfer destinations on the CLONE the FFI executes against —
+        // the stub every node WITH THE SAME PRE-STATE inserts. Deterministic in
+        // (turn, pre-state), NOT in the turn alone: the stub's asset is read off
+        // the Transfer's source cell, because the turn does not carry it (see
+        // `provision_transfer_destinations`). The pre→post diff below classifies
+        // each provisioned+credited destination as a created cell, so the overlay
+        // installs it on the authoritative ledger.
         provision_transfer_destinations(&mut exec_ledger, &turn_for_exec.call_forest);
         let result = crate::executor_setup::execute_via_producer(
             &executor,
@@ -12773,6 +12788,403 @@ mod tests {
                 "a rejected re-apply must not move value"
             );
         }
+    }
+
+    /// The complete content image of a ledger: every cell's canonical `postcard`
+    /// encoding, keyed and ordered by id. Stronger than comparing
+    /// `canonical_ledger_root` (which is a hash) and stronger than comparing
+    /// balances (which misses pk / asset / c-list drift) — two ledgers with equal
+    /// images are equal in every consensus-observable byte.
+    fn ledger_content_image(ledger: &dregg_cell::Ledger) -> Vec<(dregg_cell::CellId, Vec<u8>)> {
+        let mut image: Vec<(dregg_cell::CellId, Vec<u8>)> = ledger
+            .iter()
+            .map(|(id, cell)| (*id, postcard::to_stdvec(cell).expect("cell encodes")))
+            .collect();
+        image.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+        image
+    }
+
+    /// ⚑ THE PROVISIONING SKIP, DRIVEN ON TWO REAL NODES — what it can carry is a
+    /// LOUD refusal, never a silent state fork.
+    ///
+    /// `provision_transfer_destinations` reads the Transfer's SOURCE cell out of
+    /// the LOCAL ledger to learn which asset to mint the landing site in, and
+    /// `continue`s when the source is absent. That read is a dependence on local
+    /// state inside a function whose docblock used to claim it provisioned "purely
+    /// from the turn's data", so the question this test settles is whether the skip
+    /// can produce a SILENT fork: two nodes both COMMITTING the same finalized turn
+    /// to different content, each believing it applied consensus faithfully.
+    ///
+    /// Two independent `NodeState`s — separate data dirs, stores, ledgers, receipt
+    /// chains and attested-root histories — are seeded IDENTICALLY except for ONE
+    /// cell: the Transfer's source, which node A holds and node B does not. Both
+    /// are handed the SAME finalized `SignedTurn` bytes through the production
+    /// `execute_finalized_turn`. They share a validator key so both derive the same
+    /// `federation_id` and the one action signature is admissible on both, which
+    /// leaves the missing source cell as the ONLY independent variable.
+    ///
+    /// The source is deliberately NOT the turn's agent, because for `from == agent`
+    /// the skip is UNREACHABLE: `claimed_actor_cell` installs the signer's canonical
+    /// account on the execution candidate BEFORE provisioning runs, and
+    /// `validate_signed_turn` refuses the payload outright when there is no actor to
+    /// claim. Reaching the skip needs a cross-cell Send, which is what the agent's
+    /// c-list grant below sets up — granted identically on both nodes, so what
+    /// differs is only whether the cap's TARGET exists locally.
+    ///
+    /// What the two nodes produce:
+    ///   A — COMMITS: the landing site is provisioned in the source's asset, the
+    ///       value moves, the attested height advances 0 -> 1.
+    ///   B — REFUSES, and its authoritative state is byte-identical before and
+    ///       after: the executor cannot find the source (`apply.rs`'s
+    ///       `CellNotFound`), `TurnResult::Rejected` discards the whole isolated
+    ///       candidate without an overlay, and the refusal is recorded durably
+    ///       against the block. Height stays 0.
+    ///
+    /// So the skip is OUTCOME-NEUTRAL: on the node where it fires, provisioning or
+    /// not provisioning cannot change the post-state, because that node writes NO
+    /// post-state at all. That — not "byte-determinism from the turn alone" — is
+    /// the property carrying the cross-node uniformity argument, and it is the
+    /// property `provision_transfer_destinations`'s docblock now states.
+    ///
+    /// ⚑ MEASURED, 2026-08-06, by running this test against three deliberately
+    /// broken copies of the production path (on a build lane, never the shared
+    /// tree). The 2×2 isolates which mechanism is actually load-bearing:
+    ///
+    /// | provisioning on absent source | `TurnResult::Rejected` arm | result |
+    /// |---|---|---|
+    /// | SKIPS (HEAD)                  | discards the candidate     | PASS   |
+    /// | mints a GUESSED-asset stub    | discards the candidate     | PASS   |
+    /// | SKIPS                         | installs the overlay       | FAIL   |
+    /// | mints a GUESSED-asset stub    | installs the overlay       | FAIL   |
+    ///
+    /// The skip's column does not move the result: replacing it with the
+    /// invent-a-landing-site "fix" leaves B byte-identical either way. The
+    /// REJECTION ARM's discard is the entire guard — and note the third row, which
+    /// reds on the AGENT's cell, not the destination: a rejected candidate still
+    /// carries the executor's phase-1 fee debit and nonce tick (the arm's own
+    /// comment says so), so `touched_ids` is NON-EMPTY on a refused turn and an
+    /// overlay there would publish a charge for a turn the node refused. This test
+    /// is therefore also the live guard on "a refused finalized turn writes
+    /// nothing", which is the broader property and the one that can go red.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn finalized_transfer_source_absent_refuses_it_does_not_fork_state() {
+        let _ = tracing_subscriber::fmt::try_init();
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let default_token = *blake3::hash(b"default").as_bytes();
+
+        // The acting identity: present, funded and hybrid-enrolled on BOTH nodes.
+        let agent_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(
+            *blake3::hash(b"provision-skip:agent").as_bytes(),
+        ));
+        let agent_pk = agent_cclerk.public_key().0;
+        let agent = dregg_cell::CellId::derive_raw(&agent_pk, &default_token);
+
+        // The Transfer SOURCE — a cell the agent reaches through its c-list, held
+        // by node A only. The DESTINATION is absent everywhere, so provisioning is
+        // the only thing that can mint it.
+        let source_pk = *blake3::hash(b"provision-skip:source").as_bytes();
+        let source = dregg_cell::CellId::derive_raw(&source_pk, &default_token);
+        let dest = dregg_cell::CellId([0xD5u8; 32]);
+        const SOURCE_FUNDING: i64 = 500_000;
+        const MOVED: u64 = 4_200;
+
+        // ONE validator key, TWO data dirs. `set_federation_keys_hybrid` re-derives
+        // `federation_id` from the committee, so a shared key is what makes ONE
+        // signed turn admissible on both nodes; the stores and ledgers stay fully
+        // independent.
+        let node_key = *blake3::hash(b"provision-skip:validator").as_bytes();
+        let tmp_a = tempfile::tempdir().expect("tempdir A");
+        let tmp_b = tempfile::tempdir().expect("tempdir B");
+        let node_a = crate::state::NodeState::with_cclerk(tmp_a.path(), vec![], node_key)
+            .expect("node A state");
+        let node_b = crate::state::NodeState::with_cclerk(tmp_b.path(), vec![], node_key)
+            .expect("node B state");
+
+        for (node, holds_source) in [(&node_a, true), (&node_b, false)] {
+            let mut s = node.write().await;
+            s.lean_producer_enabled = false;
+            let sk = s.cclerk.gossip_signing_key().to_bytes();
+            s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(sk));
+            s.federation_configured = true;
+            let mut agent_cell = dregg_cell::Cell::with_hybrid_balance(
+                agent_pk,
+                &agent_cclerk.ml_dsa_public_bytes(),
+                default_token,
+                1_000_000,
+            )
+            .expect("canonical ML-DSA-65 agent identity");
+            agent_cell
+                .capabilities
+                .grant(source, dregg_cell::AuthRequired::None)
+                .expect("cross-cell Send slot");
+            s.ledger.insert_cell(agent_cell).expect("seed agent");
+            if holds_source {
+                let mut source_cell =
+                    dregg_cell::Cell::with_balance(source_pk, default_token, SOURCE_FUNDING);
+                // The other half of a cross-cell Send: `check_cross_cell_permission`
+                // wants BOTH a c-list path from the actor AND `Send: None` on the
+                // target itself (the default is `Signature`, and a zero-pk-adjacent
+                // vessel cannot produce one). This is the ordinary open-perms world
+                // cell — the shape `deos_host::open_permissions` and
+                // `starbridge_seed::grant_operator_reach` mint in production.
+                source_cell.permissions.send = dregg_cell::AuthRequired::None;
+                s.ledger.insert_cell(source_cell).expect("seed source");
+            }
+            // A solo node's committee IS its own key (see the fixture note on
+            // `solo_finalization_recovers_receipt_durable_ledger_absent_crash`: a
+            // committee the node is not a member of leaves the attested root
+            // unsigned and the durable commit correctly refuses).
+            let self_pk = s.cclerk.public_key();
+            let (self_ml_dsa, _) = dregg_federation::frost::MlDsaSigningKey::from_seed(
+                &s.cclerk.gossip_signing_key().to_bytes(),
+            );
+            s.set_federation_keys_hybrid(vec![self_pk], vec![self_ml_dsa]);
+        }
+
+        let federation_id = {
+            let s = node_a.read().await;
+            crate::executor_setup::federation_id_for_executor(&s)
+        };
+        assert_eq!(
+            federation_id,
+            {
+                let s = node_b.read().await;
+                crate::executor_setup::federation_id_for_executor(&s)
+            },
+            "the two nodes must agree on the federation id, or they are not applying the SAME turn"
+        );
+
+        // ONE finalized SignedTurn: the agent moves value OUT OF `source` (not out
+        // of its own cell) into an unseen destination.
+        let signed = {
+            let action = agent_cclerk.make_action(
+                agent,
+                "cross-cell-transfer",
+                vec![dregg_turn::Effect::Transfer {
+                    from: source,
+                    to: dest,
+                    amount: MOVED,
+                }],
+                &federation_id,
+            );
+            let mut call_forest = dregg_turn::CallForest::new();
+            call_forest.add_root(action);
+            let mut turn = dregg_turn::Turn {
+                agent,
+                nonce: 0,
+                fee: 0,
+                memo: None,
+                valid_until: Some(i64::MAX / 2),
+                call_forest,
+                depends_on: vec![],
+                previous_receipt_hash: None,
+                conservation_proof: None,
+                sovereign_witnesses: Default::default(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: vec![],
+                cross_effect_dependencies: vec![],
+                effect_witness_index_map: vec![],
+            };
+            turn.fee = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default())
+                .estimate_cost(&turn);
+            agent_cclerk.sign_turn(&turn)
+        };
+        let payload = postcard::to_stdvec(&signed).expect("encode signed turn");
+
+        // ── BEFORE ────────────────────────────────────────────────────────────
+        async fn attested_height(node: &NodeState) -> u64 {
+            node.read()
+                .await
+                .store
+                .latest_attested_root()
+                .ok()
+                .flatten()
+                .map(|r| r.height)
+                .unwrap_or(0)
+        }
+        let root_a_before = {
+            let s = node_a.read().await;
+            canonical_ledger_root(&s.ledger)
+        };
+        let (root_b_before, image_b_before, ledger_b_before) = {
+            let s = node_b.read().await;
+            (
+                canonical_ledger_root(&s.ledger),
+                ledger_content_image(&s.ledger),
+                s.ledger.clone(),
+            )
+        };
+        assert_eq!(attested_height(&node_a).await, 0, "A starts at genesis");
+        assert_eq!(attested_height(&node_b).await, 0, "B starts at genesis");
+        assert_ne!(
+            root_a_before, root_b_before,
+            "the two nodes must START divergent on exactly the source cell — that is the \
+             independent variable under test"
+        );
+
+        // THE SKIP FIRES ON B, and only on B. Probed against B's REAL authoritative
+        // pre-state (a clone, so nothing is written), because the durable refusal
+        // record's reason code is the coarse `executor-rejected` and would pass this
+        // test for an unrelated refusal.
+        {
+            let mut probe = ledger_b_before.clone();
+            provision_transfer_destinations(&mut probe, &signed.turn.call_forest);
+            assert!(
+                probe.get(&dest).is_none(),
+                "B lacks the source, so provisioning must SKIP — this test is vacuous otherwise"
+            );
+        }
+
+        // ⚑ THE DIAGNOSIS, COMPUTED UP FRONT. `execute_finalized_turn` collapses
+        // EVERY executor refusal to the one durable code `executor-rejected` and
+        // leaves the actual reason in a `warn!` a lib-test binary never shows, so
+        // a red here would otherwise arrive naming no cause at all. Run the same
+        // turn against a CLONE of each node's authoritative pre-state, through the
+        // node's OWN configured executor (a bare one carries `federation_id =
+        // [0; 32]` and would report a signature failure that production does not
+        // have), and carry the verdicts into the assertion messages below.
+        let verdict_a = {
+            let s = node_a.read().await;
+            let executor = crate::executor_setup::new_submit_executor(&s);
+            let mut probe = s.ledger.clone();
+            provision_transfer_destinations(&mut probe, &signed.turn.call_forest);
+            format!(
+                "{:?}",
+                crate::executor_setup::execute_via_producer(
+                    &executor,
+                    &signed.turn,
+                    &mut probe,
+                    false
+                )
+            )
+        };
+        let verdict_b = {
+            let s = node_b.read().await;
+            let executor = crate::executor_setup::new_submit_executor(&s);
+            let mut probe = s.ledger.clone();
+            provision_transfer_destinations(&mut probe, &signed.turn.call_forest);
+            format!(
+                "{:?}",
+                crate::executor_setup::execute_via_producer(
+                    &executor,
+                    &signed.turn,
+                    &mut probe,
+                    false
+                )
+            )
+        };
+
+        // ── THE SAME FINALIZED BLOCK, TO BOTH NODES ───────────────────────────
+        let handle = test_handle_with_committee([0x5Fu8; 32], vec![[0x5Fu8; 32]]).await;
+        let block_id = BlockId([0x51u8; 32]);
+        let outcome_a =
+            execute_finalized_turn(&node_a, &handle, block_id, &payload, None, None, 0).await;
+        let outcome_b =
+            execute_finalized_turn(&node_b, &handle, block_id, &payload, None, None, 0).await;
+
+        // ── A: COMPLETENESS. Honest provisioning still works where the cell is. ──
+        assert!(
+            matches!(outcome_a, FinalizedExecutionOutcome::Committed { .. }),
+            "the node HOLDING the source must commit the finalized transfer; got \
+             {outcome_a:?}\n  executor verdict on A's pre-state: {verdict_a}"
+        );
+        // B refused for the RIGHT reason: its executor cannot find the source. The
+        // durable code cannot say this, so it is pinned here.
+        assert!(
+            verdict_b.contains("CellNotFound"),
+            "B must refuse because the Transfer SOURCE is absent (that is what makes the \
+             provisioning skip outcome-neutral), got: {verdict_b}"
+        );
+        let root_a_after = {
+            let s = node_a.read().await;
+            let landed = s
+                .ledger
+                .get(&dest)
+                .expect("A provisioned AND credited the destination");
+            assert_eq!(
+                landed.state.balance(),
+                MOVED as i64,
+                "the provisioned landing site holds exactly the moved amount"
+            );
+            assert_eq!(
+                landed.asset(),
+                dregg_cell::CellId::from_bytes(default_token),
+                "the landing site is minted in the SOURCE's asset — a stub in any other asset \
+                 is refused by the executor's same-asset guard as a cross-asset teleport"
+            );
+            assert_eq!(
+                s.ledger
+                    .get(&source)
+                    .expect("source present")
+                    .state
+                    .balance(),
+                SOURCE_FUNDING - MOVED as i64,
+                "the source is debited exactly once"
+            );
+            canonical_ledger_root(&s.ledger)
+        };
+        assert_ne!(root_a_after, root_a_before, "A's attested root moved");
+        assert_eq!(attested_height(&node_a).await, 1, "A advanced 0 -> 1");
+
+        // ── B: THE WHOLE POINT. Refused, and NOTHING was written. ──────────────
+        assert!(
+            matches!(
+                &outcome_b,
+                FinalizedExecutionOutcome::DeterministicallyRejected { reason_code, .. }
+                    if reason_code == "executor-rejected"
+            ),
+            "the node LACKING the source must REFUSE the finalized turn — not apply a \
+             divergent one, and not silently skip it; got {outcome_b:?}"
+        );
+        let root_b_after = {
+            let s = node_b.read().await;
+            assert!(
+                s.ledger.get(&dest).is_none(),
+                "the SKIPPED provisioning must leave no landing site behind on B"
+            );
+            assert_eq!(
+                ledger_content_image(&s.ledger),
+                image_b_before,
+                "a refused finalized turn must leave B's ledger byte-identical — every cell, \
+                 not merely every balance"
+            );
+            // The refusal is DURABLE and names this exact block, so B's divergence
+            // from A is a recorded fact rather than a quiet no-op.
+            let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+                &block_id.0,
+            );
+            let bytes = s
+                .store
+                .get_config(&key)
+                .expect("read rejection record")
+                .expect("B's refusal of a finalized block is durable");
+            let record: crate::signed_turn_validation::FinalizedPayloadRejectionRecord =
+                postcard::from_bytes(&bytes).expect("decode rejection record");
+            assert_eq!(record.block_id, block_id.0);
+            assert_eq!(record.turn_hash, Some(signed.turn.hash()));
+            canonical_ledger_root(&s.ledger)
+        };
+        assert_eq!(
+            root_b_after, root_b_before,
+            "B's attested ledger root must be byte-identical before and after a refused \
+             finalized turn"
+        );
+        assert_eq!(attested_height(&node_b).await, 0, "B did not advance");
+
+        // ── THE DIVERGENCE, EXHIBITED ─────────────────────────────────────────
+        // Same finalized bytes, different post-state — and it is the LOUD kind:
+        // one node committed, the other recorded a refusal against the block. What
+        // does NOT happen is two commits at different roots, which is what a
+        // provisioning skip would have to cause to be a consensus fault of its own.
+        assert_ne!(
+            root_a_after, root_b_after,
+            "the two nodes end divergent (that is the exhibit) — but by one commit and one \
+             RECORDED REFUSAL, never by two disagreeing commits"
+        );
     }
 
     // ─── A1 FIX — off-lock finalized execution + concurrency safety ──────────
@@ -17454,12 +17866,39 @@ fn install_finalized_ledger_overlay(
 /// rejects a Transfer whose destination cell is absent (`TransferDestNotFound`),
 /// so a destination not yet seen locally must be materialized first. The recipient's
 /// pre-image (its public key / token id) is NOT carried over consensus, so NO node
-/// can reconstruct the canonical cell — instead every node provisions the IDENTICAL
-/// landing site purely from the turn's data: a zero-balance, zero-pk stub at the
-/// destination id (`Cell::remote_stub_with_id_and_balance`). Because the input
-/// (the call forest) and the constructor are byte-deterministic, the provisioned
-/// cell is byte-identical on every node — the submitter (which no longer provisions
-/// authoritatively at faucet-submission in multi-party mode) and every peer.
+/// can reconstruct the canonical cell — instead every node mints a zero-balance,
+/// zero-pk stub at the destination id.
+///
+/// ⚑ THE INPUT IS (TURN, PRE-STATE), NOT THE TURN ALONE. This docblock claimed
+/// the landing site was provisioned "purely from the turn's data" until
+/// 2026-08-06, and it was not: the destination ID comes from the turn, but the
+/// ASSET is read out of the LOCAL LEDGER, from the Transfer's SOURCE cell (see
+/// the loop body). A `Transfer` is a single-asset move, so a stub minted in any
+/// other asset is refused by the executor's own same-asset guard — the asset has
+/// to come from somewhere, and the turn does not carry it.
+///
+/// The uniformity argument never needed the stronger claim, and stating it that
+/// way hid a real dependence behind a load-bearing word ("purely"). What actually
+/// carries the argument: `provision ∘ execute` is a pure function of exactly the
+/// pair (finalized turn, pre-state), and provisioning consumes no input the
+/// executor does not already consume. So two nodes with equal pre-state provision
+/// AND execute identically, and a node with a different pre-state was going to
+/// compute a different post-state whatever provisioning did.
+///
+/// ⚠ THE ABSENT-SOURCE SKIP is the one case where that needs saying out loud,
+/// because a silent `continue` in a loop this path depends on is exactly the
+/// fail-open shape this tree has been full of. It is OUTCOME-NEUTRAL, not merely
+/// harmless-looking: a node that lacks the source cell cannot execute the
+/// Transfer either (`apply.rs` raises `CellNotFound` on the source before any
+/// mutation), `TurnResult::Rejected` discards the whole isolated candidate
+/// without an overlay, and the refusal is recorded durably against the block. So
+/// on the node where the skip fires, provisioning-or-not cannot change the
+/// post-state — that node writes no post-state at all. Provisioning a stub in a
+/// GUESSED asset would change only which error the same rejection carries, while
+/// making the un-derivable asset look derivable.
+/// `finalized_transfer_source_absent_refuses_it_does_not_fork_state` drives both
+/// nodes end to end and pins it: one commits, the other's ledger image is
+/// byte-identical before and after.
 ///
 /// This is destination PROVISIONING, not the turn's value semantics: the
 /// conservation-checked Transfer still moves the exact amount into the (now-present)
@@ -17469,6 +17908,12 @@ fn install_finalized_ledger_overlay(
 /// Idempotent: a destination already present (genesis cell, a prior turn, or a
 /// peer that legitimately holds the canonical cell) is left untouched.
 ///
+/// ⚠ ORDER-DEPENDENT, and not repaired here: the walk is single-pass over
+/// `total_effects()`, so a forest whose Transfer INTO a cell is ordered after a
+/// Transfer OUT OF it leaves the second destination unprovisioned and the turn
+/// deterministically rejected. Uniform across nodes (same order everywhere), so
+/// it is a completeness gap in what a forest may express, not a divergence — a
+/// fixpoint walk would close it.
 pub(crate) fn provision_transfer_destinations(
     ledger: &mut dregg_cell::Ledger,
     call_forest: &dregg_turn::CallForest,
@@ -17477,20 +17922,24 @@ pub(crate) fn provision_transfer_destinations(
         if let dregg_turn::Effect::Transfer { from, to, .. } = effect
             && ledger.get(to).is_none()
         {
-            // THE STUB'S ASSET IS THE MOVED ASSET. A Transfer is a single-asset
+            // THE STUB'S ASSET IS THE MOVED ASSET, AND IT COMES FROM THE LOCAL
+            // LEDGER — the turn does not carry it. A Transfer is a single-asset
             // move: the executor refuses `from.asset() != to.asset()` as a
             // cross-asset teleport. A landing site minted in the all-zero asset
             // therefore REFUSED every transfer out of a cell in any other asset —
             // which, once genesis and the faucet moved to the canonical
-            // `blake3("default")` domain, is every real grant. The source cell is
-            // part of the finalized ledger every node holds, so reading its asset
-            // here is as byte-deterministic as the constructor it feeds.
-            //
-            // No source cell → no provisioning: the transfer is going to fail with
-            // `cell not found` anyway, and inventing a landing site in a guessed
-            // asset would only change which error it fails with.
+            // `blake3("default")` domain, is every real grant.
             // The stub's id is pinned to `*to`, so its name salt is free — set it
             // to the source's ASSET so `stub.asset()` is the moved currency.
+            //
+            // ⚠ THE SKIP IS DELIBERATE AND OUTCOME-NEUTRAL, not a shrug (full
+            // argument + the two-node test in this function's docblock): a node
+            // without the source cannot execute this Transfer either — `apply.rs`
+            // raises `CellNotFound` on the source before any mutation, the
+            // rejected candidate is discarded without an overlay, and the refusal
+            // is durably recorded. Nothing this loop does or declines to do can
+            // change that node's post-state. Minting a landing site in a GUESSED
+            // asset would change only which error the same rejection carries.
             let Some(token_id) = ledger.get(from).map(|cell| *cell.asset().as_bytes()) else {
                 continue;
             };
