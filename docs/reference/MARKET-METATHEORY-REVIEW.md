@@ -44,6 +44,27 @@
 > the file now says so outright — the content is in the non-definitional theorems, not there.
 >
 > Items 2, 4, 5, 6, 7, 8, 9 of the improvement plan are **not** addressed here.
+>
+> **Item 8 (the CertFDescriptor ε-gap) is CLOSED — updated 2026-08-06 (certf-descriptor lane).**
+> Verified at source: the audited over-named keystone was the 07-14 version (`33636e08d`, where
+> `certFDescriptor_emit_sound` sat at `:558` delivering bare slack nonnegativity, no linking
+> gates). The gap-gate extraction landed the SAME DAY this review did — `d68e3d34c`
+> (07-17 16:58, ~14h after the audit's 02:20 commit): `certFDescriptor_gap_gate_sound` pins
+> `g ≡ ε − (cᵀs − wᵀf)` (now `:825`), the box-upper/dual link pins are in the headline, and
+> `certFDescriptor_emit_sound` (now `:874`, generic over `p : CertFProg`) carries all five
+> families' gates at field level. Subsequent work lifted it past the field: §7's
+> `certFDescriptor_emit_integer_sound` / `certFDescriptor_admitted_emit_Certified_sound`
+> deliver the INTEGER `Market.Certified` — the `cᵀs − wᵀf ≤ ε` clause included, feeding
+> `certifies_epsilon_optimal` — unconditionally for both deployed programs
+> (`ring3_deployed_emit_Certified_sound`, `market4_deployed_emit_Certified_sound`), with the
+> modular-to-integer no-wrap floor made explicit and countermodeled (`market4_28bit_gap_wraps`,
+> `dual_feasibility_wrap_counterexample`). What was still missing at HEAD — a descriptor-level
+> REFUSAL — was added by this lane (§7.5): `certFDescriptor_gap_violation_refused` (any admitted
+> program refuses every canonical assignment whose integer gap exceeds `ε`, for every hash),
+> instantiated by `market4_gap_violation_witness_refused` (the honest market4 optimum with `s₁`
+> mutated `0 → 500`, integer gap `250000 > ε = 2000`, the mutation asserted present against the
+> honest baseline before the verdict, `¬ Satisfied2` concluded). The CertFDescriptor per-file
+> verdict and its FAILS bullet below are therefore STALE as statements about HEAD.
 
 Read-only sufficient-test audit of every `metatheory/Market/*.lean` (37 files), the verified
 core the confidential-clearing product rests on. The discipline is the one that found vacuity in

@@ -1546,6 +1546,79 @@ theorem dual_feasibility_wrap_counterexample :
   · exact Int.modEq_iff_dvd.mpr ⟨-1, by norm_num⟩
   · norm_num
 
+/-! ### §7.5 — The ε-gap REFUSAL tooth (satisfiable AND refutable, at the descriptor level).
+
+`market4_deployed_emit_Certified_sound` says every canonical satisfying trace carries a true
+integer certificate.  The contrapositive must be EXHIBITED, not implied: a witness whose integer
+duality gap exceeds the public budget is REFUSED by the deployed wire — for every hash, and for
+every choice of the remaining cells consistent with that witness's scalar columns.  The general
+refusal below reads ONLY the gap violation and canonicality, so the refusal is *because of* the
+ε-gap, not incidental to some other broken cell. -/
+
+/-- **The general ε-gap refusal.**  For any admitted public program, a canonical assignment whose
+integer duality gap `cᵀs − wᵀf` strictly exceeds the public budget `ε` has NO satisfying trace:
+the soundness chain itself refuses the violated certificate. -/
+theorem certFDescriptor_gap_violation_refused {hash : List ℤ → ℤ} (p : CertFProg)
+    (hadmit : p.IntegerAdmission) {a : Assignment}
+    (hcanon : ∀ col, CanonCell (a col))
+    (hgap : p.eps < gapOf p a) :
+    ¬ Satisfied2 hash (certFDescriptorOf p) m0 f0 [] (constTrace p a) := by
+  intro hsat
+  obtain ⟨⟨_, _, hgap_le⟩, -⟩ :=
+    certFDescriptor_admitted_emit_Certified_sound p hadmit hcanon hsat
+  rw [← gapOf_eq_flowLP_gap] at hgap_le
+  have hle : gapOf p a ≤ p.eps := hgap_le
+  exact absurd hle (not_le.mpr hgap)
+
+/-- Every scalar the honest market4 witness carries is a canonical BabyBear representative.
+(The binder is ascribed `ℕ` rather than left to infer `Var` so the `ω`-facts elaborate at the
+type `omega` recognizes; `Var` is a reducible abbrev of `ℕ`, so use sites unify definitionally.) -/
+theorem market4Honest_canon : ∀ col : ℕ, CanonCell (market4HonestAssignment col) := by
+  intro col
+  simp only [CanonCell]
+  by_cases h : col < 21
+  · interval_cases col <;> decide
+  · have h1 : ¬ col < 4 := by omega
+    have h2 : ¬ col < 8 := by omega
+    have h3 : ¬ col < 11 := by omega
+    have h4 : col ≠ 11 := by omega
+    have h5 : ¬ col < 16 := by omega
+    have h6 : ¬ col < 20 := by omega
+    have h7 : col ≠ 20 := by omega
+    simp [market4HonestAssignment, h1, h2, h3, h4, h5, h6, h7]
+
+/-- The HOSTILE market4 witness: the honest optimum with the single dual slack `s₁` bumped
+`0 → 500` (column `5 = market4Prog.sCol 1`).  This adds `c₁·500 = 250000` to the duality gap —
+far past `ε = 2000` — while every cell stays canonical. -/
+def market4GapViolatingAssignment : Assignment := fun col =>
+  if col = 5 then 500 else market4HonestAssignment col
+
+theorem market4GapViolating_canon : ∀ col : ℕ, CanonCell (market4GapViolatingAssignment col) := by
+  intro col
+  by_cases h : col = 5
+  · subst h
+    simp only [CanonCell]
+    decide
+  · simpa [market4GapViolatingAssignment, h] using market4Honest_canon col
+
+/-- **THE ε-GAP REFUSAL, INSTANTIATED ON THE DEPLOYED WIRE.**  The mutation is asserted PRESENT
+before the verdict (the hostile witness differs from the honest baseline exactly at `s₁`), the
+achieved integer gap is computed (`250000 > ε = 2000`), and the deployed market4 descriptor
+REFUSES it: no hash admits a canonical satisfying trace over this witness.  Together with
+`market4_deployed_emit_Certified_sound` (the accepting side), the ε-optimality clause is both
+satisfiable and refutable at the descriptor level. -/
+theorem market4_gap_violation_witness_refused (hash : List ℤ → ℤ) :
+    market4Prog.sCol 1 = 5
+    ∧ market4GapViolatingAssignment 5 = 500
+    ∧ market4HonestAssignment 5 = 0
+    ∧ gapOf market4Prog market4GapViolatingAssignment = 250000
+    ∧ market4Prog.eps < gapOf market4Prog market4GapViolatingAssignment
+    ∧ ¬ Satisfied2 hash certFMarket4Descriptor m0 f0 []
+        (constTrace market4Prog market4GapViolatingAssignment) := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, ?_⟩
+  exact certFDescriptor_gap_violation_refused market4Prog market4Prog_integerAdmission
+    market4GapViolating_canon (by decide)
+
 /-! ### Axiom hygiene — the emit-soundness keystones pinned kernel-clean. -/
 
 #assert_all_clean [Market.CertFDescriptor.rangeGadget_forces_range,
@@ -1581,7 +1654,9 @@ theorem dual_feasibility_wrap_counterexample :
   Market.CertFDescriptor.ring3_unranged_potential_wraps_dual_gate,
   Market.CertFDescriptor.market4_28bit_objective_wraps,
   Market.CertFDescriptor.market4_28bit_gap_wraps,
-  Market.CertFDescriptor.dual_feasibility_wrap_counterexample]
+  Market.CertFDescriptor.dual_feasibility_wrap_counterexample,
+  Market.CertFDescriptor.certFDescriptor_gap_violation_refused,
+  Market.CertFDescriptor.market4_gap_violation_witness_refused]
 
 end Market.CertFDescriptor
 
