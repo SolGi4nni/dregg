@@ -41,7 +41,7 @@ What is proven (all additive; `Reactor/Serialize.lean` and
   emit those forged bytes — it routes to `safeError`. Witnessed by literal wire
   bytes (`serialize_splitInjected_bytes`, `serialize_safeError_bytes`).
 
-WIRING NOTE (NOT done this pass — `Reactor/Dataplane.lean` is another lane):
+WIRING NOTE (NOT done this pass — `orb/Dataplane.lean` is another lane):
 the deployed egress call site invokes `Reactor.serialize` (via
 `serialize_eq_fast` / `SerializeFast`). To install this defense-in-depth,
 replace that call with `Reactor.serializeSafe`. `serializeSafe_faithful_on_wf`
