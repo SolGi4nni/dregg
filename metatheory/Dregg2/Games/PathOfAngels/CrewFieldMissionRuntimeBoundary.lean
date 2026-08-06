@@ -1,9 +1,10 @@
 /-
 # CrewFieldMissionRuntimeBoundary — constructor-privacy regression teeth
 
-`CrewRelayExpeditionBoundary` ratchets the *relay kernel*, whose state machine
-has no consumer anywhere in the tree.  Nothing ratcheted the module that a host
-would actually call.  This is that ratchet, over `CrewFieldMissionRuntime`.
+`CrewRelayExpeditionBoundary` used to ratchet the *relay kernel*, whose state
+machine had no consumer anywhere in the tree; both were deleted on 2026-08-06.
+Nothing ratcheted the module that a host would actually call.  This is that
+ratchet, over `CrewFieldMissionRuntime`.
 
 It exists because the runtime's safety rests entirely on which names a caller
 cannot reach.  A future edit that drops a `private` on any name below hands an
@@ -13,11 +14,18 @@ digest, to parse wire bytes while skipping the re-encode equality that makes
 `canonicalDecode` canonical, or to authorize a salvage mint directly.  None of
 those would fail to compile; this module is what turns them red.
 
-⚑ Read `CrewFieldMissionRuntime`'s header before trusting the word "runtime"
-here.  `deriveRecord?` reconstructs a terminal `CrewFieldMission.StateSnapshot`
-by *asserting* `phase := .extracted`; it never drives `CrewFieldMission.execute`.
-These teeth protect the runtime's own surface.  They are not, and must not be
-read as, evidence that the runtime refines the kernel it is named after.
+⚑ 2026-08-06 — this warning USED to read: "`deriveRecord?` reconstructs a
+terminal `CrewFieldMission.StateSnapshot` by *asserting* `phase := .extracted`;
+it never drives `CrewFieldMission.execute`."  That is fixed.  `deriveRecord?`
+now returns `RunSeal.replay?`, so the record is the one the kernel reached.
+
+⚠ Read what that does and does not buy.  The runtime no longer fabricates a
+terminal state, and a record it emits is one `CrewFieldMission.execute` produced
+from signed handoffs.  That is a real weld and these teeth keep the seal
+unreachable.  It is still NOT a refinement theorem: nothing here proves the
+runtime's judgements agree with the kernel's on all inputs, and the fixture
+signature suite is non-cryptographic.  The evidence is the weld plus the
+`native_decide` cases in `CrewFieldMissionRuntime`, at that resolution.
 -/
 import Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime
 import Dregg2.Tactics
@@ -39,27 +47,41 @@ theorem activation_constructor_is_private : True := by
   fail_if_success (have _ := Activation.mk)
   trivial
 
-theorem activation_replay_authority_field_is_private : True := by
-  fail_if_success (have _ := Activation.replay)
+/-- ⚑ 2026-08-06 — replaces `activation_replay_authority_field_is_private`.  The
+field is now the `CrewFieldMission.RunSeal` that replays the run, and hiding it
+matters more than hiding its predecessor did: a reachable seal is a reachable
+`replay?`, and a caller could obtain the kernel's record for a transcript without
+`judge`'s cursor, admission, officer and custody checks. -/
+theorem activation_run_seal_field_is_private : True := by
+  fail_if_success (have _ := Activation.runSeal)
   trivial
 
-/-! ## The unchecked record reconstructor
+/-! ## The record derivation
 
-`deriveRecord?` maps a caller-supplied `CommandWire` to a
-`CrewFieldMission.RawCombinedFieldRecord`.  Exposed, it would let a caller
-obtain the record the replay authority is asked about without passing through
-`judge`'s cursor, admission, officer and custody checks. -/
+`deriveRecord?` maps a caller-supplied `CommandWire` to the
+`CrewFieldMission.RawCombinedFieldRecord` the kernel reached.  Exposed, it would
+let a caller obtain that record without passing through `judge`'s cursor,
+admission, officer and custody checks. -/
 
 theorem raw_record_reconstructor_is_private : True := by
   fail_if_success (have _ := deriveRecord?)
   trivial
 
-theorem transcript_structural_checker_is_private : True := by
-  fail_if_success (have _ := tracesStructurallyValidB)
-  trivial
+/-! ⚑ `transcript_structural_checker_is_private` and
+`final_counter_projection_is_private` were DELETED here, not left standing.
+`tracesStructurallyValidB` and `finalCounters` went with the weld — the kernel
+enforces those checks now — and `fail_if_success (have _ := <deleted name>)`
+SUCCEEDS for a name that does not exist.  Kept, they would have gone on passing
+while guarding nothing, which is how a falsifier stops falsifying. -/
 
-theorem final_counter_projection_is_private : True := by
-  fail_if_success (have _ := finalCounters)
+/-! ## The wire encoder
+
+`TraceWire.ofSemantic` is fixture scaffolding, not host ABI: the host sends
+`TraceWire`.  Public, it would read as a supported way to author a transcript
+from semantic traces the caller assembled. -/
+
+theorem wire_encoder_is_private : True := by
+  fail_if_success (have _ := TraceWire.ofSemantic)
   trivial
 
 /-! ## Digest minters
@@ -153,10 +175,9 @@ theorem canonical_surface_stays_public : True := by
   trivial
 
 #assert_axioms activation_constructor_is_private
-#assert_axioms activation_replay_authority_field_is_private
+#assert_axioms activation_run_seal_field_is_private
 #assert_axioms raw_record_reconstructor_is_private
-#assert_axioms transcript_structural_checker_is_private
-#assert_axioms final_counter_projection_is_private
+#assert_axioms wire_encoder_is_private
 #assert_axioms run_digest_minter_is_private
 #assert_axioms successor_digest_minter_is_private
 #assert_axioms raw_command_parser_is_private

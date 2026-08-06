@@ -12,14 +12,35 @@ mechanical inventory and may produce bounded market-mint authorizations.  A
 never a market mint or trade authority.  The two constructors cannot be
 relabelled by a caller.
 
-`ReplayAuthority.verify` is the cryptographic trust boundary.  A production
-activation MUST pin it to the exact `CrewFieldMission.Config` and implement it
-by consuming a `CanonicalRunAdmission` and calling
-`admitCombinedFieldRecord?`; it must not be an accept-all predicate.  The
-runtime still reconstructs the entire raw record, checks every roster seat,
-counter, observation, decision, route, extraction and activated outcome before
-invoking that boundary.  The durable host owns the predecessor state and must
-CAS the emitted successor atomically.  These are the only two host seams.
+⚑ 2026-08-06 — THE RUNTIME NOW RUNS THE KERNEL.  This paragraph used to read
+"`ReplayAuthority.verify` is the cryptographic trust boundary.  A production
+activation MUST pin it to the exact `CrewFieldMission.Config` … it must not be
+an accept-all predicate."  That was an obligation written in prose and enforced
+nowhere: `verify` was a caller-supplied `RawCombinedFieldRecord → Bool`, so a
+host could pass `fun _ => true`, and the fixture activation in this very file
+passed a session-equality plus a transcript-length check — no signature, no
+replay.  Underneath it, `deriveRecord?` **asserted** the terminal state
+(`phase := .extracted`, `sequence := CREW_SIZE`) instead of reaching it.
+
+`Activation` now carries a `CrewFieldMission.RunSeal`, and `deriveRecord?`
+returns `seal.replay? traces` — the record `CrewFieldMission.execute` actually
+arrived at, driven from the kernel's private `initialState` over every signed
+handoff.  Nothing here writes a terminal state down, so nothing here can
+fabricate one, and a forged handoff signature refuses the whole run.
+
+The seal is pinned by `sealSessionExact : runSeal.session = raw.fieldSession`.
+That is a gate and not decoration: the seal's session comes from the private
+`Config` its issuer sealed, `raw.fieldSession` is the authored activation's own
+field session, and `SessionDigest` carries the roster, budget, policy and route
+outcomes — so a seal issued for another mission cannot judge this one.
+
+⚠ `replayVerifierId` (on `RawActivation` and on the emitted receipt) is an
+authored AUDIT LABEL naming the expected verifier.  `activationValidB` does not
+pin it and neither does anything else; it carries no authority.  The authority
+is the seal.
+
+The durable host owns the predecessor state and must CAS the emitted successor
+atomically.  That is now the only host seam.
 
 ⚑ The durable key is the **pair** `(activation_id, roster_binding)`, not
 `activation_id` alone.  `activation_id` is the digest of the authored activation
@@ -169,12 +190,14 @@ structure RawActivation where
   replayVerifierId : Digest32
 deriving DecidableEq
 
-/-- This boundary is trusted only for signature verification and exact replay
-against the pinned field configuration.  It receives the complete reconstructed
-record, never a caller-selected digest. -/
-structure ReplayAuthority where
-  id : Digest32
-  verify : CrewFieldMission.RawCombinedFieldRecord → Bool
+/-- ⚑ `ReplayAuthority` was deleted on 2026-08-06.  It carried
+`verify : RawCombinedFieldRecord → Bool` — a function the caller chose — and was
+described as "the cryptographic trust boundary".  A caller that supplies the
+predicate that judges it is not a boundary.  `CrewFieldMission.RunSeal` replaces
+it: the verification is the kernel's own `execute`, and the seal cannot be
+opened, substituted, or asked to accept a record it did not reach.
+`ReplayAuthority.id` went with it, because a pin between two fields the same
+caller supplied (`replay.id = raw.replayVerifierId`) is decoration. -/
 
 def routeBindingByField? : List RouteBinding → CrewFieldMission.Route →
     Option RouteBinding
@@ -298,18 +321,24 @@ def activationValidB (raw : RawActivation) : Bool :=
   raw.fieldSession.routeOutcomes.all (fieldOutcomeAlignedB raw) &&
   ordinaryRulesValidB raw
 
-/-- Private construction pins the replay function to this activation. -/
+/-- Private construction pins the run seal to this activation.  The seal is the
+only thing in this structure that can judge a run, and `sealSessionExact` is what
+stops one issued for another mission from doing so. -/
 structure Activation where
   private mk ::
   raw : RawActivation
-  private replay : ReplayAuthority
+  private runSeal : CrewFieldMission.RunSeal
   valid : activationValidB raw = true
-  verifierExact : replay.id = raw.replayVerifierId
+  sealSessionExact : runSeal.session = raw.fieldSession
 
-def activate? (raw : RawActivation) (replay : ReplayAuthority) : Option Activation :=
+/-- Two independent sources for one identity: `runSeal.session` is projected from
+the private `CrewFieldMission.Config` the seal was issued over, `raw.fieldSession`
+is the authored activation's field session, and they must be equal. -/
+def activate? (raw : RawActivation) (runSeal : CrewFieldMission.RunSeal) :
+    Option Activation :=
   if hvalid : activationValidB raw = true then
-    if hexact : replay.id = raw.replayVerifierId then
-      some ⟨raw, replay, hvalid, hexact⟩
+    if hseal : runSeal.session = raw.fieldSession then
+      some ⟨raw, runSeal, hvalid, hseal⟩
     else none
   else none
 
@@ -429,8 +458,6 @@ private def commandString : CrewRelayExpedition.Command → String
   | .screenRecovery => "screen-recovery"
   | .bankSupplies => "bank-supplies"
   | .secureCache => "secure-cache"
-  | .abort => "abort"
-  | .restart => "restart"
 
 private def observationFromWire? (wire : TraceWire) :
     Option CrewFieldMission.PrivateObservation := do
@@ -471,84 +498,102 @@ def TraceWire.toSemantic? (activation : Activation) : TraceWire →
         signature := ⟨wire.handoffSignature⟩
       }
 
-private def expectedObservation? (activation : Activation) (seat : SeatId) :
-    Option CrewFieldMission.PrivateObservation := do
-  let assignment ← CrewFieldMission.briefingBySeat? activation.raw.briefings seat
-  some assignment.observation
+/-! ### The wire encoder
 
-private def tracesStructurallyValidB (activation : Activation)
-    (traces : List CrewFieldMission.HandoffTrace) : Bool :=
-  decide (traces.length = CrewFieldMission.CREW_SIZE) &&
-  decide (traces.map CrewFieldMission.HandoffTrace.sequence =
-    List.range CrewFieldMission.CREW_SIZE) &&
-  decide (traces.map (fun trace => trace.seat) = activation.raw.fieldSession.roster) &&
-  traces.all (fun trace =>
-    decide (expectedObservation? activation trace.seat.id = some trace.observation) &&
-    decide (trace.previousCounter = trace.seat.initialCounter) &&
-    decide (trace.counter = trace.seat.initialCounter + 1) &&
-    CrewFieldMission.decisionRoleExactB trace.seat.role trace.decision) &&
-  match traces.getLast? with
-  | none => false
-  | some finalTrace =>
-    match finalTrace.observation, finalTrace.decision with
-    | .quartermaster window, .finalize route extraction command =>
-        decide (command.strategy? = some extraction.strategy) &&
-        traces.all (fun trace =>
-          decide (trace.decision.command.strategy? = some extraction.strategy)) &&
-        match extraction with
-        | .returnNow => decide (2 ≤ CrewFieldMission.recommendationCount traces route)
-        | .descendFurther =>
-            decide (CrewFieldMission.recommendationCount traces route = 3) &&
-            decide (CrewFieldMission.evidenceCount traces route = 3) &&
-            decide (window = .stable)
-    | _, _ => false
+`toSemantic?`'s inverse.  It exists so the fixtures below can be built FROM the
+transcripts `CrewFieldMission` actually signed rather than from hand-written
+constant signature bytes: a change to the kernel's signing preimage then moves
+these fixtures with it instead of leaving them asserting against a stale
+constant.  It is not part of the host ABI — the host sends `TraceWire`. -/
 
-private def finalCounters (traces : List CrewFieldMission.HandoffTrace) :
-    List CrewFieldMission.SeatCounter :=
-  traces.map fun trace => ⟨trace.seat.id, trace.counter⟩
+private def observationToWire : CrewFieldMission.PrivateObservation → String × String
+  | .pathfinder route => ("pathfinder", routeString route)
+  | .engineer route => ("engineer", routeString route)
+  | .containment route => ("containment", routeString route)
+  | .quartermaster .closing => ("quartermaster-closing", "none")
+  | .quartermaster .stable => ("quartermaster-stable", "none")
 
-private def deriveRecord? (activation : Activation) (command : CommandWire) :
-    Option CrewFieldMission.RawCombinedFieldRecord := do
-  let traces ← command.transcript.mapM (TraceWire.toSemantic? activation)
-  if tracesStructurallyValidB activation traces ≠ true then none
-  let finalTrace ← traces.getLast?
-  let (route, extraction) ← match finalTrace.decision with
-    | .finalize route extraction _ => some (route, extraction)
-    | _ => none
-  if command.claimedRoute ≠ routeString route then none
-  if command.claimedExtraction ≠ extractionString extraction then none
-  let spec ← CrewFieldMission.routeOutcomeBy? activation.raw.fieldSession.routeOutcomes
-    route extraction
-  if command.claimedContribution ≠ ContributionWire.ofRaw spec.outcome.contribution then none
-  let artifactBinding ← artifactBindingByField? activation.raw.artifactBindings
-    spec.featuredArtifact
-  if command.claimedFeaturedArtifact ≠ artifactBinding.content.value then none
-  let strategy := extraction.strategy
-  let totalCost := CrewFieldMission.mandatorySpecialistSpend extraction + spec.operationalCost
-  if activation.raw.fieldSession.operationalBudget < totalCost then none
-  let snapshot : CrewFieldMission.StateSnapshot := {
-    phase := .extracted
-    sequence := CrewFieldMission.CREW_SIZE
-    nextSeat := CrewFieldMission.CREW_SIZE
-    counters := finalCounters traces
-    strategy := some strategy
-    operationalBudgetRemaining := activation.raw.fieldSession.operationalBudget - totalCost
-    transcript := traces
-  }
-  let root : CrewFieldMission.StateRoot := ⟨activation.raw.fieldSession, snapshot⟩
-  some {
-    session := activation.raw.fieldSession
-    route
+private def decisionToWire : CrewFieldMission.Decision → String × String × String × String
+  | .specialist route command =>
+      ("specialist", routeString route, "none", commandString command)
+  | .finalize route extraction command =>
+      ("finalize", routeString route, extractionString extraction, commandString command)
+
+private def TraceWire.ofSemantic (trace : CrewFieldMission.HandoffTrace) : TraceWire :=
+  let (observation, observedRoute) := observationToWire trace.observation
+  let (decision, decidedRoute, extraction, command) := decisionToWire trace.decision
+  { sequence := trace.sequence
+    seat := trace.seat.id.value
+    previousCounter := trace.previousCounter
+    counter := trace.counter
+    observation
+    observedRoute
+    decision
+    decidedRoute
     extraction
-    strategy
-    routeOperationalCost := spec.operationalCost
-    totalOperationalCost := totalCost
-    transcript := traces
-    finalCounters := finalCounters traces
-    finalRoot := root
-    outcome := spec.outcome
-    featuredBeta := spec.featuredArtifact
-  }
+    command
+    seatSignature := trace.seatSignature.bytes
+    handoffSignature := trace.signature.bytes }
+
+/-! ## Refusals
+
+Declared here rather than beside `judge` because `deriveRecord?` now returns an
+`Except Refusal _`: since the weld it can fail for two distinguishable reasons —
+the wire transcript does not decode, or the kernel refuses the run. -/
+
+inductive Refusal where
+  | invalidState
+  | wrongActivation
+  | staleCursor
+  | admissionReplay
+  | unauthorizedOfficer
+  | invalidTranscript
+  | replayRefused
+  | custodyRefused
+deriving Repr, DecidableEq
+
+/-- ⚑ THE WELD.  This function used to assemble a terminal
+`CrewFieldMission.StateSnapshot` by ASSERTING `phase := .extracted`,
+`sequence := CREW_SIZE`, `nextSeat := CREW_SIZE` and a budget it subtracted
+itself, then hand the result to a caller-supplied verifier.  The kernel's
+`execute` was never called; `CrewFieldMission` shipped a state machine that this
+runtime reimplemented badly beside it.
+
+It now asks the kernel and returns what the kernel answered.
+`RunSeal.replay?` drives `execute` from the private `initialState` over every
+signed handoff and yields the record the run actually REACHED — phase, sequence,
+counters, remaining budget, route, extraction, outcome and featured artifact all
+read off the kernel's own state.  Nothing here writes a terminal state down, so
+nothing here can fabricate one, and a forged handoff signature refuses the run.
+
+What survives from the old body is only the part the kernel cannot know: the
+caller's CLAIMS and the activation's authored content tables.  Those are pinned
+against the kernel's record, so they are a second source rather than the source.
+The structural transcript checks are gone with the fabrication — every one of
+them (length, sequence, seat order, briefed observation, counters, role
+exactness, strategy agreement, recommendation and evidence counts, the
+quartermaster window) is enforced inside `execute`, and a second copy here is
+two shapes that agree today and disagree later. -/
+private def deriveRecord? (activation : Activation) (command : CommandWire) :
+    Except Refusal CrewFieldMission.RawCombinedFieldRecord := do
+  let traces ← match command.transcript.mapM (TraceWire.toSemantic? activation) with
+    | none => throw .invalidTranscript
+    | some traces => pure traces
+  let record ← match activation.runSeal.replay? traces with
+    | none => throw .replayRefused
+    | some record => pure record
+  if command.claimedRoute ≠ routeString record.route then throw .invalidTranscript
+  if command.claimedExtraction ≠ extractionString record.extraction then
+    throw .invalidTranscript
+  if command.claimedContribution ≠ ContributionWire.ofRaw record.outcome.contribution then
+    throw .invalidTranscript
+  let artifactBinding ← match artifactBindingByField? activation.raw.artifactBindings
+      record.featuredBeta with
+    | none => throw .invalidTranscript
+    | some binding => pure binding
+  if command.claimedFeaturedArtifact ≠ artifactBinding.content.value then
+    throw .invalidTranscript
+  pure record
 
 /-! ## Derived settlement output -/
 
@@ -668,17 +713,6 @@ private def successorDigest (state : StateWire) (command : CommandWire)
   digestString SUCCESSOR_DIGEST_DOMAIN
     (state.toJson ++ command.toJson ++ Emit.bytes32Hex run)
 
-inductive Refusal where
-  | invalidState
-  | wrongActivation
-  | staleCursor
-  | admissionReplay
-  | unauthorizedOfficer
-  | invalidTranscript
-  | replayRefused
-  | custodyRefused
-deriving Repr, DecidableEq
-
 /-- Pure Lean admission.  The host must atomically CAS `state.head` to the
 emitted successor and persist the complete receipt before exposing a mint. -/
 def judge (activation : Activation) (state : StateWire) (command : CommandWire) :
@@ -692,10 +726,7 @@ def judge (activation : Activation) (state : StateWire) (command : CommandWire) 
     | none => throw .unauthorizedOfficer
     | some seat => pure seat
   if command.actor ≠ officer.playerKey then throw .unauthorizedOfficer
-  let record ← match deriveRecord? activation command with
-    | none => throw .invalidTranscript
-    | some record => pure record
-  if activation.replay.verify record ≠ true then throw .replayRefused
+  let record ← deriveRecord? activation command
   let run := runDigest command
   if run ∈ state.consumedRuns then throw .admissionReplay
   let custody ← match relicCustody? activation record with
@@ -957,10 +988,6 @@ private def fixtureDigest (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
   length_eq := by simp
 
-private def fixtureSignature : CrewFieldMission.SignatureBytes where
-  bytes := List.replicate CrewFieldMission.SIGNATURE_BYTE_LENGTH 0
-  length_eq := by simp [CrewFieldMission.SIGNATURE_BYTE_LENGTH]
-
 private def fixtureContentOfficers : List ContentContract.OfficerSeat :=
   [ ⟨⟨0⟩, ⟨10⟩, .pathfinder⟩
   , ⟨⟨1⟩, ⟨11⟩, .engineer⟩
@@ -1065,56 +1092,42 @@ private def fixtureRawActivation : RawActivation where
 private theorem fixture_activation_valid : activationValidB fixtureRawActivation = true := by
   native_decide
 
-/-! Fixture-only.  Production is required to call the pinned field replay
-authority described at the top of this file.  The hostile cases below exercise
-all checks owned by this runtime on both sides of that seam. -/
-private def fixtureReplayAuthority : ReplayAuthority where
-  id := fixtureRawActivation.replayVerifierId
-  verify record :=
+/-! ### The sealed fixture activation
+
+⚑ 2026-08-06.  What stood here was a `ReplayAuthority` whose `verify` was
+
     decide (record.session = fixtureRawActivation.fieldSession) &&
     decide (record.transcript.length = CrewFieldMission.CREW_SIZE)
 
-private def fixtureActivation : Activation :=
-  ⟨fixtureRawActivation, fixtureReplayAuthority, fixture_activation_valid, rfl⟩
+— a session comparison and a length check, standing in for the module's
+"cryptographic trust boundary".  It verified no signature and replayed nothing,
+and every `native_decide` result below was evidence about THAT.  The transcripts
+it judged carried `fixtureSignature` in both signature fields: one constant byte
+pattern, identical for all four seats.
 
-private def fixtureTrace (seat : Nat) (observation observedRoute command : String)
-    (decision : String) (decidedRoute extraction : String) : TraceWire :=
-  let rosterSeat := fixtureRawActivation.fieldSession.roster.getD seat
-    CrewRelayExpedition.fixtureSeat0
-  {
-    sequence := seat
-    seat
-    previousCounter := rosterSeat.initialCounter
-    counter := rosterSeat.initialCounter + 1
-    observation
-    observedRoute
-    decision
-    decidedRoute
-    extraction
-    command
-    seatSignature := fixtureSignature
-    handoffSignature := fixtureSignature
-  }
+The activation now holds `CrewFieldMission.fixtureRunSeal`, and the transcripts
+are the ones the kernel itself signed, re-encoded to the wire.  `sealSessionExact`
+holds by `rfl` because the seal's config and this activation's `fieldSession` are
+both `CrewFieldMission.fixtureRawConfig.sessionDigest` — two spellings the
+elaborator has to agree on, not a value copied from one to the other. -/
+private def fixtureActivation : Activation :=
+  ⟨fixtureRawActivation, CrewFieldMission.fixtureRunSeal, fixture_activation_valid, rfl⟩
 
 private def fixtureSafeTranscript : List TraceWire :=
-  [ fixtureTrace 0 "pathfinder" "signal-gallery" "chart-pressure-route"
-      "specialist" "maintenance-spine" "none"
-  , fixtureTrace 1 "engineer" "signal-gallery" "brace-transit"
-      "specialist" "maintenance-spine" "none"
-  , fixtureTrace 2 "containment" "signal-gallery" "quiet-anomaly"
-      "specialist" "maintenance-spine" "none"
-  , fixtureTrace 3 "quartermaster-stable" "none" "bank-supplies"
-      "finalize" "maintenance-spine" "return-now" ]
+  CrewFieldMission.fixtureSafeMaintenanceTranscript.map TraceWire.ofSemantic
 
 private def fixtureDeepTranscript : List TraceWire :=
-  [ fixtureTrace 0 "pathfinder" "signal-gallery" "mark-salvage-route"
-      "specialist" "signal-gallery" "none"
-  , fixtureTrace 1 "engineer" "signal-gallery" "overdrive-cargo-lift"
-      "specialist" "signal-gallery" "none"
-  , fixtureTrace 2 "containment" "signal-gallery" "screen-recovery"
-      "specialist" "signal-gallery" "none"
-  , fixtureTrace 3 "quartermaster-stable" "none" "secure-cache"
-      "finalize" "signal-gallery" "descend-further" ]
+  CrewFieldMission.fixtureDeepTranscript.map TraceWire.ofSemantic
+
+/-- The wire encoder is a genuine inverse on the transcripts the kernel signed:
+decoding the encoding returns the kernel's own traces.  Without this the
+fixtures below could be exercising a transcript the runtime silently reinterprets. -/
+theorem fixture_wire_transcripts_decode_back_to_the_kernel_traces :
+    fixtureSafeTranscript.mapM (TraceWire.toSemantic? fixtureActivation) =
+      some CrewFieldMission.fixtureSafeMaintenanceTranscript ∧
+    fixtureDeepTranscript.mapM (TraceWire.toSemantic? fixtureActivation) =
+      some CrewFieldMission.fixtureDeepTranscript := by
+  native_decide
 
 private def fixtureGenesis : StateWire := initialState fixtureActivation (fixtureDigest 223)
 
@@ -1207,15 +1220,53 @@ theorem hostile_actor_who_is_not_the_selected_officer_refused :
         .error .unauthorizedOfficer := by
   native_decide
 
+/-- ⚑ The refusal MOVED, and that is the weld showing.  This used to be
+`.invalidTranscript` — this module's own `traces.length = CREW_SIZE` check.  It
+is now `.replayRefused`: three signed handoffs replay fine, the run simply never
+reaches `.extracted`, so the kernel has no completed record to give back.  The
+truncation is refused by the state machine rather than by a length comparison. -/
 theorem hostile_truncated_crew_transcript_refused :
     judge fixtureActivation fixtureGenesis
       { fixtureSafeCommand with transcript := fixtureSafeTranscript.take 3 } =
-        .error .invalidTranscript := by
+        .error .replayRefused := by
   native_decide
 
-theorem hostile_wrong_replay_authority_id_refused :
-    activate? fixtureRawActivation { fixtureReplayAuthority with id := fixtureDigest 251 } =
-      none := by
+private def forgedSignatureBytes : CrewFieldMission.SignatureBytes where
+  bytes := List.replicate CrewFieldMission.SIGNATURE_BYTE_LENGTH 7
+  length_eq := by simp [CrewFieldMission.SIGNATURE_BYTE_LENGTH]
+
+/-- ⚑ THE WELD, SHOWN.  This is the case the old code got wrong: substituting a
+handoff signature changes neither the session nor the transcript length, so the
+`ReplayAuthority` that stood here — `session = … && length = CREW_SIZE` — ACCEPTED
+it, and `deriveRecord?` had already asserted the terminal state it was asked
+about.  A forged run was admitted and would have minted salvage.
+
+The kernel refuses it, because `replay?` rebuilds each `SignedHandoff` from the
+trace and the signature has to verify.
+
+The forgery is constructed from the live fixture trace and asserted DIFFERENT
+before the verdict is read: if a fixture re-emit ever makes the mutation a
+no-op, this goes red instead of quietly comparing a value with itself. -/
+def forgedHandoffSignatureRefusedB : Bool :=
+  match fixtureSafeTranscript with
+  | [] => false
+  | wire :: rest =>
+      let forged : TraceWire := { wire with handoffSignature := forgedSignatureBytes }
+      decide (forged.handoffSignature ≠ wire.handoffSignature) &&
+      decide (judge fixtureActivation fixtureGenesis
+        { fixtureSafeCommand with transcript := forged :: rest } = .error .replayRefused)
+
+theorem hostile_forged_handoff_signature_refused_by_the_kernel :
+    forgedHandoffSignatureRefusedB = true := by native_decide
+
+/-- ⚑ Replaces `hostile_wrong_replay_authority_id_refused`, which checked that
+`activate?` refused a `ReplayAuthority` whose `id` disagreed with the
+activation's own `replayVerifierId` — two fields the same caller supplied.  This
+is the check that has teeth: a seal minted for a DIFFERENT session cannot be
+attached to this activation, and the two sessions are proved distinct in the
+kernel (`the_two_fixture_seals_carry_different_sessions`). -/
+theorem hostile_seal_for_another_session_cannot_activate :
+    activate? fixtureRawActivation CrewFieldMission.fixtureRekeyedRunSeal = none := by
   native_decide
 
 private def hostileMarketContent : ContentContract.RawContent := {
@@ -1233,12 +1284,12 @@ private def hostileTradeContent : ContentContract.RawContent := {
 
 theorem hostile_canon_relic_market_activation_refused :
     activate? { fixtureRawActivation with content := hostileMarketContent }
-      fixtureReplayAuthority = none := by
+      CrewFieldMission.fixtureRunSeal = none := by
   native_decide
 
 theorem hostile_canon_relic_direct_trade_activation_refused :
     activate? { fixtureRawActivation with content := hostileTradeContent }
-      fixtureReplayAuthority = none := by
+      CrewFieldMission.fixtureRunSeal = none := by
   native_decide
 
 private def callerAuthoredMintBytes : String :=
@@ -1263,14 +1314,21 @@ theorem strict_state_roundtrip :
 — a field of the same caller-supplied record — and `MissionSpec` carries no
 roster.  The seating that `judge` authorizes against therefore sat outside the
 activation's identity entirely.  The fixtures below substitute the four wallet
-keys and change nothing else. -/
+keys and change nothing else.
 
-private def rekeyedRoster : List Seat :=
-  CrewFieldMission.fixtureRawConfig.roster.map fun seat =>
-    { seat with playerKey := fixtureDigest (200 + seat.id.value) }
+⚑ 2026-08-06.  The substituted crew now comes from `CrewFieldMission`'s second
+SEALED world rather than from a roster swapped in here.  It has to: since the
+weld an `Activation` carries a `RunSeal`, and a seal can be minted only by the
+kernel, because it holds a `Config` whose constructor is private.  The roster
+substitution itself is unchanged — `CrewFieldMission.fixtureRekeyedRoster` is
+the same four keys this file used to build inline, and
+`fixture_rekeyed_roster_substitutes_only_the_player_keys` says so next to the
+world it describes. -/
+
+private def rekeyedRoster : List Seat := CrewFieldMission.fixtureRekeyedRoster
 
 private def rekeyedSession : CrewFieldMission.SessionDigest :=
-  { CrewFieldMission.fixtureRawConfig.sessionDigest with roster := rekeyedRoster }
+  CrewFieldMission.fixtureRekeyedRawConfig.sessionDigest
 
 private def rekeyedRawActivation : RawActivation :=
   { fixtureRawActivation with
@@ -1314,8 +1372,15 @@ theorem rekeyed_roster_changes_the_computed_crew_binding :
     rekeyedRawActivation.rosterBinding ≠ fixtureRawActivation.rosterBinding := by
   native_decide
 
+/-- …and the pin refuses in the other direction too, so it is a statement about
+the pin and not about one unlucky pairing. -/
+theorem hostile_authored_seal_cannot_activate_the_substituted_crew :
+    activate? rekeyedRawActivation CrewFieldMission.fixtureRunSeal = none := by
+  native_decide
+
 private def rekeyedActivation : Activation :=
-  ⟨rekeyedRawActivation, fixtureReplayAuthority, rekeyed_crew_activation_is_valid, rfl⟩
+  ⟨rekeyedRawActivation, CrewFieldMission.fixtureRekeyedRunSeal,
+    rekeyed_crew_activation_is_valid, rfl⟩
 
 /-- The refusal, decomposed so the *cause* is named: the authored crew's genesis
 state still matches on `activation_id` — the old key really does still collide —
@@ -1366,7 +1431,10 @@ theorem callable_entrypoint_emits_the_exact_successful_receipt :
 #assert_compiled hostile_forged_outcome_refused
 #assert_compiled hostile_actor_who_is_not_the_selected_officer_refused
 #assert_compiled hostile_truncated_crew_transcript_refused
-#assert_compiled hostile_wrong_replay_authority_id_refused
+#assert_compiled hostile_forged_handoff_signature_refused_by_the_kernel
+#assert_compiled hostile_seal_for_another_session_cannot_activate
+#assert_compiled hostile_authored_seal_cannot_activate_the_substituted_crew
+#assert_compiled fixture_wire_transcripts_decode_back_to_the_kernel_traces
 #assert_compiled hostile_canon_relic_market_activation_refused
 #assert_compiled hostile_canon_relic_direct_trade_activation_refused
 #assert_compiled hostile_caller_authored_salvage_field_refused_by_strict_codec

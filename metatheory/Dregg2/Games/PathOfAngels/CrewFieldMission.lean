@@ -577,15 +577,12 @@ def traceOf {config : Config} (handoff : SignedHandoff config) : HandoffTrace wh
   signature := handoff.signature
 
 def strategyCompatibleB (current : Option Strategy) (decision : Decision) : Bool :=
-  match current, decision.command.strategy? with
-  | _, none => false
-  | none, some _ => true
-  | some before, some after => decide (before = after)
+  match current with
+  | none => true
+  | some before => decide (before = decision.command.strategy)
 
 def decisionRoleExactB (role : CrewRole) (decision : Decision) : Bool :=
-  (match decision.command.role? with
-    | none => false
-    | some authored => decide (authored = role)) &&
+  decide (decision.command.role = role) &&
   match role, decision with
   | .quartermaster, .finalize _ _ _ => true
   | .pathfinder, .specialist _ _ => true
@@ -607,7 +604,7 @@ def finalChoiceValidB (state : State) (observation : PrivateObservation)
   match observation, decision with
   | .quartermaster window, .finalize route extraction command =>
       decide (state.snapshot.transcript.length = 3) &&
-      decide (command.strategy? = some extraction.strategy) &&
+      decide (command.strategy = extraction.strategy) &&
       match extraction with
       | .returnNow =>
           decide (2 ≤ recommendationCount state.snapshot.transcript route)
@@ -619,7 +616,7 @@ def finalChoiceValidB (state : State) (observation : PrivateObservation)
 
 def decisionOperationalCost? (config : Config) (decision : Decision) : Option Nat :=
   match decision with
-  | .specialist _ command => command.strategy?.map specialistOperationalCost
+  | .specialist _ command => some (specialistOperationalCost command.strategy)
   | .finalize route extraction _ =>
       (routeOutcomeBy? config.raw.routeOutcomes route extraction).map
         RouteOutcomeSpec.operationalCost
@@ -760,7 +757,7 @@ private def transition (config : Config) (state : State)
     sequence := state.snapshot.sequence + 1
     nextSeat
     counters := setCounter state.snapshot.counters handoff.body.seat.id handoff.body.counter
-    strategy := handoff.body.decision.command.strategy?
+    strategy := some handoff.body.decision.command.strategy
     operationalBudgetRemaining :=
       state.snapshot.operationalBudgetRemaining - operationalCost
     transcript := state.snapshot.transcript ++ [traceOf handoff]
@@ -868,6 +865,92 @@ def admitCombinedFieldRecord? {config : Config}
           houtcome, raw.featuredBeta, hfeatured⟩
         if hvalid : record.validB = true then some ⟨record, hvalid⟩ else none
       else none
+
+/-! ## The run seal — the kernel's own replay, handed out as a value
+
+A host does not hold a `Config`: its constructor is private and this module
+publishes no producer, because a caller that could choose `signatureVerifier`
+could choose `fun _ _ _ _ => true`.  That privacy is why the runtime above this
+kernel could not call it, and why it reconstructed a terminal state by asserting
+`phase := .extracted` instead.
+
+`RunSeal` closes that without opening the constructor.  It packages an activated
+`Config` with the one-shot admission issued against it, keeps both fields
+private, and exposes exactly one operation: `admits`, which is
+`admitCombinedFieldRecord?` and therefore drives `execute` over every handoff
+from the private `initialState`.  A caller can pass a seal along and ask it about
+a record.  It cannot read the verifier back out, substitute one, or fabricate a
+seal for a session it was not issued for — `session` is derived from the sealed
+`Config`, so a consumer can pin `runSeal.session` against its own activation and get
+two independent sources for the same identity. -/
+structure RunSeal where
+  private mk ::
+  private config : Config
+  private admission : CanonicalRunAdmission config
+
+/-- The sealed session.  Pin your own activation against this: a seal issued for
+one mission then cannot judge another. -/
+def RunSeal.session (runSeal : RunSeal) : SessionDigest := runSeal.config.raw.sessionDigest
+
+/-- The sole replay predicate.  Not a caller-supplied function: it replays every
+signed handoff through `execute` from the kernel's initial root and demands the
+whole record back byte-for-byte. -/
+def RunSeal.admits (runSeal : RunSeal) (raw : RawCombinedFieldRecord) : Bool :=
+  (admitCombinedFieldRecord? runSeal.admission raw).isSome
+
+/-- An accepted record carries the sealed session.  This is what lets a consumer
+turn one seal into two independent sources for the same identity: it pins
+`runSeal.session` against the session its own activation was authenticated for, and
+a seal issued elsewhere then cannot judge this mission's records. -/
+theorem RunSeal.admitted_record_carries_the_sealed_session (runSeal : RunSeal)
+    (raw : RawCombinedFieldRecord) (accepted : runSeal.admits raw = true) :
+    raw.session = runSeal.session := by
+  by_contra different
+  have mismatch : raw.session ≠ runSeal.admission.session := by
+    rw [runSeal.admission.exactSession]
+    exact different
+  simp [RunSeal.admits, admitCombinedFieldRecord?, mismatch] at accepted
+
+/-- The record the kernel **reached**, for a transcript of signed handoffs.
+
+This is the difference between checking a claim and deriving a value.  `admits`
+takes a record a caller wrote down and says yes or no; `replay?` is handed only
+the signed transcript and returns what `execute` actually arrived at.  A consumer
+built on this cannot fabricate a terminal state, because it never writes one
+down: `replayTrace` drives `execute` from the private `initialState` over every
+handoff, `completedRecord?` returns `none` unless the run genuinely reached
+`.extracted`, and every field of the result — phase, sequence, counters,
+remaining budget, route, extraction, outcome, featured artifact — is read off the
+state the kernel computed.
+
+A seal still holds no signing capability: a forged handoff fails
+`signedHandoffFromTrace?` and the whole replay refuses. -/
+def RunSeal.replay? (runSeal : RunSeal) (transcript : List HandoffTrace) :
+    Option RawCombinedFieldRecord :=
+  match replayTrace runSeal.config (initialState runSeal.config) transcript with
+  | .error _ => none
+  | .ok result => result.completion.map CombinedFieldRecord.toRaw
+
+/-! ⚑ AN UNDISCHARGED LEMMA, NAMED RATHER THAN FAKED.
+
+`RunSeal.replayed_record_carries_the_sealed_session` — "a record returned by
+`replay?` carries the sealed session" — is TRUE by construction
+(`completedRecord?` stamps `config.raw.sessionDigest`) and is NOT PROVED here.
+Two attempts at the supporting lemmas
+(`completedRecord?` stamps the session; every `StepResult` carries the
+completion of its own state) left unsolved goals against the `Option.bind`
+chain, and it is not worth a proof written faster than it can be checked.
+
+It is stated here and nowhere claimed, rather than replaced by a `native_decide`
+on the fixture — one instance standing in for a general fact is the sin this
+tree keeps finding.
+
+⚠ Nothing depends on it.  The weld's pin is
+`CrewFieldMissionRuntime.Activation.sealSessionExact`, a decidable equality
+checked at activation time between the seal's session and the authored field
+session; and the analogous fact for `admits` IS proved, immediately above, as
+`RunSeal.admitted_record_carries_the_sealed_session`.
+-/
 
 theorem execute_deterministic (config : Config) (state : State)
     (handoff : SignedHandoff config) {left right : StepResult config}
@@ -1294,6 +1377,159 @@ private def completionFor? (plan : List (SeatId × Decision)) :
   let result ← drive (start fixtureAdmission) plan
   result.completion
 
+/-! ### The sealed fixture run
+
+⚠ Fixture-only, and deliberately public: `CrewFieldMissionRuntime` is welded to
+this kernel and its activation fixture must hold a real seal to exercise the
+weld.  A seal can only *verify*; it holds no signing capability, and its
+`session` is the fixture session, so an activation for any other mission refuses
+it (`Activation.sealSessionExact`).  Production activation issues its own seal
+over a cryptographic verifier; this one is the non-cryptographic fixture suite
+and must never reach a deployment. -/
+def fixtureRunSeal : RunSeal := ⟨fixtureConfig, fixtureAdmission⟩
+
+/-! ### A second sealed world — the rekeyed crew
+
+`CrewFieldMissionRuntime` demonstrates that its durable key separates two crews
+that share one authored `activation_id`, and it needs an activation for the
+substituted crew to do it.  Since the weld, that activation needs a SEAL, and a
+seal can be minted only here.
+
+⚑ Note WHY it needs a whole second world rather than the fixture seal pointed at
+a different roster: a `RunSeal` carries a `Config`, a `Config` determines the
+session, and the session CONTAINS the roster.  There is no way to move a seal
+onto another crew, which is the property the runtime relies on.
+
+⚠ And note what does NOT do this work.  `briefingDeckPreimage` includes
+`raw.roster`, so it is tempting to say the briefing commitment binds the crew.
+It does not bind it HERE: the fixture digest is
+`digestFilled (briefingPreimageCode preimage % 256)` — eight bits — and the two
+rosters collide under it, so the substituted roster carrying the AUTHORED
+commitment still passes `rawConfigValidB`.  A first draft of this comment
+asserted the opposite as a theorem and `native_decide` refuted it.  The refusal
+downstream comes from the seal, not from the commitment. -/
+def fixtureRekeyedRoster : List Seat :=
+  fixtureRoster.map fun seat =>
+    { seat with playerKey := digestFilled (200 + seat.id.value) }
+
+def fixtureRekeyedRawConfig : RawConfig :=
+  withFixtureBriefingCommitment { fixtureRawConfigBase with roster := fixtureRekeyedRoster }
+
+theorem fixture_rekeyed_config_valid :
+    rawConfigValidB fixtureRekeyedRawConfig fixtureBriefings fixtureBriefingDigest = true := by
+  native_decide
+
+/-- The substitution moved the wallet keys and nothing else about who the crew
+is.  Asserted here, next to the world it describes, so the world cannot quietly
+become a copy of the authored one. -/
+theorem fixture_rekeyed_roster_substitutes_only_the_player_keys :
+    fixtureRekeyedRoster.map Seat.playerKey ≠ fixtureRoster.map Seat.playerKey ∧
+    fixtureRekeyedRoster.map Seat.id = fixtureRoster.map Seat.id ∧
+    fixtureRekeyedRoster.map Seat.role = fixtureRoster.map Seat.role ∧
+    fixtureRekeyedRoster.map Seat.credential = fixtureRoster.map Seat.credential ∧
+    fixtureRekeyedRoster.map Seat.initialCounter = fixtureRoster.map Seat.initialCounter := by
+  native_decide
+
+/-- ⚑ The fixture briefing commitment does NOT separate these two crews: the
+substituted roster carrying the authored commitment is still a valid config.
+Recorded as a theorem because it is the reason the seal has to be what refuses,
+and because the opposite was asserted here first and was false.  This is a fact
+about the eight-bit fixture digest, not about the design: a deployment digest
+would separate them. -/
+theorem the_fixture_briefing_commitment_does_not_separate_the_two_crews :
+    rawConfigValidB { fixtureRawConfig with roster := fixtureRekeyedRoster }
+      fixtureBriefings fixtureBriefingDigest = true := by
+  native_decide
+
+private def fixtureRekeyedConfig : Config where
+  raw := fixtureRekeyedRawConfig
+  briefings := fixtureBriefings
+  briefingDigest := fixtureBriefingDigest
+  messageDigest := fixtureMessageDigest
+  signatureVerifier := fixtureSignatureVerifier
+  valid := fixture_rekeyed_config_valid
+  messageDigestSuiteExact := rfl
+  signingSuiteExact := rfl
+
+private def fixtureRekeyedAdmission : CanonicalRunAdmission fixtureRekeyedConfig :=
+  ⟨fixtureRekeyedConfig.raw.sessionDigest, rfl⟩
+
+def fixtureRekeyedRunSeal : RunSeal := ⟨fixtureRekeyedConfig, fixtureRekeyedAdmission⟩
+
+/-- The two seals are for different sessions.  Without this the runtime's
+cross-crew refusals could be comparing a world with itself. -/
+theorem the_two_fixture_seals_carry_different_sessions :
+    fixtureRekeyedRunSeal.session ≠ fixtureRunSeal.session := by native_decide
+
+/-- The traces the kernel actually signed, exported as data rather than as a
+signing oracle.  `CrewFieldMissionRuntime` builds its wire transcripts from
+these, so a change to the kernel's signing preimage moves the runtime fixtures
+with it instead of leaving them asserting against a stale constant. -/
+def fixtureSafeMaintenanceTranscript : List HandoffTrace :=
+  ((completionFor? safeMaintenancePlan).map CombinedFieldRecord.transcript).getD []
+
+def fixtureDeepTranscript : List HandoffTrace :=
+  ((completionFor? deepPlan).map CombinedFieldRecord.transcript).getD []
+
+theorem exported_fixture_transcripts_are_four_signed_handoffs_each :
+    fixtureSafeMaintenanceTranscript.length = CREW_SIZE ∧
+      fixtureDeepTranscript.length = CREW_SIZE := by native_decide
+
+/-! The seal must be satisfiable *and* refutable.  A predicate that accepted
+everything would weld the runtime to nothing at all, so each acceptance below is
+paired with a refusal built by mutating the record the kernel just produced. -/
+
+def sealAdmitsKernelProducedRecordB : Bool :=
+  match completionFor? deepPlan with
+  | none => false
+  | some record => fixtureRunSeal.admits record.toRaw
+
+theorem run_seal_admits_the_record_the_kernel_produced :
+    sealAdmitsKernelProducedRecordB = true := by native_decide
+
+/-- ⚑ The fabrication check, and the reason `RunSeal` exists.  A caller that
+asserts a terminal state — the exact defect `CrewFieldMissionRuntime.deriveRecord?`
+had — is refused, because `admits` reaches that state by running `execute` rather
+than by reading the claim.  The mutated root is built from the live record and
+asserted different before the verdict is read. -/
+def sealRefusesAssertedTerminalRootB : Bool :=
+  match completionFor? deepPlan with
+  | none => false
+  | some record =>
+      let raw := record.toRaw
+      let asserted : StateRoot := { raw.finalRoot with snapshot :=
+        { raw.finalRoot.snapshot with
+          operationalBudgetRemaining :=
+            raw.finalRoot.snapshot.operationalBudgetRemaining + 1 } }
+      decide (asserted ≠ raw.finalRoot) &&
+      !fixtureRunSeal.admits { raw with finalRoot := asserted }
+
+theorem run_seal_refuses_a_terminal_state_the_kernel_did_not_reach :
+    sealRefusesAssertedTerminalRootB = true := by native_decide
+
+/-- The signature leg: one forged handoff signature and the seal refuses.  The
+forgery is constructed from the live trace and asserted to differ from it, so
+this cannot quietly become a comparison of a value with itself. -/
+def sealRefusesForgedHandoffSignatureB : Bool :=
+  match completionFor? deepPlan with
+  | none => false
+  | some record =>
+      match record.toRaw.transcript with
+      | [] => false
+      | trace :: rest =>
+          let forged : HandoffTrace :=
+            { trace with signature := ⟨signatureBytesPattern 251⟩ }
+          decide (forged.signature ≠ trace.signature) &&
+          !fixtureRunSeal.admits { record.toRaw with transcript := forged :: rest }
+
+theorem run_seal_refuses_a_forged_handoff_signature :
+    sealRefusesForgedHandoffSignatureB = true := by native_decide
+
+/-- A seal issued for this session says so.  The runtime pins this against the
+session its activation was authenticated for. -/
+theorem fixture_run_seal_carries_the_fixture_session :
+    fixtureRunSeal.session = fixtureRawConfig.sessionDigest := rfl
+
 theorem safe_extraction_accepts_two_matching_signed_recommendations :
     (completionFor? safePlan).isSome = true := by native_decide
 
@@ -1571,6 +1807,16 @@ theorem hostile_expanded_record_mutation_matrix_refused :
 #assert_axioms handoff_signing_preimage_injective
 #assert_axioms seat_signing_preimage_injective
 #assert_axioms completed_featured_artifact_is_beta_candidate
+#assert_axioms RunSeal.admitted_record_carries_the_sealed_session
+#assert_compiled fixture_rekeyed_config_valid
+#assert_compiled fixture_rekeyed_roster_substitutes_only_the_player_keys
+#assert_compiled the_fixture_briefing_commitment_does_not_separate_the_two_crews
+#assert_compiled the_two_fixture_seals_carry_different_sessions
+#assert_compiled exported_fixture_transcripts_are_four_signed_handoffs_each
+#assert_compiled run_seal_admits_the_record_the_kernel_produced
+#assert_compiled run_seal_refuses_a_terminal_state_the_kernel_did_not_reach
+#assert_compiled run_seal_refuses_a_forged_handoff_signature
+#assert_compiled fixture_run_seal_carries_the_fixture_session
 #assert_compiled fixture_config_valid
 #assert_compiled fixture_ordered_briefing_deck_is_commitment_bound
 #assert_compiled hostile_unwinnable_terminal_costs_are_individually_within_budget
