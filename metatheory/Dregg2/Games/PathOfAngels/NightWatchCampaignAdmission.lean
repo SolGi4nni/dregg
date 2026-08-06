@@ -867,7 +867,7 @@ def resourceAboveBoundBytes : String :=
 RETIRED `hazard_cycle` spliced back in refuses, rather than being read with the field
 ignored.  `exactKeys` is exact in both directions. -/
 def legacyHazardCycleBytes : String :=
-  (configJson fixtureRaw).dropRight 1 ++ ",\"hazard_cycle\":[70,10,55]}"
+  ((configJson fixtureRaw).dropEnd 1).toString ++ ",\"hazard_cycle\":[70,10,55]}"
 
 theorem oversized_rule_list_refuses : decodeConfig oversizedRulesBytes = none := by
   native_decide
