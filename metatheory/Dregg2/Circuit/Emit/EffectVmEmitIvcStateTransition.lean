@@ -62,6 +62,20 @@ UNSAT), and `ivc_step_is_hashed` (against a sound chip table the `new_hash` colu
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Tactics
+-- ⚑ 2026-08-06 — A DEPENDENCY EDGE, NOT A USE. The three `simp only [VmConstraint2.holdsAt]`
+-- proofs below (lines ~214/234/254) FORCE Lean to generate that definition's equation lemmas, and
+-- Lean 4 stores generated equations in whichever module demanded them first. `EffectLowerCertified`
+-- demands the same ones. Two sibling modules each owning `VmConstraint2.holdsAt.eq_6` is fine
+-- until something imports BOTH — which `EmitByName.lean` now does, and which failed with
+--     import ... failed, environment already contains
+--     'Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt.eq_6' from ...EffectLowerCertified
+-- taking the WHOLE by-name emit surface down, the same class of outage as a stale length pin.
+-- Importing the owner makes these equations inherited rather than regenerated.
+-- ⚠ DEBT, and say it plainly: this repairs THIS pair, not the class. The class fix is to force
+-- the equations at the DEFINITION site (`Dregg2/Circuit/DescriptorIR2.lean:1212`) so no downstream
+-- module can ever own them — declined here only because it rebuilds the entire Dregg2 corpus and
+-- this lane's emit is downstream of that build, not because the pairwise fix is preferable.
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransition
 
