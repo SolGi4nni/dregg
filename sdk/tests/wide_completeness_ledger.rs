@@ -1226,18 +1226,33 @@ fn custom_descriptor_carries_proof_bind_residual_named() {
          got guard {:?}",
         bind.guard
     );
-    // It binds the proof_commitment column (the verifying sub-proof's PI commitment lands here).
+    // ⚑ IT BINDS AN OCTET, NOT A FELT. `ProofBindSpec.commit`/`.vk` are `Vec<LeanExpr>` since the
+    // proof-bind flag day (~62-bit → ~124-bit birthday: the commitment is the FULL 8-felt WideHash
+    // squeeze, both blocks — the test directly below states that half). This assertion still read
+    // the one-felt shape and had not compiled since; a `matches!` against a `Vec` is a type error,
+    // so `dregg-sdk`'s `wide_completeness_ledger` target has not built in HEAD OR in any working
+    // tree, which is why nothing said so. Restated at the shape the object has: the eight lanes are
+    // CONSECUTIVE columns from the base, so a seam that bound the base lane and padded the rest
+    // would fail here rather than pass as "it names the right column".
+    let octet = |xs: &[LeanExpr], base: usize| -> bool {
+        xs.len() == 8
+            && xs
+                .iter()
+                .enumerate()
+                .all(|(i, e)| matches!(e, LeanExpr::Var(v) if *v == base + i))
+    };
     assert!(
-        matches!(bind.commit, LeanExpr::Var(CUSTOM_PROOF_COMMITMENT_COL)),
-        "the proof_bind MUST bind the custom_proof_commitment column (var {CUSTOM_PROOF_COMMITMENT_COL}); \
-         got commit {:?}",
+        octet(&bind.commit, CUSTOM_PROOF_COMMITMENT_COL),
+        "the proof_bind MUST bind the EIGHT custom_proof_commitment lanes (vars \
+         {CUSTOM_PROOF_COMMITMENT_COL}..{}); got commit {:?}",
+        CUSTOM_PROOF_COMMITMENT_COL + 8,
         bind.commit
     );
-    // It binds the program_vk_hash column (the sub-proof's program VK lands here).
     assert!(
-        matches!(bind.vk, LeanExpr::Var(CUSTOM_PROGRAM_VK_HASH_COL)),
-        "the proof_bind MUST bind the custom_program_vk_hash column (var {CUSTOM_PROGRAM_VK_HASH_COL}); \
-         got vk {:?}",
+        octet(&bind.vk, CUSTOM_PROGRAM_VK_HASH_COL),
+        "the proof_bind MUST bind the EIGHT custom_program_vk_hash lanes (vars \
+         {CUSTOM_PROGRAM_VK_HASH_COL}..{}); got vk {:?}",
+        CUSTOM_PROGRAM_VK_HASH_COL + 8,
         bind.vk
     );
 }

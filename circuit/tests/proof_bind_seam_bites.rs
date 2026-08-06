@@ -425,7 +425,7 @@ fn limb0_only_vk_swapped() -> EffectVmDescriptor2 {
 /// rather than merely discouraged.
 #[test]
 fn a_narrow_seam_is_refused_by_the_descriptor_check() {
-    use dregg_circuit::descriptor_ir2::check_descriptor2;
+    use dregg_circuit::descriptor_ir2::check_descriptor2_wellformed;
     let mut d = pinned();
     if let VmConstraint2::ProofBind(m) = &mut d.constraints[0] {
         m.commit.truncate(1);
@@ -433,7 +433,7 @@ fn a_narrow_seam_is_refused_by_the_descriptor_check() {
         m.vk_pin = Some(vec![DECLARED_VK[0]]);
         m.bound = Some(vec![LeanExpr::Var(ANCHOR_BASE)]);
     }
-    let err = check_descriptor2(&d).expect_err("a one-lane seam must be refused");
+    let err = check_descriptor2_wellformed(&d).expect_err("a one-lane seam must be refused");
     assert!(
         err.contains("below the floor"),
         "the refusal must name the lane floor, got: {err}"
@@ -444,12 +444,12 @@ fn a_narrow_seam_is_refused_by_the_descriptor_check() {
 /// prefix"; it is a seam that would check half its object.
 #[test]
 fn a_truncated_pin_is_refused_by_the_descriptor_check() {
-    use dregg_circuit::descriptor_ir2::check_descriptor2;
+    use dregg_circuit::descriptor_ir2::check_descriptor2_wellformed;
     let mut d = pinned();
     if let VmConstraint2::ProofBind(m) = &mut d.constraints[0] {
         m.vk_pin = Some(DECLARED_VK[..4].to_vec());
     }
-    let err = check_descriptor2(&d).expect_err("a truncated pin must be refused");
+    let err = check_descriptor2_wellformed(&d).expect_err("a truncated pin must be refused");
     assert!(
         err.contains("not a prefix"),
         "the refusal must name the truncation, got: {err}"
