@@ -187,7 +187,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
 /// decoding a one-constraint golden is the stable public path to the same value).
 fn window_gate(loc_col: usize, nxt_col: usize) -> VmConstraint2 {
     let json = format!(
-        r#"{{"name":"w","ir":2,"trace_width":8,"public_input_count":0,"tables":[],"constraints":[{{"t":"window_gate","on_transition":true,"body":{{"t":"add","l":{{"t":"nxt","c":{nxt_col}}},"r":{{"t":"mul","l":{{"t":"const","v":-1}},"r":{{"t":"loc","c":{loc_col}}}}}}}}}],"hash_sites":[],"ranges":[]}}"#
+        r#"{{"name":"w","ir":2,"trace_width":8,"public_input_count":0,"challenges":0,"tables":[],"constraints":[{{"t":"window_gate","on_transition":true,"body":{{"t":"add","l":{{"t":"nxt","c":{nxt_col}}},"r":{{"t":"mul","l":{{"t":"const","v":-1}},"r":{{"t":"loc","c":{loc_col}}}}}}}}}],"hash_sites":[],"ranges":[]}}"#
     );
     parse_vm_descriptor2(&json)
         .expect("window-gate golden decodes")

@@ -256,7 +256,7 @@ fn shape_a_json_m(k: usize, n: usize, m: usize) -> String {
         ));
     }
     format!(
-        "{{\"name\":\"attack-shape-a-k{k}-n{n}-m{m}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\
+        "{{\"name\":\"attack-shape-a-k{k}-n{n}-m{m}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\"challenges\":0,\
          \"tables\":[{{\"id\":{TRT_TID},\"name\":\"dfa_transition_table\",\"arity\":3,\"sem\":\"exact_public_rows\",\"rows\":[{}]}}],\
          \"constraints\":[{}],\"hash_sites\":[],\"ranges\":[]}}",
         3 * k,
@@ -293,7 +293,7 @@ fn shape_b_json_m(k: usize, n: usize, m: usize) -> String {
         ));
     }
     format!(
-        "{{\"name\":\"attack-shape-b-k{k}-n{n}-m{m}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\
+        "{{\"name\":\"attack-shape-b-k{k}-n{n}-m{m}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\"challenges\":0,\
          \"tables\":[{{\"id\":{TID_RANGE},\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":4}}],\
          \"constraints\":[{}],\"hash_sites\":[],\"ranges\":[]}}",
         3 * k,

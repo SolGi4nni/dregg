@@ -33,6 +33,7 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::{Outcome, classify};
 
 /// BabyBear's modulus. `2^30 < p < 2^31` is the whole reason this file exists.
 const P: u64 = 2_013_265_921;
@@ -45,7 +46,7 @@ const BAND_EDGE: u64 = 939_524_097;
 fn comment_circuit() -> String {
     concat!(
         r#"{"name":"underflow-band-comment-circuit","ir":2,"trace_width":3,"#,
-        r#""public_input_count":0,"tables":["#,
+        r#""public_input_count":0,"challenges":0,"tables":["#,
         r#"{"id":0,"name":"main","arity":3,"sem":"main"},"#,
         r#"{"id":2,"name":"range","arity":1,"sem":"range","bits":30}],"#,
         r#""constraints":["#,
@@ -69,7 +70,7 @@ fn comment_circuit() -> String {
 fn deployed_shape() -> String {
     concat!(
         r#"{"name":"underflow-band-deployed-shape","ir":2,"trace_width":11,"#,
-        r#""public_input_count":0,"tables":["#,
+        r#""public_input_count":0,"challenges":0,"tables":["#,
         r#"{"id":0,"name":"main","arity":11,"sem":"main"},"#,
         r#"{"id":2,"name":"range","arity":1,"sem":"range","bits":30},"#,
         r#"{"id":84,"name":"range_w15","arity":1,"sem":"range","bits":15}],"#,
@@ -156,11 +157,23 @@ fn deployed_rows(before: u64, amount: u64, borrow0: u64, borrow1: u64) -> Vec<Ve
     ])
 }
 
+/// ⚑ **A REFUSAL ARRIVES AS A PANIC, NOT AS `Err` (repaired 2026-08-06).** This read
+/// `Err(_) => false` and nothing else, but p3's debug prover signals an unsatisfied constraint by
+/// PANICKING (`check_constraints.rs:133`, "constraints not satisfied on row 0"), so every
+/// `assert!(!proves(..))` in this file aborted the test instead of passing it. It went unnoticed
+/// because the file had been dead since the 2026-08-05 `challenges` flag day — its two descriptor
+/// templates lacked the key and `parse_vm_descriptor2` refused at the door, so nothing here reached
+/// a prover at all. Re-admitting them is what surfaced this. `refusal::classify` is the repo's
+/// existing reader for exactly this distinction: a DOCUMENTED unsat panic is a refusal, any other
+/// panic is a RED rather than a silent "rejected".
 fn proves(json: &str, trace: &[Vec<BabyBear>]) -> bool {
     let desc = parse_vm_descriptor2(json).expect("descriptor parses");
-    match prove_vm_descriptor2(&desc, trace, &[], &MemBoundaryWitness::default(), &[]) {
-        Ok(proof) => verify_vm_descriptor2(&desc, &proof, &[]).is_ok(),
-        Err(_) => false,
+    match classify("proves", || {
+        let proof = prove_vm_descriptor2(&desc, trace, &[], &MemBoundaryWitness::default(), &[])?;
+        verify_vm_descriptor2(&desc, &proof, &[])
+    }) {
+        Outcome::Accepted(_) => true,
+        Outcome::UnsatPanic(_) | Outcome::Err(_) => false,
     }
 }
 

@@ -184,7 +184,7 @@ fn proxy_json(n: usize, s: usize) -> String {
         "{{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":{last},\"pi_index\":1}}"
     ));
     format!(
-        "{{\"name\":\"packed-geometry-proxy-n{n}-s{s}\",\"ir\":2,\"trace_width\":{width},\"public_input_count\":2,\
+        "{{\"name\":\"packed-geometry-proxy-n{n}-s{s}\",\"ir\":2,\"trace_width\":{width},\"public_input_count\":2,\"challenges\":0,\
          \"tables\":[{{\"id\":{TID_RANGE},\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":4}}],\
          \"constraints\":[{}],\"hash_sites\":[],\"ranges\":[]}}",
         constraints.join(",")

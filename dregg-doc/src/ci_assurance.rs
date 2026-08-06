@@ -370,7 +370,7 @@ fn ci_attestation_descriptor2() -> EffectVmDescriptor2 {
     ));
     let json = format!(
         "{{\"name\":\"dregg-ci-attestation-v1\",\"ir\":2,\
-         \"trace_width\":{CI_PI_COUNT},\"public_input_count\":{CI_PI_COUNT},\
+         \"trace_width\":{CI_PI_COUNT},\"public_input_count\":{CI_PI_COUNT},\"challenges\":0,\
          \"tables\":[],\"constraints\":[{constraints}],\"hash_sites\":[],\"ranges\":[]}}"
     );
     parse_vm_descriptor2(&json).expect("the CI-attestation IR-v2 descriptor is well-formed")

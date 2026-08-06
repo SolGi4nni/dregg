@@ -20,7 +20,7 @@ fn w15_descriptor_json() -> String {
     format!(
         concat!(
             "{{\"name\":\"ir2-range-w15-test\",\"ir\":2,\"trace_width\":2,",
-            "\"public_input_count\":0,\"tables\":[",
+            "\"public_input_count\":0,\"challenges\":0,\"tables\":[",
             "{{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"}},",
             "{{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30}},",
             "{{\"id\":{w15},\"name\":\"range_w15\",\"arity\":1,\"sem\":\"range\",\"bits\":15}}],",

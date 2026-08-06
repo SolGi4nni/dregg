@@ -1,5 +1,30 @@
 //! # The emit-from-Lean EQUALITY GATE — the generalized effect-action binding AIR.
 //!
+//! ⚑⚑ **RED, AND HERE IS WHOSE — `dregg-effect-burn-v1` DOES NOT LOAD (measured 2026-08-06).**
+//! Six of this file's tests fail, and the `challenges` flag-day repair is NOT the cause; it is what
+//! made the cause visible. [`BURN_GOLDEN`] is now byte-identical to `EffectActionBindingEmit.lean`'s
+//! `#guard emitVmJson2 burnDesc`, and `parse_vm_descriptor2` refuses it:
+//!
+//! ```text
+//! constant at byte 3619 does not fit a BabyBear felt (10 decimal digits,
+//! p_babybear = 2013265921). A gate body carrying it cannot round-trip the field, so its
+//! integer semantics say nothing about any proof over it.
+//! ```
+//!
+//! The constant is `EffectActionBindingEmit.TWO_POW_32 = 4294967296`, the borrow coefficient of the
+//! two-limb u64 subtraction, emitted as `{"t":"const","v":-4294967296}`. BabyBear's `p` is
+//! `2013265921 < 2^32`, so that coefficient has no felt. **This PREDATES the flag day** — the
+//! retired inline golden carried the identical constant and simply failed one check earlier, on the
+//! missing `"challenges"` key, so the deeper refusal was never reached or reported.
+//!
+//! ⚠ **The remedy is NOT [`parse_vm_descriptor2_unsound_oversized`].** That escape exists to read an
+//! artifact, not to make a gate green over an encoding whose integer semantics do not survive the
+//! field — routing this test through it would be laundering exactly the thing the refusal names.
+//! The fix is in the AUTHOR: re-emit `burnDesc`'s borrow on a felt-sized encoding
+//! (`Dregg2.Circuit.Emit.PastaFieldSound`; the two-limb split the rest of the descriptor already
+//! uses), which needs a `lake build` and a re-emit. Until then this file is RED for one reason,
+//! written here so the red is attributable rather than stepped over.
+//!
 //! Validates the `emit-from-Lean` pattern for the `effect_action` family: the binding AIR
 //! `circuit/src/effect_action_air.rs::EffectActionAir` (a 32-byte field → 8 BabyBear limbs, a u64
 //! amount → 2 limbs, each limb pinned to a row-0 trace column; row-continuity forcing every row to
