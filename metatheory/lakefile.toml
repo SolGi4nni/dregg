@@ -361,20 +361,25 @@ globs = [
   "Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntimeBoundary",  # 6 ax
   "Dregg2.Games.PathOfAngels.HolderMechanics",  # 7 ax, 16 comp
   "Dregg2.Games.PathOfAngels.HolderMechanicsBoundary",  # 7 ax
-  "Dregg2.Games.PathOfAngels.NightWatchCampaign",  # 12 ax
+  "Dregg2.Games.PathOfAngels.NightWatchCampaign",  # 24 ax
+  # ⚑ 2026-08-05 — the authenticated-config seam. `NightWatchCampaignAdmission` is the witness
+  # constructor (`authorizeCampaignConfigForWorld?`) that makes the judged config an AUTHENTICATED
+  # document instead of one the caller handed over. It is already compiled transitively — the Wire
+  # imports it, so its pins DO run — and is listed here so the index names it rather than leaving a
+  # reader to infer coverage from an import edge.
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignAdmission",  # 10 ax, 11 comp
   # ⚑ 2026-08-05 — ROOTED WITH THE MODULE, not after it. `NightWatchCampaignWire` is the canonical
   # JSON boundary + `@[export dregg_poa_night_watch_campaign_judge]` that makes the Campaign kernel
-  # reachable at all. It carries 31 `#assert_axioms`/`#assert_compiled` pins; unrooted, every one of
-  # them would run in NO target — which is precisely the 46-orphan wound recorded above, and rooting
-  # it in the same breath as landing it is the only way that wound does not reopen.
-  "Dregg2.Games.PathOfAngels.NightWatchCampaignWire",  # 10 ax, 21 comp
+  # reachable at all; unrooted, its pins would run in NO target — precisely the 46-orphan wound
+  # recorded above, and rooting it in the same breath as landing it is how that wound stays closed.
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignWire",  # 4 ax, 21 comp
   # ⚑ 2026-08-05 — the first `Config` value in this repository's history lives here.
   # `NightWatchCampaign`'s six pins were all `∀ config : Config, …` and NO VALUE OF `Config` HAD
   # EVER BEEN CONSTRUCTED ANYWHERE — the "parametric theorems over an uninhabited premise" class
   # that cost the Galley kernel 5,111 lines. `fixture_config_activates` is the satisfiability
   # witness for `configValidB`, and the kernel has now been RUN: sixteen commands, four strict
   # watch cycles, an exact terminal state. Unrooted, that witness would prove it in no target.
-  "Dregg2.Games.PathOfAngels.NightWatchCampaignExamples",  # 16 ax, 27 comp
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignExamples",  # 17 ax, 32 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoop",  # 13 ax, 15 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoopExamples",  # 4 ax, 4 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoopRuntime",  # 8 ax
