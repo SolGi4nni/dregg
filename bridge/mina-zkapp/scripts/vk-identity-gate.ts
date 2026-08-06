@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,6 +114,74 @@ for (const r of resolved) {
     `${r.notion.id}: credited producer ${src} DOES NOT EXIST — the notion names an emitter ` +
       'this tree does not have, so its value could never appear',
   );
+}
+console.log('');
+
+// ── [1c] EVERY NOTION HAS A ROUTE INTO A CLEAN CHECKOUT ────────────────────
+// ⚑ THE STATE THIS LEG EXISTS TO REFUSE, measured 2026-08-06: `o1js-shrink-partition-walk` named
+// `.fullchain/uniform-claim-shrink/shrink-partition-pins.json` as its only source, declared NO
+// mirror, and `.fullchain/` is gitignored. The directory did not exist even on the box that had
+// emitted every other artifact. So the key `DreggShrinkHeadGate.advanceHead` pins was not
+// "absent in this checkout" — it was UNOBTAINABLE BY ANY CHECKOUT, and leg [2] below printed
+// `single-source; nothing to cross-check` over it, which reads like a decision rather than a hole.
+//
+// The distinction this leg draws, and it is the whole point:
+//   ABSENT      — a route exists (a tracked artifact, or a tracked mirror of a gitignored one) and
+//                 nothing has walked it yet on this box. Normal. Reported, never red.
+//   UNROUTABLE  — every declared source is gitignored and no tracked mirror is declared. No clone
+//                 can ever hold the value, so every comparison downstream is vacuous FOREVER. RED.
+//
+// ⚠ `git check-ignore` and not a hand-declared `isEphemeral` flag: a boolean beside the path would
+// be the path's own restatement, and the two would drift the first time a `.gitignore` moved.
+// A git that cannot answer is RED, not skipped — a blind leg here is the failure, not the absence.
+console.log('=== [1c] EVERY NOTION IS REACHABLE FROM A CLEAN CHECKOUT (tracked artifact or tracked mirror) ===\n');
+const ignored = (rel: string): boolean | null => {
+  const r = spawnSync('git', ['check-ignore', '--quiet', '--', rel], { cwd: APP });
+  if (r.error !== undefined || r.status === null || r.status > 1) return null; // git could not answer
+  return r.status === 0;
+};
+/** The routes a CLEAN CHECKOUT could obtain this notion's value through. Empty == unroutable.
+ *  `null` == git could not answer, which is a defect here and not a skip. */
+const routesFor = (valuePath: string, mirrorPath: string | null): string[] | null => {
+  const vIgn = ignored(valuePath);
+  if (vIgn === null) return null;
+  const routes: string[] = [];
+  if (!vIgn) routes.push(`${valuePath} (trackable producer artifact)`);
+  if (mirrorPath !== null) {
+    const mIgn = ignored(mirrorPath);
+    if (mIgn === null) return null;
+    if (!mIgn) routes.push(`${mirrorPath} (tracked mirror)`);
+  }
+  return routes;
+};
+for (const r of resolved) {
+  const n = r.notion;
+  const routes = routesFor(n.valuePath, n.mirrorPath);
+  if (routes === null) {
+    bad(
+      `${n.id}: \`git check-ignore\` could not answer for ${n.valuePath}. This leg cannot tell an ` +
+        'absent artifact from an unobtainable one without it, and a blind leg is the defect.',
+    );
+    continue;
+  }
+  check(
+    routes.length > 0,
+    `${n.id}: reachable via ${routes.join(' + ')}`,
+    `${n.id}: UNROUTABLE — its only source ${n.valuePath} is GITIGNORED and it declares ` +
+      `${n.mirrorPath === null ? 'no mirror at all' : `a mirror (${n.mirrorPath}) that is ALSO gitignored`}. ` +
+      `No clone can ever hold this value, so ${n.consumer} pins a key nothing in a fresh checkout ` +
+      'can name and every comparison against it is vacuous forever. Declare a TRACKED mirror and ' +
+      `teach ${n.producerSource ?? 'its producer'} to write it.`,
+  );
+  //  ROUTABLE BUT UNWALKED is a real state and it is said out loud rather than left to leg [2]'s
+  //  quiet `nothing to cross-check`. It is NOT a failure: a clone that has not run an hours-long
+  //  Pickles compile is the normal case, and reddening for it is the vacuous-red class.
+  if (routes.length > 0 && r.hash === null)
+    console.log(
+      `     ⚑ NO VALUE ANYWHERE YET: the route exists but nothing has walked it. ${r.absent}\n` +
+        `        Until then ${n.consumer} has NO pin to compare against in this checkout, and this\n` +
+        '        gate is not checking that key — it is naming the hole.',
+    );
 }
 console.log('');
 
@@ -314,6 +383,38 @@ if (SELF_TEST) {
       'self-test: a drifted hash was accepted',
     );
   }
+  // (b2) ⚑ [1c]'S RED PATH. On a healthy registry every notion is routable, which is exactly the
+  //      state in which nobody has shown the leg CAN refuse one. It is driven here on SYNTHETIC
+  //      paths — no notion is added, no file is touched — in all three directions, because the
+  //      shape it caught was a notion whose only source was under gitignored `.fullchain/` and
+  //      whose absence therefore read as "not emitted yet" forever.
+  const unroutable = routesFor('.fullchain/uniform-claim-shrink/shrink-partition-pins.json', null);
+  check(
+    unroutable !== null && unroutable.length === 0,
+    'self-test: a gitignored producer with NO mirror is reported UNROUTABLE — [1c] can go red',
+    'self-test: a gitignored source with no mirror was accepted as reachable; [1c] proves nothing',
+  );
+  const viaMirror = routesFor(
+    '.fullchain/uniform-claim-shrink/shrink-partition-pins.json',
+    'dregg-shrink-pins.json',
+  );
+  check(
+    viaMirror !== null && viaMirror.length === 1 && viaMirror[0].includes('dregg-shrink-pins.json'),
+    'self-test: CONTROL — the SAME gitignored producer becomes routable once a TRACKED mirror is ' +
+      'declared, so the red above is the missing mirror and not the path',
+    'self-test: declaring a tracked mirror did not make the notion routable — the leg is not ' +
+      'reading the mirror, and its green would mean nothing',
+  );
+  const mirrorAlsoIgnored = routesFor(
+    '.fullchain/uniform-claim-shrink/shrink-partition-pins.json',
+    '.fullchain/uniform-claim/key-block42.json',
+  );
+  check(
+    mirrorAlsoIgnored !== null && mirrorAlsoIgnored.length === 0,
+    'self-test: a mirror that is ITSELF gitignored does not count as a route',
+    'self-test: a gitignored mirror was counted as a route — declaring one would launder the hole',
+  );
+
   // (c) an unknown notion id must THROW rather than silently name nothing.
   let threw = false;
   try {

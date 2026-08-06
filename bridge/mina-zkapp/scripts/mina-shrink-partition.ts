@@ -216,7 +216,41 @@ async function main() {
       resolve(WORK, 'shrink-terminal-proof.json'),
       JSON.stringify(prev.toJSON()),
     );
+    // ── ⚑ THE TRACKED MIRROR — the half that was missing, and why it is here ────────────────
+    // `WORK` is `.fullchain/uniform-claim-shrink/`, and `.fullchain/` IS GITIGNORED. So until
+    // 2026-08-06 the ONLY copy of this pin lived in a directory no clone carries and no clone can
+    // produce without 39 Pickles proves over a fixture it also does not have. Measured that day:
+    // the directory did not exist at all, so `DreggShrinkHeadGate`'s terminal key resolved to
+    // ABSENT everywhere, and the `vk-identity` leg that is supposed to cross-check it was
+    // comparing against nothing while printing a clean sweep.
+    //
+    // The RootFriUniform chains already had the answer beside them: `dregg-chain-pins.json` is a
+    // TRACKED mirror of a gitignored key ring, read as `mirror-only` and labelled UNCHECKED on any
+    // box that did not compile the chain. This is that file for the shrink family. It is written
+    // ONLY on a terminal run — a partial walk must never mint a tracked pin naming a mid-chain
+    // step as a terminal, which is the one way this artifact could lie.
+    const MIRROR = resolve(process.cwd(), 'dregg-shrink-pins.json');
+    writeFileSync(
+      MIRROR,
+      JSON.stringify(
+        {
+          _: 'TRACKED MIRROR of .fullchain/uniform-claim-shrink/shrink-partition-pins.json. ' +
+            'Emitted by scripts/mina-shrink-partition.ts on a TERMINAL run only. Consumed by ' +
+            'DreggShrinkHeadGate (src/DreggShrinkHead.ts) and cross-checked by `npm run ' +
+            'vk-identity`, which reads the ring when it is present and reds if the two disagree. ' +
+            'Regenerate: npm run mina-shrink-partition. Do not hand-edit.',
+          label: pins.label,
+          terminalVkHash: pins.terminalVkHash,
+          totalSteps: pins.totalSteps,
+          genesisRoot: pins.genesisRoot,
+          step0VkHash: pins.step0VkHash,
+        },
+        null,
+        2,
+      ) + '\n',
+    );
     ok(`TERMINAL reached (all ${numQueries} queries) — proof + pins saved to ${WORK}`);
+    ok(`tracked mirror written to ${MIRROR} — COMMIT IT; it is the only copy a clone can read`);
   } else {
     console.log(
       `\n  ⚑ PARTIAL: proved step0 + ${provedWalk}/${numQueries} walk steps (MINA_PART_STEPS). ` +

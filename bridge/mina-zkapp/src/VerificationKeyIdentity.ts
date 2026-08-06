@@ -171,8 +171,15 @@ export const KNOWN_VK_NOTIONS: readonly VkNotion[] = [
     valuePath: '.fullchain/uniform-claim-shrink/shrink-partition-pins.json',
     producerSource: 'scripts/mina-shrink-partition.ts',
     valueField: (j) => j?.terminalVkHash,
-    mirrorPath: null,
-    mirrorField: null,
+    //  ⚑ WAS `null`, AND THAT WAS THE DEFECT (repaired 2026-08-06). `valuePath` lives under
+    //  `.fullchain/`, which is gitignored, so with no mirror declared this notion had NO ROUTE INTO
+    //  ANY CLONE: not absent-in-this-checkout, but structurally unobtainable, and the gate around it
+    //  compared nothing while printing a clean line. Measured that day: the directory did not exist
+    //  on the machine that emitted every other artifact either. `mina-shrink-partition.ts` now
+    //  writes this tracked mirror on a TERMINAL run, and leg [1c] of `vk-identity-gate.ts` reds for
+    //  any notion that has neither a tracked mirror nor a tracked producer artifact.
+    mirrorPath: 'dregg-shrink-pins.json',
+    mirrorField: (j) => j?.terminalVkHash,
     consumer: 'DreggShrinkHead.ts:138 — DreggShrinkHeadGate.advanceHead',
     caveat:
       'A DIFFERENT SEAL FAMILY from the RootFriUniform head gate: three-field UNTAGGED ' +
