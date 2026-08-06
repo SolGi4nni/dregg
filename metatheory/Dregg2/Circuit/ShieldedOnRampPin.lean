@@ -703,4 +703,165 @@ theorem route_root8_as_piCOMMITTED_needs_reencoding :
 #assert_axioms plain_fold_is_not_indexed_merkle
 #assert_axioms route_root8_as_piCOMMITTED_needs_reencoding
 
+/-! ## §8 — FORK B COMMENSURATION SPEC: the re-encoded fold that CLOSES §7's WIDTH + STRUCTURE
+obstructions, faithful to the deployed FSI2/FSN2/FSE2 exact-linked geometry.
+
+Ember greenlit **Fork B**: KEEP the depth-16 indexed-Merkle sorted-linked accumulator
+(`cell/src/shielded_note_set.rs`, `exact_linked_append_root8` at FSI2/FSN2/FSE2 — preserving
+duplicate-rejection / the absence bracket) and make the DESCRIPTOR commensurate with it. This section
+is the machine-checked OBLIGATION the re-authored emitted descriptor must realize: the exact 8-lane
+fold it must pin `piCOMMITTED` to. Geometry recon-verified against `circuit/src/exact_nullifier_aafi.rs`:
+  * LEAF preimage = 39 felts `[FSI2] ++ addrTag :: addr[16] ++ value[4] ++ nextTag :: next[16]`,
+    through `hash_many_8` (`:494-515`);
+  * NODE preimage = 33 felts `[FSN2] ++ child0[8] ++ child1[8] ++ child2[8] ++ child3[8]`, through
+    `hash_many_8` (`:522-545`); arity 4, depth 16, `ROOT_LANES = 8` (`:34-36`);
+  * the shielded leaf's `addr` is the 32-byte note commitment as sixteen `u16` LE limbs, value
+    column ZERO (hiding) — `cell/src/shielded_note_set.rs:123-138,351-359`.
+
+**Scope, said out loud.** This is the metatheory of the pin, NOT the pin. It does NOT emit a
+descriptor, does NOT route #15, and does NOT implement `Effect::Shield`/`Deshield`. The emitted
+realization is a ~2442-column exact-linked AIR at the shielded domain (adapting
+`Emit/ExactNullifierAafiDescriptorPlan.lean` from FNI2 to FSI2, chained `TID_P2_STATE16` steps —
+`TID_P2`'s 8-lane single-permutation output cannot express the `hash_many_8` sponge); that, plus the
+state-commitment change, the route + `spend_circuit.rs` deletion, and Shield/Deshield, are the named
+next steps. The hashes here are ABSTRACT (as `Hair` is): faithfulness is carried by the PREIMAGE
+SHAPES (39/33, matching the Rust `debug_assert_eq!` widths), not by evaluating Poseidon2. -/
+
+/-- The deployed shielded exact-linked domain triple (`cell/src/shielded_note_set.rs:123-127`):
+`FSI2` leaf, `FSN2` node, `FSE2` empty. -/
+def FSI2 : ℤ := 0x46534932
+def FSN2 : ℤ := 0x46534e32
+def FSE2 : ℤ := 0x46534532
+
+/-- A tag + sixteen `u16` limbs — the `tagged_key_felts` shape (`exact_nullifier_aafi.rs:452`,
+tag first then the limbs). -/
+structure Key17 where
+  tag  : ℤ
+  limb : List ℤ
+
+/-- The exact-linked LEAF preimage, felt-for-felt (`exact_leaf_preimage_in`, 39 felts): the
+`next_addr` key is what makes the leaf indexed-Merkle (absence-bracketable) rather than plain. -/
+def shieldedLeafPre (addr : Key17) (value : List ℤ) (next : Key17) : List ℤ :=
+  [FSI2, addr.tag] ++ addr.limb ++ value ++ [next.tag] ++ next.limb
+
+/-- The exact-linked NODE preimage, felt-for-felt (`exact_node_preimage_in`, 33 felts): FSN2 then
+the four children's eight lanes each, in slot order. -/
+def shieldedNodePre (c0 c1 c2 c3 : List ℤ) : List ℤ :=
+  FSN2 :: (c0 ++ c1 ++ c2 ++ c3)
+
+/-- **Faithful width (`shieldedLeafPre_length`).** 2 + 16 + 4 + 1 + 16 = 39 — the Rust
+`debug_assert_eq!(input.len(), 39)` (`exact_nullifier_aafi.rs:504`). -/
+theorem shieldedLeafPre_length (addr next : Key17) (value : List ℤ)
+    (ha : addr.limb.length = 16) (hv : value.length = 4) (hn : next.limb.length = 16) :
+    (shieldedLeafPre addr value next).length = 39 := by
+  simp only [shieldedLeafPre, List.length_append, List.length_cons, List.length_nil]
+  omega
+
+/-- **Faithful width (`shieldedNodePre_length`).** 1 + 8·4 = 33 — the Rust
+`debug_assert_eq!(input.len(), 33)`-shape node preimage (`exact_nullifier_aafi.rs:521-533`). -/
+theorem shieldedNodePre_length (c0 c1 c2 c3 : List ℤ)
+    (h0 : c0.length = 8) (h1 : c1.length = 8) (h2 : c2.length = 8) (h3 : c3.length = 8) :
+    (shieldedNodePre c0 c1 c2 c3).length = 33 := by
+  simp only [shieldedNodePre, List.length_cons, List.length_append]
+  omega
+
+theorem shieldedLeafPre_head_FSI2 (addr next : Key17) (value : List ℤ) :
+    (shieldedLeafPre addr value next).headD 0 = FSI2 := rfl
+
+theorem shieldedNodePre_head_FSN2 (c0 c1 c2 c3 : List ℤ) :
+    (shieldedNodePre c0 c1 c2 c3).headD 0 = FSN2 := rfl
+
+/-- An 8-lane digest (intended length 8). -/
+abbrev Digest8 := List ℤ
+
+/-- One exact-linked level: the child position and the three sibling digests in slot order. -/
+structure Level8 where
+  pos  : ℤ
+  sib0 : Digest8
+  sib1 : Digest8
+  sib2 : Digest8
+
+/-- Place `cur` at slot `pos` among the four children, siblings filling the rest in slot order —
+faithful to `recompose` (`exact_nullifier_aafi.rs:724-748`). -/
+def placeChildren (cur : Digest8) (lvl : Level8) : List ℤ :=
+  if lvl.pos = 0 then shieldedNodePre cur lvl.sib0 lvl.sib1 lvl.sib2
+  else if lvl.pos = 1 then shieldedNodePre lvl.sib0 cur lvl.sib1 lvl.sib2
+  else if lvl.pos = 2 then shieldedNodePre lvl.sib0 lvl.sib1 cur lvl.sib2
+  else shieldedNodePre lvl.sib0 lvl.sib1 lvl.sib2 cur
+
+/-- The exact-linked per-level fold: hash the node preimage with `cur` at its position. -/
+def exactNode8 (nodeHash : List ℤ → Digest8) (cur : Digest8) (lvl : Level8) : Digest8 :=
+  nodeHash (placeChildren cur lvl)
+
+/-- Fold a leaf digest up its exact-linked path to the 8-lane root. -/
+def foldPath8 (nodeHash : List ℤ → Digest8) (leaf : Digest8) : List Level8 → Digest8
+  | []          => leaf
+  | lvl :: rest => foldPath8 nodeHash (exactNode8 nodeHash leaf lvl) rest
+
+/-- Membership against the 8-lane exact-linked root — the predicate the re-authored descriptor pins. -/
+def membershipVerifies8 (nodeHash : List ℤ → Digest8) (leaf : Digest8) (path : List Level8)
+    (root : Digest8) : Prop := foldPath8 nodeHash leaf path = root
+
+/-- **`membership8_determines_root`.** The 8-lane fold determines the full root — there is no 8→1
+collapse in the pin, so two committed roots cannot both be pinned by one membership witness. -/
+theorem membership8_determines_root (nodeHash : List ℤ → Digest8) (leaf : Digest8)
+    (path : List Level8) (r r' : Digest8)
+    (h : membershipVerifies8 nodeHash leaf path r) (h' : membershipVerifies8 nodeHash leaf path r') :
+    r = r' := by
+  rw [membershipVerifies8] at h h'; rw [← h, ← h']
+
+/-- **⚑ WIDTH CLOSED (`pin8_separates_the_collapsed_alias`).** The 8-lane lane-wise pin (full
+`Digest8` equality) DISTINGUISHES the very pair §7's single-lane collapse `routeSum` conflates:
+`[1,0,…]` and `[0,1,…]` collapse to one felt but are distinct 8-lane roots. So pinning `piCOMMITTED`
+to all 8 lanes binds the committed root — `route_fold_8to1_collides`'s collapse is unrepresentable. -/
+theorem pin8_separates_the_collapsed_alias :
+    routeSum [1, 0, 0, 0, 0, 0, 0, 0] = routeSum [0, 1, 0, 0, 0, 0, 0, 0]
+    ∧ ([1, 0, 0, 0, 0, 0, 0, 0] : Digest8) ≠ [0, 1, 0, 0, 0, 0, 0, 0] := by
+  refine ⟨by decide, by decide⟩
+
+/-- **⚑ STRUCTURE CLOSED (`exactLinked_fold_is_not_plain`).** The re-encoded fold is the exact-linked
+one, not the plain 4-ary `Hair`: its NODE preimage is 33 felts under `FSN2` absorbing four 8-lane
+children where `Hair` hashes a 7-felt `hash_fact` block, and its LEAF preimage is 39 felts carrying a
+`next_addr` link — the indexed-Merkle distinguishing input `Hair` lacks. The width gap exhibits the
+distinction, so `plain_fold_is_not_indexed_merkle` is answered by CONSTRUCTING the commensurate fold. -/
+theorem exactLinked_fold_is_not_plain (addr next : Key17) (value : List ℤ)
+    (ha : addr.limb.length = 16) (hv : value.length = 4) (hn : next.limb.length = 16)
+    (c0 c1 c2 c3 : List ℤ) (h0 : c0.length = 8) (h1 : c1.length = 8)
+    (h2 : c2.length = 8) (h3 : c3.length = 8) (cur s0 s1 s2 pos : ℤ) :
+    (shieldedNodePre c0 c1 c2 c3).length = 33
+    ∧ (shieldedLeafPre addr value next).length = 39
+    ∧ ([cur, s0, s1, s2, pos, NS_FACT_MARK, 1]).length = 7
+    ∧ (shieldedNodePre c0 c1 c2 c3).length ≠ ([cur, s0, s1, s2, pos, NS_FACT_MARK, 1]).length := by
+  refine ⟨shieldedNodePre_length c0 c1 c2 c3 h0 h1 h2 h3,
+          shieldedLeafPre_length addr next value ha hv hn, by rfl, ?_⟩
+  rw [shieldedNodePre_length c0 c1 c2 c3 h0 h1 h2 h3]
+  show (33 : ℕ) ≠ 7
+  decide
+
+/-- **⚑ FORK B COMMENSURATION OBLIGATION (`reencoded_fold_commensurates`).** The re-encoded fold
+`foldPath8` with an 8-lane `piCOMMITTED` pin closes both §7 obstructions that made routing the OLD
+descriptor unsound: WIDTH (`pin8_separates_the_collapsed_alias`) and STRUCTURE (the node/leaf are the
+exact-linked 33/39 shapes, not `Hair`'s 7). The THIRD obstruction, LEAF, is discharged by the
+Shield-A append committing `noteLeaf` (§3 `shieldAppend_is_ledger_note`) as the exact-linked leaf's
+`addr` — the coupling to the value on-ramp. When an emitted descriptor pins `foldPath8`'s 8-lane root
+to `piCOMMITTED` sourced from `note_shielded.root8()`, the route is sound. THIS is that pin's spec;
+realizing it as an emitted `EffectVmDescriptor2` is the named next step. -/
+theorem reencoded_fold_commensurates (hash : List ℤ → ℤ) :
+    (routeSum [1, 0, 0, 0, 0, 0, 0, 0] = routeSum [0, 1, 0, 0, 0, 0, 0, 0]
+      ∧ ([1, 0, 0, 0, 0, 0, 0, 0] : Digest8) ≠ [0, 1, 0, 0, 0, 0, 0, 0])
+    ∧ (∀ c0 c1 c2 c3 : List ℤ, c0.length = 8 → c1.length = 8 → c2.length = 8 → c3.length = 8 →
+        (shieldedNodePre c0 c1 c2 c3).length = 33)
+    ∧ (∀ (auth : Note → Prop) (n : Note), auth n →
+        IsLedgerNote hash auth (shieldAppendLeaf hash n)) :=
+  ⟨pin8_separates_the_collapsed_alias,
+   fun c0 c1 c2 c3 => shieldedNodePre_length c0 c1 c2 c3,
+   fun auth n hn => shieldAppend_is_ledger_note hash auth n hn⟩
+
+#assert_axioms shieldedLeafPre_length
+#assert_axioms shieldedNodePre_length
+#assert_axioms membership8_determines_root
+#assert_axioms pin8_separates_the_collapsed_alias
+#assert_axioms exactLinked_fold_is_not_plain
+#assert_axioms reencoded_fold_commensurates
+
 end Dregg2.Circuit.ShieldedOnRampPin
