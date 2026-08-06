@@ -120,6 +120,13 @@ import Dregg2.Circuit.Emit.KimchiPreimageCircuit
 -- `KimchiConditionalCircuit` is the first circuit in the tree that USES a conditional, and its
 -- §3b composes the arena's alias ledger with `KimchiAssertEqual`'s merge seam.
 import Dregg2.Circuit.Emit.KimchiArena
+-- ⚑ `KimchiTyp` is the layer ABOVE the arena: a public-input LAYOUT derived from a type instead of
+-- hand-written. `layout`/`store`/`read`/`claims` are four recursions over ONE constructor list, so
+-- the order and the widths have no second place to disagree with — and
+-- `only_the_derived_layout_is_accepted` makes a declaration that is not the derived one a REFUSAL.
+-- It is the instrument `MinaWrapPublicInput`'s `alpha β γ ζ` field-order defect went past: every
+-- check that file had was permutation-blind, and all four slots are 128 bits wide.
+import Dregg2.Circuit.Emit.KimchiTyp
 import Dregg2.Circuit.Emit.KimchiGadgets
 import Dregg2.Circuit.Emit.KimchiConditionalCircuit
 import Dregg2.Circuit.Emit.KimchiRenderCompleteAdd
