@@ -1096,6 +1096,151 @@ theorem gExprToHead_coeff_ne_zero {L : Type} (e : GExpr L) :
         obtain ⟨u, hu, hut⟩ := List.mem_map.mp h
         exact hut ▸ mul_ne_zero hc (ihb u hu)
 
+/-! ### §6c′ — ⚑ THE FOLD: the OTHER axis of §6c's table, as a pass.
+
+§6c prices two passes and says they are orthogonal. `gCanon` is one of them and has been on disk
+since the rail fusion. This is the other one, and until now it existed only as a row in a table.
+
+`gFold` deletes the dead subtrees and buys **exactly zero** normality. That is not a hedge, it is
+the measurement: at git HEAD `db577c93dc71d40dbab5326aec5876885dba3404`, over the 122 checked-in
+`by-name` descriptors, the pass takes **1,958,542 → 1,948,364 AST nodes (−10,178)** across **26 of
+122** descriptors, and the normality reading does not move at all — **22,976 → 22,976** normal
+bodies, **23 / 122 → 23 / 122** normal descriptors. Anyone who reads this pass as a step toward
+`isNormal` is reading the wrong column of §6c's table.
+
+⚠ **Quote those figures with that revision.** §6c's own header records the same total read three
+different ways in four hours because sibling lanes re-emit continuously; this reading is pinned to
+one commit and `scripts/measure-descriptor-normal-form.py --fold` re-derives it.
+
+## ⚑ What it is FOR, since it is not normality
+
+Two things, and they are the two the corpus actually wanted.
+
+1. **It makes the artifact SMALLER.** All 26 moving descriptors SHRINK — there is no sign question
+   here, unlike `gCanon`, where 76 grow and 14 shrink. `gFold_nodeCount_le` (§7.1d) is that as a
+   theorem over every expression rather than a count over these ones.
+2. **It ships zero dead subtrees**, which `gFold_no_dead` states for every expression at every
+   alphabet. The corpus ships 5,075 `mul(const, const)` subtrees in `by-name`, 4,284 of them the
+   `mul(const -1, const 1)` a subtraction of one lowers to — a literal times a literal, carried all
+   the way into a signed artifact and re-multiplied by the verifier on every row.
+
+## ⚑ And what it does NOT disturb
+
+`gFold` does not go through a head. It never touches `gExprToHead`, `gHeadToExpr` or `gCanon`, so
+no preservation theorem in §5 or §6 is restated, weakened or re-proved on its account. `gCanon`
+remains exactly as it was — the byte-reachability option, for whenever the 90 rotations are worth
+paying. These two passes compose in either order and neither is the other's phase. -/
+
+/-- The `add` node's fold: a sum of two literals IS a literal. Split out from `gFold` so the
+bridge below is a 4×4 case analysis closed by `rfl` rather than a match inside an induction. -/
+def gFoldAdd {L : Type} : GExpr L → GExpr L → GExpr L
+  | .const x, .const y => .const (x + y)
+  | a, b => .add a b
+
+/-- The `mul` node's fold — the one that deletes `mul(const -1, const 1)`. -/
+def gFoldMul {L : Type} : GExpr L → GExpr L → GExpr L
+  | .const x, .const y => .const (x * y)
+  | a, b => .mul a b
+
+theorem gFoldAdd_eval {L : Type} (ρ : L → ℤ) (a b : GExpr L) :
+    evalG ρ (gFoldAdd a b) = evalG ρ a + evalG ρ b := by
+  cases a <;> cases b <;> rfl
+
+theorem gFoldMul_eval {L : Type} (ρ : L → ℤ) (a b : GExpr L) :
+    evalG ρ (gFoldMul a b) = evalG ρ a * evalG ρ b := by
+  cases a <;> cases b <;> rfl
+
+/-- ⚑ **THE CONSTANT FOLD** — four cases, no head, every alphabet. A leaf and a literal are fixed
+points; a sum or product whose folded operands are both literals becomes the literal. -/
+def gFold {L : Type} : GExpr L → GExpr L
+  | .leaf l  => .leaf l
+  | .const k => .const k
+  | .add a b => gFoldAdd (gFold a) (gFold b)
+  | .mul a b => gFoldMul (gFold a) (gFold b)
+
+/-- ⚑ **THE FOLD SAYS THE SAME THING** — under every leaf environment, at every alphabet. This is
+the whole licence for the re-emission: the polynomial each gate asserts is untouched, so the bytes
+move and nothing else does. -/
+theorem gFold_eval {L : Type} (ρ : L → ℤ) (e : GExpr L) : evalG ρ (gFold e) = evalG ρ e := by
+  induction e with
+  | leaf l => rfl
+  | const k => rfl
+  | add a b iha ihb => simp only [gFold, gFoldAdd_eval, iha, ihb, evalG]
+  | mul a b iha ihb => simp only [gFold, gFoldMul_eval, iha, ihb, evalG]
+
+/-- A `mul` whose BOTH operands are literals — the dead subtree, as a decidable predicate on one
+node. -/
+def gIsDeadProduct {L : Type} : GExpr L → Bool
+  | .mul (.const _) (.const _) => true
+  | _ => false
+
+/-- Does any subtree multiply two literals? This is the thing the corpus ships 5,075 times. -/
+def gHasDead {L : Type} : GExpr L → Bool
+  | .leaf _  => false
+  | .const _ => false
+  | .add a b => gHasDead a || gHasDead b
+  | .mul a b => gIsDeadProduct (GExpr.mul a b) || gHasDead a || gHasDead b
+
+theorem gFoldAdd_no_dead {L : Type} (a b : GExpr L)
+    (ha : gHasDead a = false) (hb : gHasDead b = false) : gHasDead (gFoldAdd a b) = false := by
+  cases a <;> cases b <;> simp_all [gFoldAdd, gHasDead, gIsDeadProduct]
+
+theorem gFoldMul_no_dead {L : Type} (a b : GExpr L)
+    (ha : gHasDead a = false) (hb : gHasDead b = false) : gHasDead (gFoldMul a b) = false := by
+  cases a <;> cases b <;> simp_all [gFoldMul, gHasDead, gIsDeadProduct]
+
+/-- ⚑ **ZERO DEAD SUBTREES SHIP** — for EVERY expression at every alphabet, not 5,075 counted in
+one corpus at one revision. This is the pass's actual product, stated where it cannot go stale. -/
+theorem gFold_no_dead {L : Type} (e : GExpr L) : gHasDead (gFold e) = false := by
+  induction e with
+  | leaf l => rfl
+  | const k => rfl
+  | add a b iha ihb => exact gFoldAdd_no_dead _ _ iha ihb
+  | mul a b iha ihb => exact gFoldMul_no_dead _ _ iha ihb
+
+theorem gFold_gFoldAdd {L : Type} (a b : GExpr L) (ha : gFold a = a) (hb : gFold b = b) :
+    gFold (gFoldAdd a b) = gFoldAdd a b := by
+  cases a <;> cases b <;> simp_all [gFoldAdd, gFold]
+
+theorem gFold_gFoldMul {L : Type} (a b : GExpr L) (ha : gFold a = a) (hb : gFold b = b) :
+    gFold (gFoldMul a b) = gFoldMul a b := by
+  cases a <;> cases b <;> simp_all [gFoldMul, gFold]
+
+/-- ⚑ **A SECOND EMIT RUN MOVES ZERO BYTES** — as a theorem rather than as a re-run that happened
+to agree. `gFold` is idempotent at every alphabet, so the artifact the re-emission installs is a
+fixed point of the pass that produced it. -/
+theorem gFold_idem {L : Type} (e : GExpr L) : gFold (gFold e) = gFold e := by
+  induction e with
+  | leaf l => rfl
+  | const k => rfl
+  | add a b iha ihb => exact gFold_gFoldAdd _ _ iha ihb
+  | mul a b iha ihb => exact gFold_gFoldMul _ _ iha ihb
+
+/-! ### §6c″ — ⚑ the RED pole. A fold that cannot be seen to act is decoration.
+
+`gFold_no_dead` is universally quantified and therefore says nothing about whether the pass ever
+FIRES. These three do: the exact shape the corpus ships 4,284 times, the cascade that makes the
+total 28 nodes larger than 2 × 5,075, and a body the pass must leave alone. -/
+
+/-- The corpus's own dead subtree — `mul(const -1, const 1)`, what a subtraction of one lowers to —
+folded to the literal. Three nodes become one. -/
+theorem gFold_kills_dead_product :
+    gFold (L := VLeaf) (.mul (.const (-1)) (.const 1)) = .const (-1) := by decide
+
+/-- ⚑ THE CASCADE, which is why the corpus total is not simply `2 × (dead subtree count)`: folding
+an inner product exposes an outer one. `private-book-bfv-threshold-terminal-q0-b80` is where this
+shows up — 66 dead subtrees, but 160 nodes deleted rather than 132. -/
+theorem gFold_cascades :
+    gFold (L := VLeaf) (.mul (.mul (.const 2) (.const 3)) (.const 5)) = .const 30 := by decide
+
+/-- ⚠ **AND IT LEAVES A LIVE GATE ALONE.** The pass must not touch a product that reaches a column;
+`mul(const 1, var 3)` is the unit coefficient the canonical renderer deliberately writes and the
+fold has no opinion about it. This is the conjunct that fails if `gFold` is ever "improved" into an
+identity-eliminator — which would DESTROY normality rather than preserve it. -/
+theorem gFold_spares_live_product :
+    gFold (L := VLeaf) (.add (.mul (.const 1) (.leaf 3)) (.mul (.const (-1)) (.const 1)))
+      = .add (.mul (.const 1) (.leaf 3)) (.const (-1)) := by decide
+
 /-! ### §6d — ⚑ the canonicalizer AT A VIEW, and the fusion law that makes it free.
 
 A rail canonicalizes by embedding, canonicalizing, and rendering back. `gCanonAt` is that, and it
@@ -1110,6 +1255,12 @@ def gCanonAt {L E : Type} (O : ExprOps L E) (of : E → GExpr L) (e : E) : E :=
 theorem gCanonAt_render {L E : Type} (O : ExprOps L E) (of : E → GExpr L) (e : E) :
     gCanonAt O of e = render O (gCanon (of e)) := by
   rw [gCanonAt, gCanon, render_gHeadToExpr]
+
+/-- ⚑ **THE FOLD AT A VIEW.** `gFold` is already `GExpr L → GExpr L`, so no fusion law is needed:
+embed, fold, render back. Both deployed rails are this one definition applied twice, exactly as
+`gCanonAt` is. -/
+def gFoldAt {L E : Type} (O : ExprOps L E) (of : E → GExpr L) (e : E) : E :=
+  render O (gFold (of e))
 
 /-! ## §7 — ⚑ THE GADGET LIBRARY, AUTHORED ONCE.
 
@@ -1227,6 +1378,39 @@ def nodeCount {L : Type} : GExpr L → Nat
   | .const _ => 1
   | .add a b => 1 + nodeCount a + nodeCount b
   | .mul a b => 1 + nodeCount a + nodeCount b
+
+/-! ### §7.1d — ⚑ THE FOLD NEVER GROWS A BODY.
+
+§6c′ reports the fold shrinking all 26 moving descriptors, and a per-descriptor table is evidence
+about those 26 at one revision. This is the general fact, and it is the one that makes "fold-only
+makes the artifact SMALLER" a property of the pass rather than a property of today's corpus:
+`gCanon` has no such theorem and cannot — it grows 76 of the 90 descriptors it moves. -/
+
+theorem gFoldAdd_nodeCount_le {L : Type} (a b : GExpr L) :
+    nodeCount (gFoldAdd a b) ≤ nodeCount (GExpr.add a b) := by
+  cases a <;> cases b <;> simp [gFoldAdd, nodeCount]
+
+theorem gFoldMul_nodeCount_le {L : Type} (a b : GExpr L) :
+    nodeCount (gFoldMul a b) ≤ nodeCount (GExpr.mul a b) := by
+  cases a <;> cases b <;> simp [gFoldMul, nodeCount]
+
+/-- ⚑ **THE FOLD NEVER GROWS AN EXPRESSION**, at any alphabet. -/
+theorem gFold_nodeCount_le {L : Type} (e : GExpr L) : nodeCount (gFold e) ≤ nodeCount e := by
+  induction e with
+  | leaf l => exact Nat.le_refl _
+  | const k => exact Nat.le_refl _
+  | add a b iha ihb =>
+    refine le_trans (gFoldAdd_nodeCount_le _ _) ?_
+    simp only [nodeCount]; omega
+  | mul a b iha ihb =>
+    refine le_trans (gFoldMul_nodeCount_le _ _) ?_
+    simp only [nodeCount]; omega
+
+/-- ⚠ …and it is not vacuously true by never firing: on the corpus's own dead subtree it is a
+STRICT decrease, 3 nodes to 1. -/
+theorem gFold_nodeCount_strict :
+    nodeCount (gFold (L := VLeaf) (.mul (.const (-1)) (.const 1)))
+      < nodeCount (L := VLeaf) (.mul (.const (-1)) (.const 1)) := by decide
 
 /-- ⚑ **THE NODE COUNTS, MEASURED IN THE AUTHORING LANGUAGE** — 5 · 7 · 7, for every column. -/
 theorem gBool_nodeCount (co : Nat) : nodeCount (gBool (L := VLeaf) (.leaf co)) = 5 := rfl

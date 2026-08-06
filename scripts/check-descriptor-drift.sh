@@ -40,10 +40,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ORIG_ROOT="$ROOT"
 REV=""
+FAIL_FAST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --rev) REV="${2:-}"; [ -n "$REV" ] || { echo "check-descriptor-drift: --rev needs a revision" >&2; exit 2; }; shift 2 ;;
     --rev=*) REV="${1#--rev=}"; shift ;;
+    --fail-fast) FAIL_FAST=1; shift ;;
     -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     *) echo "check-descriptor-drift: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
@@ -148,8 +150,24 @@ fi
 # written (`scripts/check-ratchet-darkness.sh` sat untracked under an uncommitted ci.yml hunk that
 # ran it). It rides along here for the same reason as the other three: this is the ~1s answer, and
 # without it the medium's only detector is the broken job itself, AFTER it lands.
+#
+# ── ⚑ AND IT DOES NOT ABORT (changed 2026-08-06) ──────────────────────────────
+# This leg used to `exit 1` on a reference gap, which made it a MASK: the gate
+# whose job is detecting descriptor drift would stop ~40s in, on a question that
+# is not drift, and never reach the byte comparison at all. Measured: a 45-file
+# descriptor drift went unreported because an unstamped-artifact preflight
+# failure exited first — the reference gap was real, the drift was real, and only
+# the reference gap was ever printed. One gate's cheap leg hid the other leg's
+# verdict, and the cheap leg is not the one the gate is named after.
+#
+# So the verdict is RECORDED and the run CONTINUES. Both legs are reported at the
+# end and either one fails the gate — nothing is weakened, the refusal is just no
+# longer allowed to be the only thing you learn. `--fail-fast` restores the old
+# abort for the case where you genuinely only want the ~40s answer.
 echo "check-descriptor-drift: by-name routing + include_str! targets + Lean imports + workflow-invoked paths (static preflight)..."
-if ! python3 "$ROOT/scripts/emit_descriptors.py" --verify-by-name-routing; then
+PREFLIGHT_RC=0
+python3 "$ROOT/scripts/emit_descriptors.py" --verify-by-name-routing || PREFLIGHT_RC=$?
+if [ "$PREFLIGHT_RC" -ne 0 ]; then
   echo "" >&2
   echo "REFERENCE GAP: something committed points at something that is not. EmitByName.lean's" >&2
   echo "  table, the checked-in by-name/ set, the Rust include_str!/include_bytes! targets, the" >&2
@@ -157,7 +175,12 @@ if ! python3 "$ROOT/scripts/emit_descriptors.py" --verify-by-name-routing; then
   echo "  (see the findings above)." >&2
   echo "  Fix the routing table, or commit/stamp the artifact, module or script ALONGSIDE the" >&2
   echo "  reference to it — not this gate, and never by #[cfg]-gating the include away." >&2
-  exit 1
+  if [ "$FAIL_FAST" -eq 1 ]; then
+    echo "  (--fail-fast: stopping here; the DRIFT question was never asked)" >&2
+    exit 1
+  fi
+  echo "  ⚑ CONTINUING to the byte comparison anyway — a reference gap must not hide a drift." >&2
+  echo "" >&2
 fi
 
 # The emitters import the compiled `Dregg2.Circuit.Emit.*` oleans (NOT the source),
@@ -269,7 +292,56 @@ for p in "${GUARDED[@]}"; do
   fi
 done
 
-if [ "$drift" -eq 0 ]; then
+# ── ⚑ THE COMPARATOR (added 2026-08-06) ───────────────────────────────────────
+# `diff` says WHETHER bytes moved. It cannot say whether the MEANING moved, so a
+# pure re-encoding (a normalizer landing, a coefficient rendered rather than
+# elided) and a changed polynomial read identically here — and the second is the
+# only one that is dangerous.
+#
+# `measure-descriptor-normal-form.py --compare` canonicalizes both sides before
+# diffing and classifies every arithmetic body IDENTICAL / COSMETIC / SEMANTIC.
+# It is SOUND BY A LANDED THEOREM: `AirNormalForm.canonicalize_eval` proves
+# `(canonicalize e).eval a = e.eval a` for every assignment, so equal canonical
+# forms denote equal polynomials. ⚠ Only that direction is proved — a SEMANTIC
+# verdict means "these did not reduce to one head", never "the polynomials
+# differ". It costs zero bytes, zero VK rotations and zero re-emissions.
+#
+# ⚠ The comparator is a MEASUREMENT TOOL, not graded content, so it is taken from the tree that
+# INVOKED this gate (`$ORIG_ROOT`), never from `$ROOT`. Under `--rev <old-sha>` the graded worktree
+# predates `--compare`, and calling its copy would make every moved descriptor come back SEMANTIC —
+# a tool-version error wearing a verdict's clothes. The capability is CHECKED and the gate REFUSES
+# on absence rather than classifying with something that cannot classify.
+if [ "$drift" -ne 0 ]; then
+  echo ""
+  echo "check-descriptor-drift: classifying the moved descriptors (canonicalizing comparator)..."
+  CMP="$ORIG_ROOT/scripts/measure-descriptor-normal-form.py"
+  if ! python3 "$CMP" --help 2>/dev/null | grep -q -- "--compare"; then
+    echo "check-descriptor-drift: FATAL — $CMP does not support --compare; refusing to" >&2
+    echo "  report a COSMETIC/SEMANTIC verdict from a tool that cannot compute one." >&2
+    exit 2
+  fi
+  semantic=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    rel="${f#"$SNAP"/}"
+    [ -f "$ROOT/$rel" ] || { echo "  GONE        $rel"; semantic=1; continue; }
+    if out="$(python3 "$ROOT/scripts/measure-descriptor-normal-form.py" --compare "$f" "$ROOT/$rel" 2>&1)"; then
+      echo "  COSMETIC    $rel — every body proves equal under canonicalize_eval"
+    else
+      echo "  ⚠ SEMANTIC  $rel"
+      echo "$out" | sed 's/^/      /'
+      semantic=1
+    fi
+  done < <(find "$SNAP/circuit/descriptors" -name '*.json' ! -name 'PROVENANCE.json' 2>/dev/null \
+             | while IFS= read -r s; do r="${s#"$SNAP"/}"; \
+                 [ -f "$ROOT/$r" ] && cmp -s "$s" "$ROOT/$r" || echo "$s"; done)
+  if [ "$semantic" -eq 0 ]; then
+    echo "check-descriptor-drift: every moved descriptor is a COSMETIC re-encoding."
+    echo "  (still DRIFT — the checked-in bytes are stale — but no gate's meaning moved.)"
+  fi
+fi
+
+if [ "$drift" -eq 0 ] && [ "$PREFLIGHT_RC" -eq 0 ]; then
   echo "check-descriptor-drift: PASS — the Lean emission matches the checked-in descriptors."
   # ADDITIVE — the DRIFT-TAXONOMY gate. Freshness (Lean<->JSON) is settled above;
   # now classify the descriptor delta vs the base ref and REFUSE a GEOMETRY-WIDEN
@@ -288,11 +360,23 @@ if [ "$drift" -eq 0 ]; then
     "$ROOT/scripts/check-drift-taxonomy.sh"
   fi
   exit $?
-else
+elif [ "$drift" -ne 0 ]; then
   echo "" >&2
   echo "DESCRIPTOR DRIFT: the emit run changed guarded artifacts despite reporting" >&2
   echo "  a no-op (this should be unreachable now that a byte-changing install is" >&2
   echo "  ack-gated — investigate). Run scripts/emit-descriptors.sh with the ack" >&2
   echo "  (see docs/VK-REGEN-CONTROLS.md) and commit the result." >&2
+  echo "  The COSMETIC/SEMANTIC classification above says which kind of drift it is." >&2
+  [ "$PREFLIGHT_RC" -ne 0 ] && echo "  ⚑ AND the static preflight ALSO failed (see the top of this run)." >&2
+  exit 1
+else
+  # drift == 0, so the bytes are fresh; we are here only because the preflight
+  # failed. Reaching this line at all is the point of the 2026-08-06 change —
+  # the drift question got asked and ANSWERED (no drift) rather than being
+  # pre-empted by a reference gap that is a different defect.
+  echo "" >&2
+  echo "check-descriptor-drift: the Lean emission MATCHES the checked-in descriptors" >&2
+  echo "  (no drift), but the static preflight FAILED — see the REFERENCE GAP above." >&2
+  echo "  Fix the reference gap; the descriptor bytes are not the problem." >&2
   exit 1
 fi

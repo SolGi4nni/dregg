@@ -531,6 +531,131 @@ theorem canonicalizeW_demoWBare : canonicalizeW demoWBare = demoWCanonical := rf
 theorem canonicalizeDesc_demoDescBad_ok :
     normalFormOk (canonicalizeDesc demoDescBad) = true := by decide
 
+/-! ## §4d — ⚑ THE FOLD AT THE TWO DEPLOYED RAILS, AND THE PASS THAT SHIPS.
+
+§4 carries `canonicalize`, which is `gCanon` at these rails and is NOT applied by any emitter — it
+is the byte-reachability option, priced at 90 rotations and three VK-lane cascades, kept proved on
+disk for whenever that is worth paying. **This section is the other axis** (`GateExpr` §6c′).
+
+## ⚠ IT IS ALSO NOT APPLIED YET, AND THE REASON IS MEASURED RATHER THAN CAUTIOUS
+
+The pass was landed to be wired into `EmitByName.main`. The consumer enumeration that had to clear
+first did not: **5 of the 26 descriptors this pass moves are HARD BYTE-PINNED by a `#guard` in
+their own emitter module**, each of the form `#guard emitVmJson2 <desc> == "<escaped JSON>"` —
+
+* `derivation` — `Emit/DerivationEmit.lean:401`
+* `field-delta-result-range` — `Emit/FieldDeltaRangeEmit.lean`
+* `faithful-note-spend-v2` — `Emit/FaithfulNoteSpendDescriptorPlan.lean`
+* `shielded-whole-note-swap-substrate-v1` — `Emit/ShieldedWholeNoteSwapSubstrateDescriptor.lean`
+* `dregg-shielded-spend-pinned-root-v1` — `Emit/ShieldedSpendDescriptor.lean`
+
+Folding in `EmitByName.main` leaves each of those `#guard`s pinning the UNFOLDED bytes while the
+artifact carries the FOLDED ones, and `scripts/check-emit-gate-weld.py` welds the two (the Rust
+`GOLDEN_JSON`s are `include_str!` of the artifact, so they follow the emit; the Lean literal does
+not). The tree would go red at the weld, not at the drift gate.
+
+⚠ **None of this is a VK cascade** — `proof_bind` appears in exactly 6 constraints across 4
+descriptors corpus-wide (`dregg-mina-lightclient-{link,verify}-v1`, `mina-wrap-conjunction{,
+-unthreaded}`), none of them among the 26, and the four hand-entered lane vectors
+(`CHAINLINK_VK_LANES`, `LINK_VK_LANES`, `CONJ_VK_LANES`, `ABSORB_VK_LANES`) all pin mina/pasta
+descriptors this pass does not touch. The blocker is five escaped JSON literals, which is ordinary
+work; it is named here rather than blown through so the re-emit and the re-pin land together.
+
+⚑ **What it buys, measured at git HEAD `db577c93dc71d40dbab5326aec5876885dba3404`** over the 122
+checked-in `by-name` descriptors: **1,958,542 → 1,948,364 AST nodes (−10,178)**, **26 of 122**
+descriptors moving, **all 26 SHRINKING**, and **5,075 → 0** `mul(const, const)` subtrees.
+
+⚠ **What it does NOT buy: normality.** Measured over the same 122 at the same revision, **22,976 →
+22,976** normal bodies and **23 / 122 → 23 / 122** normal descriptors — *exactly zero change*. This
+pass is not a phase of `canonicalize` and does not move the corpus toward it. `normalFormOk` is
+untouched by it and no theorem here says otherwise.
+
+⚠ **And it is not the whole corpus.** The 122 `by-name` artifacts are what `EmitByName` authors.
+Measured at the same revision, **1,225 further dead subtrees** ship in **5 top-level** descriptors
+(`dregg-cert-f-market4-ir2` 569, `dregg-cert-f-ir2` 455, `dregg-cert-qp-portfolio6-s3-ir2` 168,
+`dregg-effectvm-capreshape-v1` 17, `dregg-effectvm-attenuateA-v1-genuine-nonamp` 16), authored by
+emitters with their own `main`s. Two of those five are DEPLOYED effect-VM descriptors, so folding
+them is a wider re-key than this pass's consumer enumeration cleared; it is named here as measured
+remaining work rather than quietly rounded away. `table-airs` ships zero. -/
+
+open Dregg2.Circuit.GateExpr (gFold gFold_eval gFoldAt) in
+/-- ⚑ **FOLD A ONE-ROW BODY** — `gFold` at the `EmittedExpr` view. -/
+def foldConst (e : EmittedExpr) : EmittedExpr := gFoldAt toEmitted ofEmitted e
+
+open Dregg2.Circuit.GateExpr (gFold gFoldAt) in
+/-- ⚑ **FOLD A WINDOW BODY** — the same pass at the `loc`/`nxt` alphabet. -/
+def foldConstW (w : WindowExpr) : WindowExpr := gFoldAt toWindow ofWindow w
+
+open Dregg2.Circuit.GateExpr (gFold gFold_eval gFoldAt) in
+/-- ⚑ **THE FOLD SAYS THE SAME THING**, under every assignment — the licence for the re-emission
+on the gate rail. -/
+theorem foldConst_eval (a : Dregg2.Circuit.Assignment) (e : EmittedExpr) :
+    (foldConst e).eval a = e.eval a := by
+  show (Dregg2.Circuit.GateExpr.render toEmitted (gFold (ofEmitted e))).eval a = _
+  rw [eval_render_toEmitted, gFold_eval]
+  conv_rhs => rw [← render_ofEmitted e]
+  rw [eval_render_toEmitted]
+
+open Dregg2.Circuit.GateExpr (gFold gFold_eval gFoldAt) in
+/-- …and the window rail's bridge. -/
+theorem foldConstW_eval (env : VmRowEnv) (w : WindowExpr) :
+    (foldConstW w).eval env = w.eval env := by
+  show (Dregg2.Circuit.GateExpr.render toWindow (gFold (ofWindow w))).eval env = _
+  rw [eval_render_toWindow, gFold_eval]
+  conv_rhs => rw [← render_ofWindow w]
+  rw [eval_render_toWindow]
+
+/-- ⚑ **ONE CONSTRAINT.** Exactly `canonicalizeC`'s reach, and for exactly its reason: only the
+three arithmetic bodies move, and a lookup/memOp/mapOp/umemOp/proofBind tuple is carried through
+UNTOUCHED because the chip bus is keyed on the bare tuple shape. -/
+def foldConstC : VmConstraint2 → VmConstraint2
+  | .base (.gate b)         => .base (.gate (foldConst b))
+  | .base (.boundary r b)   => .base (.boundary r (foldConst b))
+  | .windowGate w           => .windowGate ⟨foldConstW w.body, w.onTransition⟩
+  | c                       => c
+
+/-- ⚑ **THE PASS, ON A WHOLE DESCRIPTOR** — what `EmitByName.main` applies. -/
+def foldConstDesc (d : EffectVmDescriptor2) : EffectVmDescriptor2 :=
+  { d with constraints := d.constraints.map foldConstC }
+
+/-- The pass touches only the arithmetic bodies: name, width, PI count, tables and the constraint
+COUNT are carried through. A re-emission that dropped a constraint would be invisible to a node
+count — this is the conjunct that sees it. -/
+theorem foldConstDesc_shape (d : EffectVmDescriptor2) :
+    (foldConstDesc d).name = d.name
+      ∧ (foldConstDesc d).traceWidth = d.traceWidth
+      ∧ (foldConstDesc d).piCount = d.piCount
+      ∧ (foldConstDesc d).tables = d.tables
+      ∧ (foldConstDesc d).constraints.length = d.constraints.length :=
+  ⟨rfl, rfl, rfl, rfl, List.length_map _⟩
+
+/-! ### §4d′ — ⚑ the RED pole of the FOLD. -/
+
+/-- The pass fires on the shape the corpus ships 4,284 times. -/
+theorem foldConst_kills_dead_product :
+    foldConst (.add (.var 3) (.mul (.const (-1)) (.const 1)))
+      = .add (.var 3) (.const (-1)) := by decide
+
+/-- ⚠ **AND IT IS NOT `canonicalize`.** On the same input the two passes disagree — the fold leaves
+the bare `var 3` bare, the canonicalizer gives it its unit coefficient. Naming them as phases of one
+another is what this theorem refuses. -/
+theorem foldConst_ne_canonicalize :
+    foldConst (.add (.var 3) (.mul (.const (-1)) (.const 1)))
+      ≠ canonicalize (.add (.var 3) (.mul (.const (-1)) (.const 1))) := by decide
+
+/-- ⚠ **AND IT BUYS NO NORMALITY** — the folded body is still not in the canonical normal form.
+This is the corpus reading `23/122 → 23/122` as a fact about a body rather than a count. -/
+theorem foldConst_not_isNormal :
+    isNormal (foldConst (.add (.var 3) (.mul (.const (-1)) (.const 1)))) = false := by decide
+
+/-- …and a second emit run moves zero bytes, on the descriptor pass, not just on `gFold`. -/
+theorem foldConst_idem (e : EmittedExpr) : foldConst (foldConst e) = foldConst e := by
+  show Dregg2.Circuit.GateExpr.render toEmitted
+        (Dregg2.Circuit.GateExpr.gFold (ofEmitted (Dregg2.Circuit.GateExpr.render toEmitted
+          (Dregg2.Circuit.GateExpr.gFold (ofEmitted e)))))
+      = Dregg2.Circuit.GateExpr.render toEmitted (Dregg2.Circuit.GateExpr.gFold (ofEmitted e))
+  rw [ofEmitted_render, Dregg2.Circuit.GateExpr.gFold_idem]
+
 /-! ## §5 — axiom-hygiene tripwires. -/
 
 #assert_axioms headToExpr_isNormal
@@ -555,5 +680,12 @@ theorem canonicalizeDesc_demoDescBad_ok :
 #assert_axioms canonicalize_folds_dead_product
 #assert_axioms canonicalize_demoCanonical
 #assert_axioms canonicalizeW_demoWBare
+#assert_axioms foldConst_eval
+#assert_axioms foldConstW_eval
+#assert_axioms foldConstDesc_shape
+#assert_axioms foldConst_kills_dead_product
+#assert_axioms foldConst_ne_canonicalize
+#assert_axioms foldConst_not_isNormal
+#assert_axioms foldConst_idem
 
 end Dregg2.Circuit.Emit.AirNormalForm
