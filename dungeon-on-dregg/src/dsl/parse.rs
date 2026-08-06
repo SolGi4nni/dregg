@@ -109,6 +109,19 @@ impl std::error::Error for DungeonError {}
 /// nowhere, …) both refuse the parse with a line-numbered [`DungeonError`]. On success
 /// the world is guaranteed to pass [`super::validate::validate`] with no
 /// [`Severity::Error`].
+///
+// `parse_dungeon` and `parse_world` are NOT twin constructors: they are ONE constructor plus a
+// gate. Both are `build(src)`; this one additionally refuses on a `Severity::Error`. That is
+// already the remedy the mirror-gate's D3 prescribes ("factor the shared shape and call it from
+// both"), so there is no second author here and nothing can drift. D3 pairs them because they
+// share a return type and each doc NAMES the other — which is the cross-reference a reader
+// wants, not a confession. Filed at the site rather than in `scripts/mirror-gates/baseline.txt`
+// because a baseline row means "a real mirror a named lane owns", and this is not one.
+//
+// It was INVISIBLE until 2026-08-06: `gate_d3`'s reachability memo was keyed by bare fn name, so
+// a same-named constructor in another crate silently overwrote this crate's verdict. See the
+// (crate, name) note in `scripts/mirror-gates/mirror_gates.py`.
+// mirror-gate: allow(D3) — one constructor (`build`) plus a semantic gate, not a re-authored twin
 pub fn parse_dungeon(src: &str) -> Result<GameWorld, DungeonError> {
     let (world, prov) = build(src)?;
     for (line, issue) in check(&world, Some(&prov)) {

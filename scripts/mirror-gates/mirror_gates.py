@@ -935,8 +935,27 @@ def gate_d3(rust: list[RustFile]) -> list[Finding]:
         callees[id(f)] = {m.group(1) for m in re.finditer(r"[.\s(\[,:]([a-z_][a-z0-9_]*)\s*\(", body)} & names
 
     # ---- reachability: is this constructor DEPLOYED (reachable from a live external caller)? --
-    live_ext: dict[str, set[str]] = {}   # sym -> {"crate/path:line"} evidence
-    test_hits: dict[str, list[Site]] = {}
+    #
+    # ⚠ THE MEMO IS KEYED BY (CRATE, NAME), NOT BY NAME. `crate_deps` above was written to stop a
+    # bare-name call site being attributed to a foreign crate's namesake, and it filters the SITES
+    # correctly — but until 2026-08-06 the two verdict dicts below were keyed by the bare name, so
+    # the last `f` of a given name to be walked OVERWROTE every same-named sibling's verdict. That
+    # is the same defect the site filter exists to prevent, one layer down, and it is order-
+    # dependent (the winner is whichever file `os.walk` yields last).
+    #
+    # MEASURED, and it manufactured a NEW-MIRROR failure on `main`: three crates define
+    # `budget_remaining_precondition() -> CellProgram` — `starbridge-guard` (src/lib.rs:632),
+    # `starbridge-tool-access-delegation` (src/lib.rs:531) and `starbridge-storage-gateway-mandate`
+    # (src/lib.rs:696) — and `starbridge-guard` DEPENDS on tool-access-delegation. So the TAD
+    # constructor's external-caller evidence (which includes guard's own definition and its own
+    # in-crate call, both legitimately "another crate" from TAD's side) was written under the bare
+    # name and read back as if it were GUARD's. `starbridge-guard` is a leaf app crate that nothing
+    # depends on, so NEITHER of its constructors is externally reached and the group cannot invert
+    # — yet the gate reported `guard_program` as a tested twin of a "deployed"
+    # `budget_remaining_precondition`, citing guard's own lines as the external proof. A finding
+    # whose evidence is not real is the one thing this gate must never emit.
+    live_ext: dict[tuple[str, str], set[str]] = {}   # (crate, sym) -> {"crate/path:line"} evidence
+    test_hits: dict[tuple[str, str], list[Site]] = {}
     deps = crate_deps(REPO)
     for f in fns:
         # `live_ext` holds rendered strings, not Sites: propagation appends "via f() — <site>" chains,
@@ -947,8 +966,8 @@ def gate_d3(rust: list[RustFile]) -> list[Finding]:
             if c != f.rf.crate and not t and f.rf.crate in deps.get(c, set())
         }
         tst = [s for (c, t, s) in sites[f.name] if t and f.rf.crate in deps.get(c, {c})]
-        live_ext[f.name] = set(ext)
-        test_hits[f.name] = tst
+        live_ext[(f.rf.crate, f.name)] = set(ext)
+        test_hits[(f.rf.crate, f.name)] = tst
 
     by_name: dict[str, list[Fn]] = {}
     for f in fns:
@@ -958,7 +977,8 @@ def gate_d3(rust: list[RustFile]) -> list[Finding]:
     for _ in range(6):  # fixpoint; depth is tiny in practice
         changed = False
         for f in fns:
-            if not live_ext[f.name]:
+            fkey = (f.rf.crate, f.name)
+            if not live_ext[fkey]:
                 continue
             if f.rf.is_test_at(f.body_span[0]):
                 continue
@@ -968,9 +988,12 @@ def gate_d3(rust: list[RustFile]) -> list[Finding]:
                 for g in by_name.get(callee, []):
                     if g.rf.crate != f.rf.crate:
                         continue
-                    before = len(live_ext[callee])
-                    live_ext[callee] |= {f"via {f.name}() — {s}" for s in list(live_ext[f.name])[:1]}
-                    if len(live_ext[callee]) != before:
+                    # The in-crate guard above already refused a cross-crate edge; writing the
+                    # result under the bare name put it back. Write it under `g`'s OWN key.
+                    gkey = (g.rf.crate, callee)
+                    before = len(live_ext[gkey])
+                    live_ext[gkey] |= {f"via {f.name}() — {s}" for s in list(live_ext[fkey])[:1]}
+                    if len(live_ext[gkey]) != before:
                         changed = True
         if not changed:
             break
@@ -984,11 +1007,11 @@ def gate_d3(rust: list[RustFile]) -> list[Finding]:
         uniq = {f.name: f for f in members}
         if len(uniq) < 2:
             continue
-        deployed = [f for f in uniq.values() if live_ext[f.name]]
+        deployed = [f for f in uniq.values() if live_ext[(crate, f.name)]]
         # `pub` matters: a private helper nothing outside reaches is just a helper. A PUBLIC
         # constructor that only tests reach, sitting beside a sibling the tree deploys, is the twin.
         tested_only = [f for f in uniq.values()
-                       if f.is_pub and not live_ext[f.name] and test_hits[f.name]]
+                       if f.is_pub and not live_ext[(crate, f.name)] and test_hits[(crate, f.name)]]
         if not deployed or not tested_only:
             continue
         for t in tested_only:
@@ -1008,9 +1031,9 @@ def gate_d3(rust: list[RustFile]) -> list[Finding]:
             d = twin or deployed[0]
             common = [
                 Site(d.rf.rel, d.line, f"DEPLOYED  `{d.name}` -> {ret}"),
-                *[Site("", 0, f"          external: {s}") for s in sorted(map(str, live_ext[d.name]))[:2]],
+                *[Site("", 0, f"          external: {s}") for s in sorted(map(str, live_ext[(crate, d.name)]))[:2]],
                 Site(t.rf.rel, t.line, f"TESTED    `{t.name}` -> {ret}   external: (none)"),
-                *[Site("", 0, f"          tests: {s}") for s in map(str, test_hits[t.name][:2])],
+                *[Site("", 0, f"          tests: {s}") for s in map(str, test_hits[(crate, t.name)][:2])],
             ]
             if twin:
                 findings.append(Finding(
