@@ -182,6 +182,28 @@ use pickles_circuit_driver::{
 ///
 /// ⚠ So no single file here is the whole circuit, and this array's ORDER is the emission order, not
 /// a containment order. `wrapmain-shape-diff.mjs` assembles the union by prefix-stripping.
+/// ⚑ **THE BINARY'S DEFAULT FIVE-POLARITY SWEEP**, a `const` rather than a `vec!` inside `main` so
+/// that `the_default_sweep_only_names_rungs_that_prove` can hold it to the rule the sweep itself
+/// assumes: every rung in it must PROVE. It named `w11_wraphack` and `w12_close` until 2026-08-06,
+/// so a bare `cargo run` panicked at rung 5 of 8 — `run_rung`'s polarity (1) is
+/// `[FATAL] … honest rung REJECTED` — while `cargo test` stayed green, because no test calls
+/// `run_rung`. The blocked rungs' subject is `the_statement_blocked_rungs_do_not_prove`, which
+/// asserts the opposite; one list could not serve both.
+///
+/// ⚑ `w6_xhat` is here, and in `public_input_binds_and_is_wired_in`'s sample, since 2026-08-06: the
+/// 67-entry MSM rung carried polarities (1)–(4) through `COMMITTED` and had **no** polarity-(5)
+/// coverage at all, which is the one leg that says its public words are wired rather than free.
+const SMOKE_SWEEP: [&str; 8] = [
+    "w1_transcript",
+    "w6_xhat",
+    "w7_split",
+    "w8_ftcomm",
+    "w9_prev",
+    "w10_finalize",
+    "w10_combine",
+    "w11_bullet",
+];
+
 const RUNGS: [&str; 15] = [
     "w1_transcript",
     "w2_challenges",
@@ -517,16 +539,16 @@ fn main() {
             fixtures_dir(),
             "smoke".to_string(),
             usize::MAX,
-            vec![
-                "w1_transcript",
-                "w7_split",
-                "w8_ftcomm",
-                "w9_prev",
-                "w11_wraphack",
-                "w12_close",
-                "w10_combine",
-                "w11_bullet",
-            ],
+            // ⚠ ⚑ **THIS SET NAMED TWO `STATEMENT_BLOCKED` RUNGS UNTIL 2026-08-06, SO A BARE
+            // `cargo run` DIED AT RUNG 5 OF 8 WHILE `cargo test` WAS GREEN.** `run_rung`'s
+            // polarity (1) panics `[FATAL] {rung}: honest {n}-row rung REJECTED`, which is the
+            // correct behaviour for a rung that is supposed to prove and the wrong subject for one
+            // the test module asserts does NOT. The blocked rungs are exercised by
+            // `the_statement_blocked_rungs_do_not_prove`, which is where a refusal belongs; this
+            // set is the five-polarity sweep and it may only name rungs in `COMMITTED` — which
+            // `the_default_sweep_only_names_rungs_that_prove` is what enforces, because a comment
+            // saying so is not a gate.
+            SMOKE_SWEEP.to_vec(),
         ),
         1 => (
             PathBuf::from(&args[0]),
@@ -632,12 +654,38 @@ mod wrapmain_tests {
     /// re-proved with a statement carrying the derived words, that test goes RED and this list has to
     /// shrink. A blocked list that can only grow is not a record of a gap; it is a place to hide one.
     ///
-    /// ⚠ The repair is a STEP-SIDE FIXPOINT and it is not paid here — each of the six words is an
-    /// x_hat MSM entry, so writing the derivation into the statement moves `x_hat`, which moves every
-    /// challenge below it, which moves the derivation. See
+    /// ⚠ ⚑ **THIS COMMENT CALLED THE REPAIR A STEP-SIDE FIXPOINT UNTIL 2026-08-06 AND IT IS NOT
+    /// ONE.** It said each of the six words is an x_hat MSM entry, so writing the derivation into
+    /// the statement moves `x_hat`, moves every challenge below it, and moves the derivation.
+    /// `KimchiWrapMain.the_deferred_derivation_does_not_read_the_words_it_checks` refutes it over
+    /// the emitted program: no transcript challenge reaches W-FINSPONGE, so the six words are three
+    /// independent strata and there is no loop. And only two of the six (55, 56) are free on the
+    /// step side at all; 27, 28, 37 and 54 are values the STEP circuit derives. What blocks these
+    /// three rungs is that `finColVal` and its neighbours are `wrapFixtureQ` fixtures where
+    /// `prev_proof.openings.evals` belongs, and those evaluations are **Fp** against this circuit's
+    /// native **Fq** — they enter only through `Other_field`, which is not assembled. See
     /// `KimchiWrapMainField.the_published_statement_does_not_carry_the_derived_words` and
     /// `KimchiWrapMain.finsponge_has_no_witness_on_the_published_statement`.
     const STATEMENT_BLOCKED: [&str; 3] = ["w11_finsponge", "w11_wraphack", "w12_close"];
+
+    /// ⚑ The gate that keeps `SMOKE_SWEEP` true. A comment saying "this set may only name rungs in
+    /// `COMMITTED`" is not a gate; this is, and it goes red the moment the two lists disagree.
+    #[test]
+    fn the_default_sweep_only_names_rungs_that_prove() {
+        for rung in SMOKE_SWEEP {
+            assert!(
+                COMMITTED.contains(&rung),
+                "{rung}: named in the binary's default sweep but not in COMMITTED. run_rung's \
+                 polarity (1) panics on a rung whose honest witness is rejected, so a bare \
+                 `cargo run` would die on it while the test suite stayed green."
+            );
+            assert!(
+                !STATEMENT_BLOCKED.contains(&rung),
+                "{rung}: the default sweep names a STATEMENT_BLOCKED rung — the sweep asserts it \
+                 proves and `the_statement_blocked_rungs_do_not_prove` asserts it does not"
+            );
+        }
+    }
 
     struct Fixture {
         wired: CircuitJson,
@@ -795,7 +843,14 @@ mod wrapmain_tests {
     /// that ever names a blocked rung again.
     #[test]
     fn public_input_binds_and_is_wired_in() {
-        for rung in ["w4_bind", "w5_key", "w9_prev", "w10_combine", "w11_bullet"] {
+        for rung in [
+            "w4_bind",
+            "w5_key",
+            "w6_xhat",
+            "w9_prev",
+            "w10_combine",
+            "w11_bullet",
+        ] {
             assert!(
                 COMMITTED.contains(&rung),
                 "{rung}: sampled here but not in COMMITTED — a rung that does not prove cannot \

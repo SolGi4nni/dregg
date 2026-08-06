@@ -636,12 +636,15 @@ The scalars are the step proof's own published `Types.Step.Statement` now, and t
 which words and refuses the claim that it does.
 
 ⚠ **THE PRICE, SAID PLAINLY.** `w12_finsponge`'s `Field.equal` legs on the finalizing block have no
-satisfying witness on `stepmain_step_r8_finalize`: an honest previous statement carries the derived
-`combined_inner_product`, `b` and `xi`, and this one carries synthetic words at those slots. It is
-UNDONE WORK on the STEP side, not a theorem of this model — the step proof has to be re-proved with a
-statement whose block-1 deferred words are the wrap's own derivation, and that is a FIXPOINT, because
-those words are x_hat entries and moving them moves every challenge below them. Nothing at or below
-`w4_bind` is affected: the three words are absorbed nowhere and are read only by W-FINSPONGE.
+satisfying witness on `stepmain_step_r8_finalize`. ⚠ **AND THIS PARAGRAPH USED TO MISNAME WHY.** It
+said the step proof had to be re-proved with a statement whose block-1 deferred words are the wrap's
+own derivation, "and that is a FIXPOINT, because those words are x_hat entries and moving them moves
+every challenge below them." Both halves are refuted below: it is a STRATIFICATION — no transcript
+challenge reaches W-FINSPONGE — and those three words are the STEP circuit's own derived
+`combined_inner_product`, `b` and `xi` (`bpDiv2`/`bpOdd`, `vXiStmt`), so they cannot be written at
+all. What disagrees is two derivations of one quantity, and the wrap's runs on `finColVal` and its
+neighbours — `wrapFixtureQ` where `prev_proof.openings.evals` belongs. Nothing at or below `w4_bind`
+is affected: the three words are absorbed nowhere and are read only by W-FINSPONGE.
 
 ⚠ ⚑ **AND UNTIL 2026-08-05 THAT THEOREM DID NOT EXIST — this paragraph said it "closes them by
 `rfl` IN THE KERNEL" and three other docblocks agreed with it.** `grep` over the tree found four
@@ -1492,11 +1495,26 @@ three ties held by construction and none of them was a question. The scalars are
 `STEP_PUBLIC_IN` now, and this measures what that costs: **six words disagree**, and the emitted rows
 above `w9_prev` have no satisfying witness on this step proof.
 
-⚠ **THE REPAIR IS A STEP-SIDE FIXPOINT AND IT IS NOT PRICED AWAY.** The step proof must be re-proved
-with a `Types.Step.Statement` whose six words are the wrap's own derivation — and each of those words
-is an x_hat MSM entry, so re-proving moves `x_hat`, which moves every challenge below it, which moves
-the derivation. Upstream Pickles closes that loop by construction; this pipeline has to bake it. That
-is the next item, and it is the whole of what stands between `w9_prev` and the top of the ladder.
+⚠ ⚑ **THE REPAIR WAS PRICED AS A STEP-SIDE FIXPOINT UNTIL 2026-08-06, AND IT IS NOT ONE — WHICH IS
+WHY IT KEPT NOT HAPPENING.** This paragraph used to read: the step proof must be re-proved with a
+statement whose six words are the wrap's own derivation, and each is an x_hat MSM entry, so
+re-proving moves `x_hat`, moves every challenge below it, and moves the derivation. The first clause
+is true and the inference is not. `KimchiWrapMain.the_deferred_derivation_does_not_read_the_words_it
+_checks` (`…Pins12` §20c) computes the transitive input cone of the two values W-FINSPONGE derives,
+over its own 1732-op emitted program, and the three cells it checks are absent from it — **no
+transcript squeeze reaches §19 or §20 at all**, because their β, γ and ζ are packed statement words
+and their sponge is a fresh one over `finSpTape`. Three independent strata, one evaluation, no loop.
+
+⚠ **AND THE ORDER MATTERS LESS THAN WHAT IT UNCOVERED.** Of the six, only 55 and 56 are FREE on the
+step side (`vStmtWrapMsg0` / `vStmtWrapMsgs`, sourceless, no row writes them). Words 27, 28, 37 and 54
+are `bpDiv2`/`bpOdd`, `vXiStmt` and `hmOutDigestVar` — values the STEP circuit derives — so writing
+the wrap's numbers there makes the step circuit unsatisfiable. The disagreement at 27/28/37 is
+therefore two derivations of one quantity, and the wrap's runs on `finColVal`/`finPZetaVal`/
+`finPZetaWVal`/`finFtEval1Val`, which are `wrapFixtureQ` fixtures standing where
+`prev_proof.openings.evals` belongs. Wiring those to the step proof's real evaluations is the repair,
+and it crosses a FIELD BOUNDARY — the evaluations are **Fp** and this circuit is native **Fq**, so
+they enter only through `Other_field` (`impls.ml:167-217`). That encoding, not a fixpoint, is what
+stands between `w9_prev` and the top of the ladder.
 
 ⚑ **WHAT IS NOT AFFECTED, MEASURED RATHER THAN ASSERTED.** None of the six is absorbed by the
 transcript and none is read at or below `w4_bind`, which is why the twenty-two slots that rung
