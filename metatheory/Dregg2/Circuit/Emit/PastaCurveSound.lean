@@ -964,6 +964,84 @@ theorem sound_rcb_against_the_unsound_one :
       ∧ 135 * 33 < 4476 ∧ 4476 < 136 * 33 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
+/-! ## §7b — ⚑⚑ AGAINST UPSTREAM, GADGET BY GADGET (read at source, 2026-08-06,
+`~/dev/proof-systems` HEAD `f6d958dc`).
+
+**The row above is 4 476 constraints and 3 048 columns. Kimchi does a complete addition in ONE row
+of a fifteen-column grid, 11 cells and 7 constraints** (`kimchi/src/circuits/polynomials/
+complete_add.rs:4-16` layout, `:101` `CONSTRAINTS = 7`). Some of that gap is forced and some of it
+is ours, and the two have to be told apart or the number means nothing.
+
+### NECESSARY — a consequence of BabyBear simulating Pasta, not of a choice made here
+
+Kimchi's curve gates do their arithmetic in the **native** proving field: a Kimchi proof over Vesta
+has constraint field `Fp = Pallas::BaseField` (`curves/src/pasta/curves/pallas.rs:21-23`), so a
+Pallas point is literally two witness cells and a slope is one. There are no limbs, no range checks
+and no lookups anywhere in `complete_add.rs`, `varbasemul.rs`, `endosclmul.rs` or
+`endomul_scalar.rs`. **That is the Pasta 2-cycle, and we do not have one**: a BabyBear STARK
+verifying Mina must simulate a 255-bit field in a 31-bit one, and `capacity_covers_pasta` /
+`felt_gates_force_congruence` are what that costs. This term is not recoverable by any layout.
+
+⚑ **AND KIMCHI'S OWN FOREIGN-FIELD TRICK DOES NOT PORT, for a reason that is arithmetic.**
+`foreign_field_mul` is 2 gate rows and 11 constraints because its constraint C5
+(`foreign_field_mul/circuitgates.rs:338-342`) discharges the *entire upper half* of the product in
+ONE native identity — `a_n·b_n + q_n·f'_n − r_n − q_n·2^264 = 0` — which works because a whole
+255-bit value fits one native element, so `2^264 · n ≥ f²`. At `n = P = 2 013 265 921` that leg
+carries **31 bits, not 255**: closing `2^t · n ≥ 2^510` needs `t ≥ 479`, i.e. sixty 8-bit limbs of
+binary modulus, which IS the schoolbook this file emits. `PastaFieldSound`'s header reaches the same
+place from the other side (the CRT-over-small-moduli variant is expressible and strictly worse), and
+this is the independent confirmation.
+
+Likewise `varbasemul`'s headline trick — never witnessing the intermediate point's Y-coordinate,
+4 constraints per bit (`varbasemul.rs:108-117`) — is bought with a **degree-6** constraint
+(`varbasemul.rs:245-260`, cleared by multiplying through by `t²`). Our per-limb gates are degree 2,
+so the intermediate has to be materialised. Not portable.
+
+### AVOIDABLE — and the largest one is that this row is PROJECTIVE
+
+⚑ **RCB Alg. 7 exists to avoid an inversion. A circuit does not need to avoid inversions.**
+`docs/MINA-KIMCHI-VERIFIER-PLAN.md:61-70` chose between three *Explicit-Formulas-Database* entries —
+naive Jacobian doubling, `add-2007-bl`, `add-2015-rcb` — whose cost model is "a field inversion is
+expensive". In a constraint system an inversion is a **witnessed column plus one multiplication
+check**, which is exactly what Kimchi does: `zero_check(x21, x21_inv, same_x)`
+(`complete_add.rs:28-37`) is `z_inv·z = 1 − r` and `r·z = 0`, two degree-2 constraints, and it
+delivers the `x1 = x2` indicator for free. Completeness is then one degree-3 multiplexed slope
+constraint (`complete_add.rs:138-144`) rather than a strongly-unified formula.
+
+Ported into this file's own op vocabulary — the same `mulCore`/`smulCore`/`addSubCore` at the same
+`SOUND_MUL_MARGINAL = 189`, `SOUND_SMUL_MARGINAL = SOUND_ADDSUB_MARGINAL = 96` — an affine complete
+add is **7 multiplies, 1 constant-multiply, ~12 add/subs and 5 boolean-selected limb blocks**
+against this file's **12 + 2 + 19**: roughly `2 957` constraints and `1 908` columns, `1.5×` and
+`1.6×` under the projective row. ⚠ That is a DERIVATION off the op census, not a measurement, and
+nothing here proves such a gadget sound; what is measured is that the thing being avoided (an
+inversion) is not expensive in the setting this row lives in.
+
+⚑ **AND THE 19 ADD/SUBS ARE 40.8% OF THE ROW, spent reducing intermediates Kimchi does not
+reduce.** `19 · SOUND_ADDSUB_MARGINAL = 1 824` of `4 476`, and `19 · 64 = 1 216` of `3 048` columns
+(witness plus result block). Kimchi's `foreign_field_add` chains additions *without* a per-op
+reduction and bounds only at the end of the chain (`book/docs/kimchi/foreign_field_add.md:378-386`).
+The enabler here is arithmetic and it is already on disk: `PastaFieldSound.digitVal_abs_le` bounds
+the coefficient body by the **whole 1 024-pair product list** where the antidiagonal is `≤ 32` long,
+so the gate body is charged `141 592 831` (7.0% of `P`) against a tight `≈12 583 231` (0.63%). The
+crude bound leaves `14.2×` of headroom under `P`; the antidiagonal one leaves **`160×`, i.e. 7.3
+bits** — `3.5` bits more, and enough for the RCB DAG's add depth including the `b3 = 15`
+constant-multiply's `3.9`. That is a strictly TIGHTER theorem, not a weaker one, and it is the
+prerequisite rather than the saving.
+
+### AND THE THIRD LEVER IS NOT IN THIS FILE AT ALL
+
+`3 048` is the DECLARED width; the prover commits `10 756`, because `MainLayout::build` compiles
+every declared range lookup into a nibble aux block at `LIMB_BITS = 4` — a sixteen-row byte table,
+one aux column per FOUR bits. **71.7% of the committed row is range-check decomposition.** Kimchi
+range-checks against a 4 096-row table (`kimchi/src/circuits/lookup/tables/range_check.rs:11`,
+`RANGE_CHECK_UPPERBOUND = 1 << 12`). Measured in `circuit-prove/tests/mina_accumulator_leaf_anatomy.
+rs::the_wrap_cost_tracks_committed_width_not_declared_width`: at radix 8 the aux block HALVES
+(`7 708 → 3 873`), and 12/16 are worse because `eval_decomp`'s partial-top-limb path bit-decomposes
+a value narrower than one limb. `ByteTableEmit.gates_admit_every_height` already records that the
+table AIR does not bound its own height — the pin is `verify_vm_descriptor2`'s — so the radix is one
+constant and a VK epoch, with no descriptor and no witness re-emit.
+-/
+
 /-! ## §8 — the HONEST witness, generated HERE (Rust fills cells, it does not author them).
 
 `PastaFieldSound` §8's rule, at the row scale: the 3 048 cells of an honest complete-add row are

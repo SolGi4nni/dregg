@@ -19,6 +19,30 @@
 //! compresses**; a Linux box at 96 GiB with no swap headroom meets the OOM killer on the way up, and
 //! the run was visibly memory-stalled throughout (500 s wall against 263 s user and 608 s sys).
 //!
+//! ## ⛑⛑ RE-MEASURED 2026-08-06, AND THE FOOTPRINT IS THE SHAPE WHILE THE WALL IS THE BOX
+//!
+//! Same binary, same fixture, same box, second run — this time with the box **co-tenanted** (three
+//! other lanes' `lean` processes at 5.7 / 1.8 / 1.4 GB, and swap already 62 GB deep):
+//!
+//! | metric            | first run              | re-measured            | moved  |
+//! |-------------------|------------------------|------------------------|--------|
+//! | wall              | 500.37 s               | **696.97 s**           | +39.3% |
+//! | user / sys        | 263 s / 608 s          | **280.58 s / 765.47 s**| sys 2.7× user |
+//! | maxrss            | 61.35 GiB / 65.87 GB   | **50.13 GiB / 53.82 GB** | −18.3% |
+//! | peak footprint    | 118.30 GiB / 127.03 GB | **117.97 GiB / 126.67 GB** | **−0.3%** |
+//!
+//! ⚑ **The footprint reproduces to three parts in a thousand while the wall moves 39% and maxrss
+//! moves 18%.** That is the cost model confirming itself: the footprint is a function of the
+//! COMMITTED LDE — a property of the descriptor's shape — and `maxrss` is a function of how much of
+//! it the machine happened to keep resident, which is a property of the box. Quote the footprint
+//! when comparing shapes; quote the wall only against a box you can describe.
+//!
+//! ⚠ **AND NO UNLOADED BOX IN THE FLEET CAN HOST IT.** 126.67 GB of footprint against persvati's
+//! 83 GiB RAM + 15 GiB swap (98 GiB, would OOM) and hbox's 123 GiB + 8 GiB swap where 34 GiB is a
+//! co-tenant's and `earlyoom` is armed. The 96 GiB Mac is the only machine it fits on, and only
+//! because macOS compresses. "Re-measure on an unloaded box" has no answer at this width — which is
+//! itself the argument for the narrowing below.
+//!
 //! ⚑ **AND THE 68.3 GiB THAT STOOD IN THIS HEADER WAS NOT A PEAK.** It was labelled "peak memory
 //! footprint" of a run that was *killed before finishing* — the high-water mark of a climb that had
 //! not stopped climbing. Both completed runs reach ~118 GiB, 1.7× higher. **A killed run's

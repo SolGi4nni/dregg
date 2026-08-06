@@ -32,6 +32,23 @@
 //! ⚠ The chainlink half is SKIPPED (loudly, not substituted) when its emitted fixture is absent;
 //! regenerate with metatheory's `mina_chain_emit`.
 //!
+//! ## ⚑⚑ AND THE DENOMINATOR THIS FILE USED WAS THE WRONG ONE
+//!
+//! The sweep below reads `6.5×` the *declared* columns costing `11.5×` the wrap ops and calls the
+//! law superlinear. It is not superlinear. `MainLayout::build` compiles every declared range lookup
+//! into the declared column **plus** a nibble-decomposition aux block, and *that* extended trace is
+//! what `Ir2Air::Main` is `width()`d at and what the prover commits:
+//!
+//! ```text
+//!   pasta-fq-chainlink              469 declared →  1,037 committed   (2.21×)
+//!   dregg-mina-accumulator-seg    3,048 declared → 10,756 committed   (3.53×)
+//! ```
+//!
+//! `10,756 / 1,037 = 10.37×` against an op ratio of `11.52×`. **71.7% of the accumulator row the
+//! prover commits is range-check decomposition**, at `LIMB_BITS = 4` — a sixteen-row byte table,
+//! one aux column per four bits. `the_wrap_cost_tracks_committed_width_not_declared_width` is that
+//! correction as a measurement, with the radix curve beside it.
+//!
 //! Run:
 //! ```text
 //! cargo test -p dregg-circuit-prove --release --test mina_accumulator_leaf_anatomy \
@@ -41,8 +58,9 @@
 use std::time::Instant;
 
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, Ir2Air, MemBoundaryWitness, UMemBoundaryWitness,
-    ir2_airs_and_common_for_config, prove_vm_descriptor2_for_config,
+    EffectVmDescriptor2, Ir2Air, MemBoundaryWitness, TableSem, UMemBoundaryWitness, VmConstraint2,
+    decomp_cols_pub, ir2_airs_and_common_for_config, parse_vm_descriptor2,
+    prove_vm_descriptor2_for_config,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
@@ -163,7 +181,11 @@ fn census_leaf_wrap(
                        apt: &[Vec<Target>],
                        _vk_cap: &[Target]| {
         let main = apt.first().expect("a main instance");
-        let claim: Vec<Target> = (0..expose_len).map(|k| main[k]).collect();
+        // A descriptor with no public inputs exposes no per-instance targets, so the requested
+        // arity is CLAMPED rather than indexed past the end. The expose_claim table is ~1.2k cells
+        // against a 10^9-cell wrap, so clamping moves the measurement by nothing that matters —
+        // and a panic here would have silently excluded every PI-free atom from the width law.
+        let claim: Vec<Target> = (0..expose_len.min(main.len())).map(|k| main[k]).collect();
         cb.expose_as_public_output(&claim);
     };
 
@@ -391,6 +413,299 @@ fn where_the_accumulator_leaf_wrap_cost_goes() {
         "\n(wrap LDE cells = Σ_table 2^(log2 rows + {LOG_BLOWUP}) × (main + preprocessed width) — \
          the cells `prove_all_tables` materialises, which is what a peak-RSS figure tracks.)"
     );
+}
+
+/// ⚑⚑ **THE COST LAW IS IN THE *COMMITTED* WIDTH, NOT THE DECLARED ONE — AND THE DIFFERENCE IS
+/// 3.5× ON THE ACCUMULATOR ROW.**
+///
+/// The sweep above compares `3,048` declared columns against `469` and reads the wrap's `11.5×`
+/// op ratio as superlinear in width. It is not superlinear; it is **linear in a width nobody had
+/// printed.** A declared column carrying a range lookup is compiled by `MainLayout::build` into
+/// the declared column PLUS a nibble-decomposition aux block (`decomp_cols_pub`: `bits/4` limbs at
+/// `bits % 4 == 0`), and *that* extended trace is what `Ir2Air::Main` is `width()`d at and what the
+/// prover commits. Measured here from the descriptors' own `tables`:
+///
+/// ```text
+///   pasta-fq-chainlink              469 declared →  1,037 committed  (+568,  2.21×)
+///   dregg-mina-accumulator-seg    3,048 declared → 10,756 committed  (+7,708, 3.53×)
+/// ```
+///
+/// `10,756 / 1,037 = 10.37×` against an op ratio of `11.52×`. The declared-width ratio `6.50×`
+/// was the wrong denominator, and the "superlinearity" was the gap between the two.
+///
+/// ⚑ **SO 71.7% OF THE ACCUMULATOR ROW THE PROVER COMMITS IS RANGE-CHECK DECOMPOSITION**, at
+/// `LIMB_BITS = 4` — a **16-row** byte table. Kimchi range-checks the same kind of limb against a
+/// **4,096-row** table (`RANGE_CHECK_UPPERBOUND = 1 << 12`, `kimchi/src/circuits/lookup/tables/
+/// range_check.rs:11`), one lookup per 12 bits with no aux column at all. Ours spends one aux
+/// column per 4 bits.
+///
+/// This test is a MEASUREMENT over the real emitted sound atoms — the one-op-per-row objects the
+/// narrowing would be built out of — so the width law has points at both ends of the range instead
+/// of two points 6.5× apart.
+#[test]
+#[ignore = "MEASUREMENT, ~1 min: builds five more leaf-wrap circuits (no wrap PROVING). --ignored --nocapture"]
+fn the_wrap_cost_tracks_committed_width_not_declared_width() {
+    /// One emitted atom: descriptor JSON + an honest Lean-emitted trace at the declared width.
+    struct Atom {
+        label: &'static str,
+        json: &'static str,
+        trace: &'static str,
+        width: usize,
+    }
+
+    let atoms = [
+        Atom {
+            label: "pasta-fpadd-sound   (one ADD op)",
+            json: include_str!("../../circuit/descriptors/by-name/pasta-fpadd-sound.json"),
+            trace: include_str!("../../circuit/tests/fixtures/pasta-fpadd-sound-trace.txt"),
+            width: 128,
+        },
+        Atom {
+            label: "pasta-fpmul-sound   (one MULTIPLY op)",
+            json: include_str!("../../circuit/descriptors/by-name/pasta-fpmul-sound.json"),
+            trace: include_str!("../../circuit/tests/fixtures/pasta-fpmul-sound-trace.txt"),
+            width: 190,
+        },
+        Atom {
+            label: "pasta-alu-fq-sound  (the Fq ALU row)",
+            json: include_str!("../../circuit/descriptors/by-name/pasta-alu-fq-sound.json"),
+            trace: include_str!("../../circuit/tests/fixtures/pasta-alu-sound-trace.txt"),
+            width: 226,
+        },
+    ];
+
+    // ── §1 the ONE-OP ATOMS, priced on the descriptor the prover reads ─────────────────────────
+    //
+    // ⚠ These are NOT run through `census_leaf_wrap`: `ir2_leaf_wrap_config` refuses them at the
+    // INNER prove (`OodEvaluationMismatch { index: Some(0) }` on an 8-row `pasta-fpadd-sound`),
+    // and that refusal is REPORTED rather than routed around, because it is itself a finding — the
+    // narrowing's atoms have never been proved under the recursion config the fold uses, so the
+    // one-op-per-row leaf is not merely unbuilt, its ingredient is unproven at this config. What
+    // IS measured here is the committed width, read through the deployed `decomp_cols_pub`.
+    println!("\n########## §1 — THE ONE-OP ATOMS, AT THE WIDTH THE PROVER COMMITS ##########");
+    println!(
+        "{:<40} {:>8} {:>7} {:>10} {:>8} {:>7}",
+        "atom", "declared", "aux", "committed", "comm/dec", "rows"
+    );
+    for a in &atoms {
+        let desc = parse_vm_descriptor2(a.json).expect("the deployed checker parses the atom");
+        assert_eq!(desc.trace_width, a.width, "{}: declared width", a.label);
+        let base = rows_of(a.trace);
+        assert!(
+            base.iter().all(|r| r.len() == a.width),
+            "{}: every fixture row is {} wide",
+            a.label,
+            a.width
+        );
+        let cw = committed_width(&desc);
+        println!(
+            "{:<40} {:>8} {:>7} {:>10} {:>8.2} {:>7}",
+            a.label,
+            desc.trace_width,
+            cw - desc.trace_width,
+            cw,
+            cw as f64 / desc.trace_width as f64,
+            base.len()
+        );
+    }
+
+    let mut rows: Vec<(String, usize, usize, usize, Census)> = Vec::new();
+
+    // ── §2 the two shapes that DO prove under the leaf-wrap config ────────────────────────────
+    if let Some((link_desc, link_trace, link_pis)) = chainlink_leaf() {
+        let pin = link_desc.public_input_count.min(200);
+        let c = census_leaf_wrap(
+            "pasta-fq-chainlink  (FOLDS in production)",
+            &link_desc,
+            &link_trace,
+            &link_pis,
+            pin,
+        );
+        let (d, cw, h) = (
+            link_desc.trace_width,
+            committed_width(&link_desc),
+            link_trace.len(),
+        );
+        rows.push((
+            "pasta-fq-chainlink  (FOLDS in production)".into(),
+            d,
+            cw,
+            h,
+            c,
+        ));
+    } else {
+        println!(
+            "\n(!) chainlink fixture absent — the production control is SKIPPED, not substituted"
+        );
+    }
+
+    let acc_rows = rows_of(DISCHARGING);
+    let acc_desc = accumulator_descriptor(Rung::Interior).expect("segment descriptor");
+    let seg: Vec<Vec<BabyBear>> = acc_rows[..8].to_vec();
+    let pis = segment_public_inputs(&seg).expect("segment public inputs");
+    let c = census_leaf_wrap(
+        "dregg-mina-accumulator-seg  (33 ops on ONE row)",
+        &acc_desc,
+        &seg,
+        &pis,
+        ACC_PI_COUNT,
+    );
+    rows.push((
+        "dregg-mina-accumulator-seg  (33 ops on ONE row)".into(),
+        acc_desc.trace_width,
+        committed_width(&acc_desc),
+        8,
+        c,
+    ));
+
+    println!("\n\n########## THE WIDTH LAW, MEASURED OVER FIVE EMITTED DESCRIPTORS ##########");
+    println!(
+        "{:<48} {:>8} {:>10} {:>5} {:>12} {:>17} {:>11} {:>11}",
+        "descriptor",
+        "declared",
+        "committed",
+        "rows",
+        "wrap ops",
+        "wrap LDE cells",
+        "ops/dec",
+        "ops/comm"
+    );
+    for (label, decl, comm, h, c) in &rows {
+        println!(
+            "{:<48} {:>8} {:>10} {:>5} {:>12} {:>17} {:>11.1} {:>11.1}",
+            label,
+            decl,
+            comm,
+            h,
+            c.ops,
+            c.committed_cells(),
+            c.ops as f64 / *decl as f64,
+            c.ops as f64 / *comm as f64
+        );
+    }
+    println!(
+        "\n⚑ `ops/comm` is the column that should be FLAT if the cost law is linear in the width \
+         the prover commits. `ops/dec` is the one the file's previous draft implicitly used."
+    );
+
+    // The two facts this measurement exists to pin, as assertions rather than prose.
+    let acc = rows.last().expect("the accumulator row");
+    assert_eq!(acc.1, 3048, "the accumulator declares 3,048 columns");
+    assert_eq!(
+        acc.2, 10756,
+        "…and COMMITS 10,756 — the nibble aux block is 7,708 columns, 2.5x the declared width"
+    );
+    assert!(
+        acc.2 * 10 > acc.1 * 35,
+        "the committed/declared ratio is above 3.5x, which is why a declared-width cost model \
+         reads as superlinear"
+    );
+
+    // ── §4 what the aux block would be at another range-table radix ───────────────────────────
+    println!("\n########## §4 — THE AUX BLOCK AS A FUNCTION OF THE RANGE-TABLE RADIX ##########");
+    println!(
+        "⚑ `LIMB_BITS = {}` today, so the shared byte table is {} rows and one aux column buys {} \
+         bits.\n   Kimchi range-checks the same kind of limb against a 4,096-row table \
+         (RANGE_CHECK_UPPERBOUND = 1 << 12).",
+        dregg_circuit::descriptor_ir2::LIMB_BITS,
+        1usize << dregg_circuit::descriptor_ir2::LIMB_BITS,
+        dregg_circuit::descriptor_ir2::LIMB_BITS,
+    );
+    println!(
+        "{:<40} {:>7} {:>8} {:>10} {:>8}",
+        "descriptor", "radix", "aux", "committed", "vs now"
+    );
+    for (label, desc) in [
+        ("dregg-mina-accumulator-seg", &acc_desc),
+        ("pasta-fpmul-sound (one MULTIPLY)", &{
+            parse_vm_descriptor2(atoms[1].json).expect("fpmul parses")
+        }),
+    ] {
+        let now = committed_width(desc);
+        for radix in [4usize, 8, 12, 16] {
+            let aux = aux_at_radix(desc, radix);
+            println!(
+                "{:<40} {:>7} {:>8} {:>10} {:>8.2}",
+                label,
+                radix,
+                aux,
+                desc.trace_width + aux,
+                (desc.trace_width + aux) as f64 / now as f64
+            );
+        }
+    }
+    println!(
+        "\n⚑ 12 and 16 are WORSE, and the reason is `eval_decomp`'s partial-top-limb path: a limb \
+         WIDER than the value being checked forces the whole value into `top_bits` booleans, one \
+         column per BIT. The win is at radix 8, where the deployed 8-bit limbs and 16-bit carries \
+         both land on a whole number of limbs."
+    );
+
+    // Radix 8 halves the aux block — re-derived from the deployed `decomp_cols_pub`, not written
+    // down, so a change to the decomposition moves this assertion rather than leaving it stale.
+    let aux4 = aux_at_radix(&acc_desc, 4);
+    let aux8 = aux_at_radix(&acc_desc, 8);
+    assert_eq!(aux4, 7708, "the deployed radix-4 aux block");
+    // ⚠ Not "exactly half": 19 of the 3,048 lookups are ONE bit wide and cost one column at every
+    // radix, so the ratio is 0.5024, and an `aux8 * 2 <= aux4` assertion is FALSE by 38 columns.
+    // Stated as the bracket it actually is rather than as the round number it nearly is.
+    assert!(
+        aux8 * 100 <= aux4 * 51 && aux8 * 100 >= aux4 * 50,
+        "radix 8 takes the accumulator's aux block to within [0.50, 0.51] of radix 4 \
+         ({aux8} against {aux4})"
+    );
+}
+
+/// The aux block the nibble decomposition would add at an arbitrary radix, computed by the SAME
+/// `limb_geom` rule `decomp_cols_pub` implements. Parameterised so the deployed `LIMB_BITS = 4` is
+/// one point of a curve rather than the only number anyone has.
+fn aux_at_radix(desc: &EffectVmDescriptor2, radix: usize) -> usize {
+    let cols = |bits: usize| -> usize {
+        let n = bits.div_ceil(radix);
+        let top = bits - (n - 1) * radix;
+        n + if top < radix { top } else { 0 }
+    };
+    let mut aux = 0usize;
+    for c in &desc.constraints {
+        if let VmConstraint2::Lookup(l) = c {
+            if let Some(bits) =
+                desc.tables
+                    .iter()
+                    .find(|t| t.id == l.table)
+                    .and_then(|t| match t.sem {
+                        TableSem::Range { bits } => Some(bits),
+                        _ => None,
+                    })
+            {
+                aux += cols(bits);
+            }
+        }
+    }
+    aux
+}
+
+/// The width `Ir2Air::Main` is actually `width()`d at: declared columns plus the nibble aux block
+/// `MainLayout::build` adds per declared range lookup. Read off the descriptor's own `tables`
+/// through the deployed `decomp_cols_pub`, exactly as
+/// `circuit/tests/pasta_sound_atom_price_and_fri_repricing.rs::committed_width` does.
+fn committed_width(desc: &EffectVmDescriptor2) -> usize {
+    let mut aux = 0usize;
+    for c in &desc.constraints {
+        if let VmConstraint2::Lookup(l) = c {
+            if let Some(bits) =
+                desc.tables
+                    .iter()
+                    .find(|t| t.id == l.table)
+                    .and_then(|t| match t.sem {
+                        TableSem::Range { bits } => Some(bits),
+                        _ => None,
+                    })
+            {
+                aux += decomp_cols_pub(bits);
+            }
+        }
+    }
+    desc.trace_width + aux
 }
 
 /// The production chainlink leaf, if its emitted fixture is on disk. Returned rather than
