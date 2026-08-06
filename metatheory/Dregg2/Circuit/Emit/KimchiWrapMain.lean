@@ -751,6 +751,26 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          fin_deferred_words_are_the_derivation
          finsponge_has_no_witness_on_the_published_statement
          finsponge_assert_reds_if_the_other_block_claims_should_finalize
+         -- ⚑ Joined 2026-08-06. It computes the TRANSITIVE INPUT CONE of the two values
+         -- W-FINSPONGE derives, over the emitted 1732-op `FOp` program, and shows the three
+         -- cells it CHECKS are absent from it. That is the theorem which refuted "the six
+         -- words are a fixpoint" — a claim three docblocks and a Rust comment had cited
+         -- without re-deriving, and which priced the repair as unbounded iteration. A cone
+         -- over 1732 ops is not a kernel object. It carries five anti-vacuity legs so an
+         -- empty cone cannot pass, and `#assert_compiled` records the compiler.
+         the_deferred_derivation_does_not_read_the_words_it_checks
+         -- ⚑ Same commit, same reason: it exhibits slot 11's blocker entry-for-entry against
+         -- the emitted forty, and slot 12's disagreement with the step assembly's outer hash.
+         -- Both are comparisons over emitted vectors, not kernel objects. Shaped to shrink:
+         -- it ASSERTS both disagreements, so closing either one reds it.
+         the_two_slots_close_does_not_reach_are_a_fixture_and_a_step_digest
+         -- ⚑ Same commit. It reads the wrap-hack tape's LENGTH and CONTENT against the emitted
+         -- statement vector — 32 absorbed words over two blocks, compared entry-for-entry.
+         -- Not a kernel object either. NOTE for whoever extends this list: add ONLY the name
+         -- the gate actually named. A grep for `native_decide` near a theorem over-matches
+         -- comments (it credited `q_inv_is_an_inverse`, which closes by `decide`), and an
+         -- unnecessary `except` row silently permits a kernel-clean theorem to go native later.
+         the_wraphack_tape_reads_no_published_statement_entry
          finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks
          wraphack_digest_is_the_emitted_squeeze
 
