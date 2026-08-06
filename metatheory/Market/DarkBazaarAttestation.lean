@@ -205,11 +205,17 @@ structure EndToEndAttestation
   receipt_exact : ExactSettlementReceipt source output receipt
 
 /-- Tier-1 public hiding: the WORLD-visible transcript factors through only
-`(p*,V*)`.  This says nothing about hiding the plaintext from the solver. -/
+`(p*,V*)` and the public circuit shape `(K,b)`.  This says nothing about hiding
+the plaintext from the solver.
+
+⚠ This used to read `mpcSim att.clearing.K att.clearing.maskedLen att.output` —
+feeding the simulator the attestation's own transcript length, which was a free
+field.  The simulator now derives every size from `(K,b)`, so the statement no
+longer supplies the number whose book-independence it is asserting. -/
 def Tier1WorldHiding {C : OrderCommitmentCarrier} {compiler : OrderToCertFCompiler}
     (att : EndToEndAttestation C compiler) : Prop :=
   att.clearing.mpcView =
-    mpcSim att.clearing.K att.clearing.maskedLen att.output
+    mpcSim att.clearing.K att.clearing.b att.output
 
 /-- At Tier 1 the solver input is the plaintext book, stated without euphemism. -/
 def tier1SolverInput {C : OrderCommitmentCarrier} {compiler : OrderToCertFCompiler}
@@ -507,15 +513,24 @@ def Tier0NoViewerDistributedAttestationResidual
 
 /-- Concrete Tier-1 separation tooth: the public views coincide while the two
 plaintext solver inputs are different.  Public-view hiding is therefore not a
-no-viewer theorem about the solver. -/
+no-viewer theorem about the solver.
+
+⚠ `mcA` and `mcB` used to each carry `maskedLen := 144`, so this tooth's
+`same_leakage_indistinguishable … rfl` discharged transcript-length agreement by
+having hand-written the same number twice — and `144` is a length the deployed
+circuit cannot emit at `K = 3` for any bit width
+(`MpcClearingSecurity.maskedOpens_three_never_144`).  Both now carry the public
+shape `(K,b) = (3,8)` and the agreement is derived. -/
 def mcB : MpcClearing :=
   { bk := bookB
     hvalid := bookB_valid
     K := 3
     hK := by norm_num
+    b := 8
+    hb := by norm_num
+    hfit := by unfold MpcClearingSecurity.CurvesFit bookB; decide
     ρ := 2
-    hρ := by norm_num
-    maskedLen := 144 }
+    hρ := by norm_num }
 
 theorem tier1_world_hiding_does_not_hide_solver_input :
     mcA.mpcView = mcB.mpcView ∧ mcA.bk ≠ mcB.bk := by

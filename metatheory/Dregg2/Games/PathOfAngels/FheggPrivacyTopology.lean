@@ -327,15 +327,31 @@ theorem full_mpc_collusion_is_not_hiding
 
 /-- The deterministic public computation view factors through `(p*, V*)` and
 public shape; changing the private book without changing that leakage does not
-change this modelled view. -/
+change this modelled view.
+
+The hypotheses are now exactly the PUBLIC circuit shape `(K, b)`.  This used to
+also demand `left.maskedLen = right.maskedLen` — transcript-length agreement —
+which was a free field and therefore an assumption that the two runs leaked the
+same amount.  It is now derived from `(K, b)`; see
+`MpcClearing.transcript_sizes_depend_only_on_shape`. -/
 theorem same_crossing_has_same_public_mpc_view
     (left right : MpcClearing)
     (sameBuckets : left.K = right.K)
-    (sameMaskedLength : left.maskedLen = right.maskedLen)
+    (sameValueBits : left.b = right.b)
     (same : left.leakage = right.leakage) :
     left.mpcView = right.mpcView :=
   MpcClearing.same_leakage_indistinguishable
-    left right sameBuckets sameMaskedLength same
+    left right sameBuckets sameValueBits same
+
+/-- Data-obliviousness at the game boundary: two Dark-Bazaar crossings at the same
+public shape open the same NUMBER of bits regardless of what was bid. -/
+theorem same_shape_leaks_the_same_amount
+    (left right : MpcClearing)
+    (sameBuckets : left.K = right.K)
+    (sameValueBits : left.b = right.b) :
+    left.mpcView.maskedLen = right.mpcView.maskedLen :=
+  (MpcClearing.transcript_sizes_depend_only_on_shape
+    left right sameBuckets sameValueBits).2.1
 
 /-- The deployed smudging theorem covers the modelled book-dependent noise
 channel at statistical distance at most `2^-48`.  It does not prove RLWE or a

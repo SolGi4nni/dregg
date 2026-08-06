@@ -1,5 +1,50 @@
 # Market Metatheory — Merciless Assurance Review (2026-07-17)
 
+> ## STATUS SINCE THE AUDIT — updated 2026-08-06 (fhegg-clearing lane)
+>
+> The findings below are preserved as written on 2026-07-17. This block records what has
+> since changed, so nobody cites a closed finding as open (or an open one as closed).
+>
+> **Findings 1 and 2 are CLOSED** — by `a95706593` ("FIX the uniform-price crossing bug —
+> argmax min(D,S) across spec + Rust + Lean"), not by this lane. Verified at source today:
+> `MpcClearing.pStar := crossing mc.bk mc.K` and `vStar := clearedVolume mc.bk mc.K` are the
+> volume-argmax, `balanceCrossing` appears in the file only as RED teeth
+> (`old_balanceCrossing_disagrees_with_runtime`,
+> `old_sign_not_determined_by_runtime_leakage`), and the joined theorem
+> `cleared_conserving_optimal_and_reveal_only` now carries the volume-maximization clause
+> `∀ q < mc.K, execVol mc.bk q ≤ mc.vStar` alongside the weak uniform-price one. The
+> balance-threshold/argmax model split of Finding 2 is gone: both files denote the argmax.
+> **Improvement-plan item 1 is done.**
+>
+> **A NEW instance of the same class was found and fixed today (this lane).** The
+> over-naming had migrated into the transcript's *size*. `MpcView`/`MpcClearing` carried
+> `maskedLen : ℕ` as a FREE FIELD and `mpcSim` took it as an INPUT — so "the view is
+> simulable from `(p*,V*)` plus public shape" handed the simulator the one number whose
+> independence from the private book was the thing to prove, and
+> `same_leakage_indistinguishable` took that independence as its hypothesis `hm`. Nothing in
+> the model could see that both Dark-Bazaar Tier-1 witnesses (`mcA`, `mcB`) hand-picked
+> `maskedLen := 144` — a length the deployed circuit **cannot emit at `K = 3` for any bit
+> width** (it emits `40b + 8`). So the marquee Tier-1 tooth
+> `tier1_world_hiding_does_not_hide_solver_input`, which is supposed to *exhibit* two books
+> with the same public view, was discharging transcript-length agreement by
+> `rfl` on `144 = 144`.
+>
+> Repaired: `MpcClearing` now carries the public shape `(K, b)`; `idxBits` / `andGates` /
+> `maskedOpens` / `crossingRounds` are transcribed from `mpc.rs`; every size is DERIVED;
+> data-obliviousness is the theorem `transcript_sizes_depend_only_on_shape` (was the
+> hypothesis `hm`); `maskedOpens_three_never_144` makes restoring the old constant a build
+> failure; and `fhegg-fhe/tests/mpc_lean_transcript_pin.rs` pins the Lean arithmetic against
+> a **measured** `mpc_crossing` run, which is the first mechanized leg of improvement-plan
+> item 3. `MpcClearingSecurity` went 17 → 31 kernel-clean keystones and 5 → 0 `#guard`s.
+>
+> Introducing `b` also made a second obligation *stateable* for the first time, so it was
+> closed rather than left as a fresh free field: `pStar`/`vStar` are the exact `crossing` /
+> `clearedVolume` over `ℤ`, while the deployed circuit computes on `b`-bit shares and wraps.
+> `MpcClearing` now carries `hfit : CurvesFit bk K b`. Note `reveal_only` is still `rfl` and
+> the file now says so outright — the content is in the non-definitional theorems, not there.
+>
+> Items 2, 4, 5, 6, 7, 8, 9 of the improvement plan are **not** addressed here.
+
 Read-only sufficient-test audit of every `metatheory/Market/*.lean` (37 files), the verified
 core the confidential-clearing product rests on. The discipline is the one that found vacuity in
 ArkLib's `KZG.binding`, in our own FRI "calculator bits", and in our `*HardQuant` costumes,

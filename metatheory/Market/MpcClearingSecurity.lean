@@ -11,11 +11,19 @@ where `crossing` is the LOWEST bucket maximizing `min demand supply`.  The publi
 deterministic view contains only `(p*, V*)` plus public circuit shape.  In
 particular it contains no balance sign vector and does not use `balanceCrossing`.
 
+The public shape is `(K, b)` — `K` price buckets, `b`-bit values — and EVERY size
+in the transcript is derived from it by the accounting transcribed from `mpc.rs`
+in §2.  Nothing here takes a transcript size as an input.
+
 PROVEN here:
 
 * additive n-of-n shares are perfectly hiding from every coalition missing one
   party, with full-collusion teeth;
 * the real deterministic view factors exactly through the volume-argmax leakage;
+* DATA-OBLIVIOUSNESS: every transcript size is a function of `(K,b)` alone, so
+  swapping the private book moves nothing the world can see — this used to be
+  the hypothesis `hm` and is now `transcript_sizes_depend_only_on_shape`;
+* the opened `p*` field is exactly wide enough for every bucket;
 * same-leakage books have identical views, while a private curve coefficient and
   the obsolete balance sign do not factor through that leakage;
 * the same clearing is conserving, uniform-price optimal, volume maximizing, and
@@ -28,6 +36,17 @@ HONEST SCOPE: this is the semi-honest, perfect-hiding algebra.  Authentication,
 malicious-share validity, dealer-free triples, smudging-to-full-transcript hybrids,
 and adaptive/UC composition remain outside this theorem.  The A2B bridge specifies
 semantic reconstruction; it does not pretend to verify the Rust gate schedule.
+
+⚠ And say plainly what `reveal_only` is: it is `rfl`, and it stays `rfl`.  The view
+is DEFINED as the simulation, so that equation is true by construction and is not
+where the content lives.  What changed in the §2 rework is what it is definitional
+ABOUT — the sizes are now the deployed circuit's, forced, instead of a free field
+that any number satisfied.  The load-bearing statements are the ones that are NOT
+definitional: `transcript_sizes_depend_only_on_shape` (was the hypothesis `hm`),
+`pStar_fits_idxBits`, `maskedOpens_three_never_144`, the satisfiable/refutable pair
+`maskedOpens_factors_through_leakage` + `book_reading_size_refutes_factorization`,
+and the measured Rust pin.  A reader who cites `reveal_only` alone is citing a
+definition.
 
 Pure.
 -/
@@ -164,27 +183,139 @@ structure CrossingLeakage where
   vStar : ℤ
   deriving DecidableEq, Repr
 
-/-- The deterministic public view: output plus public circuit shape, and nothing else. -/
+/-! ### The deployed circuit shape and its EXACT transcript accounting.
+
+`mpc.rs` fixes the SIZE of every public transcript field as a function of the
+PUBLIC shape `(K, b)` alone — `K` price buckets, `b`-bit values.  That is the
+load-bearing fact behind `mpc.rs::simulate` ("the argmax runs the SAME gate count
+on every input (data-oblivious), so that count depends only on `(k, b)`"), and it
+is transcribed here so the simulator DERIVES the transcript's size instead of
+being handed it.
+
+⚠ What this replaced: `MpcView`/`MpcClearing` used to carry `maskedLen : ℕ` as a
+FREE FIELD and `mpcSim` took it as an INPUT.  So "the view is simulable from the
+leakage plus public shape" fed the simulator the one number whose independence
+from the private book was the thing to prove, and `same_leakage_indistinguishable`
+took that independence as the hypothesis `hm`.  Nothing in the model could see
+that the only two witnesses in the tree both hand-picked `maskedLen := 144`, a
+length the deployed circuit cannot emit at `K = 3` for ANY bit width
+(`maskedOpens_three_never_144` below).
+
+Each definition names the Rust it mirrors.  The concrete numbers are pinned
+against a REAL `mpc_crossing` run in `fhegg-fhe/tests/mpc_lean_transcript_pin.rs`
+— two independent sources (this arithmetic model vs. the circuit's measured
+behaviour), so a disagreement is a red gate rather than decoration. -/
+
+/-- `mpc.rs::ceil_log2` transcribed: `while x < n { x <<= 1; d += 1 }`.  `n` is
+structural fuel — `x` doubles from `1`, so `n` iterations always suffice. -/
+def ceilLog2Go (n : ℕ) : ℕ → ℕ → ℕ → ℕ
+  | 0, _, d => d
+  | fuel + 1, x, d => if x < n then ceilLog2Go n fuel (2 * x) (d + 1) else d
+
+/-- Least `d` with `n ≤ 2 ^ d` (`mpc.rs::ceil_log2`). -/
+def ceilLog2 (n : ℕ) : ℕ := ceilLog2Go n n 1 0
+
+private theorem nat_le_two_pow (n : ℕ) : n ≤ 2 ^ n := by
+  induction n with
+  | zero => simp
+  | succ k ih =>
+    have h1 : 1 ≤ 2 ^ k := Nat.one_le_pow k 2 (by norm_num)
+    have h2 : 2 ^ (k + 1) = 2 ^ k + 2 ^ k := by ring
+    omega
+
+private theorem ceilLog2Go_covers (n : ℕ) :
+    ∀ (fuel x d : ℕ), x = 2 ^ d → n ≤ 2 ^ (d + fuel) →
+      n ≤ 2 ^ ceilLog2Go n fuel x d := by
+  intro fuel
+  induction fuel with
+  | zero => intro x d _ h; simpa using h
+  | succ f ih =>
+    intro x d hx h
+    show n ≤ 2 ^ (if x < n then ceilLog2Go n f (2 * x) (d + 1) else d)
+    by_cases hlt : x < n
+    · simp only [hlt, if_true]
+      refine ih (2 * x) (d + 1) (by rw [hx]; ring) ?_
+      rw [show d + 1 + f = d + (f + 1) from by ring]
+      exact h
+    · simp only [hlt, if_false]
+      subst hx
+      omega
+
+/-- `ceilLog2` genuinely covers: the width it reports really does hold `n`. -/
+theorem ceilLog2_covers (n : ℕ) : n ≤ 2 ^ ceilLog2 n :=
+  ceilLog2Go_covers n n 1 0 (by norm_num) (by simpa using nat_le_two_pow n)
+
+/-- `mpc.rs::index_bits` — the width `p*` is opened at (at least one bit). -/
+def idxBits (K : ℕ) : ℕ := max (ceilLog2 K) 1
+
+/-- `mpc.rs::geq_rounds` — a one-bit comparison needs two rounds. -/
+def geqRounds (b : ℕ) : ℕ := if b < 2 then 2 else b
+
+/-- `mpc.rs::mpc_crossing`'s AND-gate count: `K` `secure_min`s at `4b` each, plus
+the `K-1` argmax-tournament nodes (`geq` at `3b`, a `b`-bit value MUX, and an
+`idxBits K`-bit index MUX).  Depends on `(K,b)` only — never on the book. -/
+def andGates (K b : ℕ) : ℕ := K * (4 * b) + (K - 1) * (4 * b + idxBits K)
+
+/-- Every Beaver AND gate opens exactly two one-time-padded bits
+(`mpc.rs::and_gate` pushes `d` and `e`; `Transcript::is_reveal_only` enforces
+`masked.len() == 2 * and_gates`). -/
+def maskedOpens (K b : ℕ) : ℕ := 2 * andGates K b
+
+/-- `mpc.rs::crossing_rounds` — modeled online depth. -/
+def crossingRounds (K b : ℕ) : ℕ := (geqRounds b + 1) * (1 + ceilLog2 K)
+
+/-- The width premise the deployed circuit actually needs: every aggregate this
+clearing is computed from fits the `b`-bit shares it is computed on.
+
+⚠ This is an obligation that only became STATEABLE once `b` existed.  `pStar` and
+`vStar` below are the EXACT `crossing`/`clearedVolume` over `ℤ`; the deployed
+circuit computes them on `b`-bit shares and wraps.  Without this field an
+`MpcClearing` could carry `b = 1` over a book with `demand = 10` and still claim
+its `(p*,V*)` was the deployed output — so introducing `b` unaccompanied would
+just have traded one free field for another.  `FhEggRustDenotation.MpcInputsFit`
+is the same bound stated over the `u32Residue`s that file works in; this one is
+over the raw aggregates, and implies it. -/
+def CurvesFit (bk : OrderBook) (K b : ℕ) : Prop :=
+  ∀ p < K, demand bk p < (2 : ℤ) ^ b ∧ supply bk p < (2 : ℤ) ^ b
+
+/-- The deterministic public view of one deployed crossing: every field of
+`mpc.rs::Transcript`, with the one-time-padded opening CONTENTS abstracted to
+their COUNT — §1 is exactly what licenses that abstraction, since each opened bit
+is a fresh pad. -/
 structure MpcView where
   pStar : ℕ
   vStar : ℤ
   buckets : ℕ
+  valueBits : ℕ
+  pStarBits : ℕ
+  vStarBits : ℕ
+  andGates : ℕ
   maskedLen : ℕ
+  rounds : ℕ
   deriving DecidableEq, Repr
 
-/-- Witness-free simulation from only `(p*,V*)` and public shape. -/
-def mpcSim (K maskedLen : ℕ) (q : CrossingLeakage) : MpcView :=
-  { pStar := q.pStar, vStar := q.vStar, buckets := K, maskedLen := maskedLen }
+/-- Witness-free simulation from ONLY `(p*,V*)` and the public shape `(K,b)`.
+Note what is NOT a parameter: any transcript size. -/
+def mpcSim (K b : ℕ) (q : CrossingLeakage) : MpcView :=
+  { pStar := q.pStar, vStar := q.vStar
+    buckets := K, valueBits := b
+    pStarBits := idxBits K, vStarBits := b
+    andGates := andGates K b
+    maskedLen := maskedOpens K b
+    rounds := crossingRounds K b }
 
-/-- One output-boundary clearing on the actual volume-argmax rule. -/
+/-- One output-boundary clearing on the actual volume-argmax rule, at the public
+circuit shape `(K, b)`. -/
 structure MpcClearing where
   bk : OrderBook
   hvalid : OrdersValid bk
   K : ℕ
   hK : 0 < K
+  b : ℕ
+  hb : 0 < b
+  hfit : CurvesFit bk K b
   ρ : ℚ
   hρ : 0 < ρ
-  maskedLen : ℕ
 
 namespace MpcClearing
 
@@ -194,17 +325,50 @@ def pStar : ℕ := crossing mc.bk mc.K
 def vStar : ℤ := clearedVolume mc.bk mc.K
 def leakage : CrossingLeakage := ⟨mc.pStar, mc.vStar⟩
 def mpcView : MpcView :=
-  { pStar := mc.pStar, vStar := mc.vStar, buckets := mc.K, maskedLen := mc.maskedLen }
+  { pStar := mc.pStar, vStar := mc.vStar
+    buckets := mc.K, valueBits := mc.b
+    pStarBits := idxBits mc.K, vStarBits := mc.b
+    andGates := andGates mc.K mc.b
+    maskedLen := maskedOpens mc.K mc.b
+    rounds := crossingRounds mc.K mc.b }
 
-/-- The actual deterministic transcript factors exactly through `(p*,V*)`. -/
-theorem reveal_only : mc.mpcView = mpcSim mc.K mc.maskedLen mc.leakage := rfl
+/-- The actual deterministic transcript factors exactly through `(p*,V*)` and the
+public shape — with every size now DERIVED rather than supplied. -/
+theorem reveal_only : mc.mpcView = mpcSim mc.K mc.b mc.leakage := rfl
 
 theorem same_leakage_indistinguishable (mc₁ mc₂ : MpcClearing)
-    (hK : mc₁.K = mc₂.K) (hm : mc₁.maskedLen = mc₂.maskedLen)
+    (hK : mc₁.K = mc₂.K) (hb : mc₁.b = mc₂.b)
     (hq : mc₁.leakage = mc₂.leakage) : mc₁.mpcView = mc₂.mpcView := by
-  rw [mc₁.reveal_only, mc₂.reveal_only, hK, hm, hq]
+  rw [mc₁.reveal_only, mc₂.reveal_only, hK, hb, hq]
+
+/-- **Data-obliviousness — now a theorem, previously the hypothesis `hm`.** Every
+SIZE in the public transcript is fixed by the public shape `(K,b)`; the private
+book does not appear in any of them. -/
+theorem transcript_sizes_depend_only_on_shape (mc₁ mc₂ : MpcClearing)
+    (hK : mc₁.K = mc₂.K) (hb : mc₁.b = mc₂.b) :
+    mc₁.mpcView.andGates = mc₂.mpcView.andGates ∧
+    mc₁.mpcView.maskedLen = mc₂.mpcView.maskedLen ∧
+    mc₁.mpcView.rounds = mc₂.mpcView.rounds ∧
+    mc₁.mpcView.pStarBits = mc₂.mpcView.pStarBits ∧
+    mc₁.mpcView.vStarBits = mc₂.mpcView.vStarBits := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> simp [MpcClearing.mpcView, hK, hb]
+
+/-- The same fact as a swap: replacing the private book outright moves NO size in
+the public transcript.  This is `rfl` now, and that is the point — book
+independence became definitional instead of hypothesised. -/
+theorem transcript_sizes_invariant_under_book_swap
+    (bk' : OrderBook) (h' : OrdersValid bk') (hfit' : CurvesFit bk' mc.K mc.b) :
+    ({mc with bk := bk', hvalid := h', hfit := hfit'} : MpcClearing).mpcView.maskedLen
+      = mc.mpcView.maskedLen := rfl
 
 theorem pStar_lt : mc.pStar < mc.K := crossing_lt mc.bk mc.hK
+
+/-- The opened index field is exactly wide enough: `p* < K ≤ 2 ^ idxBits K`, so
+the `idxBits`-bit reveal neither truncates a bucket nor carries spare width. -/
+theorem pStar_fits_idxBits : mc.pStar < 2 ^ idxBits mc.K :=
+  lt_of_lt_of_le mc.pStar_lt
+    (le_trans (ceilLog2_covers mc.K)
+      (Nat.pow_le_pow_right (by norm_num) (le_max_left _ _)))
 
 theorem vStar_nonneg : 0 ≤ mc.vStar := clearedVolume_nonneg mc.hvalid mc.K
 
@@ -212,6 +376,29 @@ theorem vStar_optimal {q : ℕ} (hq : q < mc.K) : execVol mc.bk q ≤ mc.vStar :
   clearedVolume_optimal mc.bk mc.K hq
 
 end MpcClearing
+
+/-! ### The retired hand-picked length, refuted; and the deployed-shape pins. -/
+
+/-- At `K = 3` the deployed circuit emits exactly `40b + 8` masked openings. -/
+theorem maskedOpens_three (b : ℕ) : maskedOpens 3 b = 40 * b + 8 := by
+  have hidx : idxBits 3 = 2 := by decide
+  simp only [maskedOpens, andGates, hidx]
+  ring
+
+/-- RED: `144` — the length both retired Dark-Bazaar Tier-1 witnesses hand-picked
+— is one the deployed circuit CANNOT emit at `K = 3` at any bit width.  The old
+free-field model had no way to notice; this theorem makes putting it back a build
+failure. -/
+theorem maskedOpens_three_never_144 (b : ℕ) : maskedOpens 3 b ≠ 144 := by
+  rw [maskedOpens_three]; omega
+
+/-- Deployed-shape pins, measured independently off a real `mpc_crossing` run by
+`fhegg-fhe/tests/mpc_lean_transcript_pin.rs`. -/
+theorem deployed_transcript_pins :
+    (idxBits 3, andGates 3 8, maskedOpens 3 8, crossingRounds 3 8) = (2, 164, 328, 27) ∧
+    (idxBits 4, andGates 4 16, maskedOpens 4 16, crossingRounds 4 16) = (2, 454, 908, 51) ∧
+    (idxBits 8, andGates 8 32, maskedOpens 8 32, crossingRounds 8 32) = (3, 1941, 3882, 132) := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
 
 /-! ## 3. RED teeth: the old least-crossing/sign-vector semantics are not this leakage. -/
 
@@ -268,6 +455,38 @@ theorem mpc_leaky_no_simulator :
   rw [(bookAB_demand0_differs).2] at hB
   exact absurd (hA.trans hB.symm) (by decide)
 
+/-! ### Is "the transcript size factors through the public leakage" a real constraint?
+
+A property every candidate satisfies constrains nothing.  These two say the
+factorization is SATISFIED by the deployed size function and REFUTED by a
+book-reading one — so it is a genuine restriction, met on its merits rather than
+by the shape of the statement. -/
+
+/-- Satisfiable: the deployed size function factors, because it ignores the book. -/
+theorem maskedOpens_factors_through_leakage :
+    ∃ s : ℕ → ℕ → CrossingLeakage → ℕ,
+      ∀ (bk : OrderBook) (K b : ℕ),
+        maskedOpens K b = s K b ⟨crossing bk K, clearedVolume bk K⟩ :=
+  ⟨fun K b _ => maskedOpens K b, fun _ _ _ => rfl⟩
+
+/-- RED: refutable — a size function that read one private curve coefficient could
+NOT factor, since `bookA`/`bookB` share `(p*,V*) = (1,8)` at `K = 3` yet differ at
+`demand · 0`.  Had `maskedLen` stayed a free field, it was free to be exactly such
+a function and nothing would have complained. -/
+theorem book_reading_size_refutes_factorization :
+    ¬ ∃ s : ℕ → ℕ → CrossingLeakage → ℕ,
+      ∀ (bk : OrderBook) (K b : ℕ),
+        (demand bk 0).toNat = s K b ⟨crossing bk K, clearedVolume bk K⟩ := by
+  rintro ⟨s, hs⟩
+  have hA := hs bookA 3 8
+  have hB := hs bookB 3 8
+  rw [show crossing bookA 3 = 1 from workBook_crossing,
+    show clearedVolume bookA 3 = 8 from workBook_clearedVolume] at hA
+  rw [bookB_crossing, bookB_clearedVolume] at hB
+  rw [bookAB_demand0_differs.1] at hA
+  rw [bookAB_demand0_differs.2] at hB
+  exact absurd (hA.trans hB.symm) (by decide)
+
 /-! ## 4. The joined clearing theorem. -/
 
 theorem cleared_conserving_optimal_and_reveal_only (mc : MpcClearing) :
@@ -279,7 +498,7 @@ theorem cleared_conserving_optimal_and_reveal_only (mc : MpcClearing) :
       (∀ f ∈ clearedBatch (mc.vStar : ℚ) mc.ρ,
         recvValue 0 1 mc.ρ f = spentValue 0 1 mc.ρ f)) ∧
     (∀ q < mc.K, execVol mc.bk q ≤ mc.vStar) ∧
-    (mc.mpcView = mpcSim mc.K mc.maskedLen mc.leakage ∧
+    (mc.mpcView = mpcSim mc.K mc.b mc.leakage ∧
       mc.leakage = ⟨crossing mc.bk mc.K, clearedVolume mc.bk mc.K⟩) := by
   refine ⟨clearedBatch_optimal (mc.vStar : ℚ) mc.ρ ?_ mc.hρ,
     fun q hq => mc.vStar_optimal hq, mc.reveal_only, rfl⟩
@@ -290,9 +509,17 @@ def mcA : MpcClearing :=
     hvalid := workBook_valid
     K := 3
     hK := by norm_num
+    b := 8
+    hb := by norm_num
+    hfit := by unfold CurvesFit bookA; decide
     ρ := 2
-    hρ := by norm_num
-    maskedLen := 144 }
+    hρ := by norm_num }
+
+/-- `mcA`'s transcript sizes are the deployed circuit's, not a chosen number. -/
+theorem mcA_transcript_sizes :
+    (mcA.mpcView.andGates, mcA.mpcView.maskedLen, mcA.mpcView.rounds,
+      mcA.mpcView.pStarBits, mcA.mpcView.vStarBits) = (164, 328, 27, 2, 8) := by
+  decide
 
 theorem mcA_leakage : mcA.leakage = ⟨1, 8⟩ := by
   unfold MpcClearing.leakage MpcClearing.pStar MpcClearing.vStar mcA bookA
@@ -369,15 +596,15 @@ structure CertifiedMpcClearing (V E : Type*) [Fintype V] [Fintype E] where
   s : E → ℤ
   cert : Certified lp f π s
   K : ℕ
-  maskedLen : ℕ
+  b : ℕ
   leak : CrossingLeakage
   view : MpcView
-  reveal : view = mpcSim K maskedLen leak
+  reveal : view = mpcSim K b leak
 
 theorem certified_epsilon_optimal_and_reveal_only {V E : Type*} [Fintype V] [Fintype E]
     (cmc : CertifiedMpcClearing V E) {f' : E → ℤ} (hf' : PrimalFeasible cmc.lp f') :
     (cmc.lp.w ⬝ᵥ f' ≤ cmc.lp.w ⬝ᵥ cmc.f + cmc.lp.ε) ∧
-    (cmc.view = mpcSim cmc.K cmc.maskedLen cmc.leak) :=
+    (cmc.view = mpcSim cmc.K cmc.b cmc.leak) :=
   ⟨certifies_epsilon_optimal cmc.lp cmc.cert hf', cmc.reveal⟩
 
 theorem compose_reveals_only {A B QA QB VA VB : Type*}
@@ -393,7 +620,7 @@ theorem fold_then_crossing_reveals_only
     (hfold : ∀ a, foldView a = foldSim (foldLeak a)) (mc : MpcClearing) :
     ∀ a, (foldView a, mc.mpcView) =
       (fun p : QA × CrossingLeakage =>
-        (foldSim p.1, mpcSim mc.K mc.maskedLen p.2)) (foldLeak a, mc.leakage) := by
+        (foldSim p.1, mpcSim mc.K mc.b p.2)) (foldLeak a, mc.leakage) := by
   intro a
   simp only [hfold a, mc.reveal_only]
 
@@ -401,38 +628,67 @@ theorem fold_then_crossing_reveals_only
 
 open Metatheory.Open.PerfectZK
 
-def mpcPerfectZK (K maskedLen : ℕ) : PerfectZK where
+def mpcPerfectZK (K b : ℕ) : PerfectZK where
   S := CrossingLeakage
   W := MpcClearing
   V := MpcView
-  view q _ := mpcSim K maskedLen q
-  sim q := mpcSim K maskedLen q
+  view q _ := mpcSim K b q
+  sim q := mpcSim K b q
   hperf _ _ := rfl
 
 theorem mpcView_eq_perfectZK (mc : MpcClearing) :
-    mc.mpcView = (mpcPerfectZK mc.K mc.maskedLen).view mc.leakage mc :=
+    mc.mpcView = (mpcPerfectZK mc.K mc.b).view mc.leakage mc :=
   mc.reveal_only
 
-theorem mpc_reveal_nothing (K maskedLen : ℕ) (q : CrossingLeakage)
+theorem mpc_reveal_nothing (K b : ℕ) (q : CrossingLeakage)
     (mc₁ mc₂ : MpcClearing) :
-    (mpcPerfectZK K maskedLen).view q mc₁ = (mpcPerfectZK K maskedLen).view q mc₂ :=
-  (mpcPerfectZK K maskedLen).view_indep_of_witness q mc₁ mc₂
+    (mpcPerfectZK K b).view q mc₁ = (mpcPerfectZK K b).view q mc₂ :=
+  (mpcPerfectZK K b).view_indep_of_witness q mc₁ mc₂
 
-/-! Computed RED/positive teeth. -/
+/-! RED/positive teeth, as named theorems (see `metatheory/docs/GUARD-DISCIPLINE.md`
+— these were five `#guard`s, i.e. the same closed instances with the name, the term
+and the axiom record deleted). -/
 
-#guard (crossing workBook 3, clearedVolume workBook 3) == (1, 8)
-#guard (balanceCrossing workBook workBook_crosses) == 2
-#guard (crossing bookB 3, clearedVolume bookB 3) == (1, 8)
-#guard (decide (Clears workBook 1), decide (Clears bookB 1)) == (false, true)
-#guard (demand bookA 0, demand bookB 0) == (10, 11)
+theorem workBook_runtime_clearing : (crossing workBook 3, clearedVolume workBook 3) = (1, 8) := by
+  decide
+
+-- The fifth retired `#guard` asserted `balanceCrossing workBook workBook_crosses = 2`,
+-- which is already the named, kernel-clean `Market.workBook_balanceCrossing`
+-- (`FhEggClearing.lean:465`) — a duplicate, so it is simply dropped.  Note the guard
+-- could only ever have passed via the compiled evaluator: `balanceCrossing` is
+-- `Nat.find` over an opaque existence proof and does not reduce in the kernel.
+
+theorem bookB_runtime_clearing : (crossing bookB 3, clearedVolume bookB 3) = (1, 8) := by
+  decide
+
+theorem workBook_bookB_balance_signs_differ_at_one :
+    (decide (Clears workBook 1), decide (Clears bookB 1)) = (false, true) := by
+  decide
+
+theorem workBook_bookB_demand0_differs : (demand bookA 0, demand bookB 0) = (10, 11) := by
+  decide
 
 /-! Axiom hygiene. -/
 
 #assert_all_clean [Market.MpcClearingSecurity.perfect_hiding,
   Market.MpcClearingSecurity.full_collusion_breaks_hiding,
   Market.MpcClearingSecurity.otpMasks,
+  Market.MpcClearingSecurity.ceilLog2_covers,
   Market.MpcClearingSecurity.MpcClearing.reveal_only,
   Market.MpcClearingSecurity.MpcClearing.same_leakage_indistinguishable,
+  Market.MpcClearingSecurity.MpcClearing.transcript_sizes_depend_only_on_shape,
+  Market.MpcClearingSecurity.MpcClearing.transcript_sizes_invariant_under_book_swap,
+  Market.MpcClearingSecurity.MpcClearing.pStar_fits_idxBits,
+  Market.MpcClearingSecurity.maskedOpens_three,
+  Market.MpcClearingSecurity.maskedOpens_three_never_144,
+  Market.MpcClearingSecurity.maskedOpens_factors_through_leakage,
+  Market.MpcClearingSecurity.book_reading_size_refutes_factorization,
+  Market.MpcClearingSecurity.deployed_transcript_pins,
+  Market.MpcClearingSecurity.mcA_transcript_sizes,
+  Market.MpcClearingSecurity.workBook_runtime_clearing,
+  Market.MpcClearingSecurity.bookB_runtime_clearing,
+  Market.MpcClearingSecurity.workBook_bookB_balance_signs_differ_at_one,
+  Market.MpcClearingSecurity.workBook_bookB_demand0_differs,
   Market.MpcClearingSecurity.old_balanceCrossing_disagrees_with_runtime,
   Market.MpcClearingSecurity.old_sign_not_determined_by_runtime_leakage,
   Market.MpcClearingSecurity.mpc_leaky_no_simulator,

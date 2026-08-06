@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15346 guards across 1159 modules (2488 .lean files scanned).
+# TOTAL 15341 guards across 1158 modules (2492 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -37,6 +37,7 @@
 # BASELINE-PROVENANCE fff0e8df7-DIRTY 15358→15357 (-1) DECREASED — KimchiWrapMainPins03: the w4_bind inertness guard became the named theorem bind_rung_leaves_unread_exactly_what_it_declares, which states the unread set EQUALS the rung's declaration in both directions (the guard could only say '== []' at the old dense public vector)
 # BASELINE-PROVENANCE 67ad5f625-DIRTY 15357→15348 (-9) DECREASED — MinaWrapOpeningGate: the 9 IPA-transcript sponge guards became native_decide theorems with #assert_compiled, counted in the namespace except clause (155cececf)
 # BASELINE-PROVENANCE 0f062ed1f-DIRTY 15348→15346 (-2) DECREASED — retire a STALE row: DescriptorIR2 converted 2 guards (48 -> 46) and the ledger only ratchets down. --only, so a shared tree cannot absorb a sibling's in-flight guards.
+# BASELINE-PROVENANCE 18cae2966-DIRTY 15341→15341 (+0) LEVEL — fhegg-clearing: the 5 guards became named kernel-clean theorems (workBook_runtime_clearing, bookB_runtime_clearing, workBook_bookB_balance_signs_differ_at_one, workBook_bookB_demand0_differs); the 5th duplicated Market.workBook_balanceCrossing and was dropped
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -1144,7 +1145,6 @@
 3	Market/Lending.lean
 6	Market/Liquidity.lean
 7	Market/MintSafeQuantization.lean
-5	Market/MpcClearingSecurity.lean
 5	Market/Optimality.lean
 6	Market/PackedBookFamily.lean
 5	Market/PartyMpcTransportBoundary.lean
