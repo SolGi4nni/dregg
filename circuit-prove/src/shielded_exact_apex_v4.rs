@@ -48,7 +48,7 @@ use dregg_circuit::poseidon2::hash_many_8;
 
 use crate::dark_amm_private::{PUBLIC_INPUT_COUNT as DARK_AMM_PUBLIC_INPUT_COUNT, PublicStatement};
 pub use crate::shielded::WIDE_VALUE_BINDING_LANES;
-use crate::shielded::{WideValueBindingProof, verify_wide_value_binding};
+use crate::shielded::{WideValueBindingError, WideValueBindingProof, verify_wide_sidecar_proof};
 use crate::shielded_ring_clearing_air::{RING_ENDPOINT_PUBLIC_LEN, RING_LEG_CLAIM_LEN, RING_LEGS};
 
 /// ASCII `FNI4`: linked exact-nullifier leaf carrying a shielded value/asset binding.
@@ -267,7 +267,23 @@ pub fn verify_wide_binding_compatibility_v4(
         expected_legacy_value_binding,
     )?;
     let expected = BabyBear::new(expected_legacy_value_binding);
-    verify_wide_value_binding(proof, expected)
+    // ⚑ This is the LEGACY-felt compatibility check — explicitly NOT a same-opening
+    // (see this type's doc). The cryptographic same-opening join lives on the
+    // deployed shielded-transfer path (`verify_stark_with_wide_bindings` /
+    // `verify_same_opening`); the v4 apex's OWN ring↔wide tie stays the narrow
+    // legacy felt until the ring-clearing surface exposes its full-`u64` wide
+    // carrier (the sibling of the `ShieldedOnRampPin` spend-circuit widening).
+    if proof.claim.legacy_binding != expected {
+        return Err(ShieldedExactApexV4Error::WideBindingCompatibility(
+            WideValueBindingError::DarkValueDecouple {
+                lane: 0,
+                expected: expected_legacy_value_binding,
+                got: proof.claim.legacy_binding.as_u32(),
+            }
+            .to_string(),
+        ));
+    }
+    verify_wide_sidecar_proof(proof)
         .map_err(|error| ShieldedExactApexV4Error::WideBindingCompatibility(error.to_string()))?;
     Ok(VerifiedWideBindingCompatibilityV4 {
         legacy_value_binding: expected_legacy_value_binding,

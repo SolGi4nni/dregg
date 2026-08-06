@@ -14,9 +14,10 @@
 //! the source.
 
 use dregg_cell::ShieldedNoteCommitment;
+use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::shielded::{
-    ShieldedTransfer, ShieldedValueLeg, WideValueBindingProof, verify_stark_with_wide_bindings,
-    wide_transfer_message,
+    ShieldedTransfer, ShieldedValueLeg, WIDE_VALUE_BINDING_LANES, WideValueBindingProof,
+    verify_stark_with_wide_bindings, wide_transfer_message,
 };
 use dregg_turn::action::{ShieldedLeg, ShieldedTransferPayload};
 use dregg_turn::error::TurnError;
@@ -77,9 +78,29 @@ impl ShieldedTransferVerifier for CircuitShieldedTransferVerifier {
         )
         .map_err(|e| invalid(format!("shielded transfer payload malformed: {e}")))?;
 
-        // GATE 1: membership/nullifier plus exactly one canonical full-u64
-        // binding per input. The legacy felt is now only an equality join.
-        verify_stark_with_wide_bindings(&transfer, &wide_bindings)
+        // GATE 1: membership/nullifier plus the cryptographic SAME-OPENING join of
+        // each input's wide sidecar to the ring/spend proof's OWN full-`u64` wide
+        // carrier (the value coordinate the conservation clears).
+        //
+        // ⚑ COUPLING — say the substrate out loud. The routed same-opening join
+        // (`verify_stark_with_wide_bindings`, authored in
+        // `Dregg2/Circuit/ShieldedWideJoinPin.lean`) requires the ring/spend proof
+        // to EXPOSE and BIND its full-`u64` wide carrier. The current shielded-spend
+        // circuit publishes only the one-felt `value_binding` (a `value mod p`
+        // felt), so there is NO spend-proof-bound wide carrier to join against —
+        // and sourcing it from the sidecar's own claim would be a vacuous identity
+        // carrier (`ShieldedWideJoinPin.join_still_decouples`). Widening the spend
+        // circuit to expose the carrier is the ShieldedOnRampPin (shielded-onramp
+        // lane) half of this cutover. Until it lands, the deployed shielded-transfer
+        // path FAILS CLOSED here — strictly safer than the deleted ~31-bit
+        // `legacy_binding` felt join, which `ShieldedWideJoinPin.dark_value_decouples`
+        // proves admits a dark-value decouple (spend a value the receipt does not
+        // advertise). The ring wide bindings are therefore unavailable, not faked —
+        // passed EMPTY so the join fails closed INSIDE `verify_stark_with_wide_bindings`,
+        // after its membership/nullifier STARK side has run (so a forged root or an
+        // in-transfer double-spend still rejects for its own reason first).
+        let ring_wide_bindings: Vec<[BabyBear; WIDE_VALUE_BINDING_LANES]> = Vec::new();
+        verify_stark_with_wide_bindings(&transfer, &wide_bindings, &ring_wide_bindings)
             .map_err(|e| invalid(format!("shielded wide STARK verification failed: {e}")))?;
         // The structural inflation gate: exactly one range proof per output.
         transfer

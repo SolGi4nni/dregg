@@ -22,8 +22,8 @@ use dregg_circuit_prove::shielded::{
     BINDING_BLIND_LANES, ShieldedSpendWitness, ShieldedTransferWitness, ShieldedValueLeg,
     WideValueBindingError, WideValueBindingProof, WideValueBindingWitness,
     generate_wide_value_binding_trace, prove_wide_value_binding, transfer_from_witnesses,
-    verify_stark_with_wide_bindings, verify_wide_value_binding, wide_transfer_message,
-    wide_value_binding_descriptor,
+    verify_same_opening, verify_stark_with_wide_bindings, verify_wide_value_binding,
+    wide_transfer_message, wide_value_binding_descriptor,
 };
 
 fn spend_witness(value: BabyBear, asset: BabyBear, randomness: BabyBear) -> ShieldedSpendWitness {
@@ -119,7 +119,9 @@ fn hostile_turn_wire_decode_is_canonical_and_exact() {
 
     let decoded = WideValueBindingProof::from_serialized_parts(legacy, wide, &proof_bytes)
         .expect("canonical Turn wire should decode");
-    verify_wide_value_binding(&decoded, proof.claim.legacy_binding)
+    // Same-opening join: the ring's exposed wide carrier IS this opening's, so the
+    // sidecar opens the ring's value — accepted.
+    verify_wide_value_binding(&decoded, &proof.claim.wide_binding)
         .expect("decoded proof must retain the exact public claim");
 
     let mut noncanonical = wide;
@@ -292,18 +294,54 @@ fn full_u64_alias_is_distinguished_and_each_join_lane_is_load_bearing() {
 
     let mut honest = prove_wide_value_binding(&honest_witness)
         .expect("full-u64 wide binding should prove through the hiding IR-v2 backend");
-    verify_stark_with_wide_bindings(&transfer, core::slice::from_ref(&honest))
-        .expect("current spend plus faithful full-u64 sidecar should verify");
+    // The ring/spend proof's OWN exposed wide carrier (its full-`u64` opening —
+    // the value the conservation clears). Here the ring conserved the honest
+    // value, so its carrier is `honest_witness.wide_binding()`. In production this
+    // comes from the spend proof; sourcing it from a sidecar would be a vacuous
+    // identity carrier (the ShieldedOnRampPin coupling — see the module doc).
+    let ring_wide_binding = honest_witness.wide_binding();
 
-    // The alias also has a valid opening of the SAME legacy C7 felt. This is
-    // precisely why Turn/no-mint must pin the wide carrier rather than treating
-    // the compatibility join as authoritative. The two transcript extensions
-    // are nevertheless distinct, so the future consumer can make the full-u64
-    // choice load-bearing without changing the hiding proof.
+    // SATISFIABLE: the honest sidecar opens the ring's value — the routed
+    // same-opening join accepts.
+    verify_stark_with_wide_bindings(
+        &transfer,
+        core::slice::from_ref(&honest),
+        core::slice::from_ref(&ring_wide_binding),
+    )
+    .expect("current spend plus a same-opening full-u64 sidecar should verify");
+
+    // ── THE FALSIFIER, FLIPPED. The alias (`value + p`) is a DIFFERENT full-`u64`
+    // opening that shares the honest opening's ~31-bit `legacy_binding` felt (the
+    // mutation, asserted present just above and re-asserted here). The DELETED
+    // one-felt join accepted it — that was the C5 dark-value decouple
+    // (`ShieldedWideJoinPin.dark_value_decouples`). The routed same-opening join
+    // REFUSES it: its wide carrier differs from the ring's on some lane.
     let alias_proof = prove_wide_value_binding(&alias_witness)
         .expect("the distinct alias value has its own honest wide opening");
-    verify_wide_value_binding(&alias_proof, transfer.inputs[0].value_binding)
-        .expect("legacy join alone intentionally cannot choose between aliases");
+    assert_eq!(
+        honest_witness.legacy_binding(),
+        alias_witness.legacy_binding(),
+        "MUTATION PRESENT: the alias shares the ~31-bit felt the deleted join used"
+    );
+    let decouple = verify_same_opening(&ring_wide_binding, &alias_proof.claim.wide_binding);
+    assert!(
+        matches!(
+            decouple,
+            Err(WideValueBindingError::DarkValueDecouple { .. })
+        ),
+        "the routed same-opening join must REFUSE the dark-value decouple the \
+         deleted legacy felt join accepted; got {decouple:?}"
+    );
+    // …and it refuses at the full STARK entry too.
+    assert!(
+        verify_stark_with_wide_bindings(
+            &transfer,
+            core::slice::from_ref(&alias_proof),
+            core::slice::from_ref(&ring_wide_binding),
+        )
+        .is_err(),
+        "a decoupled dark-value sidecar must reject at the no-mint entry"
+    );
     assert_ne!(
         wide_transfer_message(&transfer, core::slice::from_ref(&honest)).unwrap(),
         wide_transfer_message(&transfer, core::slice::from_ref(&alias_proof)).unwrap(),
@@ -312,26 +350,35 @@ fn full_u64_alias_is_distinguished_and_each_join_lane_is_load_bearing() {
 
     // FALSE polarity 1: splice a different public wide lane onto the genuine
     // proof. The HidingFri verifier must reject; every public carrier lane is
-    // bound by a real Poseidon2 permutation output constraint.
+    // bound by a real Poseidon2 permutation output constraint. (The ring binding
+    // is updated to match so the same-opening join is NOT what rejects — the
+    // proof-lane forgery is.)
     let saved = honest.claim;
     honest.claim.wide_binding[15] += BabyBear::ONE;
+    let forged_ring = honest.claim.wide_binding;
     assert!(
-        verify_stark_with_wide_bindings(&transfer, core::slice::from_ref(&honest)).is_err(),
+        verify_stark_with_wide_bindings(
+            &transfer,
+            core::slice::from_ref(&honest),
+            core::slice::from_ref(&forged_ring),
+        )
+        .is_err(),
         "a forged wide public lane must reject"
     );
 
-    // FALSE polarity 2: retain the genuine wide lanes/proof but splice it onto
-    // a different legacy spend claim. The exact C7 compatibility join rejects.
+    // FALSE polarity 2: retain the genuine wide lanes/proof but join it to a
+    // different ring opening. The same-opening join rejects.
     honest.claim = saved;
+    let mut other_ring = ring_wide_binding;
+    other_ring[0] += BabyBear::ONE;
     assert!(
-        verify_wide_value_binding(&honest, transfer.inputs[0].value_binding + BabyBear::ONE)
-            .is_err(),
-        "a wide sidecar must not join a different shielded spend"
+        verify_wide_value_binding(&honest, &other_ring).is_err(),
+        "a wide sidecar must not join a different ring opening"
     );
 
     // Structural canary: one sidecar per spent input is mandatory.
     assert!(
-        verify_stark_with_wide_bindings(&transfer, &[]).is_err(),
+        verify_stark_with_wide_bindings(&transfer, &[], &[ring_wide_binding]).is_err(),
         "dropping the only wide sidecar must reject"
     );
 }

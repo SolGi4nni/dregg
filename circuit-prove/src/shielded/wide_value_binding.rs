@@ -404,25 +404,87 @@ pub fn prove_wide_value_binding(
     })
 }
 
-/// Verify a wide sidecar against an exact current-spend compatibility binding.
+/// The **routed cryptographic same-opening join** — the deployed binding that
+/// REPLACES the deleted one-felt `legacy_binding` equality.
+///
+/// **Substrate: this binding relation is AUTHORED IN LEAN.** Rust only compares
+/// the emitted lanes. `Dregg2/Circuit/ShieldedWideJoinPin.lean` states it as
+/// `routedJoin` and proves the two poles this function realizes:
+///
+///   * `routed_join_forces_same_opening` — under the carrier's collision-resistance
+///     floor (`Function.Injective`, the `WideValueBindingRefine.WideCarrierCR`
+///     idealization of Poseidon2 CR, discharged over the real `cap_node8` by
+///     `alias_separated_by_the_wide_carrier`), lane equality forces ONE opening;
+///   * `routed_join_refuses_decouple` — hence a value-distinct decouple can never
+///     pass, the very `dark_value_decouples` the deleted `legacy_binding` felt
+///     admitted (`v` and `v+p` share the ~31-bit felt but NOT the sixteen lanes).
+///
+/// The ring/spend proof and the sidecar open the same full-`u64` `(value, asset)`
+/// iff all sixteen domain-separated `node8` carrier lanes agree exactly.
+pub fn verify_same_opening(
+    ring_wide_binding: &[BabyBear; WIDE_VALUE_BINDING_LANES],
+    claim_wide_binding: &[BabyBear; WIDE_VALUE_BINDING_LANES],
+) -> Result<(), WideValueBindingError> {
+    for (lane, (r, c)) in ring_wide_binding
+        .iter()
+        .zip(claim_wide_binding.iter())
+        .enumerate()
+    {
+        if r != c {
+            return Err(WideValueBindingError::DarkValueDecouple {
+                lane,
+                expected: r.as_u32(),
+                got: c.as_u32(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Verify a wide sidecar and JOIN it to the ring/spend proof by the cryptographic
+/// same-opening (not the deleted one-felt `legacy_binding`): the sidecar's sixteen
+/// `node8` lanes must equal the ring's OWN exposed wide carrier, so both proofs
+/// open the same full-`u64` `(value, asset)`.
 pub fn verify_wide_value_binding(
     sidecar: &WideValueBindingProof,
-    expected_legacy_binding: BabyBear,
+    ring_wide_binding: &[BabyBear; WIDE_VALUE_BINDING_LANES],
 ) -> Result<(), WideValueBindingError> {
-    if sidecar.claim.legacy_binding != expected_legacy_binding {
-        return Err(WideValueBindingError::LegacyBindingMismatch);
-    }
+    verify_same_opening(ring_wide_binding, &sidecar.claim.wide_binding)?;
+    verify_wide_sidecar_proof(sidecar)
+}
+
+/// Verify ONLY the sidecar's hiding proof — that its public claim is a genuine
+/// canonical full-`u64` opening through the hiding IR-v2 backend — WITHOUT the
+/// same-opening join. The join to a ring opening is [`verify_same_opening`]; this
+/// is the proof-validity half alone, for callers that supply the join separately.
+pub fn verify_wide_sidecar_proof(
+    sidecar: &WideValueBindingProof,
+) -> Result<(), WideValueBindingError> {
     let statement = statement_for(&sidecar.claim.public_inputs())?;
     Plonky3HidingFriReference::verify(&statement, &sidecar.proof)
         .map_err(|reason| WideValueBindingError::ProofRejected { reason })
 }
 
 /// Verify the current hidden-membership STARK and exactly one faithful wide
-/// binding proof per input.  Turn calls this at its shielded-effect entry; the
-/// old standalone one-felt spend verifier is no longer sufficient acceptance.
+/// binding proof per input, JOINED to the ring by the cryptographic same-opening.
+///
+/// `ring_wide_bindings` are the ring/spend proof's OWN exposed sixteen-lane wide
+/// carriers (one per input) — the value coordinate the conservation clears. The
+/// join forces each sidecar to open that same value; the deleted `legacy_binding`
+/// felt join could not (`ShieldedWideJoinPin.dark_value_decouples`: a `v`/`v+p`
+/// alias shares the ~31-bit felt but not the wide carrier).
+///
+/// ⚑ **COUPLING (say it out loud):** the ring's wide binding must be INDEPENDENTLY
+/// bound by the spend proof — a full-`u64` opening, not the one-felt `value_binding`
+/// the current spend circuit exposes. Widening the spend circuit to expose it is
+/// the `ShieldedOnRampPin` (shielded-onramp lane) half of this cutover. Sourcing
+/// `ring_wide_bindings` from the sidecar's own claim would be a vacuous identity
+/// carrier (`join_still_decouples`) and is precisely what this signature refuses to
+/// let a caller do accidentally: the ring binding is a SEPARATE argument.
 pub fn verify_stark_with_wide_bindings(
     transfer: &ShieldedTransfer,
     sidecars: &[WideValueBindingProof],
+    ring_wide_bindings: &[[BabyBear; WIDE_VALUE_BINDING_LANES]],
 ) -> Result<(), WideValueBindingError> {
     transfer
         .verify_stark_side()
@@ -433,8 +495,14 @@ pub fn verify_stark_with_wide_bindings(
             sidecars: sidecars.len(),
         });
     }
-    for (i, (input, sidecar)) in transfer.inputs.iter().zip(sidecars).enumerate() {
-        verify_wide_value_binding(sidecar, input.value_binding).map_err(|source| {
+    if ring_wide_bindings.len() != transfer.inputs.len() {
+        return Err(WideValueBindingError::RingWideBindingCountMismatch {
+            inputs: transfer.inputs.len(),
+            ring_bindings: ring_wide_bindings.len(),
+        });
+    }
+    for (i, (sidecar, ring_wide)) in sidecars.iter().zip(ring_wide_bindings).enumerate() {
+        verify_wide_value_binding(sidecar, ring_wide).map_err(|source| {
             WideValueBindingError::InputSidecarRejected {
                 input_index: i,
                 reason: source.to_string(),
@@ -476,15 +544,46 @@ pub fn wide_transfer_message(
 /// Construction/verification failures for the native wide carrier.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WideValueBindingError {
-    ProveFailed { reason: String },
-    ProofDecode { reason: String },
-    ProofRejected { reason: String },
-    StatementRejected { reason: String },
-    NonCanonicalPublicField { lane: usize, value: u32 },
-    LegacyBindingMismatch,
-    SidecarCountMismatch { inputs: usize, sidecars: usize },
+    ProveFailed {
+        reason: String,
+    },
+    ProofDecode {
+        reason: String,
+    },
+    ProofRejected {
+        reason: String,
+    },
+    StatementRejected {
+        reason: String,
+    },
+    NonCanonicalPublicField {
+        lane: usize,
+        value: u32,
+    },
+    /// The routed same-opening join FAILED: the sidecar's full-`u64` wide carrier
+    /// disagrees with the ring/spend proof's exposed wide carrier on `lane`. This
+    /// is exactly the dark-value decouple the deleted one-felt `legacy_binding`
+    /// join was blind to (`ShieldedWideJoinPin.routed_join_refuses_decouple`).
+    DarkValueDecouple {
+        lane: usize,
+        expected: u32,
+        got: u32,
+    },
+    /// The caller supplied a different number of ring-side wide bindings than spent
+    /// inputs — the same-opening join has no ring carrier to join a sidecar against.
+    RingWideBindingCountMismatch {
+        inputs: usize,
+        ring_bindings: usize,
+    },
+    SidecarCountMismatch {
+        inputs: usize,
+        sidecars: usize,
+    },
     ShieldedSpendRejected(ShieldedError),
-    InputSidecarRejected { input_index: usize, reason: String },
+    InputSidecarRejected {
+        input_index: usize,
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for WideValueBindingError {
@@ -500,9 +599,22 @@ impl core::fmt::Display for WideValueBindingError {
                 f,
                 "wide binding public lane {lane} is not canonical BabyBear: {value}"
             ),
-            Self::LegacyBindingMismatch => {
-                write!(f, "wide binding does not join the shielded spend C7 claim")
-            }
+            Self::DarkValueDecouple {
+                lane,
+                expected,
+                got,
+            } => write!(
+                f,
+                "wide binding same-opening join failed: ring carrier lane {lane} is \
+                 {expected} but the sidecar opens {got} (dark-value decouple)"
+            ),
+            Self::RingWideBindingCountMismatch {
+                inputs,
+                ring_bindings,
+            } => write!(
+                f,
+                "shielded transfer has {inputs} inputs but {ring_bindings} ring wide bindings"
+            ),
             Self::SidecarCountMismatch { inputs, sidecars } => write!(
                 f,
                 "shielded transfer has {inputs} inputs but {sidecars} wide binding sidecars"

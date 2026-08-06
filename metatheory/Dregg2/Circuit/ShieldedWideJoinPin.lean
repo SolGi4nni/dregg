@@ -329,8 +329,72 @@ theorem crossScheme_fails_on_weak_schemes :
       demoNarrow o₁ = demoNarrow o₂ ∧ demoNarrow o₁ = demoNarrow o₂ ∧ o₁ ≠ o₂ :=
   ⟨oRing, oWide, by decide, by decide, by decide⟩
 
+/-! ## 8c. THE ROUTED 16-LANE BINDING — the deployed join AFTER the cutover.
+
+`circuit-prove/src/shielded/wide_value_binding.rs::verify_same_opening` compares the ring's exposed
+sixteen-lane wide binding to the sidecar's, LANE FOR LANE; acceptance is EXACT equality of all
+sixteen `node8` output felts. That is `joinedWide` at the concrete lane count: model the wide
+binding as `Opening → (Fin 16 → ℤ)` (the two domain-separated 8-lane sponge images) and the routed
+join as full 16-lane equality. The floor is `Function.Injective` on the 16-lane image — the
+`WideCarrierFaithful` / `SpongeCROnCarrier` / `WideValueBindingRefine.WideCarrierCR` idealization of
+Poseidon2 collision-resistance, the SAME register `alias_separated_by_the_wide_carrier` discharges
+over the REAL `cap_node8` chip. This section is the machine-checked statement that the ROUTED Rust
+predicate refuses the exact decouple the deleted narrow felt join admitted. -/
+
+/-- The 16-lane wide binding (two `node8` images), the object the deployed join compares after the
+cutover. -/
+abbrev Wide16 : Type := Opening → (Fin 16 → ℤ)
+
+/-- The ROUTED deployed join: the ring's and the sidecar's 16-lane wide bindings are EQUAL on every
+lane. Faithful to `verify_same_opening` (array equality on `[BabyBear; 16]`). -/
+def routedJoin (W : Wide16) (ringOpen wideOpen : Opening) : Prop :=
+  W ringOpen = W wideOpen
+
+/-- **`routed_join_forces_same_opening`.** Under the 16-lane carrier's collision-resistance floor
+(`Function.Injective`), the routed join forces the two openings equal — same-opening as a theorem,
+not a felt coincidence. -/
+theorem routed_join_forces_same_opening (W : Wide16) (hInj : Function.Injective W)
+    (ringOpen wideOpen : Opening) (h : routedJoin W ringOpen wideOpen) :
+    ringOpen = wideOpen := hInj h
+
+/-- **`routed_join_refuses_decouple` (THE FLIP, general).** The exact value-distinct decouple the
+NARROW felt join accepts (`dark_value_decouples`) can NEVER pass the routed 16-lane join: a faithful
+carrier forces the openings — hence values — equal, contradicting the decouple. This is the deployed
+binding AFTER the cutover REFUSING what the deleted one admitted. -/
+theorem routed_join_refuses_decouple (W : Wide16) (hInj : Function.Injective W)
+    (ringOpen wideOpen : Opening) (hval : ringOpen.value ≠ wideOpen.value) :
+    ¬ routedJoin W ringOpen wideOpen := by
+  intro h; exact hval (by rw [routed_join_forces_same_opening W hInj ringOpen wideOpen h])
+
+/-- A concrete 16-lane carrier standing in for the two `node8` sponge images: lane 0 carries a
+stride-separated `(value, asset)`, the rest zero. NON-IDENTITY — it READS the opening (it is not
+`fun _ _ v => v`), exactly as the real `cap_node8` image does; `alias_separated_by_the_wide_carrier`
+is the theorem that the deployed chip separates the same alias pair under its CR floor. -/
+def demoWide16 : Wide16 := fun o => fun i => if i = 0 then o.value * 1000 + o.asset else 0
+
+/-- The demo 16-lane carrier SEPARATES the value-distinct pair the narrow squeeze conflates. -/
+theorem demoWide16_separates : demoWide16 oRing ≠ demoWide16 oWide := by
+  intro h
+  exact absurd (congrFun h 0) (by decide)
+
+/-- **THE FLIP, CONCRETE (mirrors the `verify_same_opening` KAT in `shielded_wide_value_binding.rs`).**
+On the SAME value-distinct pair the narrow squeeze conflates (`demo_narrow_collides`): the deployed
+NARROW felt join ACCEPTS the decouple (the wound), and the ROUTED 16-lane join REFUSES it (the
+cutover). The mutation `oRing.value ≠ oWide.value` is present; BOTH verdicts are exhibited; the
+carrier is non-identity — so the flip is non-vacuous. -/
+theorem routed_join_flips_the_falsifier :
+    joinedNarrow demoNarrow oRing oWide ∧ ¬ routedJoin demoWide16 oRing oWide := by
+  refine ⟨?_, ?_⟩
+  · show demoNarrow oRing = demoNarrow oWide
+    decide
+  · intro h; exact demoWide16_separates h
+
 /-! ## 9. Axiom hygiene. -/
 
+#assert_axioms routed_join_forces_same_opening
+#assert_axioms routed_join_refuses_decouple
+#assert_axioms demoWide16_separates
+#assert_axioms routed_join_flips_the_falsifier
 #assert_axioms crossScheme_satisfiable
 #assert_axioms crossScheme_fails_on_weak_schemes
 #assert_axioms narrow_join_ignores_value
