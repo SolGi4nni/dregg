@@ -52,13 +52,16 @@ and **three copy-permutation classes** carry the whole statement:
 -/
 import Dregg2.Tactics
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiCircuitJson
 import Dregg2.Circuit.Emit.KimchiAssertEqual
 import Dregg2.Circuit.Emit.KimchiCustomGates
+import Dregg2.Circuit.Emit.KimchiTyp
 import Dregg2.Circuit.Emit.PastaPoseidon
 
 namespace Dregg2.Circuit.Emit.KimchiPreimageCircuit
 
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson
 open Dregg2.Circuit.Emit.KimchiAssertEqual
 open Dregg2.Circuit.Emit.KimchiCustomGates (poseidonRowCoeffs)
 open Dregg2.Circuit.Emit.PastaPoseidon
@@ -104,10 +107,55 @@ def digest : Nat := (stateAt 55).getD 0 0
 /-- Lane `j` of state `s(k)` as an `Int` (states are `Nat` in `[0, p)`). -/
 def laneI (k j : Nat) : Int := ((stateAt k).getD j 0 : Int)
 
-/-! ## §3 — the gate list and its placement. -/
+/-! ## §3 — the gate list and its placement.
 
-/-- One public word: the claimed digest. -/
-def PUB : Nat := 1
+⚑ **THE PUBLIC INTERFACE IS DERIVED FROM A TYPE, NOT WRITTEN.** `PUB`, the public-input vector
+(§5's `preimagePublic`) and the variable each public word occupies all come out of `preimageTyp`
+below through `KimchiTyp`. Before that layer existed, all three were hand-written — `PUB := 1`,
+`preimagePublic := [(digest : Int)]`, and `external 0` chosen by an author to sit at `{0,0}` — and
+nothing compared them to anything. -/
+
+/-- **THE CIRCUIT'S PUBLIC INTERFACE, AS A TYPE.** One field element, named `digest`.
+
+⚠ `felt 255` and not `word 255`: `El (.felt _)` is `Nat`, so the layout carries the SLOT WIDTH and
+not the value's range. `digest` is `(stateAt 55).getD 0 0` and its canonicity is a fact about
+`PastaPoseidon.Ref.perm` that nothing here proves; a `word 255` would have demanded that proof at
+the kernel, through 55 Poseidon rounds. Said rather than hidden — this is exactly the seam
+`KimchiTyp`'s header names. -/
+def preimageTyp : KimchiTyp.Typ := .tag (.lbl "digest") (.felt 255)
+
+/-- One public word: the claimed digest — **DERIVED**, `(layout preimageTyp).length`. -/
+def PUB : Nat := KimchiTyp.pubSize preimageTyp
+
+/-- …and it is the one the hand-written constant asserted. -/
+theorem PUB_is_one : PUB = 1 := by rfl
+
+/-- ⚑ **THE PUBLIC WORD'S VARIABLE IS DERIVED TOO.** The layout's one slot claims `external 0` —
+the id §4's binding theorem reads at cell `(0,0)`, which an author used to pick. `KimchiArena`
+accepts the claim (`KimchiTyp.derived_layouts_always_allocate` says it always will) and
+`alloc_injective` makes it the only slot that variable can serve. -/
+theorem the_public_word_variable_is_derived :
+    KimchiArena.alloc (KimchiTyp.claims preimageTyp 0)
+      = .ok ⟨[([KimchiTyp.Step.lbl "digest"], .external 0)], 1, 0⟩ := by decide
+
+/-- ⚑ **AND A DECLARED INTERFACE THAT IS NOT THIS ONE IS REFUSED.** A wrong width — the shape of the
+endo-lift defect, where a slot carried a 255-bit lift in a 128-bit prechallenge's place. -/
+theorem a_wrong_public_width_is_refused :
+    KimchiTyp.check [⟨[KimchiTyp.Step.lbl "digest"], 128⟩] preimageTyp
+      = .error (.width 0 [KimchiTyp.Step.lbl "digest"] 128 255) := by decide
+
+/-- …a wrong NAME at the right width — the shape of the `alpha β γ ζ` defect, which no width
+signature can see. -/
+theorem a_wrong_public_slot_name_is_refused :
+    KimchiTyp.check [⟨[KimchiTyp.Step.lbl "commitment"], 255⟩] preimageTyp
+      = .error (.order 0 [KimchiTyp.Step.lbl "commitment"] [KimchiTyp.Step.lbl "digest"]) := by
+  decide
+
+/-- …and a public word nobody declared. -/
+theorem a_wrong_public_arity_is_refused :
+    KimchiTyp.check [⟨[KimchiTyp.Step.lbl "digest"], 255⟩, ⟨[KimchiTyp.Step.lbl "salt"], 255⟩]
+        preimageTyp
+      = .error (.arity 2 1) := by decide
 
 def sevenNones : List (Option PVar) := List.replicate 7 none
 
@@ -116,9 +164,25 @@ zero-assert row below can pin them. Col 0 stays `none`: that cell is the secret.
 def poseidonRow0Vars : List (Option PVar) :=
   [none, some (.internal 0), some (.internal 1), none, none, none, none]
 
-/-- The `Zero` row that receives `s(55)`: col 0 is `external 0`, the public word. -/
+/-- The `Zero` row that receives `s(55)`: col 0 is the public word — ⚑ looked up **by name** out of
+`preimageTyp`'s layout, not typed in as `external 0`.
+
+⚑ The `Option` is the refusal, not an inconvenience: `KimchiTyp.varOf` returns `none` for a path the
+type does not contain, `permVars` takes `Option PVar` already, and an unwired public cell is exactly
+what `placeChecked`'s H2 refuses as `inertPublicWord`. So a misspelled wire cannot reach an
+artifact, and it needed no new check to stop it (`a_misnamed_public_wire_does_not_resolve`). -/
 def outputRowVars : List (Option PVar) :=
-  [some (.external 0), none, none, none, none, none, none]
+  [KimchiTyp.varOf preimageTyp 0 [.lbl "digest"], none, none, none, none, none, none]
+
+/-- …and it is the id the hand-picked one asserted. -/
+theorem the_binding_cell_resolves_to_external_zero :
+    outputRowVars = [some (.external 0), none, none, none, none, none, none] := by decide
+
+/-- ⚑ **A MISSPELLED SLOT NAME RESOLVES TO NOTHING** — so the cell goes unwired and the existing H2
+refusal, not a new one, is what stops it. `the_control_is_refused_as_an_inert_public_word` (§7a) is
+that refusal, exhibited on the object an unwired output row produces. -/
+theorem a_misnamed_public_wire_does_not_resolve :
+    KimchiTyp.varOf preimageTyp 0 [KimchiTyp.Step.lbl "digets"] = none := by decide
 
 /-- The zero-assert row: `w₀` is the input state's lane 1, `w₃` its lane 2. -/
 def zeroAssertVars : List (Option PVar) :=
@@ -241,8 +305,21 @@ def witAt (col row : Nat) : Int :=
 def preimageWitness : List (List Int) :=
   (List.range 15).map (fun col => (List.range NROWS).map (fun row => witAt col row))
 
-/-- The public input vector the verifier is handed: the one claimed digest. -/
-def preimagePublic : List Int := [(digest : Int)]
+/-- The public input vector the verifier is handed — **`store` of the circuit's declared type**, not
+a list literal. -/
+def preimagePublic : List Int := KimchiTyp.store preimageTyp digest
+
+/-- ⚑ **AND IT IS THE LITERAL IT REPLACES, TERM FOR TERM.** `by rfl`: `store` of a one-leaf `Typ` at
+`digest` reduces to `[(digest : Int)]` without ever forcing `digest`, so this is a byte pin on the
+emitted vector and not a re-computation of the Poseidon digest. Everything downstream — the JSON's
+`public_input` array, the harness's public input, the verification key — is unmoved. -/
+theorem the_derived_public_vector_is_the_literal : preimagePublic = [(digest : Int)] := by rfl
+
+/-- The verifier's vector is exactly `readAll`-able back to the value it came from, at this circuit,
+cited from the general round trip rather than re-decided. -/
+theorem the_public_vector_round_trips :
+    KimchiTyp.readAll preimageTyp preimagePublic = some digest :=
+  KimchiTyp.readAll_store preimageTyp digest
 
 theorem witness_column_count : preimageWitness.length = 15 := by rfl
 theorem witness_row_count : (preimageWitness.getD 0 []).length = NROWS := by rfl
@@ -279,6 +356,15 @@ theorem the_zero_assert_row_is_satisfied :
   is `proof-systems`' (`poseidon.rs`) and is trusted here, not proved.
 -/
 
+#assert_axioms PUB_is_one
+#assert_axioms the_binding_cell_resolves_to_external_zero
+#assert_axioms a_misnamed_public_wire_does_not_resolve
+#assert_axioms the_public_word_variable_is_derived
+#assert_axioms a_wrong_public_width_is_refused
+#assert_axioms a_wrong_public_slot_name_is_refused
+#assert_axioms a_wrong_public_arity_is_refused
+#assert_axioms the_derived_public_vector_is_the_literal
+#assert_axioms the_public_vector_round_trips
 #assert_axioms hash_singleton_is_one_permutation
 #assert_axioms hash_singleton_of_canonical
 #assert_axioms the_public_cell_wires_to_the_permutation_output
@@ -325,8 +411,15 @@ def preimageAliases : List (PVar × Nat) :=
   [(.external 0, 2), (.internal 0, 2), (.internal 1, 2)]
 
 /-- The variable-numbering contract: one public word at `external 0`, and the circuit allocates its
-own `external` ids from 1 upward (it allocates none — every variable it owns is `internal`). -/
-def preimageContract : Contract := ⟨PUB, 1⟩
+own `external` ids from 1 upward (it allocates none — every variable it owns is `internal`).
+
+⚑ **DERIVED**, like the rest of the interface: `KimchiTyp.contractOf` reads both numbers off the
+layout, so `auxBase` is the aux floor rather than a typed-in `1`, and the dead-gap range
+`pubSize ≤ i < auxBase` is empty by construction. -/
+def preimageContract : Contract := KimchiTyp.contractOf preimageTyp
+
+/-- …and it is the pair the hand-written contract asserted. -/
+theorem the_derived_contract_is_the_hand_written_pair : preimageContract = ⟨1, 1⟩ := by rfl
 
 def preimagePlacedAE : List PlacedGate := placeWith preimageMerges PUB preimageGatesAE
 
@@ -384,6 +477,7 @@ theorem the_control_is_refused_as_an_inert_public_word :
     placeCheckedMerged preimageContract [] ⟨[], unboundAliases⟩ preimageGatesAE
       = .error (.place (.inertPublicWord 0)) := by decide +kernel
 
+#assert_axioms the_derived_contract_is_the_hand_written_pair
 #assert_axioms the_reauthored_circuit_is_byte_identical
 #assert_axioms the_reauthored_binding_costs_zero_rows
 #assert_axioms the_reauthored_circuit_is_accepted
@@ -395,55 +489,40 @@ theorem the_control_is_refused_as_an_inert_public_word :
 /-! ## §8 — the JSON render (the shape `pickles-r4-harness`/`pickles-poseidon-harness` parse,
 plus the `public_input` vector the wrap harness's shape carries). -/
 
-private def q (s : String) : String := "\"" ++ s ++ "\""
+/-! ⚑ **ONE RENDERER, AND IT TAKES THE PUBLIC VECTOR.** The copy this module carried was written
+because none of the seven `pubSize = 0` copies took a `public_input`. Presence is now a field of the
+`KimchiCircuit` VALUE (`publicInput := some pub`), not a choice of which copy to call, and
+`renderCircuit_public_is_the_open_coded_shape` pins over EVERY argument that
+`KimchiCircuitJson.renderCircuit` emits the chain this module's copy emitted.
 
-private def renderCell (c : Cell) : String :=
-  "[" ++ toString c.row ++ "," ++ toString c.col ++ "]"
-
-private def renderWires (ws : List Cell) : String :=
-  "[" ++ String.intercalate "," (ws.map renderCell) ++ "]"
-
-private def renderIntList (xs : List Int) : String :=
-  "[" ++ String.intercalate "," (xs.map (fun i => q (toString i))) ++ "]"
-
-private def renderGate (g : PlacedGate) : String :=
-  "{" ++ q "typ" ++ ":" ++ toString g.kind.ordinal ++ ","
-       ++ q "wires" ++ ":" ++ renderWires g.wires ++ ","
-       ++ q "coeffs" ++ ":" ++ renderIntList g.coeffs ++ "}"
-
-private def renderGates (gs : List PlacedGate) : String :=
-  "[" ++ String.intercalate "," (gs.map renderGate) ++ "]"
-
-private def renderWitness (w : List (List Int)) : String :=
-  "[" ++ String.intercalate "," (w.map renderIntList) ++ "]"
-
-/-- A provable circuit WITH a public input vector. -/
-def renderCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedGate)
-    (w : List (List Int)) (pub : List Int) : String :=
-  "{" ++ q "name" ++ ":" ++ q name ++ ","
-       ++ q "public_input_size" ++ ":" ++ toString pubSize ++ ","
-       ++ q "public_input" ++ ":" ++ renderIntList pub ++ ","
-       ++ q "num_rows" ++ ":" ++ toString numRows ++ ","
-       ++ q "gates" ++ ":" ++ renderGates gs ++ ","
-       ++ q "witness" ++ ":" ++ renderWitness w ++ "}"
-
+⚠ `some []` is NOT `none`: the empty vector still emits `"public_input":[],`. That is what the wrap
+and step rungs below their closing rung emit, and it is why presence is carried rather than inferred
+from emptiness (`optField_some_nil_still_emits_the_key`). -/
 /-- The emitted preimage circuit. -/
 def preimageJson : String :=
-  renderCircuit "poseidonPreimage" PUB NROWS preimagePlaced preimageWitness preimagePublic
+  renderCircuit { name := "poseidonPreimage", pubSize := PUB, numRows := NROWS
+                , gates := preimagePlaced, witness := preimageWitness
+                , publicInput := some preimagePublic }
 
 /-- The CONTROL circuit: same gates, same coefficients, same witness, **no binding wire**. -/
 def unboundJson : String :=
-  renderCircuit "poseidonPreimageUNBOUND" PUB NROWS unboundPlaced preimageWitness preimagePublic
+  renderCircuit { name := "poseidonPreimageUNBOUND", pubSize := PUB, numRows := NROWS
+                , gates := unboundPlaced, witness := preimageWitness
+                , publicInput := some preimagePublic }
 
 /-- The circuit with its binding re-authored through `assertEqual`. Emitted under the SAME name, so
 the harness's byte-diff against `preimage.json` is a diff of two independently-produced artifacts and
 not of two names. -/
 def preimageJsonAE : String :=
-  renderCircuit "poseidonPreimage" PUB NROWS preimagePlacedAE preimageWitness preimagePublic
+  renderCircuit { name := "poseidonPreimage", pubSize := PUB, numRows := NROWS
+                , gates := preimagePlacedAE, witness := preimageWitness
+                , publicInput := some preimagePublic }
 
 /-- Its control: the same gate list with the `assertEqual` REMOVED. -/
 def unboundJsonAE : String :=
-  renderCircuit "poseidonPreimageUNBOUND" PUB NROWS unboundPlacedAE preimageWitness preimagePublic
+  renderCircuit { name := "poseidonPreimageUNBOUND", pubSize := PUB, numRows := NROWS
+                , gates := unboundPlacedAE, witness := preimageWitness
+                , publicInput := some preimagePublic }
 
 /-- ⚑ **BYTE-IDENTICAL EMISSIONS**, not merely equal placements: the two render calls agree
 character for character, so the harness's `assert_eq!` on the raw files is measuring the same fact
