@@ -91,12 +91,34 @@ def traceRows (reset? : Option Nat) : List (List ℤ) :=
 def traceText (rows : List (List ℤ)) : String :=
   String.intercalate "\n" (rows.map (fun r => String.intercalate " " (r.map toString))) ++ "\n"
 
+/-! ## ⚑ THE PUBLIC-INPUT VECTOR — rendered from the SCALARS, never read back off the trace.
+
+`conjunctionDesc` publishes five 32-limb blocks (`MinaWrapConjunctionAir.piPins`). A PI vector
+scraped out of the trace's row 0 would be a pin against its own definition: the pins say the PIs ARE
+those columns, so scraping them can never disagree. This renders the same five values from
+`MinaRealBlockGate`'s and `MinaWrapOpeningGate`'s scalars — the block's own ξ, ζ, ζω, `r` and the
+`b0` the fold produces — so the emitted vector and the emitted trace are two renderings of one set of
+numbers, and the prover's `pi_binding` check is what compares them.
+
+⚠ The `b0` slot is `claimedB reset?`, so the FORGED vector carries the forged fold's `b0`. That is
+deliberate: the falsifier must fail on the THREAD, not on a PI mismatch it could have avoided by
+publishing the number it actually computed. A forgery refused by the wrong gate is this campaign's
+named failure mode. -/
+def piVector (reset? : Option Nat) : List ℤ :=
+  let blk := fun (v : Nat) => (List.range 32).map (fun i => Dregg2.Circuit.Emit.PastaFieldSound.limbAt v i)
+  blk XI_V ++ blk ZETA_V ++ blk ZETAW_V ++ blk RSQ_V ++ blk (claimedB reset?)
+
+def piText (pis : List ℤ) : String :=
+  String.intercalate " " (pis.map toString) ++ "\n"
+
 def main (args : List String) : IO Unit :=
   match args with
   | ["trace"] => IO.print (traceText (traceRows none))
   | ["forged"] => IO.print (traceText (traceRows (some 14)))
+  | ["pis"] => IO.print (piText (piVector none))
+  | ["forged-pis"] => IO.print (piText (piVector (some 14)))
   | ["b0"] => do
       IO.println s!"honest claimed b0 = {claimedB none}"
       IO.println s!"MinaWrapOpeningGate.B0 = {Dregg2.Circuit.Emit.MinaWrapOpeningGate.B0}"
       IO.println s!"forged claimed b0 = {claimedB (some 14)}"
-  | _ => IO.eprintln "usage: EmitMinaWrapConjunction.lean (trace|forged|b0)"
+  | _ => IO.eprintln "usage: EmitMinaWrapConjunction.lean (trace|forged|pis|forged-pis|b0)"

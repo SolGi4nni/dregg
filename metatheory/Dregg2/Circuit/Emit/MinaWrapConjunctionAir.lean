@@ -47,7 +47,8 @@ declared 22 184; this one declares **2 536, at every round count.**
 ⚠ **AND IT IS A TRADE, NOT A SAVING** (`PastaLadderThread`'s own lesson, restated here because it is
 easy to quote the flattering half): threading moves work from columns to ROWS. The threaded object
 is `2 536 × 16 = 40 576` cells against the row-local `22 184`, which is MORE. What collapses is the
-DESCRIPTOR — 4 157 constraints against 30 607, so the checked-in artifact is ~7× smaller and the
+DESCRIPTOR — 4 157 constraints against 30 607 (4 317 since the 2026-08-06 public surface, §9b), so
+the checked-in artifact is ~7× smaller and the
 width no longer grows with the round count. That is the whole claim.
 
 ## ⚑ THE ROW COUNT IS THE ROUND COUNT PLUS ONE, AND THAT IS NOT A FUDGE
@@ -537,6 +538,84 @@ def xiCorrectLegs : List AirLeg := eqBlock XI_SQ XI_CL
 row where the register is finished. -/
 def bCorrectLegs : List AirLeg := lastEqBlock (vB B_ACT) B_CL
 
+/-! ## §9b — ⚑⚑ THE PUBLIC SURFACE: the five blocks this claim is ABOUT.
+
+## Why a descriptor with no public inputs cannot be welded to anything
+
+Until 2026-08-06 this descriptor declared `piCount = 0`. Everything above was true of it and none of
+it was **nameable**: a verifying proof of a 0-PI descriptor says *"some sixteen rows satisfied these
+constraints"*, and a consumer has no vocabulary in which to ask **which** ξ, **which** evaluation
+points, **which** claimed `b0`. That is not a small gap — it is the difference between a theorem and
+a theorem about nothing in particular. `EffectAirIR`'s `.pin` leg is how a claim acquires a subject,
+and `pinsTied` is the verdict that stops a pin publishing a column no constraint reads.
+
+## The five blocks, and each one is FORCED by a leg above — none is a free felt
+
+    PI[  0.. 31]  XI    = `XI_CL`   — forced equal to `XI_SQ` by `xiCorrectLegs`, every row
+    PI[ 32.. 63]  ZETA  = `ZETA`    — the seed of register 0 (`seedLegs`, `.first`)
+    PI[ 64.. 95]  ZETAW = `ZETAW`   — the seed of register 1
+    PI[ 96..127]  R     = `RSQ`     — the evalscale, read by `bTerminalLegs`' multiply
+    PI[128..159]  B0    = `B_CL`    — forced by `bCorrectLegs` at `.last` against the finished fold
+
+⚑ **THESE FIVE ARE EXACTLY THE FREE PARAMETERS OF `conjunction_forces`.** The conclusion is
+`dv.b ≡ bEval ζ chals + r · bEval ζω chals (mod q)`; ξ, ζ, ζω, `r` and `b0` are every symbol in it
+that is not the trace's own per-row challenge vector. Publishing fewer would leave the statement
+quantified over a value the prover picks and the reader cannot see; publishing more (`c`, `z1`,
+`z2`, `cip`) would publish the OPENING's coefficients, which this object does not claim to have
+checked against anything — `cipCorrect` is absent by construction (§"WHAT THIS OBJECT FORCES") and
+publishing `cip` would invite exactly the reading that it had been.
+
+⚑ **PINNED ON `.first`, AND THAT IS SUFFICIENT PRECISELY BECAUSE OF THE THREAD.** All five are
+GLOBAL blocks in `globalThread`, held row to row by `.transition` window legs, so a pin on row 0 is
+a pin on the value every gate in the trace read. Without the thread this would be a claim about one
+row and the file would have to say so.
+
+## ⚑ FLAG DAY
+
+`dregg-mina-wrap-conjunction::v1` and `dregg-mina-wrap-conjunction-unthreaded::v1` both change shape:
+`piCount 0 → 160`, `constraints 4 157 → 4 317` (and `3 709 → 3 869`). `trace_width` is UNCHANGED at
+`2 536` — a pin adds a constraint, not a column. **Re-emit both** by-name artifacts and **rotate
+their VKs**; a previously produced conjunction proof carries no PI vector and fails to verify, which
+is the intent — the old shape proved a statement with no subject. Anything pinning this descriptor's
+semantic fingerprint (see `LightClientMinaAir.CONJ_VK_LANES`) re-emits with it. -/
+
+/-- The five published blocks' PI offsets. -/
+def PI_XI : Nat := 0
+def PI_ZETA : Nat := SK
+def PI_ZETAW : Nat := 2 * SK
+def PI_R : Nat := 3 * SK
+def PI_B0 : Nat := 4 * SK
+
+/-- ⚑ **THE PUBLIC-INPUT COUNT.** Five 32-limb blocks. -/
+def CJ_PI_COUNT : Nat := 5 * SK
+
+theorem cj_pi_count_eq : CJ_PI_COUNT = 160 := by decide
+
+/-- One block pinned, limb by limb, on the FIRST row. -/
+def pinBlock (col piLo : Nat) : List AirLeg :=
+  (List.range SK).map (fun i => AirLeg.pin ⟨Dregg2.Circuit.Emit.EffectVmEmit.VmRow.first, col + i, piLo + i⟩)
+
+/-- ⚑ **THE PUBLIC SURFACE**, in PI order. -/
+def piPins : List AirLeg :=
+  pinBlock XI_CL PI_XI
+  ++ pinBlock ZETA PI_ZETA
+  ++ pinBlock ZETAW PI_ZETAW
+  ++ pinBlock RSQ PI_R
+  ++ pinBlock B_CL PI_B0
+
+theorem piPins_length : piPins.length = 160 := by decide
+
+/-- ⚑ **THE FIVE PUBLISHED BLOCKS ARE THE FIVE THIS FILE CLAIMS THEY ARE.** A pin layout is the one
+thing a constraint count cannot see: swapping `PI_ZETA` and `PI_ZETAW` moves no number and changes
+which evaluation point the consumer thinks it is naming. Stated as columns rather than as prose. -/
+theorem the_published_blocks_are_xi_zeta_zetaw_r_and_b0 :
+    piPins = pinBlock XI_CL 0 ++ pinBlock ZETA SK ++ pinBlock ZETAW (2 * SK)
+             ++ pinBlock RSQ (3 * SK) ++ pinBlock B_CL (4 * SK)
+    ∧ XI_CL = blk 1 ∧ ZETA = blk 7 ∧ ZETAW = blk 8 ∧ RSQ = blk 9 ∧ B_CL = blk 2 := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+
+
 /-- Everything except the thread. Named separately because it is exactly what the unthreaded twin
 carries, so the twin is this AIR MINUS the thread rather than a second authoring of it. -/
 def bodyLegs : List AirLeg :=
@@ -550,6 +629,7 @@ def bodyLegs : List AirLeg :=
   ++ seedLegs
   ++ bCorrectLegs
   ++ [bindLeg]
+  ++ piPins
 
 /-- ⚑ **THE THREADED CONJUNCTION AIR.** -/
 def conjunctionAir : EffectAir := { tables := cjTables, legs := bodyLegs ++ threadLegs }
@@ -569,6 +649,66 @@ the bind leg the pinned-and-wide-enough verdict. A seam narrower than eight lane
 neither program nor commitment, or a boundary leg reading the next row would emit `refuseConstraints`
 and this would be false. -/
 theorem conjunctionAir_mainRailOk : conjunctionAir.mainRailOk = true := by decide
+
+/-- ⚑ **EVERY PUBLISHED COLUMN IS READ BY ANOTHER LEG** — `EffectAir.pinsTied`, the verdict that
+makes a DECORATIVE pin unrepresentable rather than merely detectable. It is already carried in
+`conjunctionTiedAir`'s type (the structure's `tied` field is `by decide`, so the definition does not
+elaborate without it); it is named here so a consumer can cite it.
+
+⚑ Each of the five is read by at least the `.limbs` range leg of its input block, and four of them
+by more: `XI_CL` by `xiCorrectLegs`, `B_CL` by `bCorrectLegs` and by `ubCoefLegs`' `z1·b0` multiply,
+`ZETA`/`ZETAW` by `seedLegs`, `RSQ` by `bTerminalLegs`' multiply. ⚠ Being READ is not being FORCED —
+the census this verdict comes from (`PinsTiedCensus`) says so at length, and §"WHAT THIS OBJECT
+FORCES" is where the forcing claims live. -/
+theorem conjunctionAir_pinsTied :
+    Dregg2.Circuit.EffectAirIR.EffectAir.pinsTied conjunctionAir = true := by decide
+
+/-! ⚑⚑ **AND HERE IS WHAT `xiCorrect` DOES *NOT* BUY — as a decidable fact about the leg list, not
+as a caveat.**
+
+`XI_SQ` and `XI_CL` are blocks `0` and `1`, i.e. columns `0 … 63`. **No arithmetic leg of this AIR
+reads any of them.** The whole computation — the fold's twelve multiplies, its six add/subs, the
+reciprocity weld, the `lrTerms` scalars, the terminal combination and the opening's coefficient seam
+— touches only columns `≥ 2·SK`. So the ξ blocks appear in exactly three places: the `eqBlock`
+comparing them to each other, the thread that holds them, and their input range lookup (plus, since
+§9b, the pin that publishes `XI_CL`).
+
+⚑ **THEREFORE `xiCorrect` ON ITS OWN FORCES "two free columns of the prover's choosing agree", AND
+NOTHING ELSE.** A prover may run the entire b-polynomial fold at any ξ whatsoever; every gate holds.
+`op.xiSqueeze = dv.xi` is upstream's whole conjunct because upstream's `xiSqueeze` came out of a
+sponge — here it came out of a witness generator.
+
+⚑ **WHAT SUPPLIES THE MISSING SIDE is the RECURSION FOLD, not a gate in this file.**
+`circuit-prove/src/mina_wrap_finalize_fold.rs::fold_endo_into_finalize` verifies this descriptor and
+`dregg-mina-xi-endo-lift::v1` in one aggregation circuit and `cb.connect`s the 32 published ξ limbs,
+so a conjunction reading an ξ the endo-lift did not produce has no satisfying assignment and there is
+no root. **That is a consumer's constraint, not this descriptor's** — exactly the standing this file
+gives `WRAP_FS_PROVED`'s chain-root weld, and it is said here so a reader of `xiCorrect` alone cannot
+mistake it for a check. -/
+
+/-- The BASE columns every arithmetic call in this AIR names — the `xB`/`yB` arguments of each
+`mulAt` / `addAt` / `subAt`, and the value slots they write. An off-by-one in the allocator moves one
+of these and the theorem below goes red. -/
+def arithmeticBases : List Nat :=
+  [ SQ_IN 0, SQ_IN 1, FLD_IN 0, FLD_IN 1, CHAL, CHALINV, ONE, ZERO
+  , C_COL, CIP, Z1, Z2, B_CL, RSQ
+  , vB (PRD 0), vB (PRD 1), vB (SUM 0), vB (SUM 1), vB RCP, vB RB, vB CCIP, vB Z1B0 ]
+
+theorem no_arithmetic_call_names_an_xi_block :
+    arithmeticBases.all (fun c => decide (2 * SK ≤ c)) = true
+    ∧ XI_SQ = 0 ∧ XI_CL = SK ∧ XI_SQ + SK = XI_CL ∧ XI_CL + SK = 2 * SK := by
+  refine ⟨by decide, rfl, rfl, rfl, rfl⟩
+
+/-- …and the same fact at the LEG level, where the kernel walks every emitted `readCols` rather than
+trusting the base list a caller passed. ⚑ **`roundLegs`, `reciprocityLegs` and `lrCoefLegs` are the three
+families this cannot reach** — measured, not guessed: a sound MULTIPLY is ~68 legs and the kernel
+walks every one of their `readCols`, so nine multiplies exceed the 200 000-heartbeat budget where
+seven add/sub-heavy calls do not. Their bases are in `arithmeticBases` above, read directly off
+`roundLegsAt` / `reciprocityLegs` / `lrCoefLegs`. ⚠ That base list is the ONE place an omission could
+hide, and this comment is here so the theorem's name does not imply coverage it lacks. -/
+theorem the_non_round_legs_read_no_xi_column :
+    (bTerminalLegs ++ ubCoefLegs ++ negCoefLegs).all
+      (fun l => l.readCols.all (fun c => decide (2 * SK ≤ c))) = true := by decide
 
 theorem conjunctionAirUnthreaded_mainRailOk : conjunctionAirUnthreaded.mainRailOk = true := by
   decide
@@ -620,7 +760,7 @@ def conjunctionTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
 
 def conjunctionDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
-    "dregg-mina-wrap-conjunction::v1" CJ_WIDTH 0 [] conjunctionTiedAir).val
+    "dregg-mina-wrap-conjunction::v1" CJ_WIDTH CJ_PI_COUNT [] conjunctionTiedAir).val
 
 /-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
 descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
@@ -630,13 +770,13 @@ SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. N
 theorem conjunctionDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines conjunctionDesc [] conjunctionAir :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
-    "dregg-mina-wrap-conjunction::v1" CJ_WIDTH 0 [] conjunctionTiedAir).property
+    "dregg-mina-wrap-conjunction::v1" CJ_WIDTH CJ_PI_COUNT [] conjunctionTiedAir).property
 
 /-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
 the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
 Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
 theorem conjunctionDesc_eq_lowerAir :
-    conjunctionDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-wrap-conjunction::v1" CJ_WIDTH 0 [] conjunctionAir := rfl
+    conjunctionDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-wrap-conjunction::v1" CJ_WIDTH CJ_PI_COUNT [] conjunctionAir := rfl
 
 /-- ⚑ **THE TIED SOURCE** — `conjunctionAirUnthreaded` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
@@ -647,7 +787,7 @@ def conjunctionUnthreadedTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
 
 def conjunctionUnthreadedDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
-    "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH 0 [] conjunctionUnthreadedTiedAir).val
+    "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH CJ_PI_COUNT [] conjunctionUnthreadedTiedAir).val
 
 /-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
 descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
@@ -657,22 +797,41 @@ SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. N
 theorem conjunctionUnthreadedDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines conjunctionUnthreadedDesc [] conjunctionAirUnthreaded :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
-    "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH 0 [] conjunctionUnthreadedTiedAir).property
+    "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH CJ_PI_COUNT [] conjunctionUnthreadedTiedAir).property
 
 /-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
 the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
 Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
 theorem conjunctionUnthreadedDesc_eq_lowerAir :
-    conjunctionUnthreadedDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH 0 [] conjunctionAirUnthreaded := rfl
+    conjunctionUnthreadedDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH CJ_PI_COUNT [] conjunctionAirUnthreaded := rfl
 
 theorem conjunctionDesc_width : conjunctionDesc.traceWidth = 2536 := rfl
 theorem conjunctionUnthreadedDesc_width : conjunctionUnthreadedDesc.traceWidth = 2536 := rfl
 
 /-- ⚑ **THE EMITTED COUNT, AND THE TWIN IS EXACTLY 448 SHORTER.** -/
 theorem conjunctionDesc_constraint_count :
-    conjunctionDesc.constraints.length = 4157
-    ∧ conjunctionUnthreadedDesc.constraints.length = 4157 - 448 := by
+    conjunctionDesc.constraints.length = 4317
+    ∧ conjunctionUnthreadedDesc.constraints.length = 4317 - 448 := by
   refine ⟨?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE PUBLIC SURFACE IS DECLARED AND IT IS THE PIN COUNT.** `160` pins, `160` declared PIs —
+so no pin addresses a slot the descriptor does not publish and no published slot is unpinned. The
+threaded and unthreaded objects publish the SAME surface, which is what makes the negative control a
+control: the twin differs from the object in the thread and in nothing else. -/
+theorem conjunctionDesc_piCount :
+    conjunctionDesc.piCount = 160
+    ∧ conjunctionUnthreadedDesc.piCount = 160
+    ∧ CJ_PI_COUNT = piPins.length := by
+  refine ⟨rfl, rfl, by decide⟩
+
+/-- ⚑ **THE WIDTH DID NOT MOVE.** A public surface costs constraints, not columns — `160` more
+constraints at the same `2 536`. Stated because the campaign's standing worry about this object is
+its width, and a reader should not have to diff the JSON to learn that the flag day did not touch
+it. -/
+theorem the_public_surface_costs_no_column :
+    conjunctionDesc.traceWidth = CJ_WIDTH
+    ∧ conjunctionDesc.constraints.length = 4157 + CJ_PI_COUNT := by
+  refine ⟨rfl, by decide⟩
 
 /-! ## §11 — ⚑ THE LAYOUT FACT, as numbers rather than as a worry.
 
@@ -712,8 +871,9 @@ theorem the_row_local_layout_is_linear_in_the_round_count :
 /-- ⚑ **THE THREAD IS WHAT COLLAPSES THE ARTIFACT**, at Mina's own round count.
 
 `20 532` used columns (declared `22 184`) and `30 607` constraints against `2 536` columns and
-`4 157` constraints — a descriptor `7.36×` smaller, and one whose width does not move when the round
-count does. -/
+`4 317` constraints — a descriptor `7.09×` smaller, and one whose width does not move when the round
+count does. ⚑ `4 317` and not `4 157`: §9b's public surface is 160 `pi_binding`s, which is why the
+bracket below is stated as an inequality on the emitted length rather than as a literal. -/
 theorem the_thread_is_what_collapses_the_artifact :
     rowLocalConjWidth NCHAL = 20532
     ∧ threadedConjWidth NCHAL = 2536
@@ -1385,5 +1545,14 @@ def stepRegs (M : Nat) (i : RowIn) : Nat × Nat × Nat × Nat :=
 #assert_axioms terminal_forces
 #assert_axioms reciprocity_forced
 #assert_axioms conjunction_forces
+-- ⚑ 2026-08-06, the public surface (§9b).
+#assert_axioms cj_pi_count_eq
+#assert_axioms piPins_length
+#assert_axioms the_published_blocks_are_xi_zeta_zetaw_r_and_b0
+#assert_axioms conjunctionAir_pinsTied
+#assert_axioms no_arithmetic_call_names_an_xi_block
+#assert_axioms the_non_round_legs_read_no_xi_column
+#assert_axioms conjunctionDesc_piCount
+#assert_axioms the_public_surface_costs_no_column
 
 end Dregg2.Circuit.Emit.MinaWrapConjunctionAir

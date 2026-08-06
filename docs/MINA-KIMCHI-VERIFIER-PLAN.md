@@ -83,6 +83,35 @@ P=±Q, O), avoiding the exceptional-case handling naive Jacobian doubling needs.
   and the GLV scalar-mult ~10⁹. That does not change K5's conclusion below — it strengthens it, because the leg to
   DEFER is now three orders further out of reach, and the reachable architecture is the Mina-side shrink terminal
   rather than an in-dregg Pasta ladder.
+- ⛑ **AND THE ESTIMATE ABOVE IS NOW MEASURED, AND IT WAS HIGH — AND WRONG IN SHAPE (2026-08-06).** The sound
+  gadget stopped being hypothetical: `dregg-pasta-{pallas,vesta}-rcb-thread::v1` is on disk and one row IS one
+  sound RCB complete addition. **Measured: 4 572 constraints and 3 048 columns**, not `≈1.6·10⁴` — 3.5× lower,
+  because 12 of a complete addition's 41 ALU ops are multiplies and 29 are add/subs, and pricing all 41 at the
+  multiply's ≈189 marginal constraints over-charges. The bit-plane ladder's 256 steps are 256 ROWS of that
+  descriptor at a **flat** 3 048 columns (`PastaLadderThread.threaded_width_is_flat`), i.e. `7.8·10⁵` committed
+  cells, not `~10⁷` gates in one row.
+  ⚑ **THE WHOLE-VERIFIER FIGURE IS RE-DERIVED IN `MinaWrapVerifierAir` §5b AS NAMED THEOREMS**: one Wrap
+  verification, excluding the SRS-base leg, is **34 816 complete additions + 170 940 sound ALU rows = 205 756 rows
+  and 144 751 608 committed cells** — `2^17.65` rows, *four powers of two under the measured `lb = 2` ceiling of
+  `2^25`*, against `≈2.25·10⁸` constraint-instances rather than `≈10⁹`.
+  ⚠ **The standing estimate was wrong about which resource binds, not only about size.** It assumed ~100
+  constraints packed per row and therefore `10⁷` rows ≈ `2^23.3`, which is what made the verdict read as
+  "unreachable". The deployed sound rows are 3 048 and 226 columns wide.
+  ⚑⚑ **AND WHAT BINDS IS COLUMNS, NOT CELLS — measured, and it corrects the cell figure above as a wall clock.**
+  `circuit-prove/tests/mina_wrap_finalize_fold.rs`, 2026-08-06: an endo-lift leaf (687 cols × 2 048 rows) wraps in
+  **55.7 s**, the conjunction leaf (2 536 cols × **16** rows) in **177.3 s**, a fold node in **48.0 s** — against
+  the phase-2 chain's **9.5 s** for a 469-col × 2 048-row leaf. The conjunction leaf commits **1/24th** of the
+  chainlink leaf's cells and takes **18.7× longer**: the recursion verifier opens every committed column at the OOD
+  point, so the wrap circuit grows with descriptor WIDTH and barely notices height. Peak RSS ~**15 GB** for the
+  2 536-column leaf; the curve row is wider still.
+  ⚠ So `WRAP_CELLS` is the right figure for WITNESS VOLUME and the WRONG one for wall clock — a cells-per-second
+  extrapolation off the chain fold says ~45 min and is optimistic by roughly 3×. Extrapolating from the measured
+  per-leaf times instead (17 curve leaves at 3 048 cols, 84 sponge leaves at 226, ~100 fold nodes) puts one in-AIR
+  Wrap verification at **a few hours on one box**. Both are extrapolations; the second at least extrapolates from
+  the variable that moved.
+  ⚠ **What does NOT move: K5's conclusion.** `SRS_BASE_CELLS` re-prices the excluded 32 768-base leg at
+  `2.56·10¹⁰` cells — **176× the rest, in the same units** — so DEFERRING it is still the design, and
+  `opening_is_vacuous_when_sg_is_free` is still why nothing may be claimed for the opening stage until it lands.
 - The dbl-specific gadget is NOT worth building in this gate model (named micro-opt, saves nothing).
 
 ## K5 design crux (from KIMCHI-VERIFY-SPEC.md 63726f561): DEFER the MSM

@@ -16,7 +16,9 @@
 //!
 //! * `trace_width` is **2 536 at every round count** (`threaded_conj_width_is_flat`), where the
 //!   row-local layout cost 1 326 fresh columns per round;
-//! * the descriptor is **4 157 constraints**, ~7× smaller than the 30 607 that were withheld.
+//! * the descriptor is **4 317 constraints** (4 157 of arithmetic and thread, plus the 160
+//!   `pi_binding`s of the 2026-08-06 public surface), ~7× smaller than the 30 607 that were
+//!   withheld.
 //!
 //! ⚑ **AND THE ROW COUNT IS THE ROUND COUNT PLUS ONE.** `.transition` fires on every row but the
 //! last, so a 16-row trace has exactly 15 transitions — Mina's 15 IPA rounds — and one terminal row
@@ -83,13 +85,30 @@ const UNTHREADED_JSON: &str =
 
 const TRACE: &str = include_str!("fixtures/mina-wrap-conjunction-trace.txt");
 const FORGED: &str = include_str!("fixtures/mina-wrap-conjunction-forged-trace.txt");
+/// ⚑ The five published blocks, rendered by `EmitMinaWrapConjunction.lean pis` from the BLOCK'S
+/// SCALARS — not scraped off the trace, which would be a pin against its own definition.
+const PIS: &str = include_str!("fixtures/mina-wrap-conjunction-pis.txt");
+/// …and the forged fold's, carrying the `b0` the forged fold actually computes, so the falsifier
+/// cannot be refused by a PI mismatch it could have avoided.
+const FORGED_PIS: &str = include_str!("fixtures/mina-wrap-conjunction-forged-pis.txt");
 
 const WIDTH: usize = 2536;
 /// 15 IPA round rows plus the terminal read row.
 const ROWS: usize = 16;
 const NCHAL: usize = 15;
 /// The threaded descriptor's constraints; the twin is this minus the 448 window legs.
-const CONSTRAINTS: usize = 4157;
+/// ⚑ 4 317, not 4 157: `2026-08-06` gave the conjunction a PUBLIC SURFACE — 160 `pi_binding`
+/// constraints pinning ξ, ζ, ζω, `r` and the claimed `b0`, so the claim has a subject a consumer
+/// can name. The width did not move (`the_public_surface_costs_no_column`).
+const CONSTRAINTS: usize = 4317;
+/// Five 32-limb blocks (`MinaWrapConjunctionAir.CJ_PI_COUNT`).
+const PI_COUNT: usize = 160;
+/// PI offsets of the five published blocks.
+const PI_XI: usize = 0;
+const PI_ZETA: usize = SK;
+const PI_ZETAW: usize = 2 * SK;
+const PI_R: usize = 3 * SK;
+const PI_B0: usize = 4 * SK;
 const THREAD_LEGS: usize = 448;
 /// Limbs per Pasta field element in the sound encoding.
 const SK: usize = 32;
@@ -115,6 +134,15 @@ const ONE: usize = SK * 10;
 /// `MinaWrapOpeningGate.B0`, the real block's claimed `b0`, base-`2^8` limbs least-significant
 /// first. This is the number `b0_is_the_b_polynomial` proves is
 /// `bPoly CHAL ζ + r · bPoly CHAL ζω` — so it is the block's, not this test's.
+/// `MinaRealBlockGate.VV` — block 539508's polyscale ξ, extracted from the block's own proof.
+const XI_DECIMAL: &str =
+    "8288233988205559029449525580974252420889527181759196726389788710191542809415";
+/// `MinaRealBlockGate.ZETA` — the first evaluation point, endo-mapped.
+const ZETA_DECIMAL: &str =
+    "5882778464885448390370243325569768165017976480253711597216088892712827726750";
+/// `MinaRealBlockGate.UU` — the evalscale `r`.
+const R_DECIMAL: &str =
+    "6201396350626737261036432388107935815953346991927125598065137346871745847675";
 const B0_DECIMAL: &str =
     "8959513835325565174995450957597499793792733131117505895288870852340268010913";
 
@@ -135,6 +163,23 @@ fn trace(text: &str) -> Vec<Vec<BabyBear>> {
     assert_eq!(rows.len(), ROWS);
     assert!(rows.iter().all(|r| r.len() == WIDTH));
     rows
+}
+
+/// The Lean-emitted public-input vector.
+fn pis(text: &str) -> Vec<BabyBear> {
+    let v: Vec<BabyBear> = text
+        .split_whitespace()
+        .map(|w| BabyBear::new(w.parse::<u64>().expect("PI limb is a decimal") as u32))
+        .collect();
+    assert_eq!(v.len(), PI_COUNT, "the PI vector is five 32-limb blocks");
+    v
+}
+
+/// …the same vector as raw decimals, for the assertions about the FIXTURE.
+fn pi_cells(text: &str) -> Vec<u64> {
+    text.split_whitespace()
+        .map(|w| w.parse::<u64>().expect("PI limb is a decimal"))
+        .collect()
 }
 
 /// The raw decimal cells, for the assertions about the FIXTURE (not about the field).
@@ -181,7 +226,7 @@ fn block_decimal(row: &[u64], base: usize) -> String {
 // ────────────────────────────────────────────────────────────────────────────────────────────────
 
 /// ⚑ **THE WIDTH IS FLAT AND THE ARTIFACT COLLAPSED.** The withheld row-local layout declared
-/// 22 184 columns and 30 607 constraints. This declares 2 536 and 4 157 — and the 2 536 does not
+/// 22 184 columns and 30 607 constraints. This declares 2 536 and 4 317 — and the 2 536 does not
 /// depend on the round count at all, which is the property a wider row can never have.
 #[test]
 fn the_threaded_conjunction_is_flat_and_small() {
@@ -513,6 +558,64 @@ fn the_forged_trace_breaks_only_one_transition() {
 // BOTH POLARITIES.
 // ────────────────────────────────────────────────────────────────────────────────────────────────
 
+/// ⚑ **THE PUBLIC SURFACE NAMES THE REAL BLOCK, AND THE SOURCE IS NOT THIS FIXTURE.**
+///
+/// `dregg-mina-wrap-conjunction::v1` publishes five 32-limb blocks. Four of them have an
+/// INDEPENDENT decimal in the tree — `MinaRealBlockGate.VV` (the polyscale ξ), `.ZETA`, `.UU` (the
+/// evalscale `r`) and `MinaWrapOpeningGate.B0` — extracted from Mina devnet block 539508 and used
+/// by no other part of this file. Asserting the emitted PI vector against them is a gate with two
+/// sources; asserting it against the trace it pins would be a pin against its own definition.
+///
+/// ⚠ The fifth, ζω, is `ZETA * OMEGA` and has no standalone literal; what is asserted here is that
+/// it is a distinct in-range block, and its value is Lean's (`MinaRealBlockGate.ZETAW`).
+#[test]
+fn the_published_surface_is_the_real_blocks_deferred_values() {
+    let p = pi_cells(PIS);
+    assert_eq!(p.len(), PI_COUNT);
+    assert_eq!(
+        block_decimal(&p, PI_XI),
+        XI_DECIMAL,
+        "PI[0..32] is the block's polyscale"
+    );
+    assert_eq!(
+        block_decimal(&p, PI_ZETA),
+        ZETA_DECIMAL,
+        "PI[32..64] is the block's zeta"
+    );
+    assert_eq!(
+        block_decimal(&p, PI_R),
+        R_DECIMAL,
+        "PI[96..128] is the block's evalscale"
+    );
+    assert_eq!(
+        block_decimal(&p, PI_B0),
+        B0_DECIMAL,
+        "PI[128..160] is the b0 `b0_is_the_b_polynomial` proves is bPoly(zeta) + r*bPoly(zeta*w)"
+    );
+    assert_ne!(block_decimal(&p, PI_ZETAW), ZETA_DECIMAL);
+    assert!(p.iter().all(|&l| l < 256), "every published limb is a byte");
+}
+
+/// ⚑ **AND THE PUBLISHED `b0` IS THE ONE THE TRACE'S OWN FOLD LANDS ON.** The prover's
+/// `pi_binding` check is what enforces this; this is the assertion that the FIXTURE would not have
+/// passed for a trivial reason (e.g. an all-zero PI vector, which no `pi_binding` would refuse if
+/// row 0 were also zero).
+#[test]
+fn the_published_b0_is_the_folds_terminal_value() {
+    let t = cells(TRACE);
+    let p = pi_cells(PIS);
+    assert_eq!(block_decimal(&p, PI_B0), block_decimal(&t[NCHAL], B_ACT));
+    // …and the FORGED vector publishes a DIFFERENT b0 — so the falsifier below is refused by the
+    // thread, not by a public input it failed to update.
+    let f = pi_cells(FORGED_PIS);
+    assert_ne!(block_decimal(&f, PI_B0), B0_DECIMAL);
+    assert_eq!(
+        block_decimal(&f, PI_XI),
+        XI_DECIMAL,
+        "and it names the same block"
+    );
+}
+
 /// ⚑ **POLARITY 1 — THE THREADED CONJUNCTION PROVES.** Fifteen rounds of the b-polynomial at both
 /// evaluation points, the reciprocity weld on every round row, the opening's non-free coefficients
 /// and the recursion seam — the registers carried across every seam by the emitted window gates,
@@ -521,9 +624,10 @@ fn the_forged_trace_breaks_only_one_transition() {
 fn the_threaded_conjunction_proves_and_verifies() {
     let d = descriptor(DESC_JSON);
     let t = trace(TRACE);
-    let proof = prove_vm_descriptor2(&d, &t, &[], &MemBoundaryWitness::default(), &[])
+    let p = pis(PIS);
+    let proof = prove_vm_descriptor2(&d, &t, &p, &MemBoundaryWitness::default(), &[])
         .unwrap_or_else(|e| panic!("the honest threaded trace must prove: {e:?}"));
-    verify_vm_descriptor2(&d, &proof, &[])
+    verify_vm_descriptor2(&d, &proof, &p)
         .unwrap_or_else(|e| panic!("the honest threaded proof must verify: {e:?}"));
 }
 
@@ -540,7 +644,13 @@ fn the_threaded_conjunction_proves_and_verifies() {
 fn the_restarted_fold_is_refused_by_the_thread() {
     let d = descriptor(DESC_JSON);
     let t = trace(FORGED);
-    let r = prove_vm_descriptor2(&d, &t, &[], &MemBoundaryWitness::default(), &[]);
+    let r = prove_vm_descriptor2(
+        &d,
+        &t,
+        &pis(FORGED_PIS),
+        &MemBoundaryWitness::default(),
+        &[],
+    );
     assert!(
         r.is_err(),
         "sixteen independently honest rows whose b-polynomial register does NOT chain must be \
@@ -577,10 +687,11 @@ fn without_the_thread_the_forged_trace_proves() {
         0
     );
     let t = trace(FORGED);
-    let proof = prove_vm_descriptor2(&unthreaded, &t, &[], &MemBoundaryWitness::default(), &[])
+    let p = pis(FORGED_PIS);
+    let proof = prove_vm_descriptor2(&unthreaded, &t, &p, &MemBoundaryWitness::default(), &[])
         .expect(
             "every row of the forged trace is an honest row of the unthreaded descriptor — so it \
              accepts, and the refusal in the test above is the thread's doing",
         );
-    verify_vm_descriptor2(&unthreaded, &proof, &[]).expect("and the unthreaded proof verifies");
+    verify_vm_descriptor2(&unthreaded, &proof, &p).expect("and the unthreaded proof verifies");
 }

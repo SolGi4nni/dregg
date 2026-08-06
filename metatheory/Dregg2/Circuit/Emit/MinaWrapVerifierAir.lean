@@ -552,6 +552,102 @@ caption. -/
 theorem srs_leg_dwarfs_the_rest :
     SRS_BASE_ROWS = 343943424 ∧ 215 * VERIFIER_ROWS < SRS_BASE_ROWS := by decide
 
+/-! ## §5b — ⚑⚑ THE PRICE RE-DERIVED IN THE GEOMETRY THAT NOW EXISTS (2026-08-06)
+
+§5's census is in ALU ROWS, and it was correct. What it could not say, because the object did not
+exist when it was written, is what a row COSTS — and the standing figure the tree carried
+(`LightClientMinaAir` §1b: *"≈10³ BabyBear constraints per Pasta multiplication … one Wrap
+verification is then ≈10⁹ constraints … at a generous ~100 constraints packed per row that is ~10⁷
+rows ≈ 2^23.3"*) answered that with an ESTIMATE. Two SOUND rows have since been emitted and
+measured, so the estimate can be replaced by their declared widths.
+
+⚑ **THE STANDING FIGURE GOT THE SHAPE WRONG, NOT ONLY THE SIZE.** It assumed ~100 constraints
+packed per row and therefore 10⁷ rows — near a power-of-two ceiling, which is what made the verdict
+*"the construction is wrong"*. The deployed sound rows are **3 048** and **226** columns wide, so the
+same work is `2^17.65` rows: **32× fewer, and four powers of two under the measured `lb = 2`
+ceiling of `2^25`.** The binding resource was never rows. It is committed CELLS.
+
+⚠ **AND THE ATOM COUNT WAS CONFLATED.** §1b's *"≈1.06 M Pasta-field multiplications"* is neither
+this census's multiply count nor its op count: `RCB` is 12 multiplies and 29 add/subs, so 34 816
+complete additions are **417 792 multiplies and 1 009 664 add/subs**, plus the transcript's
+170 940. Pricing all 1 598 396 ops at a MULTIPLY's cost over-charges by ~1.34×; pricing them at 10³
+constraints each over-charges by ~4.4×.
+
+⚠ **WHAT THESE THEOREMS ARE.** Prices, exactly as §5's are — `atom cells × operations`, where the
+atom is an EMITTED descriptor's declared width. A number moving is a real signal; a number being
+right is not evidence that any trace IS the stage it is named for. The SRS-base leg stays excluded
+and §6 stays the reason. -/
+
+/-- The sound complete addition's declared width — ONE row of `dregg-pasta-{pallas,vesta}-rcb-
+thread::v1`. `PastaCurveSound.rcb_width_eq` is the same number from the allocator. -/
+def RCB_ROW_COLS : Nat := 3048
+
+/-- The sound Pasta ALU row's declared width — one row of `pasta-alu-sound::v1`, which is a multiply
+OR an add OR a sub under a selector. `ALU_WIDTH` is the same number from this file's own layout. -/
+def ALU_ROW_COLS : Nat := 226
+
+theorem the_atom_widths_are_this_files_own : ALU_ROW_COLS = ALU_WIDTH := by decide
+
+/-- The complete additions §5's MSM census implies: `msmRows n / ROWS_PER_COMPLETE_ADD`, summed. -/
+def COMPLETE_ADDS : Nat := 256 * 41 + 256 * 2 + 256 * 10 + 256 * 48 + 256 * 35
+
+theorem complete_adds_eq : COMPLETE_ADDS = 34816 := by decide
+
+/-- ⚑ **AND IT IS §5's OWN CENSUS, NOT A SECOND ONE.** The five MSM stages' rows are exactly
+`ROWS_PER_COMPLETE_ADD` times this count, so the two prices are about one object. -/
+theorem the_adds_are_the_censuss_msm_rows :
+    ROWS_PER_COMPLETE_ADD * COMPLETE_ADDS
+      = STAGE_PUBLIC_COMM + STAGE_F_COMM + STAGE_FT_COMM + STAGE_XI_AGGREGATE + STAGE_OPENING := by
+  decide
+
+/-- ⚑ **THE COMMITTED-CELL PRICE OF ONE WRAP VERIFICATION**, excluding the SRS-base leg: the curve
+work at the threaded sound row's width plus the transcript at the ALU row's. -/
+def WRAP_CELLS : Nat := COMPLETE_ADDS * RCB_ROW_COLS + STAGE_TRANSCRIPT * ALU_ROW_COLS
+
+/-- ⚑ **1.45 × 10⁸ committed cells** — `106 119 168` of curve and `38 632 440` of sponge. At four
+bytes a felt that is ~579 MB of witness, which is the wall the estimate was reaching for and named
+as rows instead. -/
+theorem wrap_cells_eq :
+    WRAP_CELLS = 144751608
+    ∧ COMPLETE_ADDS * RCB_ROW_COLS = 106119168
+    ∧ STAGE_TRANSCRIPT * ALU_ROW_COLS = 38632440 := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- The total ROW count in the two sound geometries. -/
+def WRAP_ROWS_SOUND : Nat := COMPLETE_ADDS + STAGE_TRANSCRIPT
+
+/-- ⚑⚑ **THE ROW COUNT WAS NEVER THE WALL.** `205 756 < 2^18`, against the `lb = 2` ceiling of
+`2^25` — and against the standing estimate's own `10⁷ ≈ 2^23.3`, which is what made it read as
+unreachable. The estimate was not 4× wrong about size and right about shape; it was wrong about
+which resource binds. -/
+theorem the_row_count_was_never_the_wall :
+    WRAP_ROWS_SOUND = 205756
+    ∧ WRAP_ROWS_SOUND < 2 ^ 18
+    ∧ WRAP_ROWS_SOUND < 2 ^ 25
+    ∧ 48 * WRAP_ROWS_SOUND < 10000000 := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
+/-- The multiply / add-sub split of the same census — the figure §1b's *"1.06 M multiplications"*
+conflated. `RCB` is 12 multiplies and 29 add/subs (`ROWS_PER_COMPLETE_ADD = 41`); every ALU row of
+the transcript stage is a multiply. -/
+def WRAP_MULS : Nat := COMPLETE_ADDS * 12 + STAGE_TRANSCRIPT
+def WRAP_ADDSUBS : Nat := COMPLETE_ADDS * 29
+
+theorem the_atom_census_splits :
+    WRAP_MULS = 588732
+    ∧ WRAP_ADDSUBS = 1009664
+    ∧ WRAP_MULS + WRAP_ADDSUBS = VERIFIER_ROWS := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- ⚑ **THE EXCLUDED SRS LEG, RE-PRICED IN THE SAME UNITS** — and it is worse in cells than in rows.
+`SRS_BASE_ROWS / 41` complete additions at `3 048` columns is `2.56 × 10¹⁰` cells, **176× the rest**,
+so §6's exclusion is not a rounding decision. -/
+def SRS_BASE_CELLS : Nat := (SRS_BASE_ROWS / ROWS_PER_COMPLETE_ADD) * RCB_ROW_COLS
+
+theorem the_srs_leg_dwarfs_it_in_cells_too :
+    SRS_BASE_CELLS = 25569257472 ∧ 176 * WRAP_CELLS < SRS_BASE_CELLS := by
+  refine ⟨by decide, by decide⟩
+
 /-! ## §6 — THE OPENING IS VACUOUS UNTIL THE SRS-BASE LEG IS DISCHARGED.
 
 ⚑ This is the mandate's item 5, and it is here as a THEOREM because a comment cannot be checked.
@@ -780,6 +876,14 @@ theorem aluChainRow1_canonical :
 #assert_axioms verifier_rows_eq
 #assert_axioms xi_aggregate_dominates
 #assert_axioms srs_leg_dwarfs_the_rest
+-- ⚑ 2026-08-06, §5b: the price re-derived on the emitted sound rows.
+#assert_axioms complete_adds_eq
+#assert_axioms the_adds_are_the_censuss_msm_rows
+#assert_axioms wrap_cells_eq
+#assert_axioms the_row_count_was_never_the_wall
+#assert_axioms the_atom_census_splits
+#assert_axioms the_srs_leg_dwarfs_it_in_cells_too
+#assert_axioms the_atom_widths_are_this_files_own
 #assert_axioms opening_is_vacuous_when_sg_is_free
 #assert_axioms sg_side_is_surjective
 #assert_axioms opening_accepts_everything_while_sg_is_free

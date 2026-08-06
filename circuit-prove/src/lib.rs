@@ -62,18 +62,23 @@ pub mod joint_turn_recursive;
 pub mod lean_lookup_air;
 pub mod membership_leaf_adapter;
 pub mod merge_pool;
-/// The Pasta half of `dregg_circuit::mina_fixture_emit`: `DreggMinaConfig` as a
-/// fixture hash suite, plus the CHECKED `MultiField32Challenger` replica whose
-/// per-permutation sponge states the Pasta fixture publishes.
-pub mod mina_pasta_fixture_suite;
 /// ⚑ The DEFERRED IPA ACCUMULATOR CHECK as a RECURSION TREE: the Lean-authored
 /// `dregg-mina-accumulator-{seg,final}::v1` leaves, and the fold that carries the accumulator POINT
 /// from segment to segment INSIDE the recursion. The leg upstream's verifier does natively.
 pub mod mina_accumulator_fold;
+/// The Pasta half of `dregg_circuit::mina_fixture_emit`: `DreggMinaConfig` as a
+/// fixture hash suite, plus the CHECKED `MultiField32Challenger` replica whose
+/// per-permutation sponge states the Pasta fixture publishes.
+pub mod mina_pasta_fixture_suite;
 /// ⚑ The 46-permutation Fq transcript of Mina devnet block 539508 as a RECURSION TREE: the
 /// Lean-authored `dregg-pasta-fq-chainlink::v1` leaf, and the fold that carries the sponge state
 /// from link to link INSIDE the recursion.
 pub mod mina_phase2_chain_leaf;
+/// ⚑ THE FINALIZE CONJUNCTION AND THE ENDOMORPHISM LIFT, FOLDED — the Lean-authored
+/// `dregg-mina-wrap-conjunction::v1` and `dregg-mina-xi-endo-lift::v1` as recursion leaves, and the
+/// node that `cb.connect`s their 32 published ξ limbs so the two halves are ONE value in-circuit
+/// rather than two that a host-side test compares.
+pub mod mina_wrap_finalize_fold;
 pub mod mpt_holding_leaf;
 pub mod note_spend_leaf_adapter;
 pub mod packed_interleaved_merkle;
