@@ -59,7 +59,7 @@ FIXREL="metatheory/fixtures"
 # The floor is a RATCHET, not a target: raise it when a harness grows a test. A harness that drops
 # below its floor has LOST a property, which is exactly the change nothing else in the tree reports.
 HARNESSES=(
-  "r4|pickles-r4-harness|6|R4a: the first provable Lean-PLACED circuit + both tamper polarities + the no-copy control + o1js render fidelity"
+  "r4|pickles-r4-harness|7|R4a: the first provable Lean-PLACED circuit + both tamper polarities + the no-copy control + o1js render fidelity + the pubSize=0 emission carrying NO public_input key (absent is not empty)"
   "poseidon|pickles-poseidon-harness|5|a REAL Poseidon permutation, output pinned to the o1js Poseidon.hash([1]) gold"
   "curvegate|pickles-curvegate-harness|19|the four kimchi CURVE gates (complete_add, endo_mul, endo_mul_scalar, var_base_mul), three-way each"
   "compose|pickles-compose-harness|7|the first CROSS-GATE copy wire: var_base_mul output consumed by complete_add through sigma"
@@ -67,11 +67,23 @@ HARNESSES=(
   "stepfragment|pickles-stepfragment-harness|9|the 132-row step_main fragment: 6 chained var_base_mul + endo_mul + a 6-long complete_add chain"
   "stepmain|pickles-stepmain-harness|9|step_verifier.verify_one ASSEMBLED: a copy-wired Poseidon sponge, chained EndoMulScalar CLOSED by to_field_checked's endo lift, an MSM whose scalar IS the derived challenge, endo_mul fold rounds, deferred b(zeta)+combined_inner_product, ft_eval0 + Plonk_checks.checked + the six-gate linearization constant term, the 43-column evaluation absorption with opt-sponge masking, and finalize_other_proof's TAIL - both b legs, the three Type1/Fp unshifts, xi_correct and the asserted Boolean.all behind should_verify - PRIMARY_LEN 67, all seven gate types in one circuit"
   "wrapmain|pickles-wrapmain-harness|9|wrap_main ASSEMBLED, the half nothing had touched: over PALLAS and Fq (not Vesta/Fp - wrap_main_inputs.ml:4,6 sets Me=Tock, Impl=Impls.Wrap), four sub-circuits of the WRAP recursive verifier. The Fq Poseidon transcript of wrap_verifier.ml:516-646 driven by the REAL rate-2 state machine (beta and gamma share ONE permutation; the digest squeeze is the fork at :645-646 that does not advance the transcript), and pinned by re-deriving beta/gamma/alpha/zeta/digest of a REAL accepted Vesta proof; to_field_checked over Fq with the n0/a0/b0 seeds pinned and BOTH halves of lowest_128_bits range-checked; One_hot_vector + Pseudo.choose + ones_vector's Field.equal gadget + Branch_data.Checked.pack, the selection sub-circuit with no step-side analogue; and the closing public tie through placeChecked. 22 of Mina's 40 wrap statement words are derived; the rest is named by sub-circuit in KimchiWrapMain 13"
+  "preimage|pickles-preimage-harness|11|the first Lean-authored circuit here that is NOT a Pickles shape: I know x such that Poseidon.hash([x]) = c, with c the ONE PUBLIC INPUT. Mina's own SRS construction (not kimchi's test srs), the VERIFIER refusing an honest proof offered at c+1, a forged claim failing to close the PERMUTATION with the gate preflight disabled, the control WITHOUT the binding wire accepting the same forgery, the wire moving the VERIFICATION KEY, and the same statement re-authored through assertEqual emitting BYTE-IDENTICAL JSON at zero rows. UNDECLARED until 2026-08-06 - it landed 08-05 and the backward leg of this ratchet was red for it, which is the leg working"
+  "chain|pickles-chain-harness|6|the CHAINED wrap rungs: the transcript is dregg's OWN step proof's tape rather than a fixture. UNDECLARED until 2026-08-06, same as preimage. WARNING: its committed fixtures predate 9413a4bd3's slot census (they carry no derived_slots/unread_slots at all) and are 18 rows behind the Lean; re-emit with lake env lean --run Dregg2/Circuit/Emit/EmitStepWrapChainJson.lean"
   "crossimpl|pickles-crossimpl-harness|9|the CROSS-IMPLEMENTATION differential: dregg's Lean Pickles/kimchi value layer against o1-labs' proof-systems 0.3.0 over a deterministic sweep of 2576 inputs (random + structured + adversarial), 15 function pairs, byte-identical vectors. THE ONLY EVIDENCE IN THE TREE ABOUT THE FUNCTION rather than about one devnet block's value; run the whole differential with scripts/pickles-crossimpl-differential.sh"
   "openmina|pickles-openmina-harness|8|the SECOND reference implementation of the cross-impl differential: OPENMINA (mina-tree), not kimchi - its own ScalarChallenge::to_field (a bit-reversal where kimchi writes a reversed get_bit loop), its own challenge_polynomial, and the ShiftedValue Type1/Type2 bridge kimchi does not carry; 1230 records over the shift boundary, plus a MEASURED openmina-vs-kimchi endo agreement over 266 challenges"
-  "vkderive|pickles-vk-derive|11|the VK-DERIVATION SEAM: Lean-emitted KimchiWrapMain gates (Pallas/Fq) -> kimchi constraint system -> Mina's own SRS -> the 28 wrap_index commitments -> the base64 binprot of Side_loaded_verification_key.Stable.V2. Three keys o1js ITSELF emitted round-trip BYTE-IDENTICALLY, our Poseidon reproduces o1js vk.hash on all three (a cross-implementation pin mina-rust does not have), one coefficient of one Lean gate +1 moves exactly coeff[0] and holds the other 27, and the strict reader refuses off-curve/truncated/bad-nil/non-canonical/bad-tag. Whether MINA'S OWN READER accepts a derived key is measured by scripts/mina-vk-derivation-gate.sh"
+  "vkderive|pickles-vk-derive|13|the VK-DERIVATION SEAM: Lean-emitted KimchiWrapMain gates (Pallas/Fq) -> kimchi constraint system -> Mina's own SRS -> the 28 wrap_index commitments -> the base64 binprot of Side_loaded_verification_key.Stable.V2. Three keys o1js ITSELF emitted round-trip BYTE-IDENTICALLY, our Poseidon reproduces o1js vk.hash on all three (a cross-implementation pin mina-rust does not have), one coefficient of one Lean gate +1 moves exactly coeff[0] and holds the other 27, and the strict reader refuses off-curve/truncated/bad-nil/non-canonical/bad-tag. Whether MINA'S OWN READER accepts a derived key is measured by scripts/mina-vk-derivation-gate.sh. SINCE THE DRIVER COLLAPSE it is field- and circuit-parametric: --curve pallas|vesta is REQUIRED and has no default (nothing in an emitted circuit says which pasta prime it was authored over, both accept every literal below p, and the wrong lane parses SILENTLY), a literal at or above the declared field's modulus is REFUSED rather than reduced, and a Vesta-committed derivation carries no Mina wire encoding at all - mina_vk exists only on Derived<Wrap>, so a step key cannot be written as a side-loaded VK by construction"
 )
 DECLARED_COUNT=${#HARNESSES[@]}
+
+# ⚑ THE SHARED DRIVER. `build_gates` / `build_witness` / `index_for` / `prove_and_verify` used to be
+# open-coded in four of the harnesses above; they are `pickles-circuit-driver` now, once, generic
+# over the curve. It is a LIBRARY — it carries no fixtures and asserts nothing about any circuit —
+# so the ratchet's `pickles-*-harness` glob does not see it, and that is exactly how a single point
+# of failure for four gates becomes invisible. Its own tests are about the READER: the canonicality
+# refusal that stops an Fq coefficient reducing into Fp, the sign handling, the width `i128` could
+# not hold, and that an ABSENT `public_input` key is not an empty one.
+DRIVER_DIR="pickles-circuit-driver"
+DRIVER_FLOOR=8
 
 MODE=run; WANT=()
 for a in "$@"; do
@@ -177,6 +189,26 @@ static_check() {
     printf '  ok   %-30s %2d fixtures  %2d #[test] @%s (floor %s)\n' "$dir" "$nfix" "$ntests" "$src_of" "$floor"
     seen=$((seen+1))
   done
+  # ⚑ the shared driver: declared, carried by HEAD, and still meeting its own floor.
+  local dd="$fix/$DRIVER_DIR"
+  if [ ! -f "$dd/src/lib.rs" ]; then
+    echo "  RED  $DRIVER_DIR — the shared driver is GONE; four harnesses read their circuits through it"
+    fails=$((fails+1))
+  elif [ "$is_git" -eq 1 ] && ! head_has "$FIXREL/$DRIVER_DIR/src/lib.rs"; then
+    echo "  RED  $DRIVER_DIR — src/lib.rs is on disk and HEAD DOES NOT CARRY IT"
+    fails=$((fails+1))
+  else
+    local dt
+    if [ "$is_git" -eq 1 ]; then dt=$(head_count_tests "$FIXREL/$DRIVER_DIR/src/lib.rs")
+    else dt=$(count_tests "$dd/src/lib.rs"); fi
+    if [ "$dt" -lt "$DRIVER_FLOOR" ]; then
+      echo "  RED  $DRIVER_DIR — $dt #[test] fns, floor is $DRIVER_FLOOR (the shared reader LOST a property)"
+      fails=$((fails+1))
+    else
+      printf '  ok   %-30s  (library)  %2d #[test] (floor %s)\n' "$DRIVER_DIR" "$dt" "$DRIVER_FLOOR"
+    fi
+  fi
+
   # backward: anything on disk that nobody declared
   for d in "$fix"/pickles-*-harness; do
     [ -d "$d" ] || continue
@@ -215,6 +247,26 @@ run_all() {
   local fix="$ROOT/$FIXREL"
   local fails=0 ran=0 total_tests=0 t0 t1 tstart tend
   t0=$(date +%s)
+  # ⚑ THE SHARED DRIVER FIRST. Four of the harnesses below read their circuits through it, so a
+  # driver that is red makes their greens meaningless — and its tests run in a second.
+  if want driver || [ ${#WANT[@]} -eq 0 ]; then
+    local dmp="$fix/$DRIVER_DIR/Cargo.toml"
+    echo "── driver ($DRIVER_DIR) ──"
+    echo "   the ONE reader: the canonicality refusal, the sign, the 253-bit width, absent-is-not-empty"
+    local dout drc dpassed
+    dout="$(cargo test --release --manifest-path "$dmp" 2>&1)"; drc=$?
+    dpassed="$(printf '%s\n' "$dout" | grep -oE '^test result: ok\. [0-9]+ passed' | grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}')"
+    dpassed="${dpassed:-0}"
+    if [ "$drc" -ne 0 ] || [ "$dpassed" -lt "$DRIVER_FLOOR" ]; then
+      echo "   RED  driver: exit $drc, $dpassed passing (floor $DRIVER_FLOOR)"
+      printf '%s\n' "$dout" | tail -20
+      fails=$((fails+1))
+    else
+      echo "   ok   $dpassed tests passed"
+      ran=$((ran+1)); total_tests=$((total_tests+dpassed))
+    fi
+  fi
+
   local row key dir floor desc
   for row in "${HARNESSES[@]}"; do
     IFS='|' read -r key dir floor desc <<< "$row"

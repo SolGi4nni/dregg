@@ -35,6 +35,10 @@ name = "derive-vk"
 path = "src/main.rs"
 
 [dependencies]
+# ⚑ THE ONE DRIVER — and it is what makes the second curve a type argument here instead of a second
+# copy of `build_gates`.
+pickles-circuit-driver = { path = "../pickles-circuit-driver" }
+
 kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
@@ -44,6 +48,7 @@ o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 ark-ec = { version = "0.5.0" }
 ark-poly = { version = "0.5.0" }
 ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+num-bigint = { version = "0.4", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

@@ -43,7 +43,7 @@ House Law #1: the CIRCUIT is Lean-authored; `proof-systems` (the harness) is the
 
 ⚑ IMPORTS `…KimchiStepMainCore`, NOT THE UMBRELLA (2026-08-02, with the split). Every name this
 driver uses — `mkStep`, `rungRows`, `stepGates`, `placedOf`, `stepWitness`, `rungProbeRows`,
-`stepPublic`, `renderStepCircuit`, `Rung`, `shapeStep`/`shapeSmoke` — is §1–§11, i.e. Core, which
+`stepPublic`, `stepCircuit`, `Rung`, `shapeStep`/`shapeSmoke` — is §1–§11, i.e. Core, which
 elaborates in ~11 s. The umbrella additionally pulls the thirteen PIN modules (837 `#guard`s,
 ~15 min of interpretation), and EMITTING a circuit does not depend on any of them. So the emit →
 prove loop no longer waits on the pins. ⚠ This does NOT unroot a guard: `Dregg2.PicklesSynthesis`
@@ -53,6 +53,7 @@ import Dregg2.Circuit.Emit.KimchiStepMainCore
 
 open Dregg2.Circuit.Emit.KimchiStepMain
 open Dregg2.Circuit.Emit.KimchiPlacement (PGate PlacedGate)
+open Dregg2.Circuit.Emit.KimchiCircuitJson (renderCircuit)
 
 /-- Force a `Nat` before the next clock read. `let x := e` for pure `e` is FLOATABLE — the compiler
 happily sinks the work past an `IO.monoMsNow`, which is how a phase split silently reports `0 ms`
@@ -129,10 +130,14 @@ def emitRung (dir tag : String) (t : StepData) (k : Rung) (wiredOnly : Bool := f
   let probes := ((rows.zip (List.range rows.length)).filter (fun ri => ri.1.probe)).map
                   (fun ri => p + ri.2)
   let pub := if p == 0 then [] else stepPublic t
-  let js := renderStepCircuit s!"stepmain_{tag}_{k.tag}" p (p + n) placed w pub probes
+  let js := renderCircuit { name := s!"stepmain_{tag}_{k.tag}", pubSize := p, numRows := p + n
+                          , gates := placed, witness := w
+                          , publicInput := some pub, probeRows := some probes }
   writeAtomic s!"{dir}/stepmain_{tag}_{k.tag}.json" js
   unless wiredOnly do
-    let jsU := renderStepCircuit s!"stepmain_{tag}_{k.tag}_UNWIRED" p (p + n) placedU w pub probes
+    let jsU := renderCircuit { name := s!"stepmain_{tag}_{k.tag}_UNWIRED", pubSize := p
+                             , numRows := p + n, gates := placedU, witness := w
+                             , publicInput := some pub, probeRows := some probes }
     writeAtomic s!"{dir}/stepmain_{tag}_{k.tag}_unwired.json" jsU
   -- ⚠ And REMOVE a stale control rather than leave one from an older run beside a fresh wired
   -- artifact. A `_unwired.json` that no longer corresponds to the `.json` next to it is exactly the

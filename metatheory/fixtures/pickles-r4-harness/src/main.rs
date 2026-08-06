@@ -3,6 +3,18 @@
 // (Lean); this harness only reads that JSON, builds the pure-Rust kimchi objects, and runs the
 // prover/verifier. House Law #1: the circuit is Lean-authored; proof-systems is the Rust prover.
 //
+// ⚑ THE READER IS `pickles-circuit-driver`, NOT A COPY. `build_gates`, `build_witness`, `index_for`
+// and `prove_and_verify` used to be open-coded here and in three sibling harnesses. What THIS copy
+// disagreed with the others about, measured: its `parse_fp` went through `i128`, so it PANICS on any
+// value wider than 127 bits — it could not have read a single Poseidon round constant, let alone a
+// wrap statement word. The shared reader parses arbitrary precision AND refuses a literal that is
+// not canonical for the field, instead of letting `ark-ff`'s `from_str` reduce it silently.
+//
+// ⚠ The one thing that is NOT shared is the index OPTIONS, and deliberately: this rung keeps
+// kimchi's prover-side gate-satisfaction PREFLIGHT ON (`gate_checks(true)`), which is what it always
+// did. Its tampers are therefore refused before the argument runs, which is weaker than the sibling
+// rungs' refusals and is stated here rather than quietly harmonised away.
+//
 // Two entry points over the SAME logic:
 //   * `main()`  — the demo/regeneration driver. Reads the four JSON files from a directory (argv[1],
 //     default the committed `fixtures/` dir), runs the full accept + both-tamper + control sequence,
@@ -12,51 +24,17 @@
 //     one polarity, so `cargo test` reports pass/fail per property (accept, gate-tamper reject,
 //     copy-tamper reject, no-copy control accept, render-fidelity vs the o1js goldens).
 
-use std::array;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use groupmap::GroupMap;
-use mina_curves::pasta::{Fp, Vesta, VestaParameters};
-use mina_poseidon::{
-    constants::PlonkSpongeConstantsKimchi, pasta::FULL_ROUNDS, sponge::DefaultFqSponge,
-    sponge::DefaultFrSponge,
-};
-use poly_commitment::{commitment::CommitmentCurve, ipa::OpeningProof};
 use serde::Deserialize;
 
-use kimchi::{
-    circuits::{
-        gate::{CircuitGate, GateType},
-        wires::{GateWires, Wire, COLUMNS},
-    },
-    proof::ProverProof,
-    prover_index::{testing::new_index_for_test, ProverIndex},
-    verifier::{batch_verify, Context},
+use pickles_circuit_driver::{
+    kimchi::circuits::wires::COLUMNS,
+    load_in,
+    step::{self, F},
+    CircuitJson, IndexOpts,
 };
-
-type BaseSponge = DefaultFqSponge<VestaParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type Idx = ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>>;
-
-// ---- the Lean-emitted JSON shapes ----
-
-#[derive(Deserialize)]
-struct GateJson {
-    typ: u64,
-    wires: Vec<[usize; 2]>,
-    coeffs: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct CircuitJson {
-    #[allow(dead_code)]
-    name: String,
-    public_input_size: usize,
-    num_rows: usize,
-    gates: Vec<GateJson>,
-    witness: Vec<Vec<String>>, // COLUMNS columns, each num_rows long
-}
 
 #[derive(Deserialize)]
 struct WireCheckJson {
@@ -70,106 +48,14 @@ fn fixtures_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures"))
 }
 
-// Decimal (possibly negative) string -> Fp, reduced.
-fn parse_fp(s: &str) -> Fp {
-    let v: i128 = s.parse().expect("coeff/witness must be a decimal integer");
-    if v < 0 {
-        -Fp::from((-v) as u128)
-    } else {
-        Fp::from(v as u128)
-    }
+/// ⚑ R4a's index options, unchanged from before the collapse: kimchi's serialized TEST srs and the
+/// gate-satisfaction preflight ON.
+fn opts(c: &CircuitJson) -> IndexOpts {
+    IndexOpts::test(c.public_input_size).gate_checks(true)
 }
 
-fn gate_type_from_ordinal(o: u64) -> GateType {
-    match o {
-        0 => GateType::Zero,
-        1 => GateType::Generic,
-        2 => GateType::Poseidon,
-        3 => GateType::CompleteAdd,
-        4 => GateType::VarBaseMul,
-        5 => GateType::EndoMul,
-        6 => GateType::EndoMulScalar,
-        _ => panic!("unsupported gate ordinal {o} for R4a"),
-    }
-}
-
-fn load_circuit(dir: &std::path::Path, name: &str) -> CircuitJson {
-    let path = dir.join(name);
-    let raw =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
-}
-
-fn build_gates(c: &CircuitJson) -> Vec<CircuitGate<Fp>> {
-    c.gates
-        .iter()
-        .map(|g| {
-            assert_eq!(g.wires.len(), 7, "kimchi PERMUTS = 7 wires per gate");
-            let wires: GateWires = array::from_fn(|i| Wire {
-                row: g.wires[i][0],
-                col: g.wires[i][1],
-            });
-            let coeffs: Vec<Fp> = g.coeffs.iter().map(|s| parse_fp(s)).collect();
-            CircuitGate::new(gate_type_from_ordinal(g.typ), wires, coeffs)
-        })
-        .collect()
-}
-
-// The witness as proof-systems wants it: COLUMNS columns, each `num_rows` long.
-fn build_witness(c: &CircuitJson) -> [Vec<Fp>; COLUMNS] {
-    assert_eq!(
-        c.witness.len(),
-        COLUMNS,
-        "witness must have {COLUMNS} columns"
-    );
-    array::from_fn(|col| {
-        let column = &c.witness[col];
-        assert_eq!(
-            column.len(),
-            c.num_rows,
-            "each witness column is num_rows long"
-        );
-        column.iter().map(|s| parse_fp(s)).collect()
-    })
-}
-
-// Build a fresh ProverIndex (+ verifier index digest) from a circuit's gate list.
-fn index_for(c: &CircuitJson) -> Idx {
-    let gates = build_gates(c);
-    let mut index = new_index_for_test::<FULL_ROUNDS, Vesta>(gates, c.public_input_size);
-    index.compute_verifier_index_digest::<BaseSponge>();
-    index
-}
-
-// Prove + verify one witness against a fixed index. Ok(()) iff the verifier accepts.
-fn prove_and_verify(
-    index: &Idx,
-    group_map: &<Vesta as CommitmentCurve>::Map,
-    witness: [Vec<Fp>; COLUMNS],
-    public_input: &[Fp],
-) -> Result<(), String> {
-    let proof: ProverProof<Vesta, OpeningProof<Vesta, FULL_ROUNDS>, FULL_ROUNDS> =
-        ProverProof::create::<BaseSponge, ScalarSponge, _>(
-            group_map,
-            witness,
-            &[],
-            index,
-            &mut rand::rngs::OsRng,
-        )
-        .map_err(|e| format!("prove rejected: {e:?}"))?;
-
-    let vk = index.verifier_index.as_ref().expect("verifier index");
-    let ctx = Context {
-        verifier_index: vk,
-        proof: &proof,
-        public_input,
-    };
-    batch_verify::<55, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>>(
-        group_map,
-        &[ctx],
-    )
-    .map_err(|e| format!("verify rejected: {e:?}"))?;
-    Ok(())
+fn index_for(c: &CircuitJson) -> step::Index {
+    step::index_for(c, opts(c))
 }
 
 // Read a wire-check fixture and return whether the Lean-rendered placement equals the o1js golden.
@@ -177,6 +63,11 @@ fn render_fidelity(dir: &std::path::Path, name: &str) -> (WireCheckJson, bool) {
     let path = dir.join(name);
     let raw =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    assert!(
+        !raw.trim().is_empty(),
+        "{} is EMPTY — a zero-byte fixture would make this check vacuous",
+        path.display()
+    );
     let wc: WireCheckJson =
         serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
     let ok = wc.placed_wires == wc.o1js_wires;
@@ -213,7 +104,7 @@ fn main() {
     println!();
 
     // --- 2. load the Lean-synthesized binding circuit ---
-    let circuit = load_circuit(&dir, "binding.json");
+    let circuit = load_in(&dir, "binding.json");
     println!(
         "-- binding circuit '{}' from Lean: {} gates, {} rows, {} public inputs --",
         circuit.name,
@@ -222,15 +113,15 @@ fn main() {
         circuit.public_input_size
     );
 
-    let public_input: Vec<Fp> = vec![]; // public_input_size == 0 here
+    let public_input: Vec<F> = step::public(&circuit); // public_input_size == 0 here
     let index = index_for(&circuit);
-    let group_map = <Vesta as CommitmentCurve>::Map::setup();
+    let group_map = step::group_map();
     println!("   built ProverIndex from the Lean gate list");
 
     // --- 3. PROVE + VERIFY the good witness ---
-    let good = build_witness(&circuit);
+    let good = step::witness(&circuit);
     let t = Instant::now();
-    match prove_and_verify(&index, &group_map, good, &public_input) {
+    match step::prove_and_verify(&index, &group_map, good, &public_input) {
         Ok(()) => println!(
             "[MILESTONE] verify() == true on the Lean-synthesized circuit (MEASURED {:?})",
             t.elapsed()
@@ -245,9 +136,9 @@ fn main() {
     );
 
     // (4a) GATE-constraint tamper: flip (col 0, row 0): 5 -> 6. Row-0 Mul now has p=35 but a*b=42.
-    let mut w_gate = build_witness(&circuit);
-    w_gate[0][0] = Fp::from(6u64);
-    match prove_and_verify(&index, &group_map, w_gate, &public_input) {
+    let mut w_gate: [Vec<F>; COLUMNS] = step::witness(&circuit);
+    w_gate[0][0] = F::from(6u64);
+    match step::prove_and_verify(&index, &group_map, w_gate, &public_input) {
         Err(e) => println!(
             "[bind:gate ] tamper a=5->6 REJECTED at [{}]",
             e.split(':').next().unwrap_or("?")
@@ -258,9 +149,9 @@ fn main() {
     }
 
     // (4b) COPY-permutation tamper: flip the FREE copy cell p@(1,3) (col 3, row 1): 35 -> 99.
-    let mut w_copy = build_witness(&circuit);
-    w_copy[3][1] = Fp::from(99u64);
-    match prove_and_verify(&index, &group_map, w_copy, &public_input) {
+    let mut w_copy = step::witness(&circuit);
+    w_copy[3][1] = F::from(99u64);
+    match step::prove_and_verify(&index, &group_map, w_copy, &public_input) {
         Err(e) => println!(
             "[bind:copy ] tamper p@(1,3)=35->99 REJECTED at [{}]",
             e.split(':').next().unwrap_or("?")
@@ -273,17 +164,17 @@ fn main() {
     // (4c) CONTROL: same free-cell flip on the no-copy circuit (where (1,3) is NOT wired) is ACCEPTED.
     println!();
     println!("-- control: same (1,3) flip WITHOUT the copy wire must be ACCEPTED (wire is what binds) --");
-    let nc = load_circuit(&dir, "nocopy.json");
+    let nc = load_in(&dir, "nocopy.json");
     let nc_index = index_for(&nc);
-    match prove_and_verify(&nc_index, &group_map, build_witness(&nc), &public_input) {
+    match step::prove_and_verify(&nc_index, &group_map, step::witness(&nc), &public_input) {
         Ok(()) => println!("[control  ] no-copy circuit good witness verify() == true"),
         Err(e) => {
             panic!("[control] no-copy good witness REJECTED ({e}) -- control circuit is wrong")
         }
     }
-    let mut nc_tamper = build_witness(&nc);
-    nc_tamper[3][1] = Fp::from(99u64);
-    match prove_and_verify(&nc_index, &group_map, nc_tamper, &public_input) {
+    let mut nc_tamper = step::witness(&nc);
+    nc_tamper[3][1] = F::from(99u64);
+    match step::prove_and_verify(&nc_index, &group_map, nc_tamper, &public_input) {
         Ok(()) => println!(
             "[control  ] no-copy circuit ACCEPTS (1,3)=35->99 (cell inert w/o the wire) -> the WIRE binds"
         ),
@@ -305,20 +196,19 @@ fn main() {
 mod r4a {
     use super::*;
 
-    fn setup() -> (CircuitJson, Idx, <Vesta as CommitmentCurve>::Map) {
+    fn setup() -> (CircuitJson, step::Index, step::Map) {
         let dir = fixtures_dir();
-        let circuit = load_circuit(&dir, "binding.json");
+        let circuit = load_in(&dir, "binding.json");
         let index = index_for(&circuit);
-        let group_map = <Vesta as CommitmentCurve>::Map::setup();
-        (circuit, index, group_map)
+        (circuit, index, step::group_map())
     }
 
     // ACCEPT: the Lean-synthesized binding circuit's good witness proves + verifies.
     #[test]
     fn good_witness_verifies() {
         let (circuit, index, gm) = setup();
-        let good = build_witness(&circuit);
-        prove_and_verify(&index, &gm, good, &[])
+        let good = step::witness(&circuit);
+        step::prove_and_verify(&index, &gm, good, &[])
             .expect("the Lean-synthesized good witness must verify() == true");
     }
 
@@ -326,10 +216,10 @@ mod r4a {
     #[test]
     fn gate_tamper_rejected() {
         let (circuit, index, gm) = setup();
-        let mut w = build_witness(&circuit);
-        w[0][0] = Fp::from(6u64);
+        let mut w = step::witness(&circuit);
+        w[0][0] = F::from(6u64);
         assert!(
-            prove_and_verify(&index, &gm, w, &[]).is_err(),
+            step::prove_and_verify(&index, &gm, w, &[]).is_err(),
             "gate-constraint tamper (a=5->6) was ACCEPTED -- the generic-gate coeffs are vacuous"
         );
     }
@@ -340,10 +230,10 @@ mod r4a {
     #[test]
     fn copy_tamper_rejected() {
         let (circuit, index, gm) = setup();
-        let mut w = build_witness(&circuit);
-        w[3][1] = Fp::from(99u64);
+        let mut w = step::witness(&circuit);
+        w[3][1] = F::from(99u64);
         assert!(
-            prove_and_verify(&index, &gm, w, &[]).is_err(),
+            step::prove_and_verify(&index, &gm, w, &[]).is_err(),
             "copy-permutation tamper (p@(1,3)=35->99) was ACCEPTED -- placement wires are inert"
         );
     }
@@ -353,17 +243,17 @@ mod r4a {
     #[test]
     fn nocopy_control_accepts_flip() {
         let dir = fixtures_dir();
-        let nc = load_circuit(&dir, "nocopy.json");
+        let nc = load_in(&dir, "nocopy.json");
         let index = index_for(&nc);
-        let gm = <Vesta as CommitmentCurve>::Map::setup();
+        let gm = step::group_map();
         // good witness verifies
-        prove_and_verify(&index, &gm, build_witness(&nc), &[])
+        step::prove_and_verify(&index, &gm, step::witness(&nc), &[])
             .expect("no-copy control good witness must verify");
         // and the (1,3) flip is accepted (the cell is inert without the wire)
-        let mut w = build_witness(&nc);
-        w[3][1] = Fp::from(99u64);
+        let mut w = step::witness(&nc);
+        w[3][1] = F::from(99u64);
         assert!(
-            prove_and_verify(&index, &gm, w, &[]).is_ok(),
+            step::prove_and_verify(&index, &gm, w, &[]).is_ok(),
             "no-copy circuit REJECTED (1,3)=35->99 -- (1,3) is NOT actually copy-free; the copy_tamper claim is unproven"
         );
     }
@@ -387,5 +277,20 @@ mod r4a {
             "caseB render diverged from o1js golden: placed={:?} o1js={:?}",
             wc.placed_wires, wc.o1js_wires
         );
+    }
+
+    /// ⚑ THE EMISSION HAS NO `public_input` KEY, AND THAT IS A FACT ABOUT THE ARTIFACT, not a
+    /// default this harness supplies. The `pubSize = 0` gate fixtures OMIT the key; the wrap and
+    /// step rungs emit it EMPTY. Reading the two as the same thing is what let four renderers and
+    /// four readers drift apart, so it is asserted here rather than assumed.
+    #[test]
+    fn the_pubsize_zero_emission_omits_the_public_input_key() {
+        let c = load_in(&fixtures_dir(), "binding.json");
+        assert_eq!(c.public_input_size, 0);
+        assert_eq!(
+            c.public_input, None,
+            "an R4a fixture must carry NO public_input key at all"
+        );
+        assert!(step::public(&c).is_empty());
     }
 }

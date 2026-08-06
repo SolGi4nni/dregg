@@ -46,12 +46,14 @@ reduce in the interpreter; no `sorry`/`native_decide`. Imports `KimchiPlacement`
 checker), `PastaField` (`pN`).
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiCircuitJson
 import Dregg2.Circuit.Emit.KimchiVerify
 import Dregg2.Circuit.Emit.PastaField
 
 namespace Dregg2.Circuit.Emit.KimchiRenderEndoMulScalar
 
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson
 open Dregg2.Circuit.Emit.KimchiVerify (endomulScalarConstraints endomulScalarConstsOk)
 open Dregg2.Circuit.Emit.PastaField (pN)
 
@@ -112,30 +114,17 @@ def emsWitness : List (List Int) :=
 
 /-! ## §4 — the JSON renderer (same shape the harness parses). -/
 
-private def qt (s : String) : String := "\"" ++ s ++ "\""
-private def renderCell (c : Cell) : String := "[" ++ toString c.row ++ "," ++ toString c.col ++ "]"
-private def renderWires (ws : List Cell) : String :=
-  "[" ++ String.intercalate "," (ws.map renderCell) ++ "]"
-private def renderIntList (xs : List Int) : String :=
-  "[" ++ String.intercalate "," (xs.map (fun i => qt (toString i))) ++ "]"
-private def renderGate (g : PlacedGate) : String :=
-  "{" ++ qt "typ" ++ ":" ++ toString g.kind.ordinal ++ ","
-       ++ qt "wires" ++ ":" ++ renderWires g.wires ++ ","
-       ++ qt "coeffs" ++ ":" ++ renderIntList g.coeffs ++ "}"
-private def renderGates (gs : List PlacedGate) : String :=
-  "[" ++ String.intercalate "," (gs.map renderGate) ++ "]"
-private def renderWitness (w : List (List Int)) : String :=
-  "[" ++ String.intercalate "," (w.map renderIntList) ++ "]"
 
-def renderCircuit (name : String) (pubSize numRows : Nat)
-    (gs : List PlacedGate) (w : List (List Int)) : String :=
-  "{" ++ qt "name" ++ ":" ++ qt name ++ ","
-       ++ qt "public_input_size" ++ ":" ++ toString pubSize ++ ","
-       ++ qt "num_rows" ++ ":" ++ toString numRows ++ ","
-       ++ qt "gates" ++ ":" ++ renderGates gs ++ ","
-       ++ qt "witness" ++ ":" ++ renderWitness w ++ "}"
 
-def endoMulScalarJson : String := renderCircuit "endoMulScalar16bit" 0 2 emsPlaced emsWitness
+/-! ⚑ **ONE RENDERER.** The copy of `renderCircuit` this module carried — one of eleven, each with
+its own private `q`/`qt`/`qs`, `renderCell`, `renderWires`, `renderIntList`, `renderGate`,
+`renderGates`, `renderWitness` — is DELETED. `KimchiCircuitJson.renderCircuit` is a pure function of
+a `KimchiCircuit` VALUE, and `renderCircuit_base_is_the_open_coded_shape` pins over EVERY argument
+that it emits the chain the deleted copy emitted. -/
+
+def endoMulScalarJson : String :=
+  renderCircuit { name := "endoMulScalar16bit", pubSize := 0, numRows := 2
+                , gates := emsPlaced, witness := emsWitness }
 
 /-! ## §5 — the in-CI pins (`#guard`; interpreter-reduced). -/
 

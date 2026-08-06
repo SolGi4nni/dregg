@@ -38,6 +38,10 @@ name = "harness"
 path = "src/main.rs"
 
 [dependencies]
+# ⚑ THE ONE DRIVER. `build_gates`/`build_witness`/`index_for`/`prove_and_verify` live there, once,
+# for both curves. This crate keeps only what is ABOUT R4a.
+pickles-circuit-driver = { path = "../pickles-circuit-driver" }
+
 kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }

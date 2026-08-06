@@ -81,10 +81,12 @@ two sources agree, and neither is `place`'s own definition.
 module roots cleanly into `PicklesSynthesis` (same split as `KimchiRenderPoseidon`).
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiCircuitJson
 
 namespace Dregg2.Circuit.Emit.KimchiRenderPublicInput
 
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson
 
 set_option autoImplicit false
 
@@ -224,50 +226,34 @@ def piWidePublic : List Int := (List.range wideN).map widePub
 
 /-! ## §3 — the JSON renderer (same shape every pickles harness parses). -/
 
-private def q (s : String) : String := "\"" ++ s ++ "\""
+/-! ⚑ `public_input` is emitted beside `public_input_size` because a `pubSize > 0` circuit is not
+runnable without it: the verifier is handed the vector separately (`kimchi/src/verifier.rs:816`
+rejects a length mismatch outright), so a fixture that omits it would force the harness to re-derive
+the public input in Rust — which is witness authoring, and would put the thing under test on both
+sides of the test. -/
+/-! ⚑ **ONE RENDERER, AND IT TAKES THE PUBLIC VECTOR.** The copy this module carried was written
+because none of the seven `pubSize = 0` copies took a `public_input`. Presence is now a field of the
+`KimchiCircuit` VALUE (`publicInput := some pub`), not a choice of which copy to call, and
+`renderCircuit_public_is_the_open_coded_shape` pins over EVERY argument that
+`KimchiCircuitJson.renderCircuit` emits the chain this module's copy emitted.
 
-private def renderCell (c : Cell) : String :=
-  "[" ++ toString c.row ++ "," ++ toString c.col ++ "]"
-
-private def renderWires (ws : List Cell) : String :=
-  "[" ++ String.intercalate "," (ws.map renderCell) ++ "]"
-
-private def renderIntList (xs : List Int) : String :=
-  "[" ++ String.intercalate "," (xs.map (fun i => q (toString i))) ++ "]"
-
-private def renderGate (g : PlacedGate) : String :=
-  "{" ++ q "typ" ++ ":" ++ toString g.kind.ordinal ++ ","
-       ++ q "wires" ++ ":" ++ renderWires g.wires ++ ","
-       ++ q "coeffs" ++ ":" ++ renderIntList g.coeffs ++ "}"
-
-private def renderGates (gs : List PlacedGate) : String :=
-  "[" ++ String.intercalate "," (gs.map renderGate) ++ "]"
-
-private def renderWitness (w : List (List Int)) : String :=
-  "[" ++ String.intercalate "," (w.map renderIntList) ++ "]"
-
-/-- A provable circuit WITH its public vector. `public_input` is emitted beside
-`public_input_size` because a `pubSize > 0` circuit is not runnable without it: the verifier is
-handed the vector separately (`kimchi/src/verifier.rs:816` rejects a length mismatch outright), so a
-fixture that omits it would force the harness to re-derive the public input in Rust — which is
-witness authoring, and would put the thing under test on both sides of the test. -/
-def renderCircuit (name : String) (pubSize numRows : Nat)
-    (gs : List PlacedGate) (w : List (List Int)) (pub : List Int) : String :=
-  "{" ++ q "name" ++ ":" ++ q name ++ ","
-       ++ q "public_input_size" ++ ":" ++ toString pubSize ++ ","
-       ++ q "public_input" ++ ":" ++ renderIntList pub ++ ","
-       ++ q "num_rows" ++ ":" ++ toString numRows ++ ","
-       ++ q "gates" ++ ":" ++ renderGates gs ++ ","
-       ++ q "witness" ++ ":" ++ renderWitness w ++ "}"
+⚠ `some []` is NOT `none`: the empty vector still emits `"public_input":[],`. That is what the wrap
+and step rungs below their closing rung emit, and it is why presence is carried rather than inferred
+from emptiness (`optField_some_nil_still_emits_the_key`). -/
 
 def piMulJsonA : String :=
-  renderCircuit "piMulInstanceA" piPub piRows piMulPlaced piWitnessA piPublicA
+  renderCircuit { name := "piMulInstanceA", pubSize := piPub, numRows := piRows
+                , gates := piMulPlaced, witness := piWitnessA, publicInput := some piPublicA }
 def piMulJsonB : String :=
-  renderCircuit "piMulInstanceB" piPub piRows piMulPlaced piWitnessB piPublicB
+  renderCircuit { name := "piMulInstanceB", pubSize := piPub, numRows := piRows
+                , gates := piMulPlaced, witness := piWitnessB, publicInput := some piPublicB }
 def piNoWireJson : String :=
-  renderCircuit "piNoWireControl" piPub piRows piNoWirePlaced piWitnessA piPublicA
+  renderCircuit { name := "piNoWireControl", pubSize := piPub, numRows := piRows
+                , gates := piNoWirePlaced, witness := piWitnessA, publicInput := some piPublicA }
 def piWideJson : String :=
-  renderCircuit "piWideStepPrimaryLen" wideN piWideRows piWidePlaced piWideWitness piWidePublic
+  renderCircuit { name := "piWideStepPrimaryLen", pubSize := wideN, numRows := piWideRows
+                , gates := piWidePlaced, witness := piWideWitness
+                , publicInput := some piWidePublic }
 
 /-! ## §4 — the in-CI pins over the EMITTED object (`#guard` / `decide`; they can go red).
 

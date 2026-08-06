@@ -10,226 +10,95 @@
 // Two entry points over the same logic: `main()` is the driver (point it at `/tmp/pickles-preimage`
 // to run the LIVE Lean emission); the `#[test]` fns are the committed gate, one property each.
 
-use std::array;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Instant;
 
 use ark_ff::{PrimeField, Zero};
-use groupmap::GroupMap;
-use mina_curves::pasta::{Fp, Fq, Vesta, VestaParameters};
+use mina_curves::pasta::{Fp, Fq};
 use mina_poseidon::{
     constants::{PlonkSpongeConstantsKimchi, SpongeConstants},
     pasta::{fp_kimchi, FULL_ROUNDS},
     poseidon::{ArithmeticSponge, Sponge},
-    sponge::{DefaultFqSponge, DefaultFrSponge},
-};
-use poly_commitment::{commitment::CommitmentCurve, ipa::OpeningProof, ipa::SRS, SRS as _};
-use serde::Deserialize;
-
-use kimchi::{
-    circuits::{
-        gate::{CircuitGate, GateType},
-        wires::{GateWires, Wire, COLUMNS},
-    },
-    proof::ProverProof,
-    prover_index::{testing::new_index_for_test_with_lookups_and_custom_srs, ProverIndex},
-    verifier::{batch_verify, Context},
 };
 
-type BaseSponge = DefaultFqSponge<VestaParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type Idx = ProverIndex<FULL_ROUNDS, Vesta, SRS<Vesta>>;
-
-// ---- the Lean-emitted JSON shape ----
-
-#[derive(Deserialize, Clone)]
-struct GateJson {
-    typ: u64,
-    wires: Vec<[usize; 2]>,
-    coeffs: Vec<String>,
-}
-
-#[derive(Deserialize, Clone)]
-struct CircuitJson {
-    name: String,
-    public_input_size: usize,
-    public_input: Vec<String>,
-    num_rows: usize,
-    gates: Vec<GateJson>,
-    witness: Vec<Vec<String>>, // COLUMNS columns, each num_rows long
-}
+use pickles_circuit_driver::{
+    kimchi::circuits::wires::COLUMNS, load_in, parse_field, step, CircuitJson, IndexOpts, Srs,
+};
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures"))
 }
 
-/// Decimal (possibly negative, possibly 255-bit) string -> Fp, reduced. `i128` is NOT enough here:
-/// the public input and every Poseidon round state are full field elements, so parsing must go
-/// through the arbitrary-precision decimal reader and the sign handled separately.
-fn parse_fp(s: &str) -> Fp {
-    if let Some(rest) = s.strip_prefix('-') {
-        -Fp::from_str(rest).expect("negative coefficient must be a decimal integer")
-    } else {
-        Fp::from_str(s).expect("coefficient/witness must be a decimal integer")
-    }
-}
-
-fn gate_type_from_ordinal(o: u64) -> GateType {
-    match o {
-        0 => GateType::Zero,
-        1 => GateType::Generic,
-        2 => GateType::Poseidon,
-        3 => GateType::CompleteAdd,
-        4 => GateType::VarBaseMul,
-        5 => GateType::EndoMul,
-        6 => GateType::EndoMulScalar,
-        _ => panic!("unsupported gate ordinal {o}"),
-    }
-}
-
 fn load(dir: &std::path::Path, name: &str) -> CircuitJson {
-    let path = dir.join(name);
-    let raw =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+    load_in(dir, name)
 }
 
-fn build_gates(c: &CircuitJson) -> Vec<CircuitGate<Fp>> {
-    c.gates
-        .iter()
-        .map(|g| {
-            assert_eq!(g.wires.len(), 7, "kimchi PERMUTS = 7 wires per gate");
-            let wires: GateWires = array::from_fn(|i| Wire {
-                row: g.wires[i][0],
-                col: g.wires[i][1],
-            });
-            let coeffs: Vec<Fp> = g.coeffs.iter().map(|s| parse_fp(s)).collect();
-            CircuitGate::new(gate_type_from_ordinal(g.typ), wires, coeffs)
-        })
-        .collect()
+fn parse_fp(s: &str) -> Fp {
+    parse_field::<Fp>(s)
 }
 
 fn build_witness(c: &CircuitJson) -> [Vec<Fp>; COLUMNS] {
-    assert_eq!(
-        c.witness.len(),
-        COLUMNS,
-        "witness must have {COLUMNS} columns"
-    );
-    array::from_fn(|col| {
-        let column = &c.witness[col];
-        assert_eq!(
-            column.len(),
-            c.num_rows,
-            "each witness column is num_rows long"
-        );
-        column.iter().map(|s| parse_fp(s)).collect()
-    })
+    step::witness(c)
 }
 
 fn build_public(c: &CircuitJson) -> Vec<Fp> {
-    assert_eq!(
-        c.public_input.len(),
-        c.public_input_size,
-        "the emitted public vector must have public_input_size entries"
-    );
-    c.public_input.iter().map(|s| parse_fp(s)).collect()
+    step::public(c)
 }
 
 /// ⚑ MINA'S OWN SRS CONSTRUCTION, not kimchi's serialized test SRS. `SRS::<Vesta>::create(n)` is the
 /// deterministic Blake2b-to-curve generator Mina uses (`SRS::<Vesta>::create(1 << 16)` on the step
 /// side), and it is index-deterministic, so this circuit's generators ARE a prefix of Mina's.
 /// ⚠ The DOMAIN is this circuit's, not Mina's 2^16 — see the manifest header on what that costs.
-fn index_for(c: &CircuitJson) -> Idx {
+/// ⚠ And it is the ONE thing this harness does not share with its three siblings: they take
+/// kimchi's serialized TEST srs, which is a DIFFERENT set of points and a different verification
+/// key. The choice is `Srs` data on the shared driver, not a fourth `index_for`.
+fn index_for(c: &CircuitJson) -> step::Index {
     index_with(c, /* gate preflight */ true)
 }
 
 /// `checks = false` disables kimchi's prover-side gate-satisfaction PREFLIGHT, so a refusal is by
 /// the argument and not by a debug assert. Every tamper below is run with the preflight OFF.
-fn index_with(c: &CircuitJson, checks: bool) -> Idx {
-    let gates = build_gates(c);
-    let mut index =
-        new_index_for_test_with_lookups_and_custom_srs::<FULL_ROUNDS, Vesta, SRS<Vesta>, _>(
-            gates,
-            c.public_input_size,
-            /* prev_challenges */ 0,
-            vec![],
-            None,
-            /* disable_gates_checks */ !checks,
-            /* override_srs_size */ None,
-            |d1, size| {
-                let srs = SRS::<Vesta>::create(size);
-                srs.get_lagrange_basis(d1);
-                srs
-            },
-            /* lazy_mode */ false,
-        );
-    index.compute_verifier_index_digest::<BaseSponge>();
-    index
+fn index_with(c: &CircuitJson, checks: bool) -> step::Index {
+    step::index_for(
+        c,
+        IndexOpts::test(c.public_input_size)
+            .srs(Srs::Mina)
+            .gate_checks(checks),
+    )
 }
 
-type Proof = ProverProof<Vesta, OpeningProof<Vesta, FULL_ROUNDS>, FULL_ROUNDS>;
+type Proof = step::StepProof;
 
 /// Prove alone. Separated from `verify_at` so a refusal can be ATTRIBUTED: a prover-side refusal
 /// (the permutation product failing to close) and a verifier-side refusal are different facts and
 /// only the second is evidence about what a chain would accept.
 fn prove(
-    index: &Idx,
-    group_map: &<Vesta as CommitmentCurve>::Map,
+    index: &step::Index,
+    group_map: &step::Map,
     witness: [Vec<Fp>; COLUMNS],
 ) -> Result<Proof, String> {
-    ProverProof::create::<BaseSponge, ScalarSponge, _>(
-        group_map,
-        witness,
-        &[],
-        index,
-        &mut rand::rngs::OsRng,
-    )
-    .map_err(|e| format!("prove rejected: {e:?}"))
+    step::prove(index, group_map, witness)
 }
 
 /// Verify an existing proof at a public input the caller chooses. This is the half a chain runs.
 fn verify_at(
-    index: &Idx,
-    group_map: &<Vesta as CommitmentCurve>::Map,
+    index: &step::Index,
+    group_map: &step::Map,
     proof: &Proof,
     public_input: &[Fp],
 ) -> Result<(), String> {
-    let vk = index.verifier_index.as_ref().expect("verifier index");
-    let ctx = Context {
-        verifier_index: vk,
-        proof,
-        public_input,
-    };
-    batch_verify::<55, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>>(
-        group_map,
-        &[ctx],
-    )
-    .map_err(|e| format!("verify rejected: {e:?}"))
+    step::verify_at(index, group_map, proof, public_input)
 }
 
 /// Prove + verify one witness against a fixed index at a given public input. `Ok(())` iff the
 /// verifier accepts.
 fn prove_and_verify(
-    index: &Idx,
-    group_map: &<Vesta as CommitmentCurve>::Map,
+    index: &step::Index,
+    group_map: &step::Map,
     witness: [Vec<Fp>; COLUMNS],
     public_input: &[Fp],
 ) -> Result<(), String> {
-    let proof = prove(index, group_map, witness)?;
-
-    let vk = index.verifier_index.as_ref().expect("verifier index");
-    let ctx = Context {
-        verifier_index: vk,
-        proof: &proof,
-        public_input,
-    };
-    batch_verify::<55, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>>(
-        group_map,
-        &[ctx],
-    )
-    .map_err(|e| format!("verify rejected: {e:?}"))?;
-    Ok(())
+    step::prove_and_verify(index, group_map, witness, public_input)
 }
 
 /// ⚑ AN INDEPENDENT IMPLEMENTATION OF THE HASH THE CIRCUIT COMPUTES. `mina-poseidon`'s
@@ -279,12 +148,8 @@ fn forged(c: &CircuitJson) -> ([Vec<Fp>; COLUMNS], Vec<Fp>) {
 
 /// ⚑ `Fq`, not `Fp`: the verifier-index digest is absorbed by the BASE-field sponge, so it is a
 /// Vesta base-field element — the same field a Mina VK hash lives in on this side.
-fn vk_digest(index: &Idx) -> Fq {
-    index
-        .verifier_index
-        .as_ref()
-        .expect("verifier index")
-        .digest::<BaseSponge>()
+fn vk_digest(index: &step::Index) -> Fq {
+    step::vk_digest(index)
 }
 
 fn main() {
@@ -325,7 +190,7 @@ fn main() {
     println!("   output cell(12,0): {}", output_of(&bound).into_bigint());
     println!();
 
-    let group_map = <Vesta as CommitmentCurve>::Map::setup();
+    let group_map = step::group_map();
 
     let t = Instant::now();
     let ib = index_for(&bound);
@@ -496,7 +361,7 @@ mod tests {
     #[test]
     fn the_honest_witness_proves_and_verifies() {
         let c = fx("preimage.json");
-        let group_map = <Vesta as CommitmentCurve>::Map::setup();
+        let group_map = step::group_map();
         let index = index_for(&c);
         prove_and_verify(&index, &group_map, build_witness(&c), &build_public(&c))
             .expect("the honest preimage witness must verify");
@@ -508,7 +373,7 @@ mod tests {
     #[test]
     fn a_valid_proof_does_not_verify_against_a_different_claim() {
         let c = fx("preimage.json");
-        let group_map = <Vesta as CommitmentCurve>::Map::setup();
+        let group_map = step::group_map();
         let index = index_for(&c);
         let proof = prove(&index, &group_map, build_witness(&c)).expect("honest proof");
         let real = build_public(&c);
@@ -528,7 +393,7 @@ mod tests {
     #[test]
     fn a_forged_claim_cannot_close_the_permutation() {
         let c = fx("preimage.json");
-        let group_map = <Vesta as CommitmentCurve>::Map::setup();
+        let group_map = step::group_map();
         let index = index_with(&c, /* preflight */ false);
         let (w, p) = forged(&c);
         let e = prove_and_verify(&index, &group_map, w, &p)
@@ -568,7 +433,7 @@ mod tests {
             "the control's output cell self-wires"
         );
 
-        let group_map = <Vesta as CommitmentCurve>::Map::setup();
+        let group_map = step::group_map();
         let index = index_with(&c, /* preflight */ false);
         let (w, p) = forged(&c);
         prove_and_verify(&index, &group_map, w, &p)
@@ -647,7 +512,7 @@ mod tests {
     /// accepts the same forgery.
     #[test]
     fn the_reauthored_circuit_refuses_the_forgery_in_the_permutation() {
-        let group_map = <Vesta as CommitmentCurve>::Map::setup();
+        let group_map = step::group_map();
 
         let b = fx("preimage_ae.json");
         let index = index_with(&b, /* preflight */ false);

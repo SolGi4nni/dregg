@@ -48,10 +48,12 @@ This is a SCRATCH executable (like `EmitAllJson`): run it with
 Dregg2.Circuit.Emit.KimchiPlacement`). It imports `KimchiPlacement` only.
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiCircuitJson
 
 namespace Dregg2.Circuit.Emit.KimchiRender
 
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson
 
 set_option autoImplicit false
 
@@ -94,65 +96,31 @@ def bindingWitness : List (List Int) :=
   [ [5, 35], [7, 0], [35, 0], [0, 35],
     [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0] ]
 
-/-! ## §2 — the JSON renderer (brace literals kept out of `s!` interpolation). -/
+/-! ## §2 — the JSON render.
 
-private def q (s : String) : String := "\"" ++ s ++ "\""
-
-private def renderCell (c : Cell) : String :=
-  "[" ++ toString c.row ++ "," ++ toString c.col ++ "]"
-
-private def renderWires (ws : List Cell) : String :=
-  "[" ++ String.intercalate "," (ws.map renderCell) ++ "]"
-
-private def renderWireList (wss : List (List Cell)) : String :=
-  "[" ++ String.intercalate "," (wss.map renderWires) ++ "]"
-
-/-- Coefficients/witness values are emitted as DECIMAL STRINGS (signed) so the Rust side reduces
-them into `Fp` losslessly regardless of magnitude/sign. -/
-private def renderIntList (xs : List Int) : String :=
-  "[" ++ String.intercalate "," (xs.map (fun i => q (toString i))) ++ "]"
-
-private def renderGate (g : PlacedGate) : String :=
-  "{" ++ q "typ" ++ ":" ++ toString g.kind.ordinal ++ ","
-       ++ q "wires" ++ ":" ++ renderWires g.wires ++ ","
-       ++ q "coeffs" ++ ":" ++ renderIntList g.coeffs ++ "}"
-
-private def renderGates (gs : List PlacedGate) : String :=
-  "[" ++ String.intercalate "," (gs.map renderGate) ++ "]"
-
-private def renderWitness (w : List (List Int)) : String :=
-  "[" ++ String.intercalate "," (w.map renderIntList) ++ "]"
-
-/-- A provable circuit: name, public-input size, row count, placed gates, witness columns. -/
-def renderCircuit (name : String) (pubSize numRows : Nat)
-    (gs : List PlacedGate) (w : List (List Int)) : String :=
-  "{" ++ q "name" ++ ":" ++ q name ++ ","
-       ++ q "public_input_size" ++ ":" ++ toString pubSize ++ ","
-       ++ q "num_rows" ++ ":" ++ toString numRows ++ ","
-       ++ q "gates" ++ ":" ++ renderGates gs ++ ","
-       ++ q "witness" ++ ":" ++ renderWitness w ++ "}"
-
-/-- A wire-fidelity check object: the render's `placed_wires` (from `place`) vs the o1js `o1js_wires`
-golden. The Rust harness parses both and asserts equality — a differential that the render
-(Lean → JSON → Rust parse) did not corrupt the byte-exact placement. -/
-def renderWireCheck (name : String) (placed o1js : List (List Cell)) : String :=
-  "{" ++ q "name" ++ ":" ++ q name ++ ","
-       ++ q "placed_wires" ++ ":" ++ renderWireList placed ++ ","
-       ++ q "o1js_wires" ++ ":" ++ renderWireList o1js ++ "}"
+⚑ **ONE RENDERER.** This module carried its own copy of `renderCircuit` plus six private
+helpers (`q`/`qt`, `renderCell`, `renderWires`, `renderIntList`, `renderGate`, `renderGates`,
+`renderWitness`) — one of eleven such copies. They are DELETED; the renderer is
+`KimchiCircuitJson.renderCircuit`, a pure function of a `KimchiCircuit` VALUE, and
+`renderCircuit_base_is_the_open_coded_shape` pins over EVERY argument that it emits the chain the
+deleted copy emitted. `renderWireCheck` moved with it, unchanged. -/
 
 end Dregg2.Circuit.Emit.KimchiRender
 
 /-! ## §3 — emit (top-level `main`, as `lake env lean --run` requires). -/
 
 open Dregg2.Circuit.Emit.KimchiPlacement in
+open Dregg2.Circuit.Emit.KimchiCircuitJson in
 open Dregg2.Circuit.Emit.KimchiRender in
 def main : IO Unit := do
   let dir := "/tmp/pickles-r4"
   IO.FS.createDirAll dir
   IO.FS.writeFile (dir ++ "/binding.json")
-    (renderCircuit "bindingMulConst" 0 2 bindingPlaced bindingWitness)
+    (renderCircuit { name := "bindingMulConst", pubSize := 0, numRows := 2
+                   , gates := bindingPlaced, witness := bindingWitness })
   IO.FS.writeFile (dir ++ "/nocopy.json")
-    (renderCircuit "noCopyControl" 0 2 noCopyPlaced bindingWitness)
+    (renderCircuit { name := "noCopyControl", pubSize := 0, numRows := 2
+                   , gates := noCopyPlaced, witness := bindingWitness })
   IO.FS.writeFile (dir ++ "/caseA.json")
     (renderWireCheck "caseA" ((place 0 caseA).map (·.wires)) caseA_o1js)
   IO.FS.writeFile (dir ++ "/caseB.json")

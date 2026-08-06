@@ -70,8 +70,33 @@
 // value, which is also what the devnet wrap VKs in bridge/mina-zkapp/fixtures carry.
 //
 // ---------------------------------------------------------------------------------------------
+// ⚑ BOTH CURVES, AND `--curve` IS NOT OPTIONAL.
+//
+// This crate was Pallas/Fq ONLY, and not by a type parameter it happened to instantiate — by
+// `build_gates -> Vec<CircuitGate<Fq>>`, hardcoded, reading a hardcoded pair of rung names through
+// `load_wrapmain`. A STEP-side circuit could not go through it, and the way it could not was the
+// dangerous way: `Fq::from_str` on an Fp coefficient is `BigInt::from_str(s) % q` (ark-ff 0.5,
+// `fields/models/fp/mod.rs:651-666`), and every step-side value is below p < q, so it would have
+// parsed SILENTLY and derived a key for a circuit nobody authored.
+//
+// Three refusals replace that comment:
+//
+//   1. **`--curve {pallas|vesta}` is REQUIRED.** Nothing in an emitted artifact says which field it
+//      was authored over — the renderer emits decimal strings and both primes accept the same
+//      literals below p — so the field is a DECLARATION, and this crate refuses to guess it. There
+//      is no default; running without it exits non-zero.
+//   2. **A non-canonical literal is refused, not reduced.** `pickles-circuit-driver`'s
+//      `parse_field` errors on `|value| >= modulus` instead of wrapping. That catches the Fq-into-Fp
+//      direction outright (the window `[p, q)` is exactly the wrap-side values `Fp::from_str` would
+//      have silently reduced) and it is the half of the hazard the bytes CAN see.
+//   3. **A Vesta-committed circuit cannot be written as a Mina `Side_loaded_verification_key`.**
+//      That object holds Pallas points; a zkApp account stores the WRAP key. The step derivation
+//      reports its 28 commitments and its domain and REFUSES the binprot encoding, rather than
+//      emitting 1796 bytes that decode as a key for the wrong group.
+//
 // USAGE
-//   cargo run --release -- <out-dir> [--log2-domain 14]
+//   cargo run --release -- <out-dir> --curve pallas [--log2-domain 14]
+//   cargo run --release -- <out-dir> --curve vesta --circuit /path/to/stepmain_smoke_r7.json
 //   cargo test --release
 //
 // SCOPE — read this before quoting anything. This derives and encodes a KEY. It does not produce a
@@ -80,38 +105,38 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use std::time::Instant;
 
 use ark_ec::AffineRepr;
 use ark_ff::{BigInt, BigInteger, Field as _, PrimeField, Zero};
 use ark_poly::EvaluationDomain;
-use mina_curves::pasta::{Fp, Fq, Pallas, PallasParameters};
+use mina_curves::pasta::{Fp, Fq};
 use mina_poseidon::{
     constants::{PlonkSpongeConstantsKimchi, SpongeConstants},
     pasta::{fp_kimchi, FULL_ROUNDS},
     poseidon::{ArithmeticSponge, Sponge as _},
-    sponge::DefaultFqSponge,
 };
-use poly_commitment::{ipa::SRS, PolyComm, SRS as _};
-use serde::Deserialize;
+use poly_commitment::PolyComm;
 
-use kimchi::{
-    circuits::{
-        constraints::ConstraintSystem,
-        gate::{CircuitGate, GateType},
-        wires::{GateWires, Wire},
-    },
-    prover_index::{testing::new_index_for_test_with_lookups_and_custom_srs, ProverIndex},
+use kimchi::circuits::{constraints::ConstraintSystem, gate::CircuitGate};
+
+// ⚑ THE ONE DRIVER. `build_gates` and the index construction are `pickles-circuit-driver`'s, shared
+// with the four prove-and-bind harnesses and generic over the curve — which is what makes this
+// crate's second curve a type argument rather than a second copy.
+use pickles_circuit_driver::{
+    load, BaseOf, CircuitJson, Idx, IndexOpts, Lane, ScalarOf, Srs, Step, StepBaseSponge, Wrap,
+    WrapBaseSponge,
 };
-
-type BaseSponge = DefaultFqSponge<PallasParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type Idx = ProverIndex<FULL_ROUNDS, Pallas, SRS<Pallas>>;
 
 /// Mina's Tock `max_poly_size`: `BACKEND_TOCK_ROUNDS_N = 15`
 /// (mina-rust/crates/ledger/src/proofs/constants.rs; used at verifiers.rs:406,448).
 const TOCK_MAX_POLY_SIZE: usize = 1 << 15;
+
+/// Mina's Tick `max_poly_size`: `BACKEND_TICK_ROUNDS_N = 16` — the STEP side's. ⚠ It is NOT
+/// interchangeable with the Tock one: `max_poly_size` decides how many chunks a commitment splits
+/// into, so deriving a step key at the wrap value would produce a differently-chunked object.
+const TICK_MAX_POLY_SIZE: usize = 1 << 16;
 
 /// The wire length of a `Side_loaded_verification_key.Stable.V2.t`.
 const VK_WIRE_LEN: usize = 1796;
@@ -395,131 +420,86 @@ fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
 // the Lean-emitted circuit
 // =================================================================================================
 
-/// The schema `EmitWrapMainJson.lean` writes; identical to the step side's.
-#[derive(Deserialize, Clone)]
-struct CircuitJson {
-    name: String,
-    public_input_size: usize,
-    num_rows: usize,
-    gates: Vec<GateJson>,
+/// ⚑ **THE LANE IS DECLARED, NOT INFERRED.** An emitted circuit is a list of decimal strings; both
+/// pasta primes accept every literal below `p`, so no amount of reading the artifact says which
+/// field it was authored over. This enum is the declaration, it comes from `--curve`, and there is
+/// no default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Curve {
+    /// The WRAP side. Pallas-committed, Fq-scalar, coordinates in Fp. `wrap_main_inputs.ml:4,6`
+    /// sets `Me = Tock`. This is the object a zkApp account stores.
+    Pallas,
+    /// The STEP side. Vesta-committed, Fp-scalar, coordinates in Fq. ⚠ A Vesta-committed key is NOT
+    /// a Mina `Side_loaded_verification_key` — see [`Derived::mina_vk`].
+    Vesta,
 }
 
-#[derive(Deserialize, Clone)]
-struct GateJson {
-    typ: u64,
-    wires: Vec<[usize; 2]>,
-    coeffs: Vec<String>,
-}
-
-fn gate_type_from_ordinal(o: u64) -> GateType {
-    match o {
-        0 => GateType::Zero,
-        1 => GateType::Generic,
-        2 => GateType::Poseidon,
-        3 => GateType::CompleteAdd,
-        4 => GateType::VarBaseMul,
-        5 => GateType::EndoMul,
-        6 => GateType::EndoMulScalar,
-        _ => panic!("wrap_main emits only the seven gate types Mina uses; got ordinal {o}"),
+impl Curve {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "pallas" | "wrap" => Ok(Curve::Pallas),
+            "vesta" | "step" => Ok(Curve::Vesta),
+            other => Err(format!(
+                "--curve {other:?} is not one of pallas|wrap (the wrap side, Fq) or \
+                 vesta|step (the step side, Fp)"
+            )),
+        }
     }
-}
-
-fn build_gates(c: &CircuitJson) -> Vec<CircuitGate<Fq>> {
-    assert_eq!(
-        c.gates.len(),
-        c.num_rows,
-        "{}: gate count != num_rows",
-        c.name
-    );
-    c.gates
-        .iter()
-        .enumerate()
-        .map(|(row, g)| {
-            assert_eq!(
-                g.wires.len(),
-                7,
-                "row {row}: a kimchi row has 7 permutable columns"
-            );
-            let mut w: GateWires = std::array::from_fn(|_| Wire { row: 0, col: 0 });
-            for (i, rc) in g.wires.iter().enumerate() {
-                w[i] = Wire {
-                    row: rc[0],
-                    col: rc[1],
-                };
-            }
-            // ⚑ `Fq`, not `Fp`: this is the wrap circuit's native field. A step-side coefficient
-            // reduced mod the other prime would parse here and mean something else.
-            let coeffs: Vec<Fq> = g
-                .coeffs
-                .iter()
-                .map(|s| {
-                    Fq::from_str(s).unwrap_or_else(|_| panic!("not a decimal Fq element: {s:?}"))
-                })
-                .collect();
-            CircuitGate::new(gate_type_from_ordinal(g.typ), w, coeffs)
-        })
-        .collect()
+    pub fn max_poly_size(self) -> usize {
+        match self {
+            Curve::Pallas => TOCK_MAX_POLY_SIZE,
+            Curve::Vesta => TICK_MAX_POLY_SIZE,
+        }
+    }
 }
 
 /// Trailing `Zero` rows, each cell wired to itself. A `Zero` gate constrains nothing and a
 /// self-wire puts the cell in a singleton permutation class, so this changes the DOMAIN and nothing
 /// else. It is how a circuit smaller than Mina's wrap domain is placed in that domain.
-fn pad_to_rows(gates: &mut Vec<CircuitGate<Fq>>, target_rows: usize) {
+fn pad_to_rows<F: PrimeField>(gates: &mut Vec<CircuitGate<F>>, target_rows: usize) {
     while gates.len() < target_rows {
         let row = gates.len();
-        let w: GateWires = std::array::from_fn(|col| Wire { row, col });
-        gates.push(CircuitGate::new(GateType::Zero, w, vec![]));
+        let w: kimchi::circuits::wires::GateWires =
+            std::array::from_fn(|col| kimchi::circuits::wires::Wire { row, col });
+        gates.push(CircuitGate::new(
+            kimchi::circuits::gate::GateType::Zero,
+            w,
+            vec![],
+        ));
     }
 }
 
 /// The constraint system on its own — no SRS, no commitments. Used to ask kimchi what domain a row
 /// count lands in without paying for an SRS.
-fn constraint_system(gates: Vec<CircuitGate<Fq>>, public: usize) -> ConstraintSystem<Fq> {
-    ConstraintSystem::<Fq>::create(gates)
+fn constraint_system<F: PrimeField>(
+    gates: Vec<CircuitGate<F>>,
+    public: usize,
+    max_poly_size: usize,
+) -> ConstraintSystem<F> {
+    ConstraintSystem::<F>::create(gates)
         .public(public)
         .prev_challenges(2)
         .disable_gates_checks(true)
-        .max_poly_size(Some(TOCK_MAX_POLY_SIZE))
+        .max_poly_size(Some(max_poly_size))
         .build()
         .expect("the Lean-emitted gate list builds a constraint system")
 }
 
-/// Mina's SRS, not kimchi's serialized test one. See the header.
-fn index_for(gates: Vec<CircuitGate<Fq>>, public: usize) -> Idx {
-    let mut index =
-        new_index_for_test_with_lookups_and_custom_srs::<FULL_ROUNDS, Pallas, SRS<Pallas>, _>(
-            gates,
-            public,
-            /* prev_challenges */
-            2, // Mina's wrap VK carries prev_challenges = 2 (verifiers.rs:451)
-            vec![],
-            None,
-            /* disable_gates_checks */ true,
-            Some(TOCK_MAX_POLY_SIZE),
-            |d1, size| {
-                let srs = SRS::<Pallas>::create_parallel(size);
-                srs.get_lagrange_basis(d1);
-                srs
-            },
-            /* lazy_mode */ false,
-        );
-    index.compute_verifier_index_digest::<BaseSponge>();
-    index
-}
-
-fn one_chunk(c: &PolyComm<Pallas>, name: &str) -> (Fp, Fp) {
+fn one_chunk<G: AffineRepr>(c: &PolyComm<G>, name: &str) -> (G::BaseField, G::BaseField) {
     assert_eq!(
         c.chunks.len(),
         1,
         "{name}: a side-loaded VK holds ONE chunk per commitment; domain must be <= max_poly_size"
     );
     let p = c.chunks[0];
-    let (x, y) = p.xy().unwrap_or((Fp::zero(), Fp::zero()));
-    (x, y)
+    p.xy()
+        .unwrap_or((G::BaseField::zero(), G::BaseField::zero()))
 }
 
-pub struct Derived {
-    pub vk: WrapVk,
+/// A derivation, on whichever curve was DECLARED. The 28 commitments live in the curve's BASE
+/// field, which is why this is generic and why the Mina wire encoding is not.
+pub struct Derived<L: Lane> {
+    pub comms: [(BaseOf<L>, BaseOf<L>); 28],
     pub lean_rows: usize,
     pub padded_rows: usize,
     pub log2_domain: u32,
@@ -529,56 +509,85 @@ pub struct Derived {
     pub wrap_domain_tag: Option<u8>,
     pub public: usize,
     pub circuit: String,
+    pub curve: Curve,
 }
 
-/// Lean-emitted gates -> constraint system -> Mina's Pallas SRS -> the 28 commitments -> a
-/// `Side_loaded_verification_key`. This function is the whole derivation.
-pub fn derive(c: &CircuitJson, log2_domain: Option<u32>) -> Derived {
-    let mut gates = build_gates(c);
+/// Pad `gates` until the constraint system's domain IS `2^k`, or refuse.
+fn pad_to_domain<F: PrimeField>(
+    gates: &mut Vec<CircuitGate<F>>,
+    name: &str,
+    public: usize,
+    max_poly_size: usize,
+    k: u32,
+) {
+    // kimchi sizes d1 as the next power of two at or above `gates.len() + zk_rows`. Rather than
+    // re-derive zk_rows, walk down from the target until the built domain IS the target — and
+    // refuse if no padding reaches it.
+    let target = 1usize << k;
+    let lean_rows = gates.len();
+    assert!(
+        lean_rows < target,
+        "{name} has {lean_rows} rows, which does not fit domain 2^{k}"
+    );
+    for slack in 1..64usize {
+        let mut g = gates.clone();
+        pad_to_rows(&mut g, target - slack);
+        // The constraint system alone decides the domain; building it needs no SRS, so the search
+        // is cheap and the answer is kimchi's, not a re-derived zk_rows formula.
+        if constraint_system(g.clone(), public, max_poly_size)
+            .domain
+            .d1
+            .size()
+            == target
+        {
+            *gates = g;
+            return;
+        }
+    }
+    panic!("no padding length reaches domain 2^{k}");
+}
+
+/// Lean-emitted gates -> constraint system -> Mina's SRS -> the 28 commitments. This function is the
+/// whole derivation, and it is the SAME function on both curves.
+pub fn derive_on<L: Lane, EFq>(
+    c: &CircuitJson,
+    curve: Curve,
+    log2_domain: Option<u32>,
+) -> Derived<L>
+where
+    BaseOf<L>: PrimeField,
+    pickles_circuit_driver::Map<L>: Sync,
+    EFq: Clone
+        + mina_poseidon::FqSponge<BaseOf<L>, L::G, ScalarOf<L>, { pickles_circuit_driver::ROUNDS }>,
+{
+    let mps = curve.max_poly_size();
+    // ⚑ The gate list comes from the SHARED reader, whose `parse_field` REFUSES a literal that is
+    // not canonical for `ScalarOf<L>` rather than reducing it into range.
+    let mut gates = pickles_circuit_driver::build_gates::<ScalarOf<L>>(c);
     let lean_rows = gates.len();
     if let Some(k) = log2_domain {
-        // kimchi sizes d1 as the next power of two at or above `gates.len() + zk_rows`. Rather than
-        // re-derive zk_rows, walk down from the target until the built domain IS the target — and
-        // refuse if no padding reaches it.
-        let target = 1usize << k;
-        assert!(
-            lean_rows < target,
-            "{} has {lean_rows} rows, which does not fit domain 2^{k}",
-            c.name
-        );
-        let mut ok = false;
-        for slack in 1..64usize {
-            let mut g = gates.clone();
-            pad_to_rows(&mut g, target - slack);
-            // The constraint system alone decides the domain; building it needs no SRS, so the
-            // search is cheap and the answer is kimchi's, not a re-derived zk_rows formula.
-            if constraint_system(g.clone(), c.public_input_size)
-                .domain
-                .d1
-                .size()
-                == target
-            {
-                gates = g;
-                ok = true;
-                break;
-            }
-        }
-        assert!(ok, "no padding length reaches domain 2^{k}");
+        pad_to_domain(&mut gates, &c.name, c.public_input_size, mps, k);
     }
     let padded_rows = gates.len();
-    let index = index_for(gates, c.public_input_size);
+    let index: Idx<L> = pickles_circuit_driver::index_from_gates::<L, EFq>(
+        gates,
+        IndexOpts::test(c.public_input_size)
+            .prev_challenges(2) // Mina's wrap VK carries prev_challenges = 2 (verifiers.rs:451)
+            .srs(Srs::MinaParallel)
+            .max_poly_size(Some(mps)),
+    );
     let vi = index.verifier_index.as_ref().expect("verifier index");
-    assert_eq!(vi.max_poly_size, TOCK_MAX_POLY_SIZE);
+    assert_eq!(vi.max_poly_size, mps);
     assert_eq!(vi.prev_challenges, 2);
 
-    let mut comms = [(Fp::zero(), Fp::zero()); 28];
+    let mut comms = [(BaseOf::<L>::zero(), BaseOf::<L>::zero()); 28];
     for i in 0..7 {
-        comms[i] = one_chunk(&vi.sigma_comm[i], COMM_NAMES[i]);
+        comms[i] = one_chunk::<L::G>(&vi.sigma_comm[i], COMM_NAMES[i]);
     }
     for i in 0..15 {
-        comms[7 + i] = one_chunk(&vi.coefficients_comm[i], COMM_NAMES[7 + i]);
+        comms[7 + i] = one_chunk::<L::G>(&vi.coefficients_comm[i], COMM_NAMES[7 + i]);
     }
-    for (j, c) in [
+    for (j, cm) in [
         &vi.generic_comm,
         &vi.psm_comm,
         &vi.complete_add_comm,
@@ -589,7 +598,7 @@ pub fn derive(c: &CircuitJson, log2_domain: Option<u32>) -> Derived {
     .into_iter()
     .enumerate()
     {
-        comms[22 + j] = one_chunk(c, COMM_NAMES[22 + j]);
+        comms[22 + j] = one_chunk::<L::G>(cm, COMM_NAMES[22 + j]);
     }
 
     let log2 = vi.domain.log_size_of_group;
@@ -597,30 +606,54 @@ pub fn derive(c: &CircuitJson, log2_domain: Option<u32>) -> Derived {
     // and `actual_wrap_domain_size` is the INVERSE of that map (common.ml:33-45). It can therefore
     // name only those three domains. Declare the truth when the derived domain is one of them, and
     // carry `None` — which `write_vk` refuses to emit — when it is not.
-    let wrap_domain_tag = match log2 {
-        13 => Some(0u8),
-        14 => Some(1u8),
-        15 => Some(2u8),
+    // ⚠ On VESTA there is no `actual_wrap_domain_size` at all; the tag is meaningless there and is
+    // held at `None` so nothing downstream can read a wrap declaration off a step key.
+    let wrap_domain_tag = match (curve, log2) {
+        (Curve::Pallas, 13) => Some(0u8),
+        (Curve::Pallas, 14) => Some(1u8),
+        (Curve::Pallas, 15) => Some(2u8),
         _ => None,
     };
     Derived {
-        vk: WrapVk {
-            // ⚑ `max_proofs_verified` is a property of the STEP branch this wrap wraps, and NOTHING in
-            // a wrap gate list determines it — it is DECLARED here, not derived. The only declaration
-            // that is not immediately self-contradictory is the one `wrap_domains` inverts to: a key
-            // whose wrap domain is 2^14 and whose `max_proofs_verified` says N2 asserts a domain of
-            // 2^15 in the same object. So both fields carry the derived domain's tag, and when the
-            // step side lands this becomes a real input rather than a consistency choice.
-            max_proofs_verified: wrap_domain_tag.unwrap_or(0),
-            actual_wrap_domain_size: wrap_domain_tag.unwrap_or(0),
-            comms,
-        },
+        comms,
         lean_rows,
         padded_rows,
         log2_domain: log2,
         wrap_domain_tag,
         public: c.public_input_size,
         circuit: c.name.clone(),
+        curve,
+    }
+}
+
+/// The wrap derivation: Pallas, Fq scalars, Fp coordinates.
+pub fn derive(c: &CircuitJson, log2_domain: Option<u32>) -> Derived<Wrap> {
+    derive_on::<Wrap, WrapBaseSponge>(c, Curve::Pallas, log2_domain)
+}
+
+/// The step derivation: Vesta, Fp scalars, Fq coordinates. ⚠ Its commitments are on the WRONG GROUP
+/// for a Mina side-loaded VK, and [`Derived::<Step>`] carries no `mina_vk`.
+pub fn derive_step(c: &CircuitJson, log2_domain: Option<u32>) -> Derived<Step> {
+    derive_on::<Step, StepBaseSponge>(c, Curve::Vesta, log2_domain)
+}
+
+impl Derived<Wrap> {
+    /// ⚑ The Mina wire object. Pallas-only, and that is not an accident of this impl block: the
+    /// binprot layout stores 32-byte little-endian **Fp** coordinates, which is what a Pallas point
+    /// has. There is no `impl Derived<Step>` counterpart, so a step key cannot be written as one by
+    /// construction rather than by a check somebody could forget.
+    pub fn mina_vk(&self) -> WrapVk {
+        WrapVk {
+            // ⚑ `max_proofs_verified` is a property of the STEP branch this wrap wraps, and NOTHING in
+            // a wrap gate list determines it — it is DECLARED here, not derived. The only declaration
+            // that is not immediately self-contradictory is the one `wrap_domains` inverts to: a key
+            // whose wrap domain is 2^14 and whose `max_proofs_verified` says N2 asserts a domain of
+            // 2^15 in the same object. So both fields carry the derived domain's tag, and when the
+            // step side lands this becomes a real input rather than a consistency choice.
+            max_proofs_verified: self.wrap_domain_tag.unwrap_or(0),
+            actual_wrap_domain_size: self.wrap_domain_tag.unwrap_or(0),
+            comms: self.comms,
+        }
     }
 }
 
@@ -630,12 +663,6 @@ pub fn derive(c: &CircuitJson, log2_domain: Option<u32>) -> Derived {
 
 fn own_fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
-}
-
-fn load(path: &Path) -> CircuitJson {
-    let s = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    serde_json::from_str(&s).unwrap_or_else(|e| panic!("bad JSON in {}: {e}", path.display()))
 }
 
 /// ⚑ THIS CRATE CARRIES ITS OWN COPY of the Lean emission, exactly as every other harness in the
@@ -654,7 +681,11 @@ fn load_wrapmain(rung: &str) -> CircuitJson {
     load(&own_fixtures_dir().join(format!("wrapmain_smoke_{rung}.json")))
 }
 
-fn write_vk(dir: &Path, stem: &str, d: &Derived) -> PathBuf {
+/// Write a derived WRAP key. ⚑ There is no step-side counterpart, by construction: `mina_vk` exists
+/// only on `Derived<Wrap>`, so "write a Mina side-loaded VK from a Vesta-committed circuit" is not a
+/// call this file can express.
+fn write_vk(dir: &Path, stem: &str, d: &Derived<Wrap>) -> PathBuf {
+    let vk = d.mina_vk();
     // ⚠ NO FALLBACK. A key whose circuit does not sit in 2^13/2^14/2^15 cannot state its own wrap
     // domain, and emitting one with a made-up tag would ship a field that says something false about
     // the object it travels with. Pad the circuit to a nameable domain or do not write the file.
@@ -667,8 +698,8 @@ fn write_vk(dir: &Path, stem: &str, d: &Derived) -> PathBuf {
     );
     let p = dir.join(format!("{stem}.json"));
     let v = serde_json::json!({
-        "data": d.vk.to_base64(),
-        "hash": d.vk.hash().to_string(),
+        "data": vk.to_base64(),
+        "hash": vk.hash().to_string(),
         "derivedFrom": {
             "lean_module": "Dregg2.Circuit.Emit.KimchiWrapMain",
             "circuit": d.circuit,
@@ -679,14 +710,14 @@ fn write_vk(dir: &Path, stem: &str, d: &Derived) -> PathBuf {
         },
         "wire": {
             "bytes": VK_WIRE_LEN,
-            "max_proofs_verified": d.vk.max_proofs_verified,
-            "actual_wrap_domain_size": d.vk.actual_wrap_domain_size,
+            "max_proofs_verified": vk.max_proofs_verified,
+            "actual_wrap_domain_size": vk.actual_wrap_domain_size,
             "log2_domain": d.log2_domain,
             "max_poly_size": TOCK_MAX_POLY_SIZE,
             "prev_challenges": 2,
             "srs": "SRS::<Pallas>::create_parallel — Mina's deterministic Blake2b-to-curve SRS",
         },
-        "commitments": d.vk.comms.iter().enumerate()
+        "commitments": vk.comms.iter().enumerate()
             .map(|(i,(x,y))| (COMM_NAMES[i].to_string(), serde_json::json!({"x": x.to_string(), "y": y.to_string()})))
             .collect::<BTreeMap<_,_>>(),
     });
@@ -695,6 +726,7 @@ fn write_vk(dir: &Path, stem: &str, d: &Derived) -> PathBuf {
 }
 
 /// One coefficient of one Lean-emitted gate, plus one. Everything downstream must move.
+#[cfg_attr(not(test), allow(dead_code))]
 fn perturb_coefficient(c: &CircuitJson, row: usize, coeff: usize) -> CircuitJson {
     let mut out = c.clone();
     let g = &mut out.gates[row];
@@ -703,7 +735,7 @@ fn perturb_coefficient(c: &CircuitJson, row: usize, coeff: usize) -> CircuitJson
         "row {row} has {} coefficients",
         g.coeffs.len()
     );
-    let v = Fq::from_str(&g.coeffs[coeff]).unwrap() + Fq::from(1u64);
+    let v = pickles_circuit_driver::parse_field::<Fq>(&g.coeffs[coeff]) + Fq::from(1u64);
     g.coeffs[coeff] = v.to_string();
     out.name = format!("{}_perturbed_r{row}c{coeff}", c.name);
     out
@@ -711,6 +743,7 @@ fn perturb_coefficient(c: &CircuitJson, row: usize, coeff: usize) -> CircuitJson
 
 /// Re-point ONE wire of ONE Lean-emitted row at itself, breaking it out of its permutation class.
 /// The copy-permutation is what `sigma_comm` commits to, so this must move sigma and nothing else.
+#[cfg_attr(not(test), allow(dead_code))]
 fn perturb_wire(c: &CircuitJson, row: usize, col: usize) -> CircuitJson {
     let mut out = c.clone();
     out.gates[row].wires[col] = [row, col];
@@ -719,6 +752,7 @@ fn perturb_wire(c: &CircuitJson, row: usize, col: usize) -> CircuitJson {
 }
 
 /// Retype ONE Lean-emitted row. Selector polynomials are a function of the gate TYPE column alone.
+#[cfg_attr(not(test), allow(dead_code))]
 fn perturb_gate_type(c: &CircuitJson, row: usize, typ: u64) -> CircuitJson {
     let mut out = c.clone();
     out.gates[row].typ = typ;
@@ -726,23 +760,72 @@ fn perturb_gate_type(c: &CircuitJson, row: usize, typ: u64) -> CircuitJson {
     out
 }
 
+/// The lines a derivation prints, on either curve. `Derived<L>` is generic and so is this.
+fn report<L: Lane>(tag: &str, d: &Derived<L>)
+where
+    BaseOf<L>: PrimeField,
+{
+    println!(
+        "\n{tag}: {} Lean rows (+{} Zero pad) -> domain 2^{}, public {} [{}]",
+        d.lean_rows,
+        d.padded_rows - d.lean_rows,
+        d.log2_domain,
+        d.public,
+        L::NAME
+    );
+}
+
+fn usage() -> ! {
+    eprintln!(
+        "usage: derive-vk <out-dir> --curve <pallas|vesta> [--circuit <path>] [--log2-domain N]\n\
+         \n\
+         ⚠ --curve is REQUIRED and has no default. An emitted circuit is decimal strings; both\n\
+         pasta primes accept every literal below p, so NOTHING in the artifact says which field it\n\
+         was authored over. Deriving a key on the wrong curve is silent — the coefficients parse\n\
+         and a well-formed key for a circuit nobody authored comes out. Declare the lane."
+    );
+    std::process::exit(2)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = PathBuf::from(
-        args.first()
+        args.iter()
+            .find(|a| !a.starts_with("--"))
             .cloned()
             .unwrap_or_else(|| "/tmp/pickles-vk-derive".into()),
     );
+
+    // ⚑ REFUSAL #1 — the lane is declared or the run stops.
+    let curve = match args.iter().position(|a| a == "--curve") {
+        Some(i) => match args.get(i + 1).map(|s| Curve::parse(s)) {
+            Some(Ok(c)) => c,
+            Some(Err(e)) => {
+                eprintln!("{e}");
+                usage()
+            }
+            None => usage(),
+        },
+        None => {
+            eprintln!("REFUSED: --curve is required.");
+            usage()
+        }
+    };
+
     let log2: Option<u32> = match args.iter().position(|a| a == "--log2-domain") {
         Some(i) => Some(args[i + 1].parse().expect("--log2-domain wants an integer")),
         None => Some(14),
     };
     std::fs::create_dir_all(&out).unwrap();
 
+    println!("pickles-vk-derive — a Lean-assembled circuit -> a derived verification key");
     println!(
-        "pickles-vk-derive — Lean-assembled wrap circuit -> Mina Side_loaded_verification_key"
+        "  declared lane: {}",
+        match curve {
+            Curve::Pallas => "pallas/Fq — the WRAP side (Dregg2.Circuit.Emit.KimchiWrapMain)",
+            Curve::Vesta => "vesta/Fp — the STEP side (Dregg2.Circuit.Emit.KimchiStepMain)",
+        }
     );
-    println!("  Lean module : Dregg2.Circuit.Emit.KimchiWrapMain (Pallas/Fq)");
     println!(
         "  target domain: {}",
         log2.map(|k| format!("2^{k}")).unwrap_or("natural".into())
@@ -757,39 +840,68 @@ fn main() {
     // ⚠ This derives and writes ONE key and returns; the movement gate below is deliberately not
     // run, because its perturbation is defined against `w4_bind`.
     if let Some(i) = args.iter().position(|a| a == "--circuit") {
-        let p = PathBuf::from(args.get(i + 1).expect("--circuit wants a path"));
+        let p = PathBuf::from(args.get(i + 1).unwrap_or_else(|| usage()));
         let c = load(&p);
-        let d = derive(&c, log2);
-        println!(
-            "\n{}: {} Lean rows (+{} Zero pad) -> domain 2^{}, public {}",
-            c.name,
-            d.lean_rows,
-            d.padded_rows - d.lean_rows,
-            d.log2_domain,
-            d.public
-        );
-        println!("  hash {}", d.vk.hash());
-        let path = write_vk(&out, &format!("vk-{}", c.name), &d);
-        println!("  wrote {}", path.display());
+        match curve {
+            Curve::Pallas => {
+                let d = derive(&c, log2);
+                report("--circuit", &d);
+                println!("  hash {}", d.mina_vk().hash());
+                let path = write_vk(&out, &format!("vk-{}", c.name), &d);
+                println!("  wrote {}", path.display());
+            }
+            Curve::Vesta => {
+                let d = derive_step(&c, log2);
+                report("--circuit", &d);
+                // ⚑ REFUSAL #3 — a Vesta-committed key is NOT a Mina side-loaded VK. The wire object
+                // holds Fp coordinates, i.e. PALLAS points, and a zkApp account stores the WRAP key.
+                // The commitments are real and are reported; the 1796-byte encoding is refused
+                // rather than emitted for the wrong group.
+                let p = out.join(format!("commitments-{}.json", c.name));
+                let v = serde_json::json!({
+                    "curve": "vesta",
+                    "note": "STEP-side commitments. NOT a Mina Side_loaded_verification_key: that                              object encodes Pallas points (Fp coordinates) and a zkApp account                              stores the WRAP key. No base64 `data` field is emitted, deliberately.",
+                    "derivedFrom": {
+                        "lean_module": "Dregg2.Circuit.Emit.KimchiStepMain",
+                        "circuit": d.circuit,
+                        "lean_rows": d.lean_rows,
+                        "padded_rows": d.padded_rows,
+                        "public_input_size": d.public,
+                        "log2_domain": d.log2_domain,
+                        "max_poly_size": TICK_MAX_POLY_SIZE,
+                    },
+                    "commitments": d.comms.iter().enumerate()
+                        .map(|(i,(x,y))| (COMM_NAMES[i].to_string(),
+                            serde_json::json!({"x": x.to_string(), "y": y.to_string()})))
+                        .collect::<BTreeMap<_,_>>(),
+                });
+                std::fs::write(&p, serde_json::to_string_pretty(&v).unwrap() + "\n").unwrap();
+                println!(
+                    "  wrote {} (commitments only — see the note in the file)",
+                    p.display()
+                );
+            }
+        }
         return;
     }
 
+    if curve == Curve::Vesta {
+        eprintln!(
+            "REFUSED: the carried fixtures are WRAP rungs (Pallas/Fq). Pass --circuit <path> to a \
+             step-side emission rather than deriving a Vesta key from a wrap gate list."
+        );
+        std::process::exit(2);
+    }
+
     let mut written = Vec::new();
-    let mut derivations: Vec<(String, Derived)> = Vec::new();
+    let mut derivations: Vec<(String, Derived<Wrap>)> = Vec::new();
 
     for rung in ["w3_branch", "w4_bind"] {
         let c = load_wrapmain(rung);
         let t = Instant::now();
         let d = derive(&c, log2);
-        println!(
-            "\n{rung}: {} Lean rows (+{} Zero pad) -> domain 2^{}, public {} — {:?}",
-            d.lean_rows,
-            d.padded_rows - d.lean_rows,
-            d.log2_domain,
-            d.public,
-            t.elapsed()
-        );
-        println!("  hash {}", d.vk.hash());
+        report(rung, &d);
+        println!("  hash {}  — {:?}", d.mina_vk().hash(), t.elapsed());
         written.push(write_vk(&out, &format!("vk-wrapmain-{rung}"), &d));
         derivations.push((rung.to_string(), d));
     }
@@ -806,7 +918,7 @@ fn main() {
     println!("\nperturbed w4_bind gate row {row} coefficient 0 (+1):");
     let d4 = &derivations.iter().find(|(k, _)| k == "w4_bind").unwrap().1;
     let moved: Vec<&str> = (0..28)
-        .filter(|i| d4.vk.comms[*i] != dp.vk.comms[*i])
+        .filter(|i| d4.comms[*i] != dp.comms[*i])
         .map(|i| COMM_NAMES[i])
         .collect();
     println!(
@@ -818,12 +930,12 @@ fn main() {
         "  commitments that held ({}/28): {}",
         28 - moved.len(),
         (0..28)
-            .filter(|i| d4.vk.comms[*i] == dp.vk.comms[*i])
+            .filter(|i| d4.comms[*i] == dp.comms[*i])
             .map(|i| COMM_NAMES[i])
             .collect::<Vec<_>>()
             .join(" ")
     );
-    println!("  hash {} -> {}", d4.vk.hash(), dp.vk.hash());
+    println!("  hash {} -> {}", d4.mina_vk().hash(), dp.mina_vk().hash());
     written.push(write_vk(&out, "vk-wrapmain-w4_bind-perturbed", &dp));
 
     println!("\nwrote:");
@@ -845,7 +957,7 @@ fn main() {
 mod tests {
     use super::*;
 
-    #[derive(Deserialize)]
+    #[derive(serde::Deserialize)]
     struct RefVk {
         data: String,
         hash: String,
@@ -907,11 +1019,11 @@ mod tests {
     fn t3_derived_vk_is_wellformed() {
         let d = derive(&load_wrapmain("w4_bind"), None);
         assert_eq!(d.lean_rows, d.padded_rows, "no padding was asked for");
-        let raw = d.vk.encode();
+        let raw = d.mina_vk().encode();
         assert_eq!(raw.len(), VK_WIRE_LEN);
         let back = WrapVk::decode(&raw).expect("the derived key decodes under the strict reader");
-        assert_eq!(back, d.vk);
-        for (i, (x, y)) in d.vk.comms.iter().enumerate() {
+        assert_eq!(back, d.mina_vk());
+        for (i, (x, y)) in d.comms.iter().enumerate() {
             assert!(on_pallas(*x, *y), "{} is off Pallas", COMM_NAMES[i]);
             assert!(
                 !(x.is_zero() && y.is_zero()),
@@ -931,11 +1043,19 @@ mod tests {
         let row = c.gates.iter().position(|g| g.typ == 2).unwrap();
         let pert = derive(&perturb_coefficient(&c, row, 0), None);
 
-        assert_ne!(base.vk, pert.vk, "one coefficient moved and the VK did not");
-        assert_ne!(base.vk.hash(), pert.vk.hash(), "the VK hash did not move");
+        assert_ne!(
+            base.mina_vk(),
+            pert.mina_vk(),
+            "one coefficient moved and the VK did not"
+        );
+        assert_ne!(
+            base.mina_vk().hash(),
+            pert.mina_vk().hash(),
+            "the VK hash did not move"
+        );
 
         let moved: Vec<usize> = (0..28)
-            .filter(|i| base.vk.comms[*i] != pert.vk.comms[*i])
+            .filter(|i| base.comms[*i] != pert.comms[*i])
             .collect();
         // Exactly coefficients_comm[0] moves: the gate's other coefficient columns, all selector
         // polynomials and the whole permutation are untouched by a change to coefficient 0.
@@ -965,10 +1085,14 @@ mod tests {
             .find_map(|(r, g)| (0..7).find(|cc| g.wires[*cc] != [r, *cc]).map(|cc| (r, cc)))
             .expect("w4_bind has at least one non-self wire");
         let pert = derive(&perturb_wire(&c, row, col), None);
-        assert_ne!(base.vk, pert.vk, "a wire moved and the VK did not");
+        assert_ne!(
+            base.mina_vk(),
+            pert.mina_vk(),
+            "a wire moved and the VK did not"
+        );
 
         let moved: Vec<&str> = (0..28)
-            .filter(|i| base.vk.comms[*i] != pert.vk.comms[*i])
+            .filter(|i| base.comms[*i] != pert.comms[*i])
             .map(|i| COMM_NAMES[i])
             .collect();
         assert!(!moved.is_empty(), "no commitment moved");
@@ -1000,10 +1124,14 @@ mod tests {
             .position(|g| g.typ == 1)
             .expect("w4_bind has Generic rows");
         let pert = derive(&perturb_gate_type(&c, row, 0), None);
-        assert_ne!(base.vk, pert.vk, "a gate type changed and the VK did not");
+        assert_ne!(
+            base.mina_vk(),
+            pert.mina_vk(),
+            "a gate type changed and the VK did not"
+        );
 
         let moved: Vec<&str> = (0..28)
-            .filter(|i| base.vk.comms[*i] != pert.vk.comms[*i])
+            .filter(|i| base.comms[*i] != pert.comms[*i])
             .map(|i| COMM_NAMES[i])
             .collect();
         assert!(
@@ -1016,23 +1144,112 @@ mod tests {
         );
     }
 
-    /// t5 — two DIFFERENT Lean circuits give two different keys, and the parts that should agree do.
+    /// t5 — two DIFFERENT Lean circuits give two different keys, and the domain is HELD FIXED so
+    /// the difference is entirely the circuit.
+    ///
+    /// ⚠ ⚑ **THIS TEST WAS RED AT HEAD AND THE REASON IS THE INTERESTING PART.** It used to derive
+    /// both rungs at their NATURAL domain and assert the two domains were EQUAL, over a comment
+    /// reading "w3 is 483 rows and w4 is 492; both land in the 2^9 domain". `9413a4bd3` re-emitted
+    /// the fixtures — w3 is 489 rows and w4 is **532** — and 532 does not fit 2^9. The assertion was
+    /// never about the derivation; it was a note about two fixture sizes, and a re-emission
+    /// invalidated it silently. Holding the domain with `Some(14)` states the intended fact
+    /// (same SRS, same domain, different circuit) instead of hoping two row counts stay on the same
+    /// side of a power of two.
     #[test]
     fn t5_different_lean_circuits_give_different_vks() {
-        let a = derive(&load_wrapmain("w3_branch"), None);
-        let b = derive(&load_wrapmain("w4_bind"), None);
-        assert_ne!(a.vk, b.vk);
-        assert_ne!(a.vk.hash(), b.vk.hash());
-        // w3 is 483 rows and w4 is 492; both land in the 2^9 domain, so the SRS and the domain are
-        // the same and the difference is entirely the circuit.
-        assert_eq!(a.log2_domain, b.log2_domain);
+        let a = derive(&load_wrapmain("w3_branch"), Some(14));
+        let b = derive(&load_wrapmain("w4_bind"), Some(14));
+        assert_eq!(a.log2_domain, 14, "w3 was not padded into 2^14");
+        assert_eq!(b.log2_domain, 14, "w4 was not padded into 2^14");
+        assert_ne!(a.mina_vk(), b.mina_vk());
+        assert_ne!(a.mina_vk().hash(), b.mina_vk().hash());
+        // …and the natural domains DO differ, which is what made the old form of this test fall
+        // over. Recorded rather than assumed.
+        assert_eq!(derive(&load_wrapmain("w3_branch"), None).log2_domain, 9);
+        assert_eq!(derive(&load_wrapmain("w4_bind"), None).log2_domain, 10);
+    }
+
+    /// ⚑ t12 — **THE LANE IS DECLARED, AND THE PARSER REFUSES THE WRONG ONE.** The two pasta primes
+    /// differ above bit 128 and `p < q`, so the window `[p, q)` holds exactly the wrap-side values a
+    /// step-side reader would have silently reduced. A coefficient in that window is refused by the
+    /// shared reader rather than wrapped; below it, NOTHING in the artifact distinguishes the two
+    /// fields, which is why `--curve` exists and has no default.
+    #[test]
+    fn t12_a_wrong_field_coefficient_is_refused_not_reduced() {
+        use ark_ff::BigInteger as _;
+        let p: num_bigint::BigUint =
+            num_bigint::BigUint::from_bytes_le(&<Fp as PrimeField>::MODULUS.to_bytes_le());
+        let q: num_bigint::BigUint =
+            num_bigint::BigUint::from_bytes_le(&<Fq as PrimeField>::MODULUS.to_bytes_le());
+        assert!(p < q, "Fp's modulus is the smaller pasta prime");
+        let in_window = ((&p + &q) / 2u32).to_string();
+
+        // The wrap lane (Fq) takes it; the step lane (Fp) REFUSES it.
+        assert!(pickles_circuit_driver::try_parse_field::<Fq>(&in_window).is_ok());
+        assert!(pickles_circuit_driver::try_parse_field::<Fp>(&in_window).is_err());
+
+        // …and it is refused THROUGH the derivation, not merely in a helper: a wrap circuit whose
+        // coefficient lands in the window cannot be derived on the step lane.
+        let mut c = load_wrapmain("w4_bind");
+        let row = c.gates.iter().position(|g| !g.coeffs.is_empty()).unwrap();
+        c.gates[row].coeffs[0] = in_window;
+        assert!(
+            std::panic::catch_unwind(move || { pickles_circuit_driver::build_gates::<Fp>(&c) })
+                .is_err(),
+            "an Fq-window coefficient was accepted on the step lane — it would have been REDUCED"
+        );
+    }
+
+    /// ⚑ t13 — **`--curve` IS PARSED, NOT GUESSED**, and a step key is not a Mina side-loaded VK.
+    /// `Derived<Step>` has no `mina_vk`, so the 1796-byte encoding cannot be produced for a
+    /// Vesta-committed circuit at all — this asserts the runtime half (the tag a wrap key would
+    /// declare is held at `None` on the step lane) since the wire half is a type error.
+    #[test]
+    fn t13_the_curve_is_declared_and_a_step_key_is_not_a_mina_vk() {
+        assert_eq!(Curve::parse("pallas"), Ok(Curve::Pallas));
+        assert_eq!(Curve::parse("wrap"), Ok(Curve::Pallas));
+        assert_eq!(Curve::parse("vesta"), Ok(Curve::Vesta));
+        assert_eq!(Curve::parse("step"), Ok(Curve::Vesta));
+        assert!(Curve::parse("").is_err());
+        assert!(Curve::parse("bn254").is_err());
+        assert_eq!(Curve::Pallas.max_poly_size(), TOCK_MAX_POLY_SIZE);
+        assert_eq!(Curve::Vesta.max_poly_size(), TICK_MAX_POLY_SIZE);
+        assert_ne!(
+            TOCK_MAX_POLY_SIZE, TICK_MAX_POLY_SIZE,
+            "Tick and Tock max_poly_size are not interchangeable"
+        );
+
+        // ⚑ THE STEP LANE RUNS. A circuit whose coefficients are all canonical for BOTH primes
+        // derives on either, which is precisely the ambiguity `--curve` resolves — and the step
+        // derivation produces Fq coordinates, on the wrong group for a side-loaded VK.
+        let c = load_wrapmain("w3_branch"); // coeff-free rung: canonical in both fields
+        let d = derive_step(&c, None);
+        assert_eq!(
+            d.wrap_domain_tag, None,
+            "a Vesta derivation must never declare an actual_wrap_domain_size"
+        );
+        assert_eq!(d.curve, Curve::Vesta);
+        assert_eq!(d.lean_rows, c.num_rows);
+        let w = derive(&c, None);
+        assert_eq!(
+            w.log2_domain, d.log2_domain,
+            "the same gate list lands in the same domain on either curve"
+        );
+        // The two derivations are DIFFERENT objects: the commitments live in different fields and
+        // are computed over different SRSs. `x.to_string()` is the only comparison the types allow,
+        // which is itself the point — nothing can accidentally treat one as the other.
+        assert_ne!(
+            d.comms[0].0.to_string(),
+            w.comms[0].0.to_string(),
+            "the step and wrap derivations of the same gate list must not coincide"
+        );
     }
 
     /// t6 — the strict reader REFUSES what a Mina reader refuses. Each mutation below is re-run
     /// through o1js's own reader by `bridge/mina-zkapp/scripts/mina-vk-parse-gate.mjs`.
     #[test]
     fn t6_reader_refuses_malformed_keys() {
-        let good = derive(&load_wrapmain("w3_branch"), None).vk.encode();
+        let good = derive(&load_wrapmain("w3_branch"), None).mina_vk().encode();
         assert!(WrapVk::decode(&good).is_ok());
 
         let mut off_curve = good.clone();
@@ -1082,7 +1299,7 @@ mod tests {
     #[test]
     fn t7_derivation_is_deterministic() {
         let c = load_wrapmain("w3_branch");
-        assert_eq!(derive(&c, None).vk, derive(&c, None).vk);
+        assert_eq!(derive(&c, None).mina_vk(), derive(&c, None).mina_vk());
     }
 
     /// t9 — the key never declares a wrap domain it does not have. The declared tag is the INVERSE
@@ -1100,9 +1317,10 @@ mod tests {
             Some(1),
             "2^14 inverts to N1 under wrap_domains"
         );
-        assert_eq!(d.vk.actual_wrap_domain_size, 1);
+        assert_eq!(d.mina_vk().actual_wrap_domain_size, 1);
         assert_eq!(
-            d.vk.max_proofs_verified, 1,
+            d.mina_vk().max_proofs_verified,
+            1,
             "the two tags must not contradict each other"
         );
         // The unpadded circuit lands in a domain no tag can name, and that must be REFUSED, not
@@ -1115,7 +1333,7 @@ mod tests {
         );
         // ...and padding is not free: it changes the committed columns, so the key moves.
         assert_ne!(
-            nat.vk.comms, d.vk.comms,
+            nat.comms, d.comms,
             "padding to a different domain left the key unchanged"
         );
     }

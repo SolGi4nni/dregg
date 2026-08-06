@@ -63,6 +63,9 @@ name = "harness"
 path = "src/main.rs"
 
 [dependencies]
+# ⚑ THE ONE DRIVER — see `pickles-circuit-driver/src/lib.rs` for what the four copies disagreed about.
+pickles-circuit-driver = { path = "../pickles-circuit-driver" }
+
 kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }

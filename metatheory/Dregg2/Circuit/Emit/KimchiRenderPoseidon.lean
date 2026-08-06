@@ -61,12 +61,14 @@ Imports `KimchiPlacement` (place/PGate/PlacedGate/Cell/PVar), `KimchiCustomGates
 `PastaPoseidon` (Ref.permFrom / Ref.hash).
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiCircuitJson
 import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.PastaPoseidon
 
 namespace Dregg2.Circuit.Emit.KimchiRenderPoseidon
 
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson
 open Dregg2.Circuit.Emit.KimchiCustomGates (poseidonRowCoeffs)
 open Dregg2.Circuit.Emit.PastaPoseidon
 
@@ -114,41 +116,17 @@ def poseidonWitness : List (List Int) :=
 
 /-! ## §2 — the JSON renderer (same shape `KimchiRender` emits; the harness parses it). -/
 
-private def q (s : String) : String := "\"" ++ s ++ "\""
 
-private def renderCell (c : Cell) : String :=
-  "[" ++ toString c.row ++ "," ++ toString c.col ++ "]"
-
-private def renderWires (ws : List Cell) : String :=
-  "[" ++ String.intercalate "," (ws.map renderCell) ++ "]"
-
-/-- Coefficients/witness values are emitted as DECIMAL STRINGS so the Rust side reduces them into
-`Fp` losslessly regardless of magnitude (Poseidon values span the full ~254-bit field). -/
-private def renderIntList (xs : List Int) : String :=
-  "[" ++ String.intercalate "," (xs.map (fun i => q (toString i))) ++ "]"
-
-private def renderGate (g : PlacedGate) : String :=
-  "{" ++ q "typ" ++ ":" ++ toString g.kind.ordinal ++ ","
-       ++ q "wires" ++ ":" ++ renderWires g.wires ++ ","
-       ++ q "coeffs" ++ ":" ++ renderIntList g.coeffs ++ "}"
-
-private def renderGates (gs : List PlacedGate) : String :=
-  "[" ++ String.intercalate "," (gs.map renderGate) ++ "]"
-
-private def renderWitness (w : List (List Int)) : String :=
-  "[" ++ String.intercalate "," (w.map renderIntList) ++ "]"
-
-/-- A provable circuit: name, public-input size, row count, placed gates, witness columns. -/
-def renderCircuit (name : String) (pubSize numRows : Nat)
-    (gs : List PlacedGate) (w : List (List Int)) : String :=
-  "{" ++ q "name" ++ ":" ++ q name ++ ","
-       ++ q "public_input_size" ++ ":" ++ toString pubSize ++ ","
-       ++ q "num_rows" ++ ":" ++ toString numRows ++ ","
-       ++ q "gates" ++ ":" ++ renderGates gs ++ ","
-       ++ q "witness" ++ ":" ++ renderWitness w ++ "}"
+/-! ⚑ **ONE RENDERER.** The copy of `renderCircuit` this module carried — one of eleven, each with
+its own private `q`/`qt`/`qs`, `renderCell`, `renderWires`, `renderIntList`, `renderGate`,
+`renderGates`, `renderWitness` — is DELETED. `KimchiCircuitJson.renderCircuit` is a pure function of
+a `KimchiCircuit` VALUE, and `renderCircuit_base_is_the_open_coded_shape` pins over EVERY argument
+that it emits the chain the deleted copy emitted. -/
 
 /-- The rendered Poseidon circuit JSON (0 public inputs, 12 rows). -/
-def poseidonJson : String := renderCircuit "poseidonPermHash1" 0 12 poseidonPlaced poseidonWitness
+def poseidonJson : String :=
+  renderCircuit { name := "poseidonPermHash1", pubSize := 0, numRows := 12
+                , gates := poseidonPlaced, witness := poseidonWitness }
 
 /-! ## §3 — the in-CI pins (`#guard`; interpreter-reduced). -/
 

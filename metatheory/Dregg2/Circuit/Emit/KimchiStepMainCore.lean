@@ -5,6 +5,7 @@ and the committed shape. Definitions only — every `#guard` about them lives in
 so editing a rung re-elaborates THIS file (seconds) and then the pin modules IN PARALLEL.
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiCircuitJson
 import Dregg2.Circuit.Emit.KimchiGadgets
 import Dregg2.Circuit.Emit.WitnessBuilder
 import Dregg2.Circuit.Emit.KimchiCustomGates
@@ -27,6 +28,7 @@ namespace Dregg2.Circuit.Emit.KimchiStepMain
 
 open Dregg2.Circuit.Emit.KimchiTarget (KGateType K_PERMUTS)
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson
 open Dregg2.Circuit.Emit.WitnessBuilder
   (VarEnv GateWitness gridAt envIndex envLookupAt gateVarWitnessAt compose)
 open Dregg2.Circuit.Emit.KimchiRenderVarBaseMul (fAdd fMul)
@@ -5820,37 +5822,29 @@ input in Rust, which is witness authoring) and `probe_rows`, the absolute rows o
 actually emitted rather than at a hand-copied constant that a schedule drift would silently
 invalidate. -/
 
-private def q (s : String) : String := "\"" ++ s ++ "\""
-private def renderCell (c : Cell) : String := "[" ++ toString c.row ++ "," ++ toString c.col ++ "]"
-private def renderWires (ws : List Cell) : String :=
-  "[" ++ String.intercalate "," (ws.map renderCell) ++ "]"
-private def renderIntList (xs : List Int) : String :=
-  "[" ++ String.intercalate "," (xs.map (fun i => q (toString i))) ++ "]"
-private def renderNatList (xs : List Nat) : String :=
-  "[" ++ String.intercalate "," (xs.map toString) ++ "]"
-private def renderGate (g : PlacedGate) : String :=
-  "{" ++ q "typ" ++ ":" ++ toString g.kind.ordinal ++ ","
-       ++ q "wires" ++ ":" ++ renderWires g.wires ++ ","
-       ++ q "coeffs" ++ ":" ++ renderIntList g.coeffs ++ "}"
+/-! ⚑ **ONE RENDERER.** `renderStepCircuit` and its six private helpers are DELETED. The two field
+groups this side needs — `public_input` and `probe_rows` — are `Option` fields of the
+`KimchiCircuit` VALUE, and `renderCircuit_step_is_the_open_coded_shape` pins over EVERY argument
+that `KimchiCircuitJson.renderCircuit` emits the chain `renderStepCircuit` emitted.
 
-/-- A provable circuit with its public vector and its probe rows. -/
-def renderStepCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedGate)
-    (w : List (List Int)) (pub : List Int) (probes : List Nat) : String :=
-  "{" ++ q "name" ++ ":" ++ q name ++ ","
-       ++ q "public_input_size" ++ ":" ++ toString pubSize ++ ","
-       ++ q "public_input" ++ ":" ++ renderIntList pub ++ ","
-       ++ q "num_rows" ++ ":" ++ toString numRows ++ ","
-       ++ q "probe_rows" ++ ":" ++ renderNatList probes ++ ","
-       ++ q "gates" ++ ":[" ++ String.intercalate "," (gs.map renderGate) ++ "],"
-       ++ q "witness" ++ ":[" ++ String.intercalate "," (w.map renderIntList) ++ "]}"
+⚠ `stepCircuitAt` below passes `some (if p == 0 then [] else stepPublic t)` — `some`, not `none`,
+even when the vector is EMPTY. A `pubSize = 0` rung emits `"public_input":[]`, key and all, and has
+since this file's first emission; inferring absence from emptiness would move bytes on every rung
+below the closing one. -/
+
+/-- Rung `k`'s circuit, as a VALUE. `rungJson` is `renderCircuit` of it, and nothing else. -/
+def stepCircuit (t : StepData) (k : Rung) (wired : Bool) (name : String)
+    : KimchiCircuitJson.KimchiCircuit :=
+  let rows := rungRows t k wired
+  let p := rungPub t.sh k
+  { name := name, pubSize := p, numRows := p + rows.length
+  , gates := placedOf p (stepGates rows), witness := stepWitness t p rows
+  , publicInput := some (if p == 0 then [] else stepPublic t)
+  , probeRows := some (rungProbeRows t k) }
 
 /-- Rung `k`'s emitted JSON (WIRED or UNWIRED control). -/
 def rungJson (t : StepData) (k : Rung) (wired : Bool) (name : String) : String :=
-  let rows := rungRows t k wired
-  let p := rungPub t.sh k
-  renderStepCircuit name p (p + rows.length)
-    (placedOf p (stepGates rows)) (stepWitness t p rows)
-    (if p == 0 then [] else stepPublic t) (rungProbeRows t k)
+  renderCircuit (stepCircuit t k wired name)
 
 /-! ## §11 — the committed shape, sized against the `verify_one` line items. -/
 

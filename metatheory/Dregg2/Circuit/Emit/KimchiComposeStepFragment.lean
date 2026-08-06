@@ -60,6 +60,7 @@ NO `main` (roots cleanly into `PicklesSynthesis`; the emit driver is `EmitStepFr
 `#guard`s reduce in the interpreter; no `sorry`/`native_decide`, no `decide` over the big grid.
 -/
 import Dregg2.Circuit.Emit.KimchiPlacement
+import Dregg2.Circuit.Emit.KimchiCircuitJson
 import Dregg2.Circuit.Emit.WitnessBuilder
 import Dregg2.Circuit.Emit.KimchiRenderVarBaseMul
 import Dregg2.Circuit.Emit.KimchiRenderCompleteAdd
@@ -71,9 +72,10 @@ namespace Dregg2.Circuit.Emit.KimchiComposeStepFragment
 
 open Dregg2.Circuit.Emit.KimchiTarget (KGateType K_PERMUTS)
 open Dregg2.Circuit.Emit.KimchiPlacement
+open Dregg2.Circuit.Emit.KimchiCircuitJson
 open Dregg2.Circuit.Emit.WitnessBuilder
   (VarEnv GateWitness gridAt gateVarWitness envIndex gateVarWitnessAt compose toGrid)
-open Dregg2.Circuit.Emit.KimchiRenderVarBaseMul (fAdd fSub fMul fInv stepVbm renderCircuit)
+open Dregg2.Circuit.Emit.KimchiRenderVarBaseMul (fAdd fSub fMul fInv stepVbm)
 open Dregg2.Circuit.Emit.KimchiRenderCompleteAdd (completeAddWitness)
 open Dregg2.Circuit.Emit.KimchiVerify
   (varBaseMulConstraints completeAddConstraints endoMulConstraints)
@@ -468,11 +470,18 @@ below answer to THIS, not to the intermediate Lean lists. -/
 def gridRow (w : List (List Int)) (r : Nat) : List Nat :=
   (List.range 15).map (fun c => (gridAt w ⟨r, c⟩).toNat)
 
-/-- Render a fragment to the harness JSON, reusing `KimchiRenderVarBaseMul.renderCircuit`
-(read-only) rather than a fifth copy of the renderer. -/
-def fragJson (f : Frag) (name : String) (wired : Bool) : String :=
+/-- A fragment, as a renderable circuit VALUE. ⚑ This used to reach into
+`KimchiRenderVarBaseMul.renderCircuit` "rather than a fifth copy of the renderer" — importing a
+whole gate module for its private JSON writer, which is what a missing shared module looks like from
+the inside. The renderer is now `KimchiCircuitJson`'s and the import is gone. -/
+def fragCircuit (f : Frag) (name : String) (wired : Bool) : KimchiCircuit :=
   let rows := fragRows f wired
-  renderCircuit name 0 rows.length (place 0 (fragGates rows)) (fragWitness f)
+  { name := name, pubSize := 0, numRows := rows.length
+  , gates := place 0 (fragGates rows), witness := fragWitness f }
+
+/-- Render a fragment to the harness JSON. -/
+def fragJson (f : Frag) (name : String) (wired : Bool) : String :=
+  renderCircuit (fragCircuit f name wired)
 
 /-! ## §7 — the committed instance.
 
@@ -499,10 +508,12 @@ def witnessS : List (List Int) := fragWitness fragS
 
 /-- The WIRED fragment JSON. -/
 def stepFragmentJson : String :=
-  renderCircuit "stepFragment_msm_K6_C8_E16" 0 nRowsS placedS witnessS
+  renderCircuit { name := "stepFragment_msm_K6_C8_E16", pubSize := 0, numRows := nRowsS
+                , gates := placedS, witness := witnessS }
 /-- The UNWIRED control: identical rows, identical witness, probe rows in NO σ class. -/
 def stepFragmentUnwiredJson : String :=
-  renderCircuit "stepFragment_msm_K6_C8_E16_UNWIRED" 0 nRowsS placedUnwiredS witnessS
+  renderCircuit { name := "stepFragment_msm_K6_C8_E16_UNWIRED", pubSize := 0, numRows := nRowsS
+                , gates := placedUnwiredS, witness := witnessS }
 
 /-! ### The rows of interest — the harness's probe coordinates.
 

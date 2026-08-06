@@ -24,7 +24,7 @@ import Dregg2.Circuit.Emit.KimchiComposeStepFragment
 
 open Dregg2.Circuit.Emit.KimchiComposeStepFragment
 open Dregg2.Circuit.Emit.KimchiPlacement (place)
-open Dregg2.Circuit.Emit.KimchiRenderVarBaseMul (renderCircuit)
+open Dregg2.Circuit.Emit.KimchiCircuitJson (renderCircuit)
 
 /-- Force a `Nat` before the next clock read. `let x := e` for pure `e` is FLOATABLE — the compiler
 happily sinks the work past an `IO.monoMsNow`, which is how a phase split silently reports `0 ms` for
@@ -52,8 +52,10 @@ def emitShape (dir : String) (tag : String) (sh : Shape) : IO Nat := do
   let w := fragWitness f
   let ncell ← force ((w.map (·.length)).foldl (· + ·) 0)
   let t4 ← IO.monoMsNow
-  let js := renderCircuit s!"stepFragment_{tag}" 0 n placed w
-  let jsU := renderCircuit s!"stepFragment_{tag}_UNWIRED" 0 n placedU w
+  let js := renderCircuit { name := s!"stepFragment_{tag}", pubSize := 0, numRows := n
+                          , gates := placed, witness := w }
+  let jsU := renderCircuit { name := s!"stepFragment_{tag}_UNWIRED", pubSize := 0, numRows := n
+                           , gates := placedU, witness := w }
   IO.FS.writeFile s!"{dir}/stepfragment_{tag}.json" js
   IO.FS.writeFile s!"{dir}/stepfragment_{tag}_unwired.json" jsU
   let t5 ← IO.monoMsNow

@@ -3,7 +3,7 @@
 # reader accepting it.
 #
 # WHAT IT MEASURES, in order, all green-or-bust:
-#   1. `pickles-vk-derive` unit gates (11):
+#   1. `pickles-vk-derive` unit gates (13):
 #        t1  three keys o1js ITSELF emitted decode + re-encode BYTE-IDENTICALLY
 #        t2  our Poseidon reproduces o1js's `vk.hash` on all three (mina-rust has no such pin)
 #        t3  a key DERIVED from Lean-emitted `KimchiWrapMain` gates is well-formed on the wire
@@ -13,6 +13,11 @@
 #        t7  determinism   t8  the o1js prefix constant   t9  no undeclarable wrap domain is emitted
 #        t10 one WIRE re-pointed -> sigma[col] moves and no selector does
 #        t11 one gate RETYPED    -> the selector moves and no sigma does
+#        t12 ⚑ a coefficient in the window [p, q) — a WRAP value a step reader would have silently
+#            REDUCED — is REFUSED on the step lane, through the derivation and not just in a helper
+#        t13 ⚑ `--curve` is parsed, both lanes derive, and a Vesta-committed key carries NO
+#            `actual_wrap_domain_size` (the Mina wire encoding does not exist for it — a type error,
+#            not a check)
 #   2. the derivation itself: `KimchiWrapMain` w3_branch + w4_bind + a one-coefficient perturbation,
 #      each padded to Mina's 2^14 wrap domain and written as base64 binprot.
 #   3. THE GATE — o1js's OCaml binprot reader (`Pickles.sideLoaded.vkToCircuit`) parsing each derived
@@ -63,8 +68,8 @@ if [ "$RUN_UNIT" = 1 ]; then
   if cargo test --release --manifest-path "$CRATE/Cargo.toml" 2>&1 | tee "$OUT/unit.log" | tail -14; then
     # A `cargo test` that ran ZERO tests exits 0. Demand the count.
     n=$(grep -oE 'test result: ok\. [0-9]+ passed' "$OUT/unit.log" | grep -oE '[0-9]+' | head -1)
-    if [ "${n:-0}" -lt 11 ]; then
-      red "only ${n:-0} unit tests ran; the crate declares 11"
+    if [ "${n:-0}" -lt 13 ]; then
+      red "only ${n:-0} unit tests ran; the crate declares 13"
     else
       note "GREEN: $n unit gates"
     fi
@@ -90,7 +95,10 @@ for f in wrapmain_smoke_w3_branch.json wrapmain_smoke_w4_bind.json; do
 done
 
 step "2. derive — Lean-emitted KimchiWrapMain gates -> Mina Side_loaded_verification_key"
-if cargo run --release --quiet --manifest-path "$CRATE/Cargo.toml" -- "$OUT" --log2-domain 14 2>&1 | tee "$OUT/derive.log" | grep -E 'Lean rows|hash |MOVED|held'; then
+# ⚑ `--curve` IS REQUIRED AND HAS NO DEFAULT. Nothing in an emitted circuit says which pasta prime
+# it was authored over — both accept every literal below p — so the lane is a declaration. Omitting
+# it exits 2; `--self-test` below proves that.
+if cargo run --release --quiet --manifest-path "$CRATE/Cargo.toml" -- "$OUT" --curve pallas --log2-domain 14 2>&1 | tee "$OUT/derive.log" | grep -E 'Lean rows|hash |MOVED|held'; then
   note "GREEN: derivation ran"
 else
   red "derivation"
@@ -144,6 +152,22 @@ PY
     red "self-test: the unit gates stayed GREEN with a corrupted o1js reference key"
   else
     note "GREEN: corrupting an o1js reference key turns the unit gates RED"
+  fi
+  # (c) ⚑ THE LANE REFUSAL. `--curve` has no default; omitting it must exit non-zero and derive
+  # nothing. A crate that quietly picked a curve would derive a well-formed key for a circuit nobody
+  # authored — every step-side coefficient is below q, so the wrong lane parses SILENTLY.
+  if cargo run --release --quiet --manifest-path "$CRATE/Cargo.toml" -- "$OUT/nocurve" \
+       >"$OUT/nocurve.log" 2>&1; then
+    red "self-test: deriving with NO --curve succeeded — the lane is being guessed"
+  else
+    note "GREEN: --curve is required ($(grep -m1 REFUSED "$OUT/nocurve.log" | cut -c1-100))"
+  fi
+  # (d) …and an unknown curve name is refused too, rather than falling back to the wrap side.
+  if cargo run --release --quiet --manifest-path "$CRATE/Cargo.toml" -- "$OUT/badcurve" \
+       --curve bn254 >"$OUT/badcurve.log" 2>&1; then
+    red "self-test: --curve bn254 was ACCEPTED"
+  else
+    note "GREEN: an unknown --curve is refused"
   fi
 fi
 

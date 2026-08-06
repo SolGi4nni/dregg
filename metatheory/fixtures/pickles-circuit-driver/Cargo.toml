@@ -1,0 +1,47 @@
+# pickles-circuit-driver — "PROVE THIS LEAN CIRCUIT". The one driver, for every pickles harness.
+#
+# ⚑ WHAT THIS REPLACES. `build_gates`, `build_witness`, `index_for` and `prove_and_verify` were
+# re-implemented in `pickles-r4-harness`, `pickles-poseidon-harness`, `pickles-wrapmain-harness` and
+# `pickles-preimage-harness` — four copies of the same forty lines, and there was no "prove this Lean
+# circuit" driver anywhere. What the four DISAGREED about is measured in `src/lib.rs`'s header; the
+# short version is that ONE of them could read a 255-bit field element AND a negative coefficient,
+# and it was not the oldest.
+#
+# Standalone, and for the same reason its consumers are: it pins `o1-labs/proof-systems` at tag 0.3.0,
+# which the breadstuffs workspace patches away. An EMPTY `[workspace]` table is the only mechanism
+# that detaches a nested package.
+#
+# It is a LIBRARY, not a harness: it carries no fixtures and asserts nothing about any circuit. The
+# accept/tamper-reject evidence stays in the `pickles-*-harness` crates, where
+# `scripts/pickles-harnesses.sh`'s ratchet enumerates and counts it.
+
+[package]
+name = "pickles-circuit-driver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "pickles_circuit_driver"
+path = "src/lib.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ec = { version = "0.5.0" }
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+num-bigint = { version = "0.4", features = ["std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }
