@@ -89,7 +89,9 @@ record (`metatheory/Dregg2/Exec/RecordKernel.lean`):
 - **No-forgery** — the descriptor AIR pins every state advance to a hash recomputed in-circuit
   (`new_cap_root == hash_2_to_1(old, entry)`, `effect.rs:93,124-126`); a prover cannot invent a
   new root.
-- **Nullifier no-double-spend** — `nullifierFreshUMem` + the `NOTESPEND_NULLIFIER` PI (198) and
+- **Nullifier no-double-spend** — `nullifierFreshUMem` + the `pi::NOTESPEND_NULLIFIER` PI slot
+  (this restated the integer `198` until 2026-08-06, a pre-Phase-C value; the offset cascades, so
+  cite the constant) and
   the committed `nullifier_root` (`note_spend_leaf_adapter.rs:70-71`); the runtime nullifier-set
   grow-gate rejects a reused nullifier.
 

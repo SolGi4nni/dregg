@@ -3025,18 +3025,12 @@ impl TurnExecutor {
         Ok(MAX_CUSTOM_EFFECTS_DEFAULT)
     }
 
-    /// Read the federation-scoped `approved_handoffs_root` as 4 BabyBear felts.
-    ///
-    /// Stage 1: returns the empty-tree sentinel (`Commitment4::empty()`).
-    /// Stage 7 populates this from federation state when CapTP runtime
-    /// emitters land. Per `DESIGN-captp-integration.md` §4.2.
-    ///
-    /// V1-only (DEAD: the v1 verify was retired);
-    /// dead under `prover`, deleted with the v1 leg at C7.
-    #[allow(dead_code)]
-    pub(super) fn read_approved_handoffs_root(&self) -> [dregg_circuit::field::BabyBear; 4] {
-        [dregg_circuit::field::BabyBear::ZERO; 4]
-    }
+    // DELETED 2026-08-06 — `read_approved_handoffs_root`. Its own docblock said
+    // it should have been "deleted with the v1 leg at C7"; it was not, and it
+    // sat behind `#[allow(dead_code)]` with zero call sites, returning the
+    // empty-tree sentinel. `pi::APPROVED_HANDOFFS_BASE` is itself a retired slot
+    // (`ValidateHandoff` no longer exists as an effect), so there is nothing
+    // left for it to read.
 
     /// Get the verification key hash for a sovereign cell, if one is set.
     ///
@@ -3058,62 +3052,19 @@ impl TurnExecutor {
         None
     }
 
-    /// Convert 4 BabyBear elements to a 16-byte array (for custom proof commitment matching).
-    /// V1-only (the rotated verify path reconstructs PIs from the trace generator); dead under
-    /// `prover`.
-    #[allow(dead_code)]
-    pub(super) fn babybear4_to_bytes16(elems: &[dregg_circuit::field::BabyBear; 4]) -> [u8; 16] {
-        let mut result = [0u8; 16];
-        for (i, elem) in elems.iter().enumerate() {
-            result[i * 4..i * 4 + 4].copy_from_slice(&elem.0.to_le_bytes());
-        }
-        result
-    }
-
-    /// Convert 8 BabyBear elements to a 32-byte array (PI v2 VK hash key).
-    ///
-    /// AIR-SOUNDNESS-AUDIT.md #70: the registry now binds against the full
-    /// 32-byte VK hash. The pre-v2 path used `babybear4_to_bytes16` plus
-    /// `expand_vk_hash_16_to_32` (zero-padded upper 16 bytes), giving 80-bit
-    /// effective security in a 128-bit system. The full 32-byte form
-    /// distinguishes VK hashes whose lower 16 bytes collide.
-    #[allow(dead_code)]
-    pub(super) fn babybear8_to_bytes32(elems: &[dregg_circuit::field::BabyBear; 8]) -> [u8; 32] {
-        let mut result = [0u8; 32];
-        for (i, elem) in elems.iter().enumerate() {
-            result[i * 4..i * 4 + 4].copy_from_slice(&elem.0.to_le_bytes());
-        }
-        result
-    }
-
-    /// Hash custom proof bytes to produce a 16-byte commitment (matching BabyBear[4]).
-    #[allow(dead_code)]
-    pub(super) fn hash_custom_proof(proof_bytes: &[u8]) -> [u8; 16] {
-        let h = blake3::hash(proof_bytes);
-        let bytes = h.as_bytes();
-        let mut result = [0u8; 16];
-        result.copy_from_slice(&bytes[..16]);
-        result
-    }
-
-    /// **DEPRECATED** — see `babybear8_to_bytes32`.
-    ///
-    /// Pre-v2 (`pi::VK_PI_LAYOUT_VERSION == 1`) expanded a 16-byte VK hash
-    /// (from 4 BabyBear elements) to a 32-byte registry key by zero-padding
-    /// the upper 16 bytes. This gave 80-bit effective security: any two
-    /// VK hashes that collide on the lower 16 bytes (~2^64 work) dispatch
-    /// to the same handler regardless of their upper 16 bytes.
-    /// `AIR-SOUNDNESS-AUDIT.md` #70 closed this by widening the PI vk_hash
-    /// to 8 felts (full 32 bytes); see `babybear8_to_bytes32`. This helper
-    /// is retained only so legacy callers compile; no live dispatch path
-    /// uses it.
-    #[deprecated(note = "PI layout v3: use babybear8_to_bytes32 against the full 8-felt PI slot")]
-    #[allow(dead_code)]
-    pub(super) fn expand_vk_hash_16_to_32(short: &[u8; 16]) -> [u8; 32] {
-        let mut result = [0u8; 32];
-        result[..16].copy_from_slice(short);
-        result
-    }
+    // DELETED 2026-08-06 — the v1-leg felt/byte conversion cluster:
+    // `babybear4_to_bytes16`, `babybear8_to_bytes32`, `hash_custom_proof`, and
+    // the `#[deprecated]` `expand_vk_hash_16_to_32`. All four were behind
+    // `#[allow(dead_code)]` with zero call sites; the rotated verify path
+    // reconstructs PIs from the trace generator instead.
+    //
+    // `expand_vk_hash_16_to_32` is the one worth naming: it zero-padded a
+    // 16-byte VK hash to a 32-byte registry key, which is the 80-bit dispatch
+    // truncation `AIR-SOUNDNESS-AUDIT.md` #70 closed by widening the PI vk_hash
+    // to 8 felts. Its docblock claimed it was "retained only so legacy callers
+    // compile" — there were none, in this crate or any other. The 16-byte
+    // `hash_custom_proof` commitment it paired with is likewise superseded: the
+    // custom-proof commitment has been 8 felts since the proof-bind rotation.
 
     /// Decode a stored [u8; 32] commitment to a single BabyBear field element.
     ///
@@ -3437,58 +3388,14 @@ impl TurnExecutor {
         )
     }
 
-    /// Compute the balance delta (magnitude, sign) from the turn's effects for a cell.
-    ///
-    /// Returns (magnitude_u32, sign_u32) where sign=0 means positive/incoming,
-    /// sign=1 means negative/outgoing.
-    /// V1-only (the rotated verify reconstructs balance PIs from the trace generator);
-    /// dead under `prover`, deleted with the v1 leg at C7.
-    #[allow(dead_code)]
-    pub(super) fn compute_balance_delta_from_effects(cell_id: &CellId, turn: &Turn) -> (u32, u32) {
-        fn walk_delta(tree: &CallTree, cell_id: &CellId, net: &mut i64) {
-            for effect in &tree.action.effects {
-                match effect {
-                    Effect::Transfer { from, to, amount } => {
-                        if from == cell_id {
-                            *net -= *amount as i64;
-                        }
-                        if to == cell_id {
-                            *net += *amount as i64;
-                        }
-                    }
-                    Effect::NoteSpend { value, .. } => {
-                        *net += *value as i64;
-                    }
-                    Effect::NoteCreate { value, .. } => {
-                        *net -= *value as i64;
-                    }
-                    // Stage 3 honest projections: AIR enforces balance changes
-                    // for these variants, so they must contribute to net_delta
-                    // for the PI-to-trace consistency constraint to hold.
-                    Effect::BridgeMint { portable_proof } => {
-                        // BridgeMint credits the actor's balance with the
-                        // portable proof's declared value.
-                        *net += portable_proof.value as i64;
-                    }
-                    _ => {}
-                }
-            }
-            for child in &tree.children {
-                walk_delta(child, cell_id, net);
-            }
-        }
-
-        let mut net_delta: i64 = 0;
-        for root in &turn.call_forest.roots {
-            walk_delta(root, cell_id, &mut net_delta);
-        }
-
-        if net_delta < 0 {
-            ((-net_delta) as u32, 1u32)
-        } else {
-            (net_delta as u32, 0u32)
-        }
-    }
+    // DELETED 2026-08-06 — `compute_balance_delta_from_effects`. Its docblock
+    // said "deleted with the v1 leg at C7"; it was not, and it had zero call
+    // sites behind `#[allow(dead_code)]`. It is the function several old audit
+    // docs cite as the derivation backing the AIR's `net_delta` PI
+    // (EXECUTOR-HONESTY-AUDIT (D), NEW-WORLD T12) — that citation has been
+    // stale since the rotated verify started reconstructing balance PIs from
+    // the trace generator, and a live copy of the superseded derivation is how
+    // such a citation keeps reading as current.
 }
 
 // ─────────────────────────────────────────────────────────────────────

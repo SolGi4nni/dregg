@@ -301,7 +301,6 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         }
         CapabilityRevoked { actor, .. } => (GuardKind::Capability, vec![*actor]),
         CapabilityStale { actor, grantor, .. } => (GuardKind::Capability, vec![*actor, *grantor]),
-        StaleDelegation { actor, source, .. } => (GuardKind::Capability, vec![*actor, *source]),
         CapabilitySlotOverflow { cell } => (GuardKind::Capability, vec![*cell]),
         IntroductionDenied {
             introducer,
@@ -318,7 +317,6 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         StealthAuthInvalid { .. } => (GuardKind::Authorization, vec![]),
         TokenAuthInvalid { .. } => (GuardKind::Authorization, vec![]),
         TokenInsufficientCapability { cell, .. } => (GuardKind::Authorization, vec![*cell]),
-        TokenVerifierNotConfigured => (GuardKind::Authorization, vec![]),
         AuthModeNotRegistered { .. } => (GuardKind::Authorization, vec![]),
 
         PreconditionFailed { .. } => (GuardKind::Precondition, vec![]),
@@ -348,9 +346,6 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         InvalidExecutionProof(_)
         | EffectsHashMismatch { .. }
         | ProofVerificationFailed(_)
-        | CustomProofCommitmentMismatch { .. }
-        | CustomProgramNotFound { .. }
-        | CustomProgramVerificationFailed { .. }
         | TooManyCustomProofs { .. }
         | CustomProofCountMismatch { .. }
         | CustomProofStateBindingMismatch { .. }
@@ -372,10 +367,7 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         | SovereignNotRegistered { cell } => (GuardKind::Proof, vec![*cell]),
 
         LeanShadowVeto => (GuardKind::Other, vec![]),
-        BridgeMintFailed { .. }
-        | BridgeLockFailed { .. }
-        | BridgeFinalizeFailed { .. }
-        | BridgeCancelFailed { .. } => (GuardKind::Other, vec![]),
+        BridgeMintFailed { .. } => (GuardKind::Other, vec![]),
         // The admission gate refused the turn WITH a theorem-backed reason (the
         // "refused with a reason" wire variant) — a fail-closed refusal carrying its
         // own prose; classified as Other (the reason is surfaced by `headline_for`).

@@ -187,10 +187,16 @@ impl TurnExecutor {
         }
 
         // Token: first-class biscuit/macaroon credential
-        // (TOKEN-CAPABILITY-UNIFICATION.md). Verified holistically by the
-        // turn-side TokenAuthorityVerifier: cryptographic verify + caveat /
+        // (TOKEN-CAPABILITY-UNIFICATION.md). Verified holistically by
+        // `verify_token_authorization` below: cryptographic verify + caveat /
         // Datalog evaluation bound to THIS call's AuthRequest + capability
         // cover + block-height-bound expiry. Fail-closed.
+        //
+        // ⚠ This named a "turn-side TokenAuthorityVerifier" until 2026-08-06.
+        // NO SUCH TYPE EXISTS — the design doc proposed one, and what shipped is
+        // the unconditional inline method. There is nothing to configure and so
+        // nothing that can be left unconfigured, which is why the
+        // `TokenVerifierNotConfigured` error naming it was deleted the same day.
         if let Authorization::Token { encoded, key_ref } = &action.authorization {
             self.verify_token_authorization(
                 action,

@@ -221,25 +221,21 @@ pub enum TurnError {
     /// or double-bridge attempt).
     BridgeMintFailed { reason: String },
 
-    /// A BridgeLock effect failed (note already locked, etc.).
-    BridgeLockFailed { reason: String },
-
-    /// A BridgeFinalize effect failed (invalid receipt, bridge not found, etc.).
-    BridgeFinalizeFailed { reason: String },
-
-    /// A BridgeCancel effect failed (timeout not reached, bridge not found, etc.).
-    BridgeCancelFailed { reason: String },
-
-    /// A delegated capability snapshot is stale (exceeded max_staleness).
-    /// The delegation must be refreshed before it can be exercised.
-    StaleDelegation {
-        actor: CellId,
-        source: CellId,
-        refreshed_at: u64,
-        max_staleness: u64,
-        now: u64,
-    },
-
+    // DELETED 2026-08-06 — `BridgeLockFailed` / `BridgeFinalizeFailed` /
+    // `BridgeCancelFailed`: `crate::action::Effect` carries exactly ONE bridge
+    // variant, `BridgeMint`. There is no `BridgeLock`, `BridgeFinalize` or
+    // `BridgeCancel` to fail (retired under VERB-LOCKSTEP —
+    // `pi::BRIDGE_LOCK_VALUE_LIMBS_BASE` is kept only as a permanent zero
+    // sentinel), so nothing could ever construct these. They were defined,
+    // formatted and classified, and constructed zero times.
+    //
+    // DELETED 2026-08-06 — `StaleDelegation`: the executor never checks
+    // snapshot staleness, and by design does not. `DelegatedRef::is_stale` has
+    // exactly one caller in the tree (a demo example), and
+    // `dregg_cell::delegation`'s module header states the rule this variant
+    // contradicted: "Freshness is checked by acceptors (remote verifiers), not
+    // by the executor." A refusal reason for a check the executor does not
+    // perform reads, to the next person, as a check the executor performs.
     /// A delegated capability has been revoked via its revocation channel.
     /// The channel was tripped, meaning the capability is no longer valid.
     CapabilityRevoked {
@@ -503,24 +499,16 @@ pub enum TurnError {
         granted_permissions: AuthRequired,
     },
 
-    /// A custom proof commitment in the Effect VM's public inputs does not match
-    /// the hash of the provided custom proof bytes.
-    CustomProofCommitmentMismatch {
-        index: usize,
-        expected: [u8; 16],
-        got: [u8; 16],
-    },
-
-    /// A custom program referenced by VK hash in a Custom effect is not deployed.
-    CustomProgramNotFound { index: usize, vk_hash: [u8; 32] },
-
-    /// A custom program's proof verification failed.
-    CustomProgramVerificationFailed {
-        index: usize,
-        program_vk: [u8; 32],
-        reason: String,
-    },
-
+    // DELETED 2026-08-06 — `CustomProofCommitmentMismatch` /
+    // `CustomProgramNotFound` / `CustomProgramVerificationFailed`: the
+    // pre-v2 custom-effect dispatch path's refusals, constructed zero times.
+    // `CustomProofCommitmentMismatch`'s 16-byte `expected`/`got` fields date it
+    // precisely — the commitment has been 8 felts (32 bytes) since the
+    // proof-bind flag-day rotation. The live path is
+    // `proof_verify::enforce_custom_effect_proofs`, which refuses through
+    // `CustomEffectCapAboveHardCap`, `CustomEffectRequiresProofCarryingTurn`,
+    // `CustomProofStateBindingMismatch`, `CustomAppWriteBindingMismatch` and
+    // `CustomProgramIdentityMismatch`. Those are the constructed ones.
     /// The cell is frozen for migration to another federation.
     ///
     /// Turns may not execute against cells in `MigrationState::Frozen` or
@@ -620,11 +608,15 @@ pub enum TurnError {
         reason: String,
     },
 
-    /// The action carried `Authorization::Token` but the executor has no
-    /// `TokenAuthorityVerifier` configured (fail-closed, mirrors the
-    /// no-proof-verifier posture).
-    TokenVerifierNotConfigured,
-
+    // DELETED 2026-08-06 — `TokenVerifierNotConfigured`. It named a type,
+    // `TokenAuthorityVerifier`, THAT DOES NOT EXIST: there is no configurable
+    // token verifier to be absent. `Authorization::Token` is verified
+    // unconditionally and inline by
+    // `executor::authorize::verify_token_authorization`, which refuses through
+    // `TokenAuthInvalid` (crypto / issuer / format) and
+    // `TokenInsufficientCapability` (policy / caveat / expiry). Deleting this
+    // removes no check — the "fail-closed when unconfigured" posture it
+    // described is achieved by there being nothing to configure.
     /// The VERIFIED executor refused the turn at admission, WITH its theorem-backed reason.
     ///
     /// The verified `Dregg2.Exec.Admission.admissible` predicate is a fold of eight named gates;
@@ -761,7 +753,6 @@ impl TurnError {
             | StealthAuthInvalid { .. }
             | TokenAuthInvalid { .. }
             | TokenInsufficientCapability { .. }
-            | TokenVerifierNotConfigured
             | AuthModeNotRegistered { .. }
             | AdmissionRefused { .. } => RefusalClass::Auth,
             // Capability gate (CAP path): held-cap missing / revoked / stale /
@@ -769,7 +760,6 @@ impl TurnError {
             CapabilityNotHeld { .. }
             | DelegationDenied { .. }
             | DelegationModeUnimplemented { .. }
-            | StaleDelegation { .. }
             | CapabilityRevoked { .. }
             | CapabilityStale { .. }
             | CapabilitySlotOverflow { .. }
@@ -1011,28 +1001,6 @@ impl core::fmt::Display for TurnError {
             }
             TurnError::BridgeMintFailed { reason } => {
                 write!(f, "bridge mint failed: {reason}")
-            }
-            TurnError::BridgeLockFailed { reason } => {
-                write!(f, "bridge lock failed: {reason}")
-            }
-            TurnError::BridgeFinalizeFailed { reason } => {
-                write!(f, "bridge finalize failed: {reason}")
-            }
-            TurnError::BridgeCancelFailed { reason } => {
-                write!(f, "bridge cancel failed: {reason}")
-            }
-            TurnError::StaleDelegation {
-                actor,
-                source,
-                refreshed_at,
-                max_staleness,
-                now,
-            } => {
-                write!(
-                    f,
-                    "stale delegation: actor {actor}'s delegation from {source} expired \
-                     (refreshed_at={refreshed_at}, max_staleness={max_staleness}, now={now})"
-                )
             }
             TurnError::CapabilityRevoked {
                 actor,
@@ -1305,34 +1273,6 @@ impl core::fmt::Display for TurnError {
                      {introducer_permissions:?} (granted ⊄ held)"
                 )
             }
-            TurnError::CustomProofCommitmentMismatch {
-                index,
-                expected,
-                got,
-            } => {
-                write!(
-                    f,
-                    "custom proof commitment mismatch at index {index}: expected {expected:02x?}, got {got:02x?}"
-                )
-            }
-            TurnError::CustomProgramNotFound { index, vk_hash } => {
-                write!(
-                    f,
-                    "custom program not found at index {index}: vk_hash {:02x}{:02x}...",
-                    vk_hash[0], vk_hash[1]
-                )
-            }
-            TurnError::CustomProgramVerificationFailed {
-                index,
-                program_vk,
-                reason,
-            } => {
-                write!(
-                    f,
-                    "custom program verification failed at index {index} (vk {:02x}{:02x}...): {reason}",
-                    program_vk[0], program_vk[1]
-                )
-            }
             TurnError::CellFrozen { cell } => {
                 write!(
                     f,
@@ -1396,13 +1336,6 @@ impl core::fmt::Display for TurnError {
                      '{action}': {reason}"
                 )
             }
-            TurnError::TokenVerifierNotConfigured => {
-                write!(
-                    f,
-                    "Authorization::Token presented but no TokenAuthorityVerifier configured \
-                     (fail-closed)"
-                )
-            }
             TurnError::AdmissionRefused { reason } => {
                 // The reason renders its own stranger-facing "refused: …" explanation.
                 write!(f, "{reason}")
@@ -1454,7 +1387,12 @@ mod refusal_class_tests {
             RefusalClass::Auth
         );
         assert_eq!(
-            TurnError::TokenVerifierNotConfigured.refusal_class(),
+            TurnError::TokenInsufficientCapability {
+                cell: CellId([3u8; 32]),
+                action: "transfer".into(),
+                reason: "token does not cover the verb".into(),
+            }
+            .refusal_class(),
             RefusalClass::Auth
         );
     }

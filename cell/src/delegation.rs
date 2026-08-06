@@ -12,8 +12,25 @@
 //! BLAKE3 hash of the parent's serialized c-list at snapshot time. Verifiers can
 //! cross-check this commitment against the parent's known state on the ledger.
 //!
-//! Additionally, the parent signs over `(clist_commitment, delegation_epoch, child_cell_id)`
-//! so that a verifier can cryptographically confirm the delegation is authentic.
+//! # ⚠ No parent signs, and no verifier checks — measured 2026-08-06
+//!
+//! This header read *"the parent signs over `(clist_commitment,
+//! delegation_epoch, child_cell_id)` so that a verifier can cryptographically
+//! confirm the delegation is authentic"*, in the present tense. Neither half
+//! happens. All three production minters (`apply_spawn_with_delegation`,
+//! `apply_refresh_delegation`, and `execute_tree`'s
+//! `DelegationMode::SnapshotRefresh` auto-install) write `[0u8; 64]` into
+//! [`DelegatedRef::parent_signature`], and the verifier that would have read it
+//! (`dregg_cell_crypto::delegation::verify_parent_signature`) had zero callers
+//! and was deleted on 2026-08-06.
+//!
+//! The authenticity the deleted sentence promised comes from somewhere else and
+//! always did: a snapshot is minted only while applying a turn the parent's own
+//! key signed. `exec_lean::lean_shadow`'s snapshot-authority fence records the
+//! decision that a snapshot is an ATTESTATION, not an authority edge — the
+//! verified kernel carries `delegations` / `delegationEpoch` as REGISTRY state
+//! and `authorizedB` reads only the live c-list. What is genuinely checked here
+//! is [`DelegatedRef::clist_commitment`], and only at INSTALL.
 
 use serde::{Deserialize, Serialize};
 
@@ -49,10 +66,9 @@ mod delegation_sig_serde {
 /// the parent's actual state — a malicious parent cannot fabricate capabilities that
 /// weren't in their c-list without producing an invalid commitment.
 ///
-/// The `parent_signature` is an Ed25519 signature over
-/// `(clist_commitment || delegation_epoch || child_cell_id)`, proving the parent
-/// authorized this specific delegation. Verifiers can check this signature against
-/// the parent's known public key.
+/// ⚠ The `parent_signature` field proves NOTHING — see the module header and
+/// the field's own doc. It is `[0u8; 64]` at every minter and has had no reader
+/// since 2026-08-06.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DelegatedRef {
     /// The parent cell this delegation comes from.
@@ -74,10 +90,21 @@ pub struct DelegatedRef {
     /// confirm the delegated capabilities were actually held by the parent.
     /// If the parent revokes or changes their c-list, this commitment won't match.
     pub clist_commitment: [u8; 32],
-    /// Ed25519 signature from the parent over (clist_commitment || delegation_epoch || child_cell_id).
+    /// ⚑ **AN INERT 64-BYTE FIELD. It is `[0u8; 64]` at every writer and has no
+    /// reader.** This said "Proves the parent authorized this delegation.
+    /// Verifiable against the parent's public key without contacting the
+    /// parent" until 2026-08-06 — it proved nothing then either, and the
+    /// verifier that clause pointed at
+    /// (`dregg_cell_crypto::delegation::verify_parent_signature`) had zero
+    /// callers and is now deleted.
     ///
-    /// Proves the parent authorized this delegation. Verifiable against the parent's
-    /// public key without contacting the parent.
+    /// It is REDUNDANT, not merely unfilled: a snapshot is minted only while
+    /// applying a turn the parent's key already signed, which is where the
+    /// authorization actually comes from. The right end state is to delete this
+    /// field and [`DelegatedRef::signing_message`] with it; that changes the
+    /// persisted `Cell` shape, so it is a `CANONICAL_STATE_SCHEMA_EPOCH` bump
+    /// plus a re-genesis and belongs to whoever moves the epoch. Until then, do
+    /// not build a check on it and do not describe it as one.
     #[serde(with = "delegation_sig_serde")]
     pub parent_signature: [u8; 64],
 }
@@ -86,8 +113,10 @@ impl DelegatedRef {
     /// Create a new delegated reference with commitment binding.
     ///
     /// The `clist_commitment` should be computed via [`Self::compute_clist_commitment`]
-    /// over the parent's full c-list. The `parent_signature` should be an Ed25519
-    /// signature over the message produced by [`Self::signing_message`].
+    /// over the parent's full c-list — that one is checked, at install.
+    ///
+    /// `parent_signature` is inert: every caller in the tree passes `[0u8; 64]`
+    /// and nothing reads it. See its field doc before writing anything else there.
     pub fn new(
         source: CellId,
         child: CellId,
@@ -121,10 +150,14 @@ impl DelegatedRef {
         *hasher.finalize().as_bytes()
     }
 
-    /// Compute the message that the parent signs for this delegation.
-    ///
-    /// The signed message is:
+    /// The message a parent WOULD sign for this delegation:
     /// `BLAKE3_derive_key("dregg-delegation-sig-v1", clist_commitment || delegation_epoch_le || child_cell_id_bytes)`
+    ///
+    /// ⚠ Conditional on purpose. No parent signs it, nothing verifies it, and
+    /// this function has had no caller since
+    /// `dregg_cell_crypto::delegation::verify_parent_signature` was deleted on
+    /// 2026-08-06. It survives only as the other half of
+    /// [`Self::parent_signature`] and goes when that field does.
     pub fn signing_message(
         clist_commitment: &[u8; 32],
         delegation_epoch: u64,

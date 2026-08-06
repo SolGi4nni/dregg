@@ -68,7 +68,9 @@
 //! columns and pinned to PI 6 — so a prover cannot expose a mint identity that
 //! disagrees with the spend this leaf actually proves. Lane 0 (the nullifier) is the
 //! double-mint guard's connect target: the deployed descriptor ALREADY commits the
-//! faithful `nullifier_root` (pre-limb 26) and `NOTESPEND_NULLIFIER` (PI 198).
+//! faithful `nullifier_root` (pre-limb 26) and `pi::NOTESPEND_NULLIFIER`. (That read
+//! "PI 198" until 2026-08-06 — a pre-Phase-C literal; the offset cascades from
+//! `OWNER_CELL_ID_BASE + OWNER_CELL_ID_LEN`, so name the constant, never the integer.)
 //!
 //! ## THE FORMERLY-VK-GATED SEAM — CLOSED (the felt-domain mint_hash thread)
 //!

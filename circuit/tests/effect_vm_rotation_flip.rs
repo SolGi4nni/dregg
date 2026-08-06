@@ -634,7 +634,8 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
 /// nullifier at PI[46] = the spend row's folded `param0`, AND the SOUNDNESS TOOTH bites: a turn
 /// that publishes a DIFFERENT nullifier in PI[46] than the one the spend row carries (or tampers
 /// the nullifier column) is UNSAT. This is the rotated re-statement of the v1 hand-AIR D5
-/// cross-binding (`s_notespend·(param0 − PI[NOTESPEND_NULLIFIER])`, offset 198) — now a first-row
+/// cross-binding (`s_notespend·(param0 − PI[NOTESPEND_NULLIFIER])` in the WIDE `pi::` layout;
+/// this said "offset 198" until 2026-08-06, a pre-Phase-C number — cite the constant) — now a first-row
 /// pin of the rotated descriptor, so a note-spending turn rotates and `verify_full_turn` step 8
 /// reads PI[46]. With the in-circuit pin proven UNSAT under tamper, the off-AIR no-double-spend
 /// cross-check binds THIS turn's nullifier (the node `spend_freshness_for_wrong_item_is_rejected`

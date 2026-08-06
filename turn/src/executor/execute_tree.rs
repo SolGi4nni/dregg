@@ -892,7 +892,10 @@ impl TurnExecutor {
                                     now,
                                     max_staleness,
                                     clist_commitment,
-                                    [0u8; 64], // Executor-internal delegation, signature verified by execution authority.
+                                    // INERT — nothing signs or verifies this. The
+                                    // parent's authorization is the signature on the
+                                    // TURN. See `DelegatedRef::parent_signature`.
+                                    [0u8; 64],
                                 ));
                             }
                             // Re-check access now that the delegation snapshot is set.

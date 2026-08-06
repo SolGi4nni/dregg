@@ -224,9 +224,15 @@ impl TurnExecutor {
     /// 4. For each action: checks preconditions, verifies authorization, applies effects.
     /// 5. Meters computrons at each step.
     /// 6. If any action fails: replays the journal in reverse to roll back all FOREST
-    ///    effects. ⚑ **Phase 1 (fee debit + nonce increment) is not journaled and is never
-    ///    rolled back** — a `Rejected` turn returns fee-debited, nonce-bumped state. That
-    ///    is the anti-DoS charge, not an oversight; see the module header.
+    ///    effects. ⚑ **Phase 1 (fee debit + nonce increment) is not journaled, so nothing
+    ///    in this function undoes it** — a `Rejected` return hands back a `ledger` that is
+    ///    fee-debited and nonce-bumped. Whether the agent is actually CHARGED depends
+    ///    entirely on the `ledger` the caller passed, and the callers do not agree: the
+    ///    node's MCP handlers pass the live one and keep the charge, the finalized path
+    ///    and HTTP `/turns/submit` both throw it away, and `/turns/submit-encrypted`
+    ///    keeps it under a comment saying it does not. The full split, with the
+    ///    file:call evidence for each, is on the PHASE 1 block below. Do not restate
+    ///    this as a system-wide property.
     /// 7. If successful: produces a TurnReceipt with Merkle hashes.
     ///
     /// TRUST-CRITICAL: This function is the sole entry point for all ledger state mutations.
@@ -597,8 +603,51 @@ impl TurnExecutor {
         }
 
         // =====================================================================
-        // PHASE 1: Commit fee + nonce (NEVER rolled back).
-        // This prevents DoS via expensive-but-failing turns that never pay.
+        // PHASE 1: Commit fee + nonce into `ledger`, outside the journal.
+        //
+        // ⚑ SCOPE — "NEVER ROLLED BACK" IS A STATEMENT ABOUT THIS FUNCTION, NOT
+        // ABOUT THE SYSTEM, and it read as global until 2026-08-06. Two separate
+        // lanes took it as "a refused finalized turn debits the agent" and filed
+        // that as fact. What is true: nothing BELOW this block un-debits the fee
+        // or un-bumps the nonce — the journal (PHASE 2) does not cover them, so a
+        // `Rejected` return hands the caller a `ledger` that is fee-debited and
+        // nonce-bumped. Whether that charge STICKS is the CALLER's property:
+        //
+        //  * IT STICKS on the ten `node::mcp::handlers_{act,apps,delegate,privacy}`
+        //    sites, which pass `&mut s.ledger` — the live node ledger — with no
+        //    restore point around the call. There the charge is real and IS the
+        //    anti-DoS tooth: an expensive-but-failing turn pays.
+        //
+        //  * IT DOES NOT STICK on the two main ingresses, which is the part the
+        //    unqualified line hid:
+        //      - FINALIZED. `execute_finalized_turn` clones the pre-state into an
+        //        `exec_ledger` candidate and runs this through
+        //        `execute_via_producer` against THAT (`node/src/blocklace_sync.rs`,
+        //        the CLONE-IN at the `spawn_blocking` boundary). Its
+        //        `TurnResult::Rejected` arm discards the whole candidate without
+        //        an overlay and writes only a deterministic rejection record.
+        //      - HTTP `/turns/submit`, via
+        //        `node::signed_turn_validation::stage_signed_turn_admission`: an
+        //        ADMISSION STAGING run that arms a restore point, executes, and
+        //        calls `rollback_restore_point()` UNCONDITIONALLY — committed or
+        //        not — leaving `s.ledger` at the pre-turn image. Finalization owns
+        //        the sole durable application.
+        //
+        //    So for a turn arriving the way real traffic arrives, a refusal is
+        //    FREE. Consensus admission, not this charge, is what bounds work
+        //    there. Do not cite phase 1 as the fee-DoS defence for an ingress
+        //    without checking which ledger that ingress handed in.
+        //
+        //  * ⚠ AND `POST /turns/submit-encrypted` DISAGREES WITH ITS OWN SIBLING.
+        //    Its rejection arm calls `commit_restore_point()` under the comment
+        //    "the executor already restored its own mutations on rejection" —
+        //    which is false for phase 1, exactly as stated above, so a rejected
+        //    encrypted turn KEEPS the debit and the nonce tick in live node RAM
+        //    while writing nothing durable. That is the RAM-only anti-spam charge
+        //    `blocklace_sync`'s `Rejected` arm forbids in so many words, and an
+        //    attested-root divergence by the argument written there. Reported
+        //    2026-08-06 and NOT fixed here: `node/src/api.rs` was held by another
+        //    lane. The fix is `rollback_restore_point()` on that arm.
         // =====================================================================
         let _pt_p1 = super::turn_profile::Instant::now();
         {

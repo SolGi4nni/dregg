@@ -414,8 +414,11 @@ pub enum Authorization {
     /// `Bearer`/`CapTpDelivered`: the caller authorizes by *presenting a
     /// token* whose caveats/Datalog are verified — deterministically and
     /// on-chain — against THIS call's `(action, resource, effects,
-    /// nonce, federation, block_height)` via a turn-side
-    /// `TokenAuthorityVerifier`.
+    /// nonce, federation, block_height)` by
+    /// `TurnExecutor::verify_token_authorization`. (This said "a turn-side
+    /// `TokenAuthorityVerifier`" until 2026-08-06; that type is from the design
+    /// doc and was never built — what shipped is the inline method, which runs
+    /// unconditionally.)
     ///
     /// - **Biscuit** (prefix `eb2_`): decentralized public-key verify.
     ///   The root key is a granting authority the executor trusts; any
@@ -494,10 +497,19 @@ pub enum Authorization {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TokenKeyRef {
     /// Biscuit: verify offline against this granting-authority Ed25519
-    /// public key. The key MUST be one the target cell's permissions /
-    /// trusted-issuer set authorizes (the executor's
-    /// `TokenAuthorityVerifier` holds that allowlist); an untrusted
-    /// issuer is rejected even if the token verifies cryptographically.
+    /// public key. An untrusted issuer is rejected even if the token verifies
+    /// cryptographically — the anchor is a two-way equality in
+    /// `TurnExecutor::verify_token_authorization`: `issuer_pubkey` must equal
+    /// the target cell's own `public_key`, or the bytes of its
+    /// `verification_key`.
+    ///
+    /// ⚠ That was described here as "one the target cell's permissions /
+    /// trusted-issuer set authorizes (the executor's `TokenAuthorityVerifier`
+    /// holds that allowlist)" until 2026-08-06. There is no allowlist, no
+    /// trusted-issuer set on `Permissions`, and no `TokenAuthorityVerifier`
+    /// type anywhere in the tree. The check is real; it is narrower and
+    /// simpler than the sentence promised — a cell is its own granting
+    /// authority, or names exactly one other via its VK bytes.
     BiscuitIssuer { issuer_pubkey: [u8; 32] },
     /// Macaroon: verify against the target cell's deterministically
     /// derived root secret (cell-scoped). The verifier derives the

@@ -1181,14 +1181,26 @@ impl Cell {
     /// The child inherits a point-in-time snapshot of the parent's c-list.
     /// The snapshot epoch and refresh timestamp are set by the caller.
     ///
-    /// Audit P1-5: This constructor produces a `DelegatedRef` with a
-    /// placeholder all-zero signature, which `verify_parent_signature` will
-    /// reject. To prevent external code from minting forged delegations by
-    /// calling this and then skipping verification, the function is now
-    /// `pub(crate)` — only the cell crate (and downstream callers that
-    /// re-export it deliberately) can invoke it. External orchestration
-    /// should go through a signature-required constructor or
-    /// `DelegatedRef::new` with a real signature.
+    /// ⚑ THE OLD RATIONALE HERE NAMED A DEFENCE THAT NEVER RAN. It read: the
+    /// all-zero placeholder signature is one "which `verify_parent_signature`
+    /// will reject", so the constructor is `pub(crate)` to stop external code
+    /// "minting forged delegations by calling this and then skipping
+    /// verification", and external orchestration "should go through a
+    /// signature-required constructor or `DelegatedRef::new` with a real
+    /// signature". Measured 2026-08-06: `verify_parent_signature` had zero
+    /// callers in the workspace and has been deleted; there is no
+    /// signature-required constructor; and every `DelegatedRef::new` call site
+    /// in the tree — production, test and example — passes `[0u8; 64]`. So the
+    /// placeholder was not a thing a check would catch, and skipping
+    /// verification was not a deviation but the only behaviour there is.
+    ///
+    /// What actually narrows this constructor is what the attributes say:
+    /// `#[cfg(test)]` plus `pub(crate)`. It does not exist outside the cell
+    /// crate's own test build. The production minters are
+    /// `apply_spawn_with_delegation` / `apply_refresh_delegation` /
+    /// `execute_tree`'s `DelegationMode::SnapshotRefresh` auto-install, and the
+    /// parent's authorization there is the signature on the TURN. See
+    /// `dregg_cell::delegation`'s module header.
     #[cfg(test)]
     pub(crate) fn spawn_child_with_delegation(
         &self,
@@ -1220,7 +1232,7 @@ impl Cell {
                     refreshed_at,
                     max_staleness,
                     clist_commitment,
-                    [0u8; 64], // Placeholder signature — spawn_child is a privileged internal op.
+                    [0u8; 64], // Inert, like every other writer's — see `DelegatedRef::parent_signature`.
                 )
             }),
             token_id: child_token_id,

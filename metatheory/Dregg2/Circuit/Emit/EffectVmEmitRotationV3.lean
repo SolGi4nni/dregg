@@ -2720,12 +2720,17 @@ def customV3 : EffectVmDescriptor2 :=
 /-! ### The note-spend nullifier PI weld (the C4 last-flip-gate close).
 
 The v1 hand-AIR (`circuit/src/effect_vm/air.rs`, D5) carries a per-row GATED cross-binding
-`s_notespend · (param0 − PI[NOTESPEND_NULLIFIER])` (offset 198): the spend row's folded
-nullifier (`param::NULLIFIER = param0`, column `prmCol 0`) MUST equal the published
-`PI[198]` — the weld that forbids the EffectVM from spending a different nullifier than the
-one the SCHEMA_NOTE_SPEND binding proof certified (the off-AIR verifier reconstructs PI[198]
-from the binding proof's `fields[0]` and `verify_full_turn` step 8 cross-checks the
-non-revocation proof's queried item == PI[198]).
+`s_notespend · (param0 − PI[NOTESPEND_NULLIFIER])` in the WIDE `pi::` layout: the spend row's
+folded nullifier (`param::NULLIFIER = param0`, column `prmCol 0`) MUST equal the published
+`PI[NOTESPEND_NULLIFIER]` — the weld that forbids the EffectVM from spending a different
+nullifier than the one the SCHEMA_NOTE_SPEND binding proof certified (the off-AIR verifier
+reconstructs it from the binding proof's `fields[0]` and `verify_full_turn` step 8 cross-checks
+the non-revocation proof's queried item against it).
+
+(This paragraph wrote the offset as the literal `198` in three places until 2026-08-06 — a
+pre-Phase-C number, stale since `OLD_COMMIT`/`NEW_COMMIT` widened 4 → 8 felts each. The slot
+cascades from `OWNER_CELL_ID_BASE + OWNER_CELL_ID_LEN`, so it is named, never restated; the
+Rust origin block, `circuit/src/effect_vm/pi.rs`'s `BASE_COUNT` docblock, says why.)
 
 That cross-binding tooth lives ONLY in the v1 hand-AIR — `noteSpendVmDescriptor` (the Lean
 per-effect descriptor) does NOT bind the nullifier to any PI (its `piCount = 42` is the v1

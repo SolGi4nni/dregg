@@ -308,13 +308,13 @@ pub const CREATE_ESCROW_AMOUNT_LIMBS_LEN: usize = 4;
 ///                                           flag-day rotation from 4; ~124-bit birthday)
 ///
 /// **PI layout v3** (`VK_PI_LAYOUT_VERSION == 3`): the frozen v2 prefix
-/// (`BASE_COUNT = 201` felts) is followed by the 3-slot v3 tail
-/// (`COMMITTED_HEIGHT`, `RATE_BOUND_TAG`, `CHALLENGE_WINDOW_TAG`); custom
-/// proof entries are appended after the tail. This moves
-/// `CUSTOM_PROOFS_BASE` from `BASE_COUNT` to `v3::V3_BASE_COUNT`. Pre-v3
+/// (`BASE_COUNT` felts) is followed by the FOUR-slot v3 tail
+/// (`v3::COMMITTED_HEIGHT`, `v3::RATE_BOUND_TAG`, `v3::CHALLENGE_WINDOW_TAG`,
+/// `v3::ASSET_CLASS`); custom proof entries are appended after the tail. This
+/// moves `CUSTOM_PROOFS_BASE` from `BASE_COUNT` to `v3::V3_BASE_COUNT`. Pre-v3
 /// proofs are NOT verifier-compatible with post-v3 proofs (the PI length
-/// differs by 3 felts plus any custom entries); the verifier rejects on
-/// PI length mismatch.
+/// differs by `V3_BASE_COUNT - BASE_COUNT` felts plus any custom entries); the
+/// verifier rejects on PI length mismatch.
 ///
 /// Note: CUSTOM_PROOFS_BASE is computed from `v3::V3_BASE_COUNT` so that
 /// adding new v3+ PI fields shifts the custom-proof entries automatically.
@@ -322,11 +322,13 @@ pub const CREATE_ESCROW_AMOUNT_LIMBS_LEN: usize = 4;
 /// constant.
 pub const CUSTOM_PROOFS_BASE: usize = v3::V3_BASE_COUNT;
 
-/// PI layout version for custom-effect dispatch. Bumped from 2 to 3 when
-/// the v3 tail (`COMMITTED_HEIGHT`, `RATE_BOUND_TAG`, `CHALLENGE_WINDOW_TAG`)
-/// was appended after the frozen v2 prefix. Verifiers MAY consult this
-/// constant to gate compatibility (the PI length itself is also a
-/// deterministic check).
+/// PI layout version for custom-effect dispatch. Bumped from 2 to 3 when the v3
+/// tail was appended after the frozen v2 prefix. ⚠ This constant does NOT
+/// discriminate the tail's WIDTH: the tail was three slots when the version
+/// bumped and is FOUR today (`v3::ASSET_CLASS` was appended without a further
+/// bump), so `VK_PI_LAYOUT_VERSION == 3` names a family, not a length. The PI
+/// length check is the deterministic one, and it is the one that actually
+/// separates the two shapes.
 pub const VK_PI_LAYOUT_VERSION: u32 = 3;
 
 /// Number of fixed public inputs in the active layout (PI v3).
@@ -337,58 +339,68 @@ pub const VK_PI_LAYOUT_VERSION: u32 = 3;
 pub const ACTIVE_BASE_COUNT: usize = v3::V3_BASE_COUNT;
 /// Frozen v2 public-input prefix (without custom proof data).
 ///
-/// Layout (post D5c burn-target cross-binding; BASE_COUNT 201):
-///   0..21   pre-γ.0a slots (commitments, balances, block height, etc.)
-///   21..25  APPROVED_HANDOFFS[4]
-///   25..29  TURN_HASH[4]                       (γ.0a)
-///   29..33  EFFECTS_HASH_GLOBAL[4]             (γ.0a)
-///   33      ACTOR_NONCE                        (γ.0a)
-///   34..38  PREVIOUS_RECEIPT_HASH[4]           (γ.0a)
-///   38..45  bilateral counts (transfer/grant/intro per direction/role) (γ.2)
-///   45..49  OUTGOING_TRANSFER_ROOT[4]          (γ.2)
-///   49..53  INCOMING_TRANSFER_ROOT[4]          (γ.2)
-///   53..57  OUTGOING_GRANT_ROOT[4]             (γ.2)
-///   57..61  INCOMING_GRANT_ROOT[4]             (γ.2)
-///   61..65  INTRO_AS_INTRODUCER_ROOT[4]        (γ.2)
-///   65..69  INTRO_AS_RECIPIENT_ROOT[4]         (γ.2)
-///   69..73  INTRO_AS_TARGET_ROOT[4]            (γ.2)
-///   73      IS_AGENT_CELL                      (γ.2)
-///   74..78  SOVEREIGN_WITNESS_KEY_COMMIT[4]    (sovereign teeth)
-///   78      SOVEREIGN_WITNESS_SEQUENCE         (sovereign teeth)
-///   79      IS_SOVEREIGN_CELL                  (sovereign teeth)
-///   80..84  SOVEREIGN_TRANSITION_PROOF_VK_HASH[4]    (sovereign teeth Phase 2)
-///   84..88  SOVEREIGN_TRANSITION_PROOF_COMMITMENT[4] (sovereign teeth Phase 2)
-///   88      HAS_TRANSITION_PROOF               (sovereign teeth Phase 2)
-///   89..93  BRIDGE_MINT_VALUE_LIMBS[4]          (30-bit-trunc fix)
-///   93..97  BRIDGE_LOCK_VALUE_LIMBS[4]          (30-bit-trunc fix)
-///   97..101 CREATE_ESCROW_AMOUNT_LIMBS[4]       (30-bit-trunc fix)
-///   101     SLOT_CAVEAT_COUNT                   (Cav-Codex Block 3)
-///   102..126 SLOT_CAVEAT_MANIFEST[24]            (Cav-Codex Block 3)
-///   126     CROSS_EFFECT_DEPS_COUNT             (Proof-to-Action §3.3)
-///   127..151 CROSS_EFFECT_DEPS_MANIFEST[24]     (Proof-to-Action §3.3)
-///   151     WITNESS_INDEX_MAP_COUNT             (Proof-to-Action §3.2)
-///   152..168 WITNESS_INDEX_MAP[16]              (Proof-to-Action §3.2)
-///   168     UNILATERAL_ATTESTATIONS_COUNT       (γ.2 unilateral)
-///   169..173 UNILATERAL_ATTESTATIONS_ROOT[4]    (γ.2 unilateral)
-///   173     EMIT_EVENT_COUNT                    (closes #110)
-///   174..182 EMIT_EVENT_TOPIC_HASH[8]            (closes #110)
-///   182..190 EMIT_EVENT_PAYLOAD_HASH[8]          (closes #110)
-///   190..194 FEDERATION_ID[4]                    (γ.2 #131)
-///   194..198 OWNER_CELL_ID[4]                    (γ.2 #132)
-///   198     NOTESPEND_NULLIFIER                  (D5 nullifier cross-binding)
-///   199     NOTECREATE_COMMITMENT                (D5b commitment cross-binding)
-///   200     BURN_TARGET_PI                       (D5c burn-target cross-binding)
+/// # ⚑ THIS BLOCK IS WHERE EVERY STALE PI NUMBER IN THE TREE CAME FROM
 ///
-/// Active layout (PI v3): the frozen v2 prefix above is followed by
-///   201     COMMITTED_HEIGHT                   (PI v3)
-///   202     RATE_BOUND_TAG                     (PI v3)
-///   203     CHALLENGE_WINDOW_TAG               (PI v3)
-///   204     ASSET_CLASS                        (PI v3 — light-client conservation)
-/// and custom proof entries start at offset 205 (`ACTIVE_BASE_COUNT`).
-/// (Offsets above the frozen v2 prefix are illustrative pre-Phase-C numbers;
-/// the live values are computed from `BASE_COUNT = 209`, so ASSET_CLASS = 212.)
-/// The v2 prefix is frozen so that pre-v3 descriptors and Lean facts
-/// remain byte-identical; new PI fields land in the v3+ tail.
+/// It carried a hand-written table of ABSOLUTE OFFSETS — `0..21`, `198
+/// NOTESPEND_NULLIFIER`, `BASE_COUNT 201` — written before Phase C widened
+/// `OLD_COMMIT`/`NEW_COMMIT` from 4 felts to 8 (`+8` total). Every number in it
+/// was therefore exactly 8 low. The same stale integers were still being quoted
+/// in four other files on 2026-08-06 (a `circuit/tests` docblock, a
+/// `circuit-prove` module header, an `EffectVmEmitRotationV3.lean` doc block,
+/// and `docs/deos/EFFECTVM-SIDESTRUCTURE-ABI.md`, all citing
+/// `NOTESPEND_NULLIFIER` as 198 against a live 206); all four now name the
+/// constant. Repairing copies without repairing this block only reseeds them.
+///
+/// So the table is gone and the layout is stated the way the code states it.
+/// `OLD_COMMIT_BASE = 0` is the single literal in the whole prefix; **every
+/// other base is `prior_base + prior_len`**, so naming the constants in order is
+/// a complete and drift-proof description — it cannot go stale under a width
+/// change the way a table of absolute offsets did. The absolute numbers a reader
+/// actually needs are pinned by a test against the Lean emission, not asserted
+/// here — see `v3_drift_guard::pi_v3_offsets_match_lean`.
+///
+/// # The v2 prefix, in cascade order
+///
+/// `OLD_COMMIT_BASE[OLD_COMMIT_LEN]` · `NEW_COMMIT_BASE[NEW_COMMIT_LEN]` ·
+/// `EFFECTS_HASH_BASE[EFFECTS_HASH_LEN]` · `INIT_BAL_LO` · `INIT_BAL_HI` ·
+/// `FINAL_BAL_LO` · `FINAL_BAL_HI` · `NET_DELTA_MAG` · `NET_DELTA_SIGN` ·
+/// `CURRENT_BLOCK_HEIGHT` · `MAX_CUSTOM_EFFECTS` · `CUSTOM_EFFECT_COUNT` ·
+/// `APPROVED_HANDOFFS_BASE[APPROVED_HANDOFFS_LEN]` (RETIRED slot) ·
+/// `TURN_HASH_BASE[TURN_HASH_LEN]` (γ.0a) ·
+/// `EFFECTS_HASH_GLOBAL_BASE[EFFECTS_HASH_GLOBAL_LEN]` (γ.0a) · `ACTOR_NONCE`
+/// (γ.0a) · `PREVIOUS_RECEIPT_HASH_BASE[PREVIOUS_RECEIPT_HASH_LEN]` (γ.0a) ·
+/// the seven γ.2 bilateral counts (`OUTBOUND_TRANSFER_COUNT` …
+/// `INTRO_AS_TARGET_COUNT`, one felt each) · the seven γ.2 4-felt roots
+/// (`OUTGOING_TRANSFER_ROOT_BASE` … `INTRO_AS_TARGET_ROOT_BASE`) ·
+/// `IS_AGENT_CELL` (γ.2) ·
+/// `SOVEREIGN_WITNESS_KEY_COMMIT_BASE[SOVEREIGN_WITNESS_KEY_COMMIT_LEN]` ·
+/// `SOVEREIGN_WITNESS_SEQUENCE` · `IS_SOVEREIGN_CELL` ·
+/// `SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE[..LEN]` ·
+/// `SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE[..LEN]` ·
+/// `HAS_TRANSITION_PROOF` · `BRIDGE_MINT_VALUE_LIMBS_BASE[..LEN]` ·
+/// `BRIDGE_LOCK_VALUE_LIMBS_BASE[..LEN]` (RETIRED) ·
+/// `CREATE_ESCROW_AMOUNT_LIMBS_BASE[..LEN]` (RETIRED) · `SLOT_CAVEAT_COUNT` ·
+/// `SLOT_CAVEAT_MANIFEST_BASE[MAX_SLOT_CAVEATS * SLOT_CAVEAT_ENTRY_SIZE]` ·
+/// `CROSS_EFFECT_DEPS_COUNT` ·
+/// `CROSS_EFFECT_DEPS_BASE[MAX_CROSS_EFFECT_DEPS * CROSS_EFFECT_DEP_ENTRY_SIZE]` ·
+/// `WITNESS_INDEX_MAP_COUNT` ·
+/// `WITNESS_INDEX_MAP_BASE[MAX_WITNESS_INDEX_ENTRIES * WITNESS_INDEX_ENTRY_SIZE]` ·
+/// `UNILATERAL_ATTESTATIONS_COUNT` ·
+/// `UNILATERAL_ATTESTATIONS_ROOT_BASE[UNILATERAL_ATTESTATIONS_ROOT_LEN]` ·
+/// `EMIT_EVENT_COUNT` · `EMIT_EVENT_TOPIC_HASH_BASE[EMIT_EVENT_TOPIC_HASH_LEN]` ·
+/// `EMIT_EVENT_PAYLOAD_HASH_BASE[EMIT_EVENT_PAYLOAD_HASH_LEN]` ·
+/// `FEDERATION_ID_BASE[FEDERATION_ID_LEN]` (#131) ·
+/// `OWNER_CELL_ID_BASE[OWNER_CELL_ID_LEN]` (#132) · `NOTESPEND_NULLIFIER` (D5) ·
+/// `NOTECREATE_COMMITMENT` (D5b) · `BURN_TARGET_PI` (D5c) — and the prefix ends
+/// at `BASE_COUNT = BURN_TARGET_PI + 1`.
+///
+/// # Active layout (PI v3)
+///
+/// The frozen v2 prefix is followed by the FOUR-slot v3 tail — `v3::COMMITTED_HEIGHT`,
+/// `v3::RATE_BOUND_TAG`, `v3::CHALLENGE_WINDOW_TAG`, `v3::ASSET_CLASS` — and custom
+/// proof entries start at `v3::V3_BASE_COUNT` (`== ACTIVE_BASE_COUNT ==
+/// CUSTOM_PROOFS_BASE`). The v2 prefix is frozen so that pre-v3 descriptors and Lean
+/// facts remain byte-identical; new PI fields land in the v3+ tail.
 ///
 /// ---- Slot-caveat manifest (Cav-Codex Block 3) ----
 ///
@@ -572,10 +584,10 @@ pub const SLOT_CAVEAT_TAG_HEAP_FIELD_LTE_OTHER: u32 = 21;
 // shared-PI surface that future row-bound enforcement (Stage 7-γ.3)
 // will tie to specific trace rows of the producer/consumer effects.
 pub const CROSS_EFFECT_DEPS_COUNT: usize =
-    SLOT_CAVEAT_MANIFEST_BASE + MAX_SLOT_CAVEATS * SLOT_CAVEAT_ENTRY_SIZE; // 126
+    SLOT_CAVEAT_MANIFEST_BASE + MAX_SLOT_CAVEATS * SLOT_CAVEAT_ENTRY_SIZE;
 pub const MAX_CROSS_EFFECT_DEPS: usize = 4;
 pub const CROSS_EFFECT_DEP_ENTRY_SIZE: usize = 6;
-pub const CROSS_EFFECT_DEPS_BASE: usize = CROSS_EFFECT_DEPS_COUNT + 1; // 127
+pub const CROSS_EFFECT_DEPS_BASE: usize = CROSS_EFFECT_DEPS_COUNT + 1;
 
 /// Field-name tags for cross-effect dependencies. Kept in sync with
 /// `dregg_turn::binding_proof::EffectDependency::field_name` string
@@ -605,10 +617,10 @@ pub const CROSS_EFFECT_FIELD_TAG_NOTE_TREE_ROOT: u32 = 5;
 // future per-effect AIR slot binds the witness blob's BLAKE3 hash to
 // the effect's row-0 columns for full algebraic enforcement.
 pub const WITNESS_INDEX_MAP_COUNT: usize =
-    CROSS_EFFECT_DEPS_BASE + MAX_CROSS_EFFECT_DEPS * CROSS_EFFECT_DEP_ENTRY_SIZE; // 127 + 24 = 151
+    CROSS_EFFECT_DEPS_BASE + MAX_CROSS_EFFECT_DEPS * CROSS_EFFECT_DEP_ENTRY_SIZE;
 pub const MAX_WITNESS_INDEX_ENTRIES: usize = 8;
 pub const WITNESS_INDEX_ENTRY_SIZE: usize = 2;
-pub const WITNESS_INDEX_MAP_BASE: usize = WITNESS_INDEX_MAP_COUNT + 1; // 152
+pub const WITNESS_INDEX_MAP_BASE: usize = WITNESS_INDEX_MAP_COUNT + 1;
 
 // ---- Stage 7-γ.2 unilateral binding (1-arity sibling of bilateral) ----
 //
@@ -636,8 +648,8 @@ pub const WITNESS_INDEX_MAP_BASE: usize = WITNESS_INDEX_MAP_COUNT + 1; // 152
 // attestation kind ensures `SelfStateTransition` cannot be confused with
 // `SelfNonceBump` even at colliding data.
 pub const UNILATERAL_ATTESTATIONS_COUNT: usize =
-    WITNESS_INDEX_MAP_BASE + MAX_WITNESS_INDEX_ENTRIES * WITNESS_INDEX_ENTRY_SIZE; // 168
-pub const UNILATERAL_ATTESTATIONS_ROOT_BASE: usize = UNILATERAL_ATTESTATIONS_COUNT + 1; // 169
+    WITNESS_INDEX_MAP_BASE + MAX_WITNESS_INDEX_ENTRIES * WITNESS_INDEX_ENTRY_SIZE;
+pub const UNILATERAL_ATTESTATIONS_ROOT_BASE: usize = UNILATERAL_ATTESTATIONS_COUNT + 1;
 pub const UNILATERAL_ATTESTATIONS_ROOT_LEN: usize = 4;
 
 /// Maximum unilateral attestations the off-AIR verifier walks per turn.
@@ -688,11 +700,11 @@ pub const UNILATERAL_ATTESTATION_KIND_CUSTOM_BASE: u32 = 0x4000_0000;
 // in one proof must share the same hashes. Multi-emit-distinct-hashes
 // requires PI extension (deferred).
 pub const EMIT_EVENT_COUNT: usize =
-    UNILATERAL_ATTESTATIONS_ROOT_BASE + UNILATERAL_ATTESTATIONS_ROOT_LEN; // 173
-pub const EMIT_EVENT_TOPIC_HASH_BASE: usize = EMIT_EVENT_COUNT + 1; // 174
+    UNILATERAL_ATTESTATIONS_ROOT_BASE + UNILATERAL_ATTESTATIONS_ROOT_LEN;
+pub const EMIT_EVENT_TOPIC_HASH_BASE: usize = EMIT_EVENT_COUNT + 1;
 pub const EMIT_EVENT_TOPIC_HASH_LEN: usize = 8;
 pub const EMIT_EVENT_PAYLOAD_HASH_BASE: usize =
-    EMIT_EVENT_TOPIC_HASH_BASE + EMIT_EVENT_TOPIC_HASH_LEN; // 182
+    EMIT_EVENT_TOPIC_HASH_BASE + EMIT_EVENT_TOPIC_HASH_LEN;
 pub const EMIT_EVENT_PAYLOAD_HASH_LEN: usize = 8;
 
 // ---- Stage 7-γ.2 follow-up (#131 + #132): per-cell federation + owner binding ----
@@ -717,13 +729,13 @@ pub const EMIT_EVENT_PAYLOAD_HASH_LEN: usize = 8;
 // #131: FEDERATION_ID — the federation under which this proof was minted.
 //       All per-cell proofs of one turn share this value (the verifier's
 //       PI-match loop also enforces cross-proof equality).
-pub const FEDERATION_ID_BASE: usize = EMIT_EVENT_PAYLOAD_HASH_BASE + EMIT_EVENT_PAYLOAD_HASH_LEN; // 190
+pub const FEDERATION_ID_BASE: usize = EMIT_EVENT_PAYLOAD_HASH_BASE + EMIT_EVENT_PAYLOAD_HASH_LEN;
 pub const FEDERATION_ID_LEN: usize = 4;
 // #132: OWNER_CELL_ID — the cell whose state transition this proof attests.
 //       Distinct per per-cell proof (each side of a bilateral effect carries
 //       its own owner). Binds the proof to a specific owner cell so a proof
 //       for owner cell X cannot be substituted for owner cell Y.
-pub const OWNER_CELL_ID_BASE: usize = FEDERATION_ID_BASE + FEDERATION_ID_LEN; // 194
+pub const OWNER_CELL_ID_BASE: usize = FEDERATION_ID_BASE + FEDERATION_ID_LEN;
 pub const OWNER_CELL_ID_LEN: usize = 4;
 
 // ---- D5: NoteSpend nullifier cross-binding (approach A) ----
@@ -774,7 +786,7 @@ pub const OWNER_CELL_ID_LEN: usize = 4;
 // from the sentinel, but `fold_bytes32_to_bb` of a real preimage-derived
 // nullifier is ~never zero (and the binding proof independently certifies
 // the 256-bit value), so the sentinel collision is not an exploit surface.
-pub const NOTESPEND_NULLIFIER: usize = OWNER_CELL_ID_BASE + OWNER_CELL_ID_LEN; // 198
+pub const NOTESPEND_NULLIFIER: usize = OWNER_CELL_ID_BASE + OWNER_CELL_ID_LEN;
 
 // ---- D5b: NoteCreate commitment cross-binding (approach A, sibling) ----
 //
@@ -804,7 +816,7 @@ pub const NOTESPEND_NULLIFIER: usize = OWNER_CELL_ID_BASE + OWNER_CELL_ID_LEN; /
 //
 // Sentinel: ZERO when the proof carries no NoteCreate row (same rationale as
 // NOTESPEND_NULLIFIER — a real commitment is ~never the zero fold).
-pub const NOTECREATE_COMMITMENT: usize = NOTESPEND_NULLIFIER + 1; // 199
+pub const NOTECREATE_COMMITMENT: usize = NOTESPEND_NULLIFIER + 1;
 
 // ---- D5c: Burn target cross-binding (approach A, sibling) ----
 //
@@ -847,9 +859,9 @@ pub const NOTECREATE_COMMITMENT: usize = NOTESPEND_NULLIFIER + 1; // 199
 // siblings are felt-width #4 and are still 1-felt carriers.
 //
 // Sentinel: ZERO when the proof carries no Burn row.
-pub const BURN_TARGET_PI: usize = NOTECREATE_COMMITMENT + 1; // 200
+pub const BURN_TARGET_PI: usize = NOTECREATE_COMMITMENT + 1;
 
-pub const BASE_COUNT: usize = BURN_TARGET_PI + 1; // 201
+pub const BASE_COUNT: usize = BURN_TARGET_PI + 1;
 /// Elements per custom effect entry in PI (8 vk_hash + 8 proof_commit).
 /// Was 8 in PI layout v1; widened to 12 in v2 (`VK_PI_LAYOUT_VERSION == 2`);
 /// widened to 16 in the proof-bind flag-day rotation (blocker #2: the
@@ -892,7 +904,8 @@ pub const MAX_CUSTOM_EFFECTS_DEFAULT: u8 = 4;
 
 // ---- PI v3 (THE ROTATION, STAGED — `.docs-history-noclaude/UNIVERSAL-MAP-ROTATION.md` §2.6) ----
 //
-// The v3 tail appends THREE slots after the frozen v2 prefix. NOTHING on the
+// The v3 tail appends FOUR slots after the frozen v2 prefix (it was three when
+// this block was written; `ASSET_CLASS` is the fourth). NOTHING on the
 // live wire path reads these yet: they are staged for the one VK flag-day
 // (`.docs-history-noclaude/ROTATION-CUTOVER.md`), exactly the additive IR-v2 pattern. The Lean
 // twin is `metatheory/Dregg2/Circuit/RotationLayout.lean` namespace `PiV3` —
@@ -963,11 +976,16 @@ pub mod v3 {
 
 #[cfg(test)]
 mod v3_drift_guard {
-    /// THE DRIFT GUARD: the staged v3 offsets are byte-pinned against the
-    /// Lean emission (`RotationLayout.PiV3`: V2_BASE_COUNT = 201, tail
-    /// 201/202/203, V3_BASE_COUNT = 204). A change to the live v2 prefix
-    /// before the flag-day fails HERE, forcing the Lean re-anchor first —
-    /// Rust never invents a layout fact (law #1 of the rotation spec).
+    /// THE DRIFT GUARD: the staged v3 offsets are byte-pinned against the Lean
+    /// emission (`RotationLayout.PiV3`). A change to the live v2 prefix before
+    /// the flag-day fails HERE, forcing the Lean re-anchor first — Rust never
+    /// invents a layout fact (law #1 of the rotation spec).
+    ///
+    /// ⚑ This docblock quoted `V2_BASE_COUNT = 201, tail 201/202/203,
+    /// V3_BASE_COUNT = 204` until 2026-08-06 — the PRE-PHASE-C numbers, which
+    /// the assertions three lines below already contradicted. The pinned values
+    /// live in the `assert_eq!`s and nowhere else; do not restate them in prose,
+    /// which is exactly how the stale set propagated out of this file.
     #[test]
     fn pi_v3_offsets_match_lean() {
         // Phase C widened OLD_COMMIT + NEW_COMMIT 4->8 felts each (+8 total),

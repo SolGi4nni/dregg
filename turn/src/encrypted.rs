@@ -89,7 +89,11 @@ pub struct EncryptedTurn {
     /// [`TurnValidityProof`] for exactly what is and is not enforced.
     pub validity_proof: TurnValidityProof,
 
-    /// Submission timestamp (for ordering within conflict buckets).
+    /// Submission timestamp, carried on the envelope and **read by no ordering
+    /// code**. This said "for ordering within conflict buckets" until
+    /// 2026-08-06; [`order_encrypted_turns`] never touches it, and a bucket's
+    /// members are pairwise non-conflicting, so there is no within-bucket order
+    /// for it to decide. Every occurrence repo-wide is a construction site.
     pub submitted_at: i64,
 }
 
@@ -546,19 +550,36 @@ pub enum EncryptedTurnError {
 
 /// Result of ordering a batch of encrypted turns.
 ///
-/// The federation produces this after consensus. It contains the ordering
-/// (which turns go in which positions) and conflict bucketing.
+/// The federation produces this after consensus. It contains the conflict
+/// bucketing produced by [`order_encrypted_turns`].
+///
+/// ⚑ **THE TWO DOC LINES HERE WERE THE EXACT INVERSE OF THE ALGORITHM until
+/// 2026-08-06.** They read *"Turns in different buckets can execute in parallel.
+/// Turns within the same bucket must execute sequentially"* and
+/// [`ConflictBucket`] was *"a group of turns that potentially conflict and must
+/// be serialized"* — so a consumer that obeyed them would have **parallelized
+/// precisely the conflicting turns**, which is the one thing this whole surface
+/// exists to prevent. The CODE was right and the docs were wrong; four
+/// independent sources say so and are cited on [`order_encrypted_turns`].
 #[derive(Clone, Debug)]
 pub struct TurnOrdering {
-    /// Turns grouped by conflict bucket. Turns in different buckets can execute in parallel.
-    /// Turns within the same bucket must execute sequentially.
+    /// Turns grouped into conflict-free buckets (graph-coloring COLOR CLASSES).
+    ///
+    /// A bucket is an INDEPENDENT SET: no two turns in one bucket conflict, so
+    /// **turns within a bucket execute in parallel**. Two turns that conflict
+    /// are always in DIFFERENT buckets, so **buckets execute sequentially**, in
+    /// index order, to serialize every conflicting pair.
     pub buckets: Vec<ConflictBucket>,
 }
 
-/// A group of turns that potentially conflict and must be serialized.
+/// A group of turns that do NOT conflict with one another and may run in parallel.
 #[derive(Clone, Debug)]
 pub struct ConflictBucket {
-    /// Turn commitments in execution order within this bucket.
+    /// Turn commitments in this bucket, in the batch's input order.
+    ///
+    /// Not an *execution* order: the members are pairwise non-conflicting, so
+    /// they have no order to respect among themselves. What is ordered is the
+    /// bucket index (see [`TurnOrdering::buckets`]).
     pub turn_commitments: Vec<[u8; 32]>,
 }
 
@@ -567,6 +588,37 @@ pub struct ConflictBucket {
 /// Algorithm: greedy graph coloring on the conflict graph.
 /// Each turn is a node; edges connect turns whose Bloom filters overlap.
 /// Each color (bucket) contains non-conflicting turns that can parallelize.
+///
+/// # A bucket is an independent set — the four sources that say so
+///
+/// This paragraph exists because the type docs on [`TurnOrdering`] and
+/// [`ConflictBucket`] asserted the opposite until 2026-08-06, and a reader who
+/// meets a type before its constructor meets the wrong claim first. The
+/// disagreement was resolved in favour of the code, unanimously:
+///
+/// 1. **The body below.** A turn is assigned to the FIRST bucket where
+///    `!conflicts_with_bucket` holds, and a new bucket is opened only when no
+///    such bucket exists. A bucket therefore cannot contain a conflicting pair.
+/// 2. **This docblock**, which has said "non-conflicting turns that can
+///    parallelize" since the function was written.
+/// 3. **The module header** (step 3: "Serializing conflicting turns,
+///    parallelizing non-conflicting ones").
+/// 4. **The tests, in their names and their assertions.**
+///    `conflicting_turns_in_different_buckets` asserts `buckets.len() == 2` for
+///    a pair sharing a cell; `non_conflicting_turns_share_one_bucket` asserts
+///    `buckets.len() == 1` for a disjoint pair. Neither pinned the invariant
+///    itself, so `buckets_are_independent_sets_and_conflicts_cross_them` now
+///    does, over a batch, from both poles.
+///
+/// # ⚠ The bucket index does NOT preserve submission order
+///
+/// Greedy coloring places each turn in the lowest-indexed bucket that fits, so
+/// for a conflicting pair `(i, j)` with `i` earlier in `turns`, `j` may still
+/// land in a LOWER bucket index than `i` — it need not conflict with the
+/// members that displaced `i` from that bucket. Executing buckets in index
+/// order therefore serializes every conflicting pair (which is what soundness
+/// needs) but may run them in the opposite order from submission.
+/// [`EncryptedTurn::submitted_at`] is not consulted anywhere in this function.
 pub fn order_encrypted_turns(turns: &[EncryptedTurn]) -> TurnOrdering {
     if turns.is_empty() {
         return TurnOrdering {
@@ -676,20 +728,25 @@ mod tests {
     }
 
     #[test]
-    fn non_conflicting_turns_in_separate_buckets_or_same() {
-        // Two turns accessing completely different cells should be in the same bucket
-        // (they can parallelize).
+    fn non_conflicting_turns_share_one_bucket() {
+        // Two turns accessing completely different cells land in the SAME bucket:
+        // a bucket is an independent set, and they can parallelize.
         let t1 = dummy_encrypted_turn(1, &[10, 11]);
         let t2 = dummy_encrypted_turn(2, &[20, 21]);
 
-        // They shouldn't conflict (different cells, Bloom filter should separate them).
-        // Note: there's a tiny chance of false positive, but with k=8, m=256, n=2 it's negligible.
-        if !t1.may_conflict_with(&t2) {
-            let ordering = order_encrypted_turns(&[t1, t2]);
-            // Should be 1 bucket (both can parallelize).
-            assert_eq!(ordering.buckets.len(), 1);
-            assert_eq!(ordering.buckets[0].turn_commitments.len(), 2);
-        }
+        // ⚑ This assertion was wrapped in `if !t1.may_conflict_with(&t2) { … }`
+        // until 2026-08-06 — the exact "asserted NOTHING" shape `conflict.rs`'s
+        // own test comments warn about in this crate. A Bloom false positive
+        // between two disjoint cell sets would have SILENTLY skipped the whole
+        // body. `ConflictSet` is a keyed, deterministic filter, so the premise is
+        // a fact about fixed inputs and belongs in an assertion, not a guard.
+        assert!(
+            !t1.may_conflict_with(&t2),
+            "k=8/m=256 over 2 cells each: these disjoint sets must not collide"
+        );
+        let ordering = order_encrypted_turns(&[t1, t2]);
+        assert_eq!(ordering.buckets.len(), 1);
+        assert_eq!(ordering.buckets[0].turn_commitments.len(), 2);
     }
 
     #[test]
@@ -701,6 +758,86 @@ mod tests {
         assert!(t1.may_conflict_with(&t2));
         let ordering = order_encrypted_turns(&[t1, t2]);
         assert_eq!(ordering.buckets.len(), 2);
+    }
+
+    /// THE INVARIANT THE TYPE DOCS ASSERTED THE INVERSE OF, pinned over a batch.
+    ///
+    /// Until 2026-08-06 [`TurnOrdering::buckets`] said "turns within the same
+    /// bucket must execute sequentially" and [`ConflictBucket`] said it held
+    /// "turns that potentially conflict" — so a consumer obeying the docs would
+    /// have serialized each bucket internally and PARALLELIZED ACROSS buckets,
+    /// which is precisely the conflicting direction. Nothing in the suite pinned
+    /// the real invariant; the two tests above only sample n=2.
+    ///
+    /// Both poles, over an 8-turn batch with deliberate overlaps:
+    ///  * WITHIN a bucket, NO pair conflicts (what parallel execution needs);
+    ///  * ACROSS buckets, at least one conflicting pair exists (so the old doc's
+    ///    reading is not vacuously satisfiable — buckets genuinely must be
+    ///    ordered against each other, and the batch is not trivially one bucket).
+    #[test]
+    fn buckets_are_independent_sets_and_conflicts_cross_them() {
+        // Overlapping cell sets: 1&2 share cell 10; 3&4 share cell 20;
+        // 5 touches both 10 and 20; 6,7,8 are disjoint singletons.
+        let turns = vec![
+            dummy_encrypted_turn(1, &[10]),
+            dummy_encrypted_turn(2, &[10, 30]),
+            dummy_encrypted_turn(3, &[20]),
+            dummy_encrypted_turn(4, &[20, 40]),
+            dummy_encrypted_turn(5, &[10, 20]),
+            dummy_encrypted_turn(6, &[50]),
+            dummy_encrypted_turn(7, &[60]),
+            dummy_encrypted_turn(8, &[70]),
+        ];
+        let by_commitment = |c: &[u8; 32]| {
+            turns
+                .iter()
+                .find(|t| &t.turn_commitment == c)
+                .expect("every bucketed commitment came from this batch")
+        };
+
+        let ordering = order_encrypted_turns(&turns);
+        let placed: usize = ordering
+            .buckets
+            .iter()
+            .map(|b| b.turn_commitments.len())
+            .sum();
+        assert_eq!(placed, turns.len(), "every turn is placed exactly once");
+
+        // POLE 1 — no bucket contains a conflicting pair.
+        for (idx, bucket) in ordering.buckets.iter().enumerate() {
+            for (i, a) in bucket.turn_commitments.iter().enumerate() {
+                for b in &bucket.turn_commitments[i + 1..] {
+                    assert!(
+                        !by_commitment(a).may_conflict_with(by_commitment(b)),
+                        "bucket {idx} holds a conflicting pair — a bucket is an \
+                         independent set, so its members run in PARALLEL"
+                    );
+                }
+            }
+        }
+
+        // POLE 2 — conflicts exist and are separated ACROSS buckets, so the
+        // bucket index is a real serialization order and not a formality.
+        assert!(
+            ordering.buckets.len() > 1,
+            "this batch conflicts; it must not collapse to a single bucket"
+        );
+        let mut cross_bucket_conflicts = 0usize;
+        for (i, ba) in ordering.buckets.iter().enumerate() {
+            for bb in &ordering.buckets[i + 1..] {
+                for a in &ba.turn_commitments {
+                    for b in &bb.turn_commitments {
+                        if by_commitment(a).may_conflict_with(by_commitment(b)) {
+                            cross_bucket_conflicts += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            cross_bucket_conflicts > 0,
+            "the conflicting pairs must land in DIFFERENT buckets"
+        );
     }
 
     // ── P3: validity-proof fail-closed gate + Phase-1 submitter auth ─────────

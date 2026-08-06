@@ -6,10 +6,11 @@
 //! delegation / ledger types depends on `dregg-cell`; a consumer that signs,
 //! seals, encrypts, or proves over cells additionally depends on this crate.
 //!
-//! This holds the bulletproofs / dalek / chacha / merlin stack plus the two
-//! crypto constructors that previously lived as methods on `dregg-cell` core
-//! types (now free functions: [`note::new_note`] and
-//! [`delegation::verify_parent_signature`]).
+//! This holds the bulletproofs / dalek / chacha / merlin stack plus the crypto
+//! constructor that previously lived as a method on a `dregg-cell` core type
+//! (now a free function: [`note::new_note`]). Its sibling
+//! `delegation::verify_parent_signature` was deleted on 2026-08-06 — see the
+//! block where it lived.
 
 pub mod capability_proof;
 pub mod note_bridge;
@@ -51,29 +52,27 @@ pub mod note {
     }
 }
 
-/// The crypto verifier for [`dregg_cell::delegation::DelegatedRef`] (moved off
-/// the type so `dregg-cell` carries no `ed25519-dalek` dependency).
-pub mod delegation {
-    use dregg_cell::delegation::DelegatedRef;
-
-    /// Verify the parent's signature over this delegation.
-    ///
-    /// Returns `true` if the signature is valid for the given parent public key.
-    pub fn verify_parent_signature(d: &DelegatedRef, parent_pubkey: &[u8; 32]) -> bool {
-        use ed25519_dalek::{Signature, VerifyingKey};
-
-        let message =
-            DelegatedRef::signing_message(&d.clist_commitment, d.delegation_epoch, &d.child);
-        let signature = Signature::from_bytes(&d.parent_signature);
-
-        if let Ok(vk) = VerifyingKey::from_bytes(parent_pubkey) {
-            vk.verify_strict(&message, &signature).is_ok()
-        } else {
-            false
-        }
-    }
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETED 2026-08-06 — `pub mod delegation { verify_parent_signature }`.
+//
+// It was a `pub` Ed25519 verifier over `DelegatedRef::parent_signature` with
+// ZERO call sites anywhere in the workspace, and — worse than dead — it could
+// only ever return `false`: all three production minters
+// (`apply_spawn_with_delegation`, `apply_refresh_delegation`, `execute_tree`'s
+// `DelegationMode::SnapshotRefresh` auto-install) write `[0u8; 64]`, as does
+// `Cell::spawn_child_with_delegation`. A public predicate that answers `false`
+// for every object this system produces reads to an integrator as a check they
+// failed to satisfy, not as a check nobody performs.
+//
+// This is not deferred work: it is abandoned work. `exec_lean::lean_shadow`'s
+// snapshot-authority fence records the decision (2026-08-06) that a delegation
+// snapshot is an ATTESTATION, not an authority edge — the verified kernel keeps
+// `delegations` / `delegationEpoch` as REGISTRY state, and the parent's
+// authorization for a snapshot is already carried by the signature on the turn
+// that minted it. `DelegatedRef::parent_signature` and
+// `DelegatedRef::signing_message` are the remaining halves of the same inert
+// mechanism; removing the FIELD changes the persisted `Cell` shape and so is a
+// `CANONICAL_STATE_SCHEMA_EPOCH` bump, which is not this lane's call to make.
 // ─────────────────────────────────────────────────────────────────────────────
 // Re-exports (mirroring what `dregg-cell` previously re-exported under the
 // `crypto` feature, so `dregg_cell_crypto::<Item>` resolves the same names).

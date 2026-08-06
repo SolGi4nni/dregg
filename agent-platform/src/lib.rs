@@ -2632,7 +2632,17 @@ mod tests {
         assert!(landed.finalized_len > 0, "the node finalized real turns");
 
         // (2) THIRD-PARTY re-verification: export the node's receipt chain and verify
-        // it offline, exactly as a light client would — no trust in this host.
+        // it offline.
+        //
+        // ⚠ STRUCTURE ONLY — this said "exactly as a light client would — no trust in
+        // this host" until 2026-08-06, and `verify_receipt_chain` cannot support that:
+        // it takes NO executor keys and checks NO executor signature, so it establishes
+        // genesis / hash-linking / state-continuity / agent-consistency and nothing
+        // about WHO produced the chain. Its own docblock says a structurally-perfect
+        // chain to any head state passes. The trust-a-stranger's-chain predicate is
+        // `verify_receipt_chain_strict`, and this test cannot call it: `LocalNode`
+        // carries no executor public keys anywhere on the type, so going strict here is
+        // an API change, not a call-site change.
         let (chain, manifest) = {
             let arc = platform
                 .tenants
