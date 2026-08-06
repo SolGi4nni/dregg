@@ -46,10 +46,10 @@ use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 use dregg_circuit::poseidon2::hash_2_to_1;
 use dregg_circuit::refusal::{Outcome, classify};
 
-/// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 multiStepChainDesc` emits (pinned by the
-/// `#guard` in `MultiStepChainEmit.lean`). If Lean drifts, that `#guard` fails; if this literal
-/// drifts, the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"multi-step-accumulated-hash-chain::poseidon2-v1","ir":2,"trace_width":10,"public_input_count":2,"challenges":0,"tables":[],"constraints":[{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":0},{"t":"var","v":1},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":2},{"t":"var","v":3},{"t":"var","v":4},{"t":"var","v":5},{"t":"var","v":6},{"t":"var","v":7},{"t":"var","v":8},{"t":"var","v":9}]},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"last","col":2,"pi_index":1}],"hash_sites":[],"ranges":[]}"#;
+/// The wire string Lean's `emitVmJson2 multiStepChainDesc` emits, READ FROM THE EMITTED ARTIFACT
+/// (routed by `EmitByName.lean`, drift-gated, stamped). Was a hand-copied literal until 2026-08-06;
+/// the `#guard` in `MultiStepChainEmit.lean` and the copy each pinned only themselves. No copy now.
+const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/multi-step-chain.json");
 
 // --- Trace column layout (must match `MultiStepChainEmit.lean` §1). ---
 const PREV: usize = 0;

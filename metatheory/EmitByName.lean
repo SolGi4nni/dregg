@@ -131,6 +131,23 @@ import Market.PrivateBookBfvExactPublicConsumer
 import Market.DarkAmmPrivateDescriptor
 import Market.PrivateBookBfvSliceDescriptor
 import Market.PrivateBookBfvButterflyAir
+-- ⚑ 2026-08-06 — THE NINE TEST-ONLY DESCRIPTORS, ROUTED. Seven modules below author nine
+-- `EffectVmDescriptor2`s that had NO checked-in artifact at all, so fifteen sites under
+-- `circuit-prove/tests/` carried the emitted JSON as a HAND-COPIED `const … &str = r#"…"#`
+-- literal instead of `include_str!` of a file. That is the same ungated hand-transcription hop
+-- this emitter's header disowns, one medium over: the Lean `#guard` pins the bytes, the Rust
+-- literal pins the bytes, and NOTHING re-derives one from the other — so a Lean change moves the
+-- guard and the fifteen Rust copies stay green against their own stale transcription. Six of the
+-- fifteen are `_emit_gate`/`_audit` DUPLICATE pairs of each other, which is the transcription
+-- hazard doubled: two copies of one descriptor that can drift apart with nothing red.
+-- Routing them here mints the artifact, and the goldens become `include_str!` of it.
+import Dregg2.Circuit.Emit.PredicatesRelationalCompoundEmit
+import Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransition
+import Dregg2.Circuit.Emit.EffectActionBindingEmit
+import Dregg2.Circuit.Emit.GarbledEvalEmit
+import Dregg2.Circuit.Emit.FoldEmit
+import Dregg2.Circuit.Emit.MultiStepChainEmit
+import Dregg2.Circuit.Emit.CommittedThresholdEmit
 
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 emitVmJson2)
 
@@ -566,6 +583,31 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.MinaWrapConjunctionAir.conjunctionDesc)
   , ("mina-wrap-conjunction-unthreaded.json",
       Dregg2.Circuit.Emit.MinaWrapConjunctionAir.conjunctionUnthreadedDesc)
+    -- ⚑ 2026-08-06 — THE NINE THAT EXISTED ONLY AS RUST STRING LITERALS. Each of the nine rows
+    -- below had a Lean author with an `emitVmJson2` `#guard` and NO artifact, so its bytes reached
+    -- the test suite by hand-copy. `descriptor_by_name.rs` dispatches none of them — same standing
+    -- as `dyck-parse.json` and `mina-fixture.json` above: the routing table is a SUPERSET of the
+    -- dispatch table by design, and routing is what makes a byte-pin re-derivable.
+  , ("compound-predicate.json",
+      Dregg2.Circuit.Emit.PredicatesRelationalCompoundEmit.compoundPredicateDesc)
+  , ("relational-predicate.json",
+      Dregg2.Circuit.Emit.PredicatesRelationalCompoundEmit.relationalPredicateDesc)
+  , ("ivc-state-transition.json",
+      Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransition.ivcStateTransitionDescriptor)
+    -- `effectActionDesc` is name/arity-PARAMETERIZED; these are its two deployed instances, and
+    -- they are the pair `effect_action_emit_gate.rs` carried as two literals in ONE file.
+  , ("effect-revoke-capability.json",
+      Dregg2.Circuit.Emit.EffectActionBindingEmit.revokeCapabilityDesc)
+  , ("effect-burn.json",
+      Dregg2.Circuit.Emit.EffectActionBindingEmit.burnDesc)
+  , ("garbled-eval.json",
+      Dregg2.Circuit.Emit.GarbledEvalEmit.garbledEvalDesc)
+  , ("fold-step.json",
+      Dregg2.Circuit.Emit.FoldEmit.foldDesc)
+  , ("multi-step-chain.json",
+      Dregg2.Circuit.Emit.MultiStepChainEmit.multiStepChainDesc)
+  , ("committed-threshold.json",
+      Dregg2.Circuit.Emit.CommittedThresholdEmit.committedThresholdDesc)
   ]
 
 /- The routing table covers the checked-in directory exactly. A bare count is a
@@ -612,7 +654,15 @@ Both directions are gated outside Lean:
 -- an emission and not a Rust-side edit of a parsed descriptor.
 -- Same shared-line hazard as every note above: if the blame on this line is one lane's, the count
 -- is probably already short again.
-theorem byNameDescriptors_length : byNameDescriptors.length = 113 := rfl
+-- ⚑ 2026-08-06 — 122 = 113 + the nine descriptors that had a Lean author and no artifact (their
+-- bytes lived in fifteen hand-copied `const … &str = r#"…"#` literals under `circuit-prove/
+-- tests/`). ⚠ THIS PIN IS BUMPED IN THE SAME EDIT AS THE ROWS, DELIBERATELY. Every note above
+-- records the same accident from the other side: a lane adds rows and leaves the pin, or bumps
+-- the pin and its row does not survive the shared tree — and either way `rfl` fails, `lake env
+-- lean --run EmitByName.lean` dies, and the WHOLE by-name surface is unemittable for every lane
+-- at once. That outage is what produced the eleven private one-off emitters this file spent
+-- 2026-08-05 absorbing. Rows and pin are one atom.
+theorem byNameDescriptors_length : byNameDescriptors.length = 122 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
