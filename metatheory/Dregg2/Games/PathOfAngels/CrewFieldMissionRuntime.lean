@@ -109,7 +109,7 @@ roster field, and the roster lives one level out, in `SessionDigest.roster`.
 constrained by nothing: two activations differing only in their four
 `playerKey`s were both valid under `activationValidB` and carried the *same*
 `activationId`.  A durable host keyed by `activation_id` would therefore serve
-one state stream — one `consumedRuns` ledger — to two distinct crews.
+one state stream — one admission cursor — to two distinct crews.
 
 `rosterBindingOf` closes that by deriving a second, *computed* identity over
 every field of every seat.  It is pinned in `activationValidB` and carried in
@@ -399,16 +399,37 @@ structure StateWire where
   sequence : Nat
   head : Digest32
   nextAdmission : Nat
-  consumedRuns : List Digest32
 deriving DecidableEq
+
+/-! ### ⚑ `consumedRuns` was deleted on 2026-08-06, and here is the argument
+
+`StateWire` carried `consumedRuns : List Digest32`, `validB` required it to be
+`Nodup` with `length = sequence`, the wire carried every entry up to
+`MAX_RUNS = 4096`, and `judge` tested `if run ∈ state.consumedRuns then throw
+.admissionReplay`.
+
+THAT TEST COULD NOT FIRE.  `run = digestString RUN_DIGEST_DOMAIN command.toJson`
+and `CommandWire.toJson` emits `"sequence":n`.  `judge` refuses unless
+`command.sequence = state.sequence` (`.staleCursor`), and the successor sets
+`sequence := state.sequence + 1`.  So every command that is ever admitted has a
+sequence no admitted command has had before, hence a distinct `toJson`, hence a
+distinct digest — and membership can only hold on a hash collision.  A ledger
+that grows to 4,096 entries on the wire to hold a check whose only reachable
+outcome is "absent".
+
+NO COVERAGE WAS LOST.  `hostile_same_admission_and_run_cannot_replay` replays the
+identical command against the successor state and already asserted
+`.error .staleCursor`, not `.admissionReplay` — the tooth that was supposed to be
+about this ledger was, and remains, about the cursor.
+
+The cursor is what makes a run one-shot.  `.admissionReplay` survives on the
+`command.admission ≠ state.nextAdmission` leg, which is reachable. -/
 
 def StateWire.validB (activation : Activation) (state : StateWire) : Bool :=
   decide (state.activationId = activation.raw.activationId) &&
   decide (state.rosterBinding = activation.raw.rosterBinding) &&
   decide (state.sequence ≤ MAX_RUNS) &&
-  decide (state.nextAdmission = state.sequence + 1) &&
-  decide (state.consumedRuns.length = state.sequence) &&
-  decide state.consumedRuns.Nodup
+  decide (state.nextAdmission = state.sequence + 1)
 
 def initialState (activation : Activation) (genesisHead : Digest32) : StateWire where
   activationId := activation.raw.activationId
@@ -416,7 +437,6 @@ def initialState (activation : Activation) (genesisHead : Digest32) : StateWire 
   sequence := 0
   head := genesisHead
   nextAdmission := 1
-  consumedRuns := []
 
 private def routeFromString? : String → Option CrewFieldMission.Route
   | "maintenance-spine" => some .maintenanceSpine
@@ -701,9 +721,7 @@ def StateWire.toJson (wire : StateWire) : String :=
     ",\"roster_binding\":" ++ jsonString (Emit.bytes32Hex wire.rosterBinding) ++
     ",\"sequence\":" ++ toString wire.sequence ++
     ",\"head\":" ++ jsonString (Emit.bytes32Hex wire.head) ++
-    ",\"next_admission\":" ++ toString wire.nextAdmission ++
-    ",\"consumed_runs\":" ++ jsonArray (wire.consumedRuns.map fun digest =>
-      jsonString (Emit.bytes32Hex digest)) ++ "}"
+    ",\"next_admission\":" ++ toString wire.nextAdmission ++ "}"
 
 private def runDigest (command : CommandWire) : Digest32 :=
   digestString RUN_DIGEST_DOMAIN command.toJson
@@ -728,7 +746,6 @@ def judge (activation : Activation) (state : StateWire) (command : CommandWire) 
   if command.actor ≠ officer.playerKey then throw .unauthorizedOfficer
   let record ← deriveRecord? activation command
   let run := runDigest command
-  if run ∈ state.consumedRuns then throw .admissionReplay
   let custody ← match relicCustody? activation record with
     | none => throw .custodyRefused
     | some custody => pure custody
@@ -739,7 +756,6 @@ def judge (activation : Activation) (state : StateWire) (command : CommandWire) 
     sequence := state.sequence + 1
     head := successor
     nextAdmission := state.nextAdmission + 1
-    consumedRuns := state.consumedRuns ++ [run]
   }
   if after.validB activation ≠ true then throw .invalidState
   let artifactBinding ← match artifactBindingByField? activation.raw.artifactBindings
@@ -862,18 +878,9 @@ private def parseCommandJson (j : Json) : Except String CommandWire := do
     transcript := ← parseTranscript (← j.getObjVal? "transcript")
   }
 
-private def parseDigestList (j : Json) : Except String (List Digest32) := do
-  let values := (← j.getArr?).toList
-  if values.length > MAX_RUNS then throw "run history exceeds wire bound"
-  values.mapM fun value => do
-    let spelling ← value.getStr?
-    match Emit.parseBytes32Hex? spelling with
-    | some digest => pure digest
-    | none => throw "run digest must be exactly 64 lowercase hexadecimal digits"
-
 private def parseStateJson (j : Json) : Except String StateWire := do
   exactKeys j ["format", "activation_id", "roster_binding", "sequence", "head",
-    "next_admission", "consumed_runs"]
+    "next_admission"]
   if (← j.getObjValAs? String "format") != STATE_FORMAT then throw "wrong state format"
   pure {
     activationId := ← objectDigest j "activation_id"
@@ -881,7 +888,6 @@ private def parseStateJson (j : Json) : Except String StateWire := do
     sequence := ← objectNat j "sequence" MAX_RUNS
     head := ← objectDigest j "head"
     nextAdmission := ← objectNat j "next_admission" (MAX_RUNS + 1)
-    consumedRuns := ← parseDigestList (← j.getObjVal? "consumed_runs")
   }
 
 def canonicalDecode {T : Type} (parse : Json → Except String T) (encode : T → String)
@@ -1360,7 +1366,7 @@ theorem rekeyed_crew_activation_is_valid :
 
 /-- ⚑ The collision.  Two crews with disjoint wallet keys, both valid, carry the
 same authored activation identity.  A durable host keyed by `activation_id`
-alone would serve one state stream — one `consumedRuns` ledger — to both.  This
+alone would serve one state stream — one admission cursor — to both.  This
 statement is expected to stay true: `activationDigest` is the digest of the
 authored envelope and the roster is not in it.  It is the reason
 `rosterBinding` exists. -/

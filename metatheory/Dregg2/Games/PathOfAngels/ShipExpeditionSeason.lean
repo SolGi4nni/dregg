@@ -567,7 +567,6 @@ private def fixtureRuntimeState : CrewFieldMissionRuntime.StateWire where
   sequence := 1
   head := digestFilled 20
   nextAdmission := 2
-  consumedRuns := [digestFilled 21]
 
 private def fixtureRuntimeReceiptWire : CrewFieldMissionRuntime.ReceiptWire where
   activationId := fixtureIdentity.activationDigest

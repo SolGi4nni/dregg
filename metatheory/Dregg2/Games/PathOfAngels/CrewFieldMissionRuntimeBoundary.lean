@@ -86,9 +86,14 @@ theorem wire_encoder_is_private : True := by
 
 /-! ## Digest minters
 
-`runDigest` is the one-shot identity a `consumedRuns` ledger is keyed on and
-`successorDigest` is the head a durable host CASes to.  A caller able to compute
-either could present a state whose head it chose. -/
+`runDigest` binds the run into the successor head and `successorDigest` is the
+head a durable host CASes to.  A caller able to compute either could present a
+state whose head it chose.
+
+(`runDigest` used to key a `consumedRuns` ledger; that ledger was deleted on
+2026-08-06 because its membership test could not fire — see the argument in
+`CrewFieldMissionRuntime` beside `StateWire.validB`.  The digest still binds the
+command into the successor, so this tooth still guards something.) -/
 
 theorem run_digest_minter_is_private : True := by
   fail_if_success (have _ := runDigest)
