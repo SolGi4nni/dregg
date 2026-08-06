@@ -446,6 +446,16 @@ private def refusedWithB {α : Type} (expected : Refusal) (result : Except Refus
   | .error refusal => decide (refusal = expected)
   | .ok _ => false
 
+/-- Admitted, and the visible ship identical to what it was.  A refusal is
+`false`, so this cannot be satisfied by declining the receipts. -/
+private def admittedAndShipUnchangedB (panel : Panel) (before : State)
+    (result : Except Refusal State) : Bool :=
+  match result with
+  | .ok state =>
+      decide (state.face panel = before.face panel) &&
+      decide (state.recovered = before.recovered)
+  | .error _ => false
+
 private def observeChain (panel : Panel) (state : State) :
     List Receipt → Except Refusal State
   | [] => .ok state
@@ -541,6 +551,21 @@ theorem welded_two_crew_members_of_one_day_are_both_counted :
     alphaWelded.key ≠ betaWelded.key ∧
     alphaWelded.key.period = betaWelded.key.period := by native_decide
 
+/-- On the authored lab rotation both crew members draw the cosmetic, whose
+table row carries `Contribution.zero`.  That is what an ordinary day IS. -/
+theorem welded_lab_day_is_an_ordinary_one :
+    alphaWelded.contribution = Contribution.zero ∧
+    betaWelded.contribution = Contribution.zero := by native_decide
+
+/-- ⭐ Two crew members really opened the crate, both openings were admitted, and
+the ship really did not move.  This is `an_ordinary_day_moves_no_gauge` on ACTUAL
+crate output rather than on a lab receipt: the mundane case is mundane all the
+way down to the emitted table. -/
+theorem welded_two_ordinary_days_leave_the_ship_unchanged :
+    admittedAndShipUnchangedB labPanel (initial labPanel)
+      (observeChain labPanel (initial labPanel) [alphaWelded, betaWelded]) = true := by
+  native_decide
+
 #assert_axioms mergeExact
 #assert_axioms observe_adds_exactly_the_receipt
 #assert_axioms readings_eq_of_meters
@@ -557,5 +582,7 @@ theorem welded_two_crew_members_of_one_day_are_both_counted :
 #assert_compiled lab_meter_overflow_refuses_instead_of_clipping
 #assert_compiled welded_lab_witness_is_admitted_by_its_own_deployment
 #assert_compiled welded_two_crew_members_of_one_day_are_both_counted
+#assert_compiled welded_lab_day_is_an_ordinary_one
+#assert_compiled welded_two_ordinary_days_leave_the_ship_unchanged
 
 end Dregg2.Games.PathOfAngels.ShipInstrumentPanel
