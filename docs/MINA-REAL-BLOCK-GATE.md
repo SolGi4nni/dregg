@@ -188,9 +188,21 @@ in Rust and pinned in Lean. Both are dead at `prev_challenges = 0`; this block c
   does not — and a `RecursionChallenge`'s `comm` is still not checked to be
   `⟨b_poly_coefficients(chals), G⟩` (5g) — though 5h now does exactly that computation for the
   OPENING's `sg`, so 5g is a fixture away. See §6.1 for what 5f and 5h establish versus assume.
-* **The verifier-index digest is still an input.** `index.digest::<EFqSponge>()` is itself a sponge
-  over every commitment of the VK (`verifier_index.rs:399-450`); it is absorbed as a value. Making
-  it derived is P8/P9 (a model of the Wrap VK), not C3.
+* **The verifier-index digest is DERIVED — 2026-08-06.** ~~Still an input.~~
+  `Dregg2.Circuit.Emit.MinaWrapVkDigestChain` runs `index.digest::<EFqSponge>()`
+  (`verifier_index.rs:399-524`) as **28 more links of `dregg-pasta-fp-chainlink::v1` — the same
+  descriptor the 27 phase-1 links use, no new AIR** — over the sha256-pinned
+  `mina-devnet-wrap-blockchain-vk.json`'s 7 `sigma_comm` + 15 `coefficients_comm` + 6 selector
+  commitments = 28 points = 56 coordinates. `the_vk_wire_blocks_are_equal` welds link 27's outgoing
+  lane 0 to the phase-1 tape's element 0, 32 felts elementwise. Harness:
+  `circuit/tests/mina_wrap_vk_digest_chain_proves.rs`.
+  ⚠ **Two things it does NOT establish, both stated there as theorems.** (1) kimchi's `digest()`
+  binds `domain`, `max_poly_size`, `zk_rows`, `public`, `prev_challenges`, `shift`, `w`, `endo` to
+  `_`, so the digest is a function of the 28 commitments **alone** and does not name the circuit.
+  (2) That the pinned fixture is *this block's* verifier index is a **sha256 against a byte copy** —
+  a build-tree fact; the devnet *transaction* Wrap index runs the same 28 links to its own digest.
+  So this removed a CARRIER, not a trust assumption: one opaque 254-bit constant became 56
+  coordinates a byte-pinned fixture determines.
 * **`KimchiVerify.frPhase2Inputs` is the `prev_challenges = 0` helper only** — it hard-codes the
   prev-challenge digest as `Ref.hash []` *and* runs over `fp_kimchi`/`pN`, which is right for a
   Vesta-committed Step proof and wrong on both counts for a Wrap proof. Its one caller
