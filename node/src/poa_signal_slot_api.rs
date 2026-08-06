@@ -219,7 +219,12 @@ mod tests {
     async fn get(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
         let response = app
             .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).expect("request"))
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
             .await
             .expect("response");
         let status = response.status();
@@ -328,8 +333,11 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = NodeState::new(tmp.path(), vec![]).expect("node state");
         let app = routes().with_state(state);
-        let (status, _) = get(&app, &format!("/api/poa/signal/{}/slot", hex_encode(&AUTHORITY)))
-            .await;
+        let (status, _) = get(
+            &app,
+            &format!("/api/poa/signal/{}/slot", hex_encode(&AUTHORITY)),
+        )
+        .await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     }
 
@@ -504,7 +512,9 @@ mod tests {
                 .expect("signature is lowercase hex");
         }
         assert!(
-            spelling.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            spelling
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
             "signature must be lowercase hex"
         );
         out
