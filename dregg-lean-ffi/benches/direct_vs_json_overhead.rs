@@ -22,7 +22,6 @@ use dregg_lean_ffi::{
 };
 
 fn split(t: &WireTurn) -> (WireTurnHdr, &WForest) {
-    let prev_low = u64::from_be_bytes(t.prev_hash.0[24..32].try_into().unwrap());
     (
         WireTurnHdr {
             agent: t.agent,
@@ -30,7 +29,7 @@ fn split(t: &WireTurn) -> (WireTurnHdr, &WForest) {
             fee: t.fee,
             valid_until: t.valid_until,
             block_height: t.block_height,
-            prev_low,
+            prev_hash: t.prev_hash.0,
         },
         &t.root,
     )

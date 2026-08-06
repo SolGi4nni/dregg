@@ -844,8 +844,26 @@ pub struct WireHostCtx {
     pub block_height: u64,
     /// The migration freeze-set (`self.frozen_cells`), as wire cell ids.
     pub frozen: Vec<u64>,
-    /// The agent's stored receipt-chain head (`self.receipt_heads[agent]`); `0` = genesis.
-    pub stored_head: u64,
+    /// ⚑ **THE AGENT'S STORED RECEIPT-CHAIN HEAD, AT ITS FULL 256 BITS** (`self.receipt_heads
+    /// [agent]`), big-endian; all-zero = genesis (`prevReceiptOf`'s `genesisSentinel`).
+    ///
+    /// **FLAG DAY 2026-08-06 — this was a `u64`.** Lean's `WHostCtx.storedHead` is an unbounded
+    /// `Nat` and `AdmCtx.storedHead` an `Option Nat`, compared structurally by
+    /// `Admission.admissible`'s ChainHead leg — so the kernel was never the narrow side. Rust fed
+    /// it `bytes32_to_nat(head)` = bytes `[24..32]` of the 32-byte head, and narrowed the turn's
+    /// claimed `prev` to match, which made the verified leg decide `low64(claimed) = low64(stored)`
+    /// on fibers of size `2^192`.
+    ///
+    /// A chain head is a NODE: it needs collision resistance, and the fold did not even cost a
+    /// search. `Turn::previous_receipt_hash` is agent-supplied with no obligation to be any
+    /// receipt's hash, so naming a sibling of a known head is **one XOR — 2^0**. (2^32 is the
+    /// birthday cost of two GENUINE receipts colliding under the fold; 2^64 the targeted
+    /// second-preimage with a genuine receipt. Neither priced this.)
+    ///
+    /// The JSON wire SHAPE is unchanged — `encodeWHostCtx` writes `toString hc.storedHead`, a
+    /// decimal `Nat`, and Lean's `parseNat` reads arbitrary width — so only the value's RANGE
+    /// widens and every `stored_head: 0` golden stays byte-identical.
+    pub stored_head: [u8; 32],
     /// The Stingray silo budget slice the fee must fit (`self.silo_budget`).
     pub budget: u64,
 }
@@ -859,9 +877,15 @@ impl WireHostCtx {
             now: 0,
             block_height: 0,
             frozen: vec![],
-            stored_head: 0,
+            stored_head: [0u8; 32],
             budget: 1_000_000_000,
         }
+    }
+
+    /// The head as the LOW-first 64-bit limbs the no-copy boundary carries
+    /// (`dregg_d_mk_whostctx_w` → Lean `natOfLimbs`).
+    pub fn stored_head_limbs(&self) -> [u64; 4] {
+        WideInt::from_be_bytes32(self.stored_head).limbs_le()
     }
 }
 
@@ -875,7 +899,9 @@ fn encode_whostctx(hc: &WireHostCtx, out: &mut String) {
     out.push_str(",\"frozen\":");
     encode_nats_w(&hc.frozen, out);
     out.push_str(",\"stored_head\":");
-    push_nat(out, hc.stored_head);
+    // The head is a 256-bit digest and `encodeWHostCtx` writes it as `toString : Nat → String`, so
+    // the decimal must be the WIDE one — `push_nat` would silently re-narrow it to a `u64`.
+    out.push_str(&WideInt::from_be_bytes32(hc.stored_head).to_decimal());
     out.push_str(",\"budget\":");
     push_nat(out, hc.budget);
     out.push('}');
@@ -2207,7 +2233,13 @@ fn conf_host_populated() -> WireHostCtx {
         now: 12,
         block_height: 0,
         frozen: vec![3, 5, 9],
-        stored_head: 4,
+        // `EmitMarshalGolden.hcPopulated` is `storedHead := 4`; the wide carrier encodes the same
+        // decimal `4`, so the golden stays byte-identical across the flag day.
+        stored_head: {
+            let mut h = [0u8; 32];
+            h[31] = 4;
+            h
+        },
         budget: 777,
     }
 }

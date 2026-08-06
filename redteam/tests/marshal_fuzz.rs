@@ -147,7 +147,11 @@ proptest! {
         arm_idx in any::<usize>(),
         now in any::<u64>(),
         block_height in any::<u64>(),
-        stored_head in any::<u64>(),
+        // ⚑ The head is fuzzed at its FULL 256 bits since the 2026-08-06 flag day. An `any::<u64>()`
+        // here would have exercised only the 8 bytes the retired projection kept — the encoder's
+        // wide-decimal path (`WideInt::to_decimal`, the one that can carry 78 digits) would never
+        // have been reached.
+        stored_head in any::<[u8; 32]>(),
         budget in any::<u64>(),
         frozen in proptest::collection::vec(any::<u64>(), 0..8),
     ) {

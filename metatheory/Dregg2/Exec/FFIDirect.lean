@@ -261,17 +261,49 @@ def mkWChild (holder : UInt64) (keep : List Auth) (parentCap : Cap) (sub : WFore
 
 /-! ## `WTurn` and `WHostCtx` builders. -/
 
-@[export dregg_d_mk_wturn]
-def mkWTurn (agent nonce : UInt64) (fee : Int) (validUntil blockHeight prevHash : UInt64)
-    (root : WForest) : WTurn :=
-  { agent := agent.toNat, nonce := nonce.toNat, fee := fee, validUntil := validUntil.toNat,
-    blockHeight := blockHeight.toNat, prevHash := prevHash.toNat, root := root }
+/-- **THE FULL-WIDTH DIGEST CARRIER.** Four 64-bit limbs (LOW-first: `l0` is the least significant)
+→ a 256-bit `Nat`. The unsigned twin of [`intOfLimbs`], for the receipt-chain head — which is a
+DIGEST, not a value, so it has no sign.
 
-@[export dregg_d_mk_whostctx]
-def mkWHostCtx (now blockHeight : UInt64) (frozen : List Nat) (storedHead budget : UInt64) :
-    WHostCtx :=
+Composition is done HERE, in Lean, over `Nat`; the C side hands four opaque `UInt64`s and performs
+no arithmetic on the digest. Deliberately NOT `@[export]`ed — unlike `intOfLimbs`, nothing on the C
+side calls it directly, and an exported symbol no caller names is surface, not an interface. It is
+exercised through the two builders below. -/
+def natOfLimbs (l0 l1 l2 l3 : UInt64) : Nat :=
+  l0.toNat + (l1.toNat <<< 64) + (l2.toNat <<< 128) + (l3.toNat <<< 192)
+
+/-- ⚑ **THE HEAD CROSSES WHOLE — FLAG DAY 2026-08-06.** `prevHash` was a single `UInt64` and the
+Rust marshaller fed it `bytes32_to_nat(prev)` = bytes `[24..32]` of the 32-byte receipt hash, while
+`mkWHostCtx` fed the stored head the same way. `TurnHdr.prevReceipt`/`AdmCtx.storedHead` are
+`Option Nat` and `Admission.admissible`'s ChainHead leg is structural equality, so the leg the
+kernel PROVES about (`admissible_links_to_head`, `admissible_append_wellLinked`) was being decided
+on a 64-bit projection of a 256-bit node.
+
+A receipt-chain head is a NODE, so what it needs is collision resistance — and the fold did not
+even cost a search: `Turn::previous_receipt_hash` is agent-supplied with no obligation to be the
+hash of anything, so an agent that knows the true head `H` names a sibling with one XOR
+(`H ^ (1 <<< 255)` folds identically). **2^0**, not the 2^32 birthday bound and not the 2^64
+targeted second-preimage bound — both of those price a GENUINE receipt hash, which this field
+never had to be.
+
+Neither side was ever narrow in Lean. This widens the C ABI to the width the type already had, the
+same repair `intOfLimbs` made for the state-field carrier. The export is RENAMED (`_w`) and the
+narrow pair DELETED so a stale archive fails the `dregg_direct_present` probe and degrades to the
+JSON path rather than silently mismatching arity. -/
+@[export dregg_d_mk_wturn_w]
+def mkWTurnW (agent nonce : UInt64) (fee : Int) (validUntil blockHeight : UInt64)
+    (prev0 prev1 prev2 prev3 : UInt64) (root : WForest) : WTurn :=
+  { agent := agent.toNat, nonce := nonce.toNat, fee := fee, validUntil := validUntil.toNat,
+    blockHeight := blockHeight.toNat, prevHash := natOfLimbs prev0 prev1 prev2 prev3,
+    root := root }
+
+/-- The host-fed admission context, with the agent's stored receipt-chain head crossing at its full
+256 bits (four LOW-first limbs). See [`mkWTurnW`] for the flag day and the bound. -/
+@[export dregg_d_mk_whostctx_w]
+def mkWHostCtxW (now blockHeight : UInt64) (frozen : List Nat)
+    (head0 head1 head2 head3 : UInt64) (budget : UInt64) : WHostCtx :=
   { now := now.toNat, blockHeight := blockHeight.toNat, frozen := frozen,
-    storedHead := storedHead.toNat, budget := budget.toNat }
+    storedHead := natOfLimbs head0 head1 head2 head3, budget := budget.toNat }
 
 /-! ## The DIRECT executor.
 

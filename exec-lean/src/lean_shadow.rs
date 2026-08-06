@@ -904,7 +904,8 @@ pub fn forest_is_root_agreeing(turn: &Turn) -> bool {
 /// `turn.agent`, the Lean model authorizes the write as if the TARGET cell were self-writing — with
 /// NO capability edge required. But the Rust executor enforces AGENT-REACH: for a root, the agent
 /// (the root's `parent_cell`) must OWN the target (`target == agent`), hold a c-list edge to it, or
-/// carry a bearer proof — else `CapabilityNotHeld` (`execute_tree.rs:451`). When agent ≠ target and
+/// carry a bearer proof — else `CapabilityNotHeld` (`execute_tree.rs`'s top-of-action gate, measured
+/// 2026-08-06 at `:823-921`; this cited `:451` and had drifted). When agent ≠ target and
 /// the agent holds no edge, Rust REJECTS while Lean COMMITS; the default-on producer would then
 /// INSTALL a cross-cell write the authority model forbids.
 ///
@@ -920,6 +921,88 @@ pub fn forest_is_root_agreeing(turn: &Turn) -> bool {
 /// rejecting the unreachable one). This is a pure SAFETY-NET tightening of which turns the verified
 /// producer INSTALLS for — no production behavior change (Rust already decides these), it only stops
 /// the producer from loosening past Rust. Decided identically in both builds (no FFI, no ledger).
+///
+/// # ⚑ THIS FENCE IS ALSO WHAT CARRIES THE SNAPSHOT-AUTHORITY MODELLING GAP — read before widening
+///
+/// **The verified kernel models exactly one authority store, and Rust has two.**
+/// `Dregg2/Exec/Kernel.lean:51`'s `authorizedB` is three disjuncts over the LIVE c-list —
+/// `actor = src`, a `node src` cap, or an `endpoint src` cap carrying `write` — and it reads
+/// `caps turn.actor` and nothing else. Rust's `Cell::resolve_authority_at` (`cell/src/cell.rs:779`)
+/// resolves over the c-list AND `Cell::delegation`, a `DelegatedRef` snapshot, tagging the result
+/// `AuthoritySource::Clist` / `AuthoritySource::DelegationSnapshot`. Three production sites mint a
+/// snapshot (`apply_spawn_with_delegation`, `apply_refresh_delegation`, and `execute_tree`'s
+/// `DelegationMode::SnapshotRefresh` chain-walk auto-install), and `ledger_to_wire_state` carries
+/// **only the c-list** across (see its `edges` projection) — so the wire could not express the
+/// second store even if the kernel had a slot for it.
+///
+/// **DECIDED (2026-08-06): a delegation snapshot is NOT an authority edge, and must not become
+/// one.** The argument is from what `authorizedB` is *for*, not from cost. `confersEdgeTo`
+/// (`Exec/AuthTurn.lean:31`) is literally `authorizedB`'s `.any` body, and `Spec.execGraph`'s body
+/// is the same term — `execGraph_eq_any` closes by `rfl`. So `authorizedB` is not "the set of
+/// reasons the executor says yes"; it *is* capability-graph connectivity, plus reflexivity. That
+/// identity is the whole content of `Spec/ExecRefinement.lean`'s `exec_heldcap_is_graph_has` and
+/// `exec_authz_grounds_in_graph`, and of `InfoFlow/Confinement.lean`'s `authorizedB_src_forces_reach`
+/// → `confined_cannot_debit_attacker`.
+///
+/// A snapshot is not an edge in that graph. It is a **frozen copy of edges another object held at a
+/// past time**, and measured at HEAD it has no live relation to its source: `parent_signature` is
+/// `[0u8; 64]` at all three minters, `clist_commitment` is checked only at INSTALL (the refresh
+/// forge antibody), `DelegatedRef::is_stale`/`max_staleness` is consulted by NO executor path, and
+/// the snapshot's `delegation_epoch` is never compared against the parent's live
+/// `CellState::delegation_epoch` at resolution time. Admitting it as a fourth disjunct would make
+/// "authorized" ≠ "connected", which does not leave those theorems needing reproof — it makes them
+/// **false**: `Confined` is defined by `reachesCell` over `caps`, so a confined actor holding a
+/// stale snapshot could debit. It would also break the ← direction of the ~two dozen `iff`-shaped
+/// circuit bridges that pin a column to the exact boolean (`Circuit/Transfer.lean:228 tauth_iff`,
+/// `Circuit/SetFieldCommit.lean:358 sfauth_iff`, `Circuit/Argus/Stmt.lean:151 transferGuard_iff`,
+/// the nine `Argus/Effects/*Guard_iff`, the `Circuit/Spec/*_iff_spec` family), retire
+/// `CircuitCompletenessAuthority.authorizedByCap_forces_gate` as a completeness story, and demand a
+/// SECOND committed cap tree in the AIR for the opening.
+///
+/// The kernel already places the snapshot correctly: `delegations` / `delegationEpoch` /
+/// `delegationEpochAt` are REGISTRY state, written by spawn/refresh/revoke, read by the state
+/// commitment and by `AuthTurn.delegationStale` — which appears in theorem statements and in no
+/// `if`-guard anywhere. Revocation's real teeth are `recKRevokeTarget`, which removes the `caps`
+/// edge. The model's structural claim is *a snapshot is an attestation, not an authority*, and that
+/// is the right claim.
+///
+/// **So Rust's snapshot authority is OUTSIDE the verified perimeter.** The scope of that caveat
+/// today is narrow, and it is THIS FENCE that makes it so — derived, not assumed:
+///
+///   * a covered root is `target == agent` or bearer (the predicate below);
+///   * for `target == agent`, `authorizedB` short-circuits on the ownership disjunct and never
+///     reads `caps` at all, so the second store cannot matter;
+///   * the cap trio (Grant/Introduce/Attenuate) DO read `caps`, but Rust's `apply_grant_capability`
+///     resolves the granter's held edge through `from_cell.capabilities.lookup_by_target`
+///     (`turn/src/executor/apply.rs:769`) — the c-list DIRECTLY, not `resolve_authority_at`. Same
+///     store on both sides;
+///   * the shapes where the snapshot genuinely decides — a cross-cell reach through
+///     `check_cross_cell_permission` → `has_access_including_delegation_at` — are fenced out HERE
+///     (`ExtractError::AgentReach`), and a cross-cell non-bearer CHILD makes the whole turn
+///     unmarshallable (`tree_is_marshallable`);
+///   * ⚠ BEARER roots ARE covered, and `verify_bearer_cap` DOES resolve the delegator's held cap
+///     through both stores. But that is not a case of the kernel modelling the snapshot narrowly —
+///     the kernel does not model `verify_bearer_cap`'s held-cap / non-amplification leg AT ALL. The
+///     bearer WHO leg is a `portalVerify` echo on the carried credential, and the body then
+///     authorizes through the owner disjunct on `action.target` (see the paragraph above). So the
+///     whole `granted ≤ held` check is Rust-side, and the snapshot's role in it is a sub-part of
+///     that larger, separately-named residual — not something a `caps` disjunct would fix.
+///
+/// ⚑ **Therefore no turn in today's covered set would change verdict if `authorizedB` grew a
+/// snapshot disjunct.** The gap is real and DORMANT. It wakes the moment the covered set widens to
+/// cross-cell non-bearer roots — the cap-reshape lane (#103) — and at that moment deleting this
+/// fence is not enough: either a snapshot is separately proved to imply a live `execGraph` edge
+/// (which needs the epoch/staleness check at resolution that Rust does not currently perform), or
+/// cross-cell reach stays on the Rust producer. Do not read this predicate as only an agent-reach
+/// safety net; it is also the reason every `*_authorized` / `*_unauthorized_fails` theorem's scope
+/// ("the c-list is the only authority store") is sound on the installed path.
+///
+/// ⓘ NAMED FOR THE OWNING LANE (`turn/` + `cell/`, not this one): `resolve_authority_at` applies
+/// `CapabilityRef::is_live_at` (frozen + `expires_at`) to snapshot entries but never compares the
+/// snapshot's `delegation_epoch` against the parent's current one, and `is_stale`/`max_staleness`
+/// has no executor consumer — so a parent's `bump_delegation_epoch` does not lapse a snapshot;
+/// only an explicit `RevokeDelegation` on that exact child clears it. That is the concrete repair
+/// that would let a snapshot derive an edge, and it belongs on the Rust side.
 pub(crate) fn forest_agent_reaches_roots(turn: &Turn) -> bool {
     turn.call_forest.roots.iter().all(|r| {
         r.action.target == turn.agent || matches!(&r.action.authorization, Authorization::Bearer(_))
@@ -1551,6 +1634,28 @@ fn effect_to_wire(
     })
 }
 
+/// **THE HOST'S STORED RECEIPT-CHAIN HEAD, AT FULL WIDTH.** `ShadowHostCtx::stored_head` has
+/// always been the executor's real `Option<[u8; 32]>`; what crossed was `bytes32_to_nat` of it.
+/// Now the whole digest crosses, with `None` (genesis) as the all-zero word — exactly
+/// `genesisSentinel`, which the verified `prevReceiptOf` maps to `none`.
+///
+/// ⚑ **THIS IS WHERE `HostCorrespondence.Reflects.storedHead` IS DISCHARGED, AND IT USED TO BE
+/// FALSE ON THE DEPLOYED PATH.** `Dregg2/Exec/HostCorrespondence.lean:108` states the node-side
+/// obligation as `ctx.storedHead = H.trueStoredHead`, and `admissible_sound_of_reflects` /
+/// `reflects_rejects_true_fork` are premised on it. The node was reporting
+/// `low64(trueStoredHead)`, so the hypothesis those two theorems consume was NOT met by the
+/// running executor — they were true, and they did not apply. That is a sharper thing than a named
+/// seam: the archived assurance note characterises the host-fed inputs as "a host obligation
+/// outside the Lean statement", which is right about host HONESTY and was silent about the
+/// CARRIER, where an honest host's true head was narrowed before the gate ever saw it.
+///
+/// The ONE remaining coincidence is a real head of all zeros, which would read as genesis. That is
+/// `2^-256` for a BLAKE3 receipt hash and is a property of the sentinel encoding, not of a fold;
+/// under the retired projection the same coincidence was `2^-64`.
+fn stored_head_wire(host: &ShadowHostCtx) -> [u8; 32] {
+    host.stored_head.unwrap_or([0u8; 32])
+}
+
 /// The pre-state nonce of a cell in the snapshot (0 if absent — a fresh cell's nonce).
 fn pre_nonce_of(pre: &ShadowPreLedger, cell: &CellId) -> u64 {
     pre.cells.get(cell).map(|c| c.state.nonce()).unwrap_or(0)
@@ -1584,12 +1689,11 @@ fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, host: &ShadowHostCtx) -> Resul
         .iter()
         .filter_map(|c| pre.id_map.get(c).copied())
         .collect();
-    let stored_head_nat = host.stored_head.map(|h| bytes32_to_nat(&h)).unwrap_or(0);
     let host_wire = dregg_lean_ffi::marshal::WireHostCtx {
         now: block_height,
         block_height,
         frozen: frozen_nats,
-        stored_head: stored_head_nat,
+        stored_head: stored_head_wire(host),
         budget: host.budget,
     };
     let wire =
@@ -1649,24 +1753,24 @@ pub(crate) fn run_shadow_state(
         .iter()
         .filter_map(|c| pre.id_map.get(c).copied())
         .collect();
-    let stored_head_nat = host.stored_head.map(|h| bytes32_to_nat(&h)).unwrap_or(0);
     let host_wire = dregg_lean_ffi::marshal::WireHostCtx {
         now: block_height,
         block_height,
         frozen: frozen_nats,
-        stored_head: stored_head_nat,
+        stored_head: stored_head_wire(host),
         budget: host.budget,
     };
     // The Turn envelope header for the NO-COPY direct path (the root forest is `wire_turn.root`,
-    // built recursively above; `prev_low` is the SAME low-64 the JSON path's `Digest::from_u64`
-    // folds, so the verified ChainHead leg compares like-for-like across both paths).
+    // built recursively above). `prev_hash` is the SAME 32 bytes the JSON path's `parseHex32`
+    // reads, so the verified ChainHead leg compares like-for-like across both paths AND at the
+    // full width of the digest.
     let direct_hdr = dregg_lean_ffi::WireTurnHdr {
         agent: wire_turn.agent,
         nonce: wire_turn.nonce,
         fee: wire_turn.fee,
         valid_until: wire_turn.valid_until,
         block_height: wire_turn.block_height,
-        prev_low: u64::from_be_bytes(wire_turn.prev_hash.0[24..32].try_into().unwrap()),
+        prev_hash: wire_turn.prev_hash.0,
     };
 
     // ── THE CUTOVER ── prefer the NO-COPY (`lean_object*`) path: it constructs the Lean inductives
@@ -1753,12 +1857,11 @@ pub(crate) fn profile_lean_phases(
         .iter()
         .filter_map(|c| pre.id_map.get(c).copied())
         .collect();
-    let stored_head_nat = host.stored_head.map(|h| bytes32_to_nat(&h)).unwrap_or(0);
     let host_wire = dregg_lean_ffi::marshal::WireHostCtx {
         now: block_height,
         block_height,
         frozen: frozen_nats,
-        stored_head: stored_head_nat,
+        stored_head: stored_head_wire(host),
         budget: host.budget,
     };
     let direct_hdr = dregg_lean_ffi::WireTurnHdr {
@@ -1767,7 +1870,7 @@ pub(crate) fn profile_lean_phases(
         fee: wire_turn.fee,
         valid_until: wire_turn.valid_until,
         block_height: wire_turn.block_height,
-        prev_low: u64::from_be_bytes(wire_turn.prev_hash.0[24..32].try_into().unwrap()),
+        prev_hash: wire_turn.prev_hash.0,
     };
 
     // (1) the bare identity floor (median over `iters` crossings on the built WState).
@@ -1854,6 +1957,16 @@ fn ledger_to_wire_state(
         // the table closed. An empty c-list (the corpus default) yields no entry — so a
         // cap-PRIVILEGED effect (Burn/RevokeCapability) correctly FAILS the Lean gate, which
         // is the genuine, non-vacuous test of the authority leg.
+        //
+        // ⚑ `Cell::delegation` — the `DelegatedRef` SNAPSHOT that Rust's `resolve_authority_at`
+        // treats as a SECOND authority store — is DELIBERATELY NOT PROJECTED HERE, and this is a
+        // decision, not an omission. `authorizedB` is definitionally capability-graph connectivity
+        // (`confersEdgeTo` ≡ `execGraph`'s body, `execGraph_eq_any := rfl`), and a snapshot is a
+        // frozen past copy with no live relation to its source, so carrying it would be carrying
+        // something the kernel has no sound place for. The argument, the theorems it would falsify,
+        // and the exact scope of the resulting caveat are in `forest_agent_reaches_roots` — which
+        // is the fence that keeps this drop from mattering on the installed path. Read it before
+        // adding a `delegations` table here.
         let edges: Vec<Cap> = cell
             .capabilities
             .iter()
@@ -1948,18 +2061,33 @@ fn turn_to_wire_turn(
         .and_then(|v| u64::try_from(v).ok())
         .ok_or_else(|| "shadow: turn.valid_until required for wire marshal".to_string())?;
 
-    // The previous-receipt hash crosses as the SAME low-64 projection the host's `stored_head` uses
-    // (`bytes32_to_nat`), so the verified `admissible` ChainHead leg (`h.prevReceipt = ctx.storedHead`)
-    // compares like-for-like. `stored_head` is plumbed as a `u64` (the `WireHostCtx`/`AdmCtx` width), so
-    // marshalling `prev` as a FULL 256-bit digest (the old `digest_of`) made `h.prevReceipt` (full Nat)
-    // never equal `ctx.storedHead` (low-64) for ANY non-genesis receipt — rejecting every turn that
-    // links to a real prior receipt (`status:0`). Folded the same way, a genesis `None` → `0` =
-    // `genesisSentinel` (the prologue's `prevReceiptOf` maps it to `none`), and a real prev echoes the
-    // host head. (Both sides truncate identically; the full collision-resistance of the head is the
-    // §8 circuit's job, not this admission-bit projection.)
+    // ⚑ THE CLAIMED PREVIOUS-RECEIPT HASH CROSSES WHOLE — flag day 2026-08-06.
+    //
+    // This was `Digest::from_u64(bytes32_to_nat(&h))` — the low 8 bytes, zero-padded — and the
+    // note here defended it as "both sides truncate identically", which is true and is a claim
+    // about PATH AGREEMENT, not about fidelity. What the verified `admissible` ChainHead leg
+    // (`h.prevReceipt = ctx.storedHead`) then decided was `low64(claimed) = low64(stored)`, whose
+    // equivalence classes hold 2^192 heads each.
+    //
+    // Lean was never the narrow side: `WTurn.prevHash`/`WHostCtx.storedHead` are unbounded `Nat`s
+    // and `parseHex32` already reads all 64 hex digits. The reason `prev` was folded is that
+    // `WireHostCtx::stored_head` was a Rust `u64`, so a full-width `prev` could never equal it and
+    // every non-genesis turn was refused. That field is now `[u8; 32]` (see its docblock), so both
+    // operands cross at 256 bits and the leg the kernel PROVES about
+    // (`admissible_links_to_head`, `admissible_append_wellLinked`) is the one it decides.
+    //
+    // A chain head is a NODE, so it needs COLLISION RESISTANCE — and the retired fold did not even
+    // cost a search. `Turn::previous_receipt_hash` is agent-supplied and carries no obligation to
+    // be any receipt's hash, so an agent that knows the true head names a sibling with ONE XOR:
+    // 2^0. (2^32 is the birthday cost of two GENUINE receipts colliding under the fold; 2^64 the
+    // targeted second-preimage with a genuine receipt. Neither priced the deployed check.)
+    // Exhibited end-to-end by `exec-lean/tests/chain_head_fold_collision.rs`.
+    //
+    // Genesis is unchanged: `None` → the all-zero digest → `0` = `genesisSentinel`, which
+    // `prevReceiptOf` maps to `none`.
     let prev_hash = turn
         .previous_receipt_hash
-        .map(|h| dregg_lean_ffi::marshal::Digest::from_u64(bytes32_to_nat(&h)))
+        .map(dregg_lean_ffi::marshal::Digest::from_bytes)
         .unwrap_or_default();
 
     // Build the WHOLE call-FOREST recursively, preserving the tree's delegation EDGES (no longer

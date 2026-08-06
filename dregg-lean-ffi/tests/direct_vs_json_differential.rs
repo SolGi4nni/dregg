@@ -19,10 +19,11 @@ use dregg_lean_ffi::{
 };
 
 /// Split a `WireTurn` into the envelope header (for the direct builder) + the root forest (built
-/// recursively, shared with its children). `prev_low` is the low-64 of the `prev` digest — the same
-/// `Nat` the JSON `parseHex32` folds for these demo/fixture chain heads (`Digest::from_u64`).
+/// recursively, shared with its children). ⚑ `prev_hash` is the WHOLE 32-byte digest — the same
+/// bytes the JSON `parseHex32` reads. It was `prev_low` (the low 8) until the 2026-08-06 flag day,
+/// which is exactly what made this differential blind to the high 192 bits of a chain head: two
+/// corpus turns differing only up there produced identical direct-path input.
 fn split_turn(t: &WireTurn) -> (WireTurnHdr, &WForest) {
-    let prev_low = u64::from_be_bytes(t.prev_hash.0[24..32].try_into().unwrap());
     (
         WireTurnHdr {
             agent: t.agent,
@@ -30,7 +31,7 @@ fn split_turn(t: &WireTurn) -> (WireTurnHdr, &WForest) {
             fee: t.fee,
             valid_until: t.valid_until,
             block_height: t.block_height,
-            prev_low,
+            prev_hash: t.prev_hash.0,
         },
         &t.root,
     )

@@ -202,20 +202,31 @@ mod imp {
         static dregg_d_childlist_nil: Obj;
         fn dregg_d_childlist_cons(x: Obj, xs: Obj) -> Obj;
 
-        fn dregg_d_mk_wturn(
+        // ⚑ The `_w` (WIDE) pair — the receipt-chain head crosses as four LOW-first 64-bit limbs
+        // instead of one `u64`. The narrow `dregg_d_mk_wturn` / `dregg_d_mk_whostctx` are DELETED
+        // from `FFIDirect.lean`, and `build.rs` probes `dregg_d_mk_wturn_w` before setting
+        // `dregg_direct_present`, so an archive predating the flag day degrades to the JSON path
+        // rather than mismatching arity at the ABI.
+        fn dregg_d_mk_wturn_w(
             agent: u64,
             nonce: u64,
             fee: Obj,
             valid_until: u64,
             block_height: u64,
-            prev_hash: u64,
+            prev0: u64,
+            prev1: u64,
+            prev2: u64,
+            prev3: u64,
             root: Obj,
         ) -> Obj;
-        fn dregg_d_mk_whostctx(
+        fn dregg_d_mk_whostctx_w(
             now: u64,
             block_height: u64,
             frozen: Obj,
-            stored_head: u64,
+            head0: u64,
+            head1: u64,
+            head2: u64,
+            head3: u64,
             budget: u64,
         ) -> Obj;
 
@@ -963,12 +974,18 @@ mod imp {
                 None
             };
             step!("build host");
-            // Build the three boundary values (owned).
-            let host_o = dregg_d_mk_whostctx(
+            // Build the three boundary values (owned). The chain head and the claimed prev each
+            // cross as four LOW-first 64-bit limbs — the full 256 bits, matching the JSON path's
+            // `parseHex32`/`parseNat` (flag day 2026-08-06).
+            let head = host.stored_head_limbs();
+            let host_o = dregg_d_mk_whostctx_w(
                 host.now,
                 host.block_height,
                 build_nat_list(&host.frozen),
-                host.stored_head,
+                head[0],
+                head[1],
+                head[2],
+                head[3],
                 host.budget,
             );
             step!("build state");
@@ -976,13 +993,17 @@ mod imp {
             step!("build forest");
             let root_o = build_forest(turn_root);
             step!("build turn");
-            let turn_o = dregg_d_mk_wturn(
+            let prev = turn.prev_hash_limbs();
+            let turn_o = dregg_d_mk_wturn_w(
                 turn.agent,
                 turn.nonce,
                 mk_int(turn.fee),
                 turn.valid_until,
                 turn.block_height,
-                turn.prev_low,
+                prev[0],
+                prev[1],
+                prev[2],
+                prev[3],
                 root_o,
             );
             let t_exec0 = if prof {
@@ -1096,22 +1117,30 @@ mod imp {
         turn: &WireTurnHdr,
     ) -> Result<ShadowState, String> {
         unsafe {
-            let host_o = dregg_d_mk_whostctx(
+            let head = host.stored_head_limbs();
+            let host_o = dregg_d_mk_whostctx_w(
                 host.now,
                 host.block_height,
                 build_nat_list(&host.frozen),
-                host.stored_head,
+                head[0],
+                head[1],
+                head[2],
+                head[3],
                 host.budget,
             );
             let state_o = build_state(state);
             let root_o = build_forest(turn_root);
-            let turn_o = dregg_d_mk_wturn(
+            let prev = turn.prev_hash_limbs();
+            let turn_o = dregg_d_mk_wturn_w(
                 turn.agent,
                 turn.nonce,
                 mk_int(turn.fee),
                 turn.valid_until,
                 turn.block_height,
-                turn.prev_low,
+                prev[0],
+                prev[1],
+                prev[2],
+                prev[3],
                 root_o,
             );
             let res = dregg_exec_full_forest_auth_direct_profiled(host_o, state_o, turn_o);
@@ -1159,8 +1188,7 @@ mod imp {
 }
 
 /// The Turn ENVELOPE fields the direct boundary needs (the root forest is passed separately so the
-/// recursive build is shared with the children). `prev_low` is the low-64 of the `prev` digest — the
-/// same `Nat` the JSON `parseHex32` folds for the demo/fixture chain heads (`Digest::from_u64`).
+/// recursive build is shared with the children).
 #[derive(Debug, Clone)]
 pub struct WireTurnHdr {
     pub agent: u64,
@@ -1168,7 +1196,22 @@ pub struct WireTurnHdr {
     pub fee: i128,
     pub valid_until: u64,
     pub block_height: u64,
-    pub prev_low: u64,
+    /// ⚑ **THE CLAIMED PREVIOUS-RECEIPT HASH, WHOLE** — the same 32 big-endian bytes the JSON
+    /// path's `parseHex32` reads, so both boundaries hand the verified ChainHead leg the same
+    /// 256-bit `Nat`.
+    ///
+    /// **FLAG DAY 2026-08-06 — this was `prev_low: u64`**, bytes `[24..32]`. See
+    /// [`WireHostCtx::stored_head`](crate::marshal::WireHostCtx::stored_head) for the bound and
+    /// why the fold cost 2^0 rather than a birthday search.
+    pub prev_hash: [u8; 32],
+}
+
+impl WireTurnHdr {
+    /// The claimed prev as the LOW-first 64-bit limbs the no-copy boundary carries
+    /// (`dregg_d_mk_wturn_w` → Lean `natOfLimbs`).
+    pub fn prev_hash_limbs(&self) -> [u64; 4] {
+        crate::marshal::WideInt::from_be_bytes32(self.prev_hash).limbs_le()
+    }
 }
 
 /// Run the verified executor over ALREADY-EXTRACTED wire values via the no-copy `lean_object*`

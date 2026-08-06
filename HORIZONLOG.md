@@ -1,5 +1,132 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 6 (WHOSE HEAD) — the verified receipt-chain leg was deciding on **64 bits of a 256-bit head at a cost of one XOR**; the head now crosses whole, and the delegation-snapshot authority question is **DECIDED, not deferred**
+
+Two findings on the `exec-lean` marshalling boundary — the seam where the deployed node hands the
+verified kernel the facts it adjudicates. One is a closed hole, one is a decided design question.
+
+### 1. ⛑ `prevReceipt = storedHead` was a 64-bit equality, and the kernel was never the narrow side
+
+`Admission.admissible`'s ChainHead leg (conjunct 10 of 11) is structural `Option Nat` equality, and
+`WHostCtx.storedHead` / `WTurn.prevHash` are **unbounded `Nat`s in Lean**. What narrowed was Rust:
+`lean_shadow.rs` fed the gate `bytes32_to_nat(head)` — bytes `[24..32]` — and narrowed the turn's
+claimed `prev` to match so the two could compare at all. The comment defending it argued **path
+agreement**, which was true, and read as if it argued **fidelity**, which it did not.
+
+⛑ **THE BOUND IS 2^0, AND IT IS NOT A BIRTHDAY BOUND.** `Turn::previous_receipt_hash` is
+agent-supplied with no obligation to be any receipt's hash, so the adversary is not searching for a
+collision — they are naming a member of a known fiber, and each fiber holds `2^192` heads. Given the
+true head an honest turn already needs, `X = H ^ (1 <<< 255)` folds identically. **One XOR, zero hash
+evaluations.** 2^32 (birthday) and 2^64 (targeted second-preimage on the fold) both price a *genuine*
+receipt hash; neither priced the deployed check. Saying "2^32 by birthday" here would have been the
+flattering half of a pair.
+
+⛑ **IT WAS AN AUTHORITY HOLE, NOT AN INSTRUMENTED GAP.** `produce_via_lean` is default-ON and makes
+the Lean verdict AUTHORITATIVE: `if lean_committed { *ledger = lean_ledger }` **overrides a Rust
+rejection**. Rust's `check_previous_receipt_hash` does compare all 32 bytes — and its refusal
+surfaced as `ProducerDivergence::CommitBit` on an `error!` line reading *"the Rust path is BUGGY"*.
+The turn committed anyway; `build_producer_committed_result` minted a receipt carrying
+`previous_receipt_hash: turn.previous_receipt_hash` — the adversary's value verbatim — signed it, and
+**advanced the stored head onto it** (`finalize.rs`'s `record_receipt_hash`). In the kernel's own
+vocabulary: `admissible_append_wellLinked` preserves `wellLinked` *given* `(head of chain) =
+headDigest ctx`, and under the fold `headDigest ctx` was `low64(H)` against a real head hash of `H`,
+so the hypothesis was false on the deployed path and the tamper-evidence conclusion did not transfer.
+The chain could accept, and permanently keep, a node whose `prevHash` is the hash of nothing.
+
+⛑ **AND IT FALSIFIED A HYPOTHESIS TWO THEOREMS CONSUME.** `HostCorrespondence.Reflects.storedHead`
+is `ctx.storedHead = H.trueStoredHead`; the node reported `low64(trueStoredHead)`. So
+`admissible_sound_of_reflects` and `reflects_rejects_true_fork` were true and **did not apply to the
+running executor**. The archived assurance note characterises the host-fed inputs as "a host
+obligation outside the Lean statement" — right about host HONESTY, silent about the CARRIER, where
+an honest host's true head was narrowed before the gate saw it.
+
+**FLAG DAY.** `WireHostCtx.stored_head` `u64` → `[u8; 32]`; the turn's `prev` stops being
+`Digest::from_u64(bytes32_to_nat(..))` and crosses as the 32 bytes it already was;
+`WireTurnHdr.prev_low: u64` → `prev_hash: [u8; 32]`. On the no-copy path the head crosses as four
+LOW-first limbs through **renamed** exports `dregg_d_mk_wturn_w` / `dregg_d_mk_whostctx_w`
+(`FFIDirect.lean`), assembled in Lean by a new `natOfLimbs` — the unsigned twin of the `intOfLimbs`
+that made the same repair for the state-field carrier on 07-30. The narrow pair is DELETED and
+`build.rs` now probes the WIDE builder before setting `dregg_direct_present`, so a pre-flag-day
+archive degrades to the JSON path (which carries the head at full width with **no** Lean change)
+rather than mismatching arity at the ABI. **The JSON wire SHAPE does not move** — `encodeWHostCtx`
+already wrote `toString : Nat → String` and `parseNat` already read arbitrary width, so every
+`stored_head: 0` golden is byte-identical and nothing re-genesises. **What re-emits: the Lean C
+facet for `Dregg2.Exec.FFIDirect` and the spliced `libdregg_lean.a`.** No VK, no descriptor, no
+schema epoch (still 23) — and therefore **no `VK-REGEN-LOG` row**: nothing regenerated a verifying
+key, and that log has already recorded transitions that did not happen.
+
+**OLD-ADMITS / NEW-REJECTS, in one run.** `exec-lean/tests/chain_head_fold_collision.rs` drives the
+verified gate with the RETIRED projection explicit (`the_retired_low64_projection_admits_the_fold_sibling`
+— it COMMITS) beside the same turn at full width (`…refuses_the_fold_sibling_and_names_the_chain_head_gate`
+— refused, reason `ChainHeadMismatch`), plus the producer-level tooth through the real shadow path,
+plus completeness at both levels and at genesis. ⚠ The pair cannot rot into agreement: re-narrowing
+the carrier turns the NEW half red while the OLD half stays green. And "the digests differ" is NOT
+what is asserted — the exhibit asserts they differ *while agreeing on every bit the projection kept*.
+
+### 2. ⛑ A delegation snapshot is **NOT** an authority edge — decided, argued from what `authorizedB` is FOR
+
+The kernel models ONE authority store; Rust has TWO. `Kernel.lean`'s `authorizedB` is three
+disjuncts over the live c-list and reads `caps turn.actor` and nothing else. Rust's
+`Cell::resolve_authority_at` resolves over the c-list AND `Cell::delegation`, tagging results
+`AuthoritySource::{Clist, DelegationSnapshot}`; three production minters install snapshots and
+`ledger_to_wire_state` carries only the c-list.
+
+**The decision is NO, and the argument is not cost.** `confersEdgeTo` is literally `authorizedB`'s
+`.any` body and `Spec.execGraph`'s body is the same term (`execGraph_eq_any := rfl`). `authorizedB`
+is not "the set of reasons the executor says yes"; it **is** capability-graph connectivity plus
+reflexivity. A snapshot is a frozen copy of edges another object held at a past time, and at HEAD it
+has no live relation to its source: `parent_signature` is `[0u8; 64]` at all three minters,
+`clist_commitment` is checked only at install, `is_stale`/`max_staleness` has **no** executor
+consumer, and the snapshot's `delegation_epoch` is never compared against the parent's live one at
+resolution. A fourth disjunct would not leave the graph theorems needing reproof — it would make
+`exec_heldcap_is_graph_has`, `exec_authz_grounds_in_graph` and (through
+`authorizedB_src_forces_reach`) `confined_cannot_debit_attacker` **FALSE**, and break the ←
+direction of ~two dozen `iff`-shaped circuit bridges that pin a column to the exact boolean.
+
+**So Rust's snapshot authority is OUTSIDE the verified perimeter — and the scope is DERIVED, not
+assumed.** A covered root is `target == agent` (where `authorizedB` short-circuits on ownership and
+never reads `caps`) or bearer; the cap trio reads `caps`, but Rust's `apply_grant_capability`
+resolves the granter's edge through `from_cell.capabilities.lookup_by_target` — the c-list directly,
+not `resolve_authority_at`; and the shapes where the snapshot genuinely decides (cross-cell reach via
+`has_access_including_delegation_at`) are fenced out by `forest_agent_reaches_roots`. ⛑ **No turn in
+today's covered set would change verdict if `authorizedB` grew a snapshot disjunct.** The gap is real
+and DORMANT, and it wakes exactly when the cap-reshape lane widens the covered set to cross-cell
+non-bearer roots — at which point deleting that fence is not enough. Written where the claim is made
+(`forest_agent_reaches_roots`, and the c-list projection that drops the snapshot).
+
+⚠ **NAMED FOR THE `turn/`+`cell/` LANE, not repaired here:** `resolve_authority_at` never compares
+the snapshot's `delegation_epoch` against the parent's current one, and `is_stale`/`max_staleness` is
+dead — so a parent's `bump_delegation_epoch` does not lapse a snapshot; only an explicit
+`RevokeDelegation` on that exact child clears it. That is the repair that would let a snapshot derive
+an edge, and it belongs on the Rust side.
+
+⚠ **ADJACENT, MEASURED, NOT REPAIRED:** `sig_echo_wire` narrows its `Signature` statement to 64 bits
+*on purpose*, saying "a 256-bit statement could never equal a 64-bit proof — the exact stuck-veto bug
+this closes." **Every other credential arm still has that shape** — `auth_to_wire`'s bearer emits
+`Bearer { deleg_msg: Digest, deleg_sig: u64 }` against
+`portalVerify (.bearer msg sig _) = verify msg sig`, and `Token`/`Custom`/`Stealth`/`CapTpDelivered`
+pair a `Digest` against a `u64` the same way. Bearer roots are deliberately INSIDE the covered set.
+Direction is fail-CLOSED, so this is availability, not soundness — pinned as a measurement
+(`adjacent_the_bearer_who_leg_cannot_echo_a_256_bit_statement_at_64_bit_width`) so the claim is not
+derived from types alone.
+
+**GREEN, with counts read from the `Summary` line and the exit code read directly.**
+`cargo nextest run -p dregg-lean-ffi -p dregg-exec-lean -p dregg-redteam --no-fail-fast`
+(`DREGG_TEST_REQUIRE_LEAN=1`): **`Summary [ 558.102s] 345 tests run: 344 passed (13 slow), 1 failed,
+4 skipped`**, `EXIT=100`. All 8 of the new file's tests pass, including the OLD-ADMITS half. The one
+failure is **`dregg-lean-ffi bridge_lc_ffi::mina_fork_choice_decides_on_real_devnet_bytes_through_the_real_ffi`**
+— `KeepExisting` where `TakeCandidate` was asserted, at `bridge_lc_ffi.rs:3092`. ⚠ **Reported, not
+touched: it is the live Mina lane's.** It is disjoint from everything here (zero references to
+`WireHostCtx` / `WireTurnHdr` / the `_w` builders in that file; `MinaForkChoiceGate.lean`,
+`Dregg2/FFI.lean` and `Dregg2.lean` are all CLEAN in this tree), and it is the exact signature this
+log already records for that gate on 07-30 — `decodeSide?` re-derives each side's hash and refuses a
+mismatch, so a call passing `"1"`/`"2"` as the hashes decodes to `"ERR"` and every verdict collapses
+to `KeepExisting`. That entry fixed the sibling test (`the_live_openmina_pair_…`) with real decimal
+hashes; **this one still passes `"1"`/`"2"`** (`bridge_lc_ffi.rs:3088-3090`) and hits the same wall.
+The strongest evidence the archive splice here is sound is that
+`direct_vs_json_differential::direct_path_equals_json_oracle_over_the_whole_corpus` — the byte-exact
+oracle for the very builders this changes — PASSES.
+
 ## ⚑⚑⚑ AUGUST 6 (THE OTHER TWO CARRIERS) — **the owner-key wound is CLOSED and the brief that sent me was describing it**; what survives is a different wound at a different bound, and the recorded severity was OVERSTATED
 
 Sent to close "`A` and `−A` pack identically, at cost zero". **Measured at HEAD first, and every clause of

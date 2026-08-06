@@ -115,6 +115,54 @@ both; the alignment landed on the verified/harness side):
   faithfully — and a Node edge to an unreferenced cell confers no spurious authority, so this only
   restores the genuine in-bounds leg.
 
+## ⚑ A third wire closure — and this one was the OTHER direction (closed 2026-08-06)
+
+The two above are alignments: neither was a Rust under-enforcement. **This one was a hole, and it ran
+the unsafe way — the verified kernel ADMITTING what Rust refused, with the verified verdict
+installed.**
+
+`Admission.admissible`'s ChainHead leg is `h.prevReceipt = ctx.storedHead`, structural equality on
+`Option Nat`; `WHostCtx.storedHead` and `WTurn.prevHash` are unbounded `Nat`s. The kernel was never
+the narrow side. **Rust was**: `lean_shadow` fed the gate `bytes32_to_nat(head)` — bytes `[24..32]`
+of the 32-byte receipt-chain head — and narrowed the turn's claimed `prev` to match, because
+`WireHostCtx::stored_head` was a `u64` and a full-width `prev` could otherwise never equal it. The
+in-tree note defended it as *"both sides truncate identically"*, which is a true statement about
+PATH AGREEMENT read as if it were one about FIDELITY. What the verified leg decided was
+`low64(claimed) = low64(stored)`, over fibers of `2^192` heads.
+
+**The cost is 2^0, and it is not a birthday bound.** `Turn::previous_receipt_hash` is agent-supplied
+with no obligation to be any receipt's hash, so the adversary names a member of a known fiber rather
+than searching for a collision: `X = H ^ (1 <<< 255)` folds identically to the true head `H` that an
+honest turn already needs. One XOR, zero hash evaluations. (2^32 birthday and 2^64 targeted
+second-preimage both price a *genuine* receipt hash; neither priced this check. Quoting either would
+be the flattering half of a pair.)
+
+Because `produce_via_lean` is default-ON and installs the Lean verdict unconditionally on the covered
+set, a fold-sibling turn COMMITTED while Rust's full-32-byte `check_previous_receipt_hash` refused —
+the refusal surfacing only as a `ProducerDivergence::CommitBit` `error!` line reading "the Rust path
+is BUGGY". `build_producer_committed_result` then minted a receipt carrying the adversary's claimed
+prev verbatim, signed it, and advanced the stored head onto it. In kernel terms:
+`admissible_append_wellLinked` preserves `wellLinked` only *given* `(head of chain) = headDigest ctx`,
+and `HostCorrespondence.Reflects.storedHead` requires `ctx.storedHead = H.trueStoredHead` — both
+false on the deployed path, so `admissible_sound_of_reflects` and `reflects_rejects_true_fork` were
+true and **did not apply to the running executor**.
+
+**Closed by widening the carrier to the width the type always had.** `WireHostCtx::stored_head`
+`u64` → `[u8; 32]`; the turn's `prev` crosses as its 32 bytes; `WireTurnHdr::prev_low` →
+`prev_hash: [u8; 32]`. On the no-copy path the head crosses as four LOW-first limbs through renamed
+exports `dregg_d_mk_wturn_w` / `dregg_d_mk_whostctx_w` (`Dregg2/Exec/FFIDirect.lean`), assembled in
+Lean by `natOfLimbs` — the unsigned twin of the `intOfLimbs` that made the same repair for the
+state-field carrier. The narrow pair is DELETED and `build.rs` probes the wide builder before setting
+`dregg_direct_present`, so a stale archive degrades to the JSON path rather than mismatching arity.
+**The JSON wire shape does not move** (`encodeWHostCtx` already wrote a decimal `Nat`), so every
+`stored_head: 0` golden is byte-identical, no VK rotates and nothing re-genesises; what re-emits is
+the `Dregg2.Exec.FFIDirect` C facet and the spliced `libdregg_lean.a`.
+
+Pinned by `exec-lean/tests/chain_head_fold_collision.rs`, which runs the retired projection and the
+full-width one **side by side against the same kernel** — the old one admits the sibling, the new one
+refuses it and names `ChainHeadMismatch` — plus the producer-level tooth through the real shadow
+path and completeness at both levels and at genesis.
+
 ## The honest residual
 
 Two cohort effects classify as `RustAcceptsLeanRejects` — Rust commits, the verified kernel refuses
@@ -163,6 +211,15 @@ in those roles is justified because:
    kernel is stricter), with a closure path — **true** of the two residuals above (`Burn`, `Mint`;
    `CellUnseal` and `AttenuateCapability` are aligned, not residuals).
 
+⚠ **(4) was FALSE until 2026-08-06 and nothing here said so.** The chain-head fold (previous section)
+was a divergence in the UNSAFE direction — the verified kernel admitting what Rust refused, with the
+verified verdict installed over the refusal — and it was not named because it was not *visible* as a
+divergence: it lived in the carrier, so the two executors were being asked different questions rather
+than giving different answers to one. The lesson worth keeping is that this list's four claims are
+about the two executors' VERDICTS and are silent about whether the marshaller hands the verified one
+the facts its statement is about. A width narrowing at the boundary does not show up as an asymmetry
+in any of the harnesses cited below.
+
 All four hold. On native the verified guarantee is the default end-to-end (the Lean producer, with the
 Rust executor as the parallel cross-check); on wasm/zkvm the Rust producer inherits exactly the parity
 argued above, with the two named residuals as its honest boundary.
@@ -177,6 +234,10 @@ argued above, with the two named residuals as its honest boundary.
   state-producer differentials (the verified Lean executor *as the state producer*; per-effect
   byte-identical post-state with negative teeth on each characterised gap).
 - `exec-lean/tests/rust_lean_divergence_finder.rs` — the broad effect-by-effect divergence ledger.
+- `exec-lean/tests/chain_head_fold_collision.rs` — the CARRIER-width tooth: the retired low-64 head
+  projection and the full-width one, run side by side against the same kernel, plus the
+  producer-level refusal. The one harness here that asks whether the verified leg is deciding on the
+  facts its statement names, rather than whether the two executors agree.
 - `docs/reference/lean-kernel.md` — `Exec ⊑ Spec`, the anchor the parity inherits from.
 - `docs/reference/lean-conserve.md` — conservation & supply (the issuer-well model the `Burn`/`Mint`
   residuals close against).

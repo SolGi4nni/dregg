@@ -54,6 +54,19 @@ use dregg_cell::Ledger;
 /// residual is producer-coverage: every cell the freeze gate reads (agent + write-set) must get a
 /// wire id; the `frozen` projection here is faithful on exactly those read cells
 /// (`marshalled_admission_sound`).
+///
+/// ⚑ **AND "OVERRIDE FROM `self`" IS NOT THE WHOLE OBLIGATION — the CARRIER has to be as wide as
+/// the fact.** `Reflects` is `ctx.storedHead = H.trueStoredHead`, and until 2026-08-06 an executor
+/// that overrode this field perfectly from its own state still failed that equation: the
+/// marshaller narrowed `stored_head` (and the turn's claimed `prev`) to their low 64 bits, because
+/// `WireHostCtx::stored_head` was a `u64`. So `admissible_sound_of_reflects` and
+/// `reflects_rejects_true_fork` were true and did not apply to the running node, and a chain head
+/// agreeing with the true one on 8 of 32 bytes was ADMITTED — at a cost of one XOR, since
+/// `Turn::previous_receipt_hash` is agent-supplied and need not be any receipt's hash. Closed by
+/// widening the carrier (`dregg-lean-ffi`'s `WireHostCtx::stored_head` / `WireTurnHdr::prev_hash`,
+/// the `_w` no-copy builders in `Dregg2/Exec/FFIDirect.lean`); pinned by
+/// `exec-lean/tests/chain_head_fold_collision.rs`. Read this paragraph before adding a field here:
+/// the obligation teeth test that a field is LOAD-BEARING, never that it crosses UNDIMINISHED.
 #[derive(Clone, Debug)]
 pub struct ShadowHostCtx {
     /// The executor's current chain block height (`self.block_height`).
