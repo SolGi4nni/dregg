@@ -90,6 +90,10 @@ function loadPins(blockers: Blocker[]): DreggChainPins | null {
       chainVkRoot: BigInt(j.chainVkRoot ?? 0),
       totalSteps: Number(j.totalSteps ?? 0),
       genesisRoot: BigInt(j.genesisRoot ?? 0),
+      //  Carried so the DEPLOYED gate's in-circuit refusal names the program
+      //  whose key it wants. It is a JS error string, not a constraint, so the
+      //  deployed verification key is unchanged by its presence or absence.
+      terminalProgram: typeof j.terminalProgram === 'string' ? j.terminalProgram : undefined,
     });
   } catch (e) {
     blockers.push({

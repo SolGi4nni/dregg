@@ -164,6 +164,7 @@ function realPins(): DreggChainPins | null {
     chainVkRoot: BigInt(j.chainVkRoot),
     totalSteps: Number(j.totalSteps),
     genesisRoot: BigInt(j.genesisRoot),
+    terminalProgram: typeof j.terminalProgram === 'string' ? j.terminalProgram : undefined,
   });
 }
 

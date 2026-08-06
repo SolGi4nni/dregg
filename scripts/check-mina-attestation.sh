@@ -246,7 +246,8 @@ cellcommit|1|cellcommit-native
 incnonce|2|incnonce-native
 mina-merkle|2|mina-merkle
 capability|2|capability-gate
-cell-fact|0|cell-fact"
+cell-fact|0|cell-fact
+vk-identity|0|vk-identity"
 
 TIER=0
 MODE=headline
@@ -489,6 +490,13 @@ run_mina_merkle(){ ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATT
 # network; a gate that reaches the internet is a gate that goes red when a
 # GraphQL endpoint has a bad afternoon.
 run_capability(){ ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent capability-gate ); }
+# ⚑ WHICH KEY IS THIS. `advanceHead` pins an o1js `.compile()` hash; dregg's key
+# on Mina devnet is DERIVED from Lean-emitted `KimchiWrapMain` gates. They differ,
+# the gate refuses the registered one — correctly, they key different circuits at
+# opposite ends of the bridge — and until this leg the refusal was a number
+# against a number, in which a category error and a real drift look identical.
+# Reads JSON, compiles nothing, milliseconds: tier 0 on its merits.
+run_vk_identity(){ ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent vk-identity ); }
 run_uniform()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-uniform ); }
 run_preamble()  { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-preamble ); }
 run_consume()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-consume-differential ); }
@@ -726,6 +734,23 @@ if [ "$MODE" = "headline" ]; then
       || die "the cell-fact leg did not check its cellCommitOf against the Lean emission"
     grep -q 'anchors to a DIFFERENT root' <<<"$cf_out" \
       || die "the cell-fact leg did not exhibit its binding control"
+    n_t0=$((n_t0+1))
+  fi
+  # ── WHICH KEY IS THIS ──────────────────────────────────────────────────────
+  # Every VK notion resolved to the CIRCUIT it keys, every pin recomputed from
+  # its producer, and both refusal polarities exercised. The sentinels are the
+  # tool's own, not the exit code: a leg that only checked `$?` would stay green
+  # if the identification stopped discriminating.
+  if leg_at_tier vk-identity; then
+    vk_out="$(run_vk_identity "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$vk_out"
+    [ "$rc" -eq 0 ] || die "the vk-identity leg exited $rc"
+    grep -q 'PASS — vk-identity' <<<"$vk_out" \
+      || die "the vk-identity leg did not print its PASS line"
+    grep -q 'REFUSE: the refusal names BOTH keys' <<<"$vk_out" \
+      || die "the vk-identity leg did not exercise the named refusal"
+    grep -q 'ACCEPT: ' <<<"$vk_out" \
+      || die "the vk-identity leg did not exercise the accepting polarity"
     n_t0=$((n_t0+1))
   fi
   if leg_at_tier merkle-constraints; then

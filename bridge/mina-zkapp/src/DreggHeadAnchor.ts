@@ -186,6 +186,23 @@ export type DreggChainPins = {
   /** `packLanes(first_old8)` of dregg's genesis state anchor: the weak-
    *  subjectivity anchor, IN THE VERIFICATION KEY. */
   genesisRoot: bigint;
+  /** The terminal program's NAME (`uniformProgramName(...)`, e.g. `block42`), as
+   *  the pin file records it.
+   *
+   *  ⚑ IT IS FOR THE REFUSAL, AND THAT IS NOT DECORATION. A `vk.hash` mismatch
+   *  that prints two numbers cannot distinguish a STALE EPOCH of this circuit
+   *  from AN ENTIRELY DIFFERENT CIRCUIT, and this tree holds keys of both kinds:
+   *  `terminalVkHash` is an o1js `.compile()` hash of a `ZkProgram` we verify
+   *  INSIDE this gate, while dregg's key registered on Mina devnet is derived
+   *  from Lean-emitted `KimchiWrapMain` gates and is ACCOUNT STATE Mina checks
+   *  proofs against — opposite ends of the bridge, never inputs to each other.
+   *  Naming the program is what makes the in-circuit refusal say which.
+   *
+   *  ⚑ AND IT DOES NOT ENTER THE VERIFICATION KEY. o1js's `assertEquals(y, msg)`
+   *  attaches `msg` in a JS `catch` (`field.js:163-176`); it is not passed to
+   *  `assertEqual` and no constraint depends on it. Optional so the stand-in
+   *  rehearsals, which have no program to name, stay buildable. */
+  terminalProgram?: string;
 };
 
 /**
@@ -519,6 +536,19 @@ export function makeDreggHeadGate(rawPins: DreggChainPins, opts: HeadGateOpts = 
   built = fingerprint;
 
   const TERMINAL_VK_HASH = Field(pins.terminalVkHash);
+  //  ⚑ THE REFUSAL NAMES THE CIRCUIT IT WANTED. Built once, at gate
+  //  construction, from constants already in the pins — it is a JS error string
+  //  (`field.js:163-176` attaches it in a `catch`), not a constraint, so it does
+  //  not move the verification key. See `DreggChainPins.terminalProgram`.
+  const WANTED_KEY =
+    'DreggHeadGate: the proof was made under a key this gate does not name. It wants the o1js ' +
+    `ZkProgram key of the TERMINAL position${
+      pins.terminalProgram ? ` \`${pins.terminalProgram}\`` : ''
+    } of "${pins.label}", vk.hash ${pins.terminalVkHash} — an o1js \`.compile()\` key of a ` +
+    'program THIS GATE side-loads. It is NOT dregg\'s Lean-derived `KimchiWrapMain` wrap key ' +
+    '(the one registered on Mina devnet): that is account state Mina checks proofs AGAINST, at ' +
+    'the other end of the bridge, and no re-derivation makes it usable here. Identify the key ' +
+    'you have with `npm run vk-identity`.';
   const CHAIN_VK_ROOT = Field(pins.chainVkRoot);
   const TOTAL_STEPS = Field(pins.totalSteps);
   const GENESIS_ROOT = Field(pins.genesisRoot);
@@ -539,11 +569,7 @@ export function makeDreggHeadGate(rawPins: DreggChainPins, opts: HeadGateOpts = 
     friCommit: Field,
     accOutDigest: Field,
   ): ChainClaim {
-    if (pinVk)
-      vk.hash.assertEquals(
-        TERMINAL_VK_HASH,
-        'DreggHeadGate: the proof was made under a key this gate does not name',
-      );
+    if (pinVk) vk.hash.assertEquals(TERMINAL_VK_HASH, WANTED_KEY);
     terminal.verify(vk);
 
     const po = terminal.publicOutput;

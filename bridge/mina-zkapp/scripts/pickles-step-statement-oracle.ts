@@ -91,7 +91,16 @@ const t2p = type2(SAMPLE, P);   // wrong FIELD (right kind)
 const t1q = type1(SAMPLE, Q);   // wrong KIND (right field: halving instead of subtract-only)
 // Lean `PicklesStepStatementDiff.step_fq_sample_shift_pins_oracle` proves the shift equals THIS
 // constant; the assert below is the TS side of that two-sided pin (kernel ZMod vs bigint agree).
-const LEAN_T2Q_SAMPLE = 19890585860582513838359427261530390921419884937022399468189279074013691866322n;
+// ⚑ `: bigint`, NOT the inferred literal type. Without the annotation TS narrows
+// `t2q` to this literal at the `!==` below (`fail` returns `never`), and then
+// calls the three falsifiability controls that follow — `t2q === SAMPLE`,
+// `=== t2p`, `=== t1q` — statically decided, TS2367, `tsc` RED. The controls are
+// about the RUNTIME arithmetic of `type2`/`type1`, which is exactly what a
+// compile-time fold assumes rather than checks. Annotating the measured constant
+// keeps every check a check. (This is the whole of one of the two lines that had
+// `tsc --noEmit` red for this directory, blocking every leg behind it.)
+const LEAN_T2Q_SAMPLE: bigint =
+  19890585860582513838359427261530390921419884937022399468189279074013691866322n;
 console.log('--- field-key: fq = Type2/Fq (impls.ml:135 · unfinalized.rs:105 · plonk_checks.rs:113) ---');
 console.log(`  Type2/Fq(SAMPLE) = ${t2q}`);
 if (t2q !== LEAN_T2Q_SAMPLE)

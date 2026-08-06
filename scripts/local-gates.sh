@@ -637,6 +637,20 @@ GATES=(
   # assertion, which passes just as happily when the reader is broken.
   "mina-npm-coverage|120|bash scripts/check-mina-npm-coverage.sh"
   "mina-npm-coverage-red|120|bash scripts/check-mina-npm-coverage.sh --self-test"
+  # ⚑ WHICH KEY IS THIS. `DreggHeadGate.advanceHead` pins a `TERMINAL_VK_HASH` that comes
+  # out of an o1js `.compile()`; dregg's key REGISTERED on Mina devnet is DERIVED from
+  # Lean-emitted `KimchiWrapMain` gates. The two differ and the gate refuses the registered
+  # one — CORRECTLY, they key different circuits at opposite ends of the bridge — but until
+  # this row the refusal was one number against another, and in that shape a CATEGORY ERROR
+  # and a REAL DRIFT are indistinguishable. This tree has had both: the head's nine `vk_pin`
+  # literals once named a program no descriptor in this tree had, and one test caught it.
+  # The leg names every notion to the circuit it keys, RECOMPUTES each pin from its producer
+  # key ring rather than trusting the emitted literal, and exercises both polarities. It
+  # reads JSON and compiles nothing (~2s, needs node + `npm ci` in bridge/mina-zkapp).
+  # The `-red` row is not optional: [2]'s drift check is never exercised on a healthy tree,
+  # which is exactly the state in which nobody has shown it can fail.
+  "mina-vk-identity|180|bash -c 'cd bridge/mina-zkapp && npm run --silent vk-identity'"
+  "mina-vk-identity-red|180|bash -c 'cd bridge/mina-zkapp && npm run --silent vk-identity -- --self-test'"
   # ⚑ THE CHAIN, NOT THE TIP. Until 2026-08-02 this repo's Mina light client read
   # `tip.data.header.protocol_state` off `get_best_tip` v2 and DROPPED `tip.proof` —
   # the merkle-list proof anchoring that tip to the serving peer's frontier root.

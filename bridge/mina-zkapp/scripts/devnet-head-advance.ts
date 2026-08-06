@@ -60,6 +60,7 @@ import {
   terminalSealOf,
 } from '../src/DreggHeadAnchor.js';
 import { makeDreggHeadGate } from '../src/DreggHeadAnchor.js';
+import { explainVkMismatch, resolveVkNotions } from '../src/VerificationKeyIdentity.js';
 import {
   balance,
   connect,
@@ -234,6 +235,11 @@ function loadPins(blockers: Blocker[]): DreggChainPins | null {
     chainVkRoot: BigInt(j.chainVkRoot),
     totalSteps: Number(j.totalSteps),
     genesisRoot: BigInt(j.genesisRoot),
+    //  Carried so the in-circuit refusal can NAME the program whose key it
+    //  wants rather than printing an anonymous number. `head-anchor-pins --emit`
+    //  writes it; a pin file that predates that field simply has no name to give
+    //  and the message says less, never something false.
+    terminalProgram: typeof j.terminalProgram === 'string' ? j.terminalProgram : undefined,
   });
 }
 
@@ -366,10 +372,24 @@ async function main() {
     hash: Field(BigInt(vkJson.hash ?? vkJson.verificationKey?.hash)),
   });
   if (vk.hash.toBigInt() !== p.terminalVkHash) {
-    console.error('\n  ✗ the supplied verification key is not the one the pins name.');
-    console.error(`      pinned   : ${p.terminalVkHash}`);
-    console.error(`      supplied : ${vk.hash.toString()}`);
-    console.error('    The gate would refuse this in circuit; refusing here saves the fee.');
+    //  ⚑ REFUSE BY NAME, NOT BY NUMBER. Two numbers side by side cannot tell a
+    //  STALE EPOCH of this circuit from an ENTIRELY DIFFERENT CIRCUIT, and this
+    //  tree holds keys of both kinds — the o1js chain terminal pinned here, and
+    //  dregg's Lean-derived `wrap_main` key registered on devnet, which lives at
+    //  the OTHER end of the bridge and could never be an input to this gate.
+    //  `VerificationKeyIdentity` resolves each from its producer and says which.
+    console.error('\n  ✗ the supplied verification key is not the one the pins name.\n');
+    console.error(
+      explainVkMismatch(
+        'o1js-rootfriuniform-terminal-babybear',
+        vk.hash.toBigInt(),
+        resolveVkNotions(process.cwd()),
+      )
+        .split('\n')
+        .map((l) => `    ${l}`)
+        .join('\n'),
+    );
+    console.error('\n    The gate would refuse this in circuit; refusing here saves the fee.');
     process.exit(1);
   }
 

@@ -52,7 +52,6 @@
     "pasta-verify": "npm run build && node --max-old-space-size=16384 dist/scripts/pasta-proof-verify.js",
     "mina-shrink-verify": "npm run build && node --max-old-space-size=16384 dist/scripts/mina-shrink-verify.js",
     "mina-shrink-partition": "npm run build && node --max-old-space-size=16384 dist/scripts/mina-shrink-partition.js",
-    "mina-shrink-head": "npm run build && node --max-old-space-size=16384 dist/scripts/mina-shrink-head.js",
     "pasta-chain": "npm run build && node --max-old-space-size=16384 dist/scripts/pasta-chain.js",
     "root-consume-differential": "npm run build && node --max-old-space-size=16384 dist/scripts/root-consume-differential.js",
     "root-consume-rows": "npm run build && node --max-old-space-size=16384 dist/scripts/root-consume-rows.js",
@@ -68,7 +67,8 @@
     "fri-mutation-gate": "bash scripts/fri-mutation-gate.sh",
     "devnet:head-deploy": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-deploy.js",
     "devnet:head-advance": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-advance.js",
-    "capability-gate": "npm run build && node --max-old-space-size=16384 dist/scripts/dregg-capability-gate.js"
+    "capability-gate": "npm run build && node --max-old-space-size=16384 dist/scripts/dregg-capability-gate.js",
+    "vk-identity": "npm run build && node dist/scripts/vk-identity-gate.js"
   },
   "dependencies": {
     "o1js": "2.15.0"

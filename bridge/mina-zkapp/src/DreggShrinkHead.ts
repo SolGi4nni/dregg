@@ -120,6 +120,17 @@ export function makeShrinkHeadGate(rawPins: ShrinkChainPins, opts: ShrinkHeadGat
   built = fingerprint;
 
   const TERMINAL_VK_HASH = Field(pins.terminalVkHash);
+  //  ⚑ THE REFUSAL NAMES THE CIRCUIT. Same reason as `DreggHeadAnchor`'s: this
+  //  tree holds THREE prover-side terminal keys (this one, and the BabyBear and
+  //  Pasta RootFriUniform terminals) plus dregg's Lean-derived `KimchiWrapMain`
+  //  key registered on Mina devnet, and a bare number-vs-number mismatch cannot
+  //  tell them apart. A JS error string, not a constraint — the VK is unmoved.
+  const WANTED_KEY =
+    'DreggShrinkHeadGate: the proof was made under a key this gate does not name. It wants the ' +
+    `o1js ZkProgram key of MinaShrinkPartition's TERMINAL \`walk\` for "${pins.label}", ` +
+    `vk.hash ${pins.terminalVkHash}. It is NOT a RootFriUniform terminal (different seal family: ` +
+    'three-field untagged `partitionTerminalSeal`, not four-field tagged `airTerminalSeal`) and ' +
+    'NOT dregg\'s Lean-derived wrap key on devnet. Identify yours with `npm run vk-identity`.';
   const TOTAL_STEPS = Field(pins.totalSteps);
   const GENESIS_ROOT = Field(pins.genesisRoot);
 
@@ -133,11 +144,7 @@ export function makeShrinkHeadGate(rawPins: ShrinkChainPins, opts: ShrinkHeadGat
     vk: VerificationKey,
     rootCommitDigest: Field,
   ): ChainClaim {
-    if (pinVk)
-      vk.hash.assertEquals(
-        TERMINAL_VK_HASH,
-        'DreggShrinkHeadGate: the proof was made under a key this gate does not name',
-      );
+    if (pinVk) vk.hash.assertEquals(TERMINAL_VK_HASH, WANTED_KEY);
     terminal.verify(vk);
     const po = terminal.publicOutput;
     if (requireSeal)

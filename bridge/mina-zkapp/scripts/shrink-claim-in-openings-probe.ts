@@ -35,7 +35,12 @@ function main() {
   const r0 = v.opened[0];
   console.log('\nround0 matrices:', r0.length);
   for (let mi = 0; mi < r0.length; mi++) {
-    const pt0 = r0[mi][0] as number[]; // point 0 flat base lanes
+    // point 0, flat base lanes. ⚑ `RootValues.opened` is `bigint[][][][]`
+    // (RootConsume.ts:200) — this used to carry `as number[]`, which was simply
+    // wrong about the array it names and was the second of the two lines that
+    // had `tsc --noEmit` red for this whole directory. `BigInt(bigint)` below is
+    // the identity, so nothing about what this probe measures changes.
+    const pt0 = r0[mi][0];
     const numCols = sh.batches[0].matrices[mi].numCols;
     // Extract base component of each column (every EXT_D-th lane).
     const EXT_D = 4;
