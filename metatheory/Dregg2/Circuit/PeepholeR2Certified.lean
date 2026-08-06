@@ -76,9 +76,9 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.PassiveDescriptorOptimization
 open Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2
-  (Wire Node witnessCount outputAt nodesAt gate bitBody subW negW fieldWindow fieldAssignment
-   fieldWire fieldWindow_eq_cast fieldWire_expr field_zero_of_gate graph_of_node_constraints
-   node_constraint_degree graphConstraints)
+  (Wire Node witnessCount outputAt nodesAt gate bitBody bitBody_eq subW negW fieldWindow
+   fieldAssignment fieldWire fieldWindow_eq_cast fieldWire_expr field_zero_of_gate
+   graph_of_node_constraints node_constraint_degree graphConstraints)
 open Dregg2.Metatheory.TypedLinearPredicateDescriptorIR2
 open Dregg2.Circuit.PeepholeBooleanityRule (peelConst peelConst_evalField recognizes pairBody
   pairGate pairBody_zero_iff pairGate_iff_or nonlinearMuls)
@@ -626,7 +626,7 @@ theorem rwR2_security_row (hash : List ℤ → ℤ) (tf : TraceFamily) (isFirst 
         List.mem_cons, List.not_mem_nil, or_false] at hcn'
       rcases hcn' with rfl | rfl
       · refine gate_holds_any hash tf env' isFirst isLast ?_
-        simp only [bitBody, Wire.expr, fieldWindow]
+        simp only [bitBody_eq, Wire.expr, fieldWindow]
         rw [hAndOut]; ring
       · refine gate_holds_any hash tf env' isFirst isLast ?_
         simp only [subW, negW, fieldWindow]

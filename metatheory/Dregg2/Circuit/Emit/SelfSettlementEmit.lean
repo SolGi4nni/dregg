@@ -97,6 +97,7 @@ would emit a descriptor that constrains nothing at all.
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Distributed.SelfSettlement
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.SelfSettlementEmit
 
@@ -227,7 +228,13 @@ def registrationFrozen : VmConstraint2 :=
 def selBoolean : VmConstraint2 :=
   .windowGate
     { onTransition := false
-    , body := .mul (loc Settle.SEL) (.add (loc Settle.SEL) (.const (-1))) }
+    , body := Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+        (Dregg2.Circuit.GateExpr.gBool (.leaf (.loc Settle.SEL))) }
+
+theorem selBoolean_eq :
+    selBoolean = .windowGate
+      { onTransition := false
+      , body := .mul (loc Settle.SEL) (.add (loc Settle.SEL) (.const (-1))) } := rfl
 
 /-- The eight commitment lanes of the seam, low limb first, as row-local expressions. -/
 def aggCommitLanes : List EmittedExpr :=
@@ -484,7 +491,7 @@ theorem settle_descriptor_refines_air
   have hv6 := h (aggVkBind 6) (by simp [selfSettlementDescriptor, settleConstraints])
   have hv7 := h (aggVkBind 7) (by simp [selfSettlementDescriptor, settleConstraints])
   have hbe := h heightBeforeBind (by simp [selfSettlementDescriptor, settleConstraints])
-  simp only [genesisPin, aggBinds, certBinds, heightIsCount, strictAdvance, selBoolean,
+  simp only [genesisPin, aggBinds, certBinds, heightIsCount, strictAdvance, selBoolean_eq,
     VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval, if_false, neg_mul,
     one_mul] at hg ha hc hh hs hb
   simp only [registrationFrozen, settledRootBind, settledHeightBind, heightBeforeBind,
@@ -538,14 +545,14 @@ theorem settle_descriptor_iff_air
     · simpa [strictAdvance, VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
         sub_eq_add_neg, add_assoc] using hs
     · exact hr1
-    · simpa [selBoolean, VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
+    · simpa [selBoolean_eq, VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
         sub_eq_add_neg] using hb
     · -- ⚑ the `.proofBind` leg is no longer `trivial`. `settleSeam` DECLARES both pins absent
       -- (a settlement row binds a CHILD chain: neither its program nor its commitment is a function
       -- of this row), so the seam reduces to the selector booleanity — the SAME fact `selBoolean`
       -- already carries, discharged from it rather than assumed.
       refine ⟨?_, trivial, trivial⟩
-      simpa [selBoolean, settleProofBind, settleSeam, WindowConstraint.holdsAt, WindowExpr.eval,
+      simpa [selBoolean_eq, settleProofBind, settleSeam, WindowConstraint.holdsAt, WindowExpr.eval,
         EmittedExpr.eval, sub_eq_add_neg] using hb
     · exact hr2
     · exact hr3

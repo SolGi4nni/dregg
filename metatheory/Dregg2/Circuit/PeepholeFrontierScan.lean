@@ -56,7 +56,8 @@ namespace Dregg2.Circuit.PeepholeFrontierScan
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.PassiveDescriptorOptimization
 open Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2
-  (Wire Node gate bitBody subW negW fieldWindow fieldAssignment fieldWire_expr field_zero_of_gate)
+  (Wire Node gate bitBody bitBody_eq subW negW fieldWindow fieldAssignment fieldWire_expr
+   field_zero_of_gate)
 open Dregg2.Circuit.PeepholeR2Certified (gate_holds_any field_of_src_gate)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 
@@ -100,7 +101,7 @@ theorem fw_andBody (env : VmRowEnv) (out l r : Nat) :
 theorem fw_bitBody (env : VmRowEnv) (c : Nat) :
     fieldWindow env (bitBody (.col c)) =
       fieldAssignment env.loc c * (fieldAssignment env.loc c - 1) := by
-  simp only [bitBody, Wire.expr, fieldWindow]
+  simp only [bitBody_eq, Wire.expr, fieldWindow]
   push_cast
   ring
 

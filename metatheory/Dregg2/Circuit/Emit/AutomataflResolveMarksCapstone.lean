@@ -493,7 +493,7 @@ theorem resolveMarksMoveLegal (W : BoardWindow n)
     have hgg := ngateH hsat i hi (mem_rm_legality hw (List.mem_cons_of_mem _
       (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_self)))))
     have hE : (headToExpr ((Head.lin 1 (rLegal n w)).addConst (-1))).eval e.loc
-        = e.loc (rLegal n w) + (-1) := rfl
+        = e.loc (rLegal n w) + (-1) := by canon_head_eval [headToExpr]
     rw [hE] at hgg
     exact eq_of_modEq_canon (canon_loc hc i _) canon_one ((gate_modEq_iff (by ring)).mp hgg)
   -- the NOR gate

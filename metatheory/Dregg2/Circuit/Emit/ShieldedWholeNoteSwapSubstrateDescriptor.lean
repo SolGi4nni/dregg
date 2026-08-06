@@ -37,6 +37,7 @@ Hash lookups remain unguarded and therefore execute on every row, as required by
 -/
 
 import Dregg2.Circuit.Emit.ExactNullifierAafiDescriptorPlan
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor
 
@@ -271,7 +272,11 @@ def rangeConstraints : List VmConstraint2 :=
     (u15Cols.map fun col => rangeLookup ⟨col, 15⟩)
 
 def bitBody' (col : Nat) : EmittedExpr :=
-  emul (.var col) (esub (.var col) (.const 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf col))
+
+theorem bitBody'_eq (col : Nat) :
+    bitBody' col = emul (.var col) (esub (.var col) (.const 1)) := rfl
 
 def bitCols : List Nat := cols NULLIFIER_ZERO_BASE KEY_LANES ++
   cols LOW_POS_BITS DEPTH ++ cols APP_POS_BITS DEPTH ++
@@ -369,7 +374,8 @@ def bracketConstraints : List VmConstraint2 :=
     lexBodies nextLeft nextRight LEX_NEXT_AUX_BASE).map firstZero
 
 def tagConstraints : List VmConstraint2 :=
-  [firstZero (emul (.var LOW_ADDR_TAG) (esub (.var LOW_ADDR_TAG) (.const 1))),
+  [firstZero (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+     (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf LOW_ADDR_TAG))),
    firstZero (emul (esub (.var LOW_NEXT_TAG) (.const 1))
      (esub (.var LOW_NEXT_TAG) (.const 2)))] ++
   ((List.range KEY_LANES).map fun lane => firstZero

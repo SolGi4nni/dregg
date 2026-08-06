@@ -248,6 +248,7 @@ free pins in the wide registry, and it makes them forced rather than exempt.
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmit
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.EffectVmEffectsHashPin
 
@@ -410,8 +411,8 @@ def ehTagGate (w : Nat) : VmConstraint2 := .base (.gate (ehTagGateBody w))
 single chain across the whole trace, so no row can restart it. -/
 def ehContinuity (w : Nat) : List VmConstraint2 :=
   (List.range EH_CARRIER).map (fun j =>
-    .windowGate { body := .add (.nxt (ehAccInCol w j))
-                    (.mul (.const (-1)) (.loc (ehAccOutCol w j)))
+    .windowGate { body := Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+                    (Dregg2.Circuit.GateExpr.gThread (ehAccInCol w j) (ehAccOutCol w j))
                 , onTransition := true })
 
 /-- **The seed.** Row 0's accumulator is the fixed IV, so the chain has one origin. -/

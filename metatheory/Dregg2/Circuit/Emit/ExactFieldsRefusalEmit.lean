@@ -18,6 +18,7 @@ genuine repeated tuple rather than relying on a dummy table row.
 -/
 import Dregg2.Circuit.FullStateChip
 import Dregg2.Circuit.Emit.EffectVmEmitRotationWide
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.ExactFieldsRefusalEmit
 
@@ -25,6 +26,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
+open Dregg2.Circuit.GateExpr (gCols gVars toEmitted gEsub gSwapLeft gSwapRight idOps render)
 
 set_option autoImplicit false
 
@@ -92,9 +94,8 @@ def eneg (a : EmittedExpr) : EmittedExpr := emul (ek (-1)) a
 def esub (a b : EmittedExpr) : EmittedExpr := eadd a (eneg b)
 def activeGate (body : EmittedExpr) : EmittedExpr := emul (ev ACTIVE_COL) body
 
-def cols (base count : Nat) : List Nat := (List.range count).map (base + ·)
-def vars (base count : Nat) : List EmittedExpr := (cols base count).map .var
-def stateCols (base step : Nat) : List Nat := cols (base + STATE_LANES * step) STATE_LANES
+/-- ⚑ Column-reader family, factored: `gCols`/`gVars toEmitted` at `Dregg2.Circuit.GateExpr`. -/
+def stateCols (base step : Nat) : List Nat := gCols (base + STATE_LANES * step) STATE_LANES
 def chunks4 {alpha : Type} (xs : List alpha) : List (List alpha) := xs.toChunks 4
 
 def initialStateExpr (inputLength : Nat) : List EmittedExpr :=
@@ -138,25 +139,25 @@ def spongePlan (stateBase : Nat) (preimage : List EmittedExpr) : List State16Ste
 
 def spongeDigestCols (stateBase inputLength : Nat) : List Nat :=
   let absorbs := (inputLength + 3) / 4
-  cols (stateBase + STATE_LANES * (absorbs - 1)) 4 ++
-    cols (stateBase + STATE_LANES * absorbs) 4
+  gCols (stateBase + STATE_LANES * (absorbs - 1)) 4 ++
+    gCols (stateBase + STATE_LANES * absorbs) 4
 
 def auditKeyLimbs : List EmittedExpr := [ek 0, ek 0, ek 1, ek 0]
 
 def oldLeafPreimage : List EmittedExpr :=
-  [ek FLD2, ev OCC_COL] ++ auditKeyLimbs ++ vars OLD_VALUE_BASE VALUE_LIMBS
+  [ek FLD2, ev OCC_COL] ++ auditKeyLimbs ++ gVars toEmitted OLD_VALUE_BASE VALUE_LIMBS
 
 def newLeafPreimage : List EmittedExpr :=
-  [ek FLD2, ek 1] ++ auditKeyLimbs ++ vars NEW_VALUE_BASE VALUE_LIMBS
+  [ek FLD2, ek 1] ++ auditKeyLimbs ++ gVars toEmitted NEW_VALUE_BASE VALUE_LIMBS
 
 def oldLeafDigestCols : List Nat := spongeDigestCols OLD_LEAF_STATE_BASE oldLeafPreimage.length
 def newLeafDigestCols : List Nat := spongeDigestCols NEW_LEAF_STATE_BASE newLeafPreimage.length
 
 def oldNodePreimage : List EmittedExpr :=
-  ek FLN2 :: (vars OLD_LEFT_BASE DIGEST ++ vars OLD_RIGHT_BASE DIGEST)
+  ek FLN2 :: (gVars toEmitted OLD_LEFT_BASE DIGEST ++ gVars toEmitted OLD_RIGHT_BASE DIGEST)
 
 def newNodePreimage : List EmittedExpr :=
-  ek FLN2 :: (vars NEW_LEFT_BASE DIGEST ++ vars NEW_RIGHT_BASE DIGEST)
+  ek FLN2 :: (gVars toEmitted NEW_LEFT_BASE DIGEST ++ gVars toEmitted NEW_RIGHT_BASE DIGEST)
 
 def oldNodeDigestCols : List Nat := spongeDigestCols OLD_NODE_STATE_BASE oldNodePreimage.length
 def newNodeDigestCols : List Nat := spongeDigestCols NEW_NODE_STATE_BASE newNodePreimage.length
@@ -175,20 +176,40 @@ def state16Lookups : List VmConstraint2 :=
     spongePlan NEW_NODE_STATE_BASE newNodePreimage).map fun step =>
       .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols step.width⟩
 
-def dirBinary : EmittedExpr := activeGate (emul (ev DIR_COL) (esub (ev DIR_COL) (ek 1)))
-def occBinary : EmittedExpr := activeGate (emul (ev OCC_COL) (esub (ev OCC_COL) (ek 1)))
-def activeBinary : EmittedExpr := emul (ev ACTIVE_COL) (esub (ev ACTIVE_COL) (ek 1))
+/-- ⚑ Byte-identical to the old body via `GateExpr.gBoolEnc2` — this file's `esub` is the
+`(−1)·1` encoding (`gEsub`'s shape, not `gBool`'s elided `.const (−1)`), so the byte-preserving
+shared home is `gBoolEnc2`, not `gBool`. -/
+def dirBinary : EmittedExpr :=
+  activeGate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf DIR_COL)))
+
+theorem dirBinary_eq : dirBinary = activeGate (emul (ev DIR_COL) (esub (ev DIR_COL) (ek 1))) := rfl
+
+def occBinary : EmittedExpr :=
+  activeGate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf OCC_COL)))
+
+theorem occBinary_eq : occBinary = activeGate (emul (ev OCC_COL) (esub (ev OCC_COL) (ek 1))) := rfl
+
+def activeBinary : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf ACTIVE_COL))
+
+theorem activeBinary_eq : activeBinary = emul (ev ACTIVE_COL) (esub (ev ACTIVE_COL) (ek 1)) := rfl
 
 def oldReservedCanonical (i : Fin VALUE_LIMBS) : EmittedExpr :=
   activeGate (emul (esub (ek 1) (ev OCC_COL)) (ev (OLD_VALUE_BASE + i.val)))
 
+/-- `active · (left − the Merkle sibling-swap)`. ⚑ Byte-identical to the old body — this file
+already wrote the compact `esub`/`eadd`/`emul` form, which IS `gEsub`/`gSwapLeft`'s shape, `rfl`. -/
 def leftSelect (cur sibling left : Nat) : EmittedExpr :=
-  activeGate (esub (ev left)
-    (eadd (ev cur) (emul (ev DIR_COL) (esub (ev sibling) (ev cur)))))
+  activeGate (render toEmitted
+    (gEsub idOps (.leaf left) (gSwapLeft (.leaf DIR_COL) (.leaf cur) (.leaf sibling))))
 
+/-- Same re-derivation as `leftSelect`, `gSwapRight`. -/
 def rightSelect (cur sibling right : Nat) : EmittedExpr :=
-  activeGate (esub (ev right)
-    (eadd (ev sibling) (emul (ev DIR_COL) (esub (ev cur) (ev sibling)))))
+  activeGate (render toEmitted
+    (gEsub idOps (.leaf right) (gSwapRight (.leaf DIR_COL) (.leaf cur) (.leaf sibling))))
 
 def wl (c : Nat) : WindowExpr := .loc c
 def wn (c : Nat) : WindowExpr := .nxt c

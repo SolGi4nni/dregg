@@ -70,6 +70,7 @@ semantic lemmas over the gate bodies (`#assert_axioms ⊆ {}`, pure `mul_eq_zero
 imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.FoldEmit
 
@@ -119,9 +120,15 @@ def FOLD_PI_COUNT : Nat := 6
 
 /-! ## §3 — The gate bodies, as NAMED `EmittedExpr`/`WindowExpr` (so §5 can prove teeth on them). -/
 
-/-- `x*(x-1)` — the binary-selector body (`ROW_TYPE`, `HASH_VALID`). -/
+/-- `x*(x-1)` — the binary-selector body (`ROW_TYPE`, `HASH_VALID`). ⚑ `GateExpr.gBoolCanon` — the
+CANONICAL (corpus-normal-form) rendering, 9 nodes. -/
 def binaryBody (c : Nat) : EmittedExpr :=
-  .mul (.var c) (.add (.var c) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolCanon c)
+
+theorem binaryBody_eq (c : Nat) :
+    binaryBody c =
+      .add (.mul (.const 1) (.mul (.var c) (.var c))) (.mul (.const (-1)) (.var c)) := rfl
 
 /-- `(1-ROW_TYPE)*(MEMBERSHIP_ROOT-OLD_ROOT)` — membership_root_matches (gated on removal rows). -/
 def mrmBody : EmittedExpr :=
@@ -142,10 +149,16 @@ def rootTransBody : EmittedExpr :=
 def constancyBody (c : Nat) : WindowExpr :=
   .add (.loc c) (.mul (.const (-1)) (.nxt c))
 
-/-- The removal_count_increment window body `(1-loc ROW_TYPE)*(nxt REMOVAL_COUNT - loc REMOVAL_COUNT_PLUS_ONE)`. -/
+/-- The removal_count_increment window body `(1-loc ROW_TYPE)*(nxt REMOVAL_COUNT - loc REMOVAL_COUNT_PLUS_ONE)`.
+⚑ The thread subterm is `GateExpr.gThread`. -/
 def removalIncrBody : WindowExpr :=
   .mul (.add (.const 1) (.mul (.const (-1)) (.loc ROW_TYPE)))
-       (.add (.nxt REMOVAL_COUNT) (.mul (.const (-1)) (.loc REMOVAL_COUNT_PLUS_ONE)))
+       (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+         (Dregg2.Circuit.GateExpr.gThread REMOVAL_COUNT REMOVAL_COUNT_PLUS_ONE))
+
+theorem removalIncrBody_eq :
+    removalIncrBody = .mul (.add (.const 1) (.mul (.const (-1)) (.loc ROW_TYPE)))
+       (WindowExpr.add (.nxt REMOVAL_COUNT) (.mul (.const (-1)) (.loc REMOVAL_COUNT_PLUS_ONE))) := rfl
 
 /-- **(A) `removal_count_plus_one` faithfulness gate body** `(1-ROW_TYPE)*(REMOVAL_COUNT_PLUS_ONE -
 REMOVAL_COUNT - 1)`. Binds the aux increment column to `REMOVAL_COUNT + 1` on every REMOVAL row — the
@@ -163,7 +176,12 @@ SUMMARY/pad row (`ROW_TYPE = 1`) it forces the count constant into the next row,
 across the summary+pad tail to the LAST row (the increment window is gated OFF on those rows, so without
 this the published last-row count decoupled from the summary's count). -/
 def rcCarryBody : WindowExpr :=
-  .mul (.loc ROW_TYPE) (.add (.nxt REMOVAL_COUNT) (.mul (.const (-1)) (.loc REMOVAL_COUNT)))
+  .mul (.loc ROW_TYPE) (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gCarry REMOVAL_COUNT))
+
+theorem rcCarryBody_eq :
+    rcCarryBody = .mul (.loc ROW_TYPE)
+      (WindowExpr.add (.nxt REMOVAL_COUNT) (.mul (.const (-1)) (.loc REMOVAL_COUNT))) := rfl
 
 /-- **(B) first-row `REMOVAL_COUNT = 0` anchor body** `REMOVAL_COUNT`. Row 0 has no removals before it,
 so the count-before-this-row starts at 0; without this the counter's START value was free (a prover
@@ -236,7 +254,7 @@ asserted equal to an independent Rust builder, and proven through the REAL prove
 side breaks THIS `#guard` (Lean) or the Rust `assert_eq!` — neither can silently diverge. -/
 
 #guard emitVmJson2 foldDesc ==
-  "{\"name\":\"dregg-fold-step-v2\",\"ir\":2,\"trace_width\":21,\"public_input_count\":6,\"challenges\":0,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":11}}}}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20}]},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":0},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":3}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":1},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":4}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":12}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":12},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"const\",\"v\":-1}}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"var\",\"v\":5}},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":13,\"pi_index\":4},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":13},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":13}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":5,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":6,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":2,\"pi_index\":4}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-fold-step-v2\",\"ir\":2,\"trace_width\":21,\"public_input_count\":6,\"challenges\":0,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"var\",\"v\":11}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":11}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":11}}}}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20}]},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":0},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":3}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":1},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":4}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":12}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":12},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"const\",\"v\":-1}}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"var\",\"v\":5}},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":13,\"pi_index\":4},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":13},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":13}}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":5,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":6,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":2,\"pi_index\":4}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §7 — Shape tripwires. -/
 #guard foldDesc.traceWidth == FOLD_WIDTH
@@ -284,8 +302,8 @@ theorem root_trans_body_zero_iff (a : Assignment) :
 /-- **binary-selector tooth.** `x*(x-1)=0 ↔ x=0 ∨ x=1`. -/
 theorem binary_body_zero_iff (c : Nat) (a : Assignment) :
     (binaryBody c).eval a = 0 ↔ a c = 0 ∨ a c = 1 := by
-  simp only [binaryBody, EmittedExpr.eval]
-  rw [mul_eq_zero]
+  simp only [binaryBody_eq, EmittedExpr.eval]
+  rw [show (1 : ℤ) * (a c * a c) + -1 * a c = a c * (a c - 1) from by ring, mul_eq_zero]
   constructor
   · rintro (h | h)
     · exact Or.inl (by omega)
@@ -312,7 +330,7 @@ the body forces `nxt REMOVAL_COUNT = loc REMOVAL_COUNT_PLUS_ONE`; on a summary r
 theorem removal_incr_body_zero_iff (env : VmRowEnv) :
     removalIncrBody.eval env = 0 ↔
       env.loc ROW_TYPE = 1 ∨ env.nxt REMOVAL_COUNT = env.loc REMOVAL_COUNT_PLUS_ONE := by
-  simp only [removalIncrBody, WindowExpr.eval]
+  simp only [removalIncrBody_eq, WindowExpr.eval]
   rw [mul_eq_zero]
   constructor
   · rintro (h | h)
@@ -350,7 +368,7 @@ changes the count into the next row (the pad-carry forgery) violates it. -/
 theorem rc_carry_body_zero_iff (env : VmRowEnv) :
     rcCarryBody.eval env = 0 ↔
       env.loc ROW_TYPE = 0 ∨ env.nxt REMOVAL_COUNT = env.loc REMOVAL_COUNT := by
-  simp only [rcCarryBody, WindowExpr.eval]
+  simp only [rcCarryBody_eq, WindowExpr.eval]
   rw [mul_eq_zero]
   constructor
   · rintro (h | h)

@@ -26,6 +26,7 @@ packed-felt PIs on the two legs ⇒ (by `pack_injective`) the two boards agree c
 -/
 import Dregg2.Games.Automatafl
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 import Dregg2.Tactics
 import Mathlib.Data.List.Basic
 import Mathlib.Data.List.Range
@@ -294,52 +295,54 @@ theorem packBoard_injective (n : Nat) (b1 b2 : Board)
 
 /-! ## §6 — The emitted family (LEAN-AUTHORED AIR).
 
-Minimal degree-1 gate combinators (the `AutomataflStepEmit` / `DyckStackEmit` `.gate`/`EmittedExpr`
-style, replicated locally so this leaf is self-contained and does not import the 120 KB step golden).
-The pack gate uses only linear terms ⇒ degree 1; the commitment is a `piBinding` (boundary), not a
-polynomial gate at all. -/
+⚑ **FLAG DAY 2026-08-06 — THIS WAS THE THIRD SHAPE, AND IT IS GONE.** These combinators were
+"replicated locally so this leaf is self-contained", and the replication drifted the same way the two
+automatafl `headToExpr` copies did: `varTerm`/`prodTerm` ELIDED a unit coefficient and
+`linGate`/`prodGate` DROPPED zero-coefficient terms, which is a DIFFERENT emitted object from
+`AirBuilder`'s renderer, not a different spelling of it. They are now `GateExpr.gHeadToExpr` at the
+emitted view — one renderer for the whole automatafl cone — and every gate this file authors
+(`packBoardConstraintsAt`, `boardRangeCells`, the `auto_out` coordinate pins) MOVED. The pack gate
+still uses only linear terms ⇒ degree 1; the commitment is still a `piBinding`, not a gate. -/
 
-/-- One linear term `coeff·col` (`coeff = 1` elides the multiplier). -/
-def varTerm : ℤ × Nat → EmittedExpr
-  | (c, col) => if c == 1 then .var col else .mul (.const c) (.var col)
+/-- One linear term `coeff·col`. ⚑ The coefficient is ALWAYS written (was: elided at `coeff = 1`). -/
+def varTerm (t : ℤ × Nat) : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.gTermToExpr Dregg2.Circuit.GateExpr.toEmitted (t.1, [t.2])
 
 /-- Left-folded sum of gate terms (empty ↦ `0`). -/
-def sumExpr : List EmittedExpr → EmittedExpr
-  | []       => .const 0
-  | e :: rest => rest.foldl (fun acc x => .add acc x) e
+def sumExpr : List EmittedExpr → EmittedExpr :=
+  Dregg2.Circuit.GateExpr.gFoldExprs Dregg2.Circuit.GateExpr.toEmitted
 
-/-- A degree-1 gate `Σ coeffᵢ·colᵢ + k = 0` (zero-coeff terms dropped, matching `headToExpr`). -/
+/-- A degree-1 gate `Σ coeffᵢ·colᵢ + k = 0` — ⚑ THE canonical head rendering, zero-coefficient terms
+KEPT. -/
 def linGate (terms : List (ℤ × Nat)) (k : ℤ) : VmConstraint2 :=
-  let ts := (terms.filter (fun t => t.1 != 0)).map varTerm
-  let ts := if k == 0 then ts else ts ++ [.const k]
-  .base (.gate (sumExpr ts))
+  .base (.gate (Dregg2.Circuit.GateExpr.gHeadToExpr Dregg2.Circuit.GateExpr.toEmitted
+    ⟨terms.map (fun t => (t.1, [t.2])), k⟩))
 
-/-- The product `∏ vars` (empty ↦ `1`), left-associated — the local mirror of
-`AutomataflStepEmit.varsProd`, so this leaf can author a degree-`k` term without importing the step
-golden. -/
-def varsProd : List Nat → EmittedExpr
-  | []          => .const 1
-  | co :: rest  => rest.foldl (fun acc v => .mul acc (.var v)) (.var co)
+/-- The product `∏ vars` (empty ↦ `1`), left-associated — ⚑ `GateExpr.gVarsProd`, the same object
+`AutomataflStepEmit.varsProd` and `AirBuilder.varsProd` name (this one was byte-identical already). -/
+def varsProd : List Nat → EmittedExpr :=
+  Dregg2.Circuit.GateExpr.gVarsProd Dregg2.Circuit.GateExpr.toEmitted
 
-/-- One gate term `coeff · ∏ cols` (`coeff = 1` elides the multiplier; `cols = []` is a constant). -/
-def prodTerm : ℤ × List Nat → EmittedExpr
-  | (c, [])         => .const c
-  | (c, co :: rest) =>
-      if c == 1 then varsProd (co :: rest) else .mul (.const c) (varsProd (co :: rest))
+/-- One gate term `coeff · ∏ cols` (`cols = []` is a constant). ⚑ Coefficient always written. -/
+def prodTerm : ℤ × List Nat → EmittedExpr :=
+  Dregg2.Circuit.GateExpr.gTermToExpr Dregg2.Circuit.GateExpr.toEmitted
 
-/-- A gate `Σ coeffᵢ·∏colsᵢ + k = 0` of degree `max |colsᵢ|` (zero-coeff terms dropped, matching
-`headToExpr`). `linGate` is the all-singleton special case. -/
+/-- A gate `Σ coeffᵢ·∏colsᵢ + k = 0` of degree `max |colsᵢ|` — ⚑ THE canonical head rendering.
+`linGate` is the all-singleton special case. -/
 def prodGate (terms : List (ℤ × List Nat)) (k : ℤ) : VmConstraint2 :=
-  let ts := (terms.filter (fun t => t.1 != 0)).map prodTerm
-  let ts := if k == 0 then ts else ts ++ [.const k]
-  .base (.gate (sumExpr ts))
+  .base (.gate (Dregg2.Circuit.GateExpr.gHeadToExpr Dregg2.Circuit.GateExpr.toEmitted ⟨terms, k⟩))
 
-/-- `∏_{s∈set}(col − s)` — the alphabet membership gate (`assert_member`). -/
+/-- ⚑ `linGate` IS `prodGate` on singleton products — `rfl`, where before it was a separate
+elide-shaped renderer that merely agreed on most inputs. -/
+theorem linGate_is_prodGate (terms : List (ℤ × Nat)) (k : ℤ) :
+    linGate terms k = prodGate (terms.map (fun t => (t.1, [t.2]))) k := rfl
+
+/-- `∏_{s∈set}(col − s)` — the alphabet membership gate (`assert_member`).
+⚑ `GateExpr.gAlphabet`, with the additive unit ELIDED: `assert_member(c,{0,1,2,3})` is 7 nodes where
+it was 9, and its degree-2 instance is now the deployed `gBin` byte. -/
 def memberExpr (col : Nat) (set : List ℤ) : EmittedExpr :=
-  match set with
-  | []        => .const 1
-  | s :: rest => rest.foldl (fun acc t => .mul acc (.add (.var col) (.const (-t))))
-                   (.add (.var col) (.const (-s)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gAlphabet (.leaf col) set)
 
 /-! ### §6.1 — Standalone column layout (the working `n²`-cell rep, then the packed felts). -/
 
@@ -545,13 +548,17 @@ def demoBoard2' : Board := mkBoard 2 [(⟨0, 0⟩, .repulsor), (⟨1, 0⟩, .rep
 #guard (newAutoCoordCommitConstraints 8 207 9 208 247 254 255 20).length = 4
 -- THE PIN IS DEGREE 2 (`m·ox`), not degree 1: the emitted gate body carries a var·var product.
 -- `rfl` here is the real check — the body below is the literal `EmittedExpr` the wire carries.
+-- ⚑ RE-EMITTED 2026-08-06: the leading `1 · nax` term now renders `mul(const 1, var 254)` where the
+-- elide-shaped local renderer wrote it bare. Same polynomial, canonical bytes.
 example :
     (newAutoCoordCommitConstraints 8 207 9 208 247 254 255 20).head?
-      = some (.base (.gate (.add (.add (.var 254) (.mul (.const (-1)) (.var 8)))
+      = some (.base (.gate (.add (.add (.mul (.const 1) (.var 254))
+          (.mul (.const (-1)) (.var 8)))
           (.mul (.const (-1)) (.mul (.var 247) (.var 207)))))) := rfl
 example :
     (newAutoCoordCommitConstraints 8 207 9 208 247 254 255 20).tail.head?
-      = some (.base (.gate (.add (.add (.var 255) (.mul (.const (-1)) (.var 9)))
+      = some (.base (.gate (.add (.add (.mul (.const 1) (.var 255))
+          (.mul (.const (-1)) (.var 9)))
           (.mul (.const (-1)) (.mul (.var 247) (.var 208)))))) := rfl
 #guard (boardRangeCells 11).length = 121
 #guard (automataflCommitDesc 11).traceWidth = 130          -- 121 cells + 9 felts

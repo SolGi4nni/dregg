@@ -91,6 +91,7 @@ base-gate path is a SECOND matcher alongside.
 -/
 import Dregg2.Circuit.PeepholeDeployedShape
 import Dregg2.Deos.BareCohortFloorRefuseDeployed
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.PeepholeBaseGateScan
 
@@ -160,7 +161,12 @@ def bAndGate (out l r : Nat) : VmConstraint2 :=
   bGate (.add (.var out) (.mul (.const (-1)) (.mul (.var l) (.var r))))
 
 /-- `c·(c−1) = 0` — the booleanity gate. THE deployed shape of `dfaRoutingDesc`'s three grid gates. -/
-def bBitGate (c : Nat) : VmConstraint2 := bGate (.mul (.var c) (.add (.var c) (.const (-1))))
+def bBitGate (c : Nat) : VmConstraint2 :=
+  bGate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf c)))
+
+theorem bBitGate_eq (c : Nat) :
+    bBitGate c = bGate (.mul (.var c) (.add (.var c) (.const (-1)))) := rfl
 
 /-- `e·out = 0` — a zero-test's product (force) gate on the residual `e`. THE deployed
 `isZeroForceGateT`. -/
@@ -190,6 +196,15 @@ theorem fb_bit (env : VmRowEnv) (c : Nat) :
     fieldBase env.loc (.mul (.var c) (.add (.var c) (.const (-1))))
       = fieldAssignment env.loc c * (fieldAssignment env.loc c - 1) := by
   simp only [fieldBase]; push_cast; ring
+
+/-- `fb_bit`, restated over `bBitGate`'s post-`GateExpr`-collapse body — `rw` needs the pattern
+spelled out (unlike `simp`/term-mode, it does not unfold through `render`/`gBool`), so every site
+that pattern-matches `bBitGate`'s emitted shape reaches for this instead of `fb_bit` directly. -/
+theorem fb_bit_gBool (env : VmRowEnv) (c : Nat) :
+    fieldBase env.loc (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+      (Dregg2.Circuit.GateExpr.gBool (.leaf c)))
+      = fieldAssignment env.loc c * (fieldAssignment env.loc c - 1) :=
+  fb_bit env c
 
 theorem fb_prod (env : VmRowEnv) (e : EmittedExpr) (out : Nat) :
     fieldBase env.loc (.mul e (.var out)) = fieldBase env.loc e * fieldAssignment env.loc out := by
@@ -474,7 +489,7 @@ theorem forcedB_field_one {cs : List VmConstraint2} {c : Nat}
       have hgz := field_of_base_gate (hall _ hg)
       have hbz := field_of_base_gate (hall _ hrb)
       rw [fb_and] at hgz
-      rw [fb_bit] at hbz
+      rw [fb_bit_gBool] at hbz
       rw [ihpar] at hgz
       have hlr : fieldAssignment env.loc l * fieldAssignment env.loc r = 1 :=
         (sub_eq_zero.mp hgz).symm
@@ -486,7 +501,7 @@ theorem forcedB_field_one {cs : List VmConstraint2} {c : Nat}
       have hgz := field_of_base_gate (hall _ hg)
       have hbz := field_of_base_gate (hall _ hlb)
       rw [fb_and] at hgz
-      rw [fb_bit] at hbz
+      rw [fb_bit_gBool] at hbz
       rw [ihpar] at hgz
       have hlr : fieldAssignment env.loc l * fieldAssignment env.loc r = 1 :=
         (sub_eq_zero.mp hgz).symm
@@ -498,7 +513,7 @@ theorem forcedB_field_one {cs : List VmConstraint2} {c : Nat}
       have hgz := field_of_base_gate (hall _ hg)
       have hbz := field_of_base_gate (hall _ hlb)
       rw [fb_and] at hgz
-      rw [fb_bit] at hbz
+      rw [fb_bit_gBool] at hbz
       rw [ihpar] at hgz
       have hlr : fieldAssignment env.loc l * fieldAssignment env.loc r = 1 :=
         (sub_eq_zero.mp hgz).symm
@@ -509,7 +524,7 @@ theorem forcedB_field_one {cs : List VmConstraint2} {c : Nat}
       have hgz := field_of_base_gate (hall _ hg)
       have hbz := field_of_base_gate (hall _ hrb)
       rw [fb_and] at hgz
-      rw [fb_bit] at hbz
+      rw [fb_bit_gBool] at hbz
       rw [ihpar] at hgz
       have hlr : fieldAssignment env.loc l * fieldAssignment env.loc r = 1 :=
         (sub_eq_zero.mp hgz).symm
@@ -1069,7 +1084,7 @@ theorem bBitGate_holds_of_forcedB {cs : List VmConstraint2} {out : Nat}
     (bBitGate out).holdsAt hash tf env f false := by
   have hone : fieldAssignment env.loc out = 1 := forcedB_field_one hall cert
   refine bGate_holds_of_field_zero ?_
-  rw [fb_bit, hone]
+  rw [fb_bit_gBool, hone]
   ring
 
 end FrontierB
@@ -1083,6 +1098,7 @@ end FrontierB
   fb_accept,
   fb_and,
   fb_bit,
+  fb_bit_gBool,
   fb_prod,
   fb_inv,
   isBProdGate_eq,

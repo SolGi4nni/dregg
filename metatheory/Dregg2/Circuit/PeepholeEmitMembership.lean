@@ -80,7 +80,7 @@ namespace Dregg2.Circuit.PeepholeEmitMembership
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.PassiveDescriptorOptimization
 open Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2
-  (Wire Node gate bitBody subW negW witnessCount outputAt nodesAt)
+  (Wire Node gate bitBody bitBody_eq subW negW witnessCount outputAt nodesAt)
 open Dregg2.Metatheory.TypedLinearPredicateDescriptorIR2
   (Program AffineTerm descriptor boolBase rawBase atomLink atomLinkBody atomLinks
     graphConstraintsAt acceptConstraintAt)
@@ -450,15 +450,15 @@ theorem andGate_mem_nodes {n : Nat} (b : Nat) (F : Formula n) (out l r : Nat)
   obtain ⟨node, hnode, hc⟩ := List.mem_flatMap.1 h
   cases node with
   | zeroTest x o i =>
-      exact absurd hc (by simp [Node.constraints, andGate, gate, subW, negW, bitBody, Wire.expr])
+      exact absurd hc (by simp [Node.constraints, andGate, gate, subW, negW, bitBody_eq, Wire.expr])
   | not w o =>
-      exact absurd hc (by simp [Node.constraints, andGate, gate, subW, negW, bitBody, Wire.expr])
+      exact absurd hc (by simp [Node.constraints, andGate, gate, subW, negW, bitBody_eq, Wire.expr])
   | or lw rw o =>
-      exact absurd hc (by simp [Node.constraints, andGate, gate, subW, negW, bitBody, Wire.expr])
+      exact absurd hc (by simp [Node.constraints, andGate, gate, subW, negW, bitBody_eq, Wire.expr])
   | and lw rw o =>
       simp only [Node.constraints, List.mem_cons, List.not_mem_nil, or_false] at hc
       rcases hc with hc | hc
-      · exact absurd hc (by simp [andGate, gate, subW, negW, bitBody, Wire.expr])
+      · exact absurd hc (by simp [andGate, gate, subW, negW, bitBody_eq, Wire.expr])
       · have hbody : subW (Wire.col out).expr (.mul (Wire.col l).expr (Wire.col r).expr)
             = subW (.loc o) (.mul lw.expr rw.expr) := by
           have := congrArg (fun cc => match cc with
@@ -508,15 +508,15 @@ theorem invGate_mem_nodes {n : Nat} (b : Nat) (F : Formula n) (x out inv : Nat)
   obtain ⟨node, hnode, hc⟩ := List.mem_flatMap.1 h
   cases node with
   | not w o =>
-      exact absurd hc (by simp [Node.constraints, invGate, gate, bitBody, Wire.expr])
+      exact absurd hc (by simp [Node.constraints, invGate, gate, bitBody_eq, Wire.expr])
   | and lw rw o =>
-      exact absurd hc (by simp [Node.constraints, invGate, gate, subW, negW, bitBody, Wire.expr])
+      exact absurd hc (by simp [Node.constraints, invGate, gate, subW, negW, bitBody_eq, Wire.expr])
   | or lw rw o =>
-      exact absurd hc (by simp [Node.constraints, invGate, gate, subW, negW, bitBody, Wire.expr])
+      exact absurd hc (by simp [Node.constraints, invGate, gate, subW, negW, bitBody_eq, Wire.expr])
   | zeroTest x' o i =>
       simp only [Node.constraints, List.mem_cons, List.not_mem_nil, or_false] at hc
       rcases hc with hc | hc | hc
-      · exact absurd hc (by simp [invGate, gate, bitBody, Wire.expr])
+      · exact absurd hc (by simp [invGate, gate, bitBody_eq, Wire.expr])
       · exact absurd hc (by simp [invGate, gate])
       · have hbody : (WindowExpr.add (.add (.mul (.loc x) (.loc inv)) (.loc out)) (.const (-1)))
             = .add (.add (.mul (.loc x') (.loc i)) (.loc o)) (.const (-1)) := by
@@ -609,7 +609,7 @@ theorem frontierKeep_andGate (cs : List VmConstraint2) (out l r : Nat) :
 /-- A bit gate survives exactly when its column is not a collapsed output. -/
 theorem frontierKeep_bitGate {cs : List VmConstraint2} {c : Nat}
     (h : c ∉ collapsedOuts cs) : frontierKeep cs (bitGate c) = true := by
-  simp only [frontierKeep, bitGate, gate, bitBody, Wire.expr]
+  simp only [frontierKeep, bitGate, gate, bitBody_eq, Wire.expr]
   simp [h]
 
 /-- THE REPAIR. A `Forced` derivation over the FULL list re-derives as a `ForcedS` derivation over the

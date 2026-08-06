@@ -53,6 +53,7 @@ non-vacuous semantic lemma (`gteHighBit_zero_iff`, the range high-bit tooth: TRU
 inactive, FALSE for an active out-of-range diff). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.DerivationEmit
 
@@ -146,7 +147,12 @@ def DERIV_TRACE_WIDTH : Nat := EXTENDED_TRACE_WIDTH + (CHIP_OUT_LANES - 1)     -
 def subE (x y : EmittedExpr) : EmittedExpr := .add x (.mul (.const (-1)) y)
 
 /-- The binary-body `c·(c − 1)`. -/
-def binBody (c : Nat) : EmittedExpr := .mul (.var c) (.add (.var c) (.const (-1)))
+def binBody (c : Nat) : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf c))
+
+theorem binBody_eq (c : Nat) :
+    binBody c = .mul (.var c) (.add (.var c) (.const (-1))) := rfl
 
 /-- The product `∏ var cols` (empty ⇒ `const 1`), left-associated. -/
 def prodCols : List Nat → EmittedExpr

@@ -89,61 +89,57 @@ theorem varsProdStep_eval (a : Nat → ℤ) (cols : List Nat) :
   cases cols with
   | nil => rfl
   | cons co rest =>
-      simp only [varsProd, AutomataflCoord.varsVal]
+      show (rest.foldl (fun acc v => EmittedExpr.mul acc (.var v)) (.var co)).eval a
+        = varsVal a (co :: rest)
       rw [foldl_mul_eval]
       rfl
 
+/-- ⚑ RE-PROVED FOR THE CANONICAL RENDERER (2026-08-06): one arm, not two. -/
 theorem termToExprStep_eval (a : Nat → ℤ) (t : ℤ × List Nat) :
     (termToExpr t).eval a = termVal a t := by
   obtain ⟨coeff, cols⟩ := t
   cases cols with
-  | nil => simp [termToExpr, AutomataflCoord.termVal, AutomataflCoord.varsVal, EmittedExpr.eval]
+  | nil => simp [termToExpr, Dregg2.Circuit.GateExpr.gTermToExpr, AutomataflCoord.termVal,
+      AutomataflCoord.varsVal, EmittedExpr.eval]
   | cons co rest =>
-      simp only [termToExpr, AutomataflCoord.termVal]
-      by_cases hc : coeff == 1
-      · have : coeff = 1 := by simpa using hc
-        rw [if_pos hc, varsProdStep_eval, this, one_mul]
-      · rw [if_neg hc]
-        simp only [EmittedExpr.eval, varsProdStep_eval]
+      show (EmittedExpr.mul (.const coeff) (varsProd (co :: rest))).eval a
+        = termVal a (coeff, co :: rest)
+      simp only [EmittedExpr.eval, varsProdStep_eval, AutomataflCoord.termVal]
 
-/-- The list of component `EmittedExpr`s the STEP `headToExpr` folds. -/
+/-- The list of component `EmittedExpr`s the STEP `headToExpr` folds. ⚑ EVERY term plus a possible
+constant — the zero-coeff filter went with the flag day of 2026-08-06. -/
 def headExprsStep (h : Head) : List EmittedExpr :=
-  let ts := (h.terms.filter (fun t => t.1 != 0)).map termToExpr
-  if h.const == 0 then ts else ts ++ [.const h.const]
+  h.terms.map termToExpr ++ (if h.const = 0 then [] else [.const h.const])
 
 /-- The STEP `headToExpr`'s `.add`-fold, over an explicit list. -/
-def foldExprsStep : List EmittedExpr → EmittedExpr
-  | []        => .const 0
-  | e :: rest => rest.foldl (fun acc x => .add acc x) e
+def foldExprsStep : List EmittedExpr → EmittedExpr :=
+  Dregg2.Circuit.GateExpr.gFoldExprs Dregg2.Circuit.GateExpr.toEmitted
 
 theorem headToExprStep_eq_foldExprs (h : Head) : headToExpr h = foldExprsStep (headExprsStep h) := rfl
 
 theorem foldExprsStep_eval (a : Nat → ℤ) (ts : List EmittedExpr) :
     (foldExprsStep ts).eval a = (ts.map (fun x => x.eval a)).sum := by
   cases ts with
-  | nil => rfl
+  | nil => show (EmittedExpr.const 0).eval a = _; simp [EmittedExpr.eval]
   | cons e rest =>
-      simp only [foldExprsStep]; rw [foldl_add_eval]; simp [List.map_cons, List.sum_cons]
+      show (rest.foldl (fun acc x => EmittedExpr.add acc x) e).eval a = _
+      rw [foldl_add_eval]; simp [List.map_cons, List.sum_cons]
 
 theorem headExprsStep_termPart_sum (a : Nat → ℤ) (h : Head) :
-    (((h.terms.filter (fun t => t.1 != 0)).map termToExpr).map (fun x => x.eval a)).sum
-      = (h.terms.map (termVal a)).sum := by
+    ((h.terms.map termToExpr).map (fun x => x.eval a)).sum = (h.terms.map (termVal a)).sum := by
   rw [List.map_map]
-  have : ((h.terms.filter (fun t => t.1 != 0)).map ((fun x => x.eval a) ∘ termToExpr))
-      = (h.terms.filter (fun t => t.1 != 0)).map (termVal a) := by
-    apply List.map_congr_left; intro t _; exact termToExprStep_eval a t
-  rw [this, sum_filter_termVal]
+  exact congrArg List.sum (List.map_congr_left (fun t _ => termToExprStep_eval a t))
 
 /-- **THE STEP BRIDGE.** The lowered STEP gate evaluates to the clean semantic sum, at ARBITRARY `n`.
 This is the exact rewrite `oneHotStepN_of_sat` needs and `AutomataflCoord.headToExpr_eval` (typed on
 `AutomataflResolveEmit.Head`) could not supply. -/
 theorem headToExpr_evalStep (a : Nat → ℤ) (h : Head) :
     (headToExpr h).eval a = evalHStep h a := by
-  rw [headToExprStep_eq_foldExprs, foldExprsStep_eval, headExprsStep]
-  by_cases hconst : (h.const == 0) = true
-  · have hc0 : h.const = 0 := by simpa using hconst
-    rw [if_pos hconst, headExprsStep_termPart_sum, evalHStep, hc0, add_zero]
-  · rw [if_neg hconst, List.map_append, List.sum_append, headExprsStep_termPart_sum]
+  rw [headToExprStep_eq_foldExprs, foldExprsStep_eval, headExprsStep, List.map_append,
+    List.sum_append, headExprsStep_termPart_sum]
+  by_cases hconst : h.const = 0
+  · rw [if_pos hconst, evalHStep, hconst]; simp
+  · rw [if_neg hconst]
     simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, EmittedExpr.eval, add_zero]
     rw [evalHStep]
 
@@ -156,28 +152,28 @@ theorem evalHStep_lin (a : Nat → ℤ) (c : ℤ) (col : Nat) : evalHStep (Head.
 
 theorem evalHStep_addLin (a : Nat → ℤ) (h : Head) (c : ℤ) (col : Nat) :
     evalHStep (h.addLin c col) a = evalHStep h a + c * a col := by
-  simp only [evalHStep, Head.addLin, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+  simp only [evalHStep, Dregg2.Circuit.GateExpr.GHead.addLin, List.map_append, List.sum_append, List.map_cons, List.map_nil,
     List.sum_cons, List.sum_nil, AutomataflCoord.termVal, AutomataflCoord.varsVal, List.foldl_nil,
     add_zero]
   ring
 
 theorem evalHStep_addProd (a : Nat → ℤ) (h : Head) (c : ℤ) (cols : List Nat) :
     evalHStep (h.addProd c cols) a = evalHStep h a + c * varsVal a cols := by
-  simp only [evalHStep, Head.addProd, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+  simp only [evalHStep, Dregg2.Circuit.GateExpr.GHead.addProd, List.map_append, List.sum_append, List.map_cons, List.map_nil,
     List.sum_cons, List.sum_nil, AutomataflCoord.termVal, add_zero]
   ring
 
 theorem evalHStep_addConst (a : Nat → ℤ) (h : Head) (k : ℤ) :
     evalHStep (h.addConst k) a = evalHStep h a + k := by
-  simp only [evalHStep, Head.addConst]; ring
+  simp only [evalHStep, Dregg2.Circuit.GateExpr.GHead.addConst]; ring
 
 theorem evalHStep_append (a : Nat → ℤ) (h o : Head) :
     evalHStep (h.append o) a = evalHStep h a + evalHStep o a := by
-  simp only [evalHStep, Head.append, List.map_append, List.sum_append]; ring
+  simp only [evalHStep, Dregg2.Circuit.GateExpr.GHead.append, List.map_append, List.sum_append]; ring
 
 theorem evalHStep_scale (a : Nat → ℤ) (h : Head) (k : ℤ) :
     evalHStep (h.scale k) a = k * evalHStep h a := by
-  simp only [evalHStep, Head.scale, List.map_map]
+  simp only [evalHStep, Dregg2.Circuit.GateExpr.GHead.scale, List.map_map]
   have : (h.terms.map ((termVal a) ∘ (fun t => (t.1 * k, t.2))))
       = h.terms.map (fun t => k * termVal a t) := by
     apply List.map_congr_left; intro t _; simp only [Function.comp, AutomataflCoord.termVal]; ring

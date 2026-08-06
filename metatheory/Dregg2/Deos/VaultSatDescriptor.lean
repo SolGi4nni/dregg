@@ -49,6 +49,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Deos.SettleEscrowSatDescriptor
 import Dregg2.Deos.DischargeSatDescriptor
 import Dregg2.Bignum
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Deos.VaultSatDescriptor
 
@@ -277,7 +278,11 @@ def selGate (body : EmittedExpr) : VmConstraint2 :=
 
 /-- A selector-gated booleanity gate `sel · (b · (b − 1))`. -/
 def selBoolGate (b : Nat) : VmConstraint2 :=
-  selGate (.mul (.var b) (.add (.var b) (.const (-1))))
+  selGate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf b)))
+
+theorem selBoolGate_eq (b : Nat) :
+    selBoolGate b = selGate (.mul (.var b) (.add (.var b) (.const (-1)))) := rfl
 
 /-- `Δshares` as the gates read it. -/
 def mExpr (share : Nat) : EmittedExpr :=

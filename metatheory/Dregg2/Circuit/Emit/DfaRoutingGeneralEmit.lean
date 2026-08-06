@@ -49,6 +49,7 @@ C2 continuity window, the C3 copy-forward window — each TRUE iff its relation 
 otherwise). `#assert_axioms` on each is pure `omega`. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.DfaRoutingGeneralEmit
 
@@ -118,18 +119,34 @@ def zeroLaneGate : VmConstraint2 := .base (.gate (.var ZERO_LANE))
 
 /-- `is_first` is boolean: `is_first · (is_first − 1) == 0`. -/
 def isFirstBoolGate : VmConstraint2 :=
-  .base (.gate (.mul (.var IS_FIRST) (.add (.var IS_FIRST) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf IS_FIRST))))
 
-/-- state on grid `{0,1,2}`: `current · (current − 1) · (current − 2) == 0` (the `∏(cur − sᵢ)`
-vanishing poly — degree 3, the three injection states). -/
+theorem isFirstBoolGate_eq :
+    isFirstBoolGate = .base (.gate (.mul (.var IS_FIRST) (.add (.var IS_FIRST) (.const (-1))))) := rfl
+
+/-- state on grid `{0,1,2}`: `current · (current − 1) · (current − 2) == 0` -- the alphabet gate
+`∏(cur − sᵢ)` at `GateExpr.gAlphabet CURRENT [0,1,2]`, degree 3, the three injection states. ⚑ THE
+GENUINE GENERALIZATION: `DfaRoutingEmit.stateGridGate` is the SAME parameterized gadget at `[0,1]`
+-- one def (`gAlphabet`), two instantiations, not two copies that happen to agree. -/
 def stateGridGate : VmConstraint2 :=
-  .base (.gate
-    (.mul (.mul (.var CURRENT) (.add (.var CURRENT) (.const (-1))))
-          (.add (.var CURRENT) (.const (-2)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gAlphabet (.leaf CURRENT) [0, 1, 2])))
+
+/-- ⚑ **THE BYTE PIN, AT DEGREE 3.** `rfl` -- `gAlphabet`'s zero-elision (`gSub`) is what makes this
+match the hand-written degree-3 product exactly rather than carrying a spurious `(cur − 0)` factor. -/
+theorem stateGridGate_eq :
+    stateGridGate = .base (.gate
+      (.mul (.mul (.var CURRENT) (.add (.var CURRENT) (.const (-1))))
+            (.add (.var CURRENT) (.const (-2))))) := rfl
 
 /-- symbol on grid `{0,1}`: `symbol · (symbol − 1) == 0` (the `∏(sym − bⱼ)` vanishing poly). -/
 def symbolGridGate : VmConstraint2 :=
-  .base (.gate (.mul (.var SYMBOL) (.add (.var SYMBOL) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf SYMBOL))))
+
+theorem symbolGridGate_eq :
+    symbolGridGate = .base (.gate (.mul (.var SYMBOL) (.add (.var SYMBOL) (.const (-1))))) := rfl
 
 /-- GAP-A transition body (DOUBLED interpolant form): `2·next − 2a² + 2a + 3a²b − 5ab − 2b`, where
 `a = current`, `b = symbol`. Over BabyBear (`2` invertible) this vanishes exactly when
@@ -146,14 +163,26 @@ def transitionBody : EmittedExpr :=
 /-- The GAP-A transition Base gate (the injection route-follows-the-table tooth). -/
 def transitionGate : VmConstraint2 := .base (.gate transitionBody)
 
-/-- C2 continuity body: `Nxt(current) − Loc(next)` (next row's `current` == this row's `next`). -/
-def contWindowBody : WindowExpr := .add (.nxt CURRENT) (.mul (.const (-1)) (.loc NEXT))
+/-- C2 continuity body: `Nxt(current) − Loc(next)` (next row's `current` == this row's `next`).
+⚑ `GateExpr.gThread` at the window view. -/
+def contWindowBody : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread CURRENT NEXT)
+
+theorem contWindowBody_eq :
+    contWindowBody = WindowExpr.add (.nxt CURRENT) (.mul (.const (-1)) (.loc NEXT)) := rfl
 
 /-- The C2 continuity `WindowGate`, asserted on the transition (every row but the last). -/
 def continuityWindow : VmConstraint2 := .windowGate ⟨contWindowBody, true⟩
 
-/-- C3 copy-forward body: `Nxt(acc) − Loc(running)` (so `acc[i+1] = running[i]`). -/
-def copyForwardBody : WindowExpr := .add (.nxt ACC) (.mul (.const (-1)) (.loc RUNNING_HASH))
+/-- C3 copy-forward body: `Nxt(acc) − Loc(running)` (so `acc[i+1] = running[i]`).
+⚑ `GateExpr.gThread`. -/
+def copyForwardBody : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread ACC RUNNING_HASH)
+
+theorem copyForwardBody_eq :
+    copyForwardBody = WindowExpr.add (.nxt ACC) (.mul (.const (-1)) (.loc RUNNING_HASH)) := rfl
 
 /-- The C3 copy-forward `WindowGate`, asserted on the transition. -/
 def copyForwardWindow : VmConstraint2 := .windowGate ⟨copyForwardBody, true⟩
@@ -214,14 +243,14 @@ theorem transition_body_zero_iff (a : Assignment) :
 `current` equals this row's `next` (the DFA state threads across the row window). -/
 theorem continuity_window_zero_iff (env : VmRowEnv) :
     contWindowBody.eval env = 0 ↔ env.nxt CURRENT = env.loc NEXT := by
-  simp only [contWindowBody, WindowExpr.eval]
+  simp only [contWindowBody_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 /-- THE C3 COPY-FORWARD TOOTH: the copy-forward window body is zero EXACTLY when the next row's
 accumulator equals this row's running hash (`acc[i+1] = running[i]`). -/
 theorem copyforward_window_zero_iff (env : VmRowEnv) :
     copyForwardBody.eval env = 0 ↔ env.nxt ACC = env.loc RUNNING_HASH := by
-  simp only [copyForwardBody, WindowExpr.eval]
+  simp only [copyForwardBody_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 -- Non-vacuity witnesses: the transition gate ACCEPTS genuine injection edges and REJECTS bad ones.

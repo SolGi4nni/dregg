@@ -450,7 +450,7 @@ def MAP_ABSENT_JSON : String := emitTableAirJson mapAbsentTable
 -- artifact re-emits. The ALGEBRA is byte-for-byte the same object; the ENCODING is not.
 -- (The checked-in artifact is these bytes plus ONE trailing newline, which is `by-name/`'s
 -- convention and which `JsonCursor` skips as whitespace.)
-#guard MAP_ABSENT_JSON.length == 80842
+#guard MAP_ABSENT_JSON.length == 70523
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin above
 while asserting nothing. -/

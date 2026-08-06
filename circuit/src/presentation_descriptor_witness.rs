@@ -10,8 +10,15 @@
 //! from the hand `PresentationAir` STARK onto the p3 descriptor prover. The emitted descriptor for
 //! this family is
 //! [`crate::descriptor_by_name::descriptor_by_name`]`("dregg-presentation-freshness::summary-v1")`:
-//! the 19-column summary copy (`PresentationAir::constraints`) PLUS the one off-AIR check that is a
+//! the 19-column summary copy PLUS the one off-AIR check that is a
 //! self-contained arithmetic tooth — the FRESHNESS binding (`verify_freshness_binding`).
+//!
+//! ⚑ **This is now the ONLY summary AIR for the family** (2026-08-06). The hand
+//! `impl Air for PresentationAir` the summary copies were transcribed from is DELETED: every one
+//! of its nineteen `row[i] - pi[i]` constraints evaluated `0 - 0`, because its own
+//! `generate_trace` returned `public_inputs = row.clone()`. It had no caller of any kind, so it
+//! was dead weight rather than a live hole — but the constraints HERE are the ones that bite, and
+//! they bite because these public inputs come from the WIRE.
 //! (The `presentation.rs:807` / `presentation.rs:316` line cites that used to sit here had both
 //! drifted — the real homes are `:651` and `:385` — which is why they are gone: a line number is a
 //! claim that rots, a symbol name is not.) Until now the only Rust producer of a
@@ -53,7 +60,7 @@
 
 use crate::field::BabyBear;
 
-// ---- Column layout (mirror `PresentationEmit.lean` §1 / `presentation.rs::SUMMARY_WIDTH`). ----
+// ---- Column layout (mirror `PresentationEmit.lean` §1 / `PresentationPublicInputs`). ----
 /// Summary col 0: `federation_root`.
 pub const FEDERATION_ROOT: usize = 0;
 /// Summary cols 1..=8: `request_predicate` (`ACTION_BINDING_WIDTH = 8`).
@@ -64,24 +71,36 @@ pub const TIMESTAMP: usize = 9;
 pub const PRESENTATION_TAG: usize = 10;
 /// Summary cols 11..=18: `revealed_facts_commitment` (`WideHash::WIDTH = 8`).
 pub const REVEALED_FACTS_BASE: usize = 11;
-/// The deployed summary width (`presentation.rs::SUMMARY_WIDTH = 1 + 8 + 1 + 1 + 8`).
-pub const SUMMARY_WIDTH: usize = 19;
+/// The summary width = `federation_root (1) + request_predicate (ACTION_BINDING_WIDTH = 8)
+/// + timestamp (1) + presentation_tag (1) + revealed_facts_commitment (WideHash::WIDTH = 8)`
+/// = 19.
+///
+/// DERIVED from the binding-layout constants rather than written as `19`, so a change to
+/// `ACTION_BINDING_WIDTH` or `WideHash::WIDTH` MOVES it instead of silently disagreeing with
+/// the columns above. The INDEPENDENT source it is checked against is the Lean emission
+/// itself: `dispatch_serves_the_byte_pinned_golden` asserts the byte-pinned
+/// `presentation-freshness.json` carries `trace_width == PRES_WIDTH` and
+/// `public_input_count == PRES_PI_COUNT`, so Rust and Lean cannot drift apart quietly.
+/// (This used to live on `PresentationAir::SUMMARY_WIDTH`; that struct's zero-constraint
+/// `Air` impl was deleted 2026-08-06 and this is now the only Rust definition.)
+pub const SUMMARY_WIDTH: usize =
+    1 + crate::binding::ACTION_BINDING_WIDTH + 1 + 1 + crate::binding::WideHash::WIDTH;
 
 /// Freshness col 19: `verifier_block_height` (the public anchor; PI-bound).
-pub const VERIFIER: usize = 19;
+pub const VERIFIER: usize = SUMMARY_WIDTH;
 /// Freshness col 20: `not_after_height` (published by the named derivation leaf).
-pub const NOT_AFTER: usize = 20;
+pub const NOT_AFTER: usize = VERIFIER + 1;
 /// Freshness col 21: `diff = not_after − verifier`; range-proved into `[0, 2^30)`.
-pub const DIFF: usize = 21;
+pub const DIFF: usize = NOT_AFTER + 1;
 /// Freshness col 22: `hi = p/2 − diff`; range-proved into `[0, 2^30)` (closes the exact bound).
-pub const HI: usize = 22;
+pub const HI: usize = DIFF + 1;
 /// Total base-trace width (23 = 19 summary + 4 freshness; the prover appends range limbs).
-pub const PRES_WIDTH: usize = 23;
+pub const PRES_WIDTH: usize = HI + 1;
 
 /// PI slot for the `verifier_block_height` anchor (after the 19 summary PIs).
-pub const PI_VERIFIER: usize = 19;
+pub const PI_VERIFIER: usize = SUMMARY_WIDTH;
 /// Public-input count: the 19 summary slots + the verifier-height anchor.
-pub const PRES_PI_COUNT: usize = 20;
+pub const PRES_PI_COUNT: usize = PI_VERIFIER + 1;
 
 /// The freshness acceptance bound `p/2 = 1_006_632_960` (`p = 2013265921`,
 /// `verify_freshness_binding`, `presentation.rs:340`). A `diff` in `[0, p/2]` is fresh; anything
@@ -93,7 +112,7 @@ pub const PRESENTATION_FRESHNESS_NAME: &str = "dregg-presentation-freshness::sum
 
 /// Pack the 19 summary felts in the deployed layout order
 /// (`federation_root ‖ request_predicate[8] ‖ timestamp ‖ presentation_tag ‖ revealed_facts[8]`),
-/// exactly `PresentationPublicInputs` → summary order (`presentation.rs:494`).
+/// exactly `crate::presentation::PresentationPublicInputs` → summary order.
 pub fn summary_from_fields(
     federation_root: BabyBear,
     request_predicate: &[BabyBear; 8],

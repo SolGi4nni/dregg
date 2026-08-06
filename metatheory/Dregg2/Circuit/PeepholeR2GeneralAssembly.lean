@@ -69,7 +69,7 @@ namespace Dregg2.Circuit.PeepholeR2GeneralAssembly
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.PassiveDescriptorOptimization
 open Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2
-  (Wire Node gate bitBody subW negW fieldWindow fieldAssignment descriptor
+  (Wire Node gate bitBody bitBody_eq subW negW fieldWindow fieldAssignment descriptor
    memOps_descriptor_nil mapOps_descriptor_nil)
 open Dregg2.Circuit.PeepholeFrontierScan
   (Forced forced_field_one acceptGate andGate bitGate prodGate invGate)
@@ -129,7 +129,7 @@ theorem r2Drop_mem_gates {s : R2SiteData} {c : VmConstraint2} (h : r2Drop s c = 
         simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, and_assoc, or_assoc] at h
         obtain ⟨rfl, rfl, hmem⟩ := h
         rcases hmem with rfl | rfl | rfl <;>
-          simp [R2SiteData.gates, bitGate, gate, bitBody, Wire.expr]
+          simp [R2SiteData.gates, bitGate, gate, bitBody_eq, Wire.expr]
       · -- product gate shape
         rename_i x out
         simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at h
@@ -161,7 +161,7 @@ theorem r2Drop_gates (s : R2SiteData) : ∀ g ∈ s.gates, r2Drop s g = true := 
   intro g hg
   simp only [R2SiteData.gates, List.mem_cons, List.not_mem_nil, or_false] at hg
   rcases hg with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-    simp [r2Drop, bitGate, prodGate, invGate, orBodyGate, orBody, gate, bitBody,
+    simp [r2Drop, bitGate, prodGate, invGate, orBodyGate, orBody, gate, bitBody_eq,
       Wire.expr, subW, negW]
 
 /-! ## 2. LEG (b) — FRESHNESS: a survivor must not read the four rebuilt columns. -/

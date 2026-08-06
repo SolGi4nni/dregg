@@ -126,7 +126,7 @@ theorem gatedSel_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin
   have hE : (headToExpr ((((Head.lin 1 out).addProd (-1) [g, s0]).addLin (-1) s1).addProd 1
         [g, s1])).eval e.loc
       = e.loc out + (-1) * (e.loc g * e.loc s0) + (-1) * e.loc s1
-        + e.loc g * e.loc s1 := rfl
+        + e.loc g * e.loc s1 := by canon_head_eval [headToExpr]
   rw [hE] at hgt
   refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hgt)
   rcases hgb with a | a <;> rcases h0b with b1 | b1 <;> rcases h1b with c | c <;>
@@ -431,7 +431,7 @@ theorem eqScalar_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin
     have hE : (headToExpr ((((Head.lin 1 dsq).addProd (-1) [a, a]).addProd 2 [a, c]).addProd
           (-1) [c, c])).eval e.loc
         = e.loc dsq + (-1) * (e.loc a * e.loc a) + 2 * (e.loc a * e.loc c)
-          + (-1) * (e.loc c * e.loc c) := rfl
+          + (-1) * (e.loc c * e.loc c) := by canon_head_eval [headToExpr]
     rw [hE] at hg
     exact sq1d_pure (canon_loc hc i _) ha hcc hg
   have hbnd : -999 ≤ e.loc dsq ∧ e.loc dsq ≤ 999 := by
@@ -477,7 +477,7 @@ theorem osrc_arith (hsat : Satisfied2 hash automataflResolveDesc minit mfin madd
   have hsum : e.loc (cOsrc o 0) + e.loc (cOsrc o 1) = e.loc (cOg o) := by
     have hg := rgateH hsat i hi rg.osS
     have hE : (headToExpr ((Head.lin (-1) (cOg o)).addLin 1 (cOsrc o 0) |>.addLin 1 (cOsrc o 1))).eval
-          e.loc = (-1) * e.loc (cOg o) + e.loc (cOsrc o 0) + e.loc (cOsrc o 1) := rfl
+          e.loc = (-1) * e.loc (cOg o) + e.loc (cOsrc o 0) + e.loc (cOsrc o 1) := by canon_head_eval [headToExpr]
     rw [hE] at hg
     have hmod := (gate_modEq_iff (x := (-1) * e.loc (cOg o) + e.loc (cOsrc o 0) + e.loc (cOsrc o 1))
       (a := e.loc (cOsrc o 0) + e.loc (cOsrc o 1)) (b := e.loc (cOg o)) (by ring)).mp hg
@@ -491,7 +491,7 @@ theorem osrc_arith (hsat : Satisfied2 hash automataflResolveDesc minit mfin madd
         [cOg o, cIv o, cFx ob])).eval e.loc
       = e.loc (cOsrc o 1) + (-1) * (e.loc (cOg o) * e.loc (cIv o) * e.loc (cFy ob))
         + (-1) * (e.loc (cOg o) * e.loc (cFx ob))
-        + e.loc (cOg o) * e.loc (cIv o) * e.loc (cFx ob) := rfl
+        + e.loc (cOg o) * e.loc (cIv o) * e.loc (cFx ob) := by canon_head_eval [headToExpr]
   rw [hE] at hg
   exact (gate_modEq_iff (by ring)).mp hg
 
@@ -797,7 +797,7 @@ theorem occ_col_iff_msumVal (hsat : Satisfied2 hash automataflResolveDesc minit 
         = e.loc (cMsum o) + (-1) * (e.loc (cSeg o 0) * e.loc (cLine o 0))
           + e.loc (cSeg o 0) * e.loc (cOsrc o 0) * e.loc (cLine o 0)
           + (-1) * (e.loc (cSeg o 1) * e.loc (cLine o 1))
-          + e.loc (cSeg o 1) * e.loc (cOsrc o 1) * e.loc (cLine o 1) := rfl
+          + e.loc (cSeg o 1) * e.loc (cOsrc o 1) * e.loc (cLine o 1) := by canon_head_eval [headToExpr, msumHead]
     rw [hE, hs0, hs1] at hg
     exact eq_of_modEq_canon (canon_loc hc i _) canon_zero ((gate_modEq_iff (by ring)).mp hg)
   -- the SEMANTIC masked sum is also 0 at NN=2 (segVal is the empty between-mask)

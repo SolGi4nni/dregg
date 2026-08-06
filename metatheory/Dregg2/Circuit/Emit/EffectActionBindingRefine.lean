@@ -66,7 +66,7 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectActionBindingEmit
   (contWindowBody contWindowBody_eq contGate contGates piGate piGates effectActionDesc
    revokeCapabilityDesc burnDesc
-   burnGates cLoBody cHiBody cBorrowBoolBody cWasBurnLoBody cWasBurnHiBody
+   burnGates cLoBody cHiBody cBorrowBoolBody cBorrowBoolBody_eq cWasBurnLoBody cWasBurnHiBody
    B_OLD_LO B_OLD_HI B_NEW_LO B_NEW_HI B_AMT_LO B_AMT_HI B_WASBURN_LO B_WASBURN_HI B_BORROW TWO_POW_32
    cont_zero_iff cLo_zero_iff cHi_zero_iff cBorrowBool_zero_iff cWasBurnLo_zero_iff)
 
@@ -257,7 +257,7 @@ theorem burn_satisfied2_conserves
       (by simp [burnGates])
     have hkey : cBorrowBoolBody.eval (envAt t i).loc
         = (envAt t i).loc B_BORROW * ((envAt t i).loc B_BORROW - 1) := by
-      simp only [cBorrowBoolBody, EmittedExpr.eval]; ring
+      simp only [cBorrowBoolBody_eq, EmittedExpr.eval]; ring
     rw [hkey, Int.modEq_zero_iff_dvd] at hb0
     rcases pPrimeInt.dvd_mul.mp hb0 with hd | hd
     · exact Or.inl (by rw [Int.modEq_zero_iff_dvd]; exact hd)

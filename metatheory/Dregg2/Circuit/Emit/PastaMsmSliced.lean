@@ -85,6 +85,7 @@ untouched, row-locally accepted trace with a mis-published partial.
 -/
 import Dregg2.Circuit.Emit.PastaMsmWindowed
 import Dregg2.Circuit.Emit.PastaIpaFold
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.PastaMsmSliced
 
@@ -384,9 +385,14 @@ the PI binding looks, and compute slice 3 on every row after it." `sliceLoGate` 
 `0 … H−2` — so that forgery was never available. `declConst_of_literal` (§5c.4) proves the
 constancy is already implied wherever the literal fires on both rows of the window; what these two
 gates actually force is the LAST row's `LO`/`HI`, which no gate and no public input reads. §7.7. -/
-def loConstGate : VmConstraint2 := cw (.add (.nxt LO) (.mul (.const (-1)) (.loc LO)))
+def loConstGate : VmConstraint2 :=
+  cw (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gCarry LO))
 /-- `nxt HI − loc HI`. -/
-def hiConstGate : VmConstraint2 := cw (.add (.nxt HI) (.mul (.const (-1)) (.loc HI)))
+def hiConstGate : VmConstraint2 :=
+  cw (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gCarry HI))
+
+theorem loConstGate_eq : loConstGate = cw (WindowExpr.add (.nxt LO) (.mul (.const (-1)) (.loc LO))) := rfl
+theorem hiConstGate_eq : hiConstGate = cw (WindowExpr.add (.nxt HI) (.mul (.const (-1)) (.loc HI))) := rfl
 
 /-- The declared bounds, on the wire: the first row's `LO`/`HI` ARE public inputs 0 and 1. -/
 def sliceBoundPiGates : List VmConstraint2 :=
@@ -525,11 +531,11 @@ theorem sliceDecl_forces_constant (lo w : Nat) (T : WTrace) (i : Nat)
     (h : DeclWindowAccepted lo w T i) : DeclConstant T i := by
   constructor
   · have hw := h ⟨.add (.nxt LO) (.mul (.const (-1)) (.loc LO)), true⟩
-      (by simp [sliceDeclGates, loConstGate, cw])
+      (by simp [sliceDeclGates, loConstGate_eq, cw])
     simp only [WindowExpr.eval, envOf] at hw
     linarith
   · have hw := h ⟨.add (.nxt HI) (.mul (.const (-1)) (.loc HI)), true⟩
-      (by simp [sliceDeclGates, hiConstGate, cw])
+      (by simp [sliceDeclGates, hiConstGate_eq, cw])
     simp only [WindowExpr.eval, envOf] at hw
     linarith
 

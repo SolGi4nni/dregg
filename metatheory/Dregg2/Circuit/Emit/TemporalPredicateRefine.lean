@@ -211,7 +211,7 @@ theorem temporalPredicate_satisfied2_sound
     have hg := gate_forces (bitBinaryBody j) (mem_bit j hj)
     have hkey : (bitBinaryBody j).eval (envAt t i).loc
         = (envAt t i).loc (DIFF_BITS_START + j) * ((envAt t i).loc (DIFF_BITS_START + j) - 1) := by
-      simp only [bitBinaryBody, EmittedExpr.eval]; ring
+      simp only [bitBinaryBody_eq, EmittedExpr.eval]; ring
     rw [hkey, Int.modEq_zero_iff_dvd] at hg
     have hc := hcBit j hj
     rcases pPrimeInt.dvd_mul.mp hg with hx | hx

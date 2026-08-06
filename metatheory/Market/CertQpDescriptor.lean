@@ -24,6 +24,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Market.CertFDescriptor
 import Market.CertQpGolden
 import Market.CertQpRustDenotation
+import Dregg2.Circuit.GateExpr
 
 namespace Market.CertQpDescriptor
 
@@ -204,7 +205,11 @@ def statHiBody (p : CertQpProg) (j : Nat) : EmittedExpr :=
   esub (.var (statHiCol j)) (esub (.const p.tol) (statExpr p j))
 
 def selectorBoolBody (col : Nat) : EmittedExpr :=
-  .mul (.var col) (esub (.var col) (.const 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf col))
+
+theorem selectorBoolBody_eq (col : Nat) :
+    selectorBoolBody col = .mul (.var col) (esub (.var col) (.const 1)) := rfl
 
 def selectorSumBody (i : Nat) : EmittedExpr :=
   esub (.add (.add (.var (lowSelCol i)) (.var (midSelCol i)))
@@ -797,7 +802,7 @@ theorem binary_of_selector_gate {hash : List Int → Int} {p : CertQpProg}
     a col = 0 ∨ a col = 1 := by
   have hmod := qp_gate_vanishes hsat hmem
   have hev : (selectorBoolBody col).eval a = a col * (a col - 1) := by
-    simp only [selectorBoolBody, esub, EmittedExpr.eval]
+    simp only [selectorBoolBody_eq, esub, EmittedExpr.eval]
     ring
   rw [hev] at hmod
   have hd : (2013265921 : Int) ∣ a col * (a col - 1) :=
@@ -1233,15 +1238,15 @@ theorem portfolio_noWrap_of_satisfied {hash : List Int → Int} {a : Assignment}
   · intro i hi
     have hs := (portfolio_selector_values hcanon hsat i hi).1
     rcases hs with hs | hs <;> simp [InZeroResidueWindow, babyBearModulus,
-      selectorBoolBody, esub, EmittedExpr.eval, hs]
+      selectorBoolBody_eq, esub, EmittedExpr.eval, hs]
   · intro i hi
     have hs := (portfolio_selector_values hcanon hsat i hi).2.1
     rcases hs with hs | hs <;> simp [InZeroResidueWindow, babyBearModulus,
-      selectorBoolBody, esub, EmittedExpr.eval, hs]
+      selectorBoolBody_eq, esub, EmittedExpr.eval, hs]
   · intro i hi
     have hs := (portfolio_selector_values hcanon hsat i hi).2.2.1
     rcases hs with hs | hs <;> simp [InZeroResidueWindow, babyBearModulus,
-      selectorBoolBody, esub, EmittedExpr.eval, hs]
+      selectorBoolBody_eq, esub, EmittedExpr.eval, hs]
   · intro i hi
     have hs := portfolio_selector_values hcanon hsat i hi
     simp only [InZeroResidueWindow, babyBearModulus, selectorSumBody, esub,
@@ -1346,13 +1351,13 @@ theorem satisfied2_implies_exactTrace {hash : List Int → Int} (p : CertQpProg)
       (hnowrap.selectorSum i hi)
     have hlo : a (lowSelCol i) = 0 ∨ a (lowSelCol i) = 1 := by
       apply int_bool_of_gate
-      simpa [selectorBoolBody, esub, EmittedExpr.eval, sub_eq_add_neg] using hloz
+      simpa [selectorBoolBody_eq, esub, EmittedExpr.eval, sub_eq_add_neg] using hloz
     have hmid : a (midSelCol i) = 0 ∨ a (midSelCol i) = 1 := by
       apply int_bool_of_gate
-      simpa [selectorBoolBody, esub, EmittedExpr.eval, sub_eq_add_neg] using hmidz
+      simpa [selectorBoolBody_eq, esub, EmittedExpr.eval, sub_eq_add_neg] using hmidz
     have hhi' : a (highSelCol i) = 0 ∨ a (highSelCol i) = 1 := by
       apply int_bool_of_gate
-      simpa [selectorBoolBody, esub, EmittedExpr.eval, sub_eq_add_neg] using hhiz
+      simpa [selectorBoolBody_eq, esub, EmittedExpr.eval, sub_eq_add_neg] using hhiz
     simp only [selectorSumBody, esub, EmittedExpr.eval] at hsum
     refine ⟨hlo, hmid, hhi', ?_⟩
     omega

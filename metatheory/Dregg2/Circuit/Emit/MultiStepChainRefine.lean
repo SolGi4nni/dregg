@@ -66,8 +66,8 @@ open Dregg2.Circuit.DescriptorIR2
    ChipTableSound chip_lookup_sound chipLookupTuple chipRow CHIP_RATE CHIP_OUT_LANES memOpsOf mapOpsOf
    memLog mapLog opRow memCheck_nil)
 open Dregg2.Circuit.Emit.MultiStepChainEmit
-  (multiStepChainDesc ms1Absorb ms2Continuity initPin finalPin contBody continuity_zero_iff
-   PREV DERIVED ACC LANES INITIAL_PI FINAL_PI)
+  (multiStepChainDesc ms1Absorb ms2Continuity initPin finalPin contBody contBody_eq
+   continuity_zero_iff PREV DERIVED ACC LANES INITIAL_PI FINAL_PI)
 
 set_option autoImplicit false
 
@@ -156,7 +156,7 @@ theorem prev_succ_eq_acc (hash : List ℤ → ℤ) (t : VmTrace)
   have hshift : (envAt t i).nxt PREV = prevAt t (i + 1) := by simp only [prevAt, envAt]
   have hacc : (envAt t i).loc ACC = accAt t i := by simp only [accAt]
   have hkey : contBody.eval (envAt t i) = prevAt t (i + 1) - accAt t i := by
-    simp only [contBody, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hshift, hacc]; ring
+    simp only [contBody_eq, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hshift, hacc]; ring
   rw [hkey] at hbody
   have hmod : prevAt t (i + 1) ≡ accAt t i [ZMOD 2013265921] := by
     have := hbody.add_right (accAt t i); simpa using this

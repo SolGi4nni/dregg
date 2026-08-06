@@ -198,11 +198,7 @@ theorem isAgent_bool_nonlast
     {i : Nat} (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length)
     (hc : 0 ≤ isAgentAt t i ∧ isAgentAt t i < 2013265921) :
     isAgentAt t i = 0 ∨ isAgentAt t i = 1 := by
-  have hmem : VmConstraint2.base (VmConstraint.gate
-      (EmittedExpr.mul (.var (Agg.schCol Sched.IS_AGENT_CELL))
-        (.add (.var (Agg.schCol Sched.IS_AGENT_CELL)) (.const (-1)))))
-      ∈ bilateralAggDescriptor.constraints := mem_boolGate_isAgent
-  have h := gate_forces hsat hi hnl hmem
+  have h := gate_forces hsat hi hnl mem_boolGate_isAgent
   simp only [EmittedExpr.eval] at h
   exact bool_of_boolGate h hc.1 hc.2
 
@@ -322,7 +318,7 @@ theorem cheatTrace_satisfies :
     simp only [bilateralAggDescriptor] at hc
     interval_cases i <;>
       fin_cases hc <;>
-      simp only [cg2PiBind, cg3Eq, colEqCol, boolGate, paddingGate, cumAgentTransition,
+      simp only [cg2PiBind, cg3Eq, colEqCol, boolGate_eq, paddingGate, cumAgentTransition,
         cumActiveTransition, firstCumSeed, firstNSeed, lastCumIsOne, lastNEqPi,
         VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
         cheatTrace, envAt, cpub, EmittedExpr.eval, WindowExpr.eval,

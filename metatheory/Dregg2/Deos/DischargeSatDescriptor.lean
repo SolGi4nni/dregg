@@ -53,6 +53,7 @@ the STABLE `holdsVm_gate_false` interface, exactly like the escrow rung.
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Deos.SettleEscrowSatDescriptor
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Deos.DischargeSatDescriptor
 
@@ -113,7 +114,11 @@ def selGate (body : EmittedExpr) : VmConstraint2 :=
 
 /-- A selector-gated booleanity gate `sel · (b · (b − 1))`. Rust `sel_bool_gate`. -/
 def selBoolGate (b : Nat) : VmConstraint2 :=
-  selGate (.mul (.var b) (.add (.var b) (.const (-1))))
+  selGate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf b)))
+
+theorem selBoolGate_eq (b : Nat) :
+    selBoolGate b = selGate (.mul (.var b) (.add (.var b) (.const (-1)))) := rfl
 
 /-- `Σ_{i<n} 2^i · bit(i)` as the Rust `bit_sum` fold (seeded at `const 0`, low bit first). -/
 def bitSum (bit : Nat → Nat) : Nat → EmittedExpr

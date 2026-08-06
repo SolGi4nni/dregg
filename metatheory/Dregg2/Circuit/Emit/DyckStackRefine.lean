@@ -80,6 +80,7 @@ import Dregg2.Circuit.DecideSatisfied2
 import Dregg2.Crypto.CfgCompact
 import Dregg2.Crypto.AbstractMachine
 import Dregg2.Circuit.Emit.DyckStackEmit
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.DyckStackRefine
 
@@ -195,7 +196,16 @@ def PI_INPUT_LEN : Nat := 1
 /-! ## §2 — The descriptor: the parse-semantic constraint set of `dyck_parse_descriptor`. -/
 
 /-- `x·(x−1)` — the booleanity gate (`ConstraintExpr::Binary`). -/
-def gBin (c : Nat) : EmittedExpr := .mul (.var c) (.add (.var c) (.const (-1)))
+def gBin (c : Nat) : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolCanon c)
+
+/-- ⚑ **THE BYTE PIN.** `gBin` is `GateExpr.gBool` at the emitted view -- the SAME object
+`AirBuilder.gBin`, `AutomataflResolveEmit.gBin`, `AutomataflStepEmit.gBin`, `DyckStackEmit.gBin`
+and `RowLibraryExperiment.gBin` each wrote out separately. `rfl`, for every column: no emitted byte
+moved. -/
+theorem gBin_eq (c : Nat) :
+    gBin c = .add (.mul (.const 1) (.mul (.var c) (.var c))) (.mul (.const (-1)) (.var c)) := rfl
 /-- `sel · e` — the `Gated` wrapper. -/
 def gGate (sel : Nat) (e : EmittedExpr) : EmittedExpr := .mul (.var sel) e
 /-- `a − b`. -/
@@ -239,8 +249,12 @@ def nonEmptyBelowBody (i : Nat) : EmittedExpr :=
     (fun acc g => .mul acc g)
     (.mul (.mul (gSubK (stk i) 1) (gSubK (stk i) 2)) (gSubK (stk i) 3))
 
-/-- `next[nc] − local[lc]` as a two-row window body. -/
-def wThread (nc lc : Nat) : WindowExpr := .add (.nxt nc) (.mul (.const (-1)) (.loc lc))
+/-- `next[nc] − local[lc]` as a two-row window body. ⚑ `GateExpr.gThread` at the window view. -/
+def wThread (nc lc : Nat) : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread nc lc)
+
+theorem wThread_eq (nc lc : Nat) :
+    wThread nc lc = WindowExpr.add (.nxt nc) (.mul (.const (-1)) (.loc lc)) := rfl
 /-- `local[sel] · e` — the `Gated` wrapper on a window body. -/
 def wGate (sel : Nat) (e : WindowExpr) : WindowExpr := .mul (.loc sel) e
 
@@ -467,8 +481,11 @@ end Extract
 gate vanishes mod `p` IS `0` or `1` over ℤ (primality splits `p ∣ x(x−1)`). -/
 theorem bin_of_gate {a : Assignment} {c : Nat}
     (h : (gBin c).eval a ≡ 0 [ZMOD 2013265921]) (hc : Canon (a c)) : a c = 0 ∨ a c = 1 := by
-  simp only [gBin, EmittedExpr.eval] at h
-  have hd : (2013265921 : ℤ) ∣ a c * (a c + (-1)) := Int.modEq_zero_iff_dvd.mp h
+  simp only [gBin_eq, EmittedExpr.eval] at h
+  have h' : a c * (a c + (-1)) ≡ 0 [ZMOD 2013265921] := by
+    have heq : a c * (a c + (-1)) = 1 * (a c * a c) + (-1) * a c := by ring
+    rw [heq]; exact h
+  have hd : (2013265921 : ℤ) ∣ a c * (a c + (-1)) := Int.modEq_zero_iff_dvd.mp h'
   obtain ⟨hc0, hc1⟩ := hc
   rcases pPrimeInt.dvd_mul.mp hd with hx | hx
   · obtain ⟨k, hk⟩ := hx; left; omega
@@ -685,7 +702,7 @@ theorem dyck_sat_imp_row_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
       e.loc sel = 1 → e.nxt nc = e.loc lc := by
     intro sel nc lc hm hs
     have hw := W hm
-    simp only [wGate, wThread, WindowExpr.eval] at hw
+    simp only [wGate, wThread_eq, WindowExpr.eval] at hw
     rw [hs, one_mul] at hw
     exact lift_nl ((gate_modEq_iff (by ring)).mp hw)
   -- gated depth delta.
@@ -763,7 +780,7 @@ theorem dyck_sat_imp_row_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
   · intro hr
     exact ⟨gc (by dyck_mem) hr canon_zero, gc (by dyck_mem) hr canon_zero⟩
   · have hw := W (b := wThread STACK_DEPTH DEPTH_NEXT) (by dyck_mem)
-    simp only [wThread, WindowExpr.eval] at hw
+    simp only [wThread_eq, WindowExpr.eval] at hw
     exact lift_nl ((gate_modEq_iff (by ring)).mp hw)
   · intro hs
     refine ⟨?_, ?_, ?_, wt (by dyck_mem) hs, wt (by dyck_mem) hs,
@@ -804,7 +821,7 @@ theorem dyck_sat_imp_row_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
   · intro hs
     have hw := W (b := .mul (.add (.const 1) (.mul (.const (-1)) (.loc IS_TERM)))
       (wThread INPUT_POS INPUT_POS)) (by dyck_mem)
-    simp only [wThread, WindowExpr.eval] at hw
+    simp only [wThread_eq, WindowExpr.eval] at hw
     rw [hs] at hw
     norm_num at hw
     exact lift_nl ((gate_modEq_iff (by ring)).mp hw)

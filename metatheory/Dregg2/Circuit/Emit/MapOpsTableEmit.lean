@@ -656,7 +656,7 @@ def MAP_OPS_JSON : String := emitTableAirJson mapOpsTable
 -- the identity is the compiled `include_bytes!` closure in
 -- `circuit-prove/src/faithful_note_spend_exact_v3_identity.rs`. (The checked-in artifact is these
 -- bytes plus ONE trailing newline, which `JsonCursor` skips as whitespace.)
-#guard MAP_OPS_JSON.length == 339000
+#guard MAP_OPS_JSON.length == 287566
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin in §4
 while asserting nothing. -/

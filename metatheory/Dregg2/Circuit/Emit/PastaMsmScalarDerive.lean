@@ -97,6 +97,7 @@ two bridges the previous rung could not write:
 -/
 import Dregg2.Circuit.Emit.PastaMsmOnCurve
 import Dregg2.Circuit.Emit.PastaMsmScalarBound
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.PastaMsmScalarDerive
 
@@ -236,7 +237,8 @@ proves the pin plus these threads put the declared public inputs on EVERY row, a
 block's challenges, which `acceptB (deriveRowGates 2 4)` ACCEPTS and these threads REFUSE. -/
 def chalThreadGates (nb : Nat) : List VmConstraint2 :=
   (List.range (numLimbs * nb)).map (fun m =>
-    cw (.add (.nxt (CHc nb m)) (.mul (.const (-1)) (.loc (CHc nb m)))))
+    cw (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+      (Dregg2.Circuit.GateExpr.gCarry (CHc nb m))))
 
 /-! ### §2.4 — the tensor chain.
 

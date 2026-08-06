@@ -18,6 +18,7 @@ Standalone additive module.  No integration imports are changed.
 
 import Dregg2.Metatheory.DirectLogicOptimizerCertificate
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2
 
@@ -75,7 +76,16 @@ def negW (x : WindowExpr) : WindowExpr := .mul (.const (-1)) x
 def subW (x y : WindowExpr) : WindowExpr := .add x (negW y)
 
 def bitBody (w : Wire) : WindowExpr :=
-  .mul w.expr (.add w.expr (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gBool (Dregg2.Circuit.GateExpr.ofWindow w.expr))
+
+/-- ⚑ THE BYTE PIN. `bitBody` is `GateExpr.gBool` at the window view, for every `Wire` — the same
+object `AirBuilder.gBin`, `AutomataflResolveEmit.gBin`, `AutomataflStepEmit.gBin`, `DyckStackEmit.
+gBin` and `DyckStackRefine.gBin` each wrote out separately, at the two-row alphabet instead of the
+one-row one. `rfl` per constructor, since `w.expr` is only concrete once `w` is. -/
+theorem bitBody_eq (w : Wire) :
+    bitBody w = .mul w.expr (.add w.expr (.const (-1))) := by
+  cases w <;> rfl
 
 def gate (body : WindowExpr) : VmConstraint2 :=
   .windowGate { body := body, onTransition := false }
@@ -213,7 +223,7 @@ theorem node_constraint_degree (node : Node) (c : VmConstraint2)
       simp [Node.constraints] at hc
       rcases hc with rfl | rfl | rfl
       · refine ⟨bitBody (.col out), rfl, ?_⟩
-        simp [bitBody, exprDegree, Wire.expr]
+        simp [bitBody_eq, exprDegree, Wire.expr]
       · exact ⟨.mul (.loc x) (.loc out), rfl, by simp [exprDegree]⟩
       · exact ⟨.add (.add (.mul (.loc x) (.loc inv)) (.loc out)) (.const (-1)),
           rfl, by simp [exprDegree]⟩
@@ -221,7 +231,7 @@ theorem node_constraint_degree (node : Node) (c : VmConstraint2)
       simp [Node.constraints] at hc
       rcases hc with rfl | rfl
       · refine ⟨bitBody (.col out), rfl, ?_⟩
-        simp [bitBody, exprDegree, Wire.expr]
+        simp [bitBody_eq, exprDegree, Wire.expr]
       · refine ⟨.add (.add (.loc out) input.expr) (.const (-1)), rfl, ?_⟩
         have h := wire_expr_degree input
         simp [exprDegree]
@@ -230,7 +240,7 @@ theorem node_constraint_degree (node : Node) (c : VmConstraint2)
       simp [Node.constraints] at hc
       rcases hc with rfl | rfl
       · refine ⟨bitBody (.col out), rfl, ?_⟩
-        simp [bitBody, exprDegree, Wire.expr]
+        simp [bitBody_eq, exprDegree, Wire.expr]
       · refine ⟨subW (.loc out) (.mul left.expr right.expr), rfl, ?_⟩
         have hl := wire_expr_degree left
         have hr := wire_expr_degree right
@@ -240,7 +250,7 @@ theorem node_constraint_degree (node : Node) (c : VmConstraint2)
       simp [Node.constraints] at hc
       rcases hc with rfl | rfl
       · refine ⟨bitBody (.col out), rfl, ?_⟩
-        simp [bitBody, exprDegree, Wire.expr]
+        simp [bitBody_eq, exprDegree, Wire.expr]
       · refine ⟨subW (.loc out)
           (subW (.add left.expr right.expr) (.mul left.expr right.expr)), rfl, ?_⟩
         have hl := wire_expr_degree left
@@ -463,7 +473,7 @@ theorem nodes_hold_of_matches {n : Nat} (truth : Fin n -> Bool) (base : Nat)
       have hi := hwitness 1 (by simp [witnessCount])
       cases ht : truth x <;> simp [witnessBits, bitInt, ht] at hb hi <;>
         simp [residualInput, ht] at hx <;>
-          simp [Node.HoldsAt, Node.constraints, gate, bitBody,
+          simp [Node.HoldsAt, Node.constraints, gate, bitBody_eq,
             VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
           hx, hb, hi]
   | top => simp [nodesAt]
@@ -482,7 +492,7 @@ theorem nodes_hold_of_matches {n : Nat} (truth : Fin n -> Bool) (base : Nat)
         cases hv : eval truth p <;>
           simp [eval, bitInt, hv, outputAt] at hout <;>
           simp [bitInt, hv] at hinE <;>
-          simp [Node.HoldsAt, Node.constraints, gate, bitBody,
+          simp [Node.HoldsAt, Node.constraints, gate, bitBody_eq,
             VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
             hinE, hout]
   | and p q ihp ihq =>
@@ -504,7 +514,7 @@ theorem nodes_hold_of_matches {n : Nat} (truth : Fin n -> Bool) (base : Nat)
         cases hpv : eval truth p <;> cases hqv : eval truth q <;>
           simp [eval, bitInt, hpv, hqv, outputAt, Nat.add_assoc] at hout <;>
           simp [bitInt, hpv] at hlE <;> simp [bitInt, hqv] at hrE <;>
-          simp [Node.HoldsAt, Node.constraints, gate, bitBody, subW, negW,
+          simp [Node.HoldsAt, Node.constraints, gate, bitBody_eq, subW, negW,
             VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
             Nat.add_assoc, hlE, hrE, hout]
   | or p q ihp ihq =>
@@ -526,7 +536,7 @@ theorem nodes_hold_of_matches {n : Nat} (truth : Fin n -> Bool) (base : Nat)
         cases hpv : eval truth p <;> cases hqv : eval truth q <;>
           simp [eval, bitInt, hpv, hqv, outputAt, Nat.add_assoc] at hout <;>
           simp [bitInt, hpv] at hlE <;> simp [bitInt, hqv] at hrE <;>
-          simp [Node.HoldsAt, Node.constraints, gate, bitBody, subW, negW,
+          simp [Node.HoldsAt, Node.constraints, gate, bitBody_eq, subW, negW,
             VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
             Nat.add_assoc, hlE, hrE, hout]
 
@@ -888,7 +898,7 @@ theorem zeroTest_of_constraints (env : VmRowEnv) (x out inv : Nat)
   have hinv := field_zero_of_gate
     (h (gate (.add (.add (.mul (.loc x) (.loc inv)) (.loc out)) (.const (-1))))
       (by simp [Node.constraints]))
-  simp only [bitBody, fieldWindow, Wire.expr] at hbit
+  simp only [bitBody_eq, fieldWindow, Wire.expr] at hbit
   simp only [fieldWindow] at hzero hinv
   have hb : Dregg2.Logic.BoolGraph.IsBit (fieldAssignment env.loc out) := by
     simpa [Dregg2.Logic.BoolGraph.IsBit, sub_eq_add_neg] using hbit
@@ -907,7 +917,7 @@ theorem not_of_constraints (env : VmRowEnv) (input : Wire) (out : Nat)
   have heq := field_zero_of_gate
     (h (gate (.add (.add (.loc out) input.expr) (.const (-1))))
       (by simp [Node.constraints]))
-  simp only [bitBody, fieldWindow, Wire.expr] at hbit
+  simp only [bitBody_eq, fieldWindow, Wire.expr] at hbit
   have hout : Dregg2.Logic.BoolGraph.IsBit (fieldAssignment env.loc out) := by
     simpa [Dregg2.Logic.BoolGraph.IsBit, sub_eq_add_neg] using hbit
   have heq' : fieldAssignment env.loc out = 1 - fieldWire env.loc input := by
@@ -936,7 +946,7 @@ theorem and_of_constraints (env : VmRowEnv) (left right : Wire) (out : Nat)
   have heq := field_zero_of_gate
     (h (gate (subW (.loc out) (.mul left.expr right.expr)))
       (by simp [Node.constraints]))
-  simp only [bitBody, fieldWindow, Wire.expr] at hbit
+  simp only [bitBody_eq, fieldWindow, Wire.expr] at hbit
   have hout : Dregg2.Logic.BoolGraph.IsBit (fieldAssignment env.loc out) := by
     simpa [Dregg2.Logic.BoolGraph.IsBit, sub_eq_add_neg] using hbit
   have heq' : fieldAssignment env.loc out =
@@ -958,7 +968,7 @@ theorem or_of_constraints (env : VmRowEnv) (left right : Wire) (out : Nat)
     (h (gate (subW (.loc out)
       (subW (.add left.expr right.expr) (.mul left.expr right.expr))))
       (by simp [Node.constraints]))
-  simp only [bitBody, fieldWindow, Wire.expr] at hbit
+  simp only [bitBody_eq, fieldWindow, Wire.expr] at hbit
   have hout : Dregg2.Logic.BoolGraph.IsBit (fieldAssignment env.loc out) := by
     simpa [Dregg2.Logic.BoolGraph.IsBit, sub_eq_add_neg] using hbit
   have heq' : fieldAssignment env.loc out = fieldWire env.loc left +

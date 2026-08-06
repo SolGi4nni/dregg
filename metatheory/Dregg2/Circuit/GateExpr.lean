@@ -494,6 +494,11 @@ def append (h o : GHead L) : GHead L := ⟨h.terms ++ o.terms, h.const + o.const
 
 end GHead
 
+/-- ⚑ The zero head is the default, at EVERY alphabet — declared once here rather than as a local
+`instance : Inhabited Head` per rail (`AutomataflStepEmit` and `AutomataflResolveEmit` each carried
+one for what is now the same type). -/
+instance {L : Type} : Inhabited (GHead L) := ⟨GHead.zero⟩
+
 /-- `AirBuilder.Head` as a `GHead`. -/
 def ofHead (h : Dregg2.Circuit.Emit.AirBuilder.Head) : GHead VLeaf := ⟨h.terms, h.const⟩
 
@@ -630,6 +635,59 @@ theorem gHeadToExpr_emitted (h : Dregg2.Circuit.Emit.AirBuilder.Head) :
 theorem gBin_is_gBool (co : Nat) :
     Dregg2.Circuit.Emit.AirBuilder.gBin co
       = render toEmitted (GExpr.mul (.leaf co) (.add (.leaf co) (.const (-1)))) := rfl
+
+/-! ### §5b‴ — ⚑ THE TACTIC THAT REPLACED `rfl` AT THE PINNED CALL SITES.
+
+Every consumer that pinned a CLOSED head's rendering (`(headToExpr H).eval a = <polynomial>`) did it
+`by rfl`, and `rfl` worked only because the ELIDED renderer wrote a unit-coefficient term bare: the
+canonical renderer writes `mul(const 1, x)`, whose `eval` is `1 * a x`, and `1 * x` is NOT
+definitionally `x` for a symbolic `x`. So the flag day of 2026-08-06 broke ~250 `rfl`s that were
+never about the arithmetic — they were about the RENDERING.
+
+`canon_head_eval` re-proves them SEMANTICALLY: `simp +ground` evaluates the closed rendering (the
+head, its column indices and the whole `EmittedExpr` tree are ground), and `ring` closes the
+resulting polynomial identity. That is strictly better than what it replaced — a site proved this way
+does not care which of the two renderings is in force, so the next rendering change moves bytes
+without touching a proof. -/
+
+/-- ⚑ Discharge `(r H).eval a = <polynomial>` for the rail's own renderer `r` (`headToExpr`).
+`+ground` handles the fully closed heads; the builder unfoldings handle the ones whose COLUMN INDICES
+are still symbolic (`Head.lin 1 (ONE n)` at a variable `n`), which `+ground` alone cannot reduce. -/
+macro "canon_head_eval" "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
+  `(tactic| simp +ground (maxSteps := 4000000) [$rs,*,
+      Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
+      Dregg2.Circuit.GateExpr.gFoldExprs, Dregg2.Circuit.GateExpr.gTermToExpr,
+      Dregg2.Circuit.GateExpr.gVarsProd, Dregg2.Circuit.GateExpr.GHead.zero,
+      Dregg2.Circuit.GateExpr.GHead.c, Dregg2.Circuit.GateExpr.GHead.lin,
+      Dregg2.Circuit.GateExpr.GHead.addLin, Dregg2.Circuit.GateExpr.GHead.addProd,
+      Dregg2.Circuit.GateExpr.GHead.addConst, Dregg2.Circuit.GateExpr.GHead.scale,
+      Dregg2.Circuit.GateExpr.GHead.append,
+      Dregg2.Exec.CircuitEmit.EmittedExpr.eval] <;> ring)
+
+/-- ⚑ The FULLY CLOSED variant. On a head whose every coefficient and column is a literal, `+ground`
+alone reduces the rendering, and `only` keeps `simp` off the emitted polynomial — which matters: the
+20-bit score-comparison heads blow past four million rewrite steps under the full simp set. -/
+macro "canon_head_eval_closed" "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
+  `(tactic| simp +ground (maxSteps := 8000000) only [$rs,*,
+      Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
+      Dregg2.Circuit.GateExpr.gFoldExprs, Dregg2.Circuit.GateExpr.gTermToExpr,
+      Dregg2.Circuit.GateExpr.gVarsProd,
+      Dregg2.Exec.CircuitEmit.EmittedExpr.eval] <;> ring)
+
+/-- ⚑ The same reduction AT A HYPOTHESIS — for the extraction sites that read a gate's satisfaction
+out of a membership proof. These used to write the emitted body as a LITERAL `EmittedExpr` and rely
+on it being defeq to the head's rendering; the literal is now the renderer's business, so the sites
+let unification supply it and reduce here. -/
+macro "canon_head_at" h:ident "[" rs:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
+  `(tactic| simp +ground (maxSteps := 4000000) [$rs,*,
+      Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
+      Dregg2.Circuit.GateExpr.gFoldExprs, Dregg2.Circuit.GateExpr.gTermToExpr,
+      Dregg2.Circuit.GateExpr.gVarsProd, Dregg2.Circuit.GateExpr.GHead.zero,
+      Dregg2.Circuit.GateExpr.GHead.c, Dregg2.Circuit.GateExpr.GHead.lin,
+      Dregg2.Circuit.GateExpr.GHead.addLin, Dregg2.Circuit.GateExpr.GHead.addProd,
+      Dregg2.Circuit.GateExpr.GHead.addConst, Dregg2.Circuit.GateExpr.GHead.scale,
+      Dregg2.Circuit.GateExpr.GHead.append,
+      Dregg2.Exec.CircuitEmit.EmittedExpr.eval] at $h:ident)
 
 /-! ### §5b′ — ⚑ THE FUSION LAW: rendering the head is rendering the rendered head.
 
@@ -1005,6 +1063,68 @@ theorem gAlphabetNoElide_eval {L : Type} (ρ : L → ℤ) (x : GExpr L) :
      = evalG ρ (GExpr.mul x (GExpr.add x (GExpr.const (-1))))
   simp only [evalG]; ring
 
+/-! ### §7.1c — ⚑ THE CANONICAL RENDERING, ONCE THE OPERATOR LIFTED "BYTES MAY NOT MOVE".
+
+Converging the three shipping encodings onto `gBool` (5 nodes) and reaching `AirNormalForm.isNormal`
+(9 nodes) were priced as two DIFFERENT jobs above (§7.1 header) under a brief that froze bytes. That
+freeze is lifted: this project's standing doctrine is that a flag day here is a rebuild, not a
+migration, and a cost estimate ("9 > 5, so canonicalizing is a second job") is not a reason to stop at
+the cheaper non-canonical form. So booleanity has ONE more step: not just "the same helper everywhere"
+but "the NORMAL FORM everywhere" — the property `AirNormalForm.isNormal` exists to buy, that two gates
+meaning the same thing render the same, made real for the family this module collapsed. -/
+
+/-- ⚑ **THE CANONICAL BOOLEANITY HEAD** — `x² − x` as a `GHead`: one squared-product term, one linear
+term, no constant. -/
+def gBoolHead {L : Type} (x : L) : GHead L :=
+  ((GHead.zero (L := L)).addProd 1 [x, x]).addLin (-1) x
+
+/-- ⚑ **THE CANONICAL BOOLEANITY GATE.** `gHeadToExpr` of `gBoolHead` — `mul(const 1, mul(x,x))` added
+to `mul(const −1, x)`, 9 nodes, the corpus normal form's own rendering of `x·(x−1)`. This is the target
+every migrated call site now points at, not `gBool`: `gBool` remains the closed-form 5-node witness the
+byte-count claims are measured against (`gBool_nodeCount` etc.), `gBoolCanon` is what ships. -/
+def gBoolCanon {L : Type} (x : L) : GExpr L := gHeadToExpr idOps (gBoolHead x)
+
+/-- ⚑ Node count, measured: 9, for every leaf. -/
+theorem gBoolCanon_nodeCount (co : VLeaf) : nodeCount (gBoolCanon co) = 9 := rfl
+
+/-- ⚑ **THE CANONICAL FORM IS NORMAL BY CONSTRUCTION** — an instance of the ONE proof every
+`gHeadToExpr` rendering gets for free (`gHeadToExpr_gIsNormal`), not a new argument. -/
+theorem gBoolCanon_isNormal {L : Type} (x : L) : gIsNormal (gBoolCanon x) = true :=
+  gHeadToExpr_gIsNormal _
+
+/-- `gBool`'s value, stated plainly (the general `gAlphabet` machinery proves membership-in-roots;
+this is the value itself). -/
+theorem gBool_eval {L : Type} (ρ : L → ℤ) (x : GExpr L) :
+    evalG ρ (gBool x) = evalG ρ x * (evalG ρ x - 1) := by
+  show evalG ρ (GExpr.mul x (GExpr.add x (GExpr.const (-1)))) = evalG ρ x * (evalG ρ x - 1)
+  simp only [evalG]; ring
+
+/-- `gBoolCanon`'s value, stated plainly. -/
+theorem gBoolCanon_eval' {L : Type} (ρ : L → ℤ) (x : L) :
+    evalG ρ (gBoolCanon x) = ρ x * (ρ x - 1) := by
+  show evalG ρ (gHeadToExpr idOps (gBoolHead x)) = ρ x * (ρ x - 1)
+  rw [gHeadToExpr_eval]
+  simp [gBoolHead, GHead.zero, GHead.addProd, GHead.addLin, gEvalH, gEvalTerm]
+  ring
+
+/-- ⚑ **THE CANONICAL FORM IS THE SAME POLYNOMIAL AS `gBool`** — every alphabet, every leaf
+environment. This is the fact that makes swapping the render target a re-emission and NOT a semantic
+edit: node count changes, the value a satisfying assignment must hit does not. -/
+theorem gBoolCanon_eval {L : Type} (ρ : L → ℤ) (x : L) :
+    evalG ρ (gBoolCanon x) = evalG ρ (gBool (.leaf x)) := by
+  rw [gBoolCanon_eval', gBool_eval]; rfl
+
+/-- ⚑ **THE DEPLOYED BYTE, CANONICAL, `EmittedExpr`.** For every column, `rfl`: this is exactly what
+`scripts/emit-descriptors.sh` now writes for a migrated booleanity site. -/
+theorem gBoolCanon_emitted (co : VLeaf) :
+    render toEmitted (gBoolCanon co)
+      = .add (.mul (.const 1) (.mul (.var co) (.var co))) (.mul (.const (-1)) (.var co)) := rfl
+
+/-- ⚑ …and the window rail, the same object. -/
+theorem gBoolCanon_window (co : Nat) :
+    render toWindow (gBoolCanon (WLeaf.loc co))
+      = .add (.mul (.const 1) (.mul (.loc co) (.loc co))) (.mul (.const (-1)) (.loc co)) := rfl
+
 /-! ### §7.1b — ⚑ THE CHIP ABSORB TUPLE, and the arity check the type split DROPPED.
 
 `LightClientSolanaAir.chipTuple16` exists *because* the chip helpers are `EmittedExpr` and that file
@@ -1115,6 +1235,24 @@ def gSwapLeft {L : Type} (bit cur sib : GExpr L) : GExpr L := gMux bit cur sib
 /-- …and the RIGHT input. -/
 def gSwapRight {L : Type} (bit cur sib : GExpr L) : GExpr L := gMux bit sib cur
 
+/-- ⚑ **`TableAirIR.node8Tuple`'s `L8`/`R8` lanes ARE `gSwapLeft`/`gSwapRight`, `rfl`.** Stated here
+rather than migrated in `TableAirIR.lean` itself: `GateExpr` imports `TableAirIR`, so the reverse
+import is a cycle (the same constraint `gCols`/`gVars`/`gOneMinus_table` name). `node8Tuple`'s body
+was rewritten BY HAND to this shape; this pin is the check that the rewrite is exactly `gMux`. -/
+theorem node8Tuple_is_gMux (cur sib dir : Nat) :
+    render toTable (gSwapLeft (.leaf (TLeaf.win (WLeaf.loc dir)))
+        (.leaf (TLeaf.win (WLeaf.loc cur))) (.leaf (TLeaf.win (WLeaf.loc sib))))
+      = .add (Dregg2.Circuit.TableAirIR.v cur) (.mul (Dregg2.Circuit.TableAirIR.v dir)
+          (Dregg2.Circuit.TableAirIR.eSub (Dregg2.Circuit.TableAirIR.v sib) (Dregg2.Circuit.TableAirIR.v cur))) :=
+  rfl
+
+theorem node8Tuple_R_is_gMux (cur sib dir : Nat) :
+    render toTable (gSwapRight (.leaf (TLeaf.win (WLeaf.loc dir)))
+        (.leaf (TLeaf.win (WLeaf.loc cur))) (.leaf (TLeaf.win (WLeaf.loc sib))))
+      = .add (Dregg2.Circuit.TableAirIR.v sib) (.mul (Dregg2.Circuit.TableAirIR.v dir)
+          (Dregg2.Circuit.TableAirIR.eSub (Dregg2.Circuit.TableAirIR.v cur) (Dregg2.Circuit.TableAirIR.v sib))) :=
+  rfl
+
 /-- ⚑ **THE SWAP IS A SWAP** — at `bit = 1` the pair is exchanged, at `bit = 0` it is not. Stated
 once, for every alphabet; no site stated it at all. -/
 theorem gSwap_exchanges {L : Type} (ρ : L → ℤ) (bit cur sib : GExpr L) :
@@ -1185,5 +1323,102 @@ theorem gThreadHead_eval (env : VmRowEnv) (dst src : Nat) :
     = evalG (wEnv env) (gThread dst src)
   simp only [gThread, evalG, wEnv]
   ring
+
+/-! ### §7.4 — the COLUMN-READER family, once.
+
+A structural census found the SAME THREE-DEFINITION IDIOM — `cols` (a run of column indices from a
+base), `vars` (those columns read as leaf expressions) and `stateCols` (a sponge-state-width block at
+a step) — byte-identical in THREE files (`Emit/ExactFieldsRefusalEmit.lean`,
+`Emit/FaithfulNoteSpendDescriptorPlan.lean`, `Games/DescentCensusDescriptor.lean`), plus narrower
+base-0 instances of the same `vars` shape (`ChipArityBite.ins`). `cols` never touches a leaf, so it
+needed no alphabet parameter at all; `vars` is `gVars` below at `toEmitted`.
+
+⚠ `DescriptorIR2.lean`'s three `factColsFour`/`factColsNine`/`factColsFourteen` are the SAME shape
+again but are NOT migrated here: `GateExpr` imports `TableAirIR`, which imports `DescriptorIR2` — a
+`DescriptorIR2` → `GateExpr` import would be a cycle. Named as a residual, not silently dropped. -/
+
+/-- A run of `count` column indices starting at `base` — alphabet-free, so it is the SAME `List Nat`
+whichever AST reads it. -/
+def gCols (base count : Nat) : List Nat := (List.range count).map (base + ·)
+
+/-- The run, read as leaf expressions in ANY view — `vars`/`ins`'s shared body. -/
+def gVars {E : Type} (O : ExprOps VLeaf E) (base count : Nat) : List E :=
+  (gCols base count).map O.leaf
+
+/-- ⚑ **`vars`/`ins` ARE THIS, on `EmittedExpr`, `rfl`.** -/
+theorem gVars_emitted (base count : Nat) :
+    gVars toEmitted base count = (gCols base count).map .var := rfl
+
+/-! ### §7.5 — the ESUB / "1 − e" family, once.
+
+A structural census found the generic two-argument idiom `esub`/`eSub a b := add a (mul (const -1)
+b)` reinvented as its own named local def in well over a dozen files, across EVERY one of the five
+concrete ASTs, and its one-argument specialization `1 − e` under at least a dozen more distinct
+names (`eOneMinus`, `oneMinus`, `oneMinusW`, `eoneMinus`, `notDbl`, `notPadding`, `unlessFire`,
+`whenHold`, `eneg1`, `atLeastOneFactor`, `wInvGate`, `eCreditSel`) — the SAME shape `gMuxA`'s own
+`(1 − b)` sub-term already carries (`gMuxA_has_gOneMinus` below), never itself exposed as a reusable
+combinator, which is very probably why nothing reused it. Both are one definition, generic over the
+view, applied everywhere.
+
+⚠ The named-def population above is what is migrated below. A further ~35 INLINE (unnamed)
+occurrences of the same shape, embedded directly in unrelated larger definitions across ~20 further
+files, were also found by the census and are NOT migrated in this pass — the volume and the breadth
+of unrelated subsystems they sit in (Pasta, Automatafl, Fold, DyckStack, EffectVM, …) make a safe
+single-pass edit of all of them irresponsible; they are a named residual for a follow-up, not a hole
+silently left out of the count. -/
+
+/-- `−e`, the standard encoding: `mul (const -1) e`. -/
+def gNeg {L E : Type} (O : ExprOps L E) (e : E) : E := O.mul (O.const (-1)) e
+
+/-- `a − b` — the generic two-argument subtraction every `esub`/`eSub`/`subE`/`sub`/`subW` copy
+reinvents. -/
+def gEsub {L E : Type} (O : ExprOps L E) (a b : E) : E := O.add a (gNeg O b)
+
+/-- `1 − e` — the specialization `eOneMinus`/`oneMinus`/`oneMinusW`/`notDbl`/… all name separately. -/
+def gOneMinus {L E : Type} (O : ExprOps L E) (e : E) : E := gEsub O (O.const 1) e
+
+/-- ⚑ **THE MUX'S OWN `(1 − b)` FACTOR IS THIS.** `gMuxA`'s second term never exposed its own
+complement as a combinator; this is the fact that it could have. -/
+theorem gMuxA_has_gOneMinus {L : Type} (b l r : GExpr L) :
+    gMuxA b l r = .add (.mul b r) (.mul (gOneMinus idOps b) l) := rfl
+
+theorem gEsub_eval {L : Type} (ρ : L → ℤ) (a b : GExpr L) :
+    evalG ρ (gEsub idOps a b) = evalG ρ a - evalG ρ b := by
+  simp only [gEsub, gNeg, evalG]; ring
+
+theorem gOneMinus_eval {L : Type} (ρ : L → ℤ) (e : GExpr L) :
+    evalG ρ (gOneMinus idOps e) = 1 - evalG ρ e := by
+  simp only [gOneMinus, gEsub, gNeg, evalG]; ring
+
+/-- ⚑ **THE FUSION LAW**, once: rendering `gEsub`/`gOneMinus` into any view IS `gEsub`/`gOneMinus`
+of the rendered pieces — so a target rail's `esub`/`oneMinus` becomes a one-line `def` that inherits
+these facts for free, the same shape as `render_gHeadToExpr` above. -/
+theorem render_gEsub {L E : Type} (O : ExprOps L E) (a b : GExpr L) :
+    render O (gEsub idOps a b) = gEsub O (render O a) (render O b) := by
+  simp only [gEsub, gNeg, render]
+
+theorem render_gOneMinus {L E : Type} (O : ExprOps L E) (e : GExpr L) :
+    render O (gOneMinus idOps e) = gOneMinus O (render O e) := by
+  simp only [gOneMinus, gEsub, gNeg, render]
+
+/-! #### The pins — named local copies ARE this, `rfl`, at their own view. -/
+
+/-- ⚑ **`LexCompare8Emit.eOneMinus` IS THIS, on `EmittedExpr`, `rfl`.** -/
+theorem gOneMinus_emitted (e : EmittedExpr) : gOneMinus toEmitted e = .add (.const 1) (.mul (.const (-1)) e) := rfl
+
+/-- ⚑ **`PastaMsmBound.notDbl`'s shape IS THIS**, applied to the `DBL` column, `rfl`. -/
+theorem gOneMinus_var_emitted (c : Nat) :
+    gOneMinus toEmitted (.var c) = .add (.const 1) (.mul (.const (-1)) (.var c)) := rfl
+
+/-- ⚑ **The `WindowExpr` rail's `1 − loc c` shape** (`FiniteLogicDescriptorIR2.oneMinusW`,
+`TurnChainAirSource`/`EffectVmEmitTurnChainBinding`/`LightClientMinaLinkAir`'s triplicated
+`realMonotone`) IS THIS, `rfl`. -/
+theorem gOneMinus_loc_window (c : Nat) :
+    gOneMinus toWindow (.loc c) = .add (.const 1) (.mul (.const (-1)) (.loc c)) := rfl
+
+/-- ⚑ **`TableAirIR.eOneMinus`'s SHAPE is this**, on `TExpr`, `rfl` — named as a pin rather than a
+migration: `GateExpr` imports `TableAirIR`, so `TableAirIR` cannot import `GateExpr` back (a cycle),
+the same constraint `gCols`/`gVars` hit against `DescriptorIR2` above. -/
+theorem gOneMinus_table (e : TExpr) : gOneMinus toTable e = .add (.const 1) (.mul (.const (-1)) e) := rfl
 
 end Dregg2.Circuit.GateExpr

@@ -217,7 +217,10 @@ theorem foldDesc_satisfied2_refines_foldStepValid
         (by simp [foldDesc, foldConstraints])
       simp only [VmConstraint2.holdsAt] at hg
       rw [holdsVm_gate_of_notLast _ _ _ _ hlf] at hg
-      simp only [binaryBody, EmittedExpr.eval] at hg
+      simp only [binaryBody_eq, EmittedExpr.eval] at hg
+      rw [show (1 : ℤ) * ((envAt t i).loc ROW_TYPE * (envAt t i).loc ROW_TYPE)
+              + -1 * (envAt t i).loc ROW_TYPE
+            = (envAt t i).loc ROW_TYPE * ((envAt t i).loc ROW_TYPE + -1) from by ring] at hg
       exact binary_modEq_cases hg (hcanon.rowType i hi)
   · -- removalsCertified.
     intro i hi hrt0
@@ -273,7 +276,7 @@ theorem foldDesc_satisfied2_refines_foldStepValid
       have hz := hw hlf
       have hg' := (gate_modEq_iff (a := (envAt t i).nxt REMOVAL_COUNT)
         (b := (envAt t i).loc REMOVAL_COUNT_PLUS_ONE)
-        (by simp only [removalIncrBody, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hrt0]
+        (by simp only [removalIncrBody_eq, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hrt0]
             ring)).mp hz
       have hi1 : i + 1 < t.rows.length := by omega
       exact eq_of_modEq_of_canon hg' (hcanon.removalCount (i + 1) hi1)

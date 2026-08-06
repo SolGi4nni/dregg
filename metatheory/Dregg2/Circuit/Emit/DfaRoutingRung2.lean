@@ -295,7 +295,7 @@ theorem dfaRouting_rung2 {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin :
     have hw := window_forces hsat hi0 (Nat.ne_of_lt hi) mem_copyForwardWindow rfl
     -- the copy-forward window binds only mod p; both spine cells are canonical, so it lifts to ℤ.
     have hcm : (envAt t i).nxt ACC ≡ (envAt t i).loc RUNNING_HASH [ZMOD 2013265921] :=
-      (gate_modEq_iff (by simp only [copyForwardBody, WindowExpr.eval]; ring)).mp hw
+      (gate_modEq_iff (by simp only [copyForwardBody_eq, WindowExpr.eval]; ring)).mp hw
     rw [envAt_nxt hi, envAt_loc hi0] at hcm
     exact eq_of_modEq_of_canon hcm ((hchain.1 (i + 1) hi).1).1 ((hchain.1 (i + 1) hi).1).2
       ((hchain.1 i hi0).2).1 ((hchain.1 i hi0).2).2
@@ -407,8 +407,8 @@ theorem cheatTrace_satisfied2 :
     interval_cases i <;>
       fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt,
-        WindowConstraint.holdsAt, entryHashLookup, runningHashLookup, zeroLaneGate, isFirstBoolGate,
-        stateGridGate, symbolGridGate, transitionGate, continuityWindow, copyForwardWindow,
+        WindowConstraint.holdsAt, entryHashLookup, runningHashLookup, zeroLaneGate, isFirstBoolGate_eq,
+        stateGridGate_eq, symbolGridGate_eq, transitionGate, continuityWindow, copyForwardWindow,
         b1InitialPin, isFirstPinned, seedAccPin, b2FinalPin, b3RoutePin, cheatTrace, cheatTf,
         cheatPub, Nat.reduceAdd, Nat.reduceBEq, reduceIte, reduceCtorEq] <;>
       decide
@@ -489,8 +489,8 @@ theorem wtTrace_satisfied2 :
     simp only [dfaRoutingDesc] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt,
-        WindowConstraint.holdsAt, entryHashLookup, runningHashLookup, zeroLaneGate, isFirstBoolGate,
-        stateGridGate, symbolGridGate, transitionGate, continuityWindow, copyForwardWindow,
+        WindowConstraint.holdsAt, entryHashLookup, runningHashLookup, zeroLaneGate, isFirstBoolGate_eq,
+        stateGridGate_eq, symbolGridGate_eq, transitionGate, continuityWindow, copyForwardWindow,
         b1InitialPin, isFirstPinned, seedAccPin, b2FinalPin, b3RoutePin, wtTrace, wtTf, envAt,
         zeroAsg, List.getD_cons_zero, List.length_cons, List.length_nil, Nat.reduceAdd,
         Nat.reduceBEq, reduceIte, reduceCtorEq] <;>

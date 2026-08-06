@@ -60,6 +60,7 @@ conditioned on the refuted injective sponge floor; the injective special case li
 spine home. Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.GateExpr
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.supplydestruction
 import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
@@ -667,9 +668,15 @@ def gAsmAfter : EmittedExpr :=
 def gAsmAmount : EmittedExpr :=
   eSub ePrmBurnAmt (.add (.var cAM0) (.mul (.const 32768) (.var cAM1)))
 /-- Borrow-bit booleanity: `bb0·(bb0 − 1)`. -/
-def gBrw0Bool : EmittedExpr := .mul (.var cBRW0) (.add (.var cBRW0) (.const (-1)))
+def gBrw0Bool : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf cBRW0))
+theorem gBrw0Bool_eq : gBrw0Bool = .mul (.var cBRW0) (.add (.var cBRW0) (.const (-1))) := rfl
 /-- Borrow-bit booleanity: `bb1·(bb1 − 1)`. -/
-def gBrw1Bool : EmittedExpr := .mul (.var cBRW1) (.add (.var cBRW1) (.const (-1)))
+def gBrw1Bool : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf cBRW1))
+theorem gBrw1Bool_eq : gBrw1Bool = .mul (.var cBRW1) (.add (.var cBRW1) (.const (-1))) := rfl
 /-- Debit borrow, limb 0 (UNGATED — a burn row is always a debit): `bef0 − am0 + bb0·2^15 − aft0`.
 This forces `bef0 − am0 = aft0 − bb0·2^15` — the low-limb borrow subtraction (the transfer
 `gBorrow0` with the `direction` factor dropped). -/
@@ -764,7 +771,7 @@ theorem burnAvail_derives_availability_row (hash : List ℤ → ℤ) (env : VmRo
   have gBor0 := hcs _ (availGate_mem (.gate gBorrow0) (by simp [burnAvailGates]))
   have gBor1 := hcs _ (availGate_mem (.gate gBorrow1) (by simp [burnAvailGates]))
   have gNoB := hcs _ (availGate_mem (.gate gNoBorrow) (by simp [burnAvailGates]))
-  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gBrw0Bool, gBrw1Bool,
+  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gBrw0Bool_eq, gBrw1Bool_eq,
     gBorrow0, gBorrow1, gNoBorrow, ePrmBurnAmt, eSA, eSB, eSub,
     EmittedExpr.eval] at gAsmB gAsmA gAsmM gB0 gB1 gBor0 gBor1 gNoB
   -- borrow bits are boolean (mod-p booleanity + canonicality + p prime)

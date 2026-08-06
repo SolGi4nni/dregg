@@ -413,7 +413,7 @@ theorem emitted_chain_continuity (hash : List ℤ → ℤ) (minit : ℤ → ℤ)
   simp only [Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt,
     Dregg2.Circuit.DescriptorIR2.WindowConstraint.holdsAt, if_true] at h
   have h1 := h hlf
-  simp only [chainWindow, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, envAt] at h1
+  simp only [chainWindow_eq, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, envAt] at h1
   exact modeq_of_sub' h1
 
 /-- **⚑ THE #B RECOMPOSITION (`emitted_membership_chain`).** The emitted per-row Merkle chain (C3 chip

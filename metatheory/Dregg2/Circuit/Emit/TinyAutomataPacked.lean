@@ -55,6 +55,7 @@ every import is read-only. Every `#guard` is COMPILED EVALUATION of a closed `Bo
 NO `Prop`; it pins measured numbers and nothing more. The load-bearing objects are the theorems.
 -/
 import Dregg2.Circuit.Emit.TinyAutomataSatisfiable
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.TinyAutomataPacked
 
@@ -126,9 +127,15 @@ def packLookups : Nat → Nat → List VmConstraint2
   | _, 0     => []
   | o, j + 1 => .lookup ⟨TRT_TID, [.var o, .var (o + 1), .var (o + 2)]⟩ :: packLookups (o + 2) j
 
-/-- The packed continuity window: the NEXT row's first state is THIS row's last state. -/
+/-- The packed continuity window: the NEXT row's first state is THIS row's last state.
+⚑ `GateExpr.gThread`. -/
 def packContWindow (s : Nat) : VmConstraint2 :=
-  .windowGate ⟨.add (.nxt 0) (.mul (.const (-1)) (.loc (packLastCol s))), true⟩
+  .windowGate ⟨Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread 0 (packLastCol s)), true⟩
+
+theorem packContWindow_eq (s : Nat) :
+    packContWindow s
+      = .windowGate ⟨WindowExpr.add (.nxt 0) (.mul (.const (-1)) (.loc (packLastCol s))), true⟩ := rfl
 
 /-- The three non-lookup constraints: continuity + the two boundary pins. -/
 def packTail (s : Nat) : List VmConstraint2 :=

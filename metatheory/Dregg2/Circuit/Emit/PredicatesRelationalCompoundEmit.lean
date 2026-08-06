@@ -51,6 +51,7 @@ non-vacuous semantic lemmas (`atLeastOne_zero_iff`, `binBody_zero_iff`, `high_bi
 each `#assert_axioms`-clean. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.PredicatesRelationalCompoundEmit
 
@@ -72,7 +73,12 @@ def subC (a : EmittedExpr) (k : Int) : EmittedExpr := .add a (.const (-k))
 def subV (a : EmittedExpr) (v : Nat) : EmittedExpr := .add a (.mul (.const (-1)) (.var v))
 
 /-- The binary-check body `x_c · (x_c − 1)` (zero iff `x_c ∈ {0,1}`). -/
-def binBody (c : Nat) : EmittedExpr := .mul (.var c) (subC (.var c) 1)
+def binBody (c : Nat) : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf c))
+
+theorem binBody_eq (c : Nat) :
+    binBody c = .mul (.var c) (subC (.var c) 1) := rfl
 
 /-- `1 − x_c`. -/
 def oneMinus (c : Nat) : EmittedExpr := .add (.const 1) (.mul (.const (-1)) (.var c))
@@ -317,7 +323,7 @@ def relationalPredicateDesc : EffectVmDescriptor2 :=
 /-- The binary-check body is zero EXACTLY when the column is 0 or 1. -/
 theorem binBody_zero_iff (a : Assignment) (c : Nat) :
     (binBody c).eval a = 0 ↔ a c = 0 ∨ a c = 1 := by
-  simp only [binBody, subC, EmittedExpr.eval]
+  simp only [binBody_eq, subC, EmittedExpr.eval]
   constructor
   · intro h
     rcases mul_eq_zero.mp h with h | h

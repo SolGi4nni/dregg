@@ -29,6 +29,7 @@ terminal BFV quotient rows, and the recursive key-certificate join.
 import Market.PrivateBookBfvNttFamily
 import Dregg2.Circuit.DecideSatisfied2
 import Dregg2.Tactics
+import Dregg2.Circuit.GateExpr
 
 namespace Market.PrivateBookBfvButterflyAir
 
@@ -192,22 +193,49 @@ def subBody (limb : Nat) : EmittedExpr :=
       (emul (ec (Int.ofNat RADIX)) carryOut))
 
 def boolBody (col : Nat) : EmittedExpr :=
-  emul (ev col) (esub (ev col) (ec 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf col))
 
+theorem boolBody_eq (col : Nat) :
+    boolBody col = emul (ev col) (esub (ev col) (ec 1)) := rfl
+
+/-- ⚑ **THE GENUINE GENERALIZATION, DEGREE 3**: `STAGE` ranges over `{0,1,2}`, so this is
+`GateExpr.gAlphabet STAGE [0,1,2]` -- the SAME parameterized gadget `DfaRoutingGeneralEmit.
+stateGridGate` instantiates, not a copy flattened to booleanity. -/
 def stagePoly : EmittedExpr :=
-  emul (ev STAGE) (emul (esub (ev STAGE) (ec 1)) (esub (ev STAGE) (ec 2)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gAlphabet (.leaf STAGE) [0, 1, 2])
 
+/-- ⚑ **THE BYTE PIN, AND IT MOVES BYTES.** The hand-written body went through `esub`/`eneg`
+(`emul (ec (-1)) k`), which carries a redundant `mul(const −1, const k)` where `gSub`'s
+zero-elision writes a bare `const (-k)`. Converging onto `gAlphabet` removes that waste, same as
+the two-root case. -/
+theorem stagePoly_eq :
+    stagePoly = .mul (.mul (.var STAGE) (.add (.var STAGE) (.const (-1))))
+      (.add (.var STAGE) (.const (-2))) := rfl
+
+/-- ⚑ **DEGREE 4**: `BUTTERFLY` ranges over `{0,1,2,3}` -- `gAlphabet BUTTERFLY [0,1,2,3]`. -/
 def butterflyPoly : EmittedExpr :=
-  emul (ev BUTTERFLY)
-    (emul (esub (ev BUTTERFLY) (ec 1))
-      (emul (esub (ev BUTTERFLY) (ec 2)) (esub (ev BUTTERFLY) (ec 3))))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gAlphabet (.leaf BUTTERFLY) [0, 1, 2, 3])
+
+/-- ⚑ Same waste, degree 4: `esub`/`eneg`'s redundant `mul(const −1, const k)` removed. -/
+theorem butterflyPoly_eq :
+    butterflyPoly =
+      .mul (.mul (.mul (.var BUTTERFLY) (.add (.var BUTTERFLY) (.const (-1))))
+                 (.add (.var BUTTERFLY) (.const (-2))))
+           (.add (.var BUTTERFLY) (.const (-3))) := rfl
 
 def stage0Selector : EmittedExpr :=
   emul (esub (ev STAGE) (ec 1)) (esub (ev STAGE) (ec 2))
 def stage1Selector : EmittedExpr :=
   emul (ev STAGE) (esub (ev STAGE) (ec 2))
 def stage2Selector : EmittedExpr :=
-  emul (ev STAGE) (esub (ev STAGE) (ec 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf STAGE))
+
+theorem stage2Selector_eq :
+    stage2Selector = emul (ev STAGE) (esub (ev STAGE) (ec 1)) := rfl
 
 def butterflyCube : EmittedExpr :=
   emul (ev BUTTERFLY) (emul (ev BUTTERFLY) (ev BUTTERFLY))

@@ -318,7 +318,7 @@ theorem committedThreshold_satisfied2_sound
     have hg := gate_forces (binBody j) (mem_bin j hj) (mem_bin_last j hj)
     have hkey : (binBody j).eval (envAt t 0).loc
         = (envAt t 0).loc (diffBit j) * ((envAt t 0).loc (diffBit j) - 1) := by
-      simp only [binBody, EmittedExpr.eval]; ring
+      simp only [binBody_eq, EmittedExpr.eval]; ring
     rw [hkey, Int.modEq_zero_iff_dvd] at hg
     have hc := hcBit j hj
     rcases pPrimeInt.dvd_mul.mp hg with hx | hx

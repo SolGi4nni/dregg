@@ -266,7 +266,7 @@ canonicality collapses each factor. -/
 theorem bin_of_gate {a : Assignment} {col : Nat}
     (h : (binBody col).eval a ≡ 0 [ZMOD 2013265921]) (hc : Canon (a col)) :
     a col = 0 ∨ a col = 1 := by
-  simp only [binBody, EmittedExpr.eval] at h
+  simp only [binBody_eq, EmittedExpr.eval] at h
   have hd : (2013265921 : ℤ) ∣ a col * (a col + (-1)) := Int.modEq_zero_iff_dvd.mp h
   obtain ⟨hc0, hc1⟩ := hc
   rcases pPrimeInt.dvd_mul.mp hd with hx | hx

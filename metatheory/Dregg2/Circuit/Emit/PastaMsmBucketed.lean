@@ -129,6 +129,7 @@ elsewhere. §7.4.
 `import Dregg2.Circuit.Emit.PastaMsmBucketed`
 -/
 import Dregg2.Circuit.Emit.PastaMsmBound
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.PastaMsmBucketed
 
@@ -753,7 +754,8 @@ def chalPinGates (nc : Nat) : List VmConstraint2 :=
 /-- ⚑ The threads that make the block ONE vector for the whole trace: `nxt CH_m − CH_m`. -/
 def chalThreadGates (nc : Nat) : List VmConstraint2 :=
   (List.range nc).map
-    (fun m => cw (.add (.nxt (CHB + m)) (.mul (.const (-1)) (.loc (CHB + m)))))
+    (fun m => cw (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+      (Dregg2.Circuit.GateExpr.gCarry (CHB + m))))
 
 /-- ⚑ **THE WIDENED DESCRIPTOR.** The bucketed artifact verbatim, plus `nc` columns, `nc` public
 inputs and the `2·nc` gates that tie them together. The name carries `nc`, because a name is a KEY

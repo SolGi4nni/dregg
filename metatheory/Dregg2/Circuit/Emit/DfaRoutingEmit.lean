@@ -66,6 +66,7 @@ them is byte-changing and soundness-preserving. Kill-set `[8, 22)` is exactly th
 so NO column index moves.
 -/
 import Dregg2.Circuit.ChipNarrowLookup
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.DfaRoutingEmit
 
@@ -134,15 +135,29 @@ def zeroLaneGate : VmConstraint2 := .base (.gate (.var ZERO_LANE))
 
 /-- `is_first` is boolean: `is_first · (is_first − 1) == 0`. -/
 def isFirstBoolGate : VmConstraint2 :=
-  .base (.gate (.mul (.var IS_FIRST) (.add (.var IS_FIRST) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf IS_FIRST))))
 
-/-- state on grid `{0,1}`: `current · (current − 1) == 0` (the `∏(cur − sᵢ)` vanishing poly). -/
+theorem isFirstBoolGate_eq :
+    isFirstBoolGate = .base (.gate (.mul (.var IS_FIRST) (.add (.var IS_FIRST) (.const (-1))))) := rfl
+
+/-- state on grid `{0,1}`: `current · (current − 1) == 0` -- the alphabet gate `∏(cur − sᵢ)` at
+`GateExpr.gAlphabet CURRENT [0,1]`. ⚑ `DfaRoutingGeneralEmit.stateGridGate` is the SAME parameterized
+gadget at `[0,1,2]` -- one def, two instantiations, not two copies. -/
 def stateGridGate : VmConstraint2 :=
-  .base (.gate (.mul (.var CURRENT) (.add (.var CURRENT) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gAlphabet (.leaf CURRENT) [0, 1])))
+
+theorem stateGridGate_eq :
+    stateGridGate = .base (.gate (.mul (.var CURRENT) (.add (.var CURRENT) (.const (-1))))) := rfl
 
 /-- symbol on grid `{0,1}`: `symbol · (symbol − 1) == 0` (the `∏(sym − bⱼ)` vanishing poly). -/
 def symbolGridGate : VmConstraint2 :=
-  .base (.gate (.mul (.var SYMBOL) (.add (.var SYMBOL) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf SYMBOL))))
+
+theorem symbolGridGate_eq :
+    symbolGridGate = .base (.gate (.mul (.var SYMBOL) (.add (.var SYMBOL) (.const (-1))))) := rfl
 
 /-- The toggle transition interpolant `P(cur, sym) = cur + sym − 2·cur·sym` — the unique bivariate
 interpolant of `step(s,y) = s XOR y` over the grid `{0,1}²`. -/
@@ -156,15 +171,26 @@ def transitionBody : EmittedExpr := .add (.var NEXT) (.mul (.const (-1)) toggleI
 /-- The GAP-A transition Base gate (the route-follows-the-table tooth). -/
 def transitionGate : VmConstraint2 := .base (.gate transitionBody)
 
-/-- C2 continuity body: `Nxt(current) − Loc(next)` (next row's `current` == this row's `next`). -/
-def contWindowBody : WindowExpr := .add (.nxt CURRENT) (.mul (.const (-1)) (.loc NEXT))
+/-- C2 continuity body: `Nxt(current) − Loc(next)` (next row's `current` == this row's `next`).
+⚑ `GateExpr.gThread` at the window view. -/
+def contWindowBody : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread CURRENT NEXT)
+
+theorem contWindowBody_eq :
+    contWindowBody = WindowExpr.add (.nxt CURRENT) (.mul (.const (-1)) (.loc NEXT)) := rfl
 
 /-- The C2 continuity `WindowGate`, asserted on the transition (every row but the last). -/
 def continuityWindow : VmConstraint2 := .windowGate ⟨contWindowBody, true⟩
 
 /-- C3 copy-forward body: `Nxt(acc) − Loc(running)` (so `acc[i+1] = running[i]`, the prior
-accumulator carried forward — the cross-row seed of the running hash). -/
-def copyForwardBody : WindowExpr := .add (.nxt ACC) (.mul (.const (-1)) (.loc RUNNING_HASH))
+accumulator carried forward — the cross-row seed of the running hash). ⚑ `GateExpr.gThread`. -/
+def copyForwardBody : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread ACC RUNNING_HASH)
+
+theorem copyForwardBody_eq :
+    copyForwardBody = WindowExpr.add (.nxt ACC) (.mul (.const (-1)) (.loc RUNNING_HASH)) := rfl
 
 /-- The C3 copy-forward `WindowGate`, asserted on the transition. -/
 def copyForwardWindow : VmConstraint2 := .windowGate ⟨copyForwardBody, true⟩
@@ -229,7 +255,7 @@ theorem transition_body_zero_iff (a : Assignment) :
 `current` equals this row's `next` (the DFA state threads across the row window). -/
 theorem continuity_window_zero_iff (env : VmRowEnv) :
     contWindowBody.eval env = 0 ↔ env.nxt CURRENT = env.loc NEXT := by
-  simp only [contWindowBody, WindowExpr.eval]
+  simp only [contWindowBody_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 /-- THE C3 COPY-FORWARD TOOTH: the copy-forward window body is zero EXACTLY when the next row's
@@ -237,7 +263,7 @@ accumulator equals this row's running hash (`acc[i+1] = running[i]` — the prio
 into the cross-row running-hash seeding). -/
 theorem copyforward_window_zero_iff (env : VmRowEnv) :
     copyForwardBody.eval env = 0 ↔ env.nxt ACC = env.loc RUNNING_HASH := by
-  simp only [copyForwardBody, WindowExpr.eval]
+  simp only [copyForwardBody_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 -- Non-vacuity witnesses: the transition gate ACCEPTS a genuine toggle edge and REJECTS a bad one.

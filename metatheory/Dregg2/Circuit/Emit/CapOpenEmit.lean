@@ -187,6 +187,18 @@ theorem boolGate_exact {d : ℤ} (hc : 0 ≤ d ∧ d < 2013265921)
     have hd : d = 1 := by omega
     rw [hd]; ring
 
+/-- ⚑ **Boolean-gate exactness, CANONICAL 9-node shape.** `GateExpr.gBoolCanon`'s rendering
+evaluates to `1·(d·d) + (−1)·d`, not `d·(d−1)` — the SAME polynomial (`ring`), a DIFFERENT
+`EmittedExpr` tree. This is `boolGate_exact` re-derived at the canonical shape via the ring
+identity connecting the two, so every call site that migrated its gate to `gBoolCanon` swaps
+`boolGate_exact` for this, unchanged otherwise. -/
+theorem boolGateCanon_exact {d : ℤ} (hc : 0 ≤ d ∧ d < 2013265921)
+    (h : 1 * (d * d) + -1 * d ≡ 0 [ZMOD 2013265921]) : 1 * (d * d) + -1 * d = 0 := by
+  have h' : d * (d + -1) ≡ 0 [ZMOD 2013265921] := by
+    have e : (1 : ℤ) * (d * d) + -1 * d = d * (d + -1) := by ring
+    rwa [e] at h
+  linear_combination boolGate_exact hc h'
+
 /-- Difference-gate exactness: `a − b ≡ 0 [ZMOD p]` + both sides canonical ⟹ `a − b = 0` over ℤ
 (the residual lies in `(−p, p)`, so `p ∣ residual` collapses it — no primality needed). -/
 theorem diffGate_exact {a b : ℤ} (ha : 0 ≤ a ∧ a < 2013265921) (hb : 0 ≤ b ∧ b < 2013265921)
@@ -418,9 +430,9 @@ theorem capOpenMem_membershipCore (w n : Nat) (D : EffectVmDescriptor2)
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
     have h' : (dirBoolGate (capOpenCols w) lvl).eval
         (Dregg2.Circuit.DescriptorIR2.envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
-    unfold dirBoolGate at h' ⊢
+    simp only [dirBoolGate_eq] at h' ⊢
     simp only [EmittedExpr.eval] at h' ⊢
-    exact boolGate_exact (hcells _) h'
+    exact boolGateCanon_exact (hcells _) h'
   · intro k
     have hin : VmConstraint2.base (.gate (rootPinGate (capOpenCols w) k)) ∈ capOpenConstraintsEff w n := by
       refine List.mem_cons_of_mem _ ?_
@@ -483,17 +495,20 @@ theorem capOpenMem_satisfiedEff (w n : Nat) (D : EffectVmDescriptor2)
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
     have h' : (maskBitBoolGate (capOpenCols w) j).eval
         (Dregg2.Circuit.DescriptorIR2.envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
-    unfold maskBitBoolGate at h' ⊢
+    simp only [maskBitBoolGate_eq] at h' ⊢
     simp only [EmittedExpr.eval] at h' ⊢
-    exact boolGate_exact (hcanon.cells _) h'
+    exact boolGateCanon_exact (hcanon.cells _) h'
   have hbool : ∀ j, j < MASK_BITS →
       (Dregg2.Circuit.DescriptorIR2.envAt t i).loc ((capOpenCols w).bit j) = 0
       ∨ (Dregg2.Circuit.DescriptorIR2.envAt t i).loc ((capOpenCols w).bit j) = 1 := by
     intro j hj
     have h := hmaskbit j hj
-    unfold maskBitBoolGate at h
+    simp only [maskBitBoolGate_eq] at h
     simp only [EmittedExpr.eval] at h
-    rcases mul_eq_zero.mp h with h0 | h1
+    have h' : (Dregg2.Circuit.DescriptorIR2.envAt t i).loc ((capOpenCols w).bit j)
+        * ((Dregg2.Circuit.DescriptorIR2.envAt t i).loc ((capOpenCols w).bit j) + -1) = 0 := by
+      linear_combination h
+    rcases mul_eq_zero.mp h' with h0 | h1
     · exact Or.inl h0
     · exact Or.inr (by linarith)
   -- The per-limb range check: the reconstruction of a 16-bit limb at offset `off` evaluates to a Nat

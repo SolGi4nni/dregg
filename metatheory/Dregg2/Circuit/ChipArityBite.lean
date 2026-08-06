@@ -30,15 +30,18 @@ value", update the expected text — do NOT delete the canary, and do not weaken
 -/
 import Dregg2.Circuit.Emit.GraduateNarrow
 import Dregg2.Circuit.TableAirIR
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.ChipArityBite
 
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (EffectVmDescriptor VmHashSite HashInput)
+open Dregg2.Circuit.GateExpr (gVars toEmitted)
 
-/-- An absorb block of `n` distinct column reads — the arity tag is `n`. -/
-def ins (n : Nat) : List EmittedExpr := (List.range n).map .var
+/-- An absorb block of `n` distinct column reads — the arity tag is `n`. ⚑ Column-reader family,
+factored: `gVars toEmitted 0`. -/
+def ins (n : Nat) : List EmittedExpr := gVars toEmitted 0 n
 
 /-- A v1 hash site absorbing `n` columns. -/
 def site (n : Nat) : VmHashSite := ⟨50, (List.range n).map .col, n⟩

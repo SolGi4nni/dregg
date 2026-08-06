@@ -471,7 +471,7 @@ theorem forkCollideBoolN (hsat : Satisfied2 hash (automataflResolveDescN n) mini
           (NGen.cEqBit n (NGen.eqBase n 0))).addProd 1
           [NGen.cEqBit n (NGen.eqBase n 0), NGen.cEqBit n (NGen.eqBase n 1)])).eval e.loc
         = e.loc (NGen.cFork n) + (-1) * e.loc (NGen.cEqBit n (NGen.eqBase n 0))
-          + e.loc (NGen.cEqBit n (NGen.eqBase n 0)) * e.loc (NGen.cEqBit n (NGen.eqBase n 1)) := rfl
+          + e.loc (NGen.cEqBit n (NGen.eqBase n 0)) * e.loc (NGen.cEqBit n (NGen.eqBase n 1)) := by canon_head_eval [headToExpr]
     rw [hE] at hg
     refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
     rcases hff with a | a <;> rcases htt with b | b <;> rw [a, b] <;>

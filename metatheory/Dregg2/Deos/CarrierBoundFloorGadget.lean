@@ -66,6 +66,7 @@ deployed `caveatCommit_binds` lever.
 -/
 import Dregg2.Deos.InAirAuthorityDigestGadget
 import Dregg2.Deos.CapacityCarrier
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Deos.CarrierBoundFloorGadget
 
@@ -191,9 +192,17 @@ def selectorForceFirstGate (floorCol selCol : Nat) : VmConstraint2 :=
 
 /-- (caveat-uniformity) `nxt(tagCol) − loc(tagCol) == 0`, on the transition — a two-row `windowGate`
 forcing the caveat type-tag column UNIFORM across adjacent rows. Rust twin
-`carrier_floor_weld::caveat_uniform_gate`. -/
+`carrier_floor_weld::caveat_uniform_gate`. ⚑ `GateExpr.gCarry`. -/
 def caveatUniformGate (tagCol : Nat) : VmConstraint2 :=
-  .windowGate { body := .add (.nxt tagCol) (.mul (.const (-1)) (.loc tagCol)), onTransition := true }
+  .windowGate
+    { body := Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+        (Dregg2.Circuit.GateExpr.gCarry tagCol),
+      onTransition := true }
+
+theorem caveatUniformGate_eq (tagCol : Nat) :
+    caveatUniformGate tagCol = .windowGate
+      { body := WindowExpr.add (.nxt tagCol) (.mul (.const (-1)) (.loc tagCol))
+      , onTransition := true } := rfl
 
 /-- The full carrier decode-gadget gate block: four per-slot is-zero gadgets (`def` + `force`), the
 OR seed, two OR folds, the final OR fold into `GENTIAN_FLOOR_ESCROW_COL`, the FIRST-ROW-scoped
@@ -283,7 +292,7 @@ theorem caveat_uniform_step (hash : List ℤ → ℤ) (legA legB : Nat)
   have hrow := hsat.rowConstraints i hi _ hkmem
   -- `.windowGate w` ⇒ `WindowConstraint.holdsAt env isLast`; `onTransition = true` ⇒ the body need
   -- only vanish off the last row (`isLast = false`, here `hnl`) — now field-faithfully mod `p`.
-  simp only [VmConstraint2.holdsAt, caveatUniformGate, WindowConstraint.holdsAt] at hrow
+  simp only [VmConstraint2.holdsAt, caveatUniformGate_eq, WindowConstraint.holdsAt] at hrow
   have hbody := hrow hnl
   simp only [WindowExpr.eval] at hbody
   -- `(envAt t i).nxt c` is definitionally `(envAt t (i+1)).loc c`.

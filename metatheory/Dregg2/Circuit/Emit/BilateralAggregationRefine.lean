@@ -208,10 +208,18 @@ theorem eq_of_modEq_of_canon {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
   omega
 
 /-- A canonical cell whose booleanity gate vanishes mod `p` IS `0` or `1` over ℤ: primality splits
-`p ∣ x·(x−1)`, and canonicality collapses each factor. -/
-theorem bool_of_boolGate {x : ℤ} (h : x * (x + (-1)) ≡ 0 [ZMOD 2013265921])
+`p ∣ x·(x−1)`, and canonicality collapses each factor.
+
+⚑ **CANONICAL SHAPE.** `GateExpr.gBoolCanon`'s rendering evaluates to `1·(x·x) + (−1)·x`, not
+`x·(x−1)` — the SAME polynomial (`ring`), a DIFFERENT `EmittedExpr` tree (9 nodes, the corpus
+normal form). The hypothesis is stated at that shape (what every migrated call site now produces
+after unfolding its `boolGate_eq`); the `ring`-bridge to the factored form is internal. -/
+theorem bool_of_boolGate {x : ℤ} (h : 1 * (x * x) + -1 * x ≡ 0 [ZMOD 2013265921])
     (h0 : 0 ≤ x) (h1 : x < 2013265921) : x = 0 ∨ x = 1 := by
-  have hd : (2013265921 : ℤ) ∣ x * (x + (-1)) := Int.modEq_zero_iff_dvd.mp h
+  have h' : x * (x + (-1)) ≡ 0 [ZMOD 2013265921] := by
+    have e : (1 : ℤ) * (x * x) + -1 * x = x * (x + (-1)) := by ring
+    rwa [e] at h
+  have hd : (2013265921 : ℤ) ∣ x * (x + (-1)) := Int.modEq_zero_iff_dvd.mp h'
   rcases pPrimeInt.dvd_mul.mp hd with hx | hx
   · obtain ⟨k, hk⟩ := hx; left; omega
   · obtain ⟨k, hk⟩ := hx; right; omega
@@ -594,7 +602,7 @@ theorem witTrace_satisfies :
     simp only [bilateralAggDescriptor] at hc
     interval_cases i <;>
       fin_cases hc <;>
-      simp only [cg2PiBind, cg3Eq, colEqCol, boolGate, paddingGate, cumAgentTransition,
+      simp only [cg2PiBind, cg3Eq, colEqCol, boolGate_eq, paddingGate, cumAgentTransition,
         cumActiveTransition, firstCumSeed, firstNSeed, lastCumIsOne, lastNEqPi,
         VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
         witTrace, envAt, wpub, EmittedExpr.eval, WindowExpr.eval,

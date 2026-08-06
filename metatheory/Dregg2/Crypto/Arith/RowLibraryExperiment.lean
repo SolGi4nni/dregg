@@ -65,6 +65,7 @@ NEW file; imports read-only (`DescriptorIR2`, `EffectVmEmitTransfer`). Not reach
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Crypto.Arith.RowLibraryExperiment
 
@@ -112,7 +113,16 @@ These are already descriptor-agnostic in `DyckStackRefine` — they build `Emitt
 standalone leaf. -/
 
 /-- `x·(x−1)` — the booleanity gate. -/
-def gBin (c : Nat) : EmittedExpr := .mul (.var c) (.add (.var c) (.const (-1)))
+def gBin (c : Nat) : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolCanon c)
+
+/-- ⚑ **THE BYTE PIN.** `gBin` is `GateExpr.gBool` at the emitted view -- the SAME object
+`AirBuilder.gBin`, `AutomataflResolveEmit.gBin`, `AutomataflStepEmit.gBin`, `DyckStackEmit.gBin`
+and `DyckStackRefine.gBin` each wrote out separately. `rfl`, for every column: no emitted byte
+moved. -/
+theorem gBin_eq (c : Nat) :
+    gBin c = .add (.mul (.const 1) (.mul (.var c) (.var c))) (.mul (.const (-1)) (.var c)) := rfl
 /-- `sel · e` — the `Gated` wrapper. -/
 def gGate (sel : Nat) (e : EmittedExpr) : EmittedExpr := .mul (.var sel) e
 /-- `a − b`. -/
@@ -121,8 +131,12 @@ def gSub (a b : Nat) : EmittedExpr := .add (.var a) (.mul (.const (-1)) (.var b)
 def gSubK (a : Nat) (k : ℤ) : EmittedExpr := .add (.var a) (.const (-k))
 /-- `a − b − k`. -/
 def gDiffIs (a b : Nat) (k : ℤ) : EmittedExpr := .add (gSub a b) (.const (-k))
-/-- `next[nc] − local[lc]` as a two-row window body. -/
-def wThread (nc lc : Nat) : WindowExpr := .add (.nxt nc) (.mul (.const (-1)) (.loc lc))
+/-- `next[nc] − local[lc]` as a two-row window body. ⚑ `GateExpr.gThread` at the window view. -/
+def wThread (nc lc : Nat) : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread nc lc)
+
+theorem wThread_eq (nc lc : Nat) :
+    wThread nc lc = WindowExpr.add (.nxt nc) (.mul (.const (-1)) (.loc lc)) := rfl
 /-- `local[sel] · e` — the `Gated` wrapper on a window body. -/
 def wGate (sel : Nat) (e : WindowExpr) : WindowExpr := .mul (.loc sel) e
 /-- A per-row gate constraint. -/
@@ -167,8 +181,11 @@ theorem win_of_sat (hsat : Satisfied2 hash d minit mfin maddrs t) (i : Nat)
 canonical cell whose `gBin` gate vanishes mod `p` is `0` or `1` over ℤ. -/
 theorem bin_of_gate {a : Assignment} {c : Nat}
     (h : (gBin c).eval a ≡ 0 [ZMOD 2013265921]) (hc : Canon (a c)) : a c = 0 ∨ a c = 1 := by
-  simp only [gBin, EmittedExpr.eval] at h
-  have hd : (2013265921 : ℤ) ∣ a c * (a c + (-1)) := Int.modEq_zero_iff_dvd.mp h
+  simp only [gBin_eq, EmittedExpr.eval] at h
+  have h' : a c * (a c + (-1)) ≡ 0 [ZMOD 2013265921] := by
+    have heq : a c * (a c + (-1)) = 1 * (a c * a c) + (-1) * a c := by ring
+    rw [heq]; exact h
+  have hd : (2013265921 : ℤ) ∣ a c * (a c + (-1)) := Int.modEq_zero_iff_dvd.mp h'
   obtain ⟨hc0, hc1⟩ := hc
   rcases pPrimeInt.dvd_mul.mp hd with hx | hx
   · obtain ⟨k, hk⟩ := hx; left; omega
@@ -208,7 +225,7 @@ theorem gatedThread_of_sat (hsat : Satisfied2 hash d minit mfin maddrs t) (i : N
     (hs : (envAt t i).loc sel = 1) :
     (envAt t i).nxt nc = (envAt t i).loc lc := by
   have hw := win_of_sat hsat i hi hm
-  simp only [wGate, wThread, WindowExpr.eval] at hw
+  simp only [wGate, wThread_eq, WindowExpr.eval] at hw
   rw [hs, one_mul] at hw
   exact eq_of_modEq_canon hcn hcl ((gate_modEq_iff (by ring)).mp hw)
 

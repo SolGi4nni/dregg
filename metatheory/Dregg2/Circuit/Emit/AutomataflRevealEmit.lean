@@ -38,6 +38,7 @@ yet: registration is a coupled Rust-caller action, and silently placing an unuse
 golden would create another dark descriptor.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.AutomataflRevealEmit
 
@@ -87,7 +88,11 @@ def REVEAL_WIDTH : Nat := PACK_FELTS + 2 * SEAT_WIDTH
 /-! ## Constraint constructors. -/
 
 def binExpr (c : Nat) : EmittedExpr :=
-  .mul (.var c) (.add (.var c) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf c))
+
+theorem binExpr_eq (c : Nat) :
+    binExpr c = .mul (.var c) (.add (.var c) (.const (-1))) := rfl
 
 def gate (e : EmittedExpr) : VmConstraint2 := .base (.gate e)
 

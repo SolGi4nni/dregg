@@ -113,7 +113,7 @@ namespace Dregg2.Circuit.PeepholeParityMeasurement
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Metatheory.TypedLinearPredicateDescriptorIR2
 open Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2
-  (witnessCount gate bitBody exprDegree)
+  (witnessCount gate bitBody bitBody_eq exprDegree)
 open Dregg2.Crypto.Arith.FieldDeltaRangePilot
   (transitionTerm recomposeTerm bitC prog fieldDeltaRange_descriptor)
 open Dregg2.Circuit.PeepholeZeroTestElision (andAllF)
@@ -317,7 +317,7 @@ theorem peephole_multiplications (m : Nat) :
       (fun j : Fin 30 => gate (bitBody (.col (rawBase (2 * m) + 3 + j.val))))
       (by
         intro j _
-        simp [nlConstraint, gate, bitBody,
+        simp [nlConstraint, gate, bitBody_eq,
           Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr, nlWindow, exprDegree])
     simpa [r2Gates] using hmap
   rw [hc, nlTotal_append, nlTotal_append, h1, h2]

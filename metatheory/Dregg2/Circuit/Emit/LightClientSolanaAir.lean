@@ -773,7 +773,12 @@ def rootContinuity (j : Nat) : AirLeg :=
 pin is vacuous on the last row, which is exactly where an unbooleanised carry would hide the
 published total. -/
 def carryBoolean (i : Nat) : AirLeg :=
-  .window ⟨RowSel.all, .mul (loc (CARRY i)) (.add (loc (CARRY i)) (.const (-1)))⟩
+  .window ⟨RowSel.all, Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gBool (.leaf (.loc (CARRY i))))⟩
+
+theorem carryBoolean_eq (i : Nat) :
+    carryBoolean i = .window ⟨RowSel.all, .mul (loc (CARRY i)) (.add (loc (CARRY i)) (.const (-1)))⟩ :=
+  rfl
 
 /-- **Seed the tally** — on the first row `ACC = 0 + STAKE`, carrying. -/
 def firstAcc (i : Nat) : AirLeg :=

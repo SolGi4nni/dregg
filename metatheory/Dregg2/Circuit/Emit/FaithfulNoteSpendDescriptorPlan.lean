@@ -36,6 +36,7 @@ import Dregg2.Circuit.CommitmentTreeWide
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.FullStateChip
 import Dregg2.Circuit.Emit.EffectVmEmit
+import Dregg2.Circuit.GateExpr
 import Mathlib.Tactic
 
 namespace Dregg2.Circuit.Emit.FaithfulNoteSpendDescriptorPlan
@@ -46,6 +47,7 @@ open Dregg2.Circuit.DescriptorIR2
    mainTableDef poseidon2state16 poseidon2State16ChipTableDef chipLookupTupleState16 emitVmJson2)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRow)
 open Dregg2.Circuit.CommitmentTreeWide
+open Dregg2.Circuit.GateExpr (gCols gVars toEmitted)
 
 set_option autoImplicit false
 
@@ -152,9 +154,12 @@ def TRACE_WIDTH : Nat := LEVEL_COL + 1
 #guard LEVEL_COL == 1022
 #guard TRACE_WIDTH == 1023
 
-def cols (base count : Nat) : List Nat := (List.range count).map (base + ·)
-def vars (base count : Nat) : List EmittedExpr := (cols base count).map .var
-def stateCols (base step : Nat) : List Nat := cols (base + STATE_LANES * step) STATE_LANES
+/-- ⚑ Column-reader family, factored: `gCols`/`gVars toEmitted` at `Dregg2.Circuit.GateExpr`. Kept
+as named wrappers (not deleted outright) — `cols`/`vars` are consumed by five external files via a
+wildcard `open`. -/
+def cols (base count : Nat) : List Nat := gCols base count
+def vars (base count : Nat) : List EmittedExpr := gVars toEmitted base count
+def stateCols (base step : Nat) : List Nat := gCols (base + STATE_LANES * step) STATE_LANES
 
 def ownerDigestCols : List Nat :=
   (cols (OWNER_STATE_BASE + STATE_LANES * 4) 4) ++
@@ -373,10 +378,20 @@ def packBodiesAt (plan : Pack8Plan) (lane : Nat) : List EmittedExpr :=
   let inv := .var (plan.invBase + lane)
   [ esub digest (eadd lo (emul (.const 65536) hi)),
     esub (eadd hi slack) (.const FIELD_HI_CANON_MAX),
-    emul z (esub z (.const 1)),
+    Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+      (Dregg2.Circuit.GateExpr.gBoolCanon (plan.zeroBase + lane)),
     esub (emul slack inv) (oneMinus z),
     emul z slack,
     emul z lo ]
+
+/-- ⚑ THE BYTE PIN on `packBodiesAt`'s booleanity element -- the canonical 9-node `x·(x−1)` rendering
+(`GateExpr.gBoolCanon`) at the `z` witness column, `rfl`. Was the ENCODING 2 shape
+(`emul z (esub z (.const 1))`, the redundant `(−1)·1` form) before the operator lifted the
+byte-freeze; this is the re-emission, stated as an object. -/
+theorem packBodiesAt_lane_z_eq (plan : Pack8Plan) (lane : Nat) :
+    (packBodiesAt plan lane).getD 2 (.const 0) =
+      .add (.mul (.const 1) (.mul (.var (plan.zeroBase + lane)) (.var (plan.zeroBase + lane))))
+        (.mul (.const (-1)) (.var (plan.zeroBase + lane))) := rfl
 
 def packBodies (plan : Pack8Plan) : List EmittedExpr :=
   (List.range DIGEST_LANES).flatMap (packBodiesAt plan)
@@ -456,7 +471,16 @@ def rangeLookup (r : RangePlan) : VmConstraint2 :=
 def rangeLookups : List VmConstraint2 := rangePlan.map rangeLookup
 
 def bitBody (col : Nat) : EmittedExpr :=
-  emul (.var col) (esub (.var col) (.const 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolCanon col)
+
+/-- ⚑ THE BYTE PIN. `bitBody` was `emul (.var col) (esub (.var col) (.const 1))` -- `GateExpr`'s
+named ENCODING 2 (the redundant `(−1)·1` shape a constant folder would remove) -- and now renders
+`GateExpr.gBoolCanon`, the corpus normal form's own 9-node `x·(x−1)`
+(`mul(const 1, mul(x,x)) + mul(const −1, x)`). The operator lifted the byte-freeze; this is the
+re-emission, `rfl`, every column. -/
+theorem bitBody_eq (col : Nat) :
+    bitBody col = .add (.mul (.const 1) (.mul (.var col) (.var col))) (.mul (.const (-1)) (.var col)) := rfl
 
 def positionBodies : List EmittedExpr := [bitBody POS_B0, bitBody POS_B1]
 
@@ -480,8 +504,8 @@ def leafLinkConstraints : List VmConstraint2 :=
   leafLinkBodies.map fun body => .base (.boundary .first body)
 
 def continuityWindow (lane : Nat) : Dregg2.Circuit.DescriptorIR2.WindowExpr :=
-  .add (.nxt (CUR_BASE + lane))
-    (.mul (.const (-1)) (.loc (nodeDigestCols.getD lane 0)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread (CUR_BASE + lane) (nodeDigestCols.getD lane 0))
 
 /-- Every transition carries all eight parent lanes into the next level. -/
 def continuityConstraints : List VmConstraint2 :=
@@ -543,8 +567,12 @@ def faithfulNoteSpendDescriptor : EffectVmDescriptor2 :=
 compares that artifact byte-for-byte against a fresh evaluation of this definition. -/
 def faithfulNoteSpendDescriptorJson : String := emitVmJson2 faithfulNoteSpendDescriptor
 
--- Compact in-module KATs; the drift gate is the full 96,534-byte equality pin.
-#guard faithfulNoteSpendDescriptorJson.length == 96549
+-- Compact in-module KATs; the drift gate is the full 97,665-byte equality pin. ⚑ RE-EMITTED
+-- 2026-08-06: the booleanity gate migrated from a mixed encoding onto `GateExpr.gBoolCanon` (the
+-- 9-node corpus normal form), moving bytes on every `bitBody`/`packBodiesAt` site in this descriptor.
+-- The `circuit/descriptors/by-name/faithful-note-spend-v2.json` drift-gate artifact needs the same
+-- re-emit; this Lean-side pin alone does not refresh it.
+#guard faithfulNoteSpendDescriptorJson.length == 97665
 #guard faithfulNoteSpendDescriptorJson.startsWith
   "{\"name\":\"faithful-note-spend-v2::exact-note16-root8-hiding\",\"ir\":2,\"trace_width\":1023"
 

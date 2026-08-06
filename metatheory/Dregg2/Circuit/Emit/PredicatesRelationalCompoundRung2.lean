@@ -336,7 +336,7 @@ theorem bwTrace_satisfied2 :
     interval_cases i
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt, gate, piFirst,
-        commitLookup, bwTrace, bwTf, bwPub, bwRow, envAt, subC, subV, binBody, sumE,
+        commitLookup, bwTrace, bwTf, bwPub, bwRow, envAt, subC, subV, binBody_eq, sumE,
         atLeastOne, oneMinus, prodE, recomposeExpr, recomposeAExpr, recomposeBExpr, EmittedExpr.eval,
         VALUE_A, BLINDING_A, VALUE_B, BLINDING_B, DIFF, NEQ_INV, RESULT_BIT, RANGE_FLAG, EQ_FLAG,
         NEQ_FLAG, COMMIT_A, COMMIT_B, COMMIT_VERIFY, ZERO_PAD, VALUE_A_BITS_START, VALUE_B_BITS_START,

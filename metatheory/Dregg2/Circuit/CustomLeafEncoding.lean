@@ -79,6 +79,7 @@ NO new axioms; sorry-free. Import-clean. NOT added to `Dregg2.lean` (the main lo
 -/
 
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.CustomLeafEncoding
 
@@ -157,7 +158,8 @@ inductive CellLocal where
 def gateBody : CellLocal → EmittedExpr
   | .equality a b              => subE (.var a) (.var b)
   | .multiplication a b o      => subE (.mul (.var a) (.var b)) (.var o)
-  | .binary c                  => .mul (.var c) (.add (.var c) (.const (-1)))
+  | .binary c                  => Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+                                     (Dregg2.Circuit.GateExpr.gBool (.leaf c))
   | .polynomial ts             => polyBody ts
   | .gated s inner             => .mul (.var s) (gateBody inner)
   | .invertedGated s inner     => .mul (subE (.const 1) (.var s)) (gateBody inner)
@@ -200,9 +202,14 @@ theorem encodeLocal_list_holdsAt_iff (hash : List ℤ → ℤ) (tf : TraceFamily
 /-! ## §4 — The two-row `Transition` carrier (CLOSED). -/
 
 /-- The Rust `Transition{next,local}` lowering: a `windowGate` whose body is `nxt next − loc local`,
-asserted on the transition domain. -/
+asserted on the transition domain. ⚑ `GateExpr.gThread` at the window view. -/
 def encodeTransition (next locCol : Nat) : VmConstraint2 :=
-  .windowGate ⟨.add (.nxt next) (.mul (.const (-1)) (.loc locCol)), true⟩
+  .windowGate ⟨Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread next locCol), true⟩
+
+theorem encodeTransition_eq (next locCol : Nat) :
+    encodeTransition next locCol
+      = .windowGate ⟨WindowExpr.add (.nxt next) (.mul (.const (-1)) (.loc locCol)), true⟩ := rfl
 
 /-- **The transition carrier is the cross-row equality.** On an active row the encoded `windowGate`
 holds iff `nxt[next] = loc[local]` — the faithful, column-general continuity a `CellProgram`
@@ -212,7 +219,7 @@ theorem encodeTransition_holdsAt_iff (hash : List ℤ → ℤ) (tf : TraceFamily
     (isFirst : Bool) (next locCol : Nat) :
     (encodeTransition next locCol).holdsAt hash tf env isFirst false
       ↔ env.nxt next ≡ env.loc locCol [ZMOD 2013265921] := by
-  simp [encodeTransition, VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
+  simp [encodeTransition_eq, VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
     Int.ModEq]
   omega
 

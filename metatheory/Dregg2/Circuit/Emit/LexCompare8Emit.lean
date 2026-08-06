@@ -56,6 +56,7 @@ goes through `range_row_mem_iff`; no `native_decide`; `decide` only on literal-i
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
+import Dregg2.Circuit.GateExpr
 import Mathlib.Order.PiLex
 
 namespace Dregg2.Circuit.Emit.LexCompare8Emit
@@ -99,10 +100,19 @@ def LO_BOUND : ℤ := 134217728
 /-! ## §1 — Gate bodies. -/
 
 /-- `1 − e` as an `EmittedExpr`. -/
+-- ⚑ NOT migrated to `GateExpr.gOneMinus` despite matching its shape (`gOneMinus_emitted`): this
+-- def has ~13 external callers and at least two internal `simp`/`ring` proof sites (including
+-- division/modulo reasoning around line 1032) that unfold it by name; a safe migration needs each
+-- of those repaired and verified individually, which this pass did not have room to do carefully.
+-- Left as a named residual rather than risking a half-migrated, broken file.
 def eOneMinus (e : EmittedExpr) : EmittedExpr := .add (.const 1) (.mul (.const (-1)) e)
 
 /-- Booleanity body `x·(x − 1)` for column `c`. -/
-def gBool (c : Nat) : EmittedExpr := .mul (.var c) (.add (.var c) (.const (-1)))
+def gBool (c : Nat) : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf c))
+
+theorem gBool_eq (c : Nat) : gBool c = .mul (.var c) (.add (.var c) (.const (-1))) := rfl
 
 /-- The selector sum `s0 + … + s7`. -/
 def eS : EmittedExpr :=
@@ -491,7 +501,7 @@ theorem lexLt8_sound (tf : TraceFamily) (hr : tf (.custom LEX_RANGE_TID) = range
     toLex (lexKeyA env) < toLex (lexKeyB env) := by
   simp only [lexBlockHolds, lexLt8Constraints, List.forall_mem_cons,
     VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt,
-    gBool, gOneHot, gPre0, gPre1, gPre2, gPre3, gPre4, gPre5, gPre6,
+    gBool_eq, gOneHot, gPre0, gPre1, gPre2, gPre3, gPre4, gPre5, gPre6,
     gPairAP, gPairAQ, gPairBP, gPairBQ, gTopA, gTopB, gDecompA, gDecompB, gHiEq, gDelta,
     eS, ePre0, ePre1, ePre2, ePre3, ePre4, ePre5, ePre6, eSelA, eSelB, eHiA, eHiB,
     eOneMinus, eSub, lkALo, lkBLo, lkDelta,
@@ -907,7 +917,7 @@ theorem lexLt8_complete (a b : Fin 8 → ℤ)
   · intro i; fin_cases i <;> rfl
   simp only [lexBlockHolds, lexLt8Constraints, List.forall_mem_cons,
     VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt,
-    gBool, gOneHot, gPre0, gPre1, gPre2, gPre3, gPre4, gPre5, gPre6,
+    gBool_eq, gOneHot, gPre0, gPre1, gPre2, gPre3, gPre4, gPre5, gPre6,
     gPairAP, gPairAQ, gPairBP, gPairBQ, gTopA, gTopB, gDecompA, gDecompB, gHiEq, gDelta,
     eS, ePre0, ePre1, ePre2, ePre3, ePre4, ePre5, ePre6, eSelA, eSelB, eHiA, eHiB,
     eOneMinus, eSub, lkALo, lkBLo, lkDelta,
@@ -1206,7 +1216,7 @@ theorem boundary_canary_others_hold :
   simp only [lexLt8Constraints, List.eraseIdx_cons_succ, List.eraseIdx_cons_zero,
     List.forall_mem_cons,
     VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt,
-    gBool, gOneHot, gPre0, gPre1, gPre2, gPre3, gPre4, gPre5, gPre6,
+    gBool_eq, gOneHot, gPre0, gPre1, gPre2, gPre3, gPre4, gPre5, gPre6,
     gPairAP, gPairAQ, gPairBP, gPairBQ, gTopA, gDecompA, gDecompB, gHiEq, gDelta,
     eS, ePre0, ePre1, ePre2, ePre3, ePre4, ePre5, ePre6, eSelA, eSelB, eHiA, eHiB,
     eOneMinus, eSub, lkALo, lkBLo, lkDelta,

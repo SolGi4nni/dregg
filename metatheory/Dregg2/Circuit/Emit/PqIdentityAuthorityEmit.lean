@@ -24,6 +24,7 @@ premise remains `PqIdentityAuthority.CryptoBoundary` over these exact images.
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.PqIdentityAuthority
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.PqIdentityAuthorityEmit
 
@@ -98,7 +99,11 @@ def succBody3 : EmittedExpr :=
   esub (ev (NEW_EPOCH + 3)) (eadd (ev (OLD_EPOCH + 3)) (ev (CARRY + 2)))
 
 def carryBoolBody (i : Nat) : EmittedExpr :=
-  emul (ev (CARRY + i)) (esub (ev (CARRY + i)) (ek 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf (CARRY + i)))
+
+theorem carryBoolBody_eq (i : Nat) :
+    carryBoolBody i = emul (ev (CARRY + i)) (esub (ev (CARRY + i)) (ek 1)) := rfl
 
 def keyDiffTerm (i : Nat) : EmittedExpr :=
   emul (esub (ev (NEW_KEY + i)) (ev (OLD_KEY + i)))

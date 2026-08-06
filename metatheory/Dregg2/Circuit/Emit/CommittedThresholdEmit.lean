@@ -62,6 +62,7 @@ non-vacuous semantic lemmas (`binary_body_zero_iff` — the range-gadget crux, T
 NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.CommittedThresholdEmit
 
@@ -192,7 +193,11 @@ def recompBody : EmittedExpr :=
 
 /-- The per-bit binary gate body `bit_i·(bit_i − 1)` (the DSL `Binary` constraint). -/
 def binBody (i : Nat) : EmittedExpr :=
-  .mul (.var (diffBit i)) (.add (.var (diffBit i)) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf (diffBit i)))
+
+theorem binBody_eq (i : Nat) :
+    binBody i = .mul (.var (diffBit i)) (.add (.var (diffBit i)) (.const (-1))) := rfl
 
 /-! ## §3 — The descriptor. -/
 
@@ -256,7 +261,7 @@ column is 0 or 1 — TRUE for a genuine bit, FALSE otherwise. This is the tooth 
 recomposition an honest range proof (a non-binary "bit" can forge the weighted sum). -/
 theorem binary_body_zero_iff (i : Nat) (a : Assignment) :
     (binBody i).eval a = 0 ↔ a (diffBit i) = 0 ∨ a (diffBit i) = 1 := by
-  simp only [binBody, EmittedExpr.eval]
+  simp only [binBody_eq, EmittedExpr.eval]
   constructor
   · intro h
     rcases mul_eq_zero.mp h with h0 | h1

@@ -88,22 +88,23 @@ theorem varsProd_eval (a : Nat → ℤ) (cols : List Nat) :
   cases cols with
   | nil => rfl
   | cons co rest =>
-      simp only [varsProd, varsVal]
+      show (rest.foldl (fun acc v => EmittedExpr.mul acc (.var v)) (.var co)).eval a
+        = varsVal a (co :: rest)
       rw [foldl_mul_eval]
       rfl
 
+/-- ⚑ RE-PROVED FOR THE CANONICAL RENDERER (2026-08-06). The `coeff == 1` case split is gone: the
+coefficient is always written, so there is one arm, not two. -/
 theorem termToExpr_eval (a : Nat → ℤ) (t : ℤ × List Nat) :
     (termToExpr t).eval a = termVal a t := by
   obtain ⟨coeff, cols⟩ := t
   cases cols with
-  | nil => simp [termToExpr, termVal, varsVal, EmittedExpr.eval]
+  | nil => simp [termToExpr, Dregg2.Circuit.GateExpr.gTermToExpr, termVal, varsVal,
+      EmittedExpr.eval]
   | cons co rest =>
-      simp only [termToExpr, termVal]
-      by_cases hc : coeff == 1
-      · have : coeff = 1 := by simpa using hc
-        rw [if_pos hc, varsProd_eval, this, one_mul]
-      · rw [if_neg hc]
-        simp only [EmittedExpr.eval, varsProd_eval]
+      show (EmittedExpr.mul (.const coeff) (varsProd (co :: rest))).eval a
+        = termVal a (coeff, co :: rest)
+      simp only [EmittedExpr.eval, varsProd_eval, termVal]
 
 /-- A `.add`-fold evaluates to `init + Σ` of the tail's evals. -/
 theorem foldl_add_eval (a : Nat → ℤ) (l : List EmittedExpr) (e : EmittedExpr) :
@@ -115,16 +116,16 @@ theorem foldl_add_eval (a : Nat → ℤ) (l : List EmittedExpr) (e : EmittedExpr
       simp only [EmittedExpr.eval, List.map_cons, List.sum_cons]
       ring
 
-/-- The list of component `EmittedExpr`s `headToExpr` folds — filtered terms plus a possible
-constant — factored out so the fold is over a list I control (dodging matcher-identity `rw` pain). -/
+/-- The list of component `EmittedExpr`s `headToExpr` folds — ⚑ EVERY term plus a possible constant,
+factored out so the fold is over a list I control (dodging matcher-identity `rw` pain). The zero-coeff
+FILTER is gone with the flag day: the canonical renderer keeps a zero-coefficient term and elides only
+a zero head-CONSTANT, which is exactly the rule `AirNormalForm` §1 states. -/
 def headExprs (h : Head) : List EmittedExpr :=
-  let ts := (h.terms.filter (fun t => t.1 != 0)).map termToExpr
-  if h.const == 0 then ts else ts ++ [.const h.const]
+  h.terms.map termToExpr ++ (if h.const = 0 then [] else [.const h.const])
 
 /-- `headToExpr`'s `.add`-fold, over an explicit list. -/
-def foldExprs : List EmittedExpr → EmittedExpr
-  | []        => .const 0
-  | e :: rest => rest.foldl (fun acc x => .add acc x) e
+def foldExprs : List EmittedExpr → EmittedExpr :=
+  Dregg2.Circuit.GateExpr.gFoldExprs Dregg2.Circuit.GateExpr.toEmitted
 
 /-- `headToExpr` IS `foldExprs ∘ headExprs`, definitionally. -/
 theorem headToExpr_eq_foldExprs (h : Head) : headToExpr h = foldExprs (headExprs h) := rfl
@@ -132,8 +133,10 @@ theorem headToExpr_eq_foldExprs (h : Head) : headToExpr h = foldExprs (headExprs
 theorem foldExprs_eval (a : Nat → ℤ) (ts : List EmittedExpr) :
     (foldExprs ts).eval a = (ts.map (fun x => x.eval a)).sum := by
   cases ts with
-  | nil => rfl
-  | cons e rest => simp only [foldExprs]; rw [foldl_add_eval]; simp [List.map_cons, List.sum_cons]
+  | nil => show (EmittedExpr.const 0).eval a = _; simp [EmittedExpr.eval]
+  | cons e rest =>
+      show (rest.foldl (fun acc x => EmittedExpr.add acc x) e).eval a = _
+      rw [foldl_add_eval]; simp [List.map_cons, List.sum_cons]
 
 /-- Filtering zero-coeff terms preserves the term-sum (dropped terms have value `0`). -/
 theorem sum_filter_termVal (a : Nat → ℤ) (L : List (ℤ × List Nat)) :
@@ -151,24 +154,21 @@ theorem sum_filter_termVal (a : Nat → ℤ) (L : List (ℤ × List Nat)) :
         rw [hb]
         simp only [if_true, List.map_cons, List.sum_cons, ih]
 
-/-- The filtered-terms sublist evaluates (mapped, summed) to the full term-sum. -/
+/-- The term sublist evaluates (mapped, summed) to the term-sum. ⚑ No filter step any more — the
+canonical renderer emits every term, so this is a plain `map` congruence. -/
 theorem headExprs_termPart_sum (a : Nat → ℤ) (h : Head) :
-    (((h.terms.filter (fun t => t.1 != 0)).map termToExpr).map (fun x => x.eval a)).sum
-      = (h.terms.map (termVal a)).sum := by
+    ((h.terms.map termToExpr).map (fun x => x.eval a)).sum = (h.terms.map (termVal a)).sum := by
   rw [List.map_map]
-  have : ((h.terms.filter (fun t => t.1 != 0)).map ((fun x => x.eval a) ∘ termToExpr))
-      = (h.terms.filter (fun t => t.1 != 0)).map (termVal a) := by
-    apply List.map_congr_left; intro t _; exact termToExpr_eval a t
-  rw [this, sum_filter_termVal]
+  exact congrArg List.sum (List.map_congr_left (fun t _ => termToExpr_eval a t))
 
 /-- **THE BRIDGE.** The lowered gate evaluates to the clean semantic sum. -/
 theorem headToExpr_eval (a : Nat → ℤ) (h : Head) :
     (headToExpr h).eval a = evalH h a := by
-  rw [headToExpr_eq_foldExprs, foldExprs_eval, headExprs]
-  by_cases hconst : (h.const == 0) = true
-  · have hc0 : h.const = 0 := by simpa using hconst
-    rw [if_pos hconst, headExprs_termPart_sum, evalH, hc0, add_zero]
-  · rw [if_neg hconst, List.map_append, List.sum_append, headExprs_termPart_sum]
+  rw [headToExpr_eq_foldExprs, foldExprs_eval, headExprs, List.map_append, List.sum_append,
+    headExprs_termPart_sum]
+  by_cases hconst : h.const = 0
+  · rw [if_pos hconst, evalH, hconst]; simp
+  · rw [if_neg hconst]
     simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, EmittedExpr.eval, add_zero]
     rw [evalH]
 
@@ -181,23 +181,23 @@ theorem evalH_lin (a : Nat → ℤ) (c : ℤ) (col : Nat) : evalH (Head.lin c co
 
 theorem evalH_addLin (a : Nat → ℤ) (h : Head) (c : ℤ) (col : Nat) :
     evalH (h.addLin c col) a = evalH h a + c * a col := by
-  simp only [evalH, Head.addLin, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+  simp only [evalH, Dregg2.Circuit.GateExpr.GHead.addLin, List.map_append, List.sum_append, List.map_cons, List.map_nil,
     List.sum_cons, List.sum_nil, termVal, varsVal, List.foldl_nil, add_zero]
   ring
 
 theorem evalH_addProd (a : Nat → ℤ) (h : Head) (c : ℤ) (cols : List Nat) :
     evalH (h.addProd c cols) a = evalH h a + c * varsVal a cols := by
-  simp only [evalH, Head.addProd, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+  simp only [evalH, Dregg2.Circuit.GateExpr.GHead.addProd, List.map_append, List.sum_append, List.map_cons, List.map_nil,
     List.sum_cons, List.sum_nil, termVal, add_zero]
   ring
 
 theorem evalH_addConst (a : Nat → ℤ) (h : Head) (k : ℤ) :
     evalH (h.addConst k) a = evalH h a + k := by
-  simp only [evalH, Head.addConst]; ring
+  simp only [evalH, Dregg2.Circuit.GateExpr.GHead.addConst]; ring
 
 theorem evalH_append (a : Nat → ℤ) (h o : Head) :
     evalH (h.append o) a = evalH h a + evalH o a := by
-  simp only [evalH, Head.append, List.map_append, List.sum_append]; ring
+  simp only [evalH, Dregg2.Circuit.GateExpr.GHead.append, List.map_append, List.sum_append]; ring
 
 theorem sum_map_mul_left {α : Type _} (k : ℤ) (l : List α) (f : α → ℤ) :
     (l.map (fun x => k * f x)).sum = k * (l.map f).sum := by
@@ -206,7 +206,7 @@ theorem sum_map_mul_left {α : Type _} (k : ℤ) (l : List α) (f : α → ℤ) 
   | cons x xs ih => simp only [List.map_cons, List.sum_cons, ih]; ring
 
 theorem evalH_scale (a : Nat → ℤ) (h : Head) (k : ℤ) : evalH (h.scale k) a = k * evalH h a := by
-  simp only [evalH, Head.scale, List.map_map]
+  simp only [evalH, Dregg2.Circuit.GateExpr.GHead.scale, List.map_map]
   have : (h.terms.map ((termVal a) ∘ (fun t => (t.1 * k, t.2))))
       = h.terms.map (fun t => k * termVal a t) := by
     apply List.map_congr_left; intro t _; simp only [Function.comp, termVal]; ring

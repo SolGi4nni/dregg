@@ -8,6 +8,7 @@ game-economy value.  Rust includes and interprets the emitted IR2 bytes.
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.DecideSatisfied2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.FieldDeltaRangeEmit
 
@@ -30,8 +31,11 @@ def bitCol (j : Nat) : Nat := BIT_BASE + j
 def esub (x y : EmittedExpr) : EmittedExpr := .add x (.mul (.const (-1)) y)
 def gate (body : EmittedExpr) : VmConstraint2 := .base (.gate body)
 def boolBody (j : Nat) : EmittedExpr :=
-  let b := EmittedExpr.var (bitCol j)
-  .mul b (esub b (.const 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf (bitCol j)))
+
+theorem boolBody_eq (j : Nat) :
+    boolBody j = let b := EmittedExpr.var (bitCol j); .mul b (esub b (.const 1)) := rfl
 def recomposeBody : EmittedExpr :=
   (List.range RESULT_BITS).foldl
     (fun acc j => esub acc (.mul (.const ((2 : Int) ^ j)) (.var (bitCol j))))
@@ -84,7 +88,7 @@ theorem binary_of_boolBody {a : Assignment} {j : Nat}
     a (bitCol j) = 0 ∨ a (bitCol j) = 1 := by
   obtain ⟨h0, h1⟩ := hc
   have hev : (boolBody j).eval a = a (bitCol j) * (a (bitCol j) - 1) := by
-    simp only [boolBody, esub, EmittedExpr.eval]; ring
+    simp only [boolBody_eq, esub, EmittedExpr.eval]; ring
   rw [hev] at h
   have hd : (2013265921 : ℤ) ∣ a (bitCol j) * (a (bitCol j) - 1) :=
     Int.modEq_zero_iff_dvd.mp h

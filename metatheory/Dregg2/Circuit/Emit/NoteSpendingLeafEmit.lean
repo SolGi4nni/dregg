@@ -56,6 +56,7 @@ Definitional descriptor + byte-pinned `#guard` + two genuinely-proven non-vacuou
 `#assert_axioms` of both ⊆ {} (pure `omega` / `mul_eq_zero`). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 
@@ -122,7 +123,12 @@ def whenSite (outputCol : Nat) (inputCols : List Nat) (laneBase : Nat) : VmConst
 /-! ## §3 — the pure-local Base gates (the adapter's `local_gate_body`). -/
 
 /-- C1 `is_merkle` boolean: `is_merkle·(is_merkle − 1)`. -/
-def binaryGate (c : Nat) : EmittedExpr := .mul (.var c) (.add (.var c) (.const (-1)))
+def binaryGate (c : Nat) : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf c))
+
+theorem binaryGate_eq (c : Nat) :
+    binaryGate c = .mul (.var c) (.add (.var c) (.const (-1))) := rfl
 
 /-- An inverted-gated equality `(1 − sel)·(a − b)` (C2-final and the three C2-link pins). -/
 def invEqGate (sel a b : Nat) : EmittedExpr := .mul (subE (.const 1) (.var sel)) (subE (.var a) (.var b))
@@ -158,7 +164,8 @@ def noteSpendConstraints : List VmConstraint2 :=
   , unlessSite 14 [17, 10, 11, 12, 13] 121          -- C4 nullifier final
   , .base (.gate posGate)                           -- C5 position validity
   , whenSite 5 [0, 1, 2, 3, 4] 128                  -- C6 Merkle membership (position-aware)
-  , .windowGate ⟨.add (.nxt 0) (.mul (.const (-1)) (.loc 5)), true⟩  -- C7 chain continuity
+  , .windowGate ⟨Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+      (Dregg2.Circuit.GateExpr.gThread 0 5), true⟩  -- C7 chain continuity
   , .base (.piBinding VmRow.first 14 0)             -- nullifier == pi0
   , .base (.piBinding VmRow.first 1 2)              -- value == pi2
   , .base (.piBinding VmRow.first 2 3)              -- asset_type == pi3
@@ -189,20 +196,23 @@ def noteSpendLeafDesc : EffectVmDescriptor2 :=
 
 /-! ## §6 — genuinely-proven, non-vacuous semantic lemmas (the load-bearing teeth). -/
 
-/-- The C7 continuity WindowExpr body. -/
-def contBodyW : WindowExpr := .add (.nxt 0) (.mul (.const (-1)) (.loc 5))
+/-- The C7 continuity WindowExpr body. ⚑ `GateExpr.gThread`. -/
+def contBodyW : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread 0 5)
+
+theorem contBodyW_eq : contBodyW = WindowExpr.add (.nxt 0) (.mul (.const (-1)) (.loc 5)) := rfl
 
 /-- C7 chain continuity: the body vanishes EXACTLY when the next level's path input equals this
 level's parent (`next[CURRENT] = loc[PARENT]`) — the Lean face of the emitted `.windowGate`. -/
 theorem cont_body_zero_iff (env : VmRowEnv) :
     contBodyW.eval env = 0 ↔ env.nxt 0 = env.loc 5 := by
-  simp only [contBodyW, WindowExpr.eval]
+  simp only [contBodyW_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 /-- C1 boolean: the gate body vanishes EXACTLY when `is_merkle ∈ {0, 1}`. -/
 theorem binary_gate_zero_iff (a : Assignment) :
     (binaryGate IS_MERKLE).eval a = 0 ↔ a IS_MERKLE = 0 ∨ a IS_MERKLE = 1 := by
-  simp only [binaryGate, EmittedExpr.eval]
+  simp only [binaryGate_eq, EmittedExpr.eval]
   rw [mul_eq_zero]
   constructor
   · rintro (h | h)

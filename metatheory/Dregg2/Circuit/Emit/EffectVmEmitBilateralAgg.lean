@@ -157,7 +157,12 @@ def cg2PiBind (row : VmRow) (col k : Nat) : VmConstraint2 :=
 
 /-- A boolean gate `local[c] ∈ {0,1}` (`c·(c-1) = 0`). -/
 def boolGate (c : Nat) : VmConstraint2 :=
-  .base (.gate (.mul (.var c) (.add (.var c) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolCanon c)))
+
+theorem boolGate_eq (c : Nat) :
+    boolGate c
+      = .base (.gate (.add (.mul (.const 1) (.mul (.var c) (.var c))) (.mul (.const (-1)) (.var c)))) := rfl
 
 /-- The padding gate `(1 - consistent)·is_agent = 0` (a padding row carries `is_agent = 0`). -/
 def paddingGate : VmConstraint2 :=

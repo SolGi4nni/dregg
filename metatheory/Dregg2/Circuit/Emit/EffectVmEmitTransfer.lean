@@ -35,6 +35,7 @@ circuit enforces EXACTLY the intent, and any wrong-output row (tampered balance 
 makes the descriptor UNSAT (`transferVm_rejects_*`).
 -/
 import Dregg2.Circuit.Emit.EffectVmEmit
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitTransfer
 
@@ -116,7 +117,13 @@ def gBalHi : EmittedExpr := eSub (eSA state.BALANCE_HI) (eSB state.BALANCE_HI)
 
 /-- Direction-boolean body: `direction·(direction - 1)`. -/
 def gDirBool : EmittedExpr :=
-  .mul (ePrm param.DIRECTION) (.add (ePrm param.DIRECTION) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf (prmCol param.DIRECTION)))
+
+/-- ⚑ **THE BYTE PIN.** `gDirBool` is `GateExpr.gBool` at the emitted view. `rfl`: no emitted byte
+moved. -/
+theorem gDirBool_eq :
+    gDirBool = .mul (ePrm param.DIRECTION) (.add (ePrm param.DIRECTION) (.const (-1))) := rfl
 
 /-- Nonce-increment body (ungated, transfer-specialized): `new_nonce - old_nonce - (1 - s_noop)`.
 On a transfer row `s_noop = 0`, so this is `new_nonce - old_nonce - 1`. -/
@@ -305,7 +312,7 @@ theorem transferRowGates_holds_iff (env : VmRowEnv) (hrow : IsTransferRow env) :
       simp only [List.mem_append, List.mem_map, List.mem_range]
       exact Or.inr ⟨i, hi, rfl⟩
     -- unfold each holds (now each body is `≡ 0 [ZMOD p]`)
-    simp only [VmConstraint.holdsVm, gBalLo, gBalHi, gDirBool, gNonce, gCapPass, gResPass,
+    simp only [VmConstraint.holdsVm, gBalLo, gBalHi, gDirBool_eq, gNonce, gCapPass, gResPass,
       eSA, eSB, ePrm, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hDir hNon hCap hRes
     rw [hsN] at hNon
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
@@ -338,7 +345,7 @@ theorem transferRowGates_holds_iff (env : VmRowEnv) (hrow : IsTransferRow env) :
       simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
       exact (gate_modEq_iff (by ring)).mpr hHi
     · -- gDirBool: from `dir ≡ 0 ∨ dir ≡ 1` the boolean gate `dir·(dir-1) ≡ 0` holds
-      simp only [VmConstraint.holdsVm, gDirBool, ePrm, EmittedExpr.eval]
+      simp only [VmConstraint.holdsVm, gDirBool_eq, ePrm, EmittedExpr.eval]
       rw [Int.modEq_zero_iff_dvd]
       rcases hDir with hd | hd
       · rw [Int.modEq_zero_iff_dvd] at hd
@@ -718,7 +725,7 @@ theorem transferFeeVm_faithful (env : VmRowEnv) (hrow : IsTransferRow env) :
       apply h
       simp only [List.mem_append, List.mem_map, List.mem_range]
       exact Or.inr ⟨i, hi, rfl⟩
-    simp only [VmConstraint.holdsVm, gBalLoFee, gBalLo, gBalHi, gDirBool, gNonce, gCapPass,
+    simp only [VmConstraint.holdsVm, gBalLoFee, gBalLo, gBalHi, gDirBool_eq, gNonce, gCapPass,
       eSA, eSB, ePrm, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hDir hNon hCap
     rw [hsN] at hNon
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
@@ -743,7 +750,7 @@ theorem transferFeeVm_faithful (env : VmRowEnv) (hrow : IsTransferRow env) :
       exact (gate_modEq_iff (by ring)).mpr hLo
     · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
       exact (gate_modEq_iff (by ring)).mpr hHi
-    · simp only [VmConstraint.holdsVm, gDirBool, ePrm, EmittedExpr.eval]
+    · simp only [VmConstraint.holdsVm, gDirBool_eq, ePrm, EmittedExpr.eval]
       rw [Int.modEq_zero_iff_dvd]
       rcases hDir with hd | hd
       · rw [Int.modEq_zero_iff_dvd] at hd
@@ -829,9 +836,15 @@ def gAsmAfter : EmittedExpr :=
 def gAsmAmount : EmittedExpr :=
   eSub (ePrm param.AMOUNT) (.add (.var cAM0) (.mul (.const 32768) (.var cAM1)))
 /-- Borrow-bit booleanity: `bb0·(bb0 − 1)`. -/
-def gBrw0Bool : EmittedExpr := .mul (.var cBRW0) (.add (.var cBRW0) (.const (-1)))
+def gBrw0Bool : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf cBRW0))
+theorem gBrw0Bool_eq : gBrw0Bool = .mul (.var cBRW0) (.add (.var cBRW0) (.const (-1))) := rfl
 /-- Borrow-bit booleanity: `bb1·(bb1 − 1)`. -/
-def gBrw1Bool : EmittedExpr := .mul (.var cBRW1) (.add (.var cBRW1) (.const (-1)))
+def gBrw1Bool : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf cBRW1))
+theorem gBrw1Bool_eq : gBrw1Bool = .mul (.var cBRW1) (.add (.var cBRW1) (.const (-1))) := rfl
 /-- Debit borrow, limb 0 (`direction`-gated): `dir·(bef0 − am0 + bb0·2^15 − aft0)`. On a debit row this
 forces `bef0 − am0 = aft0 − bb0·2^15` — the low-limb borrow subtraction (mirror of `vault_weld`'s
 `borrow_compare_gates`, with `Q=before, P=amount, W=after`). -/
@@ -862,9 +875,15 @@ gate, so on a credit row `after = before + amount` over ℤ with `after < 2^30 <
 /-- The credit selector expression `1 − dir` (`= 1` on a credit row, `0` on a debit row). -/
 def eCreditSel : EmittedExpr := .add (.const 1) (.mul (.const (-1)) (ePrm param.DIRECTION))
 /-- Credit carry-bit booleanity: `cc0·(cc0 − 1)`. -/
-def gCry0Bool : EmittedExpr := .mul (.var cCRY0) (.add (.var cCRY0) (.const (-1)))
+def gCry0Bool : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf cCRY0))
+theorem gCry0Bool_eq : gCry0Bool = .mul (.var cCRY0) (.add (.var cCRY0) (.const (-1))) := rfl
 /-- Credit carry-bit booleanity: `cc1·(cc1 − 1)`. -/
-def gCry1Bool : EmittedExpr := .mul (.var cCRY1) (.add (.var cCRY1) (.const (-1)))
+def gCry1Bool : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf cCRY1))
+theorem gCry1Bool_eq : gCry1Bool = .mul (.var cCRY1) (.add (.var cCRY1) (.const (-1))) := rfl
 /-- Credit carry, limb 0 (`(1−dir)`-gated): `(1−dir)·(bef0 + am0 − cc0·2^15 − aft0)`. On a credit row
 this forces `bef0 + am0 = aft0 + cc0·2^15` — the low-limb carry addition (twin of `gBorrow0`). -/
 def gCarry0 : EmittedExpr :=
@@ -964,7 +983,7 @@ theorem transferAvail_derives_availability_row (hash : List ℤ → ℤ) (env : 
   have gBor0 := hcs _ (availGate_mem (.gate gBorrow0) (by simp [transferAvailGates]))
   have gBor1 := hcs _ (availGate_mem (.gate gBorrow1) (by simp [transferAvailGates]))
   have gNoB := hcs _ (availGate_mem (.gate gNoBorrow) (by simp [transferAvailGates]))
-  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gBrw0Bool, gBrw1Bool,
+  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gBrw0Bool_eq, gBrw1Bool_eq,
     gBorrow0, gBorrow1, gNoBorrow, eSA, eSB, ePrm, eSub, EmittedExpr.eval] at gAsmB gAsmA gAsmM gB0 gB1 gBor0 gBor1 gNoB
   rw [hdir, one_mul] at gBor0 gBor1 gNoB
   -- borrow bits are boolean (mod-p booleanity + canonicality + p prime)
@@ -1054,7 +1073,7 @@ theorem transferAvail_credit_no_overflow (hash : List ℤ → ℤ) (env : VmRowE
   have gCar0 := hcs _ (availGate_mem (.gate gCarry0) (by simp [transferAvailGates]))
   have gCar1 := hcs _ (availGate_mem (.gate gCarry1) (by simp [transferAvailGates]))
   have gNoC := hcs _ (availGate_mem (.gate gNoCarry) (by simp [transferAvailGates]))
-  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gCry0Bool, gCry1Bool,
+  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gCry0Bool_eq, gCry1Bool_eq,
     gCarry0, gCarry1, gNoCarry, eCreditSel, eSA, eSB, ePrm, eSub,
     EmittedExpr.eval] at gAsmB gAsmA gAsmM gK0 gK1 gCar0 gCar1 gNoC
   rw [hdir] at gCar0 gCar1 gNoC
@@ -1224,9 +1243,15 @@ def gFeeCarry1 : EmittedExpr :=
     (eSub (.add (.add (.var cBEF1) (.var cAM1)) (.var cCRY0))
       (.add (.var cMID1) (.mul (.const 32768) (.var cCRY1))))
 /-- Fee-borrow-bit booleanity: `fb0·(fb0 − 1)`. -/
-def gFb0Bool : EmittedExpr := .mul (.var cFB0) (.add (.var cFB0) (.const (-1)))
+def gFb0Bool : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf cFB0))
+theorem gFb0Bool_eq : gFb0Bool = .mul (.var cFB0) (.add (.var cFB0) (.const (-1))) := rfl
 /-- Fee-borrow-bit booleanity: `fb1·(fb1 − 1)`. -/
-def gFb1Bool : EmittedExpr := .mul (.var cFB1) (.add (.var cFB1) (.const (-1)))
+def gFb1Bool : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf cFB1))
+theorem gFb1Bool_eq : gFb1Bool = .mul (.var cFB1) (.add (.var cFB1) (.const (-1))) := rfl
 /-- Fee subtraction, limb 0 — UNGATED (`after = mid − fee` holds in BOTH directions):
 `mid0 − fee0 + fb0·2^15 − aft0`. -/
 def gFeeSub0 : EmittedExpr :=
@@ -1324,8 +1349,8 @@ theorem transferFeeAvail_derives_availability_row (hash : List ℤ → ℤ) (env
   have gSub0 := hcs _ (feeAvailGate_mem (.gate gFeeSub0) (by simp [transferFeeAvailGates]))
   have gSub1 := hcs _ (feeAvailGate_mem (.gate gFeeSub1) (by simp [transferFeeAvailGates]))
   have gNoF := hcs _ (feeAvailGate_mem (.gate gNoFeeBorrow) (by simp [transferFeeAvailGates]))
-  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gAsmFee, gBrw0Bool, gBrw1Bool,
-    gFeeBorrow0, gFeeBorrow1, gNoBorrow, gFb0Bool, gFb1Bool, gFeeSub0, gFeeSub1, gNoFeeBorrow,
+  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gAsmFee, gBrw0Bool_eq, gBrw1Bool_eq,
+    gFeeBorrow0, gFeeBorrow1, gNoBorrow, gFb0Bool_eq, gFb1Bool_eq, gFeeSub0, gFeeSub1, gNoFeeBorrow,
     eSA, eSB, ePrm, eSub,
     EmittedExpr.eval] at gAsmB gAsmA gAsmM gAsmF gB0 gB1 gBor0 gBor1 gNoB gF0 gF1 gSub0 gSub1 gNoF
   rw [hdir, one_mul] at gBor0 gBor1 gNoB
@@ -1459,8 +1484,8 @@ theorem transferFeeAvail_credit_exact (hash : List ℤ → ℤ) (env : VmRowEnv)
   have gSub0 := hcs _ (feeAvailGate_mem (.gate gFeeSub0) (by simp [transferFeeAvailGates]))
   have gSub1 := hcs _ (feeAvailGate_mem (.gate gFeeSub1) (by simp [transferFeeAvailGates]))
   have gNoF := hcs _ (feeAvailGate_mem (.gate gNoFeeBorrow) (by simp [transferFeeAvailGates]))
-  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gAsmFee, gCry0Bool, gCry1Bool,
-    gFeeCarry0, gFeeCarry1, gNoCarry, gFb0Bool, gFb1Bool, gFeeSub0, gFeeSub1, gNoFeeBorrow,
+  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gAsmFee, gCry0Bool_eq, gCry1Bool_eq,
+    gFeeCarry0, gFeeCarry1, gNoCarry, gFb0Bool_eq, gFb1Bool_eq, gFeeSub0, gFeeSub1, gNoFeeBorrow,
     eCreditSel, eSA, eSB, ePrm, eSub,
     EmittedExpr.eval] at gAsmB gAsmA gAsmM gAsmF gK0 gK1 gCar0 gCar1 gNoC gF0 gF1 gSub0 gSub1 gNoF
   rw [hdir] at gCar0 gCar1 gNoC

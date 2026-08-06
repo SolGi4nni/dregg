@@ -56,6 +56,7 @@ and the sound-arithmetic floor is inherited rather than re-derived. Everything e
 `native_decide`. Facts are NAMED THEOREMS — this file adds zero `#guard`s.
 -/
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.MinaWrapCommitMachine
 
@@ -221,7 +222,12 @@ theorem yRouteExpr_eval (a : Assignment) (i : Nat) : (yRouteExpr i).eval a = yRo
   ring
 
 /-- `s · (s − 1)` — booleanity. -/
-def cboolExpr (sel : Nat) : Expr := .mul (.var sel) (.add (.var sel) (.const (-1)))
+def cboolExpr (sel : Nat) : Expr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toSource
+    (Dregg2.Circuit.GateExpr.gBool (.leaf sel))
+
+theorem cboolExpr_eq (sel : Nat) :
+    cboolExpr sel = .mul (.var sel) (.add (.var sel) (.const (-1))) := rfl
 
 /-- `Σ_{k<n} sel_{base+k} − 1` — exactly one position on. -/
 def selSumExpr (base n : Nat) : Expr :=
@@ -238,13 +244,19 @@ def decodeExpr (base n idxCol : Nat) : Expr :=
 def zchkExpr (i : Nat) : Expr := .mul (.var ZCHK_COL) (.var (Z_BASE + i))
 
 /-- The register-file window leg for register `r`, limb `i`. ONE leg, not a write leg and a hold
-leg, so no assignment leaves the next row's register free. -/
+leg, so no assignment leaves the next row's register free.
+
+⚑ **RE-EMIT**: was the expensive mux form (`WSEL·z + (1−WSEL)·reg`, 3 multiplications); this is
+`nxt(reg) − gMux(WSEL, reg, z)` (`Dregg2.Circuit.GateExpr`'s form B, 2 multiplications) — the SAME
+polynomial, one fewer multiplication. Also collapses the byte-identical cross-file duplicate in
+`MinaWrapVerifierProgram.regWindowExpr` onto the same shared shape. -/
 def regWindowExpr (r i : Nat) : WindowExpr :=
-  .add (.nxt (regCol r + i))
-    (.mul (.const (-1))
-      (.add (.mul (.loc (WSEL_BASE + r)) (.loc (Z_BASE + i)))
-            (.mul (.add (.const 1) (.mul (.const (-1)) (.loc (WSEL_BASE + r))))
-                  (.loc (regCol r + i)))))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gEsub Dregg2.Circuit.GateExpr.idOps
+      (.leaf (Dregg2.Circuit.GateExpr.WLeaf.nxt (regCol r + i)))
+      (Dregg2.Circuit.GateExpr.gMux (.leaf (Dregg2.Circuit.GateExpr.WLeaf.loc (WSEL_BASE + r)))
+        (.leaf (Dregg2.Circuit.GateExpr.WLeaf.loc (regCol r + i)))
+        (.leaf (Dregg2.Circuit.GateExpr.WLeaf.loc (Z_BASE + i)))))
 
 def regBody (cur nxt : Assignment) (r i : Nat) : ℤ :=
   nxt (regCol r + i) - (cur (WSEL_BASE + r) * cur (Z_BASE + i)

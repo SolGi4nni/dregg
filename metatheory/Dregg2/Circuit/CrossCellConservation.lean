@@ -58,6 +58,7 @@ All `#assert_axioms`-clean. NO `sorry`/`admit`/carrier; conservation DERIVED fro
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
+import Dregg2.Circuit.GateExpr
 import Dregg2.Tactics
 
 namespace Dregg2.Circuit.CrossCellConservation
@@ -168,7 +169,11 @@ def eSub (a b : EmittedExpr) : EmittedExpr := .add a (eNeg b)
 
 /-- A plain (non-selector) booleanity gate `b·(b−1)`. -/
 def rgBool (b : Nat) : VmConstraint2 :=
-  .base (.gate (.mul (.var b) (.add (.var b) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf b))))
+
+theorem rgBool_eq (b : Nat) :
+    rgBool b = .base (.gate (.mul (.var b) (.add (.var b) (.const (-1))))) := rfl
 
 /-- A plain range-assembly gate `col − Σ 2^i bit_i`. -/
 def rgAssembly (col : Nat) (bit : Nat → Nat) (n : Nat) : VmConstraint2 :=
@@ -204,7 +209,12 @@ def WIDTH : Nat := Ccc.BIT_BASE + TOTAL_RANGE_BITS
 def gate (body : EmittedExpr) : VmConstraint2 := .base (.gate body)
 
 /-- `present ∈ {0,1}`. -/
-def boolPresent : VmConstraint2 := gate (.mul (.var Ccc.PRESENT_COL) (.add (.var Ccc.PRESENT_COL) (.const (-1))))
+def boolPresent : VmConstraint2 :=
+  gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf Ccc.PRESENT_COL)))
+
+theorem boolPresent_eq :
+    boolPresent = gate (.mul (.var Ccc.PRESENT_COL) (.add (.var Ccc.PRESENT_COL) (.const (-1)))) := rfl
 /-- `present·(sign² − 1) = 0` (a real row carries `sign ∈ {+1,−1}`). -/
 def signSquareGate : VmConstraint2 :=
   gate (.mul (.var Ccc.PRESENT_COL) (.add (.mul (.var Ccc.SIGN_COL) (.var Ccc.SIGN_COL)) (.const (-1))))

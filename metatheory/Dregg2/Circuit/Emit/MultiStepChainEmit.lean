@@ -45,6 +45,7 @@ non-vacuous semantic lemma (`continuity_zero_iff`, TRUE iff the chain links, FAL
 `#assert_axioms`-clean (pure `omega`). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.MultiStepChainEmit
 
@@ -84,8 +85,12 @@ def ms1Absorb : VmConstraint2 :=
   .lookup ⟨TableId.poseidon2, chipLookupTuple [.var PREV, .var DERIVED] ACC LANES⟩
 
 /-- The chain-continuity window body: `nxt[PREV] − loc[ACC]` — the next step's entering hash equals
-this step's leaving hash. -/
-def contBody : WindowExpr := .add (.nxt PREV) (.mul (.const (-1)) (.loc ACC))
+this step's leaving hash. ⚑ `GateExpr.gThread`. -/
+def contBody : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread PREV ACC)
+
+theorem contBody_eq : contBody = WindowExpr.add (.nxt PREV) (.mul (.const (-1)) (.loc ACC)) := rfl
 
 /-- MS2 — chain continuity as a two-row `windowGate` asserted on the transition (every row but the
 last, where there is no next step). -/
@@ -129,7 +134,7 @@ chain-continuity the emitted `windowGate` enforces on every transition row in th
 
 theorem continuity_zero_iff (env : VmRowEnv) :
     contBody.eval env = 0 ↔ env.nxt PREV = env.loc ACC := by
-  simp only [contBody, WindowExpr.eval]
+  simp only [contBody_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 -- Non-vacuity witnesses: the window ACCEPTS a linked window and REJECTS an unlinked one.

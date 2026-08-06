@@ -45,11 +45,13 @@ documentation of the equations the realization satisfies.)
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.DeployedCapTree
 import Dregg2.Circuit.CapMerkleGeneric
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.DeployedCapOpen
 
 open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit.GateExpr (gSwapLeft gSwapRight gMux render toEmitted)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (Table TraceFamily TableId Lookup chipLookupTuple ChipTableSound chip_lookup_sound CHIP_RATE
@@ -189,15 +191,17 @@ def curCol (c : CapOpenCols) : Nat → (Fin 8 → Nat)
   | 0       => c.leafDigest
   | (l + 1) => c.node l
 
-/-- The `node8` LEFT input lane `i` at level `lvl`: `(1-dir)·cur_i + dir·sib_i`. -/
+/-- The `node8` LEFT input lane `i` at level `lvl`: the Merkle sibling-swap, `gSwapLeft`.
+⚑ **RE-EMIT**: this used to be the expensive form (`(1-dir)·cur_i + dir·sib_i`, 3 multiplications);
+`gSwapLeft` is `gMux`, form B (`cur_i + dir·(sib_i − cur_i)`, 2 multiplications) — the SAME
+polynomial (`gMux_eval_eq`), one fewer multiplication, DIFFERENT bytes. -/
 def leftExpr (c : CapOpenCols) (lvl : Nat) (i : Fin 8) : EmittedExpr :=
-  .add (.mul (.add (.const 1) (.mul (.const (-1)) (.var (c.dir lvl)))) (.var (curCol c lvl i)))
-       (.mul (.var (c.dir lvl)) (.var (c.sib lvl i)))
+  render toEmitted (gSwapLeft (.leaf (c.dir lvl)) (.leaf (curCol c lvl i)) (.leaf (c.sib lvl i)))
 
-/-- The `node8` RIGHT input lane `i` at level `lvl`: `(1-dir)·sib_i + dir·cur_i`. -/
+/-- The `node8` RIGHT input lane `i` at level `lvl`: the Merkle sibling-swap, `gSwapRight`. Same
+re-emit as `leftExpr`. -/
 def rightExpr (c : CapOpenCols) (lvl : Nat) (i : Fin 8) : EmittedExpr :=
-  .add (.mul (.add (.const 1) (.mul (.const (-1)) (.var (c.dir lvl)))) (.var (c.sib lvl i)))
-       (.mul (.var (c.dir lvl)) (.var (curCol c lvl i)))
+  render toEmitted (gSwapRight (.leaf (c.dir lvl)) (.leaf (curCol c lvl i)) (.leaf (c.sib lvl i)))
 
 /-- The arity-16 `node8` input block at level `lvl`: `leftExpr lanes 0..7 ‖ rightExpr lanes 0..7`,
 mirroring `cap_root.rs::cap_node8`'s `pack8 left8 right8` (`ins[..8] = L8; ins[8..] = R8`). -/
@@ -213,7 +217,13 @@ def nodeLookup (c : CapOpenCols) (lvl : Nat) : Lookup :=
 
 /-- `dir` is boolean: `dir·(dir-1) = 0`. -/
 def dirBoolGate (c : CapOpenCols) (lvl : Nat) : EmittedExpr :=
-  .mul (.var (c.dir lvl)) (.add (.var (c.dir lvl)) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolCanon (c.dir lvl))
+
+theorem dirBoolGate_eq (c : CapOpenCols) (lvl : Nat) :
+    dirBoolGate c lvl
+      = .add (.mul (.const 1) (.mul (.var (c.dir lvl)) (.var (c.dir lvl))))
+             (.mul (.const (-1)) (.var (c.dir lvl))) := rfl
 
 /-- The root pin at lane `i`: the TOP node output lane equals the committed `cap_root` lane. The 8-felt
 root pin is the CONJUNCTION over all 8 lanes (`rootPinned` in `Satisfied` quantifies `∀ i`) — the
@@ -327,7 +337,13 @@ theorem reconMaskExpr_eval (c : CapOpenCols) (env : VmRowEnv) (W : Nat)
 
 /-- **`maskBitBoolGate c i`** — bit `i` of the full mask is boolean: `bitᵢ·(bitᵢ − 1) = 0`. -/
 def maskBitBoolGate (c : CapOpenCols) (i : Nat) : EmittedExpr :=
-  .mul (.var (c.bit i)) (.add (.var (c.bit i)) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolCanon (c.bit i))
+
+theorem maskBitBoolGate_eq (c : CapOpenCols) (i : Nat) :
+    maskBitBoolGate c i
+      = .add (.mul (.const 1) (.mul (.var (c.bit i)) (.var (c.bit i))))
+             (.mul (.const (-1)) (.var (c.bit i))) := rfl
 
 /-- **`maskReconGate c`** — the recomposition gate: `maskOfLimbs mask_lo mask_hi − Σ_{i<32} bitᵢ·2ⁱ =
 0`, i.e. `(mask_lo + mask_hi·65536) − Σ bitᵢ·2ⁱ = 0`, binding the 32-bit decomposition to the committed
@@ -645,9 +661,10 @@ def dirBoolVal (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat) : Bool :=
 theorem dir_zero_or_one (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat)
     (h : (dirBoolGate c lvl).eval env.loc = 0) :
     env.loc (c.dir lvl) = 0 ∨ env.loc (c.dir lvl) = 1 := by
-  unfold dirBoolGate at h
+  simp only [dirBoolGate_eq] at h
   simp only [EmittedExpr.eval] at h
-  rcases mul_eq_zero.mp h with h0 | h1
+  have h' : env.loc (c.dir lvl) * (env.loc (c.dir lvl) + -1) = 0 := by linear_combination h
+  rcases mul_eq_zero.mp h' with h0 | h1
   · exact Or.inl h0
   · right; linarith
 
@@ -675,13 +692,21 @@ theorem nodeInputs_eval (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat)
   · have hbool : dirBoolVal c env lvl = false := by simp only [dirBoolVal, hd0]; decide
     rw [hbool]; simp only [Bool.false_eq_true, if_false]
     exact key (groupVal env (curCol c lvl)) (groupVal env (c.sib lvl))
-      (fun i => by simp only [leftExpr, EmittedExpr.eval, groupVal]; rw [hd0]; ring)
-      (fun i => by simp only [rightExpr, EmittedExpr.eval, groupVal]; rw [hd0]; ring)
+      (fun i => by
+        simp only [leftExpr, render, gSwapLeft, gMux, toEmitted, EmittedExpr.eval, groupVal]
+        rw [hd0]; ring)
+      (fun i => by
+        simp only [rightExpr, render, gSwapRight, gMux, toEmitted, EmittedExpr.eval, groupVal]
+        rw [hd0]; ring)
   · have hbool : dirBoolVal c env lvl = true := by simp only [dirBoolVal, hd1]; decide
     rw [hbool]; simp only [if_true]
     exact key (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl))
-      (fun i => by simp only [leftExpr, EmittedExpr.eval, groupVal]; rw [hd1]; ring)
-      (fun i => by simp only [rightExpr, EmittedExpr.eval, groupVal]; rw [hd1]; ring)
+      (fun i => by
+        simp only [leftExpr, render, gSwapLeft, gMux, toEmitted, EmittedExpr.eval, groupVal]
+        rw [hd1]; ring)
+      (fun i => by
+        simp only [rightExpr, render, gSwapRight, gMux, toEmitted, EmittedExpr.eval, groupVal]
+        rw [hd1]; ring)
 
 /-- **`node_sound8`** — under a SOUND WIDE chip table, level `lvl`'s 8 node columns carry the genuine
 native-8-felt `nodeOf8 S8` of the dir-mixed `(cur8, sib8)` pair — exactly one `recomposeUp8` step at
@@ -900,9 +925,10 @@ theorem facetEffGate_permits (c : CapOpenCols) (env : VmRowEnv) (n : Nat) (hn : 
   have hbool : ∀ i, i < MASK_BITS → env.loc (c.bit i) = 0 ∨ env.loc (c.bit i) = 1 := by
     intro i hi
     have h := hboolGate i hi
-    unfold maskBitBoolGate at h
+    simp only [maskBitBoolGate_eq] at h
     simp only [EmittedExpr.eval] at h
-    rcases mul_eq_zero.mp h with h0 | h1
+    have h' : env.loc (c.bit i) * (env.loc (c.bit i) + -1) = 0 := by linear_combination h
+    rcases mul_eq_zero.mp h' with h0 | h1
     · exact Or.inl h0
     · exact Or.inr (by linarith)
   -- the bit decomposition recomposes the FULL mask `maskOfLimbs mask_lo mask_hi` (as a Nat, cast to ℤ).

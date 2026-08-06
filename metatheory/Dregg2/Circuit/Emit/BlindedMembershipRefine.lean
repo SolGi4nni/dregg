@@ -531,10 +531,11 @@ splits `p ∣ bit·(bit−1)`, canonicality collapses each factor. -/
 theorem gBit_cases {a : Dregg2.Circuit.Assignment} {bit : Nat}
     (h : (bitBinaryBody bit).eval a ≡ 0 [ZMOD 2013265921]) (hc : Canon (a bit)) :
     a bit = 0 ∨ a bit = 1 := by
-  simp only [bitBinaryBody, ev, ek, eadd, emul, eneg, EmittedExpr.eval] at h
-  have hd : (2013265921 : ℤ) ∣ a bit * a bit + (-1) * a bit := Int.modEq_zero_iff_dvd.mp h
+  simp only [Dregg2.Circuit.Emit.BlindedMembershipEmit.bitBinaryBody_eq, ev, ek, eadd, emul, eneg,
+    EmittedExpr.eval] at h
+  have hd : (2013265921 : ℤ) ∣ 1 * (a bit * a bit) + -1 * a bit := Int.modEq_zero_iff_dvd.mp h
   have hd' : (2013265921 : ℤ) ∣ a bit * (a bit + (-1)) := by
-    have hsh : a bit * (a bit + (-1)) = a bit * a bit + (-1) * a bit := by ring
+    have hsh : a bit * (a bit + (-1)) = 1 * (a bit * a bit) + -1 * a bit := by ring
     rw [hsh]; exact hd
   obtain ⟨hc0, hc1⟩ := hc
   rcases pPrimeInt.dvd_mul.mp hd' with hx | hx
@@ -710,7 +711,9 @@ theorem gContAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit 
   simp only [gContinuity, VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true] at h
   have hz : gContWindow.eval (envAt t j) ≡ 0 [ZMOD 2013265921] := h hnl
   have hkey : (envAt t j).nxt gCUR ≡ (envAt t j).loc gPAR [ZMOD 2013265921] :=
-    (gate_modEq_iff (by simp only [gContWindow, WindowExpr.eval]; ring)).mp hz
+    (gate_modEq_iff (by
+      simp only [Dregg2.Circuit.Emit.BlindedMembershipEmit.gContWindow_eq, WindowExpr.eval]
+      ring)).mp hz
   have hne : j + 1 ≠ t.rows.length := by
     intro hcontra; rw [hcontra] at hnl; simp at hnl
   have hj1 : j + 1 < t.rows.length := by omega

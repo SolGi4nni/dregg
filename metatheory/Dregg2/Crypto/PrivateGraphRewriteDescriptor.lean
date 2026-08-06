@@ -27,6 +27,7 @@ import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmit
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Exec.CircuitEmit
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Crypto.PrivateGraphRewriteDescriptor
 
@@ -182,8 +183,22 @@ def ruleLeafInputExprs (coreBase rule : Nat) : List EmittedExpr :=
   digestExprs coreBase ++ (List.range 4).map (fun lane => v (ruleBlindCol rule lane)) ++
     [v DOMAIN, v VERSION, v SHAPE, c rule]
 
+/-- ⚑ Was this file's own re-derivation of the mux; now `gMux` (`Dregg2.Circuit.GateExpr`),
+byte-identical (`choose_eq_old`) — no re-emit. `bit`/`zero`/`one` are arbitrary already-built
+`EmittedExpr` sub-terms (not bare leaves), so the embed/render roundtrip (`ofEmitted`/`render
+toEmitted`) is the right shape: it is the identity on every closed term, `render_ofEmitted`. -/
 def choose (bit zero one : EmittedExpr) : EmittedExpr :=
-  add zero (mul bit (sub one zero))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gMux (Dregg2.Circuit.GateExpr.ofEmitted bit)
+      (Dregg2.Circuit.GateExpr.ofEmitted zero) (Dregg2.Circuit.GateExpr.ofEmitted one))
+
+/-- Byte-identical to the old hand-written body, for every input — the embedding round-trips
+(`render_ofEmitted`), so `gMux` applied through it is exactly the old `add zero (mul bit (sub one
+zero))`. -/
+theorem choose_eq_old (bit zero one : EmittedExpr) :
+    choose bit zero one = add zero (mul bit (sub one zero)) := by
+  simp only [choose, Dregg2.Circuit.GateExpr.gMux, Dregg2.Circuit.GateExpr.render,
+    Dregg2.Circuit.GateExpr.render_ofEmitted, add, mul, sub, neg, c]
 
 def rulesetInputExprs : List EmittedExpr :=
   digestExprs RULE0_LEAF_BASE ++ digestExprs RULE1_LEAF_BASE

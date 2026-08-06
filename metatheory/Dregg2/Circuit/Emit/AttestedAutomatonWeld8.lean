@@ -350,9 +350,13 @@ def weldTransitionOpen : VmConstraint2 :=
          , newRoot := weldRootGroup
          , op      := .read }
 
-/-- Lane `i`'s constancy body: `Nxt(root_i) − Loc(root_i)`. -/
+/-- Lane `i`'s constancy body: `Nxt(root_i) − Loc(root_i)`. ⚑ `GateExpr.gCarry`. -/
 def weldRootBody (i : Fin 8) : WindowExpr :=
-  .add (.nxt (W8ROOT i)) (.mul (.const (-1)) (.loc (W8ROOT i)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gCarry (W8ROOT i))
+
+theorem weldRootBody_eq (i : Fin 8) :
+    weldRootBody i = WindowExpr.add (.nxt (W8ROOT i)) (.mul (.const (-1)) (.loc (W8ROOT i))) := rfl
 
 /-- Lane `i`'s constancy window — one automaton for the whole run, on EVERY lane. -/
 def weldRootConst (i : Fin 8) : VmConstraint2 := .windowGate ⟨weldRootBody i, true⟩

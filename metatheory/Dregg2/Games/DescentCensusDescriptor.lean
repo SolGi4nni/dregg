@@ -18,11 +18,13 @@ Every custody value is instead forced byte-for-byte to canonical `field_from_u64
 exact leaf digest is recomposed to the public root.
 -/
 import Dregg2.Circuit.FullStateChip
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Games.DescentCensusDescriptor
 
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.DescriptorIR2
+open Dregg2.Circuit.GateExpr (gCols gVars toEmitted)
 
 set_option autoImplicit false
 
@@ -117,9 +119,8 @@ def emul (a b : EmittedExpr) : EmittedExpr := .mul a b
 def eneg (a : EmittedExpr) : EmittedExpr := emul (ek (-1)) a
 def esub (a b : EmittedExpr) : EmittedExpr := eadd a (eneg b)
 
-def cols (base count : Nat) : List Nat := (List.range count).map (base + ·)
-def vars (base count : Nat) : List EmittedExpr := (cols base count).map .var
-def stateCols (base step : Nat) : List Nat := cols (base + STATE_LANES * step) STATE_LANES
+/-- ⚑ Column-reader family, factored: `gCols`/`gVars toEmitted` at `Dregg2.Circuit.GateExpr`. -/
+def stateCols (base step : Nat) : List Nat := gCols (base + STATE_LANES * step) STATE_LANES
 def chunks4 {α : Type} (xs : List α) : List (List α) := xs.toChunks 4
 
 def initialStateExpr (inputLength : Nat) : List EmittedExpr :=
@@ -167,17 +168,17 @@ def spongeSteps (inputLength : Nat) : Nat := (inputLength + 3) / 4 + 1
 /-- Digest lanes are absorb-state lanes 0..3 followed by final-squeeze lanes 0..3. -/
 def spongeDigestCols (stateBase inputLength : Nat) : List Nat :=
   let absorbs := (inputLength + 3) / 4
-  cols (stateBase + STATE_LANES * (absorbs - 1)) 4 ++
-    cols (stateBase + STATE_LANES * absorbs) 4
+  gCols (stateBase + STATE_LANES * (absorbs - 1)) 4 ++
+    gCols (stateBase + STATE_LANES * absorbs) 4
 
 def leafPreimage (r : Fin RELICS) : List EmittedExpr :=
-  [ek FLD2, ek 1] ++ vars (keyBase r) KEY_LIMBS ++ vars (valueBase r) VALUE_LIMBS
+  [ek FLD2, ek 1] ++ gVars toEmitted (keyBase r) KEY_LIMBS ++ gVars toEmitted (valueBase r) VALUE_LIMBS
 
 def leafDigestCols (r : Fin RELICS) : List Nat :=
   spongeDigestCols (leafStateBase r) (leafPreimage r).length
 
 def nodePreimage (r : Fin RELICS) : List EmittedExpr :=
-  ek FLN2 :: (vars (leftBase r) DIGEST ++ vars (rightBase r) DIGEST)
+  ek FLN2 :: (gVars toEmitted (leftBase r) DIGEST ++ gVars toEmitted (rightBase r) DIGEST)
 
 def nodeDigestCols (r : Fin RELICS) : List Nat :=
   spongeDigestCols (nodeStateBase r) (nodePreimage r).length
@@ -211,7 +212,11 @@ def eqInverse (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
     (esub (ek 1) (ev (eqCol r z)))
 
 def eqBinary (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
-  emul (ev (eqCol r z)) (esub (ev (eqCol r z)) (ek 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf (eqCol r z)))
+
+theorem eqBinary_eq (r : Fin RELICS) (z : Fin ZONES) :
+    eqBinary r z = emul (ev (eqCol r z)) (esub (ev (eqCol r z)) (ek 1)) := rfl
 
 def zoneOneHot (r : Fin RELICS) : EmittedExpr :=
   esub ((List.finRange ZONES).foldr (fun z acc => eadd (ev (eqCol r z)) acc) (ek 0)) (ek 1)
@@ -224,17 +229,26 @@ def valueLimbGate (r : Fin RELICS) (i : Fin VALUE_LIMBS) : EmittedExpr :=
   esub (ev (valueCol r i)) (selectedValueLimb r i)
 
 def dirBinary (r : Fin RELICS) : EmittedExpr :=
-  emul (ev (dirCol r)) (esub (ev (dirCol r)) (ek 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf (dirCol r)))
 
+theorem dirBinary_eq (r : Fin RELICS) :
+    dirBinary r = emul (ev (dirCol r)) (esub (ev (dirCol r)) (ek 1)) := rfl
+
+/-- `left − (the Merkle sibling-swap)`. ⚑ Byte-identical to the old body — this file already wrote
+the compact `esub`/`eadd`/`emul` form, which IS `gEsub`/`gSwapLeft`'s shape, `rfl`. -/
 def leftSelect (r : Fin RELICS) (i : Fin DIGEST) : EmittedExpr :=
-  esub (ev (leftCol r i))
-    (eadd (ev (curCol r i))
-      (emul (ev (dirCol r)) (esub (ev (siblingCol r i)) (ev (curCol r i)))))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gEsub Dregg2.Circuit.GateExpr.idOps (.leaf (leftCol r i))
+      (Dregg2.Circuit.GateExpr.gSwapLeft (.leaf (dirCol r)) (.leaf (curCol r i))
+        (.leaf (siblingCol r i))))
 
+/-- Same re-derivation as `leftSelect`, `gSwapRight`. -/
 def rightSelect (r : Fin RELICS) (i : Fin DIGEST) : EmittedExpr :=
-  esub (ev (rightCol r i))
-    (eadd (ev (siblingCol r i))
-      (emul (ev (dirCol r)) (esub (ev (curCol r i)) (ev (siblingCol r i)))))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gEsub Dregg2.Circuit.GateExpr.idOps (.leaf (rightCol r i))
+      (Dregg2.Circuit.GateExpr.gSwapRight (.leaf (dirCol r)) (.leaf (curCol r i))
+        (.leaf (siblingCol r i))))
 
 def state16Lookups (r : Fin RELICS) : List VmConstraint2 :=
   (spongePlan (leafStateBase r) (leafPreimage r) ++
@@ -254,8 +268,8 @@ def perPathConstraints (r : Fin RELICS) : List VmConstraint2 :=
     [.base (.gate (eqZero r z)), .base (.gate (eqInverse r z)),
       .base (.gate (eqBinary r z))]) ++
   (List.finRange DIGEST).map (fun i =>
-    .windowGate ⟨.add (.nxt (curCol r i))
-      (.mul (.const (-1)) (.loc ((nodeDigestCols r).getD i.val 0))), true⟩) ++
+    .windowGate ⟨Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+      (Dregg2.Circuit.GateExpr.gThread (curCol r i) ((nodeDigestCols r).getD i.val 0)), true⟩) ++
   (List.finRange DIGEST).map (fun i =>
     .base (.boundary .first
       (esub (ev (curCol r i)) (ev ((leafDigestCols r).getD i.val 0))))) ++

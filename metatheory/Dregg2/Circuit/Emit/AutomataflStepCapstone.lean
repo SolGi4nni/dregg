@@ -545,7 +545,7 @@ theorem rayN_of_sat (n d : Nat) (dx dy : ℤ) (hn : (n : ℤ) < 2013265921)
           [NGen.rHit n d (j + 1), NGen.rIb n d (m - 1 + 1)])
         (fun (j : Nat) => [((1 : ℤ), [NGen.rHit n d (j + 1)]),
                            ((-1 : ℤ), [NGen.rHit n d (j + 1), NGen.rIb n d (m - 1 + 1)])])
-        (by intro h j; simp [Head.addLin, Head.addProd])
+        (by intro h j; simp [Dregg2.Circuit.GateExpr.GHead.addLin, Dregg2.Circuit.GateExpr.GHead.addProd])
         ((List.range n).filter (fun j => decide (j > m - 1))) Head.zero
       have hnz : headIsZero (((List.range n).filter (fun j => decide (j > m - 1))).foldl
           (fun h (j : Nat) => (h.addLin 1 (NGen.rHit n d (j + 1))).addProd (-1)

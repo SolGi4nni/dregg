@@ -283,7 +283,7 @@ theorem continuity_modEq_eq {env : VmRowEnv}
     (ha0 : 0 ≤ env.nxt CURRENT) (ha1 : env.nxt CURRENT < 2013265921)
     (hb0 : 0 ≤ env.loc NEXT) (hb1 : env.loc NEXT < 2013265921) :
     env.nxt CURRENT = env.loc NEXT := by
-  simp only [contWindowBody, WindowExpr.eval] at h
+  simp only [contWindowBody_eq, WindowExpr.eval] at h
   obtain ⟨k, hk⟩ := Int.modEq_zero_iff_dvd.mp h
   omega
 
@@ -510,8 +510,8 @@ theorem witTrace_satisfies :
     interval_cases i <;>
       fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt,
-        WindowConstraint.holdsAt, entryHashLookup, runningHashLookup, zeroLaneGate, isFirstBoolGate,
-        stateGridGate, symbolGridGate, transitionGate, continuityWindow, copyForwardWindow,
+        WindowConstraint.holdsAt, entryHashLookup, runningHashLookup, zeroLaneGate, isFirstBoolGate_eq,
+        stateGridGate_eq, symbolGridGate_eq, transitionGate, continuityWindow, copyForwardWindow,
         b1InitialPin, isFirstPinned, seedAccPin, b2FinalPin, b3RoutePin, witTrace,
         Nat.reduceAdd, Nat.reduceBEq, reduceIte, reduceCtorEq] <;>
       decide

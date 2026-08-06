@@ -62,6 +62,7 @@ open Dregg2.Circuit.DescriptorIR2
    memLog mapLog)
 open Dregg2.Circuit.Emit.AdjacencyMembershipEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (eqToModEq gate_modEq_iff pPrimeInt)
+open Dregg2.Circuit.GateExpr (gEsub gSwapLeft gSwapRight gMux gNeg render toEmitted)
 
 set_option autoImplicit false
 
@@ -153,9 +154,14 @@ theorem combine_of_gates (hash : List ℤ → ℤ) (a : Assignment)
     exact bit_of_modEq_canon hcDir hdir
   -- the ordering gates give the child columns mod `p`; canonicality lifts to genuine equalities.
   have hleftC : a left ≡ a cur + a dir * a sib - a dir * a cur [ZMOD 2013265921] :=
-    (gate_modEq_iff (by simp only [leftOrderBody, negE, EmittedExpr.eval]; ring)).mp hleft
+    (gate_modEq_iff (by
+      simp only [leftOrderBody, render, gEsub, gSwapLeft, gMux, gNeg, toEmitted, EmittedExpr.eval]
+      ring)).mp hleft
   have hrightC : a right ≡ a sib + a dir * a cur - a dir * a sib [ZMOD 2013265921] :=
-    (gate_modEq_iff (by simp only [rightOrderBody, negE, EmittedExpr.eval]; ring)).mp hright
+    (gate_modEq_iff (by
+      simp only [rightOrderBody, render, gEsub, gSwapRight, gMux, gNeg, toEmitted,
+        EmittedExpr.eval]
+      ring)).mp hright
   rcases hbin with hd | hd
   · have hl : a left = a cur :=
       eq_of_modEq_canon hcLeft hcCur (by have := hleftC; rw [hd] at this; simpa using this)
@@ -200,7 +206,7 @@ theorem activeCopyZero {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → 
     (hmem : VmConstraint2.windowGate (copyWindow hi lo) ∈ adjacencyDesc.constraints) :
     (envAt t j).nxt hi ≡ (envAt t j).loc lo [ZMOD 2013265921] := by
   have h := hsat.rowConstraints j hj _ hmem
-  simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, copyWindow, hlast,
+  simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, copyWindow_eq, hlast,
     WindowExpr.eval, ite_true, true_implies] at h
   exact (gate_modEq_iff (by ring)).mp h
 
@@ -582,7 +588,7 @@ theorem concrete_sat :
       pathBlock, List.cons_append, List.nil_append] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        copyWindow, Lookup.holdsAt, Int.ModEq, hF, hL] <;>
+        copyWindow_eq, Lookup.holdsAt, Int.ModEq, hF, hL] <;>
       decide
   · intro i _; trivial
   · intro i _ r hr; simp [adjacencyDesc] at hr

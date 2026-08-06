@@ -57,6 +57,7 @@ import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Market.CertF
 import Market.CertFGolden
+import Dregg2.Circuit.GateExpr
 
 namespace Market.CertFDescriptor
 
@@ -130,8 +131,11 @@ def egate (body : EmittedExpr) : VmConstraint2 := .base (.gate body)
 
 /-- The `j`-th boolean gate body `bⱼ·(bⱼ−1)` of a range gadget. -/
 def boolExpr (bitCol : Nat → Nat) (j : Nat) : EmittedExpr :=
-  let b := EmittedExpr.var (bitCol j)
-  .mul b (esub b (.const 1))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf (bitCol j)))
+
+theorem boolExpr_eq (bitCol : Nat → Nat) (j : Nat) :
+    boolExpr bitCol j = let b := EmittedExpr.var (bitCol j); .mul b (esub b (.const 1)) := rfl
 
 /-- The recompose gate body `col − Σⱼ 2ʲ·bⱼ` of a range gadget. -/
 def recomposeExpr (col : Nat) (bitCol : Nat → Nat) : EmittedExpr :=
@@ -323,7 +327,7 @@ theorem binary_of_boolExpr {a : Assignment} {bc : Nat → Nat} {j : Nat}
     a (bc j) = 0 ∨ a (bc j) = 1 := by
   obtain ⟨h0, h1⟩ := hc
   have hev : (boolExpr bc j).eval a = a (bc j) * (a (bc j) - 1) := by
-    simp only [boolExpr, esub, EmittedExpr.eval]; ring
+    simp only [boolExpr_eq, esub, EmittedExpr.eval]; ring
   rw [hev] at h
   have hd : (2013265921 : ℤ) ∣ a (bc j) * (a (bc j) - 1) := Int.modEq_zero_iff_dvd.mp h
   rcases pPrimeInt.dvd_mul.mp hd with hx | hx

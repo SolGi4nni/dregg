@@ -110,7 +110,12 @@ open WindowExpr (loc nxt)
 
 /-- A boolean gate `local[c] ∈ {0,1}` (`c·(c-1) = 0`). -/
 def boolGate (c : Nat) : VmConstraint2 :=
-  .base (.gate (.mul (.var c) (.add (.var c) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBoolCanon c)))
+
+theorem boolGate_eq (c : Nat) :
+    boolGate c
+      = .base (.gate (.add (.mul (.const 1) (.mul (.var c) (.var c))) (.mul (.const (-1)) (.var c)))) := rfl
 
 /-- The chip lookup pinning `edge_fp = Poseidon2(edge_id)` — an arity-4 absorb of the four
 `edge_id` columns into the `EDGE_FP_COL` digest. (`chipLookupTuple` renders `(4, ins padded to

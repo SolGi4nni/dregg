@@ -344,7 +344,7 @@ theorem wtSat :
       pathBlock, List.cons_append, List.nil_append] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        copyWindow, Lookup.holdsAt, hF, hL] <;>
+        copyWindow_eq, Lookup.holdsAt, hF, hL] <;>
       decide
   · intro i _; trivial
   · intro i _ r hr; simp [adjacencyDesc] at hr
@@ -463,7 +463,7 @@ theorem fSatCore :
     simp only [adjacencyConstraintsCore, pathBlock, List.cons_append, List.nil_append] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        copyWindow, Lookup.holdsAt, hF, hL] <;>
+        copyWindow_eq, Lookup.holdsAt, hF, hL] <;>
       decide
   · intro i _; trivial
   · intro i _ r hr; simp [adjacencyDescCore, adjacencyDesc] at hr
@@ -637,7 +637,7 @@ theorem gSatCore :
     simp only [adjacencyConstraintsCore, pathBlock, List.cons_append, List.nil_append] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        copyWindow, Lookup.holdsAt, hF, hL] <;>
+        copyWindow_eq, Lookup.holdsAt, hF, hL] <;>
       decide
   · intro i _; trivial
   · intro i _ r hr; simp [adjacencyDescCore, adjacencyDesc] at hr

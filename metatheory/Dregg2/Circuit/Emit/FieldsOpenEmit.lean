@@ -37,7 +37,7 @@ open Dregg2.Circuit.DescriptorIR2
    chipLookupTupleN chip_lookup_sound_N CHIP_RATE ChipArityAdmitted)
 open Dregg2.Circuit.DeployedCapOpen
   (CapOpenCols DEPTH digestCols digestCols_map curCol nodeInputs nodeLookup nodeInputs_eval
-   dirBoolGate dirBoolVal dir_zero_or_one rootPinGate pathOf8 groupVal)
+   dirBoolGate dirBoolGate_eq dirBoolVal dir_zero_or_one rootPinGate pathOf8 groupVal)
 open Dregg2.Circuit.DeployedCapTree (Digest8)
 open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (pack8)
 open Dregg2.Circuit.DeployedFieldsTree (Fields8Scheme)
@@ -45,7 +45,7 @@ open Dregg2.Circuit.DeployedFieldsTree.Fields8Scheme (fieldsLeafDigest8 fieldsNo
 open Dregg2.Circuit.CapMerkleGeneric (StepG recomposeG)
 open Dregg2.Circuit.Emit.CapOpenEmit
   (capOpenCols nodeLookups dirBoolGates rootPinGates eqGate eqGate_eval
-   boolGate_exact diffGate_exact
+   boolGateCanon_exact diffGate_exact
    CAP_OPEN_SPAN AFTER_SPINE_SPAN AFTER_SPINE_BASE)
 open Dregg2.Circuit.DescriptorIR2 (VmTrace envAt)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN)
@@ -324,9 +324,9 @@ theorem effFieldsOpenV3_core (base : EffectVmDescriptor2) (name : String)
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
     have h' : (dirBoolGate (capOpenCols base.traceWidth) lvl).eval
         (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
-    unfold dirBoolGate at h' ⊢
+    simp only [dirBoolGate_eq] at h' ⊢
     simp only [EmittedExpr.eval] at h' ⊢
-    exact boolGate_exact (hcells _) h'
+    exact boolGateCanon_exact (hcells _) h'
   · intro k
     have hin : VmConstraint2.base (.gate (rootPinGate (capOpenCols base.traceWidth) k))
         ∈ fieldsOpenConstraints base.traceWidth := by

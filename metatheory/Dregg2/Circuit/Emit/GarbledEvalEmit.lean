@@ -64,6 +64,7 @@ non-padding row, FALSE otherwise). `#assert_axioms decryption_body_zero_iff` ⊆
 imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.GarbledEvalEmit
 
@@ -128,7 +129,12 @@ def decryptionGates : List VmConstraint2 :=
   (List.range 8).map (fun i => .base (.gate (decBody i)))
 
 /-- The `Binary` body for column `c`: `c · (c - 1)`. -/
-def binBody (c : Nat) : EmittedExpr := .mul (.var c) (.add (.var c) (.const (-1)))
+def binBody (c : Nat) : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf c))
+
+theorem binBody_eq (c : Nat) :
+    binBody c = .mul (.var c) (.add (.var c) (.const (-1))) := rfl
 
 /-- The six boolean-selector gates (`ConstraintExpr::Binary`, C17-C22). -/
 def selectorBinaryGates : List VmConstraint2 :=
@@ -146,9 +152,14 @@ def exclusivityBody : EmittedExpr :=
     (.add (.var IS_AND) (.add (.var IS_OR) (.add (.var IS_XOR) (.add (.var IS_NOT) (.const (-1))))))
 
 /-- Wire-chaining window body, lane `i`: `chain_flag · (next.left(i) - output(i))` — the two-row
-`Gated`/`Transition` leg (C24-C31). -/
+`Gated`/`Transition` leg (C24-C31). ⚑ The thread subterm is `GateExpr.gThread`. -/
 def chainBody (i : Nat) : WindowExpr :=
-  .mul (.loc CHAIN_FLAG) (.add (.nxt (LEFT i)) (.mul (.const (-1)) (.loc (OUTPUT i))))
+  .mul (.loc CHAIN_FLAG) (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread (LEFT i) (OUTPUT i)))
+
+theorem chainBody_eq (i : Nat) :
+    chainBody i = .mul (.loc CHAIN_FLAG)
+      (WindowExpr.add (.nxt (LEFT i)) (.mul (.const (-1)) (.loc (OUTPUT i)))) := rfl
 
 /-- The 8 wire-chaining window gates (asserted on the transition, the last row exempt). -/
 def chainingGates : List VmConstraint2 :=

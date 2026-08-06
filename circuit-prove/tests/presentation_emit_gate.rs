@@ -2,13 +2,20 @@
 //! its off-AIR FRESHNESS binding).
 //!
 //! Validates the `emit-from-Lean` pattern for the `presentation` family
-//! (`circuit/src/presentation.rs`). The deployed hand AIR (`PresentationAir::constraints`,
-//! `presentation.rs:807`) enforces ONLY a 19-column `row[i] == pi[i]` summary copy; ALL the real
-//! security lives in plaintext `PresentationProof::verify` (`presentation.rs:224`). This descriptor
-//! is faithful to the literal hand AIR (the 19 summary `PiBinding` copies) AND internalizes the one
-//! off-AIR check that is a self-contained arithmetic tooth: the FRESHNESS binding
-//! (`verify_freshness_binding`, `presentation.rs:316` — accept iff
-//! `diff = not_after − verifier ∈ [0, p/2]`, `p/2 = 1_006_632_960`).
+//! (`circuit/src/presentation.rs`). This descriptor carries the 19-column `row[i] == pi[i]`
+//! summary copy AND internalizes the one off-AIR check that is a self-contained arithmetic
+//! tooth: the FRESHNESS binding (`presentation::PresentationProof::verify_freshness_binding` —
+//! accept iff `diff = not_after − verifier ∈ [0, p/2]`, `p/2 = 1_006_632_960`).
+//!
+//! ⚑ **The hand AIR this was transcribed from is GONE (2026-08-06), and it was a fiction.**
+//! `impl Air for PresentationAir` declared exactly these 19 summary copies as
+//! `|row, _, pi| row[i] - pi[i]` — but its own `generate_trace` returned
+//! `public_inputs = row.clone()`, so every one of the nineteen evaluated `0 - 0` and NO witness,
+//! honest or forged, could violate one. It also had zero callers of any kind (nothing in the
+//! workspace ever handed a `PresentationAir` to `ConstraintValidator` or `TraceSummary`), so it
+//! was dead weight rather than a live hole. It is deleted; THIS descriptor is the family's only
+//! summary AIR, and its copies bite because its public inputs come from the caller instead of
+//! from the trace. `forged_summary_pi_refuses` below is that difference, exhibited.
 //!
 //! The descriptor is AUTHORED in Lean
 //! (`metatheory/Dregg2/Circuit/Emit/PresentationEmit.lean`, `presentationFreshnessDesc`) and its
@@ -83,7 +90,7 @@ const HALF_P: u32 = 1_006_632_960;
 /// (`presFreshLastFix` — so the freshness binding also fires on the single deployed (= last) row).
 fn hand_built_desc() -> EffectVmDescriptor2 {
     let mut constraints: Vec<VmConstraint2> = Vec::new();
-    // 19 summary copies (PresentationAir::constraints).
+    // 19 summary copies (the family's summary layout; see `presentation_descriptor_witness`).
     for i in 0..SUMMARY_WIDTH {
         constraints.push(VmConstraint2::Base(VmConstraint::PiBinding {
             row: VmRow::First,

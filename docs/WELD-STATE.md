@@ -259,9 +259,18 @@ dsl `02ef3cdd7`; `CustomBindingFromFold` `fa496cfa7`.
   `metatheory/Dregg2/Deos/CapacitySatisfaction.lean`. (Note: the escrow floor's v11
   geometry drift was the LAST commit `956b8be93` — `settleEscrow` AFTER-gate cols
   v10→v11, `B_SPAN 51→119`.) Staged; the emit+producer-fill is part of the bang.
-- **flat-mem boundary** — `satisfied2_init_root` + the `whole_image_fold_bound_mem_
-  forged_minit_refuses` tooth built (memory §ALSO BUILT); the per-effect `setFieldDyn` VK
-  weld is the bang piece. This overlaps the `fields[0..7]` residual (§1d).
+- **flat-mem boundary** — `satisfied2_init_root` holds in Lean; ⚠ **the Rust tooth this row
+  used to name is GONE and was never one** (measured 2026-08-06). It cited
+  `whole_image_fold_bound_mem_forged_minit_refuses` as "built". That test refused inside
+  `prove_whole_image_fold_bound_mem`, against a `MemBoundaryWitness` the same prover had just
+  built from the same leaf list — and the boundary instance is verified against an EMPTY
+  public-value vector (`verify_vm_descriptor2` gives `pvs` to the MAIN instance only), so a
+  forging prover supplies a `minit` and a fold that agree and nothing bites. The companion and
+  its four tests are DELETED. **The flat-`minit` hole is currently UNCOVERED on the Rust side**;
+  the per-effect `setFieldDyn` VK weld — `setFieldDynVmDescriptor2` publishing
+  `minit_root`/`mfin_root` PIs pinned to the turn's committed pre/post-state root — is now the
+  ONLY thing that would close it, not merely "the bang piece". This overlaps the `fields[0..7]`
+  residual (§1d).
 - **The apex** (`lightclient_unfoolable` + assembled/forest/closure) is
   `#assert_axioms`-clean at HEAD (`docs/reference/lean-circuit.md`; pins at
   `CircuitSoundnessAssembled.lean:752-775`).

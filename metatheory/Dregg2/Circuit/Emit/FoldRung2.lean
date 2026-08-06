@@ -112,7 +112,7 @@ theorem removal_count_increment_faithful {hash : List ℤ → ℤ} {minit : ℤ 
   simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt] at hW
   have hW' := (gate_modEq_iff (a := (envAt t i).nxt REMOVAL_COUNT)
     (b := (envAt t i).loc REMOVAL_COUNT_PLUS_ONE)
-    (by simp only [removalIncrBody, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hrt]
+    (by simp only [removalIncrBody_eq, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hrt]
         ring)).mp (hW hlf)
   have hnext : (envAt t (i + 1)).loc REMOVAL_COUNT = (envAt t i).nxt REMOVAL_COUNT := rfl
   rw [hnext]
@@ -134,7 +134,7 @@ theorem summary_count_constant {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
   simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt] at hC
   have hC' := (gate_modEq_iff (a := (envAt t i).nxt REMOVAL_COUNT)
     (b := (envAt t i).loc REMOVAL_COUNT)
-    (by simp only [rcCarryBody, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hrt]
+    (by simp only [rcCarryBody_eq, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hrt]
         ring)).mp (hC hlf)
   have hnext : (envAt t (i + 1)).loc REMOVAL_COUNT = (envAt t i).nxt REMOVAL_COUNT := rfl
   rw [hnext]
@@ -152,7 +152,10 @@ theorem row_type_binary_active {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
     (by simp [foldDesc, foldConstraints])
   simp only [VmConstraint2.holdsAt] at hg
   rw [holdsVm_gate_of_notLast _ _ _ _ hlf] at hg
-  simp only [binaryBody, EmittedExpr.eval] at hg
+  simp only [binaryBody_eq, EmittedExpr.eval] at hg
+  rw [show (1 : ℤ) * ((envAt t i).loc ROW_TYPE * (envAt t i).loc ROW_TYPE)
+          + -1 * (envAt t i).loc ROW_TYPE
+        = (envAt t i).loc ROW_TYPE * ((envAt t i).loc ROW_TYPE + -1) from by ring] at hg
   exact binary_modEq_cases hg (hcanon.rowType i hi)
 
 /-- Last-row summary (no carrier — the `last_row_is_summary` boundary mod `p`, collapsed by the

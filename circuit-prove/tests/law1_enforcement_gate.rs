@@ -1110,8 +1110,29 @@ const BASELINE: &[(&str, usize)] = &[
     ("circuit/src/note_spend_witness.rs", 41),
     ("circuit/src/plonky3_prover.rs", 7),
     ("circuit/src/plonky3_recursion.rs", 6),
-    ("circuit/src/presentation.rs", 1),
-    ("circuit/src/whole_image_fold.rs", 38),
+    // ⚑ THE LAW WON HERE (2026-08-06). `circuit/src/presentation.rs`'s row was 1 — the closure
+    // `eval: Box::new(move |row, _, public_inputs| row[i] - public_inputs[i])` in
+    // `impl Air for PresentationAir::constraints`, dialect (2). That impl authored NINETEEN
+    // constraints from that one site and every one of them was IDENTICALLY ZERO: its own
+    // `generate_trace` returned `public_inputs = row.clone()`, so each evaluated `0 - 0`. It also
+    // had no caller of any kind (nothing in the workspace ever handed a `PresentationAir` to
+    // `ConstraintValidator` or `TraceSummary`). It is DELETED, not baselined, and the family's real
+    // AIR is the Lean emission it was transcribed into —
+    // `Dregg2/Circuit/Emit/PresentationEmit.lean` -> `dregg-presentation-freshness::summary-v1`,
+    // live in `wire::server::StarkVerifier`. The row is GONE, which the scan requires: a file with
+    // zero authored sites never enters `found`, so no baseline line may claim it has one.
+    // ⚑ RE-PINNED 2026-08-06, 38 -> 24. `circuit/src/whole_image_fold.rs` lost its two BOUND
+    // variants (`whole_image_fold_bound_descriptor` + `..._bound_mem_descriptor`, their witness
+    // builders and prove/verify pairs) — 14 dialect-(4) sites, the `VmConstraint2::{UMemOp, MemOp}`
+    // specs and their `LeanExpr` leaves. They are deleted rather than emitted from Lean because
+    // they were not doing anything to emit: the boundary table they bound against is
+    // prover-supplied and is verified against an EMPTY public-value vector (`verify_vm_descriptor2`
+    // gives `pvs` to the MAIN instance only), so their public inputs were byte-identical to the
+    // unbound chip's and every boundary tooth refused at PROVE time. The surviving 24 are the
+    // unbound fold chip, whose teeth ARE verifier-visible and whose Lean correspondent
+    // (`Dregg2.Circuit.WholeImageFoldRealization.wholeBoundaryFold8`) exists — it remains DEBT,
+    // just 14 sites less of it.
+    ("circuit/src/whole_image_fold.rs", 24),
     // ── OUTSIDE the old two-directory scope: the surface this gate could not see ──
     ("constraint-lowering/src/lib.rs", 8),
     ("dregg-doc/src/ci_assurance.rs", 1),

@@ -350,7 +350,7 @@ theorem compound_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mf
     have h := gforce _ hb
     have hkey : (binBody c).eval (envAt t 0).loc
         = (envAt t 0).loc c * ((envAt t 0).loc c - 1) := by
-      simp only [binBody, subC, EmittedExpr.eval]; ring
+      simp only [binBody_eq, subC, EmittedExpr.eval]; ring
     rw [hkey, Int.modEq_zero_iff_dvd] at h
     rcases pPrimeInt.dvd_mul.mp h with hx | hx
     · obtain ⟨k, hk⟩ := hx; left; omega
@@ -840,7 +840,7 @@ theorem relational_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
     intro c h hlo hhi
     have hkey : (binBody c).eval (envAt t 0).loc
         = (envAt t 0).loc c * ((envAt t 0).loc c - 1) := by
-      simp only [binBody, subC, EmittedExpr.eval]; ring
+      simp only [binBody_eq, subC, EmittedExpr.eval]; ring
     rw [hkey, Int.modEq_zero_iff_dvd] at h
     rcases pPrimeInt.dvd_mul.mp h with hx | hx
     · obtain ⟨k, hk⟩ := hx; left; omega

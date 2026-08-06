@@ -131,6 +131,7 @@ read-only. Every `#guard` is COMPILED EVALUATION of a closed `Bool` — it prove
 measured numbers and nothing more.
 -/
 import Dregg2.Circuit.Emit.TinyAutomataSatisfiable
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.AttestedAutomatonEmit
 
@@ -361,8 +362,12 @@ def attTransitionOpen : VmConstraint2 :=
 /-- C2 continuity (the same body `DfaRoutingTableEmit` emits): `Nxt(current) − Loc(next)`. -/
 def attContinuity : VmConstraint2 := .windowGate ⟨contWindowBody, true⟩
 
-/-- C3 root constancy: `Nxt(root) − Loc(root)` — one automaton for the whole run. -/
-def attRootBody : WindowExpr := .add (.nxt ROOT) (.mul (.const (-1)) (.loc ROOT))
+/-- C3 root constancy: `Nxt(root) − Loc(root)` — one automaton for the whole run.
+⚑ `GateExpr.gCarry`. -/
+def attRootBody : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gCarry ROOT)
+
+theorem attRootBody_eq : attRootBody = WindowExpr.add (.nxt ROOT) (.mul (.const (-1)) (.loc ROOT)) := rfl
 
 /-- The root-constancy window. -/
 def attRootConst : VmConstraint2 := .windowGate ⟨attRootBody, true⟩
@@ -800,7 +805,7 @@ theorem att_root_const (R : ℤ) (hRlo : 0 ≤ R) (hRhi : R < 2013265921)
     have hbody : attRootBody.eval (envAt t j) ≡ 0 [ZMOD 2013265921] := by
       simp only [VmConstraint2.holdsAt, attRootConst, WindowConstraint.holdsAt, if_true] at hrc
       exact hrc hnl
-    simp only [attRootBody, WindowExpr.eval] at hbody
+    simp only [attRootBody_eq, WindowExpr.eval] at hbody
     rw [envAt_nxt h, envAt_loc hj] at hbody
     have hcong : (t.rows[j + 1]'h) ROOT ≡ (t.rows[j]'hj) ROOT [ZMOD 2013265921] := by
       obtain ⟨k, hk⟩ := Int.modEq_zero_iff_dvd.mp hbody

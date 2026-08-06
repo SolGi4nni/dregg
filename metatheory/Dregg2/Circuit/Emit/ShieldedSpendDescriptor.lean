@@ -86,6 +86,7 @@ Definitional descriptor + byte-pinned `#guard` on the wire string + non-vacuous 
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.ShieldedSpendDescriptor
 
@@ -252,11 +253,20 @@ def lkOwnerDerive : VmConstraint2 :=
   .lookup ⟨poseidon2narrow,
     chipLookupTupleNarrow (factIns [cKEY0, cKEY1, cKEY2, cKEY3]) cOWNER⟩
 
-/-- C5: chain continuity `next.current − this.parent` (transition window). -/
-def chainWindow : WindowExpr := .add (.nxt cCUR) (.mul (.const (-1)) (.loc cPAR))
+/-- C5: chain continuity `next.current − this.parent` (transition window). ⚑ `GateExpr.gThread`. -/
+def chainWindow : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread cCUR cPAR)
 
-/-- The `merkle_root` claim lane is carried constant: `next.merkle_root − this.merkle_root`. -/
-def rootCarryWindow : WindowExpr := .add (.nxt cROOT) (.mul (.const (-1)) (.loc cROOT))
+theorem chainWindow_eq : chainWindow = WindowExpr.add (.nxt cCUR) (.mul (.const (-1)) (.loc cPAR)) := rfl
+
+/-- The `merkle_root` claim lane is carried constant: `next.merkle_root − this.merkle_root`.
+⚑ `GateExpr.gCarry`. -/
+def rootCarryWindow : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gCarry cROOT)
+
+theorem rootCarryWindow_eq :
+    rootCarryWindow = WindowExpr.add (.nxt cROOT) (.mul (.const (-1)) (.loc cROOT)) := rfl
 
 /-- The full constraint list. Per-row gates are re-lowered on the last row (gates ride the
 `when_transition()` domain — the deployed last-row-repair shape, cf. the wide membership). -/

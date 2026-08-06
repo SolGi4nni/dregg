@@ -79,20 +79,18 @@ theorem foldl_add_eval (a : Assignment) :
 theorem sumExpr_eval (a : Assignment) (es : List EmittedExpr) :
     (sumExpr es).eval a = (es.map (fun e => e.eval a)).sum := by
   cases es with
-  | nil => simp [sumExpr, EmittedExpr.eval]
+  | nil => show (EmittedExpr.const 0).eval a = _; simp [EmittedExpr.eval]
   | cons e rest =>
-    simp only [sumExpr]
+    show (rest.foldl (fun acc x => EmittedExpr.add acc x) e).eval a = _
     rw [foldl_add_eval a rest e]
     simp only [List.map_cons, List.sum_cons]
 
-/-- Each emitted `varTerm (c, col)` evaluates to `c · loc[col]`. -/
+/-- Each emitted `varTerm (c, col)` evaluates to `c · loc[col]`. ⚑ RE-PROVED for the canonical
+renderer (2026-08-06): the coefficient is always written, so there is no `coeff == 1` case split. -/
 theorem varTerm_eval (a : Assignment) (t : ℤ × Nat) : (varTerm t).eval a = t.1 * a t.2 := by
   obtain ⟨c, col⟩ := t
-  simp only [varTerm]
-  split
-  · next h => have hc1 : c = 1 := by simpa using h
-              subst hc1; simp [EmittedExpr.eval]
-  · next _ => simp [EmittedExpr.eval]
+  show (EmittedExpr.mul (.const c) (.var col)).eval a = c * a col
+  simp only [EmittedExpr.eval]
 
 /-- The emitted gate body `sumExpr (terms.map varTerm)` evaluates to the reference `linComb`. -/
 theorem sumExpr_varTerm_eval (a : Assignment) (terms : List (ℤ × Nat)) :
@@ -120,29 +118,32 @@ theorem linComb_filter (a : Assignment) (terms : List (ℤ × Nat)) :
       have h0 : t.1 = 0 := by simpa [bne_iff_ne] using h
       simp only [linComb, List.map_cons, List.sum_cons, ih, h0, zero_mul, zero_add]
 
-/-- `linGate terms 0` is `.base (.gate (sumExpr (…filter…)))` — the second `let` collapses at `k = 0`. -/
+/-- `linGate terms 0` is `.base (.gate (sumExpr (terms.map varTerm)))`. ⚑ The zero-coefficient FILTER
+is gone with the flag day: the canonical renderer keeps every term and elides only a zero head
+constant, so the term list here is the head's own. -/
 theorem linGate_zero (terms : List (ℤ × Nat)) :
-    linGate terms 0
-      = .base (.gate (sumExpr ((terms.filter (fun t => t.1 != 0)).map varTerm))) := by
-  simp [linGate]
+    linGate terms 0 = .base (.gate (sumExpr (terms.map varTerm))) := by
+  simp only [linGate, Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
+    List.map_map, if_true, List.append_nil, sumExpr, Function.comp_def]
+  rfl
 
-/-- `prodGate terms 0` is `.base (.gate (sumExpr (…filter…)))` — the degree-`k` twin of
-`linGate_zero`. -/
+/-- `prodGate terms 0` is the degree-`k` twin of `linGate_zero`. -/
 theorem prodGate_zero (terms : List (ℤ × List Nat)) :
-    prodGate terms 0
-      = .base (.gate (sumExpr ((terms.filter (fun t => t.1 != 0)).map prodTerm))) := by
-  simp [prodGate]
+    prodGate terms 0 = .base (.gate (sumExpr (terms.map prodTerm))) := by
+  simp only [prodGate, Dregg2.Circuit.GateExpr.gHeadToExpr, Dregg2.Circuit.GateExpr.gHeadExprs,
+    if_true, List.append_nil, sumExpr, prodTerm]
 
 /-- THE DEGREE-2 MASK-PIN BODY, evaluated. The gate `nax − ax − m·ox == 0` emitted by
 `newAutoCoordCommitConstraints` has body `sumExpr [var nax, (−1)·var ax, (−1)·(var m · var ox)]`;
 this computes its value as `loc nax − (loc ax + loc m · loc ox)`, the `gate_modEq_iff` shape. -/
 theorem maskPinBody_eval (a : Assignment) (naxCol axCol mCol oxCol : Nat) :
-    (sumExpr ((([(1, [naxCol]), (-1, [axCol]), (-1, [mCol, oxCol])] : List (ℤ × List Nat)).filter
-        (fun t => t.1 != 0)).map prodTerm)).eval a
+    (sumExpr (([(1, [naxCol]), (-1, [axCol]), (-1, [mCol, oxCol])] : List (ℤ × List Nat)).map
+        prodTerm)).eval a
       = a naxCol - (a axCol + a mCol * a oxCol) := by
-  -- The coefficient list is CLOSED (`1, -1, -1`), so the filter/map/fold all reduce; what is left
-  -- is the literal emitted body, whose columns are the only variables.
-  show (EmittedExpr.add (.add (.var naxCol) (.mul (.const (-1)) (.var axCol)))
+  -- The coefficient list is CLOSED (`1, -1, -1`), so the map/fold all reduce; what is left is the
+  -- literal emitted body, whose columns are the only variables. ⚑ The leading `1 · nax` term now
+  -- renders `mul(const 1, var nax)` where the elided renderer wrote it bare.
+  show (EmittedExpr.add (.add (.mul (.const 1) (.var naxCol)) (.mul (.const (-1)) (.var axCol)))
       (.mul (.const (-1)) (.mul (.var mCol) (.var oxCol)))).eval a
     = a naxCol - (a axCol + a mCol * a oxCol)
   simp only [EmittedExpr.eval]
@@ -288,7 +289,7 @@ theorem pack_gate_of_sat (hsat : Satisfied2 hash (automataflCommitDesc n) minit 
     exact List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
   rw [linGate_zero] at hmem
   have hg := commit_gate hsat 0 (by omega) hmem
-  rwa [sumExpr_varTerm_eval, linComb_filter] at hg
+  rwa [sumExpr_varTerm_eval] at hg
 
 /-- The emitted `commitBoardConstraints` `.piBinding` forces `packed_j ≡ PI[16+j]` on the first row. -/
 theorem commit_pi_of_sat (hsat : Satisfied2 hash (automataflCommitDesc n) minit mfin maddrs t)
@@ -413,7 +414,7 @@ theorem pack_pi_of_mem (hsat : Satisfied2 hash D minit mfin maddrs t)
   rw [linGate_zero] at hpack
   have hgate : linComb (packTermsAt n j cellCol feltCol) (envAt t 0).loc ≡ 0 [ZMOD 2013265921] := by
     have hg := gate_of_mem hsat 0 (by omega) hpack
-    rwa [sumExpr_varTerm_eval, linComb_filter] at hg
+    rwa [sumExpr_varTerm_eval] at hg
   rw [linComb_packTermsAt, ← packCell_boardCode_eqAt n j cellCol (envAt t 0) halpha] at hgate
   have hfelt : (envAt t 0).loc (feltCol j)
       ≡ packCell (boardCode (boardDecodeCommitAt n cellCol (envAt t 0)) n) j [ZMOD 2013265921] :=

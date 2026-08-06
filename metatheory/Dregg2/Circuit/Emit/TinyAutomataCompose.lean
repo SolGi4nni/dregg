@@ -138,6 +138,7 @@ the measured numbers and the emitted bytes, nothing more. The load-bearing facts
 -/
 import Dregg2.Circuit.Emit.DfaRoutingTableEmit
 import Dregg2.Circuit.Emit.DfaRoutingEmit
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.TinyAutomataCompose
 
@@ -402,7 +403,8 @@ def laneTableDef (i : Nat) (tbl : List (List Nat)) : TableDef :=
 column), its continuity window, and its two boundary pins. -/
 def laneConstraints (i : Nat) : List VmConstraint2 :=
   [ .lookup ⟨LANE_TID i, [.var (laneCurrent i), .var LANE_SYMBOL, .var (laneNext i)]⟩
-  , .windowGate ⟨.add (.nxt (laneCurrent i)) (.mul (.const (-1)) (.loc (laneNext i))), true⟩
+  , .windowGate ⟨Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+      (Dregg2.Circuit.GateExpr.gThread (laneCurrent i) (laneNext i)), true⟩
   , .base (.piBinding VmRow.first (laneCurrent i) (2 * i))
   , .base (.piBinding VmRow.last (laneNext i) (2 * i + 1)) ]
 

@@ -18,7 +18,7 @@
 //! The presentation proof proves: "I hold a valid attenuated token chain whose
 //! final state authorizes action X" without revealing the chain or capabilities.
 
-use crate::constraint_prover::{Air, Constraint, ConstraintValidator, TraceSummary};
+use crate::constraint_prover::{ConstraintValidator, TraceSummary};
 use crate::derivation_air::{CircuitRule, DerivationAir, DerivationWitness};
 use crate::dsl::fold::{FoldAir, FoldWitness, RemovedFact};
 use crate::field::BabyBear;
@@ -459,25 +459,23 @@ pub enum PresentationVerification {
     TokenExpired,
 }
 
-/// The presentation AIR: combines all sub-AIRs into one constraint system.
+/// The presentation witness holder: a prover-side driver that locally validates each
+/// sub-AIR (`FoldAir`, `DerivationAir`, `MerkleAir`) and summarizes them.
 ///
-/// This is a "meta-AIR" that generates a unified trace by concatenating
-/// the sub-proofs. In a real IVC/folding scheme, each step would be
-/// recursively verified. Here we verify them sequentially.
+/// ⚠ **This is NOT an AIR and no longer implements [`crate::constraint_prover::Air`].**
+/// It used to, with nineteen constraints that were identically zero and that nothing
+/// ever evaluated — see the deletion note below [`PresentationBuilder`]. The AIR for this
+/// family is Lean-authored and emitted:
+/// `descriptor_by_name("dregg-presentation-freshness::summary-v1")`, witnessed by
+/// [`crate::presentation_descriptor_witness`], verified by `wire::server::StarkVerifier`.
+///
+/// Both methods here (`prove`, `verify_all`) hold the witness themselves, so they are
+/// honest LOCAL checking — never verification of anything remote.
 pub struct PresentationAir {
     pub witness: PresentationWitness,
 }
 
 impl PresentationAir {
-    /// Width of the summary trace / public-input vector:
-    ///   federation_root (1)
-    /// + request_predicate (`ACTION_BINDING_WIDTH` = 8)
-    /// + timestamp (1)
-    /// + presentation_tag (narrow, 1)
-    /// + revealed_facts_commitment (`WideHash::WIDTH` = 8)
-    pub const SUMMARY_WIDTH: usize =
-        1 + crate::binding::ACTION_BINDING_WIDTH + 1 + 1 + crate::binding::WideHash::WIDTH;
-
     pub fn new(witness: PresentationWitness) -> Self {
         Self { witness }
     }
@@ -629,66 +627,33 @@ impl PresentationAir {
     }
 }
 
-/// Not a standalone AIR (it's a meta-proof), but we implement the Air trait
-/// so the constraint prover infrastructure can validate the combined circuit.
-/// The trace is a summary of the sub-proofs' public inputs.
-impl Air for PresentationAir {
-    fn trace_width(&self) -> usize {
-        // Summary trace (public inputs as columns), laid out as:
-        //   federation_root (1)
-        //   request_predicate[0..ACTION_BINDING_WIDTH]   (8)
-        //   timestamp (1)
-        //   presentation_tag (narrow, 1)
-        //   revealed_facts_commitment[0..PRESENTATION/WideHash::WIDTH] (8)
-        // = 1 + 8 + 1 + 1 + 8 = 19
-        Self::SUMMARY_WIDTH
-    }
-
-    fn num_public_inputs(&self) -> usize {
-        Self::SUMMARY_WIDTH
-    }
-
-    fn constraints(&self) -> Vec<Constraint> {
-        // The presentation AIR's constraints are just consistency checks on the
-        // public inputs (`row[i] == public_inputs[i]`). The real work is done by
-        // sub-AIRs. Generated from the layout so the full collision-resistant
-        // binding width is bound, not just the first 4 felts.
-        (0..Self::SUMMARY_WIDTH)
-            .map(|i| Constraint {
-                name: format!("summary_col_{i}_match"),
-                eval: Box::new(move |row, _, public_inputs| row[i] - public_inputs[i]),
-            })
-            .collect()
-    }
-
-    fn generate_trace(&self) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
-        let w = &self.witness;
-
-        let final_root = if let Some(last) = w.fold_chain.last() {
-            last.new_root
-        } else {
-            w.derivation.state_root
-        };
-
-        let presentation_tag = crate::binding::compute_presentation_tag_narrow(
-            final_root,
-            w.presentation_randomness,
-            w.verifier_nonce,
-        );
-
-        let mut row = Vec::with_capacity(Self::SUMMARY_WIDTH);
-        row.push(w.federation_root);
-        row.extend_from_slice(&w.request_predicate); // 8 felts (ACTION_BINDING_WIDTH)
-        row.push(w.timestamp);
-        row.push(presentation_tag);
-        row.extend_from_slice(w.revealed_facts_commitment.as_slice()); // 8 felts
-        debug_assert_eq!(row.len(), Self::SUMMARY_WIDTH);
-
-        let public_inputs = row.clone();
-
-        (vec![row], public_inputs)
-    }
-}
+// DELETED 2026-08-06 (zero-constraint AIR purge): `impl Air for PresentationAir` —
+// `trace_width` / `num_public_inputs` / `constraints` / `generate_trace`.
+//
+// EVERY constraint it produced was IDENTICALLY ZERO. Each was
+// `|row, _, pi| row[i] - pi[i]`, and its own `generate_trace` returned
+// `public_inputs = row.clone()`, so the checker only ever evaluated `0 - 0`. Nineteen
+// named constraints (`summary_col_0_match` ..) that could not fail under any witness,
+// honest or forged.
+//
+// It was also UNREACHABLE, which is why nothing caught it: the `Air` trait is consumed
+// only by `ConstraintValidator::{verify, verify_and_report}` and
+// `TraceSummary::{generate, generate_unchecked, from_trace}`, and NO call site anywhere
+// in the workspace — production or test — ever passed a `PresentationAir` to one.
+// `PresentationAir::prove` and `::verify_all` (the methods `bridge::present` really
+// calls) dispatch to the SUB-AIRs (`FoldAir`, `DerivationAir`, `MerkleAir`) and never
+// touch this impl. So the zero constraints were dead weight, not a live hole.
+//
+// ⚑ The real constraints for this family already exist, are AUTHORED IN LEAN, and are
+// LIVE. `metatheory/Dregg2/Circuit/Emit/PresentationEmit.lean`'s
+// `presentationFreshnessDesc` emits `dregg-presentation-freshness::summary-v1`, served
+// by `descriptor_by_name` and verified in production by `wire::server::StarkVerifier`
+// (the DEFAULT `SiloConfig` verifier). It carries the SAME 19-column summary as twenty
+// `PiBinding{First, col i, pi i}` constraints — but its public inputs arrive from the
+// WIRE rather than from `row.clone()`, so they CAN and DO fail: see
+// `presentation_descriptor_witness::tests::forged_summary_pi_refuses` and
+// `presentation_zero_constraint_purge.rs`. The witness builder is
+// `crate::presentation_descriptor_witness`.
 
 // RETIRED 2026-07-16 (mock-proof purge): the free `prove_authorization` +
 // `AuthorizationProof` (a trace-digest proof over `MultiStepDerivationAir`)

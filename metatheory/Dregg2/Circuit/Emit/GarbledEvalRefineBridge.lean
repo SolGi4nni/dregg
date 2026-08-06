@@ -273,12 +273,12 @@ theorem decBodyG_zero (pub : Assignment) (o hsh : Nat → ℤ) (j : Nat) (hj : j
 /-- The AND selector body vanishes (`is_and = 1`, `1·(1−1) = 0`). -/
 theorem binBodyG_and (pub : Assignment) (o hsh : Nat → ℤ) :
     (binBody IS_AND).eval (hRowG pub o hsh) = 0 := by
-  simp only [binBody, EmittedExpr.eval, hRowG_and]; ring
+  simp only [binBody_eq, EmittedExpr.eval, hRowG_and]; ring
 
 /-- A boolean-selector body vanishes when its selector reads `0`. -/
 theorem binBodyG_off (pub : Assignment) (o hsh : Nat → ℤ) (c : Nat)
     (h : hRowG pub o hsh c = 0) : (binBody c).eval (hRowG pub o hsh) = 0 := by
-  simp only [binBody, EmittedExpr.eval, h]; ring
+  simp only [binBody_eq, EmittedExpr.eval, h]; ring
 
 /-- The exclusivity body vanishes (`is_and = 1`, others `0`, non-padding). -/
 theorem exclBodyG_zero (pub : Assignment) (o hsh : Nat → ℤ) :
@@ -289,7 +289,7 @@ theorem exclBodyG_zero (pub : Assignment) (o hsh : Nat → ℤ) :
 /-- The wire-chaining body vanishes on row 0 (`chain_flag = 0`, so `0 · (…) = 0`). -/
 theorem chainBodyG_zero (pub : Assignment) (o hsh : Nat → ℤ) (j : Nat) :
     (chainBody j).eval (envAt (honestTraceG pub o hsh) 0) = 0 := by
-  simp only [chainBody, WindowExpr.eval, envAtG0_loc, envAtG0_nxt, hRowG_chain]; ring
+  simp only [chainBody_eq, WindowExpr.eval, envAtG0_loc, envAtG0_nxt, hRowG_chain]; ring
 
 /-! ### Constraint-holds helpers on the honest two-row trace (lift ℤ-zero to the field congruence). -/
 

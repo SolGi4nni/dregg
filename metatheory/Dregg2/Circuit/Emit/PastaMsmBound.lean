@@ -62,6 +62,7 @@ parameter choice and not a wall.** §7.1 prices the residual that is actually re
 `import Dregg2.Circuit.Emit.PastaMsmBound`
 -/
 import Dregg2.Circuit.Emit.PastaMsmSliced
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.PastaMsmBound
 
@@ -75,6 +76,7 @@ open Dregg2.Circuit.Emit.PastaScalarMul (PtP PointIsZ)
 open Dregg2.Circuit.Emit.PastaMsmWindowed (WTrace envOf cw
   SRCX SRCY SRCZ BIT DBL fpVal_as_sum)
 open Dregg2.Circuit.Emit.PastaMsmSliced (sliceLo slicedRowDesc PI_COUNT)
+open Dregg2.Circuit.GateExpr (gEsub gMux gNeg gOneMinus idOps render toWindow toEmitted WLeaf)
 
 set_option autoImplicit false
 
@@ -139,8 +141,9 @@ producing `VmConstraint2`; §4 states what each one FORCES. -/
 
 /-- `1 − DBL`, as an emitted expression: the doubling-row GUARD. A doubling row's `SRC` is the
 ACCUMULATOR (`PastaMsmWindowed.dblRow_forces`), which is not a public generator — so its tuple is
-multiplied to the all-zero row, which the manifest carries once per plane. -/
-def notDbl : EmittedExpr := .add (.const 1) (.mul (.const (-1)) (.var DBL))
+multiplied to the all-zero row, which the manifest carries once per plane. ⚑ Esub/"1-e" family,
+factored: `gOneMinus toEmitted`, `rfl` against the old body (`GateExpr.gOneMinus_var_emitted`). -/
+def notDbl : EmittedExpr := gOneMinus toEmitted (.var DBL)
 
 /-- The guard's VALUE on a row. -/
 def guardV (a : Assignment) : ℤ := 1 + (-1) * a DBL
@@ -161,15 +164,17 @@ def tidxStartGate : VmConstraint2 := .base (.boundary .first (.var TIDX))
 def tidxThreadGate : VmConstraint2 :=
   cw (.add (.nxt TIDX) (.mul (.const (-1)) (.add (.loc TIDX) (.const 1))))
 
-/-- `nxt GIDX − (DBL·lo + (1−DBL)·(GIDX+1))` — the term index RESETS to the slice's own `lo` after
-a doubling row and advances otherwise. `lo` is a LITERAL in the emitted gate, so instance `k`'s
-thread cannot be instance `j`'s. -/
+/-- `nxt GIDX − the Merkle-mux shape (DBL selects between `lo` and `GIDX+1`)` — the term index
+RESETS to the slice's own `lo` after a doubling row and advances otherwise. `lo` is a LITERAL in
+the emitted gate, so instance `k`'s thread cannot be instance `j`'s.
+
+⚑ **RE-EMIT**: was the expensive mux form (`DBL·lo + (1−DBL)·(GIDX+1)`, 3 multiplications); this is
+`gMux DBL (GIDX+1) lo` (`Dregg2.Circuit.GateExpr`'s form B, 2 multiplications) — the SAME
+polynomial, one fewer multiplication. -/
 def gidxThreadGate (lo : Nat) : VmConstraint2 :=
-  cw (.add (.nxt GIDX)
-      (.mul (.const (-1))
-        (.add (.mul (.loc DBL) (.const (lo : ℤ)))
-              (.mul (.add (.const 1) (.mul (.const (-1)) (.loc DBL)))
-                    (.add (.loc GIDX) (.const 1))))))
+  cw (render toWindow
+    (gEsub idOps (.leaf (WLeaf.nxt GIDX))
+      (gMux (.leaf (WLeaf.loc DBL)) (.add (.leaf (WLeaf.loc GIDX)) (.const 1)) (.const (lo : ℤ)))))
 
 /-- The three index gates. -/
 def boundGates (lo : Nat) : List VmConstraint2 :=
@@ -352,14 +357,14 @@ theorem tidxThread_forces (lo : Nat) (T : WTrace) (i : Nat) (h : BoundWindowAcce
 theorem gidxThread_forces (lo : Nat) (T : WTrace) (i : Nat) (h : BoundWindowAccepted lo T i) :
     T (i + 1) GIDX
       = T i DBL * (lo : ℤ) + (1 + (-1) * T i DBL) * (T i GIDX + 1) := by
-  have hw := h ⟨.add (.nxt GIDX)
-      (.mul (.const (-1))
-        (.add (.mul (.loc DBL) (.const (lo : ℤ)))
-              (.mul (.add (.const 1) (.mul (.const (-1)) (.loc DBL)))
-                    (.add (.loc GIDX) (.const 1))))), true⟩
+  have hw := h ⟨render toWindow
+      (gEsub idOps (.leaf (WLeaf.nxt GIDX))
+        (gMux (.leaf (WLeaf.loc DBL)) (.add (.leaf (WLeaf.loc GIDX)) (.const 1))
+          (.const (lo : ℤ)))), true⟩
     (by simp [boundGates, gidxThreadGate, cw])
-  simp only [WindowExpr.eval, envOf] at hw
-  linarith
+  simp only [WindowExpr.eval, envOf, render, gEsub, gMux, gNeg, toWindow,
+    Dregg2.Circuit.GateExpr.WLeaf.expr] at hw
+  linear_combination hw
 
 /-- ⚑ **`tidx_is_the_row_index`** — the emitted origin pin plus the emitted thread make `TIDX` the
 row's own index, for every row. `H` is universally quantified and occurs only as the induction
@@ -394,7 +399,8 @@ theorem tupleOf_cons (a : Assignment) :
         :: (guardV a * (a GIDX + 1))
         :: (guardV a * a BIT)
         :: ((List.range PTLIMBS).map (fun j => guardV a * a (SRCX + j))) := by
-  simp [tupleOf, genTuple, guardV, notDbl, EmittedExpr.eval, List.map_map, Function.comp_def]
+  simp [tupleOf, genTuple, guardV, notDbl, gOneMinus, gEsub, gNeg, EmittedExpr.eval,
+    List.map_map, Function.comp_def]
 
 /-- The tuple's KEY. -/
 theorem tupleOf_head (a : Assignment) :

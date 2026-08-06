@@ -96,7 +96,7 @@ theorem ge0_9N_of_sat (hsat : Satisfied2 hash d minit mfin maddrs t)
         + (-1) * e.loc (bit0 + 0) + (-2) * e.loc (bit0 + 1) + (-4) * e.loc (bit0 + 2)
         + (-8) * e.loc (bit0 + 3) + (-16) * e.loc (bit0 + 4) + (-32) * e.loc (bit0 + 5)
         + (-64) * e.loc (bit0 + 6) + (-128) * e.loc (bit0 + 7)
-        + (-256) * e.loc (bit0 + 8) := by rfl
+        + (-256) * e.loc (bit0 + 8) := by canon_head_eval [headToExpr]
   rw [hE] at hg
   have hmod : (2 * e.loc ib * (e.loc val - 1) + e.loc ib - (e.loc val - 1) - 1)
       ≡ S [ZMOD 2013265921] := by
@@ -114,7 +114,7 @@ theorem eqPinN_of_sat (hsat : Satisfied2 hash d minit mfin maddrs t)
   set e := envAt t i with he
   have hg := ngateH hsat i hi hpin
   have hE : (headToExpr (((Head.lin 1 eqCol).addLin 1 neqCol).addConst (-1))).eval e.loc
-      = e.loc eqCol + e.loc neqCol + (-1) := rfl
+      = e.loc eqCol + e.loc neqCol + (-1) := by canon_head_eval [headToExpr]
   rw [hE] at hg
   have hmod := (gate_modEq_iff (x := e.loc eqCol + e.loc neqCol + -1)
     (a := e.loc eqCol) (b := 1 - e.loc neqCol) (by ring)).mp hg
@@ -137,7 +137,7 @@ theorem gatedSelN_of_sat (hsat : Satisfied2 hash d minit mfin maddrs t)
   have hE : (headToExpr ((((Head.lin 1 out).addProd (-1) [g, s0]).addLin (-1) s1).addProd 1
         [g, s1])).eval e.loc
       = e.loc out + (-1) * (e.loc g * e.loc s0) + (-1) * e.loc s1
-        + e.loc g * e.loc s1 := rfl
+        + e.loc g * e.loc s1 := by canon_head_eval [headToExpr]
   rw [hE] at hgt
   refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hgt)
   rcases hgb with a | a <;> rcases h0b with b1 | b1 <;> rcases h1b with c | c <;>
@@ -474,7 +474,7 @@ theorem eqScalarN_of_sat (n : Nat) (hn : (n : ℤ) < 2013265921)
     have hE : (headToExpr ((((Head.lin 1 dsq).addProd (-1) [acol, acol]).addProd 2 [acol, ccol]).addProd
           (-1) [ccol, ccol])).eval e.loc
         = e.loc dsq + (-1) * (e.loc acol * e.loc acol) + 2 * (e.loc acol * e.loc ccol)
-          + (-1) * (e.loc ccol * e.loc ccol) := rfl
+          + (-1) * (e.loc ccol * e.loc ccol) := by canon_head_eval [headToExpr]
     rw [hE] at hg
     rw [hav, hcv] at hg
     exact sqDistN_pure (canon_loc hc i _) (by positivity) (by positivity) (by linarith [hsqb]) hg

@@ -65,7 +65,7 @@ theorem eq_of_modEq_small {a b : ℤ} (ha : -16 ≤ a ∧ a ≤ 16) (hb : -16 �
 theorem bin_of_gate {a : Assignment} {c : Nat}
     (h : (binExpr c).eval a ≡ 0 [ZMOD 2013265921]) (hc : Canon (a c)) :
     a c = 0 ∨ a c = 1 := by
-  simp only [binExpr, EmittedExpr.eval] at h
+  simp only [binExpr_eq, EmittedExpr.eval] at h
   have hd : (2013265921 : ℤ) ∣ a c * (a c + (-1)) := Int.modEq_zero_iff_dvd.mp h
   obtain ⟨hc0, hc1⟩ := hc
   rcases pPrimeInt.dvd_mul.mp hd with hx | hx

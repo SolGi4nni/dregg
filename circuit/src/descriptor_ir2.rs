@@ -134,14 +134,22 @@
 //!     `circuit/tests/whole_image_fold_lean_correspondent.rs`, and the chip's own behaviour by
 //!     `tests/effect_vm_umem_real_turn.rs::cross_cell_read_whole_image_*`. The `satisfied2U_init_*`
 //!     family named above is at the FLAT sponge `Heap.root` and is a THIRD object again — see the
-//!     flat-boundary note below. The cross-table wiring
-//!     binding the chip's insert-chain `(key, value)` rows to THIS universal boundary table's
-//!     per-domain `(domain, key)` cells is REALIZED (`whole_image_fold::whole_image_fold_bound_*`):
-//!     each fold link drives a `UMemOp::Read` against the boundary table, so the deployed
-//!     address-closure lookup (`BUS_UMEM_ADDRS`) forces every folded cell DECLARED and the Blum
-//!     balance (`BUS_UMEM_CHECK`) forces its folded value to equal the declared cell's value — the
-//!     chip folds EXACTLY the declared boundary, no new bus/column/AIR
-//!     (`tests/effect_vm_umem_real_turn.rs::whole_image_fold_bound_*`).
+//!     flat-boundary note below.
+//!     ⚠ **THE CROSS-TABLE WIRING WAS NEVER VERIFIER-VISIBLE, AND IS DELETED** (measured
+//!     2026-08-06). This paragraph used to say the binding of the chip's insert-chain
+//!     `(key, value)` rows to THIS universal boundary table's per-domain `(domain, key)` cells was
+//!     REALIZED by `whole_image_fold::whole_image_fold_bound_*`, with the `BUS_UMEM_ADDRS`
+//!     address-closure and `BUS_UMEM_CHECK` Blum balance forcing "the chip folds EXACTLY the
+//!     declared boundary". The boundary table is PROVER-SUPPLIED and carries no public values:
+//!     [`verify_vm_descriptor2`] builds `pvs = [public_inputs]` then `resize(airs.len(), vec![])`,
+//!     so every non-MAIN instance — including this one — is verified against an EMPTY public-value
+//!     vector. The bound wrappers' public inputs were byte-identical to the unbound chip's
+//!     (`[empty_root8, published_root8]`), and their three boundary teeth all refused inside
+//!     `prove_whole_image_fold_bound*` — an honest prover declining a boundary inconsistent with
+//!     its own fold list, which an adversary simply does not supply. The descriptors, wrappers and
+//!     their eight tests are DELETED rather than re-labelled. The chip's own, genuinely
+//!     verifier-visible behaviour (both root PI groups pinned + the empty-root pin) is still
+//!     exercised by `tests/effect_vm_umem_real_turn.rs::cross_cell_read_whole_image_*`.
 //!   * The custom table id 5 (Lean `SUBMASK_TID = 0`) is realized as the bitwise-submask
 //!     relation at 30 bits (`subsetTable_mem_iff`: both elements in `[0, 2^30)` and
 //!     `keep & held = keep`), enforced by per-bit decomposition — the custom-table CONTENTS
@@ -170,27 +178,28 @@
 //!         address (declared cells open to `minit a`, every address off the list ABSENT) — the
 //!         no-extra-cells direction that rejects a forged `minit[a]` at an untouched declared field.
 //!     IN-CIRCUIT REALIZATION — ⚠ **THE OBJECT DOES NOT MATCH, AND THIS IS THE SAME CLASS AS THE
-//!     umem ONE ABOVE** (measured 2026-07-28, NOT repaired). `satisfied2_init_whole_image` and its
+//!     umem ONE ABOVE** (measured 2026-07-28; the companion is now DELETED, see below).
+//!     `satisfied2_init_whole_image` and its
 //!     family are stated over the FLAT SPONGE `Heap.root hash h = hash (h.map leafOf)` — one absorb
-//!     of the whole leaf list, arity-2 leaves. The `*_bound_mem` companion
-//!     (`crate::whole_image_fold::whole_image_fold_bound_mem_descriptor`) reuses
-//!     `build_whole_image_fold`, so what it actually folds and pins is `CanonicalHeapTree8::root8` —
+//!     of the whole leaf list, arity-2 leaves. The `*_bound_mem` companion reused
+//!     `build_whole_image_fold`, so what it actually folded and pinned was `CanonicalHeapTree8::root8` —
 //!     an eight-felt arity-3 IMT MERKLE root. A Merkle root is not a flat sponge, so the companion
-//!     is NOT the in-circuit realization of that Lean family; it is an unrelated commitment carrying
-//!     the same cross-table teeth. The chip-level teeth it DOES bite (address closure via
-//!     `BUS_MEM_ADDRS`, value equality via `BUS_MEM_CHECK`, the published-root `PiBinding`) are real
-//!     and are exercised by
-//!     `tests/effect_vm_umem_real_turn.rs::whole_image_fold_bound_mem_forged_minit_refuses`; what is
-//!     unproved is that they discharge `satisfied2_init_whole_image`. The honest repair is the flat
-//!     twin of `Dregg2.Circuit.WholeImageFoldRealization`: restate the flat cone over the object the
-//!     companion folds, or fold the flat sponge. Named, not closed. The mechanics below describe the
-//!     companion as built: each fold link cross-bound to the `MemBoundary` table via a
-//!     `MemOp::Read`. The two deployed teeth bite in `verify_batch` (no new bus/column/AIR):
-//!     the `BUS_MEM_ADDRS` address-closure refuses a folded cell the boundary never declared, and
-//!     the `BUS_MEM_CHECK` Blum balance refuses a folded value differing from the declared
-//!     `minit[addr]` — so a forged `minit` folds to a different root and the published-root pin
-//!     REFUSES (`tests/effect_vm_umem_real_turn.rs::whole_image_fold_bound_mem_forged_minit_refuses`
-//!     + honest-accept/undeclared/smuggled-start companions).
+//!     was NOT the in-circuit realization of that Lean family; it was an unrelated commitment.
+//!     ⚠ **AND THE SECOND MEASUREMENT (2026-08-06) TOOK THE REST OF IT.** This block used to add
+//!     that the companion's chip-level teeth "are real" and "bite in `verify_batch`" — address
+//!     closure via `BUS_MEM_ADDRS`, value equality via `BUS_MEM_CHECK` — so that "a forged `minit`
+//!     folds to a different root and the published-root pin REFUSES". They did not bite in
+//!     `verify_batch`. The flat `MemBoundaryWitness` is prover-supplied and its instance is verified
+//!     against an EMPTY public-value vector (`pvs` reaches the MAIN instance only), so the verifier
+//!     never saw the declared image at all; `whole_image_fold_bound_mem_forged_minit_refuses`
+//!     refused inside `prove_whole_image_fold_bound_mem`, against a boundary the same prover had
+//!     just built from the same leaf list. A forging prover supplies a `minit` AND a matching fold,
+//!     and both teeth are silent. So the flat-`minit` hole is **NOT covered** by anything here: the
+//!     companion, its witness builder, its prove/verify pair and its four tests are DELETED. The
+//!     honest repair is unchanged and now unattended — the flat twin of
+//!     `Dregg2.Circuit.WholeImageFoldRealization` plus a PI that anchors the declared image, i.e.
+//!     `setFieldDynVmDescriptor2` publishing `minit_root`/`mfin_root` pinned to the turn's committed
+//!     pre/post-state root (the RESIDUAL named immediately below, which is the same work).
 //!     RESIDUAL — the per-EFFECT VK weld. Like the umem boundary (still "witness-supplied" at its
 //!     effect descriptors, the anchor realized as the `whole_image_fold` companion), the flat fold
 //!     is realized as a companion, NOT yet welded into `setFieldDynVmDescriptor2` itself. Welding it

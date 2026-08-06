@@ -55,6 +55,7 @@ gate-forcing reduces through the STABLE `Satisfied2.rowConstraints` interface, a
 -/
 import Dregg2.Deos.SettleEscrowSatWideDescriptor
 import Dregg2.Deos.ConstraintBinding
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Deos.InAirAuthorityDigestSelector
 
@@ -111,7 +112,12 @@ def gentianRecomputeBindGate (witCol authCol : Nat) : VmConstraint2 :=
 
 /-- (2) **decode-boolean**: `floorCol · (floorCol − 1) == 0`. Forces the decoded floor bit ∈ {0,1}. -/
 def gentianBooleanGate (floorCol : Nat) : VmConstraint2 :=
-  .base (.gate (.mul (.var floorCol) (.add (.var floorCol) (.const (-1)))))
+  .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf floorCol))))
+
+theorem gentianBooleanGate_eq (floorCol : Nat) :
+    gentianBooleanGate floorCol =
+      .base (.gate (.mul (.var floorCol) (.add (.var floorCol) (.const (-1))))) := rfl
 
 /-- (3) **selector-force**: `floorCol · (selCol − 1) == 0`. When the floor bit is `1`, forces the
 selector ON; inert when `0`. -/

@@ -24,6 +24,7 @@ state cannot be used as another PRE state, so there is no wrap/alias at capacity
 
 import Dregg2.Circuit.ExactNullifierAafiPlan
 import Dregg2.Circuit.Emit.FaithfulNoteSpendDescriptorPlan
+import Dregg2.Circuit.GateExpr
 import Mathlib.Tactic
 
 namespace Dregg2.Circuit.Emit.ExactNullifierAafiDescriptorPlan
@@ -570,7 +571,8 @@ def nextBracketRight (i : Nat) : EmittedExpr :=
 /-- Address tag is BOT/REAL; successor tag is REAL/TOP.  BOT/TOP payload lanes are forced zero,
 making the wire encoding canonical rather than merely order-equivalent. -/
 def taggedEndpointConstraints : List VmConstraint2 :=
-  [ .base (.gate (emul (.var LOW_ADDR_TAG) (esub (.var LOW_ADDR_TAG) (.const 1)))),
+  [ .base (.gate (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+      (Dregg2.Circuit.GateExpr.gBoolEnc2 (.leaf LOW_ADDR_TAG)))),
     .base (.gate (emul (esub (.var LOW_NEXT_TAG) (.const 1))
       (esub (.var LOW_NEXT_TAG) (.const 2)))) ] ++
   ((List.range 16).map fun i => .base (.gate
@@ -670,8 +672,9 @@ def leafLinkConstraintsV3 : List VmConstraint2 :=
     (List.range 8).map fun lane => .base (.boundary .first (leafLinkBody chain lane))
 
 def rootContinuity (chain lane : Nat) : Dregg2.Circuit.DescriptorIR2.WindowExpr :=
-  .add (.nxt (rootCurBase chain + lane))
-    (.mul (.const (-1)) (.loc ((exactNodeDigestCols chain).getD lane 0)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread (rootCurBase chain + lane)
+      ((exactNodeDigestCols chain).getD lane 0))
 
 def rootContinuityConstraints : List VmConstraint2 :=
   (List.range 4).flatMap fun chain =>
@@ -684,8 +687,8 @@ def middleRootConstraints : List VmConstraint2 :=
 
 def successorCarrierContinuity : List VmConstraint2 :=
   (List.range 8).map fun lane => .windowGate ⟨
-    .add (.nxt (SUCCESSOR_NULLIFIER_ROOT_BASE + lane))
-      (.mul (.const (-1)) (.loc (SUCCESSOR_NULLIFIER_ROOT_BASE + lane))), true⟩
+    Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+      (Dregg2.Circuit.GateExpr.gCarry (SUCCESSOR_NULLIFIER_ROOT_BASE + lane)), true⟩
 
 def successorCarrierDerived : List VmConstraint2 :=
   (List.range 8).map fun lane => .base (.boundary .last
@@ -693,7 +696,8 @@ def successorCarrierDerived : List VmConstraint2 :=
       (.var ((exactNodeDigestCols 3).getD lane 0))))
 
 def countContinuity (base lane : Nat) : VmConstraint2 := .windowGate ⟨
-  .add (.nxt (base + lane)) (.mul (.const (-1)) (.loc (base + lane))), true⟩
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gCarry (base + lane)), true⟩
 
 def countContinuityConstraints : List VmConstraint2 :=
   (List.range 4).map (countContinuity PRE_COUNT_BASE) ++

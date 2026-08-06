@@ -34,6 +34,7 @@ Standalone additive module.  No central import is changed.  No axioms.
 
 import Dregg2.Logic.CompilationCertificateBundle
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Logic.FiniteLogicDescriptorIR2
 
@@ -102,9 +103,15 @@ def sourcePoly : Cert.Source -> WindowExpr
   | .and p q => .mul (sourcePoly p) (sourcePoly q)
   | .or p q => orW (sourcePoly p) (sourcePoly q)
 
-/-- `x * (x - 1)`: the field booleanity body for atom column `name`. -/
+/-- `x * (x - 1)`: the field booleanity body for atom column `name`. ⚑ `GateExpr.gBoolCanon` — the
+CANONICAL (corpus-normal-form) rendering, 9 nodes. -/
 def binaryBody (name : Nat) : WindowExpr :=
-  .mul (.loc name) (.add (.loc name) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gBoolCanon (.loc name))
+
+theorem binaryBody_eq (name : Nat) :
+    binaryBody name =
+      .add (.mul (.const 1) (.mul (.loc name) (.loc name))) (.mul (.const (-1)) (.loc name)) := rfl
 
 /-- Always-on booleanity gate; it also fires on the final row. -/
 def binaryConstraint (name : Nat) : WindowConstraint :=
@@ -143,7 +150,7 @@ theorem binary_of_modular_gate {env : VmRowEnv} {atomCount name : Nat}
     exact_mod_cast Nat.prime_iff_prime_int.mp
       Dregg2.Circuit.BabyBearFriField.babyBearP_prime
   have hev : (binaryBody name).eval env = env.loc name * (env.loc name - 1) := by
-    simp only [binaryBody, WindowExpr.eval]
+    simp only [binaryBody_eq, WindowExpr.eval]
     ring
   rw [hev, Int.modEq_zero_iff_dvd] at hmod
   rcases hp.dvd_mul.mp hmod with hx | hx
@@ -314,7 +321,7 @@ theorem source_complete (hash : List Int -> Int) (atomCount : Nat)
       simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, binaryConstraint]
       change (binaryBody name).eval (envAt (traceOf env) 0) ≡ 0 [ZMOD 2013265921]
       cases h : env name <;>
-        simp [binaryBody, WindowExpr.eval, traceOf, envAt, rowOf, bitInt, h]
+        simp [binaryBody_eq, WindowExpr.eval, traceOf, envAt, rowOf, bitInt, h]
     · have hc' : c = .windowGate (acceptConstraint source) := by simpa using hc
       subst c
       simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, acceptConstraint,
@@ -439,7 +446,7 @@ def demoCertificate : LiveCertificate := certifyLive 3 demoPolicy
 against this literal detects changes to tags, field names, ordering, constants,
 or the compiled polynomial itself. -/
 def demoDescriptorJson : String :=
-  "{\"name\":\"dregg-finite-logic-v2-3\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":1},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":2},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":2},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"loc\",\"c\":2}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"loc\",\"c\":2}}}}},\"r\":{\"t\":\"const\",\"v\":-1}}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-finite-logic-v2-3\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"loc\",\"c\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":2},\"r\":{\"t\":\"loc\",\"c\":2}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"loc\",\"c\":2}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"loc\",\"c\":2}}}}},\"r\":{\"t\":\"const\",\"v\":-1}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 #guard emitVmJson2 demoDescriptor == demoDescriptorJson
 

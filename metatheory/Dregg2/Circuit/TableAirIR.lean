@@ -1016,9 +1016,17 @@ def chipAbsorbTuple (ins : List Nat) (digest : Nat)
   k (ins.length : ℤ) ::
     (ins.map v ++ (List.range (RATE - ins.length)).map (fun _ => k 0) ++ group8 digest)
 
-/-- The arity-16 `node8` compression tuple `[16, L8, R8, out8]` (25 wide), with
-`L8 = (1−dir)·cur + dir·sib` and `R8 = (1−dir)·sib + dir·cur` — the Lean twin of the Rust
-`node8_lookup_tuple`, and the in-circuit face of `heap_node8` / `recomposeUp8`.
+/-- The arity-16 `node8` compression tuple `[16, L8, R8, out8]` (25 wide): `L8 = cur + dir·(sib −
+cur)` and `R8 = sib + dir·(cur − sib)` — the Merkle sibling-swap, `Dregg2.Circuit.GateExpr.gMux`'s
+form B (`gSwapLeft`/`gSwapRight`), the Lean twin of the Rust `node8_lookup_tuple`, and the
+in-circuit face of `heap_node8` / `recomposeUp8`.
+
+⚑ **RE-EMIT**: this used to be the expensive form (`(1−dir)·cur + dir·sib`, 3 multiplications per
+lane); this is the SAME polynomial at 2 multiplications per lane — `GateExpr.node8Tuple_is_gMux`/
+`node8Tuple_R_is_gMux` pin this shape against `gSwapLeft`/`gSwapRight` (`rfl`). Written out by hand
+rather than calling `GateExpr` directly: `GateExpr` imports `TableAirIR`, so the reverse import
+would be a cycle — the same constraint `gCols`/`gVars`/`gOneMinus_table` name against
+`DescriptorIR2`/this file elsewhere.
 
 ⚠ The direction MIX is what costs the tuple its SECOND degree, and it is why `ir2_degree_budget`
 reads 4 rather than 3 on every table that folds a path. -/
@@ -1026,9 +1034,9 @@ def node8Tuple (curBase sibBase outBase dirC : Nat) : List TExpr :=
   let d : TExpr := v dirC
   k NODE8_ARITY ::
   ((List.range LANES).map (fun i =>
-      .add (.mul (eOneMinus d) (v (curBase + i))) (.mul d (v (sibBase + i)))) ++
+      .add (v (curBase + i)) (.mul d (eSub (v (sibBase + i)) (v (curBase + i))))) ++
    (List.range LANES).map (fun i =>
-      .add (.mul (eOneMinus d) (v (sibBase + i))) (.mul d (v (curBase + i)))) ++
+      .add (v (sibBase + i)) (.mul d (eSub (v (curBase + i)) (v (sibBase + i))))) ++
    group8 outBase)
 
 /-- One level of a Merkle FOLD: the digest group the level reads is the leaf at level 0 and the

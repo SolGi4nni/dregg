@@ -34,6 +34,7 @@ No `sorry`. Imports are read-only.
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitBurn
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.WrapSafetyStaticAnalyzer
 
@@ -383,7 +384,11 @@ def fixedRanges : List VmRange := [⟨0, 29⟩, ⟨1, 29⟩, ⟨2, 29⟩]
 #guard intervalVerdict (exprIntervalF fixedRanges gap4Body) == .safe
 
 /-- Boolean gate `x·(x−1)` with `x` ranged 1-bit (`x ∈ {0,1}`) ⟹ residual `∈ [−1,0] ⊂ (−p,p)` ⟹ SAFE. -/
-def boolBody : EmittedExpr := .mul (.var 0) (.add (.var 0) (.const (-1)))
+def boolBody : EmittedExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf 0))
+
+theorem boolBody_eq : boolBody = .mul (.var 0) (.add (.var 0) (.const (-1))) := rfl
 def boolRanges : List VmRange := [⟨0, 1⟩]
 #guard intervalVerdict (exprInterval boolRanges boolBody) == .safe
 

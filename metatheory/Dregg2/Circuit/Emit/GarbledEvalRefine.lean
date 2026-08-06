@@ -141,7 +141,7 @@ structure GarbledEvalRun (t : VmTrace) : Prop where
 /-- The boolean-selector body vanishes iff the selector is `0` or `1`. -/
 theorem bin_body_zero_iff (c : Nat) (a : Assignment) :
     (binBody c).eval a = 0 ↔ a c = 0 ∨ a c = 1 := by
-  simp only [binBody, EmittedExpr.eval]
+  simp only [binBody_eq, EmittedExpr.eval]
   constructor
   · intro h
     rcases mul_eq_zero.mp h with h0 | h1
@@ -170,7 +170,7 @@ row's left input, at lane `j`. -/
 theorem chain_body_zero_iff (j : Nat) (env : VmRowEnv) :
     (chainBody j).eval env = 0 ↔
       env.loc CHAIN_FLAG = 0 ∨ env.nxt (LEFT j) = env.loc (OUTPUT j) := by
-  simp only [chainBody, WindowExpr.eval]
+  simp only [chainBody_eq, WindowExpr.eval]
   constructor
   · intro h
     rcases mul_eq_zero.mp h with h0 | h1
@@ -372,27 +372,27 @@ theorem satisfied2_implies_garbledEvalRun
     have hi : i < t.rows.length := by omega
     have hlast : i + 1 ≠ t.rows.length := by omega
     have hAnd := bin_cases (by
-      simpa only [binBody, EmittedExpr.eval] using
+      simpa only [binBody_eq, EmittedExpr.eval] using
         gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_AND)
           (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.selAnd i hi)
     have hOr := bin_cases (by
-      simpa only [binBody, EmittedExpr.eval] using
+      simpa only [binBody_eq, EmittedExpr.eval] using
         gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_OR)
           (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.selOr i hi)
     have hXor := bin_cases (by
-      simpa only [binBody, EmittedExpr.eval] using
+      simpa only [binBody_eq, EmittedExpr.eval] using
         gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_XOR)
           (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.selXor i hi)
     have hNot := bin_cases (by
-      simpa only [binBody, EmittedExpr.eval] using
+      simpa only [binBody_eq, EmittedExpr.eval] using
         gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_NOT)
           (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.selNot i hi)
     have hChain := bin_cases (by
-      simpa only [binBody, EmittedExpr.eval] using
+      simpa only [binBody_eq, EmittedExpr.eval] using
         gate_forces hash minit mfin maddrs t h i hi hlast (binBody CHAIN_FLAG)
           (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.chainFlag i hi)
     have hPad := bin_cases (by
-      simpa only [binBody, EmittedExpr.eval] using
+      simpa only [binBody_eq, EmittedExpr.eval] using
         gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_PADDING)
           (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.padding i hi)
     refine ⟨hAnd, hOr, hXor, hNot, hChain, hPad, ?_⟩
@@ -431,7 +431,7 @@ theorem satisfied2_implies_garbledEvalRun
       rw [show (chainBody j).eval (envAt t i)
           = (envAt t i).loc CHAIN_FLAG
             * ((envAt t i).nxt (LEFT j) - (envAt t i).loc (OUTPUT j)) from by
-        simp only [chainBody, WindowExpr.eval]; ring] at hd
+        simp only [chainBody_eq, WindowExpr.eval]; ring] at hd
       rcases pPrimeInt.dvd_mul.mp hd with hx | hx
       · obtain ⟨hc0, hc1⟩ := hcanon.chainFlag i hi
         obtain ⟨k, hk⟩ := hx
@@ -535,7 +535,7 @@ theorem decBody_honest (j : Nat) (hj : j < 8) : (decBody j).eval honestRow0 = 0 
 /-- A boolean-selector body vanishes on the honest row when the selector reads `0` or `1`. -/
 theorem binBody_honest (c : Nat) (h : honestRow0 c = 0 ∨ honestRow0 c = 1) :
     (binBody c).eval honestRow0 = 0 := by
-  simp only [binBody, EmittedExpr.eval]
+  simp only [binBody_eq, EmittedExpr.eval]
   rcases h with h | h <;> rw [h] <;> ring
 
 /-- The exclusivity body vanishes on the honest row (`is_and = 1`, others `0`, non-padding). -/
@@ -621,17 +621,17 @@ theorem garbled_honest_satisfied2 (hash : List ℤ → ℤ) :
           or_false] at hc
         rcases hc with rfl | rfl | rfl | rfl | rfl | rfl
         · exact honest_gate_holds hash _ (by
-            simp only [binBody, EmittedExpr.eval, honestRow0_and]; ring)
+            simp only [binBody_eq, EmittedExpr.eval, honestRow0_and]; ring)
         · exact honest_gate_holds hash _ (by
-            simp only [binBody, EmittedExpr.eval, honestRow0_or]; ring)
+            simp only [binBody_eq, EmittedExpr.eval, honestRow0_or]; ring)
         · exact honest_gate_holds hash _ (by
-            simp only [binBody, EmittedExpr.eval, honestRow0_xor]; ring)
+            simp only [binBody_eq, EmittedExpr.eval, honestRow0_xor]; ring)
         · exact honest_gate_holds hash _ (by
-            simp only [binBody, EmittedExpr.eval, honestRow0_not]; ring)
+            simp only [binBody_eq, EmittedExpr.eval, honestRow0_not]; ring)
         · exact honest_gate_holds hash _ (by
-            simp only [binBody, EmittedExpr.eval, honestRow0_chain]; ring)
+            simp only [binBody_eq, EmittedExpr.eval, honestRow0_chain]; ring)
         · exact honest_gate_holds hash _ (by
-            simp only [binBody, EmittedExpr.eval, honestRow0_padding]; ring)
+            simp only [binBody_eq, EmittedExpr.eval, honestRow0_padding]; ring)
       · -- [exclusivityBody]
         intro c hc; simp only [List.mem_singleton] at hc; subst hc
         exact honest_gate_holds hash exclusivityBody (by
@@ -641,7 +641,7 @@ theorem garbled_honest_satisfied2 (hash : List ℤ → ℤ) :
         intro c hc; simp only [chainingGates, List.mem_map, List.mem_range] at hc
         obtain ⟨j, hj, rfl⟩ := hc
         exact honest_chain_holds hash j (by
-          simp only [chainBody, WindowExpr.eval, envAt0_loc, envAt0_nxt, honestRow0_chain,
+          simp only [chainBody_eq, WindowExpr.eval, envAt0_loc, envAt0_nxt, honestRow0_chain,
             honestRow0_left j hj, honestRow0_output j hj]; ring)
       · -- [gateIndexDeltaBoundary]
         intro c hc; simp only [List.mem_singleton] at hc; subst hc

@@ -78,7 +78,7 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.PassiveDescriptorOptimization
 open Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2
-  (Wire Node witnessCount outputAt nodesAt gate bitBody subW negW)
+  (Wire Node witnessCount outputAt nodesAt gate bitBody bitBody_eq subW negW)
 open Dregg2.Metatheory.TypedLinearPredicateDescriptorIR2
 
 set_option autoImplicit false
@@ -264,7 +264,7 @@ theorem node_holdsAt_congr (hash : List ℤ → ℤ) (tf : TraceFamily)
       clear hc
       rcases hc' with rfl | rfl | rfl <;>
         rw [gate_dvd_iff] at hh ⊢ <;>
-        simpa [bitBody, Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr,
+        simpa [bitBody_eq, Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr,
           WindowExpr.eval, hx, ho, hi] using hh
   | not input out =>
       have hw : input.expr.eval env' = input.expr.eval env :=
@@ -277,7 +277,7 @@ theorem node_holdsAt_congr (hash : List ℤ → ℤ) (tf : TraceFamily)
       clear hc
       rcases hc' with rfl | rfl
       · rw [gate_dvd_iff] at hh ⊢
-        simpa [bitBody, Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr, WindowExpr.eval, ho] using hh
+        simpa [bitBody_eq, Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr, WindowExpr.eval, ho] using hh
       · rw [gate_dvd_iff] at hh ⊢
         simp only [WindowExpr.eval, ho, hw]
         simp only [WindowExpr.eval] at hh
@@ -295,7 +295,7 @@ theorem node_holdsAt_congr (hash : List ℤ → ℤ) (tf : TraceFamily)
       clear hc
       rcases hc' with rfl | rfl
       · rw [gate_dvd_iff] at hh ⊢
-        simpa [bitBody, Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr, WindowExpr.eval, ho] using hh
+        simpa [bitBody_eq, Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr, WindowExpr.eval, ho] using hh
       · rw [gate_dvd_iff] at hh ⊢
         simp only [subW, negW, WindowExpr.eval, ho, hl, hr]
         simp only [subW, negW, WindowExpr.eval] at hh
@@ -313,7 +313,7 @@ theorem node_holdsAt_congr (hash : List ℤ → ℤ) (tf : TraceFamily)
       clear hc
       rcases hc' with rfl | rfl
       · rw [gate_dvd_iff] at hh ⊢
-        simpa [bitBody, Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr, WindowExpr.eval, ho] using hh
+        simpa [bitBody_eq, Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Wire.expr, WindowExpr.eval, ho] using hh
       · rw [gate_dvd_iff] at hh ⊢
         simp only [subW, negW, WindowExpr.eval, ho, hl, hr]
         simp only [subW, negW, WindowExpr.eval] at hh
@@ -724,7 +724,7 @@ theorem rw_security_row (hash : List ℤ → ℤ) (tf : TraceFamily) (isFirst is
       simp only [Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Node.constraints,
         List.mem_cons, List.not_mem_nil, or_false] at hcn'
       rcases hcn' with rfl | rfl | rfl
-      · exact gate_of_eval_zero (by simp [bitBody, WindowExpr.eval, hB])
+      · exact gate_of_eval_zero (by simp [bitBody_eq, WindowExpr.eval, hB])
       · have hd := htgt (directGate a) (directGate_mem_rw terms a rest)
         simp only [directGate] at hd
         rw [gate_dvd_iff] at hd ⊢
@@ -751,7 +751,7 @@ theorem rw_security_row (hash : List ℤ → ℤ) (tf : TraceFamily) (isFirst is
       simp only [Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2.Node.constraints,
         List.mem_cons, List.not_mem_nil, or_false] at hcn'
       rcases hcn' with rfl | rfl
-      · exact gate_of_eval_zero (by simp [bitBody, WindowExpr.eval, hTop])
+      · exact gate_of_eval_zero (by simp [bitBody_eq, WindowExpr.eval, hTop])
       · have hra := htgt (restAccept pub sec atoms rest) (restAccept_mem_rw terms a rest)
         simp only [restAccept] at hra
         rw [gate_dvd_iff] at hra ⊢
@@ -786,7 +786,7 @@ theorem rw_completeness_row (hash : List ℤ → ℤ) (tf : TraceFamily) (isFirs
   have h5 := hsrc (acceptConstraintAt (rootProgram terms a rest)) (by simp [descriptor])
   rw [src_accept] at h5
   rw [gate_dvd_iff] at h1 h2 h4 h5
-  simp only [bitBody, wire_col_expr, subW, negW, WindowExpr.eval] at h1 h2 h4 h5
+  simp only [bitBody_eq, wire_col_expr, subW, negW, WindowExpr.eval] at h1 h2 h4 h5
   have f1 := (dvd_iff_cast_zero _).1 h1
   have f2 := (dvd_iff_cast_zero _).1 h2
   have f4 := (dvd_iff_cast_zero _).1 h4

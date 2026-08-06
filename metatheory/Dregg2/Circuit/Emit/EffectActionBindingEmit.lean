@@ -143,7 +143,11 @@ def cHiBody : EmittedExpr :=
 
 /-- Boolean borrow: `borrow*(borrow-1) == 0`. -/
 def cBorrowBoolBody : EmittedExpr :=
-  .mul (.var B_BORROW) (.add (.var B_BORROW) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toEmitted
+    (Dregg2.Circuit.GateExpr.gBool (.leaf B_BORROW))
+
+theorem cBorrowBoolBody_eq :
+    cBorrowBoolBody = .mul (.var B_BORROW) (.add (.var B_BORROW) (.const (-1))) := rfl
 
 /-- Disclosure pin, low limb: `was_burn_lo - 1 == 0`. -/
 def cWasBurnLoBody : EmittedExpr :=
@@ -212,7 +216,7 @@ theorem cHi_zero_iff (a : Assignment) :
 /-- The borrow-boolean gate is zero EXACTLY when the borrow is a bit. -/
 theorem cBorrowBool_zero_iff (a : Assignment) :
     cBorrowBoolBody.eval a = 0 ↔ a B_BORROW = 0 ∨ a B_BORROW = 1 := by
-  simp only [cBorrowBoolBody, EmittedExpr.eval]
+  simp only [cBorrowBoolBody_eq, EmittedExpr.eval]
   rw [mul_eq_zero]; omega
 
 /-- The disclosure pin is zero EXACTLY when the burn flag is `1`. -/
