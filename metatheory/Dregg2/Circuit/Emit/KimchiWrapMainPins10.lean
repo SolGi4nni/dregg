@@ -113,4 +113,52 @@ theorem close_rung_extends_bullet (t : WrapData) (wired : Bool) :
 
 #assert_axioms close_rung_extends_bullet
 
+/-- ⚑⚑⚑ **THE TWO SLOTS `w12_close` DOES NOT REACH, AND THEY DO NOT HAVE ONE CAUSE.**
+
+`wrap_main` is handed forty words, CONSTRAINS twenty-four and READS six more; the ten it neither
+reads nor checks are `Spec.T.Constant` padding and the lookup `Opt` (§10). So the denominator is
+**30**, and the terminal rung reaches **28** of them. The missing two are slots **11** and **12**,
+and it is worth saying plainly that they were being read as one blockage — "the six words" — when
+they are two, with different owners and different repairs.
+
+`WRAP_PUBLIC_INPUT_MEASURED` is the second source both are graded against: the RUST marshaller's
+`PreparedStatement::to_public_input(40)`, on the SAME proof this assembly is about
+(`stepmain_step_r8_finalize`). Two implementations, one statement — which is what makes a
+disagreement a measurement rather than a preference.
+
+  * **SLOT 12 — `messages_for_next_step_proof`.** §18's `prevRows` ties Mina's slot 12 to packed
+    statement word 54 by `Field.Assert.equal`, and the wrap DERIVES NOTHING for it: it reads the
+    word and exposes it. So the disagreement is entirely the step side's — word 54 is
+    `hmOutDigestVar`, segment D's own Poseidon squeeze — and it closes when the step assembly's
+    outer hash produces what the marshaller computes. **It is not one of the values a wrap-side
+    derivation could ever supply.**
+  * **SLOT 11 — `messages_for_next_wrap_proof`.** §21's closing sponge DOES derive this one, and it
+    still cannot land, for a reason that has nothing to do with the step statement:
+    `whCloseDigest = whDigestOf whNewChals whSg` and `whNewChals` is `wrapFixtureQ 42` — a NAMED
+    FIXTURE standing for `new_bulletproof_challenges`, i.e. **W-FINALIZE's output**, the sub-circuit
+    §13 item 7 records as not assembled. A digest over a fixture cannot equal a digest over the real
+    vector. **Slot 11 is blocked on W-FINALIZE's bulletproof challenges and on nothing else**, so no
+    amount of step-side re-baking moves it.
+
+⚠ **AND THIS THEOREM IS A REFUSAL SHAPED TO SHRINK, like `STATEMENT_BLOCKED`.** It asserts the two
+DISAGREE. Close either and it goes red at the place the claim is made, and the count above has to be
+rewritten — which is the only direction this file should ever move. -/
+theorem the_two_slots_close_does_not_reach_are_a_fixture_and_a_step_digest :
+    Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 11 0
+      ≠ whCloseDigest
+  ∧ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
+      ≠ prevWordVal PREV_MSG_NEXT_STEP
+  -- ⚑ …and slot 11's blocker EXHIBITED rather than described: the closing digest's challenge vector
+  -- is the `wrapFixtureQ 42` fixture, entry for entry. A repair that wires W-FINALIZE's real
+  -- `new_bulletproof_challenges` reds this conjunct first.
+  ∧ whNewChals
+      = (List.range (WH_MLMB * WH_ROUNDS)).map
+          (fun k => wrapFixtureQ 42 k)
+  -- ⚑ …and the denominator, so "28 of 30" is not a number in a dump: forty words, ten of which
+  -- upstream neither reads nor checks.
+  ∧ 40 - 10 = 30 := by
+  refine ⟨?_, ?_, rfl, ?_⟩ <;> native_decide
+
+#assert_compiled the_two_slots_close_does_not_reach_are_a_fixture_and_a_step_digest
+
 end Dregg2.Circuit.Emit.KimchiWrapMain
