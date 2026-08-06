@@ -513,8 +513,12 @@ schedule's 11 into a measured **two slots of slack, 192 committed columns**, off
 reachable all along. The residency bound prunes hard enough that the whole exhaustion is ~84 nodes,
 which is why a kernel `decide` can do it at all.
 
-⚠ It is a statement about **this DAG**. A DAG whose floor is genuinely 11 would make the hand
-schedule optimal, and the search would say so. -/
+⚠⚠ **AND THE `none` IS EXHAUSTION, NOT FUEL STARVATION** — which is the one way this theorem could
+be vacuously true. `dfs` spends one fuel per level, so a fuel too small to reach depth 33 would
+return `none` at *every* bound and this would say nothing. `rcb_peak_nine_is_feasible` is the
+refutation, and it is deliberately stated **at the same `RCB_FUEL`**: the search completes a
+33-deep placement on that fuel, so the fuel is slack and the bound is what refused. The pair is the
+floor being satisfiable at 9, refutable at 8, and provable at neither. -/
 theorem rcb_peak_eight_is_infeasible :
     feasibleWithin rcbMachine rcbOps 8 RCB_FUEL = false := by decide
 
