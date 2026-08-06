@@ -432,7 +432,30 @@ theorem accumulator_discharge_forced (tr : Trace) (n : Nat)
     rw [hz.2] at this
     exact CZm.symm (CZm.symm this)
 
-/-! ## §7 — ⚑ AND THE LAST HYPOTHESIS IS DOING WORK.
+/-! ### ⚠ THE NON-VACUITY OF `RowSoundV` IS WITNESSED BEHAVIOURALLY, NOT IN THIS KERNEL.
+
+`accumulator_discharge_forced` would be vacuous if `RowSoundV` were unsatisfiable, and **nothing in
+this file proves it is not**. What witnesses it is the deployed prover accepting the honest trace
+under `dregg-mina-accumulator-final::v1` (`circuit/tests/mina_accumulator_air_proves.rs`, both
+polarities, release) — behavioural evidence, one rail down, and `PastaLadderThread`'s
+`threadedLadder_forces` has exactly the same status.
+
+⚑ This is UNDONE WORK wearing a caveat, not a theorem of the model, so here is what it would cost.
+A kernel witness means exhibiting one `Assignment` and discharging `RcbSat` on it — 33 SSA ops, 12
+multiply witnesses at 32 quotient limbs and 62 carries each, all reduced at `q`. That is the
+`decide`-through-a-real-field-element shape `minted-poseidon2-perm-is-a-reduction-bomb` measured at
+47.6 GB for ONE permutation, so it is a `native_decide` + `#assert_compiled` job (a confession, not a
+certificate) or a genuine satisfiability lemma over `rcbSoundRow` — which is the thing actually worth
+building, because it would serve every descriptor in this cone rather than this one.
+
+⚠ And the OTHER end is not closed either: these theorems speak the SOURCE vocabulary (`RcbSat`,
+`Ranged`), and this file lowers with `lowerAir` rather than the certified `lowerTiedAir`, so the
+`AirLeg.forces` bridge from the emitted constraints back to those predicates is inherited from
+`PastaCurveSound`/`EffectLowerCertified` rather than re-established here. `lowerTiedAir` was not used
+because `EffectAir.pinsTied` is a quadratic `decide` over ~4 000 legs against 192 pins; that is a
+cost, and a cost is not a reason to call the weaker thing done.
+
+## §7 — ⚑ AND THE LAST HYPOTHESIS IS DOING WORK.
 
 A theorem whose final hypothesis were unsatisfiable, or satisfied by everything, would prove nothing
 about the gate it is named for. Both directions are exhibited: a trace where `Discharged` HOLDS and
