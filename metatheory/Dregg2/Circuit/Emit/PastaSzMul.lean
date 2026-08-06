@@ -95,6 +95,7 @@ coefficient gates have. `sz_body_is_degree_two` states that, on the emitted expr
 -/
 import Dregg2.Circuit.Emit.PastaFieldSound
 import Dregg2.Circuit.OodQuotientConsistency
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.PastaSzMul
 
@@ -215,36 +216,88 @@ theorem szMulAir_mainRailOk (pl : Nat → ℤ) : (szMulAir pl).mainRailOk = true
   refine ⟨?_, by decide⟩
   rfl
 
+/-- ⚑ **THE TIED SOURCE** — `(szMulAir pLimb)` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def fpSzMulTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (szMulAir pLimb)
+
 /-- The `fpMul` Schwartz–Zippel descriptor. -/
 def fpSzMulDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fpmul-sz::v1" MUL_WIDTH 0 [] (szMulAir pLimb)
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fpmul-sz::v1" MUL_WIDTH 0 [] fpSzMulTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem fpSzMulDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fpSzMulDesc [] (szMulAir pLimb) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fpmul-sz::v1" MUL_WIDTH 0 [] fpSzMulTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem fpSzMulDesc_eq_lowerAir :
+    fpSzMulDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-fpmul-sz::v1" MUL_WIDTH 0 [] (szMulAir pLimb) := rfl
+
+/-- ⚑ **THE TIED SOURCE** — `(szMulAir qLimb)` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def fqSzMulTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (szMulAir qLimb)
 
 /-- The `fqMul` twin. -/
 def fqSzMulDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fqmul-sz::v1" MUL_WIDTH 0 [] (szMulAir qLimb)
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fqmul-sz::v1" MUL_WIDTH 0 [] fqSzMulTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem fqSzMulDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fqSzMulDesc [] (szMulAir qLimb) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fqmul-sz::v1" MUL_WIDTH 0 [] fqSzMulTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem fqSzMulDesc_eq_lowerAir :
+    fqSzMulDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-fqmul-sz::v1" MUL_WIDTH 0 [] (szMulAir qLimb) := rfl
 
 /-- ⚑ **IT DECLARES ITS CHALLENGE** — a value on the wire, `"challenges":1`, counted by a gate. A
 descriptor that read a challenge without declaring it is REFUSED by `check_descriptor2`; this is
 the number that refusal compares against. -/
 theorem fpSzMulDesc_declares_one_challenge : challengeCount fpSzMulDesc = 1 := by
-  unfold fpSzMulDesc lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
+  rw [fpSzMulDesc_eq_lowerAir]
+  unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
   rfl
 
 /-- Exactly one gate of the new kind. -/
 theorem fpSzMulDesc_chalGateCount : chalGateCount fpSzMulDesc = 1 := by
-  unfold fpSzMulDesc lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
+  rw [fpSzMulDesc_eq_lowerAir]
+  unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
   rfl
 
 /-- ⚑ **THE EMITTED COST, as a theorem.** `1` challenge gate + `4·32` limb lookups + `62` carry
 lookups = **`191`** constraints, against the schoolbook's **`253`**. The 62-constraint difference is
 exactly the 63 coefficient gates collapsing to 1. -/
 theorem fpSzMulDesc_constraint_count : fpSzMulDesc.constraints.length = 191 := by
-  unfold fpSzMulDesc lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
+  rw [fpSzMulDesc_eq_lowerAir]
+  unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
   simp only [List.map_nil, List.nil_append, List.append_nil]
   rfl
 
 theorem fqSzMulDesc_constraint_count : fqSzMulDesc.constraints.length = 191 := by
-  unfold fqSzMulDesc lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
+  rw [fqSzMulDesc_eq_lowerAir]
+  unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
   simp only [List.map_nil, List.nil_append, List.append_nil]
   rfl
 
@@ -267,8 +320,8 @@ theorem width_and_lookups_unchanged :
       ∧ fpSzMulDesc.traceWidth = PastaFieldSound.fpMulSoundDesc.traceWidth := by
   constructor
   · rfl
-  · unfold fpSzMulDesc PastaFieldSound.fpMulSoundDesc lowerAir
-      Dregg2.Circuit.Emit.EffectLower.assemble
+  · rw [fpSzMulDesc_eq_lowerAir, PastaFieldSound.fpMulSoundDesc_eq_lowerAir]
+    unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
     rfl
 
 /-- Multiplication nodes in a `ChalExpr` — the prover's and verifier's per-row arithmetic, which is

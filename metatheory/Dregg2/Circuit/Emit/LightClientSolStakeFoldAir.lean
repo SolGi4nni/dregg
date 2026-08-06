@@ -151,6 +151,7 @@ operator's ceremony.
 import Dregg2.Circuit.Emit.LightClientSolanaAir
 import Dregg2.Circuit.Emit.LightClientMinaAir
 import Dregg2.Circuit.DeployedCapTree
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 set_option autoImplicit false
 set_option maxHeartbeats 1600000
@@ -265,12 +266,35 @@ vocabulary was adequate; a leg the rail cannot hold lowers to an UNSATISFIABLE p
 silence. -/
 theorem solStakeFoldAir_mainRailOk : solStakeFoldAir.mainRailOk = true := by rfl
 
+/-- ⚑ **THE TIED SOURCE** — `solStakeFoldAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def solStakeFoldTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := solStakeFoldAir
+
 /-- **`solStakeFoldDesc`** — the Solana stake-table fold as an emitted IR-v2 AIR, one row per entry.
 PIs `[table_root[0..7], total_stake[0..3]]`: the eight-lane Poseidon2 commitment to the exhibited
 table and the `u64` active-stake denominator, BOTH derived from the same rows. -/
 def solStakeFoldDesc : EffectVmDescriptor2 :=
-  Dregg2.Circuit.Emit.EffectLower.lowerAir
-    "dregg-solana-stake-table-fold::v1" FOLD_WIDTH FOLD_PI_COUNT [] solStakeFoldAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-solana-stake-table-fold::v1" FOLD_WIDTH FOLD_PI_COUNT [] solStakeFoldTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem solStakeFoldDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines solStakeFoldDesc [] solStakeFoldAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-solana-stake-table-fold::v1" FOLD_WIDTH FOLD_PI_COUNT [] solStakeFoldTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem solStakeFoldDesc_eq_lowerAir :
+    solStakeFoldDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-solana-stake-table-fold::v1" FOLD_WIDTH FOLD_PI_COUNT [] solStakeFoldAir := rfl
 
 /-! ### Shape pins on the emitted object. -/
 

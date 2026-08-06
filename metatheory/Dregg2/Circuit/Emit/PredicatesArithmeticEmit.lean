@@ -59,6 +59,7 @@ each TRUE iff its slot/diff identity holds, FALSE otherwise). `#assert_axioms` �
 `omega`). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.AirNormalForm
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.PredicatesArithmeticEmit
 
@@ -234,9 +235,33 @@ def predicateGeAir : EffectAir :=
 
 #guard predicateGeAir.mainRailOk == true
 
+/-- ⚑ **THE TIED SOURCE** — `predicateGeAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def predicateGeTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := predicateGeAir
+
 /-- **`predicateGeDesc`** — COMPILED from `predicateGeAir`. -/
 def predicateGeDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-predicate-arith-ge::threshold-v1" PRED_WIDTH 2 [] predicateGeAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-predicate-arith-ge::threshold-v1" PRED_WIDTH 2 [] predicateGeTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem predicateGeDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines predicateGeDesc [] predicateGeAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-predicate-arith-ge::threshold-v1" PRED_WIDTH 2 [] predicateGeTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem predicateGeDesc_eq_lowerAir :
+    predicateGeDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-predicate-arith-ge::threshold-v1" PRED_WIDTH 2 [] predicateGeAir := rfl
 
 /-- ⚑ The compiler's output IS that constraint list, by `rfl` — so every downstream
 statement over these names is a statement about the COMPILED object. -/

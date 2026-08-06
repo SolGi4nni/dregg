@@ -131,6 +131,7 @@ byte ranges the declared lookups supply, and it is used at every equality in thi
 -/
 import Dregg2.Circuit.Emit.PastaLadderThread
 import Dregg2.Circuit.Emit.PastaIPA
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.MinaWrapConjunctionAir
 
@@ -362,10 +363,15 @@ def constBlock (bB k : Nat) : List AirLeg :=
 
 /-- ⚑ **ONE CARRY LEG.** The `i`-th limb of the block at `dst` on the NEXT row is the `i`-th limb of
 the block at `src` on THIS row. `.transition` is the ONLY selector under which `nxt` is the genuine
-successor. -/
+successor. ⚑ `GateExpr.gThread` at the window view. -/
 def carryLeg (dst src i : Nat) : AirLeg :=
   .window ⟨RowSel.transition,
-    .add (.nxt (dst + i)) (.mul (.const (-1)) (.loc (src + i)))⟩
+    Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+      (Dregg2.Circuit.GateExpr.gThread (dst + i) (src + i))⟩
+
+theorem carryLeg_eq (dst src i : Nat) :
+    carryLeg dst src i = .window ⟨RowSel.transition,
+      WindowExpr.add (.nxt (dst + i)) (.mul (.const (-1)) (.loc (src + i)))⟩ := rfl
 
 /-- A whole block carried across the seam. -/
 def carryBlock (dst src : Nat) : List AirLeg :=
@@ -605,11 +611,59 @@ theorem conjunctionAir_bind_shape :
   refine ⟨by decide, by decide, ?_⟩
   exact ⟨by decide, by decide⟩
 
+/-- ⚑ **THE TIED SOURCE** — `conjunctionAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def conjunctionTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := conjunctionAir
+
 def conjunctionDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-mina-wrap-conjunction::v1" CJ_WIDTH 0 [] conjunctionAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-wrap-conjunction::v1" CJ_WIDTH 0 [] conjunctionTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem conjunctionDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines conjunctionDesc [] conjunctionAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-wrap-conjunction::v1" CJ_WIDTH 0 [] conjunctionTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem conjunctionDesc_eq_lowerAir :
+    conjunctionDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-wrap-conjunction::v1" CJ_WIDTH 0 [] conjunctionAir := rfl
+
+/-- ⚑ **THE TIED SOURCE** — `conjunctionAirUnthreaded` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def conjunctionUnthreadedTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := conjunctionAirUnthreaded
 
 def conjunctionUnthreadedDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH 0 [] conjunctionAirUnthreaded
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH 0 [] conjunctionUnthreadedTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem conjunctionUnthreadedDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines conjunctionUnthreadedDesc [] conjunctionAirUnthreaded :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH 0 [] conjunctionUnthreadedTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem conjunctionUnthreadedDesc_eq_lowerAir :
+    conjunctionUnthreadedDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-wrap-conjunction-unthreaded::v1" CJ_WIDTH 0 [] conjunctionAirUnthreaded := rfl
 
 theorem conjunctionDesc_width : conjunctionDesc.traceWidth = 2536 := rfl
 theorem conjunctionUnthreadedDesc_width : conjunctionUnthreadedDesc.traceWidth = 2536 := rfl

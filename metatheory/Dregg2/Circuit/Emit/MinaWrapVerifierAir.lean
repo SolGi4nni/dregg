@@ -66,6 +66,8 @@ proof of coverage.
 `native_decide`. Facts are NAMED THEOREMS — this file adds zero `#guard`s.
 -/
 import Dregg2.Circuit.Emit.PastaAddSubSound
+import Dregg2.Circuit.Emit.EffectLowerCertified
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.MinaWrapVerifierAir
 
@@ -157,7 +159,11 @@ def aluAddSubExpr (sel : Nat) (pl : Nat → ℤ) (sy sc : ℤ) (m : Nat) : Expr 
 /-- `s · (s − 1)` — the booleanity body. Over BabyBear (a FIELD) this forces `s ≡ 0` or `s ≡ 1`,
 which is §3's `alu_selector_is_boolean`. -/
 def boolExpr (sel : Nat) : Expr :=
-  .mul (.var sel) (.add (.var sel) (.const (-1)))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toSource
+    (Dregg2.Circuit.GateExpr.gBool (.leaf sel))
+
+theorem boolExpr_eq (sel : Nat) :
+    boolExpr sel = .mul (.var sel) (.add (.var sel) (.const (-1))) := rfl
 
 /-- `sMul + sAdd + sSub − 1` — exactly one operation per row. -/
 def selSumExpr : Expr :=
@@ -168,7 +174,8 @@ window gate, so `nxt` is the genuine successor row (`WindowLeg.mainRailOk` refus
 under any other selector, and that refusal is the reason this is the one wiring available). -/
 def chainWindowExpr (i : Nat) : WindowExpr :=
   .mul (.loc SEL_CHAIN)
-       (.add (.nxt (X_BASE + i)) (.mul (.const (-1)) (.loc (Z_BASE + i))))
+       (Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+         (Dregg2.Circuit.GateExpr.gThread (X_BASE + i) (Z_BASE + i)))
 
 /-- The `NG − 1 = 62` multiply-carry columns. -/
 def aluCarryCols : List Nat := (List.range (NG - 1)).map (ALU_C_BASE + ·)
@@ -218,14 +225,62 @@ theorem pastaAluAir_mainRailOk (pl : Nat → ℤ) : (pastaAluAir pl).mainRailOk 
     | decide
     | (intro m _; rfl)
 
+/-- ⚑ **THE TIED SOURCE** — `(pastaAluAir pLimb)` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def fpAluTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (pastaAluAir pLimb)
+
 /-- The `fp` ALU: every row is an operation modulo the Pallas base / Vesta scalar prime. -/
 def fpAluDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-alu-sound::v1" ALU_WIDTH 0 [] (pastaAluAir pLimb)
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-alu-sound::v1" ALU_WIDTH 0 [] fpAluTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem fpAluDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fpAluDesc [] (pastaAluAir pLimb) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-alu-sound::v1" ALU_WIDTH 0 [] fpAluTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem fpAluDesc_eq_lowerAir :
+    fpAluDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-alu-sound::v1" ALU_WIDTH 0 [] (pastaAluAir pLimb) := rfl
+
+/-- ⚑ **THE TIED SOURCE** — `(pastaAluAir qLimb)` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def fqAluTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (pastaAluAir qLimb)
 
 /-- The `fq` ALU: the same shape at the Vesta base / Pallas scalar prime. The encoding is
 field-independent; only the constant limb vector moves. -/
 def fqAluDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-alu-fq-sound::v1" ALU_WIDTH 0 [] (pastaAluAir qLimb)
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-alu-fq-sound::v1" ALU_WIDTH 0 [] fqAluTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem fqAluDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fqAluDesc [] (pastaAluAir qLimb) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-alu-fq-sound::v1" ALU_WIDTH 0 [] fqAluTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem fqAluDesc_eq_lowerAir :
+    fqAluDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-alu-fq-sound::v1" ALU_WIDTH 0 [] (pastaAluAir qLimb) := rfl
 
 /-- ⚑ **THE EMITTED COST, as a theorem rather than a caption.** `63 + 32 + 32` operation gates
 `+ 4` booleanity `+ 1` selector-sum `+ 32` chain windows `+ 222` range lookups
@@ -285,7 +340,7 @@ theorem alu_selector_is_boolean (a : Assignment) (sel : Nat)
     rw [Int.prime_iff_natAbs_prime]
     norm_num [Dregg2.Circuit.Emit.EffectLower.P]
   have hbody : (boolExpr sel).eval a = a sel * (a sel - 1) := by
-    unfold boolExpr; simp only [Expr.eval]; ring
+    simp only [boolExpr_eq, Expr.eval]; ring
   rw [hbody] at h
   rcases hp.dvd_mul.mp h with h1 | h2
   · exact Or.inl (Int.modEq_zero_iff_dvd.mpr h1)

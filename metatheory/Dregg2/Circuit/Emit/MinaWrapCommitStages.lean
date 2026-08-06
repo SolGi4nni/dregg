@@ -79,6 +79,7 @@ affine coordinates cannot represent — `offset_is_a_real_pallas_point`.
 import Dregg2.Circuit.Emit.MinaWrapCommitMachine
 import Dregg2.Circuit.Emit.MinaWrapAggregationGate
 import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.MinaWrapCommitStages
 
@@ -1010,8 +1011,32 @@ theorem ladderAir_mainRailOk : ladderAir.mainRailOk = true := by
   simp only [pinOutPoint, List.all_append, List.all_map, Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
+/-- ⚑ **THE TIED SOURCE** — `ladderAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def ladderTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := ladderAir
+
 def ladderDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-mina-scalar-mul-ladder::v1" CM_WIDTH PI64 [] ladderAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-scalar-mul-ladder::v1" CM_WIDTH PI64 [] ladderTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem ladderDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines ladderDesc [] ladderAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-scalar-mul-ladder::v1" CM_WIDTH PI64 [] ladderTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs that reason through `lowerAir`. -/
+theorem ladderDesc_eq_lowerAir :
+    ladderDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-scalar-mul-ladder::v1" CM_WIDTH PI64 [] ladderAir := rfl
 
 def ladderTrace : List (List ℤ) :=
   let p := ladderProg

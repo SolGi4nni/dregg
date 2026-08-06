@@ -93,6 +93,7 @@ so the lever is measured and not merely named.
 -/
 import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.PastaCurveComplete
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.PastaCurveSound
 
@@ -508,11 +509,59 @@ theorem pallasCompleteAddSoundAir_mainRailOk : pallasCompleteAddSoundAir.mainRai
 theorem vestaCompleteAddSoundAir_mainRailOk : vestaCompleteAddSoundAir.mainRailOk = true := by
   decide
 
+/-- ⚑ **THE TIED SOURCE** — `pallasCompleteAddSoundAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def pallasCompleteAddTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := pallasCompleteAddSoundAir
+
 def pallasCompleteAddSoundDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-pallas-complete-add-sound::v1" RCB_WIDTH 0 [] pallasCompleteAddSoundAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-pallas-complete-add-sound::v1" RCB_WIDTH 0 [] pallasCompleteAddTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem pallasCompleteAddSoundDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines pallasCompleteAddSoundDesc [] pallasCompleteAddSoundAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-pallas-complete-add-sound::v1" RCB_WIDTH 0 [] pallasCompleteAddTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem pallasCompleteAddSoundDesc_eq_lowerAir :
+    pallasCompleteAddSoundDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-pallas-complete-add-sound::v1" RCB_WIDTH 0 [] pallasCompleteAddSoundAir := rfl
+
+/-- ⚑ **THE TIED SOURCE** — `vestaCompleteAddSoundAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def vestaCompleteAddTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := vestaCompleteAddSoundAir
 
 def vestaCompleteAddSoundDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-vesta-complete-add-sound::v1" RCB_WIDTH 0 [] vestaCompleteAddSoundAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-vesta-complete-add-sound::v1" RCB_WIDTH 0 [] vestaCompleteAddTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem vestaCompleteAddSoundDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines vestaCompleteAddSoundDesc [] vestaCompleteAddSoundAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-vesta-complete-add-sound::v1" RCB_WIDTH 0 [] vestaCompleteAddTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem vestaCompleteAddSoundDesc_eq_lowerAir :
+    vestaCompleteAddSoundDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-vesta-complete-add-sound::v1" RCB_WIDTH 0 [] vestaCompleteAddSoundAir := rfl
 
 /-! ## §6 — ⚑ FORCING: the 33 leg blocks' DEPLOYED satisfaction forces the RCB formula.
 
@@ -852,11 +901,11 @@ theorem lowered_length (name : String) (w pi : Nat) (air : EffectAir) :
 `6·32` input lookups `+ 12·189` multiplies `+ 2·96` constant-multiplies `+ 19·96` add/subs. -/
 theorem pallasCompleteAddSoundDesc_constraint_count :
     pallasCompleteAddSoundDesc.constraints.length = 4476 := by
-  rw [pallasCompleteAddSoundDesc, lowered_length]; decide
+  rw [pallasCompleteAddSoundDesc_eq_lowerAir, lowered_length]; decide
 
 theorem vestaCompleteAddSoundDesc_constraint_count :
     vestaCompleteAddSoundDesc.constraints.length = 4476 := by
-  rw [vestaCompleteAddSoundDesc, lowered_length]; decide
+  rw [vestaCompleteAddSoundDesc_eq_lowerAir, lowered_length]; decide
 
 /-- …and the declared width. -/
 theorem pallasCompleteAddSoundDesc_width : pallasCompleteAddSoundDesc.traceWidth = 3048 := rfl

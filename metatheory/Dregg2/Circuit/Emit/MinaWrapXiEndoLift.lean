@@ -83,6 +83,7 @@ import Dregg2.Circuit.Emit.KimchiVerify
 import Dregg2.Circuit.Emit.MinaBlockFqTranscript
 import Dregg2.Circuit.Emit.MinaWrapCommitStages
 import Dregg2.Circuit.Emit.PastaCurve
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.MinaWrapXiEndoLift
 
@@ -317,8 +318,32 @@ theorem endoAir_mainRailOk : endoAir.mainRailOk = true := by
     Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
+/-- ⚑ **THE TIED SOURCE** — `endoAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def endoTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := endoAir
+
 def endoDesc : EffectVmDescriptor2 :=
-  Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-xi-endo-lift::v1" CM_WIDTH PI64 [] endoAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-xi-endo-lift::v1" CM_WIDTH PI64 [] endoTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem endoDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines endoDesc [] endoAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-xi-endo-lift::v1" CM_WIDTH PI64 [] endoTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs that reason through `lowerAir`. -/
+theorem endoDesc_eq_lowerAir :
+    endoDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-xi-endo-lift::v1" CM_WIDTH PI64 [] endoAir := rfl
 
 /-- ⚑ **THE TRACE, ON THE STRICT REGISTER FILE.** Rust fills no cell. -/
 def endoTrace : List (List ℤ) :=

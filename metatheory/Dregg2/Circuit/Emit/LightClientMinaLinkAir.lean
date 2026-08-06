@@ -165,6 +165,8 @@ fabricate a chain of any length. What makes a row a real block is `PICKLES_OK`, 
 ⚠ And fork choice is still not here (`LightClientMinaGate`'s unchanged scope note).
 -/
 import Dregg2.Circuit.Emit.LightClientMinaAir
+import Dregg2.Circuit.Emit.EffectLowerCertified
+import Dregg2.Circuit.GateExpr
 
 set_option autoImplicit false
 set_option maxHeartbeats 1600000
@@ -264,7 +266,12 @@ def firstHeight : AirLeg :=
 /-- **`IS_REAL` is boolean on EVERY row.** ⚑ `.all`, not `.transition`: a transition-scoped boolean
 pin is vacuous on the last row, which is where a padding row would hide. -/
 def isRealBoolean : AirLeg :=
-  .window ⟨RowSel.all, .mul (loc IS_REAL) (.add (loc IS_REAL) (.const (-1)))⟩
+  .window ⟨RowSel.all, Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gBool (.leaf (.loc IS_REAL)))⟩
+
+theorem isRealBoolean_eq :
+    isRealBoolean = .window ⟨RowSel.all, .mul (loc IS_REAL) (.add (loc IS_REAL) (.const (-1)))⟩ :=
+  rfl
 
 /-- **Real rows are a PREFIX** — forbid a `0 → 1` transition (`realMonotone`). -/
 def realMonotone : AirLeg :=
@@ -371,10 +378,33 @@ theorem minaLinkAir_limbs_shape :
       ∧ minaLinkAir.maxLimbedCapacityBits = 232 := by
   refine ⟨?_, ?_, ?_⟩ <;> rfl
 
+/-- ⚑ **THE TIED SOURCE** — `minaLinkAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def minaLinkTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := minaLinkAir
+
 /-- **`minaLinkDesc` — COMPILER OUTPUT.** The exhibited Mina segment as a multi-row IR-v2 AIR. -/
 def minaLinkDesc : EffectVmDescriptor2 :=
-  Dregg2.Circuit.Emit.EffectLower.lowerAir
-    "dregg-mina-lightclient-link::v1" MINA_LINK_WIDTH MINA_LINK_PI_COUNT [] minaLinkAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-lightclient-link::v1" MINA_LINK_WIDTH MINA_LINK_PI_COUNT [] minaLinkTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem minaLinkDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines minaLinkDesc [] minaLinkAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-lightclient-link::v1" MINA_LINK_WIDTH MINA_LINK_PI_COUNT [] minaLinkTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem minaLinkDesc_eq_lowerAir :
+    minaLinkDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-lightclient-link::v1" MINA_LINK_WIDTH MINA_LINK_PI_COUNT [] minaLinkAir := rfl
 
 /-! ### §3a — the emission pins. `rfl` against the compiler's output, so a change in the leg
 lowerings, the leg ORDER or `assemble` goes red here. -/

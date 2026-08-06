@@ -76,6 +76,8 @@ a theorem or a measurement rather than a caveat:
 `native_decide`. Facts are NAMED THEOREMS — this file adds zero `#guard`s.
 -/
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
+import Dregg2.Circuit.Emit.EffectLowerCertified
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.MinaWrapVerifierProgram
 
@@ -297,13 +299,16 @@ Degree **2**. ⚑ Note the SHAPE: it is not two legs (a write leg and a hold leg
 no assignment in which both fire or neither does. A pair of separately-selected legs is exactly how
 a register silently becomes free when a third selector value appears. -/
 
-/-- The register-file window leg for register `r`, limb `i`. -/
+/-- The register-file window leg for register `r`, limb `i`. ⚑ **RE-EMIT**, and collapses the
+byte-identical cross-file duplicate in `MinaWrapCommitMachine.regWindowExpr` — see that def for the
+form-A-to-form-B rationale. -/
 def regWindowExpr (r i : Nat) : WindowExpr :=
-  .add (.nxt (regCol r + i))
-    (.mul (.const (-1))
-      (.add (.mul (.loc (WSEL_BASE + r)) (.loc (Z_BASE + i)))
-            (.mul (.add (.const 1) (.mul (.const (-1)) (.loc (WSEL_BASE + r))))
-                  (.loc (regCol r + i)))))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gEsub Dregg2.Circuit.GateExpr.idOps
+      (.leaf (Dregg2.Circuit.GateExpr.WLeaf.nxt (regCol r + i)))
+      (Dregg2.Circuit.GateExpr.gMux (.leaf (Dregg2.Circuit.GateExpr.WLeaf.loc (WSEL_BASE + r)))
+        (.leaf (Dregg2.Circuit.GateExpr.WLeaf.loc (regCol r + i)))
+        (.leaf (Dregg2.Circuit.GateExpr.WLeaf.loc (Z_BASE + i)))))
 
 /-- The register-file body, read against a two-row window. -/
 def regBody (cur nxt : Assignment) (r i : Nat) : ℤ :=
@@ -702,9 +707,42 @@ theorem sboxAir_mainRailOk : sboxAir.mainRailOk = true := by
   simp only [sboxPins, List.all_append, List.all_map, Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
+set_option maxHeartbeats 2000000 in
+/-- ⚑ **THE TIED SOURCE** — `sboxAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards.
+
+⚠ **The `by decide` here is the expensive one and it is set-option'd, not weakened.** `pinsTied`
+is `O(pins × legs)` in the kernel and this block carries 64 pins over 515 legs; the default
+heartbeat budget stops the elaborator mid-`whnf`. Raising the budget decides the SAME verdict — it
+does not admit a block the check would refuse. (The strictly better object is a theorem about
+`programAir` GENERAL over `prog`; deciding one instance is what this pass buys.) -/
+def sboxTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := sboxAir
+  ok   := by decide
+  tied := by decide
+
 /-- ⚑ **THE EMITTED S-BOX DESCRIPTOR.** -/
 def sboxDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-sbox-prog::v1" PROG_WIDTH SBOX_PI_COUNT [] sboxAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-sbox-prog::v1" PROG_WIDTH SBOX_PI_COUNT [] sboxTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem sboxDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines sboxDesc [] sboxAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-sbox-prog::v1" PROG_WIDTH SBOX_PI_COUNT [] sboxTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs that reason through `lowerAir`. -/
+theorem sboxDesc_eq_lowerAir :
+    sboxDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-sbox-prog::v1" PROG_WIDTH SBOX_PI_COUNT [] sboxAir := rfl
 
 /-- ⚑ **THE ROM LENGTH IS THE TRACE LENGTH, AND THAT IS A THEOREM OF THE IR, NOT A CONVENTION.**
 `TinyAutomataCompose.forced_trace_length` reads `trace rows × lookups-on-the-table = manifest rows`;
@@ -888,8 +926,41 @@ theorem longAir_mainRailOk : longAir.mainRailOk = true := by
   simp only [sboxPins, List.all_append, List.all_map, Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
+set_option maxHeartbeats 2000000 in
+/-- ⚑ **THE TIED SOURCE** — `longAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards.
+
+⚠ **The `by decide` here is the expensive one and it is set-option'd, not weakened.** `pinsTied`
+is `O(pins × legs)` in the kernel and this block carries 64 pins over 515 legs; the default
+heartbeat budget stops the elaborator mid-`whnf`. Raising the budget decides the SAME verdict — it
+does not admit a block the check would refuse. (The strictly better object is a theorem about
+`programAir` GENERAL over `prog`; deciding one instance is what this pass buys.) -/
+def longTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := longAir
+  ok   := by decide
+  tied := by decide
+
 def longDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-sbox-prog-1k::v1" PROG_WIDTH SBOX_PI_COUNT [] longAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-sbox-prog-1k::v1" PROG_WIDTH SBOX_PI_COUNT [] longTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem longDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines longDesc [] longAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-sbox-prog-1k::v1" PROG_WIDTH SBOX_PI_COUNT [] longTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs that reason through `lowerAir`. -/
+theorem longDesc_eq_lowerAir :
+    longDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-sbox-prog-1k::v1" PROG_WIDTH SBOX_PI_COUNT [] longAir := rfl
 
 /-- The `2^10` run: the same input, the same claimed output, 1 024 rows. -/
 def longTrace (x : Nat) : List (List ℤ) := runRows (sboxInit x) 0 longProg

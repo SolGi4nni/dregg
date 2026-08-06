@@ -87,6 +87,7 @@ Definitional descriptor + a byte-pinned `#guard` on its wire string + genuinely-
 semantic lemmas. `#assert_axioms` ⊆ {}. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.AirNormalForm
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.AttestedFactMembershipEmit
 
@@ -244,9 +245,32 @@ def attestedFactMembershipAir : EffectAir :=
 
 #guard attestedFactMembershipAir.mainRailOk == true
 
+/-- ⚑ **THE TIED SOURCE** — `attestedFactMembershipAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def attestedFactMembershipTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := attestedFactMembershipAir
+
 def attestedFactMembershipDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-attested-fact-membership::v1" ATTESTED_WIDTH PI_COUNT []
-    attestedFactMembershipAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-attested-fact-membership::v1" ATTESTED_WIDTH PI_COUNT [] attestedFactMembershipTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem attestedFactMembershipDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines attestedFactMembershipDesc [] attestedFactMembershipAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-attested-fact-membership::v1" ATTESTED_WIDTH PI_COUNT [] attestedFactMembershipTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem attestedFactMembershipDesc_eq_lowerAir :
+    attestedFactMembershipDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-attested-fact-membership::v1" ATTESTED_WIDTH PI_COUNT [] attestedFactMembershipAir := rfl
 
 /-- ⚑ The compiler's output IS that constraint list, by `rfl`. -/
 theorem attestedFactMembershipDesc_constraints :

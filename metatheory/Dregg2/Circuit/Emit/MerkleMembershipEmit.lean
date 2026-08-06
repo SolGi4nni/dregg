@@ -55,6 +55,7 @@ non-vacuous semantic lemma (`continuity_body_zero_iff`, TRUE iff the levels chai
 -/
 import Dregg2.Circuit.ChipNarrowLookup
 import Dregg2.Circuit.Emit.AirNormalForm
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.MerkleMembershipEmit
 
@@ -155,6 +156,13 @@ def merkleAir : EffectAir :=
 #guard merkleAir.lookupCount == 2
 #guard merkleAir.pinsFit 1 == true
 
+/-- ⚑ **THE TIED SOURCE** — `merkleAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def merkleTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := merkleAir
+
 /-- **`merkleMembershipDesc`** — the depth-2, 4-ary Poseidon2 Merkle-membership descriptor,
 **COMPILED from `merkleAir`**. Two child→parent chip lookups, the level-tying continuity gate, the
 root pin, and the last-row fix. The chip table (`TID_P2_NARROW`) is IMPLICITLY present
@@ -163,7 +171,24 @@ descriptors leave it. The level-tie is enforced on EVERY row: the transition gat
 `0..n-2` and the last-row boundary covers the last row (so a height-1 trace is not
 under-constrained). -/
 def merkleMembershipDesc : EffectVmDescriptor2 :=
-  lowerAir "merkle-membership-depth2-4ary::poseidon2-v1" MEMBERSHIP_WIDTH 1 [] merkleAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "merkle-membership-depth2-4ary::poseidon2-v1" MEMBERSHIP_WIDTH 1 [] merkleTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem merkleMembershipDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines merkleMembershipDesc [] merkleAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "merkle-membership-depth2-4ary::poseidon2-v1" MEMBERSHIP_WIDTH 1 [] merkleTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem merkleMembershipDesc_eq_lowerAir :
+    merkleMembershipDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "merkle-membership-depth2-4ary::poseidon2-v1" MEMBERSHIP_WIDTH 1 [] merkleAir := rfl
 
 /-! ### §2a — the lowered constraints, NAMED (no hand-written literal survives). -/
 

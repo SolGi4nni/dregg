@@ -93,6 +93,7 @@ the two generated honest witnesses.
 `native_decide`. Facts are NAMED THEOREMS, not `#guard`s — this file adds zero guards.
 -/
 import Dregg2.Circuit.Emit.PastaFieldSound
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.PastaAddSubSound
 
@@ -422,18 +423,114 @@ theorem soundAddSubAir_mainRailOk (pl : Nat → ℤ) (sy sc : ℤ) :
   intro m _
   rfl
 
+/-- ⚑ **THE TIED SOURCE** — `(soundAddSubAir pLimb 1 (-1))` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def fpAddTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (soundAddSubAir pLimb 1 (-1))
+
 /-- `fpAdd`: `x + y ≡ z (mod p)` (Pallas base / Vesta scalar). -/
 def fpAddSoundDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fpadd-sound::v1" ADDSUB_WIDTH 0 [] (soundAddSubAir pLimb 1 (-1))
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fpadd-sound::v1" ADDSUB_WIDTH 0 [] fpAddTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem fpAddSoundDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fpAddSoundDesc [] (soundAddSubAir pLimb 1 (-1)) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fpadd-sound::v1" ADDSUB_WIDTH 0 [] fpAddTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem fpAddSoundDesc_eq_lowerAir :
+    fpAddSoundDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-fpadd-sound::v1" ADDSUB_WIDTH 0 [] (soundAddSubAir pLimb 1 (-1)) := rfl
+/-- ⚑ **THE TIED SOURCE** — `(soundAddSubAir pLimb (-1) 1)` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def fpSubTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (soundAddSubAir pLimb (-1) 1)
+
 /-- `fpSub`: `x − y ≡ z (mod p)`. -/
 def fpSubSoundDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fpsub-sound::v1" ADDSUB_WIDTH 0 [] (soundAddSubAir pLimb (-1) 1)
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fpsub-sound::v1" ADDSUB_WIDTH 0 [] fpSubTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem fpSubSoundDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fpSubSoundDesc [] (soundAddSubAir pLimb (-1) 1) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fpsub-sound::v1" ADDSUB_WIDTH 0 [] fpSubTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem fpSubSoundDesc_eq_lowerAir :
+    fpSubSoundDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-fpsub-sound::v1" ADDSUB_WIDTH 0 [] (soundAddSubAir pLimb (-1) 1) := rfl
+/-- ⚑ **THE TIED SOURCE** — `(soundAddSubAir qLimb 1 (-1))` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def fqAddTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (soundAddSubAir qLimb 1 (-1))
+
 /-- `fqAdd`: the same shape at the Vesta-base / Pallas-scalar modulus. -/
 def fqAddSoundDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fqadd-sound::v1" ADDSUB_WIDTH 0 [] (soundAddSubAir qLimb 1 (-1))
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fqadd-sound::v1" ADDSUB_WIDTH 0 [] fqAddTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem fqAddSoundDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fqAddSoundDesc [] (soundAddSubAir qLimb 1 (-1)) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fqadd-sound::v1" ADDSUB_WIDTH 0 [] fqAddTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem fqAddSoundDesc_eq_lowerAir :
+    fqAddSoundDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-fqadd-sound::v1" ADDSUB_WIDTH 0 [] (soundAddSubAir qLimb 1 (-1)) := rfl
+/-- ⚑ **THE TIED SOURCE** — `(soundAddSubAir qLimb (-1) 1)` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def fqSubTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (soundAddSubAir qLimb (-1) 1)
+
 /-- `fqSub`. -/
 def fqSubSoundDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fqsub-sound::v1" ADDSUB_WIDTH 0 [] (soundAddSubAir qLimb (-1) 1)
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fqsub-sound::v1" ADDSUB_WIDTH 0 [] fqSubTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem fqSubSoundDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fqSubSoundDesc [] (soundAddSubAir qLimb (-1) 1) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fqsub-sound::v1" ADDSUB_WIDTH 0 [] fqSubTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem fqSubSoundDesc_eq_lowerAir :
+    fqSubSoundDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-fqsub-sound::v1" ADDSUB_WIDTH 0 [] (soundAddSubAir qLimb (-1) 1) := rfl
 
 /-- ⚑ **THE EMITTED COST, as a theorem rather than a caption.** `32` coefficient gates + `3·32`
 limb lookups + `1` carry-bit lookup + `31` carry lookups = **`160`** constraints for a standalone
@@ -441,22 +538,26 @@ add/sub (`64` when the two operands are already range-checked by whatever produc
 emitted `9×30` gate was **1**, and `PastaField` §Constraint-budget's own estimate for the full
 generator was `281`. -/
 theorem fpAddSoundDesc_constraint_count : fpAddSoundDesc.constraints.length = 160 := by
-  unfold fpAddSoundDesc lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
+  rw [fpAddSoundDesc_eq_lowerAir]
+  unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
   simp only [List.map_nil, List.nil_append, List.append_nil]
   rfl
 
 theorem fpSubSoundDesc_constraint_count : fpSubSoundDesc.constraints.length = 160 := by
-  unfold fpSubSoundDesc lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
+  rw [fpSubSoundDesc_eq_lowerAir]
+  unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
   simp only [List.map_nil, List.nil_append, List.append_nil]
   rfl
 
 theorem fqAddSoundDesc_constraint_count : fqAddSoundDesc.constraints.length = 160 := by
-  unfold fqAddSoundDesc lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
+  rw [fqAddSoundDesc_eq_lowerAir]
+  unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
   simp only [List.map_nil, List.nil_append, List.append_nil]
   rfl
 
 theorem fqSubSoundDesc_constraint_count : fqSubSoundDesc.constraints.length = 160 := by
-  unfold fqSubSoundDesc lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
+  rw [fqSubSoundDesc_eq_lowerAir]
+  unfold lowerAir Dregg2.Circuit.Emit.EffectLower.assemble
   simp only [List.map_nil, List.nil_append, List.append_nil]
   rfl
 

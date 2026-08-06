@@ -277,6 +277,7 @@ import Dregg2.Circuit.Emit.EffectLowerCore
 import Dregg2.Circuit.LimbTally
 import Dregg2.Circuit.Emit.PastaField
 import Dregg2.Bridge.LightClientMinaGate
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 set_option autoImplicit false
 set_option maxHeartbeats 1600000
@@ -1008,6 +1009,13 @@ theorem mina_lane_widths_are_wrap_free :
   refine ⟨?_, ?_⟩ <;>
     rw [Dregg2.Circuit.RangeFieldContainment.wrap_free_iff_le_29] <;> decide
 
+/-- ⚑ **THE TIED SOURCE** — `minaHeadAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def minaHeadTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := minaHeadAir
+
 /-- **`minaLcVerifyDesc` — COMPILER OUTPUT.** The Mina anchored-head light-client verify decision as
 an IR-v2 AIR. Not modelled beside a hand-written twin; there is no twin.
 
@@ -1016,8 +1024,24 @@ so the framework's `PIBindsDigests` surface would emit a descriptor nobody deplo
 points share the normalizer, the leg lowerings and the emission order and differ ONLY in that
 surface. -/
 def minaLcVerifyDesc : EffectVmDescriptor2 :=
-  Dregg2.Circuit.Emit.EffectLower.lowerAir
-    "dregg-mina-lightclient-verify::v1" MINA_LC_WIDTH MINA_PI_COUNT [] minaHeadAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-lightclient-verify::v1" MINA_LC_WIDTH MINA_PI_COUNT [] minaHeadTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem minaLcVerifyDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines minaLcVerifyDesc [] minaHeadAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-mina-lightclient-verify::v1" MINA_LC_WIDTH MINA_PI_COUNT [] minaHeadTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem minaLcVerifyDesc_eq_lowerAir :
+    minaLcVerifyDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-lightclient-verify::v1" MINA_LC_WIDTH MINA_PI_COUNT [] minaHeadAir := rfl
 
 /-! ### §3a — the emission pins: what the compiler produced, against a hand-written expectation.
 

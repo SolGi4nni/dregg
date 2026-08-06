@@ -6,7 +6,8 @@ with a refinement GENERAL over an arbitrary transition table (the M1 general DFA
 #1 says the AIR is Lean-authored; this file is its endpoint. What is authored here is the SOURCE
 (`dfaAir`, §2: an `EffectAir` block of one `.lookup`, one `.transition` `.window` and two `.pin`
 legs over a declared `exactPublicRows` table). The DESCRIPTOR is
-`EffectLower.lowerAir … (dfaAir tbl)` — there is no hand-written `VmConstraint2` in this file, and
+`EffectLower.lowerTiedAir … (dfaTiedAir tbl)` — there is no hand-written `VmConstraint2` in this
+file, and
 the `def`s that used to hold them (`transitionLookup`, `continuityWindow`, `b1InitialPin`,
 `b2FinalPin`) are deleted. The wire bytes of the concrete instance are byte-pinned by an
 `emitVmJson2` `#guard` against `circuit/descriptors/by-name/dfa-routing-table-exact-public-v1.json`
@@ -14,6 +15,14 @@ the `def`s that used to hold them (`transitionLookup`, `continuityWindow`, `b1In
 `Satisfied2Public <emitted-descriptor> ⟹ classify` theorem over the EMITTED object, general over
 the table. Rust parses the emitted IR2 bytes (`descriptor_ir2.rs::parse`, the
 `exact_public_rows` arm) and supplies witnesses; it authors nothing.
+
+⚑ **2026-08-06 — THE FIRST DESCRIPTOR ON THE CERTIFIED LOWERING.** `tableRoutingDesc` was
+`EffectLower.lowerAir …`, which returns bytes and nothing else; it is now the `.val` of
+`EffectLower.lowerTiedAir …`, which returns the bytes paired with `CertifiedRefines` and refuses to
+elaborate unless BOTH source verdicts hold — `mainRailOk` (main-rail expressible) and `pinsTied`
+(every published column is derived by another leg). **Zero bytes move**: `tableRoutingDesc_eq_lowerAir`
+is `rfl`, general over `name` and `tbl`, the wire golden in §6 is untouched, nothing re-emits and no
+VK rotates. What changed is what the definition PROVES, not what it PRODUCES.
 
 ## Why this file exists (the M0 finding it closes)
 
@@ -71,8 +80,9 @@ table-entry bound `hsmall : entries < p` and the PI canonicality bounds (`hq0`/`
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
-import Dregg2.Circuit.Emit.EffectLowerCore
+import Dregg2.Circuit.Emit.EffectLowerCertified
 import Dregg2.Crypto.DfaAcceptanceAir
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.DfaRoutingTableEmit
 
@@ -126,8 +136,14 @@ committed by the descriptor bytes (`exactPublicRows` — the verifier-known fini
 def transitionTableDef (tbl : List (List Nat)) : TableDef :=
   ⟨TRT_TID, "dfa_transition_table", 3, .exactPublicRows tbl⟩
 
-/-- C2 continuity body: `Nxt(current) − Loc(next)`. Source-level: this is a `WindowLeg.body`. -/
-def contWindowBody : WindowExpr := .add (.nxt CURRENT) (.mul (.const (-1)) (.loc NEXT))
+/-- C2 continuity body: `Nxt(current) − Loc(next)`. Source-level: this is a `WindowLeg.body`.
+⚑ `GateExpr.gThread` at the window view. -/
+def contWindowBody : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+    (Dregg2.Circuit.GateExpr.gThread CURRENT NEXT)
+
+theorem contWindowBody_eq :
+    contWindowBody = WindowExpr.add (.nxt CURRENT) (.mul (.const (-1)) (.loc NEXT)) := rfl
 
 /-- ⚑ **THE SOURCE.** The DFA-routing AIR in the widened `EffectAir` vocabulary
 (`Circuit/EffectAirIR.lean`), general over the transition table:
@@ -152,20 +168,76 @@ def dfaAir (tbl : List (List Nat)) : EffectAir :=
 to `EffectLower.refuseConstraints`. -/
 theorem dfaAir_mainRailOk (tbl : List (List Nat)) : (dfaAir tbl).mainRailOk = true := rfl
 
+/-- ⚑ **THE SECOND VERDICT.** Both published columns are DERIVED by another leg: `CURRENT` and
+`NEXT` are both read by the transition lookup (and `NEXT` by the continuity window too). So neither
+pin is decorative — the refinement below is about columns something else constrains.
+
+General over `tbl`, and `rfl` rather than `by decide`, because the verdict does not read the table
+rows: a table row moving cannot make a pin decorative. -/
+theorem dfaAir_pinsTied (tbl : List (List Nat)) : (dfaAir tbl).pinsTied = true := rfl
+
+/-- …and the STRICTER reading passes too: the lookup that reads `CURRENT` reads `SYMBOL` and
+`NEXT` as well, so each published column is JOINED to another column rather than threaded alone.
+This is the verdict the 192-felt ξ-basis row fails (`EffectLowerCertified` §7a). -/
+theorem dfaAir_pinsJoined (tbl : List (List Nat)) : (dfaAir tbl).pinsJoined = true := rfl
+
 #guard (dfaAir []).legs.length == 4
 #guard (dfaAir []).legCount == 5
 #guard (dfaAir []).pinsFit TRT_PI_COUNT == true
 
+/-- ⚑ **THE TIED SOURCE.** `dfaAir tbl` carrying its two decidable verdicts in its TYPE. A value of
+`TiedAir` cannot be built for an air block that publishes a column no other leg derives, so a later
+edit that deletes the lookup does not silently leave two decorative pins behind: it fails to
+elaborate here.
+
+⚠ The fields are `rfl`, not the structure's `by decide` default, because this is a FAMILY over
+`tbl` — `decide` needs a closed term and `tbl` is a variable. Both verdicts are independent of the
+table contents, which is exactly why the `rfl` goes through. -/
+def dfaTiedAir (tbl : List (List Nat)) : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air  := dfaAir tbl
+  ok   := dfaAir_mainRailOk tbl
+  tied := dfaAir_pinsTied tbl
+
 /-- **`tableRoutingDesc name tbl` — COMPILER OUTPUT.** The table-as-input DFA-routing descriptor
-family, `EffectLower.lowerAir` of `dfaAir tbl`. Not modelled beside a hand-written twin; there is
-no twin.
+family, `EffectLower.lowerTiedAir` of `dfaTiedAir tbl`. Not modelled beside a hand-written twin;
+there is no twin.
+
+⚑ **THE FIRST DESCRIPTOR ON THE CERTIFIED LOWERING (2026-08-06).** The right-hand side used to be
+`EffectLower.lowerAir … (dfaAir tbl)`, which returned bytes and nothing else. It is now the `.val`
+of `lowerTiedAir`, which returns the bytes PAIRED WITH `CertifiedRefines` — so the descriptor's
+refinement of its source is produced by the emit rather than re-established downstream, and the two
+source verdicts (`mainRailOk`, `pinsTied`) have to hold for the definition to typecheck at all.
+
+**Zero bytes move.** `tableRoutingDesc_eq_lowerAir` below is `rfl`, general over `name` and `tbl`:
+the emitted object is the same term it was. No re-emit, no VK rotation, and §6's wire golden is
+untouched.
 
 ⚠ `lowerAir`, not `lowerEffect`: this descriptor is not a full-state effect and has no digest
 wires, so the framework's `PIBindsDigests` surface would emit a descriptor nobody deployed. The two
 entry points share the normalizer, the leg lowerings and the emission order and differ ONLY in that
 surface. -/
 def tableRoutingDesc (name : String) (tbl : List (List Nat)) : EffectVmDescriptor2 :=
-  Dregg2.Circuit.Emit.EffectLower.lowerAir name TRT_WIDTH TRT_PI_COUNT [] (dfaAir tbl)
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir name TRT_WIDTH TRT_PI_COUNT [] (dfaTiedAir tbl)).val
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted — general over
+`name` and `tbl`, by `rfl`. This is what "adoption is free" means at a descriptor: the migration is
+a change of what the definition PROVES, not of what it PRODUCES. -/
+theorem tableRoutingDesc_eq_lowerAir (name : String) (tbl : List (List Nat)) :
+    tableRoutingDesc name tbl
+      = Dregg2.Circuit.Emit.EffectLower.lowerAir name TRT_WIDTH TRT_PI_COUNT [] (dfaAir tbl) := rfl
+
+/-- ⚑ **THE CERTIFICATE, as a named theorem.** Every leg of the source is FORCED by the emitted
+descriptor's constraints, on every row window that satisfies them — the lookup tuple is a declared
+table row, the continuity window vanishes off the last row, and each pin's column agrees with its
+published slot on its own boundary row. Produced by the emit, not re-derived here.
+
+⚠ What it does NOT say: `forces` is the deployed mod-`p` denotation, and it cannot make a leg
+*mean* the right thing — that is what `dfaAir_pinsTied` is for, and why the two verdicts are
+carried together. -/
+theorem tableRoutingDesc_certified (name : String) (tbl : List (List Nat)) :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines (tableRoutingDesc name tbl) [] (dfaAir tbl) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir name TRT_WIDTH TRT_PI_COUNT []
+    (dfaTiedAir tbl)).property
 
 /-! ### §2a — ⚑ THE EMISSION PIN: what the compiler produces, against a hand-written expectation.
 
@@ -322,7 +394,7 @@ theorem ofNat_eq_of_modEq {a b : ℕ} (ha : a < 2013265921) (hb : b < 2013265921
 theorem cont_eq {env : VmRowEnv} (h : contWindowBody.eval env ≡ 0 [ZMOD 2013265921])
     {x y : ℕ} (hx : env.nxt CURRENT = Int.ofNat x) (hy : env.loc NEXT = Int.ofNat y)
     (hxlt : x < 2013265921) (hylt : y < 2013265921) : x = y := by
-  simp only [contWindowBody, WindowExpr.eval] at h
+  simp only [contWindowBody_eq, WindowExpr.eval] at h
   rw [hx, hy] at h
   obtain ⟨k, hk⟩ := Int.modEq_zero_iff_dvd.mp h
   simp only [Int.ofNat_eq_natCast] at hk
@@ -608,6 +680,10 @@ theorem mutFin_not_satisfied :
 -- carry a `sorry`, but a tripwire that omits the load-bearing statements is a tripwire nobody
 -- trips — these ARE the deployed descriptor's definition now.
 #assert_axioms dfaAir_mainRailOk
+#assert_axioms dfaAir_pinsTied
+#assert_axioms dfaAir_pinsJoined
+#assert_axioms tableRoutingDesc_eq_lowerAir
+#assert_axioms tableRoutingDesc_certified
 #assert_axioms tableRoutingDesc_constraints
 #assert_axioms tableRoutingDesc_tables
 #assert_axioms tableRoutingDesc_ranges

@@ -71,6 +71,8 @@ threadable at all.
 `#assert_axioms`-clean; no `sorry`/`admit`/`native_decide`; zero `#guard`s.
 -/
 import Dregg2.Circuit.Emit.PastaCurveSound
+import Dregg2.Circuit.GateExpr
+import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.PastaLadderThread
 
@@ -132,10 +134,15 @@ last row's `nxt` is the WRAP row, so an every-row thread would say something dif
 padding hides. The census theorem below is what keeps that honest. -/
 
 /-- One carry leg: the `i`-th limb of the block at `dst` on the NEXT row is the `i`-th limb of the
-block at `src` on THIS row. -/
+block at `src` on THIS row. ⚑ `GateExpr.gThread` at the window view. -/
 def carryLeg (dst src i : Nat) : AirLeg :=
   .window ⟨RowSel.transition,
-    .add (.nxt (dst + i)) (.mul (.const (-1)) (.loc (src + i)))⟩
+    Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+      (Dregg2.Circuit.GateExpr.gThread (dst + i) (src + i))⟩
+
+theorem carryLeg_eq (dst src i : Nat) :
+    carryLeg dst src i = .window ⟨RowSel.transition,
+      WindowExpr.add (.nxt (dst + i)) (.mul (.const (-1)) (.loc (src + i)))⟩ := rfl
 
 /-- ⚑ **THE 96 TRANSITION LEGS** — three coordinates × `SK = 32` limbs. This is the whole thread,
 and `96` is the same width the phase-2 chain carries its state on (`45 × 96` in-circuit connects):
@@ -180,13 +187,61 @@ theorem pallasThreadAir_window_selectors :
     ∧ pallasThreadAir.windowCountSel RowSel.last = 0 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
+/-- ⚑ **THE TIED SOURCE** — `pallasThreadAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def pallasThreadTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := pallasThreadAir
+
 /-- The emitted descriptors. `RCB_WIDTH = 3 048` — the SAME width as the standalone row, at every
 ladder depth, because the depth is rows. -/
 def pallasThreadDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-pallas-rcb-thread::v1" RCB_WIDTH 0 [] pallasThreadAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-pallas-rcb-thread::v1" RCB_WIDTH 0 [] pallasThreadTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem pallasThreadDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines pallasThreadDesc [] pallasThreadAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-pallas-rcb-thread::v1" RCB_WIDTH 0 [] pallasThreadTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem pallasThreadDesc_eq_lowerAir :
+    pallasThreadDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-pallas-rcb-thread::v1" RCB_WIDTH 0 [] pallasThreadAir := rfl
+
+/-- ⚑ **THE TIED SOURCE** — `vestaThreadAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def vestaThreadTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := vestaThreadAir
 
 def vestaThreadDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-vesta-rcb-thread::v1" RCB_WIDTH 0 [] vestaThreadAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-vesta-rcb-thread::v1" RCB_WIDTH 0 [] vestaThreadTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem vestaThreadDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines vestaThreadDesc [] vestaThreadAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-vesta-rcb-thread::v1" RCB_WIDTH 0 [] vestaThreadTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem vestaThreadDesc_eq_lowerAir :
+    vestaThreadDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-vesta-rcb-thread::v1" RCB_WIDTH 0 [] vestaThreadAir := rfl
 
 /-- The threaded row is the standalone row plus exactly 96 constraints — the 4 476 the sound row
 already measured, and one window gate per threaded limb. -/
