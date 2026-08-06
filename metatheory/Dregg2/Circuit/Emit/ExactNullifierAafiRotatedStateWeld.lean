@@ -28,6 +28,7 @@ descriptor fingerprint/VK, and only then select it in the runtime registry.
 import Dregg2.Circuit.Emit.ExactNullifierAafiDescriptorPlan
 import Dregg2.Circuit.Emit.EffectVmEmitRotationWide
 import Mathlib.Tactic
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.ExactNullifierAafiRotatedStateWeld
 
@@ -130,7 +131,14 @@ are gone.  What is left is one of three things, and each says which it is:
 /-! ## 2. Actual weld gates -/
 
 def carryBody (col : Nat) : WindowExpr :=
-  .add (.nxt col) (.mul (.const (-1)) (.loc col))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread col col)
+
+/-- ⚑ **THE BYTE PIN.** `carryBody` is `GateExpr.gThread` at the window view -- the SAME object
+`AccumulatorNonRevocationEmit.constBody`, `BridgeActionEmit.contBody`,
+`EffectActionBindingEmit.contWindowBody` and `DyckStackEmit.wThread` each wrote out separately.
+`rfl`, for every column: no emitted byte moved. -/
+theorem carryBody_eq (col : Nat) :
+    carryBody col = WindowExpr.add (.nxt col) (.mul (.const (-1)) (.loc col)) := rfl
 
 /-- The input state published on row zero is the input state opened by FNS3 on the last row. -/
 def beforePayloadContinuity : List VmConstraint2 :=

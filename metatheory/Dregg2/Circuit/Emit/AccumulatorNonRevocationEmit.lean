@@ -52,6 +52,7 @@ binding (`accum_row_binding`), and the non-membership `check` tooth (`check0_for
 `#assert_axioms`-clean (pure `omega`). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.AccumulatorNonRevocationEmit
 
@@ -140,7 +141,15 @@ def extMulLane (o a b : Nat) : Nat → EmittedExpr
       (coeffMul (-1) (a + 1) (b + 2))) (coeffMul (-1) (a + 2) (b + 1))) (coeffMul (-1) (a + 3) (b + 0))
 
 /-- The constancy window body for column `c`: `next[c] − loc[c]`. -/
-def constBody (c : Nat) : WindowExpr := .add (.nxt c) (.mul (.const (-1)) (.loc c))
+def constBody (c : Nat) : WindowExpr :=
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread c c)
+
+/-- ⚑ **THE BYTE PIN.** `constBody` is `GateExpr.gThread` at the window view -- the SAME object
+`BridgeActionEmit.contBody`, `AccumulatorNonRevocationEmit.constBody`,
+`EffectActionBindingEmit.contWindowBody`, `ExactNullifierAafiRotatedStateWeld.carryBody` and
+`DyckStackEmit.wThread` each wrote out separately. `rfl`, for every column: no emitted byte moved. -/
+theorem constBody_eq (c : Nat) :
+    constBody c = WindowExpr.add (.nxt c) (.mul (.const (-1)) (.loc c)) := rfl
 
 /-! ## §3 — The constraint groups (order fixes the byte-pin). -/
 
@@ -189,7 +198,7 @@ aux column does not drift between rows — the Lean face of the `.windowGate` th
 (and `acc_aux`) to carry the true PI on every row, closing the hand AIR's free-`alpha_aux` gap. -/
 theorem alpha_constancy_zero_iff (env : VmRowEnv) (c : Nat) :
     (constBody c).eval env = 0 ↔ env.nxt c = env.loc c := by
-  simp only [constBody, WindowExpr.eval]
+  simp only [constBody_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 /-- **The accumulator binding.** On a row where C3 (`sum = prod + v`) and the `sum==acc_aux` gate

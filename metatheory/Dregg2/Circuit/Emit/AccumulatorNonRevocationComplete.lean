@@ -257,7 +257,7 @@ theorem certRow_sumAcc (alpha acc h w v vinv : Ext)
 /-- The aux-constancy window body vanishes: both rows are identical, so `next[c] − loc[c] = 0`. -/
 theorem certRow_const (alpha acc h w v vinv : Ext) (c : Nat) :
     (constBody c).eval (envAt (certTrace alpha acc h w v vinv) 0) = 0 := by
-  simp only [constBody, WindowExpr.eval, envAt, certTrace, List.getD_cons_zero,
+  simp only [constBody_eq, WindowExpr.eval, envAt, certTrace, List.getD_cons_zero,
     List.getD_cons_succ]
   ring
 

@@ -49,6 +49,7 @@ non-vacuous semantic lemmas (each TRUE and FALSE witnessed). `#assert_axioms` on
 `⊆ {}` (pure `omega` / `mul_eq_zero`). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.EffectActionBindingEmit
 
@@ -69,7 +70,14 @@ column, over a trace of `width = pi_count + aux` columns tied row-to-row by cont
 /-- The continuity `window_gate` body for column `c`: `Nxt c - Loc c` (the next row equals this
 row on that column — the faithful twin of `eval_constraints`' `diff = next[c] - local[c]`). -/
 def contWindowBody (c : Nat) : WindowExpr :=
-  .add (.nxt c) (.mul (.const (-1)) (.loc c))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread c c)
+
+/-- ⚑ **THE BYTE PIN.** `contWindowBody` is `GateExpr.gThread` at the window view -- the SAME object
+`BridgeActionEmit.contBody`, `AccumulatorNonRevocationEmit.constBody`,
+`EffectActionBindingEmit.contWindowBody`, `ExactNullifierAafiRotatedStateWeld.carryBody` and
+`DyckStackEmit.wThread` each wrote out separately. `rfl`, for every column: no emitted byte moved. -/
+theorem contWindowBody_eq (c : Nat) :
+    contWindowBody c = WindowExpr.add (.nxt c) (.mul (.const (-1)) (.loc c)) := rfl
 
 /-- The per-column continuity constraint (asserted on the transition domain, as the Rust
 `when_transition().assert_zero(next[c] - local[c])`). -/
@@ -183,7 +191,7 @@ def burnDesc : EffectVmDescriptor2 :=
 chain, FALSE otherwise. The Lean face of the `window_gate` the emit enforces row-for-row. -/
 theorem cont_zero_iff (env : VmRowEnv) (c : Nat) :
     (contWindowBody c).eval env = 0 ↔ env.nxt c = env.loc c := by
-  simp only [contWindowBody, WindowExpr.eval]
+  simp only [contWindowBody_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 /-- The low-limb Burn gate is zero EXACTLY when `new_lo + amt_lo = old_lo + borrow*2^32` — the

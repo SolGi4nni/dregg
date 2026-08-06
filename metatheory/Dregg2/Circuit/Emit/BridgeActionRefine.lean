@@ -56,7 +56,8 @@ open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 WindowConstraint WindowExpr Satisfied2 VmTrace TraceFamily
    TableId envAt zeroAsg memOpsOf mapOpsOf memLog mapLog opRow memCheck_nil)
 open Dregg2.Circuit.Emit.BridgeActionEmit
-  (bridgeActionDesc contBody cont_body_zero_iff piPins windowGates BRIDGE_ACTION_WIDTH)
+  (bridgeActionDesc contBody contBody_eq cont_body_zero_iff piPins windowGates
+   BRIDGE_ACTION_WIDTH)
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
 
 set_option autoImplicit false
@@ -135,9 +136,9 @@ theorem windowGate_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : V
   simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true]
   constructor
   · intro h hl
-    exact (gate_modEq_iff (by simp only [contBody, WindowExpr.eval]; ring)).mp (h hl)
+    exact (gate_modEq_iff (by simp only [contBody_eq, WindowExpr.eval]; ring)).mp (h hl)
   · intro h hl
-    exact (gate_modEq_iff (by simp only [contBody, WindowExpr.eval]; ring)).mpr (h hl)
+    exact (gate_modEq_iff (by simp only [contBody_eq, WindowExpr.eval]; ring)).mpr (h hl)
 
 /-! ## §3 — The two constraint families' membership in the descriptor. -/
 

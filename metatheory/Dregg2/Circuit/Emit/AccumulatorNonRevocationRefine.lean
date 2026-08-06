@@ -345,7 +345,7 @@ theorem windowConst_active (j : Nat) (hj : j < t.rows.length) (hjl : j + 1 ≠ t
     simp only [beq_eq_false_iff_ne]; exact hjl
   simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt] at hb
   exact (gate_modEq_iff (a := (envAt t j).nxt c) (b := (envAt t j).loc c)
-    (by simp only [constBody, WindowExpr.eval]; ring)).mp (hb hfalse)
+    (by simp only [constBody_eq, WindowExpr.eval]; ring)).mp (hb hfalse)
 
 /-! ### The six column equations extracted from the whole descriptor on one active row. -/
 
@@ -594,7 +594,7 @@ theorem accSat :
       interval_cases j <;>
       simp [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt, WindowExpr.eval,
         EmittedExpr.eval, coeffVar, coeffMul, extMulLane, c1Body, c3Body, sumAccBody, checkOneBody,
-        constBody, envAt, accTrace, honestRow, honestPub, W, HASH, QUOTIENT, REMAINDER, DIFF, PRODUCT,
+        constBody_eq, envAt, accTrace, honestRow, honestPub, W, HASH, QUOTIENT, REMAINDER, DIFF, PRODUCT,
         SUM, V_INV, CHECK, ALPHA_AUX, ACC_AUX, PI_ACC, PI_ALPHA]
   rowHashes := by intro i hi; exact trivial
   rowRanges := by intro i hi r hr; simp [accumulatorNonRevDesc] at hr

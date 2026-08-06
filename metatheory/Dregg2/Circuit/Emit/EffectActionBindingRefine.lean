@@ -64,7 +64,8 @@ open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 WindowConstraint WindowExpr Satisfied2 VmTrace TraceFamily
    TableId envAt zeroAsg memOpsOf mapOpsOf memLog mapLog opRow memCheck_nil)
 open Dregg2.Circuit.Emit.EffectActionBindingEmit
-  (contWindowBody contGate contGates piGate piGates effectActionDesc revokeCapabilityDesc burnDesc
+  (contWindowBody contWindowBody_eq contGate contGates piGate piGates effectActionDesc
+   revokeCapabilityDesc burnDesc
    burnGates cLoBody cHiBody cBorrowBoolBody cWasBurnLoBody cWasBurnHiBody
    B_OLD_LO B_OLD_HI B_NEW_LO B_NEW_HI B_AMT_LO B_AMT_HI B_WASBURN_LO B_WASBURN_HI B_BORROW TWO_POW_32
    cont_zero_iff cLo_zero_iff cHi_zero_iff cBorrowBool_zero_iff cWasBurnLo_zero_iff)
@@ -116,9 +117,9 @@ theorem contGate_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmR
   simp only [contGate, VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true]
   constructor
   · intro h hl
-    exact (gate_modEq_iff (by simp only [contWindowBody, WindowExpr.eval]; ring)).mp (h hl)
+    exact (gate_modEq_iff (by simp only [contWindowBody_eq, WindowExpr.eval]; ring)).mp (h hl)
   · intro h hl
-    exact (gate_modEq_iff (by simp only [contWindowBody, WindowExpr.eval]; ring)).mpr (h hl)
+    exact (gate_modEq_iff (by simp only [contWindowBody_eq, WindowExpr.eval]; ring)).mpr (h hl)
 
 /-- A Burn algebraic gate's per-row denotation IS "off the last row, this poly vanishes mod `p`" — the
 deployed `when_transition()` arm binds it on every active row as a field equality. -/

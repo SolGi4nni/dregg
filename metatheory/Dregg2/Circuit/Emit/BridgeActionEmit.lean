@@ -56,6 +56,7 @@ non-vacuous semantic lemma (`cont_body_zero_iff`, TRUE iff a column chains, FALS
 `#assert_axioms cont_body_zero_iff` (pure `omega`). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.BridgeActionEmit
 
@@ -83,7 +84,14 @@ def piPins : List VmConstraint2 :=
 /-- The per-column continuity body: `Nxt(c) + (−1)·Loc(c)` — the two-row twin of the hand AIR's
 `next[c] − local[c] == 0` (no subtraction node; `Add(Nxt, Mul(Const(-1), Loc))`). -/
 def contBody (c : Nat) : WindowExpr :=
-  .add (.nxt c) (.mul (.const (-1)) (.loc c))
+  Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread c c)
+
+/-- ⚑ **THE BYTE PIN.** `contBody` is `GateExpr.gThread` at the window view -- the SAME object
+`BridgeActionEmit.contBody`, `AccumulatorNonRevocationEmit.constBody`,
+`EffectActionBindingEmit.contWindowBody`, `ExactNullifierAafiRotatedStateWeld.carryBody` and
+`DyckStackEmit.wThread` each wrote out separately. `rfl`, for every column: no emitted byte moved. -/
+theorem contBody_eq (c : Nat) :
+    contBody c = WindowExpr.add (.nxt c) (.mul (.const (-1)) (.loc c)) := rfl
 
 /-- Family 2 — the 26 transition pins: each per-column difference is one `on_transition` `WindowGate`
 whose body must vanish on rows `0..n−2` (exactly the AIR's `eval_constraints` transition domain). -/
@@ -122,7 +130,7 @@ in the Rust IR-v2 main AIR (`descriptor_ir2.rs:2222-2224`). -/
 
 theorem cont_body_zero_iff (env : VmRowEnv) (c : Nat) :
     (contBody c).eval env = 0 ↔ env.nxt c = env.loc c := by
-  simp only [contBody, WindowExpr.eval]
+  simp only [contBody_eq, WindowExpr.eval]
   constructor <;> intro h <;> omega
 
 /-! ### Non-vacuity witnesses: the gate ACCEPTS a chained window and REJECTS an unchained one. -/
