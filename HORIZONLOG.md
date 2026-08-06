@@ -1,5 +1,102 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 6 (WHOSE VERIFIER INDEX) — the last free element of the phase-1 tape, derived at the number it was priced with: **28 more links, no new AIR**
+
+`MinaPhase1TapeBinding` §8 residual 1 named its own closure and named it exactly:
+
+> *"THE VERIFIER-INDEX DIGEST IS STILL AN INPUT — 1 tape element, 254 bits, and the number that
+> closes it is 28. … recomputed from nothing … a wrong VK digest produces a complete,
+> self-consistent, entirely wrong challenge vector, and **nothing downstream can tell**."*
+
+`Dregg2/Circuit/Emit/MinaWrapVkDigestChain.lean` runs those 28 links. The descriptor is
+`MinaPhase1Chain.chainDesc` — **the same object**, `vkChainDesc = MinaPhase1Chain.chainDesc` by
+`rfl`, `dregg-pasta-fp-chainlink::v1`, 2 048 rows × 469 columns, 256 PIs. **No new AIR; 28 more
+witnesses.**
+
+### ⛑⛑ THE DERIVATION, AND THE TWO PLACES IT LANDS
+
+`VerifierIndex::digest::<EFqSponge>()` (kimchi `verifier_index.rs:399-524`, tag `0.3.0`) opens a
+fresh `EFqSponge` and absorbs 7 `sigma_comm` + 15 `coefficients_comm` + `generic`/`psm`/
+`complete_add`/`mul`/`emul`/`endomul_scalar` = **28 commitments = 56 `Fp` elements**, `x` then `y`,
+whole field elements, nothing packed. 56 is EVEN, so unlike the phase-1 tape's 37-element first
+segment **there is no padding slot**. And `digest_fq` squeezes from ABSORB mode, so the answer is
+**lane 0** of the 28th permutation, where `fq_digest` was lane 1 of an already-squeezed state.
+
+  * `the_vk_chain_derives_the_verifier_index_digest` — `(vkChainState 28)[0] = VKDIGEST`.
+  * `the_vk_wire_blocks_are_equal` — link 27's OUTGOING LANE 0 (PI `[3·SK, 4·SK)`) IS the phase-1
+    chain's link 0 ABSORBED[0] (PI `[6·SK, 7·SK)`), **32 felts elementwise, no digest, no birthday
+    bound**. Measured on the emitted wire: both recompose to
+    `27413372650305777331568266454809682207773200268004525410015286142538704636274`.
+
+⛑ **28 IS DERIVED, NOT COUNTED.** `the_twenty_eight_links_are_the_index_digests_own_schedule`
+instantiates `MinaPhase1Chain.the_pairs_are_the_absorb_schedule` — general over every `Params` and
+every segment — and `the_vk_chain_is_the_prefix_fold` (induction, no evaluation) bridges that fold to
+the recursion the machine runs. The phase-1 file left that bridge implicit; this one does not.
+
+### ⛑ GENERATED, NOT TRANSCRIBED — and the gate is a decode-convention gate
+
+All 112 decimals are written by `metatheory/fixtures/gen_wrap_vk_comm_xy.py` off the sha256-pinned
+`bridge/mina-zkapp/fixtures/mina-devnet-wrap-{blockchain,transaction}-vk.json`. No human typed one.
+`circuit/tests/mina_wrap_vk_digest_chain_proves.rs` §1 closes the loop from the other side by an
+**independent decode with no square root**: `x` straight from the 32 little-endian bytes, `y` pinned
+by `y² = x³ + 5` **plus the 33rd byte's sign flag** — two conditions that determine the point
+uniquely — diffed against the emitted wire, 56/56.
+
+⚠⚠ **AND THE FLAG IS NOT A PARITY BIT.** It is arkworks' `SWFlags::PositiveY`, set iff `y > p − y`.
+Reading it as "y is odd" flips **11 of the 28** commitments to their negatives — and `(x, −y)` is
+always on the curve, so a 28/28 on-curve leg passes on a point set whose digest is entirely wrong.
+The generator prints all three readings; only `greater` reproduces `VKDIGEST`. This cone's own lesson
+(*"`onCurveQ` could never have caught it, because cycled SRS bases ARE on-curve"*) reappearing one
+layer lower down, and `the_parity_reading_is_on_curve_and_wrong` is it as an executable control.
+
+New gate rows: `wrap-vk-comm-drift` + `wrap-vk-comm-drift-red` in `scripts/local-gates.sh`. The
+red-proof separates a one-digit literal drift, a one-byte fixture change, and the parity reading.
+
+### ⚠⚠ WHAT THE DERIVATION CANNOT SEE — two theorems, not two paragraphs
+
+1. **`the_index_digest_cannot_see_the_circuit_shape`** — kimchi's `digest()` destructures the index
+   and binds `domain`, `max_poly_size`, `zk_rows`, `srs`, `public`, `prev_challenges`, `shift`, `w`,
+   `endo`, `linearization`, `powers_of_alpha` to `_` (read at source). **The digest is a function of
+   the 28 commitments alone.** An index taking 41 public inputs instead of 40 is a different circuit
+   with the SAME digest, and the pair is exhibited.
+2. **`the_derivation_cannot_see_which_verifier_index_this_is`** — the devnet **transaction** Wrap
+   index is 28/28 on-curve, shares NOT ONE commitment with the blockchain index, and the same 28
+   links derive its own digest perfectly. What selects the blockchain index is the **sha256 pin on a
+   JSON file** — a build-tree fact. Measured: the two indices agree on **every** scalar field
+   `digest()` ignores and share **0/28** commitments.
+
+⛑ So say what moved and no more: **the trusted object went from one opaque 254-bit constant that
+nothing could check to 56 coordinates a byte-pinned fixture determines.**
+
+### ⛑ AND THE 14 `t_comm` COORDINATES, WHICH FIT
+
+Residual 2 was the 7 quotient-commitment chunks, "welded to nothing". They were a THIRD independently
+hand-transcribed decimal list (`MinaWrapGroupGate.TCHUNKS`) agreeing with `MinaRealBlockTranscript.
+TCOMM_XY` and with **no theorem saying so**. `MinaPhase1TapeBinding` §6b
+(`the_tape_t_comm_chunks_are_the_ftComm_chunks`) makes them one object, so they now reach `ftComm` →
+`combine_slot_3_is_our_ftComm` → the aggregate → `opening_relation_holds` — the SAME route and the
+SAME strength as residual 3's 36, and `the_forged_t_comm_chunk_breaks_the_ft_comm` shows an
+on-curve-and-wrong chunk stops the assembly being the `ft_comm` o1-labs' own `SRS::verify` accepts.
+
+⚠ **This does NOT close the wrap side's matching wound.** `T_TCOMM` (the wrap AIR's absorb
+schedule) versus §17's `ftcTV` ladders over SRS Lagrange doublings, with no σ-tie joining them, is a
+DIFFERENT object — the wrap machine's internal absorb/fold split, not the phase-1 tape's provenance.
+One weld does not close both; it is the sibling cone's and it is still open.
+
+### THE 53, RE-COUNTED
+
+| tape elements | count | forced by | can an on-curve-and-wrong point still survive? |
+|---|---|---|---|
+| `public_comm` | **2** | the block's own 40-element public input + SRS Lagrange basis | **NO** |
+| 2 prev, `z_comm`, 15 `w_comm` | **36** | `COMBINE_POINTS` → the ξ-aggregate → `opening_relation_holds` | only if substituted in BOTH lists |
+| 7 `t_comm` chunks | **14** | `TCHUNKS` → `ftComm` → aggregate slot 3 → the same opening | only if substituted in BOTH lists |
+| verifier-index digest | **1** | the sha256-pinned Wrap VK's 28 commitments | only by re-deriving from a substituted VK |
+
+**53/53 forced. Zero free constants.** ⚠ And the floor under 50 of them is unchanged: `opening_
+relation_holds` inherits the IPA `msm == 0` opening-soundness floor (P10), **unmoved**. Deriving the
+digest removed a CARRIER; it did not verify Mina.
+
+
 ## ⛑⛑⛑ AUGUST 6 (WHOSE HASH) — the last witnessed hash in the Mina light-client path: `OWNHASH` becomes the **IMAGE of its row**, and the price the file had been carrying was wrong by **26×**
 
 `LINK_OK` was retired yesterday by binding the head's `TIP_STATE` to a segment sub-proof. The file
@@ -116,7 +213,7 @@ does not verify weakly — `prove_vm_descriptor2` **refuses a trace of the wrong
 keep their pinned predicate vk and **nothing re-genesises**. ⚠ `PROVENANCE.json` left UNSTAMPED.
 
 
-## ⛑⛑⛑ AUGUST 6 (THE LEG UPSTREAM DOES NATIVELY) — **the deferred IPA accumulator check is inside a circuit**: a Lean-authored threaded sound-Vesta AIR, both polarities green in RELEASE with the refusing gates named BY INDEX — and **the fold is written but has never produced a root**, blocked by a MEASURED 73.3 GB width wall
+## ⛑⛑⛑ AUGUST 6 (THE LEG UPSTREAM DOES NATIVELY) — **the deferred IPA accumulator check is inside a circuit AND ITS FOLD PRODUCES A ROOT**: a Lean-authored threaded sound-Vesta AIR, both polarities green in RELEASE with the refusing gates named BY INDEX; two leaves and one `cb.connect` fold in **500.37 s / 118.30 GiB peak footprint** — and the cost law is now MEASURED WITH A CONTROL (**columns, not cells, and not rows**), with the 73.3 GB figure retracted as a killed run's waypoint
 
 Upstream `&&`s `Ipa.Step.accumulator_check` into `batch_step_dlog_check` (`verify.ml:135-146`).
 Ours was an oracle **beside** the verifier: `bridge/src/mina_accumulator_discharge.rs` evaluates
@@ -183,33 +280,69 @@ proved against `-final`, whose own gates force it) or **host-read** (`Accumulato
 The claim reader lives in `dregg-recursion-verify` so a node reads a root without linking the prover;
 `check-recursion-closure.py` is **green at 14 policy rows / 21 assertions** and **no edge was added**.
 
-⛑⛑ **BUT NOTHING HERE HAS PRODUCED A ROOT, AND THE `#[ignore]` REASONS SAID "SLOW" UNTIL THEY WERE
-MEASURED.** One `prove_accumulator_segment` — a single 8-row leaf wrap — reached a **73.3 GB peak
-memory footprint** (`73,344,091,528` bytes, `/usr/bin/time -l`, 96 GB box) and was killed; an earlier
-run under co-tenant load was SIGKILLed by the OOM killer. "Minutes" was the flattering member of the
-pair and it is corrected at the three `#[ignore]` sites, not only here.
+⚑⚑ **AND THEN IT PRODUCED ONE.** Later the same day, `/usr/bin/time -l`, release, 96 GiB box:
+`a_one_segment_chain_is_the_final_rung` **223.36 s / 48.85 GiB maxrss / 117.93 GiB peak footprint**,
+and `the_split_chain_folds_and_the_root_carries_both_endpoints` — two leaves and **one `cb.connect`
+fold** — **500.37 s / 61.35 GiB maxrss / 118.30 GiB peak footprint**. The root carries segment A's
+incoming accumulator, segment B's outgoing one, and `is_identity()` on that outgoing point. The
+three tests stay `#[ignore]`d for ten minutes and 118 GiB, **not for failure**, and each reason now
+carries the wall-clock as well as the wall.
 
-⛑ **THE CAUSE IS THE WIDTH, AND IT IS THE SAME WALL `PastaLadderThread` CURED ONE RAIL DOWN.**
-`mina_phase2_chain_leaf` folds 46 leaves + 45 folds in **1 037 s** over a **469**-column descriptor;
-this one is **3 048** — `6.5×` — and the wrap's in-circuit verifier scales in the inner trace's
-width. The row-local sound ladder was `731 136` columns in ONE row and threading made depth into rows
-at a flat `RCB_WIDTH = 3 048`; **that 3 048 is now what binds the recursion.** So the layout that made
-the AIR fit is the layout that makes the fold not. The ways out — a narrower sound limb encoding, a
-two-stage wrap that shrinks a segment before the recursion sees it, or taller-not-wider segments so
-the fixed per-wrap cost amortises — are real work, and naming them is not doing them.
-`the_leaf_wrap_width_is_the_measured_wall` holds the ratio in the tree so it moves when the width
-does.
+⛑ **THE 73.3 GB WAS NOT A PEAK — IT WAS A WAYPOINT.** It was labelled "peak memory footprint" of a
+run *killed before finishing*: the high-water mark of a climb that had not stopped climbing. Both
+completed runs reach **~118 GiB footprint**, `1.7×` higher. **A killed run's high-water mark bounds
+nothing from above**, and quoting it as a peak understated the wall in the flattering direction —
+the same shape of error as quoting one member of a unit pair, which this same figure had already
+done once. ⚠ And `maxrss` vs `peak memory footprint` differ by `2.4×` here; the footprint EXCEEDS
+physical RAM, so this fits only because macOS compresses.
+
+⛑ **THE COST LAW, NOW MEASURED WITH A CONTROL: COLUMNS, NOT CELLS, AND NOT ROWS.** The width
+attribution was an inference from a ratio taken while ROWS also differed by `256×`.
+`tests/mina_accumulator_leaf_anatomy.rs` builds the leaf-wrap verifier **without proving it** (~20 s,
+~2 GiB for five wraps) and separates them: **8× the inner rows moves the wrap circuit by 0.5%**
+(2 862 507 → 2 878 069 ops) and its committed cells not at all, while `6.5×` the columns at
+`1/256`th the rows costs `11.6×` the ops and `16.0×` the cells. The mechanism is `Q · W` per
+commitment round — one Poseidon2-W16 permutation per 8 opened base coefficients, one `HornerAcc` per
+opened COLUMN per opening point, at 19 queries. And the cells ACCOUNT for the peak: `14 911 873 024
+× 4 B = 55.5 GiB` of committed LDE at `IR2_INNER_LOG_BLOWUP = 6`, against ~118 GiB with quotient,
+Merkle and copies. **So "taller, no wider" is not a mitigation, it is free — and this entry's own
+exhibit shows splitting is a pure loss: the same eight additions cost 223 s as one segment and 500 s
+as two.**
+
+⛑ **WHERE THE 3 048 GO, AND WHAT A FOLDABLE LEAF IS.** `the_column_census` names the five blocks
+(192 inputs / 1 056 SSA / 1 128 multiply witness / 64 smul / 608 add-sub), and
+`the_row_boundary_is_two_hundred_eighty_eight` proves **only 288 columns cross a row boundary** —
+the other 2 760 are scratch that exists because 33 SSA ops share ONE row. A row carrying one op
+needs its witness plus the DAG's live set, peak **11** values: `11 × 32 + 94 = **446**` at `33×` the
+rows — **below the 469 that already folds 46 leaves in 1 037 s.** That is `PastaLadderThread`'s move
+one rail further down (it took the ladder from `731 136` columns in one row to `3 048` over rows, and
+3 048 is what now binds the recursion), it is Lean authoring plus a multi-row re-proof of
+`vestaCompleteAddSound_forces`, and it is **not a soundness relaxation** — every constraint the
+gadget emits is already about one op's operands and output.
 
 ### ⚠ WHAT THE NODE STILL TAKES ON TRUST — three, each with a number, none of them a mood
 
-1. ⚠ **THE ADDENDS ARE NOT ROUTED.** `accumulator_discharge_forced` forces the chain of the trace's
-   OWN addends to vanish and says **nothing about what they are**. Forcing `A_r` to be the `r`-th
-   scaled SRS generator is `PastaMsmBucketed`'s exact-public lookups, and
-   `the_routing_tuple_does_not_fit_one_table` prices the one deployed constant in the way:
-   `MAX_EXACT_PUBLIC_ARITY = 64` against a **97**-wide point tuple in the sound 32-limb encoding.
-   `split_srs_cells_fit` already took the same medicine one layout over. **So what is in a circuit
-   is the SUMMATION half, at full 256-bit width — not the whole check.** Saying otherwise would be
-   the substitution this repo keeps finding.
+1. ⚠ **THE ADDENDS ARE NOT ROUTED — STILL TRUE, BUT THE CAP THAT "PRICED" IT PRICES NOTHING.**
+   `accumulator_discharge_forced` forces the chain of the trace's OWN addends to vanish and says
+   **nothing about what they are**, so what is in a circuit is the SUMMATION half at full 256-bit
+   width — not the whole check. ⚑ What MOVED is the blocker's character. `MAX_EXACT_PUBLIC_ARITY =
+   64` does refuse a 97-wide tuple (`descriptor_ir2.rs:2135`) and nothing should be designed as
+   though it did not — but read at source, its only other use is a drift guard whose own message
+   names the remedy: *"re-emit `dregg-ir2-exact-public-v1.json` or re-pin the cap"* (`:6737`). **64
+   is the member count of a checked-in JSON artifact**, exact as that and bounding no resource: the
+   committed object is `next_pow2(distinct) × (arity + 2)` in ONE instance, so a 97-wide manifest
+   over `2^16` generators is `6 488 064` cells ≈ 26 MB. It entered (`dc285da37`) under a comment
+   justifying ROWS and CELLS — *"each row becomes one batch instance"* — an argument about instance
+   count, which arity does not scale; its two siblings in that comment have since moved `2^14×` and
+   `2^13×` and 64 never has. ⚑ **And the prescribed remedy was the more expensive one:**
+   `the_split_remedy_costs_more_than_the_wide_table` — `2 × 2^16 × 51 = 6 684 672` against
+   `2^16 × 99 = 6 488 064`, **196 608 cells MORE**, plus a second instance, a second bus, and a
+   soundness leg the wide table does not have (nothing forces the two halves keyed by `r` to name
+   limbs of the *same* generator). The citation also crossed two caps that share no mechanism —
+   `split_srs_cells_fit` is about `MAX_EXACT_PUBLIC_CELLS`. ⚠ The **cells** cap is separately in the
+   way and is the sibling's mis-measured one: it counts the declared list (`1 474 800 × 97`), not
+   the committed distinct set. So the routing residual is a re-emission and a re-pin, not a wall —
+   and it is still UNDONE.
 2. ⚠ **THE WIDTH DEMONSTRATED IS 8 ROWS, NOT 1 474 800.** `the_full_width_sum_needs_the_fold`:
    `PastaMsmBucketed.fused_at_step` prices the `2^16`-generator MSM at 1 474 800 complete additions,
    which at `3 048` columns is **4.5 · 10⁹ committed cells** — so the full-width chain is a fold of

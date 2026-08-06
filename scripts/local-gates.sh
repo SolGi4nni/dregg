@@ -116,6 +116,18 @@ GATES=(
   "check-guard-discipline-red|60|python3 scripts/check-guard-discipline.py --self-test"
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
+  # ⚑ THE WRAP VK's 56 COORDINATES ARE GENERATED, AND THIS IS THE DRIFT GUARD.
+  # `Dregg2/Circuit/Emit/MinaWrapVkDigestChain.lean` derives the verifier-index digest — the one
+  # element of the phase-1 tape that used to be a bare constant — from the sha256-pinned devnet Wrap
+  # verifier indices. Its 112 decimals are WRITTEN by the generator, never typed, and `--check`
+  # re-decodes both pinned fixtures and refuses if a committed literal has drifted from them.
+  # ⚠ The `-red` row is not optional and it is not decoration: the thing this gate exists to catch
+  # is a DECODE-CONVENTION swap, and the wrong convention yields 28 points that are ALL ON THE
+  # CURVE. `--self-test` proves the check separates the parity reading from arkworks' `PositiveY`
+  # (11 of 56 coordinates move, digest wrong), separates a one-digit literal drift, and separates a
+  # one-byte fixture change. Pure python, no Lean toolchain, ~2s, nothing on disk moves.
+  "wrap-vk-comm-drift|60|python3 metatheory/fixtures/gen_wrap_vk_comm_xy.py --check"
+  "wrap-vk-comm-drift-red|60|python3 metatheory/fixtures/gen_wrap_vk_comm_xy.py --self-test"
   # A BYTE-FIDELITY MODEL THAT CERTIFIED ITSELF. `Dregg2/Exec/SigningMessage.lean` exists so the
   # §8 AuthPortal's opaque `stmt` is the preimage dregg1 ACTUALLY signs — "one byte differently
   # and the portal verifies the wrong message", in its own words. Its fidelity check was

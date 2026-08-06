@@ -89,7 +89,10 @@ root = "MinaChainEmit"
 
 # mina_fp_chain_emit — the PHASE-1 (Fp) twin: the `fp_kimchi` round and absorption fixtures plus
 # the 27 witnesses of block 539508's phase-1 transcript (`Dregg2.Circuit.Emit.MinaPhase1Chain`),
-# whose link 26 output lane 1 is the `fq_digest` the phase-2 chain absorbs as tape element 0.
+# whose link 26 output lane 1 is the `fq_digest` the phase-2 chain absorbs as tape element 0 — AND
+# the 28 witnesses of `Dregg2.Circuit.Emit.MinaWrapVkDigestChain`, the pinned Wrap verifier index's
+# own commitments, whose link 27 output lane 0 is the `VKDIGEST` that tape STARTS with. Same
+# descriptor for all 55 links; no new AIR.
 #
 # ⚠ COMPILED for the SAME measured reason as `mina_chain_emit`: one 2 048x469 trace costs
 # 9 min 20 s through Lean's interpreter.

@@ -491,13 +491,19 @@ fn the_forgery_at_public_comms_own_slot_breaks_the_binding() {
 /// ⚑ **§6 — THE RESIDUAL, AS A COUNT RATHER THAN A PARAGRAPH.** Printed so the number moves when
 /// the tree does, and asserted so it cannot silently grow.
 ///
-/// * **1** element — the verifier-index digest — has no derivation anywhere; closing it is **28**
-///   more links of THIS descriptor over the Wrap VK's 56 coordinates.
-/// * **14** coordinates — the 7 `t_comm` chunks — reach the aggregate only through `ft_comm`, and
-///   that weld is not built.
-/// * **36** coordinates are bound to `MinaWrapAggregationGate.COMBINE_POINTS` (Lean §6) and thence
-///   to `opening_relation_holds`, which inherits the IPA `msm == 0` floor (P10), **unmoved**.
-/// * **2** coordinates — `public_comm` — are bound to the block's own 40-element public input.
+/// ⚑ **BOTH OF THIS FILE'S FREE ELEMENTS CLOSED 2026-08-06**, at the numbers they were named with:
+///
+/// * **1** element — the verifier-index digest — is DERIVED by `MinaWrapVkDigestChain`, the **28**
+///   more links of THIS descriptor over the sha256-pinned Wrap VK's 56 coordinates this file priced.
+///   Harness: `mina_wrap_vk_digest_chain_proves.rs`. ⚠ What is left of it is two blind spots stated
+///   as theorems there, not a free constant here.
+/// * **14** coordinates — the 7 `t_comm` chunks — are welded to `MinaWrapGroupGate.TCHUNKS`
+///   (`the_tape_t_comm_chunks_are_the_ftComm_chunks`), hence to `ftComm`, hence to aggregate slot 3
+///   and `opening_relation_holds`. They now sit at exactly the strength of the 36 below.
+/// * **36 + 14 = 50** coordinates are bound to a second list which the block's own opening closes
+///   over, and inherit the IPA `msm == 0` floor (P10), **unmoved**.
+/// * **2** coordinates — `public_comm` — are bound to the block's own 40-element public input, the
+///   one place an on-curve-and-wrong substitution is refused OUTRIGHT.
 #[test]
 fn what_is_still_substitutable_is_counted() {
     let vk_digest = 1usize;
@@ -508,10 +514,11 @@ fn what_is_still_substitutable_is_counted() {
     assert_eq!(t_comm + aggregate_bound + statement_bound, 2 * NPTS);
 
     println!(
-        "\n§6 ⚠ OF THE 53: {statement_bound} bound to the block's STATEMENT (public input); \
-         {aggregate_bound} bound to the aggregate the IPA opening closes over (floor: P10); \
-         {t_comm} ({} t_comm chunks) bound to NOTHING here; {vk_digest} (the verifier-index \
-         digest) derived NOWHERE in the tree — 28 links of this descriptor would close it.",
-        t_comm / 2
+        "\n§6 ⚑ OF THE 53: {statement_bound} bound to the block's STATEMENT (public input); \
+         {} bound to the aggregate the IPA opening closes over ({aggregate_bound} via \
+         COMBINE_POINTS, {t_comm} via TCHUNKS -> ftComm -> slot 3; floor: P10, UNMOVED); \
+         {vk_digest} (the verifier-index digest) DERIVED from the pinned Wrap VK's 28 commitments \
+         by 28 links of this same descriptor. 0 free constants remain.",
+        aggregate_bound + t_comm
     );
 }

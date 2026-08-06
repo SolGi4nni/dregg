@@ -44,8 +44,8 @@ never have caught it **because cycled SRS bases are on-curve**.
 |---|---|---|---|
 | `public_comm` `(x,y)` | 2 | the block's **40-element public input** + the SRS Lagrange basis (rung 5e) | **NO** — §4 |
 | 2 prev, `z_comm`, 15 `w_comm` | 36 | the 47-term aggregate, hence `opening_relation_holds` | only if substituted in BOTH lists — §5, §7 |
-| 7 `t_comm` chunks | 14 | `ft_comm` (aggregate slot 3) — **not welded here** | **YES**, residual 2 |
-| verifier-index digest | 1 | the Wrap VK — **not derived anywhere** | **YES**, residual 1 |
+| 7 `t_comm` chunks | 14 | `ftComm`'s own chunks, hence slot 3, hence the same opening — §6b | only if substituted in BOTH lists |
+| verifier-index digest | 1 | the pinned Wrap VK's 28 commitments — `MinaWrapVkDigestChain` | only by re-deriving it from a substituted VK |
 
 ## WHAT IS AND IS NOT ESTABLISHED
 
@@ -57,8 +57,11 @@ never have caught it **because cycled SRS bases are on-curve**.
     rewritten, not a second `decide` over the same 40 ladders).
   * **Compiler-trusted, said out loud:** the pairing census and the two forgery poles that run the
     27-permutation chain.
-  * **NOT established:** the verifier-index digest, and the 7 `t_comm` chunks' tie to `ft_comm`.
-    Both are named with a number in §8.
+  * **CLOSED 2026-08-06 — both of the two things this file's first draft could not establish.** The
+    7 `t_comm` chunks' tie to `ftComm` is §6b; the verifier-index digest is derived by
+    `MinaWrapVkDigestChain`, exactly the 28 links §8 residual 1 priced. ⚠ §8's residuals 1 and 2 now
+    carry what is LEFT of each rather than the whole of each — read them, and read
+    `MinaWrapVkDigestChain` §7, before quoting a strength.
 
 Import line for the CI aggregate: `import Dregg2.Circuit.Emit.MinaPhase1TapeBinding`
 (rooted in `Dregg2.MinaBridgeGuards`, so a red assertion here reds a plain `lake build`).
@@ -311,6 +314,54 @@ theorem the_forged_public_comm_breaks_the_aggregate :
     projEqM pN (chunkedComm XI (COMBINE_POINTS.set 2 FORGED_PUBCOMM)) COMBINED_GOLD = false := by
   decide
 
+/-! ## §6b — ⚑ AND THE SEVEN `t_comm` CHUNKS ARE THE ONES `ft_comm` CONSUMED.
+
+§8 residual 2 said the 7 quotient-commitment chunks "reach the aggregate only through `ft_comm`
+(slot 3) … but no theorem here says the 7 chunks the TAPE absorbs are the 7 that `ftComm`
+consumed." They were a THIRD independently hand-transcribed decimal list
+(`MinaWrapGroupGate.TCHUNKS`), agreeing with `TCOMM_XY` and with nothing saying so.
+
+⚑ The route this weld opens is real and it is named at its true strength: `TCHUNKS` is what
+`MinaWrapGroupGate.chunkedT_reproduces_kimchi` folds with `ζ^(2^15)` into o1-labs' own
+`CHUNKED_T_GOLD`, what `ftComm_reproduces_kimchi` assembles into the `ft_comm` **o1-labs'
+`SRS::verify` accepts on this block's opening proof**, and what
+`MinaWrapAggregationGate.combine_slot_3_is_our_ftComm` ties to aggregate slot 3 — hence to
+`opening_relation_holds`. So after this section the 14 `t_comm` coordinates sit at exactly the
+strength of §6's 36: **bound to a second list which the block's own opening closes over**, and
+inheriting the IPA `msm == 0` floor (P10), which is unmoved. -/
+
+/-- Tape points 19-25 are the transcript's 7 `t_comm` chunks. -/
+theorem the_tape_t_comm_chunks_are_the_ftComm_chunks :
+    ((List.range 7).all (fun k =>
+      projEqM pN (tapePt (19 + k)) (MinaWrapGroupGate.TCHUNKS.getD k Oproj))) = true := by decide
+
+/-- …and the 7 are 7 DIFFERENT points, so the census above is not seven slots matching one chunk. -/
+theorem the_seven_t_comm_chunks_are_distinct :
+    ((List.range 7).all (fun k =>
+      (List.range 7).all (fun l =>
+        decide (k = l) || !projEqM pN (tapePt (19 + k)) (tapePt (19 + l))))) = true := by decide
+
+/-- ⚑ **AND THE TIE IS TO THE ARGUMENT, NOT TO A NAME.** Substituting the on-curve-and-wrong forgery
+for the first `t_comm` chunk stops the Maller assembly being the `ft_comm` o1-labs' own `SRS::verify`
+accepts — so a chunk the phase-1 tape absorbs cannot be swapped for another real Pallas point of this
+very block without the block's own opening refusing. -/
+theorem the_forged_t_comm_chunk_breaks_the_ft_comm :
+    projEqM pN
+        (MinaWrapGroupGate.ftCommOf MinaWrapGroupGate.ZETA_SRS MinaWrapGroupGate.ZETA_DOM_M1
+          MinaWrapGroupGate.F_TERMS (MinaWrapGroupGate.TCHUNKS.set 0 FORGED_PUBCOMM))
+        MinaWrapGroupGate.FT_COMM_GOLD = false := by
+  decide
+
+/-- ⚑ **AND THAT FALSIFIER FALSIFIES.** The substituted chunk is on the curve, is not the chunk it
+replaces, and both its coordinates are non-zero — so the refusal above is not a swap of a value for
+itself, and it is not an off-curve point being caught by a curve check that is not there. -/
+theorem the_t_comm_forgery_is_a_real_on_curve_displacement :
+    projOnCurveM pN curveB FORGED_PUBCOMM = true
+    ∧ projEqM pN FORGED_PUBCOMM (tapePt 19) = false
+    ∧ FORGED_PUBCOMM.1 ≠ (tapePt 19).1 ∧ FORGED_PUBCOMM.2.1 ≠ (tapePt 19).2.1
+    ∧ (tapePt 19).1 ≠ 0 ∧ (tapePt 19).2.1 ≠ 0 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
 /-! ## §7 — ⚑ AND IT MOVES `fq_digest`, HENCE THE PHASE-1 ↔ PHASE-2 WELD.
 
 The third refusal, and the one that reaches the deployed chain: `public_comm.x` is link 2's second
@@ -338,29 +389,27 @@ theorem the_digest_tamper_target_is_the_public_comm :
 
 /-! ## §8 — RESIDUALS, NAMED WITH NUMBERS.
 
-⚑ **1. THE VERIFIER-INDEX DIGEST IS STILL AN INPUT — 1 tape element, 254 bits, and the number that
-closes it is 28.** `VKDIGEST` is `index.digest::<EFqSponge>()` of the devnet blockchain Wrap VK
-(`verifier_index.rs:399-450`) — itself an Fp sponge over that VK's own commitments. It appears in
-the tree as a bare constant in **two** places (`MinaRealBlockTranscript.VKDIGEST` and
-`bridge/src/mina_opening_check.rs`'s `WRAP_VK_DIGEST`) and is **recomputed from nothing**, although
-the VK it digests IS committed and sha256-pinned
-(`bridge/mina-zkapp/fixtures/mina-devnet-wrap-blockchain-vk.json`, pinned at
-`mina-canonical-circuit-oracle.mjs:190`). That VK carries 7 `sigma_comm` + 15 `coefficients_comm` +
-6 selector commitments = **28 points = 56 coordinates**, which `pairsOf` chunks into **28 links of
-`dregg-pasta-fp-chainlink::v1` — the same descriptor, no new AIR** — whose 28th outgoing lane would
-weld to flat slot 0 by the same 32-felt elementwise comparison §5 uses. Until then a wrong VK digest
-produces a complete, self-consistent, entirely wrong challenge vector, and **nothing downstream can
-tell**: it is the largest trusted object under this story.
+⚑ **1. CLOSED 2026-08-06 — THE VERIFIER-INDEX DIGEST IS DERIVED.** It was named here with its
+number and the number was right: `Dregg2.Circuit.Emit.MinaWrapVkDigestChain` runs **28 more links of
+`dregg-pasta-fp-chainlink::v1` — the same descriptor, no new AIR** — over the sha256-pinned
+blockchain Wrap VK's 7 `sigma_comm` + 15 `coefficients_comm` + 6 selector commitments = 28 points =
+56 coordinates, and `the_vk_wire_blocks_are_equal` welds link 27's outgoing lane 0 to flat slot 0 by
+the same 32-felt elementwise comparison §5 uses. ⚠ **What remains is smaller and is stated there as
+two theorems, not as this paragraph**: `the_index_digest_cannot_see_the_circuit_shape` (kimchi's
+`digest()` binds `domain`, `public`, `zk_rows`, `shift` … to `_`, so it is a function of the 28
+commitments alone) and `the_derivation_cannot_see_which_verifier_index_this_is` (the devnet
+*transaction* Wrap VK runs the same 28 links perfectly and derives its own digest — the sha256 pin
+is what selects, and that is a build-tree fact).
 
-⚑ **2. THE 7 `t_comm` CHUNKS ARE NOT WELDED — 14 of the 52 coordinates.** They reach the aggregate
-only through `ft_comm` (slot 3), which `MinaWrapGroupGate.ftComm` builds and
-`MinaWrapAggregationGate.combine_slot_3_is_our_ftComm` ties to the aggregate — but no theorem here
-says the 7 chunks the TAPE absorbs are the 7 that `ftComm` consumed. An on-curve-and-wrong `t_comm`
-chunk survives everything in this file. That weld is `ftComm`'s own shape and is the obvious next
-rung.
+⚑ **2. CLOSED 2026-08-06 — THE 7 `t_comm` CHUNKS ARE WELDED**, §6b. They were a THIRD hand
+transcription (`MinaWrapGroupGate.TCHUNKS`) agreeing with `TCOMM_XY` and with nothing saying so;
+`the_tape_t_comm_chunks_are_the_ftComm_chunks` makes them one object, so they now reach `ftComm` →
+aggregate slot 3 → `opening_relation_holds` — the SAME route, and the SAME strength, as residual 3's
+36. ⚠ That strength is bounded by residual 3 below and by P10; do not read this as more.
 
-⚑ **3. THE 36 COORDINATES OF §6 ARE BOUND ONLY AGAINST A SECOND LIST.** The prev-challenge, `z_comm`
-and `w_comm` points are forced to be the aggregate's — and the aggregate's opening holds — but
+⚑ **3. THE 50 COORDINATES OF §6 AND §6b ARE BOUND ONLY AGAINST A SECOND LIST.** The prev-challenge,
+`z_comm`, `w_comm` and `t_comm` points are forced to be the aggregate's — and the aggregate's opening
+holds — but
 `COMBINE_POINTS` is itself a transcription of the same proof. A forger who substitutes an
 on-curve-and-wrong point **in both lists** is refused by `opening_relation_holds` and by nothing
 here; and `opening_relation_holds` inherits P10, the IPA `msm == 0` opening-soundness floor, which
@@ -393,6 +442,10 @@ circuit-side public-comm MSM would look like; it does not exist for the Lagrange
 #assert_axioms the_tape_points_are_the_aggregated_commitments
 #assert_axioms the_aggregate_slots_are_distinct
 #assert_axioms the_forged_public_comm_breaks_the_aggregate
+#assert_axioms the_tape_t_comm_chunks_are_the_ftComm_chunks
+#assert_axioms the_seven_t_comm_chunks_are_distinct
+#assert_axioms the_forged_t_comm_chunk_breaks_the_ft_comm
+#assert_axioms the_t_comm_forgery_is_a_real_on_curve_displacement
 #assert_axioms the_digest_tamper_target_is_the_public_comm
 
 -- ⚑ COMPILER-TRUSTED, and said out loud: the pairing census, the two wire evaluations and the

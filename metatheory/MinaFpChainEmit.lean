@@ -9,7 +9,11 @@ Renders, from the Lean interpreters and nothing else:
     (`metatheory/fp_kimchi_params.json`);
   * the **27 chain links** of `Dregg2.Circuit.Emit.MinaPhase1Chain` — Mina devnet block 539508's
     phase-1 transcript, whose link 26 OUTPUT LANE 1 is the `fq_digest` the phase-2 chain absorbs as
-    tape element 0.
+    tape element 0;
+  * the **28 VK-digest links** of `Dregg2.Circuit.Emit.MinaWrapVkDigestChain` — the sha256-pinned
+    devnet blockchain Wrap verifier index's 28 commitments, whose link 27 OUTPUT LANE 0 is
+    `VKDIGEST`, the element the phase-1 tape *starts* with. ⚑ **THE SAME DESCRIPTOR**
+    (`vkChainDesc = MinaPhase1Chain.chainDesc`, by `rfl`): 28 more witnesses, no new AIR.
 
 ⚠ **COMPILED FOR A MEASURED REASON**, the same one `MinaChainEmit` records: one 2 048×469 trace
 costs **9 min 20 s** through `lake env lean --run` (Lean's INTERPRETER). That is a codegen cost, not
@@ -31,6 +35,7 @@ objects the continuity claim and the digest weld are about. The three fixtures t
 harness `include_str!`s — the round trace, the absorb trace and link 26's trace — are tracked.
 -/
 import Dregg2.Circuit.Emit.MinaPhase1Chain
+import Dregg2.Circuit.Emit.MinaWrapVkDigestChain
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.MinaPhase1Chain
@@ -73,6 +78,21 @@ def main (args : List String) : IO UInt32 := do
   IO.FS.writeFile (dir ++ "/pasta-fp-chainlink-26-trace.txt")
     (String.intercalate "\n" ((chainTrace DIGEST_LINK).map render) ++ "\n")
   IO.println s!"link {DIGEST_LINK} (the fq_digest link) -> {dir}/pasta-fp-chainlink-26-trace.txt"
+
+  -- ── ⚑ the VK-DIGEST chain: 28 links over the pinned Wrap VK's 56 coordinates ────
+  -- `Dregg2.Circuit.Emit.MinaWrapVkDigestChain`. THE SAME DESCRIPTOR — no new AIR, 28 more
+  -- witnesses. Link 27's OUTGOING LANE 0 is `VKDIGEST`, the phase-1 tape's element 0.
+  let vkPis := (List.range Dregg2.Circuit.Emit.MinaWrapVkDigestChain.NVK).map
+    (fun j => render (Dregg2.Circuit.Emit.MinaWrapVkDigestChain.vkChainPIs j))
+  IO.FS.writeFile (dir ++ "/pasta-fp-vkchain-pis.txt") (String.intercalate "\n" vkPis ++ "\n")
+  IO.println s!"all 28 VK-chain public-input vectors -> {dir}/pasta-fp-vkchain-pis.txt"
+
+  let vkDigestLink := Dregg2.Circuit.Emit.MinaWrapVkDigestChain.VK_DIGEST_LINK
+  IO.FS.writeFile (dir ++ "/pasta-fp-vkchain-27-trace.txt")
+    (String.intercalate "\n"
+      ((Dregg2.Circuit.Emit.MinaWrapVkDigestChain.vkChainTrace vkDigestLink).map render) ++ "\n")
+  IO.println s!"VK-chain link {vkDigestLink} (the index-digest link) \
+    -> {dir}/pasta-fp-vkchain-27-trace.txt"
 
   -- ── the remaining links, on demand ──────────────────────────────────────────────
   IO.FS.createDirAll (dir ++ "/pasta-fp-chainlink")
