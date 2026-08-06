@@ -293,6 +293,33 @@ globs = [
   "Dregg2.Games.PathOfAngels.EmitJson",
   "Dregg2.Games.PathOfAngels.DeckDescentEmit",
   "Dregg2.Games.PathOfAngels.DeckDescentEmitMain",
+  # ⚑ 2026-08-06 (artificer-logic lane) — ARTIFICER LOGIC, the rule-induction game.
+  # Rooted here ON ARRIVAL rather than becoming the next orphan this list exists to
+  # catch: 84 `#assert_axioms` + 23 `#assert_compiled` in the kernel and 8 more in the
+  # wire, and an unrooted new module runs all of them NOWHERE.
+  # ⚑ The kernel's headline pin is `manual_has_no_synonyms` and it is `#assert_axioms`
+  # — KERNEL-CLEAN, closed by `decide` over 16x16x8 — so the distinguishability result
+  # does not rest on the compiler.  The `#assert_compiled` pins enumerate 1,197
+  # declared states x 24 actions = 28,728 rows, so budget ~40 s for the kernel and
+  # longer for the wire, whose eight pins parse the RENDERED descriptor back.
+  "Dregg2.Games.PathOfAngels.ArtificerLogic",
+  "Dregg2.Games.PathOfAngels.ArtificerLogicEmit",
+  "Dregg2.Games.PathOfAngels.ArtificerLogicEmitMain",
+  # ⚑ 2026-08-06 (vent-crawl lane) — the push-your-luck kernel and its wire.
+  # Rooted ON ARRIVAL, which is the whole point of this list: a new module that
+  # waits for someone to notice it is the orphan class the block above records
+  # twice. `VentCrawl` carries 58 `#assert_axioms` + 16 `#assert_compiled` (the
+  # compiled ones enumerate a 43-state parametric closure and evaluate four
+  # Poseidon2 sponges in the sentinel fixtures, so budget ~20 s); `VentCrawlEmit`
+  # carries 7 more that read the RENDERED descriptor back and compare all 86 rows
+  # against `VentCrawl.rowFor`, plus FOUR constructive falsifiers — including
+  # `softened_odds_are_caught`, which mutates only the PUBLISHED HAZARD and leaves
+  # every successor and every verdict correct.  `VentCrawlEmitMain` is the
+  # `def main` driver, rooted by the same direct-glob mechanism as the Pickles
+  # drivers so an API change cannot break the emit silently.
+  "Dregg2.Games.PathOfAngels.VentCrawl",
+  "Dregg2.Games.PathOfAngels.VentCrawlEmit",
+  "Dregg2.Games.PathOfAngels.VentCrawlEmitMain",
   # ⚑ 2026-08-05 — THE GALLEY BOUNDARY TEETH RAN NOWHERE. This block asked for
   # `Dregg2.Games.PathOfAngels.GalleyCommonsBoundary` and
   # `Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary`, crediting them with "33
@@ -415,4 +442,10 @@ globs = [
   "Dregg2.Games.PathOfAngels.ShipLifeProgression",  # 12 ax, 11 comp
   "Dregg2.Games.PathOfAngels.ShipLifeProgressionBoundary",  # 13 ax
   "Dregg2.Games.PathOfAngels.Shipworks",  # 23 ax, 22 comp
+  # ⚑ 2026-08-06 (station-wiring lane) — ROOTED WITH THE MODULE. `StationDailyRuntime` is the
+  # canonical JSON boundary + `@[export dregg_poa_station_daily_read]` that makes `SalvageCrate`
+  # and `ShipInstrumentPanel` reachable at all; the two organs above it were proved, green and
+  # DARK — zero route, zero FFI — since they landed. Unrooted, this module's pins would run in no
+  # target, which is the orphan wound this list exists to close.
+  "Dregg2.Games.PathOfAngels.StationDailyRuntime",  # 7 ax, 15 comp
 ]

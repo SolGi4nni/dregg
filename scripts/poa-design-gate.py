@@ -85,6 +85,10 @@ GAMES_DIR = os.path.join(REPO, "poa", "artifacts", "poag1", "games")
 
 FAIL, WARN, INFO = "FAIL", "WARN", "INFO"
 
+# A cost no legal play can reach.  Module scope because two rule models
+# now run minimax sweeps and a per-method constant is two constants.
+INF = 10 ** 6
+
 
 class Refusal(Exception):
     """The descriptor is outside what this analyser can honestly model."""
@@ -1183,11 +1187,36 @@ class ParametricMachineGame:
                 if mv["exposed"] is not None or xv["exposed"] is not None:
                     raise Refusal(f"{sid}/{aid} leaves a plate exposed after resolving")
 
+    def _artificer_differential(self) -> None:
+        """Artificer Logic: rebuilt in full by `ManualRules`, which is written from
+        the descriptor's own `manual` block and the state views and knows nothing
+        about the Lean kernel's numbers."""
+        ManualRules(self.doc).differential(self)
+
     def _descent_differential(self) -> None:
         """Deck Descent: rebuilt in full by `DescentRules`, which is written from the
         descriptor's own `shaft` block and the state views and knows nothing about
         the Lean kernel's numbers."""
         DescentRules(self.doc).differential(self)
+
+    # ⚑ RAISED 2026-08-06.  This search was a bare `itertools.permutations` over the
+    # action alphabet — 9! = 363k for a descent, and 24! for a rule-induction game,
+    # which does not finish before the heat death of anything.  A cap that silently
+    # gave up would be a gate that cannot go red, so the enumeration is REFINED
+    # instead and an alphabet still too wide is REFUSED out loud.
+    AUTOMORPHISM_SEARCH_CAP = 500_000
+
+    def _action_profile(self, aid):
+        """An invariant every automorphism preserves.
+
+        An automorphism carries a state BIJECTION, so for each action the multiset
+        of (verdict, reason) taken over ALL states is carried unchanged.  Two
+        actions with different multisets can therefore never be images of one
+        another, and refining by this loses no automorphism — it only removes
+        permutations that the full structural test below would have rejected."""
+        rows = Counter((self.trans[(s, aid)]["verdict"], self.trans[(s, aid)]["reason"])
+                       for s in self.states)
+        return tuple(sorted(rows.items(), key=repr))
 
     def automorphisms(self):
         """Permutations of the actions that extend to a state bijection preserving
@@ -1195,8 +1224,26 @@ class ParametricMachineGame:
         of them: that the opening is a free choice is the hiding, not a defect."""
         found = []
         acts = self.actions
-        for perm in itertools.permutations(range(len(acts))):
-            pi = {acts[i]: acts[perm[i]] for i in range(len(acts))}
+        classes = {}
+        for aid in acts:
+            classes.setdefault(self._action_profile(aid), []).append(aid)
+        blocks = list(classes.values())
+        space = 1
+        for block in blocks:
+            space *= math.factorial(len(block))
+        if space > self.AUTOMORPHISM_SEARCH_CAP:
+            raise Refusal(
+                f"the action alphabet has {len(acts)} actions in "
+                f"{len(blocks)} profile classes, so the automorphism search space is "
+                f"{space} permutations — past the {self.AUTOMORPHISM_SEARCH_CAP} cap. "
+                f"This tool will not report a symmetry group it did not enumerate: "
+                f"`opener_classes` is used to decide whether an opening is a free "
+                f"choice, and a guessed group is a guessed verdict.")
+        for combo in itertools.product(*[itertools.permutations(b) for b in blocks]):
+            pi = {}
+            for block, images in zip(blocks, combo):
+                for src, dst in zip(block, images):
+                    pi[src] = dst
             phi = {self.initial: self.initial}
             queue = deque([self.initial])
             ok = True
@@ -2219,7 +2266,681 @@ class DescentRules:
 PARAMETRIC_RULE_MODELS = {
     "salvage-v2": ParametricMachineGame._salvage_differential,
     "descent-v1": ParametricMachineGame._descent_differential,
+    "artificer-v1": ParametricMachineGame._artificer_differential,
 }
+
+
+# ---------------------------------------------------------------------------
+# the artificer rule model — a second, independent statement of Artificer Logic
+# ---------------------------------------------------------------------------
+class ManualRules:
+    """Artificer Logic, rebuilt from the descriptor's own `manual` block.
+
+    ⚑ WHY THIS IS NOT `ProbeOracleGame`.  Black Box probes an instance to name a
+    VALUE.  This game probes to name a RULE, and the difference is where the
+    hidden bit lives: there the answer is a function of the probe and the
+    instance, here the whole instance IS a member of a published lattice and a
+    probe partitions that lattice.  The state a player holds is therefore a
+    POSTERIOR — the set of rules the evidence still permits — and every
+    measurement below is over that set.
+
+    ⚑ AND WHY IT IS NOT `DescentRules`.  A descent buys information with air and
+    the interesting question is whether to.  Here a charge that cannot split the
+    survivors is REFUSED, so every legal experiment is informative by
+    construction and the only question is WHICH.  A dominance pass is therefore
+    meaningful here in a way it is not for a descent, and it is run below.
+
+    Nothing in this class reads a Lean constant.  `KERNEL_SHAPE` is consulted
+    once, after every number it is compared against is already computed.
+    """
+
+    # The kernel's claim, as a claim.  ⚠ This is NOT an input to anything computed
+    # below — the census is complete before this dict is consulted, and consulting
+    # it can only produce a finding.  Two independent sources or it is decoration.
+    KERNEL_SHAPE = {
+        "declared_states": 1197,
+        "rows": 28728,
+        "actions": 24,
+        "worst_case_probes": 4,
+        "source": "ArtificerLogic.parametric_shape_is_measured + "
+                  "four_charges_are_enough/three_charges_are_not (native_decide)",
+    }
+
+    def __init__(self, doc: dict) -> None:
+        self.doc = doc
+        manual = doc.get("manual")
+        if not isinstance(manual, dict):
+            raise Refusal("artificer descriptor carries no `manual` block, so there "
+                          "is nothing to rebuild the rules from — and the manual is "
+                          "the whole design: an induction game whose hypothesis space "
+                          "is not published is Zendo, where losing feels arbitrary")
+        self.cogs = manual["cogs_per_charge"]
+        self.metals = list(manual["metals"])
+        self.seats = list(manual["seats"])
+        self.families = list(manual["families"])
+        self.probe_budget = manual["probe_budget"]
+        self.reasons = set(manual["refusal_reasons"])
+
+        self.charges = []
+        for entry in manual["charges"]:
+            cid = entry["id"]
+            cogs = list(entry["cogs"])
+            if len(cogs) != self.cogs:
+                raise Refusal(f"charge {cid} has {len(cogs)} cogs, the manual "
+                              f"declares {self.cogs}")
+            for cog in cogs:
+                if cog not in self.metals:
+                    raise Refusal(f"charge {cid} uses a metal {cog!r} the manual "
+                                  f"does not declare")
+            self.charges.append(cid)
+        if len(set(self.charges)) != len(self.charges):
+            raise Refusal("the manual names a charge twice")
+        # The charge space is a full product or the manual is hiding an experiment.
+        want = len(self.metals) ** self.cogs
+        if len(self.charges) != want:
+            raise Refusal(
+                f"the manual declares {len(self.charges)} charges but "
+                f"{len(self.metals)} metals in {self.cogs} seats is {want}.  A "
+                f"legal-experiment set smaller than the product is a set of "
+                f"experiments the player is not allowed to run, and every "
+                f"separation bound below would be measured against the wrong space")
+
+        # The rule lattice, as signatures over the charge space.
+        self.rules = []
+        self.sig = {}
+        for entry in manual["rules"]:
+            rid = entry["id"]
+            if entry["family"] not in self.families:
+                raise Refusal(f"rule {rid} claims a family {entry['family']!r} the "
+                              f"manual does not declare")
+            engages = list(entry["engages"])
+            for c in engages:
+                if c not in self.charges:
+                    raise Refusal(f"rule {rid} engages on {c!r}, which is not a charge")
+            if len(set(engages)) != len(engages):
+                raise Refusal(f"rule {rid} names a charge twice")
+            self.rules.append(rid)
+            self.sig[rid] = frozenset(engages)
+        if len(set(self.rules)) != len(self.rules):
+            raise Refusal("the manual names a rule twice")
+        self.full = frozenset(self.rules)
+        # Memoised in `__init__` and not in `census`: the reserve is consulted by
+        # the view differential, which runs FIRST.
+        self._reserve_memo = {}
+
+    # ---- the design gate ---------------------------------------------------
+
+    def distinguishability(self, game) -> None:
+        """⚑ THE HARD FAIL.  Two rules no legal experiment separates mean a player
+        can run every charge, narrow perfectly, and still be handed a coin.
+
+        This is computed from the EMITTED signatures, not from the kernel: the
+        Lean side proves `manual_has_no_synonyms` over its own `Rule.accepts`,
+        and that proof says nothing about the bytes a client downloads unless the
+        bytes are checked too.  `synonym_manual_is_caught` in
+        `ArtificerLogicEmit` is the falsifier for exactly this leg — a manual
+        with a planted synonym passes the row-by-row differential and fails here.
+        """
+        rep, name = game.rep, game.name
+        by_sig = {}
+        for rid in self.rules:
+            by_sig.setdefault(self.sig[rid], []).append(rid)
+        collisions = sorted(tuple(sorted(v)) for v in by_sig.values() if len(v) > 1)
+        if collisions:
+            rep.find(name, "indistinguishable-rules", FAIL,
+                     f"{len(collisions)} pair(s) or group(s) of rules that no legal "
+                     f"experiment can separate",
+                     f"{collisions}.  A player who runs every one of the "
+                     f"{len(self.charges)} charges is left holding more than one "
+                     f"candidate and must guess, so a perfectly played run loses to a "
+                     f"coin flip.  This is the induction-game form of `the budget "
+                     f"never binds` and it is a design defect, not a difficulty knob.")
+            return
+        # Which single experiment separates each pair — the witness, not just the count.
+        pairs = 0
+        min_separators = None
+        for i, a in enumerate(self.rules):
+            for b in self.rules[i + 1:]:
+                pairs += 1
+                seps = len(self.sig[a] ^ self.sig[b])
+                if min_separators is None or seps < min_separators[0]:
+                    min_separators = (seps, a, b)
+        rep.find(name, "manual-is-distinguishing", INFO,
+                 f"all {pairs} pairs of the {len(self.rules)}-rule manual are "
+                 f"separated by at least one legal experiment",
+                 f"every pair differs on at least {min_separators[0]} of the "
+                 f"{len(self.charges)} charges; the closest pair is "
+                 f"{min_separators[1]}/{min_separators[2]}, separated by exactly "
+                 f"{min_separators[0]}.  Rebuilt from the emitted `manual` block "
+                 f"alone — the kernel's `manual_has_no_synonyms` is a second, "
+                 f"independent source and a pin against one definition is decoration.")
+
+    # ---- the machine, rebuilt ---------------------------------------------
+
+    def split(self, cands, charge):
+        yes = frozenset(r for r in cands if charge in self.sig[r])
+        return yes, cands - yes
+
+    def splits(self, cands, charge):
+        yes, no = self.split(cands, charge)
+        return bool(yes) and bool(no)
+
+    def state_of_view(self, view: dict):
+        """The canonical state: the surviving posterior, the clock, the verdict."""
+        return (frozenset(view["candidates"]), view["turns"], view["verdict"])
+
+    def is_open(self, st, kind, charge, rule) -> bool:
+        cands, spent, verdict = st
+        if verdict != "probing":
+            return False
+        if kind == "probe":
+            return spent < self.probe_budget and self.splits(cands, charge)
+        if kind == "declare":
+            return rule in cands
+        raise Refusal(f"unknown action kind {kind!r}")
+
+    def refusal_reason(self, st, kind, charge, rule) -> str:
+        cands, spent, verdict = st
+        if verdict == "identified":
+            return "solved"
+        if verdict == "mistaken":
+            return "run-lost"
+        if kind == "probe":
+            return "no-charges-left" if spent >= self.probe_budget else "already-answered"
+        return "refuted"
+
+    def step(self, st, kind, charge, rule, answer):
+        cands, spent, _ = st
+        if kind == "probe":
+            yes, no = self.split(cands, charge)
+            return (yes if answer else no, spent + 1, "probing")
+        if answer:
+            return (frozenset([rule]), spent + 1, "identified")
+        return (cands - {rule}, spent + 1, "mistaken")
+
+    def row_for(self, st, kind, charge, rule):
+        """(verdict, reason, next, on_match, on_mismatch), rebuilt.
+
+        `accept` exactly when every surviving candidate answers the same way —
+        which is exactly when the row does not need the oracle.
+        """
+        if not self.is_open(st, kind, charge, rule):
+            return ("refuse", self.refusal_reason(st, kind, charge, rule), None, None, None)
+        cands = st[0]
+        if kind == "probe":
+            answers = {charge in self.sig[r] for r in cands}
+        else:
+            answers = {r == rule for r in cands}
+        on_t = self.step(st, kind, charge, rule, True)
+        on_f = self.step(st, kind, charge, rule, False)
+        if answers == {True}:
+            return ("accept", None, on_t, None, None)
+        if answers == {False}:
+            return ("accept", None, on_f, None, None)
+        return ("resolve", None, None, on_t, on_f)
+
+    # ---- the differential --------------------------------------------------
+
+    def differential(self, game) -> None:
+        rep, name = game.rep, game.name
+        meta = {}
+        for aid in game.actions:
+            m = game.action_meta[aid]
+            kind = m.get("kind")
+            if kind not in ("probe", "declare"):
+                raise Refusal(f"action {aid} declares kind {kind!r}; this game has "
+                              f"probes and declarations and nothing else")
+            if kind == "probe" and m.get("charge") not in self.charges:
+                raise Refusal(f"probe {aid} names a charge the manual does not declare")
+            if kind == "declare" and m.get("rule") not in self.rules:
+                raise Refusal(f"declaration {aid} names a rule the manual does not declare")
+            meta[aid] = (kind, m.get("charge"), m.get("rule"))
+        # Every charge and every rule must be reachable as an action, or the
+        # descriptor publishes a lattice with entries no run can name.
+        probed = {c for (k, c, _) in meta.values() if k == "probe"}
+        named = {r for (k, _, r) in meta.values() if k == "declare"}
+        if probed != set(self.charges):
+            raise Refusal(f"the action alphabet does not offer every charge: "
+                          f"{sorted(set(self.charges) - probed)} cannot be fed")
+        if named != set(self.rules):
+            raise Refusal(f"the action alphabet does not offer every rule: "
+                          f"{sorted(set(self.rules) - named)} cannot be named, so a "
+                          f"run that draws one is unwinnable by construction")
+        self.meta = meta
+
+        # 1. every emitted view is a distinct state, and the id is a function of it
+        self.id_of, self.state_of = {}, {}
+        for sid, s in game.states.items():
+            st = self.state_of_view(s["view"])
+            if st in self.id_of and self.id_of[st] != sid:
+                raise Refusal(f"{sid} and {self.id_of[st]} declare the same state, so "
+                              f"the emitted id is not a function of the state")
+            self.id_of[st] = sid
+            self.state_of[sid] = st
+
+        # 2. every derived view field, rebuilt
+        for sid, s in game.states.items():
+            st = self.state_of[sid]
+            v, cands, spent, verdict = s["view"], *self.state_of[sid]
+            if not cands:
+                raise Refusal(f"{sid} declares an EMPTY candidate set.  The hidden "
+                              f"rule is always among the survivors, so no reachable "
+                              f"state can have none — this state is unreachable under "
+                              f"every instance and the table names it anyway")
+            if v["remaining"] != len(cands):
+                raise Refusal(f"{sid} reports {v['remaining']} survivors and lists "
+                              f"{len(cands)}")
+            if v["charges_left"] != max(0, self.probe_budget - spent):
+                raise Refusal(f"{sid} misreports the charges left")
+            if bool(v["certain"]) != (len(cands) == 1):
+                raise Refusal(f"{sid} misreports certainty")
+            if bool(v["solved"]) != (verdict == "identified"):
+                raise Refusal(f"{sid} misreports the win")
+            if bool(v["doomed"]) != (verdict == "mistaken"):
+                raise Refusal(f"{sid} misreports the loss")
+            if bool(s["terminal"]) != (verdict == "identified"):
+                raise Refusal(f"{sid} misreports terminality")
+            mine = self.certifiable(st)
+            if bool(v["certifiable"]) != mine:
+                raise Refusal(
+                    f"{sid} reports certifiable={v['certifiable']}; rebuilding the "
+                    f"reserve from `manual.reserve` gives {mine}.  A client that "
+                    f"tells a player their run can still be won on skill is telling "
+                    f"them what the budget is FOR, so this is not a cosmetic field")
+
+        # 3. every row
+        seen_reasons = set()
+        for sid, st in self.state_of.items():
+            for aid in game.actions:
+                kind, charge, rule = meta[aid]
+                verdict, reason, nxt, on_m, on_f = self.row_for(st, kind, charge, rule)
+                t = game.trans[(sid, aid)]
+                if t["verdict"] != verdict:
+                    raise Refusal(f"{sid}/{aid} is emitted {t['verdict']} and the "
+                                  f"rebuilt rule says {verdict}")
+                if verdict == "refuse":
+                    if t["reason"] != reason:
+                        raise Refusal(f"{sid}/{aid} refuses as {t['reason']!r}; the "
+                                      f"rebuilt rule gives {reason!r}")
+                    seen_reasons.add(t["reason"])
+                elif verdict == "accept":
+                    self._same_state(game, sid, aid, "next", t["next"], nxt)
+                else:
+                    self._same_state(game, sid, aid, "on_match", t["on_match"], on_m)
+                    self._same_state(game, sid, aid, "on_mismatch", t["on_mismatch"], on_f)
+        stray = seen_reasons - self.reasons
+        if stray:
+            raise Refusal(f"the table refuses for reasons the manual does not "
+                          f"declare: {sorted(stray)}")
+
+        # 4. the emitted state set is exactly the two-branch closure
+        closure, queue = {self.state_of[game.initial]}, deque([self.state_of[game.initial]])
+        while queue:
+            st = queue.popleft()
+            for aid in game.actions:
+                kind, charge, rule = meta[aid]
+                _, _, nxt, on_m, on_f = self.row_for(st, kind, charge, rule)
+                for n in (nxt, on_m, on_f):
+                    if n is not None and n not in closure:
+                        closure.add(n)
+                        queue.append(n)
+        emitted = set(self.state_of.values())
+        if closure != emitted:
+            raise Refusal(f"the emitted state set is not the two-branch closure: "
+                          f"{len(emitted - closure)} extra, {len(closure - emitted)} "
+                          f"missing")
+
+        self.distinguishability(game)
+        self.census(game)
+
+    def _same_state(self, game, sid, aid, slot, emitted_id, mine) -> None:
+        if mine not in self.id_of:
+            raise Refusal(f"{sid}/{aid} {slot} rebuilds to a state the descriptor "
+                          f"does not declare")
+        if self.id_of[mine] != emitted_id:
+            raise Refusal(f"{sid}/{aid} {slot} is emitted {emitted_id} and rebuilds "
+                          f"to {self.id_of[mine]}")
+
+    # ---- the reserve, and the two headline dials ---------------------------
+
+    def certain_within(self, cands, fuel, memo=None):
+        """Can this posterior be cut to ONE within `fuel` charges, on the WORST
+        answer the mechanism can give?  A real minimax: both branches of every cut
+        must succeed, so a True here is a guarantee and not a hope.
+
+        ⚑ The adversary is legitimate.  Each charge is consulted at most once —
+        a charge that cannot split is refused — so every answer sequence is
+        realised by some rule of the manual, and an adversary who picks answers
+        is exactly an adversary who picked a rule.
+        """
+        if memo is None:
+            memo = self._reserve_memo
+        if len(cands) <= 1:
+            return True
+        if fuel <= 0:
+            return False
+        key = (cands, fuel)
+        if key in memo:
+            return memo[key]
+        out = False
+        for c in self.charges:
+            yes, no = self.split(cands, c)
+            if not yes or not no:
+                continue
+            if self.certain_within(yes, fuel - 1, memo) and \
+               self.certain_within(no, fuel - 1, memo):
+                out = True
+                break
+        memo[key] = out
+        return out
+
+    def certifiable(self, st) -> bool:
+        cands, spent, verdict = st
+        if verdict != "probing":
+            return False
+        return self.certain_within(cands, max(0, self.probe_budget - spent))
+
+    def worst_case(self, cands, memo):
+        """Fewest charges that identify, against the worst answers.  INF if none."""
+        if len(cands) <= 1:
+            return 0
+        if cands in memo:
+            return memo[cands]
+        memo[cands] = INF          # cycle guard; splits strictly shrink so it is moot
+        best = INF
+        for c in self.charges:
+            yes, no = self.split(cands, c)
+            if not yes or not no:
+                continue
+            best = min(best, 1 + max(self.worst_case(yes, memo),
+                                     self.worst_case(no, memo)))
+        memo[cands] = best
+        return best
+
+    def expected(self, cands, memo):
+        """Expected charges to identify under optimal play, uniform prior.  THE
+        DIFFICULTY DIAL: it is what a competent player actually pays, where the
+        worst case is what the budget must cover."""
+        n = len(cands)
+        if n <= 1:
+            return 0.0
+        if cands in memo:
+            return memo[cands]
+        best = None
+        for c in self.charges:
+            yes, no = self.split(cands, c)
+            if not yes or not no:
+                continue
+            v = 1.0 + (len(yes) * self.expected(yes, memo)
+                       + len(no) * self.expected(no, memo)) / n
+            if best is None or v < best:
+                best = v
+        memo[cands] = INF if best is None else best
+        return memo[cands]
+
+    # ---- the census --------------------------------------------------------
+
+    def census(self, game) -> None:
+        """Walk the belief machine this class rebuilt, and count.
+
+        Nothing here is read from the descriptor's own counts; the posteriors are
+        enumerated from the `manual` signatures and the budget, and only then is
+        `KERNEL_SHAPE` consulted.
+        """
+        rep, name = game.rep, game.name
+        wmemo, ememo = {}, {}
+
+        # --- the two headline dials, over the full manual -------------------
+        worst = self.worst_case(self.full, wmemo)
+        expected = self.expected(self.full, ememo)
+        floor = ceil_log(len(self.rules), 2)
+
+        if worst >= INF:
+            rep.find(name, "manual-cannot-be-identified", FAIL,
+                     "no sequence of legal experiments identifies the rule",
+                     "the charge space does not separate the manual at all, so the "
+                     "game cannot be won on skill under any budget.")
+            return
+
+        # --- reachable posteriors, and the per-experiment texture ------------
+        reach, queue = {self.full}, deque([self.full])
+        while queue:
+            cands = queue.popleft()
+            if len(cands) <= 1:
+                continue
+            for c in self.charges:
+                yes, no = self.split(cands, c)
+                if not yes or not no:
+                    continue
+                for nxt in (yes, no):
+                    if nxt not in reach:
+                        reach.add(nxt)
+                        queue.append(nxt)
+
+        legal = Counter()
+        best_worst = Counter()
+        best_expected = Counter()
+        bits_total = {c: 0.0 for c in self.charges}
+        for cands in reach:
+            if len(cands) <= 1:
+                continue
+            scored = []
+            for c in self.charges:
+                yes, no = self.split(cands, c)
+                if not yes or not no:
+                    continue
+                legal[c] += 1
+                # information value: expected bits this cut removes, uniform prior
+                p = len(yes) / len(cands)
+                bits = -(p * math.log2(p) + (1 - p) * math.log2(1 - p))
+                bits_total[c] += bits
+                scored.append((c,
+                               1 + max(self.worst_case(yes, wmemo),
+                                       self.worst_case(no, wmemo)),
+                               1.0 + (len(yes) * self.expected(yes, ememo)
+                                      + len(no) * self.expected(no, ememo)) / len(cands)))
+            if not scored:
+                continue
+            bw = min(v for _, v, _ in scored)
+            bx = min(v for _, _, v in scored)
+            for c, dw, dx in scored:
+                if dw == bw:
+                    best_worst[c] += 1
+                if abs(dx - bx) < 1e-12:
+                    best_expected[c] += 1
+
+        dominated = sorted(c for c in self.charges
+                           if best_worst[c] == 0 and best_expected[c] == 0)
+        never_legal = sorted(c for c in self.charges if legal[c] == 0)
+
+        # --- the opening, which is where the texture is legible --------------
+        opening = []
+        for c in self.charges:
+            yes, no = self.split(self.full, c)
+            if not yes or not no:
+                opening.append({"charge": c, "engages": len(yes), "slips": len(no),
+                                "worst_case_total": None, "keeps_the_budget": False})
+                continue
+            total = 1 + max(self.worst_case(yes, wmemo), self.worst_case(no, wmemo))
+            opening.append({
+                "charge": c, "engages": len(yes), "slips": len(no),
+                "worst_case_total": total,
+                "keeps_the_budget": total <= self.probe_budget,
+                "information_bits": round(
+                    -((len(yes) / len(self.rules)) * math.log2(len(yes) / len(self.rules))
+                      + (len(no) / len(self.rules)) * math.log2(len(no) / len(self.rules))), 4),
+            })
+        even = [o for o in opening if o["engages"] == o["slips"]]
+        keeps = [o for o in opening if o["keeps_the_budget"]]
+        traps = [o["charge"] for o in even if not o["keeps_the_budget"]]
+
+        # --- the machine census, rebuilt ------------------------------------
+        rows = len(self.state_of) * len(game.actions)
+        resolve_rows = sum(
+            1 for sid, st in self.state_of.items() for aid in game.actions
+            if self.row_for(st, *self.meta[aid])[0] == "resolve")
+
+        # ⚑ the cross-check.  Two independent sources, compared, and only now.
+        k = self.KERNEL_SHAPE
+        mine = (len(self.state_of), rows, len(game.actions), worst)
+        theirs = (k["declared_states"], k["rows"], k["actions"], k["worst_case_probes"])
+        if mine != theirs:
+            rep.find(name, "kernel-census-disagreement", FAIL,
+                     "the gate and the kernel disagree about the shape of the game",
+                     f"walking the emitted descriptor gives {mine[0]} declared states "
+                     f"/ {mine[1]} rows / {mine[2]} actions / worst-case {mine[3]} "
+                     f"charges; {k['source']} asserts {theirs}.  These are "
+                     f"independent — one is a compiled evaluation of the kernel's own "
+                     f"definitions, the other is a simulation of the bytes a client "
+                     f"downloads — so a disagreement means the descriptor and the "
+                     f"engine are not the same game.")
+        else:
+            rep.find(name, "manual-shape-agrees", INFO,
+                     f"{mine[0]} declared states, {mine[1]} rows and a worst case of "
+                     f"{worst} charges, arrived at twice",
+                     f"this tool rebuilt the rules from `manual`, checked all "
+                     f"{len(game.trans)} emitted rows against them, then re-derived "
+                     f"the belief machine and the minimax from the rebuilt rules "
+                     f"alone.  It gets {mine}, and {k['source']} independently "
+                     f"asserts the same tuple.  A pin against its own definition is "
+                     f"decoration; this is two sources.")
+
+        # --- the budget -----------------------------------------------------
+        # The transcript is charges plus the one naming that ends the run.
+        needed = worst + 1
+        slack = game.budget - needed
+        if slack < 0:
+            rep.find(name, "budget-cannot-be-met", FAIL,
+                     f"the budget cannot cover identification",
+                     f"the worst case under optimal play is {worst} charges plus a "
+                     f"naming = {needed} actions, and `action_limit` is "
+                     f"{game.budget}.  A player who plays perfectly still cannot be "
+                     f"sure, so every run ends on a wager.")
+        elif slack == 0:
+            rep.find(name, "budget-binds-exactly", INFO,
+                     f"the budget is exactly identification: {worst} charges and the "
+                     f"naming, with nothing spare",
+                     f"worst case under optimal play is {worst} charges — the "
+                     f"information floor for {len(self.rules)} rules over binary "
+                     f"answers is {floor} — plus the naming, and `action_limit` is "
+                     f"{game.budget}.  Slack zero means every wasted cut is paid for "
+                     f"in certainty, which is what makes the choice of charge the "
+                     f"whole game.")
+        elif slack == 1:
+            rep.find(name, "budget-has-one-spare", INFO,
+                     f"the budget covers identification with exactly one spare action",
+                     f"worst case {worst} charges + naming = {needed}, "
+                     f"`action_limit` {game.budget}.  One mistake is survivable and "
+                     f"a second is not.")
+        else:
+            rep.find(name, "budget-has-slack", WARN,
+                     f"the budget is {slack} actions more than identification needs",
+                     f"worst case {worst} charges + naming = {needed}, "
+                     f"`action_limit` {game.budget}.  A budget that never binds is "
+                     f"not a budget: a player can afford to waste {slack} cuts and "
+                     f"still be certain.")
+
+        if worst > floor:
+            rep.find(name, "manual-is-not-a-tight-code", INFO,
+                     f"identification costs {worst} charges against an information "
+                     f"floor of {floor}",
+                     f"{len(self.rules)} rules need {floor} bits and the manual "
+                     f"cannot always deliver them one per charge.")
+
+        # --- can it be lost? -------------------------------------------------
+        wagers = 0
+        for sid, st in self.state_of.items():
+            cands, spent, verdict = st
+            if verdict == "probing" and len(cands) >= 2 and spent >= self.probe_budget:
+                wagers += 1
+        if wagers == 0:
+            rep.find(name, "cannot-be-lost", FAIL,
+                     "no reachable state forces a wager",
+                     "there is no position from which the run must name a rule with "
+                     "more than one candidate standing, so a player cannot lose by "
+                     "spending the budget badly and the budget does not bind.")
+        else:
+            rep.find(name, "the-budget-is-losable", INFO,
+                     f"{wagers} reachable states force a naming with more than one "
+                     f"candidate standing",
+                     f"a player who spends a cut badly arrives with the charges gone "
+                     f"and a posterior of size 2 or more; from there the naming is a "
+                     f"wager.  This is the loss condition, and it is reachable only "
+                     f"through a mistake the player could have avoided.")
+
+        # --- experiment texture -----------------------------------------------
+        if never_legal:
+            rep.find(name, "charge-that-never-splits", FAIL,
+                     f"{len(never_legal)} charge(s) never separate anything",
+                     f"{never_legal} are offered as actions and are refused in every "
+                     f"reachable posterior, so they are menu items that are never a "
+                     f"move.")
+        if dominated:
+            rep.find(name, "dominated-experiment", WARN,
+                     f"{len(dominated)} charge(s) are never the best probe in any "
+                     f"reachable posterior",
+                     f"{dominated}.  A charge that is legal but never optimal — "
+                     f"neither in worst case nor in expectation — anywhere in the "
+                     f"belief lattice is a menu item a player never has a reason to "
+                     f"pick.  It is not a defect the way an indistinguishable pair "
+                     f"is, but it is a decision that is not a decision.")
+        else:
+            rep.find(name, "every-charge-earns-its-place", INFO,
+                     f"all {len(self.charges)} charges are the strictly best probe in "
+                     f"at least one reachable posterior",
+                     f"no charge is dominated: for each one there is a belief state "
+                     f"in which it is the optimal cut, so the menu is a menu and not "
+                     f"a decorated shortlist.  Best-in counts (worst case / expected) "
+                     f"over {len([c for c in reach if len(c) > 1])} branching "
+                     f"posteriors: " +
+                     ", ".join(f"{c} {best_worst[c]}/{best_expected[c]}"
+                               for c in self.charges))
+
+        if len(keeps) == len(self.charges):
+            rep.find(name, "the-opening-is-a-free-choice", WARN,
+                     "every opening charge leaves the run able to finish inside the "
+                     "budget",
+                     "the first decision costs nothing, so the game does not start "
+                     "until the second cut.  With the instance hidden this is not a "
+                     "disclosure defect, but it is a wasted decision.")
+        elif traps:
+            rep.find(name, "an-even-split-is-not-a-good-one", INFO,
+                     f"{len(even)} opening charges cut the manual exactly in half and "
+                     f"only {len(keeps)} of them keep the budget",
+                     f"{traps} split {even[0]['engages']}/{even[0]['slips']} and still "
+                     f"cost {[o['worst_case_total'] for o in even if not o['keeps_the_budget']][0]} "
+                     f"charges, because the halves cannot be separated in what "
+                     f"remains.  Evenness is necessary and not sufficient, and that "
+                     f"is the whole lesson of the opening: {len(self.charges) - len(keeps)} "
+                     f"of {len(self.charges)} openings silently cost the guarantee.")
+
+        game.extra_summary = {
+            "shape": "rule-induction",
+            "manual_size": len(self.rules),
+            "manual_families": len(self.families),
+            "charge_space": len(self.charges),
+            "indistinguishable_pairs": 0,
+            "information_floor_loose": floor,
+            "information_floor_tight": floor,
+            "execution_floor_as_designed": needed,
+            "execution_floor_as_emitted": needed,
+            "worst_case_optimal": needed,
+            "worst_case_probes": worst,
+            "expected_probes_to_identify": round(expected, 4),
+            "probe_budget": self.probe_budget,
+            "budget_binds": slack <= 1,
+            "budget_slack": slack,
+            "wager_states": wagers,
+            "dominated_experiments": dominated,
+            "reachable_posteriors": len(reach),
+            "branching_posteriors": len([c for c in reach if len(c) > 1]),
+            "rebuilt_resolve_rows": resolve_rows,
+            "opening_table": opening,
+            "probe_best_in_worst_case": {c: best_worst[c] for c in self.charges},
+            "probe_best_in_expectation": {c: best_expected[c] for c in self.charges},
+            "probe_mean_bits": {c: round(bits_total[c] / legal[c], 4) if legal[c] else None
+                                for c in self.charges},
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -3320,6 +4041,70 @@ def render(report: Report, out) -> None:
                   f"{g['reference_policy_mean']}, losses "
                   f"{g['reference_policy_losses']}") + "\n")
             w(bar("  distribution", f"{g['reference_policy_distribution']}") + "\n")
+        elif g["kind"] == "push-your-luck":
+            w(bar("machine",
+                  f"{g['states']} states, {g['actions']} verbs, "
+                  f"{g['transitions']} rows "
+                  f"({g['accept_rows']} accept / {g['refuse_rows']} refuse / "
+                  f"{g['oracle_rows']} wager)") + "\n")
+            w(bar("hazard, published",
+                  f"rung 1..{g['depth_cap']} floods below "
+                  f"{g['flood_ladder']} of {g['faces']}") + "\n")
+            w(bar("hidden table",
+                  f"{g['veins']} veins, shared per slot; the tape is per player") + "\n")
+            w(bar("information floor",
+                  f"{g['information_floor_tight']} crawls before the carry ladder "
+                  f"names the day") + "\n")
+            w(bar("family census",
+                  f"{g['family_reachable']} reachable / {g['family_decisions']} "
+                  f"decisions / {g['family_drowned']} drowned, over the vein family")
+              + "\n")
+            w(bar("refusal reasons",
+                  ", ".join(f"{k}:{v}" for k, v in g["refusal_reasons"].items())) + "\n")
+            w(bar("action budget",
+                  f"{g['action_limit']}   binds: {g['budget_binds']}   "
+                  f"slack: {g['budget_slack']}") + "\n")
+            w(bar("can the run be lost?", f"{g['can_lose']}") + "\n")
+
+            w("\n  ⚑ STOPPING RULE — exact backward induction over the belief state\n")
+            w("     (the state IS the posterior: `carried` at `depth` names the veins\n")
+            w("      whose ladder passes through it, and the prior is uniform)\n\n")
+            postures = list(g["posture_thresholds"].keys())
+            w("  depth carried  flood  still possible          "
+              + "".join(f"{p[:12]:>13}" for p in postures) + "\n")
+            for row in g["stopping_table"]:
+                poss = ",".join(v[:3] for v in row["still_possible"])
+                w(f"  {row['depth']:>5}{row['carried']:>8}"
+                  f"{row['flood_below']:>5}/{g['faces']}  {poss:<22}"
+                  + "".join(f"{row['postures'][p]:>13}" for p in postures) + "\n")
+            w("\n  posture       optimal rule      value at the mouth\n")
+            for p in postures:
+                t = g["posture_thresholds"][p]
+                rule = (f"bank at depth {t}" if t is not None
+                        else "NOT a fixed depth")
+                w(f"  {p:<14}{rule:<18}{g['posture_values'][p]:>10.4f}\n")
+            w("\n  fixed-depth policies (a crawler who decided before going in)\n")
+            w("  depth   P(reach)   mean carry     EV       sd\n")
+            for f in g["fixed_depth_policies"]:
+                mark = " <- best" if f["depth"] == g["best_fixed_depth"] else ""
+                w(f"  {f['depth']:>5}{f['reach']:>11.4f}{f['mean_carry']:>13.3f}"
+                  f"{f['ev']:>9.3f}{f['sd']:>9.3f}{mark}\n")
+            w(f"\n  adaptive (risk-neutral) {g['adaptive_risk_neutral']:.4f} vs best "
+              f"fixed {g['fixed_depth_policies'][g['best_fixed_depth'] - 1]['ev']:.4f}"
+              f"  ->  reading the shaft is worth "
+              f"{g['information_gain'] * 100:.1f}%\n")
+            w("\n  `=` the posture values both verbs identically (a quota out of reach "
+              "either way);\n      it is INDIFFERENCE and is excluded from the split "
+              "count below.\n")
+            w(f"\n  salvage postures STRICTLY disagreeing: "
+              f"{len(g['posture_split_states'])} state(s) of "
+              f"{len(g['stopping_table'])} decision states\n")
+            w(f"  verbs optimal under no posture anywhere: "
+              f"{g['dead_actions'] or 'none'}\n")
+            w("\n  per vein\n")
+            for v in g["per_vein"]:
+                w(f"    {v['vein']:<14}{v['reachable']:>4} reachable  "
+                  f"{v['decisions']:>3} decisions  {v['drowned']:>3} drowned\n")
         else:
             w(bar("machine",
                   f"{g['states']} states ({g['reachable_states']} reachable), "
@@ -3361,6 +4146,43 @@ def render(report: Report, out) -> None:
                 if k in g:
                     w(bar(k.replace("_", " "), f"{g[k]}") + "\n")
 
+            if g.get("shape") == "rule-induction":
+                w("\n  \u26d1 RULE INDUCTION \u2014 the player names the LAW, not the "
+                  "instance.\n     The state IS the posterior: the set of rules the "
+                  "evidence still permits.\n\n")
+                w(bar("published manual",
+                      f"{g['manual_size']} rules in {g['manual_families']} families "
+                      f"over {g['charge_space']} legal experiments") + "\n")
+                w(bar("indistinguishable pairs",
+                      f"{g['indistinguishable_pairs']}  \u2014 a pair no experiment "
+                      f"separates is a coin a perfect player loses to") + "\n")
+                w(bar("worst case to identify",
+                      f"{g['worst_case_probes']} charges + the naming = "
+                      f"{g['worst_case_optimal']} actions") + "\n")
+                w(bar("EXPECTED charges to identify",
+                      f"{g['expected_probes_to_identify']}   (information floor "
+                      f"{g['information_floor_tight']}; uniform prior, optimal play)")
+                  + "\n")
+                w(bar("charge budget",
+                      f"{g['probe_budget']}   slack {g['budget_slack']}   "
+                      f"forced wagers {g['wager_states']}") + "\n")
+                w(bar("dominated experiments",
+                      f"{g['dominated_experiments'] or 'none'}") + "\n")
+                w("\n  charge  engages/slips   bits   worst case if opened here\n")
+                for o in g["opening_table"]:
+                    mark = "" if o["keeps_the_budget"] else "   <- loses the guarantee"
+                    w(f"  {o['charge']:<7} {o['engages']:>2}/{o['slips']:<2}"
+                      f"          {o['information_bits']:<6} "
+                      f"{o['worst_case_total']}{mark}\n")
+                w(f"\n  charge  best-in over {g['branching_posteriors']} branching "
+                  f"posteriors (worst case / expectation)   mean bits\n")
+                for c in g["probe_best_in_worst_case"]:
+                    w(f"  {c:<7} {g['probe_best_in_worst_case'][c]:>4} /"
+                      f"{g['probe_best_in_expectation'][c]:<4}"
+                      f"                                       "
+                      f"{g['probe_mean_bits'][c]}\n")
+                w("\n")
+
     summary_table(report, out)
     check_reference(report, out)
 
@@ -3394,6 +4216,903 @@ def _wrap(text, width):
 
 
 # ---------------------------------------------------------------------------
+# backend 6 — push-your-luck: a PUBLIC escalating hazard over a HIDDEN shared
+#             reward table.  Vent Crawl.
+# ---------------------------------------------------------------------------
+
+def _u_identity(x):
+    return float(x)
+
+
+def _u_sqrt(x):
+    return math.sqrt(float(x))
+
+
+def _u_log(x):
+    return math.log(1.0 + float(x))
+
+
+def _u_quota(n):
+    def u(x):
+        return 1.0 if x >= n else 0.0
+    return u
+
+
+def _close(a, b):
+    return abs(a - b) <= 1e-12 * max(1.0, abs(a), abs(b))
+
+
+class PushYourLuckGame:
+    """A descriptor carrying `vent`: an escalating PUBLISHED hazard over a hidden
+    shared reward table.
+
+    ⚑ WHY THIS IS NOT `DescentRules` OR `ParametricMachineGame`.  Descent hides the
+    RISK — a chamber's passage is unknown until a body or a survey resolves it — and
+    its rows are two-branch resolves whose branches are the two readings of one bit.
+    Vent Crawl hides the REWARD and publishes the risk in full: a crawl row carries
+    the exact flood numerator against `faces`, and its branches are the flood plus
+    ONE SUCCESSOR PER STILL-POSSIBLE VEIN.  A backend that reads `on_match` /
+    `on_mismatch` cannot see a four-way haul, and a backend that treats the hazard as
+    hidden would report the published odds as an unreachable field.
+
+    ⚑ A COST ROW IS NOT A TRANSITION, and this backend computes no cost row.  Every
+    number below comes from walking the REAL transition the emitted table names, and
+    the stopping analysis is an exact backward induction over the BELIEF state — which
+    is what a push-your-luck game IS.  Ranking `crawl` against `bank` by what they
+    spend would rank `bank` as free and `crawl` as free and say nothing.
+
+    ## What is reconstructed, and from what
+
+    Everything comes from the descriptor: the `vent` block (depth cap, faces, the
+    flood ladder, the four vein yield/carry tables, the refusal vocabulary) and the
+    emitted state VIEWS.  Nothing is read from the Lean module.  In particular NO
+    NAME IS TRUSTED:
+
+      * the CRAWL action is whichever action id carries a `wager` row; the BANK
+        action is the other one, and there must be exactly two;
+      * `crawling` is whatever outcome the INITIAL state view reads; `drowned` is
+        whatever a wager's `on_flood` successor reads; `banked` is whatever a bank
+        row's successor reads — and the three must be distinct;
+      * the three REFUSAL REASONS are derived from the three situations that produce
+        them and are then checked against `vent.refusal_vocabulary` in BOTH
+        directions, so a declared reason that never fires is a finding and an
+        undeclared reason that fires is a refusal.
+
+    ## What is checked
+
+      1. every one of the emitted rows: verdict, reason, successor ids, the published
+         flood numerator, and the haul list vein-by-vein;
+      2. every emitted view's derived fields, including `still_possible` and
+         `next_flood_below`;
+      3. the emitted state set IS the branch closure of the initial state;
+      4. the per-vein census — reachable states, decision states, drowned states —
+         computed by this file's own search over this file's own reconstruction, and
+         then compared against the kernel's claim;
+      5. ⚑ THE STOPPING RULES.  An exact backward induction over the belief state,
+         under EIGHT risk postures, reporting which verb each posture wants at each
+         reachable state, which verbs are optimal under no posture anywhere, and
+         whether the whole game collapses to one fixed depth threshold.
+
+    Points 4 and 5 are the ones that matter.  Point 4 is two independent sources
+    compared; point 5 is the only question that decides whether the thing is a game.
+    """
+
+    # The kernel's claim, as a claim.  ⚠ NOT an input to anything computed below —
+    # the census is complete before this dict is consulted, and consulting it can only
+    # produce a finding.
+    KERNEL_SHAPE = {
+        "parametric_states": 43,
+        "family_reachable": 68,
+        "family_decisions": 20,
+        "family_drowned": 20,
+        "source": "VentCrawl.parametric_shape_is_measured + "
+                  "VentCrawl.family_shape_is_measured (native_decide)",
+    }
+
+    # Eight postures.  ⚠ These are NOT a sensitivity sweep around one answer: a quota
+    # posture is a player who needs a number tonight, and it is the commonest real
+    # posture in a daily game.  A game whose verb choice is the same under all eight
+    # has one answer and is a ritual.
+    POSTURES = [
+        ("risk-neutral", "salvage", _u_identity),
+        ("sqrt-averse", "salvage", _u_sqrt),
+        ("log-averse", "salvage", _u_log),
+        ("quota-6", "salvage", _u_quota(6)),
+        ("quota-12", "salvage", _u_quota(12)),
+        ("quota-24", "salvage", _u_quota(24)),
+        ("quota-40", "salvage", _u_quota(40)),
+        ("cartographer", "depth", None),
+    ]
+
+    def __init__(self, doc: dict, rep: Report) -> None:
+        self.doc = doc
+        self.rep = rep
+        self.name = doc["game_id"]
+        vent = doc.get("vent")
+        if not isinstance(vent, dict):
+            raise Refusal("push-your-luck descriptor carries no `vent` block, so there "
+                          "is nothing to rebuild the rules from")
+        self.depth_cap = vent["depth_cap"]
+        self.faces = vent["faces"]
+        self.mouth = vent["mouth_salvage"]
+        self.initial_depth = vent["initial_depth"]
+        self.budget = doc["action_limit"]
+        self.declared_reasons = list(vent["refusal_vocabulary"])
+
+        self.flood_below = {}
+        for entry in vent["flood_below"]:
+            rung, below = entry
+            self.flood_below[rung] = below
+        for rung in range(1, self.depth_cap + 1):
+            if rung not in self.flood_below:
+                raise Refusal(f"the flood ladder has no entry for rung {rung}")
+            if self.flood_below[rung] >= self.faces:
+                raise Refusal(
+                    f"rung {rung} floods on {self.flood_below[rung]} of {self.faces} "
+                    f"faces, which is certain death — a rung nobody can survive is a "
+                    f"wall, not a wager")
+        ladder = [self.flood_below[r] for r in range(1, self.depth_cap + 1)]
+        if any(b > a for a, b in zip(ladder[1:], ladder[:-1])):
+            raise Refusal(
+                f"the hazard does not escalate: the flood ladder is {ladder}.  A "
+                f"push-your-luck game whose risk does not rise with depth has no "
+                f"reason for a player to ever stop")
+
+        self.vein_order = []
+        self.veins = {}
+        for vein in vent["veins"]:
+            vid = vein["id"]
+            if vid in self.veins:
+                raise Refusal(f"the vent names the vein {vid!r} twice")
+            yields = [int(y) for y in vein["yields"]]
+            carry = [int(c) for c in vein["carry"]]
+            if len(yields) != self.depth_cap:
+                raise Refusal(f"vein {vid} declares {len(yields)} yields for "
+                              f"{self.depth_cap} rungs")
+            if len(carry) != self.depth_cap + 1 or carry[0] != 0:
+                raise Refusal(f"vein {vid}'s carry ladder is not a cumulative sum "
+                              f"starting at zero")
+            for i in range(self.depth_cap):
+                if carry[i + 1] != carry[i] + yields[i]:
+                    raise Refusal(
+                        f"vein {vid}'s carry ladder disagrees with its own yields at "
+                        f"rung {i + 1}: {carry[i]} + {yields[i]} != {carry[i + 1]}")
+                if yields[i] <= 0:
+                    raise Refusal(
+                        f"vein {vid} pays nothing at rung {i + 1}, so crawling into it "
+                        f"is pure loss on that day and the row is not a wager")
+            self.vein_order.append(vid)
+            self.veins[vid] = {"yields": yields, "carry": carry}
+        if len(self.vein_order) < 2:
+            raise Refusal("the vent declares fewer than two veins, so there is no "
+                          "hidden table for a commitment to bind")
+
+        opening = {self.veins[v]["carry"][self.initial_depth] for v in self.vein_order}
+        if len(opening) != 1:
+            raise Refusal(
+                "the veins do not agree at the opening depth, so a run's starting "
+                "sling already names the day and the table is not hidden at all")
+
+    # -- the alphabet, derived rather than named ----------------------------
+
+    def learn_alphabet(self) -> None:
+        """Separate the two verbs and the three outcomes without trusting a name."""
+        sm = self.doc["state_machine"]
+        self.action_ids = [a["id"] for a in sm["actions"]]
+        if len(self.action_ids) != 2:
+            raise Refusal(f"this backend models exactly two verbs; the descriptor "
+                          f"declares {len(self.action_ids)}")
+        wagering = {t["state"] for t in sm["transitions"] if t["verdict"] == "wager"}
+        wager_actions = {t["action"] for t in sm["transitions"]
+                         if t["verdict"] == "wager"}
+        if len(wager_actions) != 1:
+            raise Refusal(f"{len(wager_actions)} actions carry a wager row; exactly one "
+                          f"verb may consult the hidden table")
+        if not wagering:
+            raise Refusal("no row wagers, so the hidden table cannot affect play and "
+                          "there is nothing for a commitment to bind")
+        self.crawl_action = wager_actions.pop()
+        others = [a for a in self.action_ids if a != self.crawl_action]
+        self.bank_action = others[0]
+
+        self.crawling = self.states[self.initial]["view"]["outcome"]
+        drowned = {self.states[t["on_flood"]]["view"]["outcome"]
+                   for t in sm["transitions"] if t["verdict"] == "wager"}
+        if len(drowned) != 1:
+            raise Refusal(f"the wager rows flood into {len(drowned)} distinct outcomes")
+        self.drowned = drowned.pop()
+        banked = {self.states[t["next"]]["view"]["outcome"]
+                  for t in sm["transitions"]
+                  if t["verdict"] == "accept" and t["action"] == self.bank_action}
+        if len(banked) != 1:
+            raise Refusal(f"the bank rows accept into {len(banked)} distinct outcomes")
+        self.banked = banked.pop()
+        if len({self.crawling, self.drowned, self.banked}) != 3:
+            raise Refusal(
+                f"crawling/drowned/banked are not three distinct outcomes "
+                f"({self.crawling!r}/{self.drowned!r}/{self.banked!r}); a run that "
+                f"cannot be told apart from a drowned one has no push and no luck")
+
+        # The three refusal reasons, derived from the three situations that produce
+        # them and checked in BOTH directions against the declared vocabulary.
+        self.reason_of = {}
+        for t in sm["transitions"]:
+            if t["verdict"] != "refuse":
+                continue
+            st = self.state_of[t["state"]]
+            key = self.refusal_key(st, t["action"])
+            if key is None:
+                raise Refusal(
+                    f"{t['state']}/{t['action']} refuses and the rebuilt rule says it "
+                    f"is open")
+            prior = self.reason_of.get(key)
+            if prior is None:
+                self.reason_of[key] = t["reason"]
+            elif prior != t["reason"]:
+                raise Refusal(
+                    f"the same refusal situation {key!r} carries two reasons "
+                    f"({prior!r} and {t['reason']!r}), so a client renders a different "
+                    f"story for the same fact")
+        fired = set(self.reason_of.values())
+        declared = set(self.declared_reasons)
+        if fired - declared:
+            raise Refusal(f"the table refuses for reasons the vent does not declare: "
+                          f"{sorted(fired - declared)}")
+        self.never_fires = sorted(declared - fired)
+
+    def refusal_key(self, st, aid):
+        depth, carried, outcome = st
+        if outcome == self.banked:
+            return "run-banked"
+        if outcome == self.drowned:
+            return "run-drowned"
+        if aid == self.crawl_action and depth >= self.depth_cap:
+            return "at-the-bottom"
+        return None
+
+    # -- states and the rebuilt rule ----------------------------------------
+
+    def state_of_view(self, view: dict) -> tuple:
+        return (view["depth"], view["carried"], view["outcome"])
+
+    def consistent(self, depth: int, carried: int) -> list:
+        return [v for v in self.vein_order
+                if depth < len(self.veins[v]["carry"])
+                and self.veins[v]["carry"][depth] == carried]
+
+    def is_open(self, st, aid) -> bool:
+        depth, _carried, outcome = st
+        if outcome != self.crawling:
+            return False
+        if aid == self.crawl_action:
+            return depth < self.depth_cap
+        return True
+
+    def step(self, st, aid, vein, flooded: bool):
+        depth, carried, _outcome = st
+        if aid == self.bank_action:
+            return (depth, carried, self.banked)
+        if flooded:
+            return (depth + 1, 0, self.drowned)
+        return (depth + 1, carried + self.veins[vein]["yields"][depth], self.crawling)
+
+    def row_for(self, st, aid):
+        """`(verdict, reason, next, flood_below, on_flood, hauls)`."""
+        if not self.is_open(st, aid):
+            key = self.refusal_key(st, aid)
+            return ("refuse", self.reason_of.get(key), None, None, None, None)
+        if aid == self.bank_action:
+            return ("accept", None, self.step(st, aid, None, False), None, None, None)
+        fb = self.flood_below[st[0] + 1]
+        return ("wager", None, None, fb, self.step(st, aid, None, True),
+                [(v, self.step(st, aid, v, False))
+                 for v in self.consistent(st[0], st[1])])
+
+    # -- the differential ----------------------------------------------------
+
+    def differential(self) -> None:
+        sm = self.doc["state_machine"]
+        self.states = {s["id"]: s for s in sm["states"]}
+        self.initial = sm["initial_state"]
+        if self.initial not in self.states:
+            raise Refusal("the initial state is not among the declared states")
+        self.state_of = {}
+        self.id_of = {}
+        for sid, s in self.states.items():
+            st = self.state_of_view(s["view"])
+            if st in self.id_of:
+                raise Refusal(f"states {self.id_of[st]} and {sid} carry the same view, "
+                              f"so the emitted id is not a function of the state")
+            self.id_of[st] = st and sid
+            self.state_of[sid] = st
+        self.trans = {(t["state"], t["action"]): t for t in sm["transitions"]}
+        self.learn_alphabet()
+
+        if len(self.trans) != len(self.states) * len(self.action_ids):
+            raise Refusal(f"the table is not total: {len(self.trans)} rows for "
+                          f"{len(self.states)} states by {len(self.action_ids)} actions")
+
+        # 1. every derived field of every view, rebuilt
+        for sid, s in self.states.items():
+            depth, carried, outcome = self.state_of[sid]
+            v = s["view"]
+            if bool(s["terminal"]) != (outcome != self.crawling):
+                raise Refusal(f"{sid} disagrees with its own view about being over")
+            if bool(v["banked"]) != (outcome == self.banked):
+                raise Refusal(f"{sid} misreports the bank")
+            if bool(v["drowned"]) != (outcome == self.drowned):
+                raise Refusal(f"{sid} misreports the drowning")
+            want_fb = self.flood_below.get(depth + 1)
+            if want_fb is not None and v["next_flood_below"] != want_fb:
+                raise Refusal(
+                    f"{sid} publishes odds of {v['next_flood_below']}/{self.faces} for "
+                    f"the next rung; the flood ladder gives {want_fb}/{self.faces}.  "
+                    f"The hazard is the ONE thing this descriptor is trusted to state "
+                    f"and a client renders it before every choice, so this is not a "
+                    f"cosmetic field")
+            mine = self.consistent(depth, carried)
+            if outcome == self.crawling and list(v["still_possible"]) != mine:
+                raise Refusal(
+                    f"{sid} says the day could still be {list(v['still_possible'])}; "
+                    f"the carry ladders leave {mine}")
+            if outcome == self.crawling and not mine:
+                raise Refusal(f"{sid} is a live state no vein can produce")
+
+        # 2. every row
+        for sid, st in self.state_of.items():
+            for aid in self.action_ids:
+                verdict, reason, nxt, fb, on_flood, hauls = self.row_for(st, aid)
+                t = self.trans[(sid, aid)]
+                if t["verdict"] != verdict:
+                    raise Refusal(f"{sid}/{aid}: the table says {t['verdict']}, the "
+                                  f"rebuilt rule says {verdict}")
+                if verdict == "refuse":
+                    if t["reason"] != reason:
+                        raise Refusal(
+                            f"{sid}/{aid}: the table refuses for {t['reason']!r}, the "
+                            f"rebuilt rule refuses for {reason!r}")
+                elif verdict == "accept":
+                    self._same_state(sid, aid, "next", t["next"], nxt)
+                else:
+                    if t["flood_below"] != fb:
+                        raise Refusal(
+                            f"{sid}/{aid}: the row publishes {t['flood_below']} of "
+                            f"{self.faces}, the flood ladder gives {fb}")
+                    self._same_state(sid, aid, "on_flood", t["on_flood"], on_flood)
+                    emitted = t["hauls"]
+                    if len(emitted) != len(hauls):
+                        raise Refusal(
+                            f"{sid}/{aid} names {len(emitted)} hauls, the still-possible "
+                            f"veins number {len(hauls)} — a row that has dropped a day "
+                            f"is a row that has leaked one")
+                    for got, (vein, mine) in zip(emitted, hauls):
+                        if got["vein"] != vein:
+                            raise Refusal(f"{sid}/{aid} names vein {got['vein']!r} where "
+                                          f"the rebuilt rule has {vein!r}")
+                        self._same_state(sid, aid, f"haul[{vein}]", got["next"], mine)
+
+        # 3. the emitted state set IS the branch closure of the initial state
+        closure = {self.state_of[self.initial]}
+        queue = deque([self.state_of[self.initial]])
+        while queue:
+            st = queue.popleft()
+            for aid in self.action_ids:
+                _, _, nxt, _, on_flood, hauls = self.row_for(st, aid)
+                for n in [nxt, on_flood] + [h[1] for h in (hauls or [])]:
+                    if n is not None and n not in closure:
+                        closure.add(n)
+                        queue.append(n)
+        emitted = set(self.state_of.values())
+        if closure != emitted:
+            raise Refusal(
+                f"the emitted state set is not the closure of the initial state: "
+                f"{len(emitted - closure)} declared state(s) are unreachable and "
+                f"{len(closure - emitted)} reachable state(s) are not declared")
+
+    def _same_state(self, sid, aid, slot, emitted_id, mine) -> None:
+        want = self.id_of.get(mine)
+        if want is None:
+            raise Refusal(f"{sid}/{aid} {slot}: the rebuilt rule reaches a state the "
+                          f"descriptor does not declare")
+        if emitted_id != want:
+            raise Refusal(f"{sid}/{aid} {slot}: the table names {emitted_id}, the "
+                          f"rebuilt rule reaches {want}")
+
+    # -- the census ----------------------------------------------------------
+
+    def census(self) -> dict:
+        """Walk the REAL transition on each vein, following BOTH outcomes of every
+        rung — which is exactly the set of positions a crawler on that vein can be
+        in.  ⚠ The tape is NOT enumerated: it is the crawler's dice, not the day, and
+        enumerating faces**depth_cap tapes would be enumerating luck."""
+        init = self.state_of[self.initial]
+        per_vein, total_reach, total_dec, total_drown = [], 0, 0, 0
+        for vein in self.vein_order:
+            reach = {init}
+            queue = deque([init])
+            while queue:
+                st = queue.popleft()
+                for aid in self.action_ids:
+                    if not self.is_open(st, aid):
+                        continue
+                    outs = ([self.step(st, aid, None, False)]
+                            if aid == self.bank_action
+                            else [self.step(st, aid, None, True),
+                                  self.step(st, aid, vein, False)])
+                    for n in outs:
+                        if n not in reach:
+                            reach.add(n)
+                            queue.append(n)
+            decisions = sum(1 for st in reach
+                            if all(self.is_open(st, a) for a in self.action_ids))
+            drowned = sum(1 for st in reach if st[2] == self.drowned)
+            per_vein.append({"vein": vein, "reachable": len(reach),
+                             "decisions": decisions, "drowned": drowned})
+            total_reach += len(reach)
+            total_dec += decisions
+            total_drown += drowned
+        return {"per_vein": per_vein, "family_reachable": total_reach,
+                "family_decisions": total_dec, "family_drowned": total_drown}
+
+    # -- ⚑ the stopping rules ------------------------------------------------
+
+    def stopping_rules(self) -> dict:
+        """Exact backward induction over the BELIEF state, under every posture.
+
+        The belief state is the emitted state: `carried` at `depth` is exactly the set
+        of veins whose carry ladder passes through it, so `consistent()` IS the
+        posterior and the prior over veins is uniform.  There is no approximation and
+        no sampling here; the recursion is over a DAG whose only edge direction is
+        deeper.
+        """
+        live = sorted((st for st in self.state_of.values() if st[2] == self.crawling),
+                      key=lambda s: -s[0])
+        results = {}
+        for pname, kind, u in self.POSTURES:
+            def payoff(outcome, depth, carried, kind=kind, u=u):
+                if kind == "depth":
+                    return float(depth)
+                return u(carried if outcome == self.banked else 0)
+
+            value, choice = {}, {}
+            for st in live:
+                depth, carried, _ = st
+                bank_v = payoff(self.banked, depth, carried)
+                options = {self.bank_action: bank_v}
+                if self.is_open(st, self.crawl_action):
+                    fb = self.flood_below[depth + 1]
+                    p = fb / self.faces
+                    cons = self.consistent(depth, carried)
+                    surv = 0.0
+                    for vein in cons:
+                        nxt = self.step(st, self.crawl_action, vein, False)
+                        surv += value[nxt] / len(cons)
+                    drown = self.step(st, self.crawl_action, None, True)
+                    options[self.crawl_action] = (
+                        p * payoff(self.drowned, drown[0], 0) + (1 - p) * surv)
+                best = max(options.values())
+                value[st] = best
+                choice[st] = sorted(a for a, v in options.items() if _close(v, best))
+            results[pname] = {"value": value, "choice": choice, "kind": kind}
+
+        # ⚠ A TIE IS NOT A DISAGREEMENT.  A quota posture whose quota is out of reach
+        # from here values BOTH verbs at zero, so it "wants both" — and counting that
+        # as a live decision would inflate the one number this backend exists to
+        # produce.  Only a STRICT preference counts below, and the states where a
+        # posture is indifferent are reported separately as what they are: places that
+        # posture has nothing to say about.
+        strict = {}
+        indifferent = {p: [] for p, _, _ in self.POSTURES}
+        for pname, _, _ in self.POSTURES:
+            choice = results[pname]["choice"]
+            strict[pname] = {}
+            for st, verbs in choice.items():
+                if len(verbs) == 1:
+                    strict[pname][st] = verbs[0]
+                elif self.is_open(st, self.crawl_action):
+                    indifferent[pname].append(st)
+
+        # which verbs are STRICTLY optimal SOMEWHERE, under SOME posture
+        live_verbs = {a: [] for a in self.action_ids}
+        split_states, policies = [], {}
+        for pname, _, _ in self.POSTURES:
+            for st, a in strict[pname].items():
+                live_verbs[a].append((pname, st))
+        for pname, _, _ in self.POSTURES:
+            choice = results[pname]["choice"]
+            crawls = sorted(st[0] for st in choice
+                            if self.crawl_action in choice[st]
+                            and self.is_open(st, self.crawl_action))
+            banks = sorted(st[0] for st in choice if self.bank_action in choice[st])
+            threshold = None
+            if crawls and banks and max(crawls) < min(banks):
+                threshold = min(banks)
+            elif crawls and not banks:
+                threshold = self.depth_cap + 1
+            elif banks and not crawls:
+                threshold = min(banks)
+            policies[pname] = {
+                "value_at_start": results[pname]["value"][self.state_of[self.initial]],
+                "fixed_threshold": threshold,
+                "banks_at": sorted({(st[0], st[1]) for st in choice
+                                    if self.bank_action in choice[st]
+                                    and len(choice[st]) == 1}),
+            }
+        # ⚠ The split is computed over the SALVAGE postures only.  `cartographer`
+        # optimises a different quantity (how deep the shaft got mapped), so it always
+        # crawls; counting its disagreement as evidence that the salvage arithmetic is
+        # live would make this finding true of ANY game with a consolation payout,
+        # including one whose salvage numbers were flat.
+        salvage_postures = [p for p, kind, _ in self.POSTURES if kind == "salvage"]
+        for st in self.state_of.values():
+            if st[2] != self.crawling or not self.is_open(st, self.crawl_action):
+                continue
+            wants_crawl = {p for p in salvage_postures
+                           if strict[p].get(st) == self.crawl_action}
+            wants_bank = {p for p in salvage_postures
+                          if strict[p].get(st) == self.bank_action}
+            if wants_crawl and wants_bank:
+                split_states.append(st)
+
+        # the value of the information, priced: the best ADAPTIVE risk-neutral policy
+        # against the best policy that ignores everything it sees.
+        fixed = []
+        survive = 1.0
+        for k in range(self.initial_depth, self.depth_cap + 1):
+            if k > self.initial_depth:
+                survive *= 1 - self.flood_below[k] / self.faces
+            carries = [self.veins[v]["carry"][k] for v in self.vein_order]
+            mean = sum(carries) / len(carries)
+            sq = sum(c * c for c in carries) / len(carries)
+            ev = survive * mean
+            var = survive * sq - ev * ev
+            fixed.append({"depth": k, "reach": survive, "mean_carry": mean,
+                          "ev": ev, "sd": math.sqrt(max(0.0, var))})
+        best_fixed = max(fixed, key=lambda f: f["ev"])
+        adaptive = policies["risk-neutral"]["value_at_start"]
+
+        return {
+            "per_posture": policies,
+            "split_states": split_states,
+            "dead_verbs": [a for a, hits in live_verbs.items() if not hits],
+            "fixed_depth_policies": fixed,
+            "best_fixed_depth": best_fixed,
+            "indifferent": indifferent,
+            "strict": strict,
+            "salvage_postures": salvage_postures,
+            "adaptive_risk_neutral": adaptive,
+            "information_gain": (adaptive / best_fixed["ev"] - 1.0
+                                 if best_fixed["ev"] > 0 else 0.0),
+            "choices": {pname: results[pname]["choice"] for pname, _, _ in self.POSTURES},
+        }
+
+    # -- the report ----------------------------------------------------------
+
+    def analyse(self) -> dict:
+        rep, name = self.rep, self.name
+        self.differential()
+        cen = self.census()
+        stop = self.stopping_rules()
+
+        # ⚑ the cross-check.  Two independent sources, compared.
+        k = self.KERNEL_SHAPE
+        mine = (len(self.states), cen["family_reachable"], cen["family_decisions"],
+                cen["family_drowned"])
+        theirs = (k["parametric_states"], k["family_reachable"], k["family_decisions"],
+                  k["family_drowned"])
+        if mine != theirs:
+            rep.find(name, "kernel-census-disagreement", FAIL,
+                     "the gate and the kernel disagree about the shape of the game",
+                     f"walking the emitted descriptor gives {mine[0]} declared states / "
+                     f"{mine[1]} reachable / {mine[2]} decisions / {mine[3]} drowned "
+                     f"across {len(self.vein_order)} veins; {k['source']} asserts "
+                     f"{theirs}.  These are independent — one is a compiled evaluation "
+                     f"of the kernel's own definitions, the other is a simulation of "
+                     f"the bytes a client downloads — so a disagreement means the "
+                     f"descriptor and the engine are not the same game.")
+        else:
+            rep.find(name, "family-shape-agrees", INFO,
+                     f"{mine[0]} states, {mine[1]} reachable across the vein family, "
+                     f"{mine[2]} decision states, {mine[3]} drowned — arrived at twice",
+                     f"this tool rebuilt the rules from `vent`, derived both verbs and "
+                     f"all three outcomes WITHOUT trusting a name, checked all "
+                     f"{len(self.trans)} emitted rows against them, then walked the real "
+                     f"transition on each of the {len(self.vein_order)} veins.  It gets "
+                     f"{mine}, and {k['source']} independently asserts the same tuple.  "
+                     f"A pin against its own definition is decoration; this is two "
+                     f"sources.")
+
+        # ⚑ the stopping-rule findings — the ones this game lives or dies on
+        if stop["dead_verbs"]:
+            rep.find(name, "dominated-verb", FAIL,
+                     f"{stop['dead_verbs']} is optimal under NO posture at ANY reachable "
+                     f"state",
+                     f"a push-your-luck game is the tension between two verbs.  A verb "
+                     f"that no risk posture ever wants is not a choice a player has; it "
+                     f"is a button that is always wrong, and the game is the other verb "
+                     f"repeated until it ends.")
+        decisions = len(stop["choices"]["risk-neutral"]) and len(
+            [s for s in self.state_of.values()
+             if s[2] == self.crawling and self.is_open(s, self.crawl_action)])
+        if not stop["split_states"]:
+            rep.find(name, "flat-stopping-rule", FAIL,
+                     "no reachable state is decided differently by any two risk postures",
+                     f"every one of the {len(stop['salvage_postures'])} salvage postures "
+                     f"— risk-neutral, two concave utilities and four quotas — STRICTLY "
+                     f"prefers the same verb at every state a crawler can be in.  That "
+                     f"means the stopping rule is a constant a player computes once and "
+                     f"never thinks about again, which is the failure mode this whole "
+                     f"backend exists to catch.")
+        else:
+            rep.find(name, "stopping-rule-is-live", INFO,
+                     f"{len(stop['split_states'])} of {decisions} decision states are "
+                     f"decided differently by different risk postures",
+                     f"at {sorted((s[0], s[1]) for s in stop['split_states'])} "
+                     f"(as depth/carried) at least one salvage posture STRICTLY prefers "
+                     f"crawl and another STRICTLY prefers bank, so there is no single "
+                     f"right answer to hand a player.  ⚠ Two exclusions, because both "
+                     f"would inflate this number: a posture that VALUES BOTH VERBS "
+                     f"EQUALLY is indifferent, not disagreeing (a quota out of reach "
+                     f"from here is worth zero either way), and `cartographer` is "
+                     f"excluded entirely because it optimises depth rather than salvage "
+                     f"and would therefore disagree in a game whose salvage numbers were "
+                     f"flat.  The induction is exact, over the BELIEF state, with a "
+                     f"uniform prior over veins.")
+
+        no_tradeoff = [p for p, v in stop["per_posture"].items()
+                       if len({stop["strict"][p].get(st)
+                               for st in stop["choices"][p]
+                               if self.is_open(st, self.crawl_action)} - {None}) < 2]
+        if no_tradeoff:
+            rep.find(name, "posture-with-no-tradeoff", WARN,
+                     f"{no_tradeoff} never faces a decision: one verb is strictly better "
+                     f"everywhere",
+                     f"a posture that always crawls (or always banks) wherever it has "
+                     f"any preference at all is not playing this game; it is executing "
+                     f"a constant.  Two DIFFERENT causes look the same here and they "
+                     f"want different repairs.  (a) A posture whose payout is not PRICED "
+                     f"against the risk — here `cartographer`, which is a real design "
+                     f"residual: the drowned-run consolation pays `intel` per rung "
+                     f"reached and nothing subtracts from it, so a crawler who wants "
+                     f"only intel goes to the bottom every time and is never punished.  "
+                     f"The consolation exists so a drowned transcript is worth "
+                     f"submitting — which is what makes the day's public record "
+                     f"informative — so the fix is to PRICE it (cap it, or scale it by "
+                     f"the sling that was lost), NOT to delete it.  (b) A quota so far "
+                     f"out of reach that the posture is INDIFFERENT nearly everywhere "
+                     f"and strictly prefers a verb only in the handful of states that "
+                     f"can still reach it — see `posture-is-mostly-mute`.  That is not a "
+                     f"defect in the game; it is a target set too high, and it is "
+                     f"reported so the two are not confused.")
+
+        mostly_mute = [p for p, sts in stop["indifferent"].items()
+                       if decisions and len(sts) > decisions // 2]
+        if mostly_mute:
+            rep.find(name, "posture-is-mostly-mute", INFO,
+                     f"{mostly_mute} is indifferent at more than half the decision states",
+                     f"a quota posture is indifferent exactly where its quota is out of "
+                     f"reach whatever it does.  That is not a defect — it is what a "
+                     f"player with an impossible target actually faces — but it means "
+                     f"this posture is carrying less of the split evidence than its "
+                     f"presence in the table suggests, and the count above already "
+                     f"excludes it at those states.")
+
+        thresholds = {p["fixed_threshold"] for p in stop["per_posture"].values()}
+        if len(thresholds) == 1 and None not in thresholds:
+            rep.find(name, "single-threshold-game", FAIL,
+                     f"every posture reduces to the same fixed depth threshold "
+                     f"{thresholds}",
+                     "if 'bank at depth k' is optimal for every posture then the hidden "
+                     "table buys the player nothing: they crawl to k and stop, forever.")
+        elif len([t for t in thresholds if t is not None]) < len(thresholds):
+            rep.find(name, "stopping-rule-is-not-a-threshold", INFO,
+                     "at least one posture's optimal rule is NOT a fixed depth",
+                     f"posture thresholds: "
+                     f"{ {p: v['fixed_threshold'] for p, v in stop['per_posture'].items()} }.  "
+                     f"A `None` means the posture crawls at some depth and banks at a "
+                     f"SHALLOWER one, which can only happen because what it learned "
+                     f"changed its mind — the information is doing work.")
+
+        # ⚑ WHERE THE DISCOVERY STOPS.  A push-your-luck game with a learnable table
+        # has two halves: rungs where the crawler is still finding out what kind of day
+        # it is, and rungs where they already know and are only doing arithmetic.  The
+        # second half is not worthless — the hazard is highest there — but it has no
+        # discovery in it, and a family that collapses to certainty early spends the
+        # deep rungs, which are the tense ones, on a decision with no news in it.
+        ambiguous = [st for st in self.state_of.values()
+                     if st[2] == self.crawling and self.is_open(st, self.crawl_action)
+                     and len(self.consistent(st[0], st[1])) > 1]
+        exhausted_at = None
+        if ambiguous:
+            exhausted_at = max(st[0] for st in ambiguous) + 1
+        deep = [st for st in self.state_of.values()
+                if st[2] == self.crawling and self.is_open(st, self.crawl_action)]
+        if exhausted_at is not None and deep and exhausted_at <= max(
+                st[0] for st in deep):
+            still_deciding = len([st for st in deep if st[0] >= exhausted_at])
+            rep.find(name, "discovery-stops-early", WARN,
+                     f"from rung {exhausted_at} on, the day is fully known and "
+                     f"{still_deciding} decision state(s) have nothing left to learn",
+                     f"only {len(ambiguous)} of {len(deep)} decision states still have "
+                     f"more than one possible table.  Past rung {exhausted_at} the "
+                     f"crawler is doing arithmetic against a known payout — and those "
+                     f"are precisely the rungs with the HIGHEST hazard, so the tensest "
+                     f"part of the shaft is the part with no news in it.  The repair is "
+                     f"a table family that separates in more stages (more members, "
+                     f"or ladders that stay ambiguous deeper), not a change to the "
+                     f"hazard.")
+        else:
+            rep.find(name, "discovery-runs-to-the-bottom", INFO,
+                     "the table is still ambiguous at the deepest decision",
+                     f"{len(ambiguous)} of {len(deep)} decision states have more than "
+                     f"one possible table, including the deepest, so no rung is pure "
+                     f"arithmetic.")
+
+        gain = stop["information_gain"]
+        if gain < 0.01:
+            rep.find(name, "information-is-decoration", WARN,
+                     f"the best adaptive policy beats the best fixed-depth policy by "
+                     f"{gain * 100:.1f}%",
+                     f"the hidden table is observed during play, so an adaptive crawler "
+                     f"should beat one that decided its depth before going in.  A gap "
+                     f"this small means the observation is not worth acting on and the "
+                     f"family could be collapsed to one vein with no loss.")
+        else:
+            rep.find(name, "information-is-worth-acting-on", INFO,
+                     f"the best adaptive policy beats the best fixed-depth policy by "
+                     f"{gain * 100:.1f}%",
+                     f"exact backward induction over the belief state returns "
+                     f"{stop['adaptive_risk_neutral']:.3f} at the mouth; the best policy "
+                     f"that ignores what it sees ('always crawl to depth "
+                     f"{stop['best_fixed_depth']['depth']}') returns "
+                     f"{stop['best_fixed_depth']['ev']:.3f}.  That gap is what reading "
+                     f"the shaft is worth.")
+
+        if self.never_fires:
+            rep.find(name, "declared-reason-never-fires", FAIL,
+                     f"{self.never_fires} is declared and never refuses anything",
+                     f"`vent.refusal_vocabulary` names it, so a client will carry a "
+                     f"string for it and a reader will believe it is a rule.  A refusal "
+                     f"that cannot fire is a rule that does not exist.")
+        else:
+            rep.find(name, "every-declared-reason-fires", INFO,
+                     f"all {len(self.declared_reasons)} declared refusal reasons fire, "
+                     f"and nothing else does",
+                     f"{sorted(self.declared_reasons)}, checked in both directions "
+                     f"against the emitted rows.")
+
+        one_sided = sorted({st[0] for st in self.state_of.values()
+                            if st[2] == self.crawling
+                            and not all(self.is_open(st, a) for a in self.action_ids)})
+        if one_sided and one_sided != [self.depth_cap]:
+            rep.find(name, "verb-missing-above-the-bottom", WARN,
+                     f"depths {one_sided} offer only one verb",
+                     "a live crawler should always be able to choose.  The bottom rung "
+                     "is expected (there is nowhere deeper); anything else is a place "
+                     "the game plays itself.")
+
+        if cen["family_drowned"] == 0:
+            rep.find(name, "cannot-be-lost", FAIL,
+                     "no reachable state is drowned, so the crawl cannot be lost",
+                     "a run that cannot fail is not a wager.")
+
+        shapes = {(v["reachable"], v["decisions"], v["drowned"]) for v in cen["per_vein"]}
+        carries = {self.veins[v]["carry"][self.depth_cap] for v in self.vein_order}
+        if len(carries) < len(self.vein_order):
+            rep.find(name, "the-family-collapses", WARN,
+                     f"the {len(self.vein_order)} veins produce only {len(carries)} "
+                     f"distinct deepest carries",
+                     "two hidden draws that pay the same at the bottom are the same day "
+                     "under a relabelling.")
+        elif len(shapes) == 1:
+            rep.find(name, "veins-share-a-state-shape", INFO,
+                     "every vein spans the same number of states",
+                     f"all {len(self.vein_order)} veins reach {shapes} — which is "
+                     f"expected here and is NOT the collapse finding: the shaft is one "
+                     f"shaft, so the POSITIONS coincide while the PAYOUTS "
+                     f"({sorted(carries)}) do not.  The bits are in the carry, not the "
+                     f"topology.")
+
+        refuse_rows = sum(1 for t in self.trans.values() if t["verdict"] == "refuse")
+        accept_rows = sum(1 for t in self.trans.values() if t["verdict"] == "accept")
+        wager_rows = sum(1 for t in self.trans.values() if t["verdict"] == "wager")
+        reasons = Counter(t["reason"] for t in self.trans.values()
+                          if t["verdict"] == "refuse")
+
+        # information floor: how many rungs must be crawled before the carry ladder
+        # names the day.  Computed from the ladders, not declared.
+        floor = None
+        for d in range(self.initial_depth, self.depth_cap + 1):
+            if len({self.veins[v]["carry"][d] for v in self.vein_order}) == \
+                    len(self.vein_order):
+                floor = d - self.initial_depth
+                break
+
+        longest = 0
+        for pname, _, _ in self.POSTURES:
+            choice = stop["choices"][pname]
+            depth, actions = self.state_of[self.initial], 0
+            st = depth
+            while self.crawl_action in choice.get(st, []) and \
+                    self.is_open(st, self.crawl_action):
+                # follow the modal (first-listed) vein; every vein gives the same depth
+                st = self.step(st, self.crawl_action, self.consistent(st[0], st[1])[0],
+                               False)
+                actions += 1
+            longest = max(longest, actions + 1)
+
+        self.stop = stop
+        self.cen = cen
+        return {
+            "game": name,
+            "kind": "push-your-luck",
+            "engine_module": self.doc["engine_module"],
+            "states": len(self.states),
+            "reachable_states": len(self.states),
+            "actions": len(self.action_ids),
+            "transitions": len(self.trans),
+            "accept_rows": accept_rows,
+            "refuse_rows": refuse_rows,
+            "oracle_rows": wager_rows,
+            "refusal_reasons": dict(reasons),
+            "information_floor_tight": floor,
+            "execution_floor_as_emitted": 1,
+            "worst_case_optimal": longest,
+            "worst_case_any_legal_play": self.budget,
+            "action_limit": self.budget,
+            "budget_binds": longest >= self.budget,
+            "budget_slack": self.budget - longest,
+            "can_lose": True,
+            "opener_classes": len(self.action_ids),
+            "openers_total": len(self.action_ids),
+            "automorphism_group_order": 1,
+            "depth_cap": self.depth_cap,
+            "faces": self.faces,
+            "veins": len(self.vein_order),
+            "flood_ladder": [self.flood_below[r]
+                             for r in range(1, self.depth_cap + 1)],
+            "family_reachable": cen["family_reachable"],
+            "family_decisions": cen["family_decisions"],
+            "family_drowned": cen["family_drowned"],
+            "per_vein": cen["per_vein"],
+            "posture_count": len(self.POSTURES),
+            "posture_split_states": [list(s) for s in stop["split_states"]],
+            "posture_thresholds": {p: v["fixed_threshold"]
+                                   for p, v in stop["per_posture"].items()},
+            "posture_values": {p: v["value_at_start"]
+                               for p, v in stop["per_posture"].items()},
+            "fixed_depth_policies": stop["fixed_depth_policies"],
+            "best_fixed_depth": stop["best_fixed_depth"]["depth"],
+            "adaptive_risk_neutral": stop["adaptive_risk_neutral"],
+            "information_gain": stop["information_gain"],
+            "dead_actions": stop["dead_verbs"],
+            "stopping_table": self.stopping_table(stop),
+            "kernel_shape": dict(self.KERNEL_SHAPE),
+        }
+
+    def stopping_table(self, stop) -> list:
+        """One row per reachable decision state: what each posture wants there."""
+        rows = []
+        for st in sorted((s for s in self.state_of.values()
+                          if s[2] == self.crawling), key=lambda s: (s[0], s[1])):
+            if not self.is_open(st, self.crawl_action):
+                continue
+            cell = {}
+            for pname, _, _ in self.POSTURES:
+                verbs = stop["choices"][pname][st]
+                # `=` is INDIFFERENCE, not "both are good": the posture values the two
+                # verbs identically, which for a quota means it is out of reach either
+                # way.  Rendering it as `bank/crawl` reads as a live two-sided choice
+                # and it is the opposite of one.
+                cell[pname] = verbs[0] if len(verbs) == 1 else "="
+            rows.append({"depth": st[0], "carried": st[1],
+                         "still_possible": self.consistent(st[0], st[1]),
+                         "flood_below": self.flood_below[st[0] + 1],
+                         "postures": cell})
+        return rows
+
+
+# ---------------------------------------------------------------------------
 
 def pick_backend(doc: dict):
     """Dispatch on the SHAPE, so a descriptor cannot pick its own analyser by id."""
@@ -3401,6 +5120,8 @@ def pick_backend(doc: dict):
         return ProbeOracleGame
     if "rules" in doc:
         return DeductionGame
+    if "vent" in doc:
+        return PushYourLuckGame
     sm = doc.get("state_machine")
     if not isinstance(sm, dict):
         raise Refusal(f"{doc.get('game_id')} carries no analysable shape")

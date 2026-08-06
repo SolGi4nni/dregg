@@ -16,6 +16,7 @@ import Dregg2.Games.PathOfAngels.SignalTriangulation
 import Dregg2.Games.PathOfAngels.RelayRepair
 import Dregg2.Games.PathOfAngels.SalvageLock
 import Dregg2.Games.PathOfAngels.DeckDescent
+import Dregg2.Games.PathOfAngels.VentCrawl
 import Dregg2.Games.PathOfAngels.BlackBoxReconstruction
 import Dregg2.Games.PathOfAngels.PlayerCounters
 import Dregg2.Games.PathOfAngels.HiddenInstance
@@ -32,6 +33,7 @@ inductive ActiveGame where
   | salvage (config : SalvageLock.Config)
   | blackBox (config : BlackBoxReconstruction.Config)
   | deckDescent (config : DeckDescent.Config)
+  | ventCrawl (config : VentCrawl.Config)
 
 def ActiveGame.mission : ActiveGame → MissionSpec
   | .signal config => config.mission
@@ -39,6 +41,7 @@ def ActiveGame.mission : ActiveGame → MissionSpec
   | .salvage config => config.mission
   | .blackBox config => config.mission
   | .deckDescent config => config.mission
+  | .ventCrawl config => config.mission
 
 /-- Proof fields are omitted, and — ⚠ CHANGED — so are the INSTANCE fields.
 
@@ -57,6 +60,11 @@ inductive GameConfigClaim where
   | salvage (mission : MissionSpec) (reward : Contribution)
   | blackBox (mission : MissionSpec) (reward : Contribution)
   | deckDescent (mission : MissionSpec) (reward : Contribution)
+  /-- ⚠ No `reward`.  Vent Crawl has no fixed payout to claim: what a run pays is
+  a function of the rung it banked from, computed by `VentCrawl.terminalOutput`
+  and validated against the mission's own ceiling.  What IS claimable is the
+  relic the bottom rung awards, which the mission must have allowlisted. -/
+  | ventCrawl (mission : MissionSpec) (deepRelic : RelicId)
 deriving DecidableEq
 
 def ActiveGame.configClaim : ActiveGame → GameConfigClaim
@@ -65,6 +73,7 @@ def ActiveGame.configClaim : ActiveGame → GameConfigClaim
   | .salvage config => .salvage config.mission config.reward
   | .blackBox config => .blackBox config.mission config.reward
   | .deckDescent config => .deckDescent config.mission config.reward
+  | .ventCrawl config => .ventCrawl config.mission config.deepRelic
 
 /-- Runtime state selected from the authenticated active catalog.  Domain fields
 are repeated intentionally and checked against the mission: malformed decoded
@@ -126,6 +135,7 @@ inductive SubmittedRun where
   | salvage (actions : List SalvageLock.Action)
   | blackBox (actions : List BlackBoxReconstruction.Action)
   | deckDescent (actions : List DeckDescent.Action)
+  | ventCrawl (actions : List VentCrawl.Action)
 
 def FinalizedCarrier.counterKey (carrier : FinalizedCarrier) : PlayerCounterKey where
   federationId := carrier.federationId
@@ -226,6 +236,27 @@ private def deckDescentContext (carrier : FinalizedCarrier) : DeckDescent.JudgeC
   playerKey := carrier.playerKey
   previousPlayerCounter := carrier.currentPlayerCounter.val
 
+/-- ⚠ The only judge context built from `active` as well as `carrier`, and the
+reason is the whole point of Vent Crawl: its hidden table is drawn once per SLOT
+and is the same for every player, while `active.runSeed` is drawn per player.
+There is no way to reach a shared draw through the per-player seed, so the day's
+seed is derived here, from the very `slotSecret` that `admissionChecks` has
+already pinned to the published `slotCommitment`.
+
+Nothing new is trusted: a node that swapped the secret after publishing is
+refused by `judgeActive_uncommitted_secret_refused`, and the same secret that
+fixes the player's tape fixes the day's vein.
+
+⚑ `VentCrawl.daySeedFor` is `HiddenInstance.runSeedFor` under a reserved sentinel
+key, so it is `@[irreducible]` all the way down — never `decide` through this. -/
+private def ventCrawlContext (active : ActiveRunState) (carrier : FinalizedCarrier) :
+    VentCrawl.JudgeContext where
+  actorRoot := carrier.actorRoot
+  playerKey := carrier.playerKey
+  previousPlayerCounter := carrier.currentPlayerCounter.val
+  daySeed := VentCrawl.daySeedFor active.slotSecret active.slot
+    (HiddenInstance.MissionContext.ofMission active.game.mission)
+
 /-! ## Abstract judged value with game-specific executable evidence -/
 
 private inductive JudgedEvidence where
@@ -264,6 +295,14 @@ private inductive JudgedEvidence where
       (actions : List DeckDescent.Action)
       (run : DeckDescent.JudgedRun)
       (judged : DeckDescent.judge config active.world (deckDescentContext carrier) actions = some run)
+  | ventCrawl
+      (active : ActiveRunState) (carrier : FinalizedCarrier) (claim : RunClaim)
+      (config : VentCrawl.Config)
+      (admitted : admissionChecks active carrier claim = true)
+      (actions : List VentCrawl.Action)
+      (run : VentCrawl.JudgedRun)
+      (judged : VentCrawl.judge config active.world (ventCrawlContext active carrier) actions
+        = some run)
 
 /-- Public type, private constructor and payload. -/
 structure JudgedRun where
@@ -277,6 +316,7 @@ def JudgedRun.receipt (judgedRun : JudgedRun) : RunReceipt :=
   | .salvage _ _ _ _ _ _ run _ => run.receipt
   | .blackBox _ _ _ _ _ _ run _ => run.receipt
   | .deckDescent _ _ _ _ _ _ run _ => run.receipt
+  | .ventCrawl _ _ _ _ _ _ run _ => run.receipt
 
 /-- The exact game tag and executable judge, run against an admission fact the caller
 already holds.  `judgeActive` below is `admissionChecks`-then-this and nothing else, so
@@ -317,6 +357,11 @@ def judgeAdmitted (active : ActiveRunState) (carrier : FinalizedCarrier)
       match hjudged : DeckDescent.judge config active.world
           (deckDescentContext carrier) actions with
       | some run => some ⟨.deckDescent active carrier claim config hadmitted actions run hjudged⟩
+      | none => none
+  | .ventCrawl config, .ventCrawl actions =>
+      match hjudged : VentCrawl.judge config active.world
+          (ventCrawlContext active carrier) actions with
+      | some run => some ⟨.ventCrawl active carrier claim config hadmitted actions run hjudged⟩
       | none => none
   | _, _ => none
 
@@ -484,6 +529,16 @@ theorem judgeActive_wrong_game_refused (active : ActiveRunState)
     judgeActive active carrier claim (.relay actions) = none := by
   simp [judgeActive, judgeAdmitted, hgame]
 
+/-- The sixth arm is tag-checked like the other five: a vent-crawl transcript
+submitted against a descent game is refused before either judge runs, so the new
+arm did not open a door that dispatches on the transcript. -/
+theorem judgeActive_vent_crawl_against_descent_refused (active : ActiveRunState)
+    (carrier : FinalizedCarrier) (claim : RunClaim)
+    (config : DeckDescent.Config) (actions : List VentCrawl.Action)
+    (hgame : active.game = .deckDescent config) :
+    judgeActive active carrier claim (.ventCrawl actions) = none := by
+  simp [judgeActive, judgeAdmitted, hgame]
+
 /-- Every inhabitant retains an equality to one concrete executable judge. -/
 theorem JudgedRun.has_executable_origin (run : JudgedRun) :
     (∃ (active : ActiveRunState) (carrier : FinalizedCarrier)
@@ -512,6 +567,12 @@ theorem JudgedRun.has_executable_origin (run : JudgedRun) :
         (actions : List DeckDescent.Action)
         (raw : DeckDescent.JudgedRun),
       DeckDescent.judge config active.world (deckDescentContext carrier) actions = some raw ∧
+      run.receipt = raw.receipt) ∨
+    (∃ (active : ActiveRunState) (carrier : FinalizedCarrier)
+        (config : VentCrawl.Config)
+        (actions : List VentCrawl.Action)
+        (raw : VentCrawl.JudgedRun),
+      VentCrawl.judge config active.world (ventCrawlContext active carrier) actions = some raw ∧
       run.receipt = raw.receipt) := by
   obtain ⟨evidence⟩ := run
   cases evidence with
@@ -524,7 +585,11 @@ theorem JudgedRun.has_executable_origin (run : JudgedRun) :
   | blackBox active carrier claim config admitted actions raw judged =>
       exact Or.inr (Or.inr (Or.inr (Or.inl ⟨active, carrier, config, actions, raw, judged, rfl⟩)))
   | deckDescent active carrier claim config admitted actions raw judged =>
-      exact Or.inr (Or.inr (Or.inr (Or.inr ⟨active, carrier, config, actions, raw, judged, rfl⟩)))
+      exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl
+        ⟨active, carrier, config, actions, raw, judged, rfl⟩))))
+  | ventCrawl active carrier claim config admitted actions raw judged =>
+      exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+        ⟨active, carrier, config, actions, raw, judged, rfl⟩))))
 
 theorem JudgedRun.applied (run : JudgedRun) :
     applyContribution run.receipt.mission run.receipt.contribution
@@ -555,6 +620,7 @@ theorem JudgedRun.player_counter_positive (run : JudgedRun) :
 #assert_axioms judgeActive_wrong_current_counter_refused
 #assert_axioms judgeActive_counter_exhausted_refused
 #assert_axioms judgeActive_wrong_game_refused
+#assert_axioms judgeActive_vent_crawl_against_descent_refused
 #assert_axioms JudgedRun.has_executable_origin
 #assert_axioms JudgedRun.applied
 #assert_axioms JudgedRun.player_counter_positive
