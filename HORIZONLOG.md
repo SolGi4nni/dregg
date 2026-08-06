@@ -1,5 +1,104 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 6 (THE LEG UPSTREAM DOES NATIVELY) — **the deferred IPA accumulator check is inside a circuit**: a Lean-authored threaded sound-Vesta AIR, folded with the accumulator carried by `cb.connect`, both polarities green in RELEASE — and the three things it still does **not** reach, each with a number
+
+Upstream `&&`s `Ipa.Step.accumulator_check` into `batch_step_dlog_check` (`verify.ml:135-146`).
+Ours was an oracle **beside** the verifier: `bridge/src/mina_accumulator_discharge.rs` evaluates
+`Σᵢrⁱ·Cᵢ − ⟨Σᵢrⁱ·s(u⃗ᵢ), G⟩ == O` natively over the byte-pinned 65,536-generator Vesta SRS, and its
+own header says so — *"Nothing here is an AIR, and that is the whole design."* This entry is that
+leg moved in.
+
+### ⚑ THE SHAPE, and why the claim needed no separate block
+
+Read the batched discharge as a running sum and it is a chain of complete additions:
+`acc_0 = C`, `acc_{r+1} = acc_r + A_r`, `acc_n = O`. So **the accumulator's ENTRY POINT is the
+claim's commitment** and the terminal identity **is** the check. `C` is therefore published by the
+pins the layout already needed for the fold — `PI[0..95]`, joined arithmetically (the six input
+limb legs range it, the 33 SSA ops read it), not pinned decoratively.
+
+`Dregg2/Circuit/Emit/MinaAccumulatorAir.lean` — **Lean-authored AIR, House Law #1**, Rust proves and
+folds and authors nothing. `PastaLadderThread.vestaThreadAir` (the sound Vesta RCB row with its 96
+`.transition` accumulator threads) + **192 endpoint pins** publishing `acc_in(96) ‖ acc_out(96)` +,
+in the `-final` block, **64 `.last`-row boundary gates** forcing every limb of the terminal `X` and
+`Z` to zero. That last block is `pasta_msm::is_identity` (`z == 0 && x == 0`) as a constraint.
+Emitted: `mina-accumulator-seg.json` (**4 764** constraints) and `mina-accumulator-final.json`
+(**4 828**), both `3 048` columns / `192` PIs, registered in `EmitByName.lean`
+(`byNameDescriptors_length` 111 → 113).
+
+**PROVED, not asserted**: `threadedLadderV_forces` (the Vesta twin of the threaded induction — the
+Pallas one could not be reused, `row_forces` consumes `pallasCompleteAddSound_forces`),
+`terminalAccumulator_forces` (⚑ the last row's `.transition` legs do **not** fire, so the induction
+stops one row short of the discharge; one more application of the row's own forcing transported
+through `rcbTraceZ_congr` closes it — the exact seam where an off-by-one silently drops the final
+addend), and **`accumulator_discharge_forced`**: rows satisfied + threads held + the discharge gates
+satisfied force the `n+1`-fold RCB chain of the trace's own addends to be the point at infinity mod
+the real Vesta-base prime. `#assert_axioms`-clean, no `sorry`, no `native_decide`, **zero `#guard`s**.
+
+### ⚑⚑ BOTH POLARITIES, IN RELEASE, AND THE PAIR CANNOT ROT INTO AGREEMENT
+
+`cargo test -p dregg-circuit --release --test mina_accumulator_air_proves` — **`test result: ok. 9
+passed; 0 failed`**, read off the `test result:` line.
+
+* an honest 8-row Vesta chain that walks `2G … 8G` and meets `−8G` **PROVES** under both descriptors;
+* ⚑ the **SAME eight honest rows** with the accumulator left open (one more generator add instead of
+  the closing negation) **prove under `-seg` and are REFUSED under `-final`** — OLD-ADMITS /
+  NEW-REJECTS on two artifacts that are a genuine PREFIX pair (asserted over the parsed bytes);
+* eight independently honest rows whose accumulator does not chain are refused by the **THREAD**;
+* a displaced endpoint publication is refused by the **PINS** (six slots, both blocks).
+
+⚑ **THE FALSIFIERS WERE CHECKED TO MOVE, BEFORE ANY PROVER RAN** — the two wrong-reason failures
+this campaign already paid for. The open chain's terminal `X`/`Z` limbs are **nonzero in all 64
+positions** (not a zero moved into a zero; the gate is shown a real point, not an absent one); every
+input-block cell is `< 2^8` and every cell `< 2^16`, so **no range lookup can be the refusal**; and
+every tooth calls `assert_violated_constraint_not_bus`, which holds in EVERY profile, so a LogUp
+imbalance cannot stand in for the gate under test. The honest fixture is also asserted to carry
+**eight DISTINCT accumulators** (a fixed point would make the threads vacuous) and a **nonzero
+terminal `Y`** — `(0 : y : 0)` is the projective identity; an all-zero triple is not a point.
+
+### ⚑ THE FOLD CARRIES THE ACCUMULATOR *INSIDE* THE RECURSION
+
+`circuit-prove/src/mina_accumulator_fold.rs`. The phase-2 chain's lesson applied one campaign over:
+a fold that re-pins public inputs closes nothing, so the node `cb.connect`s the left child's **96
+outgoing accumulator limbs** to the right child's 96 incoming ones, read from each child's own
+FRI-bound `air_public_targets`. The 96 is not a coincidence with the phase-2 chain's 96 — a
+projective Pasta point in the sound encoding and a Kimchi sponge state are both `3 × 32` felts. Two
+rails for the discharge, and a caller must say which a root has: **in-AIR** (the last segment is
+proved against `-final`, whose own gates force it) or **host-read** (`AccumulatorClaim::is_identity`).
+The claim reader lives in `dregg-recursion-verify` so a node reads a root without linking the prover;
+`check-recursion-closure.py` is **green at 14 policy rows / 21 assertions** and **no edge was added**.
+
+### ⚠ WHAT THE NODE STILL TAKES ON TRUST — three, each with a number, none of them a mood
+
+1. ⚠ **THE ADDENDS ARE NOT ROUTED.** `accumulator_discharge_forced` forces the chain of the trace's
+   OWN addends to vanish and says **nothing about what they are**. Forcing `A_r` to be the `r`-th
+   scaled SRS generator is `PastaMsmBucketed`'s exact-public lookups, and
+   `the_routing_tuple_does_not_fit_one_table` prices the one deployed constant in the way:
+   `MAX_EXACT_PUBLIC_ARITY = 64` against a **97**-wide point tuple in the sound 32-limb encoding.
+   `split_srs_cells_fit` already took the same medicine one layout over. **So what is in a circuit
+   is the SUMMATION half, at full 256-bit width — not the whole check.** Saying otherwise would be
+   the substitution this repo keeps finding.
+2. ⚠ **THE WIDTH DEMONSTRATED IS 8 ROWS, NOT 1 474 800.** `the_full_width_sum_needs_the_fold`:
+   `PastaMsmBucketed.fused_at_step` prices the `2^16`-generator MSM at 1 474 800 complete additions,
+   which at `3 048` columns is **4.5 · 10⁹ committed cells** — so the full-width chain is a fold of
+   segments and the recursion is load-bearing rather than an optimisation.
+3. ⚠ **THE CLAIM IS NOT TIED TO A HEAD BY A GATE.** `root_entry_binds_claim` (bridge) is the
+   consumer-side refusal that a root's published entry point **is this claim's commitment** — 96
+   lanes, elementwise, **no digest and therefore no birthday bound**, and it is exhibited to
+   discriminate between the seven real block claims pairwise, not merely between a value and a
+   scribble. But it is a **refusal a consumer makes, not a constraint**, and nothing relates the
+   claim to a light client's `TIP_STATE`. That is the same status `ANCHOR_STATE` has today; say it
+   that way and do not call it a tie.
+
+⚠ **AND THE NASTY NATIVE CONTROL IS INHERITED, NOT CURED.** The native discharge refuses a forged
+`sg` and a tampered challenge because the relation binds the *pair* `(C, u⃗)` — but a claim
+**rebuilt** around tampered challenges (recomputing `C = ⟨b_poly(u⃗′), G⟩`) discharges honestly and
+is ACCEPTED. The in-circuit version inherits that exactly: it checks a chain from a published `C` to
+`O`, so a self-consistent forged pair passes there too. What refuses it is the binding of `C` to the
+block — residual (3) — and **not** anything in this AIR.
+
+**FLAG DAY: none.** Two NEW by-name descriptors; no existing descriptor moves a byte, no VK rotates,
+no schema epoch moves, nothing re-genesises. `PROVENANCE.json` untouched.
+
 ## ⛑⛑⛑ AUGUST 6 (THE OTHER COORDINATE) — the umem producer gated its ADDRESS codec and never its VALUE codec, so a `Bytes32` write could be read back as a `UmemRef` at **cost 0**; and the `hash_bytes` sweep's last two (A)s rested on a blocker that was **FALSE**
 
 Two halves of one unfinished repair. In both, the honest answer came out the opposite way from
