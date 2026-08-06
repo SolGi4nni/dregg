@@ -282,7 +282,32 @@ def check_gate_registry(root: str, findings, enforce_floors: bool) -> int:
             parts = cmd.split()
             if len(parts) < 2:
                 continue
-            script = parts[1]
+
+            # ⚑ SKIP FLAGS, AND ONLY CHECK WHAT IS ACTUALLY A PATH.
+            #
+            # This took `parts[1]` blindly, so a row running `bash -c '...'` reported
+            # `GATE_SCRIPT_MISSING  -c` — and since the checker is a PRE-PUSH gate, that false positive
+            # blocked pushes for EVERY lane, not just the row's author. Measured 2026-08-05 on
+            # `mina-vk-identity` / `mina-vk-identity-red`, which legitimately run
+            # `bash -c 'cd bridge/mina-zkapp && npm run --silent vk-identity'`.
+            #
+            # ⚠ The gate's own purpose makes a false positive expensive: it exists to catch a reference
+            # committed without its referent (ELEVEN real instances in five days, one of which took the
+            # workspace down for six hours). A gate that cries wolf on `-c` is a gate people learn to
+            # push past with the override — which is exactly how the real instances would get through.
+            #
+            # Rule: take the first argument that is not a flag AND looks like a repo path (contains a
+            # `/` or ends in a known script suffix). A `-c` inline script names no file, so there is
+            # nothing to check and the row is skipped — correctly, since its body is not a referent.
+            script = None
+            for tok in parts[1:]:
+                if tok.startswith("-"):
+                    continue
+                if "/" in tok or tok.endswith((".sh", ".py", ".mjs", ".js")):
+                    script = tok
+                break
+            if script is None:
+                continue
             if not os.path.exists(os.path.join(root, script)):
                 findings.add(
                     "GATE_SCRIPT_MISSING", script,
