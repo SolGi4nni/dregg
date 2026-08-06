@@ -1,3 +1,10 @@
+> ⚠ **STALE — SUPERSEDED as a status anchor by `docs/reference/MARKET-FRONTIER-2026-08-06.md`
+> (verified at HEAD).** Several status lines below are wrong now: #15 is re-classified ember-gated
+> (not "AUTONOMOUS-ish"); #3's "single-process committee" is stale (`9927bb188` landed a real
+> multi-process one); the "12 same-opening consumers" is a name conflation and the deployed ring↔wide
+> join is unchanged; "discharge FRI to unlock Path 3" is a category error (FRI is assurance, not a
+> capability gate); and the DrEX-clear regression is CLOSED (`cf7cb0b76`). Cite the frontier doc.
+
 # Private-Market Dev-Plan — dark-pool + fhegg + MPC synthesis — 2026-07-25
 
 Synthesis of the three scope docs (FHEGG-MARKET-SCOPE, MPC-STACK-SCOPE, + the dark-pool findings below). One
