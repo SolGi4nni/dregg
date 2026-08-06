@@ -817,8 +817,27 @@ mod tests {
         initialize_exact(&store);
 
         assert_eq!(store.commit_cursor().expect("cursor"), 1);
-        assert_eq!(store.commit_compacted_floor().expect("floor"), 1);
-        assert!(store.commit_record_at(0).expect("tail read").is_none());
+
+        // ⚑ COMPACTION IS QUORUM-GATED NOW, AND THIS TEST'S PREAMBLE PREDATES THAT.
+        //
+        // It used to assert `commit_compacted_floor() == 1` and that record 0 had been DELETED. Both
+        // described a world where `PersistentStore::compact_below` deleted on its own authority. Since
+        // the PoA hardening (`8c7105933`) it refuses without an externally pinned, quorum-signed
+        // compact anchor and returns `Ok(0)` — deliberately, and its one production caller
+        // (`ledger_store.rs:110`) matches `Ok(0) => {}` with a comment saying so. **A checkpoint no
+        // longer grants itself deletion authority.**
+        //
+        // ⚠ `store_checkpoint_anchor` above writes a `StoredAttestedRoot` with `quorum_signatures:
+        // Vec::new()` — an attested root, NOT a signed compact anchor — so this test never had the
+        // authority the old assertions assumed. Asserting the refusal is the honest statement of what
+        // the store now does; exercising real compaction needs
+        // `compact_below_with_poa_anchor_v1` and a quorum-signed preview, which is
+        // `poa_compact_ceremony`'s subject, not this test's.
+        assert_eq!(store.commit_compacted_floor().expect("floor"), 0);
+        assert!(
+            store.commit_record_at(0).expect("tail read").is_some(),
+            "unsigned compaction must NOT delete a record: the PoA gate is the only deletion authority"
+        );
 
         let authority = capture_from_store_and_live_ledger(&store, &ledger, cell.id(), |_| true)
             .expect("attested compacted checkpoint authority");
