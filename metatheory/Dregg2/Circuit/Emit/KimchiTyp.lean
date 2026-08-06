@@ -1062,10 +1062,33 @@ def auxFloor (pub : Nat) : PVar → Prop
   | .external j => pub ≤ j
   | .internal k => pub ≤ k
 
+/-- ⚑ **THE PLACEMENT CONTRACT, DERIVED.** `KimchiPlacement.Contract` is `(pubSize, auxBase)` — the
+two numbers H1 and the dead-gap refusal read, and both are hand-written today (`preimageContract`
+is `⟨PUB, 1⟩`, typed in). The layout fixes the first; the aux floor fixes the second. -/
+def contractOf (t : Typ) : Contract := ⟨pubSize t, pubSize t⟩
+
+/-- ⚑ **NO DEAD GAP, BY CONSTRUCTION.** `placeChecked` refuses a reference into
+`pubSize ≤ i < auxBase`; the derived contract makes that range EMPTY, so a circuit placed under it
+cannot produce a `referenceInGap` refusal at all. -/
+theorem the_derived_contract_has_no_dead_gap (t : Typ) :
+    (contractOf t).pubSize = (contractOf t).auxBase := rfl
+
 theorem auxFloor_is_above (pub : Nat) (v : PVar) (h : auxFloor pub v) : 2 * pub ≤ varIx v := by
   cases v with
   | external j => simp only [auxFloor] at h; simp only [varIx]; omega
   | internal k => simp only [auxFloor] at h; simp only [varIx]; omega
+
+/-- ⚑ **AND THE DERIVED CONTRACT MAKES THE FLOOR TRUE RATHER THAN PROMISED.** Every `external` id
+the contract lets a circuit allocate for itself clears the floor — so `endpointsAbove` is a
+consequence of placing under `contractOf`, not a side condition a caller has to remember. -/
+theorem contractOf_external_clears_the_floor (t : Typ) (j : Nat)
+    (hj : (contractOf t).auxBase ≤ j) : auxFloor (pubSize t) (.external j) := hj
+
+/-- …and the `internal` half, which `varIx`'s interleaving makes the non-obvious one: an aux
+`internal k` clears the floor exactly when `k` is at or above `pubSize`, because `internal k` sits
+at `varIx (2k+1)` and the reserved region on that side is `k < pubSize`. -/
+theorem contractOf_internal_clears_the_floor (t : Typ) (k : Nat)
+    (hk : (contractOf t).auxBase ≤ k) : auxFloor (pubSize t) (.internal k) := hk
 
 /-- ⚑ **THE ALLOCATOR'S OBLIGATION, AND ITS PAYOFF, IN ONE STATEMENT.** If every variable a merge
 names clears the aux floor, no public word can be demoted. The residual `KimchiAssertEqual` named —
@@ -1181,6 +1204,9 @@ theorem the_public_word_is_the_minimum_of_a_bound_class (pub : Nat) (i : Nat) (h
 #assert_axioms no_public_word_is_demoted
 #assert_axioms the_demotion_branch_is_dead
 #assert_axioms the_aux_floor_closes_the_demotion_residual
+#assert_axioms the_derived_contract_has_no_dead_gap
+#assert_axioms contractOf_external_clears_the_floor
+#assert_axioms contractOf_internal_clears_the_floor
 #assert_axioms rootVar_varIx_le
 #assert_axioms the_demotion_root_is_inside_the_reserved_range
 #assert_axioms the_public_word_is_the_minimum_of_a_bound_class
