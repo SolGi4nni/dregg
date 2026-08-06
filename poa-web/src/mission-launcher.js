@@ -1,6 +1,32 @@
 import { ArtifactRefusal } from "./poag1.js";
+import { mountBlackBox } from "./blackbox-controller.js";
 import { mountRelayRepair } from "./relay-controller.js";
 import { mountSalvageLock } from "./salvage-controller.js";
+
+/**
+ * The dispatch table IS the list of games this client can play.
+ *
+ * It is exported because the rack has to be able to answer "is there a
+ * controller for this?" without keeping a second list — a second list is how a
+ * card ends up offering a game the launcher then refuses, or sealing one that
+ * would have opened. Adding a game is one line here and one presentation record
+ * in `game-rack.js`.
+ *
+ * ⚠ A controller installed here is NOT a game enrolled. Enrolment is the signed
+ * catalog's, and only its. Black Box's controller sits in this table with no
+ * descriptor to feed it, which is exactly the state the rack renders as a sealed
+ * slot: the drill is built and the curator has not activated it.
+ */
+const FINITE_CONTROLLERS = Object.freeze({
+  "relay-repair": mountRelayRepair,
+  "salvage-lock": mountSalvageLock,
+  "black-box-reconstruction": mountBlackBox,
+});
+
+/** Signal has its own authored surface in the page; the rest mount generically. */
+export const SIGNAL_GAME_ID = "signal-triangulation";
+
+export const INSTALLED_GAME_IDS = Object.freeze([SIGNAL_GAME_ID, ...Object.keys(FINITE_CONTROLLERS)]);
 
 function refuse(condition, code, message) {
   if (!condition) throw new ArtifactRefusal(code, message);
@@ -18,13 +44,9 @@ export function launchCatalogMission({ mission, descriptor, signalRoot, finiteRo
   refuse(mission && descriptor, "mission-launch", "mission and descriptor are required");
   refuse(descriptor.gameId === mission.gameId, "mission-controller-mismatch", "descriptor game id does not match the selected catalog mission");
   refuse(descriptorMissionId(descriptor) === mission.missionId, "mission-controller-mismatch", "descriptor mission id does not match the selected catalog mission");
-  refuse(
-    mission.gameId === "signal-triangulation" || mission.gameId === "relay-repair" || mission.gameId === "salvage-lock",
-    "mission-game-unsupported",
-    `no controller exists for ${mission.gameId}`,
-  );
+  refuse(INSTALLED_GAME_IDS.includes(mission.gameId), "mission-game-unsupported", `no controller exists for ${mission.gameId}`);
 
-  if (mission.gameId === "signal-triangulation") {
+  if (mission.gameId === SIGNAL_GAME_ID) {
     refuse(typeof launchSignal === "function" && signalRoot, "mission-launch", "Signal controller is unavailable");
     finiteRoot.hidden = true;
     signalRoot.hidden = false;
@@ -33,11 +55,7 @@ export function launchCatalogMission({ mission, descriptor, signalRoot, finiteRo
   refuse(finiteRoot && signalRoot, "mission-launch", "finite-table mission roots are unavailable");
   signalRoot.hidden = true;
   finiteRoot.hidden = false;
-  if (mission.gameId === "relay-repair") {
-    return Object.freeze({ gameId: mission.gameId, controller: mountRelayRepair(finiteRoot, descriptor, callbacks) });
-  }
-  if (mission.gameId === "salvage-lock") {
-    return Object.freeze({ gameId: mission.gameId, controller: mountSalvageLock(finiteRoot, descriptor, callbacks) });
-  }
-  throw new ArtifactRefusal("mission-game-unsupported", `no controller exists for ${mission.gameId}`);
+  const mount = FINITE_CONTROLLERS[mission.gameId];
+  refuse(typeof mount === "function", "mission-game-unsupported", `no controller exists for ${mission.gameId}`);
+  return Object.freeze({ gameId: mission.gameId, controller: mount(finiteRoot, descriptor, callbacks) });
 }

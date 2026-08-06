@@ -9,7 +9,11 @@ import {
 import { finiteTableAuthority, loadMissionCatalog, missionByGameId } from "./mission-catalog.js";
 import { loadRelayRepairDescriptor } from "./relay-runtime.js";
 import { loadSalvageLockDescriptor, salvagePracticeOracle } from "./salvage-runtime.js";
-import { launchCatalogMission } from "./mission-launcher.js";
+import { INSTALLED_GAME_IDS, launchCatalogMission } from "./mission-launcher.js";
+import { buildRack, mountGameRack } from "./game-rack.js";
+import { buildRunSummary, mountRunSummary, runOutcome } from "./run-summary.js";
+import { readRackResults, recordRackResult } from "./rack-results.js";
+import { buildTodayBoard, loadSlotState, mountTodayBoard } from "./today-board.js";
 import { mountDreggAdmissionPanel } from "./dregg-admission-panel.js";
 import { getWalletStandardRegistry } from "./wallet-standard-registry.js";
 import { mountGalley } from "./galley-controller.js";
@@ -26,6 +30,8 @@ const state = {
   bundle: null,
   missions: Object.freeze([]),
   games: Object.freeze([]),
+  cards: Object.freeze([]),
+  results: Object.freeze({}),
   activeGame: null,
   finiteController: null,
   signal: null,
@@ -33,14 +39,24 @@ const state = {
   draft: [],
   galleyController: null,
   platformEvidence: Object.freeze({}),
+  slot: null,
   contentAuthority: Object.freeze({ state: "pending" }),
 };
 
-const missionCopy = Object.freeze({
-  "signal-triangulation": "Reconstruct the band sequence using only authenticated outcome rows emitted by Lean.",
-  "relay-repair": "Restore a route by dispatching only the authenticated Relay transition table emitted by Lean.",
-  "salvage-lock": "Expose plates and clear pairs through the authenticated Salvage transition table emitted by Lean.",
-});
+/**
+ * The only rung a run in this browser can honestly reach.
+ *
+ * Nothing on this page submits a transcript anywhere: there is no submit call,
+ * no node round-trip, and `createJudgedRun` is never reached because the app
+ * hands every controller a practice session. So `practice` is the whole map. If
+ * a judged path ever lands, this refuses loudly instead of quietly picking the
+ * nearest-looking rung, which is how a rehearsal would start reading as a result.
+ */
+const STATUS_BY_MODE = Object.freeze({ practice: "practice" });
+
+function localStore() {
+  try { return globalThis.localStorage ?? null; } catch { return null; }
+}
 
 const deckCopy = {
   118: ["DECK 118", "Cartography shell: no signed field record is attached to this hotspot."],
@@ -81,6 +97,19 @@ function initializeChrome() {
 
   byId("signal-clear").addEventListener("click", clearDraft);
   byId("signal-submit").addEventListener("click", submitDraft);
+  byId("stage-back").addEventListener("click", closeStage);
+}
+
+/** Put the rack back in front of the player and stop the drill talking. */
+function closeStage() {
+  byId("mission-stage").hidden = true;
+  byId("run-summary-root").hidden = true;
+  byId("run-summary-root").replaceChildren();
+  state.finiteController?.destroy();
+  state.finiteController = null;
+  state.activeGame = null;
+  renderRack();
+  byId("mission-rack").querySelector("[data-open-game]")?.focus();
 }
 
 function initializeGalley() {
@@ -156,16 +185,21 @@ function sealAuthority(error) {
   byId("artifact-pin").textContent = "POAG1 / REFUSED";
   byId("rules-authority").textContent = "refused";
   byId("footer-authority").textContent = "Mission authority refused";
-  byId("mission-selector").replaceChildren();
   state.finiteController?.destroy();
   state.finiteController = null;
   byId("finite-game").hidden = true;
+  byId("mission-stage").hidden = true;
   disableSignal();
   state.contentAuthority = Object.freeze({
     state: "refused",
     reason: error instanceof ArtifactRefusal ? error.code : "mission-authority",
   });
+  // The rack still renders: with no authenticated catalog every slot is sealed,
+  // which is the honest picture. A blank board would have hidden the refusal.
+  state.missions = Object.freeze([]);
+  renderRack();
   renderPlatform();
+  renderToday();
 }
 
 function renderPlatform() {
@@ -183,8 +217,39 @@ function renderPlatform() {
 
 async function initializePlatformEvidence() {
   renderPlatform();
+  renderToday();
   state.platformEvidence = await loadPlatformEvidence({ baseUrl: location.href });
   renderPlatform();
+  renderToday();
+}
+
+function renderToday() {
+  mountTodayBoard(byId("today-board"), buildTodayBoard({
+    slot: state.slot,
+    recorder: state.platformEvidence.recorder ?? null,
+    contentAuthority: state.contentAuthority,
+    cards: state.cards,
+  }));
+}
+
+/**
+ * Ask the authority whether a judged slot is open.
+ *
+ * The authority id is the federation the SIGNED catalog names, and the key the
+ * opening must be signed under is the one the content bundle is already pinned
+ * to — so this asks a question it already knows how to check the answer to. Any
+ * failure lands as a sealed tile and the rack stays practice-only; there is no
+ * path here that turns a reachable node into a judged run.
+ */
+async function initializeSlotState() {
+  const [mission] = state.missions;
+  if (!mission || !state.bundle) return;
+  state.slot = await loadSlotState({
+    authorityId: mission.federationId,
+    curatorPublicKey: state.bundle.contentEpoch.curatorPublicKey,
+    baseUrl: location.href,
+  });
+  renderToday();
 }
 
 function disableSignal() {
@@ -235,13 +300,11 @@ function initializeSignal(descriptor) {
   renderSignal();
 }
 
-function presentMission(mission) {
-  byId("mission-title").textContent = mission.title;
-  byId("mission-watch-copy").textContent = missionCopy[mission.gameId];
-  document.querySelectorAll("[data-mission-game]").forEach((button) => {
-    const selected = button.dataset.missionGame === mission.gameId;
-    button.classList.toggle("active", selected);
-    button.setAttribute("aria-pressed", String(selected));
+function presentMission(mission, card) {
+  byId("mission-title").textContent = card?.name ?? mission.title;
+  byId("mission-watch-copy").textContent = card?.flavor ?? "";
+  document.querySelectorAll("[data-game]").forEach((node) => {
+    node.classList.toggle("active", node.dataset.game === mission.gameId);
   });
   const nonzero = ["intel", "supplies", "cohesion", "influence", "score"].filter((key) => mission.reward[key] !== 0);
   byId("mission-contribution").textContent = nonzero.length ? `preview: ${nonzero.join(" / ")}` : "preview: none";
@@ -260,23 +323,64 @@ function presentMission(mission) {
   byId("world-preview-note").textContent = `Lean-emitted solved-run preview for mission ${mission.missionId}; preview sequence ${mission.previewWorld.sequence}. This is not current ship state and grants nothing.`;
 }
 
-function renderMissionSelector() {
-  byId("mission-selector").replaceChildren(...state.missions.map((mission) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "mission-tab";
-    button.dataset.missionGame = mission.gameId;
-    button.setAttribute("aria-pressed", "false");
-    const number = document.createElement("span");
-    number.textContent = String(mission.missionId).padStart(2, "0");
-    const label = document.createElement("b");
-    label.textContent = mission.title;
-    const boundary = document.createElement("small");
-    boundary.textContent = "LOCAL // UNSETTLED";
-    button.append(number, label, boundary);
-    button.addEventListener("click", () => selectMission(mission.gameId));
-    return button;
-  }));
+/**
+ * One rack, rebuilt from evidence every time: the signed catalog decides what is
+ * enrolled, the launcher's dispatch table decides what is installed, and this
+ * browser's own note decides what a card can say about your last run. No card is
+ * assembled by hand, so a new game cannot acquire a special one.
+ */
+function renderRack() {
+  try {
+    state.cards = buildRack({
+      missions: state.missions,
+      installed: INSTALLED_GAME_IDS,
+      results: state.results,
+    });
+  } catch (error) {
+    console.error("PoA rack refused", error);
+    state.cards = Object.freeze([]);
+  }
+  mountGameRack(byId("mission-rack"), state.cards, { onOpen: selectMission });
+}
+
+function cardFor(gameId) {
+  return state.cards.find((card) => card.gameId === gameId) ?? null;
+}
+
+/**
+ * The one end-of-run screen. Every game reaches it through here, with the same
+ * record, so none of them can grow its own idea of what "finished" looks like.
+ */
+function finishRun(gameId, { mode, outcome, actions, actionLimit, transcript }) {
+  const card = cardFor(gameId);
+  if (!card) return;
+  const status = STATUS_BY_MODE[mode];
+  if (!status) {
+    console.error(new ArtifactRefusal(
+      "run-status-unmapped",
+      `this terminal has no path that submits a ${mode} run, so it cannot name a ladder rung for one`,
+    ));
+    return;
+  }
+  state.results = recordRackResult(localStore(), gameId, { status, outcome, actions });
+  const root = byId("run-summary-root");
+  root.hidden = false;
+  mountRunSummary(root, buildRunSummary({ card, status, outcome, actions, actionLimit, transcript }), {
+    onAgain: () => replayActive(),
+    onRack: () => closeStage(),
+  });
+}
+
+function replayActive() {
+  const gameId = state.activeGame;
+  byId("run-summary-root").hidden = true;
+  byId("run-summary-root").replaceChildren();
+  if (!gameId) return;
+  if (gameId === "signal-triangulation") {
+    initializeSignal(state.signal);
+    return;
+  }
+  state.finiteController?.reset();
 }
 
 /**
@@ -296,23 +400,49 @@ function practiceSession(gameId, descriptor) {
   return undefined;
 }
 
+/** Read a finished run through its shape and put it on the one end screen. */
+function reportRun(gameId, descriptor, run) {
+  const card = cardFor(gameId);
+  if (!card) return;
+  let reading;
+  try {
+    reading = runOutcome(card.shape, run, descriptor);
+  } catch (error) {
+    console.error("PoA end screen refused", error);
+    return;
+  }
+  if (!reading.over) return;
+  finishRun(gameId, { ...reading, transcript: null });
+}
+
 function selectMission(gameId) {
   try {
     const mission = missionByGameId(state.missions, gameId);
     const descriptor = state.games.find((candidate) => candidate.gameId === gameId);
     state.finiteController?.destroy();
     state.finiteController = null;
-    presentMission(mission);
+    byId("run-summary-root").hidden = true;
+    byId("run-summary-root").replaceChildren();
+    byId("mission-stage").hidden = false;
+    presentMission(mission, cardFor(gameId));
     const launched = launchCatalogMission({
       mission,
       descriptor,
       signalRoot: byId("signal-game"),
       finiteRoot: byId("finite-game"),
       launchSignal: initializeSignal,
-      callbacks: { session: practiceSession(gameId, descriptor) },
+      callbacks: {
+        session: practiceSession(gameId, descriptor),
+        onTranscript: (transcript, run) => reportRun(gameId, descriptor, run),
+        onReset: () => {
+          byId("run-summary-root").hidden = true;
+          byId("run-summary-root").replaceChildren();
+        },
+      },
     });
     state.activeGame = launched.gameId;
     state.finiteController = launched.controller;
+    byId("mission-stage").scrollIntoView({ block: "start" });
   } catch (error) {
     sealAuthority(error);
   }
@@ -374,7 +504,10 @@ function renderSignal() {
   document.querySelectorAll(".signal-choice").forEach((button) => { button.disabled = run.solved || run.exhausted; });
   byId("signal-clear").disabled = run.solved || run.exhausted;
   renderDraft();
-  if (run.solved || run.exhausted) renderTranscript();
+  if (run.solved || run.exhausted) {
+    renderTranscript();
+    reportRun("signal-triangulation", signal, run);
+  }
 }
 
 function renderTranscript() {
@@ -392,6 +525,10 @@ function escapeHtml(value) {
 
 async function boot() {
   initializeChrome();
+  state.results = readRackResults(localStore());
+  // The rack renders BEFORE anything is authenticated: every slot sealed, which
+  // is true, and a shape a first-time player can read while the bytes load.
+  renderRack();
   initializeGalley();
   initializeDreggAdmission();
   const platformEvidence = initializePlatformEvidence();
@@ -423,8 +560,10 @@ async function boot() {
     state.missions = missions;
     state.games = Object.freeze([signal, relay, salvage]);
     markAuthority(bundle);
-    renderMissionSelector();
-    selectMission("signal-triangulation");
+    // ⚠ No drill auto-opens any more. The first thing a player meets is the rack.
+    renderRack();
+    renderToday();
+    await initializeSlotState();
   } catch (error) {
     sealAuthority(error);
   } finally {

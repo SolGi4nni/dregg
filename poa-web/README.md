@@ -48,8 +48,21 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
 - `src/mission-catalog.js` accepts exactly Signal, Relay, and Salvage from one
   authenticated content epoch, checks their shared three-descriptor content
   root, manifest-bound beta artifacts, zero-economy policy, and preview shapes.
-- `src/mission-launcher.js` is the exhaustive controller switch. Unknown games
-  and catalog/descriptor mismatches refuse; neither can fall back to Signal.
+- `src/mission-launcher.js` is the exhaustive controller switch, and its
+  `INSTALLED_GAME_IDS` is the single list of games this client can play. Unknown
+  games and catalog/descriptor mismatches refuse; neither can fall back to
+  Signal.
+- `src/game-rack.js` holds the presentation record per game and builds the rack.
+  A record cannot enrol its own game: whether a card is `open`, `sealed`,
+  `reserved`, or `unsupported` is decided by the signed catalog and the dispatch
+  table above.
+- `src/run-summary.js` is the one end-of-run screen and the one status ladder.
+  `practice` is its own branch and cannot be advanced into the judged path.
+- `src/rack-results.js` is a note this browser keeps for itself. Practice and
+  judged bests live in separate buckets and are never merged.
+- `src/today-board.js` reads what is true today. It re-derives and verifies the
+  curator's slot-opening signature rather than believing `open: true`, and every
+  unknown lands as a sealed tile.
 - `src/signal-runtime.js` consumes Signal's compact outcome oracle. It does not
   score guesses or select outcomes itself.
 - `src/finite-table-runtime.js` consumes the complete legal-state closure and
@@ -61,12 +74,48 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
 - The curator panel is a preview/inspection surface. Signing and canon
   promotion remain the responsibility of the curator tool and capability.
 
-The terminal exposes all three drill selectors only after the five-file
-manifest, curator activation, complete catalog, and every descriptor validate.
-Those catalog drills remain visibly `LOCAL // UNSETTLED`: a browser transcript
-is not a RunReceipt and does not grant score, contribution, salvage, ranking,
-or canon status. The Galley is a separate versioned-node surface described
-below; its journal receipts must never be inferred from a local drill.
+A drill opens only after the five-file manifest, curator activation, complete
+catalog, and every descriptor validate; until then its card is a sealed slot. A
+browser transcript is not a RunReceipt and does not grant score, contribution,
+salvage, ranking, or canon status — the end screen's ladder says so on every
+run. The Galley is a separate versioned-node surface described below; its
+journal receipts must never be inferred from a local drill.
+
+## Adding a game to the rack
+
+Two files, no surgery on the board.
+
+1. **A presentation record** in `GAME_RACK` (`src/game-rack.js`), with exactly
+   these fields — `loadRackEntry` refuses any other set:
+
+   | field | what it is |
+   |---|---|
+   | `gameId` | lowercase id, equal to the descriptor's `game_id` and the catalog's |
+   | `name` | display name, ≤ 48 characters |
+   | `flavor` | ONE line, ≤ 96 characters, no newline. Mechanical-poetic and setting-neutral: vents, decks, relays, holds. No lore |
+   | `session` | `"quick-drill"` (~1 min), `"standard"` (~5 min), `"expedition"` (~10 min), or `null` for a berth |
+   | `shape` | the `descriptor-shape.js` shape the emitted descriptor actually has, or `null` for a berth |
+   | `eyebrow` | small-caps place label, ≤ 32 characters |
+   | `boardLabel` | the board's accessible name, ≤ 64 characters |
+   | `columns` | board grid columns, 1–8 |
+
+   `session` and `shape` are null together or not at all, and a record with
+   either null can never reach the `open` state. `tests/game-rack.test.mjs`
+   checks the claimed shape against the real emitted descriptor.
+
+2. **A controller** in the `FINITE_CONTROLLERS` table of
+   `src/mission-launcher.js`, mounting as `(root, descriptor, callbacks)` and
+   honouring `callbacks.session`, `onTranscript`, `onReset`. A game landing in
+   an existing shape needs no new runtime: reuse `mountFiniteTableController`.
+
+The end screen needs nothing per game — `runOutcome` in `src/run-summary.js` is
+keyed by SHAPE, so a new machine-family or parametric game already reports
+correctly. Only a genuinely new shape teaches it a row, and it refuses until it
+is taught rather than reaching for the nearest one.
+
+Nothing else is required. The card appears the moment the record exists (as a
+berth), becomes `sealed` when the controller is installed, and `open` when the
+signed catalog enrols the mission.
 
 ## Ship platform and evidence grades
 

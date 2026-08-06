@@ -59,6 +59,17 @@
             <p class="watch-copy">The ship moves by command. We go below to learn what is moving with us.</p>
           </div>
 
+          <!--
+            No `aria-live` here on purpose. This board is re-rendered up to four
+            times while the page settles — content epoch, then evidence, then the
+            slot answer — and a live region would read all four tiles out again
+            each time. It is the page's opening statement, not a running status;
+            `#app[aria-busy]` already says the terminal is still settling.
+          -->
+          <section id="today-board" class="today-board" aria-label="What is true today">
+            <p class="today-board__lead">Reading today’s state…</p>
+          </section>
+
           <div class="overview-grid">
             <article class="panel officer-card">
               <div class="panel-label">EXPEDITION OFFICER SLOT</div>
@@ -102,10 +113,10 @@
             </article>
 
             <article class="panel mission-teaser">
-              <div class="panel-label">AUTHENTICATED FIELD DRILLS</div>
+              <div class="panel-label">THE RACK</div>
               <div class="mission-icon">⌁</div>
-              <div><p class="mission-code">MISSIONS 1–3 // LOCAL</p><h2>Three ways below</h2><p>Signal, Relay, and Salvage controls open only after the complete content epoch verifies.</p></div>
-              <button class="primary" type="button" data-goto="missions">Open field board</button>
+              <div><p class="mission-code">FIELD DRILLS // PICK ONE</p><h2>Ways below</h2><p>Short drills you can finish standing up, and longer ones for a quiet watch. Every card says how long it takes.</p></div>
+              <button class="primary" type="button" data-goto="missions">Open the rack</button>
             </article>
 
             <article class="panel condition-panel">
@@ -122,53 +133,63 @@
 
         <section class="view" id="view-missions" data-view="missions">
           <div class="view-heading">
-            <div><p class="eyebrow">FIELD BOARD // LOCAL BETA // UNSETTLED</p><h1 id="mission-title">Authenticating missions</h1></div>
-            <p class="watch-copy" id="mission-watch-copy">No game controller opens until the signed catalog and every descriptor agree.</p>
+            <div><p class="eyebrow">THE RACK // FIELD DRILLS</p><h1>Pick something to play</h1></div>
+            <p class="watch-copy">Every drill here runs on rules a curator signed. The proof of that is folded into each card, for when you want it.</p>
           </div>
-          <nav class="mission-selector" id="mission-selector" aria-label="Authenticated field drills"></nav>
-          <div class="mission-layout">
-            <article class="panel signal-game" id="signal-game">
-              <div class="panel-head">
-                <div><div class="panel-label">SIGNAL TRIANGULATION</div><h2>Intercept sequence</h2></div>
-                <div class="turn-counter"><span id="turn-current">0</span><small id="turn-limit">/ -- TRANSMISSIONS</small></div>
-              </div>
-              <div class="signal-brief">
-                <span class="signal-wave" aria-hidden="true">╱╲╱╲╲╱╲╱</span>
-                <p id="signal-instruction">Authenticating mission rules…</p>
-              </div>
-              <div id="signal-history" class="signal-history" aria-live="polite"></div>
-              <div id="signal-draft" class="signal-draft" aria-label="current signal sequence"></div>
-              <div id="signal-symbols" class="signal-symbols" aria-label="signal phase controls"></div>
-              <div class="mission-actions">
-                <button id="signal-clear" class="secondary" type="button" disabled>Clear</button>
-                <button id="signal-submit" class="primary" type="button" disabled>Transmit sequence</button>
-              </div>
-              <div class="receipt-slip" id="signal-receipt" hidden></div>
-            </article>
-            <article class="panel finite-game" id="finite-game" hidden></article>
+          <div class="game-rack" id="mission-rack" aria-label="Field drill rack"></div>
+          <div class="mission-stage" id="mission-stage" hidden>
+            <div class="stage-head">
+              <div><p class="panel-label">NOW PLAYING</p><h2 id="mission-title">Authenticating missions</h2><p class="stage-flavor" id="mission-watch-copy">No drill opens until the signed catalog and every descriptor agree.</p></div>
+              <button class="secondary" type="button" id="stage-back">← Back to the rack</button>
+            </div>
+            <div class="mission-layout">
+              <article class="panel signal-game" id="signal-game">
+                <div class="panel-head">
+                  <div><div class="panel-label">SIGNAL TRIANGULATION</div><h2>Intercept sequence</h2></div>
+                  <div class="turn-counter"><span id="turn-current">0</span><small id="turn-limit">/ -- TRANSMISSIONS</small></div>
+                </div>
+                <div class="signal-brief">
+                  <span class="signal-wave" aria-hidden="true">╱╲╱╲╲╱╲╱</span>
+                  <p id="signal-instruction">Authenticating mission rules…</p>
+                </div>
+                <div id="signal-history" class="signal-history" aria-live="polite"></div>
+                <div id="signal-draft" class="signal-draft" aria-label="current signal sequence"></div>
+                <div id="signal-symbols" class="signal-symbols" aria-label="signal phase controls"></div>
+                <div class="mission-actions">
+                  <button id="signal-clear" class="secondary" type="button" disabled>Clear</button>
+                  <button id="signal-submit" class="primary" type="button" disabled>Transmit sequence</button>
+                </div>
+                <div class="receipt-slip" id="signal-receipt" hidden></div>
+              </article>
+              <article class="panel finite-game" id="finite-game" hidden></article>
+              <div class="run-summary-root" id="run-summary-root" hidden></div>
 
-            <aside class="mission-sidebar">
-              <article class="panel assignment-card">
-                <div class="panel-label">ASSIGNMENT CONDITIONS</div>
-                <dl>
-                  <div><dt>Location</dt><dd>not declared by POAG1</dd></div>
-                  <div><dt>Authority</dt><dd id="rules-authority">checking…</dd></div>
-                  <div><dt>Unsettled preview</dt><dd id="mission-contribution">checking…</dd></div>
-                  <div><dt>Discovery</dt><dd>predeclared, sealed</dd></div>
-                </dl>
-              </article>
-              <article class="panel crew-note">
-                <div class="panel-label">FIELD PROTOCOL</div>
-                <blockquote>Mission controls remain sealed unless the curator signature, content epoch, and every Lean-emitted byte pin agree.</blockquote>
-                <cite>terminal authority boundary</cite>
-              </article>
-              <article class="panel authority-card">
-                <div class="authority-row"><span class="status-lamp"></span><b>LEAN MISSION AUTHORITY</b></div>
-                <p id="artifact-detail">No unverified game controls are available while the artifact is loading.</p>
-                <code id="artifact-pin">POAG1 / pending</code>
-                <p class="microcopy">The installed Cipherclerk can verify outside the page’s origin. Standalone verification authenticates content epochs against the pinned curator key, but an origin serving altered application code is a stronger threat.</p>
-              </article>
-            </aside>
+              <aside class="mission-sidebar">
+                <article class="panel authority-card">
+                  <div class="authority-row"><span class="status-lamp"></span><b>LEAN MISSION AUTHORITY</b></div>
+                  <code id="artifact-pin">POAG1 / pending</code>
+                  <!--
+                    ⚠ The trust copy was NOT deleted when the rack landed; it moved
+                    in here, behind the same disclosure element every card and every
+                    end screen uses. A first-time player should meet a game before
+                    they meet `detached-signature-required` — and should be able to
+                    reach it in one click from anywhere it applies.
+                  -->
+                  <details class="verify-fold">
+                    <summary class="verify-fold__summary">Verification</summary>
+                    <dl class="verify-fold__rows">
+                      <div class="verify-fold__row"><dt>Rules authority</dt><dd id="rules-authority">checking…</dd></div>
+                      <div class="verify-fold__row"><dt>Unsettled preview</dt><dd id="mission-contribution">checking…</dd></div>
+                      <div class="verify-fold__row"><dt>Location</dt><dd>not declared by POAG1</dd></div>
+                      <div class="verify-fold__row"><dt>Discovery</dt><dd>predeclared, sealed</dd></div>
+                      <div class="verify-fold__row"><dt>Controls</dt><dd id="artifact-detail">No unverified game controls are available while the artifact is loading.</dd></div>
+                      <div class="verify-fold__row"><dt>Field protocol</dt><dd>Drill controls stay sealed unless the curator signature, content epoch, and every Lean-emitted byte pin agree.</dd></div>
+                      <div class="verify-fold__row"><dt>Outside this origin</dt><dd>The installed Cipherclerk can verify content epochs against the pinned curator key on its own. An origin serving altered application code is a stronger threat than one serving altered content.</dd></div>
+                    </dl>
+                  </details>
+                </article>
+              </aside>
+            </div>
           </div>
           <div id="dregg-admission-root" class="mission-admission">
             <article class="panel dregg-admission-fallback" role="status" aria-live="polite">

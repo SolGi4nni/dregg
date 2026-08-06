@@ -6,6 +6,16 @@
 export const POAG1_FORMAT = "POAG1";
 export const POAG1_SCHEMA_VERSION = 1;
 export const POAG1_AUTHORITY = "Dregg2.Games.PathOfAngels";
+/**
+ * The exact artifact set, in the exact order `canonicalArtifacts` emits it.
+ *
+ * ⚠ FIVE, and the count is refused, not warned about. Black Box's controller is
+ * installed in `mission-launcher.js` and its card is on the rack as a SEALED
+ * slot — that is not a reason to add a sixth entry here. This list is widened to
+ * the exact new set when the orchestrator lands the re-emitted bundle, against
+ * the bytes that actually shipped; widening it first would mean this client
+ * accepting a shape nothing has produced.
+ */
 export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
   Object.freeze({ path: "schema.json", mediaType: "application/schema+json" }),
   Object.freeze({ path: "catalog.json", mediaType: "application/json" }),

@@ -24,6 +24,11 @@ import { ArtifactRefusal } from "./poag1.js";
  * copy that tells a player what they are looking at. A new game that lands in an
  * existing shape needs no new runtime and no new controller, only a presentation
  * record. A new game that lands in a NEW shape needs both, and should.
+ *
+ * That presentation record is a real thing now, not a gesture: `game-rack.js`
+ * holds one per game and checks its claimed shape against what this file decides
+ * about the emitted descriptor, so a card cannot advertise mechanics the
+ * descriptor does not have.
  */
 
 const SHAPES = Object.freeze({
