@@ -331,6 +331,7 @@ import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.RangeFieldContainment
 import Dregg2.Circuit.LimbTally
 import Dregg2.Circuit.Emit.EffectLowerCore
+import Dregg2.Circuit.GateExpr
 import Dregg2.Bridge.LightClientSolana
 
 set_option autoImplicit false
@@ -687,11 +688,29 @@ def voterLowCols : List Nat := [VOTER 0, VOTER 1, VOTER 2, VOTER 3,
                                 VOTER 4, VOTER 5, VOTER 6, VOTER 7]
 
 /-- The arity-16 chip absorb tuple `[16, in₀ … in₁₅, out₀ … out₇]`, in SOURCE `Expr`.
-⚑ **16 is an ADMITTED absorb arity** (`ChipTableEmit.ARITIES = [0,2,3,4,7,11,16]`), and it is the
+⚑ **16 is an ADMITTED absorb arity** (`CHIP_ADMITTED_ARITIES = [0,2,3,4,7,11,16]`), and it is the
 `node8` full-width seed — the one arity at which all sixteen input lanes genuinely enter the
-preimage. A descriptor at a NON-admitted arity is UNPROVABLE rather than merely inefficient. -/
-def chipTuple16 (ins : List Expr) (outs : List Nat) : List Expr :=
-  Expr.const 16 :: (ins ++ outs.map Expr.var)
+preimage. A descriptor at a NON-admitted arity is UNPROVABLE rather than merely inefficient.
+
+⚑ **THE ARITY CHECK IS BACK (2026-08-06), AND WHY IT WAS EVER MISSING.** This file works in
+`Circuit.Expr` while the three checked chip-tuple constructors (`chipLookupTupleN`,
+`chipLookupTuple`, `chipLookupTupleNarrow`) are `EmittedExpr`, so it could not consume any of them
+and a fourth constructor was written here instead. The re-typing dropped two things:
+
+* the `hAdm : ChipArityAdmitted ins.length` `autoParam` — a site at arity 8, 9 or 14 **failed to
+  elaborate** on the three checked rails and elaborated fine here;
+* the tie between the arity TAG and the input list — the tag was the literal `16` regardless of
+  `ins.length`, so a fifteen-lane block would have ridden out claiming sixteen.
+
+Both call sites happen to pass exactly sixteen today, which is why this was an unenforced invariant
+rather than a live defect. It is now `GateExpr.gChipTuple` at the `toSource` view — the SAME
+constructor `chipLookupTupleN` is (`GateExpr.gChipTuple_emitted`, `rfl`), so the check is inherited
+rather than re-implemented, and `chipTuple16_absorbA_unmoved` / `_absorbB_unmoved` pin that no
+emitted byte moved. -/
+def chipTuple16 (ins : List Expr) (outs : List Nat)
+    (hAdm : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted ins.length :=
+      by chip_arity_admitted) : List Expr :=
+  Dregg2.Circuit.GateExpr.gChipTuple Dregg2.Circuit.GateExpr.toSource ins outs hAdm
 
 /-- **The row's FIRST message block** — `chipAbsorb16(ROOT_IN8 ‖ voter₀…voter₇) = MID8`. -/
 def absorbA : AirLeg :=
@@ -709,6 +728,33 @@ def absorbB : AirLeg :=
                     Expr.var (STAKE 2), Expr.var (STAKE 3),
                     Expr.const 0, Expr.const 0, Expr.const 0])
               rootOutCols }
+
+/-! ⚑ **ZERO BYTES MOVED BY THE ARITY REPAIR.** Both deployed tuples, pinned against the literal
+shape the unchecked constructor emitted. `rfl`, on the emitted object. -/
+
+theorem chipTuple16_absorbA_unmoved :
+    chipTuple16 ((rootInCols ++ voterLowCols).map Expr.var) midCols
+      = Expr.const 16 :: (((rootInCols ++ voterLowCols).map Expr.var) ++ midCols.map Expr.var) :=
+  rfl
+
+theorem chipTuple16_absorbB_unmoved :
+    chipTuple16
+        (midCols.map Expr.var
+          ++ [Expr.var (VOTER 8), Expr.var (STAKE 0), Expr.var (STAKE 1),
+              Expr.var (STAKE 2), Expr.var (STAKE 3),
+              Expr.const 0, Expr.const 0, Expr.const 0])
+        rootOutCols
+      = Expr.const 16 :: ((midCols.map Expr.var
+          ++ [Expr.var (VOTER 8), Expr.var (STAKE 0), Expr.var (STAKE 1),
+              Expr.var (STAKE 2), Expr.var (STAKE 3),
+              Expr.const 0, Expr.const 0, Expr.const 0]) ++ rootOutCols.map Expr.var) :=
+  rfl
+
+/-- ⚑ **AND THE CHECK CAN GO RED.** The arity the repair exists to refuse is not admitted — so a
+nine-lane absorb block behind this constructor fails to elaborate rather than emitting a tuple whose
+tag lies about its own contents. -/
+theorem chipTuple16_refuses_nine :
+    ¬ Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted 9 := by decide
 
 /-- **The seed** — lane 0 of the first row's running root is the domain tag. -/
 def firstRootTag : AirLeg :=
