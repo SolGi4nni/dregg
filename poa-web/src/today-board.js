@@ -1,13 +1,15 @@
 import { ArtifactRefusal } from "./poag1.js";
+import { STATION_CREW_ROUTE, STATION_PANEL_ROUTE } from "./station-panel.js";
 
 /**
- * WHAT IS TRUE TODAY — and, where nothing is, the honest shape of the absence.
+ * WHAT IS TRUE RIGHT NOW — and, where nothing is, the honest shape of the
+ * absence.
  *
- * Three tiles: is a judged slot open, has the daily crate been drawn, what is the
- * ship's headline figure. Each one is EITHER a value this page actually fetched
- * and checked, OR a sealed tile that says why there is no value. There is no
- * third option and no placeholder: a fabricated number here would be the most
- * expensive kind, because it is the first thing anybody reads.
+ * Four tiles: what is on the rack, is a judged slot open, what does the salvage
+ * crate hold, what is the ship's headline figure. Each one is EITHER a value this
+ * page actually fetched and checked, OR a sealed tile that says why there is no
+ * value. There is no third option and no placeholder: a fabricated number here
+ * would be the most expensive kind, because it is the first thing anybody reads.
  *
  * ⚠ A SUCCESSFUL REQUEST IS NOT A VERDICT. `open: true` off the wire means the
  * node said so. This module re-derives the exact statement bytes the curator
@@ -168,19 +170,26 @@ export async function loadSlotState({ authorityId, curatorPublicKey, baseUrl, fe
 }
 
 /**
- * The daily crate.
+ * The salvage crate, read off the station.
  *
- * ⚠ THERE IS NO ROUTE. Nothing in `node/src` serves a crate surface, so there is
- * nothing to fetch and nothing honest to display but the absence. `route: null`
- * is the whole of the state; when the station-wiring lane lands the endpoint it
- * sets it here and `crateTile` starts asking. `tests/today-board.test.mjs` fails
- * the moment a crate route appears in the node while this is still null, so the
- * wiring cannot land and leave this tile quietly lying.
+ * ⚠ THIS PIN WAS `null` AND IS NOT ANY MORE. It used to say "no node serves a
+ * crate surface", which was true when it was written and stopped being true in
+ * `21294c52d` without anything noticing — the guard that was supposed to notice
+ * had been keyed on the substring `crate`, and the route that landed spells it
+ * `station`. The tile went on saying "not wired yet" for as long as that took.
+ *
+ * So the pin now names the route this page actually reads, and the guard in
+ * `tests/today-board.test.mjs` checks BOTH directions: the route named here must
+ * exist in the node, and the node's station routes must be the ones named here.
+ * A rename on either side reds it; neither side can drift quietly.
+ *
+ * `crewRoute` is recorded but never called. It takes a 64-hex crew key and this
+ * terminal binds no crew identity, so asking it would mean inventing one.
  */
 export const CRATE_SURFACE = Object.freeze({
   id: "crate",
-  route: null,
-  owner: "station-wiring",
+  route: STATION_PANEL_ROUTE,
+  crewRoute: STATION_CREW_ROUTE,
 });
 
 function slotTile(slot) {
@@ -223,22 +232,53 @@ function slotTile(slot) {
   };
 }
 
-function crateTile(surface = CRATE_SURFACE) {
-  if (surface.route === null) {
+/**
+ * ⚠ The eyebrow says SALVAGE CRATE and not DAILY CRATE, and the copy never says
+ * "today". The station carries no current-period pointer — `SalvageCrate.State`
+ * has no public producer — so this tile cannot know which period is live, and a
+ * word implying a day turned over would be the page inventing the one fact the
+ * organ deliberately does not publish.
+ */
+function crateTile(station) {
+  if (!station || station.state === "pending") {
+    return { id: "crate", eyebrow: "SALVAGE CRATE", state: "pending", headline: "Reading the crate", detail: "Asking the station what the authored crate holds." };
+  }
+  if (station.state === "refused") {
     return {
       id: "crate",
-      eyebrow: "DAILY CRATE",
+      eyebrow: "SALVAGE CRATE",
+      state: "refused",
+      headline: "Station panel refused",
+      detail: `A panel was served and this terminal would not accept it (${station.code}). No crate figure is shown.`,
+    };
+  }
+  if (station.state !== "ready") {
+    return {
+      id: "crate",
+      eyebrow: "SALVAGE CRATE",
       state: "sealed",
-      headline: "Not wired yet",
-      detail: `No crate surface is served by any PoA node, so there is nothing to draw and nothing to report. Reserved for the ${surface.owner} lane.`,
+      headline: "No station answered",
+      detail: `${station.reason}. Nothing about the crate is claimed here.`,
+    };
+  }
+  const doc = station.view.station;
+  const schedule = `${doc.tableRows} loot row${doc.tableRows === 1 ? "" : "s"} and ${doc.ticketCount} ticket entries across periods ${doc.opensAt}–${doc.closesAt}`;
+  const noPointer = "There is no current-period pointer on this route, so which period is live is not a question it answers: the rotation is the whole authored schedule, not one day of it.";
+  if (doc.admitted > 0) {
+    return {
+      id: "crate",
+      eyebrow: "SALVAGE CRATE",
+      state: "live",
+      headline: `${doc.admitted} opening${doc.admitted === 1 ? "" : "s"} admitted`,
+      detail: `The station reports ${doc.observed} observed and ${doc.admitted} admitted against ${schedule}. ${noPointer}`,
     };
   }
   return {
     id: "crate",
-    eyebrow: "DAILY CRATE",
-    state: "pending",
-    headline: "Reading the crate",
-    detail: "A crate surface is configured; this terminal has not been taught to read it yet.",
+    eyebrow: "SALVAGE CRATE",
+    state: "sealed",
+    headline: "No draw is possible",
+    detail: `The station serves the authored crate — ${schedule} — and no opening has ever been admitted. ${noPointer} That is the ordinary state, not a fault.`,
   };
 }
 
@@ -291,14 +331,14 @@ function rackTile(contentAuthority, cards) {
   };
 }
 
-/** The four things the front page may claim today. */
-export function buildTodayBoard({ slot = null, recorder = null, contentAuthority = null, cards = [], crate = CRATE_SURFACE } = {}) {
+/** The four things the front page may claim right now. */
+export function buildTodayBoard({ slot = null, recorder = null, contentAuthority = null, cards = [], station = null } = {}) {
   return Object.freeze({
     lead: "Night watch. Here is what is true right now.",
     tiles: Object.freeze([
       Object.freeze(rackTile(contentAuthority, cards)),
       Object.freeze(slotTile(slot)),
-      Object.freeze(crateTile(crate)),
+      Object.freeze(crateTile(station)),
       Object.freeze(shipTile(recorder)),
     ]),
   });

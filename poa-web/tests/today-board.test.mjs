@@ -9,6 +9,7 @@ import {
   parseSlotDocument,
   slotStatementMessage,
 } from "../src/today-board.js";
+import { readyStation } from "./station-fixtures.mjs";
 
 class FakeElement {
   constructor(tagName) {
@@ -150,24 +151,73 @@ test("the slot tile says practice-only whenever no verified opening exists", asy
   assert.match(open.detail, /settles only once a node finalizes it/);
 });
 
-test("the daily crate is a sealed slot because no node serves one — and this fails when one lands", async () => {
-  assert.equal(CRATE_SURFACE.route, null);
-  const tile = buildTodayBoard({ cards: [] }).tiles.find((entry) => entry.id === "crate");
-  assert.equal(tile.state, "sealed");
-  assert.match(tile.detail, /station-wiring/);
-
-  // ⚠ THE FALSIFIER. The sealed tile is only honest while the claim behind it is
-  // true. This reads the node's own route table; the day the station-wiring lane
-  // serves a crate surface, this goes red and the tile has to be wired instead of
-  // quietly going on saying "not wired yet".
+test("the crate tile reads the station the node actually serves, in BOTH directions", async () => {
+  // ⚠ THE FALSIFIER, AND IT HAS ALREADY STOPPED FALSIFYING ONCE.
+  //
+  // Its first form asserted that no crate surface existed, and matched paths
+  // containing the substring `crate`. The station lane then served the crate at
+  // `/api/poa/station/{authority}/panel` and `/crew/{crew}` — no `crate`
+  // anywhere in the path. The surface shipped, the tile kept saying "not wired
+  // yet", and this test stayed green guarding the lie. It was re-keyed on the
+  // ORGAN (any station/crate/panel route under /api/poa), went red, and the
+  // tile was wired.
+  //
+  // It now guards the wiring rather than its absence, and it guards it BOTH
+  // WAYS, because either side can drift: the routes this client is pinned to
+  // must be exactly the station routes the node serves. A rename in the node
+  // reds it; a rename in `CRATE_SURFACE` reds it; a THIRD station route landing
+  // unnoticed reds it too.
   const nodeSrc = new URL("../../node/src/", import.meta.url);
   const files = (await readdir(nodeSrc)).filter((file) => file.endsWith(".rs"));
   assert.ok(files.length > 20, "the node source tree should not be empty");
-  const routes = (await Promise.all(files.map(async (file) => {
+  const ORGAN = /"(\/api\/poa\/[a-z0-9/{}_-]*(?:crate|station|panel)[a-z0-9/{}_-]*)"/g;
+  const routes = [...new Set((await Promise.all(files.map(async (file) => {
     const source = await readFile(new URL(file, nodeSrc), "utf8");
-    return [...source.matchAll(/"(\/api\/[a-z0-9/{}_-]*crate[a-z0-9/{}_-]*)"/g)].map((match) => match[1]);
-  }))).flat();
-  assert.deepEqual(routes, [], `a crate route exists now (${routes.join(", ")}) — wire CRATE_SURFACE.route and this tile`);
+    return [...source.matchAll(ORGAN)].map((match) => match[1]);
+  }))).flat())].sort();
+
+  // Self-check: the pattern must still be able to see a route of the shape it
+  // guards. A guard whose pattern has stopped matching is not a passing guard.
+  ORGAN.lastIndex = 0;
+  assert.ok(
+    ORGAN.test('"/api/poa/station/{authority}/panel"'),
+    "the falsifier's own pattern no longer matches a station route — it has stopped falsifying again",
+  );
+
+  assert.deepEqual(
+    routes,
+    [CRATE_SURFACE.crewRoute, CRATE_SURFACE.route].sort(),
+    "the station routes the node serves are not the ones this client is pinned to",
+  );
+  assert.equal(CRATE_SURFACE.route, "/api/poa/station/{authority}/panel");
+  assert.equal(CRATE_SURFACE.crewRoute, "/api/poa/station/{authority}/crew/{crew}");
+});
+
+test("the crate tile reports the served crate without ever implying a day passed", () => {
+  const tile = (station) => buildTodayBoard({ station, cards: [] }).tiles.find((entry) => entry.id === "crate");
+
+  const installed = tile(readyStation());
+  // Read, checked, and still sealed: the schedule is real and no draw is possible.
+  assert.equal(installed.state, "sealed");
+  assert.equal(installed.headline, "No draw is possible");
+  assert.match(installed.detail, /4 loot rows and 14 ticket entries across periods 31–35/);
+  assert.match(installed.detail, /no current-period pointer/i);
+  assert.match(installed.detail, /the whole authored schedule, not one day of it/);
+
+  // ⚠ The copy law, asserted rather than trusted: no tile may say a day turned
+  // over, because the organ carries nothing that could tell it one did.
+  for (const state of [installed, tile(readyStation({ admitted: 2, observed: 3 })), tile(null)]) {
+    assert.doesNotMatch(`${state.eyebrow} ${state.headline}`, /\btoday\b|\bdaily\b|\byesterday\b/i,
+      `the crate tile said a day passed: ${state.headline}`);
+  }
+
+  const moved = tile(readyStation({ admitted: 2, observed: 3 }));
+  assert.equal(moved.state, "live");
+  assert.equal(moved.headline, "2 openings admitted");
+
+  assert.equal(tile({ state: "refused", code: "station-gauge" }).state, "refused");
+  assert.equal(tile({ state: "unreachable", code: "station-fetch", reason: "No station answered on this origin" }).state, "sealed");
+  assert.equal(tile(null).state, "pending");
 });
 
 test("the ship headline is a live figure or an honest absence, never a filled-in number", () => {

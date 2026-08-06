@@ -479,6 +479,49 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
 .run-summary__control--again:hover { background: var(--acid); border-color: var(--acid); }
 .run-summary__control--rack:hover { color: var(--acid); border-color: var(--acid); }
 
+/* THREE LIVE ORGANS — the station panel, the field records, the Galley standing.
+   Each one carries `data-state` from its own model, and the tone is that state's
+   and nothing else: sealed and pending are DIM, refused is RED, and only a
+   figure this page actually read and checked is allowed to look alive. */
+.station-panel, .galley-standing { display: grid; gap: 10px; align-content: start; }
+.station-panel[data-state="refused"], .galley-standing[data-state="refused"],
+.galley-standing[data-state="open-without-identity"] { border-left: 2px solid var(--red); }
+.station-panel[data-state="ready"], .galley-standing[data-state="open"] { border-left: 2px solid var(--mint); }
+.station-panel__headline, .galley-standing__headline, .records-live__headline { margin: 0; color: var(--text); font: 400 26px/1.1 var(--serif); }
+.station-panel__standing, .galley-standing__copy, .records-live__standing { margin: 0; color: var(--soft); font-size: 9.5px; line-height: 1.6; }
+
+.station-panel__gauges { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px; }
+.station-gauge { display: grid; gap: 4px; padding: 10px 11px; border-left: 2px solid var(--dim); background: rgba(0,0,0,.16); }
+.station-gauge[data-at-full="true"] { border-left-color: var(--amber); }
+.station-gauge__label { color: var(--mint); font-size: 7.5px; font-weight: 600; letter-spacing: .14em; }
+.station-gauge__reading { color: var(--text); font: 400 21px/1 var(--serif); }
+.station-gauge__exact { color: var(--dim); font-size: 8px; line-height: 1.5; }
+
+.station-panel__counts, .station-panel__crate, .galley-standing__rows, .records-section__rows { margin: 0; display: grid; gap: 6px; }
+.station-panel__counts > div, .station-panel__crate > div, .galley-standing__rows > div, .records-section__rows > div { display: grid; grid-template-columns: 132px 1fr; gap: 9px; }
+.station-panel__counts dt, .station-panel__crate dt, .galley-standing__rows dt, .records-section__rows dt { color: var(--dim); font-size: 7.5px; letter-spacing: .06em; text-transform: uppercase; }
+.station-panel__counts dd, .station-panel__crate dd, .galley-standing__rows dd, .records-section__rows dd { margin: 0; color: var(--soft); font-size: 9px; line-height: 1.55; overflow-wrap: anywhere; }
+.galley-standing__source { color: var(--dim); font-size: 8px; }
+
+.records-live { display: grid; gap: 12px; align-content: start; }
+.records-live[data-state="refused"] { border-left: 2px solid var(--red); }
+.records-live[data-state="ready"] { border-left: 2px solid var(--mint); }
+.records-section { display: grid; gap: 7px; padding: 10px 0 0; border-top: 1px solid var(--line); }
+.records-section__title { margin: 0; color: var(--mint); font-size: 8px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase; }
+.records-runs { display: grid; gap: 7px; padding: 10px 0 0; border-top: 1px solid var(--line); }
+.records-runs__empty { margin: 0; color: var(--dim); font-size: 9px; line-height: 1.55; }
+.records-run { display: grid; gap: 3px; padding: 8px 10px; border-left: 2px solid var(--mint); background: rgba(0,0,0,.16); }
+.records-run[data-status="refused"] { border-left-color: var(--red); }
+.records-run time { color: var(--acid); font-size: 7.5px; letter-spacing: .12em; text-transform: uppercase; }
+.records-run b { color: var(--text); font: 400 15px/1.2 var(--serif); }
+.records-run span, .records-run small { color: var(--dim); font-size: 8.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.records-crosscheck { display: grid; gap: 5px; padding: 10px 11px; border-left: 2px solid var(--dim); background: rgba(0,0,0,.16); }
+.records-crosscheck[data-crosscheck="agreed"] { border-left-color: var(--mint); }
+.records-crosscheck[data-crosscheck="advanced"] { border-left-color: var(--amber); }
+.records-crosscheck[data-crosscheck="disagreed"] { border-left-color: var(--red); }
+.records-crosscheck p { margin: 0; color: var(--soft); font-size: 9px; line-height: 1.55; }
+.records-crosscheck small { color: var(--dim); font-size: 8px; line-height: 1.5; }
+
 @media (max-width: 1050px) {
   .today-board__grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .game-rack { grid-template-columns: repeat(2, minmax(0,1fr)); }
@@ -520,6 +563,8 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
   .stage-head { display: block; }
   .stage-head button { margin-top: 12px; width: 100%; }
   .verify-fold__row { grid-template-columns: 1fr; gap: 2px; }
+  .station-panel__counts > div, .station-panel__crate > div,
+  .galley-standing__rows > div, .records-section__rows > div { grid-template-columns: 1fr; gap: 2px; }
   .run-summary__control { flex: 1 1 auto; }
   .officer-card, .deck-panel { grid-row: auto; }
   .officer-card { display: grid; grid-template-columns: 125px 1fr; column-gap: 13px; }

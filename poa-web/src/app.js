@@ -14,6 +14,9 @@ import { buildRack, mountGameRack } from "./game-rack.js";
 import { buildRunSummary, mountRunSummary, runOutcome } from "./run-summary.js";
 import { readRackResults, recordRackResult } from "./rack-results.js";
 import { buildTodayBoard, loadSlotState, mountTodayBoard } from "./today-board.js";
+import { buildStationPanel, loadStationState, mountStationPanel } from "./station-panel.js";
+import { buildRecordsModel, loadRecordsState, mountRecords } from "./records-view.js";
+import { buildGalleyStatus, mountGalleyStatus, probeGalleyStatus } from "./galley-status.js";
 import { mountDreggAdmissionPanel } from "./dregg-admission-panel.js";
 import { getWalletStandardRegistry } from "./wallet-standard-registry.js";
 import { mountGalley } from "./galley-controller.js";
@@ -40,6 +43,10 @@ const state = {
   galleyController: null,
   platformEvidence: Object.freeze({}),
   slot: null,
+  station: null,
+  records: null,
+  galleyProbe: null,
+  galleyView: null,
   contentAuthority: Object.freeze({ state: "pending" }),
 };
 
@@ -112,6 +119,26 @@ function closeStage() {
   byId("mission-rack").querySelector("[data-open-game]")?.focus();
 }
 
+function renderGalleyStanding() {
+  const root = byId("galley-standing");
+  if (!root) return;
+  mountGalleyStatus(root, buildGalleyStatus({ probe: state.galleyProbe, view: state.galleyView }));
+}
+
+/**
+ * Ask the Galley status route with no actor header at all.
+ *
+ * This is the only thing a visitor without a Dregg identity can learn about the
+ * organ, and it is worth learning: a node that refuses with its own
+ * actor-required code has said the Galley is mounted and answering. The terminal
+ * below supersedes this the moment it obtains a real personalized document.
+ */
+async function initializeGalleyStanding() {
+  renderGalleyStanding();
+  state.galleyProbe = await probeGalleyStatus({ baseUrl: location.href });
+  renderGalleyStanding();
+}
+
 function initializeGalley() {
   const root = byId("galley-root");
   if (!root) return;
@@ -119,6 +146,10 @@ function initializeGalley() {
     state.galleyController = mountGalley(root, {
       transport: createGalleyTransport({ origin: location.origin }),
       dreggProvider: window.dregg ?? null,
+      onView: (view) => {
+        state.galleyView = view;
+        renderGalleyStanding();
+      },
     });
   } catch (error) {
     console.error("PoA Galley unavailable", error);
@@ -200,6 +231,13 @@ function sealAuthority(error) {
   renderRack();
   renderPlatform();
   renderToday();
+  // With no authenticated catalog there is no federation to ask about, so the
+  // station and the records land as sealed views that SAY that, rather than
+  // staying on a loading line that will never resolve.
+  state.station = Object.freeze({ state: "unreachable", code: "station-authority", reason: "No authenticated catalog names a federation to ask about" });
+  state.records = Object.freeze({ state: "unreachable", code: "records-authority", reason: "No authenticated catalog names a federation to ask about" });
+  renderStation();
+  renderRecords();
 }
 
 function renderPlatform() {
@@ -229,7 +267,40 @@ function renderToday() {
     recorder: state.platformEvidence.recorder ?? null,
     contentAuthority: state.contentAuthority,
     cards: state.cards,
+    station: state.station,
   }));
+}
+
+function renderStation() {
+  const root = byId("station-panel");
+  if (root) mountStationPanel(root, buildStationPanel(state.station));
+}
+
+function renderRecords() {
+  const root = byId("records-live");
+  if (root) mountRecords(root, buildRecordsModel(state.records));
+}
+
+/**
+ * The two organs that need the authority id the SIGNED catalog names.
+ *
+ * Both are read-only public surfaces and neither can be asked before the content
+ * bundle authenticates, because until then this page does not know which
+ * federation it is looking at — and asking a federation the catalog did not name
+ * would be reading a world nothing here is pinned to.
+ */
+async function initializeAuthorityOrgans() {
+  const [mission] = state.missions;
+  if (!mission) return;
+  const [station, records] = await Promise.all([
+    loadStationState({ authorityId: mission.federationId, baseUrl: location.href }),
+    loadRecordsState({ authorityId: mission.federationId, baseUrl: location.href }),
+  ]);
+  state.station = station;
+  state.records = records;
+  renderStation();
+  renderRecords();
+  renderToday();
 }
 
 /**
@@ -529,7 +600,10 @@ async function boot() {
   // The rack renders BEFORE anything is authenticated: every slot sealed, which
   // is true, and a shape a first-time player can read while the bytes load.
   renderRack();
+  renderStation();
+  renderRecords();
   initializeGalley();
+  const galleyStanding = initializeGalleyStanding();
   initializeDreggAdmission();
   const platformEvidence = initializePlatformEvidence();
   try {
@@ -563,11 +637,11 @@ async function boot() {
     // ⚠ No drill auto-opens any more. The first thing a player meets is the rack.
     renderRack();
     renderToday();
-    await initializeSlotState();
+    await Promise.all([initializeSlotState(), initializeAuthorityOrgans()]);
   } catch (error) {
     sealAuthority(error);
   } finally {
-    await platformEvidence;
+    await Promise.all([platformEvidence, galleyStanding]);
     byId("app").setAttribute("aria-busy", "false");
   }
 }

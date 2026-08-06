@@ -126,6 +126,16 @@
             </article>
           </div>
 
+          <!--
+            The station panel is a COMMUNAL instrument and records nobody: the
+            served document has no per-player field, and this terminal asks the
+            panel route, which names no crew member. It is here rather than in
+            Crew muster for that reason.
+          -->
+          <section id="station-panel" class="panel station-panel" aria-label="Ship instrument panel" aria-live="polite">
+            <p class="platform-loading">Reading the ship instrument panel…</p>
+          </section>
+
           <section id="platform-terminal" class="platform-terminal" aria-label="Ship operations terminal" aria-live="polite">
             <p class="platform-loading">Reading installed ship instruments…</p>
           </section>
@@ -205,6 +215,15 @@
             <div><p class="eyebrow">DECK 119 // RECONSTITUTION GALLERY</p><h1>The Galley</h1></div>
             <p class="watch-copy">Keep one ordinary place alive. Take a shift, accept what the vat can make, and leave the exact wake behind.</p>
           </div>
+          <!--
+            The standing view is ABOVE the terminal because it is the part a
+            visitor with no Dregg identity can see at all. The terminal below
+            needs an actor claim before the node will project a watch; this says
+            whether there is a Galley behind that door.
+          -->
+          <section id="galley-standing" class="panel galley-standing" aria-label="Galley standing" aria-live="polite">
+            <p class="platform-loading">Asking whether the Galley is answering…</p>
+          </section>
           <div id="galley-root" aria-live="off">
             <section class="galley-terminal galley-terminal--loading" aria-labelledby="galley-loading-title" aria-busy="true">
               <p class="panel-label">GALLEY NODE // V1</p>
@@ -254,14 +273,20 @@
         <section class="view" id="view-records" data-view="records">
           <div class="view-heading"><div><p class="eyebrow">BETA FIELD CANON // PROMOTION PENDING</p><h1>Things the ship may contain</h1></div><p class="watch-copy">Expeditions leave exact records. The series decides which discoveries survive into history.</p></div>
           <div class="records-layout">
-            <article class="panel record-feature">
-              <div class="record-stamp">FIELD RECORD<br><b>NO β RECORD</b></div>
-              <div class="record-art" aria-hidden="true"><span></span><span></span><span></span></div>
-              <div><p class="mission-code">ARCHIVE INTAKE // WAITING</p><h2>No expedition artifact has been settled</h2><p>This position is reserved for an exact beta artifact carried by a validated run. Interface copy cannot create a discovery, and only the curator can promote one into the series archive.</p></div>
+            <!--
+              ⚠ THIS WAS A STATIC EMPTY-STATE STRING, and the page never called
+              the route it was describing. `/api/poa/records/{authority}` is
+              mounted, public, and honest before any turn settles: at zero
+              transitions it carries the installed world identity, the world
+              meters, the Canon revision and the playable mission, with
+              `stage: awaiting-first-run` and `runs: []`. That is the content.
+              A hand-written card saying roughly the same thing was strictly
+              worse — it could not go wrong, and it could not go right either.
+            -->
+            <article class="panel records-live" id="records-live">
+              <p class="platform-loading">Reading the field records from the authority…</p>
             </article>
             <div class="record-list">
-              <article class="record-row"><time>LOCAL</time><div><b>Signal transcript</b><span>unsettled practice // no world effect</span></div><em>·</em></article>
-              <article class="record-row"><time>POA NODE</time><div><b>First expedition record</b><span>awaiting a validated run receipt</span></div><em>·</em></article>
               <article class="record-row alpha"><time>EPISODE 02</time><div><b>Crown station wreckage survey</b><span>series archive // on-screen canon</span></div><em>α</em></article>
               <a class="record-row record-link" href="./labs/expedition-lab.html"><time>LAB</time><div><b>Deck expedition demonstrator</b><span>play the authored descent plan</span></div><em>→</em></a>
               <a class="record-row record-link" href="./labs/archive-lab.html"><time>LAB</time><div><b>Archive evidence lab</b><span>triage a contaminated field record</span></div><em>→</em></a>

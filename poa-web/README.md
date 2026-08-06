@@ -60,9 +60,27 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
   `practice` is its own branch and cannot be advanced into the judged path.
 - `src/rack-results.js` is a note this browser keeps for itself. Practice and
   judged bests live in separate buckets and are never merged.
-- `src/today-board.js` reads what is true today. It re-derives and verifies the
-  curator's slot-opening signature rather than believing `open: true`, and every
-  unknown lands as a sealed tile.
+- `src/today-board.js` reads what is true right now. It re-derives and verifies
+  the curator's slot-opening signature rather than believing `open: true`, and
+  every unknown lands as a sealed tile.
+- `src/wire-shape.js` is the one exact-key-set checker every served document goes
+  through. Unknown fields are REFUSED, never ignored; when a route legitimately
+  grows one, the exact set is taught the new field against the bytes that
+  shipped.
+- `src/station-panel.js` reads `/api/poa/station/{authority}/panel` — the
+  communal ship instrument panel and the crate's authored schedule. Each gauge's
+  own arithmetic (`shown = min(exact_total, full_at)`) is recomputed, so a needle
+  that disagrees with its total is refused rather than drawn. The route carries
+  no current-period pointer, so no copy here may say a day passed.
+- `src/records-view.js` reads `/api/poa/records/{authority}`, which is honest
+  before the first turn settles: at zero transitions it is the installed world,
+  meters, Canon revision and playable mission. It also reads
+  `/api/poa/signal/{authority}/status` and says whether the head the replay
+  REBUILT is the head the authority SERVES — two computations, one question.
+- `src/galley-status.js` probes the Galley status route with NO actor header and
+  reports what came back. It never manufactures an identity to make the node
+  answer; when the terminal below obtains a real personalized watch, that
+  document supersedes the probe.
 - `src/signal-runtime.js` consumes Signal's compact outcome oracle. It does not
   score guesses or select outcomes itself.
 - `src/finite-table-runtime.js` consumes the complete legal-state closure and
