@@ -91,6 +91,7 @@ import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 namespace Dregg2.Circuit.Emit.KimchiStepWrapChain
 
 open Dregg2.Circuit.Emit.KimchiWrapMain
+open Dregg2.Circuit.Emit.KimchiCircuitJson (renderCircuit)
 open Dregg2.Circuit.Emit.KimchiPlacement (inertPublicWords)
 open Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 open Dregg2.Circuit.Emit.PastaField (pN qN)
@@ -98,34 +99,38 @@ open Dregg2.Circuit.Emit.PastaPoseidonFq (fqParams newSponge absorbMany challeng
 
 /-! ## §1 — THE SHAPE, MEASURED OFF THE STEP PROOF RATHER THAN CHOSEN.
 
-Four of `WrapShape`'s **nine** fields are read out of the tape the step proof actually produced. The
-remaining five are taken from `KimchiWrapMain.shapeWrap` unchanged, for two different reasons:
+**Six** of `WrapShape`'s nine fields are read out of the proof this file is about. The remaining
+three — `emsRows`, `branches`, `pubWords` — are wrap-instance parameters with no step-side source at
+all, because `wrap_main` is per-zkApp (`wrap_main.ml:96-105`); they stay `shapeWrap`'s.
 
-* `emsRows`, `branches`, `pubWords` are wrap-instance parameters with no step-side source —
-  `wrap_main` is per-zkApp (`wrap_main.ml:96-105`).
-* ⚑ `xhatTerms` and `xhatXY` arrived at `w6_xhat` (W-XHAT, `d89815028`) and are **§15's**, not the
-  transcript's. `xhatXY` is a memo carrying `xhatOut xhatTerms`, and copying `shapeWrap`'s pair
-  discharges that obligation by construction — `chain_xhat_is_the_step_proofs_not_the_msm_output`
-  proves it rather than assuming it, which is the committed-shape half that `KimchiWrapMain` itself
-  only closes for `shapeSmoke`.
+⚑⚑ **`xhatEntries` AND `xhatXY` ARE THIS PROOF'S SINCE 2026-08-06, AND THAT IS THE OVERRIDE THIS
+FILE NO LONGER HAS.** They used to be copied from `shapeWrap` — 67 entries over Mina's packed
+`Types.Step.Statement`, whose scalars are a NAMED FIXTURE — and `chainSchedule` absorbed
+`STEP_PUBCOMM_XY` in place of the fold's output, because a reality gate about `proof.oracles(...)`
+has to absorb the commitment the verifier absorbed. Two objects where upstream has one, and the
+theorem that said so (`chain_xhat_is_the_step_proofs_not_the_msm_output`) named the repair:
 
-⚑ **AND THE `x_hat` SLOT IS THE ONE PLACE THE CHAIN OVERRIDES A DERIVED VALUE.** `schedule` absorbs
-`s.xhatXY` at `wrap_verifier.ml:617`; `chainSchedule` absorbs `STEP_PUBCOMM_XY`, the public-input
-commitment kimchi's own verifier absorbed for THIS step proof. It has to: `chain_reality_gate` is a
-claim about what `proof.oracles(...)` computed, and §15's 67 scalars are not any statement's words.
+> To make `x_hat` the step proof's real public-input commitment the MSM has to run over dregg's step
+> proof's OWN public input against the step SRS Lagrange basis — `STEP_PUBLIC = 12` terms, not
+> `XHAT_TERMS_FULL = 67` … So `shapeChain.xhatTerms = shapeWrap.xhatTerms` is itself the thing that
+> has to go, and `chain_shape_is_the_measured_step_shape`'s `shapeChain = shapeWrap` conjunct goes
+> with it.
 
-⚠ **RE-CHECKED 2026-08-04, AFTER W-PREV LANDED (`5269fa248`), AND THE OVERRIDE STAYS.** An earlier
-draft of this paragraph said closing the gap was "W-PREV's job", and quoted the scalars as
-`wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i`. Both are stale. W-PREV has landed nine wrap rungs, and what
-it supplied is the previous STEP statement's **SHAPE**, not its values: `KimchiWrapMainField` §15c′
-derives the 57 packed words (`composition_types.ml:1453-1459`) and their expansion to §15a's 67
-entries, pins each to the width `spec.ml:374-392` packs it at, boolean-constrains `should_finalize`,
-and ties word 54 (`messages_for_next_step_proof`) to `w9_prev`'s 23rd public word. The VALUES are now
-`xhatScalar i = prevWordVal (xhatWordOf i)`, i.e. `wrapFixtureQ 34 w` through an `x^9` mixer — still a
-named fixture. And §15c now argues that is the FAITHFUL choice rather than a stand-in: upstream's 57
-words are a FREE WITNESS, and "a named fixture" and "a free witness" are the same object. So this
-override is not pending on any rung; it is what a reality gate about `proof.oracles(...)` requires,
-permanently. §8b states it as a theorem. -/
+Both have gone. `XHAT_OWN_SEL` is twelve entries of a **disjoint index space** whose bases are the
+step SRS's Lagrange basis **at this proof's own domain** (`2 ^ STEP_DOMAIN_LOG2 = 4096`, not
+`MinaStepSrsLagrange`'s 65536) and whose scalars are the twelve `Fp` public inputs the prover
+actually handed `kimchi::verifier`. `xhatOutOf XHAT_OWN_SEL` **is** `STEP_PUBCOMM_XY` —
+`the_own_xhat_msm_is_this_proofs_public_input_commitment` in Lean, and the same identity asserted
+independently in arkworks by `tape.rs` before the fixture was written.
+
+So `chainSchedule` now absorbs `s.xhatXY` at `wrap_verifier.ml:617` exactly as `schedule` does. The
+reality gate holds because the MSM computes the right point, not because the tape was patched around
+it — which is a strictly stronger statement about the same five numbers.
+
+⚠ **AND `shapeChain ≠ shapeWrap` IS NOW A FACT, NOT A REGRESSION.** A `WrapShape` for verifying
+dregg's step rule genuinely has that rule's statement width; the two shapes agree on every transcript
+parameter and differ in exactly the two x_hat fields.
+`chain_shape_is_the_measured_step_shape` states both halves. -/
 
 def shapeChain : WrapShape :=
   { prevs := STEP_PREVCOMM_XY.length / 2
@@ -135,8 +140,12 @@ def shapeChain : WrapShape :=
   , emsRows := shapeWrap.emsRows
   , branches := shapeWrap.branches
   , pubWords := shapeWrap.pubWords
-  , xhatTerms := shapeWrap.xhatTerms
-  , xhatXY := shapeWrap.xhatXY }
+  -- ⚑ THIS PROOF'S TWELVE PUBLIC INPUTS, in their own index space.
+  , xhatEntries := XHAT_OWN_SEL
+  -- ⚑ …and the memo is `STEP_PUBCOMM_XY` itself. Written as the fixture's own words rather than as
+  -- two literals, so the memo and the value it must equal have ONE source and a re-export moves
+  -- both. `EmitStepWrapChainJson` still re-derives `xhatOutOf` and refuses on disagreement.
+  , xhatXY := (STEP_PUBCOMM_XY.getD 0 0, STEP_PUBCOMM_XY.getD 1 0) }
 
 /-! ## §2 — THE TAPE, and the schedule that carries it.
 
@@ -168,7 +177,9 @@ def chainItemVal (t i : Nat) : Nat :=
 def chainSchedule (s : WrapShape) : List Ev :=
   [ Ev.abs T_DIGEST (chainItemVal T_DIGEST 0) ]
   ++ (List.range (2 * s.prevs)).map (fun i => Ev.abs T_SGOLD (chainItemVal T_SGOLD i))
-  ++ (List.range 2).map (fun i => Ev.abs T_XHAT (chainItemVal T_XHAT i))
+  -- ⚑ `s.xhatXY`, exactly as `KimchiWrapMain.schedule` does — the MSM's OWN output, which since
+  -- `XHAT_OWN_SEL` IS this proof's public-input commitment. No override.
+  ++ [ Ev.abs T_XHAT s.xhatXY.1, Ev.abs T_XHAT s.xhatXY.2 ]
   ++ (List.range (2 * s.wComms)).map (fun i => Ev.abs T_WCOMM (chainItemVal T_WCOMM i))
   ++ [ Ev.sq .chal, Ev.sq .chal ]                                    -- beta, gamma
   ++ (List.range 2).map (fun i => Ev.abs T_ZCOMM (chainItemVal T_ZCOMM i))
@@ -479,13 +490,30 @@ produces. `shapeWrap`'s docstring derives them from `Backend.Tick.Rounds.n`, `Pl
 and the devnet wrap VK; this is the independent confirmation, from a proof rather than from a
 reading. -/
 
-/-- **`chain_shape_is_the_measured_step_shape`** — and the whole record agrees with `shapeWrap`. -/
+/-- **`chain_shape_is_the_measured_step_shape`** — the transcript parameters agree with `shapeWrap`,
+and the x_hat pair does NOT.
+
+⚠ ⚑ **THE `shapeChain = shapeWrap` CONJUNCT IS GONE, AND ITS REMOVAL IS THE POINT OF THE COMMIT.**
+It was true only while this file copied `shapeWrap`'s 67-entry MSM over Mina's packed statement — an
+MSM whose output is not any proof's public-input commitment, which is why `chainSchedule` had to
+override the slot it absorbed. A `WrapShape` that verifies dregg's step rule carries THAT rule's
+statement width. Stated as a disagreement at exactly two fields rather than as a bare `≠`, so a
+future copy of `shapeWrap` into either field goes red here and not three rungs up. -/
 theorem chain_shape_is_the_measured_step_shape :
     shapeChain.prevs = 2
     ∧ shapeChain.ipaRounds = 16
     ∧ shapeChain.wComms = 15
     ∧ shapeChain.tComms = 7
-    ∧ shapeChain = shapeWrap
+    -- the transcript parameters ARE `shapeWrap`'s, which is what made the census agree all along
+    ∧ (shapeChain.prevs, shapeChain.ipaRounds, shapeChain.wComms, shapeChain.tComms,
+       shapeChain.emsRows, shapeChain.branches, shapeChain.pubWords)
+      = (shapeWrap.prevs, shapeWrap.ipaRounds, shapeWrap.wComms, shapeWrap.tComms,
+         shapeWrap.emsRows, shapeWrap.branches, shapeWrap.pubWords)
+    -- …and the two x_hat fields are this proof's, not Mina's statement's
+    ∧ shapeChain.xhatEntries = XHAT_OWN_SEL
+    ∧ shapeChain.xhatEntries ≠ shapeWrap.xhatEntries
+    ∧ shapeChain.xhatXY ≠ shapeWrap.xhatXY
+    ∧ shapeChain ≠ shapeWrap
     ∧ chainTape.length = 37
     ∧ STEP_LR_XY.length = 4 * shapeChain.ipaRounds
     ∧ STEP_TCOMM_XY.length = 2 * shapeChain.tComms := by
@@ -493,45 +521,77 @@ theorem chain_shape_is_the_measured_step_shape :
 
 #assert_compiled chain_shape_is_the_measured_step_shape
 
-/-! ### §8b — ⚑ THE ONE SLOT WHERE THE CHAIN OVERRIDES A DERIVED VALUE, exhibited.
+/-! ### §8b — ⚑ THE SLOT THE CHAIN USED TO OVERRIDE, AND NO LONGER DOES.
 
-W-XHAT (`d89815028`) turned `x_hat` from a fixture into an MSM output, and `schedule` now absorbs
-`s.xhatXY`. This file does not, and cannot: the sponge tape has to be the one kimchi's verifier ran
-on, or §3 is not a reality gate. The theorem below reads BOTH schedules' `T_XHAT` words off the
-emitted event lists — not off the definitions that produced them — and shows they differ. -/
+W-XHAT (`d89815028`) turned `x_hat` from a fixture into an MSM output over Mina's packed statement,
+and this file could not absorb that output: the sponge tape has to be the one kimchi's verifier ran
+on, or §3 is not a reality gate. So it absorbed `STEP_PUBCOMM_XY` directly and said so.
+
+⚑ **SINCE 2026-08-06 THERE IS NOTHING TO OVERRIDE.** `shapeChain.xhatEntries = XHAT_OWN_SEL`, the
+MSM runs over this proof's twelve public inputs against its own domain's Lagrange basis, and its
+output IS `STEP_PUBCOMM_XY`. `chainSchedule` absorbs `s.xhatXY` exactly as `schedule` does. The
+theorems below read the `T_XHAT` words off the EMITTED event list — not off the definitions that
+produced them — and show the derived pair and the verifier's pair are one value. -/
 
 /-- The words the CHAIN's schedule absorbs under `T_XHAT`, read off the emitted event list. -/
 def chainXhatAbsorbed : List Nat :=
   (chainSchedule shapeChain).filterMap
     (fun e => match e with | .abs t w => if t == T_XHAT then some w else none | .sq _ => none)
 
-/-- The same for `KimchiWrapMain.schedule` at the same shape. -/
+/-- The same for `KimchiWrapMain.schedule` at the shape that carries **Mina's** packed-statement MSM.
+
+⚠ ⚑ **THE SHAPE ARGUMENT IS `shapeWrap` AND IT USED TO BE `shapeChain`, WHICH IS NOW A NO-OP.**
+`schedule` reads `s.xhatXY`, and `shapeChain.xhatXY` is this proof's commitment — so
+`schedule shapeChain` absorbs exactly what `chainSchedule shapeChain` does and comparing the two
+would compare a list with itself. That is a control that stopped controlling, not a fact; the object
+worth naming is the 67-entry MSM's output, which lives on `shapeWrap`. -/
 def wrapXhatAbsorbed : List Nat :=
-  (schedule shapeChain).filterMap
+  (schedule shapeWrap).filterMap
     (fun e => match e with | .abs t w => if t == T_XHAT then some w else none | .sq _ => none)
 
-/-- **`chain_xhat_is_the_step_proofs_not_the_msm_output`** — ⚑ the substitution, stated rather than
-left for a reader to notice, and the memo obligation discharged for the COMMITTED shape.
+/-- **`chain_xhat_is_the_msm_output_and_the_step_proofs`** — ⚑⚑ **THIS REPLACED
+`chain_xhat_is_the_step_proofs_not_the_msm_output`, AND THE INEQUALITY IT CARRIED WAS THE DEFECT.**
 
-* The chain absorbs `STEP_PUBCOMM_XY`, this step proof's real public-input commitment.
-* `schedule` absorbs `shapeChain.xhatXY`, §15's MSM output.
-* They DIFFER — so the override is real, not a relabelling, and §15's MSM is not an MSM over dregg's
-  step statement. ⚠ W-PREV has LANDED (`5269fa248`) and this stays true: it gave those 67 entries the
-  previous step statement's SHAPE (§1), not its values, which are still `prevWordVal`'s named
-  fixture. `x_hat` remains on `KimchiWrapMain.WRAP_UNCONSUMED` for that reason.
-* And `shapeChain.xhatXY = xhatOut shapeChain.xhatTerms` — the obligation `EmitWrapMainJson`
-  enforces at emission time and `xhat_smoke_shape_absorbs_the_msm_output` closes only for
-  `shapeSmoke`. Here it is a theorem at the committed shape. -/
-theorem chain_xhat_is_the_step_proofs_not_the_msm_output :
+The predecessor said: the chain absorbs `STEP_PUBCOMM_XY`, `schedule` absorbs §15's MSM output, and
+**they DIFFER** — so the override is real and §15's MSM is not an MSM over dregg's step statement. It
+was true, and it was a statement that the emitted circuit constrained the absorbed `x_hat` pair
+(`xhatRows`' closing `caRowQ` writes into the transcript's own `T_XHAT` σ classes) to equal a point
+computed from scalars belonging to no proof. On this tape the honest witness could not satisfy that
+row, which is why `w6_xhat` was the ceiling.
+
+⚑ **NOW THE TWO ARE ONE VALUE, AND EVERY LEG BELOW IS READ OFF THE EMITTED EVENT LIST.** The
+absorbed pair is the fold's output, the fold's output is the commitment `kimchi::verifier` computed
+for this proof, and the memo obligation `EmitWrapMainJson` enforces at emission time is discharged
+here at the committed shape — the half `xhat_smoke_shape_absorbs_the_msm_output` closes only for
+`shapeSmoke`.
+
+⚠ **AND IT IS STILL A CONTROL, IN THE ONE DIRECTION THAT MATTERS.** `shapeWrap`'s pair is named and
+required to DIFFER: a "repair" that made this agree by moving the chain back onto Mina's 67-entry
+MSM — or the wrap shape onto these twelve — goes red here. -/
+theorem chain_xhat_is_the_msm_output_and_the_step_proofs :
     chainXhatAbsorbed = [STEP_PUBCOMM_XY.getD 0 0, STEP_PUBCOMM_XY.getD 1 0]
-    ∧ wrapXhatAbsorbed = [shapeChain.xhatXY.1, shapeChain.xhatXY.2]
-    ∧ chainXhatAbsorbed ≠ wrapXhatAbsorbed
-    ∧ shapeChain.xhatXY = xhatOut shapeChain.xhatTerms
-    ∧ shapeChain.xhatTerms = XHAT_TERMS_FULL
-    ∧ STEP_PUBCOMM_XY.length = 2 := by
+    ∧ chainXhatAbsorbed = [shapeChain.xhatXY.1, shapeChain.xhatXY.2]
+    ∧ shapeChain.xhatXY = xhatOutOf shapeChain.xhatEntries
+    ∧ shapeChain.xhatEntries = XHAT_OWN_SEL
+    ∧ shapeChain.xhatEntries.length = STEP_PUBLIC
+    -- ⚑ …and it is NOT Mina's packed-statement MSM, at either field.
+    ∧ shapeChain.xhatEntries ≠ shapeWrap.xhatEntries
+    ∧ chainXhatAbsorbed ≠ [shapeWrap.xhatXY.1, shapeWrap.xhatXY.2]
+    ∧ STEP_PUBCOMM_XY.length = 2
+    -- ⚑⚑ **THE SECOND-COPY DETECTOR, AND IT IS NOT DECORATION.** `chainTape` and `chainSchedule`
+    -- are two INDEPENDENT constructions of the same absorbed words: the tape splices
+    -- `STEP_PUBCOMM_XY` in directly (§2) and the schedule reads `s.xhatXY` (§1). §3's reality gate
+    -- runs on the first and §4's emitted trace on the second, so if the memo ever stopped being
+    -- this proof's commitment the two would come apart and `chain_reality_gate` would stay GREEN
+    -- while the circuit absorbed something else. That is exactly how `whSgOld` — a second copy of
+    -- `sg_old` still reading the borrowed proof — kept `xhatOut 67` unchanged while `RC_SGOLD`
+    -- moved, and a green refusal was the evidence of the defect. This is the leg that reds.
+    ∧ ((chainRun.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).map (fun e => e.word))
+        = [chainTape.getD (1 + 2 * shapeChain.prevs) 0,
+           chainTape.getD (1 + 2 * shapeChain.prevs + 1) 0] := by
   native_decide
 
-#assert_compiled chain_xhat_is_the_step_proofs_not_the_msm_output
+#assert_compiled chain_xhat_is_the_msm_output_and_the_step_proofs
 
 /-! ## §9 — the emission. `WrapData` with the chained trace substituted, nothing else changed.
 
@@ -552,11 +612,27 @@ index digest to the transcript's FIRST absorbed word. This tape's first word is
 ⚑ And the selection carries a second correction with it: `fz = widths.getD 2 = 2`, so
 `Branch_data.proofs_verified` packs as `N2` (`[1,1]`, `Field.pack = 3`) rather than the `N1` the old
 `min 1 (branches − 1)` produced — which is the honest value for a wrap whose step rule carries
-`STEP_PREV_CHALLENGES = 2` accumulators and whose tape has two `sg_old` points on it. -/
+`STEP_PREV_CHALLENGES = 2` accumulators and whose tape has two `sg_old` points on it.
+
+⚑⚑ **AND THE DOMAIN IS THIS PROOF'S SINCE 2026-08-06, WHICH IS MINA'S SLOT 29.** The `logs` vector
+is the per-branch STEP domain `Branch_data.domain_log2` packs (`branch_data.ml:95-101`,
+`4·domain_log2 + Field.pack mask`). Every entry was `16` — `Common.Max_degree.step_log2`, which is
+Mina's `step-transaction` domain and the SRS depth, and is right for `KEY_REAL_BRANCH`. It is not
+right for dregg's rule: `stepmain_smoke_r8_finalize` is 3 391 rows at 12 public inputs, so its
+evaluation domain is `2 ^ STEP_DOMAIN_LOG2 = 4096` and `kimchi::verifier` proved it there.
+
+⚠ **MEASURED, and it is the one derived word this file had wrong.** At `logs = 16` the branch packs
+`4·16 + 3 = 67`; `MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 29 = 51 = 4·12 + 3`, which
+`MinaWrapDeferredWords.branch_data_is_two_proofs_at_domain_log2_twelve` already read
+as `12 * 4 + 3`. So slot 29 was the ONE
+slot of `w4_bind`'s twenty-two that this tape did not reproduce, and the cause was a constant that
+described a different circuit's domain — the same class as the key digest and the MSM bases, in the
+one field nobody had looked at because `16` is correct everywhere else in the file. -/
 def chainBranch : BranchData :=
   runBranch shapeChain KEY_CHAIN_BRANCH
     ((List.range shapeChain.branches).map (fun i => min 2 i))
-    ((List.range shapeChain.branches).map (fun _ => 16))
+    ((List.range shapeChain.branches).map (fun i =>
+      if i == KEY_CHAIN_BRANCH then STEP_DOMAIN_LOG2 else 16))
 
 def tChain : WrapData := { sh := shapeChain, sp := chainRun, br := chainBranch }
 
@@ -931,9 +1007,16 @@ theorem the_consuming_rungs_and_the_wrap_read_one_step_proof :
     -- ⚑ they agree on a REAL proof, not on the borrowed one
     ∧ STEP_PREVCOMM_XY ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.PREVCOMM_XY
     ∧ STEP_WCOMM_XY ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.WCOMM_XY
-    -- ⚑ …and the chain's two OVERRIDES are still overrides
+    -- ⚑ …and the two items that separate this tape from `KimchiWrapMain.schedule`'s are still
+    -- separate. ⚠ THE SECOND LEG MOVED TO THE OBJECT THAT STILL EXISTS: `x_hat` is no longer an
+    -- OVERRIDE (the MSM computes it — §8b), so `chainItemVal T_XHAT` is not what the schedule
+    -- absorbs and comparing it against `RC_XHAT` would be a control over two dead functions. What
+    -- the wrap assembly absorbs is `shapeWrap.xhatXY`, the 67-entry fold's output, and THAT is what
+    -- this tape's `x_hat` differs from.
     ∧ (chainItemVal T_DIGEST 0 == itemVal T_DIGEST 0) = false
-    ∧ ((List.range 2).all (fun i => chainItemVal T_XHAT i == itemVal T_XHAT i)) = false := by
+    ∧ (chainItemVal T_DIGEST 0 == STEP_VKDIGEST) = true
+    ∧ chainXhatAbsorbed ≠ wrapXhatAbsorbed
+    ∧ wrapXhatAbsorbed = [shapeWrap.xhatXY.1, shapeWrap.xhatXY.2] := by
   native_decide
 
 #assert_compiled the_consuming_rungs_and_the_wrap_read_one_step_proof
@@ -1038,48 +1121,83 @@ theorem the_chain_key_is_the_tapes_own_preimage :
 
 #assert_compiled the_chain_key_is_the_tapes_own_preimage
 
-/-- **`the_chain_stops_at_xhat_because_the_msm_is_over_a_fixture`** — ⚑⚑ **THE NEXT NAMED ROW, and it
-is `w6_xhat`'s LAST one.** Stated as precisely as its two predecessors, and refutable the same way.
+/-- **`the_chain_climbs_past_xhat_at_its_own_public_input_commitment`** — ⚑⚑ **BLOCKER THREE, CLOSED
+2026-08-06, AND ITS PREDECESSOR WAS WRITTEN TO GO RED EXACTLY HERE.**
 
-`xhatRows`' closing `caRowQ` writes its OUTPUT into `xw` — the transcript's own absorbed `T_XHAT` σ
-classes — so the emitted circuit CONSTRAINS the absorbed `x_hat` pair to equal
-`Ops.add_fast (negate (MSM fold)) Generators.h` (`wrap_verifier.ml:539-617`, the `x_hat blinding`).
-On a `schedule`-driven `WrapData` that holds by construction, because `schedule` absorbs
-`s.xhatXY = xhatOut s.xhatTerms` — the fold's own output. **On this tape it does not**, because §1's
-override absorbs `STEP_PUBCOMM_XY`, the public-input commitment kimchi's verifier actually ran on,
-and the fold is over `xhatScalar i = prevWordVal (xhatWordOf i)` — a NAMED FIXTURE.
+`the_chain_stops_at_xhat_because_the_msm_is_over_a_fixture` said: `xhatRows`' closing `caRowQ`
+writes its OUTPUT into `xw` — the transcript's own absorbed `T_XHAT` σ classes — so the emitted
+circuit CONSTRAINS the absorbed `x_hat` pair to equal `Ops.add_fast (negate (MSM fold))
+Generators.h`; on a `schedule`-driven `WrapData` that holds by construction, and **on this tape it
+did not**, because the fold ran over `xhatScalar i = prevWordVal (xhatWordOf i)`, a named fixture.
+Its docstring closed with *"it goes RED when the MSM computes this proof's own public-input
+commitment."* It does, and this is that.
 
-⚑ **AND THIS IS A DIFFERENT KIND OF BLOCKER FROM THE KEY, WHICH IS WHY IT IS WORTH SEPARATING.** The
-key was a wrong CONSTANT: the wrap circuit committed to another circuit's index, and giving
-`step_keys` dregg's own entry fixed it with no new arithmetic. This one is a wrong FUNCTION. To make
-`x_hat` the step proof's real public-input commitment the MSM has to run over dregg's step proof's
-OWN public input against the step SRS Lagrange basis — `STEP_PUBLIC = 12` terms, not
-`XHAT_TERMS_FULL = 67`, because 67 is Mina's `step-transaction` statement width and 12 is
-`stepmain_smoke_r8_finalize`'s. So `shapeChain.xhatTerms = shapeWrap.xhatTerms` — §1's deliberate
-copy — is itself the thing that has to go, and `chain_shape_is_the_measured_step_shape`'s
-`shapeChain = shapeWrap` conjunct goes with it. That is correct rather than costly: a `WrapShape` for
-verifying dregg's step rule genuinely has that rule's statement width.
+⚑ **THE FIX WAS THE ONE THAT ROW NAMED, NOT A WAY AROUND IT.** The MSM runs over dregg's step
+proof's own public input against the step SRS Lagrange basis at **this proof's domain**, twelve terms
+rather than sixty-seven, in an index space of its own; `shapeChain.xhatEntries` is that selection and
+`shapeChain.xhatXY` is its output. The `caRowQ` the row was about is now satisfied by the honest
+witness, so `w6_xhat` places and its σ classes are sound at the committed shape — the last two
+conjuncts, which are what stop this being two numbers with no circuit behind them.
 
-⚠ **`.xhat` is in `rungsUpto` of `.split`, `.ftcomm`, `.prev`, `.combine` and `.bullet`**, so this
-one row is the ceiling for all five — exactly as `.key` was the ceiling for everything above
-`w4_bind`. The families W-COMBINE and W-BULLET would read (`z_comm`, 15 `w_comm`,
-`combined_inner_product`, 32 `lr`, `delta`) are NOT what blocks them.
-
-⚑ It goes RED when the MSM computes this proof's own public-input commitment. -/
-theorem the_chain_stops_at_xhat_because_the_msm_is_over_a_fixture :
+⚠ ⚑ **AND THE NEW CEILING IS `w7_split`, FOR A REASON THAT IS NOT A SCHEDULE.** `.xhat` is in
+`rungsUpto` of `.split`, `.ftcomm`, `.prev`, `.combine` and `.bullet`, so this row was the ceiling
+for all five. What now blocks `.split` is STRUCTURAL: `splitRows` implements `split_field`
+(`wrap_main.ml:69-81`) on the packed words of a `Types.Step.Statement`, and **dregg's step proof has
+no such statement** — its public input is twelve unconstrained `Fp` elements, which is why the MSM
+above is twelve terms. There is no twelve-entry `w7_split`; the row does not exist upstream for a
+step rule that is not a Pickles step rule. `the_chain_stops_at_split_because_there_is_no_packed_
+statement` is that, said as a theorem rather than as a plan. -/
+theorem the_chain_climbs_past_xhat_at_its_own_public_input_commitment :
     chainXhatAbsorbed = [STEP_PUBCOMM_XY.getD 0 0, STEP_PUBCOMM_XY.getD 1 0]
-    ∧ chainXhatAbsorbed ≠ [shapeChain.xhatXY.1, shapeChain.xhatXY.2]
-    ∧ shapeChain.xhatXY = xhatOut shapeChain.xhatTerms
-    ∧ shapeChain.xhatTerms = XHAT_TERMS_FULL
-    ∧ XHAT_TERMS_FULL ≠ STEP_PUBLIC
+    ∧ chainXhatAbsorbed = [shapeChain.xhatXY.1, shapeChain.xhatXY.2]
+    ∧ shapeChain.xhatXY = xhatOutOf shapeChain.xhatEntries
+    ∧ shapeChain.xhatEntries.length = STEP_PUBLIC
+    ∧ STEP_PUBLIC ≠ XHAT_TERMS_FULL
     ∧ (rungsUpto .split).contains .xhat = true
-    ∧ (rungsUpto .ftcomm).contains .xhat = true
-    ∧ (rungsUpto .prev).contains .xhat = true
-    ∧ (rungsUpto .combine).contains .xhat = true
-    ∧ (rungsUpto .bullet).contains .xhat = true := by
+    ∧ (rungsUpto .bullet).contains .xhat = true
+    ∧ (rungsUpto .key).contains .xhat = false
+    -- ⚑ the rung PLACES on this tape, and no gate escapes its region
+    ∧ (refusalOf shapeChain .xhat (rungPub shapeChain .xhat)
+         (wrapGates (rungRows tChain .xhat true)) == none) = true
+    ∧ regionEscape shapeChain chainRun .xhat (wrapGates (rungRows tChain .xhat true)) = none := by
   native_decide
 
-#assert_compiled the_chain_stops_at_xhat_because_the_msm_is_over_a_fixture
+#assert_compiled the_chain_climbs_past_xhat_at_its_own_public_input_commitment
+
+/-- **`the_chain_stops_at_split_because_there_is_no_packed_statement`** — ⚑ the NEW named row, and it
+is a different KIND of blocker from the three below it. Those were wrong objects: a borrowed proof's
+commitments, another circuit's verification key, an MSM over scalars belonging to nothing. Each had a
+right object to be replaced by, and each was.
+
+This one has none. `w7_split` emits `split_field`'s `2·hi + is_odd = x` over the packed words of
+`Types.Step.Statement` (`composition_types.ml:1453-1459`), and `w9_prev`, `w11_wraphack` and
+`w13_finsponge` all read that same 57-word object. `stepmain_smoke_r8_finalize`'s public input is
+twelve unconstrained `Fp` elements: **not a packed statement, not a prefix of one, and not a
+narrowing of one.** So there is no 12-entry `split_field` to emit — the gadget is upstream's
+serialization of a structure this proof does not carry.
+
+⚑ **WHICH MEANS THE FORK IS ON THE STEP SIDE, AND IT IS WORTH NAMING PRECISELY.** A wrap ladder
+above `w6_xhat` verifying THIS proof requires the step circuit's public input to BE a step statement
+— 57 packed words, 67 entries — which is a change to `KimchiStepMain`, not to this file. Until then
+the honest reading of `w7_split` and above is that they are `wrap_main` for a Pickles step rule,
+assembled and proved, and that the proof they are driven by is not one.
+
+⚠ The legs are the entry-space disagreement rather than a `sorry`: the chain's selection is disjoint
+from every entry `xhatWordOf` has a word for, and `PREV_WORDS` is not `STEP_PUBLIC`. -/
+theorem the_chain_stops_at_split_because_there_is_no_packed_statement :
+    shapeChain.xhatEntries.all (fun i => xhatIsOwn i) = true
+    ∧ shapeWrap.xhatEntries.all (fun i => !xhatIsOwn i) = true
+    ∧ STEP_PUBLIC ≠ PREV_WORDS
+    ∧ STEP_PUBLIC ≠ XHAT_TERMS_FULL
+    -- ⚑ `w7_split`'s object is the 57-word statement, and its expansion is Mina's 67 entries only.
+    ∧ ((List.range XHAT_TERMS_FULL).map xhatWordOf).all (fun w => decide (w < PREV_WORDS)) = true
+    ∧ shapeChain.xhatEntries.all (fun i =>
+        decide (PREV_WORDS ≤ xhatWordOf i)) = true
+    ∧ (rungsUpto .prev).contains .split = true
+    ∧ (rungsUpto .wraphack).contains .split = true := by
+  native_decide
+
+#assert_compiled the_chain_stops_at_split_because_there_is_no_packed_statement
 
 /-- **`the_combine_and_bullet_families_are_not_what_blocks_them`** — ⚑ the complement, so the row
 above is a DIAGNOSIS and not merely a blocker. Every commitment family W-COMBINE's 47-term fold and
@@ -1087,9 +1205,12 @@ W-BULLET's ladders read is, on this tape, the chain's own absorbed σ class hold
 value — variable AND value, since `absVal`. If `w6_xhat` were passed, nothing in those two rungs
 would be reading a borrowed proof.
 
-⚠ `x_hat` itself is the exception and is stated as one: its slot is the absorbed cell like the
-others, but the cell's VALUE is the step proof's commitment while the fold that must produce it is
-over a fixture — which is the row above, in the value layer. -/
+⚠ ⚑ **`x_hat` WAS THE EXCEPTION AND IS NOT ANY MORE, AND THE LAST CONJUNCT IS THE INVERSION.** It
+read `combPtVal tChain shapeChain.prevs ≠ shapeChain.xhatXY` — the fold slot held the step proof's
+commitment while the MSM that had to produce it ran over a fixture, so the two disagreed and the
+disagreement was the blocker. They are one value now, which is `w6_xhat` closing. Written as an
+equality against BOTH sources (the absorbed cell and the shape's memo) so a repair that moved either
+one alone goes red. -/
 theorem the_combine_and_bullet_families_are_not_what_blocks_them :
     ((List.range shapeChain.prevs).all (fun p =>
         combPtVal tChain p == (chainAbsVal T_SGOLD (2 * p), chainAbsVal T_SGOLD (2 * p + 1)))) = true
@@ -1103,7 +1224,9 @@ theorem the_combine_and_bullet_families_are_not_what_blocks_them :
           == (chainAbsVal T_LR (4 * r + 2 * j), chainAbsVal T_LR (4 * r + 2 * j + 1))))) = true
     ∧ bullDeltaVal tChain = (chainAbsVal T_DELTA 0, chainAbsVal T_DELTA 1)
     ∧ combPtVal tChain shapeChain.prevs = (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
-    ∧ combPtVal tChain shapeChain.prevs ≠ shapeChain.xhatXY := by
+    ∧ combPtVal tChain shapeChain.prevs = shapeChain.xhatXY
+    ∧ combPtVal tChain shapeChain.prevs
+        = (STEP_PUBCOMM_XY.getD 0 0, STEP_PUBCOMM_XY.getD 1 0) := by
   native_decide
 
 #assert_compiled the_combine_and_bullet_families_are_not_what_blocks_them
@@ -1137,12 +1260,7 @@ until 2026-08-04 — the rung-blind aliases §9a describes. After W-PREV those d
 `"public_input"`, with a witness grid built from a different rung's environment than its gates.
 `KimchiWrapMain.rungJson` was already rung-explicit; this is now the same shape. -/
 def chainJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :=
-  let rows := rungRows t k wired
-  let p := rungPub t.sh k
-  renderWrapCircuit name p (p + rows.length)
-    (placedOf t.sh k p (wrapGates rows)) (wrapWitnessAt t k p rows)
-    (if p == 0 then [] else wrapPublicAt t k) (rungProbeRows t k)
-    (if p == 0 then [] else wrapSlotsAt t.sh k) (if p == 0 then [] else wrapInertOk t.sh k)
+  renderCircuit (wrapCircuit t k wired name)
 
 /-! ⚠ NO `#assert_namespace_axioms` HERE, and the absence is the honest label. Every theorem above
 rests on `Lean.ofReduceBool` — they are closed by compiled evaluation, not by the kernel — so a
