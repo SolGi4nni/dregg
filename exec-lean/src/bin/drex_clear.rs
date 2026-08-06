@@ -49,7 +49,7 @@ use dregg_intent::lowering::{Intent, LoweringContext, lower, seal_plan_uniform};
 use dregg_intent::solver::{ExchangeSpec, IntentNode, RingSolver, RingTrade};
 use dregg_intent::verified_settle::{
     VerifiedLedger, VerifiedSettleError, extract_legs, funded_ledger, settle_fulfillment_verified,
-    settle_ring_verified, touched_assets,
+    settle_ring_verified, touched_assets, unjudged, unjudged_diagnosis,
 };
 
 use dregg_cell::CellId;
@@ -206,10 +206,11 @@ fn fail(msg: &str) -> ! {
 }
 
 /// Whether a settlement error means the verified core could not JUDGE the ring (as opposed to
-/// judging it and refusing it). `FfiUnavailable` is the only such kind: no gate installed, or a gate
-/// whose export could not run (archive absent / init failed / wire error).
+/// judging it and refusing it) — delegated to the classifier at the definition site rather than
+/// re-matched on variants here, so a new "the ring was never judged" kind cannot appear in
+/// `dregg-intent` and be silently mis-rendered by this binary as a verdict on the book.
 fn verified_core_absent(e: &VerifiedSettleError) -> bool {
-    matches!(e, VerifiedSettleError::FfiUnavailable(_))
+    unjudged(e).is_some()
 }
 
 /// Fail with a message that blames the BUILD/ENVIRONMENT, never the book.
@@ -224,24 +225,28 @@ fn verified_core_absent(e: &VerifiedSettleError) -> bool {
 ///     app (the twin-deletion regression itself), fixed in code.
 ///   * anything else — the gate IS installed but its Lean export could not run: this BUILD has no
 ///     verified core (`libdregg_lean.a` unlinked / init failed), fixed in the environment.
+///
+/// ⚑ **The split is no longer re-derived here.** This function used to carry its own
+/// `detail.contains("no verified gate registered")`, keyed on a string literal constructed in
+/// `intent/src/verified_settle.rs` — so rewording that literal would have silently flipped this
+/// binary to the OPPOSITE diagnosis (a wiring bug reported as a missing archive) while
+/// `tests/drex_clear_gate.rs`'s `!err.contains(…)` assertion went vacuously true. `dreggnet-market`
+/// carried a second copy of the same match with the same exposure. Both now call
+/// `dregg_intent::verified_settle::unjudged_diagnosis`, which lives where the variant is defined
+/// and the detail is constructed, so a rename is a compile error rather than a silent inversion.
 fn fail_verified_core_absent(e: &VerifiedSettleError) -> ! {
-    let detail = e.to_string();
-    if detail.contains("no verified gate registered") {
-        fail(&format!(
-            "WIRING BUG: no verified executor gate is installed in this binary, so the ring was \
-             NEVER JUDGED — it was not rejected. An app that settles intents must call \
-             `dregg_exec_lean::register_distributed_gates()` at startup (as `node/src/lib.rs` and \
-             this bin's `main` do). This build will not settle a ring with unverified Rust. \
-             underlying: {detail}"
-        ))
-    } else {
-        fail(&format!(
-            "ENVIRONMENT: this build has NO VERIFIED CORE — the Lean gate is installed but its \
-             export could not run (no linked `dregg-lean-ffi/libdregg_lean.a`, or Lean init \
-             failed), so the ring was NEVER JUDGED — it was not rejected. Seed a HEAD-matching \
-             archive and rebuild; this build will not settle a ring with unverified Rust. \
-             underlying: {detail}"
-        ))
+    match unjudged_diagnosis(
+        e,
+        "this binary (`drex_clear`, whose `main` installs the gate)",
+    ) {
+        Some(diagnosis) => fail(&diagnosis),
+        // Not an absence at all — the executor JUDGED the ring and refused it. Say so plainly
+        // rather than reaching for the build; this is the direction the original wording got
+        // wrong, in reverse.
+        None => fail(&format!(
+            "the verified executor JUDGED this ring and REFUSED it — this is a verdict on the \
+             book, not a missing gate or archive: {e}"
+        )),
     }
 }
 

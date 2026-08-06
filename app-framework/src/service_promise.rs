@@ -78,7 +78,8 @@ use dregg_intent::CommitmentId;
 use dregg_intent::exchange::AssetId;
 use dregg_intent::solver::{ExchangeSpec, IntentNode, RingSolver, RingTrade};
 use dregg_intent::verified_settle::{
-    VerifiedSettleError, WideLedger, WideLeg, settle_ring_wide_verified,
+    Unjudged, VerifiedSettleError, WideLedger, WideLeg, settle_ring_wide_verified, unjudged,
+    unjudged_diagnosis,
 };
 use dregg_turn::conditional::{
     ConditionProof, ConditionalResult, ProofCondition, ProvenReceipt, resolve_condition,
@@ -398,8 +399,19 @@ pub enum ServicePromiseError {
     /// price, or the two share a verified-ledger cell index).
     NoMatch,
     /// A value move did not settle/conserve on the verified executor. Atomic: on
-    /// this error no state changed.
+    /// this error no state changed. **A genuine verdict on the move.**
     NotConserving(VerifiedSettleError),
+    /// ⚑ **The value move was NEVER JUDGED** — this HOST never installed the verified gate (a
+    /// WIRING BUG, fixed in code) or its Lean export could not run (fixed in the ENVIRONMENT).
+    /// Atomic, same as the others: no state changed. But nothing here says the move was bad, and
+    /// reporting it as `NotConserving` ("value move did not conserve") named a fault in a move
+    /// that conserves perfectly well and was simply never looked at.
+    NeverJudged {
+        /// Which absence — the two have opposite fixes.
+        cause: Unjudged,
+        /// The operator-facing sentence naming the build/environment, never the move.
+        diagnosis: String,
+    },
     /// The escrow is already released or refunded — its one-shot exit was taken.
     AlreadySettled,
     /// Fulfillment was attempted but the presented proof did not resolve the
@@ -415,6 +427,21 @@ pub enum ServicePromiseError {
     },
 }
 
+impl ServicePromiseError {
+    /// Classify a verified-settle failure as a VERDICT on the move or an ABSENCE of the executor,
+    /// at the point the error is produced. All three settle sites in this module route through
+    /// here. See [`crate::ring_trade::CoordinationError::from_settle`].
+    fn from_settle(e: VerifiedSettleError) -> Self {
+        match unjudged_diagnosis(&e, crate::ring_trade::FRAMEWORK_HOST_HINT) {
+            Some(diagnosis) => Self::NeverJudged {
+                cause: unjudged(&e).expect("a diagnosis implies a cause"),
+                diagnosis,
+            },
+            None => Self::NotConserving(e),
+        }
+    }
+}
+
 impl std::fmt::Display for ServicePromiseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -425,6 +452,7 @@ impl std::fmt::Display for ServicePromiseError {
             }
             Self::NoMatch => write!(f, "no conserving service ring matched the pair"),
             Self::NotConserving(e) => write!(f, "value move did not conserve: {e}"),
+            Self::NeverJudged { diagnosis, .. } => write!(f, "{diagnosis}"),
             Self::AlreadySettled => write!(f, "escrow already released or refunded (one-shot)"),
             Self::Unfulfilled(d) => write!(f, "promise not fulfilled: {d}"),
             Self::NotYetRefundable {
@@ -596,8 +624,8 @@ impl ServicePromiseExchange {
             asset: matched.payment_asset,
             amount: matched.price as i128,
         };
-        let post = settle_ring_wide_verified(ledger, &[leg])
-            .map_err(ServicePromiseError::NotConserving)?;
+        let post =
+            settle_ring_wide_verified(ledger, &[leg]).map_err(ServicePromiseError::from_settle)?;
         // Bind the held leg + its one-shot status into the escrow cell's
         // commitment (the AUTHORITY); a light client sees value is escrowed.
         let mut escrow_cell = Cell::with_balance(self.escrow.0, matched.payment_asset, 0);
@@ -666,8 +694,8 @@ impl ServicePromiseExchange {
             asset: escrow.matched.payment_asset,
             amount: escrow.matched.price as i128,
         };
-        let post = settle_ring_wide_verified(ledger, &[leg])
-            .map_err(ServicePromiseError::NotConserving)?;
+        let post =
+            settle_ring_wide_verified(ledger, &[leg]).map_err(ServicePromiseError::from_settle)?;
         escrow.status = EscrowStatus::Released;
         Ok(post)
     }
@@ -701,8 +729,8 @@ impl ServicePromiseExchange {
             asset: escrow.matched.payment_asset,
             amount: escrow.matched.price as i128,
         };
-        let post = settle_ring_wide_verified(ledger, &[leg])
-            .map_err(ServicePromiseError::NotConserving)?;
+        let post =
+            settle_ring_wide_verified(ledger, &[leg]).map_err(ServicePromiseError::from_settle)?;
         escrow.status = EscrowStatus::Refunded;
         Ok(post)
     }

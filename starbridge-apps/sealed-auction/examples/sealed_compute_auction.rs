@@ -8,7 +8,9 @@
 //!
 //! Run with: `cargo run -p starbridge-sealed-auction --example sealed_compute_auction`
 
-use starbridge_sealed_auction::{AssetId, Auction, Bid, CellId, Phase, fund_ledger};
+use starbridge_sealed_auction::{
+    AssetId, Auction, Bid, CellId, Phase, fund_ledger, install_verified_auction_gate,
+};
 
 const PAY: AssetId = [0u8; 32];
 const TOKEN: AssetId = {
@@ -25,6 +27,25 @@ const SLOT: CellId = 2;
 
 fn main() {
     println!("=== Sealed-intent multi-agent coordination: a sealed-bid compute auction ===\n");
+
+    // ── INSTALL THE VERIFIED EXECUTOR GATE, and refuse to run without it ──────────────────────
+    // `Auction::settle` folds the award ring through the FAIL-CLOSED verified executor: with no
+    // gate registered it refuses rather than let an unverified Rust fold decide who won. Until
+    // 2026-08-06 this demo never installed one, so its `settle(...).unwrap()` below PANICKED on
+    // every box — the un-called-initializer regression, one entry point later than the `/clear`
+    // CLI that was fixed first.
+    //
+    // The installer PROVES the gate decides (a funded leg commits, an over-drawn leg is refused),
+    // so this cannot pass over a registered-but-dead archive. On failure we exit naming the
+    // BUILD/ENVIRONMENT — never the auction, which has not been run yet and cannot be at fault.
+    if let Err(why) = install_verified_auction_gate() {
+        eprintln!(
+            "REFUSING TO RUN: the verified executor gate is not usable in this build, so no award \
+             could be judged (it would not be rejected — it would never be decided).\n  {why}"
+        );
+        std::process::exit(1);
+    }
+    println!("verified executor gate: INSTALLED and PROVED deciding (both polarities).\n");
 
     // Three agents privately decide their bids for the compute slot.
     let alice = Bid::new(ALICE, 30, 0xA1A1);

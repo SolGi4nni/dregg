@@ -26,12 +26,22 @@
 //! pays its bid to the seller; leg 2: the seller's slot cell delivers the task-token to the winner —
 //! and folds it through [`dregg_intent::verified_settle::settle_ring_verified`], the Rust mirror of
 //! the Lean `Ring.settleRing`/`SealedAuction.settle`. That fold runs the verified per-asset
-//! transition `recKExecAsset` for every leg (and, when the host has registered the Lean intent gate
-//! — `dregg-exec-lean::register_distributed_gates()`, as a native node does at startup — cross-checks
-//! each leg against the REAL Lean FFI export; unregistered, no FFI cross-check runs). A leg that
-//! fails its gate aborts
-//! the whole award (atomicity); a committed award provably conserves every asset (conservation). The
-//! coordination is therefore settled by the verified executor, not by a Rust-only shadow.
+//! transition `recKExecAsset` for every leg, decided by the REAL Lean FFI export. A leg that fails
+//! its gate aborts the whole award (atomicity); a committed award provably conserves every asset
+//! (conservation). The coordination is therefore settled by the verified executor, not by a
+//! Rust-only shadow.
+//!
+//! ⚑ **Call [`install_verified_auction_gate`] once before settling anything.** The fold is
+//! FAIL-CLOSED: with no gate registered it REFUSES the award rather than let an unverified
+//! in-process Rust fold decide who won. This paragraph used to end *"unregistered, no FFI
+//! cross-check runs"* — describing a polarity the twin-deletion sweep (`e3f0e7b92`) had already
+//! INVERTED, and naming `register_distributed_gates()` as something a host does while this crate
+//! had no dependency edge with which to call it. The result was the un-called-initializer
+//! regression: `examples/sealed_compute_auction.rs` panicked on its `.unwrap()` and no award could
+//! close, anywhere. The installer is now here, it PROVES the gate decides before returning, and an
+//! absent one is reported as [`AuctionError::AwardNeverJudged`] — naming the build, never the
+//! auction. Both polarities are pinned by `tests/verified_gate_registered_pole.rs` and
+//! `tests/no_verified_gate_pole.rs`.
 //!
 //! ## The sealed commitment
 //!
@@ -77,9 +87,12 @@ use dregg_app_framework::{
     field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 
+use std::sync::OnceLock;
+
 use dregg_cell::{Credential, Requirement};
 use dregg_intent::verified_settle::{
-    VerifiedLedger, VerifiedLeg, VerifiedSettleError, settle_ring_verified,
+    Unjudged, VerifiedLedger, VerifiedLeg, VerifiedSettleError, settle_ring_verified, unjudged,
+    unjudged_diagnosis,
 };
 
 /// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*` view-tree.
@@ -182,8 +195,23 @@ pub enum AuctionError {
     /// No valid reveals were collected, so there is no winner to award.
     NoWinner,
     /// The award failed to settle through the verified executor (e.g. the winner cannot pay, or the
-    /// slot is empty); the whole award aborted (atomicity).
+    /// slot is empty); the whole award aborted (atomicity). **A genuine verdict on the award.**
     SettlementRejected(VerifiedSettleError),
+    /// ⚑ **The award was NEVER JUDGED** — no verdict was reached, so nothing here says the award was
+    /// bad. Either this binary never installed the verified gate (a WIRING BUG, fixed in code by
+    /// calling [`install_verified_auction_gate`]) or its Lean export could not run (fixed in the
+    /// ENVIRONMENT). Carries the already-rendered operator sentence from
+    /// [`dregg_intent::verified_settle::unjudged_diagnosis`].
+    ///
+    /// This is a SEPARATE variant rather than a nicer `Display` on [`Self::SettlementRejected`] on
+    /// purpose: a consumer that matches on the type cannot accidentally render an absent build as a
+    /// rejected auction, which is exactly what every surface did while the two shared a variant.
+    AwardNeverJudged {
+        /// Which absence — the two have opposite fixes.
+        cause: Unjudged,
+        /// The operator-facing sentence naming the build/environment, never the auction.
+        diagnosis: String,
+    },
 }
 
 impl std::fmt::Display for AuctionError {
@@ -199,6 +227,7 @@ impl std::fmt::Display for AuctionError {
             Self::SettlementRejected(e) => {
                 write!(f, "award settlement rejected by the verified executor: {e}")
             }
+            Self::AwardNeverJudged { diagnosis, .. } => write!(f, "{diagnosis}"),
         }
     }
 }
@@ -365,7 +394,23 @@ impl Auction {
         }
         let winner = self.winner().ok_or(AuctionError::NoWinner)?;
         let ring = self.award_ring(&winner);
-        let post = settle_ring_verified(ledger, &ring).map_err(AuctionError::SettlementRejected)?;
+        // Split a VERDICT from an ABSENCE at the point the error is produced, so no caller can
+        // render "the auction was rejected" over a build that never judged it. `unjudged` returns
+        // `None` for every real verdict (including a too-wide ring), so `SettlementRejected` keeps
+        // exactly the cases that ARE about this award.
+        let post = settle_ring_verified(ledger, &ring).map_err(|e| {
+            match unjudged_diagnosis(
+                &e,
+                "this binary (it must call \
+                 `starbridge_sealed_auction::install_verified_auction_gate()` at startup)",
+            ) {
+                Some(diagnosis) => AuctionError::AwardNeverJudged {
+                    cause: unjudged(&e).expect("a diagnosis implies a cause"),
+                    diagnosis,
+                },
+                None => AuctionError::SettlementRejected(e),
+            }
+        })?;
         self.phase = Phase::Settled;
         Ok((post, winner))
     }
@@ -384,6 +429,118 @@ pub fn fund_ledger(rows: &[(CellId, AssetId, i128)]) -> VerifiedLedger {
         k.set(*cell, asset, *bal);
     }
     k
+}
+
+// ---------------------------------------------------------------------------
+// The verified-executor gate every award settles THROUGH
+// ---------------------------------------------------------------------------
+
+/// The install probe's asset column — a fixed 32-byte id nothing else in this crate uses, so the
+/// probe can never collide with a live auction's `PAY`/`TOKEN` ledger.
+const GATE_PROBE_ASSET: AssetId = [0x5A; 32];
+/// The probe's two live cells, distinct from any bidder/seller/slot id an auction uses.
+const GATE_PROBE_FROM: CellId = 0xE1;
+const GATE_PROBE_TO: CellId = 0xE2;
+/// The amount the probe funds and moves.
+const GATE_PROBE_AMOUNT: i128 = 7;
+
+/// Cached one-shot install result. The gate itself is a process-global `OnceLock` inside
+/// `dregg-intent`, so registration is idempotent and the probe is worth running exactly once.
+static GATE_INSTALLED: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// **Install the verified-Lean executor gate every award settles through, and PROVE it decides.**
+/// Call once, before any auction is settled.
+///
+/// [`SealedAuction::settle`] folds the award ring through
+/// [`dregg_intent::verified_settle::settle_ring_verified`], which is FAIL-CLOSED: with no
+/// `IntentVerifiedGate` registered it REFUSES the ring rather than letting an unverified in-process
+/// Rust fold decide who won an auction. **That refusal is correct and stays.** What was missing is
+/// that NOTHING in this crate ever registered the gate, so in any process that is not a native node
+/// — this crate's own `examples/sealed_compute_auction.rs` included, which `.unwrap()`s the settle
+/// and therefore PANICKED — every award came back unjudged and no auction could close.
+///
+/// `dregg-exec-lean` is ALREADY compiled and linked into any binary that links this crate:
+/// `cargo tree -p starbridge-sealed-auction -i dregg-exec-lean` resolves
+/// `exec-lean <- sdk <- app-framework <- this crate` (verified 2026-08-06, not inherited from a
+/// docblock). So naming it directly adds ZERO compilation; it makes an already-present capability
+/// reachable.
+///
+/// `Ok(())` means an award in this process will be settled by the linked verified executor.
+/// `Err(reason)` means it will NOT — every settle will refuse — and the caller must surface that
+/// rather than run an auction it cannot close.
+///
+/// # Registered is not decided
+///
+/// Registration alone is not evidence: a gate registered over an ABSENT or STALE Lean archive still
+/// refuses at the first award, which is exactly the failure this function exists to delete. So it
+/// registers and then PROVES the gate decides, with a two-polarity probe:
+///
+///   * a funded, distinct, live-cell leg MUST commit AND produce the exact post-column;
+///   * an OVER-DRAWN leg MUST be refused.
+///
+/// The second pole is what makes this a gate rather than a smoke test — a gate that answered "ok"
+/// unconditionally would sail through the first, and every unpayable award would settle.
+pub fn install_verified_auction_gate() -> Result<(), String> {
+    GATE_INSTALLED.get_or_init(install_and_probe_gate).clone()
+}
+
+/// Whether [`install_verified_auction_gate`] has already run AND succeeded. Never triggers the
+/// install itself — for a surface that wants to describe the state without changing it.
+pub fn verified_auction_gate_available() -> bool {
+    matches!(GATE_INSTALLED.get(), Some(Ok(())))
+}
+
+fn install_and_probe_gate() -> Result<(), String> {
+    // The single documented entry point a native node calls at startup: it installs the Lean-backed
+    // impl into all four FFI-free coordination seams. The intent seam is the one an award ring
+    // folds through.
+    dregg_exec_lean::register_distributed_gates();
+
+    let probe = VerifiedLeg {
+        from: GATE_PROBE_FROM,
+        to: GATE_PROBE_TO,
+        asset: GATE_PROBE_ASSET,
+        amount: GATE_PROBE_AMOUNT,
+    };
+    let k0 = fund_ledger(&[
+        (GATE_PROBE_FROM, GATE_PROBE_ASSET, GATE_PROBE_AMOUNT),
+        (GATE_PROBE_TO, GATE_PROBE_ASSET, 0),
+    ]);
+
+    // POLE 1 — a funded, distinct, live-cell leg must COMMIT, with the exact post-column.
+    let post = settle_ring_verified(&k0, std::slice::from_ref(&probe)).map_err(|e| {
+        // Even the probe's own failure must name the right absence rather than the probe.
+        unjudged_diagnosis(&e, "this binary").unwrap_or_else(|| {
+            format!("the verified executor refused a funded, conserving probe leg: {e}")
+        })
+    })?;
+    let (from_after, to_after) = (
+        post.get(GATE_PROBE_FROM, &GATE_PROBE_ASSET),
+        post.get(GATE_PROBE_TO, &GATE_PROBE_ASSET),
+    );
+    if (from_after, to_after) != (0, GATE_PROBE_AMOUNT) {
+        return Err(format!(
+            "the verified executor committed the probe leg but produced the wrong column: \
+             from={from_after} to={to_after} (expected 0 / {GATE_PROBE_AMOUNT})"
+        ));
+    }
+
+    // POLE 2 — an OVER-DRAWN leg must be REFUSED. Without this pole a gate that answered "ok"
+    // unconditionally would sail through pole 1 and every unpayable award would settle.
+    let overdraft = VerifiedLeg {
+        from: GATE_PROBE_FROM,
+        to: GATE_PROBE_TO,
+        asset: GATE_PROBE_ASSET,
+        amount: GATE_PROBE_AMOUNT + 1,
+    };
+    if settle_ring_verified(&k0, std::slice::from_ref(&overdraft)).is_ok() {
+        return Err(
+            "the verified executor ACCEPTED an over-drawn probe leg — it is registered but not \
+             DECIDING, so an award the winner cannot pay would settle"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 // =============================================================================

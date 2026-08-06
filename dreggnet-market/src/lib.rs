@@ -843,26 +843,16 @@ impl MarketOffering {
             // expensive way (a day spent debugging the matcher instead of the missing gate); this
             // is the same split, at the market's own surface, because the two fixes are opposite —
             // one is a HOST wiring bug fixed in code, the other a BUILD with no verified core.
-            Err(AuctionError::SettlementRejected(VerifiedSettleError::FfiUnavailable(detail))) => {
-                return Err(if detail.contains("no verified gate registered") {
-                    format!(
-                        "WIRING BUG in this host, not a problem with the auction: no verified \
-                         executor gate is installed, so the award was NEVER JUDGED — it was not \
-                         rejected. A host that settles must call \
-                         `dregg_exec_lean::register_distributed_gates()` at startup (as \
-                         `dreggnet_web::install_verified_settlement_gate` and `node/src/lib.rs` \
-                         do). This build will not settle an award with unverified Rust. \
-                         underlying: {detail}"
-                    )
-                } else {
-                    format!(
-                        "NO VERIFIED CORE in this build, not a problem with the auction: the gate \
-                         is installed but its Lean export could not run (no linked \
-                         `dregg-lean-ffi/libdregg_lean.a`, or Lean init failed), so the award was \
-                         NEVER JUDGED — it was not rejected. underlying: {detail}"
-                    )
-                });
-            }
+            //
+            // ⚑ THE DISTINCTION IS NOW IN THE TYPE, so this host cannot lose it by forgetting.
+            // This arm used to carry its own `detail.contains("no verified gate registered")`
+            // against a literal constructed in `intent/src/verified_settle.rs` — a reword there
+            // would have flipped this host to the opposite diagnosis in silence. It also matched
+            // `FfiUnavailable(_)` wholesale, so a genuinely too-wide ring (then spelled with that
+            // same variant) was reported to the operator as a missing Lean archive. Both are fixed
+            // at the definition site: `LedgerWidthExceeded` is its own variant now, and
+            // `SealedAuction::settle` classifies through `unjudged` before it ever returns.
+            Err(AuctionError::AwardNeverJudged { diagnosis, .. }) => return Err(diagnosis),
             Err(error) => {
                 return Err(format!(
                     "settlement rejected by the verified executor: {error}"

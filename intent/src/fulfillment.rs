@@ -70,8 +70,44 @@ pub enum FulfillmentError {
     ProofActionMismatch(String),
     /// The VERIFIED executor refused the payment leg (gate failure, liveness, FFI
     /// divergence, …). Fail-closed: a refusal here is final — there is NO fallback
-    /// to the legacy Rust executor.
+    /// to the legacy Rust executor. **A genuine verdict on the payment.**
     VerifiedRefusal(String),
+    /// ⚑ **The payment was NEVER JUDGED.** No verdict was reached: either this BINARY never
+    /// installed the verified gate (a WIRING BUG, fixed in code by calling
+    /// `dregg_exec_lean::register_distributed_gates()` at startup) or its Lean export could not run
+    /// (fixed in the ENVIRONMENT). The ledger is untouched either way — but nothing here says the
+    /// payment was bad.
+    ///
+    /// ⚠ **This used to arrive as [`Self::VerifiedRefusal`],** whose `Display` reads *"verified
+    /// executor refused the payment"* — naming a refusal that never happened, on a payment nobody
+    /// looked at. `execute_fulfillment_flow_verified*` is a PUBLIC library entry point, so every
+    /// caller inherited the wrong sentence and had no typed way to tell the two apart.
+    PaymentNeverJudged {
+        /// Which absence — the two have opposite fixes.
+        cause: crate::verified_settle::Unjudged,
+        /// The operator-facing sentence naming the build/environment, never the payment.
+        diagnosis: String,
+    },
+}
+
+impl FulfillmentError {
+    /// Classify a verified-settle failure as a VERDICT on the payment or an ABSENCE of the
+    /// executor, at the point the error is produced.
+    fn from_settle(e: crate::verified_settle::VerifiedSettleError) -> Self {
+        use crate::verified_settle::{unjudged, unjudged_diagnosis};
+        match unjudged_diagnosis(
+            &e,
+            "this binary (a host that fulfills must call \
+             `dregg_exec_lean::register_distributed_gates()` at startup; `dregg-intent` is FFI-free \
+             and cannot install it itself)",
+        ) {
+            Some(diagnosis) => Self::PaymentNeverJudged {
+                cause: unjudged(&e).expect("a diagnosis implies a cause"),
+                diagnosis,
+            },
+            None => Self::VerifiedRefusal(e.to_string()),
+        }
+    }
 }
 
 impl std::fmt::Display for FulfillmentError {
@@ -88,6 +124,7 @@ impl std::fmt::Display for FulfillmentError {
             Self::PaymentFailed(e) => write!(f, "payment failed: {}", e),
             Self::ProofActionMismatch(e) => write!(f, "proof action mismatch: {}", e),
             Self::VerifiedRefusal(e) => write!(f, "verified executor refused the payment: {}", e),
+            Self::PaymentNeverJudged { diagnosis, .. } => write!(f, "{diagnosis}"),
         }
     }
 }
@@ -1281,8 +1318,7 @@ pub fn execute_fulfillment_flow_verified_with_key(
     // default native build (Lean unconditional), the leg is additionally settled by the REAL
     // Lean FFI export `dregg_record_kernel_step` over this exact projection and cross-checked;
     // any divergence refuses the payment.
-    let k1 = settle_ring_verified(&k0, &[leg])
-        .map_err(|e| FulfillmentError::VerifiedRefusal(e.to_string()))?;
+    let k1 = settle_ring_verified(&k0, &[leg]).map_err(FulfillmentError::from_settle)?;
 
     // Step 5: Write the VERIFIED post-balances back to the real ledger. Cell balances are
     // signed (i64) under the well model; the verified gate guarantees these ordinary

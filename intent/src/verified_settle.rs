@@ -136,9 +136,106 @@ pub enum VerifiedSettleError {
     /// post-column). Fail-closed: the verified executor is the authority, and a drift is a bug we
     /// refuse to settle through. Carries the diverging leg + a description.
     FfiDivergence { index: usize, detail: String },
-    /// The real-FFI path is compiled in (native default) but the Lean archive was not
-    /// available at runtime.
+    /// The ring addresses more distinct cells than the verified `u8` ledger can index. This is a
+    /// property of the RING, not of the build: refused fail-closed rather than silently truncated.
+    ///
+    /// ⚑ This used to be an [`Self::FfiUnavailable`] carrying a prose message, which put a genuine
+    /// ring refusal into the variant every consumer reads as "the environment is broken". A
+    /// too-wide ring was therefore reported by `dreggnet-market` as *"NO VERIFIED CORE in this
+    /// build"* — pointing the operator at a seeded Lean archive for a book they need to split.
+    /// Splitting the variant is what lets [`unjudged`] be correct by construction.
+    LedgerWidthExceeded {
+        /// How many distinct cells the ring + ledger address.
+        distinct_cells: usize,
+        /// The verified ledger's index capacity.
+        max: usize,
+    },
+    /// The verified gate could not decide: either none is registered in this binary, or the
+    /// registered one's Lean export could not run. **Read [`unjudged`] before rendering this** —
+    /// it means the ring was NEVER JUDGED, not that it was rejected.
     FfiUnavailable(String),
+}
+
+/// The EXACT detail [`ffi::settle_leg`] puts in [`VerifiedSettleError::FfiUnavailable`] when no
+/// gate is registered at all.
+///
+/// ⚑ **This constant exists because two crates matched the spelling as a bare literal.**
+/// `dreggnet-market/src/lib.rs` and `exec-lean/src/bin/drex_clear.rs` each carried their own
+/// `detail.contains("no verified gate registered")`, keyed on a string constructed here — so
+/// rewording it would have silently flipped both to the OPPOSITE diagnosis (a wiring bug reported
+/// as a missing archive), and `exec-lean/tests/drex_clear_gate.rs`'s `!err.contains(…)` assertion
+/// would have gone vacuously true while the regression it guards walked back in. That is the
+/// falsifier-stops-falsifying class, armed and waiting on a rename. Match [`unjudged`], not text.
+pub const NO_GATE_REGISTERED: &str = "no verified gate registered";
+
+/// Why a ring was **never judged** — the two absences that are NOT a verdict on the ring, and whose
+/// fixes are opposite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unjudged {
+    /// This BINARY never installed a gate. A WIRING BUG in the app, fixed in CODE: the entry point
+    /// must call `dregg_exec_lean::register_distributed_gates()` at startup.
+    WiringBug,
+    /// A gate IS installed but its Lean export could not run (no linked
+    /// `dregg-lean-ffi/libdregg_lean.a`, or Lean init failed). Fixed in the ENVIRONMENT.
+    NoVerifiedCore,
+}
+
+/// **Was this ring judged?** `None` means the verified executor actually DECIDED and refused the
+/// ring — blame the ring. `Some(_)` means no verdict was ever reached — blame the build or the
+/// environment, and say which.
+///
+/// # Why this lives here and not at each surface
+///
+/// The fail-closed refusal is correct and stays: an unverified in-process Rust fold must not decide
+/// a settlement. What over-reached, repeatedly, was the APP's RENDERING of it. `drex_clear` spent a
+/// day debugging its matcher because "verified settlement rejected the ring: …FFI unavailable"
+/// named the ring for an absence of the gate. The fix was then COPY-PASTED into `dreggnet-market`
+/// and nowhere else, so every consumer that has not yet been bitten still launders an absent gate
+/// into a ring refusal — `app-framework`'s `ring_trade` reports it as
+/// `CoordinationError::NotConserving`, which is a flat lie about a ring that conserves fine.
+///
+/// A classifier that has to be re-derived per surface will be wrong at the next surface. This is
+/// the derivation point — where the variant is defined and the detail is constructed — so a
+/// consumer gets the distinction by CALLING rather than by remembering.
+pub fn unjudged(e: &VerifiedSettleError) -> Option<Unjudged> {
+    match e {
+        VerifiedSettleError::FfiUnavailable(detail) if detail == NO_GATE_REGISTERED => {
+            Some(Unjudged::WiringBug)
+        }
+        VerifiedSettleError::FfiUnavailable(_) => Some(Unjudged::NoVerifiedCore),
+        // Every other variant IS a verdict on the ring (including `LedgerWidthExceeded`, which is a
+        // property of the ring's shape).
+        _ => None,
+    }
+}
+
+/// The one operator-facing sentence for a ring that was never judged, or `None` when the executor
+/// really did judge and refuse it (in which case render the error itself — it is about the ring).
+///
+/// `host` names the entry point that should have installed the gate, for the wiring-bug case; it
+/// appears in the message so the reader knows WHICH binary to fix.
+pub fn unjudged_diagnosis(e: &VerifiedSettleError, host: &str) -> Option<String> {
+    let detail = e.to_string();
+    match unjudged(e)? {
+        Unjudged::WiringBug => Some(format!(
+            "WIRING BUG in {host}, not a problem with the ring: no verified executor gate is \
+             installed, so the ring was NEVER JUDGED — it was not rejected. A binary that settles \
+             must call `dregg_exec_lean::register_distributed_gates()` at startup (as \
+             `node/src/lib.rs` does). This build will not settle a ring with unverified Rust. \
+             underlying: {detail}"
+        )),
+        // ⚠ The two words `ENVIRONMENT` and `NO VERIFIED CORE` are LOAD-BEARING TEXT, not prose:
+        // `exec-lean/tests/drex_clear_gate.rs` asserts on both to tell this branch from the wiring
+        // one, and its companion assertion is `!err.contains("WIRING BUG")`. Dropping either word
+        // here turns that gate's polarity check into a pass-by-accident. (Caught while writing
+        // this function — the first draft omitted `ENVIRONMENT` and would have done exactly that.)
+        Unjudged::NoVerifiedCore => Some(format!(
+            "ENVIRONMENT: this build has NO VERIFIED CORE — not a problem with the ring. The gate \
+             is installed but its Lean export could not run (no linked \
+             `dregg-lean-ffi/libdregg_lean.a`, or Lean init failed), so the ring was NEVER JUDGED \
+             — it was not rejected. Seed a HEAD-matching archive and rebuild. underlying: {detail}"
+        )),
+    }
 }
 
 impl std::fmt::Display for VerifiedSettleError {
@@ -179,6 +276,14 @@ impl std::fmt::Display for VerifiedSettleError {
                     "Lean FFI diverged from the verified transition on leg {index}: {detail}"
                 )
             }
+            Self::LedgerWidthExceeded {
+                distinct_cells,
+                max,
+            } => write!(
+                f,
+                "ring addresses {distinct_cells} distinct cells; the verified ledger indexes at \
+                 most {max} — split the ring (this is the RING's shape, not a broken build)"
+            ),
             Self::FfiUnavailable(e) => write!(f, "verified-executor FFI unavailable: {e}"),
         }
     }
@@ -527,8 +632,9 @@ pub fn funded_wide_ledger(legs: &[WideLeg]) -> WideLedger {
 /// the real Lean FFI cross-check), then lifts the post-state back to full ids.
 ///
 /// The relabel addresses ≤ 256 distinct cells (the `u8` ledger's domain); a ring
-/// touching more is refused fail-closed ([`VerifiedSettleError::FfiUnavailable`]
-/// with a descriptive message) rather than silently truncated.
+/// touching more is refused fail-closed ([`VerifiedSettleError::LedgerWidthExceeded`])
+/// rather than silently truncated — a verdict about the RING, which is why it is
+/// no longer spelled as an FFI unavailability ([`unjudged`] returns `None` for it).
 pub fn settle_ring_wide_verified(
     k0: &WideLedger,
     legs: &[WideLeg],
@@ -542,10 +648,10 @@ pub fn settle_ring_wide_verified(
         order.insert(leg.to);
     }
     if order.len() > 256 {
-        return Err(VerifiedSettleError::FfiUnavailable(format!(
-            "ring touches {} distinct cells; the verified ledger indexes at most 256",
-            order.len()
-        )));
+        return Err(VerifiedSettleError::LedgerWidthExceeded {
+            distinct_cells: order.len(),
+            max: 256,
+        });
     }
     let index: BTreeMap<[u8; 32], u8> = order
         .iter()
@@ -733,9 +839,8 @@ pub mod ffi {
         k: &VerifiedLedger,
         leg: &VerifiedLeg,
     ) -> Result<(Vec<(u8, i128)>, bool), VerifiedSettleError> {
-        let gate = crate::verified_gate::gate().ok_or_else(|| {
-            VerifiedSettleError::FfiUnavailable("no verified gate registered".into())
-        })?;
+        let gate = crate::verified_gate::gate()
+            .ok_or_else(|| VerifiedSettleError::FfiUnavailable(super::NO_GATE_REGISTERED.into()))?;
         let input = encode_leg_input(k, leg);
         let out = gate
             .record_kernel_step(&input)
@@ -1041,5 +1146,157 @@ mod tests {
                 settlements: 1
             })
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // THE UNJUDGED CLASSIFIER — both poles, and the mis-classification it fixes
+    // -----------------------------------------------------------------------
+
+    /// POLE 1 — the two absences must classify as NEVER JUDGED, and as DIFFERENT absences. A
+    /// classifier that collapsed them would be worse than none: the fixes are opposite (edit the
+    /// binary vs seed an archive), which is the whole reason the split exists.
+    #[test]
+    fn an_absent_gate_and_an_absent_core_are_unjudged_and_distinguishable() {
+        let no_gate = VerifiedSettleError::FfiUnavailable(NO_GATE_REGISTERED.into());
+        let no_core =
+            VerifiedSettleError::FfiUnavailable("lean init failed: archive absent".into());
+
+        assert_eq!(unjudged(&no_gate), Some(Unjudged::WiringBug));
+        assert_eq!(unjudged(&no_core), Some(Unjudged::NoVerifiedCore));
+
+        let wiring = unjudged_diagnosis(&no_gate, "the test binary").expect("must diagnose");
+        let env = unjudged_diagnosis(&no_core, "the test binary").expect("must diagnose");
+
+        // The message must name WHAT TO FIX and must NOT blame the ring.
+        assert!(wiring.contains("WIRING BUG in the test binary"), "{wiring}");
+        assert!(wiring.contains("register_distributed_gates"), "{wiring}");
+        assert!(wiring.contains("NEVER JUDGED"), "{wiring}");
+        assert!(env.contains("NO VERIFIED CORE"), "{env}");
+        assert!(env.contains("libdregg_lean.a"), "{env}");
+        assert!(env.contains("NEVER JUDGED"), "{env}");
+        // ⚑ THE CROSS-CRATE CONTRACT, pinned here at the source. `exec-lean`'s
+        // `drex_clear_gate.rs` distinguishes the two branches by asserting `ENVIRONMENT` +
+        // `NO VERIFIED CORE` PRESENT and `WIRING BUG` ABSENT. If this message ever loses a word
+        // that gate's polarity check silently stops discriminating, so both directions are
+        // asserted from this side too rather than left to a consumer nobody re-reads.
+        assert!(env.contains("ENVIRONMENT"), "{env}");
+        assert!(
+            !env.contains("WIRING BUG"),
+            "the environment branch must not carry the wiring branch's marker: {env}"
+        );
+        assert!(
+            !wiring.contains("ENVIRONMENT") && !wiring.contains("NO VERIFIED CORE"),
+            "the wiring branch must not carry the environment branch's markers: {wiring}"
+        );
+        // Neither may claim the ring was rejected — the exact wording that cost a day.
+        for m in [&wiring, &env] {
+            assert!(
+                !m.contains("rejected the ring") && m.contains("not a problem with the ring"),
+                "an absence must never read as a verdict on the ring: {m}"
+            );
+        }
+    }
+
+    /// POLE 2 — a REAL verdict on the ring must NOT be laundered into a build complaint. Without
+    /// this pole a classifier that answered `Some(NoVerifiedCore)` unconditionally would satisfy
+    /// pole 1 and tell every operator with an over-drawn book to go seed a Lean archive.
+    #[test]
+    fn a_real_verdict_on_the_ring_is_not_unjudged() {
+        let judged = [
+            VerifiedSettleError::LegRejected {
+                index: 0,
+                leg: VerifiedLeg {
+                    from: 1,
+                    to: 2,
+                    asset: asset(10),
+                    amount: 5,
+                },
+            },
+            VerifiedSettleError::ConservationViolated {
+                asset: asset(10),
+                before: 10,
+                after: 11,
+            },
+            VerifiedSettleError::LegCountMismatch {
+                transfers: 2,
+                settlements: 1,
+            },
+            VerifiedSettleError::LegDataMismatch {
+                index: 0,
+                detail: "amount".into(),
+            },
+            VerifiedSettleError::FfiDivergence {
+                index: 0,
+                detail: "column".into(),
+            },
+            // ⚑ THE REGRESSION THIS VARIANT EXISTS FOR. A too-wide ring is a verdict about the
+            // RING. While it was spelled `FfiUnavailable`, every consumer's classifier called it
+            // a broken build and sent the operator after an archive.
+            VerifiedSettleError::LedgerWidthExceeded {
+                distinct_cells: 257,
+                max: 256,
+            },
+        ];
+        for e in &judged {
+            assert_eq!(
+                unjudged(e),
+                None,
+                "a verdict on the ring must not read as an absent build: {e}"
+            );
+            assert_eq!(unjudged_diagnosis(e, "the test binary"), None, "{e}");
+        }
+    }
+
+    /// The width refusal must SAY it is about the ring, since its whole job is to stop pointing the
+    /// reader at the environment.
+    #[test]
+    fn the_width_refusal_names_the_ring_not_the_build() {
+        let e = VerifiedSettleError::LedgerWidthExceeded {
+            distinct_cells: 257,
+            max: 256,
+        };
+        let s = e.to_string();
+        assert!(s.contains("257") && s.contains("256"), "{s}");
+        assert!(s.contains("split the ring"), "{s}");
+        assert!(
+            !s.contains("FFI") && !s.contains("unavailable"),
+            "the width refusal must not read as an FFI absence: {s}"
+        );
+    }
+
+    /// The constant and the CONSTRUCTION SITE must agree. This is the guard against the rename that
+    /// silently flips every downstream diagnosis: `ffi::settle_leg` is the only place the detail is
+    /// built, and it must build it from [`NO_GATE_REGISTERED`]. Driven through the real public
+    /// entry point with no gate registered, so it reads the actual constructed value — not a
+    /// restatement of the constant, which would agree with itself forever.
+    #[test]
+    fn the_no_gate_detail_is_exactly_the_constant() {
+        // Only meaningful when no gate is installed in THIS test process. `dregg-intent`'s own
+        // unit tests never register one (it is FFI-free and cannot reach `dregg-exec-lean` here),
+        // but assert the premise rather than assume it — a silently-registered gate would turn
+        // this into a test of nothing.
+        assert!(
+            crate::verified_gate::gate().is_none(),
+            "premise broken: a gate IS registered in this process, so the no-gate path is \
+             unreachable and this test proves nothing"
+        );
+        let mut k = VerifiedLedger::new();
+        k.add_account(1);
+        k.add_account(2);
+        k.set(1, &asset(10), 100);
+        let leg = VerifiedLeg {
+            from: 1,
+            to: 2,
+            asset: asset(10),
+            amount: 5,
+        };
+        let err = ffi::settle_leg(&k, &leg).expect_err("no gate registered ⇒ must refuse");
+        assert_eq!(
+            err,
+            VerifiedSettleError::FfiUnavailable(NO_GATE_REGISTERED.into()),
+            "the constructed detail drifted from `NO_GATE_REGISTERED`; every downstream \
+             classifier keys on this exact value"
+        );
+        assert_eq!(unjudged(&err), Some(Unjudged::WiringBug));
     }
 }

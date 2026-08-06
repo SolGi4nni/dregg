@@ -66,8 +66,9 @@ pub use dregg_intent::solver::{
     ExchangeSpec, IntentNode, RingSolver, RingTrade, Settlement, SolverError,
 };
 pub use dregg_intent::verified_settle::{
-    VerifiedLedger, VerifiedLeg, VerifiedSettleError, WideLedger, WideLeg, funded_ledger,
-    funded_wide_ledger, settle_ring_verified, settle_ring_wide_verified,
+    Unjudged, VerifiedLedger, VerifiedLeg, VerifiedSettleError, WideLedger, WideLeg, funded_ledger,
+    funded_wide_ledger, settle_ring_verified, settle_ring_wide_verified, unjudged,
+    unjudged_diagnosis,
 };
 pub use dregg_intent::{CommitmentId, IntentId};
 
@@ -191,8 +192,27 @@ pub enum CoordinationError {
     NoMatch,
     /// The matched ring did not conserve value through the verified executor
     /// (a leg was rejected, or some asset's supply changed). Nothing settled —
-    /// the verified gate runs BEFORE any app is touched.
+    /// the verified gate runs BEFORE any app is touched. **A genuine verdict on the ring.**
     NotConserving(VerifiedSettleError),
+    /// ⚑ **The ring was NEVER JUDGED** — no verdict was reached, so nothing here says the ring was
+    /// bad. Either this HOST never installed the verified gate (a WIRING BUG, fixed in code by
+    /// calling `dregg_exec_lean::register_distributed_gates()` at startup) or its Lean export could
+    /// not run (fixed in the ENVIRONMENT). Nothing settled, same as the others.
+    ///
+    /// ⚠ **This variant exists because the absence used to arrive as
+    /// [`Self::NotConserving`],** whose `Display` reads *"matched ring did not conserve"* — a flat
+    /// lie about a ring that conserves perfectly well and was simply never looked at. Every host on
+    /// this framework inherited it (`discord-bot`, `dreggnet-market`), and
+    /// `agent_coordination.rs`'s own test comment had already noticed the hazard from the other
+    /// side: *"`NotConserving(_)` alone is satisfied by `FfiUnavailable("no verified gate
+    /// registered")` just as well as by a genuine non-conservation"* — i.e. a refusal tooth that
+    /// passes for the wrong reason. Splitting the variant fixes both directions at once.
+    NeverJudged {
+        /// Which absence — the two have opposite fixes.
+        cause: Unjudged,
+        /// The operator-facing sentence naming the build/environment, never the ring.
+        diagnosis: String,
+    },
     /// An app could not honor a leg the solver assigned it. Every leg already
     /// applied in this round was rolled back SUCCESSFULLY; no partial settlement
     /// remains — the pre-round state is fully restored.
@@ -225,11 +245,33 @@ pub enum CoordinationError {
     },
 }
 
+/// The host string every app-framework surface names when a gate is missing. One spelling, so the
+/// operator reads the same instruction whichever surface refused.
+pub(crate) const FRAMEWORK_HOST_HINT: &str = "this host binary (an app built on `dregg-app-framework` must call \
+     `dregg_exec_lean::register_distributed_gates()` at startup, as `node/src/lib.rs` and \
+     `dreggnet_web::install_verified_settlement_gate` do — the framework itself stays FFI-free)";
+
+impl CoordinationError {
+    /// Classify a verified-settle failure as a VERDICT on the ring or an ABSENCE of the executor,
+    /// at the point the error is produced. Every `map_err` on a settle in this module goes through
+    /// here, so a surface cannot render "did not conserve" over a ring nothing ever judged.
+    pub(crate) fn from_settle(e: VerifiedSettleError) -> Self {
+        match unjudged_diagnosis(&e, FRAMEWORK_HOST_HINT) {
+            Some(diagnosis) => Self::NeverJudged {
+                cause: unjudged(&e).expect("a diagnosis implies a cause"),
+                diagnosis,
+            },
+            None => Self::NotConserving(e),
+        }
+    }
+}
+
 impl std::fmt::Display for CoordinationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoMatch => write!(f, "no atomic ring matched the posted intents"),
             Self::NotConserving(e) => write!(f, "matched ring did not conserve: {e}"),
+            Self::NeverJudged { diagnosis, .. } => write!(f, "{diagnosis}"),
             Self::ParticipantFailed {
                 leg_index, detail, ..
             } => write!(f, "app refused leg {leg_index}: {detail}"),
@@ -321,7 +363,7 @@ impl RingCoordinator {
         let legs: Vec<WideLeg> = ring.settlements.iter().map(settlement_to_leg).collect();
         let k0 = funded_wide_ledger(&legs);
         let verified_post =
-            settle_ring_wide_verified(&k0, &legs).map_err(CoordinationError::NotConserving)?;
+            settle_ring_wide_verified(&k0, &legs).map_err(CoordinationError::from_settle)?;
 
         // (4) Atomically drive the apps. A leg touches its sender AND receiver;
         //     both apps settle it. Track applied (leg, participant) pairs so a

@@ -69,6 +69,37 @@ async fn main() -> ExitCode {
     println!("node:  {node}");
     println!("price: {price} DEC\n");
 
+    // ── INSTALL THE VERIFIED EXECUTOR GATE ───────────────────────────────────────────────────
+    // ⚑ THIS BINARY IS NOT THE BOT. `run_pair_round` below calls
+    // `dregg_app_framework::agent_coordination::coordinate` IN THIS PROCESS, and that folds the
+    // round's value moves through the FAIL-CLOSED `settle_ring_wide_verified`: with no
+    // `IntentVerifiedGate` registered it REFUSES rather than let an unverified in-process Rust
+    // fold decide the round. That refusal is correct and stays.
+    //
+    // `discord-bot/src/main.rs` installs the gate — but this is a SEPARATE binary with its own
+    // `main`, so it inherited exactly none of that. The crate was recorded as fixed while its
+    // second entry point still settled with no gate reachable, which is how the
+    // un-called-initializer class survives a fix: the census counts CRATES and the gate is
+    // per-PROCESS. Every additional `main` is another place to forget.
+    //
+    // `dregg-exec-lean` is already a normal dependency of this crate (Cargo.toml, not dev), so
+    // this is a call, not a new edge.
+    dregg_exec_lean::register_distributed_gates();
+    if dregg_lean_ffi::distributed_exports_available() {
+        println!("verified executor gate: INSTALLED (Lean exports reachable)\n");
+    } else {
+        // Say which absence it is BEFORE the first round, rather than letting a refusal
+        // downstream read as "the coordination round was rejected". It was never judged.
+        eprintln!(
+            "REFUSING TO RUN: the verified distributed gates are installed but this build has NO \
+             VERIFIED CORE — `dregg-lean-ffi`'s exports are unreachable (no linked \
+             `libdregg_lean.a`, or Lean init failed). Every round would be refused UNJUDGED, and \
+             that is a fact about this BUILD, not about the coordination. Seed a HEAD-matching \
+             archive and rebuild."
+        );
+        return ExitCode::FAILURE;
+    }
+
     let http = reqwest::Client::new();
 
     // Action signatures bind to the executor's federation id. An unconfigured

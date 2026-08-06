@@ -38,3 +38,19 @@ pub fn register_intent_verified_gate(gate: Box<dyn IntentVerifiedGate>) {
 pub(crate) fn gate() -> Option<&'static dyn IntentVerifiedGate> {
     GATE.get().map(|b| b.as_ref())
 }
+
+/// **Is a verified intent gate registered in THIS process?**
+///
+/// For a test that needs to assert its own PREMISE. The no-gate polarity — "an absent gate refuses
+/// and says so" — is only observable in a process where none is registered, and a sibling that
+/// quietly installs one turns every such test into a test of nothing while it stays green. That is
+/// the shape a falsifier dies in, so the premise has to be checkable rather than assumed from
+/// "this file does not call the installer".
+///
+/// ⚠ **This is NOT evidence the gate DECIDES.** A gate registered over an absent or stale Lean
+/// archive answers `true` here and still refuses every leg. For "can this process actually settle",
+/// probe with a real two-polarity fold (`starbridge_sealed_auction::install_verified_auction_gate`
+/// and `starbridge_tussle::install_verified_joint_turn_gate` both do). Registered is not decided.
+pub fn is_registered() -> bool {
+    GATE.get().is_some()
+}

@@ -70,7 +70,8 @@ use crate::exchange::AssetId;
 use crate::lowering::{Intent, LoweringContext, lower, seal_plan_uniform};
 use crate::solver::{ExchangeSpec, IntentNode, RingSolver, RingTrade, Settlement};
 use crate::verified_settle::{
-    VerifiedLedger, VerifiedLeg, extract_legs, settle_fulfillment_verified, touched_assets,
+    Unjudged, VerifiedLedger, VerifiedLeg, extract_legs, settle_fulfillment_verified,
+    touched_assets, unjudged, unjudged_diagnosis,
 };
 
 /// A party in the ring: locks `offer_amount` of `offer_asset` on its own chain, wants at least
@@ -151,10 +152,48 @@ pub enum RoutingError {
     OrphanLock { party_byte: u8 },
     /// The book did not clear into a ring (no cross-chain cycle over the mirrored locks).
     NoClearingRing,
-    /// The lowered ring did not settle+conserve on the verified executor.
+    /// The lowered ring did not settle+conserve on the verified executor. **A genuine verdict on
+    /// the ring** — the executor looked at it and said no.
     VerifiedSettleRefused(String),
+    /// ⚑ **The ring was NEVER JUDGED.** No verdict was reached: either this BINARY never installed
+    /// the verified gate (a WIRING BUG, fixed in code by calling
+    /// `dregg_exec_lean::register_distributed_gates()` at startup) or its Lean export could not run
+    /// (fixed in the ENVIRONMENT). No fixture is emitted either way, but the reason is not the ring.
+    ///
+    /// ⚠ **`route` used to fold this into [`Self::VerifiedSettleRefused`],** whose `Display` reads
+    /// *"verified executor refused the ring settlement"* — a sentence that names a refusal that
+    /// never happened. `intent/tests/drex_routing_e2e.rs` records the exact shape it produced:
+    /// `VerifiedSettleRefused("verified-executor FFI unavailable: no verified gate registered")`,
+    /// and those two tests were red for days while the attribution went to a cross-asset teleport
+    /// guard that `route` does not even invoke. That is what a laundered absence costs.
+    RingNeverJudged {
+        /// Which absence — the two have opposite fixes.
+        cause: Unjudged,
+        /// The operator-facing sentence naming the build/environment, never the ring.
+        diagnosis: String,
+    },
     /// A ring `Settlement` endpoint did not map back to a known party byte.
     UnknownEndpoint(u8),
+}
+
+impl RoutingError {
+    /// Classify a verified-settle failure as a VERDICT on the ring or an ABSENCE of the executor,
+    /// at the point the error is produced — so `route` cannot report a build with no verified core
+    /// as a refused clearing ring.
+    fn from_settle(e: crate::verified_settle::VerifiedSettleError) -> Self {
+        match unjudged_diagnosis(
+            &e,
+            "this binary (a host that routes must call \
+             `dregg_exec_lean::register_distributed_gates()` at startup; `dregg-intent` is FFI-free \
+             and cannot install it itself)",
+        ) {
+            Some(diagnosis) => Self::RingNeverJudged {
+                cause: unjudged(&e).expect("a diagnosis implies a cause"),
+                diagnosis,
+            },
+            None => Self::VerifiedSettleRefused(e.to_string()),
+        }
+    }
 }
 
 impl std::fmt::Display for RoutingError {
@@ -196,6 +235,7 @@ impl std::fmt::Display for RoutingError {
             Self::VerifiedSettleRefused(e) => {
                 write!(f, "verified executor refused the ring settlement: {e}")
             }
+            Self::RingNeverJudged { diagnosis, .. } => write!(f, "{diagnosis}"),
             Self::UnknownEndpoint(b) => write!(f, "ring endpoint {b} maps to no known party"),
         }
     }
@@ -469,7 +509,7 @@ pub fn route(
         Authorization::Signature([0u8; 32], [0u8; 32]),
     );
     let (pre, post) = settle_fulfillment_verified(&sealed, &ring.settlements)
-        .map_err(|e| RoutingError::VerifiedSettleRefused(e.to_string()))?;
+        .map_err(RoutingError::from_settle)?;
     let legs = extract_legs(&sealed, &ring.settlements)
         .map_err(|e| RoutingError::VerifiedSettleRefused(e.to_string()))?;
 

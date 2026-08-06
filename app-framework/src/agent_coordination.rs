@@ -53,7 +53,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use dregg_intent::CommitmentId;
 use dregg_intent::exchange::AssetId;
 use dregg_intent::verified_settle::{
-    VerifiedSettleError, WideLedger, WideLeg, settle_ring_wide_verified,
+    Unjudged, VerifiedSettleError, WideLedger, WideLeg, settle_ring_wide_verified, unjudged,
+    unjudged_diagnosis,
 };
 use dregg_turn::error::TurnError;
 use dregg_turn::eventual::EventualRef;
@@ -209,7 +210,38 @@ pub enum CoordinationError {
     },
     /// The round's value moves did not conserve through the verified executor.
     /// Atomic: the verified gate rejected the fold whole, so nothing committed.
+    /// **A genuine verdict on the round.**
     NotConserving(VerifiedSettleError),
+    /// ⚑ **The round was NEVER JUDGED** — this HOST never installed the verified gate (a WIRING
+    /// BUG, fixed in code) or its Lean export could not run (fixed in the ENVIRONMENT). Nothing
+    /// committed, but nothing here says the round was bad either.
+    ///
+    /// ⚠ **The hazard this closes was already written down in this file, from the other side:**
+    /// the overspend test at the bottom carries *"⚠ NAME THE REASON. `NotConserving(_)` alone is
+    /// satisfied by `FfiUnavailable("no verified gate registered")` — i.e. by a host that never
+    /// installed the gate and therefore never JUDGED the overspend."* That comment describes a
+    /// refusal tooth that passes for the wrong reason, and it was true of every consumer's error
+    /// handling too. With the split, `NotConserving` means the executor looked.
+    NeverJudged {
+        /// Which absence — the two have opposite fixes.
+        cause: Unjudged,
+        /// The operator-facing sentence naming the build/environment, never the round.
+        diagnosis: String,
+    },
+}
+
+impl CoordinationError {
+    /// Classify a verified-settle failure as a VERDICT on the round or an ABSENCE of the executor,
+    /// at the point the error is produced. See [`crate::ring_trade::CoordinationError::from_settle`].
+    fn from_settle(e: VerifiedSettleError) -> Self {
+        match unjudged_diagnosis(&e, crate::ring_trade::FRAMEWORK_HOST_HINT) {
+            Some(diagnosis) => Self::NeverJudged {
+                cause: unjudged(&e).expect("a diagnosis implies a cause"),
+                diagnosis,
+            },
+            None => Self::NotConserving(e),
+        }
+    }
 }
 
 impl std::fmt::Display for CoordinationError {
@@ -230,6 +262,7 @@ impl std::fmt::Display for CoordinationError {
                 downstream_broken.len()
             ),
             Self::NotConserving(e) => write!(f, "round did not conserve: {e}"),
+            Self::NeverJudged { diagnosis, .. } => write!(f, "{diagnosis}"),
         }
     }
 }
@@ -345,7 +378,7 @@ pub fn coordinate(
     // (3) One atomic on-chain settle: fold every value move through the verified
     //     executor (all-or-nothing, per-asset Σδ=0, Lean-FFI cross-checked).
     let verified_post = settle_ring_wide_verified(ledger, &settled_moves)
-        .map_err(CoordinationError::NotConserving)?;
+        .map_err(CoordinationError::from_settle)?;
 
     let round_hash = round_digest(round_id, &fills, &settled_moves);
 

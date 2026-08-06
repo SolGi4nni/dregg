@@ -120,8 +120,23 @@ pub enum EngineError {
     IntentNotInBatch { intent_id: IntentId },
     /// An intent is used in more than one ring within the solution.
     DuplicateIntentUsage { intent_id: IntentId },
-    /// Settlement generation failed.
+    /// Settlement generation failed. **A genuine verdict on the fulfillment.**
     SettlementFailed { reason: String },
+    /// ⚑ **The fulfillment was NEVER JUDGED.** No verdict was reached: either this BINARY never
+    /// installed the verified gate (a WIRING BUG, fixed in code by calling
+    /// `dregg_exec_lean::register_distributed_gates()` at startup) or its Lean export could not run
+    /// (fixed in the ENVIRONMENT).
+    ///
+    /// ⚠ **This used to arrive as [`Self::SettlementFailed`]** with the reason
+    /// *"verified-executor settlement refused the fulfillment"* — naming a refusal that never
+    /// happened, on a settlement nobody looked at. `finalize_verified` is a public library entry,
+    /// so every caller inherited the wrong sentence.
+    SettlementNeverJudged {
+        /// Which absence — the two have opposite fixes.
+        cause: crate::verified_settle::Unjudged,
+        /// The operator-facing sentence naming the build/environment, never the fulfillment.
+        diagnosis: String,
+    },
     /// A participating intent has expired at the current height/time.
     ExpiredIntent {
         intent_id: IntentId,
@@ -188,6 +203,7 @@ impl std::fmt::Display for EngineError {
             Self::SettlementFailed { reason } => {
                 write!(f, "settlement failed: {}", reason)
             }
+            Self::SettlementNeverJudged { diagnosis, .. } => write!(f, "{diagnosis}"),
             Self::ExpiredIntent {
                 intent_id,
                 expiry,
@@ -1661,10 +1677,28 @@ impl TrustlessIntentEngine {
 
         let output = self.finalize()?;
 
+        // Split a VERDICT from an ABSENCE where the error is produced: a build with no verified
+        // core must not be reported as a refused fulfillment.
         let (k0, k1) =
             crate::verified_settle::settle_fulfillment_verified(&output.sealed, &settlements)
-                .map_err(|e| EngineError::SettlementFailed {
-                    reason: format!("verified-executor settlement refused the fulfillment: {e}"),
+                .map_err(|e| {
+                    use crate::verified_settle::{unjudged, unjudged_diagnosis};
+                    match unjudged_diagnosis(
+                        &e,
+                        "this binary (a host that finalizes must call \
+                         `dregg_exec_lean::register_distributed_gates()` at startup; `dregg-intent` \
+                         is FFI-free and cannot install it itself)",
+                    ) {
+                        Some(diagnosis) => EngineError::SettlementNeverJudged {
+                            cause: unjudged(&e).expect("a diagnosis implies a cause"),
+                            diagnosis,
+                        },
+                        None => EngineError::SettlementFailed {
+                            reason: format!(
+                                "verified-executor settlement refused the fulfillment: {e}"
+                            ),
+                        },
+                    }
                 })?;
 
         Ok((output, k0, k1))

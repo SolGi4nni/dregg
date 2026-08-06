@@ -26,6 +26,20 @@ blake3 = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# ⚑ THE VERIFIED SETTLEMENT GATE — `register_distributed_gates()`, the ONE call that installs the
+# Lean-backed `IntentVerifiedGate` this crate's awards settle through
+# (`install_verified_auction_gate`). `dregg-intent`'s `settle_ring_verified` is FAIL-CLOSED: with no
+# gate registered it REFUSES the award ring rather than let an unverified in-process Rust fold
+# decide who won. That refusal is correct; what was missing is that nothing here ever registered
+# one, so `examples/sealed_compute_auction.rs` PANICKED on its `.unwrap()` and the crate documented
+# its own cure in a doc comment (`src/lib.rs:30`) with no way to apply it.
+#
+# This edge adds ZERO compilation: `dregg-exec-lean` is already in this crate's tree via
+# `exec-lean <- dregg-sdk <- dregg-app-framework <- this crate` — MEASURED 2026-08-06 with
+# `cargo tree -p starbridge-sealed-auction -i dregg-exec-lean`, not inherited from a docblock.
+# Naming it directly only makes an already-linked capability reachable.
+dregg-exec-lean = { path = "../../exec-lean" }
+
 [dev-dependencies]
 # The on-ledger floor (factory_birth.rs) and the deos re-expression tests
 # (reexpress_deos_app.rs / deos_seam.rs) mount the composed `DeosApp`'s axum

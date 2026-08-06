@@ -3,6 +3,38 @@
 
 use super::*;
 
+/// **Arm the verified executor every award settles through.**
+///
+/// `dregg-intent`'s `settle_ring_verified` has been FAIL-CLOSED since the twin-deletion sweep
+/// (`e3f0e7b92`): with no `IntentVerifiedGate` registered it REFUSES the ring rather than letting
+/// an unverified in-process Rust fold decide who won. `dregg-intent`'s OWN tests keep the
+/// in-process transition authoritative via a `#[cfg(test)]` sibling — but that `cfg` is set only
+/// when `dregg-intent` itself is the crate under test. Every CONSUMER (this crate included)
+/// compiles the fail-closed path, so from here every award came back unjudged.
+///
+/// ⚑ **This file was measurably red at HEAD and one of its teeth was worse than red.** Measured
+/// 2026-08-06 on hbox: `full_flow_top_bid_wins_and_settles` and `settled_award_conserves_value`
+/// PANICKED on their `.unwrap()`, and `unfunded_winner_aborts_the_whole_award` — which asserts
+/// `matches!(result, Err(AuctionError::SettlementRejected(_)))` — PASSED, because an absent gate
+/// arrived inside that very variant. A refusal tooth satisfied by the executor never having looked
+/// is a falsifier that has stopped falsifying: it would have stayed green through any change that
+/// made the auction accept an award the winner cannot pay. Arming the gate and splitting
+/// `AwardNeverJudged` off fix both halves — the two panics go green, and the tooth now demands an
+/// actual verdict.
+///
+/// Not a skip: an install that does not DECIDE is a hard failure with its own reason. An auction
+/// test over an auction that cannot close is worse than a red one.
+fn arm_the_verified_executor() {
+    install_verified_auction_gate().unwrap_or_else(|e| {
+        panic!(
+            "the verified auction gate did not install: {e}\n\
+             An award ring settles through the linked verified Lean executor; without it every \
+             award is refused and no auction can close. Seed a HEAD-matching \
+             dregg-lean-ffi/libdregg_lean.a and rebuild."
+        )
+    });
+}
+
 const PAY: AssetId = [0u8; 32]; // the payment asset
 const TOKEN: AssetId = {
     let mut a = [0u8; 32];
@@ -44,6 +76,7 @@ fn demo_ledger() -> VerifiedLedger {
 
 #[test]
 fn full_flow_top_bid_wins_and_settles() {
+    arm_the_verified_executor();
     let (mut auction, bid_a, bid_b, bid_c) = three_agent_auction();
 
     // Reveals are rejected while still committing (no reveal before the commit phase closes).
@@ -73,6 +106,7 @@ fn full_flow_top_bid_wins_and_settles() {
 
 #[test]
 fn settled_award_conserves_value() {
+    arm_the_verified_executor();
     // `settle_conserves`: every asset's total supply is preserved across the award.
     let (mut auction, bid_a, bid_b, bid_c) = three_agent_auction();
     auction.seal_commit_phase();
@@ -145,6 +179,7 @@ fn non_committed_party_cannot_reveal_or_win() {
 
 #[test]
 fn unfunded_winner_aborts_the_whole_award() {
+    arm_the_verified_executor();
     // `settle_atomic`: if the winner cannot pay, the award aborts and the ledger is untouched.
     let (mut auction, bid_a, bid_b, bid_c) = three_agent_auction();
     auction.seal_commit_phase();
@@ -155,7 +190,24 @@ fn unfunded_winner_aborts_the_whole_award() {
     // A ledger where the winner B holds NOTHING in the payment asset (it cannot pay its 50 bid).
     let ledger = fund_ledger(&[(SLOT, TOKEN, 100)]); // B has no PAY balance, and is not even live
     let result = auction.settle(&ledger);
-    assert!(matches!(result, Err(AuctionError::SettlementRejected(_))));
+    // ⚠ NAME THE REASON. `SettlementRejected(_)` alone used to be satisfied by an absent gate —
+    // the executor never looked, and this tooth reported that as a rejection of the award. Demand
+    // the verified executor actually REJECTED leg 0, so the assertion cannot be met by an absence.
+    assert!(
+        matches!(
+            result,
+            Err(AuctionError::SettlementRejected(
+                VerifiedSettleError::LegRejected { index: 0, .. }
+            ))
+        ),
+        "the verified executor must REJECT the unpayable award leg, not merely be absent; got \
+         {result:?}"
+    );
+    assert!(
+        !matches!(result, Err(AuctionError::AwardNeverJudged { .. })),
+        "an unpayable award is a VERDICT; reporting it as never-judged would send the operator \
+         after a Lean archive that is not the problem"
+    );
     // The auction did NOT transition to Settled (no half-award).
     assert_eq!(auction.phase, Phase::Reveal);
 }
