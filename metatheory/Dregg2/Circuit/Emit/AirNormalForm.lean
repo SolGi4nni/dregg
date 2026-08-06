@@ -76,6 +76,7 @@ preserving) for exactly this reason.
 No `sorry`, no `native_decide`, no new axiom. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.EffectLowerCore
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.AirNormalForm
 
@@ -84,84 +85,49 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmConstraint2 WindowExpr WindowConstraint)
 open Dregg2.Circuit.Emit.AirBuilder
   (Head headToExpr headExprs foldExprs termToExpr varsProd evalH evalTerm headToExpr_eval)
+open Dregg2.Circuit.GateExpr
 
 set_option autoImplicit false
 
-/-! ## §1 — the DECIDABLE shape predicate on a one-row (`EmittedExpr`) body. -/
+/-! ## §1+§2 — ⚑ THE SHAPE PREDICATE AND ITS BY-CONSTRUCTION PROOF, **DERIVED** (2026-08-06).
+
+## What used to be here, and what it cost
+
+§1 wrote out `isVarProd` / `isTermAtom` / `isNormal` over `EmittedExpr`; §3a wrote out
+`isVarProdW` / `isTermAtomW` / `isNormalW` over `WindowExpr`. **Six definitions for one predicate**,
+differing only in which leaf constructors they accept. §2 then proved the gate rail canonical by
+construction in four lemmas, and §3a proved the *same statement* about the window rail in four more.
+
+`Dregg2.Circuit.GateExpr` makes the leaf alphabet a PARAMETER (`GExpr L`, `GHead L`,
+`gIsNormal`), so both rails are one predicate read through their view and normality-by-construction
+is one proof for every alphabet. The invariant is UNCHANGED:
+
+    body  ::=  atom  |  add(body, atom)                  -- LEFT-nested spine, source order
+    atom  ::=  mul(const c, prod)  |  const k            -- EVERY term carries its coefficient
+    prod  ::=  leaf  |  mul(prod, leaf)                  -- LEFT-nested, leaf = var/loc/nxt
+
+and so is every emitted byte: `demoWCanonical_shape` below is still `rfl` on the same literal. -/
 
 /-- A VAR PRODUCT: `varsProd cols` for a non-empty `cols` — a LEFT-nested `mul` chain of `var`
-leaves. `varsProd []` is `const 1` and is not reachable from `termToExpr` (a term with no columns
-renders as its bare constant), so the empty product is deliberately NOT accepted here. -/
-def isVarProd : EmittedExpr → Bool
-  | .var _   => true
-  | .mul a b => isVarProd a && (match b with | .var _ => true | _ => false)
-  | _        => false
+leaves. ⚑ Now `GateExpr.gIsVarProd` read through the `EmittedExpr` view. -/
+def isVarProd (e : EmittedExpr) : Bool := gIsVarProd (ofEmitted e)
 
-/-- A TERM ATOM: one summand of the spine. `mul(const c, prod)` — ⚑ INCLUDING `c = 1` — or a bare
-constant (the head constant, or a term with no columns). -/
-def isTermAtom : EmittedExpr → Bool
-  | .const _ => true
-  | .mul a b => (match a with | .const _ => true | _ => false) && isVarProd b
-  | _        => false
+/-- A TERM ATOM: one summand of the spine — `mul(const c, prod)`, ⚑ INCLUDING `c = 1`, or a bare
+constant. -/
+def isTermAtom (e : EmittedExpr) : Bool := gIsTermAtom (ofEmitted e)
 
 /-- ⚑ **THE NORMAL FORM**: a LEFT-nested `add` spine whose every summand is a term atom. -/
-def isNormal : EmittedExpr → Bool
-  | .add l r => isNormal l && isTermAtom r
-  | e        => isTermAtom e
-
-/-! ## §2 — the gate rail is normal BY CONSTRUCTION. -/
-
-/-- `varsProd` of a non-empty column list is a var product. -/
-theorem isVarProd_varsProd (co : Nat) (rest : List Nat) :
-    isVarProd (varsProd (co :: rest)) = true := by
-  show isVarProd (rest.foldl (fun acc v => EmittedExpr.mul acc (.var v)) (.var co)) = true
-  suffices h : ∀ (rs : List Nat) (e : EmittedExpr), isVarProd e = true →
-      isVarProd (rs.foldl (fun acc v => EmittedExpr.mul acc (.var v)) e) = true by
-    exact h rest (.var co) rfl
-  intro rs
-  induction rs with
-  | nil => intro e he; simpa using he
-  | cons x xs ih =>
-    intro e he
-    exact ih _ (by simp [isVarProd, he])
-
-/-- Every term of a head lowers to a term atom. -/
-theorem isTermAtom_termToExpr (t : ℤ × List Nat) : isTermAtom (termToExpr t) = true := by
-  obtain ⟨k, cols⟩ := t
-  cases cols with
-  | nil => rfl
-  | cons c cs => simp [termToExpr, isTermAtom, isVarProd_varsProd]
-
-/-- Folding atoms onto a normal accumulator keeps it normal (the LEFT spine grows). -/
-theorem isNormal_foldl (es : List EmittedExpr) (h : ∀ e ∈ es, isTermAtom e = true) :
-    ∀ (acc : EmittedExpr), isNormal acc = true →
-      isNormal (es.foldl (fun a x => EmittedExpr.add a x) acc) = true := by
-  induction es with
-  | nil => intro acc hacc; simpa using hacc
-  | cons x xs ih =>
-    intro acc hacc
-    refine ih (fun e he => h e (List.mem_cons_of_mem _ he)) _ ?_
-    simp [isNormal, hacc, h x List.mem_cons_self]
-
-theorem isNormal_foldExprs (es : List EmittedExpr) (h : ∀ e ∈ es, isTermAtom e = true) :
-    isNormal (foldExprs es) = true := by
-  cases es with
-  | nil => rfl
-  | cons e rest =>
-    refine isNormal_foldl rest (fun x hx => h x (List.mem_cons_of_mem _ hx)) e ?_
-    have := h e List.mem_cons_self
-    cases e <;> simp_all [isNormal, isTermAtom]
+def isNormal (e : EmittedExpr) : Bool := gIsNormal (ofEmitted e)
 
 /-- ⚑ **THE GATE RAIL IS CANONICAL BY CONSTRUCTION.** Every `AirBuilder.Head` lowers to a body in
-the normal form — for EVERY head, not on a spot check. So a descriptor whose gates come out of
-`EffectLower.lowerConstraint` (which is `cgH ∘ constraintHead`) is normal without anyone checking. -/
+the normal form — for EVERY head, not on a spot check. ⚑ The proof is now INHERITED: `AirBuilder`'s
+renderer IS `gHeadToExpr` (`GateExpr.gHeadToExpr_emitted`), the fusion law moves the view outside,
+and the alphabet-generic `gHeadToExpr_gIsNormal` closes it. The four supporting lemmas this section
+used to carry are gone with it. -/
 theorem headToExpr_isNormal (h : Head) : isNormal (headToExpr h) = true := by
-  refine isNormal_foldExprs _ (fun e he => ?_)
-  simp only [headExprs, List.mem_append, List.mem_map] at he
-  rcases he with ⟨t, _, ht⟩ | he
-  · exact ht ▸ isTermAtom_termToExpr t
-  · by_cases hc : h.const = 0 <;> simp [hc] at he
-    · exact he ▸ rfl
+  show gIsNormal (ofEmitted (headToExpr h)) = true
+  rw [← Dregg2.Circuit.GateExpr.gHeadToExpr_emitted, ← render_gHeadToExpr, ofEmitted_render]
+  exact gHeadToExpr_gIsNormal _
 
 /-! ## §2b — ⚑ `gateBody`: the compiler's rendering of ONE source constraint, named.
 
@@ -200,196 +166,62 @@ theorem gateBody_zero_iff (c : Constraint) (a : Assignment) :
 theorem gateBody_isNormal (c : Constraint) : isNormal (gateBody c) = true :=
   headToExpr_isNormal _
 
-/-! ## §3 — the WINDOW rail: the head `AirBuilder` cannot express, and its renderer.
+/-! ## §3 — ⚑ the WINDOW rail: **DERIVED**, not re-authored (2026-08-06).
 
-`AirBuilder.Head` is `Σ coeff · ∏ COLUMNS + const`: its leaves are current-row columns, so it has
-no name for the next-row leaf a `.transition` continuity gate reads. That is why window and
-boundary bodies had no canonical renderer at all — and why a re-emitted descriptor that mixes a
-Head-normalized gate with a hand-shaped window body would reproduce, inside the compiler's own
-output, exactly the inconsistency §P2.5 measured in the hand-authored corpus. `WHead` closes that:
-same shape, same rendering rules, leaves widened to `loc`/`nxt`. -/
+## ⚑ WHAT THIS SECTION USED TO BE, AND WHY IT IS GONE
 
-/-- A window leaf: the current row's column, or the next row's. -/
-inductive WLeaf where
-  | loc (c : Nat)
-  | nxt (c : Nat)
-  deriving Repr, DecidableEq
+It carried `WLeaf`, `WLeaf.expr`, `WHead` + seven builder methods, `wVarsProd`, `wTermToExpr`,
+`wHeadExprs`, `wFoldExprs`, `wHeadToWindow`, `isVarProdW`, `isTermAtomW`, `isNormalW`, `wEvalTerm`
+and `wEvalH` — plus eleven supporting theorems — and every one of them was a line-for-line twin of
+§1/§2's `Nat`-leaf version. The reason was stated right here, in this file:
 
-def WLeaf.expr : WLeaf → WindowExpr
-  | .loc c => .loc c
-  | .nxt c => .nxt c
+> *"`AirBuilder.Head` is `Σ coeff · ∏ COLUMNS + const`: its leaves are current-row columns, so it
+> has no name for the next-row leaf a `.transition` continuity gate reads. That is why window and
+> boundary bodies had no canonical renderer at all … `WHead` closes that: same shape, same rendering
+> rules, **leaves widened to `loc`/`nxt`**."*
 
-/-- A two-row polynomial head: `Σ coeff · ∏ leaves + const`. The `AirBuilder.Head` shape with
-`loc`/`nxt` leaves instead of columns. -/
-structure WHead where
-  terms : List (ℤ × List WLeaf)
-  const : ℤ
+**A leaf alphabet was a hard-coded `Nat`, and it cost ~26 declarations in this one file.** `WLeaf`
+was already the right idea in the wrong place: it is the PARAMETER, not a local. It now lives in
+`Dregg2.Circuit.GateExpr` where the parameter is, `WHead` IS `GHead WLeaf` — the same structure
+`AirBuilder.Head` is — and every definition below is one line.
 
-namespace WHead
+⚑ **NO EMITTED BYTE MOVES.** `demoWCanonical_shape` (§4a) is still `rfl` on the same literal, and
+`wLinLoc` / `wLin` — the two shorthands the re-emitted descriptors actually call — are unchanged in
+name, type and output. -/
 
-/-- The identically-zero head. -/
-def zero : WHead := ⟨[], 0⟩
-/-- A pure constant. -/
-def c (k : ℤ) : WHead := ⟨[], k⟩
-/-- `coeff · leaf`. -/
-def lin (coeff : ℤ) (l : WLeaf) : WHead := ⟨[(coeff, [l])], 0⟩
-/-- Append a linear term. -/
-def addLin (h : WHead) (coeff : ℤ) (l : WLeaf) : WHead := ⟨h.terms ++ [(coeff, [l])], h.const⟩
-/-- Append a product term. -/
-def addProd (h : WHead) (coeff : ℤ) (ls : List WLeaf) : WHead := ⟨h.terms ++ [(coeff, ls)], h.const⟩
-/-- Shift the constant. -/
-def addConst (h : WHead) (k : ℤ) : WHead := ⟨h.terms, h.const + k⟩
-/-- Sum two heads. -/
-def append (h o : WHead) : WHead := ⟨h.terms ++ o.terms, h.const + o.const⟩
+/-- A window leaf: the current row's column, or the next row's. ⚑ Declared in `GateExpr`, where it
+is the alphabet parameter rather than one file's local. -/
+abbrev WLeaf := Dregg2.Circuit.GateExpr.WLeaf
 
-end WHead
+/-- A two-row polynomial head: `Σ coeff · ∏ leaves + const`. ⚑ It IS `AirBuilder.Head`'s structure,
+at a different alphabet — which is the whole content of the collapse. -/
+abbrev WHead := Dregg2.Circuit.GateExpr.GHead WLeaf
 
-/-- The leaf product, LEFT-nested (`varsProd`'s twin). -/
-def wVarsProd : List WLeaf → WindowExpr
-  | []        => .const 1
-  | l :: rest => rest.foldl (fun acc v => .mul acc v.expr) l.expr
+/-- ⚑ **The window rail's canonical renderer** — `gHeadToExpr` at the `toWindow` view. -/
+def wHeadToWindow (h : WHead) : WindowExpr := gHeadToExpr toWindow h
 
-/-- One term (`termToExpr`'s twin): ⚑ the coefficient is ALWAYS written. -/
-def wTermToExpr : ℤ × List WLeaf → WindowExpr
-  | (coeff, [])   => .const coeff
-  | (coeff, ls)   => .mul (.const coeff) (wVarsProd ls)
-
-/-- The summand list (`headExprs`' twin): a zero head-constant is elided. -/
-def wHeadExprs (h : WHead) : List WindowExpr :=
-  h.terms.map wTermToExpr ++ (if h.const = 0 then [] else [.const h.const])
-
-/-- The LEFT-nested sum (`foldExprs`' twin); `[]` renders `const 0`. -/
-def wFoldExprs : List WindowExpr → WindowExpr
-  | []        => .const 0
-  | e :: rest => rest.foldl (fun acc x => .add acc x) e
-
-/-- ⚑ **The window rail's canonical renderer.** -/
-def wHeadToWindow (h : WHead) : WindowExpr := wFoldExprs (wHeadExprs h)
-
-/-! ### §3a — the same decidable shape predicate, over `WindowExpr`. -/
-
-def isVarProdW : WindowExpr → Bool
-  | .loc _   => true
-  | .nxt _   => true
-  | .mul a b => isVarProdW a && (match b with | .loc _ => true | .nxt _ => true | _ => false)
-  | _        => false
-
-def isTermAtomW : WindowExpr → Bool
-  | .const _ => true
-  | .mul a b => (match a with | .const _ => true | _ => false) && isVarProdW b
-  | _        => false
-
-/-- ⚑ **THE NORMAL FORM on the window rail** — the same left spine of coefficient-carrying terms. -/
-def isNormalW : WindowExpr → Bool
-  | .add l r => isNormalW l && isTermAtomW r
-  | e        => isTermAtomW e
-
-theorem isVarProdW_wVarsProd (l : WLeaf) (rest : List WLeaf) :
-    isVarProdW (wVarsProd (l :: rest)) = true := by
-  show isVarProdW (rest.foldl (fun acc v => WindowExpr.mul acc v.expr) l.expr) = true
-  suffices h : ∀ (rs : List WLeaf) (e : WindowExpr), isVarProdW e = true →
-      isVarProdW (rs.foldl (fun acc v => WindowExpr.mul acc v.expr) e) = true by
-    exact h rest l.expr (by cases l <;> rfl)
-  intro rs
-  induction rs with
-  | nil => intro e he; simpa using he
-  | cons x xs ih =>
-    intro e he
-    refine ih _ ?_
-    cases x <;> simp [isVarProdW, he, WLeaf.expr]
-
-theorem isTermAtomW_wTermToExpr (t : ℤ × List WLeaf) : isTermAtomW (wTermToExpr t) = true := by
-  obtain ⟨k, ls⟩ := t
-  cases ls with
-  | nil => rfl
-  | cons l ls => simp [wTermToExpr, isTermAtomW, isVarProdW_wVarsProd]
-
-theorem isNormalW_foldl (es : List WindowExpr) (h : ∀ e ∈ es, isTermAtomW e = true) :
-    ∀ (acc : WindowExpr), isNormalW acc = true →
-      isNormalW (es.foldl (fun a x => WindowExpr.add a x) acc) = true := by
-  induction es with
-  | nil => intro acc hacc; simpa using hacc
-  | cons x xs ih =>
-    intro acc hacc
-    refine ih (fun e he => h e (List.mem_cons_of_mem _ he)) _ ?_
-    simp [isNormalW, hacc, h x List.mem_cons_self]
-
-theorem isNormalW_wFoldExprs (es : List WindowExpr) (h : ∀ e ∈ es, isTermAtomW e = true) :
-    isNormalW (wFoldExprs es) = true := by
-  cases es with
-  | nil => rfl
-  | cons e rest =>
-    refine isNormalW_foldl rest (fun x hx => h x (List.mem_cons_of_mem _ hx)) e ?_
-    have := h e List.mem_cons_self
-    cases e <;> simp_all [isNormalW, isTermAtomW]
-
-/-- ⚑ **THE WINDOW RAIL IS CANONICAL BY CONSTRUCTION**, for every `WHead`. -/
-theorem wHeadToWindow_isNormalW (h : WHead) : isNormalW (wHeadToWindow h) = true := by
-  refine isNormalW_wFoldExprs _ (fun e he => ?_)
-  simp only [wHeadExprs, List.mem_append, List.mem_map] at he
-  rcases he with ⟨t, _, ht⟩ | he
-  · exact ht ▸ isTermAtomW_wTermToExpr t
-  · by_cases hc : h.const = 0 <;> simp [hc] at he
-    · exact he ▸ rfl
-
-/-! ### §3b — and it MEANS what the head means. Canonicalization is not a byte trick. -/
-
-/-- One term's value: `coeff · ∏ leaves`. -/
-def wEvalTerm (env : VmRowEnv) (t : ℤ × List WLeaf) : ℤ :=
-  t.1 * ((t.2.map (fun l => l.expr.eval env)).prod)
+/-- ⚑ **THE NORMAL FORM on the window rail** — the SAME predicate as `isNormal`, read through the
+window view instead of the one-row view. Not two invariants that agree; one invariant. -/
+def isNormalW (e : WindowExpr) : Bool := gIsNormal (ofWindow e)
 
 /-- A head's value under a row window. -/
-def wEvalH (h : WHead) (env : VmRowEnv) : ℤ := (h.terms.map (wEvalTerm env)).sum + h.const
+def wEvalH (h : WHead) (env : VmRowEnv) : ℤ := gEvalH h (wEnv env)
 
-theorem wVarsProd_foldl (env : VmRowEnv) (rest : List WLeaf) (e : WindowExpr) :
-    (rest.foldl (fun acc v => WindowExpr.mul acc v.expr) e).eval env
-      = e.eval env * ((rest.map (fun l => l.expr.eval env)).prod) := by
-  induction rest generalizing e with
-  | nil => simp
-  | cons x xs ih =>
-    simp only [List.foldl_cons, List.map_cons, List.prod_cons, ih, WindowExpr.eval]
-    ring
+/-- ⚑ **THE WINDOW RAIL IS CANONICAL BY CONSTRUCTION**, for every `WHead` — inherited from the
+alphabet-generic proof, exactly as the gate rail is. -/
+theorem wHeadToWindow_isNormalW (h : WHead) : isNormalW (wHeadToWindow h) = true := by
+  show gIsNormal (ofWindow (gHeadToExpr toWindow h)) = true
+  rw [← render_gHeadToExpr, ofWindow_render]
+  exact gHeadToExpr_gIsNormal _
 
-theorem wVarsProd_eval (env : VmRowEnv) (ls : List WLeaf) :
-    (wVarsProd ls).eval env = ((ls.map (fun l => l.expr.eval env)).prod) := by
-  cases ls with
-  | nil => simp [wVarsProd, WindowExpr.eval]
-  | cons l rest =>
-    simp only [wVarsProd, wVarsProd_foldl, List.map_cons, List.prod_cons]
-
-theorem wTermToExpr_eval (env : VmRowEnv) (t : ℤ × List WLeaf) :
-    (wTermToExpr t).eval env = wEvalTerm env t := by
-  obtain ⟨k, ls⟩ := t
-  cases ls with
-  | nil => simp [wTermToExpr, wEvalTerm, WindowExpr.eval]
-  | cons l rest => simp [wTermToExpr, wEvalTerm, WindowExpr.eval, wVarsProd_eval]
-
-theorem wFoldExprs_foldl (env : VmRowEnv) (rest : List WindowExpr) (e : WindowExpr) :
-    (rest.foldl (fun acc x => WindowExpr.add acc x) e).eval env
-      = e.eval env + (rest.map (·.eval env)).sum := by
-  induction rest generalizing e with
-  | nil => simp
-  | cons x xs ih =>
-    simp only [List.foldl_cons, List.map_cons, List.sum_cons, ih, WindowExpr.eval]
-    ring
-
-theorem wFoldExprs_eval (env : VmRowEnv) (es : List WindowExpr) :
-    (wFoldExprs es).eval env = (es.map (·.eval env)).sum := by
-  cases es with
-  | nil => simp [wFoldExprs, WindowExpr.eval]
-  | cons e rest =>
-    simp only [wFoldExprs, wFoldExprs_foldl, List.map_cons, List.sum_cons]
-
-/-- ⚑ **THE WINDOW BRIDGE.** The canonical rendering evaluates to exactly the head's value — the
-`AirBuilder.headToExpr_eval` of the two-row rail. So re-rendering a window body into normal form
-cannot change what the constraint says. -/
+/-- ⚑ **THE WINDOW BRIDGE.** The canonical rendering evaluates to exactly the head's value, so
+re-rendering a window body into normal form cannot change what the constraint says. ⚑ It and
+`AirBuilder.headToExpr_eval` were the same theorem twice; this is the second one inherited from
+`GateExpr.gHeadToExpr_eval`, along with the seven fold lemmas each rail used to carry. -/
 theorem wHeadToWindow_eval (env : VmRowEnv) (h : WHead) :
     (wHeadToWindow h).eval env = wEvalH h env := by
-  simp only [wHeadToWindow, wFoldExprs_eval, wHeadExprs, List.map_append, List.sum_append,
-    List.map_map, Function.comp_def, wEvalH]
-  by_cases hc : h.const = 0
-  · simp [hc, wTermToExpr_eval]
-  · simp [hc, wTermToExpr_eval, WindowExpr.eval]
+  show (gHeadToExpr toWindow h).eval env = gEvalH h (wEnv env)
+  rw [← render_gHeadToExpr, Dregg2.Circuit.GateExpr.eval_render_toWindow, gHeadToExpr_eval]
 
 /-! ### §3c — the two authoring shorthands the re-emitted descriptors use. -/
 
@@ -543,13 +375,7 @@ def demoDescBad : EffectVmDescriptor2 :=
 
 /-! ## §5 — axiom-hygiene tripwires. -/
 
-#assert_axioms isVarProd_varsProd
-#assert_axioms isTermAtom_termToExpr
-#assert_axioms isNormal_foldExprs
 #assert_axioms headToExpr_isNormal
-#assert_axioms isVarProdW_wVarsProd
-#assert_axioms isTermAtomW_wTermToExpr
-#assert_axioms isNormalW_wFoldExprs
 #assert_axioms wHeadToWindow_isNormalW
 #assert_axioms wHeadToWindow_eval
 #assert_axioms wLinLoc_isNormalW

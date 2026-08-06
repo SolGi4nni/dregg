@@ -123,7 +123,8 @@ renderings that disagree with each other.
 No `sorry`, no `native_decide`, no new axiom. NEW file; imports read-only; ADDITIVE — every existing
 definition is untouched and pinned equal to its instantiation.
 -/
-import Dregg2.Circuit.Emit.AirNormalForm
+import Dregg2.Circuit.TableAirIR
+import Dregg2.Circuit.Emit.AirBuilder
 
 namespace Dregg2.Circuit.GateExpr
 
@@ -132,7 +133,6 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.DescriptorIR2 (WindowExpr ChalExpr)
 open Dregg2.Circuit.TableAirIR (TExpr TRowEnv)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
-open Dregg2.Circuit.Emit.AirNormalForm (WLeaf WHead)
 
 set_option autoImplicit false
 
@@ -168,6 +168,20 @@ it, which is exactly the relationship the two docblocks assert in prose. -/
 
 /-- The one-row alphabet: a column index. `Circuit.Expr` and `EmittedExpr` are `GExpr VLeaf`. -/
 abbrev VLeaf := Nat
+
+/-- The TWO-ROW alphabet: a current-row or next-row column. `WindowExpr` is `GExpr WLeaf`.
+
+⚑ **MOVED HERE FROM `AirNormalForm` (2026-08-06).** It was declared there because that file needed a
+leaf type to state `WHead` with, and `WHead` existed because `AirBuilder.Head`'s leaves were `Nat`.
+`WLeaf` was always the right idea in the wrong place: it is the parameter, not a local. -/
+inductive WLeaf where
+  | loc (c : Nat)
+  | nxt (c : Nat)
+  deriving Repr, DecidableEq
+
+def WLeaf.expr : WLeaf → WindowExpr
+  | .loc c => .loc c
+  | .nxt c => .nxt c
 
 /-- The CHALLENGE alphabet — `WLeaf` plus the verifier's Fiat–Shamir leaf. `ChalExpr` is
 `GExpr CLeaf`, and the `win` injection IS `ChalExpr.ofWindow`. -/
@@ -482,8 +496,10 @@ end GHead
 
 /-- `AirBuilder.Head` as a `GHead`. -/
 def ofHead (h : Dregg2.Circuit.Emit.AirBuilder.Head) : GHead VLeaf := ⟨h.terms, h.const⟩
-/-- `AirNormalForm.WHead` as a `GHead`. -/
-def ofWHead (h : WHead) : GHead WLeaf := ⟨h.terms, h.const⟩
+
+/-- ⚑ `AirNormalForm.WHead` no longer exists as its own structure: it IS `GHead WLeaf`, aliased
+there. That alias is the deletion this module exists to make possible. -/
+abbrev WHead := GHead WLeaf
 
 /-! ### §5a — the CANONICAL renderer, once.
 
@@ -518,44 +534,90 @@ def gHeadToExpr {L E : Type} (O : ExprOps L E) (h : GHead L) : E :=
 This is the `rowGatesWith_pallas` obligation discharged for the collapse: the parameterised renderer
 and each inherited one are the SAME emitted object, for every input, with no fixture anywhere. -/
 
-/-- The leaf product agrees, on every column list. -/
+/-! ### §5b — ⚑ THE HEAD'S DENOTATION, ONCE.
+
+`AirBuilder.headToExpr_eval` and `AirNormalForm.wHeadToWindow_eval` are the same theorem twice — the
+canonical rendering evaluates to the head's value. Here it is once, for every alphabet, with the
+seven supporting fold lemmas each written once instead of twice. -/
+
+/-- One term's value: `coeff · ∏ leaves`. -/
+def gEvalTerm {L : Type} (ρ : L → ℤ) (t : ℤ × List L) : ℤ := t.1 * ((t.2.map ρ).prod)
+
+/-- A head's value under a leaf environment. -/
+def gEvalH {L : Type} (h : GHead L) (ρ : L → ℤ) : ℤ := (h.terms.map (gEvalTerm ρ)).sum + h.const
+
+theorem gVarsProd_foldl {L : Type} (ρ : L → ℤ) (rest : List L) (e : GExpr L) :
+    evalG ρ (rest.foldl (fun acc v => GExpr.mul acc (GExpr.leaf v)) e)
+      = evalG ρ e * ((rest.map ρ).prod) := by
+  induction rest generalizing e with
+  | nil => simp
+  | cons x xs ih => simp only [List.foldl_cons, List.map_cons, List.prod_cons, ih, evalG]; ring
+
+theorem gVarsProd_eval {L : Type} (ρ : L → ℤ) (ls : List L) :
+    evalG ρ (gVarsProd idOps ls) = ((ls.map ρ).prod) := by
+  cases ls with
+  | nil => simp [gVarsProd, evalG]
+  | cons l rest =>
+    show evalG ρ (rest.foldl (fun acc v => GExpr.mul acc (GExpr.leaf v)) (GExpr.leaf l)) = _
+    rw [gVarsProd_foldl]; simp [evalG]
+
+theorem gTermToExpr_eval {L : Type} (ρ : L → ℤ) (t : ℤ × List L) :
+    evalG ρ (gTermToExpr idOps t) = gEvalTerm ρ t := by
+  obtain ⟨k, ls⟩ := t
+  cases ls with
+  | nil => simp [gTermToExpr, gEvalTerm, evalG]
+  | cons l rest => simp [gTermToExpr, gEvalTerm, evalG, gVarsProd_eval]
+
+theorem gFoldExprs_foldl {L : Type} (ρ : L → ℤ) (rest : List (GExpr L)) (e : GExpr L) :
+    evalG ρ (rest.foldl (fun acc x => GExpr.add acc x) e)
+      = evalG ρ e + (rest.map (evalG ρ)).sum := by
+  induction rest generalizing e with
+  | nil => simp
+  | cons x xs ih => simp only [List.foldl_cons, List.map_cons, List.sum_cons, ih, evalG]; ring
+
+theorem gFoldExprs_eval {L : Type} (ρ : L → ℤ) (es : List (GExpr L)) :
+    evalG ρ (gFoldExprs idOps es) = (es.map (evalG ρ)).sum := by
+  cases es with
+  | nil => simp [gFoldExprs, evalG]
+  | cons e rest =>
+    show evalG ρ (rest.foldl (fun acc x => GExpr.add acc x) e) = _
+    rw [gFoldExprs_foldl]; simp
+
+/-- ⚑ **THE HEAD BRIDGE, ONCE.** The canonical rendering evaluates to exactly the head's value — so
+re-rendering any body into normal form cannot change what the constraint says, on any rail. -/
+theorem gHeadToExpr_eval {L : Type} (ρ : L → ℤ) (h : GHead L) :
+    evalG ρ (gHeadToExpr idOps h) = gEvalH h ρ := by
+  simp only [gHeadToExpr, gFoldExprs_eval, gHeadExprs, List.map_append, List.sum_append,
+    List.map_map, Function.comp_def, gEvalH]
+  by_cases hc : h.const = 0
+  · simp [hc, gTermToExpr_eval]
+  · simp [hc, gTermToExpr_eval, evalG]
+
+/-! ### §5b — ⚑ THE PINS on the `EmittedExpr` rail. `AirBuilder`'s renderer IS this one.
+
+`AirNormalForm`'s window rail is pinned in that file, where it is now the instantiation rather than
+a twin. -/
+
 theorem gVarsProd_emitted (cols : List VLeaf) :
     gVarsProd toEmitted cols = Dregg2.Circuit.Emit.AirBuilder.varsProd cols := by
   cases cols <;> rfl
 
-theorem gVarsProd_window (ls : List WLeaf) :
-    gVarsProd toWindow ls = Dregg2.Circuit.Emit.AirNormalForm.wVarsProd ls := by
-  cases ls <;> rfl
-
-/-- The per-term rendering agrees, as a FUNCTION — which is what the `List.map` inside `gHeadExprs`
-needs. ⚠ This is the one step that is not `rfl`: `Eq.refl` cannot see through `List.map f` when the
-term list is a variable, because that requires `f` and `g` to be definitionally equal *as functions*
-and the two compiled matchers are distinct constants. It is a Lean elaboration limit, not a gap in
-the collapse — each ARM is `rfl`, and every pin over a CLOSED emitted object below is `rfl`. -/
+/-- The per-term rendering agrees AS A FUNCTION — what the `List.map` inside `gHeadExprs` needs.
+⚠ This is the one step that is not `rfl`: `Eq.refl` cannot see through `List.map f` when the term
+list is a variable, because that needs `f` and `g` definitionally equal *as functions* and the two
+compiled matchers are distinct constants. A Lean elaboration limit, not a gap in the collapse —
+every ARM is `rfl`, and every pin over a CLOSED emitted object is `rfl`. -/
 theorem gTermToExpr_emitted :
     gTermToExpr toEmitted = Dregg2.Circuit.Emit.AirBuilder.termToExpr := by
-  funext t; obtain ⟨k, ls⟩ := t; cases ls <;> rfl
-
-theorem gTermToExpr_window :
-    gTermToExpr toWindow = Dregg2.Circuit.Emit.AirNormalForm.wTermToExpr := by
   funext t; obtain ⟨k, ls⟩ := t; cases ls <;> rfl
 
 theorem gFoldExprs_emitted (es : List EmittedExpr) :
     gFoldExprs toEmitted es = Dregg2.Circuit.Emit.AirBuilder.foldExprs es := by
   cases es <;> rfl
 
-theorem gFoldExprs_window (es : List WindowExpr) :
-    gFoldExprs toWindow es = Dregg2.Circuit.Emit.AirNormalForm.wFoldExprs es := by
-  cases es <;> rfl
-
-/-- The component lists agree too, so a consumer that took `headExprs` apart still can. -/
 theorem gHeadExprs_emitted (h : Dregg2.Circuit.Emit.AirBuilder.Head) :
     gHeadExprs toEmitted (ofHead h) = Dregg2.Circuit.Emit.AirBuilder.headExprs h := by
   simp only [gHeadExprs, Dregg2.Circuit.Emit.AirBuilder.headExprs, ofHead, gTermToExpr_emitted]
-
-theorem gHeadExprs_window (h : WHead) :
-    gHeadExprs toWindow (ofWHead h) = Dregg2.Circuit.Emit.AirNormalForm.wHeadExprs h := by
-  simp only [gHeadExprs, Dregg2.Circuit.Emit.AirNormalForm.wHeadExprs, ofWHead, gTermToExpr_window]
 
 /-- ⚑ **`AirBuilder.headToExpr` IS `gHeadToExpr toEmitted`** — for EVERY head, no fixture. -/
 theorem gHeadToExpr_emitted (h : Dregg2.Circuit.Emit.AirBuilder.Head) :
@@ -564,13 +626,103 @@ theorem gHeadToExpr_emitted (h : Dregg2.Circuit.Emit.AirBuilder.Head) :
     = Dregg2.Circuit.Emit.AirBuilder.foldExprs (Dregg2.Circuit.Emit.AirBuilder.headExprs h)
   rw [gHeadExprs_emitted, gFoldExprs_emitted]
 
-/-- ⚑ **`AirNormalForm.wHeadToWindow` IS `gHeadToExpr toWindow`** — for EVERY head. The ~20
-definitions §3 of that file spends are these two lines. -/
-theorem gHeadToExpr_window (h : WHead) :
-    gHeadToExpr toWindow (ofWHead h) = Dregg2.Circuit.Emit.AirNormalForm.wHeadToWindow h := by
-  show gFoldExprs toWindow (gHeadExprs toWindow (ofWHead h))
-    = Dregg2.Circuit.Emit.AirNormalForm.wFoldExprs (Dregg2.Circuit.Emit.AirNormalForm.wHeadExprs h)
-  rw [gHeadExprs_window, gFoldExprs_window]
+/-- ⚑ **`AirBuilder.gBin` is the alphabet gate at `[0,1]`** — every column, `rfl`. -/
+theorem gBin_is_gBool (co : Nat) :
+    Dregg2.Circuit.Emit.AirBuilder.gBin co
+      = render toEmitted (GExpr.mul (.leaf co) (.add (.leaf co) (.const (-1)))) := rfl
+
+/-! ### §5b′ — ⚑ THE FUSION LAW: rendering the head is rendering the rendered head.
+
+This is what lets a target rail be a one-line `def` instead of a re-derivation: everything proved
+about `gHeadToExpr idOps` (normality, denotation) transfers to EVERY view for free. -/
+
+theorem render_gVarsProd {L E : Type} (O : ExprOps L E) (ls : List L) :
+    render O (gVarsProd idOps ls) = gVarsProd O ls := by
+  cases ls with
+  | nil => rfl
+  | cons l rest =>
+    show render O (rest.foldl (fun acc v => GExpr.mul acc (GExpr.leaf v)) (GExpr.leaf l))
+      = rest.foldl (fun acc v => O.mul acc (O.leaf v)) (O.leaf l)
+    suffices h : ∀ (rs : List L) (e : GExpr L),
+        render O (rs.foldl (fun acc v => GExpr.mul acc (GExpr.leaf v)) e)
+          = rs.foldl (fun acc v => O.mul acc (O.leaf v)) (render O e) by
+      exact h rest (.leaf l)
+    intro rs
+    induction rs with
+    | nil => intro e; rfl
+    | cons x xs ih => intro e; simpa [render] using ih (GExpr.mul e (GExpr.leaf x))
+
+theorem render_gTermToExpr {L E : Type} (O : ExprOps L E) (t : ℤ × List L) :
+    render O (gTermToExpr idOps t) = gTermToExpr O t := by
+  obtain ⟨k, ls⟩ := t
+  cases ls with
+  | nil => rfl
+  | cons l rest =>
+    show O.mul (O.const k) (render O (gVarsProd idOps (l :: rest)))
+      = O.mul (O.const k) (gVarsProd O (l :: rest))
+    rw [render_gVarsProd]
+
+theorem render_gHeadExprs {L E : Type} (O : ExprOps L E) (h : GHead L) :
+    (gHeadExprs idOps h).map (render O) = gHeadExprs O h := by
+  simp only [gHeadExprs, List.map_append, List.map_map, Function.comp_def, render_gTermToExpr]
+  by_cases hc : h.const = 0 <;> simp [hc, render]
+
+theorem render_gFoldExprs {L E : Type} (O : ExprOps L E) (es : List (GExpr L)) :
+    render O (gFoldExprs idOps es) = gFoldExprs O (es.map (render O)) := by
+  cases es with
+  | nil => rfl
+  | cons e rest =>
+    show render O (rest.foldl (fun acc x => GExpr.add acc x) e)
+      = (rest.map (render O)).foldl (fun acc x => O.add acc x) (render O e)
+    suffices h : ∀ (rs : List (GExpr L)) (a : GExpr L),
+        render O (rs.foldl (fun acc x => GExpr.add acc x) a)
+          = (rs.map (render O)).foldl (fun acc x => O.add acc x) (render O a) by
+      exact h rest e
+    intro rs
+    induction rs with
+    | nil => intro a; rfl
+    | cons x xs ih => intro a; simpa [render] using ih (GExpr.add a x)
+
+/-- ⚑ **THE FUSION LAW.** Rendering a head directly into a view is rendering it into the one AST and
+then viewing — so every rail's canonical renderer is `gHeadToExpr` and inherits its proofs. -/
+theorem render_gHeadToExpr {L E : Type} (O : ExprOps L E) (h : GHead L) :
+    render O (gHeadToExpr idOps h) = gHeadToExpr O h := by
+  simp only [gHeadToExpr, render_gFoldExprs, render_gHeadExprs]
+
+/-! ### §5b″ — the reverse roundtrips, so a view's PREDICATE is the one AST's predicate. -/
+
+theorem ofEmitted_render (e : GExpr VLeaf) : ofEmitted (render toEmitted e) = e := by
+  induction e with
+  | leaf l => rfl
+  | const k => rfl
+  | add a b iha ihb => simp only [render, ofEmitted, iha, ihb]
+  | mul a b iha ihb => simp only [render, ofEmitted, iha, ihb]
+
+theorem ofWindow_render (e : GExpr WLeaf) : ofWindow (render toWindow e) = e := by
+  induction e with
+  | leaf l => cases l <;> rfl
+  | const k => rfl
+  | add a b iha ihb => simp only [render, ofWindow, iha, ihb]
+  | mul a b iha ihb => simp only [render, ofWindow, iha, ihb]
+
+theorem ofChal_render (e : GExpr CLeaf) : ofChal (render toChal e) = e := by
+  induction e with
+  | leaf l => cases l with
+    | win w => cases w <;> rfl
+    | chal i => rfl
+  | const k => rfl
+  | add a b iha ihb => simp only [render, ofChal, iha, ihb]
+  | mul a b iha ihb => simp only [render, ofChal, iha, ihb]
+
+theorem ofTable_render (e : GExpr TLeaf) : ofTable (render toTable e) = e := by
+  induction e with
+  | leaf l => cases l with
+    | win w => cases w <;> rfl
+    | shr i => rfl
+    | prep c => rfl
+  | const k => rfl
+  | add a b iha ihb => simp only [render, ofTable, iha, ihb]
+  | mul a b iha ihb => simp only [render, ofTable, iha, ihb]
 
 /-! ### §5c — ⚑ THE LEGACY RENDERER, AND WHY THE HOISTED VOCABULARY WAS NEVER ADOPTED.
 
@@ -601,16 +753,6 @@ framing missed — and very probably why the migration never happened. -/
 theorem canonical_ne_elide :
     gHeadToExpr toEmitted unitHead ≠ gHeadToExprElide toEmitted unitHead := by decide
 
-/-- ⚑ …and the divergence has a DIRECTION. The canonical rendering is the one
-`AirNormalForm.isNormal` accepts; the legacy one is outside the corpus normal form BY CONSTRUCTION,
-for the most ordinary head there is. -/
-theorem canonical_is_normal :
-    Dregg2.Circuit.Emit.AirNormalForm.isNormal (gHeadToExpr toEmitted unitHead) = true := by decide
-
-theorem elide_is_not_normal :
-    Dregg2.Circuit.Emit.AirNormalForm.isNormal (gHeadToExprElide toEmitted unitHead) = false := by
-  decide
-
 /-! ## §6 — ⚑ THE NORMAL FORM, ONCE.
 
 `isNormal`/`isVarProd`/`isTermAtom` and `isNormalW`/`isVarProdW`/`isTermAtomW` are one predicate at
@@ -633,86 +775,12 @@ def gIsNormal {L : Type} : GExpr L → Bool
   | .add l r => gIsNormal l && gIsTermAtom r
   | e        => gIsTermAtom e
 
-/-! ### §6a — ⚑ the `EmittedExpr` predicate IS this one, read through the view.
+/-- ⚑ **THE DIVERGENCE HAS A DIRECTION.** The canonical rendering is the one the corpus normal form
+accepts; the legacy automatafl rendering is outside it BY CONSTRUCTION, on the most ordinary head
+there is. Every descriptor rendered through those two copies is in the non-canonical 88 of 111. -/
+theorem canonical_is_normal : gIsNormal (gHeadToExpr idOps unitHead) = true := by decide
 
-`isNormal` and `isNormalW` are not two invariants that happen to agree; they are one invariant read
-through two views. -/
-
-theorem gIsVarProd_emitted (e : GExpr VLeaf) :
-    Dregg2.Circuit.Emit.AirNormalForm.isVarProd (render toEmitted e) = gIsVarProd e := by
-  induction e with
-  | leaf l => rfl
-  | const k => rfl
-  | add a b _ _ => rfl
-  | mul a b iha _ =>
-    simp only [render, Dregg2.Circuit.Emit.AirNormalForm.isVarProd, gIsVarProd, iha]
-    congr 1
-    cases b <;> rfl
-
-theorem gIsTermAtom_emitted (e : GExpr VLeaf) :
-    Dregg2.Circuit.Emit.AirNormalForm.isTermAtom (render toEmitted e) = gIsTermAtom e := by
-  cases e with
-  | leaf l => rfl
-  | const k => rfl
-  | add a b => rfl
-  | mul a b =>
-    simp only [render, Dregg2.Circuit.Emit.AirNormalForm.isTermAtom, gIsTermAtom,
-      gIsVarProd_emitted]
-    congr 1
-    cases a <;> rfl
-
-theorem gIsNormal_emitted (e : GExpr VLeaf) :
-    Dregg2.Circuit.Emit.AirNormalForm.isNormal (render toEmitted e) = gIsNormal e := by
-  induction e with
-  | leaf l => rfl
-  | const k => rfl
-  | mul a b _ _ => exact gIsTermAtom_emitted (.mul a b)
-  | add a b iha _ =>
-    simp only [render, Dregg2.Circuit.Emit.AirNormalForm.isNormal, gIsNormal, iha,
-      gIsTermAtom_emitted]
-
-theorem gIsVarProd_window (e : GExpr WLeaf) :
-    Dregg2.Circuit.Emit.AirNormalForm.isVarProdW (render toWindow e) = gIsVarProd e := by
-  induction e with
-  | leaf l => cases l <;> rfl
-  | const k => rfl
-  | add a b _ _ => rfl
-  | mul a b iha _ =>
-    simp only [render, Dregg2.Circuit.Emit.AirNormalForm.isVarProdW, gIsVarProd, iha]
-    congr 1
-    cases b with
-    | leaf l => cases l <;> rfl
-    | const k => rfl
-    | add x y => rfl
-    | mul x y => rfl
-
-theorem gIsTermAtom_window (e : GExpr WLeaf) :
-    Dregg2.Circuit.Emit.AirNormalForm.isTermAtomW (render toWindow e) = gIsTermAtom e := by
-  cases e with
-  | leaf l => cases l <;> rfl
-  | const k => rfl
-  | add a b => rfl
-  | mul a b =>
-    simp only [render, Dregg2.Circuit.Emit.AirNormalForm.isTermAtomW, gIsTermAtom,
-      gIsVarProd_window]
-    congr 1
-    cases a with
-    | leaf l => cases l <;> rfl
-    | const k => rfl
-    | add x y => rfl
-    | mul x y => rfl
-
-/-- ⚑ **ONE INVARIANT, TWO VIEWS.** Together with `gIsNormal_emitted`, this is the whole content of
-`AirNormalForm`'s duplicated §1 and §3a. -/
-theorem gIsNormal_window (e : GExpr WLeaf) :
-    Dregg2.Circuit.Emit.AirNormalForm.isNormalW (render toWindow e) = gIsNormal e := by
-  induction e with
-  | leaf l => cases l <;> rfl
-  | const k => rfl
-  | mul a b _ _ => exact gIsTermAtom_window (.mul a b)
-  | add a b iha _ =>
-    simp only [render, Dregg2.Circuit.Emit.AirNormalForm.isNormalW, gIsNormal, iha,
-      gIsTermAtom_window]
+theorem elide_is_not_normal : gIsNormal (gHeadToExprElide idOps unitHead) = false := by decide
 
 /-! ### §6b — the canonical renderer is normal BY CONSTRUCTION, once, for every alphabet.
 
@@ -924,6 +992,11 @@ theorem gAlphabetNoElide_nodeCount (co : Nat) :
 theorem memberExpr_shape_is_not_gBin :
     render toEmitted (gAlphabetNoElide (L := VLeaf) (.leaf 0) [0, 1])
       ≠ Dregg2.Circuit.Emit.AirBuilder.gBin 0 := by decide
+
+/-- ⚑ …and the SAME comparison on the one AST, so it is a fact about the gadget rather than about
+one view of it. -/
+theorem gAlphabetNoElide_ne_gBool :
+    gAlphabetNoElide (L := VLeaf) (.leaf 0) [0, 1] ≠ gBool (L := VLeaf) (.leaf 0) := by decide
 
 /-- …while the elided form is the same polynomial, so the choice is purely a rendering one. -/
 theorem gAlphabetNoElide_eval {L : Type} (ρ : L → ℤ) (x : GExpr L) :
