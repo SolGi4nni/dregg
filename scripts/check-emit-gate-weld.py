@@ -77,6 +77,32 @@ SRC_UNPINNED_BASELINE = 66
 # A Lean string literal (double-quoted, backslash escapes), possibly spanning lines.
 LEAN_STR = re.compile(r'"((?:[^"\\]|\\.)*)"', re.DOTALL)
 
+# ⚑⚑ 2026-08-06 — THE FRAGMENT PIN. Everything above matches a WHOLE descriptor object in a RAW
+# string. That is not the only way a geometry number gets typed into Rust, and it is not the way
+# that broke: `turn-prover/src/faithful_note_spend_exact_v3_verifier.rs` carried
+#
+#     const HEADER: &str = concat!(
+#         "{\"name\":\"faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state\",",
+#         "\"ir\":2,\"trace_width\":3804,\"public_input_count\":76,"
+#     );
+#
+# — a `concat!` of ESCAPED fragments, not a raw string; a PREFIX, not a parseable object. Every one
+# of this gate's three structural requirements missed it (`r#"…"#`, starts with `{`, survives
+# `json.loads`), and so did `mirror_gates.py` and `classify_descriptor_drift.py`, for the same
+# reason. HEAD emitted 3826 after the 2026-08-01 KEY NONET; the literal said 3804; `strip_prefix`
+# returned `None`; the test panicked at RUN TIME while `cargo check --all-targets` stayed green for
+# five days. A number inside a string literal is invisible to every type check we have.
+#
+# So: find EVERY `trace_width` / `public_input_count` spelled with a number in Rust source,
+# however it is quoted or concatenated, and require the number to be one an authoritative pin
+# actually carries — by descriptor name where the fragment names one, by existence otherwise.
+# ⚑ THE QUOTE IS LOAD-BEARING. `\"trace_width\":1811` is a number inside a STRING (invisible to
+# every type check); `trace_width: 1811,` is a TYPED STRUCT FIELD (`umem_weld_generated.rs`'s 58
+# rows), which is the shape we WANT and must never flag. Requiring the quote is the whole
+# distinction, and dropping it made this leg 58/58 false-positive on its first run.
+FRAGMENT_PIN = re.compile(r'\\?"trace_width\\?"\s*:\s*(\d+)')
+PIN_WIDTH = re.compile(r'"trace_width"\s*:\s*(\d+)')
+
 
 def lean_unescape(s: str) -> str:
     # Lean string escapes relevant here: \" \\ \n \t (descriptor JSON uses only \" and \\).
@@ -255,9 +281,139 @@ def src_tree_files() -> list[Path]:
     return sorted(out)
 
 
+def check_fragment_pins(
+    scanned: list[Path],
+    lean_pins: dict[str, list[tuple[Path, str]]],
+    artifact_pins: dict[str, list[tuple[Path, str]]],
+) -> tuple[int, int, list[str]]:
+    """A geometry number typed into a Rust STRING must be one an authoritative pin carries.
+
+    Returns `(resolved, unresolved, failures)`. See FRAGMENT_PIN for why this exists and what it
+    caught."""
+    by_name: dict[str, set[int]] = {}
+    every_width: set[int] = set()
+    for src in (lean_pins, artifact_pins):
+        for name, entries in src.items():
+            for _, payload in entries:
+                for w in PIN_WIDTH.findall(payload):
+                    by_name.setdefault(name, set()).add(int(w))
+                    every_width.add(int(w))
+    # Longest first, so `pasta-rcb-sg-slice-0-of-4-w8` wins over `pasta-rcb-sg-slice-0-of-4`.
+    known = sorted(by_name, key=len, reverse=True)
+    resolved = 0
+    unresolved: list[str] = []
+    failures: list[str] = []
+    for rf in scanned:
+        text = rf.read_text(encoding="utf-8", errors="replace")
+        # Blank out the whole-object raw goldens: those are welded byte-for-byte above, and their
+        # widths would otherwise be re-counted here.
+        masked = RUST_RAW.sub(lambda m: " " * len(m.group(0)), text)
+        for m in FRAGMENT_PIN.finditer(masked):
+            width = int(m.group(1))
+            line = masked.count("\n", 0, m.start()) + 1
+            try:
+                rel = f"{rf.relative_to(ROOT)}:{line}"
+            except ValueError:  # a self-test fixture outside the tree
+                rel = f"{rf.name}:{line}"
+            # Which descriptor is this fragment about? Match by NAME appearing in the surrounding
+            # literal — robust to `concat!`, to `\"` escaping, and to key reordering, all three of
+            # which defeated the whole-object matcher.
+            # ⚑ A MUTATION PROBE's SECOND argument is DELIBERATELY not a real width
+            # (`good.replacen("\"trace_width\":181", "\"trace_width\":182", 1)`). The FIRST is
+            # the one that must still exist, or the mutation silently becomes a no-op and the
+            # adversary dies while the gate stays green — the falsifier-that-stopped-falsifying
+            # class. So on a replace line, only the first width is checked.
+            line_text = masked.splitlines()[line - 1] if line - 1 < len(masked.splitlines()) else ""
+            if ("replacen(" in line_text or ".replace(" in line_text) and m.start() > (
+                masked.rfind("\n", 0, m.start()) + 1 + line_text.find('"trace_width"')
+            ):
+                continue
+            ctx = masked[max(0, m.start() - 600) : m.end() + 600]
+            name = next((n for n in known if n in ctx), None)
+            if name is None:
+                # ⚑ NOT a failure. `circuit/src/lean_descriptor_air.rs`'s 58 synthetic interpreter
+                # fixtures and the `demo-*` probes name descriptors no emitter produces; demanding
+                # a pin for them would make this leg RED as its steady state, which is how a REAL
+                # drift stops being read. Counted and printed instead — the same discipline as
+                # SRC_UNPINNED_BASELINE.
+                unresolved.append(f'  {rel}: `"trace_width":{width}` names no pinned descriptor')
+                continue
+            resolved += 1
+            if width not in by_name[name]:
+                failures.append(
+                    f"  {rel}: a STRING pins "
+                    f'`"trace_width":{width}` for `{name}`, whose authoritative pin(s) carry '
+                    f"{sorted(by_name[name])}.\n"
+                    "    A geometry number inside a string literal is invisible to every type\n"
+                    "    check we have — it panics at run time and `cargo check` stays green.\n"
+                    "    Do not retype the digits: INTERPOLATE the crate's typed constant\n"
+                    '    (`format!("…\\"trace_width\\":{EXPECTED_TRACE_WIDTH}…")`), which\n'
+                    "    `concat!` cannot do and which is exactly how this one rotted."
+                )
+    return resolved, len(unresolved), failures
+
+
+# ⚑ THE FRAGMENT LEG'S OWN FALSIFIER, RUN EVERY TIME — not a test that can be forgotten.
+# A gate whose adversary quietly stops being adversarial is the class this repo has already paid
+# for: a mutation probe became a no-op because the string it replaced had left the fixture, the
+# adversary died, and the gate stayed green. So this reconstructs the EXACT pre-fix
+# `turn-prover` header — the shape that sat stale for five days — and REFUSES TO REPORT ANYTHING
+# unless the leg still goes red on it, and still stays green on a typed struct field.
+SELF_TEST_NAME = "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state"
+SELF_TEST_DRIFTED = (
+    "    const HEADER: &str = concat!(\n"
+    '        "{\\"name\\":\\"' + SELF_TEST_NAME + '\\",",\n'
+    '        "\\"ir\\":2,\\"trace_width\\":3804,\\"public_input_count\\":76,"\n'
+    "    );\n"
+)
+SELF_TEST_TYPED = (
+    "    UMemWeldRow {\n"
+    "        trace_width: 9999,\n"
+    "        name: \"dregg-effectvm-transfer-v1-avail-rot24-v3-staged-gentian-deployed"
+    "-bare-refuse-umem-wide-welded-staged\",\n"
+    "    },\n"
+)
+
+
+
+def self_test_fragment_leg(
+    lean_pins: dict[str, list[tuple[Path, str]]],
+    artifact_pins: dict[str, list[tuple[Path, str]]],
+) -> str | None:
+    """Return an error string if the fragment leg has stopped falsifying."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        drifted = Path(td) / "selftest_drifted.rs"
+        drifted.write_text(SELF_TEST_DRIFTED, encoding="utf-8")
+        _, _, f = check_fragment_pins([drifted], lean_pins, artifact_pins)
+        if len(f) != 1:
+            return (
+                "SELF-TEST FAILED: the fragment leg did NOT go red on the verbatim pre-fix\n"
+                "  `turn-prover` header (a `concat!` pinning \"trace_width\":3804 for a\n"
+                f"  descriptor pinned at 3826). Got {len(f)} failure(s), expected 1. Either the\n"
+                "  descriptor was renamed/unpinned or FRAGMENT_PIN stopped matching — in both\n"
+                "  cases this leg is now decoration and the PASS below would be a lie."
+            )
+        typed = Path(td) / "selftest_typed.rs"
+        typed.write_text(SELF_TEST_TYPED, encoding="utf-8")
+        _, _, f = check_fragment_pins([typed], lean_pins, artifact_pins)
+        if f:
+            return (
+                "SELF-TEST FAILED: the fragment leg flagged a TYPED struct field\n"
+                "  (`trace_width: 9999,`), which is the shape we WANT. The quote requirement in\n"
+                "  FRAGMENT_PIN has been lost and the leg is now 58/58 false-positive."
+            )
+    return None
+
+
 def main() -> int:
     lean_pins = collect_lean_pins()
     artifact_pins = collect_artifact_pins()
+    if (err := self_test_fragment_leg(lean_pins, artifact_pins)) is not None:
+        print(err)
+        print("\ncheck-emit-gate-weld: FAIL — the fragment leg no longer falsifies.")
+        return 1
     failures: list[str] = []
     drift_causes: dict[str, int] = {}
     checked = 0
@@ -383,6 +539,23 @@ def main() -> int:
         )
         for line in unpinned_src:
             print(line)
+    # ⚑ THE FRAGMENT-PIN LEG (see FRAGMENT_PIN). Runs on the same scan set.
+    frag_resolved, frag_unresolved, frag_failures = check_fragment_pins(
+        scanned, lean_pins, artifact_pins
+    )
+    print(
+        f"\nfragment pins (geometry numbers typed inside Rust STRINGS): {frag_resolved} resolved "
+        f"to a named descriptor and checked, {frag_unresolved} name no pinned descriptor, "
+        f"{len(frag_failures)} DRIFTED"
+    )
+    if frag_failures:
+        print("\nFRAGMENT-PIN FAILURES:")
+        print("\n".join(frag_failures))
+        print(
+            f"\ncheck-emit-gate-weld: FAIL — {len(frag_failures)} geometry number(s) typed into a "
+            "Rust string with no authoritative pin behind them."
+        )
+        return 1
     if failures:
         print("\nWELD FAILURES:")
         print("\n\n".join(failures))

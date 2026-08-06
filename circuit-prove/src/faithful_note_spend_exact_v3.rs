@@ -8,7 +8,7 @@
 //!   nullifier transition through column `2442`;
 //! * [`dregg_circuit::exact_nullifier_aafi_rotated_trace`] welds its FNS3 before/after checkpoints
 //!   into the carried 179-felt state and fills both chip-faithful wide commitment chains through
-//!   column `3804`.
+//!   column `3826`.
 //!
 //! The shared columns are compared on **all sixteen rows before any merge**.  The first sixty
 //! public inputs are derived from the hidden-note/exact rows at the descriptor-bound rows; the

@@ -218,15 +218,28 @@ mod tests {
 
     #[test]
     fn equivalent_descriptor_json_encoding_keeps_the_same_vk_identity() {
-        const HEADER: &str = concat!(
-            "{\"name\":\"faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state\",",
-            "\"ir\":2,\"trace_width\":3804,\"public_input_count\":76,"
+        // ⚑ 2026-08-06: this header PINNED `"trace_width":3804` while HEAD emitted 3826 (the
+        // 2026-08-01 KEY NONET). The number lived inside a `concat!` STRING, so no type check
+        // could see it: `cargo check --all-targets` stayed green and the test panicked at run
+        // time on `expect("recognized executable descriptor header")`. This crate had no typed
+        // geometry constant at all — it was a re-authored mirror of
+        // `circuit_prove::faithful_note_spend_exact_v3_identity`'s header with the digits typed
+        // out again. It now INTERPOLATES that crate's `pub const`s, so the two cannot drift and a
+        // renamed/removed constant is a COMPILE error rather than a run-time panic.
+        use dregg_circuit_prove::faithful_note_spend_exact_v3_identity::{
+            EXPECTED_PUBLIC_INPUTS, EXPECTED_TRACE_WIDTH,
+        };
+        let header = format!(
+            "{{\"name\":\"{}\",\"ir\":2,\"trace_width\":{EXPECTED_TRACE_WIDTH},\
+             \"public_input_count\":{EXPECTED_PUBLIC_INPUTS},",
+            identity::PREDICATE_NAME
         );
         let body = identity::EXECUTABLE_DESCRIPTOR_JSON
-            .strip_prefix(HEADER)
+            .strip_prefix(header.as_str())
             .expect("recognized executable descriptor header");
         let alternate_json = format!(
-            "{{\n \"trace_width\": 3804, \"public_input_count\": 76, \
+            "{{\n \"trace_width\": {EXPECTED_TRACE_WIDTH}, \
+             \"public_input_count\": {EXPECTED_PUBLIC_INPUTS}, \
              \"ir\": 2, \"name\": \"{}\", {body}\n",
             identity::PREDICATE_NAME
         );

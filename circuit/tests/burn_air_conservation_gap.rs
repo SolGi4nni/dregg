@@ -1,17 +1,22 @@
 //! FALSIFIER for the `SCHEMA_BURN` algebraic-constraint gap (LANE AV item 2).
 //!
-//! `AlgebraicConstraint::Burn` and `SCHEMA_BURN` both DOCUMENT a set of algebraic gates —
-//! `new_lo + amt_lo == old_lo + borrow*2^32`, the high limb, borrow booleanity, and the
-//! `was_burn_flag` disclosure pins. `effect_action_to_descriptor2` never reads `schema.algebraic`,
-//! so NONE of them is emitted. The Lean author of the same descriptor
-//! (`Dregg2.Circuit.Emit.EffectActionBindingEmit.burnDesc`) carries all five as proven Base gates.
+//! `AlgebraicConstraint::Burn` and `SCHEMA_BURN` both DOCUMENT a set of algebraic gates — the
+//! four-limb borrow chain `new_i + amt_i + b_{i-1} == old_i + b_i*2^16` (16-bit limbs), the three
+//! borrow booleanity gates, and the four `was_burn_flag` disclosure pins.
+//! `effect_action_to_descriptor2` never reads `schema.algebraic`, so NONE of them is emitted. The
+//! Lean author of the same descriptor
+//! (`Dregg2.Circuit.Emit.EffectActionBindingEmit.burnDesc`) carries all eleven as proven Base gates.
+//!
+//! ⚑ Geometry moved 2026-08-06 (`AMOUNT_LIMBS` 2 -> 4): width 27, pi 24, aux 3. The retired 32-bit
+//! limb split had no BabyBear felt at all — `p = 2013265921 < 2^32` — so the Lean author's
+//! descriptor could not even be PARSED by `parse_vm_descriptor2`.
 //!
 //! This file pins that gap as a MEASURED fact rather than a claim, in the two ways that can go red:
 //!
 //!   1. `deployed_burn_descriptor_is_missing_the_lean_algebraic_gates` — a hard count: the deployed
-//!      Rust descriptor is 33 constraints, the Lean author is 38, and the five missing ones are
+//!      Rust descriptor is 51 constraints, the Lean author is 62, and the eleven missing ones are
 //!      exactly `burnGates`. When the emit route lands, THIS TEST GOES RED and must be flipped to
-//!      assert 38. That is the point — the gap is detected, not merely documented.
+//!      assert 62. That is the point — the gap is detected, not merely documented.
 //!   2. `burn_air_admits_a_conservation_violating_trace` — the operational demonstration: a trace
 //!      whose amounts satisfy NO burn conservation relation still produces a VERIFYING proof under
 //!      the deployed descriptor. With the Lean gates emitted this is UNSAT.
@@ -31,32 +36,32 @@ use dregg_circuit::effect_action_air::{
 };
 
 /// The Lean author's constraint count for `burnDesc`, pinned by
-/// `#guard burnDesc.constraints.length == 38` in `EffectActionBindingEmit.lean`:
-/// 17 continuity + 16 PI pins + 5 algebraic Base gates.
-const LEAN_BURN_DESCRIPTOR_CONSTRAINTS: usize = 38;
+/// `#guard burnDesc.constraints.length == 62` in `EffectActionBindingEmit.lean`:
+/// 27 continuity + 24 PI pins + 11 algebraic Base gates.
+const LEAN_BURN_DESCRIPTOR_CONSTRAINTS: usize = 62;
 
-/// The five algebraic gates Lean emits and Rust does not.
-const MISSING_ALGEBRAIC_GATES: usize = 5;
+/// The eleven algebraic gates Lean emits and Rust does not.
+const MISSING_ALGEBRAIC_GATES: usize = 11;
 
 #[test]
 fn deployed_burn_descriptor_is_missing_the_lean_algebraic_gates() {
     let desc = effect_action_to_descriptor2(&SCHEMA_BURN).expect("burn schema lowers");
 
-    // Shape agreement: the columns and PI surface DO match Lean (width 17, pi 16). The borrow aux
-    // column at index 16 exists in both. Only the gates differ.
-    assert_eq!(desc.trace_width, 17, "burn trace width");
-    assert_eq!(desc.public_input_count, 16, "burn PI count");
+    // Shape agreement: the columns and PI surface DO match Lean (width 27, pi 24). The three borrow
+    // aux columns at 24..27 exist in both. Only the gates differ.
+    assert_eq!(desc.trace_width, 27, "burn trace width");
+    assert_eq!(desc.public_input_count, 24, "burn PI count");
     assert_eq!(
         SCHEMA_BURN.aux_count(),
-        1,
-        "the borrow aux column is still reserved"
+        3,
+        "the three borrow aux columns are still reserved"
     );
 
     let deployed = desc.constraints.len();
     assert_eq!(
         deployed,
         LEAN_BURN_DESCRIPTOR_CONSTRAINTS - MISSING_ALGEBRAIC_GATES,
-        "expected the deployed burn descriptor to carry the 33 binding/continuity constraints \
+        "expected the deployed burn descriptor to carry the 51 binding/continuity constraints \
          and NONE of Lean's {MISSING_ALGEBRAIC_GATES} algebraic gates. If this is now {LEAN_BURN_DESCRIPTOR_CONSTRAINTS}, \
          the Lean emit route has landed — flip this assertion to \
          LEAN_BURN_DESCRIPTOR_CONSTRAINTS and DELETE \
@@ -92,9 +97,9 @@ fn burn_air_admits_a_conservation_violating_trace() {
 
 #[test]
 fn burn_aux_borrow_column_is_read_by_no_constraint() {
-    // The borrow bit at column `pi_count()` = 16 is FREE: past the PI surface (so no `PiBinding`
-    // compares it) and read by no gate (so nothing constrains its value). The only constraint
-    // touching column 16 is the continuity `WindowGate`, which merely forces it constant.
+    // The borrow bits at columns `pi_count()`..+3 = 24..27 are FREE: past the PI surface (so no
+    // `PiBinding` compares them) and read by no gate (so nothing constrains their value). The only
+    // constraints touching them are the continuity `WindowGate`s, which merely force them constant.
     //
     // This is what "the aux borrow column rides free" means concretely — and it is also why the
     // gap is inert rather than exploitable: an unconstrained column that NO other constraint
@@ -102,10 +107,10 @@ fn burn_aux_borrow_column_is_read_by_no_constraint() {
     // descriptor certifies exactly the same PI either way.
     let desc = effect_action_to_descriptor2(&SCHEMA_BURN).expect("burn schema lowers");
     let borrow_col = SCHEMA_BURN.pi_count();
-    assert_eq!(borrow_col, 16);
+    assert_eq!(borrow_col, 24);
 
     // No PI binding reaches the aux column.
-    let pi_bindings_over_aux = format!("{:?}", desc.constraints).matches("col: 16").count();
+    let pi_bindings_over_aux = format!("{:?}", desc.constraints).matches("col: 24").count();
     assert_eq!(
         pi_bindings_over_aux, 0,
         "the borrow aux column must not be PI-bound (it is a witness, not a public input)"

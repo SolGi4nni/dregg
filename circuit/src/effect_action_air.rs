@@ -12,7 +12,7 @@
 //!
 //! Sibling AIR to `bridge_action_witness`. The bridge AIR established the pattern:
 //! a 32-byte field becomes 8 BabyBear limbs (4 bytes each), a u64 amount
-//! becomes 2 BabyBear limbs (low/high 32 bits), and each limb is pinned to a
+//! becomes 4 BabyBear limbs of 16 bits each, and each limb is pinned to a
 //! trace-row-0 column via a boundary constraint. Transition constraints force
 //! every row to equal row 0, so a malicious prover cannot put one set of
 //! parameters in row 0 and another in row 1 to slip past the boundary check.
@@ -32,14 +32,35 @@
 //! col / PI 0..8           field[0] limbs        (8 × 4-byte BabyBear)
 //! col / PI 8..16          field[1] limbs
 //! ...
-//! col / PI 8N             amount[0] low 32 bits
-//! col / PI 8N + 1         amount[0] high 32 bits
-//! col / PI 8N + 2         amount[1] low 32 bits
+//! col / PI 8N             amount[0] limb 0  (bits  0..16)
+//! col / PI 8N + 1         amount[0] limb 1  (bits 16..32)
+//! col / PI 8N + 2         amount[0] limb 2  (bits 32..48)
+//! col / PI 8N + 3         amount[0] limb 3  (bits 48..64)
+//! col / PI 8N + 4         amount[1] limb 0
 //! ...
 //! ```
 //!
-//! Total trace width = 8N + 2M. Total PI count = 8N + 2M. Each PI slot
+//! Total trace width = 8N + 4M. Total PI count = 8N + 4M. Each PI slot
 //! corresponds 1:1 with a row-0 boundary constraint on the same column.
+//!
+//! # ⚑ WHY 16-BIT LIMBS AND NOT 32 (flag day 2026-08-06)
+//!
+//! A 32-bit limb HAS NO BABYBEAR FELT: `p = 2013265921 < 2^32`, so
+//! `BabyBear::new(lo)` reduces and `lo = 0` collides with `lo = p`. A
+//! "full-fidelity binding" that collides on the amount is not full
+//! fidelity. The same arithmetic showed up as a hard refusal on the
+//! descriptor side: the Lean author's Burn borrow gate carried the
+//! coefficient `2^32 = 4294967296` and `parse_vm_descriptor2` REFUSED the
+//! emitted descriptor — *"constant at byte 3619 does not fit a BabyBear
+//! felt"* — so `dregg-effect-burn-v1` could not be read by its own parser.
+//!
+//! 16 bits is the felt-sized width: a u64 is EXACTLY four limbs (no
+//! truncation, no wasted capacity), the borrow weight `2^16 = 65536` is a
+//! felt, and every chain gate body is bounded by `2^18` — far inside `p` —
+//! so the prover's mod-`p` reading and the ℤ reading of Lean's forcing
+//! lemmas COINCIDE. The authority is
+//! `Dregg2.Circuit.Emit.EffectActionBindingEmit` (`LIMB_BITS = 16`,
+//! `AMOUNT_LIMBS = 4`, `burn_chain_exact_of_modEq`); this file follows it.
 //!
 //! # Why a generalized AIR rather than one-per-effect?
 //!
@@ -69,8 +90,14 @@ use crate::field::BabyBear;
 /// Number of BabyBear limbs used to represent a 32-byte field.
 pub const HASH_LIMBS: usize = 8;
 
-/// Number of BabyBear limbs used to represent a u64 amount.
-pub const AMOUNT_LIMBS: usize = 2;
+/// Bits per amount limb. 16, because a 32-bit limb has no BabyBear felt
+/// (`p = 2013265921 < 2^32`) — see the module header. Lean:
+/// `EffectActionBindingEmit.LIMB_BITS`.
+pub const AMOUNT_LIMB_BITS: u32 = 16;
+
+/// Number of BabyBear limbs used to represent a u64 amount. `4 * 16 = 64`,
+/// exact. Lean: `EffectActionBindingEmit.AMOUNT_LIMBS`.
+pub const AMOUNT_LIMBS: usize = 4;
 
 /// Optional schema-specific algebraic-constraint tag. Most schemas are
 /// pure binding (no extra arithmetic over the bound limbs). Schemas that
@@ -87,9 +114,9 @@ pub enum AlgebraicConstraint {
     None,
     /// `Burn` invariant — see `SCHEMA_BURN`. Amount layout (after the
     /// schema's 32-byte fields):
-    ///   amounts[0] = old_balance  (u64 → 2 limbs)
-    ///   amounts[1] = new_balance  (u64 → 2 limbs)
-    ///   amounts[2] = amount       (u64 → 2 limbs)
+    ///   amounts[0] = old_balance  (u64 → 4 × 16-bit limbs)
+    ///   amounts[1] = new_balance  (u64 → 4 × 16-bit limbs)
+    ///   amounts[2] = amount       (u64 → 4 × 16-bit limbs)
     ///   amounts[3] = was_burn_flag (u64; constrained to 1)
     ///
     /// ⚠ NOT ENFORCED BY THE DEPLOYED DESCRIPTOR. This doc used to read
@@ -99,14 +126,14 @@ pub enum AlgebraicConstraint {
     /// Lean (`EffectActionBindingEmit.burnDesc`, five Base gates with
     /// `cLo_zero_iff` / `cHi_zero_iff` / `cBorrowBool_zero_iff` /
     /// `cWasBurnLo_zero_iff`), but nothing routes them into Rust:
-    ///   1. new_balance_lo + amount_lo == old_balance_lo + borrow * 2^32
-    ///   2. new_balance_hi + amount_hi + borrow == old_balance_hi
-    ///   3. borrow * (borrow - 1) == 0   (boolean borrow bit)
-    ///   4. was_burn_flag_lo == 1
-    ///   5. was_burn_flag_hi == 0
+    ///   1..3.  new_i + amt_i + b_{i-1} == old_i + b_i * 2^16   (i = 0,1,2)
+    ///   4.     new_3 + amt_3 + b_2 == old_3   (NO outgoing borrow — this is
+    ///          the `amount <= old_balance` availability tooth)
+    ///   5..7.  b_i * (b_i - 1) == 0   (boolean borrow bits)
+    ///   8..11. was_burn_flag limb 0 == 1, limbs 1..3 == 0
     ///
-    /// What this tag ACTUALLY does today is reserve one aux column
-    /// (`aux_count() == 1`) for the borrow bit that `generate_trace` fills
+    /// What this tag ACTUALLY does today is reserve three aux columns
+    /// (`aux_count() == 3`) for the borrow bits that `generate_trace` fills
     /// and NO constraint reads.
     ///
     /// Why that is not (currently) a soundness hole: the deployed verifier
@@ -147,9 +174,9 @@ impl EffectActionSchema {
     /// Total trace width / PI count for this schema.
     ///
     /// Schemas with algebraic constraints may reserve additional aux
-    /// columns (e.g., `Burn` needs 1 borrow bit). Aux columns are tracked
+    /// columns (e.g., `Burn` needs 3 borrow bits). Aux columns are tracked
     /// past the PI surface — the PI count is still `field_count * 8 +
-    /// amount_count * 2`; the trace width is `pi_count + aux_count`.
+    /// amount_count * AMOUNT_LIMBS`; the trace width is `pi_count + aux_count`.
     pub const fn width(&self) -> usize {
         self.pi_count() + self.aux_count()
     }
@@ -161,27 +188,55 @@ impl EffectActionSchema {
     pub const fn aux_count(&self) -> usize {
         match self.algebraic {
             AlgebraicConstraint::None => 0,
-            // Borrow bit for the u64 subtraction.
-            AlgebraicConstraint::Burn => 1,
+            // Three borrow bits for the four-limb u64 subtraction chain
+            // (the borrow OUT of limb 3 does not exist: the top chain gate
+            // carries no outgoing borrow, which IS the `amount <= old` tooth).
+            AlgebraicConstraint::Burn => 3,
         }
     }
 }
 
-/// Encode a u64 amount as 2 BabyBear limbs (low 32 + high 32, each reduced
-/// canonically via `BabyBear::new`).
+/// Encode a u64 amount as `AMOUNT_LIMBS` BabyBear limbs of `AMOUNT_LIMB_BITS`
+/// bits, least-significant first.
 ///
-/// Same encoding as `bridge_action_witness::encode_amount`.
+/// ⚑ INJECTIVE, unlike the 32-bit split this replaced: every limb is
+/// `< 2^16 << p`, so `BabyBear::new` never reduces and two distinct u64s
+/// never share a limb vector. `encode_amount_is_injective` is the tooth.
+///
+/// ⚠ NO LONGER the same encoding as `bridge_action_witness::encode_amount`,
+/// which is still the 2x32-bit split and carries the same defect. That AIR
+/// is a separate family with its own witness/PI surface; it is named here so
+/// the divergence is visible rather than discovered.
 pub fn encode_amount(amount: u64) -> [BabyBear; AMOUNT_LIMBS] {
-    let lo = (amount & 0xFFFF_FFFF) as u32;
-    let hi = (amount >> 32) as u32;
-    [BabyBear::new(lo), BabyBear::new(hi)]
+    let mut out = [BabyBear::ZERO; AMOUNT_LIMBS];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = BabyBear::new(((amount >> (i as u32 * AMOUNT_LIMB_BITS)) & 0xFFFF) as u32);
+    }
+    out
+}
+
+/// The borrow bits of the four-limb subtraction `old - amount`: `out[i]` is
+/// the borrow OUT of limb `i` into limb `i+1`. Only three exist as witness
+/// columns; a borrow out of limb 3 would be an underflow, which the top
+/// chain gate structurally forbids (it carries no outgoing borrow term).
+fn subtraction_borrows(old: u64, amount: u64) -> [BabyBear; 3] {
+    let mask = (1u64 << AMOUNT_LIMB_BITS) - 1;
+    let mut borrow = 0u64;
+    let mut out = [BabyBear::ZERO; 3];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let o = (old >> (i as u32 * AMOUNT_LIMB_BITS)) & mask;
+        let a = ((amount >> (i as u32 * AMOUNT_LIMB_BITS)) & mask) + borrow;
+        borrow = u64::from(o < a);
+        *slot = BabyBear::new(borrow as u32);
+    }
+    out
 }
 
 /// A typed witness for one instance of an `EffectActionSchema`.
 ///
 /// The `fields` and `amounts` vectors are in schema order: `fields[i]` is
 /// pinned to PI slots `[i * 8, (i + 1) * 8)`; `amounts[j]` is pinned to PI
-/// slots `[8 * field_count + j * 2, 8 * field_count + (j + 1) * 2)`.
+/// slots `[8 * field_count + j * 4, 8 * field_count + (j + 1) * 4)`.
 #[derive(Clone, Debug)]
 pub struct EffectActionWitness {
     /// Schema describing the binding.
@@ -200,9 +255,7 @@ impl EffectActionWitness {
             pi.extend_from_slice(&crate::effect_vm::bytes32_to_8_limbs(f));
         }
         for a in &self.amounts {
-            let [lo, hi] = encode_amount(*a);
-            pi.push(lo);
-            pi.push(hi);
+            pi.extend_from_slice(&encode_amount(*a));
         }
         pi
     }
@@ -245,11 +298,10 @@ impl EffectActionAir {
             }
         }
         for a in &witness.amounts {
-            let [lo, hi] = encode_amount(*a);
-            row0[col] = lo;
-            col += 1;
-            row0[col] = hi;
-            col += 1;
+            for limb in encode_amount(*a) {
+                row0[col] = limb;
+                col += 1;
+            }
         }
 
         // Aux columns (schema-specific algebraic-constraint witnesses).
@@ -257,14 +309,11 @@ impl EffectActionAir {
             AlgebraicConstraint::None => {}
             AlgebraicConstraint::Burn => {
                 // amounts layout: [old_balance, new_balance, amount, was_burn_flag]
-                let old_balance = witness.amounts[0];
-                let amount = witness.amounts[2];
-                let old_lo = old_balance & 0xFFFF_FFFF;
-                let amt_lo = amount & 0xFFFF_FFFF;
-                // Borrow bit: 1 iff new_balance_lo would underflow (i.e.,
-                // old_lo < amt_lo).
-                let borrow_u32 = if old_lo < amt_lo { 1u32 } else { 0u32 };
-                row0[witness.schema.pi_count()] = BabyBear::new(borrow_u32);
+                let borrows = subtraction_borrows(witness.amounts[0], witness.amounts[2]);
+                let base = witness.schema.pi_count();
+                for (i, b) in borrows.into_iter().enumerate() {
+                    row0[base + i] = b;
+                }
             }
         }
 
@@ -633,31 +682,68 @@ mod tests {
 
     #[test]
     fn encode_amount_full_64_bits() {
-        let [lo, hi] = encode_amount(0xDEAD_BEEF_CAFE_F00D);
-        assert_eq!(lo, BabyBear::new(0xCAFE_F00D));
-        assert_eq!(hi, BabyBear::new(0xDEAD_BEEF));
+        let l = encode_amount(0xDEAD_BEEF_CAFE_F00D);
+        assert_eq!(l[0], BabyBear::new(0xF00D));
+        assert_eq!(l[1], BabyBear::new(0xCAFE));
+        assert_eq!(l[2], BabyBear::new(0xBEEF));
+        assert_eq!(l[3], BabyBear::new(0xDEAD));
+    }
+
+    /// ⚑ THE TOOTH THE 32-BIT SPLIT COULD NOT PASS. Every 16-bit limb is
+    /// `< 2^16 < p`, so `BabyBear::new` never reduces and the encoding is
+    /// injective on u64. Under the retired 2x32-bit split, `lo = 0` and
+    /// `lo = p = 2013265921` were the SAME cell — this names that pair.
+    #[test]
+    fn encode_amount_is_injective() {
+        assert_ne!(encode_amount(0), encode_amount(2_013_265_921));
+        for a in [
+            0u64,
+            1,
+            0xFFFF,
+            0x1_0000,
+            2_013_265_921,
+            u64::MAX,
+            0xDEAD_BEEF_CAFE_F00D,
+        ] {
+            for (i, limb) in encode_amount(a).into_iter().enumerate() {
+                let raw = ((a >> (i as u32 * AMOUNT_LIMB_BITS)) & 0xFFFF) as u32;
+                assert_eq!(limb.as_u32(), raw, "limb {i} of {a:#x} was reduced mod p");
+            }
+        }
+    }
+
+    /// The borrow chain the Lean gates read.
+    #[test]
+    fn subtraction_borrows_match_the_chain() {
+        let bits = |b: [BabyBear; 3]| [b[0].as_u32(), b[1].as_u32(), b[2].as_u32()];
+        // 65536 - 1: the low limb underflows, so b_0 = 1 and the rest are 0.
+        assert_eq!(bits(subtraction_borrows(65_536, 1)), [1, 0, 0]);
+        // 1000 - 400: no limb underflows.
+        assert_eq!(bits(subtraction_borrows(1000, 400)), [0, 0, 0]);
+        // 2^48 - 1: the borrow propagates through all three bits.
+        assert_eq!(bits(subtraction_borrows(1u64 << 48, 1)), [1, 1, 1]);
     }
 
     #[test]
     fn schema_width_arithmetic() {
-        assert_eq!(SCHEMA_GRANT_CAPABILITY.width(), 3 * 8 + 1 * 2);
-        assert_eq!(SCHEMA_REVOKE_CAPABILITY.width(), 8 + 2);
-        assert_eq!(SCHEMA_EMIT_EVENT.width(), 16 + 2);
-        assert_eq!(SCHEMA_CREATE_CELL.width(), 16 + 2);
+        assert_eq!(SCHEMA_GRANT_CAPABILITY.width(), 3 * 8 + 1 * 4);
+        assert_eq!(SCHEMA_REVOKE_CAPABILITY.width(), 8 + 4);
+        assert_eq!(SCHEMA_EMIT_EVENT.width(), 16 + 4);
+        assert_eq!(SCHEMA_CREATE_CELL.width(), 16 + 4);
         assert_eq!(SCHEMA_SET_PERMISSIONS.width(), 16);
         assert_eq!(SCHEMA_SET_VERIFICATION_KEY.width(), 16);
-        assert_eq!(SCHEMA_INTRODUCE.width(), 32 + 2);
+        assert_eq!(SCHEMA_INTRODUCE.width(), 32 + 4);
     }
 
     #[test]
     fn burn_schema_shape_v1() {
-        // Schema shape sanity: 1 field × 8 + 4 amounts × 2 = 16 PI felts.
+        // Schema shape sanity: 1 field × 8 + 4 amounts × 4 = 24 PI felts.
         assert_eq!(SCHEMA_BURN.field_count, 1);
         assert_eq!(SCHEMA_BURN.amount_count, 4);
-        assert_eq!(SCHEMA_BURN.pi_count(), 8 + 8);
-        // One aux column for the borrow bit.
-        assert_eq!(SCHEMA_BURN.aux_count(), 1);
-        assert_eq!(SCHEMA_BURN.width(), 17);
+        assert_eq!(SCHEMA_BURN.pi_count(), 8 + 16);
+        // Three aux columns for the four-limb borrow chain.
+        assert_eq!(SCHEMA_BURN.aux_count(), 3);
+        assert_eq!(SCHEMA_BURN.width(), 27);
         assert_eq!(SCHEMA_BURN.algebraic, AlgebraicConstraint::Burn);
     }
 }

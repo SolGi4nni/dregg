@@ -69,8 +69,8 @@ use dregg_circuit::refusal::{Outcome, classify};
 // ── The byte-identical wire strings Lean's `emitVmJson2` emits (pinned by the `#guard`s in
 //    `EffectActionBindingEmit.lean`). Drift on either side breaks the Lean `#guard` or the Rust
 //    `decoded == hand_built` assertion. ──
-const REVOKE_GOLDEN: &str = r#"{"name":"dregg-effect-revoke-capability-v1","ir":2,"trace_width":10,"public_input_count":10,"challenges":0,"tables":[],"constraints":[{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":1}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":3}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":6}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":7},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":8}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":9},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":9}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2},{"t":"pi_binding","row":"first","col":3,"pi_index":3},{"t":"pi_binding","row":"first","col":4,"pi_index":4},{"t":"pi_binding","row":"first","col":5,"pi_index":5},{"t":"pi_binding","row":"first","col":6,"pi_index":6},{"t":"pi_binding","row":"first","col":7,"pi_index":7},{"t":"pi_binding","row":"first","col":8,"pi_index":8},{"t":"pi_binding","row":"first","col":9,"pi_index":9}],"hash_sites":[],"ranges":[]}"#;
-const BURN_GOLDEN: &str = r#"{"name":"dregg-effect-burn-v1","ir":2,"trace_width":17,"public_input_count":16,"challenges":0,"tables":[],"constraints":[{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":1}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":3}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":6}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":7},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":8}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":9},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":9}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":10},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":10}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":11},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":11}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":12},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":12}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":13},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":13}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":14},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":14}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":15},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":15}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":16},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":16}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2},{"t":"pi_binding","row":"first","col":3,"pi_index":3},{"t":"pi_binding","row":"first","col":4,"pi_index":4},{"t":"pi_binding","row":"first","col":5,"pi_index":5},{"t":"pi_binding","row":"first","col":6,"pi_index":6},{"t":"pi_binding","row":"first","col":7,"pi_index":7},{"t":"pi_binding","row":"first","col":8,"pi_index":8},{"t":"pi_binding","row":"first","col":9,"pi_index":9},{"t":"pi_binding","row":"first","col":10,"pi_index":10},{"t":"pi_binding","row":"first","col":11,"pi_index":11},{"t":"pi_binding","row":"first","col":12,"pi_index":12},{"t":"pi_binding","row":"first","col":13,"pi_index":13},{"t":"pi_binding","row":"first","col":14,"pi_index":14},{"t":"pi_binding","row":"first","col":15,"pi_index":15},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":10},"r":{"t":"var","v":12}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-4294967296},"r":{"t":"var","v":16}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}}}}},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":11},"r":{"t":"var","v":13}},"r":{"t":"add","l":{"t":"var","v":16},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":16},"r":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":14},"r":{"t":"const","v":-1}}},{"t":"gate","body":{"t":"var","v":15}}],"hash_sites":[],"ranges":[]}"#;
+const REVOKE_GOLDEN: &str = r#"{"name":"dregg-effect-revoke-capability-v1","ir":2,"trace_width":12,"public_input_count":12,"challenges":0,"tables":[],"constraints":[{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":1}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":3}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":6}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":7},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":8}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":9},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":9}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":10},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":10}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":11},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":11}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2},{"t":"pi_binding","row":"first","col":3,"pi_index":3},{"t":"pi_binding","row":"first","col":4,"pi_index":4},{"t":"pi_binding","row":"first","col":5,"pi_index":5},{"t":"pi_binding","row":"first","col":6,"pi_index":6},{"t":"pi_binding","row":"first","col":7,"pi_index":7},{"t":"pi_binding","row":"first","col":8,"pi_index":8},{"t":"pi_binding","row":"first","col":9,"pi_index":9},{"t":"pi_binding","row":"first","col":10,"pi_index":10},{"t":"pi_binding","row":"first","col":11,"pi_index":11}],"hash_sites":[],"ranges":[]}"#;
+const BURN_GOLDEN: &str = r#"{"name":"dregg-effect-burn-v1","ir":2,"trace_width":27,"public_input_count":24,"challenges":0,"tables":[],"constraints":[{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":1}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":3}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":6}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":7},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":8}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":9},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":9}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":10},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":10}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":11},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":11}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":12},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":12}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":13},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":13}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":14},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":14}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":15},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":15}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":16},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":16}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":17},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":17}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":18},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":18}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":19},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":19}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":20},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":20}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":21},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":21}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":22},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":22}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":23},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":23}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":24},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":24}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":25},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":25}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":26},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":26}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2},{"t":"pi_binding","row":"first","col":3,"pi_index":3},{"t":"pi_binding","row":"first","col":4,"pi_index":4},{"t":"pi_binding","row":"first","col":5,"pi_index":5},{"t":"pi_binding","row":"first","col":6,"pi_index":6},{"t":"pi_binding","row":"first","col":7,"pi_index":7},{"t":"pi_binding","row":"first","col":8,"pi_index":8},{"t":"pi_binding","row":"first","col":9,"pi_index":9},{"t":"pi_binding","row":"first","col":10,"pi_index":10},{"t":"pi_binding","row":"first","col":11,"pi_index":11},{"t":"pi_binding","row":"first","col":12,"pi_index":12},{"t":"pi_binding","row":"first","col":13,"pi_index":13},{"t":"pi_binding","row":"first","col":14,"pi_index":14},{"t":"pi_binding","row":"first","col":15,"pi_index":15},{"t":"pi_binding","row":"first","col":16,"pi_index":16},{"t":"pi_binding","row":"first","col":17,"pi_index":17},{"t":"pi_binding","row":"first","col":18,"pi_index":18},{"t":"pi_binding","row":"first","col":19,"pi_index":19},{"t":"pi_binding","row":"first","col":20,"pi_index":20},{"t":"pi_binding","row":"first","col":21,"pi_index":21},{"t":"pi_binding","row":"first","col":22,"pi_index":22},{"t":"pi_binding","row":"first","col":23,"pi_index":23},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":12},"r":{"t":"var","v":16}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-65536},"r":{"t":"var","v":24}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}}}}},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":13},"r":{"t":"var","v":17}},"r":{"t":"add","l":{"t":"var","v":24},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-65536},"r":{"t":"var","v":25}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":14},"r":{"t":"var","v":18}},"r":{"t":"add","l":{"t":"var","v":25},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-65536},"r":{"t":"var","v":26}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":10}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":15},"r":{"t":"var","v":19}},"r":{"t":"add","l":{"t":"var","v":26},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":11}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":24},"r":{"t":"add","l":{"t":"var","v":24},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":25},"r":{"t":"add","l":{"t":"var","v":25},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":26},"r":{"t":"add","l":{"t":"var","v":26},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":20},"r":{"t":"const","v":-1}}},{"t":"gate","body":{"t":"var","v":21}},{"t":"gate","body":{"t":"var","v":22}},{"t":"gate","body":{"t":"var","v":23}}],"hash_sites":[],"ranges":[]}"#;
 
 // ── Descriptor builders (the independent "hand AIR semantics" twins). ──
 
@@ -104,40 +104,62 @@ fn k(x: i64) -> LeanExpr {
     LeanExpr::Const(x)
 }
 
-/// The five Burn algebraic gates (in `eval_constraints` order), over the Burn column layout
-/// (old 8/9, new 10/11, amount 12/13, was_burn 14/15, borrow aux 16).
+/// Column layout of the Burn schema (1 field + 4 amounts x 4 limbs + 3 borrow bits).
+const OLD: usize = 8; // old_balance limbs   8..12
+const NEW: usize = 12; // new_balance limbs 12..16
+const AMT: usize = 16; // amount limbs      16..20
+const WB: usize = 20; // was_burn limbs     20..24
+const BRW: usize = 24; // borrow bits       24..27
+/// The felt-sized limb base. ⚑ `2^16`, not `2^32`: `p_babybear = 2013265921 < 2^32`, so a `2^32`
+/// coefficient has no felt and `parse_vm_descriptor2` REFUSES a descriptor carrying it.
+const LIMB_BASE: i64 = 65536;
+
+/// The eleven Burn algebraic gates, in chain order, over the Burn column layout.
 fn burn_gates() -> Vec<VmConstraint2> {
-    // new_lo + amt_lo - borrow*2^32 - old_lo
-    let c_lo = LeanExpr::add(
-        LeanExpr::add(v(10), v(12)),
+    // chain limbs 0..2: new_i + amt_i + b_{i-1} - 2^16*b_i - old_i   (b_{-1} absent on limb 0)
+    let c0 = LeanExpr::add(
+        LeanExpr::add(v(NEW), v(AMT)),
         LeanExpr::add(
-            LeanExpr::mul(k(-4294967296), v(16)),
-            LeanExpr::mul(k(-1), v(8)),
+            LeanExpr::mul(k(-LIMB_BASE), v(BRW)),
+            LeanExpr::mul(k(-1), v(OLD)),
         ),
     );
-    // new_hi + amt_hi + borrow - old_hi
-    let c_hi = LeanExpr::add(
-        LeanExpr::add(v(11), v(13)),
-        LeanExpr::add(v(16), LeanExpr::mul(k(-1), v(9))),
+    let chain = |i: usize| {
+        LeanExpr::add(
+            LeanExpr::add(v(NEW + i), v(AMT + i)),
+            LeanExpr::add(
+                v(BRW + i - 1),
+                LeanExpr::add(
+                    LeanExpr::mul(k(-LIMB_BASE), v(BRW + i)),
+                    LeanExpr::mul(k(-1), v(OLD + i)),
+                ),
+            ),
+        )
+    };
+    // top limb: new_3 + amt_3 + b_2 - old_3 — NO outgoing borrow (the `amount <= old` tooth).
+    let c3 = LeanExpr::add(
+        LeanExpr::add(v(NEW + 3), v(AMT + 3)),
+        LeanExpr::add(v(BRW + 2), LeanExpr::mul(k(-1), v(OLD + 3))),
     );
-    // borrow*(borrow-1)
-    let c_bb = LeanExpr::mul(v(16), LeanExpr::add(v(16), k(-1)));
-    // was_burn_lo - 1
-    let c_wl = LeanExpr::add(v(14), k(-1));
-    // was_burn_hi
-    let c_wh = v(15);
+    let boolean = |c: usize| LeanExpr::mul(v(c), LeanExpr::add(v(c), k(-1)));
     vec![
-        VmConstraint2::Base(VmConstraint::Gate(c_lo)),
-        VmConstraint2::Base(VmConstraint::Gate(c_hi)),
-        VmConstraint2::Base(VmConstraint::Gate(c_bb)),
-        VmConstraint2::Base(VmConstraint::Gate(c_wl)),
-        VmConstraint2::Base(VmConstraint::Gate(c_wh)),
+        VmConstraint2::Base(VmConstraint::Gate(c0)),
+        VmConstraint2::Base(VmConstraint::Gate(chain(1))),
+        VmConstraint2::Base(VmConstraint::Gate(chain(2))),
+        VmConstraint2::Base(VmConstraint::Gate(c3)),
+        VmConstraint2::Base(VmConstraint::Gate(boolean(BRW))),
+        VmConstraint2::Base(VmConstraint::Gate(boolean(BRW + 1))),
+        VmConstraint2::Base(VmConstraint::Gate(boolean(BRW + 2))),
+        VmConstraint2::Base(VmConstraint::Gate(LeanExpr::add(v(WB), k(-1)))),
+        VmConstraint2::Base(VmConstraint::Gate(v(WB + 1))),
+        VmConstraint2::Base(VmConstraint::Gate(v(WB + 2))),
+        VmConstraint2::Base(VmConstraint::Gate(v(WB + 3))),
     ]
 }
 
 /// Independently hand-build the pure-binding revoke-capability descriptor (1 field + 1 amount).
 fn hand_built_revoke() -> EffectVmDescriptor2 {
-    let pi = 10;
+    let pi = 12;
     let mut constraints: Vec<VmConstraint2> = (0..pi).map(cont_gate).collect();
     constraints.extend((0..pi).map(pi_gate));
     EffectVmDescriptor2 {
@@ -154,8 +176,8 @@ fn hand_built_revoke() -> EffectVmDescriptor2 {
 
 /// Independently hand-build the algebraic Burn descriptor (1 field + 4 amounts + borrow aux).
 fn hand_built_burn() -> EffectVmDescriptor2 {
-    let width = 17;
-    let pi = 16;
+    let width = 27;
+    let pi = 24;
     let mut constraints: Vec<VmConstraint2> = (0..width).map(cont_gate).collect();
     constraints.extend((0..pi).map(pi_gate));
     constraints.extend(burn_gates());
@@ -173,38 +195,31 @@ fn hand_built_burn() -> EffectVmDescriptor2 {
 
 // ── Witness builders (the SAME encoding the hand AIR uses). ──
 
-/// One Burn binding row (width 17): field limbs + old/new/amount/was_burn limbs + borrow aux.
+/// One Burn binding row (width 27): field limbs + old/new/amount/was_burn 16-bit limbs + 3 borrows.
+///
+/// ⚑ The borrow chain is computed here EXACTLY as `effect_action_air::generate_trace` does — but
+/// spelled out independently, so a drift in either shows up as a refused honest witness.
 fn burn_row(target: &[u8; 32], old: u64, new: u64, amount: u64, was_burn: u64) -> Vec<BabyBear> {
-    let mut row = vec![BabyBear::ZERO; 17];
-    let f = bytes32_to_8_limbs(target);
-    row[0..8].copy_from_slice(&f);
-    let [o_lo, o_hi] = encode_amount(old);
-    let [n_lo, n_hi] = encode_amount(new);
-    let [a_lo, a_hi] = encode_amount(amount);
-    let [w_lo, w_hi] = encode_amount(was_burn);
-    row[8] = o_lo;
-    row[9] = o_hi;
-    row[10] = n_lo;
-    row[11] = n_hi;
-    row[12] = a_lo;
-    row[13] = a_hi;
-    row[14] = w_lo;
-    row[15] = w_hi;
-    // Borrow bit: 1 iff the low-limb subtraction underflows (old_lo < amt_lo).
-    let old_lo = old & 0xFFFF_FFFF;
-    let amt_lo = amount & 0xFFFF_FFFF;
-    row[16] = if old_lo < amt_lo {
-        BabyBear::new(1)
-    } else {
-        BabyBear::ZERO
-    };
+    let mut row = vec![BabyBear::ZERO; 27];
+    row[0..8].copy_from_slice(&bytes32_to_8_limbs(target));
+    row[OLD..OLD + 4].copy_from_slice(&encode_amount(old));
+    row[NEW..NEW + 4].copy_from_slice(&encode_amount(new));
+    row[AMT..AMT + 4].copy_from_slice(&encode_amount(amount));
+    row[WB..WB + 4].copy_from_slice(&encode_amount(was_burn));
+    let mut borrow = 0u64;
+    for i in 0..3 {
+        let o = (old >> (i * 16)) & 0xFFFF;
+        let a = ((amount >> (i * 16)) & 0xFFFF) + borrow;
+        borrow = u64::from(o < a);
+        row[BRW + i as usize] = BabyBear::new(borrow as u32);
+    }
     row
 }
 
 /// The Burn public inputs (the 16 pinned columns = `row[0..16]`, exactly the hand AIR's
 /// `EffectActionWitness::public_inputs()`).
 fn burn_pis(target: &[u8; 32], old: u64, new: u64, amount: u64, was_burn: u64) -> Vec<BabyBear> {
-    burn_row(target, old, new, amount, was_burn)[0..16].to_vec()
+    burn_row(target, old, new, amount, was_burn)[0..24].to_vec()
 }
 
 /// A 4-row (power-of-two) base trace of identical rows.
@@ -212,14 +227,11 @@ fn rows4(row: Vec<BabyBear>) -> Vec<Vec<BabyBear>> {
     vec![row.clone(), row.clone(), row.clone(), row]
 }
 
-/// One revoke-capability binding row (width 10): cell_id limbs + slot limbs.
+/// One revoke-capability binding row (width 12): cell_id limbs + slot limbs.
 fn revoke_row(cell: &[u8; 32], slot: u64) -> Vec<BabyBear> {
-    let mut row = vec![BabyBear::ZERO; 10];
-    let f = bytes32_to_8_limbs(cell);
-    row[0..8].copy_from_slice(&f);
-    let [lo, hi] = encode_amount(slot);
-    row[8] = lo;
-    row[9] = hi;
+    let mut row = vec![BabyBear::ZERO; 12];
+    row[0..8].copy_from_slice(&bytes32_to_8_limbs(cell));
+    row[8..12].copy_from_slice(&encode_amount(slot));
     row
 }
 
@@ -250,13 +262,13 @@ fn rejects(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pis: &[BabyBear]
 fn effect_action_emit_decodes_to_hand_built() {
     let dr = parse_vm_descriptor2(REVOKE_GOLDEN).expect("revoke golden decodes");
     assert_eq!(dr, hand_built_revoke(), "revoke: Lean emit ≡ hand-built");
-    assert_eq!(dr.trace_width, 10);
-    assert_eq!(dr.public_input_count, 10);
+    assert_eq!(dr.trace_width, 12);
+    assert_eq!(dr.public_input_count, 12);
 
     let db = parse_vm_descriptor2(BURN_GOLDEN).expect("burn golden decodes");
     assert_eq!(db, hand_built_burn(), "burn: Lean emit ≡ hand-built");
-    assert_eq!(db.trace_width, 17);
-    assert_eq!(db.public_input_count, 16);
+    assert_eq!(db.trace_width, 27);
+    assert_eq!(db.public_input_count, 24);
 
     // Constraint-shape pins.
     let n_win = |d: &EffectVmDescriptor2| {
@@ -277,8 +289,20 @@ fn effect_action_emit_decodes_to_hand_built() {
             .filter(|c| matches!(c, VmConstraint2::Base(VmConstraint::Gate(_))))
             .count()
     };
-    assert_eq!((n_win(&dr), n_pin(&dr), n_gate(&dr)), (10, 10, 0));
-    assert_eq!((n_win(&db), n_pin(&db), n_gate(&db)), (17, 16, 5));
+    assert_eq!((n_win(&dr), n_pin(&dr), n_gate(&dr)), (12, 12, 0));
+    assert_eq!((n_win(&db), n_pin(&db), n_gate(&db)), (27, 24, 11));
+
+    // ⚑ THE POLE THE FLAG DAY EXISTS FOR: the descriptor PARSES. Its largest gate coefficient is
+    // 2^16, so it round-trips a felt. Until 2026-08-06 the borrow rode 2^32 = 4294967296 and
+    // `parse_vm_descriptor2` refused this exact string outright.
+    assert!(
+        !BURN_GOLDEN.contains("4294967296"),
+        "a 2^32 coefficient has no BabyBear felt (p = 2013265921) — the descriptor cannot parse"
+    );
+    assert!(
+        BURN_GOLDEN.contains("\"v\":-65536"),
+        "the borrow weight must be 2^16"
+    );
 }
 
 // ── STEP 2 — the honest binding witnesses prove and verify. ──
@@ -401,7 +425,7 @@ fn revoke_forged_pi_limb_refuses() {
     let honest_pis = revoke_pis(&cell, 42);
     assert!(!rejects(&desc, &trace, &honest_pis));
     let mut forged = honest_pis.clone();
-    forged[8] = forged[8] + BabyBear::new(1); // forge the slot low-limb
+    forged[8] = forged[8] + BabyBear::new(1); // forge the slot limb 0
     assert!(
         rejects(&desc, &trace, &forged),
         "a forged revoke PI limb must be REJECTED (pi_binding tooth)"
@@ -418,38 +442,38 @@ fn drop_at(desc: &EffectVmDescriptor2, idx: usize) -> EffectVmDescriptor2 {
 /// THE NON-VACUITY PROOF: each mutation canary bites its NAMED tooth, not an unrelated error.
 /// Dropping EXACTLY the targeted constraint flips the SAME tampered witness from REJECT to ACCEPT —
 /// so the rejection is attributable to that constraint alone. (Constraint order in `burnDesc`:
-/// continuity 0..17, pi_binding 17..33, then cLo 33, cHi 34, borrow-bool 35, was_burn_lo 36,
-/// was_burn_hi 37.)
+/// continuity 0..27, pi_binding 27..51, then chain limbs 51/52/53/54, borrow-bool 55/56/57,
+/// was_burn limbs 58/59/60/61.)
 #[test]
 fn mutation_canaries_bite_named_teeth() {
     let target = [0x11u8; 32];
     let burn = hand_built_burn();
 
-    // Subtraction: with cLo present, new=601 rejects; drop cLo (33) → ACCEPTS.
+    // Subtraction: with chain limb 0 present, new=601 rejects; drop it (51) → ACCEPTS.
     let bad_sub_t = rows4(burn_row(&target, 1000, 601, 400, 1));
     let bad_sub_p = burn_pis(&target, 1000, 601, 400, 1);
     assert!(rejects(&burn, &bad_sub_t, &bad_sub_p));
     assert!(
-        !rejects(&drop_at(&burn, 33), &bad_sub_t, &bad_sub_p),
-        "dropping the low-limb subtraction gate flips new=601 to ACCEPT — cLo is the biting tooth"
+        !rejects(&drop_at(&burn, 51), &bad_sub_t, &bad_sub_p),
+        "dropping the limb-0 chain gate flips new=601 to ACCEPT — it is the biting tooth"
     );
 
-    // Disclosure: was_burn=2 rejects; drop was_burn_lo (36) → ACCEPTS.
+    // Disclosure: was_burn=2 rejects; drop the was_burn limb-0 pin (58) → ACCEPTS.
     let bad_wb_t = rows4(burn_row(&target, 1000, 600, 400, 2));
     let bad_wb_p = burn_pis(&target, 1000, 600, 400, 2);
     assert!(rejects(&burn, &bad_wb_t, &bad_wb_p));
     assert!(
-        !rejects(&drop_at(&burn, 36), &bad_wb_t, &bad_wb_p),
-        "dropping the was_burn pin flips flag=2 to ACCEPT — cWasBurnLo is the biting tooth"
+        !rejects(&drop_at(&burn, 58), &bad_wb_t, &bad_wb_p),
+        "dropping the was_burn limb-0 pin flips flag=2 to ACCEPT — it is the biting tooth"
     );
 
-    // PI binding: forged pi[0] rejects; drop the col-0 pin (17) → ACCEPTS.
+    // PI binding: forged pi[0] rejects; drop the col-0 pin (27) → ACCEPTS.
     let honest_t = rows4(burn_row(&target, 1000, 600, 400, 1));
     let mut forged_p = burn_pis(&target, 1000, 600, 400, 1);
     forged_p[0] = forged_p[0] + BabyBear::new(1);
     assert!(rejects(&burn, &honest_t, &forged_p));
     assert!(
-        !rejects(&drop_at(&burn, 17), &honest_t, &forged_p),
+        !rejects(&drop_at(&burn, 27), &honest_t, &forged_p),
         "dropping the col-0 pi_binding flips the forged limb to ACCEPT — the pin is the biting tooth"
     );
 
@@ -463,6 +487,73 @@ fn mutation_canaries_bite_named_teeth() {
     assert!(
         !rejects(&drop_at(&burn, 0), &stash_t, &pis),
         "dropping the col-0 continuity window_gate flips the stash to ACCEPT — it is the biting tooth"
+    );
+}
+
+/// A descriptor with the constraints at `hi` and `lo` removed (`hi > lo`; drop the higher index
+/// first so the lower one does not shift).
+fn drop_two(desc: &EffectVmDescriptor2, hi: usize, lo: usize) -> EffectVmDescriptor2 {
+    assert!(hi > lo);
+    drop_at(&drop_at(desc, hi), lo)
+}
+
+/// ⚑ **CANARY (FORGED BORROW) — the pole the felt-sized encoding exists for.** The honest trace with
+/// the TOP borrow bit `b_2` conjured from 0 to 1. The borrow columns are AUX (past `pi_count`), so
+/// every `pi_binding` still holds and the published tuple is untouched — a prover forging this is
+/// claiming `2^32` of balance out of a free witness cell. The two chain gates that read `b_2`
+/// (limb 2, limb 3) refuse it.
+///
+/// This is exactly what the retired shape could not have refused meaningfully: its borrow rode a
+/// `2^32` coefficient, which has no BabyBear felt, so the descriptor did not parse at all.
+#[test]
+fn burn_forged_borrow_refuses() {
+    let desc = parse_vm_descriptor2(BURN_GOLDEN).expect("decode");
+    let target = [0x11u8; 32];
+    let honest = burn_row(&target, 1000, 600, 400, 1);
+    let pis = burn_pis(&target, 1000, 600, 400, 1);
+    assert!(
+        !rejects(&desc, &rows4(honest.clone()), &pis),
+        "honest witness must be accepted — else the canary is vacuous"
+    );
+    // The honest borrows are all zero (1000 - 400 borrows nowhere); forge the top one.
+    assert_eq!(honest[BRW + 2], BabyBear::ZERO, "honest b_2 must be 0");
+    let mut forged = honest.clone();
+    forged[BRW + 2] = BabyBear::new(1);
+    assert!(
+        rejects(&desc, &rows4(forged.clone()), &pis),
+        "a FORGED BORROW must be REJECTED by the chain"
+    );
+    // Attribution: the two chain gates that READ b_2 are the biting teeth. Drop exactly those
+    // (limb-3 at 54, limb-2 at 53) and the same forgery is ACCEPTED.
+    assert!(
+        !rejects(&drop_two(&hand_built_burn(), 54, 53), &rows4(forged), &pis),
+        "dropping the two chain gates that read b_2 flips the forged borrow to ACCEPT"
+    );
+}
+
+/// ⚑ **CANARY (UNDERFLOW) — the availability tooth the retired shape did not have.** `old = 0`,
+/// `amount = 1`, `new = u64::MAX` (the wrap): every borrow closes up the chain, but the TOP limb
+/// carries no outgoing borrow, so `new_3 + amt_3 + b_2 - old_3` cannot vanish. A burn of more than
+/// the balance is UNSAT in-circuit, not merely refused by executor arithmetic.
+#[test]
+fn burn_underflow_refuses() {
+    let desc = parse_vm_descriptor2(BURN_GOLDEN).expect("decode");
+    let target = [0x11u8; 32];
+    assert!(!rejects(
+        &desc,
+        &rows4(burn_row(&target, 1000, 600, 400, 1)),
+        &burn_pis(&target, 1000, 600, 400, 1)
+    ));
+    // 0 - 1 wraps to u64::MAX. Trace AND PI move together, so every pin still holds.
+    let bad_trace = rows4(burn_row(&target, 0, u64::MAX, 1, 1));
+    let bad_pis = burn_pis(&target, 0, u64::MAX, 1, 1);
+    assert!(
+        rejects(&desc, &bad_trace, &bad_pis),
+        "burning more than the balance must be REJECTED by the top chain gate"
+    );
+    assert!(
+        !rejects(&drop_at(&hand_built_burn(), 54), &bad_trace, &bad_pis),
+        "dropping the top chain gate flips the underflow to ACCEPT — it is the biting tooth"
     );
 }
 

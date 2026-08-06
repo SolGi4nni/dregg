@@ -134,9 +134,17 @@ pub const PUBLIC_ABI: &[PublicAbiSlot] = &[
 //                   `contract_hash` lane 8 at 185, the owner key's lane 8 at 186), and one extra
 //                   absorption lookup per BLOCK for the one new wide carrier (62 -> 63).
 //   public_inputs UNCHANGED at 76 — the nonet grows the committed region, not the interface.
-const EXPECTED_TRACE_WIDTH: usize = 3826;
-const EXPECTED_PUBLIC_INPUTS: usize = 76;
-const EXPECTED_CONSTRAINTS: usize = 1282;
+//
+// ⚑ THESE THREE ARE `pub` AND THEY ARE THE TREE'S ONLY STATEMENT OF THIS GEOMETRY (2026-08-06).
+// They were crate-private, so `turn-prover` — which has no geometry constant of its own — spelled
+// `"trace_width":3804` inside a `concat!` STRING and sat five days stale through this very flag
+// day. A number inside a string literal is invisible to every type check we have; it panics at run
+// time and `cargo check --all-targets` stays green. Consumers now INTERPOLATE these constants
+// (`format!("...{EXPECTED_TRACE_WIDTH}...")`) instead of re-typing the digits, so a width change
+// is a one-line edit here and a re-type elsewhere cannot compile.
+pub const EXPECTED_TRACE_WIDTH: usize = 3826;
+pub const EXPECTED_PUBLIC_INPUTS: usize = 76;
+pub const EXPECTED_CONSTRAINTS: usize = 1282;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodedPublicAbiSlot {
@@ -675,18 +683,24 @@ pub fn proving_system_canonical_bytes() -> Vec<u8> {
 mod tests {
     use super::*;
 
-    const EXECUTABLE_HEADER: &str = concat!(
-        "{\"name\":\"faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state\",",
-        // KEY NONET 2026-08-01: 3804 -> 3826 (see EXPECTED_TRACE_WIDTH's decomposition).
-        "\"ir\":2,\"trace_width\":3826,\"public_input_count\":76,"
-    );
+    /// ⚑ DERIVED, NOT PINNED. The width and PI count are INTERPOLATED from the typed constants
+    /// above, never re-typed as digits. `concat!` cannot interpolate a `const`, which is exactly
+    /// how the `turn-prover` twin of this header rotted to `3804` and panicked at run time.
+    fn executable_header() -> String {
+        format!(
+            "{{\"name\":\"{PREDICATE_NAME}\",\"ir\":2,\
+             \"trace_width\":{EXPECTED_TRACE_WIDTH},\
+             \"public_input_count\":{EXPECTED_PUBLIC_INPUTS},"
+        )
+    }
 
     fn whitespace_and_top_level_key_reordered_json() -> String {
         let body = EXECUTABLE_DESCRIPTOR_JSON
-            .strip_prefix(EXECUTABLE_HEADER)
+            .strip_prefix(executable_header().as_str())
             .expect("executable descriptor header remains recognized");
         format!(
-            "{{\n  \"public_input_count\" : 76,\n  \"trace_width\" : 3826,\n  \
+            "{{\n  \"public_input_count\" : {EXPECTED_PUBLIC_INPUTS},\n  \
+             \"trace_width\" : {EXPECTED_TRACE_WIDTH},\n  \
              \"name\" : \"{PREDICATE_NAME}\",\n  \"ir\" : 2,\n  {body}\n"
         )
     }
