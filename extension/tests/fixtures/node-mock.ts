@@ -24,7 +24,10 @@ export interface MockNodeState {
   lastSubmittedTurn: any;
   lastMountRequest: any;
   lastBearerAuth: any;
-  lastPeerExchange: any;
+  // ⚑ `lastPeerExchange` REMOVED 2026-08-06 with the `/turns/peer-exchange`
+  // routes below. It is kept out on purpose: a mock that answers a shape no
+  // real node produces is how `acceptCapability` came to mint
+  // `permissions: "full"` out of a missing field and stay green for months.
 }
 
 export class MockNode {
@@ -65,7 +68,6 @@ export class MockNode {
       lastSubmittedTurn: null,
       lastMountRequest: null,
       lastBearerAuth: null,
-      lastPeerExchange: null,
     };
   }
 
@@ -159,18 +161,14 @@ export class MockNode {
     this.app.post('/turns/bearer-auth', bearerAuth);
     this.app.post('/api/turns/bearer-auth', bearerAuth);
 
-    // Peer exchange (enliven URI / handoff). The extension reads
-    // { permissions, cap_id } (accept) and { certificate_hash } (handoff).
-    const peerExchange = (req: express.Request, res: express.Response) => {
-      this.state.lastPeerExchange = req.body;
-      res.json({
-        cap_id: `cap_${Date.now()}`,
-        permissions: 'read,write',
-        certificate_hash: 'cd'.repeat(32),
-      });
-    };
-    this.app.post('/turns/peer-exchange', peerExchange);
-    this.app.post('/api/turns/peer-exchange', peerExchange);
+    // ⚑ The `/turns/peer-exchange` + `/api/turns/peer-exchange` mocks are GONE
+    // (2026-08-06), along with the node routes they imitated. They answered
+    // `{ cap_id, permissions: 'read,write', certificate_hash }` — three fields
+    // the real handler never returned, to requests whose bodies the real
+    // handler could not even deserialize. `acceptCapability` and
+    // `createHandoff` no longer call a node at all; the accept path is local
+    // URI bookkeeping and the handoff path refuses. Do not re-add a route here
+    // without a node handler that produces the same shape.
 
     // Registry: mount a service.
     this.app.post('/registry/mount', (req, res) => {

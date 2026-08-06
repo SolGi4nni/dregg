@@ -6,7 +6,6 @@ import type {
   TurnReceipt,
   Block,
   BlockId,
-  StarkProof,
   BearerCapProof,
   DelegationProofData,
   Intent,
@@ -187,8 +186,13 @@ export interface DreggClient {
   verifyBearerCap(proof: BearerCapProof): Promise<{ valid: boolean; expired: boolean }>;
 
   // -- Proofs --
-  /** Compose multiple proofs into an aggregate. */
-  composeProofs(proofs: StarkProof[], mode: "and" | "or" | "chain" | "aggregate"): Promise<{ composedProof: string; mode: string; inputCount: number; valid: boolean }>;
+  // ⚑ `composeProofs` REMOVED 2026-08-06. It called `POST /proofs/compose`,
+  // which is deleted: the node BLAKE3'd the submitted JSON and answered
+  // `success: true` without deserializing or verifying a single proof. This
+  // declaration also asked for `{ composedProof, valid }` — two fields that
+  // endpoint never returned — so it could not have worked even while the route
+  // existed. Real composition is `compose_and_verify_proofs` in `dregg-wasm`,
+  // which runs each tagged proof's actual verifier client-side.
 
   // -- Intents --
   /** Post an intent to the network. */
@@ -395,21 +399,8 @@ export function createClient(nodeUrl: string, apiKey?: string): DreggClient {
     },
 
     // -- Proofs --
-    async composeProofs(proofs, mode) {
-      const result = await request<{ composedProof: string; mode: string; inputCount: number; valid: boolean }>(
-        base, "/proofs/compose", apiKey, {
-          method: "POST",
-          body: {
-            proofs: proofs.map((p) => ({
-              proof_json: p.proofJson,
-              public_inputs: p.publicInputs ?? [],
-            })),
-            mode,
-          },
-        }
-      );
-      return unwrap(result, "composeProofs");
-    },
+    // (`composeProofs` removed 2026-08-06 with `POST /proofs/compose` — see the
+    //  interface declaration above.)
 
     // -- Intents --
     async postIntent(matchSpec, options) {

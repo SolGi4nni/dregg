@@ -77,7 +77,7 @@ test.describe('Accept capability', () => {
     expect(text).toBe('Accept Capability');
   });
 
-  test('accept with dregg:// URI triggers enliven flow', async ({ popup }) => {
+  test('accept with dregg:// URI enlivens LOCALLY — no node is asked', async ({ popup }) => {
     // The clerk is locked at rest; enlivening requires the unlocked clerk.
     await unlockPopup(popup);
     await popup.locator('.tab-btn[data-tab="capabilities"]').click();
@@ -86,11 +86,26 @@ test.describe('Accept capability', () => {
     await popup.locator('#acceptUriInput').fill(uri);
     await popup.locator('#acceptCapBtn').click();
 
-    // The mock node's peer-exchange answers with a cap grant; the button
-    // reports the real success state.
+    // Enlivening is LOCAL BOOKKEEPING: the URI is resolved back into the node,
+    // cell and swiss it names and recorded. Nothing is asked of a node, so
+    // nothing a node says can become a grant — the old flow POSTed to
+    // `/api/turns/peer-exchange` (a route that no longer exists, and whose body
+    // this request never matched) and read `permissions` out of the answer,
+    // defaulting to "full" when the field was absent. It always was.
     const btn = popup.locator('#acceptCapBtn');
     await expect(btn).toHaveText('Accepted!', { timeout: 5000 });
-    expect(mockNode.state.lastPeerExchange).toMatchObject({ node_id: 'node_mock_001' });
+    const liveRefs = popup.locator('#liveRefsContainer');
+    await expect(liveRefs).toContainText('node_mock_001');
+  });
+
+  test('accept REFUSES a URI with an empty component', async ({ popup }) => {
+    await unlockPopup(popup);
+    await popup.locator('.tab-btn[data-tab="capabilities"]').click();
+    // Three segments, but the swiss secret is empty — there is no reference here.
+    await popup.locator('#acceptUriInput').fill(`dregg://node_mock_001/${'b'.repeat(64)}/`);
+    await popup.locator('#acceptCapBtn').click();
+    const btn = popup.locator('#acceptCapBtn');
+    await expect(btn).toContainText('must all be non-empty', { timeout: 5000 });
   });
 });
 

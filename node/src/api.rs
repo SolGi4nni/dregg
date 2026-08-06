@@ -2368,9 +2368,33 @@ pub fn router_with_cors(
         .route("/cells/create-from-factory", post(post_create_from_factory))
         .route("/cells/make-sovereign", post(post_make_sovereign))
         .route("/programs/deploy", post(post_deploy_program))
-        .route("/proofs/compose", post(post_compose_proofs))
         .route("/turns/bearer-auth", post(post_bearer_auth))
-        .route("/turns/peer-exchange", post(post_peer_exchange))
+        // ⚑ DELETED 2026-08-06: `/proofs/compose` and `/turns/peer-exchange`.
+        // Both answered `success: true` over inputs nothing read.
+        //
+        // `/proofs/compose` took an untagged `Vec<serde_json::Value>`, BLAKE3'd
+        // the JSON together and reported success — no proof was deserialized,
+        // no verifier ran, and its `error` field was unreachable (`{"proofs":[]}`
+        // succeeded). Composition cannot be earned here: a composed verdict
+        // needs a per-turn canonical anchor a stranger can independently
+        // obtain, and no such anchor exists. Its two siblings were already
+        // retired for exactly this — the MCP tool `dregg_compose_proofs` fails
+        // closed with an explanatory error (`mcp/handlers_verify.rs`), and the
+        // wasm `compose_proofs` was downgraded to `valid: false` in favour of
+        // `compose_and_verify_proofs`, which runs the REAL per-kind verifiers
+        // client-side over TAGGED envelopes. Browser callers use that.
+        //
+        // `/turns/peer-exchange` hashed (sender, receiver, amount) into an
+        // "exchange_id", logged a line and returned. Peer exchange is a
+        // federation-BYPASSING protocol between two sovereign cells
+        // (`dregg_cell_crypto::PeerExchange`): `verify_transition` bites only
+        // against a `PeerCellView` a PARTICIPANT maintains, and the node holds
+        // no sovereign signing key and no such view — seeding one from a
+        // placeholder is the exact defect `tool_peer_exchange` was called out
+        // for. The node's real ingestion path is `POST /turns/submit` carrying
+        // `sovereign_witnesses`, where the executor's `validate_sovereign_witness`
+        // checks the signature, the commitment chain and
+        // `ledger.last_sovereign_witness_sequence(cell) + 1`.
         // LIVE EPOCH TRANSITION (validator-set reconfiguration on a RUNNING
         // node): propose adding/removing validators. The change only APPLIES
         // once a quorum of the CURRENT committee ratifies it through finality —
@@ -2483,13 +2507,14 @@ pub fn router_with_cors(
         // /cipherclerk key-management surface (authorize/mint/attenuate),
         // /cells/register, /cells/deregister, /cells/update-commitment,
         // /cells/make-sovereign, /turns/aggregate, /turn/submit-conditional,
-        // /turn/resolve-conditional, /proofs/compose — node-administration
-        // operations, not app traffic.
+        // /turn/resolve-conditional — node-administration operations, not app
+        // traffic.
         .route("/api/turn/atomic", post(post_atomic_proposal))
         .route("/api/turn/atomic/vote", post(post_atomic_vote))
         .route("/api/turn/atomic/{id}", get(get_proposal_status))
         .route("/api/turn/atomic/evaluate", post(post_evaluate_proposal))
-        .route("/api/turns/peer-exchange", post(post_peer_exchange))
+        // ⚑ `/api/turns/peer-exchange` DELETED 2026-08-06 with its canonical
+        // route — see the note beside `/turns/bearer-auth` above.
         .route(
             "/api/cells/create-from-factory",
             post(post_create_from_factory),
@@ -9110,47 +9135,14 @@ async fn post_make_sovereign(
     }
 }
 
-#[derive(Deserialize)]
-struct ComposeProofsRequest {
-    proofs: Vec<serde_json::Value>,
-    mode: String,
-}
-
-#[derive(Serialize)]
-struct ComposeProofsResponse {
-    success: bool,
-    composed_commitment: Option<String>,
-    mode: String,
-    input_count: usize,
-    error: Option<String>,
-}
-
-async fn post_compose_proofs(
-    State(state): State<NodeState>,
-    Json(req): Json<ComposeProofsRequest>,
-) -> Result<Json<ComposeProofsResponse>, StatusCode> {
-    let s = state.read().await;
-    if !s.unlocked {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    // Compute composition commitment binding all proofs.
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-proof-composition-v1");
-    hasher.update(req.mode.as_bytes());
-    for (i, proof) in req.proofs.iter().enumerate() {
-        hasher.update(&(i as u32).to_le_bytes());
-        hasher.update(proof.to_string().as_bytes());
-    }
-    let commitment = *hasher.finalize().as_bytes();
-
-    Ok(Json(ComposeProofsResponse {
-        success: true,
-        composed_commitment: Some(hex_encode(&commitment)),
-        mode: req.mode,
-        input_count: req.proofs.len(),
-        error: None,
-    }))
-}
+// ⚑ `post_compose_proofs` (`POST /proofs/compose`) DELETED 2026-08-06. It
+// BLAKE3'd an untagged `Vec<serde_json::Value>` and answered `success: true`
+// with an unreachable `error` field; no input was ever deserialized as a proof
+// and no verifier ran. See the router note beside `/turns/bearer-auth` for why
+// no honest node-side replacement exists (there is no per-turn canonical anchor
+// a stranger can independently obtain to compose against), and
+// `wasm::privacy::compose_and_verify_proofs` for the composition that does
+// discharge each tagged proof against its real verifier.
 
 #[derive(Deserialize)]
 struct BearerAuthRequest {
@@ -9246,54 +9238,15 @@ async fn post_bearer_auth(
     }
 }
 
-#[derive(Deserialize)]
-struct PeerExchangeRequest {
-    sender_cell: String,
-    receiver_cell: String,
-    amount: u64,
-}
-
-#[derive(Serialize)]
-struct PeerExchangeResponse {
-    success: bool,
-    exchange_id: Option<String>,
-    error: Option<String>,
-}
-
-async fn post_peer_exchange(
-    State(state): State<NodeState>,
-    Json(req): Json<PeerExchangeRequest>,
-) -> Result<Json<PeerExchangeResponse>, StatusCode> {
-    let s = state.read().await;
-    if !s.unlocked {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    let sender = hex_decode_32_result(&req.sender_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let receiver = hex_decode_32_result(&req.receiver_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Generate exchange ID.
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-peer-exchange-v1");
-    hasher.update(&sender);
-    hasher.update(&receiver);
-    hasher.update(&req.amount.to_le_bytes());
-    let exchange_id = *hasher.finalize().as_bytes();
-
-    // Log the peer exchange. Full execution is done via the standard turn
-    // submission pipeline with sovereign_witnesses populated by the SDK.
-    tracing::info!(
-        sender = %hex_encode(&sender),
-        receiver = %hex_encode(&receiver),
-        amount = req.amount,
-        "peer exchange initiated"
-    );
-
-    Ok(Json(PeerExchangeResponse {
-        success: true,
-        exchange_id: Some(hex_encode(&exchange_id)),
-        error: None,
-    }))
-}
+// ⚑ `post_peer_exchange` (`POST /turns/peer-exchange`, `POST
+// /api/turns/peer-exchange`) DELETED 2026-08-06 — audit finding F-P2-13
+// ("does not actually do any peer exchange", `audits/AUDIT-node.md:79`) closed
+// by deletion rather than by another year of aspirational naming. It hashed
+// (sender, receiver, amount) into an "exchange_id", emitted a `tracing::info!`
+// and returned `success: true`; no ledger read, no state change, nothing
+// signed, no peer contacted. Its own comment already said the real work
+// happened elsewhere. See the router note beside `/turns/bearer-auth`:
+// `POST /turns/submit` with `sovereign_witnesses` is that elsewhere.
 
 fn hex_decode_32_result(hex: &str) -> Result<[u8; 32], String> {
     if !hex.is_ascii() {

@@ -2764,6 +2764,23 @@ async function shareCapability(_cellId: string): Promise<{ uri?: string; cellId?
   };
 }
 
+// Enliven a `dregg://<node>/<cell>/<secret>` sturdy reference. This is LOCAL
+// BOOKKEEPING and nothing more — the same thing `dregg cap enliven` does
+// (`cli/src/commands/cap.rs`): resolve the URI back into the node, cell and
+// swiss secret it names and record it. Exercising the reference is a TURN that
+// carries the bearer proof, gated by the executor.
+//
+// ⚑ It used to POST `{node_id, cell_id, secret}` to `/api/turns/peer-exchange`
+// and take the answer as authority. Three things were wrong with that, and the
+// third is the one that mattered: (1) that endpoint's body was
+// `{sender_cell, receiver_cell, amount}`, so the request never deserialized
+// against a real node (422); (2) it never returned `permissions` or `cap_id` at
+// all; (3) when the field came back absent the code wrote
+// `permissions: "full"` — the widest grant in the vocabulary, minted from a
+// missing field. The only server that ever answered the shape this code read
+// was `extension/tests/fixtures/node-mock.ts`. That is verbatim the defect
+// `shareCapability` (just above) was fixed for on 2026-07; this is the same
+// wound, two functions over. The endpoint is deleted as of 2026-08-06.
 async function acceptCapability(uri: string, tabId?: number): Promise<{ refId?: string; cellId?: string; nodeId?: string; permissions?: string; error?: string }> {
   const cc = await loadState();
   if (cc.locked) return { error: "Cipherclerk is locked" };
@@ -2771,37 +2788,55 @@ async function acceptCapability(uri: string, tabId?: number): Promise<{ refId?: 
   const parts = uri.replace("dregg://", "").split("/");
   if (parts.length < 3) return { error: "Invalid URI format. Expected: dregg://<node>/<cell>/<secret>" };
   const [nodeId, cellId, secret] = parts;
-  const resp = await nodeRequest<{ permissions?: string; cap_id?: string }>(nodeConfig, "/api/turns/peer-exchange", {
-    method: "POST",
-    body: JSON.stringify({ node_id: nodeId, cell_id: cellId, secret }),
-  });
-  if (!resp.ok) return { error: `Failed to enliven capability: ${resp.error}` };
+  if (!nodeId || !cellId || !secret) {
+    return { error: "Invalid URI format: <node>, <cell> and <secret> must all be non-empty" };
+  }
   const refId = `ref_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const liveRef: Omit<ExtensionLiveRef, "refId"> = {
     cellId,
     uri,
     nodeId,
-    permissions: resp.data?.permissions || "full",
+    // NOT a grant. Nothing here has been checked against a ledger; the swiss
+    // secret names a capability whose permissions the EXECUTOR decides when a
+    // turn presents the bearer proof. Recording anything else — least of all
+    // "full" — would be this extension granting itself a capability.
+    permissions: "unattested (decided by the executor when the reference is exercised)",
     tabId: tabId || null,
     createdAt: Date.now(),
-    capId: resp.data?.cap_id || null,
+    capId: null,
   };
   liveRefs.set(refId, liveRef);
   await persistLiveRefs();
+  // `allowed` records that the URI was IMPORTED, not that any access was
+  // authorized — nothing was asked and nothing answered.
   cc.log.push({ action: "acceptCapability", resource: cellId, allowed: true, timestamp: Date.now(), mode: "captp" });
   await saveState();
   return { refId, cellId, nodeId, permissions: liveRef.permissions };
 }
 
-async function createHandoff(cellId: string, recipientPk: string): Promise<{ certificateHash?: string; cellId?: string; recipientPk?: string; error?: string }> {
+// ⚑ A handoff certificate cannot be minted from here, and this refuses instead
+// of pretending. The real object is `dregg_captp::HandoffCertificate::create`
+// (`captp/src/handoff.rs:245`) — introducer-signed over
+// (introducer, target federation, target cell, recipient, permissions, swiss).
+// Its `swiss` must ALREADY be registered in the target federation's
+// `SwissTable`, and no route mints or registers one, so a certificate built
+// here would carry a locally invented swiss and resolve to nothing.
+//
+// What this used to do: POST `{cell_id, recipient_pk}` to
+// `/api/turns/peer-exchange` and return `certificate_hash` from the response.
+// The endpoint's body was `{sender_cell, receiver_cell, amount}` (so the
+// request 422'd against a real node), it never returned `certificate_hash`,
+// and `|| ""` turned the absence into an empty string a caller reads as a
+// certificate. The endpoint is deleted as of 2026-08-06.
+async function createHandoff(_cellId: string, _recipientPk: string): Promise<{ certificateHash?: string; cellId?: string; recipientPk?: string; error?: string }> {
   const cc = await loadState();
   if (cc.locked) return { error: "Cipherclerk is locked" };
-  const resp = await nodeRequest<{ certificate_hash?: string }>(nodeConfig, "/api/turns/peer-exchange", {
-    method: "POST",
-    body: JSON.stringify({ cell_id: cellId, recipient_pk: recipientPk }),
-  });
-  if (!resp.ok) return { error: `Failed to create handoff: ${resp.error}` };
-  return { certificateHash: resp.data?.certificate_hash || "", cellId, recipientPk };
+  return {
+    error:
+      "Handoff certificates are not mintable from the extension: HandoffCertificate binds a swiss " +
+      "secret that must already be registered in the target federation's SwissTable, and no route " +
+      "registers one. Nothing was signed and nothing was sent.",
+  };
 }
 
 function getLiveRefs(): Array<ExtensionLiveRef> {

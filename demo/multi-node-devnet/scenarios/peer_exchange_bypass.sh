@@ -39,18 +39,45 @@ F2_PORT=$(fed_http_port F2 1)
 
 devnet_step "scenario: peer_exchange_bypass"
 
-# ── 1: /turns/peer-exchange route exists on both federations ───────
+# ── 1: the SOVEREIGN-WITNESS INGRESS route exists on both federations,
+#       and the old no-op peer-exchange route is GONE ────────────────
+#
+# ⚑ CHANGED 2026-08-06. This used to probe `/turns/peer-exchange` and record
+# "route present" on any non-404. That route hashed (sender, receiver, amount),
+# logged a line and answered `success: true` — no ledger read, no state change —
+# so "present" was a fact about a lie, and the probe passed on the 401 the
+# bearer layer returns before the handler is ever reached. It is deleted.
+#
+# The route that actually ingests a sovereign peer exchange is `/turns/submit`
+# with `sovereign_witnesses` populated: the executor's
+# `validate_sovereign_witness` checks the Ed25519 signature, the commitment
+# chain, and `ledger.last_sovereign_witness_sequence(cell) + 1`. That is the
+# substrate this scenario depends on, so that is what we probe.
 for fed in F1 F2; do
     port=$(fed_http_port "$fed" 1)
     code=$(curl -s -o "$SCN_LOG_DIR/$fed-probe.json" -w "%{http_code}" --max-time 5 \
-        -X POST "http://127.0.0.1:$port/turns/peer-exchange" \
+        -X POST "http://127.0.0.1:$port/turns/submit" \
         -H "Content-Type: application/json" \
         -d '{}' 2>/dev/null || echo "000")
     # 4xx is fine (auth/validation); 404/000 means missing.
     if [ "$code" != "404" ] && [ "$code" != "000" ]; then
-        record "${fed}_peer_exchange_route_present" true
+        record "${fed}_sovereign_witness_ingress_route_present" true
     else
-        record "${fed}_peer_exchange_route_present" false
+        record "${fed}_sovereign_witness_ingress_route_present" false
+    fi
+
+    # And the retired no-op must STAY retired. This assertion can only pass
+    # while the route is absent, so re-adding a peer-exchange endpoint that
+    # answers anything at all turns this scenario red.
+    gone=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+        -X POST "http://127.0.0.1:$port/turns/peer-exchange" \
+        -H "Content-Type: application/json" \
+        -d '{}' 2>/dev/null || echo "000")
+    if [ "$gone" = "404" ]; then
+        record "${fed}_retired_peer_exchange_route_absent" true
+    else
+        devnet_fail "${fed}_retired_peer_exchange_route_absent: /turns/peer-exchange answered HTTP $gone (expected 404)"
+        record "${fed}_retired_peer_exchange_route_absent" false
     fi
 done
 

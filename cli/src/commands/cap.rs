@@ -1,4 +1,21 @@
-//! Capability management commands (export, enliven, handoff).
+//! Capability management commands (export, enliven, list, revoke).
+//!
+//! ⚑ `cap handoff` DELETED 2026-08-06. It POSTed `{cell_id, recipient_pk}` to
+//! `POST /turns/peer-exchange` and printed `data["certificate_hash"]` — a field
+//! that endpoint never returned, from an endpoint that only hashed
+//! (sender, receiver, amount) and logged a line. Against a real node the body
+//! did not even deserialize (422); the shape it "worked" against was
+//! `extension/tests/fixtures/node-mock.ts`, which invented `certificate_hash`.
+//! The endpoint is now gone.
+//!
+//! A REAL handoff certificate exists — `dregg_captp::HandoffCertificate::create`
+//! — but it is not reachable from here yet: its `swiss` argument must already be
+//! REGISTERED in the target federation's `SwissTable`, and no route mints or
+//! registers one. Minting a certificate over a locally invented swiss would
+//! produce a signature that resolves to nothing, which is the same lie in a
+//! better font. When a swiss-registration route lands, `handoff` comes back
+//! calling `HandoffCertificate::create` locally under the active identity,
+//! exactly as `cap export` builds its `BearerCapProof`.
 //!
 //! `cap export` produces a REAL bearer capability, not a placeholder. It builds
 //! a canonical [`bearer::BearerCapProof`] (the `SignedDelegation` envelope the
@@ -50,15 +67,6 @@ pub enum CapCommand {
         uri: String,
     },
 
-    /// Create a handoff certificate for transferring capability.
-    Handoff {
-        /// Source cell ID.
-        cell_id: String,
-
-        /// Recipient's public key (hex).
-        recipient_pk: String,
-    },
-
     /// List held capabilities.
     List,
 
@@ -81,10 +89,6 @@ pub async fn run(
             expires_at,
         } => export(cfg, ctx, &cell_id, attenuate, expires_at).await,
         CapCommand::Enliven { uri } => enliven(cfg, ctx, &uri).await,
-        CapCommand::Handoff {
-            cell_id,
-            recipient_pk,
-        } => handoff(cfg, ctx, &cell_id, &recipient_pk).await,
         CapCommand::List => list(cfg, ctx).await,
         CapCommand::Revoke { id } => revoke(cfg, ctx, &id).await,
     }
@@ -249,34 +253,6 @@ async fn enliven(
     ctx.kv("Federation", &abbrev_hex(&federation_hex, 8, 4));
     ctx.kv_dim("Swiss", &abbrev_hex(&swiss_hex, 8, 4));
     ctx.info("  Exercise it by submitting a turn that carries the bearer proof to this cell.");
-
-    Ok(())
-}
-
-async fn handoff(
-    cfg: &Config,
-    ctx: &Context,
-    cell_id: &str,
-    recipient_pk: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let spinner = ctx.spinner("Creating handoff certificate...");
-    let body = serde_json::json!({
-        "cell_id": cell_id,
-        "recipient_pk": recipient_pk,
-    });
-    let data = post_json(cfg, "/turns/peer-exchange", &body).await?;
-    spinner.finish_and_clear();
-
-    if cfg.is_json() {
-        ctx.json_stdout(&data);
-        return Ok(());
-    }
-
-    let cert_hash = data["certificate_hash"].as_str().unwrap_or("?");
-    ctx.success("Handoff certificate created:");
-    ctx.kv("Cell", &abbrev_hex(cell_id, 8, 4));
-    ctx.kv("Recipient", &abbrev_hex(recipient_pk, 8, 4));
-    ctx.kv("Certificate", &abbrev_hex(cert_hash, 8, 4));
 
     Ok(())
 }

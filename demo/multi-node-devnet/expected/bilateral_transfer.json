@@ -11,7 +11,7 @@
     "transfer_id_distinguishes_target_federation",
     "bilateral_pair_direction_complement_holds",
     "bilateral_pair_amount_agrees",
-    "F2_turns_peer_exchange_route_reachable"
+    "F2_turn_submit_route_reachable"
   ],
 
   "must_not_pass": [
@@ -31,7 +31,8 @@
   "documented_gaps": [
     "transfer_id derivation in this scenario is a Python-shell BLAKE2b stand-in, not the canonical dregg-cell transfer-id from `cell/src/witness.rs`. When the canonical derivation lands, swap the python3 block for a call to a helper binary.",
     "The scenario does not submit a real signed Turn to F2's executor; it asserts the substrate properties (deterministic id, federation binding, direction-complement) that the executor's pair-verifier will assume.",
-    "#88 strengthened (2026-05-25): bilateral_pair_direction_complement_holds and bilateral_pair_amount_agrees now gate on devnet liveness (f2_status) rather than passing on hardcoded ALICE_DIR/BOB_DIR=1/0 constants. When the devnet is not responding both assertions record false. When running, a probe to /turns/peer-exchange confirms the route is present and the pair JSON carries the canonical direction/amount encoding. True γ.2 PI extraction (alice_stub_proof.json, bob_proof.json) remains blocked-on γ.2 Phase 1."
+    "#88 strengthened (2026-05-25): bilateral_pair_direction_complement_holds and bilateral_pair_amount_agrees now gate on devnet liveness (f2_status) rather than passing on hardcoded ALICE_DIR/BOB_DIR=1/0 constants. When the devnet is not responding both assertions record false. When running, a probe confirms the ingress route is present and the pair JSON carries the canonical direction/amount encoding. True γ.2 PI extraction (alice_stub_proof.json, bob_proof.json) remains blocked-on γ.2 Phase 1.",
+    "2026-08-06: both probes REPOINTED from /turns/peer-exchange to /turns/submit, and the must_pass key renamed F2_turns_peer_exchange_route_reachable -> F2_turn_submit_route_reachable. The peer-exchange route was deleted: it hashed (sender, receiver, amount), logged a line and answered success:true without reading the ledger, so leaning a direction-complement assertion on its 'presence' leaned on nothing. /turns/submit is the ingress that actually executes the pair."
   ],
 
   "synthetic_warnings_schema": {

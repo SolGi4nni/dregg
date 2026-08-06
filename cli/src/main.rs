@@ -155,7 +155,7 @@ enum Commands {
         faucet: u64,
     },
 
-    /// Capability management (export, enliven, handoff).
+    /// Capability management (export, enliven, list, revoke).
     Cap {
         #[command(subcommand)]
         command: cap::CapCommand,

@@ -124,11 +124,17 @@ fi
 # direction=0 and the alice_stub row carries direction=1; the off-AIR
 # verifier checks (direction_alice XOR direction_bob) == 1.
 #
-# STRENGTHENED (#88): when the devnet is running, probe F2's
-# /turns/peer-exchange route with a real payload to get an HTTP-level
-# confirmation (4xx = route present + auth enforced, which is the
-# real substrate check). When the devnet is down the assertions record
-# false rather than passing on hardcoded constants.
+# STRENGTHENED (#88): when the devnet is running, probe F2's turn
+# ingress with a real payload to get an HTTP-level confirmation (4xx =
+# route present + auth enforced, which is the real substrate check).
+# When the devnet is down the assertions record false rather than
+# passing on hardcoded constants.
+#
+# ⚑ REPOINTED 2026-08-06: the probe used to hit `/turns/peer-exchange`,
+# a route that hashed its inputs and answered `success: true` without
+# reading the ledger. It is deleted. A bilateral pair lands through
+# `/turns/submit` (the executor's sovereign-witness path), so that is
+# the substrate whose presence this assertion is allowed to lean on.
 #
 # Blocked-on (unchanged): γ.2 Phase 1 PI fields in per-cell AIRs.
 # When those land, replace the probe result with PI[direction] extracted
@@ -154,7 +160,7 @@ PAIREOF
 
     # Route probe: confirms F2 substrate is present and would evaluate the pair.
     _probe_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
-        -X POST "http://127.0.0.1:$F2_PORT/turns/peer-exchange" \
+        -X POST "http://127.0.0.1:$F2_PORT/turns/submit" \
         -H "Content-Type: application/json" \
         -d "$_pair_body" 2>/dev/null || echo "000")
 
@@ -162,7 +168,7 @@ PAIREOF
        && [ "$ALICE_DIR" -ge 0 ] 2>/dev/null && [ "$BOB_DIR" -ge 0 ] 2>/dev/null \
        && [ $(( ALICE_DIR ^ BOB_DIR )) -eq 1 ] 2>/dev/null; then
         record bilateral_pair_direction_complement_holds true
-        devnet_ok "bilateral_pair_direction_complement_holds: devnet probe $F2_PORT/turns/peer-exchange → HTTP $_probe_code; ALICE_DIR=$ALICE_DIR BOB_DIR=$BOB_DIR XOR=1"
+        devnet_ok "bilateral_pair_direction_complement_holds: devnet probe $F2_PORT/turns/submit → HTTP $_probe_code; ALICE_DIR=$ALICE_DIR BOB_DIR=$BOB_DIR XOR=1"
     else
         record bilateral_pair_direction_complement_holds false
         devnet_fail "bilateral_pair_direction_complement_holds: probe code=$_probe_code ALICE_DIR=$ALICE_DIR BOB_DIR=$BOB_DIR"
@@ -217,14 +223,18 @@ synthetic_warn "bilateral_pair_amount_mismatch_detectable: SYNTHETIC (99 != 100 
 # Without a signed turn the endpoint will reject (auth), but it should
 # respond rather than 404. This is "the route exists; the substrate
 # is reachable" assertion.
+#
+# ⚑ REPOINTED 2026-08-06 from `/turns/peer-exchange` (deleted — it read
+# nothing and answered `success: true`) to `/turns/submit`, the ingress
+# that actually executes a turn.
 turns_probe_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
-    -X POST "http://127.0.0.1:$F2_PORT/turns/peer-exchange" \
+    -X POST "http://127.0.0.1:$F2_PORT/turns/submit" \
     -H "Content-Type: application/json" \
     -d '{}' 2>/dev/null || echo "000")
 if [ "$turns_probe_code" != "404" ] && [ "$turns_probe_code" != "000" ]; then
-    record F2_turns_peer_exchange_route_reachable true
+    record F2_turn_submit_route_reachable true
 else
-    record F2_turns_peer_exchange_route_reachable false
+    record F2_turn_submit_route_reachable false
 fi
 
 # ── emit ────────────────────────────────────────────────────────────
