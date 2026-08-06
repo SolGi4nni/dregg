@@ -278,8 +278,21 @@ globs = [
   # ⚑ 2026-08-05 (descent lane) — the judged descent kernel. New module, so it is
   # rooted here on arrival rather than becoming the next orphan this list exists to
   # catch. 48 `#assert_axioms` + 11 `#assert_compiled`; the compiled pins enumerate
-  # 2319 reachable states across the eight-board family, so budget ~40 s.
+  # 3905 reachable states across the eight-board family, so budget ~40 s.
+  # (This said 2319 until 2026-08-06 — the count from BEFORE the mouth became a
+  # junction. A stale census in a build comment is how a shrinking state space goes
+  # unnoticed; the live number is `DeckDescent.family_shape_is_measured`.)
   "Dregg2.Games.PathOfAngels.DeckDescent",
+  # ⚑ 2026-08-06 (descent lane) — the descent WIRE. `DeckDescentEmit` carries the 5
+  # `#assert_compiled` pins that read the RENDERED descriptor bytes back and compare
+  # all 14,382 rows against `DeckDescent.rowFor`, plus the two constructive
+  # falsifiers. `EmitJson` is the shared POAG1 JSON block it and `Emit.lean` are
+  # converging on; `DeckDescentEmitMain` is the `def main` driver, rooted by the same
+  # direct-glob mechanism as the Pickles drivers so an API change cannot break the
+  # emit silently.
+  "Dregg2.Games.PathOfAngels.EmitJson",
+  "Dregg2.Games.PathOfAngels.DeckDescentEmit",
+  "Dregg2.Games.PathOfAngels.DeckDescentEmitMain",
   # ⚑ 2026-08-05 — THE GALLEY BOUNDARY TEETH RAN NOWHERE. This block asked for
   # `Dregg2.Games.PathOfAngels.GalleyCommonsBoundary` and
   # `Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary`, crediting them with "33
@@ -351,8 +364,7 @@ globs = [
   "Dregg2.Games.PathOfAngels.CrewFieldMission",  # 4 ax, 30 comp
   "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime",  # 3 ax, 23 comp
   "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntimeBoundary",  # 18 ax
-  "Dregg2.Games.PathOfAngels.CrewRelayExpedition",  # 6 ax, 28 comp
-  "Dregg2.Games.PathOfAngels.CrewRelayExpeditionBoundary",  # 20 ax
+  "Dregg2.Games.PathOfAngels.CrewRelayExpedition",  # 2 ax, 1 comp
   "Dregg2.Games.PathOfAngels.DeckGenerator",  # 22 ax, 5 comp
   "Dregg2.Games.PathOfAngels.EditorialRegistryBoundary",  # 6 ax
   "Dregg2.Games.PathOfAngels.ExpeditionDemonstrator",  # 4 ax, 19 comp

@@ -75,6 +75,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import math
 import os
 import sys
 from collections import Counter, defaultdict, deque
@@ -1120,11 +1121,28 @@ class ParametricMachineGame:
     def differential(self) -> None:
         """Rebuild every row from the declared state view and refuse on disagreement.
 
-        The rule is small enough to state: refuse if solved, out of turns, already
-        cleared or already exposed; otherwise a first exposure exposes, and a second
-        either clears both plates or clears neither.  Nothing in it mentions a board,
-        which is the property being checked.
+        ⚑ DISPATCHED ON `ruleset`, not hardcoded.  This method used to BE Salvage's
+        rule, which meant a second parametric game either got Salvage's semantics
+        checked against its rows — nonsense that happens to raise — or, worse, an
+        analyser that quietly agreed with whatever it was handed.  A parametric
+        machine with no registered rule model is REFUSED: the whole point of this
+        backend is that the reconstruction is independent, and there is no
+        independent reconstruction of a game nobody wrote one for.
         """
+        model = PARAMETRIC_RULE_MODELS.get(self.doc.get("ruleset"))
+        if model is None:
+            raise Refusal(
+                f"no rule model is registered for ruleset "
+                f"{self.doc.get('ruleset')!r}; this backend analyses a table only "
+                f"after rebuilding it from the declared semantics and checking every "
+                f"row, and it will not analyse a table it cannot rebuild")
+        model(self)
+
+    def _salvage_differential(self) -> None:
+        """Salvage Lock: refuse if solved, out of turns, already cleared or already
+        exposed; otherwise a first exposure exposes, and a second either clears both
+        plates or clears neither.  Nothing in it mentions a board, which is the
+        property being checked."""
         for (sid, aid), t in self.trans.items():
             view = self.states[sid]["view"]
             slot = self.action_meta[aid]["slot"]
@@ -1164,6 +1182,12 @@ class ParametricMachineGame:
                     raise Refusal(f"{sid}/{aid} branches disagree with the clock")
                 if mv["exposed"] is not None or xv["exposed"] is not None:
                     raise Refusal(f"{sid}/{aid} leaves a plate exposed after resolving")
+
+    def _descent_differential(self) -> None:
+        """Deck Descent: rebuilt in full by `DescentRules`, which is written from the
+        descriptor's own `shaft` block and the state views and knows nothing about
+        the Lean kernel's numbers."""
+        DescentRules(self.doc).differential(self)
 
     def automorphisms(self):
         """Permutations of the actions that extend to a state bijection preserving
@@ -1288,7 +1312,7 @@ class ParametricMachineGame:
                      "every transition is deterministic, so the instance cannot affect "
                      "play and the game has no hidden information at all.")
 
-        return {
+        out = {
             "game": self.name,
             "kind": "parametric-machine",
             "engine_module": self.doc["engine_module"],
@@ -1320,6 +1344,882 @@ class ParametricMachineGame:
             "budget_binds": None,
             "budget_slack": None,
         }
+        # A rule model may have measured things only it can measure — the descent
+        # backend's eight-board census, for one.  It goes in the summary rather than
+        # into a second report, so `--json` carries everything the run knows.
+        out.update(getattr(self, "extra_summary", {}))
+        return out
+
+
+# ---------------------------------------------------------------------------
+# the descent rule model — a second, independent statement of Deck Descent
+# ---------------------------------------------------------------------------
+
+class DescentRules:
+    """Deck Descent's rules, restated here and checked against every emitted row.
+
+    ⚑ WHY THIS IS NOT `MachineFamilyGame`.  Descent is an ORACLE game, not a family
+    of instantiated machines.  Its state carries `dark` — the ABSENCE of knowledge
+    about a chamber — and the openness predicate never reads the board: a refusal is
+    a fact the player can see, which the kernel states as `branches_agree_on_refusal`
+    and which this file re-checks row by row below.  Emitting it as a machine family
+    would declare `per-run-open`, and the family backend's dominance pass would then
+    report `survey` and blind `shore` as DOMINATED — they spend a unit of the clock
+    and move no body, so against a KNOWN board they are pure loss.  That verdict is
+    exactly backwards: those two verbs are the only ones that buy information, and
+    the whole decision in this game is when to buy it.  The information they buy is
+    invisible to any analysis that has already been told the answer.
+
+    ⚑ A COST ROW IS NOT A TRANSITION — and this backend does not compute one.  The
+    tool's own header records the nightwatch measurement
+    (`cost_row_domination_does_not_survive_the_real_transition`): two NightWatchLoop
+    choices are dominated on every axis of their delta row and are nevertheless live.
+    So nothing below ranks an action by what it spends.  Every number this class
+    reports comes from walking the REAL transition — the same one the emitted table
+    names — over the real state space.
+
+    ## What is reconstructed, and from what
+
+    Everything comes from the descriptor: the `shaft` block (topology, budgets,
+    capacity, bank target, forfeit order, which lore damages) and the emitted state
+    VIEWS.  Nothing is read from the Lean module.  In particular the four lore values
+    are not hardcoded to their names:
+
+      * `dark` is whatever every chamber reads in the INITIAL state view;
+      * the two PASSAGES are read off the resolve rows — a row that consults the
+        instance names two successors whose views differ in exactly one chamber's
+        lore, and that chamber's two values ARE the two readings;
+      * `shored` is the one declared lore value left over;
+      * `sound` and `flooded` are then separated by `shaft.damaging_lore`, not by
+        the `on_match` / `on_mismatch` labels — so the claim that `on_match` is the
+        sound branch is CHECKED here rather than believed.
+
+    ## What is checked
+
+      1. every one of the emitted rows, verdict + reason + successor ids;
+      2. every emitted view's derived fields (capacity, clock, doom, terminality);
+      3. the emitted state set IS the two-branch closure of the initial state;
+      4. the eight-board census — reachable states, outcome-changing forks, doomed
+         states — computed by this file's own search over this file's own
+         reconstruction, and then compared against the kernel's claim.
+
+    Point 4 is the one that matters.  The kernel asserts the triple in
+    `DeckDescent.family_shape_is_measured` by `native_decide` over its own
+    definitions; this class arrives at it by simulating the descriptor a client
+    downloads.  Those are two independent sources and the comparison is a gate.  A
+    disagreement is a FAIL and it is the headline, because exactly one of the two
+    is then wrong about the game people would be playing.
+    """
+
+    # The kernel's claim, as a claim.  ⚠ This is NOT an input to anything computed
+    # below — the census is complete before this dict is consulted, and consulting it
+    # can only produce a finding.  It is here so that a drift between the proved
+    # numbers and the emitted descriptor is LOUD rather than a thing someone notices
+    # by reading two files side by side.
+    KERNEL_FAMILY_SHAPE = {
+        "reachable_states": 3905,
+        "outcome_forks": 1145,
+        "doomed_states": 2059,
+        "source": "DeckDescent.family_shape_is_measured (native_decide)",
+    }
+
+    REFUSAL_VOCABULARY = {
+        "run-banked", "run-doomed", "no-air", "no-passage", "already-read",
+        "no-shoring", "already-safe", "not-in-a-chamber", "chamber-emptied",
+        "over-capacity", "at-the-hatch", "not-at-the-hatch", "short-sling",
+    }
+
+    def __init__(self, doc: dict) -> None:
+        self.doc = doc
+        shaft = doc.get("shaft")
+        if not isinstance(shaft, dict):
+            raise Refusal("descent descriptor carries no `shaft` block, so there is "
+                          "nothing to rebuild the rules from")
+        budgets = shaft["budgets"]
+        self.air_budget = budgets["air"]
+        self.shoring_budget = budgets["shoring"]
+        self.base_capacity = budgets["base_capacity"]
+        self.bank_target = budgets["bank_target"]
+        self.air_per_action = shaft["air_per_action"]
+        if self.air_per_action != 1:
+            raise Refusal("this model prices every action at one unit of air; the "
+                          f"descriptor declares {self.air_per_action}")
+        self.relics_per_chamber = shaft["relics_per_chamber"]
+        self.surface = shaft["surface"]
+        self.nodes = list(shaft["nodes"])
+        self.chambers = list(shaft["chambers"])
+        self.parent = dict(shaft["parent"])
+        self.main_child = dict(shaft["main_child"])
+        self.spur_child = dict(shaft["spur_child"])
+        self.forfeit_order = list(shaft["forfeit_order"])
+        self.lore_values = list(shaft["lore"])
+        self.damaging = set(shaft["damaging_lore"])
+        self.dist = {}
+        for p, q, d in shaft["crossings"]:
+            self.dist[(p, q)] = d
+
+        if self.surface not in self.nodes:
+            raise Refusal(f"the surface {self.surface!r} is not one of the nodes")
+        if sorted(self.nodes) != sorted(set(self.nodes)):
+            raise Refusal("the shaft names a node twice")
+        if set(self.chambers) | {self.surface} != set(self.nodes):
+            raise Refusal("the chambers and the surface do not exhaust the nodes")
+        if sorted(self.forfeit_order) != sorted(self.chambers):
+            raise Refusal("the forfeit order is not a permutation of the chambers")
+        for p in self.nodes:
+            for q in self.nodes:
+                if (p, q) not in self.dist:
+                    raise Refusal(f"the crossing table has no entry for {p} -> {q}")
+        for n in self.nodes:
+            if self.dist[(n, n)] != 0:
+                raise Refusal(f"the crossing table charges {n} for standing still")
+            if self.dist[(n, self.surface)] != shaft["crossings_to_hatch"][n]:
+                raise Refusal(f"`crossings_to_hatch` and `crossings` disagree at {n}")
+        for p in self.nodes:
+            for q in self.nodes:
+                if self.dist[(p, q)] != self.dist[(q, p)]:
+                    raise Refusal(f"the crossing table is not symmetric at {p}/{q}")
+        if not self.damaging:
+            raise Refusal("no lore value damages, so no crossing can ever cost a body "
+                          "and the shaft holds no risk at all")
+
+        self._bank_cache = {}
+
+    # -- the lore alphabet, derived rather than named ------------------------
+
+    def learn_alphabet(self, game) -> None:
+        """Separate the four lore values without trusting any of their names."""
+        init_view = game.states[game.initial]["view"]
+        init_lore = {init_view["lore"][c] for c in self.chambers}
+        if len(init_lore) != 1:
+            raise Refusal("the initial state does not read the same on every chamber, "
+                          "so the descriptor leaks a chamber before anything is done")
+        self.dark = init_lore.pop()
+
+        passages = set()
+        for (sid, aid), t in game.trans.items():
+            if t["verdict"] != "resolve":
+                continue
+            m = game.states[t["on_match"]]["view"]["lore"]
+            f = game.states[t["on_mismatch"]]["view"]["lore"]
+            differ = [c for c in self.chambers if m[c] != f[c]]
+            if len(differ) != 1:
+                raise Refusal(
+                    f"{sid}/{aid} consults the instance but its two branches differ "
+                    f"in {len(differ)} chambers' lore; a row that reveals more than "
+                    f"one bit is not a row this model can rebuild")
+            c = differ[0]
+            if game.states[sid]["view"]["lore"][c] != self.dark:
+                raise Refusal(f"{sid}/{aid} re-reads a chamber that is already known")
+            passages.add(m[c])
+            passages.add(f[c])
+        if len(passages) != 2:
+            raise Refusal(f"the emitted rows reveal {len(passages)} distinct passage "
+                          f"readings; this model needs exactly two")
+        damaging_passages = passages & self.damaging
+        if len(damaging_passages) != 1:
+            raise Refusal("exactly one of the two passage readings must damage; "
+                          f"{sorted(passages)} against damaging {sorted(self.damaging)}")
+        self.flooded = damaging_passages.pop()
+        self.sound = (passages - {self.flooded}).pop()
+        left = [v for v in self.lore_values
+                if v not in (self.dark, self.sound, self.flooded)]
+        if len(left) != 1:
+            raise Refusal(f"the declared lore alphabet {self.lore_values} does not "
+                          f"leave exactly one value for a shored passage")
+        self.shored = left[0]
+        if self.shored in self.damaging:
+            raise Refusal("a shored passage damages, so shoring buys nothing")
+        self.shoreable = {self.dark} | self.damaging
+
+    # -- states --------------------------------------------------------------
+    #
+    # A state is (node, air, shoring, damage, lore, taken, sling, banked).  The
+    # emitted view carries every one of those and nothing else that is not derived
+    # from them, which is the property `views_are_complete` checks.
+
+    def state_of_view(self, view: dict) -> tuple:
+        return (
+            view["node"], view["air"], view["shoring"], view["damage"],
+            tuple(view["lore"][c] for c in self.chambers),
+            tuple(c in view["emptied"] for c in self.chambers),
+            tuple(c in view["sling"] for c in self.chambers),
+            bool(view["banked"]),
+        )
+
+    def capacity(self, s) -> int:
+        return max(0, self.base_capacity - s[3])
+
+    def turns(self, s) -> int:
+        return self.air_budget - s[1]
+
+    def held(self, s) -> int:
+        return sum(s[6])
+
+    def cheapest_bank(self, s) -> int:
+        """`shaft.reserve`, read as arithmetic: the cheapest ordered visit of the
+        chambers still needed, one lift each, plus the extraction, on the most
+        favourable board still consistent with what the run has seen — so a dark
+        chamber is assumed to cost nothing, and a state this refuses is one no board
+        rescues."""
+        key = (s[0], s[5], s[6])
+        hit = self._bank_cache.get(key)
+        if hit is not None:
+            return hit
+        node = s[0]
+        if self.held(s) >= self.bank_target:
+            out = self.dist[(node, self.surface)] + 1
+        else:
+            need = self.bank_target - self.held(s)
+            avail = [c for i, c in enumerate(self.chambers) if not s[5][i]]
+            best = self.air_budget + 1
+            for seq in itertools.permutations(avail, need):
+                here, cost = node, 0
+                for c in seq:
+                    cost += self.dist[(here, c)]
+                    here = c
+                cost += self.dist[(here, self.surface)]
+                best = min(best, cost + need + 1)
+            out = best
+        self._bank_cache[key] = out
+        return out
+
+    def can_still_bank(self, s) -> bool:
+        return (not s[7]
+                and self.capacity(s) >= self.bank_target
+                and self.cheapest_bank(s) <= s[1])
+
+    def doomed(self, s) -> bool:
+        return not s[7] and not self.can_still_bank(s)
+
+    # -- the transition ------------------------------------------------------
+
+    def target(self, node: str, line: str):
+        if line == "spur":
+            return self.spur_child.get(node)
+        if line == "main":
+            return self.main_child.get(node)
+        return None
+
+    def is_open(self, s, kind: str, line: str) -> bool:
+        if not self.can_still_bank(s):
+            return False
+        if s[1] <= 0:
+            return False
+        node = s[0]
+        c = self.target(node, line)
+        idx = {ch: i for i, ch in enumerate(self.chambers)}
+        if kind == "survey":
+            return c is not None and s[4][idx[c]] == self.dark
+        if kind == "shore":
+            return s[2] > 0 and c is not None and s[4][idx[c]] in self.shoreable
+        if kind == "descend":
+            return c is not None
+        if kind == "lift":
+            if node == self.surface:
+                return False
+            i = idx[node]
+            return (not s[5][i]
+                    and self.held(s) + self.relics_per_chamber <= self.capacity(s))
+        if kind == "ascend":
+            return node != self.surface
+        if kind == "extract":
+            return node == self.surface and self.held(s) >= self.bank_target
+        raise Refusal(f"unknown action kind {kind!r}")
+
+    def refusal_reason(self, s, kind: str, line: str) -> str:
+        """The FIRST conjunct that failed, in the order openness tests them — so a
+        client renders the reason that actually applies and not a plausible one."""
+        if s[7]:
+            return "run-banked"
+        if not self.can_still_bank(s):
+            return "run-doomed"
+        if s[1] <= 0:
+            return "no-air"
+        node = s[0]
+        c = self.target(node, line)
+        idx = {ch: i for i, ch in enumerate(self.chambers)}
+        if kind == "survey":
+            return "no-passage" if c is None else "already-read"
+        if kind == "shore":
+            if s[2] == 0:
+                return "no-shoring"
+            return "no-passage" if c is None else "already-safe"
+        if kind == "descend":
+            return "no-passage"
+        if kind == "lift":
+            if node == self.surface:
+                return "not-in-a-chamber"
+            return "chamber-emptied" if s[5][idx[node]] else "over-capacity"
+        if kind == "ascend":
+            return "at-the-hatch"
+        if kind == "extract":
+            return "not-at-the-hatch" if node != self.surface else "short-sling"
+        raise Refusal(f"unknown action kind {kind!r}")
+
+    def take_damage(self, s) -> tuple:
+        damage = s[3] + 1
+        cap = max(0, self.base_capacity - damage)
+        sling = list(s[6])
+        if cap < sum(sling):
+            for c in self.forfeit_order:
+                i = self.chambers.index(c)
+                if sling[i]:
+                    sling[i] = False
+                    break
+        return (s[0], s[1], s[2], damage, s[4], s[5], tuple(sling), s[7])
+
+    def cross(self, s, lore_value: str) -> tuple:
+        return self.take_damage(s) if lore_value in self.damaging else s
+
+    def step(self, s, kind: str, line: str, reading: str) -> tuple:
+        """The transition with openness already decided.  `reading` is what the board
+        says about the chamber this action reaches for; it is consulted only where a
+        dark passage is actually resolved."""
+        node, air, shoring, damage, lore, taken, sling, banked = s
+        idx = {ch: i for i, ch in enumerate(self.chambers)}
+        c = self.target(node, line)
+        if kind == "survey":
+            new = list(lore)
+            new[idx[c]] = reading
+            return (node, air - 1, shoring, damage, tuple(new), taken, sling, banked)
+        if kind == "shore":
+            new = list(lore)
+            new[idx[c]] = self.shored
+            return (node, air - 1, shoring - 1, damage, tuple(new), taken, sling,
+                    banked)
+        if kind == "descend":
+            seen = reading if lore[idx[c]] == self.dark else lore[idx[c]]
+            new = list(lore)
+            new[idx[c]] = seen
+            return self.cross(
+                (c, air - 1, shoring, damage, tuple(new), taken, sling, banked), seen)
+        if kind == "lift":
+            i = idx[node]
+            t, g = list(taken), list(sling)
+            t[i], g[i] = True, True
+            return (node, air - 1, shoring, damage, lore, tuple(t), tuple(g), banked)
+        if kind == "ascend":
+            i = idx[node]
+            return self.cross(
+                (self.parent[node], air - 1, shoring, damage, lore, taken, sling,
+                 banked), lore[i])
+        if kind == "extract":
+            return (node, air - 1, shoring, damage, lore, taken, sling, True)
+        raise Refusal(f"unknown action kind {kind!r}")
+
+    def row_for(self, s, kind: str, line: str):
+        """`(verdict, reason, next, on_match, on_mismatch)` — an accept exactly when
+        the two readings agree, which is exactly when the action does not consult the
+        board."""
+        if not self.is_open(s, kind, line):
+            return ("refuse", self.refusal_reason(s, kind, line), None, None, None)
+        m = self.step(s, kind, line, self.sound)
+        f = self.step(s, kind, line, self.flooded)
+        if m == f:
+            return ("accept", None, m, None, None)
+        return ("resolve", None, None, m, f)
+
+    def successor(self, s, kind: str, line: str, board: dict):
+        """The real transition on one board — what a run actually does."""
+        if not self.is_open(s, kind, line):
+            return None
+        c = self.target(s[0], line)
+        return self.step(s, kind, line, board[c] if c is not None else self.sound)
+
+    # -- the differential ----------------------------------------------------
+
+    def differential(self, game) -> None:
+        self.learn_alphabet(game)
+        meta = {}
+        for aid in game.actions:
+            m = game.action_meta[aid]
+            kind, line = m.get("kind"), m.get("line")
+            if kind is None or line is None:
+                raise Refusal(f"action {aid} declares no kind/line, so its target "
+                              f"cannot be rebuilt from the shaft")
+            if line not in ("main", "spur", "here"):
+                raise Refusal(f"action {aid} declares an unknown line {line!r}")
+            meta[aid] = (kind, line)
+
+        # 1. every view is a state, and the ids separate them
+        state_of = {}
+        id_of = {}
+        for sid, s in game.states.items():
+            st = self.state_of_view(s["view"])
+            if st in id_of:
+                raise Refusal(f"states {id_of[st]} and {sid} carry the same view, so "
+                              f"the emitted id is not a function of the state")
+            id_of[st] = sid
+            state_of[sid] = st
+        self.id_of = id_of
+        self.state_of = state_of
+
+        # 2. every derived field of every view, rebuilt
+        for sid, s in game.states.items():
+            st = state_of[sid]
+            v = s["view"]
+            if v["capacity"] != self.capacity(st):
+                raise Refusal(f"{sid} reports capacity {v['capacity']}, the shaft "
+                              f"gives {self.capacity(st)}")
+            if v["turns"] != self.turns(st):
+                raise Refusal(f"{sid} reports {v['turns']} turns used against an air "
+                              f"budget of {self.air_budget} and {st[1]} left")
+            if bool(v["doomed"]) != self.doomed(st):
+                raise Refusal(
+                    f"{sid} reports doomed={v['doomed']}; rebuilding the reserve from "
+                    f"`shaft.reserve` gives {self.doomed(st)}.  A client that greys a "
+                    f"run out is telling a player their descent is over, so this is "
+                    f"not a cosmetic field")
+            if bool(v["solved"]) != st[7] or bool(s["terminal"]) != st[7]:
+                raise Refusal(f"{sid} disagrees with its own view about being banked")
+            if st[1] > self.air_budget or st[2] > self.shoring_budget:
+                raise Refusal(f"{sid} holds more than the declared budget")
+
+        # 3. every row
+        seen_reasons = set()
+        for sid, st in state_of.items():
+            for aid in game.actions:
+                kind, line = meta[aid]
+                verdict, reason, nxt, on_m, on_f = self.row_for(st, kind, line)
+                t = game.trans[(sid, aid)]
+                if t["verdict"] != verdict:
+                    raise Refusal(
+                        f"{sid}/{aid}: the table says {t['verdict']}, the rebuilt "
+                        f"rule says {verdict}")
+                if verdict == "refuse":
+                    seen_reasons.add(reason)
+                    if t["reason"] != reason:
+                        raise Refusal(
+                            f"{sid}/{aid}: the table refuses for {t['reason']!r}, the "
+                            f"rebuilt rule refuses for {reason!r}")
+                elif verdict == "accept":
+                    self._same_state(game, sid, aid, "next", t["next"], nxt)
+                else:
+                    self._same_state(game, sid, aid, "on_match", t["on_match"], on_m)
+                    self._same_state(game, sid, aid, "on_mismatch",
+                                     t["on_mismatch"], on_f)
+
+        unknown = seen_reasons - self.REFUSAL_VOCABULARY
+        if unknown:
+            raise Refusal(f"the rebuilt rule refuses for reasons this model does not "
+                          f"declare: {sorted(unknown)}")
+
+        # 4. the emitted state set IS the two-branch closure of the initial state
+        closure = {state_of[game.initial]}
+        queue = deque([state_of[game.initial]])
+        while queue:
+            st = queue.popleft()
+            for aid in game.actions:
+                kind, line = meta[aid]
+                _, _, nxt, on_m, on_f = self.row_for(st, kind, line)
+                for n in (nxt, on_m, on_f):
+                    if n is not None and n not in closure:
+                        closure.add(n)
+                        queue.append(n)
+        emitted = set(state_of.values())
+        if closure != emitted:
+            extra = len(emitted - closure)
+            missing = len(closure - emitted)
+            raise Refusal(
+                f"the emitted state set is not the closure of the initial state: "
+                f"{extra} declared state(s) are unreachable under the rebuilt rule "
+                f"and {missing} reachable state(s) are not declared")
+
+        self.census(game)
+
+    def _same_state(self, game, sid, aid, slot, emitted_id, mine) -> None:
+        want = self.id_of.get(mine)
+        if want is None:
+            raise Refusal(f"{sid}/{aid} {slot}: the rebuilt rule reaches a state the "
+                          f"descriptor does not declare")
+        if emitted_id != want:
+            raise Refusal(f"{sid}/{aid} {slot}: the table names {emitted_id}, the "
+                          f"rebuilt rule reaches {want}")
+
+    # -- the census ----------------------------------------------------------
+
+    def census(self, game) -> None:
+        """Walk the REAL transition on each board of the family and count.
+
+        The board is one reading per chamber, and the readings are the two this class
+        derived from the resolve rows — so the family is enumerated here, from the
+        descriptor, and not taken from anywhere.
+        """
+        rep, name = game.rep, game.name
+        meta = {aid: (game.action_meta[aid]["kind"], game.action_meta[aid]["line"])
+                for aid in game.actions}
+        init = self.state_of[game.initial]
+        readings = (self.sound, self.flooded)
+
+        boards = [dict(zip(self.chambers, combo))
+                  for combo in itertools.product(readings, repeat=len(self.chambers))]
+
+        per_board = []
+        total_reach = total_fork = total_doom = 0
+        for board in boards:
+            reach = {init}
+            queue = deque([init])
+            while queue:
+                st = queue.popleft()
+                for aid in game.actions:
+                    kind, line = meta[aid]
+                    n = self.successor(st, kind, line, board)
+                    if n is not None and n not in reach:
+                        reach.add(n)
+                        queue.append(n)
+            forks = 0
+            for st in reach:
+                lives = dies = False
+                for aid in game.actions:
+                    kind, line = meta[aid]
+                    n = self.successor(st, kind, line, board)
+                    if n is None:
+                        continue
+                    if self.doomed(n):
+                        dies = True
+                    else:
+                        lives = True
+                if lives and dies:
+                    forks += 1
+            doom = sum(1 for st in reach if self.doomed(st))
+            per_board.append({
+                "board": {c: board[c] for c in self.chambers},
+                "reachable": len(reach), "forks": forks, "doomed": doom,
+            })
+            total_reach += len(reach)
+            total_fork += forks
+            total_doom += doom
+
+        game.extra_summary = {
+            "instance_family_size": len(boards),
+            "family_reachable_states": total_reach,
+            "outcome_forks": total_fork,
+            "family_doomed_states": total_doom,
+            "per_board": per_board,
+            "kernel_family_shape": dict(self.KERNEL_FAMILY_SHAPE),
+            "lore_alphabet": {
+                "unknown": self.dark, "sound": self.sound,
+                "flooded": self.flooded, "shored": self.shored,
+            },
+        }
+
+        # ⚑ the cross-check.  Two independent sources, compared.
+        k = self.KERNEL_FAMILY_SHAPE
+        mine = (total_reach, total_fork, total_doom)
+        theirs = (k["reachable_states"], k["outcome_forks"], k["doomed_states"])
+        if mine != theirs:
+            rep.find(name, "kernel-census-disagreement", FAIL,
+                     "the gate and the kernel disagree about the shape of the family",
+                     f"walking the emitted descriptor gives "
+                     f"{total_reach} reachable / {total_fork} forks / {total_doom} "
+                     f"doomed across {len(boards)} boards; {k['source']} asserts "
+                     f"{theirs[0]} / {theirs[1]} / {theirs[2]}.  These are independent "
+                     f"— one is a compiled evaluation of the kernel's own definitions, "
+                     f"the other is a simulation of the bytes a client downloads — so a "
+                     f"disagreement means the descriptor and the engine are not the "
+                     f"same game.")
+        else:
+            rep.find(name, "family-shape-agrees", INFO,
+                     f"{total_reach} reachable states, {total_fork} outcome-changing "
+                     f"forks and {total_doom} doomed states, arrived at twice",
+                     f"this tool rebuilt the rules from `shaft`, checked all "
+                     f"{len(game.trans)} emitted rows against them, then walked the "
+                     f"real transition over all {len(boards)} boards of the family.  It "
+                     f"gets {total_reach} / {total_fork} / {total_doom}, and "
+                     f"{k['source']} independently asserts the same triple.  A pin "
+                     f"against its own definition is decoration; this is two sources.")
+
+        if total_fork == 0:
+            rep.find(name, "no-outcome-fork", FAIL,
+                     "no reachable state offers a choice that changes the outcome",
+                     "every legal action from every reachable state leaves the run in "
+                     "the same condition, so the player's decisions are decoration.")
+        if total_doom == 0:
+            rep.find(name, "cannot-be-lost", FAIL,
+                     "no reachable state is doomed, so the descent cannot be lost",
+                     "a run that cannot fail is not an expedition.")
+
+        dead_boards = [b for b in per_board if b["forks"] == 0]
+        if dead_boards:
+            rep.find(name, "board-without-a-decision", WARN,
+                     f"{len(dead_boards)} board(s) of the family offer no fork",
+                     f"a run drawn onto one of these plays itself: {dead_boards[:3]}")
+
+        spans = {b["reachable"] for b in per_board}
+        if len(spans) == 1:
+            rep.find(name, "boards-are-interchangeable", WARN,
+                     "every board of the family has the same reachable count",
+                     f"all {len(boards)} instances span {spans.pop()} states, which is "
+                     f"consistent with a family whose members differ only by relabelling "
+                     f"— check that the shaft is not symmetric under permuting the "
+                     f"chambers, or the hidden bits buy less than they appear to.")
+
+        shapes = {(b["reachable"], b["forks"], b["doomed"]) for b in per_board}
+        game.extra_summary["distinct_board_shapes"] = len(shapes)
+        if len(shapes) < len(boards):
+            rep.find(name, "the-family-collapses", WARN,
+                     f"the {len(boards)} boards of the family produce only "
+                     f"{len(shapes)} distinct shapes",
+                     f"two hidden draws that yield the same reachable count, the same "
+                     f"fork count and the same doom count are the same game under a "
+                     f"relabelling, so the bits that distinguish them buy a player "
+                     f"nothing.  {len(boards)} draws collapsing to {len(shapes)} is "
+                     f"{math.log2(len(boards)) - math.log2(len(shapes)):.2f} of a bit "
+                     f"of the instance doing no work.")
+
+        self.floors(game, boards)
+        # the two spurs, priced against each other — AFTER the floors, because the
+        # sharp question about a junction is answered in minimax values and not in
+        # the topology.
+        self.spur_symmetry(game, per_board)
+
+    def floors(self, game, boards) -> None:
+        """The three floors, computed exactly rather than estimated.
+
+        ⚑ `worst_case_optimal` is a real MINIMAX, not the longest legal play.  The
+        oracle answers adversarially, and it may: each chamber's bit is consulted at
+        most once — a resolve row fires only on a `dark` passage, which
+        `learn_alphabet` checks — so EVERY answer sequence is realised by some board
+        of the family, and an adversary who picks answers is exactly an adversary who
+        picked a board.  The value is therefore the ordinary minimax on the knowledge
+        machine: a player minimises over legal actions, the oracle maximises over the
+        two branches of a resolve row.
+
+        The recursion terminates without a fixpoint pass because every action spends
+        a unit of air, so the machine is a DAG layered by the clock.
+        """
+        meta = {aid: (game.action_meta[aid]["kind"], game.action_meta[aid]["line"])
+                for aid in game.actions}
+        rep, name = game.rep, game.name
+        INF = float("inf")
+
+        # minimax — the guaranteed cost, against any board still consistent
+        value = {}
+        for st in sorted(self.state_of.values(), key=lambda s: s[1]):
+            if st[7]:
+                value[st] = 0
+                continue
+            best = INF
+            for aid in game.actions:
+                kind, line = meta[aid]
+                _, _, nxt, on_m, on_f = self.row_for(st, kind, line)
+                branches = [b for b in (nxt, on_m, on_f) if b is not None]
+                if not branches:
+                    continue
+                best = min(best, 1 + max(value.get(b, INF) for b in branches))
+            value[st] = best
+        guaranteed = value[self.state_of[game.initial]]
+        self.value = value
+
+        # the luckiest line — shortest accepted path to a bank on the kindest board
+        luckiest = INF
+        for board in boards:
+            depth = {self.state_of[game.initial]: 0}
+            queue = deque([self.state_of[game.initial]])
+            while queue:
+                st = queue.popleft()
+                if st[7]:
+                    luckiest = min(luckiest, depth[st])
+                    continue
+                for aid in game.actions:
+                    kind, line = meta[aid]
+                    n = self.successor(st, kind, line, board)
+                    if n is not None and n not in depth:
+                        depth[n] = depth[st] + 1
+                        queue.append(n)
+
+        info_floor = ceil_log(len(boards), 2)
+        game.extra_summary["information_floor_loose"] = info_floor
+        game.extra_summary["information_floor_tight"] = info_floor
+        game.extra_summary["execution_floor_as_designed"] = (
+            None if luckiest == INF else luckiest)
+        game.extra_summary["execution_floor_as_emitted"] = (
+            None if guaranteed == INF else guaranteed)
+        game.extra_summary["worst_case_optimal"] = (
+            None if guaranteed == INF else guaranteed)
+
+        if guaranteed == INF:
+            rep.find(name, "not-winnable-against-the-oracle", FAIL,
+                     "no strategy banks the target against a worst-case oracle",
+                     f"the minimax value of the opening position is infinite: for every "
+                     f"line the player can take, some board of the family still "
+                     f"consistent with what has been seen dooms it.  A descent that "
+                     f"cannot be won by playing well is a coin, not an expedition.")
+            game.extra_summary["budget_binds"] = True
+            game.extra_summary["budget_slack"] = None
+            return
+
+        binds = guaranteed >= game.budget
+        game.extra_summary["budget_binds"] = binds
+        game.extra_summary["budget_slack"] = game.budget - guaranteed
+
+        if guaranteed == game.budget:
+            rep.find(name, "budget-binds-exactly", INFO,
+                     "the air budget binds exactly under optimal play",
+                     f"the exact minimax value of the opening position is "
+                     f"{guaranteed} and `action_limit` is {game.budget}; slack 0.  "
+                     f"Every unit of the clock is load-bearing, and a player who "
+                     f"spends one badly cannot recover it — which is what makes the "
+                     f"scout decision at the mouth a decision.  The luckiest line — "
+                     f"the shortest accepted path to a bank on the kindest board — "
+                     f"takes {luckiest}, so the gap between fortune and guarantee is "
+                     f"{guaranteed - luckiest} units.")
+        elif guaranteed > game.budget:
+            rep.find(name, "budget-cannot-be-met", FAIL,
+                     "optimal play needs more air than the descriptor allows",
+                     f"minimax {guaranteed} against `action_limit` {game.budget}: the "
+                     f"run is over before a guaranteed line can finish.")
+        else:
+            rep.find(name, "budget-has-slack", WARN,
+                     f"the air budget has {game.budget - guaranteed} unit(s) of slack "
+                     f"under optimal play",
+                     f"minimax {guaranteed} against `action_limit` {game.budget}.  "
+                     f"Spare clock means a player can buy information they do not need "
+                     f"to buy, which is how a decision stops being one.")
+
+        if luckiest == guaranteed:
+            rep.find(name, "fortune-buys-nothing", WARN,
+                     "the kindest board costs exactly what the cruellest guarantee does",
+                     f"both are {guaranteed} actions, so the hidden bits change the "
+                     f"route but never the length, and a player learns nothing from "
+                     f"finishing early because nobody ever does.")
+
+    def spur_symmetry(self, game, per_board) -> None:
+        """⚑ Are the two branches of the junction the same branch?
+
+        The junction is the whole reason this game is not a corridor, and it is worth
+        exactly as much as the two spurs differ.  Topological symmetry is the cheap
+        half of the answer: if swapping them preserves the crossing table then the two
+        names are interchangeable BEFORE anything is learnt.
+
+        ⚑ The expensive half is the one that matters, and it is measured here rather
+        than assumed.  A junction is a real decision only when which way is right
+        DEPENDS ON WHAT IS KNOWN — that is, when there are reachable positions at the
+        junction where the main line is strictly better in minimax AND reachable
+        positions where the spur is.  A junction where one side is never worse is a
+        labelled corridor no matter how asymmetric the topology looks, and topology
+        alone cannot tell the two apart.  So this counts both.
+        """
+        junctions = [n for n in self.nodes
+                     if n in self.main_child and n in self.spur_child]
+        if len(junctions) != 1:
+            if not junctions:
+                game.rep.find(game.name, "no-junction", WARN,
+                              "the shaft has no node with two children",
+                              "every descent walks the same corridor, so there is no "
+                              "branch to commit to and no spur to regret.")
+            return
+        j = junctions[0]
+        a, b = self.main_child[j], self.spur_child[j]
+        swap = {a: b, b: a}
+        sigma = lambda n: swap.get(n, n)
+        # σ is an automorphism of the shaft exactly when it preserves every crossing.
+        same_ring = all(self.dist[(sigma(p), sigma(q))] == self.dist[(p, q)]
+                        for p in self.nodes for q in self.nodes)
+        same_depth = self.dist[(a, self.surface)] == self.dist[(b, self.surface)]
+        same_parent = self.parent[a] == self.parent[b]
+        symmetric = same_depth and same_parent and same_ring
+
+        # how often the choice at the junction actually goes each way
+        value = getattr(self, "value", {})
+        meta = {aid: (game.action_meta[aid]["kind"], game.action_meta[aid]["line"])
+                for aid in game.actions}
+        main_aid = next((aid for aid, (k, l) in meta.items()
+                         if k == "descend" and l == "main"), None)
+        spur_aid = next((aid for aid, (k, l) in meta.items()
+                         if k == "descend" and l == "spur"), None)
+        main_better = spur_better = tied = 0
+        if main_aid and spur_aid:
+            for st in self.state_of.values():
+                if st[0] != j or st[7]:
+                    continue
+                vals = []
+                for aid in (main_aid, spur_aid):
+                    kind, line = meta[aid]
+                    _, _, nxt, on_m, on_f = self.row_for(st, kind, line)
+                    br = [x for x in (nxt, on_m, on_f) if x is not None]
+                    vals.append(1 + max(value.get(x, float("inf")) for x in br)
+                                if br else None)
+                if vals[0] is None or vals[1] is None:
+                    continue
+                if vals[0] < vals[1]:
+                    main_better += 1
+                elif vals[1] < vals[0]:
+                    spur_better += 1
+                else:
+                    tied += 1
+        game.extra_summary["junction_main_better"] = main_better
+        game.extra_summary["junction_spur_better"] = spur_better
+        game.extra_summary["junction_tied"] = tied
+
+        split = (f"standing at {j} with both descents legal, the main line is strictly "
+                 f"better in {main_better} reachable position(s), the spur in "
+                 f"{spur_better}, and they are worth the same in {tied}")
+
+        if main_better and spur_better:
+            game.rep.find(
+                game.name, "the-junction-is-a-decision", INFO,
+                f"which branch of {j} is right depends on what has been learnt",
+                f"{split}.  Both directions occur, so the fork is a genuine decision "
+                f"and not a labelled corridor — a player who reads the lore differently "
+                f"walks a different way and is right to." +
+                (f"  ⚠ It is a decision that only EXISTS after information: the shaft "
+                 f"is symmetric under swapping {a} and {b}, so on turn one the two are "
+                 f"interchangeable and the {main_better}/{spur_better} split is the "
+                 f"symmetry answering itself." if symmetric else ""))
+        elif main_better or spur_better:
+            winner, loser = ((a, b) if main_better else (b, a))
+            game.rep.find(
+                game.name, "the-junction-is-a-labelled-corridor", WARN,
+                f"{winner} is never worse than {loser} anywhere at {j}",
+                f"{split}.  One side of a fork that is never worse is not a branch, it "
+                f"is the route with a second name on it — and this is what a shaft "
+                f"looks like when a spur has been made asymmetric by making it more "
+                f"EXPENSIVE.  ⚑ Measured 2026-08-06 on this very game: charging the "
+                f"spur two units of air to enter (with or without a second relic in it) "
+                f"turns an 18/18 split into 26/0 and drops the family's "
+                f"outcome-changing forks from 1145 to 749.  A spur nobody takes is "
+                f"worse than a spur that is only a name.")
+        else:
+            game.rep.find(
+                game.name, "the-junction-is-a-coin", WARN,
+                f"the two branches of {j} are worth exactly the same, always",
+                f"{split}.  No reachable position at the junction prefers either "
+                f"branch, so the commitment the fork is supposed to represent costs "
+                f"the player nothing to get wrong.")
+
+        if symmetric:
+            game.rep.find(
+                game.name, "the-spurs-are-one-spur", WARN,
+                f"the shaft is symmetric under swapping {a} and {b}",
+                f"both sit {self.dist[(a, self.surface)]} crossings from "
+                f"{self.surface} under the same parent, hold the same "
+                f"{self.relics_per_chamber} relic, and the crossing table is invariant "
+                f"under the swap.  The cost is exact and it is visible in the census "
+                f"above: the eight draws collapse to "
+                f"{game.extra_summary.get('distinct_board_shapes')} distinct shapes, "
+                f"because a board and its west/east mirror are the same game.  ⚑ The "
+                f"repair that WORKS is not the obvious one.  Measured 2026-08-06 over "
+                f"this model: making {b} costlier to reach kills the decision (see the "
+                f"junction finding).  Giving {b} a SECOND RELIC at the SAME distance "
+                f"breaks the mirror without breaking the branch — all eight draws "
+                f"become distinct, family forks rise 1145 -> 1360, and the junction "
+                f"stays a real decision at 18/19.  It also keeps the clock binding at "
+                f"9.  ⚠ That is a prediction from this file's model, not a proved "
+                f"property of a kernel: it needs `Sling` to carry a COUNT per chamber "
+                f"rather than a flag, which is a real change to `DeckDescent` and has "
+                f"not been made.")
+
+
+# A parametric table is analysed only by a tool that can rebuild it.  Registering a
+# ruleset here is the assertion "there is a second, independent statement of these
+# rules in this file, and every emitted row is checked against it".  An unregistered
+# ruleset is refused rather than measured.
+PARAMETRIC_RULE_MODELS = {
+    "salvage-v2": ParametricMachineGame._salvage_differential,
+    "descent-v1": ParametricMachineGame._descent_differential,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -2322,7 +3222,11 @@ def summary_table(report: Report, out):
               f"{'classes':>9}{'':>10}\n")
     for g in report.games:
         out.write(
-            f"  {g['game']:<22}{g['information_floor_tight']:>5}"
+            # ⚠ every column is `str`-ed.  A game whose floor pass has not run yet
+            # carries `None` here, and formatting `None` with `:>5` raises — which
+            # took the whole render down AFTER every game had been analysed and every
+            # finding recorded, so a clean run reported nothing at all.
+            f"  {g['game']:<22}{str(g['information_floor_tight']):>5}"
             f"{str(g['execution_floor_as_emitted']):>6}"
             f"{str(g['worst_case_optimal']):>5}{g['action_limit']:>8}"
             f"{str(g['budget_slack']):>7}{g['opener_classes']:>9}"
