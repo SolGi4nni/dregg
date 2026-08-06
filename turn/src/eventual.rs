@@ -416,24 +416,11 @@ impl Default for Pipeline {
     }
 }
 
-// ─── PipelineResult ──────────────────────────────────────────────────────────
-
-/// The outcome of executing a pipeline.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PipelineResult {
-    /// All turns in the pipeline committed successfully.
-    AllCommitted { committed: Vec<usize> },
-    /// Some turns committed, some are pending (conditional turns not yet resolved).
-    PartialWithPending {
-        committed: Vec<usize>,
-        pending: Vec<usize>,
-    },
-    /// Some turns failed. In non-atomic mode, others may have committed.
-    Failed {
-        committed: Vec<usize>,
-        failed: Vec<(usize, PipelineError)>,
-    },
-}
+// ⚑ `PipelineResult` (an `AllCommitted / PartialWithPending / Failed` summary enum) stood
+// here until 2026-08-05. Its ONLY producer was `execute_pipeline_result`, a zero-caller
+// copy of `execute_pipeline` that skipped the `depends_on` verification; both are deleted.
+// `execute_pipeline` returns the per-turn `Vec<Result<TurnReceipt, PipelineError>>`, which
+// carries strictly more information than the summary did.
 
 /// Builder for constructing pipelines with a fluent API.
 pub struct PipelineBuilder {

@@ -364,6 +364,11 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         SovereignWitnessRequired { cell }
         | SovereignCommitmentMismatch { cell, .. }
         | ProofCarryingRequiresSovereign { cell }
+        // The cell's declared per-turn `Effect::Custom` budget exceeds the circuit's hard
+        // cap, so the DoS bound on recursive sub-proof verifies cannot be honored and the
+        // turn is refused before any of them runs. Proof-family, and it NAMES the cell:
+        // the defect is that cell's registration, not the turn.
+        | CustomEffectCapAboveHardCap { cell, .. }
         | SovereignNotRegistered { cell } => (GuardKind::Proof, vec![*cell]),
 
         LeanShadowVeto => (GuardKind::Other, vec![]),

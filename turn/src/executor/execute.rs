@@ -223,7 +223,10 @@ impl TurnExecutor {
     /// 3. Walks the call forest depth-first.
     /// 4. For each action: checks preconditions, verifies authorization, applies effects.
     /// 5. Meters computrons at each step.
-    /// 6. If any action fails: replays journal in reverse to roll back ALL effects.
+    /// 6. If any action fails: replays the journal in reverse to roll back all FOREST
+    ///    effects. ⚑ **Phase 1 (fee debit + nonce increment) is not journaled and is never
+    ///    rolled back** — a `Rejected` turn returns fee-debited, nonce-bumped state. That
+    ///    is the anti-DoS charge, not an oversight; see the module header.
     /// 7. If successful: produces a TurnReceipt with Merkle hashes.
     ///
     /// TRUST-CRITICAL: This function is the sole entry point for all ledger state mutations.
@@ -836,187 +839,13 @@ impl TurnExecutor {
         let mut sovereign_cell_ids: Vec<CellId> = Vec::new();
         let mut sovereign_witness_sequences: Vec<(CellId, u64)> = Vec::new();
         for (cell_id, witness) in &turn.sovereign_witnesses {
-            // 0. Witness key vs payload cell_id self-consistency.
-            if witness.cell_id != *cell_id {
+            // Rules 0-8 are a PURE function of (cell_id, witness, turn, ledger, federation
+            // id) and live in `validate_sovereign_witness` so `validate_without_apply` runs
+            // the SAME gate rather than a second, weaker transcription of it. Only the
+            // injection below mutates.
+            if let Err(reason) = self.validate_sovereign_witness(cell_id, witness, turn, ledger) {
                 return TurnResult::Rejected {
-                    reason: TurnError::InvalidEffect {
-                        reason: format!(
-                            "sovereign witness payload cell_id {} does not match map key {}",
-                            witness.cell_id, cell_id
-                        ),
-                    },
-                    at_action: vec![],
-                };
-            }
-            // 1. Verify the cell is actually sovereign in the ledger.
-            let stored_commitment = match ledger.get_sovereign_commitment(cell_id) {
-                Some(c) => *c,
-                None => {
-                    return TurnResult::Rejected {
-                        reason: TurnError::InvalidEffect {
-                            reason: format!(
-                                "sovereign witness provided for non-sovereign cell {}",
-                                cell_id
-                            ),
-                        },
-                        at_action: vec![],
-                    };
-                }
-            };
-            // 2. Witness declared old_commitment must equal ledger's stored.
-            if witness.old_commitment != stored_commitment {
-                return TurnResult::Rejected {
-                    reason: TurnError::SovereignCommitmentMismatch {
-                        cell: *cell_id,
-                        expected: stored_commitment,
-                        got: witness.old_commitment,
-                    },
-                    at_action: vec![],
-                };
-            }
-            // 3. cell_state's commitment must equal the witness's declared
-            //    old_commitment (and therefore the stored one).
-            let computed_commitment = witness.cell_state.state_commitment();
-            if computed_commitment != witness.old_commitment {
-                return TurnResult::Rejected {
-                    reason: TurnError::SovereignCommitmentMismatch {
-                        cell: *cell_id,
-                        expected: witness.old_commitment,
-                        got: computed_commitment,
-                    },
-                    at_action: vec![],
-                };
-            }
-            // 4. cell_state id must match the witness id (the cell carries
-            //    its identity inside its state, so this guards against any
-            //    `cell_state` body whose `id()` accessor drifts from the
-            //    map key).
-            if witness.cell_state.id() != *cell_id {
-                return TurnResult::Rejected {
-                    reason: TurnError::InvalidEffect {
-                        reason: format!(
-                            "sovereign witness cell ID mismatch: expected {}, got {}",
-                            cell_id,
-                            witness.cell_state.id()
-                        ),
-                    },
-                    at_action: vec![],
-                };
-            }
-            // 5. Ed25519 signature against the witnessed cell's public_key.
-            //    Since `cell_state.public_key()` is bound into
-            //    `state_commitment()` (verified above), the key we verify
-            //    against is itself anchored to the federation's stored
-            //    sovereign commitment.
-            let verifying_key = match VerifyingKey::from_bytes(witness.cell_state.public_key()) {
-                Ok(k) => k,
-                Err(_) => {
-                    return TurnResult::Rejected {
-                        reason: TurnError::InvalidEffect {
-                            reason: format!(
-                                "sovereign witness public key invalid for cell {}",
-                                cell_id
-                            ),
-                        },
-                        at_action: vec![],
-                    };
-                }
-            };
-            let message = crate::turn::SovereignCellWitness::signing_message_for_federation(
-                &self.local_federation_id,
-                cell_id,
-                &witness.old_commitment,
-                &witness.new_commitment,
-                &witness.effects_hash,
-                witness.timestamp,
-                witness.sequence,
-            );
-            let sig = Signature::from_bytes(&witness.signature);
-            if verifying_key.verify_strict(&message, &sig).is_err() {
-                return TurnResult::Rejected {
-                    reason: TurnError::InvalidEffect {
-                        reason: format!("sovereign witness signature invalid for cell {}", cell_id),
-                    },
-                    at_action: vec![],
-                };
-            }
-            // 6. Per-cell monotonic sequence (no gaps).
-            let expected_seq = ledger.last_sovereign_witness_sequence(cell_id) + 1;
-            if witness.sequence != expected_seq {
-                return TurnResult::Rejected {
-                    reason: TurnError::InvalidEffect {
-                        reason: format!(
-                            "sovereign witness sequence gap for cell {}: expected {}, got {}",
-                            cell_id, expected_seq, witness.sequence
-                        ),
-                    },
-                    at_action: vec![],
-                };
-            }
-            // 7a. Production sovereign witnesses must name a real post-state
-            //     commitment. All-zero is a legacy placeholder, not an explicit
-            //     no-op commitment. A no-op sovereign transition must still sign
-            //     the real unchanged state commitment.
-            if is_zero_hash(&witness.new_commitment) {
-                return TurnResult::Rejected {
-                    reason: TurnError::InvalidEffect {
-                        reason: format!(
-                            "sovereign witness for cell {} has zero new_commitment placeholder",
-                            cell_id
-                        ),
-                    },
-                    at_action: vec![],
-                };
-            }
-            // 7b. THE EFFECTS BINDING. `effects_hash` rides in the signing
-            //     message (rule 5 above), so until this check existed it was a
-            //     field the owner signed and NOTHING compared: a sovereign owner
-            //     could sign `H(Transfer 10)` while the executor applied
-            //     `Transfer 20`, and the turn committed. `EffectsHashMismatch`
-            //     was defined, formatted, and handled — and constructed zero
-            //     times.
-            //
-            //     `sovereign_effects_hash` is a pure function of the turn, so
-            //     this runs HERE — with the other witness rules, BEFORE the
-            //     forest mutates anything — rather than beside the
-            //     post-execution `new_commitment` check. The two declarations
-            //     are checked against two different things: this one against the
-            //     turn's own effect sequence, `new_commitment` against the
-            //     recomputed post-state (see `SOVEREIGN CELL POST-EXECUTION`).
-            //
-            //     The all-zero `effects_hash` sentinel that used to live here is
-            //     GONE, and deliberately: the canonical hash absorbs a domain
-            //     tag, the cell id and a length, so `[0u8; 32]` is not a value it
-            //     can take — a witness authorizing no effects has an honest
-            //     encoding. Special-casing one wrong value implies the others are
-            //     fine, and that implication is exactly what this hole was made
-            //     of. The zero placeholder is still refused; it is refused by the
-            //     rule that binds, as `EffectsHashMismatch`.
-            let expected_effects_hash = turn.sovereign_effects_hash(cell_id);
-            if witness.effects_hash != expected_effects_hash {
-                return TurnResult::Rejected {
-                    reason: TurnError::EffectsHashMismatch {
-                        cell: *cell_id,
-                        expected: expected_effects_hash,
-                        got: witness.effects_hash,
-                    },
-                    at_action: vec![],
-                };
-            }
-            // 8. Optional STARK transition proof. The v1 hand-AIR witness-STARK verify is
-            //    RETIRED; a sovereign witness carrying a v1 `transition_proof` fails closed on
-            //    every build (the rotated proof-carrying turn is the sovereign attestation path).
-            if let Some(proof_bytes) = &witness.transition_proof {
-                // The v1 hand-AIR witness-STARK verify is RETIRED. A sovereign witness carrying a
-                // v1 `transition_proof` cannot be verified here — fail closed (the rotated
-                // proof-carrying turn is the sole sovereign attestation path).
-                let _ = proof_bytes;
-                return TurnResult::Rejected {
-                    reason: TurnError::InvalidExecutionProof(
-                        "sovereign witness carries a v1 transition_proof, which is no longer \
-                         verified (use the rotated proof-carrying turn)"
-                            .into(),
-                    ),
+                    reason,
                     at_action: vec![],
                 };
             }
@@ -1639,6 +1468,175 @@ impl TurnExecutor {
         }
     }
 
+    /// The sovereign-witness admission rules 0-8, as a PURE function of the turn, the
+    /// ledger and this executor's federation id / clock.
+    ///
+    /// Extracted from the injection loop in [`Self::execute_without_shadow`] so that
+    /// [`Self::validate_without_apply`] runs THE SAME gate instead of a second, weaker
+    /// transcription of it. The caller decides what to do with the refusal; nothing here
+    /// mutates. The injection (`ledger.insert_cell`) and the POST-execution
+    /// `new_commitment` check stay on the execute path, because they need execution to
+    /// have happened.
+    ///
+    /// ⚑ Why this matters for the validate path: every one of these rules runs AFTER
+    /// Phase 1, and Phase 1 (fee debit + nonce bump) is never rolled back. A turn whose
+    /// witness fails rule 2/5/7b is therefore charged its fee and has its nonce bumped
+    /// before it is refused — so a pre-flight that admits it has told the submitter the
+    /// turn is fine when it is about to cost them.
+    pub(super) fn validate_sovereign_witness(
+        &self,
+        cell_id: &CellId,
+        witness: &crate::turn::SovereignCellWitness,
+        turn: &Turn,
+        ledger: &Ledger,
+    ) -> Result<(), TurnError> {
+        // 0. Witness key vs payload cell_id self-consistency.
+        if witness.cell_id != *cell_id {
+            return Err(TurnError::InvalidEffect {
+                reason: format!(
+                    "sovereign witness payload cell_id {} does not match map key {}",
+                    witness.cell_id, cell_id
+                ),
+            });
+        }
+        // 1. Verify the cell is actually sovereign in the ledger.
+        let stored_commitment = match ledger.get_sovereign_commitment(cell_id) {
+            Some(c) => *c,
+            None => {
+                return Err(TurnError::InvalidEffect {
+                    reason: format!(
+                        "sovereign witness provided for non-sovereign cell {}",
+                        cell_id
+                    ),
+                });
+            }
+        };
+        // 2. Witness declared old_commitment must equal ledger's stored.
+        if witness.old_commitment != stored_commitment {
+            return Err(TurnError::SovereignCommitmentMismatch {
+                cell: *cell_id,
+                expected: stored_commitment,
+                got: witness.old_commitment,
+            });
+        }
+        // 3. cell_state's commitment must equal the witness's declared
+        //    old_commitment (and therefore the stored one).
+        let computed_commitment = witness.cell_state.state_commitment();
+        if computed_commitment != witness.old_commitment {
+            return Err(TurnError::SovereignCommitmentMismatch {
+                cell: *cell_id,
+                expected: witness.old_commitment,
+                got: computed_commitment,
+            });
+        }
+        // 4. cell_state id must match the witness id (the cell carries
+        //    its identity inside its state, so this guards against any
+        //    `cell_state` body whose `id()` accessor drifts from the
+        //    map key).
+        if witness.cell_state.id() != *cell_id {
+            return Err(TurnError::InvalidEffect {
+                reason: format!(
+                    "sovereign witness cell ID mismatch: expected {}, got {}",
+                    cell_id,
+                    witness.cell_state.id()
+                ),
+            });
+        }
+        // 5. Ed25519 signature against the witnessed cell's public_key.
+        //    Since `cell_state.public_key()` is bound into
+        //    `state_commitment()` (verified above), the key we verify
+        //    against is itself anchored to the federation's stored
+        //    sovereign commitment.
+        let verifying_key = match VerifyingKey::from_bytes(witness.cell_state.public_key()) {
+            Ok(k) => k,
+            Err(_) => {
+                return Err(TurnError::InvalidEffect {
+                    reason: format!("sovereign witness public key invalid for cell {}", cell_id),
+                });
+            }
+        };
+        let message = crate::turn::SovereignCellWitness::signing_message_for_federation(
+            &self.local_federation_id,
+            cell_id,
+            &witness.old_commitment,
+            &witness.new_commitment,
+            &witness.effects_hash,
+            witness.timestamp,
+            witness.sequence,
+        );
+        let sig = Signature::from_bytes(&witness.signature);
+        if verifying_key.verify_strict(&message, &sig).is_err() {
+            return Err(TurnError::InvalidEffect {
+                reason: format!("sovereign witness signature invalid for cell {}", cell_id),
+            });
+        }
+        // 6. Per-cell monotonic sequence (no gaps).
+        let expected_seq = ledger.last_sovereign_witness_sequence(cell_id) + 1;
+        if witness.sequence != expected_seq {
+            return Err(TurnError::InvalidEffect {
+                reason: format!(
+                    "sovereign witness sequence gap for cell {}: expected {}, got {}",
+                    cell_id, expected_seq, witness.sequence
+                ),
+            });
+        }
+        // 7a. Production sovereign witnesses must name a real post-state
+        //     commitment. All-zero is a legacy placeholder, not an explicit
+        //     no-op commitment. A no-op sovereign transition must still sign
+        //     the real unchanged state commitment.
+        if is_zero_hash(&witness.new_commitment) {
+            return Err(TurnError::InvalidEffect {
+                reason: format!(
+                    "sovereign witness for cell {} has zero new_commitment placeholder",
+                    cell_id
+                ),
+            });
+        }
+        // 7b. THE EFFECTS BINDING. `effects_hash` rides in the signing
+        //     message (rule 5 above), so until this check existed it was a
+        //     field the owner signed and NOTHING compared: a sovereign owner
+        //     could sign `H(Transfer 10)` while the executor applied
+        //     `Transfer 20`, and the turn committed. `EffectsHashMismatch`
+        //     was defined, formatted, and handled — and constructed zero
+        //     times.
+        //
+        //     `sovereign_effects_hash` is a pure function of the turn, so
+        //     this runs HERE — with the other witness rules, BEFORE the
+        //     forest mutates anything — rather than beside the
+        //     post-execution `new_commitment` check. The two declarations
+        //     are checked against two different things: this one against the
+        //     turn's own effect sequence, `new_commitment` against the
+        //     recomputed post-state (see `SOVEREIGN CELL POST-EXECUTION`).
+        //
+        //     The all-zero `effects_hash` sentinel that used to live here is
+        //     GONE, and deliberately: the canonical hash absorbs a domain
+        //     tag, the cell id and a length, so `[0u8; 32]` is not a value it
+        //     can take — a witness authorizing no effects has an honest
+        //     encoding. Special-casing one wrong value implies the others are
+        //     fine, and that implication is exactly what this hole was made
+        //     of. The zero placeholder is still refused; it is refused by the
+        //     rule that binds, as `EffectsHashMismatch`.
+        let expected_effects_hash = turn.sovereign_effects_hash(cell_id);
+        if witness.effects_hash != expected_effects_hash {
+            return Err(TurnError::EffectsHashMismatch {
+                cell: *cell_id,
+                expected: expected_effects_hash,
+                got: witness.effects_hash,
+            });
+        }
+        // 8. Optional STARK transition proof. The v1 hand-AIR witness-STARK verify is
+        //    RETIRED; a sovereign witness carrying a v1 `transition_proof` fails closed on
+        //    every build (the rotated proof-carrying turn is the sovereign attestation path).
+        if witness.transition_proof.is_some() {
+            return Err(TurnError::InvalidExecutionProof(
+                "sovereign witness carries a v1 transition_proof, which is no longer \
+                 verified (use the rotated proof-carrying turn)"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // WitnessedReceipt v1 capture hook
     // -----------------------------------------------------------------------
@@ -1681,8 +1679,44 @@ impl TurnExecutor {
         total
     }
 
-    /// Validate a turn without applying it. Returns Ok(()) if it would succeed,
-    /// or the first error that would be encountered.
+    /// Validate a turn without applying it: run **every admission gate `execute` runs
+    /// that does not need the turn to have been applied**, and refuse on the first one
+    /// that fires.
+    ///
+    /// # What this checks, and what it cannot
+    ///
+    /// It runs, in `execute`'s order: empty forest, expiration, agent existence, agent
+    /// lifecycle, nonce, fee coverage, the agent + write-set **freeze** gate, the
+    /// **receipt-chain** self-binding, the **budget slice** bound, the **sovereign-witness**
+    /// rules 0-8 ([`Self::validate_sovereign_witness`] — the same function `execute` calls),
+    /// the **binding-proof / cross-effect / witness-index sweep**, and the cost estimate.
+    /// The last two are branch-matched to `execute`: a proof-carrying turn returns at
+    /// PHASE 3 and never reaches them, so for that shape this checks instead the two gates
+    /// the proof path does run (`execution_proof_cell` present, target cell sovereign).
+    ///
+    /// It **cannot** check per-action authorization, preconditions, or anything decided by
+    /// applying an effect (conservation, note nullifiers, the sovereign post-state
+    /// `new_commitment`, the custom-proof count committed by a verified proof). Those need
+    /// the mutating forest walk. **So `Ok(())` here still does not mean `execute` commits** —
+    /// it means no *admission* gate refuses. Callers must treat this as a pre-filter, never
+    /// as a decision.
+    ///
+    /// # Why it was widened (the mempool consequence)
+    ///
+    /// Until 2026-08-05 this ran only the first six of those gates. The five it skipped are
+    /// exactly the ones `execute` runs afterwards — and two of them (**sovereign witness**,
+    /// **binding-proof sweep**) run *after* PHASE 1, which is **never rolled back**
+    /// (fee debit + nonce bump). So the divergence ran in the dangerous direction and it
+    /// had a price: a turn with a forged/stale sovereign witness or a bad binding proof was
+    /// admitted by the mempool pre-filter, propagated, and then refused by the executor
+    /// **with the agent's fee already spent and its nonce already advanced**. The three
+    /// pre-Phase-1 gates it skipped (freeze, receipt chain, budget) cost no fee but let a
+    /// turn that could never commit occupy the mempool and a block slot.
+    ///
+    /// The two production callers are `dregg_sdk::embed::EmbeddedRuntime::validate_turn`
+    /// (an embedder-facing dry run) and `node::exact_fnsp_v3_execution_authority`'s charged-route
+    /// preflight, which runs it *before* installing the linear admission token — so a gate
+    /// added here refuses earlier, never later.
     pub fn validate_without_apply(&self, turn: &Turn, ledger: &Ledger) -> Result<(), TurnError> {
         if turn.call_forest.is_empty() {
             return Err(TurnError::EmptyForest);
@@ -1727,6 +1761,76 @@ impl TurnExecutor {
                 required: turn.fee,
                 available: agent_cell.state.balance(),
             });
+        }
+
+        // P0-4 freeze gate — the agent, then the call-forest write set. Same shape as
+        // `execute_without_shadow`: the write-set extraction is skipped entirely when
+        // nothing is frozen (with nothing frozen every `check_not_frozen` returns `Ok`).
+        self.check_not_frozen(&turn.agent)?;
+        let any_frozen = self
+            .cell_migrations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .any_frozen();
+        if any_frozen {
+            let (_read_set, write_set) = crate::conflict::extract_access_sets(turn);
+            for cell_id in &write_set {
+                self.check_not_frozen(cell_id)?;
+            }
+        }
+
+        // P0-3 receipt-chain self-binding. A turn whose claimed `previous_receipt_hash`
+        // does not match the executor's stored head can never commit.
+        self.check_previous_receipt_hash(&turn.agent, turn.previous_receipt_hash)?;
+
+        // Budget gate — the READ-ONLY twin of `execute`'s `try_debit`. Same two refusals
+        // (stale epoch slice, fee over the remaining slice), no debit and no digest, so a
+        // dry run cannot consume silo budget. `execute` still performs the real debit.
+        if let Some(gate_cell) = &self.budget_gate {
+            let gate = gate_cell.lock().unwrap_or_else(|e| e.into_inner());
+            let stale = gate.slice.version != gate.expected_version;
+            let remaining = if stale { 0 } else { gate.slice.remaining() };
+            if stale || turn.fee > remaining {
+                return Err(TurnError::BudgetExhausted {
+                    silo_id: gate.silo_id,
+                    requested: turn.fee,
+                    remaining,
+                });
+            }
+        }
+
+        // The branch mirrors `execute_without_shadow`: a proof-carrying turn returns at
+        // PHASE 3 and never reaches the sovereign-witness / binding-sweep blocks, so
+        // running them here would refuse turns the executor commits. Check instead the two
+        // pure gates the proof path DOES run before it verifies (both of which sit after
+        // the unrefundable Phase 1).
+        if turn.execution_proof.is_some() {
+            let Some(cell_id) = turn.execution_proof_cell else {
+                return Err(TurnError::InvalidExecutionProof(
+                    "execution_proof present but execution_proof_cell is None".to_string(),
+                ));
+            };
+            if !ledger.is_sovereign(&cell_id) && !ledger.is_sovereign_registered(&cell_id) {
+                return Err(TurnError::ProofCarryingRequiresSovereign { cell: cell_id });
+            }
+        } else {
+            // Sovereign-witness rules 0-8 — the SAME function `execute` calls, not a second
+            // transcription. These run AFTER Phase 1 on the execute path, so a witness that
+            // fails here is one the submitter would otherwise pay a fee and a nonce for.
+            for (cell_id, witness) in &turn.sovereign_witnesses {
+                self.validate_sovereign_witness(cell_id, witness, turn, ledger)?;
+            }
+
+            // Binding-sweep gate: sidecar effect-binding proofs, cross-effect chain pins
+            // and witness-index entries. Turn-level and pure (it only READS the ledger),
+            // and it too runs after Phase 1 on the execute path. Same guard as `execute`:
+            // turns carrying none of the three fields skip the verifier entirely.
+            if !turn.effect_binding_proofs.is_empty()
+                || !turn.cross_effect_dependencies.is_empty()
+                || !turn.effect_witness_index_map.is_empty()
+            {
+                Self::verify_effect_binding_proofs_with_ledger(turn, Some(ledger))?;
+            }
         }
 
         // Estimate cost.

@@ -321,8 +321,23 @@ pub enum TurnError {
     /// a full recursive STARK verify; without this cap a single authorized turn
     /// could force arbitrarily many verifications (asymmetric resource
     /// exhaustion). Rejected fail-closed BEFORE any sub-proof is verified.
-    /// `cap` is the cell's `max_custom_effects` (hard-capped at 64).
+    /// `cap` is the cell's `max_custom_effects` (a declaration above the hard cap is
+    /// refused as [`TurnError::CustomEffectCapAboveHardCap`], so `cap <= 64` always).
     TooManyCustomProofs { got: usize, cap: usize },
+
+    /// The cell's declared `max_custom_effects` exceeds
+    /// `dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_HARD_CAP` (=64), so the
+    /// registration is malformed and the turn is refused fail-closed rather than the
+    /// declaration being honored or silently clamped.
+    ///
+    /// ⚑ This variant exists because the hard cap was, until 2026-08-05, asserted ONLY in
+    /// the prover's trace generator: the verifier read the declared `u8` straight through,
+    /// making the real per-turn recursive-verify bound 255 rather than the documented 64.
+    CustomEffectCapAboveHardCap {
+        cell: dregg_types::CellId,
+        declared: u8,
+        hard_cap: u8,
+    },
 
     /// The number of `Effect::Custom` sub-proofs on the wire
     /// (`turn.custom_program_proofs`) does not equal the in-circuit committed
@@ -1099,6 +1114,18 @@ impl core::fmt::Display for TurnError {
                     f,
                     "turn carries {got} custom-effect sub-proofs but the cell admits at most {cap} \
                      (max_custom_effects); rejected before verification to bound recursive STARK work"
+                )
+            }
+            TurnError::CustomEffectCapAboveHardCap {
+                cell,
+                declared,
+                hard_cap,
+            } => {
+                write!(
+                    f,
+                    "cell {cell} declares max_custom_effects = {declared}, above the hard cap \
+                     {hard_cap}; the registration is malformed and the turn is refused \
+                     fail-closed (the cap bounds per-turn recursive STARK verifies)"
                 )
             }
             TurnError::CustomProofCountMismatch { wire, committed } => {

@@ -342,14 +342,12 @@ pub(crate) fn checkpoint_to_ledger_snapshot(snapshot: &LedgerCheckpoint) -> Ledg
         let _ = ledger.register_sovereign_cell(cell_id, *commitment);
     }
     for (id_bytes, registration) in &snapshot.sovereign_registrations {
+        // WHOLE-RECORD restore. `register_sovereign_cell_with_vk` hard-codes
+        // `max_custom_effects: None` and `owner_public_key: None`, so restoring through it
+        // silently dropped both: a declared custom-effect cap did not survive a restart,
+        // and the sovereign-witness key commitment reverted to the zero sentinel.
         let cell_id = CellId(*id_bytes);
-        let _ = ledger.register_sovereign_cell_with_vk(
-            cell_id,
-            registration.commitment,
-            registration.registered_at,
-            registration.ttl_blocks,
-            registration.verification_key_hash,
-        );
+        let _ = ledger.register_sovereign_cell_record(cell_id, registration.clone());
     }
     ledger
 }
@@ -370,16 +368,11 @@ fn checkpoint_to_ledger(snapshot: LedgerCheckpoint) -> Ledger {
         let _ = ledger.register_sovereign_cell(cell_id, commitment);
     }
 
-    // Restore sovereign registrations.
+    // Restore sovereign registrations — WHOLE RECORD (see the sibling projection above;
+    // the `_with_vk` route drops `max_custom_effects` and `owner_public_key`).
     for (id_bytes, registration) in snapshot.sovereign_registrations {
         let cell_id = CellId(id_bytes);
-        let _ = ledger.register_sovereign_cell_with_vk(
-            cell_id,
-            registration.commitment,
-            registration.registered_at,
-            registration.ttl_blocks,
-            registration.verification_key_hash,
-        );
+        let _ = ledger.register_sovereign_cell_record(cell_id, registration);
     }
 
     ledger

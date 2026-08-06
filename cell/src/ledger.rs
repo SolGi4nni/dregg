@@ -270,8 +270,14 @@ pub struct SovereignRegistration {
     ///
     /// Default (when `None`):
     /// [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] (=4).
-    /// Hard cap: [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_HARD_CAP`]
-    /// (=64).
+    ///
+    /// ⚑ The hard cap (=64) is enforced by the READER, `dregg_turn`'s
+    /// `TurnExecutor::read_cell_max_custom_effects`, which REFUSES the turn when this
+    /// field exceeds it. It is deliberately NOT enforced here: this struct is
+    /// `Deserialize`, so it is reconstituted from the durable snapshot, and a check that
+    /// only guards the setter is not a check on what the verifier reads. Until
+    /// 2026-08-05 the only assertion of the cap in the tree was in the PROVER's trace
+    /// generator, so the bound a verifier enforced was `u8::MAX` = 255.
     #[serde(default)]
     pub max_custom_effects: Option<u8>,
     /// Sovereign-witness AIR teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md §3.2):
@@ -1491,6 +1497,58 @@ impl Ledger {
             },
         );
         Ok(())
+    }
+
+    /// Register a sovereign cell from a COMPLETE [`SovereignRegistration`] record.
+    ///
+    /// This is the durable-restore entry: `register_sovereign_cell_with_vk` builds a
+    /// registration with `max_custom_effects: None` and `owner_public_key: None`
+    /// hard-coded, so a snapshot restore that went through it **silently dropped both
+    /// fields** — a declared custom-effect cap did not survive a restart, and (worse) the
+    /// sovereign-witness key commitment reverted to the zero sentinel, weakening
+    /// `PI[SOVEREIGN_WITNESS_KEY_COMMIT_BASE]` on the proof-carrying path after every node
+    /// restart. Restores must use this.
+    ///
+    /// No cap validation happens here on purpose — see
+    /// [`SovereignRegistration::max_custom_effects`]; the verifier is the enforcement
+    /// point, because deserialization can reach this state without any setter.
+    pub fn register_sovereign_cell_record(
+        &mut self,
+        id: CellId,
+        registration: SovereignRegistration,
+    ) -> Result<(), LedgerError> {
+        if self.cells.contains_key(&id)
+            || self.sovereign_commitments.contains_key(&id)
+            || self.sovereign_registrations.contains_key(&id)
+        {
+            return Err(LedgerError::SovereignAlreadyExists(id));
+        }
+        self.sovereign_registrations.insert(id, registration);
+        Ok(())
+    }
+
+    /// Declare a sovereign cell's per-turn `Effect::Custom` budget.
+    ///
+    /// Before this existed the field had NO setter at all: it was declared in the struct,
+    /// documented in two places, read by the executor's DoS cap — and every construction
+    /// site in the tree hard-coded `None`, so the cap was permanently the default (4) and
+    /// the "per-cell maximum" was decorative.
+    ///
+    /// The value is stored as given. The hard cap is enforced where it bites, at
+    /// `dregg_turn::TurnExecutor::read_cell_max_custom_effects`, which refuses a turn on a
+    /// cell declaring more than 64.
+    pub fn declare_sovereign_max_custom_effects(
+        &mut self,
+        id: &CellId,
+        max_custom_effects: u8,
+    ) -> Result<(), LedgerError> {
+        match self.sovereign_registrations.get_mut(id) {
+            Some(reg) => {
+                reg.max_custom_effects = Some(max_custom_effects);
+                Ok(())
+            }
+            None => Err(LedgerError::NotSovereign(*id)),
+        }
     }
 
     /// Deregister a sovereign cell (voluntary removal).

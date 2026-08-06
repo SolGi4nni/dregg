@@ -215,9 +215,10 @@ impl TurnExecutor {
         // unregistered vk_hash rejects the whole turn (no silent pass).
         //
         // FINDING 1 (`docs/deos/AIR-COMPOSITION-AND-PROOF-COUNT-AUDIT.md`): the
-        // DoS cap (`proofs.len() <= cell.max_custom_effects`, hard cap 64) is
-        // enforced INSIDE `enforce_custom_effect_proofs`, BEFORE any recursive
-        // sub-proof verify runs — a flooding turn pays nothing.
+        // DoS cap (`proofs.len() <= cell.max_custom_effects`, and the declaration
+        // itself refused above the hard cap of 64) is enforced INSIDE
+        // `enforce_custom_effect_proofs`, BEFORE any recursive sub-proof verify
+        // runs — a flooding turn pays nothing.
         self.enforce_custom_effect_proofs(turn, cell_id, ledger)?;
 
         self.verify_and_commit_proof_rotated(cell_id, proof_bytes, turn, ledger)?;
@@ -255,11 +256,16 @@ impl TurnExecutor {
     /// Each entry of `turn.custom_program_proofs` costs a full registry-dispatched STARK
     /// verify ([`Self::custom_effect_registry`]'s `verify`). The wire vec is attacker-chosen, so
     /// BEFORE running any verify we reject the turn if its length exceeds the cell's
-    /// declared `max_custom_effects` (via [`Self::read_cell_max_custom_effects`],
-    /// itself hard-capped at [`MAX_CUSTOM_EFFECTS_HARD_CAP`] = 64). This bounds
-    /// per-turn verifier work to <=64 recursive verifies and turns the asymmetric
+    /// declared `max_custom_effects` — read through [`Self::read_cell_max_custom_effects`],
+    /// **which refuses any declaration above [`MAX_CUSTOM_EFFECTS_HARD_CAP`] = 64**. That
+    /// bounds per-turn verifier work to <=64 recursive verifies and turns the asymmetric
     /// "one fee, M verifies" exhaustion into a cheap fail-closed reject — a flooding
     /// turn pays NOTHING (the cap is checked before the loop).
+    ///
+    /// ⚑ Until 2026-08-05 the "hard cap 64" in this docblock was **false at the verifier**:
+    /// the constant was asserted only in the prover's trace generator, this path read the
+    /// declared `u8` unclamped, and the real ceiling was 255. See
+    /// [`Self::read_cell_max_custom_effects`] for the measurement.
     ///
     /// [`MAX_CUSTOM_EFFECTS_HARD_CAP`]: dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_HARD_CAP
     pub(super) fn enforce_custom_effect_proofs(
@@ -274,7 +280,9 @@ impl TurnExecutor {
         };
 
         // FINDING 1: the decisive DoS cap — BEFORE any recursive sub-proof verify.
-        let cap = self.read_cell_max_custom_effects(cell_id, ledger) as usize;
+        // `read_cell_max_custom_effects` refuses a declaration above the hard cap rather
+        // than returning it, so `cap` is <= MAX_CUSTOM_EFFECTS_HARD_CAP by construction.
+        let cap = self.read_cell_max_custom_effects(cell_id, ledger)? as usize;
         if proofs.len() > cap {
             return Err(TurnError::TooManyCustomProofs {
                 got: proofs.len(),
@@ -2955,26 +2963,55 @@ impl TurnExecutor {
         Ok(())
     }
 
-    /// Read the per-cell `max_custom_effects` from the cell's program manifest.
+    /// Read the per-cell `max_custom_effects` — the DoS cap
+    /// [`Self::enforce_custom_effect_proofs`] checks BEFORE any recursive sub-proof
+    /// verify — and **enforce the hard ceiling here, verifier-side**.
     ///
-    /// Per `DESIGN-max-custom-effects.md` §4. Falls back to
-    /// [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] if the cell
-    /// has no explicit declaration (hosted or legacy sovereign cells).
+    /// Falls back to [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] (=4) when
+    /// the cell declares none (hosted cells, and every sovereign registration built by
+    /// `Ledger::register_sovereign_cell_with_vk`). A declaration ABOVE
+    /// [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_HARD_CAP`] (=64) is **refused**,
+    /// not clamped: the registration is malformed, and refusing is the only reading that
+    /// cannot be mistaken for an endorsement of the declared number.
     ///
-    /// Stage 1: looks at sovereign registration's `max_custom_effects` optional
-    /// field (added in this stage). Stage 8 may move the source of truth into
-    /// `cell::CellProgram::max_custom_effects` directly.
+    /// # ⚑ The cap this closes was 255, not 64 (fixed 2026-08-05)
     ///
-    /// V1-only (DEAD: the v1 verify was retired);
-    /// dead under `prover`, deleted with the v1 leg at C7.
-    #[allow(dead_code)]
-    pub(super) fn read_cell_max_custom_effects(&self, cell_id: &CellId, ledger: &Ledger) -> u8 {
+    /// `MAX_CUSTOM_EFFECTS_HARD_CAP` had exactly ONE assertion in the tree —
+    /// `dregg_circuit::effect_vm::trace`'s `generate_effect_vm_trace`, which only the
+    /// **prover** runs — while this function returned the declared `u8` unclamped and
+    /// `enforce_custom_effect_proofs` used it as the cap directly. So the bound a
+    /// **verifier** actually enforced was `u8::MAX` = **255**, four times the number
+    /// documented in three places (this module's `enforce_custom_effect_proofs` docblock,
+    /// `dregg_cell::SovereignRegistration::max_custom_effects`, and `pi.rs` itself, which
+    /// claimed a registration-time refusal that did not exist anywhere). An
+    /// attacker-supplied 255-entry `custom_program_proofs` vec against a cell declaring 255
+    /// bought 255 recursive STARK verifies for one fee. A prover-side `assert!` is not a
+    /// bound on what the verifier will do.
+    ///
+    /// The declaration reaches the ledger through `Ledger::declare_sovereign_max_custom_effects`
+    /// and through the durable snapshot restore (`dregg_persist::ledger_store`); neither is
+    /// trusted here.
+    pub(super) fn read_cell_max_custom_effects(
+        &self,
+        cell_id: &CellId,
+        ledger: &Ledger,
+    ) -> Result<u8, TurnError> {
+        use dregg_circuit::effect_vm::pi::{
+            MAX_CUSTOM_EFFECTS_DEFAULT, MAX_CUSTOM_EFFECTS_HARD_CAP,
+        };
         if let Some(reg) = ledger.get_sovereign_registration(cell_id) {
-            if let Some(m) = reg.max_custom_effects {
-                return m;
+            if let Some(declared) = reg.max_custom_effects {
+                if declared > MAX_CUSTOM_EFFECTS_HARD_CAP {
+                    return Err(TurnError::CustomEffectCapAboveHardCap {
+                        cell: *cell_id,
+                        declared,
+                        hard_cap: MAX_CUSTOM_EFFECTS_HARD_CAP,
+                    });
+                }
+                return Ok(declared);
             }
         }
-        dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT
+        Ok(MAX_CUSTOM_EFFECTS_DEFAULT)
     }
 
     /// Read the federation-scoped `approved_handoffs_root` as 4 BabyBear felts.
@@ -4329,6 +4366,172 @@ mod custom_effect_dispatch_tests {
                 }
             ),
             "expected CustomProofCountMismatch {{ wire: 1, committed: 0 }}, got {err:?}"
+        );
+    }
+    // ─────────────────────────────────────────────────────────────────────────────
+    // THE CUSTOM-EFFECT CAP, ENFORCED VERIFIER-SIDE (2026-08-05)
+    //
+    // `MAX_CUSTOM_EFFECTS_HARD_CAP` (=64) was asserted in exactly one place in the
+    // tree — `dregg_circuit::effect_vm::trace`'s trace generator, which only the
+    // PROVER runs. `read_cell_max_custom_effects` returned the cell's declared `u8`
+    // unclamped and `enforce_custom_effect_proofs` used it directly, so the ceiling
+    // a VERIFIER enforced was 255. These tests pin the refusal and the completeness
+    // boundary either side of it.
+    // ─────────────────────────────────────────────────────────────────────────────
+    use dregg_circuit::effect_vm::pi::{MAX_CUSTOM_EFFECTS_DEFAULT, MAX_CUSTOM_EFFECTS_HARD_CAP};
+
+    /// A ledger holding a sovereign registration for `cell` that declares
+    /// `max_custom_effects = declared`.
+    fn ledger_declaring(cell: CellId, declared: u8) -> Ledger {
+        let mut ledger = Ledger::new();
+        ledger
+            .register_sovereign_cell_with_vk(cell, [0u8; 32], 0, 1000, None)
+            .expect("register sovereign cell");
+        ledger
+            .declare_sovereign_max_custom_effects(&cell, declared)
+            .expect("declare the per-cell custom-effect budget");
+        assert_eq!(
+            ledger
+                .get_sovereign_registration(&cell)
+                .and_then(|r| r.max_custom_effects),
+            Some(declared),
+            "the declaration must actually be stored, or this test proves nothing"
+        );
+        ledger
+    }
+
+    /// ⚑ THE FIX FIRES. A cell declaring 255 with a 65-entry `custom_program_proofs`
+    /// vec is REFUSED verifier-side, and refused BEFORE any recursive sub-proof
+    /// verify runs.
+    ///
+    /// Before the fix this exact turn was ADMITTED past the cap gate (65 <= 255) and
+    /// went on to dispatch all 65 sub-proofs — one fee, 65 recursive STARK verifies.
+    /// The counter is the proof of the "pays nothing" property: it must read 0.
+    #[test]
+    fn sixty_five_proofs_against_a_255_declaration_are_refused_verifier_side() {
+        let (reg, vk_hash, calls) = counting_registry(b"cap-255-program");
+        let ex = executor_with(reg);
+        let agent = cell_id(91);
+        let ledger = ledger_declaring(agent, 255);
+
+        let mut turn = empty_turn(agent);
+        let valid = CustomProgramProof {
+            vk_hash,
+            proof_bytes: b"a-valid-sub-proof".to_vec(),
+            public_inputs: vec![],
+        };
+        turn.custom_program_proofs = Some(vec![valid; 65]);
+        with_custom_rows(&mut turn, vk_hash, 65);
+
+        // BEFORE, re-executed: the deleted expression was
+        //     let cap = <declared u8> as usize;   if proofs.len() > cap { refuse }
+        // with NO comparison against the hard cap anywhere on the verifier side.
+        // Evaluated against this exact ledger it admits the turn, and
+        // `a_legal_declaration_still_admits_up_to_its_cap` shows that an admitted turn
+        // dispatches EVERY sub-proof — so the old path bought 65 recursive STARK verifies
+        // for one fee.
+        let pre_fix_cap = ledger
+            .get_sovereign_registration(&agent)
+            .and_then(|r| r.max_custom_effects)
+            .expect("the cell declares a cap") as usize;
+        assert_eq!(pre_fix_cap, 255);
+        assert!(
+            65 <= pre_fix_cap,
+            "the pre-fix cap expression must ADMIT this turn, or the exhibit is empty"
+        );
+
+        let err = ex
+            .enforce_custom_effect_proofs(&turn, &agent, &ledger)
+            .expect_err("a 65-proof turn on a 255-declaring cell must be refused");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomEffectCapAboveHardCap {
+                    declared: 255,
+                    hard_cap: 64,
+                    ..
+                }
+            ),
+            "expected the hard-cap refusal, got: {err:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the refusal must land BEFORE any recursive sub-proof verify"
+        );
+    }
+
+    /// The reader itself: a declaration above the hard cap is REFUSED, not clamped
+    /// and not honored. This is the single enforcement point, so pin it directly.
+    #[test]
+    fn read_cap_refuses_a_declaration_above_the_hard_cap() {
+        let ex = executor_with(registry_with_stub(b"cap-reader").0);
+        let agent = cell_id(92);
+
+        // One over the ceiling is already malformed.
+        let over = ledger_declaring(agent, MAX_CUSTOM_EFFECTS_HARD_CAP + 1);
+        let err = ex
+            .read_cell_max_custom_effects(&agent, &over)
+            .expect_err("65 > 64 must be refused");
+        assert!(
+            matches!(err, TurnError::CustomEffectCapAboveHardCap { declared, hard_cap, .. }
+                if declared == MAX_CUSTOM_EFFECTS_HARD_CAP + 1
+                    && hard_cap == MAX_CUSTOM_EFFECTS_HARD_CAP),
+            "{err:?}"
+        );
+
+        // AT the ceiling is legal and returned as declared (a ceiling, not an
+        // off-by-one), and an undeclared cell still reads the default.
+        let at = ledger_declaring(cell_id(93), MAX_CUSTOM_EFFECTS_HARD_CAP);
+        assert_eq!(
+            ex.read_cell_max_custom_effects(&cell_id(93), &at)
+                .expect("64 == the hard cap is legal"),
+            MAX_CUSTOM_EFFECTS_HARD_CAP
+        );
+        assert_eq!(
+            ex.read_cell_max_custom_effects(&cell_id(94), &Ledger::new())
+                .expect("an undeclared cell reads the default"),
+            MAX_CUSTOM_EFFECTS_DEFAULT
+        );
+    }
+
+    /// COMPLETENESS. An honest turn is unaffected: a cell declaring a legal 64 with
+    /// 64 sub-proofs passes and dispatches every one of them, and 65 against that
+    /// same legal declaration is refused by the ORDINARY cap (`TooManyCustomProofs`),
+    /// not by the hard-cap refusal.
+    #[test]
+    fn a_legal_declaration_still_admits_up_to_its_cap() {
+        let (reg, vk_hash, calls) = counting_registry(b"cap-64-program");
+        let ex = executor_with(reg);
+        let agent = cell_id(95);
+        let ledger = ledger_declaring(agent, MAX_CUSTOM_EFFECTS_HARD_CAP);
+        let valid = CustomProgramProof {
+            vk_hash,
+            proof_bytes: b"a-valid-sub-proof".to_vec(),
+            public_inputs: vec![],
+        };
+
+        let mut at_cap = empty_turn(agent);
+        at_cap.custom_program_proofs = Some(vec![valid.clone(); 64]);
+        with_custom_rows(&mut at_cap, vk_hash, 64);
+        ex.enforce_custom_effect_proofs(&at_cap, &agent, &ledger)
+            .expect("64 proofs against a legal declaration of 64 must pass");
+        assert_eq!(calls.load(Ordering::SeqCst), 64);
+
+        let mut over = empty_turn(agent);
+        over.custom_program_proofs = Some(vec![valid; 65]);
+        with_custom_rows(&mut over, vk_hash, 65);
+        let err = ex
+            .enforce_custom_effect_proofs(&over, &agent, &ledger)
+            .expect_err("65 > the cell's legal cap of 64");
+        assert!(
+            matches!(err, TurnError::TooManyCustomProofs { got: 65, cap: 64 }),
+            "{err:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            64,
+            "no further verify may run after the cap refusal"
         );
     }
 }

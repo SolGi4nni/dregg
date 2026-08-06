@@ -859,9 +859,22 @@ pub const BASE_COUNT: usize = BURN_TARGET_PI + 1; // 201
 pub const CUSTOM_ENTRY_SIZE: usize = 16;
 
 // ---- Hard cap on declared max_custom_effects ----
-/// Hard ceiling: a cell declaring more than this is refused at registration
-/// time. Per `DESIGN-max-custom-effects.md` §5, bounds worst-case verifier
-/// child-proof work to ~3.2s/turn at 50ms/proof.
+/// Hard ceiling on a cell's declared `max_custom_effects`. Per
+/// `DESIGN-max-custom-effects.md` §5, bounds worst-case verifier child-proof work to
+/// ~3.2s/turn at 50ms/proof.
+///
+/// # Where this is enforced
+///
+/// * **Verifier** — `dregg_turn::TurnExecutor::read_cell_max_custom_effects` REFUSES a
+///   turn whose cell declares more than this, before `enforce_custom_effect_proofs` runs
+///   any recursive sub-proof verify. This is the one that bounds attacker-chosen work.
+/// * **Prover** — `crate::effect_vm::trace::generate_effect_vm_trace` asserts it while
+///   building a trace.
+///
+/// ⚑ This docblock said *"refused at registration time"* until 2026-08-05. There was no
+/// registration-time refusal anywhere in the tree, and the prover assertion was the ONLY
+/// site referencing this constant, so the ceiling a verifier enforced was the field's own
+/// `u8::MAX` = **255**. Do not restate the claim without a call site.
 pub const MAX_CUSTOM_EFFECTS_HARD_CAP: u8 = 64;
 /// Soft cap: the recommended workspace ceiling. Cells declaring up to this
 /// are uncontroversial; cells declaring 17..64 should justify the choice.

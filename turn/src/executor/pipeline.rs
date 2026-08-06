@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use dregg_cell::{CellId, Ledger};
 
 use crate::action::Effect;
-use crate::eventual::{EventualRef, Pipeline, PipelineError, PipelineResult, TurnOutput};
+use crate::eventual::{EventualRef, Pipeline, PipelineError, TurnOutput};
 use crate::turn::{Turn, TurnReceipt, TurnResult};
 
 use super::TurnExecutor;
@@ -293,14 +293,24 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
 }
 /// Execute a batch of turns against a ledger in topological order.
 ///
-/// Before executing each turn, any `PipelinedSend` effects are resolved using
-/// the resolution table (built from outputs of previously-committed turns).
-/// Turns can reference outputs of earlier turns via `EventualRef` (OutputRef),
-/// and the batch executor resolves them in causal order.
+/// **This is the only pipeline entry point.** Before executing each turn, any
+/// `PipelinedSend` effects are resolved using the resolution table (built from outputs of
+/// previously-committed turns). Turns can reference outputs of earlier turns via
+/// `EventualRef` (OutputRef), and the batch executor resolves them in causal order.
 ///
 /// Each turn's `depends_on` hashes are verified against the set of committed
 /// receipt hashes within this batch. If a turn declares a dependency on a hash
 /// that hasn't been committed, the turn is rejected.
+///
+/// When `pipeline.atomic` is set, ANY failure rolls the whole batch back to the
+/// pre-batch ledger image and every result is reported as failed.
+///
+/// ⚑ Both of those sentences used to be true of only one of TWO near-identical entry
+/// points. `execute_pipeline_result` (deleted 2026-08-05) was a zero-caller copy that
+/// **omitted the `depends_on` verification above** while being the only function that
+/// honored `pipeline.atomic` — so the live entry silently ignored `atomic`, and the
+/// variant that implemented it silently dropped a check. Both halves are folded in here;
+/// there is now one pipeline executor and it does both.
 pub fn execute_pipeline(
     pipeline: Pipeline,
     ledger: &mut Ledger,
@@ -316,6 +326,13 @@ pub fn execute_pipeline(
         Err(cycle) => {
             return vec![Err(PipelineError::Cycle(cycle)); n];
         }
+    };
+
+    // Atomic batches keep the pre-batch ledger image so a single failure can restore it.
+    let ledger_snapshot = if pipeline.atomic {
+        Some(ledger.clone())
+    } else {
+        None
     };
 
     let mut results: Vec<Option<Result<TurnReceipt, PipelineError>>> = vec![None; n];
@@ -426,6 +443,26 @@ pub fn execute_pipeline(
         }
     }
 
+    // Atomic batch, any failure: restore the pre-batch ledger and report every turn as
+    // failed — a turn whose effects were just rolled back did not commit, so returning its
+    // receipt would name a state that no longer exists.
+    if pipeline.atomic && failed.iter().any(|f| *f) {
+        if let Some(snap) = ledger_snapshot {
+            *ledger = snap;
+        }
+        let mut rolled: Vec<Result<TurnReceipt, PipelineError>> = Vec::with_capacity(n);
+        for (i, slot) in results.iter_mut().enumerate() {
+            match slot.take() {
+                Some(Err(e)) => rolled.push(Err(e)),
+                _ => rolled.push(Err(PipelineError::TurnExecutionFailed {
+                    index: i,
+                    reason: "atomic rollback".to_string(),
+                })),
+            }
+        }
+        return rolled;
+    }
+
     results
         .into_iter()
         .map(|r| r.unwrap_or(Err(PipelineError::Empty)))
@@ -517,181 +554,4 @@ pub fn resolve_eventual_ref<'a>(
             eventual_ref: eventual_ref.clone(),
             reason: "output slot not found in resolution table".to_string(),
         })
-}
-
-/// Resolve an OutputRef against the resolution table (preferred alias).
-pub fn resolve_output_ref<'a>(
-    output_ref: &crate::eventual::EventualRef,
-    table: &'a ResolutionTable,
-) -> Result<&'a TurnOutput, PipelineError> {
-    resolve_eventual_ref(output_ref, table)
-}
-
-/// Execute a pipeline with structured outcome (atomic + pending support).
-pub fn execute_pipeline_result(
-    pipeline: Pipeline,
-    ledger: &mut Ledger,
-    executor: &TurnExecutor,
-) -> (Vec<Result<TurnReceipt, PipelineError>>, PipelineResult) {
-    let n = pipeline.turns.len();
-    if n == 0 {
-        return (vec![], PipelineResult::AllCommitted { committed: vec![] });
-    }
-    let topo_order = match pipeline.topological_order() {
-        Ok(order) => order,
-        Err(cycle) => {
-            let r = vec![Err(PipelineError::Cycle(cycle.clone())); n];
-            let f: Vec<(usize, PipelineError)> = (0..n)
-                .map(|i| (i, PipelineError::Cycle(cycle.clone())))
-                .collect();
-            return (
-                r,
-                PipelineResult::Failed {
-                    committed: vec![],
-                    failed: f,
-                },
-            );
-        }
-    };
-    let ledger_snapshot = if pipeline.atomic {
-        Some(ledger.clone())
-    } else {
-        None
-    };
-    let mut results: Vec<Option<Result<TurnReceipt, PipelineError>>> = vec![None; n];
-    let mut failed: Vec<bool> = vec![false; n];
-    let mut pending_flags: Vec<bool> = vec![false; n];
-    let mut resolution_table: ResolutionTable = HashMap::new();
-    let mut turn_hashes: Vec<[u8; 32]> = Vec::with_capacity(n);
-    for turn in &pipeline.turns {
-        turn_hashes.push(turn.hash());
-    }
-    for &idx in &topo_order {
-        let deps = pipeline.dependencies_of(idx);
-        let mut dep_failed = None;
-        for dep_idx in &deps {
-            if failed[*dep_idx] {
-                dep_failed = Some(*dep_idx);
-                break;
-            }
-        }
-        if let Some(fd) = dep_failed {
-            failed[idx] = true;
-            results[idx] = Some(Err(PipelineError::DependencyFailed {
-                failed_index: fd,
-                dependent_index: idx,
-            }));
-            continue;
-        }
-        if deps.iter().any(|d| pending_flags[*d]) {
-            pending_flags[idx] = true;
-            results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
-                index: idx,
-                reason: "dependency pending".to_string(),
-            }));
-            continue;
-        }
-        let turn = &pipeline.turns[idx];
-        let mut resolved_turn = match resolve_turn(turn, &resolution_table) {
-            Ok(t) => t,
-            Err(e) => {
-                failed[idx] = true;
-                results[idx] = Some(Err(e));
-                continue;
-            }
-        };
-        // P0-3: auto-chain previous_receipt_hash for pipeline turns (see
-        // execute_pipeline for rationale).
-        if resolved_turn.previous_receipt_hash.is_none() {
-            if let Some(prev) = executor.get_last_receipt_hash(&resolved_turn.agent) {
-                resolved_turn.previous_receipt_hash = Some(prev);
-            }
-        }
-        let result = executor.execute(&resolved_turn, ledger);
-        match result {
-            TurnResult::Committed { receipt, .. } => {
-                let outputs = extract_turn_outputs(&resolved_turn, ledger);
-                let th = turn_hashes[idx];
-                for (slot, output) in outputs.into_iter().enumerate() {
-                    resolution_table.insert((th, slot as u32), output);
-                }
-                results[idx] = Some(Ok(receipt));
-            }
-            TurnResult::Rejected { reason, .. } => {
-                failed[idx] = true;
-                results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
-                    index: idx,
-                    reason: format!("{}", reason),
-                }));
-            }
-            TurnResult::Expired => {
-                failed[idx] = true;
-                results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
-                    index: idx,
-                    reason: "expired".to_string(),
-                }));
-            }
-            TurnResult::Pending => {
-                pending_flags[idx] = true;
-                results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
-                    index: idx,
-                    reason: "conditional pending".to_string(),
-                }));
-            }
-        }
-    }
-    let ci: Vec<usize> = (0..n)
-        .filter(|i| matches!(&results[*i], Some(Ok(_))))
-        .collect();
-    let fi: Vec<(usize, PipelineError)> = (0..n)
-        .filter(|i| failed[*i])
-        .filter_map(|i| {
-            results[i]
-                .as_ref()
-                .and_then(|r| r.as_ref().err().cloned())
-                .map(|e| (i, e))
-        })
-        .collect();
-    let pi: Vec<usize> = (0..n).filter(|i| pending_flags[*i]).collect();
-    if pipeline.atomic && !fi.is_empty() {
-        if let Some(snap) = ledger_snapshot {
-            *ledger = snap;
-        }
-        let mut ar: Vec<Result<TurnReceipt, PipelineError>> = Vec::with_capacity(n);
-        for i in 0..n {
-            if failed[i] || pending_flags[i] {
-                ar.push(results[i].take().unwrap_or(Err(PipelineError::Empty)));
-            } else {
-                ar.push(Err(PipelineError::TurnExecutionFailed {
-                    index: i,
-                    reason: "atomic rollback".to_string(),
-                }));
-            }
-        }
-        return (
-            ar,
-            PipelineResult::Failed {
-                committed: vec![],
-                failed: fi,
-            },
-        );
-    }
-    let fr: Vec<Result<TurnReceipt, PipelineError>> = results
-        .into_iter()
-        .map(|r| r.unwrap_or(Err(PipelineError::Empty)))
-        .collect();
-    let outcome = if !fi.is_empty() {
-        PipelineResult::Failed {
-            committed: ci,
-            failed: fi,
-        }
-    } else if !pi.is_empty() {
-        PipelineResult::PartialWithPending {
-            committed: ci,
-            pending: pi,
-        }
-    } else {
-        PipelineResult::AllCommitted { committed: ci }
-    };
-    (fr, outcome)
 }

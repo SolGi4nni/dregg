@@ -167,8 +167,8 @@ pub use encrypted::{
 };
 pub use error::{CustomBindingLeg, RefusalClass, TurnError};
 pub use eventual::{
-    CycleError, EventualRef, OutputRef, Pipeline, PipelineBuilder, PipelineError, PipelineResult,
-    Target, TurnBatch, TurnOutput,
+    CycleError, EventualRef, OutputRef, Pipeline, PipelineBuilder, PipelineError, Target,
+    TurnBatch, TurnOutput,
 };
 pub use exact_fnsp_v4_consensus_envelope::{
     EXACT_FNSP_V4_ACTIVATION_CORE_LEN, EXACT_FNSP_V4_FRAME_CORE_LEN, EXACT_RECEIPT_CORE_V4_LEN,
@@ -184,8 +184,8 @@ pub use executor::{
     BridgeEscrowRecord, BridgeMintError, BridgeMintReceipt, BridgeMintRequest,
     CellMigrationManager, ComputronCosts, MigrationCancelReason, MigrationError, MigrationState,
     MixedAtomicResult, MixedAtomicTurn, ProofVerifier, ResolutionTable, TurnExecutor,
-    escrow_nullifier_for, execute_pipeline, execute_pipeline_result, new_mirror_ledger_cell,
-    read_supply, resolve_eventual_ref,
+    escrow_nullifier_for, execute_pipeline, new_mirror_ledger_cell, read_supply,
+    resolve_eventual_ref,
 };
 pub use faithful_note_spend_exact_v3_acceptance::{
     AcceptedFaithfulNoteSpendExactV3, ExactFnspV3ProofAuthorityAlreadyInstalled,

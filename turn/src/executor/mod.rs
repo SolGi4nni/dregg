@@ -1,4 +1,5 @@
-//! TurnExecutor: applies a turn to a ledger with full atomicity.
+//! TurnExecutor: applies a turn's FOREST atomically. Fee and nonce are not in that scope
+//! — see "What atomicity means here" at the bottom of this header before relying on it.
 //!
 //! # Trust Model
 //!
@@ -33,7 +34,22 @@
 //!
 //! The executor walks the call forest depth-first, checking preconditions,
 //! verifying authorization, applying effects, and metering computrons at each step.
-//! If any action fails, ALL effects are rolled back via journal replay (atomicity guarantee).
+//!
+//! ## What atomicity means here — the forest, NOT the turn
+//!
+//! If any action fails, every FOREST effect is rolled back via journal replay. **PHASE 1
+//! is outside that journal and is never rolled back.** `execute_without_shadow` debits the
+//! fee and increments the agent's nonce before the forest runs, deliberately — it is the
+//! anti-DoS charge for an expensive-but-failing turn — and no rejection path restores
+//! either. So a `TurnResult::Rejected` returns a ledger in which the agent is
+//! **fee-debited and nonce-bumped**, and a caller that reads "atomicity guarantee" as
+//! "a rejected turn leaves the ledger untouched" is wrong about the agent cell.
+//!
+//! Concretely, on a `Rejected` turn: the budget-gate debit IS refunded (`fast_unlock`),
+//! sovereign-witness cell injections ARE removed, the factory-registry checkpoint IS
+//! restored, staged rate-limit debits are DROPPED, and the fee/nonce are NOT.
+//!
+//! This header claimed unqualified atomicity until 2026-08-05.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -2521,10 +2537,7 @@ pub use turn_profile::dump as turn_profile_dump;
 // ─── Pipeline Execution ──────────────────────────────────────────────────────
 
 mod pipeline;
-pub use pipeline::{
-    ResolutionTable, execute_pipeline, execute_pipeline_result, resolve_eventual_ref,
-    resolve_output_ref,
-};
+pub use pipeline::{ResolutionTable, execute_pipeline, resolve_eventual_ref};
 
 mod atomic;
 pub use atomic::{

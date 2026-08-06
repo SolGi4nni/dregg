@@ -993,7 +993,9 @@ impl WitnessedPredicateVerifier for PedersenBulletproofVerifier {
 /// MerkleMembership verifier *plus* the real adjacency-backed NonMembership and
 /// BlindedSet verifiers, installed on top of `default_builtins`.
 ///
-/// This is the constructor production hosts should use. It promotes every kind
+/// **This is the constructor production hosts actually use** — `node::executor_setup`,
+/// the SDK runtime, and all three `TurnExecutor` constructors default to it (the
+/// `..._full` variant below has no production caller). It promotes every kind
 /// whose cryptographic verifier is available in this crate from its fail-closed
 /// default to its real implementation:
 ///
@@ -1084,9 +1086,38 @@ pub fn registry_with_real_verifiers() -> WitnessedPredicateRegistry {
     r
 }
 
-/// Build the **fully production-wired** witnessed-predicate registry, installing
-/// every real verifier whose backend lives in `dregg-cell` / `dregg-circuit`,
-/// given the host-trusted context each context-dependent kind requires.
+/// Build the witnessed-predicate registry with EVERY context-dependent kind wired,
+/// given the host-trusted context each one requires.
+///
+/// # ⚑ Nothing in production calls this, and that is FAIL-CLOSED, not a hole
+///
+/// Measured 2026-08-05: this function has four call sites, all in this module's own
+/// `#[cfg(test)]` block. Every production host — `node::executor_setup`, the SDK runtime,
+/// `TurnExecutor`'s three constructors — installs [`registry_with_real_verifiers`] and
+/// then upgrades exactly ONE kind on top of it (`Dfa`, over the canonical routing
+/// circuit, plus the Mina chain-root backend when the operator has pinned a VK). So
+/// [`TemporalPredicateStarkVerifier`] and [`BridgePredicateStarkVerifier`] are **never
+/// constructed on a deployed node**.
+///
+/// The question that matters is whether an un-upgraded `Temporal` / `BridgePredicate`
+/// predicate then **refuses or skips**, and the answer is REFUSES, at two independent
+/// layers:
+///
+/// * `WitnessedPredicateRegistry::default_builtins` (which [`registry_with_real_verifiers`]
+///   is built on) registers `dregg_cell::predicate::NotYetWiredVerifier` for both kinds —
+///   a verifier whose `verify` returns `Rejected` for every input regardless of proof
+///   bytes. There is no "unregistered ⇒ pass" arm: `WitnessedPredicateRegistry::verify`
+///   maps a lookup miss to `KindNotRegistered`, which is also a refusal.
+/// * `TurnExecutor::execute_tree` refuses a witnessed precondition outright when the
+///   executor has NO registry at all (`witnessed_registry.is_none()`).
+///
+/// So a cell program gating on `Witnessed { Temporal }` today is unsatisfiable on a
+/// deployed node, not unguarded. That is a **capability gap** (the predicate cannot be
+/// used), not a soundness gap, and it must not be "fixed" by making anything accept.
+///
+/// This docblock read *"the **fully production-wired** registry"* until 2026-08-05, which
+/// invited exactly the wrong reading in both directions: that deployed nodes run it, and
+/// that the kinds it installs are otherwise open.
 ///
 /// On top of [`registry_with_real_verifiers`] it additionally installs:
 ///
