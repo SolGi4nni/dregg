@@ -19,3 +19,6 @@ pub mod distributed;
 pub mod quorum;
 /// Honest n-of-n multiparty BFV relinearization-key generation + its Tier-0 acceptance gate.
 pub mod relin;
+/// The production relying-party caller that drives the `distributed` committee over its authenticated
+/// transport: collective-key agreement, the verified commit round, and certificate-checked opening.
+pub mod relying_party;

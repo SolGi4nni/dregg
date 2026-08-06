@@ -624,6 +624,27 @@ pub struct VerifiedPartyAssembly {
     secret_commitment_blindings: Vec<[u8; 32]>,
 }
 
+impl VerifiedPartyAssembly {
+    /// Assemble this from a DISTRIBUTED party's own material: the rows it
+    /// verified itself and the Pedersen blindings it sampled in
+    /// [`commit_distributed_secret_share`].  Unlike [`finish_verified_keygen`],
+    /// which builds every party's assembly inside one process that has seen
+    /// every private row, this constructor takes ONLY the calling party's own
+    /// rows and blindings — the trusted viewer a distributed committee exists to
+    /// delete never appears.  [`QuorumParty::assemble_verified`] still re-derives
+    /// the aggregate row and refuses unless these blindings open the public
+    /// commitment vector recorded for this party in the transcript.
+    pub fn from_distributed_parts(
+        shares: Vec<VerifiedPrivateDealerShare>,
+        secret_commitment_blindings: Vec<[u8; 32]>,
+    ) -> Self {
+        Self {
+            shares,
+            secret_commitment_blindings,
+        }
+    }
+}
+
 /// Outputs of the verified all-dealer setup before party-local assembly.
 pub struct VerifiedQuorumSetup {
     collective: CollectivePublicKey,
@@ -1525,6 +1546,178 @@ pub fn finish_verified_keygen(
         collective,
         transcript,
         assemblies,
+    })
+}
+
+/// Sum this party's own verified rows into its aggregate secret-share row.
+///
+/// This is the exact aggregate [`QuorumParty::assemble`] forms, computed only
+/// from rows THIS party verified itself.  It is factored out so the distributed
+/// commit round can bind a Pedersen commitment to precisely the row that
+/// [`QuorumParty::assemble_verified`] will later re-derive.
+fn aggregate_secret_row(
+    session: &QuorumKeygenSession,
+    party: usize,
+    shares: &[VerifiedPrivateDealerShare],
+    params: &BfvParams,
+) -> Result<Vec<Vec<u64>>> {
+    if party >= session.n_parties() {
+        return Err(QuorumError::InvalidParty {
+            party,
+            n_parties: session.n_parties(),
+        });
+    }
+    if shares.len() < session.n_parties() {
+        return Err(QuorumError::MissingDealerShares {
+            have: shares.len(),
+            need: session.n_parties(),
+        });
+    }
+    if shares.len() > session.n_parties() {
+        return Err(QuorumError::ParamMismatch);
+    }
+    let mut seen = BTreeSet::new();
+    let mut rows = zero_rns_rows(params);
+    for share in shares {
+        if share.inner.session != *session {
+            return Err(QuorumError::SessionMismatch);
+        }
+        if share.inner.recipient != party {
+            return Err(QuorumError::RecipientMismatch {
+                expected: party,
+                actual: share.inner.recipient,
+            });
+        }
+        if share.inner.dealer >= session.n_parties() {
+            return Err(QuorumError::InvalidParty {
+                party: share.inner.dealer,
+                n_parties: session.n_parties(),
+            });
+        }
+        if !seen.insert(share.inner.dealer) {
+            return Err(QuorumError::DuplicateDealer {
+                dealer: share.inner.dealer,
+            });
+        }
+        if !valid_rows(&share.inner.rows, params) {
+            return Err(QuorumError::ParamMismatch);
+        }
+        for (acc_row, (share_row, &q)) in rows
+            .iter_mut()
+            .zip(share.inner.rows.iter().zip(params.moduli()))
+        {
+            for (acc, &value) in acc_row.iter_mut().zip(share_row) {
+                *acc = add_mod(*acc, value, q);
+            }
+        }
+    }
+    if seen.len() != session.n_parties() {
+        return Err(QuorumError::MissingDealerShares {
+            have: seen.len(),
+            need: session.n_parties(),
+        });
+    }
+    Ok(rows)
+}
+
+/// The distributed commit round, party side.
+///
+/// Compute this party's coefficient-wise Pedersen commitment vector over its
+/// aggregate secret-share row, returning the PUBLIC commitments (to broadcast
+/// into [`assemble_distributed_transcript`]) and the PRIVATE blindings (to keep
+/// in a [`VerifiedPartyAssembly::from_distributed_parts`]).  Only this party's
+/// own verified rows are read, so a distributed committee runs it with no
+/// trusted viewer.  The commitment construction is byte-for-byte the one
+/// [`finish_verified_keygen`] performs centrally, so the resulting transcript is
+/// interchangeable with an in-process one.
+pub fn commit_distributed_secret_share<R: CryptoRng + RngCore>(
+    session: &QuorumKeygenSession,
+    party: usize,
+    shares: &[VerifiedPrivateDealerShare],
+    params: &BfvParams,
+    rng: &mut R,
+) -> Result<(Vec<[u8; 32]>, Vec<[u8; 32]>)> {
+    let rows = aggregate_secret_row(session, party, shares, params)?;
+    let pc_gens = PedersenGens::default();
+    let expected_len = params.moduli().len() * params.degree();
+    let mut commitments = Vec::with_capacity(expected_len);
+    let mut blindings = Vec::with_capacity(expected_len);
+    for &value in rows.iter().flatten() {
+        let blinding = Scalar::random(&mut *rng);
+        commitments.push(
+            pc_gens
+                .commit(Scalar::from(value), blinding)
+                .compress()
+                .to_bytes(),
+        );
+        blindings.push(blinding.to_bytes());
+    }
+    Ok((commitments, blindings))
+}
+
+/// Domain-separated digest of a collective BFV public key, as bound into a
+/// verified-DKG transcript.  A distributed committee needs this to build the
+/// SAME transcript [`finish_verified_keygen`] would, so it is public.
+pub fn verified_collective_key_digest(collective: &CollectivePublicKey) -> [u8; 32] {
+    verified_dkg_collective_key_digest(collective)
+}
+
+/// The distributed commit round, public-assembly side.
+///
+/// Build the public [`VerifiedDkgTranscript`] a DISTRIBUTED committee's decrypt-
+/// share certificates anchor to, from material every participant can cross-check:
+/// each dealer's public VSS commitment digest (already checked by every
+/// recipient), each custody party's own aggregate-row commitment vector from
+/// [`commit_distributed_secret_share`] in canonical party order, and the
+/// collective key.  No private row or blinding is read here, and the digest is
+/// the exact [`vss_setup_transcript_digest`] the in-process constructor produces,
+/// so [`QuorumParty::assemble_verified`], [`AuthenticatedQuorumRoster::new_verified`]
+/// and [`QuorumOpeningSession::new_verified`] all accept the result unchanged.
+///
+/// ⚑ Scope.  This binds each HONEST party's published commitment to its
+/// VSS-admitted aggregate row through that party's own `assemble_verified` refusal
+/// (its blindings cannot open a commitment to any other row).  It does NOT carry a
+/// PUBLIC proof that a party's published commitment equals the sum of the dealer
+/// rows it accepted — a malicious party may commit to a different secret and still
+/// produce a certificate consistent with THAT commitment (a garbage opening, never
+/// a chosen plaintext).  Closing that is the endorsement seam the module header
+/// names: an additively-homomorphic dealer commitment, or a per-party equality
+/// proof from the dealer VSS commitments to the aggregate.
+pub fn assemble_distributed_transcript(
+    session: &QuorumKeygenSession,
+    dealer_commitment_digests: Vec<[u8; 32]>,
+    party_secret_commitments: Vec<Vec<[u8; 32]>>,
+    collective: &CollectivePublicKey,
+    params: &BfvParams,
+) -> Result<VerifiedDkgTranscript> {
+    let n = session.n_parties();
+    if dealer_commitment_digests.len() != n || party_secret_commitments.len() != n {
+        return Err(QuorumError::VssTranscriptMismatch);
+    }
+    let expected_len = params.moduli().len() * params.degree();
+    if party_secret_commitments
+        .iter()
+        .any(|commitments| commitments.len() != expected_len)
+    {
+        return Err(QuorumError::VssTranscriptMismatch);
+    }
+    let collective_key_digest = verified_dkg_collective_key_digest(collective);
+    let digest = vss_setup_transcript_digest(
+        session,
+        &dealer_commitment_digests,
+        &party_secret_commitments,
+        collective_key_digest,
+        params,
+        None,
+    );
+    Ok(VerifiedDkgTranscript {
+        session: session.clone(),
+        dealer_commitment_digests,
+        party_secret_commitments,
+        q0_share_commitments: None,
+        q0_share_commitment_context: None,
+        collective_key_digest,
+        digest,
     })
 }
 
@@ -4727,6 +4920,275 @@ mod vss_tests {
         eprintln!(
             "fhegg verified-share profile: total={:?}",
             total_started.elapsed()
+        );
+    }
+
+    // ─── the DISTRIBUTED verified-certificate seam (committee-caller lane) ───
+    //
+    // The transcript here is assembled from per-party commitments — each party
+    // commits ONLY its own aggregate row (`commit_distributed_secret_share`) — so
+    // no process ever holds another party's rows, unlike `finish_verified_keygen`.
+    // The result is interchangeable with the in-process transcript, which is what
+    // lets the distributed opening carry the same certificate and the verified
+    // combiner refuse a share that lacks one.
+
+    /// Deal a 3-of-2 committee and build the transcript the DISTRIBUTED way: every
+    /// party commits its own aggregate row, and only public commitments are pooled.
+    /// Returns each party's `(own rows, own blindings)` so a caller can assemble it.
+    fn distributed_setup(
+        seed: [u8; 32],
+    ) -> (
+        QuorumKeygenSession,
+        BfvParams,
+        CollectivePublicKey,
+        VerifiedDkgTranscript,
+        Vec<(Vec<VerifiedPrivateDealerShare>, Vec<[u8; 32]>)>,
+    ) {
+        let params = BfvParams::fold_set();
+        let session = QuorumKeygenSession::from_seed(3, 2, seed).unwrap();
+        let bundles: Vec<VerifiedDealerBundle> = (0..3)
+            .map(|dealer| {
+                deal(&session, dealer, &params)
+                    .unwrap()
+                    .verify(&params)
+                    .unwrap()
+            })
+            .collect();
+        let dealer_commitment_digests: Vec<[u8; 32]> = bundles
+            .iter()
+            .map(|bundle| bundle.commitment().digest)
+            .collect();
+        let contributions: Vec<PublicKeyContribution> = bundles
+            .iter()
+            .map(|bundle| bundle.public_contribution().clone())
+            .collect();
+        let collective = finish_public_key(&session, &contributions, &params).unwrap();
+
+        // Distribute one row per dealer to each recipient. No process holds
+        // another party's rows past this point.
+        let mut inboxes: Vec<Vec<VerifiedPrivateDealerShare>> =
+            (0..3).map(|_| Vec::new()).collect();
+        for bundle in bundles {
+            let (_, _, rows) = bundle.into_distributed_parts();
+            for row in rows {
+                inboxes[row.recipient()].push(row);
+            }
+        }
+
+        let mut rng = OsRng;
+        let mut party_commitments = Vec::with_capacity(3);
+        let mut per_party = Vec::with_capacity(3);
+        for (party, inbox) in inboxes.into_iter().enumerate() {
+            let (commitments, blindings) =
+                commit_distributed_secret_share(&session, party, &inbox, &params, &mut rng)
+                    .unwrap();
+            party_commitments.push(commitments);
+            per_party.push((inbox, blindings));
+        }
+        let transcript = assemble_distributed_transcript(
+            &session,
+            dealer_commitment_digests,
+            party_commitments,
+            &collective,
+            &params,
+        )
+        .unwrap();
+        (session, params, collective, transcript, per_party)
+    }
+
+    /// FAST pole: the distributed transcript assembles from per-party commitments,
+    /// each party's own blindings open its slot, and a party opening with ANOTHER
+    /// party's blindings is refused — the commitment is bound to the party's own
+    /// VSS-admitted row.
+    #[test]
+    fn distributed_transcript_is_interchangeable_and_binds_each_party_to_its_own_row() {
+        let (session, params, _collective, transcript, mut per_party) =
+            distributed_setup([0xd1; 32]);
+
+        // Wrong-opener refusal (constructive: assert the material actually differs).
+        assert_ne!(
+            per_party[0].1, per_party[1].1,
+            "two parties' blindings must differ for this to be a real substitution"
+        );
+        let inbox0 = std::mem::take(&mut per_party[0].0);
+        let wrong_blindings = per_party[1].1.clone();
+        assert_eq!(
+            QuorumParty::assemble_verified(
+                &session,
+                0,
+                VerifiedPartyAssembly::from_distributed_parts(inbox0, wrong_blindings),
+                &transcript,
+                &params,
+            )
+            .err(),
+            Some(QuorumError::VssTranscriptMismatch),
+            "a party assembling with another party's blindings must be refused"
+        );
+
+        // Positive: each remaining party's OWN blindings open its slot.
+        for party in [1usize, 2] {
+            let inbox = std::mem::take(&mut per_party[party].0);
+            let blindings = per_party[party].1.clone();
+            let assembled = QuorumParty::assemble_verified(
+                &session,
+                party,
+                VerifiedPartyAssembly::from_distributed_parts(inbox, blindings),
+                &transcript,
+                &params,
+            )
+            .expect("a party's own blindings open its slot");
+            assert_eq!(assembled.vss_setup_digest(), Some(transcript.digest()));
+        }
+    }
+
+    /// FAST RED: a structurally valid decryption share carrying NO certificate —
+    /// the transport-authenticated-but-not-share-proved shape a legacy distributed
+    /// party would emit — is refused by the verified check. This is the seam going
+    /// red; the certificate is not a decoration a caller can skip.
+    #[test]
+    fn a_distributed_share_without_a_certificate_is_refused() {
+        use fhe::bfv::Plaintext;
+        use fhe_traits::{FheEncoder, FheEncrypter};
+
+        let (session, params, collective, transcript, _per_party) = distributed_setup([0xd2; 32]);
+        let mut slots = vec![0u64; params.degree()];
+        slots[0] = 12_345;
+        let plaintext = Plaintext::try_encode(&slots, Encoding::simd(), params.arc()).unwrap();
+        let ciphertext = collective
+            .pk
+            .try_encrypt(&plaintext, &mut rand_09::rng())
+            .unwrap();
+        let ct = LeanCiphertext::from_fhe_bytes(
+            &ciphertext.to_bytes(),
+            params.moduli(),
+            params.degree(),
+            65_536,
+        )
+        .unwrap();
+        let opening =
+            QuorumOpeningSession::new_verified(session, &transcript, [0x01; 32], vec![0, 1])
+                .unwrap();
+        let uncertified = QuorumDecryptShare {
+            opening,
+            ct,
+            party: 0,
+            smudge_bits: MIN_SMUDGE_BITS,
+            h: zero_rns_rows(&params),
+            proof: None,
+        };
+        assert_eq!(
+            verify_decrypt_share_relation(&uncertified, &transcript, &params),
+            Err(QuorumError::MissingDecryptShareProof { party: 0 }),
+            "a distributed share with no certificate must be refused by the verified check"
+        );
+    }
+
+    /// HEAVY: the full distributed-API verified open. Each party proves its share
+    /// certificate; the verified combiner recovers the plaintext, and a mutated
+    /// certificate is refused. Ignored by default — the degree-4096 certificate is
+    /// correctness-grade (~2 min in release, minutes in debug).
+    #[test]
+    #[ignore = "degree-4096 decrypt-share certificate: ~2 min in release, run with --release --ignored"]
+    fn distributed_verified_open_carries_a_certificate_and_a_forgery_is_refused() {
+        use fhe::bfv::Plaintext;
+        use fhe_traits::{FheEncoder, FheEncrypter};
+
+        let (session, params, collective, transcript, mut per_party) =
+            distributed_setup([0xd3; 32]);
+        let keys = (0..3)
+            .map(|i| SigningKey::from_bytes(&[0xe0 + i as u8; 32]))
+            .collect::<Vec<_>>();
+        let roster = AuthenticatedQuorumRoster::new_verified(
+            session.clone(),
+            &transcript,
+            keys.iter()
+                .map(|key| key.verifying_key().to_bytes())
+                .collect(),
+        )
+        .unwrap();
+        let mut parties = (0..3)
+            .map(|party| {
+                let inbox = std::mem::take(&mut per_party[party].0);
+                let blindings = per_party[party].1.clone();
+                QuorumParty::assemble_verified(
+                    &session,
+                    party,
+                    VerifiedPartyAssembly::from_distributed_parts(inbox, blindings),
+                    &transcript,
+                    &params,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let mut slots = vec![0u64; params.degree()];
+        slots[..4].copy_from_slice(&[5, 9, 13, 17]);
+        let plaintext = Plaintext::try_encode(&slots, Encoding::simd(), params.arc()).unwrap();
+        let ciphertext = collective
+            .pk
+            .try_encrypt(&plaintext, &mut rand_09::rng())
+            .unwrap();
+        let ct = LeanCiphertext::from_fhe_bytes(
+            &ciphertext.to_bytes(),
+            params.moduli(),
+            params.degree(),
+            17,
+        )
+        .unwrap();
+        let opening =
+            QuorumOpeningSession::new_verified(session, &transcript, [0x02; 32], vec![0, 1])
+                .unwrap();
+        let shares =
+            partial_decrypt_quorum_parallel(&mut parties, &opening, &ct, MIN_SMUDGE_BITS, &params)
+                .unwrap();
+        assert!(
+            shares.iter().all(|share| share.proof.is_some()),
+            "a distributed verified opening must carry the decrypt-share certificate"
+        );
+
+        let framed: Vec<Vec<u8>> = shares
+            .iter()
+            .map(|share| {
+                roster
+                    .sign_share(share.clone(), &keys[share.party])
+                    .unwrap()
+                    .to_wire_bytes()
+            })
+            .collect();
+        let opened = AuthenticatedQuorumCombiner::new(roster.clone())
+            .combine_framed(&opening, &ct, &framed, &params)
+            .expect("t verified shares open the ciphertext");
+        assert_eq!(&opened[..4], &[5, 9, 13, 17]);
+
+        // Falsifier: mutate one real certificate. Assert the mutation is present,
+        // then the verified combiner refuses it.
+        let mut forged = shares.clone();
+        let before = forged[0].proof.as_ref().unwrap().relation_response;
+        forged[0].proof.as_mut().unwrap().relation_response[0] ^= 1;
+        assert_ne!(
+            before,
+            forged[0].proof.as_ref().unwrap().relation_response,
+            "the certificate mutation did not take"
+        );
+        let forged_framed: Vec<Vec<u8>> = forged
+            .iter()
+            .map(|share| {
+                roster
+                    .sign_share(share.clone(), &keys[share.party])
+                    .unwrap()
+                    .to_wire_bytes()
+            })
+            .collect();
+        assert_eq!(
+            AuthenticatedQuorumCombiner::new(roster).combine_framed(
+                &opening,
+                &ct,
+                &forged_framed,
+                &params,
+            ),
+            Err(QuorumError::InvalidDecryptShareProof {
+                party: shares[0].party
+            })
         );
     }
 }

@@ -62,11 +62,17 @@ use fhegg_fhe::mpc_party::transport::{
     EqualityTransportRoster, NativePqTransportIdentity, NativePqTransportPublicIdentity,
 };
 use fhegg_fhe::threshold::distributed::{
-    decode_enrollment, encode_enrollment, AcceptedDealing, DistributedCustody, DistributedDkg,
-    SEQUENCE_CROSS_EVALUATION, SEQUENCE_OPEN_REQUEST, SEQUENCE_OPEN_RESPONSE,
+    decode_enrollment, decode_finalize_request, encode_commit_response, encode_enrollment,
+    AcceptedDealing, DistributedDkg, DistributedPendingCustody, DistributedVerifiedCustody,
+    SEQUENCE_COMMIT_RESPONSE, SEQUENCE_CROSS_EVALUATION, SEQUENCE_FINALIZE_REQUEST,
+    SEQUENCE_FINALIZE_RESPONSE, SEQUENCE_OPEN_REQUEST, SEQUENCE_OPEN_RESPONSE,
     SEQUENCE_PUBLIC_KEY_RESPONSE,
 };
 use fhegg_fhe::threshold::quorum::{AuthenticatedQuorumRoster, QuorumOpeningSession};
+use fhegg_fhe::threshold::relying_party::{
+    decode_open_request, KIND_COMMIT_REQUEST, KIND_CROSS, KIND_DEALING, KIND_FINALIZE_REQUEST,
+    KIND_OPEN_REQUEST, KIND_PUBLIC_KEY_REQUEST, KIND_SHUTDOWN,
+};
 use fhegg_fhe::threshold::{BfvParams, MIN_SMUDGE_BITS};
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -77,14 +83,10 @@ const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 const SETUP_DEADLINE: Duration = Duration::from_secs(1_800);
 const IO_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Frame kinds. The header is public routing only — the sealed envelope inside
-/// re-binds the real route, sequence and roster, so a lying header byte makes the
-/// open fail rather than making a receiver process the wrong thing.
-const KIND_DEALING: u8 = 1;
-const KIND_CROSS: u8 = 2;
-const KIND_OPEN_REQUEST: u8 = 3;
-const KIND_PUBLIC_KEY_REQUEST: u8 = 4;
-const KIND_SHUTDOWN: u8 = 5;
+// Frame kinds are the ONE definition in `fhegg_fhe::threshold::relying_party`, so
+// the party and its caller cannot drift. The header is public routing only — the
+// sealed envelope inside re-binds route, sequence and roster, so a lying header
+// byte makes the open fail rather than making a receiver process the wrong thing.
 
 fn main() {
     if let Err(error) = run() {
@@ -412,7 +414,7 @@ fn install_verified_pq_cores() -> Result<(), String> {
 }
 
 struct Custody {
-    state: DistributedCustody,
+    state: DistributedVerifiedCustody,
     roster: AuthenticatedQuorumRoster,
     signing_key: SigningKey,
 }
@@ -496,7 +498,16 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
     let mut pending_cross: Vec<(usize, Vec<u8>)> = Vec::new();
     let mut checked_cross: BTreeSet<usize> = BTreeSet::new();
     let mut sent_cross = false;
+    // After DKG we hold `pending`: aggregated custody plus this party's own
+    // secret-share commitment, awaiting the whole committee's commitment vectors.
+    // The finalize round consumes it into a certificate-capable `custody`. The
+    // collective key and setup digest are captured independently so the collective-
+    // key request is answerable across that transition.
+    let mut setup_done = false;
+    let mut pending: Option<DistributedPendingCustody> = None;
     let mut custody: Option<Custody> = None;
+    let mut collective_pk_bytes: Option<Vec<u8>> = None;
+    let mut setup_digest: Option<[u8; 32]> = None;
 
     loop {
         if accepted.len() == n_parties && !sent_cross {
@@ -512,7 +523,7 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
             }
             sent_cross = true;
         }
-        if sent_cross && !pending_cross.is_empty() {
+        if sent_cross && !setup_done && !pending_cross.is_empty() {
             for (peer, sealed) in std::mem::take(&mut pending_cross) {
                 let message = dkg
                     .open(&identity, peer, party, SEQUENCE_CROSS_EVALUATION, &sealed)
@@ -522,29 +533,25 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
                 checked_cross.insert(peer);
             }
         }
-        if custody.is_none() && checked_cross.len() == n_parties - 1 && accepted.len() == n_parties
-        {
+        if !setup_done && checked_cross.len() == n_parties - 1 && accepted.len() == n_parties {
             let ready = dkg
-                .finish(party, std::mem::take(&mut accepted))
-                .map_err(|error| format!("finish: {error}"))?;
-            let quorum_roster =
-                AuthenticatedQuorumRoster::new(dkg.session().clone(), party_keys.clone())
-                    .map_err(|error| format!("custody roster: {error:?}"))?;
+                .prepare_verified_custody(party, std::mem::take(&mut accepted))
+                .map_err(|error| format!("prepare verified custody: {error}"))?;
+            let digest = ready.setup_digest();
+            collective_pk_bytes = Some(ready.collective().pk.to_bytes());
+            setup_digest = Some(digest);
             eprintln!(
                 "party {party}: custody ready in {:?}, setup digest {}",
                 started.elapsed(),
-                hex(&ready.setup_digest)
+                hex(&digest)
             );
-            write_atomic(&ready_path(dir, party), &ready.setup_digest)?;
-            custody = Some(Custody {
-                state: ready,
-                roster: quorum_roster,
-                signing_key: signing_key.clone(),
-            });
+            write_atomic(&ready_path(dir, party), &digest)?;
+            pending = Some(ready);
+            setup_done = true;
         }
 
         let Ok(message) = inbound.recv_timeout(Duration::from_millis(250)) else {
-            if custody.is_none() && Instant::now() > deadline {
+            if !setup_done && Instant::now() > deadline {
                 return Err("setup deadline expired".to_string());
             }
             continue;
@@ -565,7 +572,7 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
                 let _ = message.reply.send(vec![1]);
             }
             KIND_CROSS => {
-                if custody.is_none() && !checked_cross.contains(&message.sender) {
+                if !setup_done && !checked_cross.contains(&message.sender) {
                     pending_cross.push((message.sender, message.payload));
                 }
                 let _ = message.reply.send(vec![1]);
@@ -574,11 +581,11 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
                 // Sealed to the relying party like everything else: the
                 // encryption key a market will use is exactly as forgeable as
                 // the channel that delivers it.
-                let answer = match custody.as_ref() {
-                    Some(ready) => {
-                        let mut body = Vec::new();
-                        body.extend_from_slice(&ready.state.setup_digest);
-                        body.extend_from_slice(&ready.state.collective.pk.to_bytes());
+                let answer = match (&setup_digest, &collective_pk_bytes) {
+                    (Some(digest), Some(pk_bytes)) => {
+                        let mut body = Vec::with_capacity(32 + pk_bytes.len());
+                        body.extend_from_slice(digest);
+                        body.extend_from_slice(pk_bytes);
                         dkg.seal(
                             &identity,
                             party,
@@ -588,12 +595,49 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
                         )
                         .map_err(|error| format!("seal public key: {error}"))?
                     }
+                    _ => Vec::new(),
+                };
+                let _ = message.reply.send(answer);
+            }
+            KIND_COMMIT_REQUEST => {
+                // Publish this party's PUBLIC aggregate-row commitment vector and
+                // the dealer digests it accepted; the blindings stay in `pending`.
+                let answer = match pending.as_ref() {
+                    Some(ready) => {
+                        let body = encode_commit_response(
+                            ready.dealer_commitment_digests(),
+                            ready.secret_share_commitments(),
+                        );
+                        dkg.seal(
+                            &identity,
+                            party,
+                            dkg.relying_party(),
+                            SEQUENCE_COMMIT_RESPONSE,
+                            &body,
+                        )
+                        .map_err(|error| format!("seal commit response: {error}"))?
+                    }
                     None => Vec::new(),
                 };
                 let _ = message.reply.send(answer);
             }
+            KIND_FINALIZE_REQUEST => {
+                let answer = finalize_custody(
+                    &dkg,
+                    &identity,
+                    party,
+                    &party_keys,
+                    &signing_key,
+                    &mut pending,
+                    &mut custody,
+                    &message.payload,
+                );
+                let _ = message.reply.send(answer);
+            }
             KIND_OPEN_REQUEST => {
                 let Some(ready) = custody.as_mut() else {
+                    // Never opens before the verified commitment round has bound a
+                    // transcript: an opening here would be uncertified.
                     let _ = message.reply.send(Vec::new());
                     continue;
                 };
@@ -618,6 +662,83 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
     }
 }
 
+/// Consume `pending` into certificate-capable verified custody, once the collector
+/// has sent the whole committee's ordered commitment vectors. Returns the sealed
+/// acknowledgement, or an empty answer if the finalize is refused (a corrupted or
+/// mis-collected commitment set aborts the verified path for this party rather than
+/// silently opening uncertified).
+#[allow(clippy::too_many_arguments)]
+fn finalize_custody(
+    dkg: &DistributedDkg,
+    identity: &NativePqTransportIdentity,
+    party: usize,
+    party_keys: &[[u8; 32]],
+    signing_key: &SigningKey,
+    pending: &mut Option<DistributedPendingCustody>,
+    custody: &mut Option<Custody>,
+    sealed: &[u8],
+) -> Vec<u8> {
+    let Some(ready) = pending.take() else {
+        return Vec::new();
+    };
+    let request = match dkg.open(
+        identity,
+        dkg.relying_party(),
+        party,
+        SEQUENCE_FINALIZE_REQUEST,
+        sealed,
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("party {party}: finalize open REFUSED: {error}");
+            return Vec::new();
+        }
+    };
+    let commitments = match decode_finalize_request(&request) {
+        Ok(commitments) => commitments,
+        Err(error) => {
+            eprintln!("party {party}: finalize decode REFUSED: {error}");
+            return Vec::new();
+        }
+    };
+    let verified = match ready.finalize(commitments) {
+        Ok(verified) => verified,
+        Err(error) => {
+            eprintln!("party {party}: finalize REFUSED: {error}");
+            return Vec::new();
+        }
+    };
+    let roster = match AuthenticatedQuorumRoster::new_verified(
+        dkg.session().clone(),
+        &verified.transcript,
+        party_keys.to_vec(),
+    ) {
+        Ok(roster) => roster,
+        Err(error) => {
+            eprintln!("party {party}: verified custody roster REFUSED: {error:?}");
+            return Vec::new();
+        }
+    };
+    *custody = Some(Custody {
+        state: verified,
+        roster,
+        signing_key: signing_key.clone(),
+    });
+    match dkg.seal(
+        identity,
+        party,
+        dkg.relying_party(),
+        SEQUENCE_FINALIZE_RESPONSE,
+        &[1],
+    ) {
+        Ok(sealed) => sealed,
+        Err(error) => {
+            eprintln!("party {party}: seal finalize ack: {error}");
+            Vec::new()
+        }
+    }
+}
+
 fn answer_opening(
     dkg: &DistributedDkg,
     identity: &NativePqTransportIdentity,
@@ -636,8 +757,16 @@ fn answer_opening(
         )
         .map_err(|error| format!("open request: {error}"))?;
     let (nonce, roster, plain_bound, ciphertext_bytes) = decode_open_request(&request)?;
-    let opening = QuorumOpeningSession::new(dkg.session().clone(), nonce, roster)
-        .map_err(|error| format!("opening session: {error:?}"))?;
+    // The opening binds the exact accepted VSS setup, so this party's certificate-
+    // carrying share and the relying party's verified combiner agree on the same
+    // transcript digest.
+    let opening = QuorumOpeningSession::new_verified(
+        dkg.session().clone(),
+        &custody.state.transcript,
+        nonce,
+        roster,
+    )
+    .map_err(|error| format!("opening session: {error:?}"))?;
     let ciphertext = LeanCiphertext::from_fhe_bytes(
         &ciphertext_bytes,
         dkg.params().moduli(),
@@ -662,35 +791,6 @@ fn answer_opening(
         &signed.to_wire_bytes(),
     )
     .map_err(|error| format!("seal response: {error}"))
-}
-
-fn decode_open_request(bytes: &[u8]) -> Result<([u8; 32], Vec<usize>, u64, Vec<u8>), String> {
-    let mut position = 0usize;
-    let mut take = |length: usize| -> Result<&[u8], String> {
-        let end = position
-            .checked_add(length)
-            .filter(|&end| end <= bytes.len())
-            .ok_or_else(|| "truncated opening request".to_string())?;
-        let output = &bytes[position..end];
-        position = end;
-        Ok(output)
-    };
-    let nonce: [u8; 32] = take(32)?.try_into().map_err(|_| "nonce".to_string())?;
-    let count = u64::from_le_bytes(take(8)?.try_into().map_err(|_| "count".to_string())?) as usize;
-    if count > 1024 {
-        return Err("opening roster arity".to_string());
-    }
-    let mut roster = Vec::with_capacity(count);
-    for _ in 0..count {
-        roster.push(
-            u64::from_le_bytes(take(8)?.try_into().map_err(|_| "party".to_string())?) as usize,
-        );
-    }
-    let plain_bound = u64::from_le_bytes(take(8)?.try_into().map_err(|_| "bound".to_string())?);
-    let length =
-        u64::from_le_bytes(take(8)?.try_into().map_err(|_| "length".to_string())?) as usize;
-    let ciphertext = take(length)?.to_vec();
-    Ok((nonce, roster, plain_bound, ciphertext))
 }
 
 fn hex(bytes: &[u8]) -> String {

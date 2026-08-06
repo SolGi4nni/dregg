@@ -90,6 +90,7 @@
 use std::fmt;
 
 use fhe_traits::Serialize as FheSerialize;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 
 use crate::mpc_party::transport::{
@@ -97,9 +98,11 @@ use crate::mpc_party::transport::{
     NativePqTransportPublicIdentity, TransportSecurityProfile,
 };
 use crate::threshold::quorum::{
-    assemble_distributed_party, deal as deal_contribution, finish_public_key,
-    verify_received_dealer_row, DealerRowCrossEvaluation, DealerVssCommitment, PrivateDealerShare,
-    QuorumError, QuorumKeygenSession, QuorumParty, VerifiedPrivateDealerShare,
+    assemble_distributed_party, assemble_distributed_transcript, commit_distributed_secret_share,
+    deal as deal_contribution, finish_public_key, verify_received_dealer_row,
+    DealerRowCrossEvaluation, DealerVssCommitment, PrivateDealerShare, QuorumError,
+    QuorumKeygenSession, QuorumParty, VerifiedDkgTranscript, VerifiedPartyAssembly,
+    VerifiedPrivateDealerShare,
 };
 use crate::threshold::{BfvParams, CollectivePublicKey, PublicKeyContribution, ThresholdError};
 
@@ -119,6 +122,12 @@ pub const SEQUENCE_OPEN_REQUEST: u64 = 3;
 pub const SEQUENCE_OPEN_RESPONSE: u64 = 4;
 /// Sequence number of a custody party's collective-public-key response.
 pub const SEQUENCE_PUBLIC_KEY_RESPONSE: u64 = 5;
+/// Sequence number of a custody party's secret-share-commitment response.
+pub const SEQUENCE_COMMIT_RESPONSE: u64 = 6;
+/// Sequence number of the collector's transcript-finalize request.
+pub const SEQUENCE_FINALIZE_REQUEST: u64 = 7;
+/// Sequence number of a custody party's finalize acknowledgement.
+pub const SEQUENCE_FINALIZE_RESPONSE: u64 = 8;
 
 /// Canonical enrollment record for one slot: the public half of a native-PQ
 /// transport identity.
@@ -542,6 +551,82 @@ impl DistributedDkg {
             setup_digest,
         })
     }
+
+    /// PHASE 3-VERIFIED, commit step: aggregate this party's custody AND commit to
+    /// its aggregate secret-share row, so a later opening can carry the
+    /// zero-knowledge decrypt-share certificate.
+    ///
+    /// This is the distributed replacement for the trusted transition in
+    /// [`crate::threshold::quorum::finish_verified_keygen`]: instead of one process
+    /// seeing every private row and committing on every party's behalf, EACH party
+    /// commits to its own aggregate row here (from rows it verified itself) and the
+    /// public commitment vectors are collected into one transcript by
+    /// [`DistributedPendingCustody::finalize`].  The returned pending custody holds
+    /// this party's private rows and Pedersen blindings; only
+    /// [`DistributedPendingCustody::secret_share_commitments`] leaves the party.
+    pub fn prepare_verified_custody(
+        &self,
+        party: usize,
+        accepted: Vec<AcceptedDealing>,
+    ) -> Result<DistributedPendingCustody> {
+        if accepted.len() != self.n_parties() {
+            return Err(DistributedCommitteeError::Message(
+                "custody needs exactly one accepted dealing per dealer",
+            ));
+        }
+        for (dealer, dealing) in accepted.iter().enumerate() {
+            if dealing.dealer != dealer {
+                return Err(DistributedCommitteeError::Message(
+                    "accepted dealings are not in canonical dealer order",
+                ));
+            }
+        }
+        let contributions = accepted
+            .iter()
+            .map(|dealing| dealing.contribution.clone())
+            .collect::<Vec<_>>();
+        let collective = finish_public_key(&self.session, &contributions, &self.params)?;
+
+        let dealer_commitment_digests = accepted
+            .iter()
+            .map(|dealing| dealing.commitment.digest())
+            .collect::<Vec<_>>();
+
+        // The legacy setup digest is unchanged: every honest party derives the
+        // same one, and the party binary still publishes it as its readiness mark.
+        let mut digest = Sha256::new();
+        digest.update(DKG_SETUP_DIGEST_DOMAIN);
+        digest.update(self.domain);
+        for dealing in &accepted {
+            digest.update(dealing.commitment.digest());
+        }
+        digest.update(Sha256::digest(collective.pk.to_bytes()));
+        let setup_digest: [u8; 32] = digest.finalize().into();
+
+        let shares = accepted
+            .into_iter()
+            .map(|dealing| dealing.row)
+            .collect::<Vec<_>>();
+        let (secret_share_commitments, blindings) = commit_distributed_secret_share(
+            &self.session,
+            party,
+            &shares,
+            &self.params,
+            &mut OsRng,
+        )?;
+
+        Ok(DistributedPendingCustody {
+            session: self.session.clone(),
+            params: self.params.clone(),
+            party,
+            collective,
+            setup_digest,
+            dealer_commitment_digests,
+            secret_share_commitments,
+            shares,
+            blindings,
+        })
+    }
 }
 
 /// One dealer's complete phase-1 output: its own row (which never leaves the
@@ -587,6 +672,109 @@ pub struct DistributedCustody {
     pub party: QuorumParty,
     pub collective: CollectivePublicKey,
     pub setup_digest: [u8; 32],
+}
+
+/// One party's custody AFTER local aggregation and its own secret-share
+/// commitment, but BEFORE the public commitment vectors of the whole committee
+/// have been collected into a transcript.
+///
+/// It holds this party's PRIVATE rows and Pedersen blindings and never yields
+/// them; the only thing that leaves is [`secret_share_commitments`], the public
+/// vector every party publishes.  [`finalize`] consumes it once every party's
+/// vector is in hand.
+///
+/// [`secret_share_commitments`]: DistributedPendingCustody::secret_share_commitments
+/// [`finalize`]: DistributedPendingCustody::finalize
+pub struct DistributedPendingCustody {
+    session: QuorumKeygenSession,
+    params: BfvParams,
+    party: usize,
+    collective: CollectivePublicKey,
+    setup_digest: [u8; 32],
+    dealer_commitment_digests: Vec<[u8; 32]>,
+    secret_share_commitments: Vec<[u8; 32]>,
+    shares: Vec<VerifiedPrivateDealerShare>,
+    blindings: Vec<[u8; 32]>,
+}
+
+impl DistributedPendingCustody {
+    pub fn party(&self) -> usize {
+        self.party
+    }
+
+    /// The collective encryption key, live and identical for every honest party.
+    pub fn collective(&self) -> &CollectivePublicKey {
+        &self.collective
+    }
+
+    /// The legacy readiness digest, unchanged from [`DistributedDkg::finish`].
+    pub fn setup_digest(&self) -> [u8; 32] {
+        self.setup_digest
+    }
+
+    /// Every dealer's public VSS commitment digest, in canonical dealer order, as
+    /// this party checked and accepted them. Published so the collector can bind
+    /// the transcript to the SAME dealings every party accepted (and refuse if two
+    /// parties disagree).
+    pub fn dealer_commitment_digests(&self) -> &[[u8; 32]] {
+        &self.dealer_commitment_digests
+    }
+
+    /// This party's PUBLIC aggregate-row commitment vector. The blindings that
+    /// open it stay inside this pending custody.
+    pub fn secret_share_commitments(&self) -> &[[u8; 32]] {
+        &self.secret_share_commitments
+    }
+
+    /// Collect the whole committee's public commitment vectors (in canonical party
+    /// order) into one verified transcript and complete this party's certificate-
+    /// capable custody.
+    ///
+    /// Refuses unless the vector recorded for THIS party is exactly the one it
+    /// published (so a collector cannot silently drop or swap it) and unless this
+    /// party's own blindings open that vector against its re-derived aggregate row
+    /// (via [`QuorumParty::assemble_verified`]). The resulting party produces
+    /// openings that carry the zero-knowledge decrypt-share certificate.
+    pub fn finalize(
+        self,
+        party_secret_commitments: Vec<Vec<[u8; 32]>>,
+    ) -> Result<DistributedVerifiedCustody> {
+        if party_secret_commitments.get(self.party) != Some(&self.secret_share_commitments) {
+            return Err(DistributedCommitteeError::Message(
+                "the collected transcript does not carry this party's own commitment",
+            ));
+        }
+        let transcript = assemble_distributed_transcript(
+            &self.session,
+            self.dealer_commitment_digests,
+            party_secret_commitments,
+            &self.collective,
+            &self.params,
+        )?;
+        let assembly = VerifiedPartyAssembly::from_distributed_parts(self.shares, self.blindings);
+        let party = QuorumParty::assemble_verified(
+            &self.session,
+            self.party,
+            assembly,
+            &transcript,
+            &self.params,
+        )?;
+        Ok(DistributedVerifiedCustody {
+            party,
+            collective: self.collective,
+            transcript,
+        })
+    }
+}
+
+/// What one party holds after the distributed VERIFIED setup completes: custody
+/// that produces certificate-carrying openings, the collective key, and the
+/// shared transcript those certificates (and the relying party's combiner) anchor
+/// to.
+pub struct DistributedVerifiedCustody {
+    pub party: QuorumParty,
+    pub collective: CollectivePublicKey,
+    pub transcript: VerifiedDkgTranscript,
 }
 
 /// Byte offset of the first RNS coefficient inside a confidential row encoding:
@@ -661,6 +849,104 @@ fn decode_cross_round(message: &[u8], params: &BfvParams) -> Result<Vec<DealerRo
         ));
     }
     Ok(evaluations)
+}
+
+const COMMIT_RESPONSE_MAGIC: &[u8; 8] = b"FHCMv001";
+const FINALIZE_REQUEST_MAGIC: &[u8; 8] = b"FHFNv001";
+const COMMITMENT_BYTES: usize = 32;
+/// A generous ceiling on `moduli * degree`, so a malformed length cannot force a
+/// huge allocation. Deployed fold parameters are far below it.
+const MAX_COMMITMENT_VECTOR: usize = 1 << 20;
+
+fn encode_digest_list(out: &mut Vec<u8>, items: &[[u8; 32]]) {
+    out.extend_from_slice(&(items.len() as u64).to_le_bytes());
+    for item in items {
+        out.extend_from_slice(item);
+    }
+}
+
+fn decode_digest_list(cursor: &mut Cursor, cap: usize) -> Result<Vec<[u8; 32]>> {
+    let count = cursor.length()?;
+    if count > cap {
+        return Err(DistributedCommitteeError::Message("digest-list arity"));
+    }
+    let mut items = Vec::with_capacity(count);
+    for _ in 0..count {
+        items.push(
+            cursor
+                .take(COMMITMENT_BYTES)?
+                .try_into()
+                .map_err(|_| DistributedCommitteeError::Message("digest length"))?,
+        );
+    }
+    Ok(items)
+}
+
+/// The commit-round response a party publishes to the collector: every dealer's
+/// commitment digest it accepted, and its own public aggregate-row commitment
+/// vector.
+pub fn encode_commit_response(
+    dealer_commitment_digests: &[[u8; 32]],
+    secret_share_commitments: &[[u8; 32]],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        16 + (dealer_commitment_digests.len() + secret_share_commitments.len()) * COMMITMENT_BYTES,
+    );
+    out.extend_from_slice(COMMIT_RESPONSE_MAGIC);
+    encode_digest_list(&mut out, dealer_commitment_digests);
+    encode_digest_list(&mut out, secret_share_commitments);
+    out
+}
+
+/// Parse a commit-round response. Returns `(dealer_commitment_digests,
+/// secret_share_commitments)`.
+pub fn decode_commit_response(message: &[u8]) -> Result<(Vec<[u8; 32]>, Vec<[u8; 32]>)> {
+    let mut cursor = Cursor::new(message);
+    if cursor.take(8)? != COMMIT_RESPONSE_MAGIC {
+        return Err(DistributedCommitteeError::Message("commit-response magic"));
+    }
+    let dealer_commitment_digests = decode_digest_list(&mut cursor, MAX_COMMITMENT_VECTOR)?;
+    let secret_share_commitments = decode_digest_list(&mut cursor, MAX_COMMITMENT_VECTOR)?;
+    if !cursor.finished() {
+        return Err(DistributedCommitteeError::Message(
+            "trailing commit-response bytes",
+        ));
+    }
+    Ok((dealer_commitment_digests, secret_share_commitments))
+}
+
+/// The finalize-round request the collector sends every party: the whole
+/// committee's public commitment vectors in canonical party order.
+pub fn encode_finalize_request(party_secret_commitments: &[Vec<[u8; 32]>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(FINALIZE_REQUEST_MAGIC);
+    out.extend_from_slice(&(party_secret_commitments.len() as u64).to_le_bytes());
+    for commitments in party_secret_commitments {
+        encode_digest_list(&mut out, commitments);
+    }
+    out
+}
+
+/// Parse a finalize-round request into the ordered per-party commitment vectors.
+pub fn decode_finalize_request(message: &[u8]) -> Result<Vec<Vec<[u8; 32]>>> {
+    let mut cursor = Cursor::new(message);
+    if cursor.take(8)? != FINALIZE_REQUEST_MAGIC {
+        return Err(DistributedCommitteeError::Message("finalize-request magic"));
+    }
+    let parties = cursor.length()?;
+    if parties > MAX_COMMITMENT_VECTOR {
+        return Err(DistributedCommitteeError::Message("finalize party arity"));
+    }
+    let mut party_secret_commitments = Vec::with_capacity(parties);
+    for _ in 0..parties {
+        party_secret_commitments.push(decode_digest_list(&mut cursor, MAX_COMMITMENT_VECTOR)?);
+    }
+    if !cursor.finished() {
+        return Err(DistributedCommitteeError::Message(
+            "trailing finalize-request bytes",
+        ));
+    }
+    Ok(party_secret_commitments)
 }
 
 struct Cursor<'a> {
