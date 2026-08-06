@@ -256,9 +256,26 @@ from `shapeSmoke` only in `ipaRounds = 16` (`DREGG_WM=2,16,3,2,8,3,6,5`): before
 REJECTED; after, `w11_bullet` (5 452 rows) and `w12_close` (6 091 rows) both `verify()==true` with
 the public leg rejecting 4/4 sampled and accepting only declared-unread slots.
 
-**WRAP-SCALE STATUS**, five polarities, release: `w1_transcript` · `w6_xhat` · `w8_ftcomm` ·
-`w9_prev` · `w10_finalize` · `w10_combine` · `w11_wraphack` · `w11_finsponge` all prove; `w11_bullet`
-and `w12_close` were the two reds and the sentinel was why.
+⛑⛑⛑⛑ **SMOKE → WRAP IS PROMOTED: ALL FIFTEEN WRAP-SCALE RUNGS PROVE, FIVE POLARITIES, RELEASE.**
+`0` FATALs; honest `verify()==true` 15/15; wiring, unwired-control and non-vacuity legs 15/15; the
+public leg 12/12 (`w1_transcript`/`w2_challenges`/`w3_branch` carry no public words, so they have no
+fifth leg). Top rung `w12_close` = **11 563 rows at domain 2^14**, against smoke's 4 290 at 2^13.
+
+⚑ **AND THAT IS WHAT THE SIXTEEN ROUNDS BUY.** `w12_close` derives **30** of Mina's forty at the
+wrap shape against **14** at smoke, and the sixteen new ones are slots **13–28**, the bulletproof
+challenges: at `ipaRounds = 3` only one of sixteen exists, so the brief's "slots 13–28 disagree
+partly because only one of sixteen exists there" is now closed by arity rather than argued about.
+
+| rung | rows | domain | rung | rows | domain |
+|---|---|---|---|---|---|
+| w1_transcript | 818 | 2^10 | w9_prev | 7 386 | 2^13 |
+| w2_challenges | 1 407 | 2^11 | w10_finalize | 8 394 | 2^14 |
+| w3_branch | 1 430 | 2^11 | w11_finsponge | 11 200 | 2^14 |
+| w4_bind | 1 481 | 2^11 | w11_wraphack | 8 023 | 2^13 |
+| w5_key | 2 017 | 2^11 | **w12_close** | **11 563** | **2^14** |
+| w6_xhat | 6 512 | 2^13 | w10_combine | 9 142 | 2^14 |
+| w7_split | 6 532 | 2^13 | w11_bullet | 10 924 | 2^14 |
+| w8_ftcomm | 7 380 | 2^13 | | | |
 
 ⚠ **WHAT IS STILL NOT THIS PROOF'S, AND IT IS EXACTLY TWO ITEMS.** The MAIN assembly absorbs Mina's
 `step-transaction` key digest at `wrap_verifier.ml:537` (§14's `choose_key` anchor) and §15's MSM
