@@ -198,6 +198,32 @@
 //! a number that is right for a boring reason. If a third transport shows up, THAT is the
 //! moment to build the provenance analysis — with these five as its fixtures.
 //!
+//! ## Two MORE over-counts, named on the same terms (2026-08-06)
+//!
+//! The 179 -> 198 repair on `descriptor_ir2.rs` turned up two shapes this gate had never scored
+//! before. Both are named here and NEITHER is auto-detected, for the reason above.
+//!
+//!   * ⚑ **THE CONSTANT-FALSE REFUSAL.** `builder.assert_zero(AB::Expr::ONE)` asserts `1 = 0`: it
+//!     names no column and no coefficient, and it makes the AIR unsatisfiable on a shape an
+//!     admission door already refused. It is `return Err` spelled in the AIR — the OPPOSITE of
+//!     authoring a constraint — and dialect (1) scores it 1 because dialect (1) counts syntactic
+//!     `assert_zero` call sites and looks at nothing else. There are five at HEAD.
+//!     ⚠ **Do not exempt it.** A syntactic "argument is a bare constant path" rule is easy to
+//!     write and impossible to smuggle algebra through, and it is STILL the wrong trade: an
+//!     exemption list in the LAW gate costs more than five over-counted sites, and the pressure a
+//!     count creates on a fail-closed backstop — *delete the refusal and the gate goes green* —
+//!     is a pressure this repo can least afford to point that way. The row carries the reason
+//!     instead, which is what a reader needs.
+//!   * ⚑ **THE VECTOR-VALUED INTERPRETER ARM.** `Ir2Air`'s row-local walk ends in ONE shared
+//!     `builder.assert_zero(match sel { .. })`, so `Gate`/`Boundary`/`Transition`/`PiBinding`/
+//!     `WindowGate` — five node kinds, every descriptor, thousands of constraints — cost this file
+//!     exactly ONE site between them. A node kind whose Lean denotation is a VECTOR of congruences
+//!     (`ProofBind.holdsAt` is `1 + n + n` of them) cannot fold into that tail and pays per call
+//!     site. So the number moves with a node kind's ARITY, not with how much algebra originates in
+//!     Rust — and `PiBinding`, whose polynomial `local[col] − pv[pi]` is just as Rust-chosen, has
+//!     always been free. This is the sharpest known limit of dialect (1) as a proxy; a real fix is
+//!     the same provenance analysis the TRANSPORT class needs, on the same terms.
+//!
 //! ## If this test fails
 //! You (or an agent) hand-authored a constraint in Rust. That is the violation itself — do NOT add your
 //! file to the baseline to make it green. Emit it from Lean instead (`metatheory/Dregg2/Circuit/Emit/*.lean`
@@ -1058,8 +1084,59 @@ const BASELINE: &[(&str, usize)] = &[
     // artifact cannot know a table id — which is what made a per-arity Lean-emitted family
     // possible. `Ir2Air::Main`'s QUERY side still calls it, so the name is a genuine coupling
     // between this file and the Lean author, exactly like `ir2_p2` / `ir2_p2_narrow`.
-    ("circuit/src/descriptor_ir2.rs", 179), // 155 of 179 #[cfg(test)]
-    ("circuit/src/descriptor_ir2_canonical.rs", 48),
+    //
+    // ⚑ RE-PINNED 2026-08-06, 179 -> 198. NOT ONE FLAG DAY — FOUR COMMITS OVER THREE DAYS, and the
+    // attribution this repair inherited (`c08967ca2`, "the challenges/ChalGate flag day") is wrong
+    // twice: that commit touches ONLY `perf/src/lib.rs` (three `challenges: 0` initializers) and
+    // grew this file by ZERO. Measured by scoring `git show <rev>:<file>` with this file's own
+    // classifier, which is what the `GREW` row's recipe is for:
+    //
+    //   17b138e1f 179 -> f2fc52c39 185 -> 46493491d 188 -> dc5abe4ab 191 -> 72e86fc8d 198
+    //
+    // The nineteen are FOUR objects, and only ONE of them is polynomial algebra:
+    //
+    //  * **10 `#[cfg(test)]` sites**, in two tests. `f2fc52c39` (+6) added
+    //    `ir2_three_range_widths_coexist_and_prove` — a SYNTHETIC three-table descriptor
+    //    (3 `VmConstraint2::Lookup` + 3 `LeanExpr::Var`) built to show a 29/16/8-bit range trio
+    //    coexists; nothing emits it and nothing should. `72e86fc8d` (+4) added
+    //    `parses_lean_proof_bind_golden` — 4 `LeanExpr::{Var,Const}` built as the EXPECTED half of
+    //    `assert_eq!` against a `proof_bind` DECODED FROM the Lean golden, i.e. a differential,
+    //    which is the law working. Counted because `#[cfg(test)]`-inside-`src/` is counted on
+    //    purpose (module docs); the row moves, the rule does not.
+    //  * **5 `assert_zero(AB::Expr::ONE)` — a constant-FALSE REFUSAL, not a constraint.** Three in
+    //    the `ProofBind` arm (`commit.len() != vk.len()`, and either declared pin shorter than the
+    //    vector it pins — `72e86fc8d`), two for the challenge leaf (`dc5abe4ab`: the short
+    //    `permutation_randomness()` backstop in `Ir2Air::Main`, and `Ir2UniAir`'s unreachable
+    //    `ChalGate` arm). `1 = 0` names no column and no coefficient; it is `return Err` spelled in
+    //    the AIR, under an admission door that already refused the same shape. ⚑ NOT auto-detected,
+    //    for the reason the TRANSPORT class is not: a syntactic exemption in the LAW gate is worth
+    //    less than a number that is right for a boring reason — and the incentive it would create,
+    //    "delete the backstop to make the gate green", is the one this repo can least afford.
+    //  * **1 `VmConstraint2::ChalGate(..)` in `parse_constraint2`** — the JSON DECODER's `chal_gate`
+    //    arm (`dc5abe4ab`). Pure TRANSPORT: the node is being rebuilt from bytes Lean emitted. Its
+    //    three siblings in the same `match` (`WindowGate`, `ProofBind`, the `v1tag` `Base`) are
+    //    already inside the 179, so this is growth of an ALREADY-COUNTED class, not a new one.
+    //  * **3 genuine congruence bodies** — the `VmConstraint2::ProofBind` arm of
+    //    `eval_row_local_constraints` (`46493491d`): `guard·(guard − 1)`, `guard·(vk − vk_pin)`,
+    //    `guard·(commit − bound)`. This is the ONE that is polynomial algebra, and it is the
+    //    interpreter of an IR NODE whose meaning is `DescriptorIR2.ProofBind.holdsAt` in Lean —
+    //    the same act as rendering `VmConstraint::PiBinding{row,col,pi}` as `local[col] − pv[pi]`,
+    //    which has ridden the shared `assert_zero` tail inside this row since the beginning.
+    //    ⚑ It scores 3 rather than 0 only because the arm emits a VECTOR of bodies and therefore
+    //    cannot use that shared tail: dialect (1) counts syntactic call SITES and has no
+    //    authoring-vs-lowering classifier at all, so a node kind whose denotation is `1 + n + n`
+    //    congruences scores per-site while one whose denotation is a bus send scores zero.
+    //    ⚠ And what it BOUGHT is why it is not being undone: before `3f4d703ae` this kind denoted
+    //    NOTHING in either language — `.proofBind` sat in the `continue` list and emitted no bus
+    //    interaction either — so a row's claim about its sub-proof was unconstrained. Deleting
+    //    these three to lower a count would re-open that.
+    ("circuit/src/descriptor_ir2.rs", 198), // 165 of 198 #[cfg(test)]
+    // ⚑ RE-PINNED 2026-08-06, 48 -> 49. ORIGIN: `dc5abe4ab` (the challenge leaf). ONE site, and it
+    // is the canonical (binary) DECODER's tag-7 arm — `7 => Ok(VmConstraint2::ChalGate(..))` at
+    // `descriptor_ir2_canonical.rs:1018`. The TRANSPORT class again, and the exact twin of the JSON
+    // parser's arm above: the ENCODER's `ChalGate` at :593 is a match pattern and stays free. No
+    // polynomial, no column, no coefficient originates here — the node is rebuilt from bytes.
+    ("circuit/src/descriptor_ir2_canonical.rs", 49),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),
     ("circuit/src/dsl/cap_membership.rs", 4),
@@ -1102,7 +1179,18 @@ const BASELINE: &[(&str, usize)] = &[
     // Neither belongs in Lean and neither is AIR. They are COUNTED because `#[cfg(test)]`-inside-
     // `src/` is counted on purpose (module docs), and that strictness is not being relaxed to
     // absorb them — the row moves, the rule does not.
-    ("circuit/src/effect_vm_descriptors.rs", 24),
+    // ⚑ RE-PINNED 2026-08-06, 24 -> 26. ORIGIN: `72e86fc8d` ("the recursion seam ties the whole
+    // digest, not a limb"). BOTH new sites are inside `#[cfg(test)]` — the file's cfg-test subset
+    // went 8 -> 10 while its production half did not move — and both are ONE object:
+    // `rotation_caveat_layout_matches_lean` asserts the DEPLOYED member's `proof_bind` lane 0 is
+    // the anchor column the rotated layout names, as
+    // `assert_eq!((commit.first(), vk.first()), (Some(&LeanExpr::Var(PARAM_BASE + …)), …))`. The
+    // two `LeanExpr::Var`s are the EXPECTED half of a differential against a descriptor READ OUT
+    // OF the deployed bytes; the widening from one felt to eight lanes is what turned a scalar
+    // field into a vector and therefore a `.first()` comparison into two. Same class, same reason,
+    // and the same answer as this row's 2026-07-31 block: neither is AIR, and the strictness is
+    // not relaxed to absorb them.
+    ("circuit/src/effect_vm_descriptors.rs", 26),
     ("circuit/src/lean_descriptor_air.rs", 47),
     ("circuit/src/membership_descriptor_4ary.rs", 1),
     ("circuit/src/membership_descriptor_general.rs", 39),
