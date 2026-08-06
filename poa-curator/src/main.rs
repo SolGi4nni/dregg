@@ -24,6 +24,8 @@ usage:
   poa-curator verify-companion --pin PATH --manifest PATH --deployment PATH --content-signature PATH --content-epoch N --content-counter N --input PATH
   poa-curator sign-world-activation --secret PATH --pin PATH --preview PATH --output PATH
   poa-curator verify-world-activation --pin PATH --envelope PATH
+  poa-curator sign-slot-opening --secret PATH --pin PATH --preview PATH --output PATH
+  poa-curator verify-slot-opening --pin PATH --envelope PATH
   poa-curator signal-replay --bundle PATH
   poa-curator signal-review --bundle PATH
   poa-curator promotion-inbox --bundle PATH --manifest PATH --deployment PATH --pin PATH --signature PATH --epoch N --counter N
@@ -48,6 +50,22 @@ and refuses if the two disagree, so a curator cannot sign bytes nobody
 re-derived. It also refuses a secret that does not derive the pin, a preview
 addressed to another curator, and any statement the store would refuse to
 install. `verify-world-activation` repeats the check without a secret key.
+
+`sign-slot-opening` is step 2 of the three-step Signal slot ceremony: it signs
+the `signing_message` of a POA-SLOT-OPENING-PREVIEW-V1 emitted by `dregg-node
+poa-slot-opening-preview`, producing the POA-SLOT-OPENING-ENVELOPE-V1 that
+`dregg-node init-poa-signal-slot` consumes. Like `sign-world-activation` it
+re-derives the canonical statement bytes from the preview's structured fields
+and refuses if they disagree with the printed message, so a curator cannot sign
+bytes nobody re-derived. Unlike it, the slot preview carries NO curator_key
+field, so this command cannot detect a preview addressed to another curator —
+the node still refuses that at install, against its own installed pin.
+`verify-slot-opening` repeats the check without a secret key.
+
+Until a slot is open, every scored Signal run refuses: `blocklace_sync` will
+not judge a claim when the authority has no open slot. The slot secret is drawn
+by the curator OFF-LINE (`openssl rand -hex 32` into a file, 64 lowercase hex);
+the node never mints one.
 
 `signal-replay` is read-only. It checks a caller-supplied sealed wire chain,
 reruns every transition through native Lean, and prints one machine-readable
@@ -88,6 +106,8 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         "verify-companion" => command_verify_companion(&flags),
         "sign-world-activation" => command_sign_world_activation(&flags),
         "verify-world-activation" => command_verify_world_activation(&flags),
+        "sign-slot-opening" => command_sign_slot_opening(&flags),
+        "verify-slot-opening" => command_verify_slot_opening(&flags),
         "signal-replay" => command_signal_replay(&flags),
         "signal-review" => command_signal_review(&flags),
         "promotion-inbox" => command_promotion_inbox(&flags),
@@ -124,6 +144,66 @@ fn command_sign_world_activation(flags: &BTreeMap<String, String>) -> Result<(),
         output.display()
     );
     println!("  signing_message_sha256 {}", signed.signing_message_sha256);
+    Ok(())
+}
+
+/// Step 2 of the Signal slot ceremony — the step that had no tooling.
+///
+/// Mirrors `command_sign_world_activation` exactly, including the
+/// sign-then-self-verify-then-write order: an envelope this tool cannot itself
+/// check is one the operator would only discover at `init-poa-signal-slot`.
+fn command_sign_slot_opening(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(flags, &["secret", "pin", "preview", "output"], &[])?;
+    let secret_path = flag_path(flags, "secret")?;
+    let pin_path = flag_path(flags, "pin")?;
+    let preview_path = flag_path(flags, "preview")?;
+    let output = flag_path(flags, "output")?;
+
+    let secret = load_secret_key(&secret_path)?;
+    let pin = CuratorKeyPin::load(&pin_path).map_err(|error| error.to_string())?;
+    let pin_key = pin.public_key().map_err(|error| error.to_string())?;
+    let preview =
+        poa_curator::slot_opening::load_preview(&preview_path).map_err(|e| e.to_string())?;
+    let signed = poa_curator::slot_opening::sign_slot_opening(&secret, &pin_key, &preview)
+        .map_err(|error| error.to_string())?;
+    poa_curator::slot_opening::verify_slot_opening(&pin_key, &signed.envelope)
+        .map_err(|error| format!("self-verification failed: {error}"))?;
+
+    let mut bytes = serde_json::to_vec_pretty(&signed.envelope).map_err(|e| e.to_string())?;
+    bytes.push(b'\n');
+    atomic_write_new(&output, &bytes, 0o644)?;
+    println!(
+        "signed slot opening: authority {} mission {} slot {} -> {}",
+        signed.envelope.statement.authority_id,
+        signed.envelope.statement.mission_id,
+        signed.envelope.statement.slot,
+        output.display()
+    );
+    println!(
+        "  commitment             {}",
+        signed.envelope.statement.commitment
+    );
+    println!("  signing_message_sha256 {}", signed.signing_message_sha256);
+    Ok(())
+}
+
+fn command_verify_slot_opening(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    exact_flags(flags, &["pin", "envelope"], &[])?;
+    let pin_path = flag_path(flags, "pin")?;
+    let envelope_path = flag_path(flags, "envelope")?;
+
+    let pin = CuratorKeyPin::load(&pin_path).map_err(|error| error.to_string())?;
+    let pin_key = pin.public_key().map_err(|error| error.to_string())?;
+    let envelope =
+        poa_curator::slot_opening::load_envelope(&envelope_path).map_err(|e| e.to_string())?;
+    let sha = poa_curator::slot_opening::verify_slot_opening(&pin_key, &envelope)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "slot opening for authority {} mission {} slot {} verifies against the pin",
+        envelope.statement.authority_id, envelope.statement.mission_id, envelope.statement.slot
+    );
+    println!("  commitment             {}", envelope.statement.commitment);
+    println!("  signing_message_sha256 {sha}");
     Ok(())
 }
 
