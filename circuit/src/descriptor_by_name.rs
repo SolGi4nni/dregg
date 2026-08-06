@@ -618,14 +618,45 @@ const MIDNIGHT_LIGHTCLIENT_VERIFY_JSON: &str =
 /// pre-2026-08-05 `MinaHeadProofWire` no longer decodes). The old column split in two:
 ///
 /// * `PICKLES_WITNESSED` — the residue, STILL A BIT, renamed so no reader takes it for a check;
+///   ⚑ **and SPLIT AGAIN on 2026-08-06 — see the flag day below;**
 /// * ⚑ `WRAP_FS_PROVED` — **not a bit.** Its `= 1` guards NINE `proof_bind` constraints pinning the
 ///   row's attested program, lane by lane, to the semantic fingerprint of
 ///   [`MINA_CHAINLINK_TRANSCRIPT_JSON`], and PI-binds that sub-proof's public-input commitment. The
 ///   consumer then VERIFIES a STARK over that descriptor, fail-closed, before accepting the head.
 ///   A single-felt program tie would be worth `2^31`; nine `Faithful9` lanes are 256 bits.
 ///
-/// `LINK_OK` and `PICKLES_WITNESSED` remain NAMED carriers on the undischarged IPA/FRI floor;
-/// `CANON_OK` has been derived since 2026-08-03.
+/// ⚑⚑ **FLAG DAY 2026-08-06 — `PICKLES_WITNESSED` IS GONE AS A NAME.** Width 58 → 77, PIs 30 → 39,
+/// constraints 63 → 74, `proof_bind`s 2 → 3; re-emit this file and rotate its VK
+/// (`turn`'s `MINA_LC_PI_COUNT` moves 30 → 39 with it). PI slots 30..38 are APPENDED — every slot
+/// below 30 is unmoved, so no existing offset re-indexes. The old column split again:
+///
+/// * `PICKLES_OPENING_WITNESSED` — what is STILL A BIT, and it is now the residue of exactly three
+///   things: the IPA opening (not in circuit, and `MinaWrapOpeningGate.opening_is_vacuous_when_sg_is_free`
+///   is a THEOREM that its closing check accepts at EVERY value while `sg` is a free witness),
+///   `cipCorrect`, and `plonkChecksPassed`.
+/// * ⚑⚑ `FINALIZE_XI_B_PROVED` — **not a bit.** Its `= 1` guards a nine-lane `proof_bind` pinning
+///   `dregg-mina-wrap-conjunction::v1` (`MinaWrapConjunctionAir.conjunctionDesc`), a Lean-authored
+///   16-row threaded AIR that as of 2026-08-06 publishes ξ, ζ, ζω, the evalscale `r` and the claimed
+///   `b0` as 160 public inputs. A verifying STARK over it forces **TWO of Pickles'
+///   `finalize_other_proof` FOUR conjuncts** — `xiCorrect`, and `bCorrect` against `PastaIPA.bEval`
+///   itself — plus the per-round challenge/inverse reciprocity weld and the opening residual's
+///   non-free coefficients, each computed by a sound core, on Mina devnet block 539508's own opening
+///   argument.
+///
+/// ⚠ **DO NOT READ THAT AS "finalize passed".** Upstream's conjunction is a FOUR-way AND with the
+/// opening; `cipCorrect` and `plonkChecksPassed` are ABSENT BY CONSTRUCTION, because a gate
+/// comparing `cip` against a ξ-fold with a FREE `ft_eval0` column forces nothing at all and that
+/// ∃-image vacuity has shipped in this repo before.
+///
+/// ⚠ **And the sub-proof's ξ is free.** `MinaWrapConjunctionAir.no_arithmetic_call_names_an_xi_block`:
+/// ξ enters no sound core, so `xiCorrect` alone forces only "two free columns agree". What welds it
+/// to the block's own transcript is the recursion fold
+/// `dregg_circuit_prove::mina_wrap_finalize_fold::fold_endo_into_finalize` — 32 in-circuit
+/// `cb.connect`s to `dregg-mina-xi-endo-lift::v1`'s output — which is a CONSUMER's constraint, not
+/// this descriptor's.
+///
+/// `LINK_OK` and `PICKLES_OPENING_WITNESSED` remain NAMED carriers on the undischarged IPA/FRI
+/// floor; `CANON_OK` has been derived since 2026-08-03.
 const MINA_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-lightclient-verify-v1.json");
 
@@ -645,8 +676,9 @@ const MINA_LIGHTCLIENT_VERIFY_JSON: &str =
 /// state row. That is `LightClientMinaLinkAir.LinkHashResidual`, it stays WITNESSED, and it is the
 /// non-native Pasta multiply — ~5e5 BabyBear constraints per block hash at the schoolbook limb
 /// construction. A prover free to choose `OWNHASH` can still fabricate a chain; what makes a row a
-/// real block is the Pickles verdict, which after 2026-08-05 is `PICKLES_WITNESSED` — still a
-/// witness, and now named so.
+/// real block is the Pickles verdict, which after 2026-08-06 is `PICKLES_OPENING_WITNESSED` (the
+/// opening, `cipCorrect` and `plonkChecksPassed` — still a witness, and now named for exactly what
+/// it carries) plus `FINALIZE_XI_B_PROVED`, which is not a witness at all.
 const MINA_LIGHTCLIENT_LINK_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-lightclient-link-v1.json");
 

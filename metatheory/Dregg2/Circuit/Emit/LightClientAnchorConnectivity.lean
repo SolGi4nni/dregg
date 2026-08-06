@@ -478,7 +478,9 @@ the segment's SHAPE, not its hashes."* The segment descriptor now carries a `pro
 whose commitment is `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` against
 `dregg-pasta-fp-absorb::v1` — so `OWNHASH` is the IMAGE of its row at the same recursion boundary
 this seam stands at (`minaLink_the_seam_joins_the_preimage_to_the_image`, below). What remains free
-is `BODYHASH`, and what attests THAT is `PICKLES_WITNESSED`. -/
+is `BODYHASH`, and what attests THAT is `PICKLES_OPENING_WITNESSED` (⚑ renamed 2026-08-06 from
+`PICKLES_WITNESSED`, and narrowed to the IPA opening, `cipCorrect` and `plonkChecksPassed`; the rest
+became `FINALIZE_XI_B_PROVED`, which is not a bit). -/
 theorem minaVerify_tip_lanes_are_published_and_joined :
     ∀ col ∈ [21, 22, 23, 24, 25, 26, 27, 28, 29],
       isPiBound LightClientMinaAir.minaLcVerifyDesc col = true ∧
@@ -531,11 +533,31 @@ theorem minaVerify_subproof_commitment_is_published_and_joined :
     ((List.range 9).all fun i =>
         isPiBound LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)
           && isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)) = true
-      ∧ LightClientMinaAir.minaLcVerifyDesc.piCount = 30
-      -- ⚑ 18 → 9 on 2026-08-05 (the segment bind). The PI COUNT DID NOT MOVE: the tip block was
-      -- already published, and what changed is that a constraint now names it.
+      ∧ LightClientMinaAir.minaLcVerifyDesc.piCount = 39
+      -- ⚑ 18 → 9 on 2026-08-05 (the segment bind). The PI COUNT DID NOT MOVE THEN: the tip block was
+      -- already published, and what changed is that a constraint now named it.
+      -- ⚑⚑ 30 → 39 on 2026-08-06 (the FINALIZE conjunction bind). This time the count DID move — the
+      -- seam commits to a DIFFERENT object, the conjunction sub-proof's 160 public inputs, so nine
+      -- lanes had to be added rather than re-used. The decorative count is UNCHANGED at 9 (still the
+      -- anchor's nine, still joined to nothing), which is the fact worth checking: nine published
+      -- lanes were added and none of them is decoration.
       ∧ (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 9 := by
   refine ⟨by decide, rfl, by decide⟩
+
+/-- ⚑⚑ **AND THE NINE FINALIZE-CONJUNCTION COMMITMENT LANES ARE PUBLISHED AND JOINED TOO** (added
+2026-08-06). Same shape as the chainlink's above, and the same reason: a `proof_bind`'s `commit`
+vector is what `relatedCols` returns, so these nine are named by a constraint and not merely pinned.
+`FINALIZE_XI_B_PROVED` is NOT PI-bound, for the reason `WRAP_FS_PROVED` is not: a carrier a verifier
+could set from outside the proof would be no carrier. -/
+theorem minaVerify_conjunction_commitment_is_published_and_joined :
+    ((List.range 9).all fun i =>
+        isPiBound LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.CONJ_PI i)
+          && isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.CONJ_PI i)) = true
+      ∧ isPiBound LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.FINALIZE_XI_B_PROVED = false
+      ∧ isRelated LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.FINALIZE_XI_B_PROVED = true
+      ∧ ((List.range 9).all fun i =>
+          isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.CONJ_VK i)) = true := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
 
 /-- ⚑ **AND THE GUARD IS IN THE SAME COMPONENT AS EVERY LANE IT GUARDS.** Nine binds, one guard —
 so the recursion carrier is not a bit sitting on its own island beside nine other bits. `WRAP_FS_PROVED`
@@ -617,7 +639,8 @@ theorem minaLink_the_seam_joins_the_preimage_to_the_image :
   decide
 
 /-- ⚑ **THE NARROWER TRIPWIRE THAT REPLACES IT.** `BODYHASH` is the one nonet the seam does not
-DERIVE — it is an ARGUMENT of the hash, a free witness whose attestation is `PICKLES_WITNESSED`.
+DERIVE — it is an ARGUMENT of the hash, a free witness whose attestation is
+`PICKLES_OPENING_WITNESSED` (⚑ `PICKLES_WITNESSED` until 2026-08-06).
 This says so on the emitted object: the nine body-hash columns are read and joined, and NOT
 PI-bound, so nothing in this descriptor publishes them and nothing derives them. It reds the day
 `state_body_hash` acquires its own sub-proof, which is the next rung. -/

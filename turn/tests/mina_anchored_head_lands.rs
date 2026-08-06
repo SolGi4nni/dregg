@@ -55,7 +55,8 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_turn::executor::mina_head_verifier::{
     MINA_LC_PI_COUNT, MINA_LC_VERIFY_DESCRIPTOR, PI_ANCHOR_H, PI_ANCHOR_STATE_BASE, PI_BLOCK_LEN,
-    PI_REQ_DEPTH, PI_SUB_COMMIT_BASE, PI_TIP_STATE_BASE, check_head_binding, key_lanes_u32,
+    PI_CONJ_COMMIT_BASE, PI_REQ_DEPTH, PI_SUB_COMMIT_BASE, PI_TIP_STATE_BASE, check_head_binding,
+    key_lanes_u32,
 };
 
 // Trace column layout — pinned to `LightClientMinaAir`'s Lean `def`s.
@@ -68,7 +69,7 @@ const SEG_SLACK: usize = 5;
 const ANCH_SLACK: usize = 6;
 const DEPTH_SLACK: usize = 7;
 const LINK_OK: usize = 8;
-const PICKLES_WITNESSED: usize = 9;
+const PICKLES_OPENING_WITNESSED: usize = 9;
 const CANON_OK: usize = 10;
 const BLOCK_LEN: usize = 11;
 const ANCHOR_STATE_0: usize = 12;
@@ -77,11 +78,30 @@ const TIP_STATE_0: usize = 21;
 /// added the recursion carrier's two nine-lane blocks; this file kept building 30-wide rows, so
 /// every prove in it died as *"base row 0 width 30 is short of the PRODUCER-OWNED width 49"* — a
 /// SHAPE fault, which is neither pole. Both polarities in this file were dead from that morning.
-/// ⚑ 58 since 2026-08-05's SEGMENT rung (was 49, was 30). Every widening of this descriptor has cost
+/// ⚑ 77 since 2026-08-06's FINALIZE-CONJUNCTION rung (was 58, was 49, was 30). Every widening of this descriptor has cost
 /// this file a red, and each time the red was a SHAPE fault — "base row 0 width N is short of the
 /// PRODUCER-OWNED width M" — which is neither pole. That is the failure this constant exists to make
 /// loud: a stale width here does not weaken a test, it silently stops both polarities from running.
-const MINA_LC_WIDTH: usize = 58;
+const MINA_LC_WIDTH: usize = 77;
+
+/// ⚑⚑ The FINALIZE-CONJUNCTION carrier (`LightClientMinaAir.FINALIZE_XI_B_PROVED`, col 58) and its
+/// two nine-lane blocks. Added 2026-08-06; this is what `PICKLES_WITNESSED` became.
+const FINALIZE_XI_B_PROVED: usize = 58;
+const CONJ_VK_0: usize = 59;
+const CONJ_PI_0: usize = 68;
+
+/// `LightClientMinaAir.CONJ_VK_LANES` — the nine `Faithful9` lanes of
+/// `dregg-mina-wrap-conjunction::v1`'s semantic fingerprint. NOT the prover's to choose: the emitted
+/// `proof_bind` forces the row's `CONJ_VK` block to these literals under the guard.
+const CONJ_VK_LANES: [u32; 9] = [
+    447620828, 118399956, 332150941, 529607877, 314255522, 98355104, 173079149, 176046258, 561245,
+];
+
+/// `LightClientMinaAir.CONJ_PI_LANES` — ⚠ **NINE ZEROS, and labelled so in Lean too.** Not forced by
+/// any gate: `CONJ_PI` is PI-bound with `bound := none`. What refuses a wrong one is
+/// `mina_head_verifier::check_conjunction_binding`, at the consumer. Kept identical to the Lean
+/// honest row so `decide` and the deployed prover see ONE object.
+const CONJ_PI_LANES: [u32; 9] = [0; 9];
 /// ⚑ The recursion carrier (col 30) and its two nine-lane blocks (31..40 program, 40..49 declared
 /// commitment) — `LightClientMinaAir.WRAP_FS_PROVED` / `SUB_VK` / `SUB_PI`.
 const WRAP_FS_PROVED: usize = 30;
@@ -96,14 +116,14 @@ const LINK_VK_0: usize = 49;
 /// descriptor's own bytes by `circuit/tests/mina_transcript_carrier_binding.rs` and by `dregg-turn`
 /// at verify time (`check_subproof_program_pin` at `HEAD_LINK_GUARD_COL`).
 const LINK_VK_LANES: [u32; 9] = [
-    76100771, 34473567, 194746848, 491185466, 265287284, 420926520, 245421703, 7802286, 15232152,
+    233430738, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074,
 ];
 /// The nine `Faithful9` lanes of `dregg-pasta-fq-chainlink::v1`'s semantic fingerprint — the value
 /// the descriptor's `vk_pin` forces under `WRAP_FS_PROVED = 1`. Recomputed from that descriptor's
 /// own bytes by `circuit/tests/mina_transcript_carrier_binding.rs`, and by `dregg-turn` itself at
 /// verify time (`check_subproof_program_pin`); a literal here so a drift is a red, not a silence.
 const CHAINLINK_VK_LANES: [u32; 9] = [
-    40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485,
+    158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666,
 ];
 /// The nine lanes of the digest of that sub-proof's 256 public inputs on the block-539508 instance's
 /// 46th and last link — PI-bound at slots 20..28.
@@ -181,7 +201,7 @@ fn trace_and_pis(
     r[ANCH_SLACK] = felt(h.submit_h as i64 - h.anchor_h as i64);
     r[DEPTH_SLACK] = felt(h.wit_depth - h.req_depth as i64);
     r[LINK_OK] = BabyBear::new(h.link_ok);
-    r[PICKLES_WITNESSED] = BabyBear::new(h.pickles_ok);
+    r[PICKLES_OPENING_WITNESSED] = BabyBear::new(h.pickles_ok);
     r[CANON_OK] = BabyBear::new(h.canon_ok);
     r[BLOCK_LEN] = BabyBear::new(h.block_len);
     for i in 0..9 {
@@ -193,14 +213,20 @@ fn trace_and_pis(
         r[SUB_PI_0 + i] = BabyBear::new(CHAINLINK_PI_LANES[i]);
         // ⚑ …and the SEGMENT seam's program lanes, forced the same way under `LINK_OK`.
         r[LINK_VK_0 + i] = BabyBear::new(LINK_VK_LANES[i]);
+        // ⚑⚑ …and the FINALIZE-CONJUNCTION seam's, forced under `FINALIZE_XI_B_PROVED` — the third
+        // bind, and the one that retired `PICKLES_WITNESSED` on 2026-08-06.
+        r[CONJ_VK_0 + i] = BabyBear::new(CONJ_VK_LANES[i]);
+        r[CONJ_PI_0 + i] = BabyBear::new(CONJ_PI_LANES[i]);
     }
     r[WRAP_FS_PROVED] = BabyBear::new(1);
+    r[FINALIZE_XI_B_PROVED] = BabyBear::new(1);
 
     let mut pis = vec![BabyBear::new(0); MINA_LC_PI_COUNT];
     for i in 0..9 {
         pis[PI_ANCHOR_STATE_BASE + i] = BabyBear::new(anchor_lanes[i]);
         pis[PI_TIP_STATE_BASE + i] = BabyBear::new(tip_lanes[i]);
         pis[PI_SUB_COMMIT_BASE + i] = BabyBear::new(CHAINLINK_PI_LANES[i]);
+        pis[PI_CONJ_COMMIT_BASE + i] = BabyBear::new(CONJ_PI_LANES[i]);
     }
     pis[PI_BLOCK_LEN] = BabyBear::new(h.block_len);
     pis[PI_REQ_DEPTH] = BabyBear::new(h.req_depth);
@@ -335,7 +361,13 @@ fn the_served_descriptor_is_the_lean_compiled_one() {
     // vector the row's nine PUBLISHED `TIP_STATE` columns. Nine more trace columns (49..57) and
     // **zero more public inputs**: the tip block was already published, and what changed is that a
     // constraint now names it.
-    assert_eq!(d.constraints.len(), 63);
+    //
+    // ⚑⚑⚑ **63 -> 74, 2026-08-06 — the FINALIZE-CONJUNCTION seam, and the retirement of
+    // `PICKLES_WITNESSED`.** The carrier gate on col 58, ONE more nine-lane `proof_bind` pinned to
+    // `dregg-mina-wrap-conjunction::v1`'s fingerprint, and NINE more `pi_binding`s — this seam
+    // commits to a DIFFERENT object (the conjunction sub-proof's 160 public inputs), so unlike the
+    // segment seam it could not re-use a published block and the PI count moved 30 -> 39.
+    assert_eq!(d.constraints.len(), 74);
     // ⚑ And BOTH seams are present and distinguishable BY GUARD COLUMN — never by list position.
     let binds: Vec<_> = d
         .constraints
@@ -345,7 +377,11 @@ fn the_served_descriptor_is_the_lean_compiled_one() {
             _ => None,
         })
         .collect();
-    assert_eq!(binds.len(), 2, "the chainlink seam and the segment seam");
+    assert_eq!(
+        binds.len(),
+        3,
+        "the chainlink seam, the segment seam and ⚑ the finalize-conjunction seam"
+    );
     let guards: Vec<usize> = binds
         .iter()
         .map(|b| match b.guard {

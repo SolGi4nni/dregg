@@ -38,7 +38,8 @@
 //! discharged at the CONSUMER, exactly as the head descriptor's segment bind is discharged by
 //! `mina_head_verifier` refusals 11-14. So what a green here shows is that the seam is EMITTED and
 //! BITES on the deployed prover, not that a chain of Poseidon proofs was verified.
-//! `PICKLES_WITNESSED` (`PICKLES_OK` until 2026-08-05) — what makes a row a real block — is still a
+//! `PICKLES_OPENING_WITNESSED` (`PICKLES_WITNESSED` until 2026-08-06, `PICKLES_OK` until 08-05) —
+//! what makes a row a real block — is still a
 //! witness. Its sibling `WRAP_FS_PROVED` is not: see `circuit/tests/mina_lightclient_carrier_proves.rs`.
 //!
 //! ## ⚑ RUN IN RELEASE

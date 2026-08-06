@@ -44,7 +44,8 @@ TWO field elements at rate 2 is ONE block and ONE permutation, and the salt is a
 at emit time. The `~26 permutations a block` the standing estimate carried is the *transcript*
 chain's link count (27 in phase 1, 46 in phase 2), not the state hash. The deep hash is
 `state_body_hash` — and it is not part of the LINKAGE: it enters as a witnessed nonet whose
-attestation is `PICKLES_WITNESSED`, exactly as before.
+attestation is `PICKLES_OPENING_WITNESSED` (⚑ `PICKLES_WITNESSED` until 2026-08-06), exactly as
+before.
 
 ⚑ **AND THE CIRCUIT DID NOT NEED BUILDING.** `dregg-pasta-fp-absorb::v1` is emitted, fingerprinted
 and PROVES: 2 048 rows × 469 columns, 858 constraints, whose 660 ROM immediates are `fp_kimchi`'s
@@ -203,7 +204,8 @@ hashes. To publish a tip of its choosing a prover must invert Poseidon; to open 
 histories it must collide it.
 
 ⚠ **WHAT IT CAN STILL CHOOSE IS `BODYHASH`**, and that is the honest residual: nothing here says a
-body hash is a real Mina block body. That is `PICKLES_WITNESSED`, still a witness, and
+body hash is a real Mina block body. That is `PICKLES_OPENING_WITNESSED` (⚑ renamed and narrowed
+2026-08-06), still a witness, and
 `state_body_hash`'s own preimage (~38 field elements under a second salt) is the next rung.
 ⚠ Three further limits, none of them repealed: the seam's off-row half is the FRI/recursion
 obligation this whole stack carries; the limb re-encoding between this descriptor's `Faithful9`

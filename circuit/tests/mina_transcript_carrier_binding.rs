@@ -87,12 +87,41 @@ const SEGMENT_DESC_JSON: &str =
 /// The segment sub-proof's descriptor name.
 const SEGMENT_NAME: &str = "dregg-mina-lightclient-link::v1";
 
+/// ⚑⚑ **THE THIRD SUB-PROGRAM, added 2026-08-06** — the Lean-authored finalize conjunction, whose
+/// fingerprint `FINALIZE_XI_B_PROVED` pins and which is what `PICKLES_WITNESSED` became.
+const CONJUNCTION_DESC_JSON: &str =
+    include_str!("../descriptors/by-name/mina-wrap-conjunction.json");
+const CONJUNCTION_NAME: &str = "dregg-mina-wrap-conjunction::v1";
+
+/// ⚑ The nine lanes `LightClientMinaAir.CONJ_VK_LANES` transcribes. Same reasoning as the two above:
+/// Lean cannot compute blake3, so the literal there is a TRANSCRIPTION, and a transcription is only
+/// a gate if something recomputes it. This file is that something.
+const LEAN_CONJUNCTION_VK_LANES: [u64; 9] = [
+    447620828, 118399956, 332150941, 529607877, 314255522, 98355104, 173079149, 176046258, 561245,
+];
+
+/// ⚑ The FINALIZE carrier's guard column and its two nine-lane blocks
+/// (`LightClientMinaAir.{FINALIZE_XI_B_PROVED, CONJ_VK, CONJ_PI}`).
+const FINALIZE_XI_B_PROVED: usize = 58;
+const CONJ_VK_BASE: usize = 59;
+const CONJ_PI_BASE: usize = 68;
+
 /// ⚑ The nine lanes `LightClientMinaAir.LINK_VK_LANES` transcribes. Same reasoning as
 /// `LEAN_CHAINLINK_PI_LANES`: Lean cannot compute blake3, so the literal there is a transcription,
 /// and a transcription is only a gate if something recomputes it.
 const LEAN_SEGMENT_VK_LANES: [u64; 9] = [
     233430738, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074,
 ];
+
+/// ⚑ **AND IT MOVED ON 2026-08-06, WHICH IS WHY THIS FILE EXISTS.** A sibling lane re-emitted
+/// `dregg-mina-lightclient-link-v1.json` and these nine went from
+/// `[76100771, 34473567, …]` to the values above. The `FORGED_LINK_VK_LANES` twin in
+/// `LightClientMinaAir` did NOT follow, and the pair stayed GREEN throughout: a forged vector that
+/// differs from the honest one in ALL NINE lanes satisfies every conjunct of a theorem written to
+/// exhibit a ONE-LANE forgery. Nothing could go red; what died was the CLAIM. That falsifier is
+/// repaired in Lean (the claim is now `getD 0 0 = honest + 1 ∧ tail = honest tail`, so the next
+/// re-emit that leaves a forgery behind goes red), and the recompute below is what makes THESE nine
+/// a gate.
 
 /// Nine base-`2^29` lanes of a 32-byte value, least-significant first (Lean `keyToLanes9`,
 /// `Faithful9::from_key_lanes9`): `8·29 + 24 = 256` exactly, machine-checked injective.
@@ -329,8 +358,9 @@ fn the_published_commitment_covers_the_sub_proofs_public_inputs() {
     // ⚑ 30, not 29: `adf5aa892` appended `PI_ANCHOR_H` at slot 29. This literal said 29 for hours
     // after that flip, which is the pin doing its job and nobody reading it.
     assert_eq!(
-        mina.public_input_count, 30,
-        "20 + nine commitment lanes + the published anchor height"
+        mina.public_input_count, 39,
+        "20 + nine chainlink commitment lanes + the published anchor height + ⚑ nine FINALIZE \
+         conjunction commitment lanes (2026-08-06)"
     );
     let pinned: Vec<(usize, usize)> = mina
         .constraints
@@ -475,4 +505,95 @@ fn the_two_seams_pin_different_programs() {
             "the two seams share an attested-program column"
         );
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────────
+// §4 — the FINALIZE-CONJUNCTION seam. The third sub-program, and the third fingerprint.
+// ────────────────────────────────────────────────────────────────────────────────────────────────
+
+fn conjunction_desc() -> EffectVmDescriptor2 {
+    parse_vm_descriptor2(CONJUNCTION_DESC_JSON).expect("the conjunction descriptor parses")
+}
+
+/// ⚑⚑⚑ **THE FINALIZE SEAM PINS THE REAL CONJUNCTION PROGRAM — two independent sources.**
+///
+/// * side A — the nine `vk_pin` literals inside `dregg-mina-lightclient-verify-v1.json`, emitted by
+///   Lean from `LightClientMinaAir.CONJ_VK_LANES`;
+/// * side B — `effect_vm_descriptor2_semantic_fingerprint(mina-wrap-conjunction.json)`, recomputed
+///   here from the SIBLING descriptor's own canonical bytes.
+///
+/// ⚠ **This test is the entire reason `CONJ_VK_LANES` is a gate and not a decoration.** Lean cannot
+/// compute blake3; the nine numbers there are a hand-carried transcription, and the wraplink already
+/// proved that a transcription with no second reader drifts silently — `75df624cf` re-emitted a
+/// sub-program and the head's pin named a program NO DESCRIPTOR IN THIS TREE HAD, for hours, with
+/// every other gate green.
+#[test]
+fn the_finalize_seam_pins_the_real_conjunction_program() {
+    let conj = conjunction_desc();
+    assert_eq!(conj.name, CONJUNCTION_NAME);
+    assert_eq!(
+        conj.public_input_count, 160,
+        "five 32-limb blocks: xi, zeta, zeta*omega, r, b0 — a descriptor with no public surface has \
+         no subject and could not be bound at all"
+    );
+    assert_eq!(conj.trace_width, 2536, "flat in the IPA round count");
+
+    let fp = effect_vm_descriptor2_semantic_fingerprint(&conj).expect("representable");
+    let lanes = key_lanes9(&fp);
+
+    let mina = mina_desc();
+    let b = bind_by_guard(&mina, FINALIZE_XI_B_PROVED);
+    assert_eq!(b.vk.len(), STATE_LANES);
+    assert_eq!(b.commit.len(), STATE_LANES);
+    for i in 0..STATE_LANES {
+        assert_eq!(b.vk[i], LeanExpr::Var(CONJ_VK_BASE + i));
+        assert_eq!(b.commit[i], LeanExpr::Var(CONJ_PI_BASE + i));
+    }
+    assert_eq!(
+        b.vk_pin.as_deref(),
+        Some(&lanes.iter().map(|l| *l as i64).collect::<Vec<i64>>()[..]),
+        "the finalize seam's vk_pin must be the nine lanes of the CONJUNCTION fingerprint recomputed \
+         from mina-wrap-conjunction.json"
+    );
+    assert!(!b.is_declarative());
+    b.width_ok()
+        .expect("the finalize seam must satisfy the lane discipline at admission");
+
+    // …and the Lean-side transcription is the same nine numbers. THIS is the drift check.
+    assert_eq!(
+        lanes, LEAN_CONJUNCTION_VK_LANES,
+        "LightClientMinaAir.CONJ_VK_LANES has drifted from the conjunction descriptor's own bytes"
+    );
+
+    println!("\n§4 finalize seam pins {CONJUNCTION_NAME} — nine lanes, two sources, agreeing");
+}
+
+/// ⚑ **AND THE HEAD NOW BINDS THREE DISTINCT PROGRAMS, ON THREE DISTINCT GUARDS.** A census, so a
+/// seam quietly re-pointed at a sibling program moves a number here rather than nowhere.
+#[test]
+fn the_head_binds_three_distinct_programs() {
+    let mina = mina_desc();
+    let binds = proof_binds(&mina);
+    assert_eq!(binds.len(), 3, "chainlink, segment, finalize conjunction");
+
+    let guards: Vec<usize> = binds
+        .iter()
+        .map(|b| match b.guard {
+            LeanExpr::Var(c) => c,
+            _ => panic!("every bind's guard is a column"),
+        })
+        .collect();
+    assert_eq!(guards, vec![WRAP_FS_PROVED, LINK_OK, FINALIZE_XI_B_PROVED]);
+
+    // The three pinned programs are three DIFFERENT fingerprints — the thing a shared-guard or a
+    // copy-pasted literal would break, and which a bind count alone cannot see.
+    let pins: Vec<Vec<i64>> = binds
+        .iter()
+        .map(|b| b.vk_pin.clone().expect("every bind here pins its program"))
+        .collect();
+    assert_ne!(pins[0], pins[1]);
+    assert_ne!(pins[0], pins[2]);
+    assert_ne!(pins[1], pins[2]);
+
+    println!("§4 three binds, three guards {guards:?}, three distinct program pins");
 }

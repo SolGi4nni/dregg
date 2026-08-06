@@ -12,8 +12,15 @@
 //! # What this file gates
 //!
 //! The rung that landed 2026-08-05: `PICKLES_OK` — a witnessed bit forced `= 1` with nothing
-//! computing it — became two columns. `PICKLES_WITNESSED` is the residue and is still a bit, named
-//! so. `WRAP_FS_PROVED` is not: its `= 1` guards **one nine-lane `proof_bind` constraint** pinning the row's
+//! computing it — became two columns. ⚑ **AND ON 2026-08-06 THE RESIDUE SPLIT AGAIN.**
+//! `PICKLES_WITNESSED` is GONE as a name: what is still a bit is `PICKLES_OPENING_WITNESSED`, and it
+//! is the residue of exactly three things — the IPA opening, `cipCorrect` and `plonkChecksPassed`.
+//! The rest became `FINALIZE_XI_B_PROVED` (col 58), whose `= 1` guards a nine-lane `proof_bind`
+//! pinning `dregg-mina-wrap-conjunction::v1` — a Lean-authored 16-row AIR that publishes ξ, ζ, ζω,
+//! `r` and the claimed `b0` and forces TWO of Pickles' finalize FOUR conjuncts on the real block's
+//! own opening argument. Width 58 → 77, PIs 30 → 39, constraints 63 → 74, binds 2 → 3.
+//!
+//! `WRAP_FS_PROVED` is likewise not a bit: its `= 1` guards **one nine-lane `proof_bind` constraint** pinning the row's
 //! attested program, lane by lane, to the semantic fingerprint of `dregg-pasta-fq-chainlink::v1` —
 //! an AIR that EXISTS, PROVES (proven here from the served descriptor, and folded 46 deep in
 //! `circuit-prove/tests/mina_phase2_chain_fold.rs`) and whose fixture instance is Mina devnet block
@@ -88,7 +95,11 @@ const SEG_SLACK: usize = 5;
 const ANCH_SLACK: usize = 6;
 const DEPTH_SLACK: usize = 7;
 const LINK_OK: usize = 8;
-const PICKLES_WITNESSED: usize = 9;
+/// ⚑ RENAMED 2026-08-06 from `PICKLES_WITNESSED`, and narrowed. It is still a bit, and what it is
+/// now the residue of is exactly three things: the IPA opening (not in circuit, and
+/// `opening_is_vacuous_when_sg_is_free` proves its closing check accepts at EVERY value while `sg`
+/// is free), `cipCorrect`, and `plonkChecksPassed`.
+const PICKLES_OPENING_WITNESSED: usize = 9;
 const CANON_OK: usize = 10;
 const BLOCK_LEN: usize = 11;
 const ANCHOR_STATE_0: usize = 12;
@@ -100,14 +111,25 @@ const SUB_PI_0: usize = 40;
 /// ⚑⚑ The SEGMENT seam's attested program lanes (`LightClientMinaAir.LINK_VK`), cols 49..57 — added
 /// 2026-08-05. `LINK_OK` is their guard, which is what stops it being a bare `= 1`.
 const LINK_VK_0: usize = 49;
-const MINA_LC_WIDTH: usize = 58;
-const MINA_PI_COUNT: usize = 30;
+/// ⚑⚑ **THE THIRD RECURSION CARRIER** (`LightClientMinaAir.FINALIZE_XI_B_PROVED`, col 58, added
+/// 2026-08-06) — the one that retires `PICKLES_WITNESSED`. Its `= 1` guards a nine-lane
+/// `proof_bind` pinning `dregg-mina-wrap-conjunction::v1`.
+const FINALIZE_XI_B_PROVED: usize = 58;
+/// The conjunction sub-program's attested lanes, cols 59..67.
+const CONJ_VK_0: usize = 59;
+/// …and its PI-bound commitment lanes, cols 68..76 (PI slots 30..38).
+const CONJ_PI_0: usize = 68;
+const MINA_LC_WIDTH: usize = 77;
+const MINA_PI_COUNT: usize = 39;
 const STATE_LANES: usize = 9;
 const PI_SUB_COMMIT_BASE: usize = 20;
 /// ⚑ PI slot 29 — the weak-subjectivity anchor's `blockchain_length` (`LightClientMinaAir.PI_ANCHOR_H`).
 /// Added by `adf5aa892`; this file asserted 29 PIs for hours afterwards and every prove in it was a
 /// SHAPE FAULT rather than a refusal, so all nine polarity tests were red and reporting a panic.
 const PI_ANCHOR_H: usize = 29;
+/// ⚑ PI slots 30..38 — the finalize-conjunction sub-proof's commitment lanes. APPENDED, so every
+/// slot below 30 is unmoved.
+const PI_CONJ_COMMIT_BASE: usize = 30;
 
 const TRACE_ROWS: usize = 8;
 
@@ -124,7 +146,7 @@ const DEVNET_TIP_LANES: [u32; 9] = [
 /// semantic fingerprint. `mina_transcript_carrier_binding.rs` recomputes these from that
 /// descriptor's own bytes; here they are the row a prover must fill.
 const CHAINLINK_VK_LANES: [u32; 9] = [
-    40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485,
+    158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666,
 ];
 /// `LightClientMinaAir.CHAINLINK_PI_LANES` — the nine lanes of the digest of the chainlink
 /// sub-proof's 256 public inputs on the block-539508 instance's 46th and last link.
@@ -135,9 +157,28 @@ const CHAINLINK_PI_LANES: [u32; 9] = [
 /// `LightClientMinaAir.LINK_VK_LANES` — the nine `Faithful9` lanes of the SEGMENT descriptor's
 /// semantic fingerprint. `mina_transcript_carrier_binding.rs` recomputes these from that
 /// descriptor's own bytes; here they are the row a prover must fill.
+/// ⚠ **RE-MEASURED 2026-08-06.** A sibling lane re-emitted `dregg-mina-lightclient-link-v1.json` and
+/// these nine moved to the values below; the recompute gate for them lives in
+/// `circuit/tests/mina_transcript_carrier_binding.rs`, which is what makes them a gate rather than
+/// a transcription.
 const LINK_VK_LANES: [u32; 9] = [
-    76100771, 34473567, 194746848, 491185466, 265287284, 420926520, 245421703, 7802286, 15232152,
+    233430738, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074,
 ];
+
+/// `LightClientMinaAir.CONJ_VK_LANES` — the nine `Faithful9` lanes of the FINALIZE-CONJUNCTION
+/// descriptor's semantic fingerprint (`dc26ae9a…`, over `dregg-mina-wrap-conjunction::v1` at width
+/// 2536 / 160 PIs / 4317 constraints). `mina_transcript_carrier_binding.rs` recomputes these from
+/// that descriptor's own bytes; here they are the row a prover must fill.
+const CONJ_VK_LANES: [u32; 9] = [
+    447620828, 118399956, 332150941, 529607877, 314255522, 98355104, 173079149, 176046258, 561245,
+];
+
+/// `LightClientMinaAir.CONJ_PI_LANES` — ⚠ **NINE ZEROS, AND LABELLED SO IN LEAN TOO.** Unlike
+/// `CHAINLINK_PI_LANES` this is NOT a measured digest: `CONJ_PI` is PI-bound with `bound := none`,
+/// so the AIR forces nothing about its VALUE and any nine felts make a satisfying row. What refuses
+/// a wrong one is the CONSUMER (`mina_head_verifier::check_conjunction_binding`, refusal 15). Kept
+/// identical to the Lean honest row so `decide` and the deployed prover see ONE object.
+const CONJ_PI_LANES: [u32; 9] = [0; 9];
 
 fn desc() -> EffectVmDescriptor2 {
     descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR)
@@ -162,7 +203,7 @@ fn honest_cells() -> Vec<i64> {
     c[ANCH_SLACK] = 10;
     c[DEPTH_SLACK] = 0;
     c[LINK_OK] = 1;
-    c[PICKLES_WITNESSED] = 1;
+    c[PICKLES_OPENING_WITNESSED] = 1;
     c[CANON_OK] = 1;
     c[BLOCK_LEN] = 1300;
     for i in 0..STATE_LANES {
@@ -171,8 +212,11 @@ fn honest_cells() -> Vec<i64> {
         c[SUB_VK_0 + i] = i64::from(CHAINLINK_VK_LANES[i]);
         c[SUB_PI_0 + i] = i64::from(CHAINLINK_PI_LANES[i]);
         c[LINK_VK_0 + i] = i64::from(LINK_VK_LANES[i]);
+        c[CONJ_VK_0 + i] = i64::from(CONJ_VK_LANES[i]);
+        c[CONJ_PI_0 + i] = i64::from(CONJ_PI_LANES[i]);
     }
     c[WRAP_FS_PROVED] = 1;
+    c[FINALIZE_XI_B_PROVED] = 1;
     c
 }
 
@@ -184,6 +228,7 @@ fn pis_of(cells: &[i64]) -> Vec<BabyBear> {
         pis[i] = felt(cells[ANCHOR_STATE_0 + i]);
         pis[STATE_LANES + i] = felt(cells[TIP_STATE_0 + i]);
         pis[PI_SUB_COMMIT_BASE + i] = felt(cells[SUB_PI_0 + i]);
+        pis[PI_CONJ_COMMIT_BASE + i] = felt(cells[CONJ_PI_0 + i]);
     }
     pis[2 * STATE_LANES] = felt(cells[BLOCK_LEN]);
     pis[2 * STATE_LANES + 1] = felt(cells[REQ_DEPTH]);
@@ -222,9 +267,8 @@ fn the_served_descriptor_has_the_recursion_shape() {
     // bind, so the constraint count drops by eight and the bind count is 1.
     assert_eq!(
         d.constraints.len(),
-        63,
-        "50 + the carrier gate + 1 nine-lane bind + 9 commitment pins + the ANCHOR_H pin \
-         + ⚑ the SEGMENT bind (2026-08-05)"
+        74,
+        "63 + ⚑ the FINALIZE carrier gate + its nine-lane bind + nine commitment pins (2026-08-06)"
     );
     let binds: Vec<_> = d
         .constraints
@@ -236,8 +280,9 @@ fn the_served_descriptor_has_the_recursion_shape() {
         .collect();
     assert_eq!(
         binds.len(),
-        2,
-        "two proof_binds: the chainlink recursion seam and ⚑ the SEGMENT seam"
+        3,
+        "three proof_binds: the chainlink recursion seam, the SEGMENT seam, and ⚑ the FINALIZE \
+         conjunction seam (2026-08-06)"
     );
     for b in &binds {
         assert_eq!(

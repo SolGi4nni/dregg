@@ -274,6 +274,42 @@ pub const MINA_LC_VERIFY_DESCRIPTOR: &str = "dregg-mina-lightclient-verify::v1";
 /// not move), so cell programs keep their pinned vk and simply stop having old proofs accepted.
 pub const MINA_CHAINLINK_DESCRIPTOR: &str = "dregg-pasta-fq-chainlink::v1";
 
+/// ⚑⚑ **THE FINALIZE-CONJUNCTION SUB-PROGRAM** (`LightClientMinaAir` §1d, new 2026-08-06) — the
+/// third program this descriptor binds, and the one that retires `PICKLES_WITNESSED`.
+///
+/// A verifying STARK over it establishes **two of Pickles' `finalize_other_proof` four conjuncts**
+/// and nothing wider: `xiCorrect` (`op.xiSqueeze = dv.xi`) and `bCorrect` against `PastaIPA.bEval`
+/// ITSELF — `dv.b ≡ bEval ζ chals + r·bEval ζω chals (mod q)` for the fifteen IPA challenges the
+/// trace's own rows supplied — plus the per-round challenge/inverse reciprocity weld and the opening
+/// residual's non-free coefficients, each computed by a sound core.
+///
+/// ⚠ **`cipCorrect` and `plonkChecksPassed` are ABSENT BY CONSTRUCTION, not stubbed.** A gate
+/// comparing `cip` against a ξ-fold with a FREE `ft_eval0` column forces nothing at all, and that
+/// ∃-image vacuity has shipped in this repo before. Upstream's conjunction is a FOUR-way AND with
+/// the opening; this is a **TWO-way** AND. Do not read a verifying head proof as "finalize passed".
+///
+/// ⚠ **And it is not Pickles validity.** The IPA opening is not in circuit, and
+/// `MinaWrapOpeningGate.opening_is_vacuous_when_sg_is_free` is a THEOREM that its closing check
+/// accepts at EVERY value while `sg` is a free witness. That residue is what
+/// [`MINA_LC_VERIFY_DESCRIPTOR`]'s `PICKLES_OPENING_WITNESSED` still carries, and it is still a bit.
+pub const MINA_CONJUNCTION_DESCRIPTOR: &str = "dregg-mina-wrap-conjunction::v1";
+
+/// Public-input arity of [`MINA_CONJUNCTION_DESCRIPTOR`] — five 32-limb blocks, ξ ‖ ζ ‖ ζω ‖ r ‖ b0
+/// (`MinaWrapConjunctionAir.CJ_PI_COUNT`).
+///
+/// ⚑ Until 2026-08-06 this descriptor declared **zero** public inputs, so a verifying proof of it
+/// said "some sixteen rows satisfied these constraints" and no consumer had a vocabulary in which to
+/// ask WHICH ξ. A pre-08-06 artifact is refused here by arity rather than bound to an empty claim.
+pub const MINA_CONJUNCTION_PI_COUNT: usize = 5 * PASTA_LIMBS;
+
+/// Domain separation for the finalize-conjunction sub-proof's public-input commitment.
+///
+/// ⚑ A DISTINCT context from [`CHAINLINK_PI_COMMITMENT_CONTEXT`] on purpose: two sub-proofs of two
+/// different programs must not be able to mint the same nine lanes, or a prover could present a
+/// transcript proof where a conjunction proof is required. The arity is absorbed first, as there.
+pub const CONJUNCTION_PI_COMMITMENT_CONTEXT: &str =
+    "dregg.mina-lightclient.conjunction-subproof-pi-commitment.v1";
+
 /// Public-input arity of [`MINA_CHAINLINK_DESCRIPTOR`] — eight 32-limb pin blocks (Lean
 /// `MinaPhase2Chain.CHAIN_PI_COUNT`).
 pub const MINA_CHAINLINK_PI_COUNT: usize = 256;
@@ -307,7 +343,7 @@ pub const CHAINLINK_PI_COMMITMENT_CONTEXT: &str =
 /// lanes, the derived `blockchain_length`, the Samasika depth met, ⚑ the nine-lane commitment
 /// to the Fq-transcript sub-proof's public inputs, ⚑ and the anchor HEIGHT. Pinned to
 /// `LightClientMinaAir.MINA_PI_COUNT`.
-pub const MINA_LC_PI_COUNT: usize = 30;
+pub const MINA_LC_PI_COUNT: usize = 39;
 
 /// Lanes per 32-byte Mina state hash (`Faithful9`).
 pub const MINA_STATE_LANES: usize = 9;
@@ -334,6 +370,13 @@ pub const PI_SUB_COMMIT_BASE: usize = 2 * MINA_STATE_LANES + 2;
 /// in-circuit edge (`relatedCols` returns `[]` for a `piBinding`, deliberately), so the value comes
 /// from a consumer refusing the published height against a height it holds independently.
 pub const PI_ANCHOR_H: usize = 3 * MINA_STATE_LANES + 2;
+
+/// ⚑ PI slots 30..38: the finalize-conjunction sub-proof's public-input commitment lanes
+/// (`LightClientMinaAir.PI_CONJ_PI`). **New 2026-08-06.**
+///
+/// APPENDED, exactly as `PI_ANCHOR_H` was: every slot below 30 is UNMOVED, so no existing offset in
+/// this file or in `MinaHeadProofWire` re-indexes. Emission order and slot order are independent.
+pub const PI_CONJ_COMMIT_BASE: usize = 3 * MINA_STATE_LANES + 3;
 
 /// ⚑⚑⚑ **THE SEGMENT SUB-PROOF'S DESCRIPTOR — served, and as of 2026-08-05 DISPATCHED IN
 /// PRODUCTION.** Authored as `LightClientMinaLinkAir.minaLinkDesc`: the MULTI-ROW companion, one row
@@ -846,6 +889,62 @@ pub fn check_transcript_binding(pis: &[u32], transcript_pis: &[u32]) -> Result<(
                 "sub-proof commitment lane {i} is {got}, but the supplied Fq-transcript sub-proof's \
                  public inputs digest to {want}: the head proof declares a DIFFERENT sub-proof than \
                  the one presented"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// ⚑ **THE FINALIZE-CONJUNCTION SUB-PROOF'S PUBLIC-INPUT COMMITMENT** — the nine lanes the head
+/// descriptor PI-binds at slots 30..38. Same shape as [`chainlink_pi_commitment`], different
+/// domain-separation context, so a transcript commitment can never be re-read as a conjunction one.
+pub fn conjunction_pi_commitment(pis: &[u32]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key(CONJUNCTION_PI_COMMITMENT_CONTEXT);
+    h.update(&(pis.len() as u64).to_le_bytes());
+    for v in pis {
+        h.update(&v.to_le_bytes());
+    }
+    *h.finalize().as_bytes()
+}
+
+/// ⚑⚑ **REFUSAL 15 — THE ROW'S DECLARED CONJUNCTION COMMITMENT IS THE SUPPLIED SUB-PROOF'S.**
+///
+/// The consumer half of `FINALIZE_XI_B_PROVED`. In-AIR, setting that carrier to `1` forces the nine
+/// `CONJ_VK` columns to `LightClientMinaAir.CONJ_VK_LANES` — the semantic fingerprint of
+/// [`MINA_CONJUNCTION_DESCRIPTOR`] — and PI-binds the commitment lanes. What no row-local polynomial
+/// can do is check that a sub-proof with THAT commitment exists. This is that check.
+///
+/// ⚠ **AND SAY WHAT IT STILL DOES NOT BUY.** Nothing here relates the conjunction sub-proof's ξ to
+/// the block whose head this is. The conjunction AIR reads ξ in `eqBlock XI_SQ XI_CL`, in its thread
+/// and in its range lookups and in NO sound core
+/// (`MinaWrapConjunctionAir.no_arithmetic_call_names_an_xi_block`), so on its own `xiCorrect` forces
+/// only "two free columns agree". What welds ξ to the block's own Fq transcript is the RECURSION
+/// FOLD `dregg_circuit_prove::mina_wrap_finalize_fold::fold_endo_into_finalize` — 32 in-circuit
+/// `cb.connect`s to `dregg-mina-xi-endo-lift::v1`'s output — and **that fold is not run here.** Until
+/// a caller supplies its root, a head proof binds a conjunction about an ξ of the prover's choosing.
+pub fn check_conjunction_binding(pis: &[u32], conjunction_pis: &[u32]) -> Result<(), String> {
+    if pis.len() != MINA_LC_PI_COUNT {
+        return Err(format!(
+            "Mina anchored-head proof declared {} public inputs; {MINA_LC_VERIFY_DESCRIPTOR} binds \
+             exactly {MINA_LC_PI_COUNT}",
+            pis.len()
+        ));
+    }
+    if conjunction_pis.len() != MINA_CONJUNCTION_PI_COUNT {
+        return Err(format!(
+            "the finalize-conjunction sub-proof declared {} public inputs; \
+             {MINA_CONJUNCTION_DESCRIPTOR} binds exactly {MINA_CONJUNCTION_PI_COUNT}",
+            conjunction_pis.len()
+        ));
+    }
+    let expected = key_lanes_u32(&conjunction_pi_commitment(conjunction_pis));
+    for (i, want) in expected.iter().enumerate() {
+        let got = pis[PI_CONJ_COMMIT_BASE + i];
+        if got != *want {
+            return Err(format!(
+                "conjunction commitment lane {i} is {got}, but the supplied finalize-conjunction \
+                 sub-proof's public inputs digest to {want}: the head proof declares a DIFFERENT \
+                 sub-proof than the one presented"
             ));
         }
     }
