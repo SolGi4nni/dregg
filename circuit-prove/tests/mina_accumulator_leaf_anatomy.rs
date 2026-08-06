@@ -1,16 +1,18 @@
 //! ⚑⚑ **WHERE THE ACCUMULATOR LEAF WRAP'S COST GOES — MEASURED, NOT MODELLED.**
 //!
-//! `tests/mina_accumulator_fold.rs` records that ONE 8-row accumulator leaf wrap peaked at
-//! **68.3 GiB** (`73,344,091,528` bytes; `73.3 GB` decimal) and was killed, and attributes it to the
-//! descriptor's **3,048** columns against the phase-2 chainlink's **469**. That attribution was an
-//! inference from a ratio. This file is the measurement behind it, and it proves nothing — it
-//! REPORTS, so the narrowing that follows is aimed at the term that actually dominates.
+//! `tests/mina_accumulator_fold.rs` attributed a leaf wrap's memory wall to the descriptor's
+//! **3,048** columns against the phase-2 chainlink's **469**. That attribution was an inference
+//! from a ratio — taken while the two ALSO differed by 256× in ROWS, with only one of the two
+//! named. This file is the measurement behind it, and it proves nothing: it REPORTS, so the
+//! narrowing that follows is aimed at the term that actually dominates rather than at the one that
+//! was noticed first.
 //!
-//! It does the expensive-looking thing cheaply: the INNER IR-v2 prove of an 8-row accumulator
-//! segment costs **136 MB and ~2 s** (measured, `circuit/tests/mina_accumulator_air_proves.rs` runs
+//! It does the expensive-looking thing cheaply. The INNER IR-v2 prove of an 8-row accumulator
+//! segment costs **136 MB and ~1 s** (measured; `circuit/tests/mina_accumulator_air_proves.rs` runs
 //! nine of them in 16 s at a 136 MB peak), and `build_next_layer_circuit_with_expose` BUILDS the
-//! in-circuit verifier without proving it. So the leaf wrap's *shape* is observable for a few
-//! seconds and a few hundred megabytes; only `prove_all_tables` over that shape is what costs 68 GiB.
+//! in-circuit verifier without proving it. So the leaf wrap's *shape* is observable in seconds for
+//! a couple of gigabytes — **the entire 118 GiB is `prove_all_tables` over that shape**, and the
+//! shape is what this file reports.
 //!
 //! ## What it compares
 //!
