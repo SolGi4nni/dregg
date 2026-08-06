@@ -220,7 +220,7 @@ function initializeSignal(descriptor) {
   state.signal = descriptor;
   state.run = createPracticeRun(descriptor);
   state.draft = [];
-  byId("turn-limit").textContent = `/ ${descriptor.maxTurns} TRANSMISSIONS`;
+  byId("turn-limit").textContent = ` / ${descriptor.maxTurns} TRANSMISSIONS`;
   byId("signal-instruction").textContent = `Assemble ${descriptor.codeLength} carrier bands. Feedback is looked up from the authenticated mission table; the browser does not score it. PRACTICE run: this client picked its own code out of the emitted rulebook, nothing here is scored, and a judged run would learn nothing about its code at all.`;
   byId("signal-symbols").replaceChildren(...descriptor.symbols.map((symbol) => {
     const button = document.createElement("button");

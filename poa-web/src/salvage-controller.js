@@ -32,7 +32,7 @@ export function mountSalvageLock(root, descriptor, callbacks = {}) {
       const detail = cleared ? "cleared pair" : exposed ? "face up, awaiting its pair" : "sealed";
       return {
         label: action.label,
-        detail: `${detail} · ${state}`,
+        detail,
         ariaLabel: `${action.label}, ${detail}`,
         state,
         disabled: cleared,
