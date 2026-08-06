@@ -75,6 +75,18 @@ broken by exactly `2^30`. Two closures are proved: `cap_closes_aliased_shield` (
 `circuit-prove/src/shielded/wide_value_binding.rs:37-40` — is injective on the whole `u64` range, and
 `wide4_separates_the_alias` shows it separates the very pair the leaf column conflates).
 
+**§7 — THE ROUTING OBLIGATION (added 2026-08-06): "source `piCOMMITTED` from `note_shielded.root8()`"
+is NOT a wiring change.** The L4 route the frontier proposes — feed the emitted `shieldedSpendDesc`
+membership pin the committed accumulator root — is obstructed THREE ways at once, each a named
+theorem: `route_fold_8to1_collides` (WIDTH: the 8-lane `note_shielded` root does not injectively fit
+the descriptor's single `piCOMMITTED` lane), `plain_fold_is_not_indexed_merkle` (STRUCTURE: the
+descriptor's plain 4-ary fold `Hair` is a different function from the accumulator's indexed-Merkle
+`next_addr`-linked fold), and — reusing §2's `deployed_append_is_free` — the LEAF-OBJECT mismatch
+(the appended accumulator leaf is a free wire, not the descriptor's `noteLeaf`). `route_root8_as_piCOMMITTED_needs_reencoding`
+composes the three: the sound route requires FIRST re-encoding descriptor-membership and
+accumulator-append to ONE object — the VK-affecting L0.5 encoding decision (ember-gated; DESIGN §3,
+frontier §2). This arms the exact trap so no lane silently routes the mismatched descriptor.
+
 ## Scope (honest)
 
 This is the metatheory of the boundary, NOT the boundary. It does **not** implement `Effect::Shield` /
@@ -616,5 +628,79 @@ theorem wide4_separates_the_alias :
 #assert_axioms cap_closes_aliased_shield
 #assert_axioms wide4_injective_on_u64
 #assert_axioms wide4_separates_the_alias
+
+/-! ## §7 — THE ROUTING OBLIGATION: the emitted descriptor's membership object is NOT the committed
+`note_shielded` root, so "route `piCOMMITTED` from `note_shielded.root8()`" is unsound as-is.
+
+Source, verified at HEAD 2026-08-06:
+  * the emitted spend descriptor pins membership via the PLAIN 4-ary fold
+    `Hair hash cur lvl = hash_fact(cur,[sib0,sib1,sib2,pos])` to a SINGLE PI lane `piCOMMITTED`
+    (`Emit/ShieldedSpendDescriptor.lean:158,212`; the root-bound adapter binds only
+    `ROOT_BOUND_LANES = 2` single lanes, `circuit-prove/src/shielded_spend_leaf_adapter.rs:610`);
+  * the committed `note_shielded` accumulator produces an EIGHT-lane root
+    (`exact_linked_append_root8 : … → Digest8`, `ROOT_LANES = 8`, `TREE_DEPTH = 16`,
+    `circuit/src/exact_nullifier_aafi.rs:34,36`) via a depth-16 INDEXED-MERKLE sorted-linked leaf
+    whose stored object is `fold(Ristretto commitment_bytes)` with a ZERO value column
+    (`cell/src/shielded_note_set.rs`).
+
+So the L4 route is three mismatches — WIDTH (8→1), STRUCTURE (plain 4-ary vs indexed-Merkle), and
+LEAF OBJECT (`noteLeaf` vs a free wire) — each proved below to obstruct a sound pin. The route is
+sound only AFTER descriptor-membership and accumulator-append are re-encoded to one object: the
+VK-affecting L0.5 encoding decision (ember-gated: DESIGN §3, frontier §2). -/
+
+/-- A representative single-felt collapse of the 8-lane committed root into the descriptor's single
+`piCOMMITTED` lane: read lane 0. -/
+def routeLane0 (root8 : List ℤ) : ℤ := root8.headD 0
+
+/-- The lane-sum collapse — the other natural 8→1 reduction. -/
+def routeSum (root8 : List ℤ) : ℤ := root8.sum
+
+/-- **⚑ WIDTH (`route_fold_8to1_collides`).** Both natural single-felt collapses of the 8-lane
+committed root are non-injective — two DISTINCT 8-lane roots share one `piCOMMITTED` image — so
+pinning to the collapsed value does not bind the committed root: a forged 8-lane root with the same
+image passes the pin. (The general fact is pigeonhole over the finite field, `p^8 > p` — the ~31-bit
+width §4 is about, now at the root pin rather than the value column.) -/
+theorem route_fold_8to1_collides :
+    (∃ r₁ r₂ : List ℤ, r₁ ≠ r₂ ∧ routeLane0 r₁ = routeLane0 r₂)
+    ∧ (∃ r₁ r₂ : List ℤ, r₁ ≠ r₂ ∧ routeSum r₁ = routeSum r₂) := by
+  refine ⟨⟨[0, 1, 0, 0, 0, 0, 0, 0], [0, 2, 0, 0, 0, 0, 0, 0], by decide, by decide⟩,
+          ⟨[1, 0, 0, 0, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0, 0, 0], by decide, by decide⟩⟩
+
+/-- The committed accumulator's per-level fold is INDEXED-MERKLE: it mixes a `next_addr` link into
+the node hash (the sorted-linked-leaf's distinguishing input — `shielded_note_set.rs`,
+`exact_nullifier_aafi.rs`), where the descriptor's plain `Hair` puts the fixed `NS_FACT_MARK`. -/
+def Gair (hash : List ℤ → ℤ) (nextAddr : ℤ) (cur : ℤ) (lvl : Level) : ℤ :=
+  hash [cur, lvl.sib0, lvl.sib1, lvl.sib2, lvl.pos, nextAddr, 1]
+
+/-- **⚑ STRUCTURE (`plain_fold_is_not_indexed_merkle`).** The descriptor's plain 4-ary fold `Hair`
+and the accumulator's indexed-Merkle fold `Gair` are DIFFERENT functions: at a hash that reads its
+link input, one leaf/level folds to two different parents. So membership against the committed
+accumulator's root is not the predicate the emitted descriptor proves — pinning the plain-fold
+descriptor to the indexed-Merkle committed root rejects the accumulator's honest members (the effect
+goes dead), independent of the width collapse. -/
+theorem plain_fold_is_not_indexed_merkle :
+    ∃ (hash : List ℤ → ℤ) (nextAddr cur : ℤ) (lvl : Level),
+      Hair hash cur lvl ≠ Gair hash nextAddr cur lvl := by
+  refine ⟨List.sum, NS_FACT_MARK + 1, 0, ⟨0, 0, 0, 0⟩, ?_⟩
+  simp only [Hair, Gair, List.sum_cons, List.sum_nil]
+  omega
+
+/-- **⚑ THE ROUTING OBLIGATION (`route_root8_as_piCOMMITTED_needs_reencoding`).** Routing the emitted
+`shieldedSpendDesc` membership pin to `note_shielded.root8()` as it exists is obstructed THREE ways at
+once — WIDTH (`route_fold_8to1_collides`), STRUCTURE (`plain_fold_is_not_indexed_merkle`), and LEAF
+(the appended accumulator leaf is a FREE wire, `deployed_append_is_free`, not the descriptor's
+`noteLeaf`). It is therefore not a wiring change: a sound route requires FIRST re-encoding
+descriptor-membership and accumulator-append to ONE object — the VK-affecting L0.5 encoding decision
+(ember-gated: DESIGN §3, frontier §2). -/
+theorem route_root8_as_piCOMMITTED_needs_reencoding :
+    (∃ r₁ r₂ : List ℤ, r₁ ≠ r₂ ∧ routeLane0 r₁ = routeLane0 r₂)
+    ∧ (∃ (hash : List ℤ → ℤ) (nextAddr cur : ℤ) (lvl : Level),
+        Hair hash cur lvl ≠ Gair hash nextAddr cur lvl)
+    ∧ (∀ target : ℤ, ∃ wire : ℤ, deployedAppendLeaf wire = target) :=
+  ⟨route_fold_8to1_collides.1, plain_fold_is_not_indexed_merkle, deployed_append_is_free⟩
+
+#assert_axioms route_fold_8to1_collides
+#assert_axioms plain_fold_is_not_indexed_merkle
+#assert_axioms route_root8_as_piCOMMITTED_needs_reencoding
 
 end Dregg2.Circuit.ShieldedOnRampPin
