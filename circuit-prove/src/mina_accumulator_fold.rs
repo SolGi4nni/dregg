@@ -1,4 +1,23 @@
-//! ⚑⚑ **THE DEFERRED IPA ACCUMULATOR CHAIN, AS A RECURSION TREE.**
+//! ⚑⚑ **THE DEFERRED IPA ACCUMULATOR CHAIN, AS A RECURSION TREE — BUILT, AND NOT YET RUN.**
+//!
+//! ## ⛑⛑ STATUS FIRST, because every other sentence here describes a mechanism rather than a result
+//!
+//! **This fold has never produced a root.** Measured 2026-08-06 on a 96 GB box: ONE
+//! [`prove_accumulator_segment`] call — a single 8-row leaf wrap — reached a **73.3 GB peak memory
+//! footprint** and was killed. The cause is the descriptor's WIDTH: `mina_phase2_chain_leaf` folds
+//! 46 leaves and 45 folds in 1,037 s over a **469**-column descriptor, and the accumulator segment
+//! is **3,048** — the flat `RCB_WIDTH` the sound row costs. `the_leaf_wrap_width_is_the_measured_wall`
+//! in `tests/mina_accumulator_fold.rs` keeps that ratio in the tree.
+//!
+//! ⚑ It is the same wall `PastaLadderThread` cured one rail DOWN, arriving one rail UP: the
+//! row-local ladder was 731,136 columns in one row, threading made depth into rows at 3,048, and the
+//! recursion wrap's in-circuit verifier scales in the inner trace's width. So the layout that made
+//! the AIR fit is the layout that makes the FOLD not.
+//!
+//! What IS demonstrated, and where: the single-instance AIR, both polarities, in release, with the
+//! refusing gates named by constraint index — `circuit/tests/mina_accumulator_air_proves.rs`, 9/9.
+//! Everything below is the fold's mechanism, written against the one
+//! `mina_phase2_chain_leaf` already runs in production. Do not read it as a result.
 //!
 //! ## Substrate, said out loud (HOUSE LAW #1)
 //!

@@ -1,4 +1,7 @@
-//! ⚑⚑ **THE ACCUMULATOR CHAIN FOLDED, WITH THE STATE CARRIED INSIDE THE RECURSION.**
+//! ⚑⚑ **THE ACCUMULATOR CHAIN'S FOLD — WRITTEN, AND BLOCKED BY A MEASURED WIDTH WALL.**
+//!
+//! ⛑ Read the "THE THREE PROVING TESTS DO NOT RUN" section below before citing this file for
+//! anything. The fold is built and its non-proving teeth pass; **it has never produced a root.**
 //!
 //! ## Substrate, said out loud (HOUSE LAW #1)
 //!
@@ -31,7 +34,29 @@
 //! this test would go GREEN and every other test in this file would stay green — which is what
 //! makes it the load-bearing one.
 //!
-//! ⚠ **Recursion folds are minutes.** This file is in the `heavy` profile; run it with
+//! ## ⛑⛑ THE THREE PROVING TESTS DO NOT RUN, AND "SLOW" IS THE FLATTERING HALF
+//!
+//! Measured 2026-08-06 on a 96 GB box, `/usr/bin/time -l` on the release binary: ONE recursion leaf
+//! wrap of ONE 8-row segment reached a **peak memory footprint of 73.3 GB** (`73,344,091,528` bytes)
+//! and was killed before finishing; an earlier run under normal co-tenant load was SIGKILLed by the
+//! OOM killer. So these three are `#[ignore]`d for a **measured memory wall**, not for being slow,
+//! and calling them slow would be the flattering member of a pair.
+//!
+//! ⚑ **AND THE CAUSE IS THE WIDTH, WHICH IS THE SAME WALL ONE RAIL UP.**
+//! `PastaLadderThread` cured the ROW-LOCAL wall — a sound ladder was `731,136` columns in one row —
+//! by making depth into rows at a flat `RCB_WIDTH = 3,048`. The recursion wrap now hits that 3,048:
+//! `mina_phase2_chain_leaf` folds **46 leaves + 45 folds in 1,037 s** over a **469**-column
+//! descriptor, and this one is **6.5×** wider, with the in-circuit verifier's cost scaling in the
+//! inner trace's width. `the_leaf_wrap_width_is_the_measured_wall` keeps that ratio in the tree so
+//! it moves when the width does.
+//!
+//! ⚠ **So the accumulator chain is NOT folded end to end today.** The fold is written, its layout
+//! and rung teeth pass, and the mechanism it uses is the one `mina_phase2_chain_leaf` already runs
+//! in production — but nothing here has produced a root, and no sentence in this repo should say it
+//! has. What IS demonstrated is the single-instance AIR: `circuit/tests/mina_accumulator_air_proves.rs`,
+//! 9/9 in release, both polarities, refusing gates named by index.
+//!
+//! Run the two that do work with:
 //!
 //! ```text
 //! cargo test -p dregg-circuit-prove --release --test mina_accumulator_fold -- --nocapture
@@ -122,6 +147,46 @@ fn the_rungs_resolve_to_the_lean_artifacts() {
     assert_eq!(b.constraints.len(), a.constraints.len() + 64);
 }
 
+/// ⛑⛑ **THE MEASURED WALL, KEPT IN THE TREE SO IT MOVES WHEN THE WIDTH DOES.**
+///
+/// The three proving tests above are `#[ignore]`d because ONE recursion leaf wrap of ONE 8-row
+/// segment reached a **73.3 GB peak memory footprint** on a 96 GB box (2026-08-06,
+/// `/usr/bin/time -l`). The cause is the descriptor's WIDTH, and this is that ratio as an assertion:
+/// the phase-2 chain — which folds 46 leaves and 45 folds in 1,037 s in production — runs over a
+/// **469**-column descriptor, and the accumulator segment is **3,048**.
+///
+/// ⚑ This is the SAME wall `PastaLadderThread` cured one rail down, arriving one rail up. The
+/// row-local sound ladder was `731,136` columns in a single row; threading made the depth into rows
+/// at a flat `RCB_WIDTH = 3,048`. The recursion wrap builds an in-circuit verifier whose cost scales
+/// in the inner trace's width, so 3,048 is now the number that binds.
+///
+/// The ways out are all real work and none is a tuning knob: a NARROWER sound encoding (the 8-bit
+/// limb choice is what makes a Pasta coordinate 32 columns), a two-stage wrap that shrinks the
+/// segment before the recursion sees it, or a segment whose trace is taller and no wider so the
+/// fixed per-wrap cost amortises. Naming them is not doing them.
+///
+/// If this assertion ever goes red because `RCB_WIDTH` moved, re-measure the wrap before assuming
+/// the wall moved with it.
+#[test]
+fn the_leaf_wrap_width_is_the_measured_wall() {
+    /// `MinaPhase2Chain`'s chain-link descriptor width, the one that DOES fold in production.
+    const PHASE2_WIDTH: usize = 469;
+    /// The measured peak of one accumulator leaf wrap, in bytes.
+    const MEASURED_LEAF_PEAK_BYTES: u64 = 73_344_091_528;
+
+    let a = accumulator_descriptor(Rung::Interior).expect("segment descriptor");
+    assert_eq!(a.trace_width, 3048);
+    assert!(
+        a.trace_width > 6 * PHASE2_WIDTH,
+        "the accumulator segment is {} columns against the phase-2 chain's {PHASE2_WIDTH}; if that \
+         ratio ever drops below 6x, the wrap is worth re-measuring",
+        a.trace_width
+    );
+    // 73.3 GB — stated as a number so a later run can be compared against it rather than against a
+    // memory of it.
+    assert!(MEASURED_LEAF_PEAK_BYTES > 70 * 1024 * 1024 * 1024);
+}
+
 /// ⚑ **POLARITY 1 — THE CHAIN FOLDS, AND THE ROOT'S CLAIM IS THE WHOLE CHAIN'S.**
 ///
 /// Two leaves and one fold. The root exposes `A.acc_in ‖ B.acc_out` — the point the chain started
@@ -129,7 +194,7 @@ fn the_rungs_resolve_to_the_lean_artifacts() {
 /// `when_last_row` gates FORCE that terminal point to be the identity, so the discharge is in the
 /// AIR rather than in a host read.
 #[test]
-#[ignore = "recursion fold is slow (minutes); heavy profile"]
+#[ignore = "MEASURED WALL, not slowness: one leaf wrap peaked at 73.3 GB (see the header)"]
 fn the_split_chain_folds_and_the_root_carries_both_endpoints() {
     let cfg = accumulator_config();
     let segs = segments();
@@ -175,7 +240,7 @@ fn the_split_chain_folds_and_the_root_carries_both_endpoints() {
 /// This is the test that would go green if the carry were replaced by re-pinned public inputs, and
 /// it is why the carry is not a re-pin.
 #[test]
-#[ignore = "recursion fold is slow (minutes); heavy profile"]
+#[ignore = "MEASURED WALL, not slowness: one leaf wrap peaked at 73.3 GB (see the header)"]
 fn the_fold_refuses_two_segments_that_do_not_chain() {
     let cfg = accumulator_config();
     let segs = segments();
@@ -207,7 +272,7 @@ fn the_fold_refuses_two_segments_that_do_not_chain() {
 /// the discharge is forced by that one leaf's own AIR. Stated because a fold that only ever ran at
 /// depth ≥ 2 would leave the base case untested.
 #[test]
-#[ignore = "recursion leaf wrap is slow (minutes); heavy profile"]
+#[ignore = "MEASURED WALL, not slowness: this exact test peaked at 73.3 GB (see the header)"]
 fn a_one_segment_chain_is_the_final_rung() {
     let cfg = accumulator_config();
     let t = full_trace();
