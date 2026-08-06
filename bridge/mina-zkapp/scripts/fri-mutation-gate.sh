@@ -79,12 +79,27 @@ export FRIMUT_MIN_TRIALS="${FRIMUT_MIN_TRIALS:-$TRIALS}"
 # --- resolve the Rust oracle binary ----------------------------------------
 BIN="${FRIMUT_BIN:-}"
 if [[ -z "$BIN" ]]; then
-  echo "building the Rust oracle (root_fri_mutation) from $REPO ..." >&2
-  ( cd "$REPO" && cargo build -p dregg-circuit-prove --release --bin root_fri_mutation ) || {
+  # ⚠ BOUND THE BUILD, because an UNBOUNDED one turns a red into a NON-VERDICT. This repo runs ~10
+  # lanes against ONE cargo target lock and `ci-invariants falsifiers` alone holds it for ~4 h. An
+  # unbounded `cargo build` inside a gate row does not fail there — it BLOCKS until the row's own
+  # timeout, and `local-gates.sh` prints a timeout as "NOT A VERDICT". A verdict of "the workspace
+  # lock is held" is worth strictly more than four hours of silence followed by nothing.
+  BUILD_TO="${FRIMUT_BUILD_TIMEOUT:-900}"
+  echo "building the Rust oracle (root_fri_mutation) from $REPO (bounded at ${BUILD_TO}s) ..." >&2
+  ( cd "$REPO" && timeout "$BUILD_TO" cargo build -p dregg-circuit-prove --release --bin root_fri_mutation )
+  brc=$?
+  if [[ "$brc" -eq 124 ]]; then
+    echo "⊘ BLOCKED — the oracle build exceeded ${BUILD_TO}s. On this repo that is almost always the" >&2
+    echo "  ONE workspace cargo lock held by a sibling job, not a slow compile. Build it once when the" >&2
+    echo "  box is quiet and pass FRIMUT_BIN, or raise FRIMUT_BUILD_TIMEOUT:" >&2
+    echo "    cargo build -p dregg-circuit-prove --release --bin root_fri_mutation" >&2
+    exit 3
+  fi
+  if [[ "$brc" -ne 0 ]]; then
     echo "⊘ BLOCKED — could not build root_fri_mutation (is the workspace green?). Set FRIMUT_BIN" >&2
     echo "  to a prebuilt binary, or: cargo build -p dregg-circuit-prove --release --bin root_fri_mutation" >&2
     exit 3
-  }
+  fi
   BIN="$REPO/target/release/root_fri_mutation"
 fi
 [[ -x "$BIN" ]] || {
