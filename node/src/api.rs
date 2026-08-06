@@ -3427,27 +3427,80 @@ async fn get_receipt_witnesses(
 /// canonical spent-set root) into `dregg_sdk::verify_full_turn_bound` — that
 /// anchor is what binds the opened set to the node's authoritative one.
 ///
-/// Returns the hex-encoded proof bytes plus the turn hash. 404 if no proof was
-/// persisted for that turn (e.g. proving disabled, or the turn carried no
-/// verified proof).
+/// ⚑ EVERY RESPONSE CARRIES `proof_status`, AND ABSENCE IS NOT ONE FACT. A bare
+/// 404 conflated "proving is disabled on this node", "this turn needed no proof"
+/// and "**this turn's proof did not verify**" — the last of which
+/// `blocklace_sync` itself calls a serious soundness event, and which used to
+/// exist only as a log line. A finalized turn that failed proving is recorded
+/// under [`crate::turn_proving::turn_proof_failure_config_key`] and answered here
+/// as `410 Gone` with `proof_status: "generation_failed"` and the reason: the
+/// proof is definitively not coming, so a poller must stop rather than read
+/// absence as pending.
+///
+/// * `200` + `proof_status: "proved"` — hex-encoded proof bytes plus the turn hash.
+/// * `410` + `proof_status: "generation_failed"` — proving/verification FAILED.
+/// * `404` + `proof_status: "absent"` — nothing recorded either way.
 async fn get_turn_proof(
     AxumPath(hash): AxumPath<String>,
     State(state): State<NodeState>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> (StatusCode, Json<serde_json::Value>) {
     // Accept the turn hash as hex (32 bytes). Normalise to the lowercase form the
     // commit path keys with.
-    let bytes = hex_decode(&hash).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let Ok(bytes) = hex_decode(&hash) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "turn hash must be 64 hex characters" })),
+        );
+    };
     let turn_hash_hex = hex_encode(&bytes);
     let key = crate::turn_proving::turn_proof_config_key(&turn_hash_hex);
     let s = state.read().await;
     match s.store.get_config(&key) {
-        Ok(Some(proof_bytes)) => Ok(Json(serde_json::json!({
-            "turn_hash": turn_hash_hex,
-            "proof_len": proof_bytes.len(),
-            "proof_hex": hex_encode_var(&proof_bytes),
-        }))),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Ok(Some(proof_bytes)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "turn_hash": turn_hash_hex,
+                "proof_status": "proved",
+                "proof_len": proof_bytes.len(),
+                "proof_hex": hex_encode_var(&proof_bytes),
+            })),
+        ),
+        Ok(None) => {
+            let failure_key = crate::turn_proving::turn_proof_failure_config_key(&turn_hash_hex);
+            match s.store.get_config(&failure_key) {
+                Ok(Some(reason)) => (
+                    StatusCode::GONE,
+                    Json(serde_json::json!({
+                        "turn_hash": turn_hash_hex,
+                        "proof_status": "generation_failed",
+                        "error": String::from_utf8_lossy(&reason),
+                    })),
+                ),
+                Ok(None) => (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({
+                        "turn_hash": turn_hash_hex,
+                        "proof_status": "absent",
+                    })),
+                ),
+                // The store could not answer. That is not "absent" — say so
+                // rather than let an unreadable store read as a clean negative.
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "turn_hash": turn_hash_hex,
+                        "error": format!("store could not be read: {e}"),
+                    })),
+                ),
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "turn_hash": turn_hash_hex,
+                "error": format!("store could not be read: {e}"),
+            })),
+        ),
     }
 }
 
@@ -8578,16 +8631,31 @@ async fn post_faucet(
         dregg_turn::TurnResult::Committed { receipt, .. } => {
             crate::metrics::set_ledger_cell_count(s.ledger.len() as f64);
 
-            // The faucet turn is a REAL committed turn: append its receipt to
-            // the chain and hand it to the async prove pool, the same pipeline as
-            // /turn/submit. Previously the receipt was dropped here, so a faucet
-            // turn never appeared in /api/receipts and could never reach
-            // has_proof:true — the exact silent gap the devnet quickstart hit.
-            // PATH-PRESERVE Phase 5b: the executor already validated + committed
-            // the turn (the soundness boundary); the composed proof (rotated leg)
-            // is built + self-verified off the lock. The attestation is best-effort
-            // for the faucet (the commit stands either way; an unattested faucet
-            // grant is a devnet-liveness issue, not a soundness one).
+            // The faucet turn is a REAL turn, and this handler hands its rotated
+            // attestation material to the async prove pool — the same thing
+            // `/turn/submit` does with its `pending_proof`, so a faucet grant can
+            // reach `has_proof: true` in `/api/receipts` like any other turn.
+            //
+            // ⚠ IT DOES NOT APPEND THE RECEIPT, and must not. This comment used to
+            // say "append its receipt to the chain and hand it to the async prove
+            // pool"; the append half was correct only while solo mode committed
+            // here. Since `5f0999ab9` unified both committee sizes onto admission
+            // staging, the execution above runs inside an undo journal that is
+            // ROLLED BACK, and the sole durable receipt append is finalization's
+            // (`blocklace_sync`'s `append_receipt_already_durable`). Appending a
+            // staged receipt here would also move the faucet's local chain head,
+            // which is exactly the divergence the `faucet_prev_receipt` comment
+            // above records as having broken sustained faucet finality.
+            //
+            // What that same commit dropped as COLLATERAL — the hand-off below was
+            // gated on the `appended` flag it deleted, leaving `let _ =
+            // pending_proof;` under a docblock still describing the pipeline — is
+            // restored here. PATH-PRESERVE Phase 5b: the executor already
+            // validated the turn (the soundness boundary); the composed proof
+            // (rotated leg) is built + self-verified off the lock. The attestation
+            // is best-effort for the faucet (finalization stands either way; an
+            // unattested faucet grant is a devnet-liveness issue, not a soundness
+            // one).
             let receipt_hash = receipt.receipt_hash();
             // Build the rotated attestation material from the actor's before/after
             // cells. In full mode the authoritative `s.ledger` was not mutated (the
@@ -8628,8 +8696,19 @@ async fn post_faucet(
             drop(s);
 
             // Async STARK attestation, off the lock — flips the receipt's
-            // has_proof once the pool lands the proof.
-            let _ = pending_proof;
+            // has_proof once the pool lands the proof. `push_witnessed_receipt` is
+            // keyed by receipt hash, not by a position in the receipt log, so this
+            // is well-defined before finalization appends the canonical receipt.
+            if let Some(rotatable) = pending_proof {
+                enqueue_async_proof(
+                    &state,
+                    rotatable,
+                    receipt.clone(),
+                    receipt_hash,
+                    turn_hash_hex.clone(),
+                )
+                .await;
+            }
 
             let turn_data_for_gossip = turn_data.clone();
             if let Some(gossip) = state.gossip().await {
@@ -8778,9 +8857,42 @@ async fn post_discharge(
         let mut gateway = dregg_macaroon::DischargeGateway::new(gateway_key, location);
         // Default evaluator: require proof to prevent accidental open gateways.
         gateway.add_evaluator(Box::new(dregg_macaroon::ProofRequiredEvaluator));
-        // Load previously persisted replay set from store (survives restarts).
-        if let Ok(Some(data)) = s.store.get_config("discharge_issued_set") {
-            gateway.load_issued_set(&data);
+        // Load the persisted replay set (survives restarts).
+        //
+        // ⚑ THE THREE OUTCOMES ARE NOT TWO. `Ok(None)` — nothing has ever been
+        // persisted — legitimately yields an empty set. `Err(..)` — the store
+        // could not ANSWER — yields no knowledge at all, and an empty set is the
+        // WEAKEST possible answer to substitute for it: every ticket this node
+        // ever discharged becomes discharge-able again. This was written as
+        // `if let Ok(Some(data)) = …`, which collapsed the error into the
+        // nothing-stored case with no `else` and no trace, three lines above a
+        // comment naming ticket reuse as the hazard. A gateway whose replay set
+        // is UNKNOWN does not serve; it refuses.
+        match s.store.get_config("discharge_issued_set") {
+            Ok(Some(data)) => match gateway.load_issued_set(&data) {
+                Ok(loaded) => {
+                    tracing::debug!(entries = loaded, "discharge replay set restored from store");
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "REFUSING discharge: the persisted replay set is malformed, so the \
+                         gateway cannot know which tickets were already issued"
+                    );
+                    return Err(StatusCode::SERVICE_UNAVAILABLE);
+                }
+            },
+            Ok(None) => {
+                // Genuinely nothing persisted yet — an empty set is the truth.
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "REFUSING discharge: the store could not read the replay set, so the \
+                     gateway cannot know which tickets were already issued"
+                );
+                return Err(StatusCode::SERVICE_UNAVAILABLE);
+            }
         }
         s.discharge_gateway = Some(gateway);
     }
@@ -8795,23 +8907,45 @@ async fn post_discharge(
         metadata: req.metadata,
     };
 
-    match gateway.process_request(&discharge_req) {
-        Ok(resp) => {
-            // SECURITY: Persist replay-prevention state immediately after each
-            // successful discharge. A crash between discharge issuance and shutdown
-            // would otherwise lose the replay set, enabling ticket reuse.
-            let data = gateway.serialize_issued_set();
-            if let Err(e) = s.store.set_config("discharge_issued_set", &data) {
-                tracing::warn!(error = %e, "failed to persist discharge replay set");
-            }
-            Ok(Json(NodeDischargeResponse {
-                success: true,
-                discharge: Some(resp.discharge),
-                expires_at: Some(resp.expires_at),
-                condition_met: Some(resp.condition_met),
-                error: None,
-            }))
+    // `process_request` burns the ticket on PRESENTATION — the hash goes into the
+    // replay set before any condition is evaluated — so a DENIED request mutates
+    // the set exactly as an issued one does. Persisting only the success arm let a
+    // restart resurrect every denied ticket. Measure the set instead of guessing
+    // from the outcome; an undecryptable blob changes nothing and writes nothing.
+    let issued_before = gateway.issued_len();
+    let outcome = gateway.process_request(&discharge_req);
+    let replay_set_changed = gateway.issued_len() != issued_before;
+
+    if replay_set_changed {
+        // SECURITY: the durable replay set must be at least as strong as the
+        // in-memory one before this node hands anything back. A crash between
+        // discharge issuance and shutdown would otherwise lose the burn, enabling
+        // ticket reuse — which is precisely what this write exists to prevent, so
+        // a failed write cannot be a warning that still answers `success: true`.
+        //
+        // The ticket stays burned in THIS process. That is deliberate: a store
+        // that cannot write is a broken node, and re-admitting the ticket to buy
+        // back liveness would re-open the exact hole. No discharge escaped — the
+        // response is dropped unread — so nothing was issued against the burn.
+        let data = gateway.serialize_issued_set();
+        if let Err(e) = s.store.set_config("discharge_issued_set", &data) {
+            tracing::error!(
+                error = %e,
+                "REFUSING discharge: the replay-set burn could not be persisted, so a crash \
+                 here would make this ticket reusable"
+            );
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
+    }
+
+    match outcome {
+        Ok(resp) => Ok(Json(NodeDischargeResponse {
+            success: true,
+            discharge: Some(resp.discharge),
+            expires_at: Some(resp.expires_at),
+            condition_met: Some(resp.condition_met),
+            error: None,
+        })),
         Err(e) => Ok(Json(NodeDischargeResponse {
             success: false,
             discharge: None,
@@ -9922,6 +10056,64 @@ struct QueueAtomicTxResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⚑ THE UNAUTHENTICATED SURFACE IS PINNED HERE, AND THIS TEST IS WHY.
+    ///
+    /// `poa_records_api` was merged into `public_routes` while a commit message
+    /// elsewhere said "DO NOT MOUNT". A commit message is a document, not a
+    /// detector: nothing could go red, and `GET /api/poa/records/{authority}`
+    /// served a shape that published the Signal target through
+    /// `MissionWire.runSeed` (the target is three modulo operations from the
+    /// seed). It was harmless only because `latest_height` was 0, so `runs` was
+    /// empty — it would have begun leaking with the first settled turn.
+    ///
+    /// The shape is safe now (`PublicMissionWire` has no `runSeed` field and
+    /// `publicMission_ignores_the_run_seed` proves substituting any seed leaves
+    /// the published value identical), so the route stays. What was missing was
+    /// this: a gate that reds when the unauthenticated surface changes.
+    ///
+    /// Adding a route to `public_routes` is fine. Adding one WITHOUT noticing is
+    /// not. If this test fails, decide deliberately, then update the pin —
+    /// and ask the standing question first: can a reader who has never played
+    /// reconstruct a hidden instance from anything this route serves?
+    #[test]
+    fn the_unauthenticated_route_surface_is_exactly_this() {
+        let source = include_str!("api.rs");
+        let public_at = source
+            .find("let mut public_routes = Router::new()")
+            .expect("public_routes block moved; re-anchor this test");
+        let protected_at = source
+            .find("let protected_routes = Router::new()")
+            .expect("protected_routes block moved; re-anchor this test");
+        assert!(
+            public_at < protected_at,
+            "the public block must precede the protected one for this scan to be sound"
+        );
+        let public_block = &source[public_at..protected_at];
+
+        // Whole modules merged into the public surface. These are the dangerous
+        // ones: a module's route set can grow without `api.rs` changing at all.
+        let mut merged: Vec<&str> = public_block
+            .match_indices(".merge(crate::")
+            .map(|(i, _)| {
+                let rest = &public_block[i + ".merge(crate::".len()..];
+                let end = rest.find("::routes()").unwrap_or(0);
+                &rest[..end]
+            })
+            .filter(|m| !m.is_empty())
+            .collect();
+        merged.sort_unstable();
+        merged.dedup();
+
+        let expected = ["poa_galley_api", "poa_holding_api", "poa_records_api"];
+        assert_eq!(
+            merged, expected,
+            "the set of modules merged into the UNAUTHENTICATED router changed.\n\
+             Every route in a merged module is reachable with no bearer token.\n\
+             If this is deliberate, update the pin — and first answer: can a\n\
+             reader who has never played reconstruct a hidden instance from it?"
+        );
+    }
     use axum::body::Body;
     use dregg_coord::{AtomicForest, Coordinator, Decision, Vote};
     use dregg_turn::ComputronCosts;
