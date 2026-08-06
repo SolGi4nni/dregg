@@ -296,11 +296,62 @@ structure OpenResult (config : Config) (envelope : OpenEnvelope) where
   player_counter_exact : identity.playerCounter = envelope.playerCounter
   entry_id_exact : identity.entryId = entry.id
   contribution_exact : contribution = entry.contribution
+  /-- The drawn beacon is the one authored for the period the envelope signed.
+  Without this a downstream projection keying replay defence on the receipt's
+  period would be reading an unproved field. -/
+  period_exact : identity.beacon.period = envelope.expectedPeriod
   consumes_exact_period :
     openKey config envelope.expectedPeriod envelope.player ∈ after.consumed
   counter_committed :
     (after.playerCounters.lookup (counterKey config envelope.player)).val =
       envelope.playerCounter
+
+/-! ### The canonical receipt this authority publishes
+
+A receipt-only projection (the ship instrument panel) must not re-read
+`OpenResult`'s internals, and must not be able to mint crate credit at all.  The
+constructor below is private and its only producer is `OpenResult.receipt`, so
+possession of an `OpenReceipt` is exactly possession of an accepted opening.
+Every field is copied from the accepted result, and the theorems under it cite
+that result's own exactness proofs rather than restating the definition. -/
+structure OpenReceipt where
+  private mk ::
+  federationId : Digest32
+  contentSession : Digest32
+  contentEpoch : EpochId
+  period : EpochId
+  player : Digest32
+  contribution : Contribution
+deriving DecidableEq
+
+def OpenResult.receipt {config : Config} {envelope : OpenEnvelope}
+    (result : OpenResult config envelope) : OpenReceipt where
+  federationId := config.raw.mission.federationId
+  contentSession := config.raw.mission.contentSession
+  contentEpoch := config.raw.mission.epoch
+  period := result.identity.beacon.period
+  player := result.identity.player
+  contribution := result.contribution
+
+/-- The receipt names the player the envelope was signed for, not a claim. -/
+theorem receipt_player_is_the_signed_player {config : Config} {envelope : OpenEnvelope}
+    (result : OpenResult config envelope) :
+    result.receipt.player = envelope.player :=
+  result.player_exact
+
+/-- The receipt carries the authored table row's contribution.  No runtime,
+adapter, or projection chooses this number. -/
+theorem receipt_contribution_is_the_authored_table_row {config : Config}
+    {envelope : OpenEnvelope} (result : OpenResult config envelope) :
+    result.receipt.contribution = result.entry.contribution :=
+  result.contribution_exact
+
+/-- The receipt's period is the period the envelope signed and the crate
+consumed, so a projection may use it as a replay key. -/
+theorem receipt_period_is_the_consumed_period {config : Config}
+    {envelope : OpenEnvelope} (result : OpenResult config envelope) :
+    result.receipt.period = envelope.expectedPeriod :=
+  result.period_exact
 
 /-- Minted outside this module only after authenticating the current global root.
 The index prevents a capability for one state from authorizing another. -/
@@ -326,7 +377,14 @@ private def openCore (config : Config) (global : GlobalSnapshot)
   if advances : envelope.playerCounter = envelope.previousPlayerCounter + 1 then
   if inRange : envelope.playerCounter < PLAYER_COUNTER_MODULUS then
     if state.consumed.card ≥ MAX_OPEN_RECORDS then none else
-    let beacon ← beaconByPeriod? config state.currentPeriod
+    match foundBeacon : beaconByPeriod? config state.currentPeriod with
+    | none => none
+    | some beacon =>
+    let beaconPeriodExact : beacon.period = envelope.expectedPeriod := by
+      have matched := List.find?_some
+        (by simpa only [beaconByPeriod?] using foundBeacon)
+      simp only [decide_eq_true_eq] at matched
+      exact matched.trans periodMatches.symm
     let index ← drawIndex? config beacon envelope.player
     let entry := (ticketEntries config.raw).get index
     let nextCounter : PlayerCounter := ⟨envelope.playerCounter, inRange⟩
@@ -363,6 +421,7 @@ private def openCore (config : Config) (global : GlobalSnapshot)
       player_counter_exact := rfl
       entry_id_exact := rfl
       contribution_exact := rfl
+      period_exact := beaconPeriodExact
       consumes_exact_period := by simp [after, key, periodMatches]
       counter_committed := by
         change ((state.playerCounters.set playerKey nextCounter nextCounterNonzero).lookup
@@ -545,6 +604,43 @@ theorem fixture_daily_open_succeeds : firstOpen?.isSome = true := by native_deci
 private def afterFirst : State fixtureConfig :=
   (firstOpen?.get (by native_decide)).after
 
+/-- A second crew member opening on the SAME period.  Their key differs, so the
+crate admits both; a downstream projection must not collapse them. -/
+private def bobEnvelope : OpenEnvelope where
+  configIdentity := fixtureRaw
+  expectedPeriod := ⟨12⟩
+  expectedSequence := afterFirst.sequence
+  actorRoot := fixtureDigest 90
+  player := fixtureDigest 21
+  previousPlayerCounter := 0
+  playerCounter := 1
+
+private def bobOpen? : Option (OpenResult fixtureConfig bobEnvelope) :=
+  openCore fixtureConfig afterFirst.snapshot afterFirst bobEnvelope
+
+theorem two_crew_members_may_open_the_same_period : bobOpen?.isSome = true := by
+  native_decide
+
+/-! ### Deliberately public lab witnesses
+
+`OpenReceipt`'s constructor stays private; these are two *values* of it, so a
+downstream receipt-only projection can exercise its weld against a REAL accepted
+opening rather than a re-typed mirror.  This widens nothing: `OpenResult.mk` and
+`OpenReceipt.mk` remain private, `CurrentStateCapability` remains opaque, and
+both witnesses name the fixture federation — a panel deployed on any other
+federation refuses them, which `ShipInstrumentPanel` proves. -/
+def fixtureOpenReceipt : OpenReceipt := (firstOpen?.get (by native_decide)).receipt
+
+def fixtureOpenReceiptSecondCrew : OpenReceipt := (bobOpen?.get (by native_decide)).receipt
+
+/-- The two lab witnesses are the same deployment and period but different
+crew, which is exactly the pair a projection's replay key must keep apart. -/
+theorem lab_witnesses_share_a_period_and_differ_only_in_crew :
+    fixtureOpenReceipt.period = fixtureOpenReceiptSecondCrew.period ∧
+    fixtureOpenReceipt.federationId = fixtureOpenReceiptSecondCrew.federationId ∧
+    fixtureOpenReceipt.player ≠ fixtureOpenReceiptSecondCrew.player := by
+  native_decide
+
 theorem identical_daily_open_reroll_refuses :
     openCore fixtureConfig afterFirst.snapshot afterFirst firstEnvelope = none := by
   native_decide
@@ -653,6 +749,11 @@ theorem skipped_periods_do_not_change_the_daily_prize :
 #assert_axioms open_result_retains_exact_entry
 #assert_axioms accepted_open_consumes_exact_period
 #assert_axioms accepted_open_advances_global_counter
+#assert_axioms receipt_player_is_the_signed_player
+#assert_axioms receipt_contribution_is_the_authored_table_row
+#assert_axioms receipt_period_is_the_consumed_period
+#assert_compiled two_crew_members_may_open_the_same_period
+#assert_compiled lab_witnesses_share_a_period_and_differ_only_in_crew
 #assert_compiled fixture_daily_open_succeeds
 #assert_compiled identical_daily_open_reroll_refuses
 #assert_compiled tomorrow_and_old_epoch_claims_refuse
