@@ -126,10 +126,21 @@
 //!
 //! That column is now two:
 //!
-//! * **`PICKLES_WITNESSED`** — the residue, and STILL A BIT. It is renamed, not repaired: an in-AIR
-//!   Pickles verification is ≈10⁹ BabyBear constraints (`LightClientMinaAir` §1b), which is a
-//!   recursion problem and not a bigger circuit. Anyone reading `PICKLES_OK` as "checked" was
-//!   reading a name; the name no longer says that.
+//! * **`PICKLES_WITNESSED`** — the residue, and STILL A BIT. Renamed, not repaired.
+//!   ⚑⚑ **AND SPLIT AGAIN ON 2026-08-06, WHICH IS WHERE THAT NAME ENDS.** What is still a bit is
+//!   **`PICKLES_OPENING_WITNESSED`**, and it is now the residue of exactly three things: the IPA
+//!   opening, `cipCorrect`, and `plonkChecksPassed`. The rest became
+//!   **`FINALIZE_XI_B_PROVED`** (col 58), whose `= 1` guards a nine-lane `proof_bind` pinning
+//!   [`MINA_CONJUNCTION_DESCRIPTOR`] — so setting it costs a verifying STARK over a Lean-authored
+//!   16-row AIR that forces TWO of Pickles' finalize FOUR conjuncts. See [`check_conjunction_binding`],
+//!   refusal 15.
+//!   ⚠ **AND THE ≈10⁹ FIGURE THAT STOOD HERE IS RETIRED TOO.** Re-derived 2026-08-06 on the sound
+//!   rows that now exist (`MinaWrapVerifierAir` §5b, named theorems): one in-AIR Wrap verification,
+//!   excluding the SRS-base leg, is **205 756 rows and 144 751 608 committed cells** — `2^17.65`
+//!   rows, four powers of two UNDER the measured `lb = 2` ceiling, against ≈`2.25·10⁸`
+//!   constraint-instances. The old estimate was wrong about which resource binds, not only about
+//!   size: it assumed ~100 constraints per row and therefore `10⁷` rows. It is still a recursion
+//!   problem, and it is a few hours on one box, not a wall.
 //! * ⚑ **`WRAP_FS_PROVED`** — NOT a bit. Its `= 1` guards nine `proof_bind` constraints that pin the
 //!   row's attested program to `dregg-pasta-fq-chainlink::v1`'s semantic fingerprint lane by lane
 //!   (nine `Faithful9` lanes, 256 bits — a single-felt tie would be worth `2^31`, below this repo's
@@ -156,7 +167,7 @@
 //! **What it does NOT establish — three things, each with its number:**
 //! 1. **Not Pickles validity.** The IPA opening is not in circuit at all, and
 //!    `MinaWrapOpeningGate.opening_is_vacuous_when_sg_is_free` shows a free `sg` makes the closing
-//!    check accept at every value. That conjunct is `PICKLES_WITNESSED` and it is testimony.
+//!    check accept at every value. That conjunct is `PICKLES_OPENING_WITNESSED` and it is testimony.
 //! 2. **Not that the transcript is THIS head's.** The 45 upstream permutations that determine the
 //!    pinned incoming state are the sub-proof's PUBLIC INPUTS, not its gates (74 250 further rows
 //!    ≈ 203 MB of witness), and no gate of the head descriptor relates `TIP_STATE` to the sub-proof
@@ -202,9 +213,14 @@
 //!   `keyToLanes9`: nine base-`2^29` lanes, `8·29+24 = 256` exactly, machine-checked left inverse)
 //!   and the comparison is made below. That is a real refusal — the turn dies — but a proof
 //!   consumed by any OTHER route would get the widths and not the equality.
-//! * ⚑ **`PICKLES_WITNESSED` is a witnessed carrier**, not re-derived in-AIR; it rides the
+//! * ⚑ **`PICKLES_OPENING_WITNESSED` is a witnessed carrier**, not re-derived in-AIR; it rides the
 //!   undischarged IPA/FRI floor, so this refuses a bent proof word only as strongly as the witness
-//!   generator is honest about that bit. **`LINK_OK` LEFT THAT LIST ON 2026-08-05:** it is the guard
+//!   generator is honest about that bit. **`FINALIZE_XI_B_PROVED` LEFT THAT LIST ON 2026-08-06**, on
+//!   the same terms `LINK_OK` left it: it is the guard of the conjunction seam. ⚠ What that buys is
+//!   two of finalize's four conjuncts and NOT the opening — and the sub-proof's ξ is a free column
+//!   (`MinaWrapConjunctionAir.no_arithmetic_call_names_an_xi_block`), welded to the block's own
+//!   transcript only by `mina_wrap_finalize_fold::fold_endo_into_finalize`'s 32 in-circuit
+//!   `cb.connect`s, which this executor does not yet run. **`LINK_OK` LEFT THAT LIST ON 2026-08-05:** it is the guard
 //!   of the segment seam, so setting it costs a verifying STARK over `MINA_LINK_DESCRIPTOR` whose
 //!   published tip is this head's (refusals 11-14). ⚠ What that buys is the segment's SHAPE — nine
 //!   lane-continuity gates per link, a height that ticks, a row-counted length — and NOT its hashes:
