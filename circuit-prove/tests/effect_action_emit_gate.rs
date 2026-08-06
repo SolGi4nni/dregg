@@ -1,9 +1,11 @@
 //! # The emit-from-Lean EQUALITY GATE — the generalized effect-action binding AIR.
 //!
-//! ⚑⚑ **RED, AND HERE IS WHOSE — `dregg-effect-burn-v1` DOES NOT LOAD (measured 2026-08-06).**
-//! Six of this file's tests fail, and the `challenges` flag-day repair is NOT the cause; it is what
-//! made the cause visible. [`BURN_GOLDEN`] is now byte-identical to `EffectActionBindingEmit.lean`'s
-//! `#guard emitVmJson2 burnDesc`, and `parse_vm_descriptor2` refuses it:
+//! ⚑⚑ **GREEN SINCE 2026-08-06 — and here is what was RED, because the shape of the fix is the
+//! interesting part.** Six of this file's tests failed (plus one in
+//! `effect_action_extra_tamper_audit.rs`), and the `challenges` flag-day repair was NOT the cause;
+//! it is what made the cause visible. [`BURN_GOLDEN`] was made byte-identical to
+//! `EffectActionBindingEmit.lean`'s `#guard emitVmJson2 burnDesc`, and `parse_vm_descriptor2`
+//! refused it:
 //!
 //! ```text
 //! constant at byte 3619 does not fit a BabyBear felt (10 decimal digits,
@@ -11,23 +13,27 @@
 //! integer semantics say nothing about any proof over it.
 //! ```
 //!
-//! The constant is `EffectActionBindingEmit.TWO_POW_32 = 4294967296`, the borrow coefficient of the
-//! two-limb u64 subtraction, emitted as `{"t":"const","v":-4294967296}`. BabyBear's `p` is
-//! `2013265921 < 2^32`, so that coefficient has no felt. **This PREDATES the flag day** — the
-//! retired inline golden carried the identical constant and simply failed one check earlier, on the
-//! missing `"challenges"` key, so the deeper refusal was never reached or reported.
+//! The constant was `TWO_POW_32 = 4294967296`, the borrow coefficient of the two-limb u64
+//! subtraction. BabyBear's `p` is `2013265921 < 2^32`, so it had no felt. **That PREDATED the flag
+//! day** — the retired inline golden carried the identical constant and simply failed one check
+//! earlier, on the missing `"challenges"` key, so the deeper refusal was never reached.
 //!
-//! ⚠ **The remedy is NOT [`parse_vm_descriptor2_unsound_oversized`].** That escape exists to read an
+//! ⚠ **The remedy was NOT `parse_vm_descriptor2_unsound_oversized`.** That escape exists to read an
 //! artifact, not to make a gate green over an encoding whose integer semantics do not survive the
-//! field — routing this test through it would be laundering exactly the thing the refusal names.
-//! The fix is in the AUTHOR: re-emit `burnDesc`'s borrow on a felt-sized encoding
-//! (`Dregg2.Circuit.Emit.PastaFieldSound`; the two-limb split the rest of the descriptor already
-//! uses), which needs a `lake build` and a re-emit. Until then this file is RED for one reason,
-//! written here so the red is attributable rather than stepped over.
+//! field. Nor was it writing `2^32 mod p`: the gate would have parsed and stopped meaning the
+//! subtraction it claims. The ENCODING was wrong in BOTH directions — a 32-bit limb is not even
+//! injective into a felt, because `BabyBear::new` reduces, so `lo = 0` and `lo = p` were one cell.
+//!
+//! The fix is in the AUTHOR: `AMOUNT_LIMBS` 2 -> 4 at 16 bits, so a u64 is exactly four limbs, the
+//! borrow weight is `2^16 = 65536`, and every chain body is bounded by `2^18` — far inside `p`. The
+//! top chain gate carries NO outgoing borrow, which makes `amount <= old_balance` an in-circuit
+//! tooth for the first time ([`burn_underflow_refuses`]). See
+//! `Dregg2.Circuit.Emit.EffectActionBindingEmit` (`burn_chain_exact_of_modEq`,
+//! `chainBody_abs_lt_p`) for the field-to-ℤ bridge this width exists to make true.
 //!
 //! Validates the `emit-from-Lean` pattern for the `effect_action` family: the binding AIR
 //! `circuit/src/effect_action_air.rs::EffectActionAir` (a 32-byte field → 8 BabyBear limbs, a u64
-//! amount → 2 limbs, each limb pinned to a row-0 trace column; row-continuity forcing every row to
+//! amount → 4 x 16-bit limbs, each pinned to a row-0 trace column; row-continuity forcing every row to
 //! equal row 0; and — for the `Burn` schema — the two-limb u64 subtraction with a boolean borrow
 //! plus the `was_burn` disclosure pin).
 //!
@@ -46,7 +52,11 @@
 //!      NAMED constraint:
 //!        * a forged public-input limb → the `pi_binding` (the full-fidelity binding tooth);
 //!        * a broken `new_balance = old_balance - amount` (trace AND PI moved together, so the pin
-//!          still holds) → the Burn low-limb subtraction `gate`;
+//!          still holds) → the Burn limb-0 chain `gate`;
+//!        * a FORGED BORROW BIT (an aux column, so every PI pin still holds) → the two chain gates
+//!          that read it — the pole the felt-sized borrow weight exists for;
+//!        * an UNDERFLOWING burn (`0 - 1` wrapping to `u64::MAX`) → the TOP chain gate, which
+//!          carries no outgoing borrow;
 //!        * `was_burn_flag != 1` (trace AND PI together) → the Burn disclosure `gate`;
 //!        * a value stashed in a later row (row 0 still pinned) → the continuity `window_gate`.
 //!
