@@ -538,7 +538,7 @@ theorem activate_preserves_the_raw_config {raw : RawConfig} {config : Config}
     exact (congrArg Config.raw accepted).symm
   · unfold activate? at accepted
     rw [dif_neg valid] at accepted
-    exact Option.noConfusion accepted
+    simp at accepted
 
 /-! ## The run activation — the hidden instance, re-derived rather than believed
 
@@ -631,7 +631,7 @@ theorem admitted_activation_carries_the_config_it_was_admitted_against
       (congrArg Activation.draw accepted).symm⟩
   · unfold admitActivation? at accepted
     rw [dif_neg binds] at accepted
-    exact Option.noConfusion accepted
+    simp at accepted
 
 /-- The schedule an activation carries is exactly one roll per shift of its own
 config, so the ceiling and the schedule cannot disagree. -/
