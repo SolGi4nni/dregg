@@ -918,14 +918,29 @@ function at the `VLeaf` alphabet since the first rail fusion — used only on th
 the input was already a compiler input. Here it is at EVERY alphabet, which is what lets the WINDOW
 rail (whose bodies had no reader at all, only a builder) be canonicalized too.
 
-## ⚑ ONE PASS, NOT TWO — and this is where that stops being a claim
+## ⚑ ONE PASS — but the two EFFECTS are separable, and an earlier draft of this docblock said
+they were not. The correction is the useful part.
 
-Constant folding was priced as a second job to run after normalization. It is not a job at all.
-A head is `Σ coeff · ∏ leaves + const`; `gMulHead` multiplies two heads; a product of two literal
-constants is a head with an EMPTY term list, which IS the folded constant. The 5,075
-`mul(const, const)` subtrees the corpus ships today — 4,284 of them the `mul(const -1, const 1)`
-that a subtraction of one lowers to — do not survive `gExprToHead` because the head vocabulary
-CANNOT REPRESENT THEM. There is no deletion step to schedule.
+`gCanon` does both jobs in one traversal, and that much is structural: a head is
+`Σ coeff · ∏ leaves + const`, `gMulHead` multiplies two heads, and a product of two literal
+constants is a head with an EMPTY term list — so the 5,075 `mul(const, const)` subtrees the corpus
+ships (4,284 of them the `mul(const -1, const 1)` a subtraction of one lowers to) cannot survive
+`gExprToHead`, because the head vocabulary cannot represent them.
+
+⚠ **That is a fact about THIS pass's vocabulary, not about what is possible, and the first draft
+here read it as the latter** ("there is no deletion step to schedule"). Measured at HEAD
+2026-08-06, the two effects are ORTHOGONAL axes:
+
+```text
+                              nodes    descriptors moving    bodies normal
+  a 4-case structural fold   −10,460         26 / 113      22,829 → 22,829  (+0)
+  gCanon (this pass)        +179,476         90 / 113      22,829 → 41,264
+```
+
+A fold that does not round-trip through a head deletes every dead subtree, SHRINKS the corpus, and
+buys **exactly zero** normality; `gCanon` buys all the normality and pays for it. Neither is the
+other's phase. Anyone choosing between them should see both columns — which is why they are
+written here rather than argued about.
 
 ## ⚠ What it costs, measured rather than estimated
 

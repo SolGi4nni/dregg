@@ -385,20 +385,34 @@ canonically (`gHeadToExpr`). Both halves already existed; what did not exist was
 at an alphabet the WINDOW rail could use, which is why the window bodies had a builder and no
 reader. This section is that composition at the two deployed rails, lifted to a whole descriptor.
 
-## ⚑ Why "converge the encodings, THEN canonicalize" was never two jobs
+## ⚑ "Converge the encodings, THEN canonicalize" is not two jobs — but the DELETION is separable
 
-It was priced as two — `gBool` at 5 nodes first, `isNormal` at 9 nodes second — under a brief that
-froze bytes. Read the pass: `gExprToHead` produces `Σ coeff · ∏ leaves + const`, and there is no
-intermediate object in which an encoding is converged but a coefficient is still elided. The same
-single traversal that writes every coefficient also FOLDS every constant, because a product of two
-literals is a head with an empty term list. The 5,075 `mul(const, const)` subtrees the corpus ships
-(4,284 of them `mul(const -1, const 1)`) are not deleted by a step; they are unrepresentable in the
-head vocabulary the pass goes through.
+`gExprToHead` produces `Σ coeff · ∏ leaves + const`, and there is no intermediate object in which
+an encoding is converged but a coefficient is still elided. That much is settled: one traversal.
 
-## ⚑ The price, measured over the checked-in corpus (2026-08-06)
+⚠ **What does NOT follow, and what an earlier draft of this docblock claimed anyway, is that the
+constant folding is inseparable from it.** `gCanon` folds because its vocabulary cannot represent
+a `mul(const, const)` — not because folding needs a head. A 4-case structural fold outside the
+head round-trip deletes all 5,075 dead subtrees (4,284 of them `mul(const -1, const 1)`) and buys
+zero normality. See `GateExpr` §6c for both columns.
 
-`1,954,732 → 2,142,886` AST nodes, **+188,154 (+9.63%)**, and `canonicalize_eval` /
-`canonicalizeW_eval` say that is bytes and nothing else. -/
+## ⚑ The price, measured over the checked-in corpus — ⚠ AND IT IS REVISION-SCOPED
+
+At **git HEAD, 2026-08-06**: `1,963,410 → 2,142,886` AST nodes, **+179,476 (+9.14%)** over the 113
+by-name descriptors, of which 90 change. `canonicalize_eval` / `canonicalizeW_eval` say that is
+bytes and nothing else.
+
+⚠ Quote that figure WITH its revision. The same measurement over the working tree two hours
+earlier read `+188,154`, and over the working tree two hours later `+191,146` — not because the
+pass changed but because sibling lanes re-emit descriptors continuously (27 by-name artifacts
+differed from HEAD while this was being written). A corpus-wide total is a reading of a moving
+object; take it at a fixed revision or do not take it.
+
+⚑ **And the total hides the shape.** Of the 90 that change, **14 SHRINK** (−13,998 nodes, led by
+`descent-custody-census-fixed8-v1` at −1,804 and the eight `pasta-rcb-sg-slice` variants at −1,222
+each) and 76 grow (+193,474). None of the 14 is one of the three sub-programs whose semantic
+fingerprints are Lean-pinned VK lane vectors, so a shrinkers-only subset is a real frontier point
+and it avoids the cascade entirely. -/
 
 open Dregg2.Circuit.GateExpr (gCanon gCanonAt gCanonAt_render gCanon_gIsNormal gCanon_eval
   gExprToHead gHeadToExpr evalG vEnv wEnv render_ofEmitted render_ofWindow ofEmitted_render
