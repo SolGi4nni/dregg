@@ -32,6 +32,21 @@ import Dregg2.Games.PathOfAngels.NetworkGenesis
 -- persisted genesis blobs and finalized rows, and Lean alone decides what a
 -- landed run is. Absent, that route refuses; there is no Rust projection.
 import Dregg2.Games.PathOfAngels.RecordsRuntime
+-- The station's daily READ, `dregg_poa_station_daily_read`. It is in §1.3 rather than §1.5
+-- because `/api/poa/station/{authority}/daily` routes through it. `SalvageCrate` (the daily
+-- ritual) and `ShipInstrumentPanel` (the communal ship it moves) were both proved and both
+-- DARK — zero `@[export]`, zero Rust call site — since they landed, so no reader could see
+-- either organ. Absent, that route refuses; there is no Rust projection and there must never
+-- be one: the panel's `Receipt` and the crate's `OpenResult` have PRIVATE constructors, and a
+-- Rust re-typing of either would be a public mint for a sealed authority.
+-- ⚠ READ ONLY, and not by policy — by TYPE. The write path is unreachable from any export:
+-- `SalvageCrate.openCore` is `private`, and `openCrate` demands a `CurrentStateCapability`
+-- declared `opaque` with no producer anywhere in the tree.
+-- Added 2026-08-06; **+4 modules** to the closure (333 → 337) — MEASURED on the transitive
+-- import graph, not guessed: `SalvageCrate`, `SalvageCrateExamples`, `ShipInstrumentPanel` and
+-- this module. `PlayerCounters`, `NetworkJudgeWire`, `Emit` and `Core` were already in via the
+-- Records read model, so the crate cone costs only itself.
+import Dregg2.Games.PathOfAngels.StationDailyRuntime
 import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime
 import Dregg2.Games.PathOfAngels.EventBatchRuntime

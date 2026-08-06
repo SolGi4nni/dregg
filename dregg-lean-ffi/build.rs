@@ -260,6 +260,15 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          Records read must refuse; Rust may not project a run record from stored bytes",
     ),
     (
+        "dregg_poa_station_daily_read",
+        "the Path of Angels STATION DAILY read compiles out: the communal ship instrument panel \
+         and the crate's curator-authored visible rotation have no answer source, and the public \
+         station read must refuse. Rust may not project either: `ShipInstrumentPanel.Receipt` and \
+         `SalvageCrate.OpenResult` both have PRIVATE constructors precisely so that only an \
+         accepted opening can move the ship, and a Rust re-typing of either would be a public \
+         mint for a sealed authority",
+    ),
+    (
         "dregg_poa_network_genesis",
         "the Path of Angels Signal NETWORK GENESIS ceremony compiles out: Lean cannot bind the \
          externally verified deployment/content tuple to the exact zero-head config and Canon \
@@ -2343,6 +2352,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_slot_derive_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_records_project_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_station_daily_read_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_network_genesis_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
@@ -3284,6 +3294,19 @@ fn main() {
         absent_export_warn("dregg_poa_records_project");
     }
 
+    // PATH OF ANGELS STATION DAILY READ: the communal ship instrument panel plus the crate's
+    // curator-authored visible rotation. Separately versioned from every other PoA symbol because
+    // it is a READ that can never become a write — the crate's opening demands an `opaque`
+    // capability with no producer — so presence confers no ability to move any gauge, and absence
+    // must leave the public station route refusing rather than falling back to a host projection.
+    let poa_station_daily_read_present =
+        archive_exports(&build_archive, "dregg_poa_station_daily_read");
+    if poa_station_daily_read_present {
+        println!("cargo:rustc-cfg=dregg_poa_station_daily_read_present");
+    } else {
+        absent_export_warn("dregg_poa_station_daily_read");
+    }
+
     // PATH OF ANGELS NETWORK GENESIS CEREMONY: validates the externally verified tuple and exact
     // zero state, then emits the complete Lean-owned PoaSignalHeadV1 byte image. It is separately
     // versioned from transition evaluation so availability cannot confer authority on an input.
@@ -3784,6 +3807,9 @@ fn main() {
     }
     if poa_records_project_present {
         shim.define("DREGG_POA_RECORDS_PROJECT", None);
+    }
+    if poa_station_daily_read_present {
+        shim.define("DREGG_POA_STATION_DAILY_READ", None);
     }
     if poa_network_genesis_present {
         shim.define("DREGG_POA_NETWORK_GENESIS", None);

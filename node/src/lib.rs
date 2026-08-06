@@ -118,6 +118,7 @@ pub mod poa_signal_authority_export;
 pub mod poa_signal_genesis;
 pub mod poa_signal_slot_api;
 pub mod poa_signal_slot_ceremony;
+pub mod poa_station_api;
 pub mod poa_strand_admission;
 pub mod private_dependent_turns;
 mod program_registry_persistence;

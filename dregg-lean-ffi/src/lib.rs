@@ -69,6 +69,14 @@ pub mod poa_network_genesis_ffi;
 #[path = "poa_records_ffi.rs"]
 pub mod poa_records_ffi;
 
+/// Lean-owned Path of Angels station daily READ: the communal ship instrument panel and the
+/// crate's curator-authored VISIBLE rotation. Rust transports the request and serves the emitted
+/// document verbatim; there is no host-side projection, and none is possible — the crate's
+/// receipt and result constructors are private precisely so that only an accepted opening can
+/// move a gauge. Read-only by TYPE: the opening demands an `opaque` capability with no producer.
+#[path = "poa_station_daily_ffi.rs"]
+pub mod poa_station_daily_ffi;
+
 /// Lean-owned bounded private batch-settlement evaluator. Rust transports the
 /// canonical wire and has no settlement/authorization fallback.
 #[path = "poa_dark_bazaar_ffi.rs"]

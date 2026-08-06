@@ -103,6 +103,18 @@ lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkGenesis(uint8_t 
 /* Exact parity for the Records read model; it reaches the same evaluator globals. */
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_RecordsRuntime(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_SIGNAL_SLOT_DERIVE
+/* ⚑ 2026-08-06 — THIS ENTRY WAS MISSING while `lean_init.c` had carried it since the derivation
+ * landed, so the two initializer sites were ONE ENTRY OUT OF SYNC. On the single-threaded path the
+ * module's initializer never ran, and a Lean module whose initializer never runs answers with an
+ * uninitialized closure the first time it is called — on the scored-run PREPARATION path, i.e. a
+ * silent refusal of every scored run rather than a loud one. Both sites are one edit now. */
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_SlotDeriveRuntime(uint8_t builtin);
+#endif
+#ifdef DREGG_POA_STATION_DAILY_READ
+/* Exact parity for the station daily read; it reaches the same evaluator globals. */
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_StationDailyRuntime(uint8_t builtin);
+#endif
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(uint8_t builtin);
 #endif
@@ -199,6 +211,30 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(poarecres);
+    }
+#endif
+#ifdef DREGG_POA_SIGNAL_SLOT_DERIVE
+    {
+        lean_object *slotderiveres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_SlotDeriveRuntime(1);
+        if (!lean_io_result_is_ok(slotderiveres)) {
+            lean_io_result_show_error(slotderiveres);
+            lean_dec_ref(slotderiveres);
+            return 1;
+        }
+        lean_dec_ref(slotderiveres);
+    }
+#endif
+#ifdef DREGG_POA_STATION_DAILY_READ
+    {
+        lean_object *poastationres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_StationDailyRuntime(1);
+        if (!lean_io_result_is_ok(poastationres)) {
+            lean_io_result_show_error(poastationres);
+            lean_dec_ref(poastationres);
+            return 1;
+        }
+        lean_dec_ref(poastationres);
     }
 #endif
 #ifdef DREGG_POA_NETWORK_GENESIS

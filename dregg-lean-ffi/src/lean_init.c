@@ -434,6 +434,23 @@ extern lean_object *dregg_poa_records_project(lean_object *input);
 #define DREGG_POA_RECORDS_WIRE_MAX_BYTES ((size_t)67108864u)
 #endif
 
+/* The Path of Angels STATION DAILY read (`StationDailyRuntime.stationDailyReadFFI`). The host
+ * supplies a format tag and at most one crew key; Lean returns the communal ship instrument panel
+ * and, when a crew key was named, that crew member's VISIBLE rotation over the curator-authored
+ * beacon schedule. Its module initializer is required because the projection reaches the same Emit
+ * globals the evaluator does.
+ * ⚠ READ ONLY BY TYPE, not by policy. There is no argument to this export by which a caller
+ * reaches `SalvageCrate.openCrate`: that function demands a `CurrentStateCapability`, which is
+ * `opaque` with no producer, and `openCore` is `private`. Availability confers nothing. */
+#ifdef DREGG_POA_STATION_DAILY_READ
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_StationDailyRuntime(uint8_t builtin);
+extern lean_object *dregg_poa_station_daily_read(lean_object *input);
+/* Matches MAX_POA_STATION_DAILY_WIRE_BYTES in poa_station_daily_ffi.rs and
+ * StationDailyRuntime.WIRE_BYTE_LIMIT in Lean for the request; the reply is bounded by the
+ * authored schedule length, which is far below this. */
+#define DREGG_POA_STATION_DAILY_WIRE_MAX_BYTES ((size_t)1048576u)
+#endif
+
 /* The Lean-owned first-head ceremony (`NetworkGenesis.networkGenesisFFI`). The input tuple has
  * already undergone external manifest/genesis/signature verification; Lean rederives its
  * deployment binding and emits the exact config/Canon bytes and faithful digest coordinates.
@@ -1375,6 +1392,19 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(poarecres);
 #endif
+#ifdef DREGG_POA_STATION_DAILY_READ
+    /* The station daily read closes over the same evaluator globals; initialize it explicitly and
+     * keep both runtime init paths in exact parity. Initialization confers no read authority, and
+     * confers no write path at all — there is none to confer. */
+    lean_object *poastationres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_StationDailyRuntime(1);
+    if (!lean_io_result_is_ok(poastationres)) {
+        lean_io_result_show_error(poastationres);
+        lean_dec_ref(poastationres);
+        return 1;
+    }
+    lean_dec_ref(poastationres);
+#endif
 #ifdef DREGG_POA_NETWORK_GENESIS
     /* This module imports NetworkGenesisWire/Emit and therefore has initialized constants; keep
      * both runtime init paths in exact parity. Initialization does not verify the external tuple. */
@@ -2056,6 +2086,36 @@ size_t dregg_poa_records_project_str(const char *in_utf8, char *out, size_t out_
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_RECORDS_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_STATION_DAILY_READ
+/* Bounded C string bridge over the station daily read. Same return contract as the Records bridge
+ * above: the full output length on success, zero for Lean's refusal sentinel, `(size_t)-1` for an
+ * unusable or over-limit host transport. */
+size_t dregg_poa_station_daily_read_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_STATION_DAILY_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_station_daily_read(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_STATION_DAILY_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;

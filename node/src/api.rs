@@ -2234,6 +2234,19 @@ pub fn router_with_cors(
         // partial view. Before the first turn settles it shows the installed
         // world and mission, which is a true thing to show.
         .merge(crate::poa_records_api::routes())
+        // The station's two daily organs, which were proved and DARK: the
+        // communal ship instrument panel, and the salvage crate's visible
+        // rotation. Public because the panel is communal BY TYPE —
+        // `ShipInstrumentPanel.State` has no per-player field, and
+        // `the_served_panel_does_not_depend_on_the_crew` proves substituting any
+        // request leaves every communal field bit-identical — and because the
+        // rotation is one the crate deliberately publishes (its mixer is not an
+        // unpredictability source; the beacon schedule is curator-authored and
+        // visible). Neither `HiddenInstance` nor `SlotDeriveRuntime` is in this
+        // read's import cone, so no run seed, slot secret, commitment or target
+        // can reach this wire. READ-ONLY BY TYPE: the crate's opening demands an
+        // `opaque` capability with no producer.
+        .merge(crate::poa_station_api::routes())
         .route(
             "/cipherclerk/unlock",
             post({
@@ -10094,7 +10107,40 @@ mod tests {
         merged.sort_unstable();
         merged.dedup();
 
-        let expected = ["poa_galley_api", "poa_holding_api", "poa_records_api"];
+        // ⚑ `poa_station_api` added 2026-08-06, and the standing question
+        // answered rather than waved at: CAN A READER WHO HAS NEVER PLAYED
+        // RECONSTRUCT A HIDDEN INSTANCE FROM THESE FIELDS? No, and for two
+        // structural reasons rather than a filter.
+        //
+        // The panel half publishes communal AGGREGATES only.
+        // `ShipInstrumentPanel.State` has no per-player field to project — its
+        // `the_face_does_not_record_who_opened` proves two different crew
+        // members drawing the same ticket leave identical faces, and
+        // `StationDailyRuntime.the_served_panel_does_not_depend_on_the_crew`
+        // carries that to the wire: substituting ANY request leaves every
+        // communal field of the served document bit-identical. There is no
+        // attendance record, streak or leaderboard to reconstruct because there
+        // is no such state.
+        //
+        // The crate half publishes a VISIBLE ROTATION, which `SalvageCrate`'s
+        // docblock declares deliberately public: the mixer "is not an
+        // unpredictability source", the beacon schedule is "curator-authored and
+        // visible", and `generatedRotation` hands a player their whole rotation
+        // on purpose. The three arcade games' hidden instances live behind
+        // `HiddenInstance` / `SlotDeriveRuntime`, and NEITHER IS IN THIS READ'S
+        // IMPORT CONE — so no run seed, slot secret, commitment or target exists
+        // to leak, rather than existing and being filtered out.
+        //
+        // ⚠ The standing condition, from `ShipInstrumentPanel`'s own docblock:
+        // the visible rotation is fine ONLY BECAUSE the panel is communal and
+        // unattributed. If anything attributable is ever hung off this panel,
+        // the rotation must leave this surface.
+        let expected = [
+            "poa_galley_api",
+            "poa_holding_api",
+            "poa_records_api",
+            "poa_station_api",
+        ];
         assert_eq!(
             merged, expected,
             "the set of modules merged into the UNAUTHENTICATED router changed.\n\
