@@ -818,6 +818,18 @@ pub use mina_head_verifier::{
     mina_head_predicate_vk, mina_head_verifier, register_mina_head_verifier_with_chain_root,
 };
 
+/// ⚑ THE SOLANA→DREGG LANDING: the consumer that makes the Solana mint path spend a STARK over the
+/// Lean-compiled `dregg-solana-lightclient-verify::v1` instead of returning a Rust `enum` variant
+/// from a `for` loop that counted votes (`bridge/src/solana_provenance.rs:697`). Same rung as
+/// [`mina_head_verifier`], and here for the same reason: it depends on `dregg-circuit`.
+pub mod solana_head_verifier;
+pub use solana_head_verifier::{
+    SOL_LC_VERIFY_DESCRIPTOR, SOL_LC_VK_LANES, SolanaAnchoredLockStarkVerifier,
+    SolanaGovernanceAnchor, SolanaLockProofWire, check_program_pin, check_public_input_weld,
+    register_solana_lock_verifier_with_anchor, solana_lock_commitment, solana_lock_predicate_vk,
+    solana_lock_verifier,
+};
+
 /// The OWNER-SIGNED ENVELOPE keystone: an `Authorization::Custom` verifier that
 /// gates a host-keyed worker cell's authority-widening actions on the OWNER key
 /// (`RenterAnchor.pubkey`), not the host-held cell key.

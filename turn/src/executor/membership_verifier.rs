@@ -1083,6 +1083,19 @@ pub fn registry_with_real_verifiers() -> WitnessedPredicateRegistry {
         super::mina_head_verifier::mina_head_predicate_vk(),
         super::mina_head_verifier::mina_head_verifier(),
     );
+    // ⚑ THE SOLANA ANCHORED-LOCK RUNG — installed UNWIRED, and that is the point.
+    //
+    // Unlike the Mina rung, this one's trust anchor is NOT the cell's own state: it is a
+    // governance-pinned stake-table lane root, which `dregg-turn` does not hold. So the verifier
+    // installed here refuses every lock at refusal 0 until a host calls
+    // `register_solana_lock_verifier_with_anchor`. Registering it UNWIRED rather than leaving the
+    // vk unregistered is deliberate: an unregistered `Custom` vk fails with `KindNotRegistered`
+    // before the verifier's own logic runs, which reads to an operator as "this rung does not
+    // exist" instead of "this node cannot check it yet".
+    r.register_custom(
+        super::solana_head_verifier::solana_lock_predicate_vk(),
+        super::solana_head_verifier::solana_lock_verifier(),
+    );
     r
 }
 
