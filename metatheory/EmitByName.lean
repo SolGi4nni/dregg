@@ -69,8 +69,8 @@ import Dregg2.Circuit.Emit.PastaFieldSound
 import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.PastaCurveSound
 import Dregg2.Circuit.Emit.PastaLadderThread
--- ⚑ NOT routed below, and imported anyway: the conjunction AIR is built by the emit gate so it
--- cannot drift while its row-local layout is being threaded. See the note at the length pin.
+-- ⚑ ROUTED as of 2026-08-05 (it spent one commit imported-but-withheld while its row-local layout
+-- was threaded). Two rows: the threaded conjunction and its unthreaded twin.
 import Dregg2.Circuit.Emit.MinaWrapConjunctionAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
@@ -542,6 +542,16 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.PastaLadderThread.pallasThreadDesc)
   , ("pasta-vesta-rcb-thread.json",
       Dregg2.Circuit.Emit.PastaLadderThread.vestaThreadDesc)
+    -- ⚑ 2026-08-05 — THE CONJUNCTION, THREADED, AND ITS UNTHREADED TWIN. The row withheld below
+    -- lands here: the b-polynomial's 15 rounds are 15 ROWS carried by 448 `.transition` legs, so
+    -- the width is 2 536 at every round count and the artifact is 4 157 constraints instead of
+    -- 30 607. The `-unthreaded` twin is the SAME Lean AIR minus the thread — the negative control
+    -- `without_the_thread_the_forged_trace_proves` needs, emitted rather than assembled in Rust by
+    -- filtering constraints out of a parsed descriptor (which would be Rust authoring AIR).
+  , ("mina-wrap-conjunction.json",
+      Dregg2.Circuit.Emit.MinaWrapConjunctionAir.conjunctionDesc)
+  , ("mina-wrap-conjunction-unthreaded.json",
+      Dregg2.Circuit.Emit.MinaWrapConjunctionAir.conjunctionUnthreadedDesc)
   ]
 
 /- The routing table covers the checked-in directory exactly. A bare count is a
@@ -575,15 +585,20 @@ Both directions are gated outside Lean:
 -- and `pasta-fp-chainlink`. Same shared-line hazard as every note above: if the blame on this
 -- line is one lane's, the count is probably already short again.
 -- ⚑ 2026-08-05 — 109 = 107 + the threaded sound row on both curves (`pasta-{pallas,vesta}-rcb-
--- thread`). ⚠ `MinaWrapConjunctionAir.conjunctionDesc` is deliberately NOT routed here: its emitted
--- instance is ROW-LOCAL (22 184 columns, 30 607 constraints, a 24 MB artifact — 10x the largest
--- descriptor in the tree and 40% of the directory), which is the very layout `PastaLadderThread`
--- exists to replace. Routing it would check in the shape this lane just measured as wrong. The AIR,
--- its `mainRailOk`, its allocator-disjointness theorems and its forcing theorems are on disk; the
--- routing row lands when its b-polynomial chain is threaded across rows the way the ladder now is.
+-- thread`). At that count `MinaWrapConjunctionAir.conjunctionDesc` was deliberately NOT routed: its
+-- emitted instance was ROW-LOCAL (22 184 columns, 30 607 constraints, a 24 MB artifact — 10x the
+-- largest descriptor in the tree and 40% of the directory), which is the very layout
+-- `PastaLadderThread` exists to replace, and routing it would have checked in the shape that same
+-- commit measured as wrong.
+-- ⚑ 2026-08-05 — 111, AND THE WITHHELD ROW IS ONE OF THE TWO. The conjunction's b-polynomial is
+-- threaded: 15 rounds are 15 ROWS carried by 448 `.transition` legs, the width is 2 536 at EVERY
+-- round count (`threaded_conj_width_is_flat`) and the descriptor is 4 157 constraints. The second
+-- row is its unthreaded TWIN, the negative control that makes the falsifier's refusal attributable
+-- to the thread rather than to the fixture — the same Lean AIR minus the 448 window legs, so it is
+-- an emission and not a Rust-side edit of a parsed descriptor.
 -- Same shared-line hazard as every note above: if the blame on this line is one lane's, the count
 -- is probably already short again.
-theorem byNameDescriptors_length : byNameDescriptors.length = 109 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 111 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

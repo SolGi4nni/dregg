@@ -1,5 +1,147 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (WHOSE LAYOUT) — **the withheld conjunction is ROUTED**: the b-polynomial's 15 rounds are 15 ROWS, the width is 2 536 at EVERY round count, and the artifact is 24 MB → 2.4 MB
+
+`MinaWrapConjunctionAir` was built, proved and `#assert_axioms`-clean, and its routing row was
+deliberately WITHHELD by the lane that built it — *"that is the layout this same commit measures as
+wrong. Checking it in would bless the shape I just spent the day refuting."* Its emitted instance was
+ROW-LOCAL: **22 184 columns, 30 607 constraints, a 24 MB artifact**, ten times the largest descriptor
+in the tree. The fix it named was the one taken: thread the fold.
+
+⛑ **THE ROW COUNT IS THE ROUND COUNT PLUS ONE, and the fit is exact.** `.transition` fires on every
+row but the last, so a 16-row trace has exactly 15 transitions — Mina's 15 IPA rounds — and one
+terminal row that READS the finished register. The prover requires a power-of-two height and
+`15 + 1 = 16`. Carried state is four blocks (`sq` and `fld` at ζ and at ζω) plus ten globals held by
+the same mechanism: **448 `.transition` legs**, `128` `.first` seed pins, `32` `.last` read gates.
+
+| | row-local (withheld) | threaded (routed) |
+|---|---|---|
+| columns | 22 184 declared / 20 532 used | **2 536, at every round count** |
+| constraints | 30 607 | **4 157** |
+| artifact | 24 MB | **2.4 MB** |
+| per extra round | +1 326 columns | **+0 columns, +1 row** |
+
+`threaded_conj_width_is_flat` and `the_row_local_layout_is_linear_in_the_round_count` are the two
+halves as theorems, not as two sampled numbers. ⚠ **AND IT IS A TRADE**: `2 536 × 16 = 40 576` cells
+against `22 184`, which is MORE. What collapses is the DESCRIPTOR and the width's dependence on the
+round count — `threading_trades_columns_for_rows_and_cells` says so rather than quoting the
+flattering half.
+
+⛑ **`bCorrect` NOW LANDS ON `PastaIPA.bEval` ITSELF.** The row-local statement compared a circuit
+value against a circuit value. `bFoldFrom_snd_eq_bEval` proves the threaded fold IS the spec
+function over the reversed row order, so `conjunction_forces` concludes
+`dv.b ≡ bEval ζ chals + r · bEval ζω chals (mod q)`. `threadedBFold_forces` is the n-row induction —
+rows forced, thread carrying the forcing, no row's output quoted — and its enabling lemma is
+`bStep_congr`, provable for the same reason `rcbTraceZ_congr` was: the step is a POLYNOMIAL with no
+inversion in it. The seed is PINNED (`.first`), not quoted, which is one notch stronger than
+`threadedLadder_forces`, whose chain starts at `accIn tr 0`.
+
+⛑ **AND EVERY PREDICATE MOVED TO THE DEPLOYED READING.** The row-local file read its equality gates
+over ℤ (`Constraint.holds`) — a stronger hypothesis, so a weaker theorem. Everything here is
+`P ∣ body`, what `prove_vm_descriptor2` checks in BabyBear; `smallDvd_forces_eq` recovers limbwise
+equality from the byte ranges the declared lookups supply.
+
+⛑ **BOTH POLARITIES, RELEASE, 15/15 in 3.35 s**, on the REAL block's opening argument: the honest
+terminal row recomposes to `MinaWrapOpeningGate.B0`, the same number
+`b0_is_the_b_polynomial : bPoly CHAL ζ + r · bPoly CHAL ζω = B0` proves. The falsifier is sixteen
+independently HONEST rows whose fold restarts at row 14 — 5 156 cells moved, every own-row gate
+satisfied INCLUDING the `.first` seed pins and the `.last` `bCorrect` comparison (the claimed `b0` is
+what the forged fold actually produced), every cell inside the declared limb width. Evaluated against
+the emitted JSON, its **only** 127 failures are window gates and all 127 are at row 13.
+`without_the_thread_the_forged_trace_proves` closes it against
+`dregg-mina-wrap-conjunction-unthreaded::v1` — the SAME Lean AIR minus the 448 legs, EMITTED, because
+filtering constraints out of a parsed descriptor in Rust would be Rust authoring AIR.
+
+⚠ **THE CLAIM IS A TWO-WAY AND, NOT UPSTREAM'S FOUR-WAY.** `cipCorrect` and `plonkChecksPassed` are
+absent BY CONSTRUCTION, not stubbed: comparing `cip` against a ξ-fold with a free `ft_eval0` column
+forces nothing, and that vacuity has shipped here before. `G`/`z₁`/`z₂` remain free witnesses,
+faithful to `wrap_main.ml:357-382`. The bind leg pins its COMMITMENT and not its program; `vkPin`
+stays `none` and the file says so at the leg.
+
+⚠ **A CORRECTION ON RECORD.** `PastaCurveSound.lean:1064`'s *"a layout the existing ladder also lacks
+and has never had"* is true of `PastaMsmAir` and FALSE of the tree — `dregg-mina-scalar-mul-ladder::v1`
+is a register-file machine running entirely on `on_transition` gates and it shipped first. What was
+new in `PastaLadderThread`, and here, is threading the SOUND limbed encoding.
+
+WHAT RE-EMITS: nothing existing. Two NEW by-name descriptors, `byNameDescriptors_length` 109 → 111,
+no VK rotation. PROVENANCE deliberately NOT stamped — these join the rows already standing unstamped.
+
+## ⛑⛑⛑⛑ AUGUST 5 (WHOSE PROOF) — **the wrap transcript had THREE step proofs in it**: the forty public words, the absorbed commitments and the Lean chain fixture were each about a *different* one, all three the same shape, one of them proved with `OsRng`. There is now ONE, and the 116 Fq words are read off its own IPA opening
+
+The brief said `lr`/`delta` had "no real source in this tree at all" and 25 of the 58 points were
+"real, but from the WRONG proof". Both true, and the shape of the defect was one layer larger:
+
+| consumer | proof it was about | reproducible? |
+|---|---|---|
+| the forty public words (`MinaWrapDeferredWords`) | `pickles_kimchi_marshal`'s `prove_step` — Mina's SRS, seeded | yes |
+| the transcript's commitments (`KimchiWrapMain.RC_*`) | a third-party `create_circuit(0,5)` export | not ours at all |
+| the Lean chain fixture (`KimchiStepWrapChainFixture`) | `export_step_tape`'s own proof — kimchi TEST SRS, **`OsRng`** | **no** |
+
+`prevs = 2`, `wComms = 15`, `tComms = 7` on all three. ⚠ **Same-shape is not same-proof**, and no
+census, arity check or `WrapShape` comparison in the tree could see it.
+
+⛑ **AN IPA OPENING *IS* `lr` AND `delta`, AND THIS PIPELINE HAD ONE THE WHOLE TIME.** Nothing needed
+building. `KimchiWrapMainField.lrPointQ i = xhatBase (5 + i % 50)` made **32 of the 33 IPA points
+fifty SRS Lagrange bases, cycled**; the step proof's `ProverProof::create_recursive` over
+`get_srs::<Fp>()` (65,536 generators, which is what pins it to sixteen rounds) carries the real ones.
+`pickles-extractors/src/tape.rs` reads them off **in the same run that prints the forty**, so "the
+same proof" is structural, not two configs agreeing. `export_step_tape.rs` is **DELETED**.
+
+⛑ **116/116 WORDS, ELEMENTWISE, IN THE KERNEL** — `the_transcript_absorbs_this_pipelines_own_step_proof`
+compares `itemVal` against the tape at every index of `sg_old`(4) `w_comm`(30) `z_comm`(2)
+`t_comm`(14) `lr`(64) `delta`(2), both shapes, by `rfl`. Controls: `the_transcript_is_not_the_borrowed_proof`
+(≠ `PastaPoseidonFq` on all four blocks) and `the_ipa_opening_is_not_srs_lagrange_bases` — ⚑ that
+second one exists because **`onCurveQ` was never going to catch this**: the filler was on-curve, so
+`Inner_curve.typ` and `endo_inv` were satisfied and every check that existed stayed green.
+
+⛑⛑ **A GREEN GATE WAS THE EVIDENCE OF A DEFECT.** Moving `RC_SGOLD` alone left `xhatOut 67`
+**unchanged**, so the emitter's `xhatXY` refusal did not fire. Cause: `KimchiWrapMainField.whSgOld`
+was a SECOND copy of `sg_old` still reading `PastaPoseidonFq` — it feeds `prevWordVal`, i.e. packed
+statement words 55/56 and x_hat MSM entries 65/66, while §21's emitted rows hash the TRANSCRIPT's
+cells. Two defs holding one object, true only by coincidence of two literals. Both now resolve
+through `STEP_PREVCOMM_XY` (`the_wraphack_sg_old_is_the_transcripts`), `whSg` follows the same
+`Openings.Bulletproof.t` record to `STEP_SG_XY`, and the refusal then fired as designed.
+**`shapeWrap.xhatXY` re-derived**; `shapeSmoke`'s is unmoved (`xhatSel 5` selects neither 65 nor 66).
+
+⛑ **ZERO GATES MOVED — MEASURED, NOT ARGUED.** `wrapmain_smoke_w4_bind` old vs new: 532 rows, **0
+rows differ in `typ`, `wires` or `coeffs`**; 4 829 of 7 980 witness cells move, and the public vector
+moves at exactly the six slots the rung derives `[5, 6, 7, 8, 10, 13]`. So the VK does not rotate,
+and the on-chain index probe returns the **identical verdict** before and after
+(`same_index=false control=true mina_40words=false falsifiers_refused=40/40`).
+
+⛑⛑ **WHAT MINA SAYS, WITH BOTH CONTROLS.** `mina_onchain_index_probe`, key fetched read-only from
+devnet (hash `3406194937…002590`, 2 396 base64 chars, matches the registration record):
+
+| circuit handed to the probe | (A) 28 commitments | (B) control, OUR index | (B) MINA'S index |
+|---|---|---|---|
+| HEAD's emission (mine) | **4 / 28** | `Ok — accepted` | `Err(OpenProof)` *"the opening proof failed to verify"* |
+| the emission before this change | 4 / 28 | `Ok` | `Err(OpenProof)` — **identical** |
+| the emission the account actually holds (`d245921c7`, 498 rows, PI 6) | **28 / 28** | `Ok` | `Err(IncorrectPubicInputLength(40))` |
+
+⚑ The 28/28 row is the one that says the round trip **Lean → gates → SRS → 28 points → binprot →
+devnet → GraphQL → `make_zkapp_verifier_index`** closes. The account holds a circuit from three
+emissions ago (498 rows / PI 6 against HEAD's 532 / PI 40), which is `devnet-foreign-vk-registration.json`'s
+own long-standing note, not a drift of the chain and **not caused by this change**. Re-registration
+is a fresh account + 1 MINA + a signed transaction: **the operator's call, not attempted.**
+
+⚠ **DO NOT QUOTE THE 40/40 FALSIFIER LEG AS PROVENANCE.** It is the *vector* leg and was already
+40/40 while the six words were inert. The provenance evidence is the Lean equality above and the
+emitter's `inertSlotsAt = wrapInertOk` refusal, which passed at every rung of both emissions.
+
+⛑⛑ **AND THE JOIN THAT COULD NOT PREVIOUSLY BE STATED.** `chain_reality_gate` (green) says the
+Lean transcript replayed on the FULL tape reproduces `STEP_BETA/GAMMA/ALPHA_CHAL/ZETA_CHAL/DIGEST`;
+`the_chains_challenges_are_five_of_minas_forty` (new) says those five **are slots 5, 6, 7, 8 and 10
+of `PreparedStatement::to_public_input(40)`**. Two lists that were about different objects yesterday.
+`the_deferred_cip_is_kimchis_oracles_and_pickles_expand_deferred` adds the sixth crossing: kimchi's
+`oracles()` shifted by `tape.rs` **equals** openmina's `expand_deferred` rendered by `to_public_input`
+— two codebases, one Fq word, and `wrap_verifier.ml:395` absorbs it as one item.
+
+⚠ **WHAT IS STILL NOT THIS PROOF'S, AND IT IS EXACTLY TWO ITEMS.** The MAIN assembly absorbs Mina's
+`step-transaction` key digest at `wrap_verifier.ml:537` (§14's `choose_key` anchor) and §15's MSM
+output at `:617`, not this proof's index digest and `public_comm`. Both land **before β**, so its
+derived `[5, 6, 7, 8, 10, 13]` are **measured to differ** from Mina's forty — that is W-KEY's and
+W-XHAT's remaining distance, and the 116 commitment words between them are already closed.
+
 ## ⛑⛑⛑ AUGUST 5 (WHOSE TAPE) — **the phase-1 (Fp) transcript leg is a circuit**: the 46-link phase-2 chain absorbed an `fq_digest` nothing derived, and 27 links of `dregg-pasta-fp-chainlink::v1` now derive it — welded **32/32 felts, elementwise, no digest, no birthday bound**
 
 The phase-2 fold ends on Mina devnet block 539508's real `v′`/`u′` — and its tape's **element 0 is
