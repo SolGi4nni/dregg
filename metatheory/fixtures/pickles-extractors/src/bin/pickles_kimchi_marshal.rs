@@ -55,6 +55,20 @@
 //!    and the terminal rung emits the forty public words `PreparedStatement::to_public_input`
 //!    demands of the wrap circuit.
 //!
+//! 6. ⚑ **THE STEP PROOF'S PHASE-1 Fq TAPE, AS TWO GENERATED LEAN MODULES** — [`tape`], driven by
+//!    the SAME `prove_step` return value as everything above. `KimchiStepWrapChainFixture.lean`
+//!    carries the 116 Fq words the wrap transcript absorbs (`sg_old`, `w_comm`, `z_comm`, `t_comm`,
+//!    the sixteen IPA `(L,R)` pairs and `delta`) plus `x_hat` and the challenges kimchi's own
+//!    verifier derived; `KimchiStepWrapChainKey.lean` carries the 56 `index_to_field_elements`
+//!    coordinates of the same `VerifierIndex`.
+//!
+//!    ⚠ **THIS IS WHY IT LIVES HERE AND NOT IN A SECOND BINARY.** It used to be
+//!    `pickles-chain-harness/src/bin/export_step_tape.rs`, which proved its OWN step proof — over
+//!    kimchi's TEST SRS and with `OsRng`, so not reproducible — while the wrap transcript absorbed
+//!    a THIRD proof's commitments and the forty came from this one. Three proofs, one pipeline, and
+//!    every shape agreed (`prevs = 2`, `wComms = 15`, `tComms = 7`), so nothing was ever red. Same
+//!    binary, same run, same proof object is the only structural fix; that exporter is deleted.
+//!
 //! ## ⚑ WHAT PARSING PROVES, WHICH IS VERY LITTLE
 //!
 //! `proofOfBase64` reconstructs the record. It was MEASURED by the encoder lane that it also
