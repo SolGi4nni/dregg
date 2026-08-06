@@ -336,16 +336,31 @@ fn the_residual_is_a_live_exhibited_break_at_head() {
 #[test]
 fn the_residual_is_a_gate_not_a_note() {
     // ⚑ "Documented != detected". `IROOT_LANES_1_TO_7_UNABSORBED` names a live shortfall. This
-    // assertion is what stops it becoming furniture: the day the rotated block extent moves off the
-    // emitted 184, the wire can carry lanes 1..7 and this test goes RED, forcing the projection in
+    // assertion is what stops it becoming furniture: the day the rotated block has a column the
+    // iroot's lanes 1..7 could occupy, this test goes RED and forces the projection in
     // `rotation_witness::iroot` to be deleted rather than quietly kept.
-    assert_eq!(
+    //
+    // ⚠ IT USED TO BE KEYED ON `NUM_PRE_LIMBS == 184`, AND THAT PREMISE WAS FALSE. It read "the day
+    // the extent moves off 184, the wire can carry lanes 1..7" — and on 2026-08-01 the extent DID
+    // move (184 → 187, `76c3f7b9b`) while the wire gained NOTHING for the iroot: all three new
+    // columns went to `ROTATED_OCTET_NINTH_LANES` (child_vk, contract_hash, pubkey key nonets), and
+    // `rotated187_complete` proves 0..186 is tiled with nothing spare. So the tripwire fired on a
+    // condition that does not imply its conclusion, and bumping the literal to 187 would have been
+    // RELAXING it — the same red, deferred one flag day.
+    //
+    // It is now keyed on what it always meant: IS THERE A FREE COLUMN. `ROTATED_PADS` is the
+    // emitter's own record of unoccupied positions in the rotated block; while it is empty there is
+    // nowhere to write lanes 1..7 and the projection is forced, not chosen. An extent bump that
+    // hands the iroot real columns reds here; one that spends them elsewhere does not.
+    assert!(
+        dregg_circuit::effect_vm::layout_generated::ROTATED_PADS.is_empty(),
+        "ROTATED_PADS is no longer empty ({:?} at extent {}): the rotated block now has free \
+         column(s), so the iroot's lanes 1..7 CAN be carried. ABSORB THEM — write \
+         `iroot8(..).write_lanes(..)` in `produce`, change the WIDE final chain site to arity 16, \
+         delete `rotation_witness::iroot` and IROOT_LANES_1_TO_7_UNABSORBED, and delete this \
+         assertion rather than relaxing it.",
+        dregg_circuit::effect_vm::layout_generated::ROTATED_PADS,
         dregg_circuit::effect_vm::layout_generated::NUM_PRE_LIMBS,
-        184,
-        "NUM_PRE_LIMBS moved: the rotated block was re-emitted, so the iroot's lanes 1..7 now have \
-         columns. ABSORB THEM — write `iroot8(..).write_lanes(..)` in `produce`, change the WIDE \
-         final chain site to arity 16, delete `rotation_witness::iroot` and \
-         IROOT_LANES_1_TO_7_UNABSORBED, and delete this assertion rather than relaxing it."
     );
     // The residual must keep naming its own number and its own cutover, or it is not a residual.
     let r = rw::IROOT_LANES_1_TO_7_UNABSORBED;

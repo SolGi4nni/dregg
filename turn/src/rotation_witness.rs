@@ -1260,7 +1260,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_limb_count_is_112_at_r24() {
+    fn pre_limb_count_is_187_at_r24() {
         // 1 cells_root + 24 registers + 4 (cap/nullifier/commitments/heap) + 3 (lifecycle/epoch/
         // committed_height) + 6 (disc + perms + vk + mode + fields_root + revoked_root, the
         // WAVE-2/3 + REVOKED-ROOT flag-days; revoked_root = base limb 37)
@@ -1270,8 +1270,22 @@ mod tests {
         // + 7 circuit-only cells_root completion lanes (169..175, ZERO in producer)
         // + 8 NINE-LANE fields[0..7] lane-8 columns (176..183 — the two former pads plus the
         //   flag-day extent bump; `RotatedLayout.fieldLaneCol slot 8 = 176 + slot`)
-        //   → body [4..183] = 180 = 60×3 (clean 3-grouping).
-        assert_eq!(NUM_PRE_LIMBS, 184);
+        // + 3 KEY-NONET ninth lanes (184..186 = `ROTATED_OCTET_NINTH_LANES`: child_vk, contract_hash,
+        //   pubkey). `canonical_32_to_felts_8` packs 32 bytes into 8 lanes at 8+8+8+6 bits and DROPS
+        //   bits 6-7 of bytes 3,7,…,31 — bit 7 of byte 31 is the Ed25519 sign bit, so A and −A pack
+        //   to one byte-identical octet at cost zero and the attacker holds the private half of the
+        //   negation. `KeyLanes9` closes it and each of the three octets needs a ninth column.
+        //   ⚑ AND IT GREW BY THREE, NOT ONE: `B_SPAN := n + 3 + (n−4)/3` is Nat floor division while
+        //   the real chain rounds up, so they agree only at n ≡ 1 (mod 3); 185 is one carrier column
+        //   short and 186 fails `bodyAligned`. 187 is the next legal extent.
+        //   → body [4..186] = 183 = 61×3 (clean 3-grouping; `B_NUM_CHAIN = 62 = 1 + (187−4)/3`).
+        //
+        // ⚠ THIS LITERAL IS RE-TYPED ON PURPOSE (`trace_rotated.rs:3214`): re-deriving the geometry
+        // by hand each flag day IS the review. Do NOT relax it to `== NUM_PRE_LIMBS`, which would
+        // compare the constant against its own definition and check nothing.
+        // Stale since 2026-08-01 (`76c3f7b9b` moved the emission 184 → 187 and this crate's three
+        // hand-written literals were not carried across); repaired 2026-08-06.
+        assert_eq!(NUM_PRE_LIMBS, 187);
     }
 
     /// THE iroot NON-OMISSION TOOTH (Lean `ReceiptChain8.rchain8_binds_or_collides`): tamper /
