@@ -20,11 +20,12 @@ def report (name : String) (slots : List Nat) (v : List Int) : IO Unit := do
   IO.println s!"    differing slots: {slots.filter (fun s => !hit.contains s)}"
 
 def main : IO Unit := do
-  let sc := wrapSlotsAt shapeChain .bind
   let sw := wrapSlotsAt shapeWrap .bind
-  IO.println s!"wrapSlotsAt shapeChain .bind = {sc}"
   IO.println s!"wrapSlotsAt shapeWrap  .bind = {sw}"
-  report "tChain           " sc (wrapPublicAt tChain .bind)
+  report "tChain           " sw (wrapPublicAt tChain .bind)
   report "mkWrap shapeWrap " sw (wrapPublicAt (mkWrap shapeWrap) .bind)
-  IO.println s!"shapeChain.xhatEntries.length = {shapeChain.xhatEntries.length}"
   IO.println s!"shapeWrap.xhatEntries.length  = {shapeWrap.xhatEntries.length}"
+  for (n, k) in [("key", Rung.key), ("xhat", Rung.xhat), ("split", Rung.split),
+                 ("ftcomm", Rung.ftcomm), ("prev", Rung.prev), ("wraphack", Rung.wraphack),
+                 ("combine", Rung.combine), ("bullet", Rung.bullet), ("close", Rung.close)] do
+    report s!"mkWrap @ {n}" (wrapSlotsAt shapeWrap k) (wrapPublicAt (mkWrap shapeWrap) k)
