@@ -283,11 +283,19 @@ fn fixture_commitments(v: &serde_json::Value) -> Vec<Compressed> {
 }
 
 /// `p − y`.
+/// ⚠ **NOT `sub_mod_p(&P_PASTA, y)`.** That reads correctly and is wrong: `sub_mod_p`'s
+/// `debug_assert!(*x < P_PASTA && *y < P_PASTA)` refuses `x = p`, so the obvious spelling is GREEN
+/// IN RELEASE (where `debug_assert!` compiles away) and PANICS IN DEBUG. Measured 2026-08-06: two
+/// tests in this file passed `--release` 10/10 and failed the default debug profile on exactly
+/// that. `0 − y` satisfies the precondition and is the same value.
 fn neg(y: &U256) -> U256 {
+    // ⚑ The precondition, as a HARD assert rather than a `debug_assert!` two crates away — which is
+    // the whole shape of the defect above: a check that exists only in one profile.
+    assert!(*y < P_PASTA, "neg is defined on base-field elements only");
     if *y == U256::ZERO {
         U256::ZERO
     } else {
-        sub_mod_p(&P_PASTA, y).0
+        sub_mod_p(&U256::ZERO, y).0
     }
 }
 
