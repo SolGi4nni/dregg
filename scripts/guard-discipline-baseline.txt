@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15348 guards across 1159 modules (2458 .lean files scanned).
+# TOTAL 15346 guards across 1159 modules (2488 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -36,6 +36,7 @@
 # BASELINE-PROVENANCE 6daf5d8c6-DIRTY 15393→15358 (-35) DECREASED — PastaPoseidonFq: 35 guards -> 11 named theorems (9 #assert_compiled, 2 kernel-clean, one of them generalised to every Params and every pair). The docblock had cited fq_phase1_derivation as a theorem name since the file was written; it was a #guard and now exists.
 # BASELINE-PROVENANCE fff0e8df7-DIRTY 15358→15357 (-1) DECREASED — KimchiWrapMainPins03: the w4_bind inertness guard became the named theorem bind_rung_leaves_unread_exactly_what_it_declares, which states the unread set EQUALS the rung's declaration in both directions (the guard could only say '== []' at the old dense public vector)
 # BASELINE-PROVENANCE 67ad5f625-DIRTY 15357→15348 (-9) DECREASED — MinaWrapOpeningGate: the 9 IPA-transcript sponge guards became native_decide theorems with #assert_compiled, counted in the namespace except clause (155cececf)
+# BASELINE-PROVENANCE 0f062ed1f-DIRTY 15348→15346 (-2) DECREASED — retire a STALE row: DescriptorIR2 converted 2 guards (48 -> 46) and the ledger only ratchets down. --only, so a shared tree cannot absorb a sibling's in-flight guards.
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -227,7 +228,7 @@
 7	Dregg2/Circuit/DeployedCapTree.lean
 5	Dregg2/Circuit/DeployedFieldsTree.lean
 5	Dregg2/Circuit/DeployedHeapTree.lean
-48	Dregg2/Circuit/DescriptorIR2.lean
+46	Dregg2/Circuit/DescriptorIR2.lean
 25	Dregg2/Circuit/EffectAirIR.lean
 10	Dregg2/Circuit/EffectEmitRegistry.lean
 3	Dregg2/Circuit/EffectInstances2.lean

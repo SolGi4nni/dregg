@@ -360,8 +360,19 @@ def selfSettlementDescriptor : EffectVmDescriptor2 :=
   | .base (.piBinding _ _ _) => true | _ => false)).length == 20
 #guard (settleConstraints.filter (fun c => match c with
   | .proofBind _ => true | _ => false)).length == 1
-#guard (settleConstraints.filter (fun c => match c with
-  | .chalGate _ => true | _ => false)).length == 0
+
+/-- **NO CHALLENGE GATE.** The settlement AIR declares `challenges := 0`, so a `chalGate` arm here
+would read a challenge column the descriptor never publishes.
+
+⚑ WHY THIS IS A THEOREM AND NOT THE `#guard` IT ARRIVED AS. It landed in `65a4d95cb` as the
+eleventh `#guard` in this module, one above the discipline baseline — and a `#guard` is the SAME
+compiled-evaluator check as `native_decide` with the name, the term and the axiom record deleted, so
+`#assert_axioms` is structurally blind to it. Here the kernel reaches: `settleConstraints` is a
+concrete list and `decide` is strictly stronger than the guard ever was. -/
+theorem settle_has_no_chal_gate :
+    (settleConstraints.filter (fun c => match c with
+      | .chalGate _ => true | _ => false)).length = 0 := by decide
+
 #guard selfSettlementDescriptor.ranges.length == 1
 #guard (emitVmJson2 selfSettlementDescriptor).startsWith
   "{\"name\":\"dregg-self-settlement-v1\",\"ir\":2"
@@ -817,6 +828,7 @@ theorem honest_row_lanes_are_distinct :
 /-! ## §9 — Axiom hygiene. -/
 
 #assert_axioms settleSeam_widthOk
+#assert_axioms settle_has_no_chal_gate
 #assert_axioms settle_descriptor_refines_air
 #assert_axioms settle_descriptor_iff_air
 #assert_axioms eq_of_sub_modEq_zero_of_canon
