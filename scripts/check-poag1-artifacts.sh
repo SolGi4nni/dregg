@@ -61,15 +61,86 @@ be64() {
   printf '%016x' "$1" | xxd -r -p
 }
 
+# Every Lean file the emitted bytes are a function of. This list is ORDER-SENSITIVE
+# (the digest frames each entry in sequence), so it is not sorted — appending is the
+# safe edit and reordering is a flag day.
+#
+# ⚠ 2026-08-06: `BlackBoxReconstruction.lean`, `HiddenInstance.lean` and
+# `SeedDraw.lean` were ALL THREE absent. Black Box's descriptor was already being
+# emitted, and every catalog and schema entry names `HiddenInstance` as the module
+# that draws a run's instance — yet any of them could have changed without the
+# source digest moving. Enrolling Black Box in the bundle without also enrolling its
+# kernel here would have shipped a pinned artifact whose rules were outside the pin.
+#
+# `SeedDraw` is the one that says how a bounded draw is taken from a run seed, by
+# rejection sampling. `HiddenInstance.runSeedFor` — the derivation the schema names —
+# consumes it, and so do `SalvageLock` and `BlackBoxReconstruction`. It is the rule
+# that decides WHICH instance a player gets, so it is exactly as load-bearing as the
+# kernels that call it, and it was covered by nothing.
+#
+# ⚠ The list is DEPENDENCY-ORDERED, not append-ordered: this commit is already a
+# source-digest flag day (three files joined at once), so placing `SeedDraw.lean`
+# next to `Core.lean` where it belongs cost nothing here. Once the bundle is
+# re-emitted, appending is again the safe edit and reordering is again a flag day.
+#
+# The invariant to preserve: this list must contain the TRANSITIVE closure of
+# `Emit.lean`'s imports inside `Dregg2/Games/PathOfAngels/`. It now does.
 source_files=(
   "Dregg2/Games/PathOfAngels/Core.lean"
+  "Dregg2/Games/PathOfAngels/SeedDraw.lean"
   "Dregg2/Games/PathOfAngels/SignalTriangulation.lean"
   "Dregg2/Games/PathOfAngels/RelayRepair.lean"
   "Dregg2/Games/PathOfAngels/SalvageLock.lean"
+  "Dregg2/Games/PathOfAngels/BlackBoxReconstruction.lean"
+  "Dregg2/Games/PathOfAngels/HiddenInstance.lean"
   "Dregg2/Games/PathOfAngels/FiniteTables.lean"
   "Dregg2/Games/PathOfAngels/Emit.lean"
   "Dregg2/Games/PathOfAngels/EmitMain.lean"
 )
+
+# ⚑ THE CHECK THAT WOULD HAVE CAUGHT `SeedDraw`.
+#
+# The list above was maintained by hand and drifted silently: a module can join the
+# emitter's import graph and never join the digest, and NOTHING goes red — the bundle
+# still emits, still pins, still verifies, and the pin simply stops covering one of
+# the rules. That is a wound no downstream byte comparison can see, because every
+# byte agrees with itself.
+#
+# So the closure is DERIVED here and compared to the list. Walk `EmitMain`'s imports
+# transitively inside `Dregg2/Games/PathOfAngels/`; the set must equal `source_files`
+# exactly. Missing means under-covered (the SeedDraw wound). Extra means the list
+# names a file the emitter no longer reads, which makes the digest depend on
+# something the bytes do not.
+closure_work="$(mktemp "${TMPDIR:-/tmp}/poag1-closure.XXXXXXXX")"
+closure_next="$(mktemp "${TMPDIR:-/tmp}/poag1-closure.XXXXXXXX")"
+trap 'rm -rf "$tmp_root" "$closure_work" "$closure_next"' EXIT
+printf 'EmitMain\n' > "$closure_work"
+while :; do
+  before="$(wc -l < "$closure_work" | tr -d ' ')"
+  {
+    cat "$closure_work"
+    while read -r module; do
+      grep -hoE '^import Dregg2\.Games\.PathOfAngels\.[A-Za-z0-9_]+' \
+        "$meta_root/Dregg2/Games/PathOfAngels/$module.lean" 2>/dev/null \
+        | sed 's/^import Dregg2\.Games\.PathOfAngels\.//' || true
+    done < "$closure_work"
+  } | LC_ALL=C sort -u > "$closure_next"
+  mv "$closure_next" "$closure_work"
+  after="$(wc -l < "$closure_work" | tr -d ' ')"
+  [ "$before" = "$after" ] && break
+done
+declared_sources="$(
+  printf '%s\n' "${source_files[@]}" \
+    | sed 's|^Dregg2/Games/PathOfAngels/||; s|\.lean$||' \
+    | LC_ALL=C sort -u
+)"
+if [ "$declared_sources" != "$(cat "$closure_work")" ]; then
+  echo "POAG1 source_files is not the transitive import closure of EmitMain:" >&2
+  diff <(printf '%s\n' "$declared_sources") "$closure_work" \
+    --label declared-in-source_files --label reachable-from-EmitMain >&2 || true
+  echo "a module reachable from the emitter and absent above is OUTSIDE the source digest" >&2
+  exit 1
+fi
 
 source_sha="$(
   cd "$meta_root"
@@ -88,14 +159,25 @@ export LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-2}"
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
 )
 
+blackbox_sha="$(sha_file "$tmp_root/games/black-box-reconstruction.json")"
 relay_sha="$(sha_file "$tmp_root/games/relay-repair.json")"
 salvage_sha="$(sha_file "$tmp_root/games/salvage-lock.json")"
 signal_sha="$(sha_file "$tmp_root/games/signal-triangulation.json")"
+# ⚠ PATH-ASCENDING, and the content root's own framing says so
+# (`entry_order: path_ascending` in schema.json). `games/black-box-reconstruction.json`
+# sorts FIRST. A wrong order here does not fail: it silently computes a different
+# content root, which the missions then bind and the curator then accepts.
 content_paths=(
+  "games/black-box-reconstruction.json"
   "games/relay-repair.json"
   "games/salvage-lock.json"
   "games/signal-triangulation.json"
 )
+# The one place the ordering claim is CHECKED rather than asserted in a comment.
+printf '%s\n' "${content_paths[@]}" | LC_ALL=C sort -c || {
+  echo "content_paths is not path-ascending; the content root framing says it must be" >&2
+  exit 1
+}
 content_root_sha="$(
   {
     printf 'path-of-angels/content-root/v1\0'
@@ -117,6 +199,7 @@ content_root_sha="$(
     POA_FEDERATION_ID="$federation_id" \
     POA_SOURCE_SHA256="$source_sha" POA_RELAY_SHA256="$relay_sha" \
     POA_SALVAGE_SHA256="$salvage_sha" POA_SIGNAL_SHA256="$signal_sha" \
+    POA_BLACKBOX_SHA256="$blackbox_sha" \
     POA_CONTENT_ROOT_SHA256="$content_root_sha" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
 )
@@ -130,6 +213,7 @@ catalog_sha="$(sha_file "$tmp_root/catalog.json")"
     POA_FEDERATION_ID="$federation_id" \
     POA_SOURCE_SHA256="$source_sha" POA_RELAY_SHA256="$relay_sha" \
     POA_SALVAGE_SHA256="$salvage_sha" POA_SIGNAL_SHA256="$signal_sha" \
+    POA_BLACKBOX_SHA256="$blackbox_sha" \
     POA_CONTENT_ROOT_SHA256="$content_root_sha" \
     POA_SCHEMA_SHA256="$schema_sha" POA_CATALOG_SHA256="$catalog_sha" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
@@ -137,6 +221,7 @@ catalog_sha="$(sha_file "$tmp_root/catalog.json")"
 
 test "$(sha_file "$tmp_root/schema.json")" = "$schema_sha"
 test "$(sha_file "$tmp_root/catalog.json")" = "$catalog_sha"
+test "$(sha_file "$tmp_root/games/black-box-reconstruction.json")" = "$blackbox_sha"
 test "$(sha_file "$tmp_root/games/relay-repair.json")" = "$relay_sha"
 test "$(sha_file "$tmp_root/games/salvage-lock.json")" = "$salvage_sha"
 test "$(sha_file "$tmp_root/games/signal-triangulation.json")" = "$signal_sha"
@@ -147,14 +232,29 @@ if [ "$catalog_federations" != "$federation_id" ]; then
   exit 1
 fi
 
+# Every file the checked-in bundle may contain. Anything present and absent from
+# this list is refused below rather than ignored.
 expected=(
   "manifest.json"
   "schema.json"
   "catalog.json"
+  "games/black-box-reconstruction.json"
   "games/relay-repair.json"
   "games/salvage-lock.json"
   "games/signal-triangulation.json"
 )
+
+# The emitted games and the measured games are the SAME set, derived independently:
+# `content_paths` drives the content root, `expected` drives the checked-in tree.
+# A game enrolled in one and forgotten in the other is caught here rather than by a
+# content root that quietly stops covering an artifact.
+emitted_games="$(cd "$tmp_root" && find games -type f -print | LC_ALL=C sort)"
+declared_games="$(printf '%s\n' "${content_paths[@]}" | LC_ALL=C sort)"
+if [ "$emitted_games" != "$declared_games" ]; then
+  echo "POAG1 emitted game set differs from the content-root path set:" >&2
+  diff <(printf '%s\n' "$declared_games") <(printf '%s\n' "$emitted_games") >&2 || true
+  exit 1
+fi
 
 if [ "$mode" = "--update" ]; then
   mkdir -p "$checked_root/games"

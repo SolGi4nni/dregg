@@ -9,6 +9,7 @@
 pub mod authority_export;
 pub mod companion;
 pub mod signal_replay;
+pub mod slot_opening;
 pub mod world_activation;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,19 +55,79 @@ const CONTENT_ROOT_DOMAIN: &[u8] = b"path-of-angels/content-root/v1\0";
 const ACTIVATION_DIGEST_DOMAIN: &[u8] = b"pathofangels.network/activation-digest/v1\0";
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_ARTIFACT_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_MISSIONS_PER_EPOCH: usize = 3;
+/// Upper BOUND on the missions one content epoch may carry.
+///
+/// ⚠ This is a cap, not a census. It used to be both: `SUPPORTED_GAME_PATHS` was a
+/// fixed-size array typed `[&str; MAX_MISSIONS_PER_EPOCH]`, so "how many missions may
+/// an epoch hold" and "which descriptors does this curator know" were forced to be
+/// the same number. Raising the cap then meant inventing paths for games that do not
+/// exist, and the type made that look mandatory rather than wrong. The census is the
+/// list below; this is only a ceiling.
+///
+/// ⚠ Say the resolution out loud: with four supported paths this ceiling DOES NOT
+/// BIND. A catalog cannot exceed the count of distinct authenticated descriptors and
+/// every descriptor path must be in `SUPPORTED_GAME_PATHS`, so the effective cap is
+/// `SUPPORTED_GAME_PATHS.len()`. Six is the number this becomes a real bound at, once
+/// Deck Descent and Containment Inspection are enrolled — until then it is headroom,
+/// not a check, and no test can make it refuse.
+const MAX_MISSIONS_PER_EPOCH: usize = 6;
 const MAX_FIXTURES_PER_EPOCH: usize = 24;
 const MAX_FIXTURES_PER_MISSION: usize = 8;
 const MAX_DISCOVERIES_PER_MISSION: usize = 8;
 const MAX_RELICS_PER_MISSION: usize = 16;
 const SCHEMA_PATH: &str = "schema.json";
 const CATALOG_PATH: &str = "catalog.json";
+const BLACKBOX_PATH: &str = "games/black-box-reconstruction.json";
 const SIGNAL_PATH: &str = "games/signal-triangulation.json";
-const SUPPORTED_GAME_PATHS: [&str; MAX_MISSIONS_PER_EPOCH] = [
+/// Every game descriptor path a POAG1 v1 bundle may carry, in the strictly
+/// path-ascending order the manifest and the content root both require.
+///
+/// This is the Rust half of `Dregg2.Games.PathOfAngels.Emit.POAG1_GAME_PATHS`, which
+/// Lean proves equals both its rendered artifact list and the path set its own
+/// `schema.json` declares. The two halves are joined by nothing but a re-emit, so
+/// `scripts/check-poag1-artifacts.sh` byte-compares the emission against the
+/// checked-in bundle and this curator refuses any path outside this list.
+const SUPPORTED_GAME_PATHS: &[&str] = &[
+    BLACKBOX_PATH,
     "games/relay-repair.json",
     "games/salvage-lock.json",
     SIGNAL_PATH,
 ];
+
+/// Lexicographic `<` over UTF-8 bytes, usable in a const block. `str`'s own `<` is
+/// not const, and the ordering below has to be CHECKED rather than asserted in a
+/// comment.
+const fn path_lt(left: &str, right: &str) -> bool {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    let mut index = 0;
+    while index < left.len() && index < right.len() {
+        if left[index] != right[index] {
+            return left[index] < right[index];
+        }
+        index += 1;
+    }
+    left.len() < right.len()
+}
+
+const _: () = {
+    assert!(
+        SUPPORTED_GAME_PATHS.len() <= MAX_MISSIONS_PER_EPOCH,
+        "more supported game descriptors than an epoch is allowed to carry"
+    );
+    // ⚠ Strict path-ascension is not a style rule. `validate_manifest` refuses any
+    // other artifact order and the content root is framed `path_ascending`, so a
+    // wrongly ordered list does not raise an error anywhere: it computes a DIFFERENT
+    // content root, which every mission then binds and this curator then accepts.
+    // `games/black-box-reconstruction.json` sorts FIRST, which is the trap.
+    let mut index = 1;
+    while index < SUPPORTED_GAME_PATHS.len() {
+        assert!(
+            path_lt(SUPPORTED_GAME_PATHS[index - 1], SUPPORTED_GAME_PATHS[index]),
+            "SUPPORTED_GAME_PATHS is not strictly path-ascending"
+        );
+        index += 1;
+    }
+};
 
 #[derive(Debug, Error)]
 pub enum CuratorError {
@@ -2259,7 +2320,11 @@ fn validate_manifest(manifest: &Poag1Manifest) -> Result<Vec<String>, CuratorErr
     }
     parse_sha256(&manifest.source_digest, "source_digest")?;
     let minimum_artifacts = 3;
-    let maximum_artifacts = 2 + MAX_MISSIONS_PER_EPOCH;
+    // Bounded by the descriptors this curator actually knows, not by the epoch cap:
+    // every artifact past schema/catalog must be in `SUPPORTED_GAME_PATHS` and no
+    // path may repeat, so `2 + MAX_MISSIONS_PER_EPOCH` was a bound nothing could
+    // reach — which made it a weaker check wearing a larger number.
+    let maximum_artifacts = 2 + SUPPORTED_GAME_PATHS.len();
     if !(minimum_artifacts..=maximum_artifacts).contains(&manifest.artifacts.len()) {
         return Err(CuratorError::Manifest(format!(
             "artifact set has {}, expected {minimum_artifacts}..={maximum_artifacts}",
@@ -3456,6 +3521,21 @@ mod tests {
         seed_byte: u8,
     }
 
+    // ⚠ mission_id 6, so that `[BLACKBOX, SIGNAL, RELAY, SALVAGE]` is BOTH
+    // mission_id-ascending (6,7,8,9) and path-ascending. Those two orders disagree in
+    // the real catalog too — Black Box is the last mission and the first artifact —
+    // and a fixture that made them agree would test neither.
+    const BLACKBOX: GameSpec = GameSpec {
+        mission_id: 6,
+        artifact_id: 446,
+        path: BLACKBOX_PATH,
+        title: "Black Box Reconstruction",
+        engine: "Dregg2.Games.PathOfAngels.BlackBoxReconstruction",
+        ruleset: "blackbox-v2",
+        action_limit: 15,
+        session_byte: 0x54,
+        seed_byte: 0x65,
+    };
     const SIGNAL: GameSpec = GameSpec {
         mission_id: 7,
         artifact_id: 447,
@@ -3516,7 +3596,7 @@ mod tests {
 
     impl MissionActivationOracle for MultiActivation {
         fn admit(&self, config: &ActivatedMissionConfig) -> Result<(), String> {
-            if [SIGNAL, RELAY, SALVAGE].iter().any(|spec| {
+            if [BLACKBOX, SIGNAL, RELAY, SALVAGE].iter().any(|spec| {
                 config.mission_id == spec.mission_id
                     && config.mission_template["descriptor_path"] == spec.path
                     && config.content_epoch == 2
@@ -3773,14 +3853,20 @@ mod tests {
     }
 
     #[test]
-    fn checked_in_epoch_one_bundle_remains_accepted() {
+    fn checked_in_epoch_one_bundle_carries_every_supported_game() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let manifest = repo.join("poa/artifacts/poag1/manifest.json");
         let bundle = Poag1Bundle::load(&manifest).unwrap();
         assert_eq!(bundle.content_epoch(), 1);
+        // ⚠ FLAG DAY, 2026-08-06. Black Box Reconstruction joined
+        // `SUPPORTED_GAME_PATHS`, so a checked-in bundle that predates the enrolment
+        // fails HERE and not at load: the curator still accepts a three-game bundle,
+        // it is just no longer the complete one. Re-emit with
+        // `scripts/check-poag1-artifacts.sh --update`, re-sign, then this is green.
         assert_eq!(
             bundle.game_paths().collect::<Vec<_>>(),
-            SUPPORTED_GAME_PATHS
+            SUPPORTED_GAME_PATHS,
+            "the checked-in bundle does not carry every supported game; re-emit and re-sign"
         );
         assert_eq!(
             bundle.signal_triangulation()["game_id"],
@@ -3811,16 +3897,16 @@ mod tests {
     }
 
     #[test]
-    fn loads_bounded_three_mission_epoch_with_one_to_one_descriptors() {
+    fn loads_the_full_supported_game_set_with_one_to_one_descriptors() {
         let temp = tempfile::tempdir().unwrap();
-        let manifest = write_bundle_with_games(temp.path(), &[SIGNAL, RELAY, SALVAGE]);
+        let manifest = write_bundle_with_games(temp.path(), &[BLACKBOX, SIGNAL, RELAY, SALVAGE]);
         let bundle = Poag1Bundle::load(manifest).unwrap();
         assert_eq!(bundle.content_epoch(), 2);
         assert_eq!(
             bundle.game_paths().collect::<Vec<_>>(),
             SUPPORTED_GAME_PATHS
         );
-        for spec in [SIGNAL, RELAY, SALVAGE] {
+        for spec in [BLACKBOX, SIGNAL, RELAY, SALVAGE] {
             let draft = bundle
                 .prepare_mission(
                     spec.mission_id,

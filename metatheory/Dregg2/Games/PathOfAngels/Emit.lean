@@ -1390,7 +1390,128 @@ def salvagePreview (runSeed : Digest32)
 #assert_axioms salvageReward_accepted
 #assert_compiled salvageDescriptor_does_not_determine_the_board
 
+/-! ## Black Box Reconstruction — the fourth mission
+
+The descriptor, its schema check and `blackBox_table_is_the_kernel` were already in
+this module; what was missing was everything that puts the game IN the bundle.  A
+descriptor that no artifact list names and no manifest pins carries no integrity at
+all: it was emitted, and then nothing measured it.
+
+⚠ **`games/black-box-reconstruction.json` sorts FIRST.**  It precedes every other
+game path, so it is the first game entry in `canonicalArtifacts`, the first element
+of `schemaJson`'s `content_root.paths`, and the first `content_paths` entry in
+`scripts/check-poag1-artifacts.sh`.  The manifest validator requires strictly
+path-ascending game artifacts and the content root is framed `path_ascending`, so an
+appended-at-the-end mistake changes a digest rather than raising an error. -/
+
+def blackBoxContentSession : Digest32 :=
+  taggedBytes32 [80, 79, 65, 45, 66, 76, 65, 67, 75, 66, 79, 88, 45, 49]
+
+def blackBoxBudget : ContributionBudget :=
+  { intel := ⟨40, by decide⟩
+    supplies := ⟨10, by decide⟩
+    cohesion := ⟨15, by decide⟩
+    influence := ⟨10, by decide⟩
+    score := ⟨900, by decide⟩
+    relics := ⟨1, by decide⟩ }
+
+def blackBoxReward : Contribution :=
+  { intel := ⟨40, by decide⟩
+    supplies := ⟨10, by decide⟩
+    cohesion := ⟨15, by decide⟩
+    influence := ⟨10, by decide⟩
+    score := ⟨900, by decide⟩
+    relics := {⟨4⟩}
+    relics_bounded := by simp [RELIC_LIMIT] }
+
+theorem blackBoxReward_within : blackBoxReward.within blackBoxBudget = true := by
+  decide
+
+def blackBoxArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
+  { missionId := ⟨4⟩
+    artifactId := ⟨4⟩
+    sourceDigest
+    contentDigest }
+
+def blackBoxMission (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    MissionSpec :=
+  { missionId := ⟨4⟩
+    artifact := blackBoxArtifact sourceDigest contentDigest
+    epoch := ⟨1⟩
+    federationId
+    contentRoot
+    activationDigest
+    contentSession := blackBoxContentSession
+    runSeed := runSeed
+    budget := blackBoxBudget
+    allowedRelics := {⟨4⟩}
+    privacy := .public
+    ballot := .none
+    artifact_matches := rfl
+    allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
+
+theorem blackBoxReward_accepted (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (blackBoxMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).acceptsContribution blackBoxReward = true := by
+  apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
+  exact ⟨blackBoxReward_within, by simp [blackBoxMission, blackBoxReward]⟩
+
+/-- An `Option`, for the same reason `salvageConfig?` is one: a live seed whose byte
+stream is exhausted before the four rejection-sampled draws finish names NO order,
+and that refuses rather than folding to order zero. -/
+def blackBoxConfig? (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option BlackBoxReconstruction.Config :=
+  match horder : BlackBoxReconstruction.orderFromRunSeed? runSeed with
+  | none => none
+  | some order =>
+      some
+        { order := order
+          mission := blackBoxMission runSeed federationId sourceDigest contentDigest contentRoot
+            activationDigest
+          reward := blackBoxReward
+          reward_accepted := blackBoxReward_accepted runSeed federationId sourceDigest
+            contentDigest contentRoot activationDigest
+          order_eq := horder.symm }
+
+private def demoBlackBoxOrder? (tag : Nat) : Option Nat :=
+  (BlackBoxReconstruction.orderFromRunSeed?
+    (demoLiveSeed (blackBoxMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+      (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)).map Fin.val
+
+/-- ⚑ **The artifact does not determine the hidden order.**
+
+Black Box publishes its ENTIRE rule set — all 3000 oracle cells — so this is the one
+game where "the descriptor tells you everything" is nearly true, and the statement
+that it still does not tell you the instance has to be made carefully.
+
+Stated in the shape `salvageDescriptor_does_not_determine_the_board` was repaired
+into, so a `none` cannot launder a missing difference: every one of the eight
+demonstration secrets RESOLVES to an order, AND at least two of those orders differ. -/
+theorem blackBoxDescriptor_does_not_determine_the_order :
+    ((List.range 8).all fun tag => (demoBlackBoxOrder? tag).isSome) = true ∧
+      2 ≤ ((List.range 8).filterMap demoBlackBoxOrder?).eraseDups.length := by
+  native_decide
+
+def blackBoxPreview (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option WorldState :=
+  applyContribution
+    (blackBoxMission runSeed federationId sourceDigest contentDigest contentRoot activationDigest)
+    blackBoxReward WorldState.empty
+
+#assert_axioms blackBoxReward_within
+#assert_axioms blackBoxReward_accepted
+#assert_compiled blackBoxDescriptor_does_not_determine_the_order
+
+/-- ⚠ Every field here is a game whose descriptor is measured by the driver and
+pinned in the manifest.  `blackBox` was added 2026-08-06; the emit driver requires
+`POA_BLACKBOX_SHA256` and there is no default, so a caller that has not been taught
+the new game fails closed rather than emitting an unmeasured bundle. -/
 structure GameContentDigests where
+  blackBox : Digest32
   signal : Digest32
   relay : Digest32
   salvage : Digest32
@@ -1447,6 +1568,12 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
   let signal := signalMission unbound federationId sourceDigest digests.signal contentRoot inactiveActivation
   let relay := relayMission unbound federationId sourceDigest digests.relay contentRoot inactiveActivation
   let salvage := salvageMission unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation
+  let blackBox := blackBoxMission unbound federationId sourceDigest digests.blackBox contentRoot inactiveActivation
+  /- ⚠ MISSION order here is `mission_id`-ascending, which is NOT the path-ascending
+  order the manifest and the content root use.  Black Box is mission 4, so it is LAST
+  in this list and FIRST in `canonicalArtifacts`.  The curator refuses both a
+  non-ascending mission list and a non-ascending artifact list, so the two orders have
+  to disagree on purpose. -/
   let missions :=
     [ missionCatalogJson signal "Signal Triangulation"
         "Dregg2.Games.PathOfAngels.SignalTriangulation" "signal-v2"
@@ -1454,14 +1581,20 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
     , missionCatalogJson relay "Relay Repair" "Dregg2.Games.PathOfAngels.RelayRepair"
         "relay-v3" RelayRepair.MAX_TURNS [⟨2⟩] "games/relay-repair.json" "per-run-open"
     , missionCatalogJson salvage "Salvage Lock" "Dregg2.Games.PathOfAngels.SalvageLock"
-        "salvage-v2" SalvageLock.MAX_TURNS [⟨3⟩] "games/salvage-lock.json" "oracle-only" ]
+        "salvage-v2" SalvageLock.MAX_TURNS [⟨3⟩] "games/salvage-lock.json" "oracle-only"
+    , missionCatalogJson blackBox "Black Box Reconstruction"
+        "Dregg2.Games.PathOfAngels.BlackBoxReconstruction" "blackbox-v2"
+        BlackBoxReconstruction.MAX_TURNS [⟨4⟩] "games/black-box-reconstruction.json"
+        "oracle-only" ]
   let fixtures :=
     [ previewFixtureJson "signal-solved-preview-v1" signal signalReward [⟨1⟩]
         (signalPreview unbound federationId sourceDigest digests.signal contentRoot inactiveActivation)
     , previewFixtureJson "relay-solved-preview-v1" relay relayReward [⟨2⟩]
         (relayPreview unbound federationId sourceDigest digests.relay contentRoot inactiveActivation)
     , previewFixtureJson "salvage-solved-preview-v1" salvage salvageReward [⟨3⟩]
-        (salvagePreview unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation) ]
+        (salvagePreview unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation)
+    , previewFixtureJson "blackbox-solved-preview-v1" blackBox blackBoxReward [⟨4⟩]
+        (blackBoxPreview unbound federationId sourceDigest digests.blackBox contentRoot inactiveActivation) ]
   "{\n" ++
   "  \"format\":\"POAG1-CATALOG\",\n" ++
   "  \"schema_version\":1,\n" ++
@@ -1484,8 +1617,8 @@ def schemaJson : String :=
     "\"domain\":\"path-of-angels/content-root/v1\\u0000\"," ++
     "\"framing\":\"file_count_be64 || (path_len_be64 || path_utf8 || content_len_be64 || content_bytes)*\"," ++
     "\"entry_order\":\"path_ascending\"," ++
-    "\"paths\":[\"games/relay-repair.json\",\"games/salvage-lock.json\"," ++
-      "\"games/signal-triangulation.json\"]},\n" ++
+    "\"paths\":[\"games/black-box-reconstruction.json\",\"games/relay-repair.json\"," ++
+      "\"games/salvage-lock.json\",\"games/signal-triangulation.json\"]},\n" ++
   "    \"activation_digest\":{\"algorithm\":\"sha256\"," ++
     "\"domain\":\"pathofangels.network/activation-digest/v1\\u0000\"," ++
     "\"framing\":\"schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64\"," ++
@@ -1521,9 +1654,14 @@ def schemaJson : String :=
 def canonicalArtifacts (federationId sourceDigest contentRoot : Digest32)
     (digests : GameContentDigests) :
     List ArtifactBytes :=
+  /- ⚠ PATH-ASCENDING after schema/catalog, and the curator refuses any other order.
+  `games/black-box-reconstruction.json` sorts before `games/relay-repair.json`, so the
+  fourth game goes FIRST here, not last. -/
   [ { path := "schema.json", mediaType := "application/schema+json", contents := schemaJson }
   , { path := "catalog.json", mediaType := "application/json",
       contents := catalogJson federationId sourceDigest contentRoot digests }
+  , { path := "games/black-box-reconstruction.json", mediaType := "application/json",
+      contents := blackBoxDescriptorJson }
   , { path := "games/relay-repair.json", mediaType := "application/json",
       contents := relayDescriptorJson }
   , { path := "games/salvage-lock.json", mediaType := "application/json",
@@ -1532,44 +1670,53 @@ def canonicalArtifacts (federationId sourceDigest contentRoot : Digest32)
       contents := signalDescriptorJson } ]
 
 /-! SHA-256 is a deployed crypto primitive rather than a theorem implemented in
-this emitter.  The driver measures these five exact Lean-rendered byte strings;
+this emitter.  The driver measures these six exact Lean-rendered byte strings;
 the signed content epoch anchors the resulting manifest. -/
 structure ArtifactHashes where
   schema : String
   catalog : String
+  blackBox : String
   relay : String
   salvage : String
   signal : String
 deriving DecidableEq, Repr
 
 def ArtifactHashes.valid (h : ArtifactHashes) : Bool :=
-  validSha256 h.schema && validSha256 h.catalog && validSha256 h.relay &&
-    validSha256 h.salvage && validSha256 h.signal
+  validSha256 h.schema && validSha256 h.catalog && validSha256 h.blackBox &&
+    validSha256 h.relay && validSha256 h.salvage && validSha256 h.signal
 
+/-- The measured hashes in the SAME order `canonicalArtifacts` renders its entries.
+This list and that one are the two halves of one pairing; nothing else may reorder
+either of them. -/
+def ArtifactHashes.inCanonicalOrder (h : ArtifactHashes) : List String :=
+  [h.schema, h.catalog, h.blackBox, h.relay, h.salvage, h.signal]
+
+/-- ⚑ THE SIXTH ARTIFACT LANDMINE — REBUILT SO IT CANNOT BE RE-ARMED.
+
+This used to `match` a LITERAL five-element artifact list and fall through to `[]`,
+so a sixth artifact would not fail to compile: it would silently emit a manifest
+**pinning nothing**.  Enrolling Black Box is exactly the change that would have
+tripped it, and Deck Descent and Containment Inspection are next.
+
+Widening the literal match to six would have re-armed it at seven.  So the match is
+gone: pins are the artifact list zipped against `ArtifactHashes.inCanonicalOrder`.
+A shortfall now drops the unpaired tail instead of the whole list, and
+`canonicalPins_pins_every_canonical_artifact` below still sees it. -/
 def canonicalPins (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)
     (hashes : ArtifactHashes) : List ArtifactPin :=
-  match canonicalArtifacts federationId sourceDigest contentRoot digests with
-  | [schema, catalog, relay, salvage, signal] =>
-      [ schema.pin hashes.schema
-      , catalog.pin hashes.catalog
-      , relay.pin hashes.relay
-      , salvage.pin hashes.salvage
-      , signal.pin hashes.signal ]
-  | _ => []
+  ((canonicalArtifacts federationId sourceDigest contentRoot digests).zip
+      hashes.inCanonicalOrder).map fun pair => pair.1.pin pair.2
 
-/-- ⚑ THE SIXTH ARTIFACT LANDMINE, DISARMED.
+/-- ⚑ THE DETECTOR for the landmine described on `canonicalPins`.
 
-`canonicalPins` matches a LITERAL five-element list and falls through to `[]`.
-So adding a sixth artifact — a fourth game — would not fail to compile; it would
-silently emit a manifest **pinning nothing**, and the first thing to notice would
-be a byte comparison somewhere downstream, if anything noticed at all.
+It relates the pin list to the ARTIFACT LIST rather than to a literal count, so the
+moment a seventh artifact is added without a seventh hash, `6 = 7` fails and the
+BUILD goes red at the site of the mistake.
 
-This theorem is the detector. It relates the pin list to the artifact list rather
-than to a literal `5`, so the moment `canonicalArtifacts` grows and the match
-falls through, `0 = 6` fails and the BUILD goes red at the site of the mistake.
-
-Do not "fix" a failure here by changing the expected length. Widen the match in
-`canonicalPins` so every artifact is pinned, then this closes again by itself. -/
+Do not "fix" a failure here by changing an expected length — there is no expected
+length in the statement, and introducing one is how this stops being a gate.  Add
+the missing field to `ArtifactHashes` and to `inCanonicalOrder`, and this closes
+again by itself. -/
 theorem canonicalPins_pins_every_canonical_artifact
     (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)
     (hashes : ArtifactHashes) :
@@ -1578,6 +1725,66 @@ theorem canonicalPins_pins_every_canonical_artifact
   rfl
 
 #assert_axioms canonicalPins_pins_every_canonical_artifact
+
+/-! ## ⚑ The lists that must move together, and the two of them Lean can hold
+
+Enrolling a game touches four path lists: `schemaJson` DECLARES the content-root set,
+`canonicalArtifacts` RENDERS it, `scripts/check-poag1-artifacts.sh` MEASURES it, and
+the curator's `SUPPORTED_GAME_PATHS` ACCEPTS it.  Two of those are outside Lean.  The
+two that are inside it were, until now, related by nothing at all — a game added to
+`canonicalArtifacts` and forgotten in `schemaJson` produces a bundle whose own
+declared content root does not cover its own artifacts, and every downstream check
+still passes, because each one reads only one of the two lists.
+
+The ORDER is not decoration either.  The content root frames its entries
+`path_ascending`; a wrong order does not fail, it computes a DIFFERENT root, which
+every mission then binds and the curator then accepts. -/
+
+/-- The game descriptor paths of a POAG1 v1 bundle, in the path-ascending order the
+content root, the manifest and the check script all require.  ⚠ `black-box` sorts
+FIRST — appending a new game to the end of this list is right only if its path
+actually sorts last. -/
+def POAG1_GAME_PATHS : List String :=
+  [ "games/black-box-reconstruction.json"
+  , "games/relay-repair.json"
+  , "games/salvage-lock.json"
+  , "games/signal-triangulation.json" ]
+
+theorem POAG1_GAME_PATHS_strictly_ascending :
+    (POAG1_GAME_PATHS.zip POAG1_GAME_PATHS.tail).all (fun pair => decide (pair.1 < pair.2))
+      = true := by
+  decide
+
+def canonicalGamePaths (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) : List String :=
+  ((canonicalArtifacts federationId sourceDigest contentRoot digests).map ArtifactBytes.path).drop 2
+
+/-- The rendered artifact list carries exactly these game paths, in this order.
+Stated over OPEN digests and closed by `rfl`, so it is a fact about the emitter and
+not about one deployment's bundle. -/
+theorem canonicalArtifacts_carry_the_canonical_game_paths
+    (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests) :
+    canonicalGamePaths federationId sourceDigest contentRoot digests = POAG1_GAME_PATHS := rfl
+
+/-- Read back out of the RENDERED schema bytes — the ones a client fetches — rather
+than out of the Lean value that produced them. -/
+def schemaContentRootPaths : Except String (List String) := do
+  let document ← Json.parse schemaJson
+  let contract ← document.getObjVal? "contract"
+  let contentRoot ← contract.getObjVal? "content_root"
+  let paths ← (contentRoot.getObjVal? "paths") >>= Json.getArr?
+  paths.toList.mapM Json.getStr?
+
+/-- ⚑ The gate: the schema's declared content-root path set IS the artifact list's
+game path set.  Two independent renderings, one statement.  A game enrolled in one
+and not the other is a build failure. -/
+theorem schemaJson_declares_exactly_the_canonical_game_paths :
+    schemaContentRootPaths = .ok POAG1_GAME_PATHS := by
+  native_decide
+
+#assert_axioms POAG1_GAME_PATHS_strictly_ascending
+#assert_axioms canonicalArtifacts_carry_the_canonical_game_paths
+#assert_compiled schemaJson_declares_exactly_the_canonical_game_paths
 
 def manifestFor (sourceDigestString : String)
     (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)
@@ -1596,6 +1803,7 @@ def acceptsManifest (sourceDigestString : String)
   validSha256 sourceDigestString &&
     hashes.valid &&
     decide (digestHex sourceDigest = sourceDigestString) &&
+    decide (digestHex digests.blackBox = hashes.blackBox) &&
     decide (digestHex digests.signal = hashes.signal) &&
     decide (digestHex digests.relay = hashes.relay) &&
     decide (digestHex digests.salvage = hashes.salvage) &&
@@ -1610,12 +1818,34 @@ theorem acceptsManifest_eq_true_iff
       validSha256 sourceDigestString = true ∧
       hashes.valid = true ∧
       digestHex sourceDigest = sourceDigestString ∧
+      digestHex digests.blackBox = hashes.blackBox ∧
       digestHex digests.signal = hashes.signal ∧
       digestHex digests.relay = hashes.relay ∧
       digestHex digests.salvage = hashes.salvage ∧
       candidate =
         manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes := by
   simp [acceptsManifest, and_assoc]
+
+/-- ⚑ THE POSITIONAL LANDMINE, REMOVED.
+
+`ingestManifest_exact` used to reach the candidate equality with a bare
+`.2.2.2.2.2.2` — a positional index into the conjunction above.  Adding a digest
+conjunct, which is exactly what enrolling Black Box did, shifts what that index
+names, and the proof then fails somewhere other than the edit that broke it.
+
+Every consumer goes through this lemma instead.  A new conjunct is one named change,
+here, and the `obtain` pattern below fails on ARITY rather than on a type mismatch
+six projections deep. -/
+theorem acceptsManifest_determines_the_manifest
+    (sourceDigestString : String) (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) (hashes : ArtifactHashes) (candidate : Manifest)
+    (h : acceptsManifest sourceDigestString federationId sourceDigest contentRoot digests hashes
+      candidate = true) :
+    candidate =
+      manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes := by
+  obtain ⟨-, -, -, -, -, -, -, hcandidate⟩ :=
+    (acceptsManifest_eq_true_iff _ _ _ _ _ _ _).mp h
+  exact hcandidate
 
 /-- Parse plus exact reconstruction.  A parse error, version drift, field drift,
 pin mismatch, reordered file, unknown file, or source mismatch is an error. -/
@@ -1645,10 +1875,11 @@ theorem ingestManifest_exact
       · rename_i ha
         injection h with h
         subst accepted
-        exact (acceptsManifest_eq_true_iff _ _ _ _ _ _ _).mp ha |>.2.2.2.2.2.2
+        exact acceptsManifest_determines_the_manifest _ _ _ _ _ _ _ ha
       · contradiction
 
 #assert_axioms acceptsManifest_eq_true_iff
+#assert_axioms acceptsManifest_determines_the_manifest
 #assert_axioms ingestManifest_exact
 
 end Dregg2.Games.PathOfAngels.Emit

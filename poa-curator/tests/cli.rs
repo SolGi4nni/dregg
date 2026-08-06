@@ -100,9 +100,26 @@ fn keygen_refuses_a_preexisting_symlink_output() {
     assert!(!pin.exists());
 }
 
+/// The deployment `poa/deployments/epoch-1/` points at, pinned HERE rather than only
+/// inside the golden file.
+///
+/// ⚠ Why these are duplicated out of the snapshot. The golden went stale, and the
+/// delta was not new content: it was a DIFFERENT DEPLOYMENT — federation
+/// `4ea83e8e…` → `70b7fa4c…`, deployment `d933b11b…` → `4db835cc…` — sitting in the
+/// middle of an otherwise ordinary mission diff. A lane refused to regenerate it
+/// rather than bless that silently, and was right to. Regenerating a golden must not
+/// be able to move the deployment identity, so the identity is a constant the
+/// regeneration path cannot touch and a change to it fails with its own name.
+const EPOCH_ONE_FEDERATION_ID: &str =
+    "70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b";
+const EPOCH_ONE_DEPLOYMENT_ID: &str =
+    "4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d";
+
 #[test]
 fn unsigned_epoch_preview_matches_the_exact_checked_in_snapshot() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let snapshot =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/epoch-1-unsigned.json");
     let output = Command::new(binary())
         .args(["preview-epoch", "--manifest"])
         .arg(repo.join("poa/artifacts/poag1/manifest.json"))
@@ -115,10 +132,33 @@ fn unsigned_epoch_preview_matches_the_exact_checked_in_snapshot() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let rendered = String::from_utf8(output.stdout).unwrap();
+
+    // Checked BEFORE any regeneration, and never regenerated: an identity move must
+    // fail by name, in update mode as much as in check mode.
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
     assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        include_str!("snapshots/epoch-1-unsigned.json")
+        parsed["federation_id"], EPOCH_ONE_FEDERATION_ID,
+        "epoch-1 preview names a different federation; this is a deployment identity \
+         change, not a content change, and it does not belong in a golden regeneration"
     );
+    assert_eq!(
+        parsed["deployment_id"], EPOCH_ONE_DEPLOYMENT_ID,
+        "epoch-1 preview names a different deployment; this is a deployment identity \
+         change, not a content change, and it does not belong in a golden regeneration"
+    );
+
+    // Regeneration is one command, and it REFUSES to also report success — a mode
+    // that writes the file and then compares it against itself is a test that has
+    // stopped testing.
+    if std::env::var_os("POA_CURATOR_UPDATE_SNAPSHOTS").is_some() {
+        fs::write(&snapshot, rendered.as_bytes()).unwrap();
+        panic!(
+            "snapshot regenerated at {}; re-run WITHOUT POA_CURATOR_UPDATE_SNAPSHOTS to verify it",
+            snapshot.display()
+        );
+    }
+    assert_eq!(rendered, fs::read_to_string(&snapshot).unwrap());
 }
 
 #[test]
@@ -257,6 +297,27 @@ fn companion_sign_and_verify_cli_is_bound_to_content_and_refuses_overwrite() {
         "sha256:{}",
         hex(&Sha256::digest(fs::read(&manifest).unwrap()))
     );
+    // ⚠ The catalog pin is DERIVED from the authenticated manifest, not copied into
+    // the fixture. It used to be a literal `bytes: 5447` and a literal sha256, and
+    // `validate_experience` compares the asset against `pin.bytes`/`pin.sha256` — so
+    // every re-emit of the bundle broke this test in a way that reads like a
+    // signing bug. Enrolling a fourth game re-emits the catalog again; deriving it
+    // means that is no longer an edit here.
+    let manifest_value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    let catalog_pin = manifest_value["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|pin| pin["path"] == "catalog.json")
+        .expect("the authenticated POAG1 manifest pins catalog.json");
+    let catalog_bytes = catalog_pin["bytes"].as_u64().unwrap();
+    let catalog_sha = catalog_pin["sha256"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("sha256:")
+        .expect("POAG1 pins are canonical sha256: values")
+        .to_owned();
     fs::write(
         &draft,
         serde_json::to_vec_pretty(&json!({
@@ -265,8 +326,21 @@ fn companion_sign_and_verify_cli_is_bound_to_content_and_refuses_overwrite() {
             "contentCounter": 4,
             "sequence": 1,
             "poaOrigin": "https://beta.pathofangels.network",
-            "federationId": "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a",
-            "deploymentId": "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e",
+            // ⚠ THE SAME STALENESS AS THE GOLDEN, IN A THIRD COPY. These were the
+            // literal old ids, while this test binds against the REAL
+            // `poa/deployments/epoch-1/poa-devnet.json`, which moved to 70b7fa4c /
+            // 4db835cc. So `validate` refused with "route is not bound to the
+            // verified PoA deployment" and had been doing so since the identity
+            // changed. Named from the constants now, so the identity has ONE source
+            // in this file and a fourth copy cannot drift in behind it.
+            //
+            // This does not soften the binding check: `companion.rs`'s
+            // `v3_signature_and_content_ceremony_refuse_every_scope_substitution`
+            // derives the correct ids and substitutes "aa"*32 into each, asserting
+            // refusal. That is where the check is proved to have teeth; this is the
+            // happy path and was only failing because its fixture was stale.
+            "federationId": EPOCH_ONE_FEDERATION_ID,
+            "deploymentId": EPOCH_ONE_DEPLOYMENT_ID,
             "contentPackDigest": manifest_digest,
             "context": {
                 "platform": "youtube",
@@ -282,8 +356,8 @@ fn companion_sign_and_verify_cli_is_bound_to_content_and_refuses_overwrite() {
                     "path": "catalog.json",
                     "url": "https://beta.pathofangels.network/artifacts/poag1/catalog.json",
                     "mediaType": "application/json",
-                    "bytes": 5447,
-                    "sha256": "bc57b4ca130e598fd7fabfa23edb101ccf9d49fdd852cddd13350685f114e051"
+                    "bytes": catalog_bytes,
+                    "sha256": catalog_sha
                 }],
                 "actions": {
                     "mission": {
