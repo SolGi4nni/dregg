@@ -362,6 +362,12 @@ globs = [
   "Dregg2.Games.PathOfAngels.HolderMechanics",  # 7 ax, 16 comp
   "Dregg2.Games.PathOfAngels.HolderMechanicsBoundary",  # 7 ax
   "Dregg2.Games.PathOfAngels.NightWatchCampaign",  # 6 ax
+  # ⚑ 2026-08-05 — ROOTED WITH THE MODULE, not after it. `NightWatchCampaignWire` is the canonical
+  # JSON boundary + `@[export dregg_poa_night_watch_campaign_judge]` that makes the Campaign kernel
+  # reachable at all. It carries 31 `#assert_axioms`/`#assert_compiled` pins; unrooted, every one of
+  # them would run in NO target — which is precisely the 46-orphan wound recorded above, and rooting
+  # it in the same breath as landing it is the only way that wound does not reopen.
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignWire",  # 10 ax, 21 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoop",  # 13 ax, 15 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoopExamples",  # 4 ax, 4 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoopRuntime",  # 8 ax

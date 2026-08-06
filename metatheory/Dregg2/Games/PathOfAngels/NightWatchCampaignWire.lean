@@ -38,6 +38,29 @@ unknown fields; every natural carries the kernel's own bound at the parser
 `MAX_STRAIN`, `MAX_SHIFTS`, `METRIC_LIMIT`, `MAX_LOCAL_SERVICE`); unknown
 station, task, role and action tags refuse.
 
+## ⚑ THIS EXPORT CONFERS NO AUTHORITY — the config arrives in the caller's bytes
+
+`InputWire` carries `config`, so `dregg_poa_night_watch_campaign_judge` is a
+**pure function of the bytes it is handed** and reads no state.  `activate?`
+checks that a config is *structurally* valid; nothing here checks that it is the
+*authentic* one.  A caller who supplies a config whose every `riskThreshold` is
+zero and whose every `successContribution` is maximal gets a judged, internally
+consistent, entirely fraudulent watch — and every theorem in this file still
+holds, because they are all conditional on the config that was supplied.
+
+**The host must obtain the config from its own authenticated state and never
+pass a player's copy through.**  The intended source is a curator-signed
+`ActivatedContent` manifest component, the same way `authorizeEmbeddedGalleyPolicyForWorld?`
+(`ActivatedContent.lean:314`) supplies Galley's policy; that witness constructor
+does not exist for this organ yet, and until it does there is no authenticated
+config anywhere and this export must not be mounted on a route.
+
+This is the `dregg_poa_signal_slot_derive` discipline stated for this organ
+(`SlotDeriveRuntime.lean:205-211`): the export is the derivation, not the
+authority.  A node that forwards `InputWire.config` from a request body has
+built an organ any player can forge, and no amount of proof in this file will
+say so.
+
 ## Two things about the kernel a reader should know
 
 * `configValidB` does **not** require `raw.logStream.validB`.  It constrains
