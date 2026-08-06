@@ -651,6 +651,33 @@ GATES=(
   # which is exactly the state in which nobody has shown it can fail.
   "mina-vk-identity|180|bash -c 'cd bridge/mina-zkapp && npm run --silent vk-identity'"
   "mina-vk-identity-red|180|bash -c 'cd bridge/mina-zkapp && npm run --silent vk-identity -- --self-test'"
+  # ⚑ A CONTROL THAT CALLED ITSELF PERMANENT AND WAS IN NO GATE. `fri-mutation-gate.sh`'s own header
+  # reads "THE PERMANENT MUTATION-DIFFERENTIAL CONTROL" and it is the answer to a proof-systems
+  # review that ranked in-circuit verifier fidelity the #1 live risk — there is no other systematic
+  # differential that the o1js FRI verifier accepts iff dregg's native one does. Grep-exhaustive over
+  # `scripts/*.sh` and every workflow, 2026-08-05: invoked by NOTHING. A permanent control that
+  # nothing runs is a control in name, and it had been one for weeks.
+  # ⚠ THE ADVERSARY WAS CHECKED BEFORE THE WIRING, WHICH IS THE WHOLE ORDER OF OPERATIONS. This tree
+  # has a recorded case of a mutation gate whose MUTATION decayed into a no-op — the hostile input
+  # equalled the honest one, the gate could still go red, and the ADVERSARY had died with nothing
+  # measuring it. Verified at HEAD before this row existed: the baseline decode is still BYTE-EQUAL
+  # to the committed `real-root-fri.json`, 74 686 single-felt sites enumerate across 8 regions, and
+  # 36 of 40 trials were rejected by BOTH verifiers with real old->new deltas. The remaining four
+  # were the allow-listed `commit_pow_witness` (commitPowBits=0 ⇒ unabsorbed by `check_witness`).
+  # ⚑ AND THE FLOORS ARE NOW IN THE INSTRUMENT, not only in this note. The twin previously scored an
+  # empty population as `agreement 100.000%` (`trials === 0 ? 1 : …`), so an oracle that emitted its
+  # baseline and died exited GREEN. It now reds on: a stream shorter than requested, ANY trial whose
+  # reported `old->new` are equal (the direct no-op detector), a report shape that would make that
+  # detector blind, zero both-rejects, and fewer than two bound regions sampled.
+  # This row is the `--self-test`: control green, all four teeth removed ⇒ the forgery arm fires,
+  # each tooth alone measured for independent bite (reported, not asserted — `final_poly` is 4 of
+  # 74 686 sites and may go unsampled at a smoke count), the free-lane allow-list proved load-bearing,
+  # both vacuity floors proved to refuse, and BLOCKED (3) proved distinct from every FAIL code.
+  # MEASURED 2026-08-06: ~4 min at 12 trials/leg over nine differential runs, warm.
+  # ⚠ It needs `target/release/root_fri_mutation`. The script BUILDS it when absent — a cold
+  # `cargo build -p dregg-circuit-prove --release` is the whole budget below — and exits 3 (BLOCKED,
+  # not FAIL) if that build cannot run. Produce the binary; do not narrow this row.
+  "fri-mutation-red|2700|bash bridge/mina-zkapp/scripts/fri-mutation-gate.sh --self-test"
   # ⚑ THE CHAIN, NOT THE TIP. Until 2026-08-02 this repo's Mina light client read
   # `tip.data.header.protocol_state` off `get_best_tip` v2 and DROPPED `tip.proof` —
   # the merkle-list proof anchoring that tip to the serving peer's frontier root.
@@ -870,6 +897,18 @@ GATES_ALL=(
   # It also refuses an emission whose provenance stamp does not match the source cone as the tree
   # stands right now, so it cannot grade a file nobody emitted. ~3s when the emission is present.
   "wrapmain-shape-diff|300|node bridge/mina-zkapp/scripts/wrapmain-shape-diff.mjs"
+  # THE MUTATION DIFFERENTIAL ITSELF, at its RECORDED constants — the everyday table above carries
+  # only the `--self-test`, which proves the instrument can go red and says nothing about the tree.
+  # This is the other half: seed 20260731, 3000 trials, floor 1.0, EXPECTED_FREE=commit_pow_witness,
+  # the exact parameters the 2026-07-31 observation was taken at (agreement 100.000%, 0 forgeries,
+  # 0 completeness gaps, free lanes only in `commit_pow_witness`). Changing any of them is a
+  # deliberate act and the script says so in its own header.
+  # ⚠ HERE AND NOT ABOVE for two reasons, and budget is the smaller one: it cargo-builds
+  # `root_fri_mutation` in RELEASE when the binary is absent, and 3000 trials each run the DEPLOYED
+  # `TwoAdicFriPcs::verify` over a re-decoded proof (~2 s/trial measured at 12 and 40 trials, warm).
+  # It exits 3 — BLOCKED, not FAIL — when the oracle cannot be built or `.fullchain/real-root-*.json`
+  # is not on the box, rather than skipping or grading a shorter run as though it were the control.
+  "fri-mutation|14400|bash bridge/mina-zkapp/scripts/fri-mutation-gate.sh"
 )
 
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }
