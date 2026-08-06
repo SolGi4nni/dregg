@@ -551,6 +551,7 @@ pub fn cohort_map_write() -> Cohort {
         name: "bench-map-write".to_string(),
         trace_width: 19,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Var(18),
@@ -592,6 +593,7 @@ pub fn cohort_umem() -> Cohort {
         name: "bench-umem-write".to_string(),
         trace_width: 4,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![
             VmConstraint2::UMemOp(UMemOpSpec {
@@ -656,6 +658,7 @@ pub fn cohort_absent() -> Cohort {
         name: "bench-absent".to_string(),
         trace_width: 19,
         public_input_count: 0,
+        challenges: 0,
         tables: vec![],
         constraints: vec![VmConstraint2::MapOp(MapOpSpec {
             guard: LeanExpr::Var(18),
