@@ -201,7 +201,11 @@ theorem cipUsed_is_not_the_unmasked_fold :
 -- It is now the assembly's tenth statement word and its FIFTH public word, so choosing the dummy
 -- branch is a claim the consumer READS.
 #guard (exposedVars shapeSmoke).getD 4 (xv 0) == vShouldVerify shapeSmoke
-#guard (exposedVars shapeStep).getD 4 (xv 0) == vShouldVerify shapeStep
+-- ⚑ …and at the COMMITTED shape it is the step statement's own `should_finalize` slot — block 1's,
+-- because `Vector.extend_front` (`step_main.ml:568-570`) puts the padding block at the FRONT, so
+-- slot **63** and not slot 4 since §24. That is a conjunct of
+-- `KimchiStepStatementPins.the_public_vector_is_to_datas_order_slot_by_slot`, a named theorem over
+-- the whole layout rather than one more guard over one more index.
 -- …its class is R8's five reads — the booleanity square (two cells), the `= sv` assert, the mux
 -- multiply and the `1 − sv` — PLUS the closing public tie. Equality, so the tie's deletion (which
 -- is the whole content of the fix) moves it: as a witness it was these five and no public cell.

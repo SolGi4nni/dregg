@@ -23,6 +23,7 @@ import Dregg2.Bridge.MinaWrapFtEval0
 import Dregg2.Bridge.TickShifts
 import Dregg2.Bridge.MinaStepPrevCommitments
 import Dregg2.Circuit.Emit.KimchiStepMainField
+import Dregg2.Circuit.Emit.PicklesStepStatement
 
 namespace Dregg2.Circuit.Emit.KimchiStepMain
 
@@ -43,6 +44,11 @@ open Dregg2.Circuit.Emit.PastaCurve (jacEqM scMulM)
 open Dregg2.Circuit.Emit.PastaField (pN)
 open Dregg2.Circuit.Emit.PastaPoseidon (rcsN)
 open Dregg2.Bridge.MinaWrapFtEval0 (IDX_Z IDX_SEL IDX_W IDX_COEFF IDX_S)
+-- ⚑ §24 — `Types.Step.Statement`'s SHAPE, derived at source in its own module so that this file and
+-- the wrap side's x_hat table read one source and neither carries a transcribed 67.
+open Dregg2.Circuit.Emit.PicklesStepStatement
+  (PP_WORDS STMT_WORDS STMT_PREVS PP_FIELDS PP_BP_LOG2 SLOT_MSG_NEXT_STEP
+   Slot slotOf slotBits realBlocks)
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -1176,7 +1182,43 @@ flag bit. `msmChunksAt = 0` on all nine, so NO row ever reads these cells; they 
 def vStmtFlag (s : StepShape) (k : Nat) : PVar := xv (baseStmt s + 12 + k)
 /-- Wrap statement word 39 — see the note above. -/
 def vStmtLookup (s : StepShape) : PVar := xv (baseStmt s + 21)
-def N_STMT : Nat := 22
+/-- The WRAP statement's own twenty-two cells, before §24 added the STEP statement's. -/
+def N_STMT_WRAP : Nat := 22
+
+/-! ### ⚑⚑ §1e — **THE STEP STATEMENT'S OWN CELLS** (§24 uses them; they live here because a cell
+has to be allocated before the region that follows it).
+
+`Types.Step.Statement.spec 2 15` is two `per_proof` blocks, one `messages_for_next_step_proof` digest
+and two `messages_for_next_wrap_proof` digests — `PicklesStepStatement`, established at source. This
+assembly runs ONE `verify_one`, so exactly one of the two blocks is the real one and the other is
+the PADDING slot upstream fills with `Unfinalized.Constant.dummy ()`
+(`step_main.ml:568-570`, `Vector.extend_front unfinalized_proofs_unextended lte`).
+
+⚑ **`extend_front` PUTS THE PADDING AT THE FRONT**, so block 0 is the dummy and block 1 is the real
+one — which is the same suffix convention this file's own `MASK_BITS = [0, 1]` already carries
+(`Proofs_verified.Prefix_mask`, `pickles_base/proofs_verified.ml:75-81`). `realBlocks 1 = [1]` in
+`PicklesStepStatement` is that as a theorem, so the two cannot drift apart.
+
+⚠ **THE PADDING BLOCK'S THIRTY-ONE OTHER WORDS ARE FREE UPSTREAM TOO, and this says so rather than
+dressing them up.** `wrap_main.ml:333`'s `Boolean.(Assert.any [finalized; not should_finalize])`
+discharges a block whose `should_finalize` is false, so the ONLY in-circuit obligation on a padding
+block is that bit — which §24 pins to zero with a `cConst` row, and which is therefore DERIVED and
+not witnessed. What the padding block's other words must still satisfy is their WIDTH: the wrap
+circuit scales lagrange base `i` by step public word `i` under `scale_fast2 ~num_bits`, whose top-bit
+asserts refuse an over-wide word, and one-bit slots take `wrap_verifier.ml:573-577`'s
+`Constraint.boolean`. So the filler is width-respecting by construction (`stmtDummyVal`) and the five
+parity bits carry `b² = b` rows. -/
+def vStmtDummy (s : StepShape) (j : Nat) : PVar := xv (baseStmt s + N_STMT_WRAP + j)
+/-- ⚑ `messages_for_next_wrap_proof.(0)` — the PADDING block's. A requested witness upstream too
+(`step_main.ml:364-366`, `exists (Vector.typ Digest.typ Max_proofs_verified.n) ~request:(fun () ->
+Req.Messages_for_next_wrap_proof)`).
+
+⚠ There is no cell for `.(1)`: that is the digest `verify_one` receives for the REAL block, which
+`step_main.ml:85` substitutes into the WRAP statement — i.e. it is `vStmtWrapMsgs`, already
+allocated. Giving it a second cell would be two objects where upstream has one, and
+`the_step_statements_wrap_message_is_the_wrap_statements_word_eleven` is the tie. -/
+def vStmtWrapMsg0 (s : StepShape) : PVar := xv (baseStmt s + N_STMT_WRAP + PP_WORDS)
+def N_STMT : Nat := N_STMT_WRAP + PP_WORDS + 1
 
 /-! ### ⚑ `prev_challenges` — the PREVIOUS proofs' carried bulletproof challenges.
 
@@ -4702,10 +4744,128 @@ def finProgOf (W : FinWire) (C : FinCfg) : FinProg :=
   let r := (finBuild W C).run #[]
   { prog := r.2, slots := r.1 }
 
-/-- The circuit variables EXPOSED as the public output — `pubWords` of them, drawn from every
-sub-circuit so a public tie reaches all five. ⚑ The FIRST FOUR are the statement's deferred values;
-R8's `Boolean.all` assert is what makes them a claim the circuit refuses to lie about. -/
-def exposedVars (s : StepShape) : List PVar :=
+/-! ## ⚑⚑ §24 — **THE PUBLIC INPUT IS A `Types.Step.Statement`.**
+
+`KimchiStepWrapChain.the_chain_stops_at_split_because_there_is_no_packed_statement` named this as the
+one thing the wrap ladder above `w6_xhat` cannot be given from the wrap side: *"`w7_split` emits
+`split_field`'s `2·hi + is_odd = x` over the packed words of `Types.Step.Statement`
+(`composition_types.ml:1453-1459`), and `w9_prev`, `w11_wraphack` and `w13_finsponge` all read that
+same 57-word object … So there is no 12-entry `split_field` to emit — the gadget is upstream's
+serialization of a structure this proof does not carry."*
+
+It carries one now. The SHAPE is `PicklesStepStatement`, derived from the OCaml spec and
+cross-checked against openmina's two Rust implementations; this section is the MAP from a slot of
+that shape to the circuit variable this assembly already holds it in.
+
+⚑ **EVERY SLOT OF THE REAL BLOCK IS A VARIABLE ANOTHER ROW ALREADY DEFINES — the statement is a
+RE-LAYOUT of what the assembly derives, not a new set of witnesses.** Read against
+`step_verifier.ml:1224-1286` (`Step_verifier.verify`, which is what ties an `unfinalized` entry to
+the transcript) and `step_main.ml:26-110`:
+
+    slot (block 1)  statement field                     this assembly's variable      why it is that
+    0,1     combined_inner_product  hi,parity   `bpDiv2 0`, `bpOdd 0`   §19 ladder 0 IS
+                                                `scale_fast2 u advice.combined_inner_product`
+                                                (`step_verifier.ml:317`), whose `Shifted_value.Type2`
+                                                split row (`plonk_curve_ops.ml:290-291`) is exactly
+                                                the pair the statement publishes
+    2,3     b                       hi,parity   `bpDiv2 1`, `bpOdd 1`   §19 ladder 1 = `b_u`, same
+    4,5     zeta_to_srs_length      hi,parity   `ftcDiv2 1`, `ftcOdd 1` §6b's `ζ^n` scalar split
+    6,7     zeta_to_domain_size     hi,parity   `ftcDiv2 1`, `ftcOdd 1` ⚠ ONE cell for two words —
+                                                see below
+    8,9     perm                    hi,parity   `ftcDiv2 0`, `ftcOdd 0` §6b's `perm` scalar split
+    10      sponge_digest_before_evaluations    `digestBeforeEvalsVar`  `Field.Assert.equal` at
+                                                `step_verifier.ml:1271-1272`
+    11,12   beta, gamma                         `vN β/γ emsRows`        R2's decoded prechallenge
+    13,14   alpha, zeta                         `vN α/ζ emsRows`        R2's decoded prechallenge
+    15      xi                                  `vXiStmt`               R8's `xi_correct`
+    16..30  bulletproof_challenges ×15          `vN (5+k) emsRows`      `Field.Assert.equal` at
+                                                `step_verifier.ml:1273-1285`, one per
+                                                `bullet_reduce` squeeze
+    31      should_finalize                     `vShouldVerify`         `Boolean.Assert.( = )` at
+                                                `step_main.ml:37`
+    64      messages_for_next_step_proof        `hmOutDigestVar`        segment D's squeeze,
+                                                `step_main.ml:568-575`
+    66      messages_for_next_wrap_proof.(1)    `vStmtWrapMsgs`         `step_main.ml:85` substitutes
+                                                the SAME digest into the WRAP statement
+
+⚠ ⚑ **THE FIFTEEN IS `Backend.Tock.Rounds.n` AND THE ASSEMBLY'S SIXTEEN IS `Backend.Tick.Rounds.n`,
+AND THAT IS THE SLOT-29 CLASS AGAIN.** `StepShape.bRounds = 16` counts the STEP proof's own IPA
+rounds (`Step_bp_vec = N16`, what `b(ζ)` folds over); the statement's `bulletproof_challenges` are
+the WRAP proof's, **15** (`composition_types.ml:1352`). Reaching for `bRounds` here would publish a
+69-word "statement" that no wrap circuit reads — `PicklesStepStatement.the_bp_log2_is_tocks_rounds_
+not_ticks` is that number as a theorem, and the fifteen slots below are `s.zetaChal + 2 + k`, i.e.
+the squeezes AFTER β γ α ζ and `u`, which are `bullet_reduce`'s own.
+
+⚠ **WORDS 4–7 ARE ONE CELL AND FOUR WORDS, and it is the divergence §2c already states**, one level
+up: at `log2n = srs_length_log2` upstream's `zeta_to_srs_length` and `zeta_to_domain_size` are the
+same field element (`plonk_checks.ml:496-497`) and are two unconstrained statement words that happen
+to agree; here they are one DERIVED cell, so this assembly has one σ class where Snarky has two and
+the value is computed where upstream's is claimed. Strictly more constrained, stated rather than
+elided, and `KimchiStepStatementPins.the_statement_slots_are_distinct_except_the_shared_zeta_power`
+names the two slots that share and refuses a collision anywhere else. -/
+
+/-- ⚑ Which `bullet_reduce` squeeze carries `bulletproof_challenges.(k)` — the squeezes after
+β γ α ζ and `u` (`sqScheduled`'s own order, §2b). -/
+def StepShape.bulletChal (s : StepShape) (k : Nat) : Nat := s.zetaChal + 2 + k
+
+/-- ⚑ **Can this shape carry a `Types.Step.Statement` at all?** DERIVED, not declared: a statement
+needs `PP_BP_LOG2` `bullet_reduce` squeezes to fill `bulletproof_challenges` from, and
+`sqScheduled s` is `6 + |gamRounds s| / 2`. A shape whose IPA is too short to reach
+`combine_split_commitments`' end has none, and a 67-word public vector over its transcript would be
+naming challenge cells that belong to other variables. -/
+def carriesStatement (s : StepShape) : Bool :=
+  s.pubWords == STMT_WORDS && sqScheduled s == 6 + PP_BP_LOG2
+    && decide (s.bulletChal (PP_BP_LOG2 - 1) < s.chals)
+
+/-- ⚑ **Step-statement slot `i`'s circuit variable.** The table above, as a function of `slotOf`.
+Block `b` is real iff `realBlocks 1` contains it; the other is the padding slot. -/
+def stepStmtVar (s : StepShape) (i : Nat) : PVar :=
+  match slotOf i with
+  | .msgNextStep => hmOutDigestVar s
+  | .msgNextWrap 0 => vStmtWrapMsg0 s
+  | .msgNextWrap _ => vStmtWrapMsgs s
+  | .outOfRange => xv 0
+  | .fieldHi b f =>
+      if (realBlocks 1).contains b then
+        (if f == 0 then bpDiv2 s 0 else if f == 1 then bpDiv2 s 1
+         else if f == 4 then ftcDiv2 s 0 else ftcDiv2 s 1)
+      else vStmtDummy s (2 * f)
+  | .fieldOdd b f =>
+      if (realBlocks 1).contains b then
+        (if f == 0 then bpOdd s 0 else if f == 1 then bpOdd s 1
+         else if f == 4 then ftcOdd s 0 else ftcOdd s 1)
+      else vStmtDummy s (2 * f + 1)
+  | .digest b =>
+      if (realBlocks 1).contains b then digestBeforeEvalsVar s
+      else vStmtDummy s (2 * PP_FIELDS)
+  | .challenge b c =>
+      if (realBlocks 1).contains b then
+        (if c == 0 then vN s s.betaChal s.emsRows else vN s s.gammaChal s.emsRows)
+      else vStmtDummy s (2 * PP_FIELDS + 1 + c)
+  | .scalarChallenge b c =>
+      if (realBlocks 1).contains b then
+        (if c == 0 then vN s s.alphaChal s.emsRows
+         else if c == 1 then vN s s.zetaChal s.emsRows
+         else vXiStmt s)
+      else vStmtDummy s (2 * PP_FIELDS + 3 + c)
+  | .bpChallenge b k =>
+      if (realBlocks 1).contains b then vN s (s.bulletChal k) s.emsRows
+      else vStmtDummy s (2 * PP_FIELDS + 6 + k)
+  | .shouldFinalize b =>
+      if (realBlocks 1).contains b then vShouldVerify s
+      else vStmtDummy s (PP_WORDS - 1)
+
+/-- The step statement, as the public vector. -/
+def stmtExposedVars (s : StepShape) : List PVar := (List.range STMT_WORDS).map (stepStmtVar s)
+
+/-- ⚑ The CI fixture shape's tie vector, and it is **NOT** a statement — it is `pubWords` circuit
+variables drawn from every sub-circuit so that a public tie reaches all five, which is what a smoke
+shape is for. `shapeSmoke` cannot carry a statement (`carriesStatement shapeSmoke = false`, because
+its five-round IPA never reaches `bullet_reduce` and it therefore has no fifteen prechallenges to
+publish), and pretending otherwise would put a 67-word vector over eight squeezes. ⚑ The FIRST FOUR
+are the WRAP statement's deferred values; R8's `Boolean.all` assert is what makes them a claim the
+circuit refuses to lie about. -/
+def smokePublicVars (s : StepShape) : List PVar :=
   ([ vCipShift s, vBShift s, vPermShift s, vXiStmt s, vShouldVerify s, vBranch s, hmDigestVar s
    -- ⚑ the STEP statement's own `messages_for_next_step_proof` (`step_main.ml:572-575`), segment
    -- D's squeeze. `hmDigestVar` above is the WRAP statement's (`:83-86`), segment C's — two
@@ -4726,6 +4886,55 @@ def exposedVars (s : StepShape) : List PVar :=
    ++ (List.range s.bRounds).map (fun k => vAcc s k)
    ++ (List.range s.bRounds).map (fun k => vZ s k)
    ++ (List.range (tBlocks s + 1)).map (fun b => vSt s b 0)).take s.pubWords
+
+/-- **The public vector.** A statement-carrying shape publishes a `Types.Step.Statement`; a smoke
+shape publishes its tie vector and says so. ⚑ The dispatch is on `carriesStatement`, which is
+DERIVED from the transcript schedule, so a shape cannot claim a statement it has no challenges for. -/
+def exposedVars (s : StepShape) : List PVar :=
+  if carriesStatement s then stmtExposedVars s else smokePublicVars s
+
+/-! ### §24a — the rows the statement adds, and the two it MOVES.
+
+⚑ **THE TWO IT MOVES.** §19's `bpRows` emitted the `Shifted_value.Type2` split for all four
+`check_bulletproof` ladders, and `bpRows` is `r9_opening`'s. But ladders 0 and 1 are
+`combined_inner_product` and `b` — statement slots 0–3 — and the public vector is tied at the
+CLOSING rung, `r5_full`. A public word tied to a cell whose defining row appears four rungs later is
+defect class 5 wearing a public vector. So the two split rows (and ladder 1's `b² = b`; ladder 0's is
+already `cipRows`') are emitted HERE and `bpRows` no longer emits them — MOVED, not duplicated,
+which `KimchiStepStatementPins.the_statement_split_rows_are_emitted_exactly_once` is about. -/
+
+/-- ⚑ The PADDING block's filler, width-respecting BY CONSTRUCTION. Slot `j` of block 0 gets a value
+inside `slotBits`' width: a parity bit and `should_finalize` are `0`/`1`, a challenge is `< 2^128`, a
+`hi` half and a digest are `< p`. ⚠ This is a FILLER and the docblock at §1e says why that is
+faithful: upstream's padding block is `Unfinalized.Constant.dummy ()`, discharged by
+`wrap_main.ml:333`, and carries no obligation but its `should_finalize` bit — which is a `cConst`
+row here and therefore not filler at all. -/
+def stmtDummyVal (j : Nat) : Nat :=
+  let w := slotBits j
+  if w == 1 then (if j == PP_WORDS - 1 then 0 else (j % 2))
+  else if w == 128 then (7 + 1000003 * j) % 2 ^ 127
+  else (13 + 5000011 * j + 17 * j * j) % pN
+
+/-- **§24's rows.** Empty on a shape that carries no statement, so a smoke emission is byte-identical
+to what it was. -/
+def stmtRows (s : StepShape) (wired : Bool) : List SRow :=
+  if !carriesStatement s then [] else
+  packHalves
+    -- the two hoisted `Shifted_value.Type2` splits — statement slots 0–3
+    -- ⚠ `vCipShift`/`vBShift` and NOT `bpScalV 0`/`bpScalV 1`, which are declared below this point;
+    -- `the_statement_split_reads_the_ladders_own_scalar` is the tie, so this is a gate between two
+    -- expressions rather than a second name for one.
+    ([ ([some (vCipShift s), some (bpDiv2 s 0), some (bpOdd s 0)], cSplit 1)
+     , ([some (vBShift s), some (bpDiv2 s 1), some (bpOdd s 1)], cSplit 1)
+     , ([some (bpOdd s 1), some (bpOdd s 1), some (bpOdd s 1)], cMul) ]
+     -- the padding block: `should_finalize = 0` (`step_main.ml:405-425`'s `should_verify` vector),
+     -- and `Boolean.typ`'s `b² = b` on the five parity halves it publishes.
+     ++ [ ([some (vStmtDummy s (PP_WORDS - 1)), none, none], cConst 0) ]
+     ++ (List.range PP_FIELDS).map (fun f =>
+          ([some (vStmtDummy s (2 * f + 1)), some (vStmtDummy s (2 * f + 1)),
+            some (vStmtDummy s (2 * f + 1))], cMul)))
+  -- one σ probe, so a tamper isolates the padding block's bit rather than only its tie row
+  ++ [ probeRow wired (vStmtDummy s (PP_WORDS - 1)) (vStmtDummy s 1) ]
 
 /-- **R5b's rows**: every public word tied to a computed circuit variable, two per `Generic` row
 (`w₀ = w₁` in each half). Every one of `pubWords` public words is READ here — exactly what
@@ -5161,9 +5370,15 @@ def bpRows (s : StepShape) (v : BpData) (wired : Bool) : List SRow :=
   -- ⚑ Ladder 0's `s_odd` IS `vCipBit`, whose `b² = b` `cipRows` already emits (it is absorbed at
   -- every rung, and this one is emitted only at `r9_opening`). Emitting it twice would be one
   -- redundant `Generic` half, so the booleanity here is the three ladders that do not have one.
+  -- ⚑ **LADDERS 0 AND 1'S SPLITS MOVED TO §24a ON A STATEMENT-CARRYING SHAPE**, because their
+  -- `s_div_2`/`s_odd` cells ARE step-statement slots 0–3 and the public vector is tied at `r5_full`,
+  -- four rungs below this one. Ladder 1's `b² = b` moved with it; ladder 0's has always been
+  -- `cipRows`'. On a shape that carries no statement nothing moves and this list is what it was.
   ++ packHalves ((List.range N_SF).flatMap (fun k =>
-       [ ([some (bpScalV s k), some (bpDiv2 s k), some (bpOdd s k)], cSplit 1) ]
-       ++ (if k == 0 then [] else [([some (bpOdd s k), some (bpOdd s k), some (bpOdd s k)], cMul)])
+       (if decide (k < 2) && carriesStatement s then []
+        else [ ([some (bpScalV s k), some (bpDiv2 s k), some (bpOdd s k)], cSplit 1) ]
+             ++ (if k == 0 then []
+                 else [([some (bpOdd s k), some (bpOdd s k), some (bpOdd s k)], cMul)]))
        ++ [ ([some (bpN s k 0), none, none], cConst 0) ]))
   -- ladder 1 (`b_u`) must precede the `G + b_u` add that ladder 2's base is.
   ++ sfTermRows (bpSlots s 0) (v.term 0) wired
@@ -5631,6 +5846,11 @@ def circuitEnv (t : StepData) : VarEnv :=
      -- "no in-circuit source" means; the nine one-bit words get no entry because no row reads them.
      , (vStmtWrapMsgs s, (STMT_WRAPMSG_VAL : Int))
      , (vStmtLookup s, (STMT_LOOKUP_VAL : Int)) ]
+  -- ⚑ §24 — the STEP statement's padding block and its `messages_for_next_wrap_proof.(0)`. Bound on
+  -- every shape (an unbound id would read `0` and a `0` in a `hi` slot is a value, not an absence);
+  -- on a shape that carries no statement no row and no public word reads them.
+  ++ (List.range PP_WORDS).map (fun j => (vStmtDummy s j, (stmtDummyVal j : Int)))
+  ++ [ (vStmtWrapMsg0 s, ((13 + 5000011 * PP_WORDS) % pN : Int)) ]
   ++ aEnvOf (baseFin s t.ft) t.fin.fp.prog t.fin.vals
 
 /-- The full environment: the circuit's variables, then the `pubWords` public words, whose values
@@ -5727,7 +5947,8 @@ def rungOwn (t : StepData) (wired : Bool) : Rung → List SRow
   | .msm => msmRows t.sh t.msm wired ++ ftcRows t.sh t.ftw t.ftc wired
   | .ipa => ipaRows t.sh t.ipa wired
   | .full => deferredRows t.sh wired ++ sgEvalRows t.sh FT_OMEGA wired ++ branchRows t.sh wired
-             ++ xiDefRows t.sh t.defc wired ++ cipRows t.sh wired ++ closingRows t.sh
+             ++ xiDefRows t.sh t.defc wired ++ cipRows t.sh wired ++ stmtRows t.sh wired
+             ++ closingRows t.sh
   | .ftEval0 => ftRows t.sh t.ft wired
   | .absorb => absRows t wired
   | .finalize => finRows t.sh t.ft t.fin wired

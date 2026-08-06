@@ -189,8 +189,15 @@ buys the same factor and costs each pin its own failure site. -/
 -- ⚑ …AT THE COMMITTED SHAPE TOO. The smoke shape takes 12 of a 25-long list and so cannot see a
 -- collision that only appears past word 12; this is the pin that does. (It found one: `vAcc bRounds`
 -- and `vZ bRounds` were each exposed twice at `pubWords = 67`.)
-#guard ((exposedVars shapeStep).map varIx).dedup.length == shapeStep.pubWords
 #guard (exposedVars shapeStep).length == shapeStep.pubWords
+-- ⚠ ⚑ **THE COMMITTED SHAPE'S DISTINCTNESS PIN MOVED TO `KimchiStepStatementPins` (§24) AND IS NOW
+-- A NAMED THEOREM.** `exposedVars shapeStep` is a `Types.Step.Statement` since §24, and its count is
+-- 65 rather than 67 — a STATED divergence and not a collision: slots 4–7 are `zeta_to_srs_length`
+-- and `zeta_to_domain_size`, two unconstrained words upstream that agree at
+-- `log2n = srs_length_log2` (`plonk_checks.ml:496-497`) and ONE derived `ζ^n` cell here (§2c, one
+-- level up). A guard reading `== pubWords` would now be false, and reading `+ 2 == pubWords` would
+-- be a literal nobody could check; `the_statement_slots_are_distinct_except_the_shared_zeta_power`
+-- says which two are shared and that every other pair is not.
 
 -- ── The CROSS-SUB-CIRCUIT WIRES (the claim this file exists to make) ───────────────────────────
 -- ⚑ ONE VARIABLE, THREE GATE TYPES. Challenge `c`'s value cell is in the `EndoMulScalar` chain

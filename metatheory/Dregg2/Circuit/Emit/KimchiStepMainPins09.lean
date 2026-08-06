@@ -81,20 +81,51 @@ set_option maxRecDepth 100000
 -- taking them out of this hash — they were never unobserved.
 -- ⚑ CORRECTED 2026-08-03 (§19): the exposed point at 16/17 is `q = p_prime + lr_prod`, the one
 -- `Scalar_challenge.endo q c` reads, not the bare fold sum. `uc` is inside it now.
-/-- **`the_exposed_opening_words_are_the_derived_points`** — slots 14, 16 and 17 of the committed
-statement carry VARIABLES this assembly derives, not witnesses: 14 is the MSM fold's `x`, and the
-16/17 pair is `q = p_prime + lr_prod`'s. Stated together because they are one claim about one
-region, and because a slot silently ceasing to be derived is invisible when each is its own guard.
-⚠ Three `#guard`s, converted 2026-08-03 (`metatheory/docs/GUARD-DISCIPLINE.md`): the expressions
-are unchanged, and the gain is a NAMED TERM the axiom sweep can see. -/
-theorem the_exposed_opening_words_are_the_derived_points :
-    ((exposedVars shapeStep).getD 14 (xv 0)
-        == mpx shapeStep (pSum shapeStep (shapeStep.msmTerms - 2))
-     && (exposedVars shapeStep).getD 16 (xv 0) == ipx shapeStep (qPrime shapeStep)
-     && (exposedVars shapeStep).getD 17 (xv 0) == ipy shapeStep (qPrime shapeStep)) = true := by
+/-- **`the_committed_public_vector_is_a_step_statement_and_publishes_no_curve_point`** — ⚑⚑ **THIS
+REPLACED `the_exposed_opening_words_are_the_derived_points`, AND THE REPLACEMENT IS A CORRECTION.**
+
+Its predecessor said slots 14, 16 and 17 of the committed public vector carry the MSM fold's `x` and
+`q = p_prime + lr_prod` — variables this assembly derives rather than witnesses. That was true of
+the ad-hoc tie vector and it was **not upstream**: `Types.Step.Statement`
+(`composition_types.ml:1453-1459`) has sixty-seven slots and **not one of them is a curve point.**
+Publishing the fold output was this assembly's own invention, and a wrap circuit reading that
+"statement" would scale a lagrange base by a Vesta coordinate.
+
+Since §24 the committed shape publishes the statement. So the honest facts are: the three derived
+points are NOT public words, they are still derived cells (their classes are pinned in
+`…Pins13`/`…Pins06`), and the slots that used to hold them now hold what
+`Per_proof.In_circuit.to_data` puts there.
+
+⚠ ⚑ **AND SLOTS 14/16/17 ARE THE *PADDING* BLOCK'S, WHICH IS THE CORRECTION INSIDE THE CORRECTION.**
+A first draft of this theorem read them as `zeta` and `bulletproof_challenges.(0)/(1)` of the proof
+this circuit verifies, and `native_decide` said false. `Vector.extend_front`
+(`step_main.ml:568-570`) puts the padding block at the FRONT, so slots 0–31 are the dummy and the
+REAL block is 32–63: slot 14 is the padding block's `zeta`, and the live `zeta` is slot 46. Reading a
+statement slot without reading which block it is in is the same class as reading `branch_data`'s
+`domain_log2` off the wrong circuit. Both readings are stated below so the mistake cannot recur
+silently.
+
+⚠ The last three conjuncts are what would catch a regression to the old vector: the fold's `x` and
+`q`'s coordinates must appear NOWHERE in the public vector. -/
+theorem the_committed_public_vector_is_a_step_statement_and_publishes_no_curve_point :
+    (carriesStatement shapeStep
+     -- the PADDING block's slots, where the fold output and `q` used to sit
+     && (exposedVars shapeStep).getD 14 (xv 0) == vStmtDummy shapeStep 14
+     && (exposedVars shapeStep).getD 16 (xv 0) == vStmtDummy shapeStep 16
+     && (exposedVars shapeStep).getD 17 (xv 0) == vStmtDummy shapeStep 17
+     -- …and the REAL block's counterparts, which are the transcript's own decoded prechallenges
+     && (exposedVars shapeStep).getD 46 (xv 0) == vN shapeStep shapeStep.zetaChal shapeStep.emsRows
+     && (exposedVars shapeStep).getD 48 (xv 0)
+          == vN shapeStep (shapeStep.bulletChal 0) shapeStep.emsRows
+     && (exposedVars shapeStep).getD 49 (xv 0)
+          == vN shapeStep (shapeStep.bulletChal 1) shapeStep.emsRows
+     && !((exposedVars shapeStep).contains
+            (mpx shapeStep (pSum shapeStep (shapeStep.msmTerms - 2))))
+     && !((exposedVars shapeStep).contains (ipx shapeStep (qPrime shapeStep)))
+     && !((exposedVars shapeStep).contains (ipy shapeStep (qPrime shapeStep)))) = true := by
   native_decide
 
-#assert_compiled the_exposed_opening_words_are_the_derived_points
+#assert_compiled the_committed_public_vector_is_a_step_statement_and_publishes_no_curve_point
 
 -- ⚑ …and the CORRECTION IS NOT VACUOUS at the level of the public vector: the digest word moved.
 -- (Both layouts absorb the same 58-word prefix and the same 2·bRounds challenges; only the four

@@ -140,6 +140,57 @@ fn lean_nat_list_fp(name: &str, doc: &str, xs: &[Fp]) -> String {
     )
 }
 
+/// ⚑⚑ **`Types.Step.Statement`'s per-slot packed WIDTH** — the Rust twin of
+/// `Dregg2/Circuit/Emit/PicklesStepStatement.lean`'s `slotBits`, and the reason it exists here is
+/// that the WRAP circuit's x_hat ladder is sized by it (`wrap_verifier.ml:539-577`), so a correction
+/// point computed at the wrong shift cancels nothing.
+///
+/// The layout is `Statement.spec Max_proofs_verified.n Backend.Tock.Rounds.n`
+/// (`composition_types.ml:1453-1459`) with `Per_proof.In_circuit.spec` (`:1265-1274`), packed by
+/// `Impls.Step.input` (`impls.ml:128-142`) where a `B Field` is `Step.Other_field.typ_unchecked`,
+/// i.e. `(x >> 1, x & 1)` — **two** wires (`impls.ml:90-101`; openmina's own
+/// `to_field_elements.rs:213-233` writes the same pair). Everything else is one.
+///
+/// ⚠ A public input that is NOT `STMT_WORDS` wide is not a statement and this says so by giving it
+/// the all-255 partition it actually has — that is the shape the twelve-word Lean-emitted circuit
+/// had, and it is a different object, not an older version of this one.
+fn step_statement_slot_bits(n: usize) -> Vec<usize> {
+    const PP_FIELDS: usize = 5;
+    const PP_DIGESTS: usize = 1;
+    const PP_CHALLENGES: usize = 2;
+    const PP_SCALAR_CHALLENGES: usize = 3;
+    const PP_BP_LOG2: usize = 15; // Backend.Tock.Rounds.n — NOT Tick's 16
+    const PP_BOOLS: usize = 1;
+    const PREVS: usize = 2;
+    const PP_WORDS: usize =
+        2 * PP_FIELDS + PP_DIGESTS + PP_CHALLENGES + PP_SCALAR_CHALLENGES + PP_BP_LOG2 + PP_BOOLS;
+    const STMT_WORDS: usize = PP_WORDS * PREVS + 1 + PREVS;
+    if n != STMT_WORDS {
+        return vec![255; n];
+    }
+    (0..n)
+        .map(|i| {
+            if i >= PP_WORDS * PREVS {
+                return 255; // messages_for_next_step_proof + messages_for_next_wrap_proof
+            }
+            let j = i % PP_WORDS;
+            if j < 2 * PP_FIELDS {
+                if j % 2 == 0 {
+                    255
+                } else {
+                    1
+                }
+            } else if j < 2 * PP_FIELDS + PP_DIGESTS {
+                255
+            } else if j < PP_WORDS - PP_BOOLS {
+                128
+            } else {
+                1
+            }
+        })
+        .collect()
+}
+
 /// A fresh o1-labs Fq sponge — the same `static_params()` `kimchi::verifier` uses.
 fn fresh() -> StepBase {
     StepBase::new(mina_poseidon::pasta::fq_kimchi::static_params())
@@ -548,21 +599,67 @@ pub fn export(inp: StepTapeInputs<'_>) -> StepTapeOut {
     );
     let (hx, hy) = xy(&urs_h);
 
-    // `lagrange_with_correction`'s second component: `negate (pow2pow g actual_shift)` with
-    // `actual_shift = Ops.bits_per_chunk * Ops.chunks_needed ~num_bits:input_length`
-    // (`wrap_verifier.ml:247-291`). Every entry here is a full `Field.size_in_bits = 255` scalar —
-    // this proof's public input is 12 unconstrained Fp elements, not a packed Pickles statement —
-    // so `chunks_needed 255 = 51` and `actual_shift = 255` for all of them. Doubling 255 times in
-    // a group of order `p` is scaling by `2^255 mod p`, which is what `two_to_255` is.
-    const XHAT_OWN_BITS: usize = 255;
+    // ⚑⚑ **THE PER-SLOT WIDTHS, AND THEY STOPPED BEING ALL-255 WHEN THE STEP CIRCUIT STARTED
+    // PUBLISHING A `Types.Step.Statement`.** This block used to read *"every entry here is a full
+    // `Field.size_in_bits = 255` scalar — this proof's public input is 12 unconstrained Fp
+    // elements, not a packed Pickles statement"*. It is one now
+    // (`Dregg2/Circuit/Emit/PicklesStepStatement.lean`, established at
+    // `composition_types.ml:1265-1274,1453-1459`), so the partition is what
+    // `wrap_verifier.ml:539-577` makes of a packed statement:
+    //
+    //   * a 255-bit slot (a `B Field`'s `hi` half, or a `B Digest`) → `Add_with_correction`,
+    //     `chunks_needed 255 = 51`, `actual_shift = 255`;
+    //   * a 128-bit slot (`B Challenge` / `Scalar Challenge` / `B Bulletproof_challenge`) →
+    //     `Add_with_correction`, `chunks_needed 127 = 26`, `actual_shift = 130` — ⚠ **130, not
+    //     128**: `scale_fast2'` applies `chunks_needed` to `num_bits − 1` and the shift is
+    //     `bits_per_chunk × chunks` (`plonk_curve_ops.ml:250-256`);
+    //   * a ONE-bit slot (a `B Field`'s parity half, `B Bool`) → `` `Cond_add ``
+    //     (`wrap_verifier.ml:573-577`), which runs NO ladder and has NO correction.
+    //
+    // A correction computed at the wrong shift is an on-curve point that cancels nothing, and the
+    // re-derivation below is what refuses it. `correction_xy` is therefore indexed over the
+    // `Add_with_correction` partition ONLY, in slot order — the same convention
+    // `MinaStepSrsLagrange.CORRECTION_XY` uses and the same one `xhatCorrIdx` reads.
     const BITS_PER_CHUNK: usize = 5;
-    let own_chunks = (XHAT_OWN_BITS + BITS_PER_CHUNK - 1) / BITS_PER_CHUNK;
-    let own_shift = BITS_PER_CHUNK * own_chunks;
-    assert_eq!((own_chunks, own_shift), (51, 255));
-    let two_to_own_shift: Fp = Fp::from(2u64).pow([own_shift as u64]);
+    let chunks_needed = |n: usize| (n + BITS_PER_CHUNK - 1) / BITS_PER_CHUNK;
+    let slot_bits = step_statement_slot_bits(public_input.len());
+    assert_eq!(slot_bits.len(), public_input.len());
+    // ⚑ the width census, against the number Mina's own compiled `wrap-transaction` reports:
+    // W-XHAT's share of `VarBaseMul 2417` is `15 × 51 + 40 × 26 = 1805`.
+    if public_input.len() == 67 {
+        let n255 = slot_bits.iter().filter(|b| **b == 255).count();
+        let n128 = slot_bits.iter().filter(|b| **b == 128).count();
+        let n1 = slot_bits.iter().filter(|b| **b == 1).count();
+        assert_eq!(
+            (n255, n128, n1),
+            (15, 40, 12),
+            "the packed step statement's width census is not Mina's"
+        );
+        assert_eq!(
+            n255 * chunks_needed(254) + n128 * chunks_needed(127),
+            1805,
+            "the x_hat chunk count is not the 1805 of Mina's VarBaseMul 2417"
+        );
+    }
+    // …and every published word actually FITS the slot it claims, which is the obligation
+    // `scale_fast2`'s top-bit asserts enforce in the wrap circuit.
+    for (i, (p, b)) in public_input.iter().zip(slot_bits.iter()).enumerate() {
+        let w = p.into_bigint().num_bits() as usize;
+        assert!(
+            w <= *b,
+            "step public word {i} is {w} bits wide and its statement slot is {b}"
+        );
+    }
     let mut correction_xy: Vec<Fq> = Vec::new();
-    for g in &lagrange_pts {
-        let c = (-(g.into_group() * two_to_own_shift)).into_affine();
+    let mut xhat_bits: Vec<Fq> = Vec::new();
+    for (g, b) in lagrange_pts.iter().zip(slot_bits.iter()) {
+        xhat_bits.push(Fq::from(*b as u64));
+        if *b == 1 {
+            continue; // `Cond_add` — no ladder, no correction
+        }
+        let shift = BITS_PER_CHUNK * chunks_needed(*b - 1);
+        let two_to_shift: Fp = Fp::from(2u64).pow([shift as u64]);
+        let c = (-(g.into_group() * two_to_shift)).into_affine();
         assert!(
             !c.infinity && c.is_on_curve(),
             "a correction point is degenerate"
@@ -895,7 +992,7 @@ def STEP_DOMAIN_LOG2 : Nat := {}
     l.push_str(&lean_nat_list_fp(
         "STEP_PUBLIC_IN",
         "⚑ The step proof's OWN public input — the `Fp` scalars the MSM scales, in index order. \
-         `stepmain_smoke_r8_finalize.json`'s `public_input`, as the prover consumed it.",
+         `stepmain_step_r8_finalize.json`'s `public_input`, as the prover consumed it — the packed `Types.Step.Statement`.",
         public_input,
     ));
     l.push_str(&lean_nat_list(
@@ -907,9 +1004,20 @@ def STEP_DOMAIN_LOG2 : Nat := {}
     ));
     l.push_str(&lean_nat_list(
         "STEP_XHAT_CORRECTION_XY",
-        "⚑ `lagrange_with_correction`'s second component, `negate (pow2pow g 255)`, one per entry \
-         (`wrap_verifier.ml:247-291`). It cancels `scale_fast2`'s `+2^actual_bits_used` exactly.",
+        "⚑ `lagrange_with_correction`'s second component, `negate (pow2pow g actual_shift)` \
+         (`wrap_verifier.ml:247-291`), indexed over the `Add_with_correction` PARTITION ONLY — a \
+         one-bit slot takes `Cond_add` (`:573-577`), runs no ladder and has no correction. \
+         `actual_shift` is `bits_per_chunk × chunks_needed (num_bits − 1)`, i.e. **255** for a \
+         255-bit slot and **130** (not 128) for a 128-bit one.",
         &correction_xy,
+    ));
+    l.push_str(&lean_nat_list(
+        "STEP_XHAT_BITS",
+        "⚑ Slot `i`'s packed WIDTH — `Types.Step.Statement`'s own, computed by the exporter's \
+         `step_statement_slot_bits` and therefore a SECOND source for \
+         `PicklesStepStatement.slotBits`. 15 at 255, 40 at 128, 12 at 1; the exporter refuses to \
+         write this file if a published word does not fit its slot.",
+        &xhat_bits,
     ));
     l.push_str(&lean_nat_list(
         "STEP_URS_H_XY",

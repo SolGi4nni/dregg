@@ -1173,3 +1173,4 @@ import Dregg2.Circuit.Emit.KimchiStepMainPins15
 import Dregg2.Circuit.Emit.KimchiStepMainPins16
 import Dregg2.Circuit.Emit.KimchiStepMainPins17
 import Dregg2.Circuit.Emit.KimchiStepMainPins18
+import Dregg2.Circuit.Emit.KimchiStepStatementPins
