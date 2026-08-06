@@ -25,6 +25,41 @@ semantics and then DIFFERENTIALLY CHECKS it against every emitted row.  A single
 disagreement is a hard failure: the tool refuses rather than analysing its own
 reconstruction.
 
+⚑ A COST ROW IS NOT A TRANSITION.  Read this before adding a "dominated action"
+or "dead action" analysis to any organ.
+
+Measured 2026-08-05 on `Dregg2.Games.PathOfAngels.NightWatchLoop`, whose 21 authored
+choices each carry a `ChoiceDelta` cost row (turn, operational, supply, clueIntel,
+artifacts, causesInjury).  Two choices are strictly dominated ON THAT ROW and are
+nevertheless LIVE:
+
+  * `misventRelief` is worse than `replaySharedIntervals` on every cost axis — and is
+    the only choice that does not advance `encounterIndex`.  It is a retry, priced
+    accordingly.  The row cannot see that.
+  * `ignoreMovingClearance` is identical to `markMovingClearance` on all six delta
+    fields, and artifacts can never hurt (acquisition is refused only when an artifact
+    is not allowlisted).  It is live because it sets `navigationDebt` where the others
+    set `entryMarked`.  The row cannot see that either.
+
+A gate reasoning over cost rows alone would have reported both as dead content and
+argued for deleting two real choices.  This is not hypothetical: it was caught twice
+in one session, once by an author and once by an analysis lane whose first budget
+probe reported a clue-intel binding that was actually `expectedTerminalId?`
+re-selecting a terminal.  Plausible, and false.
+
+The Lean-side statement of this is a named theorem,
+`cost_row_domination_does_not_survive_the_real_transition` in `NightWatchLoop.lean`,
+proved over the ACTUAL reducer.  Its consequence for this tool: dominance and
+liveness are properties of the TRANSITION (flags, phase/index advance, accumulated
+evidence, downstream gates), so an organ whose per-action consequence is not fully
+carried by its emitted row CANNOT be analysed from the row.  Either model the
+reducer, or refuse the organ — do not analyse the row and call the answer dominance.
+
+Note the shape that IS safe: `NightWatchCampaign`'s per-action consequence lives
+entirely in its `TaskRule` table, so a row-level analysis of that organ is sound.
+The distinction is whether the row is a sufficient statistic, not whether the game
+looks tabular.
+
 Usage:
   scripts/poa-design-gate.py                       # human report
   scripts/poa-design-gate.py --json                # machine report
