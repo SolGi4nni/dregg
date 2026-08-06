@@ -442,20 +442,51 @@ one forged trace, accepted without the 18 lookups and UNSAT with them.
 The 187-limb grow bought three ninth lanes — `ROTATED_OCTET_NINTH_LANES = [184, 185, 186]` — and
 **one is used.** Columns 184 and 185 are emitted, tiled, `#guard`-ed and absorbed by `wireCommitR`,
 and **no producer writes them**: both twins still fill those two octets with
-`Faithful8::from_bytes32` (`turn/src/rotation_witness.rs:725,731` ·
-`cell/src/commitment.rs:1360,1364`), which is `bytes32_to_8_limbs` — eight 4-byte little-endian
+`Faithful8::from_bytes32` (`turn/src/rotation_witness.rs:725,730` ·
+`cell/src/commitment.rs:1365,1369`), which is `bytes32_to_8_limbs` — eight 4-byte little-endian
 chunks reduced `mod p`.
 
 **How weak, exactly.** A chunk is uniform on `[0, 2^32)` and `p = 2013265921`, so every limb value
 has **2 or 3** preimages (3 when the value is below `2^32 − 2p = 268435454`, else 2). Therefore
 **every committed octet is shared by between `2^8 = 256` and `3^8 = 6561` distinct 32-byte values**
-— expected `2^8.88`, matching the `256 − 8·log₂ p = 8.74` bits pigeonhole loses — and a sibling is
-constructed by **one addition**: add `p` to any 4-byte window whose value is below `2^32 − p`. That
-is `O(1)`, not a birthday bound, and it is `O(1)` *for the attacker's own chosen bytes*, which is
-what these two carriers hold: a factory child VK (`apply.rs`'s `effective_vk`) and a hatchery
-`HpresProof::Attested` content hash. Both are also PI-published on `factoryVmDescriptor2R24` —
-`child_vk8 → PI[47..54]`, `contract_hash8 → PI[55..62]` — so the ambiguity reaches a light client
-that has no ledger to disambiguate against.
+— expected `(2^32/p)^8 = 2^8.74`, which is the `256 − 8·log₂ p = 8.74` bits pigeonhole loses — and a
+sibling is constructed by **one addition**: add `p` to any 4-byte window whose value is below
+`2^32 − p`. Both octets are also PI-published on `factoryVmDescriptor2R24` — `child_vk8 → PI[47..54]`,
+`contract_hash8 → PI[55..62]` — so the ambiguity reaches a light client that has no ledger to
+disambiguate against.
+
+⚠ **`2^8.88` until 2026-08-06, in the same sentence as `8.74`.** Two numbers for one quantity and
+neither was derived here; `E[Π reps] = (2^32/p)^8 = 2^8.74` is the one that follows from the line
+before it.
+
+### ⚑ AND THE SEVERITY WAS OVERSTATED — corrected 2026-08-06, measured at the source
+
+This paragraph read *"That is `O(1)`, not a birthday bound, and it is `O(1)` **for the attacker's own
+chosen bytes**, which is what these two carriers hold."* **The second clause is false**, and it is the
+clause that sets this cutover's priority. What the carriers hold:
+
+* `child_vk` is `ChildVkStrategy::derive_child_vk` = `blake3_derive_key("dregg-derived-child-vk-v1",
+  factory_vk ‖ param_hash)` (`cell/src/factory.rs:181`), or under `Fixed`/`FromSet` a VK identifier
+  that must correspond to a program whose proofs verify. It is a **BLAKE3 image**, not a free field.
+* `contract_hash` is a `[u8; 32]` the SDK caller passes verbatim
+  (`sdk/src/hatchery_mint.rs::attest_hpres`), and `circuit-prove/src/hatchery_leaf_adapter.rs` names
+  its own residual: anchoring it to a **verifying** contract proof in-circuit is **not done**. The
+  value is therefore already unconstrained, and an alias buys nothing there that choosing the value
+  outright does not already buy.
+
+So the sibling is `O(1)` **in the byte domain** — and it is exhibited there, at the deployed producer
+and the deployed fold, by `circuit/tests/carrier_octet_siblings_survive_the_key_nonet_flag_day.rs`.
+Turning it into a forgery at `child_vk` means landing a *semantically valid* VK inside a target set of
+size `2^8.74`: a BLAKE3 second preimage, ≈`2^247`. ⚠ **Say that bound.** This is **not** the owner-key
+situation, where `A` and `−A` were both valid keys, the attacker held the private half of the
+negation, and the two packed identically for free — which is exactly why the owner key was the
+correct first repair and is the one that is done.
+
+**What remains true, and is what justifies the cutover:** the committed carrier does not *determine*
+the 32 bytes, it determines a set of size `≥ 2^8`. So no `keyCanon9_determines_the_owner_key`-shaped
+capstone is statable for these two carriers at all, and any downstream sentence of the form "the
+committed octet determines the installed child VK" is false as written. That is a real defect in what
+the anchor means, priced honestly rather than as a live forgery.
 
 **What the fix is NOT.** It is *not* "their own Lean emit face". `keyCanonical9At (col : KeyColMap)`
 is column-agnostic and `lane_bounds_atCols` proves the forcing for **any** nine columns; only

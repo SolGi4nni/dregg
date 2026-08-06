@@ -1,5 +1,60 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 6 (THE OTHER TWO CARRIERS) — **the owner-key wound is CLOSED and the brief that sent me was describing it**; what survives is a different wound at a different bound, and the recorded severity was OVERSTATED
+
+Sent to close "`A` and `−A` pack identically, at cost zero". **Measured at HEAD first, and every clause of
+that had already been repaired** — by `5c3cef4fa` (the ninth lane reaches the anchor) and the 08-02
+envelope landing. `keyCanonical9Wire` **is** applied — `EmitRotationV3.lean:167` is the cohort loop and
+sixteen further call sites name it, plus both wide registry probes (`:101` is only the *import*, and
+citing that would have been the same shape of error this entry corrects); the `A`/`−A` exhibit, the
+two-producer agreement and the 32-byte round-trip out of the
+committed limbs are all already on disk in `key_nonet_anchor_old_admits_new_rejects.rs`. ⓘ **Nothing
+in this entry is a new repair of the owner key.** It is the survivor, re-measured.
+
+**WHAT ACTUALLY SURVIVES**, measured at the deployed producer, not read: the `187`-grow bought three
+ninth lanes and **one is used**. `child_vk` (`89..=96` ‖ **184**) and `contract_hash` (`97..=104` ‖
+**185**) are still written by `Faithful8::from_bytes32`, and 184/185 carry `ZERO` on every turn —
+*including turns that carry the material*, which is the form that makes it a measurement rather than an
+absence. New exhibit `circuit/tests/carrier_octet_siblings_survive_the_key_nonet_flag_day.rs`, **4/4**,
+and it is a TRIPWIRE written to go RED the day the cutover lands.
+
+⚑⚑ **AND THE SEVERITY IN `FAITHFUL-COMMITMENT-LAW.md` WAS WRONG — corrected at the source.** It read
+*"`O(1)` … for the attacker's own chosen bytes, which is what these two carriers hold."* The second
+clause is false. `child_vk` is `blake3_derive_key("dregg-derived-child-vk-v1", …)` — a BLAKE3 **image**;
+`contract_hash` is an SDK-supplied `[u8;32]` whose in-circuit anchoring `hatchery_leaf_adapter.rs` names
+as its **own undone residual**, so an alias buys nothing there that choosing the value outright does not.
+The sibling is `O(1)` **in the byte domain** (exhibited: one addition, no search, byte-identical octet,
+byte-identical *whole* committed vector, byte-identical `wireCommitR`) — but weaponising it at `child_vk`
+is a BLAKE3 second preimage into a `2^8.74` target set, ≈**`2^247`**. ⚠ **This is NOT the owner-key
+situation**, where both points were valid keys and the attacker held the private half for free. That
+asymmetry is exactly why the owner key was the right first repair, and it is the one that is done.
+Also fixed: `2^8.88` and `8.74` sat in one sentence as two figures for one quantity; `(2^32/p)^8 = 2^8.74`
+is the one that follows.
+
+**WHAT IS STILL TRUE AND STILL WANTS THE CUTOVER:** the committed carrier does not *determine* the 32
+bytes (a set of `≥ 2^8`), so **no `keyCanon9_determines_…`-shaped capstone is statable for these two at
+all**, and the ambiguity is PI-published (`PI[47..54]`, `PI[55..62]`).
+
+⚑ **THE LEAN DELTA, RE-DERIVED rather than inherited — and the earlier pricing MISSED ONE LEMMA.** The
+"~80 lines, column-agnostic" estimate holds: §2–§3 of `KeyCanonicity9Emit.lean` (`keyCanonical9At`,
+`blk_mem`, `lookup_forces`, `lane_bounds_atCols`, the table/column censuses) already quantify over
+`col : KeyColMap`; only `deployedKeyCols` spells `B_PUBKEY_OCTET`, so it is one `def` gaining an
+`octetBase` parameter plus instantiations. **What the estimate did not name: the wrap must now COMPOSE.**
+`lane_bounds_atCols` is stated against the *literal* `keyCanonical9At col d`, so under three nested wraps
+only the OUTERMOST carrier's capstone holds. The fix is to restate the forcing against a membership
+hypothesis (`∀ c ∈ keyCanon9ConstraintsAt col, c ∈ D.constraints`) and recover the present statement as
+its instance — ~15 lines, and without it two of three capstones are unprovable. Budget **~120–160 lines,
+one file**. Per member: 18 → 54 lookups, 156 → 468 aux columns. `factoryV3Carriers` needs a nonet pin
+(the non-contiguous template already exists as `withAfterFieldsRootPins`), `piCount` 63 → 65, `Rfix 18`
+67 → 69.
+
+**ORDER IS FORCED — encoder, then PI face, then envelope** (an envelope over `bytes32_to_8_limbs`
+columns would force them into a non-injective map's image). Limbs 89..104 change VALUE ⇒ every
+factory/hatchery `state_commit` moves ⇒ `CANONICAL_STATE_SCHEMA_EPOCH` **23 → 24** + re-genesis + VK
+rotation + descriptor re-emit. ⚠ **NO re-emit happened here, so NO `VK-REGEN-LOG` row** — and the
+re-emit has a real environmental precondition this tree keeps hitting: `emit_descriptors.py` refuses to
+stamp while `metatheory/Dregg2` is sibling-dirty (Aug 5 hit exactly this).
+
 ## ⛑⛑⛑ AUGUST 5 (WHOSE TIP) — **the Mina head's claimed tip is JOINED IN-CIRCUIT**: `LINK_OK` stops being a bare `= 1`, the decorative census goes 18 → 9 with the denominator fixed, and the served-but-unasked-for segment descriptor is now DISPATCHED
 
 Two machine-checked absences, both closed on the emitted bytes.
