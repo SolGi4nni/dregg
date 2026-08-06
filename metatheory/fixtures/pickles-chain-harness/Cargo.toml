@@ -19,21 +19,22 @@
 # (`impls.ml:50-103`, `type t = Field.t * Boolean.var`, "Low bits, high bit"). None of that scalar
 # data is on the phase-1 tape, which is why the transcript chain is the piece that lands first.
 #
-# TWO BINARIES:
-#   export-step-tape  proves the Lean-emitted STEP circuit on Vesta, asserts `kimchi::verifier`
-#                     ACCEPTS it, and dumps the phase-1 Fq tape + the challenges kimchi's OWN
-#                     verifier derived from it, as a Lean fixture module.
-#   harness           proves the wrap circuit whose transcript was driven by THAT tape, on
-#                     Pallas/Fq, with the five polarities.
+# ONE BINARY:
+#   harness           proves the wrap circuit whose transcript is driven by the step proof's own
+#                     tape, on Pallas/Fq, with the five polarities.
+#
+# ⚑ `export-step-tape` IS GONE (2026-08-05). It proved a SECOND step proof — over kimchi's TEST SRS
+# and with `OsRng`, so it was not reproducible — and wrote `KimchiStepWrapChainFixture` about it,
+# while the forty public words came from `pickles_kimchi_marshal`'s step proof and the wrap
+# transcript absorbed a THIRD proof's commitments. Three proofs, one pipeline, every shape equal.
+# The tape is now written by `pickles-extractors/src/tape.rs` from the SAME `prove_step` return
+# value the forty come from; that crate is the one with `ledger`, so it is the one that can use
+# Mina's own SRS. This crate keeps the wrap-side prover and nothing else.
 [package]
 name = "pickles-chain-harness"
 version = "0.1.0"
 edition = "2021"
 publish = false
-
-[[bin]]
-name = "export-step-tape"
-path = "src/bin/export_step_tape.rs"
 
 [[bin]]
 name = "harness"

@@ -105,6 +105,7 @@ use pickles_reality_gate_export::marshal::{
     self, expand_prechallenge, marshal, PreChallenge, PrevStepEvals, WrapKimchiProof,
     WrapStatementScalars, PROOFS_VERIFIED, STEP_ROUNDS, WRAP_ROUNDS,
 };
+use pickles_reality_gate_export::tape::{self, StepTapeOut};
 use pickles_reality_gate_export::transcript::{self, StepTranscript};
 use pickles_reality_gate_export::wire::{binprot_of_proof, sexp_of_proof};
 
@@ -408,16 +409,26 @@ fn prove_wrap() -> (
 /// `util.rs:215-258`, both `z, generic, poseidon, complete_add, mul, emul, endomul_scalar, w,
 /// coefficients, s`). An empty vector against two counter vectors is not a protocol difference; it
 /// is a proof that does not have the recursion the statement says it has.
+///
+/// ⚑ **AND IT IS NOW THE ONLY STEP PROOF IN THE PIPELINE.** Until 2026-08-05 there were three: this
+/// one (which the forty public words describe), the third-party `create_circuit(0,5)` export whose
+/// commitments `KimchiWrapMain.RC_*` absorbed, and `export_step_tape`'s own — proved over kimchi's
+/// TEST SRS with **`OsRng`**, so not reproducible, and yet the source of the Lean chain fixture.
+/// All three had `prevs = 2`, `wComms = 15`, `tComms = 7`, so no shape check could see it. The rung
+/// moved to `stepmain_smoke_r8_finalize` (the top step rung, and the circuit the chain fixture was
+/// already about) so that ONE proof serves the forty, the wrap transcript and the chain; `tape`
+/// renders the Lean modules from this function's return value and nothing else.
 fn prove_step(
     srs: &poly_commitment::ipa::SRS<Vesta>,
 ) -> (
     PrevStepEvals,
     StepTranscript,
     Vec<[PreChallenge; STEP_ROUNDS]>,
+    StepTapeOut,
 ) {
     let c = load(&sibling(
         "pickles-stepmain-harness",
-        "stepmain_smoke_r6_ft_eval0.json",
+        "stepmain_smoke_r8_finalize.json",
     ));
     let gates = gates_of::<Fp>(&c);
     let witness = witness_of::<Fp>(&c);
@@ -487,7 +498,7 @@ fn prove_step(
         witness,
         &[],
         &index,
-        prev_slots,
+        prev_slots.clone(),
         None,
         &mut fixture_rng(*b"dregg/pickles-marshal/step-proof"),
     )
@@ -500,11 +511,13 @@ fn prove_step(
         proof: &proof,
         public_input: &public,
     };
+    let tv = Instant::now();
     batch_verify::<FULL_ROUNDS, Vesta, StepBase, StepScalar, OpeningProof<Vesta, FULL_ROUNDS>>(
         &group_map,
         &[ctx],
     )
     .expect("the step proof must verify too");
+    let verify_ms = tv.elapsed().as_millis();
 
     let tr = transcript::step_transcript(&proof, vk, &public);
     println!(
@@ -518,9 +531,31 @@ fn prove_step(
         proof.prev_challenges.len(),
         proof.proof.lr.len(),
     );
+    // ⚑ THE TAPE, FROM THIS PROOF OBJECT. Same `proof`, same `vk`, same `public_comm` the
+    // transcript above absorbed — so `KimchiStepWrapChainFixture` and the forty public words are
+    // two shadows of one object rather than two artifacts that happen to agree today.
+    let tape = tape::export(tape::StepTapeInputs {
+        circuit_name: &c.name,
+        rows: c.num_rows,
+        public_words: c.public_input_size,
+        prove_ms: (secs * 1000.0) as u128,
+        verify_ms,
+        proof: &proof,
+        vk,
+        public_input: &public,
+        public_comm: &transcript::public_comm(vk, &public),
+        prev_challenges: &prev_slots,
+    });
+    println!(
+        "[tape ] phase-1 tape {} Fq words before beta ; the wrap transcript's SOURCED block: {} Fq \
+         words / {} Vesta points, all from THIS proof (IPA rounds {}) — x_hat excluded, it is \
+         §15's MSM output",
+        tape.tape_words, tape.transcript_words, tape.transcript_points, tape.ipa_rounds
+    );
+
     let prev = marshal::prev_step_evals_from_proof(&proof)
         .expect("step proof carries a public evaluation");
-    (prev, tr, step_pre)
+    (prev, tr, step_pre, tape)
 }
 
 // ───────────────────────── the statement half ─────────────────────────
@@ -639,7 +674,22 @@ fn main() {
     );
     assert_eq!(srs.g.len(), transcript::TICK_SRS_LEN);
 
-    let (prev, tr, step_pre) = prove_step(&srs);
+    let (prev, tr, step_pre, tape_out) = prove_step(&srs);
+
+    // ⚑ THE LEAN TAPE MODULES, WRITTEN FROM THE PROOF THE FORTY DESCRIBE. Copy them over
+    // `metatheory/Dregg2/Circuit/Emit/` to re-bake; a second run must move zero bytes.
+    for (name, body) in [
+        ("KimchiStepWrapChainFixture.lean", &tape_out.fixture_lean),
+        ("KimchiStepWrapChainKey.lean", &tape_out.key_lean),
+    ] {
+        std::fs::write(format!("{out_dir}/{name}"), body).expect("write lean tape module");
+        println!("[tape ] wrote {out_dir}/{name}");
+    }
+    std::fs::write(
+        format!("{out_dir}/step-tape.json"),
+        serde_json::to_string_pretty(&tape_out.json).expect("tape json"),
+    )
+    .expect("write tape json");
 
     // ── the accumulator, computed rather than asserted ──
     println!("\n== GATE A INPUT — the IPA accumulator, computed ==");

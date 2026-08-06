@@ -219,6 +219,47 @@ of `PreparedStatement::to_public_input(40)`**. Two lists that were about differe
 `oracles()` shifted by `tape.rs` **equals** openmina's `expand_deferred` rendered by `to_public_input`
 — two codebases, one Fq word, and `wrap_verifier.ml:395` absorbs it as one item.
 
+⛑⛑⛑ **AND THE PROMOTION FOUND A LIVE DEFECT THAT WAS NOT MINE: `mkWrap`'S NO-OP BEND SENTINEL
+ZEROED A REAL ABSORBED WORD AT THE WRAP SHAPE.**
+
+`runSpongeQ` takes `(bt, bw)` so §12 can re-run the transcript on a prover's chosen word; the honest
+instance is meant to pass a `bt` naming no event. It passed **`nItems s + 1`** — the **absorb-only**
+count — while `runSpongeQ` compares `bt` against `ei.2`, the index in the **full event list**, which
+interleaves absorbs and squeezes.
+
+| shape | `nItems` | sentinel | events | what index the sentinel names |
+|---|---|---|---|---|
+| `shapeSmoke` | 34 | 35 | 44 | a **squeeze** — the override only reads in the `.abs` branch, so harmless |
+| `shapeWrap` | 120 | 121 | 143 | an **absorb**: `T_LR` item 49 = round 12's `L.y`, **replaced by 0** |
+
+⚑ **MEASURED:** of the 116 words the transcript sources, `absVal ≠ itemVal` at **exactly one index**
+and nowhere else, at any tag. `bullLrVal t 12 0` read `(x, 0)`, off `y² = x³ + 5`; `endoInvPtQ`'s
+`vestaScMul` then hit a degenerate Jacobian (`Z = 0`) and returned `(0,0)` through its **silent
+fallback**; the emitted witness was unsatisfiable and the prover said
+`Prover("rest of division by vanishing polynomial")` — **three layers from the cause, naming
+W-BULLET rather than the sentinel.**
+
+⚠ **IT IS PRE-EXISTING AND VALUE-INDEPENDENT.** The zeroing happens in the trajectory whatever the
+schedule offers, so the old borrowed-proof emission had it too. It had never been seen because the
+WRAP shape had never been proved — the accepted artifact is the smoke one, where the sentinel misses
+by luck. **A count compared against a different numbering's index**, and no arity check can see it:
+both numbers are correct counts of the things they count.
+
+FIX: the sentinel is `(schedule s).length`, one past the last index **in the numbering `runSpongeQ`
+uses**. `the_trajectory_records_the_schedules_own_words` pins the schedule's absorb payloads against
+the recorded words at both shapes — it **refuted the pre-fix code** and passes the fix, and
+`the_bend_still_bends_when_it_is_aimed` keeps §12's red controls armed so the repair is not "disable
+the feature". ⚑ **SMOKE IS BYTE-UNCHANGED** by the fix, so the 14/14 gate above still stands.
+
+⛑ **AND WITH IT, W-BULLET PROVES AT SIXTEEN ROUNDS.** Isolated on a smoke-sized shape that differs
+from `shapeSmoke` only in `ipaRounds = 16` (`DREGG_WM=2,16,3,2,8,3,6,5`): before, `w11_bullet`
+REJECTED; after, `w11_bullet` (5 452 rows) and `w12_close` (6 091 rows) both `verify()==true` with
+the public leg rejecting 4/4 sampled and accepting only declared-unread slots.
+
+**WRAP-SCALE STATUS**, five polarities, release: `w1_transcript` · `w6_xhat` · `w8_ftcomm` ·
+`w9_prev` · `w10_finalize` · `w10_combine` · `w11_wraphack` · `w11_finsponge` all prove; `w11_bullet`
+and `w12_close` were the two reds and the sentinel was why.
+
 ⚠ **WHAT IS STILL NOT THIS PROOF'S, AND IT IS EXACTLY TWO ITEMS.** The MAIN assembly absorbs Mina's
 `step-transaction` key digest at `wrap_verifier.ml:537` (§14's `choose_key` anchor) and §15's MSM
 output at `:617`, not this proof's index digest and `public_comm`. Both land **before β**, so its

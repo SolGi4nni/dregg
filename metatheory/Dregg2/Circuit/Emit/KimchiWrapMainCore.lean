@@ -31,6 +31,9 @@ import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
 import Dregg2.Circuit.Emit.MinaWrapDeferredWords
 import Dregg2.Circuit.Emit.KimchiWrapMainField
 import Dregg2.Circuit.Emit.KimchiStepWrapChainKey
+-- ⚑ THE STEP PROOF THE TRANSCRIPT IS ABOUT. `RC_SGOLD`/`RC_WCOMM`/`RC_ZCOMM`/`RC_TCOMM` read it;
+-- the module imports only `PastaField`, so this is not a cycle.
+import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 open Dregg2.Circuit.Emit.KimchiTarget (KGateType K_PERMUTS)
@@ -252,16 +255,49 @@ def T_CIP : Nat := 6
 def T_LR : Nat := 7
 def T_DELTA : Nat := 8
 
-/-- The REAL commitment coordinates of an accepted Vesta-committed kimchi proof, in Fq — the field
-this circuit computes in and the field a STEP proof's commitments live in. `PastaPoseidonFq` §6
-dumped them from `kimchi/examples/pickles_p6_fq_export.rs` off a `create_recursive` proof that
-`kimchi::verifier::verify` ACCEPTS, and re-derives β/γ/α′/ζ′ from them (`fqPhase1`). §12a pins this
-assembly's own sponge against that derivation. -/
-def RC_SGOLD : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.PREVCOMM_XY
+/-! ### ⚑ **THE COMMITMENTS ARE OUR OWN STEP PROOF'S SINCE 2026-08-05 — AND THAT CLOSED A
+THREE-PROOF PIPELINE, NOT A ONE-PROOF GAP.**
+
+These four blocks used to be `PastaPoseidonFq`'s: the commitments of a `create_circuit(0,5)` proof
+exported from a THIRD-PARTY checkout (`kimchi/examples/pickles_p6_fq_export.rs`). They were real,
+and they were *someone else's*. Meanwhile the forty public words `MinaWrapDeferredWords` carries
+came from `pickles_kimchi_marshal`'s step proof, and `KimchiStepWrapChainFixture` was written by a
+SECOND binary about a THIRD step proof — proved over kimchi's TEST SRS with **`OsRng`**, so not even
+reproducible.
+
+⚠ **THREE PROOFS, AND EVERY SHAPE AGREED**: `prevs = 2`, `wComms = 15`, `tComms = 7` on all three,
+so no census, no arity check and no `WrapShape` comparison could ever go red. That is the whole
+lesson — *same-shape is not same-proof*, and a pipeline whose parts agree on shape will keep its
+disagreement about IDENTITY silently forever.
+
+There is now ONE step proof. `tape.rs` writes `KimchiStepWrapChainFixture` from the same
+`prove_step` return value that produces the forty, so the words this transcript absorbs and the
+words the public vector must derive are facts about one object.
+
+⚠ **WHAT IS STILL NOT THIS PROOF'S, SAID PLAINLY.** Two of the transcript's absorbed items are not
+sourced here and are not claimed to be:
+
+  * `RC_DIGEST` is **Mina's `step-transaction` key's** index digest, not ours — §14's `choose_key`
+    folds `STEP_VK_XY`, and that is W-KEY's deliberate anchor (`KimchiStepWrapChainKey` carries our
+    own step key's 56 coordinates for the chain, which is the module that uses them);
+  * `x_hat` is §15's MSM output, which is `w6_xhat`'s achievement and not a fixture at all.
+
+So the emitted transcript's β/γ/α/ζ are NOT this step proof's β/γ/α/ζ, and nothing here says they
+are. `KimchiStepWrapChain` is where that equality is a theorem, because it overrides both. -/
+
+/-- `sg_old` — the step proof's two `RecursionChallenge` commitments (`verifier.rs:165-168`,
+absorbed at `wrap_verifier.ml:538`). -/
+def RC_SGOLD : List Nat := Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY
+/-- ⚠ **NOT ON THE TRANSCRIPT ANY MORE — A RED CONTROL ONLY.** The third-party proof's
+public-input commitment, kept because `xhat_derived_is_not_the_old_fixture` exhibits the value the
+transcript used to absorb before §15's MSM replaced it. -/
 def RC_XHAT : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.PUBCOMM_XY
-def RC_WCOMM : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.WCOMM_XY
-def RC_ZCOMM : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.ZCOMM_XY
-def RC_TCOMM : List Nat := Dregg2.Circuit.Emit.PastaPoseidonFq.TCOMM_XY
+/-- The step proof's 15 witness commitments (`verifier.rs:173-177`, absorbed at `:619`). -/
+def RC_WCOMM : List Nat := Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_WCOMM_XY
+/-- The step proof's `z_comm` (`verifier.rs:250`, absorbed at `:623`). -/
+def RC_ZCOMM : List Nat := Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_ZCOMM_XY
+/-- The step proof's 7 `t_comm` chunks (`verifier.rs:269`, absorbed at `:630`). -/
+def RC_TCOMM : List Nat := Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_TCOMM_XY
 /-- ⚑ **THE INDEX DIGEST OF §14's `STEP_VK_XY`** — `verifier_index.digest::<BaseSponge>()` as Rust
 kimchi computes it for Mina's `step-transaction` key, which `key_digest_is_the_index_digest`
 re-derives from the 56 coordinates through THIS FILE's own Fq sponge, and which the extractor re-derives a third time by an independent `absorb_fq`
@@ -285,13 +321,30 @@ was, until 2026-08-04, that proof's own (degenerate, seven-identity) index. §14
 broke and what re-emitted. -/
 def RC_DIGEST : Nat := STEP_VK_DIGEST
 
-/-! ### §2d — **THE FIXTURES, NAMED.**
+/-! ### §2d — **THE FIXTURES, NAMED — AND THE LIST IS NOW SHORT.**
 
-`RC_SGOLD`/`RC_XHAT`/`RC_WCOMM`/`RC_ZCOMM`/`RC_TCOMM` and `RC_DIGEST` are a real accepted proof's
-values, but they are FIXTURES in this circuit: no row here derives them, because the sub-circuits
-that would (W-KEY for the digest, W-XHAT for `x_hat`) are not assembled. `lr`/`delta` have no real
-source in this tree at all and get a deterministic filler, which is named here and nowhere pretends
-to be a commitment. -/
+⚑ **`wrapFixture` NO LONGER REACHES ANY TRANSCRIPT ITEM.** Every one of the 116 Fq words this
+transcript absorbs off the step proof — `sg_old` (4), `w_comm` (30), `z_comm` (2), `t_comm` (14),
+`lr` (64), `delta` (2) — comes from `KimchiStepWrapChainFixture`, i.e. from an accepted
+`ProverProof::create_recursive` over Mina's own 65,536-generator SRS. `lr` and `delta` were the
+sharp end: until 2026-08-05 this docblock said they *"have no real source in this tree at all"* and
+`KimchiWrapMainField.lrPointQ i = xhatBase (5 + i % 50)` made thirty-two of the thirty-three IPA
+points fifty SRS Lagrange bases, cycled. An IPA opening **is** `lr` and `delta`, and the step proof
+in this pipeline had carried one the whole time; nobody had read it off.
+
+They are still FIXTURES **in this circuit** in the exact sense that matters and no other: no row
+here DERIVES them. That is a statement about which sub-circuits are assembled (W-COMBINE's `~init`,
+W-BULLET's consumers — §2c's census), not about where the numbers came from. The two items that are
+not this step proof's at all are named in §2's `RC_*` block: `RC_DIGEST` (Mina's `step-transaction`
+key) and `x_hat` (§15's MSM output).
+
+⚠ `wrapFixture` survives as the `getD` TOTALITY default on the four commitment blocks — not a value
+anything reads, since a fired default would mean the tape asked for a word past the end of a block
+and `the_sourced_transcript_census_is_58_points` pins every length against the shape.
+`lrPointQ`/`deltaPointQ` default to **`0`** instead, and the difference is deliberate rather than an
+oversight: `(0, 0)` is kimchi's own flattening of the point at infinity (`sponge.rs:332-344`), it is
+off `y² = x³ + 5`, and `the_transcript_points_are_on_vesta` therefore turns a fired default there
+into a red rather than into a plausible-looking coordinate. -/
 def wrapFixture (tag i : Nat) : Nat := (11 + 1000003 * (17 * tag + i)) % qN
 
 /-- Item `i` of tag `t`'s VALUE.
@@ -1031,7 +1084,34 @@ def mkWrapWith (s : WrapShape) (bt bw : Nat) : WrapData :=
             ((List.range s.branches).map (fun i => min 2 i))
             ((List.range s.branches).map (fun _ => 16)) }
 
-def mkWrap (s : WrapShape) : WrapData := mkWrapWith s (nItems s + 1) 0
+/-- The HONEST instance — `mkWrapWith` at a bend index that cannot name any event.
+
+⚠ ⚑ **THIS SENTINEL WAS COUNTED IN THE WRONG NUMBERING, AND AT `shapeWrap` IT ZEROED A REAL
+ABSORBED WORD.** It was `nItems s + 1`. `nItems` counts **absorbs only**; `runSpongeQ` compares `bt`
+against `ei.2`, the index in the **full event list**, which interleaves absorbs and squeezes. So the
+"out of range" sentinel is only out of range when `nItems s + 1 ≥ (schedule s).length`, which is
+false for every shape this file has:
+
+  * `shapeSmoke` — `nItems = 34`, sentinel `35`, events `44`. Index 35 lands on a **squeeze**, and
+    the override only reads in the `.abs` branch, so it was harmless. **That is why it was never
+    seen**, and it is luck, not design.
+  * `shapeWrap` — `nItems = 120`, sentinel `121`, events `143`. Index 121 is an **absorb**:
+    `T_LR` item 49, i.e. round 12's `L.y`. Its word was replaced by `bw = 0`, so `bullLrVal t 12 0`
+    read `(x, 0)` — a point off `y² = x³ + 5`. `endoInvPtQ`'s `vestaScMul` then hit a degenerate
+    Jacobian (`Z = 0`), returned `(0, 0)` through its silent fallback, and the emitted witness was
+    unsatisfiable. **The prover reported it as `Prover("rest of division by vanishing polynomial")`
+    — three layers from the cause, and pointing at W-BULLET rather than at this line.**
+
+⚑ **MEASURED, not deduced:** of the 116 words the transcript sources, `absVal ≠ itemVal` at
+**exactly one index** — `T_LR 49` — and nowhere else, at any tag.
+
+⚠ It is **pre-existing** and independent of whose step proof the transcript carries: the zeroing
+happens in the trajectory, whatever value the schedule offers. It was invisible because the WRAP
+shape had never been proved — the accepted artifact is the smoke one, where the sentinel misses.
+
+The sentinel is now `(schedule s).length`, which is one past the last valid index **in the numbering
+`runSpongeQ` actually uses**, so no event can match it at any shape. -/
+def mkWrap (s : WrapShape) : WrapData := mkWrapWith s (schedule s).length 0
 
 /-- W2's rows: the shared endo pin, then a `to_field_checked` chain per `chal` squeeze and an
 `assert_128_bits` chain over each one's HIGH part. -/
@@ -5804,9 +5884,22 @@ def shapeWrap : WrapShape :=
   -- `wrap_verifier.ml:617` moves, so every wrap-scale challenge, the fork digest and all 22 derived
   -- public words below it move with it. The SMOKE shape is unmoved: `xhatSel 5` does not select
   -- entries 65/66, which is also why the smoke fixtures below `w11_wraphack` are byte-identical.
+  -- ⚠ ⚑ **AND IT MOVED AGAIN ON 2026-08-05, WHEN THE TRANSCRIPT BECAME THIS PIPELINE'S OWN STEP
+  -- PROOF'S.** `RC_SGOLD` and `KimchiWrapMainField.whSgOld` now both resolve to
+  -- `KimchiStepWrapChainFixture.STEP_PREVCOMM_XY`, so §21's two prev-proof
+  -- `hash_messages_for_next_wrap_proof` squeezes hash a different `sg_old`; those squeezes ARE
+  -- packed statement words 55/56, which are x_hat MSM entries 65/66. `whSg` moved with them
+  -- (`openings_proof.challenge_polynomial_commitment` is the step proof's `sg`), which is packed
+  -- word 11's input rather than an MSM entry, so it costs word 11 and not this pair.
+  -- ⚠ **THE REFUSAL DID NOT FIRE ON THE FIRST TRY, AND THAT WAS THE FINDING.** With only `RC_SGOLD`
+  -- moved, `xhatOut 67` was UNCHANGED — because `whSgOld` was a SECOND copy of `sg_old` still
+  -- reading `PastaPoseidonFq.PREVCOMM_XY`, so the emitted §21 rows (which read the transcript's
+  -- cells) and the packed words the MSM consumes had come apart. A green refusal check was
+  -- evidence of the defect, not of its absence. **WHAT RE-EMITS:** every `wrapmain_wrap_*.json`.
+  -- The SMOKE shape's pair is again unmoved — `xhatSel 5` selects none of entries 65/66.
   , xhatXY :=
-      (21038944471751315142907703185900822264518741389040370626991641394610909963071,
-       19592567164898647587744187653137926963532786082618227593626077542755892693697) }
+      (4022490419696914974552329481440292907479784771610225258625532911088680787709,
+       10670339750370241841725935164004242674693458148521342109140844533550760005700) }
 
 /-- A small shape for the in-CI `#guard`s (the committed one is emitted by the driver). -/
 def shapeSmoke : WrapShape :=

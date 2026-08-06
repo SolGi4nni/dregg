@@ -53,6 +53,10 @@ import Dregg2.Circuit.Emit.PastaField
 import Dregg2.Circuit.Emit.MinaStepSrsLagrange
 import Dregg2.Circuit.Emit.PastaPoseidonFq
 import Dregg2.Circuit.Emit.PastaCurve
+-- ⚑ THE STEP PROOF'S OWN IPA OPENING. `KimchiStepWrapChainFixture` imports only `PastaField`, so
+-- this adds no cycle; it is what makes `lrPointQ`/`deltaPointQ` read a real `openings_proof`
+-- instead of cycling SRS Lagrange bases.
+import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 
@@ -507,10 +511,21 @@ def whOldChals (p : Nat) : List Nat := (List.range (WH_MLMB * WH_ROUNDS)).map (w
 
 /-- `prev_step_accs.(p)` — ⚑ the TRANSCRIPT's own `sg_old` coordinates, not a second copy of them.
 This mirrors `KimchiWrapMain.itemVal T_SGOLD` exactly, including its fallback, so §21's tie row
-joins two cells that already hold one value. -/
+joins two cells that already hold one value.
+
+⚠ ⚑ **AND "MIRRORS" WAS ONE EDIT AWAY FROM FALSE, WHICH IS WHY IT NOW READS THE SAME LIST.** This
+def used to name `PastaPoseidonFq.PREVCOMM_XY` and `itemVal T_SGOLD` used to name it too, so the
+sentence above was true by coincidence of two literals. On 2026-08-05 `RC_SGOLD` moved to the step
+proof this pipeline is actually about and this one did not — instantly making the emitted §21 rows
+(which read the TRANSCRIPT cells, `absPtVal t.sp T_SGOLD p`) hash a different `sg_old` from the one
+`prevWordVal` packs into statement words 55/56 and the x_hat MSM consumes. `wraphack_digest_is_the_statement_word`
+is the pin that would have gone red for it. Two defs holding one object is the defect; both now
+resolve through `KimchiStepWrapChainFixture.STEP_PREVCOMM_XY`. -/
 def whSgOld (p : Nat) : Nat × Nat :=
-  ((Dregg2.Circuit.Emit.PastaPoseidonFq.PREVCOMM_XY).getD (2 * p) (wrapFixtureQ 1 (2 * p)),
-   (Dregg2.Circuit.Emit.PastaPoseidonFq.PREVCOMM_XY).getD (2 * p + 1) (wrapFixtureQ 1 (2 * p + 1)))
+  ((Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY).getD (2 * p)
+      (wrapFixtureQ 1 (2 * p)),
+   (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY).getD (2 * p + 1)
+      (wrapFixtureQ 1 (2 * p + 1)))
 
 /-- ⚑ **PACKED STATEMENT WORD `55 + p`** — `prev_statement.messages_for_next_wrap_proof.(p)`. -/
 def whPrevDigest (p : Nat) : Nat := whDigestOf (whOldChals p) (whSgOld p)
@@ -521,9 +536,22 @@ def whNewChal (k : Nat) : Nat := wrapFixtureQ 42 k
 def whNewChals : List Nat := (List.range (WH_MLMB * WH_ROUNDS)).map whNewChal
 
 /-- `openings_proof.challenge_polynomial_commitment` — `exists (Openings.Bulletproof.typ …)` at
-`wrap_main.ml:357-383`, i.e. **W-OPENINGS's**, which this file does not assemble either; its
-`Inner_curve.typ` `assert_on_curve` is that sub-circuit's row, not §21's. -/
-def whSg : Nat × Nat := (wrapFixtureQ 43 0, wrapFixtureQ 43 1)
+`wrap_main.ml:357-383`. ⚠ Its `Inner_curve.typ` `assert_on_curve` is **W-OPENINGS's** row, not §21's,
+and this file does not assemble that sub-circuit.
+
+⚑ **THE VALUE IS REAL SINCE 2026-08-05, AND IT IS THE SAME RECORD `lr` AND `delta` COME FROM.**
+`wrap_main.ml:357-383` destructures ONE `Openings.Bulletproof.t` — `{lr; delta; z_1; z_2; sg}` — and
+`challenge_polynomial_commitment` is that record's `sg`. Having wired `lr` and `delta` from the step
+proof's opening and left this a `wrapFixtureQ`, the file would have been reading one upstream record
+from two sources, which is the precise defect this whole change exists to close.
+
+⚑ It is also the one field of that record Mina checks ARITHMETICALLY before it consults any key:
+`pickles_kimchi_marshal` MEASURES `⟨b_poly_coefficients(u⃗), srs.g⟩ == opening.sg` over Mina's own
+65,536 generators, and `accumulator_check.rs:10-64` is the verifier's side of that identity. So this
+pair is not merely "from a real proof" — it is the accumulator the next proof's `sg_old` must be. -/
+def whSg : Nat × Nat :=
+  ( Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_SG_XY.getD 0 (wrapFixtureQ 43 0)
+  , Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_SG_XY.getD 1 (wrapFixtureQ 43 1) )
 
 /-- ⚑ **WRAP STATEMENT WORD 11** — `messages_for_next_wrap_proof_digest`, the value
 `wrap_main.ml:421-431` `Field.Assert.equal`s. -/
@@ -1025,11 +1053,32 @@ def endoInvPtQ (g : Nat × Nat) (pre : Nat) : Nat × Nat :=
 `[s]·T` — the `Shifted_value.Type1` shift, in Vesta's scalar field. -/
 def sfKQ (s : Nat) : Nat := (2 ^ 255 + 2 * s + 1) % pMod
 
-/-- `openings_proof.lr.(r)`'s two points (`wrap_main.ml:381`), and `delta` (`:382`). ⚠ FIXTURES —
-they have no real source in this tree — but ON-CURVE fixtures, which is what `Inner_curve.typ`
-guarantees upstream and what `endo_inv` needs to have a witness at all. -/
-def lrPointQ (i : Nat) : Nat × Nat := xhatBase (5 + i % 50)
-def deltaPointQ : Nat × Nat := xhatBase 60
+/-! ### ⚑ **`lr` AND `delta` ARE A REAL IPA OPENING SINCE 2026-08-05.**
+
+They were `xhatBase (5 + i % 50)` and `xhatBase 60` — **thirty-two of the thirty-three points were
+fifty SRS Lagrange bases, cycled**, and §2d said so in writing ("`lr`/`delta` have no real source in
+this tree at all"). The fix was not to build an opening: **an IPA opening IS `lr` and `delta`**, and
+`pickles_kimchi_marshal`'s step proof has carried one all along — `ProverProof::create_recursive`
+over Mina's own `SRS::<Vesta>::create(65536)`, which is what pins it to sixteen rounds. Nobody had
+read them off. `tape.rs` now does, in the same run that produces the forty public words.
+
+⚠ **WHAT THIS DOES NOT SAY.** These are the opening of a *smoke* step circuit, and the wrap
+assembly does not yet CHECK the opening — W-BULLET consumes the points (32 endo ladders plus
+`Inner_curve.typ`) and `w12_close` asserts `bulletproof_success`, but `combined_inner_product`'s
+VALUE is still W-FINALIZE's. What changed is provenance, not verification: the words the transcript
+absorbs are now a real `openings_proof`'s, so the challenges squeezed after them are challenges of
+something. Cycling Lagrange bases could never be that, whatever `assert_on_curve` said about them. -/
+
+/-- `openings_proof.lr.(r)`'s two points (`wrap_main.ml:381`) — round `i`, from the step proof's own
+opening. `STEP_LR_XY` is four Fq coordinates per round: `Lx, Ly, Rx, Ry`. -/
+def lrPointQ (i : Nat) : Nat × Nat :=
+  ( Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LR_XY.getD (2 * i) 0
+  , Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LR_XY.getD (2 * i + 1) 0 )
+
+/-- `delta` (`wrap_main.ml:382`), from the same opening. -/
+def deltaPointQ : Nat × Nat :=
+  ( Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DELTA_XY.getD 0 0
+  , Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DELTA_XY.getD 1 0 )
 
 end Dregg2.Circuit.Emit.KimchiWrapMain
 

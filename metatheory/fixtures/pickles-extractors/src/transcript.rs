@@ -187,7 +187,12 @@ pub struct StepTranscript {
 /// and cannot be called. It is not a re-derivation: `oracles` absorbs this commitment
 /// (`verifier.rs:171`) and every challenge downstream depends on it, so a transcript computed
 /// against a different `public_comm` is a transcript of nothing.
-fn public_comm(index: &StepVerifierIndex, public_input: &[Fp]) -> PolyComm<Vesta> {
+///
+/// ⚑ **PUBLIC BECAUSE `tape` NEEDS THE SAME OBJECT, NOT AN EQUAL ONE.** `wrap_verifier.ml:617`
+/// absorbs `x_hat`, which IS this commitment, so the Lean tape's `x_hat` block and the sponge
+/// position every challenge below it depends on are the same computation the transcript ran. A
+/// second implementation next door would be a second source.
+pub fn public_comm(index: &StepVerifierIndex, public_input: &[Fp]) -> PolyComm<Vesta> {
     let d1_size = index.domain.size();
     let chunk_size = if d1_size < index.max_poly_size {
         1

@@ -137,4 +137,163 @@ theorem the_field_is_fq_and_wraps :
     ∧ qSub 0 1 = qN - 1 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
+/-! ### §11e — ⚑ **WHOSE PROOF THE TRANSCRIPT IS ABOUT.**
+
+Landed 2026-08-05. Until then this pipeline carried **three different step proofs** and every shape
+agreed, so nothing could go red:
+
+  * the forty public words (`MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED`) came from
+    `pickles_kimchi_marshal`'s step proof — Mina's own SRS, seeded prover;
+  * the transcript's absorbed commitments (`RC_SGOLD`/`RC_WCOMM`/`RC_ZCOMM`/`RC_TCOMM`) came from a
+    THIRD-PARTY `create_circuit(0,5)` export (`PastaPoseidonFq`);
+  * `KimchiStepWrapChainFixture` came from a SECOND binary's own proof, over kimchi's TEST SRS and
+    with **`OsRng`** — not reproducible at all.
+
+`prevs = 2`, `wComms = 15`, `tComms = 7` on all three. ⚠ **Same-shape is not same-proof**, and a
+census that only counts cannot tell them apart — which is exactly why the pins below compare VALUES,
+elementwise, and why the red controls are against the specific objects that used to sit here.
+
+⚑ And `lr`/`delta` were not a borrowed proof's — they were **not a proof's at all**:
+`lrPointQ i = xhatBase (5 + i % 50)` made thirty-two of the thirty-three IPA points fifty SRS
+Lagrange bases, cycled. `the_ipa_opening_is_not_srs_lagrange_bases` is the control for that. -/
+
+/-- ⚑ **ALL 116 Fq WORDS THE TRANSCRIPT SOURCES ARE THIS PIPELINE'S OWN STEP PROOF'S**, elementwise,
+at BOTH committed shapes. Not a length, not a digest, not a sample: `itemVal` is compared against
+`KimchiStepWrapChainFixture`'s blocks at every index the schedule reads.
+
+⚠ Two absorbed items are deliberately NOT here and are not claimed: `RC_DIGEST` is Mina's
+`step-transaction` key's index digest (§14's `choose_key` anchor) and `x_hat` is §15's MSM output.
+So this says the COMMITMENTS are this proof's — it does not say the emitted transcript's β/γ/α/ζ are
+this proof's, and they are not. `KimchiStepWrapChain` is where that becomes a theorem. -/
+theorem the_transcript_absorbs_this_pipelines_own_step_proof :
+    (List.range (2 * shapeWrap.prevs)).all (fun i =>
+      itemVal T_SGOLD i
+        == Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.getD i 0) = true
+    ∧ (List.range (2 * shapeWrap.wComms)).all (fun i =>
+        itemVal T_WCOMM i
+          == Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_WCOMM_XY.getD i 0) = true
+    ∧ (List.range 2).all (fun i =>
+        itemVal T_ZCOMM i
+          == Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_ZCOMM_XY.getD i 0) = true
+    ∧ (List.range (2 * shapeWrap.tComms)).all (fun i =>
+        itemVal T_TCOMM i
+          == Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_TCOMM_XY.getD i 0) = true
+    ∧ (List.range (4 * shapeWrap.ipaRounds)).all (fun i =>
+        itemVal T_LR i
+          == Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LR_XY.getD i 0) = true
+    ∧ (List.range 2).all (fun i =>
+        itemVal T_DELTA i
+          == Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DELTA_XY.getD i 0) = true := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THE CENSUS THOSE WORDS MAKE: 58 POINTS, 116 WORDS**, and it is arithmetic over the SHAPE
+rather than a number typed next to a claim. `sg_old 2 + w_comm 15 + z_comm 1 + t_comm 7 = 25` and
+`lr 2·16 + delta 1 = 33`. ⚠ `x_hat` is not counted: `w6_xhat` made that pair §15's MSM output, so it
+is derived rather than sourced, and counting it would inflate the fixture census by the one pair a
+rung earned. -/
+theorem the_sourced_transcript_census_is_58_points :
+    shapeWrap.prevs + shapeWrap.wComms + 1 + shapeWrap.tComms = 25
+    ∧ 2 * shapeWrap.ipaRounds + 1 = 33
+    ∧ 2 * (shapeWrap.prevs + shapeWrap.wComms + 1 + shapeWrap.tComms)
+        + 2 * (2 * shapeWrap.ipaRounds + 1) = 116
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.length = 2 * shapeWrap.prevs
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_WCOMM_XY.length = 2 * shapeWrap.wComms
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_ZCOMM_XY.length = 2
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_TCOMM_XY.length = 2 * shapeWrap.tComms
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_LR_XY.length
+        = 4 * shapeWrap.ipaRounds
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DELTA_XY.length = 2 := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **RED CONTROL — IT IS NOT THE BORROWED PROOF.** Every block the transcript used to absorb came
+from `PastaPoseidonFq`, i.e. from `kimchi/examples/pickles_p6_fq_export.rs`'s `create_circuit(0,5)`
+proof. If any of these four were still equal, `the_transcript_absorbs_…` above would be true of a
+list that had simply been renamed. -/
+theorem the_transcript_is_not_the_borrowed_proof :
+    Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY
+      ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.PREVCOMM_XY
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_WCOMM_XY
+        ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.WCOMM_XY
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_ZCOMM_XY
+        ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.ZCOMM_XY
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_TCOMM_XY
+        ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.TCOMM_XY := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **RED CONTROL — AND `lr`/`delta` ARE NOT SRS LAGRANGE BASES.** The filler these replaced was
+`lrPointQ i = xhatBase (5 + i % 50)` and `deltaPointQ = xhatBase 60`: on-curve, so `Inner_curve.typ`
+and `endo_inv` were satisfied, and therefore invisible to every check that existed. **`onCurveQ` was
+never going to catch this** — which is the reason the control is an inequality against the specific
+points rather than another curve predicate. -/
+theorem the_ipa_opening_is_not_srs_lagrange_bases :
+    (List.range (2 * shapeWrap.ipaRounds)).all (fun i =>
+      lrPointQ i != xhatBase (5 + i % 50)) = true
+    ∧ deltaPointQ ≠ xhatBase 60 := by
+  refine ⟨rfl, ?_⟩
+  decide
+
+/-- ⚑ **AND ALL 58 ARE ON VESTA.** `Openings.Bulletproof.typ`'s `Inner_curve.typ` is `assert_on_curve`
+upstream, and `Scalar_challenge.endo_inv` (`scalar_challenge.ml:343-354`) has **no witness at all**
+over an off-curve `l` — its `res = [x⁻¹]·l` needs the group. A real opening satisfies this by
+construction; measuring it is what makes that a fact about these numbers rather than a deduction
+from their provenance. -/
+theorem the_transcript_points_are_on_vesta :
+    (List.range shapeWrap.prevs).all (fun p =>
+      onCurveQ (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true
+    ∧ (List.range shapeWrap.wComms).all (fun j =>
+        onCurveQ (itemVal T_WCOMM (2 * j), itemVal T_WCOMM (2 * j + 1))) = true
+    ∧ onCurveQ (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1) = true
+    ∧ (List.range shapeWrap.tComms).all (fun j =>
+        onCurveQ (itemVal T_TCOMM (2 * j), itemVal T_TCOMM (2 * j + 1))) = true
+    ∧ (List.range (2 * shapeWrap.ipaRounds)).all (fun i => onCurveQ (lrPointQ i)) = true
+    ∧ onCurveQ deltaPointQ = true := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑⚑ **THE TRAJECTORY RECORDS THE SCHEDULE'S OWN WORDS — every absorb, both shapes.**
+
+`runSpongeQ` takes a bend pair `(bt, bw)` so §12 can re-run the whole transcript on a prover's chosen
+word; the HONEST instance is supposed to pass a `bt` that names no event. It did not.
+`mkWrap`'s sentinel was `nItems s + 1` — the **absorb-only** count — while `runSpongeQ` compares it
+against the index in the **full event list**, absorbs and squeezes interleaved. At `shapeSmoke` the
+stale sentinel landed on a squeeze and did nothing; at `shapeWrap` it landed on `T_LR` item 49 and
+replaced round 12's `L.y` with **zero**, putting an off-curve point into W-BULLET's witness. The
+prover reported that as `Prover("rest of division by vanishing polynomial")`, which names neither the
+word, nor the tag, nor this line.
+
+⚠ **A COUNT COMPARED AGAINST A DIFFERENT NUMBERING'S INDEX** is the whole defect, and no arity
+check could see it: both numbers are correct counts of the things they count.
+
+This pin is the one that goes red for it: it compares the schedule's absorb payloads against the
+words the trajectory recorded, in order, at both committed shapes. It is not a length and not a
+sample — a single overridden word breaks the list equality. -/
+theorem the_trajectory_records_the_schedules_own_words :
+    ((schedule shapeWrap).filterMap (fun e => match e with | .abs _ w => some w | .sq _ => none))
+      = (((mkWrap shapeWrap).sp.evs.filter (fun e => e.isAbs)).map (fun e => e.word))
+    ∧ ((schedule shapeSmoke).filterMap (fun e => match e with | .abs _ w => some w | .sq _ => none))
+        = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs)).map (fun e => e.word)) := by
+  refine ⟨?_, ?_⟩ <;> decide
+
+/-- ⚑ …and the bend machinery is still ARMED, which is the half that stops the repair above from
+being "disable the feature". `mkWrapWith` at an in-range absorb index still moves that word, so §12's
+red controls keep working; what changed is only that the HONEST instance can no longer name one. -/
+theorem the_bend_still_bends_when_it_is_aimed :
+    (mkWrapWith shapeWrap 0 7).sp.evs.head?.map (fun e => e.word) = some 7
+    ∧ (mkWrap shapeWrap).sp.evs.head?.map (fun e => e.word) = some RC_DIGEST
+    ∧ RC_DIGEST ≠ 7 := by
+  refine ⟨rfl, rfl, by decide⟩
+
+/-- ⚑ **ONE `sg_old`, NOT TWO — the defect the move exposed.** `KimchiWrapMainField.whSgOld` feeds
+`prevWordVal`, i.e. packed statement words 55/56 and therefore x_hat MSM entries 65/66; `itemVal
+T_SGOLD` feeds the TRANSCRIPT, whose cells §21's rows actually hash. The two were separate defs that
+happened to name one list, and when `RC_SGOLD` moved to this pipeline's own step proof they came
+apart **silently** — `xhatOut 67` did not move, so the emitter's `xhatXY` refusal stayed green while
+the emitted rows and the packed words had stopped describing one `sg_old`. A green gate was evidence
+of the defect. Both now resolve through `STEP_PREVCOMM_XY`, and this `rfl` is what keeps them one. -/
+theorem the_wraphack_sg_old_is_the_transcripts :
+    (List.range shapeWrap.prevs).all (fun p =>
+      whSgOld p == (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true
+    ∧ (List.range shapeSmoke.prevs).all (fun p =>
+        whSgOld p == (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true := by
+  refine ⟨rfl, rfl⟩
+
 end Dregg2.Circuit.Emit.KimchiWrapMain

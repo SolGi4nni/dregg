@@ -1,8 +1,9 @@
 /-
 # KimchiStepWrapChainKey — GENERATED. DO NOT EDIT.
 
-Written by `metatheory/fixtures/pickles-chain-harness/src/bin/export_step_tape.rs`, in the SAME RUN
-that wrote `KimchiStepWrapChainFixture` — from the SAME `VerifierIndex`.
+Written by `metatheory/fixtures/pickles-extractors/src/tape.rs`, in the SAME RUN that wrote
+`KimchiStepWrapChainFixture` — from the SAME `VerifierIndex`, of the SAME proof whose forty public
+words `pickles_kimchi_marshal` prints.
 
 ⚑ **DREGG'S OWN STEP CIRCUIT'S VERIFICATION KEY**, flattened to the 56 Fq coordinates
 `Pickles_base.Side_loaded_verification_key.index_to_field_elements` produces

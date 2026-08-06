@@ -219,6 +219,36 @@ theorem chain_reality_gate :
 
 #assert_compiled chain_reality_gate
 
+/-- ⚑⚑ **AND THOSE FIVE VALUES ARE FIVE OF MINA'S FORTY — so `chain_reality_gate` is not a claim
+about a tape, it is a claim about the PUBLIC INPUT the wrap circuit has to produce.**
+
+`MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED` is `PreparedStatement::to_public_input(40)` — the
+forty Fq words `make_zkapp_verifier_index` hands `kimchi::verifier::verify`. Slots 5–8 are β, γ, α, ζ
+and slot 10 is `sponge_digest_before_evaluations`. This says they are exactly the values kimchi's own
+`proof.oracles(...)` computed for the step proof whose tape §3 replays.
+
+⚑ **THIS IS THE JOIN THAT DID NOT EXIST BEFORE 2026-08-05**, and could not have: the forty came from
+`pickles_kimchi_marshal`'s step proof and this tape came from a *different* step proof, so the two
+lists were about different objects and any equality between them would have been a coincidence
+worth investigating rather than a fact. One `prove_step` writes both now.
+
+⚠ **SAY THE SCOPE.** Chaining `chain_reality_gate` with this gives: the Lean-emitted transcript,
+driven on the FULL tape of this step proof, reproduces five of Mina's forty. The MAIN assembly
+(`KimchiWrapMain.schedule`) does **not** reproduce them, and is not claimed to — it absorbs Mina's
+`step-transaction` key digest at `wrap_verifier.ml:537` instead of this proof's, and §15's MSM output
+at `:617` instead of this proof's `public_comm`. Both are absorbed BEFORE β, so every challenge below
+moves. Those two items are W-KEY's and W-XHAT's remaining distance, and they are the whole of it:
+the 116 commitment words between them are already this proof's. -/
+theorem the_chains_challenges_are_five_of_minas_forty :
+    STEP_BETA = Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 5 0
+    ∧ STEP_GAMMA = Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 6 0
+    ∧ STEP_ALPHA_CHAL
+        = Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 7 0
+    ∧ STEP_ZETA_CHAL
+        = Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 8 0
+    ∧ STEP_DIGEST = Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 10 0 := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
 /-! ## §4 — ⚑ THE CIRCUIT'S OWN SPONGE, not just the reference one.
 
 §3 runs `PastaPoseidonFq`'s `SpongeSt`. The EMITTED CIRCUIT runs `KimchiWrapMain.runSpongeQ`, a
@@ -310,7 +340,7 @@ The positive control is not "some value changes" — it is that the wrap transcr
 value kimchi's own sponge produces for the bent tape**, which the exporter measured by bending the
 same coordinate and re-running the same Rust sponge.
 
-The negative control's strong half is also measured in Rust: `export_step_tape.rs` bends `z_1`,
+The negative control's strong half is also measured in Rust: `pickles-extractors/src/tape.rs` bends `z_1`,
 `z_2`, `ft_eval1`, `delta` and `sg` **in the proof object** and re-runs `proof.oracles(...)`,
 asserting all five phase-1 outputs are identical. What is checkable here is the reason: those
 values are not on the tape, and the derivation is a function of the tape alone. -/
@@ -362,7 +392,7 @@ points of it. None is on the phase-1 tape, and `chainPhase1With` is a function o
 two later blocks alone — so no bend of them can move any of the five outputs. Each is nonzero, so
 the non-membership is not vacuous.
 
-⚠ The strong form of this control is MEASURED, not stated here: `export_step_tape.rs` bends all
+⚠ The strong form of this control is MEASURED, not stated here: `pickles-extractors/src/tape.rs` bends all
 five in the proof object and re-runs `proof.oracles(...)`, asserting the five outputs are
 unchanged. -/
 theorem chain_does_not_move_with_what_it_does_not_read :
@@ -864,22 +894,70 @@ theorem the_consuming_rungs_values_are_the_chains_own_proof :
 
 #assert_compiled the_consuming_rungs_values_are_the_chains_own_proof
 
-/-- **`the_consuming_rungs_values_are_no_longer_the_borrowed_proofs`** — ⚑ the same fact from the
-other side, which is the half that would catch a repair that made the two layers agree by moving
-BOTH onto the fixture. Every slot above now differs from what `itemVal` answers, and `itemVal` is
-unchanged: it is still `PastaPoseidonFq`'s borrowed proof, still what `schedule` absorbs, still
-byte-neutral for `tWrap`. The disagreement is the point. -/
-theorem the_consuming_rungs_values_are_no_longer_the_borrowed_proofs :
-    combPtVal tChain 0 ≠ (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
-    ∧ combPtVal tChain (shapeChain.prevs + 2) ≠ (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
-    ∧ bullCipVal tChain ≠ itemVal T_CIP 0
-    ∧ bullDeltaVal tChain ≠ (itemVal T_DELTA 0, itemVal T_DELTA 1)
+/-- **`the_consuming_rungs_and_the_wrap_read_one_step_proof`** — ⚑⚑ **THIS REPLACED A CONTROL, AND
+THE REPLACEMENT IS WHY, NOT A CLIMBDOWN.**
+
+Its predecessor was `the_consuming_rungs_values_are_no_longer_the_borrowed_proofs`, whose whole
+content was `combPtVal tChain ≠ itemVal …` — the chain's consuming rungs read a REAL step proof
+while `itemVal` still answered with `PastaPoseidonFq`'s borrowed `create_circuit(0,5)` export. Its
+docstring named the repair it was built to catch: *"a repair that made the two layers agree by
+moving BOTH onto the fixture."*
+
+⚠ **On 2026-08-05 it went red, and the repair that did it was the opposite one.** `itemVal` moved
+onto **this pipeline's own step proof** — the same one this chain is about, and the one whose forty
+public words the wrap statement must derive. The layers agree because there is now ONE step proof,
+not because both were pushed onto a fixture. Restating the old inequality would have required
+keeping a second proof alive purely so a control could stay green, which is the tail wagging the
+dog; deleting it outright would have thrown away the check. So it is INVERTED and given the two
+teeth the old one had by accident:
+
+  * the six commitment tags agree **and** the tape is not the borrowed proof's
+    (`STEP_PREVCOMM_XY ≠ PastaPoseidonFq.PREVCOMM_XY`), so "agree by both moving onto the fixture"
+    is exactly what still goes red;
+  * the two item tables still **differ at `T_DIGEST` and `T_XHAT`**, which is the chain's override
+    and the reason `tChain` is a different object from `mkWrap shapeChain` at all. `T_DIGEST` is
+    Mina's `step-transaction` key digest in the wrap assembly (§14's `choose_key` anchor) and this
+    proof's own index digest here; `T_XHAT` is §15's MSM output there and the public-input
+    commitment kimchi absorbed here. A repair that collapsed the chain into the wrap would make
+    those two agree, and this refuses it. -/
+theorem the_consuming_rungs_and_the_wrap_read_one_step_proof :
+    combPtVal tChain 0 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
+    ∧ combPtVal tChain (shapeChain.prevs + 2) = (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
+    ∧ bullCipVal tChain = itemVal T_CIP 0
+    ∧ bullDeltaVal tChain = (itemVal T_DELTA 0, itemVal T_DELTA 1)
     ∧ combPtVal (mkWrap shapeChain) 0 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
     ∧ bullCipVal (mkWrap shapeChain) = itemVal T_CIP 0
-    ∧ bullDeltaVal (mkWrap shapeChain) = (itemVal T_DELTA 0, itemVal T_DELTA 1) := by
+    ∧ bullDeltaVal (mkWrap shapeChain) = (itemVal T_DELTA 0, itemVal T_DELTA 1)
+    -- ⚑ they agree on a REAL proof, not on the borrowed one
+    ∧ STEP_PREVCOMM_XY ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.PREVCOMM_XY
+    ∧ STEP_WCOMM_XY ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.WCOMM_XY
+    -- ⚑ …and the chain's two OVERRIDES are still overrides
+    ∧ (chainItemVal T_DIGEST 0 == itemVal T_DIGEST 0) = false
+    ∧ ((List.range 2).all (fun i => chainItemVal T_XHAT i == itemVal T_XHAT i)) = false := by
   native_decide
 
-#assert_compiled the_consuming_rungs_values_are_no_longer_the_borrowed_proofs
+#assert_compiled the_consuming_rungs_and_the_wrap_read_one_step_proof
+
+/-- ⚑⚑ **AND `combined_inner_product` NOW AGREES ACROSS TWO IMPLEMENTATIONS — a fact that could not
+even be STATED while the two layers were about different proofs.**
+
+`chainItemVal T_CIP` is `STEP_CIP_WORD_FQ`: `tape.rs` takes **kimchi's own** `proof.oracles(...)`
+`combined_inner_product` and applies `Shifted_value.Type1.of_field` (`shifted_value.ml:124-131`) in
+Fp, then reinterprets it as one Fq wire (`impls.ml:196-201`, valid because `p < q`).
+
+`itemVal T_CIP` is `MinaWrapDeferredWords.DEF_CIP`: slot 0 of `PreparedStatement::to_public_input(40)`,
+which Pickles fills from **openmina's `expand_deferred`** (`proofs/step.rs:1915-2072`) — a different
+codebase, reached through the statement rather than through the proof.
+
+⚠ **Two implementations, one number, and `wrap_verifier.ml:395` absorbs it as ONE item.** This is
+the single scalar that crosses Fp→Fq on this transcript, and it is the slot most likely to be got
+wrong silently, because nothing on the wire carries it (`generated.rs:805-810`) and Pickles compares
+its recomputation against nothing — a disagreement costs the PUBLIC INPUT, not a verdict. -/
+theorem the_deferred_cip_is_kimchis_oracles_and_pickles_expand_deferred :
+    STEP_CIP_WORD_FQ = Dregg2.Circuit.Emit.MinaWrapDeferredWords.DEF_CIP
+    ∧ chainItemVal T_CIP 0 = STEP_CIP_WORD_FQ
+    ∧ itemVal T_CIP 0 = Dregg2.Circuit.Emit.MinaWrapDeferredWords.DEF_CIP := by
+  refine ⟨rfl, rfl, rfl⟩
 
 /-- **`the_chain_climbs_past_bind_at_dreggs_own_step_key`** — ⚑⚑ **BLOCKER TWO, CLOSED 2026-08-05.
 THE HEADLINE OF THIS FILE.**
