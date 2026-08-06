@@ -49,9 +49,13 @@ Operations, faithful to the Rust:
     invariant `Solvent` — `ledgerMirror = supply ∧ supply ≤ locked`, hence `ledgerMirror ≤ locked` — is
     PRESERVED:
       - (TIE, ACROSS THE BOUNDARY) the dregg-ledger mirror total EQUALS the vault register and is backed
-        by external escrow — a real relation between the two sides, FALSIFIABLE (`phantomMint_not_solvent`
-        shows a world where the register out-runs the ledger is not solvent, which a disjoint conjunction
-        could never detect);
+        by external escrow — a real relation between the two sides, FALSIFIABLE FOUR WAYS
+        (`phantomMint_not_solvent`: a register out-running the ledger is not solvent;
+        `forged_clear_breaks_solvency` / `demo_forged_clear_refused`: a clear that MOVES the tracked
+        total with no clearing behind it is refused, mutation asserted present first;
+        `mistied_clear_not_solvent`: the `htie` hypothesis is LOAD-BEARING — clearing against the wrong
+        pool de-synchronizes the tie; `nonconserving_clear_unpackageable`: a minting `pre → post` admits
+        NO `DrexClearing` at all, the refusal sits in the kernel executor);
       - (THE CLEARING GENUINELY PARTICIPATES) `wclear` UPDATES `ledgerMirror` to the clearing's post-state
         total of the mirror asset, and it stays invariant ONLY because the REAL `settleRing_conserves`
         preserves that asset (`wclear_ledgerMirror`); the clearing `c` is tied to the boundary by the
@@ -60,21 +64,32 @@ Operations, faithful to the Rust:
       - (SURVIVES END TO END) after the full round trip the tie still holds, so no dregg-ledger mirror is
         left unbacked and no escrow is lost at the vault boundary.
 
-  * **`gatedRingRelease` — CROSS-CHAIN ATOMICITY (modeled).** A multi-chain ring whose per-chain
-    releases are ALL gated on the SAME clearing proof: `ringRelease` is all-or-nothing (any leg that
-    over-releases aborts the WHOLE ring to `none`, mirroring `settleRing_atomic`), and a release with
-    NO clearing proof is refused (`gatedRingRelease false = none`). The timeout/refund edge (`refund a`)
+  * **`gatedRingRelease` — CROSS-CHAIN ATOMICITY, gated on an ACCEPTED clearing proof (not a flag).**
+    The gate takes the ACTUAL proof object — an `Option DrexClearing`, where a `DrexClearing` is
+    proof-CARRYING (its `settled` field IS the kernel-real `settleRing` commitment; a non-conserving
+    "clearing" is unrepresentable, `nonconserving_clear_unpackageable`) — and releases ONLY if the
+    settlement verifier `settleDrex` (the on-chain `DreggSettlement.settle` twin) ACCEPTS it against
+    the target chain's current proven root. Three refusals are forced, each a theorem: no proof at all
+    (`gatedRingRelease_no_proof`); a REAL proof replayed onto a foreign anchor
+    (`gatedRingRelease_unanchored` — the `ContinuityBroken` gate lifts through the release); and, even
+    with an accepted proof, any single over-releasing leg aborts the WHOLE ring
+    (`gatedRingRelease_atomic`, mirroring `settleRing_atomic`). The timeout/refund edge (`refund a`)
     REDEEMS the stuck deposit — an actual `release` that recomputes both registers, proven to round-trip
     a never-cleared lock back to its pre-lock state (`lock_refund_restores`), no value lost. So neither a
     released-but-uncleared nor a cleared-but-unreleased partial state loses value: the first is
-    unreachable (gated `none`), the second is resolved by refund. (The `cleared` gate remains an
-    uninterpreted flag at spec level — a NAMED residual, not claimed bound to a proof object.)
+    unreachable (refused), the second is resolved by refund. Named residuals, still OPEN: the per-leg
+    release AMOUNTS are not yet derived from the clearing's per-leg deliveries, and ONE shared
+    `settleDrex` accept stands in for each chain's own verifier register — the invariant the
+    multi-verifier commit protocol (`DREX-DESIGN.md §6`) must realize.
 
-  * NON-VACUITY, BOTH POLARITIES (`#guard` teeth): a valid `init → lock → release` conserves (backing
-    holds, gap invariant); an over-mint (`drawMint` with no escrow), a double-draw against a spent
-    escrow, an over-release, an uncleared ring release, and a non-atomic ring (one leg over-releasing)
-    are each REFUSED (`none`). The concrete DrEX fill `Market.demoFill` exhibits the systemValue
-    conservation across a real settled clearing.
+  * NON-VACUITY, BOTH POLARITIES (named theorems + `#guard` smoke): a valid `init → lock → release`
+    conserves (backing holds, gap invariant); an over-mint (`drawMint` with no escrow), a double-draw
+    against a spent escrow, an over-release, a proof-less or mis-anchored ring release, and a
+    non-atomic ring (one leg over-releasing) are each REFUSED (`none`). The concrete kernel-settled
+    DrEX fill `Market.demoFill` drives BOTH poles for real: the keystone fires on it end-to-end
+    (`demo_custody_lifecycle_conserves`, discharging `htie` by computation) and the release gate opens
+    on it exactly when its anchor matches (`demo_gated_ring_releases` vs
+    `demo_gated_ring_refused_wrong_root`).
 
 ## HONEST SCOPE
 
@@ -90,10 +105,13 @@ the other Lean⊑Rust ties in this tree. Two edges named, not hidden:
     dual; `turn/src/action.rs` `Effect::Mint`/`Burn`, the executor's conservation checker) — a
     SEPARATE, already-enforced kernel guarantee. This module tracks the `live_supply` register (the
     circulating mirror the Rust `MirrorState` tracks), not the issuer-well ledger mechanics.
-  * Cross-chain atomicity is modeled at SPEC level (the all-or-nothing release fan-out + the
-    timeout/refund revert); the on-chain commit/abort across multiple vaults' verifiers is the named
-    build (`DREX-DESIGN.md §6`, the multi-verifier commit protocol), for which this states the
-    invariant it must realize (no partial-release value loss).
+  * Cross-chain atomicity is modeled at SPEC level, but the gate is BOUND: the release fan-out is
+    conditioned on the settlement verifier `settleDrex` ACCEPTING an actual `DrexClearing` against the
+    chain's proven root (not on a flag). Two residuals remain OPEN by name: the per-leg release
+    amounts are not derived from the clearing's per-leg deliveries, and one shared verifier accept
+    stands in for the per-chain registers — the on-chain commit/abort across multiple vaults'
+    verifiers is the named build (`DREX-DESIGN.md §6`, the multi-verifier commit protocol), for which
+    this states the invariant it must realize (no partial-release value loss).
 
 Pure. No new axioms — composes `Market.DrexClearing` + `Market.settleRing_conserves` with the lifted
 Rust invariant.
@@ -386,8 +404,8 @@ theorem wclear_solvent {w : CustodyWorld} (c : DrexClearing) (b : AssetId)
   refine ⟨⟨?_, hbk⟩, hpres⟩
   rw [hpres]; exact he
 
-/-- **The boundary is 1:1: `lock` moves `locked` and `supply` by the SAME amount**, so the gap — and
-hence `systemValue` at a FIXED ledger — is invariant across a deposit. -/
+/-- **The boundary is 1:1: `lock` moves `locked` and `supply` by the SAME amount**, so the
+redeemability slack `gap` is invariant across a deposit. -/
 theorem lock_gap {m m' : MirrorState} {a : Nat} (hb : m.backed) (h : m.lock a = some m') :
     m'.gap = m.gap := by
   rw [lock_eq hb a, Option.some.injEq] at h
@@ -460,6 +478,77 @@ theorem phantomMint_not_solvent : ¬ (CustodyWorld.mk ⟨100, 50⟩ 40).Solvent 
   rintro ⟨he, _⟩
   exact absurd he (by decide)
 
+/-- **`wclearForged t`** — the SHAPE of a non-conserving clear: land the tracked ledger-mirror total
+on an arbitrary `t`, answering to no clearing. This is the mutation the keystone must refuse — a
+"clear" that mints (or burns) mirror inside the dregg ledger with no settled clearing behind it. -/
+def CustodyWorld.wclearForged (w : CustodyWorld) (t : ℤ) : CustodyWorld :=
+  { w with ledgerMirror := t }
+
+/-- **TOOTH (the forged clear BREAKS solvency).** From any solvent world, a forged clear that MOVES
+the tracked total (`hmut` — the mutation asserted PRESENT, not a no-op twin of the honest clear)
+lands on a NON-solvent world: the dregg ledger no longer matches the vault register. The honest
+`wclear` keeps solvency (`wclear_solvent`) precisely because `settleRing_conserves` pins its landing
+total; the forged one has no such pin and the cross-predicate catches it. -/
+theorem forged_clear_breaks_solvency {w : CustodyWorld} (hs : w.Solvent) {t : ℤ}
+    (hmut : t ≠ w.ledgerMirror) : ¬ (w.wclearForged t).Solvent := by
+  rintro ⟨he, _⟩
+  exact hmut (he.trans hs.1.symm)
+
+/-- The concrete refusal, MUTATION FIRST: minting one phantom mirror unit into `demoWorld`'s ledger
+via a forged clear. Clause 1 asserts the mutation is PRESENT (the tracked total genuinely moved,
+`501 ≠ 500` — the hostile input is not the honest one); clause 2 is the verdict (REFUSED). -/
+theorem demo_forged_clear_refused :
+    (demoWorld.wclearForged 501).ledgerMirror ≠ demoWorld.ledgerMirror
+    ∧ ¬ (demoWorld.wclearForged 501).Solvent :=
+  ⟨by decide, forged_clear_breaks_solvency demoWorld_solvent (by decide)⟩
+
+/-- **TOOTH (`htie` is LOAD-BEARING, not decoration).** Clearing against a pool whose pre-state
+mirror total DIFFERS from the world's tracked total breaks solvency: `settleRing_conserves` lands the
+clear on the POOL's total, so a clearing tied to the wrong pool de-synchronizes the dregg ledger from
+the vault register. The keystone's `htie` hypothesis is exactly the obligation a caller must
+discharge — and `demo_custody_lifecycle_conserves` discharges it by computation on the real fill. -/
+theorem mistied_clear_not_solvent {w : CustodyWorld} (hs : w.Solvent) (c : DrexClearing)
+    (b : AssetId) (hoff : recTotalAsset c.pre b ≠ w.ledgerMirror) :
+    ¬ (w.wclear c b).Solvent := by
+  rintro ⟨he, _⟩
+  exact hoff (((wclear_ledgerMirror w c b).symm.trans he).trans hs.1.symm)
+
+/-- **TOOTH (a non-conserving clearing is REFUSED AT FORMATION).** A `pre → post` transition that
+changes ANY asset's total admits NO `DrexClearing` packaging at all: its `settled` field would need
+`settleRing pre … = some post`, which `Market.minting_post_unsettleable` refuses. So the forged clear
+above can never arrive through the honest `wclear` — there is no proof-carrying clearing whose
+settlement mints; the refusal sits in the verified kernel executor, upstream of this module. -/
+theorem nonconserving_clear_unpackageable (k k'' : RecordKernelState) (b : AssetId)
+    (hmint : recTotalAsset k'' b ≠ recTotalAsset k b) :
+    ¬ ∃ c : DrexClearing, c.pre = k ∧ c.post = k'' := by
+  rintro ⟨c, rfl, rfl⟩
+  exact minting_post_unsettleable c.pre c.post c.nodes b hmint c.settled
+
+/-- **POSITIVE POLE — the keystone FIRES on the REAL clearing.** The full lifecycle, concrete: from
+an empty world, deposit 7 (escrow + mint), clear through the kernel-settled `Market.demoFill` — which
+GENUINELY trades the mirror asset (asset 10: cell 1's 7 units move to cell 2; its pre-state total IS
+the world's tracked 7, discharging `htie` by computation) — then redeem 7. Every hypothesis of
+`custody_cross_boundary_conserves` is discharged on the real fill; solvency holds at every step and
+the round trip lands back on the empty world. SATISFIABLE here, REFUTABLE next door
+(`demo_forged_clear_refused`, `mistied_clear_not_solvent`) — a floor, not a tautology. -/
+theorem demo_custody_lifecycle_conserves :
+    ∃ w1 w3 : CustodyWorld,
+      (⟨⟨0, 0⟩, 0⟩ : CustodyWorld).wlock 7 = some w1
+      ∧ w1.ledgerMirror = recTotalAsset demoFill.pre 10
+      ∧ (w1.wclear demoFill 10).wrelease 7 = some w3
+      ∧ w1.Solvent ∧ (w1.wclear demoFill 10).Solvent ∧ w3.Solvent
+      ∧ w3 = ⟨⟨0, 0⟩, 0⟩ := by
+  have hs0 : (⟨⟨0, 0⟩, 0⟩ : CustodyWorld).Solvent := ⟨by decide, by decide⟩
+  have hlock : (⟨⟨0, 0⟩, 0⟩ : CustodyWorld).wlock 7 = some ⟨⟨7, 7⟩, 7⟩ := by decide
+  have htie : (⟨⟨7, 7⟩, 7⟩ : CustodyWorld).ledgerMirror = recTotalAsset demoFill.pre 10 := by
+    decide
+  have hrel : ((⟨⟨7, 7⟩, 7⟩ : CustodyWorld).wclear demoFill 10).wrelease 7
+      = some ⟨⟨0, 0⟩, 0⟩ := by decide
+  obtain ⟨h1, h2, h3, -, -, -⟩ :=
+    custody_cross_boundary_conserves ⟨⟨0, 0⟩, 0⟩ hs0 7 7 demoFill 10
+      ⟨⟨7, 7⟩, 7⟩ ⟨⟨0, 0⟩, 0⟩ hlock htie hrel
+  exact ⟨⟨⟨7, 7⟩, 7⟩, ⟨⟨0, 0⟩, 0⟩, hlock, htie, hrel, h1, h2, h3, rfl⟩
+
 /-- **The net boundary crossing, projected** — after `lock a → release a'`, BOTH registers moved by
 exactly `a − a'` (from a backed start with `a' ≤ a`): the vault's escrow change EQUALS dregg's
 circulating-mirror change. The boundary conserves value 1:1, no phantom mint, no lost escrow. -/
@@ -477,7 +566,16 @@ theorem boundary_net_matched
   refine ⟨rfl, rfl, ?_⟩
   dsimp only; omega
 
-/-! ## 5. CROSS-CHAIN ATOMICITY — an all-or-nothing multi-vault release, gated on ONE clearing proof. -/
+/-! ## 5. CROSS-CHAIN ATOMICITY — an all-or-nothing multi-vault release, gated on ONE ACCEPTED
+clearing proof.
+
+The gate is NOT a flag. `gatedRingRelease` takes the actual proof object — an `Option DrexClearing`,
+proof-CARRYING by construction (`settled` is the kernel-real `settleRing` commitment; a
+non-conserving "clearing" cannot even be built, `nonconserving_clear_unpackageable`) — and releases
+ONLY if the settlement verifier `settleDrex` (the on-chain `DreggSettlement.settle` twin) ACCEPTS it
+against the target chain's current proven root. Named residuals, OPEN: per-leg release amounts are
+not yet derived from the clearing's per-leg deliveries; one shared verifier accept stands in for the
+per-chain registers (`DREX-DESIGN.md §6`, the multi-verifier commit protocol). -/
 
 /-- **`ringRelease legs`** — release a MULTI-CHAIN ring atomically: each leg `(m, a)` redeems `a` from
 its vault, and if ANY leg over-releases (fails its gate) the WHOLE ring aborts to `none`. This is the
@@ -487,16 +585,37 @@ def ringRelease : List (MirrorState × Nat) → Option (List MirrorState)
   | []            => some []
   | (m, a) :: rest => (m.release a).bind (fun m' => (ringRelease rest).map (fun ms => m' :: ms))
 
-/-- **`gatedRingRelease cleared legs`** — the releases are gated on the shared clearing proof: with NO
-proof (`cleared = false`) the ring does NOT release (`none`). A released-but-uncleared state is
-therefore unreachable — a counterparty can never be short because a leg released without the clearing
-that authorizes all of them. -/
-def gatedRingRelease (cleared : Bool) (legs : List (MirrorState × Nat)) : Option (List MirrorState) :=
-  if cleared then ringRelease legs else none
+/-- **`gatedRingRelease rootOf S proof legs`** — the multi-vault ring release, gated on ONE ACCEPTED
+clearing proof. `proof` is the actual proof object (`Option DrexClearing` — proof-carrying: its
+`settled` field is the kernel-real `settleRing` commitment), and the gate is the settlement verifier
+itself: `settleDrex rootOf S c` must ACCEPT `c` against the chain's current proven root (else
+fail-closed — `ContinuityBroken`). Only then does the ring release, still all-or-nothing per
+`ringRelease`. A released-but-uncleared state is therefore unreachable: no proof, a mis-anchored
+proof, or any over-releasing leg each refuse the WHOLE ring. -/
+def gatedRingRelease {Root : Type} [DecidableEq Root] (rootOf : RecordKernelState → Root)
+    (S : ProvenState Root) (proof : Option DrexClearing) (legs : List (MirrorState × Nat)) :
+    Option (List MirrorState) :=
+  proof.bind fun c => (settleDrex rootOf S c).bind fun _ => ringRelease legs
 
-/-- **TOOTH (no release without the clearing proof): an uncleared ring release is REFUSED.** -/
-theorem gatedRingRelease_uncleared (legs : List (MirrorState × Nat)) :
-    gatedRingRelease false legs = none := rfl
+/-- **TOOTH (no release without a clearing proof): a proof-less ring release is REFUSED.** With no
+`DrexClearing` there is nothing to verify and the ring does not release. Unlike the retired
+`cleared : Bool` gate, `true` cannot be conjured here: opening the gate requires an actual settled
+clearing AND the verifier's accept. -/
+theorem gatedRingRelease_no_proof {Root : Type} [DecidableEq Root]
+    (rootOf : RecordKernelState → Root) (S : ProvenState Root) (legs : List (MirrorState × Nat)) :
+    gatedRingRelease rootOf S none legs = none := rfl
+
+/-- **TOOTH (a mis-anchored proof does not release): a REAL clearing proof replayed onto a foreign
+proven root is REFUSED.** The verifier's `ContinuityBroken` gate (`settleDrex_continuity_broken`)
+lifts through the release: possessing a genuine settled clearing is NOT enough — it must chain from
+the exact state the target chain has already proven. -/
+theorem gatedRingRelease_unanchored {Root : Type} [DecidableEq Root]
+    (rootOf : RecordKernelState → Root) (S : ProvenState Root) (c : DrexClearing)
+    (hbreak : rootOf c.pre ≠ S.provenRoot) (legs : List (MirrorState × Nat)) :
+    gatedRingRelease rootOf S (some c) legs = none := by
+  show ((settleDrex rootOf S c).bind fun _ => ringRelease legs) = none
+  rw [settleDrex_continuity_broken rootOf S c hbreak]
+  rfl
 
 /-- **ATOMICITY: a single over-releasing leg aborts the WHOLE ring.** If leg `j` demands more than its
 circulating supply, `ringRelease` fails-closed for the entire list — no leg commits. The partial state
@@ -511,6 +630,40 @@ theorem ringRelease_atomic (pre : List (MirrorState × Nat)) (m : MirrorState) (
     obtain ⟨mh, ah⟩ := hd
     rw [List.cons_append, ringRelease, ih]
     cases mh.release ah <;> simp
+
+/-- **ATOMICITY SURVIVES THE GATE: even an ACCEPTED proof releases all-or-nothing.** With a genuine
+clearing proof in hand, a single over-releasing leg still aborts the WHOLE ring — the gate authorizes
+the release; it never weakens the per-leg refusals. -/
+theorem gatedRingRelease_atomic {Root : Type} [DecidableEq Root]
+    (rootOf : RecordKernelState → Root) (S : ProvenState Root) (c : DrexClearing)
+    (pre : List (MirrorState × Nat)) (m : MirrorState) (a : Nat)
+    (rest : List (MirrorState × Nat)) (hfail : m.supply < a) :
+    gatedRingRelease rootOf S (some c) (pre ++ (m, a) :: rest) = none := by
+  show ((settleDrex rootOf S c).bind fun _ => ringRelease (pre ++ (m, a) :: rest)) = none
+  cases settleDrex rootOf S c with
+  | none => rfl
+  | some S' =>
+    show ringRelease (pre ++ (m, a) :: rest) = none
+    exact ringRelease_atomic pre m a rest hfail
+
+/-- **POSITIVE POLE — the gate OPENS on the real accepted proof and the ring releases atomically.**
+`Market.demoFill` (the concrete kernel-settled bilateral swap) verified against the anchor matching
+its pre-state (`Market.demoProven`) releases BOTH legs, each vault's registers lowered 1:1. -/
+theorem demo_gated_ring_releases :
+    gatedRingRelease demoRoot demoProven (some demoFill)
+      [(⟨500, 500⟩, 100), (⟨300, 300⟩, 50)] = some [⟨400, 400⟩, ⟨250, 250⟩] := by decide
+
+/-- **NEGATIVE POLE — the SAME real proof against a FOREIGN anchor releases NOTHING.** The clearing
+is genuine; the anchor (`Market.demoProvenBad`) is wrong; the whole ring refuses. With the positive
+pole this is the discriminator: the gate is not a `True`-carrier. -/
+theorem demo_gated_ring_refused_wrong_root :
+    gatedRingRelease demoRoot demoProvenBad (some demoFill)
+      [(⟨500, 500⟩, 100), (⟨300, 300⟩, 50)] = none := by decide
+
+/-- **NEGATIVE POLE (atomicity) — an accepted proof plus ONE over-releasing leg = NO leg releases.** -/
+theorem demo_gated_ring_aborts_on_one_bad_leg :
+    gatedRingRelease demoRoot demoProven (some demoFill)
+      [(⟨500, 500⟩, 100), (⟨300, 300⟩, 999)] = none := by decide
 
 /-- **All legs release ⇒ all outputs backed.** If every input leg is backed and the ring releases
 (`some out`), every released vault is still backed — the multi-chain settlement lands every vault in a
@@ -594,12 +747,9 @@ theorem demo_lifecycle_conserves :
 #guard ((⟨500, 500⟩ : MirrorState).drawMint 1).isNone
 -- NEGATIVE (over-release): redeeming 1000 against 300 circulating is REFUSED:
 #guard ((⟨300, 300⟩ : MirrorState).release 1000).isNone
--- NEGATIVE (uncleared ring): a release with NO clearing proof is REFUSED:
-#guard (gatedRingRelease false [(⟨500, 500⟩, 100)]).isNone
--- POSITIVE (atomic ring): a cleared ring where every leg is within supply releases ALL:
-#guard (gatedRingRelease true [(⟨500, 500⟩, 100), (⟨300, 300⟩, 50)]).isSome
--- NEGATIVE (non-atomic ring): one over-releasing leg aborts the WHOLE ring (no partial payout):
-#guard (gatedRingRelease true [(⟨500, 500⟩, 100), (⟨300, 300⟩, 999)]).isNone
+-- (the ring-release gate's poles are NAMED kernel theorems, not guards: `gatedRingRelease_no_proof`,
+--  `demo_gated_ring_releases`, `demo_gated_ring_refused_wrong_root`,
+--  `demo_gated_ring_aborts_on_one_bad_leg` — each over the REAL `demoFill` proof object.)
 -- the inductive invariant, run over a mixed op sequence, stays backed and commits:
 #guard (run MirrorState.init [.lock 500, .escrow 100, .draw 100, .release 200]).isSome
 
@@ -614,8 +764,14 @@ theorem demo_lifecycle_conserves :
   Market.Interchain.wrelease_solvent, Market.Interchain.wclear_solvent,
   Market.Interchain.lock_gap, Market.Interchain.release_gap,
   Market.Interchain.custody_cross_boundary_conserves, Market.Interchain.demoWorld_solvent,
-  Market.Interchain.phantomMint_not_solvent,
-  Market.Interchain.boundary_net_matched, Market.Interchain.gatedRingRelease_uncleared,
+  Market.Interchain.phantomMint_not_solvent, Market.Interchain.forged_clear_breaks_solvency,
+  Market.Interchain.demo_forged_clear_refused, Market.Interchain.mistied_clear_not_solvent,
+  Market.Interchain.nonconserving_clear_unpackageable,
+  Market.Interchain.demo_custody_lifecycle_conserves,
+  Market.Interchain.boundary_net_matched, Market.Interchain.gatedRingRelease_no_proof,
+  Market.Interchain.gatedRingRelease_unanchored, Market.Interchain.gatedRingRelease_atomic,
+  Market.Interchain.demo_gated_ring_releases, Market.Interchain.demo_gated_ring_refused_wrong_root,
+  Market.Interchain.demo_gated_ring_aborts_on_one_bad_leg,
   Market.Interchain.ringRelease_atomic, Market.Interchain.ringRelease_backed,
   Market.Interchain.lock_refund_restores, Market.Interchain.overRefund_refused,
   Market.Interchain.demo_lifecycle_conserves]

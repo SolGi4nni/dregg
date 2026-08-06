@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15339 guards across 1158 modules (2510 .lean files scanned).
+# TOTAL 15336 guards across 1158 modules (2518 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -39,6 +39,7 @@
 # BASELINE-PROVENANCE 0f062ed1f-DIRTY 15348→15346 (-2) DECREASED — retire a STALE row: DescriptorIR2 converted 2 guards (48 -> 46) and the ledger only ratchets down. --only, so a shared tree cannot absorb a sibling's in-flight guards.
 # BASELINE-PROVENANCE 18cae2966-DIRTY 15341→15341 (+0) LEVEL — fhegg-clearing: the 5 guards became named kernel-clean theorems (workBook_runtime_clearing, bookB_runtime_clearing, workBook_bookB_balance_signs_differ_at_one, workBook_bookB_demand0_differs); the 5th duplicated Market.workBook_balanceCrossing and was dropped
 # BASELINE-PROVENANCE 615eeb01d-DIRTY 15341→15339 (-2) DECREASED — §24: the step circuit publishes a Types.Step.Statement; two exposedVars-position guards at shapeStep became conjuncts of named theorems in KimchiStepStatementPins (the_public_vector_is_to_datas_order_slot_by_slot, the_statement_slots_are_distinct_except_the_shared_zeta_power)
+# BASELINE-PROVENANCE a4ead8526-DIRTY 15339→15336 (-3) DECREASED — InterchainCustody: 3 gatedRingRelease guards converted to named kernel theorems (demo_gated_ring_releases / demo_gated_ring_refused_wrong_root / demo_gated_ring_aborts_on_one_bad_leg) when the Bool gate was bound to the real DrexClearing+settleDrex proof object
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -1140,7 +1141,7 @@
 10	Market/FhIRAdmissible.lean
 6	Market/FhIRClearingPlan.lean
 4	Market/Fxc4ConsequenceBinding.lean
-11	Market/InterchainCustody.lean
+8	Market/InterchainCustody.lean
 10	Market/LedgerRealization.lean
 21	Market/LedgerRealizationExt.lean
 3	Market/Lending.lean
