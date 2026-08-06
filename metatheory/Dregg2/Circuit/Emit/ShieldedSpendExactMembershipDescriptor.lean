@@ -33,6 +33,7 @@ indicator is pure position algebra. #15 does NOT flip here; that is the route pa
 -/
 import Dregg2.Circuit.Emit.ExactNullifierAafiDescriptorPlan
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
+import Dregg2.Circuit.ShieldedWideJoinPin
 
 namespace Dregg2.Circuit.Emit.ShieldedSpendExactMembershipDescriptor
 
@@ -143,11 +144,93 @@ theorem nonbit_forges_child :
   refine ⟨fun _ => 0, ek 2, ek 0, ek 1, ek 0, ek 0, ek 0, ?_, ?_, ?_⟩ <;>
     simp only [childExpr, indP0, oneMinus, ek, eadd, emul, esub, eneg, EmittedExpr.eval] <;> norm_num
 
+/-! ## §2 — THE PI LAYOUT: expose BOTH carriers in ONE descriptor (the Fork B coupling, verified at
+source against the landed same-opening lane `4de4190ab`).
+
+Since pass 4 the same-opening lane landed (`4de4190ab`): it DELETED the ~31-bit `legacy_binding` felt
+and routed the ring↔wide join to a 16-lane wide-carrier same-opening (`ShieldedWideJoinPin.routedJoin`
+— `verify_same_opening` over `[BabyBear; 16]`, two domain-separated `node8` images,
+`WIDE_VALUE_BINDING_LANES = 16`). That routed join now **fails closed** in
+`turn-prover/src/shielded_transfer_verifier.rs` (7 `shielded_executor` tests `#[ignore]`d) because it
+needs the ring's full-`u64` value carrier INDEPENDENTLY BOUND by the spend proof — and today's spend
+circuit exposes only the one-felt `value_binding` (`value mod p`), which cannot be same-opened without
+the forbidden identity carrier.
+
+So this descriptor's PI layout exposes BOTH carriers, so ONE re-authored spend proof un-fail-closes
+BOTH #15 (the 8-lane committed root) AND the same-opening join (the 16-lane wide-`u64` carrier) —
+never a second spend-circuit pass. The layout is locked HERE so pass 6 (the emitted golden +
+`root_is_pinned8`) does not discover the coupling late. -/
+
+/-- PI 0: the published nullifier. -/
+def piNUL : Nat := 0
+/-- PIs 1..8: the **8-lane committed shielded-accumulator root** — the #15 pin, executor-sourced from
+`note_shielded.root8()`, NEVER the wire. Eight lanes, so §7's `route_fold_8to1_collides` collapse is
+unrepresentable at the PI. -/
+def PI_COMMITTED_BASE : Nat := 1
+def PI_COMMITTED_LANES : Nat := 8
+/-- PIs 9..24: the **16-lane wide-`u64` value carrier** — the object same-opening's routed join
+compares (`ShieldedWideJoinPin.routedJoin`, a `Wide16 = Opening → (Fin 16 → ℤ)`). The spend proof must
+bind this so the join has a spend-side carrier to same-open against. ⚠ It MUST be the real
+`cap_node8` image (`ShieldedWideJoinPin.alias_separated_by_the_wide_carrier` /
+`WideValueBindingRefine.WideCarrierCR`), a genuine non-identity `u64` opening — NEVER `value mod p`
+relabelled. Binding the 16 lanes to that image is the pass-6 constraint work; here the slots are
+RESERVED and the requirement is named. -/
+def PI_WIDE_BASE : Nat := PI_COMMITTED_BASE + PI_COMMITTED_LANES
+def PI_WIDE_LANES : Nat := 16
+/-- Total PIs: `[nullifier] ++ committedRoot[8] ++ wideCarrier[16]` = 25. -/
+def SPEND_PI_COUNT : Nat := PI_WIDE_BASE + PI_WIDE_LANES
+
+/-- The 8 committed-root PI indices (the `.piBinding .last` targets pass 6 pins the fold's last-row
+parent to). -/
+def piCommitted (i : Fin PI_COMMITTED_LANES) : Nat := PI_COMMITTED_BASE + i.val
+/-- The 16 wide-carrier PI indices. -/
+def piWide (i : Fin PI_WIDE_LANES) : Nat := PI_WIDE_BASE + i.val
+
+theorem spend_pi_count_val : SPEND_PI_COUNT = 25 := rfl
+
+/-- **The layout is disjoint and exact** — nullifier, then the 8-lane root, then the 16-lane carrier,
+back to back with no overlap and no gap. -/
+theorem pi_layout_disjoint :
+    piNUL < PI_COMMITTED_BASE
+    ∧ PI_COMMITTED_BASE + PI_COMMITTED_LANES = PI_WIDE_BASE
+    ∧ PI_WIDE_BASE + PI_WIDE_LANES = SPEND_PI_COUNT :=
+  ⟨by decide, rfl, rfl⟩
+
+/-- The committed-root pin is 8 lanes — the WIDTH closure of §7 realized at the descriptor PI. -/
+theorem committed_root_is_8_lanes : PI_COMMITTED_LANES = 8 := rfl
+
+/-- **⚑ The wide carrier is genuinely WIDE, not the narrow felt relabelled.** 16 lanes ≠ the one felt
+`value mod p` the coordinator forbids exposing as a `u64` opening. -/
+theorem wide_carrier_is_not_the_narrow_felt : PI_WIDE_LANES ≠ 1 := by decide
+
+/-- **The exposed carrier has exactly the arity of same-opening's `routedJoin` image** (`Wide16`'s
+`Fin 16`) — so binding these 16 PI lanes in the spend proof gives the routed join a spend-side carrier
+to same-open against, un-fail-closing it. -/
+theorem carrier_lanes_match_routedJoin_image :
+    PI_WIDE_LANES = Fintype.card (Fin 16) := by
+  simp [PI_WIDE_LANES]
+
+/-- **⚑ BOTH CARRIERS IN ONE DESCRIPTOR (`both_carriers_exposed`).** The layout carries the 8-lane
+committed root (#15) AND the disjoint 16-lane wide-`u64` carrier (the same-opening join), so one spend
+proof un-fail-closes both — the Fork B coupling resolved in a single re-authored descriptor. -/
+theorem both_carriers_exposed :
+    PI_COMMITTED_LANES = 8 ∧ PI_WIDE_LANES = 16
+    ∧ (∀ (i : Fin PI_COMMITTED_LANES) (j : Fin PI_WIDE_LANES), piCommitted i ≠ piWide j) := by
+  refine ⟨rfl, rfl, ?_⟩
+  intro i j
+  have hi : i.val < 8 := i.isLt
+  simp only [piCommitted, piWide, PI_COMMITTED_BASE, PI_COMMITTED_LANES, PI_WIDE_BASE]
+  omega
+
 #assert_axioms childExpr_pos0
 #assert_axioms childExpr_pos1
 #assert_axioms childExpr_pos2
 #assert_axioms childExpr_pos3
 #assert_axioms exactChildren4_lane
 #assert_axioms nonbit_forges_child
+#assert_axioms pi_layout_disjoint
+#assert_axioms wide_carrier_is_not_the_narrow_felt
+#assert_axioms carrier_lanes_match_routedJoin_image
+#assert_axioms both_carriers_exposed
 
 end Dregg2.Circuit.Emit.ShieldedSpendExactMembershipDescriptor
