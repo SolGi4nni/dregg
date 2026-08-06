@@ -74,6 +74,25 @@ const WRAP_FS_PROVED: usize = 30;
 const SUB_VK_BASE: usize = 31;
 const SUB_PI_BASE: usize = 40;
 const STATE_LANES: usize = 9;
+/// ⚑⚑ The SEGMENT seam, added 2026-08-05: guard column (`LINK_OK`), attested-program lane base
+/// (`LINK_VK`), and the columns its `commit` vector names (`TIP_STATE`).
+const LINK_OK: usize = 8;
+const LINK_VK_BASE: usize = 49;
+const TIP_STATE_BASE: usize = 21;
+
+/// The SEGMENT sub-proof's descriptor bytes — side B for the segment seam's pin, exactly as
+/// `LINK_DESC_JSON` is for the chainlink's.
+const SEGMENT_DESC_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-mina-lightclient-link-v1.json");
+/// The segment sub-proof's descriptor name.
+const SEGMENT_NAME: &str = "dregg-mina-lightclient-link::v1";
+
+/// ⚑ The nine lanes `LightClientMinaAir.LINK_VK_LANES` transcribes. Same reasoning as
+/// `LEAN_CHAINLINK_PI_LANES`: Lean cannot compute blake3, so the literal there is a transcription,
+/// and a transcription is only a gate if something recomputes it.
+const LEAN_SEGMENT_VK_LANES: [u64; 9] = [
+    76100771, 34473567, 194746848, 491185466, 265287284, 420926520, 245421703, 7802286, 15232152,
+];
 
 /// Nine base-`2^29` lanes of a 32-byte value, least-significant first (Lean `keyToLanes9`,
 /// `Faithful9::from_key_lanes9`): `8·29 + 24 = 256` exactly, machine-checked injective.
@@ -148,6 +167,26 @@ fn proof_binds(d: &EffectVmDescriptor2) -> Vec<&dregg_circuit::descriptor_ir2::P
         .collect()
 }
 
+/// ⚑⚑ **RESOLVE A SEAM BY ITS GUARD COLUMN, NEVER BY LIST POSITION.** The head carries two
+/// `proof_bind`s since 2026-08-05; indexing into them would silently read the wrong seam the day
+/// emission order moves. This refuses unless exactly one bind carries the key — the same
+/// resolution `mina_head_verifier::head_bind_by_guard` performs on a node.
+fn bind_by_guard(
+    d: &EffectVmDescriptor2,
+    guard_col: usize,
+) -> &dregg_circuit::descriptor_ir2::ProofBindSpec {
+    let m: Vec<_> = proof_binds(d)
+        .into_iter()
+        .filter(|p| matches!(p.guard, LeanExpr::Var(c) if c == guard_col))
+        .collect();
+    assert_eq!(
+        m.len(),
+        1,
+        "exactly one proof_bind must be guarded by column {guard_col}"
+    );
+    m[0]
+}
+
 /// ⚑ **THE PIN IS AGAINST AN INDEPENDENT SOURCE.** The nine `vk_pin` literals the Mina descriptor
 /// carries ARE the nine `Faithful9` lanes of the chainlink descriptor's semantic fingerprint,
 /// recomputed here from that descriptor's own canonical bytes.
@@ -163,14 +202,11 @@ fn the_mina_carrier_pins_the_real_chainlink_program() {
     let lanes = key_lanes9(&fp);
 
     let mina = mina_desc();
-    let binds = proof_binds(&mina);
-    // ⚑ 2026-08-05: ONE bind carrying nine LANES, where it was nine one-felt binds.
-    assert_eq!(
-        binds.len(),
-        1,
-        "the Mina light client declares one proof_bind, carrying every program lane"
-    );
-    let b = binds[0];
+    // ⚑⚑ 2026-08-05, SECOND PASS: TWO binds now — the chainlink seam and the SEGMENT seam. They are
+    // resolved BY GUARD COLUMN, never by list position: two seams picked by index is exactly the
+    // mis-resolution `reference-a-display-name-is-not-a-key` records, and the consumer
+    // (`mina_head_verifier::head_bind_by_guard`) resolves the same way.
+    let b = bind_by_guard(&mina, WRAP_FS_PROVED);
     assert_eq!(
         b.guard,
         LeanExpr::Var(WRAP_FS_PROVED),
@@ -216,15 +252,14 @@ fn the_mina_carrier_pins_the_real_chainlink_program() {
 #[test]
 fn the_program_pin_is_nine_distinct_lanes() {
     let mina = mina_desc();
-    let binds = proof_binds(&mina);
-    let mut cols: Vec<usize> = binds
-        .iter()
-        .flat_map(|b| b.vk.iter())
-        .map(|e| match e {
-            LeanExpr::Var(c) => *c,
-            _ => panic!("a program lane must be a column"),
-        })
-        .collect();
+    let b = bind_by_guard(&mina, WRAP_FS_PROVED);
+    let mut cols: Vec<usize> =
+        b.vk.iter()
+            .map(|e| match e {
+                LeanExpr::Var(c) => *c,
+                _ => panic!("a program lane must be a column"),
+            })
+            .collect();
     cols.sort_unstable();
     cols.dedup();
     assert_eq!(
@@ -312,6 +347,132 @@ fn the_published_commitment_covers_the_sub_proofs_public_inputs() {
             pinned.contains(&(SUB_PI_BASE + i, 20 + i)),
             "commitment lane {i} must be PI-bound at slot {}",
             20 + i
+        );
+    }
+}
+
+// ═══ ⚑⚑⚑ THE SEGMENT SEAM (2026-08-05) — SIDE A vs SIDE B, and the edge it buys ════════════════
+
+fn segment_desc() -> EffectVmDescriptor2 {
+    parse_vm_descriptor2(SEGMENT_DESC_JSON).expect("the segment descriptor parses")
+}
+
+/// ⚑⚑⚑ **THE SEGMENT SEAM PINS THE REAL LINK PROGRAM — two independent sources, same as the
+/// chainlink's.**
+///
+/// * side A — the nine `vk_pin` literals inside `dregg-mina-lightclient-verify-v1.json`, emitted by
+///   Lean from `LightClientMinaAir.LINK_VK_LANES`;
+/// * side B — `effect_vm_descriptor2_semantic_fingerprint(dregg-mina-lightclient-link-v1.json)`,
+///   recomputed here from the SIBLING descriptor's own canonical bytes.
+///
+/// If the segment descriptor is re-emitted and the head is not, side B moves and this goes RED —
+/// exactly the drift that already happened once with the wraplink and was caught by nothing else.
+/// The runtime reader is `mina_head_verifier::check_subproof_program_pin` at
+/// `HEAD_LINK_GUARD_COL`.
+#[test]
+fn the_segment_seam_pins_the_real_link_program() {
+    let seg = segment_desc();
+    assert_eq!(seg.name, SEGMENT_NAME);
+    assert_eq!(
+        seg.public_input_count, 20,
+        "nine anchor lanes, nine tip lanes, the anchor height, the counted segment length"
+    );
+
+    let fp = effect_vm_descriptor2_semantic_fingerprint(&seg).expect("representable");
+    let lanes = key_lanes9(&fp);
+
+    let mina = mina_desc();
+    let b = bind_by_guard(&mina, LINK_OK);
+    assert_eq!(b.vk.len(), STATE_LANES);
+    assert_eq!(b.commit.len(), STATE_LANES);
+    for i in 0..STATE_LANES {
+        assert_eq!(b.vk[i], LeanExpr::Var(LINK_VK_BASE + i));
+    }
+    assert_eq!(
+        b.vk_pin.as_deref(),
+        Some(&lanes.iter().map(|l| *l as i64).collect::<Vec<i64>>()[..]),
+        "the segment seam's vk_pin must be the nine lanes of the LINK fingerprint recomputed from \
+         dregg-mina-lightclient-link-v1.json"
+    );
+    assert!(!b.is_declarative());
+    b.width_ok()
+        .expect("the segment seam must satisfy the lane discipline at admission");
+
+    // Side A, as Lean wrote it — so a Lean-side edit that forgot to re-derive the literal is a RED
+    // here and not a silence.
+    assert_eq!(
+        lanes, LEAN_SEGMENT_VK_LANES,
+        "LightClientMinaAir.LINK_VK_LANES must be the recomputed fingerprint"
+    );
+}
+
+/// ⚑⚑⚑ **AND THE SEAM'S COMMITMENT IS THE PUBLISHED TIP — this is the whole edge, on the bytes.**
+///
+/// The nine `TIP_STATE` columns were, until this seam, read by ONE arity-1 range lookup each and
+/// joined to nothing (`LightClientAnchorConnectivity.minaVerify_state_lanes_are_read_but_never_joined`,
+/// now retired and replaced by its positive form). A width bound is a fact about a value's SHAPE; it
+/// is not a tie to the evidence. Here they are the `commit` vector of a `proof_bind`, so one emitted
+/// constraint names all nine beside the guard and the nine pinned program lanes.
+///
+/// ⚠ **NINE LANES, ELEMENTWISE, NO DIGEST — so no birthday bound.** `8·29 + 24 = 256` bits exactly,
+/// and the encoding is machine-checked injective. A one-felt tie would have been `2^31`; a digest
+/// tie would have been a collision bar. This is equality.
+#[test]
+fn the_segment_seam_commits_the_published_tip_lanes() {
+    let mina = mina_desc();
+    let b = bind_by_guard(&mina, LINK_OK);
+    for i in 0..STATE_LANES {
+        assert_eq!(
+            b.commit[i],
+            LeanExpr::Var(TIP_STATE_BASE + i),
+            "the segment seam's commitment lane {i} must be the PUBLISHED tip column, not a free \
+             column and not a digest lane"
+        );
+    }
+    // …and every one of those columns is PI-bound at the tip slots, so the commitment is PUBLIC.
+    let pinned: Vec<(usize, usize)> = mina
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. }) => {
+                Some((*col, *pi_index))
+            }
+            _ => None,
+        })
+        .collect();
+    for i in 0..STATE_LANES {
+        assert!(
+            pinned.contains(&(TIP_STATE_BASE + i, STATE_LANES + i)),
+            "tip lane {i} must be PI-bound at slot {}",
+            STATE_LANES + i
+        );
+    }
+}
+
+/// ⚑ **THE TWO SEAMS NAME DIFFERENT PROGRAMS — checked, not assumed.** A head that pinned one
+/// fingerprint twice would be one bind wearing two names, and every assertion above would still
+/// pass. This is the control that refuses it.
+#[test]
+fn the_two_seams_pin_different_programs() {
+    let mina = mina_desc();
+    let wrap = bind_by_guard(&mina, WRAP_FS_PROVED);
+    let seg = bind_by_guard(&mina, LINK_OK);
+    assert_ne!(
+        wrap.vk_pin, seg.vk_pin,
+        "the chainlink and segment seams must pin DIFFERENT program fingerprints"
+    );
+    assert_ne!(
+        effect_vm_descriptor2_semantic_fingerprint(&link_desc()).expect("representable"),
+        effect_vm_descriptor2_semantic_fingerprint(&segment_desc()).expect("representable"),
+        "and the two sub-proof descriptors are genuinely different objects"
+    );
+    // The attested-program COLUMNS are disjoint too, so the two seams cannot share a witness.
+    let wc: Vec<&LeanExpr> = wrap.vk.iter().collect();
+    let sc: Vec<&LeanExpr> = seg.vk.iter().collect();
+    for e in &wc {
+        assert!(
+            !sc.contains(e),
+            "the two seams share an attested-program column"
         );
     }
 }

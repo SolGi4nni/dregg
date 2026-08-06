@@ -306,8 +306,14 @@ fn the_bent_lane_is_itself_canonical() {
 /// ⚑ THE FREE DEPTH, REFUSED. Three exhibited real rows, `PI_SEG_LEN` published as 290 (mainnet
 /// Samasika `k`). The last-row `REAL_COUNT` pin refuses it.
 ///
-/// ⚠ This is the shape `dregg-mina-lightclient-verify::v1` CANNOT refuse: there `SEG_LEN` is a free
-/// witness column in a single row and 290 costs exactly as much to write as 3.
+/// ⚠ This is the shape `dregg-mina-lightclient-verify::v1` CANNOT refuse IN-CIRCUIT: there `SEG_LEN`
+/// is a free witness column in a single row and 290 costs exactly as much to write as 3.
+/// ⚑ **AND SINCE 2026-08-05 THE CONSUMER REFUSES IT ANYWAY, WHICH IS A DIFFERENT SENTENCE.** The
+/// head now binds this descriptor through a `LINK_OK`-guarded `proof_bind`, and
+/// `mina_head_verifier::check_segment_binding` (REFUSAL 14c) recomputes the segment length as
+/// `head PI[18] − head PI[29]` — two PUBLISHED values, so no prover input — and requires THIS
+/// descriptor's counted `PI_SEG_LEN` to equal it. So the claim is paid for in rows after all; it is
+/// paid for at an EXECUTOR CHECK plus this AIR's row count, not by a gate of the head AIR.
 #[test]
 fn a_published_depth_without_rows_is_refused() {
     let _h = Hush::new();

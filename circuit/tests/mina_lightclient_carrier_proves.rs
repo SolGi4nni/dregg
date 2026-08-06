@@ -47,10 +47,13 @@ use dregg_circuit::descriptor_ir2::{
     prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::heap_root::HeapLeaf;
+use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal;
 
 const MINA_LC_VERIFY_DESCRIPTOR: &str = "dregg-mina-lightclient-verify::v1";
 const CHAINLINK_DESCRIPTOR: &str = "dregg-pasta-fq-chainlink::v1";
+/// ⚑⚑ The SEGMENT sub-proof's descriptor — the multi-row companion the head now binds.
+const LINK_DESCRIPTOR: &str = "dregg-mina-lightclient-link::v1";
 
 /// ⚑ **ONE TRACE, TWO DESCRIPTORS — and the proof below is what establishes it, not this comment.**
 /// `pasta-fq-wraplink.json` and `pasta-fq-chainlink.json` are the same `programAir qLimb absorbProg`
@@ -94,7 +97,10 @@ const TIP_STATE_0: usize = 21;
 const WRAP_FS_PROVED: usize = 30;
 const SUB_VK_0: usize = 31;
 const SUB_PI_0: usize = 40;
-const MINA_LC_WIDTH: usize = 49;
+/// ⚑⚑ The SEGMENT seam's attested program lanes (`LightClientMinaAir.LINK_VK`), cols 49..57 — added
+/// 2026-08-05. `LINK_OK` is their guard, which is what stops it being a bare `= 1`.
+const LINK_VK_0: usize = 49;
+const MINA_LC_WIDTH: usize = 58;
 const MINA_PI_COUNT: usize = 30;
 const STATE_LANES: usize = 9;
 const PI_SUB_COMMIT_BASE: usize = 20;
@@ -124,6 +130,13 @@ const CHAINLINK_VK_LANES: [u32; 9] = [
 /// sub-proof's 256 public inputs on the block-539508 instance's 46th and last link.
 const CHAINLINK_PI_LANES: [u32; 9] = [
     76470648, 44150818, 361910605, 443692671, 242143308, 490185822, 240590146, 360276303, 4019771,
+];
+
+/// `LightClientMinaAir.LINK_VK_LANES` — the nine `Faithful9` lanes of the SEGMENT descriptor's
+/// semantic fingerprint. `mina_transcript_carrier_binding.rs` recomputes these from that
+/// descriptor's own bytes; here they are the row a prover must fill.
+const LINK_VK_LANES: [u32; 9] = [
+    76100771, 34473567, 194746848, 491185466, 265287284, 420926520, 245421703, 7802286, 15232152,
 ];
 
 fn desc() -> EffectVmDescriptor2 {
@@ -157,6 +170,7 @@ fn honest_cells() -> Vec<i64> {
         c[TIP_STATE_0 + i] = i64::from(DEVNET_TIP_LANES[i]);
         c[SUB_VK_0 + i] = i64::from(CHAINLINK_VK_LANES[i]);
         c[SUB_PI_0 + i] = i64::from(CHAINLINK_PI_LANES[i]);
+        c[LINK_VK_0 + i] = i64::from(LINK_VK_LANES[i]);
     }
     c[WRAP_FS_PROVED] = 1;
     c
@@ -208,8 +222,9 @@ fn the_served_descriptor_has_the_recursion_shape() {
     // bind, so the constraint count drops by eight and the bind count is 1.
     assert_eq!(
         d.constraints.len(),
-        62,
-        "50 + the carrier gate + 1 nine-lane bind + 9 commitment pins + the ANCHOR_H pin"
+        63,
+        "50 + the carrier gate + 1 nine-lane bind + 9 commitment pins + the ANCHOR_H pin \
+         + ⚑ the SEGMENT bind (2026-08-05)"
     );
     let binds: Vec<_> = d
         .constraints
@@ -221,19 +236,62 @@ fn the_served_descriptor_has_the_recursion_shape() {
         .collect();
     assert_eq!(
         binds.len(),
-        1,
-        "one proof_bind, carrying every program lane"
+        2,
+        "two proof_binds: the chainlink recursion seam and ⚑ the SEGMENT seam"
+    );
+    for b in &binds {
+        assert_eq!(
+            b.vk.len(),
+            STATE_LANES,
+            "each seam ties all nine program lanes — a prefix pin is refused at admission"
+        );
+        assert_eq!(b.commit.len(), STATE_LANES);
+        assert_eq!(
+            b.vk_pin.as_ref().map(Vec::len),
+            Some(STATE_LANES),
+            "each program pin names every lane"
+        );
+    }
+
+    // ⚑⚑⚑ THE WHOLE POINT OF THE 2026-08-05 SEGMENT RUNG, ON THE SERVED BYTES: the `LINK_OK`-guarded
+    // bind's COMMIT VECTOR is the nine PUBLISHED `TIP_STATE` columns. Until this landed those nine
+    // were read by one arity-1 range lookup each and RELATED TO NOTHING
+    // (`LightClientAnchorConnectivity.minaVerify_state_lanes_are_read_but_never_joined`, retired).
+    let seg = binds
+        .iter()
+        .find(|b| matches!(b.guard, LeanExpr::Var(c) if c == LINK_OK))
+        .expect("the head must carry a proof_bind guarded by LINK_OK");
+    assert_eq!(
+        seg.commit
+            .iter()
+            .map(|e| match e {
+                LeanExpr::Var(c) => *c,
+                other => panic!("commit lane is not a column: {other:?}"),
+            })
+            .collect::<Vec<usize>>(),
+        (TIP_STATE_0..TIP_STATE_0 + STATE_LANES).collect::<Vec<usize>>(),
+        "the segment seam's declared commitment must BE the published tip lanes — that is the edge"
     );
     assert_eq!(
-        binds[0].vk.len(),
-        STATE_LANES,
-        "the seam ties all nine program lanes — a prefix pin is refused at admission"
+        seg.vk_pin.as_deref(),
+        Some(
+            &LINK_VK_LANES
+                .iter()
+                .map(|v| i64::from(*v))
+                .collect::<Vec<i64>>()[..]
+        ),
+        "and it must pin the SEGMENT program, not the chainlink one"
     );
-    assert_eq!(binds[0].commit.len(), STATE_LANES);
+    assert!(!seg.is_declarative());
+
+    // ⚑ AND THE SEGMENT PROGRAM IT NAMES IS ACTUALLY SERVED — the same fail-open check the
+    // chainlink gets below. A bind to a program this node cannot load makes the consumer's refusal
+    // unreachable.
+    let seg_desc = descriptor_by_name(LINK_DESCRIPTOR)
+        .expect("the segment sub-proof descriptor must dispatch (fail-closed otherwise)");
     assert_eq!(
-        binds[0].vk_pin.as_ref().map(Vec::len),
-        Some(STATE_LANES),
-        "the program pin names every lane"
+        seg_desc.public_input_count, 20,
+        "nine anchor lanes, nine tip lanes, the anchor height, the counted segment length"
     );
 
     // ⚑ AND THE SUB-PROOF DESCRIPTOR IT NAMES IS ACTUALLY SERVED. A recursion bind to a program
@@ -329,6 +387,109 @@ fn publishing_a_commitment_the_row_does_not_hold_is_refused() {
         "a head proof publishing a commitment its row does not carry",
         || prove_and_verify(&desc(), &cells, &pis),
     );
+}
+
+// ═══ §3b — ⚑⚑⚑ THE SEGMENT SEAM: `LINK_OK` STOPS BEING A BARE `= 1` ════════════════════════════
+
+/// ⚑⚑⚑ **A ROW THAT NAMES A DIFFERENT SEGMENT PROGRAM IS REFUSED BY A GATE.** One lane of the nine,
+/// bumped by ONE — still a canonical `Faithful9` digit, so no range lookup can be what refuses it,
+/// and this descriptor declares no chip table so no filler can quietly correct it either.
+///
+/// ⚠ **THE TAMPER IS CHECKED, NOT ASSUMED.** A drafted falsifier on a sibling lane was refuted for
+/// moving a zero into a zero; `assert_ne!` below is what makes this one a real forgery. This is the
+/// shape `LINK_OK = 1` waved through for its entire life: a prover asserting "the segment linked"
+/// with nothing behind it.
+#[test]
+fn a_row_naming_a_different_segment_program_is_refused() {
+    let honest = honest_cells();
+    let mut cells = honest.clone();
+    cells[LINK_VK_0] += 1;
+    assert_ne!(
+        cells[LINK_VK_0], honest[LINK_VK_0],
+        "the forgery must actually move a value — a tamper into an equal value refuses nothing"
+    );
+    assert_ne!(
+        honest[LINK_VK_0], 0,
+        "and it must move a NON-ZERO lane: bumping a zero into a one would test the filler, not the seam"
+    );
+    let pis = pis_of(&cells);
+    let e = refusal::must_refuse(
+        "a head row attesting a segment program that is not the link AIR",
+        || prove_and_verify(&desc(), &cells, &pis),
+    );
+    refusal::assert_violated_constraint_not_bus("forged segment program lane", &e);
+}
+
+/// ⚑ …and the LAST lane too, so the refusal is not an artifact of lane 0 being special.
+#[test]
+fn a_forged_top_segment_program_lane_is_refused() {
+    let mut cells = honest_cells();
+    cells[LINK_VK_0 + 8] += 1;
+    let pis = pis_of(&cells);
+    refusal::must_refuse(
+        "a head row whose top segment-program lane is forged",
+        || prove_and_verify(&desc(), &cells, &pis),
+    );
+}
+
+/// ⚑⚑ **THE SEGMENT GUARD CANNOT BE SWITCHED OFF.** A prover who would rather not name a segment
+/// sub-proof sets `LINK_OK = 0`, which makes all nine `guard·(vk − vk_pin)` congruences hold
+/// vacuously. G6 (`LINK_OK = 1`) is what stops that — the gate that used to be the WHOLE of
+/// `LINK_OK`'s cost is now the thing that keeps the seam armed. `mina_link_guard_cannot_be_disarmed`
+/// on the prover.
+#[test]
+fn disarming_the_segment_guard_is_refused() {
+    let mut cells = honest_cells();
+    cells[LINK_OK] = 0;
+    // A prover disarming the guard would also blank the program lanes it no longer has to fill.
+    for i in 0..STATE_LANES {
+        cells[LINK_VK_0 + i] = 0;
+    }
+    let pis = pis_of(&cells);
+    refusal::must_refuse("a head row with the segment guard disarmed", || {
+        prove_and_verify(&desc(), &cells, &pis)
+    });
+}
+
+/// ⚑⚑⚑ **THE SEGMENT SUB-PROOF PROVES FROM THE SERVED DESCRIPTOR** — so the program the seam pins
+/// is one a prover can actually discharge. A pin to a program nobody can prove would be a carrier
+/// nobody can set: completeness zero, and the rung a ban rather than a gate.
+///
+/// ⚠ Two rows, the minimum a chain can be: row 0's `OWNHASH` is row 1's `PARENT`, the height ticks,
+/// and `REAL_COUNT` reaches 1. The point here is dispatch + prove, not segment depth —
+/// `circuit-prove/tests/mina_link_segment_multirow.rs` is the deep polarity suite.
+#[test]
+fn the_segment_sub_proof_proves_from_the_served_descriptor() {
+    let d = descriptor_by_name(LINK_DESCRIPTOR).expect("served");
+    assert_eq!(d.public_input_count, 20);
+    // Column layout: PARENT 0..8, OWNHASH 9..17, HEIGHT 18, IS_REAL 19, REAL_COUNT 20, ANCHOR_H 21.
+    let mut r0 = vec![BabyBear::new(0); d.trace_width];
+    let mut r1 = vec![BabyBear::new(0); d.trace_width];
+    for i in 0..STATE_LANES {
+        r0[i] = BabyBear::new(GENESIS_ANCHOR_LANES[i]);
+        r0[STATE_LANES + i] = BabyBear::new(DEVNET_TIP_LANES[i]);
+        // continuity: row 1's PARENT is row 0's OWNHASH.
+        r1[i] = BabyBear::new(DEVNET_TIP_LANES[i]);
+        r1[STATE_LANES + i] = BabyBear::new(DEVNET_TIP_LANES[i]);
+    }
+    r0[18] = BabyBear::new(1001);
+    r1[18] = BabyBear::new(1002);
+    r0[19] = BabyBear::new(1);
+    r1[19] = BabyBear::new(0);
+    r0[20] = BabyBear::new(1);
+    r1[20] = BabyBear::new(1);
+    r0[21] = BabyBear::new(1000);
+    r1[21] = BabyBear::new(1000);
+    let trace = vec![r0.clone(), r1.clone()];
+    let mut pis = vec![BabyBear::new(0); 20];
+    for i in 0..STATE_LANES {
+        pis[i] = r0[i];
+        pis[STATE_LANES + i] = r1[STATE_LANES + i];
+    }
+    pis[18] = r0[21];
+    pis[19] = r1[20];
+    // A prove/verify pair is the claim; a shape fault would surface here as a panic, not a refusal.
+    refusal::assert_committed_shape("mina segment sub-proof", &d, &trace, &pis);
 }
 
 /// The pre-existing teeth still bite with the widened row — a regression guard on the rung, since a

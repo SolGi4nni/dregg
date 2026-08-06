@@ -53,8 +53,14 @@
 //! transition unless the Mina verification predicate holds** — and the thing the turn writes is the
 //! thing the proof is about, because the descriptor's public inputs ARE the recorded triple.
 //!
-//! # The four refusals, and why each is load-bearing rather than decorative
+//! # The refusals, and why each is load-bearing rather than decorative
 //!
+//! 0. ⚑⚑⚑ **THIS NODE CAN CHECK A RECURSION ROOT — decided before the blob is decoded.**
+//!    Refusals 7-10 need a [`MinaChainRootBackend`], and `dregg-turn` cannot supply one (it does
+//!    not link `p3-recursion`; see `turn/Cargo.toml`). A node with none REFUSES the head. It does
+//!    not log-and-proceed, it does not read "we cannot check the root" as "there was no root",
+//!    and it does not spend two STARK verifications first. Whether the capability is present is a
+//!    fact about the NODE, so it is decided first.
 //! 1. **The pinned anchor is not prover-chosen.** `commitment` comes from the CELL PROGRAM (the
 //!    authoritative pre-state the executor hands the evaluator), never from the action. PI slots
 //!    0..8 must be exactly `Faithful9::from_key_lanes9(commitment)`. A proof about a head anchored
@@ -81,13 +87,36 @@
 //!    RED and stayed red — the head pinned `[460719650, …]` while the served sub-proof
 //!    fingerprinted to `[172082222, …]`, so the bind named a program no descriptor in this tree
 //!    has. A drift is now a refused head, not a red nobody read.
+//! 11. ⚑⚑⚑ **THE HEAD DESCRIPTOR'S *SEGMENT* PIN NAMES THE LINK PROGRAM.** Since 2026-08-05 the
+//!    head carries TWO `proof_bind` constraints, so [`check_subproof_program_pin`] resolves them by
+//!    GUARD COLUMN — [`HEAD_WRAP_GUARD_COL`] (30, `WRAP_FS_PROVED`) and [`HEAD_LINK_GUARD_COL`]
+//!    (8, `LINK_OK`) — and refuses unless exactly one bind carries the key. Resolving by list
+//!    position would have silently mis-read the seams the day emission order moved.
+//! 12. ⚑⚑⚑ **THE SEGMENT SUB-PROOF ITSELF IS VERIFIED.**
+//!    `descriptor_by_name(MINA_LINK_DESCRIPTOR)` (fail-closed `None`) → `verify_vm_descriptor2`
+//!    over its 20 public inputs. ⚠ **THAT DESCRIPTOR WAS SERVED AND UNASKED-FOR:** measured
+//!    2026-08-05 it resolved at exactly two sites in this file, both inside `#[cfg(test)]` and both
+//!    as a wrong-program DECOY. A sub-proof nobody dispatches refuses nothing.
+//! 13. ⚑⚑⚑ **THE SEAM: the head's published TIP IS the segment proof's published tip.** The head
+//!    descriptor's `LINK_OK`-guarded bind declares its `commit` vector to be the row's nine
+//!    `TIP_STATE` columns, so this comparison is what discharges that bind's off-row existential.
+//!    Nine `Faithful9` lanes, `8·29 + 24 = 256` bits, **elementwise, no digest, no birthday bound.**
+//!    This is the consumer half of the in-circuit edge; the AIR half is the constraint itself.
+//! 14. ⚑⚑ **AND THE ELEVEN PUBLIC INPUTS THE SEAM DOES NOT COVER.** [`check_segment_binding`]:
+//!    the segment proof's anchor lanes against head PI 0..8, its anchor height against head PI 29,
+//!    and its COUNTED segment length against `head PI[18] − head PI[29]`. ⚑ The last is the sharp
+//!    one — `SEG_LEN` is a free witness in the head AIR, but G1 makes it a function of two PUBLISHED
+//!    values, so this node recomputes it and `link_seg_len_counts_the_real_rows` then makes the
+//!    segment proof pay for it in COMMITTED ROWS. ⚠ These eleven are an EXECUTOR check, not a
+//!    constraint. Say it that way.
 //! 6. **The STARK.** `descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR)` (fail-closed `None` on a miss)
 //!    → `verify_vm_descriptor2` over all 30 public inputs. The descriptor's own gates then force
 //!    `BLOCK_LEN = ANCHOR_H + SEG_LEN` and `WIT_DEPTH + SUBMIT_H = BLOCK_LEN` — the published
 //!    `blockchain_length` is DERIVED from the pinned anchor plus the exhibited segment, so the one
 //!    field a truncated peer reply leaves standing is not settable — plus the three ranged slack
-//!    teeth, the carrier bits, and ⚑ the nine `proof_bind` congruences that force the row's attested
-//!    program to be `MINA_CHAINLINK_DESCRIPTOR`'s fingerprint, lane by lane.
+//!    teeth, the carrier bits, and ⚑ the TWO nine-lane `proof_bind` seams that force the row's
+//!    attested programs to be `MINA_CHAINLINK_DESCRIPTOR`'s and `MINA_LINK_DESCRIPTOR`'s
+//!    fingerprints, lane by lane.
 //!
 //! # ⚑⚑ 2026-08-05 — `PICKLES_OK` STOPPED BEING ONE THING, AND SAY EXACTLY WHICH HALF MOVED
 //!
@@ -140,6 +169,13 @@
 //!    pinned outgoing block and the root's incoming state must be `(0,0,0)`. **What is still open is
 //!    the Fp phase-1 leg that ties `fq_digest` to the protocol state** — until that lands, the chain
 //!    is anchored at a fresh sponge and at a tape commitment, but not at THIS head.
+//!    ⚠ **AND THE SEGMENT SEAM DOES NOT CLOSE IT EITHER — do not read refusals 11-14 as this
+//!    residual.** They tie `TIP_STATE` to a proof of the SEGMENT program, whose evidence is a chain
+//!    of rows whose `OWNHASH` is a free witness. Two different sub-proofs, two different claims:
+//!    the Fq transcript still is not shown to be this head's, and the segment's hashes still are not
+//!    shown to be Poseidon of anything. `dregg-pasta-fp-chainlink::v1` (served 2026-08-05) derives
+//!    `fq_digest` and welds it to the phase-2 tape at 32/32 felts, which is the next rung and is not
+//!    consumed here.
 //! 3. **Not the accumulator.** `bridge/examples/mina_accumulator_discharge.rs` discharges it
 //!    NATIVELY over 7 real block proofs (27.4 s batched, a forged `sg` refused in each of 7 slots);
 //!    it is not part of this bind.
@@ -166,9 +202,15 @@
 //!   `keyToLanes9`: nine base-`2^29` lanes, `8·29+24 = 256` exactly, machine-checked left inverse)
 //!   and the comparison is made below. That is a real refusal — the turn dies — but a proof
 //!   consumed by any OTHER route would get the widths and not the equality.
-//! * **`LINK_OK` and `PICKLES_WITNESSED` are witnessed carriers**, not re-derived in-AIR; the
-//!   Pickles residue rides the undischarged IPA/FRI floor. So this refuses a bent proof word only as
-//!   strongly as the witness generator is honest about those two bits. ⚑ `CANON_OK` is no longer
+//! * ⚑ **`PICKLES_WITNESSED` is a witnessed carrier**, not re-derived in-AIR; it rides the
+//!   undischarged IPA/FRI floor, so this refuses a bent proof word only as strongly as the witness
+//!   generator is honest about that bit. **`LINK_OK` LEFT THAT LIST ON 2026-08-05:** it is the guard
+//!   of the segment seam, so setting it costs a verifying STARK over `MINA_LINK_DESCRIPTOR` whose
+//!   published tip is this head's (refusals 11-14). ⚠ What that buys is the segment's SHAPE — nine
+//!   lane-continuity gates per link, a height that ticks, a row-counted length — and NOT its hashes:
+//!   `OWNHASH` is a free witness (`LinkHashResidual`), so a prover choosing every row's hash can
+//!   still fabricate a consistent chain. It can no longer be inconsistent, claim a depth it has not
+//!   committed rows for, or publish a tip that is not that chain's last element. ⚑ `CANON_OK` is no longer
 //!   one of them for the anchor and the tip: `LightClientMinaAir` §1a derives their canonicality
 //!   from the emitted lookups (`mina_anchor_and_tip_are_canonical`), and
 //!   `shifted_anchor_old_admits_new_rejects` exhibits the `+p` anchor alias that the witnessed bit
@@ -292,6 +334,52 @@ pub const PI_SUB_COMMIT_BASE: usize = 2 * MINA_STATE_LANES + 2;
 /// in-circuit edge (`relatedCols` returns `[]` for a `piBinding`, deliberately), so the value comes
 /// from a consumer refusing the published height against a height it holds independently.
 pub const PI_ANCHOR_H: usize = 3 * MINA_STATE_LANES + 2;
+
+/// ⚑⚑⚑ **THE SEGMENT SUB-PROOF'S DESCRIPTOR — served, and as of 2026-08-05 DISPATCHED IN
+/// PRODUCTION.** Authored as `LightClientMinaLinkAir.minaLinkDesc`: the MULTI-ROW companion, one row
+/// per exhibited block, with nine `.transition` lane-continuity gates per link, a height that ticks
+/// by one from a first-row anchor, and `PI_SEG_LEN` the LAST row's `REAL_COUNT` — so
+/// `link_seg_len_counts_the_real_rows` proves a claimed depth is PAID FOR IN COMMITTED ROWS.
+///
+/// ⚠ **IT WAS SERVED AND UNASKED-FOR.** Measured 2026-08-05: this descriptor proved both polarities
+/// (`circuit-prove/tests/mina_link_segment_multirow.rs`) and `descriptor_by_name` resolved it at
+/// exactly two call sites in this file, **both inside `#[cfg(test)] mod tests`, and both as a
+/// wrong-program DECOY** for the fingerprint-mismatch tests. Nothing on a node ever asked for it.
+/// A sub-proof nobody dispatches is a sub-proof that refuses nothing.
+///
+/// ⚠ **AND SAY WHAT IT DOES NOT ESTABLISH.** Its `OWNHASH` is a free witness — nothing forces it to
+/// be `Poseidon(stateRow)` (`LinkHashResidual`, priced at ~5·10⁵ BabyBear constraints per block
+/// hash). So a verifying segment proof establishes *the segment's SHAPE*, not its hashes: a prover
+/// free to choose each row's `OWNHASH` can still fabricate a consistent chain. What it removes is
+/// the freedom to be INCONSISTENT, the freedom to claim a depth without committing rows for it, and
+/// the freedom to publish a tip that is not that chain's last element.
+pub const MINA_LINK_DESCRIPTOR: &str = "dregg-mina-lightclient-link::v1";
+
+/// Public-input arity of [`MINA_LINK_DESCRIPTOR`] (`LightClientMinaLinkAir.MINA_LINK_PI_COUNT`):
+/// nine anchor lanes, nine tip lanes, the anchor height, the segment length.
+pub const MINA_LINK_PI_COUNT: usize = 2 * MINA_STATE_LANES + 2;
+
+/// PI slot of the segment proof's anchor lane `i` (`LightClientMinaLinkAir.PI_ANCHOR`), slots 0..8 —
+/// pinned from the FIRST row's `PARENT` columns.
+pub const LINK_PI_ANCHOR_BASE: usize = 0;
+/// PI slot of the segment proof's tip lane `i` (`LightClientMinaLinkAir.PI_TIP`), slots 9..17 —
+/// pinned from the LAST row's `OWNHASH` columns. ⚑ **This block is the seam's commitment**: the head
+/// descriptor's `LINK_OK`-guarded `proof_bind` declares its `commit` vector to be the head's own
+/// nine `TIP_STATE` columns, so these nine and head PI slots 9..17 must agree elementwise.
+pub const LINK_PI_TIP_BASE: usize = MINA_STATE_LANES;
+/// PI slot of the segment proof's anchor height (`LightClientMinaLinkAir.PI_ANCHOR_H`).
+pub const LINK_PI_ANCHOR_H: usize = 2 * MINA_STATE_LANES;
+/// PI slot of the segment proof's counted segment length (`LightClientMinaLinkAir.PI_SEG_LEN`) —
+/// the LAST row's `REAL_COUNT`, i.e. the number of rows the prover actually committed.
+pub const LINK_PI_SEG_LEN: usize = 2 * MINA_STATE_LANES + 1;
+
+/// ⚑ The head descriptor's guard COLUMN for the chainlink recursion bind
+/// (`LightClientMinaAir.WRAP_FS_PROVED`). Used to resolve WHICH `proof_bind` is which — the head
+/// carries two, and resolving them by list position or by display name is exactly the class of
+/// mistake `reference-a-display-name-is-not-a-key` records. The guard column is a structural key.
+pub const HEAD_WRAP_GUARD_COL: usize = 30;
+/// ⚑ The head descriptor's guard COLUMN for the SEGMENT bind (`LightClientMinaAir.LINK_OK`).
+pub const HEAD_LINK_GUARD_COL: usize = 8;
 
 /// Domain separation for the WEAK-SUBJECTIVITY ANCHOR commitment — see [`mina_anchor_commitment`].
 pub const MINA_ANCHOR_COMMITMENT_CONTEXT: &str = "dregg.mina-lightclient.anchor-commitment.v1";
@@ -434,6 +522,17 @@ pub struct MinaHeadProofWire {
     /// discharged only in an example binary until today. See
     /// [`super::mina_accumulator_oracle`] for what the discharge establishes and what it does not.
     pub accumulator: WireAccumulatorClaim,
+    /// ⚑⚑⚑ **THE SEGMENT SUB-PROOF'S TWENTY PUBLIC INPUTS**, in [`MINA_LINK_DESCRIPTOR`] order:
+    /// nine anchor lanes, nine tip lanes, the anchor height, the counted segment length. REQUIRED.
+    pub link_public_inputs: Vec<u32>,
+    /// ⚑⚑⚑ **THE IR-v2 BATCH PROOF OVER [`MINA_LINK_DESCRIPTOR`]. This node verifies it.**
+    /// REQUIRED, so a pre-2026-08-05 blob fails to DECODE rather than being reinterpreted as "no
+    /// segment proof supplied" — the refusal is at the codec, the one place it cannot be forgotten.
+    ///
+    /// This is what makes `LINK_OK` cost something. Until today it was a bare `= 1` on a witnessed
+    /// column; the head descriptor now guards a nine-lane `proof_bind` with it whose declared
+    /// commitment IS the head's published tip block, and this is the proof that commitment is of.
+    pub link_proof: Ir2BatchProof<DreggStarkConfig>,
 }
 
 /// ⚑⚑ **THE CLAIM A MINA PHASE-2 CHAIN-FOLD ROOT PUBLISHES**, as canonical `u32` lanes.
@@ -489,58 +588,179 @@ const _: () =
 /// emitted `vk_pin` cells (from `LightClientMinaAir.CHAINLINK_VK_LANES`, through Lean) and a blake3
 /// fingerprint recomputed here over the SUB-PROOF descriptor's canonical bytes. Neither is derived
 /// from the other; they agree only if both artifacts were emitted from the same Lean tree.
-pub fn check_subproof_program_pin(
+/// ⚑⚑ **RESOLVED BY GUARD COLUMN, NOT BY LIST POSITION.** Since 2026-08-05 the head descriptor
+/// carries TWO `proof_bind` constraints — the chainlink seam (guard `WRAP_FS_PROVED`, col 30) and
+/// the segment seam (guard `LINK_OK`, col 8). Picking one by index would have been a silent
+/// mis-resolution the day the emission order moved, which is the class
+/// `reference-a-display-name-is-not-a-key` records; the guard column is a structural key, and this
+/// refuses unless EXACTLY ONE bind carries it.
+fn head_bind_by_guard(
     head_desc: &EffectVmDescriptor2,
-    sub_desc: &EffectVmDescriptor2,
-) -> Result<(), String> {
-    let fp = effect_vm_descriptor2_semantic_fingerprint(sub_desc).map_err(|e| {
-        format!(
-            "the {MINA_CHAINLINK_DESCRIPTOR} descriptor has no representable semantic fingerprint \
-             ({e}): this node cannot tell which program the head proof's recursion bind names"
-        )
-    })?;
-    let expected = key_lanes_u32(&fp);
-
-    let binds: Vec<&dregg_circuit::descriptor_ir2::ProofBindSpec> = head_desc
+    guard_col: usize,
+) -> Result<&dregg_circuit::descriptor_ir2::ProofBindSpec, String> {
+    let matching: Vec<&dregg_circuit::descriptor_ir2::ProofBindSpec> = head_desc
         .constraints
         .iter()
         .filter_map(|c| match c {
             dregg_circuit::descriptor_ir2::VmConstraint2::ProofBind(p) => Some(p),
             _ => None,
         })
+        .filter(|p| matches!(p.guard, dregg_circuit::lean_descriptor_air::LeanExpr::Var(c) if c == guard_col))
         .collect();
-    if binds.len() != 1 {
+    if matching.len() != 1 {
         return Err(format!(
-            "{MINA_LC_VERIFY_DESCRIPTOR} declares {} proof_bind constraints; this consumer requires \
-             exactly one (the nine-lane recursion bind). A head descriptor with a different seam \
-             shape is refused rather than partially checked",
-            binds.len()
+            "{MINA_LC_VERIFY_DESCRIPTOR} declares {} proof_bind constraints guarded by column \
+             {guard_col}; this consumer requires exactly one. A head descriptor whose seam shape \
+             moved is refused rather than partially checked",
+            matching.len()
         ));
     }
-    let pin = binds[0].vk_pin.as_deref().ok_or_else(|| {
+    Ok(matching[0])
+}
+
+pub fn check_subproof_program_pin(
+    head_desc: &EffectVmDescriptor2,
+    sub_desc: &EffectVmDescriptor2,
+    guard_col: usize,
+    sub_name: &str,
+) -> Result<(), String> {
+    let fp = effect_vm_descriptor2_semantic_fingerprint(sub_desc).map_err(|e| {
         format!(
-            "{MINA_LC_VERIFY_DESCRIPTOR}'s recursion bind declares NO program pin (`vk_pin: None`): \
-             the row's attested program would be the prover's to choose, so this node refuses the \
-             head rather than verifying a sub-proof of an unnamed program"
+            "the {sub_name} descriptor has no representable semantic fingerprint ({e}): this node \
+             cannot tell which program the head proof's recursion bind names"
+        )
+    })?;
+    let expected = key_lanes_u32(&fp);
+
+    let bind = head_bind_by_guard(head_desc, guard_col)?;
+    let pin = bind.vk_pin.as_deref().ok_or_else(|| {
+        format!(
+            "{MINA_LC_VERIFY_DESCRIPTOR}'s bind guarded by column {guard_col} declares NO program \
+             pin (`vk_pin: None`): the row's attested program would be the prover's to choose, so \
+             this node refuses the head rather than verifying a sub-proof of an unnamed program"
         )
     })?;
     if pin.len() != MINA_STATE_LANES {
         return Err(format!(
-            "{MINA_LC_VERIFY_DESCRIPTOR}'s recursion bind pins {} program lanes; a `Faithful9` \
-             program identity is {MINA_STATE_LANES}. A prefix pin is not a pin",
+            "{MINA_LC_VERIFY_DESCRIPTOR}'s bind guarded by column {guard_col} pins {} program \
+             lanes; a `Faithful9` program identity is {MINA_STATE_LANES}. A prefix pin is not a pin",
             pin.len()
         ));
     }
     for (i, want) in expected.iter().enumerate() {
         if pin[i] != i64::from(*want) {
             return Err(format!(
-                "{MINA_LC_VERIFY_DESCRIPTOR} pins program lane {i} at {}, but the descriptor this \
-                 node dispatches for {MINA_CHAINLINK_DESCRIPTOR} fingerprints to {want}: the head \
-                 descriptor's recursion bind names a DIFFERENT program than the sub-proof this node \
-                 verifies. One of the two was re-emitted and the other was not — refusing the head",
+                "{MINA_LC_VERIFY_DESCRIPTOR} pins program lane {i} at {} on the bind guarded by \
+                 column {guard_col}, but the descriptor this node dispatches for {sub_name} \
+                 fingerprints to {want}: the head descriptor's recursion bind names a DIFFERENT \
+                 program than the sub-proof this node verifies. One of the two was re-emitted and \
+                 the other was not — refusing the head",
                 pin[i]
             ));
         }
+    }
+    Ok(())
+}
+
+/// ⚑⚑⚑ **REFUSALS 13-14 — THE SEGMENT SEAM, AND THE ELEVEN PUBLIC INPUTS IT DOES NOT COVER.**
+///
+/// # What is in-circuit and what is here — the split, said before the code
+///
+/// The head descriptor's `LINK_OK`-guarded `proof_bind` declares its `commit` vector to be the row's
+/// nine `TIP_STATE` columns. That is the **only** thing a `proof_bind` can join a published column
+/// to: `commit` is the sole vector naming off-row evidence, and `bound` is defined to be *equal* to
+/// it. So the seam covers NINE of the segment proof's twenty public inputs — the tip block — and it
+/// covers them at `8·29 + 24 = 256` bits exactly, **elementwise, no digest, therefore no birthday
+/// bound.** That is REFUSAL 13, and it is the consumer half of an in-circuit edge.
+///
+/// The other ELEVEN are refused here and nowhere else. They are an EXECUTOR CHECK, not a constraint,
+/// and this doc comment is the place that says so:
+///
+/// * `link PI[0..8] == head PI[0..8]` — the same pinned weak-subjectivity anchor. Without it a
+///   prover could exhibit a genuine chain under an anchor nobody pinned.
+/// * `link PI[18] == head PI[29]` — the same anchor height.
+/// * `link PI[19] == head PI[18] − head PI[29]` — ⚑ **the segment length, and this is the one worth
+///   reading twice.** `SEG_LEN` is column 0 of the head descriptor and a FREE WITNESS in
+///   `[1, 2^24]`; `LightClientMinaAir` §"CORRECTED 2026-08-03" says so at length. But G1 makes it a
+///   *function of two PUBLISHED values* (`BLOCK_LEN − ANCHOR_H`), so this node recomputes it without
+///   the prover's help — and `link_seg_len_counts_the_real_rows` then makes the segment proof pay
+///   for it in COMMITTED ROWS. A head claiming 300 blocks must hand over a proof with 300 rows.
+///
+/// ⚠ The subtraction is over `u32` PI cells that are BabyBear residues, so it is done in `i64` and
+/// refuses a `BLOCK_LEN < ANCHOR_H` head outright rather than wrapping. The AIR's G4 already forces
+/// `ANCHOR_H ≤ SUBMIT_H ≤ BLOCK_LEN`, so an honest head never reaches that arm — which is exactly
+/// why an inconsistent one must be refused here rather than silently reinterpreted.
+pub fn check_segment_binding(head_pis: &[u32], link_pis: &[u32]) -> Result<(), String> {
+    if head_pis.len() != MINA_LC_PI_COUNT {
+        return Err(format!(
+            "the Mina head proof publishes {} inputs; the descriptor declares {MINA_LC_PI_COUNT}",
+            head_pis.len()
+        ));
+    }
+    if link_pis.len() != MINA_LINK_PI_COUNT {
+        return Err(format!(
+            "the segment sub-proof publishes {} inputs; {MINA_LINK_DESCRIPTOR} declares \
+             {MINA_LINK_PI_COUNT}. Refusing rather than reading the tip block off the wrong offsets",
+            link_pis.len()
+        ));
+    }
+
+    // ── REFUSAL 13: THE SEAM ITSELF. These nine ARE the `commit` vector of the head descriptor's
+    // `LINK_OK`-guarded `proof_bind`, so this comparison is what discharges
+    // `Satisfied2Custom.proofBound`'s existential for that bind.
+    for i in 0..MINA_STATE_LANES {
+        let head = head_pis[PI_TIP_STATE_BASE + i];
+        let link = link_pis[LINK_PI_TIP_BASE + i];
+        if head != link {
+            return Err(format!(
+                "segment-seam tip lane {i} is {link} in the sub-proof and {head} in the head \
+                 proof: the head's `proof_bind` declares its nine TIP_STATE lanes to be this \
+                 sub-proof's public-input commitment, so a head whose published tip is not the last \
+                 element of the chain it hands over is refused"
+            ));
+        }
+    }
+
+    // ── REFUSAL 14a: the same pinned anchor.
+    for i in 0..MINA_STATE_LANES {
+        let head = head_pis[PI_ANCHOR_STATE_BASE + i];
+        let link = link_pis[LINK_PI_ANCHOR_BASE + i];
+        if head != link {
+            return Err(format!(
+                "segment anchor lane {i} is {link} in the sub-proof and {head} in the head proof: \
+                 the exhibited chain starts from an anchor this head did not pin"
+            ));
+        }
+    }
+
+    // ── REFUSAL 14b: the same anchor height.
+    if link_pis[LINK_PI_ANCHOR_H] != head_pis[PI_ANCHOR_H] {
+        return Err(format!(
+            "the segment sub-proof anchors at height {} and the head proof at {}: two heights for \
+             one anchor",
+            link_pis[LINK_PI_ANCHOR_H], head_pis[PI_ANCHOR_H]
+        ));
+    }
+
+    // ── ⚑ REFUSAL 14c: THE COUNTED SEGMENT LENGTH. `SEG_LEN` is a free witness in the head AIR;
+    // it is DERIVED here from two published values and then paid for in the sub-proof's rows.
+    let block_len = i64::from(head_pis[PI_BLOCK_LEN]);
+    let anchor_h = i64::from(head_pis[PI_ANCHOR_H]);
+    let derived = block_len - anchor_h;
+    if derived < 0 {
+        return Err(format!(
+            "the head proof publishes blockchain_length {block_len} BELOW its anchor height \
+             {anchor_h}: the implied segment length is negative and this node refuses it rather \
+             than reducing it into the field"
+        ));
+    }
+    if i64::from(link_pis[LINK_PI_SEG_LEN]) != derived {
+        return Err(format!(
+            "the segment sub-proof counted {} committed rows; the head proof's published height \
+             implies {derived} blocks above the pinned anchor ({block_len} − {anchor_h}). A claimed \
+             depth must be paid for in rows",
+            link_pis[LINK_PI_SEG_LEN]
+        ));
     }
     Ok(())
 }
@@ -1025,7 +1245,12 @@ impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
                      this node cannot check a Mina anchored head and therefore refuses one"
                 )
             })?;
-            check_subproof_program_pin(&head, &desc)?;
+            check_subproof_program_pin(
+                &head,
+                &desc,
+                HEAD_WRAP_GUARD_COL,
+                MINA_CHAINLINK_DESCRIPTOR,
+            )?;
             verify_vm_descriptor2(&desc, &wire.transcript_proof, &transcript_pis)
         }));
         match transcript_result {
@@ -1043,6 +1268,65 @@ impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
                 ));
             }
         }
+
+        // ── ⚑⚑⚑ REFUSALS 11-14: **THE SEGMENT SUB-PROOF.** This is the step that makes `LINK_OK`
+        // cost something. It was a bare `= 1` on a witnessed column and the descriptor it names was
+        // SERVED AND UNASKED-FOR — `descriptor_by_name(MINA_LINK_DESCRIPTOR)` resolved at exactly
+        // two sites in this file, both inside `#[cfg(test)]`, both as a wrong-program decoy. A
+        // sub-proof nobody dispatches refuses nothing.
+        //
+        // Order matters and is deliberate: the program pin (11) is checked BEFORE the STARK (12),
+        // so a head whose descriptor names a program this node does not dispatch is refused without
+        // spending a verification; the PI weld (13-14) runs after, because comparing public inputs
+        // of a proof that did not verify would be comparing numbers to numbers.
+        let link_pis: Vec<BabyBear> = wire
+            .link_public_inputs
+            .iter()
+            .map(|v| BabyBear::new(*v))
+            .collect();
+        let link_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let desc = descriptor_by_name(MINA_LINK_DESCRIPTOR).ok_or_else(|| {
+                format!(
+                    "no descriptor dispatches for {MINA_LINK_DESCRIPTOR:?} (fail-closed): this \
+                     node cannot check the exhibited segment and therefore refuses the head"
+                )
+            })?;
+            if desc.public_input_count != MINA_LINK_PI_COUNT {
+                return Err(format!(
+                    "the descriptor served for {MINA_LINK_DESCRIPTOR:?} declares {} public inputs; \
+                     this consumer's layout is {MINA_LINK_PI_COUNT}. Refusing an ambiguous layout \
+                     rather than reading the tip block off the wrong offsets",
+                    desc.public_input_count
+                ));
+            }
+            // ── ⚑⚑ REFUSAL 11: the head descriptor's SEGMENT bind names THIS program. Same shape
+            // as refusal 5b and for the same measured reason — the wraplink drift proved a pin
+            // whose only reader is a test is a pin a running node walks past.
+            let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).ok_or_else(|| {
+                format!(
+                    "no descriptor dispatches for {MINA_LC_VERIFY_DESCRIPTOR:?} (fail-closed): \
+                     this node cannot check a Mina anchored head and therefore refuses one"
+                )
+            })?;
+            check_subproof_program_pin(&head, &desc, HEAD_LINK_GUARD_COL, MINA_LINK_DESCRIPTOR)?;
+            // ── ⚑⚑ REFUSAL 12: the segment STARK itself.
+            verify_vm_descriptor2(&desc, &wire.link_proof, &link_pis)
+        }));
+        match link_result {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => {
+                return Err(reject(format!(
+                    "the Mina segment sub-proof rejected: {reason}"
+                )));
+            }
+            Err(_) => {
+                return Err(reject(
+                    "Mina segment sub-proof decode/verify panicked (treated as rejection)".into(),
+                ));
+            }
+        }
+        // ── ⚑⚑⚑ REFUSALS 13-14: the nine-lane seam and the eleven public inputs it does not cover.
+        check_segment_binding(&wire.public_inputs, &wire.link_public_inputs).map_err(reject)?;
 
         // ── REFUSAL 6: the STARK over the Lean-compiled descriptor. Its own gates then force the
         // published `blockchain_length` to be the pinned anchor plus the EXHIBITED segment, the
@@ -1121,8 +1405,60 @@ mod tests {
         let sub =
             descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).expect("sub-proof descriptor served");
         assert_eq!(sub.public_input_count, MINA_CHAINLINK_PI_COUNT);
-        check_subproof_program_pin(&head, &sub)
+        check_subproof_program_pin(&head, &sub, HEAD_WRAP_GUARD_COL, MINA_CHAINLINK_DESCRIPTOR)
             .expect("the head's recursion bind must name the sub-proof this node dispatches");
+    }
+
+    /// ⚑⚑⚑ **REFUSAL 11, POLARITY ONE — and it is the SEGMENT seam's twin of the test above.** The
+    /// head descriptor's `LINK_OK`-guarded bind must name the segment descriptor this node
+    /// dispatches. Both objects come from `descriptor_by_name`; neither is reconstructed.
+    ///
+    /// ⚠ Until 2026-08-05 `MINA_LINK_DESCRIPTOR` appeared in this file ONLY as the wrong-program
+    /// DECOY of the two tests below. It is dispatched in `verify` now.
+    #[test]
+    fn the_head_descriptors_segment_pin_is_the_served_link_descriptors_fingerprint() {
+        let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
+        let link = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("segment descriptor served");
+        assert_eq!(link.public_input_count, MINA_LINK_PI_COUNT);
+        check_subproof_program_pin(&head, &link, HEAD_LINK_GUARD_COL, MINA_LINK_DESCRIPTOR)
+            .expect("the head's segment bind must name the sub-proof this node dispatches");
+    }
+
+    /// ⚑⚑ **REFUSAL 11, POLARITY TWO — and it is the one that would catch a SWAPPED SEAM.** The
+    /// head carries two binds; resolving the wrong one would be invisible to a test that only ever
+    /// checks the pair it expects. Handing the SEGMENT guard the CHAINLINK descriptor must be
+    /// refused, and symmetrically.
+    #[test]
+    fn the_two_seams_are_not_interchangeable() {
+        let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
+        let link = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
+        let chain = descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).expect("served");
+        let e = check_subproof_program_pin(
+            &head,
+            &chain,
+            HEAD_LINK_GUARD_COL,
+            MINA_CHAINLINK_DESCRIPTOR,
+        )
+        .expect_err("the segment guard must not accept the chainlink program");
+        assert!(e.contains("names a DIFFERENT program"), "got: {e}");
+        let e = check_subproof_program_pin(&head, &link, HEAD_WRAP_GUARD_COL, MINA_LINK_DESCRIPTOR)
+            .expect_err("the chainlink guard must not accept the segment program");
+        assert!(e.contains("names a DIFFERENT program"), "got: {e}");
+    }
+
+    /// ⚑ **AND A GUARD COLUMN NO BIND CARRIES IS REFUSED, NOT SILENTLY SKIPPED.** The resolution is
+    /// by structural key; a key that matches nothing must be a refusal, or a seam that moved would
+    /// read as a seam that passed.
+    #[test]
+    fn an_unknown_guard_column_is_refused() {
+        let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
+        let link = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
+        let e = check_subproof_program_pin(&head, &link, 4242, MINA_LINK_DESCRIPTOR)
+            .expect_err("a guard column no bind carries must be REFUSED");
+        assert!(
+            e.contains("declares 0 proof_bind constraints guarded by column"),
+            "got: {e}"
+        );
     }
 
     /// ⚑⚑ **REFUSAL 5b, POLARITY TWO — a head descriptor pinned to some OTHER program is REFUSED,**
@@ -1132,10 +1468,11 @@ mod tests {
     #[test]
     fn a_head_pinned_to_a_different_program_is_refused() {
         let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
-        let other = descriptor_by_name("dregg-mina-lightclient-link::v1")
+        let other = descriptor_by_name(MINA_LINK_DESCRIPTOR)
             .expect("the multi-row segment descriptor is served");
-        let e = check_subproof_program_pin(&head, &other)
-            .expect_err("a pin naming a different program must be REFUSED");
+        let e =
+            check_subproof_program_pin(&head, &other, HEAD_WRAP_GUARD_COL, MINA_LINK_DESCRIPTOR)
+                .expect_err("a pin naming a different program must be REFUSED");
         assert!(
             e.contains("names a DIFFERENT program"),
             "the refusal must name the substitution; got: {e}"
@@ -1148,7 +1485,7 @@ mod tests {
     fn the_program_pin_refusal_is_not_vacuous() {
         let sub =
             descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).expect("sub-proof descriptor served");
-        let other = descriptor_by_name("dregg-mina-lightclient-link::v1").expect("served");
+        let other = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
         assert_ne!(
             effect_vm_descriptor2_semantic_fingerprint(&sub).expect("representable"),
             effect_vm_descriptor2_semantic_fingerprint(&other).expect("representable"),
@@ -1163,6 +1500,144 @@ mod tests {
     fn the_superseded_wraplink_no_longer_dispatches() {
         assert!(descriptor_by_name("dregg-pasta-fq-wraplink::v1").is_none());
         assert!(descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).is_some());
+    }
+
+    // ═══ ⚑⚑⚑ REFUSALS 13-14 — BOTH POLARITIES, EXHIBITED. ══════════════════════════════════════
+    //
+    // A refusal nothing witnesses is decoration. Each arm below is a CONCRETE pair of PI vectors,
+    // and the accepting control is the first test — without it every refusal here would be
+    // satisfied by a function that refuses everything.
+
+    /// An honest head/segment PI pair: the same anchor, the same tip, the same anchor height, and a
+    /// counted segment length equal to `BLOCK_LEN − ANCHOR_H`.
+    fn honest_pair() -> (Vec<u32>, Vec<u32>) {
+        let anchor: [u32; 9] = [11, 12, 13, 14, 15, 16, 17, 18, 19];
+        let tip: [u32; 9] = [21, 22, 23, 24, 25, 26, 27, 28, 29];
+        let mut head = vec![0u32; MINA_LC_PI_COUNT];
+        let mut link = vec![0u32; MINA_LINK_PI_COUNT];
+        for i in 0..MINA_STATE_LANES {
+            head[PI_ANCHOR_STATE_BASE + i] = anchor[i];
+            head[PI_TIP_STATE_BASE + i] = tip[i];
+            link[LINK_PI_ANCHOR_BASE + i] = anchor[i];
+            link[LINK_PI_TIP_BASE + i] = tip[i];
+        }
+        head[PI_BLOCK_LEN] = 1300;
+        head[PI_REQ_DEPTH] = 290;
+        head[PI_ANCHOR_H] = 1000;
+        link[LINK_PI_ANCHOR_H] = 1000;
+        link[LINK_PI_SEG_LEN] = 300;
+        (head, link)
+    }
+
+    /// ⚑ **POLARITY ONE — the honest pair is ACCEPTED.** The control that stops every refusal below
+    /// from being satisfied by a check that refuses everything.
+    #[test]
+    fn an_honest_segment_pair_is_accepted() {
+        let (head, link) = honest_pair();
+        check_segment_binding(&head, &link).expect("the honest pair must be accepted");
+    }
+
+    /// ⚑⚑⚑ **REFUSAL 13 — A HEAD WHOSE PUBLISHED TIP IS NOT THE CHAIN'S LAST ELEMENT.** These nine
+    /// lanes ARE the head descriptor's `LINK_OK`-guarded `proof_bind` commitment vector, so this is
+    /// the consumer half of the in-circuit edge. Lane 0 is moved, and the tamper is asserted to
+    /// have moved a value.
+    #[test]
+    fn a_head_tip_that_is_not_the_segments_tip_is_refused() {
+        let (head, mut link) = honest_pair();
+        let before = link[LINK_PI_TIP_BASE];
+        link[LINK_PI_TIP_BASE] += 1;
+        assert_ne!(
+            link[LINK_PI_TIP_BASE], before,
+            "the tamper must move a value"
+        );
+        assert_ne!(before, 0, "and it must move a NON-ZERO lane");
+        let e = check_segment_binding(&head, &link).expect_err("must be REFUSED");
+        assert!(e.contains("segment-seam tip lane 0"), "got: {e}");
+    }
+
+    /// ⚑ …and the TOP lane too, so the refusal is not an artifact of lane 0.
+    #[test]
+    fn a_head_tip_differing_in_the_top_lane_is_refused() {
+        let (head, mut link) = honest_pair();
+        link[LINK_PI_TIP_BASE + 8] += 1;
+        let e = check_segment_binding(&head, &link).expect_err("must be REFUSED");
+        assert!(e.contains("segment-seam tip lane 8"), "got: {e}");
+    }
+
+    /// ⚑⚑ **REFUSAL 14a — a genuine chain under an anchor nobody pinned.** The whole acceptance is
+    /// relative to the operator's weak-subjectivity anchor; a segment proof that starts somewhere
+    /// else is a different claim.
+    #[test]
+    fn a_segment_under_a_different_anchor_is_refused() {
+        let (head, mut link) = honest_pair();
+        link[LINK_PI_ANCHOR_BASE + 3] += 1;
+        let e = check_segment_binding(&head, &link).expect_err("must be REFUSED");
+        assert!(e.contains("segment anchor lane 3"), "got: {e}");
+    }
+
+    /// ⚑ **REFUSAL 14b — two heights for one anchor.**
+    #[test]
+    fn a_segment_anchored_at_a_different_height_is_refused() {
+        let (head, mut link) = honest_pair();
+        link[LINK_PI_ANCHOR_H] += 1;
+        let e = check_segment_binding(&head, &link).expect_err("must be REFUSED");
+        assert!(e.contains("two heights for one anchor"), "got: {e}");
+    }
+
+    /// ⚑⚑⚑ **REFUSAL 14c — A CLAIMED DEPTH WITH NO ROWS BEHIND IT.** The head publishes
+    /// `blockchain_length = 1300` above a pinned anchor at 1000, so it claims 300 blocks; the
+    /// segment proof counted 3. `SEG_LEN` is a FREE WITNESS in the head AIR and 300 costs exactly as
+    /// much to write as 3 — but G1 makes it a function of two PUBLISHED values, so this node
+    /// recomputes it without the prover's help and `link_seg_len_counts_the_real_rows` makes the
+    /// sub-proof pay for it in COMMITTED ROWS.
+    #[test]
+    fn a_claimed_depth_without_committed_rows_is_refused() {
+        let (head, mut link) = honest_pair();
+        link[LINK_PI_SEG_LEN] = 3;
+        let e = check_segment_binding(&head, &link).expect_err("must be REFUSED");
+        assert!(
+            e.contains("counted 3 committed rows") && e.contains("implies 300 blocks"),
+            "the refusal must name both numbers; got: {e}"
+        );
+    }
+
+    /// ⚑ **AND A HEAD PUBLISHING A HEIGHT BELOW ITS ANCHOR IS REFUSED, NOT REDUCED INTO THE FIELD.**
+    /// The AIR's G4 forces `ANCHOR_H <= SUBMIT_H <= BLOCK_LEN` so an honest head never reaches this
+    /// arm — which is exactly why an inconsistent one must be refused here rather than wrapping into
+    /// a huge positive segment length that some sub-proof could then satisfy.
+    #[test]
+    fn a_height_below_the_anchor_is_refused_not_wrapped() {
+        let (mut head, mut link) = honest_pair();
+        head[PI_BLOCK_LEN] = 900;
+        link[LINK_PI_SEG_LEN] = 0;
+        let e = check_segment_binding(&head, &link).expect_err("must be REFUSED");
+        assert!(e.contains("implied segment length is negative"), "got: {e}");
+    }
+
+    /// ⚑ **A SUB-PROOF WITH THE WRONG PI ARITY IS REFUSED BEFORE ANY OFFSET IS READ.** Reading the
+    /// tip block off the wrong offsets is how a layout change becomes a silent mis-comparison.
+    #[test]
+    fn a_segment_pi_vector_of_the_wrong_arity_is_refused() {
+        let (head, link) = honest_pair();
+        let short = &link[..link.len() - 1];
+        let e = check_segment_binding(&head, short).expect_err("must be REFUSED");
+        assert!(
+            e.contains("the segment sub-proof publishes 19 inputs"),
+            "got: {e}"
+        );
+    }
+
+    /// The PI slot layout of the SEGMENT descriptor, pinned to the Lean `def`s so a re-index of
+    /// `LightClientMinaLinkAir` cannot silently move what this consumer compares.
+    #[test]
+    fn segment_pi_layout_matches_the_lean_descriptor() {
+        assert_eq!(LINK_PI_ANCHOR_BASE, 0);
+        assert_eq!(LINK_PI_TIP_BASE, 9);
+        assert_eq!(LINK_PI_ANCHOR_H, 18);
+        assert_eq!(LINK_PI_SEG_LEN, 19);
+        assert_eq!(MINA_LINK_PI_COUNT, 20);
+        let d = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
+        assert_eq!(d.public_input_count, MINA_LINK_PI_COUNT);
     }
 
     /// The vk is a function of the DESCRIPTOR NAME, so a VK-epoch flip that renames the descriptor

@@ -77,12 +77,27 @@ const TIP_STATE_0: usize = 21;
 /// added the recursion carrier's two nine-lane blocks; this file kept building 30-wide rows, so
 /// every prove in it died as *"base row 0 width 30 is short of the PRODUCER-OWNED width 49"* — a
 /// SHAPE fault, which is neither pole. Both polarities in this file were dead from that morning.
-const MINA_LC_WIDTH: usize = 49;
+/// ⚑ 58 since 2026-08-05's SEGMENT rung (was 49, was 30). Every widening of this descriptor has cost
+/// this file a red, and each time the red was a SHAPE fault — "base row 0 width N is short of the
+/// PRODUCER-OWNED width M" — which is neither pole. That is the failure this constant exists to make
+/// loud: a stale width here does not weaken a test, it silently stops both polarities from running.
+const MINA_LC_WIDTH: usize = 58;
 /// ⚑ The recursion carrier (col 30) and its two nine-lane blocks (31..40 program, 40..49 declared
 /// commitment) — `LightClientMinaAir.WRAP_FS_PROVED` / `SUB_VK` / `SUB_PI`.
 const WRAP_FS_PROVED: usize = 30;
 const SUB_VK_0: usize = 31;
 const SUB_PI_0: usize = 40;
+/// ⚑⚑ The SEGMENT seam's attested program lanes (`LightClientMinaAir.LINK_VK`), cols 49..57 — the
+/// nine columns `LINK_OK` guards. Before 2026-08-05 `LINK_OK` was a bare `= 1`; it is now the guard
+/// of a `proof_bind` whose declared commitment is the row's nine PUBLISHED `TIP_STATE` columns.
+const LINK_VK_0: usize = 49;
+/// The nine `Faithful9` lanes of `dregg-mina-lightclient-link::v1`'s semantic fingerprint — the
+/// value the descriptor's second `vk_pin` forces under `LINK_OK = 1`. Recomputed from that
+/// descriptor's own bytes by `circuit/tests/mina_transcript_carrier_binding.rs` and by `dregg-turn`
+/// at verify time (`check_subproof_program_pin` at `HEAD_LINK_GUARD_COL`).
+const LINK_VK_LANES: [u32; 9] = [
+    76100771, 34473567, 194746848, 491185466, 265287284, 420926520, 245421703, 7802286, 15232152,
+];
 /// The nine `Faithful9` lanes of `dregg-pasta-fq-chainlink::v1`'s semantic fingerprint — the value
 /// the descriptor's `vk_pin` forces under `WRAP_FS_PROVED = 1`. Recomputed from that descriptor's
 /// own bytes by `circuit/tests/mina_transcript_carrier_binding.rs`, and by `dregg-turn` itself at
@@ -176,6 +191,8 @@ fn trace_and_pis(
         // `proof_bind` forces it to the chainlink fingerprint under the guard below.
         r[SUB_VK_0 + i] = BabyBear::new(CHAINLINK_VK_LANES[i]);
         r[SUB_PI_0 + i] = BabyBear::new(CHAINLINK_PI_LANES[i]);
+        // ⚑ …and the SEGMENT seam's program lanes, forced the same way under `LINK_OK`.
+        r[LINK_VK_0 + i] = BabyBear::new(LINK_VK_LANES[i]);
     }
     r[WRAP_FS_PROVED] = BabyBear::new(1);
 
@@ -312,7 +329,31 @@ fn the_served_descriptor_is_the_lean_compiled_one() {
     // `proof_bind`, and nine `SUB_PI` pins (+11). `adf5aa892` published the weak-subjectivity
     // anchor's height and added its pin (+1). Byte source:
     // `LightClientMinaAir.minaLcVerifyDesc_constraint_count`, which carries 62 as a proved `rfl`.
-    assert_eq!(d.constraints.len(), 62);
+    //
+    // ⚑⚑ **62 -> 63, 2026-08-05 SECOND PASS — the SEGMENT seam.** ONE more `proof_bind`, guarded by
+    // `LINK_OK` (col 8), pinned to `dregg-mina-lightclient-link::v1`'s fingerprint, with its `commit`
+    // vector the row's nine PUBLISHED `TIP_STATE` columns. Nine more trace columns (49..57) and
+    // **zero more public inputs**: the tip block was already published, and what changed is that a
+    // constraint now names it.
+    assert_eq!(d.constraints.len(), 63);
+    // ⚑ And BOTH seams are present and distinguishable BY GUARD COLUMN — never by list position.
+    let binds: Vec<_> = d
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            dregg_circuit::descriptor_ir2::VmConstraint2::ProofBind(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(binds.len(), 2, "the chainlink seam and the segment seam");
+    let guards: Vec<usize> = binds
+        .iter()
+        .map(|b| match b.guard {
+            dregg_circuit::lean_descriptor_air::LeanExpr::Var(c) => c,
+            _ => panic!("a seam guard must be a column"),
+        })
+        .collect();
+    assert!(guards.contains(&WRAP_FS_PROVED) && guards.contains(&LINK_OK));
     // `range` at 24 bits (the slack teeth), `range_w29` (wire 98, the sixteen low lanes),
     // `range_w22` (wire 91, the two TOP lanes — the canonicality tooth).
     assert_eq!(d.tables.len(), 3);

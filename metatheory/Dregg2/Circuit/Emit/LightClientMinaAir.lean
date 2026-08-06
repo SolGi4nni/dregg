@@ -95,18 +95,23 @@ as `lk` / `pk` / `cn`. They shipped here as witnessed boolean columns forced `= 
 statement, so BENDING one is refused, but with **nothing in the circuit computing them**. §1a and §5a
 change that for the third:
 
-  * `LINK_OK`    — the Poseidon parent-linkage fold over the exhibited segment. STILL A WITNESS
-    HERE, and it must be: the fold is a per-BLOCK object and this descriptor is ONE ROW.
-    ⚑ **SPLIT 2026-08-03.** `LightClientMina.chainLinked` is three conjuncts per block — (i)
-    `h.parent = prev`, (ii) `h.height = ph + 1`, (iii) `prev′ := blockHash h`. (i) and (ii) are
-    EQUALITY and ADDITION; only (iii) is Poseidon over Pasta `Fp`.
+  * `LINK_OK`    — ⚑⚑ **NO LONGER A BARE `= 1`, AS OF 2026-08-05 (§2c).** It was a forcing gate on
+    a witnessed column and nothing else; it is now the GUARD of a nine-lane `proofBind` pinning
+    `dregg-mina-lightclient-link::v1` and declaring the row's nine published `TIP_STATE` lanes to be
+    that sub-proof's public-input commitment. The gate stays — it is what stops a prover setting the
+    guard to `0` to switch the seam off (`mina_link_guard_cannot_be_disarmed`).
+    ⚑ **SPLIT 2026-08-03, and the split is exactly what the seam now buys.**
+    `LightClientMina.chainLinked` is three conjuncts per block — (i) `h.parent = prev`, (ii)
+    `h.height = ph + 1`, (iii) `prev′ := blockHash h`. (i) and (ii) are EQUALITY and ADDITION; only
+    (iii) is Poseidon over Pasta `Fp`.
     `Circuit/Emit/LightClientMinaLinkAir.lean` emits (i)+(ii) as a MULTI-ROW compiled descriptor —
     nine `.transition` lane-continuity gates per link, the height tick, and the segment length as a
     counted row total — and names (iii) as `LinkHashResidual`, still witnessed. So the honest
     statement is not "`LINK_OK` derived" but "the segment's SHAPE derived, its HASH still witnessed".
-    ⚠ Note what the split does NOT buy: a prover free to choose each row's `OWNHASH` can fabricate a
-    consistent chain of any length. What it removes is the freedom to be INCONSISTENT and the
-    freedom to claim a depth without committing rows for it.
+    ⚠ Note what the seam does NOT buy: a prover free to choose each row's `OWNHASH` can fabricate a
+    consistent chain of any length. What it removes is the freedom to be INCONSISTENT, the freedom to
+    claim a depth without committing rows for it, and — new today — the freedom to publish a tip that
+    is not that chain's last element.
   * `PICKLES_WITNESSED` — the per-block Pickles/Kimchi Wrap-proof result. STILL A WITNESS, and it is the
     expensive one by three orders of magnitude — see §1b. `Circuit/Emit/MinaRealBlockGate.lean`
     renders it on a real devnet block, natively.
@@ -187,14 +192,27 @@ and lane 8 below `2^24`, `8·29 + 24 = 256` EXACTLY, so the image is exactly `2^
 loses nothing. Injectivity is machine-checked (`lanes9ToField_fieldToLanes9`,
 `fieldToLanes9_injective`, `nine_lanes_is_the_minimum : P^8 < 2^256 ≤ P^9`).
 
-⚠ TWO NAMED residuals on the anchors, and they are different:
-  1. This AIR PI-binds the eighteen lane columns but carries NO GATE relating them to a 32-byte
-     value. The lane-vector ↔ head equality is enforced by the CONSUMER
+⚠ TWO NAMED residuals on the anchors — ⚑ **ONE OF THEM CLOSED 2026-08-05, THE OTHER NOT, AND THEY
+ARE DIFFERENT:**
+  1. ⚠ **STILL OPEN.** This AIR PI-binds the eighteen lane columns but carries NO GATE relating them
+     to a 32-byte value. The lane-vector ↔ head equality is enforced by the CONSUMER
      (`turn/src/executor/mina_head_verifier.rs::check_head_binding`, which refuses the turn), not
      in-circuit. That is a real refusal, and it is an executor check.
-  2. `TIP_STATE` is not arithmetically tied to the `LINK_OK` fold's terminal digest inside this AIR
-     either. That tie is `LightClientMinaHashFold`'s object and the `proofBind` recursion seam;
-     until it lands, the equality is the witness generator's, not a gate's. Say it that way.
+  2. ✅ **CLOSED for the TIP, by §2c.** This read: *"`TIP_STATE` is not arithmetically tied to the
+     `LINK_OK` fold's terminal digest inside this AIR either … until it lands, the equality is the
+     witness generator's, not a gate's."* It has landed, though NOT as a digest tie — the segment
+     bind's `commit` vector IS the nine `TIP_STATE` columns, so an emitted constraint names them
+     beside the guard and nine pinned program lanes, and the sub-proof they are the commitment of is
+     one the consumer verifies. Nine `Faithful9` lanes, 256 bits, elementwise, no digest and
+     therefore no birthday bound.
+     ⚠ **AND THE ANCHOR HALF IS UNMOVED.** `ANCHOR_STATE`'s nine lanes are still PI-bound, still
+     read by one arity-1 lookup each, and still joined to nothing
+     (`LightClientAnchorConnectivity.minaVerify_anchor_lanes_are_read_but_never_joined`). A second
+     bind could not fix that: `ProofBind`'s `commit` is the ONLY vector that names off-row evidence
+     and there is one `piCommit` per engine, so two binds against one program with DIFFERENT
+     commitments are incoherent, not merely redundant. The anchor's nine lanes are refused against
+     the link sub-proof's own anchor block AT THE CONSUMER (REFUSAL 14), elementwise. Say it that
+     way and do not call it a tie.
 
 ## Both polarities, on the EMITTED object (§6, §7)
 
@@ -212,15 +230,28 @@ loses nothing. Injectivity is machine-checked (`lanes9ToField_fieldToLanes9`,
 
 ## ⚑ WHAT THIS BREAKS (flag day, stated so it is findable)
 
-`dregg-mina-lightclient-verify::v1` changes shape: **31 → 49 constraints**, **1 → 3 declared
-tables** (adding `range_w29` at wire id 98 and `range_w22` at wire id 91). `traceWidth` (30) and
-`piCount` (20) are UNCHANGED, so `turn/src/executor/mina_head_verifier.rs`'s `MINA_LC_PI_COUNT` and
-the PI layout are untouched. **Re-emit** `circuit/descriptors/by-name/dregg-mina-lightclient-verify-v1.json`
-(`EmitByName.lean`) and **rotate the VK** for this descriptor. Any previously produced proof over the
-old shape now fails to verify, which is the intent: the old shape accepted the shifted anchor.
-⚠ A witness generator that leaves the eighteen lane columns unfilled now produces an UNSAT row —
-`mina_head_verifier.rs` must write the anchor's and the tip's nine `Faithful9` lanes, which is the
-same decomposition `check_head_binding` already computes.
+⚑⚑ **2026-08-05, THE SEGMENT BIND (§2c) — the current flag day.** `dregg-mina-lightclient-verify::v1`
+changes shape: **`traceWidth` 49 → 58** (nine `LINK_VK` columns), **62 → 63 constraints** (one
+`proof_bind`), **49 legs**. **`piCount` STAYS 30** and no PI slot moves — the seam's commitment is the
+tip block the descriptor already published, so `mina_head_verifier.rs`'s `MINA_LC_PI_COUNT` and every
+PI offset are untouched.
+
+**Re-emit** `circuit/descriptors/by-name/dregg-mina-lightclient-verify-v1.json` via
+`scripts/emit-descriptors.sh` (`metatheory/EmitByName.lean` row 443) and **rotate the VK** for this
+descriptor. Any previously produced head proof fails to verify — intended: the old shape accepted a
+published tip tied to nothing. ⚠ `mina_head_predicate_vk()` is blake3 over the descriptor NAME, which
+does not move, so cell programs keep their pinned predicate vk and nothing re-genesises.
+⚠ A witness generator that leaves `LINK_VK 0..8` unfilled now produces an UNSAT row: it must write
+the nine `Faithful9` lanes of `dregg-mina-lightclient-link::v1`'s semantic fingerprint, and it must
+hold a verifying STARK over that descriptor whose published tip block is this row's `TIP_STATE`.
+⚠ **NEW COUPLING:** re-emitting `dregg-mina-lightclient-link-v1.json` now moves `LINK_VK_LANES` and
+therefore re-emits and re-VKs THIS descriptor, exactly as `pasta-fq-chainlink.json` already does
+through `CHAINLINK_VK_LANES`. Two sub-programs, two fingerprints, two flag days.
+
+**2026-08-05, EARLIER — the canonicality rung.** `31 → 49 constraints`, `1 → 3 declared tables`
+(adding `range_w29` at wire id 98 and `range_w22` at wire id 91). A witness generator that leaves the
+eighteen lane columns unfilled produces an UNSAT row; `mina_head_verifier.rs` must write the anchor's
+and the tip's nine `Faithful9` lanes, the same decomposition `check_head_binding` already computes.
 
 ## Scope — do NOT overclaim
 
@@ -313,8 +344,25 @@ conjunct the deployed observer does not have. -/
 def ANCH_SLACK : Nat := 6
 /-- `DEPTH_SLACK = WIT_DEPTH − REQ_DEPTH`; ranged ⟹ `REQ_DEPTH ≤ WIT_DEPTH`. -/
 def DEPTH_SLACK : Nat := 7
-/-- **CARRIER** — the Poseidon parent-linkage fold RESULT over the exhibited segment; forced `= 1`.
-Derived (not trusted) in `LightClientMinaHashFold`. Witness. -/
+/-- **CARRIER — AND SINCE 2026-08-05 IT IS NOT A BARE BIT.** The exhibited segment's linkage result;
+forced `= 1` by G6.
+
+⚑ **WHAT CHANGED.** Until today `linkC` was the whole of it: `⟨.var LINK_OK, .const 1⟩`, a forcing
+gate on a witnessed column, costing a prover one felt. It is now additionally the GUARD of the §2c
+`proofBind` leg, so `LINK_OK = 1` forces nine program-lane congruences against the pinned fingerprint
+of `dregg-mina-lightclient-link::v1` AND declares the row's nine published `TIP_STATE` lanes to be
+the public-input commitment of a verifying sub-proof of that program. The gate did not go away — it
+is what stops a prover setting the guard to `0` to switch the seam off
+(`mina_link_guard_cannot_be_disarmed`).
+
+⚠ **AND THE OVERCLAIM IN THE OLD NAME IS STILL HALF-TRUE, SO READ THE SPLIT.**
+`LightClientMina.chainLinked` is three conjuncts per block — (i) `h.parent = prev`, (ii)
+`h.height = ph + 1`, (iii) `prev′ := blockHash h`. The bound sub-proof emits (i) and (ii) as gates
+over committed rows and names (iii) as `LinkHashResidual`, **still witnessed**. So what a satisfied
+`LINK_OK` now buys is *"the segment's SHAPE derived, its HASH still witnessed"* — not "the Poseidon
+fold verified". A prover free to choose each row's `OWNHASH` can still fabricate a consistent chain;
+what it can no longer do is be INCONSISTENT, claim a depth without committing rows for it, or publish
+a tip that is not that chain's last element. -/
 def LINK_OK : Nat := 8
 /-- **CARRIER, AND THE NAME SAYS WHAT IT IS** — the per-block Pickles/Kimchi Wrap-proof RESULT;
 forced `= 1`. ⚑ **STILL A WITNESS, and renamed on 2026-08-05 from `PICKLES_WITNESSED` for that reason.**
@@ -370,9 +418,19 @@ nine `Faithful9` lanes of the digest of the chainlink sub-proof's 256 public inp
 commitment the recursion existential quantifies over is a PUBLIC value and not a free column. -/
 def SUB_PI (i : Nat) : Nat := 31 + STATE_LIMBS + i
 
+/-- ⚑⚑ **THE ATTESTED SEGMENT PROGRAM's lane `i`** (cols 49..57, added 2026-08-05) — a prover column
+forced by the `LINK_OK`-guarded `proofBind` leg's `vkPin` to a descriptor literal, exactly as
+`SUB_VK` is for the chainlink. See §2c.
+
+⚑ It is a COLUMN and not a constant expression for the reason `SUB_VK` is: a constant compared
+against its own definition is decoration (`feedback-a-pin-against-its-own-definition-is-decoration`);
+the two independent sources here are the witness generator's value and the emitted bytes. -/
+def LINK_VK (i : Nat) : Nat := 31 + 2 * STATE_LIMBS + i
+
 /-- Total main-trace width: 11 logic/carrier columns + the derived height + two nine-limb anchors
-+ ⚑ the recursion carrier and its two nine-lane blocks. -/
-def MINA_LC_WIDTH : Nat := 31 + 2 * STATE_LIMBS
++ ⚑ the recursion carrier and its two nine-lane blocks + ⚑ the segment sub-proof's nine program
+lanes. -/
+def MINA_LC_WIDTH : Nat := 31 + 3 * STATE_LIMBS
 
 /-- PI slot of anchor-state limb `i` (slots 0..8). -/
 def PI_ANCHOR_STATE (i : Nat) : Nat := i
@@ -525,7 +583,9 @@ def anchSlackC : Constraint :=
 def depthSlackC : Constraint :=
   ⟨.add (.var DEPTH_SLACK) (.var REQ_DEPTH), .var WIT_DEPTH⟩
 
-/-- **G6 — the linkage carrier**: `LINK_OK = 1`. -/
+/-- **G6 — the linkage carrier**: `LINK_OK = 1`. ⚑ Since 2026-08-05 this gate has CONTENT for the
+same reason G9 does: it is the guard of the §2c `proofBind`, so it cannot be set to `0` to switch the
+segment seam off. It is no longer the whole of what `LINK_OK` costs. -/
 def linkC : Constraint := ⟨.var LINK_OK, .const 1⟩
 /-- **G7 — the witnessed Pickles residue**: `PICKLES_WITNESSED = 1`. -/
 def picklesC : Constraint := ⟨.var PICKLES_WITNESSED, .const 1⟩
@@ -684,6 +744,112 @@ def subPiPins : List AirLeg :=
   , .pin ⟨VmRow.first, SUB_PI 7, PI_SUB_PI 7⟩
   , .pin ⟨VmRow.first, SUB_PI 8, PI_SUB_PI 8⟩ ]
 
+/-! ## §2c — ⚑⚑⚑ THE SEGMENT BIND: `TIP_STATE` STOPS BEING DECORATION, AND `LINK_OK` STOPS BEING A
+BARE `= 1`.
+
+## The two defects this closes, both measured on the emitted bytes
+
+1. **`LightClientAnchorConnectivity.minaVerify_state_lanes_are_read_but_never_joined`** proved, by
+   `decide` over the served descriptor, that cols 12..29 — the anchor's nine lanes and the TIP's
+   nine — are READ (each by one arity-1 range lookup) and RELATED TO NOTHING. Their only other leg
+   was a `.pin`, and `relatedCols` returns `[]` for a `piBinding` *deliberately*: a pin ties a column
+   to a PUBLIC INPUT, not to another column. So the head's published tip was a number the prover
+   wrote down, bounded in width and tied to no evidence. **A width bound is a fact about a value's
+   SHAPE; it is not a tie to the evidence.**
+2. **`linkC` was `⟨.var LINK_OK, .const 1⟩`** — a bare forcing gate on a witnessed column, the same
+   shape §1 called *"STILL A WITNESS HERE"*. Setting it cost a prover one felt.
+
+Both are closed by ONE leg, and it is the mechanism `SUB_PI` already uses — `relatedCols`'
+`.proofBind` arm, which returns the guard, the commitment lanes, the vk lanes and the bound lanes.
+
+## What the leg says, exactly
+
+`LINK_OK = 1` is now the GUARD of a `proofBind` whose declared commitment IS the row's nine
+`TIP_STATE` lanes and whose attested program is pinned, lane by lane, to the semantic fingerprint of
+`dregg-mina-lightclient-link::v1`. Row-locally (`ProofBind.holdsAt`) that is: the guard is a bit, and
+under it every `LINK_VK` column equals its pinned literal. Off-row (`Satisfied2Custom.proofBound`) it
+is: **there exists a verifying sub-proof of that program whose public-input commitment is these nine
+lanes.**
+
+⚑ **WHY THE COMMITMENT IS THE TIP BLOCK AND NOT A DIGEST — the choice is forced, and it is the
+stronger one.** `ProofBind`'s `commit` is the ONLY vector that names off-row evidence, and `bound`
+is defined to be *equal* to it; so the only way a `proofBind` can join `TIP_STATE` at all is for
+`TIP_STATE` to BE the commitment. That is not a workaround — it is the elementwise weld the phase-1
+leg landed on the same day (`MinaPhase1Chain.the_wire_blocks_are_equal`, 32/32 felts): **nine lanes,
+`8·29 + 24 = 256` bits exactly, no digest, therefore NO BIRTHDAY BOUND.** A nine-lane `Faithful9`
+commitment is exact equality of a 256-bit value, not a `2^123.6` collision bar and not the `2^31` a
+one-felt tie would have been.
+
+## What the sub-proof establishes — and it is the SHAPE, not the HASH
+
+`dregg-mina-lightclient-link::v1` is the multi-row companion (`LightClientMinaLinkAir`): one row per
+exhibited block, nine `.transition` lane-continuity gates per link, the height ticking by one from a
+first-row anchor, and `PI_SEG_LEN` the LAST row's `REAL_COUNT` — so `link_seg_len_counts_the_real_rows`
+proves a claimed depth is PAID FOR IN COMMITTED ROWS. `LightClientAnchorConnectivity.minaLink_decorative_anchors`
+is `[]`: all twenty of its published columns are joined.
+
+⚠ **AND ITS OWN CAVEAT BINDS HERE TOO, VERBATIM.** `OWNHASH` is a free witness; nothing forces it to
+be `Poseidon(stateRow)` (`LinkHashResidual`, priced at ~5·10⁵ BabyBear constraints per block hash).
+So the honest sentence is **not** "the tip is derived" but *"the tip is the last element of a chain
+of rows this proof commits to, whose shape is gated and whose hashes are still the prover's."* That
+is strictly more than the eighteen-lookups-and-nothing it had this morning, and strictly less than
+derivation. `LINK_OK`'s docstring says the same thing and is not restated here.
+
+## The eleven public inputs the seam does NOT cover, and where they are refused
+
+The link sub-proof publishes twenty values; this seam's commitment is nine of them (PI 9..17, the
+tip). The other eleven — the anchor's nine lanes (PI 0..8), the anchor height (PI 18) and the
+segment length (PI 19) — are refused **at the consumer**, elementwise, against values this head
+descriptor publishes or derives from what it publishes:
+
+    link PI[0..8]  ==  head PI[0..8]                    (the same pinned anchor)
+    link PI[18]    ==  head PI[29]                      (the same anchor height)
+    link PI[19]    ==  head PI[18] − head PI[29]        (BLOCK_LEN − ANCHOR_H, i.e. SEG_LEN)
+
+⚑ The third is the one worth reading twice. `SEG_LEN` is column 0 and a FREE WITNESS in `[1, 2^24]`
+(§"CORRECTED 2026-08-03" says so at length), but G1 makes it a *function of two PUBLISHED values*, so
+a consumer can recompute it without the prover's help — and the link proof must then exhibit that
+many rows. `dregg_turn::executor::mina_head_verifier`'s REFUSALS 13 and 14.
+
+⚠ Say which half is which: the nine-lane tip weld is IN-CIRCUIT; the other eleven are an EXECUTOR
+CHECK. Both are real refusals; only the first is a constraint. -/
+
+/-- ⚑ **THE SEGMENT SUB-PROOF'S PROGRAM IDENTITY, AS NINE LANES.** The `Faithful9` key lanes of
+`effect_vm_descriptor2_semantic_fingerprint(dregg-mina-lightclient-link::v1)` — blake3 (derive-key,
+context `EFFECT_VM_DESCRIPTOR2_FINGERPRINT_CONTEXT`) over that descriptor's CANONICAL bytes. In this
+tree the descriptor IS the verifying key.
+
+⚠ **FLAG DAY, and it is the same real coupling `CHAINLINK_VK_LANES` carries:** re-emitting
+`dregg-mina-lightclient-link-v1.json` moves this literal and therefore re-emits and re-VKs THIS
+descriptor. `circuit/tests/mina_transcript_carrier_binding.rs` recomputes the fingerprint from the
+sibling descriptor's own bytes and asserts these nine numbers, and
+`mina_head_verifier::check_subproof_program_pin` recomputes it again AT VERIFY TIME — because the
+wraplink drift proved a pin whose only reader is a test is a pin a node can drift past. -/
+def LINK_VK_LANES : List ℤ :=
+  [76100771, 34473567, 194746848, 491185466, 265287284, 420926520, 245421703, 7802286, 15232152]
+
+/-- The `i`-th pinned segment-program lane, as the `vkPin` literal the leg carries. -/
+def linkVkLane (i : Nat) : ℤ := LINK_VK_LANES.getD i 0
+
+/-- ⚑⚑ **THE SEGMENT-BIND LEG — the one that gives `TIP_STATE` an in-circuit edge.** Guard
+`LINK_OK`; the declared commitment is the row's own nine PUBLISHED tip lanes; the attested program is
+the nine `LINK_VK` columns, pinned to the link descriptor's fingerprint.
+
+⚑ `bound := none` and it is the STRONGER choice, for exactly the reason §2b gives for the chainlink
+seam: `bound` forces the `commit` expression to equal a row-local expression, and here `commit` is
+already `.var (TIP_STATE i)` — a **PI-BOUND** column. A `bound` congruence could only compare it to
+itself, which is decoration. The commitment being PUBLIC is strictly more than its being tied to
+another witness. -/
+def linkBindLeg : AirLeg :=
+  .bind { guard := .var LINK_OK
+        , commit := (List.range 9).map (fun i => .var (TIP_STATE i))
+        , vk := (List.range 9).map (fun i => .var (LINK_VK i))
+        , vkPin := some LINK_VK_LANES
+        , bound := none }
+
+/-- The segment-bind legs — exactly one. -/
+def linkBindLegs : List AirLeg := [linkBindLeg]
+
 /-! ## §3 — ⚑ THE SOURCE AIR, and the descriptor as the COMPILER'S OUTPUT.
 
 Eight `.gate` legs, three `.lookup` legs against the declared range table, and twenty `.pin` legs,
@@ -778,7 +944,13 @@ def minaHeadAir : EffectAir :=
          , .pin ⟨VmRow.first, ANCHOR_H, PI_ANCHOR_H⟩ ]
       -- ⚑⚑ §2b — THE RECURSION CARRIER AND ITS NINE BINDS. The first leg in this file whose `= 1`
       -- a prover cannot simply write down.
-      ++ [.gate wrapFsC] ++ wrapBindLegs ++ subPiPins }
+      ++ [.gate wrapFsC] ++ wrapBindLegs ++ subPiPins
+      -- ⚑⚑⚑ §2c, 2026-08-05 — THE SEGMENT BIND, APPENDED LAST ON PURPOSE. Emission order is
+      -- constraint order, and every `rfl` slice in §3a addresses a constraint by INDEX; appending
+      -- leaves 0..61 exactly where they were and puts the new seam at 62. A leg inserted mid-list
+      -- would have moved eighteen canonicality lookups and twenty-one pins under their own pins,
+      -- which is churn no reader can check.
+      ++ linkBindLegs }
 
 /-- ⚑ **THE VOCABULARY WAS ADEQUATE.** Every leg is main-rail expressible, decided on the emitted
 predicate — so no leg lowered to `EffectLower.refuseConstraints` and nothing was hand-written around
@@ -788,12 +960,13 @@ theorem minaHeadAir_mainRailOk : minaHeadAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaHeadAir_pinsFit : minaHeadAir.pinsFit MINA_PI_COUNT = true := by rfl
 
-/-- The source carries 48 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
+/-- The source carries 49 legs: 8 gates + 3 slack lookups + ⚑ the `REQ_DEPTH` lookup + 2 `.limbs` +
 2 top-lane lookups + ⚑ 21 PI pins (the 21st is `ANCHOR_H`, 2026-08-05) + ⚑ the `WRAP_FS_PROVED` gate
-+ ⚑ ONE nine-lane `.bind` leg (was nine one-felt legs before the widening) + 9 sub-proof PI pins.
++ ⚑ ONE nine-lane `.bind` leg (was nine one-felt legs before the widening) + 9 sub-proof PI pins
++ ⚑ ONE nine-lane `.bind` leg for the SEGMENT sub-proof (2026-08-05, §2c).
 ⚑ A `.limbs` leg is ONE leg and EIGHT constraints — `minaLcVerifyDesc_constraint_count` is the
 number a dropped lane moves, and this one is not. -/
-theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 48 := by rfl
+theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 49 := by rfl
 
 /-- ⚑⚑ **ONE RECURSION BIND, NINE LANES, AND NOT THE DECLARATIVE SHAPE.** `bindCount` is the number
 a re-emission that dropped the sub-proof obligation would move while every other shape count sat
@@ -803,8 +976,8 @@ none`, on fewer lanes than `PROOF_BIND_MIN_LANES`, and on a pin that names fewer
 vector. A `true` verdict on this air block IS the statement that its recursion seam names a program
 AT ITS FULL WIDTH. -/
 theorem minaHeadAir_bind_shape :
-    minaHeadAir.bindCount = 1
-      ∧ (wrapBindLegs.all Dregg2.Circuit.EffectAirIR.AirLeg.mainRailOk) = true := by
+    minaHeadAir.bindCount = 2
+      ∧ ((wrapBindLegs ++ linkBindLegs).all Dregg2.Circuit.EffectAirIR.AirLeg.mainRailOk) = true := by
   refine ⟨rfl, rfl⟩
 
 /-- ⚑ **THE LIMBED QUANTITIES ARE COUNTED, AND A DROPPED LANE MOVES A NUMBER.** Two nine-lane state
@@ -866,7 +1039,7 @@ theorem minaLcVerifyDesc_ranges : minaLcVerifyDesc.ranges = [] := rfl
 lower to EIGHT lookups each. ⚑ A dropped lane moves this number and nothing else does — which is why
 the count is pinned separately from the leg count. (`EffectLower.lowerLeg_ne_nil` is the general
 statement that no leg can vanish; this is the exact arithmetic at this descriptor.) -/
-theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 62 := rfl
+theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 63 := rfl
 
 /-- ⚑⚑ **THE `proofBind` CONSTRAINT, AS THE COMPILER EMITTED IT** — the whole recursion declaration,
 on the bytes, at its emitted position (52; 51 is the `WRAP_FS_PROVED` gate).
@@ -893,9 +1066,36 @@ theorem minaLcVerifyDesc_proof_binds :
 commitment — the shape whose existential quantifies over every program and every statement. This
 descriptor contributes NINE binds and ZERO to that census. -/
 theorem minaLcVerifyDesc_no_declarative_binds :
-    (Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).length = 1
+    (Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).length = 2
       ∧ Dregg2.Circuit.DescriptorIR2.proofBindDeclarative minaLcVerifyDesc = 0 := by
   refine ⟨rfl, rfl⟩
+
+/-- ⚑⚑⚑ **THE SEGMENT BIND, AS THE COMPILER EMITTED IT** — the whole §2c declaration, on the bytes,
+at its emitted position (62, the last constraint). Its `commit` is the row's nine PUBLISHED
+`TIP_STATE` columns and nothing else, which is the entire content of "the head's claimed tip is tied
+to the evidence": a leg whose commitment drifted onto a free column, or whose `vkPin` lost a lane,
+moves this `rfl`. -/
+theorem minaLcVerifyDesc_link_bind :
+    minaLcVerifyDesc.constraints.drop 62 =
+      [ .proofBind ⟨.var LINK_OK
+                   , [.var (TIP_STATE 0), .var (TIP_STATE 1), .var (TIP_STATE 2), .var (TIP_STATE 3)
+                     , .var (TIP_STATE 4), .var (TIP_STATE 5), .var (TIP_STATE 6), .var (TIP_STATE 7)
+                     , .var (TIP_STATE 8)]
+                   , [.var (LINK_VK 0), .var (LINK_VK 1), .var (LINK_VK 2), .var (LINK_VK 3)
+                     , .var (LINK_VK 4), .var (LINK_VK 5), .var (LINK_VK 6), .var (LINK_VK 7)
+                     , .var (LINK_VK 8)]
+                   , some LINK_VK_LANES, none⟩ ] := rfl
+
+/-- ⚑⚑ **AND THE TIP LANES ARE THE COMMITMENT — the statement the connectivity census reads.**
+Every published tip column appears in the segment bind's `commit` vector, so the emitted constraint
+NAMES all nine of them beside the guard and the nine pinned program lanes. This is the object
+`LightClientAnchorConnectivity.minaVerify_tip_lanes_are_published_and_joined` measures from the other
+side; stating it here too means a re-point that quietly moved the commitment off `TIP_STATE` reds in
+the file that authored it, not only in the census. -/
+theorem mina_link_bind_commits_the_tip_lanes :
+    ((Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).getD 1
+        ⟨.const 0, [], [], none, none⟩).commit
+      = (List.range 9).map (fun i => Dregg2.Exec.CircuitEmit.EmittedExpr.var (TIP_STATE i)) := rfl
 
 /-- ⚑ **AND THE SEAM DECLARES NINE LANES ON BOTH HALVES, PINNED ON EVERY ONE.** The width verdict on
 the emitted object: `commit` and `vk` agree in length, the length is at or above the floor, and the
@@ -919,6 +1119,19 @@ theorem mina_program_pin_is_nine_lanes :
       ∧ (List.range 9).map SUB_PI = [40, 41, 42, 43, 44, 45, 46, 47, 48] := by
   refine ⟨rfl, rfl, ?_, rfl, rfl⟩
   decide
+
+/-- ⚑ **AND THE SEGMENT PROGRAM PIN IS NINE LANES TOO — the same arithmetic, said again rather than
+inherited.** Nine canonical `Faithful9` digits on nine DISTINCT columns, so a forger must match all
+nine of `dregg-mina-lightclient-link::v1`'s fingerprint lanes; a single-felt tie would have been
+worth `2^31`. ⚠ The two pins must NOT be equal — a seam that pinned the chainlink fingerprint for
+both sub-proofs would be one bind wearing two names, and the last conjunct is what refuses it. -/
+theorem mina_link_program_pin_is_nine_lanes :
+    LINK_VK_LANES.length = 9
+      ∧ ((List.range 8).all fun i => decide (LINK_VK_LANES.getD i 0 < 2 ^ 29)) = true
+      ∧ LINK_VK_LANES.getD 8 0 < 2 ^ 24
+      ∧ (List.range 9).map LINK_VK = [49, 50, 51, 52, 53, 54, 55, 56, 57]
+      ∧ LINK_VK_LANES ≠ CHAINLINK_VK_LANES := by
+  refine ⟨rfl, rfl, ?_, rfl, ?_⟩ <;> decide
 
 /-- ⚑ **THE SIXTEEN LANE LOOKUPS AND THE TWO TOP-LANE LOOKUPS, AT THEIR EMITTED POSITIONS.** `rfl` on
 a slice of the compiler's output: constraints 12..19 are the anchor's low lanes at 29 bits, 20 is the
@@ -994,7 +1207,7 @@ theorem minaLcVerifyDesc_pins :
 recursion existential quantifies over would be a hidden column and the consumer would have nothing to
 compare a sub-proof's public inputs against. -/
 theorem minaLcVerifyDesc_subpi_pins :
-    minaLcVerifyDesc.constraints.drop 53 =
+    (minaLcVerifyDesc.constraints.drop 53).take 9 =
       [ .base (.piBinding VmRow.first (SUB_PI 0) (PI_SUB_PI 0))
       , .base (.piBinding VmRow.first (SUB_PI 1) (PI_SUB_PI 1))
       , .base (.piBinding VmRow.first (SUB_PI 2) (PI_SUB_PI 2))
@@ -1013,9 +1226,13 @@ theorem mina_layout_wellformed :
       ∧ TIP_STATE 8 < MINA_LC_WIDTH ∧ BLOCK_LEN < ANCHOR_STATE 0
       ∧ PI_TIP_STATE 8 < PI_BLOCK_LEN ∧ PI_REQ_DEPTH < MINA_PI_COUNT
       ∧ SUB_PI 8 < MINA_LC_WIDTH ∧ PI_SUB_PI 8 < MINA_PI_COUNT
-      ∧ MINA_LC_WIDTH = 49 ∧ MINA_PI_COUNT = 30
+      -- ⚑ 2026-08-05, §2c: nine more columns and NOT ONE more public input. The segment seam's
+      -- commitment is the tip block the descriptor ALREADY published, so the statement did not
+      -- widen — an existing publication became load-bearing.
+      ∧ LINK_VK 0 = 49 ∧ LINK_VK 8 = 57 ∧ LINK_VK 8 < MINA_LC_WIDTH
+      ∧ MINA_LC_WIDTH = 58 ∧ MINA_PI_COUNT = 30
       ∧ 29 * (STATE_LIMBS - 1) + 24 = 256 := by
-  refine ⟨rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, ?_⟩ <;> decide
+  refine ⟨rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, ?_, rfl, rfl, ?_⟩ <;> decide
 
 /-- The four carriers are real hidden trace columns and none is PI-bound: a carrier a verifier could
 set from outside the proof would be no carrier at all. ⚑ `WRAP_FS_PROVED` is hidden for the same
@@ -1024,8 +1241,12 @@ theorem mina_carriers_hidden :
     LINK_OK < MINA_LC_WIDTH ∧ PICKLES_WITNESSED < MINA_LC_WIDTH ∧ CANON_OK < MINA_LC_WIDTH
       ∧ WRAP_FS_PROVED < MINA_LC_WIDTH
       ∧ LINK_OK < BLOCK_LEN ∧ PICKLES_WITNESSED < BLOCK_LEN ∧ CANON_OK < BLOCK_LEN
-      ∧ ¬ (∃ i < STATE_LIMBS, WRAP_FS_PROVED = SUB_PI i) := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+      ∧ ¬ (∃ i < STATE_LIMBS, WRAP_FS_PROVED = SUB_PI i)
+      -- ⚑ …and the SEGMENT seam's program lanes are hidden columns disjoint from the chainlink
+      -- seam's, so the two binds cannot be one bind read twice.
+      ∧ ¬ (∃ i < STATE_LIMBS, ∃ j < STATE_LIMBS, LINK_VK i = SUB_VK j)
+      ∧ ¬ (∃ i < STATE_LIMBS, ∃ j < STATE_LIMBS, LINK_VK i = SUB_PI j) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ## §4 — non-vacuous per-gate lemmas (the SOURCE constraints bite, both directions).
 
@@ -1135,11 +1356,35 @@ def bindAccepts (a : Assignment) : Prop :=
 instance decBindAccepts (a : Assignment) : Decidable (bindAccepts a) := by
   unfold bindAccepts; infer_instance
 
+/-- ⚑⚑⚑ **`linkBindAccepts a` — THE SEGMENT SEAM'S ROW-LOCAL CONTENT**, exactly as
+`DescriptorIR2.ProofBind.holdsAt` denotes the emitted §2c constraint: the guard is a bit, and under
+it every attested segment-program lane equals the descriptor's pinned fingerprint lane.
+
+⚠ Read what is and is not here, because the ASYMMETRY is the whole point of this seam. The
+`commit` half — that the sub-proof's public-input commitment is this row's nine `TIP_STATE` lanes —
+is **not a row-local congruence at all** and cannot be: `bound` is `none`, so `holdsAt`'s third
+conjunct is `True`. The commitment's content lives in `Satisfied2Custom.proofBound`'s existential,
+off-row by construction, discharged by the consumer that VERIFIES a STARK over
+`dregg-mina-lightclient-link::v1` and compares its published tip block.
+
+⚑ What the row-local half nevertheless BUYS, and it is exactly what this campaign was for: the nine
+`TIP_STATE` columns are now NAMED BY A CONSTRAINT alongside the guard and nine pinned literals. They
+were, until today, columns that appeared in one arity-1 range lookup each and in no relation with
+anything (`LightClientAnchorConnectivity.minaVerify_state_lanes_are_read_but_never_joined`, now
+retired). -/
+def linkBindAccepts (a : Assignment) : Prop :=
+  (a LINK_OK * (a LINK_OK - 1) = 0)
+    ∧ ∀ i ∈ List.range STATE_LIMBS,
+        a LINK_OK * (a (LINK_VK i) - linkVkLane i) = 0
+
+instance decLinkBindAccepts (a : Assignment) : Decidable (linkBindAccepts a) := by
+  unfold linkBindAccepts; infer_instance
+
 /-- **`airAccepts a`** — the emitted logic accepts row `a`: the verify arithmetic, the derived
-canonicality of the anchor and tip state hashes, AND ⚑ the recursion seam's nine program-lane
-congruences. -/
+canonicality of the anchor and tip state hashes, ⚑ the recursion seam's nine program-lane
+congruences, AND ⚑⚑ the SEGMENT seam's nine. -/
 def airAccepts (a : Assignment) : Prop :=
-  verifyAccepts a ∧ canonAccepts a ∧ bindAccepts a
+  verifyAccepts a ∧ canonAccepts a ∧ bindAccepts a ∧ linkBindAccepts a
 
 /-- Acceptance is strictly stronger than the pre-rung predicate. (The converse is FALSE, and §7
 exhibits the witness rather than asserting it.) -/
@@ -1276,9 +1521,35 @@ theorem mina_bind_attests_the_pinned_program {a : Assignment} (h : airAccepts a)
     ∀ i ∈ List.range STATE_LIMBS, a (SUB_VK i) = chainlinkVkLane i := by
   intro i hi
   have hg : a WRAP_FS_PROVED = 1 := h.1.2.2.2.2.2.2.2.2.2.2.2.2
-  have hb := h.2.2.2 i hi
+  have hb := h.2.2.1.2 i hi
   rw [hg] at hb
   linarith
+
+/-- ⚑⚑⚑ **AND AN ACCEPTED ROW ATTESTS THE SEGMENT PROGRAM, LANE BY LANE.** G6 (`LINK_OK = 1`) turns
+each `guard·(vk − vkPin) = 0` into an EQUALITY, so all nine `LINK_VK` columns are the `Faithful9`
+lanes of `dregg-mina-lightclient-link::v1`'s semantic fingerprint. A row that names any other
+segment program — including one differing in a single lane — has no satisfying assignment.
+
+⚠ Same scope note as the chainlink's twin: this says the row's DECLARED segment program is that one.
+That a sub-proof of it exists, verifies, and publishes THESE nine tip lanes is off-row
+(`Satisfied2Custom.proofBound`) and is `mina_head_verifier`'s REFUSALS 11-14. -/
+theorem mina_link_bind_attests_the_pinned_program {a : Assignment} (h : airAccepts a) :
+    ∀ i ∈ List.range STATE_LIMBS, a (LINK_VK i) = linkVkLane i := by
+  intro i hi
+  have hg : a LINK_OK = 1 := by
+    have hlk := h.1.2.2.2.2.2.2.2.2.2.1
+    rwa [linkC_holds_iff] at hlk
+  have hb := h.2.2.2.2 i hi
+  rw [hg] at hb
+  linarith
+
+/-- ⚑ **AND THE SEGMENT SEAM'S GUARD CANNOT BE SWITCHED OFF EITHER.** A prover who would rather not
+name a segment sub-proof cannot set `LINK_OK = 0` to make all nine congruences hold vacuously — G6
+forces it to `1`. This is the conjunct that turns the former bare `= 1` into an obligation. -/
+theorem mina_link_guard_cannot_be_disarmed {a : Assignment} (h : airAccepts a) :
+    a LINK_OK = 1 := by
+  have hlk := h.1.2.2.2.2.2.2.2.2.2.1
+  rwa [linkC_holds_iff] at hlk
 
 /-- ⚑ **AND THE ATTESTATION IS NOT VACUOUS: the guard cannot be switched off.** A prover who would
 rather not name a sub-proof cannot set `WRAP_FS_PROVED = 0` — G9 forces it to `1`. Stated because a
@@ -1450,6 +1721,12 @@ theorem minaLcAir_complete (a : Assignment) (segLen anchorH submitH reqDepth : N
     -- quietly assumed — `mina_wrap_fs_row_is_fillable` exhibits it discharged on the honest row.
     (hwf : a WRAP_FS_PROVED = 1)
     (hvk : ∀ i ∈ List.range STATE_LIMBS, a (SUB_VK i) = chainlinkVkLane i)
+    -- ⚑⚑ THE SEGMENT SEAM'S COMPLETENESS COST, NAMED (2026-08-05, §2c): an honest prover must ALSO
+    -- hold a verifying STARK over `dregg-mina-lightclient-link::v1` whose published tip block is
+    -- this row's `TIP_STATE`, and fill the nine `LINK_VK` lanes with that program's fingerprint.
+    -- `hlk` (below, via `linkB = true`) already forces the guard; this is the lane obligation, and
+    -- `mina_link_row_is_fillable` exhibits it discharged on the honest row.
+    (hlvk : ∀ i ∈ List.range STATE_LIMBS, a (LINK_VK i) = linkVkLane i)
     (hdecT : minaVerifyDecision segLen anchorH submitH (anchorH + segLen - submitH) reqDepth
       linkB picklesB canonB = true) :
     airAccepts a := by
@@ -1457,7 +1734,17 @@ theorem minaLcAir_complete (a : Assignment) (segLen anchorH submitH reqDepth : N
     refine ⟨by rw [hwf]; ring, ?_⟩
     intro i hi
     rw [hwf, hvk i hi]; ring
-  refine ⟨?_, hcanon, hbind⟩
+  have hlink1 : a LINK_OK = 1 := by
+    have h1 : linkB = true := by
+      unfold minaVerifyDecision at hdecT
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hdecT
+      exact hdecT.1.1.2
+    rw [hlk, h1]; norm_num
+  have hlbind : linkBindAccepts a := by
+    refine ⟨by rw [hlink1]; ring, ?_⟩
+    intro i hi
+    rw [hlink1, hlvk i hi]; ring
+  refine ⟨?_, hcanon, hbind, hlbind⟩
   unfold minaVerifyDecision at hdecT
   simp only [Bool.and_eq_true, decide_eq_true_eq] at hdecT
   obtain ⟨⟨⟨⟨⟨hseg, hanch⟩, _hdep⟩, hlk1⟩, hpk1⟩, hcn1⟩ := hdecT
@@ -1646,14 +1933,20 @@ lanes, and the nine published commitment lanes. -/
 def wrapBindCols : List ℤ := [1] ++ CHAINLINK_VK_LANES ++ CHAINLINK_PI_LANES
 
 /-- **THE HONEST ROW** — the logic columns above, the pinned anchor's nine lanes, the verified tip's
-nine lanes, ⚑ and the recursion carrier's nineteen. ACCEPTED. -/
+nine lanes, ⚑ the recursion carrier's nineteen, ⚑⚑ and the segment seam's nine program lanes.
+ACCEPTED.
+
+⚑ Note what the segment seam did NOT add: a commitment block. Its commitment is `TIP_STATE`, already
+in this row and already published, which is why `MINA_PI_COUNT` did not move. -/
 def honestRow : Assignment :=
-  rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES ++ wrapBindCols)
+  rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES ++ wrapBindCols
+          ++ LINK_VK_LANES)
 
 /-- ⚑ **THE SHIFTED-ANCHOR ROW** — byte-for-byte the honest row except that the pinned anchor's lanes
 are the `+p` alias. Every gate holds, every slack is in range, and every carrier bit reads `1`. -/
 def shiftedAnchorRow : Assignment :=
-  rowOf (honestLogicCols ++ SHIFTED_ANCHOR_LANES ++ DEVNET_TIP_LANES ++ wrapBindCols)
+  rowOf (honestLogicCols ++ SHIFTED_ANCHOR_LANES ++ DEVNET_TIP_LANES ++ wrapBindCols
+          ++ LINK_VK_LANES)
 
 /-- The row's logic columns, unfolded — shared by every §7 proof so the `List.getD` walk happens
 once per column rather than once per theorem. -/
@@ -1665,7 +1958,8 @@ private theorem honest_verify_cols :
         depthSlackC_holds_iff, linkC_holds_iff, picklesC_holds_iff, canonC_holds_iff,
         wrapFsC_holds_iff,
         honestRow, shiftedAnchorRow, honestLogicCols, GENESIS_ANCHOR_LANES, SHIFTED_ANCHOR_LANES,
-        DEVNET_TIP_LANES, wrapBindCols, CHAINLINK_VK_LANES, CHAINLINK_PI_LANES, rowOf,
+        DEVNET_TIP_LANES, wrapBindCols, CHAINLINK_VK_LANES, CHAINLINK_PI_LANES,
+        LINK_VK_LANES, rowOf,
         SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK,
         DEPTH_SLACK, LINK_OK, PICKLES_WITNESSED, CANON_OK, WRAP_FS_PROVED, BLOCK_LEN,
         MINA_RANGE_BITS, List.getD,
@@ -1676,7 +1970,7 @@ private theorem honest_verify_cols :
 canonicality lookups. Without this the rung would be satisfied by a descriptor that refuses
 everything, and the two real state hashes are exactly the values the gate must not refuse. -/
 theorem honest_row_accepted : airAccepts honestRow :=
-  ⟨honest_verify_cols.1, by decide, by decide⟩
+  ⟨honest_verify_cols.1, by decide, by decide, by decide⟩
 
 /-- ⚑⚑ **THE COMPLETENESS COST OF THE RECURSION CARRIER IS PAYABLE — exhibited, not assumed.**
 `minaLcAir_complete` now takes `hwf`/`hvk` as hypotheses; a rung whose completeness hypotheses no
@@ -1685,6 +1979,16 @@ carries the real devnet lanes. -/
 theorem mina_wrap_fs_row_is_fillable :
     honestRow WRAP_FS_PROVED = 1
       ∧ ∀ i ∈ List.range STATE_LIMBS, honestRow (SUB_VK i) = chainlinkVkLane i := by
+  refine ⟨by decide, ?_⟩
+  decide
+
+/-- ⚑⚑ **AND THE SEGMENT SEAM'S COMPLETENESS COST IS PAYABLE TOO — exhibited, not assumed.**
+`minaLcAir_complete`'s new `hlvk` hypothesis, discharged on the row that carries the real devnet
+lanes. A seam whose completeness hypothesis no honest row discharges is a seam that refuses
+everything, which is the cheapest way to look sound. -/
+theorem mina_link_row_is_fillable :
+    honestRow LINK_OK = 1
+      ∧ ∀ i ∈ List.range STATE_LIMBS, honestRow (LINK_VK i) = linkVkLane i := by
   refine ⟨by decide, ?_⟩
   decide
 
@@ -1804,7 +2108,7 @@ def FORGED_VK_LANES : List ℤ :=
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT PROGRAM.** -/
 def forgedProgramRow : Assignment :=
   rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES
-          ++ ([1] ++ FORGED_VK_LANES ++ CHAINLINK_PI_LANES))
+          ++ ([1] ++ FORGED_VK_LANES ++ CHAINLINK_PI_LANES) ++ LINK_VK_LANES)
 
 /-- ⚑ **BEFORE: everything this descriptor checked before the bind ACCEPTS it.** The pre-bind
 predicate is `verifyAccepts ∧ canonAccepts` — literally `airAccepts` minus the seam — and it is
@@ -1817,7 +2121,7 @@ theorem forged_program_was_admitted :
       depthSlackC_holds_iff, linkC_holds_iff, picklesC_holds_iff, canonC_holds_iff,
       wrapFsC_holds_iff,
       forgedProgramRow, honestLogicCols, GENESIS_ANCHOR_LANES, DEVNET_TIP_LANES,
-      FORGED_VK_LANES, CHAINLINK_PI_LANES, rowOf,
+      FORGED_VK_LANES, CHAINLINK_PI_LANES, LINK_VK_LANES, rowOf,
       SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK,
       DEPTH_SLACK, LINK_OK, PICKLES_WITNESSED, CANON_OK, WRAP_FS_PROVED, BLOCK_LEN,
       MINA_RANGE_BITS, List.getD,
@@ -1828,7 +2132,7 @@ theorem forged_program_was_admitted :
 else. One lane of the program identity is enough — which is the point of pinning nine of them. -/
 theorem forged_program_refused : ¬ airAccepts forgedProgramRow := by
   intro h
-  have hb := h.2.2.2 0 (by decide)
+  have hb := h.2.2.1.2 0 (by decide)
   revert hb
   decide
 
@@ -1838,6 +2142,72 @@ theorem forged_program_old_admits_new_rejects :
     (verifyAccepts forgedProgramRow ∧ canonAccepts forgedProgramRow)
       ∧ ¬ airAccepts forgedProgramRow :=
   ⟨forged_program_was_admitted, forged_program_refused⟩
+
+/-! ### ⚑⚑⚑ THE SEGMENT SEAM'S OWN FALSIFIER — a row that names the WRONG SEGMENT PROGRAM.
+
+The same discipline the chainlink seam's falsifier follows, at the leg that landed today. This row
+differs from the honest one in **one lane of one number**: `LINK_VK 0` is the link descriptor's
+fingerprint lane 0 PLUS ONE. Every gate of the verify logic holds, every slack is in range, both
+state hashes are canonical, all four pre-existing carriers read `1`, and the CHAINLINK seam is
+satisfied in full — the row is honest in every column the descriptor carried this morning.
+
+⚠ **AND THE TAMPER TARGET IS CHECKED, NOT ASSUMED.** A drafted falsifier on the phase-1 lane was
+refuted by `decide` for moving a zero into a zero; `the_forged_link_lane_moves_a_real_value` states
+that lane 0 is non-zero and that the forgery actually moves it, so a lane that silently became `0`
+could not keep this pair green. -/
+
+/-- The forged segment-program lanes: the real fingerprint with lane 0 bumped by one. -/
+def FORGED_LINK_VK_LANES : List ℤ :=
+  [76100772, 34473567, 194746848, 491185466, 265287284, 420926520, 245421703, 7802286, 15232152]
+
+/-- ⚑ **THE ROW THAT NAMES A DIFFERENT SEGMENT PROGRAM.** -/
+def forgedLinkProgramRow : Assignment :=
+  rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES ++ wrapBindCols
+          ++ FORGED_LINK_VK_LANES)
+
+/-- ⚑ **THE FORGERY MOVES A REAL VALUE.** Lane 0 is non-zero, the forged lane differs from it, and
+the two lane vectors differ — so this pair cannot go green by moving nothing. -/
+theorem the_forged_link_lane_moves_a_real_value :
+    linkVkLane 0 ≠ 0
+      ∧ forgedLinkProgramRow (LINK_VK 0) ≠ honestRow (LINK_VK 0)
+      ∧ FORGED_LINK_VK_LANES ≠ LINK_VK_LANES := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **BEFORE: everything this descriptor checked before the segment seam ACCEPTS it.** The
+pre-seam predicate is `verifyAccepts ∧ canonAccepts ∧ bindAccepts` — literally `airAccepts` minus
+`linkBindAccepts` — and it is satisfied. So the forged segment-program lane was, in the strict sense,
+admitted. -/
+theorem forged_link_program_was_admitted :
+    verifyAccepts forgedLinkProgramRow ∧ canonAccepts forgedLinkProgramRow
+      ∧ bindAccepts forgedLinkProgramRow := by
+  refine ⟨?_, by decide, by decide⟩
+  refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_, ?_, ?_, ?_⟩ <;>
+    simp only [blockLenC_holds_iff, witDepthC_holds_iff, segSlackC_holds_iff, anchSlackC_holds_iff,
+      depthSlackC_holds_iff, linkC_holds_iff, picklesC_holds_iff, canonC_holds_iff,
+      wrapFsC_holds_iff,
+      forgedLinkProgramRow, honestLogicCols, GENESIS_ANCHOR_LANES, DEVNET_TIP_LANES,
+      wrapBindCols, CHAINLINK_VK_LANES, CHAINLINK_PI_LANES, FORGED_LINK_VK_LANES, rowOf,
+      SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK,
+      DEPTH_SLACK, LINK_OK, PICKLES_WITNESSED, CANON_OK, WRAP_FS_PROVED, BLOCK_LEN,
+      MINA_RANGE_BITS, List.getD,
+      List.cons_append, List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some] <;>
+    norm_num
+
+/-- ⚑⚑ **AFTER: the emitted descriptor REFUSES it**, on the segment seam's lane-0 congruence and
+nothing else. One lane of the program identity is enough — which is the point of pinning nine. -/
+theorem forged_link_program_refused : ¬ airAccepts forgedLinkProgramRow := by
+  intro h
+  have hb := h.2.2.2.2 0 (by decide)
+  revert hb
+  decide
+
+/-- ⚑⚑⚑ **OLD ADMITS, NEW REJECTS — the segment rung stated as one theorem.** The row every
+pre-§2c conjunct accepts is refused by the seam. This is `LINK_OK` stopping being a bare `= 1`. -/
+theorem forged_link_program_old_admits_new_rejects :
+    (verifyAccepts forgedLinkProgramRow ∧ canonAccepts forgedLinkProgramRow
+        ∧ bindAccepts forgedLinkProgramRow)
+      ∧ ¬ airAccepts forgedLinkProgramRow :=
+  ⟨forged_link_program_was_admitted, forged_link_program_refused⟩
 
 /-- ⚑⚑⚑ **OLD ADMITS, NEW REJECTS — the rung stated as one theorem.** The very same row that the
 PRE-RUNG predicate ACCEPTS (`verifyAccepts`: every gate, every slack, and `CANON_OK` witnessed `1` by
@@ -1870,9 +2240,11 @@ theorem mina_air_discriminates :
       ∧ ¬ airAccepts forgedHeightRow
       ∧ ¬ airAccepts unanchoredRow
       ∧ ¬ airAccepts shiftedAnchorRow
-      ∧ ¬ airAccepts forgedProgramRow :=
+      ∧ ¬ airAccepts forgedProgramRow
+      ∧ ¬ airAccepts forgedLinkProgramRow :=
   ⟨honest_row_accepted, losing_fork_refused, bent_proof_word_refused, forged_height_refused,
-   observer_arithmetic_refused, shifted_anchor_refused, forged_program_refused⟩
+   observer_arithmetic_refused, shifted_anchor_refused, forged_program_refused,
+   forged_link_program_refused⟩
 
 /-! ## §8 — axiom hygiene, on the canonicality rung's load-bearing facts. -/
 
@@ -1905,6 +2277,19 @@ theorem mina_air_discriminates :
 #assert_axioms forged_program_was_admitted
 #assert_axioms forged_program_refused
 #assert_axioms forged_program_old_admits_new_rejects
+-- ⚑⚑⚑ THE SEGMENT RUNG, 2026-08-05: `LINK_OK` was a BARE `= 1` on a witnessed column and the nine
+-- `TIP_STATE` lanes were PI-bound, width-checked and joined to NOTHING. One `.bind` leg makes the
+-- carrier the guard of a pinned recursion seam whose declared commitment IS those nine lanes.
+#assert_axioms minaLcVerifyDesc_link_bind
+#assert_axioms mina_link_bind_commits_the_tip_lanes
+#assert_axioms mina_link_program_pin_is_nine_lanes
+#assert_axioms mina_link_bind_attests_the_pinned_program
+#assert_axioms mina_link_guard_cannot_be_disarmed
+#assert_axioms mina_link_row_is_fillable
+#assert_axioms the_forged_link_lane_moves_a_real_value
+#assert_axioms forged_link_program_was_admitted
+#assert_axioms forged_link_program_refused
+#assert_axioms forged_link_program_old_admits_new_rejects
 -- ⚑⚑ THE CLOSURE, 2026-08-03: `SUBMIT_H ≤ BLOCK_LEN` was unforced because `REQ_DEPTH` carried NO
 -- range lookup. One leg on the already-declared table closes it, and the falsifier is exhibited
 -- both ways over a DEFINED pre-repair predicate rather than a remembered one.

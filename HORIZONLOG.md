@@ -1,5 +1,88 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 5 (WHOSE TIP) — **the Mina head's claimed tip is JOINED IN-CIRCUIT**: `LINK_OK` stops being a bare `= 1`, the decorative census goes 18 → 9 with the denominator fixed, and the served-but-unasked-for segment descriptor is now DISPATCHED
+
+Two machine-checked absences, both closed on the emitted bytes.
+
+**1. `TIP_STATE` was pinned and TIED TO NOTHING.**
+`LightClientAnchorConnectivity.minaVerify_state_lanes_are_read_but_never_joined` proved by `decide`
+that cols 12..29 are READ — one arity-1 range lookup each — and RELATED TO NOTHING. Their only other
+leg was a `.pin`, and `relatedCols` returns `[]` for a `piBinding` **deliberately**: *"a width bound
+is a fact about a value's SHAPE; it is not a tie to the evidence."* Nine of those eighteen are the
+head's published tip.
+
+**2. `LINK_OK` was `⟨.var LINK_OK, .const 1⟩`** — a forcing gate on a witnessed column, one felt to
+set. And `dregg-mina-lightclient-link::v1` was SERVED, proved both polarities, and **production never
+asked for it**: `descriptor_by_name` resolved it at exactly two sites in `mina_head_verifier.rs`,
+both inside `#[cfg(test)]`, both as a wrong-program DECOY.
+
+⛑ **ONE `.bind` LEG CLOSES BOTH, and the shape was FORCED, not chosen.** `ProofBind`'s `commit` is
+the only vector that names off-row evidence and `bound` is defined to be *equal* to it — so the only
+way a `proofBind` can join `TIP_STATE` is for `TIP_STATE` to BE the commitment. It is:
+
+    guard  := LINK_OK                       -- the bare `= 1` becomes a seam guard
+    commit := TIP_STATE 0..8                -- the PUBLISHED tip, elementwise
+    vk     := LINK_VK 0..8   (cols 49..57)
+    vkPin  := the nine Faithful9 lanes of dregg-mina-lightclient-link::v1's fingerprint
+
+Nine lanes, `8·29 + 24 = 256` bits **exactly, elementwise, no digest, therefore no birthday bound** —
+the same standard the phase-1 Fp weld landed at this morning (32/32 felts). A one-felt tie would have
+been `2^31`.
+
+⛑⛑ **THE TRIPWIRES FIRED, WHICH IS THE MECHANISM WORKING.** `minaVerify_decorative_anchors` and
+`minaVerify_state_lanes_are_read_but_never_joined` were written *to go red the day an anchor column
+enters a gate beside another column*. Both did. Replaced by the positive statement
+(`minaVerify_tip_lanes_are_published_and_joined`, `minaVerify_tip_shares_a_constraint_with_the_pinned_segment_program`)
+plus a NARROWER tripwire on the nine that remain
+(`minaVerify_anchor_lanes_are_read_but_never_joined`). Census `62 → 53`.
+
+⛑ **AND THE RATCHET MOVED THE ONE WAY IT CANNOT LIE.** `18 → 9`, and **`public_input_count` STAYED
+30** — no public input added or removed; the tip block was already published and a constraint now
+names it. This file has twice recorded that column count is the wrong denominator (Solana's row ROSE
+from 11 to 19 *while a root was being bound properly*). Here numerator and denominator move together:
+decorative share 60% → 30%. Baseline edited BY HAND with that paragraph attached.
+
+⛑ **PRODUCTION NOW DISPATCHES THE SEGMENT DESCRIPTOR — refusals 11-14.** Program pin (by GUARD
+COLUMN, not list position — the head carries two `proof_bind`s now), the segment STARK itself, the
+nine-lane seam, and the eleven public inputs the seam does not cover. ⛑ The sharpest is 14c: `SEG_LEN`
+is a FREE WITNESS in the head AIR, but G1 makes it a function of two PUBLISHED values, so the node
+recomputes `BLOCK_LEN − ANCHOR_H` without the prover's help and `link_seg_len_counts_the_real_rows`
+then makes the segment proof pay for it in COMMITTED ROWS.
+
+**Both polarities, RELEASE, 14/14** (`mina_lightclient_carrier_proves`): the honest head proves on
+real devnet lanes; a forged segment-program lane 0 is refused and the test asserts the refusal names
+a **violated constraint, not a bus** (`assert_violated_constraint_not_bus`); the top lane too; the
+guard cannot be disarmed. The forgery `assert_ne!`s that it moved a NON-ZERO value — a sibling lane's
+drafted falsifier was refuted for moving a zero into a zero.
+
+⚠ **SAY WHAT THIS IS NOT.** The bound sub-proof's `OWNHASH` is a FREE WITNESS (`LinkHashResidual`,
+~5·10⁵ BabyBear constraints per block hash). So what is gated is the segment's **SHAPE**, not its
+hashes: a prover choosing every row's hash can still fabricate a consistent chain. What it can no
+longer do is be inconsistent, claim a depth it has not committed rows for, or **publish a tip that is
+not that chain's last element**. Connectivity is co-occurrence, not derivation.
+
+⚠ **AND THE ANCHOR HALF IS UNMOVED — nine lanes still joined to nothing.** A second bind could not
+fix it and the reason is structural, not schedule: there is one `piCommit` per engine, so two binds
+against one program with DIFFERENT commitments are incoherent. The anchor lanes are refused at the
+CONSUMER (refusal 14a), elementwise. That is an executor check, not an edge, and
+`minaVerify_anchor_lanes_are_read_but_never_joined` keeps saying so.
+`minaVerify_anchor_height_shares_no_constraint_with_the_hash` stayed **GREEN**: `ANCHOR_H` is not in
+the new seam.
+
+**FLAG DAY.** `dregg-mina-lightclient-verify-v1.json` re-emitted: `trace_width` **49 → 58**,
+**62 → 63 constraints**, `piCount` **30, unchanged**. **The head VK ROTATES** — every previously
+produced `MinaHeadProofWire` now fails to verify. `mina_head_predicate_vk()` is blake3 over the
+descriptor NAME, which did not move, so cell programs keep their pinned predicate vk and **nothing
+re-genesises**. `MinaHeadProofWire` gains `link_public_inputs` + `link_proof`, both REQUIRED, so a
+pre-flag-day blob fails at the CODEC. ⚠ NEW COUPLING: re-emitting the link descriptor now moves
+`LINK_VK_LANES` and re-VKs the head, exactly as `pasta-fq-chainlink.json` already does.
+
+⚠ **PROVENANCE.json left UNSTAMPED** (restored to its HEAD bytes; a `record-only` row appended to
+`docs/VK-REGEN-LOG.md`). `metatheory/Dregg2` is dirty from sibling lanes, so the stamp the emitter
+minted recorded `source_dirty=true` — a stamp `--verify-provenance` refuses outright. Second emit run
+moved **zero bytes** on this descriptor.
+
+
 ## ⛑⛑⛑ AUGUST 5 (WHOSE LAYOUT) — **the withheld conjunction is ROUTED**: the b-polynomial's 15 rounds are 15 ROWS, the width is 2 536 at EVERY round count, and the artifact is 24 MB → 2.4 MB
 
 `MinaWrapConjunctionAir` was built, proved and `#assert_axioms`-clean, and its routing row was

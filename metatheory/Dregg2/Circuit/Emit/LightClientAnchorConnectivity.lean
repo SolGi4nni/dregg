@@ -88,13 +88,22 @@ commitment the prover can afford, and derive the anchor instead of publishing it
   `SLOT_COL`. ⚠ The denominator is pinned; the stake TABLE is not (`LightClientSolanaAir` §6c prices
   the fold that would).
 
-* **`dregg-mina-lightclient-verify::v1`** — `{0..7}{11} / {8} / {9} / {10} / {12}…{29}`. EIGHTEEN of
-  twenty inert; the two that are not are `BLOCK_LEN` (col 11, PI 18) and `REQ_DEPTH` (col 4, PI 19),
-  both inside the height/depth component. *The prover exhibited a segment length, an anchor height, a
-  submission height and three range-checked slacks in an additive relation, published the derived
-  block length and the required depth, set three bits to 1, and separately exhibited eighteen lane
-  values each bounded to 29 or 22 bits.* ⚑ Two corrections the measurement forced, ONE OF WHICH IS NOW
-  REPAIRED (2026-08-05):
+* ⚑⚑ **`dregg-mina-lightclient-verify::v1` — THE SECOND VERIFY RUNG TO MOVE, AND IT MOVED BY HALF
+  (2026-08-05, second pass).** It read `{0..7}{11} / {8} / {9} / {10} / {12}…{29}`, EIGHTEEN of
+  twenty inert. It now carries **NINE**: the `TIP_STATE` lanes (cols 21..29) left the decorative set
+  when `LightClientMinaAir` §2c made them the `commit` vector of a `LINK_OK`-guarded `proofBind`
+  pinned to `dregg-mina-lightclient-link::v1`. *The prover exhibits a segment length, an anchor
+  height, a submission height and three range-checked slacks in an additive relation; publishes the
+  derived block length, the required depth and the anchor height; sets four bits to 1; exhibits nine
+  anchor lane values bounded to 29 or 22 bits and tied to nothing — **and names a verifying sub-proof
+  of the segment program whose public-input commitment is the nine tip lanes it publishes.***
+  ⚑ **PIs did NOT grow.** The tip block was already published; what changed is that a constraint now
+  names it. That is the shape of move this file's own §3 asks for — the decorative SHARE fell without
+  the denominator moving, which is not what happened when Solana widened a root.
+  ⚠ And the caveat that governs is the one `minaLink_decorative_anchors` already carries: the bound
+  sub-proof chains WITNESSED lane values. The tip is now the last element of a committed chain whose
+  SHAPE is gated; its HASH is still the prover's (`LinkHashResidual`).
+  ⚑ Corrections the measurement forced, ONE OF WHICH IS NOW REPAIRED (2026-08-05):
   - ✅ the anchor HEIGHT (`ANCHOR_H`, col 1) WAS a free witness — not PI-bound, not range-looked-up,
     and pinned to no constant, while `LightClientMinaAir` called it "the pinned weak-subjectivity
     anchor's blockchain length". It is now **PI-bound at slot 29**
@@ -158,6 +167,11 @@ import Dregg2.Circuit.Emit.LightClientSolStakeFoldAir
 
 set_option autoImplicit false
 set_option maxHeartbeats 1600000
+-- ⚑ 2026-08-05: `minaVerify_anchor_height_shares_no_constraint_with_the_hash` decides a nested
+-- quantifier over (nine columns × every constraint of the Mina head descriptor), and the segment
+-- bind took that descriptor to 63 constraints — one past the default depth. `set_option` does not
+-- cross an import, so it is stated here rather than inherited from `LightClientMinaAir`.
+set_option maxRecDepth 4000
 
 namespace Dregg2.Circuit.Emit.LightClientAnchorConnectivity
 
@@ -410,22 +424,83 @@ theorem sol_anchor_root_shares_a_constraint_with_the_stake_rows :
           && LightClientSolanaAir.STAKE 0 ∈ relatedCols c) = true := by
   decide
 
-/-- ⚑ **MINA VERIFY: eighteen of twenty published values are decorative.** Columns 12..29 — the nine
-`ANCHOR_STATE` lanes and the nine `TIP_STATE` lanes. The two that are NOT are `BLOCK_LEN` (col 11) and
-`REQ_DEPTH` (col 4), which sit in the height/depth component. -/
+/-- ⚑⚑⚑ **MINA VERIFY — THIS LITERAL FIRED, AND IT HALVED. NINE, NOT EIGHTEEN.**
+
+It read `[12 … 29]`: the nine `ANCHOR_STATE` lanes AND the nine `TIP_STATE` lanes, every one of them
+PI-bound, width-checked and joined to nothing. **The nine `TIP_STATE` lanes are gone from this list**
+— `LightClientMinaAir`'s §2c segment bind (2026-08-05) makes them the `commit` vector of a
+`proofBind` guarded by `LINK_OK` and pinned to `dregg-mina-lightclient-link::v1`, so `relatedCols`'
+`.proofBind` arm returns all nine of them beside the guard and nine program lanes.
+
+⚑ **THE TRIPWIRE WORKED AS DESIGNED.** This theorem and the one below it were written *to go red the
+day an anchor column enters a gate beside another column*; both fired on the same edit. Shrinking the
+literal is the correct move and weakening the statement is not — so the positive fact is stated
+separately (`minaVerify_tip_lanes_are_published_and_joined`) rather than left as the absence of a
+red, and the residual keeps its own narrower tripwire.
+
+⚠ What remains is the ANCHOR half, and it is not an oversight: `ProofBind`'s `commit` is the only
+vector that names off-row evidence and there is one `piCommit` per engine, so a second bind against
+the same program with a DIFFERENT commitment is incoherent. The anchor's nine lanes are refused at
+the CONSUMER against the link sub-proof's own anchor block. That is an executor check, not an edge,
+and this literal is what keeps saying so. -/
 theorem minaVerify_decorative_anchors :
     decorativeAnchors LightClientMinaAir.minaLcVerifyDesc
-      = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] := by
+      = [12, 13, 14, 15, 16, 17, 18, 19, 20] := by
   decide
 
-/-- ⚑ **AND THIS IS THE CASE `constraintCols` ALONE WOULD MISS.** The eighteen lane columns ARE read —
-each by an arity-1 range lookup at 29 or 22 bits — and joined to nothing. A width bound is a fact
-about a value's SHAPE; it is not a tie to the evidence, and a census that counted "appears in a
-lookup tuple" as bound would have scored these eighteen as connected. -/
-theorem minaVerify_state_lanes_are_read_but_never_joined :
-    ∀ col ∈ [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
+/-- ⚑ **AND THIS IS THE CASE `constraintCols` ALONE WOULD MISS — now stated of the NINE that are
+still inert.** The anchor lane columns ARE read — each by an arity-1 range lookup at 29 or 22 bits —
+and joined to nothing. A width bound is a fact about a value's SHAPE; it is not a tie to the
+evidence, and a census that counted "appears in a lookup tuple" as bound would have scored these nine
+as connected.
+
+⚑ This is the narrower replacement for `minaVerify_state_lanes_are_read_but_never_joined`, which
+covered `[12 … 29]` and fired on the segment bind. Keeping it at the anchor block is what makes the
+remaining half a MEASURED residual rather than an unmentioned one. -/
+theorem minaVerify_anchor_lanes_are_read_but_never_joined :
+    ∀ col ∈ [12, 13, 14, 15, 16, 17, 18, 19, 20],
       isRead LightClientMinaAir.minaLcVerifyDesc col = true ∧
       isRelated LightClientMinaAir.minaLcVerifyDesc col = false := by
+  decide
+
+/-- ⚑⚑⚑ **THE POSITIVE STATEMENT: THE HEAD'S PUBLISHED TIP IS JOINED.** Each of the nine
+`TIP_STATE` lanes is PI-bound (so a consumer can compare it against a head it holds), READ, and
+RELATED — none is decorative. This is the flip of the deleted
+`minaVerify_state_lanes_are_read_but_never_joined`, stated in the affirmative so the gain is a term
+and not the absence of a red.
+
+⚠ The standing caveat binds here as it does everywhere in this file: **connectivity is co-occurrence,
+not derivation.** What these nine co-occur with is a guard and a pinned program identity; what
+upgrades that to evidence is off-row — `Satisfied2Custom.proofBound`'s existential, discharged by a
+consumer that verifies a STARK over `dregg-mina-lightclient-link::v1`. And that sub-proof's own
+caveat (`minaLink_decorative_anchors`, below) still holds: its `OWNHASH` is a free witness, so what
+is gated is the segment's SHAPE, not its hashes. -/
+theorem minaVerify_tip_lanes_are_published_and_joined :
+    ∀ col ∈ [21, 22, 23, 24, 25, 26, 27, 28, 29],
+      isPiBound LightClientMinaAir.minaLcVerifyDesc col = true ∧
+      isRead LightClientMinaAir.minaLcVerifyDesc col = true ∧
+      isRelated LightClientMinaAir.minaLcVerifyDesc col = true ∧
+      col ∉ decorativeAnchors LightClientMinaAir.minaLcVerifyDesc := by
+  decide
+
+/-- ⚑⚑ **AND THE JOIN IS TO THE PINNED PROGRAM, IN ONE CONSTRAINT — the Mina analogue of
+`sol_anchor_root_shares_a_constraint_with_the_stake_rows`.** Every published tip lane co-occurs, in a
+SINGLE constraint, with the `LINK_OK` carrier and with the segment program's first and last attested
+lane. So the tip columns and the identity of the sub-proof they commit to are adjacent, not merely in
+one component by a long walk.
+
+⚠ The difference from Solana's is worth stating rather than letting the parallel shape imply it:
+there the co-occurring columns are the INPUTS of a deployed Poseidon2 chip absorb, so the published
+root is the IMAGE of the exhibited rows. Here they are a program FINGERPRINT, so what the constraint
+says is *which* sub-proof these nine lanes are the commitment of — not that they are anything's
+image. -/
+theorem minaVerify_tip_shares_a_constraint_with_the_pinned_segment_program :
+    ∀ j ∈ [21, 22, 23, 24, 25, 26, 27, 28, 29],
+      LightClientMinaAir.minaLcVerifyDesc.constraints.any (fun c =>
+        j ∈ relatedCols c
+          && LightClientMinaAir.LINK_OK ∈ relatedCols c
+          && LightClientMinaAir.LINK_VK 0 ∈ relatedCols c
+          && LightClientMinaAir.LINK_VK 8 ∈ relatedCols c) = true := by
   decide
 
 /-! ### ⚑⚑ 2026-08-05 — THE RECURSION RUNG, MEASURED HERE RATHER THAN ASSUMED.
@@ -453,7 +528,9 @@ theorem minaVerify_subproof_commitment_is_published_and_joined :
         isPiBound LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)
           && isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)) = true
       ∧ LightClientMinaAir.minaLcVerifyDesc.piCount = 30
-      ∧ (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 18 := by
+      -- ⚑ 18 → 9 on 2026-08-05 (the segment bind). The PI COUNT DID NOT MOVE: the tip block was
+      -- already published, and what changed is that a constraint now names it.
+      ∧ (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 9 := by
   refine ⟨by decide, rfl, by decide⟩
 
 /-- ⚑ **AND THE GUARD IS IN THE SAME COMPONENT AS EVERY LANE IT GUARDS.** Nine binds, one guard —
@@ -578,29 +655,36 @@ theorem solStakeFold_denominator_shares_a_constraint_with_the_row_stakes :
 /-! ## §3 — the census, as one number. -/
 
 /-- ⚑ **THE ANSWER TO "HOW MANY OF OUR LIGHT CLIENTS RELATE THEIR CLAIMED BLOCK TO THE EVIDENCE THEY
-CHECK?"** Sixty-two decorative anchors across the five VERIFY descriptors; zero across the LINK rung
-and the FOLD rung. **Two of seven now, and one of them is a VERIFY descriptor.**
+CHECK?"** Fifty-three decorative anchors across the five VERIFY descriptors; zero across the LINK rung
+and the FOLD rung. **Three of seven now, and two of them are VERIFY descriptors.**
 
-⚑ **THE SEQUENCE, BECAUSE A SINGLE NUMBER IS A BAD SUMMARY AND THIS FILE HAS SAID SO TWICE.**
-`63 → 71 → 62`. The rise to 71 was Solana's `ANCHOR_ROOT` widening from ONE 31-bit column standing for
-a 256-bit SHA-256 root to nine radix-`2^31` limbs: eight more published columns, none of them read.
+⚑ **THE SEQUENCE, BECAUSE A SINGLE NUMBER IS A BAD SUMMARY AND THIS FILE HAS SAID SO THREE TIMES.**
+`63 → 71 → 62 → 53`. The rise to 71 was Solana's `ANCHOR_ROOT` widening from ONE 31-bit column standing
+for a 256-bit SHA-256 root to nine radix-`2^31` limbs: eight more published columns, none of them read.
 The fall to 62 is those nine limbs being DELETED and replaced by the stake-table fold's eight `.last`
 output lanes, which are in the same component as the rows they commit to. **Column count moved the
 same direction for "we widened a root to bind it properly" and for "we published something and joined
 it to nothing"; it moved the RIGHT direction only when the root became derived.** Anyone tightening
 this gate should count BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the decorative SHARE, not columns.
 
+⚑ **AND THE FALL TO 53 IS THE FIRST ONE THIS METRIC MEASURES HONESTLY, WHICH IS WHY IT IS WORTH THE
+SENTENCE.** Mina's nine `TIP_STATE` lanes joined a `proofBind` and **no public input was added or
+removed** — the descriptor's statement is the same thirty values it was this morning, and nine of them
+stopped being carried by nothing. Denominator fixed, numerator down: the one shape where the column
+count and the meaning cannot disagree. Contrast the `62 → 71` step, where the count rose *because* a
+root was being bound properly.
+
 ⚠ Read `minaLink_decorative_anchors`' own caveat before reading Solana's `[69 … 78]` as SOUND. Zero
 decorative anchors is the floor, not the ceiling, and Solana is not at zero: its bank root and slot
 are still carried by no gate, its `ED_OK` is still a witnessed carrier and its numerator is still a
 witnessed projection. What changed is that the DENOMINATOR and the TABLE it is a total of are now
 derived from rows the same proof commits to. -/
-theorem the_five_verify_descriptors_carry_sixty_two_decorative_anchors :
+theorem the_five_verify_descriptors_carry_fifty_three_decorative_anchors :
     (decorativeAnchors LightClientEthAir.ethLcVerifyDesc).length
       + (decorativeAnchors LightClientTendermintAir.tmLcVerifyDesc).length
       + (decorativeAnchors LightClientMidnightAir.midLcVerifyDesc).length
       + (decorativeAnchors LightClientSolanaAir.solLcVerifyDesc).length
-      + (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 62 ∧
+      + (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 53 ∧
     (decorativeAnchors LightClientMinaLinkAir.minaLinkDesc).length = 0 := by
   decide
 
@@ -622,7 +706,9 @@ theorem the_five_verify_descriptors_carry_sixty_two_decorative_anchors :
 #assert_axioms minaVerify_decorative_anchors
 #assert_axioms minaVerify_subproof_commitment_is_published_and_joined
 #assert_axioms minaVerify_recursion_guard_is_joined_and_hidden
-#assert_axioms minaVerify_state_lanes_are_read_but_never_joined
+#assert_axioms minaVerify_anchor_lanes_are_read_but_never_joined
+#assert_axioms minaVerify_tip_lanes_are_published_and_joined
+#assert_axioms minaVerify_tip_shares_a_constraint_with_the_pinned_segment_program
 #assert_axioms minaVerify_anchor_height_is_published
 #assert_axioms minaVerify_anchor_height_shares_no_constraint_with_the_hash
 #assert_axioms minaLink_decorative_anchors
@@ -631,6 +717,6 @@ theorem the_five_verify_descriptors_carry_sixty_two_decorative_anchors :
 #assert_axioms solStakeFold_has_twelve_pi_bound_columns
 #assert_axioms solStakeFold_root_shares_a_constraint_with_the_stake_rows
 #assert_axioms solStakeFold_denominator_shares_a_constraint_with_the_row_stakes
-#assert_axioms the_five_verify_descriptors_carry_sixty_two_decorative_anchors
+#assert_axioms the_five_verify_descriptors_carry_fifty_three_decorative_anchors
 
 end Dregg2.Circuit.Emit.LightClientAnchorConnectivity

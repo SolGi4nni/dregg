@@ -84,6 +84,36 @@
 # Binding them is a different rung (the Poseidon fold over Pasta `Fp`); this row is unmoved and the
 # honest reason is that the work that would move it was not done here.
 #
+# ⚑⚑⚑ 2026-08-05, SECOND PASS — THE ROW MOVED, 18 -> 9, AND THIS IS THE ONE CASE WHERE THE COLUMN
+# COUNT AND THE MEANING CANNOT DISAGREE. Read it against the paragraph directly above, which is the
+# same descriptor earlier the same day recording that its shape changed and its row did NOT.
+#   * WHAT LANDED: `LightClientMinaAir` §2c. `LINK_OK` was a BARE `= 1` on a witnessed column — one
+#     felt to set, nothing behind it. It is now the GUARD of a second nine-lane `proof_bind` whose
+#     `vk_pin` is the semantic fingerprint of `dregg-mina-lightclient-link::v1` and whose `commit`
+#     vector IS the row's nine PUBLISHED `TIP_STATE` columns (21..29). A `proof_bind` relates its
+#     guard, its commitment and its vk lanes, so those nine tip columns are now JOINED.
+#   * WHAT LEFT THE ROW: exactly the nine tip lanes. The row was the eighteen anchor+tip state
+#     lanes; it is now the NINE ANCHOR lanes (cols 12..20) and nothing else.
+#   * ⚑ **THE DENOMINATOR DID NOT MOVE. `public_input_count` IS STILL 30.** This file warns twice
+#     that column count is the wrong summary — Solana's row ROSE from 11 to 19 while a root was
+#     being bound properly. Here no public input was added or removed: the tip block was already
+#     published, and what changed is that a constraint now names it. Decorative share 18/30 = 60%
+#     -> 9/30 = 30%, and the count and the share move together for once. The descriptor also went
+#     width 49 -> 58 and 62 -> 63 constraints; the head VK rotates.
+# ⚠ AND SAY WHAT DID **NOT** HAPPEN, because the previous paragraph had to say the same thing:
+#   * the NINE ANCHOR lanes are unmoved. Still PI-bound, still read by one arity-1 lane lookup each,
+#     still joined to nothing. `LightClientAnchorConnectivity.minaVerify_anchor_lanes_are_read_but_never_joined`
+#     is the narrower tripwire that keeps saying so.
+#   * a second bind could NOT fix that, and the reason is structural rather than schedule: a
+#     `proof_bind`'s `commit` is the only vector naming off-row evidence and there is one `piCommit`
+#     per engine, so two binds against ONE program with DIFFERENT commitments are incoherent. The
+#     anchor lanes are refused against the segment sub-proof's own anchor block AT THE CONSUMER
+#     (`mina_head_verifier` REFUSAL 14), elementwise. That is an executor check, not an edge.
+#   * ⚠ and connectivity is still CO-OCCURRENCE, not derivation. What these nine tip lanes co-occur
+#     with is a guard and a program fingerprint; the bound sub-proof's own `OWNHASH` is a free
+#     witness (`LinkHashResidual`), so what is gated is the segment's SHAPE, not its hashes. Read
+#     `minaLink_decorative_anchors`' caveat before reading `9` as sound.
+#
 # ⚑ `dregg-pasta-fq-wraplink::v1` is NEWLY SERVED (2026-08-05) and enters at ZERO — all 224 of its
 # public inputs sit in a single component spanning all 469 columns — so it gets no row, per the
 # "descriptors at zero are omitted" rule above rather than by omission.
@@ -148,7 +178,7 @@
 11	dregg-eth-lightclient-verify::v1
 8	dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1
 12	dregg-midnight-lightclient-verify::v1
-18	dregg-mina-lightclient-verify::v1
+9	dregg-mina-lightclient-verify::v1
 192	dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1
 19	dregg-presentation-freshness::summary-v1
 1	dregg-shielded-spend-pinned-root::v1
