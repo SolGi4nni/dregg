@@ -27,7 +27,6 @@
 //! (`turn-prover/src/aggregate_bilateral_prover.rs`, `EffectVmEmitBilateralAgg.lean`); the abstract
 //! hyperedge/CG-2 spec is `Dregg2.Spec.JointViaHyper`.
 
-use dregg_circuit::effect_vm::pi;
 use dregg_circuit::field::BabyBear;
 
 // ============================================================================
@@ -820,7 +819,6 @@ impl RotatedParticipantLeg {
         effects: &[dregg_circuit::effect_vm::Effect],
         before: &dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness,
         after: &dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness,
-        turn_id: Option<BabyBear>,
         umem_rows: &[Vec<BabyBear>],
         umem_boundary: &dregg_circuit::descriptor_ir2::UMemBoundaryWitness,
         domain: u32,
@@ -884,7 +882,7 @@ impl RotatedParticipantLeg {
         };
         // The trace SHAPE follows the COMMITTED descriptor: a hardened `…-v1-avail` transfer/burn
         // member (the GAP #4 availability weld) demands the avail-padded geometry.
-        let (rot_trace, mut dpis) =
+        let (rot_trace, dpis) =
             dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_avail(
                 dregg_circuit::effect_vm::trace_rotated::avail_pad_for_descriptor_name(
                     &rotated_desc.name,
@@ -896,9 +894,6 @@ impl RotatedParticipantLeg {
                 &caveat,
             )
             .map_err(|e| format!("mint_welded: rotated trace generation failed: {e}"))?;
-        if let Some(tid) = turn_id {
-            dpis[pi::TURN_HASH_BASE] = tid;
-        }
 
         // Assemble the welded base trace: inject the REAL umem rows (guard col 6 == 1) into the
         // appended 7 columns of the first rows (the umem-op gathering reads operands row-local).
@@ -975,7 +970,6 @@ impl RotatedParticipantLeg {
         effects: &[dregg_circuit::effect_vm::Effect],
         before: &dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness,
         after: &dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness,
-        turn_id: Option<BabyBear>,
         umem_rows: &[Vec<BabyBear>],
         umem_boundary: &dregg_circuit::descriptor_ir2::UMemBoundaryWitness,
         domain: u32,
@@ -1008,7 +1002,7 @@ impl RotatedParticipantLeg {
             [dregg_circuit::effect_vm::Effect::Transfer { .. }] => transfer_caveat_manifest(),
             _ => empty_caveat_manifest(),
         };
-        let (wide_desc, wide_trace, mut dpis, map_heaps, mem_boundary) =
+        let (wide_desc, wide_trace, dpis, map_heaps, mem_boundary) =
             generate_rotated_effect_vm_descriptor_and_trace_wide(
                 initial_state,
                 effects,
@@ -1026,10 +1020,6 @@ impl RotatedParticipantLeg {
         // WELD: the universal-memory leg INTO the WIDE descriptor (keeps the 16 wide commit PIs).
         let welded = weld_umem_into_wide_descriptor(&wide_desc, domain);
         let base = wide_desc.trace_width;
-
-        if let Some(tid) = turn_id {
-            dpis[pi::TURN_HASH_BASE] = tid;
-        }
 
         // Assemble the welded base trace: inject the REAL umem rows (guard col 6 == 1) into the
         // appended 7 columns of the first rows (the umem-op gathering reads operands row-local).
@@ -1106,7 +1096,6 @@ impl RotatedParticipantLeg {
         effects: &[dregg_circuit::effect_vm::Effect],
         before: &dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness,
         after: &dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness,
-        turn_id: Option<BabyBear>,
         umem_rows: &[Vec<BabyBear>],
         umem_boundary: &dregg_circuit::descriptor_ir2::UMemBoundaryWitness,
         domains: &[u32],
@@ -1141,7 +1130,7 @@ impl RotatedParticipantLeg {
             [dregg_circuit::effect_vm::Effect::Transfer { .. }] => transfer_caveat_manifest(),
             _ => empty_caveat_manifest(),
         };
-        let (wide_desc, wide_trace, mut dpis, map_heaps, mem_boundary) =
+        let (wide_desc, wide_trace, dpis, map_heaps, mem_boundary) =
             generate_rotated_effect_vm_descriptor_and_trace_wide(
                 initial_state,
                 effects,
@@ -1163,10 +1152,6 @@ impl RotatedParticipantLeg {
         let welded = weld_umem_multidomain_into_wide_descriptor(&wide_desc, domains);
         let base = wide_desc.trace_width;
         let umem_cols = 6 + domains.len();
-
-        if let Some(tid) = turn_id {
-            dpis[pi::TURN_HASH_BASE] = tid;
-        }
 
         // Assemble the welded base trace: inject the REAL umem rows (a row is REAL if ANY per-domain
         // guard col `6 .. 6 + domains.len()` is 1) into the appended `6 + domains.len()` columns of
@@ -1248,7 +1233,6 @@ impl RotatedParticipantLeg {
         effects: &[dregg_circuit::effect_vm::Effect],
         before: &dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness,
         after: &dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness,
-        turn_id: Option<BabyBear>,
         bundle: impl Into<CarrierWitness>,
     ) -> Result<RotatedParticipantLeg, String> {
         use crate::ivc_turn_chain::ir2_leaf_wrap_config;
@@ -1269,7 +1253,7 @@ impl RotatedParticipantLeg {
             ));
         }
 
-        let (desc, trace, mut dpis, map_heaps, mb) =
+        let (desc, trace, dpis, map_heaps, mb) =
             generate_rotated_effect_vm_descriptor_and_trace_wide(
                 initial_state,
                 effects,
@@ -1296,10 +1280,6 @@ impl RotatedParticipantLeg {
                  at {CUSTOM_COMMIT_PI_LO}..{commit_pi_hi} (got {})",
                 dpis.len()
             ));
-        }
-
-        if let Some(tid) = turn_id {
-            dpis[pi::TURN_HASH_BASE] = tid;
         }
 
         let config = ir2_leaf_wrap_config();

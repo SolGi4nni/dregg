@@ -1889,7 +1889,6 @@ pub fn mint_and_encode_finalized_turn(
         nullifier_root,
         commitments_root,
         receipt_hashes,
-        None,
         proven_old_commit,
         proven_new_commit,
     )?;

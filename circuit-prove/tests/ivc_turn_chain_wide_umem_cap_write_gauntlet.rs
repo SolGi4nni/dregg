@@ -187,7 +187,6 @@ fn try_mint_cap_write_leg(
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32], [2u8; 32]],
-        None,
         cap_write,
     )
 }
@@ -402,7 +401,6 @@ fn grant_cap_mints_wide_welded_leg_via_freeze_base() {
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32], [2u8; 32]],
-        None,
     )
     .expect("grantCap mints + self-verifies on the wide+umem leg via the nonce-FREEZE base");
     assert!(
@@ -674,7 +672,6 @@ fn cap_write_without_capopen_witness_fails_closed() {
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32], [2u8; 32]],
-        None,
     );
     // (`RotatedParticipantLeg` is not `Debug`, so classify by hand rather than `expect_err`.)
     let err = match res {

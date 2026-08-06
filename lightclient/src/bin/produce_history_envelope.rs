@@ -66,7 +66,6 @@ fn make_turn(balance: u64, nonce: u32, amount: u64) -> FinalizedTurn {
         &nullifier_root,
         &commitments_root,
         &receipt_log,
-        None,
     )
     .expect("rotated transfer leg mints + self-verifies");
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))

@@ -97,12 +97,21 @@
 //! > the per-asset imbalance) — "On failure … no state changes" (the function's atomic-commit
 //! > contract is unchanged).
 //! >
-//! > The same handoff applies at the bundle layer:
-//! > `turn/src/executor/proof_verify.rs::verify_proof_carrying_turn_bundle` receives
-//! > `bundle_pis: &[Vec<BabyBear>]` (the verified per-cell PIs) after the per-proof STARK verify and
-//! > the cross-bundle shared-PI loop — the collector slots in right after that loop, before `Ok(())`.
 //! > In `node/src/turn_proving.rs` the `FullTurnWitness.conservation: None` slot becomes the
 //! > per-asset proof set the collector certifies.
+//!
+//! ⚠ **CORRECTED 2026-08-06 — BOTH seams this paragraph names are UNREACHABLE.** The text above
+//! describes `execute_atomic_sovereign` as "the exact seam" and offers a second one at
+//! `verify_proof_carrying_turn_bundle`. Measured: `execute_atomic` / `execute_atomic_sovereign` have
+//! no caller outside `turn/src/executor/atomic.rs` and their only in-module callers are
+//! `#[cfg(test)]`; `verify_proof_carrying_turn_bundle{,_with_ledger}` had zero reachable callers and
+//! were DELETED. So the "DEPLOYED path" whose off-AIR scalar sum this collector was to replace is
+//! not the deployed path. The conservation gate that DOES run is
+//! `turn/src/executor/execute.rs`'s `check_per_asset_conservation_by_asset_id` →
+//! `check_per_asset_conservation_by_asset`, which is already per-asset and already routes the
+//! decision through the installed Lean `ConservationOracle` — so the "OFF-AIR, NOT-per-asset" gap
+//! this module was written against no longer describes the live executor. **The real remaining
+//! handoff is a BLOCK-level (multi-turn) one, and it has no seam in the tree yet.**
 //!
 //! The Lean twin is `metatheory/Dregg2/Circuit/CrossCellConservation.lean` (the per-asset AIR + its
 //! rejection teeth); the block-level aggregation is the proven per-asset AIR run once per asset.
@@ -222,8 +231,10 @@ fn hex32(b: &[u8; 32]) -> String {
 ///
 /// # Why an in-scope check is enough on the paths that can run it
 ///
-/// A conservation scope is one turn (`check_per_asset_conservation_by_asset`) or
-/// one bundle (`check_bundle_per_asset_conservation`). Cross-asset borrowing
+/// A conservation scope is one turn (`check_per_asset_conservation_by_asset`).
+/// (It was also "one bundle", via `check_bundle_per_asset_conservation` — deleted
+/// 2026-08-06 with the unreachable bundle verifier that was its sole caller.)
+/// Cross-asset borrowing
 /// needs BOTH legs — the short asset and the long one — inside a single scope: a
 /// lone `−10` leg in its own turn leaves that class at `Σδ = −10` and is rejected
 /// on the spot. So a colliding pair can only be exploited where both ids are
@@ -231,11 +242,13 @@ fn hex32(b: &[u8; 32]) -> String {
 ///
 /// # ⚠ WHERE THIS DOES NOT REACH
 ///
-/// The pure light-client / bundle path
-/// (`turn/src/executor/proof_verify.rs::check_bundle_per_asset_conservation`)
-/// groups by `PI[v3::ASSET_CLASS]` and has NO ledger, so the 32-byte ids do not
-/// exist for it and this guard cannot be called there. That leg is already
-/// weaker for a strictly larger reason, named in
+/// A pure light-client / bundle path would group by `PI[v3::ASSET_CLASS]` and
+/// have NO ledger, so the 32-byte ids would not exist for it and this guard could
+/// not be called there. ⚠ **There is no such path at HEAD**: the one that existed
+/// (`check_bundle_per_asset_conservation`) was reachable only from
+/// `verify_proof_carrying_turn_bundle`, which had no callers, and both were
+/// deleted 2026-08-06. Any rebuild inherits the following, which is
+/// why the leg was already weaker for a strictly larger reason, named in
 /// `atomic.rs::resolve_proof_asset_class`: nothing in-AIR binds
 /// `PI[v3::ASSET_CLASS]` to a cell's committed asset bytes, so a light client's
 /// partition key is prover-chosen outright — an attacker there does not need a

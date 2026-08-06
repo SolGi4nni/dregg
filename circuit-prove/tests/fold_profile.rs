@@ -131,7 +131,6 @@ fn make_turn(balance: u64, nonce: u32) -> Result<FinalizedTurn, String> {
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &receipt_log,
-        None,
     )?;
     Ok(FinalizedTurn::new(DescriptorParticipant::rotated(leg)))
 }

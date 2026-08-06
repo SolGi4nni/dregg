@@ -74,7 +74,6 @@ fn make_welded_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, Ba
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32], [2u8; 32]],
-        None,
     )
     .expect("welded rotated+umem transfer leg mints + self-verifies");
     // ⚑ THIS LEG IS NARROW, AND SAYING OTHERWISE READ TWO UNRELATED PIs AS AN ANCHOR.

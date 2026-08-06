@@ -138,12 +138,30 @@
 //! ```
 //!
 //! The four 7-γ.0a additions (TURN_HASH, EFFECTS_HASH_GLOBAL, ACTOR_NONCE,
-//! PREVIOUS_RECEIPT_HASH) are *shared across all per-cell proofs of one
-//! turn*. The verifier's cross-proof PI matching loop
-//! (`verify_proof_carrying_turn_bundle` in `turn::executor`) enforces
-//! equality across the N proofs; per-proof binding to the canonical
-//! Turn::hash / call_forest is the executor's responsibility for now and
-//! becomes algebraic at Stage 7-γ.1.
+//! PREVIOUS_RECEIPT_HASH) were designed as values *shared across all per-cell
+//! proofs of one turn*, checked for cross-proof equality by
+//! `verify_proof_carrying_turn_bundle`.
+//!
+//! ⚠ **CORRECTED 2026-08-06. That loop never ran and is now deleted.** Measured
+//! before removal: `verify_proof_carrying_turn_bundle` had exactly one caller,
+//! which itself had zero, so no executor ever compared these four slots across a
+//! bundle — and no artifact in the tree carries a bundle of per-cell PI vectors
+//! to a verifier in the first place. What actually decides these values today:
+//!
+//! * On the FULL NODE, `turn::executor::proof_verify::verify_one_cohort_run`
+//!   takes no PI vector at all — it RECONSTRUCTS the whole vector from the
+//!   trusted `Turn` / before-`Cell` / anchors and verifies against that. Every
+//!   slot is verifier-authoritative there, pinned or not; the prover's published
+//!   vector is never deserialised.
+//! * On the WIRE, `TURN_HASH` is compared against a CALLER-SUPPLIED external
+//!   anchor (`sdk::verify_full_turn_bound`'s `expected_turn_hash`,
+//!   `dregg_verifier::check_receipt_pi_binding`,
+//!   `turn::conditional`), always as FOUR felts via `canonical_32_to_felts_4`.
+//! * `EFFECTS_HASH_GLOBAL` is read by NOTHING and is zero on every deployed leg.
+//!
+//! No AIR constraint reads any of the four: `pi_binding` is the only constraint
+//! kind that reads a public input, and offsets 33..40 carry zero of them across
+//! all 56 deployed wide members. See `docs/DESIGN-pi-authority.md`.
 
 // ============================================================================
 // Sub-module layout

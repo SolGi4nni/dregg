@@ -49,9 +49,24 @@ use dregg_turn::rotation_witness::{
 /// rotated participant; it mirrors `circuit/tests/rotation_batchstark_leaf_smoke.rs`'s mint
 /// sequence exactly.
 ///
-/// `turn_id`, when `Some`, overrides the `TURN_HASH` slot of the carried PI prefix (the joint
-/// aggregator's shared-turn-id projection) — pass it for joint-turn participants that must agree
-/// on a shared id; pass `None` for whole-chain turns (the carried hash from the witness stands).
+/// The leg publishes whatever `TURN_HASH` the wide producer carried, and there is deliberately
+/// NO caller override. The slot is FOUR felts (`canonical_32_to_felts_4`) at every reader
+/// (`dregg_verifier::check_receipt_pi_binding`, `sdk::verify_full_turn_bound`,
+/// `turn::conditional::verify_effect_vm_proof_against_condition`); the `Option<BabyBear>`
+/// shared-turn-id knob this recipe used to take wrote ONE felt and left three zero, minting a leg
+/// every one of those readers refuses. It was unreachable, and the census is exhaustive: this
+/// recipe had **28** call sites, 27 passing the literal `None` and the 28th being
+/// [`finalized_turn_from_full_turn`] forwarding its own parameter — whose own **3** call sites
+/// (`node::turn_proving`'s finalized-turn retention, plus two SDK tests) also all passed `None`.
+/// Same for the four welded/custom minters in `dregg_circuit_prove::joint_turn_aggregation`:
+/// **12** call sites, every one `None`. So the write `dpis[TURN_HASH_BASE] = tid` never executed
+/// anywhere, and the knob is DELETED rather than widened. A joint-turn shared identity threads a
+/// `[BabyBear; 4]`, not a felt.
+///
+/// ⚠ Counting note, because it cost a wrong claim once: `ast-grep`'s `f($$$)` matches a bare-name
+/// call and **NOT** a path-qualified `a::b::f($$$)`, and it does not descend into `assert!(…)`
+/// macro bodies. Five call sites hid in exactly those two blind spots. Cross-check a call census
+/// with `grep`, or the count is a floor rather than a total.
 ///
 /// ## The post-regen registry TAIL (v12 exposure regen)
 ///
@@ -78,12 +93,10 @@ pub fn mint_rotated_participant_leg(
     nullifier_root: &dregg_circuit::Faithful8,
     commitments_root: &dregg_circuit::Faithful8,
     receipt_log: &[[u8; 32]],
-    turn_id: Option<BabyBear>,
 ) -> Result<dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg, String> {
     use dregg_circuit::descriptor_ir2::{
         UMemBoundaryWitness, prove_vm_descriptor2_for_config, verify_vm_descriptor2_with_config,
     };
-    use dregg_circuit::effect_vm::pi;
     use dregg_circuit::effect_vm::trace_rotated::{
         RotatedBlockWitness, empty_caveat_manifest,
         generate_rotated_effect_vm_descriptor_and_trace_wide, transfer_caveat_manifest,
@@ -144,7 +157,7 @@ pub fn mint_rotated_participant_leg(
     // through its dedicated minter and fails closed here. The dispatcher owns the post-regen
     // registry TAIL (derived from the committed descriptor, fail-closed on an unknown member);
     // this recipe threads the producer-honest membership-teeth pair from the BEFORE cell.
-    let (desc, trace, mut dpis, map_heaps, mem_boundary) =
+    let (desc, trace, dpis, map_heaps, mem_boundary) =
         generate_rotated_effect_vm_descriptor_and_trace_wide(
             initial_state,
             effects,
@@ -158,13 +171,6 @@ pub fn mint_rotated_participant_leg(
         )
         .map_err(|e| format!("mint_rotated_participant_leg: wide producer dispatch failed: {e}"))?;
     debug_assert_eq!(dpis.len(), desc.public_input_count);
-
-    // Optional shared-turn-id override (joint participants). The EffectVm AIRs do not constrain
-    // TURN_HASH (it is an executor-trusted shared PI), so overriding the carried prefix slot and
-    // proving against the edited PI yields a still-valid proof binding the chosen id.
-    if let Some(tid) = turn_id {
-        dpis[pi::TURN_HASH_BASE] = tid;
-    }
 
     let wrap_config = ir2_leaf_wrap_config();
     let umem_boundary = UMemBoundaryWitness::default();
@@ -221,7 +227,7 @@ pub fn mint_rotated_participant_leg(
 /// fold.
 ///
 /// `initial_state` / `effects` / `before_cell` / `after_cell` / `nullifier_root` /
-/// `commitments_root` / `receipt_log` / `turn_id` are exactly the arguments
+/// `commitments_root` / `receipt_log` are exactly the arguments
 /// [`mint_rotated_participant_leg`] consumes (the turn's execution context the node holds at
 /// `blocklace_sync::execute_finalized_turn`). `proven_old_commit` / `proven_new_commit` are the
 /// served `FullTurnProof`'s proven wide anchors (`ProvenFinalizedTurn::{old_commit, new_commit}`).
@@ -234,7 +240,6 @@ pub fn finalized_turn_from_full_turn(
     nullifier_root: &dregg_circuit::Faithful8,
     commitments_root: &dregg_circuit::Faithful8,
     receipt_log: &[[u8; 32]],
-    turn_id: Option<BabyBear>,
     proven_old_commit: [BabyBear; 8],
     proven_new_commit: [BabyBear; 8],
 ) -> Result<dregg_circuit_prove::ivc_turn_chain::FinalizedTurn, String> {
@@ -252,7 +257,6 @@ pub fn finalized_turn_from_full_turn(
         nullifier_root,
         commitments_root,
         receipt_log,
-        turn_id,
     )?;
 
     // 2. THE FAITHFULNESS TIE (fail-closed): the wrap leg's wide 8-felt anchors must be the SAME
@@ -311,7 +315,6 @@ pub fn mint_custom_wide_rotated_participant_leg(
     nullifier_root: &dregg_circuit::Faithful8,
     commitments_root: &dregg_circuit::Faithful8,
     receipt_log: &[[u8; 32]],
-    turn_id: Option<BabyBear>,
     bundle: dregg_circuit_prove::joint_turn_aggregation::CustomWitnessBundle,
 ) -> Result<dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg, String> {
     use dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness;
@@ -361,7 +364,6 @@ pub fn mint_custom_wide_rotated_participant_leg(
         effects,
         &bridge(&before_w)?,
         &bridge(&after_w)?,
-        turn_id,
         bundle,
     )
 }
@@ -388,7 +390,6 @@ pub fn mint_welded_umem_rotated_participant_leg(
     nullifier_root: &dregg_circuit::Faithful8,
     commitments_root: &dregg_circuit::Faithful8,
     receipt_log: &[[u8; 32]],
-    turn_id: Option<BabyBear>,
 ) -> Result<dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg, String> {
     use dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness;
     use dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg;
@@ -448,7 +449,6 @@ pub fn mint_welded_umem_rotated_participant_leg(
         effects,
         &bridge(&before_w)?,
         &bridge(&after_w)?,
-        turn_id,
         &inputs.rows,
         &inputs.boundary,
         inputs.domain,
@@ -483,7 +483,6 @@ pub fn mint_welded_wide_umem_rotated_participant_leg(
     nullifier_root: &dregg_circuit::Faithful8,
     commitments_root: &dregg_circuit::Faithful8,
     receipt_log: &[[u8; 32]],
-    turn_id: Option<BabyBear>,
 ) -> Result<dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg, String> {
     use dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness;
     use dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg;
@@ -541,7 +540,6 @@ pub fn mint_welded_wide_umem_rotated_participant_leg(
         effects,
         &bridge(&before_w)?,
         &bridge(&after_w)?,
-        turn_id,
         &inputs.rows,
         &inputs.boundary,
         inputs.domain,
@@ -575,7 +573,6 @@ pub fn mint_welded_wide_umem_cap_write_rotated_participant_leg(
     nullifier_root: &dregg_circuit::Faithful8,
     commitments_root: &dregg_circuit::Faithful8,
     receipt_log: &[[u8; 32]],
-    turn_id: Option<BabyBear>,
     cap_write: &dregg_circuit::effect_vm::trace_rotated::CapWriteWideWitness,
 ) -> Result<dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg, String> {
     use dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness;
@@ -634,7 +631,6 @@ pub fn mint_welded_wide_umem_cap_write_rotated_participant_leg(
         effects,
         &bridge(&before_w)?,
         &bridge(&after_w)?,
-        turn_id,
         &inputs.rows,
         &inputs.boundary,
         inputs.domain,
@@ -672,7 +668,6 @@ pub fn mint_welded_wide_umem_multidomain_rotated_participant_leg(
     nullifier_root: &dregg_circuit::Faithful8,
     commitments_root: &dregg_circuit::Faithful8,
     receipt_log: &[[u8; 32]],
-    turn_id: Option<BabyBear>,
     pre: &dregg_turn::umem::UProjection,
     ops: &[dregg_turn::umem::UmemOp],
     before_nullifiers: Option<&[BabyBear]>,
@@ -730,7 +725,6 @@ pub fn mint_welded_wide_umem_multidomain_rotated_participant_leg(
         effects,
         &bridge(&before_w)?,
         &bridge(&after_w)?,
-        turn_id,
         &inputs.rows,
         &inputs.boundary,
         &inputs.domains,

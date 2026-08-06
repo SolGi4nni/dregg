@@ -957,10 +957,32 @@ pub fn effect_action_binding(effects: &[effect_vm::Effect]) -> BabyBear {
 /// AIR-bound, filling it forbids **RELABELLING** — a genuine proof of turn A cannot be
 /// re-served as a proof of turn B, because the felts are welded to the artifact. It does
 /// NOT force the proven effects to be turn B's effects: a *malicious prover* still chooses
-/// this value at prove time, since no constraint ties it to the transition. Closing that
-/// is the parked AIR cutover (pin `PI[TURN_HASH]` to a trace column across the wide
-/// members), which needs an emit + a VK rotation + a re-genesis. This function does not
-/// pretend to be that.
+/// this value at prove time, since no constraint ties it to the transition. This function
+/// does not pretend to be that.
+///
+/// ⚠ **AND THAT RESIDUAL IS NOT TRANSMUTABLE DEBT — IT IS A THEOREM OF THE MODEL.** This
+/// used to end "Closing that is the parked AIR cutover (pin `PI[TURN_HASH]` to a trace
+/// column across the wide members), which needs an emit + a VK rotation + a re-genesis."
+/// Two corrections, made 2026-08-06 (`docs/DESIGN-pi-authority.md` §3):
+///
+/// 1. **The cutover is DROPPED, not parked.** A pin makes the *columns* forced; it does not
+///    make the *value* forced, because the carrier chain it would ride
+///    (`C_TH_OFF` → `C_TH_CARRIER` → `C_COMMIT` → PI 45) is prover-chosen end to end and no
+///    wire verifier anchors PI 45. And the value is not derivable in-circuit anyway:
+///    `Turn::hash` is BLAKE3 over a per-action forest walk, and on the sovereign path it
+///    absorbs `execution_proof` — **a sovereign proof can never publish `turn.hash()`,
+///    because it would have to contain a hash of itself.** The reachable ceiling is the
+///    *proofless* identity, and only by arithmetising BLAKE3.
+/// 2. **The price was over-quoted.** It would be a VK rotation, NOT a re-genesis —
+///    `CANONICAL_STATE_SCHEMA_EPOCH` stays 23. An inflated estimate in a docblock is how a
+///    cost becomes a constraint, so the number is corrected even though the verdict is
+///    "don't do it".
+///
+/// The real teeth for a verifier that holds no state are (i) an in-circuit weld forcing the
+/// value from data the client can recompute — the lifecycle disc gate, the perms/VK weld,
+/// the lifecycle-payload hash, the refusal `.write` map-op, the noteSpend `.absent` — or
+/// (ii) an external anchor the caller supplies, which is exactly what `expected_turn_hash`
+/// already is.
 fn bind_turn_identity_pi(dpis: &mut [BabyBear], turn_hash: [u8; 32]) -> Result<(), SdkError> {
     use dregg_circuit::effect_vm::pi;
     let lo = pi::TURN_HASH_BASE;
@@ -10463,7 +10485,6 @@ mod tests {
             &empty,
             &empty,
             &receipt_log,
-            None,
             old_commit,
             new_commit,
         );
@@ -10486,7 +10507,6 @@ mod tests {
             &empty,
             &empty,
             &receipt_log,
-            None,
             bad_old,
             new_commit,
         );

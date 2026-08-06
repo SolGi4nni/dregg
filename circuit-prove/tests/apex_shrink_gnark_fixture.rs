@@ -89,7 +89,6 @@ fn make_turn(balance: u64, nonce: u32) -> FinalizedTurn {
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &receipt_log,
-        None,
     )
     .expect("rotated leg mints");
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))

@@ -451,7 +451,8 @@ pub struct Turn {
     pub custom_program_proofs: Option<Vec<CustomProgramProof>>,
     /// Sidecar full-fidelity binding proofs, one per Effect that has a
     /// schema in `dregg_circuit::effect_action_air`. The verifier
-    /// (`verify_proof_carrying_turn_bundle`) walks this list, looks up
+    /// (`TurnExecutor::verify_effect_binding_proofs_with_ledger`, reached from
+    /// `turn::executor::execute`) walks this list, looks up
     /// each schema by `schema_id`, reconstructs the expected PI from
     /// the executor's view of the effect's typed parameters, and
     /// verifies the STARK proof. Tampering on any byte of any 32-byte

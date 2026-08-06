@@ -233,9 +233,11 @@ impl TurnExecutor {
 
         // FINDING 1, binding leg: after the main EffectVM proof verifies, the
         // off-circuit dispatch count (`turn.custom_program_proofs.len()`) must
-        // equal the in-circuit committed Custom-effect count `PI[CUSTOM_EFFECT_COUNT]`,
+        // equal the Custom-effect count of the transition that proof commits to,
         // so the wire vec can carry neither MORE (padding) nor FEWER (a dropped,
         // unverified custom effect) than the proven transition commits to.
+        // ⚠ NOT via `PI[CUSTOM_EFFECT_COUNT]`, as this comment used to claim —
+        // that slot is read by nothing and pinned by nothing; see the callee.
         self.enforce_custom_proof_count_committed(cell_id, turn)?;
         Ok(())
     }
@@ -762,20 +764,29 @@ impl TurnExecutor {
     }
 
     /// FINDING 1 binding leg (`docs/deos/AIR-COMPOSITION-AND-PROOF-COUNT-AUDIT.md`):
-    /// bind the off-circuit custom-sub-proof dispatch count to the in-circuit
-    /// committed count `PI[CUSTOM_EFFECT_COUNT]`.
+    /// bind the off-circuit custom-sub-proof dispatch count to the Custom-effect
+    /// count of the transition the verified proof commits to.
     ///
     /// The DoS cap in [`Self::enforce_custom_effect_proofs`] bounds the wire vec
     /// length; this closes the orthogonal seam the audit names — that the wire vec
-    /// and the in-circuit Custom-row count are otherwise INDEPENDENT. The committed
-    /// count is the number of `Effect::Custom` rows the proven transition carries,
-    /// which the in-circuit sum-check pins to `PI[CUSTOM_EFFECT_COUNT]`
-    /// (`circuit/src/effect_vm/{columns,trace}.rs`). The executor reconstructs the
-    /// SAME effect sequence the proof binds via [`convert_turn_effects_to_vm`], so
-    /// counting `effect_vm::Effect::Custom` there reproduces `PI[CUSTOM_EFFECT_COUNT]`
-    /// exactly. A wire vec longer (padding extra recursive verifies) or shorter (a
-    /// dropped, unverified custom effect) than that committed count is rejected
-    /// fail-closed.
+    /// and the Custom-row count are otherwise INDEPENDENT. The executor
+    /// reconstructs the SAME effect sequence the proof binds via
+    /// [`convert_turn_effects_to_vm`] and counts `effect_vm::Effect::Custom` there.
+    /// A wire vec longer (padding extra recursive verifies) or shorter (a
+    /// dropped, unverified custom effect) than that count is rejected fail-closed.
+    ///
+    /// ⚠ **CORRECTED 2026-08-06 — THIS FUNCTION READS NO PUBLIC INPUT.** It used to
+    /// be documented as comparing against "the in-circuit committed count
+    /// `PI[CUSTOM_EFFECT_COUNT]`, which the in-circuit sum-check pins". Measured:
+    /// **there is no such sum-check.** `columns::aux_off::CUSTOM_COUNT_ACC` is
+    /// declared and filled but referenced by no constraint, the v1 hand-AIR that
+    /// was to host it is retired, and the deployed registries carry zero
+    /// `pi_binding`s at PI 28. Both sides of the comparison below are derived from
+    /// `turn`, off-circuit: `turn.custom_program_proofs.len()` against a fresh
+    /// re-derivation from `turn`'s own effects. What makes that non-vacuous is the
+    /// SEQUENCING, not a PI: it runs only after `verify_and_commit_proof_rotated`
+    /// has verified the transition those effects generate, so the reconstruction is
+    /// pinned by the proof it follows — but via the whole trace, not via a slot.
     ///
     /// Called only AFTER the main EffectVM proof has verified (so the reconstructed
     /// effect sequence — hence the count — is genuinely COMMITTED by a verified proof,
@@ -1904,320 +1915,34 @@ impl TurnExecutor {
     // rotated proof-carrying turn (`verify_and_commit_proof_rotated`) is the sole
     // sovereign verify path.
 
-    /// Stage 7-γ.0d: cross-proof PI matching for a bundle of per-cell proofs
-    /// from one turn.
-    ///
-    /// Given the N per-cell proof PI vectors that a turn's bundle has
-    /// produced (one entry per touched cell, in any order), enforces that
-    /// all of them agree on the four "turn-identity" PI fields introduced
-    /// at γ.0a:
-    ///
-    ///   - PI[TURN_HASH_BASE..+4]
-    ///   - PI[EFFECTS_HASH_GLOBAL_BASE..+4]
-    ///   - PI[ACTOR_NONCE]
-    ///   - PI[PREVIOUS_RECEIPT_HASH_BASE..+4]
-    ///
-    /// Also enforces — if `turn` is provided — that the shared values
-    /// match the canonical `Turn::hash`-derived projection
-    /// (`compute_turn_identity_pi`). This second check is the
-    /// executor-side enforcement that γ.0 keeps trusted; γ.1 will move
-    /// the `effects_hash_global ↔ Σ effects_local` direction into an
-    /// aggregation micro-AIR.
-    ///
-    /// Per-proof STARK verification is the caller's responsibility (see
-    /// `verify_and_commit_proof` for the single-cell case). This function
-    /// only checks PI consistency across the bundle and against the turn.
-    ///
-    /// Returns `Ok(())` if every PI vector in `bundle_pis` agrees with
-    /// every other on the four shared slots and (when `turn.is_some()`)
-    /// with the canonical projection.
-    pub fn verify_proof_carrying_turn_bundle(
-        bundle_pis: &[Vec<dregg_circuit::field::BabyBear>],
-        turn: Option<&Turn>,
-    ) -> Result<(), TurnError> {
-        use dregg_circuit::effect_vm::pi;
-        use dregg_circuit::field::BabyBear;
-
-        if bundle_pis.is_empty() {
-            return Ok(());
-        }
-
-        // Every PI vector must be at least as long as the active PI layout —
-        // shorter vectors can't carry the γ.0a slots or the v3 tail at all.
-        for (i, p) in bundle_pis.iter().enumerate() {
-            if p.len() < pi::ACTIVE_BASE_COUNT {
-                return Err(TurnError::InvalidExecutionProof(format!(
-                    "bundle proof {} has {} public inputs, expected at least {} \
-                     (PI v3 layout)",
-                    i,
-                    p.len(),
-                    pi::ACTIVE_BASE_COUNT
-                )));
-            }
-        }
-
-        // Determine the canonical "shared" values. When the turn is
-        // supplied, use Turn::compute_turn_identity_pi (executor-trusted
-        // source of truth). Otherwise, take the first proof's values as
-        // the reference and verify the rest match — useful for federation
-        // verifiers that receive a bundle without re-deriving the Turn.
-        let (ref_turn_hash, ref_eff_global, ref_actor_nonce, ref_prev_receipt): (
-            [BabyBear; 4],
-            [BabyBear; 4],
-            BabyBear,
-            [BabyBear; 4],
-        ) = if let Some(t) = turn {
-            let (th, eg, an, pr) = Self::compute_turn_identity_pi(t);
-            (th, eg, BabyBear::new((an & 0x7FFF_FFFF) as u32), pr)
-        } else {
-            let p0 = &bundle_pis[0];
-            let mut th = [BabyBear::ZERO; 4];
-            let mut eg = [BabyBear::ZERO; 4];
-            let mut pr = [BabyBear::ZERO; 4];
-            th.copy_from_slice(&p0[pi::TURN_HASH_BASE..(pi::TURN_HASH_BASE + 4)]);
-            eg.copy_from_slice(
-                &p0[pi::EFFECTS_HASH_GLOBAL_BASE..(pi::EFFECTS_HASH_GLOBAL_BASE + 4)],
-            );
-            pr.copy_from_slice(
-                &p0[pi::PREVIOUS_RECEIPT_HASH_BASE..(pi::PREVIOUS_RECEIPT_HASH_BASE + 4)],
-            );
-            (th, eg, p0[pi::ACTOR_NONCE], pr)
-        };
-
-        // Per-proof check: each proof must agree with the reference on
-        // every shared slot. Errors name the slot and the proof index.
-        for (proof_idx, p) in bundle_pis.iter().enumerate() {
-            for i in 0..pi::TURN_HASH_LEN {
-                if p[pi::TURN_HASH_BASE + i] != ref_turn_hash[i] {
-                    return Err(TurnError::InvalidExecutionProof(format!(
-                        "bundle PI mismatch: TURN_HASH felt {} differs in proof {} \
-                         (expected {:?}, got {:?})",
-                        i,
-                        proof_idx,
-                        ref_turn_hash[i],
-                        p[pi::TURN_HASH_BASE + i],
-                    )));
-                }
-            }
-            for i in 0..pi::EFFECTS_HASH_GLOBAL_LEN {
-                if p[pi::EFFECTS_HASH_GLOBAL_BASE + i] != ref_eff_global[i] {
-                    return Err(TurnError::InvalidExecutionProof(format!(
-                        "bundle PI mismatch: EFFECTS_HASH_GLOBAL felt {} differs in \
-                         proof {} (expected {:?}, got {:?})",
-                        i,
-                        proof_idx,
-                        ref_eff_global[i],
-                        p[pi::EFFECTS_HASH_GLOBAL_BASE + i],
-                    )));
-                }
-            }
-            if p[pi::ACTOR_NONCE] != ref_actor_nonce {
-                return Err(TurnError::InvalidExecutionProof(format!(
-                    "bundle PI mismatch: ACTOR_NONCE differs in proof {} \
-                     (expected {:?}, got {:?})",
-                    proof_idx,
-                    ref_actor_nonce,
-                    p[pi::ACTOR_NONCE],
-                )));
-            }
-            for i in 0..pi::PREVIOUS_RECEIPT_HASH_LEN {
-                if p[pi::PREVIOUS_RECEIPT_HASH_BASE + i] != ref_prev_receipt[i] {
-                    return Err(TurnError::InvalidExecutionProof(format!(
-                        "bundle PI mismatch: PREVIOUS_RECEIPT_HASH felt {} differs in \
-                         proof {} (expected {:?}, got {:?})",
-                        i,
-                        proof_idx,
-                        ref_prev_receipt[i],
-                        p[pi::PREVIOUS_RECEIPT_HASH_BASE + i],
-                    )));
-                }
-            }
-        }
-
-        // ---- Proof-to-action binding sweep §3.2/§3.3 + §5 ----
-        //
-        // If the turn carries sidecar effect-binding proofs (and/or
-        // cross-effect dependencies and/or witness-index pins), run the
-        // strong-soundness verification path on them. Turns without any
-        // of these continue to apply with executor-trusted enforcement
-        // (backwards compat); turns *with* them get the algebraic
-        // full-fidelity check.
-        if let Some(t) = turn {
-            if !t.effect_binding_proofs.is_empty()
-                || !t.cross_effect_dependencies.is_empty()
-                || !t.effect_witness_index_map.is_empty()
-            {
-                // Without ledger snapshot: any Burn binding proof routes
-                // through the snapshot-aware error path. Callers that need
-                // Burn coverage must use
-                // `verify_proof_carrying_turn_bundle_with_ledger`.
-                Self::verify_effect_binding_proofs(t)?;
-            }
-        }
-
-        // CROSS-CELL PER-ASSET CONSERVATION — light-client-sound, ledger-free.
-        //
-        // Each per-cell proof now publishes its ASSET CLASS as a public input
-        // (`PI[v3::ASSET_CLASS]`, pinned by the AIR's row-0 boundary constraint
-        // to the trace's committed class). The bundle / light-client path groups
-        // each proof's proven NET_DELTA by that PI-BOUND asset class and
-        // requires EACH asset to conserve to zero INDEPENDENTLY — exactly the
-        // arithmetic the committed per-asset `cross_cell_conservation_air`
-        // forces (`balance[last]==0` per asset). Because the partition key comes
-        // from the PROOF (not a ledger lookup), a verifier with NO LEDGER
-        // enforces per-asset Σδ=0: a turn that nets to zero ACROSS assets but
-        // forges value WITHIN an asset is rejected here.
-        //
-        // The two prerequisites the residual named are both met: (1) the PI slot
-        // exists, and (2) grouping needs no separate cell_id list — the asset
-        // class travels IN each PI vector.
-        //
-        // SCOPE (improve, don't degrade): per-asset Σδ=0 is the law for a
-        // CONSERVATION-CLOSED bundle — a complete turn whose every value-moving
-        // effect's BOTH sides carry a per-cell proof (a Transfer's sender AND
-        // receiver, etc.). DISCLOSED supply changes (mint / burn) are the
-        // sanctioned non-conservation: they enter the per-asset sum as explicit
-        // signed rows ON THE EXECUTOR (which derives them from the ledger-
-        // validated effects), so a turn that mints/burns balances WITH its
-        // declared rows. The bundle signature carries no declared-supply rows,
-        // so when the turn DISCLOSES mint/burn the proof-only sum is legitimately
-        // non-zero — enforcing it here would FALSELY reject a disclosed mint.
-        // We therefore enforce the proof-only per-asset gate exactly for the
-        // conservation-closed case (no disclosed mint/burn); disclosed-supply
-        // turns keep the executor's declared-row accounting (which IS proof-
-        // bound on the per-cell deltas, ledger-bound on the disclosed rows). The
-        // pure light-client case (`turn == None`) receives a complete bundle and
-        // is enforced.
-        let discloses_supply = turn
-            .map(|t| {
-                t.call_forest
-                    .total_effects()
-                    .iter()
-                    .any(|e| matches!(**e, Effect::BridgeMint { .. } | Effect::Burn { .. }))
-            })
-            .unwrap_or(false);
-        if !discloses_supply {
-            Self::check_bundle_per_asset_conservation(bundle_pis)?;
-        }
-
-        Ok(())
-    }
-
-    /// Per-asset cross-cell conservation over a proof bundle, keyed by the
-    /// PROOF-BOUND asset class (`PI[v3::ASSET_CLASS]`). LEDGER-FREE: the
-    /// partition key and the signed delta both come from each per-cell proof's
-    /// public inputs, so a light client enforces per-asset Σδ=0 without any
-    /// ledger state. Each `(asset, net_delta)` is grouped by `asset` and each
-    /// asset must conserve to zero independently. Bundles whose PI vectors are
-    /// too short to carry the active v3 layout are already rejected by the
-    /// caller's length check.
-    ///
-    /// ## House Law #1 — ONE conservation decider, and it is the Lean one
-    ///
-    /// This function does NOT decide conservation. It only DECODES the bundle's
-    /// public inputs into `(asset, signed_delta)` rows and hands them to
-    /// [`Self::check_per_asset_conservation_by_asset`] — the single per-asset
-    /// `Σδ=0` entry point, which routes through the installed `ConservationOracle`
-    /// (`dregg_cross_cell_conserves` /
-    /// `Dregg2.Circuit.CrossCellConserveDecision.conservesFFI`, proved equal to the
-    /// committed `CrossCellConservation` AIR boundary by
-    /// `CrossCellConserveRefine.decision_conserves_iff_air_boundary`).
-    ///
-    /// It previously ran its OWN `dregg_circuit::block_conservation::BlockConservation`
-    /// collector — a second, un-gated copy of the decision the executor path had
-    /// already routed to Lean, so the light-client / bundle leg silently kept the
-    /// hand-written Rust twin even on a node where the oracle was installed. That
-    /// copy is deleted; the bundle leg now inherits whatever the executor leg
-    /// decides with, by construction.
-    ///
-    /// The bundle signature carries no declared-supply rows (the caller only invokes
-    /// this for the conservation-CLOSED case — see `discloses_supply` above), so the
-    /// declared-supply argument is empty.
-    fn check_bundle_per_asset_conservation(
-        bundle_pis: &[Vec<dregg_circuit::field::BabyBear>],
-    ) -> Result<(), TurnError> {
-        let mut entries: Vec<(dregg_circuit::field::BabyBear, i64)> =
-            Vec::with_capacity(bundle_pis.len());
-        for (i, p) in bundle_pis.iter().enumerate() {
-            let asset = dregg_circuit::extract_asset_class(p).ok_or_else(|| {
-                TurnError::InvalidExecutionProof(format!(
-                    "bundle proof {i} PI too short to carry ASSET_CLASS (PI v3 layout)"
-                ))
-            })?;
-            let delta = dregg_circuit::extract_net_delta(p).ok_or_else(|| {
-                TurnError::InvalidExecutionProof(format!(
-                    "bundle proof {i} PI: failed to extract NET_DELTA"
-                ))
-            })?;
-            entries.push((asset, delta));
-        }
-
-        Self::check_per_asset_conservation_by_asset(&entries).map_err(|e| match e {
-            AtomicTurnError::PerAssetConservationViolation { asset, imbalance } => {
-                TurnError::InvalidExecutionProof(format!(
-                    "bundle per-asset conservation violated: asset {asset} imbalance {imbalance} \
-                     (per-asset Σδ≠0 — value forged within or across an asset)"
-                ))
-            }
-            // FAIL CLOSED, and surfaced as ITSELF: the bundle may well conserve — no verified gate
-            // was installed to say so. Collapsing this into `InvalidExecutionProof` would blame the
-            // prover for the verifier's missing archive.
-            AtomicTurnError::ConservationGateUnavailable => TurnError::ConservationGateUnavailable,
-            // A ROW THE CONSERVATION FIELD CANNOT DENOTE — surfaced as ITSELF for
-            // the same reason as the executor path. Unreachable from THIS caller
-            // as long as every bundle delta comes from `extract_net_delta` (a
-            // `BabyBear` magnitude, so `< p` by construction); routed explicitly
-            // anyway so a future PI-width change cannot land it in the catch-all
-            // and read as a malformed proof.
-            AtomicTurnError::NetDeltaNotRepresentable { asset, delta } => {
-                TurnError::NetDeltaNotRepresentable { asset, delta }
-            }
-            other => TurnError::InvalidExecutionProof(format!(
-                "bundle per-asset conservation check failed: {other}"
-            )),
-        })
-    }
-
-    /// Snapshot-aware variant of `verify_proof_carrying_turn_bundle`.
-    /// Same shape, but threads a `&Ledger` into the binding-proof sweep so
-    /// `SCHEMA_BURN` proofs can reconstruct `(old_balance, new_balance)`
-    /// from the target cell's state. Closes AIR-SOUNDNESS-AUDIT #75.
-    ///
-    /// To avoid running the binding sweep twice (once snapshot-free,
-    /// once snapshot-aware), this function temporarily clones the turn
-    /// without its `effect_binding_proofs` and routes the cross-bundle
-    /// PI check through that copy; then it issues the snapshot-aware
-    /// binding-proof sweep against the original turn.
-    pub fn verify_proof_carrying_turn_bundle_with_ledger(
-        bundle_pis: &[Vec<dregg_circuit::field::BabyBear>],
-        turn: Option<&Turn>,
-        ledger: Option<&Ledger>,
-    ) -> Result<(), TurnError> {
-        // Run the cross-bundle PI checks via the existing path, with a
-        // shallow clone that omits `effect_binding_proofs` so the
-        // snapshot-free Burn arm is skipped. The other two
-        // binding-extension fields (`cross_effect_dependencies` and
-        // `effect_witness_index_map`) are ledger-independent and can
-        // run either way; we drop all three from the clone and re-issue
-        // the full sweep below with the snapshot-aware extractor.
-        let stripped_turn: Option<Turn> = turn.map(|t| {
-            let mut t = t.clone();
-            t.effect_binding_proofs = Vec::new();
-            t.cross_effect_dependencies = Vec::new();
-            t.effect_witness_index_map = Vec::new();
-            t
-        });
-        Self::verify_proof_carrying_turn_bundle(bundle_pis, stripped_turn.as_ref())?;
-        if let Some(t) = turn {
-            if !t.effect_binding_proofs.is_empty()
-                || !t.cross_effect_dependencies.is_empty()
-                || !t.effect_witness_index_map.is_empty()
-            {
-                Self::verify_effect_binding_proofs_with_ledger(t, ledger)?;
-            }
-        }
-        Ok(())
-    }
+    // DELETED 2026-08-06 — `verify_proof_carrying_turn_bundle`, its
+    // `_with_ledger` twin, and the private `check_bundle_per_asset_conservation`
+    // they wrapped. Measured before removal: `_with_ledger` had ZERO call sites in
+    // the tree and was the ONLY caller of the plain form, so neither ran; eleven
+    // grep hits were two definitions, one internal call, and EIGHT doc comments
+    // asserting they were live. They were the only executor-side
+    // `PI[TURN_HASH] == Turn::hash()` comparison, which is why four separate
+    // docblocks (`circuit/src/effect_vm/pi.rs`, `.../effect_vm/mod.rs`,
+    // `circuit/src/block_conservation.rs`, `turn/src/turn.rs`) described an
+    // enforcement that did not run.
+    //
+    // ⚑ WHAT WENT WITH THEM, AND WHAT DID NOT. The per-asset Σδ=0 DECIDER is
+    // untouched: `Self::check_per_asset_conservation_by_asset` (routing through the
+    // installed `ConservationOracle` / the Lean `CrossCellConserveDecision`) stays,
+    // and stays live on the executor path (`executor/execute.rs` via
+    // `check_per_asset_conservation_by_asset_id`). What died is the LEDGER-FREE
+    // BUNDLE FRAMING around it — decoding N per-cell PI vectors into
+    // `(PI[ASSET_CLASS], PI[NET_DELTA])` rows. Nothing in the tree produces that
+    // artifact: no wire type carries a bundle of per-cell PI vectors to a verifier,
+    // and the one `Vec<Vec<BabyBear>>` that exists (`sdk/src/full_turn_proof.rs`,
+    // `leg_pis`) is PROVER-side and is compared against the witness's own
+    // `expected_net_delta`, not used as a gate. If a per-cell bundle is ever put on
+    // the wire, rebuild the framing against the surviving decider — the decision is
+    // already verified; only the decode was here.
+    //
+    // The sidecar `EffectBindingProof` sweep is NOT affected:
+    // `verify_effect_binding_proofs_with_ledger` is reached from
+    // `executor/execute.rs` and remains the live path.
 
     /// Verify every sidecar `EffectBindingProof` carried by the turn.
     ///
@@ -2245,9 +1970,11 @@ impl TurnExecutor {
     /// generalized AIR exposes a `witness_blob_hash` schema slot when
     /// the binding schema declares one).
     pub fn verify_effect_binding_proofs(turn: &Turn) -> Result<(), TurnError> {
-        // Backwards-compat wrapper: callers that don't have a ledger
-        // snapshot (the `verify_proof_carrying_turn_bundle` static path,
-        // and existing structural tests) route through here. The Burn
+        // Snapshot-free wrapper: callers that don't have a ledger snapshot route
+        // through here. Since the bundle pair was deleted the only such callers are
+        // `turn/src/tests.rs`'s structural tests — the live executor path
+        // (`executor/execute.rs`) always holds a ledger and calls
+        // `verify_effect_binding_proofs_with_ledger` directly. The Burn
         // arm is the only schema whose executor-side projection requires
         // a snapshot (`old_balance`, `new_balance`); without one it
         // continues to surface as a schema/variant mismatch, the same

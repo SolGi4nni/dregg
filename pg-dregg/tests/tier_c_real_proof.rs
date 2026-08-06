@@ -105,7 +105,6 @@ fn make_chain(k: usize, step: u64) -> Vec<FinalizedTurn> {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
-            None,
         )
         .expect("rotated leg mint must succeed for an open-permission Transfer");
         turns.push(FinalizedTurn::new(DescriptorParticipant::rotated(leg)));

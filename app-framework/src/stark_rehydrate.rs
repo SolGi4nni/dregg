@@ -328,7 +328,6 @@ pub fn mint_transfer_leg(
         &nullifier_root,
         &commitments_root,
         &receipt_log,
-        None,
     )
 }
 

@@ -348,8 +348,16 @@ pub mod aux_off {
     /// Intermediate 3: hash_4_to_1(field[5], field[6], field[7], cap_root)
     pub const STATE_INTER3: usize = 10;
     /// Stage 1: cumulative count of `s_custom == 1` rows up to and including
-    /// this row. Boundary-pinned at last row to `PI[CUSTOM_EFFECT_COUNT]`
-    /// (sum-check, per `DESIGN-max-custom-effects.md` §6 step 3).
+    /// this row.
+    ///
+    /// ⚠ **NOT PINNED TO ANYTHING, MEASURED 2026-08-06.** This said
+    /// "Boundary-pinned at last row to `PI[CUSTOM_EFFECT_COUNT]` (sum-check, per
+    /// `DESIGN-max-custom-effects.md` §6 step 3)". The column is DECLARED here and
+    /// FILLED by the trace generator, and that is all: **no constraint anywhere
+    /// references it** (three tree-wide hits — this const, one comment, the fill),
+    /// the v1 hand-AIR `eval_constraints` that was to host the sum-check is
+    /// retired, and the deployed registries carry zero `pi_binding`s at PI 28. A
+    /// filled column no constraint reads is prover-chosen padding.
     pub const CUSTOM_COUNT_ACC: usize = 11;
     /// Stage 2 (sealing honesty): bit-decomposition of `old_reserved`.
     /// `old_reserved == Σ_{i=0..7} bi * 2^i + mode * 256`, with each bi

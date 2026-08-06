@@ -730,7 +730,6 @@ impl DreggRuntime {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
-            None,
         )
         .map_err(|e| format!("rotated turn proof mint/verify failed: {e}"))?;
 

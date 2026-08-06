@@ -78,7 +78,6 @@ fn make_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, BabyBear,
         &nullifier_root,
         &commitments_root,
         &receipt_log,
-        None,
     )
     .expect("rotated transfer leg mints + self-verifies");
     // H0 DEPLOYED-WIDE: the deployed leg is WIDE-anchored — the single-felt rotated roots are RETIRED

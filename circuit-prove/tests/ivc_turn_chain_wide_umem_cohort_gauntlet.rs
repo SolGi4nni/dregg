@@ -74,7 +74,6 @@ fn mint_value_leg(
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32], [2u8; 32]],
-        None,
     )
     .expect("WIDE+umem welded value-cohort leg mints + self-verifies");
     let old8 = leg.wide_old_root8().expect("8-felt before anchor");
@@ -229,7 +228,6 @@ fn non_cohort_cap_write_lead_fails_closed() {
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32]],
-        None,
     );
     assert!(
         res.is_err(),

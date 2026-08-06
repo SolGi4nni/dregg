@@ -1301,7 +1301,6 @@ mod tests {
             &nullifier_root,
             &commitments_root,
             &receipt_log,
-            None,
         )
         .expect("rotated transfer leg mints + self-verifies");
         // H0 DEPLOYED-WIDE: the deployed leg is now WIDE-anchored — the single-felt rotated roots

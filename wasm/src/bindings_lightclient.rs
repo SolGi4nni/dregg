@@ -951,7 +951,6 @@ fn fold_demo_chain(
             &nullifier_root,
             &commitments_root,
             &receipt_log,
-            None,
         )
         .map_err(|e| JsError::new(&format!("rotated leg mint failed: {e}")))?;
         turns.push(FinalizedTurn::new(DescriptorParticipant::rotated(leg)));

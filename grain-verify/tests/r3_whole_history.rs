@@ -78,7 +78,6 @@ fn make_turn(
         &nullifier_root,
         &commitments_root,
         &receipt_log,
-        None,
     )
     .expect("rotated transfer leg mints + self-verifies");
     let old_root = leg.wide_old_root8().expect("deployed leg is wide-anchored");

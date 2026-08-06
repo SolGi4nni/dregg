@@ -619,9 +619,11 @@ impl TurnExecutor {
     /// the EXECUTOR path (which holds the ledger).
     ///
     /// The proof publishes its asset class at `PI[v3::ASSET_CLASS]`, pinned by
-    /// the AIR's row-0 boundary constraint to the trace's committed class — this
-    /// is the LIGHT-CLIENT-sound partition key (the ledgerless bundle path
-    /// groups by it directly in `check_bundle_per_asset_conservation`). The
+    /// the AIR's row-0 boundary constraint to the trace's committed class — the
+    /// partition key a ledgerless verifier would group by. ⚠ There is no such
+    /// verifier at HEAD: `check_bundle_per_asset_conservation`, which grouped by it
+    /// directly, was reachable only from `verify_proof_carrying_turn_bundle` (zero
+    /// callers) and both were deleted 2026-08-06. The
     /// executor reconciles it against the cell's committed `token_id`:
     ///   * if the proof carries a NON-zero (populated) class, it MUST equal the
     ///     ledger token_id's fold — a mismatch is a mislabeled asset and is

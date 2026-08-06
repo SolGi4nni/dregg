@@ -235,3 +235,87 @@ python3 scripts/pi_disposition_census.py --json   # totals, machine-readable
 The "after" numbers are **unchanged from the before** numbers in this lane: no descriptor was
 re-emitted, so no registry byte moved. What changed is that 50 of those felts — every slot of one
 deployed member — now carry a checked disposition instead of a silence.
+
+---
+
+## 6. THE DEAD ELEVEN — per-slot decision, and the price of removing them
+
+*Added 2026-08-06 by the PI-authority lane. Every count below is one I reproduced from
+`circuit/descriptors/*.tsv` by parsing the JSON, not relayed.*
+
+`docs/DESIGN-pi-authority.md` §4(c) names eleven felts as dead rather than merely unpinned. §3 of
+this document declared them `.transcriptOnly` with a reason. This section answers the question that
+leaves open — **reconstruct it correctly, or stop publishing it** — one slot at a time, and prices
+the removal so the next lane does not have to re-derive it.
+
+**Measured pin counts, both deployed registries** (57 wide members / 60 v3 members; `pi_binding` is
+the only constraint kind that reads a public input):
+
+```
+offsets 26, 27, 28, 29..32, 37..40  ->  0 pins in BOTH registries.  (also 33..36: 0)
+for contrast: 41 ACTOR_NONCE 47/50 · 44 COMMITTED_HEIGHT 56/59 · 45 CAVEAT_COMMIT 56/59
+```
+
+### The decision, per slot
+
+| # | slot | what the published felt actually is | is there a reader? | decision |
+|---|---|---|---|---|
+| 26 | `CURRENT_BLOCK_HEIGHT` | the constant `0` — `EffectVmContext::default()`, never overridden by any producer, never touched by `verify_one_cohort_run`'s reconstruction | **none** | **STOP PUBLISHING.** The live temporal binding is PI 44, pinned 56/56 *and* overridden by the verifier from the trusted `cell.state.committed_height()`. The comparison against 26 that would make it "the verifier-supplied comparand" is written nowhere. |
+| 27 | `MAX_CUSTOM_EFFECTS` | the constant `4` (`MAX_CUSTOM_EFFECTS_DEFAULT`), on producer *and* verifier | **none** | **STOP PUBLISHING** — ⚑ and note this is a case where *reconstructing it correctly buys nothing.* The cap is really enforced, but off-circuit and from the verifier's own ledger (`read_cell_max_custom_effects` → the `proofs.len() > cap` refusal), which is strictly stronger than any felt the artifact carries. Publishing the cell's value into a slot no constraint reads and no verifier compares would only make the transcript less misleading — the removal does that better. ⓘ The declaration site `SovereignRegistration::max_custom_effects` also still has no production writer, so every live cell sits at the default; that is a separate, real gap. |
+| 28 | `CUSTOM_EFFECT_COUNT` | the true `custom_count`, but re-derived identically by the verifier | **none** | **STOP PUBLISHING.** Its named enforcement, `enforce_custom_proof_count_committed`, reads no public input — it compares `turn.custom_program_proofs.len()` against a fresh re-derivation from the same turn. The "Stage 1 sum-check (Group 7)" three docblocks credit does not exist: `columns::aux_off::CUSTOM_COUNT_ACC` is filled by the trace generator and referenced by **no constraint** (three tree-wide hits: the const, one comment, the fill). |
+| 29..32 | `APPROVED_HANDOFFS[4]` | the empty-tree zero sentinel | **none** | **STOP PUBLISHING.** `ValidateHandoff` is not an effect. Already RETIRED in prose since the verb-lockstep pass. |
+| 37..40 | `EFFECTS_HASH_GLOBAL[4]` | `[ZERO; 4]` on every deployed leg | **none** | **STOP PUBLISHING from this window.** The real object lives at `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE`, on the aggregation's own outer PI, and moves with it. The only executor that ever compared these four across a bundle was `verify_proof_carrying_turn_bundle` — zero reachable callers, deleted 2026-08-06. |
+
+⚠ **Not in this set, and for a different reason:** `TURN_HASH` (33..36) is also 0/56 pinned and also
+reconstructs to zero — but unlike the eleven it has real wire readers
+(`sdk::verify_full_turn_bound`, `dregg_verifier::check_receipt_pi_binding`, `turn::conditional`)
+comparing it against a caller-supplied external anchor. It stays. `docs/DESIGN-pi-authority.md` §3
+argues *pinning* it is not worth doing either.
+
+### The price — ONE VK rotation for all eleven, and it is the same price for any one of them
+
+The offsets in `circuit/src/effect_vm/pi.rs` are a pure cascade (`MAX_CUSTOM_EFFECTS =
+CURRENT_BLOCK_HEIGHT + 1`, …). **Deleting any single slot shifts every later slot**, so there is no
+cheaper subset: removing offset 26 alone reshapes `TURN_HASH_BASE` 33→32, `ACTOR_NONCE` 41→40,
+`V1_PI_COUNT` 42→41, and therefore every member's `public_input_count`. Do all eleven at once.
+
+Measured footprint:
+
+| | before | after |
+|---|---|---|
+| wide registry (57 members) | 56 carry the v1 window; Σ `piCount` **3,821** | Σ **3,205** (−616 felts) |
+| v3 staged registry (60 members) | 59 carry it; Σ `piCount` **3,012** | Σ **2,363** (−649 felts) |
+| `transferVmDescriptor2R24` | 68 | 57 |
+| `burnVmDescriptor2R24` | 66 | 55 |
+
+Steps, ordered:
+
+1. `circuit/src/effect_vm/pi.rs` — delete the eleven consts, re-cascade. `trace.rs` stops writing
+   them; `trace_rotated.rs:334` `V1_PI_COUNT` 42→31, `ROT_PI_COUNT` 46→35.
+2. Lean: `Dregg2/Circuit/Emit/EffectVmEmit.lean` `namespace pi` (`ACTOR_NONCE`, `PI_COUNT`, the
+   offset docblock) and the `EffectVmEmitRotation*` pin indices. `EffectVmEmitRotationV3.lean` is
+   7,199 lines with **268 downstream modules** — this is the long pole, and it is a rebuild, not a
+   design question.
+3. `Dregg2/Circuit/Emit/PiDeclarationDeployed.lean` — `burnDecl`'s index column is written as
+   literals, and `turn_hash_is_transcript_only` / `turn_hash_slot_admits_any_value` **hard-code 33,
+   34, 35, 36**. They break by arithmetic, not by rename. Re-state at the new offsets;
+   `burnDecl_admitted := by decide` re-checks them.
+4. Re-emit, ack-gated: `DREGG_VK_REGEN_ACK="$(git rev-parse HEAD:metatheory/Dregg2)"
+   scripts/emit-descriptors.sh`.
+5. Re-pin `WIDE_REGISTRY_STAGED_FP` (`circuit/src/effect_vm_descriptors.rs`), `dregg-epoch`'s
+   `registry_fp` (it feeds `descriptor_set_tag`, so peers on the old tag refuse the handshake —
+   which is the correct loud break), `circuit/descriptors/PROVENANCE.json`,
+   `circuit/src/effect_vm/layout_generated.rs`.
+6. ~20 Rust geometry pins in tests (`sdk/tests/sovereign_rotated_wide.rs`,
+   `circuit-prove/tests/dsl_binding_deployed_tooth.rs`, `circuit/tests/decider_experiments.rs`,
+   `circuit/tests/legacy_chain_drop_measurement.rs`, `circuit/tests/setfield_value8_epoch_flip.rs`,
+   `circuit/tests/vk_epoch_refusal_lifecycle_light_client_binding.rs`, …).
+7. **A `docs/VK-REGEN-LOG.md` row — because this one really does re-emit.**
+
+**VK rotation, NOT a re-genesis:** `CANONICAL_STATE_SCHEMA_EPOCH` stays 23 (`persist/src/lib.rs:779`,
+read at HEAD).
+
+⚑ **This is the opposite trade from §4.** §4 prices *adding* a pin onto a carrier nobody anchors,
+and `DESIGN-pi-authority.md` §3 says don't. This removes 616 felts of surface that no constraint
+reads, no verifier compares, and four docblocks were describing as enforcement. Nothing is lost
+because nothing was there — that is the whole finding.

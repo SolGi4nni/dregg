@@ -165,7 +165,6 @@ pub fn finalize_grain_turn(record: &GrainTurnRecord) -> Result<Vec<FinalizedTurn
             &nullifier_root,
             &commitments_root,
             &receipt_log,
-            None,
         )
         .map_err(|e| format!("finalize_grain_turn: run {i} rotated-leg mint failed: {e}"))?;
         // Thread the interior pre-state for the next run.

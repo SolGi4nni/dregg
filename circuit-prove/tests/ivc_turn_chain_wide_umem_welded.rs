@@ -95,7 +95,6 @@ fn make_wide_welded_turn(
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32], [2u8; 32]],
-        None,
     )
     .expect("WIDE welded rotated+umem transfer leg mints + self-verifies");
     let old_root = leg.old_root();

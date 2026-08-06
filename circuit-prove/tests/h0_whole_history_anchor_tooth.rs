@@ -68,7 +68,6 @@ fn deployed_leg(balance: u64, nonce: u32, amount: u64) -> RotatedParticipantLeg 
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32], [2u8; 32]],
-        None,
     )
     .expect("deployed rotated transfer leg mints + self-verifies (now WIDE)")
 }

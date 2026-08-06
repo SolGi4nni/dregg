@@ -466,7 +466,7 @@ pub mod whole_image_fold;
 /// the committed `cross_cell_conservation_air` per asset — ACCEPTS the block iff every asset's Σδ=0
 /// (incl. declared mint/burn), else REJECTS. The cross-cell light-client bite the per-cell-isolated
 /// path structurally cannot give. ADDITIVE: NOT wired into the live verifier (see module docs for
-/// the `verify_proof_carrying_turn_bundle` handoff seam).
+/// the handoff seam — ⚠ and BOTH seams the module docs named are unreachable at HEAD).
 pub mod block_conservation;
 
 // `effect_vm_p3_air` moved to `dregg-circuit-prove`.

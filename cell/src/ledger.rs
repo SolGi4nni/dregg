@@ -263,10 +263,20 @@ pub struct SovereignRegistration {
     #[serde(default)]
     pub verification_key_hash: Option<[u8; 32]>,
     /// Stage 1 (`DESIGN-max-custom-effects.md`): per-cell maximum number of
-    /// `Effect::Custom` slots allowed in a single turn. The verifier enforces
+    /// `Effect::Custom` slots allowed in a single turn.
+    ///
+    /// ⚠ **CORRECTED 2026-08-06.** This said "the verifier enforces
     /// `PI[CUSTOM_EFFECT_COUNT] <= max_custom_effects`; the AIR's Stage 1
-    /// sum-check (Group 7) makes `PI[CUSTOM_EFFECT_COUNT]` algebraically
-    /// binding to the trace.
+    /// sum-check (Group 7) makes `PI[CUSTOM_EFFECT_COUNT]` algebraically binding
+    /// to the trace." Neither half is true: **Group 7 does not exist** (the v1
+    /// hand-AIR that was to host it is retired, `columns::aux_off::CUSTOM_COUNT_ACC`
+    /// is filled but read by no constraint, and the deployed registries carry zero
+    /// `pi_binding`s at PI 28), and the verifier's refusal
+    /// (`TurnExecutor::enforce_custom_effect_proofs`) compares the WIRE vec length
+    /// against THIS ledger field — it reads no public input. That is a real check,
+    /// and a stronger one than a PI comparison would be, because the bound comes
+    /// from the verifier's own state rather than from the artifact. It is simply
+    /// not the check that was written down.
     ///
     /// Default (when `None`):
     /// [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] (=4).

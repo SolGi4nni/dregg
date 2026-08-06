@@ -65,35 +65,91 @@ pub const NET_DELTA_MAG: usize = FINAL_BAL_HI + 1;
 pub const NET_DELTA_SIGN: usize = NET_DELTA_MAG + 1;
 
 // ---- Stage 1 additions (per EFFECT-VM-SHAPE-A.md G, E, F) ----
-/// Federation block height supplied by the verifier. Used by effects
-/// that take a timeout (escrow refund, bridge cancel) — those land in
-/// later stages; the PI slot exists now so they have it.
+/// Federation block height "supplied by the verifier".
+///
+/// ⚠ **DEAD, MEASURED 2026-08-06 — nothing supplies it and nothing reads it.**
+/// `EffectVmContext::default()` sets `current_block_height: 0`
+/// (`trace.rs`), no producer overrides it, `verify_one_cohort_run`'s
+/// reconstruction never touches it, and the deployed registries carry **zero**
+/// `pi_binding`s at this index (57 wide members). So the published felt is the
+/// constant `0` on every proof in the system. The live temporal binding is
+/// `v3::COMMITTED_HEIGHT` (PI 44) — pinned by 56/56 wide members AND overridden
+/// by the verifier from the trusted `cell.state.committed_height()`; the
+/// comparison against THIS slot that would have made it a comparand is written
+/// nowhere. **Disposition: STOP PUBLISHING.** See `docs/DESIGN-pi-authority.md`
+/// §4(c) for the compaction price (it is one VK rotation for all eleven).
 pub const CURRENT_BLOCK_HEIGHT: usize = NET_DELTA_SIGN + 1;
-/// Per-cell maximum custom effects (from cell program manifest).
-/// Verifier supplies from `cell.program.max_custom_effects`.
+/// Per-cell maximum custom effects.
+///
+/// ⚠ **DEAD, MEASURED 2026-08-06, AND ITS DOCUMENTED SOURCE DOES NOT EXIST.**
+/// This line used to read "Verifier supplies from `cell.program.max_custom_effects`":
+/// there is no `cell.program.max_custom_effects` field anywhere in the tree. The
+/// declaration lives on the LEDGER, at
+/// `dregg_cell::ledger::SovereignRegistration::max_custom_effects: Option<u8>`.
+/// Nothing plumbs it here — the value published is
+/// `MAX_CUSTOM_EFFECTS_DEFAULT` (4) from `EffectVmContext::default()`, on the
+/// producer AND the verifier, always.
+///
+/// ⓘ Reconstructing it "correctly" would buy nothing, which is why the
+/// disposition is removal rather than repair: the cap is genuinely enforced, but
+/// OFF-CIRCUIT and from the verifier's own ledger
+/// (`TurnExecutor::read_cell_max_custom_effects` → the `proofs.len() > cap`
+/// refusal in `executor::proof_verify`), which is strictly stronger than a
+/// published felt no constraint reads. **Disposition: STOP PUBLISHING.**
 pub const MAX_CUSTOM_EFFECTS: usize = CURRENT_BLOCK_HEIGHT + 1;
-/// Number of custom effects in this turn (0 if none). The AIR enforces
-/// `Σ s_custom == PI[CUSTOM_EFFECT_COUNT]` (sum-check, soundness
-/// prerequisite per `DESIGN-max-custom-effects.md` §7 threat 3).
+/// Number of custom effects in this turn (0 if none).
+///
+/// ⚠ **THE SUM-CHECK THIS SLOT IS NAMED FOR DOES NOT EXIST.** This line used to
+/// read "The AIR enforces `Σ s_custom == PI[CUSTOM_EFFECT_COUNT]`". Measured
+/// 2026-08-06: the accumulator column exists (`columns::aux_off::CUSTOM_COUNT_ACC`)
+/// and is filled by the trace generator, but **no constraint anywhere references
+/// it** — the v1 hand-AIR `eval_constraints` that was to host it is retired, and
+/// the deployed registries carry zero `pi_binding`s at this index. The named
+/// enforcement, `TurnExecutor::enforce_custom_proof_count_committed`, **reads no
+/// public input at all**: it compares `turn.custom_program_proofs.len()` against a
+/// fresh re-derivation from the same `turn`'s effects. Two executor-derived
+/// quantities compared to each other. **Disposition: STOP PUBLISHING.**
 pub const CUSTOM_EFFECT_COUNT: usize = MAX_CUSTOM_EFFECTS + 1;
 
 // ---- CapTP federation-state root (RETIRED slot, VERB-LOCKSTEP) ----
 /// Federation-scoped approved-handoffs Merkle root, 4-felt Poseidon2 form.
-/// RETIRED: `ValidateHandoff` no longer exists as an effect; the slot stays
-/// at the empty-tree sentinel until the descriptor-regeneration lane compacts
-/// the PI layout (frozen descriptors pin PI prefix offsets).
+///
+/// ⚠ **RETIRED AND DEAD.** `ValidateHandoff` no longer exists as an effect; the
+/// four felts sit at the empty-tree sentinel, carry zero `pi_binding`s across all
+/// 57 deployed wide members, and are read by nothing. **Disposition: STOP
+/// PUBLISHING** — `docs/DESIGN-pi-authority.md` §4(c). (The former note here said
+/// the slot stays "until the descriptor-regeneration lane compacts the PI layout
+/// (frozen descriptors pin PI prefix offsets)". Nothing here is frozen: the
+/// descriptors are re-emitted from Lean by
+/// `DREGG_VK_REGEN_ACK=… scripts/emit-descriptors.sh`, and a compaction is an
+/// ordinary VK rotation — not a re-genesis, `CANONICAL_STATE_SCHEMA_EPOCH` stays
+/// 23.)
 pub const APPROVED_HANDOFFS_BASE: usize = CUSTOM_EFFECT_COUNT + 1;
 pub const APPROVED_HANDOFFS_LEN: usize = 4;
 
 // ---- Stage 7-γ.0a additions: turn-level identity bindings ----
 //
-// These four fields are *shared across all per-cell proofs of one turn*.
-// Each per-cell proof carries the same values; the verifier's
-// cross-proof PI matching loop (`verify_proof_carrying_turn_bundle`)
-// enforces equality across the N proofs. Per-proof binding to the
-// canonical Turn::hash and call_forest projection is executor-trusted
-// for γ.0; γ.1 elevates the effects_hash_global -> Σ effects_local
-// merge to an aggregation micro-AIR.
+// These four fields were designed as values *shared across all per-cell proofs of
+// one turn*, with the verifier's cross-proof PI matching loop
+// (`verify_proof_carrying_turn_bundle`) enforcing equality across the N proofs.
+//
+// ⚠ CORRECTED 2026-08-06: THAT LOOP NEVER RAN, and is now deleted. It had one
+// caller, which had none. No artifact in the tree carries a bundle of per-cell PI
+// vectors to a verifier either, so there is nothing for a cross-proof loop to
+// range over. What decides these four today:
+//   * FULL NODE — `verify_one_cohort_run` RECONSTRUCTS the whole PI vector from
+//     the trusted Turn/Cell/anchors and never deserialises the prover's. Every
+//     slot is verifier-authoritative there; an AIR pin would be a subset of what
+//     reconstruction already forces.
+//   * WIRE — TURN_HASH is compared against a CALLER-SUPPLIED external anchor
+//     (`sdk::verify_full_turn_bound`, `dregg_verifier::check_receipt_pi_binding`,
+//     `turn::conditional`), always as FOUR felts via `canonical_32_to_felts_4`.
+//     ACTOR_NONCE is genuinely pinned (47/56 members) to the state column.
+//     EFFECTS_HASH_GLOBAL is read by nobody and is zero on every deployed leg.
+// No AIR constraint reads any of the four: `pi_binding` is the only constraint
+// kind that reads a public input, and offsets 33..40 carry zero of them.
+// `docs/DESIGN-pi-authority.md` argues the geometry cutover that would have
+// pinned TURN_HASH is NOT worth doing.
 //
 /// Poseidon2 of the canonical `Turn::hash()` (v3, post-Stage-7-α.1).
 /// All per-cell proofs of one turn share this value; the verifier
@@ -101,9 +157,15 @@ pub const APPROVED_HANDOFFS_LEN: usize = 4;
 pub const TURN_HASH_BASE: usize = APPROVED_HANDOFFS_BASE + APPROVED_HANDOFFS_LEN;
 pub const TURN_HASH_LEN: usize = 4;
 /// Poseidon2 over the canonical-DFS-order traversal of the whole
-/// `call_forest`'s effects (not per-cell). Closes P2 (projection
-/// totality) at γ.1; for γ.0 it's a shared PI the executor verifies
-/// against the turn's recomputed value.
+/// `call_forest`'s effects (not per-cell).
+///
+/// ⚠ **DEAD AT THESE OFFSETS.** No executor verifies it against the turn's
+/// recomputed value — the only comparison that did was in the deleted bundle
+/// verifier. `EffectVmContext::default()` publishes `[ZERO; 4]` here and no
+/// producer overrides it, so the deployed value is zero on every leg; zero
+/// `pi_binding`s across all 57 wide members; no reader. The real object lives at
+/// `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE`, on the
+/// aggregation's own outer PI. **Disposition: STOP PUBLISHING from this window.**
 pub const EFFECTS_HASH_GLOBAL_BASE: usize = TURN_HASH_BASE + TURN_HASH_LEN;
 pub const EFFECTS_HASH_GLOBAL_LEN: usize = 4;
 /// Outer `Turn::nonce`, promoted to PI. Closes the differential-test
@@ -579,7 +641,9 @@ pub const SLOT_CAVEAT_TAG_HEAP_FIELD_LTE_OTHER: u32 = 21;
 //     submit an `EffectBindingProof` schema entry which carries the
 //     full 8 limbs).
 //
-// The verifier-side off-AIR check (`TurnExecutor::verify_effect_binding_proofs`)
+// The verifier-side off-AIR check
+// (`TurnExecutor::verify_effect_binding_proofs_with_ledger`, reached from
+// `turn::executor::execute`)
 // enforces the full 32-byte algebraic match; the AIR slot here is the
 // shared-PI surface that future row-bound enforcement (Stage 7-γ.3)
 // will tie to specific trace rows of the producer/consumer effects.
@@ -920,7 +984,10 @@ pub mod v3 {
     /// public face (Lean: `PiV3.COMMITTED_HEIGHT`). Closes the temporal
     /// gate's prover-chosen-height note: the verifier reads the height FROM
     /// the committed state (`RotationLayout.committed_height_not_prover_chosen`);
-    /// `CURRENT_BLOCK_HEIGHT` (PI 18) stays as the verifier-supplied comparand.
+    /// ⚠ `CURRENT_BLOCK_HEIGHT` was described here as "(PI 18) … the
+    /// verifier-supplied comparand". Both halves are wrong: it is PI **26**
+    /// post-Phase-C, and no code performs the comparison — see its declaration
+    /// above. THIS slot (44) is the whole binding.
     pub const COMMITTED_HEIGHT: usize = BASE_COUNT;
     /// The rateBound caveat tag (Lean: `PiV3.RATE_BOUND_TAG`).
     pub const RATE_BOUND_TAG: usize = BASE_COUNT + 1;

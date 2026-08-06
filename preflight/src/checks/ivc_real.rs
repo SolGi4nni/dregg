@@ -85,7 +85,6 @@ pub(crate) fn mint_real_turn(
         &nullifier_root,
         &commitments_root,
         &receipt_log,
-        None,
     )
     .map_err(|e| format!("rotated turn leg failed to mint: {e}"))?;
     Ok(FinalizedTurn::new(DescriptorParticipant::rotated(leg)))

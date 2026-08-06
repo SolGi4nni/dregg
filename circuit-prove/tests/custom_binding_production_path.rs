@@ -233,7 +233,6 @@ fn mint_production_custom_leg(
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[3u8; 32]],
-        None,
         bundle,
     )
     .expect("the production custom-wide minter mints the leg with the bundle attached")
