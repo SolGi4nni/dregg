@@ -295,8 +295,9 @@ globs = [
   "Dregg2.Games.PathOfAngels.DeckDescentEmitMain",
   # ⚑ 2026-08-06 (artificer-logic lane) — ARTIFICER LOGIC, the rule-induction game.
   # Rooted here ON ARRIVAL rather than becoming the next orphan this list exists to
-  # catch: 84 `#assert_axioms` + 23 `#assert_compiled` in the kernel and 8 more in the
-  # wire, and an unrooted new module runs all of them NOWHERE.
+  # catch: 61 `#assert_axioms` + 22 `#assert_compiled` in the kernel and 8 more in the
+  # wire, over 99 theorems and no `sorry`, and an unrooted new module runs all of
+  # them NOWHERE.
   # ⚑ The kernel's headline pin is `manual_has_no_synonyms` and it is `#assert_axioms`
   # — KERNEL-CLEAN, closed by `decide` over 16x16x8 — so the distinguishability result
   # does not rest on the compiler.  The `#assert_compiled` pins enumerate 1,197
