@@ -282,7 +282,7 @@ theorem ivc_multi_fires_demo_value :
     demoTrace.pub Ivc.PI_ACC_HASH = 0
       ∧ rootsOf demoTrace = [7]
       ∧ ivcChain hash0 (demoTrace.pub Ivc.PI_INITIAL_HASH) 1 (rootsOf demoTrace) = 0 := by
-  refine ⟨rfl, rfl, rfl, fun _ => 0⟩
+  refine ⟨rfl, rfl, rfl⟩
 
 /-! ## §5 — the 2-row abstract-hash constructions (honest witness + cheat).
 

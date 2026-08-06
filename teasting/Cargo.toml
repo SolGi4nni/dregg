@@ -20,7 +20,6 @@ dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-federation = { path = "../federation" }
 dregg-sdk = { path = "../sdk" }
 dregg-bridge = { path = "../bridge", features = ["test-utils"] }
-dregg-verifier = { path = "../verifier" }
 dregg-wire = { path = "../wire" }
 dregg-blocklace = { path = "../blocklace" }
 # dregg-node is a binary crate (no lib target); use its deps directly instead.

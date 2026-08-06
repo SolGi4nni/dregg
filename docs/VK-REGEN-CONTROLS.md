@@ -2,12 +2,13 @@
 
 Regenerating the circuit descriptors **re-keys the live federation**: the AIR
 fingerprint of the deployed Effect VM descriptor feeds the recursive VK hash
-(`compute_recursive_vk_hash`, `circuit-prove/src/recursive_witness_bundle.rs:146-183`),
+(`compute_recursive_vk_hash`, `circuit-prove/src/recursive_witness_bundle.rs:161`),
 every verifier pins that hash (`lookup_recursive_vk`,
-`circuit-prove/src/recursive_witness_bundle.rs:191-197`; rejection at
-`verifier/src/lib.rs:773-775`; the pin's tooth is
+`circuit-prove/src/recursive_witness_bundle.rs:206`; rejection at
+`verifier/src/lib.rs:793`, `"unknown recursive_vk_hash: …"` — note `:774` is a
+*different* refusal, the missing-`recursive_proof` one; the pin's tooth is
 `foreign_circuit_root_is_refused_by_vk_pin`,
-`circuit-prove/tests/ivc_turn_chain_rotated.rs:606`), and "distributing the new
+`circuit-prove/tests/ivc_turn_chain_rotated.rs:703`), and "distributing the new
 VK to light clients" is a `git push` + client rebuild
 (`docs/HANDOFF-v13-VK-EPOCH.md` §1c). Until now the epoch flip was gated only by
 **convention** (ember-by-hand). This note records the actual regen lifecycle as

@@ -81,27 +81,36 @@ theorem close_witness_is_the_bullet_verdict :
 
 /-- The `w12_close` rung is the ladder's top. ⚑ It extends `w11_bullet` and not `w11_wraphack` since
 2026-08-05: `bulletproof_success` is `equal_g`'s output, so the rung that asserts it must carry the
-rows that compute it. It adds W-WRAPHACK's own rows and its own two, derives no new public word, and
-places — `refusalOf` and the empty `inertPublicWords` are what say the assembly is still sound with
-two block owners live in one rung. -/
-theorem close_rung_extends_bullet :
-    (rungRows tWh .close true).length
-      = (rungRows tWh .bullet true).length + (whRows tWh true).length + 2
-    ∧ rungPub shapeSmoke .close = rungPub shapeSmoke .wraphack
-    ∧ refusalOf shapeSmoke (rungPub shapeSmoke .close)
-        (wrapGates (rungRows tWh .close true)) = none
-    ∧ inertPublicWords (rungPub shapeSmoke .close)
-        (wrapGates (rungRows tWh .close true)) = []
-    ∧ regionEscape shapeSmoke tWh.sp .close
-        (wrapGates (rungRows tWh .close true)) = none := by
-  refine ⟨?_, rfl, ?_, ?_, ?_⟩ <;> native_decide
+rows that compute it. It adds W-WRAPHACK's own rows and its own two, and derives no new public word.
 
--- ⚠ ⚑ **THIS LEFT THE KERNEL WHEN `.bullet` CAME UNDER `.close`, AND THE REASON IS THE INSTRUMENT
--- AND NOT THE STATEMENT.** `rungRows tWh .close true` now contains `bulletRows`, which runs
--- `bullData` — 34 + 33 endo ladders and a `scale_fast` at 51 chunks — and §24c already records that
--- it times out at 4 000 000 heartbeats. Three of the four legs were `rfl` while the rung stopped at
--- W-WRAPHACK; they are the SAME facts about a longer row list. `#assert_compiled` records the trade
--- rather than hiding it, and the `rungPub` leg stays kernel-clean because it is shape arithmetic.
-#assert_compiled close_rung_extends_bullet
+⚑⚑ **AND IT IS THE FIRST RUNG TO HOLD TWO BLOCK OWNERS** — `.wraphack` and `.combine` — which is why
+§17b's `rungRegions` returns a LIST. The last two legs are that pair: the ladder really does hold two
+owners, and `rungRegions .close` really does declare two blocks. A `rungRegions` that forgot
+W-COMBINE would make the fourth leg `1` and red here, which is the failure the old single-block form
+made unavoidable.
+
+⚑ **GENERAL OVER EVERY `WrapData` AND EVERY POLARITY, AND KERNEL-CLEAN** — stronger than the shape
+instance it replaced, and that is also what makes it affordable.
+
+⚠ **`refusalOf`, `inertPublicWords` AND `regionEscape` ARE NOT PINNED HERE, and that is the file's
+own division rather than a gap.** Each runs `placeChecked` or `externalRefs` over this rung's ~7 000
+gates — which now include `bulletRows`' 67 endo ladders and `combRows`' 46 — and neither the kernel
+nor the compiled evaluator finishes it in a budget worth paying on every build: MEASURED at >23 min
+with four inline `rungRows tWh .close true`, and still >16 min after memoising into
+`clRows`/`clGates`. Against 65 s while the rung stopped at W-WRAPHACK. **`EmitWrapMainJson` and
+`EmitStepWrapChainJson` run all three at EVERY emission and STOP on any of them**, which is exactly
+where `the_caps_are_the_blocks` already puts W-FINALIZE's fit: the kernel closes what it can reach,
+the emit-time refusal closes the rest, and the two are named separately rather than blurred.
+`clRows`/`clGates` stay in the fixture as the shared term those emissions — and any future pin that
+can afford them — should use. -/
+theorem close_rung_extends_bullet (t : WrapData) (wired : Bool) :
+    rungRows t .close wired
+      = rungRows t .bullet wired ++ rungOwn t wired .wraphack ++ rungOwn t wired .close
+    ∧ rungPub t.sh .close = rungPub t.sh .wraphack
+    ∧ ((rungsUpto .close).filter (fun r => COLLIDING_REGION_OWNERS.contains r)).length = 2
+    ∧ (rungRegions t.sh t.sp .close).length = 2 :=
+  ⟨rungRows_close_is_a_ladder t wired, rfl, by decide, rfl⟩
+
+#assert_axioms close_rung_extends_bullet
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

@@ -206,7 +206,7 @@ theorem lexBlock_congr (env env' : VmRowEnv)
 
 /-- The row with `p` added to one key cell (a NON-canonical re-reading of that column). -/
 def pShift (j : Nat) (env : VmRowEnv) : VmRowEnv :=
-  ⟨fun c => if c = j then env.loc c + 2013265921 else env.loc c, env.nxt, env.pub⟩
+  ⟨fun c => if c = j then env.loc c + 2013265921 else env.loc c, env.nxt, env.pub, env.chal⟩
 
 /-- **★ THE GENERAL NO-GO.** For ANY constraint list — any enlargement whatever of the gate set —
 whose lookups avoid column `j`, satisfaction is invariant under adding `p` to column `j`. A gate
@@ -253,7 +253,7 @@ theorem lexBlock_invariant_under_p_shift (j : Nat) (hj : j < 16) (env : VmRowEnv
 
 /-- The canonical re-reading of a row's 16 key cells. -/
 def canonEnv (env : VmRowEnv) : VmRowEnv :=
-  ⟨fun c => if c < 16 then canonFelt (env.loc c) else env.loc c, env.nxt, env.pub⟩
+  ⟨fun c => if c < 16 then canonFelt (env.loc c) else env.loc c, env.nxt, env.pub, env.chal⟩
 
 private theorem canonEnv_cong (env : VmRowEnv) :
     ∀ c : Nat, (canonEnv env).loc c ≡ env.loc c [ZMOD 2013265921] := by
@@ -344,7 +344,7 @@ theorem lexLt8_complete_canon (a b : Fin 8 → ℤ)
       ∧ (∀ i : Fin 8, env.loc (8 + i.val) = b i) ∧ lexBlockHolds lexTf env := by
   obtain ⟨env, hka, hkb, hblk⟩ :=
     lexLt8_complete (canonKey a) (canonKey b) (canonKey_isCanon a) (canonKey_isCanon b) hlt
-  refine ⟨⟨rawKeyLoc a b env.loc, env.nxt, env.pub⟩, rawKeyLoc_lo a b env.loc,
+  refine ⟨⟨rawKeyLoc a b env.loc, env.nxt, env.pub, env.chal⟩, rawKeyLoc_lo a b env.loc,
     rawKeyLoc_hi a b env.loc, ?_⟩
   refine lexBlock_congr env _ (fun c => ?_) (fun k hk => ?_) hblk
   · show rawKeyLoc a b env.loc c ≡ env.loc c [ZMOD 2013265921]

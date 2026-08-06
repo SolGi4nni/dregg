@@ -7,9 +7,11 @@
 #   3. VERIFY  the friend re-checks it, trusting no one, offline from the API.
 #   4. TAMPER  any single-byte change makes verification refuse (fail-closed).
 #
-# Runs against the default (self-hosted, in-process notary) build — no network,
-# no third party. Pass --live to route the same machinery through the real
-# internet-host MPC-TLS path (heavier build; see README "honest boundary").
+# The PROVE step runs a REAL MPC-TLS 2PC session against the real
+# `api.coinbase.com`, so this script NEEDS NETWORK. The notary is self-hosted and
+# ephemeral (in-process, fresh key per run), so there is no third party in the
+# loop — but there is no `--live` switch either: the live path is UNCONDITIONAL
+# (see README "honest boundary"). The one optional argument is the asset pair.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -25,7 +27,7 @@ ORACLE=(cargo run --release --quiet --)
 line() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
 
 line "1. PROVE — capture a real $ASSET spot quote as a portable proof"
-"${ORACLE[@]}" prove price --asset "$ASSET" --out "$PROOF"
+"${ORACLE[@]}" prove --endpoint coinbase --asset "$ASSET" --out "$PROOF"
 echo "wrote $PROOF ($(wc -c < "$PROOF" | tr -d ' ') bytes) — this is the whole proof."
 echo
 echo "the portable proof (self-contained; no key, no live connection inside it):"

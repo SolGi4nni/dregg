@@ -113,12 +113,17 @@ use crate::state::{CellState, FieldVisibility};
 /// limb (`compute_rotated_pre_limbs`, limb 25) calls the SAME
 /// `compute_canonical_capability_root_felt`, which now tombstones.
 ///
-/// NB — the EffectVM VK (`dregg_verifier::EFFECT_VM_VK_HASH_HEX`) is, in this
-/// codebase's v1 verifier, a hash of the AIR *name* (`"dregg-effect-vm-v1"`),
-/// NOT a structural commitment to the constraint set — so it does not need (and
-/// would not meaningfully reflect) a tombstone bump. The cryptographic
-/// invalidation of stale post-revoke roots is enforced by the changed cap-root
-/// VALUE flowing into this commitment's PI face, not by a VK-string change.
+/// NB — a rotated leg's `vk_hash` IS a structural commitment: it is the blake3 of
+/// the accepting cohort descriptor's committed JSON (or, for a derived welded
+/// member, of its canonical bytes), so it moves when the constraint set moves. It
+/// still does not need a tombstone bump here: the cryptographic invalidation of
+/// stale post-revoke roots is enforced by the changed cap-root VALUE flowing into
+/// this commitment's PI face, not by a VK change.
+///
+/// (This note used to cite `dregg_verifier::EFFECT_VM_VK_HASH_HEX` as "a hash of
+/// the AIR *name*". That constant was DELETED 2026-08-05 along with the v1 verifier
+/// that consulted it — and it was not even that: it documented itself as
+/// `SHA-256(b"dregg-effect-vm-v1")` while carrying a value that is not that digest.)
 pub const CANONICAL_COMMITMENT_CONTEXT: &str = "dregg-cell:canonical-state-commitment v11";
 
 /// Domain-separation context for the canonical capability-set root.

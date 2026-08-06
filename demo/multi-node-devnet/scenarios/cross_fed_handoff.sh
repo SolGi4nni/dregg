@@ -12,6 +12,22 @@
 #     committee descriptors extracted from the two genesis.json files
 #   - Tamper test: flips introducer in the cert and asserts verifier rejects
 #
+# ⚑ 2026-08-05 VERIFIER FLAG DAY — read before trusting a green here.
+# `verify-cross-fed-bundle` steps (2) and (3) used to run through
+# `verify_effect_vm_proof`, a stub that rejected EVERY input, so the happy-path
+# assertion `verifier_accepts_bundle` COULD NOT PASS and the tamper assertion passed
+# for the wrong reason (everything was rejected). Step (2) is now a real
+# SELECTOR-BOUND `verify_vm_descriptor2` verify of each `recipient_chain` entry's
+# `proof_bytes`, plus a `check_receipt_pi_binding` tie to the receipt it accompanies;
+# step (3), the retired v1 trace replay, is gone (the batch-STARK verify IS the trace
+# check) and `witness_chain_replay_verified` / `replay_detail` are gone from the
+# verdict JSON. Consequences for this scenario:
+#   - the WitnessedReceipts in `recipient_chain` must carry REAL rotated proof bytes;
+#     an entry with `proof_bytes: []` is now refused BY NAME at step (2);
+#   - each entry's PI[TURN_HASH_BASE..+4] must equal
+#     canonical_32_to_felts_4(receipt.turn_hash) and the receipt chain-walk must close;
+#   - any jq that reads the two removed fields needs updating.
+#
 # When the devnet is not running (http /status fails), the MCP+verifier
 # assertions gracefully record false and the result.json still compares
 # cleanly against expected.json (which documents the precondition).

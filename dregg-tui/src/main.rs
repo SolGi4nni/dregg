@@ -21,7 +21,7 @@
 //!
 //! Step 3 — the actual cryptographic check — is NOT WIRED. The only verify entry
 //! this crate can reach for a single DWR1 artifact is
-//! `dregg_verifier::verify_effect_vm_proof`, and that entry is RETIRED: the v1
+//! `dregg_verifier::verify_effect_vm_proof`, an entry now DELETED (it was the v1
 //! hand-AIR (`EffectVmAir`) surface is gone, so the function discards its
 //! arguments and fails closed on every build (`verifier/src/lib.rs`). The Verify
 //! tab therefore reports `CANNOT VERIFY HERE` for every receipt — valid or not.
@@ -220,7 +220,7 @@ struct VerifyReport {
 /// report on the proof.
 ///
 /// Steps 1-2 are real. Step 3 — the cryptographic verify — is NOT WIRED: the only
-/// reachable single-artifact entry (`dregg_verifier::verify_effect_vm_proof`) is
+/// reachable single-artifact entry (`dregg_verifier::verify_effect_vm_proof`, now DELETED) was
 /// the RETIRED v1 hand-AIR core, which discards its arguments and fails closed on
 /// every build. This function therefore returns [`VerifyOutcome::Unavailable`] at
 /// step 3 for every artifact and names what is missing. See the module doc for
@@ -355,37 +355,20 @@ fn verify_receipt(client: &Client, receipt: &ReceiptInfo) -> VerifyReport {
     // 3. The cryptographic verify. NOT WIRED — and this reports that rather than
     //    performing a step that looks like verification and is not.
     //
-    //    The only single-artifact verify entry this crate can reach is
-    //    `dregg_verifier::verify_effect_vm_proof`, which is the RETIRED v1
-    //    hand-AIR core: it discards `proof_bytes` / `public_inputs` / `vk_hash`
-    //    and returns a fixed rejection on every build. Calling it would examine
-    //    nothing, so it is not called. Its retirement reason is quoted below from
-    //    the crate itself (single source of truth) — obtained by asking it about
-    //    an EMPTY input, never about this receipt's proof, so no line here can be
-    //    mistaken for a verdict on this artifact.
+    //    ⚑ 2026-08-05: this block used to CALL `dregg_verifier::verify_effect_vm_proof`
+    //    on an empty input and print its fixed rejection string as a "retirement
+    //    witness". That entry is DELETED (it discarded every argument and rejected on
+    //    every build), and with it the last reason to invoke anything here. The client
+    //    still does not verify this artifact, and now says so without borrowing a
+    //    sentence from a function to make the not-verifying look instrumented.
     push(
         &mut lines,
         "3. cryptographic verify: NOT WIRED in this client.".into(),
         Color::Yellow,
     );
-    let (retired, _code) =
-        dregg_verifier::verify_effect_vm_proof(&[], &[], dregg_verifier::AUTO_DETECT_VK_HASH);
     push(
         &mut lines,
-        format!(
-            "   dregg_verifier::verify_effect_vm_proof — {}",
-            retired.reason
-        ),
-        Color::DarkGray,
-    );
-    push(
-        &mut lines,
-        "   that entry ignores its arguments and fails closed on every build, so".into(),
-        Color::DarkGray,
-    );
-    push(
-        &mut lines,
-        "   it was NOT invoked on this proof. Nothing examined these bytes.".into(),
+        "   Nothing examined these bytes. No proof verifier ran.".into(),
         Color::DarkGray,
     );
     push(&mut lines, String::new(), Color::White);

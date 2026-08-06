@@ -15,9 +15,10 @@
 #       * proof-systems fork rev c5305e63 — Cargo.toml:173-176
 #       * ark-serialize MUTABLE BRANCH pin (the last non-immutable ref) — Cargo.toml:180-181
 #       * in-repo vendored [patch] paths that MUST travel with the clone —
-#         pathfinder_simd Cargo.toml:190, servo-paint :197, servo-net :200
+#         pathfinder_simd Cargo.toml:287, servo-paint :294, servo-net :297
 #   - default-members = the light protocol/circuit spine (no gpui/servo/mozjs) —
-#     Cargo.toml:19-23. `cargo build` with no `--workspace` operates on THESE.
+#     Cargo.toml:61 (149 entries; `members` is :54, 225 entries). `cargo build` with
+#     no `--workspace` operates on THESE.
 #
 # WHY --locked: without it CI can silently regenerate Cargo.lock, re-floating the
 #   mutable ark-serialize branch instead of proving the COMMITTED lock resolves
@@ -187,7 +188,7 @@ if [ "$MODE" = "metadata-only" ]; then
 fi
 
 # ── stage 2: compile the light protocol/circuit spine (default-members) ───────────
-# `cargo build --locked` with no --workspace builds default-members only (Cargo.toml:19-23):
+# `cargo build --locked` with no --workspace builds default-members only (Cargo.toml:61):
 # the light spine, gpui/servo/mozjs-free, the set a stranger reproduces first. This is
 # where the plonky3-recursion sibling-[patch] escape lived, so it is the load-bearing
 # compile.
@@ -202,7 +203,7 @@ echo "   ✓ the light spine compiles from a bare clone into an empty ~/dev."
 
 # ── stage 3 (--full): the whole workspace, elephants included ─────────────────────
 # `--workspace` pulls the gpui/servo/mozjs crates whose [patch] entries point at IN-REPO
-# vendored dirs (pathfinder_simd, servo-paint, servo-net — Cargo.toml:190,197,200); those
+# vendored dirs (pathfinder_simd, servo-paint, servo-net — Cargo.toml:287,294,297); those
 # MUST travel with the clone. A missing vendored path reds here. HEAVY: this is the whole
 # tree with no cache; provision disk + a long timeout (see the workflow / the runbook).
 if [ "$MODE" = "full" ]; then

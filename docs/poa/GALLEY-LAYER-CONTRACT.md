@@ -5,47 +5,99 @@ Galley is the only PoA kernel with a complete Lean → player path, so it is the
 This document states what each hop is allowed to decide and — just as important — the
 places where the template is Galley-specific and a second organ would have to generalize.
 
-**Read the correction in §0 before you copy anything.** The Lean object that reaches the
-player is *not* the Galley kernel.
+**Read §0 before you copy anything.** It records a twin that existed until 2026-08-05,
+what deleting it cost, and the check every other organ still has to pass.
 
 ---
 
-## 0. The correction: two Galleys, and only one of them ships
+## 0. There was a second Galley. It is deleted.
 
-There are two independent Lean state machines with "Galley" in the name.
+**Resolved 2026-08-05 — one state machine.** Until that day there were two independent
+Lean state machines with "Galley" in the name, sharing exactly one identifier and no
+type, relation or theorem:
 
-| | `GalleyMaintenanceDaily.lean` (1906 ln) | `GalleyMaintenanceDailyRuntime.lean` (1412 ln) |
+| | `GalleyMaintenanceDaily.lean` (2003 ln, **DELETED**) | `GalleyMaintenanceDailyRuntime.lean` |
 |---|---|---|
-| Reducer | `reduce` (`GalleyMaintenanceDaily.lean:350`), private | `reduce` (`…Runtime.lean:684`), public |
-| State | `State` (`:162`) — phases `ballot / maintenance / completed / outputRecorded` | `ProjectionWire` (`:160`) — no phases, one `sequence` counter |
-| Actions | `participant / openMaintenance / perform / visitCommons / recordFinalizedOutput` (`:185`) | payload kinds `"public-play"` / `"holder-sponsor"` (`:688`, `:698`) |
-| Concepts | HolderMechanics two-chamber ballot, authored procedure steps, commons rotations + capacity + neighborly alternative, finalized-run output + deployment-global nullifier registry, CAS persistence contracts | one visit per player, a bounded `localService` accumulator against `serviceTarget`, three inert anchor roots |
-| `@[export]` | **none** | `dregg_poa_galley_daily_judge` (`:975`) |
+| Reducer | `reduce`, private | `reduce`, public |
+| State | `State` — phases `ballot / maintenance / completed / outputRecorded` | `ProjectionWire` — no phases, one `sequence` counter |
+| Actions | `participant / openMaintenance / perform / visitCommons / recordFinalizedOutput` | payload kinds `"public-play"` / `"holder-sponsor"` |
+| `@[export]` | **none** | `dregg_poa_galley_daily_judge` |
 | Reached by Rust | **never** | always |
 
-`…Runtime.lean` imports `GalleyMaintenanceDaily` for **exactly one identifier** —
-`abbrev MAX_LOCAL_SERVICE := GalleyMaintenanceDaily.MAX_LOCAL_SERVICE` (`…Runtime.lean:46`).
-Nothing else. Verified by `grep -n "GalleyMaintenanceDaily\." …Runtime.lean` → one hit.
+Deleted with it: `GalleyMaintenanceDailyBoundary.lean` (186 ln), `GalleyCommons.lean`
+(2760 ln — a *third*, settled-credit commons economy, reachable only as a type parameter
+of the kernel's uncallable `provisionCapabilities`), `GalleyCommonsBoundary.lean` (162 ln).
+**5,111 lines, 135 pins** (85 `#assert_axioms` + 50 `#assert_compiled`).
 
-**There is no refinement theorem, no simulation, and no shared type between them.**
-`GalleyMaintenanceDailyBoundary.lean` (145 ln) is a privacy ratchet over the *kernel*
-(`fail_if_success (have _ := State.mk)` etc., 13 `True`-valued theorems) — it proves the
-kernel's constructors are private, which is worth having, but it says nothing about the
-runtime and the runtime has no boundary module of its own.
+### Why deletion and not a refinement theorem
 
-`GalleyCommons.lean` (2760 ln) is a third, separate kernel — settled-credit commons play —
-with **zero `@[export]`**. It is reachable from `GalleyMaintenanceDaily.provisionCapabilities`
-(`GalleyMaintenanceDaily.lean:1329`) as a type parameter and from nothing else. It does not
-ship either.
+A simulation between the two would have had to be *stated*, and every honest statement of
+it was blocked:
 
-So: **≈4,700 lines of proved Lean Galley kernel are dark, and the ~1,400-line Runtime that
-does ship is the whole shipped semantics.** Every other organ's Runtime/Wire layer (the
-~9,880 lines named in the brief) is in the same position by default. When a lane says
-"the kernel reaches the node", the check is: *does the `@[export]`'d function's call graph
-reach the kernel's reducer?* For Galley the answer is no.
+- the Runtime's sponsor transition adds `policy.sponsorService` to the only progress
+  variable it has, while the kernel's sponsorship provably moved nothing
+  (`dregg_sponsorship_preserves_chamber_power`) — a **contradiction** under any relation
+  mapping progress to progress, not a gap;
+- a kernel commons visit paid `choice.localService` or `0` by capacity; the Runtime pays a
+  policy constant with no capacity, no rotation and no authored alternative;
+- `perform` and `recordFinalizedOutput` had no Runtime counterpart, and the Runtime's four
+  anchor roots had no kernel counterpart;
+- the only kernel state a public importer could name was `genesisState spec` (phase
+  `.ballot`); the Runtime's genesis corresponds to a kernel state in `.maintenance`, which
+  is reachable only through a passed two-chamber ballot or the **private** `State.mk`. A
+  refinement would have had to quantify over a `DailySpec` and a `CommonsPolicy` that no
+  authored content and no emitted `PolicyWire` constructs — the identity-carrier vacuity
+  shape — and over `ActivatedDaily`, whose `HostInitializer.mk` had **zero construction
+  sites in the repository** (verified by grep at HEAD).
 
-This is not a reason to stop. It is the first item of work for any organ that wants its
-kernel to be load-bearing — but it must be **said out loud** rather than inherited silently.
+### What proof coverage was lost — measured, not estimated
+
+Counted at HEAD: 24 `#assert_axioms` + 25 `#assert_compiled` in
+`GalleyMaintenanceDaily.lean`, 14 `#assert_axioms` in its boundary module, 27 + 25 in
+`GalleyCommons.lean`, 20 in *its* boundary module. Sorted by what they actually
+established:
+
+1. **Parametric theorems over an uninhabited premise (no coverage lost).**
+   `PersistedDailyTransition.same_successor`, `…deployment_scoped`,
+   `DurableDailyLoad.revisionZero_same_genesis`,
+   `OutputRegistryGenesisCertificate.same_root`, and their output-registry twins are all
+   `∀ persistence : DailyPersistenceCASContract / OutputRegistryPersistenceContract, …`.
+   **No value of either contract type existed anywhere in the tree**, nor of
+   `DailyCanonicalSerializer` / `GalleyCommons.CanonicalSerializer`, so `faithful` was
+   never discharged and the CAS/genesis-uniqueness results held of nothing. They also
+   could not be inhabited across the FFI: `loadedAt` / `createGenesis` / `rootedAt` /
+   `compareAndSwap` are `Prop`-valued host predicates and a `String → String` export
+   cannot receive a `Prop`. The durability, CAS and receipt resolution they modelled are
+   done for real, with independent re-checks at five hops, in `persist/` (§7).
+2. **Case tests over private fixtures (real, and about a game nobody plays).**
+   `three_step_daily_replays_to_one_exact_finalized_output`,
+   `full_commons_choice_gives_authored_neighborly_alternative`,
+   `one_commons_visit_per_player_is_enforced`,
+   `authored_commons_strategies_have_distinct_outcomes`,
+   `deployment_registry_refuses_reused_receipt_hash`, and ~20 more `native_decide` facts
+   about `fixtureSpec`. These were genuine checks of a genuine design; they constrained no
+   byte any node, browser or wallet ever sees.
+3. **Two parametric theorems that were neither vacuous nor fixture-bound** —
+   `dregg_sponsorship_preserves_chamber_power` (over every admitted grant and pre-state)
+   and `successful_commons_visit_preserves_power`. These are the real loss. Their
+   *subject matter* — that a service acknowledgement moves no narrative authority — now
+   exists on the shipped side as `judge_output_preserves_advantage_anchors` (§2.6), which
+   is strictly better placed because it is stated about the emitted `OutputWire`.
+4. **The 13 privacy teeth** (`State.mk` / `initialState` / the five `*Step`s / the
+   post-ballot fixture are private). Not lost — **moved**:
+   `GalleyMaintenanceDailyRuntimeBoundary.lean` is the same ratchet over the module that
+   ships, which is also the closure of **G8** below.
+
+`MAX_LOCAL_SERVICE = 100` now lives in `…Runtime.lean`. Value unchanged, so no emitted
+policy, fixture or pinned digest moves arithmetically.
+
+### The check this section still exists for
+
+Every other organ's Runtime/Wire layer starts in the position Galley was in. When a lane
+says "the kernel reaches the node", the check is: *does the `@[export]`'d function's call
+graph reach the kernel's reducer?* And the second check, which Galley failed until the
+same commit: *is there a theorem tying the exported answer to that reducer, or only
+theorems about the reducer?* See §2.6.
 
 ---
 
@@ -170,12 +222,37 @@ depend on:
 Output (`OutputWire`, `:229`): `input_digest`, `policy_digest`, `replay{6}`, `projection`,
 `view`, `event?`, `receipt?` — `event` and `receipt` are both-or-neither (`:1145`).
 
-Proved facts a consumer may rely on:
-- `reduce_preserves_advantage_anchors` (`:716`) — `powerRoot/lootRoot/canonRoot/canonRevision`
-  are identical across any accepted transition.
-- `reduce_holder_sponsor_bounded` (`:725`) — sponsor service ≤ 100 and anchors unchanged.
-- `receiptOf_has_no_advantage_delta` (`:979`) — the three deltas are literally `0`.
-- `no_authority_cannot_form_holder_payload` (`:984`).
+Proved facts **about the reducer**:
+- `reduce_preserves_advantage_anchors` — `powerRoot/lootRoot/canonRoot/canonRevision` are
+  identical across any accepted transition.
+- `reduce_holder_sponsor_bounded` — sponsor service ≤ 100 and anchors unchanged.
+- `receiptOf_has_no_advantage_delta` — the three deltas are literally `0`.
+- `no_authority_cannot_form_holder_payload` — with `authority = none`, which is what the
+  export passes, the sponsor branch cannot form a payload.
+
+⚑ **Proved facts about the EMITTED OUTPUT** — added 2026-08-05, and the reason the list
+above is now usable. Every fact in that list is about `reduce`; the judge obtains its
+successor through `EventSourcing.applyEvent` and, until these theorems, could have
+published *any* projection with all four of them still green. A consumer sees an
+`OutputWire`, not a `Reducer`.
+
+- `judge_command_projection_is_reduce` — for an accepted command emitting `event`,
+  `reduce policy input.claimed_projection event.payload = some output.projection`. The
+  published successor **is** the reducer's.
+- `judge_view_projection_is_claimed` — a view answer emits no event and republishes the
+  caller's `claimed_projection` byte-identically.
+- `judge_output_preserves_advantage_anchors` — the four anchors of `output.projection`
+  equal the four anchors of `input.claimed_projection`, in **both** modes. This is the
+  one to cite; it is the only form of the anchor claim stated over what the wire carries.
+- `EventSourcing.applyEvent_projection_is_reduce` — the generic law the three above rest
+  on, available to every other organ's Runtime.
+
+Refutation the weld catches: give the command branch a successor the reducer did not
+return (`localServiceTotal + 1`, say) and `judge_command_projection_is_reduce` goes red.
+Measured before it existed, that mutation passed every other check in the module —
+`fixture_public_command_accepted` tests only `.isSome`, `fixture_public_output_redecodes`
+re-decodes a tampered projection happily, and
+`fixture_beta_sponsor_accepted_without_advantage` inspects only the four anchors.
 
 ### 2.7 Action-token semantics — read this before copying
 
@@ -388,8 +465,12 @@ classify the same bytes without an SDK dependency (`:1-8`). `sdk/src/poa_galley.
 Of the five tags, **only `Perform` has a writer.** `classify_finalized_galley`
 (`poa_galley_api.rs:75`) maps `PublicVote / VisitCommons / HolderSponsorship` to
 `UnsupportedCommand` (`:128-132`). The vocabulary is deliberately wider than the shipped
-semantics — which is the right shape, but note the vocabulary describes the *kernel's*
-actions, and the kernel does not ship (§0).
+semantics — which is the right shape, but note that four of the five tags were named after
+the **deleted** kernel's actions (`PublicVote`, `OpenMaintenance`, `VisitCommons`) or after
+its structurally-unreachable sponsor path. After §0 they name nothing in Lean at all. A
+carrier tag whose semantics do not exist is not harmful — every one of them refuses — but
+it is now a vocabulary with no referent, and the next carrier edit should collapse it to
+`Perform` or say why not.
 
 ---
 
@@ -515,9 +596,10 @@ the whole browser loop branches on it. Either compute it or delete it; a boolean
 be false is not a gate.
 
 **G4 — the stream kind `9` and the `1`-event batch shape.** `GALLEY_STREAM_KIND = 9` is
-spelled in Lean (`…Runtime.lean:41`), in persist (`:56`), and in the kernel's
-`streamSpec` (`GalleyMaintenanceDaily.lean:447`). Kind must become a per-organ registry with
-a collision refusal, not a constant copied into three files. Note also that
+spelled in Lean (`…Runtime.lean:41`) and in persist (`:56`). (It was spelled a *third*
+time in the deleted kernel's `streamSpec`, where nothing checked the two agreed.) Kind
+must become a per-organ registry with a collision refusal, not a constant copied into two
+files. Note also that
 `prepare_poa_galley_public_event_batch_v1_in` hardcodes a **one-event batch** (`event_index: 0`,
 single-element vectors, `:691-743`); the EventBatch V2 substrate supports more, the Galley
 adapter does not.
@@ -544,10 +626,17 @@ honestly built and honestly disabled — but it is ~250 lines of Lean and two Ru
 that a reader will mistake for a working path. Either wire the atomically-consumable wallet
 capability or delete it.
 
-**G8 — no Runtime boundary module.** `GalleyMaintenanceDailyBoundary.lean` ratchets the
-*kernel's* privacy. The Runtime — the thing that actually ships — has no equivalent, so
-nothing prevents a future edit from making `reduce`, `nextEvent` or `AdmittedBetaSponsor.mk`
-public. Every organ's Runtime should get a `*RuntimeBoundary.lean` on day one.
+**G8 — no Runtime boundary module. ✅ CLOSED 2026-08-05 for Galley; open for every other
+organ.** `GalleyMaintenanceDailyBoundary.lean` ratcheted the *deleted kernel's* privacy;
+the Runtime had no equivalent, so nothing prevented a future edit from making `nextEvent`,
+`validatedPrefix?`, the raw `parse*` decoders or `AdmittedBetaSponsor.mk` public.
+`GalleyMaintenanceDailyRuntimeBoundary.lean` is now that ratchet, over the module the
+export actually runs: six `fail_if_success` theorems covering the sponsor-authority
+constructor, the action-token minters, the unchecked transition surface, the raw parsers
+(the ones that skip the re-encode equality of §2.5), the adversarial fixtures, and the
+encoder internals. It is globbed into `PathOfAngelsGuards` because nothing imports a
+boundary module — a ratchet in no build target is not a ratchet. **Every organ's Runtime
+should get a `*RuntimeBoundary.lean` on day one, and it must be in a build target.**
 
 **G9 — the SDK path constant disagrees with the node's.**
 `sdk/src/poa_galley.rs:17` says `/node/api/poa/galley/v1`; `poa_galley_api.rs:25` says
@@ -649,3 +738,21 @@ What is still open:
   action-token preimage and verified against nothing at runtime; editing that file makes
   the artifact stale, and re-emitting it changes `content_root` and needs a new signed
   activation.
+
+  ⚑ **IT IS STALE RIGHT NOW.** `poa/artifacts/galley/epoch-1/policy.json` carries
+  `rules_digest = fe40fcf02db8ea6a660dce4eae418e75a2983c8d27aee91445e96126c2c6291b`, which
+  was SHA-256 of `…Runtime.lean` before the §0 deletion. That file changed in the same
+  commit (import block, `MAX_LOCAL_SERVICE`, the three weld theorems), so the digest no
+  longer matches its own declared source. **Re-emit, after the tree builds green:**
+
+  ```
+  scripts/poa-galley-content.py …                    # new rules_digest, component_sha256, content_root
+  dregg-node poa-galley-world-preview …              # new signing_message
+  <curator signs>                                    # new POA-WORLD-ACTIVATION-ENVELOPE-V1
+  dregg-node init-poa-galley-world … --signed-activation activation.sig.json
+  ```
+
+  Cost of not doing it: nothing refuses — that is the whole point of "provenance, not a
+  binding" — so a stale `rules_digest` is silently baked into every action-token preimage
+  a player signs against. The organ has never been installed on the live validator
+  (`latest_height = 0`, §10), so nothing deployed carries the old value.

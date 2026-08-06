@@ -4,6 +4,15 @@ Status: **BUILT.** ⚑ **NO LONGER BYTE-PRESERVING — flag day 2026-07-31, `rot
 178 -> 184.** See "The ninth-lane flag day" below. This was Goal A only; the narrow optimizer
 deployment remains Goal B.
 
+> ⚑ **A SECOND FLAG DAY LANDED — this file stops at the first one.** On 2026-08-01 the **KEY-nonet**
+> flag day took the geometry **184 -> 187**. The current object is `rotated187`
+> (`metatheory/Dregg2/Circuit/Emit/RotatedLayout.lean:157`, with `rotated187_legal` at `:208`), and
+> `circuit/src/effect_vm/layout_generated.rs:18` reads `NUM_PRE_LIMBS = 187`. Everything below
+> describes the 184 geometry — including the sentence "187 costs four columns for nothing", which
+> the KEY nonet superseded, and the `assert!(NUM_PRE_LIMBS == 178, …)` pin, which now reads `== 187`
+> at `circuit/src/effect_vm/trace_rotated.rs:4569`. The downstream span table below is likewise the
+> 184-era set. Read `RotatedLayout.lean` for the live integers — they live there once, by design.
+
 ## The ninth-lane flag day (2026-07-31)
 
 `p = 2013265921`, so `log2 p = 30.907` and **eight lanes carry 247.26 bits against a 32-byte field's

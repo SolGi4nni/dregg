@@ -211,8 +211,16 @@ impl WitnessBundle {
 pub struct WitnessedReceipt {
     /// The receipt itself. Unchanged from today, so existing chains stay valid.
     pub receipt: TurnReceipt,
-    /// STARK proof bytes (`stark::proof_to_bytes` output). Verifiable
-    /// stand-alone via `verifier::verify_effect_vm_proof`.
+    /// Rotated `"effect-vm-rotated"` proof bytes (a postcard `Ir2BatchProof`).
+    /// Verifiable stand-alone via `dregg_verifier::verify_rotated_leg` or, for a
+    /// whole chain, `dregg_verifier::verify_rotated_replay_chain`.
+    ///
+    /// ⚠ May be EMPTY. `dregg_verifier::fabricate_pi_only_witnessed_receipt` mints
+    /// receipts with `proof_bytes: vec![]` for the cross-cell PI-agreement tests, and
+    /// nothing on the type forbids it — so a consumer that reads `public_inputs`
+    /// without first verifying THIS field is reading numbers its presenter chose.
+    /// (The doc here used to point at `verifier::verify_effect_vm_proof`, a v1 entry
+    /// deleted 2026-08-05 that rejected every input it was ever handed.)
     pub proof_bytes: Vec<u8>,
     /// Public inputs as a flat `u32` vector (BabyBear canonical form).
     /// Redundant with `proof.public_inputs` but extracted for replayer

@@ -131,12 +131,14 @@ pub struct ZkOracleAttestation {
     /// whole attestation); when absent leg 3 is the cleartext matcher as before.
     pub zk_injection: Option<ZkInjectionProof>,
     /// **The REAL tlsn presentation** (optional) — the bincode-serialized genuine `tlsn`
-    /// `Presentation` from a live MPC-TLS 2PC roundtrip. When present, [`verify_zkoracle_live`]
-    /// (feature `tlsn-live`) authenticates leg 1 by the REAL `presentation.verify()` — a
-    /// trustless 2PC notary — instead of the modeled ed25519 [`Self::presentation`] carrier.
-    /// The default [`verify_zkoracle`] path ignores this and uses the modeled carrier, so a
-    /// light default attestation sets it `None`. Always present (not feature-gated) so the
-    /// struct shape is uniform; only the live *verifier* links the heavy `tlsn` backend.
+    /// `Presentation` from a live MPC-TLS 2PC roundtrip. When present,
+    /// `dregg_zkoracle_live::verify_zkoracle_live` (in the SEPARATE `dregg-zkoracle-live`
+    /// crate — no longer a `tlsn-live` feature of this one) authenticates leg 1 by the REAL
+    /// `presentation.verify()` — a trustless 2PC notary — instead of the modeled ed25519
+    /// [`Self::presentation`] carrier. The default [`verify_zkoracle`] path ignores this and
+    /// uses the modeled carrier, so a light default attestation sets it `None`. Always
+    /// present (never cfg'd away) so the struct shape is uniform; only the live *verifier*
+    /// links the heavy `tlsn` backend.
     pub tlsn_presentation: Option<Vec<u8>>,
 }
 

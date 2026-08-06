@@ -3,9 +3,43 @@
 Three public-facing claims were falsified by lanes tonight. Two of them are in the
 draft Sunday announcement. **Fix the copy before it ships, not after someone checks.**
 
+> ## ⚑ STALE — re-checked against the tree 2026-08-05. §1, §2 and §3 are all SUPERSEDED BY CODE.
+>
+> Every line-pin below points into a `surface.rs` that has since been rewritten; the
+> pins are dead and the findings no longer describe the deployed path. Do not cite
+> §1–§3 as current. What is true now, each re-read in the implementation:
+>
+> * **§1 (clash → dropped moves → unfoldable).** The surface no longer resolves a
+>   clash at all: it runs `COMMIT → REVEAL → RESOLVE → (RE-SUBMIT → REVEAL →
+>   RESOLVE)*`, and the resolution is ONE `AutomataflRules.roundStep` call per round
+>   through the Lean (`dregg-automatafl/src/surface.rs:26-39`, `crate::rules::round`).
+>   A clashed round MARKS the contested square and RE-ENTERS. A re-entered turn folds
+>   as a `MultiRoundTurn` (Leg C conflict braid ∘ Leg RM ∘ Leg A) rather than being
+>   unfoldable; `AutomataflSession::unfoldable_round` (`surface.rs:669-683`) now names
+>   only the residual case, and its second arm is documented as unreachable through
+>   this surface. The Lean capstone for the whole multi-round turn is
+>   `braid_sat_imp_runTurn_stock` (n = 11, P = 2).
+> * **§2 (the seal stores plaintext server-side).** The executor cell now holds only
+>   a blake3 commitment over the move plus a per-turn nonce (`surface.rs:797-822`,
+>   `seal_of` / `seal_nonce`; `MatchState { commit: self.seal, .. }`). The plaintext
+>   lives in the session until the reveal, so the honest sentence is the crate's own:
+>   **the proof gates the record, the host gates play** — the board transition is
+>   proven in-circuit by the Lean-emitted descriptors, while the seal hides by
+>   NON-REVEAL ON A TRUSTED HOST. The in-proof sealed move is still the named next
+>   lane. Current honest-scope note: `surface.rs:57-62` (was pinned here as 47-49).
+> * **§3 ("you can lose").** The fix landed: `BREATH` is 30
+>   (`metatheory/Dregg2/Games/Dungeon.lean:143`) and `toll < BREATH` is now a conjunct
+>   of every verb's guard, so a run past the toll is TERMINAL (`doomed_is_terminal`)
+>   rather than holding 28 unwinnable moves. The claim is released.
+>
+> **What is NOT superseded: §4, and "the pattern" below it.** The retraction of the
+> dead-draw finding, and the standing rule (*before any public claim, open the file
+> that implements it*), are the durable content of this document.
+
 ---
 
 ## 1. ⚠ "A whole match folds into ONE proof" — FALSE IN PRACTICE for automatafl
+### ⛔ SUPERSEDED 2026-08-05 (see banner) — the pins below are dead lines
 
 **Draft copy:** *"A whole match folds into ONE succinct proof a light client checks
 in O(1) — the moves are never posted. The board keeps the proof, not the plays."*
@@ -24,6 +58,7 @@ The fold machinery is real; it is the *surface's* clash rule that is wrong. Fixi
 the surface to the proven rule is the repair, and until then the sentence must go.
 
 ## 2. ⚠ "Sealed orders / sealed simultaneous moves" — TRUSTED-HOST, not cryptographic
+### ⛔ SUPERSEDED 2026-08-05 (see banner) — the pins below are dead lines; the cell now holds a commitment, not the plaintext
 
 `dregg-automatafl/src/surface.rs:850` stores the **plaintext** move server-side at
 commit time. The seal hides by **non-reveal on a trusted host**, not by a
@@ -38,6 +73,7 @@ not.
 copy stands. Do not let this correction bleed onto it.)
 
 ## 3. ⚠ "You can lose" — was FALSE, being fixed
+### ✅ LANDED 2026-08-05 (see banner) — `BREATH = 30`, `toll < BREATH` guards every verb, claim released
 
 Two lanes independently enumerated the deployed Descent teeth: `flee` costs one
 breath from any depth, and a non-fleeing run can burn at most 21–26 of 26. **On 14

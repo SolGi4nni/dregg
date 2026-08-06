@@ -4,7 +4,8 @@
 # THE DO-ONCE PATH (docs/FRONTEND-PLAN.md, Tier A/B): write `render -> ViewNode` ONCE per
 # feature and web + discord + telegram + wechat render it for free (every renderer already
 # covers the ViewNode vocab). `dreggnet-market` is the reference (the one prior new-domain
-# Offering). This crate lights up FOUR more:
+# Offering). This crate now registers NINE surfaces (`register_surfaces`; this comment used to say
+# FOUR and listed only the original four below):
 #   * TradeOffering  — a market #2 over dreggnet-trade (list -> settle a real atomic asset
 #                      swap; the actions fire real owner-signed transfer turns).
 #   * InventoryOffering — a READ-surface over dreggnet-asset owned notes (name/rarity/

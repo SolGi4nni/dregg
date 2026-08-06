@@ -10,7 +10,7 @@ say.
 
 A smart contract or settlement engine can't call `api.coinbase.com` itself, and it
 shouldn't trust whoever hands it a number. With `dregg-oracle`, an off-chain
-relayer runs `prove price --asset BTC-USD` and submits the resulting `proof.json`;
+relayer runs `prove --endpoint coinbase --asset BTC-USD` and submits the resulting `proof.json`;
 the on-chain (or on-ledger) verifier re-checks the authentic + well-formed + weld
 legs and reads the amount straight out of the *authenticated* body. The contract
 now acts on "Coinbase's endpoint quoted 64250.37 at this session time" without

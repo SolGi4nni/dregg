@@ -6,7 +6,7 @@
 //! with the verdict code, this PD:
 //!
 //!   1. reads a `BilateralBundle` (postcard) from the `proof_in` shared page,
-//!   2. runs `dregg_verifier::verify_bilateral_bundle*` (the same audited
+//!   2. runs `dregg_verifier::check_bilateral_pi_agreement*` (the same audited
 //!      verify core — NO Lean, NO IO loop, pure plonky3-STARK + crypto),
 //!   3. writes a one-byte verdict + reason into the `verdict_out` page,
 //!   4. signals its scheduler over the notification channel, then waits.
@@ -55,17 +55,21 @@ fn run_verify(proof_in: &[u8], verdict_out: &mut [u8]) -> u8 {
     // The bundle arrives as the postcard wire form the SDKs share. The verify
     // core takes JSON in its highest-level entry; for the PD we use the
     // bytes-oriented bundle path. (Wiring detail: the exact entry —
-    // `verify_bilateral_bundle_json` vs a postcard variant — is chosen when the
+    // `check_bilateral_pi_agreement_json` vs a postcard variant — is chosen when the
     // ingress contract is fixed; both are in `dregg_verifier`'s public API and
     // neither touches Lean or IO.)
     match core::str::from_utf8(proof_in) {
         Ok(json) => {
-            // `verify_bilateral_bundle_json` returns a pure `BilateralVerdict`
+            // `check_bilateral_pi_agreement_json` returns a pure `BilateralPiAgreement`
             // (a struct over the bundle — `verified: bool` + `reason`). The
             // caller maps it to the exit-code byte contract, exactly as the
             // host `run_bilateral_pair` does.
-            let verdict = dregg_verifier::verify_bilateral_bundle_json(json);
-            let v = if verdict.verified { VERDICT_VERIFIED } else { VERDICT_REJECTED };
+            let verdict = dregg_verifier::check_bilateral_pi_agreement_json(json);
+            let v = if verdict.pi_agrees_with_schedule {
+                VERDICT_VERIFIED
+            } else {
+                VERDICT_REJECTED
+            };
             write_verdict(verdict_out, v, &verdict.reason);
             v
         }

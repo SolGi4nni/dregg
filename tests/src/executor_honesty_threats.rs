@@ -109,7 +109,7 @@ fn sample_receipt(
     }
 }
 
-/// A `ReplayEntry` carrying the ROTATED-shaped PI vector a real
+/// The ROTATED-shaped PI vector a real
 /// `"effect-vm-rotated"` leg publishes: the v1 prefix `[0, V1_PI_COUNT)` plus the four
 /// appended rotated pins (`ROT_PI_COUNT` felts), with `PI[TURN_HASH_BASE..+4]` filled
 /// the way the honest producer fills it (`turn_prover::proven_receipt`).
@@ -121,7 +121,7 @@ fn sample_receipt(
 /// never carries. Measured 2026-07-27, a real wide rotated leg carries **68** felts;
 /// the drive-the-real-producer measurement is
 /// `tests/tests/receipt_pi_binding_reachability.rs`.
-fn replay_entry_with_receipt_pi(receipt: TurnReceipt) -> dregg_verifier::ReplayEntry {
+fn rotated_pi_for_receipt(receipt: &TurnReceipt) -> Vec<u32> {
     use dregg_circuit::effect_vm::pi;
     use dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
     use dregg_commit::typed::canonical_32_to_felts_4;
@@ -131,14 +131,18 @@ fn replay_entry_with_receipt_pi(receipt: TurnReceipt) -> dregg_verifier::ReplayE
     for i in 0..pi::TURN_HASH_LEN {
         public_inputs[pi::TURN_HASH_BASE + i] = turn_hash[i].as_u32();
     }
+    public_inputs
+}
 
-    dregg_verifier::ReplayEntry {
+/// A `RotatedReplayLeg` carrying that PI vector, `proof_bytes` supplied by the caller
+/// and a vk_hash that pins nothing. Used to drive the LIVE chain verifier's refusals.
+fn rotated_leg(receipt: TurnReceipt, proof_bytes: Vec<u8>) -> dregg_verifier::RotatedReplayLeg {
+    let public_inputs = rotated_pi_for_receipt(&receipt);
+    dregg_verifier::RotatedReplayLeg {
         receipt,
-        proof_bytes: vec![],
+        proof_bytes,
         public_inputs,
-        witness_bundle: None,
-        witness_hash: [0u8; 32],
-        aggregate_membership: None,
+        vk_hash: [0u8; 32],
     }
 }
 
@@ -455,11 +459,11 @@ fn t8_verifier_rejects_fake_previous_receipt_hash() {
 
     let forged_previous = [0x84u8; 32];
     let receipt = sample_receipt(agent, [0x85u8; 32], Some(forged_previous));
-    let entry = replay_entry_with_receipt_pi(receipt);
+    let public_inputs = rotated_pi_for_receipt(&receipt);
 
     let reason = dregg_verifier::check_receipt_pi_binding(
-        &entry.receipt,
-        &entry.public_inputs,
+        &receipt,
+        &public_inputs,
         Some(prior.receipt_hash()),
     )
     .expect("chain-walk must reject a fake previous_receipt_hash");
@@ -596,12 +600,11 @@ fn t10_executor_rejects_transfer_without_required_capability() {
 fn t11_stale_proof_replay_rejected_by_verifier() {
     let agent = CellId([0xA1u8; 32]);
     let receipt = sample_receipt(agent, [0xA2u8; 32], None);
-    let mut entry = replay_entry_with_receipt_pi(receipt);
-    entry.public_inputs[dregg_circuit::effect_vm::pi::TURN_HASH_BASE] ^= 0x01;
+    let mut public_inputs = rotated_pi_for_receipt(&receipt);
+    public_inputs[dregg_circuit::effect_vm::pi::TURN_HASH_BASE] ^= 0x01;
 
-    let reason =
-        dregg_verifier::check_receipt_pi_binding(&entry.receipt, &entry.public_inputs, None)
-            .expect("stale proof PI must reject when TURN_HASH no longer matches receipt");
+    let reason = dregg_verifier::check_receipt_pi_binding(&receipt, &public_inputs, None)
+        .expect("stale proof PI must reject when TURN_HASH no longer matches receipt");
     assert!(
         reason.contains("TURN_HASH_BASE"),
         "expected TURN_HASH_BASE rejection, got: {reason}"
@@ -757,53 +760,54 @@ fn t13_remote_stub_with_id_cannot_mint_arbitrary_cell_ids() {
 // deleted; these now compile and run unconditionally.
 //
 // They asserted the reason substring `"deserial"`, which was the bespoke v1 hand-STARK
-// deserialisation failure. That engine is RETIRED: `dregg_verifier::verify_effect_vm_proof` is
-// now an unconditional fail-closed stub (no `cfg`) whose reason names the retirement. The
-// substring is re-pointed at the LIVE refusal, and it is a STRICTER pin than `"deserial"` was:
-// a whole distinctive sentence instead of one word. What it still catches is the thing that
-// matters — a proofless / malformed receipt reaching `Verified`, or a refusal that stops saying
-// why. Reviving v1 reds these, which is the point.
+// deserialisation failure. Between then and 2026-08-05 they were re-pointed at
+// `verify_effect_vm_proof`, a stub that rejected EVERY input, so what they actually pinned was
+// the wording of a refusal nothing could ever pass. That stub is DELETED. They now drive the
+// LIVE rotated verifier (`verify_rotated_replay_chain` / `verify_rotated_leg`), where the
+// refusal is a real one: proofless and malformed bytes bind ZERO committed cohort descriptors
+// and are turned away by `verify_vm_descriptor2`, not by a constant. The honest pole for these
+// same functions is `verifier/tests/integration_rotated_replay_chain.rs`, which mints real
+// proofs and watches them be ADMITTED.
 
 /// A receipt carrying no wire proof must be a HARD rejection of the whole chain, and the
 /// rejection must be attributable. Can go red three ways: `overall_verified` turning true,
 /// the failure moving off index 0, or the reason losing its provenance.
 #[test]
 fn t14_receipt_without_proof_rejected_at_wire_level() {
+    use dregg_circuit::field::BabyBear;
     let agent = CellId([0xE1u8; 32]);
     let receipt = sample_receipt(agent, [0xE2u8; 32], None);
-    let entry = replay_entry_with_receipt_pi(receipt);
+    let leg = rotated_leg(receipt, vec![]);
 
-    let out = dregg_verifier::replay_chain(&[entry]);
+    let zero = [BabyBear::ZERO; 8];
+    let out = dregg_verifier::verify_rotated_replay_chain(&[leg], zero, zero);
     assert!(!out.overall_verified, "empty proof bytes must not verify");
     assert_eq!(out.first_failure, Some(0));
+    let dregg_verifier::RotatedReplayVerdict::Rejected { reason } = &out.per_leg[0] else {
+        panic!(
+            "missing wire proof must be a hard rejection, got: {:?}",
+            out.per_leg[0]
+        );
+    };
     assert!(
-        matches!(
-            &out.per_entry[0],
-            dregg_verifier::ReplayVerdict::Rejected { reason }
-                if reason.contains("STARK verify failed")
-                    && reason.contains("v1 Effect VM STARK verification is retired")
-        ),
-        "missing wire proof must be a hard rejection naming the v1 retirement, got: {:?}",
-        out.per_entry[0]
+        reason.contains("deserialize") || reason.contains("NO cohort descriptor"),
+        "the refusal must name what the verifier could not do with the bytes, got: {reason}"
     );
 }
 
 /// Malformed proof bytes must not verify, must exit ERROR, and must say why.
 #[test]
 fn t14_malformed_proof_bytes_rejected() {
-    let (out, code) = dregg_verifier::verify_effect_vm_proof(
-        b"not a serialized STARK proof",
-        &[],
-        dregg_verifier::EFFECT_VM_VK_HASH_HEX,
-    );
+    let agent = CellId([0xE3u8; 32]);
+    let receipt = sample_receipt(agent, [0xE4u8; 32], None);
+    let leg = rotated_leg(receipt, b"not a serialized STARK proof".to_vec());
 
-    assert!(!out.verified, "malformed proof bytes must not verify");
-    assert_eq!(code, dregg_verifier::exit_code::ERROR);
+    let reason = dregg_verifier::verify_rotated_leg(&leg)
+        .expect_err("malformed proof bytes must not verify");
     assert!(
-        out.reason
-            .contains("v1 Effect VM STARK verification is retired"),
-        "the refusal must name the v1 retirement rather than fail for an incidental reason, got: {}",
-        out.reason
+        reason.contains("deserialize"),
+        "the refusal must name the deserialisation failure rather than fail for an incidental \
+         reason, got: {reason}"
     );
 }
 
@@ -1385,14 +1389,10 @@ fn cross_cutting_verifier_checks_all_pi() {
 
     // (a) TURN_HASH — the one PI slot a rotated leg actually publishes for the turn
     //     identity (`TURN_HASH_BASE` = 33, inside the v1 window `[0, 42)`).
-    let mut turn_hash_tamper = replay_entry_with_receipt_pi(base.clone());
-    turn_hash_tamper.public_inputs[pi::TURN_HASH_BASE] ^= 0x01;
-    let reason = dregg_verifier::check_receipt_pi_binding(
-        &turn_hash_tamper.receipt,
-        &turn_hash_tamper.public_inputs,
-        Some(previous),
-    )
-    .expect("TURN_HASH PI mismatch must reject");
+    let mut tampered_pi = rotated_pi_for_receipt(&base);
+    tampered_pi[pi::TURN_HASH_BASE] ^= 0x01;
+    let reason = dregg_verifier::check_receipt_pi_binding(&base, &tampered_pi, Some(previous))
+        .expect("TURN_HASH PI mismatch must reject");
     assert!(reason.contains("TURN_HASH_BASE"));
 
     // (b) PREVIOUS_RECEIPT_HASH and IS_AGENT_CELL are NOT on the wire, and the
@@ -1430,26 +1430,18 @@ fn cross_cutting_verifier_checks_all_pi() {
         "Turn::hash MUST absorb previous_receipt_hash — the transitive chain-link binding \
          rests entirely on it"
     );
-    let honest = replay_entry_with_receipt_pi(sample_receipt(agent, at_p.hash(), Some(previous)));
+    let honest_receipt = sample_receipt(agent, at_p.hash(), Some(previous));
+    let honest_pi = rotated_pi_for_receipt(&honest_receipt);
     assert!(
-        dregg_verifier::check_receipt_pi_binding(
-            &honest.receipt,
-            &honest.public_inputs,
-            Some(previous)
-        )
-        .is_none(),
+        dregg_verifier::check_receipt_pi_binding(&honest_receipt, &honest_pi, Some(previous))
+            .is_none(),
         "the honestly-positioned receipt must be admitted"
     );
-    let rebased = dregg_verifier::ReplayEntry {
-        receipt: sample_receipt(agent, at_other.hash(), Some(previous)),
-        ..honest
-    };
-    let reason = dregg_verifier::check_receipt_pi_binding(
-        &rebased.receipt,
-        &rebased.public_inputs,
-        Some(previous),
-    )
-    .expect("a receipt re-based to another chain position must reject via TURN_HASH");
+    // Same PI vector (the proof did not change); only the receipt is re-based.
+    let rebased_receipt = sample_receipt(agent, at_other.hash(), Some(previous));
+    let reason =
+        dregg_verifier::check_receipt_pi_binding(&rebased_receipt, &honest_pi, Some(previous))
+            .expect("a receipt re-based to another chain position must reject via TURN_HASH");
     assert!(
         reason.contains("TURN_HASH_BASE"),
         "the chain-link refusal must come from the TURN_HASH comparison; got: {reason}"

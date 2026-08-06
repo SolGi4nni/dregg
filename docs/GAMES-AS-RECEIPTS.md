@@ -174,8 +174,11 @@ inspect hypotheses, so the statement is the honesty surface.
   1208 (Leg C) — see the `#[ignore]` reasons in
   `dreggnet-game-board/tests/two_leg_board_window.rs` and `multi_round_fold.rs`, and
   [`VERIFIED-GAME-PORTFOLIO.md`](VERIFIED-GAME-PORTFOLIO.md).
-- **automatafl fold not run** — every n=11 deployed-prover arm is `#[ignore]`d at tens
-  of minutes and has not been run on the build box.
+- **automatafl fold — RUN for the two-leg path** (this line used to say "not run"; stale
+  as of 2026-07-26). The two-leg n=11 arm was executed on a 12-core M-series: the honest
+  fold passed in 754s with `verify_history` ACCEPTING, the forged twin refused in 219s.
+  The arms stay `#[ignore]`d for COST. Still unrun: the whole-braid (Leg C) deployed fold
+  and every `dreggnet-prove-service/tests/match_fold.rs` arm.
 - **automatafl move count** — the general N=11 occlusion scan and full-SCC resolution
   are labeled residuals.
 - **multiway-tug privacy** — succinct, not zero-knowledge (see tier 2 above).

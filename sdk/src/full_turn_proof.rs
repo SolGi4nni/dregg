@@ -932,7 +932,7 @@ pub fn effect_action_binding(effects: &[effect_vm::Effect]) -> BabyBear {
 //
 // The rotated R=24 path drives the LIVE rotated trace generator
 // (`dregg_circuit::effect_vm::trace_rotated`) from the real per-turn producer witnesses
-// (`dregg_turn::rotation_witness`) and proves the 311-column rotated trace + 38-PI vector
+// (`dregg_turn::rotation_witness`) and proves the 311-column rotated trace + `ROT_PI_COUNT` (46) PI vector
 // through the IR-v2 batch prover (`descriptor_ir2`). It is `prover`-gated (compiles
 // `descriptor_ir2`'s PROVE surface). With the v1 hand-AIR retired, this is the only
 // effect-vm prover; a finalized turn with no rotation witness fails closed.
@@ -995,7 +995,8 @@ pub fn prove_effect_vm_rotated_ir2(
     )
 }
 
-/// Re-derive the rotated 38-PI vector for a turn (the same `dpis` the rotated prover binds).
+/// Re-derive the rotated `ROT_PI_COUNT` (46) PI vector for a turn (the same `dpis` the rotated
+/// prover binds).
 /// Used by [`prove_full_turn`] to record the rotated leg's `sub_public_inputs` and to extend
 /// the composed PI without re-proving.
 // Scaffolding for the in-flight rotated-leg composed-PI path; retained for the rotated VK epoch.
@@ -2460,8 +2461,10 @@ fn cap_open_supported_for_run(run_effects: &[VmEffectKind]) -> Result<(), SdkErr
 /// `prove_vm_descriptor2`. The depth-16 absorb-node fold opens the committed `cap_root` at a
 /// write-mask leaf whose target is the turn's `src`; the proof self-verifies before return.
 ///
-/// Returns `(proof, dpis)` — the dpis are the SAME 38-PI vector the base attenuate leg carries
-/// (the cap-open descriptor declares 38 PIs), corrected by the phase-B base wiring. The verifier
+/// Returns `(proof, dpis)` — the dpis are the SAME `ROT_PI_COUNT` (46) PI vector the base
+/// attenuate leg carries (the cap-open BASE descriptor declares 46 too: the membership appendix
+/// adds columns, no PIs; only the TB weld appends one, `CAP_OPEN_TB_PI_COUNT` = 47), corrected
+/// by the phase-B base wiring. The verifier
 /// (`verify_effect_vm_rotated_with_cutover`) binds the cap-open descriptor naturally (it iterates
 /// every committed cohort descriptor and binds the unique acceptor), so no verify-side change is
 /// needed beyond the cap-open vk_hash.
@@ -2687,7 +2690,7 @@ fn rotated_transfer_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
 ///
 /// Unlike the attenuate leg, the transfer base needs NO phase-B nonce-freeze patch: a Transfer is a
 /// regular rotated cohort effect whose `generate_rotated_effect_vm_trace` output is directly valid
-/// (the base 38-PI vector is correct as generated). We build the transfer base, convert the SDK
+/// (the base `ROT_PI_COUNT` (46) PI vector is correct as generated). We build the transfer base, convert the SDK
 /// c-list opening to the trace-column [`CapOpenWitness`], widen with the 59-column appendix
 /// (`widen_to_cap_open`, which fails CLOSED if the cap does not recompose its root or does not
 /// confer the transfer facet/tier the descriptor's gates pin), then prove + self-verify.
@@ -3009,7 +3012,7 @@ fn build_effect_vm_cap_open_leg(
     }
 
     // Attenuate-family bases need the phase-B nonce-FREEZE + cap-root advance wiring; transfer is
-    // directly valid (its 38-PI vector is correct as generated). BUT the WRITE-bearing wrappers ALL
+    // directly valid (its `ROT_PI_COUNT` (46) PI vector is correct as generated). BUT the WRITE-bearing wrappers ALL
     // ride the nonce-TICK face (`after.nonce == before.nonce + 1`, the gate `(var78-var56) == 1-sel0`)
     // — the cap-root advance is the openable map_op write, NOT the v1-state freeze the authority-only
     // attenuate-family `key` carries. So when the write wrapper is active, SKIP the nonce-freeze patch
@@ -4490,8 +4493,11 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     // THE ROTATED LEG (the SOLE effect-vm prover): when the caller threaded the rotation producer
     // witnesses, prove the effect-vm transition through the ROTATED IR-v2 path (the multi-table
     // `Ir2BatchProof`) and attach it as the `"effect-vm-rotated"` sub-proof. Its PI vector is
-    // the rotated 38-PI (the v1 prefix `[0..34)` — OLD/NEW_COMMIT/turn-id/effects-hash carried
-    // at their v1 offsets — plus the 4 appended rotated commit/height/caveat pins at 34..37).
+    // the rotated `ROT_PI_COUNT` (46): the v1 prefix `[0..V1_PI_COUNT)` (`[0..42)` —
+    // OLD/NEW_COMMIT/turn-id/effects-hash carried at their v1 offsets) plus the 4 appended
+    // rotated commit/height/caveat pins at `V1_PI_COUNT..ROT_PI_COUNT` (42..46). Wider shapes
+    // append further tails past that (see `trace_rotated`: `ROT_NULLIFIER_PI_COUNT` 47,
+    // `WIDE_PI_COUNT` 66).
     components.has_state_transition = true;
     // PATH-PRESERVE §2/§3: the rotated leg is N legs — one per maximal homogeneous cohort-run
     // (`split_into_cohort_runs`). A HOMOGENEOUS turn yields exactly ONE run. The collected PI
@@ -4931,11 +4937,20 @@ pub fn verify_full_turn_bound(
     }
 
     // 4. Check Effect VM public input bindings (old/new commitment). Each effect-vm leg is
-    //    EITHER the v1 `"effect-vm"` (204-PI) or the rotated `"effect-vm-rotated"` (38-PI).
-    //    The rotated 38-PI is the v1 prefix `[0..34)` + 4 appended pins, so OLD_COMMIT(0) /
-    //    NEW_COMMIT(4) / TURN_HASH(25) / EFFECTS_HASH(8) / NET_DELTA(16-17) all carry the SAME
-    //    values at the SAME offsets — the cross-bindings below read those unchanged. Only
-    //    offsets >= 34 (e.g. NOTESPEND_NULLIFIER at 198) are absent from the rotated leg.
+    //    EITHER the v1 `"effect-vm"` (the full `pi::ACTIVE_BASE_COUNT`, 213, plus any custom
+    //    entries) or the rotated `"effect-vm-rotated"` (`trace_rotated::ROT_PI_COUNT`, 46).
+    //    The rotated vector is the v1 prefix `[0..V1_PI_COUNT)` = `[0..42)` + 4 appended pins,
+    //    so every slot the cross-bindings below read carries the SAME value at the SAME v1
+    //    offset on both shapes: OLD_COMMIT_BASE `[0..8)`, NEW_COMMIT_BASE `[8..16)`,
+    //    EFFECTS_HASH_BASE `[16..20)`, NET_DELTA_MAG(24) / NET_DELTA_SIGN(25). Only offsets
+    //    `>= V1_PI_COUNT` (42) are absent from the rotated leg — e.g. NOTESPEND_NULLIFIER
+    //    (206), NOTECREATE_COMMITMENT (207), BURN_TARGET_PI (208), and the whole v3 tail
+    //    (COMMITTED_HEIGHT 209 … ASSET_CLASS 212).
+    //
+    //    ⚑ TURN_HASH_BASE `[33..37)` is INSIDE that shared prefix but is NOT a binding on this
+    //    path: `prove_full_turn` never writes it (grep `TURN_HASH_BASE` in this file — no hit)
+    //    and nothing here reads it, so a `FullTurnProof` is not bound to any turn identity.
+    //    `turn-prover`'s receipt path DOES fill and check that slot; this one does not.
     //
     //    PATH-PRESERVE §3: a heterogeneous turn carries N chained rotated legs (one per cohort
     //    run, in `sub_proofs` order = chain order s0→s1→…→sN). COLLECT all effect-vm legs, then
@@ -4952,8 +4967,9 @@ pub fn verify_full_turn_bound(
     if effect_legs.is_empty() {
         return Err(FullTurnVerifyError::MissingComponent("effect-vm".into()));
     }
-    // Every leg must carry at least the v1 prefix it publishes at: the rotated leg >= V1_PI_COUNT
-    // (34); the v1 leg the full ACTIVE_BASE_COUNT. The cross-bindings only read offsets < 34.
+    // Every leg must carry at least the v1 prefix it publishes at: the rotated leg
+    // >= `V1_PI_COUNT` (42); the v1 leg the full `ACTIVE_BASE_COUNT` (213). The cross-bindings
+    // only read offsets < `V1_PI_COUNT`.
     for leg in &effect_legs {
         let leg_is_rotated = leg.label == "effect-vm-rotated";
         let min_pi = if leg_is_rotated {
@@ -4978,9 +4994,9 @@ pub fn verify_full_turn_bound(
         // prover's limbs were unrange-checked on every deployed verify.
         //
         // Every leg reaching this line has already passed the `min_pi` floor above, and
-        // `min_pi` (V1_PI_COUNT = 42, or the full v1 count) exceeds
-        // `BALANCE_LIMB_PI_MIN_LEN` (26) on both leg shapes — so this can only fail on a
-        // genuine range violation, never on length.
+        // `min_pi` (`V1_PI_COUNT` (42) on the rotated leg, `ACTIVE_BASE_COUNT` (213) on the
+        // v1 leg) exceeds `BALANCE_LIMB_PI_MIN_LEN` (26, = `NET_DELTA_SIGN` + 1) on both leg
+        // shapes — so this can only fail on a genuine range violation, never on length.
         debug_assert!(min_pi >= dregg_circuit::effect_vm::BALANCE_LIMB_PI_MIN_LEN);
         dregg_circuit::effect_vm::verify_balance_limb_pis(&leg.sub_public_inputs).map_err(
             |reason| {
@@ -9902,7 +9918,7 @@ mod tests {
             "the plain revoke base leg proves (it is sound for the authority-BLIND descriptor)",
         );
         let plain_bytes = postcard::to_allocvec(&plain_proof).expect("serialize plain revoke leg");
-        // The plain leg's PI vector (the same 38-PI vector the base descriptor declares).
+        // The plain leg's PI vector (the same `ROT_PI_COUNT` (46) PI vector the base descriptor declares).
         let run_rot = RotationTurnWitness {
             before: before_w.clone(),
             after: after_w.clone(),
@@ -11059,7 +11075,7 @@ mod tests {
         pis_on[sel_pi] = BabyBear::ONE;
         assert!(check_escrow_selector_pin(&[tag], &pis_on).is_ok());
 
-        // A leg too short to even carry the welded selector PI (e.g. a plain 38-PI rotated transfer
+        // A leg too short to even carry the welded selector PI (e.g. a plain `ROT_PI_COUNT` (46) rotated transfer
         // leg) is rejected fail-closed — the welded descriptor was not the accepting one.
         let short = vec![BabyBear::ONE; sel_pi]; // length sel_pi, index sel_pi absent
         let err = check_escrow_selector_pin(&[tag], &short).unwrap_err();

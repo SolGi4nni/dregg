@@ -1272,7 +1272,7 @@ fn cross_federation_captp_delivered_with_sovereign_and_bilateral() {
             .iter()
             .map(|cell_id| dregg_verifier::BilateralEntry {
                 cell_id: *cell_id,
-                witnessed_receipt: dregg_verifier::fabricate_witnessed_receipt(
+                witnessed_receipt: dregg_verifier::fabricate_pi_only_witnessed_receipt(
                     &turn,
                     cell_id,
                     captp_dummy_receipt(turn.agent),
@@ -1281,9 +1281,9 @@ fn cross_federation_captp_delivered_with_sovereign_and_bilateral() {
             .collect(),
         unilateral_attestations: std::collections::BTreeMap::new(),
     };
-    let verdict = dregg_verifier::verify_bilateral_bundle(&bundle);
+    let verdict = dregg_verifier::check_bilateral_pi_agreement(&bundle);
     assert!(
-        verdict.verified,
+        verdict.pi_agrees_with_schedule,
         "γ.2 must bind the transfer a CapTP delivery carried: {verdict:?}"
     );
     assert_eq!(verdict.transfer_count, 1);
@@ -1292,7 +1292,7 @@ fn cross_federation_captp_delivered_with_sovereign_and_bilateral() {
     tampered.entries[1].witnessed_receipt.public_inputs
         [dregg_circuit::effect_vm::pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
     assert!(
-        !dregg_verifier::verify_bilateral_bundle(&tampered).verified,
+        !dregg_verifier::check_bilateral_pi_agreement(&tampered).pi_agrees_with_schedule,
         "the γ.2 tooth must survive the CapTP composition"
     );
 

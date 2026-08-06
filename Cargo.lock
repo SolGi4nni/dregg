@@ -6257,6 +6257,7 @@ dependencies = [
  "dregg-commit",
  "dregg-lean-ffi",
  "dregg-p3-pasta",
+ "dregg-recursion-verify",
  "dregg-turn",
  "dregg-turn-prover",
  "fhegg-solver",
@@ -6656,6 +6657,7 @@ name = "dregg-exec-lean"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-bridge",
  "dregg-captp",
  "dregg-cell",
  "dregg-cell-crypto",
@@ -6994,6 +6996,7 @@ dependencies = [
  "dregg-dsl-runtime",
  "dregg-exec-lean",
  "dregg-federation",
+ "dregg-governance",
  "dregg-intent",
  "dregg-lean-ffi",
  "dregg-macaroon",
@@ -7002,6 +7005,7 @@ dependencies = [
  "dregg-persist",
  "dregg-pq",
  "dregg-query",
+ "dregg-recursion-verify",
  "dregg-sdk",
  "dregg-sdk-net",
  "dregg-storage",
@@ -7023,6 +7027,7 @@ dependencies = [
  "ml-kem",
  "pg-dregg",
  "poa-curator",
+ "poa-solana-gate",
  "postcard",
  "quinn",
  "rand 0.8.6",
@@ -7191,6 +7196,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-federation",
+ "dregg-lean-ffi",
  "dregg-pq-testkit",
  "dregg-turn",
  "dregg-types",
@@ -7198,6 +7204,7 @@ dependencies = [
  "postcard",
  "redb",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tracing",
@@ -7300,6 +7307,34 @@ dependencies = [
  "blake3",
  "dregg-cell",
  "dregg-types",
+]
+
+[[package]]
+name = "dregg-recursion-verify"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-turn",
+ "p3-baby-bear",
+ "p3-challenger",
+ "p3-circuit",
+ "p3-circuit-prover",
+ "p3-commit",
+ "p3-dft",
+ "p3-field",
+ "p3-fri",
+ "p3-lookup",
+ "p3-merkle-tree",
+ "p3-poseidon2-circuit-air",
+ "p3-recursion",
+ "p3-symmetric",
+ "p3-uni-stark",
+ "postcard",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7556,7 +7591,6 @@ dependencies = [
  "dregg-turn",
  "dregg-turn-prover",
  "dregg-types",
- "dregg-verifier",
  "dregg-wire",
  "ed25519-dalek",
  "getrandom 0.3.4",
@@ -7775,7 +7809,6 @@ dependencies = [
  "dregg-captp",
  "dregg-cell",
  "dregg-circuit",
- "dregg-circuit-prove",
  "dregg-commit",
  "dregg-federation",
  "dregg-pq-testkit",
@@ -16876,12 +16909,35 @@ dependencies = [
 name = "poa-curator"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
+ "dregg-cell",
  "dregg-lean-ffi",
+ "dregg-pq",
+ "dregg-sdk",
+ "dregg-turn",
  "dregg-types",
  "libc",
+ "postcard",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "poa-solana-gate"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "bs58",
+ "dregg-bridge",
+ "dregg-governance",
+ "dregg-pay",
+ "dregg-types",
+ "ed25519-dalek",
+ "postcard",
+ "serde",
  "sha2 0.10.9",
  "thiserror 2.0.18",
 ]

@@ -118,6 +118,8 @@ The honest boundary, endpoint by endpoint:
 - `--features tlsn-live` (`deco-prove/tests/tlsn_live_roundtrip.rs`): the real local MPC-TLS roundtrip
   for Anthropic, GitHub, and Coinbase — authentic body → CFG cert → fact, tamper refused.
   The durable notary trust root is exercised hermetically in `zkoracle-live/tests/notary_durable_key.rs`.
-- Live-host runs (need network): `cargo run -p dregg-zkoracle-prove --example coinbase_live
-  --features tlsn-live` (prove against the real host, re-verify the portable proof file);
-  `coinbase_inproc` is the in-process variant.
+- Live-host runs (need network): `cargo run -p dregg-zkoracle-live --example coinbase_live`
+  (prove against the real host, re-verify the portable proof file); `coinbase_inproc` is the
+  in-process variant. Both examples live in `zkoracle-live/examples/`, and
+  `dregg-zkoracle-live` is featureless — the live backend is a crate now, not a
+  `dregg-zkoracle-prove` feature.

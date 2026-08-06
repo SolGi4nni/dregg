@@ -679,7 +679,7 @@ theorem movedPartsN_of_sat (n : Nat) (hn1 : 1 ≤ n) (hn : (n : ℤ) < 201326592
   · rw [hm]; constructor
     · intro hp
       rcases hoffB with h | h <;> rcases htibB with h1 | h1 <;> rcases htvB with h2 | h2 <;>
-        rw [h, h1, h2] at hp ⊢ <;> first | exact ⟨rfl, rfl, rfl, fun _ => 0⟩ | (exfalso; revert hp; norm_num)
+        rw [h, h1, h2] at hp ⊢ <;> first | exact ⟨rfl, rfl, rfl⟩ | (exfalso; revert hp; norm_num)
     · rintro ⟨h1, h2, h3⟩; rw [h1, h2, h3]; norm_num
 
 /-- **`movedIffGuardN_of_sat` — the move mask IS the reference guard, at ARBITRARY `n`.** `m = 1`

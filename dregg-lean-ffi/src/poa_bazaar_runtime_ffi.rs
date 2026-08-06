@@ -204,11 +204,16 @@ mod tests {
             crate::poa_bazaar_restart_portal::BAZAAR_STORE_ID_ENV,
             "17".repeat(32),
         );
+        std::env::set_var(
+            crate::poa_bazaar_restart_portal::BAZAAR_DEPLOYMENT_ID_ENV,
+            "58".repeat(32),
+        );
 
         assert!(poa_bazaar_runtime_available());
         assert_eq!(ffi::fixture("genesis").unwrap(), "applied");
         assert_eq!(ffi::fixture("successor").unwrap(), "applied");
         assert_eq!(ffi::fixture("stale").unwrap(), "refused");
+        assert_eq!(ffi::fixture("admit-replayed").unwrap(), "admitted");
 
         let head = load_poa_bazaar_canonical_head()
             .unwrap()

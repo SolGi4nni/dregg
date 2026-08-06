@@ -38,6 +38,16 @@ The verdict JSON shape:
   }
 """
 
+# ⚑ BROKEN BY THE 2026-08-05 VERIFIER FLAG DAY — re-point before running.
+# `dregg-verifier` no longer has `replay-chain`, `scope-recursive` or `bilateral-pair`.
+# All three bottomed out in `verify_effect_vm_proof`, a stub that rejected EVERY input,
+# so every invocation below was ALREADY recording a rejection on every run; they are
+# deleted rather than left advertising a check that could not pass. The live chain
+# verify is `dregg-verifier rotated-replay-chain <request.json>`, whose request carries
+# real `"effect-vm-rotated"` legs plus 8-felt `expected_old_commit`/`expected_new_commit`
+# lane arrays. These drivers need re-pointing at it; until then they exit 2 with usage.
+
+
 from __future__ import annotations
 
 import argparse

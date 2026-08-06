@@ -5,7 +5,7 @@
 //! projection. `deos-reflect` builds the moldable faces (RawFields · Graph ·
 //! DomainVisual · Provenance) as its OWN pure-data payloads
 //! ([`deos_reflect::PresentationBody`]); this module lowers each into the ONE
-//! [`ViewNode`] IR the four backends (native gpui / web HTML / Discord / Telegram)
+//! [`ViewNode`] IR the five backends (native gpui / web HTML / Discord / Telegram / WeChat)
 //! already walk — instead of a second renderer per face. Every datum in a face is
 //! carried across (lossless: every field key+value, every graph node/edge, every
 //! state/transition, every timeline event becomes a node in the tree).

@@ -190,10 +190,18 @@ impl TurnExecutor {
     /// 2. Verifies the STARK proof (public inputs bind old -> new commitment + effects hash)
     /// 3. Updates the 32-byte commitment
     ///
-    /// Public inputs layout (Effect VM, 7+ BabyBear elements):
-    ///   [old_commit(1), new_commit(1), net_delta_mag(1), net_delta_sign(1),
-    ///    effects_hash_lo(1), effects_hash_hi(1), custom_count(1),
-    ///    ...custom_entries(8 per custom effect)]
+    /// Public inputs layout: `circuit/src/effect_vm/pi.rs` IS the source of truth — read it
+    /// there, never from a copy in this file. (The 7-slot single-felt sketch that used to sit
+    /// here — old_commit(1), new_commit(1), net_delta pair, effects_hash lo/hi, custom_count —
+    /// described a layout retired several widenings ago and was wrong in every offset.)
+    /// The two live shapes, both computed from named constants:
+    ///   * v1 `"effect-vm"`: `pi::ACTIVE_BASE_COUNT` (213) fixed felts, then custom-proof
+    ///     entries (16 felts each) from `pi::CUSTOM_PROOFS_BASE`. Commitments are 8 felts each
+    ///     (`OLD_COMMIT_BASE` `[0..8)`, `NEW_COMMIT_BASE` `[8..16)`), not 1.
+    ///   * rotated `"effect-vm-rotated"`: `trace_rotated::ROT_PI_COUNT` (46) = the v1 prefix
+    ///     `[0..V1_PI_COUNT)` (42) plus four appended pins (OLD commit 42, NEW commit 43,
+    ///     committed height 44, caveat commit 45). Wider cohorts append further tails
+    ///     (`ROT_NULLIFIER_PI_COUNT` 47, `CAP_OPEN_TB_PI_COUNT` 47, `WIDE_PI_COUNT` 66).
     pub(super) fn verify_and_commit_proof(
         &self,
         cell_id: &CellId,
@@ -594,8 +602,8 @@ impl TurnExecutor {
     /// The companion [`Self::enforce_custom_proof_entry_binding`] welds the wire
     /// sub-proof to the in-circuit committed `(vk_hash, proof_commitment)` entry; it is
     /// separate because it needs the WIDE `pi::` public-input vector, which only the
-    /// bundle path reconstructs (the rotated sovereign path carries a 38-PI descriptor
-    /// vector instead). Each function is fail-closed within its own contract rather than
+    /// bundle path reconstructs (the rotated sovereign path carries a `ROT_PI_COUNT` (46)
+    /// descriptor vector instead). Each function is fail-closed within its own contract rather than
     /// gating on an optional input.
     ///
     /// ## Reach (honest scope)
@@ -691,8 +699,8 @@ impl TurnExecutor {
     ///
     /// 1. **It has NO production caller.** The deployed sovereign path is
     ///    `verify_and_commit_proof` → `enforce_custom_effect_proofs` →
-    ///    `verify_and_commit_proof_rotated` (which reconstructs a 38-PI descriptor
-    ///    vector, not the WIDE `pi::` one) → `enforce_custom_proof_count_committed`.
+    ///    `verify_and_commit_proof_rotated` (which reconstructs a `ROT_PI_COUNT` (46)
+    ///    descriptor vector, not the WIDE `pi::` one) → `enforce_custom_proof_count_committed`.
     ///    Nothing in that chain calls this; the only call sites are this module's tests.
     ///    Do not cite it as a live check.
     /// 2. **Leg 1 cannot be byte-exact and is not a program-identity check.** The
@@ -793,25 +801,27 @@ impl TurnExecutor {
     /// THE ROTATED sovereign verify (cutover C1, decision #1's verify leg). The
     /// proof is a rotated R=24 `Ir2BatchProof` minted by
     /// `sdk::cipherclerk::execute_sovereign_turn_with_proof` over the cohort
-    /// descriptor for the turn's effect. We RECONSTRUCT the exact 38-PI vector the
-    /// prover bound and verify through `descriptor_ir2::verify_vm_descriptor2` — the
+    /// descriptor for the turn's effect. We RECONSTRUCT the exact `ROT_PI_COUNT` (46) PI
+    /// vector the prover bound and verify through `descriptor_ir2::verify_vm_descriptor2` — the
     /// multi-table batch verifier — retiring the weaker hand-AIR `EffectVmAir` leg.
     ///
-    /// PI reconstruction (all 38 must match the prover for Fiat–Shamir to agree):
-    ///   * PIs 0..33 (the v1 sub-trace prefix) + PI 37 (the caveat commit) are
-    ///     witness-INDEPENDENT — they are a function of `(initial_vm_state,
-    ///     vm_effects, caveat)` alone, so a re-run of `generate_rotated_effect_vm_trace`
-    ///     with PLACEHOLDER block witnesses reproduces them exactly;
+    /// PI reconstruction (all `ROT_PI_COUNT` (46) must match the prover for Fiat–Shamir to
+    /// agree):
+    ///   * PIs `[0..V1_PI_COUNT)` (`[0..42)`, the v1 sub-trace prefix) + PI V1_PI_COUNT+3
+    ///     (45, the caveat commit) are witness-INDEPENDENT — they are a function of
+    ///     `(initial_vm_state, vm_effects, caveat)` alone, so a re-run of
+    ///     `generate_rotated_effect_vm_trace` with PLACEHOLDER block witnesses reproduces
+    ///     them exactly;
     ///   * PI V1_PI_COUNT (42, rotated OLD commit) ← the stored sovereign v9 commitment felt;
-    ///   * PI 35 (rotated NEW commit) ← `turn.execution_proof_new_commitment` felt
-    ///     (the claimed post-state; the descriptor's `pi_binding` at col 261 ties it
+    ///   * PI V1_PI_COUNT+1 (43, rotated NEW commit) ← `turn.execution_proof_new_commitment`
+    ///     felt (the claimed post-state; the descriptor's `pi_binding` at col 261 ties it
     ///     to the trace's after-block `STATE_COMMIT`, so a forged claim is rejected);
     ///   * PI V1_PI_COUNT+2 (44, committed height) ← the cell's own committed height.
     ///
     /// The verifier does NOT reconstruct the producer's turn-context (`cells_root` /
     /// `iroot`): those are absorbed INTO the v9 commitment, which the proof binds and
     /// the verifier takes from trusted storage/claim. A tampered post-state commitment
-    /// makes PI 35 disagree with the trace's bound carrier ⇒ UNSAT (the anti-ghost
+    /// makes PI V1_PI_COUNT+1 (43) disagree with the trace's bound carrier ⇒ UNSAT (the anti-ghost
     /// tooth, exercised in `tests/src/sovereign_proof.rs`).
     pub(super) fn verify_and_commit_proof_rotated(
         &self,
@@ -1278,9 +1288,10 @@ impl TurnExecutor {
             caveat.dfa_rc = rc;
         }
 
-        // 6. Reconstruct the 38-PI vector. PLACEHOLDER block witnesses reproduce the
-        //    witness-INDEPENDENT PIs (0..33 + 37) exactly; the commit/height PIs (34/35/36)
-        //    are overridden from trusted storage/claim/cell below.
+        // 6. Reconstruct the `ROT_PI_COUNT` (46) PI vector. PLACEHOLDER block witnesses
+        //    reproduce the witness-INDEPENDENT PIs (`[0..V1_PI_COUNT)` = `[0..42)`, plus the
+        //    caveat commit at V1_PI_COUNT+3 = 45) exactly; the commit/height PIs
+        //    (V1_PI_COUNT..+3 = 42/43/44) are overridden from trusted storage/claim/cell below.
         let placeholder =
             RotatedBlockWitness::new(vec![BabyBear::ZERO; NUM_PRE_LIMBS], BabyBear::ZERO).map_err(
                 |e| TurnError::InvalidExecutionProof(format!("rotated placeholder witness: {e}")),

@@ -50,7 +50,7 @@ use dregg_turn::{
     SovereignCellWitness, Turn, TurnReceipt,
 };
 use dregg_types::FederationId;
-use dregg_verifier::{BilateralBundle, BilateralEntry, fabricate_witnessed_receipt};
+use dregg_verifier::{BilateralBundle, BilateralEntry, fabricate_pi_only_witnessed_receipt};
 
 // ---------------------------------------------------------------------------
 // Deterministic demo keypair derivation
@@ -1164,11 +1164,15 @@ fn cmd_make_introduce(
         consumed_capabilities: vec![],
     };
 
-    let intro_wr =
-        fabricate_witnessed_receipt(&turn, &introducer_cell, dummy_receipt(introducer_cell));
+    let intro_wr = fabricate_pi_only_witnessed_receipt(
+        &turn,
+        &introducer_cell,
+        dummy_receipt(introducer_cell),
+    );
     let recp_wr =
-        fabricate_witnessed_receipt(&turn, &recipient_cell, dummy_receipt(introducer_cell));
-    let tgt_wr = fabricate_witnessed_receipt(&turn, &target_cell, dummy_receipt(introducer_cell));
+        fabricate_pi_only_witnessed_receipt(&turn, &recipient_cell, dummy_receipt(introducer_cell));
+    let tgt_wr =
+        fabricate_pi_only_witnessed_receipt(&turn, &target_cell, dummy_receipt(introducer_cell));
 
     let bundle = BilateralBundle {
         turn: turn.clone(),
@@ -1214,7 +1218,7 @@ fn cmd_make_introduce(
             },
             BilateralEntry {
                 cell_id: recipient_cell,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &turn,
                     &recipient_cell,
                     dummy_receipt(introducer_cell),
@@ -1222,7 +1226,7 @@ fn cmd_make_introduce(
             },
             BilateralEntry {
                 cell_id: target_cell,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &turn,
                     &target_cell,
                     dummy_receipt(introducer_cell),
@@ -1345,8 +1349,9 @@ fn cmd_make_bilateral_bundle(
         consumed_capabilities: vec![],
     };
 
-    let alice_wr = fabricate_witnessed_receipt(&turn, &alice_cell, dummy_receipt(alice_cell));
-    let bob_wr = fabricate_witnessed_receipt(&turn, &bob_cell, dummy_receipt(alice_cell));
+    let alice_wr =
+        fabricate_pi_only_witnessed_receipt(&turn, &alice_cell, dummy_receipt(alice_cell));
+    let bob_wr = fabricate_pi_only_witnessed_receipt(&turn, &bob_cell, dummy_receipt(alice_cell));
 
     let bundle = BilateralBundle {
         turn: turn.clone(),
@@ -1381,7 +1386,7 @@ fn cmd_make_bilateral_bundle(
             },
             BilateralEntry {
                 cell_id: bob_cell,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &turn,
                     &bob_cell,
                     dummy_receipt(alice_cell),

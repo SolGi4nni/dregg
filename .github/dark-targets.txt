@@ -272,15 +272,21 @@ never-run fhegg-fhe test tfhe_wgpu_parity   # `tfhe-integer`, ditto.
 never-run fhegg-fhe test tfhe_wgpu_pbs_deployed_envelope   # `tfhe-integer`, ditto.
 never-run fhegg-fhe test tfhe_wgpu_pbs_extract_keyswitch   # `tfhe-integer`, ditto.
 #
-# ⚠ THE SEVEN `tfhe-*` ROWS ARE DOUBLE-DARK, and turning the feature on does NOT fix
-# them. Every one opens with `if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
-# eprintln!("skipped"); return; }` — the SELF-SKIPPING-TEST shape this repository has now
-# found in eight costumes in one day. So a lane that pays tfhe-rs's compile cost and does
-# not also set `DREGG_REQUIRE_WGPU=1` on a box with a real adapter buys a suite that
-# reports `ok` having asserted nothing. Their `ristretto_*_wgpu_required` siblings show
-# the correct shape: `#[ignore]` + a HARD `assert_eq!(env, Ok("1"))` + a refusal of a
-# software adapter, so an opted-in lane cannot hollowly pass and a GPU-less lane skips
-# EXPLICITLY. Fixing the polarity is the fhegg-fhe lane's, not a wiring change.
+# ⚠ THE SEVEN `tfhe-*` ROWS ARE STILL DARK (no lane enables `tfhe-integer`), but the
+# SELF-SKIPPING-TEST polarity IS FIXED — re-verified at HEAD 2026-08-05: the shape this
+# note used to describe, `if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
+# eprintln!("skipped"); return; }`, now occurs ZERO times across all seven files.
+# THREE of them (`tfhe_high_level_wgpu`, `tfhe_wgpu_ntt_crossover`,
+# `tfhe_wgpu_pbs_deployed_envelope`) took the `ristretto_*_wgpu_required` shape:
+# `#[ignore]` + a HARD `assert!(env::var_os("DREGG_REQUIRE_WGPU").is_some(), ...)`, so an
+# opted-in lane cannot hollowly pass and a GPU-less lane skips EXPLICITLY.
+# The other FOUR (`tfhe_wgpu_blind_rotation`, `_cmux`, `_parity`,
+# `_pbs_extract_keyswitch`) are NOT `#[ignore]`d: they assert bit-exactness against a CPU
+# oracle and select `TorusMacPolicy::Auto` unless `DREGG_REQUIRE_WGPU` is set, LABELLING a
+# `CpuFallback` rather than skipping. Read those four honestly: they are real parity
+# tests, but on a GPU-less box they compare CPU against tfhe-rs CPU and prove nothing
+# about a kernel. Only `DREGG_REQUIRE_WGPU=1` on a box with a real adapter makes them
+# device-bearing.
 
 # ── ENVIRONMENT (12): needs a seeded runner, an adapter, or a runtime CI does not have. ─
 # The right answer here is a seeded runner where one is affordable, and an HONEST,

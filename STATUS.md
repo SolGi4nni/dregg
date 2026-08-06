@@ -2,7 +2,8 @@
 
 This file is **ground truth, derived from code and from commands that actually run** —
 not from design narrative. The many `*.md` design/audit documents now under
-[`docs-old/`](docs-old/) are mid-development aspirational notes of *unknown current
+[`.docs-history-noclaude/docs-old/`](.docs-history-noclaude/docs-old/) are
+mid-development aspirational notes of *unknown current
 validity*; do not treat them as authoritative. When this file and a design doc
 disagree, the code wins, then this file, then nothing else.
 
@@ -112,14 +113,15 @@ Wiring an explicit, uniformly-honored mode selector is tracked, not done.
 
 ## Known gaps (pointers, not promises)
 
-Soundness/correctness debt is tracked in the task list and in `docs-old/SILVER-DEBT.md`
+Soundness/correctness debt is tracked in the task list and in
+`.docs-history-noclaude/docs-old/SILVER-DEBT.md`
 (archived; verify any specific claim against code before relying on it). Active items
 include cross-federation attested-root threshold handling, intent-fulfillment
 body-membership binding, and queue FIFO completeness.
 
 ## On the archived docs
 
-The `docs-old/` and `docs/` trees contain design rationale, audits, and aspirational
+The `.docs-history-noclaude/docs-old/` and `docs/` trees contain design rationale, audits, and aspirational
 plans accumulated across many development sessions and several different authors/models.
 They are kept for history (timestamps preserved) and can be genuinely useful as *design
 intent*, but they routinely describe things as finished that are partial, and miss

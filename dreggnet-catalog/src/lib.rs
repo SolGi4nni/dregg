@@ -46,12 +46,15 @@
 //! built and boot-resumed on first touch. A frontend routes [`is_rpg_key`] keys there and
 //! everything else — including `party` — to its catalog host.
 //!
-//! ## State (Phase A + B-for-Telegram of docs/BOT-SHARED-BACKEND-DESIGN.md)
+//! ## State (Phases A, B and C of docs/BOT-SHARED-BACKEND-DESIGN.md — all landed)
 //! The registrars are complete ports of the (byte-identical) web/telegram registrations, and the
 //! [`seated`] adapter is the complete port of `dreggnet-web/src/seated.rs` (the source of the four
 //! byte-peers). `dreggnet-telegram` builds its host through [`full_catalog_host`] and re-exports
-//! [`seated::SeatedTug`]; web now delegates too, while WeChat delegation and Discord's cutover onto
-//! `OfferingHost` are the design doc's remaining Phases B and C.
+//! [`seated::SeatedTug`]; web delegates too. ⚑ This note used to name WeChat delegation and
+//! Discord's `OfferingHost` cutover as the design doc's remaining Phases B and C — both have
+//! since landed: WeChat calls [`full_catalog_host`] (`dreggnet-wechat/src/host.rs`), and the
+//! Discord bot builds an `OfferingHost` via `register_player_surfaces_for`
+//! (`discord-bot/src/commands/rpg_world.rs`).
 
 use dreggnet_offerings::OfferingHost;
 use dreggnet_offerings::campaign::DescentCampaignOffering;

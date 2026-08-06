@@ -6,6 +6,15 @@ is from a full DSL/compiler approach and what the new Pickles-epoch tools (Witne
 KimchiPlacement, AirBuilder, the gate emitters) buy us. READ-ONLY structural map — no code
 changed. All citations are `path:line` into `metatheory/`.*
 
+> ⚑ **DENOMINATOR MOVED — re-measured 2026-08-05.** Every `N/76` figure below (including the
+> conclusion at §"So the count is 11 of 76 compiler-authored") was measured against a registry of
+> **76** descriptors. `byNameDescriptors` is now **91**, pinned by
+> `theorem byNameDescriptors_length : byNameDescriptors.length = 91 := rfl`
+> (`metatheory/EmitByName.lean:481`). Re-counted at HEAD, **26 of the 91** are compiled from a spec
+> (the RHS is `lowerAir …` / `tableRoutingDesc`, no `EffectVmDescriptor2` record literal); the other
+> 65 are hand-written `VmConstraint2` literals. The per-phase `/76` measurements below are correct
+> **as of their own dates** — read them as history, and take 26/91 as the current count.
+
 ---
 
 ## TL;DR verdict

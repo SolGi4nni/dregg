@@ -7,7 +7,16 @@ re-execution (a stranger re-runs your run and confirms it), NOT a STARK check. T
 systemd units + runbooks under deploy/games/ (dregg-web-games.service and the funnel variant that serves on hbox). The honest
 framing: the demo verifies by REPLAY (= "anyone re-runs your run and confirms it"); the STARK fold (private-strategy, portable
 proof) is the labeled Phase-3 UPGRADE. Deploy caveat (once, for the whole doc): nothing is deployed as a durable public product
-— the reproducible build is the P0, fg-goose.online is a dead domain, and the product domain is www.dregg.net.
+— the reproducible build is the P0.
+
+⚑ **DOMAIN FACTS RE-CHECKED 2026-08-05 — the sentence that used to end this paragraph was wrong on
+every clause.** It said "fg-goose.online is a dead domain, and the product domain is www.dregg.net."
+Today: `headscale.dreggnet.fg-goose.online` is **live** and is the tailnet control plane (it has its
+own block in `~/dev/dregg-infra/edge/anchor/Caddyfile`); `www.dregg.net` does **not** point at the
+edge box (it is CloudFront/Squarespace, the marketing site); `demo.dregg.net`, named below as "the
+planned app subdomain", is **NXDOMAIN**; and the two domains actually registered for the product,
+**`dregg.gg` and `dregg.tech`** (2026-08-02), appear nowhere in this doc. The edge serves fourteen
+names from one Caddyfile — check it, not this paragraph.
 
 ## RANKED PATH
 - PHASE 0 — THE STANDALONE WEB DEMO (no node/testnet/prover). BUILT: the `dreggnet-web-server` bin mounts

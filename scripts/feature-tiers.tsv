@@ -176,9 +176,7 @@ dregg-token	zkvm	T3	the proof-carrying token helpers
 dregg-turn	default	T1	default@.
 dregg-turn	threshold-sig	T1	default@.
 dregg-verifier	default	T1	default@.
-dregg-verifier	no-lean-link	T3	pulls the verifier crate's own `verifier` feature so the prover-free rotated VERIFY surface (rotated_replay) is present on the floor — the standalone-verifier-PD invariant
-dregg-verifier	prover	T1	default@.
-dregg-verifier	verifier	T1	default@.
+dregg-verifier	no-lean-link	T3	EMPTY TIER as of 2026-08-05: it selects no code. The prover-free rotated VERIFY surface (rotated_replay) is now unconditional and this crate links no prover at all, so Lean-freedom and prover-freedom are both STRUCTURAL. Kept only as the name `sel4/Makefile`'s verify-isolation gate builds under.
 dreggnet-catalog	default	T1	default@.
 dreggnet-catalog	private-bazaar-live	T3	the hosted journey for the private/proven Dark Bazaar to exact game consequence
 dreggnet-catalog	private-fhegg-game-consequence	T1	default@.

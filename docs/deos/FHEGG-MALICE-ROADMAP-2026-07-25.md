@@ -9,7 +9,14 @@ suite to **no fakes + robust to active malice** — and the honest line on what 
 
 **CAN reach no-fakes + malicious-secure-with-(identifiable)-abort NOW:** the **decryption path + its bindings**.
 The exact ZK decrypt-share certificate + Ed25519 authenticated combiner + `InvalidDecryptShareProof{party}`
-identifiable-abort **already RUN** in `threshold/quorum.rs` (t-of-n, verified on disk). So the fastest real
+identifiable-abort are **built and exercised IN TEST ONLY** in `threshold/quorum.rs` (t-of-n).
+⚠ CORRECTED 2026-08-05 — this line used to read "already RUN … verified on disk", which overstated it: the
+verification is guarded by `if let Some(verified_transcript) = &self.roster.verified_transcript` at
+`quorum.rs:2682`, and NO production caller populates that field. Every `new_verified` /
+`assemble_verified` / `finish_verified_keygen` call site sits below `#[cfg(test)]` (quorum.rs:4108); the two
+live entry points — `node/src/dark_clearing_service.rs:1140,1179` and
+`fhegg-fhe/src/bin/threshold_committee_party.rs:531,639` — use the UNVERIFIED constructors, so that branch
+never fires outside tests. So the fastest real
 win is migrating the dark pool onto that already-running t-of-n stack (Build 10 fork), which subsumes most of
 the n-of-n decrypt build AND adds dropout tolerance. This kills the top active-malice gap: the
 **wrong-secret / retarget attack** that today returns `Ok(attacker-chosen slots)` SILENTLY and

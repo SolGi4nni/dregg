@@ -238,8 +238,11 @@ unsafe extern "C" {
     /// is post-processed with a `Date` header (F1) and, on `HEAD`, a body strip (B1).
     /// The inner `drorbServe` is byte-identical to the deployed serve — the dense/poly
     /// family is untouched. Same `ByteArray -> ByteArray` ABI as `drorb_serve`; selected
-    /// on EVERY HTTP serve job when `DRORB_SPAN=19`. This is the serve the RFC
-    /// conformance probe (`conformance/rfc_conformance.py`) drives to 17/17.
+    /// on EVERY HTTP serve job when `DRORB_SPAN=19`. ⚑ This comment used to say this is
+    /// the serve the RFC conformance probe drives to 17/17 — stale. The probe
+    /// (`conformance/rfc_conformance.py`, launched by `conformance/rfc_launch.sh`) sets
+    /// no `DRORB_SPAN` and reaches 17/17 on the DEFAULT metered path
+    /// (`drorb_serve_pipeline_conformant`), not through this span.
     fn drorb_serve_conformant(input: *mut LeanObject) -> *mut LeanObject;
     /// `@[export drorb_serve_head_idx] serveHeadIdx : ByteArray -> ByteArray`
     /// (Datapath.ServeHeadIdx) — the INDEX-NATIVE-HEAD serve, THE DEPLOYED
@@ -1297,7 +1300,7 @@ fn serve_gateway_into(framed: &[u8], meter: Meter, out: &mut Vec<u8>) {
 
 /// THE DEPLOYED-DEFAULT metered seam crossing (RFC-conformant, DENSE): the ONE
 /// consolidated metered default. Crosses `drorb_serve_pipeline_conformant` — the
-/// proven `conformantServe` wrapper over the single flat 43-stage pipeline
+/// proven `conformantServe` wrapper over the single flat 53-stage pipeline
 /// (`Reactor.DeployPipeline`, definitionally the deployed onion), `/bulk` emitted
 /// DENSE (fully-stamped head + dense 1 MiB body, no per-byte `List` cons). Proven
 /// byte-identical to the pre-consolidation default for EVERY (peer, seq, input)

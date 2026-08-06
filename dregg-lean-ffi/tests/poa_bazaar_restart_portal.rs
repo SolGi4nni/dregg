@@ -9,11 +9,11 @@ use std::sync::{Arc, Barrier};
 use dregg_lean_ffi::poa_bazaar_restart_portal::DurableBazaarHeadStore as RegisteredDurableBazaarHeadStore;
 use portal::{
     BazaarCasOutcome, BazaarCasRequest, BazaarRestartError, BazaarStoreIdentity,
-    CanonicalStateBytes, CasFault, DurableBazaarHeadStore,
+    CanonicalEventBytes, CanonicalStateBytes, CasFault, DurableBazaarHeadStore,
 };
 
 const HEAD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.durable-head.v2";
-const JOURNAL_RECORD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.journal-record.v2";
+const JOURNAL_RECORD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.journal-record.v3";
 
 struct ScratchDir(PathBuf);
 
@@ -76,9 +76,23 @@ fn identity_bound_digest(domain: &str, identity: &[u8; 32], bytes: &[u8]) -> [u8
     *hasher.finalize().as_bytes()
 }
 
+fn journal_bound_digest(
+    domain: &str,
+    identity: &[u8; 32],
+    deployment_id: &[u8; 32],
+    bytes: &[u8],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(domain);
+    hasher.update(identity);
+    hasher.update(deployment_id);
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
 fn reseal_first_journal_sequence(mut bytes: Vec<u8>, sequence: u64) -> Vec<u8> {
-    let header_len = 8 + 2 + 32 + 32;
+    let header_len = 8 + 2 + 32 + 32 + 32;
     let identity: [u8; 32] = bytes[10..42].try_into().unwrap();
+    let deployment_id: [u8; 32] = bytes[42..74].try_into().unwrap();
     let record_len =
         u32::from_be_bytes(bytes[header_len..header_len + 4].try_into().unwrap()) as usize;
     let record_start = header_len + 4;
@@ -86,9 +100,10 @@ fn reseal_first_journal_sequence(mut bytes: Vec<u8>, sequence: u64) -> Vec<u8> {
     let sequence_start = record_start + 8 + 2;
     bytes[sequence_start..sequence_start + 8].copy_from_slice(&sequence.to_be_bytes());
     let checksum_start = record_end - 32;
-    let checksum = identity_bound_digest(
+    let checksum = journal_bound_digest(
         JOURNAL_RECORD_CHECKSUM_DOMAIN,
         &identity,
+        &deployment_id,
         &bytes[record_start..checksum_start],
     );
     bytes[checksum_start..record_end].copy_from_slice(&checksum);
@@ -185,6 +200,21 @@ fn legacy_unbound_durable_formats_refuse_explicitly() {
         ))
     ));
 
+    let state_only = ScratchDir::new("legacy-state-only-journal");
+    let state_only_store =
+        DurableBazaarHeadStore::open_bound(state_only.path(), BazaarStoreIdentity::test(0x53))
+            .unwrap();
+    write_private(
+        &state_only.path().join("bazaar-cas-v1.journal"),
+        b"POAJNL02",
+    );
+    assert!(matches!(
+        state_only_store.load(),
+        Err(BazaarRestartError::InvalidWire(
+            "legacy state-only journal lacks canonical command events"
+        ))
+    ));
+
     let head = ScratchDir::new("legacy-head");
     let head_store =
         DurableBazaarHeadStore::open_bound(head.path(), BazaarStoreIdentity::test(0x52)).unwrap();
@@ -270,6 +300,60 @@ fn exact_cas_has_one_genesis_and_refuses_forks_without_mutating_the_head() {
         }
     );
     assert_eq!(store.load().unwrap(), Some(first));
+}
+
+#[test]
+fn journaled_cas_retains_exact_command_payload_and_binds_deployment() {
+    let scratch = ScratchDir::new("journaled-command");
+    let store = DurableBazaarHeadStore::open_bound_deployment(
+        scratch.path(),
+        BazaarStoreIdentity::test(0x61),
+        [0x71; 32],
+    )
+    .unwrap();
+    let replacement = state(b"typed-replay-state-1");
+    let command = CanonicalEventBytes::new(b"lean-command-event-1".to_vec()).unwrap();
+    store
+        .compare_and_swap_journaled(
+            &BazaarCasRequest::new(None, replacement.clone()),
+            command.clone(),
+        )
+        .unwrap();
+
+    let records = store.load_authenticated_journal_records().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].sequence, 0);
+    assert_eq!(records[0].expected, None);
+    assert_eq!(records[0].replacement, replacement);
+    assert_eq!(records[0].command_event, command);
+
+    let wrong_deployment = DurableBazaarHeadStore::open_bound_deployment(
+        scratch.path(),
+        BazaarStoreIdentity::test(0x61),
+        [0x72; 32],
+    )
+    .unwrap();
+    assert!(matches!(
+        wrong_deployment.load(),
+        Err(BazaarRestartError::InvalidWire(
+            "journal deployment identity mismatch"
+        ))
+    ));
+}
+
+#[test]
+fn typed_replay_refuses_a_state_only_v3_record() {
+    let scratch = ScratchDir::new("state-only-v3-record");
+    let store = DurableBazaarHeadStore::open(scratch.path()).unwrap();
+    store
+        .compare_and_swap(&BazaarCasRequest::new(None, state(b"state-only")))
+        .unwrap();
+    assert!(matches!(
+        store.load_authenticated_journal_records(),
+        Err(BazaarRestartError::InvalidWire(
+            "journal record lacks canonical command event"
+        ))
+    ));
 }
 
 #[test]
@@ -773,7 +857,7 @@ fn replay_audits_every_record_and_refuses_reordered_history() {
 
     let journal_path = scratch.path().join("bazaar-cas-v1.journal");
     let journal = fs::read(&journal_path).unwrap();
-    let header_len = 8 + 2 + 32 + 32;
+    let header_len = 8 + 2 + 32 + 32 + 32;
     let first_len =
         u32::from_be_bytes(journal[header_len..header_len + 4].try_into().unwrap()) as usize;
     let first_end = header_len + 4 + first_len;

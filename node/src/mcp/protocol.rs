@@ -1153,9 +1153,13 @@ pub(super) fn handle_prompts_get(id: Value, params: Value) -> JsonRpcResponse {
                      proof of the transition).\n\
                      2. Read `dregg://blocklace` for the current attested height (finality \
                      context).\n\
-                     3. If `has_witness` is true, the standalone `dregg-verifier replay-chain` can \
-                     re-check the whole receipt chain end-to-end. Your action is not merely \
-                     logged — it is PROVEN."
+                     3. If `has_witness` is true, the standalone \
+                     `dregg-verifier rotated-replay-chain` can re-check the chain end-to-end: \
+                     every leg's IR-v2 batch proof against its committed cohort descriptor, the \
+                     chain's endpoints and adjacency against commitments YOU supply, and each \
+                     leg's PI against the receipt it attests. Your action is not merely logged, \
+                     it is PROVEN. (The old `replay-chain` subcommand named here is DELETED as \
+                     of 2026-08-05: it rejected every input it was ever given.)"
                 ),
             )
         }

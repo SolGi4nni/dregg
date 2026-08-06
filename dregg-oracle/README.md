@@ -34,7 +34,7 @@ A onto an authentic session for response B — the weld refuses it.
 
 ```sh
 # 1. PROVE — capture a real Coinbase BTC spot quote as a portable proof.
-dregg-oracle prove price --asset BTC-USD --out proof.json
+dregg-oracle prove --endpoint coinbase --asset BTC-USD --out proof.json
 
 # 2. SEND — proof.json is just a file. Email it, paste it, commit it. No key,
 #    no server, no live connection travels with it.
@@ -57,7 +57,7 @@ Run the whole thing end to end with [`./demo.sh`](./demo.sh).
 The GitHub commit oracle works the same way:
 
 ```sh
-dregg-oracle prove github --owner octocat --repo hello-world \
+dregg-oracle prove --endpoint github --repo octocat/hello-world \
     --sha 6dcb09b5b57875f334f61aebed695e2e4193db5e --out commit.json
 dregg-oracle verify commit.json
 #   → PASS  api.github.com  octocat/hello-world @ 6dcb09b…  by Monalisa Octocat
@@ -120,12 +120,20 @@ attests.
 - **The timestamp is the session time,** signed by the notary — the moment the TLS
   session happened, not a clock inside the response body.
 
-- **Live-host status.** The self-hosted notary + prover run the genuine MPC-TLS
-  2PC today; the default build exercises the full prove → portable → verify →
-  refuse-on-tamper pipeline over a self-hosted session. Pointing the same prover at
-  the public `api.coinbase.com` / `api.github.com` (a real internet TLS session
-  with a deployed, pinned notary) is the same machinery with the server swapped —
-  see the live path behind the `live` feature.
+- **Live-host status — what is real, and what is still local.** The *server* half
+  is fully live: `prove` opens a real TCP session to the public
+  `api.coinbase.com` / `api.github.com`, verified against the Mozilla roots with
+  the host pinned, and that path is UNCONDITIONAL (there is no `live` feature to
+  turn on — see "Build & run"). What is still local is the *notary*: it is a
+  genuinely separate party, reached over a socket, whose key the prover never
+  holds — but it is spawned on `127.0.0.1` by the same run, and on THIS CLI's
+  path it mints a **fresh ephemeral key every run**, which the prover must
+  publish alongside the proof as the out-of-band anchor. (A durable, re-pinnable
+  notary key exists in the library —
+  `run_coinbase_roundtrip_with_durable_notary` /
+  `ZKORACLE_NOTARY_KEY_PATH` — but the CLI does not call it.) A notary **deployed independently, at a public address, under a
+  long-lived published key** is not shipped yet; that is the remaining gap
+  between this and a stranger-verifiable proof.
 
 ---
 

@@ -26,16 +26,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const HEAD_MAGIC: &[u8; 8] = b"POAHEAD2";
-const JOURNAL_MAGIC: &[u8; 8] = b"POAJNL02";
-const JOURNAL_RECORD_MAGIC: &[u8; 8] = b"POAREC02";
+const JOURNAL_MAGIC: &[u8; 8] = b"POAJNL03";
+const JOURNAL_RECORD_MAGIC: &[u8; 8] = b"POAREC03";
 const LEGACY_HEAD_MAGIC: &[u8; 8] = b"POAHEAD1";
 const LEGACY_JOURNAL_MAGIC: &[u8; 8] = b"POAJNL01";
-const WIRE_VERSION: u16 = 2;
+const STATE_ONLY_JOURNAL_MAGIC: &[u8; 8] = b"POAJNL02";
+const HEAD_WIRE_VERSION: u16 = 2;
+const JOURNAL_WIRE_VERSION: u16 = 3;
 const HEAD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.durable-head.v2";
-const JOURNAL_HEADER_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.journal-header.v2";
-const JOURNAL_RECORD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.journal-record.v2";
-const JOURNAL_RECORD_DIGEST_DOMAIN: &str = "dregg.poa-bazaar.journal-chain.v2";
-const JOURNAL_GENESIS_DIGEST_DOMAIN: &str = "dregg.poa-bazaar.journal-genesis.v2";
+const JOURNAL_HEADER_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.journal-header.v3";
+const JOURNAL_RECORD_CHECKSUM_DOMAIN: &str = "dregg.poa-bazaar.journal-record.v3";
+const JOURNAL_RECORD_DIGEST_DOMAIN: &str = "dregg.poa-bazaar.journal-chain.v3";
+const JOURNAL_GENESIS_DIGEST_DOMAIN: &str = "dregg.poa-bazaar.journal-genesis.v3";
 const HEAD_FILE: &str = "bazaar-head-v1.bin";
 const JOURNAL_FILE: &str = "bazaar-cas-v1.journal";
 const LOCK_FILE: &str = "bazaar-head-v1.lock";
@@ -46,9 +48,10 @@ const IDENTITY_FORMAT: &str = "POA-BAZAAR-STORE-ID-1";
 /// A generous hard ceiling against hostile or corrupt allocation lengths.
 /// It is a wire bound, not a claim about the current semantic state size.
 pub const MAX_CANONICAL_STATE_BYTES: usize = 16 * 1024 * 1024;
-const JOURNAL_HEADER_BYTES: usize = 8 + 2 + 32 + 32;
+pub const MAX_CANONICAL_EVENT_BYTES: usize = 16 * 1024 * 1024;
+const JOURNAL_HEADER_BYTES: usize = 8 + 2 + 32 + 32 + 32;
 const MAX_JOURNAL_RECORD_BYTES: usize =
-    8 + 2 + 8 + 32 + 1 + 4 + 4 + MAX_CANONICAL_STATE_BYTES * 2 + 32;
+    8 + 2 + 8 + 32 + 1 + 4 + 4 + 4 + MAX_CANONICAL_STATE_BYTES * 2 + MAX_CANONICAL_EVENT_BYTES + 32;
 const MAX_JOURNAL_RECORDS: u64 = 1_000_000;
 
 /// Opaque bytes reserved for a complete Lean-emitted `StateKey` image.
@@ -76,6 +79,42 @@ impl CanonicalStateBytes {
 
     pub fn into_bytes(self) -> Vec<u8> {
         self.0
+    }
+}
+
+/// Exact canonical command-event payload emitted and decoded by Lean.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CanonicalEventBytes(Vec<u8>);
+
+impl CanonicalEventBytes {
+    pub(crate) fn new_checked(bytes: Vec<u8>) -> Result<Self, BazaarRestartError> {
+        if bytes.is_empty() {
+            return Err(BazaarRestartError::InvalidWire("empty canonical event"));
+        }
+        if bytes.len() > MAX_CANONICAL_EVENT_BYTES {
+            return Err(BazaarRestartError::InvalidWire(
+                "canonical event exceeds maximum",
+            ));
+        }
+        Ok(Self(bytes))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new(bytes: Vec<u8>) -> Result<Self, BazaarRestartError> {
+        Self::new_checked(bytes)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CanonicalEventBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CanonicalEventBytes")
+            .field("len", &self.0.len())
+            .field("digest", &blake3::hash(&self.0).to_hex().as_str())
+            .finish()
     }
 }
 
@@ -140,6 +179,16 @@ struct JournalEvent {
     predecessor_digest: [u8; 32],
     expected: Option<CanonicalStateBytes>,
     replacement: CanonicalStateBytes,
+    command_event: Option<CanonicalEventBytes>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AuthenticatedJournalRecord {
+    pub sequence: u64,
+    pub predecessor_digest: [u8; 32],
+    pub expected: Option<CanonicalStateBytes>,
+    pub replacement: CanonicalStateBytes,
+    pub command_event: CanonicalEventBytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,10 +199,15 @@ struct JournalReplay {
 }
 
 impl JournalReplay {
-    fn empty(identity: &[u8; 32]) -> Self {
+    fn empty(identity: &[u8; 32], deployment_id: &[u8; 32]) -> Self {
         Self {
             record_count: 0,
-            tail_digest: identity_bound_digest(JOURNAL_GENESIS_DIGEST_DOMAIN, identity, &[]),
+            tail_digest: journal_bound_digest(
+                JOURNAL_GENESIS_DIGEST_DOMAIN,
+                identity,
+                deployment_id,
+                &[],
+            ),
             tail: None,
         }
     }
@@ -202,6 +256,23 @@ fn hex_nibble(byte: u8) -> u8 {
         b'a'..=b'f' => byte - b'a' + 10,
         _ => unreachable!("store identity was validated before decoding"),
     }
+}
+
+pub(crate) fn parse_hex_digest(value: &str, label: &str) -> Result<[u8; 32], BazaarRestartError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(BazaarRestartError::Configuration(format!(
+            "{label} must be 64 lowercase hexadecimal digits"
+        )));
+    }
+    let mut digest = [0u8; 32];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        digest[index] = (hex_nibble(chunk[0]) << 4) | hex_nibble(chunk[1]);
+    }
+    Ok(digest)
 }
 
 const UNBOUND_STORE_IDENTITY: [u8; 32] = [0; 32];
@@ -269,18 +340,20 @@ pub struct DurableBazaarHeadStore {
     root_dir: Arc<File>,
     owner_uid: u32,
     identity: Option<BazaarStoreIdentity>,
+    deployment_id: [u8; 32],
 }
 
 impl DurableBazaarHeadStore {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, BazaarRestartError> {
         let owner_uid = platform_effective_uid()?;
-        Self::open_inner(root.as_ref(), owner_uid, None)
+        Self::open_inner(root.as_ref(), owner_uid, None, [0; 32])
     }
 
     fn open_inner(
         root: &Path,
         owner_uid: u32,
         identity: Option<BazaarStoreIdentity>,
+        deployment_id: [u8; 32],
     ) -> Result<Self, BazaarRestartError> {
         if !root.is_absolute() {
             return Err(BazaarRestartError::UnsafePath(
@@ -293,6 +366,7 @@ impl DurableBazaarHeadStore {
             root_dir: Arc::new(root_dir),
             owner_uid,
             identity,
+            deployment_id,
         };
         if store.identity.is_some() {
             store.verify_or_create_identity()?;
@@ -305,7 +379,16 @@ impl DurableBazaarHeadStore {
         identity: BazaarStoreIdentity,
     ) -> Result<Self, BazaarRestartError> {
         let owner_uid = platform_effective_uid()?;
-        Self::open_inner(root.as_ref(), owner_uid, Some(identity))
+        Self::open_inner(root.as_ref(), owner_uid, Some(identity), [0; 32])
+    }
+
+    pub(crate) fn open_bound_deployment(
+        root: impl AsRef<Path>,
+        identity: BazaarStoreIdentity,
+        deployment_id: [u8; 32],
+    ) -> Result<Self, BazaarRestartError> {
+        let owner_uid = platform_effective_uid()?;
+        Self::open_inner(root.as_ref(), owner_uid, Some(identity), deployment_id)
     }
 
     #[cfg(test)]
@@ -313,7 +396,7 @@ impl DurableBazaarHeadStore {
         root: impl AsRef<Path>,
         owner_uid: u32,
     ) -> Result<Self, BazaarRestartError> {
-        Self::open_inner(root.as_ref(), owner_uid, None)
+        Self::open_inner(root.as_ref(), owner_uid, None, [0; 32])
     }
 
     pub fn load(&self) -> Result<Option<CanonicalStateBytes>, BazaarRestartError> {
@@ -526,12 +609,39 @@ impl DurableBazaarHeadStore {
         &self,
         request: &BazaarCasRequest,
     ) -> Result<BazaarCasOutcome, BazaarRestartError> {
-        self.compare_and_swap_inner(request, None)
+        self.compare_and_swap_inner(request, None, None)
+    }
+
+    pub(crate) fn compare_and_swap_journaled(
+        &self,
+        request: &BazaarCasRequest,
+        command_event: CanonicalEventBytes,
+    ) -> Result<BazaarCasOutcome, BazaarRestartError> {
+        self.compare_and_swap_inner(request, Some(command_event), None)
+    }
+
+    pub(crate) fn require_replay_context(
+        &self,
+        store_identity: &[u8; 32],
+        deployment_id: &[u8; 32],
+    ) -> Result<(), BazaarRestartError> {
+        if self.format_identity() != store_identity {
+            return Err(BazaarRestartError::InvalidWire(
+                "command event store identity mismatch",
+            ));
+        }
+        if &self.deployment_id != deployment_id {
+            return Err(BazaarRestartError::InvalidWire(
+                "command event deployment identity mismatch",
+            ));
+        }
+        Ok(())
     }
 
     fn compare_and_swap_inner(
         &self,
         request: &BazaarCasRequest,
+        command_event: Option<CanonicalEventBytes>,
         fault: Option<CasFault>,
     ) -> Result<BazaarCasOutcome, BazaarRestartError> {
         let mut lock = WriterLock::acquire(self)?;
@@ -552,6 +662,7 @@ impl DurableBazaarHeadStore {
             predecessor_digest: replay.tail_digest,
             expected: request.expected.clone(),
             replacement: request.replacement.clone(),
+            command_event,
         };
         append_journal_event(self, &event, fault)?;
 
@@ -572,7 +683,7 @@ impl DurableBazaarHeadStore {
         request: &BazaarCasRequest,
         fault: CasFault,
     ) -> Result<BazaarCasOutcome, BazaarRestartError> {
-        self.compare_and_swap_inner(request, Some(fault))
+        self.compare_and_swap_inner(request, None, Some(fault))
     }
 
     /// Test seam for the descriptor/pathname stability check. It deliberately
@@ -676,22 +787,34 @@ impl Drop for WriterLock {
     }
 }
 
-fn encode_journal_header(identity: &[u8; 32]) -> Vec<u8> {
+fn encode_journal_header(identity: &[u8; 32], deployment_id: &[u8; 32]) -> Vec<u8> {
     let mut header = Vec::with_capacity(JOURNAL_HEADER_BYTES);
     header.extend_from_slice(JOURNAL_MAGIC);
-    header.extend_from_slice(&WIRE_VERSION.to_be_bytes());
+    header.extend_from_slice(&JOURNAL_WIRE_VERSION.to_be_bytes());
     header.extend_from_slice(identity);
-    append_checksum(&mut header, JOURNAL_HEADER_CHECKSUM_DOMAIN, identity);
+    header.extend_from_slice(deployment_id);
+    append_journal_checksum(
+        &mut header,
+        JOURNAL_HEADER_CHECKSUM_DOMAIN,
+        identity,
+        deployment_id,
+    );
     header
 }
 
 fn decode_journal_header(
     bytes: &[u8],
     expected_identity: &[u8; 32],
+    expected_deployment_id: &[u8; 32],
 ) -> Result<(), BazaarRestartError> {
     if bytes.starts_with(LEGACY_JOURNAL_MAGIC) {
         return Err(BazaarRestartError::InvalidWire(
             "legacy journal format lacks embedded store identity",
+        ));
+    }
+    if bytes.starts_with(STATE_ONLY_JOURNAL_MAGIC) {
+        return Err(BazaarRestartError::InvalidWire(
+            "legacy state-only journal lacks canonical command events",
         ));
     }
     if bytes.len() != JOURNAL_HEADER_BYTES {
@@ -704,7 +827,7 @@ fn decode_journal_header(
         bytes[8..10]
             .try_into()
             .map_err(|_| BazaarRestartError::InvalidWire("journal version width"))?,
-    ) != WIRE_VERSION
+    ) != JOURNAL_WIRE_VERSION
     {
         return Err(BazaarRestartError::InvalidWire("journal version"));
     }
@@ -713,45 +836,78 @@ fn decode_journal_header(
             "journal store identity mismatch",
         ));
     }
-    checked_body(bytes, JOURNAL_HEADER_CHECKSUM_DOMAIN, expected_identity)?;
+    if bytes[42..74] != expected_deployment_id[..] {
+        return Err(BazaarRestartError::InvalidWire(
+            "journal deployment identity mismatch",
+        ));
+    }
+    checked_journal_body(
+        bytes,
+        JOURNAL_HEADER_CHECKSUM_DOMAIN,
+        expected_identity,
+        expected_deployment_id,
+    )?;
     Ok(())
 }
 
-fn encode_journal_event(event: &JournalEvent, identity: &[u8; 32]) -> Vec<u8> {
+fn encode_journal_event(
+    event: &JournalEvent,
+    identity: &[u8; 32],
+    deployment_id: &[u8; 32],
+) -> Vec<u8> {
     let expected_len = event.expected.as_ref().map_or(0, |value| value.0.len());
+    let event_len = event
+        .command_event
+        .as_ref()
+        .map_or(0, |value| value.0.len());
     let mut record = Vec::with_capacity(
-        8 + 2 + 8 + 32 + 1 + 4 + 4 + expected_len + event.replacement.0.len() + 32,
+        8 + 2 + 8 + 32 + 1 + 4 + 4 + 4 + expected_len + event.replacement.0.len() + event_len + 32,
     );
     record.extend_from_slice(JOURNAL_RECORD_MAGIC);
-    record.extend_from_slice(&WIRE_VERSION.to_be_bytes());
+    record.extend_from_slice(&JOURNAL_WIRE_VERSION.to_be_bytes());
     record.extend_from_slice(&event.sequence.to_be_bytes());
     record.extend_from_slice(&event.predecessor_digest);
     record.push(u8::from(event.expected.is_some()));
     record.extend_from_slice(&(expected_len as u32).to_be_bytes());
     record.extend_from_slice(&(event.replacement.0.len() as u32).to_be_bytes());
+    record.extend_from_slice(&(event_len as u32).to_be_bytes());
     if let Some(expected) = &event.expected {
         record.extend_from_slice(&expected.0);
     }
     record.extend_from_slice(&event.replacement.0);
-    append_checksum(&mut record, JOURNAL_RECORD_CHECKSUM_DOMAIN, identity);
+    if let Some(command_event) = &event.command_event {
+        record.extend_from_slice(&command_event.0);
+    }
+    append_journal_checksum(
+        &mut record,
+        JOURNAL_RECORD_CHECKSUM_DOMAIN,
+        identity,
+        deployment_id,
+    );
     record
 }
 
 fn decode_journal_event(
     bytes: &[u8],
     identity: &[u8; 32],
+    deployment_id: &[u8; 32],
 ) -> Result<JournalEvent, BazaarRestartError> {
     if bytes.len() > MAX_JOURNAL_RECORD_BYTES {
         return Err(BazaarRestartError::InvalidWire(
             "journal record exceeds maximum",
         ));
     }
-    let body = checked_body(bytes, JOURNAL_RECORD_CHECKSUM_DOMAIN, identity)?;
+    let body = checked_journal_body(
+        bytes,
+        JOURNAL_RECORD_CHECKSUM_DOMAIN,
+        identity,
+        deployment_id,
+    )?;
     let mut cursor = 0usize;
     if take::<8>(body, &mut cursor)? != *JOURNAL_RECORD_MAGIC {
         return Err(BazaarRestartError::InvalidWire("journal record magic"));
     }
-    if u16::from_be_bytes(take::<2>(body, &mut cursor)?) != WIRE_VERSION {
+    if u16::from_be_bytes(take::<2>(body, &mut cursor)?) != JOURNAL_WIRE_VERSION {
         return Err(BazaarRestartError::InvalidWire("journal record version"));
     }
     let sequence = u64::from_be_bytes(take::<8>(body, &mut cursor)?);
@@ -763,6 +919,7 @@ fn decode_journal_event(
     };
     let expected_len = decode_len(body, &mut cursor)?;
     let replacement_len = decode_len(body, &mut cursor)?;
+    let event_len = decode_len(body, &mut cursor)?;
     if expected_present != (expected_len != 0) {
         return Err(BazaarRestartError::InvalidWire(
             "journal expected tag/length mismatch",
@@ -772,6 +929,11 @@ fn decode_journal_event(
         validate_state_len(expected_len)?;
     }
     validate_state_len(replacement_len)?;
+    if event_len > MAX_CANONICAL_EVENT_BYTES {
+        return Err(BazaarRestartError::InvalidWire(
+            "canonical event exceeds maximum",
+        ));
+    }
     let expected = if expected_present {
         Some(CanonicalStateBytes(take_vec(
             body,
@@ -782,6 +944,11 @@ fn decode_journal_event(
         None
     };
     let replacement = CanonicalStateBytes(take_vec(body, &mut cursor, replacement_len)?);
+    let command_event = if event_len == 0 {
+        None
+    } else {
+        Some(CanonicalEventBytes(take_vec(body, &mut cursor, event_len)?))
+    };
     if cursor != body.len() {
         return Err(BazaarRestartError::InvalidWire(
             "journal record trailing bytes",
@@ -792,15 +959,21 @@ fn decode_journal_event(
         predecessor_digest,
         expected,
         replacement,
+        command_event,
     })
 }
 
-fn journal_record_digest(record: &[u8], identity: &[u8; 32]) -> [u8; 32] {
-    identity_bound_digest(JOURNAL_RECORD_DIGEST_DOMAIN, identity, record)
+fn journal_record_digest(record: &[u8], identity: &[u8; 32], deployment_id: &[u8; 32]) -> [u8; 32] {
+    journal_bound_digest(
+        JOURNAL_RECORD_DIGEST_DOMAIN,
+        identity,
+        deployment_id,
+        record,
+    )
 }
 
 fn replay_journal(store: &DurableBazaarHeadStore) -> Result<JournalReplay, BazaarRestartError> {
-    replay_journal_with_validator(store, &mut |_| Ok(true))
+    replay_journal_core(store, &mut |_| Ok(true), &mut |_| Ok(()))
 }
 
 fn replay_journal_with_validator<F>(
@@ -809,6 +982,18 @@ fn replay_journal_with_validator<F>(
 ) -> Result<JournalReplay, BazaarRestartError>
 where
     F: FnMut(&[u8]) -> Result<bool, BazaarRestartError>,
+{
+    replay_journal_core(store, validate_canonical, &mut |_| Ok(()))
+}
+
+fn replay_journal_core<F, V>(
+    store: &DurableBazaarHeadStore,
+    validate_canonical: &mut F,
+    visit: &mut V,
+) -> Result<JournalReplay, BazaarRestartError>
+where
+    F: FnMut(&[u8]) -> Result<bool, BazaarRestartError>,
+    V: FnMut(&JournalEvent) -> Result<(), BazaarRestartError>,
 {
     let file = match secure_open_regular_at(
         &store.root_dir,
@@ -819,7 +1004,10 @@ where
     ) {
         Ok(file) => file,
         Err(BazaarRestartError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(JournalReplay::empty(store.format_identity()));
+            return Ok(JournalReplay::empty(
+                store.format_identity(),
+                &store.deployment_id,
+            ));
         }
         Err(error) => return Err(error),
     };
@@ -833,12 +1021,17 @@ where
             "legacy journal format lacks embedded store identity",
         ));
     }
+    if header[..8] == *STATE_ONLY_JOURNAL_MAGIC {
+        return Err(BazaarRestartError::InvalidWire(
+            "legacy state-only journal lacks canonical command events",
+        ));
+    }
     reader
         .read_exact(&mut header[8..])
         .map_err(|_| BazaarRestartError::InvalidWire("truncated journal header"))?;
-    decode_journal_header(&header, store.format_identity())?;
+    decode_journal_header(&header, store.format_identity(), &store.deployment_id)?;
 
-    let mut replay = JournalReplay::empty(store.format_identity());
+    let mut replay = JournalReplay::empty(store.format_identity(), &store.deployment_id);
     loop {
         let mut first = [0u8; 1];
         match reader.read(&mut first) {
@@ -867,7 +1060,7 @@ where
         reader
             .read_exact(&mut record)
             .map_err(|_| BazaarRestartError::InvalidWire("truncated journal record"))?;
-        let event = decode_journal_event(&record, store.format_identity())?;
+        let event = decode_journal_event(&record, store.format_identity(), &store.deployment_id)?;
         if event.sequence != replay.record_count {
             return Err(BazaarRestartError::InvalidWire(
                 "journal sequence is not contiguous",
@@ -888,13 +1081,43 @@ where
                 "journal replacement is not a canonical Lean StateKey",
             ));
         }
+        visit(&event)?;
         replay.record_count += 1;
-        replay.tail_digest = journal_record_digest(&record, store.format_identity());
+        replay.tail_digest =
+            journal_record_digest(&record, store.format_identity(), &store.deployment_id);
         replay.tail = Some(event.replacement);
     }
     let file = reader.into_inner();
     verify_name_still_same(&store.root_dir, JOURNAL_FILE, &file, store.owner_uid)?;
     Ok(replay)
+}
+
+impl DurableBazaarHeadStore {
+    pub(crate) fn load_authenticated_journal_records(
+        &self,
+    ) -> Result<Vec<AuthenticatedJournalRecord>, BazaarRestartError> {
+        self.verify_root_path_still_same()?;
+        self.verify_identity()?;
+        let mut records = Vec::new();
+        replay_journal_core(self, &mut |_| Ok(true), &mut |event| {
+            let command_event =
+                event
+                    .command_event
+                    .clone()
+                    .ok_or(BazaarRestartError::InvalidWire(
+                        "journal record lacks canonical command event",
+                    ))?;
+            records.push(AuthenticatedJournalRecord {
+                sequence: event.sequence,
+                predecessor_digest: event.predecessor_digest,
+                expected: event.expected.clone(),
+                replacement: event.replacement.clone(),
+                command_event,
+            });
+            Ok(())
+        })?;
+        Ok(records)
+    }
 }
 
 fn append_journal_event(
@@ -912,9 +1135,12 @@ fn append_journal_event(
             Err(error) => return Err(error),
         };
     if new_file {
-        file.write_all(&encode_journal_header(store.format_identity()))?;
+        file.write_all(&encode_journal_header(
+            store.format_identity(),
+            &store.deployment_id,
+        ))?;
     }
-    let record = encode_journal_event(event, store.format_identity());
+    let record = encode_journal_event(event, store.format_identity(), &store.deployment_id);
     let record_len = u32::try_from(record.len())
         .map_err(|_| BazaarRestartError::InvalidWire("journal record length overflow"))?;
     file.write_all(&record_len.to_be_bytes())?;
@@ -951,7 +1177,7 @@ fn sync_journal(store: &DurableBazaarHeadStore) -> Result<(), BazaarRestartError
 fn encode_head(state: &CanonicalStateBytes, identity: &[u8; 32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + 2 + 32 + 4 + state.0.len() + 32);
     out.extend_from_slice(HEAD_MAGIC);
-    out.extend_from_slice(&WIRE_VERSION.to_be_bytes());
+    out.extend_from_slice(&HEAD_WIRE_VERSION.to_be_bytes());
     out.extend_from_slice(identity);
     out.extend_from_slice(&(state.0.len() as u32).to_be_bytes());
     out.extend_from_slice(&state.0);
@@ -978,7 +1204,7 @@ fn decode_head(
         bytes[8..10]
             .try_into()
             .map_err(|_| BazaarRestartError::InvalidWire("head version width"))?,
-    ) != WIRE_VERSION
+    ) != HEAD_WIRE_VERSION
     {
         return Err(BazaarRestartError::InvalidWire("head version"));
     }
@@ -992,7 +1218,7 @@ fn decode_head(
     if take::<8>(body, &mut cursor)? != *HEAD_MAGIC {
         return Err(BazaarRestartError::InvalidWire("head magic"));
     }
-    if u16::from_be_bytes(take::<2>(body, &mut cursor)?) != WIRE_VERSION {
+    if u16::from_be_bytes(take::<2>(body, &mut cursor)?) != HEAD_WIRE_VERSION {
         return Err(BazaarRestartError::InvalidWire("head version"));
     }
     if take::<32>(body, &mut cursor)? != *expected_identity {
@@ -1028,8 +1254,31 @@ fn identity_bound_digest(domain: &str, identity: &[u8; 32], bytes: &[u8]) -> [u8
     *hasher.finalize().as_bytes()
 }
 
+fn journal_bound_digest(
+    domain: &str,
+    identity: &[u8; 32],
+    deployment_id: &[u8; 32],
+    bytes: &[u8],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(domain);
+    hasher.update(identity);
+    hasher.update(deployment_id);
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
 fn append_checksum(bytes: &mut Vec<u8>, domain: &str, identity: &[u8; 32]) {
     let digest = identity_bound_digest(domain, identity, bytes);
+    bytes.extend_from_slice(&digest);
+}
+
+fn append_journal_checksum(
+    bytes: &mut Vec<u8>,
+    domain: &str,
+    identity: &[u8; 32],
+    deployment_id: &[u8; 32],
+) {
+    let digest = journal_bound_digest(domain, identity, deployment_id, bytes);
     bytes.extend_from_slice(&digest);
 }
 
@@ -1043,6 +1292,22 @@ fn checked_body<'a>(
     }
     let (body, checksum) = bytes.split_at(bytes.len() - 32);
     if identity_bound_digest(domain, identity, body).as_slice() != checksum {
+        return Err(BazaarRestartError::InvalidWire("checksum"));
+    }
+    Ok(body)
+}
+
+fn checked_journal_body<'a>(
+    bytes: &'a [u8],
+    domain: &str,
+    identity: &[u8; 32],
+    deployment_id: &[u8; 32],
+) -> Result<&'a [u8], BazaarRestartError> {
+    if bytes.len() < 32 {
+        return Err(BazaarRestartError::InvalidWire("truncated checksum"));
+    }
+    let (body, checksum) = bytes.split_at(bytes.len() - 32);
+    if journal_bound_digest(domain, identity, deployment_id, body).as_slice() != checksum {
         return Err(BazaarRestartError::InvalidWire("checksum"));
     }
     Ok(body)
@@ -1566,10 +1831,12 @@ fn secure_try_lock_exclusive(file: &File) -> Result<(), BazaarRestartError> {
 /// redirect later CAS calls across deployments.
 pub const BAZAAR_STORE_DIR_ENV: &str = "DREGG_POA_BAZAAR_STORE_DIR";
 pub const BAZAAR_STORE_ID_ENV: &str = "DREGG_POA_BAZAAR_STORE_ID";
+pub const BAZAAR_DEPLOYMENT_ID_ENV: &str = "DREGG_POA_BAZAAR_DEPLOYMENT_ID";
 
 struct BazaarRuntimeConfig {
     root: PathBuf,
     identity: BazaarStoreIdentity,
+    deployment_id: [u8; 32],
 }
 
 fn configured_runtime() -> Result<&'static BazaarRuntimeConfig, BazaarRestartError> {
@@ -1588,9 +1855,14 @@ fn configured_runtime() -> Result<&'static BazaarRuntimeConfig, BazaarRestartErr
                 .map_err(|_| format!("{BAZAAR_STORE_ID_ENV} is not set"))?;
             let identity =
                 BazaarStoreIdentity::parse(identity).map_err(|error| error.to_string())?;
+            let deployment_id = std::env::var(BAZAAR_DEPLOYMENT_ID_ENV)
+                .map_err(|_| format!("{BAZAAR_DEPLOYMENT_ID_ENV} is not set"))?;
+            let deployment_id = parse_hex_digest(&deployment_id, "Bazaar deployment identity")
+                .map_err(|error| error.to_string())?;
             Ok(BazaarRuntimeConfig {
                 root: path,
                 identity,
+                deployment_id,
             })
         })
         .as_ref()
@@ -1599,7 +1871,11 @@ fn configured_runtime() -> Result<&'static BazaarRuntimeConfig, BazaarRestartErr
 
 pub(crate) fn configured_runtime_store() -> Result<DurableBazaarHeadStore, BazaarRestartError> {
     let config = configured_runtime()?;
-    DurableBazaarHeadStore::open_bound(&config.root, config.identity.clone())
+    DurableBazaarHeadStore::open_bound_deployment(
+        &config.root,
+        config.identity.clone(),
+        config.deployment_id,
+    )
 }
 
 pub(crate) fn load_configured_canonical_head(

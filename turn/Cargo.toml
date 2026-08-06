@@ -19,10 +19,42 @@ dregg-circuit = { path = "../circuit" }
 # projection, `mint_transfer_proven_receipt`) now lives in `dregg-turn-prover`,
 # which depends on THIS crate — never the reverse. turn's executor VERIFY
 # reconstructs PIs through the `*_wide` generators, which are verify-level in
-# `dregg-circuit`, so core turn is recursion-free by construction (the seL4
-# verifier-PD floor and the wasm/zkvm card), not by a feature that happened to be
-# off. Adding this dep back would silently re-open the cfg-brittleness class
-# `docs/reference/TURN-PROVER-CRATE-EXTRACTION-DESIGN.md` exists to close.
+# `dregg-circuit`, so core turn is recursion-free by construction, not by a
+# feature that happened to be off. Adding this dep back would silently re-open the
+# cfg-brittleness class `docs/reference/TURN-PROVER-CRATE-EXTRACTION-DESIGN.md`
+# exists to close — which IS the real reason, and is now the only one stated.
+#
+# ⚑ THIS COMMENT USED TO NAME TWO OTHER REASONS. Both were checked at source on
+# 2026-08-05 and both were spent; they are struck rather than softened, because a
+# justification nobody can refute is how a boundary outlives its purpose.
+#   * "the seL4 verifier-PD floor" — the seL4 verifier PDs build NO dregg crate.
+#     `sel4/dregg-pd/verifier/Cargo.toml`'s whole `[dependencies]` is
+#     `sel4-microkit`; `sel4/dregg-pd/verifier-stark/` carries a VENDORED COPY of
+#     `circuit/src/{field,stark}.rs` rather than a path dep. The one scaffold that
+#     names a dregg crate (`sel4/verifier-pd` → `dregg-verifier`) is marked
+#     "SCAFFOLD … not built here" — and `dregg-verifier` pulls `dregg-turn-prover`
+#     UNCONDITIONALLY (`verifier/Cargo.toml`), i.e. the recursion tower is already
+#     inside the crate that floor would link.
+#   * "the wasm/zkvm card" — `wasm/Cargo.toml` already declares BOTH
+#     `dregg-circuit-prove` and `dregg-turn-prover` as normal deps, deliberately
+#     (the light-client-in-a-tab verifies the recursive IVC aggregate), and
+#     `circuit-prove` compiles for wasm32. The real zkvm guest
+#     (`circuit/sp1-guest/`) does not depend on `dregg-turn` at all.
+# What remains, and is enough: cfg-brittleness (above) plus dependency WEIGHT for
+# the ~50 crates that inherit turn. Neither argues against a consumer that WANTS
+# verification taking an explicit edge — which is the design: `dregg-node` depends
+# on `dregg-recursion-verify` (a crate that unconditionally verifies) and injects
+# a `MinaChainRootBackend`; turn REFUSES the effect when nothing is injected.
+#
+# ⚠ AND NOTHING ENFORCED THIS UNTIL 2026-08-05. There is no `deny.toml` in the
+# repo, no `[bans]`, no `cargo tree`/`cargo metadata` gate naming these crates,
+# and no step of `scripts/local-gates.sh` touching it — the extraction design
+# named the check as its own acceptance criterion (§5 PR1) and it was never
+# written. It is `tests/tests/recursion_verify_closure.rs` now. Note what that
+# gate does and does not say: `p3-circuit` is ALREADY in this crate's normal graph
+# (turn → dregg-circuit → p3-poseidon2-circuit-air → p3-circuit), so
+# "recursion-free" means exactly NO `p3-recursion`, NO `p3-circuit-prover`, NO
+# `dregg-circuit-prove`.
 dregg-commit = { path = "../commit" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-token = { path = "../token" }

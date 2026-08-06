@@ -46,23 +46,35 @@ teeth — teeth handle the simple state-shape + validity; the Custom AIR proves 
 7. The Offering + frontends: the `open`/`actions`/`advance`/`verify`/`render`/`price` shape every
    dreggnet frontend (web / Discord / Telegram / WeChat) drives.
 
-## THE FOLD — WIRED IN-TREE, ITS ACCEPTANCE GATE NOT YET RUN
+## THE FOLD — WIRED IN-TREE, AND ITS ACCEPTANCE GATE HAS NOW RUN
 
 ⚑ 2026-07-25 correction. This section used to cite a `prove_fold.rs` under `dregg-automatafl/tests/`
 for a green D1 leaf → fold → `verify_history` ACCEPTS. That test was deleted with the hand-written Rust
-AIR it drove, and the two-leg descriptor path that replaced it does not carry the same green.
+AIR it drove, and the two-leg descriptor path that replaced it did not yet carry the same green.
 
-What is true now: `dreggnet-game-board/tests/two_leg_board_window.rs` chains Leg R
-(`automataflResolveDescN 11`) and Leg A (`automataflStepDescN 11`) and states its own three tiers —
-the PI level (windows carry the right values, a forged mid breaks the seam) and the constraint level
-(`dregg-circuit-prove::board_window_seam_tests`, a broken equality is a `connect` conflict) RUN
-GREEN; the deployed-prover arm, `the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position`,
-is `#[ignore]`d at tens of minutes and **has not been run**. Same shape in
-`dreggnet-game-board/tests/multi_round_fold.rs` (the Leg C conflict braid) and
-`dreggnet-prove-service/tests/match_fold.rs` (fast arm green, fold arm `--ignored`). So the seam is
-wired and its mechanism bites; a light client accepting a real automatafl match is not a measured
-result. The same fold carries multiway-tug's membership-proven plays
-(`dregg-multiway-tug/src/fold.rs`): a whole private match becomes ONE `WholeChainProof`.
+⚑ 2026-08-05 update — **it does now, and this section's "has not been run" was stale.**
+`dreggnet-game-board/tests/two_leg_board_window.rs` chains Leg R (`automataflResolveDescN 11`) and
+Leg A (`automataflStepDescN 11`) across three tiers. The PI level (windows carry the right values, a
+forged mid breaks the seam) and the constraint level (`dregg-circuit-prove::board_window_seam_tests`,
+a broken equality is a `connect` conflict) RUN GREEN in a default run. The deployed-prover arm,
+`the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position`, **was executed on
+2026-07-26** (12-core M-series, debug): it passed in **754s**, a real n=11 two-leg fold that
+`verify_history` ACCEPTS, with the attestation carrying the genesis and final positions. Its twin,
+the mismatched mid, was REFUSED in 219s. Both stay `#[ignore]`d for COST, not for doubt — the reason
+strings carry the measurements (`two_leg_board_window.rs:40-46`, `:778-795`).
+
+**What that run does and does not settle.** A light client accepting a real automatafl match IS now
+a measured result. What is still NOT settled is the forgery half at the level it ultimately rests on:
+the mismatched-mid refusal landed at the HOST MIRROR, before any proving, so what was measured is
+"the host refuses to assemble a forged chain", not "the aggregation node's in-circuit `connect` is
+UNSAT on one". `dregg-circuit-prove::board_window_seam_tests` covers the `connect` level separately.
+
+Elsewhere: `dreggnet-game-board/tests/multi_round_fold.rs` (the Leg C conflict braid) has its
+clean-round handoff closed and its section-(d) tier-3 gate is now `#[ignore]`-FREE, while its
+tier-3 whole-braid deployed fold remains unrun; `dreggnet-prove-service/tests/match_fold.rs` keeps a
+green fast arm with every fold arm `--ignored` and no recorded run. The same fold carries
+multiway-tug's membership-proven plays (`dregg-multiway-tug/src/fold.rs`): a whole private match
+becomes ONE `WholeChainProof`.
 
 ## multiway-tug — the hidden-hand card game (all phases present)
 
@@ -147,9 +159,12 @@ raycast-decided step; win = steer the Daemon into your goal (no capture). What e
   RETRACTED. The emitted legs at n=11 are 1273 columns (Leg R), 680 (Leg A) and 1208 (Leg C), per
   the `#[ignore]` reasons in `dreggnet-game-board/tests/two_leg_board_window.rs` and
   `multi_round_fold.rs`.
-- **The fold has not been run** — every deployed-prover arm at n=11 is `#[ignore]`d at tens of
-  minutes. Until one is run on the build box, "a played match folds and the light client accepts"
-  is a wiring claim, not a result.
+- **The fold HAS now been run** (this bullet used to say it had not; stale as of 2026-07-26). The
+  two-leg n=11 arm was executed and passed — `verify_history` ACCEPTS a real played fold in 754s,
+  the forged twin refused in 219s. "A played match folds and the light client accepts" is a
+  RESULT for the two-leg path. Still open: the whole-braid (Leg C) deployed fold at n=11 and every
+  `dreggnet-prove-service/tests/match_fold.rs` arm remain `#[ignore]`d with no recorded run, and
+  the forged-chain refusal was measured at the HOST MIRROR, not at the in-circuit `connect`.
 - **Move count** — the general N=11 occlusion scan and full-SCC resolution are the labeled
   residuals (`metatheory/Dregg2/Games/Automatafl.lean` §4).
 

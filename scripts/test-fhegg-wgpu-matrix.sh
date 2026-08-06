@@ -7,10 +7,15 @@ export DREGG_REQUIRE_WGPU=1
 
 # Actual tfhe-rs default order and type boundary: KS -> transform PBS -> a
 # reconstructed big-key FheUint32 that survives a subsequent high-level op.
+# NOTE: `--run-ignored all` is REQUIRED here. All four tests in tfhe_high_level_wgpu.rs
+# carry `#[ignore]` (that attribute IS the GPU gate), so without this flag this command
+# selects ZERO tests and exits 0 — a green that asserted nothing, which is exactly the
+# skip-green shape the #[ignore] messages in that file were written to kill.
 cargo nextest run --release \
   -p fhegg-fhe \
   --features tfhe-integer \
   --test tfhe_high_level_wgpu \
+  --run-ignored all \
   --no-capture
 
 cargo nextest run --release \

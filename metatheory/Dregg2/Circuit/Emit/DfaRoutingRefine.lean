@@ -556,7 +556,7 @@ theorem witTrace_hterm :
 theorem classify_discriminates :
     classify (pinnedDfa 0) [1, 1] = 0 ∧ classify (pinnedDfa 0) [1] = 1 ∧
       classify (pinnedDfa 0) [1, 1] ≠ classify (pinnedDfa 0) [1] := by
-  refine ⟨by decide, by decide, by decide, fun _ => 0⟩
+  refine ⟨by decide, by decide, by decide⟩
 
 /-- **The bridge FIRES on the witness (the true half of non-vacuity).** Feeding the concrete
 satisfying trace + its terminal step to `dfaRouting_refines_classify` recovers the genuine

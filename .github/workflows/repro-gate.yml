@@ -34,7 +34,7 @@ env:
 
 jobs:
   # ── ARMED on every push/PR: canary + light-spine bare-clone build ────────────────
-  # Scope = default-members (Cargo.toml:19-23), the gpui/servo/mozjs-free protocol/
+  # Scope = default-members (Cargo.toml:61, 149 of the 225 `members` at :54), the gpui/servo/mozjs-free protocol/
   # circuit spine — the set a stranger reproduces first, and where the plonky3-recursion
   # sibling-[patch] escape lived. Affordable without a cache; the full --workspace tree
   # is the separate manual job below.
@@ -68,7 +68,7 @@ jobs:
 
   # ── PENDING on every push (cost/disk): the FULL workspace, elephants included ─────
   # `cargo build --workspace --locked` from a cold clone pulls the gpui/servo/mozjs
-  # crates whose [patch] entries point at IN-REPO vendored dirs (Cargo.toml:190,197,200)
+  # crates whose [patch] entries point at IN-REPO vendored dirs (Cargo.toml:287,294,297)
   # — those must travel with the clone, and a missing one reds here. This is HEAVY: the
   # whole tree with no cache overruns the hosted runner's small disk exactly as ci.yml's
   # test job documents (ci.yml:104-113), so it needs the disk-reclaim + debuginfo-off

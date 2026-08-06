@@ -33,7 +33,8 @@ use dregg_cell::{AuthRequired, CapabilityRef, CellId};
 use dregg_turn::bilateral_schedule::{derive_intro_id, derive_intro_id_for_federation};
 use dregg_turn::{ActionBuilder, Turn, TurnBuilder, TurnReceipt};
 use dregg_verifier::{
-    BilateralBundle, BilateralEntry, fabricate_witnessed_receipt, verify_bilateral_bundle,
+    BilateralBundle, BilateralEntry, check_bilateral_pi_agreement,
+    fabricate_pi_only_witnessed_receipt,
 };
 
 // ---------------------------------------------------------------------------
@@ -186,7 +187,7 @@ fn fabricated_bundle(turn: &Turn, cells: &[CellId]) -> BilateralBundle {
             .iter()
             .map(|cell_id| BilateralEntry {
                 cell_id: *cell_id,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     turn,
                     cell_id,
                     dummy_receipt(turn.agent),
@@ -284,8 +285,11 @@ fn bilateral_transfer_happy_path_two_cells_verify_matched_transfer_id() {
     let turn = make_transfer_turn(alice, bob, 10, 7);
     let bundle = fabricated_bundle(&turn, &[alice, bob]);
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(verdict.verified, "honest transfer bundle: {verdict:?}");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        verdict.pi_agrees_with_schedule,
+        "honest transfer bundle: {verdict:?}"
+    );
     assert_eq!(verdict.transfer_count, 1);
     assert_eq!(verdict.entry_count, 2);
 }
@@ -300,8 +304,11 @@ fn sender_outflow_vs_receiver_inflow_mismatch_rejects() {
     let mut bundle = fabricated_bundle(&turn, &[alice, bob]);
     bundle.entries[1].witnessed_receipt.public_inputs[pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(!verdict.verified, "receiver mismatch must reject");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        !verdict.pi_agrees_with_schedule,
+        "receiver mismatch must reject"
+    );
     assert!(
         verdict.reason.contains("incoming_transfer") || verdict.reason.contains("root"),
         "expected transfer root mismatch, got: {}",
@@ -369,14 +376,15 @@ fn coherent_two_sided_transfer_id_lie_is_refused_by_the_canonical_turn() {
 
     // A bundle over `turn`, with every entry's bilateral block projected from
     // `sched`. Turn identity always comes from `turn`.
-    let bundle_with = |turn: &Turn, sched: &ExpectedBilateral| BilateralBundle {
+    let bundle_with = |turn: &Turn, sched: &ExpectedBilateral| {
+        BilateralBundle {
         turn: turn.clone(),
         entries: [alice, bob]
             .iter()
             .map(|cell_id| BilateralEntry {
                 cell_id: *cell_id,
                 witnessed_receipt:
-                    dregg_verifier::bilateral_pair::fabricate_witnessed_receipt_with_schedule(
+                    dregg_verifier::bilateral_pair::fabricate_pi_only_witnessed_receipt_with_schedule(
                         turn,
                         cell_id,
                         dummy_receipt(turn.agent),
@@ -385,22 +393,23 @@ fn coherent_two_sided_transfer_id_lie_is_refused_by_the_canonical_turn() {
             })
             .collect(),
         unilateral_attestations: std::collections::BTreeMap::new(),
+    }
     };
 
     // CONTROL — same construction, honest schedule. Without this leg the
     // rejection below could be an artifact of
-    // `fabricate_witnessed_receipt_with_schedule` rather than of the lie.
-    let honest = verify_bilateral_bundle(&bundle_with(&real, &real_sched));
+    // `fabricate_pi_only_witnessed_receipt_with_schedule` rather than of the lie.
+    let honest = check_bilateral_pi_agreement(&bundle_with(&real, &real_sched));
     assert!(
-        honest.verified,
+        honest.pi_agrees_with_schedule,
         "control: the same construction with the turn's own schedule must verify: \
          {honest:?}"
     );
 
     // THE ATTACK: both sides agree with each other and disagree with the turn.
-    let verdict = verify_bilateral_bundle(&bundle_with(&real, &lie_sched));
+    let verdict = check_bilateral_pi_agreement(&bundle_with(&real, &lie_sched));
     assert!(
-        !verdict.verified,
+        !verdict.pi_agrees_with_schedule,
         "two entries that agree with each other but not with the bundle's own Turn \
          must reject — the schedule is recomputed from the Turn, not read off the \
          entries: {verdict:?}"
@@ -417,9 +426,9 @@ fn coherent_two_sided_transfer_id_lie_is_refused_by_the_canonical_turn() {
     // first.
     let reversed_lie = make_transfer_turn(bob, alice, 10, 7);
     let reversed_sched = ExpectedBilateral::from_turn(&reversed_lie);
-    let verdict = verify_bilateral_bundle(&bundle_with(&real, &reversed_sched));
+    let verdict = check_bilateral_pi_agreement(&bundle_with(&real, &reversed_sched));
     assert!(
-        !verdict.verified,
+        !verdict.pi_agrees_with_schedule,
         "a coherent two-sided DIRECTION lie must also reject: {verdict:?}"
     );
 }
@@ -432,8 +441,11 @@ fn bilateral_grant_happy_path_two_cells() {
     let turn = make_grant_turn(alice, bob, target, 7);
     let bundle = fabricated_bundle(&turn, &[alice, bob]);
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(verdict.verified, "honest grant bundle: {verdict:?}");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        verdict.pi_agrees_with_schedule,
+        "honest grant bundle: {verdict:?}"
+    );
     assert_eq!(verdict.grant_count, 1);
 }
 
@@ -448,8 +460,11 @@ fn bilateral_grant_tampered_cap_entry_rejects() {
     let mut bundle = fabricated_bundle(&turn, &[alice, bob]);
     bundle.entries[1].witnessed_receipt.public_inputs[pi::INCOMING_GRANT_ROOT_BASE] ^= 1;
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(!verdict.verified, "grant-root tamper must reject");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        !verdict.pi_agrees_with_schedule,
+        "grant-root tamper must reject"
+    );
 }
 
 #[test]
@@ -460,8 +475,11 @@ fn trilateral_introduce_happy_path_three_cells() {
     let turn = make_intro_turn(alice, bob, carol, AuthRequired::Signature, 7);
     let bundle = fabricated_bundle(&turn, &[alice, bob, carol]);
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(verdict.verified, "honest introduce bundle: {verdict:?}");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        verdict.pi_agrees_with_schedule,
+        "honest introduce bundle: {verdict:?}"
+    );
     assert_eq!(verdict.introduce_count, 1);
     assert_eq!(verdict.entry_count, 3);
 }
@@ -477,8 +495,11 @@ fn trilateral_introduce_permissions_bit_tamper_rejects() {
     let mut bundle = fabricated_bundle(&turn, &[alice, bob, carol]);
     bundle.entries[1].witnessed_receipt.public_inputs[pi::INTRO_AS_RECIPIENT_ROOT_BASE] ^= 1;
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(!verdict.verified, "permissions/root tamper must reject");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        !verdict.pi_agrees_with_schedule,
+        "permissions/root tamper must reject"
+    );
 }
 
 #[test]
@@ -543,8 +564,11 @@ fn three_cell_ring_transfer_all_pairings_bound() {
     let turn = make_transfer_ring_turn(a, b, c, 7);
     let bundle = fabricated_bundle(&turn, &[a, b, c]);
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(verdict.verified, "honest ring bundle: {verdict:?}");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        verdict.pi_agrees_with_schedule,
+        "honest ring bundle: {verdict:?}"
+    );
     assert_eq!(verdict.transfer_count, 3);
     assert_eq!(verdict.entry_count, 3);
 }
@@ -560,8 +584,11 @@ fn three_cell_ring_with_tampered_pair_rejects() {
     let mut bundle = fabricated_bundle(&turn, &[a, b, c]);
     bundle.entries[2].witnessed_receipt.public_inputs[pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(!verdict.verified, "tampered ring pair must reject");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        !verdict.pi_agrees_with_schedule,
+        "tampered ring pair must reject"
+    );
 }
 
 // ===========================================================================
@@ -676,9 +703,9 @@ fn bilateral_transfer_with_bound_delta_caveat_on_both_sides() {
     // transfer counted on both sides. This is the composition: the slot
     // caveats fired AND the cross-cell transfer_id binding holds.
     let bundle = fabricated_bundle(&turn, &[alice_id, bob_id]);
-    let verdict = verify_bilateral_bundle(&bundle);
+    let verdict = check_bilateral_pi_agreement(&bundle);
     assert!(
-        verdict.verified,
+        verdict.pi_agrees_with_schedule,
         "γ.2 binding must hold over a caveat-guarded bilateral turn: {verdict:?}"
     );
     assert_eq!(verdict.transfer_count, 1, "the Transfer must be scheduled");
@@ -701,7 +728,7 @@ fn bilateral_transfer_with_bound_delta_caveat_on_both_sides() {
     tampered.entries[1].witnessed_receipt.public_inputs
         [dregg_circuit::effect_vm::pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
     assert!(
-        !verify_bilateral_bundle(&tampered).verified,
+        !check_bilateral_pi_agreement(&tampered).pi_agrees_with_schedule,
         "γ.2 root tamper must still reject under the caveat composition"
     );
 }
@@ -1066,9 +1093,9 @@ fn bilateral_transfer_with_sovereign_witness_on_both_sides() {
     //    the composition proper — the same turn satisfies the sovereign teeth
     //    AND the cross-cell binding.
     let bundle = fabricated_bundle(&turn, &[alice_id, bob_id]);
-    let verdict = verify_bilateral_bundle(&bundle);
+    let verdict = check_bilateral_pi_agreement(&bundle);
     assert!(
-        verdict.verified,
+        verdict.pi_agrees_with_schedule,
         "γ.2 must bind the transfer across two sovereign cells: {verdict:?}"
     );
     assert_eq!(verdict.transfer_count, 1);
@@ -1078,7 +1105,7 @@ fn bilateral_transfer_with_sovereign_witness_on_both_sides() {
     tampered.entries[1].witnessed_receipt.public_inputs
         [dregg_circuit::effect_vm::pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
     assert!(
-        !verify_bilateral_bundle(&tampered).verified,
+        !check_bilateral_pi_agreement(&tampered).pi_agrees_with_schedule,
         "the γ.2 tooth must not be blunted by the sovereign composition"
     );
 
@@ -1430,9 +1457,9 @@ fn trilateral_introduce_three_federations_each_sovereign() {
 
     // …and γ.2 binds the introduce across all three roles.
     let bundle = fabricated_bundle(&turn, &ids);
-    let verdict = verify_bilateral_bundle(&bundle);
+    let verdict = check_bilateral_pi_agreement(&bundle);
     assert!(
-        verdict.verified,
+        verdict.pi_agrees_with_schedule,
         "γ.2 trilateral introduce over three sovereign cells: {verdict:?}"
     );
     assert_eq!(verdict.introduce_count, 1);
@@ -1442,7 +1469,7 @@ fn trilateral_introduce_three_federations_each_sovereign() {
     tampered.entries[2].witnessed_receipt.public_inputs
         [dregg_circuit::effect_vm::pi::INTRO_AS_TARGET_ROOT_BASE] ^= 1;
     assert!(
-        !verify_bilateral_bundle(&tampered).verified,
+        !check_bilateral_pi_agreement(&tampered).pi_agrees_with_schedule,
         "the target role's γ.2 root must still be checked under the sovereign \
          composition"
     );
@@ -1495,17 +1522,20 @@ fn five_cell_ring_all_pairs_bound() {
     let turn = make_transfer_five_ring_turn(cells, 7);
     let bundle = fabricated_bundle(&turn, &cells);
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(verdict.verified, "honest five-cell ring: {verdict:?}");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        verdict.pi_agrees_with_schedule,
+        "honest five-cell ring: {verdict:?}"
+    );
     assert_eq!(verdict.transfer_count, 5);
     assert_eq!(verdict.entry_count, 5);
 
     let mut tampered = fabricated_bundle(&turn, &cells);
     tampered.entries[3].witnessed_receipt.public_inputs[pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
 
-    let verdict = verify_bilateral_bundle(&tampered);
+    let verdict = check_bilateral_pi_agreement(&tampered);
     assert!(
-        !verdict.verified,
+        !verdict.pi_agrees_with_schedule,
         "tampered five-cell ring pair must reject"
     );
 }
@@ -1522,7 +1552,7 @@ fn bilateral_bound_delta_disagreement_on_nonce_rejects() {
         entries: vec![
             BilateralEntry {
                 cell_id: alice,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &real_turn,
                     &alice,
                     dummy_receipt(alice),
@@ -1530,7 +1560,7 @@ fn bilateral_bound_delta_disagreement_on_nonce_rejects() {
             },
             BilateralEntry {
                 cell_id: bob,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &nonce_lie_turn,
                     &bob,
                     dummy_receipt(alice),
@@ -1540,9 +1570,9 @@ fn bilateral_bound_delta_disagreement_on_nonce_rejects() {
         unilateral_attestations: std::collections::BTreeMap::new(),
     };
 
-    let verdict = verify_bilateral_bundle(&bundle);
+    let verdict = check_bilateral_pi_agreement(&bundle);
     assert!(
-        !verdict.verified,
+        !verdict.pi_agrees_with_schedule,
         "nonce-derived transfer_id mismatch must reject"
     );
 }
@@ -1683,7 +1713,7 @@ fn direction_bit_both_outflow_rejects() {
         entries: vec![
             BilateralEntry {
                 cell_id: alice,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &real_turn,
                     &alice,
                     dummy_receipt(alice),
@@ -1691,7 +1721,7 @@ fn direction_bit_both_outflow_rejects() {
             },
             BilateralEntry {
                 cell_id: bob,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &reversed_turn,
                     &bob,
                     dummy_receipt(alice),
@@ -1701,8 +1731,11 @@ fn direction_bit_both_outflow_rejects() {
         unilateral_attestations: std::collections::BTreeMap::new(),
     };
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(!verdict.verified, "receiver claiming outflow must reject");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        !verdict.pi_agrees_with_schedule,
+        "receiver claiming outflow must reject"
+    );
 }
 
 #[test]
@@ -1717,7 +1750,7 @@ fn direction_bit_inverted_on_sender_rejects() {
         entries: vec![
             BilateralEntry {
                 cell_id: alice,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &reversed_turn,
                     &alice,
                     dummy_receipt(alice),
@@ -1725,7 +1758,7 @@ fn direction_bit_inverted_on_sender_rejects() {
             },
             BilateralEntry {
                 cell_id: bob,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     &real_turn,
                     &bob,
                     dummy_receipt(alice),
@@ -1735,8 +1768,11 @@ fn direction_bit_inverted_on_sender_rejects() {
         unilateral_attestations: std::collections::BTreeMap::new(),
     };
 
-    let verdict = verify_bilateral_bundle(&bundle);
-    assert!(!verdict.verified, "sender claiming inflow must reject");
+    let verdict = check_bilateral_pi_agreement(&bundle);
+    assert!(
+        !verdict.pi_agrees_with_schedule,
+        "sender claiming inflow must reject"
+    );
 }
 
 // ===========================================================================

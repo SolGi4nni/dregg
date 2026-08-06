@@ -190,7 +190,8 @@ mod tests {
     /// ⚠ The clause that stood here — "without this, the standalone
     /// `dregg-verifier replay-chain` rejects the chain with 'PI[IS_AGENT_CELL]
     /// = 0 but single-proof replay requires 1'" — is FALSE at HEAD
-    /// (2026-07-27): `check_receipt_pi_binding` no longer compares
+    /// (2026-07-27; and `replay-chain` itself was DELETED 2026-08-05):
+    /// `check_receipt_pi_binding` no longer compares
     /// `IS_AGENT_CELL`. The slot is PI 81 and a real rotated leg publishes
     /// 46-68 felts, so no proof that ships carries the offset at all.
     ///

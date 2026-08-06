@@ -204,8 +204,9 @@ pub fn price_fact_over_session(
 
 /// **The real (fixture-backed) [`PriceOracle`] implementation.** Holds a notary + a quote
 /// book; `price(asset)` produces a genuine attestation over the quote session and returns
-/// the attested price. A live implementation swaps `build_endpoint_fixture` for the
-/// `tlsn-live` roundtrip against `api.coinbase.com` — the same `PriceOracle` interface.
+/// the attested price. The live implementation swaps `build_endpoint_fixture` for the
+/// `dregg-zkoracle-live` roundtrip against `api.coinbase.com` — the same `PriceOracle`
+/// interface.
 pub struct CoinbaseSpotOracle {
     notary: FixtureNotary,
     config: EndpointConfig,

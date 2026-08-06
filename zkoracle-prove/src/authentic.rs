@@ -11,8 +11,11 @@
 //!
 //! This is the **Layer-2 tlsn-attestation INTERFACE + ADAPTER** (the exact shape of
 //! deco-prove's `tlsn_attest.rs`, generalized Stripe→Anthropic), exercised end-to-end by
-//! an in-tree fixture. The genuine live MPC-TLS 2PC run lives behind the `tlsn-live`
-//! feature ([`crate::tlsn_live`]) — vendored TLSNotary, a real Notary + Prover, a real
+//! an in-tree fixture. The genuine live MPC-TLS 2PC run lives in the SEPARATE
+//! `dregg-zkoracle-live` crate (`dregg_zkoracle_live::tlsn_live`) — it is no longer a
+//! `tlsn-live` cargo feature of this crate, because a feature UNIFIES across a workspace
+//! resolve and silently changed what this crate compiled; a dependency edge does not.
+//! That crate carries vendored TLSNotary, a real Notary + Prover, a real
 //! `presentation.verify()`. The operational remainder — pointing the Prover at the live
 //! `api.anthropic.com` with a real key + a deployed notary — is NAMED, not faked
 //! (`docs/deos/ZKORACLE-PROVER-STATUS.md`).

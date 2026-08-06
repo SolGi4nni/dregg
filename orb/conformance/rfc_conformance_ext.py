@@ -420,7 +420,11 @@ def main():
         record("Z1-large-head-dos", "resource-limit", "availability (DoS)",
                "a single ~32 KiB request head does not crash the serve",
                "GET /health with a 32 KiB header value", "SKIP",
-               "destructive check not run (set CONF_DESTRUCTIVE=1); confirmed FAIL manually — see CONFORMANCE-EXT.md")
+               "destructive check not run (set CONF_DESTRUCTIVE=1). NOTE: this used to read "
+               "'confirmed FAIL manually' — that is STALE. Z1 was fixed: the pre-parse headGate "
+               "(Reactor/ServeConformant.lean) answers 431 for an oversized header block and 414 "
+               "for an over-long request-line BEFORE the recursive parse can overflow, and the "
+               "scoreboard records PASS with serve_alive_after=True.")
 
     graded = [r for r in RESULTS if r["verdict"] in ("PASS", "FAIL")]
     npass = sum(1 for r in graded if r["verdict"] == "PASS")

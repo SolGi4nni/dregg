@@ -99,6 +99,10 @@ lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkJudge(uint8_t bu
 /* Exact parity with the default initializer for the Lean-owned zero-head ceremony. */
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkGenesis(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_RECORDS_PROJECT
+/* Exact parity for the Records read model; it reaches the same evaluator globals. */
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_RecordsRuntime(uint8_t builtin);
+#endif
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(uint8_t builtin);
 #endif
@@ -183,6 +187,18 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(poares);
+    }
+#endif
+#ifdef DREGG_POA_RECORDS_PROJECT
+    {
+        lean_object *poarecres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_RecordsRuntime(1);
+        if (!lean_io_result_is_ok(poarecres)) {
+            lean_io_result_show_error(poarecres);
+            lean_dec_ref(poarecres);
+            return 1;
+        }
+        lean_dec_ref(poarecres);
     }
 #endif
 #ifdef DREGG_POA_NETWORK_GENESIS

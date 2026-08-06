@@ -895,7 +895,7 @@ fn tamper_then_sign_witness_workflow_rejects() {
 /// cell's own program objects. A commitment-trusting executor commits it.
 #[test]
 fn sovereign_witness_plus_bilateral_transfer_plus_slot_caveats() {
-    use dregg_verifier::{BilateralBundle, BilateralEntry, fabricate_witnessed_receipt};
+    use dregg_verifier::{BilateralBundle, BilateralEntry, fabricate_pi_only_witnessed_receipt};
 
     const AMOUNT: u64 = 10;
     const SLOT_BEFORE: u64 = 10;
@@ -998,7 +998,7 @@ fn sovereign_witness_plus_bilateral_transfer_plus_slot_caveats() {
             .iter()
             .map(|cell_id| BilateralEntry {
                 cell_id: *cell_id,
-                witnessed_receipt: fabricate_witnessed_receipt(
+                witnessed_receipt: fabricate_pi_only_witnessed_receipt(
                     turn,
                     cell_id,
                     sovereign_dummy_receipt(turn.agent),
@@ -1007,9 +1007,9 @@ fn sovereign_witness_plus_bilateral_transfer_plus_slot_caveats() {
             .collect(),
         unilateral_attestations: std::collections::BTreeMap::new(),
     };
-    let verdict = dregg_verifier::verify_bilateral_bundle(&bundle(&turn));
+    let verdict = dregg_verifier::check_bilateral_pi_agreement(&bundle(&turn));
     assert!(
-        verdict.verified,
+        verdict.pi_agrees_with_schedule,
         "γ.2 must bind a sovereign, caveat-guarded transfer: {verdict:?}"
     );
     assert_eq!(verdict.transfer_count, 1);
@@ -1017,7 +1017,7 @@ fn sovereign_witness_plus_bilateral_transfer_plus_slot_caveats() {
     tampered.entries[1].witnessed_receipt.public_inputs
         [dregg_circuit::effect_vm::pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
     assert!(
-        !dregg_verifier::verify_bilateral_bundle(&tampered).verified,
+        !dregg_verifier::check_bilateral_pi_agreement(&tampered).pi_agrees_with_schedule,
         "the γ.2 tooth must survive this composition"
     );
 

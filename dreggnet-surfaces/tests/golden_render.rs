@@ -10,7 +10,7 @@
 //! and asserts golden, stable output. A broken surface (an empty tree, a dropped section, a lost
 //! action) fails a concrete assertion here, on every channel at once.
 //!
-//! The cross-backend INVARIANTS proven for all eight surfaces:
+//! The cross-backend INVARIANTS proven for all nine surfaces (`register_surfaces` mounts nine):
 //!  * the Telegram text IS the shared prose walk (`telegram == text`) — one walk, never two;
 //!  * the WeChat message body opens with that same prose, then appends its numbered reply block;
 //!  * the WeChat numbered options are EXACTLY the tree's actuations (the do-once affordance reach —

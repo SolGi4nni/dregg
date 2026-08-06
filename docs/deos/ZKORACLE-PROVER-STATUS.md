@@ -113,7 +113,7 @@ lane). It is NOT edited here.
   body, and a `{{`-bearing field each independently REFUSE; the injection catch
   discriminates. All through the REAL `verify_zkoracle`, not a mock.
 
-- **REAL behind `tlsn-live`** (`--features tlsn-live --test tlsn_live_roundtrip`, PASSES,
+- **REAL in `dregg-zkoracle-live`** (`cargo test -p dregg-zkoracle-live --test tlsn_live_roundtrip`, PASSES,
   ~1.3 s after build): a genuine local MPC-TLS 2PC roundtrip against an Anthropic-shaped
   HTTPS endpoint — vendored TLSNotary @ `v0.1.0-alpha.15` (the SAME rev deco-prove pins),
   a real Notary + Prover, the 2PC handshake (the Notary co-derives session keys and sees
@@ -177,7 +177,7 @@ prover overflows the thread stack. The same dense-16.4k on the compact path: 33 
 
 Refuse paths (hostiles bounce FAST, before any heavy leg): forged notary sig **33 µs** ·
 cross-leg splice **35 µs** · injection match alone **12 µs**. The live local MPC-TLS 2PC
-roundtrip (`tlsn-live` test) completes in **~0.4 s** warm.
+roundtrip (`dregg-zkoracle-live`'s `tlsn_live_roundtrip` test) completes in **~0.4 s** warm.
 
 Readings:
 - **A single model response attests in ~320 µs each way**; a **256k-LLM-token context in
@@ -255,7 +255,7 @@ on `dregg-zkoracle-prove` and attests each turn.
   `authentic_provenance(&att)` reads which of the two actually vouches, and a
   `VerifiedZkOracle` reports the provenance its accept rested on.
 
-  Driven: `zkoracle-live/tests/model_provenance_fused.rs` (6 tests, `--features tlsn-live`)
+  Driven: `zkoracle-live/tests/model_provenance_fused.rs` (6 tests, unconditional — `dregg-zkoracle-live` has no cargo features)
   against a genuine MPC-TLS 2PC roundtrip, and `zkoracle-prove/tests/provenance_gate.rs` (4 tests, light
   build). The fixture survives ONLY as an explicitly-labelled test double
   (`AuthenticProvenance::SelfSignedFixture`), admitted by `AuthenticPolicy::AllowFixture`.
@@ -274,7 +274,7 @@ on `dregg-zkoracle-prove` and attests each turn.
      chain against the Mozilla roots, SigV4-signed, under a separate durable pinned notary,
      binding **the completion Claude actually returned in-session**. Wired; needs live
      network + AWS credentials (a paid call), so it is not driven in CI:
-     `cargo test -p dregg-zkoracle-prove --features tlsn-live --test bedrock_mpctls_live -- --ignored --nocapture`
+     `cargo test -p dregg-zkoracle-live --test bedrock_mpctls_live -- --ignored --nocapture`
 
 - **THE IN-CIRCUIT PROSE TOOTH IS LIVE (was: dead code).** Both narrators now attach the
   zk-injection STARK (`zk_leg::prove_injection_leg` — a real `prove_vm_descriptor2` of the
@@ -348,7 +348,7 @@ attestation, so the finalized, light-client-verifiable receipt proves **jailed �
     `bedrock_mpctls_live` tests are wired end-to-end but need live network + AWS
     credentials + a paid Bedrock call, so no live model session is driven in this
     environment. Drive it with
-    `cargo test -p dregg-zkoracle-prove --features tlsn-live --test bedrock_mpctls_live -- --ignored --nocapture`;
+    `cargo test -p dregg-zkoracle-live --test bedrock_mpctls_live -- --ignored --nocapture`;
   - **hosting the notary** at a stable public address with a PUBLISHED, independently
     audited pinned key and a documented rotation policy (the cryptographic pinning is
     identical today; `run_bedrock_roundtrip_with_durable_notary` already gives a stable

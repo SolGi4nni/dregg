@@ -414,7 +414,7 @@ theorem demoTrace_canon : IvcTraceCanon demoTrace := by
   have hlen : demoTrace.rows.length = 1 := rfl
   have h0 : i = 0 := by omega
   subst h0
-  exact ⟨by decide, by decide, by decide, fun _ => 0⟩
+  exact ⟨by decide, by decide, by decide⟩
 
 /-- **`ivc_witness_refines` — the bridge FIRES on the concrete honest witness.** Feeding `demoTrace`
 to `ivc_single_step_refines_chain` recovers the genuine fold value: the published accumulated hash
@@ -432,7 +432,7 @@ theorem ivc_witness_value :
     demoTrace.pub Ivc.PI_ACC_HASH = 0
       ∧ demoTrace.pub Ivc.PI_INITIAL_HASH = 100
       ∧ (envAt demoTrace 0).loc Ivc.NEW_ROOT_COL = 7 := by
-  refine ⟨rfl, rfl, rfl, fun _ => 0⟩
+  refine ⟨rfl, rfl, rfl⟩
 
 /-! ## §6 — axiom hygiene. -/
 

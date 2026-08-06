@@ -47,8 +47,12 @@ public intent lib entries fulfillment.rs::execute_fulfillment_flow_verified* / t
   not the deployed committee), real inter-party OT/HE preprocessing (not the dealer). THE largest gap; the DARK
   tier IS the MPC. (See the MPC scope doc.)
 ② [BLOCKS LAUNCH] **Wire the real clearing into a live path + fix two hard stops:** the DrEX /clear gate regression
-  (above); the Cert-F STARK wrap UNREACHABLE for live orders (hardcoded epsilon=0.5 in fhegg_clear.rs:235 can't
-  match the 2-program registry — make registration dynamic); the proven private-book relation called only from
+  (above); the Cert-F STARK wrap UNREACHABLE for live orders (STALE PIN CORRECTED 2026-08-05: there is no
+  `0.5` literal anywhere in fhegg_clear.rs and line 235 now lands inside `struct Cleared`'s serde fields. The
+  accuracy budget is derived-or-declared via `budget.epsilon_for(&lp)` at
+  fhegg-solver/src/bin/fhegg_clear.rs:305, documented "Never a literal" at :147. What has NOT changed is the
+  registry: `CERT_F_REGISTRY` is still a fixed 2-program `const` — ring3 and market4 — at
+  circuit-prove/src/cert_f_air.rs:361, so registration is still not dynamic and the match constraint stands); the proven private-book relation called only from
   test code (call prepare_private_clearing_zk from the production worker). No real crypto touches a user surface.
 ③ [BLOCKS LAUNCH] **Malicious-secure computation-integrity proof over the encrypted clearing.** attestation.rs
   binds + checks reveal-only SHAPE but does NOT prove (p*,V*) is the correct clearing of the encrypted inputs

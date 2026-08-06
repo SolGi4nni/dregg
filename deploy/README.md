@@ -3,6 +3,25 @@
 Verified live 2026-07-15 by direct inspection of the boxes. Everything below is
 observed state, not intent. Where something is aspirational it says so.
 
+> ## ⚑ STALE EDGE — re-checked 2026-08-05. The public names have moved OFF AWS.
+>
+> The "edge" row and the five-names table below describe the AWS box
+> `34.224.208.52`. **DNS no longer points there.** All the public names now resolve
+> to a Hetzner floating IP, and the edge is a **two**-box topology (`dregg-anchor`
+> terminating TLS in front of `dregg-workhorse`), not one box. The name set has
+> grown from five to fourteen across four zones — including `dregg.gg` and
+> `dregg.tech`, which this file does not mention at all.
+>
+> Authoritative config is the single Caddyfile in **`~/dev/dregg-infra`**
+> (`edge/anchor/Caddyfile` — "THE ONLY CADDYFILE; every public name lands here"),
+> with the servers declared in `edge/tofu/main.tf`. See
+> [`INFRA-MOVED.md`](INFRA-MOVED.md). Treat the AWS specifics below as history.
+>
+> Two smaller corrections to the table: `arcade.dregg.net` is **no longer
+> undocumented** (it now has a Caddy block, and `dreggnet-catalog`, `dreggnet-web`
+> and two deploy runbooks name it), and `hello.dregg.works` is no longer "the only
+> name still pointing at AWS" — nothing is.
+
 Read [`PRACTICES.md`](PRACTICES.md) before touching a box — it is short, and each
 rule in it was paid for by an incident in the last session.
 
