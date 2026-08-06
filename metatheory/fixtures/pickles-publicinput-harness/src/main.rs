@@ -57,191 +57,84 @@ use std::array;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use groupmap::GroupMap;
-use mina_curves::pasta::{Fp, Vesta, VestaParameters};
-use mina_poseidon::{
-    constants::PlonkSpongeConstantsKimchi, pasta::FULL_ROUNDS, sponge::DefaultFqSponge,
-    sponge::DefaultFrSponge,
+use mina_curves::pasta::Fp;
+
+// ⚑ THE ONE DRIVER. `build_gates` / `build_witness` / `index_for` / `prove_and_verify` were
+// open-coded in TEN of these harnesses — not ten transcriptions of one reader but ten readers that
+// DISAGREED. `pickles-circuit-driver/src/lib.rs` carries the measured list: an `i128` parser that
+// cannot hold a round constant, an `F::from_str` that SILENTLY REDUCES a coefficient authored over
+// the other pasta prime, a gate table stopping at ordinal 3, two SRS constructions, two preflight
+// settings, and two serde shapes with no `public_input` field at all. The bodies below are
+// one-liners into the shared reader; the names stay, so everything about THIS rung is untouched.
+use pickles_circuit_driver::{
+    kimchi::circuits::gate::CircuitGate, kimchi::circuits::wires::COLUMNS, load, load_in, step,
+    CircuitJson, IndexOpts,
 };
-use poly_commitment::{commitment::CommitmentCurve, ipa::OpeningProof};
-use serde::Deserialize;
-
-use kimchi::{
-    circuits::{
-        gate::{CircuitGate, GateType},
-        wires::{GateWires, Wire, COLUMNS},
-    },
-    proof::ProverProof,
-    prover_index::{testing::new_index_for_test_with_lookups, ProverIndex},
-    verifier::{batch_verify, Context},
-};
-
-type BaseSponge = DefaultFqSponge<VestaParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type Idx = ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>>;
-
-// ---- the Lean-emitted JSON shape. `public_input` is the ONE field the sibling harnesses do not
-// carry: a pubSize > 0 circuit is not runnable without it, and re-deriving it in Rust would put the
-// thing under test on both sides of the test.
-#[derive(Deserialize, Clone)]
-struct GateJson {
-    typ: u64,
-    wires: Vec<[usize; 2]>,
-    coeffs: Vec<String>,
-}
-
-#[derive(Deserialize, Clone)]
-struct CircuitJson {
-    name: String,
-    public_input_size: usize,
-    public_input: Vec<String>,
-    num_rows: usize,
-    gates: Vec<GateJson>,
-    witness: Vec<Vec<String>>, // COLUMNS columns, each num_rows long
-}
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures"))
 }
 
-// Decimal (possibly negative) string -> Fp, reduced.
-fn parse_fp(s: &str) -> Fp {
-    let v: i128 = s.parse().expect("coeff/witness must be a decimal integer");
-    if v < 0 {
-        -Fp::from((-v) as u128)
-    } else {
-        Fp::from(v as u128)
-    }
+/// A decimal literal as a field element. ⚠ NOT `Fp::from_str`: ark-ff implements that as
+/// `BigInt::from_str(s) % MODULUS`, so a coefficient authored over the OTHER pasta prime becomes a
+/// well-formed element of this one with no error anywhere. The shared reader REFUSES a
+/// non-canonical literal instead.
+#[allow(dead_code)]
+fn parse_f(s: &str) -> Fp {
+    pickles_circuit_driver::parse_field::<Fp>(s)
 }
 
-fn gate_type_from_ordinal(o: u64) -> GateType {
-    match o {
-        0 => GateType::Zero,
-        1 => GateType::Generic,
-        2 => GateType::Poseidon,
-        3 => GateType::CompleteAdd,
-        4 => GateType::VarBaseMul,
-        5 => GateType::EndoMul,
-        6 => GateType::EndoMulScalar,
-        _ => panic!("unsupported gate ordinal {o}"),
-    }
+#[allow(dead_code)]
+fn load_path(path: &std::path::Path) -> CircuitJson {
+    load(path)
 }
 
+#[allow(dead_code)]
 fn load_circuit(dir: &std::path::Path, name: &str) -> CircuitJson {
-    let path = dir.join(name);
-    let raw =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let c: CircuitJson =
-        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
-    // A fixture whose declared public size does not match its vector would silently make every
-    // verify() fail at `verifier.rs:816` for a reason that has nothing to do with the circuit.
-    assert_eq!(
-        c.public_input.len(),
-        c.public_input_size,
-        "{}: public_input has {} words, public_input_size says {}",
-        c.name,
-        c.public_input.len(),
-        c.public_input_size
-    );
-    assert!(
-        c.public_input_size > 0,
-        "{}: this harness exists for public_input_size > 0 — a 0 here means the fixture is the \
-         thing the five sibling harnesses already cover",
-        c.name
-    );
-    c
+    load_in(dir, name)
 }
 
+#[allow(dead_code)]
 fn build_gates(c: &CircuitJson) -> Vec<CircuitGate<Fp>> {
-    c.gates
-        .iter()
-        .map(|g| {
-            assert_eq!(g.wires.len(), 7, "kimchi PERMUTS = 7 wires per gate");
-            let wires: GateWires = array::from_fn(|i| Wire {
-                row: g.wires[i][0],
-                col: g.wires[i][1],
-            });
-            let coeffs: Vec<Fp> = g.coeffs.iter().map(|s| parse_fp(s)).collect();
-            CircuitGate::new(gate_type_from_ordinal(g.typ), wires, coeffs)
-        })
-        .collect()
+    step::gates(c)
 }
 
-// The witness as proof-systems wants it: COLUMNS columns, each `num_rows` long.
+#[allow(dead_code)]
 fn build_witness(c: &CircuitJson) -> [Vec<Fp>; COLUMNS] {
-    assert_eq!(
-        c.witness.len(),
-        COLUMNS,
-        "witness must have {COLUMNS} columns"
-    );
-    array::from_fn(|col| {
-        let column = &c.witness[col];
-        assert_eq!(
-            column.len(),
-            c.num_rows,
-            "each witness column is num_rows long"
-        );
-        column.iter().map(|s| parse_fp(s)).collect()
-    })
+    step::witness(c)
 }
 
-// The public vector the VERIFIER is handed (`verifier.rs:816`). The PROVER never sees this — it
-// reads `witness[0][0..n]` for itself (`prover.rs:270`). Keeping them separate is what lets the
-// tamper legs below move one without the other.
+#[allow(dead_code)]
 fn build_public(c: &CircuitJson) -> Vec<Fp> {
-    c.public_input.iter().map(|s| parse_fp(s)).collect()
+    step::public(c)
 }
 
-// disable_gates_checks = true: skip the prover's debug preflight so a tampered witness (gate,
-// permutation OR public input) is rejected by the PROOF, returning Err rather than panicking.
-fn index_from_gates(gates: Vec<CircuitGate<Fp>>, public: usize) -> Idx {
-    let mut index = new_index_for_test_with_lookups::<FULL_ROUNDS, Vesta>(
-        gates,
-        public,
-        0,
-        vec![],
-        None,
-        true,
-        None,
-        false,
-    );
-    index.compute_verifier_index_digest::<BaseSponge>();
-    index
+#[allow(dead_code)]
+fn public_of(c: &CircuitJson) -> Vec<Fp> {
+    step::public(c)
 }
 
-fn index_for(c: &CircuitJson) -> Idx {
-    index_from_gates(build_gates(c), c.public_input_size)
+/// ⚑ This rung's index options, unchanged from before the collapse: kimchi's serialized TEST srs and
+/// `disable_gates_checks` — the prover's debug preflight is SKIPPED so a tampered witness (gate OR
+/// permutation) is rejected by the PROOF, returning `Err` rather than panicking.
+#[allow(dead_code)]
+fn index_from_gates(gates: Vec<CircuitGate<Fp>>, public: usize) -> step::Index {
+    step::index_from_gates(gates, IndexOpts::test(public))
 }
 
-// Prove + verify one (witness, public_input) pair against a fixed index. Ok(()) iff verify()==true.
+#[allow(dead_code)]
+fn index_for(c: &CircuitJson) -> step::Index {
+    step::index_for(c, IndexOpts::test(c.public_input_size))
+}
+
+#[allow(dead_code)]
 fn prove_and_verify(
-    index: &Idx,
-    group_map: &<Vesta as CommitmentCurve>::Map,
+    index: &step::Index,
+    group_map: &step::Map,
     witness: [Vec<Fp>; COLUMNS],
     public_input: &[Fp],
 ) -> Result<(), String> {
-    let proof: ProverProof<Vesta, OpeningProof<Vesta, FULL_ROUNDS>, FULL_ROUNDS> =
-        ProverProof::create::<BaseSponge, ScalarSponge, _>(
-            group_map,
-            witness,
-            &[],
-            index,
-            &mut rand::rngs::OsRng,
-        )
-        .map_err(|e| format!("prove rejected: {e:?}"))?;
-
-    let vk = index.verifier_index.as_ref().expect("verifier index");
-    let ctx = Context {
-        verifier_index: vk,
-        proof: &proof,
-        public_input,
-    };
-    batch_verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>>(
-        group_map,
-        &[ctx],
-    )
-    .map_err(|e| format!("verify rejected: {e:?}"))?;
-    Ok(())
+    step::prove_and_verify(index, group_map, witness, public_input)
 }
 
 // A flip of witness cell (col,row) by +1.
@@ -268,7 +161,7 @@ fn main() {
     println!("   fixtures dir: {}", dir.display());
     println!();
 
-    let gm = <Vesta as CommitmentCurve>::Map::setup();
+    let gm = step::group_map();
 
     let a = load_circuit(&dir, "pi_mul_a.json");
     let b = load_circuit(&dir, "pi_mul_b.json");
@@ -385,10 +278,10 @@ fn main() {
 mod public_input {
     use super::*;
 
-    fn setup(name: &str) -> (CircuitJson, Idx, <Vesta as CommitmentCurve>::Map) {
+    fn setup(name: &str) -> (CircuitJson, step::Index, step::Map) {
         let c = load_circuit(&fixtures_dir(), name);
         let index = index_for(&c);
-        let gm = <Vesta as CommitmentCurve>::Map::setup();
+        let gm = step::group_map();
         (c, index, gm)
     }
 

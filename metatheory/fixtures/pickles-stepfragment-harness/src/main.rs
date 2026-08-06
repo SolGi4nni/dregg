@@ -60,158 +60,86 @@
 //       /tmp/pickles-stepfragment/stepfragment_K12_C16_E32.json
 
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Instant;
 
-use groupmap::GroupMap;
-use mina_curves::pasta::{Fp, Vesta, VestaParameters};
-use mina_poseidon::{
-    constants::PlonkSpongeConstantsKimchi, pasta::FULL_ROUNDS, sponge::DefaultFqSponge,
-    sponge::DefaultFrSponge,
+use mina_curves::pasta::Fp;
+
+// ⚑ THE ONE DRIVER. `build_gates` / `build_witness` / `index_for` / `prove_and_verify` were
+// open-coded in TEN of these harnesses — not ten transcriptions of one reader but ten readers that
+// DISAGREED. `pickles-circuit-driver/src/lib.rs` carries the measured list: an `i128` parser that
+// cannot hold a round constant, an `F::from_str` that SILENTLY REDUCES a coefficient authored over
+// the other pasta prime, a gate table stopping at ordinal 3, two SRS constructions, two preflight
+// settings, and two serde shapes with no `public_input` field at all. The bodies below are
+// one-liners into the shared reader; the names stay, so everything about THIS rung is untouched.
+use pickles_circuit_driver::{
+    kimchi::circuits::gate::CircuitGate, kimchi::circuits::wires::COLUMNS, load, load_in, step,
+    CircuitJson, IndexOpts,
 };
-use poly_commitment::{commitment::CommitmentCurve, ipa::OpeningProof};
-use serde::Deserialize;
-
-use kimchi::{
-    circuits::{
-        gate::{CircuitGate, GateType},
-        wires::{GateWires, Wire, COLUMNS},
-    },
-    proof::ProverProof,
-    prover_index::{testing::new_index_for_test_with_lookups, ProverIndex},
-    verifier::{batch_verify, Context},
-};
-
-type BaseSponge = DefaultFqSponge<VestaParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type Idx = ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>>;
-
-// ---- the Lean-emitted JSON shape (identical to the compose / curve-gate harnesses) ----
-
-#[derive(Deserialize, Clone)]
-struct GateJson {
-    typ: u64,
-    wires: Vec<[usize; 2]>,
-    coeffs: Vec<String>,
-}
-
-#[derive(Deserialize, Clone)]
-struct CircuitJson {
-    name: String,
-    public_input_size: usize,
-    num_rows: usize,
-    gates: Vec<GateJson>,
-    witness: Vec<Vec<String>>, // COLUMNS columns, each num_rows long
-}
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures"))
 }
 
-fn parse_fp(s: &str) -> Fp {
-    Fp::from_str(s).unwrap_or_else(|_| panic!("not a decimal field element: {s:?}"))
+/// A decimal literal as a field element. ⚠ NOT `Fp::from_str`: ark-ff implements that as
+/// `BigInt::from_str(s) % MODULUS`, so a coefficient authored over the OTHER pasta prime becomes a
+/// well-formed element of this one with no error anywhere. The shared reader REFUSES a
+/// non-canonical literal instead.
+#[allow(dead_code)]
+fn parse_f(s: &str) -> Fp {
+    pickles_circuit_driver::parse_field::<Fp>(s)
 }
 
-fn gate_type_from_ordinal(o: u64) -> GateType {
-    match o {
-        0 => GateType::Zero,
-        1 => GateType::Generic,
-        2 => GateType::Poseidon,
-        3 => GateType::CompleteAdd,
-        4 => GateType::VarBaseMul,
-        5 => GateType::EndoMul,
-        6 => GateType::EndoMulScalar,
-        _ => panic!("unsupported gate ordinal {o} for the step-fragment rung"),
-    }
-}
-
+#[allow(dead_code)]
 fn load_path(path: &std::path::Path) -> CircuitJson {
-    let raw =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+    load(path)
 }
 
+#[allow(dead_code)]
 fn load_circuit(dir: &std::path::Path, name: &str) -> CircuitJson {
-    load_path(&dir.join(name))
+    load_in(dir, name)
 }
 
+#[allow(dead_code)]
 fn build_gates(c: &CircuitJson) -> Vec<CircuitGate<Fp>> {
-    c.gates
-        .iter()
-        .map(|g| {
-            assert_eq!(g.wires.len(), 7, "kimchi PERMUTS = 7 wires per gate");
-            let wires: GateWires = core::array::from_fn(|i| Wire {
-                row: g.wires[i][0],
-                col: g.wires[i][1],
-            });
-            let coeffs: Vec<Fp> = g.coeffs.iter().map(|s| parse_fp(s)).collect();
-            CircuitGate::new(gate_type_from_ordinal(g.typ), wires, coeffs)
-        })
-        .collect()
+    step::gates(c)
 }
 
+#[allow(dead_code)]
 fn build_witness(c: &CircuitJson) -> [Vec<Fp>; COLUMNS] {
-    assert_eq!(
-        c.witness.len(),
-        COLUMNS,
-        "witness must have {COLUMNS} columns"
-    );
-    core::array::from_fn(|col| {
-        let column = &c.witness[col];
-        assert_eq!(
-            column.len(),
-            c.num_rows,
-            "each witness column is num_rows long"
-        );
-        column.iter().map(|s| parse_fp(s)).collect()
-    })
+    step::witness(c)
 }
 
-// disable_gates_checks = true: skip the prover's debug preflight so a tampered witness (gate OR
-// permutation) is rejected by the PROOF, returning Err rather than panicking.
-fn index_for(c: &CircuitJson) -> Idx {
-    let mut index = new_index_for_test_with_lookups::<FULL_ROUNDS, Vesta>(
-        build_gates(c),
-        c.public_input_size,
-        0,
-        vec![],
-        None,
-        true,
-        None,
-        false,
-    );
-    index.compute_verifier_index_digest::<BaseSponge>();
-    index
+#[allow(dead_code)]
+fn build_public(c: &CircuitJson) -> Vec<Fp> {
+    step::public(c)
 }
 
+#[allow(dead_code)]
+fn public_of(c: &CircuitJson) -> Vec<Fp> {
+    step::public(c)
+}
+
+/// ⚑ This rung's index options, unchanged from before the collapse: kimchi's serialized TEST srs and
+/// `disable_gates_checks` — the prover's debug preflight is SKIPPED so a tampered witness (gate OR
+/// permutation) is rejected by the PROOF, returning `Err` rather than panicking.
+#[allow(dead_code)]
+fn index_from_gates(gates: Vec<CircuitGate<Fp>>, public: usize) -> step::Index {
+    step::index_from_gates(gates, IndexOpts::test(public))
+}
+
+#[allow(dead_code)]
+fn index_for(c: &CircuitJson) -> step::Index {
+    step::index_for(c, IndexOpts::test(c.public_input_size))
+}
+
+#[allow(dead_code)]
 fn prove_and_verify(
-    index: &Idx,
-    group_map: &<Vesta as CommitmentCurve>::Map,
+    index: &step::Index,
+    group_map: &step::Map,
     witness: [Vec<Fp>; COLUMNS],
     public_input: &[Fp],
 ) -> Result<(), String> {
-    let proof: ProverProof<Vesta, OpeningProof<Vesta, FULL_ROUNDS>, FULL_ROUNDS> =
-        ProverProof::create::<BaseSponge, ScalarSponge, _>(
-            group_map,
-            witness,
-            &[],
-            index,
-            &mut rand::rngs::OsRng,
-        )
-        .map_err(|e| format!("prove rejected: {e:?}"))?;
-
-    let vk = index.verifier_index.as_ref().expect("verifier index");
-    let ctx = Context {
-        verifier_index: vk,
-        proof: &proof,
-        public_input,
-    };
-    batch_verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>>(
-        group_map,
-        &[ctx],
-    )
-    .map_err(|e| format!("verify rejected: {e:?}"))?;
-    Ok(())
+    step::prove_and_verify(index, group_map, witness, public_input)
 }
 
 /// A flip of witness cell (col,row) by +1, returning a fresh tampered witness.
@@ -245,7 +173,7 @@ fn main() {
 
     println!("== step-fragment harness: LEAN-SYNTHESIZED MULTI-STEP step_main MSM COMPONENT ==");
     let dir = fixtures_dir();
-    let gm = <Vesta as CommitmentCurve>::Map::setup();
+    let gm = step::group_map();
     let public: Vec<Fp> = vec![];
 
     let wired = load_circuit(&dir, "stepfragment.json");
@@ -335,7 +263,7 @@ fn main() {
 /// Scale rung: prove ONE emitted circuit and report rows / domain / wall-clock.
 fn scale_run(path: &str) {
     let c = load_path(std::path::Path::new(path));
-    let gm = <Vesta as CommitmentCurve>::Map::setup();
+    let gm = step::group_map();
     let t_idx = Instant::now();
     let idx = index_for(&c);
     let idx_ms = t_idx.elapsed();
@@ -372,16 +300,16 @@ mod stepfragment_tests {
     fn setup() -> (
         CircuitJson,
         CircuitJson,
-        Idx,
-        Idx,
-        <Vesta as CommitmentCurve>::Map,
+        step::Index,
+        step::Index,
+        step::Map,
     ) {
         let dir = fixtures_dir();
         let wired = load_circuit(&dir, "stepfragment.json");
         let unwired = load_circuit(&dir, "stepfragment_unwired.json");
         let iw = index_for(&wired);
         let iu = index_for(&unwired);
-        let gm = <Vesta as CommitmentCurve>::Map::setup();
+        let gm = step::group_map();
         (wired, unwired, iw, iu, gm)
     }
 

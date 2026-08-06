@@ -43,198 +43,113 @@
 //!   cargo run   --release --manifest-path .../Cargo.toml --bin harness -- /tmp/pickles-chain
 
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::Instant;
 
-use groupmap::GroupMap;
-use mina_curves::pasta::{Fq, Pallas, PallasParameters};
-use mina_poseidon::{
-    constants::PlonkSpongeConstantsKimchi, pasta::FULL_ROUNDS, sponge::DefaultFqSponge,
-    sponge::DefaultFrSponge,
-};
-use poly_commitment::{commitment::CommitmentCurve, ipa::OpeningProof};
-use serde::Deserialize;
+use mina_curves::pasta::Fq;
 
-use kimchi::{
-    circuits::{
-        gate::{CircuitGate, GateType},
-        wires::{GateWires, Wire, COLUMNS},
-    },
-    proof::ProverProof,
-    prover_index::{testing::new_index_for_test_with_lookups, ProverIndex},
-    verifier::{batch_verify, Context},
+// ⚑ THE ONE DRIVER. `build_gates` / `build_witness` / `index_for` / `prove_and_verify` were
+// open-coded in TEN of these harnesses — not ten transcriptions of one reader but ten readers that
+// DISAGREED. `pickles-circuit-driver/src/lib.rs` carries the measured list: an `i128` parser that
+// cannot hold a round constant, an `F::from_str` that SILENTLY REDUCES a coefficient authored over
+// the other pasta prime, a gate table stopping at ordinal 3, two SRS constructions, two preflight
+// settings, and two serde shapes with no `public_input` field at all. The bodies below are
+// one-liners into the shared reader; the names stay, so everything about THIS rung is untouched.
+use pickles_circuit_driver::{
+    kimchi::circuits::gate::CircuitGate, kimchi::circuits::wires::COLUMNS, load, load_in, wrap,
+    CircuitJson, IndexOpts,
 };
 
-// ⚑ Pallas-committed, Fq-scalar — the mirror of the step side, which is Vesta/Fp.
-type BaseSponge = DefaultFqSponge<PallasParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type ScalarSponge = DefaultFrSponge<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
-type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
-
-/// The rungs the chain emits. Same ladder as `pickles-wrapmain-harness`, driven by a different
-/// tape.
-///
-/// ⚑ **`w5_key` JOINED ON 2026-08-05, AND IT IS THE POINT.** It was absent because `keyRows`'
-/// closing `digestTie` is a `Field.Assert.equal` joining the index sponge's squeeze to the
-/// transcript's FIRST absorbed word, and the wrap circuit committed to MINA's `step-transaction`
-/// verification key while this tape is dregg's own step proof's. Two different circuits, one
-/// unsatisfiable row, and `.key` sits in `rungsUpto` of every rung above `w4_bind` — so that ONE
-/// row was the whole ceiling, not W-COMBINE and not W-BULLET. `step_keys` is a per-branch vector of
-/// the compiled step rules' keys (`wrap_main.ml:98-101`), so dregg's step rule took an entry beside
-/// Mina's and `choose_key` selects it. This harness proving `w5_key` on Pallas is the climb.
-/// ⚑⚑ **`w6_xhat` JOINED ON 2026-08-06, AND IT IS A DIFFERENT KIND OF CLIMB FROM `w5_key`'s.**
-/// `w5_key` was blocked by a wrong CONSTANT — the wrap circuit committed to Mina's
-/// `step-transaction` index while this tape is dregg's own step proof's — and giving `step_keys`
-/// dregg's own entry fixed it with no new arithmetic. `w6_xhat` was blocked by a wrong FUNCTION:
-/// `xhatRows`' closing `caRowQ` ties the absorbed `x_hat` pair to the MSM's output, and the MSM ran
-/// over Mina's packed `Types.Step.Statement` — 67 entries whose scalars are a named fixture and
-/// belong to no proof — while this tape's `x_hat` is the public-input commitment
-/// `kimchi::verifier` computed for dregg's own step proof. The MSM now runs over THIS proof's
-/// twelve `Fp` public inputs against the step SRS's Lagrange basis **at this proof's own domain**
-/// (2^12, not `MinaStepSrsLagrange`'s 2^16), so the row has an honest witness. This harness proving
-/// `w6_xhat` on Pallas is that climb; `w7_split` is the new ceiling and it is structural — dregg's
-/// step proof has no packed statement for `split_field` to be about.
 const RUNGS: [&str; 4] = ["w1_transcript", "w4_bind", "w5_key", "w6_xhat"];
 
-#[derive(Deserialize, Clone, PartialEq, Eq)]
-struct GateJson {
-    typ: u64,
-    wires: Vec<[usize; 2]>,
-    coeffs: Vec<String>,
-}
-
-#[derive(Deserialize, Clone, PartialEq, Eq)]
-struct CircuitJson {
-    name: String,
-    public_input_size: usize,
-    public_input: Vec<String>,
-    num_rows: usize,
-    probe_rows: Vec<usize>,
-    /// ⚑ Which of MINA'S forty statement slots the Lean emission DERIVES, and which it declares
-    /// unread. Emitted WITH the circuit so a Rust gate tests the split rather than its own guess.
-    #[serde(default)]
-    derived_slots: Vec<usize>,
-    #[serde(default)]
-    unread_slots: Vec<usize>,
-    gates: Vec<GateJson>,
-    witness: Vec<Vec<String>>,
-}
-
-/// Mina's own wrap statement width (`Impls.Wrap.input ()`), as an INDEPENDENT source the emission
-/// is checked against rather than read off it.
+/// `WRAP_PRIMARY_LEN` — what `Impls.Wrap.input ()` allocates.
 const MINA_WRAP_PRIMARY_LEN: usize = 40;
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures"))
 }
 
-/// ⚑ `Fq`. A step-side coefficient reduced mod p would parse here and mean something else.
-fn parse_fq(s: &str) -> Fq {
-    Fq::from_str(s).unwrap_or_else(|_| panic!("not a decimal Fq element: {s:?}"))
+/// A decimal literal as a field element. ⚠ NOT `Fq::from_str`: ark-ff implements that as
+/// `BigInt::from_str(s) % MODULUS`, so a coefficient authored over the OTHER pasta prime becomes a
+/// well-formed element of this one with no error anywhere. The shared reader REFUSES a
+/// non-canonical literal instead.
+#[allow(dead_code)]
+fn parse_f(s: &str) -> Fq {
+    pickles_circuit_driver::parse_field::<Fq>(s)
 }
 
-fn gate_type_from_ordinal(o: u64) -> GateType {
-    match o {
-        0 => GateType::Zero,
-        1 => GateType::Generic,
-        2 => GateType::Poseidon,
-        3 => GateType::CompleteAdd,
-        4 => GateType::VarBaseMul,
-        5 => GateType::EndoMul,
-        6 => GateType::EndoMulScalar,
-        _ => panic!("wrap_main emits only the seven gate types Mina uses; got ordinal {o}"),
-    }
+#[allow(dead_code)]
+fn load_path(path: &std::path::Path) -> CircuitJson {
+    load(path)
 }
 
-fn load_path(path: &Path) -> CircuitJson {
-    let s = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    serde_json::from_str(&s).unwrap_or_else(|e| panic!("bad JSON in {}: {e}", path.display()))
+#[allow(dead_code)]
+fn load_circuit(dir: &std::path::Path, name: &str) -> CircuitJson {
+    load_in(dir, name)
 }
 
+#[allow(dead_code)]
 fn build_gates(c: &CircuitJson) -> Vec<CircuitGate<Fq>> {
-    c.gates
-        .iter()
-        .enumerate()
-        .map(|(row, g)| {
-            assert_eq!(
-                g.wires.len(),
-                7,
-                "row {row}: a kimchi row has 7 permutable columns"
-            );
-            let mut w: GateWires = std::array::from_fn(|_| Wire { row: 0, col: 0 });
-            for (i, rc) in g.wires.iter().enumerate() {
-                w[i] = Wire {
-                    row: rc[0],
-                    col: rc[1],
-                };
-            }
-            let coeffs: Vec<Fq> = g.coeffs.iter().map(|s| parse_fq(s)).collect();
-            CircuitGate::new(gate_type_from_ordinal(g.typ), w, coeffs)
-        })
-        .collect()
+    wrap::gates(c)
 }
 
+#[allow(dead_code)]
 fn build_witness(c: &CircuitJson) -> [Vec<Fq>; COLUMNS] {
-    assert_eq!(c.witness.len(), COLUMNS, "the composed grid is 15 columns");
-    let cols: Vec<Vec<Fq>> = c
-        .witness
-        .iter()
-        .map(|col| {
-            assert_eq!(col.len(), c.num_rows, "every column is num_rows long");
-            col.iter().map(|s| parse_fq(s)).collect()
-        })
-        .collect();
-    std::array::from_fn(|i| cols[i].clone())
+    wrap::witness(c)
 }
 
+#[allow(dead_code)]
+fn build_public(c: &CircuitJson) -> Vec<Fq> {
+    wrap::public(c)
+}
+
+#[allow(dead_code)]
 fn public_of(c: &CircuitJson) -> Vec<Fq> {
-    assert_eq!(c.public_input.len(), c.public_input_size);
-    c.public_input.iter().map(|s| parse_fq(s)).collect()
+    wrap::public(c)
 }
 
-fn index_for(c: &CircuitJson) -> Idx {
-    let mut index = new_index_for_test_with_lookups::<FULL_ROUNDS, Pallas>(
-        build_gates(c),
-        c.public_input_size,
-        0,
-        vec![],
-        None,
-        true,
-        None,
-        false,
-    );
-    index.compute_verifier_index_digest::<BaseSponge>();
-    index
+/// ⚑ This rung's index options, unchanged from before the collapse: kimchi's serialized TEST srs and
+/// `disable_gates_checks` — the prover's debug preflight is SKIPPED so a tampered witness (gate OR
+/// permutation) is rejected by the PROOF, returning `Err` rather than panicking.
+#[allow(dead_code)]
+fn index_from_gates(gates: Vec<CircuitGate<Fq>>, public: usize) -> wrap::Index {
+    wrap::index_from_gates(gates, IndexOpts::test(public))
 }
 
+#[allow(dead_code)]
+fn index_for(c: &CircuitJson) -> wrap::Index {
+    wrap::index_for(c, IndexOpts::test(c.public_input_size))
+}
+
+#[allow(dead_code)]
 fn prove_and_verify(
-    index: &Idx,
-    group_map: &<Pallas as CommitmentCurve>::Map,
+    index: &wrap::Index,
+    group_map: &wrap::Map,
     witness: [Vec<Fq>; COLUMNS],
     public_input: &[Fq],
 ) -> Result<(), String> {
-    let proof: ProverProof<Pallas, OpeningProof<Pallas, FULL_ROUNDS>, FULL_ROUNDS> =
-        ProverProof::create::<BaseSponge, ScalarSponge, _>(
-            group_map,
-            witness,
-            &[],
-            index,
-            &mut rand::rngs::OsRng,
-        )
-        .map_err(|e| format!("prove rejected: {e:?}"))?;
+    wrap::prove_and_verify(index, group_map, witness, public_input)
+}
 
-    let vk = index.verifier_index.as_ref().expect("verifier index");
-    let ctx = Context {
-        verifier_index: vk,
-        proof: &proof,
-        public_input,
-    };
-    batch_verify::<FULL_ROUNDS, Pallas, BaseSponge, ScalarSponge, OpeningProof<Pallas, FULL_ROUNDS>>(
-        group_map,
-        &[ctx],
-    )
-    .map_err(|e| format!("verify rejected: {e:?}"))?;
-    Ok(())
+/// ⚑ THE CENSUS MUST BE THERE, AND ITS ABSENCE IS A RED. These were `#[serde(default)]` `Vec`s on
+/// this harness's own serde shape, so an emission carrying no census at all read back as an EMPTY
+/// one and every slot assertion below quietly ranged over nothing. They are `Option` on the shared
+/// reader — absent is distinguishable from empty — and these three REFUSE the absent case.
+fn probes_of(c: &CircuitJson) -> &[usize] {
+    c.probe_rows
+        .as_deref()
+        .unwrap_or_else(|| panic!("{}: the emission carries NO probe_rows", c.name))
+}
+
+fn derived_of(c: &CircuitJson) -> &[usize] {
+    c.derived_slots
+        .as_deref()
+        .unwrap_or_else(|| panic!("{}: the emission carries NO derived_slots", c.name))
+}
+
+fn unread_of(c: &CircuitJson) -> &[usize] {
+    c.unread_slots
+        .as_deref()
+        .unwrap_or_else(|| panic!("{}: the emission carries NO unread_slots", c.name))
 }
 
 fn tamper(c: &CircuitJson, col: usize, row: usize) -> [Vec<Fq>; COLUMNS] {
@@ -288,7 +203,7 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
             .collect::<Vec<_>>()
     );
 
-    let gm = <Pallas as CommitmentCurve>::Map::setup();
+    let gm = wrap::group_map();
     let iw = index_for(&wired);
     let iu = index_for(&unwired);
     let pub_w = public_of(&wired);
@@ -312,7 +227,7 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
         wired.num_rows, honest
     );
 
-    let sample = probe_sample(&wired.probe_rows, budget);
+    let sample = probe_sample(probes_of(&wired), budget);
     for &r in &sample {
         assert!(
             prove_and_verify(&iw, &gm, tamper(&wired, 0, r), &pub_w).is_err(),
@@ -322,7 +237,7 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
     println!(
         "[2 WIRING   ] {}/{} sigma-only probes REJECT a col-0 desync",
         sample.len(),
-        wired.probe_rows.len()
+        probes_of(&wired).len()
     );
 
     prove_and_verify(&iu, &gm, build_witness(&unwired), &pub_w)
@@ -335,7 +250,7 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
     }
     println!("[3 CONTROL  ] the SAME flips ACCEPTED on the UNWIRED circuit -> (2) is the WIRE");
 
-    let p0 = wired.probe_rows[0];
+    let p0 = probes_of(&wired)[0];
     assert!(
         prove_and_verify(&iw, &gm, tamper(&wired, 12, p0), &pub_w).is_ok(),
         "[FALSIFICATION] {rung}: unread advice cell (col 12, row {p0}) flip REJECTED"
@@ -353,11 +268,11 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
             "{rung}: the emission must be Mina's own statement width"
         );
         assert_eq!(
-            wired.derived_slots.len() + wired.unread_slots.len(),
+            derived_of(&wired).len() + unread_of(&wired).len(),
             MINA_WRAP_PRIMARY_LEN,
             "{rung}: derived + unread must be exactly Mina's forty"
         );
-        for i in [wired.derived_slots[0], wired.unread_slots[0]] {
+        for i in [derived_of(&wired)[0], unread_of(&wired)[0]] {
             let mut bad = pub_w.clone();
             bad[i] += Fq::from(1u64);
             assert!(
@@ -366,8 +281,8 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
             );
         }
         let d = [
-            wired.derived_slots[0],
-            wired.derived_slots[wired.derived_slots.len() - 1],
+            derived_of(&wired)[0],
+            derived_of(&wired)[derived_of(&wired).len() - 1],
         ];
         for i in d {
             let mut b = pub_w.clone();
@@ -378,8 +293,8 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
             );
         }
         let u = [
-            wired.unread_slots[0],
-            wired.unread_slots[wired.unread_slots.len() - 1],
+            unread_of(&wired)[0],
+            unread_of(&wired)[unread_of(&wired).len() - 1],
         ];
         for i in u {
             let mut b = pub_w.clone();
@@ -392,8 +307,8 @@ fn run_rung(dir: &Path, rung: &str, budget: usize) -> (usize, u128) {
         println!(
             "[5 PUBLIC   ] {} Mina slots ({} derived {:?}): VECTOR leg REJECTS; SIGMA leg REJECTS at derived {d:?} and ACCEPTS at unread {u:?}",
             wired.public_input_size,
-            wired.derived_slots.len(),
-            wired.derived_slots
+            derived_of(&wired).len(),
+            derived_of(&wired)
         );
     }
 
@@ -442,11 +357,11 @@ fn run_chain_controls_at(dir: &Path, rung: &str) {
         .count();
     println!(
         "[6 CHAIN +  ] {rung}: bending ONE Fq coordinate of the step proof's w_comm MOVES {moved}/{} wrap public words",
-        honest.public_input.len()
+        honest.public_strings().len()
     );
 
     // ...and the moved circuit is still a real circuit: it proves.
-    let gm = <Pallas as CommitmentCurve>::Map::setup();
+    let gm = wrap::group_map();
     let ib = index_for(&bent);
     prove_and_verify(&ib, &gm, build_witness(&bent), &public_of(&bent))
         .unwrap_or_else(|e| panic!("[FATAL] the BENT-step chained circuit did not prove: {e}"));
@@ -462,7 +377,7 @@ fn run_chain_controls_at(dir: &Path, rung: &str) {
     // Everything but the `name` field, which carries the emission's own filename by construction.
     assert_eq!(unread.public_input_size, honest.public_input_size);
     assert_eq!(unread.num_rows, honest.num_rows);
-    assert_eq!(unread.probe_rows, honest.probe_rows);
+    assert_eq!(probes_of(&unread), probes_of(&honest));
     assert!(
         unread.gates == honest.gates,
         "[FALSIFICATION] bending z_1/z_2/ft_eval1/delta/sg changed the emitted gates"
@@ -519,7 +434,7 @@ mod chain_tests {
 
     #[test]
     fn honest_chained_rungs_verify() {
-        let gm = <Pallas as CommitmentCurve>::Map::setup();
+        let gm = wrap::group_map();
         for rung in RUNGS {
             let c = load(&format!("chain_{rung}"));
             let i = index_for(&c);
@@ -530,15 +445,15 @@ mod chain_tests {
 
     #[test]
     fn every_sigma_probe_binds_and_the_control_accepts() {
-        let gm = <Pallas as CommitmentCurve>::Map::setup();
+        let gm = wrap::group_map();
         for rung in RUNGS {
             let w = load(&format!("chain_{rung}"));
             let u = load(&format!("chain_{rung}_unwired"));
             let iw = index_for(&w);
             let iu = index_for(&u);
             let p = public_of(&w);
-            assert!(!w.probe_rows.is_empty(), "{rung}: no probes emitted");
-            for &r in &w.probe_rows {
+            assert!(!probes_of(&w).is_empty(), "{rung}: no probes emitted");
+            for &r in probes_of(&w) {
                 assert!(
                     prove_and_verify(&iw, &gm, tamper(&w, 0, r), &p).is_err(),
                     "{rung}: probe row {r} col-0 desync ACCEPTED on the WIRED circuit"
@@ -553,11 +468,11 @@ mod chain_tests {
 
     #[test]
     fn unread_advice_cells_are_accepted() {
-        let gm = <Pallas as CommitmentCurve>::Map::setup();
+        let gm = wrap::group_map();
         for rung in RUNGS {
             let c = load(&format!("chain_{rung}"));
             let i = index_for(&c);
-            let p0 = c.probe_rows[0];
+            let p0 = probes_of(&c)[0];
             assert!(
                 prove_and_verify(&i, &gm, tamper(&c, 12, p0), &public_of(&c)).is_ok(),
                 "{rung}: an unread advice cell flip was REJECTED - the rejections may be vacuous"
@@ -567,7 +482,7 @@ mod chain_tests {
 
     #[test]
     fn public_input_binds_and_is_wired_in() {
-        let gm = <Pallas as CommitmentCurve>::Map::setup();
+        let gm = wrap::group_map();
         let c = load("chain_w4_bind");
         let i = index_for(&c);
         let p = public_of(&c);
@@ -576,10 +491,7 @@ mod chain_tests {
         bad[0] += Fq::from(1u64);
         assert!(prove_and_verify(&i, &gm, build_witness(&c), &bad).is_err());
         // the SIGMA leg: REFUSE where the rung derives, ACCEPT where it declares unread.
-        for k in [
-            c.derived_slots[0],
-            c.derived_slots[c.derived_slots.len() - 1],
-        ] {
+        for k in [derived_of(&c)[0], derived_of(&c)[derived_of(&c).len() - 1]] {
             let mut b = p.clone();
             b[k] += Fq::from(1u64);
             assert!(
@@ -587,7 +499,7 @@ mod chain_tests {
                 "DERIVED slot ({k},0) flip WITH a matching public vector ACCEPTED"
             );
         }
-        for k in [c.unread_slots[0], c.unread_slots[c.unread_slots.len() - 1]] {
+        for k in [unread_of(&c)[0], unread_of(&c)[unread_of(&c).len() - 1]] {
             let mut b = p.clone();
             b[k] += Fq::from(1u64);
             assert!(

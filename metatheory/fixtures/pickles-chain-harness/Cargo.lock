@@ -765,6 +765,24 @@ dependencies = [
  "mina-poseidon",
  "num-bigint",
  "o1-utils",
+ "pickles-circuit-driver",
+ "poly-commitment",
+ "rand",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pickles-circuit-driver"
+version = "0.1.0"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "groupmap",
+ "kimchi",
+ "mina-curves",
+ "mina-poseidon",
+ "num-bigint",
  "poly-commitment",
  "rand",
  "serde",
