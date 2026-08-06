@@ -908,6 +908,49 @@ def CMP_COLS : Nat := 3 + decompCols KEY_LO_BITS
 #guard CMP_COLS == 13
 #guard KEY_HI_MAX * KEY_HI_BASE == 2013265921 - 1
 
+/-! ### §6a′ — ⚑⚑ `LIMB_BITS = 4` IS A SOUNDNESS PIN, NOT A PERFORMANCE ONE.
+
+Read `canonDecompQueries` below: the `hi4` column is bounded by **ONE query on the shared byte bus
+and nothing else**. So `hi4`'s admissible range IS the byte table's HEIGHT, and the byte table's
+height IS `2 ^ LIMB_BITS`. `hi4` is not a limb — it is the high digit of the canonical split
+`value = hi4·2^27 + lo27` — but it is bounded as though it were.
+
+That coupling is invisible from either end. `ByteTableEmit.gates_admit_every_height` proves the
+byte table's ALGEBRA does not care how tall it is, which reads as "the height is a free verifier
+constant"; and the width arithmetic says a bigger radix is cheaper (measured 2026-08-06: the
+corpus aux block is 75,156 columns at radix 4 and 39,168 at radix 8, a 0.521× on the quantity the
+prover actually commits). Both are true. Neither can see this.
+
+`KEY_HI_MAX = 15` and `p − 1 = 15·2^27` are what make the split unique at a `[0,16)` bound. The two
+theorems below are the pair: the collision a `[0,256)` bound ADMITS, exhibited on a real witness,
+and its ABSENCE at the deployed bound. ⚠ The consequence is not a wider range — it is that
+`CMP_COLS`/`lexLtGates` order keys lexicographically on `(hi4, lo27)`, so a felt with two
+representations compares two ways, which is a satisfying witness for the IMT bracket
+`low_addr < key < low_next` on a key that does not lie in it. -/
+
+/-- The felt a canonical-split block denotes: `hi·2^27 + lo`, reduced. -/
+def canonValue (hi lo : Nat) : Nat := (hi * 134217728 + lo) % 2013265921
+
+/-- ⚑ **THE COLLISION A 256-ROW BYTE TABLE ADMITS.** `(hi 0, lo 2^27−1)` and `(hi 16, lo 0)` are
+both legal under a `[0,256)` bound on `hi` with `lo < 2^27`, and they denote the SAME felt. -/
+theorem canon_split_collides_when_hi_reaches_16 :
+    canonValue 0 134217727 = canonValue 16 0 := by decide
+
+/-- ⚑ **AND THE DEPLOYED BOUND EXCLUDES IT — the TRUE pole.** No legal `hi < 16` reproduces that
+felt from `lo = 0`, so at `[0,16)` the witness above simply does not exist. -/
+theorem canon_hi_witness_absent_below_16 :
+    (List.range 16).filter (fun hi => canonValue hi 0 == canonValue 0 134217727) = [] := by decide
+
+/-- …and it appears at EXACTLY the first row a 256-height table adds beyond a 16-height one, which
+is what makes the height the load-bearing quantity rather than a coincidence of this witness. -/
+theorem canon_hi_witness_present_below_256 :
+    (List.range 256).filter (fun hi => canonValue hi 0 == canonValue 0 134217727) = [16] := by
+  decide
+
+#assert_axioms canon_split_collides_when_hi_reaches_16
+#assert_axioms canon_hi_witness_absent_below_16
+#assert_axioms canon_hi_witness_present_below_256
+
 /-- `hi4` of a canonical-decomposition block. -/
 def canonHi (b0 : Nat) : TExpr := v b0
 /-- `lo27 = value − hi4 · 2^27`. -/

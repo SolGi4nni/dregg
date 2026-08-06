@@ -51,6 +51,27 @@ nibble-limb change, so `BYTE_TABLE_HEIGHT = 16` and the served range is `[0,16)`
 NIBBLE table with a byte table's name. Nothing depends on the wrong number (every caller reads
 the constant), but a reader auditing a range bound from the prose would be off by a factor of 16.
 
+## ⚑⚑ 2026-08-06 — AND THE 16 IS A SOUNDNESS PIN, WHICH THIS FILE MAKES EASY TO MISREAD
+
+4 → 8 was attempted for a measured width win (corpus aux columns 75,156 → 39,168) and REVERTED.
+The reason is worth stating HERE, because §4b below is exactly what makes the mistake attractive:
+`gates_admit_every_height` says this AIR does not care how tall the table is, so the height reads
+like a free verifier constant. It is not free, because the height is a RANGE BOUND for a column
+that is not a limb.
+
+`TableAirIR.canonDecompQueries` bounds the `hi4` of the canonical key split
+`value = hi4·2^27 + lo27` with ONE query on this bus and nothing else. At 16 rows that is
+`hi4 < 16`, and `KEY_HI_MAX = 15` with `p − 1 = 15·2^27` is what makes the split UNIQUE. At 256
+rows, `134217727 = (hi4 0, lo27 2^27−1) = (hi4 16, lo27 0)` — one felt, two representations — and
+the lex comparator that orders IMT keys on `(hi4, lo27)` will compare them differently. The full
+account, the measured curve and what a real move requires are on the Rust `LIMB_BITS`
+(`circuit/src/descriptor_ir2.rs`).
+
+⚠ Note also what this file does NOT license: "the byte table's own bytes never move" is TRUE and
+is proved below, but the OTHER Lean table AIRs (`MapOpsTableEmit`, `MapAbsentTableEmit`,
+`MemoryTableEmit`, `MemBoundaryTableEmit`, the umem pair) bake `decompCols` into their gate and
+query lists, so a radix change DOES re-emit those. The byte table is the exception, not the rule.
+
 ## Axiom hygiene
 No `sorry`, no `native_decide`, no new axiom. Crypto enters nowhere: this file is the ALGEBRA of
 a counter and the range semantics it grounds.

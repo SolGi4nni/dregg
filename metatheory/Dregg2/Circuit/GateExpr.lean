@@ -905,6 +905,197 @@ theorem gHeadToExpr_gIsNormal {L : Type} (h : GHead L) :
   · by_cases hc : h.const = 0 <;> simp [hc] at he
     · exact he ▸ rfl
 
+/-! ### §6c — ⚑ THE NORMALIZER: an ARBITRARY body INTO the normal form, at every alphabet.
+
+§6b says the canonical renderer's OUTPUT is normal. That is a fact about bodies the compiler BUILT
+from a head, and it says nothing about a body that was hand-shaped before there was a compiler —
+which is most of the corpus. `scripts/measure-descriptor-normal-form.py` reads **23 of 113**
+checked-in descriptors in the normal form, 18,290 of 41,264 arithmetic bodies outside it.
+
+What closes that is not a per-descriptor re-authoring. It is the renderer's INVERSE: read any body
+back into a head, then render that head canonically. `EffectLower.exprToHead` has been exactly this
+function at the `VLeaf` alphabet since the first rail fusion — used only on the SOURCE side, where
+the input was already a compiler input. Here it is at EVERY alphabet, which is what lets the WINDOW
+rail (whose bodies had no reader at all, only a builder) be canonicalized too.
+
+## ⚑ ONE PASS, NOT TWO — and this is where that stops being a claim
+
+Constant folding was priced as a second job to run after normalization. It is not a job at all.
+A head is `Σ coeff · ∏ leaves + const`; `gMulHead` multiplies two heads; a product of two literal
+constants is a head with an EMPTY term list, which IS the folded constant. The 5,075
+`mul(const, const)` subtrees the corpus ships today — 4,284 of them the `mul(const -1, const 1)`
+that a subtraction of one lowers to — do not survive `gExprToHead` because the head vocabulary
+CANNOT REPRESENT THEM. There is no deletion step to schedule.
+
+## ⚠ What it costs, measured rather than estimated
+
+Rendering every term with its coefficient is more bytes than eliding the unit ones. Over the 113
+checked-in descriptors the whole pass is **1,954,732 → 2,142,886 AST nodes, +188,154 (+9.63%)**,
+and it is bytes only: `gCanon_eval` says the polynomial is untouched, and the Rust interpreter's
+`LeanExpr::degree` sends `mul(const 1, x)` to degree 1 exactly as bare `x`, so no FRI or VK
+geometry moves. `AirNormalForm`'s header argues why that trade is the right one.
+
+## ⚠ …and the one thing it DOES remove from a body
+
+`gExprToHead` never emits a zero-coefficient term (`gExprToHead_coeff_ne_zero`), so a source
+`0 · x` does not come back. `AirNormalForm` rule 3 forbids the RENDERER from eliding a
+zero-coefficient term the head carries, and `gHeadExprs` still does not — but the normalizer
+declines to build one, which is the same guard `mulHead` has carried since the Phase-3 re-emission
+and is why `gCanon` is idempotent at all. -/
+
+/-- Multiply two heads: distribute term × term, then each side's terms against the other's
+constant, then the constant product. ⚑ `EffectLower.mulHead` at every alphabet, guards and all —
+the constant cross-products are dropped when that constant is `0`. `gEvalH_gMulHead` is
+UNCONDITIONAL: the dropped branches are exactly the ones whose value is `0`. -/
+def gMulHead {L : Type} (h o : GHead L) : GHead L :=
+  { terms := (h.terms.flatMap fun t => o.terms.map fun u => ((t.1 * u.1, t.2 ++ u.2) : ℤ × List L))
+             ++ (if o.const = 0 then []
+                 else h.terms.map fun t => ((t.1 * o.const, t.2) : ℤ × List L))
+             ++ (if h.const = 0 then []
+                 else o.terms.map fun u => ((h.const * u.1, u.2) : ℤ × List L))
+  , const := h.const * o.const }
+
+/-- ⚑ **THE NORMALIZER** — any gate AST into the sum-of-products head, at any alphabet. -/
+def gExprToHead {L : Type} : GExpr L → GHead L
+  | .leaf l  => GHead.lin 1 l
+  | .const k => GHead.c k
+  | .add a b => (gExprToHead a).append (gExprToHead b)
+  | .mul a b => gMulHead (gExprToHead a) (gExprToHead b)
+
+private theorem gsum_scaleR {L : Type} (ρ : L → ℤ) (k : ℤ) (ts : List (ℤ × List L)) :
+    ((ts.map fun t => ((t.1 * k, t.2) : ℤ × List L)).map (gEvalTerm ρ)).sum
+      = (ts.map (gEvalTerm ρ)).sum * k := by
+  induction ts with
+  | nil => simp
+  | cons x xs ih => simp only [List.map_cons, List.sum_cons, ih, gEvalTerm]; ring
+
+private theorem gsum_scaleL {L : Type} (ρ : L → ℤ) (k : ℤ) (ts : List (ℤ × List L)) :
+    ((ts.map fun t => ((k * t.1, t.2) : ℤ × List L)).map (gEvalTerm ρ)).sum
+      = k * (ts.map (gEvalTerm ρ)).sum := by
+  induction ts with
+  | nil => simp
+  | cons x xs ih => simp only [List.map_cons, List.sum_cons, ih, gEvalTerm]; ring
+
+private theorem gsum_crossOne {L : Type} (ρ : L → ℤ) (x : ℤ × List L) (us : List (ℤ × List L)) :
+    ((us.map fun u => ((x.1 * u.1, x.2 ++ u.2) : ℤ × List L)).map (gEvalTerm ρ)).sum
+      = gEvalTerm ρ x * (us.map (gEvalTerm ρ)).sum := by
+  induction us with
+  | nil => simp
+  | cons y ys ih =>
+    simp only [List.map_cons, List.sum_cons, ih, gEvalTerm, List.map_append, List.prod_append]
+    ring
+
+private theorem gsum_cross {L : Type} (ρ : L → ℤ) (ts us : List (ℤ × List L)) :
+    ((ts.flatMap fun t =>
+        us.map fun u => ((t.1 * u.1, t.2 ++ u.2) : ℤ × List L)).map (gEvalTerm ρ)).sum
+      = (ts.map (gEvalTerm ρ)).sum * (us.map (gEvalTerm ρ)).sum := by
+  induction ts with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.flatMap_cons, List.map_append, List.sum_append, ih, gsum_crossOne,
+      List.map_cons, List.sum_cons]
+    ring
+
+private theorem gsum_scaleR_guard {L : Type} (ρ : L → ℤ) (k : ℤ) (ts : List (ℤ × List L)) :
+    (((if k = 0 then ([] : List (ℤ × List L))
+        else ts.map fun t => ((t.1 * k, t.2) : ℤ × List L))).map (gEvalTerm ρ)).sum
+      = (ts.map (gEvalTerm ρ)).sum * k := by
+  by_cases hk : k = 0
+  · simp [hk]
+  · simp only [if_neg hk, gsum_scaleR]
+
+private theorem gsum_scaleL_guard {L : Type} (ρ : L → ℤ) (k : ℤ) (ts : List (ℤ × List L)) :
+    (((if k = 0 then ([] : List (ℤ × List L))
+        else ts.map fun u => ((k * u.1, u.2) : ℤ × List L))).map (gEvalTerm ρ)).sum
+      = k * (ts.map (gEvalTerm ρ)).sum := by
+  by_cases hk : k = 0
+  · simp [hk]
+  · simp only [if_neg hk, gsum_scaleL]
+
+/-- The multiplication bridge, at every alphabet. UNCONDITIONAL. -/
+theorem gEvalH_gMulHead {L : Type} (ρ : L → ℤ) (h o : GHead L) :
+    gEvalH (gMulHead h o) ρ = gEvalH h ρ * gEvalH o ρ := by
+  simp only [gEvalH, gMulHead, List.map_append, List.sum_append, gsum_cross,
+    gsum_scaleR_guard, gsum_scaleL_guard]
+  ring
+
+theorem gEvalH_append {L : Type} (ρ : L → ℤ) (h o : GHead L) :
+    gEvalH (h.append o) ρ = gEvalH h ρ + gEvalH o ρ := by
+  simp only [gEvalH, GHead.append, List.map_append, List.sum_append]; ring
+
+/-- ⚑ **THE NORMALIZER IS MEANING-PRESERVING**, at every alphabet — so reading a hand-shaped body
+back into a head cannot change what the gate says. -/
+theorem gEvalH_gExprToHead {L : Type} (ρ : L → ℤ) (e : GExpr L) :
+    gEvalH (gExprToHead e) ρ = evalG ρ e := by
+  induction e with
+  | leaf l => simp [gExprToHead, GHead.lin, gEvalH, gEvalTerm, evalG]
+  | const k => simp [gExprToHead, GHead.c, gEvalH, evalG]
+  | add a b iha ihb => simp [gExprToHead, evalG, gEvalH_append, iha, ihb]
+  | mul a b iha ihb => simp [gExprToHead, evalG, gEvalH_gMulHead, iha, ihb]
+
+/-- ⚑ **THE CANONICALIZER.** Read the body into a head, render the head canonically. This is the
+whole pass, and both of its halves already existed — what did not exist was their composition at an
+alphabet the window rail could use. -/
+def gCanon {L : Type} (e : GExpr L) : GExpr L := gHeadToExpr idOps (gExprToHead e)
+
+/-- ⚑ **THE END STATE, AS A THEOREM RATHER THAN A COUNT.** Every body, on every rail, is in the
+canonical normal form after one pass — not 113 of 113 descriptors measured, but every expression
+there is. -/
+theorem gCanon_gIsNormal {L : Type} (e : GExpr L) : gIsNormal (gCanon e) = true :=
+  gHeadToExpr_gIsNormal _
+
+/-- ⚑ **AND IT SAYS THE SAME THING.** The canonicalized body evaluates to exactly what the original
+did, under every leaf environment — so the flag day moves bytes and nothing else. -/
+theorem gCanon_eval {L : Type} (ρ : L → ℤ) (e : GExpr L) : evalG ρ (gCanon e) = evalG ρ e := by
+  rw [gCanon, gHeadToExpr_eval, gEvalH_gExprToHead]
+
+/-- ⚑ **THE NORMALIZER NEVER BUILDS A ZERO-COEFFICIENT TERM.** This is the structural reason
+`gCanon` cannot silently drop a column reference on a SECOND pass: there is no `mul(const 0, …)` in
+its output for a second pass to guard away. Note where the zero cases go instead — a zero constant
+sends the whole product to the EMPTY head, which is the folding above, not an elision. -/
+theorem gExprToHead_coeff_ne_zero {L : Type} (e : GExpr L) :
+    ∀ t ∈ (gExprToHead e).terms, t.1 ≠ 0 := by
+  induction e with
+  | leaf l => intro t ht; simp [gExprToHead, GHead.lin] at ht; simp [ht]
+  | const k => intro t ht; simp [gExprToHead, GHead.c] at ht
+  | add a b iha ihb =>
+    intro t ht
+    simp only [gExprToHead, GHead.append, List.mem_append] at ht
+    rcases ht with h | h
+    · exact iha t h
+    · exact ihb t h
+  | mul a b iha ihb =>
+    intro t ht
+    simp only [gExprToHead, gMulHead, List.mem_append, List.mem_flatMap, List.mem_map] at ht
+    -- ⚠ `++` is `infixl`, so the three-way union is LEFT-nested: `(cross ++ right) ++ left`.
+    rcases ht with (⟨u, hu, v, hv, huv⟩ | h) | h
+    · exact huv ▸ mul_ne_zero (iha u hu) (ihb v hv)
+    · split at h
+      · exact absurd h (by simp)
+      · rename_i hc
+        obtain ⟨u, hu, hut⟩ := List.mem_map.mp h
+        exact hut ▸ mul_ne_zero (iha u hu) hc
+    · split at h
+      · exact absurd h (by simp)
+      · rename_i hc
+        obtain ⟨u, hu, hut⟩ := List.mem_map.mp h
+        exact hut ▸ mul_ne_zero hc (ihb u hu)
+
+/-! ### §6d — ⚑ the canonicalizer AT A VIEW, and the fusion law that makes it free.
+
+A rail canonicalizes by embedding, canonicalizing, and rendering back. `gCanonAt` is that, and it
+inherits BOTH theorems from `gCanon` through `render_gHeadToExpr` — so the `EmittedExpr` rail and
+the `WindowExpr` rail are one definition applied twice, exactly as the renderer is. -/
+
+/-- Canonicalize a body of the target AST `E`, given its embedding and its view. -/
+def gCanonAt {L E : Type} (O : ExprOps L E) (of : E → GExpr L) (e : E) : E :=
+  gHeadToExpr O (gExprToHead (of e))
+
+/-- The view's canonicalization IS the one AST's, rendered. -/
+theorem gCanonAt_render {L E : Type} (O : ExprOps L E) (of : E → GExpr L) (e : E) :
+    gCanonAt O of e = render O (gCanon (of e)) := by
+  rw [gCanonAt, gCanon, render_gHeadToExpr]
+
 /-! ## §7 — ⚑ THE GADGET LIBRARY, AUTHORED ONCE.
 
 The three families the census ranked. Each is written at `GExpr L` — leaf-generic, so it is

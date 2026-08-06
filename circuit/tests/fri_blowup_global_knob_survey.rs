@@ -634,8 +634,10 @@ fn every_provable_descriptor_at_every_parity_point() {
     assert_eq!(
         mul4096.committed, 694,
         "the sound multiply commits 694 columns (190 declared + the nibble aux block over 190 \
-         range lookups). A different number means `decomp_cols_pub` or the descriptor moved and \
-         every width in this table is denominated in the wrong unit."
+         range lookups). ⚑ At `LIMB_BITS = 8` it would be 442 — measured 2026-08-06, and NOT \
+         taken: see the soundness blocker on `descriptor_ir2::LIMB_BITS`. A different number \
+         means `decomp_cols_pub` or the descriptor moved and every width in this table is \
+         denominated in the wrong unit."
     );
     let (mul_bytes, mul_prove_ms, _) = mul4096
         .points

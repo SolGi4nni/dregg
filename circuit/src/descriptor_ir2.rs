@@ -17,9 +17,8 @@
 //!     ride the `ir2_p2` bus (the measured 85% lever — one aux block per UNIQUE permutation,
 //!     not per row × site);
 //!   * **range** — the shared `[0, 2^LIMB_BITS)` byte table (⚠ `LIMB_BITS` is **4**, so it is a
-//!     `[0,16)` NIBBLE table; the `[0,256)` this line used to say outlived the limb change by a
-//!     factor of 16, and a reader auditing a range bound from the prose would have been off by
-//!     it); a declared `lookup` into the range table
+//!     `[0,16)` NIBBLE table, and see the constant for why that is a SOUNDNESS pin and not a
+//!     performance one); a declared `lookup` into the range table
 //!     (`rangeLimb bits`) is realized by byte-limb decomposition + LogUp byte queries + a
 //!     tight top-limb bit bound (the proven `lean_lookup_air` shape; the realized relation is
 //!     exactly `v ∈ [0, 2^bits)` = Lean's `range_row_mem_iff`);
@@ -399,12 +398,73 @@ const MEM_GAP_BITS: usize = 30;
 
 /// Bits per range-table limb: 4-bit nibble chunks against a `[0,16)` table.
 ///
-/// MEASURED better than 8-bit byte limbs at every FRI grid point
-/// (.docs-history-noclaude/PROOF-ECONOMICS.md §2c): the table's degree_bits drop 8 → 4, which shortens
-/// the whole batch's FRI commit phase and the table's per-query Merkle paths
-/// (transfer at the production `ir2_config` [DATED measurement, approximate]: 124.1 → 120.4 KiB, prove ~330 → ~55 ms —
-/// the 2¹⁴-point byte-table LDE was the high-blowup prover's dominant cost), while
-/// the doubled limb count adds only a few opened main columns per query.
+/// ## ⚑⚑ 2026-08-06 — 4 → 8 WAS ATTEMPTED, MEASURED, AND REVERTED. IT IS UNSOUND, NOT EXPENSIVE.
+///
+/// Read this before moving the constant again; the width argument for moving it is CORRECT and it
+/// is not the binding constraint.
+///
+/// **The width win is real.** `MainLayout::build` compiles every declared range lookup into the
+/// declared column **plus** an aux block of `decomp_cols(bits)` columns, and *that* extended trace
+/// is what `Ir2Air::Main` is `width()`d at and what the prover commits. Re-derived over all 53
+/// checked-in descriptors that declare a range lookup, through this file's own `decomp_cols`:
+///
+/// ```text
+///   radix  4:  aux  75,156   committed 130,881   (declared 55,725)   ← DEPLOYED
+///   radix  8:  aux  39,168   committed  94,893   0.725× committed, 0.521× aux
+///   radix 12:  aux 234,151   committed 289,876   2.215×
+///   radix 16:  aux 196,289   committed 252,014   1.926×
+/// ```
+///
+/// On `dregg-mina-accumulator-seg` alone the aux block is 7,708 → 3,873 and the committed row
+/// 10,756 → 6,921. 12 and 16 are far WORSE via [`eval_decomp`]'s partial-top path (a limb wider
+/// than the value forces the whole value into `top_bits` booleans, one column per BIT), so the
+/// curve has an interior minimum at 8.
+///
+/// ## ⚑ WHY IT CANNOT SHIP AS A BARE CONSTANT: `hi4` IS NOT A LIMB, AND IT RIDES THIS TABLE
+///
+/// `TableAirIR.canonDecompQueries` (Lean; Rust twin `eval_canon_decomp`) bounds the `hi4` column of
+/// the canonical key split `value = hi4·2^27 + lo27` with **ONE query on the shared byte bus and
+/// nothing else**. So `hi4`'s bound IS this table's height. At 16 rows that is `hi4 < 16`, and
+/// `KEY_HI_MAX = 15` with `p − 1 = 15·2^27` is exactly what makes the split UNIQUE. At 256 rows it
+/// becomes `hi4 < 256` and uniqueness is gone — measured, not argued:
+///
+/// ```text
+///   value 134217727 = (hi4 0, lo27 2^27−1) = (hi4 16, lo27 0)     ← same felt, different hi4
+///   value 268435455 = (hi4 1, lo27 2^27−1) = (hi4 17, lo27 0)
+///   240 such collisions over two probe lo27 values; ZERO at radix 4.
+/// ```
+///
+/// `CMP_COLS` / `eval_lex_lt` orders keys LEXICOGRAPHICALLY on `(hi4, lo27)`, so a key with two
+/// representations compares two different ways — which is a satisfying witness for the IMT
+/// bracket `low_addr < key < low_next` on a key that does not lie in it. That is the
+/// non-membership tooth, so this is a soundness regression and not a cost.
+///
+/// ⚠ It is also caught, loudly: `deployed_heap_splice_honest_proves_and_verifies` panics with
+/// "main column index out of bounds" the moment the Lean and Rust copies of the radix disagree.
+///
+/// ## What moving it actually requires
+///
+/// 1. **Give `hi4` its own 4-bit bound that does not ride the shared table's height** — four
+///    booleans plus a recomposition, i.e. exactly the partial-top path a *declared* 4-bit range
+///    already gets. Lean-authored, in `TableAirIR.canonDecompGates`/`canonDecompQueries`, with the
+///    Rust `eval_canon_decomp` following. Cost: +4 columns per canonical-split block against a
+///    3,835-column saving on the accumulator row.
+/// 2. **THE RADIX HAS FOUR COPIES and they must become one**: this constant,
+///    `TableAirIR.LIMB_BITS` (which every Lean table AIR's `decompCols` reads),
+///    `ByteTableEmit.LIMB_BITS`, and `AirColumnAlloc.decompCols` — which inlines `4` as a
+///    LITERAL in three places and reads no constant at all.
+/// 3. **Re-emit every Lean table AIR that carries a decomposition** — `dregg-ir2-map-ops-v1`,
+///    `-map-absent-`, `-memory-`, `-mem-boundary-`, `-umem-boundary-`, `-umemory-`. ⚠ NOT
+///    `dregg-ir2-byte-v1`: `ByteTableEmit.gates_admit_every_height` proves that AIR is
+///    height-independent, so the byte table's own bytes do not move at any radix.
+/// 4. **Then the VK epoch**, plus `verify_vm_descriptor2`'s `expected_byte_degree` (already
+///    derived from this constant, so it follows for free).
+///
+/// ⚠ And the ORIGINAL justification is still wrong in the other direction, so do not restore it:
+/// `.docs-history-noclaude/PROOF-ECONOMICS.md` §2c reports nibbles "measured better at EVERY grid
+/// point", but every point in that grid is the same `transfer` descriptor, whose declared width is
+/// small enough that the 2⁸-row table's own LDE dominated. That is a per-BATCH constant; the aux
+/// block scales with descriptor width. The table was never the reason 4 is right — `hi4` is.
 pub const LIMB_BITS: usize = 4;
 /// The range-table height. PINNED, prove- AND verify-side: the table AIR forces
 /// `value = row index`, so its committed HEIGHT is its value range — a taller table

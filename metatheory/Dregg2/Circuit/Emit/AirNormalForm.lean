@@ -373,6 +373,150 @@ def demoDescBad : EffectVmDescriptor2 :=
 #guard normalFormOk demoDescBad == false
 #guard nonNormalCount demoDescBad == 2
 
+/-! ## §4b — ⚑ THE PASS THAT REACHES THE END STATE, and it is ONE pass.
+
+§2 and §3 say the two rails are canonical BY CONSTRUCTION — for bodies the compiler BUILT. §4 gives
+a decidable verdict for bodies it did not. Between them sat the whole corpus: 23 of 113 descriptors
+in the normal form, 18,290 of 41,264 arithmetic bodies outside it, and no way from one to the other
+except re-authoring 90 descriptors by hand.
+
+`GateExpr.gCanon` is the way: read a body back into a head (`gExprToHead`), render the head
+canonically (`gHeadToExpr`). Both halves already existed; what did not exist was their composition
+at an alphabet the WINDOW rail could use, which is why the window bodies had a builder and no
+reader. This section is that composition at the two deployed rails, lifted to a whole descriptor.
+
+## ⚑ Why "converge the encodings, THEN canonicalize" was never two jobs
+
+It was priced as two — `gBool` at 5 nodes first, `isNormal` at 9 nodes second — under a brief that
+froze bytes. Read the pass: `gExprToHead` produces `Σ coeff · ∏ leaves + const`, and there is no
+intermediate object in which an encoding is converged but a coefficient is still elided. The same
+single traversal that writes every coefficient also FOLDS every constant, because a product of two
+literals is a head with an empty term list. The 5,075 `mul(const, const)` subtrees the corpus ships
+(4,284 of them `mul(const -1, const 1)`) are not deleted by a step; they are unrepresentable in the
+head vocabulary the pass goes through.
+
+## ⚑ The price, measured over the checked-in corpus (2026-08-06)
+
+`1,954,732 → 2,142,886` AST nodes, **+188,154 (+9.63%)**, and `canonicalize_eval` /
+`canonicalizeW_eval` say that is bytes and nothing else. -/
+
+open Dregg2.Circuit.GateExpr (gCanon gCanonAt gCanonAt_render gCanon_gIsNormal gCanon_eval
+  gExprToHead gHeadToExpr evalG vEnv wEnv render_ofEmitted render_ofWindow ofEmitted_render
+  ofWindow_render eval_render_toEmitted eval_render_toWindow toEmitted toWindow ofEmitted ofWindow)
+
+/-- ⚑ **CANONICALIZE A ONE-ROW BODY** — `gCanon` at the `EmittedExpr` view. -/
+def canonicalize (e : EmittedExpr) : EmittedExpr := gCanonAt toEmitted ofEmitted e
+
+/-- ⚑ **CANONICALIZE A WINDOW BODY** — the same pass at the `loc`/`nxt` alphabet. This is the one
+the pre-`GateExpr` shape could not express at all. -/
+def canonicalizeW (w : WindowExpr) : WindowExpr := gCanonAt toWindow ofWindow w
+
+/-- ⚑ **THE END STATE ON THE GATE RAIL, FOR EVERY BODY** — not a count over 113 files. -/
+theorem canonicalize_isNormal (e : EmittedExpr) : isNormal (canonicalize e) = true := by
+  show gIsNormal (ofEmitted (gCanonAt toEmitted ofEmitted e)) = true
+  rw [gCanonAt_render, ofEmitted_render]
+  exact gCanon_gIsNormal _
+
+/-- ⚑ **AND IT SAYS THE SAME THING.** Every assignment, so the flag day can never be read as a
+semantic change. -/
+theorem canonicalize_eval (a : Dregg2.Circuit.Assignment) (e : EmittedExpr) :
+    (canonicalize e).eval a = e.eval a := by
+  show (gCanonAt toEmitted ofEmitted e).eval a = _
+  rw [gCanonAt_render, eval_render_toEmitted, gCanon_eval]
+  conv_rhs => rw [← render_ofEmitted e]
+  rw [eval_render_toEmitted]
+
+/-- The window rail's end state. -/
+theorem canonicalizeW_isNormalW (w : WindowExpr) : isNormalW (canonicalizeW w) = true := by
+  show gIsNormal (ofWindow (gCanonAt toWindow ofWindow w)) = true
+  rw [gCanonAt_render, ofWindow_render]
+  exact gCanon_gIsNormal _
+
+/-- …and the window rail's bridge. -/
+theorem canonicalizeW_eval (env : VmRowEnv) (w : WindowExpr) :
+    (canonicalizeW w).eval env = w.eval env := by
+  show (gCanonAt toWindow ofWindow w).eval env = _
+  rw [gCanonAt_render, eval_render_toWindow, gCanon_eval]
+  conv_rhs => rw [← render_ofWindow w]
+  rw [eval_render_toWindow]
+
+/-- ⚑ **ONE CONSTRAINT.** Only the three arithmetic bodies move; a lookup/memOp/mapOp/umemOp/
+proofBind tuple is carried through UNTOUCHED, because the chip bus is keyed on the bare tuple shape
+and normalizing there would move a chip query's wire bytes without changing its meaning (header). -/
+def canonicalizeC : VmConstraint2 → VmConstraint2
+  | .base (.gate b)         => .base (.gate (canonicalize b))
+  | .base (.boundary r b)   => .base (.boundary r (canonicalize b))
+  | .windowGate w           => .windowGate ⟨canonicalizeW w.body, w.onTransition⟩
+  | c                       => c
+
+/-- ⚑ **THE PASS, ON A WHOLE DESCRIPTOR.** -/
+def canonicalizeDesc (d : EffectVmDescriptor2) : EffectVmDescriptor2 :=
+  { d with constraints := d.constraints.map canonicalizeC }
+
+theorem canonicalizeC_normalOk (c : VmConstraint2) :
+    constraintNormalOk (canonicalizeC c) = true := by
+  match c with
+  | .base (.gate b)       => exact canonicalize_isNormal b
+  | .base (.boundary r b) => exact canonicalize_isNormal b
+  | .windowGate w         => exact canonicalizeW_isNormalW w.body
+  | .base (.piBinding ..) => rfl
+  | .base (.transition ..) => rfl
+  | .lookup _    => rfl
+  | .memOp _     => rfl
+  | .mapOp _     => rfl
+  | .umemOp _    => rfl
+  | .proofBind _ => rfl
+  | .chalGate _  => rfl
+
+/-- ⚑⚑ **THE END STATE, AS A THEOREM.** Every descriptor is in the canonical normal form after ONE
+pass. The corpus reading `23/113` is what this replaces, and it replaces it with a fact about EVERY
+descriptor rather than a number about these ones. -/
+theorem canonicalizeDesc_normalFormOk (d : EffectVmDescriptor2) :
+    normalFormOk (canonicalizeDesc d) = true := by
+  simp only [normalFormOk, canonicalizeDesc, List.all_eq_true, List.mem_map]
+  rintro c ⟨c₀, _, rfl⟩
+  exact canonicalizeC_normalOk c₀
+
+theorem canonicalizeDesc_nonNormalCount (d : EffectVmDescriptor2) :
+    nonNormalCount (canonicalizeDesc d) = 0 :=
+  (normalFormOk_iff_zero _).mp (canonicalizeDesc_normalFormOk d)
+
+/-- The pass touches only the arithmetic bodies: name, width, PI count, tables, hash sites and
+ranges are carried through, and so is the constraint COUNT. A re-emission that dropped a constraint
+would be invisible to `normalFormOk` — this is the conjunct that sees it. -/
+theorem canonicalizeDesc_shape (d : EffectVmDescriptor2) :
+    (canonicalizeDesc d).name = d.name
+      ∧ (canonicalizeDesc d).traceWidth = d.traceWidth
+      ∧ (canonicalizeDesc d).piCount = d.piCount
+      ∧ (canonicalizeDesc d).tables = d.tables
+      ∧ (canonicalizeDesc d).constraints.length = d.constraints.length :=
+  ⟨rfl, rfl, rfl, rfl, List.length_map _⟩
+
+/-! ### §4c — ⚑ the RED pole of the PASS. A canonicalizer that cannot be seen to act is decoration. -/
+
+/-- The pass carries the non-canonical demo body to the canonical one — the exact byte change the
+corpus re-emission makes, 18,290 times. -/
+theorem canonicalize_demoBareUnit : canonicalize demoBareUnit = demoCanonical := by decide
+
+/-- ⚑ And the constant fold, on the shape the corpus ships 4,284 times: `mul(const -1, const 1)` —
+what a subtraction of one lowers to — is not deleted by a step, it is UNREPRESENTABLE in the head
+the pass goes through, so it comes back as the literal. -/
+theorem canonicalize_folds_dead_product :
+    canonicalize (.add (.var 3) (.mul (.const (-1)) (.const 1)))
+      = .add (.mul (.const 1) (.var 3)) (.const (-1)) := by decide
+
+/-- …and the pass is a FIXED POINT on an already-canonical body, so a second emit run moves zero
+bytes. (`gExprToHead_coeff_ne_zero` is why this can hold at all: with a zero-coefficient term in the
+rendering, the second pass's `gMulHead` guard would drop it and the bytes would move again.) -/
+theorem canonicalize_demoCanonical : canonicalize demoCanonical = demoCanonical := by decide
+
+-- ⚠ `WindowExpr` has no `DecidableEq`, so this is `rfl` rather than `decide` — same content,
+-- same refutability, exactly as `demoWCanonical_shape` above.
+theorem canonicalizeW_demoWBare : canonicalizeW demoWBare = demoWCanonical := rfl
+
+theorem canonicalizeDesc_demoDescBad_ok :
+    normalFormOk (canonicalizeDesc demoDescBad) = true := by decide
+
 /-! ## §5 — axiom-hygiene tripwires. -/
 
 #assert_axioms headToExpr_isNormal
@@ -385,5 +529,17 @@ def demoDescBad : EffectVmDescriptor2 :=
 #assert_axioms normalFormOk_iff_zero
 #assert_axioms demoBareUnit_same_polynomial
 #assert_axioms demoWCanonical_shape
+#assert_axioms canonicalize_isNormal
+#assert_axioms canonicalize_eval
+#assert_axioms canonicalizeW_isNormalW
+#assert_axioms canonicalizeW_eval
+#assert_axioms canonicalizeC_normalOk
+#assert_axioms canonicalizeDesc_normalFormOk
+#assert_axioms canonicalizeDesc_nonNormalCount
+#assert_axioms canonicalizeDesc_shape
+#assert_axioms canonicalize_demoBareUnit
+#assert_axioms canonicalize_folds_dead_product
+#assert_axioms canonicalize_demoCanonical
+#assert_axioms canonicalizeW_demoWBare
 
 end Dregg2.Circuit.Emit.AirNormalForm

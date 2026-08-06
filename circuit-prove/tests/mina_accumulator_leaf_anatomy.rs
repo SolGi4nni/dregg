@@ -49,6 +49,14 @@
 //! one aux column per four bits. `the_wrap_cost_tracks_committed_width_not_declared_width` is that
 //! correction as a measurement, with the radix curve beside it.
 //!
+//! ⚑ **§4's CURVE WAS ACTED ON, AND THE ANSWER WAS NO (2026-08-06).** Radix 8 takes this
+//! descriptor's aux block 7,708 → 3,873 and its committed row 10,756 → 6,921 (corpus-wide:
+//! 75,156 → 39,168 aux columns), and 12/16 are far worse — all reproduced. It was still REVERTED,
+//! and not for cost: the shared table's HEIGHT is also the only bound on the `hi4` of the
+//! canonical key split, so 256 rows destroys the split's uniqueness and the IMT lex comparator
+//! with it. The account is on `descriptor_ir2::LIMB_BITS`. ⚠ Read §4 as a curve with a NAMED
+//! blocker, not as a knob waiting to be turned.
+//!
 //! Run:
 //! ```text
 //! cargo test -p dregg-circuit-prove --release --test mina_accumulator_leaf_anatomy \
@@ -421,8 +429,8 @@ fn where_the_accumulator_leaf_wrap_cost_goes() {
 /// The sweep above compares `3,048` declared columns against `469` and reads the wrap's `11.5×`
 /// op ratio as superlinear in width. It is not superlinear; it is **linear in a width nobody had
 /// printed.** A declared column carrying a range lookup is compiled by `MainLayout::build` into
-/// the declared column PLUS a nibble-decomposition aux block (`decomp_cols_pub`: `bits/4` limbs at
-/// `bits % 4 == 0`), and *that* extended trace is what `Ir2Air::Main` is `width()`d at and what the
+/// the declared column PLUS a byte-decomposition aux block (`decomp_cols_pub`: `bits/8` limbs at
+/// `bits % 8 == 0`; it was `bits/4` until the 2026-08-06 radix move), and *that* extended trace is what `Ir2Air::Main` is `width()`d at and what the
 /// prover commits. Measured here from the descriptors' own `tables`:
 ///
 /// ```text
@@ -646,6 +654,34 @@ fn the_wrap_cost_tracks_committed_width_not_declared_width() {
     let aux4 = aux_at_radix(&acc_desc, 4);
     let aux8 = aux_at_radix(&acc_desc, 8);
     assert_eq!(aux4, 7708, "the deployed radix-4 aux block");
+
+    // ⚑ THE DEPLOYED CONSTANT IS THE MEASURED OPTIMUM, and this is the assertion that makes that a
+    // GATE rather than a docblock. `aux_at_radix` re-derives the geometry from the descriptor's own
+    // tables; `committed_width` reads it through the deployed `decomp_cols_pub`. Two independent
+    // routes to the same number — so moving `LIMB_BITS` without re-measuring reds here.
+    assert_eq!(
+        aux_at_radix(&acc_desc, dregg_circuit::descriptor_ir2::LIMB_BITS),
+        committed_width(&acc_desc) - acc_desc.trace_width,
+        "the parameterised curve and the DEPLOYED decomposition must agree at the deployed radix"
+    );
+    assert_eq!(
+        aux8, 3873,
+        "and the radix-8 aux block the 2026-08-06 lane measured"
+    );
+
+    // ⚑ …AND 12 AND 16 ARE WORSE, asserted rather than printed. The mechanism is `eval_decomp`'s
+    // partial-top-limb path: a limb WIDER than the value forces the whole value into `top_bits`
+    // booleans, one column per BIT. So the curve has an interior minimum and "bigger radix is
+    // cheaper" is false — which is the whole reason this file reports a curve and not a direction.
+    for wider in [12usize, 16] {
+        let aux = aux_at_radix(&acc_desc, wider);
+        assert!(
+            aux > aux8 * 2,
+            "radix {wider} costs {aux} aux columns against radix 8's {aux8} — more than double. \
+             If this ever stops holding, `eval_decomp`'s partial path changed and the deployed \
+             `LIMB_BITS` must be re-derived, not assumed."
+        );
+    }
     // ⚠ Not "exactly half": 19 of the 3,048 lookups are ONE bit wide and cost one column at every
     // radix, so the ratio is 0.5024, and an `aux8 * 2 <= aux4` assertion is FALSE by 38 columns.
     // Stated as the bracket it actually is rather than as the round number it nearly is.
@@ -657,8 +693,10 @@ fn the_wrap_cost_tracks_committed_width_not_declared_width() {
 }
 
 /// The aux block the nibble decomposition would add at an arbitrary radix, computed by the SAME
-/// `limb_geom` rule `decomp_cols_pub` implements. Parameterised so the deployed `LIMB_BITS = 4` is
-/// one point of a curve rather than the only number anyone has.
+/// `limb_geom` rule `decomp_cols_pub` implements. Parameterised so the deployed `LIMB_BITS` is
+/// one point of a curve rather than the only number anyone has — which is what let 2026-08-06
+/// PRICE the move rather than argue about it, and then refuse it on a soundness ground the price
+/// could never have shown.
 fn aux_at_radix(desc: &EffectVmDescriptor2, radix: usize) -> usize {
     let cols = |bits: usize| -> usize {
         let n = bits.div_ceil(radix);
