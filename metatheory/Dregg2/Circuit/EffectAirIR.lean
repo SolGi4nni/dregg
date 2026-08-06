@@ -223,11 +223,22 @@ existential quantifies over every program and every statement.
 
 *Width*: a bind narrower than `PROOF_BIND_MIN_LANES` ties a LIMB of the object it names — `2^31` a
 lane against a ~124-bit bar — and a pin that names fewer lanes than the vector it pins is a
-truncation. The source cannot say either. -/
+truncation. The source cannot say either.
+
+⚑ **2026-08-06 — `commit` AND `vk` ARE MEASURED SEPARATELY, and the coupling that was here was an
+artifact.** This predicate required `vk.length == commit.length`. That is true of the Custom effect,
+where both objects are eight felts (`custom_proof_pi_commitment` and `bytes32_to_8_limbs`), and it
+was read off that pair rather than derived — with the consequence that **a seam could never name a
+statement wider than a program fingerprint.** The two lengths measure different things: `commit` is
+the width of the SENTENCE the sub-proof proves, `vk` the width of the PROGRAM identity. A Mina
+state-hash seam names SIX `Fp` elements (the salt's three sponge lanes, the parent, the body hash
+and the block hash = 54 lanes) against a nine-lane `Faithful9` fingerprint, and under the old
+conjunct the only way to say it was to widen the fingerprint to 54 lanes — i.e. to lie about the
+program's identity in order to state the sentence. Both floors still bite; neither is relaxed. -/
 def BindLeg.mainRailOk (b : BindLeg) : Bool :=
   !(b.vkPin.isNone && b.bound.isNone)
-    && (b.vk.length == b.commit.length)
     && decide (PROOF_BIND_MIN_LANES ≤ b.commit.length)
+    && decide (PROOF_BIND_MIN_LANES ≤ b.vk.length)
     && (match b.vkPin with | none => true | some vs => vs.length == b.vk.length)
     && (match b.bound with | none => true | some bs => bs.length == b.commit.length)
 

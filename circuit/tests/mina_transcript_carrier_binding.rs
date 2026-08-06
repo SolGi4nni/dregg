@@ -91,7 +91,7 @@ const SEGMENT_NAME: &str = "dregg-mina-lightclient-link::v1";
 /// `LEAN_CHAINLINK_PI_LANES`: Lean cannot compute blake3, so the literal there is a transcription,
 /// and a transcription is only a gate if something recomputes it.
 const LEAN_SEGMENT_VK_LANES: [u64; 9] = [
-    76100771, 34473567, 194746848, 491185466, 265287284, 420926520, 245421703, 7802286, 15232152,
+    233430738, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074,
 ];
 
 /// Nine base-`2^29` lanes of a 32-byte value, least-significant first (Lean `keyToLanes9`,

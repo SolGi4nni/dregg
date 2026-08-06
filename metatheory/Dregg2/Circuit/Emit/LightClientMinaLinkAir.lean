@@ -19,31 +19,49 @@ split is the whole point of the file, so it is stated before the construction:
 
 ⚑ **(i) and (ii) are equality and addition. (iii) is Mina's Poseidon over Pasta `Fp`.** This file
 derives (i) and (ii) — over nine-lane `Fp` columns, multi-row, one row per exhibited block — and
-derives the SEGMENT LENGTH besides. It does **not** derive (iii), and nothing here pretends to:
-`OWNHASH` is a witnessed nonet, and what binds it to a real Mina block stays `PICKLES_OK`.
+derives the SEGMENT LENGTH besides.
 
-So the honest name for what is derived is the segment's **SHAPE**, not `LINK_OK`. The predicate is
-called `linkShapeAccepts`; the residual is called `LinkHashResidual` and is a NAMED `Prop` (§6), not
-a sentence in a comment.
+⚑⚑ **AND SINCE 2026-08-06 IT DERIVES (iii) TOO — by RECURSION, not by a bigger circuit.** Every row
+carries a `proofBind` whose commitment is `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH`, fifty-four
+`Faithful9` lanes, against the pinned fingerprint of `dregg-pasta-fp-absorb::v1`. `OWNHASH` is the
+IMAGE of its row, at the recursion boundary every `proofBind` in this tree stands at
+(`seam_derives_the_own_hash`, §6). The predicate `linkShapeAccepts` keeps its name because what a
+ROW-LOCAL predicate can see of a seam is still only its shape.
 
-## ⚑ Why (iii) is a wall and not a lane — the decision, stated as the brief asks
+## ⚑ Why (iii) was called a wall, and what re-deriving the price found — 2026-08-06
 
-Mina's protocol-state hash is Poseidon over Pasta `Fp` (`p ≈ 2^254.0`), and the dregg prover is over
-BabyBear (`P = 2013265921 ≈ 2^30.9`). A Pasta multiplication at BabyBear is non-native: a limb
-product must not wrap, so `2b + log₂ k < 30.9`, which at `k = ⌈255/b⌉` forces `b ≈ 13`, `k ≈ 20`, and
-schoolbook `k² = 400` limb products plus a reduction and ~40 range-checked carry rungs — **≈10³
-BabyBear constraints per Pasta multiplication** (`LightClientMinaAir` §1b, measured off this tree's
-own `KimchiVerify`/`PastaPoseidon`). One Poseidon-over-Pasta permutation is 55 full rounds at width 3
-with an `x^7` S-box: ~500 Pasta multiplications, so **~5·10⁵ BabyBear constraints per block hash**,
-and a Samasika-depth segment (`k = 290` on mainnet) is ~1.5·10⁸ constraints for the linkage hash
-alone. That is the same construction §1b already called wrong: the reachable shape is RECURSION, not
-a bigger circuit.
+This header used to read: *"a Pasta multiplication at BabyBear is ~10³ constraints; one
+Poseidon-over-Pasta permutation is ~500 of them, so ~5·10⁵ BabyBear constraints per block hash, and
+a Samasika-depth segment is ~1.5·10⁸ for the linkage hash alone."* Both factors were wrong, in the
+same direction, and the second by 26×.
 
-⚑ **AND THE GADGET THAT WOULD DO IT IS NOT SOUND AS EMITTED TODAY.** `Dregg2.PastaMsmBound`'s limb
-multiply is not reachable from any emitted descriptor, `pastaLimbRange` is emitted nowhere, and the
-carry columns are not boolean-pinned in any emitted object. Building (iii) on it would inherit all of
-that. **So this file does (i) + (ii) and NAMES (iii) as the wall.** It does not ship (iii) dressed as
-(i): `minaLinkDesc` contains no multiplication of two witness columns anywhere (`minaLink_has_no_witness_product`, §3a).
+⚑ **THE PERMUTATION COUNT IS 1 PER BLOCK.** `Bridge/MinaStateHashDerive.lean:31` reads the daemon
+(`protocol_state.ml:45-55`):
+
+    state_hash = Poseidon_Fp( salt "MinaProtoState" )[ previous_state_hash ; state_body_hash ]
+
+TWO field elements at rate 2 is ONE block and ONE permutation, and the salt is a CONSTANT permuted
+at emit time. The `~26 permutations a block` the standing estimate carried is the *transcript*
+chain's link count (27 in phase 1, 46 in phase 2), not the state hash. The deep hash is
+`state_body_hash` — and it is not part of the LINKAGE: it enters as a witnessed nonet whose
+attestation is `PICKLES_WITNESSED`, exactly as before.
+
+⚑ **AND THE CIRCUIT DID NOT NEED BUILDING.** `dregg-pasta-fp-absorb::v1` is emitted, fingerprinted
+and PROVES: 2 048 rows × 469 columns, 858 constraints, whose 660 ROM immediates are `fp_kimchi`'s
+own `static_params()` checked on the emitted bytes. It computes `perm(state + [x₀,x₁,0])`, its
+incoming state is a PUBLIC INPUT rather than a descriptor constant, and
+`MinaWrapVerifierSpongeFp.the_absorb_program_permutes_gen` carries **no hypothesis on that state** —
+so a *salted* sponge is the same descriptor with different public inputs, which is what
+`MinaPhase1Chain` already does for 27 links. Re-derived segment cost at that family's measured
+leaf/fold times (9.5 s a leaf, 11.5 s a fold node): 290 leaves + 289 folds ≈ **1 h 41 min** against
+the inherited **44 h**. ⚠ An extrapolation from a same-shaped descriptor, not a measured 290-leaf
+run, and labelled as one.
+
+⚑ **NOTHING NON-NATIVE IS AUTHORED HERE.** The Pasta cone whose emitted form is unsound
+(`pastaLimbRange` emitted nowhere, the RCB carry columns not boolean-pinned) is untouched:
+`minaLinkDesc` still contains no multiplication of two distinct witness columns anywhere
+(`minaLink_products_are_only_the_real_bit`, §3b). The multiply lives in the BOUND SUB-PROOF, whose
+program identity is pinned lane by lane.
 
 ## ⚑ What `dregg-turn-chain-binding-v2` actually contributed — the transfer, measured
 
@@ -115,11 +133,13 @@ statement; `linkAccepts_forces_exact_lane_chain` is where it is used. **Two rung
 ## Layout — one row per exhibited block
 
     col 0..8    PARENT[j]    the block's `previousStateHash`, nine base-`2^29` `Faithful9` lanes
-    col 9..17   OWNHASH[j]   the block's OWN protocol-state hash, nine lanes.  ⚠ WITNESSED — see §6
+    col 9..17   OWNHASH[j]   the block's OWN protocol-state hash, nine lanes.  ⚑ DERIVED — §6
     col 18      HEIGHT       `blockchainLength`
     col 19      IS_REAL      1 on an exhibited block, 0 on padding; real rows are a PREFIX
     col 20      REAL_COUNT   cumulative `IS_REAL`
     col 21      ANCHOR_H     the pinned anchor's height (read on the first row only)
+    col 22..30  BODYHASH[j]  ⚑ the block's `state_body_hash`, nine lanes — the PREIMAGE
+    col 31..39  HASH_VK[i]   ⚑ the attested state-hash program's nine fingerprint lanes
 
     PI 0..8     PI_ANCHOR[j] the operator-pinned weak-subjectivity anchor state hash
     PI 9..17    PI_TIP[j]    the verified head's state hash
@@ -146,27 +166,54 @@ refuses one structurally (`LimbsLeg.mainRailOk`).
 
 ## ⚑ WHAT THIS BREAKS (flag day, stated so it is findable)
 
-**NEW descriptor** `dregg-mina-lightclient-link::v1`, width 22, 20 PIs, 53 constraints, three
-declared tables (`range_w29` at wire id 98, `range_w22` at wire id 91 — SHARED with
-`dregg-mina-lightclient-verify::v1`, which already declares both). **Emit**
-`circuit/descriptors/by-name/dregg-mina-lightclient-link-v1.json` and **mint a VK** for it. Nothing
-existing changes shape: `dregg-mina-lightclient-verify::v1` is untouched, so no VK rotates and
-nothing re-genesises. ⚠ `circuit/descriptors/PROVENANCE.json` is already UNSTAMPED from the
-2026-08-03 flag day and `check-descriptor-drift.sh` is already RED; this adds a row to that ledger
-and the stamp remains the operator's ceremony.
+**2026-08-06 — THE STATE-HASH SEAM. Say what re-emits, and what refuses rather than reinterprets.**
+
+* `dregg-mina-lightclient-link::v1` **re-emits**: `trace_width` **22 → 40** (nine `BODYHASH`, nine
+  `HASH_VK`), constraints **53 → 72** (eight body-lane lookups, one body top-lane lookup, nine
+  program-lane lookups, one `proof_bind`), legs **39 → 43**. **`piCount` STAYS 20** and no PI slot
+  moves — nothing new is published; a seam names columns, not public inputs. **Its VK rotates.**
+* ⚠ A witness generator that leaves `HASH_VK 0..8` unfilled now produces an **UNSAT row**: the
+  `vkPin` congruence is an emitted constraint, so a pre-flag-day 22-wide trace does not "verify
+  weakly", it **fails to load** — `prove_vm_descriptor2` refuses a trace of the wrong width outright.
+* `dregg-mina-lightclient-verify::v1` **re-emits and re-VKs**, because `LightClientMinaAir.LINK_VK_LANES`
+  is the link descriptor's fingerprint and that moved. Same coupling `CHAINLINK_VK_LANES` already
+  carries. **Every previously produced `MinaHeadProofWire` fails to verify.**
+* `mina_head_predicate_vk()` is blake3 over the descriptor NAME, which did not move, so cell
+  programs keep their pinned predicate vk and **nothing re-genesises.**
+* `pasta-fp-absorb.json` is **unchanged** — it is the sub-program, not a new one — but it must join
+  the by-name registry to be servable, and re-emitting it would move `ABSORB_VK_LANES` and cascade
+  through both descriptors above. Three descriptors, one chain.
+
+⚠ `circuit/descriptors/PROVENANCE.json` is already UNSTAMPED from the 2026-08-03 flag day and
+`check-descriptor-drift.sh` is already RED; this adds a row to that ledger and the stamp remains the
+operator's ceremony.
 
 ## Scope — do NOT overclaim
 
 ⚠ This does **not** make the Mina light client's linkage verified. What a STARK over this descriptor
-proves is: *there exists a sequence of `PI_SEG_LEN` canonical-`Fp` `(parent, ownHash)` pairs, running
-from `PI_ANCHOR` to `PI_TIP`, with contiguous heights.* Whether each `ownHash` is the Poseidon of its
-block's state row is `LinkHashResidual` and is NOT proved — a prover free to choose `OWNHASH` can
-fabricate a chain of any length. What makes a row a real block is `PICKLES_OK`, still a witness.
-⚠ And fork choice is still not here (`LightClientMinaGate`'s unchanged scope note).
+proves is: *there exists a sequence of `PI_SEG_LEN` canonical-`Fp` `(parent, bodyHash, ownHash)`
+triples, running from `PI_ANCHOR` to `PI_TIP`, with contiguous heights, each recursion-bound to a
+sub-proof of the pinned Poseidon-over-Pasta program.*
+
+⚑ **CAN A PROVER STILL CHOOSE THE CHAIN'S HASHES? NO — and here is exactly what changed.** Before
+today a prover picked every `OWNHASH` and therefore picked the TIP outright. Now the anchor is
+pinned, each `OWNHASH` is `Poseidon_salt(PARENT, BODYHASH)`, and `PARENT[i+1] = OWNHASH[i]`, so the
+whole chain — the tip included — is a FORWARD computation from the pinned anchor and the body
+hashes. To publish a tip of its choosing a prover must invert Poseidon; to open one tip to two
+histories it must collide it.
+
+⚠ **WHAT IT CAN STILL CHOOSE IS `BODYHASH`**, and that is the honest residual: nothing here says a
+body hash is a real Mina block body. That is `PICKLES_WITNESSED`, still a witness, and
+`state_body_hash`'s own preimage (~38 field elements under a second salt) is the next rung.
+⚠ Three further limits, none of them repealed: the seam's off-row half is the FRI/recursion
+obligation this whole stack carries; the limb re-encoding between this descriptor's `Faithful9`
+lanes and the absorb descriptor's 32 eight-bit limbs is an EXECUTOR check, not a constraint; and
+fork choice is still not here (`LightClientMinaGate`'s unchanged scope note).
 -/
 import Dregg2.Circuit.Emit.LightClientMinaAir
 import Dregg2.Circuit.Emit.EffectLowerCertified
 import Dregg2.Circuit.GateExpr
+import Dregg2.Bridge.MinaStateHashDerive
 
 set_option autoImplicit false
 set_option maxHeartbeats 1600000
@@ -191,8 +238,10 @@ open Dregg2.Bridge.LightClientMina
 def PARENT (j : Nat) : Nat := j
 
 /-- **`OWNHASH j`** — lane `j` of this block's OWN protocol-state hash. Columns 9..17.
-⚠ WITNESSED. Nothing in this descriptor forces it to be `Poseidon(stateRow)`; that is
-`LinkHashResidual` (§6) and it is the Pasta multiply. -/
+⚑ **DERIVED since 2026-08-06.** The state-hash seam (§2b) makes this nonet the IMAGE of the row:
+`Poseidon_{MinaProtoState}(PARENT, BODYHASH)`, bound to a verifying sub-proof of
+`dregg-pasta-fp-absorb::v1`. It was a free witness until then and `LinkHashResidual` was the name of
+that hole; the `Prop` survives as a CONCLUSION (`linkHashResidual_of_seam`). -/
 def OWNHASH (j : Nat) : Nat := STATE_LIMBS + j
 
 /-- **`HEIGHT`** — this block's `blockchainLength`. -/
@@ -210,8 +259,22 @@ def REAL_COUNT : Nat := 2 * STATE_LIMBS + 2
 first-row height gate and the first-row PI pin); unconstrained elsewhere, deliberately. -/
 def ANCHOR_H : Nat := 2 * STATE_LIMBS + 3
 
-/-- Main-trace width: two nine-lane hashes + height + the two real-row columns + the anchor height. -/
-def MINA_LINK_WIDTH : Nat := 2 * STATE_LIMBS + 4
+/-- ⚑ **`BODYHASH j`** — lane `j` of this block's `state_body_hash`. Columns 22..30. ⚑ **THE
+PREIMAGE THE ROW DID NOT HAVE.** `OWNHASH` could not be the image of its row while the row carried
+no preimage: Mina's identity is
+`state_hash = Poseidon_Fp(salt "MinaProtoState")[previous_state_hash ; state_body_hash]`
+(`Bridge/MinaStateHashDerive.lean:31`, `:392`), and the second argument was in no column. It is one
+now, and it is a WITNESS — what makes it a real block body is `PICKLES_OK`, unchanged. -/
+def BODYHASH (j : Nat) : Nat := 2 * STATE_LIMBS + 4 + j
+
+/-- ⚑ **`HASH_VK i`** — lane `i` of the attested state-hash program's fingerprint. Columns 31..39,
+range-gated and forced by the seam's `vkPin` to the nine `Faithful9` lanes of
+`dregg-pasta-fp-absorb::v1`. The same shape `LightClientMinaAir.LINK_VK` carries one rung up. -/
+def HASH_VK (i : Nat) : Nat := 3 * STATE_LIMBS + 4 + i
+
+/-- Main-trace width: three nine-lane hashes (parent, own, body) + height + the two real-row
+columns + the anchor height + the nine attested-program lanes. -/
+def MINA_LINK_WIDTH : Nat := 4 * STATE_LIMBS + 4
 
 /-- PI slot of anchor-state lane `j` (slots 0..8). -/
 def PI_ANCHOR (j : Nat) : Nat := j
@@ -237,6 +300,18 @@ def parentValue (a : Assignment) : ℤ := stateValue a parentLowLanes (PARENT 8)
 
 /-- The `Fp` element a row's OWNHASH nonet denotes. -/
 def ownHashValue (a : Assignment) : ℤ := stateValue a ownHashLowLanes (OWNHASH 8)
+
+/-- The eight LOW lane columns of the block's body hash. -/
+def bodyHashLowLanes : List Nat :=
+  [BODYHASH 0, BODYHASH 1, BODYHASH 2, BODYHASH 3, BODYHASH 4, BODYHASH 5, BODYHASH 6, BODYHASH 7]
+
+/-- The `Fp` element a row's BODYHASH nonet denotes. -/
+def bodyHashValue (a : Assignment) : ℤ := stateValue a bodyHashLowLanes (BODYHASH 8)
+
+/-- The nine `HASH_VK` columns, as a limb vector. -/
+def hashVkLanes : List Nat :=
+  [HASH_VK 0, HASH_VK 1, HASH_VK 2, HASH_VK 3, HASH_VK 4, HASH_VK 5, HASH_VK 6, HASH_VK 7,
+   HASH_VK 8]
 
 /-! ## §2 — the SOURCE legs, in the framework's own algebra.
 
@@ -322,10 +397,136 @@ def tipPins : List AirLeg :=
   , .pin ⟨VmRow.last, OWNHASH 7, PI_TIP 7⟩
   , .pin ⟨VmRow.last, OWNHASH 8, PI_TIP 8⟩ ]
 
+/-! ## §2b — ⚑⚑⚑ THE STATE-HASH SEAM: `OWNHASH` STOPS BEING A FREE WITNESS.
+
+## What was here this morning, and why the price was wrong by 26×
+
+The file's own header called Mina's linkage hash a WALL and priced it: *"~500 Pasta multiplications
+per permutation, ≈5·10⁵ BabyBear constraints per block hash, ~1.5·10⁸ for a Samasika-depth
+segment."* Both halves of that estimate were re-derived here and both moved.
+
+⚑ **THE PERMUTATION COUNT: 1 PER BLOCK, NOT 26.** `Bridge/MinaStateHashDerive.lean:31` reads the
+daemon (`protocol_state.ml:45-55`) and says what a Mina block's identity IS:
+
+    state_hash = Poseidon_Fp( salt "MinaProtoState" )[ previous_state_hash ; state_body_hash ]
+
+**Two field elements at rate 2 is ONE block and ONE permutation.** The salt is
+`Random_oracle.update ~state:[0,0,0] [|prefix_to_field s|]` — a CONSTANT, permuted at emit time, not
+in circuit. The `~26 permutations/block` the standing estimate carried is the *transcript* chain's
+link count (phase-1 is 27 links, phase-2 is 46); it is not the state hash. The deep hash is
+`state_body_hash`, over ~38 field elements — and that one is **not part of the linkage**: it enters
+here as a witnessed nonet and what attests it is `PICKLES_OK`, exactly as before.
+
+⚑ **AND THE CIRCUIT DOES NOT NEED BUILDING — IT IS EMITTED AND IT PROVES.**
+`dregg-pasta-fp-absorb::v1` (`MinaWrapVerifierSpongeFp.fpAbsorbDesc`) is a 2 048-row, 469-column,
+858-constraint instance of the Pasta program VM whose 660 ROM immediates are `fp_kimchi`'s own
+`static_params()`, checked on the emitted bytes (`circuit/tests/pasta_fp_sponge_proves.rs` §9). It
+computes `perm(state + [x₀, x₁, 0])` and — the fact that makes it usable here —
+`the_absorb_program_permutes_gen` has **no hypothesis on the incoming state**, which is not a
+descriptor constant but PUBLIC INPUT slots `[0, 3·SK)`. So a *salted* sponge is the SAME descriptor
+with different public inputs; `MinaPhase1Chain` already threads 27 links of non-zero state through
+it. Nothing new is authored, and in particular **no non-native Pasta multiply is authored here**
+(`minaLink_products_are_only_the_real_bit` still holds, §3b).
+
+Re-derived segment cost, at the measured leaf/fold times of that same descriptor family (9.5 s a
+leaf, 11.5 s a fold node, `mina_phase2_chain_fold`): a Samasika-depth `k = 290` segment is 290
+leaves + 289 fold nodes ≈ **1 h 41 min**, against the inherited **44 h**. ⚠ That is an
+extrapolation from a same-shaped descriptor's measured times, not a fresh wall-clock measurement of
+290 leaves, and it is labelled as one.
+
+## The leg, and why the commitment has FOUR nonets in it
+
+`ProofBind`'s `commit` is the only vector naming off-row evidence, so the only way a `proofBind` can
+join a column is for that column to BE part of the commitment. The sentence that has to be true is
+`OWNHASH = Poseidon_{salt}(PARENT, BODYHASH)`, and it names SIX `Fp` elements — the salt's three
+sponge lanes and the row's three nonets. All six are in the commit vector, elementwise, nine
+`Faithful9` lanes each — **54 lanes, `8·29 + 22 = 254` bits an element, no digest, therefore no
+birthday bound.**
+
+⚑ **THE SALT LANES ARE `.const`, AND THEY ARE THE LOAD-BEARING PART.** With a free incoming state
+the seam would be VACUOUS and not weakly so: `perm` is a permutation, so for any target `out` a
+prover picks `state := perm⁻¹(T) − [x₀,x₁,0]` for any `T` with `T[0] = out` and the sub-proof is
+honest. Pinning the three state lanes as descriptor CONSTANTS is what makes the bound sub-proof a
+*Mina* state hash rather than a generic two-input Poseidon.
+
+⚑ **THE GUARD IS `1`, NOT `IS_REAL`, AND THAT CLOSES A HOLE THIS FILE DID NOT KNOW IT HAD.**
+`Satisfied2Custom.proofBound` quantifies over EVERY row, so a guard column would let a prover switch
+the seam off — and the natural choice, `IS_REAL`, switches it off exactly where the tip lives: the
+`.last` tip pin reads the LAST row whether or not that row is real, `laneContinuity` is
+unconditional, so `[real, real, real, pad]` chains into a padding row whose `OWNHASH` is free and
+IS `PI_TIP`. An unconditional guard makes every row of the trace a state-hash step and the tip the
+image of the chain regardless of `IS_REAL`. -/
+
+/-- ⚑ **THE `MinaProtoState` SALT, AS 27 `Faithful9` LANES.** The three-lane sponge state
+`Random_oracle.salt "MinaProtoState"` — `Bridge/MinaStateHashDerive.saltProtoState`, itself pinned
+to openmina's OWN regression constants (`poseidon/tests/test_hash_params.rs:28-51`), which is what
+exercises the 20-byte `'*'` padding, the little-endian prefix read, the Kimchi constants and the
+absorb schedule in one line. Decomposed here base `2^29`, low lane first, nine lanes per element.
+
+⚠ These are the `commit` vector's CONSTANT head. A wrong lane here does not fail loudly — it names
+a different salt, i.e. a different chain's hash function — so `mina_link_salt_lanes_are_the_salt`
+recomposes all three and compares against `saltProtoState` itself rather than against a comment. -/
+def MINA_PROTO_STATE_SALT_LANES : List ℤ :=
+  [ 116766262, 149354484, 292986828, 413194933, 280149768, 225329418, 86819885, 115568088, 756181
+  , 484328300, 122810986, 211984088, 66952329, 462241909, 111193962, 66311195, 117199812, 1110329
+  , 340957929, 274801759, 113970126, 217898572, 2899587, 228371615, 197690145, 523247988, 2877414 ]
+
+/-- ⚑ **THE STATE-HASH PROGRAM'S IDENTITY, AS NINE LANES.** The `Faithful9` key lanes of
+`effect_vm_descriptor2_semantic_fingerprint(dregg-pasta-fp-absorb::v1)`. Lean cannot compute blake3,
+so this literal is a TRANSCRIPTION, and a transcription is only a gate if something recomputes it:
+`circuit/tests/mina_statehash_seam_proves.rs` recomputes it from that descriptor's own bytes.
+
+⚠ **FLAG DAY COUPLING:** re-emitting `pasta-fp-absorb.json` moves this literal and therefore
+re-emits and re-VKs `dregg-mina-lightclient-link::v1`, which in turn moves
+`LightClientMinaAir.LINK_VK_LANES` and re-VKs the head. Three descriptors, one chain. -/
+def ABSORB_VK_LANES : List ℤ :=
+  [446814635, 83884421, 374082988, 139195248, 519518863, 422740375, 389354132, 515631608, 9097818]
+
+/-- The nine `Faithful9` lanes of a row's PARENT nonet, as commit expressions. -/
+def parentCommitLanes : List Expr :=
+  [ .var (PARENT 0), .var (PARENT 1), .var (PARENT 2), .var (PARENT 3), .var (PARENT 4)
+  , .var (PARENT 5), .var (PARENT 6), .var (PARENT 7), .var (PARENT 8) ]
+
+/-- The nine `Faithful9` lanes of a row's BODYHASH nonet, as commit expressions. -/
+def bodyCommitLanes : List Expr :=
+  [ .var (BODYHASH 0), .var (BODYHASH 1), .var (BODYHASH 2), .var (BODYHASH 3), .var (BODYHASH 4)
+  , .var (BODYHASH 5), .var (BODYHASH 6), .var (BODYHASH 7), .var (BODYHASH 8) ]
+
+/-- The nine `Faithful9` lanes of a row's OWNHASH nonet, as commit expressions. -/
+def ownCommitLanes : List Expr :=
+  [ .var (OWNHASH 0), .var (OWNHASH 1), .var (OWNHASH 2), .var (OWNHASH 3), .var (OWNHASH 4)
+  , .var (OWNHASH 5), .var (OWNHASH 6), .var (OWNHASH 7), .var (OWNHASH 8) ]
+
+/-- The nine attested-program columns, as vk expressions. -/
+def hashVkCommitLanes : List Expr :=
+  [ .var (HASH_VK 0), .var (HASH_VK 1), .var (HASH_VK 2), .var (HASH_VK 3), .var (HASH_VK 4)
+  , .var (HASH_VK 5), .var (HASH_VK 6), .var (HASH_VK 7), .var (HASH_VK 8) ]
+
+/-- ⚑⚑ **THE STATE-HASH BIND LEG.** Guard `1` — unconditional, every row. Commitment: the pinned
+salt as constants, then the row's parent, its body hash and its own hash, nine lanes each. Attested
+program: the nine `HASH_VK` columns, pinned to `dregg-pasta-fp-absorb::v1`'s fingerprint.
+
+⚑ `bound := none` and it is the right choice for the same reason the head's segment seam gives:
+`bound` forces `commit` to equal a row-local expression, and every `commit` lane here is already
+either a descriptor CONSTANT or a `.var` on this row. A `bound` congruence could only compare each
+to itself. -/
+def seamCommitLanes : List Expr :=
+  MINA_PROTO_STATE_SALT_LANES.map Expr.const
+    ++ parentCommitLanes ++ bodyCommitLanes ++ ownCommitLanes
+
+def stateHashBindLeg : AirLeg :=
+  .bind { guard  := .const 1
+        , commit := seamCommitLanes
+        , vk     := hashVkCommitLanes
+        , vkPin  := some ABSORB_VK_LANES
+        , bound  := none }
+
 /-! ## §3 — ⚑ THE SOURCE AIR, and the descriptor as the COMPILER'S OUTPUT. -/
 
-/-- ⚑ **THE SOURCE.** Thirty-nine legs: fifteen windows (nine lane-continuity + six counting/height),
-two `.limbs` + two narrow lookups for per-row canonicality, and twenty PI pins. -/
+/-- ⚑ **THE SOURCE.** Forty-three legs: fifteen windows (nine lane-continuity + six
+counting/height), THREE `.limbs` + three narrow lookups for per-row canonicality of the parent, the
+own hash and the BODY hash, one `.limbs` for the nine attested-program lanes, ⚑ ONE `.bind` — the
+state-hash seam — and twenty PI pins. -/
 def minaLinkAir : EffectAir :=
   { tables := [minaLaneTable, minaTopLaneTable]
   , legs   :=
@@ -341,7 +542,11 @@ def minaLinkAir : EffectAir :=
       , lowLanesLeg parentLowLanes
       , topLaneLeg (PARENT 8)
       , lowLanesLeg ownHashLowLanes
-      , topLaneLeg (OWNHASH 8) ]
+      , topLaneLeg (OWNHASH 8)
+      , lowLanesLeg bodyHashLowLanes
+      , topLaneLeg (BODYHASH 8)
+      , lowLanesLeg hashVkLanes
+      , stateHashBindLeg ]
       ++ anchorPins ++ tipPins
       ++ [ .pin ⟨VmRow.first, ANCHOR_H, PI_ANCHOR_H⟩
          , .pin ⟨VmRow.last, REAL_COUNT, PI_SEG_LEN⟩ ] }
@@ -356,9 +561,23 @@ theorem minaLinkAir_mainRailOk : minaLinkAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaLinkAir_pinsFit : minaLinkAir.pinsFit MINA_LINK_PI_COUNT = true := by rfl
 
-/-- Thirty-nine legs: 9 lane windows + 6 counting/height windows + 2 `.limbs` + 2 top lookups + 20
-pins. -/
-theorem minaLinkAir_leg_count : minaLinkAir.legs.length = 39 := by rfl
+/-- Forty-three legs: 9 lane windows + 6 counting/height windows + 4 `.limbs` + 3 top lookups +
+1 `.bind` + 20 pins. -/
+theorem minaLinkAir_leg_count : minaLinkAir.legs.length = 43 := by rfl
+
+/-- ⚑ **THE SEAM IS NOT THE DECLARATIVE SHAPE, AND IT IS NOT NARROW.** `BindLeg.mainRailOk` refuses
+a bind that pins neither its program nor its commitment, and refuses either vector below
+`PROOF_BIND_MIN_LANES`. This decides both on the leg rather than describing them: 54 commit lanes
+(SIX `Fp` elements at nine `Faithful9` lanes each — the salt's three sponge lanes and the row's
+parent, body hash and own hash) against 9 attested program lanes. ⚠ The two numbers DIFFER, which
+is exactly what the retired `vk.length == commit.length` conjunct forbade. -/
+theorem minaLink_seam_shape :
+    (match stateHashBindLeg with | .bind b => b.mainRailOk | _ => false) = true
+      ∧ (match stateHashBindLeg with | .bind b => b.commit.length | _ => 0) = 54
+      ∧ (match stateHashBindLeg with | .bind b => b.vk.length | _ => 0) = 9 := by
+  refine ⟨by rfl, ?_, by rfl⟩
+  simp [stateHashBindLeg, seamCommitLanes, MINA_PROTO_STATE_SALT_LANES, parentCommitLanes,
+    bodyCommitLanes, ownCommitLanes]
 
 /-- ⚑ **THE INTER-ROW LAWS ARE COUNTED BY SELECTOR.** Twelve `.transition` legs (nine lane equalities +
 the height tick + the monotone pin + the counter accumulation — the laws that need a genuine
@@ -371,11 +590,15 @@ theorem minaLinkAir_window_selectors :
       ∧ minaLinkAir.windowCountSel RowSel.last = 0 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
 
-/-- Two limbed quantities per row, sixteen per-lane range lookups, and the limbed capacity is the
-232-bit LOW half of an `Fp` element with lane 8 gated separately and more narrowly. -/
+set_option maxRecDepth 8000 in
+/-- FOUR limbed quantities per row — the parent's low half, the own hash's, the BODY hash's and the
+nine attested-program lanes — and thirty-three per-lane range lookups. ⚑ The `HASH_VK` vector is
+limbed at 29 bits for a reason that is load-bearing rather than tidy: an emitted `vkPin` congruence
+is `≡ 0 [ZMOD P]`, so without a width gate a `HASH_VK` column could sit at `pin + P` and attest a
+program nobody pinned. Same coupling, same gadget, as `link_lane_equality_is_exact`. -/
 theorem minaLinkAir_limbs_shape :
-    minaLinkAir.limbsCount = 2 ∧ minaLinkAir.totalRangeLookups = 16
-      ∧ minaLinkAir.maxLimbedCapacityBits = 232 := by
+    minaLinkAir.limbsCount = 4 ∧ minaLinkAir.totalRangeLookups = 33
+      ∧ minaLinkAir.maxLimbedCapacityBits = 261 := by
   refine ⟨?_, ?_, ?_⟩ <;> rfl
 
 /-- ⚑ **THE TIED SOURCE** — `minaLinkAir` carrying its two decidable verdicts in its TYPE:
@@ -416,9 +639,42 @@ theorem minaLinkDesc_tables : minaLinkDesc.tables = [minaLaneTable, minaTopLaneT
 theorem minaLinkDesc_hashSites : minaLinkDesc.hashSites = [] := rfl
 theorem minaLinkDesc_ranges : minaLinkDesc.ranges = [] := rfl
 
-/-- Fifty-three constraints from thirty-nine legs: one per leg except the two `.limbs` legs, which
-lower to EIGHT lookups each. A dropped lane moves this and nothing else does. -/
-theorem minaLinkDesc_constraint_count : minaLinkDesc.constraints.length = 53 := rfl
+/-- Seventy-two constraints from forty-three legs: one per leg except the four `.limbs` legs, which
+lower to EIGHT (parent, own, body) and NINE (attested program) lookups. A dropped lane moves this
+and nothing else does. -/
+theorem minaLinkDesc_constraint_count : minaLinkDesc.constraints.length = 72 := rfl
+
+/-- ⚑⚑ **THE SEAM, AT ITS EMITTED POSITION, ON THE COMPILER'S OUTPUT.** Constraint 51 is the
+`proofBind`: an unconditional guard, a commitment whose first 27 lanes are the pinned salt
+CONSTANTS and whose remaining 27 are this row's parent, body hash and own hash, and nine attested
+program columns pinned to the absorb descriptor's fingerprint. A leg that silently dropped the salt
+head, or swapped a `.const` for a `.var`, moves this. -/
+theorem minaLinkDesc_state_hash_seam :
+    (minaLinkDesc.constraints.drop 51).take 1 =
+      [ .proofBind
+          { guard  := Dregg2.Exec.CircuitEmit.emitExpr (.const 1)
+          , commit := seamCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+          , vk     := hashVkCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+          , vkPin  := some ABSORB_VK_LANES
+          , bound  := none } ] := rfl
+
+/-- ⚑ **THE COMMITMENT NAMES ALL FOUR OBJECTS AND NOTHING ELSE.** Thirty-six lanes: 27 constants
+then this row's three nonets, in that order. Stated separately from the byte pin above because it is
+the property the derivation theorem consumes. -/
+theorem minaLink_commit_is_salt_then_the_row :
+    (match (minaLinkDesc.constraints.drop 51).head? with
+     | some (.proofBind m) => m.commit
+     | _ => []) =
+      (MINA_PROTO_STATE_SALT_LANES.map Expr.const
+        ++ parentCommitLanes ++ bodyCommitLanes ++ ownCommitLanes).map
+          Dregg2.Exec.CircuitEmit.emitExpr := rfl
+
+/-- ⚑ **AND IT IS THE ONLY ONE.** One seam, so `proofBind_bound`'s `∀ m ∈ proofBindsOf d` is about
+this leg and no other, and the `proofBindDeclarative` census is zero. -/
+theorem minaLink_has_one_pinned_seam :
+    (Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLinkDesc).length = 1
+      ∧ Dregg2.Circuit.DescriptorIR2.proofBindDeclarative minaLinkDesc = 0 := by
+  refine ⟨?_, ?_⟩ <;> rfl
 
 /-- ⚑ **THE NINE LANE-CONTINUITY GATES, AT THEIR EMITTED POSITIONS, AS TRANSITION WINDOWS.** `rfl` on
 a slice of the compiler's output. A lane that lost its gate, or a gate that drifted off
@@ -459,7 +715,7 @@ LAST-row tip lanes, the first-row anchor height, and — the tooth — the LAST-
 `PI_SEG_LEN`. A `.last` pin re-scoped to `.first` would read the first row's counter (always
 `IS_REAL[0] ∈ {0,1}`) and the segment length would be free again. -/
 theorem minaLinkDesc_pins :
-    minaLinkDesc.constraints.drop 33 =
+    minaLinkDesc.constraints.drop 52 =
       [ .base (.piBinding VmRow.first (PARENT 0) (PI_ANCHOR 0))
       , .base (.piBinding VmRow.first (PARENT 1) (PI_ANCHOR 1))
       , .base (.piBinding VmRow.first (PARENT 2) (PI_ANCHOR 2))
@@ -486,8 +742,24 @@ width, and the counting columns sit above them. -/
 theorem minaLink_layout_wellformed :
     PARENT 0 = 0 ∧ PARENT 8 = 8 ∧ OWNHASH 0 = 9 ∧ OWNHASH 8 = 17
       ∧ HEIGHT = 18 ∧ IS_REAL = 19 ∧ REAL_COUNT = 20 ∧ ANCHOR_H = 21
-      ∧ ANCHOR_H < MINA_LINK_WIDTH ∧ PI_SEG_LEN < MINA_LINK_PI_COUNT := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩ <;> decide
+      ∧ BODYHASH 0 = 22 ∧ BODYHASH 8 = 30 ∧ HASH_VK 0 = 31 ∧ HASH_VK 8 = 39
+      ∧ MINA_LINK_WIDTH = 40
+      ∧ HASH_VK 8 < MINA_LINK_WIDTH ∧ PI_SEG_LEN < MINA_LINK_PI_COUNT := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE SALT LANES ARE THE SALT.** The 27 `.const` lanes of the seam's commitment head
+recompose, nine at a time base `2^29`, to the three elements of
+`Bridge.MinaStateHashDerive.saltProtoState` — which is itself pinned to openmina's own regression
+constants. Without this the constants are a transcription nothing checks, and a wrong lane would
+name a different hash function while every gate stayed green.
+
+⚠ `native_decide`: `saltProtoState` is a Kimchi Poseidon permutation, and reducing one under the
+kernel is measured at 47.6 GB / 68 min in this tree. This is the compiled evaluator, confessed. -/
+theorem mina_link_salt_lanes_are_the_salt :
+    MINA_PROTO_STATE_SALT_LANES =
+      ((Dregg2.Bridge.MinaStateHashDerive.saltProtoState.flatMap
+        (fun v => (List.range 9).map (fun i => ((v / 2 ^ (29 * i)) % 2 ^ 29 : Nat)))).map
+          (fun n => (n : ℤ))) := by native_decide
 
 /-! ### §3b — ⚑ THE (a)/(b) DECISION, DECIDED ON THE EMITTED BYTES.
 
@@ -607,24 +879,193 @@ theorem link_lane_equality_is_exact {x y : ℤ}
   obtain ⟨k, hk⟩ := h
   omega
 
-/-! ## §6 — ⚑ THE RESIDUAL, NAMED. -/
+/-! ## §6 — ⚑⚑ THE RESIDUAL, DERIVED. -/
 
-/-- ⚑ **`LinkHashResidual` — WHAT THIS DESCRIPTOR DOES NOT FORCE, as a `Prop` rather than a caveat.**
+/-- The base-`2^29` recomposition of a LANE VECTOR (as opposed to a column vector). The seam's
+`commit` is a list of VALUES, so the tie back to `stateValue` needs this shape. -/
+def laneVal : List ℤ → ℤ
+  | [] => 0
+  | v :: rest => v + (2 : ℤ) ^ MINA_LANE_BITS * laneVal rest
 
-Row `i`'s `OWNHASH` nonet denotes the Poseidon-over-Pasta protocol-state hash of block `i`'s state
-row. **This is the Pasta multiply.** Every theorem below that reaches `ChainFrom` takes it as a
-HYPOTHESIS; it is discharged by the witness generator today, i.e. it is TRUSTED.
+/-- `laneVal` of a column vector's readings IS `limbValue` of the columns — the bridge between the
+seam's value-level commitment and this file's column-level `stateValue`. -/
+theorem laneVal_map (a : Assignment) :
+    ∀ cs : List Nat, laneVal (cs.map a) = limbValue MINA_LANE_BITS a cs := by
+  intro cs
+  induction cs with
+  | nil => rfl
+  | cons c cs ih => simp [laneVal, ih]
 
-⚠ It is load-bearing and it is not small. A prover free to choose `OWNHASH` can fabricate a chain of
-any length between any two `Fp` elements; what makes a row a real Mina block is `PICKLES_OK`, which
-is also still a witness. What this descriptor removes is the freedom to be INCONSISTENT and the
-freedom to claim a depth without paying rows for it. -/
+/-- ⚑ **`minaLinkHash` — MINA'S OWN LINKAGE HASH, at `ℤ`.**
+`Bridge.MinaStateHashDerive.stateHash` is `hashFrom saltProtoState [previousStateHash,
+stateBodyHash]` (`:392-393`, the daemon's `protocol_state.ml:45-55`). This is that function, on the
+two arguments the row carries. It is Mina's, not this file's: no hash is authored here. -/
+def minaLinkHash (parent body : ℤ) : ℤ :=
+  (Dregg2.Bridge.MinaStateHashDerive.hashFrom
+     Dregg2.Bridge.MinaStateHashDerive.saltProtoState [parent.toNat, body.toNat] : ℤ)
+
+/-- ⚑ **THE SEAM, AS THE `ProofBind` THE COMPILER EMITS.** Named so the theorems below can quantify
+over `proofBindsOf` and land on THIS object rather than on a re-description of it. -/
+def minaLinkSeam : Dregg2.Circuit.DescriptorIR2.ProofBind :=
+  { guard  := Dregg2.Exec.CircuitEmit.emitExpr (.const 1)
+  , commit := seamCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+  , vk     := hashVkCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+  , vkPin  := some ABSORB_VK_LANES
+  , bound  := none }
+
+/-- The nine attested-program lanes a row READS, as values. The seam compares exactly this vector
+against `ABSORB_VK_LANES`. -/
+def hashVkRead (a : Assignment) : List ℤ := minaLinkSeam.vk.map (fun e => e.eval a)
+
+/-- The emitted descriptor's proof-binding ops are exactly this seam. -/
+theorem minaLink_proofBinds : Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLinkDesc =
+    [minaLinkSeam] := rfl
+
+/-- ⚑ **A GATED LANE-VECTOR CONGRUENCE IS AN EXACT EQUALITY when both sides are canonical.** The
+list-level form of `link_lane_equality_is_exact`, and it is the SAME coupling: `zeroLanes` says
+`1·(xᵢ − yᵢ) ≡ 0 [ZMOD P]`, which admits a `+P` alias per lane; the width gates are what collapse
+each alias family to a point. ⚠ Without the canonicality hypotheses this is FALSE. -/
+theorem zeroLanes_one_exact : ∀ (xs ys : List ℤ),
+    (∀ v ∈ xs, 0 ≤ v ∧ v < 2013265921) → (∀ v ∈ ys, 0 ≤ v ∧ v < 2013265921) →
+    Dregg2.Circuit.DescriptorIR2.zeroLanes 1 xs ys → xs = ys := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro ys _ _ h
+    exact (List.eq_nil_of_length_eq_zero h.1.symm).symm
+  | cons x xs ih =>
+    intro ys hx hy h
+    obtain ⟨hlen, hz⟩ := h
+    match ys with
+    | [] => simp at hlen
+    | y :: ys' =>
+      have hzip : ((x, y) : ℤ × ℤ) ∈ (x :: xs).zip (y :: ys') := by simp
+      have hcong := hz (x, y) hzip
+      have hform : (1 : ℤ) * (x - y) = x + (-1) * y := by ring
+      rw [hform] at hcong
+      have hhead : x = y :=
+        link_lane_equality_is_exact (hx x (by simp)) (hy y (by simp)) hcong
+      have htail : xs = ys' :=
+        ih ys' (fun v hv => hx v (by simp [hv])) (fun v hv => hy v (by simp [hv]))
+          ⟨by simpa using hlen, fun p hp => hz p (by simp [hp])⟩
+      rw [hhead, htail]
+
+/-- ⚑ **`HashVkCanon`** — the nine attested-program lanes a row reads are field-canonical. This is
+the content of the nine emitted 29-bit lookups, stated at the model's own resolution: `Assignment`
+is `Nat → ℤ`, so nothing in the TYPE says a column is a residue, while in the deployed prover every
+column IS one. It is named because it is precisely what turns the seam's `≡ 0 [ZMOD P]` `vkPin`
+congruence into an EXACT program equality — the same coupling `link_lane_equality_is_exact` states
+for the lane chain, one object over. -/
+def HashVkCanon (a : Assignment) : Prop :=
+  ∀ v ∈ hashVkRead a, 0 ≤ v ∧ v < 2013265921
+
+/-- ⚑⚑ **THE SEAM FORCES THE PINNED PROGRAM, EXACTLY.** `ProofBind.holdsAt`'s middle conjunct is
+nine congruences `1·(vkⱼ − pinⱼ) ≡ 0 [ZMOD P]`; with the columns canonical and every pin literal
+below `2^29`, that is equality of the whole nine-lane fingerprint. So the sub-proof the off-row leg
+produces is a proof of `dregg-pasta-fp-absorb::v1` and not of some other program — which is the
+difference between this seam and the decorative shape `ProofBind.isDeclarative` counts. -/
+theorem seam_forces_the_pinned_program {env : VmRowEnv} (hc : HashVkCanon env.loc)
+    (h : Dregg2.Circuit.DescriptorIR2.ProofBind.holdsAt env minaLinkSeam) :
+    hashVkRead env.loc = ABSORB_VK_LANES := by
+  obtain ⟨-, hvk, -⟩ := h
+  refine zeroLanes_one_exact _ _ hc (by decide) ?_
+  simpa [hashVkRead, minaLinkSeam] using hvk
+
+/-- ⚑⚑⚑ **`StateHashEngine` — WHAT THE PINNED SUB-PROGRAM PROVES, as a NAMED hypothesis about the
+recursion engine.**
+
+A proof that VERIFIES under the engine and attests the fingerprint of `dregg-pasta-fp-absorb::v1`,
+whose public-input commitment is `salt ‖ x ‖ y ‖ z` in `Faithful9` lanes, has
+`laneVal z = Poseidon_{salt}(laneVal x, laneVal y)`.
+
+⚑ **Read what this is and what it is not.** It is the sub-program's own denotation, which that
+descriptor's file PROVES about the emitted object
+(`MinaWrapVerifierSpongeFp.the_fp_absorb_program_squeezes_the_kimchi_hash`,
+`the_emitted_fp_absorb_output_is_K3s_hash`, on the SAME `programAir` at `pLimb`, with the incoming
+state a public input and `the_absorb_program_permutes_gen` carrying no hypothesis on it). What is
+NOT discharged here is the recursion boundary itself — that a verifying STARK implies its statement
+— which is the FRI obligation this whole stack carries and names
+(`RecursiveAggregation.EngineSound.recursive_sound`). Every `proofBind` in this tree stands at
+exactly that resolution; this one is not weaker and not stronger.
+
+⚠ It also carries a LIMB-ENCODING obligation the consumer discharges: the absorb descriptor
+publishes 32 eight-bit limbs an element and this seam commits nine base-`2^29` lanes, so the node
+re-limbs 54 lanes into six 32-limb blocks and refuses a mismatch. That is an executor check, not a
+constraint, and saying so is the point of naming this structure rather than asserting the
+conclusion. -/
+structure StateHashEngine (E : Dregg2.Circuit.DescriptorIR2.ProofEngine) : Prop where
+  squeezes : ∀ p : E.Proof, E.verify p = true → E.vkOf p = ABSORB_VK_LANES →
+    ∀ x y z : List ℤ,
+      E.piCommit p = MINA_PROTO_STATE_SALT_LANES ++ x ++ y ++ z →
+      laneVal z = minaLinkHash (laneVal x) (laneVal y)
+
+/-- ⚑⚑⚑ **THE CLOSURE: A ROW'S `OWNHASH` IS THE IMAGE OF THAT ROW.** Given the seam's row-local
+half (which pins the program) and its off-row half (which produces the verifying sub-proof), the
+row's own-hash nonet denotes `Poseidon_{MinaProtoState}(parent, bodyHash)` — Mina's own linkage
+hash, on this row's own two lanes. `OWNHASH` is no longer a value a prover writes down. -/
+theorem seam_derives_the_own_hash (E : Dregg2.Circuit.DescriptorIR2.ProofEngine)
+    (hSH : StateHashEngine E) {env : VmRowEnv} (hc : HashVkCanon env.loc)
+    (hrow : Dregg2.Circuit.DescriptorIR2.ProofBind.holdsAt env minaLinkSeam)
+    (hbound : Dregg2.Circuit.DescriptorIR2.ProofBind.boundAt E env minaLinkSeam) :
+    ownHashValue env.loc
+      = minaLinkHash (parentValue env.loc) (bodyHashValue env.loc) := by
+  obtain ⟨p, hp, hpc, hpv⟩ := hbound rfl
+  have hvk : E.vkOf p = ABSORB_VK_LANES := by
+    rw [hpv]; simpa [hashVkRead] using seam_forces_the_pinned_program hc hrow
+  have hsplit : minaLinkSeam.commit.map (fun e => e.eval env.loc) =
+      MINA_PROTO_STATE_SALT_LANES
+        ++ (Dregg2.Circuit.Emit.LightClientMinaAir.nonetOf parentLowLanes (PARENT 8)).map env.loc
+        ++ (Dregg2.Circuit.Emit.LightClientMinaAir.nonetOf bodyHashLowLanes (BODYHASH 8)).map env.loc
+        ++ (Dregg2.Circuit.Emit.LightClientMinaAir.nonetOf ownHashLowLanes (OWNHASH 8)).map env.loc :=
+    rfl
+  have hsq := hSH.squeezes p hp hvk _ _ _ (by rw [hpc, hsplit])
+  rw [laneVal_map, laneVal_map, laneVal_map] at hsq
+  exact hsq
+
+/-- ⚑ **`LinkOwnHashIsImage` — what the seam DERIVES, over a whole segment.** Every row's own-hash
+nonet denotes Mina's linkage hash of that row's own two lanes. `seam_derives_the_own_hash` is the
+per-row form; this is the list form the refinement consumes. -/
+def LinkOwnHashIsImage (rows : List Assignment) : Prop :=
+  ∀ i, (hi : i < rows.length) →
+    ownHashValue rows[i] = minaLinkHash (parentValue rows[i]) (bodyHashValue rows[i])
+
+/-- ⚑ **`LinkHashResidual` — RETAINED, BUT NO LONGER A RESIDUAL.**
+
+Row `i`'s `OWNHASH` denotes the protocol-state hash of block `i`. Until 2026-08-06 this was an
+ASSUMPTION every theorem below carried: *"the Pasta multiply, discharged by the witness generator,
+i.e. TRUSTED"*. It is a CONCLUSION now — `linkHashResidual_of_seam` derives it from the emitted
+seam plus `LeafHashIsMina`, and the only thing left in that second hypothesis is an ENCODING claim
+with no hash in it. The `Prop` keeps its name because §8 is stated in terms of it and the name is
+what a reader greps for; what changed is which side of the turnstile it sits on. -/
 def LinkHashResidual (L : MinaLeaf) (enc : L.Digest → ℤ) (rows : List Assignment)
     (blocks : List (MinaHeader L)) : Prop :=
   ∀ i, (hi : i < rows.length) → (hb : i < blocks.length) →
     ownHashValue rows[i] = enc (blockHash L blocks[i])
 
-/-- The companion tie for the PARENT nonet. ⚑ Unlike `LinkHashResidual` this is a pure ENCODING
+/-- ⚑ **`LeafHashIsMina` — ALL THAT REMAINS of the old residual, and it computes no hash.** The
+ABSTRACT bridge leaf's `MinaLeaf.stateHash` is Mina's own `MinaStateHashDerive.stateHash`, read
+through the lane encoding. ⚠ This is `LightClientMinaHashFold`'s named RESIDUAL #2 — the
+protocol-state PREIMAGE SHAPE — and it is genuinely still open at the bridge-leaf boundary: the
+abstract leaf hashes a four-tuple while the daemon hashes `[previous_state_hash ; state_body_hash]`
+over a `Body.to_input` of ~38 elements. Naming it here keeps the two apart instead of letting the
+seam's closure launder it. -/
+def LeafHashIsMina (L : MinaLeaf) (enc : L.Digest → ℤ) (rows : List Assignment)
+    (blocks : List (MinaHeader L)) : Prop :=
+  ∀ i, (hi : i < rows.length) → (hb : i < blocks.length) →
+    enc (blockHash L blocks[i]) = minaLinkHash (parentValue rows[i]) (bodyHashValue rows[i])
+
+/-- ⚑⚑ **THE RESIDUAL, DISCHARGED.** What §8 took as a hypothesis is now the composition of a fact
+the descriptor forces (`LinkOwnHashIsImage`, out of the seam) with a fact that computes nothing
+(`LeafHashIsMina`). ⚑ Read the asymmetry: the *hash* moved to the sub-proof; what is left is the
+claim that two spellings of the same digest agree. -/
+theorem linkHashResidual_of_seam (L : MinaLeaf) (enc : L.Digest → ℤ)
+    (rows : List Assignment) (blocks : List (MinaHeader L))
+    (himg : LinkOwnHashIsImage rows) (hleaf : LeafHashIsMina L enc rows blocks) :
+    LinkHashResidual L enc rows blocks := by
+  intro i hi hb
+  rw [himg i hi, hleaf i hi hb]
+
+/-- The companion tie for the PARENT nonet. ⚑ Like `LeafHashIsMina` this is a pure ENCODING
 statement — no hash is computed — discharged by writing the nine lanes of a value the generator
 already holds (`turn/src/executor/mina_head_verifier.rs::check_head_binding` computes exactly this
 decomposition). -/
@@ -659,16 +1100,24 @@ structure LinkLast (a : Assignment) (pub : Assignment) : Prop where
   tip : ∀ j, j < STATE_LIMBS → a (OWNHASH j) = pub (PI_TIP j)
   segLen : a REAL_COUNT = pub PI_SEG_LEN
 
-/-- Both nonets of a row are canonical `Fp` elements — the eighteen per-row lookups. -/
+/-- ⚑ All THREE nonets of a row are canonical `Fp` elements — the twenty-seven per-row lookups.
+`BODYHASH` joined on 2026-08-06 and it is not decoration: it is an ARGUMENT of the hash the seam
+binds, and an argument that could sit at `v + p` would let two body hashes give one state hash
+(`MinaStateQuery.poseidonPair_shift_collides` — a structural collision, not a birthday event). -/
 def RowCanon (a : Assignment) : Prop :=
   laneCanon a parentLowLanes (PARENT 8) ∧ laneCanon a ownHashLowLanes (OWNHASH 8)
+    ∧ laneCanon a bodyHashLowLanes (BODYHASH 8)
 
-/-- ⚑ **`linkShapeAccepts` — THE DERIVED PREDICATE, AND ITS NAME SAYS WHAT IT IS.** The emitted
-descriptor accepts this trace: every row canonical and `IS_REAL`-boolean, every adjacent pair a
-`LinkStep`, the first row anchored, the last row pinned to the tip and to the segment length.
+/-- ⚑ **`linkShapeAccepts` — THE DERIVED PREDICATE, AND ITS NAME STILL SAYS WHAT IT IS.** The
+emitted descriptor accepts this trace: every row canonical and `IS_REAL`-boolean, every adjacent
+pair a `LinkStep`, the first row anchored, the last row pinned to the tip and to the segment length,
+and — new on 2026-08-06 — every row ATTESTING the pinned state-hash program.
 
-⚠ It is the segment's SHAPE. It is NOT `LightClientMina.linkOk`, which additionally requires each
-`OWNHASH` to BE the block's Poseidon state hash (`LinkHashResidual`). -/
+⚠ It is still the segment's SHAPE, and the name is not being quietly widened. What the shape
+predicate can see of the seam is its ROW-LOCAL half: the guard is a bit and the nine `HASH_VK`
+columns are the pinned fingerprint. The half that makes `OWNHASH` an IMAGE is the off-row
+existential (`ProofBind.boundAt`), which no row-level predicate can state — that is
+`seam_derives_the_own_hash`, and it takes an engine. -/
 structure linkShapeAccepts (rows : List Assignment) (pub : Assignment) : Prop where
   nonempty : rows ≠ []
   canon : ∀ a ∈ rows, RowCanon a
@@ -676,6 +1125,9 @@ structure linkShapeAccepts (rows : List Assignment) (pub : Assignment) : Prop wh
   steps : List.IsChain LinkStep rows
   first : ∀ a, rows.head? = some a → LinkFirst a pub
   last : ∀ a, rows.getLast? = some a → LinkLast a pub
+  /-- ⚑ Every row's nine attested-program lanes ARE `dregg-pasta-fp-absorb::v1`'s fingerprint. This
+  is the `vkPin` congruence at the row level, made exact by the nine 29-bit lookups. -/
+  program : ∀ a ∈ rows, hashVkRead a = ABSORB_VK_LANES
 
 /-- ⚑ **DERIVED FACT 1 — THE LANE CHAIN IS AN `Fp` CHAIN.** Nine lane equalities on an adjacent pair
 give equality of the two nonets' DENOTED field elements. This is `chainLinked`'s `h.parent = prev`
@@ -903,18 +1355,28 @@ descriptor forces is that they CHAIN, not what they are — and that is exactly 
 def MID1_LANES : List ℤ := [11, 22, 33, 44, 55, 66, 77, 88, 99]
 def MID2_LANES : List ℤ := [111, 222, 333, 444, 555, 666, 777, 888, 999]
 
-/-- Row 0 — parent is the REAL devnet genesis anchor, height 1001, real. -/
+/-- Three canonical body-hash nonets. ⚑ These are SHAPE witnesses: `linkShapeAccepts` is the
+row-local predicate and says nothing about which `Fp` element a body hash is — the tie
+`OWNHASH = Poseidon_salt(PARENT, BODYHASH)` lives in `seam_derives_the_own_hash`, off-row, and no
+`decide` over three rows could witness it. Saying so here is the point. -/
+def BODY0_LANES : List ℤ := [7, 14, 21, 28, 35, 42, 49, 56, 63]
+def BODY1_LANES : List ℤ := [70, 140, 210, 280, 350, 420, 490, 560, 630]
+def BODY2_LANES : List ℤ := [700, 1400, 2100, 2800, 3500, 4200, 4900, 5600, 6300]
+
+/-- Row 0 — parent is the REAL devnet genesis anchor, height 1001, real; the nine attested-program
+lanes are `dregg-pasta-fp-absorb::v1`'s fingerprint. -/
 def hrow0 : Assignment :=
   rowOf (Dregg2.Circuit.Emit.LightClientMinaAir.GENESIS_ANCHOR_LANES ++ MID1_LANES
-    ++ [1001, 1, 1, 1000])
+    ++ [1001, 1, 1, 1000] ++ BODY0_LANES ++ ABSORB_VK_LANES)
 
 /-- Row 1 — parent is row 0's own hash. -/
-def hrow1 : Assignment := rowOf (MID1_LANES ++ MID2_LANES ++ [1002, 1, 2, 1000])
+def hrow1 : Assignment :=
+  rowOf (MID1_LANES ++ MID2_LANES ++ [1002, 1, 2, 1000] ++ BODY1_LANES ++ ABSORB_VK_LANES)
 
 /-- Row 2 — parent is row 1's own hash, own hash is the REAL devnet block-539508 tip. -/
 def hrow2 : Assignment :=
   rowOf (MID2_LANES ++ Dregg2.Circuit.Emit.LightClientMinaAir.DEVNET_TIP_LANES
-    ++ [1003, 1, 3, 1000])
+    ++ [1003, 1, 3, 1000] ++ BODY2_LANES ++ ABSORB_VK_LANES)
 
 /-- The public inputs: the pinned anchor, the verified tip, the anchor height, and the segment
 length THE TRACE PAYS FOR. -/
@@ -945,8 +1407,12 @@ theorem honest_segment_accepted : linkShapeAccepts honestSegment honestPub where
   canon := by
     intro a ha
     simp only [honestSegment, List.mem_cons, List.not_mem_nil, or_false] at ha
-    rcases ha with rfl | rfl | rfl <;> exact ⟨by decide, by decide⟩
+    rcases ha with rfl | rfl | rfl <;> exact ⟨by decide, by decide, by decide⟩
   isReal := by
+    intro a ha
+    simp only [honestSegment, List.mem_cons, List.not_mem_nil, or_false] at ha
+    rcases ha with rfl | rfl | rfl <;> decide
+  program := by
     intro a ha
     simp only [honestSegment, List.mem_cons, List.not_mem_nil, or_false] at ha
     rcases ha with rfl | rfl | rfl <;> decide
@@ -972,11 +1438,12 @@ theorem honest_segment_pays_for_its_length : honestPub PI_SEG_LEN ≤ (honestSeg
 perfectly canonical lane (`12 < 2^29`), so every canonicality lookup still passes, every height still
 ticks, and `IS_REAL`/`REAL_COUNT` are untouched. Only the linkage is broken. -/
 def brokenRow1 : Assignment :=
-  rowOf ((12 :: MID1_LANES.tail) ++ MID2_LANES ++ [1002, 1, 2, 1000])
+  rowOf ((12 :: MID1_LANES.tail) ++ MID2_LANES ++ [1002, 1, 2, 1000] ++ BODY1_LANES
+    ++ ABSORB_VK_LANES)
 
 /-- The bent row is still a well-formed canonical row — so the refusal below is the LINKAGE gate's
 and not the canonicality gate's. -/
-theorem broken_row_is_still_canonical : RowCanon brokenRow1 := ⟨by decide, by decide⟩
+theorem broken_row_is_still_canonical : RowCanon brokenRow1 := ⟨by decide, by decide, by decide⟩
 
 /-- …and its height and counter are still exactly the honest row's, so nothing but the link differs. -/
 theorem broken_row_differs_only_in_the_link :
@@ -1006,7 +1473,8 @@ theorem broken_link_old_admits_new_rejects :
     (RowCanon hrow0 ∧ RowCanon brokenRow1 ∧ RowCanon hrow2)
       ∧ brokenRow1 HEIGHT = hrow0 HEIGHT + 1
       ∧ ¬ linkShapeAccepts brokenSegment honestPub :=
-  ⟨⟨⟨by decide, by decide⟩, broken_row_is_still_canonical, ⟨by decide, by decide⟩⟩,
+  ⟨⟨⟨by decide, by decide, by decide⟩, broken_row_is_still_canonical,
+     ⟨by decide, by decide, by decide⟩⟩,
    by decide, broken_link_refused⟩
 
 /-- ⚑ **REFUSED — THE FREE DEPTH.** The same three exhibited rows, but the published `PI_SEG_LEN`
@@ -1025,13 +1493,84 @@ theorem short_segment_refused : ¬ linkShapeAccepts honestSegment liarPub := by
   simp only [honestSegment, List.length_cons, List.length_nil] at hle
   norm_num at hle
 
-/-- ⚑ **THE POLARITY PAIR, AS ONE STATEMENT.** The emitted logic DISCRIMINATES: it accepts an honest
-anchored segment on real devnet lanes and refuses both the mismatched parent and the free depth. -/
+/-! ### §9a — ⚑⚑ THE SEAM'S OWN POLARITY, and the falsifier is checked for MOVING. -/
+
+/-- ⚑ **THE ROW THAT ATTESTS A PROGRAM NOBODY PINNED.** Row 0 with `HASH_VK` lane 0 moved by one —
+`446814635 → 446814636`. Three things about this forgery, each of which a sibling lane's falsifier
+got wrong on a measured occasion:
+
+* it moves a **NON-ZERO** value **to** a non-zero value, so it is not the zero-into-zero mutation
+  `decide` cheerfully proves is not a tamper;
+* it stays **INSIDE the 29-bit lookup**, so a range gate cannot be what refuses it;
+* it changes **nothing else** — same parent, same own hash, same body hash, same height, same
+  `IS_REAL`, same counter — so the refusal cannot come from any pre-existing gate. -/
+def forgedProgramRow : Assignment :=
+  rowOf (Dregg2.Circuit.Emit.LightClientMinaAir.GENESIS_ANCHOR_LANES ++ MID1_LANES
+    ++ [1001, 1, 1, 1000] ++ BODY0_LANES ++ (446814636 :: ABSORB_VK_LANES.tail))
+
+/-- ⚑ **THE FALSIFIER MOVES, AND IT MOVES THE RIGHT THING.** Checked, not asserted. -/
+theorem forged_program_falsifier_moves :
+    forgedProgramRow (HASH_VK 0) ≠ hrow0 (HASH_VK 0)
+      ∧ forgedProgramRow (HASH_VK 0) ≠ 0
+      ∧ hrow0 (HASH_VK 0) ≠ 0
+      ∧ forgedProgramRow (HASH_VK 0) < 2 ^ MINA_LANE_BITS
+      ∧ (∀ j, j < STATE_LIMBS → forgedProgramRow (PARENT j) = hrow0 (PARENT j))
+      ∧ (∀ j, j < STATE_LIMBS → forgedProgramRow (OWNHASH j) = hrow0 (OWNHASH j))
+      ∧ (∀ j, j < STATE_LIMBS → forgedProgramRow (BODYHASH j) = hrow0 (BODYHASH j))
+      ∧ forgedProgramRow HEIGHT = hrow0 HEIGHT
+      ∧ forgedProgramRow IS_REAL = hrow0 IS_REAL
+      ∧ forgedProgramRow REAL_COUNT = hrow0 REAL_COUNT := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide, by decide,
+          by decide, by decide, by decide⟩
+
+/-- …and it is a perfectly canonical row, so the twenty-seven canonicality lookups are not what
+objects. -/
+theorem forged_program_row_is_still_canonical : RowCanon forgedProgramRow :=
+  ⟨by decide, by decide, by decide⟩
+
+/-- ⚑ ACCEPT side: the honest row's nine lanes ARE `dregg-pasta-fp-absorb::v1`'s fingerprint. -/
+theorem honest_row_attests_the_pinned_program : hashVkRead hrow0 = ABSORB_VK_LANES := by decide
+
+/-- ⚑ REFUSE side, at the lane vector the seam compares. -/
+theorem forged_row_attests_a_different_program :
+    hashVkRead forgedProgramRow ≠ ABSORB_VK_LANES := by decide
+
+def forgedProgramSegment : List Assignment := [forgedProgramRow, hrow1, hrow2]
+
+/-- ⚑⚑ **REFUSED — AND THE REFUSING GATE IS NAMED.** The forged segment satisfies every conjunct
+`linkShapeAccepts` had before 2026-08-06: its rows are canonical, its `IS_REAL` bits are boolean,
+its two links are exact, its first row is anchored and its last row is pinned to the tip and to the
+counted length. The conjunct it fails is `program` — the seam's `vkPin` congruence — and the proof
+below goes through that field and no other. -/
+theorem forged_program_segment_refused :
+    ¬ linkShapeAccepts forgedProgramSegment honestPub := by
+  intro h
+  exact forged_row_attests_a_different_program
+    (h.program forgedProgramRow (by simp [forgedProgramSegment]))
+
+/-- ⚑ **OLD ADMITS, NEW REJECTS — for the state-hash seam.** Every shape conjunct that existed
+before the seam holds of the forged segment; the pre-seam predicate accepted it. -/
+theorem forged_program_old_admits_new_rejects :
+    (RowCanon forgedProgramRow ∧ RowCanon hrow1 ∧ RowCanon hrow2)
+      ∧ LinkStep forgedProgramRow hrow1
+      ∧ LinkFirst forgedProgramRow honestPub
+      ∧ ¬ linkShapeAccepts forgedProgramSegment honestPub :=
+  ⟨⟨forged_program_row_is_still_canonical, ⟨by decide, by decide, by decide⟩,
+    ⟨by decide, by decide, by decide⟩⟩,
+   { lanes := by decide, height := by decide, monotone := by decide, count := by decide },
+   { anchor := by decide, anchorH := by decide, height := by decide, count := by decide },
+   forged_program_segment_refused⟩
+
+/-- ⚑ **THE POLARITY TRIPLE, AS ONE STATEMENT.** The emitted logic DISCRIMINATES: it accepts an
+honest anchored segment on real devnet lanes and refuses the mismatched parent, the free depth, and
+— new on 2026-08-06 — the row that recursion-binds to a program nobody pinned. -/
 theorem mina_link_discriminates :
     linkShapeAccepts honestSegment honestPub
       ∧ ¬ linkShapeAccepts brokenSegment honestPub
-      ∧ ¬ linkShapeAccepts honestSegment liarPub :=
-  ⟨honest_segment_accepted, broken_link_refused, short_segment_refused⟩
+      ∧ ¬ linkShapeAccepts honestSegment liarPub
+      ∧ ¬ linkShapeAccepts forgedProgramSegment honestPub :=
+  ⟨honest_segment_accepted, broken_link_refused, short_segment_refused,
+   forged_program_segment_refused⟩
 
 /-! ## §10 — axiom hygiene. Every asserted fact above is a NAMED THEOREM; this file contains no
 `#guard` (`metatheory/docs/GUARD-DISCIPLINE.md`). -/
@@ -1070,5 +1609,26 @@ theorem mina_link_discriminates :
 #assert_axioms broken_link_old_admits_new_rejects
 #assert_axioms short_segment_refused
 #assert_axioms mina_link_discriminates
+#assert_axioms minaLink_seam_shape
+#assert_axioms minaLinkDesc_state_hash_seam
+#assert_axioms minaLink_commit_is_salt_then_the_row
+#assert_axioms minaLink_has_one_pinned_seam
+#assert_axioms minaLink_proofBinds
+#assert_axioms laneVal_map
+#assert_axioms zeroLanes_one_exact
+#assert_axioms seam_forces_the_pinned_program
+#assert_axioms seam_derives_the_own_hash
+#assert_axioms linkHashResidual_of_seam
+#assert_axioms forged_program_falsifier_moves
+#assert_axioms forged_program_row_is_still_canonical
+#assert_axioms honest_row_attests_the_pinned_program
+#assert_axioms forged_row_attests_a_different_program
+#assert_axioms forged_program_segment_refused
+#assert_axioms forged_program_old_admits_new_rejects
+
+-- ⚑ THE ONE COMPILED FACT, CONFESSED. `saltProtoState` is a Kimchi Poseidon permutation and the
+-- kernel cannot reduce one (47.6 GB / 68 min, measured in this tree), so the salt-lane
+-- decomposition is checked by the compiled evaluator and says so.
+#assert_compiled mina_link_salt_lanes_are_the_salt
 
 end Dregg2.Circuit.Emit.LightClientMinaLinkAir

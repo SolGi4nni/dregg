@@ -854,24 +854,34 @@ impl ProofBindSpec {
         self.commit.len()
     }
 
-    /// ⚑ **THE WIDTH VERDICT** — the lanes agree in number, there are at least
-    /// [`PROOF_BIND_MIN_LANES`] of them, and each declared pin names exactly as many lanes as the
-    /// vector it pins. The Lean twin is `DescriptorIR2.ProofBind.widthOk`; this is applied at all
-    /// three admission doors (the JSON parser, the canonical decoder, `check_descriptor2`), so a
-    /// narrow or truncated seam cannot reach a prover from any direction.
+    /// ⚑ **THE WIDTH VERDICT** — each vector clears the [`PROOF_BIND_MIN_LANES`] floor, and each
+    /// declared pin names exactly as many lanes as the vector it pins. The Lean twin is
+    /// `DescriptorIR2.ProofBind.widthOk`; this is applied at all three admission doors (the JSON
+    /// parser, the canonical decoder, `check_descriptor2`), so a narrow or truncated seam cannot
+    /// reach a prover from any direction.
+    ///
+    /// ⚑ **2026-08-06 — `commit.len() == vk.len()` IS GONE, and it was never a law.** It held
+    /// because the Custom effect's two objects are both eight felts (`custom_proof_pi_commitment`
+    /// and `bytes32_to_8_limbs`) and the check was read off that pair. The two lengths measure
+    /// different things: `commit` is the width of the SENTENCE the sub-proof proves, `vk` the width
+    /// of the PROGRAM identity. Coupling them meant a seam could not name a statement wider than a
+    /// fingerprint — so a Mina state-hash seam (six `Fp` elements = 54 lanes, against a nine-lane
+    /// `Faithful9` program fingerprint) could only be stated by inflating the fingerprint to 54
+    /// lanes, i.e. by lying about the program's identity to state the sentence. Both FLOORS remain
+    /// and both bite independently; nothing is relaxed.
     pub fn width_ok(&self) -> Result<(), String> {
-        if self.commit.len() != self.vk.len() {
-            return Err(format!(
-                "proof_bind declares {} commit lanes and {} vk lanes; they must agree",
-                self.commit.len(),
-                self.vk.len()
-            ));
-        }
         if self.commit.len() < PROOF_BIND_MIN_LANES {
             return Err(format!(
-                "proof_bind declares {} lanes, below the floor of {PROOF_BIND_MIN_LANES}: a \
+                "proof_bind declares {} commit lanes, below the floor of {PROOF_BIND_MIN_LANES}: a \
                  narrower seam ties one limb of an eight-felt object and is worth 2^31 a lane",
                 self.commit.len()
+            ));
+        }
+        if self.vk.len() < PROOF_BIND_MIN_LANES {
+            return Err(format!(
+                "proof_bind declares {} vk lanes, below the floor of {PROOF_BIND_MIN_LANES}: a \
+                 narrower program pin names a limb of a fingerprint, not the fingerprint",
+                self.vk.len()
             ));
         }
         if let Some(p) = &self.vk_pin

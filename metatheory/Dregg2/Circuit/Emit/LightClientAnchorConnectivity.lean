@@ -472,9 +472,13 @@ and not the absence of a red.
 ⚠ The standing caveat binds here as it does everywhere in this file: **connectivity is co-occurrence,
 not derivation.** What these nine co-occur with is a guard and a pinned program identity; what
 upgrades that to evidence is off-row — `Satisfied2Custom.proofBound`'s existential, discharged by a
-consumer that verifies a STARK over `dregg-mina-lightclient-link::v1`. And that sub-proof's own
-caveat (`minaLink_decorative_anchors`, below) still holds: its `OWNHASH` is a free witness, so what
-is gated is the segment's SHAPE, not its hashes. -/
+consumer that verifies a STARK over `dregg-mina-lightclient-link::v1`. ⚑ **AND THE CAVEAT THAT USED TO SIT HERE HAS MOVED ONE RUNG DOWN, 2026-08-06.** This paragraph
+read *"that sub-proof's own caveat still holds: its `OWNHASH` is a free witness, so what is gated is
+the segment's SHAPE, not its hashes."* The segment descriptor now carries a `proof_bind` of its own
+whose commitment is `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` against
+`dregg-pasta-fp-absorb::v1` — so `OWNHASH` is the IMAGE of its row at the same recursion boundary
+this seam stands at (`minaLink_the_seam_joins_the_preimage_to_the_image`, below). What remains free
+is `BODYHASH`, and what attests THAT is `PICKLES_WITNESSED`. -/
 theorem minaVerify_tip_lanes_are_published_and_joined :
     ∀ col ∈ [21, 22, 23, 24, 25, 26, 27, 28, 29],
       isPiBound LightClientMinaAir.minaLcVerifyDesc col = true ∧
@@ -589,6 +593,39 @@ height to the first row's height, and the segment length to the `IS_REAL` accumu
 witness pair. -/
 theorem minaLink_decorative_anchors :
     decorativeAnchors LightClientMinaLinkAir.minaLinkDesc = [] := by
+  decide
+
+/-- ⚑⚑⚑ **THE POSITIVE STATEMENT, AND IT IS THE ONE THIS FILE EXISTED TO BE ABLE TO MAKE.**
+
+The header of this module says every theorem in it is *"a TRIPWIRE meant to go red"*, and names the
+change that would do it: *"the in-AIR-crypto iteration (… `LINK_OK` from the Poseidon chain) is
+exactly the change that puts an anchor beside another column in a gate."* That change landed on
+2026-08-06 and this is what it looks like measured rather than described: the segment descriptor's
+`proof_bind` names, in ONE constraint, all thirty-six columns of the row's parent, body hash, own
+hash and attested program. Nine `PARENT`, nine `OWNHASH`, nine `BODYHASH`, nine `HASH_VK`, one
+component.
+
+⚠ **AND THE FILE'S STANDING CAVEAT IS NOT REPEALED BY IT.** Connectivity is CO-OCCURRENCE, not
+derivation: what this measures is that the columns share a constraint. What upgrades it to
+derivation is the seam's off-row half plus the sub-program's own denotation
+(`LightClientMinaLinkAir.seam_derives_the_own_hash`, which takes `StateHashEngine` as a named
+hypothesis). A green here is necessary and not sufficient, and saying which is the job. -/
+theorem minaLink_the_seam_joins_the_preimage_to_the_image :
+    ∀ col ∈ (List.range 9).flatMap (fun j => [j, 9 + j, 22 + j, 31 + j]),
+      col ∈ (((LightClientMinaLinkAir.minaLinkDesc.constraints.drop 51).take 1).flatMap
+        relatedCols) := by
+  decide
+
+/-- ⚑ **THE NARROWER TRIPWIRE THAT REPLACES IT.** `BODYHASH` is the one nonet the seam does not
+DERIVE — it is an ARGUMENT of the hash, a free witness whose attestation is `PICKLES_WITNESSED`.
+This says so on the emitted object: the nine body-hash columns are read and joined, and NOT
+PI-bound, so nothing in this descriptor publishes them and nothing derives them. It reds the day
+`state_body_hash` acquires its own sub-proof, which is the next rung. -/
+theorem minaLink_body_hash_is_joined_but_not_published :
+    ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
+      isRead LightClientMinaLinkAir.minaLinkDesc col = true ∧
+      isRelated LightClientMinaLinkAir.minaLinkDesc col = true ∧
+      isPiBound LightClientMinaLinkAir.minaLinkDesc col = false := by
   decide
 
 /-- …and the count is exactly the twenty the descriptor declares, so the `[]` above is a statement
@@ -712,6 +749,8 @@ theorem the_five_verify_descriptors_carry_fifty_three_decorative_anchors :
 #assert_axioms minaVerify_anchor_height_is_published
 #assert_axioms minaVerify_anchor_height_shares_no_constraint_with_the_hash
 #assert_axioms minaLink_decorative_anchors
+#assert_axioms minaLink_the_seam_joins_the_preimage_to_the_image
+#assert_axioms minaLink_body_hash_is_joined_but_not_published
 #assert_axioms minaLink_has_twenty_pi_bound_columns
 #assert_axioms solStakeFold_decorative_anchors
 #assert_axioms solStakeFold_has_twelve_pi_bound_columns

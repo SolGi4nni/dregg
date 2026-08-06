@@ -23,12 +23,21 @@
 //!   That is the forgery the witnessed `LINK_OK = 1` waves through;
 //! * a segment whose published `PI_SEG_LEN` claims 290 against 3 real rows is REFUSED.
 //!
+//! * ⚑⚑ **2026-08-06 — THE STATE-HASH SEAM.** Every row carries nine `HASH_VK` lanes that the
+//!   descriptor's `proof_bind` pins, lane by lane, to the semantic fingerprint of
+//!   `dregg-pasta-fp-absorb::v1` — the emitted Poseidon-over-Pasta sponge. A row whose lane 0 is
+//!   moved by ONE (non-zero to non-zero, well inside the 29-bit lookup) is REFUSED, and the
+//!   assertion below requires the refusal to name a violated constraint rather than a bus.
+//!
 //! ## ⚠ What it does NOT exhibit, said plainly
 //!
-//! Nothing here forces a row's `OWNHASH` nonet to BE the Poseidon-over-Pasta hash of that block's
-//! state row (`LightClientMinaLinkAir.LinkHashResidual`). A prover free to choose `OWNHASH` can
-//! fabricate a consistent chain of any length between any two `Fp` elements. What this removes is
-//! the freedom to be INCONSISTENT and the freedom to claim a depth without committing rows for it.
+//! The prover enforces the seam's ROW-LOCAL half — the guard is a bit, the nine attested-program
+//! lanes are the pinned literal. It does not run a verifier: the existential
+//! (`Satisfied2Custom.proofBound`, "there IS a verifying absorb sub-proof whose public-input
+//! commitment is this row's salt ‖ parent ‖ body ‖ own") is off-row by construction and is
+//! discharged at the CONSUMER, exactly as the head descriptor's segment bind is discharged by
+//! `mina_head_verifier` refusals 11-14. So what a green here shows is that the seam is EMITTED and
+//! BITES on the deployed prover, not that a chain of Poseidon proofs was verified.
 //! `PICKLES_WITNESSED` (`PICKLES_OK` until 2026-08-05) — what makes a row a real block — is still a
 //! witness. Its sibling `WRAP_FS_PROVED` is not: see `circuit/tests/mina_lightclient_carrier_proves.rs`.
 //!
@@ -57,7 +66,19 @@ const HEIGHT: usize = 18;
 const IS_REAL: usize = 19;
 const REAL_COUNT: usize = 20;
 const ANCHOR_H: usize = 21;
-const LINK_WIDTH: usize = 22;
+/// ⚑ 2026-08-06: the block's `state_body_hash` — the PREIMAGE the row did not have.
+const BODYHASH_0: usize = 22;
+/// ⚑ 2026-08-06: the attested state-hash program's nine `Faithful9` fingerprint lanes.
+const HASH_VK_0: usize = 31;
+const LINK_WIDTH: usize = 40;
+
+/// ⚑ The nine `Faithful9` lanes of `effect_vm_descriptor2_semantic_fingerprint`
+/// (`dregg-pasta-fp-absorb::v1`), transcribed in `LightClientMinaLinkAir.ABSORB_VK_LANES` and
+/// recomputed from that descriptor's own bytes by
+/// `circuit/tests/mina_statehash_seam_proves.rs::the_seam_pins_the_real_absorb_program`.
+const ABSORB_VK_LANES: [u32; 9] = [
+    446814635, 83884421, 374082988, 139195248, 519518863, 422740375, 389354132, 515631608, 9097818,
+];
 
 const PI_ANCHOR_BASE: usize = 0;
 const PI_TIP_BASE: usize = 9;
@@ -82,6 +103,15 @@ const DEVNET_TIP_LANES: [u32; 9] = [
 const MID1_LANES: [u32; 9] = [11, 22, 33, 44, 55, 66, 77, 88, 99];
 const MID2_LANES: [u32; 9] = [111, 222, 333, 444, 555, 666, 777, 888, 999];
 
+/// Canonical body-hash nonets. ⚑ These are SHAPE witnesses and the file says so: the tie
+/// `OWNHASH = Poseidon_salt(PARENT, BODYHASH)` is the off-row half of the seam and no trace can
+/// witness it. Using real Poseidon images here would make the test LOOK like it checked the hash.
+const BODY_LANES: [[u32; 9]; 3] = [
+    [7, 14, 21, 28, 35, 42, 49, 56, 63],
+    [70, 140, 210, 280, 350, 420, 490, 560, 630],
+    [700, 1400, 2100, 2800, 3500, 4200, 4900, 5600, 6300],
+];
+
 /// The committed trace must be a power of two; the real rows are a PREFIX and the rest is padding
 /// that repeats the tip, exactly as `dregg-turn-chain-binding-v2` pads.
 const TRACE_ROWS: usize = 8;
@@ -101,6 +131,7 @@ fn desc() -> EffectVmDescriptor2 {
 struct Block {
     parent: [u32; 9],
     own: [u32; 9],
+    body: [u32; 9],
     height: u32,
     is_real: u32,
 }
@@ -110,6 +141,10 @@ fn row_of(b: Block, real_count: u32, anchor_h: u32) -> Vec<BabyBear> {
     for i in 0..9 {
         r[PARENT_0 + i] = BabyBear::new(b.parent[i]);
         r[OWNHASH_0 + i] = BabyBear::new(b.own[i]);
+        r[BODYHASH_0 + i] = BabyBear::new(b.body[i]);
+        // ⚑ The seam's `vk` vector. A witness generator that leaves these unfilled produces an
+        // UNSAT row: the `proof_bind`'s `vk_pin` congruence is an emitted constraint.
+        r[HASH_VK_0 + i] = BabyBear::new(ABSORB_VK_LANES[i]);
     }
     r[HEIGHT] = BabyBear::new(b.height);
     r[IS_REAL] = BabyBear::new(b.is_real);
@@ -144,6 +179,7 @@ fn trace_and_pis(
             Block {
                 parent: tip,
                 own: tip,
+                body: BODY_LANES[2],
                 height: h,
                 is_real: 0,
             },
@@ -217,18 +253,21 @@ fn honest_blocks() -> Vec<Block> {
         Block {
             parent: GENESIS_ANCHOR_LANES,
             own: MID1_LANES,
+            body: BODY_LANES[0],
             height: 1001,
             is_real: 1,
         },
         Block {
             parent: MID1_LANES,
             own: MID2_LANES,
+            body: BODY_LANES[1],
             height: 1002,
             is_real: 1,
         },
         Block {
             parent: MID2_LANES,
             own: DEVNET_TIP_LANES,
+            body: BODY_LANES[2],
             height: 1003,
             is_real: 1,
         },
@@ -247,8 +286,28 @@ fn the_served_descriptor_matches_the_lean_shape() {
     assert_eq!(d.public_input_count, LINK_PI_COUNT, "PI count drifted");
     assert_eq!(
         d.constraints.len(),
-        53,
+        72,
         "constraint count drifted (minaLinkDesc_constraint_count)"
+    );
+    // ⚑ 2026-08-06: exactly one recursion seam, and it is not the declarative shape.
+    let binds: Vec<_> = d
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            dregg_circuit::descriptor_ir2::VmConstraint2::ProofBind(m) => Some(m),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(binds.len(), 1, "one state-hash seam (minaLink_proofBinds)");
+    assert_eq!(
+        binds[0].commit.len(),
+        54,
+        "six Fp elements, nine lanes each"
+    );
+    assert_eq!(binds[0].vk.len(), 9, "a nine-lane Faithful9 program pin");
+    assert!(
+        !binds[0].is_declarative(),
+        "the seam must pin its program (ProofBind::is_declarative)"
     );
     assert_eq!(
         d.tables.len(),
@@ -257,7 +316,8 @@ fn the_served_descriptor_matches_the_lean_shape() {
     );
     assert!(
         d.hash_sites.is_empty(),
-        "this descriptor computes no hash — that is the residual"
+        "this descriptor computes no hash IN ITS OWN ROWS — the Poseidon is the bound sub-proof's, \
+         and a native BabyBear hash site here would be a different hash entirely"
     );
 }
 
@@ -408,6 +468,89 @@ fn the_refusal_is_the_verifiers_in_release() {
         Err(_) => eprintln!(
             "REFUSAL LEG (panic): plonky3's debug constraint check fired. Expected in a DEBUG \
              build; in release this should be a clean Err."
+        ),
+    }
+}
+
+/// ⚑⚑⚑ **THE STATE-HASH SEAM BITES ON THE DEPLOYED PROVER — both polarities, 2026-08-06.**
+///
+/// The honest trace fills every row's nine `HASH_VK` lanes with
+/// `dregg-pasta-fp-absorb::v1`'s fingerprint and proves. The forgery moves **lane 0 of row 1 by
+/// one** and must be refused.
+///
+/// Three properties of the forgery are ASSERTED rather than described, because each one is a way a
+/// falsifier in this tree has previously died without anyone noticing:
+///
+/// * it moves a **non-zero value to a non-zero value** (a sibling lane shipped a mutation that
+///   moved a zero into a zero, and `decide` correctly proved it was not a tamper);
+/// * it stays **inside the 29-bit range lookup**, so a range check cannot be what objects (another
+///   was refused by a range lookup rather than by the gate under test);
+/// * **nothing else in the row changes** — same parent, own hash, body hash, height, `IS_REAL`,
+///   counter — so no pre-existing gate can be the one that fires.
+#[test]
+fn a_row_attesting_the_wrong_program_is_refused() {
+    let _h = Hush::new();
+    let d = desc();
+    let blocks = honest_blocks();
+    let (honest_trace, pis) = trace_and_pis(&blocks, 1000, 3);
+
+    // ── ACCEPT: the honest trace, with every row attesting the pinned absorb program.
+    {
+        let mem = MemBoundaryWitness::default();
+        let heaps: Vec<Vec<HeapLeaf>> = vec![];
+        let proof = prove_vm_descriptor2(&d, &honest_trace, &pis, &mem, &heaps)
+            .expect("the honest segment proves with the seam in place");
+        verify_vm_descriptor2(&d, &proof, &pis).expect("…and verifies");
+    }
+
+    // ── THE FORGERY. One lane, one row.
+    let mut forged = honest_trace.clone();
+    let before = forged[1][HASH_VK_0].as_u32();
+    let after = before + 1;
+    forged[1][HASH_VK_0] = BabyBear::new(after);
+
+    // ⚑ THE FALSIFIER MOVES, AND IT MOVES THE RIGHT THING.
+    assert_ne!(before, after, "the forgery must actually move the lane");
+    assert_ne!(before, 0, "moving a zero into a zero proves nothing");
+    assert_ne!(after, 0, "the forged value must be non-zero too");
+    assert_eq!(
+        before, ABSORB_VK_LANES[0],
+        "the honest cell must be the pinned lane, or this moves the wrong column"
+    );
+    assert!(
+        after < (1u32 << 29),
+        "the forged lane must stay INSIDE the 29-bit lookup so a range check cannot refuse it"
+    );
+    for (c, (h, f)) in honest_trace[1].iter().zip(forged[1].iter()).enumerate() {
+        assert_eq!(
+            h.as_u32() == f.as_u32(),
+            c != HASH_VK_0,
+            "column {c} changed and it should not have (or HASH_VK_0 did not)"
+        );
+    }
+
+    // ── REFUSE, and the refusing gate is NAMED: the `proof_bind`'s `vk_pin` congruence.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mem = MemBoundaryWitness::default();
+        let heaps: Vec<Vec<HeapLeaf>> = vec![];
+        let proof = prove_vm_descriptor2(&d, &forged, &pis, &mem, &heaps)
+            .map_err(|e| format!("prover refused: {e}"))?;
+        verify_vm_descriptor2(&d, &proof, &pis).map_err(|e| format!("verifier refused: {e:?}"))
+    }));
+    match outcome {
+        Ok(Err(msg)) => {
+            assert!(
+                !msg.contains("exact-public") && !msg.contains("lookup"),
+                "the SEAM must refuse this, not a bus or a range table; got: {msg}"
+            );
+            eprintln!("⚑ FORGED HASH_VK LANE -> REFUSED by the proof_bind vk_pin: {msg}");
+        }
+        Ok(Ok(())) => panic!(
+            "a row attesting a program nobody pinned was ACCEPTED — the state-hash seam is not \
+             biting, and `OWNHASH` is a free witness again"
+        ),
+        Err(_) => eprintln!(
+            "⚑ FORGED HASH_VK LANE -> REFUSED by plonky3's debug constraint check (DEBUG build)."
         ),
     }
 }

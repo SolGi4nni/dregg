@@ -570,13 +570,18 @@ def ProofBind.holdsAt (env : VmRowEnv) (m : ProofBind) : Prop :=
                   (bs.map (·.eval env.loc)))
 
 /-- ⚑ **THE WIDTH VERDICT on one seam** — decidable, in the authoring language, one stage upstream
-of the bytes. The lanes are equal in number, there are at least `PROOF_BIND_MIN_LANES` of them, and
-each declared pin names exactly as many lanes as the vector it pins. The Rust twin is
-`descriptor_ir2::ProofBindSpec::width_ok`, checked at `check_descriptor2`, at the JSON door and at
-the canonical decoder. -/
+of the bytes. Each vector clears the lane FLOOR, and each declared pin names exactly as many lanes
+as the vector it pins. The Rust twin is `descriptor_ir2::ProofBindSpec::width_ok`, checked at
+`check_descriptor2`, at the JSON door and at the canonical decoder.
+
+⚑ **2026-08-06 — the `vk.length == commit.length` conjunct is GONE, and it was never a law.** It
+held because the Custom effect's two objects are both eight felts and the predicate was written off
+that pair. `commit` measures the SENTENCE, `vk` the PROGRAM; a seam whose statement is six `Fp`
+elements against a nine-lane fingerprint is well-formed and was unrepresentable. Both FLOORS remain
+and both bite independently. -/
 def ProofBind.widthOk (m : ProofBind) : Bool :=
-  (m.vk.length == m.commit.length)
-    && decide (PROOF_BIND_MIN_LANES ≤ m.commit.length)
+  decide (PROOF_BIND_MIN_LANES ≤ m.commit.length)
+    && decide (PROOF_BIND_MIN_LANES ≤ m.vk.length)
     && (match m.vkPin with | none => true | some vs => vs.length == m.vk.length)
     && (match m.bound with | none => true | some bs => bs.length == m.commit.length)
 

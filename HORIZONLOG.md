@@ -1,6 +1,122 @@
 # HORIZONLOG — the named-follow-up burn-down
 
-## ⛑⛑⛑ AUGUST 6 (THE LEG UPSTREAM DOES NATIVELY) — **the deferred IPA accumulator check is inside a circuit**: a Lean-authored threaded sound-Vesta AIR, folded with the accumulator carried by `cb.connect`, both polarities green in RELEASE — and the three things it still does **not** reach, each with a number
+## ⛑⛑⛑ AUGUST 6 (WHOSE HASH) — the last witnessed hash in the Mina light-client path: `OWNHASH` becomes the **IMAGE of its row**, and the price the file had been carrying was wrong by **26×**
+
+`LINK_OK` was retired yesterday by binding the head's `TIP_STATE` to a segment sub-proof. The file
+that landed it said, in its own header, exactly what it had not closed: *"`OWNHASH` is a FREE WITNESS
+(`LinkHashResidual`) … what is gated is the segment's SHAPE, not its hashes — a prover choosing every
+row's hash can still fabricate a consistent chain."* That is now closed, by the mechanism the rung
+above it used, one level down.
+
+### ⛑ THE PRICE WAS THE BLOCKER, AND THE PRICE WAS WRONG IN BOTH FACTORS
+
+`LightClientMinaLinkAir`'s header carried: *"~10³ BabyBear constraints a Pasta multiply × ~500
+multiplies a permutation = **~5·10⁵ constraints per block hash**, ~1.5·10⁸ for a Samasika-depth
+segment."* The brief inherited *"~26 permutations/block × 290 blocks ≈ 44 h."* Both re-derived:
+
+⛑ **ONE PERMUTATION PER BLOCK, NOT 26.** `Bridge/MinaStateHashDerive.lean:31` reads the daemon
+(`protocol_state.ml:45-55`) and says what a Mina block's identity IS:
+
+    state_hash = Poseidon_Fp( salt "MinaProtoState" )[ previous_state_hash ; state_body_hash ]
+
+**Two field elements at rate 2 is ONE block and ONE permutation**, and the salt is a CONSTANT
+permuted at emit time. The `26` is the *transcript* chain's link count (27 phase-1, 46 phase-2) — a
+different object. The deep hash is `state_body_hash`, and it is **not part of the linkage**.
+
+⛑ **AND THE CIRCUIT DID NOT NEED BUILDING — IT WAS EMITTED, FINGERPRINTED AND PROVING.**
+`dregg-pasta-fp-absorb::v1` is 2 048 rows × 469 columns, 858 constraints, its 660 ROM immediates
+`fp_kimchi`'s own `static_params()` checked on the emitted bytes. It computes `perm(state +
+[x₀,x₁,0])`, **its incoming sponge state is a PUBLIC INPUT** (slots `[0, 3·SK)`), and
+`the_absorb_program_permutes_gen` carries **no hypothesis on that state** — so a *salted* sponge is
+the SAME descriptor with different public inputs, which `MinaPhase1Chain` already does for 27 links.
+Re-derived segment cost at that family's measured leaf/fold times (9.5 s / 11.5 s): 290 leaves + 289
+folds ≈ **1 h 41 min** against **44 h**. ⚠ An extrapolation from a same-shaped descriptor, labelled.
+
+### ⛑⛑ THE SEAM: SIX `Fp` ELEMENTS, 54 LANES, GUARD `1`
+
+    guard  := 1                                    -- UNCONDITIONAL, every row
+    commit := salt("MinaProtoState")[0..2] ‖ PARENT ‖ BODYHASH ‖ OWNHASH     -- 54 Faithful9 lanes
+    vk     := HASH_VK 0..8   (cols 31..39)
+    vkPin  := the nine Faithful9 lanes of dregg-pasta-fp-absorb::v1's fingerprint
+
+⛑ **THE ROW GAINED A PREIMAGE.** `OWNHASH` could not be the image of its row while the row carried
+no preimage — `BODYHASH` (cols 22..30) is that, and it is honestly a witness: what attests it is
+`PICKLES_WITNESSED`, unchanged.
+
+⛑ **THE SALT LANES ARE `.const`, AND THEY ARE THE LOAD-BEARING PART.** With a free incoming state
+the seam would be VACUOUS *and not weakly so*: `perm` is a permutation, so for any target `out` a
+prover picks `state := perm⁻¹(T) − [x₀,x₁,0]` and the sub-proof is honest. 27 constant lanes are
+what make the bound object Mina's state hash rather than a generic two-input Poseidon.
+`the_commitments_salt_head_is_minas_own_salt` recomposes all 27 against **openmina's own regression
+constants**, not against the Lean that emitted them.
+
+⛑ **THE GUARD IS `1`, NOT `IS_REAL`, AND THAT CLOSED A HOLE NOBODY HAD NAMED.**
+`Satisfied2Custom.proofBound` quantifies over EVERY row, so a guard column is an off switch — and
+`IS_REAL` switches it off exactly where the tip lives: the `.last` tip pin reads the final row
+whether or not it is real, and `laneContinuity` is unconditional, so `[real, real, real, pad]` chains
+into a padding row whose `OWNHASH` is free and IS `PI_TIP`.
+
+### ⛑ ONE SHARED PREDICATE MOVED, AND IT WAS AN ARTIFACT
+
+`BindLeg.mainRailOk` and `ProofBind.widthOk` required `vk.length == commit.length`. That is true of
+the Custom effect — both objects are eight felts — and was **read off that pair rather than derived**,
+with the consequence that *a seam could never name a statement wider than a program fingerprint.*
+The two lengths measure different things: `commit` is the width of the SENTENCE, `vk` of the PROGRAM
+IDENTITY. Under the old conjunct the only way to state this seam was to inflate the fingerprint to 54
+lanes — to lie about the program's identity in order to state the sentence. **Both FLOORS remain and
+both bite independently**; the Rust twin moved with it.
+
+### ⛑⛑ BOTH POLARITIES, AND THE FALSIFIER IS CHECKED FOR MOVING
+
+Lean, on the emitted object: `mina_link_discriminates` is now a **triple** — accepts the honest
+segment, refuses the mismatched parent, refuses the free depth, and refuses a row that
+recursion-binds to a program nobody pinned. `forged_program_falsifier_moves` asserts, by `decide`,
+that the forgery moves a **non-zero value to a non-zero value**, stays **inside the 29-bit lookup**
+so no range gate can be what objects, and changes **nothing else in the row**.
+`forged_program_segment_refused` goes through the `program` conjunct **and no other**.
+
+Release, on the deployed prover (`circuit-prove/tests/mina_link_segment_multirow.rs`): the honest
+40-wide trace proves and verifies; the same trace with `HASH_VK` lane 0 of row 1 moved by one is
+REFUSED, and the assertion requires the refusal **not** to name `exact-public` or `lookup`.
+
+### ⛑ THE CONNECTIVITY TRIPWIRES FIRED, WHICH IS THE MECHANISM WORKING
+
+`LightClientAnchorConnectivity`'s header named the change that would red it: *"the in-AIR-crypto
+iteration (… `LINK_OK` from the Poseidon chain) is exactly the change that puts an anchor beside
+another column in a gate."* It landed. The caveat *"its `OWNHASH` is a free witness, so what is gated
+is the segment's SHAPE"* is retired and replaced by
+`minaLink_the_seam_joins_the_preimage_to_the_image` — 36 columns, ONE constraint — plus a NARROWER
+tripwire, `minaLink_body_hash_is_joined_but_not_published`, which reds the day `state_body_hash`
+acquires its own sub-proof. ⚠ Connectivity is still CO-OCCURRENCE; the derivation is
+`seam_derives_the_own_hash`, which takes `StateHashEngine` as a named hypothesis.
+
+### ⛑ CAN A PROVER STILL CHOOSE THE CHAIN'S HASHES?
+
+**No.** The anchor is pinned, each `OWNHASH` is `Poseidon_salt(PARENT, BODYHASH)`, and
+`PARENT[i+1] = OWNHASH[i]` — so the chain **including the tip** is a forward computation from the
+pinned anchor. Publishing a chosen tip requires inverting Poseidon; opening one tip to two histories
+requires colliding it. **What a prover still chooses is `BODYHASH`**, and that is the honest residual.
+
+⚠ **SAY WHAT THIS IS NOT.** Three limits, none repealed. (1) The seam's off-row half is the
+FRI/recursion obligation this whole stack carries — every `proofBind` in this tree stands at that
+resolution and this one is not stronger. (2) The limb re-encoding between this descriptor's
+`Faithful9` lanes and the absorb descriptor's 32 eight-bit limbs is an **EXECUTOR check, not a
+constraint**, and the consumer wiring for it is NOT yet written: `pasta-fp-absorb.json` is not in
+`descriptor_by_name()` and `mina_head_verifier` has no refusal for a state-hash sub-proof. That is
+the next commit, not a design fork. (3) `LeafHashIsMina` — the abstract bridge leaf's four-tuple
+`stateHash` against the daemon's two-element one — is `LightClientMinaHashFold`'s RESIDUAL #2 and is
+genuinely open; it is named as a `Prop` so the seam's closure cannot launder it.
+
+**FLAG DAY.** `dregg-mina-lightclient-link-v1.json` re-emitted: `trace_width` **22 → 40**,
+constraints **53 → 72**, legs **39 → 43**, `piCount` **20, unchanged** — a seam names columns, not
+public inputs. **Its VK rotates**, which rotates `LightClientMinaAir.LINK_VK_LANES` and re-VKs the
+head; every previously produced `MinaHeadProofWire` fails to verify. A pre-flag-day 22-wide trace
+does not verify weakly — `prove_vm_descriptor2` **refuses a trace of the wrong width outright**.
+`mina_head_predicate_vk()` is blake3 over the descriptor NAME, which did not move, so cell programs
+keep their pinned predicate vk and **nothing re-genesises**. ⚠ `PROVENANCE.json` left UNSTAMPED.
+
+
+## ⛑⛑⛑ AUGUST 6 (THE LEG UPSTREAM DOES NATIVELY) — **the deferred IPA accumulator check is inside a circuit**: a Lean-authored threaded sound-Vesta AIR, both polarities green in RELEASE with the refusing gates named BY INDEX — and **the fold is written but has never produced a root**, blocked by a MEASURED 73.3 GB width wall
 
 Upstream `&&`s `Ipa.Step.accumulator_check` into `batch_step_dlog_check` (`verify.ml:135-146`).
 Ours was an oracle **beside** the verifier: `bridge/src/mina_accumulator_discharge.rs` evaluates
@@ -55,7 +171,7 @@ imbalance cannot stand in for the gate under test. The honest fixture is also as
 **eight DISTINCT accumulators** (a fixed point would make the threads vacuous) and a **nonzero
 terminal `Y`** — `(0 : y : 0)` is the projective identity; an all-zero triple is not a point.
 
-### ⚑ THE FOLD CARRIES THE ACCUMULATOR *INSIDE* THE RECURSION
+### ⛑⛑ THE FOLD CARRIES THE ACCUMULATOR *INSIDE* THE RECURSION — AND HAS NEVER RUN
 
 `circuit-prove/src/mina_accumulator_fold.rs`. The phase-2 chain's lesson applied one campaign over:
 a fold that re-pins public inputs closes nothing, so the node `cb.connect`s the left child's **96
@@ -66,6 +182,23 @@ rails for the discharge, and a caller must say which a root has: **in-AIR** (the
 proved against `-final`, whose own gates force it) or **host-read** (`AccumulatorClaim::is_identity`).
 The claim reader lives in `dregg-recursion-verify` so a node reads a root without linking the prover;
 `check-recursion-closure.py` is **green at 14 policy rows / 21 assertions** and **no edge was added**.
+
+⛑⛑ **BUT NOTHING HERE HAS PRODUCED A ROOT, AND THE `#[ignore]` REASONS SAID "SLOW" UNTIL THEY WERE
+MEASURED.** One `prove_accumulator_segment` — a single 8-row leaf wrap — reached a **73.3 GB peak
+memory footprint** (`73,344,091,528` bytes, `/usr/bin/time -l`, 96 GB box) and was killed; an earlier
+run under co-tenant load was SIGKILLed by the OOM killer. "Minutes" was the flattering member of the
+pair and it is corrected at the three `#[ignore]` sites, not only here.
+
+⛑ **THE CAUSE IS THE WIDTH, AND IT IS THE SAME WALL `PastaLadderThread` CURED ONE RAIL DOWN.**
+`mina_phase2_chain_leaf` folds 46 leaves + 45 folds in **1 037 s** over a **469**-column descriptor;
+this one is **3 048** — `6.5×` — and the wrap's in-circuit verifier scales in the inner trace's
+width. The row-local sound ladder was `731 136` columns in ONE row and threading made depth into rows
+at a flat `RCB_WIDTH = 3 048`; **that 3 048 is now what binds the recursion.** So the layout that made
+the AIR fit is the layout that makes the fold not. The ways out — a narrower sound limb encoding, a
+two-stage wrap that shrinks a segment before the recursion sees it, or taller-not-wider segments so
+the fixed per-wrap cost amortises — are real work, and naming them is not doing them.
+`the_leaf_wrap_width_is_the_measured_wall` holds the ratio in the tree so it moves when the width
+does.
 
 ### ⚠ WHAT THE NODE STILL TAKES ON TRUST — three, each with a number, none of them a mood
 
