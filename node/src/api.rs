@@ -2423,6 +2423,11 @@ pub fn router_with_cors(
         // the bearer layer below and applies its own proxy-aware rate/concurrency
         // budget; it is neither anonymous nor a finality/provenance surface.
         .merge(crate::poa_signal_authority_export::routes())
+        // PUBLICATION of the curator-signed slot opening. A commitment a node keeps
+        // to itself binds nothing, and a client with no way to read one can only
+        // ever offer practice. Serves the statement, the curator key and the
+        // signature; never the secret, the run seed or the target.
+        .merge(crate::poa_signal_slot_api::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
@@ -2684,10 +2689,10 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
 const POA_SIGNAL_STATUS_FORMAT_V1: &str = "POA-SIGNAL-STATUS-1";
 const POA_SIGNAL_TRANSITION_VIEW_FORMAT_V1: &str = "POA-SIGNAL-TRANSITION-VIEW-1";
 const POA_SIGNAL_PLAYER_HEAD_FORMAT_V1: &str = "POA-SIGNAL-PLAYER-HEAD-1";
-const POA_SIGNAL_VIEW_FINALITY_CLAIM: &str = "not_asserted_by_this_view";
+pub(crate) const POA_SIGNAL_VIEW_FINALITY_CLAIM: &str = "not_asserted_by_this_view";
 const POA_SIGNAL_PUBLIC_MISSION_ID: u32 = 1;
 
-fn parse_poa_signal_authority(authority: &str) -> Result<[u8; 32], StatusCode> {
+pub(crate) fn parse_poa_signal_authority(authority: &str) -> Result<[u8; 32], StatusCode> {
     if authority.len() != 64
         || !authority
             .bytes()
@@ -2729,7 +2734,7 @@ fn parse_poa_signal_sequence(sequence: &str) -> Result<u64, StatusCode> {
 /// A path cannot be used to probe arbitrary authority rows in the shared store:
 /// the exact 32-byte selector must equal the node's canonical configured
 /// federation id.  Discovery-mode nodes have no such authority and return 503.
-fn select_local_poa_signal_authority(
+pub(crate) fn select_local_poa_signal_authority(
     authority: [u8; 32],
     federation_configured: bool,
     federation_id: [u8; 32],

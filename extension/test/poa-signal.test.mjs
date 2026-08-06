@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   POA_SIGNAL_BETA_ORIGIN,
   POA_SIGNAL_FEDERATION_HEX,
@@ -19,9 +20,25 @@ const good = () => ({
 test("PoA Signal deployment pins are exact and contain no Basic Auth credential", () => {
   assert.equal(POA_SIGNAL_BETA_ORIGIN, "https://beta.pathofangels.network");
   assert.equal(POA_SIGNAL_NODE_URL, "https://node.pathofangels.network");
+
+  // ⚠ NOT a literal. This assertion used to compare the constant against a
+  // hand-copied spelling of itself — a pin against its own definition, which
+  // stayed green for as long as both copies were wrong together, and they were:
+  // the deployment moved to 70b7fa4c… and the extension went on signing claims
+  // under 4ea83e8e…, a federation the live node answers 400 for. Two
+  // INDEPENDENT sources that must agree is a gate; one source quoted twice is
+  // decoration.
+  const deployment = JSON.parse(
+    readFileSync(
+      new URL("../../poa/deployments/epoch-1/poa-devnet.json", import.meta.url),
+      "utf8",
+    ),
+  );
   assert.equal(
     POA_SIGNAL_FEDERATION_HEX,
-    "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a",
+    deployment.federation_id,
+    "the extension signs Signal claims under a different federation than the checked-in " +
+      "deployment; every claim it posts would be refused by the node's authority selector",
   );
   assert.equal(POA_SIGNAL_FEDERATION_HEX.length, 64);
   const exported = JSON.stringify({

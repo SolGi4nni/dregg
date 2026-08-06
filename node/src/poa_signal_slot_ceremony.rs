@@ -238,7 +238,7 @@ pub fn initialize_poa_signal_slot(
 /// refuses, and the operator cannot open a slot — which is the correct outcome: a
 /// commitment the node computed with an unproven second implementation of the
 /// sponge is a commitment nobody can check.
-fn derive_commitment(secret: [u8; 32], slot: u64) -> Result<[u8; 32], String> {
+pub(crate) fn derive_commitment(secret: [u8; 32], slot: u64) -> Result<[u8; 32], String> {
     let zero = hex(&[0u8; 32]);
     let wire = format!(
         "{{\"format\":\"{}\",\"slot\":{},\"secret\":\"{}\",\"mission_id\":0,\"epoch\":0,\

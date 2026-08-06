@@ -116,6 +116,7 @@ pub mod poa_records_api;
 pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;
 pub mod poa_signal_genesis;
+pub mod poa_signal_slot_api;
 pub mod poa_signal_slot_ceremony;
 pub mod poa_strand_admission;
 pub mod private_dependent_turns;

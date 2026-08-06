@@ -2,8 +2,29 @@
 export const POA_SIGNAL_SCHEMA = "poa-signal-claim/v1" as const;
 export const POA_SIGNAL_BETA_ORIGIN = "https://beta.pathofangels.network" as const;
 export const POA_SIGNAL_NODE_URL = "https://node.pathofangels.network" as const;
+/**
+ * The federation every consented Signal claim is signed against and posted to.
+ *
+ * ⚠ FLAG DAY, 2026-08-06. This was
+ * `4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a`, a
+ * federation that no longer exists. The live deployment
+ * (`poa/deployments/epoch-1/poa-devnet.json`) moved to the value below, and the
+ * old id was still here — so the extension signed each claim under the wrong
+ * federation domain and posted it to
+ * `/api/poa/signal/4ea83e8e…/claims`, where the node's authority selector
+ * answers 400 because the path does not name its configured federation. Every
+ * judged Signal claim from the extension was refused before it reached the
+ * judge, and nothing said so: the failure looked like an ordinary rejection.
+ *
+ * It is the SAME staleness found in three other places the same week (the
+ * epoch-1 curator golden, the companion route fixture, the follower-package
+ * test) — one deployment identity copied into four files with no source.
+ * `poa-signal.test.mjs` now reads `poa-devnet.json` and fails if this constant
+ * and the deployment disagree, so the next move breaks a test instead of a
+ * player's turn.
+ */
 export const POA_SIGNAL_FEDERATION_HEX =
-  "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a" as const;
+  "70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b" as const;
 export const POA_SIGNAL_MISSION_ID = 1 as const;
 
 export interface PoASignalClaimParams {
