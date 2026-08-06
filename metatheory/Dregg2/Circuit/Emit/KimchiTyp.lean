@@ -46,8 +46,8 @@ nobody can write it wrong.
 other does not typecheck, and if it is declared it is refused by width. `Typ.felt w` denotes `Nat` —
 the host's canonical representative, whose range is the field's business (`PastaField`) and not the
 layout's. `felt` buys the layout check only, **not** the type check. Slots that carry a challenge
-must use `word`; §8's preimage digest uses `felt` because its canonicity is a fact about
-`PastaPoseidon.Ref.perm` that nothing in this file proves.
+must use `word`; `KimchiPreimageCircuit`'s digest slot uses `felt` because its canonicity is a
+fact about `PastaPoseidon.Ref.perm` that nothing in this file proves.
 
 ## ⚑ THE CIRCUIT IS STILL A VALUE
 
