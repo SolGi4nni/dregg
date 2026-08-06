@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { launchCatalogMission } from "../src/mission-launcher.js";
-import { loadRelayRepairDescriptor } from "../src/relay-runtime.js";
-import { loadSalvageLockDescriptor } from "../src/salvage-runtime.js";
-import { fixtureAuthority, relayFixture, salvageFixture } from "./finite-table-fixtures.mjs";
+import { salvagePracticeOracle } from "../src/salvage-runtime.js";
+import { canonicalDescriptors } from "./canonical-descriptors.mjs";
 
 class FakeElement {
   constructor(tagName = "div") {
@@ -35,36 +34,53 @@ function withDocument(callback) {
 
 const mission = (missionId, gameId) => ({ missionId, gameId });
 
-test("each exact catalog game id launches only its matching browser controller", () => withDocument(() => {
-  const signalRoot = new FakeElement();
-  const finiteRoot = new FakeElement();
-  let signalLaunches = 0;
-  const signal = launchCatalogMission({
-    mission: mission(1, "signal-triangulation"),
-    descriptor: { gameId: "signal-triangulation", missionId: 1 },
-    signalRoot,
-    finiteRoot,
-    launchSignal: () => { signalLaunches += 1; },
+test("each exact catalog game id launches only its matching browser controller", async () => {
+  const descriptors = await canonicalDescriptors();
+  withDocument(() => {
+    const signalRoot = new FakeElement();
+    const finiteRoot = new FakeElement();
+    let signalLaunches = 0;
+    const signal = launchCatalogMission({
+      mission: mission(1, "signal-triangulation"),
+      descriptor: { gameId: "signal-triangulation", missionId: 1 },
+      signalRoot,
+      finiteRoot,
+      launchSignal: () => { signalLaunches += 1; },
+    });
+    assert.equal(signal.gameId, "signal-triangulation");
+    assert.equal(signalLaunches, 1);
+    assert.equal(signalRoot.hidden, false);
+    assert.equal(finiteRoot.hidden, true);
+
+    const relayId = descriptors.relay.authority.missionId;
+    const relay = launchCatalogMission({
+      mission: mission(relayId, "relay-repair"),
+      descriptor: descriptors.relay,
+      signalRoot,
+      finiteRoot,
+      launchSignal() {},
+      callbacks: { session: { mode: "practice", member: 1 } },
+    });
+    assert.equal(relay.gameId, "relay-repair");
+    assert.equal(relay.controller.getRun().gameId, "relay-repair");
+    assert.equal(signalRoot.hidden, true);
+    assert.equal(finiteRoot.hidden, false);
+    relay.controller.destroy();
+
+    const salvageId = descriptors.salvage.authority.missionId;
+    const salvage = launchCatalogMission({
+      mission: mission(salvageId, "salvage-lock"),
+      descriptor: descriptors.salvage,
+      signalRoot,
+      finiteRoot,
+      launchSignal() {},
+      callbacks: { session: { mode: "practice", member: 2, oracle: salvagePracticeOracle(descriptors.salvage, 2) } },
+    });
+    assert.equal(salvage.gameId, "salvage-lock");
+    assert.equal(salvage.controller.getRun().gameId, "salvage-lock");
+    salvage.controller.destroy();
   });
-  assert.equal(signal.gameId, "signal-triangulation");
-  assert.equal(signalLaunches, 1);
-  assert.equal(signalRoot.hidden, false);
-  assert.equal(finiteRoot.hidden, true);
-
-  const relayDescriptor = loadRelayRepairDescriptor(relayFixture(), fixtureAuthority());
-  const relay = launchCatalogMission({ mission: mission(7, "relay-repair"), descriptor: relayDescriptor, signalRoot, finiteRoot, launchSignal() {} });
-  assert.equal(relay.gameId, "relay-repair");
-  assert.equal(relay.controller.getRun().gameId, "relay-repair");
-  assert.equal(signalRoot.hidden, true);
-  assert.equal(finiteRoot.hidden, false);
-  relay.controller.destroy();
-
-  const salvageDescriptor = loadSalvageLockDescriptor(salvageFixture(), fixtureAuthority());
-  const salvage = launchCatalogMission({ mission: mission(7, "salvage-lock"), descriptor: salvageDescriptor, signalRoot, finiteRoot, launchSignal() {} });
-  assert.equal(salvage.gameId, "salvage-lock");
-  assert.equal(salvage.controller.getRun().gameId, "salvage-lock");
-  salvage.controller.destroy();
-}));
+});
 
 test("unknown games refuse and descriptor mismatch cannot fall back to Signal", () => withDocument(() => {
   const signalRoot = new FakeElement();

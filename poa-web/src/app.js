@@ -2,13 +2,13 @@ import { ArtifactRefusal, loadPOAG1 } from "./poag1.js";
 import { POA_CURATOR_KEY_URL, POA_EXPECTED_CONTENT_EPOCH, POA_EXPECTED_CURATOR_COUNTER } from "./trust-config.js";
 import {
   canonicalReplay,
-  createSignalRun,
+  createPracticeRun,
   loadSignalDescriptor,
-  submitSignalGuess,
+  submitPracticeGuess,
 } from "./signal-runtime.js";
 import { finiteTableAuthority, loadMissionCatalog, missionByGameId } from "./mission-catalog.js";
 import { loadRelayRepairDescriptor } from "./relay-runtime.js";
-import { loadSalvageLockDescriptor } from "./salvage-runtime.js";
+import { loadSalvageLockDescriptor, salvagePracticeOracle } from "./salvage-runtime.js";
 import { launchCatalogMission } from "./mission-launcher.js";
 import { mountDreggAdmissionPanel } from "./dregg-admission-panel.js";
 import { getWalletStandardRegistry } from "./wallet-standard-registry.js";
@@ -203,12 +203,25 @@ function token(symbol, className = "signal-token") {
   return node;
 }
 
+/**
+ * The one place this client draws anything. A practice member is a local,
+ * unscored choice out of an emitted family — it is not the Lean derivation and
+ * must not become it, because reproducing `HiddenInstance` here would put a
+ * second copy of the draw in the browser. Judged runs get their member (or, for
+ * an oracle-only game, their answers) from the host and never come through here.
+ */
+function practiceMember(count) {
+  const draw = new Uint32Array(1);
+  crypto.getRandomValues(draw);
+  return draw[0] % count;
+}
+
 function initializeSignal(descriptor) {
   state.signal = descriptor;
-  state.run = createSignalRun(descriptor);
+  state.run = createPracticeRun(descriptor);
   state.draft = [];
   byId("turn-limit").textContent = `/ ${descriptor.maxTurns} TRANSMISSIONS`;
-  byId("signal-instruction").textContent = `Assemble ${descriptor.codeLength} carrier bands. Feedback is looked up from the authenticated mission table; the browser does not score it. Transparent beta drill: the target table is public, and no competitive or economic reward is attached to this local transcript.`;
+  byId("signal-instruction").textContent = `Assemble ${descriptor.codeLength} carrier bands. Feedback is looked up from the authenticated mission table; the browser does not score it. PRACTICE run: this client picked its own code out of the emitted rulebook, nothing here is scored, and a judged run would learn nothing about its code at all.`;
   byId("signal-symbols").replaceChildren(...descriptor.symbols.map((symbol) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -266,6 +279,23 @@ function renderMissionSelector() {
   }));
 }
 
+/**
+ * A practice session for a finite-table game: which member of the emitted family
+ * this rehearsal plays, and — for an oracle-only game — the local oracle that
+ * answers its own questions. Both are unscored by construction, and `mode` puts
+ * that in the transcript so a rehearsal cannot be presented as a result.
+ */
+function practiceSession(gameId, descriptor) {
+  if (gameId === "relay-repair") {
+    return { mode: "practice", member: practiceMember(descriptor.instance.modulus) };
+  }
+  if (gameId === "salvage-lock") {
+    const member = practiceMember(descriptor.instance.practice.boards.length);
+    return { mode: "practice", member, oracle: salvagePracticeOracle(descriptor, member) };
+  }
+  return undefined;
+}
+
 function selectMission(gameId) {
   try {
     const mission = missionByGameId(state.missions, gameId);
@@ -279,6 +309,7 @@ function selectMission(gameId) {
       signalRoot: byId("signal-game"),
       finiteRoot: byId("finite-game"),
       launchSignal: initializeSignal,
+      callbacks: { session: practiceSession(gameId, descriptor) },
     });
     state.activeGame = launched.gameId;
     state.finiteController = launched.controller;
@@ -319,7 +350,7 @@ function renderDraft() {
 function submitDraft() {
   if (!state.signal || state.draft.length !== state.signal.codeLength) return;
   try {
-    state.run = submitSignalGuess(state.signal, state.run, state.draft);
+    state.run = submitPracticeGuess(state.signal, state.run, state.draft);
     state.draft = [];
     renderSignal();
   } catch (error) {
@@ -350,7 +381,8 @@ function renderTranscript() {
   const node = byId("signal-receipt");
   const canonical = canonicalReplay(state.run);
   const title = state.run.solved ? "SIGNAL LOCATED" : "FIELD WINDOW CLOSED";
-  node.innerHTML = `<b>${title} // UNSETTLED TRANSCRIPT</b><br>${state.run.turns.length} transmissions recorded locally. No authoritative world state, salvage, or ranking changes until a PoA node validates and settles this run.<br><code>${escapeHtml(canonical)}</code>`;
+  const mode = state.run.mode === "practice" ? "PRACTICE TRANSCRIPT — NOT SCORED" : "UNSETTLED JUDGED TRANSCRIPT";
+  node.innerHTML = `<b>${title} // ${mode}</b><br>${state.run.turns.length} transmissions recorded locally against a code this client chose for itself. No authoritative world state, salvage, or ranking changes until a PoA node validates and settles a judged run.<br><code>${escapeHtml(canonical)}</code>`;
   node.hidden = false;
 }
 

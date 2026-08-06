@@ -4,13 +4,20 @@ import { contentRoot } from "./signal-runtime.js";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const HEX32 = /^[0-9a-f]{64}$/;
 const METRIC_LIMIT = 1_000_000;
+/**
+ * ⚠ `disclosure` is pinned here, in the SIGNED catalog's consumer, and the game
+ * descriptors are checked against it. A descriptor that quietly relabelled
+ * itself `per-run-open` would start handing out the board it is supposed to
+ * withhold, and nothing inside that descriptor could contradict it.
+ */
 const GAME_SPECS = Object.freeze([
   Object.freeze({
     missionId: 1,
     gameId: "signal-triangulation",
     title: "Signal Triangulation",
     engineModule: "Dregg2.Games.PathOfAngels.SignalTriangulation",
-    ruleset: "signal-v1",
+    ruleset: "signal-v2",
+    disclosure: "oracle-only",
     actionLimit: 5,
     descriptorPath: "games/signal-triangulation.json",
     fixtureId: "signal-solved-preview-v1",
@@ -20,7 +27,8 @@ const GAME_SPECS = Object.freeze([
     gameId: "relay-repair",
     title: "Relay Repair",
     engineModule: "Dregg2.Games.PathOfAngels.RelayRepair",
-    ruleset: "relay-v2",
+    ruleset: "relay-v3",
+    disclosure: "per-run-open",
     actionLimit: 3,
     descriptorPath: "games/relay-repair.json",
     fixtureId: "relay-solved-preview-v1",
@@ -30,7 +38,8 @@ const GAME_SPECS = Object.freeze([
     gameId: "salvage-lock",
     title: "Salvage Lock",
     engineModule: "Dregg2.Games.PathOfAngels.SalvageLock",
-    ruleset: "salvage-v1",
+    ruleset: "salvage-v2",
+    disclosure: "oracle-only",
     actionLimit: 12,
     descriptorPath: "games/salvage-lock.json",
     fixtureId: "salvage-solved-preview-v1",
@@ -136,7 +145,7 @@ export async function loadMissionCatalog(bundle) {
     exactKeys(value, [
       "mission_id", "title", "engine_module", "ruleset", "reward_class", "action_limit",
       "privacy_grade", "ballot_regime", "epoch", "federation_id", "content_root", "activation",
-      "content_session", "run_seed", "budget", "allowed_relics", "descriptor_path",
+      "content_session", "instance", "budget", "allowed_relics", "descriptor_path",
       "allowed_beta_discoveries",
     ], `catalog missions[${index}]`);
     refuse(
@@ -148,7 +157,15 @@ export async function loadMissionCatalog(bundle) {
     );
     refuse(value.reward_class === "non-economic-demo" && value.privacy_grade === "public" && value.ballot_regime === "none", "catalog-policy", `${spec.title} must remain a public zero-economy demo`);
     refuse(value.epoch === bundle.contentEpoch.contentEpoch, "catalog-epoch", `${spec.title} epoch does not match its authenticated activation`);
-    refuse(HEX32.test(value.federation_id) && HEX32.test(value.content_session) && HEX32.test(value.run_seed), "catalog-domain", `${spec.title} has an invalid domain separator`);
+    refuse(HEX32.test(value.federation_id) && HEX32.test(value.content_session), "catalog-domain", `${spec.title} has an invalid domain separator`);
+    // ⚠ `run_seed` is GONE. It named the live instance of every mission in a
+    // file the client fetches unauthenticated-readable, so the answer shipped
+    // with the question. The catalog now states only how the seed is DERIVED.
+    exactKeys(value.instance, ["binding", "disclosure", "derivation_module", "commitment_published_in"], `${spec.title} instance`);
+    refuse(value.instance.binding === "per-run-hidden-draw", "catalog-instance", `${spec.title} does not bind a per-run hidden draw`);
+    refuse(value.instance.disclosure === spec.disclosure, "catalog-instance", `${spec.title} disclosure is not ${spec.disclosure}`);
+    refuse(value.instance.commitment_published_in === "slot-opening", "catalog-instance", `${spec.title} does not publish its commitment in the slot opening`);
+    refuse(typeof value.instance.derivation_module === "string" && value.instance.derivation_module.length > 0, "catalog-instance", `${spec.title} names no derivation module`);
     refuse(value.content_root === measuredRoot && SHA256.test(value.content_root), "catalog-content-root", `${spec.title} does not bind the complete descriptor set`);
     exactKeys(value.activation, ["state", "digest_source"], `${spec.title} activation`);
     refuse(
@@ -163,8 +180,8 @@ export async function loadMissionCatalog(bundle) {
     const betaArtifact = artifactRef(value.allowed_beta_discoveries[0], `${spec.title} beta artifact`, spec, bundle.manifest, pins.get(spec.descriptorPath));
 
     const preview = catalog.fixtures[index];
-    exactKeys(preview, ["id", "mission_id", "run_seed", "base_world", "contribution", "preview_world"], `catalog fixtures[${index}]`);
-    refuse(preview.id === spec.fixtureId && preview.mission_id === spec.missionId && preview.run_seed === value.run_seed, "catalog-preview", `${spec.title} preview identity is invalid`);
+    exactKeys(preview, ["id", "mission_id", "base_world", "contribution", "preview_world"], `catalog fixtures[${index}]`);
+    refuse(preview.id === spec.fixtureId && preview.mission_id === spec.missionId, "catalog-preview", `${spec.title} preview identity is invalid`);
     const reward = contribution(preview.contribution, `${spec.title} preview contribution`, true);
     refuse(JSON.stringify(reward.relics) === JSON.stringify(allowedRelics), "catalog-preview", `${spec.title} preview relics are outside its allowlist`);
     for (const field of ["intel", "supplies", "cohesion", "influence", "score"]) {
@@ -183,7 +200,9 @@ export async function loadMissionCatalog(bundle) {
       federationId: value.federation_id,
       contentRoot: value.content_root,
       contentSession: value.content_session,
-      runSeed: value.run_seed,
+      instanceDisclosure: value.instance.disclosure,
+      instanceBinding: value.instance.binding,
+      derivationModule: value.instance.derivation_module,
       activation: Object.freeze({ state: value.activation.state, digestSource: value.activation.digest_source }),
       activationDigest: bundle.contentEpoch.activationDigest,
       contentEpoch: bundle.contentEpoch.contentEpoch,
@@ -202,6 +221,14 @@ export async function loadMissionCatalog(bundle) {
   return Object.freeze(missions);
 }
 
+/**
+ * The authenticated envelope a finite-table descriptor is checked against.
+ *
+ * ⚠ `runSeed` is GONE. It was here so the loader could confirm the descriptor's
+ * published `run_seed` matched the catalog's — two copies of the answer agreeing
+ * with each other. What travels now is the DISCLOSURE the signed catalog
+ * declares, which the descriptor must match and cannot widen.
+ */
 export function finiteTableAuthority(mission) {
   return Object.freeze({
     missionId: mission.missionId,
@@ -212,7 +239,7 @@ export function finiteTableAuthority(mission) {
     federationId: mission.federationId,
     contentRoot: mission.contentRoot,
     contentSession: mission.contentSession,
-    runSeed: mission.runSeed,
+    instanceDisclosure: mission.instanceDisclosure,
     rewardClass: mission.rewardClass,
   });
 }

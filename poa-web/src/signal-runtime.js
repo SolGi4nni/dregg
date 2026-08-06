@@ -1,4 +1,5 @@
 import { ArtifactRefusal, sha256Hex } from "./poag1.js";
+import { loadHiddenInstanceDeclaration, loadSlotOpening, refuseNamedInstance } from "./hidden-instance.js";
 
 /**
  * Signal Triangulation after the instance/rules split.
@@ -37,16 +38,8 @@ import { ArtifactRefusal, sha256Hex } from "./poag1.js";
 const SIGNAL_FORMAT = "POAG1-GAME";
 const ENGINE = "Dregg2.Games.PathOfAngels.SignalTriangulation";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
-const HEX_32 = /^[0-9a-f]{64}$/;
 const PALETTE = ["#9bd8bf", "#d6e779", "#dcac62", "#a9cbd6", "#bb9dd1", "#d2786c"];
 const CONTENT_ROOT_DOMAIN = new TextEncoder().encode("path-of-angels/content-root/v1\0");
-
-/** Fields that named the live instance in the pre-split bundle. */
-const BANNED_FIELDS = Object.freeze({
-  target: "states the hidden code outright",
-  run_seed: "determines the instance through the public derivation",
-  outcomes: "tabulates feedback against one target, which is the target",
-});
 
 function refuse(condition, code, message) {
   if (!condition) throw new ArtifactRefusal(code, message);
@@ -87,56 +80,16 @@ export async function contentRoot(files) {
   return `sha256:${await sha256Hex(concat(parts))}`;
 }
 
-/**
- * The instance declaration every hidden-instance descriptor carries in place of
- * its instance. This is checked before anything else: a descriptor that does not
- * say where its instance comes from cannot be played for a score, and one that
- * still carries the instance is the old bundle.
- */
-export function loadInstanceDeclaration(game, expectedDisclosure, at) {
-  for (const [field, why] of Object.entries(BANNED_FIELDS)) {
-    refuse(!(field in game), "instance-published", `${at} carries \`${field}\`, which ${why}; this is the pre-split POAG1 shape and must be re-emitted`);
-  }
-  const block = game.instance;
-  exactKeys(block, ["kind", "derivation_module", "disclosure", "commitment", "draw", "sponge", "practice", "operator_knows_instance"], `${at} instance`);
-  refuse(block.kind === "per-run-hidden-draw", "instance-kind", `${at} instance is not a per-run hidden draw`);
-  refuse(block.disclosure === expectedDisclosure, "instance-disclosure", `${at} instance disclosure is not ${expectedDisclosure}`);
-  exactKeys(block.commitment, ["published_in", "domain", "preimage", "binding_bits", "opened_after"], `${at} instance commitment`);
-  refuse(block.commitment.published_in === "slot-opening", "instance-commitment", `${at} does not publish its commitment in the slot opening`);
-  refuse(integer(block.commitment.binding_bits, 100, 512), "instance-commitment", `${at} declares an implausible commitment binding`);
-  exactKeys(block.draw, ["domain", "preimage", "purposes"], `${at} instance draw`);
-  exactKeys(block.sponge, ["permutation", "width", "rate", "capacity", "lane_bytes", "lane_reject_at_or_above", "squeeze_blocks"], `${at} instance sponge`);
-  exactKeys(block.practice, ["seed", "scored", "purpose_tag", "transcript_field"], `${at} instance practice`);
-  refuse(block.practice.scored === false, "instance-practice", `${at} declares practice runs scored`);
-  return Object.freeze({
-    disclosure: block.disclosure,
-    derivationModule: block.derivation_module,
-    bindingBits: block.commitment.binding_bits,
-    // Stated, not hidden: whoever holds the slot secret knows every instance.
-    operatorKnowsInstance: block.operator_knows_instance === true,
-  });
-}
-
-/**
- * A curator-signed slot opening. Without one there is no commitment, and without
- * a commitment the host could choose the instance after seeing the transcript, so
- * a judged run refuses to start.
- */
-export function loadSlotOpening(opening, mission, at = "slot opening") {
-  exactKeys(opening, ["slot", "mission_id", "commitment", "curator_pubkey", "signature"], at);
-  refuse(integer(opening.slot, 0, Number.MAX_SAFE_INTEGER), "opening-slot", `${at}.slot is invalid`);
-  refuse(opening.mission_id === mission.missionId, "opening-mission", `${at} is for a different mission`);
-  refuse(typeof opening.commitment === "string" && HEX_32.test(opening.commitment), "opening-commitment", `${at}.commitment is invalid`);
-  refuse(typeof opening.curator_pubkey === "string" && HEX_32.test(opening.curator_pubkey), "opening-curator", `${at}.curator_pubkey is invalid`);
-  refuse(typeof opening.signature === "string" && /^[0-9a-f]{128}$/.test(opening.signature), "opening-signature", `${at}.signature is invalid`);
-  return Object.freeze({ ...opening });
-}
+export { loadHiddenInstanceDeclaration, loadSlotOpening };
 
 /**
  * Compile the emitted oracle into a read-only lookup table. JavaScript never
  * derives exact/present/solved feedback: it decodes what Lean wrote.
  */
 export function loadSignalDescriptor(game, mission, contentEpoch) {
+  // Before any field is read for meaning: is this the pre-split bundle?
+  refuseNamedInstance(game, "Signal descriptor");
+  refuseNamedInstance(game.instance, "Signal descriptor instance");
   exactKeys(game, ["format", "schema_version", "game_id", "ruleset", "engine_module", "action_limit", "security", "instance", "state", "action", "feedback", "transition", "output", "rules"], "Signal descriptor");
   refuse(game.format === SIGNAL_FORMAT && game.schema_version === 1, "signal-format", "unsupported Signal descriptor");
   refuse(
@@ -157,7 +110,10 @@ export function loadSignalDescriptor(game, mission, contentEpoch) {
     "signal-security",
     "Signal v2 must remain a committed, oracle-only, zero-reward beta demo",
   );
-  const declaration = loadInstanceDeclaration(game, "oracle-only", "Signal descriptor");
+  // The disclosure comes from the SIGNED catalog, not from the descriptor, so a
+  // descriptor cannot relabel itself and start naming the code it withholds.
+  refuse(mission.instanceDisclosure === "oracle-only", "signal-security", "the signed catalog does not declare Signal oracle-only");
+  const declaration = loadHiddenInstanceDeclaration(game.instance, mission.instanceDisclosure, "Signal descriptor instance");
 
   exactKeys(game.action, ["tag", "code"], "Signal action");
   refuse(game.action.tag === "submit", "signal-action", "unsupported Signal action");
@@ -324,7 +280,7 @@ export function createPracticeRun(descriptor, pick) {
  * what its transcript will be judged against.
  */
 export function createJudgedRun(descriptor, opening) {
-  const checked = loadSlotOpening(opening, descriptor.mission);
+  const checked = loadSlotOpening(opening, descriptor.missionId);
   return baseRun(descriptor, "judged", {
     practiceInstance: null,
     practiceCode: null,
