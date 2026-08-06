@@ -50,6 +50,37 @@ if [ "$rc" -ne 0 ]; then
   echo
   n=$(grep -cE "^error" "$LOG" || true)
   echo "  $n error line(s). Full log: $LOG (deleted on exit — copy it if you need it)"
+  #  ⚑ KEEP THE LOG WHEN ASKED. The one thing a reader always wants after a red here is the FULL
+  #  rustc output, and this script deleted it on exit — so the second run costs another whole
+  #  workspace check to see what the first already knew.
+  if [ -n "${HEADBUILD_KEEP_LOG:-}" ]; then
+    cp "$LOG" "$HEADBUILD_KEEP_LOG" && echo "  copied to $HEADBUILD_KEEP_LOG"
+  fi
   exit 1
 fi
-echo "check-head-builds: PASS — $(git rev-parse --short "$SHA") builds clean from a detached clone."
+
+# ── ⚑ THE NON-VACUITY FLOOR ────────────────────────────────────────────────────────────────────
+# "HEAD builds" is a NEGATIVE assertion — no errors — and every negative assertion passes just as
+# happily over a workspace that compiled NOTHING. `cargo check` exits 0 and prints `Finished` when
+# every unit is already fresh, so a target directory inherited from elsewhere (a stray
+# `CARGO_TARGET_DIR` in the environment, a clone that landed on a warm cache) turns this whole gate
+# into a no-op that reads exactly like a pass. That is the same shape as a lakefile glob that killed
+# every build at [0/0] while 817 pins "ran".
+#
+# So: a clone with a FRESH target directory must compile essentially the whole workspace, and the
+# floor is stated against the member count rather than a magic number. Measured 2026-08-06 on a
+# clean clone: 226 workspace members, well over a thousand Compiling/Checking lines with deps.
+units=$(grep -cE "^\s+(Compiling|Checking) " "$LOG" || true)
+members=$(cd "$WORK/tree" && cargo metadata --no-deps --format-version 1 2>/dev/null \
+            | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["packages"]))' 2>/dev/null || echo 0)
+FLOOR=$(( members > 0 ? members / 2 : 50 ))
+if [ "$units" -lt "$FLOOR" ]; then
+  echo
+  echo "check-head-builds: FAIL (VACUOUS) — cargo reported success having compiled only $units unit(s)"
+  echo "  against a floor of $FLOOR (half of $members workspace members). A fresh clone compiles"
+  echo "  everything; a run this small did not check HEAD, it checked a cache. Suspect an inherited"
+  echo "  CARGO_TARGET_DIR. A green over an empty population is the failure this floor refuses."
+  exit 1
+fi
+echo "check-head-builds: PASS — $(git rev-parse --short "$SHA") builds clean from a detached clone"
+echo "  ($units unit(s) compiled over $members workspace members; floor $FLOOR)."

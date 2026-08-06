@@ -909,6 +909,24 @@ GATES_ALL=(
   # It exits 3 — BLOCKED, not FAIL — when the oracle cannot be built or `.fullchain/real-root-*.json`
   # is not on the box, rather than skipping or grading a shorter run as though it were the control.
   "fri-mutation|14400|bash bridge/mina-zkapp/scripts/fri-mutation-gate.sh"
+  # ⚑ DOES **HEAD** BUILD FOR SOMEBODY WHO JUST CLONED — and the instrument that answers it was, as
+  # of 2026-08-06, referenced by NOTHING: not this table, not a workflow, not a doc. Its own header
+  # records `main` breaking at HEAD three times in one morning with a working-tree `cargo check`
+  # reporting exit 0 each time, because in a shared-tree swarm the working tree is the UNION of every
+  # lane's in-flight work and is therefore systematically GREENER than HEAD.
+  # ⚑ IT WENT RED THE FIRST TIME IT WAS RUN HERE, which is its red-proof and a measured one: six
+  # targets across four crates, all downstream of the 2026-08-05 `dregg-verifier` carve that deleted
+  # `verify_effect_vm_proof`/`replay_chain`/`ReplayVerdict` while their consumers stayed. Four were
+  # landed by a sibling mid-flight; the other two (`proof_bind_seam_bites`, `wide_completeness_ledger`)
+  # had not compiled in HEAD OR in any working tree and are repaired in `c3b18ac42`.
+  # ⚠ AND IT NOW HAS A NON-VACUITY FLOOR. `cargo check` exits 0 printing `Finished` when everything is
+  # already fresh, so an inherited `CARGO_TARGET_DIR` would have turned the whole gate into a no-op
+  # that reads exactly like a pass. It refuses a run that compiled fewer units than half the workspace
+  # member count — derived from `cargo metadata`, not typed in.
+  # ⚠ HERE AND NOT ABOVE only for cost: a fresh `--shared` clone plus a cold whole-workspace
+  # `cargo check --all-targets --keep-going` over 226 members. ~20 min measured, longer under load.
+  # `HEADBUILD_KEEP_LOG=/path` preserves the full rustc output, which a red always wants.
+  "head-builds|7200|bash scripts/check-head-builds.sh HEAD"
 )
 
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }
@@ -916,16 +934,38 @@ want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -q
 printf '%-28s %-6s %-8s %s\n' GATE RESULT TIME NOTE
 printf '%.0s─' {1..96}; echo
 
-pass=0; fail=0; skip=0; timedout=0; blocked=0; failed=()
+pass=0; fail=0; skip=0; timedout=0; blocked=0; unprobed=0; failed=()
 run_one() {
   IFS='|' read -r name to cmd <<< "$1"
   want "$name" || return 0
-  # A gate whose script is missing is a FINDING, not a skip: something references it.
-  set -- $cmd; local script="$2"
-  if [ ! -f "$script" ]; then
-    printf '%-28s \033[31m%-6s\033[0m %-8s %s\n' "$name" MISSING "-" "$script does not exist"
+  # ── A gate whose script is missing is a FINDING, not a skip: something references it. ──────────
+  #
+  # ⚠ IT USED TO TAKE "THE SECOND WORD" AS THE SCRIPT, AND TWO ROWS COULD THEREFORE NEVER RUN.
+  # `bash -c 'cd bridge/mina-zkapp && npm run --silent vk-identity'` has `-c` in that position, so
+  # `[ ! -f "-c" ]` was true and BOTH `mina-vk-identity` rows printed MISSING and returned WITHOUT
+  # INVOKING ANYTHING — a gate reporting a permanent red for a file that was never its script, while
+  # the check it names (the VK-notion identity gate, and its own red-proof) had not executed once.
+  # The inverse of this table's usual disease: not a gate that cannot fail, a gate that cannot PASS,
+  # and a red nobody can act on gets skipped by readers exactly as fast as a green nobody checks.
+  # Measured 2026-08-06: 2 of 109 rows.
+  #
+  # So the probe now IDENTIFIES the script — every token that looks like a repo-relative script path
+  # — instead of guessing by position. And where a row invokes NO identifiable script (an npm run, an
+  # inline shell), it says so in the summary rather than inventing a verdict: a pre-flight that
+  # cannot speak for a row must not be counted as having cleared it.
+  local tok scripts=() missing=()
+  for tok in $cmd; do
+    tok="${tok#\'}"; tok="${tok%\'}"
+    case "$tok" in
+      */*.sh|*/*.py|*/*.mjs|*/*.js|*/*.ts)
+        scripts+=("$tok"); [ -f "$tok" ] || missing+=("$tok") ;;
+    esac
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    printf '%-28s \033[31m%-6s\033[0m %-8s %s\n' "$name" MISSING "-" "${missing[*]} does not exist"
     fail=$((fail+1)); failed+=("$name"); return 0
   fi
+  [ "${#scripts[@]}" -eq 0 ] && unprobed=$((unprobed+1))
   local s e rc out
   s=$(date +%s); out="$(timeout "$to" bash -c "$cmd" 2>&1)"; rc=$?; e=$(date +%s)
   local note; note="$(printf '%s' "$out" | tail -1 | cut -c1-46)"
@@ -981,6 +1021,7 @@ echo
 echo "passed $pass · failed $fail · skipped $skip"
 [ "$timedout" -gt 0 ] && echo "  ⚠ $timedout failure(s) produced NO VERDICT (timeout) — that wants a budget or a phase split, not a repair"
 [ "$blocked" -gt 0 ] && echo "  ⚠ $blocked failure(s) are BLOCKED (exit 3) — an INPUT is absent or stale, not a divergence. Produce the input; do not 'fix' the gate"
+[ "$unprobed" -gt 0 ] && echo "  · $unprobed row(s) invoke no identifiable script path (npm run / inline shell), so the missing-script pre-flight could not speak for them — they RAN and their verdict above is their own"
 [ ${#failed[@]} -gt 0 ] && printf 'failing: %s\n' "${failed[*]}"
 
 # ── WHAT THIS DELIBERATELY DOES NOT RUN, and why ───────────────────────────────
