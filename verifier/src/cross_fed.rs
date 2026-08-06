@@ -7,9 +7,10 @@
 //!
 //! 1. Verify the introducer's signature on the `HandoffCertificate` under
 //!    the issuing committee's pubkey.
-//! 2. (Soft) Effect-VM STARK proof checks pass on every receipt in the
-//!    chain.
-//! 3. Scope-2 replay of the chain (re-derive trace + verify).
+//! 2. Verify every receipt's rotated effect-VM proof SELECTOR-BOUND against the
+//!    committed cohort descriptors, and bind each proof to the receipt it accompanies
+//!    plus the receipt chain-walk.
+//! 3. (was: scope-2 trace replay — DELETED, see the flag-day note below.)
 //! 4. Verify F1's `AttestedRoot` HYBRID quorum (ed25519 ∧ ML-DSA-65) under
 //!    F1's known keys — a classical-only root fails closed.
 //! 5. Verify F2's `AttestedRoot` HYBRID quorum (ed25519 ∧ ML-DSA-65) under
@@ -24,6 +25,40 @@
 //!
 //! Returns a `CrossFedVerdict` carrying a granular per-step result so the
 //! demo's `must_not_pass` negative tests can read individual flags.
+//!
+//! # ⚑ FLAG DAY 2026-08-05 — this subcommand could not return `overall_verified: true`
+//!
+//! Steps (2) and (3) were routed through the retired `verify_effect_vm_proof`, which
+//! returned `exit_code::ERROR` on every input. Step (2) therefore set
+//! `effect_vm_proof_verified = false` and returned early on EVERY bundle, honest or
+//! forged, so the documented 8-step check was structurally unable to report success.
+//! Six of its eight legs are real crypto (the hybrid ed25519 ∧ ML-DSA-65 attested-root
+//! quorum, the handoff-cert signature, the `FederationReceipt`, the cross-links) and
+//! have adversarial tests; deleting the subcommand would have thrown those away. So
+//! the two dead legs are REPAIRED, not removed:
+//!
+//! * **(2) is now a real verify.** Each `recipient_chain` entry's `proof_bytes` is
+//!   deserialized and verified SELECTOR-BOUND through
+//!   [`crate::rotated_replay::resolve_rotated_descriptor`] — the same audited
+//!   `verify_vm_descriptor2` path the rotated replay chain and the SDK wire verifier
+//!   use, over the WIDE / welded-wide / bare-V3 committed registries. Each entry is
+//!   then bound to the `TurnReceipt` it carries via
+//!   [`crate::check_receipt_pi_binding`] (T11 relabelling + T8 chain walk), so a
+//!   genuine proof of turn A cannot be presented beside a receipt naming turn B.
+//! * **(3) is DELETED as a separate leg.** It re-ran the v1 hand-AIR over an inline
+//!   witness trace; that AIR is gone, and in the rotated world the batch-STARK verify
+//!   in (2) IS the trace check. Keeping a second flag for it would have been a field
+//!   that could never go true. The `witness_chain_replay_verified` and `replay_detail`
+//!   fields are GONE from `CrossFedVerdict`; a consumer reading them refuses to
+//!   deserialize rather than seeing `false`.
+//!
+//! **What re-emits / breaks:** `demo/multi-node-devnet/expected/cross_fed_handoff.json`
+//! names the removed fields and must be re-emitted. The bundles
+//! `demo/multi-node-devnet/scenarios/cross_fed_handoff.sh` feeds this subcommand must
+//! now carry REAL rotated proofs in `recipient_chain[*].proof_bytes`; a bundle whose
+//! entries carry `proof_bytes: []` is now rejected at (2) by name, where before it was
+//! rejected at (2) by a stub. The requirement that every entry carry a
+//! `witness_bundle` is also gone: scope-2 material is not what step (2) reads.
 
 use serde::{Deserialize, Serialize};
 
@@ -31,8 +66,6 @@ use dregg_federation::CrossFedReceiptBundle;
 use dregg_federation::frost::MlDsaPublicKey;
 use dregg_federation::receipt::FederationReceipt;
 use dregg_types::{AttestedRoot, PublicKey};
-
-use crate::{AUTO_DETECT_VK_HASH, ReplayChainOutput, exit_code, verify_effect_vm_proof};
 
 /// A federation committee descriptor as it appears on disk (the file the
 /// `register-federation` CLI writes / `setup_federations.sh` cross-copies).
@@ -136,10 +169,13 @@ pub struct CrossFedVerdict {
     /// (1) The handoff cert's introducer signature verifies under F1's
     /// committee pubkey.
     pub cert_introducer_sig_verified: bool,
-    /// (2) Every receipt's STARK proof verifies (scope-1).
+    /// (2) Every receipt's rotated effect-VM proof verified SELECTOR-BOUND against a
+    /// committed cohort descriptor, AND each proof is bound to the receipt it
+    /// accompanies (`PI[TURN_HASH..+4]`) with the receipt chain-walk closed.
+    ///
+    /// (Step (3), the v1 scope-2 trace replay, is deleted: the batch-STARK verify here
+    /// IS the trace check. See the module docblock's flag-day note.)
     pub effect_vm_proof_verified: bool,
-    /// (3) The witness chain replays end-to-end (scope-2).
-    pub witness_chain_replay_verified: bool,
     /// (4) F1's `AttestedRoot` quorum is structurally + cryptographically
     /// valid under F1's committee.
     pub attested_root_f1_verified: bool,
@@ -168,9 +204,6 @@ pub struct CrossFedVerdict {
     pub executor_signature_includes_federation_id: bool,
     /// Human-readable trace of which step failed first (or "all green").
     pub summary: String,
-    /// Per-receipt replay output (for debugging negative cases).
-    #[serde(default)]
-    pub replay_detail: Option<ReplayChainOutput>,
     /// True iff every load-bearing check passes (steps 1-8 above; the
     /// optional `federation_receipt_f2_verified` only counts when a
     /// receipt is supplied).
@@ -182,7 +215,6 @@ impl CrossFedVerdict {
         Self {
             cert_introducer_sig_verified: false,
             effect_vm_proof_verified: false,
-            witness_chain_replay_verified: false,
             attested_root_f1_verified: false,
             attested_root_f2_verified: false,
             federation_receipt_f2_verified: false,
@@ -190,7 +222,6 @@ impl CrossFedVerdict {
             attested_root_f2_blocklace_bound: false,
             executor_signature_includes_federation_id: false,
             summary: reason.into(),
-            replay_detail: None,
             overall_verified: false,
         }
     }
@@ -254,7 +285,6 @@ pub fn verify_cross_fed_bundle(
     let mut verdict = CrossFedVerdict {
         cert_introducer_sig_verified: false,
         effect_vm_proof_verified: false,
-        witness_chain_replay_verified: false,
         attested_root_f1_verified: false,
         attested_root_f2_verified: false,
         federation_receipt_f2_verified: bundle.recipient_federation_receipt.is_none(), // vacuously true when absent
@@ -262,7 +292,6 @@ pub fn verify_cross_fed_bundle(
         attested_root_f2_blocklace_bound: false,
         executor_signature_includes_federation_id: false,
         summary: String::new(),
-        replay_detail: None,
         overall_verified: false,
     };
 
@@ -321,49 +350,51 @@ pub fn verify_cross_fed_bundle(
         return verdict;
     }
 
-    for (i, wr) in bundle.recipient_chain.iter().enumerate() {
-        if wr.witness_bundle.is_none() {
-            verdict.summary = format!(
-                "recipient_chain[{i}] has no witness_bundle; cross-fed verification requires scope-2 replay material"
-            );
-            return verdict;
-        }
-    }
-
-    // (2) STARK proof verifies for every receipt.
+    // (2) THE ROTATED EFFECT-VM PROOF VERIFIES FOR EVERY RECEIPT, AND IS BOUND TO IT.
+    //
+    // Two teeth per entry, and both can fire:
+    //   a. `resolve_rotated_descriptor` deserializes the `Ir2BatchProof` and requires it
+    //      to verify SELECTOR-BOUND under EXACTLY ONE committed cohort descriptor
+    //      (`verify_vm_descriptor2`). Empty / corrupt / forged bytes bind zero members
+    //      and are refused by name; a proof that binds several is refused as ambiguous
+    //      rather than laundered under the wrong selector.
+    //   b. `check_receipt_pi_binding` requires `PI[TURN_HASH_BASE..+4] ==
+    //      canonical_32_to_felts_4(receipt.turn_hash)` (T11) and closes the receipt
+    //      chain-walk across the chain (T8). Without (b), a genuine proof of turn A
+    //      verifies happily beside a receipt naming turn B and the whole cross-fed
+    //      story is told about the wrong turn.
+    //
+    // This is also step (3): the batch-STARK verify IS the trace check. The v1 hand-AIR
+    // row-pair replay that used to be a separate leg no longer exists.
     let mut all_proofs_ok = true;
+    let mut prev_receipt_hash: Option<[u8; 32]> = None;
     for (i, wr) in bundle.recipient_chain.iter().enumerate() {
-        let (out, code) =
-            verify_effect_vm_proof(&wr.proof_bytes, &wr.public_inputs, AUTO_DETECT_VK_HASH);
-        if code != exit_code::VERIFIED {
-            verdict.summary = format!(
-                "effect-vm proof rejected at chain[{i}]: {} (code={code})",
-                out.reason
-            );
+        let pi_felts: Vec<dregg_circuit::field::BabyBear> = wr
+            .public_inputs
+            .iter()
+            .map(|&v| dregg_circuit::field::BabyBear::new_canonical(v))
+            .collect();
+        if let Err(reason) =
+            crate::rotated_replay::resolve_rotated_descriptor(&wr.proof_bytes, &pi_felts)
+        {
+            verdict.summary = format!("effect-vm proof rejected at chain[{i}]: {reason}");
             all_proofs_ok = false;
             break;
         }
+        if let Some(reason) =
+            crate::check_receipt_pi_binding(&wr.receipt, &wr.public_inputs, prev_receipt_hash)
+        {
+            verdict.summary =
+                format!("effect-vm proof is not bound to chain[{i}]'s receipt: {reason}");
+            all_proofs_ok = false;
+            break;
+        }
+        prev_receipt_hash = Some(wr.receipt.receipt_hash());
     }
     verdict.effect_vm_proof_verified = all_proofs_ok;
     if !all_proofs_ok {
         return verdict;
     }
-
-    // (3) Scope-2 replay via the existing replay_chain machinery. We
-    // convert the bundle's `WitnessedReceipt`s to `ReplayEntry`s on the fly.
-    let replay_entries: Vec<crate::ReplayEntry> = bundle
-        .recipient_chain
-        .iter()
-        .map(witnessed_to_replay)
-        .collect();
-    let replay = crate::replay_chain(&replay_entries);
-    verdict.witness_chain_replay_verified = replay.overall_verified;
-    if !replay.overall_verified {
-        verdict.summary = format!("scope-2 replay failed: {}", replay.summary);
-        verdict.replay_detail = Some(replay);
-        return verdict;
-    }
-    verdict.replay_detail = Some(replay);
 
     // (5, second half) F2's attested root must also TIE to the chain it is presented with:
     // its `receipt_stream_root` must be the stream of these receipts. Leg (5) is only
@@ -447,7 +478,6 @@ pub fn verify_cross_fed_bundle(
 
     verdict.overall_verified = verdict.cert_introducer_sig_verified
         && verdict.effect_vm_proof_verified
-        && verdict.witness_chain_replay_verified
         && verdict.attested_root_f1_verified
         && verdict.attested_root_f2_verified
         && verdict.federation_receipt_f2_verified
@@ -604,35 +634,6 @@ fn federation_receipt_matches_tail(
     Ok(())
 }
 
-/// Translate a `dregg_turn::WitnessedReceipt` into a `ReplayEntry` for
-/// the in-crate replay_chain machinery. The two shapes are nearly
-/// identical; we transcode `WitnessAvailability::Inline` and preserve
-/// the trace rows verbatim.
-fn witnessed_to_replay(wr: &dregg_turn::WitnessedReceipt) -> crate::ReplayEntry {
-    let bundle = wr
-        .witness_bundle
-        .as_ref()
-        .map(|b| crate::ReplayWitnessBundle {
-            trace_rows: b.trace_rows.clone(),
-            availability: crate::ReplayWitnessAvailability::Inline,
-            recursive_proof: b.recursive_proof.as_ref().map(|rp| {
-                crate::ReplayRecursiveProofVariant {
-                    proof_bytes: rp.proof_bytes.clone(),
-                    public_inputs: rp.public_inputs.clone(),
-                    recursive_vk_hash: rp.recursive_vk_hash,
-                }
-            }),
-        });
-    crate::ReplayEntry {
-        receipt: wr.receipt.clone(),
-        proof_bytes: wr.proof_bytes.clone(),
-        public_inputs: wr.public_inputs.clone(),
-        witness_bundle: bundle,
-        witness_hash: wr.witness_hash,
-        aggregate_membership: None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -698,7 +699,7 @@ mod tests {
 
         assert!(!v.overall_verified);
         assert!(v.summary.contains("recipient_chain is empty"));
-        assert!(!v.witness_chain_replay_verified);
+        assert!(!v.effect_vm_proof_verified);
     }
 
     #[test]

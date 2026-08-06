@@ -114,7 +114,11 @@ mod tests {
     }
 
     fn fabricate_wr(turn: &dregg_turn::Turn, cell_id: &CellId) -> WitnessedReceipt {
-        crate::bilateral_pair::fabricate_witnessed_receipt(turn, cell_id, dummy_receipt(turn.agent))
+        crate::bilateral_pair::fabricate_pi_only_witnessed_receipt(
+            turn,
+            cell_id,
+            dummy_receipt(turn.agent),
+        )
     }
 
     #[test]

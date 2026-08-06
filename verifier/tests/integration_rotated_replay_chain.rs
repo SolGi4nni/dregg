@@ -1,4 +1,3 @@
-#![cfg(feature = "prover")]
 //! Integration tests: the ROTATED replay-chain verifier (the recursion-build
 //! replacement for `integration_replay_chain.rs`, whose v1 hand-AIR is retired
 //! under `recursion`).
@@ -21,8 +20,19 @@
 //!   - WRONG-CHAIN: a dropped / spliced middle leg breaks adjacency and is
 //!     REJECTED.
 //!
+//! ⚑ 2026-08-05: this file used to carry `#![cfg(feature = "prover")]`, so deleting the
+//! crate's `prover` feature (which existed only for the recursive-replay entries, now
+//! themselves deleted) would have compiled all eleven of these tests to NOTHING while
+//! `cargo nextest` still reported green. The gate is gone; these are the crate's only
+//! coverage of a real proof verify and they run on every build.
+//!
+//! ⚑ The legs minted here are BARE V3 (1-felt / ~31-bit) members, so their commit
+//! anchors are `narrow_commit_anchor(felt)` — the felt in lane 0, seven zero lanes.
+//! `verify_rotated_replay_chain` now speaks the 8-felt anchor because it also accepts
+//! WIDE and welded-wide legs, whose ~124-bit commits live in their LAST 16 PIs.
+//!
 //! SLOW (real Plonky3 proving). Run with
-//! `cargo test -p dregg-verifier --features recursion rotated_replay -- --nocapture`.
+//! `cargo nextest run -p dregg-verifier -E 'test(/rotated/)'`.
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{
@@ -40,6 +50,7 @@ use dregg_circuit::field::BabyBear;
 use dregg_commit::typed::canonical_32_to_felts_4;
 use dregg_turn::rotation_witness as rw;
 use dregg_turn::turn::TurnReceipt;
+use dregg_verifier::rotated_replay::narrow_commit_anchor;
 use dregg_verifier::{RotatedReplayLeg, RotatedReplayVerdict, verify_rotated_replay_chain};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,7 +130,7 @@ fn mint_rotated_leg_with_witnesses(
     before_w: &rw::RotationWitness,
     after_w: &rw::RotationWitness,
     receipt: TurnReceipt,
-) -> (RotatedReplayLeg, BabyBear, BabyBear) {
+) -> (RotatedReplayLeg, [BabyBear; 8], [BabyBear; 8]) {
     let effects = vec![effect.clone()];
     let (name, json) = rotated_json_for(&effect);
     let desc = parse_vm_descriptor2(json).expect("rotated cohort descriptor parses");
@@ -173,8 +184,8 @@ fn mint_rotated_leg_with_witnesses(
             public_inputs,
             vk_hash,
         },
-        dpis[pi::OLD_COMMIT],
-        dpis[pi::NEW_COMMIT],
+        narrow_commit_anchor(dpis[pi::OLD_COMMIT]),
+        narrow_commit_anchor(dpis[pi::NEW_COMMIT]),
     )
 }
 
@@ -187,7 +198,7 @@ fn mint_rotated_leg(
     before_cell: &Cell,
     after_cell: &Cell,
     receipt: TurnReceipt,
-) -> (RotatedReplayLeg, BabyBear, BabyBear) {
+) -> (RotatedReplayLeg, [BabyBear; 8], [BabyBear; 8]) {
     let mut ledger = Ledger::new();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nr = nullifier_root();
@@ -562,7 +573,8 @@ fn wrong_endpoint_commitment_rejected() {
     // The leg itself is sound, but the caller claims a NEW commitment that the
     // chain does not reach. The endpoint check must reject (the proof binds the
     // turn's real post-state; a verifier expecting a different one is not fooled).
-    let wrong_new = BabyBear::new_canonical(old_commit.as_u32().wrapping_add(1));
+    let mut wrong_new = old_commit;
+    wrong_new[0] = BabyBear::new_canonical(wrong_new[0].as_u32().wrapping_add(1));
     let out = verify_rotated_replay_chain(&[leg], old_commit, wrong_new);
     assert!(
         !out.overall_verified,
@@ -642,14 +654,14 @@ fn spliced_chain_breaks_endpoint() {
 
 #[test]
 fn empty_chain_identity_verified_nonidentity_rejected() {
-    let c = BabyBear::new_canonical(12345);
+    let c = narrow_commit_anchor(BabyBear::new_canonical(12345));
     // Identity turn (old == new): an empty chain is vacuously consistent.
     let ok = verify_rotated_replay_chain(&[], c, c);
     assert!(ok.overall_verified, "empty identity chain must verify");
     assert_eq!(ok.total, 0);
 
     // Non-identity (old != new) with no legs: nothing moved the commitment → reject.
-    let d = BabyBear::new_canonical(54321);
+    let d = narrow_commit_anchor(BabyBear::new_canonical(54321));
     let bad = verify_rotated_replay_chain(&[], c, d);
     assert!(
         !bad.overall_verified,
@@ -676,7 +688,12 @@ fn empty_chain_identity_verified_nonidentity_rejected() {
 fn mint_chained_pair(
     r0: TurnReceipt,
     r1: TurnReceipt,
-) -> (RotatedReplayLeg, RotatedReplayLeg, BabyBear, BabyBear) {
+) -> (
+    RotatedReplayLeg,
+    RotatedReplayLeg,
+    [BabyBear; 8],
+    [BabyBear; 8],
+) {
     let bal0: i64 = 100_000;
     let amount: u64 = 50;
     let s0 = CellState::new(bal0 as u64, 0);

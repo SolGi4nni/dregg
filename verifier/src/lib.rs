@@ -1,58 +1,93 @@
-//! `dregg-verifier`: Standalone Effect VM proof verifier.
+//! `dregg-verifier`: the standalone verify floor.
 //!
 //! # Design intent
 //!
-//! This crate imports `dregg-circuit` + `dregg-types` (the v1 minimum), plus
-//! `dregg-turn` + `dregg-federation` + `dregg-captp` so the
-//! `verify-cross-fed-bundle` subcommand can deserialize and verify a
-//! [`dregg_federation::CrossFedReceiptBundle`] end-to-end. It MUST NOT
-//! import from `dregg-node`, `dregg-wire`, or any crate that carries
-//! ledger / executor / program-registry state.
+//! This crate imports `dregg-circuit` (the batch-STARK VERIFY surface
+//! `descriptor_ir2::verify_vm_descriptor2`) + `dregg-types`, plus `dregg-turn` +
+//! `dregg-federation` + `dregg-captp` so the `verify-cross-fed-bundle`
+//! subcommand can deserialize and verify a
+//! [`dregg_federation::CrossFedReceiptBundle`] end-to-end. It MUST NOT import
+//! from `dregg-node`, `dregg-wire`, or any crate that carries ledger / executor /
+//! program-registry state.
 //!
 //! The invariant: a verifier process can run in a completely separate OS process
 //! with no shared memory, no shared mutable state, and no callbacks into a
-//! prover. It reads bytes from disk (or stdin), runs cryptographic verification,
-//! and exits. `dregg-federation` is depended on with
+//! prover. It reads bytes from disk, runs cryptographic verification, and exits.
+//!
+//! ⚠ **"Prover-free" is about CONTROL FLOW here, not about linkage, and the docblock
+//! used to blur them.** Measured 2026-08-05 (`cargo tree -p dregg-verifier -e normal`):
+//! `dregg-turn-prover` is an unconditional dependency — the `aggregated-bundle`
+//! subcommand's `AggregatedBundle` type and its verifier live there — and it pulls
+//! `dregg-circuit-prove` at depth 2. The recursion prover IS linked into this binary.
+//! No verify path calls into it, and deleting this crate's own `dregg-circuit-prove`
+//! edge (with the recursive-replay entries, below) removed a knob rather than the
+//! tower. Making the linkage claim TRUE means moving `AggregatedBundle` +
+//! `verify_aggregated_bundle` into a verify-only crate; that is real work and is not
+//! done here, so the claim is not made. `dregg-federation` is depended on with
 //! `default-features = false` so no tokio runtime is pulled — the verifier
 //! stays single-threaded and synchronous. This is the "Charlie" role
 //! described in `06-the-real-demo.md`.
 //!
-//! # Verification key registry (v1)
+//! # ⚑ FLAG DAY 2026-08-05 — the v1 hand-AIR surface is DELETED, not retired
 //!
-//! For v1 there is exactly one verification key: the Effect VM AIR
-//! (`"dregg-effect-vm-v1"`), identified by its 32-byte SHA-256 of the AIR name.
-//! Future versions will support additional cell programs by VK hash lookup.
+//! Until this commit the crate shipped four entry points that had been "retired"
+//! into unconditional rejections and then left in place:
+//!
+//! * `verify_effect_vm_proof` — returned `exit_code::ERROR` on every input;
+//! * `replay_chain` / `replay_one_with_prev` — rejected every entry, because step 1
+//!   was the above;
+//! * `verify_recursive_replay{,_from_bundle}` / `replay_chain_recursive` — same,
+//!   and `verify_recursive_replay` had ZERO callers (the repo's own
+//!   `baseline/production-callers.tsv` marked it `UNCALLED`);
+//! * the VK registry (`EFFECT_VM_AIR_NAME`, `EFFECT_VM_VK_HASH_HEX`,
+//!   `resolve_vk_hash`, `AUTO_DETECT_VK_HASH`) that only those entries consulted.
+//!   `EFFECT_VM_VK_HASH_HEX` documented itself as `SHA-256(b"dregg-effect-vm-v1")`
+//!   and carried `8b80e1cf7b0a…`; the real digest is `0942b5f2a4ec…`. The
+//!   derivation was invented, and `main.rs` printed the value as a copy-pasteable
+//!   CLI example.
+//!
+//! A surface that cannot return "verified" is not a fail-closed verifier, it is an
+//! advertisement for a check that does not exist. They are DELETED. What replaced
+//! each one already existed and is tested:
+//!
+//! | deleted | replacement |
+//! |---|---|
+//! | `verify_effect_vm_proof` (single v1 proof) | [`rotated_replay::verify_rotated_leg`] |
+//! | `replay_chain` (v1 chain) | [`rotated_replay::verify_rotated_replay_chain`] |
+//! | `replay_chain_recursive` / `verify_recursive_replay*` | same — the rotated leg IS the recursion-era unit |
+//!
+//! **What re-emits / breaks:** the `dregg-verifier` binary no longer accepts
+//! `--proof/--pi/--vk-hash`, a JSON request on stdin, `replay-chain`, or
+//! `scope-recursive`; each now prints usage and exits `ERROR` rather than pretending
+//! to check something. `demo/two-ai-handoff/charlie.py` and
+//! `demo/cross-app-e2e/verify_real.py` invoked `replay-chain` / `scope-recursive`
+//! and were already getting a rejection on every run; they must be re-pointed at
+//! `rotated-replay-chain`. Nothing persists a v1 proof; nothing needs migrating.
 
-// The v1 hand-AIR STARK surface (`EffectVmAir`, the bespoke `stark::{verify,
-// proof_from_bytes}`, the `StarkAir` width trait) is RETIRED. The single-proof and
-// replay-chain v1 entries fail closed under every config; the live replay-chain
-// verify is the rotated path (`rotated_replay`, prover-free `verifier` floor).
-// `BabyBear` stays — the rotated PI lift + the `replay_one_with_prev` u32→felt lift
-// use it on every build.
-use dregg_circuit::field::BabyBear;
 use serde::{Deserialize, Serialize};
 
 pub mod aggregated_bundle;
 pub mod bilateral_pair;
 pub mod cross_fed;
-/// Rotated replay-chain verify — the live replacement for the retired v1
-/// `replay_chain` (the v1 hand-AIR is gone). Verifies a chain of
+/// Rotated replay-chain verify — the LIVE replay-chain verify. Verifies a chain of
 /// `"effect-vm-rotated"` IR-v2 legs via the audited `verify_vm_descriptor2`.
-/// Gated on `verifier` (the PROVER-FREE verify floor): rotated VERIFY belongs on
-/// the verify floor (the seL4 verifier-PD), NOT behind the STARK prover.
-#[cfg(feature = "verifier")]
+///
+/// UNCONDITIONAL as of 2026-08-05. It used to sit behind `#[cfg(feature = "verifier")]`,
+/// a feature declared as `verifier = []` — it forwarded nothing to any dependency, so
+/// the gate never selected anything; it only decided whether the crate's one real proof
+/// verifier compiled. This is the verify floor (its code path calls no prover) and it
+/// belongs on every build, including the seL4 verifier-PD's.
 pub mod rotated_replay;
 pub use aggregated_bundle::{
     AggregatedBundleVerdict, verify_aggregated_bundle_json, verify_aggregated_bundle_struct,
 };
 pub use bilateral_pair::{
-    BilateralBundle, BilateralEntry, BilateralVerdict, fabricate_witnessed_receipt,
-    verify_bilateral_bundle, verify_bilateral_bundle_json,
+    BilateralBundle, BilateralEntry, BilateralPiAgreement, check_bilateral_pi_agreement,
+    fabricate_pi_only_witnessed_receipt,
 };
 pub use cross_fed::{
     CommitteeDescriptor, CrossFedVerdict, ValidatorDescriptor, verify_cross_fed_bundle,
 };
-#[cfg(feature = "verifier")]
 pub use rotated_replay::{
     RotatedChainOutput, RotatedReplayLeg, RotatedReplayVerdict, verify_rotated_leg,
     verify_rotated_replay_chain,
@@ -93,300 +128,8 @@ pub mod exit_code {
 }
 
 // ---------------------------------------------------------------------------
-// VK registry
+// Receipt <-> PI cross-binding (used by the rotated replay chain)
 // ---------------------------------------------------------------------------
-
-/// The Effect VM AIR name baked into all v1 proofs.
-pub const EFFECT_VM_AIR_NAME: &str = "dregg-effect-vm-v1";
-
-/// 32-byte SHA-256 of the AIR name bytes used as the VK hash for the default
-/// Effect VM circuit. Callers pass this via `--vk-hash` to select the
-/// built-in verifier.
-///
-/// Computed as: SHA-256(b"dregg-effect-vm-v1")
-pub const EFFECT_VM_VK_HASH_HEX: &str =
-    "8b80e1cf7b0a04e74e7d7bfb9c7a11e37c1d0bb1a5edae8e3b92c9e9b6d5f42a";
-
-/// Resolve a 32-byte hex VK hash to the AIR name it identifies.
-/// Returns `None` if the hash is unknown.
-pub fn resolve_vk_hash(hex_hash: &str) -> Option<&'static str> {
-    // v1: only the Effect VM is supported.
-    // We match on the canonical SHA-256, but also accept any 64-hex-char string
-    // whose value matches the Effect VM constant — callers that computed their
-    // own hash of the AIR name will still work.
-    let normalized = hex_hash.trim().to_ascii_lowercase();
-    if normalized == EFFECT_VM_VK_HASH_HEX {
-        return Some(EFFECT_VM_AIR_NAME);
-    }
-    // Also accept the literal AIR name encoded as hex (useful for testing).
-    let air_name_hex = hex::encode(EFFECT_VM_AIR_NAME);
-    if normalized == air_name_hex {
-        return Some(EFFECT_VM_AIR_NAME);
-    }
-    None
-}
-
-/// Sentinel VK hash value that instructs the verifier to auto-detect the AIR
-/// from the proof's embedded `air_name` field. Callers may pass this when they
-/// do not know (or do not care to specify) the VK hash and simply want the
-/// verifier to trust whatever AIR the proof claims — suitable for development
-/// and testing, but NOT for production use where the hash pins the circuit.
-pub const AUTO_DETECT_VK_HASH: &str = "auto";
-
-// ---------------------------------------------------------------------------
-// Core verification
-// ---------------------------------------------------------------------------
-
-/// Verify an Effect VM STARK proof.
-///
-/// Arguments (all caller-supplied, no shared state):
-/// - `proof_bytes`: serialised STARK proof as produced by `stark::proof_to_bytes`
-/// - `public_inputs`: the claimed public inputs, as `u32` values (BabyBear canonical)
-/// - `vk_hash_hex`: 64-hex-char VK hash, or `"auto"` for development use
-///
-/// Returns `VerifierOutput` and the corresponding exit code.
-///
-/// RETIRED (v1 hand-AIR): the single-proof `EffectVmAir` verify is gone. This entry
-/// fails closed on every build (honest rejection, not a silent skip) because a SINGLE
-/// v1 STARK proof has no rotated single-proof analog — the rotated unit is a chain
-/// leg, verified through [`rotated_replay::verify_rotated_replay_chain`] (the
-/// `"effect-vm-rotated"` IR-v2 legs via the audited
-/// `descriptor_ir2::verify_vm_descriptor2`).
-pub fn verify_effect_vm_proof(
-    proof_bytes: &[u8],
-    public_inputs_u32: &[u32],
-    vk_hash_hex: &str,
-) -> (VerifierOutput, i32) {
-    let _ = (proof_bytes, public_inputs_u32, vk_hash_hex);
-    (
-        VerifierOutput::reject(
-            "v1 Effect VM STARK verification is retired; verify a rotated chain via \
-             rotated_replay::verify_rotated_replay_chain instead"
-                .to_string(),
-        ),
-        exit_code::ERROR,
-    )
-}
-
-/// Parse a JSON array of `u32` values from a string.
-pub fn parse_public_inputs_json(json: &str) -> Result<Vec<u32>, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("invalid JSON: {}", e))?;
-    let arr = v.as_array().ok_or("public inputs must be a JSON array")?;
-    arr.iter()
-        .enumerate()
-        .map(|(i, x)| {
-            x.as_u64()
-                .ok_or_else(|| format!("element {} is not an unsigned integer", i))
-                .and_then(|n| {
-                    if n > u32::MAX as u64 {
-                        Err(format!("element {} value {} exceeds u32::MAX", i, n))
-                    } else {
-                        Ok(n as u32)
-                    }
-                })
-        })
-        .collect()
-}
-
-/// Parse a JSON stdin request (alternative to CLI flags).
-///
-/// Expected shape:
-/// ```json
-/// {
-///   "proof_hex": "...",
-///   "public_inputs": [u32, ...],
-///   "vk_hash": "..."
-/// }
-/// ```
-#[derive(Debug, Deserialize)]
-pub struct JsonRequest {
-    /// Hex-encoded proof bytes.
-    pub proof_hex: String,
-    /// Public inputs as an array of u32 values.
-    pub public_inputs: Vec<u32>,
-    /// VK hash (64 hex chars) or `"auto"`.
-    pub vk_hash: String,
-}
-
-impl JsonRequest {
-    pub fn parse(json: &str) -> Result<Self, String> {
-        serde_json::from_str(json).map_err(|e| format!("invalid JSON request: {}", e))
-    }
-
-    pub fn proof_bytes(&self) -> Result<Vec<u8>, String> {
-        hex::decode(&self.proof_hex).map_err(|e| format!("invalid hex in proof_hex: {}", e))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Replay-chain (WitnessedReceipt v1) — see WITNESSED-RECEIPT-CHAIN-DESIGN.md
-// ---------------------------------------------------------------------------
-//
-// The verifier crate intentionally does NOT import `dregg-turn`
-// (which is where `WitnessedReceipt` lives). To preserve that isolation
-// while still parsing the on-disk WR JSON, we declare a verifier-local
-// mirror struct that is serde-compatible with the producer's
-// `WitnessedReceipt`. Only the fields the replay loop needs are
-// deserialized; everything else (the inner `receipt`, etc.) is
-// preserved as raw JSON so the replayer can still pretty-print a verdict
-// per receipt index.
-
-/// Mirror of `dregg_turn::WitnessAvailability`. Only `Inline` is supported
-/// in v1; future variants will reject with "unwitnessable" in the verdict.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ReplayWitnessAvailability {
-    Inline,
-}
-
-/// Mirror of `dregg_turn::RecursiveProofVariant`. When present in a
-/// [`ReplayWitnessBundle`], a verifier may dispatch through
-/// [`dregg_circuit_prove::recursive_witness_bundle::verify_recursive_proof_variant`]
-/// instead of re-running the AIR over the inline trace.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ReplayRecursiveProofVariant {
-    pub proof_bytes: Vec<u8>,
-    pub public_inputs: Vec<u32>,
-    pub recursive_vk_hash: [u8; 32],
-}
-
-/// Mirror of `dregg_turn::WitnessBundle`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayWitnessBundle {
-    pub trace_rows: Vec<Vec<u32>>,
-    pub availability: ReplayWitnessAvailability,
-    /// Golden Vision recursive compression. `None` for legacy
-    /// Silver-Vision-only chains; `Some` for chains produced with
-    /// `recursive_compress = true`.
-    #[serde(default)]
-    pub recursive_proof: Option<ReplayRecursiveProofVariant>,
-}
-
-impl ReplayWitnessBundle {
-    /// BLAKE3 of postcard-serialized bundle. Must match the producer's
-    /// `WitnessBundle::witness_hash` computation byte-for-byte.
-    pub fn witness_hash(&self) -> [u8; 32] {
-        let bytes = postcard::to_allocvec(self).expect("ReplayWitnessBundle is serializable");
-        *blake3::hash(&bytes).as_bytes()
-    }
-}
-
-/// Mirror of `dregg_turn::WitnessedReceipt`. The inner `receipt` deserializes
-/// directly to `dregg_turn::TurnReceipt` (we already depend on `dregg-turn`),
-/// so the replayer can cross-check the proof's PI against the receipt's
-/// authoritative `turn_hash` and `previous_receipt_hash`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayEntry {
-    /// The full TurnReceipt this proof attests to.
-    pub receipt: dregg_turn::TurnReceipt,
-    pub proof_bytes: Vec<u8>,
-    pub public_inputs: Vec<u32>,
-    #[serde(default)]
-    pub witness_bundle: Option<ReplayWitnessBundle>,
-    pub witness_hash: [u8; 32],
-    #[serde(default)]
-    pub aggregate_membership: Option<serde_json::Value>,
-}
-
-/// Per-receipt verdict from a replay-chain run.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ReplayVerdict {
-    /// Proof verified AND (if present) the witness bundle's constraints
-    /// and witness_hash match.
-    Verified,
-    /// One of the verification steps failed; `reason` explains.
-    Rejected { reason: String },
-    /// The receipt carried no witness bundle and the proof + PI were
-    /// either malformed or rejected by the STARK verifier. Distinct from
-    /// `Rejected` only when the witness was the missing piece — i.e. a
-    /// `Sealed` / future-variant WR that the v1 replayer cannot fully
-    /// exercise. v1 produces this only when `witness_bundle` is absent
-    /// AND the proof itself was sound (so the chain is *scope-1-OK* but
-    /// not scope-2-OK).
-    Unwitnessable,
-}
-
-/// Overall chain verdict.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayChainOutput {
-    pub total: usize,
-    pub verified: usize,
-    /// 0-based index of the first WR that failed verification (None if all green).
-    pub first_failure: Option<usize>,
-    pub per_entry: Vec<ReplayVerdict>,
-    pub overall_verified: bool,
-    pub summary: String,
-}
-
-/// Run the v1 replay loop on a deserialized chain of [`ReplayEntry`].
-///
-/// Steps (per WR), matching design doc §5 / instructions:
-/// 1. Verify the STARK proof against the embedded public inputs.
-/// 2. If `witness_bundle` is `Some(Inline)`: reconstruct the trace, run
-///    `EffectVmAir::eval_constraints` on each consecutive row pair across
-///    several alphas, confirm ALL are zero.
-/// 3. Confirm BLAKE3 of the serialized bundle matches `witness_hash`.
-/// 4. (Optional structural check) `witness_hash == [0;32]` iff bundle is None.
-///
-/// Returns per-receipt verdicts and the chain-level overall.
-pub fn replay_chain(entries: &[ReplayEntry]) -> ReplayChainOutput {
-    use blake3;
-
-    let mut per_entry = Vec::with_capacity(entries.len());
-    let mut first_failure: Option<usize> = None;
-    let mut verified = 0usize;
-
-    // Pseudo-random alphas for trace constraint sampling. We use a small
-    // fixed set drawn from BabyBear's canonical interval; this gives a
-    // soundness boost over a single alpha without needing a transcript
-    // (the STARK verify already provides cryptographic soundness; the
-    // alpha sampling is a redundancy check on the witness side).
-    let alphas: [BabyBear; 4] = [
-        BabyBear::new(0xdead_beefu32 % (1u32 << 31)),
-        BabyBear::new(0x1234_5678u32),
-        BabyBear::new(0xfeed_face_u32 % (1u32 << 31)),
-        BabyBear::new(0x0bad_c0deu32),
-    ];
-
-    let mut prev_receipt_hash: Option<[u8; 32]> = None;
-    for (idx, wr) in entries.iter().enumerate() {
-        let verdict = replay_one_with_prev(wr, &alphas, prev_receipt_hash);
-        let is_ok = matches!(verdict, ReplayVerdict::Verified);
-        if is_ok {
-            verified += 1;
-        } else if first_failure.is_none() {
-            first_failure = Some(idx);
-        }
-        // The next entry's receipt.previous_receipt_hash must equal
-        // this entry's receipt_hash(). We capture the hash here regardless
-        // of verdict so a downstream mismatch surfaces a clear chain-walk
-        // rejection at the next iteration rather than leaving a gap.
-        prev_receipt_hash = Some(wr.receipt.receipt_hash());
-        per_entry.push(verdict);
-        let _ = blake3::hash(b"replay-progress"); // keep blake3 used in non-test builds
-    }
-
-    let overall_verified = first_failure.is_none();
-    let summary = if overall_verified {
-        format!("chain verified: {}/{} entries", verified, entries.len())
-    } else {
-        format!(
-            "chain rejected: {}/{} entries verified; first failure at index {}",
-            verified,
-            entries.len(),
-            first_failure.unwrap()
-        )
-    };
-
-    ReplayChainOutput {
-        total: entries.len(),
-        verified,
-        first_failure,
-        per_entry,
-        overall_verified,
-        summary,
-    }
-}
 
 /// The shortest PI vector [`check_receipt_pi_binding`] can decide, DERIVED from the
 /// highest offset the body reads rather than written down. Every offset it touches
@@ -426,6 +169,15 @@ pub const RECEIPT_PI_BINDING_MIN_LEN: usize =
 ///   receipt[N-1].receipt_hash()`); when it is `None` the receipt is the chain head
 ///   and must not claim a predecessor. Verifying a suffix requires the caller to
 ///   supply the expected prior hash.
+///
+/// ⚠ **The honest producer must FILL the slot for this to bind anything.**
+/// `dregg_turn_prover::proven_receipt` and the rotated-replay test minter both write
+/// `canonical_32_to_felts_4(turn_hash)` into `PI[TURN_HASH_BASE..+4]`.
+/// `dregg_sdk::prove_full_turn` does NOT (measured 2026-08-05: `TURN_HASH_BASE`
+/// appears nowhere in `sdk/src/full_turn_proof.rs`, and `verify_full_turn_bound`
+/// never reads `FullTurnProof::turn_hash`), so a leg minted by that path carries the
+/// zero sentinel and this comparison would refuse a receipt naming a real turn. That
+/// is a producer-side hole in the SDK, not a reason to weaken the comparison.
 ///
 /// # What is NOT compared, and why that is not a hole
 ///
@@ -515,373 +267,9 @@ pub fn check_receipt_pi_binding(
     None
 }
 
-/// Inner replay: cross-binds the proof's public inputs against the receipt
-/// fields the receipt itself authoritatively names, AND against the prior
-/// receipt's hash (chain-walk invariant).
-///
-/// `prev_receipt_hash`: when `Some`, the verifier requires
-/// `wr.receipt.previous_receipt_hash == Some(prev_receipt_hash)`. Pass
-/// `None` for the chain's head (genesis position).
-fn replay_one_with_prev(
-    wr: &ReplayEntry,
-    alphas: &[BabyBear],
-    prev_receipt_hash: Option<[u8; 32]>,
-) -> ReplayVerdict {
-    // Step 1: STARK proof verification (algebraic soundness).
-    let (proof_verdict, code) =
-        verify_effect_vm_proof(&wr.proof_bytes, &wr.public_inputs, AUTO_DETECT_VK_HASH);
-    if code != exit_code::VERIFIED {
-        return ReplayVerdict::Rejected {
-            reason: format!("STARK verify failed: {}", proof_verdict.reason),
-        };
-    }
-
-    // Step 1b: PI completeness — cross-check the proof's claimed public
-    // inputs against the receipt's authoritatively-stated turn-identity
-    // fields. Per EXECUTOR-HONESTY-AUDIT.md cross-cutting #3 and threats
-    // T8/T11, the verifier must reject a proof whose PI does not match the
-    // receipt it accompanies, even if the proof itself is algebraically
-    // sound. Without this, an executor could swap a proof for a different
-    // turn (T11) or fake the chain-walk link (T8) and the chain-level
-    // verifier would not notice.
-    if let Some(reason) =
-        check_receipt_pi_binding(&wr.receipt, &wr.public_inputs, prev_receipt_hash)
-    {
-        return ReplayVerdict::Rejected { reason };
-    }
-
-    // Step 2: trace-side replay (witness bundle).
-    let Some(bundle) = wr.witness_bundle.as_ref() else {
-        // No witness bundle attached.
-        // - witness_hash MUST be all zeros (the producer's invariant).
-        // - Otherwise the receipt claims a witness it isn't shipping →
-        //   scope-(2) cannot complete (unwitnessable).
-        if wr.witness_hash != [0u8; 32] {
-            return ReplayVerdict::Unwitnessable;
-        }
-        // No bundle, no hash claim: chain is scope-1 sound but cannot
-        // be scope-2 replayed. Returning Verified here matches the design
-        // doc's "scope-(1)-OK" semantics; surface a softer signal via
-        // Unwitnessable when callers explicitly require scope-2.
-        return ReplayVerdict::Verified;
-    };
-
-    // Availability must be Inline in v1.
-    if !matches!(bundle.availability, ReplayWitnessAvailability::Inline) {
-        return ReplayVerdict::Unwitnessable;
-    }
-
-    // Step 3: witness_hash binding check.
-    let recomputed_hash = bundle.witness_hash();
-    if recomputed_hash != wr.witness_hash {
-        return ReplayVerdict::Rejected {
-            reason: format!(
-                "witness_hash mismatch: declared={}, recomputed={}",
-                hex::encode(wr.witness_hash),
-                hex::encode(recomputed_hash)
-            ),
-        };
-    }
-
-    // Step 4: trace shape sanity.
-    let trace = &bundle.trace_rows;
-    if trace.len() < 2 {
-        return ReplayVerdict::Rejected {
-            reason: format!("trace too short: {} rows", trace.len()),
-        };
-    }
-    let width = trace[0].len();
-    if !trace.iter().all(|r| r.len() == width) {
-        return ReplayVerdict::Rejected {
-            reason: "ragged trace rows".to_string(),
-        };
-    }
-
-    // Step 5: trace_len must be power-of-two ≥ 2 (matches the AIR's invariant).
-    let trace_len = trace.len();
-    if !trace_len.is_power_of_two() {
-        return ReplayVerdict::Rejected {
-            reason: format!("trace_len {} not power-of-two", trace_len),
-        };
-    }
-
-    // Lift trace_rows (u32) → BabyBear.
-    let trace_bb: Vec<Vec<BabyBear>> = trace
-        .iter()
-        .map(|row| row.iter().map(|&v| BabyBear::new_canonical(v)).collect())
-        .collect();
-
-    // Lift public_inputs.
-    let pi_bb: Vec<BabyBear> = wr
-        .public_inputs
-        .iter()
-        .map(|&v| BabyBear::new_canonical(v))
-        .collect();
-
-    // Step 6 (RETIRED): the v1 hand-AIR (`EffectVmAir`) per-row-pair constraint replay
-    // is gone. This v1 replay-chain leg fails closed on every build; a rotated chain is
-    // verified through `rotated_replay::verify_rotated_replay_chain` (the prover-free
-    // `verifier`-floor path) instead.
-    let _ = (&trace_bb, &pi_bb, trace_len, alphas);
-    ReplayVerdict::Rejected {
-        reason: "v1 hand-AIR replay-chain verification is retired; verify a rotated chain \
-                 via rotated_replay::verify_rotated_replay_chain"
-            .to_string(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Block 3 — Optional recursive scope-2 verification mode
-// ---------------------------------------------------------------------------
-//
-// The replay loop above performs scope-2 verification by re-running
-// `EffectVmAir::eval_constraints` against every consecutive row pair of
-// the inline witness bundle. That is *trust-and-replay*: the verifier
-// re-does the prover's algebraic work locally.
-//
-// With the now-working `plonky3-recursion` path (see
-// `dregg_circuit_prove::plonky3_recursion_impl`), a producer can instead ship
-// a *recursive proof* attesting that the inner trace was valid. The
-// verifier then just runs `verify_recursive_layer` on the recursive
-// proof; no row-by-row replay needed. This trades a one-time recursive
-// proof generation (~seconds, fixed cost) for asymptotic verifier work
-// independent of trace length.
-//
-// Block 3 wires this as an **opt-in compression**: the trust-and-replay
-// path stays the default (`replay_one_with_prev` above is unchanged);
-// callers wanting the recursive-verify path call
-// `verify_recursive_replay` instead.
-//
-// The on-disk format for the recursive proof is whatever the producer
-// emits via `dregg_circuit::plonky3_verifier_air::RecursiveIvcStep::recursive_layer_bytes`
-// (postcard-encoded `BatchStarkProof<DreggRecursionConfig>`). The
-// verifier deserialises and runs `verify_recursive_layer` on it.
-
-/// Verdict for the recursive-mode scope-2 replay.
-///
-/// Distinct from [`ReplayVerdict`] because the recursion path has
-/// different failure modes (deserialisation, recursion-config mismatch,
-/// inner-proof commitment mismatch) that don't map cleanly onto the
-/// trust-and-replay vocabulary.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg(feature = "prover")]
-pub enum RecursiveReplayVerdict {
-    /// The recursive proof verified — by transitive soundness, the inner
-    /// trace satisfied the Effect VM AIR constraints.
-    Verified,
-    /// The scope-1 (per-WR STARK) verification failed; we never reached
-    /// the recursive layer.
-    InnerProofRejected { reason: String },
-    /// The recursive-layer proof bytes failed to deserialise or verify.
-    RecursiveProofRejected { reason: String },
-}
-
-/// Verify a [`ReplayEntry`] using the optional recursive scope-2 mode.
-///
-/// Steps:
-/// 1. Run the same scope-1 STARK verification + receipt-PI binding as
-///    [`replay_one`] (so a malformed scope-1 chain is rejected even when
-///    the recursive proof would otherwise verify).
-/// 2. Decode `recursive_layer_bytes` (postcard-encoded
-///    `BatchStarkProof<DreggRecursionConfig>`) and verify via
-///    [`dregg_circuit_prove::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes`].
-///
-/// Returns `Verified` only when *both* checks pass. The trust-and-replay
-/// path (`replay_one_with_prev`) remains the default; this function is
-/// only invoked when the caller explicitly opts in.
-#[cfg(feature = "prover")]
-pub fn verify_recursive_replay(
-    wr: &ReplayEntry,
-    recursive_layer_bytes: &[u8],
-    prev_receipt_hash: Option<[u8; 32]>,
-) -> RecursiveReplayVerdict {
-    use dregg_circuit_prove::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes;
-
-    // Step 1: scope-1 STARK verification.
-    let (proof_verdict, code) =
-        verify_effect_vm_proof(&wr.proof_bytes, &wr.public_inputs, AUTO_DETECT_VK_HASH);
-    if code != exit_code::VERIFIED {
-        return RecursiveReplayVerdict::InnerProofRejected {
-            reason: format!("STARK verify failed: {}", proof_verdict.reason),
-        };
-    }
-
-    // Step 1b: PI completeness — same cross-binding as the trust-replay path.
-    if let Some(reason) =
-        check_receipt_pi_binding(&wr.receipt, &wr.public_inputs, prev_receipt_hash)
-    {
-        return RecursiveReplayVerdict::InnerProofRejected { reason };
-    }
-
-    // Step 2: recursive-layer verification.
-    match verify_recursive_layer_bytes(recursive_layer_bytes) {
-        Ok(()) => RecursiveReplayVerdict::Verified,
-        Err(e) => RecursiveReplayVerdict::RecursiveProofRejected {
-            reason: format!("recursive verify failed: {e}"),
-        },
-    }
-}
-
-/// Golden Vision scope-2 replay: verify a [`ReplayEntry`] whose
-/// [`ReplayWitnessBundle::recursive_proof`] field carries a recursive
-/// proof.
-///
-/// Steps:
-/// 1. Same scope-1 STARK verification + receipt-PI binding as
-///    [`verify_recursive_replay`].
-/// 2. Pull `recursive_proof` out of the entry's witness bundle. If
-///    absent → `InnerProofRejected` ("no recursive proof attached").
-/// 3. Dispatch through
-///    [`dregg_circuit_prove::recursive_witness_bundle::verify_recursive_proof_variant`],
-///    cross-binding the variant's public inputs against the receipt's
-///    `public_inputs` (so a swapped recursive proof from a different
-///    receipt is caught).
-///
-/// Returns `Verified` only when every step passes.
-#[cfg(feature = "prover")]
-pub fn verify_recursive_replay_from_bundle(
-    wr: &ReplayEntry,
-    prev_receipt_hash: Option<[u8; 32]>,
-) -> RecursiveReplayVerdict {
-    use dregg_circuit_prove::recursive_witness_bundle::{
-        RecursiveVariantVerdict, verify_recursive_proof_variant,
-    };
-
-    // Step 1: scope-1 STARK verification (algebraic soundness).
-    let (proof_verdict, code) =
-        verify_effect_vm_proof(&wr.proof_bytes, &wr.public_inputs, AUTO_DETECT_VK_HASH);
-    if code != exit_code::VERIFIED {
-        return RecursiveReplayVerdict::InnerProofRejected {
-            reason: format!("STARK verify failed: {}", proof_verdict.reason),
-        };
-    }
-
-    // Step 1b: PI completeness — same cross-binding as the trust-replay path.
-    if let Some(reason) =
-        check_receipt_pi_binding(&wr.receipt, &wr.public_inputs, prev_receipt_hash)
-    {
-        return RecursiveReplayVerdict::InnerProofRejected { reason };
-    }
-
-    // Step 2: pull the recursive proof out of the bundle.
-    let Some(bundle) = wr.witness_bundle.as_ref() else {
-        return RecursiveReplayVerdict::InnerProofRejected {
-            reason: "no witness bundle attached; recursive replay needs one".to_string(),
-        };
-    };
-    let Some(rp) = bundle.recursive_proof.as_ref() else {
-        return RecursiveReplayVerdict::InnerProofRejected {
-            reason: "witness bundle has no recursive_proof; this WR was produced \
-                     without recursive_compress = true"
-                .to_string(),
-        };
-    };
-
-    // Step 3: dispatch through the circuit-crate verifier, cross-binding
-    // the recursive variant's PI against the receipt's authoritative PI.
-    let verdict = verify_recursive_proof_variant(
-        &rp.proof_bytes,
-        &rp.public_inputs,
-        &rp.recursive_vk_hash,
-        Some(&wr.public_inputs),
-    );
-
-    match verdict {
-        RecursiveVariantVerdict::Verified => RecursiveReplayVerdict::Verified,
-        RecursiveVariantVerdict::UnknownVkHash { hash } => {
-            RecursiveReplayVerdict::RecursiveProofRejected {
-                reason: format!("unknown recursive_vk_hash: {}", hex::encode(hash)),
-            }
-        }
-        RecursiveVariantVerdict::PublicInputsTooShort { have, need } => {
-            RecursiveReplayVerdict::RecursiveProofRejected {
-                reason: format!("recursive variant PI too short: have {have}, need {need}"),
-            }
-        }
-        RecursiveVariantVerdict::PublicInputsMismatch { reason } => {
-            RecursiveReplayVerdict::RecursiveProofRejected {
-                reason: format!("recursive variant PI mismatch: {reason}"),
-            }
-        }
-        RecursiveVariantVerdict::ProofRejected { reason } => {
-            RecursiveReplayVerdict::RecursiveProofRejected {
-                reason: format!("recursive proof rejected: {reason}"),
-            }
-        }
-    }
-}
-
-/// Chain-level Golden Vision replay: run
-/// [`verify_recursive_replay_from_bundle`] over a slice of entries,
-/// honoring the chain-walk invariant.
-#[cfg(feature = "prover")]
-pub fn replay_chain_recursive(entries: &[ReplayEntry]) -> ReplayChainOutput {
-    let mut per_entry = Vec::with_capacity(entries.len());
-    let mut first_failure: Option<usize> = None;
-    let mut verified = 0usize;
-
-    let mut prev_receipt_hash: Option<[u8; 32]> = None;
-    for (idx, wr) in entries.iter().enumerate() {
-        let r = verify_recursive_replay_from_bundle(wr, prev_receipt_hash);
-        let v = match &r {
-            RecursiveReplayVerdict::Verified => ReplayVerdict::Verified,
-            RecursiveReplayVerdict::InnerProofRejected { reason } => ReplayVerdict::Rejected {
-                reason: format!("inner: {reason}"),
-            },
-            RecursiveReplayVerdict::RecursiveProofRejected { reason } => ReplayVerdict::Rejected {
-                reason: format!("recursive: {reason}"),
-            },
-        };
-        let is_ok = matches!(v, ReplayVerdict::Verified);
-        if is_ok {
-            verified += 1;
-        } else if first_failure.is_none() {
-            first_failure = Some(idx);
-        }
-        prev_receipt_hash = Some(wr.receipt.receipt_hash());
-        per_entry.push(v);
-    }
-
-    let overall_verified = first_failure.is_none();
-    let summary = if overall_verified {
-        format!(
-            "recursive chain verified: {}/{} entries",
-            verified,
-            entries.len()
-        )
-    } else {
-        format!(
-            "recursive chain rejected: {}/{} entries verified; first failure at index {}",
-            verified,
-            entries.len(),
-            first_failure.unwrap()
-        )
-    };
-
-    ReplayChainOutput {
-        total: entries.len(),
-        verified,
-        first_failure,
-        per_entry,
-        overall_verified,
-        summary,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ---- replay-chain v1 -------------------------------------------------
-
-    #[test]
-    fn replay_chain_empty_is_verified() {
-        let out = replay_chain(&[]);
-        assert!(out.overall_verified);
-        assert_eq!(out.total, 0);
-        assert_eq!(out.verified, 0);
-        assert!(out.first_failure.is_none());
-    }
 
     fn sample_receipt() -> dregg_turn::TurnReceipt {
         dregg_turn::TurnReceipt {
@@ -906,102 +294,6 @@ mod tests {
             was_burn: false,
             consumed_capabilities: vec![],
         }
-    }
-
-    #[test]
-    fn replay_chain_detects_witness_hash_tamper() {
-        // Build a WR-shaped entry where the bundle is present but the
-        // declared witness_hash is wrong. The proof step rejects first
-        // because we use empty proof_bytes — but the structural check
-        // still demonstrates the verdict shape is wired.
-        let bundle = ReplayWitnessBundle {
-            trace_rows: vec![vec![0u32; 4]; 4],
-            availability: ReplayWitnessAvailability::Inline,
-            recursive_proof: None,
-        };
-        let entry = ReplayEntry {
-            receipt: sample_receipt(),
-            proof_bytes: vec![],
-            public_inputs: vec![],
-            witness_bundle: Some(bundle),
-            witness_hash: [0xFFu8; 32], // wrong
-            aggregate_membership: None,
-        };
-        let out = replay_chain(&[entry]);
-        assert!(!out.overall_verified);
-        assert_eq!(out.first_failure, Some(0));
-    }
-
-    /// Empty proof bytes with no bundle → `Rejected` (STARK step fails first),
-    /// NOT `Unwitnessable`. The `Unwitnessable` verdict is only reachable when
-    /// the STARK proof is valid and the witness bundle is absent with a non-zero
-    /// `witness_hash`. Constructing a valid proof in unit tests requires the full
-    /// prover stack; that path is exercised by the integration-test replay harness.
-    #[test]
-    fn replay_chain_empty_proof_bytes_is_rejected_not_unwitnessable() {
-        // No bundle, witness_hash zero, no proof → STARK verify rejects
-        // first (empty proof bytes). Verdict must be Rejected, not Unwitnessable.
-        let entry = ReplayEntry {
-            receipt: sample_receipt(),
-            proof_bytes: vec![],
-            public_inputs: vec![],
-            witness_bundle: None,
-            witness_hash: [0u8; 32],
-            aggregate_membership: None,
-        };
-        let out = replay_chain(&[entry]);
-        assert!(!out.overall_verified);
-        assert_eq!(out.first_failure, Some(0));
-        assert!(
-            matches!(out.per_entry[0], ReplayVerdict::Rejected { .. }),
-            "empty proof bytes must produce Rejected, not Unwitnessable: {:?}",
-            out.per_entry[0]
-        );
-    }
-
-    /// Direct exercise of the `Unwitnessable` branch: a non-zero `witness_hash`
-    /// with no bundle fires `Unwitnessable` when the STARK step would otherwise
-    /// pass. We reach this by bypassing `replay_chain` and calling the inner
-    /// function directly (same crate, so private access is allowed in tests).
-    ///
-    /// We supply a bundle-less entry where `witness_hash != [0; 32]` and fake
-    /// proof bytes that DO NOT satisfy STARK verification — then assert that the
-    /// first rejection is via STARK (Rejected), not Unwitnessable. This confirms
-    /// the ordering: STARK check precedes the bundle check.
-    ///
-    /// The test also directly invokes `replay_one_with_prev` with mocked alphas
-    /// to validate the Unwitnessable verdict shape on the bundle-absent path when
-    /// STARK would hypothetically pass. Because we cannot generate a real proof
-    /// in a unit test, we document the structural guarantee instead:
-    ///
-    /// Code path: `replay_one_with_prev` line ~597 checks `witness_hash != [0;32]`
-    /// ONLY after the STARK step passes. The test below confirms that without
-    /// a valid proof, the verdict is always `Rejected` — not `Unwitnessable`.
-    /// The `Unwitnessable` branch is integration-tested in the demo replay harness.
-    #[test]
-    fn replay_chain_nonzero_witness_hash_no_bundle_produces_rejected_not_unwitnessable() {
-        // non-zero witness_hash, no bundle, empty proof → STARK rejects first
-        // so verdict is Rejected, not Unwitnessable. This confirms the branch
-        // ordering: STARK always runs before the bundle availability check.
-        let entry = ReplayEntry {
-            receipt: sample_receipt(),
-            proof_bytes: vec![],
-            public_inputs: vec![],
-            witness_bundle: None,
-            witness_hash: [0xABu8; 32], // non-zero: would trigger Unwitnessable if STARK passed
-            aggregate_membership: None,
-        };
-        let out = replay_chain(&[entry]);
-        assert!(!out.overall_verified);
-        assert_eq!(out.first_failure, Some(0));
-        // Must be Rejected (STARK failed), NOT Unwitnessable.
-        // If this ever becomes Unwitnessable, it means empty proof bytes
-        // started passing STARK verification — a major regression.
-        assert!(
-            matches!(out.per_entry[0], ReplayVerdict::Rejected { .. }),
-            "with empty proof bytes the verdict must be Rejected even when witness_hash is non-zero: {:?}",
-            out.per_entry[0]
-        );
     }
 
     // ---- PI completeness adversarial tests (EXECUTOR-HONESTY-AUDIT #3) ----
@@ -1140,53 +432,5 @@ mod tests {
             check_receipt_pi_binding(&r, &exact, None).is_none(),
             "exactly the offsets the body reads must be enough to DECIDE"
         );
-    }
-
-    // (The v1 hand-AIR `EffectVmAir` short-PI / balance-limb rejection tests were
-    // retired with the v1 single-proof verify — that entry now fails closed on every
-    // build, so there is no v1 proof to construct here.)
-
-    // ---- scope-recursive subcommand wiring tests (Golden Vision Block 3) ----
-
-    /// `verify_recursive_replay_from_bundle` must reject when the entry has
-    /// no `witness_bundle` at all — there is nothing to recursively verify.
-    #[test]
-    fn recursive_replay_rejects_missing_witness_bundle() {
-        let entry = ReplayEntry {
-            receipt: sample_receipt(),
-            proof_bytes: vec![],
-            public_inputs: vec![],
-            witness_bundle: None,
-            witness_hash: [0u8; 32],
-            aggregate_membership: None,
-        };
-        let verdict = verify_recursive_replay_from_bundle(&entry, None);
-        // Scope-1 fails first (empty proof bytes), so we land in
-        // InnerProofRejected before ever consulting the bundle.
-        match verdict {
-            RecursiveReplayVerdict::InnerProofRejected { .. } => {}
-            other => panic!("expected InnerProofRejected; got {:?}", other),
-        }
-    }
-
-    /// `verify_recursive_replay_from_bundle` must reject when the bundle is
-    /// present but lacks a `recursive_proof` — the WR was produced
-    /// without `recursive_compress = true`, so it can be replayed via the
-    /// trust-and-replay path (`replay_chain`) but not via the recursive
-    /// path. The verdict surface lets the caller redirect to the Silver
-    /// Vision path.
-    ///
-    /// In this test scope-1 still fails first (empty proof bytes), so we
-    /// land in InnerProofRejected. The interesting positive case (scope-1
-    /// passes, then we see "no recursive_proof") is exercised by the
-    /// integration path; here we just confirm the verdict shape.
-    #[test]
-    fn recursive_replay_chain_runs_over_empty_input() {
-        let out = replay_chain_recursive(&[]);
-        assert!(out.overall_verified);
-        assert_eq!(out.total, 0);
-        assert_eq!(out.verified, 0);
-        assert!(out.first_failure.is_none());
-        assert!(out.summary.contains("recursive"));
     }
 }

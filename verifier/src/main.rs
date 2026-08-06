@@ -1,175 +1,143 @@
-//! `dregg-verifier`: Standalone Effect VM proof verifier.
+//! `dregg-verifier`: the standalone proof verifier.
 //!
 //! # Usage
 //!
-//! ## CLI mode
 //! ```text
-//! dregg-verifier \
-//!   --proof /path/to/proof.bin \
-//!   --pi /path/to/pi.json \
-//!   --vk-hash 8b80e1cf7b0a04e74e7d7bfb9c7a11e37c1d0bb1a5edae8e3b92c9e9b6d5f42a
-//! ```
-//!
-//! ## stdin (JSON) mode
-//! ```text
-//! echo '{"proof_hex":"...","public_inputs":[...],"vk_hash":"auto"}' | dregg-verifier
+//! dregg-verifier rotated-replay-chain <request.json>
+//! dregg-verifier verify-cross-fed-bundle --bundle <path> \
+//!                                        --known-issuer <path> \
+//!                                        --known-recipient <path>
+//! dregg-verifier aggregated-bundle <bundle.json>
 //! ```
 //!
 //! ## Exit codes
-//! - 0 — proof verified
-//! - 1 — proof rejected (cryptographically invalid)
-//! - 2 — error (bad inputs, unknown VK, deserialisation failure)
+//! - 0 — verified
+//! - 1 — rejected (cryptographically invalid, or a binding did not hold)
+//! - 2 — error (bad inputs, unknown subcommand, deserialisation failure)
+//!
+//! # ⚑ FLAG DAY 2026-08-05 — four surfaces DELETED, not retired
+//!
+//! This binary used to advertise seven entry points. Five of them could not return
+//! "verified" for any input, because each one bottomed out in `verify_effect_vm_proof`,
+//! a stub that returned `exit_code::ERROR` unconditionally. A check that cannot pass is
+//! not fail-closed caution, it is an advertisement for a check that does not exist, and
+//! a reader trusts it. So:
+//!
+//! | deleted | why | what to use |
+//! |---|---|---|
+//! | the bare `--proof/--pi/--vk-hash` mode | always exit 2 | `rotated-replay-chain` |
+//! | the JSON-on-stdin mode | always exit 2 | `rotated-replay-chain` |
+//! | `replay-chain` | v1 hand-AIR; rejected every entry | `rotated-replay-chain` |
+//! | `scope-recursive` | same, via the recursion tower | `rotated-replay-chain` |
+//! | `bilateral-pair` / `bilateral-bundle` | verified NO proof: it printed `verified: true` over `WitnessedReceipt`s carrying `proof_bytes: []`, which is what this crate's own fabricator produces | nothing — the PI-agreement algebra survives as a library call (`check_bilateral_pi_agreement`), named for what it does |
+//!
+//! The `--vk-hash` flag's documented example value was
+//! `8b80e1cf7b0a04e74e7d7bfb9c7a11e37c1d0bb1a5edae8e3b92c9e9b6d5f42a`, described as
+//! `SHA-256(b"dregg-effect-vm-v1")`. That digest is actually
+//! `0942b5f2a4ecb7d78aaff908fc605257cb2a31b55b722561f330a8f8ff3c87f3`. The constant was
+//! invented and the derivation note was wrong; both are gone with the flag.
+//!
+//! The `cross-fed` and `aggregate-bilateral` aliases are also gone (zero callers; two
+//! spellings that agree today are two spellings that disagree later).
+//!
+//! **Who this breaks:** `demo/two-ai-handoff/charlie.py` spawns `replay-chain`,
+//! `bilateral-pair` and `scope-recursive`; `demo/cross-app-e2e/verify_real.py` spawns
+//! `replay-chain`. All four invocations were already receiving a rejection on every
+//! run. They now get usage + exit 2 and must be re-pointed at `rotated-replay-chain`.
 //!
 //! # Isolation guarantee
-//! This binary imports ONLY `dregg-circuit` and `dregg-types`. It carries no
-//! prover state, no ledger, no executor, no program registry. The only
-//! dependencies on shared context are the bytes it reads from disk / stdin.
+//! This binary carries no prover state, no ledger, no executor, and no program
+//! registry. The only dependencies on shared context are the bytes it reads from disk.
+//!
+//! ⚠ It DOES still LINK a prover, and this note exists so nobody reads the sentence
+//! above as saying otherwise. `dregg-turn-prover` is an unconditional dependency (the
+//! `aggregated-bundle` subcommand's type + verifier live there) and it pulls
+//! `dregg-circuit-prove` at depth 2 — measured 2026-08-05 with `cargo tree`. Deleting
+//! this crate's own `prover` feature and direct `dregg-circuit-prove` edge removed a
+//! knob, not the tower. No verify path calls into it; the linkage is real anyway.
 
-#[cfg(feature = "prover")]
-use dregg_verifier::replay_chain_recursive;
 use dregg_verifier::{
-    CommitteeDescriptor, JsonRequest, ReplayEntry, VerifierOutput, exit_code,
-    parse_public_inputs_json, replay_chain, verify_aggregated_bundle_json,
-    verify_bilateral_bundle_json, verify_cross_fed_bundle, verify_effect_vm_proof,
+    CommitteeDescriptor, exit_code, verify_aggregated_bundle_json, verify_cross_fed_bundle,
 };
-use std::{
-    env,
-    io::{self, Read},
-    process,
-};
+use std::{env, io, process};
+
+const USAGE: &str = "\
+Usage:
+  dregg-verifier rotated-replay-chain <request.json>
+  dregg-verifier verify-cross-fed-bundle --bundle <path> --known-issuer <path> \
+--known-recipient <path>
+  dregg-verifier aggregated-bundle <bundle.json>
+
+Exit codes: 0 = verified, 1 = rejected, 2 = error.";
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    // Subcommand dispatch.
-    if args.len() >= 2 && args[1] == "replay-chain" {
-        run_replay_chain(&args[2..]);
-    }
-    #[cfg(feature = "prover")]
-    if args.len() >= 2 && args[1] == "scope-recursive" {
-        run_scope_recursive(&args[2..]);
-    }
-    #[cfg(feature = "verifier")]
-    if args.len() >= 2 && args[1] == "rotated-replay-chain" {
-        run_rotated_replay_chain(&args[2..]);
-    }
-    if args.len() >= 2 && (args[1] == "verify-cross-fed-bundle" || args[1] == "cross-fed") {
-        run_verify_cross_fed_bundle(&args[2..]);
-    }
-    if args.len() >= 2 && (args[1] == "bilateral-pair" || args[1] == "bilateral-bundle") {
-        run_bilateral_pair(&args[2..]);
-    }
-    if args.len() >= 2 && (args[1] == "aggregated-bundle" || args[1] == "aggregate-bilateral") {
-        run_aggregated_bundle(&args[2..]);
-    }
-
-    // Detect JSON-stdin mode: no args, or stdin is not a tty.
-    // We use the simple heuristic: if no flags given, read stdin.
-    let (proof_bytes, pi_u32, vk_hash) = if args.len() == 1 {
-        match read_json_stdin() {
-            Ok(t) => t,
-            Err(e) => {
-                let out = VerifierOutput::reject(format!("stdin read error: {}", e));
-                print_and_exit(out, exit_code::ERROR);
-            }
-        }
-    } else {
-        match parse_cli(&args[1..]) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("Usage: dregg-verifier --proof <file> --pi <file> --vk-hash <hex>");
-                eprintln!("       dregg-verifier  (reads JSON from stdin)");
-                eprintln!("Error: {}", e);
-                process::exit(exit_code::ERROR);
-            }
-        }
-    };
-
-    let (output, code) = verify_effect_vm_proof(&proof_bytes, &pi_u32, &vk_hash);
-    print_and_exit(output, code);
-}
-
-fn print_and_exit(output: VerifierOutput, code: i32) -> ! {
-    let json = serde_json::to_string(&output)
-        .unwrap_or_else(|_| r#"{"verified":false,"reason":"serialisation error"}"#.to_string());
-    println!("{}", json);
-    process::exit(code);
-}
-
-// ---------------------------------------------------------------------------
-// CLI argument parsing (no external parser dep)
-// ---------------------------------------------------------------------------
-
-fn parse_cli(args: &[String]) -> Result<(Vec<u8>, Vec<u32>, String), String> {
-    let mut proof_path: Option<&str> = None;
-    let mut pi_path: Option<&str> = None;
-    let mut vk_hash: Option<&str> = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--proof" => {
-                i += 1;
-                proof_path = Some(args.get(i).ok_or("--proof requires a value")?);
-            }
-            "--pi" => {
-                i += 1;
-                pi_path = Some(args.get(i).ok_or("--pi requires a value")?);
-            }
-            "--vk-hash" => {
-                i += 1;
-                vk_hash = Some(args.get(i).ok_or("--vk-hash requires a value")?);
-            }
-            other => return Err(format!("unknown flag: {}", other)),
-        }
-        i += 1;
-    }
-
-    let proof_path = proof_path.ok_or("--proof is required")?;
-    let pi_path = pi_path.ok_or("--pi is required")?;
-    let vk_hash = vk_hash.ok_or("--vk-hash is required")?;
-
-    let proof_bytes =
-        std::fs::read(proof_path).map_err(|e| format!("cannot read proof file: {}", e))?;
-    let pi_json =
-        std::fs::read_to_string(pi_path).map_err(|e| format!("cannot read pi file: {}", e))?;
-    let pi_u32 = parse_public_inputs_json(&pi_json)?;
-
-    Ok((proof_bytes, pi_u32, vk_hash.to_string()))
-}
-
-// ---------------------------------------------------------------------------
-// JSON stdin mode
-// ---------------------------------------------------------------------------
-
-fn read_json_stdin() -> Result<(Vec<u8>, Vec<u32>, String), String> {
-    let mut buf = String::new();
-    io::stdin()
-        .read_to_string(&mut buf)
-        .map_err(|e| format!("stdin read error: {}", e))?;
-    let req = JsonRequest::parse(&buf)?;
-    let proof_bytes = req.proof_bytes()?;
-    Ok((proof_bytes, req.public_inputs, req.vk_hash))
-}
-
-// ---------------------------------------------------------------------------
-// replay-chain subcommand
-// ---------------------------------------------------------------------------
-
-/// `dregg-verifier replay-chain <path-to-chain.json>`
-///
-/// Reads a JSON array of `WitnessedReceipt` entries (the on-disk shape
-/// produced by `dregg_turn::WitnessedReceipt::chain_to_json`), runs the
-/// v1 replay loop (proof verify + trace re-check + witness_hash binding),
-/// and prints a JSON verdict object. Exit code matches the chain-level
-/// verdict (0 = all verified, 1 = at least one rejection, 2 = read/parse error).
-fn run_replay_chain(args: &[String]) -> ! {
-    let path = match args.first() {
-        Some(p) => p,
-        None => {
-            eprintln!("Usage: dregg-verifier replay-chain <path-to-chain.json>");
+    match args.get(1).map(String::as_str) {
+        Some("rotated-replay-chain") => run_rotated_replay_chain(&args[2..]),
+        Some("verify-cross-fed-bundle") => run_verify_cross_fed_bundle(&args[2..]),
+        Some("aggregated-bundle") => run_aggregated_bundle(&args[2..]),
+        Some(other) => {
+            eprintln!("unknown subcommand: {other}");
+            eprintln!("{USAGE}");
             process::exit(exit_code::ERROR);
         }
+        None => {
+            eprintln!("{USAGE}");
+            process::exit(exit_code::ERROR);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// rotated-replay-chain subcommand (the verify floor: no verify path here calls a prover)
+// ---------------------------------------------------------------------------
+
+/// On-disk request for the rotated replay-chain verify: the chained
+/// `"effect-vm-rotated"` legs plus the caller's trusted pre/post commitments.
+#[derive(serde::Deserialize)]
+struct RotatedReplayRequest {
+    /// The rotated legs in chain order (`s0 → s1 → … → sN`).
+    legs: Vec<dregg_verifier::RotatedReplayLeg>,
+    /// The turn's pre-state commitment as the 8-felt (~124-bit) anchor: eight canonical
+    /// BabyBear `u32` lanes. The first leg's before-anchor must match.
+    expected_old_commit: [u32; 8],
+    /// The turn's post-state commitment as the 8-felt anchor. The last leg's
+    /// after-anchor must match.
+    expected_new_commit: [u32; 8],
+}
+
+/// `dregg-verifier rotated-replay-chain <path-to-request.json>`
+///
+/// Reads `{ "legs": [..], "expected_old_commit": [u32; 8], "expected_new_commit": [u32; 8] }`
+/// and runs the ROTATED replay-chain verify. Each leg is an `"effect-vm-rotated"` IR-v2
+/// batch proof verified SELECTOR-BOUND via the audited `verify_vm_descriptor2` against
+/// the committed WIDE / welded-wide / bare-V3 registries; the chain's endpoints and
+/// interior adjacency are then checked against the caller's commitments at each leg's
+/// TRUE width, and each leg is bound to the `TurnReceipt` it attests.
+///
+/// ⚑ FLAG DAY (2026-07-27): each leg object REQUIRES a `"receipt"` field (a serialized
+/// `dregg_turn::TurnReceipt`). A request written before that date has no `receipt` on
+/// its legs and REFUSES TO LOAD — deliberately, and with a parse error rather than a
+/// silent verify: the field's absence used to mean "this chain's proofs are bound to no
+/// receipt at all".
+///
+/// ⚑ FLAG DAY (2026-08-05): `expected_old_commit` / `expected_new_commit` are now
+/// 8-element arrays, not single integers. Reading a WIDE leg's ~124-bit anchor at its
+/// ~31-bit slot-0 position is the defect the SDK's `vk_hash_is_wide` exists to prevent,
+/// and this floor now accepts WIDE legs, so it must speak the wide anchor. A request in
+/// the old single-integer shape REFUSES TO LOAD. Nothing persists these requests;
+/// re-emit them from the producer. A genuinely narrow (1-felt) expectation is written
+/// `[felt, 0, 0, 0, 0, 0, 0, 0]`, which is exactly how a narrow leg publishes it.
+///
+/// Exit code: 0 = chain verified, 1 = at least one rejection, 2 = read/parse error.
+fn run_rotated_replay_chain(args: &[String]) -> ! {
+    use dregg_circuit::field::BabyBear;
+    use dregg_verifier::verify_rotated_replay_chain;
+
+    let Some(path) = args.first() else {
+        eprintln!("Usage: dregg-verifier rotated-replay-chain <path-to-request.json>");
+        process::exit(exit_code::ERROR);
     };
 
     let text = match std::fs::read_to_string(path) {
@@ -180,15 +148,24 @@ fn run_replay_chain(args: &[String]) -> ! {
         }
     };
 
-    let entries: Vec<ReplayEntry> = match serde_json::from_str(&text) {
-        Ok(v) => v,
+    let req: RotatedReplayRequest = match serde_json::from_str(&text) {
+        Ok(r) => r,
         Err(e) => {
-            eprintln!("cannot parse chain JSON: {}", e);
+            eprintln!("cannot parse rotated-replay-chain request JSON: {}", e);
+            eprintln!(
+                "note: `expected_old_commit` / `expected_new_commit` are 8-element arrays of \
+                 canonical u32 BabyBear lanes as of 2026-08-05; a single integer no longer parses."
+            );
             process::exit(exit_code::ERROR);
         }
     };
 
-    let output = replay_chain(&entries);
+    let lift = |lanes: [u32; 8]| lanes.map(BabyBear::new_canonical);
+    let output = verify_rotated_replay_chain(
+        &req.legs,
+        lift(req.expected_old_commit),
+        lift(req.expected_new_commit),
+    );
     let json = serde_json::to_string_pretty(&output).unwrap_or_else(|_| {
         r#"{"overall_verified":false,"summary":"serialisation error"}"#.to_string()
     });
@@ -208,12 +185,11 @@ fn run_replay_chain(args: &[String]) -> ! {
 
 /// `dregg-verifier verify-cross-fed-bundle --bundle <path> --known-issuer <path> --known-recipient <path>`
 ///
-/// Reads a JSON-encoded `dregg_federation::CrossFedReceiptBundle` and two
-/// committee descriptors (issuing + receiving federation), runs the 8-step
-/// cross-federation verification from `SILVER-VISION-E2E-VERIFICATION.md`
-/// §1 Step 6, and prints a `CrossFedVerdict` JSON to stdout. Exit code
-/// matches the verdict (0 = overall_verified, 1 = at least one check
-/// failed, 2 = parse / IO error).
+/// Reads a JSON-encoded `dregg_federation::CrossFedReceiptBundle` and two committee
+/// descriptors (issuing + receiving federation), runs the cross-federation
+/// verification from `SILVER-VISION-E2E-VERIFICATION.md` §1 Step 6, and prints a
+/// `CrossFedVerdict` JSON to stdout. Exit code matches the verdict (0 =
+/// overall_verified, 1 = at least one check failed, 2 = parse / IO error).
 fn run_verify_cross_fed_bundle(args: &[String]) -> ! {
     let mut bundle_path: Option<String> = None;
     let mut issuer_path: Option<String> = None;
@@ -244,26 +220,17 @@ fn run_verify_cross_fed_bundle(args: &[String]) -> ! {
         }
         i += 1;
     }
-    let bundle_path = match bundle_path {
-        Some(p) => p,
-        None => {
-            eprintln!("--bundle is required");
-            process::exit(exit_code::ERROR);
-        }
+    let Some(bundle_path) = bundle_path else {
+        eprintln!("--bundle is required");
+        process::exit(exit_code::ERROR);
     };
-    let issuer_path = match issuer_path {
-        Some(p) => p,
-        None => {
-            eprintln!("--known-issuer is required");
-            process::exit(exit_code::ERROR);
-        }
+    let Some(issuer_path) = issuer_path else {
+        eprintln!("--known-issuer is required");
+        process::exit(exit_code::ERROR);
     };
-    let recipient_path = match recipient_path {
-        Some(p) => p,
-        None => {
-            eprintln!("--known-recipient is required");
-            process::exit(exit_code::ERROR);
-        }
+    let Some(recipient_path) = recipient_path else {
+        eprintln!("--known-recipient is required");
+        process::exit(exit_code::ERROR);
     };
 
     let bundle_text = match std::fs::read_to_string(&bundle_path) {
@@ -314,225 +281,20 @@ fn run_verify_cross_fed_bundle(args: &[String]) -> ! {
 }
 
 // ---------------------------------------------------------------------------
-// bilateral-pair subcommand (Stage 7-γ.2 Phase 1)
-// ---------------------------------------------------------------------------
-
-/// `dregg-verifier bilateral-pair <bundle.json>`
-///
-/// Reads a JSON-encoded `BilateralBundle` (the on-disk shape produced by
-/// `dregg_verifier::BilateralBundle`), runs the off-AIR bilateral
-/// cross-cell consistency check from `STAGE-7-GAMMA-2-PI-DESIGN.md` §4,
-/// and prints a `BilateralVerdict` JSON to stdout.
-///
-/// Exit code: 0 = verified, 1 = rejected, 2 = read / parse error.
-///
-/// The bundle JSON shape:
-/// ```json
-/// {
-///   "turn": <Turn>,
-///   "entries": [
-///     {"cell_id": "<32-byte hex>", "witnessed_receipt": <WitnessedReceipt>},
-///     ...
-///   ]
-/// }
-/// ```
-fn run_bilateral_pair(args: &[String]) -> ! {
-    let path = match args.first() {
-        Some(p) => p,
-        None => {
-            eprintln!("Usage: dregg-verifier bilateral-pair <bundle.json>");
-            process::exit(exit_code::ERROR);
-        }
-    };
-
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("cannot read {}: {}", path, e);
-            process::exit(exit_code::ERROR);
-        }
-    };
-
-    let verdict = verify_bilateral_bundle_json(&text);
-    let json = serde_json::to_string_pretty(&verdict)
-        .unwrap_or_else(|_| r#"{"verified":false,"reason":"serialisation error"}"#.to_string());
-    println!("{}", json);
-    let code = if verdict.verified {
-        exit_code::VERIFIED
-    } else {
-        exit_code::REJECTED
-    };
-    process::exit(code);
-}
-
-// ---------------------------------------------------------------------------
-// scope-recursive subcommand (Golden Vision Block 3)
-// ---------------------------------------------------------------------------
-
-/// `dregg-verifier scope-recursive <path-to-chain.json>` or
-/// `dregg-verifier scope-recursive <path-to-wr.json>` (single entry)
-///
-/// Reads either a JSON array of `WitnessedReceipt`s or a single object,
-/// runs the **Golden Vision** scope-2 replay loop (verify the recursive
-/// proof attached to each WR's witness_bundle instead of re-running the
-/// AIR over the inline trace), and prints a JSON verdict.
-///
-/// A WR may be produced with a recursive proof via
-/// `WitnessedReceipt::from_components_with_compression(.., recursive_compress: true)`
-/// or `WitnessedReceipt::from_components_strict_recursive(..)`.
-///
-/// Exit code: 0 = all verified, 1 = at least one rejection, 2 = read /
-/// parse error.
-///
-/// If a WR carries no `recursive_proof`, it is rejected by this
-/// subcommand — fall back to `replay-chain` (Silver Vision) for those.
-#[cfg(feature = "prover")]
-fn run_scope_recursive(args: &[String]) -> ! {
-    let path = match args.first() {
-        Some(p) => p,
-        None => {
-            eprintln!("Usage: dregg-verifier scope-recursive <path-to-chain.json>");
-            process::exit(exit_code::ERROR);
-        }
-    };
-
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("cannot read {}: {}", path, e);
-            process::exit(exit_code::ERROR);
-        }
-    };
-
-    // Accept either a single ReplayEntry or an array of them.
-    let entries: Vec<ReplayEntry> = match serde_json::from_str::<Vec<ReplayEntry>>(&text) {
-        Ok(v) => v,
-        Err(_) => match serde_json::from_str::<ReplayEntry>(&text) {
-            Ok(single) => vec![single],
-            Err(e) => {
-                eprintln!(
-                    "cannot parse {} as a ReplayEntry array or single ReplayEntry: {}",
-                    path, e
-                );
-                process::exit(exit_code::ERROR);
-            }
-        },
-    };
-
-    let output = replay_chain_recursive(&entries);
-    let json = serde_json::to_string_pretty(&output).unwrap_or_else(|_| {
-        r#"{"overall_verified":false,"summary":"serialisation error"}"#.to_string()
-    });
-    println!("{}", json);
-
-    let code = if output.overall_verified {
-        exit_code::VERIFIED
-    } else {
-        exit_code::REJECTED
-    };
-    process::exit(code);
-}
-
-// ---------------------------------------------------------------------------
-// rotated-replay-chain subcommand (the prover-free `verifier` floor — the live
-// replacement for the retired v1 replay-chain)
-// ---------------------------------------------------------------------------
-
-/// On-disk request for the rotated replay-chain verify: the chained
-/// `"effect-vm-rotated"` legs plus the caller's trusted pre/post commitments.
-#[cfg(feature = "verifier")]
-#[derive(serde::Deserialize)]
-struct RotatedReplayRequest {
-    /// The rotated legs in chain order (`s0 → s1 → … → sN`).
-    legs: Vec<dregg_verifier::RotatedReplayLeg>,
-    /// The turn's pre-state commitment (canonical BabyBear `u32`) the first leg's
-    /// `OLD_COMMIT` must match.
-    expected_old_commit: u32,
-    /// The turn's post-state commitment (canonical BabyBear `u32`) the last leg's
-    /// `NEW_COMMIT` must match.
-    expected_new_commit: u32,
-}
-
-/// `dregg-verifier rotated-replay-chain <path-to-request.json>`
-///
-/// Reads `{ "legs": [..], "expected_old_commit": u32, "expected_new_commit": u32 }`
-/// and runs the ROTATED replay-chain verify (the live replacement for the retired
-/// v1 `replay-chain` subcommand — the v1 hand-AIR is gone). Each leg is an
-/// `"effect-vm-rotated"` IR-v2 batch proof verified SELECTOR-BOUND via the audited
-/// `verify_vm_descriptor2`; the chain's endpoints and interior adjacency are then
-/// checked against the caller's commitments, and each leg is bound to the
-/// `TurnReceipt` it attests.
-///
-/// ⚑ FLAG DAY (2026-07-27): each leg object now REQUIRES a `"receipt"` field (a
-/// serialized `dregg_turn::TurnReceipt`). A request written before that date has no
-/// `receipt` on its legs and REFUSES TO LOAD — deliberately, and with a parse error
-/// rather than a silent verify: the field's absence used to mean "this chain's proofs
-/// are bound to no receipt at all", which is exactly what the binding closes. Nothing
-/// persists these requests; re-emit them from the producer.
-///
-/// Exit code: 0 = chain verified, 1 = at least one rejection, 2 = read/parse error.
-#[cfg(feature = "verifier")]
-fn run_rotated_replay_chain(args: &[String]) -> ! {
-    use dregg_verifier::verify_rotated_replay_chain;
-
-    let path = match args.first() {
-        Some(p) => p,
-        None => {
-            eprintln!("Usage: dregg-verifier rotated-replay-chain <path-to-request.json>");
-            process::exit(exit_code::ERROR);
-        }
-    };
-
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("cannot read {}: {}", path, e);
-            process::exit(exit_code::ERROR);
-        }
-    };
-
-    let req: RotatedReplayRequest = match serde_json::from_str(&text) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("cannot parse rotated-replay-chain request JSON: {}", e);
-            process::exit(exit_code::ERROR);
-        }
-    };
-
-    let output = verify_rotated_replay_chain(
-        &req.legs,
-        dregg_circuit::field::BabyBear::new_canonical(req.expected_old_commit),
-        dregg_circuit::field::BabyBear::new_canonical(req.expected_new_commit),
-    );
-    let json = serde_json::to_string_pretty(&output).unwrap_or_else(|_| {
-        r#"{"overall_verified":false,"summary":"serialisation error"}"#.to_string()
-    });
-    println!("{}", json);
-
-    let code = if output.overall_verified {
-        exit_code::VERIFIED
-    } else {
-        exit_code::REJECTED
-    };
-    process::exit(code);
-}
-
-// ---------------------------------------------------------------------------
 // aggregated-bundle subcommand (Stage 7-γ.2 Phase 2)
 // ---------------------------------------------------------------------------
 
 /// `dregg-verifier aggregated-bundle <bundle.json>`
 ///
 /// Reads a JSON-encoded `dregg_turn_prover::AggregatedBundle` and runs the Phase-2
-/// joint aggregation verifier (`STAGE-7-GAMMA-2-PHASE-2-SKETCH.md`).
+/// joint aggregation verifier (`STAGE-7-GAMMA-2-PHASE-2-SKETCH.md`), whose step 4 is a
+/// real `verify_vm_descriptor2` batch verify of the bundle's outer proof against the
+/// Lean-emitted descriptor.
 /// Exit code: 0 = verified, 1 = rejected, 2 = read / parse error.
 fn run_aggregated_bundle(args: &[String]) -> ! {
-    let path = match args.first() {
-        Some(p) => p,
-        None => {
-            eprintln!("Usage: dregg-verifier aggregated-bundle <bundle.json>");
-            process::exit(exit_code::ERROR);
-        }
+    let Some(path) = args.first() else {
+        eprintln!("Usage: dregg-verifier aggregated-bundle <bundle.json>");
+        process::exit(exit_code::ERROR);
     };
 
     let text = match std::fs::read_to_string(path) {

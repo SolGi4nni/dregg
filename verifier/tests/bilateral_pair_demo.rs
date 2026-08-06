@@ -1,33 +1,36 @@
-//! Stage 7-γ.2 Phase 1 — bilateral-pair demo / integration test.
+//! Stage 7-γ.2 Phase 1 — bilateral cross-cell PI AGREEMENT demo / integration test.
 //!
-//! Demonstrates an end-to-end bilateral verification flow:
+//! ⚑ 2026-08-05: this file used to drive the `dregg-verifier bilateral-pair` SUBPROCESS
+//! and assert `exit 0` + `"verified": true`. That subcommand is DELETED, because every
+//! `WitnessedReceipt` it printed `verified: true` over carried `proof_bytes: []` — it
+//! verified no proof and could not have. The demo now calls the library entry point,
+//! which is named for what it does (`check_bilateral_pi_agreement`) and reports
+//! `pi_agrees_with_schedule` alongside `entries_without_proof`.
+//!
+//! What it demonstrates, and the boundary:
 //!
 //!   1. Build a [`Turn`] with a Transfer(alice → bob).
-//!   2. Fabricate per-cell [`WitnessedReceipt`]s for alice + bob with the
-//!      γ.2 bilateral PI slots populated.
-//!   3. Serialize a [`BilateralBundle`] to a tempfile.
-//!   4. Invoke the `dregg-verifier bilateral-pair <bundle.json>` subprocess.
-//!   5. Confirm exit code 0 + `verified == true` in the JSON verdict.
-//!   6. Tamper with the bundle (overwrite Alice's `OUTGOING_TRANSFER_ROOT`
-//!      with garbage), re-invoke, confirm exit code 1 + `verified == false`.
+//!   2. Fabricate per-cell PI-ONLY [`WitnessedReceipt`]s for alice + bob with the γ.2
+//!      bilateral PI slots populated and NO proof bytes.
+//!   3. The schedule reconstructed from the canonical `Turn` AGREES with those PI
+//!      vectors, and the result says both things: it agrees, and 2 of 2 entries have
+//!      nothing behind them.
+//!   4. Tamper with the bundle (overwrite Alice's `OUTGOING_TRANSFER_ROOT` with
+//!      garbage) and the agreement REFUSES.
+//!   5. Ship only one half of a bilateral Transfer and the cross-side existence check
+//!      REFUSES (§4.5 of STAGE-7-GAMMA-2-PI-DESIGN.md).
 //!
-//! This is the "demo wire-up" deliverable for Stage 7-γ.2 Phase 1: an
-//! executable witness that the off-AIR bilateral verifier rejects tampered
-//! cross-cell evidence. The flow runs entirely in-tree without requiring
-//! the full two-AI MCP harness — the WRs are fabricated for the bilateral
-//! slots only, since γ.2 Phase 1 is PI-only and does not require a real
-//! STARK proof inside each WR for the cross-cell check (the STARK proof
-//! verification is orthogonal — Phase 1 layers cross-cell agreement on top
-//! of per-cell STARK soundness).
-
-use std::io::Write;
-use std::process::Command;
+//! Steps 4 and 5 are real refusals of the agreement algebra. Step 3's caveat is the
+//! whole reason the CLI is gone: cross-cell agreement layers ON TOP of per-cell proof
+//! soundness (`dregg_verifier::verify_rotated_leg` /
+//! `dregg_sdk::verify_effect_vm_rotated_with_cutover`), it does not supply it.
 
 use dregg_circuit::effect_vm::pi as p;
 use dregg_turn::{ActionBuilder, Turn, TurnBuilder, TurnReceipt};
 use dregg_types::CellId;
 use dregg_verifier::{
-    BilateralBundle, BilateralEntry, BilateralVerdict, fabricate_witnessed_receipt,
+    BilateralBundle, BilateralEntry, BilateralPiAgreement, check_bilateral_pi_agreement,
+    fabricate_pi_only_witnessed_receipt,
 };
 
 fn cid(b: u8) -> CellId {
@@ -68,25 +71,12 @@ fn make_transfer_turn(alice: CellId, bob: CellId, amount: u64, nonce: u64) -> Tu
     builder.fee(0).build()
 }
 
-fn write_bundle(bundle: &BilateralBundle) -> tempfile::NamedTempFile {
-    let mut f = tempfile::NamedTempFile::new().expect("tempfile");
+/// Round-trip the bundle through its on-disk JSON shape (an auditor ships one file),
+/// then run the agreement check on what came back out.
+fn check_via_json(bundle: &BilateralBundle) -> BilateralPiAgreement {
     let json = serde_json::to_string_pretty(bundle).expect("serialize");
-    f.write_all(json.as_bytes()).expect("write");
-    f
-}
-
-fn run_subcommand(bundle_path: &std::path::Path) -> (i32, BilateralVerdict) {
-    let bin = env!("CARGO_BIN_EXE_dregg-verifier");
-    let out = Command::new(bin)
-        .arg("bilateral-pair")
-        .arg(bundle_path)
-        .output()
-        .expect("spawn dregg-verifier");
-    let code = out.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let verdict: BilateralVerdict = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("parse verdict failed: {e}; stdout={stdout}"));
-    (code, verdict)
+    let round_tripped: BilateralBundle = serde_json::from_str(&json).expect("deserialize");
+    check_bilateral_pi_agreement(&round_tripped)
 }
 
 #[test]
@@ -95,8 +85,8 @@ fn bilateral_pair_demo_happy_path_then_tamper() {
     let alice = cid(0xA1);
     let bob = cid(0xB2);
     let turn = make_transfer_turn(alice, bob, 100, 1);
-    let alice_wr = fabricate_witnessed_receipt(&turn, &alice, dummy_receipt(alice));
-    let bob_wr = fabricate_witnessed_receipt(&turn, &bob, dummy_receipt(alice));
+    let alice_wr = fabricate_pi_only_witnessed_receipt(&turn, &alice, dummy_receipt(alice));
+    let bob_wr = fabricate_pi_only_witnessed_receipt(&turn, &bob, dummy_receipt(alice));
 
     let bundle = BilateralBundle {
         turn: turn.clone(),
@@ -112,18 +102,16 @@ fn bilateral_pair_demo_happy_path_then_tamper() {
         ],
         unilateral_attestations: std::collections::BTreeMap::new(),
     };
-    let bundle_file = write_bundle(&bundle);
-
-    // ---- Step 4-5: invoke verifier subprocess ----
-    let (code, verdict) = run_subcommand(bundle_file.path());
-    assert_eq!(
-        code, 0,
-        "honest bilateral bundle should exit 0; verdict={:?}",
-        verdict
-    );
+    // ---- Step 3: the schedule agrees, AND the scope is reported ----
+    let verdict = check_via_json(&bundle);
     assert!(
-        verdict.verified,
-        "verdict.verified must be true: {verdict:?}"
+        verdict.pi_agrees_with_schedule,
+        "the honest bundle's PI must agree with the schedule: {verdict:?}"
+    );
+    assert_eq!(
+        verdict.entries_without_proof, 2,
+        "both entries are PI-only, and the result must SAY so rather than print \
+         `verified: true` over them: {verdict:?}"
     );
     assert_eq!(verdict.entry_count, 2);
     assert_eq!(verdict.transfer_count, 1);
@@ -147,16 +135,10 @@ fn bilateral_pair_demo_happy_path_then_tamper() {
         ],
         unilateral_attestations: std::collections::BTreeMap::new(),
     };
-    let tampered_file = write_bundle(&tampered_bundle);
-    let (code, verdict) = run_subcommand(tampered_file.path());
-    assert_eq!(
-        code, 1,
-        "tampered bundle should exit 1; verdict={:?}",
-        verdict
-    );
+    let verdict = check_via_json(&tampered_bundle);
     assert!(
-        !verdict.verified,
-        "tampered bundle must report verified=false: {verdict:?}"
+        !verdict.pi_agrees_with_schedule,
+        "tampered bundle must REFUSE: {verdict:?}"
     );
     assert!(
         verdict.reason.contains("root") || verdict.reason.contains("outgoing_transfer"),
@@ -169,13 +151,13 @@ fn bilateral_pair_demo_happy_path_then_tamper() {
 fn bilateral_pair_demo_missing_peer_rejects() {
     // Demo: a malicious prover who tries to ship only one half of a
     // bilateral Transfer (the sender's WR) and elide the receiver. The
-    // bilateral-pair verifier rejects on the cross-side existence check
+    // agreement check rejects on the cross-side existence check
     // — this is the §4.5 "sender invents a transfer to a non-existent cell"
     // adversarial case from STAGE-7-GAMMA-2-PI-DESIGN.md.
     let alice = cid(0xA1);
     let bob = cid(0xB2);
     let turn = make_transfer_turn(alice, bob, 100, 1);
-    let alice_wr = fabricate_witnessed_receipt(&turn, &alice, dummy_receipt(alice));
+    let alice_wr = fabricate_pi_only_witnessed_receipt(&turn, &alice, dummy_receipt(alice));
 
     let bundle = BilateralBundle {
         turn,
@@ -185,10 +167,11 @@ fn bilateral_pair_demo_missing_peer_rejects() {
         }],
         unilateral_attestations: std::collections::BTreeMap::new(),
     };
-    let bundle_file = write_bundle(&bundle);
-    let (code, verdict) = run_subcommand(bundle_file.path());
-    assert_eq!(code, 1, "missing-peer bundle should exit 1");
-    assert!(!verdict.verified);
+    let verdict = check_via_json(&bundle);
+    assert!(
+        !verdict.pi_agrees_with_schedule,
+        "missing-peer bundle must REFUSE: {verdict:?}"
+    );
     assert!(
         verdict.reason.contains("missing peer") || verdict.reason.contains("Transfer"),
         "expected missing-peer reason, got: {}",

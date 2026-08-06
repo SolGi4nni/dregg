@@ -371,6 +371,10 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
             // VERIFY the fetched artifact right here — the bot runs the same audited
             // Plonky3 verifier a remote peer would, and reports the verdict rather than
             // "Attached ✅" trust-me (backlog Tier-2 #11).
+            // The TITLE says "legs verify", not "verifies": the check is limited to the bytes
+            // (the state anchors compared are the proof's own, and no leg publishes a turn
+            // hash, so nothing ties these bytes to THIS turn or to the chain). Both seams are
+            // spelled out in the Verification field below; see `proof_verify`'s docblock.
             let check = crate::commands::proof_verify::check_proof_hex_blocking(
                 proof.proof_hex.clone(),
                 turn_hash.clone(),
@@ -378,7 +382,7 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
             .await;
             let verified_ok = matches!(&check, Ok(c) if c.verified);
             let title = if verified_ok {
-                "Proof Artifact · verifies"
+                "Proof Artifact · legs verify (not chain-bound)"
             } else {
                 "Proof Artifact · DOES NOT VERIFY"
             };

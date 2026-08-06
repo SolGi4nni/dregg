@@ -14,13 +14,12 @@ name = "dregg-verifier"
 path = "src/main.rs"
 
 [dependencies]
-# `dregg-circuit` is the prover-FREE VERIFY FLOOR (the batch-STARK verify surface
-# `descriptor_ir2::verify_vm_descriptor2` the rotated replay rides) — exactly what
-# the seL4 verifier-PD floor needs, with NO recursion prover. The RECURSION-replay
-# entries (`verify_recursive_replay{,_from_bundle}`) need the recursion tower
-# (`dregg-circuit-prove`), pulled only by this crate's `prover` feature below.
+# `dregg-circuit` is the VERIFY FLOOR this crate's verify paths ride (the batch-STARK
+# surface `descriptor_ir2::verify_vm_descriptor2`) — exactly what the seL4 verifier-PD
+# floor needs. This crate's DIRECT edge to the recursion tower (`dregg-circuit-prove`)
+# is gone as of 2026-08-05 along with the recursive-replay entries it existed for, but
+# the tower is still linked TRANSITIVELY via `dregg-turn-prover`; see [features].
 dregg-circuit = { path = "../circuit" }
-dregg-circuit-prove = { path = "../circuit-prove", optional = true }
 dregg-types = { path = "../types" }
 dregg-commit = { path = "../commit" }
 # Federation primitives (cross-fed bundle, FederationReceipt verify path).
@@ -41,38 +40,46 @@ blake3 = "1"
 postcard = { version = "1", features = ["alloc"] }
 
 [features]
-# THE PROVE-vs-VERIFY AXIS (mirrors `dregg-circuit`: prover ⊃ verifier ⊃ plonky3).
+# ⚑ 2026-08-05: the prove-vs-verify axis COLLAPSED here, because there is nothing left
+# on this crate's prover side.
 #
-# `verifier` = the PROVER-FREE rotated VERIFY floor. It forwards `dregg-circuit/
-# verifier` (the prover-free batch-STARK verify surface) so `rotated_replay`
-# (`#[cfg(feature = "verifier")]`) — the `"effect-vm-rotated"` IR-v2 legs verified
-# via the audited `descriptor_ir2::verify_vm_descriptor2` — is the LIVE replay-chain
-# verify on the seL4 verifier-PD floor, with NO prover linked.
-verifier = []
-# `prover` pulls the RECURSION tower (`dregg-circuit-prove`) so the recursive-replay
-# entries (`verify_recursive_replay{,_from_bundle}`) compile. It implies `verifier`
-# so the rotated verify is present too. The v1 single-proof / replay-chain entries
-# (`verify_effect_vm_proof`, `replay_chain`) are RETIRED (the v1 hand-AIR
-# `EffectVmAir` is gone); a rotated chain is verified through `rotated_replay`.
-prover = ["verifier", "dep:dregg-circuit-prove"]
-default = ["prover"]
-
-# The seL4 protection-domain floor selector (see .docs-history-noclaude/FEATURE-HYGIENE.md §Lean and
-# .docs-history-noclaude/SEL4-EMBEDDING.md §2). After the lean-FFI boundary carve the verifier has NO
-# transitive reach to `libdregg_lean.a` at all — {federation, captp, turn} are FFI-free by
-# construction (they route their verified gates through `verified_gate` seams that only a
-# Lean-boundary crate, never depended on here, registers). So Lean-freedom is now STRUCTURAL,
-# not a flag. This feature's sole remaining job is to pull the verifier crate's own `verifier`
-# feature so the prover-free rotated VERIFY surface (`rotated_replay`) is present on the floor —
-# the standalone-verifier-PD invariant: a rotated chain verifies with NO prover, NO Lean, NO
-# ledger. (The verify path itself never calls Lean — plonky3 STARK + crypto only.)
-no-lean-link = [
-    "verifier",
-]
+# `prover` existed to pull `dregg-circuit-prove` for `verify_recursive_replay{,_from_bundle}`
+# and `replay_chain_recursive`. All three are DELETED (each bottomed out in the retired
+# `verify_effect_vm_proof` and rejected every input; `verify_recursive_replay` had zero
+# callers), and with them the crate's OWN edge to the recursion tower.
+#
+# ⚠ THAT DOES NOT MAKE THIS CRATE PROVER-FREE, AND SAYING SO WOULD BE A LIE. Measured
+# 2026-08-05 with `cargo tree -p dregg-verifier -e normal`: `dregg-turn-prover` is an
+# UNCONDITIONAL dependency (the `aggregated-bundle` subcommand's `AggregatedBundle` type
+# and verifier live there) and it pulls `dregg-circuit-prove` at depth 2. So the whole
+# recursion prover is still linked into the binary on every build. The crate docblock has
+# claimed "no prover" through several rewrites while this edge was present; deleting the
+# `prover` feature removes a KNOB, not the tower. Making it true means moving
+# `AggregatedBundle` + `verify_aggregated_bundle` out of `dregg-turn-prover` into a
+# verify-only crate, which is real work and is NOT done here.
+#
+# `verifier` existed to gate `pub mod rotated_replay`. It was declared `verifier = []` —
+# it forwarded nothing to any dependency, so it selected no code in `dregg-circuit`; it
+# only decided whether this crate's one real proof verifier compiled. `rotated_replay` is
+# now unconditional and the feature is gone.
+#
+# What remains is the seL4 protection-domain floor selector (see
+# .docs-history-noclaude/FEATURE-HYGIENE.md §Lean and .docs-history-noclaude/SEL4-EMBEDDING.md §2).
+# After the lean-FFI boundary carve this crate has NO transitive reach to `libdregg_lean.a`
+# at all — {federation, captp, turn} are FFI-free by construction (they route their verified
+# gates through `verified_gate` seams that only a Lean-boundary crate, never depended on
+# here, registers). So Lean-freedom is STRUCTURAL, not a flag, and the rotated VERIFY
+# surface (which calls no prover) is now present on every build. `no-lean-link` therefore selects nothing and
+# is kept ONLY as the name `sel4/Makefile`'s `verify-isolation` gate and
+# `scripts/feature-tiers.tsv` build it under; it is an empty tier, said out loud rather than
+# dressed up as a selector.
+no-lean-link = []
+default = []
 
 [dev-dependencies]
-# Verify-surface only (the v1 hand-AIR integration tests are retired/ported to the
-# rotated path).
+# Verify-surface only (the v1 hand-AIR integration tests are deleted with the v1 surface;
+# `integration_rotated_replay_chain.rs` mints REAL rotated legs through the circuit
+# crate's ungated `prove_vm_descriptor2`).
 dregg-circuit = { path = "../circuit" }
 dregg-cell = { path = "../cell" }
 tempfile = { workspace = true }
