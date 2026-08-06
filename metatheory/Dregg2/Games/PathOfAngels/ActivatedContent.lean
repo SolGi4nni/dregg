@@ -286,7 +286,14 @@ def Manifest.matchesWorldB (manifest : Manifest)
   decide (manifest.scope.contentSession = world.contentSession) &&
   decide (manifest.scope.contentEpoch = world.contentEpoch.value)
 
-private def componentByName? : List Component → String → Option Component
+/-- Component lookup by exact name.  **Public deliberately, 2026-08-05.**  This was
+`private` while Galley was the only organ with an embedded component, which meant a
+second organ authorizing its own component had to write a second lookup.  Two lookups
+that agree today are two lookups that disagree later, so the one function is shared
+rather than mirrored.  It confers no authority — it is a `List` search; every check
+that matters (`matchesWorldB`, the byte-exactness of the located component, and the
+organ's own validity predicate) stays with the caller's witness constructor. -/
+def componentByName? : List Component → String → Option Component
   | [], _ => none
   | component :: rest, name =>
       if component.name = name then some component else componentByName? rest name
