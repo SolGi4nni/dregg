@@ -6178,6 +6178,15 @@ impl AgentCipherclerk {
                 None,
                 // The refusal `fields_root` WRITE-gate context — same as the bare wide route below.
                 refusal_fields.as_ref().map(|(l, a)| (l.as_slice(), *a)),
+                // NO published turn identity, and this is a FACT about the consumer, not a default.
+                // This leg goes into `turn.execution_proof`, whose verifier is the executor's
+                // `verify_one_cohort_run` — which RECONSTRUCTS the whole `ROT_PI_COUNT` vector from
+                // the trusted `Turn` and its own trusted state and lets Fiat-Shamir reject any leg
+                // the prover bound differently. Its turn binding is therefore already total, and
+                // publishing a felt the reconstruction does not also write would make every honest
+                // sovereign proof fail. (The COMPOSED path is the one that reads a leg's published
+                // PIs, and `prove_cohort_run_chain` passes `Some(turn_hash)` there.)
+                None,
             )?,
             // BARE wide (the deployed default — toggle disarmed or the turn is not weldable).
             (None, true) => {
@@ -6205,6 +6214,10 @@ impl AgentCipherclerk {
                 // the lead is a Refusal) — threaded so the honest refusal proves through the `.write`
                 // map-op gate. This MUST match the precompute's refusal route (same trace + wide PIs).
                 refusal_fields.as_ref().map(|(l, a)| (l.as_slice(), *a)),
+                // NO published turn identity — see the welded arm above: the executor reconstructs
+                // this leg's entire PI vector from the trusted `Turn`, so writing here would break
+                // Fiat-Shamir on every honest sovereign proof.
+                None,
             )?,
         };
         let proof_bytes = postcard::to_allocvec(&proof)
@@ -6388,6 +6401,10 @@ impl AgentCipherclerk {
                 // The whole-turn forest path threads no per-run fields context; a Refusal run here would
                 // fail closed against the `.write` gate (the live sovereign refusal lead is the single-leg
                 // path above). Heterogeneous-forest refusal is out of this wire's scope.
+                None,
+                // NO published turn identity — the executor reconstructs this chain leg's PI vector
+                // from the trusted `Turn` (`verify_one_cohort_run`), so writing here would break
+                // Fiat-Shamir on every honest sovereign chain proof.
                 None,
             )?;
             let n_pi = dpis.len();

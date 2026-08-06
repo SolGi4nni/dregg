@@ -1562,7 +1562,13 @@ mod wall_a {
             "after anchor must equal the proof's bound PI tail"
         );
 
-        verify_full_turn(&proof, old_commit, new_commit).expect("rotated full-turn should verify");
+        verify_full_turn(
+            &proof,
+            *blake3::hash(b"wallA-turn").as_bytes(),
+            old_commit,
+            new_commit,
+        )
+        .expect("rotated full-turn should verify");
     }
 
     /// ANTI-GHOST (A.1): tampering the rotated leg's vk_hash is REJECTED. The verifier
@@ -1581,8 +1587,13 @@ mod wall_a {
             .expect("rotated leg present");
         leg.vk_hash[0] ^= 0xFF; // flip a byte of the descriptor fingerprint
 
-        let err = verify_full_turn(&proof, old_commit, new_commit)
-            .expect_err("ANTI-GHOST: a tampered rotated vk_hash must be rejected");
+        let err = verify_full_turn(
+            &proof,
+            *blake3::hash(b"wallA-turn").as_bytes(),
+            old_commit,
+            new_commit,
+        )
+        .expect_err("ANTI-GHOST: a tampered rotated vk_hash must be rejected");
         let s = format!("{err:?}");
         assert!(
             s.contains("vk_hash") || s.contains("fingerprint"),

@@ -58,19 +58,34 @@ impl TurnProof {
         &self.0.proof_bytes
     }
 
-    /// Verify this proof against the expected pre/post state commitments.
+    /// Verify this proof against the turn it must attest and the expected pre/post
+    /// state commitments.
     ///
     /// Thin delegation to
     /// [`verify_full_turn`](crate::full_turn_proof::verify_full_turn);
     /// freshness-critical verifiers (no-double-spend) should use
     /// [`verify_full_turn_bound`](crate::full_turn_proof::verify_full_turn_bound)
     /// on the inner proof via [`Self::inner`].
+    ///
+    /// ⚠ **`expected_turn_hash` must come from the CALLER, not from this object.** The
+    /// docblock on [`Self::turn_hash`] has always claimed "replay protection: a proof only
+    /// attests the turn it names", and until the turn-identity flag day nothing enforced
+    /// it — this method dropped the turn entirely. Passing [`Self::turn_hash`] back in here
+    /// would restore the appearance and not the property: the comparison would be `x != x`
+    /// and could not fire. Pass the hash of the turn you are checking (`turn.hash()`, or the
+    /// hash you fetched the artifact by).
     pub fn verify(
         &self,
+        expected_turn_hash: [u8; 32],
         expected_old_commit: [dregg_circuit::BabyBear; 8],
         expected_new_commit: [dregg_circuit::BabyBear; 8],
     ) -> Result<(), FullTurnVerifyError> {
-        crate::full_turn_proof::verify_full_turn(&self.0, expected_old_commit, expected_new_commit)
+        crate::full_turn_proof::verify_full_turn(
+            &self.0,
+            expected_turn_hash,
+            expected_old_commit,
+            expected_new_commit,
+        )
     }
 
     /// Access the underlying composed proof (plumbing surface, for

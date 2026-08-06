@@ -253,6 +253,7 @@ fn mint_and_wire_verify(family: &str, registry_key: &str, fx: &RecordPinFixture)
         &fx.ops,
         None,
         refusal_fields,
+        None,
     )
     .unwrap_or_else(|e| panic!("[{family}] the welded WIDE+umem mint MUST prove: {e:?}"));
 
@@ -506,7 +507,7 @@ fn matrix_forbidden_plain_cap_is_wire_rejected() {
 
     let caveat = empty_caveat_manifest();
     let (welded_proof, welded_dpis) = prove_wide_umem_welded_staged(
-        &initial, &effects, &before_w, &after_w, &caveat, &proj_pre, &ops, None, None,
+        &initial, &effects, &before_w, &after_w, &caveat, &proj_pre, &ops, None, None, None,
     )
     .expect("the PLAIN welded grant SELF-verifies (it carries no membership crown)");
     let proof_bytes = postcard::to_allocvec(&welded_proof).unwrap();

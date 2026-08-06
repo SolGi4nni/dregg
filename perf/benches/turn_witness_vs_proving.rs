@@ -83,8 +83,13 @@ fn bench_contrast(c: &mut Criterion) {
         let proof = prove_full_turn(&rt.witness).expect("honest turn must prove");
         group.bench_function(format!("verify_{name}"), |b| {
             b.iter(|| {
-                verify_full_turn(black_box(&proof), rt.old_commit, rt.new_commit)
-                    .expect("honest proof must verify");
+                verify_full_turn(
+                    black_box(&proof),
+                    rt.witness.turn_hash,
+                    rt.old_commit,
+                    rt.new_commit,
+                )
+                .expect("honest proof must verify");
             });
         });
     }

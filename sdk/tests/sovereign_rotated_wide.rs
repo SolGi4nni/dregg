@@ -119,6 +119,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
         &caveat,
         None,
         None,
+        None,
     )
     .expect("wide sovereign producer must mint a proof");
 
@@ -241,6 +242,7 @@ fn wide_sovereign_forged_anchor_is_rejected() {
         &before_w,
         &after_w,
         &caveat,
+        None,
         None,
         None,
     )
@@ -402,6 +404,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         &caveat,
         None,
         Some((&before_leaves, audit_bytes)),
+        None,
     )
     .expect(
         "DEPLOYED REFUSAL PROVE-THROUGH (liveness pole): the honest refusal MUST prove on the wide path \
@@ -497,6 +500,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         &caveat,
         None,
         Some((&before_leaves, forged_audit)),
+        None,
     );
     // NOTE: a different audit value yields a DIFFERENT (but still genuine) write — so this proves with a
     // SELF-CONSISTENT after-root. The forge that the GATE rejects is an after-root that is NOT the write
@@ -649,14 +653,25 @@ fn flagday_wide_full_turn_proves_and_light_client_verifies_at_124_bit() {
     );
 
     // THE LIGHT-CLIENT VERIFY at the FULL 8-felt width — the close of the 31-bit floor.
-    verify_full_turn(&proof, old8, new8)
-        .expect("the light-client verifier ACCEPTS the honest wide full-turn at the 8-felt anchor");
+    verify_full_turn(
+        &proof,
+        *blake3::hash(b"flagday-turn").as_bytes(),
+        old8,
+        new8,
+    )
+    .expect("the light-client verifier ACCEPTS the honest wide full-turn at the 8-felt anchor");
 
     // A forged 8-felt NEW commit (one felt off) is REJECTED (the wide anchor binds ~124-bit).
     let mut forged_new = new8;
     forged_new[3] = forged_new[3] + BabyBear::new(0x7777);
     assert!(
-        verify_full_turn(&proof, old8, forged_new).is_err(),
+        verify_full_turn(
+            &proof,
+            *blake3::hash(b"flagday-turn").as_bytes(),
+            old8,
+            forged_new
+        )
+        .is_err(),
         "a forged 8-felt NEW commit MUST be rejected — the light-client surface binds the full ~124-bit commit"
     );
     eprintln!(
@@ -713,7 +728,13 @@ fn flagday_rejects_one_felt_v3_full_turn_leg() {
     // POST-CUTOVER: the re-pointed light-client verifier REJECTS the narrow leg (no WIDE descriptor
     // accepts it; the V3 fallback admits cap-open members only, so a plain narrow transfer is out).
     assert!(
-        verify_full_turn(&proof, old8, new8).is_err(),
+        verify_full_turn(
+            &proof,
+            *blake3::hash(b"flagday-turn").as_bytes(),
+            old8,
+            new8
+        )
+        .is_err(),
         "REJECT TOOTH: a 1-felt V3 transfer leg MUST be rejected by the wide-bound light-client \
          verifier post-cutover — the ~31-bit waist is closed for normal effects"
     );

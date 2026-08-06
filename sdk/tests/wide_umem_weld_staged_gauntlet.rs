@@ -166,14 +166,15 @@ fn wide_umem_welded_transfer_proves_and_preserves_8felt() {
     // CONTROL: the welded WIDE descriptor PROVES the real turn (wide rotated semantics + the
     // universal-memory reconciliation, one proof). Returns (proof, wide_dpis).
     let (welded_proof, welded_dpis) = prove_wide_umem_welded_staged(
-        &st, &effects, &before_w, &after_w, &caveat, &proj_pre, &ops, None, None,
+        &st, &effects, &before_w, &after_w, &caveat, &proj_pre, &ops, None, None, None,
     )
     .expect("the welded WIDE+umem descriptor proves the genuine transfer turn");
 
     // The wide-ONLY leg over the SAME transition (the deployed wide producer leg).
-    let (_wide_proof, wide_dpis) =
-        prove_effect_vm_rotated_wide(&st, &effects, &before_w, &after_w, &caveat, None, None)
-            .expect("the deployed wide leg proves");
+    let (_wide_proof, wide_dpis) = prove_effect_vm_rotated_wide(
+        &st, &effects, &before_w, &after_w, &caveat, None, None, None,
+    )
+    .expect("the deployed wide leg proves");
 
     // 8-FELT PRESERVED: the weld appends ZERO PIs — the welded leg's whole PI vector is
     // byte-identical to the wide-only leg's, so the LAST 16 PIs (the 8-felt before/after commits
@@ -283,7 +284,7 @@ fn wide_umem_welded_transfer_verifies_through_wire_verifier() {
     let caveat = transfer_caveat_manifest();
 
     let (welded_proof, welded_dpis) = prove_wide_umem_welded_staged(
-        &st, &effects, &before_w, &after_w, &caveat, &proj_pre, &ops, None, None,
+        &st, &effects, &before_w, &after_w, &caveat, &proj_pre, &ops, None, None, None,
     )
     .expect("the welded WIDE+umem descriptor proves the genuine transfer turn");
 
@@ -336,7 +337,7 @@ fn wide_umem_welded_forged_pre_refuses() {
         None => Some(UVal::Int(1)),
     };
     let r = prove_wide_umem_welded_staged(
-        &st, &effects, &before_w, &after_w, &caveat, &proj_pre, &forged, None, None,
+        &st, &effects, &before_w, &after_w, &caveat, &proj_pre, &forged, None, None, None,
     );
     assert!(
         r.is_err(),
@@ -376,6 +377,7 @@ fn wide_umem_welded_non_cohort_refuses() {
         &transfer_caveat_manifest(),
         &proj,
         &[op],
+        None,
         None,
         None,
     );

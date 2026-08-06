@@ -29,16 +29,22 @@
 //!   in the chain. The real binding needs a canonical `expected_old_commit` the caller obtained
 //!   independently (which also carries spend freshness: the limb-26 BEFORE nullifier root is
 //!   absorbed into it), and the node publishes no such value to bind to.
-//! * **NOT established, seam 2 (the artifact carries no turn identity).**
-//!   [`FullTurnProof::turn_hash`] is DECORATIVE on this path. `prove_full_turn` never writes
-//!   the turn hash into any leg's PI (`pi::TURN_HASH_BASE` appears nowhere in
-//!   `sdk/src/full_turn_proof.rs`) and `verify_full_turn_bound` never reads
-//!   `proof.turn_hash`. This module parses the turn hash out of the URL and stuffs it into the
-//!   struct, and nothing ever looks at it. A proof for turn B, served under turn A's URL,
-//!   verifies here identically. (Two OTHER producers do fill the slot honestly and check it:
-//!   `turn-prover/src/proven_receipt.rs` writes `canonical_32_to_felts_4(&turn_hash)` into
-//!   `dpis[TURN_HASH_BASE..+4]`, and `verifier`'s `check_receipt_pi_binding` compares exactly
-//!   that. `prove_full_turn` simply does not.)
+//! * **ESTABLISHED as of the turn-identity flag day (this WAS seam 2).** The artifact IS
+//!   bound to the turn it was fetched for. `prove_full_turn` now writes
+//!   `canonical_32_to_felts_4(turn_hash)` into every effect-vm leg's
+//!   `PI[TURN_HASH_BASE..+4]` BEFORE proving, so those felts ride the leg's Fiat-Shamir
+//!   transcript; `verify_full_turn` takes the expected turn hash as a REQUIRED argument and
+//!   refuses on disagreement. This module passes the hash from the REQUEST URL — an anchor
+//!   that did NOT come out of the artifact — so unlike seam 1 the comparison is not
+//!   reflexive and it DOES fire: a proof of a DIFFERENT turn, served under this turn's URL,
+//!   is now rejected. (Same slot, encoder and width as `turn-prover/src/proven_receipt.rs`
+//!   and `dregg_verifier::check_receipt_pi_binding`.)
+//! * **NOT established, seam 2 (the identity is prover-CHOSEN, not prover-FORCED).** No AIR
+//!   constraint reads those four felts — 0 of the 57 `WIDE_REGISTRY_STAGED_TSV` members bind
+//!   a `pi_index` in `33..37` — so what the check forbids is RELABELLING an artifact. A
+//!   malicious prover can still mint a fresh proof of some other transition and publish THIS
+//!   turn's hash beside it. Forcing the published identity to be a function of the proven
+//!   transition is the parked AIR cutover (an emit + a VK rotation + a re-genesis).
 //!
 //! Both seams are reported to the reader at runtime, not only here: [`check_proof_hex`] fills
 //! [`ProofCheck::unbound`] and [`verdict_text`] prints it under the verdict.
@@ -89,10 +95,14 @@ pub fn unbound_claims() -> Vec<String> {
          this turn, or that this turn is in the chain at all. (The leg-to-leg adjacency check \
          is real and did run.)"
             .to_string(),
-        "The artifact carries no turn identity. The full-turn prover never writes the turn hash \
-         into any leg's public inputs, and the verifier never reads it, so these bytes are not \
-         bound to the turn they were fetched for. A proof of a DIFFERENT turn, served under \
-         this turn's URL, would verify here identically."
+        "The turn identity is prover-CHOSEN, not prover-FORCED. The bytes ARE bound to the turn \
+         this was fetched for — every effect-vm leg publishes that turn hash in its public \
+         inputs, welded to the proof by Fiat-Shamir, and the check above used the hash from the \
+         request rather than one read out of the artifact, so a proof of a different turn \
+         served under this URL is rejected. What is NOT settled is that the transition proven \
+         is the one this turn asked for: no constraint ties the published identity to the \
+         proven effects, so a malicious prover could mint a proof of something else and label \
+         it with this turn."
             .to_string(),
     ]
 }
@@ -132,14 +142,22 @@ pub fn check_proof_hex(proof_hex: &str, turn_hash_hex: &str) -> Result<ProofChec
     let (published_old, published_new) = extract_commits(&composed.sub_proofs)?;
     let vk_hex = hex::encode(composed.composed_vk_hash);
 
-    // SEAM 2, at its source: this field is decorative. Nothing downstream reads it, and no leg's
-    // PI carries the turn hash, so parsing it here binds the artifact to nothing.
-    let mut turn_hash = [0u8; 32];
-    if let Ok(th) = hex::decode(turn_hash_hex) {
-        if th.len() == 32 {
-            turn_hash.copy_from_slice(&th);
-        }
-    }
+    // THE TURN THE CALLER ASKED FOR. This is an EXTERNAL anchor — it comes from the request
+    // (`/api/turn/{hash}/proof`), not out of the artifact — so handing it to the verifier is a
+    // real check, unlike the commit anchors above. `verify_full_turn` now requires it and
+    // compares it against the felts every effect-vm leg PUBLISHES at `pi::TURN_HASH_BASE`
+    // (bound into the leg's Fiat-Shamir transcript at prove time), so a proof of a DIFFERENT
+    // turn served under this URL is REFUSED here. A turn hash that is not 32 hex bytes is
+    // rejected outright rather than silently verified against the all-zero sentinel.
+    let turn_hash: [u8; 32] = hex::decode(turn_hash_hex.trim())
+        .ok()
+        .and_then(|th| <[u8; 32]>::try_from(th.as_slice()).ok())
+        .ok_or_else(|| {
+            format!(
+                "the turn hash `{turn_hash_hex}` is not 32 hex bytes, so there is nothing to bind \
+                 the artifact to — refusing to report a verdict"
+            )
+        })?;
 
     let proof = FullTurnProof {
         composed,
@@ -147,7 +165,8 @@ pub fn check_proof_hex(proof_hex: &str, turn_hash_hex: &str) -> Result<ProofChec
         turn_hash,
         proof_bytes: bytes,
     };
-    let (verified, detail) = match verify_full_turn(&proof, published_old, published_new) {
+    let (verified, detail) = match verify_full_turn(&proof, turn_hash, published_old, published_new)
+    {
         Ok(()) => (true, String::new()),
         Err(e) => (false, format!("{e:?}")),
     };
@@ -253,8 +272,10 @@ pub fn verdict_text(check: &Result<ProofCheck, String>) -> String {
              these are its bytes.**\nEstablished: every attached leg ({legs}) verifies under the \
              same audited Plonky3 verifier a remote peer would run \
              (`dregg_sdk::verify_full_turn`), the legs chain leg to leg (each leg's BEFORE \
-             anchor equals the previous leg's AFTER), and the object binds the composed VK \
-             `{vk}…`. Checked just now over the fetched bytes, not trusted.\nAnchors the \
+             anchor equals the previous leg's AFTER), every leg publishes THIS turn's hash in \
+             its public inputs (so a proof of another turn served here is refused), and the \
+             object binds the composed VK `{vk}…`. Checked just now over the fetched bytes, \
+             not trusted.\nAnchors the \
              artifact PUBLISHES (the prover's claim, not the chain's): `{old}…` → \
              `{new}…`.\nNOT established:\n{unbound}",
             vk = &c.vk_hex[..16.min(c.vk_hex.len())],
@@ -300,8 +321,10 @@ pub fn offline_recheck_text(node_url: &str, turn_hash_hex: &str) -> String {
          the node serves no commitment alongside the artifact) and the endpoint check compares \
          each value against itself. It becomes a real check only when you pass an \
          `expected_old_commit` you obtained independently, which is also what binds spend \
-         freshness (in-circuit already) to the canonical spent set. Nothing you pass binds the \
-         artifact to a turn hash; no leg publishes one.",
+         freshness (in-circuit already) to the canonical spent set. The TURN-HASH argument is \
+         different: pass the hash you fetched by (this bot does), and the endpoint check is \
+         real — every leg publishes it, welded in by Fiat-Shamir, so a proof of another turn \
+         is refused.",
         base = node_url.trim_end_matches('/'),
     )
 }
@@ -320,6 +343,22 @@ mod tests {
         let err = check_proof_hex(&"ab".repeat(40), &"00".repeat(32))
             .expect_err("random bytes must not parse as a composed proof");
         assert!(err.contains("do not parse"), "{err}");
+    }
+
+    /// A turn hash that is not 32 hex bytes is REFUSED, not silently verified against the
+    /// all-zero sentinel. Before the turn-identity binding this field was decorative, so a
+    /// malformed hash cost nothing; now it is the artifact's only external anchor, and
+    /// accepting a zeroed one would hand back a verdict bound to no turn at all.
+    #[test]
+    fn a_malformed_turn_hash_is_refused_rather_than_zeroed() {
+        for bad in ["", "zz", &"ab".repeat(31), &"ab".repeat(33)] {
+            let err = check_proof_hex(&"ab".repeat(40), bad)
+                .expect_err("a malformed turn hash must not yield a verdict");
+            assert!(
+                err.contains("not 32 hex bytes") || err.contains("do not parse"),
+                "expected a turn-hash or parse refusal for {bad:?}, got: {err}"
+            );
+        }
     }
 
     fn a_passing_check() -> ProofCheck {
@@ -387,11 +426,8 @@ mod tests {
         );
         // Seam 2: no turn-hash binding.
         assert!(
-            text.contains(
-                "A proof of a DIFFERENT turn, served under this turn's URL, would \
-                           verify here identically."
-            ),
-            "seam 2 (no turn identity) missing: {text}"
+            text.contains("The turn identity is prover-CHOSEN, not prover-FORCED."),
+            "seam 2 (identity not prover-forced) missing: {text}"
         );
         for u in unbound_claims() {
             assert!(
@@ -414,9 +450,9 @@ mod tests {
             unbound[0]
         );
         assert!(
-            unbound[1].contains("no turn identity")
-                && unbound[1].contains("not bound to the turn they were fetched for"),
-            "entry 1 must name the missing turn-hash binding: {}",
+            unbound[1].contains("prover-CHOSEN, not prover-FORCED")
+                && unbound[1].contains("no constraint ties the published identity"),
+            "entry 1 must name what the turn-hash binding does NOT force: {}",
             unbound[1]
         );
         // And a live `check_proof_hex` populates the field from this same function, so the

@@ -235,7 +235,7 @@ fn domain2_attenuate_cap_open_weld_proves_and_verifies_through_wire() {
     // CONTROL: the welded WIDE cap-open descriptor PROVES the real attenuate turn (the depth-16
     // cap-membership crown + the universal-memory CAPS reconciliation, one proof) and self-verifies.
     let (welded_proof, welded_dpis) = prove_cap_open_umem_welded_staged(
-        &initial, &effects, &before_w, &after_w, &cap, &proj_pre, &ops,
+        &initial, &effects, &before_w, &after_w, &cap, &proj_pre, &ops, None,
     )
     .expect("the welded WIDE cap-open+umem descriptor proves the genuine attenuate turn");
 
@@ -287,7 +287,7 @@ fn domain2_attenuate_cap_open_weld_forged_caps_prev_refuses() {
     let mut forged = ops.clone();
     forged[0].prev_val = Some(UVal::Present);
     let r = prove_cap_open_umem_welded_staged(
-        &initial, &effects, &before_w, &after_w, &cap, &proj_pre, &forged,
+        &initial, &effects, &before_w, &after_w, &cap, &proj_pre, &forged, None,
     );
     assert!(
         r.is_err(),
@@ -320,6 +320,7 @@ fn domain2_cap_open_weld_non_caps_op_refuses() {
         &cap,
         &proj_pre,
         std::slice::from_ref(&heap_op),
+        None,
     );
     assert!(
         r.is_err(),
@@ -389,7 +390,7 @@ fn domain2_plain_cap_weld_is_wire_forbidden() {
 
     let caveat = dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest();
     let (welded_proof, welded_dpis) = prove_wide_umem_welded_staged(
-        &initial, &effects, &before_w, &after_w, &caveat, &proj_pre, &ops, None, None,
+        &initial, &effects, &before_w, &after_w, &caveat, &proj_pre, &ops, None, None, None,
     )
     .expect("the PLAIN welded grant SELF-verifies (it carries no membership crown)");
 

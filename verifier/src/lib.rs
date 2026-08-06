@@ -173,11 +173,24 @@ pub const RECEIPT_PI_BINDING_MIN_LEN: usize =
 /// ⚠ **The honest producer must FILL the slot for this to bind anything.**
 /// `dregg_turn_prover::proven_receipt` and the rotated-replay test minter both write
 /// `canonical_32_to_felts_4(turn_hash)` into `PI[TURN_HASH_BASE..+4]`.
-/// `dregg_sdk::prove_full_turn` does NOT (measured 2026-08-05: `TURN_HASH_BASE`
-/// appears nowhere in `sdk/src/full_turn_proof.rs`, and `verify_full_turn_bound`
-/// never reads `FullTurnProof::turn_hash`), so a leg minted by that path carries the
-/// zero sentinel and this comparison would refuse a receipt naming a real turn. That
-/// is a producer-side hole in the SDK, not a reason to weaken the comparison.
+///
+/// ⚑ **The SDK hole this note used to record is CLOSED (2026-08-06).** It said
+/// `dregg_sdk::prove_full_turn` does NOT fill the slot — measured true on 2026-08-05
+/// (`TURN_HASH_BASE` appeared nowhere in `sdk/src/full_turn_proof.rs`) — so a leg
+/// minted by that path carried the zero sentinel and this comparison refused a receipt
+/// naming a real turn. `prove_full_turn` now writes the same four felts, in the same
+/// encoding, on every leg it mints (`full_turn_proof::bind_turn_identity_pi`, called
+/// BEFORE the prove so the felts ride Fiat–Shamir), and `verify_full_turn_bound` takes
+/// the expected turn hash as a required argument and compares it here-identically. So
+/// this check now binds legs from BOTH producers.
+///
+/// The one remaining `None`-identity producer is the SOVEREIGN path
+/// (`cipherclerk::prove_sovereign_turn_rotated`), and deliberately: its consumer is
+/// `turn::executor::verify_one_cohort_run`, which RECONSTRUCTS the whole PI vector from
+/// the trusted `Turn` rather than reading the leg's, so publishing a felt the
+/// reconstruction does not also write would break Fiat–Shamir on every honest sovereign
+/// proof. Extending the fill to that path means changing the executor's reconstruction
+/// in lock-step — a re-mint flag day, named and not done here.
 ///
 /// # What is NOT compared, and why that is not a hole
 ///

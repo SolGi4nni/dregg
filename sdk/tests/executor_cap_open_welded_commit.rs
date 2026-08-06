@@ -283,6 +283,7 @@ fn make_welded_cap_open_attenuate() -> (
         &cap,
         &proj_pre,
         &ops,
+        None,
     )
     .expect("the welded WIDE cap-open+umem descriptor proves the genuine attenuate turn");
     assert!(

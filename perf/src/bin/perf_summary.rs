@@ -36,7 +36,8 @@ fn main() {
     for (name, rt) in rotated_turns() {
         // Warm + correctness gate.
         let proof = prove_full_turn(&rt.witness).expect("honest turn must prove");
-        verify_full_turn(&proof, rt.old_commit, rt.new_commit).expect("honest proof must verify");
+        verify_full_turn(&proof, rt.witness.turn_hash, rt.old_commit, rt.new_commit)
+            .expect("honest proof must verify");
 
         let prove_iters = 5u32;
         let t0 = Instant::now();
@@ -49,7 +50,8 @@ fn main() {
         let verify_iters = 50u32;
         let t1 = Instant::now();
         for _ in 0..verify_iters {
-            verify_full_turn(&proof, rt.old_commit, rt.new_commit).expect("verify");
+            verify_full_turn(&proof, rt.witness.turn_hash, rt.old_commit, rt.new_commit)
+                .expect("verify");
         }
         let verify_mean = t1.elapsed().as_secs_f64() / verify_iters as f64;
 

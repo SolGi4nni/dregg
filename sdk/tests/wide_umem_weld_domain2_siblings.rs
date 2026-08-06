@@ -273,6 +273,7 @@ fn mint_wire_commit(
         &cap,
         &proj_pre,
         &ops,
+        None,
     )
     .unwrap_or_else(|e| panic!("[{family}] the welded WIDE cap-open+umem mint MUST prove: {e:?}"));
     assert!(

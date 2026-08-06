@@ -130,6 +130,7 @@ fn create_cell_proves_on_deployed_wide_path() {
         &caveat,
         None,
         None,
+        None,
     )
     .expect(
         "DEPLOYED createCell PROVE-THROUGH: createCell MUST prove on the wide path (routed to \
@@ -220,6 +221,7 @@ fn prove_through_deployed(
         &before_w,
         &after_w,
         &caveat,
+        None,
         None,
         None,
     )
@@ -641,6 +643,7 @@ fn probe_wide(
         &caveat,
         before_nullifiers,
         refusal_fields,
+        None,
     )
     .map_err(|e| e.to_string())
 }

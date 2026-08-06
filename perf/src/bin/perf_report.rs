@@ -199,10 +199,12 @@ fn main() {
         let t0 = Instant::now();
         let proof = prove_full_turn(&rt.witness).expect("full-turn prove");
         let first = t0.elapsed().as_secs_f64();
-        verify_full_turn(&proof, old_commit, new_commit).expect("full-turn verify");
+        verify_full_turn(&proof, rt.witness.turn_hash, old_commit, new_commit)
+            .expect("full-turn verify");
         let prove = time_mean(3, || prove_full_turn(&rt.witness).expect("full-turn prove"));
         let verify = time_mean(20, || {
-            verify_full_turn(&proof, old_commit, new_commit).expect("full-turn verify")
+            verify_full_turn(&proof, rt.witness.turn_hash, old_commit, new_commit)
+                .expect("full-turn verify")
         });
         println!("  {:<34} {:>13}", "stage", "time");
         println!(

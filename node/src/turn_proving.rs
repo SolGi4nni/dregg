@@ -158,6 +158,12 @@ pub struct ProvenFinalizedTurn {
     pub old_commit: [BabyBear; 8],
     /// The proven post-execution 8-felt wide state commitment.
     pub new_commit: [BabyBear; 8],
+    /// The turn this proof is bound to — the value the PROVER was handed, carried
+    /// alongside the anchors so a downstream re-verifier has an identity anchor that came
+    /// from the turn pipeline rather than out of the artifact. `verify_full_turn_bound`
+    /// requires one; sourcing it from `proof.turn_hash` instead would make the comparison
+    /// reflexive and it could not fire.
+    pub turn_hash: [u8; 32],
 }
 
 impl ProvenFinalizedTurn {
@@ -1015,13 +1021,14 @@ pub fn prove_and_verify_finalized_turn(
     // 5. VERIFY → ACCEPT leg. Re-verify the proof against the expected
     //    pre/post commitments using the same verifier a remote peer runs.
     //    Acceptance is gated on this returning Ok.
-    dregg_sdk::verify_full_turn(&proof, old_commit, new_commit)
+    dregg_sdk::verify_full_turn(&proof, turn_hash, old_commit, new_commit)
         .map_err(FullTurnProvingError::Verify)?;
 
     Ok(ProvenFinalizedTurn {
         proof,
         old_commit,
         new_commit,
+        turn_hash,
     })
 }
 
@@ -1325,13 +1332,14 @@ pub fn prove_and_verify_finalized_turn_freshness(
     // is gated on this Ok: a freshness opening against any other (prover-chosen)
     // set moves the absorbed OLD commit and is rejected here; the item identity
     // (`.absent` key == published nullifier) is in-circuit.
-    verify_full_turn_bound(&proof, old_commit, new_commit, None)
+    verify_full_turn_bound(&proof, turn_hash, old_commit, new_commit, None)
         .map_err(FullTurnProvingError::Verify)?;
 
     Ok(ProvenFinalizedTurn {
         proof,
         old_commit,
         new_commit,
+        turn_hash,
     })
 }
 
@@ -1714,13 +1722,20 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         leaf: consumed.cap_leaf(),
         cap_root: holder_cap_root,
     };
-    verify_full_turn_bound(&proof, old_commit, new_commit, Some(&expectation))
-        .map_err(FullTurnProvingError::Verify)?;
+    verify_full_turn_bound(
+        &proof,
+        turn_hash,
+        old_commit,
+        new_commit,
+        Some(&expectation),
+    )
+    .map_err(FullTurnProvingError::Verify)?;
 
     Ok(ProvenFinalizedTurn {
         proof,
         old_commit,
         new_commit,
+        turn_hash,
     })
 }
 
@@ -2366,8 +2381,13 @@ mod tests {
         assert_eq!(proven.proof.turn_hash, turn_hash);
 
         // Independent re-verification against the carried commitments.
-        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit)
-            .expect("carried proof must re-verify against carried commitments");
+        dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            proven.new_commit,
+        )
+        .expect("carried proof must re-verify against carried commitments");
     }
 
     /// **RETENTION ROUND-TRIP (the REAL IVC-compression seam).** A committed
@@ -2513,8 +2533,12 @@ mod tests {
         forged_new_commit[0] = forged_new_commit[0] + BabyBear::new(1);
         assert_ne!(forged_new_commit, proven.new_commit);
 
-        let result =
-            dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, forged_new_commit);
+        let result = dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            forged_new_commit,
+        );
         assert!(
             result.is_err(),
             "ANTI-GHOST: forged post-state commitment MUST be rejected"
@@ -2571,8 +2595,12 @@ mod tests {
 
         let mut forged_old_commit = proven.old_commit;
         forged_old_commit[0] = forged_old_commit[0] + BabyBear::new(1);
-        let result =
-            dregg_sdk::verify_full_turn(&proven.proof, forged_old_commit, proven.new_commit);
+        let result = dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            forged_old_commit,
+            proven.new_commit,
+        );
         assert!(
             result.is_err(),
             "ANTI-GHOST: forged pre-state commitment MUST be rejected"
@@ -2739,9 +2767,13 @@ mod tests {
 
         // Independent re-verification against the carried commitments (a light client's path):
         // OLD_COMMIT is the REAL field-bearing cell's commitment, reproducible from the real cell.
-        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit).expect(
-            "the non-synthetic rotated proof must re-verify against the real-cell commitments",
-        );
+        dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            proven.new_commit,
+        )
+        .expect("the non-synthetic rotated proof must re-verify against the real-cell commitments");
     }
 
     /// ANTI-GHOST (PATH-PRESERVE §4): the non-synthetic rotated turn's commitments are LOAD-BEARING
@@ -2791,8 +2823,12 @@ mod tests {
         let mut forged_new_commit = proven.new_commit;
         forged_new_commit[0] = forged_new_commit[0] + BabyBear::new(1);
         assert_ne!(forged_new_commit, proven.new_commit);
-        let result =
-            dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, forged_new_commit);
+        let result = dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            forged_new_commit,
+        );
         assert!(
             result.is_err(),
             "ANTI-GHOST: a forged post-state commitment on the non-synthetic rotated leg MUST be rejected"
@@ -2914,9 +2950,13 @@ mod tests {
 
         // Independent re-verification against the carried commitments (a light client's chain-check):
         // first.OLD == old_commit, last.NEW == new_commit, interior adjacency closes.
-        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit).expect(
-            "the chained heterogeneous proof must re-verify against the real-cell commitments",
-        );
+        dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            proven.new_commit,
+        )
+        .expect("the chained heterogeneous proof must re-verify against the real-cell commitments");
     }
 
     /// PATH-PRESERVE §6.2 ANTI-GHOST (the chain): a TAMPERED interior chain leg is REJECTED. We
@@ -2989,8 +3029,12 @@ mod tests {
         // The chained verifier rejects: the corrupted leg is UNSAT against its forged PI (step 3)
         // OR — if it stayed self-consistent — its broken NEW fails chain adjacency (step 4). Either
         // is the anti-ghost: the chain does not close on a fictional intermediate state.
-        let result =
-            dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit);
+        let result = dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            proven.new_commit,
+        );
         match result {
             Err(FullTurnVerifyError::SubProofInvalid { index, label, .. }) => {
                 assert_eq!(index, 0, "the tampered first leg is the rejected sub-proof");
@@ -3096,8 +3140,12 @@ mod tests {
         proven.proof.composed.sub_proofs[non_lead_idx].sub_public_inputs[new_commit_off] +=
             BabyBear::new(1);
 
-        let result =
-            dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit);
+        let result = dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            proven.new_commit,
+        );
         match result {
             Err(FullTurnVerifyError::SubProofInvalid { index, label, .. }) => {
                 assert_eq!(
@@ -3212,8 +3260,14 @@ mod tests {
         // Independent re-verification against the canonical-set-derived anchors
         // (a light client's path — the OLD anchor absorbs the canonical set's
         // limb-26 root, so pinning it IS the set binding).
-        verify_full_turn_bound(&proven.proof, proven.old_commit, proven.new_commit, None)
-            .expect("light-client re-verify against the canonical anchors must accept");
+        verify_full_turn_bound(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+        )
+        .expect("light-client re-verify against the canonical anchors must accept");
     }
 
     /// ANTI-FORGERY set binding (the former binding (a)): an honest spend proof
@@ -3258,7 +3312,8 @@ mod tests {
             "a different spent set must move the absorbed OLD anchor",
         );
 
-        let result = verify_full_turn_bound(&proven.proof, wrong_old, wrong_new, None);
+        let result =
+            verify_full_turn_bound(&proven.proof, proven.turn_hash, wrong_old, wrong_new, None);
         match result {
             Err(FullTurnVerifyError::CommitmentMismatch { .. }) => {}
             Ok(()) => panic!(
@@ -3875,6 +3930,7 @@ mod tests {
         };
         verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -3962,6 +4018,7 @@ mod tests {
         };
         match verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -4071,6 +4128,7 @@ mod tests {
         };
         match verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -4172,6 +4230,7 @@ mod tests {
         };
         let result = verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -4223,8 +4282,13 @@ mod tests {
             !proven.proof.components.has_cap_membership,
             "a self-sovereign turn carries NO cap-membership leg"
         );
-        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit)
-            .expect("self-sovereign verification is unchanged");
+        dregg_sdk::verify_full_turn(
+            &proven.proof,
+            proven.turn_hash,
+            proven.old_commit,
+            proven.new_commit,
+        )
+        .expect("self-sovereign verification is unchanged");
     }
 
     /// A capability-gated turn whose proof LACKS the cap leg must be rejected
@@ -4258,6 +4322,7 @@ mod tests {
         };
         let result = verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -4402,6 +4467,7 @@ mod tests {
         };
         verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -4530,6 +4596,7 @@ mod tests {
         };
         match verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -4888,6 +4955,7 @@ mod tests {
         };
         verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -5005,6 +5073,7 @@ mod tests {
         };
         match verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
@@ -5271,6 +5340,7 @@ mod tests {
         };
         verify_full_turn_bound(
             &proven.proof,
+            proven.turn_hash,
             proven.old_commit,
             proven.new_commit,
             Some(&expectation),
