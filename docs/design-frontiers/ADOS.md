@@ -149,7 +149,7 @@ in order (`swarm.rs:604`):
 2. **confirm backed** (the cell is live in the ledger — a destroyed agent
    cannot act);
 3. **CAP-GATE** — for each effect, confirm the acting cell's c-list reaches the
-   target (`Capabilities::has_access`); an out-of-mandate action is **refused
+   target (`CapabilitySet::holds_unfrozen_ref_to`); an out-of-mandate action is **refused
    before it runs** (`SwarmError::OutOfMandate`, fail-closed);
 4. **BUDGET-GATE** — refuse, fail-closed and before the turn runs, a dispatch
    from a member at/over its metered-computron ceiling

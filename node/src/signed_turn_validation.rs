@@ -1,10 +1,114 @@
-//! One application-payload admission predicate for every `SignedTurn` ingress.
+//! One application-payload admission predicate — and one admission STAGING RUN —
+//! for every `SignedTurn` ingress.
 //!
 //! Consensus authentication proves which validator carried a payload; it does
-//! not authorize the payload's agent.  HTTP admission, finalized-block
-//! execution, and the PostgreSQL drainer therefore call this module before any
-//! ledger mutation.  Keeping the predicate here prevents a new transport from
-//! accidentally implementing a weaker subset.
+//! not authorize the payload's agent, so every ingress runs
+//! [`validate_signed_turn`] before the turn can reach the authoritative ledger.
+//!
+//! # What each ingress actually does — MEASURED, not intended
+//!
+//! The previous version of this docblock said this module "prevents a new
+//! transport from accidentally implementing a weaker subset", named three
+//! transports, and claimed validation runs "before any ledger mutation". Every
+//! one of those clauses was false at the time it was read (2026-08-06), and the
+//! interesting falsehood was not weakness but STRICTNESS — see below. So this
+//! block states the arrangement rather than an aspiration, and the arrangement is
+//! now enforced by a shared function instead of by this paragraph.
+//!
+//! **The five production `validate_signed_turn` call sites**, and what surrounds
+//! each:
+//!
+//! | site | what it is | staging run |
+//! |---|---|---|
+//! | `api::post_submit_turn` | `POST /turn/submit`, node-signed thin ingress | [`stage_signed_turn_admission`] |
+//! | `api::submit_signed_turn` | `POST /turns/submit` + `POST /api/poa/signal/{a}/claims` | [`stage_signed_turn_admission`] |
+//! | `api::post_faucet` | node-built faucet envelope | its own (pipelined-nonce delta, below) |
+//! | `api::post_aggregate_bundle` | `POST /turns/aggregate` | none — proves, never executes |
+//! | `blocklace_sync::execute_finalized_turn` | consensus finalization — THE AUTHORITY | its own (isolated clone) |
+//! | `submit_queue_drainer::execute_submission` | pg `dregg.submit_queue`, `pg-mirror-live` ONLY | [`stage_signed_turn_admission`] |
+//!
+//! ⓘ `private_dependent_turns` calls the predicate twice more (arming, and
+//! release) as READ-LOCK PRE-CHECKS. They mutate nothing and execute nothing;
+//! they exist so a turn is not sealed into custody that the ingress which will
+//! actually apply it would refuse. They deliberately use the pure
+//! [`claimed_actor_cell`] rather than the mutating claim.
+//!
+//! ⓘ The drainer is `#![cfg(feature = "pg-mirror-live")]` and `node/Cargo.toml`
+//! declares **no `default` feature at all**, so that transport does not exist in
+//! a default build. Do not read its row as describing a shipped ingress.
+//!
+//! ⚠ **The predicate does NOT run before every ledger mutation, and the old
+//! docblock's claim that it did was false.** [`claim_signer_actor_cell`] WRITES
+//! to the live ledger and must run FIRST on the write-lock ingresses, because the
+//! predicate resolves authority against the LIVE agent cell and a fresh or
+//! faucet-stubbed client has none that binds its signer. Every such write is
+//! inside an armed restore point, so it is O(touched)-reversible and a refused
+//! turn leaves the ledger byte-identical — but "recoverable" is not "before any
+//! mutation", and stating the stronger thing is how a reader stops checking.
+//! Finalization is the one path that genuinely does not write first: it uses the
+//! pure [`claimed_actor_cell`] and installs the result on an isolated clone,
+//! because a claim in authoritative RAM that no commit record carries is an
+//! attested-root split.
+//!
+//! ⓘ **The boundary of this module's guarantee.** It covers ingresses that STAGE
+//! a `SignedTurn` and predict finalization's verdict. Three other places call
+//! `executor_setup::execute_via_producer` on a `Turn` and are NOT covered:
+//! `api::post_resolve_conditional` (a stored pending conditional, committed
+//! locally), `mcp::handlers_act` (the operator's own MCP `act` surface), and
+//! `exact_fnsp_v3_execution_authority`. None of them provisions Transfer
+//! destinations either, so a conditional or MCP transfer to an unseen cell hits
+//! the same executor refusal. They are a different question — they commit rather
+//! than stage — and they are named here so this block is not read as covering
+//! them.
+//!
+//! # ⚑ The split this module was reorganised to kill: STRICTER, not weaker
+//!
+//! `POST /turn/submit` and the pg drainer used to execute their staging run
+//! against a ledger that had NOT had [`install_pre_execution_state`] applied —
+//! specifically, without `blocklace_sync::provision_transfer_destinations`. A
+//! `Transfer` to a destination cell nobody has seen yet is refused by the
+//! executor as `transfer destination not found` (`turn/src/executor/apply.rs`),
+//! so those two ingresses answered a TERMINAL REFUSAL for a turn that
+//! `POST /turns/submit` accepts and that finalization commits — on the same node,
+//! at the same instant, for byte-identical effects. The drainer wrote
+//! `status='refused'` into `dregg.submit_queue` and never handed the envelope to
+//! consensus at all.
+//!
+//! That is a LIVENESS SPLIT between transports on one chain, and it protected
+//! nothing: finalization provisions unconditionally and is the sole authoritative
+//! application, so the strict ingresses refused turns the chain then had no
+//! objection to. The gate set that is correct is **finalization's**, because
+//! finalization is the only run whose verdict is binding; a staging run exists to
+//! PREDICT that verdict, and a prediction made against a ledger finalization will
+//! never produce is not a stricter check, it is a wrong one.
+//!
+//! # How parity is held now
+//!
+//! [`stage_signed_turn_admission`] is the single staging run: claim → predicate →
+//! receipt continuity → [`install_pre_execution_state`] → the one executor gate →
+//! unconditional rollback. A transport does not get to choose the steps or their
+//! order; it chooses only how to render the refusal. [`install_pre_execution_state`]
+//! is the SAME function `execute_finalized_turn` calls on its isolated candidate
+//! ledger, so "what the ledger must look like before this turn runs" has exactly
+//! one definition and staging cannot drift from finalization.
+//!
+//! The two remaining deltas are deliberate and stated here rather than implied:
+//!
+//! * **the faucet** builds its own envelope and must reflect a PIPELINED nonce
+//!   (`faucet_reserved_nonce`) inside the journal between provisioning and
+//!   execution, so it keeps its own sequence. It runs the same predicate and the
+//!   same provisioning; it skips the claim, which would be a no-op (the faucet
+//!   cell is genesis-minted and already its signer's canonical account).
+//! * **finalization** decides the claim with the pure [`claimed_actor_cell`]
+//!   BEFORE validation and installs it on an isolated clone, because a finalized
+//!   payload can clear this whole perimeter and still be refused afterwards; a
+//!   claim written into authoritative RAM would then survive in RAM only and
+//!   split the attested root. It applies ~15 further deterministic-rejection
+//!   gates no ingress runs (the PoA Signal/galley classifiers, the
+//!   faithful-note/nullifier suite, `exact-fnsp-v3-carrier-refused`). Those are
+//!   refusals, and an ingress that skips them is merely optimistic: the turn is
+//!   admitted, reaches consensus, and is deterministically rejected there. That
+//!   direction costs a block, not safety.
 
 use dregg_sdk::SignedTurn;
 use dregg_turn::TurnExecutor;
@@ -419,6 +523,159 @@ pub fn claimed_actor_cell(
             carried_balance,
         ))
     }
+}
+
+/// THE PRE-EXECUTION LEDGER SHAPE — the writes that must precede EVERY execution
+/// of a `SignedTurn`, on every transport, stated once.
+///
+/// Two things, and the reason they are one function is that they were previously
+/// three open-coded copies and two of them were missing the second half:
+///
+/// 1. **the first-turn claim**, when one was decided. `claimed_actor` is `Some`
+///    only where finalization computed it purely and is installing it on its own
+///    candidate ledger; the write-lock ingresses have already installed theirs via
+///    [`claim_signer_actor_cell`] (which must run BEFORE the predicate reads the
+///    cell) and pass `None`.
+/// 2. **Transfer destination provisioning.** The executor refuses a `Transfer`
+///    whose destination is absent (`TurnError::TransferDestNotFound`), and no node
+///    holds the destination's pre-image, so every node materialises a zero-pk stub
+///    at the destination id. ⚑ Deterministic in (turn, PRE-STATE), not in the turn
+///    alone — the stub's ASSET is read from the Transfer's source cell in the local
+///    ledger, because a Transfer is a single-asset move and the turn does not carry
+///    the asset. See `blocklace_sync::provision_transfer_destinations` for why that
+///    is enough for cross-node uniformity, and for the absent-source skip.
+///    Finalization does this unconditionally; a staging run that omits it is not
+///    predicting finalization's verdict, it is answering a different question about
+///    a ledger that will never exist.
+///
+/// ⚠ Idempotent, and a pure function of (claimed actor, call forest, pre-state) in
+/// both halves, which is what lets the same function serve an authoritative
+/// isolated candidate and a rolled-back staging journal.
+pub fn install_pre_execution_state(
+    ledger: &mut dregg_cell::Ledger,
+    claimed_actor: Option<dregg_cell::Cell>,
+    call_forest: &dregg_turn::CallForest,
+) {
+    if let Some(claimed) = claimed_actor {
+        let id = claimed.id();
+        let _ = ledger.remove(&id);
+        let _ = ledger.insert_cell(claimed);
+    }
+    crate::blocklace_sync::provision_transfer_destinations(ledger, call_forest);
+}
+
+/// Why [`stage_signed_turn_admission`] refused before it ever reached the
+/// executor. The executor's own verdict is NOT one of these — it comes back in
+/// [`StagedAdmission::outcome`], so each transport renders it in its own shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AdmissionRefusal {
+    /// The shared outer `SignedTurn` perimeter refused the envelope.
+    Envelope(SignedTurnValidationError),
+    /// The turn's `previous_receipt_hash` is not this agent's current causal
+    /// head. Compared as complete `Option`s: `None` is valid only for an agent's
+    /// genesis turn, never as an omitted-link reset.
+    ReceiptChainMismatch,
+}
+
+impl core::fmt::Display for AdmissionRefusal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Envelope(error) => error.fmt(f),
+            Self::ReceiptChainMismatch => f.write_str("receipt chain mismatch"),
+        }
+    }
+}
+
+/// A completed admission staging run. The ledger is ALREADY rolled back when
+/// this is returned — consensus finalization is the sole authoritative
+/// application at every committee size — so `pre_ledger` is the only view of the
+/// cells the run touched.
+#[derive(Debug)]
+pub struct StagedAdmission {
+    /// The exact turn hash whose classical/PQ perimeter passed.
+    pub validated: ValidatedSignedTurn,
+    /// What the one executor gate said. `Committed` means ADMITTED, not applied.
+    pub outcome: dregg_turn::TurnResult,
+    /// Prior images of exactly the cells the staging run touched, captured from
+    /// the undo journal before it was rolled back.
+    pub pre_ledger: dregg_cell::Ledger,
+}
+
+/// THE ONE ADMISSION STAGING RUN. Every mutating `SignedTurn` ingress calls
+/// this and nothing else; the transport chooses how to render a refusal and
+/// what to do with an admission, never which checks apply or in what order.
+///
+/// # Why this is a function and not a paragraph
+///
+/// The docblock this replaced claimed a shared choke point "prevents a new
+/// transport from implementing a weaker subset". Nothing enforced it, and what
+/// actually happened was the opposite failure: two ingresses became STRICTER
+/// than consensus by omitting [`install_pre_execution_state`], and each returned
+/// a terminal refusal for a `Transfer` the chain commits. A name is a claim; this
+/// is the mechanism. A new transport that wants to admit a `SignedTurn` has one
+/// door, and the steps behind it are not individually reachable in a way that
+/// composes wrongly.
+///
+/// # The sequence, and why each step is where it is
+///
+/// 1. `begin_restore_point` FIRST, so a refused turn — and an admitted one,
+///    which consensus applies authoritatively — leaves the ledger byte-identical.
+/// 2. [`claim_signer_actor_cell`] BEFORE the predicate, because the predicate
+///    resolves authority against the LIVE agent cell and a fresh or
+///    faucet-stubbed client has none that binds its signer. This is an ordering
+///    fix, not a weakening: the claim writes only the account this envelope's own
+///    two possession proofs describe, and only where nobody else holds the id.
+/// 3. [`validate_signed_turn`] under the SAME guard that protects the impending
+///    mutation, so an identity rotation cannot race the check.
+/// 4. Agent-scoped receipt continuity.
+/// 5. [`install_pre_execution_state`] — the same one finalization applies.
+/// 6. `execute_via_producer`, THE one executor gate (#171).
+/// 7. Capture the journal's prior images, then roll back UNCONDITIONALLY.
+///
+/// ⚠ The rollback is unconditional in every arm and at every committee size.
+/// This run decides admissibility and builds a response artifact; it is not an
+/// application. Anything that reads `s.ledger` after this call is reading the
+/// pre-turn ledger.
+pub fn stage_signed_turn_admission(
+    s: &mut crate::state::NodeStateInner,
+    signed: &SignedTurn,
+) -> Result<StagedAdmission, AdmissionRefusal> {
+    let executor = crate::executor_setup::new_submit_executor(s);
+    let lean_producer_enabled = s.lean_producer_enabled;
+
+    s.ledger.begin_restore_point();
+    claim_signer_actor_cell(&mut s.ledger, signed, executor.require_pq());
+
+    let validated = match validate_signed_turn(signed, &executor, s.ledger.get(&signed.turn.agent))
+    {
+        Ok(validated) => validated,
+        Err(error) => {
+            s.ledger.rollback_restore_point();
+            return Err(AdmissionRefusal::Envelope(error));
+        }
+    };
+
+    if signed.turn.previous_receipt_hash != s.cclerk.agent_receipt_head_hash(&signed.turn.agent) {
+        s.ledger.rollback_restore_point();
+        return Err(AdmissionRefusal::ReceiptChainMismatch);
+    }
+
+    // The claim is already installed (step 2), so only the destinations remain.
+    install_pre_execution_state(&mut s.ledger, None, &signed.turn.call_forest);
+    let outcome = crate::executor_setup::execute_via_producer(
+        &executor,
+        &signed.turn,
+        &mut s.ledger,
+        lean_producer_enabled,
+    );
+
+    let pre_ledger = s.ledger.pre_turn_touched_ledger();
+    s.ledger.rollback_restore_point();
+    Ok(StagedAdmission {
+        validated,
+        outcome,
+        pre_ledger,
+    })
 }
 
 /// Versioned durable record for a consensus-finalized payload that the

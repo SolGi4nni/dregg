@@ -29,7 +29,7 @@ up an item, the other cannot dupe it.*
 | **inhabitant / player** | a cap-rooted **session** = the c-list reachable from the identity cell | `starbridge-v2/src/session.rs:13` (login = root cap), `Session` `:147` |
 | **identity** | `CellId::derive_raw(pubkey, ROOT_TOKEN)` — the content-address of the key | `types/src/lib.rs:683`, `session.rs:53` (`ROOT_TOKEN`), `:72` (`root_cell`) |
 | **item / object** | a **capability** to a cell (holding the cap = holding the thing) | `cell/src/capability.rs:44` (`CapabilityRef`), `:126` (`CapabilitySet`) |
-| **exit / door** | a cap *edge* to the neighbour room cell; a *locked* door = a cap you lack | `cell/src/capability.rs` (`has_access`), `permissions.rs:5` (`AuthRequired`) |
+| **exit / door** | a cap *edge* to the neighbour room cell; a *locked* door = a cap you lack | `cell/src/capability.rs` (`has_access_at`, height-aware since 2026-08-06), `permissions.rs:5` (`AuthRequired`) |
 | **affordance (lever, button, "look")** | a cell-declared, cap-gated effect-template; firing = a verified turn | `starbridge-v2/src/affordance.rs:62` (`CellAffordance`), `:99` (`authorized_for`) |
 | **pick up / drop / give** | `Effect::GrantCapability` / `RevokeCapability` (a real attenuated grant) | `turn/src/action.rs` (`GrantCapability`/`RevokeCapability`), powerbox `starbridge-v2/src/powerbox.rs` |
 | **trade / pay** | `Effect::Transfer` / `NoteSpend`+`NoteCreate` under Σδ=0 | `turn/src/action.rs` (`Transfer`/`NoteSpend`/`NoteCreate`), conservation in the executor |
@@ -94,7 +94,7 @@ What this buys the MUD:
 There is no separate "item table." An **item** is a `CapabilityRef`
 (`cell/src/capability.rs:44`) into an item-cell; *holding* the item is *holding the
 cap*. An **exit** is a cap edge from one room cell to the neighbour
-(`has_access(&neighbour)` is "this room connects there"). A **locked door** is the
+(`holds_unfrozen_ref_to(&neighbour)` is "this room connects there"). A **locked door** is the
 absence of a cap, or a cap whose `AuthRequired` you cannot satisfy
 (`permissions.rs:5`): the key is the cap, and `is_attenuation(held, required)`
 (`capability.rs:603`) is the lock mechanism. You don't *check* a lock; you simply

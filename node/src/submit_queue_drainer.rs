@@ -389,69 +389,44 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
         }
     }
 
-    // The same complete application-payload predicate as HTTP admission and
-    // consensus finalization.  In required/native mode a self-carried key is
-    // never an authority: it must equal the independently enrolled key.
-    let executor = crate::executor_setup::new_submit_executor(&s);
-    // Admission staging is O(touched)-reversible: arm the undo journal BEFORE the
-    // first-turn claim so a refused turn — and an admitted one, which consensus
-    // applies authoritatively — leaves the ledger exactly as it found it.
-    s.ledger.begin_restore_point();
-    // THE FIRST-TURN CLAIM, before the predicate reads the actor cell — the same
-    // ordering every other ingress uses. A queued first turn from a fresh client
-    // otherwise refuses `pq-identity-not-enrolled` / `live-agent-signer-mismatch`
-    // here while finalization would have accepted it.
-    crate::signed_turn_validation::claim_signer_actor_cell(
-        &mut s.ledger,
-        &signed,
-        executor.require_pq(),
-    );
-    if let Err(error) = crate::signed_turn_validation::validate_signed_turn(
-        &signed,
-        &executor,
-        s.ledger.get(&signed.turn.agent),
-    ) {
-        s.ledger.rollback_restore_point();
-        return DrainOutcome::Refused {
-            error: error.to_string(),
-        };
-    }
+    // THE ONE ADMISSION STAGING RUN, byte-for-byte the one both HTTP ingresses
+    // take (`signed_turn_validation::stage_signed_turn_admission`): the undo
+    // journal, the first-turn claim, the shared outer predicate, agent-scoped
+    // receipt continuity, the pre-execution ledger shape finalization installs,
+    // THE one executor gate (#171), and an unconditional rollback.
+    //
+    // ⚑ WHAT THIS FIXES, AND IT IS THE INTERESTING DIRECTION. This function used
+    // to open-code that sequence and it was missing ONE line —
+    // `provision_transfer_destinations`. `execute_finalized_turn` provisions
+    // every unseen `Transfer` destination before executing, and the executor
+    // refuses a `Transfer` whose destination is absent, so a QUEUED transfer to a
+    // fresh cell was staged against a ledger consensus will never produce,
+    // rejected `transfer destination not found`, and written back
+    // `status='refused'` — TERMINAL, in a queue row a submitter polls, for a turn
+    // the same node admits over `/turns/submit` and commits. The drainer was not
+    // weaker than the shared predicate; it was STRICTER than the chain, which
+    // bought no safety (finalization provisions unconditionally and is the sole
+    // authoritative application) and cost liveness outright.
+    //
+    // The sequence is no longer this module's to get right. It picks the checks
+    // for no transport, including itself.
+    let staged = match crate::signed_turn_validation::stage_signed_turn_admission(&mut s, &signed) {
+        Ok(staged) => staged,
+        Err(refusal) => {
+            return DrainOutcome::Refused {
+                error: refusal.to_string(),
+            };
+        }
+    };
 
-    // Agent-scoped receipt continuity. Compare exact Options: `None` is valid
-    // only for this agent's genesis turn, never as an omitted-link reset.
-    let expected_prev = s.cclerk.agent_receipt_head_hash(&signed.turn.agent);
-    if signed.turn.previous_receipt_hash != expected_prev {
-        s.ledger.rollback_restore_point();
-        return DrainOutcome::Refused {
-            error: "receipt chain mismatch".to_string(),
-        };
-    }
-
-    // THE ONE executor gate (#171): execute through the producer-aware path —
-    // the verified Lean producer is authoritative for the covered set, exactly
-    // as for a locally- or HTTP-submitted turn. No new execution path.
-    let lean_producer_enabled = s.lean_producer_enabled;
-    let exec_result = crate::executor_setup::execute_via_producer(
-        &executor,
-        &signed.turn,
-        &mut s.ledger,
-        lean_producer_enabled,
-    );
-
-    // EVERY arm rolls the journal back, admitted or refused: this run exists to
-    // decide admissibility and nothing else. The executor restores its own
-    // mutations on rejection, but the first-turn claim above is not the
-    // executor's, and an ADMITTED turn's mutation belongs to finalization.
-    let admitted = match exec_result {
+    if let Err(error) = match staged.outcome {
         dregg_turn::TurnResult::Committed { .. } => Ok(()),
         dregg_turn::TurnResult::Rejected { reason, .. } => Err(format!("turn rejected: {reason}")),
         dregg_turn::TurnResult::Expired => Err("turn expired".to_string()),
         dregg_turn::TurnResult::Pending => {
             Err("turn pending (conditional turns are not queue-drainable)".to_string())
         }
-    };
-    s.ledger.rollback_restore_point();
-    if let Err(error) = admitted {
+    } {
         return DrainOutcome::Refused { error };
     }
     drop(s);
@@ -614,6 +589,137 @@ mod tests {
         };
         turn.fee = crate::executor_setup::new_submit_executor(&s).estimate_cost(&turn);
         s.cclerk.sign_turn(&turn)
+    }
+
+    /// An operator-signed turn carrying ONE `Transfer` to `to` — the shape whose
+    /// destination provisioning is the thing under test in
+    /// [`a_queued_transfer_to_a_fresh_destination_is_not_refused_where_the_chain_commits_it`].
+    async fn operator_signed_transfer_turn(
+        state: &NodeState,
+        to: dregg_cell::CellId,
+        amount: u64,
+    ) -> SignedTurn {
+        install_verified_pq_cores();
+        let mut s = state.write().await;
+        s.unlocked = true;
+        let operator_pk = s.cclerk.public_key().0;
+        let operator = crate::executor_setup::local_agent_cell(&s);
+        let token = *blake3::hash(b"default").as_bytes();
+        if s.ledger.get(&operator).is_none() {
+            s.ledger
+                .insert_cell(dregg_cell::Cell::with_balance(
+                    operator_pk,
+                    token,
+                    1_000_000,
+                ))
+                .expect("insert operator cell");
+        }
+        let federation_id = crate::executor_setup::federation_id_for_executor(&s);
+        let action = s.cclerk.make_action(
+            operator,
+            "pg-queue-transfer",
+            vec![dregg_turn::Effect::Transfer {
+                from: operator,
+                to,
+                amount,
+            }],
+            &federation_id,
+        );
+        let mut call_forest = dregg_turn::CallForest::new();
+        call_forest.add_root(action);
+        let mut turn = dregg_turn::Turn {
+            agent: operator,
+            nonce: s
+                .ledger
+                .get(&operator)
+                .expect("operator cell")
+                .state
+                .nonce(),
+            fee: 0,
+            memo: None,
+            valid_until: Some(i64::MAX / 2),
+            call_forest,
+            depends_on: vec![],
+            previous_receipt_hash: s.cclerk.agent_receipt_head_hash(&operator),
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: vec![],
+            cross_effect_dependencies: vec![],
+            effect_witness_index_map: vec![],
+        };
+        turn.fee = crate::executor_setup::new_submit_executor(&s).estimate_cost(&turn);
+        s.cclerk.sign_turn(&turn)
+    }
+
+    /// ⚑ THE PG HALF OF THE TRANSPORT SPLIT (the HTTP half is
+    /// `transport_parity_e2e`), driven through the REAL drain path.
+    ///
+    /// `execute_finalized_turn` provisions every unseen `Transfer` destination
+    /// (`provision_transfer_destinations`) before it executes, and the executor
+    /// refuses a `Transfer` whose destination is absent. This function used to
+    /// open-code its staging run WITHOUT that provisioning, so a queued transfer
+    /// to a cell no node had seen was staged against a ledger consensus will never
+    /// produce, rejected `turn rejected: transfer destination not found: <id>`, and
+    /// written back to `dregg.submit_queue` as `status='refused'` — TERMINAL, and
+    /// never handed to the blocklace at all — for a turn the same node admits over
+    /// `/turns/submit` and then COMMITS.
+    ///
+    /// The assertion is `Executed`, which is read from
+    /// `PersistentStore::lookup_turn`, so a green is proof the envelope entered the
+    /// DAG and `execute_finalized_turn` applied it: the drainer's own staging run
+    /// is rolled back and cannot produce that outcome. The destination balance is
+    /// then read off the AUTHORITATIVE ledger, because "admitted" and "the money
+    /// moved" are different claims and only the second one matters here.
+    ///
+    /// THE CANARY: delete the `install_pre_execution_state` call from
+    /// `signed_turn_validation::stage_signed_turn_admission` and this goes red with
+    /// exactly the refusal above.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_queued_transfer_to_a_fresh_destination_is_not_refused_where_the_chain_commits_it() {
+        let (state, _tmp) = drainer_node().await;
+
+        // A destination cell id no node has ever seen — the whole point.
+        let destination =
+            dregg_cell::CellId::derive_raw(&[0xF3; 32], blake3::hash(b"default").as_bytes());
+        {
+            let s = state.read().await;
+            assert!(
+                s.ledger.get(&destination).is_none(),
+                "the fixture must start with NO cell at the destination, or the provisioning \
+                 this test is about never runs"
+            );
+        }
+
+        let amount = 4_200u64;
+        let signed = operator_signed_transfer_turn(&state, destination, amount).await;
+        let bytes = postcard::to_stdvec(&signed).expect("encode submission");
+
+        match execute_submission(&state, &bytes).await {
+            DrainOutcome::Executed { .. } => {}
+            DrainOutcome::Refused { error } => panic!(
+                "the drainer refused a queued Transfer the chain has no objection to: {error}. \
+                 `transfer destination not found` here means the staging run is not installing \
+                 the pre-execution ledger shape finalization installs — a terminal `refused` row \
+                 for a turn `/turns/submit` admits and commits."
+            ),
+            DrainOutcome::Deferred => panic!(
+                "the queued transfer was admitted and submitted but never finalized within the \
+                 wait — a Deferred here is not the split, but it is not a pass either"
+            ),
+        }
+
+        await_agent_receipt_count(&state, signed.turn.agent, 1).await;
+        let s = state.read().await;
+        assert_eq!(
+            s.ledger.get(&destination).map(|cell| cell.state.balance()),
+            Some(amount as i64),
+            "finalization must have provisioned the destination AND credited it — an `Executed` \
+             that moved nothing is the other failure this file exists to catch"
+        );
     }
 
     fn refusal_error(outcome: DrainOutcome) -> String {

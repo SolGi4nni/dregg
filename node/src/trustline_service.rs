@@ -422,7 +422,7 @@ fn require_operator_authority(
     let holds_cap = s
         .ledger
         .get(&operator_cell)
-        .map(|c| c.capabilities.has_access(&trustline))
+        .map(|c| c.capabilities.holds_unfrozen_ref_to(&trustline))
         .unwrap_or(false);
     if !holds_cap {
         return Err(TrustlineRefusal::NoCapability(format!(
@@ -1008,7 +1008,7 @@ async fn post_trustline_draw(
     if !inner
         .ledger
         .get(&holder)
-        .map(|c| c.capabilities.has_access(&trustline))
+        .map(|c| c.capabilities.holds_unfrozen_ref_to(&trustline))
         .unwrap_or(false)
     {
         return Err(TrustlineRefusal::NoCapability(
@@ -1706,7 +1706,11 @@ mod tests {
         {
             let s = state.write().await;
             assert!(
-                s.ledger.get(&holder).unwrap().capabilities.has_access(&tl),
+                s.ledger
+                    .get(&holder)
+                    .unwrap()
+                    .capabilities
+                    .holds_unfrozen_ref_to(&tl),
                 "holder must hold the line capability"
             );
         }

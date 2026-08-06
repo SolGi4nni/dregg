@@ -718,20 +718,34 @@ pub fn verify_anonymous_presentation(
             None => return false,
         };
 
-        // Check federation root is the committed root.
-        let expected_root_bb = {
-            let limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(expected_federation_root);
-            poseidon2::hash_many(&limbs)
-        };
-
-        // The root is the second public input in blinded ring-membership proofs.
+        // ⚑ BOTH HALVES OF THIS CHECK WERE WRONG UNTIL 2026-08-06.
+        //
+        // (1) It compared LANE 0 of the committed root against
+        //     `poseidon2::hash_many(bytes32_to_8_limbs(expected_root))` — a HASH of the
+        //     whole root. The blinded 4-ary descriptor publishes the root as eight RAW
+        //     `Digest8` lanes at `PI_ROOT_4ARY..+8` (`BLINDED_4ARY_PI_COUNT` = 16;
+        //     `sdk::verify::verify_authorization_wires` reads exactly that slice). Lane 0
+        //     of a root is not the Poseidon2 hash of that root's lanes, so the primary
+        //     comparison was between two unrelated objects.
+        //
+        // (2) When it inevitably failed, the function fell back to
+        //     `blinded_pis.contains(&expected_root_bb)` — "does this felt appear ANYWHERE
+        //     in the 16 public inputs", including the eight BLINDED-LEAF lanes at
+        //     `0..8`, whose contents the prover moves at will by choosing the
+        //     per-presentation blinding factor. A prover grinding blindings until one
+        //     leaf lane hit the target felt was accepted against a federation it is not
+        //     a member of. A fallback that widens a failed equality into a membership
+        //     test over prover-chosen slots is not a fallback, it is the hole.
+        //
+        // Now: all EIGHT root lanes, at their published offsets, against the same decode
+        // the SDK's other verifier uses. No fallback.
         use dregg_circuit::blinded_membership_witness::PI_ROOT_4ARY;
-        if blinded_pis.get(PI_ROOT_4ARY).copied() == Some(expected_root_bb) {
-            return true;
+        use dregg_circuit::membership_descriptor_4ary::DIGEST_W;
+        let expected_root8 = dregg_circuit::effect_vm::bytes32_to_8_limbs(expected_federation_root);
+        if blinded_pis.len() < PI_ROOT_4ARY + DIGEST_W {
+            return false;
         }
-
-        // Fallback: check if root appears anywhere in public inputs.
-        blinded_pis.contains(&expected_root_bb)
+        blinded_pis[PI_ROOT_4ARY..PI_ROOT_4ARY + DIGEST_W] == expected_root8[..]
     } else {
         false
     }

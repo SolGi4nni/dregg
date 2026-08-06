@@ -715,7 +715,7 @@ mod tests {
                     .get(&holder)
                     .unwrap()
                     .capabilities
-                    .has_access(&tl.cell),
+                    .holds_unfrozen_ref_to(&tl.cell),
                 "holder must hold the line capability"
             );
         }

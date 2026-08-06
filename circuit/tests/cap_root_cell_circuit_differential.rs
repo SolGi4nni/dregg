@@ -21,9 +21,34 @@
 //!      root, and `CellState::with_capability_root` round-trips the real root.
 
 use dregg_cell::permissions::AuthRequired;
-use dregg_cell::{Cell, CellId};
+use dregg_cell::{CapabilityRef, Cell, CellId};
 use dregg_circuit::cap_root::{self, CapLeaf};
 use dregg_circuit::field::BabyBear;
+
+/// A wire-shaped `CapabilityRef` for [`dregg_cell::CapabilitySet::grant_ref`], which
+/// assigns the c-list's own slot and chains a fresh provenance (neither is part of the
+/// canonical 7-field cap leaf, so neither moves the root this file differentials).
+///
+/// This replaces the deleted `grant_full`, which took four of the eight fields and
+/// hardcoded `allowed_effects: None` — the reason the `(c)` cap below was commented
+/// "a faceted cap (restricted mask)" while actually being installed UNFACETED.
+fn wire_cap(
+    target: CellId,
+    permissions: AuthRequired,
+    breadstuff: Option<[u8; 32]>,
+    expires_at: Option<u64>,
+) -> CapabilityRef {
+    CapabilityRef {
+        target,
+        slot: 0,
+        permissions,
+        breadstuff,
+        expires_at,
+        allowed_effects: None,
+        stored_epoch: None,
+        provenance: [0u8; 32],
+    }
+}
 
 /// Build the circuit-side `CapLeaf` for a `dregg_cell` capability, mirroring
 /// the cell's encoding INDEPENDENTLY (this is the differential reference — if
@@ -118,7 +143,7 @@ fn a2_populated_clist_cell_equals_circuit() {
     let bread = [0xABu8; 32];
     let s3 = cell
         .capabilities
-        .grant_full(t3, AuthRequired::Either, Some(bread), None)
+        .grant_ref(&wire_cap(t3, AuthRequired::Either, Some(bread), None))
         .unwrap();
 
     let cell_root = dregg_cell::compute_canonical_capability_root_8(&cell.capabilities);
@@ -197,7 +222,12 @@ fn a2_anti_ghost_every_field_binds() {
     let base = {
         let mut c = tcell();
         c.capabilities
-            .grant_full(t, AuthRequired::Signature, Some([1u8; 32]), Some(100))
+            .grant_ref(&wire_cap(
+                t,
+                AuthRequired::Signature,
+                Some([1u8; 32]),
+                Some(100),
+            ))
             .unwrap();
         dregg_cell::compute_canonical_capability_root_felt(&c.capabilities)
     };
@@ -206,7 +236,12 @@ fn a2_anti_ghost_every_field_binds() {
     let diff_target = {
         let mut c = tcell();
         c.capabilities
-            .grant_full(t_other, AuthRequired::Signature, Some([1u8; 32]), Some(100))
+            .grant_ref(&wire_cap(
+                t_other,
+                AuthRequired::Signature,
+                Some([1u8; 32]),
+                Some(100),
+            ))
             .unwrap();
         dregg_cell::compute_canonical_capability_root_felt(&c.capabilities)
     };
@@ -216,7 +251,12 @@ fn a2_anti_ghost_every_field_binds() {
     let diff_auth = {
         let mut c = tcell();
         c.capabilities
-            .grant_full(t, AuthRequired::Proof, Some([1u8; 32]), Some(100))
+            .grant_ref(&wire_cap(
+                t,
+                AuthRequired::Proof,
+                Some([1u8; 32]),
+                Some(100),
+            ))
             .unwrap();
         dregg_cell::compute_canonical_capability_root_felt(&c.capabilities)
     };
@@ -226,7 +266,12 @@ fn a2_anti_ghost_every_field_binds() {
     let diff_expiry = {
         let mut c = tcell();
         c.capabilities
-            .grant_full(t, AuthRequired::Signature, Some([1u8; 32]), Some(200))
+            .grant_ref(&wire_cap(
+                t,
+                AuthRequired::Signature,
+                Some([1u8; 32]),
+                Some(200),
+            ))
             .unwrap();
         dregg_cell::compute_canonical_capability_root_felt(&c.capabilities)
     };
@@ -236,7 +281,12 @@ fn a2_anti_ghost_every_field_binds() {
     let diff_bread = {
         let mut c = tcell();
         c.capabilities
-            .grant_full(t, AuthRequired::Signature, Some([2u8; 32]), Some(100))
+            .grant_ref(&wire_cap(
+                t,
+                AuthRequired::Signature,
+                Some([2u8; 32]),
+                Some(100),
+            ))
             .unwrap();
         dregg_cell::compute_canonical_capability_root_felt(&c.capabilities)
     };
@@ -279,7 +329,7 @@ fn a2_revoke_cell_equals_circuit_tombstone() {
     let bread = [0xABu8; 32];
     let s3 = cell
         .capabilities
-        .grant_full(t3, AuthRequired::Either, Some(bread), None)
+        .grant_ref(&wire_cap(t3, AuthRequired::Either, Some(bread), None))
         .unwrap();
 
     // The PRE-revoke live tree (all three leaves), for the witness reference.

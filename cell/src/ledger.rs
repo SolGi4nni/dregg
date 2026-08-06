@@ -1014,14 +1014,14 @@ impl Ledger {
             cell.permissions = new_perms.clone();
         }
 
-        // Capability grants (preserving all fields including expires_at).
+        // Capability grants, preserving every field of the granted `CapabilityRef` —
+        // including `allowed_effects` (the FACET mask) and `stored_epoch` (R7 freshness),
+        // which the deleted `grant_full` silently reset to `None`/`None`. `None` on
+        // `allowed_effects` means UNRESTRICTED, so applying a delta carrying an attenuated
+        // cap used to WIDEN it to every effect on the way in. `grant_ref` assigns this
+        // c-list's own slot and chains a fresh provenance; everything else rides through.
         for cap_ref in &delta.capability_grants {
-            cell.capabilities.grant_full(
-                cap_ref.target,
-                cap_ref.permissions.clone(),
-                cap_ref.breadstuff,
-                cap_ref.expires_at,
-            );
+            cell.capabilities.grant_ref(cap_ref);
         }
 
         // Capability revocations.

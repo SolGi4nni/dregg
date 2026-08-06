@@ -416,34 +416,19 @@ impl CapabilitySet {
         Some(slot)
     }
 
-    /// Grant a capability preserving ALL fields from a CapabilityRef (breadstuff + expires_at).
-    ///
-    /// Used during delta application to avoid silently dropping the `expires_at` field.
-    /// Returns the assigned slot number, or `None` if the slot counter would overflow.
-    pub fn grant_full(
-        &mut self,
-        target: CellId,
-        permissions: AuthRequired,
-        breadstuff: Option<[u8; 32]>,
-        expires_at: Option<u64>,
-    ) -> Option<u32> {
-        // INVALIDATE the cached cap-root: this method appends to the c-list.
-        self.invalidate_cap_root_cache();
-        let slot = self.next_slot;
-        self.next_slot = self.next_slot.checked_add(1)?;
-        let provenance = cap_provenance(&target, slot, &mint_provenance(), &NO_TURN_CONTEXT);
-        self.refs.push(CapabilityRef {
-            target,
-            slot,
-            permissions,
-            breadstuff,
-            expires_at,
-            allowed_effects: None,
-            stored_epoch: None,
-            provenance,
-        });
-        Some(slot)
-    }
+    // ⚑ `grant_full` LIVED HERE UNTIL 2026-08-06 AND ITS NAME WAS THE WHOLE BUG.
+    // Its docblock read "Grant a capability preserving ALL fields from a CapabilityRef
+    // (breadstuff + expires_at)" — and the parenthetical was the true half. It took FOUR
+    // of `CapabilityRef`'s eight fields and hardcoded `allowed_effects: None` +
+    // `stored_epoch: None`, so a `TRANSFER`-only faceted cap fed through it came out the
+    // other side as an ALL-EFFECTS cap (`facet::is_effect_permitted` reads `None` as "every
+    // bit set"), exempt from the R7 freshness re-check. Its one production caller,
+    // `Ledger::apply_delta`, held the WHOLE `CapabilityRef` and destructured four fields out
+    // of it to call this — under a comment that repeated the false claim. It now calls
+    // [`Self::grant_ref`], which is what "preserving all fields" was always supposed to mean
+    // and which has said so correctly since it was written. Deleted rather than fixed: two
+    // install primitives that agree on unfaceted caps and disagree on faceted ones is exactly
+    // how the B2 runtime-laxity hole got in.
 
     /// Grant a capability preserving EVERY field of `cap` except the slot
     /// (which this c-list assigns). The faithful install primitive: the
@@ -657,14 +642,23 @@ impl CapabilitySet {
         self.refs.iter().find(|r| r.slot == slot)
     }
 
-    /// Check if this set contains any non-revoked capability referencing the given target.
+    /// Does this set hold an UNFROZEN entry pointing at `target`?
     ///
-    /// A capability with `permissions: Impossible` is treated as revoked/frozen and
-    /// does NOT count as a valid access path.
+    /// ⚠ **This is not an access check, and the name no longer says it is.** It reads
+    /// ONE of [`CapabilityRef::is_live_at`]'s two legs — `permissions != Impossible`
+    /// — and ignores `expires_at` entirely, so it answers `true` for a capability
+    /// that lapsed a million blocks ago. It was called `has_access` until 2026-08-06,
+    /// with a docblock that admitted the gap in a `NOTE:` and a name that promised the
+    /// opposite; the executor's `apply_introduce` read the name, not the note, and
+    /// admitted an expired conferring edge (`turn/src/executor/apply.rs`, fixed in the
+    /// same commit).
     ///
-    /// NOTE: This method does NOT check expiration. Use `has_access_at()` when you
-    /// have a current block height available (e.g., during turn execution).
-    pub fn has_access(&self, target: &CellId) -> bool {
+    /// **If you have a height, you want [`Self::has_access_at`].** Every authorization
+    /// path does have one. This survives only for the height-free pre-checks that are
+    /// deciding whether to BUILD a turn, where the executor is the real gate — and
+    /// those read as what they are now that the name says "holds a ref", not "has
+    /// access".
+    pub fn holds_unfrozen_ref_to(&self, target: &CellId) -> bool {
         self.refs
             .iter()
             .any(|r| &r.target == target && r.permissions != AuthRequired::Impossible)
@@ -695,26 +689,19 @@ impl CapabilitySet {
             .filter(move |r| r.target == target && r.is_live_at(current_height))
     }
 
-    /// Like [`has_access_at`], but additionally requires that some held,
-    /// non-revoked, non-expired capability to `target` admits the given
-    /// effect-kind bit through its `allowed_effects` FACET mask (E-language
-    /// faceting).
-    ///
-    /// A cap with `allowed_effects: None` is the full-facet node cap (every
-    /// effect permitted); `Some(mask)` admits only effects whose bit is set
-    /// (and `Some(0)` admits nothing — the P2-1 deny-all). This is the
-    /// FACET leg the verified kernel's `authorizedB` enforces on the DIRECT
-    /// cross-cell path (an `.endpoint` cap must carry the required facet, not
-    /// merely exist) — `CAP-FACET-1`.
-    pub fn permits_effect_at(
-        &self,
-        target: &CellId,
-        current_height: u64,
-        effect_bit: EffectMask,
-    ) -> bool {
-        self.live_at(target, current_height)
-            .any(|r| crate::facet::is_effect_permitted(r.allowed_effects, effect_bit))
-    }
+    // ⚑ `permits_effect_at` LIVED HERE UNTIL 2026-08-06, WITH A RULE ID AND NO CALLER.
+    // Its docblock read: *"This is the FACET leg the verified kernel's `authorizedB`
+    // ENFORCES on the DIRECT cross-cell path (an `.endpoint` cap must carry the required
+    // facet, not merely exist) — `CAP-FACET-1`."* Measured 2026-08-06: zero call sites
+    // repo-wide, test or production. A rule identifier on a function nothing calls is the
+    // most convincing possible form of the claim, and it enforced nothing.
+    //
+    // The facet leg that IS live is [`crate::HeldAuthority::permits_effect`], reached from
+    // `Cell::resolve_authority_at` by six executor sites in `apply.rs` / `authorize.rs`.
+    // It is the correct one, because it unions over BOTH authority stores (c-list and the
+    // delegation snapshot) where this one saw only the c-list — the same split that made
+    // the facet check and the presence check disagree once already, and the reason
+    // `effect_mask_union_for` was deleted below.
 
     // `effect_mask_union_for` lived here: a c-list-only union used to fill the
     // `allowed_mask` of a `FacetViolation`. It is DELETED rather than kept
@@ -1007,10 +994,13 @@ impl CapabilitySet {
         self.refs.iter_mut()
     }
 
-    /// Get all capabilities targeting a specific cell.
-    pub fn capabilities_for(&self, target: &CellId) -> Vec<&CapabilityRef> {
-        self.refs.iter().filter(|r| &r.target == target).collect()
-    }
+    // ⚑ `capabilities_for` LIVED HERE UNTIL 2026-08-06 — `filter(|r| &r.target == target)`,
+    // no liveness leg at all (not even the frozen check), zero production callers, two in
+    // `cell/src/tests.rs`. Its DELEGATION twin was already deleted for exactly this, and
+    // `delegation.rs` names it: *"The predicates this replaced — `has_capability(target)`
+    // and `capabilities_for(target)` — matched on TARGET EQUALITY ALONE."* The c-list copy
+    // survived that cutover. [`Self::live_at`] is the replacement and returns the same
+    // iterator, filtered by [`CapabilityRef::is_live_at`].
 
     /// Look up the first capability referencing the given target.
     /// Returns None if no capability to that target is held.
@@ -1363,10 +1353,13 @@ mod revoke_tombstone_tests {
         );
         assert!(caps.lookup(s2).is_some(), "other slot survives");
         assert!(
-            !caps.has_access(&cid(1)),
+            !caps.holds_unfrozen_ref_to(&cid(1)),
             "revoked target no longer accessible"
         );
-        assert!(caps.has_access(&cid(2)), "other target still accessible");
+        assert!(
+            caps.holds_unfrozen_ref_to(&cid(2)),
+            "other target still accessible"
+        );
         // The slot is tombstoned.
         assert_eq!(
             caps.tombstoned_slots().collect::<Vec<_>>(),

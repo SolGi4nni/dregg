@@ -349,7 +349,7 @@ impl SurfaceBacking {
     /// checks (`turn/src/executor/apply.rs`):
     ///
     /// 1. **connectivity** — the `introducer` (the parent window manager) holds a
-    ///    cap to the `recipient` (`has_access`);
+    ///    cap to the `recipient` (`has_access_at`, height-aware since 2026-08-06);
     /// 2. **holds-target** — the `introducer` holds a cap over the
     ///    `child_surface`;
     /// 3. **non-amplification** — the embedded `rights` are `⊆` the introducer's

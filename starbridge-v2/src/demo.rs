@@ -989,7 +989,7 @@ mod tests {
                 .get(&demo.agent_a())
                 .unwrap()
                 .capabilities
-                .has_access(&demo.token()),
+                .holds_unfrozen_ref_to(&demo.token()),
             "agent-A holds a cap reaching the minted token cell"
         );
     }

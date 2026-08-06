@@ -578,7 +578,7 @@ fn require_operator_authority(s: &NodeStateInner, channel: CellId) -> Result<(),
     let holds_cap = s
         .ledger
         .get(&operator_cell)
-        .map(|c| c.capabilities.has_access(&channel))
+        .map(|c| c.capabilities.holds_unfrozen_ref_to(&channel))
         .unwrap_or(false);
     if !holds_cap {
         return Err(ChannelRefusal::TurnRejected(format!(

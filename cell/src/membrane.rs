@@ -66,15 +66,31 @@
 //!
 //! ## Honest seams (named with their lanes)
 //!
-//! - **Executor-grounded; the circuit witness is the named VK follow-up.** The
-//!   Lean rung above grounds the EXECUTOR non-amp tooth. Binding the membrane's
-//!   `exposed` mask into the cell state-commitment / cap-root the circuit sees
-//!   (so a light client — not just the executor — witnesses "C's authority =
-//!   a&b") is the VK-affecting weld named in
-//!   `metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md` (membrane row: "Medium,
-//!   VK-affecting — new authorization predicate + circuit auth check"), the same
-//!   VK-gated lane the cap-root reshape (`project-cap-reshape-plan`) drives. The
-//!   non-amp tooth here is the *executor* tooth; the circuit tooth is its shadow.
+//! - **⚑ THERE IS NO EXECUTOR TOOTH. Measured 2026-08-06: this module has ZERO
+//!   consumers.** `SealedMembrane`, `Membrane::seal`, `exercise`, `HeldFacet`,
+//!   `CompositionPolicy`, `MembraneCap` and `is_non_amplifying` appear nowhere in
+//!   the tree outside this file and the `pub use` in `cell/src/lib.rs`. No executor
+//!   calls `seal` or `exercise`; nothing constructs a `Membrane`. (The `Membrane`
+//!   hits in `starbridge-v2/src/web_cells.rs` are `starbridge_web_surface::Membrane`,
+//!   an unrelated type.)
+//!
+//!   This section previously read *"Executor-grounded; the circuit witness is the
+//!   named VK follow-up … The non-amp tooth here is the **executor** tooth; the
+//!   circuit tooth is its shadow."* — naming the CIRCUIT as the missing half while
+//!   asserting the executor half was grounded. That is the inverse of the truth, and
+//!   the header above still says the membrane *"enforces"* `exposed ⊑ compose(A, B)`
+//!   *"at SEAL time AND … at EXERCISE time"*. Read those as: the functions here
+//!   implement that rule correctly and refuse correctly when called, and nothing
+//!   calls them. `is_non_amplifying` genuinely computes the meet and applies
+//!   `is_facet_attenuation` in the right argument order — the code is right; only
+//!   its reach was overstated.
+//!
+//!   The Lean rung (`Dregg2/Deos/Membrane.lean`) is proven and `#assert_all_clean`;
+//!   what it is a proven rung OF is this unreached Rust, so it grounds a statement
+//!   about a function, not about any turn the executor has ever run. Wiring
+//!   `seal`/`exercise` into the authorization path is the first item; binding the
+//!   `exposed` mask into the cap-root the circuit sees (the VK-affecting weld in
+//!   `metatheory/docs/HOUSE-CAPACITIES-WELD-PLAN.md`, membrane row) is the second.
 //! - **2-of-2 is the genuine slice.** The policy generalises to k-of-n (hold a
 //!   `Vec` of facets, require a quorum) and to predicate-gated composition
 //!   (the [`crate::capability::CapabilityCaveat::Witnessed`] surface); the

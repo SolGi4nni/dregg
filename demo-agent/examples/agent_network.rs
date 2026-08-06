@@ -252,9 +252,9 @@ fn main() {
 
     // Verify agent has access to gateway.
     let agent_cell = ledger.get(&agent_id).unwrap();
-    assert!(agent_cell.capabilities.has_access(&gateway_id));
-    assert!(agent_cell.capabilities.has_access(&registry_id));
-    assert!(agent_cell.capabilities.has_access(&budget_id));
+    assert!(agent_cell.capabilities.holds_unfrozen_ref_to(&gateway_id));
+    assert!(agent_cell.capabilities.holds_unfrozen_ref_to(&registry_id));
+    assert!(agent_cell.capabilities.holds_unfrozen_ref_to(&budget_id));
     println!("  Verified: AgentRuntime has caps to Gateway, Registry, Budget, Audit, Tool");
     println!();
 
@@ -302,7 +302,7 @@ fn main() {
 
     let agent_cell = ledger.get(&agent_id).unwrap();
     assert!(
-        agent_cell.capabilities.has_access(&provider_id),
+        agent_cell.capabilities.holds_unfrozen_ref_to(&provider_id),
         "Agent must have access to Provider after 3PI"
     );
     println!("  Verified: AgentRuntime now has access to InferenceProvider");

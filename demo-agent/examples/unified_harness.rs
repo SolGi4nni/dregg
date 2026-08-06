@@ -690,7 +690,7 @@ fn run_three_party_introduction(
     let result = executor.execute(&turn, ledger);
     assert!(result.is_committed(), "Introduction should succeed");
     let bob_cell = ledger.get(&bob_id).unwrap();
-    assert!(bob_cell.capabilities.has_access(&carol_id));
+    assert!(bob_cell.capabilities.holds_unfrozen_ref_to(&carol_id));
     Ok(())
 }
 

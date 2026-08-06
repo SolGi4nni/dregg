@@ -624,8 +624,8 @@ mod tests {
             .grant(target, AuthRequired::Signature)
             .expect("grant cap to target");
         // Sanity on the ORIGIN cell: the held cap reads reachable here.
-        assert!(holder.capabilities.has_access(&target));
-        assert!(!holder.capabilities.has_access(&unheld));
+        assert!(holder.capabilities.holds_unfrozen_ref_to(&target));
+        assert!(!holder.capabilities.holds_unfrozen_ref_to(&unheld));
         let holder_id = node.insert_cell(holder);
 
         let spawned = node.spawn().await;
@@ -642,12 +642,12 @@ mod tests {
 
         // The two poles over the REAL wire.
         assert!(
-            crawled.capabilities.has_access(&target),
+            crawled.capabilities.holds_unfrozen_ref_to(&target),
             "a HELD cap must read reachable over the crawled ledger (Pillar-2b) \
              — this was FALSE before the c-list edges crossed the wire"
         );
         assert!(
-            !crawled.capabilities.has_access(&unheld),
+            !crawled.capabilities.holds_unfrozen_ref_to(&unheld),
             "an UNHELD cap must NOT read reachable (fail-closed, no fabricated authority)"
         );
     }

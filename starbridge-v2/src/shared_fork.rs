@@ -2243,7 +2243,7 @@ mod tests {
                 .get(&guest)
                 .unwrap()
                 .capabilities
-                .has_access(&docs),
+                .holds_unfrozen_ref_to(&docs),
             "the guest reaches docs locally in the fork (embedded → no consent)"
         );
 
@@ -2258,7 +2258,7 @@ mod tests {
                 .get(&guest)
                 .unwrap()
                 .capabilities
-                .has_access(&peer),
+                .holds_unfrozen_ref_to(&peer),
             "a networkboundary rides NO cap into the fork (exercise needs consent)"
         );
 
@@ -2267,7 +2267,7 @@ mod tests {
             world
                 .ledger()
                 .get(&guest)
-                .is_none_or(|c| !c.capabilities.has_access(&docs)),
+                .is_none_or(|c| !c.capabilities.holds_unfrozen_ref_to(&docs)),
             "forking + granting mutated ONLY the fork, never the live world"
         );
     }
@@ -2298,7 +2298,7 @@ mod tests {
                 .get(&guest)
                 .unwrap()
                 .capabilities
-                .has_access(&peer),
+                .holds_unfrozen_ref_to(&peer),
             "the guest got nothing — the powerbox refused the amplifying grant"
         );
     }
@@ -2705,7 +2705,7 @@ mod tests {
             .get(&guest)
             .unwrap()
             .capabilities
-            .has_access(&docs));
+            .holds_unfrozen_ref_to(&docs));
 
         // The guest drives a REAL turn over its embedded cap — no consent door.
         let drive = fork.turn(guest, vec![crate::world::set_field(docs, 3, [9u8; 32])]);
@@ -2757,7 +2757,7 @@ mod tests {
                 .get(&guest)
                 .unwrap()
                 .capabilities
-                .has_access(&docs),
+                .holds_unfrozen_ref_to(&docs),
             "a studyref grants NO write cap (exercise needs an upgrade)"
         );
         // The exercise path is an upgrade REQUEST routed to the owner (not a turn).
@@ -3205,7 +3205,7 @@ mod tests {
                 .get(&guest)
                 .unwrap()
                 .capabilities
-                .has_access(&docs),
+                .holds_unfrozen_ref_to(&docs),
             "rehydrated fork holds the granted (embedded) docs cap"
         );
         assert!(
@@ -3214,7 +3214,7 @@ mod tests {
                 .get(&guest)
                 .unwrap()
                 .capabilities
-                .has_access(&peer),
+                .holds_unfrozen_ref_to(&peer),
             "anti-amplification: the boundary cap did NOT ride into the fork"
         );
         assert_eq!(
@@ -3226,7 +3226,7 @@ mod tests {
             world
                 .ledger()
                 .get(&guest)
-                .is_none_or(|c| !c.capabilities.has_access(&docs)),
+                .is_none_or(|c| !c.capabilities.holds_unfrozen_ref_to(&docs)),
             "the live world is untouched — minting mutated ONLY the fork"
         );
 

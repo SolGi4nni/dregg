@@ -492,7 +492,7 @@ fn factory_born_swarm_refuses_a_worker_reaching_a_non_mandated_cell() {
     let has_cap = exec.with_ledger_mut(|ledger| {
         ledger
             .get(&agent)
-            .map(|c| c.capabilities.has_access(&treasury))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&treasury))
             .unwrap_or(false)
     });
     assert!(!has_cap, "the swarm must hold no cap reaching the treasury");

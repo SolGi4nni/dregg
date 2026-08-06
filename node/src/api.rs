@@ -4322,36 +4322,61 @@ async fn post_submit_turn(
     let turn_hash_bytes = turn.hash();
     let turn_hash = hex_encode(&turn_hash_bytes);
 
-    // O(touched) atomic rollback: arm a per-turn undo journal instead of cloning
-    // the whole O(cells) ledger. The executor mutates `s.ledger` IN PLACE below;
-    // on the rare `append_receipt` failure the journal restores exactly the
-    // touched cells (byte-identical to the old `s.ledger = pre_ledger.clone()`),
-    // and on success it is dropped after the pre-turn actor/effect state is read.
-    s.ledger.begin_restore_point();
+    // THE ONE ADMISSION STAGING RUN — the SAME one `POST /turns/submit` and the
+    // pg submit-queue drainer take (`signed_turn_validation::stage_signed_turn_admission`).
+    //
+    // ⚑ WHY THIS HANDLER CHANGED, AND IT IS THE FINDING, NOT A TIDY-UP. Because
+    // the node builds and signs this envelope itself, this path used to run
+    // NEITHER the shared outer predicate NOR the pre-execution ledger shape. The
+    // second omission is the one that bit: `execute_finalized_turn` provisions
+    // every missing `Transfer` destination (`provision_transfer_destinations`)
+    // before it executes, and the executor refuses a `Transfer` whose
+    // destination is absent — so a thin turn moving value to a cell nobody has
+    // seen was answered `rejected: transfer destination not found`, TERMINALLY
+    // and without ever reaching consensus, while the byte-identical effect
+    // submitted to `/turns/submit` was admitted and committed on the same node.
+    // A staging run exists to PREDICT finalization's verdict; one computed
+    // against a ledger finalization will never produce is not stricter, it is
+    // wrong, and it guarded nothing. (`transport_parity_e2e` drives both halves.)
+    //
+    // The predicate comes along because it is the same verdict, sooner: a
+    // node-signed envelope that fails it here would have been deterministically
+    // rejected at finalization anyway. The operator's own cell is enrolled by
+    // `executor_setup::enroll_known_pq_identities`, and a faucet-stubbed one is
+    // upgraded by the first-turn claim inside the staging run — the case
+    // `dregg demo` (QUICKSTART §4) walks.
+    //
+    // ⚠ SAID PLAINLY, because the alternative is an over-claim: on THIS route the
+    // predicate cannot be made to fire from the wire. The handler derives the
+    // agent from its own cipherclerk pubkey and stamps the receipt link from its
+    // own head, so agent-binding and continuity are self-consistent by
+    // construction. It is here for the regression class this handler has ALREADY
+    // had once — F-P1-3, where `agent` was taken from the request body and signed
+    // with the operator's key (a confused deputy). Reintroduce that and
+    // `agent-signer-mismatch` fires here instead of at finalization. The
+    // load-bearing half of this change is the pre-execution ledger shape, which
+    // `transport_parity_e2e` drives red without.
+    let staged = match crate::signed_turn_validation::stage_signed_turn_admission(&mut s, &signed) {
+        Ok(staged) => staged,
+        Err(refusal) => {
+            crate::metrics::inc_turns_executed("rejected");
+            crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
+            drop(s);
+            return Ok(Json(SubmitTurnResponse {
+                accepted: false,
+                turn_hash: Some(turn_hash),
+                proof_status: ActivityProofStatus::NotCommitted,
+                has_witness: false,
+                witness_count: 0,
+                error: Some(refusal.to_string()),
+            }));
+        }
+    };
+    // Prior images of exactly the cells the staging run touched, captured from
+    // the journal before the unconditional rollback.
+    let pre_ledger = staged.pre_ledger;
 
-    // Execute the turn locally FIRST — through the ONE shared producer gate
-    // (#171): same authoritative (Lean-producer-aware) path as the signed
-    // envelope ingress and blocklace-finalized turns.
-    let executor = crate::executor_setup::new_submit_executor(&s);
-    // THE FIRST-TURN CLAIM for the OPERATOR's own cell. On a fresh data dir that
-    // cell does not exist until the faucet funds it, and the faucet leaves a
-    // zero-pk landing stub — against which this turn's own actions do not
-    // authorize, and which finalization refuses as `live-agent-signer-mismatch`.
-    // `dregg demo` (QUICKSTART §4) is exactly this path.
-    crate::signed_turn_validation::claim_signer_actor_cell(
-        &mut s.ledger,
-        &signed,
-        executor.require_pq(),
-    );
-    let lean_producer_enabled = s.lean_producer_enabled;
-    let exec_result = crate::executor_setup::execute_via_producer(
-        &executor,
-        &turn,
-        &mut s.ledger,
-        lean_producer_enabled,
-    );
-
-    match exec_result {
+    match staged.outcome {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
             crate::metrics::inc_turns_executed("committed");
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
@@ -4367,8 +4392,6 @@ async fn post_submit_turn(
             // authoritative ledger + receipt + faithful-state commit for n=1
             // and n>1 alike, so an ingress crash cannot leave a durable receipt
             // ahead of the ledger/commit cursor.
-            let pre_ledger = s.ledger.pre_turn_touched_ledger();
-            s.ledger.rollback_restore_point();
             let receipt_hash = receipt.receipt_hash();
             // Gather the rotated attestation material from the REAL before/after
             // actor cells (pre_ledger / the just-committed s.ledger). A build hiccup
@@ -4488,11 +4511,10 @@ async fn post_submit_turn(
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
-            // The executor already rolled its own mutations back on rejection —
-            // but the FIRST-TURN CLAIM above is not the executor's, so ROLL BACK
-            // rather than merely dropping the journal. A refused turn must leave
-            // the ledger exactly as it found it, claim included.
-            s.ledger.rollback_restore_point();
+            // The journal is already resolved: the staging run rolls it back
+            // unconditionally, so a refused turn leaves the ledger exactly as it
+            // found it — the first-turn claim and the provisioned destinations
+            // included, neither of which is the executor's to restore.
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::note_turn_rejected(&reason);
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
@@ -4507,7 +4529,6 @@ async fn post_submit_turn(
             }))
         }
         _ => {
-            s.ledger.rollback_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             drop(s);
             Ok(Json(SubmitTurnResponse {
@@ -4633,117 +4654,52 @@ async fn submit_signed_turn(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // O(touched) atomic rollback: arm an undo journal instead of cloning the
-    // whole O(cells) ledger up front. Armed BEFORE the first-turn claim, so a
-    // refused turn leaves the authoritative ledger exactly as it found it.
-    s.ledger.begin_restore_point();
-
-    // ONE outer SignedTurn predicate for every transport.  Run it under the
-    // same state guard that protects the impending ledger mutation, so an
-    // identity rotation cannot race validation.  The executor registry is
-    // populated only from independently anchored host state; never enroll from
-    // `signed.pq_signer` here.
-    let executor = crate::executor_setup::new_submit_executor(&s);
-    // THE FIRST-TURN CLAIM, before the predicate reads the cell. A fresh client
-    // has no agent cell, and a faucet-funded one has a zero-pk landing stub, so
-    // required-PQ admission refused every first turn (`pq-identity-not-enrolled`
-    // / `live-agent-signer-mismatch`) while the provisioning that would have
-    // fixed it ran strictly later. The predicate is unchanged; the claim writes
-    // only the account this envelope's own two possession proofs describe, and
-    // only where nobody else holds the id (`claim_signer_actor_cell`).
-    crate::signed_turn_validation::claim_signer_actor_cell(
-        &mut s.ledger,
-        &signed,
-        executor.require_pq(),
-    );
-    if let Err(error) = crate::signed_turn_validation::validate_signed_turn(
-        &signed,
-        &executor,
-        s.ledger.get(&signed.turn.agent),
-    ) {
-        s.ledger.rollback_restore_point();
-        return Ok(Json(SubmitSignedTurnResponse {
-            accepted: false,
-            turn_hash: Some(turn_hash),
-            signer: Some(signer),
-            action_count,
-            proof_status: ActivityProofStatus::NotCommitted,
-            has_witness: false,
-            witness_count: 0,
-            error: Some(error.to_string()),
-        }));
-    }
-
-    // Every agent has an independent immutable receipt chain in the node's
-    // global receipt log. Compare the complete Option, so `None` means genesis
-    // only; omitting the link after an accepted turn cannot reset a foreign
-    // agent to genesis.
-    let expected_prev = s.cclerk.agent_receipt_head_hash(&signed.turn.agent);
-    if signed.turn.previous_receipt_hash != expected_prev {
-        s.ledger.rollback_restore_point();
-        return Ok(Json(SubmitSignedTurnResponse {
-            accepted: false,
-            turn_hash: Some(turn_hash),
-            signer: Some(signer),
-            action_count,
-            proof_status: ActivityProofStatus::NotCommitted,
-            has_witness: false,
-            witness_count: 0,
-            error: Some("receipt chain mismatch".to_string()),
-        }));
-    }
-
-    // ONE executor gate (#171): the remote signed envelope executes through the
-    // same producer-aware path as local thin-HTTP turns and finalized turns —
-    // a remote agent's turn is covered by the verified Lean producer exactly
-    // like a local one (its SDK stamps `valid_until`, so it does not fall off
-    // the wire marshal).
-    let lean_producer_enabled = s.lean_producer_enabled;
-    // MULTI-PARTY: consensus FINALIZATION is the SOLE authoritative application of a
-    // client turn — `execute_finalized_turn` runs identically on every node and
-    // claims the actor (`claim_signer_actor_cell`) + provisions destinations
-    // deterministically from the finalized turn's own data. Committing the local
-    // authoritative ledger HERE would advance the actor nonce / create cells
-    // LOCAL-ONLY, so peers reject the finalized re-execution as nonce-replay /
-    // destination-not-found — wedging cross-node commit (the exact faucet full-mode
-    // hazard). Both regimes execute IN PLACE under this exclusive write lock, with
-    // the IDENTICAL provisioning the finalized path applies; the difference is the
-    // FATE of the mutation (resolved just below), and it is THE SAME AT EVERY COMMITTEE
-    // SIZE: the journal is rolled back and the authoritative ledger ends UNTOUCHED. The
-    // in-place run only builds the HTTP receipt — the O(touched) stand-in for the old
-    // full SCRATCH CLONE, byte-identical outcome.
+    // THE ONE ADMISSION STAGING RUN, shared with `POST /turn/submit` and the pg
+    // submit-queue drainer: arm the undo journal, take the first-turn claim,
+    // apply the shared outer `SignedTurn` predicate, check agent-scoped receipt
+    // continuity, install the SAME pre-execution ledger shape
+    // `execute_finalized_turn` installs (the actor claim + Transfer-destination
+    // provisioning), run THE one executor gate (#171), and roll the journal back
+    // unconditionally. This transport chooses only how to RENDER the verdict; it
+    // no longer chooses which checks apply or in what order
+    // (`signed_turn_validation::stage_signed_turn_admission`, which is also where
+    // the reasons each step sits where it does are written down). The whole
+    // sequence runs under this exclusive write guard, so an identity rotation
+    // cannot race the check protecting the impending mutation, and the executor
+    // registry is still populated only from independently anchored host state.
     //
-    // ⚑ THIS PARAGRAPH USED TO CARRY A SECOND BULLET SAYING "SOLO (n=1) has no
-    // finalization pass, so it keeps the in-place commit authoritatively", AND THE CODE
-    // BELOW HAS NOT DONE THAT SINCE `5f0999ab9` (2026-07-21) — `rollback_restore_point()`
-    // at the end of this block is unconditional, with its own comment saying so. A reader
-    // trusting the older bullet concludes that a solo `POST /turns/submit` mutates state,
-    // which is how `relay_slash_submit`'s weld test came to POST an envelope and then
-    // assert on `state.ledger`: it was red for nine days and its message ("bond
-    // decremented by the seizure") named the cell program, which was never at fault.
-    // The actor cell is already the signer's canonical account here: the claim
-    // above ran inside this same restore point and validation could not have
-    // passed otherwise. Only the Transfer destinations remain.
-    crate::blocklace_sync::provision_transfer_destinations(&mut s.ledger, &signed.turn.call_forest);
-    let exec_result = crate::executor_setup::execute_via_producer(
-        &executor,
-        &signed.turn,
-        &mut s.ledger,
-        lean_producer_enabled,
-    );
+    // ⚑ A PARAGRAPH HERE USED TO SAY "SOLO (n=1) has no finalization pass, so it
+    // keeps the in-place commit authoritatively", and the code has not done that
+    // since `5f0999ab9` (2026-07-21). Consensus FINALIZATION is the sole
+    // authoritative application at EVERY committee size: the rollback is
+    // unconditional, `s.ledger` below is the PRE-TURN ledger, and an
+    // `accepted:true` that never finalizes moved nothing. A reader trusting the
+    // older bullet concludes a solo `POST /turns/submit` mutates state, which is
+    // how `relay_slash_submit`'s weld test came to POST an envelope and then
+    // assert on `state.ledger`: red for nine days, with a message ("bond
+    // decremented by the seizure") naming the cell program, which was never at
+    // fault.
+    let staged = match crate::signed_turn_validation::stage_signed_turn_admission(&mut s, &signed) {
+        Ok(staged) => staged,
+        Err(refusal) => {
+            return Ok(Json(SubmitSignedTurnResponse {
+                accepted: false,
+                turn_hash: Some(turn_hash),
+                signer: Some(signer),
+                action_count,
+                proof_status: ActivityProofStatus::NotCommitted,
+                has_witness: false,
+                witness_count: 0,
+                error: Some(refusal.to_string()),
+            }));
+        }
+    };
+    // Prior images of exactly the cells the staging run touched — the O(touched)
+    // stand-in for the old full `pre_ledger` clone, captured from the journal
+    // before it was rolled back.
+    let pre_ledger = staged.pre_ledger;
 
-    // Capture the pre-turn actor/effect cells from the journal BEFORE resolving
-    // it (the O(touched) stand-in for the old full `pre_ledger` clone).
-    let pre_ledger = s.ledger.pre_turn_touched_ledger();
-    // Consensus finalization is the sole authoritative application in every
-    // committee size, including n=1.  The old solo split committed RAM + a
-    // durable receipt here, then wrote faithful leaves/nullifiers/cursors later;
-    // a crash between those writes restored the receipt but not the ledger and
-    // made finalization falsely skip execution.  This ingress run is admission
-    // staging only, exactly like multi-party mode, so roll it back unconditionally.
-    s.ledger.rollback_restore_point();
-
-    match exec_result {
+    match staged.outcome {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
             crate::metrics::inc_turns_executed("committed");
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
@@ -4756,7 +4712,6 @@ async fn submit_signed_turn(
             // The receipt is an admission artifact only.  Finalization welds its
             // canonical receipt into the durable log with ledger state, faithful
             // leaves, nullifiers, history, attestation, and both cursors.
-            s.ledger.commit_restore_point();
             let receipt_hash = receipt.receipt_hash();
             let witness_outcome = match prepare_rotatable_turn(
                 &signed.turn,
@@ -4849,9 +4804,8 @@ async fn submit_signed_turn(
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
-            // Drop the (unused) journal; the executor already restored its own
-            // mutations on rejection, and MULTI-PARTY was rolled back above.
-            s.ledger.commit_restore_point();
+            // The journal is already resolved: the staging run rolled it back
+            // unconditionally, admitted or refused.
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::note_turn_rejected(&reason);
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
@@ -4868,7 +4822,6 @@ async fn submit_signed_turn(
             }))
         }
         _ => {
-            s.ledger.commit_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             drop(s);
             Ok(Json(SubmitSignedTurnResponse {
@@ -6184,7 +6137,7 @@ async fn get_starbridge_identity_events(
                 topic: Some(serde_json::to_value(event.topic).unwrap_or(serde_json::Value::Null)),
                 data: Some(serde_json::to_value(&event.data).unwrap_or(serde_json::Value::Null)),
                 effects: Vec::new(),
-                proof_status: receipt_proof_status(receipt),
+                proof_status: receipt_proof_status(&s, receipt),
                 finality: Some(format!("{:?}", receipt.finality).to_lowercase()),
             });
             if out.len() >= limit {
@@ -6238,7 +6191,7 @@ async fn get_starbridge_identity_credentials(
                 effects_hash: hex_encode(&receipt.effects_hash),
                 event_count: receipt.emitted_events.len(),
                 derivation_record_count: receipt.derivation_records.len(),
-                proof_status: receipt_proof_status(receipt),
+                proof_status: receipt_proof_status(&s, receipt),
                 finality: format!("{:?}", receipt.finality).to_lowercase(),
             }
         })
@@ -6272,7 +6225,7 @@ async fn get_starbridge_identity_proof_checkpoints(
                 effects_hash: hex_encode(&receipt.effects_hash),
                 pre_state: hex_encode(&receipt.pre_state_hash),
                 post_state: hex_encode(&receipt.post_state_hash),
-                proof_status: receipt_proof_status(receipt),
+                proof_status: receipt_proof_status(&s, receipt),
                 executor_signed: receipt.executor_signature.is_some(),
                 witness_count: s.witnessed_receipt_count(&receipt_hash),
                 finality: format!("{:?}", receipt.finality).to_lowercase(),
@@ -6946,9 +6899,15 @@ async fn post_fast_path_lock(
 
 /// POST /turn/certificate — execute a certified fast-path turn.
 ///
-/// The client presents a TurnCertificate (turn + 2f+1 validator signatures).
-/// The node verifies the certificate, executes the turn, releases locks, and
-/// gossips the result.
+/// The client presents a TurnCertificate (turn + 2f+1 validator signatures). The node
+/// checks `turn.hash() == turn_hash`, then hands the signature set to
+/// [`dregg_turn::assemble_certificate`] together with THIS node's committee roster —
+/// which verifies quorum size, roster membership, distinctness, and each Ed25519
+/// signature over `turn_hash`. Only then does it execute the turn, release locks and
+/// gossip the result.
+///
+/// ⚑ The clause "the node verifies the certificate" was in this docblock while nothing
+/// verified anything but the count: see the flag-day note on `assemble_certificate`.
 #[tracing::instrument(skip_all)]
 async fn post_fast_path_certificate(
     State(state): State<NodeState>,
@@ -6990,15 +6949,38 @@ async fn post_fast_path_certificate(
     // Assemble certificate (verify quorum).
     // Threshold is derived from federation size: n - f where f = (n-1)/3.
     // For single-node (n=1): threshold = 1. For 4 nodes: threshold = 3.
-    let n = {
+    //
+    // ⚑ THE ROSTER IS NEW (2026-08-06) AND IT IS THE POINT. Until today this block
+    // read `known_federation_keys` for its LENGTH ONLY — the threshold — and never
+    // for membership, while `assemble_certificate` never verified a signature. Any
+    // bearer-token holder could POST `threshold` fabricated `{validator_key,
+    // signature}` pairs and the certificate assembled. The roster now travels with
+    // the count, and `assemble_certificate` checks each signature against it.
+    //
+    // The node's OWN cipherclerk key is unioned in because that is the key
+    // `post_fast_path_lock` signs `TurnSign`s with (`s.cclerk.public_key().0`, the
+    // `validator_key` argument to `process_fast_path_lock`). Without it a solo node
+    // — empty roster, threshold 1 — could not certify the very signature it just
+    // issued, and `NoValidatorRoster` would refuse every fast-path turn.
+    let (n, roster) = {
         let s = state.read().await;
+        let mut roster: Vec<[u8; 32]> = s.known_federation_keys.iter().map(|k| k.0).collect();
+        let own = s.cclerk.public_key().0;
+        if !roster.contains(&own) {
+            roster.push(own);
+        }
         let key_count = s.known_federation_keys.len();
-        if key_count == 0 { 1usize } else { key_count }
+        (if key_count == 0 { 1usize } else { key_count }, roster)
     };
     let f = (n.saturating_sub(1)) / 3;
     let threshold = n - f;
-    let cert = match dregg_turn::assemble_certificate(turn, turn_hash_bytes, signatures, threshold)
-    {
+    let cert = match dregg_turn::assemble_certificate(
+        turn,
+        turn_hash_bytes,
+        signatures,
+        threshold,
+        &roster,
+    ) {
         Ok(c) => c,
         Err(e) => {
             return Ok(Json(FastPathCertificateResponse {
@@ -9616,9 +9598,40 @@ fn identity_scoped_params(params: &StarbridgeQuery) -> StarbridgeQuery {
     }
 }
 
-fn receipt_proof_status(receipt: &dregg_turn::TurnReceipt) -> ActivityProofStatus {
-    if receipt.executor_signature.is_some() {
+/// The proof status of a committed receipt, derived from **whether proof material is
+/// actually attached** — the async prove pool's `WitnessedReceipt`s, or the persisted
+/// full-turn proof — and never from the executor signature.
+///
+/// ⚑ CORRECTED 2026-08-06. This function used to be, in full:
+///
+/// ```ignore
+/// if receipt.executor_signature.is_some() { Proved } else { NotRequired }
+/// ```
+///
+/// so `Proved` meant "an executor signed it" on three PUBLIC (unauthenticated)
+/// endpoints — `/api/starbridge/identity/{events,credentials,proof-checkpoints}`. The
+/// identical derivation had already been found and fixed for `ReceiptInfo::has_proof`
+/// 6000 lines earlier in this same file, whose comment says outright *"It is NOT the
+/// executor signature — that is `executor_signed`"*; the sibling was fixed and this one
+/// was not. `/proof-checkpoints` shipped `proof_status`, `executor_signed` and
+/// `witness_count` in ONE object, where the first was definitionally equal to the
+/// second and could read `Proved` beside a `witness_count` of 0.
+///
+/// The two states are now distinguishable, which is the whole point of the enum:
+/// material attached ⇒ `Proved`; committed with an executor signature but no
+/// attestation yet ⇒ `ProofPending` (the prove pool is asynchronous — `state.rs`
+/// documents exactly this state); neither ⇒ `NotRequired`.
+fn receipt_proof_status(
+    s: &crate::state::NodeStateInner,
+    receipt: &dregg_turn::TurnReceipt,
+) -> ActivityProofStatus {
+    let receipt_hash = receipt.receipt_hash();
+    let has_material = s.witnessed_receipt_count(&receipt_hash) > 0
+        || stored_full_turn_proof_exists(s, &hex_encode(&receipt.turn_hash));
+    if has_material {
         ActivityProofStatus::Proved
+    } else if receipt.executor_signature.is_some() {
+        ActivityProofStatus::ProofPending
     } else {
         ActivityProofStatus::NotRequired
     }

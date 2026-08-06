@@ -8533,28 +8533,34 @@ async fn execute_finalized_turn(
 
     let turn_for_exec = signed_turn.turn.clone();
     let exec_join = tokio::task::spawn_blocking(move || {
-        // THE FIRST-TURN CLAIM, installed on the isolated candidate. It was
-        // DECIDED before the admission predicate (which could not have passed
-        // otherwise) and is APPLIED here, so the authoritative ledger carries it
-        // only through the post-durability overlay. There is still exactly one
-        // claim, computed once, by `claimed_actor_cell`; what moved is where it
-        // lands. `pre_ledger` was cloned before this install, so the actor is in
-        // the pre→post diff and therefore in the commit record's `touched_cells`
-        // whether or not execution touches it again — which is what makes the
-        // durable image and live RAM agree on a first turn.
-        if let Some(claimed) = claimed_actor_cell {
-            let id = claimed.id();
-            let _ = exec_ledger.remove(&id);
-            let _ = exec_ledger.insert_cell(claimed);
-        }
-        // Provision Transfer destinations on the CLONE the FFI executes against —
-        // the stub every node WITH THE SAME PRE-STATE inserts. Deterministic in
-        // (turn, pre-state), NOT in the turn alone: the stub's asset is read off
-        // the Transfer's source cell, because the turn does not carry it (see
-        // `provision_transfer_destinations`). The pre→post diff below classifies
+        // THE PRE-EXECUTION LEDGER SHAPE, on the isolated candidate — and it is
+        // the SAME function every ingress's admission staging run applies
+        // (`signed_turn_validation::install_pre_execution_state`), which is the
+        // point: "what the ledger must look like before this turn runs" now has
+        // one definition, so a staging run cannot silently predict a verdict
+        // against a ledger this path will never produce. Two ingresses did
+        // exactly that by omitting the provisioning half.
+        //
+        // [1] THE FIRST-TURN CLAIM. It was DECIDED before the admission
+        // predicate (which could not have passed otherwise) and is APPLIED here,
+        // so the authoritative ledger carries it only through the post-durability
+        // overlay. There is still exactly one claim, computed once, by
+        // `claimed_actor_cell`; what moved is where it lands. `pre_ledger` was
+        // cloned before this install, so the actor is in the pre→post diff and
+        // therefore in the commit record's `touched_cells` whether or not
+        // execution touches it again — which is what makes the durable image and
+        // live RAM agree on a first turn.
+        //
+        // [2] TRANSFER DESTINATIONS — the stub every node with the same pre-state
+        // inserts (deterministic in (turn, pre-state), NOT in the turn alone: the
+        // asset comes from the source cell). The pre→post diff below classifies
         // each provisioned+credited destination as a created cell, so the overlay
         // installs it on the authoritative ledger.
-        provision_transfer_destinations(&mut exec_ledger, &turn_for_exec.call_forest);
+        crate::signed_turn_validation::install_pre_execution_state(
+            &mut exec_ledger,
+            claimed_actor_cell,
+            &turn_for_exec.call_forest,
+        );
         let result = crate::executor_setup::execute_via_producer(
             &executor,
             &turn_for_exec,

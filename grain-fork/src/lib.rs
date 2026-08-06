@@ -354,9 +354,14 @@ impl Grain {
         }
     }
 
-    /// Whether the mind currently holds a live capability reaching `target`.
+    /// Whether the mind holds an UNFROZEN reference reaching `target`.
+    ///
+    /// ⚑ This said "a live capability" until 2026-08-06 and did not check liveness: the
+    /// callee (then `CapabilitySet::has_access`) ignored `expires_at` entirely. Renamed
+    /// at the source; a lapsed capability still answers `true` here, so do not read this
+    /// as an authority decision — `has_access_at(target, height)` is that.
     pub fn holds(&self, target: CellId) -> bool {
-        self.mind.capabilities.has_access(&target)
+        self.mind.capabilities.holds_unfrozen_ref_to(&target)
     }
 
     // ── checkpoint / rewind (the umem-cell time-travel discipline) ───────────────────

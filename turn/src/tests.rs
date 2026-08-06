@@ -1826,7 +1826,7 @@ fn test_grant_and_use_capability() {
 
     // Verify target1 now has a capability to target2.
     let t1 = ledger.get(&target1_id).unwrap();
-    assert!(t1.capabilities.has_access(&target2_id));
+    assert!(t1.capabilities.holds_unfrozen_ref_to(&target2_id));
 }
 
 // =============================================================================
@@ -1875,7 +1875,7 @@ fn test_revoke_capability() {
 
     // Target should no longer have capability to other.
     let t = ledger.get(&target_id).unwrap();
-    assert!(!t.capabilities.has_access(&other_id));
+    assert!(!t.capabilities.holds_unfrozen_ref_to(&other_id));
 }
 
 // =============================================================================
@@ -3082,7 +3082,7 @@ fn test_grant_capability_amplification_blocked() {
 
     // Verify target1 did NOT gain the capability (atomicity).
     let t1 = ledger.get(&target1_id).unwrap();
-    assert!(!t1.capabilities.has_access(&target2_id));
+    assert!(!t1.capabilities.holds_unfrozen_ref_to(&target2_id));
 }
 
 // =============================================================================
@@ -3209,7 +3209,7 @@ fn test_grant_capability_attenuation_succeeds() {
 
     // Verify target1 gained the (attenuated) capability.
     let t1 = ledger.get(&target1_id).unwrap();
-    assert!(t1.capabilities.has_access(&target2_id));
+    assert!(t1.capabilities.holds_unfrozen_ref_to(&target2_id));
     let granted = t1.capabilities.lookup_by_target(&target2_id).unwrap();
     assert_eq!(granted.permissions, AuthRequired::Signature);
 }
@@ -5761,7 +5761,7 @@ fn test_introduction_permissions() {
                 assert!(result.is_committed(), "case {} should commit", case.name);
                 let bob = ledger.get(&bob_id).unwrap();
                 assert!(
-                    bob.capabilities.has_access(&carol_id),
+                    bob.capabilities.holds_unfrozen_ref_to(&carol_id),
                     "case {}: bob should have cap to carol",
                     case.name
                 );
@@ -5788,6 +5788,96 @@ fn test_introduction_permissions() {
         }
     }
 }
+/// ⚑ THE REFUSAL THIS COMMIT ADDED, SHOWN TO FIRE END-TO-END.
+///
+/// `apply_introduce` guards a PAIR of held caps — introducer→target and
+/// introducer→recipient. The target leg has consulted `expires_at` since the
+/// "authority-over-time" fix; the RECIPIENT leg called `CapabilitySet::has_access`,
+/// whose docblock said in as many words *"This method does NOT check expiration"*.
+/// So an introducer whose cap to the RECIPIENT had lapsed still minted a fresh
+/// capability for them — authority that should have died, re-conferred.
+///
+/// Both cells here hold caps that are live at height 5 and lapsed at height 50; the
+/// ONLY difference between the two halves is the executor's block height, so a
+/// regression that drops the check turns the second half green again.
+#[test]
+fn introduce_refuses_an_expired_capability_to_the_recipient() {
+    let build = |height: u64| {
+        let mut ledger = Ledger::new();
+        let (alice, _) = make_open_cell(10, 10000);
+        let (bob, _) = make_open_cell(20, 1000);
+        let (carol, _) = make_open_cell(30, 1000);
+        let alice_id = alice.id();
+        let bob_id = bob.id();
+        let carol_id = carol.id();
+
+        let mut alice_with_caps = alice;
+        // Both conferring edges expire at height 10.
+        alice_with_caps
+            .capabilities
+            .grant_with_expiry(bob_id, AuthRequired::None, 10);
+        alice_with_caps
+            .capabilities
+            .grant_with_expiry(carol_id, AuthRequired::None, 10);
+        ledger.insert_cell(alice_with_caps).unwrap();
+        ledger.insert_cell(bob).unwrap();
+        ledger.insert_cell(carol).unwrap();
+
+        let mut executor = zero_cost_executor();
+        executor.set_block_height(height);
+        let mut builder = TurnBuilder::new(alice_id, 0);
+        let action = ActionBuilder::new_unchecked_for_tests(alice_id, "introduce", alice_id)
+            .effect_introduce(alice_id, bob_id, carol_id, AuthRequired::None)
+            .build();
+        builder.add_action(action);
+        let turn = builder.fee(100).build();
+        let result = executor.execute(&turn, &mut ledger);
+        (result, ledger, bob_id, carol_id)
+    };
+
+    // HONEST POLE: at height 5 both caps are live and the introduction commits, so the
+    // refusal below is about liveness and not a blanket denial.
+    let (live, ledger, bob_id, carol_id) = build(5);
+    assert!(
+        live.is_committed(),
+        "an introduction under LIVE caps must still commit: {live:?}"
+    );
+    assert!(
+        ledger
+            .get(&bob_id)
+            .unwrap()
+            .capabilities
+            .holds_unfrozen_ref_to(&carol_id),
+        "the live introduction should have installed bob's cap to carol"
+    );
+
+    // THE POLE THAT USED TO PASS: at height 50 both caps have lapsed. Before this
+    // commit the recipient leg admitted (`has_access` ignored `expires_at`) and the
+    // turn was refused only by the TARGET leg's expiry check, so the message named the
+    // target. Now the recipient leg refuses first, by name.
+    let (lapsed, ledger, bob_id, carol_id) = build(50);
+    assert!(
+        lapsed.is_rejected(),
+        "an introduction from a LAPSED capability must be refused: {lapsed:?}"
+    );
+    let (error, _) = lapsed.unwrap_rejected();
+    match error {
+        TurnError::IntroductionDenied { reason, .. } => assert!(
+            reason.contains("no LIVE capability to recipient"),
+            "the RECIPIENT leg must be the one that refuses; got: {reason}"
+        ),
+        other => panic!("expected IntroductionDenied, got: {other:?}"),
+    }
+    assert!(
+        !ledger
+            .get(&bob_id)
+            .unwrap()
+            .capabilities
+            .holds_unfrozen_ref_to(&carol_id),
+        "no capability may be minted from a lapsed conferring edge"
+    );
+}
+
 #[test]
 fn test_introduction_routing_directive_hash() {
     let (mut ledger, alice_id, bob_id, carol_id) = setup_three_cells_for_introduction();

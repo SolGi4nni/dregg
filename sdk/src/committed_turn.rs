@@ -1,13 +1,29 @@
 //! Committed payment turn builder: constructs turns with Pedersen-committed note
 //! values and conservation proofs.
 //!
-//! The [`CommittedTurnBuilder`] assembles a turn whose note effects carry
-//! value commitments (hiding amounts) rather than cleartext values. It generates:
+//! The [`CommittedTurnBuilder`] assembles a turn whose note effects carry value
+//! commitments BESIDE their cleartext values. It generates:
 //! - Per-output Bulletproof range proofs (proving values in [0, 2^64))
 //! - A Schnorr conservation proof (proving inputs and outputs balance)
 //!
 //! The resulting turn is accepted by the executor's committed conservation path
 //! (`detect_commitment_mode -> Committed`).
+//!
+//! ⚠ **THE AMOUNTS ARE NOT HIDDEN, AND THIS PARAGRAPH SAID THEY WERE UNTIL 2026-08-06.**
+//! It read *"value commitments (hiding amounts) **rather than** cleartext values"*. What
+//! [`CommittedTurnBuilder::build`] actually emits is `Effect::NoteSpend { value:
+//! inp.value, …, value_commitment: Some(vc) }` and `Effect::NoteCreate { value:
+//! out.value, …, value_commitment: Some(vc) }` — the plaintext `u64` rides the effect,
+//! inside the `CallForest` the executor reads and `Turn::hash()` covers. The commitment
+//! is carried ALONGSIDE the cleartext, not instead of it. This file's own test asserts
+//! exactly that (`assert_eq!(opening.value, eff_value)` where `eff_value` is read off
+//! `Effect::NoteCreate { value, .. }`), with the word "cleartext" in its comment.
+//!
+//! `privacy.rs`'s `FaithfulHiddenSpendProof::into_note_spend_effect` gets the same
+//! situation right and is the model: it documents that FNSP-v2 publicly binds `value`
+//! and `asset_type`, and sets `value_commitment: None` rather than implying a hiding it
+//! does not do. Hiding the amounts means a spend path that does not publish `value` at
+//! all; that is not this builder, and no production code calls this builder today.
 
 use curve25519_dalek::scalar::Scalar;
 
@@ -35,7 +51,9 @@ pub struct CommittedNoteInput {
     pub nullifier: Nullifier,
     /// Root of the note Merkle tree at proof-generation time.
     pub merkle_root: [u8; 32],
-    /// The plaintext value (known to spender, hidden from executor).
+    /// The plaintext value. ⚠ Known to the spender AND PUBLISHED TO THE EXECUTOR: `build`
+    /// writes it into `Effect::NoteSpend { value, .. }` in the clear beside the
+    /// commitment. Said "hidden from executor" until 2026-08-06 — see the module doc.
     pub value: u64,
     /// The blinding factor from the value commitment opening.
     pub blinding: Scalar,
@@ -50,7 +68,9 @@ pub struct CommittedNoteInput {
 /// Output blindings are generated fresh by the builder.
 #[derive(Clone, Debug)]
 pub struct CommittedNoteOutput {
-    /// The value to commit (known to builder, hidden from executor).
+    /// The value to commit. ⚠ Known to the builder AND PUBLISHED TO THE EXECUTOR: `build`
+    /// writes it into `Effect::NoteCreate { value, .. }` in the clear beside the
+    /// commitment. Said "hidden from executor" until 2026-08-06 — see the module doc.
     pub value: u64,
     /// Asset type identifier.
     pub asset_type: u64,

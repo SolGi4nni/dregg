@@ -142,6 +142,11 @@ pub mod storage_service;
 pub mod strand_admission_gate;
 #[cfg(feature = "pg-mirror-live")]
 pub mod submit_queue_drainer;
+/// Two ingresses on one node, driven end to end, asserted to reach the SAME
+/// verdict. `signed_turn_validation`'s parity claim is enforced by
+/// `stage_signed_turn_admission`; this is the detector that says so out loud.
+#[cfg(test)]
+mod transport_parity_e2e;
 pub mod trustline_service;
 pub mod turn_proving;
 pub mod ws;

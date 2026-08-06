@@ -2847,13 +2847,25 @@ impl TurnExecutor {
         let intro_cell = ledger
             .get(introducer)
             .ok_or_else(|| (TurnError::CellNotFound { id: *introducer }, path.to_vec()))?;
-        if !intro_cell.capabilities.has_access(recipient) {
+        // AUTHORITY-OVER-TIME, BOTH LEGS. The conferring edge is a PAIR of held caps —
+        // introducer→recipient (this one) and introducer→target (below) — and until
+        // 2026-08-06 only the second was height-aware. This one called `has_access`,
+        // whose docblock said in as many words "does NOT check expiration", so an
+        // introducer whose cap to the RECIPIENT had lapsed still minted a fresh cap for
+        // them. The two legs now consult the SAME liveness predicate
+        // (`CapabilityRef::is_live_at`, via `has_access_at`) at the SAME height.
+        if !intro_cell
+            .capabilities
+            .has_access_at(recipient, self.block_height)
+        {
             return Err((
                 TurnError::IntroductionDenied {
                     introducer: *introducer,
                     recipient: *recipient,
                     target: *target,
-                    reason: "introducer has no capability to recipient".to_string(),
+                    reason: "introducer has no LIVE capability to recipient (absent, frozen, \
+                             or expired at this height)"
+                        .to_string(),
                 },
                 path.to_vec(),
             ));

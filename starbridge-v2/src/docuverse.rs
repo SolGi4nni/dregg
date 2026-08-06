@@ -598,7 +598,7 @@ mod tests {
                 .get(&service)
                 .expect("service cell")
                 .capabilities
-                .has_access(&user),
+                .holds_unfrozen_ref_to(&user),
             "the service really holds a capability over the user cell"
         );
         assert!(
@@ -607,7 +607,7 @@ mod tests {
                 .get(&treasury)
                 .expect("treasury cell")
                 .capabilities
-                .has_access(&user),
+                .holds_unfrozen_ref_to(&user),
             "the treasury really holds none"
         );
 

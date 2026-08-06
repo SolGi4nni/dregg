@@ -130,7 +130,7 @@ fn main() {
 
     // Verify Bob cannot reach Carol yet.
     let bob_cell = ledger.get(&bob_id).unwrap();
-    assert!(!bob_cell.capabilities.has_access(&carol_id));
+    assert!(!bob_cell.capabilities.holds_unfrozen_ref_to(&carol_id));
     println!("  Verified: Bob has NO access to Carol");
     println!();
 
@@ -179,7 +179,7 @@ fn main() {
 
     // Verify Bob now has access to Carol.
     let bob_cell = ledger.get(&bob_id).unwrap();
-    assert!(bob_cell.capabilities.has_access(&carol_id));
+    assert!(bob_cell.capabilities.holds_unfrozen_ref_to(&carol_id));
     println!("  Verified: Bob NOW has access to Carol!");
     println!("  Bob's c-list: [Carol]");
     println!();
@@ -212,7 +212,7 @@ fn main() {
 
     // Verify Eve still has no access to Carol.
     let eve_cell = ledger.get(&eve_id).unwrap();
-    assert!(!eve_cell.capabilities.has_access(&carol_id));
+    assert!(!eve_cell.capabilities.holds_unfrozen_ref_to(&carol_id));
     println!("  Verified: Eve still has NO access to Carol");
     println!("  The ocap discipline holds: no capability without introduction.");
     println!();
@@ -267,7 +267,7 @@ fn main() {
 
     // Verify Dave now has access to Carol.
     let dave_cell = ledger.get(&dave_id).unwrap();
-    assert!(dave_cell.capabilities.has_access(&carol_id));
+    assert!(dave_cell.capabilities.holds_unfrozen_ref_to(&carol_id));
     println!("  Verified: Dave NOW has access to Carol!");
     println!("  Dave's c-list: [Carol]");
     println!();
@@ -354,7 +354,7 @@ fn main() {
 
     // Verify Eve still has no access to Carol.
     let eve_cell = ledger.get(&eve_id).unwrap();
-    assert!(!eve_cell.capabilities.has_access(&carol_id));
+    assert!(!eve_cell.capabilities.holds_unfrozen_ref_to(&carol_id));
     println!("  Verified: Eve still has NO access to Carol.");
     println!("  Amplification is impossible: the attenuation-only rule holds.");
     println!();

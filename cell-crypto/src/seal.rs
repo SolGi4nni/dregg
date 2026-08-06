@@ -418,7 +418,7 @@ impl SealPair {
         // Version 3: allowed_effects facet mask. Authority-amplification
         // hardening: sealing a faceted cap must round-trip the facet, not
         // silently widen it back to "all effects" (which `None` means in
-        // CapabilitySet::has_access lookups).
+        // CapabilitySet::holds_unfrozen_ref_to lookups).
         match cap.allowed_effects {
             Some(mask) => {
                 buf.push(1);

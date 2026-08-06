@@ -64,7 +64,19 @@ pub enum FastPathError {
     InsufficientSignatures { have: usize, need: usize },
     /// Duplicate validator in signature set.
     DuplicateValidator { key: [u8; 32] },
-    /// Signature verification failed.
+    /// A `TurnSign` claims a `validator_key` that is not on the verifier's committee
+    /// roster. Constructed by [`assemble_certificate`].
+    UnknownValidator { key: [u8; 32] },
+    /// A `TurnSign`'s Ed25519 signature does not verify over the certificate's
+    /// `turn_hash` under its claimed `validator_key`. Constructed by
+    /// [`assemble_certificate`] via [`verify_turn_sign`].
+    InvalidValidatorSignature { key: [u8; 32] },
+    /// [`assemble_certificate`] was handed an EMPTY committee roster. A quorum over
+    /// no known validators is not a quorum, so this refuses rather than counting
+    /// self-declared signers.
+    NoValidatorRoster,
+    /// Signature verification failed (the AGENT's signature, in
+    /// [`process_fast_path_lock`]).
     InvalidSignature,
     /// Lock has expired.
     LockExpired,
@@ -99,7 +111,21 @@ impl core::fmt::Display for FastPathError {
                 write!(f, "insufficient signatures: have {have}, need {need}")
             }
             Self::DuplicateValidator { .. } => write!(f, "duplicate validator in signature set"),
-            Self::InvalidSignature => write!(f, "signature verification failed"),
+            Self::UnknownValidator { key } => write!(
+                f,
+                "validator {} is not on this verifier's committee roster",
+                hex::encode(key)
+            ),
+            Self::InvalidValidatorSignature { key } => write!(
+                f,
+                "validator {}'s fast-path signature does not verify over this turn_hash",
+                hex::encode(key)
+            ),
+            Self::NoValidatorRoster => write!(
+                f,
+                "no committee roster: a quorum over zero known validators is not a quorum"
+            ),
+            Self::InvalidSignature => write!(f, "agent signature verification failed"),
             Self::LockExpired => write!(f, "lock has expired"),
             Self::HasDependencies => {
                 write!(f, "turn has dependencies, cannot use fast path")
@@ -411,12 +437,40 @@ pub fn process_fast_path_lock(
     Ok(sign)
 }
 
-/// Client assembles a certificate from collected signatures.
+/// Assemble a certificate from collected validator signatures, **verifying every
+/// one of them**.
 ///
-/// Verifies:
-/// - At least `threshold` (2f+1) signatures are present
-/// - All signatures are from distinct validators
-/// - All signatures are over the same turn_hash
+/// Checks, in order:
+/// - At least `threshold` (2f+1) signatures are present;
+/// - every `validator_key` appears in `known_validators` — the caller's own committee
+///   roster, never the certificate's;
+/// - all signatures are from distinct validators;
+/// - **every signature is a valid Ed25519 signature over `turn_hash`** under its
+///   claimed `validator_key` ([`verify_turn_sign`]).
+///
+/// ⚑ FLAG DAY 2026-08-06 — **the last two checks are new, and this function did not
+/// verify a signature before today.** Its docblock claimed "All signatures are over
+/// the same turn_hash"; the body read `signatures.len()`, compared `validator_key`s
+/// for duplicates, and moved the `TurnSign`s into the certificate. The `signature:
+/// [u8; 64]` field was never read on this path by anything. `verify_turn_sign` sat
+/// eighty lines below with a `SECURITY (P0-1 fix)` docblock, two forgery-rejection
+/// tests, and — measured 2026-08-06 — **zero production callers.** The correct check
+/// existed, was tested, and was not wired; so a caller of `POST /turn/certificate`
+/// (`node/src/api.rs`) formed a quorum out of `threshold` arbitrary 32-byte strings
+/// paired with arbitrary 64-byte strings, bypassing the agent-signature gate that
+/// `process_fast_path_lock` does enforce.
+///
+/// **`known_validators` is required and an empty roster refuses.** Verifying the
+/// signature alone would not have closed it — an attacker mints `threshold` fresh
+/// keypairs and signs honestly with each. The quorum only means anything against a
+/// roster the verifier already trusts, so the roster is a parameter rather than a
+/// courtesy.
+///
+/// **What breaks:** every caller must now pass the committee roster. The node's
+/// handler passes `known_federation_keys` plus its own cipherclerk key (so a solo
+/// node, whose roster is empty and whose threshold is 1, still certifies its OWN
+/// `TurnSign` and nobody else's). Test harnesses that fabricated signatures must
+/// now sign with `sign_fast_path` and declare the signer.
 ///
 /// The `threshold` parameter should be set based on the federation mode:
 /// - Full mode: `quorum_threshold(n)` (standard BFT threshold)
@@ -429,6 +483,7 @@ pub fn assemble_certificate(
     turn_hash: [u8; 32],
     signatures: Vec<TurnSign>,
     threshold: usize,
+    known_validators: &[[u8; 32]],
 ) -> Result<TurnCertificate, FastPathError> {
     // Check quorum.
     if signatures.len() < threshold {
@@ -438,7 +493,15 @@ pub fn assemble_certificate(
         });
     }
 
-    // Check for duplicate validators.
+    // A quorum is only meaningful relative to a roster the VERIFIER holds. With no
+    // roster there is no committee to be two-thirds of, and any set of fabricated
+    // keys would pass the per-signature check below by simply signing honestly.
+    if known_validators.is_empty() {
+        return Err(FastPathError::NoValidatorRoster);
+    }
+
+    // Check for duplicate validators, roster membership, and — the part that was
+    // missing — that each claimed signature actually verifies over this turn_hash.
     let mut seen_keys: Vec<[u8; 32]> = Vec::new();
     for sign in &signatures {
         if seen_keys.contains(&sign.validator_key) {
@@ -447,6 +510,16 @@ pub fn assemble_certificate(
             });
         }
         seen_keys.push(sign.validator_key);
+        if !known_validators.contains(&sign.validator_key) {
+            return Err(FastPathError::UnknownValidator {
+                key: sign.validator_key,
+            });
+        }
+        if !verify_turn_sign(sign, &turn_hash) {
+            return Err(FastPathError::InvalidValidatorSignature {
+                key: sign.validator_key,
+            });
+        }
     }
 
     Ok(TurnCertificate {
@@ -826,8 +899,11 @@ mod tests {
             })
             .collect();
 
+        // The verifier's committee roster: the three validators it knows.
+        let roster: Vec<[u8; 32]> = signs.iter().map(|s| s.validator_key).collect();
+
         // Assemble with threshold=2 (2f+1 where f=0 for simplicity, or just test with 2).
-        let cert = assemble_certificate(turn.clone(), turn_hash, signs, 2);
+        let cert = assemble_certificate(turn.clone(), turn_hash, signs, 2, &roster);
         assert!(cert.is_ok());
         let cert = cert.unwrap();
         assert_eq!(cert.turn_hash, turn_hash);
@@ -837,6 +913,82 @@ mod tests {
         for sign in &cert.signatures {
             assert!(verify_turn_sign(sign, &turn_hash));
         }
+    }
+
+    /// THE FLAG-DAY TOOTH, POLE 1 — a FORGED validator signature is refused.
+    ///
+    /// Before 2026-08-06 this certificate assembled: `assemble_certificate` read
+    /// `signatures.len()` and the `validator_key`s and never touched `signature`.
+    /// The validator here is genuinely on the roster and the quorum is genuinely
+    /// met; only the 64 signature bytes are junk, which is exactly the input the
+    /// old body could not tell from a real one.
+    #[test]
+    fn forged_validator_signature_is_refused() {
+        let mut ledger = Ledger::new();
+        let (_, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
+        let turn = make_own_cell_turn(agent_id);
+        let turn_hash = turn.hash();
+
+        let (seed, _) = keypair_from_seed(0xB1);
+        let honest = sign_fast_path(&seed, &turn_hash, 100);
+        let roster = vec![honest.validator_key];
+
+        // Same key, same height, garbage signature bytes.
+        let forged = TurnSign {
+            validator_key: honest.validator_key,
+            signature: [0x7Au8; 64],
+            height: honest.height,
+        };
+        let err = assemble_certificate(turn.clone(), turn_hash, vec![forged], 1, &roster)
+            .expect_err("a forged validator signature must not assemble a certificate");
+        match err {
+            FastPathError::InvalidValidatorSignature { key } => {
+                assert_eq!(key, honest.validator_key)
+            }
+            other => panic!("expected InvalidValidatorSignature, got: {other:?}"),
+        }
+
+        // The honest signature over the SAME turn, same roster, still assembles —
+        // so the refusal above is the signature check, not a blanket denial.
+        assemble_certificate(turn, turn_hash, vec![honest], 1, &roster)
+            .expect("the honest signature must still certify");
+    }
+
+    /// THE FLAG-DAY TOOTH, POLE 2 — a validator that is not on the roster is refused
+    /// even though its signature is CRYPTOGRAPHICALLY VALID.
+    ///
+    /// This is why verifying the signature alone would not have closed the hole: an
+    /// attacker mints its own keypair and signs honestly with it. Only the roster
+    /// makes a quorum mean anything.
+    #[test]
+    fn honestly_signed_but_off_roster_validator_is_refused() {
+        let mut ledger = Ledger::new();
+        let (_, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
+        let turn = make_own_cell_turn(agent_id);
+        let turn_hash = turn.hash();
+
+        let (committee_seed, _) = keypair_from_seed(0xC1);
+        let committee_member = sign_fast_path(&committee_seed, &turn_hash, 100);
+        let roster = vec![committee_member.validator_key];
+
+        // A stranger's own keypair, signing the real turn_hash correctly.
+        let (stranger_seed, _) = keypair_from_seed(0xC2);
+        let stranger = sign_fast_path(&stranger_seed, &turn_hash, 100);
+        assert!(
+            verify_turn_sign(&stranger, &turn_hash),
+            "the stranger's signature is genuinely valid — that is the point"
+        );
+
+        let err = assemble_certificate(turn.clone(), turn_hash, vec![stranger], 1, &roster)
+            .expect_err("an off-roster validator must not form a quorum");
+        assert!(matches!(err, FastPathError::UnknownValidator { .. }));
+
+        // And an EMPTY roster refuses rather than counting self-declared signers.
+        let err = assemble_certificate(turn, turn_hash, vec![committee_member], 1, &[])
+            .expect_err("an empty roster must refuse");
+        assert!(matches!(err, FastPathError::NoValidatorRoster));
     }
 
     #[test]
@@ -866,7 +1018,8 @@ mod tests {
         let sign = sign_fast_path(&seed, &turn_hash, 100);
 
         // Need 3, have 1.
-        let result = assemble_certificate(turn, turn_hash, vec![sign], 3);
+        let roster = vec![sign.validator_key];
+        let result = assemble_certificate(turn, turn_hash, vec![sign], 3, &roster);
         assert!(result.is_err());
         match result.unwrap_err() {
             FastPathError::InsufficientSignatures { have: 1, need: 3 } => {}
@@ -993,7 +1146,8 @@ mod tests {
 
         // Build a certificate using a real Ed25519 signature.
         let sign = sign_fast_path(&validator_seed, &turn_hash, 100);
-        let cert = assemble_certificate(turn, turn_hash, vec![sign], 1).unwrap();
+        let roster = vec![sign.validator_key];
+        let cert = assemble_certificate(turn, turn_hash, vec![sign], 1, &roster).unwrap();
 
         // Execute.
         let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());

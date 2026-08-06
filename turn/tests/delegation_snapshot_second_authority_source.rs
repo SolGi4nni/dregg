@@ -301,7 +301,7 @@ fn a_unbounded_snapshot_capability_is_unaffected_by_height() {
 
 /// A snapshot capability frozen to `Impossible` confers nothing either — the
 /// same liveness predicate, the other leg. The c-list sibling
-/// (`CapabilitySet::has_access`) has always refused `Impossible`; the snapshot
+/// (`CapabilitySet::holds_unfrozen_ref_to`) has always refused `Impossible`; the snapshot
 /// branch never looked.
 #[test]
 fn a_impossible_snapshot_capability_confers_nothing() {

@@ -3219,7 +3219,10 @@ mod tests {
         let turn = w.turn(a, vec![grant_capability(a, a, b, slot + 1)]);
         assert!(w.commit_turn(turn).is_committed());
         let cell_a = w.ledger().get(&a).unwrap();
-        assert!(cell_a.capabilities.has_access(&b), "a should reach b");
+        assert!(
+            cell_a.capabilities.holds_unfrozen_ref_to(&b),
+            "a should reach b"
+        );
     }
 
     #[test]
@@ -3797,7 +3800,7 @@ mod tests {
             .get(&service)
             .unwrap()
             .capabilities
-            .has_access(&user));
+            .holds_unfrozen_ref_to(&user));
     }
 
     #[test]
@@ -3857,7 +3860,7 @@ mod tests {
             .get(&service)
             .unwrap()
             .capabilities
-            .has_access(&user));
+            .holds_unfrozen_ref_to(&user));
     }
 
     // ── THE SEMIHOSTED COCKPIT — a turn flowing through the executor-PD over the

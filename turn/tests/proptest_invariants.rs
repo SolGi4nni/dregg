@@ -631,7 +631,7 @@ proptest! {
                     let target_id = ids[*target_idx];
 
                     let intro_caps = &ledger.get(&intro_id).unwrap().capabilities;
-                    let has_recipient = intro_caps.has_access(&recipient_id);
+                    let has_recipient = intro_caps.holds_unfrozen_ref_to(&recipient_id);
                     let held = intro_caps.lookup_by_target(&target_id).cloned();
                     // Mirrors `apply_introduce` (apply.rs:2263-2340): access to the
                     // recipient, a live (unexpired) held cap over the target, and

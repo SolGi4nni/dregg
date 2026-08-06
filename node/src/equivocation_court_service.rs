@@ -645,7 +645,7 @@ async fn post_court_bond(
     let needs_adopt = !inner
         .ledger
         .get(&operator)
-        .map(|c| c.capabilities.has_access(&bond_cell))
+        .map(|c| c.capabilities.holds_unfrozen_ref_to(&bond_cell))
         .unwrap_or(false);
     let mut turn_hashes = Vec::with_capacity(2);
     let mut effects = Vec::with_capacity(3);

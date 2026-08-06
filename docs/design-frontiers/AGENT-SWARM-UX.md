@@ -54,7 +54,7 @@ This is a weld, not a build. The headless heart already runs.
 - **`starbridge-v2/src/swarm.rs` — the Swarm coordinator (gpui-free, tested).**
   `Swarm::new(world, members)` seeds N agent cells; `Swarm::run(world, agent,
   effects)` is the one seam — it resolves the member, confirms the backing cell
-  is live, **CAP-GATES** every effect (`capabilities.has_access(target)` against
+  is live, **CAP-GATES** every effect (`capabilities.has_access_at(target, height)` against
   the real c-list, `OutOfMandate` otherwise), runs the turn through the REAL
   embedded executor (`World::commit_turn`), and on commit scans the new
   `EventEmitted` dynamics to deposit `NotifyEdge`s into recipients' inboxes.
@@ -358,7 +358,7 @@ fooled. Each of the four observables makes one untrusted thing accountable:
 
 | The loop could lie about… | The cockpit shows instead… | Backed by |
 |---|---|---|
-| "I was authorized to do X" | the cap-gate REFUSED it (out-of-mandate, on-ledger, no commit) | `Swarm::run` cap-gate + `capabilities.has_access` |
+| "I was authorized to do X" | the cap-gate REFUSED it (out-of-mandate, on-ledger, no commit) | `Swarm::run` cap-gate + `capabilities.has_access_at` |
 | "I did X" / "I coordinated with B" | the executor's receipt + the `EventEmitted` dynamics (the seam record) | `World::commit_turn` receipts + the dynamics stream |
 | "I stayed within budget" | the conserved computron spend against the Stingray ceiling | per-receipt computrons + `StingrayCounter` conservation |
 | "I am member M" | the identity drawn from the live ledger, not self-description | the §5 T2 label-binding (the cipherclerk anchor) |

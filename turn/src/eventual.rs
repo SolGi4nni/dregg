@@ -799,7 +799,7 @@ mod tests {
 
         // Verify B now holds the capability to A.
         let cell_b_after = ledger.get(&id_b).unwrap();
-        assert!(cell_b_after.capabilities.has_access(&id_a));
+        assert!(cell_b_after.capabilities.holds_unfrozen_ref_to(&id_a));
     }
 
     #[test]

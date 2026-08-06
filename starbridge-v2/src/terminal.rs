@@ -293,7 +293,7 @@ impl TerminalCell {
         world
             .ledger()
             .get(&self.backing)
-            .map(|c| c.capabilities.has_access(&target))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&target))
             .unwrap_or(false)
     }
 

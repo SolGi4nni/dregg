@@ -830,7 +830,7 @@ impl PermWorld {
         let target = permission.grant_target(self.app_cell);
         self.ledger
             .get(&self.app_cell)
-            .map(|c| c.capabilities.has_access(&target))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&target))
             .unwrap_or(false)
     }
 
@@ -1308,7 +1308,7 @@ mod tests {
                 .get(&app)
                 .unwrap()
                 .capabilities
-                .has_access(&organ),
+                .holds_unfrozen_ref_to(&organ),
             "precondition: the android-cell does NOT reach the location organ before the grant"
         );
         let loc_before = pw
@@ -1381,7 +1381,7 @@ mod tests {
                 .get(&pw.app_cell())
                 .unwrap()
                 .capabilities
-                .has_access(&cam_organ),
+                .holds_unfrozen_ref_to(&cam_organ),
             "the android-cell never reaches the camera organ"
         );
     }
@@ -1415,7 +1415,7 @@ mod tests {
                 .get(&app)
                 .unwrap()
                 .capabilities
-                .has_access(&organ),
+                .holds_unfrozen_ref_to(&organ),
             "the cap never landed"
         );
     }

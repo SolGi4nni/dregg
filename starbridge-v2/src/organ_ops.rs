@@ -567,7 +567,7 @@ impl OrganDriver {
         let already = world
             .ledger()
             .get(&borrower)
-            .map(|c| c.capabilities.has_access(&well))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&well))
             .unwrap_or(false);
         if !already {
             // THE ADOPT-GRANT — the operator-root endows the BORROWER's c-list with

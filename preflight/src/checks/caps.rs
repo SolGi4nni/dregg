@@ -101,13 +101,13 @@ fn check_bearer_cap() -> Result<(), String> {
     let mut cap_set = CapabilitySet::new();
 
     // No access initially
-    if cap_set.has_access(&target_id) {
+    if cap_set.holds_unfrozen_ref_to(&target_id) {
         return Err("should not have access before grant".into());
     }
 
     // Grant bearer-style (no auth required)
     cap_set.grant(target_id, AuthRequired::None);
-    if !cap_set.has_access(&target_id) {
+    if !cap_set.holds_unfrozen_ref_to(&target_id) {
         return Err("should have access after bearer grant".into());
     }
 
@@ -170,7 +170,7 @@ fn check_revocation() -> Result<(), String> {
     // Verify access
     {
         let g = ledger.get(&granter_id).unwrap();
-        if !g.capabilities.has_access(&target_id) {
+        if !g.capabilities.holds_unfrozen_ref_to(&target_id) {
             return Err("should have access after grant".into());
         }
     }
@@ -199,7 +199,7 @@ fn check_revocation() -> Result<(), String> {
 
     // Verify access revoked
     let g = ledger.get(&granter_id).ok_or("granter not found")?;
-    if g.capabilities.has_access(&target_id) {
+    if g.capabilities.holds_unfrozen_ref_to(&target_id) {
         return Err("should NOT have access after revocation".into());
     }
 

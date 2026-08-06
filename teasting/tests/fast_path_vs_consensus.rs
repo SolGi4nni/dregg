@@ -293,7 +293,8 @@ fn test_fast_path_executes_immediately() {
     }
 
     // Assemble certificate (threshold=2 for 2f+1 with f=0 simplified).
-    let cert = assemble_certificate(turn, turn_hash, signs, 2)
+    let roster: Vec<[u8; 32]> = signs.iter().map(|s| s.validator_key).collect();
+    let cert = assemble_certificate(turn, turn_hash, signs, 2, &roster)
         .expect("certificate assembly should succeed");
 
     // Execute the certified turn — this is the "immediate" execution (no consensus round).
@@ -418,7 +419,8 @@ fn test_both_paths_deterministic() {
         &agent_signature,
     )
     .unwrap();
-    let cert = assemble_certificate(turn_fast, turn_hash, vec![sign], 1).unwrap();
+    let roster = vec![sign.validator_key];
+    let cert = assemble_certificate(turn_fast, turn_hash, vec![sign], 1, &roster).unwrap();
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let result_fast = execute_certified_turn(&cert, &executor, &mut ledger_fast, &mut table);
     assert!(

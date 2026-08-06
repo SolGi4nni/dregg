@@ -351,7 +351,7 @@ mod tests {
                     .get(&e.holder)
                     .unwrap()
                     .capabilities
-                    .has_access(&e.target),
+                    .holds_unfrozen_ref_to(&e.target),
                 "every mandate edge is a real held capability"
             );
         }

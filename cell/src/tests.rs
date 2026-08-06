@@ -304,7 +304,7 @@ fn capability_set_revoke() {
 
     assert!(caps.revoke(slot));
     assert!(caps.lookup(slot).is_none());
-    assert!(!caps.has_access(&target));
+    assert!(!caps.holds_unfrozen_ref_to(&target));
 }
 
 #[test]
@@ -320,8 +320,8 @@ fn capability_set_has_access() {
     let other = CellId::derive_raw(&test_key(6), &test_token(6));
 
     caps.grant(target, AuthRequired::Signature);
-    assert!(caps.has_access(&target));
-    assert!(!caps.has_access(&other));
+    assert!(caps.holds_unfrozen_ref_to(&target));
+    assert!(!caps.holds_unfrozen_ref_to(&other));
 }
 
 #[test]
@@ -385,7 +385,7 @@ fn capability_set_with_breadstuff() {
 }
 
 #[test]
-fn capability_set_capabilities_for() {
+fn capability_set_live_at_groups_by_target() {
     let mut caps = CapabilitySet::new();
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
     let other = CellId::derive_raw(&test_key(2), &test_token(2));
@@ -394,10 +394,12 @@ fn capability_set_capabilities_for() {
     caps.grant(target, AuthRequired::Signature);
     caps.grant(other, AuthRequired::Proof);
 
-    let for_target = caps.capabilities_for(&target);
+    // `live_at` replaced the liveness-free `capabilities_for` (deleted 2026-08-06).
+    // Every cap here is unfrozen and unexpiring, so the counts are unchanged.
+    let for_target: Vec<_> = caps.live_at(&target, 0).collect();
     assert_eq!(for_target.len(), 2);
 
-    let for_other = caps.capabilities_for(&other);
+    let for_other: Vec<_> = caps.live_at(&other, 0).collect();
     assert_eq!(for_other.len(), 1);
 }
 
@@ -412,9 +414,9 @@ fn capability_isolation_no_implicit_access() {
     caps.grant(a, AuthRequired::None);
 
     // B and C are not accessible.
-    assert!(caps.has_access(&a));
-    assert!(!caps.has_access(&b));
-    assert!(!caps.has_access(&c));
+    assert!(caps.holds_unfrozen_ref_to(&a));
+    assert!(!caps.holds_unfrozen_ref_to(&b));
+    assert!(!caps.holds_unfrozen_ref_to(&c));
 
     // Lookup by slot for non-granted targets returns None.
     assert!(caps.lookup(1).is_none());
@@ -918,7 +920,7 @@ fn ledger_delta_capability_grant_and_revoke() {
 
     ledger.apply_delta(&delta).unwrap();
     let cell = ledger.get(&id).unwrap();
-    assert!(cell.capabilities.has_access(&target));
+    assert!(cell.capabilities.holds_unfrozen_ref_to(&target));
 
     // Revoke it.
     // The grant_with_breadstuff call assigns a new slot (0 in this case since it's the first).
@@ -942,7 +944,7 @@ fn ledger_delta_capability_grant_and_revoke() {
 
     ledger.apply_delta(&delta2).unwrap();
     let cell = ledger.get(&id).unwrap();
-    assert!(!cell.capabilities.has_access(&target));
+    assert!(!cell.capabilities.holds_unfrozen_ref_to(&target));
 }
 
 #[test]
@@ -1333,14 +1335,14 @@ fn scenario_agent_lifecycle() {
     // 5. Verify state.
     let parent = ledger.get(&parent_id).unwrap();
     assert_eq!(parent.state.balance, 8000);
-    assert!(parent.capabilities.has_access(&child_id));
+    assert!(parent.capabilities.holds_unfrozen_ref_to(&child_id));
 
     let child = ledger.get(&child_id).unwrap();
     assert_eq!(child.state.balance, 2000);
     assert_eq!(child.delegate, Some(parent_id));
 
     // 6. Child CANNOT access parent (isolation).
-    assert!(!child.capabilities.has_access(&parent_id));
+    assert!(!child.capabilities.holds_unfrozen_ref_to(&parent_id));
 }
 
 #[test]
@@ -1369,13 +1371,13 @@ fn scenario_capability_delegation_chain() {
 
     // A cannot directly reach C (capability isolation).
     let a = ledger.get(&a_id).unwrap();
-    assert!(a.capabilities.has_access(&b_id));
-    assert!(!a.capabilities.has_access(&c_id));
+    assert!(a.capabilities.holds_unfrozen_ref_to(&b_id));
+    assert!(!a.capabilities.holds_unfrozen_ref_to(&c_id));
 
     // B can reach C but not A.
     let b = ledger.get(&b_id).unwrap();
-    assert!(b.capabilities.has_access(&c_id));
-    assert!(!b.capabilities.has_access(&a_id));
+    assert!(b.capabilities.holds_unfrozen_ref_to(&c_id));
+    assert!(!b.capabilities.holds_unfrozen_ref_to(&a_id));
 
     // C has no capabilities.
     let c = ledger.get(&c_id).unwrap();
@@ -1511,15 +1513,15 @@ fn scenario_multiple_grants_same_target() {
 
     // Revoking one doesn't revoke others.
     caps.revoke(s1);
-    assert!(caps.has_access(&target)); // still accessible via s2, s3
+    assert!(caps.holds_unfrozen_ref_to(&target)); // still accessible via s2, s3
     assert_eq!(caps.len(), 2);
 
     caps.revoke(s2);
-    assert!(caps.has_access(&target)); // still via s3
+    assert!(caps.holds_unfrozen_ref_to(&target)); // still via s3
     assert_eq!(caps.len(), 1);
 
     caps.revoke(s3);
-    assert!(!caps.has_access(&target)); // now gone
+    assert!(!caps.holds_unfrozen_ref_to(&target)); // now gone
     assert_eq!(caps.len(), 0);
 }
 

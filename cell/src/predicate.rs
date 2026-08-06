@@ -3730,12 +3730,21 @@ mod tests {
         proof.merkle_path[0].0 = [0xAAu8; 32];
         // Re-bind the tag to the (unchanged) claimed roots so we exercise
         // the membership check, not the tag check.
-        proof.binding_tag = CredentialSetMembershipProof::binding_tag(
+        //
+        // ⚑ FIXED 2026-08-06 — this passed `&holder` in the `committed_leaf` slot
+        // (`binding_tag(commitment, committed_leaf, issuer_set_root, revocation_root)`),
+        // so the recomputed tag did NOT match the one step 2 recomputes from
+        // `proof.committed_leaf`. The proof was refused by the BINDING-TAG check and
+        // step 3 — the membership walk this test is named for — was never reached. The
+        // test passed; the thing it claimed to cover was unexercised. Same shape as a
+        // rejection test whose input is malformed for a different reason.
+        let rebound_tag = CredentialSetMembershipProof::binding_tag(
             &commitment,
-            &holder,
+            &proof.committed_leaf,
             &proof.issuer_set_root,
             &proof.revocation_root,
         );
+        proof.binding_tag = rebound_tag;
         let bytes = proof.to_bytes();
 
         let reg = WitnessedPredicateRegistry::default_builtins();
@@ -3743,10 +3752,15 @@ mod tests {
         let err = reg
             .verify(&wp, &PredicateInput::Sender(&holder), &bytes)
             .unwrap_err();
-        assert!(
-            matches!(err, WitnessedPredicateError::Rejected { .. }),
-            "forged membership path must reject; got {err:?}"
-        );
+        match &err {
+            WitnessedPredicateError::Rejected { reason, .. } => assert!(
+                !reason.contains("binding_tag"),
+                "the refusal must come from the MEMBERSHIP walk (step 3), not the \
+                 binding-tag check (step 2) — that is the whole point of re-binding the \
+                 tag above; got: {reason}"
+            ),
+            other => panic!("forged membership path must reject; got {other:?}"),
+        }
     }
 
     #[test]

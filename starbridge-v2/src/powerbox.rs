@@ -773,7 +773,7 @@ mod tests {
                 .get(&app)
                 .unwrap()
                 .capabilities
-                .has_access(&docs),
+                .holds_unfrozen_ref_to(&docs),
             "precondition: the app does NOT reach docs before the grant"
         );
         let receipts_before = world.receipts().len();
@@ -800,7 +800,7 @@ mod tests {
         // The app's LIVE c-list now reaches docs (the cap was minted in by the executor).
         let app_cell = world.ledger().get(&app).unwrap();
         assert!(
-            app_cell.capabilities.has_access(&docs),
+            app_cell.capabilities.holds_unfrozen_ref_to(&docs),
             "the app now reaches docs via the granted cap"
         );
         // …and the granted cap carries the ATTENUATED rights, not the user's wider ones.
@@ -852,7 +852,7 @@ mod tests {
                 .get(&app)
                 .unwrap()
                 .capabilities
-                .has_access(&unheld),
+                .holds_unfrozen_ref_to(&unheld),
             "the app does not reach the unheld target"
         );
     }
@@ -954,7 +954,7 @@ mod tests {
                 .get(&launched.app_cell)
                 .unwrap()
                 .capabilities
-                .has_access(&docs),
+                .holds_unfrozen_ref_to(&docs),
             "the launched app does NOT reach docs before the powerbox grant"
         );
 
@@ -1004,7 +1004,7 @@ mod tests {
                 .get(&launched.app_cell)
                 .unwrap()
                 .capabilities
-                .has_access(&docs),
+                .holds_unfrozen_ref_to(&docs),
             "the launched app now reaches docs — the runtime launch + powerbox grant closed the loop"
         );
     }

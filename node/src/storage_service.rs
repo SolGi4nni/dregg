@@ -446,7 +446,7 @@ pub fn require_operator_authority(
     let holds_cap = s
         .ledger
         .get(&operator_cell)
-        .map(|c| c.capabilities.has_access(&gateway))
+        .map(|c| c.capabilities.holds_unfrozen_ref_to(&gateway))
         .unwrap_or(false);
     if !holds_cap {
         return Err(StorageRefusal::NoCapability(format!(

@@ -625,7 +625,7 @@ impl Swarm {
                     let has_cap = world
                         .ledger()
                         .get(&agent)
-                        .map(|c| c.capabilities.has_access(&target))
+                        .map(|c| c.capabilities.holds_unfrozen_ref_to(&target))
                         .unwrap_or(false);
                     if !has_cap {
                         return Err(SwarmError::OutOfMandate {
@@ -934,7 +934,7 @@ impl Swarm {
                         let has_cap = world
                             .ledger()
                             .get(&agent)
-                            .map(|c| c.capabilities.has_access(&t))
+                            .map(|c| c.capabilities.holds_unfrozen_ref_to(&t))
                             .unwrap_or(false);
                         if !has_cap {
                             return Err(SwarmError::OutOfMandate {
@@ -1627,7 +1627,7 @@ mod tests {
         assert!(!world
             .ledger()
             .get(&worker_a)
-            .map(|c| c.capabilities.has_access(&worker_b))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&worker_b))
             .unwrap_or(false));
         let r = swarm.run(
             &mut world,

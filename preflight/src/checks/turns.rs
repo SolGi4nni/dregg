@@ -194,7 +194,7 @@ fn check_grant_capability() -> Result<(), String> {
 
     // Verify capability is still in c-list after the grant turn.
     let g = ledger.get(&granter_id).ok_or("granter not found")?;
-    if !g.capabilities.has_access(&target_id) {
+    if !g.capabilities.holds_unfrozen_ref_to(&target_id) {
         return Err("granter should have capability to target after grant".into());
     }
 

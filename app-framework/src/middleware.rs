@@ -486,22 +486,27 @@ impl FromRequestParts<MutexEngineState> for OptionalPresentation {
 }
 
 // =============================================================================
-// Dev/test: any-tier verification helper
+// Dev/test: tagged verification helper
 // =============================================================================
 
-/// Verify a proof accepting any tier (dev/test only).
+/// Verify an authorization proof and TAG the verdict with backend metadata (dev/test only).
 ///
-/// This function is only available when the `dev` feature is enabled.
-/// It allows structural and experimental proofs to pass verification,
-/// which is useful for integration testing without real cryptographic backends.
+/// Only available when the `dev` feature is enabled.
+///
+/// ⚑ RENAMED 2026-08-06 from `verify_any_tier_presentation`. The old name, and the doc
+/// line *"It allows structural and experimental proofs to pass verification"*, described
+/// a relaxation that does not exist: the SDK enforces no tier on ANY path, so there was
+/// nothing for this to relax. The cryptographic check is identical to what a production
+/// caller runs — a structural stub cannot produce a verifying STARK and is rejected by
+/// the proof check itself. See `dregg_sdk::verify_authorization_proof_tagged`.
 #[cfg(feature = "dev")]
-pub fn verify_any_tier_presentation(
+pub fn verify_tagged_presentation(
     proof_bytes: &[u8],
     federation_root: &[u8; 32],
     expected_action: &str,
     expected_resource: &str,
 ) -> Result<dregg_circuit::VerifiedProof, dregg_sdk::SdkError> {
-    dregg_sdk::verify_any_tier(
+    dregg_sdk::verify_authorization_proof_tagged(
         proof_bytes,
         federation_root,
         expected_action,

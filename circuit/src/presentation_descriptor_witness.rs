@@ -4,13 +4,17 @@
 //!
 //! ## What this closes (the Gate-1.5 pattern for the blinded-presentation family)
 //!
-//! The StarkProof→descriptor-prover migration flips the anonymous-presentation verifiers
-//! (`sdk::verify_anonymous_presentation`, the `bridge` issuer path) from the hand
-//! `PresentationAir` STARK onto the p3 descriptor prover. The emitted descriptor for this family is
+//! The StarkProof→descriptor-prover migration flips the anonymous-presentation verifiers (the
+//! `bridge` issuer path; `sdk::verify_anonymous_presentation` is the SDK's face on it and, measured
+//! 2026-08-06, has ZERO call sites — so read it as an available surface, not as a live consumer)
+//! from the hand `PresentationAir` STARK onto the p3 descriptor prover. The emitted descriptor for
+//! this family is
 //! [`crate::descriptor_by_name::descriptor_by_name`]`("dregg-presentation-freshness::summary-v1")`:
-//! the 19-column summary copy (`PresentationAir::constraints`, `presentation.rs:807`) PLUS the one
-//! off-AIR check that is a self-contained arithmetic tooth — the FRESHNESS binding
-//! (`verify_freshness_binding`, `presentation.rs:316`). Until now the only Rust producer of a
+//! the 19-column summary copy (`PresentationAir::constraints`) PLUS the one off-AIR check that is a
+//! self-contained arithmetic tooth — the FRESHNESS binding (`verify_freshness_binding`).
+//! (The `presentation.rs:807` / `presentation.rs:316` line cites that used to sit here had both
+//! drifted — the real homes are `:651` and `:385` — which is why they are gone: a line number is a
+//! claim that rots, a symbol name is not.) Until now the only Rust producer of a
 //! descriptor-matching trace for it lived inside `circuit-prove/tests/presentation_emit_gate.rs`;
 //! there was NO production witness builder (the analog of [`crate::membership_descriptor_4ary::membership_witness_4ary`])
 //! that consumers of `descriptor_by_name` could call. This module is that builder.

@@ -57,21 +57,21 @@ pub enum VerifyOutcome {
     RootMismatch,
     /// The proof's freshness window has elapsed.
     FreshnessExpired,
-    /// The proof carries an AIR name that does not match what the verifier expected.
-    WrongAir {
-        /// Expected AIR identifier.
-        expected: &'static str,
-        /// AIR identifier carried by the proof.
-        got: String,
-    },
-    /// A STARK proof was required but not present.
-    NoStarkProof,
-    /// The presentation kind (e.g., `Selective` vs `Trusted`) did not match the verifier.
-    WrongPresentationKind,
-    /// The revealed-facts commitment does not match the revealed plaintext.
-    RevealedFactsMismatch,
-    /// A predicate-proof variant failed verification.
-    PredicateProofInvalid,
+    // ⚑ FIVE VARIANTS DELETED 2026-08-06 — `WrongAir { expected, got }`, `NoStarkProof`,
+    // `WrongPresentationKind`, `RevealedFactsMismatch`, `PredicateProofInvalid`. Each was
+    // defined, doc-commented, and CONSTRUCTED ZERO TIMES outside the smoke test that
+    // pinned its existence: the same `TurnError::EffectsHashMismatch` shape this repo's
+    // CLAUDE.md opens with. The enum's stated purpose is *"operational logging and
+    // alerting"* — a `WrongAir` alert could never fire, so an operator watching for it was
+    // watching a channel with no transmitter.
+    //
+    // The five that remain are the five the one production producer (`embed.rs`) can
+    // actually emit. That producer reaches them by string-sniffing `format!("{e:?}")` for
+    // "root" / "freshness", which is its own defect and the named follow-up: the typed
+    // information exists at the source (`SdkError::UnknownAir` IS constructed twice in
+    // this file) and is thrown away, then guessed at. Restoring `WrongAir` means plumbing
+    // that typed error through `embed.rs` — reinstate the variant WITH its producer, not
+    // before it.
 }
 
 impl VerifyOutcome {
@@ -138,12 +138,39 @@ pub fn verify_authorization_proof(
 /// `4..32` zeroed, because the blinded ring-membership descriptor's committed root was one felt.
 /// After the `node8` cutover that root is a full [`Digest8`], and 8 felts × 4 bytes is exactly the
 /// 32 the wire already had. A pre-cutover root (one felt, tail zeros) decodes to a digest whose
-/// lanes `1..8` are zero, which no honest `node8_4ary` fold produces — so it is REFUSED, never
-/// reinterpreted.
+/// lanes `1..8` are zero, which no honest `node8_4ary` fold produces — so it is REFUSED (by
+/// [`refuse_pre_cutover_root`], called on the verify path), never reinterpreted.
 ///
-/// This is the identity decode: nothing is projected or discarded.
+/// ⚠ **This is NOT an identity decode, and it said it was until 2026-08-06.** The line here
+/// read *"This is the identity decode: nothing is projected or discarded."* The callee,
+/// `bytes32_to_8_limbs`, computes `BabyBear::new(v % BABYBEAR_P)` per 4-byte chunk — a
+/// PROJECTION — and its own docblock is emphatic about the consequence: *"⚑ THE ALIAS RATE IS
+/// 100%, NOT 53.1%"*, *"every 32-byte value has at least 2^8 = 256 byte-distinct siblings with
+/// an identical limb vector"*, refuted in general by the Lean theorem
+/// `capFoldLimbs_not_injective` (`metatheory/Dregg2/Circuit/CapLeafTargetLanes9.lean`). So a
+/// 32-byte federation root pinned by a caller has ≥256 byte-distinct siblings this comparison
+/// admits. That is the felt-width campaign's boundary, not something a rename fixes — but the
+/// sentence claiming the opposite, on the neighbour of an admirably honest *"⚠ This is a
+/// ~31-bit binding"* note, is exactly the shape that stops a reader looking.
 fn expected_federation_root_d8(federation_root: &[u8; 32]) -> Digest8 {
     dregg_circuit::effect_vm::bytes32_to_8_limbs(federation_root)
+}
+
+/// The refusal the docblock above has promised since the `node8` cutover and which, until
+/// 2026-08-06, no code performed: a PRE-CUTOVER federation root — one felt in bytes `0..4`
+/// and `4..32` zeroed — decodes to a digest whose lanes `1..8` are all zero.
+///
+/// No honest `node8_4ary` fold produces that (it is a Poseidon2 output; eight simultaneously
+/// zero lanes is a ~2^-248 event), so it can only be an old-format 32-byte root being
+/// reinterpreted under the new one. Reinterpreting it would compare ONE lane of real entropy
+/// and seven zeros against a real 8-lane root — the exact ~31-bit waist the cutover widened.
+///
+/// Returns `true` when the root must be refused. `[0u8; 32]` — an unset/default anchor — is
+/// caught by the same rule, which is correct: it is not a root either.
+fn refuse_pre_cutover_root(root8: &Digest8) -> bool {
+    root8[1..]
+        .iter()
+        .all(|lane| *lane == dregg_circuit::BabyBear::ZERO)
 }
 
 /// The expected federation root as ONE canonical `BabyBear` — the slot the Lean-emitted
@@ -207,6 +234,12 @@ fn verify_authorization_wires(
     check_bundle_predicates(bundle)?;
     let expected_root = expected_federation_root(federation_root);
     let expected_root8 = expected_federation_root_d8(federation_root);
+    // The promised pre-cutover refusal, now actually performed (see
+    // [`refuse_pre_cutover_root`]). A caller that hands us an old one-felt root gets a
+    // refusal rather than a ~31-bit comparison dressed as an 8-lane one.
+    if refuse_pre_cutover_root(&expected_root8) {
+        return Ok(None);
+    }
 
     // (a) MEMBERSHIP: verify the blinded ring-membership proof. Its PIs are the 8-felt
     //     `blinded_leaf` then the 8-felt federation `root` — SIXTEEN slots, not two.
@@ -315,13 +348,28 @@ pub fn verify_selective_disclosure(
     //    the commitment from the plaintext revealed_facts and compare to the committed value.
     let recomputed_commitment = dregg_bridge::compute_revealed_facts_commitment(revealed_facts);
 
-    if revealed_facts.is_empty() {
-        // No facts revealed — effectively fully private; the recomputed commitment must be zero.
-        return Ok(recomputed_commitment.is_zero());
-    }
+    // ⚑ THE EMPTY BRANCH USED TO RETURN WITHOUT READING THE PROOF (fixed 2026-08-06).
+    // It was:
+    //
+    //     if revealed_facts.is_empty() {
+    //         return Ok(recomputed_commitment.is_zero());
+    //     }
+    //
+    // and `dregg_bridge::compute_revealed_facts_commitment` opens with
+    // `if facts.is_empty() { return WideHash::ZERO; }`. So `revealed_facts.is_empty()`
+    // implied `recomputed_commitment.is_zero()` implied `Ok(true)` — unconditionally,
+    // for any proof bytes, having never touched `bound_pis[REVEALED_FACTS_BASE..]`.
+    // The comment "the recomputed commitment must be zero" stated a condition on a
+    // value the function had just derived from the same emptiness it branched on:
+    // `x == x`, the `verify_full_turn` shape. A presentation that revealed facts
+    // IN-CIRCUIT was reported verified-and-fully-private by passing `&[]` here.
+    //
+    // Both branches now compare the recomputed commitment against the PI the AIR
+    // constrained. The empty case is not exempt — it asserts the proof ALSO committed
+    // to nothing, which is the actual claim "no facts were revealed".
 
     // Facts ARE revealed — the recomputed commitment must be non-zero.
-    if recomputed_commitment.is_zero() {
+    if !revealed_facts.is_empty() && recomputed_commitment.is_zero() {
         return Ok(false);
     }
 
@@ -338,29 +386,16 @@ pub fn verify_selective_disclosure(
     Ok(recomputed_commitment == proof_commitment)
 }
 
-/// Verify a selective disclosure presentation using the full `AuthorizationPresentation`.
-///
-/// This is the high-level verifier entry point that accepts the SDK's
-/// [`AuthorizationPresentation::Selective`] variant directly and performs the
-/// cryptographic commitment check.
-///
-/// # Returns
-///
-/// `true` if the revealed facts commitment matches (prover did not lie),
-/// `false` otherwise.
-pub fn verify_selective_presentation(presentation: &crate::AuthorizationPresentation) -> bool {
-    match presentation {
-        crate::AuthorizationPresentation::Selective {
-            revealed_facts,
-            revealed_facts_commitment,
-            ..
-        } => dregg_bridge::verify_revealed_facts_commitment(
-            revealed_facts,
-            *revealed_facts_commitment,
-        ),
-        _ => false,
-    }
-}
+// ⚑ `verify_selective_presentation` LIVED HERE UNTIL 2026-08-06. Deleted: zero callers,
+// and strictly weaker than the `verify_disclosure_presentation` forty lines below, which
+// DOES have a real consumer (`sdk-py`). Its docblock said *"the high-level verifier entry
+// point … performs the cryptographic commitment check"*; it performed ONE check — the
+// revealed-facts commitment — with no STARK, no federation root, no action binding, and
+// it swallowed `predicate_proofs` through a `..` pattern where its surviving sibling
+// FAILS CLOSED on them (`predicate_proofs.is_empty()`). "using the full
+// `AuthorizationPresentation`" described the argument TYPE and read as coverage.
+// Two entry points that agree on predicate-free presentations and disagree on the
+// dangerous ones is the shape this sweep exists to remove.
 
 /// Verify the revealed-facts half of a disclosure presentation.
 ///
@@ -615,64 +650,50 @@ pub fn verify_validated_ivc_proof(_proof_bytes: &[u8]) -> Result<bool, SdkError>
 // Tier-gated verification
 // ============================================================================
 
-/// Verify a serialized authorization proof (production entry point).
+// ⚑ `verify_production` LIVED HERE UNTIL 2026-08-06. Deleted, along with the
+// `verify_any_tier` / `verify_production` PAIR, because the pair was the claim.
+//
+// * `verify_production` — *"the production-safe entry point … full STARK verification
+//   including action/resource binding and composition commitment checks"*, with an
+//   `# Errors` bullet reading *"Composition commitment is missing or invalid"*. The
+//   string "composition" appeared nowhere else in the file; there was no such check and
+//   no error path could produce it. **Zero callers**, and not re-exported at the crate
+//   root, so the word "production" described nothing that ran.
+// * `verify_any_tier` carried a `# Safety` banner — *"This MUST NOT be used in
+//   production code paths"* — over a body BYTE-IDENTICAL to `verify_production`'s: the
+//   same `verify_authorization_proof` call, the same `VerifiedProof::with_federation_root(
+//   stark_tier(), STARK_BACKEND, …)`. Neither read a tier. "does not enforce a minimum
+//   proof tier" was not a DIFFERENCE between them, it was what both did, and the safety
+//   banner marked a boundary between two functions that were the same function.
+//
+// What survives is [`verify_authorization_proof_tagged`] below: one function, named for
+// what it does (verify, then TAG the result with backend metadata) rather than for a
+// tier policy that was removed years ago.
+
+/// Verify a serialized authorization proof, then TAG the result with the backend
+/// metadata a consumer wants for logging.
 ///
-/// This is the production-safe entry point. It performs full STARK verification
-/// including action/resource binding and composition commitment checks.
+/// The verdict is exactly [`verify_authorization_proof`]'s — the two committed
+/// descriptor wires, the 8-felt federation-root binding, and the action/resource
+/// binding. **No tier is enforced, here or anywhere.** Tier gating was removed under
+/// the verification-policy simplification: a proof that cryptographically verifies is
+/// valid regardless of which backend produced it, and a structural stub cannot produce
+/// a verifying STARK. The [`ProofTier`](dregg_circuit::ProofTier) on the returned
+/// [`VerifiedProof`](dregg_circuit::VerifiedProof) is therefore INFORMATIONAL, and the
+/// name says "tagged" rather than "production" so a reader can tell that without
+/// opening the callee.
 ///
-/// Tier gating has been removed per the verification policy simplification:
-/// if a proof cryptographically verifies (passes `verify_authorization_proof`),
-/// it is valid regardless of which backend produced it. Structural stubs cannot
-/// produce valid STARK proofs and are rejected by the cryptographic check itself.
-/// The tier is retained as informational metadata only.
+/// ⚠ **The tag is currently `stark_tier()` / `STARK_BACKEND` — i.e. `Experimental` /
+/// `"custom-stark"` — while the proof it verified is an IR-v2 descriptor wire.** That
+/// is a mislabel, not a gate: nothing reads it. `dregg_circuit::proof_tier` has no
+/// descriptor-wire constant to name yet, which is the named residual.
 ///
 /// # Errors
 ///
-/// Returns `Err` if:
-/// - The proof cannot be deserialized
-/// - STARK verification fails
-/// - Action/resource binding fails
-/// - Composition commitment is missing or invalid
-pub fn verify_production(
-    proof_bytes: &[u8],
-    federation_root: &[u8; 32],
-    expected_action: &str,
-    expected_resource: &str,
-) -> Result<dregg_circuit::VerifiedProof, SdkError> {
-    use dregg_circuit::proof_tier;
-
-    // Perform the standard verification (including action/resource binding).
-    let valid = verify_authorization_proof(
-        proof_bytes,
-        federation_root,
-        expected_action,
-        expected_resource,
-    )?;
-    if !valid {
-        return Err(SdkError::Wire("proof verification failed".into()));
-    }
-
-    // Return a VerifiedProof with informational tier metadata.
-    // No tier gating: if the STARK verified, the proof is accepted.
-    Ok(dregg_circuit::VerifiedProof::with_federation_root(
-        proof_tier::stark_tier(),
-        proof_tier::STARK_BACKEND,
-        *federation_root,
-    ))
-}
-
-/// Verify a serialized authorization proof accepting any tier.
-///
-/// This function is only available in tests or when the `dev` feature is enabled.
-/// It performs standard verification but does not enforce a minimum proof tier,
-/// allowing structural stubs and experimental backends to pass.
-///
-/// # Safety
-///
-/// This MUST NOT be used in production code paths. It exists solely for testing
-/// and development workflows where real cryptographic proofs are unavailable.
+/// `Err` if the proof cannot be deserialized, names an unexpected descriptor
+/// ([`SdkError::UnknownAir`]), or fails verification.
 #[cfg(any(test, feature = "dev"))]
-pub fn verify_any_tier(
+pub fn verify_authorization_proof_tagged(
     proof_bytes: &[u8],
     federation_root: &[u8; 32],
     expected_action: &str,
@@ -690,7 +711,6 @@ pub fn verify_any_tier(
         return Err(SdkError::Wire("proof verification failed".into()));
     }
 
-    // In dev mode, accept any tier.
     Ok(dregg_circuit::VerifiedProof::with_federation_root(
         proof_tier::stark_tier(),
         proof_tier::STARK_BACKEND,
@@ -800,61 +820,26 @@ pub fn verify_finalized_history(
     )
 }
 
-/// Build a federation Merkle tree from member public keys and return the root.
-///
-/// This is the verifier-side helper for constructing the federation tree that
-/// anonymous credential gates need. Given a list of member Ed25519 public keys,
-/// this builds the same Merkle tree structure used by `authorize_anonymously` and
-/// returns the root hash.
-///
-/// # Arguments
-///
-/// * `member_keys` - Slice of 32-byte Ed25519 public keys for federation members.
-///
-/// # Returns
-///
-/// The 32-byte Merkle root that can be used as the `federation_root` parameter
-/// when verifying ring membership proofs.
-pub fn build_federation_tree(member_keys: &[[u8; 32]]) -> [u8; 32] {
-    if member_keys.is_empty() {
-        return *blake3::hash(b"dregg-federation:empty").as_bytes();
-    }
-
-    // Hash each member key to produce leaves.
-    let mut leaves: Vec<[u8; 32]> = member_keys
-        .iter()
-        .map(|key| {
-            let mut hasher = blake3::Hasher::new_derive_key("dregg-federation-leaf-v1");
-            hasher.update(key);
-            *hasher.finalize().as_bytes()
-        })
-        .collect();
-
-    // Sort for deterministic ordering.
-    leaves.sort();
-
-    // Build binary Merkle tree.
-    if leaves.len() == 1 {
-        return leaves[0];
-    }
-
-    // Pad to next power of two.
-    let next_pow2 = leaves.len().next_power_of_two();
-    leaves.resize(next_pow2, [0u8; 32]);
-
-    let mut current_level = leaves;
-    while current_level.len() > 1 {
-        let mut next_level = Vec::with_capacity(current_level.len() / 2);
-        for chunk in current_level.chunks(2) {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&chunk[0]);
-            hasher.update(&chunk[1]);
-            next_level.push(*hasher.finalize().as_bytes());
-        }
-        current_level = next_level;
-    }
-    current_level[0]
-}
+// ⚑ `build_federation_tree` LIVED HERE UNTIL 2026-08-06 AND ITS OUTPUT WAS ACCEPTED BY
+// NOTHING. Its docblock promised *"the same Merkle tree structure used by
+// `authorize_anonymously`"* and a root *"that can be used as the `federation_root`
+// parameter when verifying ring membership proofs"*. Both were false:
+//
+// * it built a SORTED, zero-padded, BINARY tree over blake3 leaves
+//   (`new_derive_key("dregg-federation-leaf-v1")`), and
+// * the `federation_root` parameter is consumed two ways, neither of which is a blake3
+//   digest — `expected_federation_root_d8` reads the 32 bytes as eight canonical LE
+//   `u32` lanes of a Poseidon2 `node8_4ary` root, and `expected_federation_root`
+//   Poseidon2-hashes those lanes. Feeding this function's output to
+//   `verify_authorization_proof` rejects every honest proof.
+// * `authorize_anonymously` (`privacy.rs`) builds no tree at all — it delegates to
+//   `prove_authorization`.
+//
+// Zero callers. A helper whose whole contract is "the value this returns goes THERE"
+// and whose value is refused THERE is worse than an absent one, because the next
+// reader wires it up. Building the real thing means a Poseidon2 4-ary `node8` fold
+// matching `blinded_membership_witness_4ary` — that is the replacement, and it is not
+// this. Named residual, recorded in `old-docs/app-blockers.md`.
 
 #[cfg(test)]
 mod tests {
@@ -1135,6 +1120,68 @@ mod tests {
         );
     }
 
+    /// ⚑ THE REFUSAL THE EMPTY BRANCH GAINED (2026-08-06), SHOWN TO FIRE.
+    ///
+    /// The proof here COMMITS to a non-zero revealed-facts value in-circuit
+    /// (`bound_pis[REVEALED_FACTS_BASE..+8]`), and the caller claims `&[]` — "nothing
+    /// was revealed". The old body took `revealed_facts.is_empty()` as its whole
+    /// question, recomputed `WideHash::ZERO` from that same emptiness, compared the two,
+    /// and returned `Ok(true)` without ever reading the proof. So a presentation that
+    /// revealed facts was reported verified-and-fully-private by passing an empty slice.
+    ///
+    /// Note the honest pole above uses the SAME construction with a ZERO commitment and
+    /// still passes, so this is the commitment comparison biting, not a blanket refusal
+    /// of the empty case.
+    #[test]
+    fn empty_facts_claim_against_a_proof_that_committed_facts_is_refused() {
+        let revealed = [
+            BabyBear::new(0x1234),
+            BabyBear::new(0x5678),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ];
+        let (bundle, fed) = honest_bundle("read", "api/v1/users", revealed);
+        let bytes = postcard::to_allocvec(&bundle).expect("encode bundle");
+        assert_eq!(
+            verify_selective_disclosure(&bytes, &fed, "read", "api/v1/users", &[]).unwrap(),
+            false,
+            "claiming NO facts were revealed against a proof whose in-circuit \
+             revealed-facts commitment is non-zero must be refused"
+        );
+    }
+
+    /// The pre-cutover federation-root refusal the docblock promised and no code performed
+    /// until 2026-08-06, shown to fire: a one-felt root (bytes 0..4 set, 4..32 zeroed)
+    /// decodes to a digest whose lanes 1..8 are all zero. No honest `node8_4ary` fold
+    /// produces that, so it is REFUSED rather than compared at its ~31-bit waist.
+    #[test]
+    fn pre_cutover_one_felt_federation_root_is_refused_not_reinterpreted() {
+        let zero = [BabyBear::ZERO; 8];
+        let (bundle, fed) = honest_bundle("read", "api/v1/users", zero);
+        let bytes = postcard::to_allocvec(&bundle).expect("encode bundle");
+        // The honest 8-lane root still verifies.
+        assert!(
+            verify_authorization_proof(&bytes, &fed, "read", "api/v1/users").unwrap(),
+            "the 8-lane root must still verify"
+        );
+        // A pre-cutover root: lane 0 carried in bytes 0..4, the tail zeroed.
+        let mut old_shape = [0u8; 32];
+        old_shape[..4].copy_from_slice(&fed[..4]);
+        assert!(
+            !verify_authorization_proof(&bytes, &old_shape, "read", "api/v1/users").unwrap(),
+            "a pre-cutover one-felt root must be refused"
+        );
+        // And the all-zero (unset) anchor is caught by the same rule.
+        assert!(
+            !verify_authorization_proof(&bytes, &[0u8; 32], "read", "api/v1/users").unwrap(),
+            "an unset [0u8; 32] anchor is not a root either"
+        );
+    }
+
     /// P2-3: `VerifyOutcome` exposes failure categories so callers can distinguish decode failure
     /// from STARK rejection. This test pins the shape so future migrations keep the variants.
     #[test]
@@ -1154,22 +1201,8 @@ mod tests {
         let stale = VerifyOutcome::FreshnessExpired;
         assert!(!stale.is_ok());
 
-        let wrong_air = VerifyOutcome::WrongAir {
-            expected: "merkle-v1",
-            got: "merkle-v0".into(),
-        };
-        assert!(!wrong_air.is_ok());
-
-        let nostark = VerifyOutcome::NoStarkProof;
-        assert!(!nostark.is_ok());
-
-        let wrong_kind = VerifyOutcome::WrongPresentationKind;
-        assert!(!wrong_kind.is_ok());
-
-        let mismatch = VerifyOutcome::RevealedFactsMismatch;
-        assert!(!mismatch.is_ok());
-
-        let pred = VerifyOutcome::PredicateProofInvalid;
-        assert!(!pred.is_ok());
+        // The five never-constructed variants this used to also instantiate are gone
+        // (see the note on the enum). This test could not have caught their deadness:
+        // constructing a variant HERE is exactly what made it look alive.
     }
 }

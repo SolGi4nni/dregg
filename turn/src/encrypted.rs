@@ -175,11 +175,23 @@ pub struct TurnValidityPublicInputs {
     pub agent_commitment: [u8; 32],
 
     /// The nonce this turn claims to use.
-    /// The verifier checks: agent_cell.nonce == claimed_nonce.
+    ///
+    /// ⚠ **NOTHING COMPARES THIS TO ANY CELL'S NONCE.** The line here read *"The verifier
+    /// checks: agent_cell.nonce == claimed_nonce"* until 2026-08-06, in the present tense.
+    /// Measured that day: every occurrence repo-wide is a construction site, a field of
+    /// [`Self::signing_message`], or a test XOR. It is IN THE SIGNING MESSAGE AND COMPARED
+    /// AGAINST NOTHING — the same shape as the sovereign `effects_hash` this repo's
+    /// CLAUDE.md opens with. The type-level docblock above already lists nonce-freshness as
+    /// part of the UNBUILT Phase-2 STARK; this field doc contradicted it, and a reader
+    /// meets this one first. Binding it is that STARK's job, not a host-side compare.
     pub claimed_nonce: u64,
 
-    /// Minimum fee this turn will pay (proven lower bound).
-    /// The verifier checks: agent_cell.balance >= min_fee.
+    /// Minimum fee this turn will pay (claimed lower bound).
+    ///
+    /// ⚠ **NOTHING COMPARES THIS TO ANY CELL'S BALANCE** — see [`Self::claimed_nonce`].
+    /// The line here read *"The verifier checks: agent_cell.balance >= min_fee"*; there is
+    /// no such comparison anywhere. Also "proven lower bound" was two claims in three
+    /// words, and neither holds: it is claimed, and it is unproven.
     /// This may be lower than the actual fee (privacy: exact fee is hidden).
     pub min_fee: u64,
 

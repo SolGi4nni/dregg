@@ -383,7 +383,7 @@ pub use witness_artifact::{
 // Standalone credential verification the node/teasting name at root; the
 // rest lives in [`verify`].
 #[cfg(any(test, feature = "dev"))]
-pub use verify::verify_any_tier;
+pub use verify::verify_authorization_proof_tagged;
 pub use verify::{verify_authorization_proof, verify_committed_threshold};
 
 // The networked surface — CapTP capability sharing + pipelining, petname

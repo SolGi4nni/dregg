@@ -731,7 +731,7 @@ mod tests {
                 .get(&guest)
                 .unwrap()
                 .capabilities
-                .has_access(&docs),
+                .holds_unfrozen_ref_to(&docs),
             "the studyref holder holds NO write cap to docs before the upgrade"
         );
 
@@ -762,7 +762,7 @@ mod tests {
         // The guest now reaches docs with a write cap — the STUDYREF became EMBEDDED.
         let guest_cell = world.ledger().get(&guest).unwrap();
         assert!(
-            guest_cell.capabilities.has_access(&docs),
+            guest_cell.capabilities.holds_unfrozen_ref_to(&docs),
             "the upgraded guest now holds a write cap to docs (studyref → embedded)"
         );
         let granted = guest_cell
@@ -809,7 +809,7 @@ mod tests {
                 .get(&guest)
                 .unwrap()
                 .capabilities
-                .has_access(&peer),
+                .holds_unfrozen_ref_to(&peer),
             "the guest gained no cap from the refused upgrade"
         );
 

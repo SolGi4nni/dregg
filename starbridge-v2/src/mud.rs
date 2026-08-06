@@ -73,14 +73,14 @@ impl Room {
     /// connects there iff its c-list reaches the neighbour room cell.
     pub fn connects_to(&self, world: &World, neighbour: Room) -> bool {
         self.clist(world)
-            .map(|cl| cl.has_access(&neighbour.cell))
+            .map(|cl| cl.holds_unfrozen_ref_to(&neighbour.cell))
             .unwrap_or(false)
     }
 
     /// Is `item` lying in this room? An item-in-room IS a cap-in-the-room's-c-list.
     pub fn contains(&self, world: &World, item: Item) -> bool {
         self.clist(world)
-            .map(|cl| cl.has_access(&item.cell))
+            .map(|cl| cl.holds_unfrozen_ref_to(&item.cell))
             .unwrap_or(false)
     }
 }
@@ -105,7 +105,7 @@ impl Inhabitant {
         world
             .ledger()
             .get(&self.cell)
-            .map(|c| c.capabilities.has_access(&item.cell))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&item.cell))
             .unwrap_or(false)
     }
 
@@ -125,7 +125,7 @@ impl Inhabitant {
         world
             .ledger()
             .get(&self.cell)
-            .map(|c| c.capabilities.has_access(&room.cell))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&room.cell))
             .unwrap_or(false)
     }
 }
@@ -425,7 +425,7 @@ impl PresenceToken {
         world
             .ledger()
             .get(&holder)
-            .map(|c| c.capabilities.has_access(&self.cell))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&self.cell))
             .unwrap_or(false)
     }
 }
@@ -442,7 +442,7 @@ impl Room {
     pub fn hosts(&self, ledger: &Ledger, token: PresenceToken) -> bool {
         ledger
             .get(&self.cell)
-            .map(|c| c.capabilities.has_access(&token.cell))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(&token.cell))
             .unwrap_or(false)
     }
 

@@ -220,7 +220,7 @@ impl Session {
         world
             .ledger()
             .get(&self.root_cell)
-            .map(|c| c.capabilities.has_access(target))
+            .map(|c| c.capabilities.holds_unfrozen_ref_to(target))
             .unwrap_or(false)
     }
 
@@ -1885,7 +1885,7 @@ mod tests {
             assert!(
                 anchors[1..]
                     .iter()
-                    .all(|t| recovered_root.capabilities.has_access(t)),
+                    .all(|t| recovered_root.capabilities.holds_unfrozen_ref_to(t)),
                 "the session cap-tree resumed from the durable image"
             );
 

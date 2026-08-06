@@ -442,10 +442,15 @@ const PREDICATE_ARITH_INRANGE_JSON: &str =
     include_str!("../descriptors/by-name/predicate-arith-inrange.json");
 /// The `presentation` family (token-presentation summary AIR + internalized FRESHNESS binding),
 /// authored in `metatheory/Dregg2/Circuit/Emit/PresentationEmit.lean` (`presentationFreshnessDesc`)
-/// and byte-pinned there by an `emitVmJson2` `#guard`. The blinded-presentation path
-/// (`sdk::verify_anonymous_presentation`, `bridge` issuer path) reduces to this descriptor for the
-/// summary + freshness tooth; the blinded issuer Merkle membership itself rides as a NAMED STARK leaf
-/// (the `FITS_WITH_NAMED_GATE` verdict), so it is not internalized here.
+/// and byte-pinned there by an `emitVmJson2` `#guard`. The blinded-presentation path reduces to
+/// this descriptor for the summary + freshness tooth; the blinded issuer Merkle membership itself
+/// rides as a NAMED STARK leaf (the `FITS_WITH_NAMED_GATE` verdict), so it is not internalized here.
+///
+/// ⚠ This doc named `sdk::verify_anonymous_presentation` as that path's consumer until
+/// 2026-08-06. Measured that day: **`verify_anonymous_presentation` has zero call sites** — it is
+/// a public SDK function nothing in the tree reaches. Citing an uncalled function as the consumer
+/// that justifies a descriptor makes the descriptor look wired when it is not. The `bridge` issuer
+/// path is the real one; the SDK entry point is a surface awaiting a consumer.
 const PRESENTATION_FRESHNESS_JSON: &str =
     include_str!("../descriptors/by-name/presentation-freshness.json");
 /// Exact shielded-owner opening, faithful note-tree membership, and nullifier relation authored
