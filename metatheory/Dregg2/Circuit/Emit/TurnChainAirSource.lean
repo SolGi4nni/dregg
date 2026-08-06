@@ -64,6 +64,8 @@ and no artifact byte moves.
 -/
 import Dregg2.Circuit.Emit.EffectLowerCore
 import Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding
+import Dregg2.Circuit.Emit.EffectLowerCertified
+import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.TurnChainAirSource
 
@@ -161,7 +163,14 @@ exact parity. The source has to be able to SAY the scope, which is why `RowSel` 
 than inferred from the body. -/
 def legIsRealBoolean : AirLeg :=
   .window { sel := .all
-          , body := .mul (loc Chain.IS_REAL) (.add (loc Chain.IS_REAL) (.const (-1))) }
+          , body := Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow
+              (Dregg2.Circuit.GateExpr.gBool (.leaf (.loc Chain.IS_REAL))) }
+
+theorem legIsRealBoolean_eq :
+    legIsRealBoolean =
+      .window { sel := .all
+              , body := .mul (loc Chain.IS_REAL)
+                          (.add (loc Chain.IS_REAL) (.const (-1))) } := rfl
 
 /-- 11. Real rows are a prefix: forbid a `0 → 1` step. -/
 def legRealMonotone : AirLeg :=
@@ -197,10 +206,33 @@ def turnAir : EffectAir where
   ranges  := []
   extraPi := 0
 
+/-- ⚑ **THE TIED SOURCE** — `turnAir` carrying its two decidable verdicts in its TYPE:
+`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
+leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
+decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+def turnTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := turnAir
+
 /-- **The DERIVED descriptor.** No `VmConstraint2` appears on this right-hand side. -/
 def turnChainDerived : EffectVmDescriptor2 :=
-  Dregg2.Circuit.Emit.EffectLower.lowerAir
-    "dregg-turn-chain-binding-v2" Chain.WIDTH Chain.PI_COUNT [] turnAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-turn-chain-binding-v2" Chain.WIDTH Chain.PI_COUNT [] turnTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
+descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
+SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
+
+**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+theorem turnChainDerived_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines turnChainDerived [] turnAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-turn-chain-binding-v2" Chain.WIDTH Chain.PI_COUNT [] turnTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
+Also the unfolding lemma for the cost/shape proofs below, which reason through `lowerAir`. -/
+theorem turnChainDerived_eq_lowerAir :
+    turnChainDerived = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-turn-chain-binding-v2" Chain.WIDTH Chain.PI_COUNT [] turnAir := rfl
 
 /-! ## §3 — the acceptance test. -/
 
