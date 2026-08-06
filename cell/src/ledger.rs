@@ -456,8 +456,29 @@ impl Ledger {
     /// image; the shallow sovereign/migration side-maps are captured whole here.
     /// Pair with exactly one of [`Ledger::commit_restore_point`] (turn accepted —
     /// drop the journal) or [`Ledger::rollback_restore_point`] (turn rejected —
-    /// restore the exact pre-turn state). Re-arming discards any prior journal.
+    /// restore the exact pre-turn state).
+    ///
+    /// ⚑ RE-ARMING WHILE ARMED ROLLS THE OLD JOURNAL BACK. It used to *discard*
+    /// it, which is the single worst of the three available answers. A journal
+    /// still armed at arm time means the turn that armed it NEVER RESOLVED —
+    /// every caller (`api::post_turn`, `post_faucet`, the submit-queue drainer,
+    /// starbridge) arms, executes and resolves inside one held write lock, so the
+    /// only way to reach here armed is an unwind out of that region. There is no
+    /// `CatchPanicLayer` anywhere in this tree, so a panic between the arm and the
+    /// resolve strands the partial mutation in the ledger — and discarding the
+    /// journal then PROMOTED that half-applied turn to authoritative state on the
+    /// next turn, silently. Rolling back is the only direction with an argument
+    /// behind it: an unresolved turn was never accepted, so its writes are not
+    /// state, and the next turn must not start on top of them.
+    ///
+    /// This narrows the wound; it does not close it. A stranded mutation is still
+    /// live until the next arm, and anything reading the ledger in between sees
+    /// it. The real fix is that the journal should resolve on unwind (a guard, or
+    /// a panic boundary at the HTTP layer) rather than at the next caller's mercy.
     pub fn begin_restore_point(&mut self) {
+        if self.restore_point.is_some() {
+            self.rollback_restore_point();
+        }
         self.restore_point = Some(RestorePoint {
             cells: HashMap::new(),
             sovereign_commitments: self.sovereign_commitments.clone(),

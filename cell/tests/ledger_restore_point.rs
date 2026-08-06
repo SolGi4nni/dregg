@@ -114,6 +114,61 @@ fn commit_keeps_mutations_and_drops_journal() {
     assert_eq!(ledger.get(&a).unwrap().state.balance(), 5);
 }
 
+/// RE-ARMING WHILE ARMED MUST NOT PROMOTE THE STRANDED MUTATION.
+///
+/// A journal is only still armed at arm time when the turn that armed it never
+/// resolved — which, given every caller arms/executes/resolves inside one held
+/// write lock and there is no `CatchPanicLayer` in the tree, means an unwind. The
+/// old behaviour (`self.restore_point = Some(..)` over the top) DISCARDED the
+/// journal, so the half-applied turn's writes silently became the base state the
+/// next turn built on. This test is that half-applied turn: it mutates, never
+/// resolves, and then a second turn arms.
+///
+/// The canary: delete the rollback in `begin_restore_point` and this goes red on
+/// a balance of 999 — the abandoned turn's write, adopted as authoritative.
+#[test]
+fn re_arming_rolls_back_an_unresolved_journal_instead_of_adopting_it() {
+    let mut ledger = Ledger::new();
+    let a = ledger
+        .insert_cell(Cell::with_balance(pk(1), tok(1), 100))
+        .unwrap();
+    let root0 = ledger.root();
+
+    // Turn 1: arms, mutates, creates a cell — and then never resolves.
+    ledger.begin_restore_point();
+    ledger.get_mut(&a).unwrap().state.set_balance(999);
+    let orphan = ledger
+        .insert_cell(Cell::with_balance(pk(8), tok(1), 42))
+        .unwrap();
+    // NON-VACUOUS: the abandoned turn really did land its writes.
+    assert_eq!(ledger.get(&a).unwrap().state.balance(), 999);
+    assert!(ledger.get(&orphan).is_some());
+
+    // Turn 2 arms on the same ledger.
+    ledger.begin_restore_point();
+
+    assert_eq!(
+        ledger.get(&a).unwrap().state.balance(),
+        100,
+        "the unresolved turn's write must be rolled back, not adopted"
+    );
+    assert!(
+        ledger.get(&orphan).is_none(),
+        "the unresolved turn's created cell must be gone, not inherited"
+    );
+
+    // And turn 2's own journal is armed and intact over the RESTORED base.
+    assert!(ledger.has_restore_point());
+    ledger.get_mut(&a).unwrap().state.set_balance(7);
+    ledger.rollback_restore_point();
+    assert_eq!(
+        ledger.root(),
+        root0,
+        "rolling turn 2 back returns to the pre-turn-1 root — the stranded \
+         mutation never entered the base state"
+    );
+}
+
 #[test]
 fn pre_turn_touched_ledger_exposes_prior_images_only_for_touched() {
     let mut ledger = Ledger::new();

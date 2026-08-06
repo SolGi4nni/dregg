@@ -67,8 +67,8 @@ pub use caveat_3p::ThirdPartyCaveat;
 pub use discharge_gateway::{
     AllOfEvaluator, AllowlistEvaluator, AlwaysAllow, AnyOfEvaluator, ConditionEvaluator,
     DischargeError, DischargeGateway, DischargeRequest, DischargeResponse, PaymentEvaluator,
-    ProofRequiredEvaluator, ProofVerifierFn, RateLimitEvaluator, TimeWindowEvaluator,
-    VerifyingProofEvaluator,
+    ProofRequiredEvaluator, ProofVerifierFn, RateLimitEvaluator, ReplaySetLoadError,
+    TimeWindowEvaluator, VerifyingProofEvaluator,
 };
 pub use error::{CaveatError, MacaroonError, MacaroonResult};
 #[cfg(feature = "crypto")]

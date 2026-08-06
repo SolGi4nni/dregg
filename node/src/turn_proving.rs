@@ -918,6 +918,9 @@ pub fn prove_and_verify_finalized_turn(
     turn_hash: [u8; 32],
     rotation: Option<dregg_sdk::RotationTurnWitness>,
 ) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
+    if let Some(fault) = injected_proving_fault() {
+        return Err(fault);
+    }
     // 1. Marshal the turn's effects onto the actor cell in the Effect-VM
     //    encoding (reuses the cipherclerk's canonical marshaller so the node
     //    proves exactly what the cipherclerk would sign).
@@ -1721,11 +1724,61 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     })
 }
 
+/// Test-only fault seam for [`prove_and_verify_finalized_turn`] (the
+/// self-sovereign Effect-VM path every ordinary turn takes).
+///
+/// A real proving failure needs either a genuinely malformed witness or a broken
+/// prover, and neither is constructible from a test that wants the REST of the
+/// finalized path to run normally. Without a seam, the disposition
+/// `blocklace_sync` takes on a failed proof — the one it calls a *serious
+/// soundness event* — has no way to be shown FIRING, which is exactly how it sat
+/// for as long as it did with nothing but an `error!` line behind it.
+///
+/// Always compiled (one relaxed atomic load per finalized-turn proof, and the
+/// whole path is already gated OFF by default behind `--prove-turns`) and NEVER
+/// set in production.
+static INJECT_PROVING_FAULT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Test-only: arm/disarm [`INJECT_PROVING_FAULT`].
+#[doc(hidden)]
+pub fn set_inject_proving_fault(fail: bool) {
+    INJECT_PROVING_FAULT.store(fail, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn injected_proving_fault() -> Option<FullTurnProvingError> {
+    INJECT_PROVING_FAULT
+        .load(std::sync::atomic::Ordering::Relaxed)
+        .then(|| {
+            FullTurnProvingError::Prove(dregg_sdk::SdkError::InvalidWitness(
+                "full-turn proving fault injected (test-only seam)".to_string(),
+            ))
+        })
+}
+
 /// Config-store key under which a finalized turn's proof bytes are persisted,
 /// keyed by the turn hash (hex). Lets an operator / API surface the attached
 /// proof for any committed turn.
 pub fn turn_proof_config_key(turn_hash_hex: &str) -> String {
     format!("full_turn_proof:{turn_hash_hex}")
+}
+
+/// Config-store key under which a finalized turn's PROVING FAILURE is recorded,
+/// keyed by the turn hash (hex).
+///
+/// ⚑ The absence of a proof is three different facts and they were indexed as
+/// one. `full_turn_proof:{h}` missing means "proving disabled", OR "no proof was
+/// attempted for this shape", OR **"the proof FAILED to generate or verify"** —
+/// which `blocklace_sync` calls, in its own words, a *serious* soundness event,
+/// and which was recorded ONLY as an `error!` line in a log nobody queries. A log
+/// is not a detection. This key makes the third case a durable, per-turn fact any
+/// operator or peer can ask for (`GET /api/turn/:hash/proof`).
+///
+/// It records that the node published NO proof and WHY. It does not decide
+/// whether such a turn should have been committed — see the fork stated at the
+/// `error!` site in `blocklace_sync::execute_finalized_turn`.
+pub fn turn_proof_failure_config_key(turn_hash_hex: &str) -> String {
+    format!("full_turn_proof_failed:{turn_hash_hex}")
 }
 
 /// Config-store key under which a committed turn's RETAINED wrap-input

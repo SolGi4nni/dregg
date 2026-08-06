@@ -94,6 +94,14 @@ groups (`node/src/api.rs:1627`):
   `/api/server/{cell}/affordances` (deos-host discovery), `/api/turn/{hash}/proof`,
   `/api/events`, `/api/events/stream` (the SSE receipt stream, `node/src/api.rs:1715`),
   `/checkpoint/*`, `/pir/*`, and more.
+
+  ⚑ `/api/turn/{hash}/proof` **always carries `proof_status`**, and its absence
+  cases are three, not one (changed 2026-08-05): `200`/`proved` with the bytes,
+  `410 Gone`/`generation_failed` + `error` when the finalized proof did NOT
+  verify (recorded under `full_turn_proof_failed:{hash}`, never coming — stop
+  polling), and `404`/`absent` when nothing is recorded either way (proving
+  disabled, or no proof applies). It previously answered a bare `404` for all
+  three, so a poller could not tell a failed proof from a pending one.
 - **protected_routes** — gated by the `require_auth` middleware layer
   (`node/src/api.rs:1780`, layered at `:1884`): `/turn/submit`, `/turns/submit`,
   `/turns/submit-encrypted`, `/turns/aggregate`, `/ws`, `/cipherclerk/*`, `/intents*`,

@@ -30,6 +30,11 @@ pub mod deos_host;
 mod deos_host_e2e;
 #[cfg(all(test, feature = "deos-host"))]
 mod deos_host_fork_client_e2e;
+// DOES `/api/discharge` REFUSE WHEN IT CANNOT KNOW? The replay set's load and
+// its store were both silent fail-opens; these drive each refusal to FIRE
+// through the `fail_config_io` seam, paired with the honest path still working.
+#[cfg(test)]
+mod discharge_replay_e2e;
 pub mod dkg_service;
 pub mod finality_gate;
 #[cfg(all(test, feature = "deos-host"))]
@@ -70,6 +75,11 @@ mod faucet_grant_e2e;
 // client's OWN first turn → finalized, asserted on the authoritative ledger.
 #[cfg(test)]
 mod first_turn_e2e;
+// WHAT DOES A FAILED FULL-TURN PROOF LEAVE? The commit-anyway fork is NOT settled
+// there; what is pinned is that the failure is durable, served as 410, and never
+// reported as `ProofPending`.
+#[cfg(test)]
+mod finalized_proof_failure_e2e;
 pub mod genesis;
 pub mod gossip;
 pub mod identity_export;

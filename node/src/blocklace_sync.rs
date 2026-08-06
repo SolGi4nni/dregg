@@ -9031,12 +9031,18 @@ async fn execute_finalized_turn(
             // enabled it should get the same `spawn_blocking` + off-lock treatment
             // as the execution FFI above (the named follow-up); a proving validator
             // otherwise re-introduces a per-turn lock hold for the prover's duration.
-            let full_turn_proof_artifacts: Option<(Vec<u8>, Option<Vec<u8>>)> = if let Some((
-                pre_balance,
-                pre_nonce,
-            )) =
-                full_turn_pre_state
-            {
+            //
+            // ⚑ THE DISPOSITION IS CARRIED, NOT JUST THE ARTIFACTS. The second
+            // element is `Some(reason)` exactly when proving/verification FAILED —
+            // as opposed to being disabled, not applicable, or deliberately
+            // withheld. Those four were all represented as `None` and published to
+            // observers as `ProofPending`, so "the proof for this finalized turn
+            // did not verify" was indistinguishable from "the proof is in flight",
+            // forever, on every surface except the log.
+            let (full_turn_proof_artifacts, full_turn_proof_failure): (
+                Option<(Vec<u8>, Option<Vec<u8>>)>,
+                Option<String>,
+            ) = if let Some((pre_balance, pre_nonce)) = full_turn_pre_state {
                 let effects: Vec<dregg_turn::Effect> = signed_turn
                     .turn
                     .call_forest
@@ -9381,7 +9387,7 @@ async fn execute_finalized_turn(
                         // here. Their store keys are published after the finalized
                         // commit succeeds, so a rejected durable record leaves no
                         // orphan proof that looks accepted.
-                        Some((proof_bytes, retained_turn))
+                        (Some((proof_bytes, retained_turn)), None)
                     }
                     Err(
                         crate::turn_proving::FullTurnProvingError::RevocationCapacityExceeded {
@@ -9403,7 +9409,8 @@ async fn execute_finalized_turn(
                             "spend candidate NOT freshness-proven: canonical nullifier set exceeds \
                              the openable heap tree capacity"
                         );
-                        None
+                        // WITHHELD, not failed: nothing was proven wrong.
+                        (None, None)
                     }
                     Err(
                         crate::turn_proving::FullTurnProvingError::BearerAuthorityLegUnbindable,
@@ -9421,25 +9428,60 @@ async fn execute_finalized_turn(
                             "no full-turn proof published: bearer AUTHORITY leg unbindable \
                              (fail-closed disposition)"
                         );
-                        None
+                        // WITHHELD, not failed: the authority leg was unbuildable.
+                        (None, None)
                     }
                     Err(e) => {
                         // SOUNDNESS: a body-committed candidate whose full-turn proof
                         // does not verify is a serious event. We surface it
                         // loudly and refuse to attach an unverified proof.
+                        //
+                        // ⚑ AND THE TURN STILL COMMITS. That is a GENUINE DESIGN
+                        // FORK and it is deliberately NOT decided here:
+                        //
+                        //   (a) COMMIT UNPROVEN (what this code does). Consensus
+                        //       already ORDERED this turn; every other node will
+                        //       apply it. Refusing locally does not un-finalize it,
+                        //       it only makes THIS node diverge from the committee's
+                        //       state — and since the proving failure is
+                        //       deterministic, the node would refuse the same turn
+                        //       on every retry, i.e. HALT at this height forever.
+                        //       The state transition itself was still validated by
+                        //       the executor; what is missing is the succinct
+                        //       attestation of it.
+                        //   (b) REFUSE THE DURABLE COMMIT (return
+                        //       `FinalizedExecutionOutcome::RetryableOperational`,
+                        //       exactly as the malformed-note-root arm below does).
+                        //       This keeps "every finalized state transition on this
+                        //       node is proven" TRUE by construction, at the cost of
+                        //       a wedge that an operator must clear by hand.
+                        //
+                        // Which one is right depends on what a dregg node is FOR —
+                        // a liveness-first validator or a proof-carrying archive —
+                        // and that is the operator's call, not a lane's.
+                        //
+                        // What is NOT a fork, and is closed here: the failure used
+                        // to leave no trace but this line. The turn was published to
+                        // every observer as `ProofPending`, and `full_turn_proof:{h}`
+                        // was simply absent — the same shape as proving being turned
+                        // off. It is now recorded durably under
+                        // `full_turn_proof_failed:{h}` and reported as
+                        // `ProofGenerationFailed`, so option (a) is at least an
+                        // AUDITABLE choice rather than an invisible one.
                         error!(
                             turn_hash = %turn_hash_hex,
                             block_id = %block_id,
                             error = %e,
                             spend = is_spend,
                             "full-turn proof generation/verification FAILED for candidate; \
-                             no verified proof will be published"
+                             no verified proof will be published, and the finalized turn \
+                             COMMITS UNPROVEN (recorded under full_turn_proof_failed:*)"
                         );
-                        None
+                        (None, Some(e.to_string()))
                     }
                 }
             } else {
-                None
+                (None, None)
             };
 
             // ── Lift TurnReceipt → FederationReceipt (audit F7) ──────────
@@ -10043,13 +10085,39 @@ async fn execute_finalized_turn(
                 }
             }
 
+            // A finalized turn whose proof FAILED is recorded as such, durably and
+            // per-turn. Same auxiliary-write caveat as the proof bytes above (this
+            // is not a member of the finalized redb transaction), but it is written
+            // on the SAME path, so a reader that finds neither `full_turn_proof:{h}`
+            // nor `full_turn_proof_failed:{h}` is looking at a turn that was never
+            // proved rather than one that failed.
+            if let Some(reason) = &full_turn_proof_failure {
+                let key = crate::turn_proving::turn_proof_failure_config_key(&turn_hash_hex);
+                if let Err(e) = s.store.set_config(&key, reason.as_bytes()) {
+                    error!(
+                        error = %e,
+                        turn_hash = %turn_hash_hex,
+                        reason = %reason,
+                        "could not record the full-turn proving FAILURE durably; this turn's \
+                         unproven status is now only in the log"
+                    );
+                }
+            }
+
             crate::api::push_committed_event_enriched(
                 &mut s,
                 receipt_hash_hex.clone(),
                 activity_agent_hex,
                 activity_kinds,
                 activity_summaries,
-                crate::state::ActivityProofStatus::ProofPending,
+                // ⚠ NOT unconditionally `ProofPending`. A turn whose proof failed
+                // is never going to be attested, and reporting it as "in flight"
+                // is a claim that resolves itself in the reader's head as success.
+                if full_turn_proof_failure.is_some() {
+                    crate::state::ActivityProofStatus::ProofGenerationFailed
+                } else {
+                    crate::state::ActivityProofStatus::ProofPending
+                },
             );
 
             // Publish only the exact cascade that shared the source commit's

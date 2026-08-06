@@ -985,7 +985,7 @@ pub enum ActivityStatus {
     Rejected,
 }
 
-#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityProofStatus {
     Proved,
@@ -2079,6 +2079,13 @@ impl NodeState {
         if let Some(gateway) = &s.discharge_gateway {
             let data = gateway.serialize_issued_set();
             if !data.is_empty() {
+                // A WARNING IS CORRECT HERE, and only became correct on 2026-08-05.
+                // `post_discharge` now persists each burn BEFORE it answers and
+                // REFUSES (503) if that write fails, so by the time we reach
+                // shutdown every issued and every denied ticket is already durable
+                // and this write is genuinely the redundant checkpoint the doc
+                // comment above claims. Until then it was the only durable write
+                // on some paths, and losing it lost replay prevention outright.
                 if let Err(e) = s.store.set_config("discharge_issued_set", &data) {
                     tracing::warn!(error = %e, "failed to persist discharge replay set on shutdown");
                 } else {

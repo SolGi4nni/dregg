@@ -320,6 +320,15 @@ pub struct PersistentStore {
     /// REAL producer (`submit_heartbeat` / `produce_round_block`). Always compiled
     /// — one relaxed atomic load per block persist — and NEVER set in production.
     fail_persist_block: std::sync::atomic::AtomicBool,
+    /// Test-only fault seam for [`Self::get_config`] / [`Self::set_config`]. When
+    /// set, both return a database error instead of touching redb, so a caller's
+    /// fail-CLOSED disposition on an unreadable/unwritable config key can be shown
+    /// to FIRE. Written for `/api/discharge`, whose replay set lives under a config
+    /// key: an unreadable one used to yield an EMPTY replay set (every prior ticket
+    /// replayable) and an unwritable one used to warn and still answer
+    /// `success: true`. Always compiled — one relaxed atomic load per config
+    /// operation — and NEVER set in production.
+    fail_config_io: std::sync::atomic::AtomicBool,
 }
 
 impl PersistentStore {
@@ -777,6 +786,7 @@ impl PersistentStore {
         let store = Self {
             db,
             fail_persist_block: std::sync::atomic::AtomicBool::new(false),
+            fail_config_io: std::sync::atomic::AtomicBool::new(false),
         };
         store.initialize_tables()?;
         store.enforce_canonical_state_schema_epoch()?;
@@ -818,6 +828,7 @@ impl PersistentStore {
         let store = Self {
             db,
             fail_persist_block: std::sync::atomic::AtomicBool::new(false),
+            fail_config_io: std::sync::atomic::AtomicBool::new(false),
         };
         store.initialize_tables()?;
         store.enforce_canonical_state_schema_epoch()?;
@@ -847,6 +858,7 @@ impl PersistentStore {
         let store = Self {
             db,
             fail_persist_block: std::sync::atomic::AtomicBool::new(false),
+            fail_config_io: std::sync::atomic::AtomicBool::new(false),
         };
         store.initialize_tables()?;
         store.enforce_canonical_state_schema_epoch()?;
@@ -1709,8 +1721,31 @@ impl PersistentStore {
     // Generic Config Storage (METADATA_BYTES)
     // =========================================================================
 
+    /// Test-only: arm/disarm the [`Self::get_config`] / [`Self::set_config`] fault
+    /// seam. Never called in production — an API durability test sets it to drive
+    /// a caller's fail-closed refusal (e.g. `/api/discharge` refusing to serve on
+    /// an unknown replay set), then clears it to prove the honest path still works.
+    #[doc(hidden)]
+    pub fn set_fail_config_io(&self, fail: bool) {
+        self.fail_config_io
+            .store(fail, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn config_io_fault(&self) -> Option<StoreError> {
+        self.fail_config_io
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .then(|| {
+                StoreError::Database(
+                    "config io fault injected (test-only fail_config_io seam)".to_string(),
+                )
+            })
+    }
+
     /// Store a byte blob under a config key.
     pub fn set_config(&self, key: &str, value: &[u8]) -> Result<()> {
+        if let Some(fault) = self.config_io_fault() {
+            return Err(fault);
+        }
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(tables::METADATA_BYTES)?;
@@ -1722,6 +1757,9 @@ impl PersistentStore {
 
     /// Load a byte blob stored under a config key.
     pub fn get_config(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        if let Some(fault) = self.config_io_fault() {
+            return Err(fault);
+        }
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(tables::METADATA_BYTES)?;
         match table.get(key)? {

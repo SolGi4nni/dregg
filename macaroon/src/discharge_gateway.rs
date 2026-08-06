@@ -409,6 +409,38 @@ impl ConditionEvaluator for AnyOfEvaluator {
 /// When exceeded, the oldest entries are removed to bound memory usage.
 const MAX_ISSUED_CACHE: usize = 100_000;
 
+/// Why a persisted replay set could not be loaded.
+///
+/// [`DischargeGateway::load_issued_set`] used to return `()` and, per its own
+/// docstring, "silently ignore" a blob that was not a whole number of 32-byte
+/// hashes — leaving the gateway with an EMPTY replay set. An empty replay set is
+/// not a degraded one: it admits every ticket ever issued. A caller that cannot
+/// load the set must refuse to serve discharges, so the failure is typed and
+/// returned rather than swallowed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplaySetLoadError {
+    /// The blob is not a whole number of 32-byte hashes, so at least one entry is
+    /// unrecoverable and the set that would be built is strictly weaker than the
+    /// one that was persisted.
+    Truncated {
+        /// Length of the blob that was offered.
+        len: usize,
+    },
+}
+
+impl std::fmt::Display for ReplaySetLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { len } => write!(
+                f,
+                "persisted replay set is {len} bytes, not a whole number of 32-byte ticket hashes"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReplaySetLoadError {}
+
 /// The discharge gateway: evaluates conditions and issues discharge macaroons.
 pub struct DischargeGateway {
     /// The shared key for decrypting third-party tickets.
@@ -454,6 +486,17 @@ impl BoundedReplaySet {
     }
 
     fn insert(&mut self, hash: [u8; 32]) {
+        // ⚑ `set` and `order` MUST stay in exact correspondence: eviction pops one
+        // `order` entry and removes that hash from `set`, so a hash sitting twice
+        // in `order` gets removed from `set` while an `order` entry still names
+        // it — i.e. a ticket falls out of the replay set early and becomes
+        // discharge-able again. `process_request` happens to check `contains`
+        // first, but `load_issued_set` does not (and a persisted blob is exactly
+        // where a duplicate can arrive), so the invariant is enforced HERE rather
+        // than relying on every caller to hold it.
+        if self.set.contains(&hash) {
+            return;
+        }
         // Evict oldest entries if at capacity.
         while self.set.len() >= MAX_ISSUED_CACHE {
             if let Some(oldest) = self.order.pop_front() {
@@ -626,13 +669,33 @@ impl DischargeGateway {
         data
     }
 
+    /// Number of ticket hashes currently in the replay prevention set.
+    ///
+    /// Lets a persisting caller tell whether a request actually changed the set
+    /// (the gateway burns a ticket on PRESENTATION, before conditions are
+    /// evaluated, so a denied request mutates it too) without writing on every
+    /// undecryptable blob a stranger posts.
+    pub fn issued_len(&self) -> usize {
+        let issued = match self.issued.lock() {
+            Ok(guard) => guard,
+            Err(e) => e.into_inner(),
+        };
+        issued.set.len()
+    }
+
     /// Load a previously persisted replay prevention set.
     ///
     /// The input must be a sequence of 32-byte hashes (as produced by
-    /// `serialize_issued_set`). Invalid-length data is silently ignored.
-    pub fn load_issued_set(&self, data: &[u8]) {
+    /// `serialize_issued_set`). Returns how many hashes were loaded.
+    ///
+    /// ⚑ A malformed blob is an ERROR and the set is left UNTOUCHED. This used to
+    /// `return` silently on a length that was not a multiple of 32, which left the
+    /// gateway holding an empty set — i.e. every previously issued ticket became
+    /// discharge-able again, with no trace. There is no safe partial load here:
+    /// the set's whole job is to be complete.
+    pub fn load_issued_set(&self, data: &[u8]) -> Result<usize, ReplaySetLoadError> {
         if !data.len().is_multiple_of(32) {
-            return;
+            return Err(ReplaySetLoadError::Truncated { len: data.len() });
         }
         let mut issued = match self.issued.lock() {
             Ok(guard) => guard,
@@ -645,6 +708,7 @@ impl DischargeGateway {
             // Use insert which handles eviction of oldest entries.
             issued.insert(hash);
         }
+        Ok(issued.set.len())
     }
 }
 
@@ -1041,6 +1105,114 @@ mod tests {
         }
 
         assert_eq!(gateway.issued_count(), 3);
+    }
+
+    /// THE CONSEQUENCE, DEMONSTRATED. Not "a replay set could be lost" in the
+    /// abstract: a gateway holding an EMPTY set re-issues a ticket it has already
+    /// discharged, and the re-issued macaroon verifies against the root token
+    /// exactly like the first one. This is what `/api/discharge` was one swallowed
+    /// `Err` away from doing on every restart-with-an-unreadable-store.
+    #[test]
+    fn an_empty_replay_set_re_issues_an_already_spent_ticket() {
+        let root_key = crypto::random_key();
+        let shared_key = crypto::random_key();
+        let location = "https://gateway.dev";
+
+        let mut gateway = DischargeGateway::new(shared_key, location.to_string());
+        gateway.add_evaluator(Box::new(AlwaysAllow));
+
+        let mac = setup_3p_macaroon(&root_key, &shared_key, location);
+        let ticket = extract_ticket(&mac);
+        let request = DischargeRequest {
+            ticket,
+            client_id: None,
+            proof: None,
+            payment: None,
+            metadata: HashMap::new(),
+        };
+
+        let first = gateway.process_request(&request).expect("first discharge");
+        // With the burn in place, the ticket is spent.
+        assert!(
+            gateway.process_request(&request).is_err(),
+            "the burn must refuse the second presentation"
+        );
+
+        // Now lose the set — precisely what a gateway built on an unread /
+        // malformed persisted blob starts life with.
+        let restored = DischargeGateway::new(shared_key, location.to_string());
+        assert_eq!(restored.issued_len(), 0, "a fresh gateway knows nothing");
+        let second = restored
+            .process_request(&request)
+            .expect("⚑ THE SPENT TICKET IS DISCHARGED AGAIN");
+
+        // And it is a usable credential, not a stub. (It is not byte-identical to
+        // the first — `create_discharge` draws a fresh nonce — which makes it
+        // WORSE, not better: the two are independently usable.)
+        assert_ne!(second.discharge, first.discharge);
+        let mut discharge = Macaroon::decode(&second.discharge).unwrap();
+        mac.bind_discharge(&mut discharge);
+        assert!(
+            mac.verify(&root_key, &[discharge]).is_ok(),
+            "the re-issued discharge verifies — this is the ticket reuse the \
+             persisted set exists to prevent"
+        );
+    }
+
+    /// A malformed persisted blob is an ERROR and leaves the set UNTOUCHED. This
+    /// used to `return` silently, which is the same observable as a clean load of
+    /// an empty set — the state the test above shows is exploitable.
+    #[test]
+    fn a_malformed_persisted_set_is_refused_and_does_not_clear_the_live_one() {
+        let shared_key = crypto::random_key();
+        let gateway = DischargeGateway::new(shared_key, "https://gateway.dev".to_string());
+
+        // Seed two DISTINCT burns, then offer a truncated blob.
+        let mut seed = [0u8; 64];
+        seed[..32].copy_from_slice(&[0x11u8; 32]);
+        seed[32..].copy_from_slice(&[0x33u8; 32]);
+        assert_eq!(gateway.load_issued_set(&seed), Ok(2));
+        assert_eq!(gateway.issued_len(), 2);
+
+        assert_eq!(
+            gateway.load_issued_set(&[0x22u8; 65]),
+            Err(ReplaySetLoadError::Truncated { len: 65 }),
+            "65 bytes is not a whole number of 32-byte hashes"
+        );
+        assert_eq!(
+            gateway.issued_len(),
+            2,
+            "the refused load must not have cleared the set it could not replace"
+        );
+
+        // A well-formed round-trip still works.
+        let blob = gateway.serialize_issued_set();
+        let fresh = DischargeGateway::new(shared_key, "https://gateway.dev".to_string());
+        assert_eq!(fresh.load_issued_set(&blob), Ok(2));
+        assert_eq!(fresh.serialize_issued_set(), blob, "round-trip is exact");
+    }
+
+    /// `set` and `order` must not diverge. A persisted blob carrying the same
+    /// hash twice used to push two `order` entries behind one `set` entry, so the
+    /// FIFO eviction would later remove that hash from `set` while `order` still
+    /// named it — dropping a live ticket out of the replay set ahead of schedule.
+    #[test]
+    fn a_duplicated_hash_in_a_persisted_blob_does_not_desynchronise_the_eviction_queue() {
+        let shared_key = crypto::random_key();
+        let gateway = DischargeGateway::new(shared_key, "https://gateway.dev".to_string());
+
+        // 96 bytes: hash A, hash A again, hash B.
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&[0xAAu8; 32]);
+        blob.extend_from_slice(&[0xAAu8; 32]);
+        blob.extend_from_slice(&[0xBBu8; 32]);
+
+        assert_eq!(gateway.load_issued_set(&blob), Ok(2), "A and B, not A A B");
+        assert_eq!(
+            gateway.serialize_issued_set().len(),
+            64,
+            "the eviction queue holds exactly the two live hashes"
+        );
     }
 
     #[test]
