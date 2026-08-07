@@ -810,7 +810,35 @@ impl PersistentStore {
     /// changes, no chip arity moves. `receipt_stream_root` was already a field of both
     /// `AttestedRoot` and `StoredAttestedRoot` and is already in the attested-root preimage
     /// (v4, #80) — this epoch changes WHICH SIGNATURES cover it, not what it is.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 24;
+    ///
+    /// # Epoch 25 — SHIELDED SPEND PINS THE COMMITTED ACCUMULATOR (seam #15), 2026-08-07
+    ///
+    /// **WHAT SHAPE CHANGED.** `ShieldedTransferPayload` lost `merkle_root: u32` and
+    /// `ShieldedInputPayload` gained `spend_wide_binding: [u32; 16]`, while `spend_proof` changed
+    /// relation: it is now an `Ir2BatchProof` against the Lean-emitted
+    /// `dregg-shielded-spend-complete-fsi2::v1` (`ShieldedSpendCompleteEmit.lean`, 557 columns,
+    /// 25 PIs) instead of a `DslZkProof` against the retired 3-PI `dregg-shielded-spend-v1`.
+    ///
+    /// **WHY.** The retired `merkle_root` was the PROVER's choice of commitment-tree root and was
+    /// compared against nothing — `ShieldedMerkleRootPin.root_substitution_forges`: build your own
+    /// tree holding a note that was never committed, honestly prove membership at that tree's root,
+    /// publish it. The executor now reads `note_shielded.root8()` from live state and judges every
+    /// spend against it (`apply_shielded_transfer` GATE 0), so there is no field to forge.
+    ///
+    /// **WHAT REFUSES TO LOAD / WHAT MUST BE RE-GENESISED.** Postcard is non-self-describing: a
+    /// pre-cutover `ShieldedTransferPayload` does not decode as a current one (a removed field, a
+    /// widened input struct, different proof bytes) — it REFUSES rather than being reinterpreted.
+    /// Every shielded-transfer `effects_hash` moves (the root was the first thing absorbed), so
+    /// every receipt, executor signature, receipt QC and attestation over a turn containing one is
+    /// invalid. A store stamped 24 is refused by `enforce_canonical_state_schema_epoch` rather than
+    /// migrated — **re-genesis**, and the devnet is re-genesised with it.
+    ///
+    /// **WHAT DOES *NOT* MOVE:** no rotation-carrier limb is added, so the signed consensus anchor
+    /// (`consensus_state_commitment`) is byte-identical and no VK in the rotation family rotates.
+    /// Committing `note_shielded.root8()` into that carrier needs a fifth `V9RotationContext` root
+    /// — a new base limb plus a completion octet in the Lean-emitted `EffectVmEmitRotationV3` — and
+    /// is a SEPARATE VK epoch (the L1 carrier work), deliberately not folded in here.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 25;
 
     /// Open a persistent store backed by a file on disk.
     ///

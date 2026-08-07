@@ -361,7 +361,6 @@ weld_ledger! {
     },
     ShieldedTransfer => Class::NoCellStateChange, Prep::Live, Effect::ShieldedTransfer {
         payload: dregg_turn::action::ShieldedTransferPayload {
-            merkle_root: 0,
             inputs: vec![],
             input_legs: vec![],
             output_legs: vec![],

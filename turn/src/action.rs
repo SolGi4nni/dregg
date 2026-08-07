@@ -3193,7 +3193,6 @@ mod effect_tag_tests {
 
     fn minimal_shielded_payload() -> ShieldedTransferPayload {
         ShieldedTransferPayload {
-            merkle_root: 0x0102_0304,
             inputs: Vec::new(),
             input_legs: Vec::new(),
             output_legs: Vec::new(),
@@ -3307,7 +3306,10 @@ mod effect_tag_tests {
         let body = |tag: u8| {
             let mut h = blake3::Hasher::new();
             h.update(&[tag]);
-            h.update(&payload.merkle_root.to_le_bytes());
+            // ⚑ FLAG DAY: `merkle_root` was absorbed HERE, first. The field is deleted (the
+            // committed root is executor state, not effect content), so every shielded-transfer
+            // effect digest moved. The tag assertion below is unaffected — it is about the LEADING
+            // byte — and that is the property this test exists for.
             h.update(&0u64.to_le_bytes()); // inputs
             h.update(&[0u8]); // input-leg group tag
             h.update(&0u64.to_le_bytes()); // input_legs

@@ -23,7 +23,8 @@
 //!          — an asset-type forgery on one leg of a split (mixed-asset split)
 //!            REJECTS via the asset-equality proof;
 //!          — a value imbalance (inflation) REJECTS;
-//!          — a wrong published merkle_root REJECTS (no fake membership);
+//!          — a spend judged under a committed root that is not the tree it folded to REJECTS
+//!            (seam #15 — the pool inherits M2-a's fix: there is no published root to forge);
 //!          — a duplicate nullifier (pool-wide double-spend) REJECTS.
 
 // NOTE: this file previously carried `#![cfg(feature = "prover")]`, the SAME vestigial
@@ -34,10 +35,12 @@
 // (found 2026-07-16, Lane 2 config-space audit). The prover is unconditional in this
 // crate; the gate is removed so the teeth compile and run.
 
+use dregg_cell::{ShieldedNoteCommitment, ShieldedNoteSet, felt_to_bytes32};
+use dregg_circuit::exact_nullifier_aafi::{Digest8, TaggedKeyWire};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::shielded::{
-    HiddenAssetLeg, PoolBalanceMode, PoolInputWitness, ShieldedError, ShieldedSpendWitness,
-    prove_pool_transfer,
+    HiddenAssetLeg, PoolBalanceMode, PoolInputWitness, ShieldedError, ShieldedSpendCompleteWitness,
+    ShieldedSpendMembership, TREE_DEPTH, prove_pool_transfer,
 };
 
 use curve25519_dalek::scalar::Scalar;
@@ -71,47 +74,62 @@ fn make_pool_input(
     asset: u64,
     blinding: [u8; 32],
     key_seed: u32,
-    depth: usize,
-) -> PoolInputWitness {
-    let key = [
-        BabyBear::new(key_seed),
-        BabyBear::new(key_seed.wrapping_add(1)),
-        BabyBear::new(key_seed.wrapping_add(2)),
-        BabyBear::new(key_seed.wrapping_add(3)),
-    ];
-
-    let mut siblings = Vec::with_capacity(depth);
-    let mut positions = Vec::with_capacity(depth);
-    for i in 0..depth {
-        positions.push((i % 4) as u8);
-        siblings.push([
-            BabyBear::new((i as u32) * 7 + 1 + leaf_seed),
-            BabyBear::new((i as u32) * 7 + 2 + leaf_seed),
-            BabyBear::new((i as u32) * 7 + 3 + leaf_seed),
-        ]);
-    }
-
-    // The leaf is the C6-bound note commitment hash_fact(value,[asset,owner,
-    // randomness]) — a real note whose preimage the spender knows, not a free
-    // cell. The asset is bound INTO the leaf, so the note's identity (and its
-    // nullifier) now includes its asset. (The leaf↔leg value link is residual.)
-    let spend = ShieldedSpendWitness {
-        value: BabyBear::new(value as u32),
-        asset_type: BabyBear::new(asset as u32),
-        owner: BabyBear::new(0x5EED ^ leaf_seed),
+) -> (PoolInputWitness, ShieldedNoteSet) {
+    // The leaf is the note commitment hash_fact(v mod p,[a mod p, owner, rand]) — a real note whose
+    // preimage the spender knows, genuinely committed in an accumulator. The asset is bound INTO
+    // the leaf, so the note's identity (and its nullifier) includes its asset. (The leaf↔leg value
+    // link is residual.)
+    let probe = ShieldedSpendCompleteWitness {
+        value,
+        asset_type: asset,
         randomness: BabyBear::new(0xC0FFEE ^ key_seed),
-        key,
-        siblings,
-        positions,
+        spending_key: [
+            BabyBear::new(key_seed),
+            BabyBear::new(key_seed.wrapping_add(1)),
+            BabyBear::new(key_seed.wrapping_add(2)),
+            BabyBear::new(key_seed.wrapping_add(3)),
+        ],
+        binding_blind: core::array::from_fn(|i| BabyBear::new(0x5EED ^ leaf_seed ^ i as u32)),
+        membership: ShieldedSpendMembership {
+            positions: [0; TREE_DEPTH],
+            siblings: [[[BabyBear::ZERO; 8]; 3]; TREE_DEPTH],
+            next_addr: TaggedKeyWire::top(),
+        },
+    };
+    let note = ShieldedNoteCommitment(felt_to_bytes32(probe.note_commitment_felt()));
+    let mut set = ShieldedNoteSet::new();
+    set.insert(ShieldedNoteCommitment(felt_to_bytes32(BabyBear::new(
+        0x0A0A_0000 + leaf_seed,
+    ))))
+    .expect("decoy inserts");
+    set.insert(note).expect("the spent note is committed");
+    let path = set
+        .membership_path(&note)
+        .expect("the committed note has a membership path");
+    let spend = ShieldedSpendCompleteWitness {
+        membership: ShieldedSpendMembership {
+            positions: path.path.positions,
+            siblings: path.path.siblings,
+            next_addr: path.leaf.next_addr().wire(),
+        },
+        ..probe
     };
 
     let commitment =
         ValueCommitment::commit_hidden_asset(value, asset, &scalar_from_blinding_bytes(&blinding));
 
-    PoolInputWitness {
-        spend,
-        leg: HiddenAssetLeg::new(commitment.to_bytes().0),
-    }
+    (
+        PoolInputWitness {
+            spend,
+            leg: HiddenAssetLeg::new(commitment.to_bytes().0),
+        },
+        set,
+    )
+}
+
+/// A committed root no pool spend here folded to — the foreign root the seam-#15 refusal uses.
+fn foreign_root() -> Digest8 {
+    ShieldedNoteSet::new().root8().limbs()
 }
 
 /// An output asset-hiding leg + the underlying ValueCommitment (so a caller can
@@ -139,16 +157,12 @@ fn balanced_multi_asset_pool_verifies_hidden() {
     let bo_a = [7u8; 32];
     let bo_b = [8u8; 32];
 
-    let w_a = make_pool_input(11, 1_000_000, asset_a, bi_a, 0xAAAA, 4);
+    let (w_a, set_a) = make_pool_input(11, 1_000_000, asset_a, bi_a, 0xAAAA);
 
-    // Pin both inputs to a shared root. (Each witness derives its own real root;
-    // we pick input A's and prove A against it. For a STARK-side acceptance test
-    // with multiple inputs we drive both with the SAME witnessed root by building
-    // each input's path identically rooted — here we use A's root and a second
-    // input whose own root matches by construction is not guaranteed, so we test
-    // the asset side over both legs and the STARK side over a single shared-root
-    // input below. This test focuses on the asset-hiding conservation.)
-    let merkle_root = w_a.spend.merkle_root();
+    // Every input in one pool transfer is judged against ONE committed root (the verifier's), so
+    // the STARK side runs over input A alone here and the asset side over both legs. This test
+    // focuses on the asset-hiding conservation.
+    let committed_root = set_a.root8().limbs();
 
     let (out_a, out_a_c) = make_output(1_000_000, asset_a, bo_a);
     let (out_b, out_b_c) = make_output(5_000, asset_b, bo_b);
@@ -158,7 +172,6 @@ fn balanced_multi_asset_pool_verifies_hidden() {
         pool_range_proof_bytes(5_000, &bo_b),
     ];
     let transfer = prove_pool_transfer(
-        merkle_root,
         &[w_a.clone()],
         vec![out_a.clone(), out_b.clone()],
         out_range_proofs,
@@ -171,9 +184,9 @@ fn balanced_multi_asset_pool_verifies_hidden() {
         .check_range_proof_shape()
         .expect("balanced pool transfer has a range proof per output");
 
-    // STARK side: the single shared-root input's hidden proof verifies blind.
+    // STARK side: the input's hidden complete-spend proof verifies blind, under the COMMITTED root.
     transfer
-        .verify_stark_side()
+        .verify_stark_side(committed_root)
         .expect("pool transfer STARK side must verify");
 
     // Asset+value side over ALL legs (both assets), conserved jointly. Inputs are
@@ -191,7 +204,7 @@ fn balanced_multi_asset_pool_verifies_hidden() {
     let excess = (scalar_from_blinding_bytes(&bi_a) + scalar_from_blinding_bytes(&bi_b))
         - (scalar_from_blinding_bytes(&bo_a) + scalar_from_blinding_bytes(&bo_b));
 
-    let msg = transfer.pool_message();
+    let msg = transfer.pool_message(committed_root);
     let proof = prove_asset_conservation(&inputs, &outputs, &excess, &msg);
     verify_asset_conservation(&inputs, &outputs, &proof, &msg)
         .expect("balanced multi-asset legs must conserve (value AND asset-tag), hidden");
@@ -207,9 +220,9 @@ fn balanced_multi_asset_pool_verifies_hidden() {
         .iter()
         .map(|rp| 8 + rp.len())
         .sum();
-    let expected_len = b"dregg-shielded-pool-v1".len()
-        + 4                                   // merkle_root (u32 LE)
-        + 8 + transfer.inputs.len() * (4 + 4) // nullifier count + per input (nullifier + value_binding, u32 LE each)
+    let expected_len = b"dregg-shielded-pool-v2-committed-root".len()
+        + 8 * 4                                // the 8-lane committed root (u32 LE each)
+        + 8 + transfer.inputs.len() * (4 + 16 * 4) // count + per input (nullifier + 16 ring carrier lanes)
         + 8 + transfer.input_legs.len() * 32  // input leg count + opaque commitments
         + 8 + transfer.output_legs.len() * 32 // output leg count + opaque commitments
         + 8 + range_proofs_len; // range-proof count + (len-prefixed) range proofs
@@ -277,14 +290,13 @@ fn same_asset_split_verifies_with_equality_proof() {
     let bo1 = [7u8; 32];
     let bo2 = [9u8; 32];
 
-    let w = make_pool_input(31, 1_000, asset, bi, 0xCCCC, 4);
+    let (w, set) = make_pool_input(31, 1_000, asset, bi, 0xCCCC);
     let (out1, out1_c) = make_output(600, asset, bo1);
     let (out2, out2_c) = make_output(400, asset, bo2);
     let in_c = ValueCommitment::commit_hidden_asset(1_000, asset, &scalar_from_blinding_bytes(&bi));
 
-    let merkle_root = w.spend.merkle_root();
+    let committed_root = set.root8().limbs();
     let transfer = prove_pool_transfer(
-        merkle_root,
         &[w],
         vec![out1, out2],
         vec![
@@ -299,14 +311,14 @@ fn same_asset_split_verifies_with_equality_proof() {
         .expect("split outputs each carry a range proof");
 
     transfer
-        .verify_stark_side()
+        .verify_stark_side(committed_root)
         .expect("split STARK side verifies");
     assert!(
         transfer.requires_asset_equality(),
         "a 1->2 split must require the asset-equality argument"
     );
 
-    let msg = transfer.pool_message();
+    let msg = transfer.pool_message(committed_root);
 
     // Asset-equality across ALL legs proves every leg shares one hidden asset.
     let all = vec![in_c.clone(), out1_c.clone(), out2_c.clone()];
@@ -379,16 +391,19 @@ fn mixed_asset_split_rejects() {
     );
 }
 
-// ── FALSE: a wrong published merkle_root rejects (no fake membership) ─────────
+// ── ⚑ SEAM #15, pool side: a spend judged under a foreign committed root rejects ──
+//
+// There is no published root to bump: `MultiAssetPoolTransfer` has no `merkle_root` field. The
+// retired test mutated one, which `ShieldedMerkleRootPin.mutation_test_is_not_the_pin` names as a
+// launder. Both poles here, so the accept is the non-vacuity guard for the refusal.
 
 #[test]
-fn forged_root_rejects() {
-    let w = make_pool_input(41, 1_000, 1, [3u8; 32], 0xDDDD, 4);
+fn pool_spend_judged_under_a_foreign_committed_root_rejects() {
+    let (w, set) = make_pool_input(41, 1_000, 1, [3u8; 32], 0xDDDD);
     let (out, _out_c) = make_output(1_000, 1, [7u8; 32]);
-    let merkle_root = w.spend.merkle_root();
+    let committed_root = set.root8().limbs();
 
-    let mut transfer = prove_pool_transfer(
-        merkle_root,
+    let transfer = prove_pool_transfer(
         &[w],
         vec![out],
         vec![pool_range_proof_bytes(1_000, &[7u8; 32])],
@@ -396,11 +411,18 @@ fn forged_root_rejects() {
     )
     .expect("prove pool transfer");
 
-    transfer.merkle_root = transfer.merkle_root + BabyBear::ONE;
-    let res = transfer.verify_stark_side();
+    transfer
+        .verify_stark_side(committed_root)
+        .expect("ACCEPT POLE: under its own committed root the pool transfer verifies");
+    assert_ne!(
+        committed_root,
+        foreign_root(),
+        "vacuity guard: the foreign root must genuinely differ"
+    );
+    let res = transfer.verify_stark_side(foreign_root());
     assert!(
         matches!(res, Err(ShieldedError::InputProofRejected { .. })),
-        "a pool transfer presented against the wrong root must reject, got {res:?}"
+        "a pool spend judged under a root it did not fold to must reject, got {res:?}"
     );
 }
 
@@ -414,26 +436,29 @@ fn duplicate_nullifier_rejects() {
     // includes its asset, since the leaf is bound to hash_fact(value,[asset,owner,
     // randomness]) by the C6 leaf-binding fix; spending one note twice is the
     // double-spend the nullifier set must catch.)
-    let w1 = make_pool_input(51, 1_000, 1, [3u8; 32], 0xEEEE, 4);
-    let w2 = make_pool_input(51, 1_000, 1, [3u8; 32], 0xEEEE, 4); // identical note
+    let (w1, set) = make_pool_input(51, 1_000, 1, [3u8; 32], 0xEEEE);
+    let w2 = w1.clone(); // the SAME note, presented twice
     assert_eq!(
-        w1.spend.nullifier(),
-        w2.spend.nullifier(),
-        "identical notes must produce identical nullifiers"
+        w1.spend.note_commitment_felt(),
+        w2.spend.note_commitment_felt(),
+        "identical notes must produce identical commitments (hence identical nullifiers)"
     );
-    let merkle_root = w1.spend.merkle_root();
+    let committed_root = set.root8().limbs();
     let (out, _c) = make_output(2_000, 1, [7u8; 32]);
 
     let transfer = prove_pool_transfer(
-        merkle_root,
         &[w1, w2],
         vec![out],
         vec![pool_range_proof_bytes(2_000, &[7u8; 32])],
         PoolBalanceMode::EqualCount,
     )
     .expect("STARK proofs build even for a double-spend (caught at verify)");
+    assert_eq!(
+        transfer.inputs[0].nullifier, transfer.inputs[1].nullifier,
+        "MUTATION PRESENT: both inputs really do reveal the same nullifier"
+    );
 
-    let res = transfer.verify_stark_side();
+    let res = transfer.verify_stark_side(committed_root);
     assert!(
         matches!(res, Err(ShieldedError::DuplicateNullifier { .. })),
         "a pool transfer spending one note twice (across assets) must reject, got {res:?}"
@@ -442,13 +467,7 @@ fn duplicate_nullifier_rejects() {
 
 #[test]
 fn no_inputs_rejects() {
-    let res = prove_pool_transfer(
-        BabyBear::ZERO,
-        &[],
-        vec![],
-        vec![],
-        PoolBalanceMode::EqualCount,
-    );
+    let res = prove_pool_transfer(&[], vec![], vec![], PoolBalanceMode::EqualCount);
     assert!(matches!(res, Err(ShieldedError::NoInputs)));
 }
 

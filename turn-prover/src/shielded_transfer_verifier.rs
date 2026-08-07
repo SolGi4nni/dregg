@@ -16,8 +16,8 @@
 use dregg_cell::ShieldedNoteCommitment;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::shielded::{
-    ShieldedTransfer, ShieldedValueLeg, WIDE_VALUE_BINDING_LANES, WideValueBindingProof,
-    verify_stark_with_wide_bindings, wide_transfer_message,
+    ShieldedTransfer, ShieldedValueLeg, WideValueBindingProof, verify_stark_with_wide_bindings,
+    wide_transfer_message,
 };
 use dregg_turn::action::{ShieldedLeg, ShieldedTransferPayload};
 use dregg_turn::error::TurnError;
