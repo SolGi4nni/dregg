@@ -142,7 +142,24 @@ by nothing else. The old-admits pole is not a fixture written for the occasion; 
 rung's own honest artifact. -/
 
 open Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo (demoChals srsDemoAddends srsDemoClaim
-  accSrsDemoDesc srsParamsText)
+  accSrsDemoDesc srsParamsText demoHeadLanes accHeadDemoDesc accHeadGenesisDesc)
+
+/-! ## ⚑⚑ THE HEAD RAIL — the same chain, plus the nineteen columns the seam reads.
+
+`MinaAccumulatorAir` §11 adds `RIDX + 1 … RIDX + 19`: the guard, the nine published head lanes and
+the nine attested program lanes. The guard is `1` on the FIRST row and `0` on every successor —
+which is not a convention chosen here but what `headOkOnLeg`/`headOkOffLeg` force, and what makes
+the seam's off-row obligation the first row's and not one per intermediate accumulator.
+
+⚠ **THE PROGRAM LANES ARE THE DESCRIPTOR'S OWN `MINA_HEAD_VK_LANES`, NOT A SECOND SPELLING.** A
+transcription here would let the trace and the `vkPin` drift into agreement about a program neither
+names; `75df624cf` is the commit where exactly that happened one rail over. -/
+
+/-- Widen the routed rows with the head seam's nineteen columns. -/
+def withHeadSeam (H : List ℤ) (rows : List (List ℤ)) : List (List ℤ) :=
+  rows.mapIdx (fun i r =>
+    r ++ ((if i = 0 then (1 : ℤ) else 0) :: H)
+      ++ Dregg2.Circuit.Emit.MinaAccumulatorAir.MINA_HEAD_VK_LANES)
 
 /-- ⚑ The three descriptors' JSON, for the same reason `EmitPastaBucketed.lean` prints its own: the
 by-name ROUTER (`EmitByName.lean`, where these are registered and where the drift gate reads them)
@@ -162,6 +179,10 @@ def descJson (which : String) : Option String :=
       Dregg2.Circuit.Emit.MinaAccumulatorAir.accRoutedDemoDesc)
   else if which = "srs" then
     some (Dregg2.Circuit.DescriptorIR2.emitVmJson2 accSrsDemoDesc)
+  else if which = "head" then
+    some (Dregg2.Circuit.DescriptorIR2.emitVmJson2 accHeadDemoDesc)
+  else if which = "head-genesis" then
+    some (Dregg2.Circuit.DescriptorIR2.emitVmJson2 accHeadGenesisDesc)
   else none
 
 def main (args : List String) : IO Unit :=
@@ -169,7 +190,7 @@ def main (args : List String) : IO Unit :=
   | ["desc", w] =>
       match descJson w with
       | some s => IO.println s
-      | none => IO.eprintln "usage: EmitMinaAccumulator.lean desc (seg|final|routed)"
+      | none => IO.eprintln "usage: EmitMinaAccumulator.lean desc (seg|final|routed|srs|head|head-genesis)"
   | ["discharging"] =>
       IO.print (traceText (dischargingRows qN curveB3 qLimb Gvesta Gvesta N_ADDS))
   | ["open"] =>
@@ -194,5 +215,11 @@ def main (args : List String) : IO Unit :=
       IO.print (traceText (withRowIndex (rowsFromAddends qN curveB3 qLimb srsDemoClaim
         srsDemoAddends)))
   | ["srs-params"] => IO.print srsParamsText
+  -- ⚑ The HEAD rail. The SAME srs chain — same claim, same derived addends, same manifest — with
+  -- the seam's nineteen columns appended. The OLD-ADMITS pole of this pair is
+  -- `mina-accumulator-srs-trace.txt`, already on disk: this trace narrowed to 3 049 columns IS it.
+  | ["head"] =>
+      IO.print (traceText (withHeadSeam demoHeadLanes
+        (withRowIndex (rowsFromAddends qN curveB3 qLimb srsDemoClaim srsDemoAddends))))
   | _ => IO.eprintln
-      "usage: EmitMinaAccumulator.lean (discharging|open|unchained|routed|substituted|substituted-narrow|srs|srs-params)"
+      "usage: EmitMinaAccumulator.lean (discharging|open|unchained|routed|substituted|substituted-narrow|srs|srs-params|head)"

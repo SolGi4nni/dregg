@@ -599,6 +599,30 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- (`ir2_exact_public_a97`), because it discharges and is not the scalar multiples.
   , ("mina-accumulator-srs.json",
       Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo.accSrsDemoDesc)
+    -- ⚑ 2026-08-07 — THE HEAD RUNG, and it closes the accumulator's SECOND trusted item.
+    -- `-srs` publishes the claim at `PI[0..95]` and NO gate relates it to a head: the comparison
+    -- was `bridge/src/mina_accumulator_discharge.rs::root_entry_binds_claim`, whose own docblock
+    -- says *"a REFUSAL made by the consumer, not a gate"* — so a node that forgets to call it
+    -- accepts any discharging claim. `-head` is `-srs`'s algebra plus TWELVE constraints: a guard
+    -- forced on at `.first` and off on every successor, nine PI pins publishing the head, and ONE
+    -- `proof_bind` whose 105 `commit` lanes (head ‖ claim) are `bound` to the descriptor's declared
+    -- pair and whose nine `vk` lanes are pinned to `dregg-mina-lightclient-verify::v1`'s semantic
+    -- fingerprint. The pair: the honest head chain PROVES under `-head`, and the SAME chain with
+    -- the devnet GENESIS anchor substituted for the block-539508 tip — a claim that still
+    -- discharges, still routes, still publishes PI[0..191] byte-identically — is REFUSED by the
+    -- `proof_bind` and by nothing else, while proving under `-srs` narrowed to 3 049 columns.
+    -- ⚠ FLAG DAY: re-emitting `dregg-mina-lightclient-verify-v1.json` MOVES `MINA_HEAD_VK_LANES`
+    -- and re-VKs THIS descriptor. Nothing below `-head` moves; PI 192..200 are APPENDED.
+  , ("mina-accumulator-head.json",
+      Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo.accHeadDemoDesc)
+    -- ⚑ …and its NEGATIVE CONTROL, emitted for the same reason `mina-wrap-conjunction-unthreaded`
+    -- is: the isolation claim *"refused by the `proof_bind` and by nothing else"* has to be
+    -- MEASURED, and measuring it by editing a parsed descriptor's `bound` lanes in Rust would be
+    -- Rust authoring AIR. Same algebra, same manifest, same claim, the devnet GENESIS head
+    -- declared instead of the block-539508 tip: the two artifacts differ in EXACTLY ONE constraint
+    -- and within it in EXACTLY the nine head lanes, and each accepts the chain the other refuses.
+  , ("mina-accumulator-head-genesis.json",
+      Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo.accHeadGenesisDesc)
     -- ⚑ 2026-08-05 — THE CONJUNCTION, THREADED, AND ITS UNTHREADED TWIN. The row withheld below
     -- lands here: the b-polynomial's 15 rounds are 15 ROWS carried by 448 `.transition` legs, so
     -- the width is 2 536 at every round count and the artifact is 4 157 constraints instead of
@@ -688,7 +712,7 @@ Both directions are gated outside Lean:
 -- lean --run EmitByName.lean` dies, and the WHOLE by-name surface is unemittable for every lane
 -- at once. That outage is what produced the eleven private one-off emitters this file spent
 -- 2026-08-05 absorbing. Rows and pin are one atom.
-theorem byNameDescriptors_length : byNameDescriptors.length = 123 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 125 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

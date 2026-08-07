@@ -1741,6 +1741,470 @@ theorem the_coefficients_are_not_constant_in_the_challenges :
     ∧ bPolyCoeff pN [3, 5] 2 ≠ bPolyCoeff pN [11, 5] 2 := by
   refine ⟨by decide, by decide⟩
 
+/-! ## §11 — ⚑⚑⚑ THE HEAD BIND: THE CLAIM STOPS BEING A NUMBER A CONSUMER REMEMBERS TO COMPARE.
+
+## The defect this closes, quoted from the object that carries it
+
+`bridge/src/mina_accumulator_discharge.rs::root_entry_binds_claim` compares a verified fold root's
+`acc_in` block against a claim the caller holds, elementwise over 96 lanes, and its own docblock
+says what it is: *"It is a REFUSAL made by the consumer, not a gate; say it that way."* Its second
+paragraph names what it still does not reach — *"nor does it relate the claim to a tracked head."*
+
+So: a node that verifies an accumulator root and **forgets to call that function** accepts *any*
+discharging claim. Nothing in the emitted bytes says which chain's head the claim belongs to. That
+is the accumulator's second trusted item, and it is the one this section closes.
+
+## ⚑ WHAT IS NOW A CONSTRAINT, AND SAY WHICH OBJECT IT IS ABOUT
+
+The object is `dregg-mina-accumulator-head::v1` — `-srs`'s ALGEBRA VERBATIM (same manifest, same
+4 831 routed constraints, same selector census on the routed prefix) plus TWELVE constraints:
+
+    guard on      HEAD_OK = 1 on the FIRST row                     (.first window gate)
+    guard off     HEAD_OK = 0 on every later row                   (.transition window gate)
+    nine pins     HEAD_STATE i ↦ PI[192 + i]                       (.first pi bindings)
+    ONE proof_bind  guard HEAD_OK
+                    commit  = HEAD_STATE(9) ‖ ACC_X..ACC_Z(96)     — 105 lanes
+                    vk      = HEAD_VK(9), pinned to the HEAD PROGRAM's fingerprint
+                    bound   = the DECLARED head's nine lanes ‖ the DECLARED claim's 96 limbs
+
+`ProofBind.holdsAt`'s third conjunct is `zeroLanes guard commit bound`, so under `HEAD_OK = 1` the
+row's nine published head lanes and its ninety-six entry-accumulator limbs are forced, **lane by
+lane, to the descriptor's declared pair**. `Ir2Air::eval`'s `ProofBind` arm emits the same
+`1 + 9 + 105` polynomials. **105 lanes, elementwise, no digest, therefore no birthday bound** — the
+shape §"THE SHAPE" already claims for the claim block and `LightClientMinaAir` §2c landed for
+`TIP_STATE`.
+
+## ⚑ WHY `bound` IS LITERALS AND NOT COLUMNS — the opposite call from `linkBindLeg`, deliberately
+
+`LightClientMinaAir.linkBindLeg` takes `bound := none` and argues it is the STRONGER choice, because
+there `commit` is already a PI-bound column and a `bound` congruence *"could only compare it to
+itself, which is decoration"* (`feedback-a-pin-against-its-own-definition-is-decoration`). That
+argument is about comparing a column to ITS OWN definition. Here `bound` is a vector of DESCRIPTOR
+LITERALS, so the congruence compares a PI-bound column to a **VK-declared constant** — which is the
+entire difference between *"the prover publishes whatever claim it likes"* and *"the descriptor
+declares the claim."* The two calls are opposite because the two situations are.
+
+## ⚠ AND WHAT THE NINETY-SIX CLAIM LITERALS DO **NOT** ADD, said before a reader assumes it
+
+Given the routing and the discharge, the entry accumulator is already DETERMINED as a *point*:
+`accumulator_discharge_forced_on_srs_scaled_addends` forces `C + Σ_r (−s_r·G_r) = O`, so
+`C = Σ_r s_r·G_r`. The claim half of `bound` therefore adds (i) the canonical projective
+REPRESENTATIVE — the discharge fixes the point, not the triple — and (ii) the elementwise statement
+of the PAIR inside one emitted object. **It is the head half that carries the new content**: nine
+lanes of a Mina protocol-state hash that no other constraint in this file mentions.
+
+## ⚑ WHY THE GUARD IS FORCED ON AT `.first` AND OFF EVERYWHERE ELSE, and it is not a style choice
+
+`Satisfied2Custom.proofBound` quantifies over EVERY row, and `Ir2Air::eval` asserts the seam's
+polynomials on every row. A seam whose commit lanes are the row's own `ACC_X..` block would then
+demand a sub-proof per row, one per intermediate accumulator — which is not the sentence. And a
+guard that is a FREE column is the vacuity `LightClientMinaLinkAir` names: a prover sets it to zero
+and the whole seam evaporates for one felt. Both are closed by the same two window gates: `.first`
+forces `HEAD_OK = 1` (so the seam cannot be switched off — `the_unguarded_head_row_is_refused` is
+the exhibit), `.transition` forces `HEAD_OK = 0` on every successor (so the obligation is the FIRST
+ROW's and there is exactly one).
+
+## ⚠ WHAT STANDING EACH HALF OF THE SEAM HAS, AND THEY ARE NOT THE SAME
+
+* **ROW-LOCAL — a CONSTRAINT, and it is what closes item 2.** The guard is a bit, the nine `HEAD_VK`
+  columns equal `MINA_HEAD_VK_LANES`, and the 105 commit lanes equal the declared pair. All of it is
+  in `constraints`, all of it is refutable, and the refusals are exhibited in
+  `circuit/tests/mina_accumulator_head_proves.rs` against `prove_vm_descriptor2_unchecked` so the
+  verdict is the AIR's and not the producer's pre-flight.
+
+* ⚠ **OFF-ROW — an OBLIGATION, and NO PROGRAM IN THIS TREE CAN DISCHARGE IT TODAY.**
+  `ProofBind.boundAt` reads *"∃ a verifying sub-proof of the pinned program whose `piCommit` is
+  these 105 lanes."* The pinned program is `dregg-mina-lightclient-verify::v1`, which publishes the
+  head's nine `TIP_STATE` lanes (PI 9..17) and **does not publish the block's
+  challenge-polynomial commitment at all**. So the existential names evidence that does not yet
+  exist. That is **UNDONE WORK with a named shape, not a caveat and not a theorem of the model.**
+
+  ⚠ And the cheap version of that work is REFUSED here rather than shipped: appending 96 free PI
+  slots to the head descriptor would make `boundTo` dischargeable by a head proof that *published*
+  a claim nothing forced — the same vacuity one layer down, and the same shape this tree already
+  calls out about `CONJ_PI` (*"a published block nothing refuses"*). The content version is that the
+  head DERIVES `messages_for_next_wrap_proof.challenge_polynomial_commitment` from the block, which
+  is Pasta arithmetic on a BabyBear rail and is the ≈10⁹-constraint wall `LightClientMinaAir`'s own
+  §"Public inputs" prices. Nothing here is cheaper than that number and nothing here pretends to be.
+
+* ⚠ **DESCRIPTOR SELECTION is untouched, and it is §8's residual verbatim.** Whether the descriptor
+  a node verified against is the one for the block in hand is not closed here. What IS closed: given
+  a descriptor, a prover can no longer present a claim it does not declare, or publish a head it does
+  not declare. The consumer's residue shrank from *"96 lanes it must have obtained out of band"* to
+  *"nine lanes against a head it already tracks"*, and `check_subproof_program_pin`'s idiom —
+  recompute the pinned program's fingerprint at VERIFY time — applies to `MINA_HEAD_VK_LANES`
+  unchanged.
+
+## ⚑ FLAG DAY (findable, and this is the fifth coupling of its kind)
+
+**Re-emitting `dregg-mina-lightclient-verify-v1.json` MOVES `MINA_HEAD_VK_LANES` and therefore
+re-emits and re-VKs `dregg-mina-accumulator-head::v1`.** That is intended and it is exactly what
+`CHAINLINK_VK_LANES`, `LINK_VK_LANES` and `CONJ_VK_LANES` already cost on the head side: a light
+client must not keep accepting accumulator roots that name a head program no descriptor has.
+**NOTHING BELOW MOVES:** `-seg`, `-final`, `-routed` and `-srs` are byte-identical, PI slots 0..191
+are untouched and 192..200 are APPENDED, and `root_entry_binds_claim` still reads the same
+`acc_in` block. A new artifact is emitted (`mina-accumulator-head.json`); nothing is re-genesised. -/
+
+/-- The nine `Faithful9` key lanes a 32-byte Mina protocol-state hash occupies: `8·29 + 24 = 256`
+bits exactly, so the encoding is injective (`fieldToLanes9_injective`) and the tie is worth the whole
+object rather than a ~31-bit projection of it. -/
+def HEAD_LANES : Nat := 9
+
+/-- ⚑ **THE SEAM'S GUARD** — one column past the routing's row index. Forced to `1` on the first row
+and to `0` on every successor; it is never a free witness. -/
+def HEAD_OK : Nat := ROUTED_WIDTH
+
+/-- The `i`-th published lane of the head this claim is declared to belong to. -/
+def HEAD_STATE (i : Nat) : Nat := ROUTED_WIDTH + 1 + i
+
+/-- The `i`-th attested HEAD-PROGRAM fingerprint lane. Pinned by `vkPin`, not by a PI binding — the
+program identity is the descriptor's, not something a consumer supplies. -/
+def HEAD_VK (i : Nat) : Nat := ROUTED_WIDTH + 1 + HEAD_LANES + i
+
+/-- The head-bound descriptor's declared trace width. -/
+def HEADED_WIDTH : Nat := ROUTED_WIDTH + 1 + 2 * HEAD_LANES
+
+/-- ⚑ **NINETEEN COLUMNS, AND THE BLOCKS DO NOT OVERLAP.** A `HEAD_STATE`/`HEAD_VK` collision would
+make the program pin and the head pin the same cells, so the seam would pin the fingerprint to the
+head and read as satisfied — written out rather than assumed. -/
+theorem the_head_seam_costs_nineteen_columns :
+    HEADED_WIDTH = 3068 ∧ HEADED_WIDTH = ROUTED_WIDTH + 19
+    ∧ HEAD_OK = 3049 ∧ HEAD_STATE 0 = 3050 ∧ HEAD_STATE 8 = 3058
+    ∧ HEAD_VK 0 = 3059 ∧ HEAD_VK 8 = 3067
+    ∧ ∀ i j, i < HEAD_LANES → j < HEAD_LANES → HEAD_STATE i ≠ HEAD_VK j := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide, by decide, ?_⟩
+  intro i j hi hj
+  simp only [HEAD_STATE, HEAD_VK, HEAD_LANES, ROUTED_WIDTH, RCB_WIDTH] at *
+  omega
+
+/-- PI slot of the `i`-th published head lane — APPENDED after the accumulator's 192. -/
+def PI_HEAD (i : Nat) : Nat := ACC_PI_COUNT + i
+
+/-- `192 + 9`. -/
+def HEAD_PI_COUNT : Nat := ACC_PI_COUNT + HEAD_LANES
+
+/-- ⚑ **APPENDED: NO EXISTING SLOT MOVES.** `acc_in ‖ acc_out` keeps slots 0..191 and the fold's
+`left[96 + k] ↔ right[k]` connect is unaffected, which is why this is not a fold flag day. -/
+theorem head_pi_layout :
+    HEAD_PI_COUNT = 201 ∧ PI_HEAD 0 = 192 ∧ PI_HEAD 8 = 200
+    ∧ ACC_PI_COUNT ≤ PI_HEAD 0 ∧ ∀ i, PI_HEAD i = ACC_PI_COUNT + i := by
+  refine ⟨by decide, by decide, by decide, by decide, fun _ => rfl⟩
+
+/-- ⚑ **THE GUARD IS FORCED ON.** `.first` lowers to a `VmConstraint.boundary` whose body reads
+`env.loc` alone. Setting `HEAD_OK = 0` — the "switch the seam off for one felt" move — makes this
+gate false, which is `the_unguarded_head_row_is_refused`. -/
+def headOkOnLeg : AirLeg :=
+  .window ⟨RowSel.first, WindowExpr.add (.loc HEAD_OK) (.const (-1))⟩
+
+/-- ⚑ **…AND OFF ON EVERY SUCCESSOR**, so the off-row obligation is the FIRST ROW'S and there is
+exactly one of it. `.transition` is the only selector under which `nxt` is the genuine successor. -/
+def headOkOffLeg : AirLeg :=
+  .window ⟨RowSel.transition, WindowExpr.nxt HEAD_OK⟩
+
+/-- The nine head lanes, published. -/
+def headStatePinLegs : List AirLeg :=
+  (List.range HEAD_LANES).map (fun i => AirLeg.pin ⟨.first, HEAD_STATE i, PI_HEAD i⟩)
+
+theorem headStatePinLegs_length : headStatePinLegs.length = 9 := by decide
+
+/-- ⚑⚑ **THE HEAD PROGRAM'S IDENTITY, AS NINE LANES — MEASURED, NEVER INVENTED.** The `Faithful9`
+key lanes of `effect_vm_descriptor2_semantic_fingerprint(dregg-mina-lightclient-verify::v1)` —
+blake3 (derive-key, context `EFFECT_VM_DESCRIPTOR2_FINGERPRINT_CONTEXT`) over that descriptor's
+CANONICAL bytes, `923bcba9…` at `w=77, pi=39, cons=74`. In this tree the descriptor IS the verifying
+key: `verify_vm_descriptor2(&desc, &proof, &pis)` takes no other key material.
+
+⚠ These digits cannot be computed in Lean (the fingerprint is blake3 over emitted bytes), so they
+are read from the served artifact by `circuit/examples/conj_fingerprint.rs` and re-derived as a GATE
+by `mina_accumulator_head_proves.rs::the_pinned_head_program_is_the_served_head_descriptor`. That
+gate exists because `75df624cf` once re-emitted a descriptor and left a `vkPin` naming a program no
+descriptor in this tree had. -/
+def MINA_HEAD_VK_LANES : List ℤ :=
+  [164314002, 222897309, 128412693, 475553674, 499468058, 337539357, 27327466, 136743749, 10293761]
+
+theorem the_head_vk_pin_is_nine_lanes : MINA_HEAD_VK_LANES.length = HEAD_LANES := by decide
+
+/-- ⚑ **THE SENTENCE THE SUB-PROOF MUST EXPOSE** — the head, then the claim, as columns. 105 lanes:
+`commit` is the width of the STATEMENT, not of the program fingerprint, and the two have been
+measured separately since 2026-08-06 (`ProofBind.widthOk`). The 96 claim lanes are `ACC_X + j` for
+`j < 3·SK`, contiguous exactly because `ACC_X/ACC_Y/ACC_Z = 0/32/64`. -/
+def headCommitLanes : List Dregg2.Circuit.Expr :=
+  (List.range HEAD_LANES).map (fun i => Dregg2.Circuit.Expr.var (HEAD_STATE i))
+    ++ (List.range (3 * SK)).map (fun j => Dregg2.Circuit.Expr.var (ACC_X + j))
+
+theorem headCommitLanes_length : headCommitLanes.length = 105 := by decide
+
+/-- ⚑ **THE DECLARED PAIR, AS LITERALS.** `H` is the head's nine lanes; `C` the claim, whose 96
+`coordLimb` digits are the SAME base-`2^8` decomposition the manifest rows and the trace's addend
+cells use — one layout, not a second transcription. -/
+def headBoundLanes (H : List ℤ) (C : Pt3) : List Dregg2.Circuit.Expr :=
+  (List.range HEAD_LANES).map (fun i => Dregg2.Circuit.Expr.const (H.getD i 0))
+    ++ (List.range (3 * SK)).map (fun j => Dregg2.Circuit.Expr.const ((coordLimb C j : ℤ)))
+
+theorem headBoundLanes_length (H : List ℤ) (C : Pt3) : (headBoundLanes H C).length = 105 := by
+  simp only [headBoundLanes, List.length_append, List.length_map, List.length_range]
+  decide
+
+/-- ⚑⚑ **THE SEAM.** Guard `HEAD_OK`; the attested program is nine `HEAD_VK` columns pinned to the
+head descriptor's fingerprint; the declared commitment is the 105-lane pair. `BindLeg.mainRailOk`
+refuses a seam that pins NEITHER half (`ProofBind.isDeclarative`, whose existential quantifies over
+every program), one below the nine-lane floor, and a pin naming fewer lanes than the vector it pins —
+so this leg could not be weakened into any of those and still lower. -/
+def headBindLeg (H : List ℤ) (C : Pt3) : AirLeg :=
+  .bind { guard := .var HEAD_OK
+        , commit := headCommitLanes
+        , vk := (List.range HEAD_LANES).map (fun i => Dregg2.Circuit.Expr.var (HEAD_VK i))
+        , vkPin := some MINA_HEAD_VK_LANES
+        , bound := some (headBoundLanes H C) }
+
+/-- The routed block's tables at the WIDENED main declaration. Only the main table's width moves;
+the three range tables and the addend manifest are `routedTables`' verbatim. -/
+def headedTables (As : List Pt3) : List Dregg2.Circuit.DescriptorIR2.TableDef :=
+  Dregg2.Circuit.DescriptorIR2.mainTableDef HEADED_WIDTH
+    :: (rcbTables.drop 1 ++ [addendTable As])
+
+theorem headedTables_ids_are_the_routed_ones (As : List Pt3) :
+    (headedTables As).map (·.id) = (routedTables As).map (·.id) := rfl
+
+/-- ⚑ **THE HEAD-BOUND BLOCK** — `accRoutedAir`'s legs VERBATIM plus the twelve. Nothing is
+re-authored, so every forcing theorem of §5–§10 applies unchanged. -/
+def accHeadAir (As : List Pt3) (H : List ℤ) (C : Pt3) : EffectAir :=
+  { tables := headedTables As
+  , legs := accRoutedAir.legs ++ [headOkOnLeg, headOkOffLeg]
+              ++ headStatePinLegs ++ [headBindLeg H C] }
+
+/-- ⚑ **THE ROUTED BLOCK'S LEGS ARE A PREFIX.** The head bind APPENDS; it does not re-author the
+routing, the threads, the discharge or the pins. -/
+theorem accHeadAir_extends_accRoutedAir (As : List Pt3) (H : List ℤ) (C : Pt3) :
+    accRoutedAir.legs <+: (accHeadAir As H C).legs :=
+  ⟨[headOkOnLeg, headOkOffLeg] ++ headStatePinLegs ++ [headBindLeg H C], by
+    simp [accHeadAir, List.append_assoc]⟩
+
+/-- ⚑ **THE COMPILER ACCEPTS IT, AT EVERY DECLARED PAIR.** `BindLeg.mainRailOk` reads only lengths,
+and `headCommitLanes`/`headBoundLanes` are `List.range`-shaped, so the verdict does not depend on
+`H` or `C` — a descriptor emitted at a different head cannot be the one that stops lowering. -/
+theorem accHeadAir_mainRailOk (As : List Pt3) (H : List ℤ) (C : Pt3) :
+    (accHeadAir As H C).mainRailOk = true := by
+  simp only [EffectAir.mainRailOk, accHeadAir, List.all_append, Bool.and_eq_true]
+  refine ⟨⟨⟨accRoutedAir_mainRailOk [], by decide⟩, by decide⟩, ?_⟩
+  simp only [List.all_cons, List.all_nil, Bool.and_true, AirLeg.mainRailOk, headBindLeg,
+    Dregg2.Circuit.EffectAirIR.BindLeg.mainRailOk, headCommitLanes, headBoundLanes,
+    Option.isNone, List.length_append, List.length_map, List.length_range,
+    MINA_HEAD_VK_LANES]
+  decide
+
+/-- ⚑ **THE SELECTOR CENSUS, HEAD-BOUND.** One more `.first` (the guard's forcing gate) and one more
+`.transition` (the guard's off-gate) than `-routed`; the 64 `.last` discharge gates and the 96
+accumulator threads are untouched, and there is still no `.all`. A `.first → .all` re-scope on the
+guard would force `HEAD_OK = 1` on every row and re-arm the per-row obligation the off-gate exists to
+retire — and it moves this number. -/
+theorem the_head_selector_census (As : List Pt3) (H : List ℤ) (C : Pt3) :
+    (accHeadAir As H C).windowCountSel RowSel.transition = 98
+    ∧ (accHeadAir As H C).windowCountSel RowSel.last = 64
+    ∧ (accHeadAir As H C).windowCountSel RowSel.first = 2
+    ∧ (accHeadAir As H C).windowCountSel RowSel.all = 0
+    ∧ (accHeadAir As H C).lookupCount = 1 := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THE HEAD-BOUND DESCRIPTOR, EMITTED UNDER A GIVEN NAME.** -/
+def accHeadDescNamed (nm : String) (As : List Pt3) (H : List ℤ) (C : Pt3) : EffectVmDescriptor2 :=
+  Dregg2.Circuit.Emit.EffectLower.lowerAir nm HEADED_WIDTH HEAD_PI_COUNT [] (accHeadAir As H C)
+
+/-- ⚑⚑ **THE EMITTED HEAD-BOUND DESCRIPTOR** — `-srs`'s manifest (a function of the pinned SRS and
+the challenges) with the head seam on top. -/
+def accHeadDesc (Gs : List Pt3) (u : List Nat) (n : Nat) (H : List ℤ) (C : Pt3) :
+    EffectVmDescriptor2 :=
+  accHeadDescNamed "dregg-mina-accumulator-head::v1" (srsScaledAddends Gs u n) H C
+
+theorem accHeadDesc_name (Gs : List Pt3) (u : List Nat) (n : Nat) (H : List ℤ) (C : Pt3) :
+    (accHeadDesc Gs u n H C).name = "dregg-mina-accumulator-head::v1" := rfl
+
+theorem accHeadDesc_width (Gs : List Pt3) (u : List Nat) (n : Nat) (H : List ℤ) (C : Pt3) :
+    (accHeadDesc Gs u n H C).traceWidth = 3068 := rfl
+
+theorem accHeadDesc_piCount (Gs : List Pt3) (u : List Nat) (n : Nat) (H : List ℤ) (C : Pt3) :
+    (accHeadDesc Gs u n H C).piCount = 201 := rfl
+
+/-- ⚑ **FIVE NAMES, FIVE OBJECTS.** A registry lookup that resolved `-head` to `-srs` would serve a
+descriptor with no head seam at all and every shape pin below would still pass —
+`reference-a-display-name-is-not-a-key` records three wrong lookups in one day from exactly this. -/
+theorem the_five_descriptors_do_not_share_a_name (As : List Pt3)
+    (Gs : List Pt3) (u : List Nat) (n : Nat) (H : List ℤ) (C : Pt3) :
+    accSegDesc.name ≠ (accHeadDesc Gs u n H C).name
+    ∧ accFinalDesc.name ≠ (accHeadDesc Gs u n H C).name
+    ∧ (accRoutedDesc As).name ≠ (accHeadDesc Gs u n H C).name
+    ∧ (accSrsDesc Gs u n).name ≠ (accHeadDesc Gs u n H C).name := by
+  rw [accHeadDesc_name, accRoutedDesc_name, accSrsDesc_name]
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
+set_option maxHeartbeats 0 in
+/-- ⚑ **TWELVE CONSTRAINTS, AND THE ROUTED 4 831 ARE A PREFIX.** `4 831 + 1 + 1 + 9 + 1`. A leg
+lowers to at least one constraint (`lowerLeg_ne_nil`), so this count is a real pin on the leg list
+and a dropped seam cannot hide in it. -/
+theorem accHeadDesc_constraint_count (Gs : List Pt3) (u : List Nat) (n : Nat)
+    (H : List ℤ) (C : Pt3) :
+    (accHeadDesc Gs u n H C).constraints.length = 4476 + 96 + 192 + 64 + 3 + 12 := rfl
+
+set_option maxHeartbeats 0 in
+/-- ⚑ **THE SEAM IS NOT DECLARATIVE.** `proofBindDeclarative` counts seams that pin NEITHER the
+program nor the commitment — the shape whose existential quantifies over every program and every
+statement. This descriptor's count is ZERO, on the emitted object, in the authoring language, one
+stage upstream of the bytes. -/
+theorem the_head_seam_is_not_declarative (Gs : List Pt3) (u : List Nat) (n : Nat)
+    (H : List ℤ) (C : Pt3) :
+    Dregg2.Circuit.DescriptorIR2.proofBindDeclarative (accHeadDesc Gs u n H C) = 0 := rfl
+
+/-! ### §11b — ⚠⚠ THE THIRD TRUSTED ITEM, CLASSIFIED: **theorem of the relation**, and what moved.
+
+The accumulator's third trusted item reads *"a claim rebuilt around tampered challenges is accepted,
+in-circuit exactly as natively."* It is asked of this section because §11 is the first rung that
+could plausibly touch it. Classify it before pricing it.
+
+## ⚑ IT IS A THEOREM OF THE RELATION, AND THEREFORE TERMINAL FOR ANY AIR OF THAT RELATION
+
+The relation the accumulator checks is
+
+    R(C, u⃗)  ⟺  C = Σ_r b_poly_coefficients(u⃗)_r · G_r
+
+and `srsScaledAddends` is the *function* whose graph that is: for EVERY `u⃗′` there is exactly one
+`C′ = f(u⃗′)` with `R(C′, u⃗′)`. So *"a rebuilt pair satisfies `R`"* is not a defect of the AIR — it
+is what it means for `R` to be a function graph, and it is why the item's own wording says *"exactly
+as natively"*: `mina-rust`'s `Ipa::Step::accumulator_check` accepts the rebuilt pair too. **No AIR
+for `R`, at any width, on any field, can separate `(C, u⃗)` from `(f(u⃗′), u⃗′)`.** That half is
+TERMINAL and no amount of work on this file moves it. ⚠ It is not *"undone work in a caveat's
+clothes"* and must not be priced as though a bigger circuit would fix it.
+
+## ⚑ WHAT IS TRANSMUTABLE IS THE TIE, AND §11 MOVED IT
+
+The exploit `R`'s functionality permits is *presenting a rebuilt pair where the original was
+expected*. That is a statement about what a VERIFIER accepts, not about `R`, and it has now changed
+shape twice:
+
+* §10 put `u⃗` in the DESCRIPTOR: the manifest is `srsScaledAddends Gs u⃗ n`, so a tampered `u⃗′` is a
+  different manifest, a different descriptor and therefore a different VK. A rebuilt claim cannot be
+  presented under the original descriptor's routing.
+* §11 puts the HEAD in the same object. So under a FIXED `-head` descriptor a rebuilt claim `C′` is
+  refused by the seam's `bound` congruence, elementwise, before the routing is even consulted.
+
+⚑ **The residue is therefore exactly DESCRIPTOR SELECTION** — an attacker who can make a node
+verify against a descriptor of their choosing can still present `(u⃗′, C′)` under a `-head`
+descriptor that declares the honest head beside `C′`, because nothing in this file relates the
+declared head to the declared manifest. Two things would close that and neither is cheap or hidden:
+the seam's OFF-ROW half (a head proof that EXPOSES the pair — §11's named undone work), or the
+scaling relation in-circuit (the deferred MSM, `PastaMsmBucketed.fused_at_step`'s `1 474 800`
+complete additions on the UNSOUND multiply, so ~10² further out on this file's sound row).
+
+⚠ **Say the standing plainly: item 3's premise is closed as a theorem, its exploit is narrowed to
+descriptor selection, and descriptor selection is NOT closed here.** -/
+
+/-! ### §11a — ⚑⚑ WHAT THE SEAM FORCES, AS A THEOREM ABOUT THE EMITTED `ProofBind`.
+
+⚠ **SAY WHICH OBJECT.** These are statements about `headProofBind H C` — the `DescriptorIR2.ProofBind`
+that `lowerBindLeg` actually emits into `(accHeadDesc …).constraints` — and not about the source
+`BindLeg`, not about a re-spelling of it. `the_emitted_seam_is_the_lowered_leg` is the `rfl` that
+makes them the same object; without it every theorem below would be true about a look-alike. -/
+
+/-- The emitted seam. -/
+def headProofBind (H : List ℤ) (C : Pt3) : Dregg2.Circuit.DescriptorIR2.ProofBind :=
+  { guard := Dregg2.Exec.CircuitEmit.emitExpr (Dregg2.Circuit.Expr.var HEAD_OK)
+  , commit := headCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+  , vk := ((List.range HEAD_LANES).map
+      (fun i => Dregg2.Circuit.Expr.var (HEAD_VK i))).map Dregg2.Exec.CircuitEmit.emitExpr
+  , vkPin := some MINA_HEAD_VK_LANES
+  , bound := some ((headBoundLanes H C).map Dregg2.Exec.CircuitEmit.emitExpr) }
+
+/-- ⚑ **THE EMITTED SEAM IS THE LOWERED LEG** — one object, two spellings, joined by `rfl`. -/
+theorem the_emitted_seam_is_the_lowered_leg (H : List ℤ) (C : Pt3) :
+    Dregg2.Circuit.Emit.EffectLower.lowerLeg (headBindLeg H C)
+      = [VmConstraint2.proofBind (headProofBind H C)] := rfl
+
+/-- …and it is the ONLY `proofBind` the descriptor carries, so "the seam" is not ambiguous. -/
+theorem the_head_descriptor_has_exactly_one_seam (Gs : List Pt3) (u : List Nat) (n : Nat)
+    (H : List ℤ) (C : Pt3) :
+    Dregg2.Circuit.DescriptorIR2.proofBindsOf (accHeadDesc Gs u n H C) = [headProofBind H C] := rfl
+
+set_option maxHeartbeats 0 in
+/-- ⚑ **THE PAIRS THE SEAM COMPARES, NAMED.** `zeroLanes` quantifies over `commit.zip bound`; this
+is that list, spelled as *the nine head pairs, then the ninety-six claim pairs*. `rfl` — one object,
+two spellings — so the theorem below needs no index projection between it and `ProofBind.holdsAt`. -/
+theorem the_seam_pairs_are_the_head_then_the_claim (H : List ℤ) (C : Pt3)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv) :
+    ((headProofBind H C).commit.map (fun e => e.eval env.loc)).zip
+        (((headBoundLanes H C).map Dregg2.Exec.CircuitEmit.emitExpr).map
+          (fun e => e.eval env.loc))
+      = ((List.range HEAD_LANES).map (fun i => (env.loc (HEAD_STATE i), H.getD i 0)))
+          ++ ((List.range (3 * SK)).map
+                (fun j => (env.loc (ACC_X + j), ((coordLimb C j : Nat) : ℤ)))) := rfl
+
+/-- ⚑⚑ **THE HEAD IS FORCED.** Under the guard, the row's `i`-th published head lane IS the declared
+head's `i`-th lane, in BabyBear. This is the constraint item 2 asked for: it is in `constraints`,
+`Ir2Air::eval` asserts the same polynomial, and nothing about it is a consumer's memory. The exhibit
+that it can go red is `the_wrong_head_claim_is_refused_by_the_air` in the Rust tooth. -/
+theorem the_head_seam_forces_the_declared_head (H : List ℤ) (C : Pt3)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (hh : (headProofBind H C).holdsAt env) (hg : env.loc HEAD_OK = 1)
+    (i : Nat) (hi : i < HEAD_LANES) :
+    env.loc (HEAD_STATE i) ≡ H.getD i 0 [ZMOD 2013265921] := by
+  obtain ⟨-, -, hb⟩ := hh
+  have hguard : (headProofBind H C).guard.eval env.loc = 1 := hg
+  rw [hguard] at hb
+  obtain ⟨-, hz⟩ := hb
+  have hmem : (env.loc (HEAD_STATE i), H.getD i 0)
+      ∈ ((headProofBind H C).commit.map (fun e => e.eval env.loc)).zip
+          (((headBoundLanes H C).map Dregg2.Exec.CircuitEmit.emitExpr).map
+            (fun e => e.eval env.loc)) := by
+    rw [the_seam_pairs_are_the_head_then_the_claim]
+    exact List.mem_append_left _ (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩)
+  have h1 := hz _ hmem
+  rw [one_mul] at h1
+  exact Int.modEq_iff_dvd.mpr (by simpa using Int.modEq_iff_dvd.mp h1)
+
+/-- ⚑⚑ **…AND SO IS THE CLAIM.** The row's `j`-th entry-accumulator limb is the declared claim's
+`j`-th `coordLimb` digit. ⚠ Read this against §11's docblock: given the routing and the discharge
+the entry accumulator was already determined as a POINT, so what this adds is the canonical
+projective representative and the elementwise statement of the pair — the NEW content is the head
+half above. -/
+theorem the_head_seam_forces_the_declared_claim (H : List ℤ) (C : Pt3)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (hh : (headProofBind H C).holdsAt env) (hg : env.loc HEAD_OK = 1)
+    (j : Nat) (hj : j < 3 * SK) :
+    env.loc (ACC_X + j) ≡ ((coordLimb C j : Nat) : ℤ) [ZMOD 2013265921] := by
+  obtain ⟨-, -, hb⟩ := hh
+  have hguard : (headProofBind H C).guard.eval env.loc = 1 := hg
+  rw [hguard] at hb
+  obtain ⟨-, hz⟩ := hb
+  have hmem : (env.loc (ACC_X + j), ((coordLimb C j : Nat) : ℤ))
+      ∈ ((headProofBind H C).commit.map (fun e => e.eval env.loc)).zip
+          (((headBoundLanes H C).map Dregg2.Exec.CircuitEmit.emitExpr).map
+            (fun e => e.eval env.loc)) := by
+    rw [the_seam_pairs_are_the_head_then_the_claim]
+    exact List.mem_append_right _ (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩)
+  have h1 := hz _ hmem
+  rw [one_mul] at h1
+  exact Int.modEq_iff_dvd.mpr (by simpa using Int.modEq_iff_dvd.mp h1)
+
+/-- ⚑ **AND THE PROGRAM PIN IS FORCED TOO** — the attested `HEAD_VK` lane is the head descriptor's
+fingerprint lane, which is what makes a re-emit of that descriptor a FLAG DAY here rather than a
+silence. `forged_head_program_refused` is the exhibit. -/
+theorem the_head_seam_forces_the_declared_program (H : List ℤ) (C : Pt3)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (hh : (headProofBind H C).holdsAt env) (hg : env.loc HEAD_OK = 1)
+    (i : Nat) (hi : i < HEAD_LANES) :
+    env.loc (HEAD_VK i) ≡ MINA_HEAD_VK_LANES.getD i 0 [ZMOD 2013265921] := by
+  obtain ⟨-, hv, -⟩ := hh
+  have hguard : (headProofBind H C).guard.eval env.loc = 1 := hg
+  rw [hguard] at hv
+  obtain ⟨-, hz⟩ := hv
+  have hpairs : ((headProofBind H C).vk.map (fun e => e.eval env.loc)).zip MINA_HEAD_VK_LANES
+      = (List.range HEAD_LANES).map
+          (fun k => (env.loc (HEAD_VK k), MINA_HEAD_VK_LANES.getD k 0)) := rfl
+  have hmem : (env.loc (HEAD_VK i), MINA_HEAD_VK_LANES.getD i 0)
+      ∈ ((headProofBind H C).vk.map (fun e => e.eval env.loc)).zip MINA_HEAD_VK_LANES := by
+    rw [hpairs]
+    exact List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩
+  have h1 := hz _ hmem
+  rw [one_mul] at h1
+  exact Int.modEq_iff_dvd.mpr (by simpa using Int.modEq_iff_dvd.mp h1)
+
 #assert_axioms acc_pi_layout
 #assert_axioms pin_leg_counts
 #assert_axioms dischargeLegs_length
@@ -1824,5 +2288,25 @@ theorem the_coefficients_are_not_constant_in_the_challenges :
 #assert_axioms smulV_at_zero
 #assert_axioms the_challenge_order_is_the_o1labs_one
 #assert_axioms the_coefficients_are_not_constant_in_the_challenges
+#assert_axioms the_head_seam_costs_nineteen_columns
+#assert_axioms head_pi_layout
+#assert_axioms headStatePinLegs_length
+#assert_axioms the_head_vk_pin_is_nine_lanes
+#assert_axioms headCommitLanes_length
+#assert_axioms headBoundLanes_length
+#assert_axioms headedTables_ids_are_the_routed_ones
+#assert_axioms accHeadAir_extends_accRoutedAir
+#assert_axioms accHeadAir_mainRailOk
+#assert_axioms the_head_selector_census
+#assert_axioms accHeadDesc_name
+#assert_axioms the_five_descriptors_do_not_share_a_name
+#assert_axioms accHeadDesc_constraint_count
+#assert_axioms the_head_seam_is_not_declarative
+#assert_axioms the_emitted_seam_is_the_lowered_leg
+#assert_axioms the_head_descriptor_has_exactly_one_seam
+#assert_axioms the_seam_pairs_are_the_head_then_the_claim
+#assert_axioms the_head_seam_forces_the_declared_head
+#assert_axioms the_head_seam_forces_the_declared_claim
+#assert_axioms the_head_seam_forces_the_declared_program
 
 end Dregg2.Circuit.Emit.MinaAccumulatorAir
