@@ -201,6 +201,18 @@ GATES=(
   # the honest candidate), ~2s. The full grade needs a `DREGG_WM=wrap` emission and is under --all.
   "wrapmain-shape-diff-red|120|node bridge/mina-zkapp/scripts/wrapmain-shape-diff.mjs --self-test"
   "no-degraded-felt|180|bash scripts/check-no-degraded-felt.sh --rev HEAD"
+  # ⚑ ADDED 2026-08-07, and the reason is a mispriced VK rotation. `pi_disposition_census.py`
+  # answers "does any constraint IN THESE TWO REGISTRIES read PI index i". A prior lane read a zero
+  # there as "nothing reads this slot" and declared eleven felts dead; four of them
+  # (`EFFECTS_HASH_GLOBAL`, v1 37..40) are `sched::EFFECTS_HASH_GLOBAL` inside the 49-felt
+  # bilateral-schedule window, projected into `dregg-bilateral-aggregation-v3` where the EMITTED
+  # bytes force them (4 `window_gate`s) and pin them to its outer PI. The script now carries a
+  # `PROJECTIONS` table CHECKED against those bytes and refuses (exit 1) when a declared projection
+  # stops holding — so deleting the consumer goes RED here instead of quietly handing the slot back
+  # to the "nothing reads it" column. It was a doc-reproduction script wired into no gate at all,
+  # which is why the refusal needed a row before it could ever fire.
+  "pi-projections|120|python3 scripts/pi_disposition_census.py"
+  "pi-projections-red|120|python3 scripts/pi_disposition_census.py --self-test-projections"
   "emitter-routing|120|bash scripts/check-emitter-routing.sh"
   "anchored-lc-committee|60|bash scripts/check-anchored-lc-committee.sh"
   "anchored-lc-committee-red|60|bash scripts/check-anchored-lc-committee.sh --self-test"

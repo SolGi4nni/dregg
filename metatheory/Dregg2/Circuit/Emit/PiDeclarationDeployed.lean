@@ -124,10 +124,19 @@ private def rEffectsHash : String :=
    not because it is the right one. Whoever anchors this must anchor the 8 limbs."
 
 private def rEffectsGlobal : String :=
-  "EXECUTOR-TRUSTED SHARED PI (Stage 7-gamma.0a): the whole-call_forest effects hash is a \
-   turn-level value no per-cell trace can see. The cross-proof match loop \
-   (turn/src/executor/proof_verify.rs) enforces agreement ACROSS the bundle; nothing binds it to \
-   the turn. gamma.1 was to make this algebraic and did not land."
+  "CARRIED BY A WIDER BINDING, IN ANOTHER DESCRIPTOR (corrected 2026-08-07): the whole-call_forest \
+   effects hash is a turn-level value no per-cell trace can see, so no pin on THIS member can reach \
+   it. But it is not unread. PI 37..40 are sched::EFFECTS_HASH_GLOBAL inside the 49-felt \
+   bilateral-schedule contract window inner_pi[33,82) \
+   (bilateral_aggregation_air::SCHEDULE_PI_BASE = TURN_HASH_BASE = 33), which \
+   schedule_block_from_inner_pi projects into the deployed dregg-bilateral-aggregation-v3 at cols \
+   4..7, where four window_gate transitions hold them equal on every row and a piBinding pins them \
+   first AND last to that descriptor's outer PI[4..7] (EffectVmEmitBilateralAgg.turnIdBindings). \
+   The column is FORCED, so that pin survives dropUnforcedPins. This reason previously read \
+   'nothing binds it to the turn; gamma.1 was to make this algebraic and did not land' -- the \
+   agreement half DID land, in the aggregation; what still does not exist is a binding of the \
+   published value to the turn's RECOMPUTED effects hash. Do not read this slot as deletable: \
+   docs/PI-DISPOSITION.md section 6 retracts exactly that."
 
 private def rTurnHash : String :=
   "UNDER PROTEST — this one wants to be .bound and cannot be yet. There is no trace carrier for \

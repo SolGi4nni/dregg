@@ -145,11 +145,24 @@ pub const APPROVED_HANDOFFS_LEN: usize = 4;
 //     (`sdk::verify_full_turn_bound`, `dregg_verifier::check_receipt_pi_binding`,
 //     `turn::conditional`), always as FOUR felts via `canonical_32_to_felts_4`.
 //     ACTOR_NONCE is genuinely pinned (47/56 members) to the state column.
-//     EFFECTS_HASH_GLOBAL is read by nobody and is zero on every deployed leg.
-// No AIR constraint reads any of the four: `pi_binding` is the only constraint
-// kind that reads a public input, and offsets 33..40 carry zero of them.
+//   * THE BILATERAL AGGREGATION — and this is the half the 2026-08-06 rewrite of
+//     this block MISSED, corrected 2026-08-07. `bilateral_aggregation_air::
+//     SCHEDULE_PI_BASE == TURN_HASH_BASE` (33): offsets 33..81 ARE the 49-felt
+//     bilateral-schedule contract. `schedule_block_from_inner_pi` projects the
+//     window into `dregg-bilateral-aggregation-v3`, whose EMITTED bytes force
+//     cols 0..12 (TURN_HASH, EFFECTS_HASH_GLOBAL, ACTOR_NONCE,
+//     PREVIOUS_RECEIPT_HASH) with `window_gate` transitions and pin them to its
+//     own outer PI. So TURN_HASH and EFFECTS_HASH_GLOBAL are consumed by a
+//     deployed AIR — the previous text here, "EFFECTS_HASH_GLOBAL is read by
+//     nobody", was false.
+// No EFFECT-VM AIR constraint reads any of the four: `pi_binding` is the only
+// constraint kind that reads a public input, and offsets 33..40 carry zero of
+// them IN THE TWO ROTATION REGISTRIES. That is a statement about those
+// descriptors, NOT about the slots — see the aggregation bullet above, and
+// `scripts/pi_disposition_census.py`'s `proj-read` column, which exists because
+// the distinction was collapsed once and cost a mispriced VK rotation.
 // `docs/DESIGN-pi-authority.md` argues the geometry cutover that would have
-// pinned TURN_HASH is NOT worth doing.
+// pinned TURN_HASH in the effect-VM member is NOT worth doing.
 //
 /// Poseidon2 of the canonical `Turn::hash()` (v3, post-Stage-7-α.1).
 /// All per-cell proofs of one turn share this value; the verifier
@@ -159,13 +172,38 @@ pub const TURN_HASH_LEN: usize = 4;
 /// Poseidon2 over the canonical-DFS-order traversal of the whole
 /// `call_forest`'s effects (not per-cell).
 ///
-/// ⚠ **DEAD AT THESE OFFSETS.** No executor verifies it against the turn's
-/// recomputed value — the only comparison that did was in the deleted bundle
-/// verifier. `EffectVmContext::default()` publishes `[ZERO; 4]` here and no
-/// producer overrides it, so the deployed value is zero on every leg; zero
-/// `pi_binding`s across all 57 wide members; no reader. The real object lives at
-/// `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE`, on the
-/// aggregation's own outer PI. **Disposition: STOP PUBLISHING from this window.**
+/// ⚑ **"DEAD AT THESE OFFSETS" — RETRACTED 2026-08-07. THESE FOUR FELTS ARE THE
+/// BILATERAL-SCHEDULE CONTRACT'S EFFECTS-HASH BLOCK, AND A DEPLOYED AIR FORCES
+/// THEM.** This docblock said *"zero `pi_binding`s across all 57 wide members; no
+/// reader … the real object lives at
+/// `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE`. Disposition: STOP
+/// PUBLISHING from this window."* The pin count is right; both conclusions are
+/// wrong, and the citation is the reason why — that outer slot is **sourced from
+/// this one**.
+///
+/// `bilateral_aggregation_air::SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE` (33)
+/// and `sched::EFFECTS_HASH_GLOBAL_BASE = 4`, so the 49-felt bilateral-schedule
+/// contract window is `inner_pi[33, 82)` and THIS slot is its felts 4..7.
+/// `schedule_block_from_inner_pi` projects that window into the deployed
+/// `dregg-bilateral-aggregation-v3` main trace at cols 4..7, where the EMITTED
+/// bytes (`circuit/descriptors/dregg-bilateral-aggregation-v3.json`, read
+/// directly) carry four `window_gate` transitions holding them equal on every row
+/// AND `pi_binding` first + last to that descriptor's own `PI[4..7]`. The column
+/// is forced, so the pin survives `dropUnforcedPins`: the aggregation enforces
+/// cross-cell agreement on the whole-`call_forest` effects hash ALGEBRAICALLY.
+/// Lean origin: `EffectVmEmitBilateralAgg.lean:224` (`turnIdBindings`).
+///
+/// Reachable, not dead plumbing: `wasm/src/runtime.rs:584` proves an aggregated
+/// bundle; `verifier/src/bilateral_pair.rs:331`, `wasm/src/runtime.rs:556`,
+/// `turn-prover/src/aggregate_bilateral_prover.rs:1082` and
+/// `node/src/blocklace_sync.rs:12162` each reconstruct these felts into the PI
+/// vector they Fiat–Shamir against.
+///
+/// **Disposition: KEEP.** Removing them punches a hole in a contiguous contract
+/// window — a second VK rotation for the aggregation descriptor, and the deletion
+/// of a check that currently holds. `docs/PI-DISPOSITION.md` §6 carries the
+/// retraction and the corrected price (the removable set is the SEVEN at 26..32,
+/// which are contiguous and slide this window intact).
 pub const EFFECTS_HASH_GLOBAL_BASE: usize = TURN_HASH_BASE + TURN_HASH_LEN;
 pub const EFFECTS_HASH_GLOBAL_LEN: usize = 4;
 /// Outer `Turn::nonce`, promoted to PI. Closes the differential-test

@@ -620,9 +620,18 @@ pub fn try_generate_effect_vm_trace_ext(
     // short effect sequences use 64 NoOp padding rows instead of 2; the Merkle
     // tree and FRI layers are correspondingly larger but still fast.
     //
-    // Stage 2 (REVIEW[stage1-acc-row0]): if the last real effect is a Custom,
-    // we need at least one trailing NoOp row so the exclusive-sum boundary
-    // `acc[last] == PI[CUSTOM_EFFECT_COUNT]` holds. Reserve a slot.
+    // Stage 2 (REVIEW[stage1-acc-row0]): if the last real effect is a Custom, we
+    // reserve a trailing NoOp row so that the exclusive-sum accumulator ends at
+    // the true total.
+    //
+    // ⚠ THE BOUNDARY THIS PAD EXISTS FOR DOES NOT EXIST (measured 2026-08-06,
+    // re-checked 2026-08-07). This read "so the exclusive-sum boundary
+    // `acc[last] == PI[CUSTOM_EFFECT_COUNT]` holds". No constraint anywhere
+    // references `aux_off::CUSTOM_COUNT_ACC` — see its declaration in
+    // `columns.rs` — so nothing "holds"; the pad keeps a prover-filled column
+    // self-consistent and buys no soundness. Kept because removing it would
+    // change the emitted trace height (a VK rotation) for no gain; do not read
+    // it as evidence of a check.
     const MIN_TRACE_HEIGHT: usize = 64;
     let n_effects = effects.len();
     let need_extra_pad = matches!(effects.last(), Some(Effect::Custom { .. }));
@@ -1216,14 +1225,23 @@ pub fn try_generate_effect_vm_trace_ext(
         // current_state stays the same for padding.
     }
 
-    // Stage 2 sum-check (REVIEW[stage1-acc-row0] resolution): populate
-    // aux[CUSTOM_COUNT_ACC] as the EXCLUSIVE running sum of `s_custom`
-    // indicators. Convention: acc[i] = count of s_custom rows in [0..i)
-    // (NOT including row i). With this convention:
-    //   - acc[0] == 0 always (pinned by row-0 boundary)
-    //   - Transition: next.acc == this.acc + this.s_custom (Group 7)
-    //   - acc[last] == total count, pinned to PI[CUSTOM_EFFECT_COUNT] by
-    //     the last-row boundary.
+    // Populate aux[CUSTOM_COUNT_ACC] as the EXCLUSIVE running sum of `s_custom`
+    // indicators. Convention: acc[i] = count of s_custom rows in [0..i) (NOT
+    // including row i).
+    //
+    // ⚠ **"Stage 2 sum-check" NAMES NOTHING. THERE IS NO SUM-CHECK.** This block
+    // read: "acc[0] == 0 always (pinned by row-0 boundary) · Transition:
+    // next.acc == this.acc + this.s_custom (Group 7) · acc[last] == total count,
+    // pinned to PI[CUSTOM_EFFECT_COUNT] by the last-row boundary." Measured
+    // 2026-08-06 and re-checked 2026-08-07: **"Group 7" does not exist**, no
+    // boundary or transition constraint references `aux_off::CUSTOM_COUNT_ACC`
+    // (three tree-wide hits: the const, this fill, one comment), the v1 hand-AIR
+    // that was to host it is retired, and the deployed registries carry zero
+    // `pi_binding`s at PI 28. So all three bullets described constraints that
+    // were never emitted. What this loop actually produces is a prover-filled
+    // column that no verifier consults; the three-docblock "Group 7" citation is
+    // the reason `PI[CUSTOM_EFFECT_COUNT]` was believed to be algebraically
+    // bound. `docs/PI-DISPOSITION.md` §6 has the disposition (STOP PUBLISHING).
     //
     // For the last-row boundary to equal the total custom count, the last
     // row must contribute 0 to the running sum — i.e., the last row must

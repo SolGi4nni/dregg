@@ -238,10 +238,63 @@ deployed member — now carry a checked disposition instead of a silence.
 
 ---
 
-## 6. THE DEAD ELEVEN — per-slot decision, and the price of removing them
+## 6. THE DEAD ~~ELEVEN~~ **SEVEN** — per-slot decision, and the price of removing them
 
 *Added 2026-08-06 by the PI-authority lane. Every count below is one I reproduced from
 `circuit/descriptors/*.tsv` by parsing the JSON, not relayed.*
+
+### ⚑ CORRECTION, 2026-08-07 — **four of the eleven are not dead, and the census could not see it**
+
+The execution lane that was briefed to remove all eleven verified them at source first and
+**refuted the disposition for `EFFECTS_HASH_GLOBAL` (offsets 37..40)**. Nothing below changed by
+argument; it changed because the emitted bytes of a *different* descriptor say otherwise.
+
+**What the zero actually meant.** `scripts/pi_disposition_census.py` walks the two rotation
+registries. A `pi_binding` is the only constraint kind that reads a public input — so a zero there
+is a true statement about *those descriptors*. It is not a statement about the layout slot, because
+**a slot can be unpinned in its own descriptor and load-bearing in another one that consumes the
+window.** That is exactly what happens here:
+
+* `circuit/src/bilateral_aggregation_air.rs:230` — `SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE`
+  (33). The **49-felt bilateral-schedule contract** *is* the v1 PI window `[33, 82)`, and
+  `sched::EFFECTS_HASH_GLOBAL_BASE = 4` puts its four felts at **v1 offsets 37..40**.
+* `schedule_block_from_inner_pi` (`:236`) projects that window into the deployed
+  `dregg-bilateral-aggregation-v3` main trace at cols `[0, 49)`.
+* In the **emitted descriptor bytes** (`circuit/descriptors/dregg-bilateral-aggregation-v3.json`,
+  read directly): cols 4..7 carry **four `window_gate` transitions** holding them equal on every
+  row, **and** `pi_binding` first *and* last to that descriptor's own `PI[4..7]`. So the column is
+  *forced*, the pin survives `dropUnforcedPins`, and the aggregation enforces cross-cell agreement
+  on the whole-`call_forest` effects hash **algebraically**.
+* Lean-side origin: `EffectVmEmitBilateralAgg.lean:224-226`, `turnIdBindings`' `cg2PiBind` over
+  `Sched.EFFECTS_HASH_GLOBAL_BASE`. It is Lean-authored, not a Rust-side artefact.
+* Reachable, not dead plumbing: `wasm/src/runtime.rs:584` calls `prove_aggregated_bundle`, and
+  `teasting/tests/multi_cell_cross_fed_binding.rs` drives the cross-federation path end to end.
+  Four verifiers reconstruct the felts into the PI vector they Fiat–Shamir against
+  (`verifier/src/bilateral_pair.rs:331`, `wasm/src/runtime.rs:556`,
+  `turn-prover/src/aggregate_bilateral_prover.rs:1082`, `node/src/blocklace_sync.rs:12162`).
+
+⚠ **The sentence that produced the error is still in the table below, and it is instructive:** *"the
+real object lives at `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE`, on the
+aggregation's own outer PI."* That symbol exists — but the aggregation's outer slot is **sourced
+from this window**. The "real object" and the allegedly-dead one are the same object at two ends of
+a projection, so "the real one lives elsewhere" read as "this one is redundant" when it meant "this
+one is the input."
+
+**And `TURN_HASH` (33..36) is read by the same projection** (cols 0..3, pinned + forced identically).
+§4's account of it — "there is no column to name" — is true *of the effect-VM rotated geometry* and
+false as a statement about the whole system.
+
+**The instrument is repaired, not just the document.** `pi_disposition_census.py` now carries a
+`PROJECTIONS` table checked against the emitted bytes on every run: the per-slot table gained a
+`proj-read` column, and the script **exits 1** if a declared projection's target columns stop being
+forced+pinned — so the annotation cannot rot into a lie, and deleting the consumer goes red instead
+of quietly restoring a "nothing reads it" verdict. Red-proved 2026-08-07 by deleting the four
+`window_gate`s on a scratch copy (green control → `verdict: FINDINGS`, exit 1 → restored, `cmp` OK).
+`PROJECTIONS` records the projections that have been **measured**; a blank `proj-read` means "no
+reader is known to this script", never "no reader exists".
+
+**Net:** the removable set is **seven** — `26`, `27`, `28`, `29..32`. `37..40` stay.
+The corrected footprint is in *The price*, below.
 
 `docs/DESIGN-pi-authority.md` §4(c) names eleven felts as dead rather than merely unpinned. §3 of
 this document declared them `.transcriptOnly` with a reason. This section answers the question that
@@ -256,50 +309,93 @@ offsets 26, 27, 28, 29..32, 37..40  ->  0 pins in BOTH registries.  (also 33..36
 for contrast: 41 ACTOR_NONCE 47/50 · 44 COMMITTED_HEIGHT 56/59 · 45 CAVEAT_COMMIT 56/59
 ```
 
+⚠ Reproduced independently at HEAD on 2026-08-07 — every number in that line still holds. **The
+zeroes were never the error; reading a zero as "nothing reads it" was.** 33..36 and 37..40 carry no
+pin in these registries *and* are consumed by `dregg-bilateral-aggregation-v3` — see the correction
+above.
+
 ### The decision, per slot
 
 | # | slot | what the published felt actually is | is there a reader? | decision |
 |---|---|---|---|---|
 | 26 | `CURRENT_BLOCK_HEIGHT` | the constant `0` — `EffectVmContext::default()`, never overridden by any producer, never touched by `verify_one_cohort_run`'s reconstruction | **none** | **STOP PUBLISHING.** The live temporal binding is PI 44, pinned 56/56 *and* overridden by the verifier from the trusted `cell.state.committed_height()`. The comparison against 26 that would make it "the verifier-supplied comparand" is written nowhere. |
 | 27 | `MAX_CUSTOM_EFFECTS` | the constant `4` (`MAX_CUSTOM_EFFECTS_DEFAULT`), on producer *and* verifier | **none** | **STOP PUBLISHING** — ⚑ and note this is a case where *reconstructing it correctly buys nothing.* The cap is really enforced, but off-circuit and from the verifier's own ledger (`read_cell_max_custom_effects` → the `proofs.len() > cap` refusal), which is strictly stronger than any felt the artifact carries. Publishing the cell's value into a slot no constraint reads and no verifier compares would only make the transcript less misleading — the removal does that better. ⓘ The declaration site `SovereignRegistration::max_custom_effects` also still has no production writer, so every live cell sits at the default; that is a separate, real gap. |
-| 28 | `CUSTOM_EFFECT_COUNT` | the true `custom_count`, but re-derived identically by the verifier | **none** | **STOP PUBLISHING.** Its named enforcement, `enforce_custom_proof_count_committed`, reads no public input — it compares `turn.custom_program_proofs.len()` against a fresh re-derivation from the same turn. The "Stage 1 sum-check (Group 7)" three docblocks credit does not exist: `columns::aux_off::CUSTOM_COUNT_ACC` is filled by the trace generator and referenced by **no constraint** (three tree-wide hits: the const, one comment, the fill). |
+| 28 | `CUSTOM_EFFECT_COUNT` | the true `custom_count`, but re-derived identically by the verifier | no *constraint*; ⓘ **four off-circuit readers**, see below | **STOP PUBLISHING.** Its named enforcement, `enforce_custom_proof_count_committed`, reads no public input — it compares `turn.custom_program_proofs.len()` against a fresh re-derivation from the same turn. The "Stage 1 sum-check (Group 7)" three docblocks credit does not exist: `columns::aux_off::CUSTOM_COUNT_ACC` is filled by the trace generator and referenced by **no constraint** (three tree-wide hits: the const, one comment, the fill). |
 | 29..32 | `APPROVED_HANDOFFS[4]` | the empty-tree zero sentinel | **none** | **STOP PUBLISHING.** `ValidateHandoff` is not an effect. Already RETIRED in prose since the verb-lockstep pass. |
-| 37..40 | `EFFECTS_HASH_GLOBAL[4]` | `[ZERO; 4]` on every deployed leg | **none** | **STOP PUBLISHING from this window.** The real object lives at `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE`, on the aggregation's own outer PI, and moves with it. The only executor that ever compared these four across a bundle was `verify_proof_carrying_turn_bundle` — zero reachable callers, deleted 2026-08-06. |
+| ~~37..40~~ | `EFFECTS_HASH_GLOBAL[4]` | `[ZERO; 4]` on every deployed **rotated** leg; the real value on a full-PI leg | ⚑ **YES** — `sched::EFFECTS_HASH_GLOBAL` (cols 4..7 of `dregg-bilateral-aggregation-v3`): forced by 4 `window_gate`s, pinned first+last to its outer `PI[4..7]` | ⚑ **KEEP — RETRACTED 2026-08-07.** This row read *"**none**  ·  STOP PUBLISHING from this window. The real object lives at `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE`."* The aggregation's outer slot is **sourced from this window** by `schedule_block_from_inner_pi`; they are one object at two ends of a projection. Deleting these four re-bases the 49-felt schedule contract (`sched`/`agg`/`outer_pi_v2`, the Lean `Sched.*`/`OuterPi.*`, a **second** VK rotation for the aggregation descriptor) **and deletes the algebraic cross-cell agreement it currently enforces** — a weakened check, which is the operator's call, not this document's. It is true that `verify_proof_carrying_turn_bundle` is deleted; it was not the only reader. |
+
+ⓘ **Amendment 2026-08-07 — slot 28 has four off-circuit readers this table missed, and the fix is
+an improvement.** `turn/src/executor/atomic.rs:1159` and `:1518`, `circuit/src/effect_vm/trace.rs:1689`
+(`extract_custom_proof_commitments`) and `preflight/src/checks/effect_vm.rs:342` read
+`public_inputs[pi::CUSTOM_EFFECT_COUNT]` as the **length prefix of the custom-proof entry array**
+that starts at `CUSTOM_PROOFS_BASE`. The verdict survives, because the length is *derivable*:
+`(len − CUSTOM_PROOFS_BASE) / CUSTOM_ENTRY_SIZE` is a fact about the vector the verifier holds,
+where the felt is a number the prover wrote. Removing the slot must land **with** that derivation,
+not after it — and the derivation is the stronger of the two, so this is a gain, not a cost.
 
 ⚠ **Not in this set, and for a different reason:** `TURN_HASH` (33..36) is also 0/56 pinned and also
-reconstructs to zero — but unlike the eleven it has real wire readers
+reconstructs to zero — but unlike the seven it has real wire readers
 (`sdk::verify_full_turn_bound`, `dregg_verifier::check_receipt_pi_binding`, `turn::conditional`)
-comparing it against a caller-supplied external anchor. It stays. `docs/DESIGN-pi-authority.md` §3
-argues *pinning* it is not worth doing either.
+comparing it against a caller-supplied external anchor — **and, as of the 2026-08-07 correction, a
+proof-bound one**: it is the first four felts of the bilateral-schedule window, forced and pinned in
+`dregg-bilateral-aggregation-v3` exactly as `EFFECTS_HASH_GLOBAL` is. It stays.
+`docs/DESIGN-pi-authority.md` §3 argues *pinning* it in the effect-VM member is not worth doing
+either.
 
-### The price — ONE VK rotation for all eleven, and it is the same price for any one of them
+### The price — ONE VK rotation for the seven, and it is the same price for any one of them
+
+*(Corrected 2026-08-07. This section priced eleven; four of them are live — see the correction at
+the head of §6 — so every figure below moved. **Nothing here has been executed**: no descriptor was
+re-emitted and no VK rotated by the lane that made the correction.)*
 
 The offsets in `circuit/src/effect_vm/pi.rs` are a pure cascade (`MAX_CUSTOM_EFFECTS =
 CURRENT_BLOCK_HEIGHT + 1`, …). **Deleting any single slot shifts every later slot**, so there is no
 cheaper subset: removing offset 26 alone reshapes `TURN_HASH_BASE` 33→32, `ACTOR_NONCE` 41→40,
-`V1_PI_COUNT` 42→41, and therefore every member's `public_input_count`. Do all eleven at once.
+`V1_PI_COUNT` 42→41, and therefore every member's `public_input_count`. Do all seven at once.
 
-Measured footprint:
+The seven are **contiguous** (`26..32`), which is what makes them separable from the live four at
+all: after the cut, `TURN_HASH_BASE` 33→26, `EFFECTS_HASH_GLOBAL_BASE` 37→30, `ACTOR_NONCE` 41→34,
+and the 49-felt bilateral-schedule window slides `[33, 82)` → `[26, 75)` **still contiguous** — so
+`SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE` cascades symbolically and the aggregation contract is
+unharmed. Had the cut included 37..40, the window would have been punched through.
+
+Measured footprint (7 slots × the members that carry the v1 window):
 
 | | before | after |
 |---|---|---|
-| wide registry (57 members) | 56 carry the v1 window; Σ `piCount` **3,821** | Σ **3,205** (−616 felts) |
-| v3 staged registry (60 members) | 59 carry it; Σ `piCount` **3,012** | Σ **2,363** (−649 felts) |
-| `transferVmDescriptor2R24` | 68 | 57 |
-| `burnVmDescriptor2R24` | 66 | 55 |
+| wide registry (57 members) | 56 carry the v1 window; Σ `piCount` **3,821** | Σ **3,429** (−392 felts) |
+| v3 staged registry (60 members) | 59 carry it; Σ `piCount` **3,012** | Σ **2,599** (−413 felts) |
+| `transferVmDescriptor2R24` | 68 | 61 |
+| `burnVmDescriptor2R24` | 66 | 59 |
+| `V1_PI_COUNT` / `ROT_PI_COUNT` | 42 / 46 | **35 / 39** |
+| `BASE_COUNT` / `v3::V3_BASE_COUNT` | 209 / 213 | **202 / 206** |
 
 Steps, ordered:
 
-1. `circuit/src/effect_vm/pi.rs` — delete the eleven consts, re-cascade. `trace.rs` stops writing
-   them; `trace_rotated.rs:334` `V1_PI_COUNT` 42→31, `ROT_PI_COUNT` 46→35.
-2. Lean: `Dregg2/Circuit/Emit/EffectVmEmit.lean` `namespace pi` (`ACTOR_NONCE`, `PI_COUNT`, the
-   offset docblock) and the `EffectVmEmitRotation*` pin indices. `EffectVmEmitRotationV3.lean` is
-   7,199 lines with **268 downstream modules** — this is the long pole, and it is a rebuild, not a
-   design question.
+1. `circuit/src/effect_vm/pi.rs` — delete the seven consts, re-cascade. `trace.rs` stops writing
+   them; `trace_rotated.rs:334` `V1_PI_COUNT` 42→35, `ROT_PI_COUNT` 46→39. The `pi_v3_offsets_match_lean`
+   drift guard re-anchors (`BASE_COUNT` 209→202, the v3 tail 202/203/204/205, `V3_BASE_COUNT` 213→206),
+   and `RotationLayout.PiV3.V2_BASE_COUNT` (Lean) moves with it — **not named in the original step
+   list, and it is the drift guard's whole point.**
+2. Lean. `Dregg2/Circuit/Emit/EffectVmEmit.lean` `namespace pi` is the only *symbolic* edit
+   (`ACTOR_NONCE` 41→34 + the offset docblock); every pin below it already reads `pi.*` by name and
+   cascades for free. ⚠ **The rest is not two files.** Measured 2026-08-07 at HEAD: **54 `.lean`
+   files** carry a NUMERIC `piCount` literal in the EffectVM v1/rotated/wide family — 40 sites of
+   `piCount := 42` across 29 emit modules, plus ~50 `#guard`/theorem pins at 46 / 47 / 50 / 54 / 58 /
+   62 / 63 / 66 / 74 in `EffectVmEmitRotationV3`, `AvailWide*`/`AvailWire*`, `CarrierComposed`, the
+   three `RotatedKernelRefinement*`, and eleven `Deos/*`. Each moves by −7. ⚑ **`piCount == 46/47/50`
+   also appears on descriptors OUTSIDE this family** (`PastaMsmScalarDerive`, `AutomataflLegCEmit`) —
+   a blind `sed` corrupts them; resolve per file. `EffectVmEmitRotationV3.lean` is 7,204 lines with
+   **268 downstream modules** — the long pole, and a rebuild rather than a design question.
 3. `Dregg2/Circuit/Emit/PiDeclarationDeployed.lean` — `burnDecl`'s index column is written as
    literals, and `turn_hash_is_transcript_only` / `turn_hash_slot_admits_any_value` **hard-code 33,
-   34, 35, 36**. They break by arithmetic, not by rename. Re-state at the new offsets;
-   `burnDecl_admitted := by decide` re-checks them.
+   34, 35, 36**. They break by arithmetic, not by rename. Re-state at **26, 27, 28, 29**;
+   `burnDecl_admitted := by decide` re-checks them. The manifest goes 50 slots → **43** (15 bound
+   unchanged, transcript-only 35 → 28), so `burnM_resolved`, `burnDecl_transcript_only_count` and
+   `burnDecl_partitions` re-type too, and the reasons `rVerifierHeight` / `rCustomCaps` /
+   `rCustomCount` / `rApprovedHandoffs` become unused and go. ⓘ `rEffectsGlobal` **stays** — its slot
+   stays — but its text was corrected on 2026-08-07 (it claimed γ.1 "did not land"; the aggregation
+   is where it landed).
 4. Re-emit, ack-gated: `DREGG_VK_REGEN_ACK="$(git rev-parse HEAD:metatheory/Dregg2)"
    scripts/emit-descriptors.sh`.
 5. Re-pin `WIDE_REGISTRY_STAGED_FP` (`circuit/src/effect_vm_descriptors.rs`), `dregg-epoch`'s
@@ -316,6 +412,15 @@ Steps, ordered:
 read at HEAD).
 
 ⚑ **This is the opposite trade from §4.** §4 prices *adding* a pin onto a carrier nobody anchors,
-and `DESIGN-pi-authority.md` §3 says don't. This removes 616 felts of surface that no constraint
+and `DESIGN-pi-authority.md` §3 says don't. This removes **392** felts of surface that no constraint
 reads, no verifier compares, and four docblocks were describing as enforcement. Nothing is lost
 because nothing was there — that is the whole finding.
+
+⚠ **And the finding that outlived it.** The original §6 said 616 felts and eleven slots, and it was
+right about seven. The four it was wrong about were wrong for a reason worth carrying forward: the
+census answers *"does any constraint in these two registries read this index"*, and that question was
+read as *"does anything read this slot"*. Those are different questions whenever a slot's value is
+projected into another descriptor — and the projection was documented right there in the row that
+declared the slot dead. **Before deleting any published felt, grep the whole tree for the layout
+constant, not just the registries**, and check `pi_disposition_census.py`'s `proj-read` column, which
+now exists because of this.
