@@ -136,6 +136,18 @@
             <p class="platform-loading">Reading the ship instrument panel…</p>
           </section>
 
+          <!--
+            Opening the crate is the one ACT on this page, and it is an
+            authorized one: the crate refuses a crew key the curator did not
+            enrol. This terminal binds no crew identity, so the control renders
+            DISABLED with the reason said plainly — never hidden, and never
+            dressed up with a streak or a countdown, because no such state
+            exists on any wire the node serves.
+          -->
+          <section id="crate-open" class="panel crate-open" aria-label="Salvage crate" aria-live="polite">
+            <p class="platform-loading">Reading whether the salvage crate can be opened…</p>
+          </section>
+
           <section id="platform-terminal" class="platform-terminal" aria-label="Ship operations terminal" aria-live="polite">
             <p class="platform-loading">Reading installed ship instruments…</p>
           </section>

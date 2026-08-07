@@ -14,7 +14,14 @@ import { buildRack, mountGameRack } from "./game-rack.js";
 import { buildRunSummary, mountRunSummary, runOutcome } from "./run-summary.js";
 import { readRackResults, recordRackResult } from "./rack-results.js";
 import { buildTodayBoard, loadSlotState, mountTodayBoard } from "./today-board.js";
-import { buildStationPanel, loadStationState, mountStationPanel } from "./station-panel.js";
+import {
+  buildCrateOpenAction,
+  buildStationPanel,
+  loadStationState,
+  mountCrateOpenAction,
+  mountStationPanel,
+  openSalvageCrate,
+} from "./station-panel.js";
 import { buildRecordsModel, loadRecordsState, mountRecords } from "./records-view.js";
 import { buildGalleyStatus, mountGalleyStatus, probeGalleyStatus } from "./galley-status.js";
 import { mountDreggAdmissionPanel } from "./dregg-admission-panel.js";
@@ -44,6 +51,18 @@ const state = {
   platformEvidence: Object.freeze({}),
   slot: null,
   station: null,
+  /**
+   * The crew identity the crate open is authorized under, or `null`.
+   *
+   * ⚠ IT IS `null` AND THIS PAGE WILL NOT INVENT ONE. Opening the crate is an
+   * authorized act against the curator's authored roster, and this terminal
+   * binds no crew key — so the control renders DISABLED with that reason,
+   * rather than being hidden or fed a key made up here. The day a crew binding
+   * lands, this is what it fills, and nothing else about the action changes.
+   */
+  crew: null,
+  /** The last crate opening this terminal attempted, as a STATE. */
+  crateOpen: null,
   records: null,
   galleyProbe: null,
   galleyView: null,
@@ -274,6 +293,44 @@ function renderToday() {
 function renderStation() {
   const root = byId("station-panel");
   if (root) mountStationPanel(root, buildStationPanel(state.station));
+  renderCrateOpen();
+}
+
+/**
+ * The salvage crate's one control.
+ *
+ * The click sends ONE THING — the crew key — and then RE-READS the panel rather
+ * than patching the gauges from the reply. Both documents are folds of the same
+ * durable open log, so they agree; but the panel a player looks at should be
+ * the one the public route serves, not one this page assembled from a write
+ * reply. That difference is the whole reason the loop was open.
+ */
+function renderCrateOpen() {
+  const root = byId("crate-open");
+  if (!root) return;
+  const action = buildCrateOpenAction({ crew: state.crew, open: state.crateOpen });
+  mountCrateOpenAction(root, action);
+  if (!action.enabled) return;
+
+  const button = root.children?.find?.((node) => node.tagName === "BUTTON")
+    ?? root.querySelector?.("button");
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    const [mission] = state.missions;
+    if (!mission || !state.crew) return;
+    state.crateOpen = Object.freeze({ state: "pending" });
+    renderCrateOpen();
+    state.crateOpen = await openSalvageCrate({
+      authorityId: mission.federationId,
+      opener: state.crew.key,
+      baseUrl: location.href,
+    });
+    // The communal panel is re-read from the public route, so what a player
+    // sees after opening is what every other player sees.
+    state.station = await loadStationState({ authorityId: mission.federationId, baseUrl: location.href });
+    renderStation();
+    renderToday();
+  }, { once: true });
 }
 
 function renderRecords() {

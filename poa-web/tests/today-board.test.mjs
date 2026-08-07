@@ -184,13 +184,18 @@ test("the crate tile reads the station the node actually serves, in BOTH directi
     "the falsifier's own pattern no longer matches a station route — it has stopped falsifying again",
   );
 
+  // ⚑ IT FIRED A SECOND TIME. The crate-open WRITE landed and this went red
+  // naming a route the client had never heard of, which is the guard working —
+  // it is not "fixed" by widening it, it is fixed by teaching the client the
+  // route that shipped and wiring the action. `openRoute` is that.
   assert.deepEqual(
     routes,
-    [CRATE_SURFACE.crewRoute, CRATE_SURFACE.route].sort(),
+    [CRATE_SURFACE.crewRoute, CRATE_SURFACE.openRoute, CRATE_SURFACE.route].sort(),
     "the station routes the node serves are not the ones this client is pinned to",
   );
   assert.equal(CRATE_SURFACE.route, "/api/poa/station/{authority}/panel");
   assert.equal(CRATE_SURFACE.crewRoute, "/api/poa/station/{authority}/crew/{crew}");
+  assert.equal(CRATE_SURFACE.openRoute, "/api/poa/station/{authority}/crate/open");
 });
 
 test("the crate tile reports the served crate without ever implying a day passed", () => {
