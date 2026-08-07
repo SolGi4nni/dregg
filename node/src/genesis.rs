@@ -202,30 +202,100 @@ impl Default for GenesisOptions {
     }
 }
 
-/// Key-derivation context for the deployment-local PLAYER GRANT identity.
+/// The key-derivation context the PLAYER GRANT used to be derived from, kept
+/// for exactly one purpose: to RECOGNISE and REFUSE that shape.
 ///
-/// ⚑ CUSTODY, SAID OUT LOUD. [`auxiliary_genesis_key`] derives from
-/// `(context, deployment_domain, federation_id)` and BOTH of those inputs are
-/// PUBLIC — the domain is a constant and the federation id is printed in the
-/// descriptor every follower pins. So this seed is a pure function of published
-/// data: whoever can read `genesis.json` can recompute `player-grant.key`. That
-/// is already true of `issuer-well.key` and `fee-well.key`, where it costs
-/// nothing (a well cannot author a turn: the issuer well's balance is negative
-/// and `execute` refuses a negative-balance agent outright). It does NOT cost
-/// nothing here, because this cell HOLDS value: the grant is BEARER value for
-/// anyone who reads the descriptor, and the only thing bounding the loss is the
-/// grant amount.
+/// ⚑ FLAG DAY 2026-08-07. Until this date the grant seed was
+/// `auxiliary_genesis_key(this, deployment_domain, federation_id)`, and BOTH of
+/// those inputs are PUBLIC — the domain is a compile-time constant and the
+/// federation id is printed in the descriptor every follower pins. The seed was
+/// therefore a pure function of published data: whoever could read
+/// `genesis.json` could recompute `player-grant.key` and spend the grant. It was
+/// bearer value for the whole world, bounded only by the grant amount.
 ///
-/// It is deliberate anyway, and the reason is that the alternative is worse in
-/// the same direction: a grant to an operator-supplied player key is a second
-/// custody scheme with a seed that has to be transported, and this deployment
-/// has exactly one shared player pool. Fund it for the turns you intend, not for
-/// a treasury. If you want per-player custody, that is a real design change —
-/// mint per-player grants against keys the players bring — not a bigger number here.
-pub const PLAYER_GRANT_KEY_CONTEXT: &str = "dregg-poa-player-grant-key-v1";
+/// That derivation is still correct for `issuer-well.key` and `fee-well.key`,
+/// and they still use it: a well cannot author a turn (the issuer well's balance
+/// is negative and `execute` refuses a negative-balance agent outright), so
+/// recomputing a well key buys nothing, while reproducibility of the well cell
+/// ids from the descriptor is load-bearing. The grant is different in exactly one
+/// way that decides the question: it HOLDS SPENDABLE VALUE. The custody model was
+/// carried over from the wells by an instruction that never priced that
+/// difference.
+///
+/// The grant seed is now DRAWN, not derived — see the generator below and
+/// [`refuse_derivable_player_grant`], which is what makes the old shape refuse to
+/// load rather than be reinterpreted.
+pub const REFUSED_DERIVABLE_PLAYER_GRANT_KEY_CONTEXT: &str = "dregg-poa-player-grant-key-v1";
 
 /// Filename of the PLAYER GRANT seed inside a generated deployment bundle.
+///
+/// ⚑ This file is the SOLE COPY of a spendable identity. It is written 0600 next
+/// to `node-N.key` and it is NOT reconstructible from the descriptor: nothing
+/// published — not `genesis.json`, not the manifest, not the follower package —
+/// determines it. Back it up like a validator seed; losing it strands the grant
+/// permanently, and copying it is handing over the grant.
 pub const PLAYER_GRANT_KEY_FILE: &str = "player-grant.key";
+
+/// The player-grant cell id a PUBLICLY-DERIVABLE grant WOULD carry, computed
+/// from nothing but the descriptor's own public coordinates.
+///
+/// This is the FORBIDDEN shape, and it exists to be compared against — never to
+/// produce a key. `refuse_derivable_player_grant` runs it against a descriptor's
+/// declared `player_grant` and refuses on a match.
+pub fn derivable_player_grant_cell_id(
+    deployment_domain: Option<&str>,
+    federation_id: &[u8; 32],
+) -> String {
+    let secret = auxiliary_genesis_key(
+        REFUSED_DERIVABLE_PLAYER_GRANT_KEY_CONTEXT,
+        deployment_domain,
+        federation_id,
+    );
+    let public_key = ed25519_dalek::SigningKey::from_bytes(&secret)
+        .verifying_key()
+        .to_bytes();
+    derive_cell_id(&public_key, blake3::hash(b"default").as_bytes())
+}
+
+/// THE CUSTODY GATE. Refuse a descriptor whose player-grant cell is the one
+/// anyone can recompute from public data.
+///
+/// FAIL CLOSED, and at LOAD: a pre-flag-day descriptor is not reinterpreted, it
+/// is rejected. The generator runs this over the exact bytes it is about to write
+/// (so it cannot emit what a node will not load), and `complete_boot_recovery`
+/// runs it over the exact bytes a node reads.
+///
+/// Silent (`Ok`) on any descriptor that issues no grant — the legacy devnet
+/// profile and the zero-issuance PoA profile both carry no `player_grant` — and
+/// on a grant cell that is not the derivable one, which is every grant this
+/// generator now mints.
+pub fn refuse_derivable_player_grant(genesis: &serde_json::Value) -> Result<(), String> {
+    let Some(declared) = genesis["player_grant"].as_str() else {
+        return Ok(());
+    };
+    let federation_id_hex = genesis["federation_id"]
+        .as_str()
+        .ok_or_else(|| "descriptor declares a player_grant but no federation_id, so its custody cannot be checked; refusing".to_string())?;
+    let federation_id = hex_decode_32(federation_id_hex).ok_or_else(|| {
+        format!(
+            "descriptor declares a player_grant but its federation_id ({federation_id_hex}) is \
+             not 32 hex bytes, so its custody cannot be checked; refusing"
+        )
+    })?;
+    let deployment_domain = genesis["deployment_domain"].as_str();
+    let derivable = derivable_player_grant_cell_id(deployment_domain, &federation_id);
+    if declared == derivable {
+        return Err(format!(
+            "REFUSING a descriptor whose player-grant cell {declared} is DERIVABLE from its own \
+             public coordinates (deployment_domain {}, federation_id {federation_id_hex}): \
+             anyone who can read genesis.json can recompute {PLAYER_GRANT_KEY_FILE} and spend \
+             the grant. This is the pre-2026-08-07 shape and it does not load — re-run \
+             `dregg-node genesis --player-grant` to draw a fresh grant key and re-genesis.",
+            deployment_domain.unwrap_or("<none>")
+        ));
+    }
+    Ok(())
+}
 
 /// Run the genesis configuration generation.
 pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u64, output: &Path) {
@@ -544,12 +614,23 @@ pub fn run_genesis_with_options(
     // admission anchors the PQ key a turn carries in the AGENT CELL's committed
     // `pq_identity`, so a grant cell without one is a funded cell that refuses
     // every turn it is the agent of (`pq-identity-not-enrolled`).
+    //
+    // ⚑ CUSTODY: THE GRANT SEED IS DRAWN, NOT DERIVED. This is the one auxiliary
+    // identity that holds spendable value, so it is generated exactly like a
+    // validator seed — 32 bytes from the OS CSPRNG, written 0600, and NOT a
+    // function of anything the descriptor publishes. The wells above keep their
+    // deterministic derivation because a well cannot author a turn and because
+    // reproducing their cell ids from the descriptor is load-bearing; the grant
+    // had that same derivation until 2026-08-07, which made it bearer value for
+    // anyone who could read `genesis.json`. See
+    // `REFUSED_DERIVABLE_PLAYER_GRANT_KEY_CONTEXT`.
+    //
+    // The descriptor carries only what a verifier needs and nothing the secret
+    // follows from: the cell id, the ed25519 public key, and the ML-DSA public
+    // key. The seed leaves this function only into `PLAYER_GRANT_KEY_FILE`.
     let player_grant_id = options.player_grant.map(|amount| {
-        let secret = auxiliary_genesis_key(
-            PLAYER_GRANT_KEY_CONTEXT,
-            deployment_domain,
-            &federation_id_bytes,
-        );
+        let mut secret = [0u8; 32];
+        getrandom::fill(&mut secret).expect("getrandom failed");
         let pubkey = ed25519_dalek::SigningKey::from_bytes(&secret)
             .verifying_key()
             .to_bytes();
@@ -649,6 +730,21 @@ pub fn run_genesis_with_options(
     // Write genesis.json.
     let genesis_path = output.join("genesis.json");
     let genesis_json = serde_json::to_string_pretty(&genesis).expect("failed to serialize genesis");
+
+    // THE CUSTODY GATE, over the EXACT BYTES about to be written — the same
+    // function `complete_boot_recovery` runs over the exact bytes a node reads.
+    // The generator refuses to emit a descriptor no node would load, so a revert
+    // of the grant derivation dies here, at the first `dregg-node genesis`, and
+    // not on a deployed chain holding bearer value.
+    {
+        let as_loaded: serde_json::Value =
+            serde_json::from_str(&genesis_json).expect("the descriptor we just serialized parses");
+        if let Err(reason) = refuse_derivable_player_grant(&as_loaded) {
+            eprintln!("error: {reason}");
+            std::process::exit(1);
+        }
+    }
+
     std::fs::write(&genesis_path, &genesis_json).unwrap_or_else(|e| {
         eprintln!("error: failed to write genesis.json: {e}");
         std::process::exit(1);
@@ -686,9 +782,12 @@ pub fn run_genesis_with_options(
                 amount / signal_claim_fee
             );
             println!(
-                "    ⚑ {PLAYER_GRANT_KEY_FILE} derives from the PUBLIC (domain, federation_id): \
-                 anyone who reads this descriptor can recompute it. The grant is bearer value; \
-                 the amount is the loss bound."
+                "    ⚑ {} is the SOLE COPY of the key that spends this grant. It was DRAWN \
+                 from the OS CSPRNG, written 0600, and NOTHING published — not this descriptor, \
+                 not the manifest, not the follower package — determines it. Back it up like a \
+                 validator seed; copying it is handing over the grant, and losing it strands \
+                 the grant permanently (there is no re-derivation).",
+                output.join(PLAYER_GRANT_KEY_FILE).display()
             );
         }
         _ => println!(
@@ -783,6 +882,20 @@ pub fn default_starbridge_genesis_cells() -> Vec<StarbridgeGenesisCell> {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Decode exactly 32 hex bytes, or nothing. Used by the custody gate, which must
+/// be able to read a descriptor's federation id without depending on the node's
+/// boot-time decoders (it runs inside `dregg-node genesis`, before a node exists).
+fn hex_decode_32(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (index, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
 }
 
 fn node_env_content(
@@ -887,6 +1000,326 @@ fn write_key_file(output: &Path, name: &str, key_bytes: &[u8; 32]) {
                 );
                 std::process::exit(1);
             },
+        );
+    }
+}
+
+#[cfg(test)]
+mod custody {
+    //! ⚑ THE PLAYER-GRANT CUSTODY FALSIFIER.
+    //!
+    //! One property, stated so it can go red: **the descriptor and every other
+    //! published artifact do not determine the grant secret.** Until 2026-08-07
+    //! they did — the seed was `auxiliary_genesis_key(context, deployment_domain,
+    //! federation_id)` over two public inputs — so a funded cell was bearer value
+    //! for anyone who could read `genesis.json`.
+    //!
+    //! The two poles, both held here:
+    //!
+    //! * the WELLS still reproduce EXACTLY from public data (their derivation is
+    //!   sound — a well cannot author a turn — and reproducibility is
+    //!   load-bearing), checked by re-deriving them from each descriptor's own
+    //!   `(deployment_domain, federation_id)` and demanding a byte match;
+    //! * the GRANT does not, checked by running the SAME derivation over the SAME
+    //!   public inputs and demanding a MISS.
+    //!
+    //! The miss is what goes red on a revert: re-derive the grant from public
+    //! inputs and `grade_grant_custody` fails on the very next run. That is not
+    //! an argument — `a_re_derived_bundle_is_graded_red` CONSTRUCTS the
+    //! pre-flag-day bundle out of the derivation the wells still use, asserts the
+    //! mutation actually changed the bytes on disk, and feeds it to the same
+    //! grader the real ceremony passes.
+
+    use super::*;
+    use std::path::Path;
+
+    const DOMAIN: &str = "pathofangels.network/federation/v1";
+    const GRANT: u64 = 100_000;
+
+    /// Generate one real deployment bundle, exactly as `scripts/poa-devnet.sh
+    /// genesis` does: deployment-scoped, no demo economy, one funded grant.
+    fn ceremony(output: &Path) {
+        run_genesis_with_options(
+            1,
+            1000,
+            100,
+            output,
+            GenesisOptions {
+                deployment_domain: Some(DOMAIN.to_owned()),
+                seed_demo_economy: false,
+                player_grant: Some(GRANT),
+            },
+        );
+    }
+
+    fn descriptor(bundle: &Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(bundle.join("genesis.json")).expect("descriptor"))
+            .expect("descriptor JSON")
+    }
+
+    fn seed(bundle: &Path, name: &str) -> [u8; 32] {
+        std::fs::read(bundle.join(name))
+            .unwrap_or_else(|e| panic!("{name} must be in the bundle: {e}"))
+            .try_into()
+            .expect("a 32-byte Ed25519 seed")
+    }
+
+    /// GRADE one generated bundle against the custody property, using ONLY what
+    /// the descriptor publishes. `Err` names the failure the way an auditor would.
+    ///
+    /// This is the single grader both poles run through: the real ceremony must
+    /// pass it, and a bundle whose grant was re-derived from public inputs must
+    /// not.
+    fn grade_grant_custody(bundle: &Path) -> Result<(), String> {
+        let genesis = descriptor(bundle);
+        let federation_id =
+            hex_decode_32(genesis["federation_id"].as_str().expect("federation_id"))
+                .expect("32-byte federation id");
+        let domain = genesis["deployment_domain"].as_str();
+
+        // POLE 1 — THE WELLS REPRODUCE. Their derivation is unchanged and it is
+        // load-bearing: a verifier holding nothing but the descriptor recomputes
+        // both well identities and both well cell ids, to the byte.
+        for (context, file, field) in [
+            (
+                "dregg-devnet-issuer-well-key-v1",
+                "issuer-well.key",
+                "issuer_well",
+            ),
+            ("dregg-devnet-fee-well-key-v1", "fee-well.key", "fee_well"),
+        ] {
+            let derived = auxiliary_genesis_key(context, domain, &federation_id);
+            if derived != seed(bundle, file) {
+                return Err(format!(
+                    "{file} is NOT reproducible from the descriptor's public coordinates — the \
+                     wells' derivation is load-bearing and must not have changed"
+                ));
+            }
+            let derived_id = derive_cell_id(
+                &ed25519_dalek::SigningKey::from_bytes(&derived)
+                    .verifying_key()
+                    .to_bytes(),
+                blake3::hash(b"default").as_bytes(),
+            );
+            if genesis[field].as_str() != Some(derived_id.as_str()) {
+                return Err(format!(
+                    "the descriptor's {field} is not the cell the public derivation produces"
+                ));
+            }
+        }
+
+        // POLE 2 — THE GRANT DOES NOT. Same derivation, same public inputs, and
+        // it must MISS: both the seed on disk and the cell id in the descriptor.
+        let would_be = auxiliary_genesis_key(
+            REFUSED_DERIVABLE_PLAYER_GRANT_KEY_CONTEXT,
+            domain,
+            &federation_id,
+        );
+        if would_be == seed(bundle, PLAYER_GRANT_KEY_FILE) {
+            return Err(format!(
+                "{PLAYER_GRANT_KEY_FILE} IS the key `auxiliary_genesis_key` derives from the \
+                 PUBLIC (deployment_domain, federation_id) — anyone who can read genesis.json \
+                 can spend this grant"
+            ));
+        }
+        if genesis["player_grant"].as_str()
+            == Some(derivable_player_grant_cell_id(domain, &federation_id).as_str())
+        {
+            return Err(
+                "the descriptor's player_grant cell is the publicly-derivable one".to_string(),
+            );
+        }
+
+        // And the shipped gate agrees with this hand grading.
+        refuse_derivable_player_grant(&genesis)
+    }
+
+    /// THE PROPERTY: two ceremonies over the SAME deployment domain reproduce the
+    /// wells from public data and never reproduce the grant.
+    #[test]
+    fn two_ceremonies_reproduce_the_wells_and_never_the_player_grant() {
+        let first = tempfile::tempdir().expect("tempdir");
+        let second = tempfile::tempdir().expect("tempdir");
+        ceremony(first.path());
+        ceremony(second.path());
+
+        grade_grant_custody(first.path()).expect("ceremony 1 custody");
+        grade_grant_custody(second.path()).expect("ceremony 2 custody");
+
+        // Same domain, same generator, same amount — and two different secrets.
+        // (The wells differ too, but only because each ceremony mints a fresh
+        // committee and therefore a fresh federation id; that is why the grading
+        // above re-derives from EACH descriptor's OWN coordinates rather than
+        // comparing the two bundles to each other. This assertion is the weaker,
+        // more obvious half: the grant is not a constant either.)
+        assert_ne!(
+            seed(first.path(), PLAYER_GRANT_KEY_FILE),
+            seed(second.path(), PLAYER_GRANT_KEY_FILE),
+            "two ceremonies must not share a grant key"
+        );
+        assert_ne!(
+            descriptor(first.path())["player_grant"],
+            descriptor(second.path())["player_grant"],
+            "two ceremonies must not share a grant cell"
+        );
+
+        // The grant amount, the fee well and the conservation column are NOT what
+        // this change touched, and the bundle still says so.
+        let genesis = descriptor(first.path());
+        let column: i64 = genesis["initial_cells"]
+            .as_array()
+            .expect("initial_cells")
+            .iter()
+            .map(|cell| cell["balance"].as_i64().expect("signed balance"))
+            .sum();
+        assert_eq!(column, 0, "the value column still sums to zero");
+        assert_eq!(
+            genesis["genesis_moves"].as_array().map(Vec::len),
+            Some(1),
+            "still exactly one issuer-move"
+        );
+    }
+
+    /// THE FALSIFIER, RUN. Rebuild the pre-2026-08-07 bundle — grant seed and
+    /// grant cell derived from the public `(domain, federation_id)`, which is
+    /// literally the code this commit removed — and watch the grader reject it.
+    ///
+    /// The mutation is CONSTRUCTED from `auxiliary_genesis_key`, the function the
+    /// wells still call, so it cannot rot into a no-op the way a string-replace
+    /// mutation does; and the assertion below proves the bytes on disk actually
+    /// changed before any verdict is read.
+    #[test]
+    fn a_re_derived_bundle_is_graded_red() {
+        let bundle = tempfile::tempdir().expect("tempdir");
+        ceremony(bundle.path());
+        grade_grant_custody(bundle.path()).expect("the freshly drawn bundle is green");
+
+        let mut genesis = descriptor(bundle.path());
+        let federation_id =
+            hex_decode_32(genesis["federation_id"].as_str().expect("federation_id"))
+                .expect("32-byte federation id");
+
+        // ── the pre-flag-day generator, reconstructed ────────────────────────
+        let re_derived = auxiliary_genesis_key(
+            REFUSED_DERIVABLE_PLAYER_GRANT_KEY_CONTEXT,
+            Some(DOMAIN),
+            &federation_id,
+        );
+        let drawn = seed(bundle.path(), PLAYER_GRANT_KEY_FILE);
+        assert_ne!(
+            drawn, re_derived,
+            "THE MUTATION MUST BE A MUTATION: if these already agree the generator is \
+             already deriving the grant and this test is grading nothing"
+        );
+        std::fs::write(bundle.path().join(PLAYER_GRANT_KEY_FILE), re_derived)
+            .expect("overwrite the grant seed with the derivable one");
+        genesis["player_grant"] =
+            serde_json::Value::String(derivable_player_grant_cell_id(Some(DOMAIN), &federation_id));
+        std::fs::write(
+            bundle.path().join("genesis.json"),
+            serde_json::to_vec_pretty(&genesis).expect("serialize"),
+        )
+        .expect("overwrite the descriptor");
+        assert_eq!(
+            seed(bundle.path(), PLAYER_GRANT_KEY_FILE),
+            re_derived,
+            "the mutation reached the disk"
+        );
+
+        // ── and the verdict ──────────────────────────────────────────────────
+        let refusal = grade_grant_custody(bundle.path())
+            .expect_err("a grant re-derived from public inputs MUST be graded red");
+        eprintln!("\n  RED (custody grader): {refusal}");
+        assert!(
+            refusal.contains(PLAYER_GRANT_KEY_FILE) || refusal.contains("player_grant"),
+            "the refusal must name what is derivable: {refusal}"
+        );
+
+        // The SHIPPED gate — the one `dregg-node genesis` runs before writing and
+        // `complete_boot_recovery` runs before serving — refuses the same bundle.
+        let boot = refuse_derivable_player_grant(&descriptor(bundle.path()))
+            .expect_err("the boot gate must refuse a derivable grant");
+        eprintln!("  RED (shipped gate):    {boot}\n");
+        assert!(
+            boot.contains("DERIVABLE") && boot.contains("re-genesis"),
+            "the boot refusal must say what is wrong and what to do: {boot}"
+        );
+    }
+
+    /// The gate is silent where it must be, and loud where it must be — including
+    /// the worst case, a grant minted with NO deployment domain, whose derivable
+    /// key is a global constant shared by every unscoped deployment.
+    #[test]
+    fn the_custody_gate_refuses_only_the_derivable_shape() {
+        let federation_id = [0x5c; 32];
+        let federation_hex = hex_encode(&federation_id);
+
+        // No grant at all — the legacy devnet and zero-issuance PoA profiles.
+        assert!(
+            refuse_derivable_player_grant(&serde_json::json!({
+                "federation_id": federation_hex,
+                "deployment_domain": DOMAIN,
+            }))
+            .is_ok(),
+            "a descriptor that issues no grant has no grant custody to refuse"
+        );
+
+        // A drawn grant — the shape this generator now mints.
+        let drawn = derive_cell_id(
+            &ed25519_dalek::SigningKey::from_bytes(&[0x9e; 32])
+                .verifying_key()
+                .to_bytes(),
+            blake3::hash(b"default").as_bytes(),
+        );
+        assert!(
+            refuse_derivable_player_grant(&serde_json::json!({
+                "federation_id": federation_hex,
+                "deployment_domain": DOMAIN,
+                "player_grant": drawn,
+            }))
+            .is_ok(),
+            "a grant nobody can recompute loads"
+        );
+
+        // The scoped derivable shape.
+        assert!(
+            refuse_derivable_player_grant(&serde_json::json!({
+                "federation_id": federation_hex,
+                "deployment_domain": DOMAIN,
+                "player_grant": derivable_player_grant_cell_id(Some(DOMAIN), &federation_id),
+            }))
+            .is_err(),
+            "the pre-flag-day descriptor must refuse to load"
+        );
+
+        // The UNSCOPED derivable shape: `auxiliary_genesis_key` with no domain is
+        // `blake3::derive_key(context, b"genesis")` — one constant key for every
+        // deployment that ever mints one, which is strictly worse.
+        assert!(
+            refuse_derivable_player_grant(&serde_json::json!({
+                "federation_id": federation_hex,
+                "player_grant": derivable_player_grant_cell_id(None, &federation_id),
+            }))
+            .is_err(),
+            "a grant on the domainless constant key must refuse to load"
+        );
+
+        // Unreadable coordinates are refused, not skipped: a descriptor whose
+        // custody CANNOT be checked does not get the benefit of the doubt.
+        assert!(
+            refuse_derivable_player_grant(&serde_json::json!({
+                "player_grant": drawn,
+            }))
+            .is_err(),
+            "a grant with no federation id cannot be custody-checked; refuse it"
+        );
+        assert!(
+            refuse_derivable_player_grant(&serde_json::json!({
+                "federation_id": "not-hex",
+                "player_grant": drawn,
+            }))
+            .is_err(),
+            "a grant with a malformed federation id cannot be custody-checked; refuse it"
         );
     }
 }

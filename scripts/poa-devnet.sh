@@ -27,7 +27,19 @@ POA_NODE_HOSTS="${POA_NODE_HOSTS:-}"
 # `latest_height` was pinned to 0 by its descriptor. A default that builds a
 # dead chain is the bug, so the default is now a funded grant.
 # `POA_PLAYER_GRANT=0` opts out explicitly and says what that costs.
+#
+# ⚑ CUSTODY (flag day 2026-08-07). The grant seed is DRAWN at this ceremony, not
+# derived: `bundle/player-grant.key` is 32 CSPRNG bytes written 0600 beside the
+# validator seeds, and nothing published determines it. Until 2026-08-07 it was
+# `auxiliary_genesis_key(context, deployment_domain, federation_id)` over two
+# PUBLIC inputs — a constant domain and the federation id printed in the
+# descriptor every follower pins — so any reader of `genesis.json` could
+# recompute it and spend the grant. The wells keep that derivation (a well cannot
+# author a turn, and reproducing its cell id from the descriptor is
+# load-bearing); the grant, which holds spendable value, does not.
 POA_PLAYER_GRANT="${POA_PLAYER_GRANT:-1000000}"
+# The one secret this ceremony produces that is NOT a validator seed.
+POA_PLAYER_GRANT_KEY_FILE="player-grant.key"
 
 usage() {
   cat <<'EOF'
@@ -62,9 +74,10 @@ Environment:
   POA_PLAYER_GRANT      value issued, by one issuer-move, into the deployment-local
                         player-grant cell (default: 1000000). This is the ONLY value
                         on a PoA chain — with 0 no cell can pay a turn fee and
-                        latest_height can never leave 0. The grant seed derives from
-                        the PUBLIC (domain, federation_id), so it is bearer value for
-                        anyone who reads the descriptor: fund the turns you intend.
+                        latest_height can never leave 0. The grant seed is DRAWN at
+                        genesis and written 0600 to bundle/player-grant.key; nothing
+                        published determines it, so that file is the sole copy of the
+                        key that spends the grant. Back it up, never distribute it.
   POA_HTTP_BASE         first HTTP port (default: 8421)
   POA_GOSSIP_BASE       first gossip port (default: 9421)
   POA_NODE_HOSTS        comma-separated advertised hosts, one per validator
@@ -291,9 +304,42 @@ assertDisjointRoots(process.argv[2], process.argv[3]);
 
   run_manifest_tool create
   assert_validator_pubkeys
+  assert_player_grant_custody
   printf '\nPoA federation ready at %s\n' "$POA_ROOT"
   printf '  federation: %s\n' "$(manifest_field federation_id)"
+  if [ "$POA_PLAYER_GRANT" -gt 0 ]; then
+    printf '  ⚑ grant key: %s\n' "$POA_ROOT/bundle/$POA_PLAYER_GRANT_KEY_FILE"
+    printf '      The SOLE COPY of the key that spends the %s-unit grant. Drawn here,\n' "$POA_PLAYER_GRANT"
+    printf '      not derived: nothing published — not bundle/genesis.json, not\n'
+    printf '      poa-devnet.json, not the follower package — reproduces it. Back it up\n'
+    printf '      like a node.key. Distributing it distributes the grant; losing it\n'
+    printf '      strands the grant permanently.\n'
+  fi
   printf '  next: POA_ROOT=%q scripts/poa-devnet.sh up\n' "$POA_ROOT"
+}
+
+# The grant seed must EXIST when value was issued, be a 32-byte owner-only regular
+# file, and be ABSENT when no value was issued. `dregg-node genesis` establishes
+# that; the ceremony re-checks it because this is the one secret the kit produces
+# that is not a validator seed, and every way it can go wrong is silent.
+#
+# NOT checked here, and checked elsewhere: that the key is non-derivable (the
+# generator refuses to write a derivable descriptor, and a node refuses to load
+# one — `dregg_node::genesis::refuse_derivable_player_grant`), and that it is not
+# a main-federation identity (`assertNoMainKeyReuse` digests every bundle key).
+assert_player_grant_custody() {
+  local path="$POA_ROOT/bundle/$POA_PLAYER_GRANT_KEY_FILE"
+  if [ "$POA_PLAYER_GRANT" -eq 0 ]; then
+    [ ! -e "$path" ] || die "no grant was issued, but $path exists"
+    return 0
+  fi
+  [ -f "$path" ] || die "missing $path; a funded federation must carry its grant seed"
+  [ ! -L "$path" ] || die "$path must be a regular file, not a link"
+  local size mode
+  size="$(wc -c <"$path" | tr -d ' ')"
+  [ "$size" = "32" ] || die "$path must be a raw 32-byte seed (found $size bytes)"
+  mode="$(stat -f '%OLp' "$path" 2>/dev/null || stat -c '%a' "$path")"
+  [ "$mode" = "600" ] || die "$path must be mode 600, not $mode"
 }
 
 cmd_verify() {

@@ -106,16 +106,57 @@ issuance over an empty genesis is refused. Because `policy_sha256` feeds
 `deployment_digest`, a funded deployment has a different identity from an empty one
 and a follower pinned to the old digest refuses it rather than reinterpreting it.
 
-**⚑ Custody.** The grant seed is `auxiliary_genesis_key("dregg-poa-player-grant-key-v1",
-domain, federation_id)` — the same custody model as `issuer-well.key`, and both of
-its inputs are **public**. The domain is a constant and the federation id is printed
-in the descriptor every follower pins, so **anyone who can read `genesis.json` can
-recompute `player-grant.key`.** For the wells that costs nothing (a well cannot
-author a turn: the issuer well's balance is negative and `execute` refuses a
-negative-balance agent). For the grant it means the value is **bearer value for the
-whole world**, bounded only by `G`. Fund the turns you intend, not a treasury. Per-player
-custody — grants against keys the players bring — is a real design change, not a
-bigger number here.
+**⚑ Custody — the grant key is DRAWN, not derived.** `bundle/player-grant.key` is 32
+bytes from the OS CSPRNG, written `0600` beside the validator seeds, exactly like a
+`node-N.key`. **Nothing published determines it**: not `bundle/genesis.json`, not
+`poa-devnet.json`, not the follower package. The descriptor carries only the grant
+*cell id* and the grant cell's ed25519/ML-DSA *public* keys.
+
+That file is therefore the **sole copy of the key that spends the grant**:
+
+- **Back it up** like a validator seed. There is no re-derivation — lose it and the
+  grant is stranded on-chain forever, and the only remedy is a re-genesis.
+- **Never distribute it.** It is not part of the follower package and not part of
+  what an operator receives; copying it is handing over the grant.
+- `scripts/poa-devnet.sh genesis` re-checks it: present when `POA_PLAYER_GRANT > 0`,
+  absent when `0`, a 32-byte regular file, mode `600`.
+
+<details>
+<summary>⚑ Flag day 2026-08-07 — what this replaced, and why the wells did not change</summary>
+
+Until 2026-08-07 the grant seed was
+`auxiliary_genesis_key("dregg-poa-player-grant-key-v1", domain, federation_id)`, and
+**both** of those inputs are public — the domain is a compile-time constant and the
+federation id is printed in the descriptor every follower pins. So the seed was a pure
+function of published data: **anyone who could read `genesis.json` could recompute
+`player-grant.key` and spend the grant.** It was bearer value for the whole world,
+bounded only by `G`.
+
+`issuer-well.key` and `fee-well.key` keep that exact derivation, and it is sound for
+them: a well cannot author a turn (the issuer well's balance is negative and `execute`
+refuses a negative-balance agent outright), so recomputing a well key buys nothing,
+while reproducing the well cell ids from the descriptor alone is load-bearing for
+verification. The grant differs in the one way that decides the question — it holds
+**spendable** value. The custody model was carried over from the wells by an
+instruction that never priced that difference.
+
+**The old shape now refuses to load.** `dregg_node::genesis::refuse_derivable_player_grant`
+recomputes the derivable grant cell from a descriptor's own `deployment_domain` and
+`federation_id` and rejects any descriptor whose `player_grant` matches it —
+run by `dregg-node genesis` over the exact bytes it is about to write, and by
+`complete_boot_recovery` over the exact bytes a node reads, where `Err` means refuse to
+serve. A pre-flag-day funded PoA bundle is not reinterpreted; it is re-genesised.
+Descriptors that issue no grant (the legacy devnet profile, the zero-issuance PoA
+profile, and the live `poa/deployments/epoch-1/` bundle) are untouched.
+
+Held red by `node/src/genesis.rs`'s `custody` tests: the wells must reproduce byte-exact
+from each descriptor's own public coordinates, and the grant must **miss** under the
+same derivation.
+</details>
+
+Per-player custody — grants against keys the players bring — is still a real design
+change rather than a bigger number here; what changed is that the shared pool's key is
+no longer public.
 
 `POA_PLAYER_GRANT=0` opts out explicitly, prints a warning, and produces the chain
 that cannot settle.
@@ -148,9 +189,10 @@ scripts/poa-devnet.sh genesis
 Distribute `poa-devnet.json`, the public `bundle/genesis.json`, the chosen
 `nodes/node-N/` directory, this launcher, and the binary over the private
 overlay, under the same `POA_ROOT` path on each host.  Do **not** copy any
-`bundle/node-N.key`: the rest of `bundle/` is the provisioning archive and
-contains all three validator seeds. Each operator receives exactly one
-`node.key`. On each destination host, print its command with that host's API
+`bundle/node-N.key`, and do **not** copy `bundle/player-grant.key`: the rest of
+`bundle/` is the provisioning archive and contains all three validator seeds
+**and the sole copy of the grant key**. Each operator receives exactly one
+`node.key` and no grant key at all. On each destination host, print its command with that host's API
 bind address only after the public manifest and local operator package verify:
 
 ```sh
@@ -324,6 +366,13 @@ The node-side domain-key tests are narrow:
 
 ```sh
 cargo nextest run -p dregg-node -E 'test(/deployment_domain/)'
+```
+
+The player-grant custody property — the wells reproduce from public data, the grant
+never does — runs two real ceremonies and grades their bundles:
+
+```sh
+cargo nextest run -p dregg-node -E 'test(/custody::/)'
 ```
 
 For a live mesh, `health` additionally requires the manifest federation id at
