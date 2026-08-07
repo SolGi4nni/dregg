@@ -339,11 +339,17 @@ fn check_custom_dispatch() -> Result<(), String> {
         ));
     }
 
-    let custom_count = public_inputs[pi::CUSTOM_EFFECT_COUNT];
-    if custom_count != BabyBear::ONE {
+    // ⚑ DERIVED from the vector's length, not read from `PI[CUSTOM_EFFECT_COUNT]` — that slot was
+    // deleted on 2026-08-07 (no constraint read it). One custom effect means exactly one
+    // `CUSTOM_ENTRY_SIZE` entry past `CUSTOM_PROOFS_BASE`, which this vector either has or has not.
+    let custom_count = pi::custom_entry_count(public_inputs.len());
+    if custom_count != 1 {
         return Err(format!(
-            "expected 1 custom effect in public inputs, got {:?}",
-            custom_count
+            "expected 1 custom effect entry in public inputs, got {custom_count} \
+             (len {}, base {}, entry {})",
+            public_inputs.len(),
+            pi::CUSTOM_PROOFS_BASE,
+            pi::CUSTOM_ENTRY_SIZE
         ));
     }
 

@@ -82,7 +82,7 @@ twin beside it would be two shapes that agree today and disagree later.
 
 The deployed setField member is therefore `withDfaRcPins (gentianDeployedBareRefuse
 (withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))))`: `traceWidth = 1752`
-(the pins add no column; the width moved with the 178 → 184 ninth-lane flag day) and `piCount = 58`
+(the pins add no column; the width moved with the 178 → 184 ninth-lane flag day) and `piCount = 51`
 (46 rotated prefix + **8** value8 lanes + 4 rc — ⚑ the NINTH `fields[slot]` lane is published too,
 so the setField PI count moved 57 → 58 and every setField VK rotates). The
 per-effect setField soundness rungs peel it as `satisfied2_of_v3RefusedMember` plus
@@ -105,7 +105,7 @@ def deployedSetFieldMembers : List (String × EffectVmDescriptor2) :=
     == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor + 45
 -- PI LAYOUT: 46 rotated prefix + 8 value8 completion pins (46..53) + 4 rc pins (54..57) = 58.
 #guard deployedSetFieldMembers.all fun (k, d) =>
-  d.piCount == 58 && !d.name.isEmpty && !d.constraints.isEmpty
+  d.piCount == 51 && !d.name.isEmpty && !d.constraints.isEmpty
     && k.startsWith "setFieldVmDescriptor2-"
 
 end Value8Witnesses

@@ -74,8 +74,8 @@ set_option autoImplicit false
 escrow slot is reused). Rust `discharge_weld::DISCHARGE_SEL_COL`. -/
 def DISCHARGE_SEL_COL : Nat := prmCol 2
 
-/-- The selector PI slot (the appended 47th, `pi_base + 4 = 46`). Rust `DISCHARGE_SEL_PI`. -/
-def DISCHARGE_SEL_PI : Nat := 46
+/-- The selector PI slot (the appended 40th, `pi_base + 4 = 39`). Rust `DISCHARGE_SEL_PI`. -/
+def DISCHARGE_SEL_PI : Nat := 39
 
 /-- The carrier-bound `period` scalar column (`prmCol 5`). Rust `PERIOD_COL`. -/
 def PERIOD_COL : Nat := prmCol 5
@@ -163,7 +163,7 @@ def DISCHARGE_WIDTH : Nat := dueBitCol (DUE_BITS - 1) + 1
 /-- **`dischargeSatVmDescriptor2R24`** — the welded discharge-obligation satisfaction descriptor
 over the R=24 rotated cohort. `graduateV1 (rotateV3 settle-base)` (the `cur`/`tot` freezes dropped)
 PLUS the discharge satisfaction gates PLUS the selector PI pin; the trace WIDENED to carry the
-range-check aux block (the tables re-declared at the widened arity). `piCount = 47`. STAGED: the
+range-check aux block (the tables re-declared at the widened arity). `piCount = 40`. STAGED: the
 registry row + FP pin ride the big-bang regen. -/
 def dischargeSatVmDescriptor2R24 (cur tot due : Nat) : EffectVmDescriptor2 :=
   let base := graduateV1 (rotateV3
@@ -487,7 +487,7 @@ private def honestLoc (clock diff afterCur afterTot : Int) : Nat → Int :=
 #guard (dischargeSatGates 0 1 2).all
   (fun g => gateVal g (mkLoc [(beforeFieldCol 0, 7), (afterFieldCol 0, 9), (CLOCK_COL, 3)]) == 0)
 -- The descriptor publishes 47 PIs (the rotated 46 + the appended selector slot).
-#guard (dischargeSatVmDescriptor2R24 0 1 2).piCount == 47
+#guard (dischargeSatVmDescriptor2R24 0 1 2).piCount == 40
 -- The gate count: 3 relation gates + two 28-bit booleanity blocks + two assemblies.
 #guard (dischargeSatGates 0 1 2).length == 3 + 2 * DUE_BITS + 2
 -- The width covers exactly through the last due-bit column (the aux block derivation).

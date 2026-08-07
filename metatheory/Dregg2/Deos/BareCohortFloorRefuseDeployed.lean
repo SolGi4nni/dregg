@@ -571,15 +571,15 @@ weld declares.  Those hold at any geometry and still go red if the weld's shape 
 -- The three-block weld adds 3 × 13 = 39 gates (each block: 8 is-zero + 3 fold-into + 1 refuse = 13).
 #guard (deployedRefuseGates GRAD_ROT_WIDTH).length == 39
 private def toyBare : EffectVmDescriptor2 :=
-  { name := "toy", traceWidth := GRAD_ROT_WIDTH, piCount := 46, tables := [], constraints := [],
+  { name := "toy", traceWidth := GRAD_ROT_WIDTH, piCount := 39, tables := [], constraints := [],
     hashSites := [], ranges := [] }
 -- Standard member: every aux column the weld writes is inside the width the weld declares.
 #guard (deployedAuxCols toyBare.traceWidth).all
   (fun c => decide (c < (gentianDeployedBareRefuse toyBare).traceWidth))
 #guard (gentianDeployedBareRefuse toyBare).constraints.length == 39
-#guard (gentianDeployedBareRefuse toyBare).piCount == 46
+#guard (gentianDeployedBareRefuse toyBare).piCount == 39
 private def toyDistinct : EffectVmDescriptor2 :=
-  { name := "toy-distinct", traceWidth := GRAD_ROT_WIDTH - 28, piCount := 46, tables := [],
+  { name := "toy-distinct", traceWidth := GRAD_ROT_WIDTH - 28, piCount := 39, tables := [],
     constraints := [], hashSites := [], ranges := [] }
 -- DISTINCT V1Face geometry (auxBase = `GRAD_ROT_WIDTH − 4 chip sites·7`): `setFieldDyn` / `custom`
 -- base their refuse at THEIR OWN width and widen over it — not at the standard graduated width,

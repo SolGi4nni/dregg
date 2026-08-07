@@ -891,15 +891,41 @@ pub fn note_spend_nullifier_felt(nullifier: &[u8; 32]) -> Option<BabyBear> {
 }
 
 /// ⚠ **NAMED RESIDUAL — the nullifier leg here is still COMPRESSED.** `apply_bridge_mint`'s
-/// verifier now DECODES the nullifier ([`note_spend_nullifier_felt`]), so the felt this projector
-/// puts into the mint identity is NOT the felt the claim tuple pins. That divergence predates the
-/// decode and is not repaired by it: the ROOT leg has the same shape (the AIR's `pi[1]` is a
-/// one-felt in-AIR Merkle chain output while `AttestedRoot::note_tree_root` is an 8-lane digest),
-/// so the recursion fold's mint-hash `connect` cannot succeed on a real bridge turn either way,
-/// and moving one leg alone would change nothing. It is NOT a replay hole after the decode: a
-/// non-canonical nullifier is refused at admission, so no aliased byte string reaches this
-/// projector on any turn that can be applied. Repairing the mint identity end-to-end is the
-/// mint-identity/fold lane's work, and it is a descriptor re-emit + VK rotation.
+/// verifier DECODES the nullifier ([`note_spend_nullifier_felt`]), so the felt this projector
+/// puts into the mint identity is NOT the felt the claim tuple pins. It is NOT a replay hole
+/// after the decode: a non-canonical nullifier is refused at admission, so no aliased byte
+/// string reaches this projector on any turn that can be applied.
+///
+/// ⚑ **CORRECTED 2026-08-07 — this is NOT an encoding wound, and fixing the encoding fixes
+/// nothing.** This block used to read "the ROOT leg has the same shape … so the `connect` cannot
+/// succeed either way, and moving one leg alone would change nothing", which reads as *moving
+/// BOTH legs would*. It would not. Read at source:
+///
+///  * **The AIR's Merkle node function is no deployed tree's.** C6 hashes
+///    `hash_fact(current, [sib0, sib1, sib2, position])`. The note tree that actually serves
+///    membership proofs — `Poseidon2MerkleTree`, via `persist::Poseidon2NoteTree::prove_membership`
+///    — hashes `hash_4_to_1([c0, c1, c2, c3])`, position-ORDERED, with no position felt. Different
+///    function, different arity; `commit/src/poseidon2_tree.rs:988` and [`dsl_merkle_root`] both
+///    say so. **No membership path from the real note tree satisfies this AIR at any encoding**,
+///    so `pi[1]` has no honest producer to encode FROM.
+///  * **The attested root is a third object again** — `AttestedRoot::note_tree_root` on the live
+///    path is `CanonicalFaithfulRoot::to_bytes()`, the 8-lane `Faithful8` root of
+///    `Poseidon2NoteTree16` (`node/src/blocklace_sync.rs:7355`).
+///  * **Nothing produces a bridge `spending_proof`** anywhere in the tree — every construction is
+///    `vec![]` / `vec![1,2,3,4]` / `vec![0xDE,0xAD,0xBE,0xEF]`. The accept path has never been
+///    exercised by a genuine note-spend STARK.
+///  * **The fold arm has no production witness**: `CarrierWitness::Bridge` is test-only and
+///    `BridgeWitnessBundle::from_retained_bridge` has zero callers.
+///
+/// The identity wanted here is a HASH-NODE identity, so the bar is collision resistance and eight
+/// BabyBear lanes (≈2^123.63) is the right width — which `Faithful8` already carries on the wire.
+/// The scalar tree is ~31 bits per node (≈2^15.5 birthday), so re-pointing C6 at `hash_4_to_1`
+/// would make the path reachable but land the source-root binding far below the repo's ~124-bit
+/// bar. The on-bar target is the faithful 8-lane note-spend surface
+/// (`faithful-note-spend-exact-v3`, built and staged, not in the deployed registry), after which
+/// the codec is the lane-wise decode-or-refuse of `Faithful8::to_bytes32` — the direct
+/// generalization of [`note_spend_nullifier_felt`]. That is a campaign, not a codec patch; the
+/// full six-blocker account is in `circuit-prove/src/note_spend_leaf_adapter.rs`.
 pub fn bridge_mint_hash_felt(
     nullifier: &[u8; 32],
     note_tree_root: &[u8; 32],

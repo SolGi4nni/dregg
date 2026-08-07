@@ -356,8 +356,12 @@ pub mod aux_off {
     /// FILLED by the trace generator, and that is all: **no constraint anywhere
     /// references it** (three tree-wide hits — this const, one comment, the fill),
     /// the v1 hand-AIR `eval_constraints` that was to host the sum-check is
-    /// retired, and the deployed registries carry zero `pi_binding`s at PI 28. A
-    /// filled column no constraint reads is prover-chosen padding.
+    /// retired, and the registries carried zero `pi_binding`s at that index. The PI
+    /// slot it was said to be pinned to no longer exists — deleted 2026-08-07,
+    /// `docs/PI-DISPOSITION.md` §6. THIS COLUMN IS THE REMAINING HALF OF THE SAME
+    /// DEBT: a filled column no constraint reads is prover-chosen padding, and
+    /// removing it moves the trace GEOMETRY (a second, separable flag day), which is
+    /// why the seven-slot PI compaction did not take it.
     pub const CUSTOM_COUNT_ACC: usize = 11;
     /// Stage 2 (sealing honesty): bit-decomposition of `old_reserved`.
     /// `old_reserved == Σ_{i=0..7} bi * 2^i + mode * 256`, with each bi

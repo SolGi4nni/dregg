@@ -407,7 +407,7 @@ def transferDeployedV2 : EffectVmDescriptor2 := embedV1 transferVmDescriptor
 
 #guard transferDeployedV2.name == "dregg-effectvm-transfer-v1"
 #guard transferDeployedV2.traceWidth == 188
-#guard transferDeployedV2.piCount == 42
+#guard transferDeployedV2.piCount == 35
 #guard transferDeployedV2.constraints.length == 36
 #guard transferDeployedV2.hashSites.length == 4
 #guard transferDeployedV2.ranges.length == 2
@@ -465,7 +465,7 @@ not be recovered from it by any lowering, because the spec never held it:
    structural gap and it is deliberate in the framework's design.
 5. **The 2 range teeth** `⟨saCol BALANCE_LO, 30⟩`, `⟨saCol BALANCE_HI, 30⟩` (`:236`) — the
    field-soundness / availability layer. `EffectSpec2` has no range vocabulary at all.
-6. **The 7 boundary PI pins at the deployed indices** (`:150,157`) and `piCount = 42`. The pass
+6. **The 7 boundary PI pins at the deployed indices** (`:150,157`) and `piCount = 35`. The pass
    emits 7 PIs realizing `PIBindsDigests`; the deployed surface is a different, larger, ordered
    contract the spec does not name.
 7. **The selector gate** `selectorGates sel.TRANSFER` (`EffectVmEmit.lean:594`) — the multi-effect

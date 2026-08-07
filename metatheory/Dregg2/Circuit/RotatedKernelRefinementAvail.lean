@@ -96,7 +96,7 @@ theorem transferAvail_graduableWide :
 
 -- The rotated hardened descriptor publishes the same 4 appended commit pins as every cohort
 -- member (42 + 4), and stays wide-graduable through the rotation + freeze.
-#guard (rotateV3FrozenAuthority EffectVmEmitTransfer.transferVmDescriptorAvail).piCount == 46
+#guard (rotateV3FrozenAuthority EffectVmEmitTransfer.transferVmDescriptorAvail).piCount == 39
 #guard graduableWide (rotateV3FrozenAuthority EffectVmEmitTransfer.transferVmDescriptorAvail)
 
 /-! ## §1 — the wide table side + the per-row decode chain. -/

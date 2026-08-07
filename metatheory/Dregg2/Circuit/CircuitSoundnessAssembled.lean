@@ -367,7 +367,7 @@ def actionTagToPos : EffectIdx → Nat
                --                   bare `noteCreateV3` [pos 4] stays for the live prover route.)
   | 38 => 59   -- makeSovereign   → makeSovereignDeployedVmDescriptor2R24 (the v12 big-bang DEPLOYED
                --                   sovereign, `v3RegistryHeap` tail pos 59: rc + the 4 KEY_COMMIT
-               --                   teeth PI pins at 58..61 (`SOVEREIGN_KEY_COMMIT_PI_LO`) + the
+               --                   teeth PI pins at 51..54 (`SOVEREIGN_KEY_COMMIT_PI_LO`) + the
                --                   in-AIR KEY_COMMIT chip-compress gate welding the published teeth
                --                   to the committed `B_PUBKEY8` octet. The cohort member [pos 21]
                --                   stays for the bare slot.)
@@ -448,7 +448,7 @@ theorem Rfix_transfer :
 /-- **`Rfix_makeSovereign` — the v12 big-bang: makeSovereign (tag 38) ranges over its OWN DEPLOYED
 key-commit descriptor.** `actionTagToPos 38 = 59` and `v3RegistryHeap`'s position-59 entry is
 `CarrierComposed.makeSovereignV3Deployed` — the record-pin base + rc + the 4 KEY_COMMIT teeth PI
-pins (58..61, `SOVEREIGN_KEY_COMMIT_PI_LO`) + the in-AIR KEY_COMMIT chip-compress gate. So the
+pins (51..54, `SOVEREIGN_KEY_COMMIT_PI_LO`) + the in-AIR KEY_COMMIT chip-compress gate. So the
 apex's `StarkSound hash Rfix` quantifies over the descriptor a light client actually verifies —
 whose `Satisfied2` FORCES each published teeth PI == `canonical_32_to_felts_4` of the COMMITTED
 BEFORE `B_PUBKEY8` octet (`CarrierComposed.makeSovereignV3Deployed_publishes_key_commit`): the

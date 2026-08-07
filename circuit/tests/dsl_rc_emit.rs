@@ -379,8 +379,16 @@ fn dsl_rc_pins_prove_with_and_without_a_dfa_caveat_and_the_tooth_bites() {
     );
 
     // The slot contract for the fold lane: rc = the LAST 4 member PIs, i.e.
-    // `public_input_count - 4 ..` on the non-wide member (46..49 for transfer).
-    assert_eq!(ROT_PI_COUNT, 46);
+    // `public_input_count - 4 ..` on the non-wide member (39..42 for transfer).
+    //
+    // The literal STAYS a literal on purpose — it is the tripwire, and a tripwire re-expressed as
+    // `ROT_PI_COUNT == ROT_PI_COUNT` is true at every geometry including a wrong one (the reasoning
+    // is written out at the CAP-OPEN GEOMETRY PINS block in `trace_rotated.rs`). Re-typing it per
+    // epoch is the cost: 46 until the 2026-08-07 seven-slot PI compaction took `V1_PI_COUNT` 42 → 35
+    // (`docs/PI-DISPOSITION.md` §6), 39 after. The line BELOW is the one that reaches a committed
+    // artifact — it relates the emitted `public_input_count` to the Rust constant, so it is the leg
+    // that would catch a descriptor set that did not get re-emitted with the layout.
+    assert_eq!(ROT_PI_COUNT, 39);
     assert_eq!(desc.public_input_count - DFA_RC_LEN, ROT_PI_COUNT);
 }
 

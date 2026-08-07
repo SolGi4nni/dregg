@@ -336,10 +336,17 @@ pub enum TurnError {
     },
 
     /// The number of `Effect::Custom` sub-proofs on the wire
-    /// (`turn.custom_program_proofs`) does not equal the in-circuit committed
-    /// count `PI[CUSTOM_EFFECT_COUNT]` (FINDING 1). The off-circuit dispatch
+    /// (`turn.custom_program_proofs`) does not equal the Custom-effect count of the
+    /// transition the verified proof commits to (FINDING 1). The off-circuit dispatch
     /// count must equal the in-circuit Custom-row count the proof binds, else the
     /// wire vec could carry more (or fewer) sub-proofs than the turn commits to.
+    ///
+    /// ⚠ `committed` is NOT a published felt. It never was: the docblock and the message
+    /// below both said `PI[CUSTOM_EFFECT_COUNT]` until 2026-08-07, and that slot was read
+    /// by no constraint and compared by no verifier — it has since been deleted
+    /// (`docs/PI-DISPOSITION.md` §6). What produces `committed` is
+    /// `TurnExecutor::enforce_custom_proof_count_committed`, re-deriving the effect
+    /// sequence from the `turn` AFTER the main proof verified it.
     CustomProofCountMismatch { wire: usize, committed: usize },
 
     /// **THE CUSTOM-PROOF STATE-BINDING REFUSAL** — a custom sub-proof verified, but it
@@ -1100,7 +1107,8 @@ impl core::fmt::Display for TurnError {
                 write!(
                     f,
                     "custom-effect sub-proof count mismatch: {wire} on the wire but the proof \
-                     commits to {committed} (PI[CUSTOM_EFFECT_COUNT]); rejected fail-closed"
+                     commits to {committed} (the re-derived Custom-row count of the verified \
+                     transition); rejected fail-closed"
                 )
             }
             TurnError::CustomProofStateBindingMismatch {

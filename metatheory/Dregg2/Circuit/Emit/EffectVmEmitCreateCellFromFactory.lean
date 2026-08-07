@@ -94,7 +94,7 @@ gates + the 4 ordered GROUP-4 hash sites binding the zero economic block into `s
 def factoryVmDescriptor : EffectVmDescriptor :=
   { name := factoryVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := factoryRowGates
   , hashSites := factoryHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
@@ -449,7 +449,7 @@ name and the selector gate differ. The born-empty CHILD face stays `factoryVmDes
 def factoryActorVmDescriptor : EffectVmDescriptor :=
   { name := factoryActorVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := revokeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates SEL_FACTORY_RT
   , hashSites := transferHashSites

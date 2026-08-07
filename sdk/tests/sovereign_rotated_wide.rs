@@ -145,7 +145,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     // DRIFT CANARY, re-measured 2026-07-25 off the staged wide registry at HEAD. Re-derive, never
     // re-type, if this reds.
     assert_eq!(
-        desc.public_input_count, 68,
+        desc.public_input_count, 61,
         "transfer wide descriptor carries 68 PIs (staged registry at HEAD)"
     );
     // Derived, never hand-pinned: the 16 wide commit PIs are the descriptor's TAIL.

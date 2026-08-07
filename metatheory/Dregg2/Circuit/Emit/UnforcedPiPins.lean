@@ -733,7 +733,8 @@ def registryDeclarationOnlyCount (R : List (String × EffectVmDescriptor2)) : Na
   (R.map (fun p => (declarationOnlyPins p.2).length)).foldl (· + ·) 0
 
 -- MEASURED on `v3Registry` after the subtraction. `forcedCols` over-counts by exactly TWO, both on
--- the custom member: PI 46 → the proof-commitment limb 0, PI 54 → the program-VK limb 0, whose only
+-- the custom member: the exposure base (→ the proof-commitment limb 0) and base+8 (→ the program-VK
+-- limb 0) — 46 and 54 before the 2026-08-07 seven-slot PI compaction, 39 and 47 after — whose only
 -- non-pin reader is the `proofBind`. Downstream, `circuit/tests/unforced_pi_pin_census.rs`'s
 -- `proof_bind_is_the_only_reader_of_the_custom_exposure_columns` measures the SAME two on the
 -- emitted bytes of all three registries; this is that statement one stage upstream, where it can
@@ -749,7 +750,7 @@ def registryDeclarationOnlyCount (R : List (String × EffectVmDescriptor2)) : Na
   == ["customVmDescriptor2R24"]
 #guard ((v3Registry.lookup "customVmDescriptor2R24").map
   (fun M => (declarationOnlyPins M).map (fun p => p.2.2)))
-  == some [46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61]
+  == some [39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54]
 
 /-- The same surface with ONLY `.proofBind` dropped — `.umemOp` kept. -/
 def refs2NoProofBind : VmConstraint2 → List Nat

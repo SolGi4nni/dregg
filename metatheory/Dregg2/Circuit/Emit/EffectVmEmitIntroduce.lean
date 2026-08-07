@@ -98,7 +98,7 @@ pins, the 4 ordered GROUP-4 hash sites and the 2 balance-limb range checks. -/
 def introduceVmDescriptor : EffectVmDescriptor :=
   { name := introduceVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := introduceRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 35
   , hashSites := introduceHashSites

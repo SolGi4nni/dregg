@@ -128,7 +128,7 @@ pub const BALANCE_LIMB_PI_MIN_LEN: usize = pi::NET_DELTA_SIGN + 1;
 /// This guard used to demand `pi::BASE_COUNT` (201). The body reads exactly six
 /// offsets — `INIT_BAL_LO(20) .. NET_DELTA_SIGN(25)` — all inside the v1 PI
 /// PREFIX, which the deployed rotated leg publishes in full
-/// (`trace_rotated::V1_PI_COUNT` = 42, and the Lean emit pins the same offsets:
+/// (`trace_rotated::V1_PI_COUNT` = 35, and the Lean emit pins the same offsets:
 /// `Dregg2/Circuit/Emit/EffectVmEmit.lean` `INIT_BAL_LO := 20`). So the 201-felt
 /// demand did not make the check strict — it made it **unreachable on the only
 /// leg that ships**: every live `"effect-vm-rotated"` PI vector failed the

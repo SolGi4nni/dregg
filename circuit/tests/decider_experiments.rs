@@ -407,7 +407,7 @@ fn d1_d2_chip_census_and_logup_aux_provenance() {
         committed_wide_transfer_width(),
         "deployed wide transfer width"
     );
-    assert_eq!(desc.public_input_count, 68);
+    assert_eq!(desc.public_input_count, 61);
 
     // Grow producer rows to trace_width and run the DEPLOYED lane weld (pub API), so every
     // chip tuple (including wide-chain state lanes) evaluates to its genuine value.

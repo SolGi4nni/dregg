@@ -110,7 +110,7 @@ decode the WRONG columns), so its welded row is exactly the proven
 `EffectVmEmitUMemWeldWide.weldedTransferAvailWide`. -/
 def weldRefusedFirst (e : String × EffectVmDescriptor2) : String × EffectVmDescriptor2 :=
   -- DELIVER #1 (welded twin): rebuild the custom wide host WITH the app-root field octet
-  -- (`withAfterOctetPins … 4`, PIs 62..69 ahead of the 16 wide anchors; piCount 78 → 86) so the
+  -- (`withAfterOctetPins … 4`, PIs 55..62 ahead of the 16 wide anchors; piCount 71 → 79) so the
   -- umem-welded custom member matches the bare wide member the fold binds. `host == e.2` for every
   -- other key, so the refuse/umem composition below is unchanged for them.
   let host :=

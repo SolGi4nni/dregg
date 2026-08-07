@@ -70,26 +70,9 @@ pub const AIR_DESCRIPTOR: crate::air_descriptor::AirDescriptor =
                 offset: pi::NET_DELTA_SIGN,
                 length_in_felts: 1,
             },
-            crate::air_descriptor::PiSlot {
-                name: "current_block_height",
-                offset: pi::CURRENT_BLOCK_HEIGHT,
-                length_in_felts: 1,
-            },
-            crate::air_descriptor::PiSlot {
-                name: "max_custom_effects",
-                offset: pi::MAX_CUSTOM_EFFECTS,
-                length_in_felts: 1,
-            },
-            crate::air_descriptor::PiSlot {
-                name: "custom_effect_count",
-                offset: pi::CUSTOM_EFFECT_COUNT,
-                length_in_felts: 1,
-            },
-            crate::air_descriptor::PiSlot {
-                name: "approved_handoffs",
-                offset: pi::APPROVED_HANDOFFS_BASE,
-                length_in_felts: pi::APPROVED_HANDOFFS_LEN,
-            },
+            // `current_block_height` / `max_custom_effects` / `custom_effect_count` /
+            // `approved_handoffs` stood here until the 2026-08-07 seven-slot PI compaction
+            // (`docs/PI-DISPOSITION.md` §6). Nothing bound them and nothing compared them.
             crate::air_descriptor::PiSlot {
                 name: "turn_hash",
                 offset: pi::TURN_HASH_BASE,

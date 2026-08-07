@@ -14,7 +14,7 @@ connected to the published `key_commit` teeth — is now DEPLOYED:
     `canonical_32_to_felts_8(cell.public_key())`.
   * THE BIG-BANG REGEN pinned AND welded it: the committed wide registry row is
     `CarrierComposed.makeSovereignV3DeployedWide` — the 4 KEY_COMMIT teeth columns (113..=116)
-    row-0-pinned at claim PIs 58..61 (`SOVEREIGN_KEY_COMMIT_PI_LO`) PLUS the in-AIR KEY_COMMIT
+    row-0-pinned at claim PIs 51..54 (`SOVEREIGN_KEY_COMMIT_PI_LO`) PLUS the in-AIR KEY_COMMIT
     chip-compress gate (the THIRD EDGE: teeth == `canonical_32_to_felts_4` of the committed octet
     — `makeSovereignV3DeployedWide_publishes_key_commit`, `#assert_axioms`-clean). The apex rides
     the narrow member at `Rfix 38` (`Rfix_makeSovereign`).

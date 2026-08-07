@@ -270,8 +270,9 @@ pub struct SovereignRegistration {
     /// sum-check (Group 7) makes `PI[CUSTOM_EFFECT_COUNT]` algebraically binding
     /// to the trace." Neither half is true: **Group 7 does not exist** (the v1
     /// hand-AIR that was to host it is retired, `columns::aux_off::CUSTOM_COUNT_ACC`
-    /// is filled but read by no constraint, and the deployed registries carry zero
-    /// `pi_binding`s at PI 28), and the verifier's refusal
+    /// is filled but read by no constraint, and the registries carried zero
+    /// `pi_binding`s at that index — so the slot was DELETED on 2026-08-07,
+    /// `docs/PI-DISPOSITION.md` §6), and the verifier's refusal
     /// (`TurnExecutor::enforce_custom_effect_proofs`) compares the WIRE vec length
     /// against THIS ledger field — it reads no public input. That is a real check,
     /// and a stronger one than a PI comparison would be, because the bound comes

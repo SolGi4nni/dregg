@@ -155,7 +155,7 @@ def cellSealFrozenPubkey : EffectVmDescriptor2 := withCellSealPubkeyFreeze cellS
 #guard cellSealFrozenPubkey.piCount == cellSealV3.piCount
 #guard cellSealFrozenPubkey.traceWidth == cellSealV3.traceWidth
 #guard cellSealFrozenPubkey.constraints.length == cellSealV3.constraints.length + 8
-#guard cellSealFrozenPubkey.piCount == 47
+#guard cellSealFrozenPubkey.piCount == 40
 
 /-- **THE TOOTH — the owner-forge is UNSAT under the frozen variant.** A trace with a transition row
 `i` whose AFTER owner-octet limb `k` DIFFERS from its BEFORE limb (both canonical) — i.e. exactly the

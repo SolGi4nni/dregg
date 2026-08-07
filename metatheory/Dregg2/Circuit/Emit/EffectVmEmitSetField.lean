@@ -151,7 +151,7 @@ written `fields[slot]` among the 13 absorbed columns) into the published `state_
 def setFieldVmDescriptor (slot : Fin 8) : EffectVmDescriptor :=
   { name := setFieldVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := setFieldRowGates slot
   , hashSites := transferHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }

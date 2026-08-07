@@ -141,15 +141,18 @@ pub fn try_generate_effect_vm_trace(
 /// the live `Turn` and call_forest.
 #[derive(Clone, Copy, Debug)]
 pub struct EffectVmContext {
-    /// Federation block height at turn-commit time. Used by timeout-bearing
-    /// effects in later stages.
-    pub current_block_height: u64,
-    /// Per-cell maximum custom effects (from cell program manifest).
+    /// Per-cell maximum custom effects (from cell program manifest). Read only by this
+    /// module's own `custom_count <= max_custom_effects` assertion — the enforcing bound is
+    /// the VERIFIER's, off-circuit, from its own ledger
+    /// (`TurnExecutor::read_cell_max_custom_effects`).
     pub max_custom_effects: u8,
-    /// Federation-scoped approved-handoffs Merkle root (4-felt Poseidon2 form).
-    /// RETIRED (VERB-LOCKSTEP): `ValidateHandoff` is gone; always the empty
-    /// sentinel until the PI-layout compaction lane.
-    pub approved_handoffs_root: [BabyBear; 4],
+    // ⚑ `current_block_height` and `approved_handoffs_root` were DELETED here on 2026-08-07
+    // with the PI slots they fed (`docs/PI-DISPOSITION.md` §6). Each had exactly one reader —
+    // the `PI[CURRENT_BLOCK_HEIGHT]` / `PI[APPROVED_HANDOFFS_BASE..+4]` fill below — and
+    // NOTHING ever wrote either: every producer took the `Default` (`0`, and the empty-tree
+    // sentinel), so both published a constant on every proof in the system. The live temporal
+    // binding is `v3::COMMITTED_HEIGHT`, which the verifier overrides from the trusted
+    // committed state; `ValidateHandoff` has not been an effect since the verb-lockstep pass.
     /// Stage 7-γ.0a: Poseidon2 of canonical `Turn::hash()` (v3). Shared
     /// across all per-cell proofs of one turn.
     pub turn_hash: [BabyBear; 4],
@@ -387,9 +390,7 @@ impl RotCaveatEntry {
 impl Default for EffectVmContext {
     fn default() -> Self {
         Self {
-            current_block_height: 0,
             max_custom_effects: pi::MAX_CUSTOM_EFFECTS_DEFAULT,
-            approved_handoffs_root: [BabyBear::ZERO; 4],
             turn_hash: [BabyBear::ZERO; 4],
             effects_hash_global: [BabyBear::ZERO; 4],
             actor_nonce: 0,
@@ -1331,17 +1332,14 @@ pub fn try_generate_effect_vm_trace_ext(
     public_inputs[pi::NET_DELTA_MAG] = BabyBear::new(delta_mag);
     public_inputs[pi::NET_DELTA_SIGN] = BabyBear::new(delta_sign);
 
-    // ---- Stage 1 additions ----
-    public_inputs[pi::CURRENT_BLOCK_HEIGHT] =
-        BabyBear::new((context.current_block_height & 0x7FFF_FFFF) as u32);
-    public_inputs[pi::MAX_CUSTOM_EFFECTS] = BabyBear::new(context.max_custom_effects as u32);
-    public_inputs[pi::CUSTOM_EFFECT_COUNT] = BabyBear::new(custom_count as u32);
-    // RETIRED slot (VERB-LOCKSTEP): ValidateHandoff is gone; the approved-
-    // handoffs root stays the context-supplied sentinel until the PI compaction.
-    public_inputs
-        [pi::APPROVED_HANDOFFS_BASE..pi::APPROVED_HANDOFFS_BASE + pi::APPROVED_HANDOFFS_LEN]
-        .copy_from_slice(&context.approved_handoffs_root[..pi::APPROVED_HANDOFFS_LEN]);
-
+    // ⚑ THE SEVEN WRITES THAT USED TO BE HERE ARE GONE (flag day 2026-08-07). This block filled
+    // `CURRENT_BLOCK_HEIGHT` (with a constant 0 — nothing ever set the context field, which is
+    // deleted too), `MAX_CUSTOM_EFFECTS` (with the library default — nothing plumbs the cell's),
+    // `CUSTOM_EFFECT_COUNT` and the four `APPROVED_HANDOFFS` sentinel felts. All seven slots were deleted from
+    // `pi.rs`: zero `pi_binding`s on all 117 deployed registry members, and the one class of
+    // off-circuit reader now derives its count from the PI vector's own length
+    // (`pi::custom_entry_count`). `docs/PI-DISPOSITION.md` §6.
+    //
     // ---- Stage 7-γ.0a turn-identity bindings ----
     // These four fields are *shared across all per-cell proofs of one turn*.
     // The verifier's cross-proof PI matching loop enforces equality across
@@ -1704,7 +1702,10 @@ pub fn extract_custom_proof_commitments(
     if public_inputs.len() < pi::BASE_COUNT {
         return Vec::new();
     }
-    let custom_count = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
+    // ⚑ DERIVED, not read. This was `public_inputs[pi::CUSTOM_EFFECT_COUNT]` — a felt the PROVER
+    // wrote and no constraint read — used to slice the vector the VERIFIER holds. The length is a
+    // fact about that vector; take it from there. (Seven-slot compaction, 2026-08-07.)
+    let custom_count = pi::custom_entry_count(public_inputs.len());
     let mut result = Vec::with_capacity(custom_count);
     for i in 0..custom_count {
         let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;

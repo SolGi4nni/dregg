@@ -64,7 +64,8 @@
 //! ⚑ AND `forcedCols` OVER-COUNTS BY EXACTLY SIXTEEN. A `proof_bind` has no row denotation — the
 //! deployed `Ir2Air::eval` `continue`s on it and emits no bus interaction, and Lean's
 //! `VmConstraint2.holdsAt` is `trivial` for it — yet `forcedCols` counts its `commit`/`vk` column
-//! references. So `customVmDescriptor2R24`'s surviving exposure pins (PI slots 46..61: an eight-lane
+//! references. So `customVmDescriptor2R24`'s surviving exposure pins (PI slots 39..54 — they were
+//! 46..61 before the 2026-08-07 seven-slot PI compaction: an eight-lane
 //! proof commitment and an eight-lane program VK) are as prover-chosen as the 159 that were deleted;
 //! they survive on the strength of a DECLARATION. That is measured, not asserted in prose, by
 //! [`proof_bind_is_the_only_reader_of_the_custom_exposure_columns`].
@@ -490,9 +491,10 @@ fn unforced_pi_pin_census_is_pinned() {
 /// a `proof_bind` is exactly as prover-chosen as the 159 columns the subtraction deleted; its pin
 /// survives on the strength of a DECLARATION.
 ///
-/// Exactly two such pins exist, both on `customVmDescriptor2R24`: PI 46 → col 72
-/// (`PARAM_BASE + CUSTOM_PROOF_COMMIT_BASE`, commit limb 0) and PI 54 → col 68
-/// (`PARAM_BASE + CUSTOM_VK_HASH_BASE`, VK limb 0). This is not a defect being tolerated — it is
+/// Exactly two such pins exist, both on `customVmDescriptor2R24`: the exposure base → col 72
+/// (`PARAM_BASE + CUSTOM_PROOF_COMMIT_BASE`, commit limb 0) and base+8 → col 68
+/// (`PARAM_BASE + CUSTOM_VK_HASH_BASE`, VK limb 0) — 46 / 54 before the 2026-08-07 seven-slot PI
+/// compaction, 39 / 47 after. This is not a defect being tolerated — it is
 /// the already-documented shape of the custom member (`require_no_unbacked_proof_bind`: *"The
 /// declaration is NOT an in-AIR check … the ONLY thing that makes the published claim mean anything
 /// is the per-turn fold connecting it to a re-proven sub-proof leaf"*). What this test adds is that
@@ -546,7 +548,14 @@ fn proof_bind_is_the_only_reader_of_the_custom_exposure_columns() {
             .iter()
             .map(|(k, _col, pi)| (k.clone(), *pi))
             .collect();
-        let mut want: Vec<(String, usize)> = (46..=61)
+        // ⚑ The base is DERIVED, not a literal. It was `46..=61` until 2026-08-07, and the
+        // seven-slot PI compaction moved it — the Lean side had those four bases written as
+        // literals while the member's `piCount` was symbolic, so for one build the descriptor
+        // declared 59 PIs and pinned three past the end. Deriving here means this test measures
+        // the exposure block wherever the rotated tail puts it, and disagrees loudly if the two
+        // sides ever drift again.
+        let exposure_lo = dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
+        let mut want: Vec<(String, usize)> = (exposure_lo..exposure_lo + 16)
             .map(|pi| ("customVmDescriptor2R24".to_string(), pi))
             .collect();
         want.sort();
@@ -657,22 +666,38 @@ fn pin_relation_is_injective_so_the_no_op_theorem_applies() {
     }
 }
 
-/// **The `APPROVED_HANDOFFS` retired sentinel, measured.**
+/// **The v1 window has no slack — the seven-slot compaction, kept true.**
 ///
-/// `pi::APPROVED_HANDOFFS_BASE..+4` (PI 29..32) is the CapTP federation-scoped approved-handoffs
-/// root. `ValidateHandoff` no longer exists as an effect; `pi.rs` says the slot "stays at the
-/// empty-tree sentinel", and `pi.rs:864` already admits it is "bound only by the executor's PI
-/// matching loop". This makes that admission a MEASUREMENT: no member of any deployed registry
-/// pins those four slots to any column, so what the AIR says about them is nothing at all. They
-/// are verifier-supplied inputs that no equation reads — the same class as the other 2,172
-/// unpinned slots, not a binding that a light client could rely on.
+/// This test used to be `approved_handoffs_sentinel_is_pinned_by_no_member`: a standing
+/// measurement that no member pinned `pi::APPROVED_HANDOFFS_BASE..+4`, ending "deleting the
+/// slots is a PI-layout flag day … this test is the standing statement that nothing in-circuit
+/// is lost by doing it." **The flag day landed on 2026-08-07** — `APPROVED_HANDOFFS`,
+/// `CURRENT_BLOCK_HEIGHT`, `MAX_CUSTOM_EFFECTS` and `CUSTOM_EFFECT_COUNT` (the old v1 offsets
+/// 26..32) are gone, so there is no window left to measure.
 ///
-/// Deleting the slots is a PI-layout flag day (every offset above 32 shifts, in `pi.rs`, every
-/// producer's PI vector, `proof_verify.rs`, the fold and the Mina-side verifier, in one commit).
-/// This test is the standing statement that nothing in-circuit is lost by doing it.
+/// What replaces it is the property that makes a re-addition visible: **the published v1 window
+/// is exactly as wide as its highest pin.** `V1_PI_COUNT == pi::ACTOR_NONCE + 1`, and no member
+/// of any deployed registry pins a v1 index above `ACTOR_NONCE`. If a future lane appends a v1
+/// slot that nothing binds, `V1_PI_COUNT` grows past the highest pin and this goes RED — which
+/// is the check the seven dead slots evaded for a year by being added below the nonce, not above
+/// it. (A pin at or above `V1_PI_COUNT` is a ROTATED-tail pin and is out of scope here; the
+/// rotated tail is audited by the pins census above.)
+///
+/// ⚠ Read the "no member pins it" half the way `docs/PI-DISPOSITION.md` §6 teaches: it says no
+/// constraint IN THESE REGISTRIES reads the index, never "nothing reads the slot".
+/// `TURN_HASH` and `EFFECTS_HASH_GLOBAL` are unpinned here and FORCED in
+/// `dregg-bilateral-aggregation-v3`, which consumes the window.
 #[test]
-fn approved_handoffs_sentinel_is_pinned_by_no_member() {
-    use dregg_circuit::effect_vm::pi::{APPROVED_HANDOFFS_BASE, APPROVED_HANDOFFS_LEN};
+fn v1_pi_window_has_no_slack_above_its_highest_pin() {
+    use dregg_circuit::effect_vm::pi::ACTOR_NONCE;
+    use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
+
+    assert_eq!(
+        V1_PI_COUNT,
+        ACTOR_NONCE + 1,
+        "the published v1 window is wider than its highest named pin — a dead slot was added"
+    );
+
     for (label, set) in [
         ("v3", members(V3_STAGED_REGISTRY_TSV)),
         ("wide", members(WIDE_REGISTRY_STAGED_TSV)),
@@ -682,10 +707,9 @@ fn approved_handoffs_sentinel_is_pinned_by_no_member() {
             for c in &d.constraints {
                 if let VmConstraint2::Base(VmConstraint::PiBinding { pi_index, .. }) = c {
                     assert!(
-                        !(APPROVED_HANDOFFS_BASE..APPROVED_HANDOFFS_BASE + APPROVED_HANDOFFS_LEN)
-                            .contains(pi_index),
-                        "{label}/{key}: PI {pi_index} is in the retired APPROVED_HANDOFFS window \
-                         and IS pinned — the sentinel became load-bearing"
+                        *pi_index >= V1_PI_COUNT || *pi_index <= ACTOR_NONCE,
+                        "{label}/{key}: PI {pi_index} is inside the v1 window but above \
+                         ACTOR_NONCE ({ACTOR_NONCE}) — the window layout and the pins disagree"
                     );
                 }
             }

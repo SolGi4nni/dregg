@@ -278,11 +278,11 @@ section Witnesses
 #guard (wideRefuseGates WIDE_WIDTH).length == 39
 -- The aux blocks ride PAST the wide member width (aux base = the member's own width; no carrier collision).
 private def toyWide : EffectVmDescriptor2 :=
-  { name := "toy-wide", traceWidth := WIDE_WIDTH, piCount := 74, tables := [], constraints := [],
+  { name := "toy-wide", traceWidth := WIDE_WIDTH, piCount := 67, tables := [], constraints := [],
     hashSites := [], ranges := [] }
 #guard (gentianWideBareRefuse toyWide).traceWidth == WIDE_WIDTH + 48
 #guard (gentianWideBareRefuse toyWide).constraints.length == 39
-#guard (gentianWideBareRefuse toyWide).piCount == 74
+#guard (gentianWideBareRefuse toyWide).piCount == 67
 #guard (gentianWideBareRefuse toyWide).name == "toy-wide-gentian-deployed-bare-refuse"
 -- The wide floor columns are all ≥ the member width (free headroom, disjoint from the wide carriers).
 #guard wideFc WIDE_WIDTH 0 == WIDE_WIDTH + 12

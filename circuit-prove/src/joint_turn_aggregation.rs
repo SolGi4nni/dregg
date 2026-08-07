@@ -58,7 +58,7 @@ pub struct DescriptorParticipant {
 }
 
 /// **The smallest PI vector that can CARRY the 16-felt wide anchor tail** — the rotated prefix
-/// (`ROT_PI_COUNT` = 46) plus the 8-felt BEFORE and 8-felt AFTER commits. A leg at or above this
+/// (`ROT_PI_COUNT` = 39) plus the 8-felt BEFORE and 8-felt AFTER commits. A leg at or above this
 /// publishes the ~124-bit anchors at `[n-16 .. n)`; a leg below it structurally cannot, whatever
 /// else is in its vector. It is the guard on
 /// [`RotatedParticipantLeg::wide_old_root8`] / [`RotatedParticipantLeg::wide_new_root8`], and it is
@@ -1325,12 +1325,15 @@ impl RotatedParticipantLeg {
     /// `wide_old_root8()[0] == 0` (PI 34, not an anchor) against `wide_new_root8()[0]` (PI 42).
     /// Refusing is the only honest answer: a narrow leg has no 8-felt anchor to return.
     ///
-    /// ⚠ THE THRESHOLD IS `ROT_PI_COUNT + 16` (62), NOT `WIDE_PI_COUNT` (66). 62 is exactly the
+    /// ⚠ THE THRESHOLD IS `ROT_PI_COUNT + 16` (55), NOT `WIDE_PI_COUNT` (59). 55 is exactly the
     /// shape these accessors read — the rotated prefix plus the 16-felt anchor tail — and 20 of the
-    /// committed wide members sit at 62/63/65 because they carry NO `DFA_RC_LEN` rc block (every
+    /// committed wide members sit at 55/56/58 because they carry NO `DFA_RC_LEN` rc block (every
     /// cap-open member, `supplyMint`, `transferCapOpenTB`). `WIDE_PI_COUNT` would refuse all of
-    /// them while they genuinely publish the anchors. Every narrow leg (rotated 46, grow-gate 47,
-    /// cap-open-tb narrow 49, custom 50, the deployed narrow transfer 50) is still below it.
+    /// them while they genuinely publish the anchors. Every narrow leg (rotated 39, grow-gate 40,
+    /// cap-open-tb narrow 42, custom 43, the deployed narrow transfer 43) is still below it.
+    /// (Those numbers were 62/63/65 and 46/47/49/50 until the 2026-08-07 seven-slot PI
+    /// compaction took `V1_PI_COUNT` 42 → 35; every one of them moved by −7 together, which is
+    /// why the comparison still holds.)
     /// `leg_is_wide_anchored` keys the FOLD on `WIDE_PI_COUNT`, so those 20 members are treated as
     /// narrow THERE and get their 1-felt root broadcast — a separate disagreement, named here and
     /// not silently resolved by moving this number to match it.

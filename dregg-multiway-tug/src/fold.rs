@@ -297,7 +297,7 @@ fn cell_block_witnesses(
 /// producer lays its BEFORE/AFTER blocks from, for a nonce-bump transition over a real cell.
 ///
 /// The wide leg exposes the AFTER-block `fields[0..8]` octet (leg PIs `custom_leg_field_octet_lo(n)
-/// .. +8`, currently 66..74 at the deployed `public_input_count = 98`) that the app-root weld's
+/// .. +8`, currently 59..67 at the deployed `public_input_count = 91`) that the app-root weld's
 /// `field_key` indexes; but that octet is `fill_block`-OVERRIDDEN from the v1 EffectVM
 /// AFTER-state-block fields (`row[STATE_AFTER_BASE + FIELD_BASE + i]` = `st.fields[i]`,
 /// `EffectVmEmitRotationV3.weldsAt`), NOT from the rotation witness — so with the default
@@ -648,7 +648,7 @@ fn mint_win_turn_over_cell(cell: &Cell, win: &LeafBundle) -> FinalizedTurn {
 /// deployed app-root arm uses to locate `field[field_key]`, so this probe cannot disagree with the
 /// weld it is modeling. (It once did: a hardcoded `n - 24` survived the insertion of the 8-felt
 /// post-state fields-root pins between the octet and the 16 wide anchors, and read the fields-root
-/// instead of the fields. At the deployed `public_input_count = 98` the octet is PIs 66..74.)
+/// instead of the fields. At the deployed `public_input_count = 91` the octet is PIs 59..67.)
 pub fn probe_leg_field_octet(cell: &Cell) -> Vec<u32> {
     let after = nonce_bumped(cell);
     let leg = cell_custom_leg(cell, &after, [BabyBear::ZERO; 8], None);

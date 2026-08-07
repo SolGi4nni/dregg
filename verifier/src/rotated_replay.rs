@@ -8,11 +8,11 @@
 //! PI vector, and the cohort descriptor's `vk_hash`. The rotated PI vector
 //! PREFIXES the v1 PI layout, so the v1 offsets sit where the v1 leg puts them:
 //! `pi::OLD_COMMIT` = 0, `pi::NEW_COMMIT` = 8 (Phase C widened `OLD_COMMIT_LEN` to 8),
-//! `pi::TURN_HASH_BASE` = 33. A WIDE leg
+//! `pi::TURN_HASH_BASE` = 26. A WIDE leg
 //! additionally publishes the FULL 8-felt before/after commits as its LAST 16 PIs.
-//! Real widths, measured: `V1_PI_COUNT` = 42 (the v1 prefix), `ROT_PI_COUNT` = 46
-//! (the prefix plus the four appended rotated pins), `ROT_NULLIFIER_PI_COUNT` = 47
-//! for a note-spend leg, `WIDE_PI_COUNT` = 66 for the wide core.
+//! Real widths, measured: `V1_PI_COUNT` = 35 (the v1 prefix), `ROT_PI_COUNT` = 39
+//! (the prefix plus the four appended rotated pins), `ROT_NULLIFIER_PI_COUNT` = 40
+//! for a note-spend leg, `WIDE_PI_COUNT` = 59 for the wide core.
 //!
 //! # ⚑ FLAG DAY 2026-08-05 — this floor now accepts what the WIRE emits, at the WIRE's width
 //!
@@ -144,9 +144,9 @@ pub struct RotatedReplayLeg {
     /// rotated batch proof).
     pub proof_bytes: Vec<u8>,
     /// The rotated public-input vector as canonical `u32` BabyBear values. At least
-    /// [`V1_PI_COUNT`] (42) elements: `OLD_COMMIT` at 0, `NEW_COMMIT` at 8, the v1
-    /// prefix `[0..42)`, then the 4 appended rotated pins (`ROT_PI_COUNT` = 46; 47
-    /// with the note-spend nullifier pin). A WIDE leg runs to `WIDE_PI_COUNT` = 66
+    /// [`V1_PI_COUNT`] (35) elements: `OLD_COMMIT` at 0, `NEW_COMMIT` at 8, the v1
+    /// prefix `[0..35)`, then the 4 appended rotated pins (`ROT_PI_COUNT` = 39; 40
+    /// with the note-spend nullifier pin). A WIDE leg runs to `WIDE_PI_COUNT` = 59
     /// and publishes the 8-felt before/after commits as its LAST 16 elements.
     pub public_inputs: Vec<u32>,
     /// The cohort descriptor's identity fingerprint — pinned against the

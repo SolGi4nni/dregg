@@ -95,7 +95,7 @@ zero block into `state_commit`. -/
 def makeSovereignVmDescriptor : EffectVmDescriptor :=
   { name := makeSovereignVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := makeSovereignRowGates
   , hashSites := makeSovereignHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
@@ -442,7 +442,7 @@ balance-limb range checks. The executor REBIND face stays `makeSovereignVmDescri
 def makeSovereignRuntimeVmDescriptor : EffectVmDescriptor :=
   { name := makeSovereignRuntimeVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := sovereignRuntimeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates SEL_MAKE_SOVEREIGN_RT
   , hashSites := transferHashSites

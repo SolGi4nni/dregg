@@ -53,7 +53,15 @@ The doctrine is already written down in the tree, correctly, at
 matches the brief and §1 of `PI-DISPOSITION.md` exactly.
 
 Offsets are the v1 cascade in `circuit/src/effect_vm/pi.rs`; the rotated leg publishes
-`pis[..V1_PI_COUNT]` = `[0,42)` plus four appended pins (`trace_rotated.rs:334`, `:336`, `:677-681`).
+`pis[..V1_PI_COUNT]` plus four appended pins (`trace_rotated.rs`'s `V1_PI_COUNT` / `ROT_PI_COUNT`
+and `fill_rotated_pis`).
+
+⚑ **THE OFFSETS IN THIS TABLE ARE PRE-COMPACTION (2026-08-06).** On 2026-08-07 the seven rows
+marked DELETE below were DELETED — `V1_PI_COUNT` went 42 → 35 and every offset from 26 up moved
+down by seven (`TURN_HASH` 33 → 26, `EFFECTS_HASH_GLOBAL` 37 → 30, `ACTOR_NONCE` 41 → 34, the
+rotated pins 42..45 → 35..38). The table is left at the offsets it was measured at, with the
+decisions it reached; read `docs/PI-DISPOSITION.md` §6 for the executed shape. Nothing else in the
+verdict column changed.
 
 Columns: **is** = what actually decides the value at HEAD, per verifier class.
 FN = full node (`verify_one_cohort_run`). LC = the wire verifiers
@@ -442,11 +450,13 @@ already fixed once for the SDK path. Do this first regardless of anything else i
 
 ### (c) Delete the dead slots instead of pinning them
 
-`APPROVED_HANDOFFS` (retired effect), `CURRENT_BLOCK_HEIGHT` (superseded by the pinned+anchored PI
-44), `MAX_CUSTOM_EFFECTS` (the reconstruction publishes the library default, not the cell's),
-~~`EFFECTS_HASH_GLOBAL` (zero on every deployed leg, no reader)~~, `CUSTOM_EFFECT_COUNT`. That is
-~~**11**~~ **7 of the 39 unpinned felts** on `transferVmDescriptor2R24` (unpinned set measured:
-`1..7, 9..15, 16..19, 24..40, 42, 43, 50, 51`; the 7 are `26, 27, 28, 29..32`).
+✅ **DONE 2026-08-07.** `APPROVED_HANDOFFS` (retired effect), `CURRENT_BLOCK_HEIGHT` (superseded by
+the pinned+anchored rotated committed-height pin), `MAX_CUSTOM_EFFECTS` (the reconstruction
+publishes the library default, not the cell's), ~~`EFFECTS_HASH_GLOBAL` (zero on every deployed
+leg, no reader)~~, `CUSTOM_EFFECT_COUNT`. That was ~~**11**~~ **7 of the 39 unpinned felts** on
+`transferVmDescriptor2R24` (unpinned set measured pre-cut: `1..7, 9..15, 16..19, 24..40, 42, 43,
+50, 51`; the 7 were `26, 27, 28, 29..32`). They are gone — one VK rotation, a full descriptor
+re-emit, −392 felts wide / −413 v3. `docs/PI-DISPOSITION.md` §6.
 
 ⚑ **`EFFECTS_HASH_GLOBAL` (37..40) was struck from this list on 2026-08-07 and it is the most
 useful line in the section.** "Zero on every deployed leg, no reader" was measured off the two
@@ -459,10 +469,11 @@ descriptor's outer `PI[4..7]` — the algebraic cross-cell agreement §3's `rEff
 evidence, and the corrected price are in `docs/PI-DISPOSITION.md` §6; `scripts/pi_disposition_census.py`
 now reports a `proj-read` column and refuses (exit 1) if the projection stops holding.
 
-ⓘ `CUSTOM_EFFECT_COUNT` also has four off-circuit readers this section did not name — it is the
-length prefix of the custom-proof array (`atomic.rs:1159`/`:1518`, `trace.rs:1689`,
-`preflight/src/checks/effect_vm.rs:342`). Its deletion still stands: the length is derivable from the
-vector the verifier already holds, which is strictly stronger than a felt the prover wrote.
+ⓘ `CUSTOM_EFFECT_COUNT` also had four off-circuit readers this section did not name — it was the
+length prefix of the custom-proof array (`atomic.rs` ×2, `trace.rs`'s
+`extract_custom_proof_commitments`, `preflight/src/checks/effect_vm.rs`). All four now call
+`pi::custom_entry_count(len)`, which derives the count from the vector the verifier already holds —
+strictly stronger than a felt the prover wrote, so the deletion was a gain rather than a cost.
 
 `CUSTOM_EFFECT_COUNT` deserves its own line. `turn/src/executor/proof_verify.rs:236` states the
 off-circuit dispatch count "must equal the in-circuit committed Custom-effect count

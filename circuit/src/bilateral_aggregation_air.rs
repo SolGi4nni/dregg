@@ -223,14 +223,24 @@ pub mod outer_pi_v2 {
     pub const COUNT: usize = 23;
 }
 
-/// The v1 PI offsets of the bilateral-schedule contract — the 49-felt window `[33, 82)` inside
-/// the legacy `effect_vm::pi` vector that the decoupled `sched` block re-bases to 0. The WR
-/// carries the schedule independently; this is the ONE coupling to the v1 PI module, retired
-/// when the WR is restructured to emit `sched` natively (see `schedule_block_from_inner_pi`).
-pub const SCHEDULE_PI_BASE: usize = inner_pi::TURN_HASH_BASE; // == 33
+/// The v1 PI offsets of the bilateral-schedule contract — the 49-felt window
+/// `[TURN_HASH_BASE, +49)` inside the legacy `effect_vm::pi` vector that the decoupled `sched`
+/// block re-bases to 0. The WR carries the schedule independently; this is the ONE coupling to
+/// the v1 PI module, retired when the WR is restructured to emit `sched` natively (see
+/// `schedule_block_from_inner_pi`).
+///
+/// ⚑ **THIS COUPLING IS WHY THE 2026-08-07 PI COMPACTION STOPPED AT SEVEN SLOTS.** A prior lane
+/// read `EFFECTS_HASH_GLOBAL`'s zero pin-count in the two rotation registries as "nothing reads
+/// it" and priced deleting it — but it is `sched::EFFECTS_HASH_GLOBAL`, felts 4..7 of THIS
+/// window, forced by four `window_gate` transitions and pinned first+last in the emitted
+/// `dregg-bilateral-aggregation-v3`. The seven slots that WERE removed (the old v1 26..32) sat
+/// entirely BELOW this base, so the window slid down by 7 still contiguous and the contract was
+/// unharmed. `docs/PI-DISPOSITION.md` §6; `scripts/pi_disposition_census.py` now goes red if
+/// this projection stops holding.
+pub const SCHEDULE_PI_BASE: usize = inner_pi::TURN_HASH_BASE; // == 26 (was 33 pre-compaction)
 
 /// Extract the 49-felt decoupled schedule block from a per-cell inner-PI vector. The block is
-/// `inner_pi[SCHEDULE_PI_BASE .. SCHEDULE_PI_BASE + Sched::WIDTH)` — a pure projection (the
+/// `inner_pi[SCHEDULE_PI_BASE .. SCHEDULE_PI_BASE + sched::WIDTH)` — a pure projection (the
 /// fields are contiguous in the v1 layout: turn-id 13 · counts 7 · roots 28 · is_agent 1). A
 /// restructured rotated WR carries this block directly; until then the bundle derives it here.
 pub fn schedule_block_from_inner_pi(inner_pi_vec: &[BabyBear]) -> [BabyBear; sched::WIDTH] {

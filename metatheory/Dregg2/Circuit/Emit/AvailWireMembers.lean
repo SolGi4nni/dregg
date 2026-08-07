@@ -409,8 +409,8 @@ section Witnesses
 -- for is the WRAPPER RELATION: the wire member is the wide-graduated face plus the deployed refuse
 -- weld's 45 aux columns (`fcDep base 2 + 1 - base = 2·REFUSE_STRIDE + 13`, which the flag day does
 -- NOT move).  That relation holds at any rotated geometry and still reds if a wrapper changes.
-#guard transferV3AvailWire.piCount == 50
-#guard burnV3AvailWire.piCount == 50
+#guard transferV3AvailWire.piCount == 43
+#guard burnV3AvailWire.piCount == 43
 #guard transferV3AvailWire.traceWidth
   == (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail).traceWidth + 45
 #guard burnV3AvailWire.traceWidth
@@ -433,7 +433,7 @@ section Witnesses
 -- deployed `withDfaRcPins transferFeeV3` PI shape); traceWidth = the wide-graduated fee face
 -- (NO refuse block — the deployed fee member carries none); name-marked `-fee-avail`; the ONLY
 -- constraint delta past the face is the 4 rc pins.
-#guard transferFeeV3AvailWire.piCount == 51
+#guard transferFeeV3AvailWire.piCount == 44
 #guard transferFeeV3AvailWire.traceWidth
   == (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3OfFrozenFeeWide
       Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferFeeVmDescriptorAvail).traceWidth

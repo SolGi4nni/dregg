@@ -201,7 +201,7 @@ impl TurnExecutor {
     ///   * rotated `"effect-vm-rotated"`: `trace_rotated::ROT_PI_COUNT` (46) = the v1 prefix
     ///     `[0..V1_PI_COUNT)` (42) plus four appended pins (OLD commit 42, NEW commit 43,
     ///     committed height 44, caveat commit 45). Wider cohorts append further tails
-    ///     (`ROT_NULLIFIER_PI_COUNT` 47, `CAP_OPEN_TB_PI_COUNT` 47, `WIDE_PI_COUNT` 66).
+    ///     (`ROT_NULLIFIER_PI_COUNT` 40, `CAP_OPEN_TB_PI_COUNT` 40, `WIDE_PI_COUNT` 59).
     pub(super) fn verify_and_commit_proof(
         &self,
         cell_id: &CellId,
@@ -237,7 +237,8 @@ impl TurnExecutor {
         // so the wire vec can carry neither MORE (padding) nor FEWER (a dropped,
         // unverified custom effect) than the proven transition commits to.
         // ⚠ NOT via `PI[CUSTOM_EFFECT_COUNT]`, as this comment used to claim —
-        // that slot is read by nothing and pinned by nothing; see the callee.
+        // that slot was read by nothing and pinned by nothing, and no longer exists
+        // (deleted 2026-08-07); see the callee.
         self.enforce_custom_proof_count_committed(cell_id, turn)?;
         Ok(())
     }
@@ -604,7 +605,7 @@ impl TurnExecutor {
     /// The companion [`Self::enforce_custom_proof_entry_binding`] welds the wire
     /// sub-proof to the in-circuit committed `(vk_hash, proof_commitment)` entry; it is
     /// separate because it needs the WIDE `pi::` public-input vector, which only the
-    /// bundle path reconstructs (the rotated sovereign path carries a `ROT_PI_COUNT` (46)
+    /// bundle path reconstructs (the rotated sovereign path carries a `ROT_PI_COUNT` (39)
     /// descriptor vector instead). Each function is fail-closed within its own contract rather than
     /// gating on an optional input.
     ///
@@ -701,7 +702,7 @@ impl TurnExecutor {
     ///
     /// 1. **It has NO production caller.** The deployed sovereign path is
     ///    `verify_and_commit_proof` → `enforce_custom_effect_proofs` →
-    ///    `verify_and_commit_proof_rotated` (which reconstructs a `ROT_PI_COUNT` (46)
+    ///    `verify_and_commit_proof_rotated` (which reconstructs a `ROT_PI_COUNT` (39)
     ///    descriptor vector, not the WIDE `pi::` one) → `enforce_custom_proof_count_committed`.
     ///    Nothing in that chain calls this; the only call sites are this module's tests.
     ///    Do not cite it as a live check.
@@ -780,8 +781,9 @@ impl TurnExecutor {
     /// `PI[CUSTOM_EFFECT_COUNT]`, which the in-circuit sum-check pins". Measured:
     /// **there is no such sum-check.** `columns::aux_off::CUSTOM_COUNT_ACC` is
     /// declared and filled but referenced by no constraint, the v1 hand-AIR that
-    /// was to host it is retired, and the deployed registries carry zero
-    /// `pi_binding`s at PI 28. Both sides of the comparison below are derived from
+    /// was to host it is retired, and the registries carried zero `pi_binding`s at
+    /// that index — which is why the slot itself was DELETED on 2026-08-07
+    /// (`docs/PI-DISPOSITION.md` §6). Both sides of the comparison below are derived from
     /// `turn`, off-circuit: `turn.custom_program_proofs.len()` against a fresh
     /// re-derivation from `turn`'s own effects. What makes that non-vacuous is the
     /// SEQUENCING, not a PI: it runs only after `verify_and_commit_proof_rotated`
@@ -812,11 +814,11 @@ impl TurnExecutor {
     /// THE ROTATED sovereign verify (cutover C1, decision #1's verify leg). The
     /// proof is a rotated R=24 `Ir2BatchProof` minted by
     /// `sdk::cipherclerk::execute_sovereign_turn_with_proof` over the cohort
-    /// descriptor for the turn's effect. We RECONSTRUCT the exact `ROT_PI_COUNT` (46) PI
+    /// descriptor for the turn's effect. We RECONSTRUCT the exact `ROT_PI_COUNT` (39) PI
     /// vector the prover bound and verify through `descriptor_ir2::verify_vm_descriptor2` — the
     /// multi-table batch verifier — retiring the weaker hand-AIR `EffectVmAir` leg.
     ///
-    /// PI reconstruction (all `ROT_PI_COUNT` (46) must match the prover for Fiat–Shamir to
+    /// PI reconstruction (all `ROT_PI_COUNT` (39) must match the prover for Fiat–Shamir to
     /// agree):
     ///   * PIs `[0..V1_PI_COUNT)` (`[0..42)`, the v1 sub-trace prefix) + PI V1_PI_COUNT+3
     ///     (45, the caveat commit) are witness-INDEPENDENT — they are a function of
@@ -1299,7 +1301,7 @@ impl TurnExecutor {
             caveat.dfa_rc = rc;
         }
 
-        // 6. Reconstruct the `ROT_PI_COUNT` (46) PI vector. PLACEHOLDER block witnesses
+        // 6. Reconstruct the `ROT_PI_COUNT` (39) PI vector. PLACEHOLDER block witnesses
         //    reproduce the witness-INDEPENDENT PIs (`[0..V1_PI_COUNT)` = `[0..42)`, plus the
         //    caveat commit at V1_PI_COUNT+3 = 45) exactly; the commit/height PIs
         //    (V1_PI_COUNT..+3 = 42/43/44) are overridden from trusted storage/claim/cell below.
@@ -1559,7 +1561,7 @@ impl TurnExecutor {
         }
 
         // 6b. THE RECORD-PIN ANCHOR (the deployment-soundness close for the record-digest family;
-        // setPermissions BEACHHEAD). The record-pin descriptors ship at `public_input_count == ROT_PI_COUNT + 1` (47):
+        // setPermissions BEACHHEAD). The record-pin descriptors ship at `public_input_count == ROT_PI_COUNT + 1` (40):
         // the descriptor's last-row pin (`EffectVmEmitRotationV3.rotateV3WithRecordPin`) welds the
         // AFTER block's `B_RECORD_DIGEST` limb (col 256) to rotated PI ROT_PI_COUNT (46). The producer fills PI ROT_PI_COUNT (46)
         // from its honest after-cell's authority digest, but PI ROT_PI_COUNT (46) is otherwise a FREE public input
@@ -1595,7 +1597,7 @@ impl TurnExecutor {
         // and NEVER reaches this off-cell anchor, so setPerms/setVK are FORCED-ON-WIRE light-client-
         // verifiable. (Witness: `circuit/tests/vk_epoch_perms_vk_light_client_binding.rs` — a perms-/
         // vk-only forged post-cell rejects with `failed constraints = [#64]`, the weld, the anchor not
-        // in the loop.) For setPerms/setVK the PI-`ROT_PI_COUNT` (46) authority-digest pin below — limb
+        // in the loop.) For setPerms/setVK the PI-`ROT_PI_COUNT` (39) authority-digest pin below — limb
         // 24, which folds the SAME perms/vk plus the unchanged-by-these-effects residue — is therefore
         // REDUNDANT BELT-AND-SUSPENDERS on the full-node leg only; `apply_effect_to_cell` for these two
         // effects writes ONLY `cell.permissions` / `cell.verification_key`, exactly the sub-limbs the
@@ -2755,9 +2757,9 @@ impl TurnExecutor {
     // DELETED 2026-08-06 — `read_approved_handoffs_root`. Its own docblock said
     // it should have been "deleted with the v1 leg at C7"; it was not, and it
     // sat behind `#[allow(dead_code)]` with zero call sites, returning the
-    // empty-tree sentinel. `pi::APPROVED_HANDOFFS_BASE` is itself a retired slot
-    // (`ValidateHandoff` no longer exists as an effect), so there is nothing
-    // left for it to read.
+    // empty-tree sentinel. The slot it fed, `pi::APPROVED_HANDOFFS_BASE`, was
+    // itself deleted on 2026-08-07 (`ValidateHandoff` has not been an effect
+    // since the verb-lockstep pass) — `docs/PI-DISPOSITION.md` §6.
 
     /// Get the verification key hash for a sovereign cell, if one is set.
     ///
@@ -3815,7 +3817,9 @@ mod custom_effect_dispatch_tests {
     }
 
     /// FINDING 1, the binding leg: the off-circuit dispatch count must equal the
-    /// in-circuit committed count `PI[CUSTOM_EFFECT_COUNT]`. The empty `empty_turn`
+    /// Custom-row count of the transition the verified proof commits to (re-derived
+    /// from the turn, NOT read from a felt — the `PI[CUSTOM_EFFECT_COUNT]` this
+    /// docblock used to name was deleted on 2026-08-07). The empty `empty_turn`
     /// carries no `Effect::Custom` rows (committed count 0), so a wire vec of any
     /// non-zero length is a MISMATCH and is rejected fail-closed.
     #[test]

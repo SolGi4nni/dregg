@@ -326,12 +326,17 @@ pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 666
 
 /// The number of v1 public inputs the rotated PI vector prefixes. This is the
 /// length of the v1 PI window the descriptors pin into — it MUST cover every v1
-/// pin, the highest of which is `pi::ACTOR_NONCE`. Phase C
-/// (`FAITHFUL-STATE-COMMITMENT.md`) widened OLD/NEW_COMMIT 4→8 each (+8 prefix),
-/// pushing `ACTOR_NONCE` 33→41, so the window grew 34→42 to keep the nonce pin in
-/// range (`42 = pi::ACTOR_NONCE + 1`). A window of 34 would slice the nonce OFF the
-/// rotated PI vector, leaving the row-0 nonce boundary pin reading past the slice.
-pub const V1_PI_COUNT: usize = 42;
+/// pin, the highest of which is `pi::ACTOR_NONCE`, so it is exactly
+/// `pi::ACTOR_NONCE + 1` (held by `pi::v3_drift_guard::v1_window_covers_the_highest_v1_pin`,
+/// and by the Lean twin `EffectVmEmit.pi.V1_PI_COUNT` which every v1 descriptor's `piCount`
+/// now reads by name). A shorter window would slice the nonce OFF the rotated PI vector,
+/// leaving the row-0 nonce boundary pin reading past the slice.
+///
+/// History, so the number is legible: Phase C (`FAITHFUL-STATE-COMMITMENT.md`) widened
+/// OLD/NEW_COMMIT 4→8 each (+8 prefix), pushing `ACTOR_NONCE` 33→41 and the window 34→42. The
+/// 2026-08-07 SEVEN-SLOT COMPACTION then deleted v1 offsets 26..32 (`docs/PI-DISPOSITION.md`
+/// §6), taking `ACTOR_NONCE` 41→34 and the window 42→35.
+pub const V1_PI_COUNT: usize = 35;
 /// The rotated public-input count (42 v1 + 4 appended commit/height/caveat pins).
 pub const ROT_PI_COUNT: usize = V1_PI_COUNT + 4;
 /// The rotated NOTE-SPEND public-input count (the rotated prefix + the appended
@@ -675,7 +680,7 @@ fn generate_rotated_effect_vm_trace_avail_core(
     let r0 = &trace[0];
     let last = &trace[trace.len() - 1];
     let mut dpis: Vec<BabyBear> = pis[..V1_PI_COUNT].to_vec();
-    dpis.push(r0[before_base + B_STATE_COMMIT]); // PI 42 (V1_PI_COUNT): rotated OLD commit
+    dpis.push(r0[before_base + B_STATE_COMMIT]); // PI V1_PI_COUNT: rotated OLD commit
     dpis.push(last[after_base + B_STATE_COMMIT]); // PI 43: rotated NEW commit
     dpis.push(last[after_base + B_COMMITTED_HEIGHT]); // PI 44: committed height
     dpis.push(last[caveat_base + C_CAVEAT_COMMIT]); // PI 45: caveat commit
@@ -2988,7 +2993,7 @@ pub fn rotated_descriptor_name_for_effect(effect: &Effect) -> Option<&'static st
 
 /// The registry name (TSV column 1) of the welded sealed-escrow satisfaction descriptor — the
 /// Lean `Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24` (piCount 47, the
-/// rotated 46-PI vector + the appended selector slot pinned at PI `ESCROW_SEL_PI = 46`). The
+/// rotated `ROT_PI_COUNT`-PI vector + the appended selector slot pinned at PI `ESCROW_SEL_PI`). The
 /// descriptor carrying the four selector-gated `SETTLE_ESCROW` satisfaction gates over the rotated
 /// BEFORE/AFTER field columns. STAGED: a member of `rotation-v3-staged-registry.tsv` only (no wide
 /// twin, no producer, no committed VK yet — see `docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md`
@@ -3185,20 +3190,27 @@ pub const CAP_OPEN_WIDTH: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
 /// (`actor`/`dst`) the TB weld used to add. `CapOpenTurnPins` deleted them at the source on
 /// 2026-07-30 and the re-emit shipped it: the committed `transferCapOpenTBVmDescriptor2R24` and
 /// `transferCapOpenEffVmDescriptor2R24` now carry the SAME `trace_width`, and the TB member's
-/// `public_input_count` is 47, not 49. The two columns were introduced by that weld and read by
+/// `public_input_count` is `ROT_PI_COUNT + 1`, not `+ 3`. The two columns were introduced by that weld and read by
 /// no other constraint, so their `.piBinding`s were `local[c] == pi[k]` with the prover choosing
 /// both sides — no producer, verifier or light client loses a check by their removal, and the
 /// successor that publishes `actor`/`dst` FORCED (through the Lamport turn-digest lookup) is
 /// `Dregg2/Circuit/Emit/TurnAuthCapOpenWeld.lean`.
 pub const CAP_OPEN_TB_WIDTH: usize = CAP_OPEN_WIDTH;
-/// The cap-open base descriptor's PI count (`effCapOpenV3.piCount = 46`; the cap-open appendix adds
-/// no PIs). The TB weld appends exactly ONE turn-identity PI, at 46.
-pub const CAP_OPEN_TB_PI_BASE: usize = ROT_PI_COUNT; // 46
+/// The cap-open base descriptor's PI count (`effCapOpenV3.piCount == ROT_PI_COUNT`; the cap-open
+/// appendix adds no PIs). The TB weld appends exactly ONE turn-identity PI, at that slot.
+///
+/// ⚑ THE WELD FOLLOWS `ROT_PI_COUNT` BY CONSTRUCTION, not by transcription — checked at the source
+/// on 2026-08-07 rather than re-typed. `CapOpenTurnPins.withTurnIdentityPins` is
+/// `{ d with piCount := d.piCount + 1, constraints := d.constraints ++ turnIdentityPins _ d.piCount }`:
+/// the index is `d.piCount`, symbolic, and its own docblock says "the turn-identity pin rides the
+/// first slot past those four: `base.piCount`". So the `46` this pair used to carry was a snapshot
+/// of `ROT_PI_COUNT`, not an independent claim, and the seven-slot PI compaction moves it to 39.
+pub const CAP_OPEN_TB_PI_BASE: usize = ROT_PI_COUNT;
 /// The one published turn-identity PI slot of the TB cap-open (`effCapOpenV3.piCount + 0`):
-/// `src → PI[46]` (`CapOpenTurnPins.turnIdentityPins`, a singleton).
-pub const CAP_OPEN_TB_PI_SRC: usize = CAP_OPEN_TB_PI_BASE; // 46
-/// The TB cap-open's public-input count: the rotated 46 plus the one turn-identity slot.
-pub const CAP_OPEN_TB_PI_COUNT: usize = CAP_OPEN_TB_PI_BASE + 1; // 47
+/// `src → PI[CAP_OPEN_TB_PI_BASE]` (`CapOpenTurnPins.turnIdentityPins`, a singleton).
+pub const CAP_OPEN_TB_PI_SRC: usize = CAP_OPEN_TB_PI_BASE;
+/// The TB cap-open's public-input count: the rotated prefix plus the one turn-identity slot.
+pub const CAP_OPEN_TB_PI_COUNT: usize = CAP_OPEN_TB_PI_BASE + 1;
 
 // CAP-OPEN GEOMETRY PINS — the twin of the wide-carrier FLAG-DAY block below, and it exists
 // because this family's numbers ROTTED IN PLACE ONCE ALREADY. Docs on the widener, the wide
@@ -3252,12 +3264,14 @@ const _: () = {
     // `CAP_OPEN_WIDTH`, so `CAP_OPEN_TB_WIDTH == 2020` beside `CAP_OPEN_WIDTH == 2020` four lines
     // up is one fact typed twice — the two can only ever go red together. The claim worth guarding
     // ("the TB member and the non-TB member carry the SAME committed `trace_width`, and the TB
-    // member's `public_input_count` is 47") relates two COMMITTED ARTIFACTS, which a const-assert
+    // member's `public_input_count` is `ROT_PI_COUNT + 1`") relates two COMMITTED ARTIFACTS, which a const-assert
     // cannot reach; it is pinned in `circuit/tests/cap_open_avail_roundtrip.rs` against the
     // registry bytes. What IS local and non-redundant is the PI slot arithmetic:
     assert!(
-        CAP_OPEN_TB_PI_SRC == 46 && CAP_OPEN_TB_PI_COUNT == 47,
-        "the TB weld appends exactly ONE turn-identity PI, at the first slot past rotateV3's 46"
+        CAP_OPEN_TB_PI_SRC == 39 && CAP_OPEN_TB_PI_COUNT == 40,
+        "the TB weld appends exactly ONE turn-identity PI, at the first slot past ROT_PI_COUNT \
+         (39 since the 2026-08-07 seven-slot PI compaction, 46 before it — the Lean weld indexes \
+         `d.piCount` symbolically, so this literal transcribes ROT_PI_COUNT and is re-typed with it)"
     );
 };
 
@@ -4501,7 +4515,7 @@ pub fn transfer_caveat_manifest() -> RotatedCaveatManifest {
 // THE FAITHFUL 8-FELT WIDE COMMITMENT APPENDIX (Lean
 // `EffectVmEmitRotationWide.wideAppend` over `transferV3`, the `v3RegistryWide`
 // transfer member — descriptor `transferVmDescriptor2R24Wide`, width `WIDE_WIDTH` = 2607 /
-// PI `WIDE_PI_COUNT` = 66).
+// PI `WIDE_PI_COUNT`).
 //
 // STAGED-ADDITIVE: this is a PARALLEL wide producer BESIDE the live 1-felt path. The live
 // `generate_rotated_effect_vm_trace` (GRAD_ROT_WIDTH = 1647) is UNTOUCHED; this WIDENS its
@@ -4595,7 +4609,7 @@ const _: () = {
 /// (`h.piCount + 16`, where `h.piCount = ROT_PI_COUNT + DFA_RC_LEN` — the wide host is the
 /// `withDfaRcPins`-wrapped member, so the 4 dsl rc PIs ride BETWEEN the base 46 and the 16 wide
 /// commit PIs).
-pub const WIDE_PI_COUNT: usize = ROT_PI_COUNT + DFA_RC_LEN + 16; // 66
+pub const WIDE_PI_COUNT: usize = ROT_PI_COUNT + DFA_RC_LEN + 16;
 
 /// Fill one block's [`WIDE_NUM_CARRIERS`]-carrier × 8-felt wide commitment chain at `cbase`,
 /// reading the limbs from the rotated block at `limb_base` (`BEFORE_BASE` / `AFTER_BASE`). Each
@@ -5059,7 +5073,7 @@ pub const SOVEREIGN_KEY_COMMIT_SPAN: usize = 32;
 ///     gets its lane-0 producer columns (`row[dg_base + 8·q] = kc[q]`; the prove wrapper's
 ///     `fill_chip_lanes` fills lanes 1..7 from the genuine permutation);
 ///   * the 4 teeth claim PIs are SPLICED ahead of the 16 wide anchors (`insert_at =
-///     dpis.len() − 16` = the committed `SOVEREIGN_KEY_COMMIT_PI_LO` 58, post-rc-wrap).
+///     dpis.len() − 16` = the committed `SOVEREIGN_KEY_COMMIT_PI_LO`, post-rc-wrap).
 ///
 /// The teeth values are DERIVED FROM THE COMMITTED TRACE, never caller-supplied: `kc[q] =
 /// chip_absorb_all_lanes(4, octet[quadIdx q])[0]` over the BEFORE-block `pubkey8` octet (limbs
@@ -5116,7 +5130,7 @@ pub fn append_sovereign_key_commit_rider(
     }
 
     // Splice the 4 teeth claim PIs ahead of the 16 wide anchors (the committed
-    // `SOVEREIGN_KEY_COMMIT_PI_LO` = 58 on the 74-PI wide record-pin vector).
+    // `SOVEREIGN_KEY_COMMIT_PI_LO` on the wide record-pin vector).
     let insert_at = dpis.len() - 16;
     let mut spliced = Vec::with_capacity(dpis.len() + kc.len());
     spliced.extend_from_slice(&dpis[..insert_at]);
@@ -5191,15 +5205,15 @@ pub fn generate_rotated_transfer_shape_with_fee_wide_avail(
     let dpis =
         append_wide_carriers_avail(&mut trace, base_pis, GRAD_ROT_WIDTH + avail_pad, avail_pad);
     debug_assert_eq!(trace[0].len(), WIDE_WIDTH + avail_pad);
-    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 46 base + fee + 4 rc + 16 wide = 67
+    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // ROT_PI_COUNT + fee + 4 rc + 16 wide
     Ok((trace, dpis))
 }
 
 /// **THE WIDE BRIDGE-MINT trace generator (`mintVmDescriptor2R24` wide, 67-PI).** The bridge-mint
-/// member carries the FELT mint-hash pin at PI `ROT_PI_COUNT` (46) — the STEP-2/3 bridge-carrier
+/// member carries the FELT mint-hash pin at PI `ROT_PI_COUNT` — the STEP-2/3 bridge-carrier
 /// exposure (Lean `mintV3BridgeHash`; base 46 + mint_hash + 4 dsl rc = 51) — so it can no longer
 /// ride the bare transfer shape. This appends the 16 wide commit PIs at `GRAD_ROT_WIDTH`:
-/// `51 + 16 = 67` (= `WIDE_PI_COUNT + 1`). The published PI 46 is the projector-derived
+/// `WIDE_PI_COUNT + 1`. The published PI `ROT_PI_COUNT` is the projector-derived
 /// `note_spend_mint_hash_felt` (see the base generator's bridge-mint arm); the verifier's
 /// reconstruction recomputes it from the turn's OWN `PortableNoteProof` via
 /// `convert_turn_effects_to_vm`, so the anchor is executor-derived, never prover-supplied.
@@ -5224,7 +5238,7 @@ pub fn generate_rotated_bridge_mint_wide(
     }
     let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
     debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
-    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 46 base + mint_hash + 4 rc + 16 wide = 67
+    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // ROT_PI_COUNT + mint_hash + 4 rc + 16 wide
     Ok((trace, dpis))
 }
 
@@ -6119,7 +6133,7 @@ pub fn generate_rotated_set_field_dyn_base(
     // `record_pin_offset`, so INSERT the AFTER record-digest limb at PI 46 (the descriptor pins the
     // per-effect extra FIRST, the dsl rc tail LAST: fifth@46, rc@47..50 — the base generator already
     // appended the 4 rc PIs at 46..49, so the insert shifts them to 47..50).
-    dpis.insert(ROT_PI_COUNT, trace[last_idx][AFTER_BASE + B_RECORD_DIGEST]); // PI 46
+    dpis.insert(ROT_PI_COUNT, trace[last_idx][AFTER_BASE + B_RECORD_DIGEST]);
     debug_assert_eq!(
         dpis.len(),
         ROT_PI_COUNT + 1 + DFA_RC_LEN,

@@ -239,10 +239,44 @@ deployed member — now carry a checked disposition instead of a silence.
 
 ---
 
-## 6. THE DEAD ~~ELEVEN~~ **SEVEN** — per-slot decision, and the price of removing them
+## 6. THE DEAD ~~ELEVEN~~ **SEVEN** — per-slot decision, the price, and **the execution**
 
 *Added 2026-08-06 by the PI-authority lane. Every count below is one I reproduced from
 `circuit/descriptors/*.tsv` by parsing the JSON, not relayed.*
+
+### ✅ EXECUTED 2026-08-07 — the seven are gone
+
+The cut described in *The price* below **landed**. `pi.rs` no longer declares
+`CURRENT_BLOCK_HEIGHT`, `MAX_CUSTOM_EFFECTS`, `CUSTOM_EFFECT_COUNT` or `APPROVED_HANDOFFS[4]`;
+`TURN_HASH_BASE` is `NET_DELTA_SIGN + 1 = 26`, `EFFECTS_HASH_GLOBAL_BASE = 30`, `ACTOR_NONCE = 34`,
+`V1_PI_COUNT = 35`, `BASE_COUNT = 202`, `V3_BASE_COUNT = 206`. Every descriptor was re-emitted, the
+fingerprints re-pinned, and a `docs/VK-REGEN-LOG.md` row written. **`EFFECTS_HASH_GLOBAL` (the old
+37..40) stayed** and the bilateral-schedule window slid `[33, 82)` → `[26, 75)` still contiguous,
+exactly as priced — `pi_disposition_census.py`'s projection check was green before, during and
+after.
+
+Two things went further than the step list, and both are the same repair applied twice:
+
+* **The Lean side is now SYMBOLIC.** `EffectVmEmit.pi.V1_PI_COUNT` is the one place the v1 window
+  width is written; all 43 `piCount := 42` literals across 29 emit modules read it by name, and
+  `pi.V1_PI_COUNT_eq_actor_nonce_succ` is the drift guard as a theorem. The four
+  `def ROT_*_PI : Nat := 46` slot constants became `pi.V1_PI_COUNT + 4`. The next slot change
+  cascades instead of needing 43 edits.
+* **`CUSTOM_EFFECT_COUNT`'s four off-circuit readers got the STRONGER check**, not a weaker one.
+  `pi::custom_entry_count(len)` derives the custom-proof entry count from the PI vector's own
+  length — a fact about the object the verifier holds — where the felt was a number the prover
+  wrote and no constraint read.
+
+What the removal took with it, because nothing was left to feed: `EffectVmContext`'s
+`current_block_height` and `approved_handoffs_root` fields (each had exactly one reader — the
+deleted PI write — and **no writer at all**, so both published a constant on every proof in the
+system), and `dregg_commit::typed`'s `ApprovedHandoffSetMarker` /
+`ApprovedHandoffsRootCommitment` / `TAG_APPROVED_HANDOFFS`.
+
+⚠ **What did NOT move, and is the remaining half of the same debt:**
+`columns::aux_off::CUSTOM_COUNT_ACC` — a trace column the generator fills and no constraint reads,
+plus the `need_extra_pad` row that exists to keep its last-row value meaningful. Removing it moves
+the trace GEOMETRY, which is a separable flag day; it is named at its declaration.
 
 ### ⚑ CORRECTION, 2026-08-07 — **four of the eleven are not dead, and the census could not see it**
 
@@ -346,8 +380,9 @@ either.
 ### The price — ONE VK rotation for the seven, and it is the same price for any one of them
 
 *(Corrected 2026-08-07. This section priced eleven; four of them are live — see the correction at
-the head of §6 — so every figure below moved. **Nothing here has been executed**: no descriptor was
-re-emitted and no VK rotated by the lane that made the correction.)*
+the head of §6 — so every figure below moved. **EXECUTED 2026-08-07**, later the same day; the
+"Steps, ordered" list below is what was done, and the ✅ block at the head of §6 records what it
+actually cost.)*
 
 The offsets in `circuit/src/effect_vm/pi.rs` are a pure cascade (`MAX_CUSTOM_EFFECTS =
 CURRENT_BLOCK_HEIGHT + 1`, …). **Deleting any single slot shifts every later slot**, so there is no

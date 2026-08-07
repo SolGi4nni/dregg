@@ -14,17 +14,28 @@ input, `descriptor_ir2.rs`'s sole `pv[*pi_index]` site):
 
 | registry | members | Σ piCount | Σ with a pin | **unpinned** |
 |---|---|---|---|---|
-| `rotation-wide-registry-staged.tsv` (deployed) | 57 | 3,821 | 1,642 | **2,179 (57.0%)** |
-| `rotation-v3-staged-registry.tsv` | 60 | 3,012 | 844 | **2,168 (72.0%)** |
+| `rotation-wide-registry-staged.tsv` (deployed) | 57 | 3,429 | 1,642 | **1,787 (52.1%)** |
+| `rotation-v3-staged-registry.tsv` | 60 | 2,599 | 844 | **1,755 (67.5%)** |
+
+(Those Σ were 3,821 / 3,012 until 2026-08-07, when the SEVEN-SLOT COMPACTION removed v1 offsets
+26..32 — `CURRENT_BLOCK_HEIGHT`, `MAX_CUSTOM_EFFECTS`, `CUSTOM_EFFECT_COUNT`,
+`APPROVED_HANDOFFS[4]` — 392 + 413 felts of surface that no constraint read and no verifier
+compared. `docs/PI-DISPOSITION.md` §6. The Σ-with-a-pin columns did not move, because there was
+never a pin to lose.)
 
 Per slot across the 57 wide members: `TURN_HASH` 0/56, `EFFECTS_HASH_GLOBAL` 0/56, `NET_DELTA_*`
-0/56, `CURRENT_BLOCK_HEIGHT` 0/56, `CUSTOM_EFFECT_COUNT` 0/56 — and the producer writes
-`PI[TURN_HASH] = [0,0,0,0]` on every deployed rotated leg (`trace_rotated.rs`'s v1 sub-trace is
-built `..Default::default()`, and `EffectVmContext::default` zeroes `turn_hash`).
+0/56 — and the producer writes `PI[TURN_HASH] = [0,0,0,0]` on every deployed rotated leg
+(`trace_rotated.rs`'s v1 sub-trace is built `..Default::default()`, and `EffectVmContext::default`
+zeroes `turn_hash`).
 
-⚑ **The wound is not that 2,179 are unpinned. It is that NOBODY CHOSE.** An unpinned slot is
-either (a) a value a verifier must check — so it needs a binding — or (b) not a public input at
-all. Nothing in the tree forces that choice, or even records which was intended.
+⚠ And read that zero the way the 2026-08-07 retraction teaches: it says NO CONSTRAINT IN THESE TWO
+REGISTRIES reads the index, not "nothing reads the slot". `TURN_HASH` and `EFFECTS_HASH_GLOBAL`
+are the first eight felts of the 49-felt bilateral-schedule window that
+`dregg-bilateral-aggregation-v3` FORCES and PINS; they are 0/56 here and load-bearing there.
+
+⚑ **The wound is not that the unpinned majority is unpinned. It is that NOBODY CHOSE.** An
+unpinned slot is either (a) a value a verifier must check — so it needs a binding — or (b) not a
+public input at all. Nothing in the tree forces that choice, or even records which was intended.
 
 ## What this module is
 

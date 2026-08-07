@@ -100,7 +100,7 @@ sites and the 2 balance-limb range checks. -/
 def cellDestroyVmDescriptor : EffectVmDescriptor :=
   { name := cellDestroyVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := cellDestroyRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 47
   , hashSites := cellDestroyHashSites

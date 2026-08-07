@@ -95,7 +95,7 @@ the per-row passthrough gates with the nonce TICK ++ transition continuity ++ th
 def setVKVmDescriptor : EffectVmDescriptor :=
   { name := setVKVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := setVKRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 27
   , hashSites := setVKHashSites

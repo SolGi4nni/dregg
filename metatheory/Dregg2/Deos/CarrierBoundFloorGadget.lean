@@ -590,7 +590,7 @@ private def hollowManifest : RotCaveatManifest :=
 
 -- The carrier descriptor extends the wide welded descriptor (63 PIs, no new PI — the forcing is
 -- in-AIR) and appends exactly the carrier decode + first-row selector-force + caveat-uniformity block.
-#guard (gentianCarrierDescriptor 0 1).piCount == 63
+#guard (gentianCarrierDescriptor 0 1).piCount == 56
 #guard carrierGates.length == 17
 
 -- The decode/aux columns are distinct (no aliasing).

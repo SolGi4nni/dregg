@@ -224,7 +224,7 @@ boundary PI pins, with the 4 ordered GROUP-4 hash sites and the 2 balance-limb r
 def transferVmDescriptor : EffectVmDescriptor :=
   { name := transferVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := transferRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates sel.TRANSFER
   , hashSites := transferHashSites
@@ -684,7 +684,7 @@ column to the published fee PI. -/
 def transferFeeVmDescriptor : EffectVmDescriptor :=
   { name := transferVmAirName ++ "-fee"
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := transferFeeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates sel.TRANSFER
   , hashSites := transferHashSites

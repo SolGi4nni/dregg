@@ -39,10 +39,13 @@ use dregg_turn::rotation_witness as rw;
 
 const SLOT: usize = 3;
 /// The written slot's first freed completion lane, absolute trace column (`AFTER_BASE + 113 + 7·slot`)
-/// on the 1-felt member — the exact column Lean `withSetFieldCompletionPins` pins to PI 46.
+/// on the 1-felt member — the exact column Lean `withSetFieldCompletionPins` pins to
+/// `VALUE8_PI_BASE`.
 const COMPLETION_COL: usize = AFTER_BASE + 113 + 7 * SLOT;
-/// The value8 PI base (the 7 completion pins ride PI 46..=52; rc rides 53..56).
-const VALUE8_PI_BASE: usize = 46;
+/// The value8 PI base: the first slot past the four rotated commit pins. The 7 completion pins
+/// ride `[base, base+7)`; rc rides the four after them. Derived from `ROT_PI_COUNT` rather than
+/// written as `46` — the 2026-08-07 seven-slot PI compaction moved it to 39.
+const VALUE8_PI_BASE: usize = dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
 
 fn tsv_json(tsv: &'static str, name: &str) -> &'static str {
     tsv.lines()
@@ -131,7 +134,7 @@ fn honest_large_fixture() -> Fixture {
     }
 }
 
-/// The 1-felt (narrow) trace + the generator's own 57-PI vector.
+/// The 1-felt (narrow) trace + the generator's own PI vector.
 fn build_narrow(f: &Fixture) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     generate_rotated_effect_vm_trace(
         &f.st,
@@ -218,13 +221,14 @@ fn honest_large_value_setfield_proves_under_value8() {
          adds the 112-column aux region past the caveat region (1752 → 1864); the KEY NONET adds \
          three limbs and the chain carrier that absorbs them, twice over (1864 → 1886)"
     );
-    // 57 → 58: the ninth lane publishes one more PI. `46 prefix + 8 value8 + 4 rc`, and the emitted
-    // descriptor carries pi_binding indices 46..=53 on columns [569..575, 614] — the seventh contiguous
-    // plus the ninth at 614, `fieldLaneCol`'s documented NON-CONTIGUOUS placement.
-    assert_eq!(desc.public_input_count, 58);
+    // 50 → 51: the ninth lane publishes one more PI. `39 prefix + 8 value8 + 4 rc`, and the emitted
+    // descriptor carries pi_binding indices 39..=46 on columns [569..575, 614] — the seventh contiguous
+    // plus the ninth at 614, `fieldLaneCol`'s documented NON-CONTIGUOUS placement. (Those were
+    // 57 → 58 / 46..=53 before the 2026-08-07 seven-slot PI compaction.)
+    assert_eq!(desc.public_input_count, 51);
     assert_eq!(
         dpis.len(),
-        58,
+        51,
         "the generator publishes the value8 block AND the ninth lane"
     );
 
@@ -264,12 +268,12 @@ fn deployed_wide_member_accepts_the_honest_large_write() {
         )
         .expect("the LIVE wide producer must build a large-value setField leg");
     assert_eq!(
-        desc.public_input_count, 74,
-        "the deployed WIDE setField member is 46 prefix + 8 value8 + 4 rc + 16 wide anchors"
+        desc.public_input_count, 67,
+        "the deployed WIDE setField member is 39 prefix + 8 value8 + 4 rc + 16 wide anchors"
     );
     assert_eq!(
         dpis.len(),
-        74,
+        67,
         "the wide producer publishes the value8 block"
     );
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
@@ -297,7 +301,7 @@ fn forged_completion_lane_off_the_published_pi_is_unsat() {
 
     let mut ftrace = trace.clone();
     // Forge completion lane 0 (col COMPLETION_COL) on the LAST row (the pin reads `.last`) to a value
-    // that differs from the published PI 46 (the honest completion). dpis stay honest.
+    // that differs from the published `PI[VALUE8_PI_BASE]` (the honest completion). dpis stay honest.
     let last = ftrace.len() - 1;
     let honest = ftrace[last][COMPLETION_COL];
     ftrace[last][COMPLETION_COL] = honest + BabyBear::new(0x9999);
@@ -318,7 +322,8 @@ fn forged_completion_lane_off_the_published_pi_is_unsat() {
 
 #[test]
 fn slot_i_value8_proof_binds_uniquely() {
-    // UNIQUE BINDING. The slot-3 large-write proof (its completion lanes published at PI 46..=52)
+    // UNIQUE BINDING. The slot-3 large-write proof (completion lanes published at
+    // `PI[VALUE8_PI_BASE ..= VALUE8_PI_BASE+6]`)
     // verifies under descriptor-3 but NOT under a sibling descriptor (e.g. slot 0), which pins
     // slot-0's frozen completion lanes to the SAME PI slots — a mismatch the slot-3 trace violates.
     // This is the "selector binding ambiguous" reject the deployed freeze-ALL could not give the

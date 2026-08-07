@@ -436,7 +436,7 @@ section Witnesses
 
 -- The gadget descriptor extends the selector descriptor (63 PIs, no new PI — the discharge is
 -- in-AIR, not a pin) and appends the recompute lookup + the five decode gates.
-#guard (gentianGadgetDescriptor 0 1).piCount == 63
+#guard (gentianGadgetDescriptor 0 1).piCount == 56
 #guard decodeGates.length == 5
 #guard floorCols.length == 2
 #guard laneCols.length == 7

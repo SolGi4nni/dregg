@@ -94,7 +94,7 @@ prepend is IR-BLOCKED (header), NOT in this descriptor. -/
 def pipelinedSendVmDescriptor : EffectVmDescriptor :=
   { name := pipelinedSendVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := pipelinedSendRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 36
   , hashSites := pipelinedSendHashSites

@@ -98,49 +98,22 @@
 //!
 //! # Public Inputs
 //!
-//! Base layout (`pi::ACTIVE_BASE_COUNT` felts, Stage 7-γ.2 Phase 1 widening):
+//! Base layout: `pi::ACTIVE_BASE_COUNT` felts, then the per-custom-effect entries.
 //!
-//! ```text
-//!   [ 0.. 4]  OLD_COMMIT[4]                   cell pre-state commitment (Poseidon2)
-//!   [ 4.. 8]  NEW_COMMIT[4]                   cell post-state commitment (Poseidon2)
-//!   [ 8..12]  EFFECTS_HASH[4]                 Poseidon2 over per-cell projected effects
-//!   [12]      INIT_BAL_LO                     row 0 balance low limb
-//!   [13]      INIT_BAL_HI                     row 0 balance high limb
-//!   [14]      FINAL_BAL_LO                    last row balance low limb
-//!   [15]      FINAL_BAL_HI                    last row balance high limb
-//!   [16]      NET_DELTA_MAG                   |Δbalance|
-//!   [17]      NET_DELTA_SIGN                  0 = +, 1 = −
-//!   [18]      CURRENT_BLOCK_HEIGHT            federation block height
-//!   [19]      MAX_CUSTOM_EFFECTS              per-cell manifest cap
-//!   [20]      CUSTOM_EFFECT_COUNT             Σ sel_custom in trace
-//!   [21..25]  APPROVED_HANDOFFS[4]            CapTP federation-scoped Merkle root
-//!   [25..29]  TURN_HASH[4]                    Poseidon2 of Turn::hash() (7-γ.0a)
-//!   [29..33]  EFFECTS_HASH_GLOBAL[4]          Poseidon2 over canonical-DFS call_forest effects (7-γ.0a)
-//!   [33]      ACTOR_NONCE                     outer Turn::nonce (7-γ.0a; closes W-1 nonce gap)
-//!   [34..38]  PREVIOUS_RECEIPT_HASH[4]        Poseidon2 of previous_receipt_hash (7-γ.0a)
-//!   [38..45]  bilateral counts (7-γ.2): outbound_transfer, inbound_transfer,
-//!                                       outbound_grant, inbound_grant,
-//!                                       intro_introducer, intro_recipient, intro_target
-//!   [45..49]  OUTGOING_TRANSFER_ROOT[4]       (7-γ.2)
-//!   [49..53]  INCOMING_TRANSFER_ROOT[4]       (7-γ.2)
-//!   [53..57]  OUTGOING_GRANT_ROOT[4]          (7-γ.2)
-//!   [57..61]  INCOMING_GRANT_ROOT[4]          (7-γ.2)
-//!   [61..65]  INTRO_AS_INTRODUCER_ROOT[4]     (7-γ.2)
-//!   [65..69]  INTRO_AS_RECIPIENT_ROOT[4]      (7-γ.2)
-//!   [69..73]  INTRO_AS_TARGET_ROOT[4]         (7-γ.2)
-//!   [73]      IS_AGENT_CELL                   (7-γ.2; 1 iff this proof is the actor's)
-//!   ... (sovereign-witness teeth, value-limbs, slot-caveat / cross-effect /
-//!        witness-index manifests; see `pi::ACTIVE_BASE_COUNT` for the precise tail
-//!        layout) ...
-//!   [168]     UNILATERAL_ATTESTATIONS_COUNT   (7-γ.2 unilateral; number of self-attestations this turn)
-//!   [169..173] UNILATERAL_ATTESTATIONS_ROOT[4] (7-γ.2 unilateral; Merkle/Poseidon2 accumulator over (kind, data) tuples)
-//!   [173..]   CUSTOM_PROOFS                   per-custom-effect (vk_hash[4], proof_commit[4])
-//! ```
+//! ⚑ **A TABLE OF ABSOLUTE OFFSETS USED TO SIT HERE, AND IT WAS WRONG BY 8 FOR MONTHS.** It
+//! opened `[0..4] OLD_COMMIT[4]` — the PRE-PHASE-C widths, stale from the day the state
+//! commitments went 4 felts → 8, so every number below the third row was low by eight. The
+//! 2026-08-07 seven-slot compaction would have made the same table wrong by another seven. The
+//! prefix is a pure cascade (`OLD_COMMIT_BASE = 0` is the only literal; every later base is
+//! `prior_base + prior_len`), so naming the constants in order is a COMPLETE and drift-proof
+//! description and an offset table is not. Read `pi.rs` — its `BASE_COUNT` docblock states the
+//! order, and `pi::v3_drift_guard` pins the handful of absolute numbers a reader actually needs
+//! against the Lean emission.
 //!
-//! The four 7-γ.0a additions (TURN_HASH, EFFECTS_HASH_GLOBAL, ACTOR_NONCE,
-//! PREVIOUS_RECEIPT_HASH) were designed as values *shared across all per-cell
-//! proofs of one turn*, checked for cross-proof equality by
-//! `verify_proof_carrying_turn_bundle`.
+//! The one thing worth stating in prose, because it is a decision rather than a layout: the four
+//! 7-γ.0a additions (`TURN_HASH`, `EFFECTS_HASH_GLOBAL`, `ACTOR_NONCE`, `PREVIOUS_RECEIPT_HASH`)
+//! were designed as values *shared across all per-cell proofs of one turn*, checked for
+//! cross-proof equality by `verify_proof_carrying_turn_bundle`.
 //!
 //! ⚠ **CORRECTED 2026-08-06. That loop never ran and is now deleted.** Measured
 //! before removal: `verify_proof_carrying_turn_bundle` had exactly one caller,
@@ -157,11 +130,17 @@
 //!   anchor (`sdk::verify_full_turn_bound`'s `expected_turn_hash`,
 //!   `dregg_verifier::check_receipt_pi_binding`,
 //!   `turn::conditional`), always as FOUR felts via `canonical_32_to_felts_4`.
-//! * `EFFECTS_HASH_GLOBAL` is read by NOTHING and is zero on every deployed leg.
+//! * ⚑ `TURN_HASH` **and** `EFFECTS_HASH_GLOBAL` are also PROOF-BOUND, in another descriptor —
+//!   corrected 2026-08-07, and this block previously said the opposite ("`EFFECTS_HASH_GLOBAL`
+//!   is read by NOTHING"). They are the first eight felts of the 49-felt bilateral-schedule
+//!   window `inner_pi[TURN_HASH_BASE, +49)` that `schedule_block_from_inner_pi` projects into
+//!   `dregg-bilateral-aggregation-v3`, where `window_gate` transitions FORCE the columns and
+//!   `pi_binding` pins them to that descriptor's own outer PI.
 //!
-//! No AIR constraint reads any of the four: `pi_binding` is the only constraint
-//! kind that reads a public input, and offsets 33..40 carry zero of them across
-//! all 56 deployed wide members. See `docs/DESIGN-pi-authority.md`.
+//! No EFFECT-VM AIR constraint reads any of the four: `pi_binding` is the only constraint kind
+//! that reads a public input, and those offsets carry zero of them across all 56 deployed wide
+//! members — a statement about THOSE descriptors, not about the slots. See
+//! `docs/PI-DISPOSITION.md` §6 and `scripts/pi_disposition_census.py`'s `proj-read` column.
 
 // ============================================================================
 // Sub-module layout

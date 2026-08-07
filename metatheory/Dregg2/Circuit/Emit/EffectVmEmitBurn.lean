@@ -168,7 +168,7 @@ ordered GROUP-4 hash sites and the 2 balance-limb range checks. -/
 def burnVmDescriptor : EffectVmDescriptor :=
   { name := burnVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := burnRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates selB.BURN
   , hashSites := transferHashSites

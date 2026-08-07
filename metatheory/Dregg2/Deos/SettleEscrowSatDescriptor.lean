@@ -25,7 +25,7 @@ stay frozen) — so the welded gates and the base are mutually satisfiable for a
 
 * **The selector** is a free PARAM column (`ESCROW_SEL_COL = prmCol 2`), 1 on the settle row and 0
   on padding — the producer fills it. It replaces the `SEL = 320` placeholder. Pinned to PI
-  `ESCROW_SEL_PI = 46` on the first row, so a verifier that KNOWS the cell declares the escrow
+  `ESCROW_SEL_PI = 39` on the first row, so a verifier that KNOWS the cell declares the escrow
   capacity (the deployed COVERAGE carrier, `CapacityCarrier`) can FORCE the selector on. (Binding
   the selector to the committed declaration's required-tag floor IN-AIR — so a forger cannot dodge
   by setting the selector 0 — is the named `DeclCommitBinds` realization, §6 item 2; this
@@ -77,7 +77,7 @@ def ESCROW_SEL_COL : Nat := prmCol 2
 
 /-- The selector PI slot (`pi_base + 4 = 46`): the first row's selector is pinned here so a verifier
 that knows the cell declares the escrow capacity can FORCE the selector on. -/
-def ESCROW_SEL_PI : Nat := 46
+def ESCROW_SEL_PI : Nat := 39
 
 /-- The rotated BEFORE-block field column for slot `k`: `r3..r10 ↔ fields[0..8]` (`r3` is appendix
 limb 4), the before block based at `EFFECT_VM_WIDTH` (the `rotateV3` appendix base for a transfer
@@ -132,7 +132,7 @@ def settleEscrowV1Base (legA legB : Nat) : EffectVmDescriptor :=
 /-- **`settleEscrowSatVmDescriptor2R24`** — the welded sealed-escrow satisfaction descriptor over the
 R=24 rotated cohort. `graduateV1 (rotateV3 settle-base)` PLUS the four selector-gated satisfaction
 gates over the rotated field columns PLUS the selector PI pin — the additive shape every deployed
-fifth-pin variant uses. `piCount = 47` (the rotated 46-PI vector + the appended selector slot). The
+fifth-pin variant uses. `piCount = 40` (the rotated 39-PI vector + the appended selector slot). The
 descriptor a flippable escrow weld commits a VK for. -/
 def settleEscrowSatVmDescriptor2R24 (legA legB : Nat) : EffectVmDescriptor2 :=
   let base := graduateV1 (rotateV3 (settleEscrowV1Base legA legB))
@@ -276,7 +276,7 @@ private def gateVal (g : VmConstraint2) (loc : Nat → ℤ) : ℤ :=
 #guard (settleEscrowSatGates ESCROW_SEL_COL 0 1).all
   (fun g => gateVal g (mkLoc 0 7 9 3 4) == 0)
 -- The descriptor publishes 47 PIs (the rotated 46 + the appended selector slot).
-#guard (settleEscrowSatVmDescriptor2R24 0 1).piCount == 47
+#guard (settleEscrowSatVmDescriptor2R24 0 1).piCount == 40
 
 end Witnesses
 

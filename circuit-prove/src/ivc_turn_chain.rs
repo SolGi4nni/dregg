@@ -513,7 +513,8 @@ pub const CUSTOM_POST_FIELDS_ROOT_LEN: usize = 8;
 ///
 /// and the octet therefore starts `CUSTOM_APP_FIELD_OCTET_LEN + CUSTOM_POST_FIELDS_ROOT_LEN +
 /// 2*SEG_ANCHOR_WIDTH` felts before the end — currently `n - 32` (measured: at the deployed
-/// `public_input_count = 98` the octet is PIs 66..74). `None` iff the leg is too short to carry
+/// `public_input_count = 91` the octet is PIs 59..67; those were 98 / 66..74 before the
+/// 2026-08-07 seven-slot PI compaction). `None` iff the leg is too short to carry
 /// that tail at all (i.e. it is not the wide app-root-weldable member).
 ///
 /// EVERY reader of the octet — the deployed app-root arm below, the entity/braid fold, and the
@@ -529,8 +530,11 @@ pub fn custom_leg_field_octet_lo(pi_len: usize) -> Option<usize> {
 }
 
 /// Faithful custom-wide ABI: all eight canonical program-VK felts are trace-carried
-/// and pinned at PI 54..61 (low4 params + four exact VK teeth).
-pub const CUSTOM_PROGRAM_VK_PI_LO: usize = 54;
+/// and pinned at the eight slots after the `custom_proof_commitment` block (low4 params + four
+/// exact VK teeth). Derived from `CUSTOM_COMMIT_PI_LO` — it was the literal `54` until the
+/// 2026-08-07 seven-slot PI compaction moved the rotated tail down by seven.
+pub const CUSTOM_PROGRAM_VK_PI_LO: usize = crate::joint_turn_recursive::CUSTOM_COMMIT_PI_LO
+    + crate::joint_turn_recursive::CUSTOM_COMMIT_LEN;
 pub const DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN: usize = 8;
 pub const DIRECT_IR2_VK8_REFUSAL: &str =
     "direct-IR2 custom fold requires an exact 8-felt leg-to-leaf program-VK correlation";
@@ -3560,51 +3564,65 @@ pub fn verify_wide_turn_chain_recursive(
 /// The factory leg's `child_vk8` claim PI base — `factoryV3Carriers` TAIL-appends the
 /// child-VK octet pins (AFTER-block limbs `B_CHILD_VK_OCTET..+8`) after the narrow factory
 /// PI count 47 (Lean `EffectVmEmitRotationV3.withAfterOctetPins`, commit `556970558`:
-/// PI 47..54). REGEN-RIDER: the committed `WIDE_REGISTRY_STAGED_TSV` row still carries the
-/// pre-pin shape; the fold arm admits a leg only when its descriptor actually carries these
-/// pins ([`carrier_claim_pins_admitted`]), so until the big-bang descriptor regen lands the
-/// arm stays fail-closed on deployed legs.
-pub const FACTORY_CHILD_VK_PI_LO: usize = 47;
+/// PI `[narrow factory piCount, +8)`). REGEN-RIDER: the committed `WIDE_REGISTRY_STAGED_TSV`
+/// row still carries the pre-pin shape; the fold arm admits a leg only when its descriptor
+/// actually carries these pins ([`carrier_claim_pins_admitted`]), so until the big-bang
+/// descriptor regen lands the arm stays fail-closed on deployed legs.
+///
+/// Derived: the narrow factory is the rotated prefix plus its one new-cell-key pin, so this is
+/// `ROT_PI_COUNT + 1`. It was the literal `47` until the 2026-08-07 seven-slot PI compaction.
+pub const FACTORY_CHILD_VK_PI_LO: usize = dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT + 1;
 /// The hatchery leg's `contract_hash8` claim PI base — the SECOND octet cohort on the same
-/// `factoryV3Carriers` descriptor (AFTER-block limbs `B_CONTRACT_HASH_OCTET..+8`, PI 55..62;
-/// the hatchery carrier rides factory's `CreateCellFromFactory` leg). Same regen-rider note.
-pub const HATCHERY_CONTRACT_HASH_PI_LO: usize = 55;
+/// `factoryV3Carriers` descriptor (AFTER-block limbs `B_CONTRACT_HASH_OCTET..+8`, the octet
+/// immediately after the child-VK octet; the hatchery carrier rides factory's
+/// `CreateCellFromFactory` leg). Same regen-rider note. Derived — it was the literal `55` until
+/// the 2026-08-07 seven-slot PI compaction.
+pub const HATCHERY_CONTRACT_HASH_PI_LO: usize = FACTORY_CHILD_VK_PI_LO + 8;
 /// The sovereign leg's `KEY_COMMIT` teeth claim PI base — **NATIVE**: the committed wide
 /// registry row (`CarrierComposed.makeSovereignV3DeployedWide`, the v12 big-bang regen) pins
-/// the 4 teeth columns (113..=116) at PI 58..61 (record-pin8 54 + the 4 dsl rc, THEN the
-/// teeth, ahead of the 16 wide anchors 62..77) and welds them in-AIR to the committed
+/// the 4 teeth columns (113..=116) at PI `[ROT_PI_COUNT + 12, +4)` (record-pin8 `ROT_PI_COUNT + 8`
+/// + the 4 dsl rc, THEN the teeth, ahead of the 16 wide anchors) and welds them in-AIR to the
+/// committed
 /// `B_PUBKEY8` octet via the KEY_COMMIT chip gate (Lean keystone
 /// `makeSovereignV3DeployedWide_publishes_key_commit`). The fold arm admits only a leg whose
 /// descriptor genuinely pins these slots, so a mismatched convention fails closed.
-pub const SOVEREIGN_KEY_COMMIT_PI_LO: usize = 58;
+/// Derived — it was the literal `58` until the 2026-08-07 seven-slot PI compaction.
+pub const SOVEREIGN_KEY_COMMIT_PI_LO: usize =
+    dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT + 8 + 4;
 /// The membership leg's `(sender_leaf, authorized_root)` claim PI base — **NATIVE**: the
 /// committed wide transfer row (`CarrierComposed.transferV3MembershipWide`, the v12 big-bang
-/// regen) pins the two teeth columns (past the carriers, 1771..1772) at PI 50..51 (the bare
-/// rotated 46 + the 4 dsl rc, THEN the teeth, ahead of the anchors 52..67 — Lean keystone
+/// regen) pins the two teeth columns (past the carriers, 1771..1772) at PI
+/// `[ROT_PI_COUNT + 4, +2)` (the bare rotated prefix + the 4 dsl rc, THEN the teeth, ahead of
+/// the 16 anchors — Lean keystone
 /// `transferV3MembershipWide_publishes_teeth`). PI-EXPOSURE leg only (the FOLD edge binds;
 /// the in-AIR welds stay the named `MembershipAuthRootEdge` seams). Same fail-closed
 /// admission discipline.
 // ⚠ STALE AS OF 2026-08-01, IN THE DIRECTION THAT MAKES THE WOUND LOOK CLOSED.
 //
-// Re-measured on the emitted bytes: `transferVmDescriptor2R24` has 68 PIs and 29 pins, and there is
-// **no `pi_binding` at 50 or 51**. Columns 1735/1736 are referenced by NOTHING, while 1730-1734 and
-// 1737+ all are — `dropUnforcedPins` deleted the pins and E1 compaction then removed the dead columns.
-// Top pinned column is 1734.
+// Re-measured on the emitted bytes: `transferVmDescriptor2R24` has 61 PIs (68 before the
+// 2026-08-07 seven-slot compaction) and 29 pins, and there is **no `pi_binding` at
+// `MEMBERSHIP_CLAIM_PI_LO` or `+1`**. Columns 1735/1736 are referenced by NOTHING, while 1730-1734
+// and 1737+ all are — `dropUnforcedPins` deleted the pins and E1 compaction then removed the dead
+// columns. Top pinned column is 1734.
 //
 // ⚑ CONSEQUENCE: `carrier_claim_pins_admitted` hard-requires the pin, so the **Membership fold arm is
 // FAIL-CLOSED on every deployed leg today** — `MembershipBindingFromFold`'s flip is inert on the
-// deployed object, and this tooth's *honest* pole cannot pass either. The same cause reds bridge PI 46.
+// deployed object, and this tooth's *honest* pole cannot pass either. The same cause reds
+// `BRIDGE_MINT_HASH_PI`.
 // The teeth are not "native at 1771..1772"; they do not exist.
-pub const MEMBERSHIP_CLAIM_PI_LO: usize = 50;
+/// Derived — it was the literal `50` until the 2026-08-07 seven-slot PI compaction.
+pub const MEMBERSHIP_CLAIM_PI_LO: usize = dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT + 4;
 /// The bridge leg's felt mint-hash claim PI — **NATIVE**: the committed mint row
 /// (`mintV3BridgeHash`, the STEP-3/4 regen) pins the mint row's `param0` (`prmCol 0` — since
 /// the STEP-1 executor re-align, the FELT-domain `note_spend_mint_hash_felt` over the six
-/// compressed felts `apply_bridge_mint` enforces the note-spend STARK against) at PI 46 on
-/// the FIRST row (Lean keystone `withMintHashPin_publishes`; rc rides 47..50, wide anchors
-/// 51..66). ONE lane binds the whole spend tuple: the identity is the leaf's in-AIR
+/// compressed felts `apply_bridge_mint` enforces the note-spend STARK against) at PI
+/// `ROT_PI_COUNT` on the FIRST row (Lean keystone `withMintHashPin_publishes`; rc rides the
+/// four after it, then the 16 wide anchors). ONE lane binds the whole spend tuple: the identity
+/// is the leaf's in-AIR
 /// `hash_fact` chain over its own PI-pinned `(nullifier, root, value_lo, asset, dest_fed,
 /// value_hi)`. Same fail-closed admission discipline.
-pub const BRIDGE_MINT_HASH_PI: usize = 46;
+/// Derived — it was the literal `46` until the 2026-08-07 seven-slot PI compaction.
+pub const BRIDGE_MINT_HASH_PI: usize = dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
 /// The bridge claim length (the single felt mint identity lane).
 pub const BRIDGE_MINT_HASH_CLAIM_LEN: usize = 1;
 
@@ -3620,7 +3638,9 @@ pub const BRIDGE_MINT_HASH_CLAIM_LEN: usize = 1;
 /// big-bang descriptor regen (`DECO-CARRIER-PLAN.md` §2 finale) — until it lands, `stripeMint`
 /// legs are `Effect::Mint` rows that carry NO payment-hash pin, so this arm's admission
 /// REFUSES them (fail-closed), never silently degrading to a fabricated fold.
-pub const DECO_PAYMENT_HASH_PI: usize = 46;
+/// Derived from `ROT_PI_COUNT` — it was the literal `46` until the 2026-08-07 seven-slot PI
+/// compaction (`docs/PI-DISPOSITION.md` §6).
+pub const DECO_PAYMENT_HASH_PI: usize = dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
 /// The DECO claim length (the single felt payment-identity lane).
 pub const DECO_PAYMENT_HASH_CLAIM_LEN: usize = 1;
 

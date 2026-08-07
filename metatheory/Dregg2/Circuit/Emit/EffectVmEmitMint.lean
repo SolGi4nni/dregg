@@ -154,7 +154,7 @@ transitions ++ boundary PI pins, GROUP-4 hash sites, balance range checks). -/
 def mintVmDescriptor : EffectVmDescriptor :=
   { name := mintVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := mintRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
   , hashSites := transferHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }

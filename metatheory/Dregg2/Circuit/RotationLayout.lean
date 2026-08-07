@@ -29,7 +29,7 @@ what the layout IS:
     vectors bound to the same commitment agree on the height; the temporal gate's
     prover-chosen-height note closes at the flag-day by THIS pin. `PiV3` declares the v3 tail
     (committed-height column + rateBound/challengeWindow caveat tags) appended after the frozen
-    v2 prefix (`V2_BASE_COUNT = 209` — drift-guarded by the Rust twin test
+    v2 prefix (`V2_BASE_COUNT = 202` — drift-guarded by the Rust twin test
     `pi_v3_offsets_match_lean` in `circuit/src/effect_vm/pi.rs`).
   * **the anti-ghost keystone** (`rotatedCommit_binds`): under the ONE named CR floor, equal
     commits force equal limb structures AND equal receipt logs — tampering ANY limb (a register
@@ -365,14 +365,17 @@ theorem rotatedCommit_binds_named_field (hash : List ℤ → ℤ) (hCR : Poseido
 
 /-! ## §4 — PI v3: the staged public-input tail (committed height + caveat tags).
 
-The v3 tail appends THREE slots after the frozen v2 prefix (`pi.rs` `BASE_COUNT = 209` — the
+The v3 tail appends FOUR slots after the frozen v2 prefix (`pi.rs` `BASE_COUNT = 202` — the
 Rust drift-guard test `pi_v3_offsets_match_lean` pins these numbers against this module, so a
 v2-prefix drift fails loudly before the flag-day):
 
   * `COMMITTED_HEIGHT` — the height the commitment carries (the `committedHeight` limb's PI
     face). Closes the temporal gate's prover-chosen-height note: the verifier reads the height
-    FROM the committed state, never from a prover-chosen scalar (`CURRENT_BLOCK_HEIGHT`, PI 18,
-    stays as the verifier-supplied comparand).
+    FROM the committed state, never from a prover-chosen scalar. ⚑ This bullet used to end
+    "(`CURRENT_BLOCK_HEIGHT`, PI 18, stays as the verifier-supplied comparand)" — wrong twice
+    over: the slot was PI 26 post-Phase-C, and NO code ever performed the comparison that would
+    have made it a comparand. It was DELETED on 2026-08-07 with the other six dead v1 slots
+    (`docs/PI-DISPOSITION.md` §6). THIS column is the whole temporal binding.
   * `RATE_BOUND_TAG` / `CHALLENGE_WINDOW_TAG` — the caveat tags (`REORIENT.md:75-76`); the
     challengeWindow tag is what the optimistic proving mode reads (#169) — the tag ships at the
     flag-day, the mode ships later. -/
@@ -384,8 +387,14 @@ by the Rust twin test — if the live layout grows before the flag-day, the pin 
 
 Phase C (`.docs-history-noclaude/FAITHFUL-STATE-COMMITMENT.md`): re-anchored 201 → 209 when the
 OLD/NEW state commitment widened 4 → 8 felts each (+8 prefix shift) to lift the
-collision floor ~62 → ~124 bits, matching FRI ~128-bit soundness. -/
-def V2_BASE_COUNT : Nat := 209
+collision floor ~62 → ~124 bits, matching FRI ~128-bit soundness.
+
+⚑ THE SEVEN-SLOT COMPACTION (2026-08-07, `docs/PI-DISPOSITION.md` §6): re-anchored 209 → 202
+when `CURRENT_BLOCK_HEIGHT` / `MAX_CUSTOM_EFFECTS` / `CUSTOM_EFFECT_COUNT` /
+`APPROVED_HANDOFFS[4]` (v1 offsets 26..32) were DELETED — 0 `pi_binding`s across both deployed
+registries, no verifier comparison, and the one off-circuit reader now derives its count from
+the PI vector's own length. -/
+def V2_BASE_COUNT : Nat := 202
 
 /-- The committed-height PI column: the `committedHeight` limb's public face. -/
 def COMMITTED_HEIGHT : Nat := V2_BASE_COUNT

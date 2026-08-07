@@ -118,7 +118,8 @@ fn sample_receipt(
 /// shape NO leg ships — and that is exactly how `check_receipt_pi_binding`'s 213-felt
 /// precondition stayed invisible: the tests manufactured an input long enough to clear
 /// a gate that every real proof failed, so T8/T11 passed against a vector the wire
-/// never carries. Measured 2026-07-27, a real wide rotated leg carries **68** felts;
+/// never carries. Measured 2026-07-27, a real wide rotated leg carried **68** felts (61 after
+/// the 2026-08-07 seven-slot PI compaction);
 /// the drive-the-real-producer measurement is
 /// `tests/tests/receipt_pi_binding_reachability.rs`.
 fn rotated_pi_for_receipt(receipt: &TurnReceipt) -> Vec<u32> {
@@ -832,7 +833,7 @@ fn t14_malformed_proof_bytes_rejected() {
 ///
 /// | field | trace-bound? |
 /// |---|---|
-/// | `ACTOR_NONCE` (41) | YES — row-0 `state_before.NONCE` |
+/// | `ACTOR_NONCE` (34) | YES — row-0 `state_before.NONCE` |
 /// | `OLD_COMMIT[0]` (0) | YES — row-0 `state_before.STATE_COMMIT` |
 /// | `NEW_COMMIT[0]` (8) | YES — last-row `state_after.STATE_COMMIT` |
 /// | `INIT_BAL_LO/HI` (20,21) | YES — row-0 `state_before.BALANCE_*` |
@@ -1388,7 +1389,7 @@ fn cross_cutting_verifier_checks_all_pi() {
     use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
 
     // (a) TURN_HASH — the one PI slot a rotated leg actually publishes for the turn
-    //     identity (`TURN_HASH_BASE` = 33, inside the v1 window `[0, 42)`).
+    //     identity (`TURN_HASH_BASE` = 26, inside the v1 window `[0, V1_PI_COUNT)`).
     let mut tampered_pi = rotated_pi_for_receipt(&base);
     tampered_pi[pi::TURN_HASH_BASE] ^= 0x01;
     let reason = dregg_verifier::check_receipt_pi_binding(&base, &tampered_pi, Some(previous))
@@ -1399,9 +1400,10 @@ fn cross_cutting_verifier_checks_all_pi() {
     //     verifier no longer pretends to compare them. This is structural, not a
     //     preference: the rotated producer slices the v1 PI vector at exactly
     //     `V1_PI_COUNT` before appending its four rotated pins, and
-    //     `PREVIOUS_RECEIPT_HASH_BASE` IS that slice point — so indices 42..46 of a
-    //     real leg carry the rotated OLD/NEW commit, committed height and caveat
-    //     commit. `IS_AGENT_CELL` (81) is past the end of the vector entirely.
+    //     `PREVIOUS_RECEIPT_HASH_BASE` IS that slice point — so indices
+    //     `V1_PI_COUNT..ROT_PI_COUNT` of a real leg carry the rotated OLD/NEW commit,
+    //     committed height and caveat commit. `IS_AGENT_CELL` is past the end of the
+    //     vector entirely.
     //     Comparing either against a receipt field would reject every honest proof.
     assert_eq!(
         pi::PREVIOUS_RECEIPT_HASH_BASE,

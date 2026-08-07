@@ -97,7 +97,7 @@ pins, the 4 ordered GROUP-4 hash sites and the 2 balance-limb range checks. -/
 def revokeVmDescriptor : EffectVmDescriptor :=
   { name := revokeVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := revokeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 30
   , hashSites := revokeHashSites

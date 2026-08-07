@@ -7615,7 +7615,7 @@ mod tests {
             .expect("Lean-emitted EffectVM transfer descriptor must parse");
         assert_eq!(d.name, "dregg-effectvm-transfer-v1");
         assert_eq!(d.trace_width, 188);
-        assert_eq!(d.public_input_count, 42);
+        assert_eq!(d.public_input_count, 35);
         // 14 per-row gates + 14 transitions + 7 boundary PI pins + 1 selector-binding gate.
         assert_eq!(d.constraints.len(), 14 + 14 + 7 + 1);
         assert_eq!(d.hash_sites.len(), 4);

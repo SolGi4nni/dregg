@@ -66,7 +66,6 @@ pub mod domain {
     pub const TAG_QUEUE_STATE: &str = "dregg-queue:state v2";
     pub const TAG_SWISS_TABLE: &str = "dregg-captp:swiss-table v2";
     pub const TAG_REFCOUNT_TABLE: &str = "dregg-captp:refcount-table v2";
-    pub const TAG_APPROVED_HANDOFFS: &str = "dregg-captp:approved-handoffs v2";
     pub const TAG_EFFECTS: &str = "dregg-turn:effects v2";
 }
 
@@ -405,8 +404,12 @@ pub enum BridgeReceiptMarker {}
 pub enum SwissTableMarker {}
 /// Marker: CapTP refcount table root.
 pub enum RefcountTableMarker {}
-/// Marker: federation approved-handoffs set root.
-pub enum ApprovedHandoffSetMarker {}
+// ⚑ `ApprovedHandoffSetMarker` (+ its `TAG_APPROVED_HANDOFFS` domain and the
+// `ApprovedHandoffsRootCommitment` alias) were DELETED on 2026-08-07. Its only consumer was
+// `PI[APPROVED_HANDOFFS_BASE..+4]`, which went with the seven-slot PI compaction
+// (`docs/PI-DISPOSITION.md` §6); `ValidateHandoff` has not been an effect since the
+// verb-lockstep pass. A commitment schema with no value to commit is a domain tag that can
+// only ever be wrong.
 
 // =============================================================================
 // Implementations for the top-5 migration targets
@@ -487,14 +490,6 @@ impl CommitmentSchema for RefcountTableMarker {
     }
 }
 
-impl CommitmentSchema for ApprovedHandoffSetMarker {
-    type Value = [u8];
-    const DOMAIN: &'static str = domain::TAG_APPROVED_HANDOFFS;
-    fn canonical(value: &Self::Value) -> Vec<u8> {
-        value.to_vec()
-    }
-}
-
 // =============================================================================
 // Convenience type aliases
 // =============================================================================
@@ -506,7 +501,6 @@ pub type NullifierCommitment = Commitment4<NullifierMarker>;
 pub type EffectsCommitment = Commitment4<EffectsMarker>;
 pub type SwissTableRootCommitment = Commitment4<SwissTableMarker>;
 pub type RefcountTableRootCommitment = Commitment4<RefcountTableMarker>;
-pub type ApprovedHandoffsRootCommitment = Commitment4<ApprovedHandoffSetMarker>;
 
 // =============================================================================
 // Helpers

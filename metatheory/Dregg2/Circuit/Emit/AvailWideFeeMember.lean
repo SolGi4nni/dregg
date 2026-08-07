@@ -166,7 +166,7 @@ def FEE_AVAIL_BB : Nat := FEE_AVAIL_WIDTH
 
 #guard FEE_AVAIL_BB == transferFeeVmDescriptorAvail.traceWidth
 #guard FEE_AVAIL_BB == 204
-#guard transferFeeAvailV3W.piCount == 47
+#guard transferFeeAvailV3W.piCount == 40
 -- MODEL vs EMISSION (was the literal 1835 — a constant against its own definition, moved by the
 -- 2026-08-01 key nonet).  `gradRotWidthOf` is the graduation model; the left side is what
 -- `v3OfFrozenWide` actually emitted for the FEE avail face.
@@ -189,11 +189,11 @@ def transferFeeAvailWide : EffectVmDescriptor2 :=
 -- Geometry pins: the avail fee member mirrors the bare wide fee member (+16 pad): 67 PIs, and the
 -- wide-graduated fee face plus the wide appendix.  ⚑ The literal `2827` stood beside that relation
 -- and said nothing it does not; the key nonet moved the literal and left the relation true.
-#guard transferFeeAvailWide.piCount == 67
+#guard transferFeeAvailWide.piCount == 60
 #guard transferFeeAvailWide.traceWidth == transferFeeAvailV3W.traceWidth + wideAppendixSpan
 #guard transferFeeAvailWide.name == "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged"
 -- The bare wide fee twin for reference: the SAME 67-PI layout, fee-avail-shifted columns.
-#guard (wideAppend (withDfaRcPins transferFeeV3) 188 (188 + B_SPAN)).piCount == 67
+#guard (wideAppend (withDfaRcPins transferFeeV3) 188 (188 + B_SPAN)).piCount == 60
 #guard transferFeeAvailWide.traceWidth
   == (wideAppend (withDfaRcPins transferFeeV3) 188 (188 + B_SPAN)).traceWidth + 16
 

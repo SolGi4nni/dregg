@@ -76,7 +76,7 @@ def ACTIVE_COL : Nat := NEW_NODE_STATE_BASE + NODE_STATE_STEPS * STATE_LANES
 def COUNT_COL : Nat := ACTIVE_COL + 1
 def TRACE_WIDTH : Nat := COUNT_COL + 1
 
-def AUDIT_PI_BASE : Nat := 54
+def AUDIT_PI_BASE : Nat := 47
 def AUDIT_PI_COUNT : Nat := 16
 
 #guard BEFORE_BASE == 1841    -- ⚑ +22 at the KEY-NONET flag day (APPENDIX_SPAN 651 → 659, +2 sites)
@@ -84,7 +84,7 @@ def AUDIT_PI_COUNT : Nat := 16
 #guard AFTER_BASE == 2099
 #guard ACTIVE_COL == 2347
 #guard TRACE_WIDTH == 2349
-#guard AUDIT_PI_BASE == 46 + 8
+#guard AUDIT_PI_BASE == 39 + 8
 
 def ev (c : Nat) : EmittedExpr := .var c
 def ek (x : Int) : EmittedExpr := .const x
@@ -285,14 +285,14 @@ def refusalExactFieldsWide : EffectVmDescriptor2 :=
       (EffectVmEmitRefusal.refusalVmDescriptor.traceWidth + B_SPAN))
 
 #guard refusalExactFieldsV4.traceWidth == TRACE_WIDTH
-#guard refusalExactFieldsV4.piCount == 70
+#guard refusalExactFieldsV4.piCount == 63
 #guard (withRecordPin8Headroom2 refusalV3).piCount == AUDIT_PI_BASE
 -- ⚑ KEY-NONET: 992 → 1008. Two wide blocks of `wideNumCarriers` 8-felt carriers, 62 → 63.
 #guard refusalExactFieldsWide.traceWidth == TRACE_WIDTH + 1008
 -- and the same fact WELDED to the producer's derived span, so the next carrier move reds the literal.
 #guard refusalExactFieldsWide.traceWidth
   == TRACE_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppendixSpan
-#guard refusalExactFieldsWide.piCount == 90
+#guard refusalExactFieldsWide.piCount == 83
 #guard ((refusalExactFieldsV4.constraints.filter fun c =>
   match c with | .lookup l => l.table == poseidon2state16 | _ => false).length) == 26
 #guard ((refusalExactFieldsV4.constraints.filter fun c =>

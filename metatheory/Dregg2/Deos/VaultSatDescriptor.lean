@@ -189,8 +189,8 @@ private theorem liftDelta {v a b : ℤ} (h : v ≡ a + 32768 * b [ZMOD 201326592
 /-- The capacity selector column (`prmCol 2` — a SEPARATE descriptor, slot reused). Rust
 `vault_weld::VAULT_SEL_COL`. -/
 def VAULT_SEL_COL : Nat := prmCol 2
-/-- The selector PI slot (the appended 47th). Rust `VAULT_SEL_PI`. -/
-def VAULT_SEL_PI : Nat := 46
+/-- The selector PI slot (the appended 40th). Rust `VAULT_SEL_PI`. -/
+def VAULT_SEL_PI : Nat := 39
 
 /-- Limb width (15 bits keeps every partial product `< 2^30 < p`). Rust `LIMB_BITS`. -/
 def LIMB_BITS : Nat := 15
@@ -390,7 +390,7 @@ def VAULT_WIDTH : Nat := BIT_BASE + TOTAL_RANGE_BITS
 /-- **`vaultSatVmDescriptor2R24`** — the welded vault-deposit satisfaction descriptor over the R=24
 rotated cohort. `graduateV1 (rotateV3 settle-base)` (the `asset`/`share` freezes dropped) PLUS the
 vault satisfaction gates PLUS the selector PI pin; the trace WIDENED to carry the product/compare
-aux block (tables re-declared at the widened arity). `piCount = 47`. STAGED: the registry row + FP
+aux block (tables re-declared at the widened arity). `piCount = 40`. STAGED: the registry row + FP
 pin ride the big-bang regen. -/
 def vaultSatVmDescriptor2R24 (asset share : Nat) : EffectVmDescriptor2 :=
   let base := graduateV1 (rotateV3
@@ -879,7 +879,7 @@ private def vaultLoc (sel ba aa bs asv dInv mInv : Int) : Nat → Int :=
 -- SELECTOR OFF: the gates are inert even on the diluting row.
 #guard (vaultSatGates 0 1).all (fun g => gateVal g (vaultLoc 0 5 6 3 4 1 1) == 0)
 -- The descriptor publishes 47 PIs (the rotated 46 + the appended selector slot).
-#guard (vaultSatVmDescriptor2R24 0 1).piCount == 47
+#guard (vaultSatVmDescriptor2R24 0 1).piCount == 40
 -- Gate count: 6 core + 12 sign (no-borrow) + 8 product + 9 borrow + one bool-per-bit + one
 -- assembly-per-spec.
 #guard (vaultSatGates 0 1).length == 6 + 12 + 8 + 9 + TOTAL_RANGE_BITS + rangeSpecs.length

@@ -22,7 +22,7 @@ apex re-key rides `CircuitSoundnessAssembled.v3RegistryHeap` tail positions (the
 
 `withSovereignKeyCommit makeSovereignV3 SOVEREIGN_KEY_COMMIT_COL` binds the FOUR executor KEY_COMMIT
 teeth (`columns.rs::WITNESS_KEY_COMMIT_0..3` = cols 113..=116, row-0-pinned to PI by the ALREADY-CLOSED
-record-pin family — `makeSovereignV3.piCount = 54` is UNTOUCHED, the gate only widens `traceWidth` and
+record-pin family — `makeSovereignV3.piCount = 47` is UNTOUCHED, the gate only widens `traceWidth` and
 appends 4 chip lookups + 4 teeth welds) to the in-AIR `canonical_32_to_felts_4` of the committed
 `B_PUBKEY8` octet. The executor's `KEY_COMMIT` (`proof_verify.rs::pubkey_to_witness_key_commit` =
 `canonical_32_to_felts_8` then FOUR `hash_4_to_1` over the interleave quads) EQUALS this in-AIR
@@ -80,7 +80,7 @@ def SOVEREIGN_KEY_COMMIT_COL : Nat := 113
 
 /-- **`makeSovereignV3Keyed`** — the deployed `makeSovereignVmDescriptor2R24` COMPOSED with the in-AIR
 KEY_COMMIT compress gate: the 4 executor teeth (cols 113..=116) are forced EQUAL to
-`canonical_32_to_felts_4` of the committed `B_PUBKEY8` octet. `piCount = 54` UNCHANGED (the record-pin
+`canonical_32_to_felts_4` of the committed `B_PUBKEY8` octet. `piCount = 47` UNCHANGED (the record-pin
 is closed; the gate binds EXISTING teeth columns, adding only trace width + chip lookups). -/
 def makeSovereignV3Keyed : EffectVmDescriptor2 :=
   withSovereignKeyCommit makeSovereignV3 SOVEREIGN_KEY_COMMIT_COL
@@ -124,7 +124,7 @@ theorem makeSovereignV3Keyed_rejects_forged (A : List ℤ → Digest8) (hash : L
 
 /-! ## §4 — THE DEPLOYED SOVEREIGN MEMBER (big-bang regen): teeth PI pins + the KEY_COMMIT gate.
 
-The annotated fold-arm convention (`ivc_turn_chain.rs::SOVEREIGN_KEY_COMMIT_PI_LO = 58`,
+The annotated fold-arm convention (`ivc_turn_chain.rs::SOVEREIGN_KEY_COMMIT_PI_LO = 51`,
 `sovereign_binding_deployed_tooth.rs`): the 4 KEY_COMMIT teeth (cols 113..=116) publish at the
 POST-rc tail — PIs 58..61 on the narrow member (54 record-pin + 4 rc, THEN the teeth), strictly
 AHEAD of the 16 wide anchors on the wide member (62..77). So the compose order is
@@ -206,7 +206,7 @@ theorem withSovereignTeethPins_publishes (hash : List ℤ → ℤ) (g : EffectVm
 #assert_axioms withSovereignTeethPins_publishes
 
 /-- The deployed sovereign HOST: record-pin base + the cohort rc wrap + the teeth PI pins
-(piCount `54 → 58 → 62`; teeth at PI 58..61, the annotated `SOVEREIGN_KEY_COMMIT_PI_LO`). -/
+(piCount `47 → 51 → 55`; teeth at PI 51..54, the annotated `SOVEREIGN_KEY_COMMIT_PI_LO`). -/
 def makeSovereignV3Pinned : EffectVmDescriptor2 :=
   withSovereignTeethPins (withDfaRcPins makeSovereignV3)
 
@@ -238,11 +238,11 @@ def makeSovereignV3DeployedWide : EffectVmDescriptor2 :=
     SOVEREIGN_KEY_COMMIT_COL
 
 -- Geometry: narrow 62 PIs / width +32; wide 78 PIs / 1707+992+32 = 2731 wide, teeth ahead of anchors.
-#guard makeSovereignV3.piCount == 54
-#guard makeSovereignV3Pinned.piCount == 62
-#guard makeSovereignV3Deployed.piCount == 62
+#guard makeSovereignV3.piCount == 47
+#guard makeSovereignV3Pinned.piCount == 55
+#guard makeSovereignV3Deployed.piCount == 55
 #guard makeSovereignV3Deployed.traceWidth == makeSovereignV3.traceWidth + 32
-#guard makeSovereignV3DeployedWide.piCount == 78
+#guard makeSovereignV3DeployedWide.piCount == 71
 #guard makeSovereignV3DeployedWide.traceWidth == makeSovereignV3.traceWidth + wideAppendixSpan + 32
 -- MODEL vs EMISSION (was the literal 1819 — decoration the key nonet moved).
 #guard makeSovereignV3.traceWidth
@@ -511,13 +511,13 @@ def transferV3MembershipWide : EffectVmDescriptor2 :=
   { w with traceWidth := w.traceWidth + 2 }
 
 -- Geometry: narrow 52 PIs / width 1709; wide 68 PIs / 2701 wide (carriers 1707.., teeth 2699..2700).
-#guard transferV3.piCount == 46
-#guard transferV3Membership.piCount == 52
+#guard transferV3.piCount == 39
+#guard transferV3Membership.piCount == 45
 #guard transferV3Membership.traceWidth == transferV3.traceWidth + 2
 -- MODEL vs EMISSION (was the literal 1819 — decoration the key nonet moved).
 #guard transferV3.traceWidth
   == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor
-#guard transferV3MembershipWide.piCount == 68
+#guard transferV3MembershipWide.piCount == 61
 #guard transferV3MembershipWide.traceWidth == transferV3.traceWidth + wideAppendixSpan + 2
 
 /-- **THE DEPLOYED MEMBERSHIP EXPOSURE KEYSTONE (wide — the `WIDE_REGISTRY_STAGED_TSV` member the

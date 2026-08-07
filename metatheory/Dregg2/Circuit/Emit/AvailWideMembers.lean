@@ -181,7 +181,7 @@ def transferAvailV3W : EffectVmDescriptor2 := v3OfFrozenWide transferVmDescripto
 def TR_AVAIL_BB : Nat := AVAIL_WIDTH
 
 #guard TR_AVAIL_BB == transferVmDescriptorAvail.traceWidth
-#guard transferAvailV3W.piCount == 46
+#guard transferAvailV3W.piCount == 39
 -- MODEL vs EMISSION (was the literal 1829 — decoration; the key nonet moved it).
 #guard transferAvailV3W.traceWidth
   == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf transferVmDescriptorAvail
@@ -243,13 +243,13 @@ def transferAvailWideRefused : EffectVmDescriptor2 :=
 -- ⚑ The widths were the literals 2823 / 3150 / 2823+45, retyped once per flag day and red once per
 -- flag day. Each is now the RELATION it stood for: an emitted descriptor against another emitted
 -- descriptor plus a delta the rotation geometry does not move.
-#guard transferV3MembershipAvailWide.piCount == 68
+#guard transferV3MembershipAvailWide.piCount == 61
 #guard transferV3MembershipAvailWide.traceWidth
   == transferAvailV3W.traceWidth + wideAppendixSpan + 2
 #guard transferV3MembershipAvailWide.name == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged"
 -- ⚑ 2026-07-30: TB piCount 65 → 63 and width 3024 → 3038, the two unforced `actor`/`dst`
 -- publications deleted (`UnforcedPiPins`); the convergence re-emit rotates the wide registry FP.
-#guard transferCapOpenTBAvailWide.piCount == 63
+#guard transferCapOpenTBAvailWide.piCount == 56
 #guard transferCapOpenTBAvailWide.traceWidth
   == transferV3MembershipAvailWide.traceWidth + 327
 #guard transferCapOpenTBAvailWide.name
@@ -259,7 +259,7 @@ def transferAvailWideRefused : EffectVmDescriptor2 :=
 #guard transferAvailWideRefused.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 -- The bare crown twin for reference: same PI layout, avail-shifted columns.
-#guard Dregg2.Circuit.Emit.CarrierComposed.transferV3MembershipWide.piCount == 68
+#guard Dregg2.Circuit.Emit.CarrierComposed.transferV3MembershipWide.piCount == 61
 #guard transferV3MembershipAvailWide.traceWidth
   == Dregg2.Circuit.Emit.CarrierComposed.transferV3MembershipWide.traceWidth + 10
 
@@ -526,7 +526,7 @@ def BU_AVAIL_BB : Nat := Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH
 
 #guard BU_AVAIL_BB == Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.traceWidth
 #guard BU_AVAIL_BB == 196
-#guard burnAvailV3W.piCount == 46
+#guard burnAvailV3W.piCount == 39
 -- MODEL vs EMISSION (was the literal 1827 — decoration the key nonet moved).
 #guard burnAvailV3W.traceWidth
   == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
@@ -553,17 +553,17 @@ def burnAvailWideRefused : EffectVmDescriptor2 :=
 -- Geometry pins: the avail crown mirrors the bare wide burn (+8 pad): 66 PIs (46 + 4 rc + 16
 -- wide anchors), the wide-graduated face plus the wide appendix; the refused crown +45 aux columns.
 -- ⚑ The literals 2819 / 2819+45 were decoration and moved with the key nonet.
-#guard burnV3AvailWide.piCount == 66
+#guard burnV3AvailWide.piCount == 59
 #guard burnV3AvailWide.traceWidth == burnAvailV3W.traceWidth + wideAppendixSpan
 #guard burnV3AvailWide.name == "dregg-effectvm-burn-v1-avail-rot24-v3-staged"
-#guard burnAvailWideRefused.piCount == 66
+#guard burnAvailWideRefused.piCount == 59
 #guard burnAvailWideRefused.traceWidth == burnV3AvailWide.traceWidth + 45
 #guard burnAvailWideRefused.name
   == "dregg-effectvm-burn-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 -- The bare wide burn twin for reference: SAME 66-PI layout, avail-shifted columns.
 #guard (Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpenWide.lookup
     "burnVmDescriptor2R24").any
-  (fun d => d.piCount == 66 && d.traceWidth + 8 == burnV3AvailWide.traceWidth)
+  (fun d => d.piCount == 59 && d.traceWidth + 8 == burnV3AvailWide.traceWidth)
 
 /-! ### §7.1 — the pin-cleanliness + membership embed (the `wideEmbedded_sound_v1` premises). -/
 
@@ -767,7 +767,7 @@ def transferCapOpenEffAvailWide : EffectVmDescriptor2 :=
 
 -- Geometry pins: the EFF member is the narrow avail cap-open plus the wide appendix (+16 PIs).
 -- ⚑ The literal 3150 was decoration; stated as the relation, it rides the flag day.
-#guard transferCapOpenEffAvailWide.piCount == 62
+#guard transferCapOpenEffAvailWide.piCount == 55
 #guard transferCapOpenEffAvailWide.traceWidth
   == transferV3MembershipAvailWide.traceWidth + 327
 #guard transferCapOpenEffAvailWide.name

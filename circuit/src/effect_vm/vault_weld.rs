@@ -58,10 +58,12 @@ use crate::descriptor_ir2::{VmConstraint2, WindowExpr, WindowGateSpec};
 use crate::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
 /// **THE VAULT CAPACITY-SELECTOR COLUMN** — `param2` (`PARAM_BASE + 2`). `1` on the settle row, `0`
-/// on padding; the emitted descriptor pins it to PI 46.
+/// on padding; the emitted descriptor pins it to `VAULT_SEL_PI`.
 pub const VAULT_SEL_COL: usize = super::columns::PARAM_BASE + 2;
-/// The PI slot the emitted descriptor pins the selector to.
-pub const VAULT_SEL_PI: usize = 46;
+/// The PI slot the emitted descriptor pins the selector to: the first slot past the four rotated
+/// commit pins. Derived from `ROT_PI_COUNT` (it was the literal `46` until the 2026-08-07
+/// seven-slot PI compaction).
+pub const VAULT_SEL_PI: usize = super::trace_rotated::ROT_PI_COUNT;
 /// **THE DECODED VAULT-FLOOR COLUMN** — `param4` (`PARAM_BASE + 4`), the boolean "this cell declares
 /// the vault-deposit capacity (some bound caveat type-tag == 19)".
 pub const FLOOR_VAULT_COL: usize = super::columns::PARAM_BASE + 4;

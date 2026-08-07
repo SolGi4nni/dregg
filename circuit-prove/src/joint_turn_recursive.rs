@@ -34,10 +34,14 @@ const D: usize = 4;
 
 /// IR2 PI slot the deployed `customVmDescriptor2R24` publishes its `custom_proof_commitment` at
 /// (the Lean `customPiExposure`; see `effect_vm/trace_rotated.rs::generate_rotated_custom_wide` —
-/// the PROOF-BIND FLAG-DAY ROTATION lays the eight `custom_proof_commitment` limbs at IR2 PI
-/// 46..53 (limbs 0..4 from cols 72..75, limbs 4..8 from the commit-teeth columns), and the full
-/// `custom_program_vk_hash` at 54..61 (low4 parameter columns plus high4 VK teeth).
-pub const CUSTOM_COMMIT_PI_LO: usize = 46;
+/// the PROOF-BIND FLAG-DAY ROTATION lays the eight `custom_proof_commitment` limbs at the first
+/// eight slots past the four rotated commit pins (limbs 0..4 from cols 72..75, limbs 4..8 from
+/// the commit-teeth columns), and the full `custom_program_vk_hash` at the eight after those
+/// (low4 parameter columns plus high4 VK teeth).
+///
+/// Derived from `ROT_PI_COUNT`, not written as `46`: the 2026-08-07 seven-slot PI compaction took
+/// `V1_PI_COUNT` 42 → 35 and this exposure base with it (`docs/PI-DISPOSITION.md` §6).
+pub const CUSTOM_COMMIT_PI_LO: usize = dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
 /// Width of the `custom_proof_commitment` claim — the FULL 8-felt `WideHash` class
 /// (~124-bit birthday; flag-day rotation from the retired 4-felt / ~62-bit shape).
 /// Old 4-felt custom artifacts are refused at the versioned admission boundary
@@ -1118,7 +1122,8 @@ mod custom_fold_wire_tests {
         (w, rows)
     }
 
-    /// Build an effect-vm leg leaf that PUBLISHES the 8-felt `claim` at IR2 PI 46..53 (the
+    /// Build an effect-vm leg leaf that PUBLISHES the 8-felt `claim` at IR2 PI
+    /// `[CUSTOM_COMMIT_PI_LO, +8)` (the
     /// deployed `customVmDescriptor2R24` slot semantics after the proof-bind flag-day rotation —
     /// eight `PiBinding .first` commit pins) and re-exposes it for the fold. A minimal stand-in
     /// for the wide deployed trace at the SAME exposure surface.
@@ -1126,7 +1131,8 @@ mod custom_fold_wire_tests {
         claim: crate::custom_proof_bind::ProofBindCommitment,
         config: &DreggRecursionConfig,
     ) -> RecursionOutput<DreggRecursionConfig> {
-        let pi_count = CUSTOM_COMMIT_PI_LO + CUSTOM_COMMIT_LEN; // 54: slots 46..53 carry the claim.
+        // The eight slots at `[CUSTOM_COMMIT_PI_LO, +CUSTOM_COMMIT_LEN)` carry the claim.
+        let pi_count = CUSTOM_COMMIT_PI_LO + CUSTOM_COMMIT_LEN;
         let constraints: Vec<VmConstraint2> = (0..CUSTOM_COMMIT_LEN)
             .map(|k| {
                 VmConstraint2::Base(VmConstraint::PiBinding {
@@ -1308,7 +1314,7 @@ mod custom_state_fold_wire_tests {
     /// PI count of the stand-in leg — the deployed custom wide member's shape (70 base [46 rot +
     /// 12 exposure + 4 rc + 8 app-root field octet] + 16 wide anchors = 86, the app-root leg-emit
     /// epoch). Keeps the claim slice [46..54) and the anchors [70..86) disjoint (the state node
-    /// ignores the field octet at [62..70)), and is >= `WIDE_PI_COUNT` (66) so
+    /// ignores the field octet at [62..70)), and is >= `WIDE_PI_COUNT` (59) so
     /// `prove_descriptor_leaf_dual_expose` takes the WIDE anchor branch (sourcing the genuine 8-felt
     /// roots rather than broadcasting a single felt).
     const STANDIN_LEG_PI_COUNT: usize = 86;

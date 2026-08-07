@@ -647,9 +647,13 @@ theorem cont_rejects_stash :
 #assert_axioms pRow_breaks_exactness
 #assert_axioms pRow_breaks_no_underflow
 #assert_axioms burnLimbsCanonical_is_load_bearing
-
-end Dregg2.Circuit.Emit.EffectActionBindingEmit
-
+-- The three RE-HOMED width facts (`two_felts_cannot_carry_a_u64` and friends, moved here from the
+-- deleted `BridgeActionEmit` on 2026-08-07). ⚑ They were appended BELOW the `end` of this
+-- namespace, where their short names do not resolve — `Unknown constant`, so the module did not
+-- elaborate and every emitter that transitively imports it could not run. Inside the namespace,
+-- as the other fourteen already were.
 #assert_axioms two_felts_cannot_carry_a_u64
 #assert_axioms four_limbs_carry_u64_exactly
 #assert_axioms amount_limb_fits_felt
+
+end Dregg2.Circuit.Emit.EffectActionBindingEmit

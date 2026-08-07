@@ -95,7 +95,7 @@ here it is the slot just past the rotated 46 + the 16 wide anchors.) -/
 
 /-- The WIDE selector PI slot (`host.piCount + 16 = 62`): the appended selector pin slot, past the 46
 rotated PIs and the 16 wide commit anchors. -/
-def ESCROW_SEL_PI_WIDE : Nat := 62
+def ESCROW_SEL_PI_WIDE : Nat := 55
 
 /-! ## §2 — THE WIDE WELDED DESCRIPTOR (the graduation, emit-faithful). -/
 
@@ -105,7 +105,7 @@ def ESCROW_SEL_PI_WIDE : Nat := 62
 16 wide commit PIs) — PLUS the four selector-gated satisfaction gates over the rotated field columns
 PLUS the selector PI pin. `bb = (settleEscrowV1Base legA legB).traceWidth = EFFECT_VM_WIDTH`, so the
 BEFORE block limbs are based at `bb` and the AFTER block limbs at `bb+B_SPAN` — EXACTLY the bases
-`beforeFieldCol`/`afterFieldCol` read. `piCount = 63` (rotated 46 + 16 wide anchors + the selector
+`beforeFieldCol`/`afterFieldCol` read. `piCount = 56` (rotated 39 + 16 wide anchors + the selector
 slot). -/
 def settleEscrowSatVmDescriptor2R24Wide (legA legB : Nat) : EffectVmDescriptor2 :=
   let bb := (settleEscrowV1Base legA legB).traceWidth
@@ -251,9 +251,9 @@ theorem afterFieldCol_absorbed (k : Nat) (hk : k ≤ 7) :
 section Witnesses
 
 -- The wide descriptor publishes 63 PIs (the rotated 46 + the 16 wide commit anchors + the selector).
-#guard (settleEscrowSatVmDescriptor2R24Wide 0 1).piCount == 63
+#guard (settleEscrowSatVmDescriptor2R24Wide 0 1).piCount == 56
 -- The selector pin rides PI 62 (just past the 16 wide anchors at 46..61).
-#guard ESCROW_SEL_PI_WIDE == 62
+#guard ESCROW_SEL_PI_WIDE == 55
 -- The escrow wide block bases match the satisfaction-gate field bases (the absorption alignment).
 #guard (settleEscrowV1Base 0 1).traceWidth == EFFECT_VM_WIDTH
 -- The legs (slots 0, 1) land inside the absorbed 37-limb windows.

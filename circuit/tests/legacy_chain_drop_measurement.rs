@@ -249,7 +249,7 @@ fn s2_deletion_yield_measurement() {
         "compact width"
     );
     assert_eq!(
-        deployed.public_input_count, 68,
+        deployed.public_input_count, 61,
         "PI shape UNCHANGED by the deletion"
     );
     assert_eq!(pis.len(), deployed.public_input_count);

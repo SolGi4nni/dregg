@@ -64,68 +64,59 @@ pub const FINAL_BAL_HI: usize = FINAL_BAL_LO + 1;
 pub const NET_DELTA_MAG: usize = FINAL_BAL_HI + 1;
 pub const NET_DELTA_SIGN: usize = NET_DELTA_MAG + 1;
 
-// ---- Stage 1 additions (per EFFECT-VM-SHAPE-A.md G, E, F) ----
-/// Federation block height "supplied by the verifier".
-///
-/// ⚠ **DEAD, MEASURED 2026-08-06 — nothing supplies it and nothing reads it.**
-/// `EffectVmContext::default()` sets `current_block_height: 0`
-/// (`trace.rs`), no producer overrides it, `verify_one_cohort_run`'s
-/// reconstruction never touches it, and the deployed registries carry **zero**
-/// `pi_binding`s at this index (57 wide members). So the published felt is the
-/// constant `0` on every proof in the system. The live temporal binding is
-/// `v3::COMMITTED_HEIGHT` (PI 44) — pinned by 56/56 wide members AND overridden
-/// by the verifier from the trusted `cell.state.committed_height()`; the
-/// comparison against THIS slot that would have made it a comparand is written
-/// nowhere. **Disposition: STOP PUBLISHING.** See `docs/DESIGN-pi-authority.md`
-/// §4(c) for the compaction price (it is one VK rotation for all eleven).
-pub const CURRENT_BLOCK_HEIGHT: usize = NET_DELTA_SIGN + 1;
-/// Per-cell maximum custom effects.
-///
-/// ⚠ **DEAD, MEASURED 2026-08-06, AND ITS DOCUMENTED SOURCE DOES NOT EXIST.**
-/// This line used to read "Verifier supplies from `cell.program.max_custom_effects`":
-/// there is no `cell.program.max_custom_effects` field anywhere in the tree. The
-/// declaration lives on the LEDGER, at
-/// `dregg_cell::ledger::SovereignRegistration::max_custom_effects: Option<u8>`.
-/// Nothing plumbs it here — the value published is
-/// `MAX_CUSTOM_EFFECTS_DEFAULT` (4) from `EffectVmContext::default()`, on the
-/// producer AND the verifier, always.
-///
-/// ⓘ Reconstructing it "correctly" would buy nothing, which is why the
-/// disposition is removal rather than repair: the cap is genuinely enforced, but
-/// OFF-CIRCUIT and from the verifier's own ledger
-/// (`TurnExecutor::read_cell_max_custom_effects` → the `proofs.len() > cap`
-/// refusal in `executor::proof_verify`), which is strictly stronger than a
-/// published felt no constraint reads. **Disposition: STOP PUBLISHING.**
-pub const MAX_CUSTOM_EFFECTS: usize = CURRENT_BLOCK_HEIGHT + 1;
-/// Number of custom effects in this turn (0 if none).
-///
-/// ⚠ **THE SUM-CHECK THIS SLOT IS NAMED FOR DOES NOT EXIST.** This line used to
-/// read "The AIR enforces `Σ s_custom == PI[CUSTOM_EFFECT_COUNT]`". Measured
-/// 2026-08-06: the accumulator column exists (`columns::aux_off::CUSTOM_COUNT_ACC`)
-/// and is filled by the trace generator, but **no constraint anywhere references
-/// it** — the v1 hand-AIR `eval_constraints` that was to host it is retired, and
-/// the deployed registries carry zero `pi_binding`s at this index. The named
-/// enforcement, `TurnExecutor::enforce_custom_proof_count_committed`, **reads no
-/// public input at all**: it compares `turn.custom_program_proofs.len()` against a
-/// fresh re-derivation from the same `turn`'s effects. Two executor-derived
-/// quantities compared to each other. **Disposition: STOP PUBLISHING.**
-pub const CUSTOM_EFFECT_COUNT: usize = MAX_CUSTOM_EFFECTS + 1;
-
-// ---- CapTP federation-state root (RETIRED slot, VERB-LOCKSTEP) ----
-/// Federation-scoped approved-handoffs Merkle root, 4-felt Poseidon2 form.
-///
-/// ⚠ **RETIRED AND DEAD.** `ValidateHandoff` no longer exists as an effect; the
-/// four felts sit at the empty-tree sentinel, carry zero `pi_binding`s across all
-/// 57 deployed wide members, and are read by nothing. **Disposition: STOP
-/// PUBLISHING** — `docs/DESIGN-pi-authority.md` §4(c). (The former note here said
-/// the slot stays "until the descriptor-regeneration lane compacts the PI layout
-/// (frozen descriptors pin PI prefix offsets)". Nothing here is frozen: the
-/// descriptors are re-emitted from Lean by
-/// `DREGG_VK_REGEN_ACK=… scripts/emit-descriptors.sh`, and a compaction is an
-/// ordinary VK rotation — not a re-genesis, `CANONICAL_STATE_SCHEMA_EPOCH` stays
-/// 23.)
-pub const APPROVED_HANDOFFS_BASE: usize = CUSTOM_EFFECT_COUNT + 1;
-pub const APPROVED_HANDOFFS_LEN: usize = 4;
+// ---- ⚑ THE SEVEN-SLOT COMPACTION — flag day 2026-08-07 ----
+//
+// SEVEN published felts stood here, at v1 offsets 26..32, and they are GONE:
+//
+//   26      CURRENT_BLOCK_HEIGHT   the constant `0` — `EffectVmContext::default()`, never
+//                                  overridden by any producer, never touched by
+//                                  `verify_one_cohort_run`'s reconstruction. The live temporal
+//                                  binding is `v3::COMMITTED_HEIGHT`, pinned 56/56 AND overridden
+//                                  by the verifier from `cell.state.committed_height()`. The
+//                                  comparison that would have made 26 "the verifier-supplied
+//                                  comparand" was written NOWHERE.
+//   27      MAX_CUSTOM_EFFECTS     the constant `MAX_CUSTOM_EFFECTS_DEFAULT` (4) on producer AND
+//                                  verifier. The cap IS enforced — off-circuit, from the
+//                                  verifier's own ledger (`read_cell_max_custom_effects` → the
+//                                  `proofs.len() > cap` refusal), which is strictly stronger than
+//                                  a felt the prover wrote.
+//   28      CUSTOM_EFFECT_COUNT    the real count, but re-derived identically by every consumer.
+//                                  Its four OFF-CIRCUIT readers used it as the length prefix of
+//                                  the custom-proof array; they now call [`custom_entry_count`],
+//                                  which derives the length from the PI VECTOR THE VERIFIER
+//                                  HOLDS. That is the stronger of the two, so this is a gain.
+//                                  The "Stage 1 sum-check (Group 7)" three docblocks credited
+//                                  never existed: `aux_off::CUSTOM_COUNT_ACC` is filled by the
+//                                  trace generator and read by NO constraint.
+//   29..32  APPROVED_HANDOFFS[4]   the empty-tree zero sentinel. `ValidateHandoff` has not been
+//                                  an effect since the verb-lockstep pass.
+//
+// Measured before the cut, from the emitted registry bytes
+// (`scripts/pi_disposition_census.py`): **0 `pi_binding`s at every one of the seven, on all 57
+// wide members and all 60 v3 members.** A `pi_binding` is the only constraint kind that reads a
+// public input, so the constraint system never looked at any of them.
+//
+// ⚠ AND THE PART THAT NEARLY WENT WRONG. A prior lane priced ELEVEN — these seven plus
+// `EFFECTS_HASH_GLOBAL` (37..40) — off the same zeroes, and REFUSED the rotation when it read the
+// consumers. `EFFECTS_HASH_GLOBAL` and `TURN_HASH` are 0-pinned HERE and load-bearing in
+// `dregg-bilateral-aggregation-v3`: `bilateral_aggregation_air::SCHEDULE_PI_BASE ==
+// inner_pi::TURN_HASH_BASE`, so the 49-felt bilateral-schedule contract IS the v1 window
+// `[TURN_HASH_BASE, TURN_HASH_BASE + 49)`, and `schedule_block_from_inner_pi` projects it into
+// that descriptor's main trace where `window_gate` transitions FORCE the columns and `pi_binding`
+// pins them. A zero in the census answers "does any constraint IN THESE TWO REGISTRIES read this
+// index" — never "does anything read this slot".
+//
+// The seven were CONTIGUOUS, which is exactly what made them separable: the schedule window slides
+// down by 7 STILL CONTIGUOUS, `SCHEDULE_PI_BASE` cascades symbolically, and the aggregation
+// contract is unharmed. Had the cut included 37..40 it would have punched a hole through it.
+// `docs/PI-DISPOSITION.md` §6 carries the retraction, the price and the per-slot decision;
+// `scripts/pi_disposition_census.py`'s `PROJECTIONS` table now goes RED if that projection stops
+// holding, which exists because this mistake was nearly made.
+//
+// What this re-emitted: every rotation descriptor (Σ piCount 3,821 → 3,429 wide, 3,012 → 2,599
+// v3), `WIDE_REGISTRY_STAGED_FP`, `dregg-epoch`'s `registry_fp`, `PROVENANCE.json`, and a VK
+// rotation. NOT a re-genesis: `CANONICAL_STATE_SCHEMA_EPOCH` (24) does not move — the compaction
+// rides past every `state_commit`.
 
 // ---- Stage 7-γ.0a additions: turn-level identity bindings ----
 //
@@ -147,17 +138,20 @@ pub const APPROVED_HANDOFFS_LEN: usize = 4;
 //     ACTOR_NONCE is genuinely pinned (47/56 members) to the state column.
 //   * THE BILATERAL AGGREGATION — and this is the half the 2026-08-06 rewrite of
 //     this block MISSED, corrected 2026-08-07. `bilateral_aggregation_air::
-//     SCHEDULE_PI_BASE == TURN_HASH_BASE` (33): offsets 33..81 ARE the 49-felt
+//     SCHEDULE_PI_BASE == TURN_HASH_BASE` (26 post-compaction, 33 before it):
+//     offsets `[TURN_HASH_BASE, TURN_HASH_BASE + 49)` ARE the 49-felt
 //     bilateral-schedule contract. `schedule_block_from_inner_pi` projects the
 //     window into `dregg-bilateral-aggregation-v3`, whose EMITTED bytes force
 //     cols 0..12 (TURN_HASH, EFFECTS_HASH_GLOBAL, ACTOR_NONCE,
 //     PREVIOUS_RECEIPT_HASH) with `window_gate` transitions and pin them to its
 //     own outer PI. So TURN_HASH and EFFECTS_HASH_GLOBAL are consumed by a
 //     deployed AIR — the previous text here, "EFFECTS_HASH_GLOBAL is read by
-//     nobody", was false.
+//     nobody", was false. ⓘ The seven-slot compaction slid that window down by 7
+//     INTACT (it kept the schedule block contiguous), which is why it cost the
+//     aggregation nothing but a re-emit.
 // No EFFECT-VM AIR constraint reads any of the four: `pi_binding` is the only
-// constraint kind that reads a public input, and offsets 33..40 carry zero of
-// them IN THE TWO ROTATION REGISTRIES. That is a statement about those
+// constraint kind that reads a public input, and `TURN_HASH_BASE..+8` carry zero
+// of them IN THE TWO ROTATION REGISTRIES. That is a statement about those
 // descriptors, NOT about the slots — see the aggregation bullet above, and
 // `scripts/pi_disposition_census.py`'s `proj-read` column, which exists because
 // the distinction was collapsed once and cost a mispriced VK rotation.
@@ -167,7 +161,7 @@ pub const APPROVED_HANDOFFS_LEN: usize = 4;
 /// Poseidon2 of the canonical `Turn::hash()` (v3, post-Stage-7-α.1).
 /// All per-cell proofs of one turn share this value; the verifier
 /// rejects bundles whose per-cell proofs disagree.
-pub const TURN_HASH_BASE: usize = APPROVED_HANDOFFS_BASE + APPROVED_HANDOFFS_LEN;
+pub const TURN_HASH_BASE: usize = NET_DELTA_SIGN + 1;
 pub const TURN_HASH_LEN: usize = 4;
 /// Poseidon2 over the canonical-DFS-order traversal of the whole
 /// `call_forest`'s effects (not per-cell).
@@ -181,9 +175,9 @@ pub const TURN_HASH_LEN: usize = 4;
 /// wrong, and the citation is the reason why — that outer slot is **sourced from
 /// this one**.
 ///
-/// `bilateral_aggregation_air::SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE` (33)
+/// `bilateral_aggregation_air::SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE` (26)
 /// and `sched::EFFECTS_HASH_GLOBAL_BASE = 4`, so the 49-felt bilateral-schedule
-/// contract window is `inner_pi[33, 82)` and THIS slot is its felts 4..7.
+/// contract window is `inner_pi[26, 75)` and THIS slot is its felts 4..7.
 /// `schedule_block_from_inner_pi` projects that window into the deployed
 /// `dregg-bilateral-aggregation-v3` main trace at cols 4..7, where the EMITTED
 /// bytes (`circuit/descriptors/dregg-bilateral-aggregation-v3.json`, read
@@ -202,8 +196,9 @@ pub const TURN_HASH_LEN: usize = 4;
 /// **Disposition: KEEP.** Removing them punches a hole in a contiguous contract
 /// window — a second VK rotation for the aggregation descriptor, and the deletion
 /// of a check that currently holds. `docs/PI-DISPOSITION.md` §6 carries the
-/// retraction and the corrected price (the removable set is the SEVEN at 26..32,
-/// which are contiguous and slide this window intact).
+/// retraction and the corrected price. The removable SEVEN (the old 26..32) were
+/// contiguous and slid this window down INTACT; they were cut on 2026-08-07, which
+/// is why this slot now begins at 30 rather than 37.
 pub const EFFECTS_HASH_GLOBAL_BASE: usize = TURN_HASH_BASE + TURN_HASH_LEN;
 pub const EFFECTS_HASH_GLOBAL_LEN: usize = 4;
 /// Outer `Turn::nonce`, promoted to PI. Closes the differential-test
@@ -422,6 +417,27 @@ pub const CREATE_ESCROW_AMOUNT_LIMBS_LEN: usize = 4;
 /// constant.
 pub const CUSTOM_PROOFS_BASE: usize = v3::V3_BASE_COUNT;
 
+/// How many custom-proof entries a public-input vector of length `len` carries.
+///
+/// ⚑ **This replaces `PI[CUSTOM_EFFECT_COUNT]`, and it is STRICTLY STRONGER than what it
+/// replaces.** Until 2026-08-07 four off-circuit readers — `turn::executor::atomic` (twice),
+/// `effect_vm::trace::extract_custom_proof_commitments` and `preflight`'s effect-VM check — took
+/// the entry count from a published felt. No constraint read that felt (0 `pi_binding`s on all 117
+/// deployed members), so it was a number the PROVER wrote, used to slice the array the VERIFIER
+/// holds. This derives it from the vector's own length instead: a fact about the object in hand,
+/// which a prover cannot lie about at all.
+///
+/// Entries start at [`CUSTOM_PROOFS_BASE`] and are [`CUSTOM_ENTRY_SIZE`] felts each. A vector
+/// whose tail is not a whole number of entries yields the floor — the readers already bounds-check
+/// each slice, and a short tail is a PI-length mismatch the verifier rejects earlier.
+pub const fn custom_entry_count(len: usize) -> usize {
+    if len <= CUSTOM_PROOFS_BASE {
+        0
+    } else {
+        (len - CUSTOM_PROOFS_BASE) / CUSTOM_ENTRY_SIZE
+    }
+}
+
 /// PI layout version for custom-effect dispatch. Bumped from 2 to 3 when the v3
 /// tail was appended after the frozen v2 prefix. ⚠ This constant does NOT
 /// discriminate the tail's WIDTH: the tail was three slots when the version
@@ -464,8 +480,6 @@ pub const ACTIVE_BASE_COUNT: usize = v3::V3_BASE_COUNT;
 /// `OLD_COMMIT_BASE[OLD_COMMIT_LEN]` · `NEW_COMMIT_BASE[NEW_COMMIT_LEN]` ·
 /// `EFFECTS_HASH_BASE[EFFECTS_HASH_LEN]` · `INIT_BAL_LO` · `INIT_BAL_HI` ·
 /// `FINAL_BAL_LO` · `FINAL_BAL_HI` · `NET_DELTA_MAG` · `NET_DELTA_SIGN` ·
-/// `CURRENT_BLOCK_HEIGHT` · `MAX_CUSTOM_EFFECTS` · `CUSTOM_EFFECT_COUNT` ·
-/// `APPROVED_HANDOFFS_BASE[APPROVED_HANDOFFS_LEN]` (RETIRED slot) ·
 /// `TURN_HASH_BASE[TURN_HASH_LEN]` (γ.0a) ·
 /// `EFFECTS_HASH_GLOBAL_BASE[EFFECTS_HASH_GLOBAL_LEN]` (γ.0a) · `ACTOR_NONCE`
 /// (γ.0a) · `PREVIOUS_RECEIPT_HASH_BASE[PREVIOUS_RECEIPT_HASH_LEN]` (γ.0a) ·
@@ -998,11 +1012,13 @@ pub const MAX_CUSTOM_EFFECTS_SOFT_CAP: u8 = 16;
 pub const MAX_CUSTOM_EFFECTS_DEFAULT: u8 = 4;
 
 // AUDIT[stage1-pi-only-bound]: PI[OLD_COMMIT_BASE+1..+4],
-// PI[NEW_COMMIT_BASE+1..+4], PI[EFFECTS_HASH_BASE+1..+4], and the entire
-// PI[APPROVED_HANDOFFS_BASE..+4] are bound only by the executor's PI
-// matching loop (deterministic recomputation from cell/federation
-// state), not by per-row AIR constraints. Stage 2 may add aux columns
-// to anchor positions 1..3 of state-commit forms inside the trace.
+// PI[NEW_COMMIT_BASE+1..+4] and PI[EFFECTS_HASH_BASE+1..+4] are bound only
+// by the executor's PI matching loop (deterministic recomputation from
+// cell/federation state), not by per-row AIR constraints. Stage 2 may add
+// aux columns to anchor positions 1..3 of state-commit forms inside the
+// trace. (This note also named `PI[APPROVED_HANDOFFS_BASE..+4]`; that slot
+// was DELETED in the 2026-08-07 seven-slot compaction — `ValidateHandoff`
+// has not been an effect since the verb-lockstep pass.)
 
 // ---- PI v3 (THE ROTATION, STAGED — `.docs-history-noclaude/UNIVERSAL-MAP-ROTATION.md` §2.6) ----
 //
@@ -1021,11 +1037,11 @@ pub mod v3 {
     /// The committed-height column: the `committedHeight` commitment limb's
     /// public face (Lean: `PiV3.COMMITTED_HEIGHT`). Closes the temporal
     /// gate's prover-chosen-height note: the verifier reads the height FROM
-    /// the committed state (`RotationLayout.committed_height_not_prover_chosen`);
-    /// ⚠ `CURRENT_BLOCK_HEIGHT` was described here as "(PI 18) … the
-    /// verifier-supplied comparand". Both halves are wrong: it is PI **26**
-    /// post-Phase-C, and no code performs the comparison — see its declaration
-    /// above. THIS slot (44) is the whole binding.
+    /// the committed state (`RotationLayout.committed_height_not_prover_chosen`).
+    /// ⚠ This docblock twice described `CURRENT_BLOCK_HEIGHT` as the
+    /// "verifier-supplied comparand" (at PI 18, then at PI 26) — and no code
+    /// ever performed the comparison. That slot was DELETED on 2026-08-07.
+    /// THIS slot is the whole temporal binding, and always was.
     pub const COMMITTED_HEIGHT: usize = BASE_COUNT;
     /// The rateBound caveat tag (Lean: `PiV3.RATE_BOUND_TAG`).
     pub const RATE_BOUND_TAG: usize = BASE_COUNT + 1;
@@ -1094,20 +1110,37 @@ mod v3_drift_guard {
     #[test]
     fn pi_v3_offsets_match_lean() {
         // Phase C widened OLD_COMMIT + NEW_COMMIT 4->8 felts each (+8 total),
-        // shifting the whole prefix: BASE_COUNT 201 -> 209, V3 tail 209/210/211,
-        // V3_BASE_COUNT 204 -> 212. The Lean twin `RotationLayout.PiV3` is
-        // re-anchored to match.
+        // shifting the whole prefix: BASE_COUNT 201 -> 209. The 2026-08-07
+        // seven-slot compaction then removed v1 offsets 26..32, taking it
+        // 209 -> 202. The Lean twin `RotationLayout.PiV3` is re-anchored to match.
         assert_eq!(
             super::BASE_COUNT,
-            209,
+            202,
             "v2 prefix drifted: re-anchor RotationLayout.PiV3.V2_BASE_COUNT"
         );
-        assert_eq!(super::v3::COMMITTED_HEIGHT, 209);
-        assert_eq!(super::v3::RATE_BOUND_TAG, 210);
-        assert_eq!(super::v3::CHALLENGE_WINDOW_TAG, 211);
-        // ASSET_CLASS appended as the 4th v3 slot (light-client conservation
-        // soundness): V3_BASE_COUNT 212 -> 213, CUSTOM_PROOFS_BASE shifts +1.
-        assert_eq!(super::v3::ASSET_CLASS, 212);
-        assert_eq!(super::v3::V3_BASE_COUNT, 213);
+        assert_eq!(super::v3::COMMITTED_HEIGHT, 202);
+        assert_eq!(super::v3::RATE_BOUND_TAG, 203);
+        assert_eq!(super::v3::CHALLENGE_WINDOW_TAG, 204);
+        // ASSET_CLASS is the 4th v3 slot (light-client conservation soundness).
+        assert_eq!(super::v3::ASSET_CLASS, 205);
+        assert_eq!(super::v3::V3_BASE_COUNT, 206);
+    }
+
+    /// The v1 published window is exactly `ACTOR_NONCE + 1` — the highest v1 pin plus
+    /// one. `trace_rotated::V1_PI_COUNT` and the Lean `pi.V1_PI_COUNT` are the same
+    /// number written in two more places; this is where the three are held together.
+    #[test]
+    fn v1_window_covers_the_highest_v1_pin() {
+        assert_eq!(super::ACTOR_NONCE, 34);
+        assert_eq!(
+            crate::effect_vm::trace_rotated::V1_PI_COUNT,
+            super::ACTOR_NONCE + 1,
+            "V1_PI_COUNT must be ACTOR_NONCE + 1 — a shorter window slices the nonce pin \
+             off the rotated PI vector"
+        );
+        // The seven-slot compaction: TURN_HASH now starts immediately after NET_DELTA_SIGN.
+        assert_eq!(super::TURN_HASH_BASE, super::NET_DELTA_SIGN + 1);
+        assert_eq!(super::TURN_HASH_BASE, 26);
+        assert_eq!(super::EFFECTS_HASH_GLOBAL_BASE, 30);
     }
 }

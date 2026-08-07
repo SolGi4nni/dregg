@@ -136,7 +136,8 @@ pub mod exit_code {
 /// lives in the v1 PI prefix a rotated leg publishes in full
 /// (`trace_rotated::V1_PI_COUNT` = 42), so the deployed leg always satisfies it.
 ///
-/// The previous precondition was `pi::ACTIVE_BASE_COUNT` (213), which did not make
+/// The previous precondition was `pi::ACTIVE_BASE_COUNT` (206 today, 213 when this was
+/// measured), which did not make
 /// the check strict — it made it **unreachable on every leg that ships**. Measured
 /// 2026-07-27 against a real wide rotated proof from
 /// `dregg_turn_prover::mint_transfer_proven_receipt`: the leg carries **68** felts, and
@@ -158,7 +159,7 @@ pub const RECEIPT_PI_BINDING_MIN_LEN: usize =
 ///
 /// - **T11 (stale-proof replay against a different receipt).**
 ///   `PI[TURN_HASH_BASE..+4]` must equal `canonical_32_to_felts_4(receipt.turn_hash)`.
-///   `TURN_HASH_BASE` is 33 and the rotated leg publishes the v1 prefix `[0, 42)`, so
+///   `TURN_HASH_BASE` is 26 and the rotated leg publishes the v1 prefix `[0, 35)`, so
 ///   this is inside the window a real proof carries. The slot is not pinned to a
 ///   trace column by the AIR — the honest producer fills it
 ///   (`turn_prover::proven_receipt`) and it rides the Fiat–Shamir transcript — so
@@ -315,7 +316,7 @@ mod tests {
     /// for `receipt`: the v1 prefix `[0, V1_PI_COUNT)` plus the four appended rotated
     /// pins, with `PI[TURN_HASH_BASE..+4]` filled the way the honest producer fills it
     /// (`turn_prover::proven_receipt`). Deliberately `ROT_PI_COUNT` felts and NOT
-    /// `ACTIVE_BASE_COUNT` — a 213-slot vector is a shape no leg ships, and testing
+    /// `ACTIVE_BASE_COUNT` — a full-prefix vector is a shape no leg ships, and testing
     /// against one is exactly how this check hid.
     fn rotated_pi_from_receipt(receipt: &dregg_turn::TurnReceipt) -> Vec<u32> {
         use dregg_circuit::effect_vm::pi;

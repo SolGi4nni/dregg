@@ -333,9 +333,9 @@ private def gateVal (g : VmConstraint2) (loc : Nat → ℤ) : ℤ :=
 
 -- Additivity witness on a toy base descriptor: piCount / width UNCHANGED (the forcing is in-AIR).
 private def toyBase : EffectVmDescriptor2 :=
-  { name := "toy", traceWidth := 100, piCount := 46, tables := [], constraints := [], hashSites := [],
+  { name := "toy", traceWidth := 100, piCount := 39, tables := [], constraints := [], hashSites := [],
     ranges := [] }
-#guard (gentianBareRefuseDescriptor toyBase).piCount == 46
+#guard (gentianBareRefuseDescriptor toyBase).piCount == 39
 #guard (gentianBareRefuseDescriptor toyBase).traceWidth == 100
 #guard (gentianBareRefuseDescriptor toyBase).constraints.length == 18
 

@@ -70,10 +70,15 @@ use dregg_circuit::refusal::{Outcome, classify};
 use dregg_turn::rotation_witness as rw;
 
 /// The rotated OLD/NEW commit PI slots (the rotated leg's published commitment) — the four-pin
-/// block appended after the 42 v1 PIs. The grow-gate generators re-derive these from the overridden
-/// limb so the published commitment binds the grown set.
-const PI_OLD_COMMIT: usize = 42; // V1_PI_COUNT
-const PI_NEW_COMMIT: usize = 43; // V1_PI_COUNT + 1
+/// block appended after the v1 PI window. The grow-gate generators re-derive these from the
+/// overridden limb so the published commitment binds the grown set.
+///
+/// DERIVED from `V1_PI_COUNT`, not transcribed: these were `42` / `43` until the 2026-08-07
+/// seven-slot PI compaction (`docs/PI-DISPOSITION.md` §6) and are `35` / `36` now. The values are
+/// used as INDICES into the generator's PI vector, so a stale literal here does not go red — it
+/// silently reads a different slot and asserts about the wrong felt.
+const PI_OLD_COMMIT: usize = dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
+const PI_NEW_COMMIT: usize = PI_OLD_COMMIT + 1;
 
 /// Resolve a rotated descriptor JSON by registry key from the committed staged TSV.
 fn rotated_descriptor_json(name: &str) -> &'static str {

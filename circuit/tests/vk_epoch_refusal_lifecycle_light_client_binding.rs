@@ -251,7 +251,7 @@ fn lifecycle_payload_forge_rejected_by_hash_gate_anchor_disabled() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated cellSeal descriptor parses");
     assert_eq!(
-        desc.public_input_count, 51,
+        desc.public_input_count, 44,
         "cellSeal PIs = 50 rotated base (46 + 4 dsl rc) + 1 appended record pin = 51 \
          (committed cellSealVmDescriptor2R24)"
     );

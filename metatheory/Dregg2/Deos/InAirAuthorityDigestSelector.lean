@@ -403,7 +403,7 @@ section Witnesses
 
 -- The descriptor extends the WIDE welded descriptor's 63 PIs (no new PI; the selector forcing is
 -- in-AIR, NOT a PI pin) and appends exactly the three gentian gates.
-#guard (gentianSelectorDescriptor 0 1).piCount == 63
+#guard (gentianSelectorDescriptor 0 1).piCount == 56
 #guard gentianGates.length == 3
 
 /-- A row assignment for the gate-body #guards: the three gentian columns set, else 0. -/

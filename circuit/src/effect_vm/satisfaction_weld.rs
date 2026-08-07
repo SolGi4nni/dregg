@@ -44,15 +44,19 @@ use crate::lean_descriptor_air::{LeanExpr, VmConstraint};
 /// **THE REAL CAPACITY-SELECTOR COLUMN** — the free PARAM slot `param2` (`PARAM_BASE + 2 = 70`) the
 /// emitted `settleEscrowSatVmDescriptor2R24` gates the four satisfaction constraints on, and that the
 /// producer fills (`1` on the settle row, `0` on padding). This REPLACES the prior placeholder
-/// `SEL = 320` (a column no producer filled): the emitted descriptor pins this column to PI 46 on the
-/// first row (`pi_binding first col 70 pi 46`), so a verifier that knows the cell declares the escrow
+/// `SEL = 320` (a column no producer filled): the emitted descriptor pins this column to
+/// `ESCROW_SEL_PI` on the first row (`pi_binding first col 70 pi ESCROW_SEL_PI`), so a verifier
+/// that knows the cell declares the escrow
 /// capacity (the deployed COVERAGE carrier) can FORCE the selector on. The Lean twin is
 /// `Dregg2.Deos.SettleEscrowSatDescriptor.ESCROW_SEL_COL`.
 pub const ESCROW_SEL_COL: usize = super::columns::PARAM_BASE + 2;
 
-/// The PI slot the emitted descriptor pins the selector to (the fifth appended PI, `pi_base + 4`).
+/// The PI slot the emitted descriptor pins the selector to: the FIRST slot past the four rotated
+/// commit pins, i.e. `ROT_PI_COUNT`. Derived, not a literal — it was `46` until the 2026-08-07
+/// seven-slot PI compaction took `V1_PI_COUNT` 42 → 35 (`docs/PI-DISPOSITION.md` §6) and this is
+/// where such a shift must land without anyone remembering to come here.
 /// Lean `Dregg2.Deos.SettleEscrowSatDescriptor.ESCROW_SEL_PI`.
-pub const ESCROW_SEL_PI: usize = 46;
+pub const ESCROW_SEL_PI: usize = super::trace_rotated::ROT_PI_COUNT;
 
 /// The rotated state-block in-block offset of field-slot `k`: the `r3..r10 ↔ fields[0..8]` weld
 /// (`r3` is pre-limb index 4, so `fields[k]` rides limb `4 + k` — `trace_rotated::fill_block`). The

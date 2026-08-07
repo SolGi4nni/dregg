@@ -1358,7 +1358,7 @@ SAME runtime row shape the Custom AIR pins) with the CUSTOM selector (8) instead
 def customV1Face : EffectVmDescriptor :=
   { name        := "dregg-effectvm-custom-v1"
   , traceWidth  := EFFECT_VM_WIDTH
-  , piCount     := 42
+  , piCount     := pi.V1_PI_COUNT
   , constraints := EffectVmEmitEmitEvent.emitTickRowGates
                      ++ EffectVmEmitTransfer.transitionAll
                      ++ EffectVmEmitTransfer.boundaryFirstPins
@@ -1578,7 +1578,7 @@ slot-range gate, the dynamic write, the read-back. -/
 def setFieldDynVmDescriptor2 : EffectVmDescriptor2 :=
   { name        := "dregg-effectvm-setfield-dyn-v2"
   , traceWidth  := EFFECT_VM_WIDTH
-  , piCount     := 42
+  , piCount     := pi.V1_PI_COUNT
   , tables      := v2Tables EFFECT_VM_WIDTH
   , constraints :=
       [ .base (.gate gSlotRange)

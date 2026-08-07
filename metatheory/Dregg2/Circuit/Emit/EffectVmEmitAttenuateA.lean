@@ -195,7 +195,7 @@ move). -/
 def attenuateVmDescriptor : EffectVmDescriptor :=
   { name := attenuateVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := attenuateRowGates ++ transitionAll ++ boundaryFirstPins
   , hashSites := attenuateHashSites
   , ranges := [] }
@@ -620,7 +620,7 @@ post-`cap_root` is now a FORCED recomputation, not an opaque parameter. -/
 def attenuateVmDescriptorGenuine : EffectVmDescriptor :=
   { name := attenuateVmAirName ++ "-genuine"
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := attenuateGenuineRowGates ++ transitionAll ++ boundaryFirstPins
   , hashSites := attenuateGenuineHashSites
   , ranges := [] }
@@ -642,7 +642,7 @@ input — never a hash OUTPUT. Here `cap_root` gets the same treatment. -/
 def attenuateVmDescriptorGenuineNoRecompute : EffectVmDescriptor :=
   { name := attenuateVmAirName ++ "-genuine-norecompute"
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := attenuateGenuineRowGates ++ transitionAll ++ boundaryFirstPins
   , hashSites := attenuateHashSites
   , ranges := [] }
@@ -688,7 +688,7 @@ that ride it admit the honest nonce-advancing trace. The bare GROUP-4 commitment
 def attenuateVmDescriptorGenuineNoRecomputeTick : EffectVmDescriptor :=
   { name := attenuateVmAirName ++ "-genuine-norecompute-tick"
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := attenuateGenuineRowGatesTick ++ transitionAll ++ boundaryFirstPins
   , hashSites := attenuateHashSites
   , ranges := [] }

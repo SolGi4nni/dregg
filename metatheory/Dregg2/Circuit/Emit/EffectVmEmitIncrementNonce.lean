@@ -100,7 +100,7 @@ boundary PI pins, the 4 ordered GROUP-4 hash sites and the 2 balance-limb range 
 def incrementNonceVmDescriptor : EffectVmDescriptor :=
   { name := incNonceVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 42
+  , piCount := pi.V1_PI_COUNT
   , constraints := incNonceRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 53
   , hashSites := incNonceHashSites

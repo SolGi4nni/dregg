@@ -1155,8 +1155,12 @@ impl TurnExecutor {
             public_inputs[pi::NEW_COMMIT_BASE..(pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN)]
                 .copy_from_slice(&new_commit_8[..pi::NEW_COMMIT_LEN]);
 
-            // Append custom proof entries from the wire PIs.
-            let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
+            // Append custom proof entries from the wire PIs. ⚑ The count is DERIVED from the
+            // wire vector's own length (`pi::custom_entry_count`), not read out of
+            // `PI[CUSTOM_EFFECT_COUNT]` — that felt was deleted on 2026-08-07 because no
+            // constraint read it, so slicing by it meant trusting a number the prover wrote to
+            // walk an array the verifier holds. `docs/PI-DISPOSITION.md` §6.
+            let custom_count_val = pi::custom_entry_count(wire.public_inputs.len());
             for i in 0..custom_count_val {
                 let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
                 if base + pi::CUSTOM_ENTRY_SIZE > wire.public_inputs.len() {
@@ -1514,8 +1518,12 @@ impl TurnExecutor {
             public_inputs[pi::NEW_COMMIT_BASE..(pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN)]
                 .copy_from_slice(&new_commit_8[..pi::NEW_COMMIT_LEN]);
 
-            // Append custom proof entries from the wire PIs.
-            let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
+            // Append custom proof entries from the wire PIs. ⚑ The count is DERIVED from the
+            // wire vector's own length (`pi::custom_entry_count`), not read out of
+            // `PI[CUSTOM_EFFECT_COUNT]` — that felt was deleted on 2026-08-07 because no
+            // constraint read it, so slicing by it meant trusting a number the prover wrote to
+            // walk an array the verifier holds. `docs/PI-DISPOSITION.md` §6.
+            let custom_count_val = pi::custom_entry_count(wire.public_inputs.len());
             for i in 0..custom_count_val {
                 let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
                 if base + pi::CUSTOM_ENTRY_SIZE > wire.public_inputs.len() {

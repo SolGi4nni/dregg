@@ -272,16 +272,16 @@ def main : IO Unit := do
     -- UNCHANGED at 57; the narrow live TSV / FP / VK untouched — the wide slice is the fold lane).
     else if key == "makeSovereignVmDescriptor2R24" then
       -- The DEPLOYED wide sovereign (`CarrierComposed.makeSovereignV3DeployedWide`): rc + the 4
-      -- KEY_COMMIT teeth PI pins (58..61 = `SOVEREIGN_KEY_COMMIT_PI_LO`, cols 113..=116) AHEAD of
-      -- the 16 wide anchors (62..77) + the in-AIR KEY_COMMIT chip gate (digest appendix at the
-      -- wide end, dgBase 2683; width 2715). piCount 74 → 78.
+      -- KEY_COMMIT teeth PI pins (51..54 = `SOVEREIGN_KEY_COMMIT_PI_LO`, cols 113..=116) AHEAD of
+      -- the 16 wide anchors (55..70) + the in-AIR KEY_COMMIT chip gate (digest appendix at the
+      -- wide end, dgBase 2683; width 2715). piCount 67 → 71.
       let msWide := Dregg2.Circuit.Emit.CarrierComposed.makeSovereignV3DeployedWide
       emitCompact key (weldWide key msWide)
     else if key == "transferVmDescriptor2R24" then
       -- AVAILABILITY RETARGET (the wide-transfer wrap-forgery closure): the wide membership-teeth
       -- transfer REBUILT over the §11.7 borrow-weld face (`AvailWideMembers.
       -- transferV3MembershipAvailWide` — teeth PIs 50..51 UNCHANGED, rc pins at the avail-shifted
-      -- carrier, teeth cols 2693..2694 past the avail carriers; width 2695, piCount 68). The
+      -- carrier, teeth cols 2693..2694 past the avail carriers; width 2695, piCount 61). The
       -- capacity-floor refuse rides the AVAIL caveat base (`cavBaseOf AVAIL_WIDTH = 676` — the
       -- fixed-base `gentianWideBareRefuse` would decode the WRONG columns on the widened face),
       -- i.e. the committed row is `AvailWideMembers.transferAvailWideRefused`, whose availability
@@ -328,8 +328,8 @@ def main : IO Unit := do
     else if key == "customVmDescriptor2R24" then
       -- DELIVER #1 — THE APP-ROOT WELD LEG-EMIT (the VK epoch): the wide custom member additionally
       -- PUBLISHES the AFTER-block `fields[0..8]` octet (`withAfterOctetPins … 4`, cols 431..438 = the
-      -- custom face's after rotated block, exposed at PIs 62..69) AHEAD of the 16 wide anchors (which
-      -- move to 70..85; piCount 78 → 86). The per-turn FOLD's app-root arm connects
+      -- custom face's after rotated block, exposed at PIs 55..62) AHEAD of the 16 wide anchors (which
+      -- move to 63..78; piCount 71 → 79). The per-turn FOLD's app-root arm connects
       -- `field[field_key]` to the custom sub-proof's published root R (`field[K] == R`). `bb = 188 =
       -- EFFECT_VM_WIDTH` (the custom face base), `ab = bb + B_SPAN = 435`. `withAfterOctetPins` adds NO
       -- columns (only 8 PIs), so the custom wide `traceWidth` is UNCHANGED (a TAIL-APPEND, not a

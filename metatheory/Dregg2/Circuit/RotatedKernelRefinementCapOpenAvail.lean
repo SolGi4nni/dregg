@@ -347,8 +347,8 @@ section Witnesses
 #guard transferCapOpenEffV3TBAvail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN
 #guard transferCapOpenEffV3TBAvail.traceWidth == transferCapOpenEffV3Avail.traceWidth
 -- PI shape unchanged: 46 (42 v1 + 4 rotated commit pins); TB adds the ONE turn-identity pin.
-#guard transferCapOpenEffV3Avail.piCount == 46
-#guard transferCapOpenEffV3TBAvail.piCount == 47
+#guard transferCapOpenEffV3Avail.piCount == 39
+#guard transferCapOpenEffV3TBAvail.piCount == 40
 -- Constraint deltas: the 78-gate appendix + the selector tooth (eff) / + the 1 TB pin (TB).
 #guard transferCapOpenEffV3Avail.constraints.length == transferV3Avail.constraints.length + 79
 #guard transferCapOpenEffV3TBAvail.constraints.length == transferV3Avail.constraints.length + 78 + 1

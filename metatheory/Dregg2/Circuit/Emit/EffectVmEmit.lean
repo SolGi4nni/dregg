@@ -238,12 +238,31 @@ def INIT_BAL_LO : Nat := 20
 def INIT_BAL_HI : Nat := 21
 def FINAL_BAL_LO : Nat := 22
 def FINAL_BAL_HI : Nat := 23
-/-- `pi.rs` `ACTOR_NONCE` (the full v3 layout offset): post-Phase-C the OLD/NEW
-state commitments widened 4→8 each (+8 prefix), shifting `INIT_BAL_LO` 12→20 AND the
-later blocks, so `APPROVED_HANDOFFS_BASE = 29`, `TURN_HASH_BASE = 33`,
-`EFFECTS_HASH_GLOBAL_BASE = 37`, and `ACTOR_NONCE = 41`. The descriptor PI window
-must therefore be wide enough to address index 41 (see `PI_COUNT = 42`). -/
-def ACTOR_NONCE : Nat := 41
+/-- `pi.rs` `ACTOR_NONCE` (the full v3 layout offset).
+
+⚑ **THE SEVEN-SLOT COMPACTION, 2026-08-07** (`docs/PI-DISPOSITION.md` §6). Offsets 26..32 —
+`CURRENT_BLOCK_HEIGHT`, `MAX_CUSTOM_EFFECTS`, `CUSTOM_EFFECT_COUNT`, `APPROVED_HANDOFFS[4]` — are
+GONE from the layout: no constraint in either rotation registry read them, no verifier compared
+them, and the four off-circuit readers of `CUSTOM_EFFECT_COUNT` now DERIVE the count from the PI
+vector's own length instead of trusting the felt the prover wrote. The seven were CONTIGUOUS, so
+the 49-felt bilateral-schedule window `inner_pi[33, 82)` slides to `[26, 75)` intact — which is
+why `EFFECTS_HASH_GLOBAL` (a live consumer of that window; see the retraction in §6) could stay.
+
+Post-compaction the prefix reads `NET_DELTA_SIGN = 25`, `TURN_HASH_BASE = 26`,
+`EFFECTS_HASH_GLOBAL_BASE = 30`, and `ACTOR_NONCE = 34`; the descriptor PI window must be wide
+enough to address index 34, i.e. `V1_PI_COUNT = ACTOR_NONCE + 1 = 35` (was 42). Phase C's earlier
++8 (OLD/NEW commitments 4→8 felts each) is already folded into these numbers. -/
+def ACTOR_NONCE : Nat := 34
+/-- The v1 published PI window width — the Rust twin `trace_rotated::V1_PI_COUNT`. Every EffectVM
+v1 descriptor's `piCount` is this, and the rotated family is `+ 4` on top of it, so a future slot
+addition or removal cascades from ONE place instead of forty literal `42`s. `abbrev` so it is
+reducible: a `decide`/`rfl` through a descriptor's `piCount` behaves exactly as if the literal
+were written there. -/
+abbrev V1_PI_COUNT : Nat := 35
+/-- The window is exactly wide enough to address `ACTOR_NONCE`, the highest v1 pin. This is the
+drift guard, stated as a theorem rather than left to two literals agreeing by luck: move either
+number without the other and this stops elaborating. -/
+theorem V1_PI_COUNT_eq_actor_nonce_succ : V1_PI_COUNT = ACTOR_NONCE + 1 := rfl
 end pi
 
 /-- Absolute column index of `state_before[off]`. -/

@@ -16,7 +16,7 @@ The five refusals, each one a real failure mode measured in this tree:
 
 | # | the false declaration | the wound it is |
 |---|---|---|
-| 1 | a slot in `0..piCount` with NO declaration | the 2,179 unbound slots — nobody chose |
+| 1 | a slot in `0..piCount` with NO declaration | the 1,787 unbound slots — nobody chose |
 | 2 | `.bound` naming a pin the descriptor does not carry | `PI[TURN_HASH]` today: a slot the producer fills and the AIR never reads |
 | 3 | `.bound` naming a pin whose COLUMN nothing else reads | the `withDfaRcPins` quartet — `UnforcedPiPins.dropUnforcedPins` deletes it and the fold that located its slot BY the pin refused every deployed leg |
 | 4 | `.transcriptOnly` with an empty reason | the choice made and not recorded |
@@ -97,7 +97,7 @@ error: PI DISPOSITION MISSING OR FALSE — every published public input must car
 ⊢ PiManifestAdmitted forcedM [{ index := 0, slot := "STATE_COMMIT", disp := PiDisposition.bound VmRow.first 5 }]
 -/
 #guard_msgs (error, drop info, drop warning) in
--- ① THE 2,179: slot 1 is published and undeclared. Silence is not an answer.
+-- ① THE UNBOUND MAJORITY: slot 1 is published and undeclared. Silence is not an answer.
 example : EffectVmDescriptor2 :=
   withPiManifest forcedM [⟨0, "STATE_COMMIT", .bound .first 5⟩]
 
@@ -149,7 +149,7 @@ error: PI DISPOSITION MISSING OR FALSE — every published public input must car
 -/
 #guard_msgs (error, drop info, drop warning) in
 -- ④ THE UNRECORDED CHOICE. Transcript-only is permitted; transcript-only-because-nobody-said is
--- not. An empty reason is the 2,179 with a checkbox ticked.
+-- not. An empty reason is an unbound slot with a checkbox ticked.
 example : EffectVmDescriptor2 :=
   withPiManifest forcedM
     [ ⟨0, "STATE_COMMIT", .bound .first 5⟩

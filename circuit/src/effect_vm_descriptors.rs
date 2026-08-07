@@ -1450,16 +1450,20 @@ pub fn umem_weld_keys_for_welded_name(welded_name: &str) -> Vec<&'static str> {
 ///
 /// ⚑ 7 → 8 AT THE NINE-LANE EPOCH (2026-07-31). The fields octet became a fields NONET: slot `j`
 /// gained a NINTH lane at the new column `176 + j` (`RotatedLayout.fieldLaneCol slot 8`), so the
-/// deployed members now pin lanes 1..=8 at PIs 46..=53 — verified against the emitted bytes:
-/// `setFieldVmDescriptor2-0R24` pins PI 46..=52 to the contiguous window `after_base + 113..=119`
-/// and PI 53 to `after_base + 176`, the non-contiguous ninth lane. That eighth pin is the whole
+/// deployed members now pin lanes 1..=8 at PIs `[SETFIELD_VALUE8_PI_BASE, +8)` — verified against
+/// the emitted bytes: `setFieldVmDescriptor2-0R24` pins the first seven to the contiguous window
+/// `after_base + 113..=119` and the eighth to `after_base + 176`, the non-contiguous ninth lane.
+/// (Those PIs were 46..=53 until the 2026-08-07 seven-slot compaction, and are 39..=46 now.)
+/// That eighth pin is the whole
 /// point of the epoch — with seven, the top of the value was still unbound on the wire.
 pub const SETFIELD_VALUE8_PI_LEN: usize = 8;
 
-/// The PI slot the deployed setField members' VALUE8 completion pins start at: immediately past the
-/// 46-PI rotated prefix, BEFORE the 4 dsl rc pins (Lean `withDfaRcPins (gentianDeployedBareRefuse
+/// The PI slot the deployed setField members' VALUE8 completion pins start at: immediately past
+/// the rotated prefix, BEFORE the 4 dsl rc pins (Lean `withDfaRcPins (gentianDeployedBareRefuse
 /// (withSetFieldCompletionPins slot …))` — rc rides outermost, so the value8 block is interior).
-pub const SETFIELD_VALUE8_PI_BASE: usize = 46;
+/// Derived from `ROT_PI_COUNT`; it was the literal `46` until the 2026-08-07 seven-slot PI
+/// compaction took `V1_PI_COUNT` 42 → 35 (`docs/PI-DISPOSITION.md` §6).
+pub const SETFIELD_VALUE8_PI_BASE: usize = crate::effect_vm::trace_rotated::ROT_PI_COUNT;
 
 /// The IN-BLOCK offset of `fields[0]`'s first completion lane, so `fields[slot]`'s freed lanes are
 /// `SETFIELD_VALUE8_LANE_BASE + 7·slot ..= +6` (Lean `setFieldCompletionBase`). ⚠ 113, not 112 — the
@@ -2781,7 +2785,7 @@ mod tests {
             t.trace_width, 216,
             "graduated transfer = 188 base + 7·4 chip lane cols (Phase B-GATE: 4 hash sites)"
         );
-        assert_eq!(t.public_input_count, 42);
+        assert_eq!(t.public_input_count, 35);
     }
 
     /// THE ROTATION LAYOUT DRIFT GUARD (staged): rebuild the Lean
@@ -3465,18 +3469,20 @@ mod tests {
                  caveat chain→manifest commit→rc carrier→CAVEAT_COMMIT"
             );
 
-            // The four rotated commit pins always sit at the v1 prefix count (42..=45),
-            // bound to: first-row before state_commit, last-row after state_commit,
-            // last-row after committed_height, last-row caveat commit. (The pins do NOT
-            // ride `public_input_count - 4`: note-spend appends a FIFTH nullifier pin past
-            // them, so the commit-pin base is the FIXED v1 prefix `V1_PI_COUNT = 34`.)
+            // The four rotated commit pins always sit at the v1 prefix count
+            // (`V1_PI_COUNT ..= V1_PI_COUNT + 3`), bound to: first-row before state_commit,
+            // last-row after state_commit, last-row after committed_height, last-row caveat
+            // commit. (The pins do NOT ride `public_input_count - 4`: note-spend appends a
+            // FIFTH nullifier pin past them, so the commit-pin base is the FIXED v1 prefix.)
             //
-            // heapWrite is the LONE exception: its base descriptor (`heapWriteVmDescriptor`)
-            // declares ZERO v1 PIs (its faithfulness rides the three recompute chip lookups,
-            // not a published-param prefix), so `rotateV3` lands the four commit pins at the
-            // FRONT (indices 0..=3). It carries no fifth pin, so `public_input_count == 4`.
+            // ⚑ IMPORTED, NOT RE-TYPED. This was a local `const V1_PI_COUNT: usize = 42` shadowing
+            // the real one, and the comment above it said `34` — a third number again, left over
+            // from before Phase C. Two literals and a prose number for one fact is how the
+            // 2026-08-07 seven-slot compaction (`docs/PI-DISPOSITION.md` §6) found this: the
+            // shadow does not move when the layout does, so the test would have gone on measuring
+            // a window nothing puts pins in and passing vacuously.
             let is_heap_write = key == "heapWriteVmDescriptor2R24";
-            const V1_PI_COUNT: usize = 42;
+            use crate::effect_vm::trace_rotated::V1_PI_COUNT;
             let pi_base = if is_heap_write {
                 d.public_input_count - 4
             } else {

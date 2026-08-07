@@ -15,7 +15,7 @@
 //!   2. **Nothing COULD call it on the leg that ships.** Its length guard
 //!      demanded `pi::BASE_COUNT` (201 felts) while its body reads six offsets,
 //!      all `<= 25`. The deployed `"effect-vm-rotated"` leg publishes
-//!      `V1_PI_COUNT` (42). So every live PI vector would have been turned away
+//!      `V1_PI_COUNT` (35). So every live PI vector would have been turned away
 //!      as "too short" *before a single limb was examined* — a range check that
 //!      reports a length complaint about the proof it was meant to police.
 //!

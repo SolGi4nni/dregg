@@ -38,7 +38,7 @@ import Dregg2.Deos.SettleEscrowSatDescriptor
 -- G5 tags 18/19: the staged in-AIR satisfaction descriptors for the discharge-obligation and
 -- vault-deposit capacities. dischargeSatVmDescriptor2R24 (legs cur/tot/due in field slots 0/1/2 +
 -- the DUE_BITS range check + selector PI pin) and vaultSatVmDescriptor2R24 (asset/share in slots
--- 0/1 + the overflow-safe multi-limb no-dilution product + selector PI pin). Both piCount == 47,
+-- 0/1 + the overflow-safe multi-limb no-dilution product + selector PI pin). Both piCount == 40,
 -- the tag-17 shape; emitted BESIDE the deployed cohort (staged, no live routing). Refinement
 -- proven kernel-clean in Dregg2.Deos.{Discharge,Vault}SatDescriptor.
 import Dregg2.Deos.DischargeSatDescriptor
