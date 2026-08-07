@@ -361,15 +361,11 @@ weld_ledger! {
     },
     ShieldedTransfer => Class::NoCellStateChange, Prep::Live, Effect::ShieldedTransfer {
         payload: dregg_turn::action::ShieldedTransferPayload {
+            // ⚑ FLAG DAY (value link): the Pedersen legs, the range proofs and the conservation
+            // proof are DELETED from the payload; an output is a note commitment plus its
+            // Lean-emitted value-link proof.
             inputs: vec![],
-            input_legs: vec![],
-            output_legs: vec![],
-            output_range_proofs: vec![],
-            conservation: dregg_cell_crypto::value_commitment::ConservationProof {
-                excess_commitment: [0u8; 32],
-                nonce_commitment: [0u8; 32],
-                response: [0u8; 32],
-            },
+            outputs: vec![],
         },
     },
     BridgeMint => Class::NoCellStateChange, Prep::Live, Effect::BridgeMint {

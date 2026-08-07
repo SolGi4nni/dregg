@@ -2,7 +2,7 @@
 //!
 //! M2-a ([`crate::shielded::transfer`]) hides the *value* and the *owner* of a
 //! single-asset transfer but leaves the **asset type** in the clear (a public
-//! `u64` on each [`crate::shielded::ShieldedValueLeg`], hashed cleartext into the
+//! `u64` on each [`HiddenAssetLeg`], hashed cleartext into the
 //! transfer transcript). M2-b lifts the asset type *into* the hidden scalar of
 //! the Pedersen commitment, so one pool can carry MANY asset types and an
 //! observer learns neither how much moved, who owned it, NOR which asset it was.
@@ -65,7 +65,6 @@
 //! `DslP3Air`, hiding config swapped in. This module assembles witnesses and
 //! composes proofs; it emits no AIR of its own.
 
-use crate::shielded::ShieldedTransferWitness;
 use crate::shielded::spend_complete::{
     ShieldedSpendCompleteWitness, verify_shielded_spend_complete_parts,
 };
@@ -78,7 +77,7 @@ use dregg_circuit::field::BabyBear;
 /// Carries ONLY the opaque 32-byte compressed Ristretto encoding of
 /// `commit_hidden_asset(value, asset_type, blinding)` — the asset type is a
 /// blinded scalar on the fixed `H_asset` generator, NOT a public field. Contrast
-/// [`crate::shielded::ShieldedValueLeg`] (M2-a), which exposes `asset_type: u64`.
+/// the retired M2-a `ShieldedValueLeg`, which exposed `asset_type: u64`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HiddenAssetLeg {
     /// Compressed Ristretto encoding of `value·V + asset_type·H_asset + blinding·R`.
@@ -316,17 +315,10 @@ pub fn prove_pool_transfer(
     let mut inputs = Vec::with_capacity(witnesses.len());
     let mut input_legs = Vec::with_capacity(witnesses.len());
     for w in witnesses {
-        // Reuse the M2-a per-input prover: build the M2-a witness shape it expects
-        // (its `ShieldedValueLeg.asset_type` is unused by the STARK side — the
-        // spend circuit never reads value or asset — and is dropped here).
-        let m2a_witness = ShieldedTransferWitness {
-            spend: w.spend.clone(),
-            leg: crate::shielded::ShieldedValueLeg {
-                asset_type: 0,
-                commitment_bytes: w.leg.commitment_bytes,
-            },
-        };
-        inputs.push(prove_shielded_input(&m2a_witness)?);
+        // Reuse the M2-a per-input prover directly: it takes the complete-spend witness, so
+        // there is no M2-a leg to fabricate. (`ShieldedValueLeg` is DELETED with the Pedersen
+        // transfer path; the M2-b pool keeps its own `HiddenAssetLeg`.)
+        inputs.push(prove_shielded_input(&w.spend)?);
         input_legs.push(w.leg.clone());
     }
     let mode = if input_legs.len() != output_legs.len() {

@@ -26,13 +26,20 @@
 //!    so the proof's openings reveal nothing about the witness beyond the
 //!    public `(nullifier, merkle_root, …)`. *Owner is blind.*
 //!
-//! 2. **Value balance — the hidden Pedersen side.**
-//!    Per-asset value conservation rides the homomorphic Pedersen value
-//!    commitments ([`dregg_cell_crypto::value_commitment`]): each note carries
-//!    `commit(v, r) = v·V + r·R`, and a single Schnorr **conservation proof**
-//!    certifies `Σ C_in − Σ C_out = r_excess·R`, i.e. `Σ v_in = Σ v_out`,
-//!    without revealing any `v`. Per-output Bulletproof **range proofs** close
-//!    the negative-value (mod-order wrap) inflation hole. *Value is blind.*
+//! 2. **Value — the hidden VALUE LINK, in the AIR** ([`transfer_link`], the Lean-emitted
+//!    `dregg-shielded-transfer-value-link::v1`). ⚑ FLAG DAY: this REPLACED the Pedersen side.
+//!    The retired shape carried a prover-chosen Ristretto `commit(v,r)` per leg, a Schnorr
+//!    conservation proof over `Σ C_in = Σ C_out`, and a Bulletproof range proof per output —
+//!    and nothing tied the leg's `v` to the value the spend STARK proved for the note, so a
+//!    note worth `1` funded legs worth `1_000_000`. That gap is not checkable across the two
+//!    systems (BabyBear cannot open a Ristretto point without curve arithmetic in-AIR;
+//!    a sigma protocol cannot open a Poseidon2 image without the hash in-group —
+//!    `cell-crypto/src/value_link_zk.rs` says so and names this exit). So the value is bound
+//!    where the spend already binds it: one Lean relation reads ONE set of canonical 16-bit
+//!    limb columns for both the spent note's sixteen carrier lanes and the minted note's
+//!    commitment. *Value is blind, and it is bound.* Range proofs are gone with the group that
+//!    needed them: the limb cells' booleanity is forced in the AIR, so `0 ≤ v < 2^64` is a
+//!    property of the trace.
 //!
 //! The shielded action is the *conjunction*: a verifier accepts iff (1) every
 //! input's hidden membership+nullifier STARK verifies against the published
@@ -92,6 +99,7 @@ pub mod shield_opening;
 pub mod spend_circuit;
 pub mod spend_complete;
 mod transfer;
+pub mod transfer_link;
 pub mod wide_value_binding;
 
 pub use attest::{
@@ -112,13 +120,19 @@ pub use spend_complete::{
     verify_shielded_spend_complete_parts,
 };
 pub use transfer::{
-    ShieldedError, ShieldedInputProof, ShieldedTransfer, ShieldedTransferWitness, ShieldedValueLeg,
-    prove_shielded_input, prove_shielded_transfer as transfer_from_witnesses,
+    DEPLOYED_INPUTS, DEPLOYED_OUTPUTS, ShieldedError, ShieldedInputProof, ShieldedOutput,
+    ShieldedTransfer, ShieldedTransferWitness, prove_shielded_input, prove_shielded_transfer,
+};
+pub use transfer_link::{
+    ShieldedTransferLinkClaim, ShieldedTransferLinkError, ShieldedTransferLinkProof,
+    ShieldedTransferLinkWitness, generate_shielded_transfer_link_trace,
+    note_commitment_felt_from_bytes, prove_shielded_transfer_link,
+    shielded_transfer_value_link_descriptor, shielded_transfer_value_link_descriptor_json,
+    verify_shielded_transfer_link,
 };
 pub use wide_value_binding::{
     BINDING_BLIND_LANES, LIMB_BITS, U64_LIMBS, WIDE_VALUE_BINDING_LANES, WideValueBindingClaim,
     WideValueBindingError, WideValueBindingProof, WideValueBindingWitness,
     generate_wide_value_binding_trace, prove_wide_value_binding, verify_same_opening,
-    verify_stark_with_wide_bindings, verify_wide_sidecar_proof, verify_wide_value_binding,
-    wide_transfer_message, wide_value_binding_descriptor, wide_value_binding_descriptor_json,
+    verify_wide_sidecar_proof, wide_value_binding_descriptor, wide_value_binding_descriptor_json,
 };

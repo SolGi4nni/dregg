@@ -22,10 +22,9 @@ use dregg_circuit::poseidon2::hash_fact;
 use dregg_circuit_prove::shielded::wide_value_binding::{DOMAIN_A, DOMAIN_B, col};
 use dregg_circuit_prove::shielded::{
     BINDING_BLIND_LANES, ShieldedSpendCompleteWitness, ShieldedSpendMembership,
-    ShieldedTransferWitness, ShieldedValueLeg, TREE_DEPTH, WideValueBindingError,
-    WideValueBindingProof, WideValueBindingWitness, generate_wide_value_binding_trace,
-    prove_wide_value_binding, transfer_from_witnesses, verify_same_opening,
-    verify_stark_with_wide_bindings, verify_wide_value_binding, wide_transfer_message,
+    ShieldedTransferWitness, TREE_DEPTH, WideValueBindingError, WideValueBindingProof,
+    WideValueBindingWitness, generate_wide_value_binding_trace, prove_shielded_transfer,
+    prove_wide_value_binding, verify_same_opening, verify_wide_sidecar_proof,
     wide_value_binding_descriptor,
 };
 
@@ -86,7 +85,7 @@ fn blind() -> [BabyBear; BINDING_BLIND_LANES] {
 /// The relation the DEPLOYED sidecar proves against is the Lean-emitted one, and the felt-width
 /// repair (128 boolean limb pins) is present in it. `wide_value_binding_lean_route.rs` checks the
 /// same object straight out of the Lean source; this checks what `prove_wide_value_binding` and
-/// `verify_wide_value_binding` actually load.
+/// `prove_wide_value_binding` / `verify_wide_sidecar_proof` actually load.
 #[test]
 fn the_deployed_relation_is_the_lean_emitted_one() {
     let desc = wide_value_binding_descriptor();
@@ -152,8 +151,9 @@ fn hostile_turn_wire_decode_is_canonical_and_exact() {
         .expect("canonical Turn wire should decode");
     // Same-opening join: the ring's exposed wide carrier IS this opening's, so the
     // sidecar opens the ring's value — accepted.
-    verify_wide_value_binding(&decoded, &proof.claim.wide_binding)
-        .expect("decoded proof must retain the exact public claim");
+    verify_same_opening(&proof.claim.wide_binding, &decoded.claim.wide_binding)
+        .expect("the decoded claim is the same opening");
+    verify_wide_sidecar_proof(&decoded).expect("decoded proof must retain the exact public claim");
 
     let mut noncanonical = wide;
     noncanonical[7] = BABYBEAR_P;
@@ -303,20 +303,24 @@ fn full_u64_alias_is_distinguished_and_each_join_lane_is_load_bearing() {
 
     // Build the COMPLETE hidden spend over a real committed accumulator, then join the full-u64
     // sidecar to that accepting proof's own PI-pinned carrier.
+    //
+    // ⚑ FLAG DAY (value link): the sidecar is no longer the shielded TRANSFER's value gate — the
+    // Lean-emitted `dregg-shielded-transfer-value-link::v1` is, and it proves everything the
+    // sidecar proves about an input carrier PLUS the tie to the minted note. So this file now
+    // tests the sidecar RELATION and the same-opening comparison as standalone objects; the
+    // transfer-path teeth moved to `shielded_transfer_value_link.rs` and
+    // `turn-prover/tests/shielded_executor.rs`.
     let (spend, set) = spend_in_set(value, asset, randomness);
     let committed_root = set.root8().limbs();
-    let transfer = transfer_from_witnesses(
-        &[ShieldedTransferWitness {
-            spend,
-            leg: ShieldedValueLeg {
-                asset_type: asset,
-                commitment_bytes: [0xa5; 32],
-            },
-        }],
-        vec![],
-        vec![],
-    )
-    .expect("the complete shielded spend should prove");
+    let transfer = prove_shielded_transfer(&ShieldedTransferWitness {
+        spend,
+        out_owner: BabyBear::new(0x0777),
+        out_randomness: BabyBear::new(0x0888),
+    })
+    .expect("the complete shielded spend plus its value link should prove");
+    transfer
+        .verify(committed_root)
+        .expect("the honest transfer verifies under its own committed root");
 
     let mut honest = prove_wide_value_binding(&honest_witness)
         .expect("full-u64 wide binding should prove through the hiding IR-v2 backend");
@@ -328,95 +332,55 @@ fn full_u64_alias_is_distinguished_and_each_join_lane_is_load_bearing() {
     assert_eq!(
         ring_wide_binding,
         honest_witness.wide_binding(),
-        "the complete-spend proof's PI-pinned carrier must equal the sidecar relation's carrier          over the same (value, asset, randomness, blind) — this is what makes the join comparable"
+        "the complete-spend proof's PI-pinned carrier must equal the sidecar relation's carrier \
+         over the same (value, asset, randomness, blind) — this is what makes the join comparable"
     );
 
-    // SATISFIABLE: the honest sidecar opens the ring's value — the routed
-    // same-opening join accepts, under the committed root.
-    verify_stark_with_wide_bindings(&transfer, core::slice::from_ref(&honest), committed_root)
-        .expect("the complete spend plus a same-opening full-u64 sidecar should verify");
+    // SATISFIABLE: the honest sidecar opens the ring's value, and its own proof verifies.
+    verify_same_opening(&ring_wide_binding, &honest.claim.wide_binding)
+        .expect("the same-opening join accepts two proofs of the SAME opening");
+    verify_wide_sidecar_proof(&honest).expect("the honest sidecar proof verifies");
 
-    // ── THE FALSIFIER, FLIPPED. The alias (`value + p`) is a DIFFERENT full-`u64`
-    // opening that shares the honest opening's ~31-bit `legacy_binding` felt (the
-    // mutation, asserted present just above and re-asserted here). The DELETED
-    // one-felt join accepted it — that was the C5 dark-value decouple
-    // (`ShieldedWideJoinPin.dark_value_decouples`). The routed same-opening join
-    // REFUSES it: its wide carrier differs from the ring's on some lane.
+    // ── THE FALSIFIER. The alias (`value + p`) is a DIFFERENT full-`u64` opening that shares the
+    // honest opening's ~31-bit `legacy_binding` felt but NOT the sixteen lanes, so the join
+    // separates what the one-felt binding cannot.
     let alias_proof = prove_wide_value_binding(&alias_witness)
-        .expect("the distinct alias value has its own honest wide opening");
+        .expect("the alias sidecar proves its own relation");
     assert_eq!(
-        honest_witness.legacy_binding(),
-        alias_witness.legacy_binding(),
-        "MUTATION PRESENT: the alias shares the ~31-bit felt the deleted join used"
+        alias_proof.claim.legacy_binding, honest.claim.legacy_binding,
+        "the one-felt surface is BLIND to the alias — that is the wound the wide carrier closes"
     );
-    let decouple = verify_same_opening(&ring_wide_binding, &alias_proof.claim.wide_binding);
     assert!(
-        matches!(
-            decouple,
-            Err(WideValueBindingError::DarkValueDecouple { .. })
-        ),
-        "the routed same-opening join must REFUSE the dark-value decouple the \
-         deleted legacy felt join accepted; got {decouple:?}"
-    );
-    // …and it refuses at the full STARK entry too.
-    assert!(
-        verify_stark_with_wide_bindings(
-            &transfer,
-            core::slice::from_ref(&alias_proof),
-            committed_root,
-        )
-        .is_err(),
-        "a decoupled dark-value sidecar must reject at the no-mint entry"
-    );
-    assert_ne!(
-        wide_transfer_message(&transfer, core::slice::from_ref(&honest), committed_root).unwrap(),
-        wide_transfer_message(
-            &transfer,
-            core::slice::from_ref(&alias_proof),
-            committed_root
-        )
-        .unwrap(),
-        "the full-width transcript carrier must distinguish the modulo-p aliases"
+        verify_same_opening(&ring_wide_binding, &alias_proof.claim.wide_binding).is_err(),
+        "an x+p sidecar must NOT join an x ring carrier"
     );
 
     // FALSE polarity 1: splice a different public wide lane onto the genuine sidecar proof. The
     // HidingFri verifier must reject; every public carrier lane is bound by a real Poseidon2
-    // permutation output constraint. (Here the join ALSO rejects, since the ring carrier is no
-    // longer a free argument a test can move to match — that is a strictly stronger wall, and both
-    // refusals are correct.)
+    // permutation output constraint.
     let saved = honest.claim;
     honest.claim.wide_binding[15] += BabyBear::ONE;
     assert!(
-        verify_stark_with_wide_bindings(&transfer, core::slice::from_ref(&honest), committed_root)
-            .is_err(),
+        verify_wide_sidecar_proof(&honest).is_err(),
         "a forged wide public lane must reject"
     );
 
-    // FALSE polarity 2: retain the genuine wide lanes/proof but join it to a
-    // different ring opening. The same-opening join rejects.
+    // FALSE polarity 2: retain the genuine wide lanes/proof but join it to a different ring
+    // opening. The same-opening join rejects.
     honest.claim = saved;
     let mut other_ring = ring_wide_binding;
     other_ring[0] += BabyBear::ONE;
     assert!(
-        verify_wide_value_binding(&honest, &other_ring).is_err(),
+        verify_same_opening(&other_ring, &honest.claim.wide_binding).is_err(),
         "a wide sidecar must not join a different ring opening"
-    );
-
-    // Structural canary: one sidecar per spent input is mandatory.
-    assert!(
-        verify_stark_with_wide_bindings(&transfer, &[], committed_root).is_err(),
-        "dropping the only wide sidecar must reject"
     );
 
     // ⚑ AND THE #15 CANARY, at this layer: the same accepting transfer, judged under a root that
     // is not the tree it folded to, REFUSES. The committed root is not decoration.
     assert!(
-        verify_stark_with_wide_bindings(
-            &transfer,
-            core::slice::from_ref(&alias_proof),
-            ShieldedNoteSet::new().root8().limbs(),
-        )
-        .is_err(),
+        transfer
+            .verify(ShieldedNoteSet::new().root8().limbs())
+            .is_err(),
         "a spend judged under a foreign committed root must reject"
     );
 }

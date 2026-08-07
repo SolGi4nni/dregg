@@ -164,9 +164,9 @@ fn effect_body(effect: &Effect) -> String {
             value, asset_type, ..
         } => format!("create a private note (value {value}, asset {asset_type})"),
         Effect::ShieldedTransfer { payload } => format!(
-            "a shielded value transfer (amount + parties hidden): spend {} input note(s) and mint {} output note(s), value conserved",
+            "a shielded value transfer (amount + parties hidden): spend {} input note(s) and mint {} output note(s), value conserved by the in-AIR value link",
             payload.inputs.len(),
-            payload.output_legs.len()
+            payload.outputs.len()
         ),
         Effect::Shield {
             value, asset_type, ..

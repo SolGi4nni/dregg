@@ -843,7 +843,51 @@ impl PersistentStore {
     /// Committing `note_shielded.root8()` into that carrier needs a fifth `V9RotationContext` root
     /// — a new base limb plus a completion octet in the Lean-emitted `EffectVmEmitRotationV3` — and
     /// is a SEPARATE VK epoch (the L1 carrier work), deliberately not folded in here.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 25;
+    /// # Epoch 26 — THE SHIELDED VALUE LINK IS IN THE AIR; THE PEDERSEN LEG IS DELETED, 2026-08-07
+    ///
+    /// **WHAT SHAPE CHANGED.** `ShieldedTransferPayload` lost `input_legs`, `output_legs`,
+    /// `output_range_proofs` and `conservation`; `ShieldedInputPayload` lost
+    /// `legacy_value_binding`, `wide_value_binding` and `wide_value_proof`; `ShieldedLeg` is
+    /// DELETED and replaced by `ShieldedOutputPayload { note_commitment, link_proof }`.
+    ///
+    /// **WHY.** Epoch 25 closed the spend-side theft and its lane named one residual it did not
+    /// hide: *"the Pedersen leg's own `v` is bound to the STARK-side `v` only through this
+    /// TRANSCRIPT, not by any circuit equality (`verify_value_link` is test-only)."* So a spender
+    /// who genuinely owned a note worth `1` published legs committing to `1_000_000`,
+    /// `verify_full_conservation_bytes` cleared `Σ C_in = Σ C_out` over those PROVER-CHOSEN legs,
+    /// and nothing compared them to the note. That gap is not closable by a check — a BabyBear
+    /// STARK cannot open a Ristretto point without non-native curve arithmetic in-AIR, and a
+    /// Ristretto sigma protocol cannot open a Poseidon2 image without the hash in-group
+    /// (`cell-crypto/src/value_link_zk.rs` records the same finding and names the exit). The
+    /// Pedersen leg is therefore deleted and the value is bound where the spend already binds it:
+    /// the Lean-emitted `dregg-shielded-transfer-value-link::v1`
+    /// (`ShieldedTransferValueLinkEmit.lean`, 164 columns, 17 PIs) reads ONE set of canonical
+    /// 16-bit limb columns for both the spent note's sixteen carrier lanes and the minted note's
+    /// commitment. Range proofs went with the group that needed them — the limb cells' booleanity
+    /// is forced in the AIR, so `0 ≤ v < 2^64` is a property of the trace.
+    ///
+    /// **WHAT REFUSES TO LOAD / WHAT MUST BE RE-GENESISED.** Postcard is non-self-describing: a
+    /// pre-cutover `ShieldedTransferPayload` does not decode as a current one (four removed
+    /// fields, a narrowed input struct, a replaced output struct) — it REFUSES rather than being
+    /// reinterpreted. Every shielded-transfer `effects_hash` moves again (the leg groups, the
+    /// range-proof group and the conservation blob all leave the preimage), so every receipt,
+    /// executor signature, receipt QC and attestation over a turn containing one is invalid. A
+    /// store stamped 25 is refused by `enforce_canonical_state_schema_epoch` rather than migrated
+    /// — **re-genesis**.
+    ///
+    /// **WHAT ELSE RE-EMITS.** `dregg-shielded-transfer-value-link::v1` is a NEW descriptor; the
+    /// shielded family's VK epoch rolls with it. The wide-value-binding SIDECAR relation is no
+    /// longer on the transfer path (the link relation proves everything it proved about an input
+    /// carrier, plus the tie to the output), so the sidecar's proof no longer rides the wire.
+    ///
+    /// **WHAT DOES *NOT* MOVE:** no rotation-carrier limb is added; the signed consensus anchor is
+    /// byte-identical and no VK in the rotation family rotates.
+    ///
+    /// **WHAT A TRANSFER OUTPUT NOW IS.** `note_shielded` used to hold two shapes — Shield-minted
+    /// Poseidon2 note commitments (spendable) and transfer-minted Ristretto points (not openable
+    /// by any circuit, so value entering one was unrecoverable). It now holds ONE: every appended
+    /// leaf is `hash_fact(v,[a,owner,rand])` and every appended leaf is spendable.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 26;
 
     /// Open a persistent store backed by a file on disk.
     ///

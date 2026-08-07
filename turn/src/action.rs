@@ -893,83 +893,93 @@ pub enum DelegationMode {
     SnapshotRefresh,
 }
 
-/// One value-commitment leg of a shielded transfer on the wire: the (single-asset
-/// M2-a) public asset type and the opaque compressed Pedersen value commitment
-/// `commit(v, r)`. The amount `v` stays hidden behind the commitment; the
-/// downstream conservation proof certifies `Σ in = Σ out` without revealing any
-/// `v`. Mirrors `dregg_circuit_prove::shielded::ShieldedValueLeg` as plain,
-/// always-serializable data so the `Effect` vocabulary needs no circuit type.
+/// One MINTED note of a shielded transfer on the wire.
+///
+/// ⚑ FLAG DAY (value link) — this REPLACED `ShieldedLeg`, which carried a prover-chosen Ristretto
+/// Pedersen commitment `commit(v, r)` whose `v` was tied to the STARK-side `v` by a TRANSCRIPT and
+/// by nothing else. A spender who genuinely owned a note worth `1` published legs worth
+/// `1_000_000` and the conservation proof cleared over the legs. There is no check that closes
+/// that across the two systems, so the leg is gone: what a transfer publishes per output is a
+/// Poseidon2 NOTE COMMITMENT and a Lean-emitted proof binding it to the spent note's carrier.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShieldedLeg {
-    /// Asset type (public in M2-a; the multi-asset pool hides it into a scalar).
-    pub asset_type: u64,
-    /// Compressed Ristretto encoding of the Pedersen value commitment.
-    pub commitment_bytes: [u8; 32],
+pub struct ShieldedOutputPayload {
+    /// The minted note's commitment `hash_fact(v,[a,owner,rand])`, `felt_to_bytes32`-encoded —
+    /// four little-endian bytes, twenty-eight zero. This is the leaf the executor appends, and it
+    /// is the SAME shape the complete-spend relation opens, so the minted note is SPENDABLE.
+    ///
+    /// There is no asset field: the asset is bound by the link proof to the spent note's, so a
+    /// published one would be an unchecked claim.
+    pub note_commitment: [u8; 32],
+    /// Canonical postcard bytes of the hiding VALUE-LINK proof — an
+    /// `Ir2BatchProof<DreggZkStarkConfig>` against the Lean-emitted
+    /// `dregg-shielded-transfer-value-link::v1` relation
+    /// (`metatheory/Dregg2/Circuit/Emit/ShieldedTransferValueLinkEmit.lean`, 164 columns, 17 PIs).
+    /// Its sixteen carrier PIs are supplied by the executor from the INPUT's complete-spend proof,
+    /// never from this proof's own claim; its seventeenth is `note_commitment`. The relation reads
+    /// one set of canonical 16-bit limb columns for both, so the minted note is worth exactly the
+    /// spent one.
+    pub link_proof: Vec<u8>,
 }
 
-/// One spent input of a shielded transfer on the wire: the revealed nullifier,
-/// the legacy compatibility binding, and the mandatory sixteen-lane native
-/// wide binding, each backed by its own hiding proof.
+/// One spent input of a shielded transfer on the wire: the revealed nullifier, the sixteen-lane
+/// carrier the complete-spend proof PI-pins, and that proof.
 ///
-/// The legacy felt is retained only to join the existing membership proof.  It
-/// is not sufficient acceptance: the executor verifies the wide proof and
-/// absorbs every wide lane into the live conservation transcript.  This is an
-/// intentional wire cut; old one-felt-only shielded inputs fail closed.
+/// ⚑ FLAG DAY (value link) — `legacy_value_binding`, `wide_value_binding` and `wide_value_proof`
+/// are DELETED. They carried the WIDE SIDECAR, whose whole job was to prove that the sixteen
+/// carrier lanes open to a canonical full-`u64` `(value, asset)`. The value-link relation on the
+/// OUTPUT proves exactly that about the same sixteen lanes AND ties them to the minted note, so the
+/// sidecar became a second proof of a strictly weaker statement. Keeping it would be a no-op
+/// retained for shape.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShieldedInputPayload {
     /// The revealed nullifier (the double-spend tag), as a canonical BabyBear u32.
     pub nullifier: u32,
-    /// Compatibility `hash_fact(value mod p,[asset mod p,randomness,0])` — PI 0 of the WIDE
-    /// SIDECAR relation (`WideValueBindingEmit.lean`), carried because that descriptor publishes
-    /// it. It is no longer a join of any kind: the join is the sixteen-lane same-opening between
-    /// `spend_wide_binding` and `wide_value_binding`.
-    pub legacy_value_binding: u32,
-    /// **The RING-side sixteen-lane wide carrier** — PI 9..25 of the complete-spend proof, pinned
-    /// by the Lean-emitted `carrierPins` to the note's canonical full-`u64` `(value, asset)` limb
-    /// opening.
+    /// **The sixteen-lane wide carrier** — PI 9..25 of the complete-spend proof, pinned by the
+    /// Lean-emitted `carrierPins` to the note's canonical full-`u64` `(value, asset)` limb opening.
     ///
-    /// ⚑ This and [`Self::wide_value_binding`] are two SEPARATELY PROVEN quantities that the
-    /// executor requires to be equal (`verify_same_opening`). They are carried as two fields, not
-    /// one, so the tooth stays REFUTABLE: decoupling them is a one-line mutation a test can make,
-    /// and the refusal is observable. A single shared field would make the join read `x == x`.
+    /// ⚑ This is what the OUTPUT's value-link proof is judged against, and the executor reads it
+    /// from HERE only after `spend_proof` verified — so it is a public input of an already-checked
+    /// proof, not a claim the link proof makes about itself.
     pub spend_wide_binding: [u32; 16],
-    /// Sixteen canonical BabyBear lanes binding the complete `u64` value and
-    /// asset encodings before hashing — the SIDECAR's claim (PI 1..17).
-    pub wide_value_binding: [u32; 16],
     /// Canonical postcard bytes of the hiding COMPLETE-spend proof — an
     /// `Ir2BatchProof<DreggZkStarkConfig>` against the Lean-emitted
     /// `dregg-shielded-spend-complete-fsi2::v1` relation
     /// (`metatheory/Dregg2/Circuit/Emit/ShieldedSpendCompleteEmit.lean`). It proves membership in
     /// the COMMITTED shielded accumulator, the nullifier derivation, the owner derivation and the
     /// wide carrier, all under a root the verifier supplies.
-    ///
-    /// ⚑ FLAG DAY: these were `DslZkProof` bytes against the retired Rust-DSL
-    /// `dregg-shielded-spend-v1` (3 PIs, one of them the prover's own `merkle_root`). An old
-    /// payload does not deserialize as current shielded authority.
     pub spend_proof: Vec<u8>,
-    /// Canonical postcard bytes of the hiding full-width value/asset proof.
-    ///
-    /// These are `Ir2BatchProof<DreggZkStarkConfig>` bytes — the relation is AUTHORED IN LEAN
-    /// (`metatheory/Dregg2/Circuit/Emit/WideValueBindingEmit.lean`) and proven through
-    /// `Plonky3HidingFriReference` on `create_zk_config` (salted-leaf hiding MMCS + four random
-    /// codewords). They were a v1 `DslZkProof` before the Lean cutover; the FIELD shape did not
-    /// move, only the bytes inside it. `dregg_circuit_prove::shielded::WideValueBindingProof
-    /// ::from_serialized_parts` is the only decoder.
-    pub wide_value_proof: Vec<u8>,
 }
 
-/// The wire payload of a shielded transfer effect (privacy M2-a).
+/// The wire payload of a shielded transfer effect.
 ///
-/// A **shielded transfer** spends hidden input notes and mints hidden output
-/// notes with the **value** and the **owner** blind, leaving only: the nullifiers
-/// (so the chain rejects double-spends), the output value commitments, and a
-/// proof that the flow is genuine, conserved (`Σ in = Σ out`), and in-range. This
-/// is the always-serializable, circuit-type-free mirror of
-/// `dregg_circuit_prove::shielded::ShieldedTransfer` plus the Pedersen
-/// conservation proof. The mandatory wide input proof is part of that wire
-/// identity, so an old one-felt-only payload cannot deserialize as current
-/// shielded authority. The heavy STARK verification is reconstructed only in a
-/// `prover`-enabled executor.
+/// A **shielded transfer** spends a hidden input note and mints a hidden output note with the
+/// **value** and the **owner** blind, leaving only: the nullifier (so the chain rejects
+/// double-spends), the minted note commitment, and two Lean-emitted proofs.
+///
+/// ## ⚑ FLAG DAY — WHAT SHAPE CHANGED, AND WHAT NOW REFUSES TO LOAD
+///
+/// `input_legs`, `output_legs`, `output_range_proofs` and `conservation` are **DELETED**, along
+/// with `ShieldedLeg` and the three sidecar fields of [`ShieldedInputPayload`]. A pre-cutover
+/// payload does not deserialize as a current one.
+///
+/// They were the Pedersen half: a prover-chosen Ristretto `commit(v,r)` per leg, a Schnorr
+/// conservation proof over `Σ C_in = Σ C_out`, and a Bulletproof range proof per output. Seam
+/// #15's lane named what that left open, verbatim: *"the Pedersen leg's own `v` is bound to the
+/// STARK-side `v` only through this TRANSCRIPT, not by an equality the circuit enforces."* So a
+/// note worth `1` funded legs worth `1_000_000`, conservation cleared, and nothing compared them.
+///
+/// That gap is not checkable: BabyBear cannot open a Ristretto point without non-native curve
+/// arithmetic in-AIR, and a Ristretto sigma protocol cannot open a Poseidon2 image without the
+/// hash in-group (`cell-crypto/src/value_link_zk.rs` records the same finding and names this
+/// exit). The value is therefore bound where the spend already binds it — in ONE Lean relation
+/// reading ONE set of canonical 16-bit limb columns.
+///
+/// **What re-emits:** `dregg-shielded-transfer-value-link::v1` is a NEW descriptor; the shielded
+/// family's VK epoch rolls with it. The wide sidecar relation is no longer on this path.
+///
+/// **Deployed arity:** one input, one output, equal value (a whole-note transfer). Anything else
+/// REFUSES — there is no descriptor whose conservation covers it. Splitting is the next member of
+/// the Lean family.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShieldedTransferPayload {
     // ⚑ FLAG DAY 2026-08-07 — `merkle_root: u32` is DELETED, and its absence is the point.
@@ -979,23 +989,11 @@ pub struct ShieldedTransferPayload {
     // the theft exactly: build your own tree holding a note that was never committed, honestly
     // prove membership at that tree's root R, publish R. The executor now supplies the root from
     // `note_shielded.root8()` at verification time, so there is no field in which to publish one.
-    //
-    // A pre-cutover payload REFUSES TO DESERIALIZE (a removed field plus a widened
-    // `ShieldedInputPayload` plus `Ir2BatchProof` spend bytes) rather than being reinterpreted.
     /// One hidden complete-spend proof per spent input.
     pub inputs: Vec<ShieldedInputPayload>,
-    /// Input value-commitment legs (the spent notes' Pedersen commitments).
-    pub input_legs: Vec<ShieldedLeg>,
-    /// Output value-commitment legs (the minted notes' Pedersen commitments).
-    pub output_legs: Vec<ShieldedLeg>,
-    /// One serialized Bulletproof range proof per output leg (same order), each
-    /// attesting the committed value is in `[0, 2^64)` — the inflation gate.
-    pub output_range_proofs: Vec<Vec<u8>>,
-    /// The Pedersen conservation (Schnorr-excess) proof over the legs, certifying
-    /// `Σ C_in − Σ C_out = r_excess·R` (i.e. `Σ v_in = Σ v_out`) without revealing
-    /// any amount. Bound — with the range proofs and STARK nullifiers/value-bindings
-    /// — to the transfer's Fiat-Shamir transcript so the two halves cannot be spliced.
-    pub conservation: dregg_cell_crypto::ConservationProof,
+    /// One minted note per output, each with the value-link proof binding it to its input's
+    /// carrier. There is no value here that a prover chose.
+    pub outputs: Vec<ShieldedOutputPayload>,
 }
 
 /// An effect produced by an action — what changes in the ledger.
@@ -2542,34 +2540,18 @@ impl Effect {
                 hasher.update(&(payload.inputs.len() as u64).to_le_bytes());
                 for input in &payload.inputs {
                     hasher.update(&input.nullifier.to_le_bytes());
-                    hasher.update(&input.legacy_value_binding.to_le_bytes());
                     for lane in input.spend_wide_binding {
-                        hasher.update(&lane.to_le_bytes());
-                    }
-                    for lane in input.wide_value_binding {
                         hasher.update(&lane.to_le_bytes());
                     }
                     hasher.update(&(input.spend_proof.len() as u64).to_le_bytes());
                     hasher.update(&input.spend_proof);
-                    hasher.update(&(input.wide_value_proof.len() as u64).to_le_bytes());
-                    hasher.update(&input.wide_value_proof);
                 }
-                for (tag, legs) in [(0u8, &payload.input_legs), (1u8, &payload.output_legs)] {
-                    hasher.update(&[tag]);
-                    hasher.update(&(legs.len() as u64).to_le_bytes());
-                    for leg in legs {
-                        hasher.update(&leg.asset_type.to_le_bytes());
-                        hasher.update(&leg.commitment_bytes);
-                    }
+                hasher.update(&(payload.outputs.len() as u64).to_le_bytes());
+                for output in &payload.outputs {
+                    hasher.update(&output.note_commitment);
+                    hasher.update(&(output.link_proof.len() as u64).to_le_bytes());
+                    hasher.update(&output.link_proof);
                 }
-                hasher.update(&(payload.output_range_proofs.len() as u64).to_le_bytes());
-                for rp in &payload.output_range_proofs {
-                    hasher.update(&(rp.len() as u64).to_le_bytes());
-                    hasher.update(rp);
-                }
-                let c = postcard::to_allocvec(&payload.conservation).unwrap_or_default();
-                hasher.update(&(c.len() as u64).to_le_bytes());
-                hasher.update(&c);
             }
             Effect::Shield {
                 value,
@@ -2741,17 +2723,13 @@ impl Effect {
                 4 + payload
                     .inputs
                     .iter()
-                    .map(|i| {
-                        4 + 4 + 16 * 4 + 8 + i.spend_proof.len() + 8 + i.wide_value_proof.len()
-                    })
+                    .map(|i| 4 + 16 * 4 + 8 + i.spend_proof.len())
                     .sum::<usize>()
-                    + (payload.input_legs.len() + payload.output_legs.len()) * (8 + 32)
                     + payload
-                        .output_range_proofs
+                        .outputs
                         .iter()
-                        .map(|rp| 8 + rp.len())
+                        .map(|o| 32 + 8 + o.link_proof.len())
                         .sum::<usize>()
-                    + 96 // the three 32-byte ConservationProof fields
             }
             // Shield: the two public u64s + the 32-byte minted commitment + the
             // 32-byte nullifier + the 32-byte note-tree root + the three
@@ -3194,14 +3172,7 @@ mod effect_tag_tests {
     fn minimal_shielded_payload() -> ShieldedTransferPayload {
         ShieldedTransferPayload {
             inputs: Vec::new(),
-            input_legs: Vec::new(),
-            output_legs: Vec::new(),
-            output_range_proofs: Vec::new(),
-            conservation: dregg_cell_crypto::ConservationProof {
-                excess_commitment: [0xE1u8; 32],
-                nonce_commitment: [0xE2u8; 32],
-                response: [0xE3u8; 32],
-            },
+            outputs: Vec::new(),
         }
     }
 
@@ -3289,9 +3260,6 @@ mod effect_tag_tests {
     /// is no longer producible.
     #[test]
     fn shielded_transfer_effect_digest_moved_off_the_collided_tag() {
-        let payload = minimal_shielded_payload();
-        let conservation_bytes =
-            postcard::to_allocvec(&payload.conservation).expect("encode conservation proof");
         let effect = Effect::ShieldedTransfer {
             payload: minimal_shielded_payload(),
         };
@@ -3306,18 +3274,13 @@ mod effect_tag_tests {
         let body = |tag: u8| {
             let mut h = blake3::Hasher::new();
             h.update(&[tag]);
-            // ⚑ FLAG DAY: `merkle_root` was absorbed HERE, first. The field is deleted (the
-            // committed root is executor state, not effect content), so every shielded-transfer
-            // effect digest moved. The tag assertion below is unaffected — it is about the LEADING
-            // byte — and that is the property this test exists for.
+            // ⚑ FLAG DAY (value link): the Pedersen leg groups, the range-proof group and the
+            // conservation-proof blob are all DELETED from the preimage, along with the sidecar
+            // fields inside each input. Every shielded-transfer effect digest moved AGAIN. The tag
+            // assertion below is unaffected — it is about the LEADING byte — and that is the
+            // property this test exists for.
             h.update(&0u64.to_le_bytes()); // inputs
-            h.update(&[0u8]); // input-leg group tag
-            h.update(&0u64.to_le_bytes()); // input_legs
-            h.update(&[1u8]); // output-leg group tag
-            h.update(&0u64.to_le_bytes()); // output_legs
-            h.update(&0u64.to_le_bytes()); // output_range_proofs
-            h.update(&(conservation_bytes.len() as u64).to_le_bytes());
-            h.update(&conservation_bytes);
+            h.update(&0u64.to_le_bytes()); // outputs
             *h.finalize().as_bytes()
         };
 

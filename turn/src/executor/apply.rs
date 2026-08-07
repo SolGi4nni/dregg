@@ -1778,24 +1778,38 @@ impl TurnExecutor {
     ///    canonical full-`u64` value/asset binding. Both are proved through
     ///    `HidingFriPcs`; the executor verifies their exact legacy join and
     ///    rejects an in-transfer duplicate nullifier.
-    /// 2. **Hidden Pedersen side** — `Σ C_in = Σ C_out` (value conserved, blind)
-    ///    AND one in-`[0,2^64)` range proof per output (the negative-value /
-    ///    mod-order-wrap inflation gate), over the SAME Fiat-Shamir transcript that
-    ///    binds the STARK nullifiers and every native-wide carrier lane (no
-    ///    one-felt or cross-transfer splice).
+    /// 2. **The VALUE LINK, in the AIR** — the Lean-emitted
+    ///    `dregg-shielded-transfer-value-link::v1` forces the minted note's commitment and the
+    ///    spent note's sixteen carrier lanes to be functions of ONE canonical 16-bit limb
+    ///    opening, so the note that arrives is worth exactly the note that left. ⚑ FLAG DAY:
+    ///    this REPLACED the Pedersen side (`Σ C_in = Σ C_out` over prover-chosen Ristretto legs
+    ///    plus Bulletproof range proofs, welded by a transcript). That weld was the residual seam
+    ///    #15's lane named: the leg's own `v` was tied to the STARK-side `v` by the transcript and
+    ///    by no circuit equality, so a note worth 1 funded legs worth 1_000_000. Range proofs went
+    ///    with it — the limb cells are booleanity-pinned, so `0 <= v < 2^64` is a property of the
+    ///    trace.
     /// 3. **Cross-transfer double-spend gate** — each revealed nullifier is
     ///    consumed once in the production `note_nullifiers` set (journaled, so a
     ///    later-failing turn unwinds the spend), exactly as `NoteSpend`.
     ///
-    /// NAMED RESIDUAL (honest): (a) the LIGHT-CLIENT witness — this VERIFIES live
-    /// in a re-executing validator, but binding the shielded-proof verification
-    /// into the `effect_vm` descriptor (so a pure light client witnesses it) is the
-    /// VK-affecting follow-up. (b) the wide carrier is now live Turn/no-mint
-    /// transcript input, but the old note leaf precommits only its reduced felt.
-    /// Until note creation commits the wide carrier (or the combined transfer AIR
-    /// replaces the split), two full-width openings with the same reduction can
-    /// still be re-proved under distinct transcripts. This is the exact remaining
-    /// leaf migration, not a claim that the compatibility join is collision-free.
+    /// NAMED RESIDUALS (honest), after the value-link close:
+    ///
+    /// (a) **The LIGHT-CLIENT witness.** This VERIFIES live in a re-executing validator; binding
+    ///     the shielded-proof verification into the `effect_vm` descriptor (so a pure light client
+    ///     witnesses it) is the VK-affecting follow-up. Unchanged by this pass.
+    ///
+    /// (b) **The ARITY.** One input, one output. A payment with change (`1-in / 2-out`) needs the
+    ///     next descriptor in the Lean family — the limbwise carry chain
+    ///     `v_in_i = o1_i + o2_i - 65536*c_i + c_{i-1}`, `c_i` boolean, `c_3 = 0`. Until it lands,
+    ///     other arities REFUSE (they are not silently admitted).
+    ///
+    /// (c) **Note plaintext delivery.** The recipient needs `(value, asset, owner, randomness)` to
+    ///     spend the minted note; that is an out-of-band/memo concern this effect does not carry.
+    ///
+    /// The old residual (b) — "the note leaf precommits only its reduced felt, so two full-width
+    /// openings with the same reduction can be re-proved under distinct transcripts" — is RETIRED
+    /// as stated, because there are no transcripts left to be distinct: the value link is a public
+    /// input equality on a single relation, not a Fiat-Shamir weld between two proof systems.
     ///
     /// ## Where the cryptography lives (the seam)
     ///
@@ -1901,40 +1915,31 @@ impl TurnExecutor {
             journal.record_note_spend(*nf);
         }
 
-        // GATE 4 (SHIELDED ACCUMULATOR APPEND): land each output note's HIDING commitment in the
-        // `note_shielded` accumulator, journaled for rollback.
+        // GATE 4 (SHIELDED ACCUMULATOR APPEND): land each minted note's Poseidon2 commitment in
+        // the `note_shielded` accumulator, journaled for rollback.
         //
-        // ⚑ L4 LANDED (2026-08-07): `root8()` is no longer "the FUTURE piCOMMITTED source". GATE 0
-        // above reads it and every input's complete-spend proof is pinned to it. That closes #15
-        // for the SPEND side, and it changes what this append means, so read the next paragraph.
+        // ⚑ WHAT LANDS HERE CHANGED, AND SO DID WHAT IT IS WORTH (value-link flag day).
         //
-        // ⚑ WHAT A TRANSFER OUTPUT IS, EXACTLY — and why it is still the Pedersen leg.
+        // What used to land was the output leg's Ristretto `commitment_bytes` — a Pedersen VALUE
+        // commitment, not the Poseidon2 note commitment the complete-spend relation opens. Two
+        // things followed, and both are now gone:
         //
-        // What lands is the output leg's Ristretto `commitment_bytes`: a Pedersen VALUE commitment,
-        // NOT the Poseidon2 note commitment `hash_fact(v,[a,owner,rand])` that the complete-spend
-        // relation opens. A `Shield` mint appends the Poseidon2 image (see `apply_shield` GATE 4,
-        // `ShieldedOnRampPin §3`), so the accumulator holds BOTH shapes and only the Shield-minted
-        // ones are spendable. Two consequences, and neither is hidden:
+        //   * a transfer's output notes could NOT be spent (the accumulator held a leaf no circuit
+        //     could open), so value entering an output was unrecoverable — the L0.5 liveness gap;
+        //   * what the leg was WORTH was decided by the prover. The Pedersen leg's `v` was tied to
+        //     the STARK-side `v` by a transcript and nothing else, so a note worth 1 funded legs
+        //     worth 1_000_000 and conservation cleared over the legs.
         //
-        //   * FUNCTIONAL: a transfer's output notes cannot be spent. Value entering a shielded
-        //     transfer's output leg is, today, unrecoverable. That is a LIVENESS gap and it is the
-        //     value on-ramp's L0.5, named below.
-        //   * SAFETY: it is NOT a mint. A leaf's address is the RAW 32 bytes (sixteen `u16` limbs,
-        //     `2^256` on the nose — `shielded_note_set.rs`), while a spendable note's address is
-        //     `felt_to_bytes32(cCM)`: four significant bytes and twenty-eight ZERO. The
-        //     complete-spend relation pins `cADDR0`/`cADDR1` and constrains the higher limbs to
-        //     zero, so opening a leaf requires it to lie in that 4-byte subspace. A leg must
-        //     decompress as a valid Ristretto point for the conservation gate, and finding one
-        //     whose compressed encoding has 28 trailing zero bytes is ~2^-224. So a transfer output
-        //     can never become a forged spendable note — but that is an ENCODING argument, not a
-        //     CHECK, which is why it is written down here rather than assumed.
+        // What lands now is `hash_fact(v,[a,owner,rand])` — the SAME site a `Shield` mint appends
+        // and the complete-spend relation opens — and the Lean-emitted
+        // `dregg-shielded-transfer-value-link::v1` proof has already forced it and the spent note's
+        // sixteen carrier lanes to be functions of ONE canonical 16-bit limb opening. So the
+        // accumulator now holds ONE shape, every leaf in it is spendable, and the value a minted
+        // leaf carries is the value the spent leaf carried. That is the conservation statement, and
+        // it is a circuit equality rather than a transcript convention.
         //
-        // REMAINING (L0.5, precisely): the wire carries a Poseidon2 note commitment per output and
-        // GATE 4 appends THAT — which REQUIRES an output-side note-creation relation with HIDDEN
-        // value (the input side's wide-carrier join, minus the membership fold) so the appended
-        // commitment's value is bound to the output leg's Pedersen value. Appending a
-        // prover-chosen note commitment WITHOUT that relation would be strictly worse than this:
-        // it would be a mint from nothing. The relation is Lean-authored AIR and is its own lane.
+        // The arity is one-in/one-out; `ShieldedTransfer::verify` REFUSES anything else, so there
+        // is no unstated split for this append to be wrong about.
         {
             let mut set = self.note_shielded.lock().unwrap();
             for commitment in &verified.output_commitments {
@@ -2631,13 +2636,25 @@ impl TurnExecutor {
             // either is ever reachable here. The nullifier had no such backstop, which is exactly
             // why it, and only it, was the replay hole.
             //
-            // ⚠ NAMED RESIDUAL, not closed by this lane: `compress(root)` is also not the honest
-            // inverse of anything — the AIR's `pi[1]` is a ONE-FELT in-AIR Merkle chain output
-            // while `AttestedRoot::note_tree_root` is an 8-lane digest — so the byte↔felt
-            // correspondence on the root leg is still incoherent, and the recursion fold's
-            // mint-hash `connect` (which recomputes over `pi[0..6]`) cannot succeed on a real
-            // bridge turn until that leg is repaired too. It is an availability divergence, not a
-            // replay hole: the trusted-set equality admits exactly one byte string.
+            // ⚑ NAMED RESIDUAL — and CORRECTED 2026-08-07: the root leg is NOT an encoding wound,
+            // so "repair that leg too" is not the repair. `compress(root)` is indeed the inverse of
+            // nothing, but there is no honest felt to decode TO: the AIR's C6 hashes
+            // `hash_fact(current, [sib0, sib1, sib2, position])`, while the note tree that actually
+            // serves membership proofs (`Poseidon2MerkleTree`, via
+            // `persist::Poseidon2NoteTree::prove_membership`) hashes `hash_4_to_1([c0..c3])` —
+            // position-ORDERED, no position felt. Different function, different arity
+            // (`commit/src/poseidon2_tree.rs:988`). NO membership path from the real note tree
+            // satisfies this AIR at any encoding, and the live attestation carries a third object
+            // again (the 8-lane `Faithful8` root of `Poseidon2NoteTree16`,
+            // `node/src/blocklace_sync.rs:7355`). Nothing in the tree produces a bridge
+            // `spending_proof` at all, so this accept path has never run on a genuine STARK.
+            //
+            // It is an availability wall, not a replay hole: the trusted-set equality admits
+            // exactly one byte string. The on-bar repair is the faithful 8-lane note-spend surface
+            // (hash-node identity ⇒ collision resistance ⇒ 8 lanes ≈ 2^123.63; the scalar tree's
+            // ~31-bit nodes are ≈2^15.5). Full six-blocker account, and why a codec patch shipped
+            // in its place would read as progress while every blocker stands:
+            // `circuit-prove/src/note_spend_leaf_adapter.rs`.
             let root_bb = compress(root);
             let dest_bb = compress(dest_federation);
             let (value_lo, value_hi) = u64_to_limbs(value);

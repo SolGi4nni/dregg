@@ -1,40 +1,47 @@
-//! End-to-end shielded transfer through the REAL executor (privacy M2-a), over the
-//! **committed shielded accumulator**.
+//! End-to-end shielded transfer through the REAL executor, over the **committed shielded
+//! accumulator**, with the **value link in the AIR**.
 //!
 //! ## ⚑ SAY THE SUBSTRATE OUT LOUD
 //!
 //! Every constraint exercised here is AUTHORED IN LEAN. The spend side is
 //! `dregg-shielded-spend-complete-fsi2::v1`
 //! (`metatheory/Dregg2/Circuit/Emit/ShieldedSpendCompleteEmit.lean`, 557 columns, 25 PIs
-//! `[nullifier] ++ committedRoot[8] ++ wide[16]`); the sidecar is
-//! `WideValueBindingEmit.lean`. This file authors no constraint — it builds witnesses, drives the
-//! public executor entry, and reads refusals.
+//! `[nullifier] ++ committedRoot[8] ++ wide[16]`); the value link is
+//! `dregg-shielded-transfer-value-link::v1`
+//! (`metatheory/Dregg2/Circuit/Emit/ShieldedTransferValueLinkEmit.lean`, 164 columns, 17 PIs
+//! `wide[16] ++ [outCm]`). This file authors no constraint — it builds witnesses, drives the public
+//! executor entry, and reads refusals.
 //!
-//! ## ⚑ FLAG DAY 2026-08-07 — seam #15, closed ON THE DEPLOYED PATH
+//! ## ⚑ FLAG DAY — the VALUE LINK, and the Pedersen leg's deletion
 //!
-//! The retired payload carried `merkle_root: u32`, chosen by the prover, compared against nothing.
-//! `ShieldedMerkleRootPin.root_substitution_forges` states the theft: build your OWN tree holding a
-//! note that was never committed, honestly prove membership at that tree's root `R`, publish `R`.
-//! Membership genuinely holds. Nobody checked which tree.
+//! Seam #15's lane closed the spend-side theft (a prover-chosen `merkle_root`) and named one
+//! residual it did not hide, verbatim:
 //!
-//! The field is gone. `apply_shielded_transfer` reads `note_shielded.root8()` from live executor
-//! state and hands it to the verifier as the 8-lane `piCommitted` every spend proof is judged
-//! against. `executor_theft_forged_tree_refuses_on_the_deployed_path` is the exhibit, and it is
-//! deliberately built so the ONLY difference between accept and refuse is which accumulator the
-//! executor holds — the same payload bytes, two executors.
+//! > the Pedersen leg's own `v` is bound to the STARK-side `v` only through this TRANSCRIPT, not by
+//! > any circuit equality (`verify_value_link` is test-only). The wide join makes the two proofs
+//! > open the same `(value, asset)` **as each other**; it does not make either open the value the
+//! > Ristretto commitment holds.
 //!
-//! The old test in this position was `forged_membership_root_rejects`, which bumped
-//! `payload.merkle_root` by one on an already-built payload and watched the STARK fail. Lean names
-//! that exactly: `ShieldedMerkleRootPin.mutation_test_is_not_the_pin`. It rejected
-//! root-mutation-without-reproof; the attacker never mutates, they PROVE. It is replaced, not
-//! renamed.
+//! So a spender who genuinely owned a note worth `1` published input and output legs committing to
+//! `1_000_000`; `verify_full_conservation_bytes` cleared `Σ C_in = Σ C_out` over those legs and
+//! nothing compared them to the note. That gap is not closable by a check — BabyBear cannot open a
+//! Ristretto point without non-native curve arithmetic in-AIR, and a Ristretto sigma protocol
+//! cannot open a Poseidon2 image without the hash in-group (`cell-crypto/src/value_link_zk.rs`
+//! records the same finding and names the exit). The Pedersen leg is therefore GONE: no
+//! `input_legs`, no `output_legs`, no `output_range_proofs`, no `conservation`, no sidecar fields.
 //!
-//! ## What the seven un-ignored tests now cover
+//! What an output publishes is a **Poseidon2 note commitment** plus its value-link proof, and the
+//! Lean relation forces that commitment and the spend's sixteen carrier lanes to be functions of
+//! ONE canonical 16-bit limb opening. Two consequences this file tests:
 //!
-//! They were `#[ignore]`d because the deployed path FAILED CLOSED: the retired spend circuit
-//! published only a one-felt `value_binding`, so the same-opening join had no ring-side full-`u64`
-//! carrier to join against and `ring_wide_bindings` was passed EMPTY. The complete spend PI-pins
-//! its own sixteen `cap_node8` lanes, so the join is live and the ignores are gone.
+//! * [`value_link_divergence_refuses_on_the_deployed_path`] — the NEGATIVE pole. A transfer whose
+//!   minted note opens to `v' != v` is CONSTRUCTED (a real link proof, at `v'`, over a real spend
+//!   proof at `v`), the divergence is asserted present before any verdict is read, and it REFUSES.
+//! * [`honest_transfer_conserves_and_the_minted_note_is_spendable`] — the POSITIVE pole. The
+//!   appended leaf IS `hash_fact(v,[a,owner,rand])` for the SAME `v` the spent note held, and a
+//!   second transfer spends it. The old L0.5 tripwire (`transfer_output_append_is_prover_written…`)
+//!   asserted the opposite — that no spend could ever open a transfer output — and said in its own
+//!   docblock that it must be rewritten when the output relation landed. This is that rewrite.
 
 use std::sync::Arc;
 
@@ -42,18 +49,15 @@ use dregg_cell::{
     AuthRequired, Cell, CellId, Ledger, Permissions, ShieldedNoteCommitment, ShieldedNoteSet,
     felt_to_bytes32,
 };
-use dregg_cell_crypto::value_commitment::{
-    BulletproofRangeProof, ValueCommitment, ValueCommitmentBytes, prove_conservation,
-    scalar_from_blinding_bytes,
-};
 use dregg_circuit::exact_nullifier_aafi::TaggedKeyWire;
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::poseidon2::hash_fact;
 use dregg_circuit_prove::shielded::{
-    BINDING_BLIND_LANES, ShieldedSpendCompleteWitness, ShieldedSpendMembership, ShieldedTransfer,
-    ShieldedTransferWitness, ShieldedValueLeg, TREE_DEPTH, WideValueBindingProof,
-    WideValueBindingWitness, prove_wide_value_binding, wide_transfer_message,
+    BINDING_BLIND_LANES, ShieldedSpendCompleteWitness, ShieldedSpendMembership,
+    ShieldedTransferLinkWitness, ShieldedTransferWitness, TREE_DEPTH, prove_shielded_transfer,
+    prove_shielded_transfer_link,
 };
-use dregg_turn::action::{ShieldedInputPayload, ShieldedLeg, ShieldedTransferPayload};
+use dregg_turn::action::{ShieldedInputPayload, ShieldedOutputPayload, ShieldedTransferPayload};
 use dregg_turn::executor::shielded_nullifier_key;
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnError,
@@ -86,8 +90,7 @@ fn open_permissions() -> Permissions {
 /// ⚑ The root equality assert is not decoration. The AAFI root is APPEND-ORDER dependent (append
 /// rank `r` sits at physical slot `r + 1`), so a harness that seeded the same commitments in a
 /// different order would produce a different `root8()` and every test below would refuse for the
-/// wrong reason — a refusal that looks exactly like the theft refusal. It is checked here so that
-/// can never be mistaken for the tooth.
+/// wrong reason — a refusal that looks exactly like the theft refusal.
 fn shielded_executor_holding(set: &ShieldedNoteSet) -> TurnExecutor {
     let executor = TurnExecutor::new(ComputronCosts::zero())
         .with_shielded_transfer_verifier(Arc::new(CircuitShieldedTransferVerifier::new()));
@@ -203,15 +206,22 @@ fn refusal_reason(error: TurnError) -> String {
 
 // ── shielded witness / payload construction (the real prover, over a REAL accumulator) ──
 
-fn range_proof_bytes(value: u64, blinding: &[u8; 32]) -> Vec<u8> {
-    BulletproofRangeProof::prove_range(value, &scalar_from_blinding_bytes(blinding)).proof_bytes
-}
-
 /// Distinct canonical single-felt decoy commitments (the shape a `Shield` mint lands).
 fn decoys(n: u32, salt: u32) -> Vec<[u8; 32]> {
     (0..n)
         .map(|i| felt_to_bytes32(BabyBear::new(0x0A0A_0000 + salt * 0x1000 + i)))
         .collect()
+}
+
+/// A recipient: their four-limb spending key and the owner felt the minted note must carry
+/// (`hash_fact(key0,[key1,key2,key3])` — the SAME derivation the complete-spend relation's
+/// `lkOwnerDerive` performs, which is what makes the minted note spendable by them and nobody
+/// else).
+fn recipient(seed: u32) -> ([BabyBear; 4], BabyBear) {
+    let key: [BabyBear; 4] =
+        core::array::from_fn(|i| BabyBear::new(seed.wrapping_mul(31) + i as u32 + 7));
+    let owner = hash_fact(key[0], &[key[1], key[2], key[3]]);
+    (key, owner)
 }
 
 /// Build a complete-spend witness whose note is a GENUINE member of a fresh `ShieldedNoteSet`
@@ -280,100 +290,52 @@ fn witness_against(
     }
 }
 
-/// The wide sidecar for a spend witness. Its `(value, asset, randomness, blind)` are the SAME as
-/// the spend's, so the sidecar's sixteen `cap_node8` lanes equal the spend proof's PI-pinned ring
-/// carrier and `verify_same_opening` joins them. `override_value` exists so a test can prove a
-/// DIFFERENT full-`u64` opening (the `v` / `v+p` alias) and watch the join refuse.
-fn sidecar_for(
-    w: &ShieldedSpendCompleteWitness,
-    override_value: Option<u64>,
-) -> WideValueBindingProof {
-    prove_wide_value_binding(&WideValueBindingWitness {
-        value: override_value.unwrap_or(w.value),
-        asset_type: w.asset_type,
-        legacy_randomness: w.randomness,
-        binding_blind: w.binding_blind,
-    })
-    .expect("prove the mandatory native-wide input binding")
-}
-
-/// Serialize a built circuit `ShieldedTransfer` + its conservation proof into the executor wire
-/// payload — exactly what a client would post. There is no root to serialize.
+/// Serialize a built circuit `ShieldedTransfer` into the executor wire payload — exactly what a
+/// client would post. There is no root to serialize, and no value.
 fn to_payload(
-    transfer: &ShieldedTransfer,
-    sidecars: &[WideValueBindingProof],
-    conservation: dregg_cell_crypto::ConservationProof,
+    transfer: &dregg_circuit_prove::shielded::ShieldedTransfer,
 ) -> ShieldedTransferPayload {
-    assert_eq!(transfer.inputs.len(), sidecars.len());
-    let leg = |l: &ShieldedValueLeg| ShieldedLeg {
-        asset_type: l.asset_type,
-        commitment_bytes: l.commitment_bytes,
-    };
     ShieldedTransferPayload {
         inputs: transfer
             .inputs
             .iter()
-            .zip(sidecars)
-            .map(|(ip, wide)| ShieldedInputPayload {
+            .map(|ip| ShieldedInputPayload {
                 nullifier: ip.nullifier.as_u32(),
-                legacy_value_binding: wide.claim.legacy_binding.as_u32(),
                 spend_wide_binding: ip.spend_wide_binding.map(BabyBear::as_u32),
-                wide_value_binding: wide.claim.wide_binding.map(BabyBear::as_u32),
                 spend_proof: ip.proof_bytes(),
-                wide_value_proof: wide.proof_bytes(),
             })
             .collect(),
-        input_legs: transfer.input_legs.iter().map(leg).collect(),
-        output_legs: transfer.output_legs.iter().map(leg).collect(),
-        output_range_proofs: transfer.output_range_proofs.clone(),
-        conservation,
+        outputs: transfer
+            .outputs
+            .iter()
+            .map(|o| ShieldedOutputPayload {
+                note_commitment: o.note_commitment,
+                link_proof: o.link_proof.clone(),
+            })
+            .collect(),
     }
 }
 
-/// Assemble a one-in/one-out shielded transfer over `set` spending the note `witness` opens.
-/// `out_value` is what the OUTPUT leg commits to — equal to the input for a conserving transfer,
-/// larger for the inflation pole.
+/// Assemble the honest one-in/one-out transfer over `set`: spend the note `witness` opens, mint a
+/// note of the SAME value to `out_owner`. There is no `out_value` parameter, and that absence IS
+/// the close — the Lean relation reads the minted note's value off the spent note's limb columns.
 fn build_payload(
     witness: &ShieldedSpendCompleteWitness,
-    set: &ShieldedNoteSet,
-    in_blinding: [u8; 32],
-    out_blinding: [u8; 32],
-    out_value: u64,
+    out_owner: BabyBear,
+    out_randomness: BabyBear,
 ) -> ShieldedTransferPayload {
-    let in_c = ValueCommitment::commit(witness.value, &scalar_from_blinding_bytes(&in_blinding));
-    let out_c = ValueCommitment::commit(out_value, &scalar_from_blinding_bytes(&out_blinding));
-    let sidecar = sidecar_for(witness, None);
-
-    let transfer = dregg_circuit_prove::shielded::transfer_from_witnesses(
-        &[ShieldedTransferWitness {
-            spend: witness.clone(),
-            leg: ShieldedValueLeg {
-                asset_type: ASSET,
-                commitment_bytes: in_c.to_bytes().0,
-            },
-        }],
-        vec![ShieldedValueLeg {
-            asset_type: ASSET,
-            commitment_bytes: out_c.to_bytes().0,
-        }],
-        vec![range_proof_bytes(out_value, &out_blinding)],
-    )
-    .expect("prove the shielded transfer's complete-spend side");
-
-    // The conservation transcript absorbs the COMMITTED ROOT the transfer is meant for, so a
-    // conservation proof cannot be replayed against a different accumulator state.
-    let committed_root = set.root8().limbs();
-    let excess =
-        scalar_from_blinding_bytes(&in_blinding) - scalar_from_blinding_bytes(&out_blinding);
-    let message = wide_transfer_message(&transfer, core::slice::from_ref(&sidecar), committed_root)
-        .expect("build the native-wide conservation transcript");
-    let conservation = prove_conservation(&[in_c], &[out_c], &excess, &message);
-    to_payload(&transfer, &[sidecar], conservation)
+    let transfer = prove_shielded_transfer(&ShieldedTransferWitness {
+        spend: witness.clone(),
+        out_owner,
+        out_randomness,
+    })
+    .expect("prove the shielded transfer (complete spend + value link)");
+    to_payload(&transfer)
 }
 
 /// A balanced one-in/one-out shielded transfer over a fresh committed accumulator: the set the
-/// executor must hold, the payload, and the spend witness (so a test can re-prove against a grown
-/// tree).
+/// executor must hold, the payload, the spend witness (so a test can re-prove against a grown
+/// tree), and the spent note's commitment.
 fn balanced(
     seed: u32,
 ) -> (
@@ -390,39 +352,36 @@ fn balanced(
         core::array::from_fn(|i| BabyBear::new(seed.wrapping_mul(7) + i as u32 + 1)),
         &decoys(2, seed),
     );
-    let mut in_blinding = [3u8; 32];
-    let mut out_blinding = [7u8; 32];
-    in_blinding[..4].copy_from_slice(&seed.to_le_bytes());
-    out_blinding[..4].copy_from_slice(&seed.wrapping_mul(3).to_le_bytes());
-    let payload = build_payload(&witness, &set, in_blinding, out_blinding, amount);
+    let (_rk, out_owner) = recipient(seed);
+    let payload = build_payload(&witness, out_owner, BabyBear::new(0xB10B ^ seed));
     (set, payload, witness, commitment)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ⚑ THE #15 CLOSE — the theft REFUSES on the deployed path
+//  ⚑ THE #15 CLOSE — the forged-tree theft REFUSES on the deployed path
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// **⚑ THE EXECUTOR THEFT KAT — seam #15, on the DEPLOYED path.**
 ///
-/// The Rust exhibit of `ShieldedMerkleRootPin.deployed_admits_but_pin_rejects`: a note that was
-/// NEVER committed is spent, and only the missing pin would stop it. Here the pin is present, so
-/// it stops it — inside `apply_shielded_transfer`, through the public `execute()` entry.
+/// A note that was NEVER committed is spent, and only the missing pin would stop it. Here the pin
+/// is present, so it stops it — inside `apply_shielded_transfer`, through the public `execute()`
+/// entry.
 ///
 /// The construction is deliberately arranged so that the ONLY variable is which accumulator the
 /// executor holds. The SAME payload bytes are submitted to two executors:
 ///
 /// * to an executor whose committed accumulator IS the attacker's tree — **ACCEPTED**. This is the
 ///   non-vacuity pole and it is the important one: it proves the payload is completely well formed
-///   (a genuine membership proof, a genuine nullifier derivation, a live wide join, a conserving
-///   Pedersen side, a valid range proof), so nothing about it is malformed and the refusal below
-///   cannot be some incidental rejection wearing the pin's clothes.
+///   (a genuine membership proof, a genuine nullifier derivation, a genuine value link), so nothing
+///   about it is malformed and the refusal below cannot be some incidental rejection wearing the
+///   pin's clothes.
 /// * to an executor holding the REAL accumulator (which has never seen this note) — **REFUSED**,
 ///   nothing spent, nothing appended.
 ///
 /// Vacuity guards asserted BEFORE the verdict: the forged note is genuinely absent from the real
-/// accumulator, and the attacker's root `R` genuinely differs from the real `root8()`. The mutation
-/// is CONSTRUCTIVE — the attacker's tree is built, not a mutated copy of the real one — so it
-/// cannot decay into a no-op the way a `replacen`-style mutation can.
+/// accumulator, and the attacker's root `R` genuinely differs from the real `root8()`. The
+/// construction is CONSTRUCTIVE — the attacker's tree is built, not a mutated copy of the real one
+/// — so it cannot decay into a no-op the way a `replacen`-style mutation can.
 #[test]
 fn executor_theft_forged_tree_refuses_on_the_deployed_path() {
     // ── The REAL committed accumulator: an authorized note plus decoys. ──
@@ -456,19 +415,10 @@ fn executor_theft_forged_tree_refuses_on_the_deployed_path() {
          these agreed the refusal below would prove nothing"
     );
 
-    // The theft payload: an honest membership proof IN THE ATTACKER'S TREE, with a fully
-    // conserving Pedersen side and a valid range proof. Everything a well-formed transfer needs.
-    let mut in_blinding = [11u8; 32];
-    let mut out_blinding = [13u8; 32];
-    in_blinding[..4].copy_from_slice(&0xBAADu32.to_le_bytes());
-    out_blinding[..4].copy_from_slice(&0xF00Du32.to_le_bytes());
-    let theft_payload = build_payload(
-        &forged_w,
-        &attacker_set,
-        in_blinding,
-        out_blinding,
-        attacker_amount,
-    );
+    // The theft payload: an honest membership proof IN THE ATTACKER'S TREE, with a genuine value
+    // link. Everything a well-formed transfer needs.
+    let (_rk, thief_owner) = recipient(0xBAAD);
+    let theft_payload = build_payload(&forged_w, thief_owner, BabyBear::new(0xF00D));
 
     // ── POLE 1 (NON-VACUITY): an executor whose committed state IS the attacker's tree ACCEPTS
     //    this exact payload. So the payload is well formed in every respect. ──
@@ -488,7 +438,7 @@ fn executor_theft_forged_tree_refuses_on_the_deployed_path() {
          sourced from the executor's note_shielded.root8(). This is seam #15.",
     ));
     assert!(
-        reason.contains("STARK") || reason.contains("complete-spend"),
+        reason.contains("complete-spend"),
         "the refusal must be the complete-spend proof failing under the executor-committed root, \
          not some earlier structural check: {reason}"
     );
@@ -526,85 +476,279 @@ fn valid_shielded_transfer_is_admitted_and_spends_its_nullifier() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Conservation
+//  ⚑ THE VALUE LINK — the residual #15 named, closed, with both poles
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// **A transfer that does not conserve REFUSES.** The output leg commits to MORE than the input
-/// (hidden inflation) — the complete-spend membership is genuine, the range proof is valid (the
-/// inflated value really is in `[0, 2^64)`), so only the Pedersen conservation gate can catch it.
-/// `Σδ ≠ 0` ⇒ refused, and nothing is spent.
+/// **⚑ THE NEGATIVE POLE: a minted note worth more than the note it spends REFUSES.**
+///
+/// This is the theft the residual described, in its post-Pedersen form. Under the retired shape the
+/// attacker chose a Ristretto leg worth `1_000_000` for a note worth `1`; conservation cleared over
+/// the legs and nothing compared them to the note. Here the attacker's only remaining lever is the
+/// value-link proof itself, so they pull it: they prove a **genuine, fully valid** value link at
+/// `v' = 1_000_000` and staple it to a **genuine, fully valid** complete-spend proof of a note they
+/// really own, worth `v = 1`.
+///
+/// **The construction is CONSTRUCTIVE, not a mutation.** Both proofs are freshly proven objects,
+/// each internally satisfying its own relation — nothing is byte-poked, so this adversary cannot
+/// decay into a no-op the way a `replacen`-style mutation can (`minted-a-falsifier-that-stopped-
+/// falsifying`). What kills it is that the two objects disagree, and the executor supplies the
+/// link's sixteen carrier public inputs FROM THE SPEND PROOF rather than from the link's own claim.
+///
+/// **The divergence is asserted PRESENT before any verdict is read**: the forged link's carrier
+/// differs from the spend's on at least one lane, and its minted commitment differs from the honest
+/// one. If either assert ever goes quiet, the adversary has stopped adversing and this test says so
+/// instead of going green.
 #[test]
-fn inflating_shielded_transfer_rejects_on_conservation() {
-    let amount = 1_000_000u64;
+fn value_link_divergence_refuses_on_the_deployed_path() {
+    let honest_value = 1u64;
+    let forged_value = 1_000_000u64;
     let (witness, set, _cm) = witness_in_set(
-        amount,
+        honest_value,
         ASSET,
-        BabyBear::new(0x5151),
-        [
-            BabyBear::new(14),
-            BabyBear::new(15),
-            BabyBear::new(16),
-            BabyBear::new(17),
-        ],
-        &decoys(2, 14),
+        BabyBear::new(0x5EED),
+        core::array::from_fn(|i| BabyBear::new(400 + i as u32)),
+        &decoys(2, 0x99),
     );
+    let (_rk, out_owner) = recipient(0x99);
+    let out_randomness = BabyBear::new(0x1234);
+
+    // The HONEST transfer of that note — proven first, so its parts are available to splice.
+    let honest = prove_shielded_transfer(&ShieldedTransferWitness {
+        spend: witness.clone(),
+        out_owner,
+        out_randomness,
+    })
+    .expect("prove the honest transfer");
+
+    // THE ADVERSARY: a genuine value-link proof, at a DIFFERENT value. Everything else — asset,
+    // recipient, randomness — is the honest transfer's, so the ONLY difference is `v`.
+    let forged_link = prove_shielded_transfer_link(&ShieldedTransferLinkWitness {
+        value: forged_value,
+        asset_type: ASSET,
+        in_randomness: witness.randomness,
+        in_binding_blind: witness.binding_blind,
+        out_owner,
+        out_randomness,
+    })
+    .expect("the forged link is a GENUINE proof of its own relation — at the wrong value");
+
+    // ── THE MUTATION, ASSERTED PRESENT (before any verdict). ──
+    assert_ne!(
+        honest_value, forged_value,
+        "the two values must differ, or there is no divergence to refuse"
+    );
+    assert_ne!(
+        forged_link.claim.in_wide_binding, honest.inputs[0].spend_wide_binding,
+        "VACUITY GUARD: the forged link must carry a DIFFERENT sixteen-lane carrier than the one \
+         the spend proof PI-pins — that difference IS the divergence this test refuses. If these \
+         ever agreed, the adversary would be proving the honest statement."
+    );
+    let forged_cm_bytes = felt_to_bytes32(forged_link.claim.out_note_commitment);
+    assert_ne!(
+        forged_cm_bytes, honest.outputs[0].note_commitment,
+        "VACUITY GUARD: the forged mint must be a DIFFERENT note commitment than the honest one"
+    );
+
+    // The theft payload: the honest spend proof, the forged link, the forged mint.
+    let theft = ShieldedTransferPayload {
+        inputs: vec![ShieldedInputPayload {
+            nullifier: honest.inputs[0].nullifier.as_u32(),
+            spend_wide_binding: honest.inputs[0].spend_wide_binding.map(BabyBear::as_u32),
+            spend_proof: honest.inputs[0].proof_bytes(),
+        }],
+        outputs: vec![ShieldedOutputPayload {
+            note_commitment: forged_cm_bytes,
+            link_proof: forged_link.proof_bytes(),
+        }],
+    };
+
+    // ── NON-VACUITY: the forged link proof is REAL. Verified against ITS OWN public inputs it
+    //    passes — so what refuses below is the LINK to the spend, not a malformed proof. ──
+    dregg_circuit_prove::shielded::verify_shielded_transfer_link(
+        &forged_link.proof_bytes(),
+        &forged_link.claim.in_wide_binding,
+        forged_link.claim.out_note_commitment,
+    )
+    .expect(
+        "the forged link is a completely valid proof of the value-link relation at v'. It is not \
+         malformed; it is about the wrong note. That is what makes this a theft and not a typo.",
+    );
+
+    // ── THE VERDICT. ──
     let executor = shielded_executor_holding(&set);
-    // The output leg commits to the INFLATED value; the prover still uses the blinding excess, so
-    // the value imbalance leaves a V-component the Schnorr-on-R proof cannot answer.
-    let payload = build_payload(&witness, &set, [3u8; 32], [7u8; 32], 2_000_000);
-    let reason = refusal_reason(
-        run(&executor, payload).expect_err("an inflating shielded transfer must reject"),
-    );
+    let reason = refusal_reason(run(&executor, theft).expect_err(
+        "a transfer whose minted note opens to a DIFFERENT value than the spent note's carrier \
+         binds must REFUSE. This is the residual seam #15 named and did not close.",
+    ));
     assert!(
-        reason.contains("conservation") || reason.contains("range"),
-        "rejection must be the value-conservation gate, got: {reason}"
+        reason.contains("value link"),
+        "the refusal must be the VALUE LINK, named — not an incidental structural rejection \
+         wearing its clothes: {reason}"
     );
     assert!(
         executor.note_nullifiers.lock().unwrap().is_empty(),
-        "the transfer was refused before the nullifier gate could record"
+        "a refused value-link theft spends NOTHING"
+    );
+    assert_eq!(
+        executor.note_shielded.lock().unwrap().root8(),
+        set.root8(),
+        "a refused value-link theft mints NOTHING — the committed accumulator is untouched"
+    );
+
+    // ── AND THE HONEST TRANSFER OF THE SAME NOTE IS ADMITTED, in a fresh world holding the same
+    //    committed state. The link refuses the theft without refusing the legitimate transfer. ──
+    let honest_world = shielded_executor_holding(&set);
+    run(&honest_world, to_payload(&honest))
+        .expect("the honest transfer of the same note must be admitted");
+}
+
+/// **⚑ THE POSITIVE POLE: the honest transfer conserves, and what it mints is SPENDABLE.**
+///
+/// Conservation is checked the only way it can be checked once values are hidden: by exhibiting the
+/// opening. The minted leaf is asserted equal to `hash_fact(v,[a,owner,rand])` for the SAME `v` the
+/// spent note held — recomputed here from an independently constructed
+/// `ShieldedSpendCompleteWitness` — and then that note is SPENT, through the same executor, in a
+/// second transfer. Value in, same value out, and out again.
+///
+/// ⚑ This inverts `transfer_output_append_is_prover_written_and_cannot_be_opened_by_any_spend`,
+/// whose docblock said it must be rewritten when the output relation landed. Under the retired
+/// shape the appended leaf was a Ristretto point, so no spend could ever open it and value entering
+/// a transfer output was unrecoverable (the L0.5 liveness gap). It is a Poseidon2 note commitment
+/// now, and the second spend below is the proof.
+#[test]
+fn honest_transfer_conserves_and_the_minted_note_is_spendable() {
+    let amount = 4_242u64;
+    let (witness, set, _cm) = witness_in_set(
+        amount,
+        ASSET,
+        BabyBear::new(0xAB0DE),
+        core::array::from_fn(|i| BabyBear::new(700 + i as u32)),
+        &decoys(2, 0x77),
+    );
+    let (recipient_key, out_owner) = recipient(0x77);
+    let out_randomness = BabyBear::new(0x0BEEF);
+    let payload = build_payload(&witness, out_owner, out_randomness);
+
+    // ── CONSERVATION, exhibited. The note the recipient will hold, constructed independently from
+    //    the value the SPENT note carried. ──
+    let minted = ShieldedSpendCompleteWitness {
+        value: amount,
+        asset_type: ASSET,
+        randomness: out_randomness,
+        spending_key: recipient_key,
+        binding_blind: witness.binding_blind,
+        membership: ShieldedSpendMembership {
+            positions: [0; TREE_DEPTH],
+            siblings: [[[BabyBear::ZERO; 8]; 3]; TREE_DEPTH],
+            next_addr: TaggedKeyWire::top(),
+        },
+    };
+    let minted_cm = ShieldedNoteCommitment(felt_to_bytes32(minted.note_commitment_felt()));
+    assert_eq!(
+        payload.outputs[0].note_commitment, minted_cm.0,
+        "THE CONSERVATION STATEMENT: the leaf this transfer mints is the note commitment of a note \
+         worth exactly what the spent note was worth. Not `<=`, not `mod p` — the same u64, \
+         because the Lean relation read one set of limb columns for both."
+    );
+
+    let executor = shielded_executor_holding(&set);
+    run(&executor, payload).expect("the honest transfer is admitted");
+    assert!(
+        executor.note_shielded.lock().unwrap().contains(&minted_cm),
+        "GATE 4 appended the value-linked Poseidon2 note commitment"
+    );
+
+    // ── SPENDABLE: the recipient spends the note they were just paid. ──
+    let grown = live_accumulator(&executor);
+    let minted_against = witness_against(&minted, &grown, &minted_cm);
+    let (_next_key, next_owner) = recipient(0x78);
+    let second = build_payload(&minted_against, next_owner, BabyBear::new(0x0F1E));
+    assert_ne!(
+        second.inputs[0].nullifier, 0,
+        "the minted note derives its own nullifier"
+    );
+    run(&executor, second).expect(
+        "the note a transfer MINTED must be spendable by its recipient — this is the L0.5 \
+         liveness gap closing, and it is only meaningful because the value it carries was bound",
     );
 }
 
-/// **The same-opening JOIN is live, and it bites.** `v` and `v + p` share the one-felt legacy
-/// binding but NOT the sixteen `cap_node8` carrier lanes. Splicing an `x + p` sidecar over a
-/// transfer whose spend proof pins the `x` carrier is refused by `verify_same_opening` — the
-/// `ShieldedWideJoinPin.dark_value_decouples` pole, now reachable because the ring carrier is a
-/// public input of the complete-spend proof rather than the empty vector.
+/// **The modulus alias, on the value-link surface.** `v` and `v + p` reduce to the SAME BabyBear
+/// felt, so any one-felt binding is blind to the difference. The link's carrier is not one felt: it
+/// is sixteen `cap_node8` lanes over the CANONICAL 16-bit limb decomposition, which differs between
+/// the two. A link proven at `v + p` therefore carries a different carrier and refuses against the
+/// spend's — even though `hash_fact(value mod p, …)` cannot tell them apart.
+///
+/// Constructive: the alias link is a genuine proof at `v + p`, not a poked byte.
 #[test]
-fn modulus_alias_splice_rejects_at_real_executor_no_mint_entry() {
-    let (set, honest_payload, witness, _cm) = balanced(31);
+fn modulus_alias_output_refuses_against_the_spend_carrier() {
+    let value = 5_000u64;
+    let (witness, set, _cm) = witness_in_set(
+        value,
+        ASSET,
+        BabyBear::new(0x51DE),
+        core::array::from_fn(|i| BabyBear::new(900 + i as u32)),
+        &decoys(2, 0x55),
+    );
+    let (_rk, out_owner) = recipient(0x55);
+    let out_randomness = BabyBear::new(0x2222);
+    let honest = prove_shielded_transfer(&ShieldedTransferWitness {
+        spend: witness.clone(),
+        out_owner,
+        out_randomness,
+    })
+    .expect("prove the honest transfer");
 
-    // The honest transfer is admitted.
-    let honest_executor = shielded_executor_holding(&set);
-    run(&honest_executor, honest_payload.clone()).expect("the full-width x carrier is admitted");
+    let aliased = value + u64::from(BABYBEAR_P);
+    let alias_link = prove_shielded_transfer_link(&ShieldedTransferLinkWitness {
+        value: aliased,
+        asset_type: ASSET,
+        in_randomness: witness.randomness,
+        in_binding_blind: witness.binding_blind,
+        out_owner,
+        out_randomness,
+    })
+    .expect("the alias link is a genuine proof at v + p");
 
-    // The distinct full-`u64` opening `x + p`. Its compatibility felt is identical by construction.
-    let alias = sidecar_for(&witness, Some(witness.value + BABYBEAR_P as u64));
+    // ── THE ALIAS, ASSERTED PRESENT: same felt, different limbs, different carrier. ──
     assert_eq!(
-        alias.claim.legacy_binding.as_u32(),
-        honest_payload.inputs[0].legacy_value_binding,
-        "vacuity guard: x and x+p must genuinely share the retired one-felt binding"
+        aliased % u64::from(BABYBEAR_P),
+        value % u64::from(BABYBEAR_P),
+        "v and v + p must reduce to the SAME felt — that is what makes this an alias"
+    );
+    assert_eq!(
+        felt_to_bytes32(alias_link.claim.out_note_commitment),
+        honest.outputs[0].note_commitment,
+        "AND THE ONE-FELT SURFACE IS BLIND TO IT: the alias mints the very SAME note commitment, \
+         because `hash_fact(value mod p, …)` cannot separate v from v + p. Every narrow binding in \
+         this system agrees with the attacker here."
     );
     assert_ne!(
-        alias.claim.wide_binding.map(BabyBear::as_u32),
-        honest_payload.inputs[0].wide_value_binding,
-        "vacuity guard: the native carrier must distinguish x from x+p"
+        alias_link.claim.in_wide_binding, honest.inputs[0].spend_wide_binding,
+        "VACUITY GUARD: the alias must move the SIXTEEN-LANE carrier even though it does not move \
+         the reduced felt — that separation is the whole reason the carrier is wide"
     );
 
-    let mut alias_payload = honest_payload;
-    alias_payload.inputs[0].wide_value_binding = alias.claim.wide_binding.map(BabyBear::as_u32);
-    alias_payload.inputs[0].wide_value_proof = alias.proof_bytes();
-    let alias_executor = shielded_executor_holding(&set);
+    let theft = ShieldedTransferPayload {
+        inputs: vec![ShieldedInputPayload {
+            nullifier: honest.inputs[0].nullifier.as_u32(),
+            spend_wide_binding: honest.inputs[0].spend_wide_binding.map(BabyBear::as_u32),
+            spend_proof: honest.inputs[0].proof_bytes(),
+        }],
+        outputs: vec![ShieldedOutputPayload {
+            note_commitment: felt_to_bytes32(alias_link.claim.out_note_commitment),
+            link_proof: alias_link.proof_bytes(),
+        }],
+    };
+    let executor = shielded_executor_holding(&set);
     let reason = refusal_reason(
-        run(&alias_executor, alias_payload)
-            .expect_err("an x+p sidecar spliced over an x spend carrier must reject"),
+        run(&executor, theft).expect_err("an x+p link spliced over an x spend must reject"),
     );
     assert!(
-        reason.contains("dark-value decouple") || reason.contains("same-opening"),
-        "the splice must die at the routed same-opening join, which is the whole point of the \
-         join being live: {reason}"
+        reason.contains("value link"),
+        "the alias splice must die at the value link: {reason}"
     );
-    assert!(alias_executor.note_nullifiers.lock().unwrap().is_empty());
+    assert!(executor.note_nullifiers.lock().unwrap().is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -613,17 +757,10 @@ fn modulus_alias_splice_rejects_at_real_executor_no_mint_entry() {
 
 /// **A genuine double-spend REFUSES at the nullifier gate.**
 ///
-/// ⚑ This is a stronger test than the one it replaces, and it had to become one. The old version
-/// re-presented the IDENTICAL payload; that no longer reaches the nullifier gate, because an
-/// accepted transfer APPENDS its output and therefore MOVES `note_shielded.root8()`, so a replayed
-/// proof now fails the root pin first. A spend proof is bound to the accumulator SNAPSHOT it was
-/// built against — a real property of pinning to live state, and one worth a test rather than an
-/// assumption.
-///
-/// So the attacker does what a real attacker does: after the first transfer lands, they RE-PROVE
-/// the same note's spend against the GROWN accumulator, with fresh output blinding. The membership
-/// proof is genuine and current, the conservation is genuine — and the nullifier, being derived
-/// from the note, is the same. The cross-transfer double-spend gate is what refuses it.
+/// The attacker does what a real attacker does: after the first transfer lands, they RE-PROVE the
+/// same note's spend against the GROWN accumulator, with a fresh output. The membership proof is
+/// genuine and current, the value link is genuine — and the nullifier, being derived from the note,
+/// is the same. The cross-transfer double-spend gate is what refuses it.
 #[test]
 fn double_spent_shielded_nullifier_rejects() {
     let (set, first_payload, witness, commitment) = balanced(13);
@@ -646,7 +783,8 @@ fn double_spent_shielded_nullifier_rejects() {
          the old replay test wearing a new name"
     );
     let reproved = witness_against(&witness, &grown, &commitment);
-    let second_payload = build_payload(&reproved, &grown, [3u8; 32], [0x5Au8; 32], witness.value);
+    let (_rk, other_owner) = recipient(0x13FF);
+    let second_payload = build_payload(&reproved, other_owner, BabyBear::new(0x5A5A));
     assert_eq!(
         second_payload.inputs[0].nullifier, wire_nullifier,
         "the re-proved spend of the same note reveals the SAME nullifier — the nullifier is \
@@ -665,28 +803,11 @@ fn double_spent_shielded_nullifier_rejects() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Decoder / fail-closed / unlinkability
+//  Decoder / arity / fail-closed / unlinkability
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// A non-canonical BabyBear encoding in the SIDECAR's public lanes is refused at the decoder,
+/// A non-canonical BabyBear encoding in the ring carrier's public lanes is refused at the decoder,
 /// before any proof work — `x + p` must never be accepted as `x`.
-#[test]
-fn noncanonical_wide_public_lane_rejects_at_executor_entry() {
-    let (set, mut payload, _w, _cm) = balanced(32);
-    let executor = shielded_executor_holding(&set);
-    payload.inputs[0].wide_value_binding[0] = BABYBEAR_P;
-    let reason = refusal_reason(
-        run(&executor, payload).expect_err("a noncanonical wide field encoding must reject"),
-    );
-    assert!(
-        reason.contains("not canonical BabyBear"),
-        "wide decoder refusal must be explicit: {reason}"
-    );
-}
-
-/// The same canonicality wall on the RING side — the lanes the complete-spend proof pins. This is a
-/// NEW surface (the ring carrier only became wire data at this flag day), so it gets its own tooth
-/// rather than borrowing the sidecar's.
 #[test]
 fn noncanonical_ring_wide_lane_rejects_at_executor_entry() {
     let (set, mut payload, _w, _cm) = balanced(33);
@@ -701,54 +822,44 @@ fn noncanonical_ring_wide_lane_rejects_at_executor_entry() {
     );
 }
 
-/// ⚑ **THE L0.5 TRIPWIRE — what a transfer APPENDS is not what a spend can OPEN.**
-///
-/// This replaces `shielded_append_is_prover_written_not_ledger_derived`, whose own comment said it
-/// "must be rewritten" when the accumulator became load-bearing. It has: `note_shielded.root8()` is
-/// now the `piCommitted` every spend is pinned to.
-///
-/// What lands from a transfer is still the output leg's Ristretto Pedersen commitment, chosen by
-/// the prover. The safety argument is an ENCODING argument and this test is where it is checked
-/// rather than assumed: a spendable note's address is `felt_to_bytes32(cCM)` — four significant
-/// bytes, twenty-eight ZERO — because the complete-spend relation pins `cADDR0`/`cADDR1` and
-/// constrains the higher limbs to zero. A valid compressed Ristretto point in that subspace would
-/// need 224 zero bits. So a transfer output can pollute the accumulator but can never become a
-/// forged spendable note.
-///
-/// When the L0.5 output relation lands (the wire carries a Poseidon2 note commitment bound to the
-/// output leg's hidden value, and GATE 4 appends THAT), this test must be rewritten again — and
-/// the rewrite is the tripwire.
+/// A minted note commitment OUTSIDE the spendable address subspace is refused before it can be
+/// appended. `felt_to_bytes32` is four significant bytes and twenty-eight zero; the complete-spend
+/// relation pins `cADDR0`/`cADDR1` and constrains the higher limbs to zero, so a leaf outside that
+/// subspace could be appended and never opened again — value in, never out.
 #[test]
-fn transfer_output_append_is_prover_written_and_cannot_be_opened_by_any_spend() {
-    let (set, payload, _w, _cm) = balanced(41);
+fn noncanonical_note_commitment_rejects_before_it_can_be_appended() {
+    let (set, mut payload, _w, _cm) = balanced(34);
     let executor = shielded_executor_holding(&set);
-    let leg_bytes = payload.output_legs[0].commitment_bytes;
-    let before = executor.note_shielded.lock().unwrap().root8();
+    payload.outputs[0].note_commitment[31] = 1;
+    let reason = refusal_reason(
+        run(&executor, payload).expect_err("a non-felt-encoded note commitment must reject"),
+    );
+    assert!(
+        reason.contains("canonical felt encoding"),
+        "the refusal must name the encoding: {reason}"
+    );
+    assert_eq!(
+        executor.note_shielded.lock().unwrap().root8(),
+        set.root8(),
+        "nothing was appended"
+    );
+}
 
-    run(&executor, payload).expect("a valid shielded transfer must be admitted");
-
-    let live = executor.note_shielded.lock().unwrap();
-    assert!(
-        live.contains(&ShieldedNoteCommitment(leg_bytes)),
-        "GATE 4 appends the PROVER-SUPPLIED wire bytes verbatim"
-    );
-    assert_ne!(
-        live.root8(),
-        before,
-        "the committed root MOVES — which is exactly why the appended encoding matters now"
-    );
-    assert!(
-        ValueCommitment::from_bytes(&ValueCommitmentBytes(leg_bytes)).is_some(),
-        "what landed is a PEDERSEN VALUE commitment (a valid Ristretto point), not the Poseidon2 \
-         note commitment hash_fact(v,[a,owner,rand]) the complete-spend relation opens"
+/// An arity the deployed value-link descriptor does not state REFUSES rather than being admitted
+/// without a conservation statement. Today that is anything but one-in/one-out.
+#[test]
+fn unstated_arity_refuses_rather_than_being_admitted() {
+    let (set, mut payload, _w, _cm) = balanced(35);
+    let executor = shielded_executor_holding(&set);
+    let extra = payload.outputs[0].clone();
+    payload.outputs.push(extra);
+    let reason = refusal_reason(
+        run(&executor, payload).expect_err("a 1-in/2-out transfer has no stated conservation"),
     );
     assert!(
-        leg_bytes[4..].iter().any(|b| *b != 0),
-        "THE SAFETY ARGUMENT, CHECKED: the appended leaf lies OUTSIDE the spendable address \
-         subspace (felt_to_bytes32 = 4 significant bytes, 28 zero). No complete-spend proof can \
-         open it, so a transfer output cannot become a forged spendable note. If this ever fails, \
-         a prover has found a Ristretto encoding with 28 trailing zero bytes and the append is a \
-         mint."
+        reason.contains("not stated by the deployed value-link descriptor"),
+        "the refusal must name the missing descriptor, so the next reader knows this is a gap in \
+         the Lean family and not a bug: {reason}"
     );
 }
 
@@ -763,20 +874,20 @@ fn distinct_transfers_are_unlinkable_on_the_wire() {
         "distinct shielded inputs must reveal distinct nullifiers"
     );
     assert_ne!(
-        a.output_legs[0].commitment_bytes, b.output_legs[0].commitment_bytes,
-        "equal amounts must still commit to distinct (blinded) value commitments"
+        a.outputs[0].note_commitment, b.outputs[0].note_commitment,
+        "equal amounts must still mint distinct (blinded) note commitments"
     );
     assert_ne!(
         a.inputs[0].spend_proof, b.inputs[0].spend_proof,
         "the hidden proofs reveal nothing linking the two transfers"
     );
     assert_ne!(
-        a.inputs[0].wide_value_binding, b.inputs[0].wide_value_binding,
-        "the native wide carriers retain fresh hidden blinding"
+        a.outputs[0].link_proof, b.outputs[0].link_proof,
+        "nor do the hidden value-link proofs"
     );
     assert_ne!(
         a.inputs[0].spend_wide_binding, b.inputs[0].spend_wide_binding,
-        "so does the ring carrier the spend proof pins"
+        "the ring carriers retain fresh hidden blinding"
     );
 }
 
@@ -794,7 +905,7 @@ fn uninjected_executor_refuses_the_very_transfer_the_injected_one_admits() {
     assert_eq!(
         injected.note_shielded.lock().unwrap().len(),
         before + 1,
-        "the admitted transfer landed its output note"
+        "the admitted transfer landed its minted note"
     );
 
     // Same payload, SAME committed state, NOTHING injected: REFUSED, and nothing landed.
@@ -833,14 +944,14 @@ fn uninjected_executor_refuses_the_very_transfer_the_injected_one_admits() {
 #[test]
 fn the_verifier_trait_is_pure_verification_and_returns_the_state_to_land() {
     let (set, payload, _w, _cm) = balanced(61);
-    let expected_commitment = ShieldedNoteCommitment(payload.output_legs[0].commitment_bytes);
+    let expected_commitment = ShieldedNoteCommitment(payload.outputs[0].note_commitment);
 
     let verified = dregg_turn::ShieldedTransferVerifier::verify(
         &CircuitShieldedTransferVerifier::new(),
         &payload,
         set.root8().limbs(),
     )
-    .expect("a balanced transfer verifies under the committed root");
+    .expect("a valid transfer verifies under the committed root");
 
     assert_eq!(
         verified.nullifiers,
@@ -850,7 +961,8 @@ fn the_verifier_trait_is_pure_verification_and_returns_the_state_to_land() {
     assert_eq!(
         verified.output_commitments,
         vec![expected_commitment],
-        "the returned commitments are what the core executor appends and journals"
+        "the returned commitments are what the core executor appends and journals — and they are \
+         value-linked Poseidon2 note commitments, not prover-chosen group elements"
     );
 
     // And under the EMPTY accumulator's root — a tree that does not hold this note — the same call
