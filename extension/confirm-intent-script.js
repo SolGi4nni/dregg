@@ -163,15 +163,28 @@ async function init() {
           true,
         );
         addDetailRow('Signed bytes', String(p.sessionStatement ?? ''), true);
+        // ⚠ WHAT ACCEPTING ALSO AUTHORIZES, and it is not optional chrome. The
+        // binding echoed back on accept covers THIS statement's bytes only; the
+        // rest of the run is covered by this scope and by nothing else. A dialog
+        // that showed the statement without the scope would be asking about one
+        // burst while granting six.
+        if (typeof p.sessionGrantScope === 'string' && p.sessionGrantScope) {
+          addDetailRow('Also authorizes (without asking again)', p.sessionGrantScope, true);
+        }
         const explanationEl = document.getElementById('explanation');
         if (explanationEl) {
-          explanationEl.textContent = opening
+          const scopeNote = typeof p.sessionGrantScope === 'string' && p.sessionGrantScope
+            ? ' Accepting also covers the rest of THIS run — the same authority, the same slot, ' +
+              'this identity and this page, for the budget and the time shown above. A new slot, ' +
+              'a different identity, another page, or one burst past the budget asks you again.'
+            : '';
+          explanationEl.textContent = (opening
             ? 'This signature opens or resumes a judged run against this slot. It moves no DREGG, ' +
               'grants no capability, and authorizes no turn — it proves possession of the player key ' +
               'so nobody else can burn your five bursts.'
             : 'This signature spends ONE of five bursts against the judged target, and it covers this ' +
               'round only: replayed after the burst lands, the authority refuses it rather than ' +
-              'spending a second one. It moves no DREGG and authorizes no turn.';
+              'spending a second one. It moves no DREGG and authorizes no turn.') + scopeNote;
           explanationEl.style.display = 'block';
         }
         displayedSessionBinding = typeof p.bindingHex === 'string' ? p.bindingHex : null;

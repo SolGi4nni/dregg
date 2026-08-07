@@ -24,6 +24,9 @@ import {
   type ParsedOfferingTurn,
 } from "./offering-sign";
 import {
+  SignalSessionGrantBook,
+  createSignalSessionGrant,
+  describeSignalSessionGrant,
   parseSignalSessionRequest,
   signalSessionStatement,
   type ParsedSignalSessionRequest,
@@ -1415,6 +1418,12 @@ async function saveState(): Promise<void> {
 
 async function lockCipherclerk(): Promise<void> {
   if (!state) return;
+  // Locking drops the judged-run grant. Defence in depth rather than the
+  // mechanism: `grantCovers` compares `playerKeyHex` against custody at spend
+  // time, so a different identity is already structurally unable to reuse one.
+  // What this closes is the same identity, unlocked again later, silently
+  // resuming a scope the player last thought about before they locked.
+  signalSessionGrants.clear();
   if (cclerkPassphrase) {
     state.locked = false;
     await saveState();
@@ -3868,6 +3877,12 @@ function showSignalSessionConfirmation(input: {
   signerProfile?: string;
   /** Lowercase hex SHA-256 of the exact statement bytes — the echo binding. */
   bindingHex: string;
+  /**
+   * ⚠ WHAT ACCEPTING ALSO AUTHORIZES. `bindingHex` covers this statement and no
+   * other; the remaining signatures of the run are covered by this scope. A
+   * surface that omits it displays consent for less than it grants.
+   */
+  grantScope: string;
 }): Promise<boolean> {
   return new Promise((resolve) => {
     const nonce = registerPendingDecision("confirm-intent.html", {
@@ -3883,6 +3898,7 @@ function showSignalSessionConfirmation(input: {
       signerPubkeyHex: input.signerPubkeyHex,
       signerProfile: input.signerProfile,
       bindingHex: input.bindingHex,
+      sessionGrantScope: input.grantScope,
     });
     const popupUrl = chrome.runtime.getURL("confirm-intent.html") + "#nonce=" + nonce;
 
@@ -3922,6 +3938,23 @@ function showSignalSessionConfirmation(input: {
     });
   });
 }
+
+/**
+ * THE JUDGED-RUN CONSENT LEDGER — at most one live grant, and the reason it
+ * exists is that six popups per run is not a consent surface, it is a surface
+ * players click through.
+ *
+ * A judged Signal run is `open` plus up to five `guess` signatures against ONE
+ * (authority, slot, playerKey, origin). Asking six times taught the player to
+ * accept without reading, which is strictly worse for them than asking once
+ * about the whole scope — the popup that is read is the one that is rare.
+ *
+ * ⚠ IT IS SCOPE, NOT A TOKEN. `grantCovers` compares authority, slot, custody
+ * key and origin for EQUALITY and counts down a per-kind budget, so a new slot,
+ * a rotated identity, another page or a sixth guess all fall back to asking.
+ * The failure direction is always a popup, never a signature.
+ */
+const signalSessionGrants = new SignalSessionGrantBook();
 
 /**
  * Sign ONE judged Signal session statement with the extension-held player key.
@@ -3978,21 +4011,55 @@ async function signSignalSession(paramsInput: unknown, origin?: string): Promise
     new Uint8Array(await crypto.subtle.digest("SHA-256", statement.bytes as Uint8Array<ArrayBuffer>)),
   );
 
-  const confirmed = await showSignalSessionConfirmation({
-    origin,
-    kind: r.kind,
-    schema: statement.schema,
-    authorityId: r.authorityId,
-    slotDecimal: r.slot.toString(),
-    roundDecimal: r.round === null ? null : String(r.round),
-    guessText: r.guess === null ? null : `${r.guess.low} · ${r.guess.mid} · ${r.guess.high}`,
-    statement: statement.text,
-    signerPubkeyHex: playerKeyHex,
-    signerProfile: cc.activeProfile || undefined,
-    bindingHex,
-  });
-  if (!confirmed) {
-    return { ok: false, code: "user-declined", error: "User declined to sign this judged session statement" };
+  // ⚑ ONE CONSENT PER RUN, and the popup that asks for it must name the SCOPE.
+  //
+  // `bindingHex` binds THIS statement only — it is a digest of these exact bytes.
+  // The other five signatures of a run are covered by the grant's scope and by
+  // nothing else, so a popup that showed only the statement would be asking about
+  // one burst while authorizing six. `grantScope` is therefore not decoration:
+  // it is the part of the consent that covers everything after the first.
+  //
+  // The order is: try to spend, and only ask if the grant does not cover it. A
+  // spend is recorded BEFORE the signature (`SignalSessionGrantBook.consume`), so
+  // a failure after this point costs a unit rather than leaving one silently
+  // retryable.
+  const grantOrigin = origin || "unknown";
+  if (!signalSessionGrants.consume(r, playerKeyHex, grantOrigin).ok) {
+    // Mint the grant this consent is FOR, so the surface can show what it covers
+    // rather than a description assembled beside it. Nothing is remembered until
+    // the player accepts.
+    const pending = createSignalSessionGrant({
+      authorityId: r.authorityId,
+      slot: r.slot,
+      playerKeyHex,
+      origin: grantOrigin,
+    });
+    const confirmed = await showSignalSessionConfirmation({
+      origin,
+      kind: r.kind,
+      schema: statement.schema,
+      authorityId: r.authorityId,
+      slotDecimal: r.slot.toString(),
+      roundDecimal: r.round === null ? null : String(r.round),
+      guessText: r.guess === null ? null : `${r.guess.low} · ${r.guess.mid} · ${r.guess.high}`,
+      statement: statement.text,
+      signerPubkeyHex: playerKeyHex,
+      signerProfile: cc.activeProfile || undefined,
+      bindingHex,
+      grantScope: describeSignalSessionGrant(pending),
+    });
+    if (!confirmed) {
+      return { ok: false, code: "user-declined", error: "User declined to sign this judged session statement" };
+    }
+    signalSessionGrants.remember(pending);
+    // Spend THIS statement's unit out of the grant just consented to. If it
+    // somehow does not cover its own first request, refuse rather than sign
+    // outside a grant — the whole point is that no signature happens uncovered.
+    const first = signalSessionGrants.consume(r, playerKeyHex, grantOrigin);
+    if (!first.ok) {
+      signalSessionGrants.clear();
+      return { ok: false, code: "user-declined", error: first.error };
+    }
   }
 
   let signature: Uint8Array;
