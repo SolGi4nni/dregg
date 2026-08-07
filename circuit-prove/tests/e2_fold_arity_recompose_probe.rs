@@ -367,8 +367,11 @@ fn two_arity8_leaves_aggregate_at_probe_config() {
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
-    let left = left_out.into_recursion_input::<BatchOnly>();
-    let right = right_out.into_recursion_input::<BatchOnly>();
+    // ⚑ VK-identity pinned, as every 2-to-1 fold in this crate now is (`fold_vk_pin`).
+    let pins = dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(&left_out, &right_out)
+        .expect("both probe leaves carry a preprocessed commitment");
+    let left = left_out.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = right_out.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let t0 = Instant::now();
     let agg =

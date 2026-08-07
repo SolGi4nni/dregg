@@ -53,6 +53,7 @@ use dregg_circuit::poseidon2::hash_fact;
 use p3_field::PrimeField32;
 use p3_recursion::{ProveNextLayerParams, RecursionOutput};
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::ivc_turn_chain::{
     prove_descriptor_leaf_rotated_with_config, prove_descriptor_leaf_with_pi_slice_expose,
 };
@@ -392,6 +393,11 @@ pub fn prove_deco_leaf_with_claim(
 pub fn prove_deco_payment_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     deco_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
@@ -416,8 +422,8 @@ pub fn prove_deco_payment_binding_node_segmented(
         }
     })?;
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = deco_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = deco_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
@@ -469,6 +475,11 @@ pub fn prove_deco_payment_binding_node_segmented(
 pub fn prove_deco_binding_node(
     leg_claim_leaf: &RecursionOutput<DreggRecursionConfig>,
     deco_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::expose_claim_instance_index;
@@ -491,8 +502,8 @@ pub fn prove_deco_binding_node(
         }
     })?;
 
-    let left = leg_claim_leaf.into_recursion_input::<BatchOnly>();
-    let right = deco_leaf.into_recursion_input::<BatchOnly>();
+    let left = leg_claim_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = deco_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
@@ -792,8 +803,14 @@ mod tests {
         let leg = prove_deco_leg_identity(&w, &config);
         let backing =
             prove_deco_leaf_with_claim(&w, &deco_leaf_public_inputs(&w), &config).expect("leaf");
-        prove_deco_binding_node(&leg, &backing, &config)
-            .expect("honest identity: the fold connect must PROVE (leg == leaf identity)");
+        prove_deco_binding_node(
+            &leg,
+            &backing,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &backing)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("honest identity: the fold connect must PROVE (leg == leaf identity)");
     }
 
     /// THE FOLD-CONNECT TOOTH (NEGATIVE — the anti-ghost bite): a leg publishing identity `A`
@@ -814,7 +831,15 @@ mod tests {
                 .expect("backing leaf B proves");
         must_refuse(
             "a leg identity backed by NO matching DECO commitment folded",
-            || prove_deco_binding_node(&leg, &backing, &config),
+            || {
+                prove_deco_binding_node(
+                    &leg,
+                    &backing,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &backing)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            },
         );
     }
 }

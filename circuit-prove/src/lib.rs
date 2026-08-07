@@ -52,6 +52,15 @@ pub mod faithful_note_spend_exact_v3_identity;
 pub mod field_delta_range_air;
 pub mod gnark_witness_export;
 pub use gnark_witness_export::export_gnark_witness_json;
+/// ⚑ THE CHILD-VK IDENTITY PIN every 2-to-1 fold in this crate takes: the expected preprocessed
+/// commitment of each child, `connect`ed in-circuit to `alloc_const`s of that value, so a child of
+/// identical table shape and different preprocessed CONTENT (a descriptor with the same constraint
+/// structure and different round constants) is refused by the parent circuit rather than folded.
+///
+/// ⚠ It was called `mina_fold_vk_pin` while only the Mina tower used it. It is not Mina-specific
+/// and never was — the leaf adapters, the joint-turn nodes, the cohort spine, the solvency union
+/// and the accumulator all take the same pin. The Mina-scoped name is gone rather than aliased.
+pub mod fold_vk_pin;
 pub mod gpu_backend;
 pub mod gpu_hidingfri_fold;
 pub mod hatchery_leaf_adapter;
@@ -65,11 +74,6 @@ pub mod merge_pool;
 /// `dregg-mina-accumulator-{seg,final}::v1` leaves, and the fold that carries the accumulator POINT
 /// from segment to segment INSIDE the recursion. The leg upstream's verifier does natively.
 pub mod mina_accumulator_fold;
-/// ⚑ THE CHILD-VK IDENTITY PIN every fold of the Mina tower takes: the expected preprocessed
-/// commitment of each child, `connect`ed in-circuit to `alloc_const`s of that value, so a child of
-/// identical table shape and different preprocessed CONTENT (a descriptor with the same constraint
-/// structure and different round constants) is refused by the parent circuit rather than folded.
-pub mod mina_fold_vk_pin;
 /// ⚑⚑ **A KIMCHI VERIFIER GADGET, IN PLONKY3'S OWN RECURSION.** The top fold that welds the
 /// phase-2 transcript chain ROOT to the endo/conjunction finalize ROOT, so the ξ the finalize
 /// conjuncts check is the one the block's OWN sponge squeezed. ⚠ **An implementation, unverified,
@@ -107,9 +111,6 @@ pub mod private_shuffle_fair;
 pub mod recursive_witness_bundle;
 pub mod shielded;
 pub mod shielded_exact_apex_v4;
-pub mod shielded_ring_clearing_air;
-pub mod shielded_ring_clearing_nleg_air;
-pub mod shielded_spend_leaf_adapter;
 pub mod shielded_whole_note_swap_substrate;
 pub mod solvency_leaf_adapter;
 pub mod sovereign_leaf_adapter;

@@ -73,27 +73,76 @@
 //! "PI 198" until 2026-08-06 — a pre-Phase-C literal; the offset cascades from
 //! `OWNER_CELL_ID_BASE + OWNER_CELL_ID_LEN`, so name the constant, never the integer.)
 //!
-//! ## THE FORMERLY-VK-GATED SEAM — CLOSED (the felt-domain mint_hash thread)
+//! ## ⚑ THE SEAM IS NOT CLOSED — the arm is BUILT, and it CANNOT FIRE (measured 2026-08-07)
 //!
-//! The two pieces named here as riding the big-bang VK regen have LANDED:
+//! This section read "THE FORMERLY-VK-GATED SEAM — CLOSED … now CONNECTED on the
+//! deployed path." That was false, and it is the sentence that sends each new reader
+//! to repair a byte↔felt codec and stop. What has landed is the MECHANISM (the PI-46
+//! pin, the dual-expose leg, this backing leaf, the binding node). What has NOT landed
+//! is any path on which the mechanism runs. SIX independent blockers stand between HEAD
+//! and "the fold arm fired on a real bridge turn"; each was read at source, and NO ONE
+//! of them is repaired by fixing the other five.
 //!
-//! 1. **The `mintV3` mint_hash PI-emit** — via the STEP-1 EXECUTOR RE-ALIGN (the
-//!    `687601953` membership-compress precedent, stronger than the descriptor-side
-//!    `lifecycle_payload_felt` shape originally sketched): `effect_vm_bridge.rs` (and
-//!    the SDK/differential projector twins) now derive `mint_hash` AS the FELT-domain
-//!    [`note_spend_mint_hash_felt`] (`dsl::note_spending::bridge_mint_hash_felt`, over
-//!    the six compressed felts `apply_bridge_mint` enforces the note-spend STARK
-//!    against), and the deployed `mintVmDescriptor2R24` (Lean `mintV3BridgeHash`)
-//!    pins the mint row's `param0` at PI 46 (`withMintHashPin`, producer-filled —
-//!    the STEP-3/4 regen).
-//! 2. **The deployed-path fold arm** — `prove_chain_core_rotated`'s Bridge arm mints
-//!    the dual-expose leg at PI 46 and folds THIS module's backing leaf under
-//!    [`prove_note_spend_mint_binding_node_segmented`] (one connected lane binds the
-//!    whole spend tuple through the in-AIR `hash_fact` chain).
+//! 1. **There is no production witness.** `CarrierWitness::Bridge` is constructed
+//!    ONLY in tests (`circuit-prove/tests/bridge_binding_deployed_tooth.rs:309`,
+//!    `tests/ivc_turn_chain_rotated.rs:509`).
+//!    `joint_turn_aggregation::BridgeWitnessBundle::from_retained_bridge:452` — the
+//!    one documented "THE PRODUCTION PROJECTION" — has **zero callers**. Every
+//!    production leg minter hard-codes `carrier_witness: None`
+//!    (`turn-prover/src/rotation_witness.rs:195`, `node/src/turn_proving.rs:2011`).
+//!    Retention then **refuses** to persist a leg carrying one
+//!    (`node/src/turn_proving.rs:1908`), so a wire-rehydrated turn always lands on the
+//!    `None` re-exec rung. The Bridge arm at `ivc_turn_chain.rs:4438` is dead code.
+//! 2. **The nullifier leg disagrees with the enforcer.** The projectors
+//!    (`turn/src/executor/effect_vm_bridge.rs:406`, `sdk/src/cipherclerk.rs:6880`)
+//!    build `mint_hash` from `compress(nullifier)`, while `apply_bridge_mint:2618`
+//!    DECODES it (`note_spend_nullifier_felt`). Different felts ⇒ PI 46 ≠ lane 6.
+//! 3. **The root leg has no honest byte↔felt map at all.** Both sides compress, so they
+//!    agree with each other — but `pi[1]` is an in-AIR chain output, and `compress` is
+//!    the inverse of nothing.
+//! 4. **⚑ The AIR's Merkle node function is no deployed tree's.** C6 is
+//!    `hash_fact(current, [sib0, sib1, sib2, position])`; the note tree that actually
+//!    serves membership proofs (`Poseidon2MerkleTree`, via
+//!    `persist::Poseidon2NoteTree::prove_membership`) hashes
+//!    `hash_4_to_1([c0, c1, c2, c3])` — position-ORDERED children, no position felt.
+//!    Different function, different arity. Stated in-tree at
+//!    `commit/src/poseidon2_tree.rs:988` and `circuit/src/dsl/note_spending.rs:524`.
+//!    **No membership path from the real note tree can satisfy this AIR**, at any
+//!    encoding. This is the blocker that makes 2 and 3 moot, and it is why "fix the
+//!    codec on both legs" cannot produce a firing arm.
+//! 5. **The attested root is a THIRD tree's.** `AttestedRoot::note_tree_root` on the
+//!    live path is `CanonicalFaithfulRoot::to_bytes()` — the 8-lane `Faithful8` root of
+//!    `Poseidon2NoteTree16` (`node/src/blocklace_sync.rs:7355`), not the scalar tree
+//!    this AIR walks, and not one felt widened.
+//! 6. **Nothing produces a bridge `spending_proof`.** Every construction in the tree is
+//!    `vec![]`, `vec![1,2,3,4]`, or `vec![0xDE,0xAD,0xBE,0xEF]`
+//!    (`teasting/tests/cross_federation.rs:354`, `cell-crypto/src/note_bridge.rs:1483`).
+//!    The BridgeMint accept path has never been exercised by a genuine note-spend STARK.
 //!
-//! `apply_bridge_mint`'s off-AIR `verify_note_spend_dsl_full` remains the executor
-//! enforcer; this leaf is its light-client-witnessable twin, now CONNECTED on the
-//! deployed path.
+//! ⚠ **What the green tooth proves.** `bridge_binding_deployed_tooth.rs`'s honest pole
+//! sets the leg's PI 46 to `bundle.public_inputs[NOTE_SPEND_MINT_HASH_PI]` — the leaf's
+//! OWN lane 6. It sets both sides of `connect` equal by construction and never calls
+//! `bridge_mint_hash_felt`, `verify_portable_note`, or any projector. It demonstrates
+//! that the binding node wires up; it is NOT evidence that a bridge turn can satisfy it.
+//! (Both poles are `#[ignore]`d besides.)
+//!
+//! ⓘ **Where the repair actually is.** The identity is a HASH-NODE identity, so the bar
+//! is collision resistance, and eight BabyBear lanes give ≈2^123.63 — which is exactly
+//! what `Faithful8`/`CanonicalFaithfulRoot` already carry on the wire and what
+//! `Poseidon2NoteTree16` already builds. The scalar tree this AIR walks carries ~31 bits
+//! per node (≈2^15.5 birthday), so re-pointing C6 at `hash_4_to_1` would make the path
+//! REACHABLE but land the source-root binding far below the repo's ~124-bit bar. The
+//! on-bar target is the faithful 8-lane note-spend surface
+//! (`faithful-note-spend-exact-v3`, built and staged, NOT in the deployed registry —
+//! `circuit-prove/src/faithful_note_spend_exact_v3.rs:18`); the codec then falls out for
+//! free as the lane-wise decode-or-refuse of `Faithful8::to_bytes32`, the direct
+//! generalization of `note_spend_nullifier_felt`'s refuse-don't-reinterpret precedent.
+//! That is a campaign (new claim tuple, new identity, new leaf, VK epoch, registry
+//! rows), not a codec patch — and a codec patch shipped in its place would read as
+//! progress while all six blockers stand.
+//!
+//! `apply_bridge_mint`'s `verify_note_spend_descriptor2` remains the executor enforcer.
+//! This leaf is its light-client-witnessable twin — WIRED, not connected.
 
 use dregg_circuit::descriptor_ir2::{
     CHIP_OUT_LANES, CHIP_RATE, CHIP_TUPLE_LEN, EffectVmDescriptor2, LookupSpec, MemBoundaryWitness,
@@ -111,6 +160,7 @@ use dregg_circuit::poseidon2::hash_fact;
 
 use p3_recursion::{ProveNextLayerParams, RecursionOutput};
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::ivc_turn_chain::{
     prove_descriptor_leaf_rotated_with_config, prove_descriptor_leaf_with_pi_slice_expose,
 };
@@ -609,6 +659,11 @@ fn prove_note_spend_inner(
 pub fn prove_note_spend_binding_node(
     leg_claim_leaf: &RecursionOutput<DreggRecursionConfig>,
     note_spend_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::expose_claim_instance_index;
@@ -633,8 +688,8 @@ pub fn prove_note_spend_binding_node(
         }
     })?;
 
-    let left = leg_claim_leaf.into_recursion_input::<BatchOnly>();
-    let right = note_spend_leaf.into_recursion_input::<BatchOnly>();
+    let left = leg_claim_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = note_spend_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
@@ -687,6 +742,11 @@ pub fn prove_note_spend_binding_node(
 pub fn prove_note_spend_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     note_spend_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
@@ -711,8 +771,8 @@ pub fn prove_note_spend_binding_node_segmented(
         }
     })?;
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = note_spend_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = note_spend_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
@@ -773,6 +833,11 @@ pub fn prove_note_spend_binding_node_segmented(
 pub fn prove_note_spend_mint_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     note_spend_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
@@ -797,8 +862,8 @@ pub fn prove_note_spend_mint_binding_node_segmented(
         }
     })?;
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = note_spend_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = note_spend_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();

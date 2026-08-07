@@ -69,11 +69,11 @@ use dregg_circuit::field::BabyBear;
 
 use p3_recursion::{BatchOnly, RecursionInput, RecursionOutput, Target};
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::gpu_backend::{
     prove_recursion_aggregation_auto_with_expose, prove_recursion_layer_auto_with_expose,
 };
 use crate::ivc_turn_chain::{expose_claim_instance_index, ir2_leaf_wrap_config};
-use crate::mina_fold_vk_pin::FoldVkPins;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
@@ -273,7 +273,7 @@ fn prove_ir2_leaf(
 ///   re-published: it is now an internal wire of the aggregation, and a root that re-published it
 ///   would read as though the two halves were still separately checkable.
 /// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child's preprocessed commitment in-circuit
-/// ([`crate::mina_fold_vk_pin`]). Without it the two `require_claim` lane-count checks are the only
+/// ([`crate::fold_vk_pin`]). Without it the two `require_claim` lane-count checks are the only
 /// gate, and a same-shape/different-constants endo-lift or conjunction descriptor passes them.
 pub fn fold_endo_into_finalize(
     endo: &RecursionOutput<DreggRecursionConfig>,

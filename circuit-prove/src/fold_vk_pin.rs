@@ -1,10 +1,33 @@
-//! ⚑⚑ **THE CHILD-VK IDENTITY PIN, AT EVERY FOLD OF THE MINA TOWER.**
+//! ⚑⚑ **THE CHILD-VK IDENTITY PIN, AT EVERY 2-TO-1 FOLD IN THIS CRATE.**
 //!
 //! ⚠ **LABEL FIRST.** This is recursion *wiring* — `alloc_const` + `connect` over targets the
 //! child verifier already allocated. It authors **no AIR** (House Law #1 holds: every AIR under
-//! this tower comes out of Lean). It "proves on a box", which is **not verified and not sound**:
+//! these towers comes out of Lean). It "proves on a box", which is **not verified and not sound**:
 //! it inherits the undischarged FRI/STARK floor. The tests that exercise it are Rust case-tests —
 //! not translation validation, not refinement, not verification.
+//!
+//! ⚑ **IT WAS CALLED `mina_fold_vk_pin` AND IT WAS NEVER MINA-SPECIFIC.** The four Mina folds were
+//! only where the defect was closed first (`685a62a32`). Sixty-six further `into_recursion_input`
+//! call sites carried the same hole — the leaf adapters, the joint-turn binding nodes, the cohort
+//! spine, the solvency union, the accumulator, the wide K-fold tree and both apex shrinks — and all
+//! of them now take this pin. The Mina-scoped name is gone rather than aliased.
+//!
+//! ⚑ **THE CLASSIFICATION, MEASURED.** Two call shapes exist and only one is in the hole:
+//!
+//! * A **leaf wrap** builds [`p3_recursion::RecursionInput::NativeBatchStark`] — the descriptor's
+//!   own AIRs are handed to the verifier circuit, so its constants compile into the wrap's static
+//!   op list and reach the wrap's preprocessed commitment. A leaf wrap therefore **already**
+//!   separates two same-shape/different-constants descriptors, and pinning one buys nothing. It
+//!   does not call `into_recursion_input` at all.
+//! * A **fold** (and a single-child re-wrap) builds `RecursionInput::BatchStark` — the child is
+//!   re-verified through the FIXED `CircuitTablesAir` reconstruction, so only its `CommonData`
+//!   SHAPE reaches the parent's op list while its preprocessed commitment rides as a **runtime
+//!   public input**, and `PublicAir`'s value columns are main-trace only. Every
+//!   `into_recursion_input` site is this arm.
+//!
+//! Measured for the Mina pair in `circuit-prove/tests/mina_fold_vk_pin.rs` and independently, in a
+//! tower with no Pasta in it, in `circuit-prove/tests/predicate_fold_vk_pin.rs` (the `≥`/`≤`/`>`
+//! bridge-predicate relations: leaf wraps separate, unpinned folds do not).
 //!
 //! # THE HOLE THIS CLOSES, AND THE OBJECT EACH CLAIM IS ABOUT
 //!

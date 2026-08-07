@@ -163,7 +163,16 @@ pub fn shrink_apex_to_outer<SC: OuterShrinkConfig>(
     inner_config: &DreggRecursionConfig,
     outer_config: &SC,
 ) -> Result<ApexShrinkProof<SC>, String> {
-    let input = apex.into_recursion_input::<BatchOnly>();
+    // ⚑ THE APEX'S VK IDENTITY, PINNED. `into_recursion_input` passed
+    // `expected_preprocessed_commit: None`, so the apex's preprocessed commitment rode into the
+    // shrink circuit as an UNCONSTRAINED runtime public input: an apex of identical table shape and
+    // different preprocessed content — a VALID proof of a DIFFERENT circuit — shrank to a
+    // byte-identical outer VK, which is the object an L1 verifier anchors. Tracked off the apex
+    // itself, mirroring `apex_shrink_gnark_export`'s default entrypoint; a settlement service
+    // holding a deployed anchor pins to THAT via the gnark export's `_pinned_to` form. Fail-closed:
+    // an apex with no preprocessed commitment is refused rather than shrunk unpinned.
+    let apex_pre_commit = crate::fold_vk_pin::child_vk_commit(apex, "apex")?;
+    let input = apex.into_recursion_input_pinned::<BatchOnly>(apex_pre_commit);
     shrink_recursion_input_to_outer(&input, inner_config, outer_config)
 }
 
@@ -195,7 +204,16 @@ pub fn shrink_apex_to_outer_with_packing<SC: OuterShrinkConfig>(
     outer_config: &SC,
     packing: &TablePacking,
 ) -> Result<ApexShrinkProof<SC>, String> {
-    let input = apex.into_recursion_input::<BatchOnly>();
+    // ⚑ THE APEX'S VK IDENTITY, PINNED. `into_recursion_input` passed
+    // `expected_preprocessed_commit: None`, so the apex's preprocessed commitment rode into the
+    // shrink circuit as an UNCONSTRAINED runtime public input: an apex of identical table shape and
+    // different preprocessed content — a VALID proof of a DIFFERENT circuit — shrank to a
+    // byte-identical outer VK, which is the object an L1 verifier anchors. Tracked off the apex
+    // itself, mirroring `apex_shrink_gnark_export`'s default entrypoint; a settlement service
+    // holding a deployed anchor pins to THAT via the gnark export's `_pinned_to` form. Fail-closed:
+    // an apex with no preprocessed commitment is refused rather than shrunk unpinned.
+    let apex_pre_commit = crate::fold_vk_pin::child_vk_commit(apex, "apex")?;
+    let input = apex.into_recursion_input_pinned::<BatchOnly>(apex_pre_commit);
     shrink_recursion_input_to_outer_with_packing(&input, inner_config, outer_config, packing)
 }
 

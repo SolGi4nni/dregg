@@ -67,7 +67,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dregg_circuit::field::BabyBear;
-use dregg_circuit_prove::mina_fold_vk_pin::FoldVkPins;
+use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_kimchi_verifier_gadget::{
     CHAIN_ACC_LO, CHAIN_ACC_WIDTH, CHAIN_OUT_LANE0, GADGET_CONNECTS, KIMCHI_CLAIM_LEN, KV_B0,
     KV_VPRIME, V_PRIME_LIMBS, fold_transcript_into_finalize, kimchi_config, read_kimchi_claim,

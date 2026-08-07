@@ -288,8 +288,11 @@ fn two_rotated_leaves_aggregate_at_wrap_config() {
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
-    let left = left_out.into_recursion_input::<BatchOnly>();
-    let right = right_out.into_recursion_input::<BatchOnly>();
+    // ⚑ VK-identity pinned, as every 2-to-1 fold in this crate now is (`fold_vk_pin`).
+    let pins = dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(&left_out, &right_out)
+        .expect("both rotated leaves carry a preprocessed commitment");
+    let left = left_out.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = right_out.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let agg =
         build_and_prove_aggregation_layer::<DreggRecursionConfig, BatchOnly, BatchOnly, _, 4>(

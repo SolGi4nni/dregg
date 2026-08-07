@@ -263,6 +263,12 @@ pub mod multi_step_witness;
 pub mod note_spending_witness;
 #[allow(deprecated)]
 pub mod poseidon2_air;
+/// ⚑ WAS NEVER DECLARED. `private_book_bfv_exact_public.rs` — the three Lean-emitted q0/N=8
+/// radix-2 stage relations, their prover, their consumer verifier and four `#[cfg(test)]` teeth —
+/// sat on disk with no `mod` line, so **none of it was ever compiled** and `examples/bfv_stage_canary.rs`
+/// could not have built either. Found 2026-08-07 while looking for a same-shape/different-constants
+/// descriptor pair; this is the repo's own never-connected class, not broken code.
+pub mod private_book_bfv_exact_public;
 pub mod private_book_bfv_tables;
 #[cfg(feature = "plonky3")]
 pub mod temporal_predicate_air;

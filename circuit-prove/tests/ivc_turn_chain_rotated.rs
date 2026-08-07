@@ -1165,8 +1165,12 @@ fn mixed_root_forgery_executes_A_claims_B() {
         while i + 1 < proofs.len() {
             let left_idx = expose_claim_idx(&proofs[i].0).expect("left segment");
             let right_idx = expose_claim_idx(&proofs[i + 1].0).expect("right segment");
-            let left = proofs[i].into_recursion_input::<BatchOnly>();
-            let right = proofs[i + 1].into_recursion_input::<BatchOnly>();
+            // ⚑ VK-identity pinned, mirroring the lib `aggregate_tree_wide` this replica shadows.
+            let pins =
+                dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(&proofs[i], &proofs[i + 1])
+                    .expect("both aggregation children carry a preprocessed commitment");
+            let left = proofs[i].into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+            let right = proofs[i + 1].into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
             let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
                                left_apt: &[Vec<p3_recursion::Target>],
                                right_apt: &[Vec<p3_recursion::Target>],

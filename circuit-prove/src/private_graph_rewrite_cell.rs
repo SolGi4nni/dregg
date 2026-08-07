@@ -512,7 +512,14 @@ mod tests {
             new_u32.map(BabyBear::new),
             &config,
         );
-        prove_direct_ir2_binding_node_app_root_segmented(&leg, &direct, &config, 8)
-            .expect("graph proof folds only when state, VK, and stored graph root all agree");
+        prove_direct_ir2_binding_node_app_root_segmented(
+            &leg,
+            &direct,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &direct)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+            8,
+        )
+        .expect("graph proof folds only when state, VK, and stored graph root all agree");
     }
 }

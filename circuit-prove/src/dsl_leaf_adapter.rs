@@ -88,6 +88,7 @@ use dregg_circuit::field::BabyBear;
 use p3_recursion::RecursionOutput;
 
 use crate::custom_leaf_adapter::{cellprogram_to_descriptor2, prove_custom_leaf_with_commitment};
+use crate::fold_vk_pin::FoldVkPins;
 use crate::joint_turn_aggregation::JointAggError;
 use crate::joint_turn_recursive::prove_claim_binding_node_segmented;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
@@ -146,10 +147,18 @@ pub fn prove_dsl_leaf_with_commitment(
 pub fn prove_dsl_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     dsl_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins, threaded to the node below (`crate::fold_vk_pin`).
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN;
-    prove_claim_binding_node_segmented(dual_expose_leg_leaf, dsl_subproof_leaf, config, DFA_RC_LEN)
+    prove_claim_binding_node_segmented(
+        dual_expose_leg_leaf,
+        dsl_subproof_leaf,
+        pins,
+        config,
+        DFA_RC_LEN,
+    )
 }
 
 /// Report the constraint kinds in `program` that [`cellprogram_to_descriptor2`] cannot map to the

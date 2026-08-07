@@ -72,6 +72,7 @@ use p3_recursion::{
 };
 use p3_uni_stark::StarkGenericConfig;
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config;
 use crate::joint_turn_aggregation::JointAggError;
 use crate::plonky3_recursion_impl::recursive::{DreggRecursionConfig, create_recursion_backend};
@@ -345,6 +346,11 @@ pub fn read_exposed_contract_hash(
 pub fn prove_hatchery_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     hatchery_attestation_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
@@ -366,8 +372,9 @@ pub fn prove_hatchery_binding_node_segmented(
         }
     })?;
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = hatchery_attestation_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right =
+        hatchery_attestation_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
@@ -558,8 +565,14 @@ mod tests {
             .expect("the attestation leaf folds");
         let leg_leaf = hatchery_leg_leaf(&segment, w.contract_hash, &config); // claims the REAL hash
 
-        let node = prove_hatchery_binding_node_segmented(&leg_leaf, &attestation_leaf, &config)
-            .expect("an honest hatchery mint binds in the fold");
+        let node = prove_hatchery_binding_node_segmented(
+            &leg_leaf,
+            &attestation_leaf,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&leg_leaf, &attestation_leaf)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("an honest hatchery mint binds in the fold");
         // The node re-exposes the SEGMENT (the chain claim a light client folds onward).
         let exposed: Vec<BabyBear> = node
             .0
@@ -608,7 +621,15 @@ mod tests {
 
         must_refuse(
             "a FORGED contract_hash (no backing attestation) produced a fold root —  hatchery forever",
-            || prove_hatchery_binding_node_segmented(&leg_leaf, &attestation_leaf, &config),
+            || {
+                prove_hatchery_binding_node_segmented(
+                    &leg_leaf,
+                    &attestation_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg_leaf, &attestation_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            },
         );
     }
 }

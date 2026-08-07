@@ -92,7 +92,7 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit_prove::mina_fold_vk_pin::FoldVkPins;
+use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_wrap_finalize_fold::{
     CLAIM_B0, CLAIM_R, CLAIM_VPRIME, CLAIM_ZETA, CLAIM_ZETAW, CONJ_PI_B0, CONJ_PI_COUNT, CONJ_PI_R,
     CONJ_PI_XI, CONJ_PI_ZETA, CONJ_PI_ZETAW, CONJ_ROWS, ENDO_PI_COUNT, ENDO_PI_VPRIME, ENDO_PI_XI,

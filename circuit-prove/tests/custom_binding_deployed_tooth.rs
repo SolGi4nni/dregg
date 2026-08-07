@@ -69,6 +69,21 @@ use dregg_circuit_prove::joint_turn_aggregation::{
 };
 use dregg_turn::rotation_witness as rw;
 
+/// ⚑ TRACKED child-VK pins for a 2-to-1 fold (`dregg_circuit_prove::fold_vk_pin`) — every fold in
+/// the crate now takes them, because `into_recursion_input` left each child's preprocessed
+/// commitment an unconstrained runtime public input.
+fn pins(
+    l: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+    r: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+) -> dregg_circuit_prove::fold_vk_pin::FoldVkPins {
+    dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(l, r)
+        .expect("both fold children carry a preprocessed commitment")
+}
+
 /// SCOPE — printed by every test in this file. The module doc above and these two
 /// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
 /// cheap single-source-of-truth for a doc line that is also runtime output.
@@ -607,7 +622,7 @@ fn canary__the_pre_flip_deployed_pair_accepts_the_forged_root_the_state_node_ref
     // forged-root proof FOLDS.
     let thin_leaf = prove_custom_leaf_with_commitment(&program, &w, rows, &forged_pis, &config)
         .expect("the commitment-only leaf proves");
-    prove_custom_binding_node_segmented(&dual, &thin_leaf, &config).expect(
+    prove_custom_binding_node_segmented(&dual, &thin_leaf, &pins(&dual, &thin_leaf), &config).expect(
         "CANARY BROKEN: the pre-flip deployed pair was expected to ACCEPT this forged-root proof \
          (that acceptance is the gap the flip closes). If this now refuses, the forged-root tooth \
          is passing for some OTHER reason and no longer measures the state connects.",
@@ -621,7 +636,14 @@ fn canary__the_pre_flip_deployed_pair_accepts_the_forged_root_the_state_node_ref
         );
     must_refuse(
         "the DEPLOYED state node accepted a forged-root proof the canary proves is forgeable",
-        || prove_custom_binding_node_state_segmented(&dual, &state_leaf, &config),
+        || {
+            prove_custom_binding_node_state_segmented(
+                &dual,
+                &state_leaf,
+                &pins(&dual, &state_leaf),
+                &config,
+            )
+        },
     );
     eprintln!(
         "DEPLOYED CANARY: the pre-flip pair ACCEPTS the forged-root fold; the deployed state pair \
@@ -672,7 +694,7 @@ fn budget__the_state_weld_costs_this_much() {
         .expect("8-lane leaf proves");
     let thin_leaf_ms = t.elapsed().as_millis();
     let t = Instant::now();
-    let thin_node = prove_custom_binding_node_segmented(&dual, &thin, &config)
+    let thin_node = prove_custom_binding_node_segmented(&dual, &thin, &pins(&dual, &thin), &config)
         .expect("commitment-only node folds the honest pair");
     let thin_node_ms = t.elapsed().as_millis();
 
@@ -681,8 +703,9 @@ fn budget__the_state_weld_costs_this_much() {
         .expect("24-lane leaf proves");
     let wide_leaf_ms = t.elapsed().as_millis();
     let t = Instant::now();
-    let wide_node = prove_custom_binding_node_state_segmented(&dual, &wide, &config)
-        .expect("the state node folds the HONEST pair — the honest pole of the budget");
+    let wide_node =
+        prove_custom_binding_node_state_segmented(&dual, &wide, &pins(&dual, &wide), &config)
+            .expect("the state node folds the HONEST pair — the honest pole of the budget");
     let wide_node_ms = t.elapsed().as_millis();
 
     eprintln!(

@@ -107,7 +107,7 @@
 //!    **four** fold functions and **eight** call sites — `fold_chain_links`,
 //!    `fold_endo_into_finalize`, `fold_transcript_into_finalize` and
 //!    [`crate::mina_accumulator_fold::fold_accumulator_segments`], the last of which the list
-//!    missed entirely. All four now take a [`crate::mina_fold_vk_pin::FoldVkPins`] and pin both
+//!    missed entirely. All four now take a [`crate::fold_vk_pin::FoldVkPins`] and pin both
 //!    children.
 //!    ⚑ **What that closes, at the resolution it holds at.** A child whose preprocessed commitment
 //!    differs from the pinned value makes the parent circuit UNSAT — there is no parent proof — and
@@ -196,9 +196,9 @@
 
 use p3_recursion::{BatchOnly, RecursionOutput, Target};
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::gpu_backend::prove_recursion_aggregation_auto_with_expose;
 use crate::ivc_turn_chain::expose_claim_instance_index;
-use crate::mina_fold_vk_pin::FoldVkPins;
 use crate::mina_phase2_chain_leaf::{CHAIN_CLAIM_LEN, STATE_WIDTH};
 use crate::mina_wrap_finalize_fold::{
     CLAIM_VPRIME, FINALIZE_CLAIM_LEN, SK, connect_chain_root_v_prime,
@@ -257,7 +257,7 @@ pub const GADGET_CONNECTS: usize = STATE_WIDTH + V_PRIME_LIMBS + (SK - V_PRIME_L
 /// module's index arithmetic is about, and folding some other root would be reading a claim as a
 /// sentence it does not say.
 /// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child root's preprocessed commitment in-circuit
-/// ([`crate::mina_fold_vk_pin`]) — the top of a tower whose every fold now takes one. Pinning only
+/// ([`crate::fold_vk_pin`]) — the top of a tower whose every fold now takes one. Pinning only
 /// here would have closed almost nothing: the substitution was available at each of the 45 chain
 /// folds beneath it.
 pub fn fold_transcript_into_finalize(

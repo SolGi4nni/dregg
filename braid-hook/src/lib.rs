@@ -387,9 +387,16 @@ pub mod fold {
             &binding,
             &config,
         )?;
+        // ⚑ TRACKED child-VK pins (`dregg_circuit_prove::fold_vk_pin`). Unpinned, each child's
+        // preprocessed commitment was an unconstrained runtime public input, so a same-shape /
+        // different-constants child — a VALID proof of a DIFFERENT circuit — folded through and the
+        // parent VK did not move. ⚠ No host comparison: the refusal is the circuit's.
+        let pins = dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(&dual, &app_leaf)
+            .map_err(|e| format!("app-root fold child VK pin unavailable: {e}"))?;
         prove_direct_ir2_binding_node_app_root_segmented(
             &dual,
             &app_leaf,
+            &pins,
             &config,
             binding.app_root_len,
         )

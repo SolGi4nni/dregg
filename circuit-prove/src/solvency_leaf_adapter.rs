@@ -57,6 +57,7 @@ use dregg_circuit::poseidon2::hash_fact;
 
 use p3_recursion::{ProveNextLayerParams, RecursionOutput};
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::ivc_turn_chain::{
     prove_descriptor_leaf_rotated_with_config, prove_descriptor_leaf_with_pi_slice_expose,
 };
@@ -441,6 +442,8 @@ pub const STRUCTURED_PRODUCT_CLAIM_LEN: usize =
 pub fn prove_structured_product_fold(
     note_spend_leaf: &RecursionOutput<DreggRecursionConfig>,
     solvency_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins, threaded to the node below (`crate::fold_vk_pin`).
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     prove_claim_union_fold(
@@ -448,6 +451,7 @@ pub fn prove_structured_product_fold(
         crate::note_spend_leaf_adapter::NOTE_SPEND_CLAIM_LEN,
         solvency_leaf,
         SOLVENCY_CLAIM_LEN,
+        pins,
         config,
     )
 }
@@ -467,6 +471,11 @@ pub fn prove_claim_union_fold(
     left_len: usize,
     right_leaf: &RecursionOutput<DreggRecursionConfig>,
     right_len: usize,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::expose_claim_instance_index;
@@ -493,8 +502,8 @@ pub fn prove_claim_union_fold(
         }
     })?;
 
-    let left = left_leaf.into_recursion_input::<BatchOnly>();
-    let right = right_leaf.into_recursion_input::<BatchOnly>();
+    let left = left_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = right_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
@@ -742,8 +751,14 @@ mod tests {
             .expect("the solvency claim leaf must mint");
 
         // THE FOLD: one apex verifying both leaves + exposing the combined claim.
-        let apex = prove_structured_product_fold(&ns_leaf, &sv_leaf, &config)
-            .expect("the genuine structured product (note-spend ⊕ solvency) must fold + verify");
+        let apex = prove_structured_product_fold(
+            &ns_leaf,
+            &sv_leaf,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&ns_leaf, &sv_leaf)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("the genuine structured product (note-spend ⊕ solvency) must fold + verify");
 
         let combined =
             read_structured_product_claim(&apex).expect("the apex exposes the combined claim");

@@ -19,10 +19,12 @@
 //!   1. verify `turn`'s leaf (host admission + the in-circuit descriptor leaf re-proof);
 //!   2. **verify `acc_{n-1}`'s running proof IN-CIRCUIT** — the recursion: the previous running
 //!      `RecursionOutput.0` (a `BatchStarkProof`) rides back in as a [`BatchOnly`] recursion input
-//!      (`acc.running.into_recursion_input::<BatchOnly>()`), so the next aggregation layer's
-//!      in-circuit FRI verifier RE-VERIFIES it. This is the same `into_recursion_input::<BatchOnly>`
-//!      re-verification [`aggregate_tree`](crate::ivc_turn_chain) already performs at every internal
-//!      tree node — driven here as a running LEFT-fold rather than a balanced tree;
+//!      (`acc.running.into_recursion_input_pinned::<BatchOnly>(..)`), so the next aggregation
+//!      layer's in-circuit FRI verifier RE-VERIFIES it. This is the same re-verification
+//!      [`aggregate_tree`](crate::ivc_turn_chain) already performs at every internal tree node —
+//!      driven here as a running LEFT-fold rather than a balanced tree. ⚑ `_pinned`, and BOTH
+//!      children: the unpinned form passes `expected_preprocessed_commit: None`, which leaves each
+//!      child's VK identity an unconstrained runtime public input (see [`crate::fold_vk_pin`]);
 //!   3. bind `acc_{n-1}.head_root == turn_n.pre_root`, advance `head_root = turn_n.post_root`,
 //!      `num_turns += 1`, `chain_digest = H(prev_digest, old, new, idx)`;
 //!   4. aggregate `running ∘ new_turn_leaf` into the NEW running `RecursionOutput`.
@@ -436,13 +438,11 @@ pub struct Accumulator {
     /// fixed-point VK forever). A FOREIGN running proof (different preprocessed commitment than the one
     /// we recorded) makes the aggregation circuit UNSAT and is rejected host-side BEFORE the fold.
     ///
-    /// `None` until the first aggregation OR if the pin is disabled (see
-    /// [`Accumulator::with_vk_identity_pin`]). Default: pin ENABLED.
+    /// `None` until the first aggregation. There is no longer a way to turn the pin OFF: the
+    /// `with_vk_identity_pin(false)` knob had zero callers and its only effect was to restore the
+    /// unpinned fold, so it is deleted rather than kept. At fold 1 (no recorded value yet) the
+    /// running child is pinned TRACKED against its own commitment, so no fold is ever unpinned.
     pinned_running_vk: Option<RecursionCommit>,
-    /// Whether the VK-identity fixed-point pin is enabled. Default `true`. Disable only to reproduce
-    /// the legacy unpinned fold (e.g. to exhibit that a foreign-circuit proof is REJECTED only with
-    /// the pin on).
-    pin_vk_identity: bool,
     /// **Whether the WRAP step is enabled (the fixed-shape re-prove, lever closing the depth-invariant
     /// fixed point).** When `true` (default), every running fold is proven under [`wrap_params`] — a
     /// fixed [`WRAP_LOG_CEIL`] trace-height ceiling — so the running proof's `degree_bits` (hence its
@@ -467,16 +467,8 @@ impl Accumulator {
             summary: None,
             seam_pairs: Vec::new(),
             pinned_running_vk: None,
-            pin_vk_identity: true,
             wrap_enabled: true,
         }
-    }
-
-    /// Toggle the VK-identity fixed-point pin (lever (a)). Enabled by default; disable to reproduce
-    /// the legacy unpinned fold. Returns `self` for chaining (`Accumulator::genesis().with_vk_identity_pin(false)`).
-    pub fn with_vk_identity_pin(mut self, enabled: bool) -> Self {
-        self.pin_vk_identity = enabled;
-        self
     }
 
     /// Toggle the WRAP step (the fixed-shape re-prove that makes the running VK depth-invariant; see
@@ -603,7 +595,15 @@ impl Accumulator {
         .map_err(|reason| AccError::TurnProofInvalid { index: 0, reason })?;
 
         let left = running.into_recursion_input_pinned::<BatchOnly>(expected_running_vk);
-        let right = new_leaf.into_recursion_input::<BatchOnly>();
+        // ⚑ THE RIGHT CHILD IS PINNED TOO. The probe existed to demonstrate the LEFT pin and left
+        // the new leaf's preprocessed commitment an unconstrained runtime public input — so a
+        // same-shape/different-constants leaf (a valid proof of a DIFFERENT descriptor) folded in
+        // on the right without moving the parent VK. TRACKED: no anchor exists for a leaf minted
+        // in this call, and what the pin buys is that the leaf's identity reaches the parent VK.
+        let right = new_leaf.into_recursion_input_pinned::<BatchOnly>(
+            crate::fold_vk_pin::child_vk_commit(&new_leaf, "new descriptor leaf")
+                .map_err(|reason| AccError::RecursionFailed { reason })?,
+        );
         build_and_prove_aggregation_layer::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
             &left, &right, &config, &backend, &params, None,
         )
@@ -764,7 +764,16 @@ impl Accumulator {
                             .to_string(),
                     }
                 })?;
-                let left = if self.pin_vk_identity && self.pinned_running_vk.is_some() {
+                let left = if self.pinned_running_vk.is_some() {
+                    // ⚠ PRE-EXISTING HOST PRE-FLIGHT, AND IT IS NAMED HERE BECAUSE IT COSTS
+                    // SOMETHING. This host comparison fires BEFORE the fold, so the LEFT child's
+                    // in-circuit pin is never the thing that refuses a foreign running proof on
+                    // this path — the host is. That makes the in-circuit constraint untested by any
+                    // adversary that reaches `accumulate`, which is exactly why the crate's VK-pin
+                    // teeth (`fold_vk_pin.rs`, `mina_fold_vk_pin.rs`,
+                    // `predicate_fold_vk_pin.rs`) drive the aggregation layer DIRECTLY and add no
+                    // host check of their own. Left in place as defence-in-depth, not deleted; but
+                    // it is not evidence about the circuit.
                     if self.pinned_running_vk != expected {
                         // Restore the running proof we `take()`-d so the accumulator is unchanged on
                         // the rejection, then fail closed.
@@ -791,12 +800,28 @@ impl Accumulator {
                             .expect("pinned_running_vk is Some by the enclosing guard"),
                     )
                 } else {
-                    // First aggregation (no recorded expectation yet) OR pin disabled: the unpinned
-                    // fold. The expectation is recorded from this fold's OUTPUT (below), so EVERY
-                    // subsequent fold takes the pinned-or-reject branch above.
-                    running.into_recursion_input::<BatchOnly>()
+                    // ⚑ FIRST aggregation — no RECORDED expectation exists yet, so the pin is
+                    // TRACKED off the running proof itself rather than absent. It was absent, and
+                    // an absent pin at fold 1 leaves the genesis leaf's preprocessed commitment an
+                    // unconstrained runtime public input: a same-shape/different-constants genesis
+                    // leaf produced a byte-identical parent VK. Tracked, its identity reaches the
+                    // parent VK. From fold 2 on, the branch above pins against the RECORDED value.
+                    running.into_recursion_input_pinned::<BatchOnly>(
+                        crate::fold_vk_pin::child_vk_commit(
+                            &running,
+                            "running proof at first fold",
+                        )
+                        .map_err(|reason| AccError::RecursionFailed { reason })?,
+                    )
                 };
-                let right = new_leaf.into_recursion_input::<BatchOnly>();
+                // ⚑ THE RIGHT CHILD. The descriptor leaf was folded with its VK identity
+                // unconstrained at EVERY depth — the running (left) pin never covered it. Tracked:
+                // the leaf is minted in this call, so there is no anchor to name, and what the pin
+                // buys is that the leaf's identity reaches the parent VK.
+                let right = new_leaf.into_recursion_input_pinned::<BatchOnly>(
+                    crate::fold_vk_pin::child_vk_commit(&new_leaf, "new descriptor leaf")
+                        .map_err(|reason| AccError::RecursionFailed { reason })?,
+                );
                 // THE SEGMENT COMBINE (the online dual of the K-fold `aggregate_tree` combine):
                 // re-expose the parent segment with the ordered 4-lane digest acc = commit(L ++ R),
                 // so the running proof carries the whole-chain segment by construction.
@@ -840,14 +865,12 @@ impl Accumulator {
         // RECORD the expectation for the NEXT fold: the commitment of the running proof we just
         // produced. The next `accumulate` will re-fold THIS proof and must see this exact commitment
         // (the fail-closed tooth above). We record only once `new_running` is an aggregation (it has a
-        // preprocessed commitment); the genesis leaf produces `None`, leaving the first aggregation
-        // unpinned (as intended). Across the transient this updates each step; at the fixed point it
-        // stabilizes to the perpetual VK.
-        if self.pin_vk_identity {
-            let produced = new_running.running_preprocessed_commit();
-            if produced.is_some() {
-                self.pinned_running_vk = produced;
-            }
+        // preprocessed commitment); the genesis leaf produces `None`, which is why fold 1 has no
+        // RECORDED value to pin against — it pins TRACKED instead, so it is not unpinned. Across the
+        // transient this updates each step; at the fixed point it stabilizes to the perpetual VK.
+        let produced = new_running.running_preprocessed_commit();
+        if produced.is_some() {
+            self.pinned_running_vk = produced;
         }
 
         // (5) advance the running summary. The host folds the SEGMENT exactly as the in-circuit
@@ -930,7 +953,7 @@ impl Accumulator {
         // proof's commitment STILL matches the captured pin: a foreign/swapped running proof is
         // refused fail-closed rather than read out. (No pin captured = a single-turn chain whose
         // running proof is still a leaf; the leaf root is correct.)
-        if self.pin_vk_identity && self.pinned_running_vk.is_some() {
+        if self.pinned_running_vk.is_some() {
             let running_commit = running.running_preprocessed_commit();
             if self.pinned_running_vk != running_commit {
                 return Err(AccError::VkIdentityMismatch {

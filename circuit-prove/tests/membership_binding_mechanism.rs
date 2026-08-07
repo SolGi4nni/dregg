@@ -27,6 +27,21 @@
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::refusal::must_refuse;
 use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+
+/// ⚑ TRACKED child-VK pins for a 2-to-1 fold (`dregg_circuit_prove::fold_vk_pin`) — every fold in
+/// the crate now takes them, because `into_recursion_input` left each child's preprocessed
+/// commitment an unconstrained runtime public input.
+fn pins(
+    l: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+    r: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+) -> dregg_circuit_prove::fold_vk_pin::FoldVkPins {
+    dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(l, r)
+        .expect("both fold children carry a preprocessed commitment")
+}
 use dregg_circuit_prove::membership_leaf_adapter::{
     SenderMembershipWitness, prove_membership_binding_node, prove_membership_leaf_with_claim,
 };
@@ -52,7 +67,7 @@ fn membership_binding_honest_folds() {
         .expect("membership leg claim leaf mints");
     let ms = prove_membership_leaf_with_claim(&w, &pis, &config).expect("membership leaf mints");
 
-    prove_membership_binding_node(&leg, &ms, &config)
+    prove_membership_binding_node(&leg, &ms, &pins(&leg, &ms), &config)
         .expect("the honest membership-binding node folds (tuples agree)");
     eprintln!("MEMBERSHIP binding: honest in-set tuple FOLDED + bound in the recursion tree.");
 }
@@ -77,7 +92,7 @@ fn membership_binding_forged_rejected() {
 
     must_refuse(
         "a leg claiming a membership tuple NO bound membership leaf backs folded into a  verifying node",
-        || prove_membership_binding_node(&leg, &ms, &config),
+        || prove_membership_binding_node(&leg, &ms, &pins(&leg, &ms), &config),
     );
     eprintln!(
         "MEMBERSHIP binding: out-of-set tuple REJECTED by the fold (connect conflict ⇒ no root)."

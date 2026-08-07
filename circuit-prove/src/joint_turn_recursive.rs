@@ -25,6 +25,7 @@
 use p3_recursion::ProveNextLayerParams;
 use p3_recursion::{BatchOnly, RecursionOutput};
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::joint_turn_aggregation::JointAggError;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 #[cfg(test)]
@@ -117,6 +118,11 @@ pub const CUSTOM_COMMIT_LEN: usize = 8;
 pub fn prove_custom_binding_node(
     effectvm_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::expose_claim_instance_index;
@@ -142,8 +148,8 @@ pub fn prove_custom_binding_node(
         }
     })?;
 
-    let left = effectvm_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = custom_subproof_leaf.into_recursion_input::<BatchOnly>();
+    let left = effectvm_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = custom_subproof_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend_with_coeff_lookups();
     let params = ProveNextLayerParams::default();
@@ -210,11 +216,14 @@ pub fn prove_custom_binding_node(
 pub fn prove_custom_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins, threaded to the node below (`crate::fold_vk_pin`).
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     prove_claim_binding_node_segmented(
         dual_expose_leg_leaf,
         custom_subproof_leaf,
+        pins,
         config,
         CUSTOM_COMMIT_LEN,
     )
@@ -268,6 +277,11 @@ pub fn prove_custom_binding_node_segmented(
 pub fn prove_custom_binding_node_state_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::custom_leaf_adapter::CUSTOM_STATE_CLAIM_LEN;
@@ -322,8 +336,8 @@ pub fn prove_custom_binding_node_state_segmented(
         });
     }
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = custom_subproof_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = custom_subproof_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend_with_coeff_lookups();
     let params = ProveNextLayerParams::default();
@@ -411,6 +425,11 @@ pub fn prove_custom_binding_node_state_segmented(
 pub fn prove_custom_binding_node_state_and_board_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
     window: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
@@ -470,8 +489,8 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
         });
     }
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = custom_subproof_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = custom_subproof_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend_with_coeff_lookups();
     let params = ProveNextLayerParams::default();
@@ -576,12 +595,15 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
 pub fn prove_custom_binding_node_app_root_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins, threaded to the node below (`crate::fold_vk_pin`).
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
     app_root_len: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     prove_custom_binding_node_app_root_segmented_with_vk(
         dual_expose_leg_leaf,
         custom_subproof_leaf,
+        pins,
         config,
         app_root_len,
         0,
@@ -596,12 +618,15 @@ pub fn prove_custom_binding_node_app_root_segmented(
 pub fn prove_direct_ir2_binding_node_app_root_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     direct_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins, threaded to the node below (`crate::fold_vk_pin`).
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
     app_root_len: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     prove_custom_binding_node_app_root_segmented_with_vk(
         dual_expose_leg_leaf,
         direct_subproof_leaf,
+        pins,
         config,
         app_root_len,
         0,
@@ -615,12 +640,15 @@ pub fn prove_direct_ir2_binding_node_app_root_segmented(
 pub fn prove_direct_ir2_binding_node_app_and_fields_root_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     direct_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins, threaded to the node below (`crate::fold_vk_pin`).
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
     app_root_len: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     prove_custom_binding_node_app_root_segmented_with_vk(
         dual_expose_leg_leaf,
         direct_subproof_leaf,
+        pins,
         config,
         app_root_len,
         8,
@@ -631,6 +659,11 @@ pub fn prove_direct_ir2_binding_node_app_and_fields_root_segmented(
 fn prove_custom_binding_node_app_root_segmented_with_vk(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
     app_root_len: usize,
     post_fields_root_len: usize,
@@ -723,8 +756,8 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
         });
     }
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = custom_subproof_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = custom_subproof_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend_with_coeff_lookups();
     let params = ProveNextLayerParams::default();
@@ -815,6 +848,11 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
 pub fn prove_claim_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
     claim_len: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
@@ -840,8 +878,8 @@ pub fn prove_claim_binding_node_segmented(
         }
     })?;
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = custom_subproof_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = custom_subproof_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend_with_coeff_lookups();
     let params = ProveNextLayerParams::default();
@@ -937,6 +975,11 @@ pub fn prove_claim_binding_node_segmented(
 pub fn prove_sovereign_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     sovereign_authority_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
@@ -963,8 +1006,9 @@ pub fn prove_sovereign_binding_node_segmented(
         }
     })?;
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = sovereign_authority_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right =
+        sovereign_authority_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
@@ -1196,8 +1240,14 @@ mod custom_fold_wire_tests {
         // PI 46..53 — both squeeze blocks, all eight lanes bound by the node's `connect`.
         let ev_leaf = effectvm_leg_leaf(real, &config); // claims the REAL commitment
 
-        let node = prove_custom_binding_node(&ev_leaf, &custom_leaf, &config)
-            .expect("an honest custom turn binds in the fold");
+        let node = prove_custom_binding_node(
+            &ev_leaf,
+            &custom_leaf,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&ev_leaf, &custom_leaf)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("an honest custom turn binds in the fold");
         let exposed = read_exposed_pi_commitment(&node)
             .expect("the binding node re-exposes the bound commitment");
         assert_eq!(
@@ -1232,7 +1282,15 @@ mod custom_fold_wire_tests {
 
         must_refuse(
             "a FORGED custom_proof_commitment minted a verifying fold node",
-            || prove_custom_binding_node(&ev_leaf, &custom_leaf, &config),
+            || {
+                prove_custom_binding_node(
+                    &ev_leaf,
+                    &custom_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&ev_leaf, &custom_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            },
         );
     }
 
@@ -1262,7 +1320,15 @@ mod custom_fold_wire_tests {
             let ev_leaf = effectvm_leg_leaf(forged, &config);
             must_refuse(
                 "a commitment forged ONLY in lane {k} minted a verifying fold node —  that lane is NOT bound",
-                || prove_custom_binding_node(&ev_leaf, &custom_leaf, &config),
+                || {
+                    prove_custom_binding_node(
+                        &ev_leaf,
+                        &custom_leaf,
+                        &crate::fold_vk_pin::FoldVkPins::tracked(&ev_leaf, &custom_leaf)
+                            .expect("both fold children carry a preprocessed commitment"),
+                        &config,
+                    )
+                },
             );
         }
     }
@@ -1548,8 +1614,14 @@ mod custom_state_fold_wire_tests {
         // The leg publishes the SAME roots the sub-proof declares.
         let leg = dual_expose_leg_leaf(real, &old8, &new8, &config);
 
-        prove_custom_binding_node_state_segmented(&leg, &custom_leaf, &config)
-            .expect("an honest state-bound custom turn must bind in the fold");
+        prove_custom_binding_node_state_segmented(
+            &leg,
+            &custom_leaf,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("an honest state-bound custom turn must bind in the fold");
     }
 
     /// **THE TOOTH.** A custom sub-proof about a DIFFERENT transition — it VERIFIES, and the
@@ -1584,7 +1656,15 @@ mod custom_state_fold_wire_tests {
 
         must_refuse(
             "a custom proof about a DIFFERENT transition minted a verifying state-bound fold",
-            || prove_custom_binding_node_state_segmented(&leg, &custom_leaf, &config),
+            || {
+                prove_custom_binding_node_state_segmented(
+                    &leg,
+                    &custom_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            },
         );
     }
 
@@ -1614,7 +1694,14 @@ mod custom_state_fold_wire_tests {
         let leg = dual_expose_leg_leaf(claim, &real_old8, &real_new8, &config);
 
         // THE CANARY: the state connects DISABLED (the pre-leg node) => the forgery PASSES.
-        prove_custom_binding_node_segmented(&leg, &custom_leaf, &config).expect(
+        prove_custom_binding_node_segmented(
+            &leg,
+            &custom_leaf,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect(
             "CANARY BROKEN: the commitment-only node was expected to ACCEPT this forged-root \
              proof (that acceptance is the gap the state leg closes). If this now refuses, the \
              forged-root tooth below is passing for some OTHER reason and no longer measures \
@@ -1624,7 +1711,15 @@ mod custom_state_fold_wire_tests {
         // THE LEG: the state connects ENABLED => the same forgery is UNSAT.
         must_refuse(
             "the state-bound node accepted a forged-root proof the canary proves is forgeable",
-            || prove_custom_binding_node_state_segmented(&leg, &custom_leaf, &config),
+            || {
+                prove_custom_binding_node_state_segmented(
+                    &leg,
+                    &custom_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            },
         );
     }
 
@@ -1657,7 +1752,15 @@ mod custom_state_fold_wire_tests {
             must_refuse(
                 "a root forged in ONE state-prefix lane minted a verifying state-bound fold — \
                  that lane is NOT bound",
-                || prove_custom_binding_node_state_segmented(&leg, &custom_leaf, &config),
+                || {
+                    prove_custom_binding_node_state_segmented(
+                        &leg,
+                        &custom_leaf,
+                        &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                            .expect("both fold children carry a preprocessed commitment"),
+                        &config,
+                    )
+                },
             );
         }
     }
@@ -1683,7 +1786,15 @@ mod custom_state_fold_wire_tests {
 
         must_refuse(
             "a commitment-only leaf was accepted by the state-binding node",
-            || prove_custom_binding_node_state_segmented(&leg, &thin_leaf, &config),
+            || {
+                prove_custom_binding_node_state_segmented(
+                    &leg,
+                    &thin_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &thin_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            },
         );
     }
 }
@@ -1990,8 +2101,15 @@ mod app_root_weld_fold_tests {
         // The leg publishes the SAME field octet the sub-proof publishes as R.
         let leg = app_root_leg_leaf(real, &r8, &old8, &new8, &config);
 
-        prove_custom_binding_node_app_root_segmented(&leg, &custom_leaf, &config, APP_ROOT_LEN)
-            .expect("an honest app-root-bound turn must bind in the fold");
+        prove_custom_binding_node_app_root_segmented(
+            &leg,
+            &custom_leaf,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+            APP_ROOT_LEN,
+        )
+        .expect("an honest app-root-bound turn must bind in the fold");
     }
 
     /// **THE HEADLINE TOOTH.** A custom sub-proof that PUBLISHES a root R which DISAGREES with the
@@ -2032,6 +2150,8 @@ mod app_root_weld_fold_tests {
                 prove_custom_binding_node_app_root_segmented(
                     &leg,
                     &custom_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
                     &config,
                     APP_ROOT_LEN,
                 )
@@ -2128,7 +2248,14 @@ mod app_root_weld_fold_tests {
             prove_descriptor_leaf_dual_expose(&desc, &inner, &lpis, &config)
                 .expect("state leg exposes segment ++ commitment")
         };
-        prove_custom_binding_node_state_segmented(&state_leg, &state_leaf, &config).expect(
+        prove_custom_binding_node_state_segmented(
+            &state_leg,
+            &state_leaf,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&state_leg, &state_leaf)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect(
             "CANARY BROKEN: the state node was expected to ACCEPT this disagreeing-R turn (that \
              acceptance is the gap the app-root weld closes). If this now refuses, the headline \
              tooth is passing for some OTHER reason and no longer measures the app-root connect.",
@@ -2151,6 +2278,8 @@ mod app_root_weld_fold_tests {
                 prove_custom_binding_node_app_root_segmented(
                     &leg,
                     &custom_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
                     &config,
                     APP_ROOT_LEN,
                 )
@@ -2191,6 +2320,8 @@ mod app_root_weld_fold_tests {
                     prove_custom_binding_node_app_root_segmented(
                         &leg,
                         &custom_leaf,
+                        &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                            .expect("both fold children carry a preprocessed commitment"),
                         &config,
                         APP_ROOT_LEN,
                     )
@@ -2223,6 +2354,8 @@ mod app_root_weld_fold_tests {
                 prove_custom_binding_node_app_root_segmented(
                     &leg,
                     &state_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &state_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
                     &config,
                     APP_ROOT_LEN,
                 )

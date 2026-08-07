@@ -82,7 +82,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dregg_circuit::field::BabyBear;
-use dregg_circuit_prove::mina_fold_vk_pin::{FoldVkPins, VK_PIN_FELTS_PER_CHILD, child_vk_commit};
+use dregg_circuit_prove::fold_vk_pin::{FoldVkPins, VK_PIN_FELTS_PER_CHILD, child_vk_commit};
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     CHAIN_PI_COUNT, chain_config, chain_link_descriptor, fold_chain_links,
     fp_chain_link_descriptor, prove_chain_link_leaf_with, read_chain_claim,

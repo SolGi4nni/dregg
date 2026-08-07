@@ -65,6 +65,7 @@ use dregg_circuit::field::BabyBear;
 
 use p3_recursion::{BatchOnly, RecursionInput, RecursionOutput, Target};
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::gpu_backend::{
     prove_recursion_aggregation_auto_with_expose, prove_recursion_layer_auto_with_expose,
 };
@@ -72,7 +73,6 @@ use crate::ivc_turn_chain::{
     SEG_DIGEST_WIDTH, expose_claim_instance_index, ir2_leaf_wrap_config, seg_poseidon_commit,
     seg_poseidon_commit_host,
 };
-use crate::mina_fold_vk_pin::FoldVkPins;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
@@ -233,7 +233,7 @@ pub fn prove_chain_link_leaf_with(
 ///   exposes, which is what makes the node composable with itself to any depth.
 ///
 /// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child's preprocessed commitment in-circuit
-/// ([`crate::mina_fold_vk_pin`]). Without it the two `require_chain_claim` lane-count checks are the
+/// ([`crate::fold_vk_pin`]). Without it the two `require_chain_claim` lane-count checks are the
 /// ONLY thing standing between this fold and a leaf of a *different* chain-link descriptor:
 /// `dregg-pasta-fp-chainlink::v1` has the same 469 columns, the same 256 public inputs and the same
 /// 200-lane claim, so it passes the shape gate and folds — proving *"some sponge chain ran"* rather
@@ -385,7 +385,7 @@ pub fn prove_chain_fold_with(
         progress(i, "leaf");
         let leaf = prove_chain_link_leaf_with(desc, trace, pis, config)?;
         progress(i, "fold");
-        // ⚑ TRACKED pins (see `mina_fold_vk_pin`): the running node's VK genuinely changes across
+        // ⚑ TRACKED pins (see `fold_vk_pin`): the running node's VK genuinely changes across
         // the first folds of the transient, so a frozen constant would falsely refuse honest depth.
         // What the tracked pin buys is that the pinned values land in the parent's `RecursionVk`, so
         // a substituted child cannot reach the anchored root fingerprint.

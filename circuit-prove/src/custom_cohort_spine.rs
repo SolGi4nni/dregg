@@ -44,6 +44,7 @@
 use p3_recursion::{BatchOnly, ProveNextLayerParams, RecursionOutput, Target};
 
 use crate::custom_leaf_adapter::custom_app_root_claim_len;
+use crate::fold_vk_pin::FoldVkPins;
 use crate::ivc_turn_chain::{
     SEG_ANCHOR_WIDTH, SEG_COUNT, SEG_DIGEST_FIRST, SEG_DIGEST_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW,
     SEG_WIDTH, expose_claim_instance_index, seg_poseidon_commit,
@@ -143,13 +144,18 @@ pub fn prove_segment_merge_preserving_claims(
     left_suffix_len: usize,
     right: &RecursionOutput<DreggRecursionConfig>,
     right_suffix_len: usize,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     let left_idx = require_claim_len(left, SEG_WIDTH + left_suffix_len, "left cohort segment")?;
     let right_idx = require_claim_len(right, SEG_WIDTH + right_suffix_len, "right cohort segment")?;
 
-    let left_input = left.into_recursion_input::<BatchOnly>();
-    let right_input = right.into_recursion_input::<BatchOnly>();
+    let left_input = left.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right_input = right.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
     let backend = create_recursion_backend_with_coeff_lookups();
     let params = ProveNextLayerParams::default();
 
@@ -216,6 +222,11 @@ pub fn prove_segment_merge_preserving_claims(
 pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
     whole_turn_carrier: &RecursionOutput<DreggRecursionConfig>,
     direct_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
     app_root_len: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
@@ -237,8 +248,10 @@ pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
         "direct-IR2 sub-proof leaf",
     )?;
 
-    let carrier_input = whole_turn_carrier.into_recursion_input::<BatchOnly>();
-    let direct_input = direct_subproof_leaf.into_recursion_input::<BatchOnly>();
+    let carrier_input =
+        whole_turn_carrier.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let direct_input =
+        direct_subproof_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
     let backend = create_recursion_backend_with_coeff_lookups();
     let params = ProveNextLayerParams::default();
 

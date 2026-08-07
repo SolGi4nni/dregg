@@ -499,8 +499,15 @@ mod tests {
         )
         .expect("exact private-preference direct leaf proves");
         let leg = direct_leg_leaf(claim, winner, vk8, old8, new8, &config);
-        prove_direct_ir2_binding_node_app_root_segmented(&leg, &direct, &config, 1)
-            .expect("honest private-preference direct fold binds all four surfaces");
+        prove_direct_ir2_binding_node_app_root_segmented(
+            &leg,
+            &direct,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &direct)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+            1,
+        )
+        .expect("honest private-preference direct fold binds all four surfaces");
     }
 
     #[test]
@@ -559,7 +566,14 @@ mod tests {
         for (name, c, field, vk, old, new) in cases {
             let leg = direct_leg_leaf(c, field, vk, old, new, &config);
             must_refuse(name, || {
-                prove_direct_ir2_binding_node_app_root_segmented(&leg, &direct, &config, 1)
+                prove_direct_ir2_binding_node_app_root_segmented(
+                    &leg,
+                    &direct,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &direct)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                    1,
+                )
             });
         }
     }

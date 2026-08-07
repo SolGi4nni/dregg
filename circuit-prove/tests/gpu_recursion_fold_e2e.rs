@@ -323,7 +323,11 @@ fn recursion_tower_large_regime_byte_identical_on_gpu() {
         &params,
     )
     .expect("L1 (wrap the leaf) proves");
-    let l2_input = l1.into_recursion_input::<BatchOnly>();
+    // ⚑ VK-identity pinned: a single-child next-layer wrap is the SAME `RecursionInput::BatchStark`
+    // arm a fold takes — the child's commitment rides as a runtime public input either way.
+    let l2_input = l1.into_recursion_input_pinned::<BatchOnly>(
+        dregg_circuit_prove::fold_vk_pin::child_vk_commit(&l1, "L1").expect("L1 commitment"),
+    );
     let l2 = build_and_prove_next_layer::<DreggRecursionConfig, BatchOnly, _, D>(
         &l2_input,
         &cpu_config,
@@ -334,7 +338,9 @@ fn recursion_tower_large_regime_byte_identical_on_gpu() {
     let tower_secs = t_tower.elapsed().as_secs_f64();
 
     // The TOP layer input: verify L2 in-circuit (a real, large aggregated child).
-    let top_input = l2.into_recursion_input::<BatchOnly>();
+    let top_input = l2.into_recursion_input_pinned::<BatchOnly>(
+        dregg_circuit_prove::fold_vk_pin::child_vk_commit(&l2, "L2").expect("L2 commitment"),
+    );
 
     // ---- prove the TOP layer CPU vs GPU, byte-identical ---------------------
     let cpu = prove_recursion_layer_cpu(&top_input, &cpu_config, &cpu_config)

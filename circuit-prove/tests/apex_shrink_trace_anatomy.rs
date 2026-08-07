@@ -261,7 +261,12 @@ fn apex_verifier_air_trace_anatomy() {
 
     let inner_config = ir2_leaf_wrap_config();
     let backend = create_recursion_backend();
-    let input = whole.root.into_recursion_input::<BatchOnly>();
+    // ⚑ VK-identity pinned, as `shrink_apex_to_outer` now is: an unpinned apex commitment is an
+    // unconstrained runtime public input of the shrink circuit.
+    let input = whole.root.into_recursion_input_pinned::<BatchOnly>(
+        dregg_circuit_prove::fold_vk_pin::child_vk_commit(&whole.root, "apex")
+            .expect("apex carries a preprocessed commitment"),
+    );
 
     // ---- 2. the apex-verifier circuit (shrink circuit) ----------------------
     let t1 = Instant::now();

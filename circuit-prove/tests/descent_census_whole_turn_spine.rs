@@ -35,6 +35,21 @@ use dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig
 use p3_field::PrimeField32;
 use p3_recursion::RecursionOutput;
 
+/// ⚑ TRACKED child-VK pins for a 2-to-1 fold (`dregg_circuit_prove::fold_vk_pin`) — every fold in
+/// the crate now takes them, because `into_recursion_input` left each child's preprocessed
+/// commitment an unconstrained runtime public input.
+fn pins(
+    l: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+    r: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+) -> dregg_circuit_prove::fold_vk_pin::FoldVkPins {
+    dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(l, r)
+        .expect("both fold children carry a preprocessed commitment")
+}
+
 const APP_LEN: usize = 6;
 // Current Custom-wide geometry:
 // 46 rotated + commitment/VK exposure 16 + dsl-rc 4 + field octet 8 +
@@ -203,19 +218,28 @@ fn exact_census_binds_to_setfield_prefix_and_terminal_custom() {
         &config,
     );
 
-    let prefix = prove_segment_merge_preserving_claims(&first_write, 0, &final_write, 0, &config)
-        .expect("the ordinary SetField prefix preserves exact state continuity");
+    let prefix = prove_segment_merge_preserving_claims(
+        &first_write,
+        0,
+        &final_write,
+        0,
+        &pins(&first_write, &final_write),
+        &config,
+    )
+    .expect("the ordinary SetField prefix preserves exact state continuity");
     let whole_carrier = prove_segment_merge_preserving_claims(
         &prefix,
         0,
         &terminal_custom,
         terminal_custom_suffix_len(APP_LEN),
+        &pins(&prefix, &terminal_custom),
         &config,
     )
     .expect("the spine preserves terminal Custom identity and application state");
     let bound = prove_direct_ir2_whole_turn_binding_node_segmented(
         &whole_carrier,
         &direct,
+        &pins(&whole_carrier, &direct),
         &config,
         APP_LEN,
     )
@@ -266,6 +290,7 @@ fn exact_census_binds_to_setfield_prefix_and_terminal_custom() {
         0,
         &wrong_terminal_custom,
         terminal_custom_suffix_len(APP_LEN),
+        &pins(&prefix, &wrong_terminal_custom),
         &config,
     )
     .expect("the cohort spine faithfully preserves the wrong committed field");
@@ -273,6 +298,7 @@ fn exact_census_binds_to_setfield_prefix_and_terminal_custom() {
         prove_direct_ir2_whole_turn_binding_node_segmented(
             &wrong_carrier,
             &direct,
+            &pins(&wrong_carrier, &direct),
             &config,
             APP_LEN,
         )

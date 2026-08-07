@@ -29,6 +29,21 @@ use dregg_circuit::note_spending_witness::{NoteSpendingWitness, test_spending_ke
 use dregg_circuit::poseidon2::hash_many;
 use dregg_circuit::refusal::must_refuse;
 use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+
+/// ⚑ TRACKED child-VK pins for a 2-to-1 fold (`dregg_circuit_prove::fold_vk_pin`) — every fold in
+/// the crate now takes them, because `into_recursion_input` left each child's preprocessed
+/// commitment an unconstrained runtime public input.
+fn pins(
+    l: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+    r: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+) -> dregg_circuit_prove::fold_vk_pin::FoldVkPins {
+    dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(l, r)
+        .expect("both fold children carry a preprocessed commitment")
+}
 use dregg_circuit_prove::note_spend_leaf_adapter::{
     note_spend_leaf_public_inputs, prove_note_spend_binding_node, prove_note_spend_leaf_with_claim,
     read_exposed_note_spend_claim,
@@ -95,7 +110,7 @@ fn note_spend_binding_node_bites() {
 
     // POSITIVE POLE: a leg claiming the tuple the sub-proof genuinely backs folds,
     // and the node re-exposes the bound tuple.
-    let node = prove_note_spend_binding_node(&leaf_a, &leaf_a, &config)
+    let node = prove_note_spend_binding_node(&leaf_a, &leaf_a, &pins(&leaf_a, &leaf_a), &config)
         .expect("a backed claim must fold through the binding node");
     let bound = read_exposed_note_spend_claim(&node).expect("the node re-exposes the bound tuple");
     assert_eq!(
@@ -108,6 +123,6 @@ fn note_spend_binding_node_bites() {
     // backing tuple B is a per-lane `connect` conflict — UNSAT, no root.
     must_refuse(
         "a claim with NO backing note-spend folded through the node",
-        || prove_note_spend_binding_node(&leaf_a, &leaf_b, &config),
+        || prove_note_spend_binding_node(&leaf_a, &leaf_b, &pins(&leaf_a, &leaf_b), &config),
     );
 }

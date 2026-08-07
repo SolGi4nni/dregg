@@ -3314,8 +3314,19 @@ fn aggregate_tree_wide(
                 }
             })?;
 
-            let left = proofs[i].into_recursion_input::<BatchOnly>();
-            let right = proofs[i + 1].into_recursion_input::<BatchOnly>();
+            // ⚑ THE CHILD-VK PINS. Unpinned, each child's preprocessed commitment is an
+            // unconstrained runtime public input, so a same-shape/different-constants child — a
+            // VALID proof of a DIFFERENT circuit — folds through and the parent VK does not move.
+            // TRACKED (read off the children being folded) because a tree fold over a runtime-sized
+            // vector has no per-node anchor to name: what the pin buys here is that the pinned
+            // values reach the parent's `RecursionVk`, so the substitution moves the ROOT
+            // fingerprint a consumer anchors. See `crate::fold_vk_pin`.
+            let pins = crate::fold_vk_pin::FoldVkPins::tracked(&proofs[i], &proofs[i + 1])
+                .map_err(|reason| TurnChainError::RecursionFailed {
+                    reason: format!("wide aggregation child VK pin unavailable: {reason}"),
+                })?;
+            let left = proofs[i].into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+            let right = proofs[i + 1].into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
             let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                                left_apt: &[Vec<p3_recursion::Target>],
@@ -3750,6 +3761,36 @@ pub fn dsl_rc_carrier_col(
 ///      AFTER-block committed carrier octet — so the fold arm folds ONLY the real third-edge
 ///      shape.
 ///
+/// ⚑ **THE CHILD-VK PINS FOR ONE CARRIER FOLD ARM**, TRACKED off the two children this turn just
+/// minted ([`crate::fold_vk_pin`]).
+///
+/// Every carrier arm below folds a dual-expose leg leaf with a backing leaf through
+/// `into_recursion_input`, which passed `expected_preprocessed_commit: None` — so each child's
+/// preprocessed commitment (its VK-identity core) was an UNCONSTRAINED runtime public input and a
+/// child of identical table shape with different constants (a valid proof of a DIFFERENT
+/// descriptor) folded through leaving the parent VK byte-identical.
+///
+/// ⚠ **This is not a host pre-flight.** It compares nothing: it READS each child's own commitment
+/// and hands it to the fold, which `connect`s it to an `alloc_const` in-circuit. A host comparison
+/// would fire first and leave the in-circuit constraint untested. What a tracked pin buys is
+/// consequence (2) in [`crate::fold_vk_pin`]: the pinned values land in the parent's `RecursionVk`,
+/// so a substituted child moves the ROOT fingerprint a light client anchors.
+///
+/// Fails closed if either child carries no preprocessed commitment — an unpinnable child is refused
+/// rather than folded unpinned.
+fn carrier_fold_pins(
+    left: &RecursionOutput<DreggRecursionConfig>,
+    right: &RecursionOutput<DreggRecursionConfig>,
+    index: usize,
+) -> Result<crate::fold_vk_pin::FoldVkPins, TurnChainError> {
+    crate::fold_vk_pin::FoldVkPins::tracked(left, right).map_err(|reason| {
+        TurnChainError::TurnProofInvalid {
+            index,
+            reason: format!("carrier fold child VK pin unavailable: {reason}"),
+        }
+    })
+}
+
 /// A leg failing any tooth is REFUSED (the carrier witness never silently degrades to the
 /// plain segment leaf): pre-regen deployed legs land here, which is the fail-closed law.
 fn carrier_claim_pins_admitted(
@@ -4190,6 +4231,7 @@ fn mint_rotated_turn_leaf(
                             crate::joint_turn_recursive::prove_custom_binding_node_state_and_board_segmented(
                                 &dual,
                                 &custom_leaf,
+                                &carrier_fold_pins(&dual, &custom_leaf, i)?,
                                 config,
                                 bw.window_len(),
                             )
@@ -4202,6 +4244,7 @@ fn mint_rotated_turn_leaf(
                             crate::joint_turn_recursive::prove_custom_binding_node_state_segmented(
                                 &dual,
                                 &custom_leaf,
+                                &carrier_fold_pins(&dual, &custom_leaf, i)?,
                                 config,
                             )
                             .map_err(|e| TurnChainError::TurnProofInvalid {
@@ -4288,6 +4331,7 @@ fn mint_rotated_turn_leaf(
                     crate::joint_turn_recursive::prove_custom_binding_node_app_root_segmented(
                         &dual,
                         &custom_leaf,
+                        &carrier_fold_pins(&dual, &custom_leaf, i)?,
                         config,
                         binding.app_root_len,
                     )
@@ -4370,6 +4414,7 @@ fn mint_rotated_turn_leaf(
                     crate::joint_turn_recursive::prove_direct_ir2_binding_node_app_root_segmented(
                         &dual,
                         &direct_leaf,
+                        &carrier_fold_pins(&dual, &direct_leaf, i)?,
                         config,
                         binding.app_root_len,
                     )
@@ -4428,6 +4473,7 @@ fn mint_rotated_turn_leaf(
                         prove_direct_ir2_binding_node_app_and_fields_root_segmented(
                             &dual,
                             &direct_leaf,
+                            &carrier_fold_pins(&dual, &direct_leaf, i)?,
                             config,
                             binding.app_root_len,
                         )
@@ -4486,7 +4532,10 @@ fn mint_rotated_turn_leaf(
                 reason: format!("bridge note-spend backing leaf mint failed: {reason}"),
             })?;
             crate::note_spend_leaf_adapter::prove_note_spend_mint_binding_node_segmented(
-                &dual, &backing, config,
+                &dual,
+                &backing,
+                &carrier_fold_pins(&dual, &backing, i)?,
+                config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4536,7 +4585,10 @@ fn mint_rotated_turn_leaf(
                 reason: format!("deco payment backing leaf mint failed: {reason}"),
             })?;
             crate::deco_leaf_adapter::prove_deco_payment_binding_node_segmented(
-                &dual, &backing, config,
+                &dual,
+                &backing,
+                &carrier_fold_pins(&dual, &backing, i)?,
+                config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4610,11 +4662,16 @@ fn mint_rotated_turn_leaf(
                 index: i,
                 reason: format!("dsl sub-proof leaf mint failed: {reason}"),
             })?;
-            crate::dsl_leaf_adapter::prove_dsl_binding_node_segmented(&dual, &dsl_leaf, config)
-                .map_err(|e| TurnChainError::TurnProofInvalid {
-                    index: i,
-                    reason: format!("segmented dsl-binding node failed: {e:?}"),
-                })?
+            crate::dsl_leaf_adapter::prove_dsl_binding_node_segmented(
+                &dual,
+                &dsl_leaf,
+                &carrier_fold_pins(&dual, &dsl_leaf, i)?,
+                config,
+            )
+            .map_err(|e| TurnChainError::TurnProofInvalid {
+                index: i,
+                reason: format!("segmented dsl-binding node failed: {e:?}"),
+            })?
         }
         // THE FOUR v12 CARRIER FOLD ARMS (factory · hatchery · sovereign · membership) —
         // each mirrors the Custom arm: (1) ADMIT the leg's claim slots through
@@ -4656,7 +4713,10 @@ fn mint_rotated_turn_leaf(
                 reason: format!("factory backing leaf mint failed: {reason}"),
             })?;
             crate::factory_leaf_adapter::prove_factory_binding_node_segmented(
-                &dual, &backing, config,
+                &dual,
+                &backing,
+                &carrier_fold_pins(&dual, &backing, i)?,
+                config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4697,6 +4757,7 @@ fn mint_rotated_turn_leaf(
             crate::hatchery_leaf_adapter::prove_hatchery_binding_node_segmented(
                 &dual,
                 &attestation,
+                &carrier_fold_pins(&dual, &attestation, i)?,
                 config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
@@ -4737,7 +4798,10 @@ fn mint_rotated_turn_leaf(
                 reason: format!("sovereign authority leaf mint failed: {reason}"),
             })?;
             crate::joint_turn_recursive::prove_sovereign_binding_node_segmented(
-                &dual, &authority, config,
+                &dual,
+                &authority,
+                &carrier_fold_pins(&dual, &authority, i)?,
+                config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4778,6 +4842,7 @@ fn mint_rotated_turn_leaf(
             crate::membership_leaf_adapter::prove_membership_binding_node_segmented(
                 &dual,
                 &membership,
+                &carrier_fold_pins(&dual, &membership, i)?,
                 config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {

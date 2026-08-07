@@ -69,6 +69,7 @@ use p3_recursion::{
 };
 use p3_uni_stark::StarkGenericConfig;
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config;
 use crate::joint_turn_aggregation::JointAggError;
 use crate::plonky3_recursion_impl::recursive::{DreggRecursionConfig, create_recursion_backend};
@@ -339,6 +340,11 @@ pub fn read_exposed_child_vk(
 pub fn prove_factory_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     factory_backing_leaf: &RecursionOutput<DreggRecursionConfig>,
+    // ⚑ The children's VK-identity pins (`crate::fold_vk_pin`). Unpinned, each child's
+    // preprocessed commitment is an unconstrained runtime public input and a same-shape /
+    // different-constants child — a VALID proof of a DIFFERENT circuit — folds through.
+    // ⚠ No host pre-flight compares these against the children: the refusal is the circuit's.
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
@@ -359,8 +365,8 @@ pub fn prove_factory_binding_node_segmented(
         }
     })?;
 
-    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
-    let right = factory_backing_leaf.into_recursion_input::<BatchOnly>();
+    let left = dual_expose_leg_leaf.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right = factory_backing_leaf.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
@@ -570,8 +576,14 @@ mod tests {
             .expect("the factory backing leaf folds");
         let leg_leaf = factory_leg_leaf(&segment, w.child_vk, &config); // claims the REAL child_vk
 
-        let node = prove_factory_binding_node_segmented(&leg_leaf, &backing_leaf, &config)
-            .expect("an honest factory turn binds in the fold");
+        let node = prove_factory_binding_node_segmented(
+            &leg_leaf,
+            &backing_leaf,
+            &crate::fold_vk_pin::FoldVkPins::tracked(&leg_leaf, &backing_leaf)
+                .expect("both fold children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("an honest factory turn binds in the fold");
         let exposed = read_exposed_segment(&node).expect("the binding node re-exposes the segment");
         assert_eq!(
             exposed, segment,
@@ -602,7 +614,15 @@ mod tests {
 
         must_refuse(
             "a FORGED child_vk (no backing leaf binds it) produced an aggregate root",
-            || prove_factory_binding_node_segmented(&leg_leaf, &backing_leaf, &config),
+            || {
+                prove_factory_binding_node_segmented(
+                    &leg_leaf,
+                    &backing_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg_leaf, &backing_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            },
         );
     }
 }
