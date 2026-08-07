@@ -102,6 +102,50 @@ groups (`node/src/api.rs:1627`):
   polling), and `404`/`absent` when nothing is recorded either way (proving
   disabled, or no proof applies). It previously answered a bare `404` for all
   three, so a poller could not tell a failed proof from a pending one.
+
+  ⚑ **`/api/turn/{hash}/anchor` — the committee-signed per-turn anchor (NEW 2026-08-06).**
+  A proof artifact is only worth re-verifying against something *external*. This route
+  serves that something. `anchor_hex` is the postcard encoding of
+  `dregg_federation::TurnAnchorV1`; a holder decodes it and calls
+  `.verify(&committee)` with a roster **they** trust (from genesis, not from this node),
+  which recomputes `TurnReceipt::receipt_hash()`, re-roots it through
+  `merkle_root_of_receipt_hashes` into the attestation's `receipt_stream_root`, and
+  requires `>= threshold` distinct committee signatures over
+  `AttestedRoot::signing_message()`. The verified `turn_hash` is then the
+  `expected_turn_hash` argument to `dregg_sdk::verify_full_turn_bound`.
+
+  * `200` / `anchor_status: "anchored"` — `anchor_hex`, `anchor_len`,
+    `artifact_format: "DTA1"`, plus a **non-authoritative** summary (`height`,
+    `block_id`, `receipt_hash`, `ledger_root`, `receipt_stream_root`, `threshold`,
+    `receipt_covering_signatures`, `chain_position_signatures`). Verify `anchor_hex`;
+    never the summary.
+  * `404` / `anchor_status: "not_committed"` — no committed turn under this hash.
+  * `409` / `anchor_status: "no_attestation"` — the turn committed but nothing at its
+    height binds a receipt stream, so no signature reaches it. A conflict, not an
+    absence.
+  * `400` — the hash is not 64 hex characters.
+
+  ⚠ **The anchor carries an 8-felt state-commit pair that is NOT the proof's.** The
+  receipt's `pre_state_hash`/`post_state_hash` are the chip 8-felt consensus commitment
+  under `state_commit::consensus_ctx` (whole-ledger `cells_root`, `iroot =
+  empty_iroot()`); the full-turn proof publishes the rotated leg's commitment under a
+  single-cell context ledger with the real receipt-chain `iroot`. They differ —
+  measured, with both causes isolated, in
+  `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`. Passing the
+  receipt's pair to `verify_full_turn_bound` as `expected_old_commit` refuses every
+  honest proof, so this endpoint does **not** advertise them as such and the two
+  endpoint `CommitmentMismatch` teeth remain reflexive. That is undone work (align the
+  executor's and the prover's `V9RotationContext`), priced in
+  `docs/DESIGN-pi-authority.md`.
+
+  ⚠ **How much committee is actually behind it.** `AttestedRoot::quorum_signatures` —
+  the only preimage that covers `receipt_stream_root` — receives exactly ONE push on the
+  live path, the local node's (`node/src/blocklace_sync.rs:9741`). So the anchor verifies
+  on a threshold-1 federation and **refuses on a larger committee**. The `>= threshold`
+  hybrid vote quorum signs `dregg-finalization-vote-v3 || block_id || merkle_root` and
+  reaches no receipt, so it cannot stand in; `TurnAnchorV1::verify` reports it
+  (`position_quorum_met`) and never gates on it. Closing this means putting
+  `receipt_stream_root` into the finalization-vote preimage.
 - **protected_routes** — gated by the `require_auth` middleware layer
   (`node/src/api.rs:1780`, layered at `:1884`): `/turn/submit`, `/turns/submit`,
   `/turns/submit-encrypted`, `/turns/aggregate`, `/ws`, `/cipherclerk/*`, `/intents*`,

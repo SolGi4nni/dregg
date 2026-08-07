@@ -368,21 +368,43 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
         Ok(proof) => {
             let kib = proof.proof_len as f64 / 1024.0;
             let preview = short(&proof.proof_hex, 32);
+            // ⚑ THE ANCHOR FIRST, AND IT IS REQUIRED. Without a committee-signed anchor this
+            // command has nothing external to judge the artifact against, so it REFUSES to
+            // report a verdict rather than comparing the artifact against itself. See
+            // `proof_verify`'s docblock.
+            let anchor = match crate::commands::proof_verify::fetch_and_verify_anchor(
+                state.devnet.client(),
+                &state.config.devnet_url,
+                &turn_hash,
+            )
+            .await
+            {
+                Ok(anchor) => anchor,
+                Err(why) => {
+                    let embed = embeds::warning_embed(
+                        "Proof Artifact · NO VERDICT (unanchored)",
+                        &crate::commands::proof_verify::no_anchor_text(&turn_hash, &why),
+                    );
+                    let _ = command
+                        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+                        .await;
+                    return;
+                }
+            };
             // VERIFY the fetched artifact right here — the bot runs the same audited
-            // Plonky3 verifier a remote peer would, and reports the verdict rather than
-            // "Attached ✅" trust-me (backlog Tier-2 #11).
-            // The TITLE says "legs verify", not "verifies": the check is limited to the bytes
-            // (the state anchors compared are the proof's own, and no leg publishes a turn
-            // hash, so nothing ties these bytes to THIS turn or to the chain). Both seams are
-            // spelled out in the Verification field below; see `proof_verify`'s docblock.
+            // Plonky3 verifier a remote peer would, against the turn hash the COMMITTEE
+            // signed, and reports the verdict rather than "Attached ✅" trust-me.
+            // The TITLE says "legs verify", not "verifies": the state anchors compared are
+            // still the proof's own (seam 1), so the bytes are not tied to the chain's state
+            // transition. Every seam is spelled out in the Verification field below.
             let check = crate::commands::proof_verify::check_proof_hex_blocking(
                 proof.proof_hex.clone(),
-                turn_hash.clone(),
+                anchor,
             )
             .await;
             let verified_ok = matches!(&check, Ok(c) if c.verified);
             let title = if verified_ok {
-                "Proof Artifact · legs verify (not chain-bound)"
+                "Proof Artifact · legs verify, bound to the committee-signed turn"
             } else {
                 "Proof Artifact · DOES NOT VERIFY"
             };

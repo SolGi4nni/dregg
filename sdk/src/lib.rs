@@ -246,6 +246,23 @@ pub use cipherclerk::AgentCipherclerk;
 /// copy of that predicate in the tree has drifted from the gate at least once.
 pub use dregg_cell::program::constraint_subset_fails_closed_without_oracle;
 pub use dregg_cell::{CellId, Ledger};
+/// **The committee-signed per-turn ANCHOR** — the object that makes
+/// [`verify_full_turn_bound`]'s `expected_turn_hash` argument a real check instead of whatever the
+/// caller typed. Re-exported here, from `dregg-federation` (which owns committee/quorum semantics
+/// and is already in this crate's graph), for the same reason as the `dregg-pq` outcomes above: the
+/// hosts that re-verify a served proof — a bot, a portal, a funnel — must be able to obtain and
+/// check one without taking a direct `dregg-federation` dependency, and above all without
+/// hand-copying the attested-root preimage or the quorum rule, every copy of which in this tree has
+/// drifted at least once.
+///
+/// ⚠ The verified anchor's `receipt_pre_state_commit` / `receipt_post_state_commit` are NOT the
+/// `expected_old_commit` / `expected_new_commit` this crate's verifier wants. They are the
+/// committee-signed consensus commitment under a different `V9RotationContext`; passing them
+/// refuses every honest proof. See `dregg_federation::turn_anchor`'s module docs and
+/// `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`.
+pub use dregg_federation::turn_anchor::{
+    AnchorCommittee, TURN_ANCHOR_PROTOCOL_V1, TurnAnchorError, TurnAnchorV1, VerifiedTurnAnchor,
+};
 /// The verify-core install outcome (from `dregg-pq`), re-exported so SDK-hosted processes can match on
 /// [`install_verified_mldsa_verify_core`]'s result without a direct `dregg-pq` dependency.
 pub use dregg_pq::MlDsaVerifyCoreInstall;

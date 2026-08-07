@@ -957,20 +957,42 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
     match resp.json::<TurnProofWire>().await {
         Ok(proof) => {
             let kib = proof.proof_len as f64 / 1024.0;
-            // VERIFY the fetched artifact right here (the audited `verify_full_turn`), and
-            // report the verdict — never an "Attached ✅" trust-me (backlog Tier-2 #11).
-            // The TITLE says "legs verify", not "verifies": the check is limited to the bytes
-            // (the state anchors compared are the proof's own, and no leg publishes a turn
-            // hash, so nothing ties these bytes to THIS turn or to the chain). Both seams are
-            // spelled out in the Verification field below; see `proof_verify`'s docblock.
+            // ⚑ THE ANCHOR FIRST, AND IT IS REQUIRED — the same forcing shape `/proof turn`
+            // takes. No committee-signed anchor, no verdict; see `proof_verify`'s docblock.
+            let anchor = match crate::commands::proof_verify::fetch_and_verify_anchor(
+                state.devnet.client(),
+                &state.config.devnet_url,
+                &hash,
+            )
+            .await
+            {
+                Ok(anchor) => anchor,
+                Err(why) => {
+                    let embed = embeds::warning_embed(
+                        "Turn Proof Artifact · NO VERDICT (unanchored)",
+                        &crate::commands::proof_verify::no_anchor_text(&hash, &why),
+                    );
+                    let _ = command
+                        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+                        .await;
+                    return;
+                }
+            };
+            // VERIFY the fetched artifact right here (the audited `verify_full_turn`) against
+            // the turn hash the COMMITTEE signed, and report the verdict — never an
+            // "Attached ✅" trust-me. The TITLE says "legs verify": the state anchors compared
+            // are still the proof's own (seam 1), so the bytes are not tied to the chain's
+            // state transition. Every seam is in the Verification field below.
             let check = crate::commands::proof_verify::check_proof_hex_blocking(
                 proof.proof_hex.clone(),
-                hash.clone(),
+                anchor,
             )
             .await;
             let verified_ok = matches!(&check, Ok(c) if c.verified);
             let base = if verified_ok {
-                embeds::dregg_embed("Turn Proof Artifact · legs verify (not chain-bound)")
+                embeds::dregg_embed(
+                    "Turn Proof Artifact · legs verify, bound to the committee-signed turn",
+                )
             } else {
                 embeds::error_embed(
                     "Turn Proof Artifact · DOES NOT VERIFY",

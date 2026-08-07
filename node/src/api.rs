@@ -2145,6 +2145,7 @@ pub fn router_with_cors(
             get(crate::identity_export::get_identity_export),
         )
         .route("/api/turn/{hash}/proof", get(get_turn_proof))
+        .route("/api/turn/{hash}/anchor", get(get_turn_anchor))
         .route("/api/starbridge/receipts", get(get_starbridge_receipts))
         .route("/api/starbridge/events", get(get_starbridge_events))
         .route("/api/starbridge/turns", get(get_starbridge_turns))
@@ -2246,6 +2247,23 @@ pub fn router_with_cors(
         // read's import cone, so no run seed, slot secret, commitment or target
         // can reach this wire. READ-ONLY BY TYPE: the crate's opening demands an
         // `opaque` capability with no producer.
+        // PUBLICATION of the curator-signed slot opening — UNAUTHENTICATED, on
+        // purpose. A commitment a node keeps to itself binds nothing, and a client
+        // with no way to read one can only ever offer practice: this route is the
+        // difference between a station that can be played for real and one that
+        // can only rehearse. It was mounted behind the bearer layer, where the
+        // browser fetched it anonymously, got refused, and SILENTLY degraded every
+        // game to practice — the publication surface existed and published to
+        // nobody.
+        //
+        // Standing question, answered: a reader who has not played CANNOT
+        // reconstruct an instance from this. It serves the statement, the curator
+        // key and the signature — never the secret, the run seed, the target, nor
+        // the pre-encoded signing message (a client that verified pre-encoded
+        // bytes could be handed statement S beside a valid signature over S'; it
+        // re-derives instead). The published commitment is `commit secret slot`:
+        // no player, no mission, ~2^124 to invert.
+        .merge(crate::poa_signal_slot_api::routes())
         .merge(crate::poa_station_api::routes())
         .route(
             "/cipherclerk/unlock",
@@ -2460,11 +2478,6 @@ pub fn router_with_cors(
         // the bearer layer below and applies its own proxy-aware rate/concurrency
         // budget; it is neither anonymous nor a finality/provenance surface.
         .merge(crate::poa_signal_authority_export::routes())
-        // PUBLICATION of the curator-signed slot opening. A commitment a node keeps
-        // to itself binds nothing, and a client with no way to read one can only
-        // ever offer practice. Serves the statement, the curator key and the
-        // signature; never the secret, the run seed or the target.
-        .merge(crate::poa_signal_slot_api::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
@@ -3545,6 +3558,212 @@ async fn get_turn_proof(
             })),
         ),
     }
+}
+
+/// `GET /api/turn/{hash}/anchor` — **the committee-signed per-turn anchor**, so a stranger
+/// re-verifying a served full-turn STARK is checking it against something they obtained and
+/// checked themselves, instead of against the artifact's own claims.
+///
+/// This endpoint publishes NO new authority. Every byte it serves is either recomputable by the
+/// holder or already covered by a signature the finalized path produced:
+/// `TurnReceipt::receipt_hash()` -> `merkle_root_of_receipt_hashes([receipt_hash])` ->
+/// `AttestedRoot::receipt_stream_root` -> `AttestedRoot::signing_message()` -> the committee
+/// signatures in `quorum_signatures`. The node does not sign an envelope around values it
+/// computed — that would be the same `x != x` with a signature on it.
+///
+/// The authoritative object is `anchor_hex`: the postcard encoding of
+/// [`dregg_federation::TurnAnchorV1`], which the holder deserializes and runs
+/// [`dregg_federation::TurnAnchorV1::verify`] on **against a committee roster of their own**.
+/// The JSON summary beside it is a convenience for humans and is NOT what anything should trust.
+///
+/// ⚠ THE ANCHOR CARRIES AN 8-FELT STATE COMMIT PAIR THAT IS **NOT** THE PROOF'S. The receipt's
+/// `pre_state_hash` / `post_state_hash` are the chip 8-felt consensus commitment under
+/// `state_commit::consensus_ctx` (whole-ledger `cells_root`, `iroot = empty_iroot()`); the
+/// full-turn proof publishes the rotated leg's commitment under a single-cell context ledger with
+/// the real receipt-chain `iroot`. They are two commitments of one transition and they differ —
+/// measured, both causes independently sufficient, in
+/// `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`. Passing these to
+/// `verify_full_turn_bound` as `expected_old_commit` refuses every honest proof.
+///
+/// * `200` + `anchor_status: "anchored"` — the anchor, postcard-hex.
+/// * `404` + `anchor_status: "not_committed"` — no committed turn under this hash.
+/// * `409` + `anchor_status: "no_attestation"` — the turn committed but carries no attested root
+///   binding a receipt stream at its height, so there is nothing for a committee signature to
+///   reach. A conflict, not an absence: the turn exists and cannot be anchored.
+async fn get_turn_anchor(
+    AxumPath(hash): AxumPath<String>,
+    State(state): State<NodeState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Ok(turn_hash) = hex_decode(&hash) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "turn hash must be 64 hex characters" })),
+        );
+    };
+    let turn_hash_hex = hex_encode(&turn_hash);
+    let s = state.read().await;
+
+    let record = match s.store.lookup_turn(&turn_hash) {
+        Ok(Some(record)) => record,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "turn_hash": turn_hash_hex,
+                    "anchor_status": "not_committed",
+                })),
+            );
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "turn_hash": turn_hash_hex,
+                    "error": format!("commit log could not be read: {e}"),
+                })),
+            );
+        }
+    };
+
+    // The receipt WHOLE — the holder recomputes `receipt_hash()` from it rather than being told
+    // it. Matched by the durable commit record's receipt hash, so a chain scan cannot hand back
+    // some other turn's receipt.
+    let Some(receipt) = s
+        .cclerk
+        .receipt_chain()
+        .iter()
+        .find(|r| r.receipt_hash() == record.receipt_hash)
+        .cloned()
+    else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "turn_hash": turn_hash_hex,
+                "anchor_status": "no_attestation",
+                "error": "the committed turn's receipt is not in this node's receipt chain",
+            })),
+        );
+    };
+
+    let attested_stored = match s.store.attested_root_at_height(record.height) {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "turn_hash": turn_hash_hex,
+                    "anchor_status": "no_attestation",
+                    "height": record.height,
+                    "error": "no attested root at this turn's committed height",
+                })),
+            );
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "turn_hash": turn_hash_hex,
+                    "error": format!("attested roots could not be read: {e}"),
+                })),
+            );
+        }
+    };
+
+    // The stored root -> the wire root. `hybrid_quorum` is mapped from `finalization_quorum`
+    // exactly as the finalized path maps it (`blocklace_sync.rs:9773`), so what the holder gets
+    // is byte-for-byte the committee vote signatures the node persisted.
+    let attested = dregg_types::AttestedRoot {
+        merkle_root: attested_stored.merkle_root,
+        note_tree_root: attested_stored.note_tree_root,
+        nullifier_set_root: attested_stored.nullifier_set_root,
+        height: attested_stored.height,
+        timestamp: attested_stored.timestamp,
+        blocklace_block_id: attested_stored.blocklace_block_id,
+        finality_round: attested_stored.finality_round,
+        quorum_signatures: attested_stored.quorum_signatures.clone(),
+        threshold_qc: attested_stored.threshold_qc.clone(),
+        threshold: attested_stored.threshold,
+        federation_id: attested_stored.federation_id,
+        receipt_stream_root: attested_stored.receipt_stream_root,
+        hybrid_quorum: attested_stored
+            .finalization_quorum
+            .iter()
+            .map(|qs| dregg_types::HybridQuorumSig {
+                pubkey: qs.voter,
+                signature: qs.signature,
+                ml_dsa_pubkey: qs.ml_dsa_pubkey.clone(),
+                pq_signature: qs.pq_signature.clone(),
+            })
+            .collect(),
+    };
+
+    // The roster the SERVER claims. A holder that uses it is trusting this node to name its own
+    // judges; the type's `served_committee` accessor is named to keep that visible.
+    //
+    // ⚑ The empty-roster branch mirrors the SIGNER's own rule. `blocklace_sync.rs:9741` pushes the
+    // local signature when `federation_keys.is_empty() || federation_keys.contains(&local_pk)` —
+    // i.e. an unconfigured node IS its own committee of one. Serving an empty roster here would
+    // contradict who actually signed and make every anchor refuse with `NoCommittee`, which reads
+    // as "the chain is broken" rather than "this node is solo". Naming the signer is the honest
+    // projection; whether to BELIEVE a committee of one is the holder's call, and
+    // `RosterProvenance::ServedByTheNode` is what says so at the far end.
+    let mut roster = s.known_federation_keys.clone();
+    if roster.is_empty() {
+        roster.push(s.cclerk.public_key());
+    }
+    let served_committee = dregg_federation::AnchorCommittee {
+        ed25519: roster,
+        ml_dsa: s
+            .known_federation_ml_dsa_keys
+            .iter()
+            .map(|k| k.0.to_vec())
+            .collect(),
+        threshold: attested_stored.threshold,
+        federation_id: attested_stored.federation_id,
+    };
+
+    let anchor = dregg_federation::TurnAnchorV1 {
+        protocol: dregg_federation::TURN_ANCHOR_PROTOCOL_V1.to_string(),
+        turn_hash,
+        receipt,
+        height: record.height,
+        block_id: record.block_id,
+        attested,
+        served_committee,
+    };
+
+    let Ok(bytes) = postcard::to_stdvec(&anchor) else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "turn_hash": turn_hash_hex,
+                "error": "the anchor could not be encoded",
+            })),
+        );
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "turn_hash": turn_hash_hex,
+            "anchor_status": "anchored",
+            "artifact_format": dregg_federation::TURN_ANCHOR_PROTOCOL_V1,
+            "anchor_len": bytes.len(),
+            "anchor_hex": hex_encode_var(&bytes),
+            // ── summary only. NOT authoritative: verify `anchor_hex`. ──
+            "height": anchor.height,
+            "block_id": hex_encode(&anchor.block_id),
+            "receipt_hash": hex_encode(&record.receipt_hash),
+            "ledger_root": hex_encode(&anchor.attested.merkle_root),
+            "receipt_stream_root": anchor
+                .attested
+                .receipt_stream_root
+                .map(|r| hex_encode(&r)),
+            "threshold": anchor.attested.threshold,
+            "receipt_covering_signatures": anchor.attested.quorum_signatures.len(),
+            "chain_position_signatures": anchor.attested.hybrid_quorum.len(),
+        })),
+    )
 }
 
 async fn get_starbridge_receipts(
@@ -10139,6 +10358,11 @@ mod tests {
             "poa_galley_api",
             "poa_holding_api",
             "poa_records_api",
+            // Deliberate, 2026-08-06: the curator-signed slot opening is PUBLISHED.
+            // It carries statement + curator key + signature and no secret, seed,
+            // target or pre-encoded signing message. Mounted protected, it made
+            // every browser game permanently practice via a silent 401.
+            "poa_signal_slot_api",
             "poa_station_api",
         ];
         assert_eq!(

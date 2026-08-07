@@ -239,16 +239,65 @@ rewritten in the tree as one instead of standing as a promissory note.
 
 ## 4. What is actually broken, and is cheaper
 
-### (a) ⚑ Publish a canonical per-turn commit anchor — the biggest win, costs an API field
+### (a) ⚑ Publish a canonical per-turn commit anchor — LANDED IN PART, and this section was WRONG
 
-Class II's two endpoint teeth are structurally dead because no endpoint publishes the canonical
-8-felt `old_commit`/`new_commit` for a turn. Adding them to `/api/turn/{hash}/proof` (from the
-node's own committed state, which it has) converts `x != x` into a live check that a third party can
-run. **No VK, no re-emit, no re-genesis, no Lean.** It also carries spend freshness for free — the
-limb-26 BEFORE nullifier root is absorbed into the OLD commit.
+**Original text (kept, because the correction is the interesting part):** *"Class II's two endpoint
+teeth are structurally dead because no endpoint publishes the canonical 8-felt
+`old_commit`/`new_commit` for a turn. Adding them to `/api/turn/{hash}/proof` (from the node's own
+committed state, which it has) converts `x != x` into a live check that a third party can run. No
+VK, no re-emit, no re-genesis, no Lean."*
 
-⚠ Scope note: this is an *outward-facing* surface change, so it is the operator's call under
-`CLAUDE.md` §"what still deserves a pause" item 3. It is named here, not done.
+⚠⚠ **MEASURED FALSE 2026-08-06. The node's committed state does not hold that pair.**
+
+It holds *an* 8-felt per-turn pair — `TurnReceipt::{pre,post}_state_hash`, which
+`dregg_turn::state_commit` made the chip 8-felt consensus commitment and which the attestation's
+`receipt_stream_root` transitively covers. **It is a different commitment from the one the proof
+publishes**, and two causes are independently sufficient
+(`turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`):
+
+* **`iroot`** — `state_commit::consensus_ctx` pins `rotation_witness::empty_iroot()` deliberately
+  (a receipt cannot bind a commitment its own hash is computed from); the proof's witness folds the
+  real receipt chain (`turn_proving::rotation_witness_for_self_sovereign_with_root` threads
+  `[receipt.receipt_hash()]`).
+* **`cells_root`** — `consensus_ctx` folds the WHOLE ledger; `rotation_witness_for_self_sovereign_impl`
+  folds a single-cell `ctx_ledger` holding only the actor.
+
+So serving the receipt's pair as `expected_old_commit` would **refuse every honest proof**. The
+endpoint teeth stay reflexive, and closing them is not an API field — it is aligning the executor's
+and the prover's `V9RotationContext` to one commit per turn, which moves what the committee signs
+*and* what the proof publishes. Real work, correctly the next item, and **undone, not terminal**.
+
+**What DID land (2026-08-06):** `GET /api/turn/{hash}/anchor`, serving
+`dregg_federation::TurnAnchorV1` — the receipt whole, its chain position, and the attestation with
+both quorum legs. A holder verifies it against a roster of their own and gets a **committee-signed
+turn hash**, which `verify_full_turn_bound` already takes as a required argument. `/proof turn` now
+requires one and refuses without it; a proof of turn B under turn A's anchor is rejected end to end
+(`node/tests/turn_anchor_binds_a_proof_to_the_committee.rs`). No VK, no re-emit, no re-genesis, no
+Lean — that part of the original estimate held.
+
+⚠ **And a second correction, to a premise this document did not state but relied on.** "The
+committee signed it" is weaker than it reads. `AttestedRoot::quorum_signatures` — the ONLY preimage
+that absorbs `receipt_stream_root`, hence the only one that reaches a receipt — receives exactly one
+push on the live path, the local node's (`blocklace_sync.rs:9741`); there is no gossip merge
+(`PeerMessage::AttestedRootUpdate` has zero handlers). The `>= threshold` hybrid quorum that DOES
+assemble signs `dregg-finalization-vote-v3 || block_id || merkle_root` and covers no per-turn value
+at all. **No `>= threshold` committee signature anywhere in this tree covers a turn hash, a receipt
+hash, or a receipt's state commit.** `TurnAnchorV1::verify` therefore REFUSES on any federation with
+`threshold > 1` rather than reporting a caveat. The fix is one field in the vote preimage
+(`finalization_vote_signing_message` v3 → v4, carrying `receipt_stream_root`); the emitter already
+runs *after* `execute_finalized_turn` returns, with the durable attested root readable
+(`blocklace_sync.rs:6044-6077` re-reads the live ledger instead). It also touches
+`FinalizationVote::sign`, `VoteCollector::assembled_quorum` (group by `(root, stream_root)`),
+`StoredAttestedRoot::verify_finalization_quorum` / `has_any_valid_committee_signature`,
+`backfill_finalization_quorums`, and the Lean-side `verified_finalization_quorum` decider
+(`node/src/finalization_votes.rs:594`). That Lean twin is why it is a separate change, not a line.
+
+⚠ Related, found while measuring and NOT fixed here: the live path fills
+`AttestedRoot::hybrid_quorum` by copying `finalization_quorum`'s signature bytes
+(`blocklace_sync.rs:9773`), which are over the *vote* preimage — while the field's own docs and
+`verifier/src/cross_fed.rs:599` check them against `signing_message()`. A live-produced root's
+`hybrid_quorum` therefore cannot pass `verify_attested_root_hybrid`. Fail-closed, and invisible in
+test because the cross-fed tests sign `signing_message()` directly.
 
 ### (b) Collapse the three `TURN_HASH` fill conventions to one — a live liveness bug
 

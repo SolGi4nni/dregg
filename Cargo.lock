@@ -7021,6 +7021,7 @@ dependencies = [
  "fips204",
  "futures-util",
  "getrandom 0.3.4",
+ "hex",
  "http-body-util",
  "metrics",
  "metrics-exporter-prometheus",

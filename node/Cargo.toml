@@ -174,6 +174,7 @@ x25519-dalek = { workspace = true }
 chacha20poly1305 = { workspace = true }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
+hex = "0.4"
 # The LIVE postgres client for the pg-mirror sink — OPTIONAL, pulled only by the
 # `pg-mirror-live` feature. The mirror's load-bearing half (MirrorBatch construction
 # from CommitRecords + the RootChain anti-substitution gate) is feature-INDEPENDENT and
@@ -231,6 +232,10 @@ pg-mirror-live = ["dep:tokio-postgres"]
 # unit-style tests in api.rs / relay_service.rs do not need them, but keeping
 # them declared keeps the followup PR trivial.
 [dev-dependencies]
+# The integration exhibits drive the REAL axum router (`api::router`), which takes a
+# `PrometheusHandle`. Regular deps are visible to integration targets, but the recorder
+# BUILDER is only used by tests, so it is declared here too rather than left implicit.
+metrics-exporter-prometheus = "0.16"
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
 # Exposes only explicitly named corruption/legacy-atomicity fixture helpers;

@@ -146,6 +146,9 @@ pub mod threshold_decrypt;
 /// `threshold_decrypt` (GF(256) field, Shamir/Lagrange reconstruction, the combine gate). Test-only.
 #[cfg(test)]
 mod threshold_decrypt_diff;
+/// The per-turn committee-signed anchor a stranger obtains to make a served full-turn
+/// proof's re-verification a check against something external. See the module docs.
+pub mod turn_anchor;
 pub mod types;
 pub mod verified_gate;
 /// Per-agent ECVRF sortition (RFC 9381 ECVRF-EDWARDS25519-SHA512-TAI): each
@@ -196,6 +199,9 @@ pub use threshold::{
 pub use threshold_decrypt::{
     DecryptionShare, KeyShare, ThresholdCiphertext, ThresholdDecryptError, ThresholdEncryptionKey,
     combine_shares, generate_epoch_key, produce_decryption_share, threshold_encrypt,
+};
+pub use turn_anchor::{
+    AnchorCommittee, TURN_ANCHOR_PROTOCOL_V1, TurnAnchorError, TurnAnchorV1, VerifiedTurnAnchor,
 };
 pub use types::{
     AttestedRoot, ConsensusMessage, HybridQuorumCertificate, HybridVote, LightClientProof,
