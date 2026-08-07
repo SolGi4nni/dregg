@@ -602,13 +602,24 @@ fn published_slot_accounting_is_pinned() {
         }
         pinned_slots += seen.iter().filter(|b| **b).count();
     }
-    // 3815 -> 3821. DERIVED, per-member, from the two shape changes in the same flag day:
+    // 3815 -> 3821. DERIVED, per-member, from the two shape changes in that flag day:
     //   +8  the eight `setFieldVmDescriptor2-{0..7}` members each gained ONE PI (73 -> 74) for the
     //       ninth VALUE8 lane's completion pin;
     //   -2  `transferCapOpenTBVmDescriptor2R24` lost the `actor`/`dst` slots (65 -> 63).
     // No other member's `public_input_count` moved (checked member-by-member against the registry
     // at `e662ade32^`). 3815 + 8 - 2 = 3821.
-    assert_eq!(total_slots, 3821, "wide registry published PI slots");
+    //
+    // ⚑ 3821 -> 3429, THE SEVEN-SLOT PI COMPACTION (2026-08-07, `docs/PI-DISPOSITION.md` §6). v1
+    // offsets 26..32 — `CURRENT_BLOCK_HEIGHT`, `MAX_CUSTOM_EFFECTS`, `CUSTOM_EFFECT_COUNT`,
+    // `APPROVED_HANDOFFS[4]` — were deleted, and 56 of the 57 wide members carry the v1 window:
+    // 3821 - 7*56 = 3429, to the felt. `pi_disposition_census.py` reports the same number off the
+    // same bytes, and `docs/PI-DISPOSITION.md` §6 PRICED it before the emit ran.
+    //
+    // ⚠ The 57th member is `heapWriteVmDescriptor2R24` (20 PIs — no v1 window at all), which is
+    // why this is `7*56` and not `7*57`, and why the arithmetic is worth writing out rather than
+    // transcribing the number the test printed when it went red. Read out of the emitted TSV, not
+    // recalled.
+    assert_eq!(total_slots, 3429, "wide registry published PI slots");
     // ⚑ UNMOVED by the rc FOLD: `piCount` is invariant under `dropUnforcedPins` in both directions,
     // so restoring 148 pins published no new slot — it bound slots that were already there.
     // 1639 -> 1480 -> 1628. The first move was EXACTLY the 159 pins `dropUnforcedPins` removed; the
@@ -625,6 +636,11 @@ fn published_slot_accounting_is_pinned() {
     // proof-bind-referenced columns where the pre-widening one had two: +14, in `pins` and in
     // `pinned_slots` alike. Nothing was widened, relaxed or admitted here — the object grew fourteen
     // real columns and the census is finally counting them.
+    //
+    // ⚑ UNMOVED by the 2026-08-07 seven-slot PI compaction, and that is the finding: the seven
+    // slots it deleted carried ZERO pins on every member, so removing them changed `total_slots`
+    // by 392 and this number by nothing at all. A compaction that moved this would have removed a
+    // binding, not dead surface.
     assert_eq!(pinned_slots, 1642, "…of which some constraint pins");
 }
 
