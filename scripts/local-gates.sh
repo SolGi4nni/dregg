@@ -415,6 +415,26 @@ GATES=(
   # boundary object that would reference the missing 55 was itself missing. "It self-links"
   # is not the bar; the closure is. This row reads the members.
   "lean-seed-closure|180|bash scripts/check-lean-seed-closure.sh"
+  # ⚑ THE THIRD QUESTION ABOUT THIS ARCHIVE, AND IT IS NOT A ROW HERE — read this before assuming
+  # the two rows above cover it (2026-08-07). `lean-seed-freshness` asks whether a PUBLISHED ASSET
+  # matches this checkout's closure key. `lean-seed-closure` asks whether a module has a MEMBER.
+  # NEITHER asks whether a member is OLDER THAN THE `.lean` IT WAS COMPILED FROM, and that gap cost
+  # a week: `dregg-lean-ffi::deployed_constraint_probe` printed `8 passed` from 07-30 to 08-06 with
+  # SIX of its eight assertions false, because the archive linked on the box carried a 2026-07-25
+  # `Dregg2_Exec_DeployedConstraint.o` — the pre-cutover admission-wire evaluator — that agreed
+  # with the test's equally pre-cutover wire builder. Two stale things agreeing reads exactly like
+  # correctness, and build.rs's PROVENANCE DOWNGRADE could not see it: that gate is whole-archive
+  # and fires when the Lean build did not run. The Lean build ran. The `.c` was current. The splice
+  # ran. ONE object was old.
+  # The check is `dregg-lean-ffi/tests/linked_archive_freshness.rs`, NOT a script and deliberately
+  # so: the only process that knows WHICH archive was linked is the one that linked it, so build.rs
+  # hands the path over (`DREGG_LEAN_LINKED_ARCHIVE`) and the test walks its `Dregg2_*.o` members
+  # against `metatheory/`. A script here would have to guess among the per-OUT_DIR working copies,
+  # and `rerun-if-changed` refreshes those before a link anyway — so a stale one merely resident in
+  # `target/` is not evidence of anything, and a row that reddened on it would be noise.
+  # RUN IT WITH: `cargo nextest run -p dregg-lean-ffi --features lean-lib` (any invocation that
+  # links the archive runs it). Measured at landing: a freshly-spliced working archive is CLEAN
+  # (0 of 323 members); the seed in this checkout carries 56 stale members of 188.
   "nightly-verdict|120|bash scripts/check-nightly-verdict.sh"
   # A function that DECIDES something — `verify_*`, `check_*`, `*_admits` — with no
   # production caller. `dregg_circuit::effect_vm::verify_balance_limb_pis` was the
