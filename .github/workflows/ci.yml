@@ -286,6 +286,15 @@ jobs:
       # broken wasm32 build is reported even while something else in this job is
       # red. If you add a step here, ask whether it must precede this one; the
       # default answer is no.
+      # ⚑ AND ITS TOOL MUST PRECEDE IT. The 2026-07-25 reorder above moved the build to the front
+      # of the job and left `Install wasm-pack` where it was — three steps LATER, next to the
+      # `wasm-pack test` it was originally written for. So from that commit the job died on
+      # `wasm-pack: command not found`, exit 127, before compiling anything: the reorder that
+      # existed to stop a gate hiding behind a red gate put this gate in front of its own
+      # installer. Measured on run 31132306053 (2026-08-06) and on every run since the reorder.
+      # A step promoted to first must bring its prerequisites with it.
+      - name: Install wasm-pack (BEFORE the build below — it is what runs it)
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Build the wasm32 bundle (the oracle + the pages artifact)
         run: |
           set -euo pipefail
@@ -304,8 +313,6 @@ jobs:
       # browser, not node. ubuntu-latest ships Chrome; wasm-pack drives it
       # headless. This is the only place the in-browser surface (the card-in-the-
       # tab loop, the light-client-in-the-tab) is exercised at all.
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: wasm-pack test (the in-browser wasm_bindgen_test surface)
         working-directory: wasm
         run: wasm-pack test --headless --chrome
