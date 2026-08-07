@@ -138,6 +138,14 @@ export function mountDeckDescent(root, descriptor, callbacks = {}) {
           detail: row ? shortRefusal(row.reason) : "closed here",
           ariaLabel: `${action.label}. Refused: ${REFUSAL_COPY[row?.reason] ?? "closed here"}`,
           state: "spent",
+          // ⚑ DISABLED, not merely greyed — and this game is the one where it
+          // matters. 1030 of the 1924 emitted states are doomed, and in every one
+          // of them all nine rows refuse. Nine live-looking buttons over a run
+          // that is already lost is the "doomed-but-open" board the design gate
+          // raises against other games; the reason is on the button face and the
+          // doom is in the status line, so nothing is hidden by the control being
+          // honestly dead.
+          disabled: true,
         };
       }
       const asks = row.verdict === "resolve";

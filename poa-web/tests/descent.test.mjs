@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { descriptorShape, SHAPES } from "../src/descriptor-shape.js";
 import { GAME_RACK, buildRack, loadRackEntry } from "../src/game-rack.js";
 import { INSTALLED_GAME_IDS } from "../src/mission-launcher.js";
+import { mountDeckDescent } from "../src/descent-controller.js";
 import { runOutcome } from "../src/run-summary.js";
 import {
   createFiniteTableRun, replayFiniteTable, submitFiniteTableAction, tableRunView,
@@ -239,4 +240,128 @@ test("the rack teaches Deck Descent and the launcher installs it, so the card is
     installed: INSTALLED_GAME_IDS.filter((id) => id !== "deck-descent"),
   });
   assert.equal(without.find((entry) => entry.gameId === "deck-descent").state, "unsupported");
+});
+
+/**
+ * ⚠ EVIDENCE THAT THE FACE RENDERS, not that its parts are correct.
+ *
+ * Everything above tests the RUNTIME. A controller that threw on its first paint
+ * would pass all of it — the wound `controller-reach.test.mjs` names one level up
+ * (a module can be perfect and dead) has a sibling here: a module can be reached
+ * and still be unrenderable, and the only thing that catches that is mounting it.
+ * The fake document is the one `minigame-accessibility.test.mjs` uses, so this
+ * exercises the real `finite-table-controller.js` shell and the real board.
+ */
+class FakeElement {
+  constructor(tagName) {
+    this.tagName = tagName.toUpperCase();
+    this.children = [];
+    this.attributes = new Map();
+    this.dataset = {};
+    this.className = "";
+    this.textContent = "";
+    this.disabled = false;
+    this.tabIndex = -1;
+    this.listeners = new Map();
+  }
+  append(...nodes) { this.children.push(...nodes); }
+  replaceChildren(...nodes) { this.children = [...nodes]; }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  removeAttribute(name) { this.attributes.delete(name); }
+  addEventListener(name, callback) {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), callback]);
+  }
+  removeEventListener(name, callback) {
+    this.listeners.set(name, (this.listeners.get(name) ?? []).filter((entry) => entry !== callback));
+  }
+  dispatch(name, extra = {}) {
+    const event = { key: undefined, preventDefault() {}, ...extra };
+    for (const callback of this.listeners.get(name) ?? []) callback(event);
+    return event;
+  }
+  focus() { this.dispatch("focus"); }
+}
+
+function all(root) {
+  return [root, ...root.children.flatMap(all)];
+}
+
+function withFakeDocument(callback) {
+  const previous = globalThis.document;
+  globalThis.document = { createElement: (tag) => new FakeElement(tag) };
+  try { return callback(); } finally { globalThis.document = previous; }
+}
+
+test("the descent face mounts, draws the shaft, and plays a whole practice run", async () => {
+  const { descriptor } = await descent();
+  const transcripts = [];
+  withFakeDocument(() => {
+    const root = new FakeElement("div");
+    const controller = mountDeckDescent(root, descriptor, {
+      session: { mode: "practice", member: 0, oracle: descentPracticeOracle(descriptor, 0) },
+      onTranscript: (canonical) => transcripts.push(JSON.parse(canonical)),
+    });
+    const nodes = all(root);
+    const press = (actionId) => {
+      const button = nodes.find((node) => node.dataset.action === actionId)
+        ?? all(root).find((node) => node.dataset.action === actionId);
+      assert.ok(button, `no control for ${actionId}`);
+      assert.equal(button.disabled, false, `${actionId} is disabled`);
+      button.dispatch("click");
+    };
+
+    // The shaft map: four rows, surface first, in the order the shaft declares.
+    const map = all(root).filter((node) => node.className === "descent-shaft__node");
+    assert.deepEqual(map.map((node) => node.dataset.node), ["hatch", "mouth", "west", "east"]);
+    assert.equal(map[0].dataset.here, "true", "the body starts at the hatch");
+    // Nine verbs, and the four that ask the dark carry the `exposed` marking.
+    const board = all(root).filter((node) => node.dataset.action !== undefined);
+    assert.equal(board.length, 9);
+    assert.ok(board.some((node) => node.className.endsWith("--exposed")), "no verb is marked as asking the instance");
+
+    for (const action of ["descend", "lift", "descend", "lift", "ascend", "ascend", "extract"]) press(action);
+
+    const status = all(root).find((node) => node.className === "poa-minigame__status");
+    assert.match(status.textContent, /Out through the hatch with 2 relics/);
+    assert.equal(controller.getRun().terminal, true);
+    assert.equal(transcripts.at(-1).mode, "practice");
+    assert.equal(transcripts.at(-1).settlement, "unsettled-local-transcript");
+    // The map followed the body all the way back up.
+    const ended = all(root).filter((node) => node.className === "descent-shaft__node");
+    assert.equal(ended[0].dataset.here, "true");
+    controller.destroy();
+  });
+});
+
+test("a doomed run says so, on the map and in words, before a player presses anything", async () => {
+  const { descriptor } = await descent();
+  withFakeDocument(() => {
+    const root = new FakeElement("div");
+    // Board 7 floods every passage. Walk into the mouth blind and take the damage,
+    // then spend the rest of the air on looks: the emitted table calls it doomed.
+    const oracle = descentPracticeOracle(descriptor, 7);
+    mountDeckDescent(root, descriptor, { session: { mode: "practice", member: 7, oracle } });
+    const press = (actionId) => {
+      const button = all(root).find((node) => node.dataset.action === actionId);
+      assert.ok(button && !button.disabled, `${actionId} is unavailable`);
+      button.dispatch("click");
+    };
+    // Three moves: into the flooded mouth (a body), lift its relic, then into the
+    // flooded west (another body). The sling can no longer hold the target.
+    for (const action of ["descend", "lift", "descend"]) press(action);
+    const status = all(root).find((node) => node.className === "poa-minigame__status");
+    const map = all(root).find((node) => node.className === "descent-shaft");
+    assert.equal(map.dataset.doomed, "true", "a doomed run's map must go cold");
+    assert.match(status.textContent, /still brings 2 relics up/);
+    assert.match(status.textContent, /6 air left and no line home/);
+    // ⚑ EVERY VERB IS DEAD, AND SAYS SO. Nine live-looking buttons over a run
+    // that is already lost is the "doomed-but-open" board the design gate raises
+    // against other games; the run has six units of clock left and no line, and
+    // the board must not pretend otherwise.
+    const verbs = all(root).filter((node) => node.dataset.action !== undefined);
+    assert.equal(verbs.length, 9);
+    assert.ok(verbs.every((node) => node.disabled === true), "a doomed board still offers a move");
+    assert.ok(verbs.every((node) => node.attributes.get("aria-label").includes("no longer brings the target up")
+      || node.attributes.get("aria-label").includes("Refused")), "a dead verb must say why in its label");
+  });
 });
