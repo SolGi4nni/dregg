@@ -304,7 +304,7 @@ fn discharge_trace_ex(
     let (mut trace, dpis) =
         generate_rotated_settle_escrow_trace_forged(&st, &bw, &aw, &m, CUR, TOT, before, after)
             .expect("the discharge settle carrier must generate");
-    assert_eq!(dpis.len(), 47);
+    assert_eq!(dpis.len(), 40);
     fill_discharge_aux(
         &mut trace,
         desc.trace_width,
@@ -343,7 +343,7 @@ fn vault_trace(
     let (mut trace, dpis) =
         generate_rotated_settle_escrow_trace_forged(&st, &bw, &aw, &m, ASSET, SHARE, before, after)
             .expect("the vault deposit carrier must generate");
-    assert_eq!(dpis.len(), 47);
+    assert_eq!(dpis.len(), 40);
     fill_vault_aux(&mut trace, desc.trace_width, ASSET, SHARE);
     (trace, dpis)
 }

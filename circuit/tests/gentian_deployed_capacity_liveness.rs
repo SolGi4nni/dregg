@@ -198,7 +198,7 @@ fn honest_escrow_settle_proves_through_deployed_member() {
     let m = capacity_manifest(SLOT_CAVEAT_TAG_SETTLE_ESCROW, [0; 4]);
     let (mut trace, dpis) = generate_rotated_settle_escrow_trace(&st, &bw, &aw, &m, LEG_A, LEG_B)
         .expect("honest settle generates");
-    assert_eq!(dpis.len(), 47);
+    assert_eq!(dpis.len(), 40);
     pad_rows(&mut trace, desc.trace_width);
     assert_eq!(
         trace[0][ESCROW_SEL_COL],
@@ -218,7 +218,7 @@ fn honest_escrow_settle_proves_through_deployed_member() {
 #[test]
 fn honest_discharge_proves_through_deployed_member() {
     let desc = deployed_member(DISCHARGE_SAT_DESCRIPTOR_NAME);
-    assert_eq!(desc.public_input_count, 47);
+    assert_eq!(desc.public_input_count, 40);
     let settle = dregg_circuit::effect_vm::Effect::Transfer {
         amount: 0,
         direction: 0,
@@ -244,7 +244,7 @@ fn honest_discharge_proves_through_deployed_member() {
         (1100, 50),
     )
     .expect("honest discharge generates");
-    assert_eq!(dpis.len(), 47);
+    assert_eq!(dpis.len(), 40);
     fill_discharge_aux(&mut trace, desc.trace_width, DUE, PERIOD, AMOUNT, CLOCK);
     assert_eq!(
         trace[0][FLOOR_DISCHARGE_COL],
@@ -265,7 +265,7 @@ fn honest_discharge_proves_through_deployed_member() {
 #[test]
 fn honest_vault_deposit_proves_through_deployed_member() {
     let desc = deployed_member(VAULT_SAT_DESCRIPTOR_NAME);
-    assert_eq!(desc.public_input_count, 47);
+    assert_eq!(desc.public_input_count, 40);
     let settle = dregg_circuit::effect_vm::Effect::Transfer {
         amount: 0,
         direction: 0,
@@ -289,7 +289,7 @@ fn honest_vault_deposit_proves_through_deployed_member() {
         (12, 24),
     )
     .expect("honest vault generates");
-    assert_eq!(dpis.len(), 47);
+    assert_eq!(dpis.len(), 40);
     fill_vault_aux(&mut trace, desc.trace_width, ASSET, SHARE);
     assert_eq!(
         trace[0][FLOOR_VAULT_COL],

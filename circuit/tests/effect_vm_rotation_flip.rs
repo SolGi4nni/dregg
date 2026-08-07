@@ -282,7 +282,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         ROT_WIDTH + pad,
         "avail-shifted rotated trace"
     );
-    assert_eq!(dpis.len(), 50);
+    assert_eq!(dpis.len(), 43);
 
     // -- (2) THE cell≡circuit ROTATED DIFFERENTIAL: producer limbs == the generated trace's
     //    welded state-block felts (r0↔balance_lo, …, cap_root↔cap_root), on the first row. --
@@ -541,7 +541,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         expected_rot_width(&desc),
         "the graduated rotated width + the gentian refuse extent"
     );
-    assert_eq!(desc.public_input_count, 50);
+    assert_eq!(desc.public_input_count, 43);
     // The deployed burn member is AVAILABILITY-HARDENED (`…-v1-avail`, pad 8 — debit-only, no
     // credit-carry chain): every rotated base shifts by the pad.
     let pad = avail_pad_for_descriptor_name(&desc.name);
@@ -3567,7 +3567,11 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         fee,
     )
     .expect("fee'd rotated generator produces the avail-shifted trace + 51 PIs");
-    assert_eq!(dpis.len(), 51, "51 PIs (46 rotated + the fee + 4 dsl rc)");
+    assert_eq!(
+        dpis.len(),
+        44,
+        "44 PIs (39 rotated + the fee + 4 dsl rc); 51 pre-compaction"
+    );
     assert_eq!(
         dpis[46],
         BabyBear::new(fee as u32),

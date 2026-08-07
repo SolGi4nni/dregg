@@ -142,7 +142,11 @@ fn honest_settle_proves_and_verifies_end_to_end() {
         LEG_B,
     )
     .expect("the satisfying settle carrier must generate");
-    assert_eq!(dpis.len(), 47, "47 PIs (rotated 46 + selector)");
+    assert_eq!(
+        dpis.len(),
+        40,
+        "40 PIs (rotated ROT_PI_COUNT=39 + selector); 47 pre-compaction"
+    );
 
     // The welded gate reads exactly these columns; pin the satisfying assignment for clarity.
     let r0 = &trace[0];

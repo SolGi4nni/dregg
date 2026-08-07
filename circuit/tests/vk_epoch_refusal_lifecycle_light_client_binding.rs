@@ -84,7 +84,7 @@ fn accepts(
 }
 
 /// **THE FULL-NODE OFF-CELL ANCHOR (modelled).** The deployed full-node verifier (`proof_verify.rs`
-/// step 6b) recomputes PI[46] from the TRUSTED pre-cell + the effect — it has the ledger. We model that
+/// step 6b) recomputes `PI[ROT_PI_COUNT]` from the TRUSTED pre-cell + the effect — it has the ledger. We model that
 /// by overriding `dpis[ROT_PI_COUNT]` with the HONEST post-payload limb (the value the full node
 /// recomputes by `apply_effect_to_cell(trusted pre, effect)` then `compute_authority_digest_felt(post)`
 /// / `lifecycle_felt_cell(post)`). A LEDGERLESS LIGHT CLIENT CANNOT do this — it has no pre-cell — so
@@ -175,7 +175,7 @@ fn refusal_exact_statement_is_raw_state16_and_nonlegacy() {
         map_heaps.is_empty(),
         "the exact epoch must not use scalar map-op heaps"
     );
-    assert_eq!(dpis.len(), 90);
+    assert_eq!(dpis.len(), 83);
     assert_eq!(
         trace[0].len(),
         REFUSAL_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX
@@ -194,7 +194,9 @@ fn refusal_exact_statement_is_raw_state16_and_nonlegacy() {
     let desc = parse_vm_descriptor2(wide_json("refusalVmDescriptor2R24"))
         .expect("exact refusal descriptor parses");
     assert_eq!(desc.trace_width, exact_refusal_committed_width());
-    assert_eq!(desc.public_input_count, 90);
+    // 90 until the 2026-08-07 seven-slot PI compaction (`docs/PI-DISPOSITION.md` §6) took
+    // `V1_PI_COUNT` 42 → 35; every member of both rotation registries moved by exactly −7.
+    assert_eq!(desc.public_input_count, 83);
     assert_eq!(
         trace[0].len(),
         exact_refusal_compacted_producer_width(),
@@ -511,7 +513,7 @@ fn wide_fields_write_proves_and_verifies() {
         "46 rotated + 8 authority + 16 raw-audit + 4 DFA + 16 wide anchors"
     );
     assert_eq!(trace[0].len(), exact_refusal_compacted_producer_width());
-    assert_eq!(dpis.len(), 90);
+    assert_eq!(dpis.len(), 83);
     assert!(map_heaps.is_empty());
 
     let mb = MemBoundaryWitness::default();

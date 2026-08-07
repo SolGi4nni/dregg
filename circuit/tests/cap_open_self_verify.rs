@@ -260,7 +260,7 @@ fn cap_open_witness_and_appendix_are_genuine() {
     );
 
     let (mut trace, pis) = build_attenuate_base();
-    assert_eq!(pis.len(), 46);
+    assert_eq!(pis.len(), 39);
 
     let w = cap_open_witness();
     assert_eq!(

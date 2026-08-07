@@ -682,7 +682,7 @@ fn fresh_fold_leaf_mints_and_proves_both_bodies() {
             refuse::CAPACITY_TAGS.len() * refuse::REFUSE_STRIDE,
             "the teeth-less incrementNonce carries the dead stride-tail above its refuse block"
         );
-        assert_eq!(desc.public_input_count, 66);
+        assert_eq!(desc.public_input_count, 59);
         assert_eq!(dpis.len(), desc.public_input_count);
         let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mb, &map_heaps)
             .unwrap_or_else(|e| panic!("IncrementNonce fresh leaf must PROVE: {e}"));
@@ -755,7 +755,7 @@ fn fresh_fold_leaf_mints_and_proves_both_bodies() {
             refuse::REFUSE_WELD_WIDEN,
             "the avail-hardened transfer's refuse block rides at the TOP of the trace"
         );
-        assert_eq!(desc.public_input_count, 68);
+        assert_eq!(desc.public_input_count, 61);
         assert_eq!(dpis.len(), desc.public_input_count);
         let proof =
             prove_vm_descriptor2(&desc, &trace, &dpis, &mb, &map_heaps).unwrap_or_else(|e| {

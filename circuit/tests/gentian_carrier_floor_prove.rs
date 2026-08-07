@@ -212,7 +212,7 @@ fn carrier_trace(
     let (mut trace, dpis) =
         generate_rotated_settle_escrow_trace(&st, &bw, &aw, manifest, LEG_A, LEG_B)
             .expect("the settle carrier must generate");
-    assert_eq!(dpis.len(), 47);
+    assert_eq!(dpis.len(), 40);
     let w = desc.trace_width;
     for row in trace.iter_mut() {
         fill_carrier_decode(row, w);
@@ -240,7 +240,7 @@ fn carrier_trace_forged(
         after_status,
     )
     .expect("the forged settle carrier must generate");
-    assert_eq!(dpis.len(), 47);
+    assert_eq!(dpis.len(), 40);
     let w = desc.trace_width;
     for row in trace.iter_mut() {
         fill_carrier_decode(row, w);
