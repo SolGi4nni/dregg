@@ -212,17 +212,21 @@ async fn signal_solo_node() -> (
 /// The exact player-signed Signal carrier: build the one-action `poa-signal`
 /// turn, attach the hybrid authorization, and sign the turn — byte-for-byte what
 /// an SDK client emits.
+///
+/// ⚠ This used to BE the builder, living here inside `#[cfg(test)]` where no
+/// binary could reach it — so the only code in the tree that could construct a
+/// live Signal carrier was unreachable from `dregg-node`, and an operator running
+/// the ceremony on the live node had nothing to run. The builder now lives in
+/// `poa_signal_slot_claim` behind `dregg-node poa-signal-submit-claim`, and this
+/// milestone drives THAT function. The carrier an operator ships is the carrier
+/// this test proves settles; a second implementation that agreed today is exactly
+/// what must not exist.
 fn solved_signal_turn(
     player: &dregg_sdk::AgentCipherclerk,
     federation_id: [u8; 32],
     claim: dregg_sdk::poa_signal::SignalClaimV1,
 ) -> dregg_sdk::SignedTurn {
-    let mut turn = dregg_sdk::poa_signal::signal_claim_turn(&player.public_key().0, 0, None, claim);
-    let unsigned = turn.call_forest.roots[0].action.clone();
-    turn.call_forest.roots[0].action = player.sign_action(unsigned, &federation_id);
-    turn.call_forest.roots[0].hash = [0; 32];
-    turn.call_forest.forest_hash = [0; 32];
-    player.sign_turn(&turn)
+    crate::poa_signal_slot_claim::signed_signal_claim_turn(player, federation_id, 0, None, claim)
 }
 
 /// POST a postcard `SignedTurn` to the public Signal claims route.

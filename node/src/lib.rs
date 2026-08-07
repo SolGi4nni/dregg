@@ -122,7 +122,15 @@ pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;
 pub mod poa_signal_genesis;
 pub mod poa_signal_slot_api;
+// STEPS 5–6 of the first-turn ceremony: THE ONE Signal carrier builder (lifted out
+// of the milestone test so the operator ships the carrier that was proved) plus the
+// submit + `latest_height` watch.
 pub mod poa_signal_slot_ceremony;
+pub mod poa_signal_slot_claim;
+// ⚠ STEP 4, OPERATOR-ONLY: derives the Signal puzzle's ANSWER from the installed
+// slot secret. Never reachable from the router — a name gate in the module fails if
+// any route-defining file so much as mentions it.
+pub mod poa_signal_slot_instance;
 pub mod poa_station_api;
 pub mod poa_strand_admission;
 pub mod private_dependent_turns;
@@ -530,6 +538,93 @@ pub enum Command {
         /// The curator-signed `POA-SLOT-OPENING-ENVELOPE-V1` document.
         #[arg(long)]
         signed_opening: PathBuf,
+    },
+
+    /// ⚠ OPERATOR/CURATOR ONLY — PRINTS THE SIGNAL PUZZLE'S ANSWER.
+    ///
+    /// Step 4 of the first-turn ceremony: derive, through Lean, the live instance
+    /// the INSTALLED slot draws for one player, and print the solving code.
+    ///
+    /// This must never become an HTTP route, a log line or an artifact: it turns
+    /// the node's private slot secret into the answer, and a caller who holds no
+    /// secret would get it for free. It is a subcommand against a STOPPED node
+    /// (redb is single-writer, so a running node's store cannot be opened), it
+    /// requires the installed secret to be presented again from a file, and
+    /// `poa_signal_slot_instance` fails the build's tests if any route-defining
+    /// module in the node so much as names the derivation.
+    PoaSignalInstancePreview {
+        /// Existing PoA node data directory. The node must be STOPPED.
+        #[arg(long)]
+        data_dir: String,
+        /// Federation id of the Signal authority, 64 lowercase hex.
+        #[arg(long)]
+        authority_id: String,
+        /// Mission the open slot must name.
+        #[arg(long)]
+        mission_id: u64,
+        /// The open beacon slot.
+        #[arg(long)]
+        slot: u64,
+        /// File holding the curator's 32-byte slot secret as 64 lowercase hex.
+        /// Must be the secret this slot was installed with.
+        #[arg(long)]
+        secret_file: PathBuf,
+        /// The player's Ed25519 PUBLIC key, 64 lowercase hex. The instance is
+        /// per-player: a code derived for one key solves nothing for another.
+        #[arg(long)]
+        player_key: String,
+        /// Write the preview here instead of stdout. Prefer this: the file is the
+        /// exact `--claim-file` input of `poa-signal-submit-claim`, so the answer
+        /// never has to be retyped onto a command line.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Steps 5–6: build the exact player-signed Signal carrier, POST it to the
+    /// public claims route of a RUNNING node, and watch `latest_height`.
+    ///
+    /// The carrier is a postcard `SignedTurn` with a hybrid action authorization
+    /// over the federation-bound canonical message; it is built by the SAME
+    /// function the `latest_height` 0→1 milestone test drives, not a second
+    /// implementation of it.
+    PoaSignalSubmitClaim {
+        /// Base HTTP URL of a RUNNING node, e.g. `http://127.0.0.1:8423`.
+        #[arg(long)]
+        endpoint: String,
+        /// Federation id of the Signal authority, 64 lowercase hex.
+        #[arg(long)]
+        authority_id: String,
+        /// File holding the PLAYER's 32-byte Ed25519 seed as 64 lowercase hex.
+        #[arg(long)]
+        player_key_file: PathBuf,
+        /// A `POA-SIGNAL-INSTANCE-PREVIEW-V1` document from step 4.
+        #[arg(long)]
+        claim_file: Option<PathBuf>,
+        /// A hand-typed guess as `low,mid,high` in base six (what a stranger with
+        /// no slot secret plays). Mutually exclusive with `--claim-file`.
+        #[arg(long)]
+        code: Option<String>,
+        /// Mission the hand-typed code claims. Ignored with `--claim-file`.
+        #[arg(long, default_value = "1")]
+        mission_id: u64,
+        /// The turn nonce (`agent.state.nonce()`); 0 for a player's first turn.
+        #[arg(long, default_value = "0")]
+        nonce: u64,
+        /// The player's previous receipt hash, if it has acted before.
+        #[arg(long)]
+        previous_receipt_hash: Option<String>,
+        /// Print the player public key and its agent cell id, then exit. Nothing is
+        /// signed or submitted. Use this to learn the cell that must be funded.
+        #[arg(long, default_value_t = false)]
+        identity_only: bool,
+        /// After a successful submit, poll `GET /status` until `latest_height`
+        /// reaches this. THIS is the number that says a turn settled; the submit's
+        /// `accepted: true` is admission staging and settles nothing.
+        #[arg(long)]
+        await_latest_height: Option<u64>,
+        /// How long to poll for.
+        #[arg(long, default_value = "90")]
+        await_timeout_secs: u64,
     },
 
     /// Install the Path of Angels Galley world: the curator pin, the signed
@@ -1253,6 +1348,77 @@ pub async fn run(cli: Cli) {
                 ),
                 Err(error) => {
                     eprintln!("PoA Signal slot install refused: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::PoaSignalInstancePreview {
+            data_dir,
+            authority_id,
+            mission_id,
+            slot,
+            secret_file,
+            player_key,
+            output,
+        } => {
+            let args = poa_signal_slot_instance::PoaSignalInstancePreviewArgs {
+                data_dir: expand_path(&data_dir),
+                authority_id,
+                mission_id,
+                slot,
+                secret_file,
+                player_key,
+            };
+            match poa_signal_slot_instance::preview_poa_signal_instance(&args) {
+                Ok(preview) => match output {
+                    Some(path) => match std::fs::write(&path, preview.as_bytes()) {
+                        // Print only the PATH. The document holds the answer; a
+                        // command that echoes it as well would put the solution in
+                        // the operator's scrollback for no benefit.
+                        Ok(()) => println!("{}", path.display()),
+                        Err(error) => {
+                            eprintln!("PoA Signal instance preview could not be written: {error}");
+                            std::process::exit(1);
+                        }
+                    },
+                    None => println!("{preview}"),
+                },
+                Err(error) => {
+                    eprintln!("PoA Signal instance preview refused: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::PoaSignalSubmitClaim {
+            endpoint,
+            authority_id,
+            player_key_file,
+            claim_file,
+            code,
+            mission_id,
+            nonce,
+            previous_receipt_hash,
+            identity_only,
+            await_latest_height,
+            await_timeout_secs,
+        } => {
+            let args = poa_signal_slot_claim::PoaSignalSubmitClaimArgs {
+                endpoint,
+                authority_id,
+                player_key_file,
+                claim_file,
+                code,
+                mission_id,
+                nonce,
+                previous_receipt_hash,
+                identity_only,
+                await_latest_height,
+                await_timeout_secs,
+            };
+            match poa_signal_slot_claim::submit_poa_signal_claim(&args).await {
+                Ok(report) => print!("{report}"),
+                Err(error) => {
+                    eprint!("PoA Signal claim refused: {error}");
                     std::process::exit(1);
                 }
             }

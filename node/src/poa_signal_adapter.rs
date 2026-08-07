@@ -318,6 +318,69 @@ fn derive_live_instance(
     })
 }
 
+/// The live instance one (authority, open slot, player) draws — THE ANSWER to
+/// that run, as Lean derives it.
+///
+/// ⚠ **THIS VALUE IS THE PUZZLE SOLUTION.** It is produced from the curator's slot
+/// secret and is only meaningful to whoever already holds that secret. Nothing that
+/// renders it may reach a route, a public log, an artifact or a metric.
+#[derive(Clone, Debug)]
+pub struct OperatorDerivedInstance {
+    /// The mission the persisted head has active.
+    pub mission_id: u64,
+    /// The open slot this instance belongs to.
+    pub slot: u64,
+    /// Lean's `runSeedFor` for this (secret, slot, player) and this content context.
+    pub run_seed: String,
+    /// Lean's `targetFromSeed` of that run seed — the solving code.
+    pub target: SignalCode,
+}
+
+/// Derive the live instance for one player against a persisted head and an
+/// INSTALLED slot, through the same Lean export the judge re-derives with.
+///
+/// ⚠ **OPERATOR / CURATOR ONLY. NEVER REACHABLE FROM THE HTTP ROUTER.** Publishing
+/// this — as a route, a log line, a status field, an exported artifact — hands
+/// every player the answer and makes the whole deduction game a formality. The
+/// caller must already hold the slot secret (it is read out of the installed slot
+/// record, which lives only in the node's own store), and holding the secret is
+/// what knowing the instance MEANS; but a route would hand the derived answer to
+/// callers who hold nothing.
+/// `poa_signal_slot_instance::the_operator_derivation_is_unreachable_from_any_router`
+/// fails if any HTTP surface in this crate so much as names these symbols.
+///
+/// There is no Rust derivation here and there must never be one: this is Lean's
+/// `HiddenInstance` sponge, and the judge re-derives it independently and refuses
+/// if the two disagree.
+pub fn derive_operator_instance(
+    head: &dregg_persist::PoaSignalHeadV1,
+    slot: &dregg_persist::PoaInstalledSlotV1,
+    active_federation_id: [u8; 32],
+    player_key: [u8; 32],
+    actor_root: [u8; 32],
+) -> Result<OperatorDerivedInstance, SignalAdapterError> {
+    let context = authority_context_from_persisted_head(
+        head,
+        slot,
+        active_federation_id,
+        player_key,
+        actor_root,
+    )?;
+    let instance = derive_live_instance(&context)?;
+    let target = SignalCode::new(
+        instance.target.low,
+        instance.target.mid,
+        instance.target.high,
+    )
+    .map_err(SignalAdapterError::Claim)?;
+    Ok(OperatorDerivedInstance {
+        mission_id: context.config.mission.mission_id,
+        slot: context.slot_state.slot,
+        run_seed: instance.run_seed,
+        target,
+    })
+}
+
 /// Invoke the existing Lean FFI and strictly parse its exact reply.
 ///
 /// This function is intentionally pure with respect to node state: it neither
@@ -1540,6 +1603,10 @@ pub(crate) fn fixture_signal_slot_for_finality_test(
 ///
 /// Requires the derivation export; panics if absent, because a test that silently
 /// stopped checking the judge would be worse than one that stops.
+///
+/// This is [`derive_operator_instance`] with its refusals turned into panics — ONE
+/// derivation, so the operator command an operator will actually run and the test
+/// that proved the milestone cannot draw different answers.
 pub(crate) fn solving_claim_for_finality_test(
     head: &dregg_persist::PoaSignalHeadV1,
     slot: &dregg_persist::PoaInstalledSlotV1,
@@ -1547,22 +1614,10 @@ pub(crate) fn solving_claim_for_finality_test(
     player_key: [u8; 32],
     actor_root: [u8; 32],
 ) -> SignalClaimV1 {
-    let context = authority_context_from_persisted_head(
-        head,
-        slot,
-        active_federation_id,
-        player_key,
-        actor_root,
-    )
-    .expect("fixture authority context");
-    let instance = derive_live_instance(&context).expect("Lean must derive the fixture instance");
-    let code = SignalCode::new(
-        instance.target.low,
-        instance.target.mid,
-        instance.target.high,
-    )
-    .expect("a derived target is a legal code");
-    SignalClaimV1::new(context.config.mission.mission_id, code)
+    let instance =
+        derive_operator_instance(head, slot, active_federation_id, player_key, actor_root)
+            .expect("Lean must derive the fixture instance");
+    SignalClaimV1::new(instance.mission_id, instance.target)
         .expect("a derived claim is a legal claim")
 }
 
