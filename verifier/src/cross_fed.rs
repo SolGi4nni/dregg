@@ -583,10 +583,22 @@ fn verify_attested_root_against_descriptor(
 /// delegated to `dregg_federation::receipt::verify_hybrid_quorum_sigs` (which
 /// owns the FIPS 204 ML-DSA-65 primitive). Accepts iff at least `threshold`
 /// DISTINCT committee members each present a valid ed25519 signature AND a valid
-/// ML-DSA-65 signature over `root.signing_message()` under their ENROLLED
-/// `ml_dsa_keys[i]` key (aligned index-for-index with `known_keys`). Fail-closed
-/// on any non-member signer, any bad half, a self-carried PQ key differing from
-/// the enrolled one, or a missing/misaligned enrolled roster.
+/// ML-DSA-65 signature over [`AttestedRoot::hybrid_quorum_message`] under their
+/// ENROLLED `ml_dsa_keys[i]` key (aligned index-for-index with `known_keys`).
+/// Fail-closed on any non-member signer, any bad half, a self-carried PQ key
+/// differing from the enrolled one, a missing/misaligned enrolled roster, or an
+/// unanchored root (no `blocklace_block_id` ⇒ no vote preimage exists).
+///
+/// ⚑ **THIS FUNCTION USED `root.signing_message()` AND THEREFORE COULD NOT PASS
+/// ON A LIVE ROOT.** The node fills `hybrid_quorum` by copying the assembled
+/// committee **finalization-vote** signatures (`blocklace_sync.rs`), which are
+/// over `finalization_vote_signing_message`, not over the attested-root
+/// preimage. Every test in this module signed `signing_message()` by hand and so
+/// was blind to it — a test that constructs its subject differently from
+/// production is not testing production. Both consumers of the field now call
+/// the one named `AttestedRoot::hybrid_quorum_message()`, and
+/// `production_shaped_attested_root_hybrid_quorum_verifies` below builds its
+/// root the way the node does rather than the way a test finds convenient.
 fn verify_attested_root_hybrid(
     root: &AttestedRoot,
     threshold: usize,
@@ -596,7 +608,9 @@ fn verify_attested_root_hybrid(
     if threshold == 0 || threshold > known_keys.len() {
         return false;
     }
-    let message = root.signing_message();
+    let Some(message) = root.hybrid_quorum_message() else {
+        return false;
+    };
     dregg_federation::receipt::verify_hybrid_quorum_sigs(
         &root.hybrid_quorum,
         &message,
@@ -758,9 +772,21 @@ mod tests {
     // ---------------------------------------------------------------------
 
     /// Build a 3-member committee (ed25519 + per-member ML-DSA-65) and an
-    /// `AttestedRoot` whose `hybrid_quorum` is signed over its own
-    /// `signing_message()` by the members in `signers`. Returns the descriptor,
-    /// the decoded committee keys, the deterministic federation id, and the root.
+    /// `AttestedRoot` whose `hybrid_quorum` is signed over
+    /// [`AttestedRoot::hybrid_quorum_message`] — **the preimage the node
+    /// actually produces** — by the members in `signers`. Returns the
+    /// descriptor, the decoded committee keys, the deterministic federation id,
+    /// and the root.
+    ///
+    /// ⚑ Until 2026-08-07 this fixture signed `root.signing_message()`, and so
+    /// did every other hybrid test here. That is a different preimage from the
+    /// one `blocklace_sync` fills the field with, so the whole module was green
+    /// while a LIVE root's hybrid quorum could not pass. The fixture now calls
+    /// the same method the verifier calls; the divergence is unrepresentable.
+    /// `production_shaped_root_signed_over_the_attested_root_preimage_is_refused`
+    /// pins that the old shape is now REFUSED, and
+    /// `node/tests/committee_signature_covers_a_per_turn_value.rs` drives the
+    /// real `VoteCollector` end to end.
     fn hybrid_committee_and_root(
         signers: &[usize],
         threshold: usize,
@@ -816,7 +842,10 @@ mod tests {
         root.federation_id = dregg_types::FederationId(fed_id);
         root.blocklace_block_id = Some([0x9A; 32]);
         root.finality_round = Some(5);
-        let message = root.signing_message();
+        root.receipt_stream_root = Some(dregg_types::merkle_root_of_receipt_hashes(&[[0x3D; 32]]));
+        let message = root
+            .hybrid_quorum_message()
+            .expect("an anchored root has a vote preimage");
         root.hybrid_quorum = signers
             .iter()
             .map(|&i| HybridQuorumSig {
@@ -842,6 +871,88 @@ mod tests {
             fed_id,
         )
         .expect("honest 2-of-3 hybrid quorum (ed25519 ∧ ML-DSA-65) must verify");
+    }
+
+    /// ⚑ **THE PREIMAGE-MISMATCH FALSIFIER.** The shape every hybrid test in this
+    /// module used until 2026-08-07 — signatures over `root.signing_message()` —
+    /// is now REFUSED, because that is not the preimage the node produces. The
+    /// node fills `hybrid_quorum` by copying assembled committee
+    /// finalization-vote signatures, so a root whose hybrid quorum signs the
+    /// attested-root preimage is a root no node ever built.
+    ///
+    /// This is the test that would have caught the live defect: it constructs the
+    /// WRONG shape deliberately and requires a refusal, rather than constructing
+    /// the wrong shape by accident and requiring success.
+    #[test]
+    fn a_hybrid_quorum_over_the_attested_root_preimage_is_refused() {
+        use dregg_federation::frost::MlDsaSigningKey;
+        use dregg_types::HybridQuorumSig;
+
+        let (desc, keys, fed_id, mut root) = hybrid_committee_and_root(&[0, 1], 2);
+        // Re-sign the SAME two members over the attested-root preimage instead.
+        let wrong_message = root.signing_message();
+        assert_ne!(
+            wrong_message,
+            root.hybrid_quorum_message().expect("anchored root"),
+            "precondition: the two preimages differ"
+        );
+        let sks: Vec<dregg_types::SigningKey> = (0..2)
+            .map(|i| {
+                let mut s = [0u8; 32];
+                s[0] = 0x71;
+                s[1] = i as u8;
+                dregg_types::SigningKey::from_bytes(&s)
+            })
+            .collect();
+        let pqs: Vec<_> = (0..2)
+            .map(|i| {
+                let mut s = [0u8; 32];
+                s[0] = 0x72;
+                s[1] = i as u8;
+                MlDsaSigningKey::from_seed(&s)
+            })
+            .collect();
+        root.hybrid_quorum = (0..2)
+            .map(|i| HybridQuorumSig {
+                pubkey: sks[i].public_key(),
+                signature: dregg_types::sign(&sks[i], &wrong_message),
+                ml_dsa_pubkey: pqs[i].0.0.to_vec(),
+                pq_signature: pqs[i].1.sign(&wrong_message).expect("ml-dsa sign"),
+            })
+            .collect();
+
+        let err = verify_attested_root_against_descriptor(
+            "root",
+            &root,
+            &desc,
+            &keys,
+            &desc.ml_dsa_pubkeys(),
+            fed_id,
+        )
+        .expect_err(
+            "a hybrid quorum over `signing_message()` is not the quorum the node produces and \
+             must be refused",
+        );
+        assert!(err.contains("hybrid"), "{err}");
+    }
+
+    /// An UNANCHORED root has no finalization-vote preimage at all, so its
+    /// hybrid quorum cannot be judged and the check fails closed rather than
+    /// inventing a message to check against.
+    #[test]
+    fn an_unanchored_root_hybrid_quorum_fails_closed() {
+        let (desc, keys, fed_id, mut root) = hybrid_committee_and_root(&[0, 1], 2);
+        root.blocklace_block_id = None;
+        let err = verify_attested_root_against_descriptor(
+            "root",
+            &root,
+            &desc,
+            &keys,
+            &desc.ml_dsa_pubkeys(),
+            fed_id,
+        )
+        .expect_err("a root with no blocklace anchor has no vote preimage");
+        assert!(err.contains("hybrid"), "{err}");
     }
 
     #[test]
@@ -912,7 +1023,7 @@ mod tests {
         let (desc, keys, fed_id, mut root) = hybrid_committee_and_root(&[0], 1);
         // Replace the lone signer with a fully-valid hybrid signer who is NOT a
         // committee member: both halves verify, but membership fails closed.
-        let message = root.signing_message();
+        let message = root.hybrid_quorum_message().expect("anchored root");
         let outsider_sk = dregg_types::SigningKey::from_bytes(&[0xEE; 32]);
         let (out_pq_pk, out_pq_sk) = MlDsaSigningKey::from_seed(&[0xEF; 32]);
         root.hybrid_quorum = vec![HybridQuorumSig {
@@ -946,7 +1057,7 @@ mod tests {
         use dregg_federation::frost::MlDsaSigningKey;
 
         let (desc, keys, fed_id, mut root) = hybrid_committee_and_root(&[0, 1], 2);
-        let message = root.signing_message();
+        let message = root.hybrid_quorum_message().expect("anchored root");
         // Swap signer 0's ML-DSA key + signature for a FRESH attacker keypair.
         let attacker = MlDsaSigningKey::from_seed(&[0xC7; 32]);
         root.hybrid_quorum[0].ml_dsa_pubkey = attacker.0.0.to_vec();

@@ -45,44 +45,77 @@
 //! publishes**, and it must never be handed to `verify_full_turn_bound` as
 //! `expected_old_commit` / `expected_new_commit` — doing so refuses every honest proof.
 //!
-//! Measured, both causes independently sufficient
-//! (`turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`):
+//! ⚠ **THERE ARE FOUR CAUSES, NOT TWO — corrected 2026-08-07.** This docblock named two, as did
+//! every other description of the divergence in the tree. Each is independently sufficient, and
+//! all four are measured cause-by-cause in
+//! `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`:
 //!
 //! * **`iroot`.** The receipt anchor pins `state_commit::consensus_ctx`'s
 //!   `iroot = rotation_witness::empty_iroot()` deliberately (a receipt cannot bind the
-//!   commitment its own hash is computed from). The proof's rotation witness folds the REAL
-//!   receipt chain (`node/src/turn_proving.rs:9317` threads `[receipt.receipt_hash()]`).
+//!   commitment its own hash is computed from). ⚠ The proof side does NOT "fold the real receipt
+//!   chain" — that is true of exactly one of four producers, the ledgerless sovereign
+//!   `cipherclerk`, whose artifacts this endpoint never serves. The live node path folds a
+//!   ONE-ENTRY log: `[receipt.receipt_hash()]` on the non-spend and bearer arms
+//!   (`blocklace_sync.rs:9239`, `:9319`), `[turn_hash]` on the cap-less spend arm
+//!   (`turn_proving.rs:1298`). Three conventions, three different published commits for one
+//!   transition.
 //! * **`cells_root`.** The receipt anchor folds the WHOLE ledger
 //!   (`state_commit::consensus_ctx` -> `rotation_witness::cells_root(ledger)`); the proof's
 //!   witness folds a SINGLE-CELL context ledger holding only the actor
 //!   (`node/src/turn_proving.rs::rotation_witness_for_self_sovereign_impl`, `ctx_ledger`).
+//! * **`revoked_root`** (unnamed before 2026-08-07). The anchor threads the executor's LIVE
+//!   `note_revoked.root8()`; `rotation_witness_for_self_sovereign_impl` writes
+//!   `empty_revoked_root_8()` unconditionally and has no parameter for it. Dormant until the
+//!   federation's first revocation, permanent after.
+//! * **`material`** (unnamed before 2026-08-07). `consensus_ctx` hardcodes
+//!   `RotationCarrierMaterial::default()`; the proof carries the installed `child_vk` on a
+//!   factory turn's AFTER block. ⚑ This is the one cause that should not be closed by moving the
+//!   proving side: `factoryV3Carriers` `.piBinding`s that octet as PI 47..54 precisely to EXPOSE
+//!   the installed child VK, so zeroing it on the prover would blank a published surface.
+//!   (ⓘ Whether any verifier ANCHORS those PIs is NOT established — `executor/proof_verify.rs`
+//!   constructs no `RotationCarrierMaterial`. Do not relay a UNSAT claim about it.)
 //!
-//! They are two different commitments of the same transition. Aligning them is real work on the
-//! consensus anchor (it moves what the committee signs AND what the proof publishes); it is
-//! priced in `docs/DESIGN-pi-authority.md` and NOT done here. What this anchor therefore
-//! delivers to a proof re-verifier is the **turn identity**, which every effect-vm leg publishes
-//! at `pi::TURN_HASH_BASE` and which `verify_full_turn_bound` compares as a required argument.
+//! They are two different commitments of the same transition. Aligning them is real work; it is
+//! priced in `docs/DESIGN-pi-authority.md` and NOT done here. ⚑ But the price is not what that
+//! doc assumed: `trace_rotated::fill_block` copies `cells_root` and `iroot` straight out of the
+//! producer witness and (per `EffectVmEmitRotationV3.cellsRootGroupCol`'s own docstring) only
+//! createCell/factory/spawn constrain the cells group — so three of the four causes converge by
+//! moving the PROVING side, at **no VK rotation, no descriptor re-emit and no re-genesis**,
+//! because the signed anchor does not move at all. Only `material` moves it.
 //!
-//! ## ⚑ WHAT THE >=THRESHOLD COMMITTEE QUORUM COVERS, AND WHAT IT DOES NOT
+//! What this anchor therefore delivers to a proof re-verifier TODAY is the **turn identity**,
+//! which every effect-vm leg publishes at `pi::TURN_HASH_BASE` and which
+//! `verify_full_turn_bound` compares as a required argument.
 //!
-//! Two different quorum legs ride an `AttestedRoot`, over two different preimages:
+//! ## ⚑ WHAT THE >=THRESHOLD COMMITTEE QUORUM COVERS — AND WHAT CHANGED IN v4
 //!
-//! | leg | preimage | reaches the turn? |
-//! |---|---|---|
-//! | `quorum_signatures` (ed25519) | [`AttestedRoot::signing_message`] — absorbs `receipt_stream_root` | **yes** |
-//! | `hybrid_quorum` (ed25519 ∧ ML-DSA-65) | [`dregg_types::finalization_vote_signing_message`] — `(block_id, merkle_root)` only | **no** |
+//! Two quorum legs ride an `AttestedRoot`, over two different preimages. **Since the
+//! finalization-vote domain moved v3 → v4, BOTH reach the receipt:**
 //!
-//! [`TurnAnchorV1::verify`] gates acceptance on the FIRST leg, because it is the only one whose
-//! preimage reaches the receipt. The second leg is verified and REPORTED
-//! ([`VerifiedTurnAnchor::position_quorum_met`]) because it is what pins the block into
-//! consensus, but it can never stand in for the first: a signature over `(block_id, merkle_root)`
-//! says nothing about which receipt that block carried.
+//! | leg | preimage | reaches the turn? | who signs it |
+//! |---|---|---|---|
+//! | `quorum_signatures` (ed25519) | [`AttestedRoot::signing_message`] — absorbs `receipt_stream_root` | **yes** | the LOCAL node only (one push) |
+//! | `hybrid_quorum` (ed25519 ∧ ML-DSA-65) | [`AttestedRoot::hybrid_quorum_message`] = `domain-v4 ‖ block_id ‖ merkle_root ‖ framed(receipt_stream_root)` | **yes (v4)** | the assembled CROSS-NODE committee quorum |
 //!
-//! ⚠ On the live path `quorum_signatures` receives exactly ONE push — the local node's
-//! (`node/src/blocklace_sync.rs:9761`) — so this anchor VERIFIES on a threshold-1 federation and
-//! REFUSES on a larger committee until a committee vote covers `receipt_stream_root`. That
-//! refusal is deliberate and load-bearing: it is the difference between "the committee said so"
-//! and "the node said so", and it must fail loudly rather than be labelled away.
+//! [`TurnAnchorV1::verify`] counts the UNION of distinct committee members across the two legs,
+//! each verified against its own preimage. That is sound because both preimages bind the SAME
+//! `(block_id, merkle_root, receipt_stream_root)` of the SAME root: a signer counted from either
+//! leg really did sign a statement naming this receipt stream at this chain position.
+//!
+//! ⚑ **THE HISTORY THIS FIXES, because the refusal it produced was correct and load-bearing.**
+//! Through v3 the vote preimage was `(block_id, merkle_root)` only — no per-turn value — and
+//! `quorum_signatures` receives exactly one push, the local node's, because
+//! `PeerMessage::AttestedRootUpdate` has zero handlers. So on any federation with `threshold > 1`
+//! this anchor REFUSED, honestly, rather than reporting a caveat: no committee signature in the
+//! tree covered a per-turn value. v4 does not relax that gate. It supplies the missing quorum:
+//! the votes the committee already exchanges now bind `receipt_stream_root`, so
+//! `>= threshold` distinct members genuinely sign a statement that reaches this turn. A
+//! federation that has NOT yet assembled its vote quorum still refuses, and a sub-threshold one
+//! still refuses — see `federation/tests/turn_anchor_refusals.rs`.
+//!
+//! The Lean side moved with it: `Dregg2.Distributed.FinalizationQuorum.quorum_binds_snd` and
+//! `FinalityGate.quorum_gate_binds_receipt_stream` are the named theorems that a quorum on the
+//! widened pair IS a supermajority of distinct signers agreeing on the receipt-stream component.
 //!
 //! # The roster is the caller's, never the anchor's
 //!
@@ -94,10 +127,7 @@
 use serde::{Deserialize, Serialize};
 
 use dregg_turn::TurnReceipt;
-use dregg_types::{
-    AttestedRoot, FederationId, PublicKey, finalization_vote_signing_message,
-    merkle_root_of_receipt_hashes,
-};
+use dregg_types::{AttestedRoot, FederationId, PublicKey, merkle_root_of_receipt_hashes};
 
 use crate::frost::MlDsaPublicKey;
 use crate::receipt::verify_hybrid_quorum_sigs;
@@ -179,10 +209,21 @@ pub enum TurnAnchorError {
         recomputed_stream_root: [u8; 32],
         attested_stream_root: [u8; 32],
     },
-    /// Fewer than `threshold` distinct committee members signed the preimage that reaches the
-    /// receipt. This is the refusal that separates "the committee said so" from "the node said
-    /// so" — see the module docs.
-    ReceiptQuorumNotMet { signers: usize, threshold: usize },
+    /// Fewer than `threshold` DISTINCT committee members signed a preimage that reaches the
+    /// receipt, counting the union of both legs. This is the refusal that separates "the
+    /// committee said so" from "the node said so" — see the module docs.
+    ///
+    /// `attestation_signers` is the `quorum_signatures` (attested-root preimage) leg and
+    /// `vote_signers` the `hybrid_quorum` (finalization-vote preimage) leg; `signers` is the
+    /// size of their UNION, which is what the threshold is measured against. Reporting the two
+    /// separately is what lets a holder say *why* — "the node signed but the committee has not
+    /// assembled its vote quorum yet" is a different situation from "nobody signed".
+    ReceiptQuorumNotMet {
+        signers: usize,
+        attestation_signers: usize,
+        vote_signers: usize,
+        threshold: usize,
+    },
 }
 
 impl std::fmt::Display for TurnAnchorError {
@@ -236,11 +277,19 @@ impl std::fmt::Display for TurnAnchorError {
                 hex::encode(recomputed_stream_root),
                 hex::encode(attested_stream_root)
             ),
-            Self::ReceiptQuorumNotMet { signers, threshold } => write!(
+            Self::ReceiptQuorumNotMet {
+                signers,
+                attestation_signers,
+                vote_signers,
+                threshold,
+            } => write!(
                 f,
-                "only {signers} distinct committee signature(s) cover this receipt; {threshold} \
-                 required. The >=threshold hybrid vote quorum signs (block_id, merkle_root) only \
-                 and does NOT reach the receipt, so it cannot stand in"
+                "only {signers} distinct committee signature(s) cover this receipt \
+                 ({attestation_signers} over the attested-root preimage, {vote_signers} over the \
+                 v4 finalization-vote preimage); {threshold} required. On the live path the \
+                 attested-root leg receives only the local node's signature, so a federation \
+                 with threshold > 1 is anchored by the committee's assembled VOTE quorum — \
+                 which is absent or short here"
             ),
         }
     }
@@ -268,13 +317,21 @@ pub struct VerifiedTurnAnchor {
     /// never pass them to `verify_full_turn_bound`.
     pub receipt_pre_state_commit: [u8; 32],
     pub receipt_post_state_commit: [u8; 32],
-    /// Distinct committee members whose signature covers the RECEIPT (over
-    /// `AttestedRoot::signing_message`). `>= threshold`, or `verify` would have refused.
+    /// Distinct committee members whose signature covers the RECEIPT, counting the UNION of
+    /// both legs: `quorum_signatures` over `AttestedRoot::signing_message` and `hybrid_quorum`
+    /// over the v4 `AttestedRoot::hybrid_quorum_message`. `>= threshold`, or `verify` would
+    /// have refused.
     pub receipt_quorum_signers: usize,
     /// Did a `>= threshold` HYBRID (ed25519 ∧ ML-DSA-65, enrolled-key pinned) committee quorum
-    /// cover the CHAIN POSITION `(block_id, merkle_root)`? Decided by the ONE shared rule,
-    /// [`crate::receipt::verify_hybrid_quorum_sigs`]. Reported, never gating — this preimage
-    /// does not reach the receipt, so it can neither establish nor stand in for the turn.
+    /// sign the v4 finalization-vote preimage — `(block_id, merkle_root, receipt_stream_root)`
+    /// — on its own? Decided per signer by the ONE shared rule,
+    /// [`crate::receipt::verify_hybrid_quorum_sigs`].
+    ///
+    /// ⚑ Since v4 this leg DOES reach the receipt, and its signers are counted toward
+    /// [`receipt_quorum_signers`](Self::receipt_quorum_signers). It stays a separate reported
+    /// field because it is the leg a real multi-node committee assembles, and a holder wants to
+    /// know whether acceptance rested on the committee's cross-node quorum or on a single-node
+    /// federation's own attestation signature.
     pub position_quorum_met: bool,
     /// The threshold the roster declared.
     pub threshold: usize,
@@ -338,25 +395,37 @@ impl TurnAnchorV1 {
             });
         }
 
-        // LEG 1 (gating): committee signatures over the preimage that absorbs
-        // `receipt_stream_root`, hence this receipt, hence this turn hash.
-        let receipt_message = self.attested.signing_message();
+        // LEG 1: committee signatures over `AttestedRoot::signing_message()`, which absorbs
+        // `receipt_stream_root`. On the live path this leg receives exactly one push — the
+        // local node's — so on a real federation it is the SMALLER of the two.
+        let attestation_message = self.attested.signing_message();
         let mut receipt_signers: std::collections::HashSet<[u8; 32]> = Default::default();
         for (pk, sig) in &self.attested.quorum_signatures {
-            if committee.ed25519.contains(pk) && pk.verify(&receipt_message, sig) {
+            if committee.ed25519.contains(pk) && pk.verify(&attestation_message, sig) {
                 receipt_signers.insert(pk.0);
             }
         }
+        let attestation_signers = receipt_signers.len();
+
+        // LEG 2: the HYBRID (ed25519 ∧ ML-DSA-65, enrolled-key pinned) committee vote quorum,
+        // over `AttestedRoot::hybrid_quorum_message()`. Since the vote domain moved to v4 that
+        // preimage absorbs `receipt_stream_root`, so THIS leg reaches the receipt too — and it
+        // is the leg a real committee actually assembles. Its signers join the same union.
+        let vote_signers = self.vote_quorum_signers(committee);
+        let position_quorum_met = vote_signers.len() >= committee.threshold;
+        let vote_signer_count = vote_signers.len();
+        receipt_signers.extend(vote_signers);
+
+        // THE GATE: `>= threshold` DISTINCT committee members, each having signed SOME preimage
+        // that names this receipt stream at this chain position.
         if receipt_signers.len() < committee.threshold {
             return Err(TurnAnchorError::ReceiptQuorumNotMet {
                 signers: receipt_signers.len(),
+                attestation_signers,
+                vote_signers: vote_signer_count,
                 threshold: committee.threshold,
             });
         }
-
-        // LEG 2 (reported, never gating): the HYBRID vote quorum over the CHAIN POSITION. Its
-        // preimage is `(block_id, merkle_root)` and reaches no receipt.
-        let position_quorum_met = self.position_quorum_met(committee);
 
         Ok(VerifiedTurnAnchor {
             turn_hash: self.turn_hash,
@@ -372,17 +441,21 @@ impl TurnAnchorV1 {
         })
     }
 
-    /// Did a `>= threshold` HYBRID committee quorum sign the finalization-vote preimage
-    /// `(block_id, merkle_root)`?
+    /// The DISTINCT committee members whose HYBRID (ed25519 ∧ ML-DSA-65, enrolled-key pinned)
+    /// signature over [`AttestedRoot::hybrid_quorum_message`] verifies — the v4
+    /// finalization-vote preimage, which absorbs `receipt_stream_root` and therefore reaches
+    /// this turn.
     ///
-    /// Delegates to [`crate::receipt::verify_hybrid_quorum_sigs`] — the ONE place the
-    /// `classical ∧ pq`, enrolled-key-pinned rule lives — so this can never drift from the rule
-    /// the restart anchor and the cross-fed verifier apply. Fail-closed on a misaligned or empty
-    /// enrolled ML-DSA roster (that function refuses rather than downgrading to ed25519-only)
-    /// and on an undecodable enrolled key.
-    fn position_quorum_met(&self, committee: &AnchorCommittee) -> bool {
-        let Some(block_id) = self.attested.blocklace_block_id else {
-            return false;
+    /// The `classical ∧ pq` rule itself is [`crate::receipt::verify_hybrid_quorum_sigs`] — the
+    /// ONE place it lives, applied by the restart anchor and the cross-fed verifier too — so
+    /// this can never drift from it. This function calls that rule at threshold 1 PER SIGNER so
+    /// it can report a COUNT rather than a boolean (the anchor's gate is a union across two
+    /// legs, so it needs who, not whether). Fail-closed on a misaligned or empty enrolled
+    /// ML-DSA roster (that rule refuses rather than downgrading to ed25519-only), on an
+    /// undecodable enrolled key, and on a root with no blocklace anchor (no vote preimage).
+    fn vote_quorum_signers(&self, committee: &AnchorCommittee) -> Vec<[u8; 32]> {
+        let Some(vote_message) = self.attested.hybrid_quorum_message() else {
+            return Vec::new();
         };
         let enrolled: Vec<MlDsaPublicKey> = committee
             .ml_dsa
@@ -391,15 +464,25 @@ impl TurnAnchorV1 {
             .map(MlDsaPublicKey)
             .collect();
         // A key that did not decode drops out above, which shortens the roster and makes
-        // `verify_hybrid_quorum_sigs`'s length-alignment guard refuse the whole leg.
-        let vote_message = finalization_vote_signing_message(&block_id, &self.attested.merkle_root);
-        verify_hybrid_quorum_sigs(
-            &self.attested.hybrid_quorum,
-            &vote_message,
-            &committee.ed25519,
-            &enrolled,
-            committee.threshold,
-        )
+        // `verify_hybrid_quorum_sigs`'s length-alignment guard refuse every signer.
+        let mut signers: Vec<[u8; 32]> = Vec::new();
+        for qs in &self.attested.hybrid_quorum {
+            if signers.contains(&qs.pubkey.0) {
+                continue;
+            }
+            // One-signer slice through the SHARED rule: membership, both halves, and the
+            // enrolled-key pin are all decided there, never re-implemented here.
+            if verify_hybrid_quorum_sigs(
+                std::slice::from_ref(qs),
+                &vote_message,
+                &committee.ed25519,
+                &enrolled,
+                1,
+            ) {
+                signers.push(qs.pubkey.0);
+            }
+        }
+        signers
     }
 
     /// The roster the SERVER claims, for a caller that has none configured.

@@ -823,7 +823,7 @@ mod fetch_tests {
 // federation's finalized ledger root is the other half: it is authenticated by the
 // node's HYBRID finalization quorum (`node/src/finalization_votes.rs` —
 // `FinalizationVote` carries BOTH an ed25519 AND an ML-DSA-65 (FIPS 204) signature
-// over `dregg-finalization-vote-v3 ‖ block_id ‖ merkle_root`, and a vote counts only
+// over `dregg-finalization-vote-v4 ‖ block_id ‖ merkle_root ‖ framed(receipt_stream_root)`, and a vote counts only
 // when BOTH verify), so the root is POST-QUANTUM unforgeable — but a within-threshold
 // proposer can grind block content to steer `H(root)`, so it is not on its own
 // bias-resistant.
@@ -1019,8 +1019,8 @@ impl std::error::Error for RootError {}
 /// (`node/src/finalization_votes.rs::VoteCollector::assembled_quorum`) and the persistence
 /// layer stores as an attested root's `finalization_quorum`: per distinct signer, the
 /// ed25519 signature AND the ML-DSA-65 signature over the ONE canonical preimage
-/// `dregg-finalization-vote-v3 ‖ block_id ‖ merkle_root`. Nothing is re-signed here — the
-/// day seed folds the federation's own finality evidence.
+/// `dregg-finalization-vote-v4 ‖ block_id ‖ merkle_root ‖ framed(receipt_stream_root)`.
+/// Nothing is re-signed here — the day seed folds the federation's own finality evidence.
 ///
 /// `fixed_at_unix` is WHEN the root was fixed (the finalized block's time, as observed /
 /// recorded by the party that pinned this root). It is the ordering witness: the root must
@@ -1035,8 +1035,14 @@ pub struct FinalizedRootAttestation {
     pub merkle_root: [u8; 32],
     /// When this root was FIXED (unix seconds) — the ordering witness (see the type docs).
     pub fixed_at_unix: u64,
-    /// The hybrid finalization quorum over `(block_id, merkle_root)`: per distinct signer,
-    /// the ed25519 half + the ML-DSA-65 half + the signer's (pinned) ML-DSA public key.
+    /// The `receipt_stream_root` the SAME quorum signed (v4) — the per-turn value the vote
+    /// preimage absorbs. `None` for a finalized block that carried no turn. It must be the
+    /// value the committee actually voted over: it is part of the preimage, so a wrong one
+    /// simply refuses the quorum.
+    pub receipt_stream_root: Option<[u8; 32]>,
+    /// The hybrid finalization quorum over
+    /// `(block_id, merkle_root, receipt_stream_root)`: per distinct signer, the ed25519 half +
+    /// the ML-DSA-65 half + the signer's (pinned) ML-DSA public key.
     pub quorum: Vec<HybridQuorumSig>,
 }
 
@@ -1046,7 +1052,11 @@ impl FinalizedRootAttestation {
     /// node's `FinalizationVote` and the persisted restart anchor both use. Re-derived here,
     /// never re-defined.
     pub fn signing_message(&self) -> Vec<u8> {
-        dregg_types::finalization_vote_signing_message(&self.block_id, &self.merkle_root)
+        dregg_types::finalization_vote_signing_message(
+            &self.block_id,
+            &self.merkle_root,
+            self.receipt_stream_root,
+        )
     }
 
     /// **Verify the PQ half.** Re-check the finalized root's HYBRID quorum against the
@@ -1294,7 +1304,8 @@ mod hybrid_tests {
     /// a genuine ed25519 signature AND a genuine ML-DSA-65 signature over the same bytes.
     fn hybrid_sig(seed: u8, block_id: &[u8; 32], merkle_root: &[u8; 32]) -> HybridQuorumSig {
         let (sk, pq_sk, ed_pk, pq_pk) = member(seed);
-        let msg = dregg_types::finalization_vote_signing_message(block_id, merkle_root);
+        let msg =
+            dregg_types::finalization_vote_signing_message(block_id, merkle_root, STREAM_ROOT);
         HybridQuorumSig {
             pubkey: ed_pk,
             signature: dregg_types::Signature(sk.sign(&msg).to_bytes()),
@@ -1306,12 +1317,16 @@ mod hybrid_tests {
     const BLOCK_ID: [u8; 32] = [0xB1; 32];
     const ROOT_A: [u8; 32] = [0x5A; 32];
     const ROOT_B: [u8; 32] = [0x77; 32];
+    /// The per-turn value the v4 vote preimage absorbs. Every fixture signs over it, so the
+    /// beacon's quorum evidence is the same shape the node's committee actually produces.
+    const STREAM_ROOT: Option<[u8; 32]> = Some([0x3D; 32]);
 
     /// A root fixed comfortably before the pinned round matured (the honest ordering).
     fn attestation(seeds: &[u8], root: [u8; 32]) -> FinalizedRootAttestation {
         FinalizedRootAttestation {
             block_id: BLOCK_ID,
             merkle_root: root,
+            receipt_stream_root: STREAM_ROOT,
             // One hour before the pinned fallback round matured.
             fixed_at_unix: quicknet_round_matures_at(PINNED_FALLBACK_ROUND) - 3_600,
             quorum: seeds
@@ -1423,7 +1438,7 @@ mod hybrid_tests {
 
         // The adversary's own (unenrolled) ML-DSA keypair, signing the real message.
         let (adv_pk, adv_sk) = MlDsaSigningKey::from_seed(&[0xEE; 32]);
-        let msg = dregg_types::finalization_vote_signing_message(&BLOCK_ID, &ROOT_A);
+        let msg = dregg_types::finalization_vote_signing_message(&BLOCK_ID, &ROOT_A, STREAM_ROOT);
         let adv_sig = adv_sk.sign(&msg).expect("ML-DSA hedged signing");
         assert!(
             adv_pk.verify(&msg, &adv_sig),

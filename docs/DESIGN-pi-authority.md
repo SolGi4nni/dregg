@@ -72,7 +72,7 @@ FN = full node (`verify_one_cohort_run`). LC = the wire verifiers
 | **`CUSTOM_EFFECT_COUNT`** | `28` | **0/56** | **R** | **T** | **DELETE** — its named enforcement reads no PI (§4) |
 | **`APPROVED_HANDOFFS`** | `29..33` | **0/56** | **R** (zero sentinel) | **T** | **DELETE** — `ValidateHandoff` is not an effect |
 | **`TURN_HASH`** | **`33..37`** | **0/56** | **R, and the reconstructed value is `[0,0,0,0]`** | **caller-anchored comparison** against `expected_turn_hash` | **stay transcript-only.** See §3 |
-| **`EFFECTS_HASH_GLOBAL`** | `37..41` | **0/56** | **R** (zero) | **nobody** | **DELETE** from this window; the real object lives at `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE` |
+| **`EFFECTS_HASH_GLOBAL`** | `37..41` | **0/56** | **R** (zero) | ⚑ **the bilateral aggregation** — forced + pinned, see below | ⚑ **KEEP — this row is RETRACTED 2026-08-07.** It read *"**nobody** · DELETE from this window; the real object lives at `bilateral_aggregation_air::OUTER_EFFECTS_HASH_GLOBAL_BASE`."* The outer slot is **sourced from this window**: `SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE = 33`, `sched::EFFECTS_HASH_GLOBAL_BASE = 4` ⇒ v1 `37..40`, host-projected by `schedule_block_from_inner_pi` into `dregg-bilateral-aggregation-v3` cols 4..7, which the **emitted bytes** show forced by four `window_gate`s and pinned first+last to outer `PI[4..7]`. Same object, two ends of a projection. `docs/PI-DISPOSITION.md` §6 carries the full retraction. |
 | `ACTOR_NONCE` | `41` | **47/56**, pinned to `STATE_BEFORE_BASE + state::NONCE` | **R + A** | **A**, and the column is *forced* by the v1 machinery | **the model.** This is what a bound slot looks like |
 | `rot::OLD/NEW_COMMIT` | `42`,`43` | 0/56 on wide | **R** (overridden from stored/claimed) | carried by the wide 16 | keep as vestigial or compact away |
 | `rot::COMMITTED_HEIGHT` | `44` | **56/56** | **R + A** (overridden from `cell_committed_height`) | **A** | keep |
@@ -252,20 +252,130 @@ VK, no re-emit, no re-genesis, no Lean."*
 It holds *an* 8-felt per-turn pair — `TurnReceipt::{pre,post}_state_hash`, which
 `dregg_turn::state_commit` made the chip 8-felt consensus commitment and which the attestation's
 `receipt_stream_root` transitively covers. **It is a different commitment from the one the proof
-publishes**, and two causes are independently sufficient
-(`turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`):
+publishes**, and the causes are independently sufficient
+(`turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`).
 
-* **`iroot`** — `state_commit::consensus_ctx` pins `rotation_witness::empty_iroot()` deliberately
-  (a receipt cannot bind a commitment its own hash is computed from); the proof's witness folds the
-  real receipt chain (`turn_proving::rotation_witness_for_self_sovereign_with_root` threads
-  `[receipt.receipt_hash()]`).
-* **`cells_root`** — `consensus_ctx` folds the WHOLE ledger; `rotation_witness_for_self_sovereign_impl`
-  folds a single-cell `ctx_ledger` holding only the actor.
+### ⚠⚠ Re-measured 2026-08-07: there are FOUR causes, not two — and the price is the opposite way round
 
-So serving the receipt's pair as `expected_old_commit` would **refuse every honest proof**. The
-endpoint teeth stay reflexive, and closing them is not an API field — it is aligning the executor's
-and the prover's `V9RotationContext` to one commit per turn, which moves what the committee signs
-*and* what the proof publishes. Real work, correctly the next item, and **undone, not terminal**.
+This section named two causes. So did `federation/src/turn_anchor.rs`, `node/src/api.rs`'s
+`/anchor` docblock, and `discord-bot`'s `unbound_claims`. The two that were missing are the ones
+that decide what the fix costs.
+
+| # | field of `V9RotationContext` | consensus side | proof side | converges by moving |
+|---|---|---|---|---|
+| 1 | `cells_root` | the WHOLE ledger | a single-cell `ctx_ledger` holding only the actor | the **prover** — free |
+| 2 | `iroot` | `empty_iroot()`, pinned | **three** different logs across four producers | the **prover** — free |
+| 3 | `revoked_root` | the executor's LIVE `note_revoked.root8()` | `empty_revoked_root_8()` **unconditionally** — no parameter exists to thread it | the **prover** — free |
+| 4 | `material` | `RotationCarrierMaterial::default()` | a factory turn's installed `child_vk` on the AFTER block | ⚑ the **consensus side** — a re-genesis |
+
+⚠ **And "the proof folds the real receipt chain" is true of exactly one of four producers.** That
+one is `sdk::cipherclerk::prove_sovereign_turn_rotated` (`:5638`) — the *ledgerless* path, whose
+artifacts `/api/turn/{hash}/proof` never serves, because the endpoint serves what the commit path
+persisted and the commit path proves with its own witness. What the live producers actually fold:
+
+| producer | log |
+|---|---|
+| `blocklace_sync` non-spend + bearer arms (`:9239`, `:9319`) | `[receipt.receipt_hash()]` — a ONE-entry log holding this turn's receipt |
+| `turn_proving::rotation_witness_for_cap_less_turn` (`:1298`) | `[turn_hash]` — the turn hash, not a receipt hash |
+| `api.rs` HTTP witness route (`:4292`) | `[receipt_hash]` |
+| `cipherclerk` (`:5638`) | the agent's WHOLE prior receipt chain |
+
+So `iroot` on the proof side is not a commitment to a history. It is a **free witness felt each
+producer fills differently**, and "the proof's published pair" is not one value across the tree.
+
+### ⚑ Why it is free: the AIR gates none of it
+
+`EffectVmEmitRotationV3.cellsRootGroupCol`'s own docstring
+(`metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean:2145-2155`): *"the
+createCell/factory/spawn trace generator still OVERWRITES the whole group with its own in-circuit
+accounts tree, which is the object the two map-ops below actually gate. **Only those three members
+constrain this group; on every other member the lanes are absorbed by `wireCommitR` and gated by
+nothing.**"* `B_IROOT` is absorbed last and gated by nothing on any member.
+`trace_rotated::fill_block` copies both straight out of the producer witness.
+
+On **54 of the 57** registry members these limbs are free witness values. Converging causes 1–3 by
+moving the **prover** therefore costs **no VK rotation, no descriptor re-emit and no re-genesis** —
+the signed anchor does not move at all, because only the prover's side changes. That is the reverse
+of this document's original estimate ("it moves what the committee signs *and* what the proof
+publishes"), which was wrong in the expensive direction.
+
+Cause 4 is the real flag day and it is small: `factoryV3Carriers`
+(`EffectVmEmitRotationV3.lean:6553`) `.piBinding`s the child-VK octet as PI 47..54 **precisely to
+expose the installed child VK**, and two producers (`turn_proving.rs:732`, `:885`) exist to fill
+it — so zeroing it on the prover to force agreement would blank a published surface rather than
+align one. (ⓘ NOT established, and not to be relayed as if it were: whether any verifier ANCHORS
+those PIs from trusted state. `turn/src/executor/proof_verify.rs` constructs no
+`RotationCarrierMaterial`; if its reconstruction reaches the octet it does so through the trace
+generators, and that routing was not traced.) `consensus_ctx` has to learn to carry the material
+instead — which moves every factory turn's `post_state_hash`. **`CANONICAL_STATE_SCHEMA_EPOCH`
+23 → 24, re-genesis, no VK, no re-emit, no `VK-REGEN-LOG` row** (nothing is re-emitted). It is also
+strictly *more* binding: the anchor starts committing to the VK the turn installed.
+
+### The verdict: converge, with the prover moving three fields and the anchor moving one
+
+The consensus context is the one that is *defined*: reproducible by every node from committed
+state, and deliberately non-circular in `iroot` (a receipt cannot bind a commitment its own hash is
+computed from). The proving context is not one context at all — it is five ad-hoc assemblies, none
+of which any verifier reconstructs or compares against anything. **Nothing establishes what the
+proving context needs, because nothing reads it.** So the direction is settled: the prover adopts
+the executor's context.
+
+The surface that makes this a one-argument change rather than a rewrite is
+`dregg_turn::rotation_witness::produce_in_ctx` (landed 2026-08-07): it takes a `V9RotationContext`
+instead of assembling one from loose parts, and `produce` now delegates to it — deleting the
+170-line limb-fill twin that had stood beside `cell::commitment::compute_rotated_pre_limbs`, with
+`the_two_producers_are_one_body` as the standing check that they had not already drifted.
+
+⚠ **One structural boundary the convergence does NOT cross.** A *ledgerless* producer cannot
+compute a whole-ledger `cells_root`. `sdk::cipherclerk` is exactly that, so its artifacts cannot
+publish the consensus anchor. This is not a defect to fix; it is what "sovereign, ledgerless" means.
+It bounds the claim: the pair a stranger checks is the pair a **node** proved, and the endpoint
+must refuse rather than serve a bindable pair for any artifact minted elsewhere.
+
+⚠ **And createCell / spawn / factory need one more thing.** Those three members' in-circuit
+accounts map-op is fed `before_accounts = &[]` in production, so their published `cells_root` is
+already an empty-tree root plus one insert — not a function of the real cell set. Under a
+whole-ledger `cells_root` they go UNSAT unless the real leaf set is threaded. That is its own item
+(and its own pre-existing wound: the accounts grow-gate proves membership in a tree that is not the
+ledger).
+
+### ⚑ It also decides the parked receipt-octet cutover, rather than merely conflicting with it
+
+`rotation_witness::IROOT_LANES_1_TO_7_UNABSORBED` prices a cutover (block extent 196, the wide
+final chain site 11 → 16, a VK rotation, a schema-epoch bump) against the claim that lane 0's
+2^15.45 collision *reaches the signed anchor*. Measured 2026-08-07, it does not:
+
+* `consensus_ctx` pins `empty_iroot()`, so the live signed anchor contains no receipt log at all.
+* The cost site `state_commit`'s residual named — *"the sovereign proof-carrying path, where
+  `cipherclerk` folds the real chain in and `executor::atomic.rs:992-993` writes the resulting
+  commitments straight into `TurnReceipt::{pre,post}_state_hash`"* — is **dead code**.
+  `build_atomic_per_cell_receipt`'s only caller is `execute_atomic_sovereign`, whose only callers
+  are `#[cfg(test)]`.
+* `the_residual_is_a_live_exhibited_break_at_head` builds its own synthetic limb vector rather than
+  calling `consensus_state_commitment`, so what it exhibits is a collision of the chain *function*,
+  not of a value any committee has signed.
+
+So the two pieces of work are not independent, and the `iroot` direction decides the cutover:
+
+* **Prover adopts `empty_iroot()`** (the convergence above) ⇒ `iroot` is a constant on every live
+  path, lanes 1..7 of a constant carry nothing, and the cutover should be **RETIRED**, not landed.
+* **Anchor adopts a real receipt-chain fold** (the strictly-more-binding direction, a re-genesis)
+  ⇒ the cutover becomes a hard **PREREQUISITE**, because landing the fold first would put a
+  2^15.45-collision component inside the signed anchor for the first time.
+
+Half-landing either is the failure. The parked patch at `…/scratchpad/receipt-octet-196-lean.patch`
+must not be applied until that fork is taken, and `the_residual_is_a_gate_not_a_note` (green,
+keyed on `ROTATED_PADS.is_empty()`) should stay exactly as it is meanwhile — it is not relaxed by
+any of this.
+
+### Status
+
+`produce_in_ctx` + the four-cause measurement + these corrections are landed. The context threading
+(`turn_proving`'s builders take the executor's two contexts; `blocklace_sync` captures the
+pre-execution accumulator roots beside `pre_ledger`; `consensus_ctx` gains the material; the
+endpoint publishes the pair; `check_proof_hex` passes it) is **not** landed — it crosses
+`node/src/blocklace_sync.rs`, which a sibling lane holds. Until it lands the endpoint teeth stay
+reflexive, and that must keep being reported as **undone work, not a theorem**.
 
 **What DID land (2026-08-06):** `GET /api/turn/{hash}/anchor`, serving
 `dregg_federation::TurnAnchorV1` — the receipt whole, its chain position, and the attestation with
@@ -275,15 +385,27 @@ requires one and refuses without it; a proof of turn B under turn A's anchor is 
 (`node/tests/turn_anchor_binds_a_proof_to_the_committee.rs`). No VK, no re-emit, no re-genesis, no
 Lean — that part of the original estimate held.
 
-⚠ **And a second correction, to a premise this document did not state but relied on.** "The
-committee signed it" is weaker than it reads. `AttestedRoot::quorum_signatures` — the ONLY preimage
-that absorbs `receipt_stream_root`, hence the only one that reaches a receipt — receives exactly one
-push on the live path, the local node's (`blocklace_sync.rs:9741`); there is no gossip merge
-(`PeerMessage::AttestedRootUpdate` has zero handlers). The `>= threshold` hybrid quorum that DOES
-assemble signs `dregg-finalization-vote-v3 || block_id || merkle_root` and covers no per-turn value
-at all. **No `>= threshold` committee signature anywhere in this tree covers a turn hash, a receipt
-hash, or a receipt's state commit.** `TurnAnchorV1::verify` therefore REFUSES on any federation with
-`threshold > 1` rather than reporting a caveat. The fix is one field in the vote preimage
+⚑ **And a second correction, to a premise this document did not state but relied on — RAISED HERE,
+CLOSED 2026-08-07 (schema epoch 24).** "The committee signed it" WAS weaker than it read.
+`AttestedRoot::quorum_signatures` — then the ONLY preimage absorbing `receipt_stream_root`, hence
+the only one reaching a receipt — receives exactly one push on the live path, the local node's;
+there is no gossip merge (`PeerMessage::AttestedRootUpdate` has zero handlers). The `>= threshold`
+hybrid quorum that DOES assemble signed `dregg-finalization-vote-v3 || block_id || merkle_root` and
+covered no per-turn value at all. **No `>= threshold` committee signature anywhere in this tree
+covered a turn hash, a receipt hash, or a receipt's state commit**, so `TurnAnchorV1::verify`
+REFUSED on any federation with `threshold > 1` rather than reporting a caveat.
+
+The fix named below is DONE: the vote preimage is now
+`dregg-finalization-vote-v4 || block_id || merkle_root || framed(receipt_stream_root)`, quorum
+agreement is over the pair, the Lean twin moved with it
+(`FinalizationQuorum.quorum_binds_snd`, `FinalityGate.quorum_gate_binds_receipt_stream`, wire
+`VOTE := signer:ledgerRoot:streamRoot`), and `TurnAnchorV1::verify` counts the union of both legs.
+Exhibited refused-then-accepted at `threshold = 3` in
+`node/tests/committee_signature_covers_a_per_turn_value.rs`. It cost a schema epoch and a devnet
+re-genesis and NO VK rotation — see the `epoch:24` row of `docs/VK-REGEN-LOG.md`. The estimate
+below is retained as written because it was accurate.
+
+The fix is one field in the vote preimage
 (`finalization_vote_signing_message` v3 → v4, carrying `receipt_stream_root`); the emitter already
 runs *after* `execute_finalized_turn` returns, with the durable attested root readable
 (`blocklace_sync.rs:6044-6077` re-reads the live ledger instead). It also touches
@@ -322,9 +444,25 @@ already fixed once for the SDK path. Do this first regardless of anything else i
 
 `APPROVED_HANDOFFS` (retired effect), `CURRENT_BLOCK_HEIGHT` (superseded by the pinned+anchored PI
 44), `MAX_CUSTOM_EFFECTS` (the reconstruction publishes the library default, not the cell's),
-`EFFECTS_HASH_GLOBAL` (zero on every deployed leg, no reader), `CUSTOM_EFFECT_COUNT`. That is
-**11 of the 39 unpinned felts** on `transferVmDescriptor2R24` (unpinned set measured:
-`1..7, 9..15, 16..19, 24..40, 42, 43, 50, 51`; the 11 are `26, 27, 28, 29..32, 37..40`).
+~~`EFFECTS_HASH_GLOBAL` (zero on every deployed leg, no reader)~~, `CUSTOM_EFFECT_COUNT`. That is
+~~**11**~~ **7 of the 39 unpinned felts** on `transferVmDescriptor2R24` (unpinned set measured:
+`1..7, 9..15, 16..19, 24..40, 42, 43, 50, 51`; the 7 are `26, 27, 28, 29..32`).
+
+⚑ **`EFFECTS_HASH_GLOBAL` (37..40) was struck from this list on 2026-08-07 and it is the most
+useful line in the section.** "Zero on every deployed leg, no reader" was measured off the two
+rotation registries, where it is true — and it is not what "no reader" means. Those four felts are
+`sched::EFFECTS_HASH_GLOBAL` inside the 49-felt bilateral-schedule contract window `inner_pi[33, 82)`,
+which `schedule_block_from_inner_pi` projects into the deployed `dregg-bilateral-aggregation-v3`,
+where the emitted bytes force them (4 `window_gate` transitions) and pin them first+last to that
+descriptor's outer `PI[4..7]` — the algebraic cross-cell agreement §3's `rEffectsGlobal` reason said
+"did not land". Deleting them is a second VK rotation AND a weakened check. The full retraction, the
+evidence, and the corrected price are in `docs/PI-DISPOSITION.md` §6; `scripts/pi_disposition_census.py`
+now reports a `proj-read` column and refuses (exit 1) if the projection stops holding.
+
+ⓘ `CUSTOM_EFFECT_COUNT` also has four off-circuit readers this section did not name — it is the
+length prefix of the custom-proof array (`atomic.rs:1159`/`:1518`, `trace.rs:1689`,
+`preflight/src/checks/effect_vm.rs:342`). Its deletion still stands: the length is derivable from the
+vector the verifier already holds, which is strictly stronger than a felt the prover wrote.
 
 `CUSTOM_EFFECT_COUNT` deserves its own line. `turn/src/executor/proof_verify.rs:236` states the
 off-circuit dispatch count "must equal the in-circuit committed Custom-effect count

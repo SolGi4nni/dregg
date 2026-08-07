@@ -59,6 +59,36 @@ pub struct QuorumSignature {
     pub pq_signature: Vec<u8>,
 }
 
+impl QuorumSignature {
+    /// **The ONE production mapping** from a stored finalization-vote signature
+    /// to the wire [`dregg_types::HybridQuorumSig`] carried on an
+    /// `AttestedRoot::hybrid_quorum`.
+    ///
+    /// ⚑ It is a named function rather than three inline `.map(|qs| …)` closures
+    /// because the field it feeds was, until this change, checked by one
+    /// consumer against a preimage these signatures were never over. A test that
+    /// assembles the wire quorum by hand is a test of the test; every producer
+    /// (`node/src/blocklace_sync.rs` on both finalized paths, `node/src/api.rs`'s
+    /// anchor endpoint) and every exhibit now goes through here, so a root built
+    /// in a test is byte-for-byte the shape the node builds.
+    pub fn to_hybrid(&self) -> dregg_types::HybridQuorumSig {
+        dregg_types::HybridQuorumSig {
+            pubkey: self.voter,
+            signature: self.signature,
+            ml_dsa_pubkey: self.ml_dsa_pubkey.clone(),
+            pq_signature: self.pq_signature.clone(),
+        }
+    }
+}
+
+/// Map a whole assembled finalization quorum onto the wire `hybrid_quorum`.
+/// See [`QuorumSignature::to_hybrid`] for why this is not an inline closure.
+pub fn hybrid_quorum_from_finalization_quorum(
+    quorum: &[QuorumSignature],
+) -> Vec<dregg_types::HybridQuorumSig> {
+    quorum.iter().map(QuorumSignature::to_hybrid).collect()
+}
+
 /// A stored attested root, capturing the federation's consensus state at a
 /// particular block height.
 ///
@@ -102,8 +132,17 @@ pub struct StoredAttestedRoot {
     pub receipt_stream_root: Option<[u8; 32]>,
     /// N3 committee-restart fix (Fix B): the assembled quorum of committee
     /// **finalization votes** over this root's `(blocklace_block_id,
-    /// merkle_root)` — each pair a distinct committee member's Ed25519 signature
-    /// over [`dregg_types::finalization_vote_signing_message`].
+    /// merkle_root, receipt_stream_root)` — each a distinct committee member's
+    /// hybrid signature over
+    /// [`dregg_types::finalization_vote_signing_message`] (v4).
+    ///
+    /// ⚑ **v4 is why this record is now more than a restart anchor.** Through v3
+    /// the vote preimage was `(block_id, merkle_root)` only — a whole-ledger
+    /// BLAKE3 image and a block id, covering no value derived from the TURN the
+    /// block carried. Absorbing `receipt_stream_root` makes these same
+    /// signatures the committee's statement about a per-turn value, which is
+    /// what `dregg_federation::TurnAnchorV1` needs and what it refused for
+    /// lack of on any federation with `threshold > 1`.
     ///
     /// This is the record that lets a FULL-MODE committee node restart cleanly.
     /// `quorum_signatures` carries the local node's signature over the full
@@ -235,7 +274,15 @@ impl StoredAttestedRoot {
         if ml_dsa_committee.len() != committee.len() {
             return false;
         }
-        let message = dregg_types::finalization_vote_signing_message(&block_id, &self.merkle_root);
+        // v4: the vote preimage absorbs THIS root's `receipt_stream_root`, so a
+        // quorum that re-anchors a restart is also a quorum over the receipts
+        // the anchored block committed — the restart anchor and the per-turn
+        // anchor are now the same signatures.
+        let message = dregg_types::finalization_vote_signing_message(
+            &block_id,
+            &self.merkle_root,
+            self.receipt_stream_root,
+        );
         let mut distinct: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
         for qs in &self.finalization_quorum {
             // Membership — and the voter's ENROLLED index.
@@ -316,8 +363,11 @@ impl StoredAttestedRoot {
         if ml_dsa_committee.len() == committee.len()
             && let Some(block_id) = self.blocklace_block_id
         {
-            let vote_msg =
-                dregg_types::finalization_vote_signing_message(&block_id, &self.merkle_root);
+            let vote_msg = dregg_types::finalization_vote_signing_message(
+                &block_id,
+                &self.merkle_root,
+                self.receipt_stream_root,
+            );
             for qs in &self.finalization_quorum {
                 // Membership — and the voter's enrolled index.
                 let Some(idx) = committee.iter().position(|c| c == &qs.voter) else {

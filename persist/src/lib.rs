@@ -94,7 +94,7 @@ pub use faithful_note_root_history::{
     FaithfulNoteRootExpectationV1, FaithfulNoteRootHistoryError, FaithfulNoteRootHistoryV1,
     FaithfulNoteRootRecordV1, plan_faithful_note_root_transition_v1,
 };
-pub use federation::{QuorumSignature, StoredAttestedRoot};
+pub use federation::{QuorumSignature, StoredAttestedRoot, hybrid_quorum_from_finalization_quorum};
 pub use finalized_faithful_spend::{FinalizedFaithfulSpend, FinalizedFaithfulSpendInput};
 pub use finalized_receipt_core_v1::DurableFinalizedReceiptCoreHeadV1;
 pub use image_builder::{
@@ -776,7 +776,41 @@ impl PersistentStore {
     /// `PREDICATE_SYM` of the deployed `predicate-arith*` goldens, and
     /// `sandstorm_bridge::cell::{var_addr, var_value_felt}` (whose whole `/var` ROOT is one felt,
     /// so widening only the leaves would be a containment below the bar).
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 23;
+    ///
+    /// ## Epoch 24 — the finalization vote covers a per-turn value (2026-08-07)
+    ///
+    /// `dregg_types::finalization_vote_signing_message` moved v3 → v4 and now absorbs the
+    /// finalized block's `receipt_stream_root`:
+    ///
+    /// ```text
+    ///   v3:  "dregg-finalization-vote-v3" ‖ block_id ‖ merkle_root
+    ///   v4:  "dregg-finalization-vote-v4" ‖ block_id ‖ merkle_root ‖ 0x00 | 0x01‖<32 bytes>
+    /// ```
+    ///
+    /// **WHY, in one line:** no committee signature anywhere in this tree covered a per-turn
+    /// value. The only preimage that absorbed `receipt_stream_root`
+    /// (`AttestedRoot::signing_message`) receives exactly ONE push — the local node's — because
+    /// `PeerMessage::AttestedRootUpdate` has zero handlers, while the quorum that DOES assemble
+    /// signed a block id and a whole-ledger BLAKE3 image. So `dregg_federation::TurnAnchorV1`
+    /// refused on every federation with `threshold > 1`.
+    ///
+    /// **WHAT REFUSES TO LOAD / WHAT MUST BE RE-GENESISED.** Every persisted
+    /// `StoredAttestedRoot::finalization_quorum` signed under v3 is now a signature over a
+    /// message no verifier reconstructs: `verify_finalization_quorum` REFUSES it (it does not
+    /// reinterpret it), so an epoch-23 store's committee restart anchor fails closed and the
+    /// node refuses to start on it. A store stamped 23 is refused by
+    /// `enforce_canonical_state_schema_epoch` rather than migrated — re-genesis. The gossiped
+    /// `FinalizationVote` wire also gained a field (postcard is non-self-describing), so a
+    /// mixed-version mesh does not merely fail to agree, it fails to decode: **every node
+    /// upgrades together, which is what a flag day means here.** The verified Lean quorum wire
+    /// moved in the same commit (`VOTE := signer:ledgerRoot:streamRoot`); a v3 wire is `ERR`,
+    /// fail-closed.
+    ///
+    /// **WHAT DOES *NOT* MOVE:** no VK rotates, no descriptor is re-emitted, no PI count
+    /// changes, no chip arity moves. `receipt_stream_root` was already a field of both
+    /// `AttestedRoot` and `StoredAttestedRoot` and is already in the attested-root preimage
+    /// (v4, #80) — this epoch changes WHICH SIGNATURES cover it, not what it is.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 24;
 
     /// Open a persistent store backed by a file on disk.
     ///

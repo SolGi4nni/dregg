@@ -81,6 +81,10 @@ fn signed_vote(seed: u8, blk: BlockId) -> FinalizationVote {
         blk,
         FinalityLevel::Ordered,
         [0x5A; 32],
+        // v4: the per-turn value the vote also binds. Fixed here — this harness
+        // is about committee membership across an epoch boundary, and members
+        // that disagreed on it would (correctly) form no quorum at all.
+        Some([0x3D; 32]),
     )
     .expect("hedged ML-DSA signing fails only on an OS-entropy failure")
 }

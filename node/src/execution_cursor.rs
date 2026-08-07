@@ -64,6 +64,16 @@ pub enum FinalizedExecutionOutcome {
     Committed {
         block_id: BlockId,
         durable_ordinal: u64,
+        /// The `receipt_stream_root` of the attested root this commit wrote —
+        /// `merkle_root_of_receipt_hashes` over the receipts this block's turn
+        /// produced.
+        ///
+        /// ⚑ It rides on the OUTCOME rather than being re-read from the store at
+        /// the vote site, because the finalization vote must bind exactly the
+        /// value THIS commit attested. A store re-read is a second derivation of
+        /// the same quantity, and two derivations of a value a committee must
+        /// agree on byte-for-byte is how a quorum silently stops forming.
+        receipt_stream_root: Option<[u8; 32]>,
     },
     DeterministicallyRejected {
         block_id: BlockId,
@@ -456,6 +466,7 @@ mod tests {
         let committed = FinalizedExecutionOutcome::Committed {
             block_id: BlockId([1; 32]),
             durable_ordinal: 7,
+            receipt_stream_root: Some([0x3D; 32]),
         };
         let rejected = FinalizedExecutionOutcome::DeterministicallyRejected {
             block_id: BlockId([2; 32]),

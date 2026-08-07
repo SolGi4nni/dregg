@@ -138,14 +138,26 @@ groups (`node/src/api.rs:1627`):
   executor's and the prover's `V9RotationContext`), priced in
   `docs/DESIGN-pi-authority.md`.
 
-  ⚠ **How much committee is actually behind it.** `AttestedRoot::quorum_signatures` —
-  the only preimage that covers `receipt_stream_root` — receives exactly ONE push on the
-  live path, the local node's (`node/src/blocklace_sync.rs:9741`). So the anchor verifies
-  on a threshold-1 federation and **refuses on a larger committee**. The `>= threshold`
-  hybrid vote quorum signs `dregg-finalization-vote-v3 || block_id || merkle_root` and
-  reaches no receipt, so it cannot stand in; `TurnAnchorV1::verify` reports it
-  (`position_quorum_met`) and never gates on it. Closing this means putting
-  `receipt_stream_root` into the finalization-vote preimage.
+  ⚑ **How much committee is actually behind it — CLOSED 2026-08-07 (schema epoch 24).**
+  `AttestedRoot::quorum_signatures` receives exactly ONE push on the live path, the local
+  node's, because `PeerMessage::AttestedRootUpdate` has zero handlers. Until this change
+  that was the only preimage covering `receipt_stream_root`, so the anchor verified on a
+  threshold-1 federation and **refused on a larger committee**: the `>= threshold` hybrid
+  vote quorum signed `dregg-finalization-vote-v3 || block_id || merkle_root` and reached
+  no receipt.
+
+  The finalization-vote preimage is now
+  `dregg-finalization-vote-v4 || block_id || merkle_root || framed(receipt_stream_root)`,
+  so the quorum a real committee assembles DOES reach the receipt. `TurnAnchorV1::verify`
+  counts the UNION of distinct committee members across both legs — `quorum_signatures`
+  over `AttestedRoot::signing_message()` and `hybrid_quorum` over
+  `AttestedRoot::hybrid_quorum_message()` — and both preimages bind the same
+  `(block_id, merkle_root, receipt_stream_root)` of the same root. `position_quorum_met`
+  still reports which leg carried it, because "the committee's cross-node quorum" and
+  "this node's own attestation" are different facts and a holder should see which one it
+  got. A federation whose vote quorum has not yet converged still refuses, by name.
+  Exhibited end to end in
+  `node/tests/committee_signature_covers_a_per_turn_value.rs`.
 - **protected_routes** — gated by the `require_auth` middleware layer
   (`node/src/api.rs:1780`, layered at `:1884`): `/turn/submit`, `/turns/submit`,
   `/turns/submit-encrypted`, `/turns/aggregate`, `/ws`, `/cipherclerk/*`, `/intents*`,

@@ -16,6 +16,11 @@ mod starbridge_wasm_persistence;
 // Helpers
 // =============================================================================
 
+/// The per-turn value (v4) every finalization-quorum fixture in this module signs
+/// alongside the ledger root. A stored root must CARRY it or its quorum does not
+/// verify — that binding is the point of the v4 preimage.
+const FIXTURE_STREAM_ROOT: [u8; 32] = [0x3D; 32];
+
 fn new_store() -> PersistentStore {
     PersistentStore::open_in_memory().expect("failed to open in-memory store")
 }
@@ -702,7 +707,12 @@ fn committee_node_restarts_cleanly_with_finalization_quorum() {
     // attestation), and the >=threshold committee HYBRID finalization-vote
     // signatures over `(block_id, merkle_root)` fill `finalization_quorum` — each
     // carrying BOTH halves and the voter's ML-DSA pubkey (option (a)).
-    let vote_msg = dregg_types::finalization_vote_signing_message(&block_id, &merkle_root);
+    let receipt_stream_root = Some(FIXTURE_STREAM_ROOT);
+    let vote_msg = dregg_types::finalization_vote_signing_message(
+        &block_id,
+        &merkle_root,
+        receipt_stream_root,
+    );
     let hybrid_quorum = |msg: &[u8]| -> Vec<QuorumSignature> {
         sks.iter()
             .zip(pqs.iter())
@@ -742,7 +752,7 @@ fn committee_node_restarts_cleanly_with_finalization_quorum() {
                     threshold_qc: None,
                     threshold: 3,
                     federation_id: dregg_types::FederationId::PLACEHOLDER,
-                    receipt_stream_root: None,
+                    receipt_stream_root,
                     finalization_quorum: Vec::new(),
                 }
                 .signing_message(),
@@ -751,7 +761,7 @@ fn committee_node_restarts_cleanly_with_finalization_quorum() {
         threshold_qc: None,
         threshold: 3,
         federation_id: dregg_types::FederationId::PLACEHOLDER,
-        receipt_stream_root: None,
+        receipt_stream_root,
         finalization_quorum: Vec::new(),
     };
 
@@ -799,7 +809,11 @@ fn committee_node_restarts_cleanly_with_finalization_quorum() {
     );
 
     // ── SOUNDNESS: >=threshold signatures over a DIFFERENT root are refused. ──
-    let wrong_msg = dregg_types::finalization_vote_signing_message(&block_id, &[0x00; 32]);
+    let wrong_msg = dregg_types::finalization_vote_signing_message(
+        &block_id,
+        &[0x00; 32],
+        receipt_stream_root,
+    );
     let wrong_root_quorum = hybrid_quorum(&wrong_msg);
     let forged = StoredAttestedRoot {
         finalization_quorum: wrong_root_quorum,
@@ -893,7 +907,16 @@ fn hybrid_quorum_fixture() -> (
 
     let block_id = [0xCD; 32];
     let merkle_root = [0xAB; 32];
-    let vote_msg = dregg_types::finalization_vote_signing_message(&block_id, &merkle_root);
+    // v4: the vote preimage absorbs the finalized block's receipt stream, so the
+    // fixture's root must CARRY the value its quorum signed. A root whose
+    // `receipt_stream_root` differs from what the members voted over simply has
+    // no valid quorum — which is the binding, working.
+    let receipt_stream_root = Some(FIXTURE_STREAM_ROOT);
+    let vote_msg = dregg_types::finalization_vote_signing_message(
+        &block_id,
+        &merkle_root,
+        receipt_stream_root,
+    );
     let quorum: Vec<QuorumSignature> = sks
         .iter()
         .zip(pqs.iter())
@@ -917,7 +940,7 @@ fn hybrid_quorum_fixture() -> (
         threshold_qc: None,
         threshold: 3,
         federation_id: dregg_types::FederationId::PLACEHOLDER,
-        receipt_stream_root: None,
+        receipt_stream_root,
         finalization_quorum: quorum,
     };
     (committee, ml_dsa_committee, root, block_id, merkle_root)
@@ -1001,7 +1024,11 @@ fn quantum_forged_pq_key_is_rejected() {
     use dregg_federation::frost::MlDsaSigningKey;
 
     let (committee, ml_dsa_committee, root, block_id, merkle_root) = hybrid_quorum_fixture();
-    let vote_msg = dregg_types::finalization_vote_signing_message(&block_id, &merkle_root);
+    let vote_msg = dregg_types::finalization_vote_signing_message(
+        &block_id,
+        &merkle_root,
+        Some(FIXTURE_STREAM_ROOT),
+    );
 
     // The HONEST persisted quorum re-anchors (baseline).
     assert!(

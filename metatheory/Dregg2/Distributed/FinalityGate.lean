@@ -368,38 +368,55 @@ distinct roots cannot both reach quorum, since `2·superMajority(n) > n`). This 
 wire-in/wire-out `@[export]` so the collector computes its verdict FROM the verified rule itself — the
 tier-2 "no-drift" pattern (the Rust `VoteCollector` becomes the differential sibling, not the decider).
 
-`Sig` and `Root` are both `Nat` here: the collector interns signer pubkeys and root hashes to the
-small ids it feeds the gate (the same interning the finality gate uses for `AuthorId`/`BlockId`), and
-maps the decided root id back to its hash. The tally on the wire is the collector's ALREADY-DEDUPED
-`(signer, root)` list (first-write-wins per signer), so it matches `quorumRoot`'s well-formed input.
+`Sig` is `Nat` and `Root` is `Nat × Nat` here: the collector interns signer pubkeys, ledger-root
+hashes and receipt-stream-root hashes to the small ids it feeds the gate (the same interning the
+finality gate uses for `AuthorId`/`BlockId`), and maps the decided pair back to its hashes. The
+tally on the wire is the collector's ALREADY-DEDUPED `(signer, (ledgerRoot, streamRoot))` list
+(first-write-wins per signer), so it matches `quorumRoot`'s well-formed input.
+
+⚑ **v3 → v4: the ROOT is a PAIR.** Through v3 a vote agreed on the finalized ledger root alone,
+and the assembled quorum's signatures therefore covered no value derived from the TURN the block
+carried — `node/src/finalization_votes.rs`'s vote preimage was `domain ‖ block_id ‖ merkle_root`.
+The second component is the block's `receipt_stream_root`, and
+`FinalizationQuorum.quorum_binds_snd` is the theorem that a quorum on the pair IS a supermajority
+agreeing on that component. The wire moved with the Rust preimage, in the same commit: a v3 wire
+(`signer:root`) no longer parses and is `"ERR"`, fail-closed.
 
 ```
 INPUT  := "n=" Nat ";V=" (VOTE ("," VOTE)*)?      -- committee size ; the deduped tally
-VOTE   := Nat ":" Nat                              -- signer-id : root-id
-OUTPUT := "R=" Nat        -- the root a supermajority of distinct signers attested
-        | "NONE"          -- no root reached quorum
-        | "ERR"           -- malformed wire (fail-closed: NO root finalized)
+VOTE   := Nat ":" Nat ":" Nat                      -- signer-id : ledger-root-id : stream-root-id
+OUTPUT := "R=" Nat ":" Nat  -- the PAIR a supermajority of distinct signers attested
+        | "NONE"            -- no pair reached quorum
+        | "ERR"             -- malformed wire (fail-closed: NO root finalized)
 ```
 
 Co-located in the `FinalityGate` module ⇒ spliced + initialized on the SAME `DREGG_FINALIZE_GATE`
 define / `dregg_finalize_gate_present` cfg as `dregg_blocklace_finalize` and `dregg_tau_order`. -/
 
 open Dregg2.Distributed.FinalizationQuorum
-  (quorumRoot quorumRoot_sound quorum_no_conflict signersFor WellFormed)
+  (quorumRoot quorumRoot_sound quorum_no_conflict quorum_binds_snd signersFor signersForSnd
+   WellFormed)
 open Dregg2.Distributed.BlocklaceFinality (superMajority)
 
-/-- Parse one `VOTE` (`signer:root`) into a `(signer, root)` pair. Fail-closed. -/
-def parseVote? (s : String) : Option (Nat × Nat) :=
+/-- **The value a finalization quorum agrees on**: `(ledger-root id, receipt-stream-root id)`.
+The second component is the per-turn value — the Merkle root over the receipt hashes the
+finalized block's turn produced. -/
+abbrev QuorumRootPair : Type := Nat × Nat
+
+/-- Parse one `VOTE` (`signer:ledgerRoot:streamRoot`) into a `(signer, pair)`. Fail-closed — in
+particular a v3 two-field vote (`signer:root`) does NOT parse, so a stale wire can never be read
+as agreement on a receipt stream nobody signed. -/
+def parseVote? (s : String) : Option (Nat × QuorumRootPair) :=
   match s.splitOn ":" with
-  | [sigS, rootS] =>
-      match parseNat? sigS, parseNat? rootS with
-      | some sig, some root => some (sig, root)
-      | _, _ => none
+  | [sigS, ledgerS, streamS] =>
+      match parseNat? sigS, parseNat? ledgerS, parseNat? streamS with
+      | some sig, some ledger, some stream => some (sig, (ledger, stream))
+      | _, _, _ => none
   | _ => none
 
 /-- Parse the `V=` tally segment (a `,`-separated list of `VOTE`, or empty). Fail-closed: a single
 malformed vote makes the whole parse fail. -/
-def parseVotes? (s : String) : Option (List (Nat × Nat)) :=
+def parseVotes? (s : String) : Option (List (Nat × QuorumRootPair)) :=
   if s.isEmpty then some []
   else (s.splitOn ",").foldr
         (fun part acc => match acc, parseVote? part with
@@ -409,7 +426,7 @@ def parseVotes? (s : String) : Option (List (Nat × Nat)) :=
 
 /-- **`decodeQuorumWire`** — parse the full `INPUT` grammar into `(tally, committeeSize)`.
 Fail-closed on any deviation. -/
-def decodeQuorumWire (s : String) : Option (List (Nat × Nat) × Nat) := do
+def decodeQuorumWire (s : String) : Option (List (Nat × QuorumRootPair) × Nat) := do
   let rest ← stripReq? "n=" s
   match rest.splitOn ";" with
   | [nS, vSeg] =>
@@ -419,10 +436,10 @@ def decodeQuorumWire (s : String) : Option (List (Nat × Nat) × Nat) := do
       some (votes, n)
   | _ => none
 
-/-- **`encodeQuorumResult`** — encode the `Option Root` decision: a decided root as `"R=<root>"`, or
-the `"NONE"` sentinel when no root reached quorum. -/
-def encodeQuorumResult : Option Nat → String
-  | some r => "R=" ++ toString r
+/-- **`encodeQuorumResult`** — encode the `Option Root` decision: a decided pair as
+`"R=<ledger>:<stream>"`, or the `"NONE"` sentinel when no pair reached quorum. -/
+def encodeQuorumResult : Option QuorumRootPair → String
+  | some (ledger, stream) => "R=" ++ toString ledger ++ ":" ++ toString stream
   | none => "NONE"
 
 /-- **`quorumGate`** — THE GATE. Decode the wire `(tally, n)`, run the VERIFIED
@@ -445,14 +462,14 @@ def dregg_finalization_quorum (s : String) : String := quorumGate s
 distinguishes a malformed wire (`none`) from a well-formed one (`some res`), and the INNER `Option`
 is the verified `quorumRoot` verdict (`some root` / `none = no quorum`). This is the pre-encoding
 decision the export string is a faithful rendering of (see `quorum_gate_eq_encode_decision`). -/
-def quorumGateDecision (s : String) : Option (Option Nat) :=
+def quorumGateDecision (s : String) : Option (Option QuorumRootPair) :=
   (decodeQuorumWire s).map (fun p => quorumRoot p.1 p.2)
 
 /-- **`quorum_gate_decision_eq` (the gate string IS the verified decision, by construction).** For any
 wire that decodes to `(tally, n)`, the exported gate's output is the `encodeQuorumResult` of the
 verified `quorumRoot tally n`. So gating the collector on this export gates it, definitionally, on
 `FinalizationQuorum.quorumRoot`. -/
-theorem quorum_gate_decision_eq (s : String) (votes : List (Nat × Nat)) (n : Nat)
+theorem quorum_gate_decision_eq (s : String) (votes : List (Nat × QuorumRootPair)) (n : Nat)
     (h : decodeQuorumWire s = some (votes, n)) :
     quorumGate s = encodeQuorumResult (quorumRoot votes n) := by
   unfold quorumGate
@@ -471,8 +488,8 @@ theorem quorum_gate_eq_encode_decision (s : String) :
 
 /-- **`quorum_gate_decision_is_verified`.** On a well-formed wire the gate's decision IS exactly the
 verified `quorumRoot` of the decoded tally. -/
-theorem quorum_gate_decision_is_verified (s : String) (votes : List (Nat × Nat)) (n : Nat)
-    (h : decodeQuorumWire s = some (votes, n)) :
+theorem quorum_gate_decision_is_verified (s : String) (votes : List (Nat × QuorumRootPair))
+    (n : Nat) (h : decodeQuorumWire s = some (votes, n)) :
     quorumGateDecision s = some (quorumRoot votes n) := by
   unfold quorumGateDecision
   rw [h]
@@ -484,8 +501,8 @@ well-formed wire the gate consensus-attests root `r` IFF the verified `quorumRoo
 decision on this export IS gating it on `FinalizationQuorum.quorumRoot`, by construction. (The
 Option-level statement mirrors `gate_admits_iff_verified_finalizes`; the string encoding of the two
 sides is `#guard`-witnessed below, the module's TCB-codec discipline.) -/
-theorem quorum_gate_finalizes_iff_verified (s : String) (votes : List (Nat × Nat)) (n : Nat)
-    (h : decodeQuorumWire s = some (votes, n)) (r : Nat) :
+theorem quorum_gate_finalizes_iff_verified (s : String) (votes : List (Nat × QuorumRootPair))
+    (n : Nat) (h : decodeQuorumWire s = some (votes, n)) (r : QuorumRootPair) :
     quorumGateDecision s = some (some r) ↔ quorumRoot votes n = some r := by
   rw [quorum_gate_decision_is_verified s votes n h]
   simp
@@ -494,7 +511,8 @@ theorem quorum_gate_finalizes_iff_verified (s : String) (votes : List (Nat × Na
 a wire decoding to `(tally, n)`, then a genuine supermajority of DISTINCT signers attested `r` — never
 a fabricated quorum a restart would reject. Transfers `FinalizationQuorum.quorumRoot_sound` onto the
 gate's decision. -/
-theorem quorum_gate_sound (s : String) (votes : List (Nat × Nat)) (n : Nat) (r : Nat)
+theorem quorum_gate_sound (s : String) (votes : List (Nat × QuorumRootPair)) (n : Nat)
+    (r : QuorumRootPair)
     (hdec : decodeQuorumWire s = some (votes, n))
     (hgate : quorumGateDecision s = some (some r)) :
     superMajority n ≤ (signersFor votes r).length := by
@@ -503,12 +521,34 @@ theorem quorum_gate_sound (s : String) (votes : List (Nat × Nat)) (n : Nat) (r 
     exact Option.some.inj hgate
   exact quorumRoot_sound hr
 
+/-- **`quorum_gate_binds_receipt_stream` — THE PER-TURN TOOTH, on the gate.**
+
+If the exported gate consensus-attests the pair `(ledgerRoot, streamRoot)` on a wire decoding to
+`(tally, n)`, then `≥ superMajority n` DISTINCT committee signers signed a vote whose
+RECEIPT-STREAM component is exactly `streamRoot`.
+
+This is the statement that was FALSE of every quorum this tree assembled before v4, and it is why
+`dregg_federation::TurnAnchorV1::verify` had to refuse on any federation with `threshold > 1`: the
+quorum that did assemble signed `(block_id, merkle_root)`, so no committee statement reached the
+receipt — hence the turn — at all. Transfers `FinalizationQuorum.quorum_binds_snd` onto the gate's
+decision, so what the node's collector reads back from the archive carries it. -/
+theorem quorum_gate_binds_receipt_stream (s : String) (votes : List (Nat × QuorumRootPair))
+    (n ledgerRoot streamRoot : Nat)
+    (hdec : decodeQuorumWire s = some (votes, n))
+    (hgate : quorumGateDecision s = some (some (ledgerRoot, streamRoot))) :
+    superMajority n ≤ (signersForSnd votes streamRoot).length := by
+  have hr : quorumRoot votes n = some (ledgerRoot, streamRoot) := by
+    rw [quorum_gate_decision_is_verified s votes n hdec] at hgate
+    exact Option.some.inj hgate
+  exact quorum_binds_snd hr
+
 /-- **`quorum_gate_root_unique` (THE SAFETY property, on the gate).** If the gate consensus-attests
 root `r` on a WELL-FORMED tally, then NO distinct root `r'` also reaches quorum — the gate can never
 finalize two conflicting roots (two disjoint supermajorities would need `2·superMajority(n) > n`
 distinct signers, impossible in an `n`-member committee). Transfers `quorum_no_conflict` onto the
 gate's decision. -/
-theorem quorum_gate_root_unique (s : String) (votes : List (Nat × Nat)) (n : Nat) (r r' : Nat)
+theorem quorum_gate_root_unique (s : String) (votes : List (Nat × QuorumRootPair)) (n : Nat)
+    (r r' : QuorumRootPair)
     (hwf : WellFormed votes n)
     (hdec : decodeQuorumWire s = some (votes, n))
     (hgate : quorumGateDecision s = some (some r))
@@ -527,25 +567,75 @@ theorem quorum_gate_deterministic (s : String) (o₁ o₂ : String)
     (h₁ : quorumGate s = o₁) (h₂ : quorumGate s = o₂) : o₁ = o₂ := by
   rw [← h₁, ← h₂]
 
-/-! ### Quorum-gate non-vacuity `#guard`s — the gate reproduces the verified quorum decision on the
-wire. `superMajority 4 = 4*2/3 + 1 = 3`, so an `n=4` committee needs 3 distinct signers. -/
+/-! ### Quorum-gate non-vacuity — NAMED, not `#guard`ed.
 
--- three distinct signers (0,1,2) attest root 7 in a 4-committee ⇒ quorum ⇒ the gate finalizes `R=7`.
-#guard quorumGate "n=4;V=0:7,1:7,2:7" == "R=7"
--- only two distinct signers attest ⇒ below the 3-supermajority ⇒ NO root finalized (`NONE`).
-#guard quorumGate "n=4;V=0:7,1:7" == "NONE"
--- a DUPLICATE signer does not double-count (dedup): signer 0 twice + signer 1 = two DISTINCT ⇒ NONE.
-#guard quorumGate "n=4;V=0:7,0:7,1:7" == "NONE"
--- a SPLIT vote (no root gets 3) ⇒ NONE (and, by `quorum_no_conflict`, never two winners at once).
-#guard quorumGate "n=4;V=0:7,1:7,2:8,3:8" == "NONE"
--- the gate's decision is exactly the verified `quorumRoot` on the decoded tally.
-#guard quorumGateDecision "n=4;V=0:7,1:7,2:7" == some (some 7)
-#guard quorumGateDecision "n=4;V=0:7,1:7" == some none
--- malformed wires are FAIL-CLOSED to the ERR sentinel (the collector finalizes NOTHING).
-#guard quorumGate "not a wire" == "ERR"
-#guard quorumGate "n=4;V=bad" == "ERR"
-#guard quorumGate "n=x;V=0:7" == "ERR"
-#guard quorumGateDecision "not a wire" == none
+The gate reproduces the verified quorum decision on the wire. `superMajority 4 = 4*2/3 + 1 = 3`,
+so an `n=4` committee needs 3 distinct signers. These were four `#guard`s; each is now a theorem
+with a name, a term, and an axiom record, per `metatheory/docs/GUARD-DISCIPLINE.md`. The Rust
+differential (`dregg-lean-ffi::distributed_ffi::verified_finalization_quorum_matches_guards`)
+drives the SAME wires through the linked archive. -/
+
+/-- Three distinct signers attest the pair `(7,9)` in a 4-committee ⇒ quorum ⇒ `R=7:9`. -/
+theorem quorum_gate_finalizes_a_supermajority_pair :
+    quorumGate "n=4;V=0:7:9,1:7:9,2:7:9" = "R=7:9" := by native_decide
+
+/-- Only two distinct signers ⇒ below the 3-supermajority ⇒ NO pair finalized. -/
+theorem quorum_gate_below_supermajority_finalizes_nothing :
+    quorumGate "n=4;V=0:7:9,1:7:9" = "NONE" := by native_decide
+
+/-- A DUPLICATE signer does not double-count (dedup): signer 0 twice + signer 1 = two DISTINCT. -/
+theorem quorum_gate_duplicate_signer_does_not_double_count :
+    quorumGate "n=4;V=0:7:9,0:7:9,1:7:9" = "NONE" := by native_decide
+
+/-- A SPLIT vote (no pair gets 3) ⇒ NONE — and by `quorum_gate_root_unique`, never two winners. -/
+theorem quorum_gate_split_vote_finalizes_nothing :
+    quorumGate "n=4;V=0:7:9,1:7:9,2:8:9,3:8:9" = "NONE" := by native_decide
+
+/-- **⚑ THE v4 NON-VACUITY TOOTH.** Three distinct signers AGREEING ON THE LEDGER ROOT but SPLIT
+on the RECEIPT STREAM reach no quorum. Under the v3 wire this same tally was `0:7,1:7,2:7` — a
+quorum whose signatures covered no receipt at all. This is the instance that shows the widened
+agreement BITES rather than merely being carried. -/
+theorem quorum_gate_ledger_agreement_is_not_turn_agreement :
+    quorumGate "n=4;V=0:7:9,1:7:9,2:7:10" = "NONE" := by native_decide
+
+/-- A v3-shaped wire (two fields per vote) does not parse and is fail-closed to `ERR`. Nothing
+signed under the old preimage can be read back as a v4 quorum. -/
+theorem quorum_gate_refuses_the_v3_wire :
+    quorumGate "n=4;V=0:7,1:7,2:7" = "ERR" := by native_decide
+
+#assert_compiled quorum_gate_finalizes_a_supermajority_pair
+#assert_compiled quorum_gate_below_supermajority_finalizes_nothing
+#assert_compiled quorum_gate_duplicate_signer_does_not_double_count
+#assert_compiled quorum_gate_split_vote_finalizes_nothing
+#assert_compiled quorum_gate_ledger_agreement_is_not_turn_agreement
+#assert_compiled quorum_gate_refuses_the_v3_wire
+/-- The gate's DECISION (pre-encoding) is exactly the verified `quorumRoot` on the decoded tally. -/
+theorem quorum_gate_decision_on_a_supermajority :
+    quorumGateDecision "n=4;V=0:7:9,1:7:9,2:7:9" = some (some (7, 9)) := by native_decide
+
+/-- …and `some none` — well-formed wire, no quorum — below the supermajority. -/
+theorem quorum_gate_decision_below_supermajority :
+    quorumGateDecision "n=4;V=0:7:9,1:7:9" = some none := by native_decide
+
+/-- Malformed wires are FAIL-CLOSED to the `ERR` sentinel (the collector finalizes NOTHING). -/
+theorem quorum_gate_garbage_is_err : quorumGate "not a wire" = "ERR" := by native_decide
+
+theorem quorum_gate_bad_vote_is_err : quorumGate "n=4;V=bad" = "ERR" := by native_decide
+
+theorem quorum_gate_bad_committee_size_is_err :
+    quorumGate "n=x;V=0:7:9" = "ERR" := by native_decide
+
+/-- A malformed wire decodes to `none` at the DECISION level too — the outer `Option` is what
+distinguishes "unparseable" from "parsed, no quorum". -/
+theorem quorum_gate_decision_garbage_is_none :
+    quorumGateDecision "not a wire" = none := by native_decide
+
+#assert_compiled quorum_gate_decision_on_a_supermajority
+#assert_compiled quorum_gate_decision_below_supermajority
+#assert_compiled quorum_gate_garbage_is_err
+#assert_compiled quorum_gate_bad_vote_is_err
+#assert_compiled quorum_gate_bad_committee_size_is_err
+#assert_compiled quorum_gate_decision_garbage_is_none
 
 #assert_axioms quorum_gate_decision_eq
 #assert_axioms quorum_gate_eq_encode_decision
@@ -554,5 +644,6 @@ wire. `superMajority 4 = 4*2/3 + 1 = 3`, so an `n=4` committee needs 3 distinct 
 #assert_axioms quorum_gate_sound
 #assert_axioms quorum_gate_root_unique
 #assert_axioms quorum_gate_deterministic
+#assert_axioms quorum_gate_binds_receipt_stream
 
 end Dregg2.Distributed.FinalityGate

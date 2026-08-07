@@ -392,12 +392,24 @@ pub struct AttestedRoot {
     #[serde(default)]
     pub receipt_stream_root: Option<[u8; 32]>,
     /// **HYBRID quorum (post-quantum closure of the cross-federation finality
-    /// wire).** Per-signer [`HybridQuorumSig`] over the SAME canonical bytes as
-    /// `quorum_signatures` sign ([`signing_message`](Self::signing_message)):
-    /// each entry carries the voter's ed25519 signature AND its ML-DSA-65
-    /// (FIPS 204) signature plus the SELF-CONTAINED ML-DSA public key. A
-    /// verifier counts a signer only when BOTH halves verify (classical ∧ pq),
-    /// so an adversary who breaks ed25519 alone cannot forge the quorum.
+    /// wire).** Per-signer [`HybridQuorumSig`] over
+    /// [`hybrid_quorum_message`](Self::hybrid_quorum_message) — the v4
+    /// finalization-vote preimage `domain ‖ block_id ‖ merkle_root ‖
+    /// framed(receipt_stream_root)`: each entry carries the voter's ed25519
+    /// signature AND its ML-DSA-65 (FIPS 204) signature plus the
+    /// SELF-CONTAINED ML-DSA public key. A verifier counts a signer only when
+    /// BOTH halves verify (classical ∧ pq), so an adversary who breaks ed25519
+    /// alone cannot forge the quorum.
+    ///
+    /// ⚑ **This is NOT [`signing_message`](Self::signing_message).** The node
+    /// populates this field by copying the assembled cross-node
+    /// finalization-vote quorum, which signs the vote preimage; a consumer that
+    /// checks it against `signing_message()` refuses every live root. Both
+    /// consumers now go through `hybrid_quorum_message()` so they cannot drift
+    /// apart again. Since v4 that preimage absorbs `receipt_stream_root`, so
+    /// this quorum — unlike `quorum_signatures`, which only ever receives the
+    /// local node's push — is a genuine `>= threshold` committee statement that
+    /// reaches the receipts, hence the turns, the block carried.
     ///
     /// This is the wire twin of the persist layer's
     /// `StoredAttestedRoot::finalization_quorum` and the light-client
@@ -487,10 +499,24 @@ pub fn merkle_root_of_receipt_hashes(receipts: &[[u8; 32]]) -> [u8; 32] {
 /// the `AttestedRoot` this quorum re-anchors binds those receipts through
 /// `receipt_stream_root`. The bump fences a v2 signature — made when the receipt
 /// stream meant a BLAKE3 ledger root — from counting toward a v3 quorum.
-pub const FINALIZATION_VOTE_DOMAIN_V3: &[u8] = b"dregg-finalization-vote-v3";
+///
+/// **v3 -> v4 (THE PER-TURN BINDING).** Through v3 the only `>= threshold`
+/// committee quorum this tree ever assembled signed
+/// `domain ‖ block_id ‖ merkle_root` — and `merkle_root` is a whole-ledger
+/// BLAKE3 image, so no committee signature anywhere covered a value derived
+/// from the TURN the block carried. `AttestedRoot::quorum_signatures` (the one
+/// preimage that does absorb `receipt_stream_root`) receives exactly one push,
+/// the local node's, and `PeerMessage::AttestedRootUpdate` has zero handlers —
+/// so `TurnAnchorV1::verify` refused on every federation with `threshold > 1`.
+/// v4 absorbs `receipt_stream_root` into the vote preimage itself, which is
+/// what makes the assembled cross-node quorum reach the receipt, hence the
+/// turn. The domain bump fences a v3 signature — which said nothing about any
+/// receipt — from counting toward a v4 quorum.
+pub const FINALIZATION_VOTE_DOMAIN_V4: &[u8] = b"dregg-finalization-vote-v4";
 
 /// The canonical bytes a committee member signs when it votes that it has
-/// finalized `block_id` over committed state root `merkle_root`.
+/// finalized `block_id` over committed state root `merkle_root`, covering the
+/// receipt stream `receipt_stream_root` that block's turn produced.
 ///
 /// This is the SINGLE source of truth for the finalization-vote preimage,
 /// shared by the node's `FinalizationVote` (which produces the signatures) and
@@ -500,15 +526,40 @@ pub const FINALIZATION_VOTE_DOMAIN_V3: &[u8] = b"dregg-finalization-vote-v3";
 /// gossiped finalization vote's signature verifies as a persisted quorum
 /// signature with no format drift.
 ///
-/// It binds ONLY the two provably-deterministic quantities that identify the
-/// finalized state — the blocklace `block_id` and the canonical `merkle_root` —
-/// so every honest committee member computes the identical preimage regardless
-/// of local wall clock or per-node DAG bookkeeping.
-pub fn finalization_vote_signing_message(block_id: &[u8; 32], merkle_root: &[u8; 32]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(FINALIZATION_VOTE_DOMAIN_V3.len() + 32 + 32);
-    buf.extend_from_slice(FINALIZATION_VOTE_DOMAIN_V3);
+/// It binds ONLY provably-deterministic quantities, so every honest committee
+/// member computes the identical preimage regardless of local wall clock or
+/// per-node DAG bookkeeping:
+///
+/// * the blocklace `block_id` — the finalized block's own identity;
+/// * the canonical `merkle_root` — `canonical_ledger_root` of the post-execution
+///   ledger, the restart anchor;
+/// * `receipt_stream_root` — `merkle_root_of_receipt_hashes` over the receipts
+///   the block's turn produced. A receipt is the deterministic output of
+///   executing the in-block `SignedTurn` against the agreed pre-state at the
+///   in-block consensus time, so every honest member derives the identical
+///   value — the same determinism argument `merkle_root` already rests on.
+///
+/// `receipt_stream_root` is an `Option` because a finalized block need not
+/// carry a turn (membership / checkpoint / inert blocks anchor no receipt
+/// stream). It is framed `0x00` / `0x01 ‖ 32 bytes`, the same unambiguous
+/// encoding [`AttestedRoot::signing_message`] uses, so "absent" can never alias
+/// a present root of any value.
+pub fn finalization_vote_signing_message(
+    block_id: &[u8; 32],
+    merkle_root: &[u8; 32],
+    receipt_stream_root: Option<[u8; 32]>,
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(FINALIZATION_VOTE_DOMAIN_V4.len() + 32 + 32 + 33);
+    buf.extend_from_slice(FINALIZATION_VOTE_DOMAIN_V4);
     buf.extend_from_slice(block_id);
     buf.extend_from_slice(merkle_root);
+    match receipt_stream_root {
+        Some(ref r) => {
+            buf.push(0x01);
+            buf.extend_from_slice(r);
+        }
+        None => buf.push(0x00),
+    }
     buf
 }
 
@@ -810,6 +861,32 @@ impl AttestedRoot {
             }
         }
         msg
+    }
+
+    /// **The preimage this root's [`hybrid_quorum`](Self::hybrid_quorum) signatures are over** —
+    /// the v4 finalization-vote message for THIS root's
+    /// `(blocklace_block_id, merkle_root, receipt_stream_root)`.
+    ///
+    /// ⚑ This method exists because the producer and the two consumers of `hybrid_quorum`
+    /// silently disagreed, and the disagreement was invisible in test. The node fills the field
+    /// by copying the assembled committee **finalization-vote** signatures
+    /// (`node/src/blocklace_sync.rs`), `dregg_federation::turn_anchor` checked them against the
+    /// vote message, and `dregg_verifier::cross_fed` checked them against
+    /// [`signing_message`](Self::signing_message) — so **a live root's hybrid quorum could never
+    /// pass the cross-fed check**, while every test signed `signing_message()` directly and was
+    /// therefore blind to it. One named method, called by both consumers, is what makes that
+    /// class of drift a compile-time impossibility rather than a test everyone forgot to write.
+    ///
+    /// Returns `None` when the root carries no `blocklace_block_id`: a finalization vote binds a
+    /// block, so an unanchored root HAS no hybrid-quorum preimage and every consumer must fail
+    /// closed rather than invent one.
+    pub fn hybrid_quorum_message(&self) -> Option<Vec<u8>> {
+        let block_id = self.blocklace_block_id?;
+        Some(finalization_vote_signing_message(
+            &block_id,
+            &self.merkle_root,
+            self.receipt_stream_root,
+        ))
     }
 
     /// Verify that this attested root is valid AND recent enough.
@@ -1450,19 +1527,81 @@ mod tests {
 
     #[test]
     fn finalization_vote_message_binds_block_and_root() {
-        // The shared finalization-vote preimage binds both the block id and the
-        // finalized merkle_root: flipping either yields a different message.
-        let base = finalization_vote_signing_message(&[0x11; 32], &[0x22; 32]);
-        assert!(base.starts_with(FINALIZATION_VOTE_DOMAIN_V3));
+        // The shared finalization-vote preimage binds the block id, the
+        // finalized merkle_root, AND (v4) the receipt stream root: flipping any
+        // of the three yields a different message.
+        let base = finalization_vote_signing_message(&[0x11; 32], &[0x22; 32], Some([0x33; 32]));
+        assert!(base.starts_with(FINALIZATION_VOTE_DOMAIN_V4));
         assert_ne!(
             base,
-            finalization_vote_signing_message(&[0x11; 32], &[0x23; 32]),
+            finalization_vote_signing_message(&[0x11; 32], &[0x23; 32], Some([0x33; 32])),
             "a different merkle_root must change the vote preimage"
         );
         assert_ne!(
             base,
-            finalization_vote_signing_message(&[0x10; 32], &[0x22; 32]),
+            finalization_vote_signing_message(&[0x10; 32], &[0x22; 32], Some([0x33; 32])),
             "a different block_id must change the vote preimage"
+        );
+        assert_ne!(
+            base,
+            finalization_vote_signing_message(&[0x11; 32], &[0x22; 32], Some([0x34; 32])),
+            "⚑ v4: a different receipt_stream_root must change the vote preimage — this is the \
+             per-turn value the committee quorum now covers"
+        );
+        assert_ne!(
+            base,
+            finalization_vote_signing_message(&[0x11; 32], &[0x22; 32], None),
+            "an absent receipt stream must not alias a present one"
+        );
+    }
+
+    /// The `0x00` / `0x01 ‖ 32` framing is what makes "absent" unambiguous: no
+    /// value of a present `receipt_stream_root` can produce the bytes an absent
+    /// one does, so a block that carried no turn cannot be presented as one
+    /// that carried a turn (or vice versa) under the same signature.
+    #[test]
+    fn absent_receipt_stream_is_framed_not_elided() {
+        let absent = finalization_vote_signing_message(&[0x11; 32], &[0x22; 32], None);
+        assert_eq!(
+            absent.len(),
+            FINALIZATION_VOTE_DOMAIN_V4.len() + 32 + 32 + 1,
+            "absent is one tag byte, never an elision"
+        );
+        assert_eq!(*absent.last().unwrap(), 0x00);
+        let present = finalization_vote_signing_message(&[0x11; 32], &[0x22; 32], Some([0x00; 32]));
+        assert_eq!(
+            present.len(),
+            FINALIZATION_VOTE_DOMAIN_V4.len() + 32 + 32 + 33,
+            "a present root is a tag plus 32 bytes"
+        );
+        assert_ne!(absent, present);
+    }
+
+    /// The ONE preimage `hybrid_quorum` is over, taken from the root itself.
+    /// Fail-closed when the root is not anchored to a block.
+    #[test]
+    fn hybrid_quorum_message_is_the_vote_preimage_of_this_root() {
+        let mut root = root_with_receipts([0x42; 32], &[[0x01; 32]]);
+        root.blocklace_block_id = Some([0xB1; 32]);
+        assert_eq!(
+            root.hybrid_quorum_message(),
+            Some(finalization_vote_signing_message(
+                &[0xB1; 32],
+                &root.merkle_root,
+                root.receipt_stream_root,
+            ))
+        );
+        // It is NOT the light-client preimage; conflating the two is the defect
+        // this method exists to make impossible.
+        assert_ne!(
+            root.hybrid_quorum_message().unwrap(),
+            root.signing_message(),
+            "the hybrid-quorum preimage and the attested-root preimage are different messages"
+        );
+        root.blocklace_block_id = None;
+        assert!(
+            root.hybrid_quorum_message().is_none(),
+            "an unanchored root has no vote preimage; consumers must fail closed"
         );
     }
 

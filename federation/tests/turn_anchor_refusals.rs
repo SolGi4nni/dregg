@@ -163,9 +163,12 @@ fn an_attestation_binding_no_receipt_stream_is_refused() {
 /// ⚑ **THE REFUSAL THAT SEPARATES "THE COMMITTEE SAID SO" FROM "THE NODE SAID SO".**
 ///
 /// On the live path `AttestedRoot::quorum_signatures` receives exactly one push — the local
-/// node's. A committee larger than 1 therefore cannot reach threshold on the ONLY preimage that
-/// covers `receipt_stream_root`, and the anchor must refuse rather than report a caveat. The
-/// `>= threshold` hybrid vote quorum signs `(block_id, merkle_root)` and cannot stand in.
+/// node's. A committee larger than 1 therefore cannot reach threshold on that leg alone, and
+/// with NO assembled vote quorum on the root the anchor must refuse rather than report a
+/// caveat. This is the state a threshold-2 federation is in before its committee's votes
+/// converge; it is what v4 supplies the missing quorum for, and it must keep refusing until
+/// that quorum actually exists. `node/tests/committee_signature_covers_a_per_turn_value.rs`
+/// drives the accepted side through the real `VoteCollector`.
 #[test]
 fn a_sub_threshold_receipt_quorum_is_refused_not_caveated() {
     let turn_hash = [0xAB; 32];
@@ -176,8 +179,19 @@ fn a_sub_threshold_receipt_quorum_is_refused_not_caveated() {
     let committee = committee_of(&[one, two], 2);
 
     match anchor.verify(&committee) {
-        Err(TurnAnchorError::ReceiptQuorumNotMet { signers, threshold }) => {
+        Err(TurnAnchorError::ReceiptQuorumNotMet {
+            signers,
+            attestation_signers,
+            vote_signers,
+            threshold,
+        }) => {
             assert_eq!((signers, threshold), (1, 2));
+            assert_eq!(
+                (attestation_signers, vote_signers),
+                (1, 0),
+                "the one signer is the node's own attestation signature; the committee's vote \
+                 quorum has not assembled"
+            );
         }
         other => panic!("expected ReceiptQuorumNotMet, got {other:?}"),
     }
@@ -196,7 +210,8 @@ fn a_non_member_signature_does_not_count_toward_the_quorum() {
         anchor.verify(&committee),
         Err(TurnAnchorError::ReceiptQuorumNotMet {
             signers: 0,
-            threshold: 1
+            threshold: 1,
+            ..
         })
     ));
 }
@@ -216,7 +231,8 @@ fn a_duplicated_signature_does_not_manufacture_a_quorum() {
         anchor.verify(&committee_of(&[one, two], 2)),
         Err(TurnAnchorError::ReceiptQuorumNotMet {
             signers: 1,
-            threshold: 2
+            threshold: 2,
+            ..
         })
     ));
 }

@@ -49,16 +49,28 @@ use dregg_federation::frost::{MlDsaPublicKey, MlDsaSigningKey};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
 /// A signed assertion by one committee member that it has locally finalized a
-/// block to (at least) `level` over committed state root `merkle_root`.
+/// block to (at least) `level` over committed state root `merkle_root`,
+/// covering the receipt stream that block's turn produced.
 ///
 /// The signature is over
 /// [`dregg_types::finalization_vote_signing_message`] =
-/// `dregg-finalization-vote-v3 || block_id || merkle_root`, so it binds the
-/// voter to *this* block at *this* finalized state root. That `merkle_root`
+/// `dregg-finalization-vote-v4 || block_id || merkle_root ||
+/// framed(receipt_stream_root)`, so it binds the voter to *this* block at
+/// *this* finalized state root over *these* receipts. That `merkle_root`
 /// binding (N3 committee-restart fix, `VOTE_DOMAIN` v1→v2) is what turns a
 /// quorum of these votes INTO the restart anchor: the same signatures a full
 /// node collects for consensus-wide attestation are, verbatim, the
 /// `finalization_quorum` a committee node re-verifies on restart.
+///
+/// ⚑ **v3 → v4 is what makes a committee signature cover a per-turn value.**
+/// Through v3 the ONLY `>= threshold` quorum this tree assembled signed
+/// `(block_id, merkle_root)` — a block id and a whole-ledger BLAKE3 image. The
+/// one preimage that did absorb `receipt_stream_root`
+/// (`AttestedRoot::signing_message`) received exactly one signature, the local
+/// node's, because `PeerMessage::AttestedRootUpdate` has no handlers. So
+/// `dregg_federation::TurnAnchorV1::verify` refused on every federation with
+/// `threshold > 1`, honestly and structurally. Absorbing `receipt_stream_root`
+/// into the preimage the committee actually assembles a quorum over is the fix.
 ///
 /// The `level` is retained as a struct field (the collector gates on
 /// `>= Attested`) but is deliberately NOT part of the signed message: a
@@ -78,6 +90,19 @@ pub struct FinalizationVote {
     /// about a specific finalized state — a quorum of these IS the attested
     /// root's restart-anchor quorum.
     pub merkle_root: [u8; 32],
+    /// **v4 — THE PER-TURN VALUE.** The `merkle_root_of_receipt_hashes` over the
+    /// receipts the finalized block's turn produced, i.e. the
+    /// `receipt_stream_root` of the attested root this block writes. `None` for
+    /// a finalized block that carries no turn (membership / checkpoint / inert),
+    /// framed distinctly in the preimage so absent can never alias present.
+    ///
+    /// It is deterministic across the committee for the same reason
+    /// `merkle_root` is: a receipt is the output of executing the in-block
+    /// `SignedTurn` against the agreed pre-state at the in-block consensus time.
+    /// Members that disagree on it therefore do not form a quorum, which is the
+    /// correct (loud) behaviour — a split here is a real divergence, not a
+    /// clock difference.
+    pub receipt_stream_root: Option<[u8; 32]>,
     /// The voter's federation Ed25519 public key (the committee identity, the
     /// same key space as `Block::creator`).
     pub voter: [u8; 32],
@@ -113,22 +138,32 @@ impl FinalizationVote {
     /// byte-identical to what the persistence layer reconstructs in
     /// `StoredAttestedRoot::verify_finalization_quorum`, so a gossiped vote's
     /// signature is a valid persisted quorum signature with no format drift.
-    pub fn signing_message(block_id: &BlockId, merkle_root: &[u8; 32]) -> Vec<u8> {
-        dregg_types::finalization_vote_signing_message(&block_id.0, merkle_root)
+    pub fn signing_message(
+        block_id: &BlockId,
+        merkle_root: &[u8; 32],
+        receipt_stream_root: Option<[u8; 32]>,
+    ) -> Vec<u8> {
+        dregg_types::finalization_vote_signing_message(
+            &block_id.0,
+            merkle_root,
+            receipt_stream_root,
+        )
     }
 
     /// Construct a signed vote for `block_id` at `level` over finalized state
-    /// root `merkle_root`, using `signing_key`. Each call stamps a fresh
-    /// liveness `nonce` so re-emissions are byte-unique (see the `nonce` field);
-    /// the nonce is outside the signed message.
+    /// root `merkle_root` and receipt stream `receipt_stream_root`, using
+    /// `signing_key`. Each call stamps a fresh liveness `nonce` so re-emissions
+    /// are byte-unique (see the `nonce` field); the nonce is outside the signed
+    /// message.
     pub fn sign(
         signing_key: &SigningKey,
         pq_key: &MlDsaSigningKey,
         block_id: BlockId,
         level: FinalityLevel,
         merkle_root: [u8; 32],
+        receipt_stream_root: Option<[u8; 32]>,
     ) -> Option<Self> {
-        let msg = Self::signing_message(&block_id, &merkle_root);
+        let msg = Self::signing_message(&block_id, &merkle_root, receipt_stream_root);
         let sig: Signature = signing_key.sign(&msg);
         // ML-DSA-65 over the SAME canonical bytes (the post-quantum half). Fails
         // only on an OS-entropy failure during hedged signing — treat as a
@@ -138,6 +173,7 @@ impl FinalizationVote {
             block_id,
             level,
             merkle_root,
+            receipt_stream_root,
             voter: signing_key.verifying_key().to_bytes(),
             signature: dregg_types::Signature(sig.to_bytes()),
             pq_signature,
@@ -153,14 +189,16 @@ impl FinalizationVote {
             return false;
         };
         let sig = Signature::from_bytes(&self.signature.0);
-        let msg = Self::signing_message(&self.block_id, &self.merkle_root);
+        let msg =
+            Self::signing_message(&self.block_id, &self.merkle_root, self.receipt_stream_root);
         vk.verify_strict(&msg, &sig).is_ok()
     }
 
     /// Verify the ML-DSA-65 (POST-QUANTUM) half against the voter's committee PQ
     /// key `pq_pubkey`, over the same canonical bytes.
     pub fn verify_pq(&self, pq_pubkey: &MlDsaPublicKey) -> bool {
-        let msg = Self::signing_message(&self.block_id, &self.merkle_root);
+        let msg =
+            Self::signing_message(&self.block_id, &self.merkle_root, self.receipt_stream_root);
         pq_pubkey.verify(&msg, &self.pq_signature)
     }
 
@@ -181,6 +219,18 @@ pub fn fresh_nonce() -> u64 {
     static VOTE_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     VOTE_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
+
+/// **What a quorum has to AGREE ON** — the finalized ledger root together with
+/// the receipt stream the block committed.
+///
+/// v4 made this a PAIR. Before it, distinct signers agreeing on `merkle_root`
+/// alone formed a quorum, and the assembled signatures said nothing about which
+/// receipts the block carried; the value a per-turn anchor needs was outside the
+/// agreement entirely. Agreement is now componentwise, so a member that
+/// executed the same turn to the same ledger but produced a DIFFERENT receipt
+/// stream does not count toward the same quorum — which is the whole point:
+/// the quorum's statement reaches the turn.
+pub type AttestedPair = ([u8; 32], Option<[u8; 32]>);
 
 /// Collects finalization votes and gates consensus-wide finality on a quorum of
 /// distinct verified signers.
@@ -214,11 +264,13 @@ pub struct VoteCollector {
     /// per signer means an equivocating member (a second, differing vote) cannot
     /// displace its counted vote or be counted twice.
     ///
-    /// The stored triple is `(ed25519 signature, merkle_root, ML-DSA-65 pq
+    /// The stored triple is `(ed25519 signature, attested PAIR, ML-DSA-65 pq
     /// signature)`: retaining `pq_signature` is what lets `assembled_quorum` hand
     /// back the HYBRID signature so the persisted quorum re-verifies BOTH halves
     /// on restart (the voter's ML-DSA pubkey is looked up from `pq_committee`).
-    votes: HashMap<BlockId, HashMap<[u8; 32], (dregg_types::Signature, [u8; 32], Vec<u8>)>>,
+    /// The middle element is the [`AttestedPair`] the voter signed — v4 made it
+    /// a pair so agreement covers the receipt stream, not the ledger root alone.
+    votes: HashMap<BlockId, HashMap<[u8; 32], (dregg_types::Signature, AttestedPair, Vec<u8>)>>,
     /// Blocks that have crossed the quorum threshold (consensus-wide Attested).
     attested: HashSet<BlockId>,
     /// THEME-2 #5 — per-member eviction bookkeeping: for each member, the
@@ -416,9 +468,10 @@ impl VoteCollector {
     /// The assembled restart-anchor quorum for `block_id`, if a supermajority of
     /// distinct committee members have signed the SAME finalized `merkle_root`.
     ///
-    /// Returns `Some((merkle_root, sigs))` where `sigs` is the set of
-    /// [`dregg_persist::QuorumSignature`]s from `>= quorum_threshold` distinct
-    /// committee signers who all attested `merkle_root` — exactly the record the
+    /// Returns `Some(((merkle_root, receipt_stream_root), sigs))` where `sigs` is
+    /// the set of [`dregg_persist::QuorumSignature`]s from `>= quorum_threshold`
+    /// distinct committee signers who all attested that exact PAIR — the ledger
+    /// root AND the receipt stream — exactly the record the
     /// persistence layer stores as `StoredAttestedRoot::finalization_quorum` and
     /// re-verifies via `verify_finalization_quorum`. Returns `None` while the
     /// quorum is still forming, or if the votes recorded for the block are split
@@ -438,11 +491,12 @@ impl VoteCollector {
     pub fn assembled_quorum(
         &self,
         block_id: &BlockId,
-    ) -> Option<([u8; 32], Vec<dregg_persist::QuorumSignature>)> {
+    ) -> Option<(AttestedPair, Vec<dregg_persist::QuorumSignature>)> {
         let signers = self.votes.get(block_id)?;
-        // Group distinct signers by the root they attested; pick a root that a
+        // Group distinct signers by the PAIR they attested; pick a pair that a
         // supermajority of distinct signers agreed on.
-        let mut by_root: HashMap<[u8; 32], Vec<dregg_persist::QuorumSignature>> = HashMap::new();
+        let mut by_root: HashMap<AttestedPair, Vec<dregg_persist::QuorumSignature>> =
+            HashMap::new();
         for (voter, (sig, root, pq_sig)) in signers {
             // The voter's ML-DSA committee key rides ALONGSIDE the signature so
             // the persisted quorum re-verifies its PQ half self-contained.
@@ -546,7 +600,7 @@ impl VoteCollector {
         let is_fresh = !signers.contains_key(&vote.voter);
         signers.entry(vote.voter).or_insert((
             vote.signature.clone(),
-            vote.merkle_root,
+            (vote.merkle_root, vote.receipt_stream_root),
             vote.pq_signature.clone(),
         ));
         let distinct_votes = signers.len();
@@ -619,21 +673,32 @@ impl VoteCollector {
     }
 
     /// Marshal `block_id`'s deduped tally to the verified-quorum wire
-    /// (`"n=<committee>;V=<signer>:<root>,..."`, the grammar `FinalizationQuorum.decodeQuorumWire`
-    /// mirrors). `n` is the committee size (the Lean gate derives `superMajority(n)` from it — the
-    /// SAME threshold `quorum_threshold` carries). Each distinct signer gets a unique wire id, and
-    /// roots are interned to ids by first appearance; the decision depends only on which signers share
-    /// a root (root EQUALITY), so any injective interning yields the identical verdict. `None` when
-    /// no votes are recorded for the block. The tally is already committee-filtered (non-members are
-    /// rejected in `record` before insertion) and deduped (first-write-wins per signer).
+    /// (`"n=<committee>;V=<signer>:<ledgerRoot>:<streamRoot>,..."`, the grammar
+    /// `FinalityGate.decodeQuorumWire` mirrors). `n` is the committee size (the Lean gate derives
+    /// `superMajority(n)` from it — the SAME threshold `quorum_threshold` carries).
+    ///
+    /// ⚑ **v4: the wire carries the PAIR, not one root.** Each distinct signer gets a unique wire
+    /// id; the ledger root and the receipt-stream root are interned into SEPARATE pools by first
+    /// appearance. Interning each component injectively is injective on the pair, and the verified
+    /// decision depends only on which signers share a pair (componentwise EQUALITY), so this yields
+    /// the identical verdict as comparing the 32-byte values. The absent receipt stream (a
+    /// finalized block with no turn) is its own interned value, so it can never collide with a
+    /// present one. `None` when no votes are recorded for the block. The tally is already
+    /// committee-filtered (non-members are rejected in `record` before insertion) and deduped
+    /// (first-write-wins per signer).
     fn marshal_quorum_wire(&self, block_id: &BlockId) -> Option<String> {
         let signers = self.votes.get(block_id)?;
-        let mut root_ids: HashMap<[u8; 32], u64> = HashMap::new();
+        let mut ledger_ids: HashMap<[u8; 32], u64> = HashMap::new();
+        let mut stream_ids: HashMap<Option<[u8; 32]>, u64> = HashMap::new();
         let mut entries: Vec<String> = Vec::with_capacity(signers.len());
-        for (signer_id, (_voter, (_sig, root, _pq))) in signers.iter().enumerate() {
-            let next_root = root_ids.len() as u64;
-            let root_id = *root_ids.entry(*root).or_insert(next_root);
-            entries.push(format!("{signer_id}:{root_id}"));
+        for (signer_id, (_voter, (_sig, (ledger_root, stream_root), _pq))) in
+            signers.iter().enumerate()
+        {
+            let next_ledger = ledger_ids.len() as u64;
+            let ledger_id = *ledger_ids.entry(*ledger_root).or_insert(next_ledger);
+            let next_stream = stream_ids.len() as u64;
+            let stream_id = *stream_ids.entry(*stream_root).or_insert(next_stream);
+            entries.push(format!("{signer_id}:{ledger_id}:{stream_id}"));
         }
         Some(format!(
             "n={};V={}",
@@ -687,16 +752,30 @@ mod tests {
         MlDsaSigningKey::from_seed(&[seed; 32])
     }
 
-    /// Sign a HYBRID vote as the member with key seed `seed` (both halves).
+    /// Sign a HYBRID vote as the member with key seed `seed` (both halves), over
+    /// the default per-turn value [`TEST_STREAM`]. Most tests vary the ledger
+    /// root; the ones that exercise the v4 binding use [`signed_vote_stream`].
     fn signed_vote(
         seed: u8,
         blk: BlockId,
         level: FinalityLevel,
         root: [u8; 32],
     ) -> FinalizationVote {
+        signed_vote_stream(seed, blk, level, root, TEST_STREAM)
+    }
+
+    /// Sign a HYBRID vote over an explicit `(merkle_root, receipt_stream_root)`
+    /// pair — the value v4 quorum agreement is over.
+    fn signed_vote_stream(
+        seed: u8,
+        blk: BlockId,
+        level: FinalityLevel,
+        root: [u8; 32],
+        stream: Option<[u8; 32]>,
+    ) -> FinalizationVote {
         let sk = keypair(seed);
         let pq = pq_keypair(seed);
-        FinalizationVote::sign(&sk, &pq.1, blk, level, root)
+        FinalizationVote::sign(&sk, &pq.1, blk, level, root, stream)
             .expect("hedged ML-DSA signing fails only on an OS-entropy failure")
     }
 
@@ -717,6 +796,10 @@ mod tests {
     /// the same block must agree on it to form a quorum (the real finalizer
     /// binds `canonical_ledger_root`).
     const TEST_ROOT: [u8; 32] = [0x5A; 32];
+
+    /// The per-turn value (v4) the votes in a test attest alongside the ledger
+    /// root. Quorum agreement is over the PAIR, so members must match on both.
+    const TEST_STREAM: Option<[u8; 32]> = Some([0x3D; 32]);
 
     #[test]
     fn vote_roundtrip_signs_and_verifies() {
@@ -843,14 +926,14 @@ mod tests {
 
         // The third distinct signer completes the quorum.
         col.record(&signed_vote(3, blk, FinalityLevel::Ordered, TEST_ROOT));
-        let (root, sigs) = col.assembled_quorum(&blk).expect("quorum assembled");
-        assert_eq!(root, TEST_ROOT);
+        let (pair, sigs) = col.assembled_quorum(&blk).expect("quorum assembled");
+        assert_eq!(pair, (TEST_ROOT, TEST_STREAM));
         assert_eq!(sigs.len(), 3);
 
         // The assembled sigs verify against the shared finalization-vote preimage
         // (i.e. they are valid persisted `finalization_quorum` signatures) — BOTH
         // the ed25519 half AND the carried ML-DSA-65 half (the hybrid quorum).
-        let msg = dregg_types::finalization_vote_signing_message(&blk.0, &TEST_ROOT);
+        let msg = dregg_types::finalization_vote_signing_message(&blk.0, &TEST_ROOT, TEST_STREAM);
         for qs in &sigs {
             assert!(
                 qs.voter.verify(&msg, &qs.signature),
@@ -866,6 +949,83 @@ mod tests {
                 "assembled quorum ML-DSA half must verify against the carried pubkey"
             );
         }
+    }
+
+    /// ⚑ **THE v4 TOOTH, IN THE COLLECTOR.** Three distinct signers who all
+    /// attest the SAME finalized ledger root but disagree about the RECEIPT
+    /// STREAM form no quorum — because what a quorum agrees on is the pair.
+    ///
+    /// Under v3 this exact tally WAS a quorum: the vote preimage was
+    /// `(block_id, merkle_root)`, agreement was on `merkle_root` alone, and the
+    /// assembled signatures said nothing whatsoever about which receipts — hence
+    /// which turn — the block carried. That is why `TurnAnchorV1` had to refuse
+    /// on every federation with `threshold > 1`. This test is the falsifier for
+    /// the fix: delete the stream component from the tally key and it goes green
+    /// while the anchor's guarantee evaporates.
+    #[test]
+    fn agreement_on_the_ledger_root_is_not_agreement_on_the_turn() {
+        let (committee, pq) = committee_of(&[1, 2, 3]);
+        let quorum = dregg_blocklace::ordering::supermajority_threshold(3); // = 3
+        let mut col = VoteCollector::new(committee, pq, quorum);
+        let blk = BlockId([0x4D; 32]);
+        let stream_a = Some([0xA1; 32]);
+        let stream_b = Some([0xB2; 32]);
+
+        // All three agree on TEST_ROOT; one executed to a different receipt stream.
+        col.record(&signed_vote_stream(
+            1,
+            blk,
+            FinalityLevel::Ordered,
+            TEST_ROOT,
+            stream_a,
+        ));
+        col.record(&signed_vote_stream(
+            2,
+            blk,
+            FinalityLevel::Ordered,
+            TEST_ROOT,
+            stream_a,
+        ));
+        let third = col.record(&signed_vote_stream(
+            3,
+            blk,
+            FinalityLevel::Ordered,
+            TEST_ROOT,
+            stream_b,
+        ));
+
+        assert_eq!(
+            third,
+            RecordOutcome::Counted { distinct_votes: 3 },
+            "three distinct signers agreeing only on the LEDGER root must not reach quorum"
+        );
+        assert!(!col.is_consensus_attested(&blk));
+        assert!(
+            col.assembled_quorum(&blk).is_none(),
+            "no pair reached the threshold, so there is no attachable quorum"
+        );
+
+        // And when the third member's receipt stream MATCHES, the quorum forms —
+        // over the pair, so the signatures reach the turn.
+        let mut col2 = VoteCollector::new(
+            committee_of(&[1, 2, 3]).0,
+            committee_of(&[1, 2, 3]).1,
+            quorum,
+        );
+        for seed in [1u8, 2, 3] {
+            col2.record(&signed_vote_stream(
+                seed,
+                blk,
+                FinalityLevel::Ordered,
+                TEST_ROOT,
+                stream_a,
+            ));
+        }
+        let (pair, sigs) = col2
+            .assembled_quorum(&blk)
+            .expect("agreement on the pair is a quorum");
+        assert_eq!(pair, (TEST_ROOT, stream_a));
+        assert_eq!(sigs.len(), 3);
     }
 
     #[test]
@@ -1233,14 +1393,21 @@ mod tests {
     /// test-only; the collector stays pure Rust at runtime).
     ///
     /// MARSHALLING. The Lean wire (`decodeQuorumWire`) is
-    /// `"n=<committee>;V=<signer>:<root>,..."` with `Sig = Root = Nat`; the
-    /// documented wire contract is the collector's ALREADY-DEDUPED tally
-    /// (first-write-wins per signer — exactly `record`'s `or_insert`). So the
-    /// test interns the 32-byte keys/roots to stable u64 ids (signer = its pool
-    /// index, root = its pool index) and applies the SAME first-write-wins
-    /// dedup to the raw emission sequence it feeds the collector — the identical
-    /// tally, two deciders. Self-skips when the archive lacks the export — unless
+    /// `"n=<committee>;V=<signer>:<ledgerRoot>:<streamRoot>,..."` with
+    /// `Sig = Nat` and `Root = Nat × Nat`; the documented wire contract is the
+    /// collector's ALREADY-DEDUPED tally (first-write-wins per signer — exactly
+    /// `record`'s `or_insert`). So the test interns the 32-byte keys/roots to
+    /// stable u64 ids (signer = its pool index, each root component = its pool
+    /// index) and applies the SAME first-write-wins dedup to the raw emission
+    /// sequence it feeds the collector — the identical tally, two deciders.
+    /// Self-skips when the archive lacks the export — unless
     /// `DREGG_TEST_REQUIRE_LEAN=1`, under which the absent export PANICS.
+    ///
+    /// ⚑ **v4 widened the agreed value to a PAIR**, so the cases below vary the
+    /// receipt-stream component independently of the ledger root: a tally that
+    /// agrees on the ledger image but splits on the turn must reach NO quorum in
+    /// BOTH deciders. That is the case the verified
+    /// `FinalizationQuorum.quorum_binds_snd` makes a theorem.
     #[test]
     fn quorum_decision_matches_verified_lean_gate() {
         if !dregg_lean_ffi::demand_lean(
@@ -1250,19 +1417,26 @@ mod tests {
             return;
         }
 
-        /// The root pool: stable id `r` ↔ the 32-byte root `[r+1; 32]`.
+        /// The ledger-root pool: stable id `r` ↔ the 32-byte root `[r+1; 32]`.
         fn root_hash(r: u64) -> [u8; 32] {
             [(r + 1) as u8; 32]
         }
         fn root_id(hash: &[u8; 32]) -> u64 {
             u64::from(hash[0]) - 1
         }
+        /// The receipt-stream pool: stable id `s` ↔ `Some([s + 0x80; 32])`.
+        fn stream_hash(s: u64) -> Option<[u8; 32]> {
+            Some([(s + 0x80) as u8; 32])
+        }
+        fn stream_id(hash: &Option<[u8; 32]>) -> u64 {
+            u64::from(hash.expect("every test vote carries a stream root")[0]) - 0x80
+        }
 
         /// Run ONE tally through both deciders and assert agreement.
-        /// `votes` is the raw emission sequence of `(signer_index, root_id)`;
-        /// signer index `i` is committee seed `i+1` and doubles as its interned
-        /// wire id.
-        fn check_case(n: usize, votes: &[(usize, u64)], label: &str) {
+        /// `votes` is the raw emission sequence of
+        /// `(signer_index, ledger_root_id, stream_root_id)`; signer index `i` is
+        /// committee seed `i+1` and doubles as its interned wire id.
+        fn check_case(n: usize, votes: &[(usize, u64, u64)], label: &str) {
             let seeds: Vec<u8> = (1..=n as u8).collect();
             let (committee, pq) = committee_of(&seeds);
             let threshold = dregg_blocklace::ordering::supermajority_threshold(n);
@@ -1270,12 +1444,13 @@ mod tests {
             let blk = BlockId([0xEE; 32]);
 
             // Drive the REAL collector with real hybrid-signed votes.
-            for &(signer, root) in votes {
-                let outcome = col.record(&signed_vote(
+            for &(signer, root, stream) in votes {
+                let outcome = col.record(&signed_vote_stream(
                     seeds[signer],
                     blk,
                     FinalityLevel::Ordered,
                     root_hash(root),
+                    stream_hash(stream),
                 ));
                 assert_ne!(
                     outcome,
@@ -1283,25 +1458,25 @@ mod tests {
                     "{label}: a genuine member vote must never be rejected"
                 );
             }
-            let rust_decision: Option<u64> = col
+            let rust_decision: Option<(u64, u64)> = col
                 .assembled_quorum(&blk)
-                .map(|(root, _sigs)| root_id(&root));
+                .map(|((root, stream), _sigs)| (root_id(&root), stream_id(&stream)));
 
             // Marshal the SAME tally for the verified Lean gate: first-write-wins
             // per signer (the collector's record contract = the documented wire
             // input), keys interned to their stable pool-index ids.
             let mut seen: HashSet<usize> = HashSet::new();
-            let mut tally: Vec<(usize, u64)> = Vec::new();
-            for &(signer, root) in votes {
+            let mut tally: Vec<(usize, u64, u64)> = Vec::new();
+            for &(signer, root, stream) in votes {
                 if seen.insert(signer) {
-                    tally.push((signer, root));
+                    tally.push((signer, root, stream));
                 }
             }
             let wire = format!(
                 "n={n};V={}",
                 tally
                     .iter()
-                    .map(|(s, r)| format!("{s}:{r}"))
+                    .map(|(s, r, st)| format!("{s}:{r}:{st}"))
                     .collect::<Vec<_>>()
                     .join(",")
             );
@@ -1318,30 +1493,63 @@ mod tests {
 
         // ── Targeted edges. superMajority(4) = 3. ──
         check_case(4, &[], "empty tally");
-        check_case(4, &[(0, 0), (1, 0)], "one below threshold (2 of 3)");
-        check_case(4, &[(0, 0), (1, 0), (2, 0)], "exactly threshold (3 of 3)");
-        check_case(4, &[(0, 0), (1, 0), (2, 0), (3, 0)], "unanimous");
-        check_case(4, &[(0, 0), (1, 0), (2, 1), (3, 1)], "split vote 2/2");
+        check_case(4, &[(0, 0, 0), (1, 0, 0)], "one below threshold (2 of 3)");
         check_case(
             4,
-            &[(0, 0), (0, 0), (1, 0)],
+            &[(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+            "exactly threshold (3 of 3)",
+        );
+        check_case(
+            4,
+            &[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)],
+            "unanimous",
+        );
+        check_case(
+            4,
+            &[(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 1, 0)],
+            "split vote 2/2 on the ledger root",
+        );
+        // ⚑ v4: agreement on the LEDGER ROOT is not agreement on the TURN.
+        check_case(
+            4,
+            &[(0, 0, 0), (1, 0, 0), (2, 0, 1)],
+            "same ledger root, SPLIT receipt stream — no quorum",
+        );
+        check_case(
+            4,
+            &[(0, 0, 0), (1, 0, 0), (2, 0, 1), (3, 0, 1)],
+            "same ledger root, receipt stream split 2/2 — no quorum either way",
+        );
+        check_case(
+            4,
+            &[(0, 0, 1), (1, 0, 1), (2, 0, 1), (3, 0, 0)],
+            "a supermajority on the PAIR forms with a dissenter on the stream",
+        );
+        check_case(
+            4,
+            &[(0, 0, 0), (0, 0, 0), (1, 0, 0)],
             "duplicate signer does not double-count",
         );
         check_case(
             4,
-            &[(0, 0), (0, 1), (1, 0), (2, 0)],
+            &[(0, 0, 0), (0, 1, 0), (1, 0, 0), (2, 0, 0)],
             "equivocating signer counts once, first-write-wins (quorum forms)",
         );
         check_case(
             4,
-            &[(0, 1), (0, 0), (1, 0), (2, 0)],
+            &[(0, 1, 0), (0, 0, 0), (1, 0, 0), (2, 0, 0)],
             "equivocating signer's FIRST root is the counted one (no quorum)",
         );
-        check_case(1, &[(0, 0)], "n=1 solo committee (threshold 1)");
+        check_case(
+            4,
+            &[(0, 0, 1), (0, 0, 0), (1, 0, 0), (2, 0, 0)],
+            "equivocation on the STREAM component alone still counts once",
+        );
+        check_case(1, &[(0, 0, 0)], "n=1 solo committee (threshold 1)");
         check_case(1, &[], "n=1 empty");
         check_case(
             6,
-            &[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)],
+            &[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)],
             "n=6 exactly threshold 5",
         );
 
@@ -1356,8 +1564,16 @@ mod tests {
         for case in 0..48u32 {
             let n = 1 + (next() % 7) as usize; // committee of 1..=7
             let vote_count = (next() % (2 * n as u64 + 1)) as usize; // 0..=2n
-            let votes: Vec<(usize, u64)> = (0..vote_count)
-                .map(|_| ((next() % n as u64) as usize, next() % 3))
+            let votes: Vec<(usize, u64, u64)> = (0..vote_count)
+                .map(|_| {
+                    (
+                        (next() % n as u64) as usize,
+                        next() % 3,
+                        // The stream component varies INDEPENDENTLY, so random
+                        // cases exercise "agree on one, differ on the other".
+                        next() % 3,
+                    )
+                })
                 .collect();
             check_case(n, &votes, &format!("random case {case} (n={n})"));
         }

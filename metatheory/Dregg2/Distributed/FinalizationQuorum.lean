@@ -103,7 +103,73 @@ theorem quorum_no_conflict {votes : List (Sig × Root)} {n : Nat} (hwf : WellFor
     unfold superMajority; omega
   omega
 
+/-! ## The per-turn binding (v4)
+
+Through v3 the value a quorum agreed on was the finalized ledger root alone — a whole-ledger
+BLAKE3 image that says nothing about which TURN the block carried. v4 makes it a PAIR
+`(ledgerRoot, receiptStreamRoot)`, and this section proves what that buys: a quorum on a pair is
+a quorum on **each component separately**, so `≥ superMajority n` distinct committee signers
+signed that exact receipt-stream root.
+
+`quorumRoot` is already polymorphic in `Root`, so the pair instantiation needs no new decision
+procedure — but "a supermajority agreed on the pair" does NOT syntactically say "a supermajority
+agreed on the second component", and that is the statement the per-turn anchor rests on. It is
+proved here rather than asserted in a comment. -/
+
+/-- The distinct signers who attested SECOND component `r₂`, ignoring the first — the signer set a
+receipt-stream binding is about. -/
+def signersForSnd {R₁ R₂ : Type*} [DecidableEq R₁] [DecidableEq R₂]
+    (votes : List (Sig × (R₁ × R₂))) (r₂ : R₂) : List Sig :=
+  ((votes.filter (fun v => v.2.2 = r₂)).map (·.1)).dedup
+
+/-- Signers who agreed on the whole PAIR `(r₁, r₂)` are among those who agreed on `r₂`. -/
+theorem signersFor_pair_subset_snd {R₁ R₂ : Type*} [DecidableEq R₁] [DecidableEq R₂]
+    {votes : List (Sig × (R₁ × R₂))} {r₁ : R₁} {r₂ : R₂} :
+    signersFor votes (r₁, r₂) ⊆ signersForSnd votes r₂ := by
+  intro s hs
+  simp only [signersFor, signersForSnd, List.mem_dedup, List.mem_map, List.mem_filter,
+    decide_eq_true_eq] at hs ⊢
+  obtain ⟨v, ⟨hv, hvr⟩, hvs⟩ := hs
+  exact ⟨v, ⟨hv, by rw [hvr]⟩, hvs⟩
+
+/-- **THE PER-TURN BINDING.** If the verified quorum decision returns the pair `(r₁, r₂)`, then
+`≥ superMajority n` DISTINCT committee signers signed that exact SECOND component. Instantiated at
+`R₂ := the receipt-stream root`, this is the statement "a committee quorum covers a per-turn
+value" — the thing no signature in this tree carried before v4. -/
+theorem quorum_binds_snd {R₁ R₂ : Type*} [DecidableEq R₁] [DecidableEq R₂]
+    {votes : List (Sig × (R₁ × R₂))} {n : Nat} {r₁ : R₁} {r₂ : R₂}
+    (h : quorumRoot votes n = some (r₁, r₂)) :
+    superMajority n ≤ (signersForSnd votes r₂).length := by
+  have hpair : superMajority n ≤ (signersFor votes (r₁, r₂)).length := quorumRoot_sound h
+  have hnd : (signersFor votes (r₁, r₂)).Nodup := List.nodup_dedup _
+  have hle : (signersFor votes (r₁, r₂)).length ≤ (signersForSnd votes r₂).length :=
+    (List.subperm_of_subset hnd signersFor_pair_subset_snd).length_le
+  exact le_trans hpair hle
+
+/-- The mirror for the FIRST component: a pair quorum is still a quorum on the finalized ledger
+root, so the restart anchor v3 provided is not weakened by widening the agreement. -/
+theorem quorum_binds_fst {R₁ R₂ : Type*} [DecidableEq R₁] [DecidableEq R₂]
+    {votes : List (Sig × (R₁ × R₂))} {n : Nat} {r₁ : R₁} {r₂ : R₂}
+    (h : quorumRoot votes n = some (r₁, r₂)) :
+    superMajority n ≤ (((votes.filter (fun v => v.2.1 = r₁)).map (·.1)).dedup).length := by
+  have hpair : superMajority n ≤ (signersFor votes (r₁, r₂)).length := quorumRoot_sound h
+  have hsub : signersFor votes (r₁, r₂)
+      ⊆ ((votes.filter (fun v => v.2.1 = r₁)).map (·.1)).dedup := by
+    intro s hs
+    simp only [signersFor, List.mem_dedup, List.mem_map, List.mem_filter,
+      decide_eq_true_eq] at hs ⊢
+    obtain ⟨v, ⟨hv, hvr⟩, hvs⟩ := hs
+    exact ⟨v, ⟨hv, by rw [hvr]⟩, hvs⟩
+  have hnd : (signersFor votes (r₁, r₂)).Nodup := List.nodup_dedup _
+  have hle : (signersFor votes (r₁, r₂)).length
+      ≤ (((votes.filter (fun v => v.2.1 = r₁)).map (·.1)).dedup).length :=
+    (List.subperm_of_subset hnd hsub).length_le
+  exact le_trans hpair hle
+
 #assert_axioms quorumRoot_sound
 #assert_axioms quorum_no_conflict
+#assert_axioms signersFor_pair_subset_snd
+#assert_axioms quorum_binds_snd
+#assert_axioms quorum_binds_fst
 
 end Dregg2.Distributed.FinalizationQuorum

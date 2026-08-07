@@ -1305,6 +1305,7 @@ impl BlocklaceHandle {
         block_id: BlockId,
         level: dregg_blocklace::finality::FinalityLevel,
         merkle_root: [u8; 32],
+        receipt_stream_root: Option<[u8; 32]>,
     ) {
         use crate::finalization_votes::FinalizationVote;
         // HYBRID-PQ: sign BOTH the ed25519 and the ML-DSA-65 halves. `sign`
@@ -1318,6 +1319,7 @@ impl BlocklaceHandle {
             block_id,
             level,
             merkle_root,
+            receipt_stream_root,
         ) else {
             tracing::warn!(
                 "ML-DSA finalization-vote signing failed (transient); skipping emission"
@@ -6001,6 +6003,20 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                     FinalizedBlock::Inert { .. } => None,
                 };
 
+                // v4 THE PER-TURN VALUE THE VOTE WILL BIND. Taken from the
+                // outcome of THIS block's commit — the same `receipt_stream_root`
+                // the attested root published — never re-derived from the store.
+                // A block that committed no turn (membership / checkpoint /
+                // inert / deterministically rejected) has none, and every honest
+                // member derives that same `None`.
+                let block_receipt_stream_root = match outcome.as_ref() {
+                    Some(FinalizedExecutionOutcome::Committed {
+                        receipt_stream_root,
+                        ..
+                    }) => *receipt_stream_root,
+                    _ => None,
+                };
+
                 if let Some(outcome) = outcome.as_ref() {
                     match outcome {
                         FinalizedExecutionOutcome::Committed { .. }
@@ -6062,6 +6078,13 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                         // this block completed above); non-Turn blocks (membership /
                         // checkpoint) anchor no persisted attested root, so their
                         // vote binds the current canonical root harmlessly.
+                        //
+                        // v4: the vote ALSO binds this block's
+                        // `receipt_stream_root` — the per-turn value. That is what
+                        // makes the >=threshold quorum a committee statement about
+                        // the TURN and not merely about a whole-ledger digest, and
+                        // it is what `TurnAnchorV1::verify` refused for lack of on
+                        // every federation with threshold > 1.
                         let merkle_root = {
                             let s = state.read().await;
                             canonical_ledger_root(&s.ledger)
@@ -6071,6 +6094,7 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                                 block_id,
                                 dregg_blocklace::finality::FinalityLevel::Ordered,
                                 merkle_root,
+                                block_receipt_stream_root,
                             )
                             .await;
                     }
@@ -6220,10 +6244,14 @@ async fn backfill_finalization_quorums(state: &NodeState, handle: &BlocklaceHand
         let Some(block_id) = root.blocklace_block_id else {
             continue;
         };
-        if let Some((qroot, sigs)) = col.assembled_quorum(&BlockId(block_id)) {
+        if let Some((qpair, sigs)) = col.assembled_quorum(&BlockId(block_id)) {
             // Only attach a quorum that binds THIS root's exact committed state
-            // and meets the root's own threshold — never fabricate an anchor.
-            if qroot == root.merkle_root && sigs.len() >= root.threshold {
+            // — v4: the ledger root AND the receipt stream — and meets the
+            // root's own threshold. Never fabricate an anchor, and never attach
+            // signatures that agreed on the ledger image while disagreeing about
+            // which receipts produced it.
+            if qpair == (root.merkle_root, root.receipt_stream_root) && sigs.len() >= root.threshold
+            {
                 let updated = dregg_persist::StoredAttestedRoot {
                     finalization_quorum: sigs,
                     ..root
@@ -7090,7 +7118,7 @@ async fn execute_live_exact_fnsp_v3(
     handle: &BlocklaceHandle,
     preparation: LiveExactFnspV3Preparation,
     finality_round: Option<u64>,
-) -> Result<u64, ExactFinalizedFailure> {
+) -> Result<(u64, Option<[u8; 32]>), ExactFinalizedFailure> {
     let LiveExactFnspV3Preparation {
         signed_turn,
         validated_signed_turn,
@@ -7341,23 +7369,22 @@ async fn execute_live_exact_fnsp_v3(
     attested
         .quorum_signatures
         .push((local_pk, attested_signature));
+    // v4: the assembled quorum agrees on the PAIR, so a quorum is attachable to
+    // THIS root only when it binds both this ledger root AND this receipt
+    // stream. Filtering on the ledger root alone would attach signatures that
+    // said nothing about the receipts this attestation publishes.
     let finalization_quorum = handle
         .votes
         .read()
         .await
         .assembled_quorum(&block_id)
-        .filter(|(root, _)| *root == attested.merkle_root)
+        .filter(|(pair, _)| *pair == (attested.merkle_root, attested.receipt_stream_root))
         .map(|(_, signatures)| signatures)
         .unwrap_or_default();
-    attested.hybrid_quorum = finalization_quorum
-        .iter()
-        .map(|signature| dregg_types::HybridQuorumSig {
-            pubkey: signature.voter,
-            signature: signature.signature,
-            ml_dsa_pubkey: signature.ml_dsa_pubkey.clone(),
-            pq_signature: signature.pq_signature.clone(),
-        })
-        .collect();
+    // ONE mapping, shared with the other finalized path, the anchor endpoint and
+    // the exhibits — see `QuorumSignature::to_hybrid`.
+    attested.hybrid_quorum =
+        dregg_persist::hybrid_quorum_from_finalization_quorum(&finalization_quorum);
     let stored = dregg_persist::StoredAttestedRoot {
         merkle_root: attested.merkle_root,
         note_tree_root: attested.note_tree_root,
@@ -7405,7 +7432,7 @@ async fn execute_live_exact_fnsp_v3(
             ordinal = outcome.ordinal,
             "exact FNSP-v3 commit was already durable; suppressing RAM/event replay"
         );
-        return Ok(outcome.ordinal);
+        return Ok((outcome.ordinal, attested.receipt_stream_root));
     }
     // Clone before taking disjoint mutable field borrows.  Fresh installation is deliberately
     // coupled to typed promise-resolution publication against the same durable store.
@@ -7487,7 +7514,7 @@ async fn execute_live_exact_fnsp_v3(
         block_executed_up_to,
         "exact FNSP-v3 finalized turn durably committed and published"
     );
-    Ok(outcome.ordinal)
+    Ok((outcome.ordinal, attested.receipt_stream_root))
 }
 
 /// Apply one identity selected by [`ExecutionCursor::pending`]. The sole live
@@ -7921,10 +7948,13 @@ async fn execute_finalized_turn(
             return match execute_live_exact_fnsp_v3(state, handle, preparation, finality_round)
                 .await
             {
-                Ok(durable_ordinal) => FinalizedExecutionOutcome::Committed {
-                    block_id,
-                    durable_ordinal,
-                },
+                Ok((durable_ordinal, receipt_stream_root)) => {
+                    FinalizedExecutionOutcome::Committed {
+                        block_id,
+                        durable_ordinal,
+                        receipt_stream_root,
+                    }
+                }
                 Err(failure) => {
                     warn!(block_id = %block_id, turn_hash = %turn_hash_hex,
                         class = ?failure.class, error = %failure.error,
@@ -9726,9 +9756,12 @@ async fn execute_finalized_turn(
             // state.rs) is CORRECT hardening and pre-Fix-B this fail-closed the
             // node after >=1 finalized height.
             //
-            // Fix B (landed): `FinalizationVote` v2 binds the finalized
-            // merkle_root (`dregg-finalization-vote-v3 || block_id ||
-            // merkle_root`), the `VoteCollector` RETAINS the signature bytes
+            // Fix B (landed): `FinalizationVote` binds the finalized merkle_root
+            // AND (v4) this block's `receipt_stream_root`
+            // (`dregg-finalization-vote-v4 || block_id || merkle_root ||
+            // framed(receipt_stream_root)`) — which is what makes the assembled
+            // quorum a committee statement about the TURN and not only about a
+            // whole-ledger digest. The `VoteCollector` RETAINS the signature bytes
             // (`assembled_quorum`), and the >=threshold committee quorum is
             // persisted into the root's `finalization_quorum` — captured below
             // when already assembled, otherwise back-filled a gossip round or
@@ -9752,12 +9785,14 @@ async fn execute_finalized_turn(
             // gossip — so the quorum is normally back-filled later by
             // `backfill_finalization_quorums`. Populating it here too closes the
             // case where the quorum is already complete.
+            // v4: attachable only when the assembled quorum binds THIS root's
+            // PAIR — ledger root and receipt stream both.
             let finalization_quorum = handle
                 .votes
                 .read()
                 .await
                 .assembled_quorum(&block_id)
-                .filter(|(root, _)| *root == attested.merkle_root)
+                .filter(|(pair, _)| *pair == (attested.merkle_root, attested.receipt_stream_root))
                 .map(|(_, sigs)| sigs)
                 .unwrap_or_default();
 
@@ -9770,15 +9805,17 @@ async fn execute_finalized_turn(
             // (Empty at first persist while the quorum is still assembling; the
             // backfill path below carries the completed quorum on the stored root,
             // and the same mapping applies wherever the root is exported cross-fed.)
-            attested.hybrid_quorum = finalization_quorum
-                .iter()
-                .map(|qs| dregg_types::HybridQuorumSig {
-                    pubkey: qs.voter,
-                    signature: qs.signature,
-                    ml_dsa_pubkey: qs.ml_dsa_pubkey.clone(),
-                    pq_signature: qs.pq_signature.clone(),
-                })
-                .collect();
+            //
+            // ⚑ AND THE PREIMAGE THIS FIELD IS OVER IS THE VOTE PREIMAGE, NOT
+            // `signing_message()`. These are finalization-vote signatures; a
+            // consumer that checked them against the attested-root preimage
+            // refused every live root while every test signed
+            // `signing_message()` directly and never saw it. Both consumers now
+            // read `AttestedRoot::hybrid_quorum_message()`, and the mapping is
+            // the shared `QuorumSignature::to_hybrid` so a test cannot build
+            // this field differently from the node.
+            attested.hybrid_quorum =
+                dregg_persist::hybrid_quorum_from_finalization_quorum(&finalization_quorum);
 
             let stored = dregg_persist::StoredAttestedRoot {
                 merkle_root: attested.merkle_root,
@@ -9998,6 +10035,7 @@ async fn execute_finalized_turn(
                             return FinalizedExecutionOutcome::Committed {
                                 block_id,
                                 durable_ordinal: assigned,
+                                receipt_stream_root,
                             };
                         }
 
@@ -10218,6 +10256,7 @@ async fn execute_finalized_turn(
             return FinalizedExecutionOutcome::Committed {
                 block_id,
                 durable_ordinal,
+                receipt_stream_root,
             };
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {

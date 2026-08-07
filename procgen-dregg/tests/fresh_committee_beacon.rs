@@ -178,7 +178,14 @@ fn fresh_genesis_committee_authenticates_a_beacon_finalized_root() {
     // ── (4) A real hybrid finalized-root attestation from 2f+1 fresh members. ──
     let block_id = [0xB1u8; 32];
     let merkle_root = [0x5Au8; 32];
-    let msg = dregg_types::finalization_vote_signing_message(&block_id, &merkle_root);
+    // v4: the vote preimage absorbs the finalized block's receipt stream, so the beacon's
+    // quorum evidence is a committee statement about the TURN, not only the ledger image.
+    let receipt_stream_root = Some([0x3Du8; 32]);
+    let msg = dregg_types::finalization_vote_signing_message(
+        &block_id,
+        &merkle_root,
+        receipt_stream_root,
+    );
 
     let quorum: Vec<HybridQuorumSig> = members[..threshold]
         .iter()
@@ -187,6 +194,7 @@ fn fresh_genesis_committee_authenticates_a_beacon_finalized_root() {
     let root = FinalizedRootAttestation {
         block_id,
         merkle_root,
+        receipt_stream_root,
         fixed_at_unix: 0,
         quorum,
     };
@@ -208,6 +216,7 @@ fn fresh_genesis_committee_authenticates_a_beacon_finalized_root() {
         FinalizedRootAttestation {
             block_id,
             merkle_root,
+            receipt_stream_root,
             fixed_at_unix: 0,
             quorum: short,
         }
@@ -220,6 +229,7 @@ fn fresh_genesis_committee_authenticates_a_beacon_finalized_root() {
     let mut forged = FinalizedRootAttestation {
         block_id,
         merkle_root,
+        receipt_stream_root,
         fixed_at_unix: 0,
         quorum: members[..threshold]
             .iter()

@@ -125,9 +125,15 @@ pub fn verified_tau_order(wire: &str) -> Result<Vec<u64>, String> {
 // dregg_finalization_quorum — the verified finalization-vote QUORUM decision (consensus side)
 // =============================================================================
 
-/// The interned root id the quorum decision ranges over (the collector maps a root hash → this id
-/// and back). Mirrors the Lean `Root := Nat`.
-pub type Root = u64;
+/// The interned root PAIR the quorum decision ranges over: `(ledger-root id, receipt-stream-root
+/// id)`. The collector interns each 32-byte component into its own pool and maps the decided pair
+/// back. Mirrors the Lean `Root := Nat × Nat`.
+///
+/// ⚑ v4 widened this from a single `Nat`. Agreement on the ledger root alone was agreement on a
+/// whole-ledger BLAKE3 image and said nothing about which receipts — hence which TURN — the
+/// finalized block carried, so no assembled committee quorum in this tree ever covered a per-turn
+/// value. The second component is that value.
+pub type Root = (u64, u64);
 
 /// Whether the linked archive exports the verified finalization-quorum gate
 /// (`dregg_finalization_quorum`). It is co-located with `dregg_blocklace_finalize` in
@@ -148,13 +154,15 @@ pub fn shadow_finalization_quorum(wire: &str) -> Result<String, String> {
     ffi_quorum::lean_finalization_quorum(wire)
 }
 
-/// Decode a `"R=<root>"` / `"NONE"` / `"ERR"` quorum-verdict wire to the decided root, if any. This
-/// is the Rust inverse of the Lean `encodeQuorumResult`. Returns `Some(root)` on `"R=<root>"`, and
-/// `None` on `"NONE"`, `"ERR"`, or any malformed body (fail-closed — the collector finalizes NO root
-/// on a parse failure).
+/// Decode a `"R=<ledger>:<stream>"` / `"NONE"` / `"ERR"` quorum-verdict wire to the decided root
+/// PAIR, if any. This is the Rust inverse of the Lean `encodeQuorumResult`. Returns
+/// `Some((ledger, stream))` on `"R=<ledger>:<stream>"`, and `None` on `"NONE"`, `"ERR"`, or any
+/// malformed body — including a v3-shaped single-component `"R=<n>"` (fail-closed: the collector
+/// finalizes NO root on a parse failure, so a stale archive cannot be read as a quorum).
 pub fn decode_quorum_root(wire: &str) -> Option<Root> {
     let body = wire.strip_prefix("R=")?;
-    body.parse::<Root>().ok()
+    let (ledger, stream) = body.split_once(':')?;
+    Some((ledger.parse::<u64>().ok()?, stream.parse::<u64>().ok()?))
 }
 
 /// The end-to-end verified finalization-quorum query: run the gate and decode the verdict to the
@@ -622,22 +630,28 @@ mod tests {
 
     #[test]
     fn quorum_root_decoder_is_fail_closed_and_exact() {
-        // a decided root round-trips; NONE / ERR / malformed bodies fail closed (None).
-        assert_eq!(decode_quorum_root("R=7"), Some(7));
-        assert_eq!(decode_quorum_root("R=0"), Some(0));
+        // a decided root PAIR round-trips; NONE / ERR / malformed bodies fail closed (None).
+        assert_eq!(decode_quorum_root("R=7:9"), Some((7, 9)));
+        assert_eq!(decode_quorum_root("R=0:0"), Some((0, 0)));
         assert_eq!(decode_quorum_root("NONE"), None);
         assert_eq!(decode_quorum_root("ERR"), None);
-        assert_eq!(decode_quorum_root("R=bad"), None);
+        assert_eq!(decode_quorum_root("R=bad:1"), None);
+        assert_eq!(decode_quorum_root("R=1:bad"), None);
         assert_eq!(decode_quorum_root("nope"), None);
+        // ⚑ a v3-shaped single-component verdict is NOT a v4 quorum. A stale archive
+        // that still emits `R=<n>` must fail closed, never be read as agreement on a
+        // receipt stream nobody signed.
+        assert_eq!(decode_quorum_root("R=7"), None);
     }
 
     /// THE LIVE QUORUM-DECISION DIFFERENTIAL — the verified Lean export `dregg_finalization_quorum`
-    /// returns, through the Rust wrapper, the SAME root the Lean `#guard`s pin on the same wires
-    /// (`superMajority 4 = 3`, so an n=4 committee needs 3 distinct signers). Three distinct signers
-    /// for root 7 ⇒ `Some(7)`; two distinct signers ⇒ `None`; a duplicate signer does not
-    /// double-count; a split vote reaches no quorum; a malformed wire is fail-closed to `None`. This
-    /// is the runtime face of the tier-2 no-drift closure: the SAME verified rule the collector calls
-    /// decides exactly these roots. Self-skips when the archive lacks the export.
+    /// returns, through the Rust wrapper, the SAME root PAIR the Lean named non-vacuity theorems pin
+    /// on the same wires (`superMajority 4 = 3`, so an n=4 committee needs 3 distinct signers).
+    /// Three distinct signers for `(7,9)` ⇒ `Some((7,9))`; two distinct signers ⇒ `None`; a
+    /// duplicate signer does not double-count; a split vote reaches no quorum; a malformed wire is
+    /// fail-closed to `None`. This is the runtime face of the tier-2 no-drift closure: the SAME
+    /// verified rule the collector calls decides exactly these pairs. Self-skips when the archive
+    /// lacks the export.
     #[test]
     fn verified_finalization_quorum_matches_guards() {
         if !crate::demand_lean(
@@ -646,30 +660,43 @@ mod tests {
         ) {
             return;
         }
-        // three distinct signers (0,1,2) attest root 7 in a 4-committee ⇒ quorum ⇒ Some(7).
+        // three distinct signers (0,1,2) attest pair (7,9) in a 4-committee ⇒ quorum.
         assert_eq!(
-            verified_finalization_quorum("n=4;V=0:7,1:7,2:7").expect("quorum gate ran"),
-            Some(7)
+            verified_finalization_quorum("n=4;V=0:7:9,1:7:9,2:7:9").expect("quorum gate ran"),
+            Some((7, 9))
         );
         // only two distinct signers ⇒ below the 3-supermajority ⇒ no root finalized.
         assert_eq!(
-            verified_finalization_quorum("n=4;V=0:7,1:7").expect("ran"),
+            verified_finalization_quorum("n=4;V=0:7:9,1:7:9").expect("ran"),
             None
         );
         // a DUPLICATE signer does not double-count (dedup): 0,0,1 = two DISTINCT ⇒ None.
         assert_eq!(
-            verified_finalization_quorum("n=4;V=0:7,0:7,1:7").expect("ran"),
+            verified_finalization_quorum("n=4;V=0:7:9,0:7:9,1:7:9").expect("ran"),
             None
         );
-        // a SPLIT vote (no root gets 3 distinct) ⇒ None (and by `quorum_no_conflict`, never two).
+        // a SPLIT vote (no pair gets 3 distinct) ⇒ None (and by `quorum_no_conflict`, never two).
         assert_eq!(
-            verified_finalization_quorum("n=4;V=0:7,1:7,2:8,3:8").expect("ran"),
+            verified_finalization_quorum("n=4;V=0:7:9,1:7:9,2:8:9,3:8:9").expect("ran"),
             None
         );
-        // malformed wire ⇒ ERR ⇒ fail-closed to no root.
+        // ⚑ THE v4 TOOTH: three distinct signers AGREEING ON THE LEDGER ROOT but SPLIT on the
+        // receipt stream reach NO quorum. Under v3 this wire was `0:7,1:7,2:7` — a quorum — and
+        // the assembled signatures covered no receipt at all.
+        assert_eq!(
+            verified_finalization_quorum("n=4;V=0:7:9,1:7:9,2:7:10").expect("ran"),
+            None,
+            "agreement on the ledger root is not agreement on the turn"
+        );
+        // malformed wire ⇒ ERR ⇒ fail-closed to no root. A v3-shaped wire is malformed.
         assert_eq!(
             verified_finalization_quorum("not a wire").expect("gate ran on garbage"),
             None
+        );
+        assert_eq!(
+            verified_finalization_quorum("n=4;V=0:7,1:7,2:7").expect("gate ran on the v3 wire"),
+            None,
+            "a v3 wire must not decide a v4 quorum"
         );
     }
 

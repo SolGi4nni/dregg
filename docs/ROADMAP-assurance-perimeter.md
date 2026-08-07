@@ -131,7 +131,9 @@ byte-reproducible) · `metatheory/Dregg2/Tools/ConeCutover.lean` (TRANSACTIONAL 
    chain and a canary test pins that). Converted: `execute.rs` pre/post, `collapse.rs` head,
    `exec-lean/src/lean_apply.rs` (Lean/Rust differential now over the anchor), `finalize.rs` contracts.
    Domain-bumped: `dregg-receipt-v5`, `executor-receipt-sig-v5`, `dregg-fed-receipt-body-v2`,
-   `dregg-attested-root-v6`, `dregg-finalization-vote-v3`. RESIDUAL (do not overclaim): 8-felt `⟺` is not
+   `dregg-attested-root-v6`, `dregg-finalization-vote-v3` (since 2026-08-07: **v4**, which absorbs
+   `receipt_stream_root` so the assembled committee quorum reaches the turn — schema epoch 24).
+   RESIDUAL (do not overclaim): 8-felt `⟺` is not
    derived; the anchor is per-cell not whole-ledger; the lane-0 waist persists at narrow-leg broadcast
    sites; the executor's root phase regressed from incremental O(log n) to O(n_cells) Poseidon2.
 3. **All-effect-tag `⟺`:** generalize `transferDescriptor_commit_iff` from transfer to every effect (the rotated
