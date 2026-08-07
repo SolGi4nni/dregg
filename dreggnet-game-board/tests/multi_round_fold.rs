@@ -529,8 +529,13 @@ fn a_substituted_round_with_a_forged_marks_out_is_unsat() {
         "the honest fork round accepts"
     );
 
-    // The clash coordinate is the fork SOURCE (0,0), linear index 0. Drop its OUT mark.
-    let clash = 0 * N + 0;
+    // The clash coordinate is the fork SOURCE (col 0, row 0). Drop its OUT mark.
+    // ⚠ Named bindings rather than `0 * N + 0` — that literal trips the deny-by-default
+    // `clippy::correctness/erasing_op`, which failed this target and took the whole
+    // `dreggnet-game-board` test binary dark. See the twin note in
+    // `dregg-automatafl/src/legc_witness.rs`.
+    let (clash_row, clash_col) = (0usize, 0usize);
+    let clash = clash_row * N + clash_col;
     assert_eq!(
         tr.row[l.c_marks_out_cell(clash)],
         BabyBear::ONE,

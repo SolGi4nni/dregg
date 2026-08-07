@@ -764,8 +764,15 @@ mod tests {
             legc_trace_accepts(&d, &tr),
             "the honest collide trace accepts"
         );
-        // The clash coordinate is (2, 0), linear index 2. Drop its OUT mark.
-        let clash = 0 * n + 2;
+        // The clash coordinate is (col 2, row 0). Drop its OUT mark.
+        // ⚠ Written through named bindings, not `0 * n + 2`: that literal trips
+        // `clippy::correctness/erasing_op`, which is DENY-BY-DEFAULT, so it failed this target —
+        // and a failed target is a dark one, which pruned `dregg-drive` and seven `dreggnet-*`
+        // packages out of the clippy sweep entirely (they were never attempted, and cargo emits
+        // no diagnostic for a pruned unit). Two literal zeros cost nine packages' worth of
+        // coverage for two weeks. Keep the row-major arithmetic legible instead of folding it.
+        let (clash_row, clash_col) = (0usize, 2usize);
+        let clash = clash_row * n + clash_col;
         assert_eq!(
             canon(tr.row[l.c_marks_out_cell(clash)]),
             1,
