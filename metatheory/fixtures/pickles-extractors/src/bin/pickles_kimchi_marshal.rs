@@ -1140,7 +1140,57 @@ fn main() {
 
     println!("\n== GATE C — the two message hashes (openmina's own hashers) ==");
     let vk_evals = gates::vk_evals_of_wrap_index(wrap_vk);
-    let hashes = gates::gate_c(&wire, &vk_evals).expect("gate C");
+
+    // ⚑ THE OUTER `dlog_plonk_index`, AS A LEAN MODULE. `step.rs:2718` makes it the INSTANCE'S OWN
+    // wrap key, and this is that key — the verifier index of the wrap circuit compiled twenty lines
+    // into this binary. Segment D absorbed block 539508's key instead, which is segment C's.
+    std::fs::write(
+        format!("{out_dir}/MinaWrapOwnVerifierKey.lean"),
+        gates::wrap_own_vk_lean(&vk_evals),
+    )
+    .expect("write the wrap-own-vk lean module");
+    println!("[gate C] wrote {out_dir}/MinaWrapOwnVerifierKey.lean — the OUTER dlog_plonk_index");
+
+    // ⚠ ⚑ THE RECORD'S ARITY, CHECKED RATHER THAN ACCEPTED. `step.rs:2848-2857` leaves
+    // `messages_for_next_step_proof` UNPADDED at `N_PREVIOUS` while the same function pads
+    // `unfinalized_proofs` and `messages_for_next_wrap_proof` to two in view. Dregg's step rule has
+    // ONE `verify_one`, so the record is one entry long, and this counts the disagreement instead
+    // of hashing a two-slot record and reporting the digest as if it described the rule.
+    let step_record_slots = wire
+        .statement
+        .messages_for_next_step_proof
+        .old_bulletproof_challenges
+        .len();
+    let arity_ok = step_record_slots == gates::STEP_RULE_N_PREVIOUS;
+    if !arity_ok {
+        failed += 1;
+    }
+    println!(
+        "[gate C] messages_for_next_step_proof carries {step_record_slots} slot(s); \
+         `step.rs:2676-2679` N_PREVIOUS for this rule is {} — MATCH={arity_ok}",
+        gates::STEP_RULE_N_PREVIOUS
+    );
+    if !arity_ok {
+        println!(
+            "[gate C] ⚑ WHAT CLOSES IT, and it is not a truncation here: `wrap.rs:658-666` sets \
+             `actual_proofs_verified = <the record>.old_bulletproof_challenges.len()`, so the \
+             RECORD defines the step proof's own kimchi recursion arity. `prove_step` must fold \
+             ONE recursion challenge, which re-bakes STEP_PREVCOMM_XY (2 points -> 1) and \
+             therefore `shapeWrap.prevs` and the 30 wrap fixtures. Truncating in `gate_c` alone \
+             would disagree with `gate_b`, which folds the same vector into expand_deferred's \
+             challenges_digest."
+        );
+    }
+
+    let app_state = gates::step_rule_app_state();
+    println!(
+        "[gate C] app_state = {} words (KimchiStepMainCore.hmOVal): {:?} — the wire carries `()` \
+         and `verification.rs:438-454` erases it (`app_state: _, // unused`), substituting the \
+         caller's at `:872`",
+        app_state.len(),
+        gates::STEP_RULE_APP_STATE
+    );
+    let hashes = gates::gate_c(&wire, &vk_evals, &app_state).expect("gate C");
     println!(
         "[gate C] hash(messages_for_next_step_proof) = {:?}\n[gate C] hash(messages_for_next_wrap_proof) = {:?}",
         hashes.0, hashes.1
@@ -1153,7 +1203,7 @@ fn main() {
             (ProjectivePallas::from(moved.sigma[0].to_affine()) + Pallas::generator())
                 .into_affine(),
         );
-        let h2 = gates::gate_c(&wire, &moved).expect("gate C moved");
+        let h2 = gates::gate_c(&wire, &moved, &app_state).expect("gate C moved");
         let ok = h2.0 != hashes.0 && h2.1 == hashes.1;
         if !ok {
             failed += 1;
@@ -1168,7 +1218,8 @@ fn main() {
 
     println!("\n== TERMINAL — the forty public words Pickles demands of the wrap circuit ==");
     if let Ok(d) = dv {
-        let words = gates::wrap_public_input(&wire, &vk_evals, d).expect("to_public_input");
+        let words =
+            gates::wrap_public_input(&wire, &vk_evals, &app_state, d).expect("to_public_input");
         let names = gates::wrap_public_input_slot_names();
         println!(
             "[terminal] to_public_input({}) produced {} field elements; the wrap verifier index \

@@ -66,6 +66,43 @@ pub const ZK_ROWS: u64 = 3;
 /// constant ?`. It is not derived from the VK, so it is not negotiable per-app.
 pub const WRAP_PUBLIC_INPUT: usize = 40;
 
+/// ⚑ **`N_PREVIOUS` FOR DREGG'S OWN STEP RULE — ONE, AND THE RECORD IS UNPADDED AT IT.**
+///
+/// `step.rs:2676-2679` names the three cases outright: *"For block and merge proofs, the number is
+/// 2; for zkapp with proof authorization, it's 1; for other proofs, it's 0."* Dregg's step rule
+/// (`KimchiStepMainCore`) assembles ONE `verify_one`, and its `branch_data.proofs_verified_mask` is
+/// `Prefix_mask.there N1` — one previous proof of two slots.
+///
+/// ⚠ **AND THE RECORD IS THE ONE FIELD THAT IS NOT PADDED.** `step.rs:2848-2857` builds
+/// `challenge_polynomial_commitments` as `prevs.iter().map(…).collect()` over
+/// `prevs: [PerProofWitness; N_PREVIOUS]` and `old_bulletproof_challenges` as the vector
+/// `verify_one` returned — while the SAME function pads `messages_for_next_wrap_proof` (`:2764-2772`)
+/// and `unfinalized_proofs` (`:2861-2868`) to two, explicitly and in view. The omission is
+/// deliberate, and `wrap.rs:658-666` is what consumes it: `actual_proofs_verified` is literally
+/// `<the record>.old_bulletproof_challenges.len()`.
+pub const STEP_RULE_N_PREVIOUS: usize = 1;
+
+/// ⚑ **DREGG'S STEP RULE'S APP STATE — `KimchiStepMainCore.hmOVal 0` and `1`.**
+///
+/// `(23 + 5000011·i + 11·i²) mod p`, the two words segment D's `Not_opt` prefix absorbs after the
+/// index. They are the INDUCTIVE RULE's own statement: no `verify_one` sub-circuit derives them, so
+/// the step assembly names them as witnesses and this is the same pair read from the other side.
+///
+/// ⚠ **THIS IS A SNAPSHOT AND IT IS GUARDED AS ONE.** `segd_slot12_probe` hashes segment D's whole
+/// preimage — these two words included — with openmina's own `MessagesForNextStepProof::hash()` and
+/// compares the result against the step statement's published word 54 read out of the tracked
+/// `KimchiStepWrapChainFixture`. If `hmOVal` moves and this does not, that probe REFUSES.
+pub const STEP_RULE_APP_STATE: [&str; 2] = ["23", "5000045"];
+
+/// …as field elements.
+pub fn step_rule_app_state() -> Vec<Fp> {
+    use std::str::FromStr;
+    STEP_RULE_APP_STATE
+        .iter()
+        .map(|s| Fp::from_str(s).expect("an app-state word is a decimal numeral"))
+        .collect()
+}
+
 // ───────────────────────────── Gate A ─────────────────────────────
 
 /// **Mina's own `accumulator_check`, run on our object.**
@@ -248,14 +285,124 @@ pub fn vk_evals_of_wrap_index(
     }
 }
 
+/// **The 28 points of a `PlonkVerificationKeyEvals`, flattened in `to_field_elements` order** —
+/// `sigma[0..7]`, `coefficients[0..15]`, `generic`, `psm`, `complete_add`, `mul`, `emul`,
+/// `endomul_scalar`, each as `(x, y)`. This is the order `sponge_after_index` absorbs
+/// (`step_verifier.ml:1149-1157`) and the order `segd_slot12_probe` reconstructs.
+pub fn vk_evals_flat(vk: &PlonkVerificationKeyEvals<Fp>) -> Vec<Fp> {
+    let mut out = Vec::with_capacity(56);
+    let mut push = |c: &InnerCurve<Fp>| {
+        let a = c.to_affine();
+        out.push(a.x);
+        out.push(a.y);
+    };
+    for s in vk.sigma.iter() {
+        push(s);
+    }
+    for c in vk.coefficients.iter() {
+        push(c);
+    }
+    for p in [
+        &vk.generic,
+        &vk.psm,
+        &vk.complete_add,
+        &vk.mul,
+        &vk.emul,
+        &vk.endomul_scalar,
+    ] {
+        push(p);
+    }
+    assert_eq!(out.len(), 56, "28 points, two coordinates each");
+    out
+}
+
+/// ⚑⚑ **THE LEAN FIXTURE FOR THE OUTER `dlog_plonk_index` — dregg's OWN wrap verification key.**
+///
+/// `step.rs:2718` is `let dlog_plonk_index = w.exists(super::merge::dlog_plonk_index(wrap_prover))`
+/// — the index the OUTER `hash_messages_for_next_step_proof` absorbs is **the instance's own wrap
+/// key**, not the previous branch's. Only `expand_proof` gets the previous branch's (`:2725,2734`),
+/// and that is what the INNER, `_opt` hash uses. Two hashes, two keys.
+///
+/// The step assembly's segment D absorbed `MinaStepPrevCommitments.INDEX_XY` — Mina devnet block
+/// 539508's `wrap-transaction` key, which is right for segment C and wrong for segment D. This is
+/// the module that gives it the right one.
+///
+/// ⚠ **AND IT IS A WITNESS ON THE STEP SIDE, NOT A PINNED CONSTANT.** `w.exists` is what keeps the
+/// two circuits stratified: the wrap circuit pins the step keys as `Inner_curve.constant`
+/// (`wrap_main.ml:98-101`), so its coefficients carry the step VK; if the step circuit pinned the
+/// wrap VK back, the two key equations would close on each other and neither VK would be
+/// computable. `KimchiStepWrapChain.the_wrap_gates_carry_the_step_key_and_none_of_the_step_proofs_values`
+/// is the measurement.
+pub fn wrap_own_vk_lean(vk: &PlonkVerificationKeyEvals<Fp>) -> String {
+    let flat = vk_evals_flat(vk);
+    let mut s = String::new();
+    s.push_str(
+        "/-\n\
+         # MinaWrapOwnVerifierKey — dregg's OWN wrap circuit's verification key, 56 coordinates.\n\
+         \n\
+         ⚑ GENERATED by `pickles-extractors/src/bin/pickles_kimchi_marshal.rs`\n\
+         (`gates::wrap_own_vk_lean`). Do not hand-edit: re-run the marshal and copy it over.\n\
+         \n\
+         These are `vk_evals_of_wrap_index(wrap_index.verifier_index)` — the kimchi verifier index\n\
+         of the wrap circuit this pipeline COMPILES AND PROVES (`pickles-wrapmain-harness`'s\n\
+         `wrapmain_smoke_w1_transcript.json`), re-typed as Pickles' `PlonkVerificationKeyEvals` and\n\
+         flattened `sigma[0..7] · coefficients[0..15] · generic · psm · complete_add · mul · emul ·\n\
+         endomul_scalar`, each point as `(x, y)`. They are **Pallas** points, so their coordinates\n\
+         live in Fp — the STEP circuit's own field, which is why segment D can absorb them.\n\
+         \n\
+         ⚑ WHAT CONSUMES THIS: the OUTER `hash_messages_for_next_step_proof`'s `sponge_after_index`\n\
+         (`step_main.ml:525-566`, `step.rs:2718`). The INNER `_opt` hash keeps\n\
+         `MinaStepPrevCommitments.INDEX_XY` — the PREVIOUS branch's key (`step.rs:2725,2734`).\n\
+         -/\n\
+         namespace Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey\n\n\
+         /-- The 28 points as 56 coordinates, `to_field_elements` order. -/\n\
+         def INDEX_WORDS : List Nat :=\n[\n",
+    );
+    for (i, v) in flat.iter().enumerate() {
+        s.push_str("  ");
+        s.push_str(&dec(v));
+        if i + 1 != flat.len() {
+            s.push(',');
+        }
+        s.push('\n');
+    }
+    s.push_str(
+        "]\n\n\
+         /-- …as points. -/\n\
+         def INDEX_XY : List (Nat × Nat) :=\n  \
+         (List.range 28).map (fun k => (INDEX_WORDS.getD (2 * k) 0, INDEX_WORDS.getD (2 * k + 1) 0))\n\n\
+         end Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey\n",
+    );
+    s
+}
+
 /// **Gate C, both halves, with Mina's own hashers.**
 ///
 /// `get_message_for_next_step_proof` hashes the VK's 28 points AND the app state alongside the
 /// wire's recursion data (`messages.rs:138-200`), which is why a wrap proof is never portable
 /// between keys: slot 12 of the public input moves when the key does.
+///
+/// ⚑⚑ **THE `app_state: &()` DEFECT, CLOSED 2026-08-07.** This hashed the WIRE's `app_state`, which
+/// is `()` — a `unit` on the p2p record — and therefore contributed ZERO field elements where the
+/// step circuit's segment D absorbs `N_HM_APP = 2`. That was not a faithful reading of the wire: it
+/// was reading the wire where openmina explicitly does not. `verification.rs:438-454` destructures
+/// `app_state: _, // unused` and substitutes the CALLER's app state (`:872`), because the record's
+/// `app_state` field is erased on the wire and the verifier is expected to know what it is
+/// verifying. So the record Pickles hashes has the real app state in it, and this now hands it the
+/// same two words segment D absorbs — [`STEP_RULE_APP_STATE`].
+///
+/// ⚠ **AND THE ARITY IS CHECKED RATHER THAN ACCEPTED.** [`STEP_RULE_N_PREVIOUS`] is what
+/// `step.rs:2848-2857` makes the record's length; a record of any other length is a record about a
+/// different rule, and the caller is told which so the disagreement is a NAMED refusal instead of a
+/// silently different digest. This does NOT truncate: truncating here would make `gate_c` disagree
+/// with [`gate_b`], which folds the SAME vector into `expand_deferred`'s `challenges_digest`, and
+/// `wrap.rs:658-666` sets the step proof's own kimchi recursion arity from it
+/// (`actual_proofs_verified = <the record>.old_bulletproof_challenges.len()`). The three have to
+/// move together or ξ stops agreeing.
 pub fn gate_c(
     wire: &Wire,
     vk_evals: &PlonkVerificationKeyEvals<Fp>,
+    app_state: &[Fp],
 ) -> anyhow::Result<([u64; 4], [u64; 4])> {
     let m = &wire.statement.messages_for_next_step_proof;
     let challenge_polynomial_commitments: Vec<InnerCurve<Fp>> =
@@ -263,7 +410,7 @@ pub fn gate_c(
     let old_bulletproof_challenges: Vec<[Fp; 16]> =
         extract_bulletproof(&m.old_bulletproof_challenges);
     let step = MessagesForNextStepProof {
-        app_state: &(),
+        app_state: &app_state.to_vec(),
         dlog_plonk_index: vk_evals,
         challenge_polynomial_commitments,
         old_bulletproof_challenges,
@@ -294,9 +441,10 @@ pub fn gate_c(
 pub fn wrap_public_input(
     wire: &Wire,
     vk_evals: &PlonkVerificationKeyEvals<Fp>,
+    app_state: &[Fp],
     deferred: DeferredValues<Fp>,
 ) -> anyhow::Result<Vec<Fq>> {
-    let (step_hash, wrap_hash) = gate_c(wire, vk_evals)?;
+    let (step_hash, wrap_hash) = gate_c(wire, vk_evals, app_state)?;
     let digest: [u64; 4] = wire
         .statement
         .proof_state

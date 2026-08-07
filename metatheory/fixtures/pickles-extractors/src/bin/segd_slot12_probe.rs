@@ -93,7 +93,16 @@ fn main() {
     // ── segment D's own twenty words ──
     let segd: Vec<Fp> = SEGD_WORDS.iter().map(|s| f(s)).collect();
     assert_eq!(segd.len(), 20);
-    let app_state: Vec<Fp> = segd[0..2].to_vec();
+    // ⚑ ONE COPY OF THE APP STATE. `gates::STEP_RULE_APP_STATE` is what `gate_c` now hands
+    // `MessagesForNextStepProof::hash()`; this snapshot's first two words have to BE it, or the two
+    // sides of slot 12 are about different records and this probe would be measuring neither.
+    let app_state: Vec<Fp> = pickles_reality_gate_export::gates::step_rule_app_state();
+    assert_eq!(
+        app_state,
+        segd[0..2].to_vec(),
+        "`gates::STEP_RULE_APP_STATE` and this file's segment-D snapshot disagree about the step \
+         rule's app state; one of them has drifted from `KimchiStepMainCore.hmOVal`"
+    );
     let g = InnerCurve::<Fp>::of_affine(make_group(segd[2], segd[3]));
     let chals: [Fp; 16] = std::array::from_fn(|i| segd[4 + i]);
 
