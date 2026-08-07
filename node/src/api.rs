@@ -2478,6 +2478,14 @@ pub fn router_with_cors(
         // the bearer layer below and applies its own proxy-aware rate/concurrency
         // budget; it is neither anonymous nor a finality/provenance surface.
         .merge(crate::poa_signal_authority_export::routes())
+        // THE DAILY SALVAGE CRATE'S ONE WRITE. Authenticated because opening is an authorized
+        // act against a curator-authored roster; the document it returns is still communal
+        // (`ShipInstrumentPanel.State` has no per-player field), so mounting it here rather than
+        // in `public_routes` costs a reader nothing they could get from `/panel` anyway. Every
+        // number in the reply is Lean's: `StationCrateOpenRuntime` replays this node's durable
+        // open log from `SalvageCrate.genesis`, appends the open under the capability chain, and
+        // folds the crate's own sealed receipt. (`crate::poa_crate_api`.)
+        .merge(crate::poa_crate_api::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 

@@ -114,6 +114,10 @@ mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
 pub mod poa_compact_ceremony;
+// The daily salvage crate's WRITE path: the authenticated POST that opens it. Mounted PROTECTED
+// (the opener is identified for authorization); the panel it returns is still communal and
+// unattributed, so `the_unauthenticated_route_surface_is_exactly_this` is untouched by it.
+pub mod poa_crate_api;
 pub(crate) mod poa_galley_api;
 pub mod poa_galley_genesis;
 pub mod poa_holding_api;
