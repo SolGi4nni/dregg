@@ -345,6 +345,16 @@ async fn a_judged_signal_turn_moves_latest_height_from_zero_to_one() {
 
     // ── THE ASSERTION THAT BITES: the public height AFTER finalization. ──────
     let height = await_latest_height(&app, 1, Duration::from_secs(45)).await;
+    // PRINT the number before asserting on it. The whole point of this test is a
+    // single public integer, and a milestone whose evidence exists only as a
+    // green tick is a milestone nobody can quote. `cargo test -- --nocapture`
+    // puts the real `/status` body in the log.
+    let after = get_json(&app, "/status").await;
+    eprintln!(
+        "MILESTONE /status latest_height: {}",
+        after["latest_height"]
+    );
+    eprintln!("MILESTONE /status body: {after}");
     assert_eq!(
         height, 1,
         "a genuinely-solved judged Signal turn MUST finalize and move latest_height 0 -> 1. \
@@ -377,10 +387,19 @@ async fn a_judged_signal_turn_moves_latest_height_from_zero_to_one() {
         );
     }
 
-    // And the public Signal status route reflects the settled turn.
+    // And the public Signal status route reflects the settled turn. The counter
+    // lives under `head` (`PoaSignalStatusResponseV1.head: Option<HeadView>`),
+    // never at the top level — a top-level read yields `None` and would fail
+    // this test against a node that had settled the turn perfectly.
     let signal_status = get_json(&app, &format!("/api/poa/signal/{authority}/status")).await;
+    eprintln!("MILESTONE /api/poa/signal/{authority}/status body: {signal_status}");
     assert_eq!(
-        signal_status["transition_count"].as_u64(),
+        signal_status["installed"].as_bool(),
+        Some(true),
+        "the public Signal status must carry a head: {signal_status}"
+    );
+    assert_eq!(
+        signal_status["head"]["transition_count"].as_u64(),
         Some(1),
         "the public Signal status must show one settled transition: {signal_status}"
     );

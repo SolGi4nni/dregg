@@ -394,7 +394,7 @@ impl DistributedDkg {
             ));
         }
         let bundle = deal_contribution(&self.session, dealer, &self.params)?;
-        let (contribution, commitment, rows) =
+        let (contribution, commitment, rows, relin_secret) =
             bundle.verify(&self.params)?.into_distributed_parts();
 
         let contribution_wire = contribution.to_wire_bytes();
@@ -429,6 +429,7 @@ impl DistributedDkg {
                 row: own_row,
             },
             sealed,
+            relin_secret,
         })
     }
 
@@ -638,13 +639,21 @@ impl DistributedDkg {
 pub struct Dealing {
     accepted: AcceptedDealing,
     sealed: Vec<(usize, Vec<u8>)>,
+    relin_secret: DealerRelinSecret,
 }
 
 impl Dealing {
     /// The dealer's own accepted dealing, ready to sit alongside the ones it
-    /// receives.
-    pub fn own(self) -> (AcceptedDealing, Vec<(usize, Vec<u8>)>) {
-        (self.accepted, self.sealed)
+    /// receives, plus the short secret `s_d` the relinearization ceremony runs
+    /// on.
+    ///
+    /// The secret never leaves this process: it is the dealer's own additive
+    /// contribution to `s = sum_d s_d`, and [`DealerRelinSecret`] has no
+    /// serializer or coefficient accessor. A party that will not run relin can
+    /// drop it immediately. See [`super::distributed_relin`] for why the relin
+    /// ceremony cannot instead run on the Lagrange custody rows.
+    pub fn own(self) -> (AcceptedDealing, Vec<(usize, Vec<u8>)>, DealerRelinSecret) {
+        (self.accepted, self.sealed, self.relin_secret)
     }
 }
 

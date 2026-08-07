@@ -317,16 +317,83 @@ impl PrivateDealerShare {
     }
 }
 
+/// One dealer's own SHORT secret contribution `s_d`, retained past the dealing.
+///
+/// # Why this exists, and why it does not lower the threshold
+///
+/// The collective BFV secret is `s = sum_d s_d` over the `n` dealer
+/// contributions, each ternary. Custody is a SEPARATE, Lagrange structure: party
+/// `i` holds `s_i = sum_d S_d(i+1, 0)` and any `t` of them reconstruct `s`.
+///
+/// Relinearization is the one ceremony that cannot run on the custody rows —
+/// see [`super::distributed_relin`] for the derivation — and it runs on exactly
+/// this additive-of-shorts structure, which is the shape fhe.rs's mbfv
+/// `RelinKeyGen` was designed for. So the dealer must keep `s_d` until the relin
+/// ceremony consumes it, where before it dropped at the end of [`deal`].
+///
+/// This does not weaken the corruption threshold. Recovering `s` from dealer
+/// secrets needs ALL `n` of them; recovering it from custody rows needs only
+/// `t <= n`. Since dealer `d` and custody party `d` are the same process, an
+/// adversary holding every dealer secret already holds `n >= t` custody rows and
+/// has the shorter route. The dealer-secret route is strictly harder.
+///
+/// It has no `Clone`, `Debug`, serializer, or coefficient accessor, and it
+/// overwrites its coefficients on drop. The only thing it will do is build the
+/// fhe.rs `SecretKey` for a relin party inside this crate.
+pub struct DealerRelinSecret {
+    session: QuorumKeygenSession,
+    dealer: usize,
+    /// Ternary coefficients of `s_d`, exactly as [`deal`] sampled them.
+    coefficients: Vec<i64>,
+}
+
+impl DealerRelinSecret {
+    pub fn dealer(&self) -> usize {
+        self.dealer
+    }
+
+    pub fn session(&self) -> &QuorumKeygenSession {
+        &self.session
+    }
+
+    /// The fhe.rs secret key for this dealer's own contribution.
+    ///
+    /// Crate-internal on purpose: the ONLY consumer is the relin ceremony in
+    /// [`super::distributed_relin`], which keeps it inside the party process.
+    pub(crate) fn secret_key(&self, params: &BfvParams) -> fhe::bfv::SecretKey {
+        sk_from_coeffs(&self.coefficients, params.arc())
+    }
+}
+
+impl Drop for DealerRelinSecret {
+    fn drop(&mut self) {
+        // Best-effort overwrite. `zeroize` on a Vec<i64> would be stronger; this
+        // matches what the surrounding module already does for its row buffers.
+        for coefficient in &mut self.coefficients {
+            *coefficient = 0;
+        }
+    }
+}
+
 /// Public contribution plus the `n` private messages produced by one dealer.
 pub struct DealerBundle {
     public: PublicKeyContribution,
     private: Vec<PrivateDealerShare>,
     vss_commitment: DealerVssCommitment,
+    relin_secret: DealerRelinSecret,
 }
 
 impl DealerBundle {
     pub fn vss_commitment(&self) -> &DealerVssCommitment {
         &self.vss_commitment
+    }
+
+    /// The dealer's own short secret, for the relinearization ceremony.
+    ///
+    /// A caller that does not run relin should simply drop the bundle; nothing
+    /// retains this once the bundle is gone.
+    pub fn into_relin_secret(self) -> DealerRelinSecret {
+        self.relin_secret
     }
 
     pub fn into_parts(self) -> (PublicKeyContribution, Vec<PrivateDealerShare>) {
@@ -555,6 +622,9 @@ pub struct VerifiedDealerBundle {
     public: PublicKeyContribution,
     commitment: DealerVssCommitment,
     private: Vec<VerifiedPrivateDealerShare>,
+    /// This dealer's own short `s_d`, carried through verification so the relin
+    /// ceremony can run on it. See [`DealerRelinSecret`].
+    relin_secret: DealerRelinSecret,
 }
 
 /// Public all-dealer setup transcript.  Its digest is threaded into the
@@ -957,6 +1027,13 @@ pub fn deal(
         public,
         private,
         vss_commitment,
+        // `s_d` survives the dealing so the relin ceremony can run on the
+        // additive-of-shorts structure. See `DealerRelinSecret`.
+        relin_secret: DealerRelinSecret {
+            session: session.clone(),
+            dealer,
+            coefficients: secret,
+        },
     })
 }
 
@@ -965,6 +1042,7 @@ fn verify_dealer_bundle(bundle: DealerBundle, params: &BfvParams) -> Result<Veri
         public,
         private,
         vss_commitment,
+        relin_secret,
     } = bundle;
     let session = &vss_commitment.session;
     let dealer = vss_commitment.dealer;
@@ -1087,6 +1165,7 @@ fn verify_dealer_bundle(bundle: DealerBundle, params: &BfvParams) -> Result<Veri
     let commitment_digest = vss_commitment.digest;
     Ok(VerifiedDealerBundle {
         public,
+        relin_secret,
         commitment: vss_commitment,
         private: private
             .into_iter()
@@ -1256,8 +1335,14 @@ impl VerifiedDealerBundle {
         PublicKeyContribution,
         DealerVssCommitment,
         Vec<VerifiedPrivateDealerShare>,
+        DealerRelinSecret,
     ) {
-        (self.public, self.commitment, self.private)
+        (
+            self.public,
+            self.commitment,
+            self.private,
+            self.relin_secret,
+        )
     }
 }
 

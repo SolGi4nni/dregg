@@ -69,6 +69,7 @@ use dregg_circuit::descriptor_proof_backend::{
     DescriptorProofProver, DescriptorProofVerifier, DescriptorStatement, Plonky3HidingFriReference,
     Plonky3HidingFriWitness,
 };
+use dregg_circuit::exact_nullifier_aafi::Digest8;
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::poseidon2::hash_fact;
 use dregg_circuit::stark_zk::DreggZkStarkConfig;
@@ -465,29 +466,37 @@ pub fn verify_wide_sidecar_proof(
         .map_err(|reason| WideValueBindingError::ProofRejected { reason })
 }
 
-/// Verify the current hidden-membership STARK and exactly one faithful wide
-/// binding proof per input, JOINED to the ring by the cryptographic same-opening.
+/// Verify every input's hidden **complete-spend** STARK against the EXECUTOR-COMMITTED accumulator
+/// root, then exactly one faithful wide binding proof per input, JOINED to the ring by the
+/// cryptographic same-opening.
 ///
-/// `ring_wide_bindings` are the ring/spend proof's OWN exposed sixteen-lane wide
-/// carriers (one per input) — the value coordinate the conservation clears. The
-/// join forces each sidecar to open that same value; the deleted `legacy_binding`
-/// felt join could not (`ShieldedWideJoinPin.dark_value_decouples`: a `v`/`v+p`
-/// alias shares the ~31-bit felt but not the wide carrier).
+/// ⚑ **FLAG DAY — the coupling that used to fail closed here is CLOSED.** The note that stood here
+/// said the ring's wide binding "must be INDEPENDENTLY bound by the spend proof", that the then-
+/// deployed spend circuit exposed only a one-felt `value_binding`, and that the deployed path
+/// therefore passed `ring_wide_bindings` EMPTY and refused every transfer. That is no longer the
+/// shape: `dregg-shielded-spend-complete-fsi2::v1` PI-pins its own sixteen `cap_node8` carrier lanes
+/// (`carrierPins`) column-for-column with this sidecar's, so the ring binding is read off
+/// [`ShieldedTransfer::ring_wide_bindings`] — a value the COMPLETE-SPEND proof binds, verified in
+/// the first statement of this function, before any join is attempted.
 ///
-/// ⚑ **COUPLING (say it out loud):** the ring's wide binding must be INDEPENDENTLY
-/// bound by the spend proof — a full-`u64` opening, not the one-felt `value_binding`
-/// the current spend circuit exposes. Widening the spend circuit to expose it is
-/// the `ShieldedOnRampPin` (shielded-onramp lane) half of this cutover. Sourcing
-/// `ring_wide_bindings` from the sidecar's own claim would be a vacuous identity
-/// carrier (`join_still_decouples`) and is precisely what this signature refuses to
-/// let a caller do accidentally: the ring binding is a SEPARATE argument.
+/// That ordering is what keeps `ShieldedWideJoinPin.join_still_decouples` unreachable: the ring
+/// carrier is not the sidecar's own claim handed back to itself, it is a public input of a
+/// SEPARATE proof that has already been checked. The join then forces both proofs to open the same
+/// full-`u64` `(value, asset)` — which the deleted one-felt `legacy_binding` join could not
+/// (`dark_value_decouples`: `v` and `v+p` share the ~31-bit felt but not the sixteen lanes).
+///
+/// `committed_root` MUST come from live executor state (`note_shielded.root8()`), never the wire.
 pub fn verify_stark_with_wide_bindings(
     transfer: &ShieldedTransfer,
     sidecars: &[WideValueBindingProof],
-    ring_wide_bindings: &[[BabyBear; WIDE_VALUE_BINDING_LANES]],
+    committed_root: Digest8,
 ) -> Result<(), WideValueBindingError> {
+    // FIRST: the complete-spend side, under the executor's root. This both closes seam #15 (a
+    // forged tree folds to R != committed_root and has no satisfying assignment) and is what makes
+    // each input's `spend_wide_binding` a PROVEN opening rather than a wire claim — so the join
+    // below compares two independently proven quantities.
     transfer
-        .verify_stark_side()
+        .verify_stark_side(committed_root)
         .map_err(WideValueBindingError::ShieldedSpendRejected)?;
     if sidecars.len() != transfer.inputs.len() {
         return Err(WideValueBindingError::SidecarCountMismatch {
@@ -495,14 +504,8 @@ pub fn verify_stark_with_wide_bindings(
             sidecars: sidecars.len(),
         });
     }
-    if ring_wide_bindings.len() != transfer.inputs.len() {
-        return Err(WideValueBindingError::RingWideBindingCountMismatch {
-            inputs: transfer.inputs.len(),
-            ring_bindings: ring_wide_bindings.len(),
-        });
-    }
-    for (i, (sidecar, ring_wide)) in sidecars.iter().zip(ring_wide_bindings).enumerate() {
-        verify_wide_value_binding(sidecar, ring_wide).map_err(|source| {
+    for (i, (sidecar, input)) in sidecars.iter().zip(&transfer.inputs).enumerate() {
+        verify_wide_value_binding(sidecar, &input.spend_wide_binding).map_err(|source| {
             WideValueBindingError::InputSidecarRejected {
                 input_index: i,
                 reason: source.to_string(),
@@ -519,6 +522,7 @@ pub fn verify_stark_with_wide_bindings(
 pub fn wide_transfer_message(
     transfer: &ShieldedTransfer,
     sidecars: &[WideValueBindingProof],
+    committed_root: Digest8,
 ) -> Result<Vec<u8>, WideValueBindingError> {
     if sidecars.len() != transfer.inputs.len() {
         return Err(WideValueBindingError::SidecarCountMismatch {
@@ -527,8 +531,8 @@ pub fn wide_transfer_message(
         });
     }
     let mut message = Vec::new();
-    message.extend_from_slice(b"dregg-shielded-transfer-wide-binding-v1");
-    let base = transfer.transfer_message();
+    message.extend_from_slice(b"dregg-shielded-transfer-wide-binding-v2");
+    let base = transfer.transfer_message(committed_root);
     message.extend_from_slice(&(base.len() as u64).to_le_bytes());
     message.extend_from_slice(&base);
     message.extend_from_slice(&(sidecars.len() as u64).to_le_bytes());
@@ -569,12 +573,13 @@ pub enum WideValueBindingError {
         expected: u32,
         got: u32,
     },
-    /// The caller supplied a different number of ring-side wide bindings than spent
-    /// inputs — the same-opening join has no ring carrier to join a sidecar against.
-    RingWideBindingCountMismatch {
-        inputs: usize,
-        ring_bindings: usize,
-    },
+    // ⚑ `RingWideBindingCountMismatch` is DELETED (this flag day). It reported "the caller supplied
+    // a different number of ring wide bindings than inputs", which was reachable only while the
+    // ring bindings were a SEPARATE argument the caller assembled — and whose deployed value was
+    // the EMPTY vector, i.e. this variant was the deployed refusal. The ring carrier is now read
+    // off `ShieldedTransfer::inputs[i].spend_wide_binding`, one per input by construction, so the
+    // arity can no longer disagree. Keeping an unreachable refusal would be a no-op retained for
+    // shape, and the next reader would trust it.
     SidecarCountMismatch {
         inputs: usize,
         sidecars: usize,
@@ -607,13 +612,6 @@ impl core::fmt::Display for WideValueBindingError {
                 f,
                 "wide binding same-opening join failed: ring carrier lane {lane} is \
                  {expected} but the sidecar opens {got} (dark-value decouple)"
-            ),
-            Self::RingWideBindingCountMismatch {
-                inputs,
-                ring_bindings,
-            } => write!(
-                f,
-                "shielded transfer has {inputs} inputs but {ring_bindings} ring wide bindings"
             ),
             Self::SidecarCountMismatch { inputs, sidecars } => write!(
                 f,

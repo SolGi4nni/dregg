@@ -32,6 +32,7 @@
 //! enforced by the type system and a crate boundary instead of a cfg matrix.
 
 use dregg_cell::ShieldedNoteCommitment;
+use dregg_circuit::field::BabyBear;
 
 use crate::action::ShieldedTransferPayload;
 use crate::error::TurnError;
@@ -69,9 +70,26 @@ pub trait ShieldedTransferVerifier: Send + Sync {
     /// is called mid-`apply` and its `Err` must leave nothing behind. The state
     /// mutations (nullifier consumption, accumulator append) belong to the core
     /// executor, which journals them.
+    ///
+    /// # ⚑ `committed_root` — the seam-#15 argument, and why the trait grew one
+    ///
+    /// `committed_root` is the executor's LIVE shielded-accumulator root,
+    /// `TurnExecutor::note_shielded.root8().limbs()`, read inside `apply_shielded_transfer`
+    /// immediately before this call and never from `payload`. Every input's complete-spend proof
+    /// is judged with it as the 8-lane `piCommitted` of the Lean-emitted
+    /// `dregg-shielded-spend-complete-fsi2::v1` relation.
+    ///
+    /// The payload used to carry a `merkle_root` the prover chose, which nothing compared against
+    /// — `ShieldedMerkleRootPin.root_substitution_forges`. That field is gone; this parameter
+    /// replaces it. A forged-tree membership proof folds to `R ≠ committed_root`, the 8-lane
+    /// `rootPins` `.piBinding` has no satisfying assignment, and the transfer REFUSES.
+    ///
+    /// **An implementor MUST NOT re-derive this from the payload.** It is a parameter precisely so
+    /// that it cannot be: there is nothing in `ShieldedTransferPayload` to derive it from.
     fn verify(
         &self,
         payload: &ShieldedTransferPayload,
+        committed_root: [BabyBear; 8],
     ) -> Result<VerifiedShieldedTransfer, TurnError>;
 }
 

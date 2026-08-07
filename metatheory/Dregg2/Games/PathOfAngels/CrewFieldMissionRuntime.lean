@@ -821,7 +821,7 @@ private def parseSignature (j : Json) : Except String CrewFieldMission.Signature
   let values ← parseNatList j CrewFieldMission.SIGNATURE_BYTE_LENGTH 255
   match signatureBytes? values with
   | some signature => pure signature
-  | none => throw "signature must contain exactly 64 bytes"
+  | none => throw "signature envelope must contain exactly SIGNATURE_BYTE_LENGTH bytes"
 
 private def parseContribution (j : Json) : Except String ContributionWire := do
   exactKeys j ["intel", "supplies", "cohesion", "influence", "score", "relics"]

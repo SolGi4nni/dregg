@@ -31,8 +31,13 @@ claim that immutable Lean values are globally linear: a runtime must issue it
 once, consume the session key by atomic CAS, and wrap accepted transitions in
 the generic finalized event stream.
 -/
+import Mathlib.Data.Finset.Sort
+import Dregg2.Crypto.Keccak
+import Dregg2.Crypto.MlDsaVerifyReal
 import Dregg2.Games.PathOfAngels.CrewRelayExpedition
 import Dregg2.Games.PathOfAngels.ActivityOutcome
+import Dregg2.Games.PathOfAngels.PlayerCounters
+import Dregg2.Games.PathOfAngels.CrewSigningVectors
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.CrewFieldMission
@@ -304,10 +309,31 @@ structure SeatAdmissionBody where
   seat : Seat
 deriving DecidableEq
 
-abbrev SIGNATURE_BYTE_LENGTH : Nat := 64
+/-! ### ⚑ SIGNATURE ENVELOPE FLAG DAY — 2026-08-07
 
-/-- Finite representation of an external signature.  These bytes are opaque to
-the semantic kernel; only the activated verifier interprets them. -/
+`SIGNATURE_BYTE_LENGTH` was 64 (an ed25519-shaped placeholder no verifier ever
+interpreted cryptographically).  It is now the ML-DSA-65 envelope
+`publicKey ‖ signature` (1952 + 3309 = 5261 bytes), because the production
+signing suite below verifies through the REAL executable FIPS 204 verify
+(`Dregg2.Crypto.MlDsaVerifyReal.verifyCore`) and the verifier receives only
+`playerKey : Digest32` — the full public key must travel in the envelope, and
+`SHAKE256(publicKey, 32) = playerKey` is the two-source pin (roster vs envelope).
+
+What breaks and re-emits: every previously constructed `SignatureBytes` value
+(there were none outside this file's fixtures and `CrewFieldMissionRuntime`'s
+wire fixtures, both re-derived here), and any wire bytes carrying the old
+64-byte arrays refuse at `parseSignature`.  Nothing else in the tree names this
+length. -/
+
+abbrev MLDSA65_PUBLIC_KEY_BYTE_LENGTH : Nat := 1952
+abbrev MLDSA65_SIGNATURE_BYTE_LENGTH : Nat := 3309
+abbrev SIGNATURE_BYTE_LENGTH : Nat :=
+  MLDSA65_PUBLIC_KEY_BYTE_LENGTH + MLDSA65_SIGNATURE_BYTE_LENGTH
+
+/-- Finite representation of an external signature envelope
+`publicKey ‖ signature`.  These bytes are opaque to the semantic kernel; only
+the activated verifier interprets them (the fixture suite as a whole opaque
+pattern, the production suite as the ML-DSA-65 envelope). -/
 structure SignatureBytes where
   bytes : List (Fin 256)
   length_eq : bytes.length = SIGNATURE_BYTE_LENGTH
@@ -988,9 +1014,11 @@ def digestFilled (value : Nat) : Digest32 where
 
 private def signatureBytesPattern (value : Nat) : SignatureBytes where
   bytes :=
-    List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩ ++
+    List.replicate (SIGNATURE_BYTE_LENGTH - 32) ⟨value % 256, Nat.mod_lt _ (by omega)⟩ ++
     List.replicate 32 ⟨(value + 1) % 256, Nat.mod_lt _ (by omega)⟩
-  length_eq := by simp [SIGNATURE_BYTE_LENGTH]
+  length_eq := by
+    simp only [List.length_append, List.length_replicate]
+    decide
 
 def fixtureBriefings : List BriefingAssignment :=
   [ ⟨⟨0⟩, .pathfinder .signalGallery⟩
@@ -1095,9 +1123,10 @@ private def fixtureMessageDigest : SigningMessageDigestBoundary where
   seatMessageDigest preimage := digestFilled (seatPreimageCode preimage)
   handoffMessageDigest preimage := digestFilled (handoffPreimageCode preimage)
 
-/-! This deterministic verifier is fixture-only.  Production activation must
-replace it with a cryptographic verifier and faithful canonical byte codec; the
-kernel still supplies the full semantic preimage and exact 64-byte signature. -/
+/-! This deterministic verifier is fixture-only.  Production activation
+(`ProductionSigning.activate?` below) replaces it with the ML-DSA-65 verifier
+over the canonical signing-preimage bytes; the kernel supplies the full
+semantic preimage and exact fixed-length signature envelope in both suites. -/
 private def fixtureExpectedSignature (domain : Nat) (playerKey : Digest32)
     (credential : CredentialId) (messageDigest : Digest32) : SignatureBytes :=
   signatureBytesPattern
@@ -1742,11 +1771,15 @@ theorem hostile_signing_suite_substitution_refused :
     wrongSigningSuiteResult = some .signatureRefused := by native_decide
 
 private def digestDoubledAsSignatureBytes (digest : Digest32) : SignatureBytes where
-  bytes := digest.bytes ++ digest.bytes
-  length_eq := by simp [SIGNATURE_BYTE_LENGTH, digest.length_eq]
+  bytes := digest.bytes ++ digest.bytes ++
+    List.replicate (SIGNATURE_BYTE_LENGTH - 64) 0
+  length_eq := by
+    simp only [List.length_append, List.length_replicate, digest.length_eq]
+    decide
 
-/-- A message digest is public and easy to compute.  Repeating its 32 bytes to
-fit the 64-byte signature type still provides no proof of key possession. -/
+/-- A message digest is public and easy to compute.  Repeating its 32 bytes
+(zero-padded to the envelope length) still provides no proof of key
+possession. -/
 def forgedMessageDigestAsSignatureResult : Option Refusal := do
   let handoff ← firstHandoff?
   let forgedSignature : HandoffSignature := {
@@ -1847,5 +1880,670 @@ theorem hostile_expanded_record_mutation_matrix_refused :
 #assert_compiled hostile_public_message_digest_submitted_as_signature_refused
 #assert_compiled hostile_combined_record_route_substitution_refused
 #assert_compiled hostile_expanded_record_mutation_matrix_refused
+
+/-! ## ⚑ The production ML-DSA-65 signing suite — 2026-08-07
+
+Until today every seal in the universe was a FIXTURE seal, and the fixture
+verifier checks a publicly computable pattern with no secret anywhere — the
+kernel's own docblock bars it from deployment.  This section is the deployable
+suite: the canonical signing-preimage byte encoding, the SHAKE-256 message
+digest, the ML-DSA-65 envelope verifier through the REAL executable FIPS 204
+verify (`Dregg2.Crypto.MlDsaVerifyReal.verifyCore` — NIST-ACVP- and
+crate-anchored in its own module), and the one public seal producer
+`ProductionSigning.activate?`, structurally pinned to these three boundaries so
+no caller ever supplies a verifier function.
+
+**The signing message is canonical JSON with a FIXED key order**, containing
+only decimal naturals, fixed labels, and lowercase hex — no escapable content
+anywhere, so byte-faithful reproduction by a client signer is string
+concatenation, not a JSON library.  The exact shapes are the `*Json` functions
+below; they are the client-signing spec.  Faithfulness of this encoding
+(injectivity into bytes) rests on the fixed key order plus the injective
+`.code` projections, whose injectivity over their full finite spaces is proved
+below as `observation_codes_are_injective` / `decision_codes_are_injective`.
+
+**The two-source key pin.**  The verifier receives `playerKey : Digest32` from
+the activated roster and an envelope `publicKey ‖ signature` from the signer;
+it demands `SHAKE256(publicKey, 32) = playerKey` and then runs `verifyCore`
+with the suite's signature context.  Roster and envelope are independent
+sources; a genuine signature under a key that is not the seat's key is refused
+by the pin (proved below with a REAL second keypair, not a corrupted blob).
+
+**Signature-level domain separation.**  Seat admission and handoff signing use
+distinct FIPS 204 `ctx` strings (`SEAT_SIGNING_CONTEXT` /
+`HANDOFF_SIGNING_CONTEXT`) in addition to the distinct preimage formats, so a
+seat-admission signature can never be replayed as a handoff signature even if
+the message bytes were ever to collide.
+
+The cross-language KAT at the bottom is the reason to believe the encoding is
+not a mirror: the Lean encoder emitted the exact message bytes, the Rust
+`fips204` v0.4.6 crate (an independent implementation) signed them, the crate's
+own verify accepted them first, and `verifyCore` accepts them here —
+satisfiable and refutable, with every refutation's mutation asserted present
+before the verdict. -/
+
+namespace ProductionSigning
+
+open scoped Prod.Lex
+
+/-! ### Canonical order for the two `Finset`s inside a session
+
+`SessionDigest` reaches the signing preimage, and it contains
+`policy.allowedBeta : Finset ArtifactRef` and
+`policy.mission.allowedRelics : Finset RelicId`.  A `Finset`'s runtime
+representative is insertion-ordered, so encoding the representative would make
+the encoder non-functional (equal sessions, different bytes) — they must be
+sorted.  These instances mirror `NetworkJudgeWire`'s (same order keys); they
+are duplicated rather than imported because that module belongs to the signal
+organ and drags its whole wire cone. -/
+
+instance : LinearOrder RelicId :=
+  LinearOrder.lift' RelicId.value (by
+    intro left right equal
+    cases left
+    cases right
+    simp_all)
+
+private abbrev ArtifactSigningKey := Nat ×ₗ (Nat ×ₗ (Digest32 ×ₗ Digest32))
+
+private def artifactSigningKey (a : ArtifactRef) : ArtifactSigningKey :=
+  toLex (a.missionId.value,
+    toLex (a.artifactId.value, toLex (a.sourceDigest, a.contentDigest)))
+
+instance : LinearOrder ArtifactRef :=
+  LinearOrder.lift' artifactSigningKey (by
+    intro left right equal
+    cases left
+    cases right
+    case mk.mk missionId₁ artifactId₁ source₁ content₁ missionId₂ artifactId₂ source₂ content₂ =>
+      cases missionId₁
+      cases artifactId₁
+      cases missionId₂
+      cases artifactId₂
+      simp_all [artifactSigningKey])
+
+/-! ### Canonical JSON emission (the client-signing spec) -/
+
+private def hexDigitChar (n : Nat) : Char :=
+  if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+
+private def byteHex (b : Fin 256) : String :=
+  String.ofList [hexDigitChar (b.val / 16), hexDigitChar (b.val % 16)]
+
+/-- 64 lowercase hex digits. -/
+def digestHex (digest : Digest32) : String :=
+  String.join (digest.bytes.map byteHex)
+
+private def natArray (values : List Nat) : String :=
+  "[" ++ String.intercalate "," (values.map toString) ++ "]"
+
+private def jsonArray (values : List String) : String :=
+  "[" ++ String.intercalate "," values ++ "]"
+
+private def crewRoleCode : CrewRole → Nat
+  | .pathfinder => 0
+  | .engineer => 1
+  | .containment => 2
+  | .quartermaster => 3
+
+private def privacyGradeCode : PrivacyGrade → Nat
+  | .public => 0
+  | .operatorVisibleHidingFri => 1
+  | .processSeparatedThreshold => 2
+  | .independentOperatorThreshold => 3
+
+private def ballotRegimeCode : BallotRegime → Nat
+  | .none => 0
+  | .onePlayerOneVoice => 1
+  | .oneWalletOneVoice => 2
+  | .cappedChoir => 3
+  | .predictionOracle => 4
+
+private def briefingPrivacyCode : BriefingPrivacyBoundary → Nat
+  | .trustedDealerOperatorVisibleThenPublicHandoff => 0
+
+private def extractionCode : ExtractionChoice → Nat
+  | .returnNow => 0
+  | .descendFurther => 1
+
+private def phaseCode : MissionPhase → Nat
+  | .active => 0
+  | .extracted => 1
+
+private def strategyCode : Option Strategy → Nat
+  | none => 0
+  | some .survey => 1
+  | some .salvage => 2
+
+def seatJson (seat : Seat) : String :=
+  "{\"seat\":" ++ toString seat.id.value ++
+    ",\"player_key\":\"" ++ digestHex seat.playerKey ++ "\"" ++
+    ",\"credential\":" ++ toString seat.credential.value ++
+    ",\"role\":" ++ toString (crewRoleCode seat.role) ++
+    ",\"initial_counter\":" ++ toString seat.initialCounter ++ "}"
+
+def artifactJson (artifact : ArtifactRef) : String :=
+  "{\"mission\":" ++ toString artifact.missionId.value ++
+    ",\"artifact\":" ++ toString artifact.artifactId.value ++
+    ",\"source\":\"" ++ digestHex artifact.sourceDigest ++ "\"" ++
+    ",\"content\":\"" ++ digestHex artifact.contentDigest ++ "\"}"
+
+private def budgetJson (budget : ContributionBudget) : String :=
+  "{\"intel\":" ++ toString budget.intel.val ++
+    ",\"supplies\":" ++ toString budget.supplies.val ++
+    ",\"cohesion\":" ++ toString budget.cohesion.val ++
+    ",\"influence\":" ++ toString budget.influence.val ++
+    ",\"score\":" ++ toString budget.score.val ++
+    ",\"relics\":" ++ toString budget.relics.val ++ "}"
+
+private def missionSpecJson (mission : MissionSpec) : String :=
+  "{\"mission\":" ++ toString mission.missionId.value ++
+    ",\"artifact\":" ++ artifactJson mission.artifact ++
+    ",\"epoch\":" ++ toString mission.epoch.value ++
+    ",\"federation\":\"" ++ digestHex mission.federationId ++ "\"" ++
+    ",\"content_root\":\"" ++ digestHex mission.contentRoot ++ "\"" ++
+    ",\"activation\":\"" ++ digestHex mission.activationDigest ++ "\"" ++
+    ",\"content_session\":\"" ++ digestHex mission.contentSession ++ "\"" ++
+    ",\"run_seed\":\"" ++ digestHex mission.runSeed ++ "\"" ++
+    ",\"budget\":" ++ budgetJson mission.budget ++
+    ",\"allowed_relics\":" ++
+      natArray ((mission.allowedRelics.sort (· ≤ ·)).map RelicId.value) ++
+    ",\"privacy\":" ++ toString (privacyGradeCode mission.privacy) ++
+    ",\"ballot\":" ++ toString (ballotRegimeCode mission.ballot) ++ "}"
+
+private def policyJson (policy : ActivityOutcome.Policy) : String :=
+  "{\"mission\":" ++ missionSpecJson policy.mission ++
+    ",\"allowed_beta\":" ++
+      jsonArray ((policy.allowedBeta.sort (· ≤ ·)).map artifactJson) ++
+    ",\"result_limit\":" ++ toString policy.resultLimit.val ++ "}"
+
+private def rawContributionJson (raw : RawContribution) : String :=
+  "{\"intel\":" ++ toString raw.intel ++
+    ",\"supplies\":" ++ toString raw.supplies ++
+    ",\"cohesion\":" ++ toString raw.cohesion ++
+    ",\"influence\":" ++ toString raw.influence ++
+    ",\"score\":" ++ toString raw.score ++
+    ",\"relics\":" ++ natArray (raw.relics.map RelicId.value) ++ "}"
+
+private def rawOutcomeJson (raw : ActivityOutcome.Raw) : String :=
+  "{\"contribution\":" ++ rawContributionJson raw.contribution ++
+    ",\"beta_candidates\":" ++ jsonArray (raw.betaCandidates.map artifactJson) ++ "}"
+
+private def routeOutcomeJson (spec : RouteOutcomeSpec) : String :=
+  "{\"route\":" ++ toString spec.route.code ++
+    ",\"extraction\":" ++ toString (extractionCode spec.extraction) ++
+    ",\"cost\":" ++ toString spec.operationalCost ++
+    ",\"featured\":" ++ artifactJson spec.featuredArtifact ++
+    ",\"outcome\":" ++ rawOutcomeJson spec.outcome ++ "}"
+
+def sessionJson (session : SessionDigest) : String :=
+  "{\"federation\":\"" ++ digestHex session.federationId ++ "\"" ++
+    ",\"content_session\":\"" ++ digestHex session.contentSession ++ "\"" ++
+    ",\"epoch\":" ++ toString session.missionEpoch.value ++
+    ",\"mission\":" ++ toString session.missionId.value ++
+    ",\"relay\":\"" ++ digestHex session.relayId ++ "\"" ++
+    ",\"privacy\":" ++ toString (briefingPrivacyCode session.briefingPrivacy) ++
+    ",\"briefing_suite\":\"" ++ digestHex session.briefingHashSuiteId ++ "\"" ++
+    ",\"briefing_commitment\":\"" ++ digestHex session.briefingCommitment ++ "\"" ++
+    ",\"message_suite\":\"" ++ digestHex session.messageDigestSuiteId ++ "\"" ++
+    ",\"signing_suite\":\"" ++ digestHex session.signingSuiteId ++ "\"" ++
+    ",\"roster\":" ++ jsonArray (session.roster.map seatJson) ++
+    ",\"policy\":" ++ policyJson session.policy ++
+    ",\"budget\":" ++ toString session.operationalBudget ++
+    ",\"route_outcomes\":" ++ jsonArray (session.routeOutcomes.map routeOutcomeJson) ++ "}"
+
+private def seatCounterJson (counter : SeatCounter) : String :=
+  "{\"seat\":" ++ toString counter.seat.value ++
+    ",\"counter\":" ++ toString counter.counter ++ "}"
+
+private def signatureNats (signature : SignatureBytes) : List Nat :=
+  signature.bytes.map Fin.val
+
+private def traceJson (trace : HandoffTrace) : String :=
+  "{\"sequence\":" ++ toString trace.sequence ++
+    ",\"seat\":" ++ seatJson trace.seat ++
+    ",\"previous_counter\":" ++ toString trace.previousCounter ++
+    ",\"counter\":" ++ toString trace.counter ++
+    ",\"observation\":" ++ toString trace.observation.code ++
+    ",\"decision\":" ++ toString trace.decision.code ++
+    ",\"seat_signature\":" ++ natArray (signatureNats trace.seatSignature.bytes) ++
+    ",\"handoff_signature\":" ++ natArray (signatureNats trace.signature.bytes) ++ "}"
+
+private def snapshotJson (snapshot : StateSnapshot) : String :=
+  "{\"phase\":" ++ toString (phaseCode snapshot.phase) ++
+    ",\"sequence\":" ++ toString snapshot.sequence ++
+    ",\"next_seat\":" ++ toString snapshot.nextSeat ++
+    ",\"counters\":" ++ jsonArray (snapshot.counters.map seatCounterJson) ++
+    ",\"strategy\":" ++ toString (strategyCode snapshot.strategy) ++
+    ",\"budget_remaining\":" ++ toString snapshot.operationalBudgetRemaining ++
+    ",\"transcript\":" ++ jsonArray (snapshot.transcript.map traceJson) ++ "}"
+
+private def stateRootJson (root : StateRoot) : String :=
+  "{\"session\":" ++ sessionJson root.session ++
+    ",\"snapshot\":" ++ snapshotJson root.snapshot ++ "}"
+
+def seatAdmissionBodyJson (body : SeatAdmissionBody) : String :=
+  "{\"session\":" ++ sessionJson body.session ++
+    ",\"seat\":" ++ seatJson body.seat ++ "}"
+
+def handoffBodyJson (body : HandoffBody) : String :=
+  "{\"session\":" ++ sessionJson body.session ++
+    ",\"sequence\":" ++ toString body.sequence ++
+    ",\"pre_root\":" ++ stateRootJson body.preRoot ++
+    ",\"seat\":" ++ seatJson body.seat ++
+    ",\"previous_counter\":" ++ toString body.previousCounter ++
+    ",\"counter\":" ++ toString body.counter ++
+    ",\"observation\":" ++ toString body.observation.code ++
+    ",\"decision\":" ++ toString body.decision.code ++ "}"
+
+def seatPreimageJson (preimage : SeatSigningPreimage) : String :=
+  "{\"format\":\"POA-CREW-SEAT-SIGNING-1\"" ++
+    ",\"version\":" ++ toString preimage.formatVersion ++
+    ",\"message_suite\":\"" ++ digestHex preimage.messageDigestSuiteId ++ "\"" ++
+    ",\"signing_suite\":\"" ++ digestHex preimage.signatureSuiteId ++ "\"" ++
+    ",\"body\":" ++ seatAdmissionBodyJson preimage.body ++ "}"
+
+def handoffPreimageJson (preimage : HandoffSigningPreimage) : String :=
+  "{\"format\":\"POA-CREW-HANDOFF-SIGNING-1\"" ++
+    ",\"version\":" ++ toString preimage.formatVersion ++
+    ",\"message_suite\":\"" ++ digestHex preimage.messageDigestSuiteId ++ "\"" ++
+    ",\"signing_suite\":\"" ++ digestHex preimage.signatureSuiteId ++ "\"" ++
+    ",\"body\":" ++ handoffBodyJson preimage.body ++ "}"
+
+/-- The exact bytes a seat's signer signs to open its seat. -/
+def seatPreimageMessage (preimage : SeatSigningPreimage) : List UInt8 :=
+  (seatPreimageJson preimage).toUTF8.toList
+
+/-- The exact bytes a seat's signer signs for one handoff. -/
+def handoffPreimageMessage (preimage : HandoffSigningPreimage) : List UInt8 :=
+  (handoffPreimageJson preimage).toUTF8.toList
+
+/-! The encoder leans on the `.code` projections; their injectivity over the
+COMPLETE finite decision and observation spaces is asserted here as named
+theorems, not left to the constructor comment. -/
+
+private def allRoutes : List Route := [.maintenanceSpine, .signalGallery, .sealedNave]
+
+private def allObservations : List PrivateObservation :=
+  (allRoutes.map .pathfinder) ++ (allRoutes.map .engineer) ++
+    (allRoutes.map .containment) ++ [.quartermaster .closing, .quartermaster .stable]
+
+private def allCommands : List Command :=
+  [.chartPressureRoute, .markSalvageRoute, .braceTransit, .overdriveCargoLift,
+    .quietAnomaly, .screenRecovery, .bankSupplies, .secureCache]
+
+private def allDecisions : List Decision :=
+  (allRoutes.flatMap fun route => allCommands.map (Decision.specialist route)) ++
+    (allRoutes.flatMap fun route => allCommands.flatMap fun command =>
+      [Decision.finalize route .returnNow command,
+       Decision.finalize route .descendFurther command])
+
+private def codesInjectiveOnB {α : Type} [DecidableEq α]
+    (code : α → Nat) (values : List α) : Bool :=
+  values.all fun left => values.all fun right =>
+    decide (code left = code right → left = right)
+
+theorem observation_codes_are_injective :
+    codesInjectiveOnB PrivateObservation.code allObservations = true ∧
+      allObservations.length = 11 := by native_decide
+
+theorem decision_codes_are_injective :
+    codesInjectiveOnB Decision.code allDecisions = true ∧
+      allDecisions.length = 72 := by native_decide
+
+/-! ### SHAKE-256 digest and the suite identities -/
+
+/-- SHAKE-256 → 32 bytes, refusal-shaped.  `none` is structurally dead —
+`Keccak.squeeze` emits `⌈32/136⌉·136 = 136` bytes and takes 32, a length that
+depends only on the requested output length, never on the input — but the type
+does not know that, and a silent pad here would be a degrade, so the mismatch
+arm refuses instead. -/
+def shakeDigest32? (input : List UInt8) : Option Digest32 :=
+  let out := (Dregg2.Crypto.Keccak.shake256 input 32).map
+    fun b => (⟨b.toNat % 256, Nat.mod_lt _ (by omega)⟩ : Fin 256)
+  if h : out.length = 32 then some ⟨out, h⟩ else none
+
+/-- Total form for the activated boundaries, which must return a digest.  The
+fallback arm is the structurally dead branch above; the concrete teeth below
+pin the live arm on every value this file relies on. -/
+def shakeDigest32 (input : List UInt8) : Digest32 :=
+  (shakeDigest32? input).getD (digestFilled 0)
+
+/-- Two labeled INSTANCES (not a general proof) that the shake output length is
+exactly 32 — one empty input, one multi-block input. -/
+theorem shake_digest_lengths_hold_on_instances :
+    (shakeDigest32? []).isSome = true ∧
+      (shakeDigest32? (List.replicate 500 7)).isSome = true := by native_decide
+
+private def labelDigest (label : String) : Digest32 :=
+  shakeDigest32 label.toUTF8.toList
+
+def briefingSuiteId : Digest32 := labelDigest "POA-CREW-BRIEFING-SHAKE256-1"
+def messageSuiteId : Digest32 := labelDigest "POA-CREW-MSGDIGEST-SHAKE256-1"
+def signingSuiteId : Digest32 := labelDigest "POA-CREW-SIGNING-MLDSA65-1"
+
+/-- Distinct from each other AND from the fixture suite ids.  This is also the
+tooth that proves the `labelDigest` fallback arm never fired (a fired fallback
+would collapse two of these to the same constant). -/
+theorem production_suite_ids_are_distinct_and_not_the_fixture_ids :
+    briefingSuiteId ≠ messageSuiteId ∧ briefingSuiteId ≠ signingSuiteId ∧
+    messageSuiteId ≠ signingSuiteId ∧
+    briefingSuiteId ≠ fixtureBriefingDigest.id ∧
+    messageSuiteId ≠ fixtureMessageDigestSuiteId ∧
+    signingSuiteId ≠ fixtureSignatureSuiteId := by native_decide
+
+def briefingDeckJson (preimage : BriefingDeckPreimage) : String :=
+  "{\"format\":\"POA-CREW-BRIEFING-DECK-1\"" ++
+    ",\"federation\":\"" ++ digestHex preimage.federationId ++ "\"" ++
+    ",\"content_session\":\"" ++ digestHex preimage.contentSession ++ "\"" ++
+    ",\"epoch\":" ++ toString preimage.missionEpoch.value ++
+    ",\"mission\":" ++ toString preimage.missionId.value ++
+    ",\"relay\":\"" ++ digestHex preimage.relayId ++ "\"" ++
+    ",\"privacy\":" ++ toString (briefingPrivacyCode preimage.privacy) ++
+    ",\"roster\":" ++ jsonArray (preimage.roster.map seatJson) ++
+    ",\"briefings\":" ++ jsonArray (preimage.orderedBriefings.map fun briefing =>
+      "{\"seat\":" ++ toString briefing.seat.value ++
+        ",\"observation\":" ++ toString briefing.observation.code ++ "}") ++ "}"
+
+def productionBriefingDigest : BriefingDigestBoundary where
+  id := briefingSuiteId
+  digest preimage := shakeDigest32 (briefingDeckJson preimage).toUTF8.toList
+
+def productionMessageDigest : SigningMessageDigestBoundary where
+  id := messageSuiteId
+  seatMessageDigest preimage := shakeDigest32 (seatPreimageMessage preimage)
+  handoffMessageDigest preimage := shakeDigest32 (handoffPreimageMessage preimage)
+
+/-! ### The ML-DSA-65 envelope verifier -/
+
+abbrev SEAT_SIGNING_CONTEXT : String := "POA-CREW-SEAT-MLDSA65-1"
+abbrev HANDOFF_SIGNING_CONTEXT : String := "POA-CREW-HANDOFF-MLDSA65-1"
+
+private def envelopeParts (signature : SignatureBytes) : List UInt8 × List UInt8 :=
+  let bytes := signature.bytes.map fun b => UInt8.ofNat b.val
+  (bytes.take MLDSA65_PUBLIC_KEY_BYTE_LENGTH, bytes.drop MLDSA65_PUBLIC_KEY_BYTE_LENGTH)
+
+/-- The two-source pin plus the real verify: the envelope's public key must
+digest to the roster's `playerKey`, and the ML-DSA-65 signature must verify
+over the exact message under the suite's signature context. -/
+def verifyEnvelope (playerKey : Digest32) (context : String) (message : List UInt8)
+    (signature : SignatureBytes) : Bool :=
+  let (publicKey, mldsaSignature) := envelopeParts signature
+  decide (shakeDigest32? publicKey = some playerKey) &&
+  Dregg2.Crypto.MlDsaVerifyReal.verifyCore publicKey message
+    context.toUTF8.toList mldsaSignature
+
+def productionSignatureVerifier : ActivatedSignatureVerifier where
+  id := signingSuiteId
+  verifySeat playerKey _credential preimage signature :=
+    decide (preimage.formatVersion = SIGNING_FORMAT_VERSION) &&
+    decide (preimage.messageDigestSuiteId = messageSuiteId) &&
+    decide (preimage.signatureSuiteId = signingSuiteId) &&
+    verifyEnvelope playerKey SEAT_SIGNING_CONTEXT
+      (seatPreimageMessage preimage) signature
+  verifyHandoff playerKey _credential preimage signature :=
+    decide (preimage.formatVersion = SIGNING_FORMAT_VERSION) &&
+    decide (preimage.messageDigestSuiteId = messageSuiteId) &&
+    decide (preimage.signatureSuiteId = signingSuiteId) &&
+    verifyEnvelope playerKey HANDOFF_SIGNING_CONTEXT
+      (handoffPreimageMessage preimage) signature
+
+/-! ### The one public seal producer
+
+A caller chooses only DATA (`RawConfig` + briefings); every function — briefing
+digest, message digest, signature verifier — is pinned structurally to the
+production suite.  This does not reopen the caller-supplied-verifier hole the
+2026-08-06 weld closed: there is no argument through which a verifier could
+arrive.  A caller can mint a seal for a mission of its own authorship, but a
+seal only ever judges its own session
+(`RunSeal.admitted_record_carries_the_sealed_session`), and the runtime pins
+`runSeal.session` against the authored activation's field session. -/
+
+def activate? (raw : RawConfig) (briefings : List BriefingAssignment) : Option RunSeal :=
+  if hvalid : rawConfigValidB raw briefings productionBriefingDigest = true then
+    if hmessage : raw.messageDigestSuiteId = productionMessageDigest.id then
+      if hsigning : raw.signingSuiteId = productionSignatureVerifier.id then
+        let config : Config := ⟨raw, briefings, productionBriefingDigest,
+          productionMessageDigest, productionSignatureVerifier, hvalid, hmessage, hsigning⟩
+        some ⟨config, ⟨config.raw.sessionDigest, rfl⟩⟩
+      else none
+    else none
+  else none
+
+/-! ### The KAT world — a production-suited mission with one REAL keypair
+
+Seat 0's `playerKey` is the SHAKE-256 digest of a genuine ML-DSA-65 public key
+(`CrewSigningVectors.katSeat0PublicKey`, deterministic `keygen_from_seed` from
+a pinned xi — the secret is derivable by anyone; this world is for the KAT and
+must never be deployed, same status as the fixture crew).  Seats 1–3 keep
+fixture placeholder keys: only seat 0's signatures are judged here. -/
+
+private def katSeat0PublicKeyBytes : List UInt8 :=
+  CrewSigningVectors.katSeat0PublicKey.toList
+
+private def katWrongPublicKeyBytes : List UInt8 :=
+  CrewSigningVectors.katWrongPublicKey.toList
+
+def katPlayerKey : Digest32 :=
+  (shakeDigest32? katSeat0PublicKeyBytes).getD (digestFilled 7)
+
+theorem kat_player_key_is_the_seat0_public_key_digest :
+    shakeDigest32? katSeat0PublicKeyBytes = some katPlayerKey := by native_decide
+
+/-- The wrong keypair's digest is NOT seat 0's player key — the premise of the
+wrong-key refutation below. -/
+theorem kat_wrong_public_key_digest_is_not_the_seat_key :
+    shakeDigest32? katWrongPublicKeyBytes ≠ some katPlayerKey := by native_decide
+
+private def katSeat0 : Seat := { fixtureSeat0 with playerKey := katPlayerKey }
+
+private def katRoster : List Seat := [katSeat0, fixtureSeat1, fixtureSeat2, fixtureSeat3]
+
+private def katRawConfigBase : RawConfig := {
+  fixtureRawConfigBase with
+  roster := katRoster
+  briefingHashSuiteId := briefingSuiteId
+  messageDigestSuiteId := productionMessageDigest.id
+  signingSuiteId := productionSignatureVerifier.id }
+
+def katRawConfig : RawConfig := {
+  katRawConfigBase with
+  briefingCommitment := productionBriefingDigest.digest
+    (briefingDeckPreimage katRawConfigBase fixtureBriefings) }
+
+theorem kat_config_valid :
+    rawConfigValidB katRawConfig fixtureBriefings productionBriefingDigest = true := by
+  native_decide
+
+private def katConfig : Config :=
+  ⟨katRawConfig, fixtureBriefings, productionBriefingDigest, productionMessageDigest,
+    productionSignatureVerifier, kat_config_valid, rfl, rfl⟩
+
+private def katState : State := initialState katConfig
+
+private def katSeatBody : SeatAdmissionBody := expectedAdmission katConfig katSeat0
+
+/-- Seat 0's first handoff body at the initial root — the exact thing a player
+signs to act. -/
+def katHandoffBody : HandoffBody := {
+  session := katRawConfig.sessionDigest
+  sequence := 0
+  preRoot := katState.root
+  seat := katSeat0
+  previousCounter := katSeat0.initialCounter
+  counter := katSeat0.initialCounter + 1
+  observation := .pathfinder .signalGallery
+  decision := .specialist .signalGallery .chartPressureRoute }
+
+/-- The exact seat-admission message bytes (emitted for the cross-language
+generator, and pinned back below once signed). -/
+def katSeatMessage : List UInt8 :=
+  seatPreimageMessage (katSeatBody.signingPreimage
+    katRawConfig.messageDigestSuiteId katRawConfig.signingSuiteId)
+
+/-- The exact handoff message bytes. -/
+def katHandoffMessage : List UInt8 :=
+  handoffPreimageMessage (katHandoffBody.signingPreimage
+    katRawConfig.messageDigestSuiteId katRawConfig.signingSuiteId)
+
+/-! ### Producer teeth (signature-independent) -/
+
+theorem production_activation_seals_the_kat_mission :
+    (activate? katRawConfig fixtureBriefings).map RunSeal.session =
+      some katRawConfig.sessionDigest := by native_decide
+
+/-- The producer cannot mint a seal over the fixture suite: the authored
+fixture config names the fixture briefing/message/signing suite ids and the
+production validator refuses it. -/
+theorem production_activation_refuses_the_fixture_suite_config :
+    activate? fixtureRawConfig fixtureBriefings = none := by native_decide
+
+/-! ### The cross-language KAT — Rust `fips204` signs, Lean `verifyCore` accepts
+
+Chronology, so the two-source claim is checkable: (1) the Lean encoder above
+emitted `katSeatMessage` / `katHandoffMessage`; (2) the `fips204` crate signed
+those exact bytes under the suite contexts and its OWN verify accepted the
+honest pairings and refused the wrong-key/wrong-ctx/wrong-message pairings —
+asserted inside the generator, before Lean ever judged anything; (3) the
+signatures were pinned verbatim into `CrewSigningVectors`; (4) the theorems
+below run the production verifier — the SHAKE-256 key pin plus the executable
+FIPS 204 verify — over them.  Every refutation's mutation is asserted present
+in the same statement as its refusal. -/
+
+private def envelope? (publicKey signature : Array UInt8) : Option SignatureBytes :=
+  let bytes := (publicKey.toList ++ signature.toList).map
+    fun b => (⟨b.toNat % 256, Nat.mod_lt _ (by omega)⟩ : Fin 256)
+  if h : bytes.length = SIGNATURE_BYTE_LENGTH then some ⟨bytes, h⟩ else none
+
+private def katSeatEnvelope : SignatureBytes :=
+  (envelope? CrewSigningVectors.katSeat0PublicKey
+    CrewSigningVectors.katSeatSignature).getD (signatureBytesPattern 0)
+
+private def katHandoffEnvelope : SignatureBytes :=
+  (envelope? CrewSigningVectors.katSeat0PublicKey
+    CrewSigningVectors.katHandoffSignature).getD (signatureBytesPattern 0)
+
+private def katWrongKeyEnvelope : SignatureBytes :=
+  (envelope? CrewSigningVectors.katWrongPublicKey
+    CrewSigningVectors.katWrongKeyHandoffSignature).getD (signatureBytesPattern 0)
+
+/-- The pinned vectors really are envelope-sized — and therefore none of the
+`getD` fallbacks above fired. -/
+theorem kat_envelopes_are_exact :
+    envelope? CrewSigningVectors.katSeat0PublicKey CrewSigningVectors.katSeatSignature =
+      some katSeatEnvelope ∧
+    envelope? CrewSigningVectors.katSeat0PublicKey CrewSigningVectors.katHandoffSignature =
+      some katHandoffEnvelope ∧
+    envelope? CrewSigningVectors.katWrongPublicKey
+      CrewSigningVectors.katWrongKeyHandoffSignature = some katWrongKeyEnvelope := by
+  native_decide
+
+/-- The messages the Rust side signed are byte-identical to what the Lean
+encoder emits TODAY.  If the encoder ever drifts, this goes red separately
+from the verify theorems, so encoder drift and verifier drift are
+distinguishable at a glance. -/
+theorem kat_messages_are_the_pinned_bytes :
+    katSeatMessage = CrewSigningVectors.katSeatMessagePinned.toList ∧
+    katHandoffMessage = CrewSigningVectors.katHandoffMessagePinned.toList := by
+  native_decide
+
+/-- ⚑ THE KEYSTONE, seat half: the honest seat-admission signature verifies
+through the REAL executable FIPS 204 verify, over the production preimage
+bytes, under the production suite — cross-language. -/
+theorem kat_seat_admission_signature_verifies_cross_language :
+    seatSignatureValidB katConfig katSeat0 katSeatBody ⟨katSeatEnvelope⟩ = true := by
+  native_decide
+
+/-- ⚑ THE KEYSTONE, handoff half: the honest handoff signature verifies. -/
+theorem kat_handoff_signature_verifies_cross_language :
+    handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katHandoffEnvelope⟩ = true := by
+  native_decide
+
+/-- One seat's signed handoff, end to end through the kernel: the ML-DSA-65
+seat admission mints the capability (`authenticateSeat?`), the briefing opens,
+and `execute` ACCEPTS the ML-DSA-65-signed handoff and advances the mission to
+sequence 1 (not yet complete — three seats remain).  This is the smallest real
+crew action, judged by the kernel under real cryptography. -/
+def katFirstHandoffExecutesB : Bool :=
+  match authenticateSeat? katConfig ⟨0⟩ ⟨katSeatEnvelope⟩ with
+  | none => false
+  | some capability =>
+    match briefingFor? katConfig capability with
+    | none => false
+    | some briefing =>
+      match execute katConfig katState ⟨capability, briefing, katHandoffBody,
+          ⟨katHandoffEnvelope⟩⟩ with
+      | .error _ => false
+      | .ok result =>
+          decide (result.state.snapshot.sequence = 1) &&
+          decide (result.completion = none)
+
+theorem kat_one_seats_signed_handoff_is_executed_by_the_kernel :
+    katFirstHandoffExecutesB = true := by native_decide
+
+/-- Refutation: one flipped byte in the ML-DSA signature half of the envelope,
+asserted a real mutation, refused by `verifyCore`. -/
+private def katTamperedEnvelope : SignatureBytes :=
+  { katHandoffEnvelope with
+    bytes := katHandoffEnvelope.bytes.set (MLDSA65_PUBLIC_KEY_BYTE_LENGTH + 100)
+      ((katHandoffEnvelope.bytes.getD (MLDSA65_PUBLIC_KEY_BYTE_LENGTH + 100) 0) + 1)
+    length_eq := by rw [List.length_set]; exact katHandoffEnvelope.length_eq }
+
+theorem kat_tampered_signature_byte_is_refused :
+    katTamperedEnvelope.bytes ≠ katHandoffEnvelope.bytes ∧
+    handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katTamperedEnvelope⟩ = false := by
+  native_decide
+
+/-- ⚑ Refutation with a GENUINE signature: the wrong-key envelope carries a
+signature that `verifyCore` itself ACCEPTS under its own public key (first
+conjunct — the signature is not broken), and the crew verifier still refuses
+it for seat 0 (second conjunct).  Together with
+`kat_wrong_public_key_digest_is_not_the_seat_key`, the refusal is the
+two-source `SHAKE256(pk) = playerKey` pin doing its work — the case a
+self-pinned verifier could never catch. -/
+theorem kat_wrong_key_signature_is_genuine_but_refused_by_the_key_pin :
+    Dregg2.Crypto.MlDsaVerifyReal.verifyCore katWrongPublicKeyBytes katHandoffMessage
+      HANDOFF_SIGNING_CONTEXT.toUTF8.toList
+      CrewSigningVectors.katWrongKeyHandoffSignature.toList = true ∧
+    handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katWrongKeyEnvelope⟩ = false := by
+  native_decide
+
+/-- Refutation: the honest signature does not transfer to a different body —
+one counter increment, asserted different, refused. -/
+private def katTamperedBody : HandoffBody :=
+  { katHandoffBody with counter := katHandoffBody.counter + 1 }
+
+theorem kat_signature_does_not_transfer_to_a_different_body :
+    katTamperedBody ≠ katHandoffBody ∧
+    handoffSignatureValidB katConfig katSeat0 katTamperedBody ⟨katHandoffEnvelope⟩ = false := by
+  native_decide
+
+/-- Refutation: signature-level domain separation — the genuine SEAT-admission
+envelope is refused as a HANDOFF signature (distinct FIPS 204 `ctx`, distinct
+preimage format). -/
+theorem kat_seat_admission_envelope_is_refused_as_a_handoff :
+    handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katSeatEnvelope⟩ = false := by
+  native_decide
+
+#assert_compiled observation_codes_are_injective
+#assert_compiled decision_codes_are_injective
+#assert_compiled shake_digest_lengths_hold_on_instances
+#assert_compiled production_suite_ids_are_distinct_and_not_the_fixture_ids
+#assert_compiled kat_player_key_is_the_seat0_public_key_digest
+#assert_compiled kat_wrong_public_key_digest_is_not_the_seat_key
+#assert_compiled kat_config_valid
+#assert_compiled production_activation_seals_the_kat_mission
+#assert_compiled production_activation_refuses_the_fixture_suite_config
+#assert_compiled kat_envelopes_are_exact
+#assert_compiled kat_messages_are_the_pinned_bytes
+#assert_compiled kat_seat_admission_signature_verifies_cross_language
+#assert_compiled kat_handoff_signature_verifies_cross_language
+#assert_compiled kat_one_seats_signed_handoff_is_executed_by_the_kernel
+#assert_compiled kat_tampered_signature_byte_is_refused
+#assert_compiled kat_wrong_key_signature_is_genuine_but_refused_by_the_key_pin
+#assert_compiled kat_signature_does_not_transfer_to_a_different_body
+#assert_compiled kat_seat_admission_envelope_is_refused_as_a_handoff
+
+end ProductionSigning
 
 end Dregg2.Games.PathOfAngels.CrewFieldMission

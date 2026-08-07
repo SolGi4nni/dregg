@@ -104,6 +104,13 @@ pub use spend_circuit::{
     ShieldedSpendWitness, generate_shielded_spend_trace, shielded_spend_circuit,
     shielded_spend_descriptor,
 };
+pub use spend_complete::{
+    ShieldedSpendCompleteClaim, ShieldedSpendCompleteError, ShieldedSpendCompleteProof,
+    ShieldedSpendCompleteWitness, ShieldedSpendMembership, TREE_DEPTH, WIDE_LANES,
+    generate_shielded_spend_complete_trace, prove_shielded_spend_complete,
+    shielded_spend_complete_descriptor, verify_shielded_spend_complete,
+    verify_shielded_spend_complete_parts,
+};
 pub use transfer::{
     ShieldedError, ShieldedInputProof, ShieldedTransfer, ShieldedTransferWitness, ShieldedValueLeg,
     prove_shielded_input, prove_shielded_transfer as transfer_from_witnesses,

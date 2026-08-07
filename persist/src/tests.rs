@@ -809,11 +809,8 @@ fn committee_node_restarts_cleanly_with_finalization_quorum() {
     );
 
     // ── SOUNDNESS: >=threshold signatures over a DIFFERENT root are refused. ──
-    let wrong_msg = dregg_types::finalization_vote_signing_message(
-        &block_id,
-        &[0x00; 32],
-        receipt_stream_root,
-    );
+    let wrong_msg =
+        dregg_types::finalization_vote_signing_message(&block_id, &[0x00; 32], receipt_stream_root);
     let wrong_root_quorum = hybrid_quorum(&wrong_msg);
     let forged = StoredAttestedRoot {
         finalization_quorum: wrong_root_quorum,

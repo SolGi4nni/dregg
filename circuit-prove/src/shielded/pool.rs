@@ -65,10 +65,12 @@
 //! `DslP3Air`, hiding config swapped in. This module assembles witnesses and
 //! composes proofs; it emits no AIR of its own.
 
-use crate::shielded::spend_circuit::{PUBLIC_INPUT_COUNT, pi};
+use crate::shielded::ShieldedTransferWitness;
+use crate::shielded::spend_complete::{
+    ShieldedSpendCompleteWitness, verify_shielded_spend_complete_parts,
+};
 use crate::shielded::transfer::{ShieldedError, ShieldedInputProof, prove_shielded_input};
-use crate::shielded::{ShieldedTransferWitness, shielded_spend_circuit};
-use dregg_circuit::dsl::dsl_p3_air::verify_dsl_zk;
+use dregg_circuit::exact_nullifier_aafi::Digest8;
 use dregg_circuit::field::BabyBear;
 
 /// One asset-hiding value-commitment leg of a multi-asset pool transfer.
@@ -122,10 +124,11 @@ pub enum PoolBalanceMode {
 /// (Not `Clone`/`Debug`: holds `ShieldedInputProof`s whose inner `DslZkProof`
 /// implements neither.)
 pub struct MultiAssetPoolTransfer {
-    /// The commitment-tree root all input notes are proven members of.
-    pub merkle_root: BabyBear,
-    /// One hidden note-spend proof per spent input (asset-agnostic, reused from
-    /// M2-a).
+    /// One hidden complete-spend proof per spent input (asset-agnostic, reused from M2-a).
+    ///
+    /// ⚑ There is no `merkle_root` field. The pool inherits M2-a's seam-#15 fix: which tree the
+    /// inputs must be members of is supplied to [`Self::verify_stark_side`] by the verifier from
+    /// COMMITTED state, never published by the prover.
     pub inputs: Vec<ShieldedInputProof>,
     /// Input asset-hiding legs (the spent notes' hidden-asset commitments).
     pub input_legs: Vec<HiddenAssetLeg>,
@@ -159,19 +162,19 @@ impl MultiAssetPoolTransfer {
     /// This does NOT check value/asset balance — that is the downstream
     /// composition `verify_asset_conservation` (+ `verify_asset_equality` when
     /// [`PoolBalanceMode::Unequal`]) over the legs, bound to [`Self::pool_message`].
-    pub fn verify_stark_side(&self) -> Result<(), ShieldedError> {
+    pub fn verify_stark_side(&self, committed_root: Digest8) -> Result<(), ShieldedError> {
         if self.inputs.is_empty() {
             return Err(ShieldedError::NoInputs);
         }
-        let circuit = shielded_spend_circuit();
         for (i, input) in self.inputs.iter().enumerate() {
-            let mut pis = vec![BabyBear::ZERO; PUBLIC_INPUT_COUNT];
-            pis[pi::NULLIFIER] = input.nullifier;
-            pis[pi::MERKLE_ROOT] = self.merkle_root;
-            // The shielded-spend circuit now publishes a value-binding PI (C7); the
-            // proof was generated with it, so it must be supplied to the verifier.
-            pis[pi::VALUE_BINDING] = input.value_binding;
-            verify_dsl_zk(&circuit, &input.proof, &pis).map_err(|e| {
+            // The claim is assembled around the CALLER's committed root — the pool has no root of
+            // its own to substitute. Same substitution as `ShieldedTransfer::verify_stark_side`.
+            let claim = crate::shielded::spend_complete::ShieldedSpendCompleteClaim {
+                nullifier: input.nullifier,
+                committed_root,
+                wide_binding: input.spend_wide_binding,
+            };
+            verify_shielded_spend_complete_parts(&claim, &input.proof).map_err(|e| {
                 ShieldedError::InputProofRejected {
                     input_index: i,
                     reason: format!("{e}"),
@@ -214,16 +217,21 @@ impl MultiAssetPoolTransfer {
     /// asset-equality proof both take this as their `message`, so an adversary
     /// cannot splice one transfer's membership proofs onto another's value/asset
     /// commitments.
-    pub fn pool_message(&self) -> Vec<u8> {
+    pub fn pool_message(&self, committed_root: Digest8) -> Vec<u8> {
         let mut m = Vec::new();
-        m.extend_from_slice(b"dregg-shielded-pool-v1");
-        m.extend_from_slice(&self.merkle_root.as_u32().to_le_bytes());
+        m.extend_from_slice(b"dregg-shielded-pool-v2-committed-root");
+        for lane in committed_root {
+            m.extend_from_slice(&lane.as_u32().to_le_bytes());
+        }
         m.extend_from_slice(&(self.inputs.len() as u64).to_le_bytes());
         for input in &self.inputs {
             m.extend_from_slice(&input.nullifier.as_u32().to_le_bytes());
-            // Bind each input's value-binding (C7) into the transcript, tying the
-            // STARK leaf value to the hidden-asset Pedersen leg.
-            m.extend_from_slice(&input.value_binding.as_u32().to_le_bytes());
+            // Bind each input's full-`u64` wide carrier into the transcript, tying the
+            // STARK-proven note opening to the hidden-asset Pedersen leg. (Was the one-felt C7
+            // `value_binding`, which a `v`/`v+p` alias shared.)
+            for lane in input.spend_wide_binding {
+                m.extend_from_slice(&lane.as_u32().to_le_bytes());
+            }
         }
         m.extend_from_slice(&(self.input_legs.len() as u64).to_le_bytes());
         for leg in &self.input_legs {
@@ -275,14 +283,15 @@ impl MultiAssetPoolTransfer {
 /// asset-agnostic), paired with this input's asset-hiding leg.
 #[derive(Clone, Debug)]
 pub struct PoolInputWitness {
-    /// The hidden shielded-spend witness (leaf, key, Merkle path). Asset-agnostic.
-    pub spend: crate::shielded::ShieldedSpendWitness,
+    /// The hidden COMPLETE-spend witness (note opening, key, blinding, membership path in the
+    /// committed accumulator). Asset-agnostic.
+    pub spend: ShieldedSpendCompleteWitness,
     /// This input's published asset-hiding leg.
     pub leg: HiddenAssetLeg,
 }
 
 /// Build a multi-asset pool transfer's STARK side from per-input witnesses and the
-/// output legs. All inputs are pinned to `merkle_root`. `mode` records whether the
+/// output legs. `mode` records whether the
 /// asset side needs the per-leg equality argument; if the leg counts are unequal it
 /// is forced to [`PoolBalanceMode::Unequal`] so [`Self::requires_asset_equality`]
 /// cannot be under-claimed.
@@ -290,7 +299,6 @@ pub struct PoolInputWitness {
 /// The caller composes `prove_asset_conservation` (always) and, when required,
 /// `prove_asset_equality` over the legs downstream to complete value+asset balance.
 pub fn prove_pool_transfer(
-    merkle_root: BabyBear,
     witnesses: &[PoolInputWitness],
     output_legs: Vec<HiddenAssetLeg>,
     output_range_proofs: Vec<Vec<u8>>,
@@ -327,7 +335,6 @@ pub fn prove_pool_transfer(
         mode
     };
     Ok(MultiAssetPoolTransfer {
-        merkle_root,
         inputs,
         input_legs,
         output_legs,

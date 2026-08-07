@@ -42,6 +42,7 @@ impl ShieldedTransferVerifier for CircuitShieldedTransferVerifier {
     fn verify(
         &self,
         payload: &ShieldedTransferPayload,
+        committed_root: [BabyBear; 8],
     ) -> Result<VerifiedShieldedTransfer, TurnError> {
         // Reconstruct every mandatory full-width proof first. There is no
         // compatibility fallback: a pre-cutover one-felt-only payload cannot
@@ -65,12 +66,13 @@ impl ShieldedTransferVerifier for CircuitShieldedTransferVerifier {
             asset_type: l.asset_type,
             commitment_bytes: l.commitment_bytes,
         };
+        // ⚑ No root parameter. `from_serialized_parts` has none, and the payload has no field that
+        // could supply one — the committed root arrives as `committed_root`, from executor state.
         let transfer = ShieldedTransfer::from_serialized_parts(
-            payload.merkle_root,
             payload
                 .inputs
                 .iter()
-                .map(|i| (i.nullifier, i.legacy_value_binding, i.spend_proof.clone()))
+                .map(|i| (i.nullifier, i.spend_wide_binding, i.spend_proof.clone()))
                 .collect(),
             payload.input_legs.iter().map(leg).collect(),
             payload.output_legs.iter().map(leg).collect(),
@@ -78,38 +80,54 @@ impl ShieldedTransferVerifier for CircuitShieldedTransferVerifier {
         )
         .map_err(|e| invalid(format!("shielded transfer payload malformed: {e}")))?;
 
-        // GATE 1: membership/nullifier plus the cryptographic SAME-OPENING join of
-        // each input's wide sidecar to the ring/spend proof's OWN full-`u64` wide
-        // carrier (the value coordinate the conservation clears).
+        // GATE 1: the COMPLETE-spend STARK under the EXECUTOR'S committed root, plus the
+        // cryptographic SAME-OPENING join of each input's wide sidecar to the spend proof's OWN
+        // full-`u64` wide carrier (the value coordinate the conservation clears).
         //
-        // ⚑ COUPLING — say the substrate out loud. The routed same-opening join
-        // (`verify_stark_with_wide_bindings`, authored in
-        // `Dregg2/Circuit/ShieldedWideJoinPin.lean`) requires the ring/spend proof
-        // to EXPOSE and BIND its full-`u64` wide carrier. The current shielded-spend
-        // circuit publishes only the one-felt `value_binding` (a `value mod p`
-        // felt), so there is NO spend-proof-bound wide carrier to join against —
-        // and sourcing it from the sidecar's own claim would be a vacuous identity
-        // carrier (`ShieldedWideJoinPin.join_still_decouples`). Widening the spend
-        // circuit to expose the carrier is the ShieldedOnRampPin (shielded-onramp
-        // lane) half of this cutover. Until it lands, the deployed shielded-transfer
-        // path FAILS CLOSED here — strictly safer than the deleted ~31-bit
-        // `legacy_binding` felt join, which `ShieldedWideJoinPin.dark_value_decouples`
-        // proves admits a dark-value decouple (spend a value the receipt does not
-        // advertise). The ring wide bindings are therefore unavailable, not faked —
-        // passed EMPTY so the join fails closed INSIDE `verify_stark_with_wide_bindings`,
-        // after its membership/nullifier STARK side has run (so a forged root or an
-        // in-transfer double-spend still rejects for its own reason first).
-        let ring_wide_bindings: Vec<[BabyBear; WIDE_VALUE_BINDING_LANES]> = Vec::new();
-        verify_stark_with_wide_bindings(&transfer, &wide_bindings, &ring_wide_bindings)
+        // ⚑ SAY THE SUBSTRATE OUT LOUD. Both relations are AUTHORED IN LEAN:
+        // `dregg-shielded-spend-complete-fsi2::v1` (`ShieldedSpendCompleteEmit.lean`, 557 cols,
+        // 25 PIs) and the wide sidecar (`WideValueBindingEmit.lean`). This crate hands them
+        // witnesses and public inputs; it authors no constraint.
+        //
+        // ⚑ FLAG DAY — this call site used to FAIL CLOSED, deliberately, and now it does not.
+        // The note that stood here explained that the retired spend circuit published only a
+        // one-felt `value_binding`, so there was no ring-side full-`u64` carrier for the join, and
+        // that `ring_wide_bindings` was therefore passed EMPTY — no shielded transfer succeeded at
+        // all. The complete spend PI-pins its own sixteen `cap_node8` lanes (`carrierPins`), so
+        // `verify_stark_with_wide_bindings` reads the ring binding off each verified input. It is
+        // not the sidecar's claim handed back to itself — that is the vacuity
+        // `ShieldedWideJoinPin.join_still_decouples` names — it is a public input of a SEPARATE
+        // proof, checked first.
+        //
+        // ⚑ AND: `committed_root` is the seam-#15 pin. A spend proving membership in a tree the
+        // attacker built folds to `R != committed_root` and refuses inside this call.
+        verify_stark_with_wide_bindings(&transfer, &wide_bindings, committed_root)
             .map_err(|e| invalid(format!("shielded wide STARK verification failed: {e}")))?;
         // The structural inflation gate: exactly one range proof per output.
         transfer
             .check_range_proof_shape()
             .map_err(|e| invalid(format!("shielded range-proof shape rejected: {e}")))?;
 
-        // GATE 2: the hidden Pedersen side — conservation (Σ in = Σ out) AND each
-        // output's range proof, over the transfer's binding transcript.
-        let message = wide_transfer_message(&transfer, &wide_bindings)
+        // GATE 2: the hidden Pedersen side — conservation (Σ in = Σ out) AND each output's range
+        // proof, over the transfer's binding transcript.
+        //
+        // ⚑ THE CONSERVATION RECONCILIATION, stated as a chain — each link is a check above:
+        //   note value `v` (witness-only in the complete spend)
+        //     →[Lean `carrierPins`]      the sixteen ring carrier lanes
+        //     →[`verify_same_opening`]   the sidecar's sixteen lanes  (GATE 1)
+        //     →[Lean wide-sidecar relation] a canonical full-`u64` `(value, asset)` opening
+        //     →[this transcript]         absorbed into `message`
+        //     →[Schnorr excess + Bulletproofs] `Σ C_in = Σ C_out`, every output in `[0, 2^64)`
+        // The transcript also absorbs `committed_root`, so a conservation proof cannot be replayed
+        // against a different accumulator state.
+        //
+        // ⚑ NAMED RESIDUAL, unchanged by this route and NOT closed by it: the Pedersen leg's own
+        // `v` is bound to the STARK-side `v` only through this TRANSCRIPT, not by an equality the
+        // circuit enforces. `dregg_cell_crypto::value_commitment::verify_value_link` is the
+        // compatibility bridge and it is exercised in TESTS ONLY. The wide join makes both proofs
+        // open the SAME `(value, asset)` as each other; it does not make either of them open the
+        // value the Ristretto commitment holds. That is the value-link leg, and it is still open.
+        let message = wide_transfer_message(&transfer, &wide_bindings, committed_root)
             .map_err(|e| invalid(format!("shielded wide transcript rejected: {e}")))?;
         dregg_cell_crypto::value_commitment::verify_full_conservation_bytes(
             &transfer.input_commitment_bytes(),

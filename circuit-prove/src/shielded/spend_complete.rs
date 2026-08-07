@@ -594,8 +594,22 @@ pub fn prove_shielded_spend_complete(
 pub fn verify_shielded_spend_complete(
     proof: &ShieldedSpendCompleteProof,
 ) -> Result<(), ShieldedSpendCompleteError> {
-    let statement = statement_for(&proof.claim)?;
-    Plonky3HidingFriReference::verify(&statement, &proof.proof)
+    verify_shielded_spend_complete_parts(&proof.claim, &proof.proof)
+}
+
+/// [`verify_shielded_spend_complete`] over **separately held** halves — the entry the executor route
+/// uses, because there the claim is not the prover's: its 8-lane `committed_root` is substituted
+/// from live executor state (`note_shielded.root8()`) while the proof bytes come off the wire.
+///
+/// Keeping this by-reference is what lets `ShieldedTransfer::verify_stark_side` judge a wire proof
+/// under a root the wire never carried, without cloning the proof or ever materializing a
+/// prover-authored claim.
+pub fn verify_shielded_spend_complete_parts(
+    claim: &ShieldedSpendCompleteClaim,
+    proof: &Ir2BatchProof<DreggZkStarkConfig>,
+) -> Result<(), ShieldedSpendCompleteError> {
+    let statement = statement_for(claim)?;
+    Plonky3HidingFriReference::verify(&statement, proof)
         .map_err(|reason| ShieldedSpendCompleteError::VerifyFailed { reason })
 }
 

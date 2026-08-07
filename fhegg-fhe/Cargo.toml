@@ -51,7 +51,11 @@ rand = "0.8"
 # cleanest real additive-homomorphic path in pure Rust and it is what codex
 # specified for the auction fold. `rand_09` is BFV's rng (fhe.rs is on rand 0.9;
 # the existing tfhe bins stay on rand 0.8, so it is a renamed second dep).
-fhe = "0.1.1"
+# `mbfv-share-codec` is the vendored fork's ONE additive seam (see the workspace
+# `[patch.crates-io]` note): it lets a `RelinKeyShare` cross a socket, which is
+# what the DISTRIBUTED relinearization ceremony in `threshold/distributed_relin.rs`
+# is built on. Upstream's share is opaque and the ceremony cannot leave a process.
+fhe = { version = "0.1.1", features = ["mbfv-share-codec"] }
 fhe-math = "0.1.1"
 fhe-traits = "0.1.1"
 rand_09 = { package = "rand", version = "0.9" }

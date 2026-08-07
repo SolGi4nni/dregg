@@ -9140,8 +9140,6 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "929ff5c547926375361c75c126198d886b77b6ee952fdaea4c26002cbe0359cf"
 dependencies = [
  "doc-comment",
  "fhe-math",

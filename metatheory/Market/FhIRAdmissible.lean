@@ -63,6 +63,11 @@ non-fixed-point certificate is refused) — the teeth in §8 exhibit both.
   * **`mostPrivateTier` + soundness** — the compiler computes the most private tier a product runs at, and
     `mostPrivateTier_runnable` proves the offered tier is always genuinely runnable; `mostPrivate_dark_iff`
     proves the type system (not marketing) decides the DARK label.
+  * **Manifest-level refutability (`runnable_flag_census`, §8b/§9).** `RunnableAt` itself — not merely
+    the program-level `SemRunnableAt` — is REFUTED for one-flag mutants of a passing manifest: each of
+    the four flags `Reflects` carries sinks `RunnableAt` when withdrawn (the mutation pinned by `rfl`
+    before the verdict), and `approvedCone` — the one field `Reflects` omits — is proved the ONLY flip
+    `RunnableAt` survives. Satisfiable, refutable, not trivially provable.
 
 **The ⟹ direction is the NAMED OPEN target — with a concrete witness.** `runnable_not_compiles` exhibits
 a manifest that is `RunnableAt shielded` yet does NOT `passes shielded` — its cone is off the *conservative*
@@ -439,6 +444,82 @@ required (execution IS the check). The private-vs-public certificate split is ge
 theorem uncertProg_semRunnable_open : SemRunnableAt .«open» uncertProg :=
   ⟨fun x => carrierRun_open_isSome uncertProg x, Or.inl rfl⟩
 
+/-! ## 8b. MANIFEST-LEVEL REFUTATION — `RunnableAt` ITSELF has teeth, not merely `SemRunnableAt`.
+
+The §8 teeth falsify the program-level predicate. That alone leaves a hole: if `Reflects` were too
+weak to ever deliver a falsifying program, `RunnableAt` could still hold of EVERY manifest — making
+`passes_runnable` empty and re-manufacturing the very mirror this file was rebuilt to kill. So here
+we refute `RunnableAt` at the MANIFEST level, one theorem per semantically-load-bearing flag: for
+each flag, the manifest that withdraws it faithfully abstracts (`Reflects`) one of the §8 rogue
+programs, and that program sinks it. Each mutant is pinned as EXACTLY `cheapM` with the ONE flag
+flipped (asserted by `rfl` *before* the verdict is read), so the refutations are one-flag mutations
+of a manifest `passes` accepts — `RunnableAt` is satisfiable, refutable, and decided by the flags'
+SEMANTIC content, not their syntax. -/
+
+/-- A private-operator program (the Markowitz covariance `Σ` stays private) the `markowitzM` manifest
+faithfully abstracts — `publicOps = false` truthfully reports `opPublic = false`. -/
+def privOpProg : Program :=
+  { stepMap := id, iters := 0, opPublic := false, branches := false, optimum := 0 }
+
+theorem privOpProg_reflects_markowitzM : Reflects markowitzM privOpProg where
+  pub := rfl
+  bounded := fun _ => Nat.zero_le _
+  noInt := fun _ => rfl
+  cert := fun _ => rfl
+
+/-- **`publicOps` is semantically load-bearing at DARK:** the private-matrix manifest is NOT
+`RunnableAt dark` — it faithfully abstracts a private-operator program the FHE carrier refuses. -/
+theorem markowitzM_not_runnable_dark : ¬ RunnableAt .dark markowitzM := by
+  intro h
+  obtain ⟨hrun, _⟩ := h privOpProg privOpProg_reflects_markowitzM
+  have := hrun 0
+  simp [carrierRun, privOpProg] at this
+
+/-- The bounds-withdrawn mutant: EXACTLY `cheapM` with `boundedDims` flipped off. -/
+def unboundedM : Manifest := { cheapM with boundedDims := false }
+
+/-- With `boundedDims` withdrawn, the manifest faithfully abstracts the over-deep `deepProg`
+(the `bounded` guarantee is no longer made; every other guarantee is honoured). -/
+theorem deepProg_reflects_unboundedM : Reflects unboundedM deepProg where
+  pub := rfl
+  bounded := fun h => nomatch h
+  noInt := fun _ => rfl
+  cert := fun _ => rfl
+
+/-- **`boundedDims` is semantically load-bearing at SHIELDED:** withdraw it and `RunnableAt` falls
+to the over-budget program (`deepProg_not_semRunnable_shielded`). -/
+theorem unboundedM_not_runnable_shielded : ¬ RunnableAt .shielded unboundedM :=
+  fun h => deepProg_not_semRunnable_shielded (h deepProg deepProg_reflects_unboundedM)
+
+/-- With `noIntegrality` withdrawn (`aonM`), the manifest faithfully abstracts the data-branching
+`branchingProg` (the `noInt` guarantee is no longer made). -/
+theorem branchingProg_reflects_aonM : Reflects aonM branchingProg where
+  pub := rfl
+  bounded := fun _ => Nat.zero_le _
+  noInt := fun h => nomatch h
+  cert := fun _ => rfl
+
+/-- **`noIntegrality` is semantically load-bearing at SHIELDED:** the AON manifest is NOT
+`RunnableAt shielded` — it abstracts a branching program no arithmetic-circuit carrier hosts. -/
+theorem aonM_not_runnable_shielded : ¬ RunnableAt .shielded aonM :=
+  fun h => branchingProg_not_semRunnable_shielded (h branchingProg branchingProg_reflects_aonM)
+
+/-- The certificate-withdrawn mutant: EXACTLY `cheapM` with `traceIndepCert` flipped off. -/
+def uncertM : Manifest := { cheapM with traceIndepCert := false }
+
+/-- With `traceIndepCert` withdrawn, the manifest faithfully abstracts `uncertProg`, whose declared
+optimum is NOT a fixed point (the `cert` guarantee is no longer made). -/
+theorem uncertProg_reflects_uncertM : Reflects uncertM uncertProg where
+  pub := rfl
+  bounded := fun _ => Nat.zero_le _
+  noInt := fun _ => rfl
+  cert := fun h => nomatch h
+
+/-- **`traceIndepCert` is semantically load-bearing at the private tiers:** withdraw it and
+`RunnableAt dark` falls to the unsound-certificate program (`uncertProg_not_semRunnable_dark`). -/
+theorem uncertM_not_runnable_dark : ¬ RunnableAt .dark uncertM :=
+  fun h => uncertProg_not_semRunnable_dark (h uncertProg uncertProg_reflects_uncertM)
+
 /-! ## 9. THE OPEN ⟹ DIRECTION, made concrete — admissible does NOT imply compiles (GENUINELY).
 
 The full IFF `admissible ⟺ compiles` is the named research target. The ⟹ (admissible ⇒ compiles) FAILS
@@ -483,6 +564,28 @@ theorem admissible_not_compiles :
   rw [runnable_not_compiles.2] at hp
   exact absurd hp (by decide)
 
+/-- **`runnable_flag_census` — THE COMPLETE FLAG CENSUS: the ⟹ gap is a property of the CARRIER,
+not a definitional artifact.** Every one of `cheapM`'s five flags is flipped off in turn — each
+mutation pinned by `rfl` as EXACTLY the one-field update, *then* the verdict — and the census is
+asymmetric in precisely the honest place: the four flags `Reflects` carries
+(`publicOps`/`boundedDims`/`noIntegrality`/`traceIndepCert`) each REFUTE `RunnableAt` at the tier
+that needed them, while `approvedCone` — the conservative v0 `ProxLib` declaration `Reflects`
+deliberately omits — is the ONLY flip `RunnableAt` survives. The earlier MIRROR manufactured its
+gap by silently ignoring a field; this census PROVES which fields carry runtime semantics and that
+exactly the ignored one does not. The base point makes it self-contained: `cheapM` passes DARK and
+IS `RunnableAt dark` — satisfiable, and refuted by exactly the four one-flag mutations below. -/
+theorem runnable_flag_census :
+    (passes .dark cheapM = true ∧ RunnableAt .dark cheapM) ∧
+    ({ cheapM with publicOps      := false } = markowitzM   ∧ ¬ RunnableAt .dark markowitzM) ∧
+    ({ cheapM with boundedDims    := false } = unboundedM   ∧ ¬ RunnableAt .shielded unboundedM) ∧
+    ({ cheapM with noIntegrality  := false } = aonM         ∧ ¬ RunnableAt .shielded aonM) ∧
+    ({ cheapM with traceIndepCert := false } = uncertM      ∧ ¬ RunnableAt .dark uncertM) ∧
+    ({ cheapM with approvedCone   := false } = frontierConeM ∧ RunnableAt .shielded frontierConeM) :=
+  ⟨⟨rfl, passes_runnable rfl⟩,
+   ⟨rfl, markowitzM_not_runnable_dark⟩, ⟨rfl, unboundedM_not_runnable_shielded⟩,
+   ⟨rfl, aonM_not_runnable_shielded⟩, ⟨rfl, uncertM_not_runnable_dark⟩,
+   ⟨rfl, runnable_not_compiles.1⟩⟩
+
 /-! ### `#guard` smoke — the typechecks are COMPUTED, and the carrier genuinely RUNS / REFUSES. -/
 
 -- the cheap product passes at every tier; its most-private tier is DARK:
@@ -511,6 +614,11 @@ theorem admissible_not_compiles :
   Market.markowitz_not_dark_but_shielded, Market.aon_not_shielded_but_open,
   Market.branchingProg_not_semRunnable_shielded, Market.deepProg_not_semRunnable_shielded,
   Market.uncertProg_not_semRunnable_dark, Market.uncertProg_semRunnable_open,
+  Market.privOpProg_reflects_markowitzM, Market.markowitzM_not_runnable_dark,
+  Market.deepProg_reflects_unboundedM, Market.unboundedM_not_runnable_shielded,
+  Market.branchingProg_reflects_aonM, Market.aonM_not_runnable_shielded,
+  Market.uncertProg_reflects_uncertM, Market.uncertM_not_runnable_dark,
+  Market.runnable_flag_census,
   Market.runnable_not_compiles, Market.admissible_not_compiles]
 
 end Market

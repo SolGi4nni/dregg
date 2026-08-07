@@ -1828,11 +1828,32 @@ impl TurnExecutor {
             ));
         };
 
-        // GATES 1 + 2, in `dregg-turn-prover`: the wide STARK join, the
-        // range-proof shape, and the Pedersen conservation/range side over the
-        // one binding transcript. Returns ONLY validated data.
+        // ⚑ GATE 0 — THE COMMITTED ROOT, SOURCED FROM LEDGER STATE (seam #15).
+        //
+        // This is the whole of the #15 close and it is one line, so it is worth saying exactly what
+        // it does. The shielded accumulator's live `root8()` is read HERE, from the executor's own
+        // state, and handed to the verifier as the 8-lane `piCommitted` every input's complete-spend
+        // proof is judged against. The payload has no root field to offer instead
+        // (`ShieldedTransferPayload`, flag day 2026-08-07).
+        //
+        // Before this, the prover published `merkle_root` and nothing compared it to anything:
+        // `ShieldedMerkleRootPin.root_substitution_forges` — the attacker builds their OWN tree
+        // holding a note that was never committed, honestly proves membership at that tree's root
+        // `R`, and publishes `R`. Membership genuinely holds. The theft was in what nobody checked.
+        //
+        // Now the fold must reach THIS root or the proof has no satisfying assignment. See the KAT
+        // `executor_theft_forged_tree_refuses_on_the_deployed_path`.
+        //
+        // Read BEFORE GATE 4's appends, and the guard is dropped immediately: the root a spend is
+        // judged against is the accumulator as it stood when the turn began, not one this turn's
+        // own outputs moved.
+        let committed_root = self.note_shielded.lock().unwrap().root8().limbs();
+
+        // GATES 1 + 2, in `dregg-turn-prover`: the complete-spend STARK under `committed_root`,
+        // the same-opening wide join, the range-proof shape, and the Pedersen conservation/range
+        // side over the one binding transcript. Returns ONLY validated data.
         let verified = verifier
-            .verify(payload)
+            .verify(payload, committed_root)
             .map_err(|error| (error, path.to_vec()))?;
 
         // GATE 3: consume each input nullifier ONCE in the production set. The
@@ -1880,24 +1901,40 @@ impl TurnExecutor {
             journal.record_note_spend(*nf);
         }
 
-        // GATE 4 (L0 SHIELDED ACCUMULATOR, byte-safe — DESIGN §3 R1): land each
-        // output note's HIDING commitment in the committed-capable `note_shielded`
-        // accumulator, journaled for rollback. This is the STATE half that closes
-        // the placeholder above: before it, a shielded transfer's outputs landed
-        // NOWHERE committed, so `merkle_root` (#15) had no committed root to pin
-        // to. Now a shielded output IS in a grow-only accumulator whose `root8()`
-        // is the future `piCOMMITTED` source (L4) and future carrier limb (L1).
+        // GATE 4 (SHIELDED ACCUMULATOR APPEND): land each output note's HIDING commitment in the
+        // `note_shielded` accumulator, journaled for rollback.
         //
-        // ⚑ HONEST ENCODING SCOPE: we append the commitment the deployed transfer
-        // produces TODAY — the output leg's Pedersen `commitment_bytes` (itself a
-        // hiding commitment). The design is explicit that this Ristretto leg is
-        // NOT yet the Poseidon2 `shieldedSpendDesc` membership-leaf image; WHICH
-        // 32-byte commitment becomes the canonical membership leaf is the single
-        // committed-tree ENCODING decision of L2 (in-AIR append grow-gate) / L4
-        // (membership pin) — DESIGN §7 Q2. L0 provides the accumulator + append +
-        // rollback only; it does NOT pin membership, nor commit `root8()` into the
-        // rotation carrier (L1, a VK epoch). The append thus has ZERO effect on any
-        // committed value or proof today — pure additive live executor state.
+        // ⚑ L4 LANDED (2026-08-07): `root8()` is no longer "the FUTURE piCOMMITTED source". GATE 0
+        // above reads it and every input's complete-spend proof is pinned to it. That closes #15
+        // for the SPEND side, and it changes what this append means, so read the next paragraph.
+        //
+        // ⚑ WHAT A TRANSFER OUTPUT IS, EXACTLY — and why it is still the Pedersen leg.
+        //
+        // What lands is the output leg's Ristretto `commitment_bytes`: a Pedersen VALUE commitment,
+        // NOT the Poseidon2 note commitment `hash_fact(v,[a,owner,rand])` that the complete-spend
+        // relation opens. A `Shield` mint appends the Poseidon2 image (see `apply_shield` GATE 4,
+        // `ShieldedOnRampPin §3`), so the accumulator holds BOTH shapes and only the Shield-minted
+        // ones are spendable. Two consequences, and neither is hidden:
+        //
+        //   * FUNCTIONAL: a transfer's output notes cannot be spent. Value entering a shielded
+        //     transfer's output leg is, today, unrecoverable. That is a LIVENESS gap and it is the
+        //     value on-ramp's L0.5, named below.
+        //   * SAFETY: it is NOT a mint. A leaf's address is the RAW 32 bytes (sixteen `u16` limbs,
+        //     `2^256` on the nose — `shielded_note_set.rs`), while a spendable note's address is
+        //     `felt_to_bytes32(cCM)`: four significant bytes and twenty-eight ZERO. The
+        //     complete-spend relation pins `cADDR0`/`cADDR1` and constrains the higher limbs to
+        //     zero, so opening a leaf requires it to lie in that 4-byte subspace. A leg must
+        //     decompress as a valid Ristretto point for the conservation gate, and finding one
+        //     whose compressed encoding has 28 trailing zero bytes is ~2^-224. So a transfer output
+        //     can never become a forged spendable note — but that is an ENCODING argument, not a
+        //     CHECK, which is why it is written down here rather than assumed.
+        //
+        // REMAINING (L0.5, precisely): the wire carries a Poseidon2 note commitment per output and
+        // GATE 4 appends THAT — which REQUIRES an output-side note-creation relation with HIDDEN
+        // value (the input side's wide-carrier join, minus the membership fold) so the appended
+        // commitment's value is bound to the output leg's Pedersen value. Appending a
+        // prover-chosen note commitment WITHOUT that relation would be strictly worse than this:
+        // it would be a mint from nothing. The relation is Lean-authored AIR and is its own lane.
         {
             let mut set = self.note_shielded.lock().unwrap();
             for commitment in &verified.output_commitments {

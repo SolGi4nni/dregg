@@ -1175,6 +1175,7 @@ dependencies = [
  "dregg-commit",
  "dregg-lean-ffi",
  "dregg-p3-pasta",
+ "dregg-recursion-verify",
  "futures-channel",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
@@ -1299,6 +1300,7 @@ name = "dregg-exec-lean"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-bridge",
  "dregg-captp",
  "dregg-cell",
  "dregg-cell-crypto",
@@ -1470,6 +1472,30 @@ dependencies = [
  "sha2 0.10.9",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "dregg-recursion-verify"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-circuit",
+ "p3-baby-bear",
+ "p3-challenger",
+ "p3-circuit",
+ "p3-circuit-prover",
+ "p3-commit",
+ "p3-dft",
+ "p3-field",
+ "p3-fri",
+ "p3-lookup",
+ "p3-merkle-tree",
+ "p3-poseidon2-circuit-air",
+ "p3-recursion",
+ "p3-symmetric",
+ "p3-uni-stark",
+ "postcard",
+ "serde",
 ]
 
 [[package]]

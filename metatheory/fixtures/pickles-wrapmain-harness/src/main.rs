@@ -193,7 +193,7 @@ use pickles_circuit_driver::{
 /// ⚑ `w6_xhat` is here, and in `public_input_binds_and_is_wired_in`'s sample, since 2026-08-06: the
 /// 67-entry MSM rung carried polarities (1)–(4) through `COMMITTED` and had **no** polarity-(5)
 /// coverage at all, which is the one leg that says its public words are wired rather than free.
-const SMOKE_SWEEP: [&str; 10] = [
+const SMOKE_SWEEP: [&str; 11] = [
     "w1_transcript",
     "w6_xhat",
     "w7_split",
@@ -207,6 +207,8 @@ const SMOKE_SWEEP: [&str; 10] = [
     // for panicking rung 5 of 8; they are back because they prove.
     "w11_wraphack",
     "w12_close",
+    // ✅ ⚑⚑⚑ AND THE LAST BLOCKED RUNG JOINED 2026-08-07. `STATEMENT_BLOCKED` is EMPTY.
+    "w11_finsponge",
 ];
 
 const RUNGS: [&str; 15] = [
@@ -638,7 +640,7 @@ mod wrapmain_tests {
     /// gone, and six of those words are NOT the values the wrap circuit derives for them. So the
     /// three rungs that read them have no satisfying witness, and the prover says so —
     /// `Prover("rest of division by vanishing polynomial")`, measured, not predicted.
-    const COMMITTED: [&str; 12] = [
+    const COMMITTED: [&str; 13] = [
         "w1_transcript",
         "w4_bind",
         "w5_key",
@@ -652,75 +654,64 @@ mod wrapmain_tests {
         // ⚑ THE LADDER'S TOP TWO JOINED 2026-08-06 — see `STATEMENT_BLOCKED` below.
         "w11_wraphack",
         "w12_close",
+        // ✅ ⚑⚑⚑ AND THE LAST ONE JOINED 2026-08-07, WHICH EMPTIED `STATEMENT_BLOCKED`.
+        "w11_finsponge",
     ];
 
-    /// ⚑⚑ **THE THREE RUNGS THE PUBLISHED STEP STATEMENT BLOCKS — ASSERTED AS REFUSALS, NOT
-    /// DELETED.** Each contains `finSpRows` or `whRows`, the two emitters whose rows tie a packed
-    /// statement word to a value the wrap circuit computes. Removing them from `COMMITTED` and
-    /// saying nothing would be exactly the disarming this file exists to prevent, so
-    /// `the_statement_blocked_rungs_do_not_prove` REQUIRES each to be rejected: if the step proof is
-    /// re-proved with a statement carrying the derived words, that test goes RED and this list has to
-    /// shrink. A blocked list that can only grow is not a record of a gap; it is a place to hide one.
+    /// ✅ ⚑⚑⚑ **EMPTY SINCE 2026-08-07. IT WENT THREE → ONE → ZERO IN TWO DAYS, AND THE LIST IS
+    /// KEPT AT LENGTH ZERO RATHER THAN DELETED** — `the_statement_blocked_rungs_do_not_prove` is
+    /// still the gate that requires every name in it to be REJECTED, so a rung that stops proving
+    /// has to be named here to get past `honest_rungs_verify`, in public, with a reason. A blocked
+    /// list that can only grow is a place to hide a gap; one that is deleted when it empties is a
+    /// place to hide the next one.
     ///
-    /// ⚠ ⚑ **THIS COMMENT CALLED THE REPAIR A STEP-SIDE FIXPOINT UNTIL 2026-08-06 AND IT IS NOT
-    /// ONE.** It said each of the six words is an x_hat MSM entry, so writing the derivation into
-    /// the statement moves `x_hat`, moves every challenge below it, and moves the derivation.
-    /// `KimchiWrapMain.the_deferred_derivation_does_not_read_the_words_it_checks` refutes it over
-    /// the emitted program: no transcript challenge reaches W-FINSPONGE, so the six words are three
-    /// independent strata and there is no loop. And only two of the six (55, 56) are free on the
-    /// step side at all; 27, 28, 37 and 54 are values the STEP circuit derives. What blocks these
-    /// three rungs is that `finColVal` and its neighbours are `wrapFixtureQ` fixtures where
-    /// `prev_proof.openings.evals` belongs, and those evaluations are **Fp** against this circuit's
-    /// native **Fq** — they enter only through `Other_field`, which is not assembled. See
-    /// `KimchiWrapMainField.the_published_statement_does_not_carry_the_derived_words` and
-    /// `KimchiWrapMain.finsponge_has_no_witness_on_the_published_statement`.
+    /// Each entry contained `finSpRows` or `whRows` — the two emitters whose rows tie a packed step
+    /// statement word to a value the wrap circuit computes.
     ///
-    /// ✅ ⚑⚑⚑ **IT SHRANK FROM THREE TO ONE ON 2026-08-06, AND `w11_wraphack` AND `w12_close` BOTH
-    /// PROVE.** MEASURED, in this order and with the gate red at each step:
+    /// ⚑ **THE THREE CLOSURES, IN ORDER, EACH WITH THIS GATE RED AT THE MOMENT IT CLOSED:**
     ///
-    ///   1. `KimchiStepMainCore.stmtWrapMsgVal` became `KimchiWrapMain.whPrevDigest`, so the step
-    ///      circuit publishes the two `hash_messages_for_next_wrap_proof` squeezes at packed words
-    ///      55/56 instead of `160000365` / `77001823`. Re-emitted, re-proved: **exactly two of the
-    ///      sixty-seven entries moved.** `whRows`' two tie rows acquired a witness.
-    ///   2. `w11_wraphack` PROVED — this test went red and said so — and `w12_close`, which contains
-    ///      `rungOwn _ .wraphack` by `close_rung_extends_bullet`, proved with it.
+    ///   1. **2026-08-06 — `w11_wraphack`, `w12_close`.** `KimchiStepMainCore.stmtWrapMsgVal`
+    ///      became `KimchiWrapMain.whPrevDigest`, so the step circuit publishes the two
+    ///      `hash_messages_for_next_wrap_proof` squeezes at packed words 55/56 instead of
+    ///      `160000365`/`77001823`. Re-emitted and re-proved: **exactly two of the sixty-seven
+    ///      entries moved**, and `whRows`' two tie rows acquired a witness.
+    ///   2. **2026-08-07 — `w11_finsponge`.** See below.
     ///
-    /// ⚠ **AND THE PRICE THIS DOCBLOCK QUOTED FOR STEP 1 WAS A FIXPOINT.** It said each of the six
-    /// words is an x_hat MSM entry, so writing the derivation into the statement moves `x_hat`,
-    /// moves every challenge below it, and moves the derivation.
-    /// `KimchiWrapMain.the_wraphack_tape_reads_no_published_statement_entry` says otherwise over the
-    /// tape: `whPrevDigest` reads no packed word at all, so it is computable BEFORE the re-prove and
-    /// unmoved BY it. The whole repair was one Lean edit, a 97 s emit and a 21 s prove.
+    /// ⚠ ⚑⚑ **AND EVERY PRICE THIS DOCBLOCK QUOTED FOR THE LAST ONE WAS WRONG, IN THREE DIFFERENT
+    /// WAYS, ACROSS THREE DAYS. THAT IS THE PART WORTH KEEPING.**
     ///
-    /// ⚑ **WHAT IS LEFT IS `w11_finsponge` AND IT IS A DIFFERENT SHAPE OF THING.** Its three
-    /// `Field.equal` legs are against packed words 27, 28 and 37 — `bpDiv2`/`bpOdd` and `vXiStmt`,
-    /// values the STEP circuit DERIVES — so no statement can carry both sides. That is two
-    /// derivations of one quantity.
+    ///   * *"A step-side FIXPOINT — each of the six words is an x_hat MSM entry, so writing the
+    ///     derivation into the statement moves `x_hat`, moves every challenge below it, and moves
+    ///     the derivation."* Refuted over the emitted program by
+    ///     `KimchiWrapMain.the_deferred_derivation_does_not_read_the_words_it_checks`: no transcript
+    ///     challenge reaches W-FINSPONGE. A stratification with no edges, terminating in one pass.
+    ///   * *"Two derivations of one quantity — words 27, 28 and 37 are `bpDiv2`/`bpOdd` and
+    ///     `vXiStmt`, values the STEP circuit DERIVES, so no statement can carry both sides."*
+    ///     ⚑ **This was the defect misread as a conflict, and it is the one that cost the most.**
+    ///     Those cells are the **WRAP statement's** deferred values — Fp, `Shifted_value.Type1`,
+    ///     about the step proof, checked by R5/R6/R8. A step statement's `unfinalized_proofs`
+    ///     deferred values are **Fq**, `Type2`, about the WRAP proof, and this circuit's
+    ///     `finalize_other_proof` is their checker. One set of cells, two statements, two fields.
+    ///     `KimchiStepMainCore` §1f gave the live block its own eleven cells; nothing became
+    ///     unsatisfiable and the step proof still verifies (`batch_verify = Ok`).
+    ///   * *"It closes on the wrap side, not by re-baking a statement."* Refuted 2026-08-07 by
+    ///     `KimchiWrapFinalizeSpongeGate`: the wrap side went as far as it could go — 90 of 91 tape
+    ///     slots — and the last one was a step-side wiring item all along.
     ///
-    /// ⚠ ⚑⚑ **AND THE NEXT SENTENCE USED TO READ "it closes on the wrap side, not by re-baking a
-    /// statement." THAT IS REFUTED, MEASURED 2026-08-07.** The wrap side went as far as it can go:
-    /// `KimchiWrapFinalizeSpongeGate` now measures §20's own emitted 91-element tape against
-    /// `MinaRealBlockTranscript.fqTape2` — block 539508's own phase-2 tape, extracted on a path
-    /// that never sees this assembly — and it agrees in **90 of 91 slots**. The one that differs is
-    /// slot 6, `finZW0`'s solved `z(ζω)`, and with that single bend removed the tape IS `fqTape2`
-    /// and §20's two squeezes ARE that block's `V_CHAL` and `U_CHAL`
-    /// (`the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges`, closed in the kernel).
+    /// ⚑ **WHAT LANDED.** Packed words 27, 28, 29, 30, 31 and 37 carry
+    /// `MinaWrapProofDeferredWords`' six Fq deferred words of block 539508's wrap proof. `finZW0`'s
+    /// `permUsed / perm` solve is the identity now, so the emitted 91-element finalize tape IS
+    /// `MinaRealBlockTranscript.fqTape2` (`the_emitted_finalize_tape_is_minas`, `[]` disagreements
+    /// where it was `[6]`), §20's two squeezes ARE that block's `V_CHAL` and `U_CHAL`, and all
+    /// three `Field.equal` differences are ZERO
+    /// (`KimchiWrapMain.finsponge_has_a_witness_on_the_published_statement`).
     ///
-    /// ⚑ **SO THE RESIDUE IS ONE WIRING DEFECT WITH FOUR INSTANCES, AND IT IS ON THE STEP SIDE.**
-    /// `KimchiStepMainCore.stepStmtVar` publishes the live block's `unfinalized_proofs` deferred
-    /// words out of cells that already hold a DIFFERENT statement's deferred values: `perm`
-    /// hi/parity are `ftcDiv2 0`/`ftcOdd 0` (§6b's own ft-comm `perm`), `combined_inner_product`
-    /// and `b` are the splits of `vCipShift`/`vBShift`, and ξ is `vXiStmt` — R5/R6/R8's outputs,
-    /// which are the step circuit's native **Fp** `finalize_other_proof` results about the STEP
-    /// proof. What belongs in those words is the **Fq** deferred values about the WRAP proof, which
-    /// is exactly what §19/§20 derive. One set of cells, two statements: the aliasing IS the
-    /// blocker, and `KimchiWrapFinalizeSpongeGate.the_bend_is_the_live_blocks_own_perm_word`
-    /// exhibits it at word 31 with the target value.
-    ///
-    /// See `KimchiWrapMain.finsponge_has_no_witness_on_the_published_statement` and
-    /// `KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words`.
-    ///
-    const STATEMENT_BLOCKED: [&str; 1] = ["w11_finsponge"];
+    /// ⚠ **WHAT IS STILL OPEN, so the emptying is not read as a total.** Packed word 54 —
+    /// `messages_for_next_step_proof` — remains an ARITY mismatch: segment D and the marshaller's
+    /// `MessagesForNextStepProof::hash()` hash preimages of 56+20 against 56+36
+    /// (`KimchiWrapMainPins10`). It blocks no rung here; it is why the emitted forty agree with
+    /// Mina's in 39 of 40 slots at `shapeWrap` and not 40.
+    const STATEMENT_BLOCKED: [&str; 0] = [];
 
     /// ⚑ The gate that keeps `SMOKE_SWEEP` true. A comment saying "this set may only name rungs in
     /// `COMMITTED`" is not a gate; this is, and it goes red the moment the two lists disagree.
@@ -788,6 +779,12 @@ mod wrapmain_tests {
             COMMITTED.len() + STATEMENT_BLOCKED.len(),
             13,
             "a rung left the harness entirely instead of moving between the two lists"
+        );
+        // ✅ ⚑ …and the emptying itself, asserted rather than left to a reader of the list. This
+        // line is the one a regression has to delete, which is the point of writing it.
+        assert!(
+            STATEMENT_BLOCKED.is_empty(),
+            "STATEMENT_BLOCKED is non-empty again — say which rung and why in its docblock"
         );
     }
 

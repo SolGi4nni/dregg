@@ -919,14 +919,33 @@ pub struct ShieldedLeg {
 pub struct ShieldedInputPayload {
     /// The revealed nullifier (the double-spend tag), as a canonical BabyBear u32.
     pub nullifier: u32,
-    /// Compatibility `hash_fact(value mod p,[asset mod p,randomness,0])`.
-    /// This one-felt claim is used only to join the existing spend proof to the
-    /// native wide proof; it is no longer accepted on its own.
+    /// Compatibility `hash_fact(value mod p,[asset mod p,randomness,0])` — PI 0 of the WIDE
+    /// SIDECAR relation (`WideValueBindingEmit.lean`), carried because that descriptor publishes
+    /// it. It is no longer a join of any kind: the join is the sixteen-lane same-opening between
+    /// `spend_wide_binding` and `wide_value_binding`.
     pub legacy_value_binding: u32,
+    /// **The RING-side sixteen-lane wide carrier** — PI 9..25 of the complete-spend proof, pinned
+    /// by the Lean-emitted `carrierPins` to the note's canonical full-`u64` `(value, asset)` limb
+    /// opening.
+    ///
+    /// ⚑ This and [`Self::wide_value_binding`] are two SEPARATELY PROVEN quantities that the
+    /// executor requires to be equal (`verify_same_opening`). They are carried as two fields, not
+    /// one, so the tooth stays REFUTABLE: decoupling them is a one-line mutation a test can make,
+    /// and the refusal is observable. A single shared field would make the join read `x == x`.
+    pub spend_wide_binding: [u32; 16],
     /// Sixteen canonical BabyBear lanes binding the complete `u64` value and
-    /// asset encodings before hashing.
+    /// asset encodings before hashing — the SIDECAR's claim (PI 1..17).
     pub wide_value_binding: [u32; 16],
-    /// Canonical postcard bytes of the hiding membership/nullifier proof.
+    /// Canonical postcard bytes of the hiding COMPLETE-spend proof — an
+    /// `Ir2BatchProof<DreggZkStarkConfig>` against the Lean-emitted
+    /// `dregg-shielded-spend-complete-fsi2::v1` relation
+    /// (`metatheory/Dregg2/Circuit/Emit/ShieldedSpendCompleteEmit.lean`). It proves membership in
+    /// the COMMITTED shielded accumulator, the nullifier derivation, the owner derivation and the
+    /// wide carrier, all under a root the verifier supplies.
+    ///
+    /// ⚑ FLAG DAY: these were `DslZkProof` bytes against the retired Rust-DSL
+    /// `dregg-shielded-spend-v1` (3 PIs, one of them the prover's own `merkle_root`). An old
+    /// payload does not deserialize as current shielded authority.
     pub spend_proof: Vec<u8>,
     /// Canonical postcard bytes of the hiding full-width value/asset proof.
     ///
@@ -953,9 +972,17 @@ pub struct ShieldedInputPayload {
 /// `prover`-enabled executor.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShieldedTransferPayload {
-    /// Commitment-tree root every input note is proven a member of (BabyBear u32).
-    pub merkle_root: u32,
-    /// One hidden note-spend proof per spent input.
+    // ⚑ FLAG DAY 2026-08-07 — `merkle_root: u32` is DELETED, and its absence is the point.
+    //
+    // It was the commitment-tree root "every input note is proven a member of", chosen by the
+    // PROVER and compared against nothing. `ShieldedMerkleRootPin.root_substitution_forges` states
+    // the theft exactly: build your own tree holding a note that was never committed, honestly
+    // prove membership at that tree's root R, publish R. The executor now supplies the root from
+    // `note_shielded.root8()` at verification time, so there is no field in which to publish one.
+    //
+    // A pre-cutover payload REFUSES TO DESERIALIZE (a removed field plus a widened
+    // `ShieldedInputPayload` plus `Ir2BatchProof` spend bytes) rather than being reinterpreted.
+    /// One hidden complete-spend proof per spent input.
     pub inputs: Vec<ShieldedInputPayload>,
     /// Input value-commitment legs (the spent notes' Pedersen commitments).
     pub input_legs: Vec<ShieldedLeg>,
@@ -2508,11 +2535,17 @@ impl Effect {
                 hasher.update(&wake.hash());
             }
             Effect::ShieldedTransfer { payload } => {
-                hasher.update(&payload.merkle_root.to_le_bytes());
+                // ⚑ FLAG DAY: the retired arm folded `payload.merkle_root` FIRST. There is no such
+                // field — the committed root is executor state, not effect content — so every
+                // shielded-transfer `effects_hash` changes. Both wide carriers are folded, so a
+                // decoupling of the ring carrier from the sidecar's is visible in the effect hash.
                 hasher.update(&(payload.inputs.len() as u64).to_le_bytes());
                 for input in &payload.inputs {
                     hasher.update(&input.nullifier.to_le_bytes());
                     hasher.update(&input.legacy_value_binding.to_le_bytes());
+                    for lane in input.spend_wide_binding {
+                        hasher.update(&lane.to_le_bytes());
+                    }
                     for lane in input.wide_value_binding {
                         hasher.update(&lane.to_le_bytes());
                     }
