@@ -27,9 +27,13 @@
 //! additive-inverse wrap encoding is preserved for the affordable decrement, refused
 //! for the unaffordable one.
 //!
-//! This is the exact idiom the shielded-ring conservation weld uses
+//! This is the exact idiom the shielded-ring conservation weld used
 //! (`shielded_ring_clearing_air.rs::(c.range)`) — a value-minting wraparound has no
 //! bit preimage and dies at the recompose gate — applied to the `FieldDelta` result.
+//! ⚠ That file is DELETED (2026-08-07, the Rust-authored shielded-spend tower, house
+//! law #1), so the citation is to a retired precedent, not to live code. The idiom
+//! itself is unaffected and lives on here and in the Lean-emitted wide-carrier limb
+//! blocks (`Emit/ShieldedSpendCompleteEmit.lean` R1/R2/R3).
 //!
 //! ## Where it sits (honest map)
 //!

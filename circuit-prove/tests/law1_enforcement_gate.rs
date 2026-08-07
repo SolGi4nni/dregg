@@ -48,8 +48,11 @@
 //!   3. **`ConstraintExpr` literals** — the DSL descriptor algebra. Invisible to (1) and (2).
 //!   4. **descriptor gate trees** — `LeanExpr` / `VmConstraint` / `VmConstraint2` values built directly in
 //!      Rust. This is the dialect that let a file truthfully say it "authors NO constraints" while
-//!      authoring the entire descriptor: `circuit-prove/src/shielded_ring_clearing_air.rs` builds 75 of
-//!      them with no `include_str!` and no `parse_vm_descriptor2` anywhere in the file, and `perf/src/lib.rs`
+//!      authoring the entire descriptor. The worked example was `shielded_ring_clearing_air.rs`, which
+//!      built 75 of them with no `include_str!` and no `parse_vm_descriptor2` anywhere in the file while
+//!      its own module docblock said "NOT an AIR ... it authors NO constraints in any of the three
+//!      dialects" — true of dialects (1)-(3) and false of the whole. That file is DELETED (2026-08-07,
+//!      see its ledger note below); the dialect it exposed is why (4) exists. `perf/src/lib.rs`
 //!      hand-builds a `VmConstraint2::MapOp` / `UMemOp` descriptor in a crate the old scope never reached.
 //!   5. **`air_accepts` predicates** — a Rust-authored answer to "does the AIR accept this row". The law
 //!      names these explicitly; they get their own ledger below (`AIR_ACCEPTS_LEDGER`) and their own test.
@@ -928,7 +931,17 @@ const BASELINE: &[(&str, usize)] = &[
     ("circuit-prove/src/private_graph_rewrite_cell.rs", 2),
     ("circuit-prove/src/private_preference_cell.rs", 2),
     ("circuit-prove/src/shielded/attest.rs", 11),
-    ("circuit-prove/src/shielded/spend_circuit.rs", 11),
+    // ── `circuit-prove/src/shielded/spend_circuit.rs` (was 11) is GONE from this ledger,
+    //    2026-08-07 — the file is DELETED. It was the Rust-authored shielded-spend AIR
+    //    (`shielded_spend_descriptor` / `shielded_spend_circuit`, width 20, PIs
+    //    `[nullifier, merkle_root, value_binding]`). The deployed path stopped using it at
+    //    `8c90ba1a0`, which routed `apply_shielded_transfer` through the LEAN-emitted
+    //    `dregg-shielded-spend-complete-fsi2::v1`
+    //    (`metatheory/Dregg2/Circuit/Emit/ShieldedSpendCompleteEmit.lean`, 557 cols, 25 PIs)
+    //    and judged spends against the executor's own `note_shielded.root8()` instead of a
+    //    wire-supplied `merkle_root`. What remained was a Rust AIR nothing live called.
+    //    The row is REMOVED rather than zeroed: see the `gpu_backend.rs` note above for why
+    //    a ledger must not carry slack for a file.
     // circuit-prove/src/shielded/wide_value_binding.rs is GONE from this ledger (was 7).
     // Dregg2/Circuit/Emit/WideValueBindingEmit.lean authors the whole AIR (byte-pinned, 29874 B)
     // and WideValueBindingRefine proves EVERY emitted constraint — including
@@ -938,9 +951,33 @@ const BASELINE: &[(&str, usize)] = &[
     // prove_dsl_zk route used, so hiding is preserved); the descriptor-authoring half of the
     // file — mod col's AIR use, constant_gate, limb_recompose, u64_recompose,
     // wide_input_columns, wide_value_binding_descriptor, wide_value_binding_circuit — is deleted.
-    ("circuit-prove/src/shielded_ring_clearing_air.rs", 75),
-    ("circuit-prove/src/shielded_ring_clearing_nleg_air.rs", 32),
-    ("circuit-prove/src/shielded_spend_leaf_adapter.rs", 39),
+    // ── THREE MORE ROWS GONE 2026-08-07, with the spend AIR above: the whole Rust-authored
+    //    shielded-spend tower is DELETED, 157 authored sites off this ledger in one cut.
+    //
+    //    `circuit-prove/src/shielded_spend_leaf_adapter.rs` (was 39) — existed for one purpose:
+    //    splice the deleted `shielded_spend_descriptor` into a foldable leaf exposing
+    //    `[nullifier, merkle_root, value_binding]`. With the descriptor gone it proves nothing.
+    //
+    //    `circuit-prove/src/shielded_ring_clearing_air.rs` (was 75) and
+    //    `circuit-prove/src/shielded_ring_clearing_nleg_air.rs` (was 32) — the 2-leg and N-leg
+    //    ring-clearing apex. Their clause (a), "each leg is a valid shielded spend", WAS the leaf
+    //    adapter: `bind_leg_node` `connect`ed each leg's 3-lane claim to a leaf minted by
+    //    `prove_shielded_spend_leaf_with_claim`. Delete the adapter and that clause has nothing
+    //    behind it — the apex would fold whatever `RecursionOutput` a caller handed it, which is
+    //    the empty-premise vacuity this repo keeps re-discovering. Keeping them was not an option
+    //    that preserved a check; it only preserved the appearance of one.
+    //
+    //    ⚠ WHAT THIS COST, said out loud: the ring-clearing family was the DrEX rung-3 private
+    //    matching silicon (`Market/ShieldedClearing.lean::shielded_ring_clears`), and its 8/8 and
+    //    12/12 circuit-UNSAT teeth go with it. It was never on the deployed path (never emitted to
+    //    `circuit/descriptors/`, absent from `PROVENANCE.json`, reachable only from its own
+    //    `#[cfg(test)]` modules), its conservation ran over `pedTwoGen` — a coordinate ABSTRACTION
+    //    of Ristretto, not the curve — and the redesign that once planned to route the deployed
+    //    transfer through it (`docs/PLAN-shielded-apex-redesign-2026-07-20.md`) was superseded
+    //    twice: by the Lean-emitted FWS1 substrate (`docs/DESIGN-bazaar-apex-v4.md`) and then by
+    //    the FSI2 transfer cutover. RE-AUTHORING RING CLEARING IS LEAN-SIDE WORK: there is no
+    //    `Emit/ShieldedRingClear*.lean` in the tree, and that absence — not these Rust files — is
+    //    the open item.
     ("circuit-prove/src/solvency_leaf_adapter.rs", 27),
     ("circuit-prove/src/sovereign_leaf_adapter.rs", 3),
     ("circuit-prove/src/zkoracle_leaf_adapter.rs", 16),

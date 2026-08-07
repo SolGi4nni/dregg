@@ -2,14 +2,22 @@
 //!
 //! # ⚠ PQ CUTOVER TARGET — this DLog aggregate is still live in the deployed transfer
 //!
-//! The intended shielded value-commitment is the in-AIR Poseidon2
-//! `value_binding = hash_fact(value, [asset_type, randomness, 0])` (the spend circuit's
-//! C7 PI, `dregg_circuit::shielded::spend_circuit`), binding `(value, asset_type)`
-//! jointly under `HashCR` once encoded injectively, and the intended NO-MINT
-//! (conservation + no-wraparound range) check is the fully-in-AIR
-//! STARK conservation gate in `circuit-prove/src/shielded_ring_clearing_air.rs`
-//! (`Poseidon2ChipArithSound`, `HidingFriPcs` statistical-ZK). See
-//! `docs/deos/PQ-SHIELDED-COMMITMENT.md` (Option A).
+//! The intended shielded value-commitment is the in-AIR Poseidon2 wide carrier: the 16 lanes
+//! the Lean-emitted `dregg-shielded-spend-complete-fsi2::v1` publishes over the note's own
+//! 16-bit limbs (`metatheory/Dregg2/Circuit/Emit/ShieldedSpendCompleteEmit.lean`, read through
+//! `dregg_circuit_prove::shielded::spend_complete`), binding `(value, asset_type)` jointly under
+//! `HashCR` on an injective encoding, with the no-wraparound range a property of the trace
+//! (limb booleanity is forced in-AIR, so `0 ≤ v < 2^64` needs no separate range proof).
+//! See `docs/deos/PQ-SHIELDED-COMMITMENT.md` (Option A).
+//!
+//! ⚠ CORRECTED 2026-08-07. This paragraph used to name two things that no longer exist: the
+//! one-felt `value_binding = hash_fact(value, [asset_type, randomness, 0])` as "the spend
+//! circuit's C7 PI, `dregg_circuit::shielded::spend_circuit`", and the conservation gate in
+//! `circuit-prove/src/shielded_ring_clearing_air.rs`. BOTH files were Rust-authored AIRs and
+//! both are DELETED (house law #1). The narrow felt was also the wrong target: it reduces
+//! `value` mod BabyBear `p` BEFORE hashing, so `v` and `v + p` present identical hash inputs —
+//! a FREE collision, not a birthday one (`Market/WideCarrierSameOpening.lean`). The wide
+//! carrier above is the object that separates them.
 //!
 //! Everything in THIS module — the Pedersen `commit_hidden_asset` over Ristretto, the
 //! Schnorr `prove/verify_asset_conservation` excess, the `AssetEqualityProof`
@@ -1546,7 +1554,16 @@ impl std::error::Error for FullConservationError {}
 
 // ─── Leaf↔leg value link (STARK value-binding ↔ Pedersen leg) ────────────────
 //
-// The shielded-spend STARK (`dregg_circuit::shielded::spend_circuit`) publishes a
+// ⚠ THE STARK SIDE OF THIS BRIDGE NO LONGER EXISTS (2026-08-07). The relation this text
+// describes was `shielded/spend_circuit.rs`, a Rust-authored AIR, DELETED under house law #1;
+// the deployed spend is now the Lean-emitted `dregg-shielded-spend-complete-fsi2::v1`, which
+// publishes a 16-lane WIDE carrier and no such one-felt PI. So `value_link_binding` /
+// `verify_value_link` below recompute a felt that NOTHING in-circuit publishes any more. They
+// are dead compatibility bridge code kept only because the Ristretto conservation path that
+// consumes them is itself still on the deployed transfer (see this module's header); when that
+// goes, these go with it. Do not build anything new on them.
+//
+// The (historical) shielded-spend STARK published a
 // hiding Poseidon2 **value-binding** `value_binding = hash_fact(value, [randomness,
 // 0, 0])` (its C7 public input), computed in-circuit from the SAME value/randomness
 // cells the membership leaf is built from. The transfer's value balance is carried

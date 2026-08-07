@@ -96,7 +96,6 @@
 pub mod attest;
 pub mod pool;
 pub mod shield_opening;
-pub mod spend_circuit;
 pub mod spend_complete;
 mod transfer;
 pub mod transfer_link;
@@ -107,10 +106,6 @@ pub use attest::{
 };
 pub use pool::{
     HiddenAssetLeg, MultiAssetPoolTransfer, PoolBalanceMode, PoolInputWitness, prove_pool_transfer,
-};
-pub use spend_circuit::{
-    ShieldedSpendWitness, generate_shielded_spend_trace, shielded_spend_circuit,
-    shielded_spend_descriptor,
 };
 pub use spend_complete::{
     ShieldedSpendCompleteClaim, ShieldedSpendCompleteError, ShieldedSpendCompleteProof,

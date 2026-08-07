@@ -27,7 +27,14 @@
 //!
 //! The four wrapped shapes below are the ones the 2026-07-30 census actually found in
 //! this workspace, not invented ones:
-//!   * `Gated{Hash}`        — `circuit-prove/src/shielded/spend_circuit.rs` (C4, repaired)
+//!   * `Gated{Hash}`        — was `circuit-prove/src/shielded/spend_circuit.rs` (C4, repaired);
+//!                            that file is DELETED (2026-08-07, house law #1) and so is the
+//!                            instance-specific probe that stood beside this one
+//!                            (`circuit-prove/tests/gated_hash_erasure_probe.rs`). ⚑ THIS FILE IS
+//!                            NOW THE ONLY STANDING GUARD FOR THE CLASS — it always was the
+//!                            form-agnostic half (a lowering that refuses to emit nothing, over
+//!                            every wrapped shape), which is why deleting the instance probe does
+//!                            not un-guard the defect. Do not weaken it.
 //!   * `InvertedGated{Hash}`— `circuit/src/dsl/note_spending.rs` (C2a..g, C3, C4)
 //!   * `Gated{Hash2to1}`    — `circuit/src/dsl/predicates/relational.rs` (C14, C15)
 //!   * `Gated{Gated{Hash4to1}}` / `Gated{InvertedGated{Hash2to1}}` — DOUBLY nested,

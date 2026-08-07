@@ -49,7 +49,47 @@ use dregg_circuit::poseidon2::hash_many_8;
 use crate::dark_amm_private::{PUBLIC_INPUT_COUNT as DARK_AMM_PUBLIC_INPUT_COUNT, PublicStatement};
 pub use crate::shielded::WIDE_VALUE_BINDING_LANES;
 use crate::shielded::{WideValueBindingError, WideValueBindingProof, verify_wide_sidecar_proof};
-use crate::shielded_ring_clearing_air::{RING_ENDPOINT_PUBLIC_LEN, RING_LEG_CLAIM_LEN, RING_LEGS};
+
+/// ── THE 27 RING LANES OF THE FXC4 TRANSCRIPT ─────────────────────────────────────────────
+///
+/// These four items were `use`d from `shielded_ring_clearing_air.rs` until that file — a
+/// Rust-authored AIR — was deleted (2026-08-07, with `shielded/spend_circuit.rs`,
+/// `shielded_spend_leaf_adapter.rs` and `shielded_ring_clearing_nleg_air.rs`; house law #1).
+/// They are declared here now because **this module is their real owner**: per
+/// `docs/DESIGN-bazaar-apex-v4.md`, `shielded_exact_apex_v4.rs` is "ABI/transcript only —
+/// transcript data, never proof authority", and the 27 ring lanes are a fixed slice of the
+/// 146-lane FXC4 preimage this ABI defines.
+///
+/// ⚠ SAY WHAT THEY ARE NOW: this is a **lane layout with no relation behind it.** The deleted
+/// Rust ring AIR was the only thing that ever produced these lanes, and the v4 design's
+/// substrate is the Lean-emitted FWS1 (`shielded-whole-note-swap-substrate-v1`), which the
+/// design doc itself records as *omitting* the 27 ring lanes. So these constants describe a
+/// leg the Lean emit path has **not yet authored**; nothing in-tree fills them with a proved
+/// value. Do not read a `ring_public` block as evidence of a cleared ring.
+///
+/// Legs in a v4 ring transcript block.
+pub const RING_LEGS: usize = 2;
+/// Per-leg claim lanes: `[nullifier, merkle_root, value_binding]`.
+pub const RING_LEG_CLAIM_LEN: usize = 3;
+/// `RING_LEGS * RING_LEG_CLAIM_LEN` + creator(2) + turn_count(1) + pre/post receipt root(2)
+/// + pre/post 8-lane kernel commitments(16) = 27.
+pub const RING_ENDPOINT_PUBLIC_LEN: usize = RING_LEGS * RING_LEG_CLAIM_LEN + 2 + 1 + 1 + 1 + 8 + 8;
+
+/// Lane indices inside a 27-lane ring endpoint block, after the per-leg claims.
+pub mod endpoint_pi {
+    use super::{RING_LEG_CLAIM_LEN, RING_LEGS};
+
+    /// Total per-leg claim lanes, i.e. where the endpoint fields begin.
+    pub const RING_CLAIM_LEN: usize = RING_LEGS * RING_LEG_CLAIM_LEN;
+
+    pub const CREATOR_0: usize = RING_CLAIM_LEN;
+    pub const CREATOR_1: usize = CREATOR_0 + 1;
+    pub const TURN_COUNT: usize = CREATOR_1 + 1;
+    pub const PRE_RECEIPT_ROOT: usize = TURN_COUNT + 1;
+    pub const POST_RECEIPT_ROOT: usize = PRE_RECEIPT_ROOT + 1;
+    pub const PRE_COMMIT_8: usize = POST_RECEIPT_ROOT + 1;
+    pub const POST_COMMIT_8: usize = PRE_COMMIT_8 + 8;
+}
 
 /// ASCII `FNI4`: linked exact-nullifier leaf carrying a shielded value/asset binding.
 pub const SHIELDED_EXACT_LEAF_DOMAIN: u32 = 0x464e_4934;
@@ -738,9 +778,9 @@ impl std::error::Error for ShieldedExactApexV4Error {}
 
 #[cfg(test)]
 mod tests {
+    use super::endpoint_pi;
     use super::*;
     use crate::shielded::{BINDING_BLIND_LANES, WideValueBindingWitness, prove_wide_value_binding};
-    use crate::shielded_ring_clearing_air::endpoint_pi;
     use dregg_circuit::exact_nullifier_aafi::{ExactTaggedKey, TaggedKeyWire, exact_state_commit};
 
     fn root(seed: u32) -> [u32; 8] {

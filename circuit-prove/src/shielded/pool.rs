@@ -11,8 +11,11 @@
 //!
 //! Nothing changes on the **STARK side**. Membership-in-the-commitment-tree and
 //! nullifier-derivation are *asset-agnostic*: the shielded-spend circuit
-//! ([`crate::shielded::spend_circuit`]) never mentions the value or the asset —
-//! those live only in the Pedersen leg. So a [`MultiAssetPoolTransfer`] reuses
+//! ([`crate::shielded::spend_complete`]) never mentions the value or the asset —
+//! those live only in the Pedersen leg. (This sentence named
+//! `crate::shielded::spend_circuit` until 2026-08-07; that Rust-authored AIR is
+//! DELETED and the relation is now the Lean-emitted
+//! `dregg-shielded-spend-complete-fsi2::v1`.) So a [`MultiAssetPoolTransfer`] reuses
 //! the *exact same* per-input hidden note-spend proofs as M2-a
 //! ([`crate::shielded::ShieldedInputProof`], proved through `HidingFriPcs`), and
 //! the same one-nullifier-set-across-all-assets double-spend gate
@@ -60,10 +63,18 @@
 //!
 //! # No Rust-authored AIR (standing law)
 //!
-//! Zero hand-written circuit constraints: the STARK side is the same
-//! Lean-emitted/DSL `shielded_spend_circuit()` descriptor run through the audited
-//! `DslP3Air`, hiding config swapped in. This module assembles witnesses and
-//! composes proofs; it emits no AIR of its own.
+//! Zero hand-written circuit constraints: the STARK side is the Lean-emitted
+//! `dregg-shielded-spend-complete-fsi2::v1` descriptor
+//! (`metatheory/Dregg2/Circuit/Emit/ShieldedSpendCompleteEmit.lean`, read through
+//! [`super::spend_complete`]) run through the audited hiding backend. This module
+//! assembles witnesses and composes proofs; it emits no AIR of its own.
+//!
+//! ⚠ This paragraph used to credit `shielded_spend_circuit()` and call it
+//! "Lean-emitted/DSL". It was neither: `shielded/spend_circuit.rs` was a
+//! Rust-authored AIR, and the sentence above is the exact shape law #1 exists to
+//! catch — a module truthfully reporting it authors no AIR *itself* while naming a
+//! hand-written one as its Lean foundation. That file is DELETED (2026-08-07); the
+//! descriptor named above really is emitted from Lean.
 
 use crate::shielded::spend_complete::{
     ShieldedSpendCompleteWitness, verify_shielded_spend_complete_parts,

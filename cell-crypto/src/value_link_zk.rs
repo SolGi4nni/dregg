@@ -607,44 +607,32 @@ mod tests {
         );
     }
 
-    // ─── REAL-PATH tests: the genuine STARK `value_binding` felt ──────────────
+    // ─── REAL-PATH tests: the genuine narrow `value_binding` felt ─────────────
     //
-    // These exercise the felt an honest shielded-spend witness publishes
-    // (`ShieldedSpendWitness::value_binding()` == `value_link_binding(value,
-    // asset_type, randomness)`), not a fixture string. They check honest-value
-    // compatibility only; they do not establish the missing hash-preimage relation.
+    // These exercise the real `value_link_binding(value, asset_type, randomness)`
+    // felt, not a fixture string. They check honest-value compatibility only; they
+    // do not establish the missing hash-preimage relation.
+    //
+    // ⚠ WHAT THIS USED TO BE, AND WHAT IT NO LONGER IS (2026-08-07). Until the
+    // Rust-authored shielded-spend AIR was deleted (`circuit-prove/src/shielded/
+    // spend_circuit.rs`, house law #1), `real_leaf` built a `ShieldedSpendWitness`,
+    // took its `value_binding()` and asserted it equalled this crate's
+    // `value_link_binding`. That was NOT a circuit-vs-cell agreement: both sides
+    // were hand-written Rust re-derivations of the same `hash_fact` squeeze, so the
+    // assertion could only ever fail if one of the two twins was edited alone. The
+    // twin is gone; the felt below is the cell derivation, full stop. The deployed
+    // relation publishes a 16-lane WIDE carrier
+    // (`dregg-shielded-spend-complete-fsi2::v1`), not this one narrow felt, so there
+    // is no live circuit-side counterpart to compare against here.
 
     use crate::value_commitment::value_link_binding;
     use dregg_circuit::field::BabyBear;
-    use dregg_circuit_prove::shielded::spend_circuit::ShieldedSpendWitness;
 
-    /// Build a real shielded-spend witness and return its genuine `(value,
-    /// value_binding felt)` — the SAME felt the STARK publishes as PI[VALUE_BINDING].
+    /// The genuine `(value, value_binding felt)` pair for an honest note at
+    /// `asset_type = 1`.
     fn real_leaf(value: u64, randomness_seed: u32) -> (u64, BabyBear) {
         let randomness = BabyBear::new(randomness_seed);
-        let w = ShieldedSpendWitness {
-            value: BabyBear::new((value % ((1u64 << 31) as u64)) as u32),
-            asset_type: BabyBear::new(1),
-            owner: BabyBear::new(7),
-            randomness,
-            key: [
-                BabyBear::new(11),
-                BabyBear::new(13),
-                BabyBear::new(17),
-                BabyBear::new(19),
-            ],
-            siblings: vec![],
-            positions: vec![],
-        };
-        let vb_circuit = w.value_binding();
-        // The cell-side re-derivation MUST equal the circuit's published felt (the
-        // witness above uses asset_type = 1).
-        let vb_cell = value_link_binding(value, 1, randomness);
-        assert_eq!(
-            vb_circuit, vb_cell,
-            "cell re-derivation must match the STARK PI"
-        );
-        (value, vb_circuit)
+        (value, value_link_binding(value, 1, randomness))
     }
 
     /// POSITIVE honest-input case: the proof accepts with the matching PI as context.

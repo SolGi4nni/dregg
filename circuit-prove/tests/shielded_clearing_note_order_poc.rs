@@ -36,7 +36,12 @@
 //!
 //!   * The notes are REAL Poseidon2 `BoundNote`s — the exact `hash_fact`
 //!     value-binding / leaf / nullifier the shielded spend circuit binds
-//!     (`shielded/spend_circuit.rs` C6/C7, `shielded_deposit_bridge_poc.rs`).
+//!     (`shielded_deposit_bridge_poc.rs`). ⚠ This line cited `shielded/spend_circuit.rs`
+//!     C6/C7 until 2026-08-07; that Rust-authored AIR is deleted (house law #1) and the
+//!     binding the deployed spend proves is now the 16-lane wide carrier of the
+//!     Lean-emitted `dregg-shielded-spend-complete-fsi2::v1`, NOT the one-felt C7 these
+//!     notes carry. So the notes here are real Poseidon2 objects, but they are no longer
+//!     the same shape any live circuit binds.
 //!   * The clearing is the REAL `fhegg_solver::clearing::{clear, allocate}` —
 //!     the uniform-price fold + volume-maximising crossing + conserving pro-rata
 //!     allocation, run over the ORDERS the adapter seals from actual notes. NOT an

@@ -741,8 +741,9 @@ fn drive_nonequality_bytes(l: &[u8; 32], r: &[u8; 32]) -> Verdict {
 /// Repointed 2026-07-16 off `dregg_dsl_runtime::{prove,verify}_dsl_plonky3` — a SECOND, name-colliding
 /// `DslP3Air` (p3-uni-stark) with no production consumer, which cannot express `Hash` and enforced
 /// `BoundaryRow::Index(n>0)` on row 0 only. A differential harness must drive the interpreter the product
-/// actually ships: `dregg_circuit::dsl::dsl_p3_air` (p3-batch-stark), the one `shielded/spend_circuit.rs`
-/// and `attest.rs` use.
+/// actually ships: `dregg_circuit::dsl::dsl_p3_air` (p3-batch-stark), the one `shielded/attest.rs`
+/// uses. (It named `shielded/spend_circuit.rs` as the other consumer until 2026-08-07; that
+/// Rust-authored AIR is deleted under house law #1, so `attest.rs` is now the live example.)
 fn round_trip(
     descriptor: &CircuitDescriptor,
     trace: &[Vec<BabyBear>],
