@@ -65,7 +65,12 @@ use crate::poa_crate_open_ffi::{crate_open_log_rows_json, CrateOpenLogRow};
 use crate::{ensure_lean_init, lean_init_once};
 
 /// Host-transport ceiling for the request and the emitted document. Lean independently refuses a
-/// request above its own 16 KiB pre-parser fuse; this only prevents unbounded host allocation.
+/// request above its own 1 MiB pre-parser fuse and a log above 4096 rows; this only prevents
+/// unbounded host allocation.
+///
+/// ⚠ Lean's fuse was 16 KiB until this request grew `history`, and this comment said so. A full
+/// 4096-row log spells to about 390 KB, so the old fuse would have refused every station read on
+/// a busy node — a fail-closed refusal indistinguishable from a corrupt log.
 pub const MAX_POA_STATION_DAILY_WIRE_BYTES: usize = 1024 * 1024;
 
 /// The canonical request format this seam sends to Lean.
