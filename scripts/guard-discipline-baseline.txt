@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15264 guards across 1152 modules (2523 .lean files scanned).
+# TOTAL 15265 guards across 1152 modules (2532 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -45,6 +45,7 @@
 # BASELINE-PROVENANCE bc10ec598-DIRTY 15298→15287 (-11) DECREASED — deleted the bridge-action binding AIR: BridgeActionEmit.lean (11) + BridgeActionRefine.lean (3) retired with their modules. SWEPT IN, not mine: Dregg2/Deos/Affordance.lean 11 -> 0 (another lane's conversion) and a -10 row delta already in the worktree before this pass.
 # BASELINE-PROVENANCE 1ac1a5bbd-DIRTY 15287→15285 (-2) DECREASED — DeployedConstraint: the two malformed-wire guards asserted admitsWire = "1", the string a genuine ConstraintViolated also renders as, so neither could tell a parse failure from its opposite; replaced by named theorems on the new distinct malformed code (unknown_tag_is_malformed / short_wire_is_malformed) plus their violated/ok controls
 # BASELINE-PROVENANCE 21fd365d8-DIRTY 15285→15264 (-21) DECREASED — verify-wire malformed/verdict split: Fips204Verify 21 -> 10 and R3Verify 10 -> 0. Every wire-level guard on the three signature-verification exports asserted a string that a MALFORMED wire also rendered ("0" / "REJECT"), so none could tell a forged signature from a wire nothing parsed; they are now named theorems over the new distinct "2 <fault>" code, native_decide + #assert_compiled (String.splitOn does not reduce in the kernel), beside kernel-proved #assert_axioms both-pole iffs
+# BASELINE-PROVENANCE f5b8825bb-DIRTY 15264→15265 (+1) INCREASED — KimchiStepMainPins08 72 -> 73 (8015b6f07, the AIR cross-row lane). DEBT MARKER, NOT APPROVAL — the same treatment 15523->15602 gave the live wrap_main cone. The +1 is the SEGMENT-D SPONGE CORRECTION: three guards that read 'segment D is a Sponge.copy of sponge_after_index' now read the opposite (step.rs:2718 hands the OUTER hash merge::dlog_plonk_index(wrap_prover), so D starts FRESH and absorbs its own 56 coordinates), and the third — 'a different key gives a different after_index state' — is a NEW claim, not a restatement, and the LOAD-BEARING one: it is what makes section 18's tie bind the key at all. Rowed rather than converted ONLY because this is the live Pickles step/wrap cone (KimchiWrapMainCore has a 349-line uncommitted rewrite renaming WrapShape.prevs -> maxPrevs in the shared tree at this moment, and every KimchiWrapMainPins module is mid-lake-build against it), and converting one guard out of 73 in a sibling lane's module would launder the count without doing the burndown. OWNER: the Pickles step/wrap lane, 8015b6f07. Disposition: CONVERT to a named native_decide theorem + #assert_compiled, do not keep. The row must SHRINK; no other module may hide behind it.
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -433,7 +434,7 @@
 62	Dregg2/Circuit/Emit/KimchiStepMainPins05.lean
 74	Dregg2/Circuit/Emit/KimchiStepMainPins06.lean
 55	Dregg2/Circuit/Emit/KimchiStepMainPins07.lean
-72	Dregg2/Circuit/Emit/KimchiStepMainPins08.lean
+73	Dregg2/Circuit/Emit/KimchiStepMainPins08.lean
 21	Dregg2/Circuit/Emit/KimchiStepMainPins09.lean
 66	Dregg2/Circuit/Emit/KimchiStepMainPins10.lean
 46	Dregg2/Circuit/Emit/KimchiStepMainPins11.lean
