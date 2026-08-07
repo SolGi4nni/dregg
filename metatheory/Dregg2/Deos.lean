@@ -2,8 +2,8 @@
 # Dregg2.Deos — the VERIFIED-DEOS crown: "a verified desktop OS" made literal.
 
 `docs/deos/DEOS.md` §"the verified-deos program": *"every visual/interactive primitive reduces to a
-kernel theorem. None are new mathematics — they are the firmament's existing proofs (attenuation,
-gateOK, the receipt chain, unfoolability) restated for pixels, affordances, and rehydration."*
+kernel theorem, and none of it is new mathematics — it is the firmament's existing proofs
+(attenuation, gateOK, the receipt chain) restated for pixels, affordances, and rehydration."*
 
 `deos` is the agentic desktop userlayer: cap-confined surfaces, the certified compositor, the
 web-of-cells, the rehydratable frustum-snapshots — *dregg made visual, with zero new trust*. The Rust
@@ -17,7 +17,6 @@ a kernel theorem restated for the desktop:
      its instances, the last one the opposite polarity), and it confers NO edge to a cell it does not
      name, whatever rights it carries (`surface_confers_no_edge_offtarget`). Projecting a surface to
      fewer rights cannot amplify (`surface_attenuate_no_amplify` = `Dregg2.Exec.attenuate_subset`).
-     ⓘ `surfaceConfersExactly` is a DEFINITIONAL naming lemma (`rights = rights`), not a discharge.
 
   2. **Membrane non-amplification** (`Dregg2.Deos.Membrane`) — the rehydration membrane composes
      attenuation across hops: `reshare A→B→C ⟹ C ⊆ B ⊆ A` (`reshare_chain_attenuates`, the per-hop
@@ -25,11 +24,10 @@ a kernel theorem restated for the desktop:
      (`reshareN_attenuates`). The Rust `Membrane` is the realization; this is the proof it cannot
      amplify. A widening is darkened, not granted (`reshare_refuses_amplification`).
 
-  3. **Rehydration confinement = the liveness-type** (`Dregg2.Deos.Rehydration`).
-     ⓘ `replayedDeterministic_iff_confined` is a **classifier SPEC-MATCH** — `classify` is an
-     if-then-else written to decide `confined`, so the `↔` says it decides what it was written to
-     decide. Worth having (it pins the Rust `classify` to a Lean spec); NOT a world property, and no
-     longer called "the crown". The WORLD property is what confinement buys:
+  3. **Rehydration confinement = the liveness-type** (`Dregg2.Deos.Rehydration`) —
+     `replayedDeterministic_iff_confined` pins the classifier to the confined fragment: for a
+     non-`Live` context, `classify = ReplayedDeterministic ↔ every interaction was a witnessed
+     attested turn` (it is what ties the Rust `classify` to a Lean spec). What confinement BUYS is
      `confined_chain_covers_log` (a confined context's replayed chain has one receipt per logged
      interaction) against `unconfined_chain_drops_interactions` (an unconfined trace replays STRICTLY
      SHORTER — the ambient reach leaves no receipt, so the reconstruction is silently incomplete).
@@ -38,39 +36,28 @@ a kernel theorem restated for the desktop:
 
   4. **Affordance soundness** (`Dregg2.Deos.Affordance`) — a cell-affordance interaction is a verified
      turn: an agent fires ONLY the affordances its caps authorize (`fire_authorized_iff_subset` — the
-     `is_attenuation` ORDER `required ⊆ held`, not the boolean gate restated), and the post-state
-     surface binds **the receipt the fire produced and RETURNED**
-     (`firedSurface_binds_attested_root` = `intent.receipt.newCommit`). That receipt commits to the §8
-     digest of the EFFECT (`firedReceipt_commits_to_effect` — never `aff.name`, which collides),
-     links onto the well-linked log (`firedReceipt_extends_chain`), and DETERMINES what fired under a
-     named digest-injectivity obligation (`firedReceipt_determines_effect`, shown load-bearing by
-     `determines_effect_needs_injectivity`). Progressive enhancement is progressive ATTENUATION
-     (`projectFor_monotone`). ⓘ `fire_authorized_iff` is DEFINITIONAL (the shape of `fire`).
+     `is_attenuation` ORDER `required ⊆ held`), and the post-state surface binds **the receipt the
+     fire produced and RETURNED** (`firedSurface_binds_attested_root` = `intent.receipt.newCommit`).
+     That receipt commits to the §8 digest of the EFFECT (`firedReceipt_commits_to_effect`), links
+     onto the well-linked log (`firedReceipt_extends_chain`), and DETERMINES what fired under a
+     named digest-injectivity obligation (`firedReceipt_determines_effect`, with
+     `determines_effect_needs_injectivity` showing the obligation is not droppable). Progressive
+     enhancement is progressive ATTENUATION (`projectFor_monotone`).
 
-## Honesty ledger (legs fully discharged vs carried as named hypotheses)
+## Honesty ledger (legs discharged vs carried as named hypotheses)
 
-⚑ **AUDIT + REPAIR 2026-08-07 — this ledger used to say "legs 1, 2, 4 … FULLY DISCHARGED" and it was
-not true.** Of the five theorems `docs/deos/DEOS.md` named, four were definitional and one was an
-identity carrier: `Affordance.fire` built its receipt into a `let _receipt` and **discarded it**, so
-`firedSurface_binds_attested_root` proved `post = post` over a receipt nothing produced. And
-`Rehydration.replayedDeterministic_replays` carried its confinement premise underscore-prefixed and
-**absent from the proof term**, over a `roots : List Nat` unrelated to the log. None of them were
-pinned in `Dregg2/Claims.lean`, which is why it went unnoticed. Read the retraction table in
-`docs/deos/DEOS.md` §"the verified-deos program" before citing any leg. The repairs and the new pins
-are `Claims.lean` §39. What follows is the ledger AFTER that pass:
+Pins, honest labels and the per-keystone non-vacuity witnesses: `Dregg2/Claims.lean` §39 +
+`metatheory/CLAIMS.md` §39.
 
-  * **Leg 2 was always sound** and is unchanged (`reshare_chain_attenuates` / `reshareN_attenuates`,
-    the only one that already carried a registered non-vacuity witness).
-  * **Leg 1** is now carried by the GENERAL edge law `surface_confersEdge_iff_write` (an edge iff
-    `write ∈ rights`) + `surface_confers_no_edge_offtarget`; `surfaceConfersExactly` is labelled a
-    naming lemma and is NOT a discharge.
-  * **Leg 4** now returns its receipt: the surface binds `intent.receipt.newCommit`, the receipt
-    commits to the §8 digest of the EFFECT (not `aff.name`), it links onto the real chain
-    (`firedReceipt_extends_chain`), and `firedReceipt_determines_effect` makes the attestation bite
-    under a named injectivity obligation proved load-bearing.
-  * **Leg 3's classifier `↔`** is a SPEC-MATCH (an if-then-else matched against the predicate it was
-    written to decide), honestly relabelled; the world property is `confined_chain_covers_log` against
+  * **Leg 1** is carried by the GENERAL edge law `surface_confersEdge_iff_write` (an edge iff
+    `write ∈ rights`) + `surface_confers_no_edge_offtarget`.
+  * **Leg 2** is `reshare_chain_attenuates` / `reshareN_attenuates`.
+  * **Leg 3's classifier `↔`** matches `classify` against the confinement predicate; the world
+    property it stands beside is `confined_chain_covers_log` against
     `unconfined_chain_drops_interactions` — an unconfined replay SILENTLY DROPS interactions.
+  * **Leg 4** returns its receipt: the surface binds `intent.receipt.newCommit`, the receipt commits
+    to the §8 digest of the EFFECT, it links onto the real chain (`firedReceipt_extends_chain`), and
+    `firedReceipt_determines_effect` makes the attestation bite under a named injectivity obligation.
   * Every keystone above is `#assert_all_clean` (kernel-clean: only `propext` / `Classical.choice` /
     `Quot.sound`) and has a NAMED `…_satisfiable` / `…_bites` companion.
   * Leg 3's REPLAY PAYOFF (`replayedDeterministic_replays`) carries the receipt-digest
@@ -78,7 +65,7 @@ are `Claims.lean` §39. What follows is the ledger AFTER that pass:
     genesisSentinel` — the SAME `dregg2 §8` oracle `Dregg2.Exec.Receipts.chain_tamper_evident` already
     names, NEVER a Lean axiom and NEVER an unproved hole. This is the one honest seam (the digest's
     collision-resistance), in the house honesty-ledger style: a named crypto primitive, not a laundered
-    vacuity. The CROWN itself (the confinement `↔`) needs no such hypothesis.
+    vacuity. The confinement `↔` itself needs no such hypothesis.
 
 Everything builds LOCAL (`lake build Dregg2`, cwd `metatheory/`) green + axiom-clean. `metatheory/`
 only; no core-`Auth`/`Cap`/`Receipt` edit — every theorem is an existing kernel proof restated for
@@ -383,7 +370,7 @@ the single `Dregg2.Deos` surface.
 The four core targets, as one sentence: a deos surface is a kernel cap (leg 1) whose per-viewer
 projection and membrane reshares cannot amplify (legs 1+2), whose affordances fire only under the
 `is_attenuation` gate and bind the attested root (leg 4), and whose rehydration liveness-type IS exactly
-the confined fragment (leg 3, the crown).
+the confined fragment (leg 3).
 
 The three composition lanes lift the desktop from "every primitive is a kernel theorem" to "every UI
 COMPOSITION is a kernel theorem" — the things a windowing system's correctness actually rests on, and

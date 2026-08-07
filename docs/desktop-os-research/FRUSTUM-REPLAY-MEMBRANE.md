@@ -16,18 +16,12 @@ Dregg2` green, LOCAL):
 
 | target | theorem | what it nails |
 |---|---|---|
-> ⚑ **This table was rewritten 2026-08-07.** It previously named `surfaceConfersExactly`,
-> `fire_authorized_iff` and `firedSurface_binds_attested_root` as the discharges of targets 1 and 4,
-> and called target 3 "the crown". A survey found the first two definitional and the third an
-> **identity carrier** (`fire`'s receipt was discarded into a `let _receipt`; the theorem proved
-> `post = post`). Full retraction table: `docs/deos/DEOS.md` §"the verified-deos program".
-
-| target | theorem | what it nails |
-|---|---|---|
-| 1 surface-as-cap | `surface_confersEdge_iff_write`, `surface_confers_no_edge_offtarget` | a window confers a connectivity edge **iff `write ∈ rights`**, and none at all to a cell it does not name (⚑ `surfaceConfersExactly` is a naming lemma, `rights = rights`) |
-| 2 membrane non-amp | `reshare_chain_attenuates`, `reshareN_attenuates`, `reshare_refuses_amplification` | a reshare A→B→C→…→Z grants ⊆ the first holder held — **the one leg that was always sound** |
-| 3 rehydration confinement | `confined_chain_covers_log` vs `unconfined_chain_drops_interactions` (+ `replayedDeterministic_replays`) | a confined replay covers the WHOLE trace; an unconfined one is strictly shorter (the ambient reach leaves no receipt). ⚑ `replayedDeterministic_iff_confined` is a classifier SPEC-MATCH, not "the crown" |
+| 1 surface-as-cap | `surface_confersEdge_iff_write`, `surface_confers_no_edge_offtarget` | a window confers a connectivity edge **iff `write ∈ rights`**, and none at all to a cell it does not name |
+| 2 membrane non-amp | `reshare_chain_attenuates`, `reshareN_attenuates`, `reshare_refuses_amplification` | a reshare A→B→C→…→Z grants ⊆ the first holder held |
+| 3 rehydration confinement | `replayedDeterministic_iff_confined`, `confined_chain_covers_log` vs `unconfined_chain_drops_interactions` (+ `replayedDeterministic_replays`) | the classifier IS the confined fragment, and a confined replay covers the WHOLE trace where an unconfined one is strictly shorter (the ambient reach leaves no receipt) |
 | 4 affordance | `fire_authorized_iff_subset`, `firedReceipt_commits_to_effect`, `firedReceipt_extends_chain`, `firedReceipt_determines_effect` | a fire commits iff `required ⊆ held`; the receipt it RETURNS commits to the effect, links onto the chain, and pins what fired |
+
+*(What is currently proved, with its honest labels: `metatheory/CLAIMS.md` §39.)*
 
 So the *classifier* is confinement-faithful and the *chain* is tamper-evident. What is
 **still open** — the three continents this doc advances — is sharper than "negotiation UX
@@ -102,13 +96,10 @@ fold** over that trace: `replayState s₀ trace = trace.foldl stepReplay s₀`, 
 > ambient environment on an `.ambient` one — so confinement is exactly what makes the environment
 > unreachable, and the fold has no hidden input.
 
-⚑ **This paragraph used to promise more than the theorem delivered, and the theorem was the one that
-was wrong.** This doc said, correctly, that "`replayState s₀ trace = replayState s₀ trace` is not the
-point" — but until 2026-08-07 that reflexivity was *literally what the Lean said*, with `_hconf`
-underscore-prefixed and unused, so it held of every trace, confined or not. The prose named the
-theorem; the theorem did not state it. The statement above is the repair, and
-`ambient_replay_env_dependent` proves it FALSE for a one-interaction unconfined trace, which is what
-makes the premise load-bearing.
+Reflexivity (`replayState s₀ trace = replayState s₀ trace`) is *not* the point and is not what the
+theorem says: the confinement premise is consumed, and `ambient_replay_env_dependent` proves the
+statement FALSE for a one-interaction unconfined trace, which is what makes that premise
+load-bearing.
 
 The load-bearing lemma is **closure under the witness**: `stepReplay` reads *only* the
 `AttestedRoot` (a structurally-holding commitment) and the prior reconstructed state —

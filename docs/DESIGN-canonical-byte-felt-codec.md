@@ -160,30 +160,23 @@ Pricing the alternatives on this basis:
 
 | Codec | Felts | Absorbs | Range check | Byte-aligned | In tree | Verdict |
 |---|---|---|---|---|---|---|
-| 9 × base-`p` digits | 9 | 1 | big-int `< 2^256` borrow chain | **no** | no | minimum width, worst gadget; Lean model would be genuinely painful |
+| 9 × base-`p` digits | 9 | 1 | big-int `< 2^256` borrow chain | **no** | no | minimum width, worst gadget — but `field_limbs9` below reaches 9 felts *without* this shape |
+| **9 × `field_limbs9`** | **9** | **1** | **none for injectivity; canonicity is 7 × `< 2^28`** | **yes** | **Lean `Circuit/FieldLanes9.lean`, Rust `effect_vm::field_limbs9`** | **recommended at committed, persistent, ABI-pinned slots** |
 | 11 × u24 | 11 | 1 | 2^24 table (too large) or 16+8 split ⇒ **22** lookups | yes | no | **strictly dominated** — no absorb saving over u16, *more* range constraints, a 5th codec to prove |
-| **16 × u16** | **16** | **1** | **16 lookups at the standard 2^16 width** | **yes** | **4× in Rust, 1× in Lean** | **recommended** |
+| **16 × u16** | **16** | **1** | **16 lookups at the standard 2^16 width** | **yes** | **4× in Rust, 1× in Lean** | **recommended for absorbed preimages** |
 | 8 × u32 mod p (today) | 8 | 1 | none | yes | everywhere | non-injective, O(1) collisions |
 
-⚑ **CORRECTION, 2026-07-31 — the "9 felts" row priced a DIFFERENT ENCODING from the one that
-shipped, and this table's verdict on it is wrong.**
+**`field_limbs9` is not "9 × base-`p` digits", and that is why it prices differently.** It is 2
+pinned `u32 % p` lanes — the kernel u64 window, unchanged deployed ABI — plus **7 base-`2^28` digits**
+of `W = ofDigits 256 (b[0..24] ++ [q₀ + 4·q₁])`, where the single extra base-256 digit carries the two
+quotients the pinned lanes' `mod p` discards. So it needs no borrow chain, it *is* byte-aligned (a
+25-byte source repacked into 28-bit digits), it is injective (`fieldToLanes9_injective`), and the Lean
+model is 486 lines — a total decoder plus a machine-checked left inverse, `#assert_axioms`-clean.
 
-That row assumes *9 × base-`p` digits*: hence "big-int `< 2^256` borrow chain", "not byte-aligned",
-"Lean model would be genuinely painful". The nine-lane encoder actually deployed
-(`metatheory/Dregg2/Circuit/FieldLanes9.lean`, Rust twin `effect_vm::field_limbs9`) is **not that**.
-It is 2 pinned `u32 % p` lanes — the kernel u64 window, unchanged deployed ABI — plus **7 base-`2^28`
-digits** of `W = ofDigits 256 (b[0..24] ++ [q₀ + 4·q₁])`, where the single extra base-256 digit
-carries the two quotients the pinned lanes' `mod p` discards. Re-priced on this table's own axes:
-
-| | 9 × base-`p` (as costed) | `field_limbs9` (as shipped) |
-|---|---|---|
-| range gadget | big-int `< 2^256` borrow chain | none needed for injectivity; canonicity is 7 × `< 2^28` |
-| byte-aligned | no | **yes** — a 25-byte source repacked into 28-bit digits |
-| Lean model | "genuinely painful" | 486 lines, total decoder + machine-checked left inverse, `#assert_axioms`-clean |
-| injective | yes | yes (`fieldToLanes9_injective`) |
-
-So "strictly dominated" does not hold. And at the **`fields[0..8]` rotated slots specifically,
-`Limbs16` is not merely more expensive — it is disqualified twice over**:
+**So there are two recommendations, split by slot kind.** `Limbs16` is the map for **absorbed
+preimages** (§2.6), where 16 lanes is exactly one `CHIP_RATE` absorb. At a **committed, persistent,
+ABI-pinned slot** the minimum-width injective encoding wins instead — and at the **`fields[0..8]`
+rotated slots specifically, `Limbs16` is disqualified twice over**:
 
 1. **It cannot hold lane 0.** A 16-bit lane cannot carry the kernel's 32-bit u64-lane `lo32`, which
    `field_to_u64`, `gFieldWriteP1`, the escrow / discharge / vault welds and every app encoder read.
@@ -196,11 +189,6 @@ So "strictly dominated" does not hold. And at the **`fields[0..8]` rotated slots
    wasted. That is `B_SPAN` 247 → 323 and `APPENDIX_SPAN` 537 → 689: **+152 columns on each of the
    174 emitted members and +38 Poseidon2 absorptions per row** — buying nothing, since both
    encodings are injective and the anchor's binding is the sponge's (`2^123.63`) either way.
-
-`Limbs16` remains the right recommendation for **absorbed preimages**, which is what §2.6 is about
-and where 16 lanes is exactly one `CHIP_RATE` absorb. The correction is narrow: at a **committed,
-persistent, ABI-pinned slot**, the minimum-width injective encoding wins, and it is not painful to
-model.
 
 11 × u24 is the interesting near-miss and it loses cleanly: it saves 5 felts of *preimage* width,
 which buys nothing because both fit in one absorb, and pays for it with a range-check story that
@@ -423,28 +411,21 @@ key type. One epoch, one re-genesis.
   catalogue** by blast radius).
 * `turn/src/umem.rs:1149,1169,1205` — V1 codec (`umem_fold_bytes_v1` / `umem_key_addr_v1` /
   `umem_val_felt_v1`) **deleted**, V2 `UAddrV2`/`UValV2` armed on the wire, endianness flipped to
-  LE (§2.5).
+  LE (§2.5). This is a live-wire move, not a staged one. `umem_witness_enabled` is
+  `AtomicBool::new(true)` in all three `TurnExecutor` constructors (`turn/src/executor/mod.rs:1293`,
+  `:1376`, `:1429` — the field's own doc at `:1172` says *"ON by default (the umem VK EPOCH — G4)"*),
+  and `umem_cohort_proving_inputs_from` — which calls `umem_proving_inputs_from_v1` — has eight
+  production call sites: `sdk/src/full_turn_proof.rs:1385,1635,1773,3586` and
+  `turn-prover/src/rotation_witness.rs:443,536,629`, plus the multi-domain twin at `:725`. Its
+  width-7 row layout (`key · present · value · prev_present · prev_value · prev_serial · guard`) is
+  what the committed umem-cohort registries back.
 
-  > ⚠ **CORRECTED 2026-08-06 — the parenthetical that stood here was stale in BOTH halves.** It
-  > read *"Free today because V1 is staged and `umem_witness_enabled` is unflipped."* Neither
-  > clause survives reading the code.
-  >
-  > * **`umem_witness_enabled` is ON.** It is `AtomicBool::new(true)` in all three `TurnExecutor`
-  >   constructors (`turn/src/executor/mod.rs:1293`, `:1376`, `:1429`) and the field's own doc at
-  >   `:1172` says so out loud: *"ON by default (the umem VK EPOCH — G4)."*
-  > * **V1 is not merely staged.** `umem_cohort_proving_inputs_from` — which calls
-  >   `umem_proving_inputs_from_v1` — has eight production call sites:
-  >   `sdk/src/full_turn_proof.rs:1385,1635,1773,3586` and
-  >   `turn-prover/src/rotation_witness.rs:443,536,629`, plus the multi-domain twin at `:725`.
-  >   Its width-7 row layout (`key · present · value · prev_present · prev_value · prev_serial ·
-  >   guard`) is what the committed umem-cohort registries back.
-  >
-  > **What IS still free, stated narrowly:** the V2 **address** endianness flip.
-  > `UAddrV2::from_key` has no production caller (pinned by
-  > `umem_v2_address_is_big_endian_the_one_divergence_from_the_canonical_le_codec`). V2's **value**
-  > encoding acquired one on 2026-08-06 — `turn/src/umem.rs`'s `admit_value_v2`, the producer's
-  > value-injectivity gate — but that caller only ever COMPARES `UValV2`s and never emits their
-  > limbs, so re-orienting the value payload is still free too. Emitting either is this stage.
+  What is free until this stage runs is the V2 **encodings**, in both coordinates. `UAddrV2::from_key`
+  has no production caller (pinned by
+  `umem_v2_address_is_big_endian_the_one_divergence_from_the_canonical_le_codec`), so the address
+  endianness flip is free. `UValV2`'s only caller — `turn/src/umem.rs`'s `admit_value_v2`, the
+  producer's value-injectivity gate — only ever COMPARES `UValV2`s and never emits their limbs, so
+  re-orienting the value payload is free too. **Emitting either is this stage.**
 * `turn/src/rotation_witness.rs:346` `iroot` — the receipt-log MMR leaf **and** its 1-felt root.
 * `turn/src/executor/proof_verify.rs:3371,3401,3412` + `verifier/src/lib.rs:466,480` +
   `turn/src/conditional.rs:816` + `node/src/mcp/proof.rs:200,204` +

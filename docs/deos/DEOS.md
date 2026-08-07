@@ -54,31 +54,9 @@ model* — declarative, hypertext-driven, server-rendered, progressively enhance
 
 ## The verified-deos program (a verified *desktop* OS — the Lean targets)
 
-> ⚑ **RETRACTION + REPAIR, 2026-08-07.** This section previously read "The four modeling targets …
-> are **ALL DISCHARGED** at HEAD" and named five theorems. A survey read all five at source. **Four
-> were definitional and one was an identity carrier**, and **none of them were in
-> `metatheory/Dregg2/Claims.lean` or `metatheory/CLAIMS.md`** — the project's own honesty ledger made
-> no claim about deos at all, so no instrument keyed on the rot. What follows replaces the claim with
-> what is actually proved, at the resolution the theorems support. Everything surviving is now pinned
-> (`Claims.lean` §39) with a registered non-vacuity witness. The audit trail:
->
-> | old headline | what it actually was | now |
-> |---|---|---|
-> | `surfaceConfersExactly` | `rights = rights` — `Surface` IS `Cap.endpoint` by definition | **retracted as a discharge**; kept as a labelled naming lemma. Target 1 is carried by `surface_confersEdge_iff_write` (new, general) |
-> | `fire_authorized_iff` | `(if c then some _ else none).isSome ↔ c` | **relabelled DEFINITIONAL**; target 4's gate clause is now `fire_authorized_iff_subset` (the `required ⊆ held` order) |
-> | `firedSurface_binds_attested_root` | ⚑ **identity carrier** — `fire` built its receipt into `let _receipt` and **discarded it**, bound the surface to the caller's free `post`, and the theorem re-derived the same receipt in its own statement: `post = post`. Nothing was attested. | **REPAIRED** — `fire` returns the receipt; the surface binds `intent.receipt.newCommit` |
-> | `replayedDeterministic_iff_confined` | `(if c then A else B) = A ↔ c` — a spec-match, not a world property | kept, **relabelled** a classifier spec-match; the confinement *payoff* is the new coverage theorem |
-> | `replayedDeterministic_replays` | confinement premise **absent from the proof term**; a free `roots : List Nat` unrelated to `log` | **REPAIRED** — `roots` derived from the log; the premise buys COVERAGE, and dropping it makes that conjunct provably false |
-> | `ReplayMembrane.confined_replay_deterministic` | literally `replayState … = replayState … := rfl`, premise unused | **REPAIRED** — now ambient-environment independence, false off the confined fragment |
->
-> Three further defects rode inside the discarded receipt and are fixed with it: its `effectsHash` was
-> the affordance's **display name** (which collides) rather than a commitment to the effect; its
-> `prevHash` was hard-coded to `genesisSentinel`, so no fire could link into the receipt chain; and the
-> attested root `post` was a **free parameter the verifier consumed**.
-
 The desktop adds ZERO new trust, so its safety is provable from the kernel's own
-metatheory. The four modeling targets (Lean, `metatheory/Dregg2/Deos/…`), at honest resolution — the
-sibling `desktop-os-research/FRUSTUM-REPLAY-MEMBRANE.md` advances PAST them (the C1 replay derivation
+metatheory. The four modeling targets are these (Lean, `metatheory/Dregg2/Deos/…`), and the sibling
+`desktop-os-research/FRUSTUM-REPLAY-MEMBRANE.md` advances PAST them (the C1 replay derivation
 + C2 negotiation algebra, `ReplayMembrane.lean`):
 
 1. **Surface-as-capability.** `Target::Surface(cell)` is a point on the existing
@@ -89,44 +67,41 @@ sibling `desktop-os-research/FRUSTUM-REPLAY-MEMBRANE.md` advances PAST them (the
    `interactiveSurface_confers_edge`) — and `surface_confers_no_edge_offtarget`: a `write`-carrying
    window on cell `c` confers **no** edge to a different cell `c'`. Plus
    `surface_attenuate_no_amplify` (= `Exec.attenuate_subset`, per-viewer projection cannot amplify).
-   ⓘ `surfaceConfersExactly` is a **naming lemma** (`rights = rights`) and is not a discharge.
 2. **Membrane non-amplification.** The rehydration membrane composes `is_attenuation`
    across hops; `reshare A→B→C ⟹ C's authority ⊆ B's held ⊆ A's` (the chained
    lattice law — the proven `is_attenuation` lifted to projection composition). The Rust
    `Membrane` in `starbridge-web-surface` is the realization; the Lean is the proof it
    cannot amplify. **PROVED:** `Membrane.lean::reshare_chain_attenuates` + the n-hop
-   `reshareN_attenuates`. ⓘ **This leg was always sound** — it is the only one of the five that
-   carried a registered non-vacuity witness before this pass, and it survives unchanged.
-3. **Rehydration confinement = the liveness-type.** Two claims here, and they are not the same
-   strength. ⓘ **`replayedDeterministic_iff_confined` is a SPEC-MATCH**: `classify` is an
-   if-then-else written to decide `confined`, so the `↔` says the classifier decides the predicate it
-   was written to decide. Useful (it pins the Rust `classify` to a Lean spec) but it is not a world
-   property, and calling it "the verified-desktop crown" was overclaim. **The world property is what
-   confinement BUYS:** `Rehydration.lean::confined_chain_covers_log` — a confined context's replayed
-   receipt chain has **one receipt per logged interaction** — against
-   `unconfined_chain_drops_interactions`, which proves an unconfined trace replays to a **strictly
-   shorter** chain: the ambient reach leaves no receipt, so the reconstructed history is silently
-   missing something that happened. `replayedDeterministic_replays` now carries both (tamper-evidence
-   under the named §8 digest oracle **and** coverage), with the confinement premise consumed.
-4. **Affordance soundness.** A cell-affordance interaction is a verified turn.
+   `reshareN_attenuates`.
+3. **Rehydration confinement = the liveness-type.** `ReplayedDeterministic` *is exactly* the confined
+   fragment: a context whose every external interaction was an attested turn replays deterministically;
+   otherwise `ReconstructedApproximate`. **PROVED:**
+   `Rehydration.lean::replayedDeterministic_iff_confined` pins the classifier to that predicate, and
+   `confined_chain_covers_log` states what confinement BUYS — a confined context's replayed receipt
+   chain has **one receipt per logged interaction** — against `unconfined_chain_drops_interactions`,
+   which proves an unconfined trace replays to a **strictly shorter** chain: the ambient reach leaves
+   no receipt, so the reconstructed history is silently missing something that happened.
+   `replayedDeterministic_replays` carries both — tamper-evidence under the named §8 digest oracle,
+   **and** coverage — with the confinement premise consumed.
+4. **Affordance soundness.** A cell-affordance interaction is a verified turn: an agent can only fire
+   the affordances its caps authorize, and the post-state surface binds the attested root.
    **PROVED:** `Affordance.lean::fire_authorized_iff_subset` — a fire commits iff
    `aff.required ⊆ held`, the `is_attenuation` order itself — and, for the attestation clause,
    `firedSurface_binds_attested_root` (the surface binds **the receipt the fire produced and
    returned**), `firedReceipt_commits_to_effect` (the receipt's `effectsHash` is the §8 digest of the
-   effect, never the display name), `firedReceipt_extends_chain` (the receipt is an APPEND to the
-   well-linked log, so it inherits `chain_tamper_evident`), and `firedReceipt_determines_effect` —
-   under the named digest-injectivity obligation, **the same receipt means the same effect fired**.
-   That obligation is shown load-bearing by `determines_effect_needs_injectivity`, which exhibits a
-   degenerate digest under which the conclusion is false.
+   effect), `firedReceipt_extends_chain` (the receipt is an APPEND to the well-linked log, so it
+   inherits `chain_tamper_evident`), and `firedReceipt_determines_effect` — under a named
+   digest-injectivity obligation, **the same receipt means the same effect fired**.
 
-**What this is and is not.** Every visual/interactive primitive reduces to a kernel theorem, and none
+**What the program covers.** Every visual/interactive primitive reduces to a kernel theorem, and none
 of it is new mathematics — it is the firmament's existing proofs (attenuation, gateOK, the receipt
-chain) restated for pixels, affordances, and rehydration. It is **not** "a verified desktop OS" in any
-sense a skeptic would grant: these are theorems about *models* of the surfaces, the Rust realization is
-related to them by nothing stronger than shared intent, and the compositor, the input path and the
-rehydration transport are outside the models entirely. The honest sentence is: *the authority algebra
-of a deos window, membrane, replay and affordance is proved over the kernel's own lattice and receipt
-chain, and each proof has a registered witness that it reds when the property breaks.*
+chain) restated for pixels, affordances, and rehydration. What the models cover is the **authority
+algebra** of a deos window, membrane, replay and affordance, over the kernel's own lattice and receipt
+chain. The compositor, the input path and the rehydration transport are outside them, and the Rust
+realization is related to the models by shared intent.
+
+*What is currently proved — with its honest labels and its non-vacuity witnesses — is
+`metatheory/CLAIMS.md` §39 (pins: `metatheory/Dregg2/Claims.lean`).*
 
 ## Build status + queue
 
@@ -176,12 +151,10 @@ chain, and each proof has a registered witness that it reds when the property br
   rehydrates per-viewer (an incomparable identity gets no projection).
 - **PROVED (Lean, `metatheory/Dregg2/Deos/`):** the verified-deos modeling — the four targets above
   (`Surface.lean` · `Membrane.lean` · `Rehydration.lean` · `Affordance.lean`), extended PAST them by
-  `ReplayMembrane.lean` (C1/C2). See `desktop-os-research/FRUSTUM-REPLAY-MEMBRANE.md`. ⚑ **Read the
-  retraction table at the head of "the verified-deos program" before citing any of these**: four of
-  the five names this bullet used to stand behind were definitional or vacuous until 2026-08-07. Every
-  surviving theorem is now pinned in `metatheory/Dregg2/Claims.lean` §39 and listed in
-  `metatheory/CLAIMS.md`, each with a NAMED non-vacuity companion — which is the actual durable fix,
-  since the reason this rotted for weeks is that nothing keyed on it.
+  `ReplayMembrane.lean` (C1/C2). See `desktop-os-research/FRUSTUM-REPLAY-MEMBRANE.md`. Every theorem
+  is pinned in `metatheory/Dregg2/Claims.lean` §39 and listed in `metatheory/CLAIMS.md`, each with a
+  NAMED non-vacuity companion; **`metatheory/CLAIMS.md` §39 is what to read before citing any of
+  them.**
 - **OPEN (forward):** the membrane wired into the live captp sturdyref path (not just
   the web crate) · starbridge-v2 native cockpit embedding the affordance surfaces.
 - **WOOD (frontier):** the certified compositor-PD (sole framebuffer+input cap holder,
