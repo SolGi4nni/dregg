@@ -729,8 +729,9 @@ impl PoaDeploymentScope {
         let actual_operator = read_regular_bounded(&operator_path, 64 * 1024)?;
         if actual_operator != expected_operator.as_bytes() {
             return Err(CuratorError::Deployment(format!(
-                "{} differs from exact manifest-derived production policy",
-                operator_path.display()
+                "{} differs from exact manifest-derived production policy: {}",
+                operator_path.display(),
+                first_operator_difference(&actual_operator, expected_operator.as_bytes())
             )));
         }
         Ok(node.index)
@@ -1393,6 +1394,85 @@ fn collect_key_digests(root: &Path) -> Result<BTreeSet<[u8; 32]>, CuratorError> 
     let mut output = BTreeSet::new();
     visit(root, &mut output)?;
     Ok(output)
+}
+
+/// Name the FIRST line on which a serving `operator.env` and the manifest-derived policy image
+/// disagree, with both values.
+///
+/// ⚑ WHY THIS EXISTS: THE MESSAGE WAS A DIAGNOSIS, AND IT NAMED THE WRONG CAUSE (2026-08-07).
+/// The comparison is byte-exact over ~18 `KEY=value` lines, and its refusal said only
+/// "`<path>` differs from exact manifest-derived production policy". Six
+/// `dregg_node::poa_signal_genesis` tests failed with that sentence on macOS for a reason that is
+/// not a policy at all: `tempfile::tempdir()` hands back `/var/folders/…` while this scope's root
+/// resolves through `/private/var/…`, so exactly ONE line — `POA_DATA_DIR` — differed, by a
+/// symlink prefix, and the reader was told their production policy was wrong. A refusal that
+/// names the wrong cause costs more than a bare one, because it is acted on.
+///
+/// So the refusal now carries evidence instead of a conclusion. It weakens NOTHING: the byte
+/// comparison above is unchanged and still exact; this only says what the bytes were. Values are
+/// truncated so a pathological file cannot turn one refusal into a wall of output, and the count
+/// of further differing keys is reported so "one line" and "everything" are distinguishable.
+fn first_operator_difference(actual: &[u8], expected: &[u8]) -> String {
+    const MAX_VALUE: usize = 160;
+    let clip = |s: &str| -> String {
+        if s.len() <= MAX_VALUE {
+            s.to_string()
+        } else {
+            format!("{}… ({} bytes)", &s[..MAX_VALUE], s.len())
+        }
+    };
+    let (Ok(actual), Ok(expected)) = (std::str::from_utf8(actual), std::str::from_utf8(expected))
+    else {
+        return "the serving file is not UTF-8, so it cannot be a policy image at all".into();
+    };
+    let a: Vec<&str> = actual.lines().collect();
+    let e: Vec<&str> = expected.lines().collect();
+
+    let mut diffs: Vec<(usize, &str, &str)> = Vec::new();
+    for i in 0..a.len().max(e.len()) {
+        let (av, ev) = (
+            a.get(i).copied().unwrap_or("(absent)"),
+            e.get(i).copied().unwrap_or("(absent)"),
+        );
+        if av != ev {
+            diffs.push((i + 1, av, ev));
+        }
+    }
+    let Some(&(line, av, ev)) = diffs.first() else {
+        // Byte-unequal but line-equal: a trailing-newline or line-ending difference. Say THAT
+        // rather than reporting no difference, which would read as "the check is broken".
+        return format!(
+            "the lines are identical but the bytes are not — a trailing-newline or line-ending \
+             difference (serving {} bytes, expected {} bytes)",
+            actual.len(),
+            expected.len()
+        );
+    };
+    let key = av.split('=').next().unwrap_or("");
+    let hint = if key == "POA_DATA_DIR"
+        && Path::new(av.trim_start_matches("POA_DATA_DIR="))
+            .canonicalize()
+            .ok()
+            == Path::new(ev.trim_start_matches("POA_DATA_DIR="))
+                .canonicalize()
+                .ok()
+    {
+        " — ⚠ THESE TWO PATHS CANONICALIZE TO THE SAME DIRECTORY (a symlink prefix, e.g. macOS \
+         `/var` → `/private/var`). This is a PATH SPELLING mismatch, not a policy mismatch: the \
+         writer of this file must spell POA_DATA_DIR the way the manifest-derived image does."
+    } else {
+        ""
+    };
+    format!(
+        "line {line} differs{}\n  serving:  {}\n  expected: {}{hint}",
+        if diffs.len() > 1 {
+            format!(" (and {} more line(s))", diffs.len() - 1)
+        } else {
+            " (and it is the ONLY differing line)".to_string()
+        },
+        clip(av),
+        clip(ev),
+    )
 }
 
 fn operator_config(

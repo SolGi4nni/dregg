@@ -655,6 +655,42 @@ fn sha256_hex(bytes: &[u8]) -> String {
     output
 }
 
+/// ⚑⚑ THE ONE RED THIS MODULE STILL CARRIES — OWNED, NAMED, AND NOT A TEST DEFECT.
+///
+/// Six tests here were red on 2026-08-07 for THREE stacked causes. Two are fixed in the commit
+/// that wrote this note; the third is a live design change and is the poa-signal lane's.
+///
+///  1. FIXED — the fixture wrote `POA_DATA_DIR=/var/folders/…` from a raw `tempfile::tempdir()`
+///     while the manifest-derived policy image spells the canonical `/private/var/…`, so a
+///     byte-exact operator.env comparison failed on ONE line and reported
+///     "differs from exact manifest-derived production policy". A path mismatch wearing a policy
+///     verdict. `prepare_deployment` now derives every path from the canonical root, and
+///     `poa_curator::first_operator_difference` makes that refusal name the differing line.
+///  2. FIXED — `expected_activation_counter` was hardcoded `2` beside an artifact that carries
+///     8 (`4002060a2`, Black Box enrolled and the curator re-signed). Read from the envelope now,
+///     with `a_wrong_activation_counter_is_refused` keeping the leg able to go red.
+///  3. ⚑ OPEN, AND IT IS THE REAL ONE. `build_network_genesis_input` reads
+///     `descriptor["target"]` — three bands — and refuses with "authenticated Signal target is
+///     not three bands". The shipped descriptor has no `target`, and that is DELIBERATE:
+///     `4db8ec12e` ("the games stop publishing their own answers") deleted it when Signal moved
+///     `signal-v1 → signal-v2`, because a published target IS the published answer. The run seed
+///     is now per-run and unpredictable, derived through `dregg_poa_signal_slot_derive` from a
+///     curator-held per-slot secret whose commitment is published before the slot opens.
+///
+///     SO THERE IS NOTHING TO REPOINT THIS READ AT. Closing it means deciding what the Signal
+///     genesis head commits to when there is no published target — a commitment to the per-slot
+///     secret rather than a code — which is game semantics, and this module owns ceremony
+///     plumbing, not game semantics (see the module doc). Guessing it here would install a head
+///     binding the wrong thing.
+///
+///     OWNER: the live poa-signal lane — `4db8ec12e` (the descriptor cutover), `47cf23360`
+///     ("judged play gets a feedback oracle in Lean") and `e1410b0f8` ("a judged SESSION"), with
+///     `sdk/src/poa_signal.rs`, `node/src/poa_signal_session.rs` and
+///     `node/src/poa_signal_adapter.rs` uncommitted in the tree as this was written.
+///
+///     ⚠ It is a CALLER/CALLEE SPLIT, and it was invisible for two days because causes 1 and 2
+///     refused first. That is the whole reason those two were worth fixing: the red now names
+///     the thing that is actually broken.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,10 +714,22 @@ mod tests {
     fn prepare_deployment() -> PreparedDeployment {
         let root = tempfile::tempdir().unwrap();
         let main = tempfile::tempdir().unwrap();
-        fs::create_dir_all(root.path().join("bundle")).unwrap();
-        fs::create_dir_all(root.path().join("nodes/node-0")).unwrap();
-        let manifest = root.path().join("poa-devnet.json");
-        let genesis = root.path().join("bundle/genesis.json");
+        // ⚑ CANONICALIZED, and it is not tidiness. `poa_curator::operator_config` spells
+        // `POA_DATA_DIR` as `verified.root.join(node.data_dir)` over a root that resolved through
+        // `fs::canonicalize`, and `verify_serving_data_dir` compares operator.env BYTE-EXACTLY.
+        // On macOS `tempfile::tempdir()` hands back `/var/folders/…` while the same directory
+        // canonicalizes to `/private/var/folders/…`, so a fixture built from the raw handle wrote
+        // one line the production image could never match — and all six tests in this module
+        // failed reporting `operator.env differs from exact manifest-derived production policy`,
+        // which is a policy verdict for a symlink prefix. Deriving every path here from the
+        // canonical root makes the fixture spell what production spells. It relaxes NOTHING: the
+        // comparison in `poa-curator` is still byte-exact, and its refusal now names the differing
+        // line so this cannot be mis-diagnosed again.
+        let root_path = fs::canonicalize(root.path()).unwrap();
+        fs::create_dir_all(root_path.join("bundle")).unwrap();
+        fs::create_dir_all(root_path.join("nodes/node-0")).unwrap();
+        let manifest = root_path.join("poa-devnet.json");
+        let genesis = root_path.join("bundle/genesis.json");
         fs::copy(
             repo().join("poa/deployments/epoch-1/poa-devnet.json"),
             &manifest,
@@ -692,7 +740,7 @@ mod tests {
             &genesis,
         )
         .unwrap();
-        let data_dir = root.path().join("nodes/node-0");
+        let data_dir = root_path.join("nodes/node-0");
         fs::copy(&genesis, data_dir.join("genesis.json")).unwrap();
         let manifest_json: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
         let node = &manifest_json["nodes"][0];
@@ -724,8 +772,34 @@ mod tests {
         }
     }
 
+    /// The shipped envelope's own `(content_epoch, counter)`.
+    ///
+    /// ⚑ THESE WERE HARDCODED `(1, 2)` AND THE ARTIFACT MOVED TO COUNTER 8 (`4002060a2`, Black Box
+    /// enrolled and the curator re-signed) — six tests in this module red for a reason unrelated to
+    /// anything any of them checks, and stale again the moment the next content lands. A number that
+    /// lives in a signed artifact must be READ FROM IT, never repeated beside it.
+    ///
+    /// ⚠ AND READING IT IS ONLY SAFE BECAUSE OF `a_wrong_activation_counter_is_refused` BELOW.
+    /// `expected_activation_counter` is the caller-owned ANTI-ROLLBACK value and `verify` has no
+    /// other check on `counter`, so sourcing it from the envelope makes that comparison trivially
+    /// true for every happy-path fixture here. The negative test is what keeps the leg able to go
+    /// red at THIS boundary; do not keep one without the other.
+    ///
+    /// (`expected_content_epoch` is different in kind: `verify` independently requires
+    /// `envelope.content_epoch == bundle.content_epoch`, the authenticated catalog's, so reading it
+    /// from the envelope leaves the epoch bound to the bundle either way. `poa-curator`'s
+    /// `checked_in_epoch_one_replacement_requires_counter_two` covers the counter leg inside
+    /// `verify` over a self-signed envelope; what it cannot cover is the node's WIRING of it.)
+    fn shipped_epoch_and_counter() -> (u64, u64) {
+        let envelope =
+            ContentEpochEnvelope::load(repo().join("poa/artifacts/poag1/manifest.sig.json"))
+                .expect("the shipped content envelope must load");
+        (envelope.content_epoch, envelope.counter)
+    }
+
     fn args(deployment: &PreparedDeployment) -> PoaSignalGenesisArgs {
         let repo = repo();
+        let (expected_content_epoch, expected_activation_counter) = shipped_epoch_and_counter();
         PoaSignalGenesisArgs {
             data_dir: deployment.data_dir.clone(),
             deployment_manifest: deployment.manifest.clone(),
@@ -734,9 +808,76 @@ mod tests {
             poag1_manifest: repo.join("poa/artifacts/poag1/manifest.json"),
             content_envelope: repo.join("poa/artifacts/poag1/manifest.sig.json"),
             curator_key_pin: repo.join("poa/config/curator-key.json"),
-            expected_content_epoch: 1,
-            expected_activation_counter: 2,
+            expected_content_epoch,
+            expected_activation_counter,
         }
+    }
+
+    /// ⚑ THE LEG `shipped_epoch_and_counter` WOULD OTHERWISE DISARM, at the node boundary.
+    ///
+    /// `expected_activation_counter` is the operator's anti-rollback claim: it is the ONLY thing
+    /// constraining `counter`, because unlike `content_epoch` it is cross-checked against nothing
+    /// in the bundle. If the ceremony stopped forwarding it — or forwarded a value it read back
+    /// out of the same envelope it is judging — a curator replaying an OLD signed epoch would
+    /// activate, and every happy-path test here would still be green.
+    ///
+    /// So this hands `run_poa_signal_genesis` a counter that is deliberately not the shipped one
+    /// and asserts the refusal NAMES both numbers. Both directions are driven — one below and one
+    /// above — because a comparison that had degenerated into `>=` or `<=` would still refuse one
+    /// of them, and refusing one is not refusing a rollback.
+    #[test]
+    fn a_wrong_activation_counter_is_refused() {
+        let deployment = prepare_deployment();
+        let (_, shipped) = shipped_epoch_and_counter();
+
+        for wrong in [shipped - 1, shipped + 1] {
+            let mut args = args(&deployment);
+            args.expected_activation_counter = wrong;
+            let error = initialize_poa_signal_genesis_with(&args, fixture_evaluator)
+                .expect_err("a counter that is not the signed one must REFUSE activation");
+            assert!(
+                error.contains(&format!("counter {shipped} != expected {wrong}")),
+                "the refusal must name the signed counter AND the expected one, so an operator \
+                 can tell a rollback attempt from a mis-typed argument. Got: {error}"
+            );
+        }
+
+        // ...and the SHIPPED counter gets past this leg, so the assertions above are a
+        // discrimination and not a gate that refuses everything.
+        //
+        // ⚠ Deliberately "does not fail ON THE COUNTER" rather than "installs". The ceremony does
+        // not currently reach installation at all — `build_network_genesis_input` still reads a
+        // `target` the descriptor no longer publishes (see THE ONE RED THIS MODULE STILL CARRIES,
+        // at the top of this module). Asserting `Installed` here would couple this counter tooth
+        // to an unrelated open wound and take it red with it, which is how a tooth stops being
+        // read. It strengthens on its own the day that wound closes: the shipped counter must
+        // then carry all the way through.
+        let shipped_run = initialize_poa_signal_genesis_with(&args(&deployment), fixture_evaluator);
+        if let Err(error) = &shipped_run {
+            assert!(
+                !error.contains("!= expected"),
+                "the SHIPPED counter must pass the anti-rollback comparison — if it does not, the \
+                 two refusals above prove nothing about the counter. Got: {error}"
+            );
+        }
+    }
+
+    /// The pair really is read from the artifact and not from a constant that happens to agree
+    /// today. `4002060a2` moved the counter to 8 and six tests went red against a hardcoded 2;
+    /// this asserts the fixture tracks the file rather than a number someone typed.
+    #[test]
+    fn the_expected_pair_is_the_shipped_envelopes_own() {
+        let raw: Value = serde_json::from_slice(
+            &fs::read(repo().join("poa/artifacts/poag1/manifest.sig.json")).unwrap(),
+        )
+        .unwrap();
+        let (epoch, counter) = shipped_epoch_and_counter();
+        assert_eq!(epoch, raw["content_epoch"].as_u64().unwrap());
+        assert_eq!(counter, raw["counter"].as_u64().unwrap());
+        assert!(
+            counter >= 1,
+            "a zero activation counter would make the anti-rollback claim vacuous"
+        );
     }
 
     fn fixture_evaluator(wire: &str) -> Result<String, String> {
