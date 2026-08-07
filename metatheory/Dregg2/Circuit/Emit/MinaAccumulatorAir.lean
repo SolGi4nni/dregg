@@ -1267,6 +1267,27 @@ theorem the_routing_key_separates_rows :
     rw [h, h1] at h0
     exact absurd (Option.some.inj h0) (by decide)
 
+/-! ### §8f — ⚠ WHAT STANDING EACH HALF OF §8 HAS, AND THEY ARE NOT THE SAME.
+
+§6's note applies unchanged to the ROW half and is not re-argued: `RowSoundV`, `Threaded` — and now
+`IdxStarted`/`IdxThreaded` — are the emitted bodies READ AS FACTS ABOUT THE TRACE, and the
+`AirLeg.forces` bridge from the emitted constraints back to them is inherited from
+`PastaCurveSound`/`EffectLowerCertified` rather than re-established here, because this file lowers
+with `lowerAir` and not the certified `lowerTiedAir`. A reader arriving at §8 alone would otherwise
+take the two index predicates for something they are not.
+
+⚑ **THE ROUTING HALF STANDS DIFFERENTLY, AND BETTER.** `PublicLookupBalanced` is not a transcription
+of an emitted body — it is `DescriptorIR2`'s OWN denotation of the `exactPublicRows` declaration, the
+same predicate `demoPublic_duplicate_omission_refused` exercises in both polarities, and the deployed
+realization of it is a LogUp PERMUTATION the VERIFIER checks. That is measured rather than argued:
+`circuit/tests/mina_accumulator_routing_proves.rs` puts a forged trace past the producer's pre-flight
+(`prove_vm_descriptor2_unchecked`) and the deployed verifier refuses it with
+`LookupError("GlobalCumulativeMismatch(None): ir2_exact_public_a97")`.
+
+⚠ And the non-vacuity of the routing hypothesis is behavioural, like §6's: what witnesses that
+`PublicLookupBalanced (accRoutedDesc demoAddends)` is satisfiable at all is the deployed prover
+accepting the honest trace, not anything in this kernel. -/
+
 #assert_axioms acc_pi_layout
 #assert_axioms pin_leg_counts
 #assert_axioms dischargeLegs_length
@@ -1293,6 +1314,16 @@ theorem the_routing_key_separates_rows :
 #assert_axioms accumulator_discharge_forced
 #assert_axioms the_discharge_gate_is_refutable
 #assert_axioms the_two_exhibits_differ_in_one_cell
+#assert_axioms accRoutedDesc_constraints_eq
+#assert_axioms accRoutedDesc_name
+#assert_axioms traceOf_apply
+#assert_axioms rowAt_mem
+#assert_axioms addTupleOf_head
+#assert_axioms addendRow_head
+#assert_axioms addendRow_map_head
+#assert_axioms flatMap_singleton_map
+#assert_axioms filterMap_of_noAddendLookup
+#assert_axioms sumL_congr
 #assert_axioms the_routing_costs_one_column
 #assert_axioms the_declared_tuple_is_the_priced_one
 #assert_axioms addendTuple_length
