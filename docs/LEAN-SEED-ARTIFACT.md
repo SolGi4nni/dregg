@@ -17,7 +17,7 @@ See also `docs/BUILD-LEAN-LINKED-NODE.md` (the build-time story + the `DREGG_REQ
 
 | File | Role |
 |------|------|
-| `scripts/lean-seed-key.sh` | Computes the seed **provenance + content key** (platform · Lean toolchain · mathlib rev · Dregg2 tree hash) and the canonical asset name. Shared by fetch + publish. |
+| `scripts/lean-seed-key.sh` | Computes the seed **provenance + content key** (platform · Lean toolchain · mathlib rev · **Dregg2.FFI boundary-closure** hash) and the canonical asset name. Shared by fetch + publish. |
 | `dregg-lean-ffi/lean-seed.pin` | The committed **pointer**: which release `TAG` holds the current seed, and the provenance it was cut from. Rewritten by the publish workflow. |
 | `scripts/fetch-lean-seed.sh` | Downloads the platform-native seed asset from the pinned release, **verifies the sha256 + the `dregg_*` exports**, and installs it at `dregg-lean-ffi/libdregg_lean.a`. |
 | `.github/workflows/lean-seed.yml` | The **publish** workflow: build the seed on a beefy host, compress, upload the asset + `.sha256` to a release, and bump the pin. |
@@ -27,9 +27,9 @@ See also `docs/BUILD-LEAN-LINKED-NODE.md` (the build-time story + the `DREGG_REQ
 
 A seed archive is valid only for a specific **platform** (Mach-O arm64 ≠ ELF x86_64), **Lean
 toolchain** (the runtime/stdlib ABI it links against), **mathlib pin** (its dependency closure),
-and **Dregg2 source tree** (the executor slice baked in — used verbatim on the fetch path, where a
-fresh clone has no warm `.lake` to re-splice from). `scripts/lean-seed-key.sh` hashes exactly those
-into a short key and names the asset:
+and the **`Dregg2.FFI` boundary closure** (the executor slice baked in — used verbatim on the fetch
+path, where a fresh clone has no warm `.lake` to re-splice from). `scripts/lean-seed-key.sh` hashes
+exactly those into a short key and names the asset:
 
 ```
 libdregg_lean-<os>-<arch>-<lean-tag>-<key>.a.zst
@@ -37,9 +37,28 @@ libdregg_lean-<os>-<arch>-<lean-tag>-<key>.a.zst
 ```
 
 Same key ⇒ interchangeable seed. `fetch-lean-seed.sh` computes the local key, downloads the asset
-of that exact name, and **warns loudly** if the committed pin's `DREGG_TREE_HASH` has drifted from
-your checkout (a stale seed whose Dregg2 slice predates your source — the closure link may then
-need a warm local `.lake`).
+of that exact name, and **warns loudly** if the committed pin's `DREGG_CLOSURE_HASH` has drifted
+from your checkout (a stale seed whose Dregg2 slice predates your source — the closure link may
+then need a warm local `.lake`).
+
+> ⚑ **The fourth input changed on 2026-08-07, and it is a flag day.** It used to be
+> `git rev-parse HEAD:metatheory/Dregg2` — all **2246** modules. The archive contains ONE target's
+> import closure (`Dregg2.FFI`, **339** in-tree modules — the only thing `build.rs` builds and
+> splices, and the set `scripts/check-lean-seed-closure.sh` already checks an archive against).
+> Measured over the last 300 commits touching `metatheory/Dregg2/`: only **69 (23.0%)** touched
+> that closure, so **77% of key invalidations were for source that cannot enter the archive**. The
+> closure set is verified identical with and without a warm `metatheory/.lake/packages`, so a fresh
+> clone and a warm one compute the same key. It is also a **worktree** hash now, not a git hash —
+> uncommitted Lean edits move the key, which is what lets `build.rs` treat a match as evidence.
+> **All 152 assets published under the old scheme are unreachable by the new name.** Re-cut with
+> `gh workflow run lean-seed.yml -f platforms=linux-x86_64`.
+
+> ⓘ **A key-matched seed is now accepted as current-source evidence.** `fetch-lean-seed.sh` writes
+> `dregg-lean-ffi/libdregg_lean.a.provenance`; `build.rs::seed_key_evidence` re-derives the key from
+> the checkout and compares it, plus the archive's sha256. On a match, a `--release` /
+> `DREGG_REQUIRE_LEAN=1` build links the seed **without running lake** — which is what makes a
+> verified build possible on a hosted runner at all. It is honoured only where lake could not be
+> *run*; where lake ran and a module failed to elaborate, the gate still refuses.
 
 ## Fetching (the fast path, for everyone)
 
