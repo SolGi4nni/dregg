@@ -54,11 +54,11 @@ Generation and every later `verify` refuse:
 - overlapping HTTP/gossip ports;
 - the `.devnet` marker in any serving directory (it silently enables automatic
   Join approval);
-- a faucet key, a genesis value move, a non-zero generic balance, or the generic
-  Starbridge demo catalog.
+- a faucet key, the generic Starbridge demo catalog, or any genesis value beside
+  the single named player grant described below.
 
-The PoA profile consequently starts with two zero-balance, deployment-scoped
-wells and no generic `$DREGG`/computron issuance.  The launcher never passes
+The PoA profile consequently starts with two deployment-scoped wells and no
+generic `$DREGG`/computron issuance.  The launcher never passes
 `--enable-faucet`, `--auto-approve-joins`, or
 `DREGG_ALLOW_UNVERIFIED_CONSENSUS`.  Every local, printed-remote, and follower
 command explicitly sets `DREGG_REQUIRE_LEAN=1`,
@@ -67,6 +67,58 @@ command explicitly sets `DREGG_REQUIRE_LEAN=1`,
 passes `--prove-turns` and checks
 that `/status` reports both the Lean producer and full-turn proving.  Aggregate
 private-activity counts stay off the public status surface.
+
+## The player grant — the only value on the chain
+
+⚑ **A PoA turn is not free, and a PoA chain has no faucet.** A Signal claim costs
+`dregg_sdk::poa_signal::signal_claim_fee_v1()` — **870** computrons at
+`ComputronCosts::default()`. The executor refuses any agent whose balance is under
+the fee (`insufficient balance on cell …: need 870, have N`); `POST /api/faucet` is
+off by policy *and* has no genesis faucet cell to spend from; and `Effect::Mint`
+needs a fee the zero-balance issuer well cannot pay either.
+
+Until 2026-08-07 a PoA genesis therefore held **no value at all** — two
+zero-balance wells and no moves — so no player could pay for a turn and
+`latest_height` was pinned to 0 by the descriptor. The federation verified, booted
+and reported `healthy: true` the whole time.
+
+`POA_PLAYER_GRANT` (default `1000000`) fixes it with **one issuer-move** into a
+deployment-local **player-grant cell**:
+
+```
+issuer well   −G          the −supply account
+fee well       0          starts empty, accumulates fee MOVES
+player grant  +G          named by genesis.json `player_grant`
+genesis_moves [ issuer → player_grant, G ]
+              Σ balances = 0
+```
+
+Value never appears from nowhere: the well goes negative by exactly what the grant
+receives, and both `dregg-node genesis` and the deployment verifier refuse a
+descriptor whose column does not sum to zero. The grant cell commits its ML-DSA-65
+half, so it can actually author hybrid-signed turns (a classical-only genesis cell
+is refused `pq-identity-not-enrolled`).
+
+The manifest **declares** the issuance: a funded descriptor emits
+`"generic_genesis_value_issued": true`, and the binding is enforced **both ways** —
+a funded genesis under a zero-issuance policy is refused, and a policy claiming
+issuance over an empty genesis is refused. Because `policy_sha256` feeds
+`deployment_digest`, a funded deployment has a different identity from an empty one
+and a follower pinned to the old digest refuses it rather than reinterpreting it.
+
+**⚑ Custody.** The grant seed is `auxiliary_genesis_key("dregg-poa-player-grant-key-v1",
+domain, federation_id)` — the same custody model as `issuer-well.key`, and both of
+its inputs are **public**. The domain is a constant and the federation id is printed
+in the descriptor every follower pins, so **anyone who can read `genesis.json` can
+recompute `player-grant.key`.** For the wells that costs nothing (a well cannot
+author a turn: the issuer well's balance is negative and `execute` refuses a
+negative-balance agent). For the grant it means the value is **bearer value for the
+whole world**, bounded only by `G`. Fund the turns you intend, not a treasury. Per-player
+custody — grants against keys the players bring — is a real design change, not a
+bigger number here.
+
+`POA_PLAYER_GRANT=0` opts out explicitly, prints a warning, and produces the chain
+that cannot settle.
 
 ## Make the federation
 

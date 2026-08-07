@@ -14,13 +14,32 @@
 //! below).
 //!
 //! ```text
+//! 0. dregg-node genesis --player-grant        SUBPROCESS  (no node yet)   ← new
 //! 1. dregg-node poa-slot-opening-preview      SUBPROCESS  (node stopped)
 //! 2. poa-curator  sign-slot-opening           SUBPROCESS  (CURATOR KEY)
 //! 3. dregg-node init-poa-signal-slot          SUBPROCESS  (node stopped)
-//! 4. dregg-node poa-signal-instance-preview   SUBPROCESS  (node stopped)  ← new
-//! 5. dregg-node poa-signal-submit-claim       SUBPROCESS  (node running) ← new
-//! 6.   …its --await-latest-height polls GET /status over real TCP           ← new
+//! 4. dregg-node poa-signal-instance-preview   SUBPROCESS  (node stopped)
+//! 5. dregg-node poa-signal-submit-claim       SUBPROCESS  (node running)
+//! 6.   …its --await-latest-height polls GET /status over real TCP
 //! ```
+//!
+//! # ⚑ THE FUNDING, WHICH USED TO BE THE HARNESS LYING TO ITSELF
+//!
+//! Until 2026-08-07 this drill inserted the player's cell into the ledger by hand,
+//! in-process, with `ledger.insert_cell(Cell::with_hybrid_balance(…, 1_000_000))`,
+//! and a comment beside it said in as many words that the live chain had no way to
+//! produce that state. Which means the drill's own `latest_height: 1` was
+//! unreachable on the deployment it was rehearsing: the descriptor issued no value,
+//! `execute` refuses any agent below the turn fee, `/api/faucet` is off and has no
+//! genesis cell, and `Effect::Mint` needs a fee the zero-balance issuer well cannot
+//! pay. The rehearsal passed; the deployment could not have.
+//!
+//! It is now step 0. The player's identity IS the descriptor's `player_grant` cell,
+//! funded by one issuer-move at genesis, and the drill reads `player-grant.key`
+//! rather than a constant of its own. So the ledger the ceremony runs against is
+//! the ledger `dregg-node genesis` emitted and `reseed_genesis_then_overlay`
+//! materialized — the same path `run_node` takes on the live host, with the same
+//! `genesis_moves` replay — not a state this file invented.
 //!
 //! The node is genuinely STOPPED for steps 1-4 and genuinely RUNNING for 5-6: redb
 //! is single-writer, so the harness must drop its store before the subprocesses can
@@ -39,10 +58,13 @@
 //!   catalog (`poa/artifacts/poag1/catalog.json`) NAMES the live federation id, so
 //!   the content bundle is bound to that one deployment and cannot authenticate a
 //!   different one;
-//! * re-emitting content for a local federation is Lean `Emit` work, out of scope
-//!   here;
-//! * and `scripts/poa-devnet-manifest.mjs` additionally refuses any PoA genesis
-//!   whose `initial_cells` is not exactly the two zero-balance wells.
+//! * and re-emitting content for a local federation is Lean `Emit` work, out of
+//!   scope here.
+//!
+//! (The third reason used to be that `scripts/poa-devnet-manifest.mjs` refused any
+//! PoA genesis that was not exactly the two zero-balance wells. That gate was
+//! deliberately widened on 2026-08-07 to permit exactly the funded shape this drill
+//! now generates — see `assertGenesisEconomy` there for the recorded reason.)
 //!
 //! So the head/pin installation is stubbed and everything downstream of it — which
 //! is the entire set of steps that had no command — is real. On the LIVE node the
@@ -79,8 +101,13 @@ const MISSION_ID: u64 = 1;
 /// The curator's slot secret for this drill. A real deployment draws it off-line
 /// (`openssl rand -hex 32`) and the node never mints one.
 const SECRET_HEX: &str = "7777777777777777777777777777777777777777777777777777777777777777";
-/// The player's Ed25519 seed.
-const PLAYER_SEED_HEX: &str = "c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7";
+/// The deployment domain the descriptor is scoped to. The same string the live
+/// deployment uses, so step 0 exercises the real auxiliary-key derivation.
+const DEPLOYMENT_DOMAIN: &str = "pathofangels.network/federation/v1";
+/// The genesis grant, in the descriptor's default asset. Deliberately not round:
+/// the drill asserts an EXACT balance delta, so a number that happens to equal a
+/// fee multiple could hide an off-by-a-fee.
+const PLAYER_GRANT: u64 = 100_000;
 
 /// The workspace `target/<profile>/` a `cargo test` of this crate builds into.
 fn binary(name: &str) -> PathBuf {
@@ -152,16 +179,85 @@ async fn the_first_turn_ceremony_settles_when_driven_by_the_commands() {
     std::fs::create_dir_all(&data_dir).expect("data dir");
     let secret_file = work.path().join("slot.secret");
     std::fs::write(&secret_file, SECRET_HEX).expect("slot secret");
-    let player_key_file = work.path().join("player.key");
-    std::fs::write(&player_key_file, PLAYER_SEED_HEX).expect("player key");
     let curator_secret = work.path().join("curator.secret");
     let curator_pin = work.path().join("curator-pin.json");
 
-    let player =
-        dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new(parse32(PLAYER_SEED_HEX)));
-    let player_key_hex = hex_encode(&player.public_key().0);
+    // ── STEP 0 — RE-GENESIS. The descriptor, and the only value on this chain. ─
+    //
+    // This is the whole point of the funding work: the player identity below is not
+    // minted by this file, it is the descriptor's `player_grant` cell, and the only
+    // way it holds anything is the one issuer-move `dregg-node genesis` wrote.
+    let grant_amount = PLAYER_GRANT.to_string();
+    step(
+        "genesis (deployment-scoped, no demo economy, funded player grant)",
+        &node_bin,
+        &[
+            "genesis",
+            "--validators",
+            "1",
+            "--deployment-domain",
+            DEPLOYMENT_DOMAIN,
+            "--no-demo-economy",
+            "--player-grant",
+            &grant_amount,
+            "--output",
+            data_dir.to_str().unwrap(),
+        ],
+    );
+    // `run_node` reads `<data-dir>/genesis.json` and `<data-dir>/node.key`; the
+    // generator writes the committee's seed as `node-0.key`. Placing it is the
+    // operator's step on the real host too (`docs/poa/DEVNET-OPERATOR-KIT.md`).
+    std::fs::rename(data_dir.join("node-0.key"), data_dir.join("node.key"))
+        .expect("place the validator seed as node.key");
+    let genesis: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(data_dir.join("genesis.json")).expect("descriptor"))
+            .expect("descriptor JSON");
 
-    // ── STEP 0 — the curator draws its key. Off the node, as it must be. ─────
+    // The descriptor's OWN claims about its economy, read before any node exists.
+    let declared_grant_id = genesis["player_grant"]
+        .as_str()
+        .expect("a funded PoA descriptor names its player-grant cell")
+        .to_owned();
+    let declared_column: i64 = genesis["initial_cells"]
+        .as_array()
+        .expect("initial_cells")
+        .iter()
+        .map(|cell| cell["balance"].as_i64().expect("signed balance"))
+        .sum();
+    assert_eq!(
+        declared_column, 0,
+        "CONSERVATION: the declared value column must sum to zero — an issuer-move \
+         genesis whose books do not close is minting from nowhere: {genesis}"
+    );
+    assert_eq!(
+        genesis["genesis_moves"].as_array().map(Vec::len),
+        Some(1),
+        "the funded descriptor carries exactly one issuer-move"
+    );
+
+    // THE PLAYER IS THE GRANT CELL. Its seed comes off the generated bundle, not
+    // out of a constant in this file — so if the derivation, the asset, or the
+    // ML-DSA commitment were wrong, the ceremony below would fail rather than run
+    // against a cell the harness had arranged to exist.
+    let player_key_file = data_dir.join(crate::genesis::PLAYER_GRANT_KEY_FILE);
+    let player_seed: [u8; 32] = std::fs::read(&player_key_file)
+        .expect("the generated bundle carries the player-grant seed")
+        .try_into()
+        .expect("a 32-byte Ed25519 seed");
+    let player = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new(player_seed));
+    let player_key_hex = hex_encode(&player.public_key().0);
+    let player_cell = dregg_sdk::poa_signal::signal_player_cell(&player.public_key().0);
+    assert_eq!(
+        hex_encode(&player_cell.0),
+        declared_grant_id,
+        "the cell the Signal perimeter derives for this player must BE the descriptor's \
+         funded grant cell; if these differ the grant funds a cell nobody can act as"
+    );
+    // The seed file the submit-claim command reads must be hex, as an operator's is.
+    let player_key_hex_file = work.path().join("player.key");
+    std::fs::write(&player_key_hex_file, hex_encode(&player_seed)).expect("player key");
+
+    // ── the curator draws its key. Off the node, as it must be. ──────────────
     step(
         "poa-curator keygen",
         &curator_bin,
@@ -210,6 +306,14 @@ async fn the_first_turn_ceremony_settles_when_driven_by_the_commands() {
         drop(state);
         hex_encode(&federation_id)
     };
+    // The node identity this drill boots must BE the descriptor's committee. If it
+    // is not, everything below runs against a federation the descriptor does not
+    // describe — which is exactly the fiction the old in-process funding hid.
+    assert_eq!(
+        authority_hex,
+        genesis["federation_id"].as_str().unwrap(),
+        "the placed node.key must reproduce the descriptor's committee-derived federation id"
+    );
 
     let preview_path = work.path().join("slot-opening-preview.json");
     let envelope_path = work.path().join("slot-opening.json");
@@ -314,6 +418,8 @@ async fn the_first_turn_ceremony_settles_when_driven_by_the_commands() {
     // ── START THE NODE (real consensus loop, real TCP listener) ───────────────
     let state = NodeState::new(&data_dir, vec![]).expect("reopen NodeState");
     let federation_id;
+    let issuer_well_id;
+    let fee_well_id;
     {
         let mut s = state.write().await;
         s.unlocked = true;
@@ -323,29 +429,65 @@ async fn the_first_turn_ceremony_settles_when_driven_by_the_commands() {
         s.set_federation_keys_hybrid(vec![node_pk], vec![node_ml_dsa]);
         s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(node_seed));
         federation_id = crate::executor_setup::federation_id_for_executor(&s);
-        // ⚑ THE FUNDING, and the live blocker in one line. The player cell must
-        // carry value AND commit its ML-DSA half or the claim dies as
-        // `InsufficientBalance` / `pq-identity-not-enrolled`. On the live PoA chain
-        // there is no way to produce this state: `--deployment-domain` forces
-        // `--no-demo-economy`, the manifest tool refuses any funded genesis cell,
-        // and `Effect::Mint` needs a fee its zero-balance well cannot pay.
-        s.ledger
-            .insert_cell(
-                dregg_cell::Cell::with_hybrid_balance(
-                    player.public_key().0,
-                    &player.ml_dsa_public_bytes(),
-                    crate::executor_setup::default_token_id(),
-                    1_000_000,
-                )
-                .expect("canonical ML-DSA-65 player identity"),
-            )
-            .expect("fund the Signal player");
+
+        // ⚑ THE FUNDING — and there is nothing here that funds anything. The
+        // ledger comes out of the DESCRIPTOR, through the same reconstruction
+        // `run_node` runs on the live host: materialize every `initial_cells` entry
+        // VALUE-EMPTY, then replay the `genesis_moves` exactly once. The player's
+        // balance is the outcome of an issuer-move, not an insert.
+        let stats = crate::reseed_genesis_then_overlay(&genesis, &mut s.ledger, &[]);
+        assert_eq!(
+            stats.invalid, 0,
+            "every declared post-seed balance must be the exact issuer-move outcome"
+        );
+
+        // The wells, exactly as `run_node` picks them up — LOAD-BEARING for
+        // conservation: without the fee well configured, a fee BURNS and the value
+        // column silently stops summing to zero the moment a turn settles.
+        issuer_well_id = dregg_cell::CellId(parse32(
+            genesis["issuer_well"].as_str().expect("issuer_well"),
+        ));
+        fee_well_id = dregg_cell::CellId(parse32(genesis["fee_well"].as_str().expect("fee_well")));
+        s.fee_well = Some(fee_well_id);
+        let well_asset = s
+            .ledger
+            .get(&issuer_well_id)
+            .map(|cell| *cell.asset().as_bytes())
+            .expect("the issuer well materialized");
+        s.issuer_wells.push((well_asset, issuer_well_id));
     }
     assert_eq!(
         hex_encode(&federation_id),
         authority_hex,
         "reopening the data dir must reproduce the same node identity, or the head \
          installed in phase 0 belongs to another federation"
+    );
+
+    // The genesis economy, as the LEDGER holds it — the numbers the executor will
+    // read, not the numbers the descriptor declared.
+    let balance_of = |ledger: &dregg_cell::Ledger, id: &dregg_cell::CellId| -> i64 {
+        ledger.get(id).map(|cell| cell.state.balance()).unwrap_or(0)
+    };
+    let (grant_before, column_before) = {
+        let s = state.read().await;
+        let column: i128 = s
+            .ledger
+            .iter()
+            .map(|(_, cell)| cell.state.balance() as i128)
+            .sum();
+        (balance_of(&s.ledger, &player_cell), column)
+    };
+    assert_eq!(
+        grant_before, PLAYER_GRANT as i64,
+        "the player-grant cell must hold exactly the issuer-move amount before any turn"
+    );
+    assert_eq!(
+        column_before, 0,
+        "CONSERVATION at boot: the materialized value column must sum to zero"
+    );
+    eprintln!(
+        "\n  GENESIS  player-grant cell {} holds {grant_before}; value column Σ = {column_before}",
+        &declared_grant_id[..16]
     );
 
     let handle = run_blocklace_sync_with_policy(
@@ -410,7 +552,7 @@ async fn the_first_turn_ceremony_settles_when_driven_by_the_commands() {
             "--authority-id",
             &authority_hex,
             "--player-key-file",
-            player_key_file.to_str().unwrap(),
+            player_key_hex_file.to_str().unwrap(),
             "--claim-file",
             instance_path.to_str().unwrap(),
             "--await-latest-height",
@@ -422,6 +564,51 @@ async fn the_first_turn_ceremony_settles_when_driven_by_the_commands() {
     assert!(
         report.contains("latest_height: 1"),
         "the drill must SETTLE, not merely be accepted: {report}"
+    );
+
+    // ── VALUE MOVED. Not "a test passed". ────────────────────────────────────
+    //
+    // `latest_height: 1` says a block was produced. It does NOT say the player paid
+    // for it: a fee that burned, a fee charged to nobody, or a fee of zero would all
+    // leave the height at 1. The point of the genesis grant is that a real balance
+    // went down by a real fee and the same amount arrived somewhere real, so that is
+    // what is asserted — with the fee taken from the SDK's canonical pricing, never
+    // from the observed delta (an assertion that derives its expectation from the
+    // measurement cannot fail).
+    let claim_fee = dregg_sdk::poa_signal::signal_claim_fee_v1();
+    let (grant_after, fee_well_after, column_after) = {
+        let s = state.read().await;
+        let column: i128 = s
+            .ledger
+            .iter()
+            .map(|(_, cell)| cell.state.balance() as i128)
+            .sum();
+        (
+            balance_of(&s.ledger, &player_cell),
+            balance_of(&s.ledger, &fee_well_id),
+            column,
+        )
+    };
+    eprintln!(
+        "\n  SETTLED  player-grant {grant_before} → {grant_after}  (Δ = -{})\n           \
+         fee well 0 → {fee_well_after}   (the canonical Signal claim fee is {claim_fee})\n           \
+         value column Σ = {column_after}",
+        grant_before - grant_after
+    );
+    assert_eq!(
+        grant_before - grant_after,
+        claim_fee as i64,
+        "the settled turn must be PAID FOR out of the genesis grant, by exactly the \
+         canonical Signal claim fee"
+    );
+    assert_eq!(
+        fee_well_after, claim_fee as i64,
+        "the fee is a MOVE to the fee well, not a burn; a burnt fee would leave the \
+         value column short by exactly the fee"
+    );
+    assert_eq!(
+        column_after, 0,
+        "CONSERVATION after the turn: the value column must still sum to zero"
     );
 
     // And the durable authority agrees: one judged transition, and the complete
@@ -440,6 +627,100 @@ async fn the_first_turn_ceremony_settles_when_driven_by_the_commands() {
         assert_eq!(replay.transition_count, 1);
     }
     eprintln!("\n  REHEARSAL COMPLETE — the ceremony settles when driven by the commands.");
+}
+
+/// THE OTHER POLE: an UNDERFUNDED player is refused, and the refusal NAMES THE FEE.
+///
+/// A funded player settling is only half the property. The half that decides
+/// whether an operator can act on a failure is what an underfunded one sees, and a
+/// deployment refusing every claim with something shapeless is a deployment nobody
+/// can debug. There are two refusals and they are at different distances:
+///
+/// * `dregg-node genesis` refuses the underfunded grant OUTRIGHT, before a chain
+///   exists — the cheap one, and the only one that costs nothing to act on;
+/// * the executor refuses the turn with `InsufficientBalance { required, available }`,
+///   whose `Display` is `insufficient balance on cell …: need N, have M`.
+///
+/// Both are checked here: the CLI one as a real process, the runtime one against
+/// the real executor over a real ledger, so the numbers are the deployed pricing
+/// rather than a restatement.
+#[tokio::test]
+#[ignore = "runs the built dregg-node binary; build it first (see module docs)"]
+async fn an_underfunded_player_is_refused_with_the_fee_named() {
+    let _ = crate::install_mldsa_verified_keygen_core_real();
+    let node_bin = binary("dregg-node");
+    let work = tempfile::tempdir().expect("tempdir");
+    let claim_fee = dregg_sdk::poa_signal::signal_claim_fee_v1();
+
+    // ── POLE 1: the operator types a grant that cannot buy one turn. ─────────
+    let short = (claim_fee - 1).to_string();
+    let out = std::process::Command::new(&node_bin)
+        .args([
+            "genesis",
+            "--validators",
+            "1",
+            "--deployment-domain",
+            DEPLOYMENT_DOMAIN,
+            "--no-demo-economy",
+            "--player-grant",
+            &short,
+            "--output",
+            work.path().join("short").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn dregg-node genesis");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        !out.status.success() || stderr.contains("below the Path of Angels Signal claim fee"),
+        "an underfunded grant must be REFUSED at genesis: {stderr}"
+    );
+    assert!(
+        stderr.contains(&claim_fee.to_string()) && stderr.contains(&short),
+        "the refusal must name BOTH the fee and what was offered, or the operator \
+         cannot act on it: {stderr}"
+    );
+    assert!(
+        !work.path().join("short").join("genesis.json").exists(),
+        "a refused genesis must leave no descriptor behind"
+    );
+    eprintln!("\n  REFUSED (genesis): {}", stderr.trim());
+
+    // ── POLE 2: a hybrid player cell that exists but cannot cover the fee. ───
+    let player = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0x4du8; 32]));
+    let underfunded = claim_fee - 1;
+    let mut ledger = dregg_cell::Ledger::new();
+    ledger
+        .insert_cell(
+            dregg_cell::Cell::with_hybrid_balance(
+                player.public_key().0,
+                &player.ml_dsa_public_bytes(),
+                crate::executor_setup::default_token_id(),
+                underfunded as i64,
+            )
+            .expect("canonical ML-DSA-65 identity"),
+        )
+        .expect("insert the underfunded player");
+    let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
+        MISSION_ID,
+        dregg_sdk::poa_signal::SignalCode::new(1, 2, 3).unwrap(),
+    )
+    .unwrap();
+    let turn = dregg_sdk::poa_signal::signal_claim_turn(&player.public_key().0, 0, None, claim);
+    let error = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default())
+        .validate_without_apply(&turn, &ledger)
+        .expect_err("an underfunded player must be REFUSED");
+    let rendered = error.to_string();
+    assert!(
+        matches!(error, dregg_turn::TurnError::InsufficientBalance { required, available, .. }
+            if required == claim_fee && available == underfunded as i64),
+        "the refusal must carry the fee and the balance, not a generic admission error: {error:?}"
+    );
+    assert!(
+        rendered.contains(&format!("need {claim_fee}"))
+            && rendered.contains(&format!("have {underfunded}")),
+        "the rendered diagnosis must name the fee: {rendered}"
+    );
+    eprintln!("  REFUSED (runtime): {rendered}");
 }
 
 fn parse32(hex: &str) -> [u8; 32] {

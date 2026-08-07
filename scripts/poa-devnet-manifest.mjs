@@ -28,23 +28,29 @@ import { fileURLToPath } from "node:url";
 export const POA_DEPLOYMENT_DOMAIN = "pathofangels.network/federation/v1";
 export const POA_MANIFEST_SCHEMA = "dregg-poa-devnet-manifest-v1";
 
-const POA_POLICY = Object.freeze({
-  follower_first: true,
-  descriptor_pinned: true,
-  admission: "committee-ratified-manual-v1",
-  f4_transitive_vouch_rows_live: false,
-  objective_vouch_admission_ready: false,
-  prove_turns: true,
-  require_lean: true,
-  strand_admission_gate: true,
-  allow_unverified_consensus: false,
-  faucet_http: false,
-  auto_approve_joins: false,
-  public_private_activity_counts: false,
-  shares_main_identity: false,
-  shares_main_storage: false,
-  generic_genesis_value_issued: false,
-});
+function poaPolicy(genesisValueIssued) {
+  return Object.freeze({
+    follower_first: true,
+    descriptor_pinned: true,
+    admission: "committee-ratified-manual-v1",
+    f4_transitive_vouch_rows_live: false,
+    objective_vouch_admission_ready: false,
+    prove_turns: true,
+    require_lean: true,
+    strand_admission_gate: true,
+    allow_unverified_consensus: false,
+    faucet_http: false,
+    auto_approve_joins: false,
+    public_private_activity_counts: false,
+    shares_main_identity: false,
+    shares_main_storage: false,
+    generic_genesis_value_issued: genesisValueIssued,
+  });
+}
+
+/** The two policies a Path of Angels deployment may declare, and no others. */
+export const POA_POLICY_ZERO_ISSUANCE = poaPolicy(false);
+export const POA_POLICY_PLAYER_GRANT = poaPolicy(true);
 
 const HEX32 = /^[0-9a-f]{64}$/;
 
@@ -169,23 +175,132 @@ function parseGenesis(root) {
         "the public manifest cannot retrofit domain separation onto an unscoped genesis",
     );
   }
-  if (!Array.isArray(genesis.initial_cells) || genesis.initial_cells.length !== 2) {
-    fail("PoA genesis must contain only its deployment-local issuer and fee wells");
-  }
-  genesis.initial_cells.forEach((cell, index) => {
-    requireHex32(cell.public_key, `initial_cells[${index}].public_key`);
-    if (cell.balance !== 0) fail("PoA genesis must issue zero generic devnet value");
-  });
-  if (!Array.isArray(genesis.genesis_moves) || genesis.genesis_moves.length !== 0) {
-    fail("PoA genesis must have no generic devnet genesis moves");
-  }
+  const economy = assertGenesisEconomy(genesis);
   if (Array.isArray(genesis.starbridge_cells) && genesis.starbridge_cells.length !== 0) {
     fail("PoA genesis must not seed the generic Starbridge demo catalog");
   }
   if (existsSync(join(root, "bundle", "faucet.key"))) {
-    fail("PoA empty-economy genesis must not emit a faucet key");
+    fail("PoA genesis must not emit a faucet key; the deployment policy pins faucet_http:false");
   }
-  return { path, genesis };
+  return { path, genesis, economy };
+}
+
+/**
+ * The exact genesis economy a Path of Angels descriptor may have — one of TWO
+ * shapes, and nothing between or beside them.
+ *
+ * ── WHY THIS GATE WIDENED, 2026-08-07 ────────────────────────────────────────
+ * It used to permit exactly one shape: two zero-balance wells, no moves. That
+ * was written to keep the GENERIC devnet economy (faucet, demo agents, the
+ * Starbridge catalog) out of a production application federation, and it did
+ * that. What nobody priced is that it also forbade the deployment from having
+ * ANY economy — and a Path of Angels turn is not free. A Signal claim pays
+ * `action_base + 2×signature_verify + effect_base + per-byte` — MEASURED 870 at
+ * `ComputronCosts::default()`, not the ~550 a back-of-envelope gives; the
+ * executor refuses any agent whose balance is under the fee, `POST /api/faucet`
+ * needs a genesis faucet cell an empty-economy deployment does not have, and
+ * `Effect::Mint` needs a fee the zero-balance issuer well cannot pay either. So
+ * the live chain held no value AT ALL, no player could pay for a turn, and
+ * `latest_height` was structurally pinned to 0 — a federation that verified,
+ * booted, and reported healthy while being incapable of settling anything.
+ *
+ * This is a POLICY CHANGE, not a bug fix: the deployment may now issue genesis
+ * value. It is widened to EXACTLY the funded shape and no further —
+ *
+ *   issuer well  balance −G      (the −supply account)
+ *   fee well     balance  0
+ *   player grant balance +G      named by `genesis.player_grant`
+ *   genesis_moves = [ issuer → player_grant, G ]   ← exactly one
+ *   the column sums to zero
+ *
+ * — and it is bound BOTH WAYS to the manifest policy: a funded genesis is
+ * refused unless the policy declares `generic_genesis_value_issued: true`, and a
+ * policy declaring it is refused unless the genesis actually carries the grant.
+ * Neither half can be moved without the other, so value cannot be issued under a
+ * policy that says none was.
+ *
+ * ⚑ The zero-issuance branch is not kept for compatibility and must not be read
+ * that way: it is the shape the CURRENT live deployment (epoch-1) has, and it is
+ * the shape that cannot settle a turn. Once epoch-1 is re-genesised with a
+ * grant, DELETE it.
+ */
+function assertGenesisEconomy(genesis) {
+  if (!Array.isArray(genesis.initial_cells)) fail("PoA genesis initial_cells must be an array");
+  genesis.initial_cells.forEach((cell, index) => {
+    requireHex32(cell.public_key, `initial_cells[${index}].public_key`);
+    requireHex32(cell.id, `initial_cells[${index}].id`);
+    if (!Number.isSafeInteger(cell.balance)) {
+      fail(`initial_cells[${index}].balance must be an exact integer`);
+    }
+  });
+  if (!Array.isArray(genesis.genesis_moves)) fail("PoA genesis genesis_moves must be an array");
+  const issuer = requireHex32(genesis.issuer_well, "issuer_well");
+  const fee = requireHex32(genesis.fee_well, "fee_well");
+  if (issuer === fee) fail("PoA issuer and fee wells must be distinct cells");
+
+  const column = genesis.initial_cells.reduce((total, cell) => total + cell.balance, 0);
+  if (column !== 0) {
+    fail(
+      `PoA genesis value column sums to ${column}, not zero; an issuer-move genesis that does ` +
+        "not conserve is minting from nowhere",
+    );
+  }
+
+  const byId = new Map(genesis.initial_cells.map((cell) => [cell.id, cell]));
+  if (byId.size !== genesis.initial_cells.length) fail("PoA genesis initial cells are not distinct");
+  if (!byId.has(issuer) || !byId.has(fee)) {
+    fail("issuer_well/fee_well do not name PoA genesis initial cells");
+  }
+
+  if (genesis.player_grant === undefined) {
+    // ── SHAPE 1: zero issuance. Nothing can pay a turn fee. ──
+    if (genesis.initial_cells.length !== 2) {
+      fail("PoA genesis without a player_grant must contain only its issuer and fee wells");
+    }
+    if (genesis.initial_cells.some((cell) => cell.balance !== 0)) {
+      fail("PoA genesis without a player_grant must issue zero value");
+    }
+    if (genesis.genesis_moves.length !== 0) {
+      fail("PoA genesis without a player_grant must have no genesis moves");
+    }
+    return { valueIssued: false, playerGrant: null, grantAmount: 0 };
+  }
+
+  // ── SHAPE 2: exactly one issuer-move into exactly one named grant cell. ──
+  const grant = requireHex32(genesis.player_grant, "player_grant");
+  if (grant === issuer || grant === fee) {
+    fail("PoA player_grant must be its own cell, not one of the wells");
+  }
+  if (genesis.initial_cells.length !== 3) {
+    fail(
+      "a funded PoA genesis must contain exactly its issuer well, its fee well, and the named " +
+        "player-grant cell",
+    );
+  }
+  const grantCell = byId.get(grant);
+  if (!grantCell) fail("player_grant does not name a PoA genesis initial cell");
+  if (!Number.isSafeInteger(grantCell.balance) || grantCell.balance <= 0) {
+    fail("the PoA player-grant cell must declare a positive post-seed balance");
+  }
+  const amount = grantCell.balance;
+  if (byId.get(fee).balance !== 0) fail("the PoA fee well must start empty");
+  if (byId.get(issuer).balance !== -amount) {
+    fail(
+      `the PoA issuer well must declare exactly −${amount} (the whole issued supply); ` +
+        `it declares ${byId.get(issuer).balance}`,
+    );
+  }
+  if (genesis.genesis_moves.length !== 1) {
+    fail("a funded PoA genesis must carry exactly one issuer-move");
+  }
+  const [move] = genesis.genesis_moves;
+  if (move.from !== issuer || move.to !== grant || move.amount !== amount) {
+    fail(
+      "the PoA genesis move must be exactly issuer_well → player_grant for the grant's whole " +
+        "declared balance",
+    );
+  }
+  return { valueIssued: true, playerGrant: grant, grantAmount: amount };
 }
 
 function assertNotMainFederation(poaGenesis, mainDataDir) {
@@ -303,7 +418,7 @@ export function buildManifest({
   validatePort(httpBase, "httpBase");
   validatePort(gossipBase, "gossipBase");
   const roots = assertDisjointRoots(root, mainDataDir);
-  const { path: genesisPath, genesis } = parseGenesis(roots.poa);
+  const { path: genesisPath, genesis, economy } = parseGenesis(roots.poa);
   const validators = genesis.validators.length;
   const advertisedHosts = normalizeHosts(hosts, validators);
   if (httpBase + validators - 1 > 65535 || gossipBase + validators - 1 > 65535) {
@@ -338,7 +453,10 @@ export function buildManifest({
     threshold: genesis.threshold,
     genesis_sha256: genesisSha256,
     descriptor: "bundle/genesis.json",
-    policy: { ...POA_POLICY },
+    // DERIVED from the descriptor, never chosen by the operator: the policy
+    // cannot claim zero issuance over a funded genesis, or issuance over an
+    // empty one, because there is no input here that could disagree.
+    policy: { ...(economy.valueIssued ? POA_POLICY_PLAYER_GRANT : POA_POLICY_ZERO_ISSUANCE) },
     nodes: genesis.validators.map((validator, index) => ({
       index,
       name: `node-${index}`,
@@ -445,14 +563,24 @@ export function verifyManifest(options) {
   return actual;
 }
 
-function assertPublicManifestShape(manifest, genesis) {
+function assertPublicManifestShape(manifest, genesis, economy) {
   if (manifest.descriptor !== "bundle/genesis.json") fail("public descriptor path is not canonical");
   if (manifest.threshold !== genesis.threshold) fail("public threshold does not match genesis");
   if (manifest.committee_epoch !== (genesis.committee_epoch ?? 0)) {
     fail("public committee epoch does not match genesis");
   }
-  if (stableJson(manifest.policy) !== stableJson(POA_POLICY)) {
-    fail("public manifest carries an unknown or weakened PoA operator policy");
+  // BOTH DIRECTIONS. The policy is checked against the economy the descriptor
+  // actually has, so a funded genesis under a zero-issuance policy and an empty
+  // genesis under an issuance policy are BOTH refused. A one-way check would let
+  // value be issued under a policy that declares none.
+  const expected = economy.valueIssued ? POA_POLICY_PLAYER_GRANT : POA_POLICY_ZERO_ISSUANCE;
+  if (stableJson(manifest.policy) !== stableJson(expected)) {
+    fail(
+      "public manifest carries an unknown or weakened PoA operator policy, or one that " +
+        `disagrees with the descriptor's economy (genesis issues ${economy.grantAmount} into ` +
+        `${economy.playerGrant ?? "no player-grant cell"}, so the policy must declare ` +
+        `generic_genesis_value_issued: ${economy.valueIssued})`,
+    );
   }
 
   const hosts = manifest.nodes.map((node) => node?.gossip?.advertised_host);
@@ -491,7 +619,7 @@ export function verifyPublicManifest(options) {
   if (manifest.deployment_domain !== POA_DEPLOYMENT_DOMAIN) {
     fail("public manifest has the wrong Path of Angels federation domain");
   }
-  const { path: genesisPath, genesis } = parseGenesis(roots.poa);
+  const { path: genesisPath, genesis, economy } = parseGenesis(roots.poa);
   const digest = sha256File(genesisPath);
   if (manifest.genesis_sha256 !== digest || manifest.federation_id !== genesis.federation_id) {
     fail("public manifest does not pin this genesis.json");
@@ -503,7 +631,7 @@ export function verifyPublicManifest(options) {
   if (!Array.isArray(manifest.nodes) || manifest.nodes.length !== genesis.validators.length) {
     fail("public manifest committee size does not match genesis");
   }
-  assertPublicManifestShape(manifest, genesis);
+  assertPublicManifestShape(manifest, genesis, economy);
   manifest.nodes.forEach((node, index) => {
     if (node.public_key !== genesis.validators[index].public_key || node.index !== index) {
       fail(`public manifest node-${index} does not match the genesis committee`);

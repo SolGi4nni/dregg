@@ -18,6 +18,16 @@ POA_HTTP_BASE="${POA_HTTP_BASE:-8421}"
 POA_GOSSIP_BASE="${POA_GOSSIP_BASE:-9421}"
 POA_BIND="${POA_BIND:-127.0.0.1}"
 POA_NODE_HOSTS="${POA_NODE_HOSTS:-}"
+# ⚑ THE ONLY VALUE ON THE CHAIN, and why it defaults to funded.
+# A PoA genesis is `--no-demo-economy`: no faucet cell, no demo agents, no
+# Starbridge catalog. Before 2026-08-07 that also meant no value AT ALL — two
+# zero-balance wells — and a turn is not free (a Signal claim costs 870 at the
+# default computron costs). So the kit's own default produced a federation that
+# verified, booted, reported healthy, and could not settle a single turn: its
+# `latest_height` was pinned to 0 by its descriptor. A default that builds a
+# dead chain is the bug, so the default is now a funded grant.
+# `POA_PLAYER_GRANT=0` opts out explicitly and says what that costs.
+POA_PLAYER_GRANT="${POA_PLAYER_GRANT:-1000000}"
 
 usage() {
   cat <<'EOF'
@@ -49,6 +59,12 @@ Environment:
   POA_MAIN_DATA_DIR     main dregg data dir to refuse reusing (default: ~/.dregg)
   POA_BIN               Lean-linked dregg-node binary
   POA_VALIDATORS        genesis committee size (default: 3)
+  POA_PLAYER_GRANT      value issued, by one issuer-move, into the deployment-local
+                        player-grant cell (default: 1000000). This is the ONLY value
+                        on a PoA chain — with 0 no cell can pay a turn fee and
+                        latest_height can never leave 0. The grant seed derives from
+                        the PUBLIC (domain, federation_id), so it is bearer value for
+                        anyone who reads the descriptor: fund the turns you intend.
   POA_HTTP_BASE         first HTTP port (default: 8421)
   POA_GOSSIP_BASE       first gossip port (default: 9421)
   POA_NODE_HOSTS        comma-separated advertised hosts, one per validator
@@ -245,12 +261,22 @@ const { assertDisjointRoots } = await import(process.argv[1]);
 assertDisjointRoots(process.argv[2], process.argv[3]);
 ' "file://$MANIFEST_TOOL" "$POA_ROOT" "$POA_MAIN_DATA_DIR"
 
+  [[ "$POA_PLAYER_GRANT" =~ ^[0-9]+$ ]] || die "POA_PLAYER_GRANT must be a non-negative integer"
+
   mkdir -p "$POA_ROOT/bundle" "$POA_ROOT/nodes" "$POA_ROOT/followers"
+  local grant_args=()
+  if [ "$POA_PLAYER_GRANT" -gt 0 ]; then
+    grant_args=(--player-grant "$POA_PLAYER_GRANT")
+  else
+    printf 'warning: POA_PLAYER_GRANT=0 — this federation issues NO value, so no cell can\n' >&2
+    printf '         pay a turn fee and latest_height can never leave 0. Deliberate?\n' >&2
+  fi
   "$BIN" genesis \
     --validators "$POA_VALIDATORS" \
     --output "$POA_ROOT/bundle" \
     --deployment-domain pathofangels.network/federation/v1 \
-    --no-demo-economy
+    --no-demo-economy \
+    "${grant_args[@]}"
 
   local index data_dir
   for ((index = 0; index < POA_VALIDATORS; index += 1)); do

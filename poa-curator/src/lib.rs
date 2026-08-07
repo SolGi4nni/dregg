@@ -38,10 +38,44 @@ pub const POA_DEPLOYMENT_MANIFEST_SCHEMA: &str = "dregg-poa-devnet-manifest-v1";
 pub const POA_DEPLOYMENT_DOMAIN: &str = "pathofangels.network/federation/v1";
 pub const POA_EPOCH_PREVIEW_SCHEMA: &str = "POA-EPOCH-PREVIEW-V1";
 
-/// Canonical semantic image of the only operator policy accepted by the v1
-/// Path of Angels production federation. The manifest itself may use any JSON
-/// whitespace/key order, but this policy value may not be weakened or grown.
-pub const POA_PRODUCTION_POLICY_CANONICAL: &str = "{\"admission\":\"committee-ratified-manual-v1\",\"allow_unverified_consensus\":false,\"auto_approve_joins\":false,\"descriptor_pinned\":true,\"f4_transitive_vouch_rows_live\":false,\"faucet_http\":false,\"follower_first\":true,\"generic_genesis_value_issued\":false,\"objective_vouch_admission_ready\":false,\"prove_turns\":true,\"public_private_activity_counts\":false,\"require_lean\":true,\"shares_main_identity\":false,\"shares_main_storage\":false,\"strand_admission_gate\":true}";
+/// Canonical semantic image of the operator policy of a ZERO-ISSUANCE v1 Path of
+/// Angels production federation: two zero-balance wells and no genesis moves.
+/// The manifest itself may use any JSON whitespace/key order, but this policy
+/// value may not be weakened or grown.
+///
+/// ⚑ This is the shape that CANNOT SETTLE A TURN, and it is named that way on
+/// purpose. A Signal claim costs `dregg_sdk::poa_signal::signal_claim_fee_v1()`
+/// (870 at `ComputronCosts::default()`, measured 2026-08-07), `execute` refuses any agent
+/// whose balance is under the fee, and this economy has no cell with a positive
+/// balance at all — so a deployment declaring this policy is one whose
+/// `latest_height` is structurally pinned to 0. It is retained only because the
+/// live epoch-1 deployment declares it and has not been re-genesised yet; DELETE
+/// it, and its branch in [`verify_genesis_economy_and_committee`], the moment it
+/// has.
+pub const POA_PRODUCTION_POLICY_ZERO_ISSUANCE: &str = "{\"admission\":\"committee-ratified-manual-v1\",\"allow_unverified_consensus\":false,\"auto_approve_joins\":false,\"descriptor_pinned\":true,\"f4_transitive_vouch_rows_live\":false,\"faucet_http\":false,\"follower_first\":true,\"generic_genesis_value_issued\":false,\"objective_vouch_admission_ready\":false,\"prove_turns\":true,\"public_private_activity_counts\":false,\"require_lean\":true,\"shares_main_identity\":false,\"shares_main_storage\":false,\"strand_admission_gate\":true}";
+
+/// Canonical semantic image of the operator policy of a PLAYER-GRANT-FUNDED v1
+/// Path of Angels production federation: the same policy in every other respect,
+/// declaring `generic_genesis_value_issued: true` because it IS issuing genesis
+/// value — one issuer-move into the named player-grant cell.
+///
+/// The declaration and the descriptor are bound in BOTH directions
+/// ([`verify_genesis_economy_and_committee`]): this policy is refused over a
+/// genesis with no `player_grant`, and a genesis WITH one is refused under
+/// [`POA_PRODUCTION_POLICY_ZERO_ISSUANCE`]. There is therefore no accepted
+/// deployment in which value is issued under a policy that says none was.
+pub const POA_PRODUCTION_POLICY_PLAYER_GRANT: &str = "{\"admission\":\"committee-ratified-manual-v1\",\"allow_unverified_consensus\":false,\"auto_approve_joins\":false,\"descriptor_pinned\":true,\"f4_transitive_vouch_rows_live\":false,\"faucet_http\":false,\"follower_first\":true,\"generic_genesis_value_issued\":true,\"objective_vouch_admission_ready\":false,\"prove_turns\":true,\"public_private_activity_counts\":false,\"require_lean\":true,\"shares_main_identity\":false,\"shares_main_storage\":false,\"strand_admission_gate\":true}";
+
+/// Which genesis economy a verified deployment declares — the verdict
+/// [`verify_production_policy`] renders and the genesis gate then enforces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoaGenesisEconomy {
+    /// Two zero-balance wells, no moves. Nothing can pay a turn fee.
+    ZeroIssuance,
+    /// Two wells plus one named player-grant cell, funded by exactly one
+    /// issuer-move. The value column still sums to zero.
+    PlayerGrant,
+}
 pub const POA_SIGNAL_DEPLOYMENT_IDENTITY_DOMAIN: &str = "POA-SIGNAL-DEPLOYMENT-IDENTITY-V2";
 /// The Lean module that draws every live run instance. A catalog naming a
 /// different one is describing a game this node cannot judge.
@@ -399,7 +433,14 @@ impl PoaDeploymentScope {
             .ok_or_else(|| CuratorError::Deployment("genesis_sha256 is absent".into()))?;
         parse_hex_array::<32>(genesis_sha256, "genesis_sha256")?;
         let manifest_sha256 = hex_encode(&sha256_raw(&bytes));
-        let policy_bytes = canonical_production_policy_bytes()?;
+        // The manifest's OWN declared policy decides the digest now that there are
+        // two of them. Before, this assumed the single compiled constant and never
+        // looked — so an unverified `load` on a manifest carrying a different
+        // policy produced a deployment digest for a policy that manifest does not
+        // declare. Reading it here also means `load` refuses an unknown/weakened
+        // policy at the same boundary `load_verified` does.
+        let economy = verify_production_policy(object.get("policy"))?;
+        let policy_bytes = canonical_production_policy_bytes(economy)?;
         let policy_sha256 = hex_encode(&sha256_raw(&policy_bytes));
         let deployment_digest =
             derive_signal_deployment_digest(deployment_id, &manifest_sha256, &policy_sha256);
@@ -467,7 +508,7 @@ impl PoaDeploymentScope {
         let deployment_id = manifest_hex32(manifest, "deployment_id")?;
         let federation_id = manifest_hex32(manifest, "federation_id")?;
         let pinned_genesis_sha256 = manifest_hex32(manifest, "genesis_sha256")?;
-        verify_production_policy(manifest.get("policy"))?;
+        let economy = verify_production_policy(manifest.get("policy"))?;
         if manifest.get("descriptor").and_then(Value::as_str) != Some("bundle/genesis.json") {
             return Err(CuratorError::Deployment(
                 "poa-devnet.json descriptor is not bundle/genesis.json".into(),
@@ -547,6 +588,7 @@ impl PoaDeploymentScope {
             &federation_id,
             genesis_epoch,
             genesis_threshold,
+            economy,
         )?;
         let validator_public_keys = validators
             .iter()
@@ -565,7 +607,7 @@ impl PoaDeploymentScope {
         verify_main_identity_isolation(&root, &main_root, genesis)?;
 
         let manifest_sha256 = hex_encode(&sha256_raw(&manifest_bytes));
-        let policy_sha256 = hex_encode(&sha256_raw(&canonical_production_policy_bytes()?));
+        let policy_sha256 = hex_encode(&sha256_raw(&canonical_production_policy_bytes(economy)?));
         let deployment_digest =
             derive_signal_deployment_digest(&deployment_id, &manifest_sha256, &policy_sha256);
         Ok(Self {
@@ -701,8 +743,18 @@ struct ValidatorIdentity {
     hybrid_id: [u8; 32],
 }
 
-fn canonical_production_policy_bytes() -> Result<Vec<u8>, CuratorError> {
-    let policy: Value = serde_json::from_str(POA_PRODUCTION_POLICY_CANONICAL).map_err(|error| {
+impl PoaGenesisEconomy {
+    /// The exact compiled policy image a deployment with this economy declares.
+    pub fn canonical_policy(self) -> &'static str {
+        match self {
+            Self::ZeroIssuance => POA_PRODUCTION_POLICY_ZERO_ISSUANCE,
+            Self::PlayerGrant => POA_PRODUCTION_POLICY_PLAYER_GRANT,
+        }
+    }
+}
+
+fn canonical_production_policy_bytes(economy: PoaGenesisEconomy) -> Result<Vec<u8>, CuratorError> {
+    let policy: Value = serde_json::from_str(economy.canonical_policy()).map_err(|error| {
         CuratorError::Deployment(format!("invalid compiled PoA policy: {error}"))
     })?;
     serde_json::to_vec(&policy).map_err(|error| {
@@ -710,17 +762,25 @@ fn canonical_production_policy_bytes() -> Result<Vec<u8>, CuratorError> {
     })
 }
 
-fn verify_production_policy(policy: Option<&Value>) -> Result<(), CuratorError> {
-    let expected: Value =
-        serde_json::from_str(POA_PRODUCTION_POLICY_CANONICAL).map_err(|error| {
-            CuratorError::Deployment(format!("invalid compiled PoA policy: {error}"))
-        })?;
-    if policy != Some(&expected) {
-        return Err(CuratorError::Deployment(
-            "public manifest carries an unknown or weakened PoA operator policy".into(),
-        ));
+/// Accept exactly one of the two compiled policies and say WHICH, so the genesis
+/// gate can require the matching economy. A policy that is neither is refused;
+/// there is no "close enough".
+fn verify_production_policy(policy: Option<&Value>) -> Result<PoaGenesisEconomy, CuratorError> {
+    for economy in [
+        PoaGenesisEconomy::ZeroIssuance,
+        PoaGenesisEconomy::PlayerGrant,
+    ] {
+        let expected: Value =
+            serde_json::from_str(economy.canonical_policy()).map_err(|error| {
+                CuratorError::Deployment(format!("invalid compiled PoA policy: {error}"))
+            })?;
+        if policy == Some(&expected) {
+            return Ok(economy);
+        }
     }
-    Ok(())
+    Err(CuratorError::Deployment(
+        "public manifest carries an unknown or weakened PoA operator policy".into(),
+    ))
 }
 
 fn derive_signal_deployment_digest(
@@ -755,24 +815,49 @@ fn verify_genesis_economy_and_committee(
     federation_id: &str,
     committee_epoch: u64,
     threshold: u64,
+    economy: PoaGenesisEconomy,
 ) -> Result<Vec<ValidatorIdentity>, CuratorError> {
+    // The key set IS the economy check's first half: `player_grant` is present in
+    // exactly one of the two shapes, and `require_exact_object_keys` is exact, so
+    // a descriptor carrying the field under a zero-issuance policy — or omitting
+    // it under a player-grant policy — is refused here before anything is read.
+    let zero_issuance_keys: &[&str] = &[
+        "checkpoint_interval",
+        "committee_epoch",
+        "consensus_genesis_unix_seconds",
+        "consensus_time_mode",
+        "deployment_domain",
+        "epoch_length",
+        "federation_id",
+        "fee_well",
+        "genesis_moves",
+        "initial_cells",
+        "issuer_well",
+        "threshold",
+        "validators",
+    ];
+    let player_grant_keys: &[&str] = &[
+        "checkpoint_interval",
+        "committee_epoch",
+        "consensus_genesis_unix_seconds",
+        "consensus_time_mode",
+        "deployment_domain",
+        "epoch_length",
+        "federation_id",
+        "fee_well",
+        "genesis_moves",
+        "initial_cells",
+        "issuer_well",
+        "player_grant",
+        "threshold",
+        "validators",
+    ];
     require_exact_object_keys(
         genesis,
-        &[
-            "checkpoint_interval",
-            "committee_epoch",
-            "consensus_genesis_unix_seconds",
-            "consensus_time_mode",
-            "deployment_domain",
-            "epoch_length",
-            "federation_id",
-            "fee_well",
-            "genesis_moves",
-            "initial_cells",
-            "issuer_well",
-            "threshold",
-            "validators",
-        ],
+        match economy {
+            PoaGenesisEconomy::ZeroIssuance => zero_issuance_keys,
+            PoaGenesisEconomy::PlayerGrant => player_grant_keys,
+        },
         "PoA genesis.json",
     )
     .map_err(CuratorError::Deployment)?;
@@ -861,17 +946,47 @@ fn verify_genesis_economy_and_committee(
         ));
     }
 
+    // ── THE GENESIS ECONOMY — exactly the shape the policy declares. ─────────
+    //
+    // WHY THIS WIDENED, 2026-08-07. It accepted one shape: two zero-balance wells
+    // and no moves. That kept the generic devnet economy out of a production
+    // application federation, which was right, and it also left the deployment
+    // with NO economy at all, which was not. A Signal claim costs
+    // `dregg_sdk::poa_signal::signal_claim_fee_v1()` — 870 at the default costs;
+    // `TurnExecutor::execute` refuses any agent whose balance is under the fee;
+    // `/api/faucet` needs a genesis faucet cell an empty-economy deployment does
+    // not have; and `Effect::Mint` needs a fee the zero-balance issuer well
+    // cannot pay either. So the live chain could not settle a single turn and
+    // `latest_height` was pinned to 0 by the descriptor itself.
+    //
+    // The second accepted shape is EXACTLY one issuer-move into one named
+    // player-grant cell, and it is bound to the manifest policy in BOTH
+    // directions by `economy` (see `verify_production_policy`): value cannot be
+    // issued under a policy declaring none, and a policy declaring issuance
+    // cannot sit over an empty genesis.
+    let expected_cells = match economy {
+        PoaGenesisEconomy::ZeroIssuance => 2,
+        PoaGenesisEconomy::PlayerGrant => 3,
+    };
     let initial = genesis
         .get("initial_cells")
         .and_then(Value::as_array)
-        .filter(|cells| cells.len() == 2)
+        .filter(|cells| cells.len() == expected_cells)
         .ok_or_else(|| {
-            CuratorError::Deployment(
-                "PoA genesis must contain exactly its issuer and fee wells".into(),
-            )
+            CuratorError::Deployment(match economy {
+                PoaGenesisEconomy::ZeroIssuance => {
+                    "PoA genesis must contain exactly its issuer and fee wells".into()
+                }
+                PoaGenesisEconomy::PlayerGrant => String::from(
+                    "a player-grant PoA genesis must contain exactly its issuer well, its fee \
+                     well, and the named player-grant cell",
+                ),
+            })
         })?;
     let mut initial_ids = BTreeSet::new();
     let mut initial_public = BTreeSet::new();
+    let mut declared: BTreeMap<[u8; 32], i64> = BTreeMap::new();
+    let mut column: i128 = 0;
     for (index, value) in initial.iter().enumerate() {
         let cell = value.as_object().ok_or_else(|| {
             CuratorError::Deployment(format!("initial cell {index} is not an object"))
@@ -896,33 +1011,109 @@ fn verify_genesis_economy_and_committee(
             .and_then(Value::as_str)
             .ok_or_else(|| CuratorError::Deployment("initial cell ML-DSA key is absent".into()))?;
         parse_lower_hex(ml, ML_DSA_65_PUBLIC_KEY_BYTES, "initial cell ML-DSA key")?;
-        if cell.get("balance").and_then(Value::as_u64) != Some(0)
-            || !initial_ids.insert(id)
-            || !initial_public.insert(public)
-        {
+        // SIGNED (THE EPOCH §5): the issuer well declares −supply. `as_u64` would
+        // silently reject it, which is why the read widened with the shape.
+        let balance = cell
+            .get("balance")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| CuratorError::Deployment("initial cell balance is not an i64".into()))?;
+        if !initial_ids.insert(id) || !initial_public.insert(public) {
             return Err(CuratorError::Deployment(
-                "PoA initial wells must be distinct and carry zero generic value".into(),
+                "PoA initial cells must be distinct".into(),
             ));
         }
+        column += balance as i128;
+        declared.insert(id, balance);
+    }
+    // CONSERVATION. An issuer-move genesis whose column does not close is minting
+    // from nowhere, and every downstream identity (deployment id, manifest,
+    // follower package, signed authority head) would pin that supply as fact.
+    if column != 0 {
+        return Err(CuratorError::Deployment(format!(
+            "PoA genesis value column sums to {column}, not zero; value would enter this chain \
+             from nowhere"
+        )));
     }
     let issuer = manifest_value_hex32(genesis, "issuer_well", "issuer_well")?;
     let fee = manifest_value_hex32(genesis, "fee_well", "fee_well")?;
     if issuer == fee || !initial_ids.contains(&issuer) || !initial_ids.contains(&fee) {
         return Err(CuratorError::Deployment(
-            "issuer_well/fee_well do not name the two exact initial cells".into(),
+            "issuer_well/fee_well do not name exact initial cells".into(),
         ));
     }
     if genesis
-        .get("genesis_moves")
-        .and_then(Value::as_array)
-        .is_none_or(|moves| !moves.is_empty())
-        || genesis
-            .get("starbridge_cells")
-            .is_some_and(|value| value.as_array().is_none_or(|cells| !cells.is_empty()))
+        .get("starbridge_cells")
+        .is_some_and(|value| value.as_array().is_none_or(|cells| !cells.is_empty()))
     {
         return Err(CuratorError::Deployment(
-            "PoA genesis must have no generic moves or Starbridge demo catalog".into(),
+            "PoA genesis must not carry a Starbridge demo catalog".into(),
         ));
+    }
+    let moves = genesis
+        .get("genesis_moves")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CuratorError::Deployment("PoA genesis_moves is not an array".into()))?;
+    match economy {
+        PoaGenesisEconomy::ZeroIssuance => {
+            if !moves.is_empty() || declared.values().any(|balance| *balance != 0) {
+                return Err(CuratorError::Deployment(
+                    "a zero-issuance PoA genesis must carry no moves and no value".into(),
+                ));
+            }
+        }
+        PoaGenesisEconomy::PlayerGrant => {
+            let grant = manifest_value_hex32(genesis, "player_grant", "player_grant")?;
+            if grant == issuer || grant == fee || !initial_ids.contains(&grant) {
+                return Err(CuratorError::Deployment(
+                    "player_grant must name its own initial cell, distinct from both wells".into(),
+                ));
+            }
+            let amount = *declared.get(&grant).unwrap_or(&0);
+            let issuer_hex = hex_encode(&issuer);
+            let grant_hex = hex_encode(&grant);
+            if amount <= 0 {
+                return Err(CuratorError::Deployment(
+                    "the PoA player-grant cell must declare a positive post-seed balance".into(),
+                ));
+            }
+            let claim_fee = dregg_sdk::poa_signal::signal_claim_fee_v1();
+            if (amount as u64) < claim_fee {
+                return Err(CuratorError::Deployment(format!(
+                    "the PoA player grant is {amount}, below the {claim_fee} a single Signal \
+                     claim costs; this deployment would boot healthy and refuse every claim"
+                )));
+            }
+            if declared.get(&fee) != Some(&0) {
+                return Err(CuratorError::Deployment(
+                    "the PoA fee well must start empty".into(),
+                ));
+            }
+            if declared.get(&issuer) != Some(&-amount) {
+                return Err(CuratorError::Deployment(format!(
+                    "the PoA issuer well must declare exactly -{amount}, the whole issued supply"
+                )));
+            }
+            let [only_move] = moves.as_slice() else {
+                return Err(CuratorError::Deployment(
+                    "a player-grant PoA genesis must carry exactly one issuer-move".into(),
+                ));
+            };
+            let only_move = only_move.as_object().ok_or_else(|| {
+                CuratorError::Deployment("PoA genesis move is not an object".into())
+            })?;
+            require_exact_object_keys(only_move, &["from", "to", "amount"], "PoA genesis move")
+                .map_err(CuratorError::Deployment)?;
+            if only_move.get("from").and_then(Value::as_str) != Some(issuer_hex.as_str())
+                || only_move.get("to").and_then(Value::as_str) != Some(grant_hex.as_str())
+                || only_move.get("amount").and_then(Value::as_u64) != Some(amount as u64)
+            {
+                return Err(CuratorError::Deployment(
+                    "the PoA genesis move must be exactly issuer_well → player_grant for the \
+                     grant's whole declared balance"
+                        .into(),
+                ));
+            }
+        }
     }
     Ok(validators)
 }
@@ -3509,6 +3700,14 @@ impl<'de> Visitor<'de> for StrictValueVisitor {
 mod tests {
     use super::*;
 
+    /// The zero-issuance production policy as a JSON value, for fixtures that must
+    /// carry a REAL one. Derived from the compiled constant rather than transcribed,
+    /// so a fixture cannot drift into asserting against a policy nothing accepts.
+    fn canonical_policy_value() -> Value {
+        serde_json::from_str(POA_PRODUCTION_POLICY_ZERO_ISSUANCE)
+            .expect("the compiled zero-issuance policy is valid JSON")
+    }
+
     #[derive(Clone, Copy)]
     struct GameSpec {
         mission_id: u64,
@@ -3845,7 +4044,10 @@ mod tests {
                 "threshold": 1,
                 "genesis_sha256": hex_encode(&[0x88; 32]),
                 "descriptor": "bundle/genesis.json",
-                "policy": {},
+                // A REAL policy. `PoaDeploymentScope::load` reads it now (it decides
+                // which of the two compiled policies the deployment digest is over),
+                // so `{}` — which only ever passed because nothing looked — refuses.
+                "policy": canonical_policy_value(),
                 "nodes": []
             }))
             .unwrap(),
@@ -4311,7 +4513,10 @@ mod tests {
                 "threshold": 1,
                 "genesis_sha256": hex_encode(&[0x88; 32]),
                 "descriptor": "bundle/genesis.json",
-                "policy": {},
+                // A REAL policy. `PoaDeploymentScope::load` reads it now (it decides
+                // which of the two compiled policies the deployment digest is over),
+                // so `{}` — which only ever passed because nothing looked — refuses.
+                "policy": canonical_policy_value(),
                 "nodes": []
             }))
             .unwrap(),
@@ -4680,5 +4885,208 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("copied from the main federation"), "{error}");
+    }
+
+    // ── THE PLAYER GRANT: a deployment that can actually settle a turn. ──────
+
+    /// Rewrite the epoch-1 deployment into the FUNDED shape, in a tempdir, and
+    /// re-derive every identity that depends on the descriptor bytes. The committee
+    /// is the real one (real ML-DSA keys, real hybrid ids, a `federation_id` that
+    /// genuinely derives from them), so the only thing that varies is the economy —
+    /// which is what these tests are about.
+    fn funded_deployment(
+        grant: i64,
+        policy: &str,
+        mutate: impl FnOnce(&mut Value),
+    ) -> (tempfile::TempDir, tempfile::TempDir, PathBuf, PathBuf) {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = tempfile::tempdir().unwrap();
+        let main = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("bundle")).unwrap();
+        let manifest_path = root.path().join("poa-devnet.json");
+        let genesis_path = root.path().join("bundle/genesis.json");
+
+        let mut genesis: Value = serde_json::from_slice(
+            &fs::read(repo.join("poa/deployments/epoch-1/bundle/genesis.json")).unwrap(),
+        )
+        .unwrap();
+        let cells = genesis["initial_cells"].as_array().unwrap().clone();
+        let issuer = genesis["issuer_well"].as_str().unwrap().to_owned();
+        let grant_id = "c3".repeat(32);
+        let mut funded = Vec::new();
+        for mut cell in cells {
+            if cell["id"] == Value::String(issuer.clone()) {
+                cell["balance"] = Value::from(-grant);
+            }
+            funded.push(cell);
+        }
+        // The grant cell: its own id and public key, an ML-DSA key of the canonical
+        // length (only the length and the shape are this gate's business — the cell
+        // id/key derivation is `dregg-node genesis`'s, and is exercised there).
+        let ml = funded[0]["ml_dsa_public_key"].clone();
+        funded.push(serde_json::json!({
+            "id": grant_id,
+            "public_key": "a6".repeat(32),
+            "token_id": funded[0]["token_id"].clone(),
+            "balance": grant,
+            "ml_dsa_public_key": ml,
+        }));
+        genesis["initial_cells"] = Value::Array(funded);
+        genesis["genesis_moves"] =
+            serde_json::json!([{ "from": issuer, "to": grant_id, "amount": grant }]);
+        genesis["player_grant"] = Value::String(grant_id);
+        mutate(&mut genesis);
+
+        let genesis_bytes = serde_json::to_vec_pretty(&genesis).unwrap();
+        fs::write(&genesis_path, &genesis_bytes).unwrap();
+        let genesis_sha256 = hex_encode(&sha256_raw(&genesis_bytes));
+
+        let mut manifest: Value = serde_json::from_slice(
+            &fs::read(repo.join("poa/deployments/epoch-1/poa-devnet.json")).unwrap(),
+        )
+        .unwrap();
+        let federation_id = manifest["federation_id"].as_str().unwrap().to_owned();
+        manifest["genesis_sha256"] = Value::String(genesis_sha256.clone());
+        manifest["deployment_id"] = Value::String(hex_encode(&sha256_raw(
+            format!("{POA_DEPLOYMENT_DOMAIN}\0{federation_id}\0{genesis_sha256}").as_bytes(),
+        )));
+        manifest["policy"] = serde_json::from_str(policy).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        (root, main, manifest_path, genesis_path)
+    }
+
+    /// The deliverable, at the verifier: a descriptor carrying an issuer-move to a
+    /// player-grant cell VERIFIES, under a policy that declares the issuance.
+    #[test]
+    fn a_player_grant_deployment_verifies_under_a_policy_that_declares_it() {
+        let (_root, main, manifest, genesis) =
+            funded_deployment(100_000, POA_PRODUCTION_POLICY_PLAYER_GRANT, |_| {});
+        let scope = PoaDeploymentScope::load_verified(&manifest, &genesis, main.path())
+            .expect("a funded PoA deployment must verify");
+        // The digest is over the PLAYER-GRANT policy, so it is a different deployment
+        // identity from the zero-issuance one — a follower pinned to the old digest
+        // refuses this descriptor rather than reinterpreting it.
+        assert_eq!(
+            scope.policy_sha256(),
+            hex_encode(&sha256_raw(
+                &canonical_production_policy_bytes(PoaGenesisEconomy::PlayerGrant).unwrap()
+            ))
+        );
+        assert_ne!(
+            scope.policy_sha256(),
+            "8346263cf2fd50210353dca763dfb8f1271e1154e766ca93553ef3abc12a65ca",
+            "the funded policy must not share the zero-issuance policy digest"
+        );
+    }
+
+    /// The BOTH-WAYS binding. Neither half of the pair can move alone, so there is
+    /// no accepted deployment in which value is issued under a policy denying it.
+    #[test]
+    fn the_policy_and_the_genesis_economy_cannot_disagree() {
+        // Funded genesis, zero-issuance policy — value sneaked in under a denial.
+        let (_root, main, manifest, genesis) =
+            funded_deployment(100_000, POA_PRODUCTION_POLICY_ZERO_ISSUANCE, |_| {});
+        let error = PoaDeploymentScope::load_verified(&manifest, &genesis, main.path())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("player_grant") || error.contains("unexpected"),
+            "a funded genesis under a zero-issuance policy must refuse: {error}"
+        );
+
+        // Empty genesis, player-grant policy — a boast with nothing behind it.
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = tempfile::tempdir().unwrap();
+        let main2 = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("bundle")).unwrap();
+        let m = root.path().join("poa-devnet.json");
+        let g = root.path().join("bundle/genesis.json");
+        fs::copy(repo.join("poa/deployments/epoch-1/bundle/genesis.json"), &g).unwrap();
+        let mut manifest_json: Value = serde_json::from_slice(
+            &fs::read(repo.join("poa/deployments/epoch-1/poa-devnet.json")).unwrap(),
+        )
+        .unwrap();
+        manifest_json["policy"] = serde_json::from_str(POA_PRODUCTION_POLICY_PLAYER_GRANT).unwrap();
+        fs::write(&m, serde_json::to_vec_pretty(&manifest_json).unwrap()).unwrap();
+        let error = PoaDeploymentScope::load_verified(&m, &g, main2.path())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("player_grant") || error.contains("absent"),
+            "an empty genesis under a player-grant policy must refuse: {error}"
+        );
+    }
+
+    /// The widening is EXACT. Each of these is one edit away from the accepted
+    /// shape and every one of them is refused — including the two that would let
+    /// value exist without an issuer-move behind it.
+    #[test]
+    fn the_funded_shape_admits_nothing_beside_the_one_named_grant() {
+        let cases: Vec<(&str, Box<dyn FnOnce(&mut Value)>, &str)> = vec![
+            (
+                "value with no issuer debit",
+                Box::new(|g: &mut Value| {
+                    let issuer = g["issuer_well"].as_str().unwrap().to_owned();
+                    for cell in g["initial_cells"].as_array_mut().unwrap() {
+                        if cell["id"] == Value::String(issuer.clone()) {
+                            cell["balance"] = Value::from(0);
+                        }
+                    }
+                }),
+                "not zero",
+            ),
+            (
+                "a grant credited by no move",
+                Box::new(|g: &mut Value| g["genesis_moves"] = serde_json::json!([])),
+                "exactly one issuer-move",
+            ),
+            (
+                "a move for less than the declared balance",
+                Box::new(|g: &mut Value| g["genesis_moves"][0]["amount"] = Value::from(1)),
+                "whole declared balance",
+            ),
+            (
+                "player_grant naming a well",
+                Box::new(|g: &mut Value| g["player_grant"] = g["fee_well"].clone()),
+                "its own initial cell",
+            ),
+        ];
+        for (name, mutate, expected) in cases {
+            let (_root, main, manifest, genesis) =
+                funded_deployment(100_000, POA_PRODUCTION_POLICY_PLAYER_GRANT, mutate);
+            let error = PoaDeploymentScope::load_verified(&manifest, &genesis, main.path())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{name}: got {error}");
+        }
+    }
+
+    /// A grant that cannot buy one turn is refused at the VERIFIER too, not only at
+    /// `dregg-node genesis`. The operator can hand-edit a descriptor; the number
+    /// that matters is what a turn costs, and it is checked where the descriptor is
+    /// authenticated.
+    #[test]
+    fn a_grant_below_one_claim_fee_is_refused_by_the_deployment_verifier() {
+        let fee = dregg_sdk::poa_signal::signal_claim_fee_v1() as i64;
+        let (_root, main, manifest, genesis) =
+            funded_deployment(fee - 1, POA_PRODUCTION_POLICY_PLAYER_GRANT, |_| {});
+        let error = PoaDeploymentScope::load_verified(&manifest, &genesis, main.path())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&fee.to_string()) && error.contains("Signal claim"),
+            "the refusal must name the fee: {error}"
+        );
+
+        // …and exactly the fee is enough for exactly one turn, so the bound is the
+        // real one and not an arbitrary floor.
+        let (_root2, main2, manifest2, genesis2) =
+            funded_deployment(fee, POA_PRODUCTION_POLICY_PLAYER_GRANT, |_| {});
+        PoaDeploymentScope::load_verified(&manifest2, &genesis2, main2.path())
+            .expect("a grant of exactly one claim fee must verify");
     }
 }

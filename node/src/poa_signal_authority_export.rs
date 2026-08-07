@@ -313,7 +313,15 @@ mod tests {
                 "threshold": 1,
                 "genesis_sha256": dregg_types::hex_encode(&[0x92; 32]),
                 "descriptor": "bundle/genesis.json",
-                "policy": {},
+                // A REAL policy. `PoaDeploymentScope::load` reads it now — the
+                // deployment digest is over the policy the manifest DECLARES, and
+                // there are two of them since the player-grant economy landed, so it
+                // can no longer be assumed. `{}` only ever passed because nothing
+                // looked, which also meant this fixture's `deployment_digest` was
+                // over a policy this manifest did not carry.
+                "policy": serde_json::from_str::<serde_json::Value>(
+                    poa_curator::POA_PRODUCTION_POLICY_ZERO_ISSUANCE
+                ).unwrap(),
                 "nodes": [{"public_key": dregg_types::hex_encode(&node_public_key)}]
             }))
             .unwrap(),

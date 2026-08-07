@@ -169,6 +169,31 @@ pub fn signal_claim_turn(
     turn
 }
 
+/// The exact fee every canonical version-1 Signal claim turn carries.
+///
+/// It is a constant of the claim SHAPE, not of its contents. `estimate_cost`
+/// prices `action_base + 2×signature_verify` for the hybrid carrier plus one
+/// `EmitEvent` whose reserved topic and four field lanes are the same width for
+/// every mission id, every code, and every player key — so this number does not
+/// depend on who claims or what they claim.
+/// `signal_claim_fee_is_a_constant_of_the_shape` pins that, and it is a real
+/// check rather than a restatement: it recomputes the fee across several keys,
+/// missions and codes and requires one value.
+///
+/// ⚑ WHY IT IS PUBLIC. Genesis has to fund a player with this number. Until
+/// 2026-08-07 the live Path of Angels chain held no value at all — two
+/// zero-balance wells and no genesis moves — so no player could pay this fee and
+/// `latest_height` could not move off 0. The genesis grant that fixes it is only
+/// meaningful against the fee it must cover, and the one place worth refusing an
+/// underfunded grant is where the operator types the amount, before a chain
+/// exists. A caller that hardcodes a number instead of calling this will silently
+/// desynchronize from `ComputronCosts::default()`.
+pub fn signal_claim_fee_v1() -> u64 {
+    let code = SignalCode::new(0, 0, 0).expect("0,0,0 is in every base-six band");
+    let claim = SignalClaimV1::new(0, code).expect("mission 0 is in the wire bound");
+    signal_claim_turn(&[0u8; 32], 0, None, claim).fee
+}
+
 /// Compute the fee for the post-signing hybrid carrier without manufacturing a
 /// credential. `estimate_cost` keys on authorization kind, not signature bytes.
 fn signal_claim_hybrid_fee(turn: &dregg_turn::Turn) -> u64 {
@@ -429,5 +454,38 @@ mod tests {
             turn.fee,
             TurnExecutor::new(ComputronCosts::default()).estimate_cost(&turn)
         );
+    }
+
+    /// [`signal_claim_fee_v1`] is quotable as THE Signal claim fee only if the
+    /// fee genuinely does not vary with the player, the mission or the code.
+    /// Genesis funds a grant against this number without knowing any of the
+    /// three, so if it varied the grant would be right for one player and wrong
+    /// for the next.
+    #[test]
+    fn signal_claim_fee_is_a_constant_of_the_shape() {
+        let quoted = signal_claim_fee_v1();
+        assert!(
+            quoted > 0,
+            "a free Signal claim would need no funding at all"
+        );
+        for signer in [[0x00u8; 32], [0xff; 32], [0x5a; 32]] {
+            for nonce in [0u64, 1, u64::MAX] {
+                for (mission, bands) in [
+                    (0u64, (0u64, 0u64, 0u64)),
+                    (7, (5, 4, 3)),
+                    (u32::MAX as u64, (1, 2, 5)),
+                ] {
+                    let code = SignalCode::new(bands.0, bands.1, bands.2).unwrap();
+                    let claim = SignalClaimV1::new(mission, code).unwrap();
+                    for previous in [None, Some([0x9du8; 32])] {
+                        assert_eq!(
+                            signal_claim_turn(&signer, nonce, previous, claim).fee,
+                            quoted,
+                            "the Signal claim fee must not depend on signer/nonce/mission/code/receipt",
+                        );
+                    }
+                }
+            }
+        }
     }
 }

@@ -26,14 +26,16 @@ function key(byte) {
   return Buffer.alloc(32, byte);
 }
 
-function fixture() {
-  const scratch = mkdtempSync(join(tmpdir(), "poa-devnet-manifest-test-"));
-  const root = join(scratch, "poa");
-  const mainDataDir = join(scratch, "main");
-  mkdirSync(join(root, "bundle"), { recursive: true });
-  mkdirSync(join(root, "nodes"), { recursive: true });
-  mkdirSync(mainDataDir, { recursive: true });
-  const genesis = {
+const ISSUER_ID = "c1".repeat(32);
+const FEE_ID = "c2".repeat(32);
+const GRANT_ID = "c3".repeat(32);
+
+/**
+ * The empty-economy descriptor: what the LIVE epoch-1 deployment is, and the shape
+ * that cannot settle a turn. `funded()` below is the shape that can.
+ */
+function emptyEconomyGenesis() {
+  return {
     federation_id: "a1".repeat(32),
     deployment_domain: "pathofangels.network/federation/v1",
     committee_epoch: 0,
@@ -43,12 +45,36 @@ function fixture() {
       public_key: byte.toString(16).padStart(2, "0").repeat(32),
     })),
     initial_cells: [
-      { public_key: "a4".repeat(32), balance: 0 },
-      { public_key: "a5".repeat(32), balance: 0 },
+      { id: ISSUER_ID, public_key: "a4".repeat(32), balance: 0 },
+      { id: FEE_ID, public_key: "a5".repeat(32), balance: 0 },
     ],
+    issuer_well: ISSUER_ID,
+    fee_well: FEE_ID,
     genesis_moves: [],
     starbridge_cells: [],
   };
+}
+
+/** The funded shape: one issuer-move into the named player-grant cell. */
+function playerGrantGenesis(amount = 100000) {
+  const genesis = emptyEconomyGenesis();
+  genesis.initial_cells = [
+    { id: ISSUER_ID, public_key: "a4".repeat(32), balance: -amount },
+    { id: FEE_ID, public_key: "a5".repeat(32), balance: 0 },
+    { id: GRANT_ID, public_key: "a6".repeat(32), balance: amount },
+  ];
+  genesis.genesis_moves = [{ from: ISSUER_ID, to: GRANT_ID, amount }];
+  genesis.player_grant = GRANT_ID;
+  return genesis;
+}
+
+function fixture(genesis = emptyEconomyGenesis()) {
+  const scratch = mkdtempSync(join(tmpdir(), "poa-devnet-manifest-test-"));
+  const root = join(scratch, "poa");
+  const mainDataDir = join(scratch, "main");
+  mkdirSync(join(root, "bundle"), { recursive: true });
+  mkdirSync(join(root, "nodes"), { recursive: true });
+  mkdirSync(mainDataDir, { recursive: true });
   const encoded = `${JSON.stringify(genesis, null, 2)}\n`;
   writeFileSync(join(root, "bundle", "genesis.json"), encoded);
   genesis.validators.forEach((_, index) => {
@@ -62,6 +88,7 @@ function fixture() {
     scratch,
     root,
     mainDataDir,
+    genesis,
     options: {
       root,
       mainDataDir,
@@ -99,9 +126,11 @@ if (args[0] === "genesis") {
       public_key: (index + 1).toString(16).padStart(2, "0").repeat(32),
     })),
     initial_cells: [
-      { public_key: "${"a4".repeat(32)}", balance: 0 },
-      { public_key: "${"a5".repeat(32)}", balance: 0 },
+      { id: "${"c1".repeat(32)}", public_key: "${"a4".repeat(32)}", balance: 0 },
+      { id: "${"c2".repeat(32)}", public_key: "${"a5".repeat(32)}", balance: 0 },
     ],
+    issuer_well: "${"c1".repeat(32)}",
+    fee_well: "${"c2".repeat(32)}",
     genesis_moves: [],
     starbridge_cells: [],
   };
@@ -483,4 +512,131 @@ exit 99
   assert.match(command.stdout, /DREGG_ALLOW_UNVERIFIED_CONSENSUS=0/);
   assert.match(command.stdout, /join --follow-only --bootstrap hbox\.poa:9421/);
   assert.match(command.stdout, /--prove-turns/);
+});
+
+// ── THE PLAYER GRANT — the deliberate widening, and its exact edges. ─────────
+//
+// The gate now accepts TWO genesis economies and binds each to a manifest policy
+// in both directions. These tests are written against the edges rather than the
+// happy path, because a widening that only ever sees valid input is a widening
+// nobody can tell from a deletion.
+
+test("a funded genesis produces a manifest that DECLARES the issuance", () => {
+  const f = fixture(playerGrantGenesis(100000));
+  const manifest = writeManifestAndConfigs(f.options);
+  assert.equal(
+    manifest.policy.generic_genesis_value_issued,
+    true,
+    "the policy is derived from the descriptor: value is issued, so it must say so",
+  );
+  // Every other policy field is unchanged — the widening is one bit, not a relaxation.
+  assert.equal(manifest.policy.faucet_http, false);
+  assert.equal(manifest.policy.prove_turns, true);
+  assert.equal(manifest.policy.allow_unverified_consensus, false);
+  assert.equal(manifest.policy.auto_approve_joins, false);
+  assert.equal(verifyManifest(f.options).deployment_id, manifest.deployment_id);
+  assert.equal(
+    verifyPublicManifest(f.options).policy.generic_genesis_value_issued,
+    true,
+  );
+});
+
+test("an empty genesis still declares zero issuance", () => {
+  const f = fixture();
+  const manifest = writeManifestAndConfigs(f.options);
+  assert.equal(manifest.policy.generic_genesis_value_issued, false);
+});
+
+test("a policy that disagrees with the descriptor's economy is refused BOTH ways", () => {
+  // Funded descriptor, manifest hand-edited to claim zero issuance — the exact
+  // move this gate exists to refuse: value sneaked in under a policy denying it.
+  const funded = fixture(playerGrantGenesis(100000));
+  writeManifestAndConfigs(funded.options);
+  const path = join(funded.root, "poa-devnet.json");
+  const lying = JSON.parse(readFileSync(path, "utf8"));
+  lying.policy.generic_genesis_value_issued = false;
+  writeFileSync(path, `${JSON.stringify(lying, null, 2)}\n`);
+  assert.throws(() => verifyPublicManifest(funded.options), /disagrees with the descriptor/);
+
+  // And the mirror: an empty descriptor whose manifest claims issuance.
+  const empty = fixture();
+  writeManifestAndConfigs(empty.options);
+  const emptyPath = join(empty.root, "poa-devnet.json");
+  const boasting = JSON.parse(readFileSync(emptyPath, "utf8"));
+  boasting.policy.generic_genesis_value_issued = true;
+  writeFileSync(emptyPath, `${JSON.stringify(boasting, null, 2)}\n`);
+  assert.throws(() => verifyPublicManifest(empty.options), /disagrees with the descriptor/);
+});
+
+test("the widening does not admit a second funded cell, a second move, or free value", () => {
+  const cases = [
+    [
+      "an unnamed extra funded cell",
+      (g) => {
+        g.initial_cells[0].balance = -200000;
+        g.initial_cells.push({ id: "c4".repeat(32), public_key: "a7".repeat(32), balance: 100000 });
+        g.genesis_moves.push({ from: ISSUER_ID, to: "c4".repeat(32), amount: 100000 });
+      },
+      /exactly its issuer well, its fee well, and the named player-grant/,
+    ],
+    [
+      "a grant credited by no move",
+      (g) => {
+        g.genesis_moves = [];
+      },
+      /exactly one issuer-move/,
+    ],
+    [
+      "a move that does not close the column",
+      (g) => {
+        g.genesis_moves[0].amount = 1;
+      },
+      /whole declared balance/,
+    ],
+    [
+      "value minted without debiting the issuer well",
+      (g) => {
+        g.initial_cells[0].balance = 0;
+      },
+      /sums to 100000, not zero/,
+    ],
+    [
+      "a pre-funded fee well",
+      (g) => {
+        g.initial_cells[1].balance = 5;
+        g.initial_cells[0].balance -= 5;
+      },
+      /fee well must start empty/,
+    ],
+    [
+      "player_grant naming a well instead of its own cell",
+      (g) => {
+        g.player_grant = ISSUER_ID;
+      },
+      /its own cell, not one of the wells/,
+    ],
+    [
+      "a move to somewhere other than the grant",
+      (g) => {
+        g.genesis_moves[0].to = FEE_ID;
+      },
+      /issuer_well → player_grant/,
+    ],
+  ];
+  for (const [name, mutate, expected] of cases) {
+    const genesis = playerGrantGenesis(100000);
+    mutate(genesis);
+    assert.throws(() => fixture(genesis) && buildManifest(fixture(genesis).options), expected, name);
+  }
+});
+
+test("a funded genesis that omits player_grant is refused rather than read as empty", () => {
+  const genesis = playerGrantGenesis(100000);
+  delete genesis.player_grant;
+  const f = fixture(genesis);
+  assert.throws(
+    () => buildManifest(f.options),
+    /must contain only its issuer and fee wells/,
+    "an unnamed funded cell must not slip through the zero-issuance branch",
+  );
 });

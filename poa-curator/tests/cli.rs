@@ -584,7 +584,7 @@ fn write_bundle(root: &Path) -> (PathBuf, PathBuf) {
     let manifest = root.join("manifest.json");
     fs::write(&manifest, serde_json::to_vec(&json!({"format":"POAG1","schema_version":1,"source_digest":source,"authority":"Dregg2.Games.PathOfAngels","artifacts":pins})).unwrap()).unwrap();
     let deployment = root.join("poa-devnet.json");
-    fs::write(&deployment, serde_json::to_vec(&json!({"schema":"dregg-poa-devnet-manifest-v1","deployment_domain":"pathofangels.network/federation/v1","deployment_id":"77".repeat(32),"federation_id":"33".repeat(32),"committee_epoch":0,"threshold":1,"genesis_sha256":"88".repeat(32),"descriptor":"bundle/genesis.json","policy":{},"nodes":[]})).unwrap()).unwrap();
+    fs::write(&deployment, serde_json::to_vec(&json!({"schema":"dregg-poa-devnet-manifest-v1","deployment_domain":"pathofangels.network/federation/v1","deployment_id":"77".repeat(32),"federation_id":"33".repeat(32),"committee_epoch":0,"threshold":1,"genesis_sha256":"88".repeat(32),"descriptor":"bundle/genesis.json","policy":serde_json::from_str::<serde_json::Value>(poa_curator::POA_PRODUCTION_POLICY_ZERO_ISSUANCE).unwrap(),"nodes":[]})).unwrap()).unwrap();
     (manifest, deployment)
 }
 
