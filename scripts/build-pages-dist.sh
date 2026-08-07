@@ -309,9 +309,19 @@ fi
 # ── 3. THE CARD GALLERY: the deos-js cards (wasm/ runtime bindings), node-less ────
 echo "=== 3/6 build the card-world wasm (wasm/) + bake the gallery ==="
 if [ "$REUSE_WASM" = "0" ]; then
-  # A larger wasm stack gives the in-tab recursion verify (the light client's
-  # verify-a-whole-history path) headroom — scoped to this build, not the native bake.
-  RUSTFLAGS="-C link-arg=-zstack-size=33554432" wasm-pack build "$ROOT/wasm" --target web --out-dir pkg --release
+  # ⚑ BOTH FLAGS, FROM THE ONE DEFINITION. This line used to set the stack size ALONE, and
+  # that is the documented landmine, not a shorthand: cargo does NOT merge the RUSTFLAGS
+  # environment variable with `.cargo/config.toml` — env WINS OUTRIGHT — so setting the
+  # stack size here SILENTLY DELETED `--cfg getrandom_backend="wasm_js"`, which getrandom
+  # 0.3/0.4 require to compile for wasm32 at all. `.github/workflows/pages-wasm.yml` hit
+  # exactly this and fixed its own copy; this one, `.github/workflows/ci.yml` and
+  # `.github/workflows/publish-sdk-ts.yml` were left, so "there is nothing left to drift"
+  # was untrue when it was written. The pair now lives in scripts/wasm-build-flags.sh.
+  #   -C link-arg=-zstack-size=33554432 : 32 MiB linear-memory stack; the in-tab recursion
+  #   verify (the light client's verify-a-whole-history path) overflows the 1 MiB default.
+  # shellcheck source=scripts/wasm-build-flags.sh
+  . "$ROOT/scripts/wasm-build-flags.sh"
+  RUSTFLAGS="$DREGG_WASM_RUSTFLAGS" wasm-pack build "$ROOT/wasm" --target web --out-dir pkg --release
   ( cd "$ROOT/deos-view" && cargo run -q --no-default-features --features web --example web_render_card )
 fi
 # The light-client page verifies a REAL pre-folded whole-history aggregate in-tab. The

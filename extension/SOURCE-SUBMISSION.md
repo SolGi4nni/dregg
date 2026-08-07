@@ -65,7 +65,18 @@ crypto in `wasm/src/privacy.rs`). It is a standalone cargo workspace (its
 `Cargo.toml` declares an empty `[workspace]`), so it builds into `wasm/target/`.
 
 ```bash
-# (1) compile the crate to wasm (release)
+# (1) compile the crate to wasm (release).
+#     BOTH RUSTFLAGS, ALWAYS — they are one pair and they travel together:
+#       --cfg getrandom_backend="wasm_js"    getrandom 0.3/0.4 will not compile for
+#                                            wasm32 without a backend selection
+#       -C link-arg=-zstack-size=33554432    32 MiB of linear-memory stack; the
+#                                            recursion verifier overflows the 1 MiB default
+#     The repo keeps ONE definition of them, in `scripts/wasm-build-flags.sh`; the command
+#     below is that definition written out, and `scripts/wasm-build-flags.sh` printed will
+#     reproduce it exactly. Note that cargo does NOT merge the RUSTFLAGS environment
+#     variable with `.cargo/config.toml` — env wins outright — so passing only one of the
+#     two silently deletes the other.
+RUSTFLAGS='--cfg getrandom_backend="wasm_js" -C link-arg=-zstack-size=33554432' \
 cargo build \
   --manifest-path wasm/Cargo.toml \
   -p dregg-wasm \
@@ -96,10 +107,20 @@ wasm-opt -Oz extension/dregg_wasm_bg.wasm -o extension/dregg_wasm_bg.wasm
 # 27.16 MB -> 17.57 MB
 ```
 
-The committed `extension/dregg_wasm.js` and `extension/dregg_wasm_bg.wasm` are
-the outputs of exactly these steps. The glue is standard wasm-bindgen output and
-is human-readable; the `.wasm` is the compiled, size-optimized form of the
-`wasm/` Rust source.
+`./extension/build.sh wasm` runs exactly these four steps and nothing else, and
+then (5) writes `extension/dregg-wasm-provenance.json` — the sha256 of the glue,
+the sha256 of the blob, and a fingerprint of the whole wasm32 source closure they
+were built from — and re-checks all three with
+`scripts/check-wasm-freshness.sh`. `./extension/build.sh package` puts that record
+INSIDE the .zip/.xpi and refuses to leave a package the check calls stale, so the
+correspondence between the shipped binary and this repository is machine-checkable
+from the package alone.
+
+Of the two outputs, only `extension/dregg_wasm.js` is committed; the `.wasm` blob
+is a build product and is not in the repository (the repo-root `.gitignore`
+excludes `*.wasm`). Both are produced by the steps above. The glue is standard
+wasm-bindgen output and is human-readable; the `.wasm` is the compiled,
+size-optimized form of the `wasm/` Rust source.
 
 > Note on `wasm-opt`: `-Oz` is a size optimization, not an obfuscation. The
 > unoptimized blob built by step (1)+(2) is functionally identical; a reviewer

@@ -11,6 +11,33 @@
 #   - cargo, wasm-bindgen-cli (cargo install wasm-bindgen-cli)
 #   - zip (for .zip/.xpi packaging)
 #   - web-ext (optional, for Mozilla extension linting)
+#
+# ⚑ THIS BUILDS THE SECOND OF THIS REPO'S TWO BROWSER BUNDLES — AND IT IS NOT A COPY
+# ----------------------------------------------------------------------------------
+# `wasm/pkg/dregg_wasm.js` (built by `scripts/build-descent-wasm.sh`, `wasm-pack --target
+# web`) is an ES MODULE: it opens `import * as import1 from "./snippets/…"`. The bundle
+# HERE is `wasm-bindgen --target no-modules`: an IIFE that defines a global
+# `wasm_bindgen`, because `background.ts` loads it with `importScripts` inside an MV3
+# service worker, where an ES module and a `require()` both fail outright. So the two
+# glues are DIFFERENT ARTIFACTS from the same crate, and copying one over the other
+# breaks at load rather than at build. Nothing may "sync" them.
+#
+# What they must NOT differ in is the `RUSTFLAGS` pair. This script used to run a bare
+# `cargo build` with none, so the shipped blob got `getrandom_backend` from
+# `.cargo/config.toml` (and only while the CWD sat inside the repo) and NEVER the 32 MiB
+# stack. Both now come from `scripts/wasm-build-flags.sh`, the one definition — which also
+# means this build and the `wasm-pack` one share compiled artifacts in `wasm/target`
+# instead of each forcing a full recompile of the other's.
+#
+# ⚑ AND THE ARTIFACT IS GATED NOW. Until 2026-08-07 nothing refreshed this bundle in the
+# pipeline and nothing checked it: `scripts/build-web-artifacts.sh` ran `./build.sh
+# package` only, so it packaged whatever glue happened to be committed, and
+# `check-wasm-freshness.sh` was pointed at `wasm/pkg` — one artifact away. The extension
+# shipped a glue with ZERO `build_poa_signal_claim_turn` while `wasm/src/lib.rs` exported
+# one, and `background.ts` refused every judged PoA Signal claim on live beta.
+#
+# `build_wasm` now stamps `dregg-wasm-provenance.json`, the packages CARRY it, and
+# `package` REFUSES to leave a package the gate calls stale.
 
 set -euo pipefail
 
@@ -33,8 +60,17 @@ FIREFOX_PACKAGE_NAME="dregg-cipherclerk-firefox.xpi"
 # ---------------------------------------------------------------------------
 
 build_wasm() {
+  # THE FLAG PAIR, from the one definition. `.cargo/config.toml` supplies only the
+  # getrandom backend, and only when cargo's CWD walk happens to reach the repo root;
+  # exporting RUSTFLAGS here makes both flags unconditional AND makes this build's cargo
+  # fingerprint match `scripts/build-descent-wasm.sh`'s, so the two bundles share one
+  # compile instead of invalidating each other.
+  # shellcheck source=../scripts/wasm-build-flags.sh
+  . "$PROJECT_ROOT/scripts/wasm-build-flags.sh"
+
   echo "[1/4] Building dregg-wasm (release, wasm32-unknown-unknown)..."
-  cargo build \
+  echo "      RUSTFLAGS: $DREGG_WASM_RUSTFLAGS"
+  RUSTFLAGS="$DREGG_WASM_RUSTFLAGS" cargo build \
     --manifest-path "$WASM_CRATE/Cargo.toml" \
     -p dregg-wasm \
     --target wasm32-unknown-unknown \
@@ -79,6 +115,17 @@ build_wasm() {
     ls -la "$SCRIPT_DIR"/dregg_wasm* 2>/dev/null || true
     exit 1
   fi
+
+  # ── STAMP WHAT THIS BUNDLE WAS BUILT FROM ───────────────────────────────────
+  # AFTER the last pass that rewrites bytes (wasm-opt above), or the record describes a
+  # file that no longer exists. Without this the bundle is UNGRADEABLE, which is what it
+  # was for as long as it has existed.
+  echo "  Recording bundle provenance..."
+  bash "$PROJECT_ROOT/scripts/wasm-bundle-provenance.sh" "$SCRIPT_DIR" no-modules
+
+  # And PROVE it here, in the build that made it — a gate that only runs somewhere else is
+  # a gate the build can walk past.
+  bash "$PROJECT_ROOT/scripts/check-wasm-freshness.sh" "$SCRIPT_DIR" --kind no-modules
 }
 
 # ---------------------------------------------------------------------------
@@ -88,7 +135,16 @@ build_wasm() {
 # unoptimized blob. `-Oz` optimizes aggressively for size — important for an
 # MV3 extension whose service worker is killed/woken frequently (every wake
 # re-instantiates the wasm) and for store size limits. Installs binaryen via
-# brew if it is missing and brew is available. Idempotent.
+# brew if it is missing and brew is available.
+#
+# ⚑ CALLED FROM `build_wasm` ONLY, AND THAT IS LOAD-BEARING. `package_extension` used to
+# call it too, "idempotent if already -Oz'd" — and it is not idempotent in the way that
+# mattered: it `mv`s a fresh file over `dregg_wasm_bg.wasm` on every run, so the blob's
+# MTIME ADVANCED on every packaging while its CONTENT stayed as old as the last real wasm
+# build. That is how `extension/dregg_wasm_bg.wasm` read "modified today" on 2026-08-07
+# while carrying an Aug-1 engine, and it is why the freshness gate hashes instead of
+# stat()ing. Re-running it after the provenance stamp would also invalidate the record it
+# just wrote.
 # ---------------------------------------------------------------------------
 
 optimize_wasm() {
@@ -189,8 +245,9 @@ package_extension() {
     (cd "$SCRIPT_DIR" && npm run build)
   fi
 
-  # Ensure the shipped wasm is size-optimized (idempotent if already -Oz'd).
-  optimize_wasm
+  # NOTHING HERE REWRITES THE BUNDLE. `optimize_wasm` used to run at this point and its
+  # only observable effect on an already-optimized blob was to refresh the mtime — see its
+  # header. Packaging reads the artifact; it does not produce it.
 
   mkdir -p "$DIST_DIR"
 
@@ -225,13 +282,24 @@ package_extension() {
     icons/icon-128.png
   )
 
-  # Add WASM files if they exist.
-  if [ -f "$SCRIPT_DIR/dregg_wasm.js" ]; then
-    BASE_FILES+=(dregg_wasm.js)
-  fi
-  if [ -f "$SCRIPT_DIR/dregg_wasm_bg.wasm" ]; then
-    BASE_FILES+=(dregg_wasm_bg.wasm)
-  fi
+  # THE WASM BUNDLE — glue, blob, AND the record that describes them.
+  #
+  # The provenance file ships INSIDE the package on purpose: the artifact a store receives
+  # and a user installs is the .zip, not this directory, and an artifact that cannot
+  # describe itself cannot be graded after it leaves. `scripts/check-wasm-freshness.sh`
+  # takes the .zip/.xpi directly and reads these three members out of it.
+  #
+  # NOT CONDITIONAL ANY MORE. The two `if [ -f ]` guards that stood here meant a package
+  # built with no engine at all was a SUCCESSFUL build producing a silently crippled
+  # extension. A missing bundle is a build failure.
+  for f in dregg_wasm.js dregg_wasm_bg.wasm dregg-wasm-provenance.json; do
+    if [ ! -f "$SCRIPT_DIR/$f" ]; then
+      echo "ERROR: $f is missing — this package would ship without a working crypto core."
+      echo "       Build it first:  ./build.sh wasm"
+      exit 1
+    fi
+    BASE_FILES+=("$f")
+  done
 
   # Build the file list (only include files that actually exist).
   local EXISTING_FILES=()
@@ -273,6 +341,27 @@ package_extension() {
   local XPI_SIZE
   XPI_SIZE=$(wc -c < "$DIST_DIR/$XPI_NAME" | tr -d ' ')
   echo "  Firefox package: $DIST_DIR/$XPI_NAME ($XPI_SIZE bytes)"
+
+  # ── GRADE THE THING THAT ACTUALLY SHIPS ─────────────────────────────────────
+  # Not the source, not this directory: the archive. On 2026-08-07 this directory and the
+  # archive were both a week stale and every instrument in the repo was pointed at
+  # `wasm/pkg`, so nothing said a word while beta refused every judged claim.
+  #
+  # `DREGG_WASM_SKIP_VERIFY=1` skips it, the same named escape `build-descent-wasm.sh`
+  # offers, and it says so out loud. CI and `scripts/local-gates.sh` never set it.
+  if [ "${DREGG_WASM_SKIP_VERIFY:-0}" = "1" ]; then
+    echo ""
+    echo "  !! Skipping the package freshness gate (DREGG_WASM_SKIP_VERIFY=1)."
+    echo "  !! These packages are UNVERIFIED: nothing has checked that their engine matches"
+    echo "  !! this tree. Do not ship them."
+  else
+    echo ""
+    echo "[5/5] Grading the packaged bundle..."
+    bash "$PROJECT_ROOT/scripts/check-wasm-freshness.sh" \
+      "$DIST_DIR/$CHROME_PACKAGE_NAME" --kind no-modules
+    bash "$PROJECT_ROOT/scripts/check-wasm-freshness.sh" \
+      "$DIST_DIR/$FIREFOX_PACKAGE_NAME" --kind no-modules
+  fi
 
   echo ""
   echo "Done. Packages in: $DIST_DIR/"

@@ -2,13 +2,22 @@
 # BUILD THE BROWSER BUNDLE — `wasm/pkg`, the artifact `/descent/play` serves when a player
 # opts into running the game in their own tab.
 #
-# THE ONE PLACE THE BUNDLE IS BUILT
-# ---------------------------------
+# THE ONE PLACE THE `wasm/pkg` BUNDLE IS BUILT
+# --------------------------------------------
 # There were three, and they disagreed. `scripts/build-web-artifacts.sh` built it with the
 # correct flag pair; `deploy/games/deploy-hbox.sh` built it with only the stack-size flag;
 # `.github/workflows/*` did their own third thing. That divergence is not cosmetic — see
 # THE FLAG PAIR below — and a bundle is not a thing you can eyeball for correctness, so
-# every path now calls THIS script and there is nothing left to drift.
+# every path that builds `wasm/pkg` now calls THIS script.
+#
+# ⚑ AND THERE WAS A FOURTH, WHICH THIS SCRIPT NEVER COVERED (found 2026-08-07). The repo
+# ships TWO browser bundles. `extension/build.sh` builds the other one — the MV3 service
+# worker's engine, which needs `wasm-bindgen --target no-modules` because it is loaded by
+# `importScripts` and cannot be an ES module — and it ran a BARE `cargo build` with no
+# `RUSTFLAGS` at all, i.e. with the flag pair separated in the second of the two possible
+# ways. A script cannot be "the one build" for a bundle it does not build, so the flags
+# moved to `scripts/wasm-build-flags.sh`, which both builds read. Same flags, two bindgen
+# targets, one definition.
 #
 # THE ARTIFACT IS NOT IN THE REPOSITORY. `wasm/pkg/.gitignore` is a single `*`; a fresh
 # clone has no bundle at all, and that is deliberate (it is ~54 MB). So the bundle is a
@@ -42,13 +51,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="$ROOT/wasm/pkg"
 
-# BOTH FLAGS, ALWAYS. See the header — separating them is the documented landmine.
-WASM_RUSTFLAGS='--cfg getrandom_backend="wasm_js" -C link-arg=-zstack-size=33554432'
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
-  else shasum -a 256 "$1" | awk '{print $1}'; fi
-}
+# BOTH FLAGS, ALWAYS, and from the ONE definition both wasm32 builds read. See the header
+# — separating them is the documented landmine, and a second literal here would be the
+# fifth copy.
+# shellcheck source=scripts/wasm-build-flags.sh
+. "$ROOT/scripts/wasm-build-flags.sh"
+WASM_RUSTFLAGS="$DREGG_WASM_RUSTFLAGS"
 
 die() { echo "build-descent-wasm: $*" >&2; exit 1; }
 
@@ -121,30 +129,14 @@ fi
 # exported was silently refused. `scripts/check-wasm-freshness.sh` reads this file and goes
 # RED on a mismatch; a bundle without it is REFUSED rather than assumed fresh.
 echo "=== Recording wasm provenance ==="
-PROV_OUT="$("$ROOT/scripts/wasm-source-fingerprint.sh" --verbose)"
-PROV_COUNT="$(printf '%s\n' "$PROV_OUT" | head -1 | awk '{print $2}')"
-PROV_SRC="$(printf '%s\n' "$PROV_OUT" | tail -1)"
-cat >"$PKG/dregg-wasm-provenance.json" <<PROVJSON
-{
-  "schema": "dregg-wasm-provenance-v1",
-  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "git_head": "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)",
-  "git_dirty": $(if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then echo true; else echo false; fi),
-  "source_sha256": "$PROV_SRC",
-  "source_file_count": ${PROV_COUNT:-0},
-  "wasm_bytes": $(wc -c <"$WASM" | tr -d ' '),
-  "wasm_sha256": "$(sha256_file "$WASM")",
-  "glue_sha256": "$(sha256_file "$PKG/dregg_wasm.js")"
-}
-PROVJSON
-echo "    source fingerprint: $PROV_SRC (${PROV_COUNT:-?} files)"
+bash "$ROOT/scripts/wasm-bundle-provenance.sh" "$PKG" web
 
 # ── AND PROVE IT, HERE, BEFORE ANYONE DEPLOYS IT ──────────────────────────────
 # A gate that only runs somewhere else is a gate the build can walk past.
 if [ "${DREGG_WASM_SKIP_VERIFY:-0}" = "1" ]; then
   echo "=== Skipping the freshness gate (DREGG_WASM_SKIP_VERIFY=1) ==="
 else
-  bash "$ROOT/scripts/check-wasm-freshness.sh" "$PKG"
+  bash "$ROOT/scripts/check-wasm-freshness.sh" "$PKG" --kind web
 fi
 
 echo

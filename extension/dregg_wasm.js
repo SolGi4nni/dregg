@@ -2454,6 +2454,39 @@ let wasm_bindgen = (function(exports) {
     exports.build_facet_mask = build_facet_mask;
 
     /**
+     * Build the canonical *unsigned* PoA Signal claim carrier from public state.
+     *
+     * This deliberately accepts no secret, federation, target cell, method,
+     * effects, memo, reward, or Canon fields. The extension background supplies
+     * the active public identity and node-observed nonce/receipt head; the SDK
+     * derives the agent and fixes the complete one-action/one-event shape. The
+     * resulting JSON `Turn` is consumed by [`sign_turn_v3`] under the separately
+     * pinned PoA federation domain.
+     *
+     * ⚑ IT CARRIES THE TRANSCRIPT (2026-08-07). `transcript` is every round the
+     * player spent against the judged session, in order, ending in the solving guess
+     * — the node refuses a claim whose rounds it did not itself classify, so a
+     * browser that posts only the winning code buys a rejected turn. Take the list
+     * straight from the session document's `settlement.transcript`.
+     *
+     * Input JSON:
+     * `{ schema, signer_public_key_hex, nonce, previous_receipt_hash_hex?,
+     *    mission_id, transcript: [[low, mid, high], …] }`.
+     * @param {string} spec_json
+     * @returns {any}
+     */
+    function build_poa_signal_claim_turn(spec_json) {
+        const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.build_poa_signal_claim_turn(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.build_poa_signal_claim_turn = build_poa_signal_claim_turn;
+
+    /**
      * Build and sign a canonical turn from a JSON spec, using `AgentCipherclerk` as
      * the canonical signing path.
      *
@@ -4414,6 +4447,23 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.grant_reach_capability = grant_reach_capability;
+
+    /**
+     * Re-read a signed PoA carrier through the SDK's exact shape gate. This is the
+     * extension's post-signing substitution check before it paints consent chrome.
+     * @param {Uint8Array} turn_bytes_json
+     * @returns {any}
+     */
+    function inspect_poa_signal_claim_turn(turn_bytes_json) {
+        const ptr0 = passArray8ToWasm0(turn_bytes_json, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.inspect_poa_signal_claim_turn(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.inspect_poa_signal_claim_turn = inspect_poa_signal_claim_turn;
 
     /**
      * Install a canonical starbridge-app cell-program + initial state on a cell.

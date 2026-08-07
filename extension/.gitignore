@@ -3,8 +3,17 @@ dist/
 dregg-cipherclerk-chrome.zip
 dregg-cipherclerk-firefox.xpi
 
-# wasm-bindgen scratch (the committed dregg_wasm.js + dregg_wasm_bg.wasm are kept).
+# wasm-bindgen scratch. `dregg_wasm.js` is committed; `dregg_wasm_bg.wasm` is NOT (the
+# repo-root .gitignore's `*.wasm` catches it), so the tracked half of this bundle has
+# never been the whole bundle — building it locally is required either way.
 snippets/
+
+# The bundle's provenance record, written by `./build.sh wasm` via
+# `scripts/wasm-bundle-provenance.sh` and read by `scripts/check-wasm-freshness.sh`. It
+# describes a `dregg_wasm_bg.wasm` that is not in the repository, so committing it would
+# be committing a hash of a file a clone does not have. A clone with no record is REFUSED
+# by the gate — which is the correct answer for a bundle nobody has built yet.
+dregg-wasm-provenance.json
 
 # Playwright failure artifacts (the tracked .last-run.json is kept).
 tests/test-results/*/

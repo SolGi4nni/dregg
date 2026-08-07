@@ -194,8 +194,39 @@ npm test                 # node --test: explain parity, SSE parser, golden deriv
 ```
 
 `npm run build` is required after any change under `src/`; the committed `dist/`
-must match a fresh build. `./build.sh wasm` is only needed when the Rust `wasm/`
-crate changes.
+must match a fresh build. `./build.sh wasm` is needed whenever anything in the
+wasm32 crate closure changes — which is `wasm/` **and every local crate it
+depends on**, plus the AIR descriptor data those crates `include_str!`.
+
+**The bundle is a build output, and it is gated.** `./build.sh wasm` writes
+`dregg-wasm-provenance.json` beside the glue and blob: their sha256s plus a
+fingerprint of the whole wasm32 source closure they were built from
+(`scripts/wasm-source-fingerprint.sh`). `./build.sh package` puts that record
+inside the `.zip`/`.xpi` and then **refuses to leave a package the freshness
+gate calls stale**. Check any artifact by hand:
+
+```sh
+bash ../scripts/check-wasm-freshness.sh extension --kind no-modules
+bash ../scripts/check-wasm-freshness.sh extension/dist/dregg-cipherclerk-chrome.zip --kind no-modules
+bash ../scripts/check-wasm-freshness.sh --self-test    # prove the gate can go red
+```
+
+⚑ Why: none of this existed before 2026-08-07, and the bundle rotted for a week
+against live beta. `wasm/src/lib.rs` exported `build_poa_signal_claim_turn`; the
+shipped glue had zero occurrences of it; `background.ts` refused every judged
+PoA Signal claim. `scripts/build-web-artifacts.sh` ran `./build.sh package`
+without `./build.sh wasm`, so the pipeline packaged whatever glue was in the
+tree — and `scripts/check-wasm-freshness.sh` was pointed at `wasm/pkg`, the
+*other* browser bundle. Packaging also used to re-run `wasm-opt` over the blob,
+which refreshed its **mtime** on every run while its content stayed a week old.
+The gate hashes; it does not `stat`.
+
+Do not "sync" this bundle from `wasm/pkg`. That one is `wasm-pack --target web`
+— an ES module. This one is `--target no-modules`, an IIFE defining a global
+`wasm_bindgen`, because the MV3 service worker loads it with `importScripts` and
+cannot import a module. They are two artifacts from one crate. What they *do*
+share is the `RUSTFLAGS` pair, which has one definition in
+`scripts/wasm-build-flags.sh`.
 
 ## Store listing
 
