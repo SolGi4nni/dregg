@@ -711,8 +711,15 @@ pub fn fips204_verify_core_available() -> bool {
 ///
 /// Wire grammar the export reads:
 ///   * in:  `"thi μ c̃ z h"` (five decimal ints — the deployed-parameter public high part, message,
-///     challenge digest, response, hint).
-///   * out: `"1"` (accept) · `"0"` (reject; also the fail-closed answer for a malformed wire).
+///     challenge digest, response, hint). STRICT: `mapM`, not `filterMap`, so a token that is not a
+///     decimal integer is refused rather than silently dropped.
+///   * out: `"1"` (accept) · `"0"` (reject) · `"2 <fault>"` (⚑ the wire could not be READ, so nothing
+///     was verified — `0` scalar arity, `1` scalar token).
+///
+/// ⚑ 2026-08-07: `"0"` used to be BOTH "this signature does not verify" AND the fail-closed answer for
+/// a malformed wire, so no reader could tell a forgery from a grammar disagreement and every negative
+/// test on this wire was satisfied by "nothing was verified". The separation is proved both ways in
+/// `Dregg2.Crypto.Fips204Verify` (`verifyWire_eq_reject_iff` / `verifyWire_malformed_iff`).
 ///
 /// `dregg-pq` routes its ML-DSA verify through this entry when [`fips204_verify_core_available`], so the
 /// verify runs the verified Lean core rather than a trusted primitive. Returns `Err` if the archive lacks
@@ -740,7 +747,15 @@ pub fn fips204_verify_real_core_available() -> bool {
 /// Wire grammar the export reads:
 ///   * in:  `"hex(pk) hex(msg) hex(ctx) hex(sig)"` (four space-separated lowercase-hex fields; an empty
 ///     field, e.g. `ctx = ε`, is the empty token between two spaces).
-///   * out: `"1"` (accept) · `"0"` (reject; also the fail-closed answer for a malformed wire).
+///   * out: `"1"` (accept) · `"0"` (reject) · `"2 <fault>"` (⚑ the wire could not be READ, so nothing
+///     was verified — `2` byte-field arity, `3` byte-field hex).
+///
+/// ⚑ 2026-08-07: `"0"` used to be BOTH the cryptographic reject AND the fail-closed malformed answer.
+/// `dregg_pq::ml_dsa_verify`'s `reply == "1"` therefore turned a `real_verify_wire` / `parseByteE`
+/// disagreement into "this signature is forged" on ~10 gating surfaces. It now decodes to
+/// `MlDsaVerifyRefusal::VerifiedCoreWireMalformed`, which still REJECTS (fail-closed) but names the
+/// stage instead of the signer. Proved both ways by `Fips204Verify.verifyRealWire_eq_reject_iff` /
+/// `verifyRealWire_malformed_iff`.
 ///
 /// `dregg-pq::ml_dsa_verify` routes its verify through this entry (installed via
 /// `dregg_pq::install_lean_verify_core_real`), so the deployed verify runs the verified Lean core over the
@@ -767,8 +782,14 @@ pub fn fips204_sign_core_available() -> bool {
 /// Wire grammar the export reads:
 ///   * in:  `"s1 s2 t0 μ y"` (five decimal ints — the deployed-parameter secret `(s₁,s₂,t₀)`, message,
 ///     and the sampled randomness/mask `y`).
-///   * out: `"c̃ z h"` (an accepted signature — three decimal ints) · `"REJECT"` (a rejected sample or a
-///     malformed wire; the caller resamples `y`, the Dilithium rejection loop).
+///   * out: `"1 c̃ z h"` (an accepted signature — the tag, then three decimal ints) · `"0"` (a REJECTED
+///     sample; the caller resamples `y`, the Dilithium rejection loop) · `"2 <fault>"` (⚑ the wire
+///     could not be READ, so nothing was signed — the caller must STOP, not resample).
+///
+/// ⚑ 2026-08-07 RETAG: the reply alphabet was `"c̃ z h"` / `"REJECT"`, where `"REJECT"` meant BOTH the
+/// honest rejection-sampling abort AND a wire the Lean side could not read — so a caller could resample
+/// forever against a wire that would never parse. `dregg_pq::ml_dsa_sign_core` decodes the new alphabet;
+/// its pre-retag form treated every non-`"REJECT"` string as signature bytes.
 ///
 /// `dregg-pq` routes its ML-DSA sign path through this entry when [`fips204_sign_core_available`], so the
 /// signing runs the verified Lean core rather than a trusted primitive. Returns `Err` if the archive
@@ -996,8 +1017,16 @@ pub fn grain_r3_verify_core_available() -> bool {
 ///     presented root and `expectedVk` the caller's out-of-band anchor, each as a `RecursionVk`'s 32
 ///     bytes in eight big-endian `u32` lanes; the two heads are the FULL 8-felt (~124-bit) state
 ///     anchors (`SEG_ANCHOR_WIDTH` lanes), not a lane-0 projection.
-///   * out: `"1"` (accept) · `"0"` (reject; also the fail-closed answer for a malformed or wrong-arity
-///     wire — the parse is strict, so a non-integer token cannot be dropped and shift the lanes).
+///   * out: `"1"` (accept) · `"0"` (reject) · `"2 <fault>"` (⚑ the wire could not be READ, so no R3
+///     decision was made about anybody's history — `0` a token that is not a decimal integer, `1` a
+///     token COUNT that is not 33, which is where a stale caller's pre-repair three-int wire lands).
+///
+/// ⚑ 2026-08-07: `"0"` used to be BOTH the whole-history REFUSAL and the fail-closed answer for a wire
+/// the Lean parser could not read, and `grain_verify::r3_verify` turned both into
+/// `R3Error::Rejected { aggregate_verified, aggregate_head, presented_vk, … }` — a diagnosis about the
+/// renter's chain for a fault in how the binary was built. It now decodes to `R3Error::WireMalformed`.
+/// The separation is proved both ways in `Dregg2.Grain.R3Verify` (`r3VerifyWire_eq_reject_iff` /
+/// `r3VerifyWire_malformed_iff`).
 ///
 /// `grain-verify::r3_verify` folds the finalized-turn chain, reads the verified-status from
 /// `verify_whole_chain_proof_bytes`, and routes the accept decision through THIS entry — the DECISION is

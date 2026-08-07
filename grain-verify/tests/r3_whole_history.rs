@@ -14,6 +14,15 @@
 //!         returns `"0"` (the anti-ghost head tooth) → `R3Error::Rejected`.
 //!   (iii) FABRICATION — a chain whose last turn's post-state PI is forged → the fold
 //!         does not verify → verified-status false → the Lean verifier rejects.
+//!
+//! ⚑ WHY THE `R3Error::Rejected` MATCHES BELOW MEAN SOMETHING NOW. Until 2026-08-07 the
+//! Lean side rendered a wire it could not PARSE as `"0"` too, and `r3_verify` decoded
+//! everything that was not `"1"` into `Rejected` — so all three negative poles here were
+//! also satisfied by "`r3_wire` and `parseWireE` disagree and nothing was decided", with
+//! the `aggregate_verified` / `aggregate_head` / `presented_vk` fields they assert on
+//! describing a decision that was never made. An unreadable wire is now
+//! `R3Error::WireMalformed`, a different variant, which every `other => panic!` arm below
+//! catches. No edit was needed here; the three matches simply became load-bearing.
 
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;

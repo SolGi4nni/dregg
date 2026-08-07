@@ -43,18 +43,92 @@ pub fn install_lean_verify_core(core: LeanVerifyCore) -> bool {
     LEAN_VERIFY_CORE.set(core).is_ok()
 }
 
+/// The `&'static str` behind each Lean `Fips204Verify.FWireFault.code` — the `<fault>` token of the
+/// `"2 <fault>"` malformed code shared by `dregg_fips204_verify`, `dregg_fips204_verify_real` and
+/// `dregg_fips204_sign`.
+///
+/// These name WHICH HALF OF THE GRAMMAR disagreed. "your five-int statement wire is not five tokens"
+/// and "your byte wire's third field is not hex" are bugs in different files, and a refusal that says
+/// only "unreadable" sends the reader looking in both.
+///
+/// `None` for a code this table does not carry — a NAMING gap, not a decoding one. Every call site
+/// substitutes [`ML_DSA_WIRE_FAULT_UNNAMED`] and still REFUSES: the `"2"` tag alone already says the
+/// Lean side could not read the wire, and losing the stage must not lose that.
+fn ml_dsa_wire_fault_name(code: &str) -> Option<&'static str> {
+    match code {
+        "0" => Some(
+            "scalar arity — the five-int statement wire does not carry exactly five whitespace-\
+             separated tokens",
+        ),
+        "1" => Some(
+            "scalar token — a token on the five-int statement wire is not a decimal integer (the \
+             Lean parse is strict `mapM`, so a bad token is never dropped and the lanes never shift)",
+        ),
+        "2" => Some(
+            "byte-field arity — the real wire does not carry exactly four space-separated hex \
+             fields (an EMPTY field, e.g. ctx = ε, is legal and is not this)",
+        ),
+        "3" => Some(
+            "byte-field hex — a field of the real wire is odd-length or carries a non-hex character",
+        ),
+        _ => None,
+    }
+}
+
+/// The stage carried when the Lean side named a fault THIS binary has no name for — a newer
+/// `FWireFault` against an older decoder. It says so, because "unknown stage" and "no stage" are
+/// different facts about the two halves and an operator needs to know which.
+const ML_DSA_WIRE_FAULT_UNNAMED: &str = "unnamed stage — the linked Lean ML-DSA core reported an FWireFault code this binary's decoder \
+     has no name for, so the two halves are of different vintages";
+
+/// What the Lean-verified ML-DSA verify cores can answer. ⚑ THREE ANSWERS, NOT TWO: until
+/// 2026-08-07 a wire the Lean side could not READ came back as `"0"`, the same string a forged
+/// signature comes back as, so this type had no third variant to have — and every negative test on
+/// these wires was satisfied by "nothing was verified".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlDsaCoreReply {
+    /// The verified core RAN and accepted.
+    Accept,
+    /// The verified core RAN and rejected — a forgery, a tamper, a wrong message.
+    Reject,
+    /// The verified core could not READ the wire this binary sent, so it never ran. Proved
+    /// reachable only from a parse failure by `Fips204Verify.verifyWire_malformed_iff` /
+    /// `verifyRealWire_malformed_iff`. This is NOT a verdict about anybody's signature.
+    WireMalformed {
+        /// The parse STAGE the Lean side stopped at ([`ml_dsa_wire_fault_name`]).
+        stage: &'static str,
+    },
+}
+
+/// Decode one reply from a Lean ML-DSA verify core. An answer this decoder does not recognise at all
+/// is [`MlDsaCoreReply::WireMalformed`] with the unnamed stage rather than a `Reject`: "I did not
+/// understand the verified core" must never be laundered into "your signature is invalid".
+fn decode_ml_dsa_reply(out: &str) -> MlDsaCoreReply {
+    let mut toks = out.split_whitespace();
+    match toks.next() {
+        Some("1") => MlDsaCoreReply::Accept,
+        Some("0") => MlDsaCoreReply::Reject,
+        _ => MlDsaCoreReply::WireMalformed {
+            stage: toks
+                .next()
+                .and_then(ml_dsa_wire_fault_name)
+                .unwrap_or(ML_DSA_WIRE_FAULT_UNNAMED),
+        },
+    }
+}
+
 /// Route a deployed-parameter ML-DSA verify statement `"thi μ c̃ z h"` (the wire the extracted Lean
-/// `verifyFFI` reads) through the installed Lean-verified verify core. `Some(true)` = accept,
-/// `Some(false)` = reject (a forged/tampered statement), `None` = no core installed (caller falls back
-/// to the `fips204` primitive). This is the routing seam that sends the security-critical verify
+/// `verifyFFI` reads) through the installed Lean-verified verify core. `None` = no core installed
+/// (caller falls back to the `fips204` primitive); otherwise one of the three
+/// [`MlDsaCoreReply`] answers. This is the routing seam that sends the security-critical verify
 /// through the `Fips204Correct`-discharging Lean object; the full-byte-codec path over real 1952/3309-
 /// byte keys/signatures is the named engineering residual (`Fips204Verify.lean`).
-pub fn ml_dsa_verify_core(wire: &str) -> Option<bool> {
+///
+/// ⚑ The return type used to be `Option<bool>` with `_ => Some(false)`, so a wire the Lean parser
+/// could not read arrived at every caller as "this statement does not verify".
+pub fn ml_dsa_verify_core(wire: &str) -> Option<MlDsaCoreReply> {
     let core = LEAN_VERIFY_CORE.get()?;
-    match core(wire)?.as_str() {
-        "1" => Some(true),
-        _ => Some(false),
-    }
+    Some(decode_ml_dsa_reply(core(wire)?.as_str()))
 }
 
 /// A pluggable, Lean-VERIFIED **REAL, FULL-BYTE** ML-DSA verify backend (BRICK 8), installed by an
@@ -201,27 +275,56 @@ pub fn lean_sign_core_installed() -> bool {
     LEAN_SIGN_CORE.get().is_some()
 }
 
+/// What the Lean-verified ML-DSA sign core can answer. ⚑ THREE ANSWERS, NOT TWO: until 2026-08-07
+/// the sign wire answered `"REJECT"` both for the honest Fiat–Shamir-with-aborts resample AND for a
+/// wire it could not read, so a caller could resample forever against a wire that would never parse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MlDsaSignCoreReply {
+    /// An ACCEPTED iteration: the signature wire `"c̃ z h"` (three ints), with the Lean reply's
+    /// leading `"1 "` tag already stripped — exactly what [`ml_dsa_verify_core`] verifies after the
+    /// `"thi μ "` prefix.
+    Signed(String),
+    /// The sample was REJECTED by the norm/hint gates; resample `y` and retry (the Dilithium
+    /// rejection loop) — an honest reject, not a fake accept.
+    Resampled,
+    /// The verified core could not READ the wire this binary sent, so it never signed anything.
+    /// A caller must STOP, not resample.
+    WireMalformed {
+        /// The parse STAGE the Lean side stopped at ([`ml_dsa_wire_fault_name`]).
+        stage: &'static str,
+    },
+}
+
 /// Route a deployed-parameter ML-DSA sign request `"s₁ s₂ t₀ μ y"` (the wire the extracted Lean
 /// `signFFI` reads — secret `(s₁,s₂,t₀)`, message `μ`, and the sampled randomness/mask `y`) through the
-/// installed Lean-verified sign core. The outer `Option` is the install state; the inner `Option` is the
-/// rejection-sampling verdict:
+/// installed Lean-verified sign core. `None` = no core installed (caller falls back to the `fips204`
+/// primitive); otherwise one of the three [`MlDsaSignCoreReply`] answers.
 ///
-///   * `None`                 — no core installed (caller falls back to the `fips204` primitive).
-///   * `Some(None)`           — the sample was REJECTED (norm/hint gate failed); the caller resamples
-///                              `y` and retries (the Dilithium rejection loop) — an honest reject, not a
-///                              fake accept.
-///   * `Some(Some(sig_wire))` — an ACCEPTED signature `"c̃ z h"` (three ints), exactly what
-///                              [`ml_dsa_verify_core`] verifies after the `"thi μ "` prefix.
+/// ⚑ The reply alphabet changed with the 2026-08-07 wire flag day: an accepted iteration is now
+/// `"1 c̃ z h"` and the honest resample is `"0"`, where they used to be `"c̃ z h"` and `"REJECT"`. The
+/// pre-flag-day decoder here treated ANY non-`"REJECT"` string as a signature, so both the new
+/// resample code and the new malformed code would have been handed onward AS SIGNATURES.
 ///
 /// This is the routing seam that sends the signing path through the `Fips204Correct`-discharging Lean
 /// object; the full-byte-codec path over real keys/signatures is the named engineering residual
 /// (`Fips204Verify.lean`).
-pub fn ml_dsa_sign_core(wire: &str) -> Option<Option<String>> {
+pub fn ml_dsa_sign_core(wire: &str) -> Option<MlDsaSignCoreReply> {
     let core = LEAN_SIGN_CORE.get()?;
-    match core(wire)?.as_str() {
-        "REJECT" => Some(None),
-        sig => Some(Some(sig.to_string())),
-    }
+    let out = core(wire)?;
+    let mut toks = out.split_whitespace();
+    Some(match toks.next() {
+        Some("1") => MlDsaSignCoreReply::Signed(toks.collect::<Vec<_>>().join(" ")),
+        Some("0") => MlDsaSignCoreReply::Resampled,
+        // Anything else — including a reply this decoder does not recognise at all — REFUSES, and
+        // refuses as a WIRE fault. Handing an unrecognised string onward as signature bytes is how
+        // the pre-flag-day decoder would have shipped `"2 1"` as a signature.
+        _ => MlDsaSignCoreReply::WireMalformed {
+            stage: toks
+                .next()
+                .and_then(ml_dsa_wire_fault_name)
+                .unwrap_or(ML_DSA_WIRE_FAULT_UNNAMED),
+        },
+    })
 }
 
 /// A pluggable, Lean-VERIFIED **REAL, FULL-BYTE** ML-DSA SIGN backend (the brick-8 SIGN analog), installed
@@ -645,6 +748,21 @@ pub enum MlDsaVerifyRefusal {
     /// exactly the authority the install removed. NOT bypassable — an archive that faults is
     /// an integrity failure, not a policy choice.
     VerifiedCoreFaulted,
+    /// ⚑ **THE WIRE, NOT THE SIGNATURE.** A Lean-verified REAL verify core IS installed and it
+    /// REFUSED TO PARSE the `hex(pk) hex(msg) hex(ctx) hex(sig)` wire this binary sent it, naming the
+    /// stage. It never ran, so this says nothing about the signature; it says
+    /// `dregg_pq::real_verify_wire` and `Dregg2.Crypto.Fips204Verify.parseByteE` disagree in THIS
+    /// binary. The signature is REJECTED (fail-closed) and the `fips204` crate is NOT consulted.
+    ///
+    /// **It has its own variant because until 2026-08-07 it did not have one.** `verifyRealFFI`
+    /// rendered a parse failure as `"0"`, so `reply == "1"` here produced `Some(false)` — an ordinary
+    /// cryptographic REJECT — and a grammar disagreement made every ML-DSA verification on this node
+    /// fail while blaming every signer. `Fips204Verify.verifyRealWire_eq_reject_iff` /
+    /// `verifyRealWire_malformed_iff` are the theorems that make the two codes distinguishable.
+    VerifiedCoreWireMalformed {
+        /// The parse STAGE the Lean side stopped at ([`ml_dsa_wire_fault_name`]).
+        stage: &'static str,
+    },
     /// NO verified core is installed in this process AND the bypass is not declared —
     /// `DREGG_ALLOW_UNAUDITED_PQ` is unset, or `DREGG_REQUIRE_LEAN=1` revoked it. The process
     /// ABORTS rather than let the unaudited `fips204` crate decide accept/reject.
@@ -661,6 +779,20 @@ impl std::fmt::Display for MlDsaVerifyRefusal {
                  produced no usable verdict — the signature is REJECTED and the unaudited \
                  fips204 crate is NOT consulted (this is a BROKEN ARCHIVE, not a verdict about \
                  any signature)"
+            ),
+            // ⚑ Must NOT say "invalid signature". Nothing the signer could have produced avoids
+            // this: the verifier never ran. That false diagnosis is the whole reason the variant
+            // exists.
+            Self::VerifiedCoreWireMalformed { stage } => write!(
+                f,
+                "VerifiedCoreWireMalformed: the Lean-verified ML-DSA-65 verify core \
+                 (dregg_fips204_verify_real = MlDsaVerifyReal.verifyCore) IS installed and REFUSED \
+                 TO PARSE the wire this binary sent it, at stage: {stage}. It never ran, so this \
+                 says NOTHING about any signature — it says dregg_pq::real_verify_wire and \
+                 Dregg2.Crypto.Fips204Verify.parseByteE disagree about the byte wire in THIS \
+                 binary. The signature is REJECTED (fail-closed) and the unaudited fips204 crate is \
+                 NOT consulted. Rebuild dregg-lean-ffi so its splice picks up the current \
+                 Dregg2.Crypto.Fips204Verify"
             ),
             Self::NoVerifiedCoreAndBypassNotDeclared => write!(
                 f,
@@ -734,11 +866,21 @@ fn mldsa_verify_bypass_allowed(
 /// signature on a node with no verified core installed would take the process down.
 fn mldsa_verify_disposition(
     verified_verdict: Option<bool>,
+    wire_malformed: Option<&'static str>,
     verified_core_installed: bool,
     unaudited_accepted_by_operator: bool,
     require_lean: bool,
 ) -> Result<(), MlDsaVerifyRefusal> {
     let Some(_accept_or_reject) = verified_verdict else {
+        // ⚑ FIRST, AND IT IS A REFUSAL: the installed core ANSWERED, and what it said is that it
+        // could not read this binary's wire. That is the most actionable thing anyone gets, and it
+        // is NOT a missing gate — so it must not be routed through the declared bypass below (the
+        // crate would then decide accept/reject while the verified core sits installed and unread)
+        // and it must not be collapsed into `VerifiedCoreFaulted` (a fault with no stage is a
+        // different fact about the two halves).
+        if let Some(stage) = wire_malformed {
+            return Err(MlDsaVerifyRefusal::VerifiedCoreWireMalformed { stage });
+        }
         if mldsa_verify_bypass_allowed(
             verified_core_installed,
             unaudited_accepted_by_operator,
@@ -805,14 +947,29 @@ pub fn ml_dsa_verify(public_bytes: &[u8], ctx: &[u8], message: &[u8], sig_bytes:
     // THAT COULD NOT ANSWER (FFI/archive fault, `"ERR"`) from a core that answered REJECT — the old
     // `matches!(.., Some("1"))` collapsed both to `false`, which is the right VERDICT but leaves an
     // operator unable to tell a broken archive from a stream of bad signatures.
+    //
+    // ⚑ AND `"2 <stage>"` IS NEITHER. Until 2026-08-07 this line read `reply == "1"`, so a wire the
+    // Lean parser could not read became `Some(false)` — a cryptographic REJECT — and a
+    // `real_verify_wire` / `parseByteE` disagreement would have failed every ML-DSA verification on
+    // this node while blaming every signer. It is now its own refusal, carrying the stage.
     let installed_core = LEAN_VERIFY_CORE_REAL.get();
-    let verified_verdict = installed_core.and_then(|core| {
+    let reply = installed_core.and_then(|core| {
         let wire = real_verify_wire(public_bytes, message, ctx, sig_bytes);
-        core(&wire).map(|reply| reply == "1")
+        core(&wire).map(|out| decode_ml_dsa_reply(&out))
     });
+    let verified_verdict = match reply {
+        Some(MlDsaCoreReply::Accept) => Some(true),
+        Some(MlDsaCoreReply::Reject) => Some(false),
+        Some(MlDsaCoreReply::WireMalformed { .. }) | None => None,
+    };
+    let wire_malformed = match reply {
+        Some(MlDsaCoreReply::WireMalformed { stage }) => Some(stage),
+        _ => None,
+    };
 
     if let Err(refusal) = mldsa_verify_disposition(
         verified_verdict,
+        wire_malformed,
         installed_core.is_some(),
         crate::audit::unaudited_pq_accepted(),
         crate::audit::require_verified_lean_gate(),
@@ -825,6 +982,14 @@ pub fn ml_dsa_verify(public_bytes: &[u8], ctx: &[u8], message: &[u8], sig_bytes:
             // archive faults on every call, so an unlatched line would be one stderr write per
             // verification.)
             MlDsaVerifyRefusal::VerifiedCoreFaulted => {
+                crate::audit::note_verified_core_fault(PqSite::MlDsaVerify);
+                return false;
+            }
+            // The WIRE is broken, not the signature and not the archive's integrity. Same
+            // fail-closed disposition (reject; never consult the crate), and it is counted at the
+            // same site so a node whose every verify suddenly fails is diagnosable — but the
+            // refusal that reached here NAMED THE STAGE, which is the whole point.
+            MlDsaVerifyRefusal::VerifiedCoreWireMalformed { .. } => {
                 crate::audit::note_verified_core_fault(PqSite::MlDsaVerify);
                 return false;
             }
@@ -889,7 +1054,7 @@ mod tests {
     fn ml_dsa_verify_fails_closed_when_the_verified_core_cannot_answer() {
         // ── THE HOLE, CLOSED (a). No verified core installed, and the operator did NOT accept the
         //    unaudited primitive ⇒ REFUSE (the site aborts rather than let `fips204` decide).
-        match mldsa_verify_disposition(None, false, false, false) {
+        match mldsa_verify_disposition(None, None, false, false, false) {
             Err(MlDsaVerifyRefusal::NoVerifiedCoreAndBypassNotDeclared) => { /* fail-closed */ }
             other => panic!(
                 "FAIL-OPEN: no Lean-verified ML-DSA-65 verify core is installed and the operator has \
@@ -905,7 +1070,7 @@ mod tests {
         //    the authority the install removed. Every combination of the two escapes must still refuse.
         for (accepted, require_lean) in [(false, false), (true, false), (false, true), (true, true)]
         {
-            match mldsa_verify_disposition(None, true, accepted, require_lean) {
+            match mldsa_verify_disposition(None, None, true, accepted, require_lean) {
                 Err(MlDsaVerifyRefusal::VerifiedCoreFaulted) => { /* fail-closed */ }
                 other => panic!(
                     "FAIL-OPEN: a verified verify core IS installed and produced NO usable verdict, and \
@@ -920,7 +1085,7 @@ mod tests {
         //    Both verdicts, so the disposition cannot be a disguised "reject everything".
         for verdict in [true, false] {
             assert!(
-                mldsa_verify_disposition(Some(verdict), true, false, false).is_ok(),
+                mldsa_verify_disposition(Some(verdict), None, true, false, false).is_ok(),
                 "an ANSWERING verified core must never be refused — {verdict} is the verified \
                  object's own accept/reject, not a missing gate"
             );
@@ -929,7 +1094,7 @@ mod tests {
         // ── THE DECLARED BYPASS: no core installed in this binary at all (an archive-less build /
         //    the guest / every `dregg-pq` unit-test binary) AND the operator accepted it.
         assert!(
-            mldsa_verify_disposition(None, false, true, false).is_ok(),
+            mldsa_verify_disposition(None, None, false, true, false).is_ok(),
             "with NO verified core linked and DREGG_ALLOW_UNAUDITED_PQ=1 this is the DECLARED bypass \
              (gate-dataflow.tsv twin#13), not a silent fall-open — a blanket refusal would brick every \
              wasm / zkVM / archive-less build"
@@ -938,7 +1103,7 @@ mod tests {
         // ── `DREGG_REQUIRE_LEAN=1` REVOKES IT. Before this existed the variable had NO EFFECT on any
         //    PQ path: an operator could demand the verified artifact and still get `fips204`.
         assert!(
-            mldsa_verify_disposition(None, false, true, true).is_err(),
+            mldsa_verify_disposition(None, None, false, true, true).is_err(),
             "DREGG_REQUIRE_LEAN=1 must REVOKE the unaudited bypass — two switches with contradictory \
              meanings must not resolve in favour of the permissive one"
         );
@@ -961,6 +1126,80 @@ mod tests {
         assert!(
             !mldsa_verify_bypass_allowed(false, true, true),
             "DREGG_REQUIRE_LEAN=1 revokes"
+        );
+
+        // ── ⚑ THE WIRE, NOT THE SIGNATURE. A malformed wire is a REFUSAL of its own, and it is NOT
+        //    bypassable in any quadrant: the verified core is installed and it ANSWERED, so routing
+        //    to the crate here would let the unaudited primitive decide while the verified object
+        //    sits there having told us the wire is unreadable.
+        for (installed, accepted, require_lean) in [
+            (true, false, false),
+            (true, true, false),
+            (true, false, true),
+            (true, true, true),
+            (false, true, false),
+        ] {
+            match mldsa_verify_disposition(
+                None,
+                Some("test stage"),
+                installed,
+                accepted,
+                require_lean,
+            ) {
+                Err(MlDsaVerifyRefusal::VerifiedCoreWireMalformed { stage }) => {
+                    assert_eq!(stage, "test stage", "the stage must reach the refusal");
+                }
+                other => panic!(
+                    "FAIL-OPEN: the verified core reported it could not READ the wire and the \
+                     disposition returned {other:?} (installed={installed}, accepted={accepted}, \
+                     require_lean={require_lean}). A wire disagreement must refuse as ITSELF — it \
+                     must not fall through to the unaudited crate and must not be laundered into \
+                     `VerifiedCoreFaulted`, which carries no stage."
+                ),
+            }
+        }
+    }
+
+    /// ⚑ THE DECODER POLES — the Rust half of `Fips204Verify.verifyRealWire_malformed_iff`.
+    ///
+    /// Until 2026-08-07 `"0"` was both "this signature does not verify" and "I could not read your
+    /// wire", so this test could not have been written: every assertion below would have compared a
+    /// value to itself.
+    #[test]
+    fn a_malformed_reply_is_not_a_reject() {
+        assert_eq!(decode_ml_dsa_reply("1"), MlDsaCoreReply::Accept);
+        assert_eq!(decode_ml_dsa_reply("0"), MlDsaCoreReply::Reject);
+
+        // Every code the Lean `FWireFault` can emit resolves to a NAMED stage. If a fifth
+        // constructor is added and this table is not extended, this goes RED rather than the
+        // refusal silently degrading to the unnamed stage.
+        for code in ["0", "1", "2", "3"] {
+            let out = format!("2 {code}");
+            match decode_ml_dsa_reply(&out) {
+                MlDsaCoreReply::WireMalformed { stage } => assert_ne!(
+                    stage, ML_DSA_WIRE_FAULT_UNNAMED,
+                    "FWireFault code {code} has no name in `ml_dsa_wire_fault_name`"
+                ),
+                other => panic!("{out:?} must decode to WireMalformed; got {other:?}"),
+            }
+        }
+
+        // An UNNAMED or ABSENT stage — and a reply this decoder does not recognise at all — still
+        // REFUSES, and refuses as a WIRE fault. Turning "the Lean side told me it could not read my
+        // wire" into "your signature is invalid" is the collision this whole change removes.
+        for out in ["2 9", "2", "", "nonsense", "REJECT"] {
+            match decode_ml_dsa_reply(out) {
+                MlDsaCoreReply::WireMalformed { stage } => {
+                    assert_eq!(stage, ML_DSA_WIRE_FAULT_UNNAMED, "{out:?}")
+                }
+                other => panic!("{out:?} must still refuse as a malformed wire; got {other:?}"),
+            }
+        }
+
+        assert_ne!(
+            decode_ml_dsa_reply("0"),
+            decode_ml_dsa_reply("2 3"),
+            "a forged signature and an unreadable wire must not be the same answer"
         );
     }
 
@@ -1107,14 +1346,20 @@ mod tests {
         // No core installed ⇒ the seam declines and the caller falls back.
         assert_eq!(ml_dsa_verify_core("3 7 7 45 0"), None);
         // Install a core carrying the extracted `verifyCore`'s proven contract (the `#guard` teeth).
+        // ⚑ THE MOCK CARRIES THE MEASURED LEAN ALPHABET, INCLUDING THE THIRD CODE. Its arms are the
+        // `#eval`-measured values of `Fips204Verify.verifyFFI` at HEAD — `"1"`, `"0"`, and `"2 1"`
+        // (`scalarToken`) for a wire the Lean parser cannot read. Before 2026-08-07 the last arm was
+        // `_ => "0"`, so this mock encoded the collision itself and the "malformed fails closed"
+        // assertion below compared a value to the reject it was supposed to be distinguished from.
         let installed = install_lean_verify_core(|wire| {
             Some(
                 match wire {
                     // honest round-trip (realParams.sign 5 1 3 7 40 = (7,45,0)) ⇒ accept
                     "3 7 7 45 0" => "1",
-                    // tampered c̃ ⇒ reject; out-of-range z ⇒ reject; malformed ⇒ reject
+                    // tampered c̃ ⇒ reject; out-of-range z ⇒ reject
                     "3 7 8 45 0" | "3 7 7 100000000 0" => "0",
-                    _ => "0",
+                    // anything the five-int parse cannot read ⇒ the malformed code, NOT a reject
+                    _ => "2 1",
                 }
                 .to_string(),
             )
@@ -1127,18 +1372,33 @@ mod tests {
         // The security-critical verdicts route through the installed verified core.
         assert_eq!(
             ml_dsa_verify_core("3 7 7 45 0"),
-            Some(true),
+            Some(MlDsaCoreReply::Accept),
             "honest ACCEPTS"
         );
         assert_eq!(
             ml_dsa_verify_core("3 7 8 45 0"),
-            Some(false),
+            Some(MlDsaCoreReply::Reject),
             "tampered c̃ REJECTS"
         );
         assert_eq!(
             ml_dsa_verify_core("3 7 7 100000000 0"),
-            Some(false),
+            Some(MlDsaCoreReply::Reject),
             "out-of-range z REJECTS"
+        );
+        // ⚑ AND AN UNREADABLE WIRE IS A THIRD ANSWER. This assertion could not be written before
+        // 2026-08-07: `_ => Some(false)` made it identical to the two above it, so "malformed fails
+        // closed" was the same fact as "a tampered signature rejects" and neither could fail alone.
+        match ml_dsa_verify_core("garbage") {
+            Some(MlDsaCoreReply::WireMalformed { stage }) => assert!(
+                stage.contains("scalar token"),
+                "the stage must name the half of the grammar that refused, got {stage:?}"
+            ),
+            other => panic!("an unreadable statement wire must not be a verdict; got {other:?}"),
+        }
+        assert_ne!(
+            ml_dsa_verify_core("3 7 8 45 0"),
+            ml_dsa_verify_core("garbage"),
+            "a forged statement and a wire nothing parsed must not be the same answer"
         );
 
         // ── THE SIGN → VERIFY ROUND-TRIP through the extracted cores (Unit 3a) ──
@@ -1154,12 +1414,15 @@ mod tests {
             None,
             "no sign core ⇒ caller falls back"
         );
+        // ⚑ THE MEASURED POST-RETAG SIGN ALPHABET: `"1 c̃ z h"` / `"0"` / `"2 <fault>"`. It used to be
+        // `"c̃ z h"` / `"REJECT"`, with `"REJECT"` doing double duty for the honest resample AND for a
+        // wire the Lean side could not read.
         let sign_installed = install_lean_sign_core(|wire| {
             Some(
                 match wire {
-                    "5 1 3 7 40" => "7 45 0",
-                    "5 1 3 7 261888" | "5 1 3 7 1000000" => "REJECT",
-                    _ => "REJECT",
+                    "5 1 3 7 40" => "1 7 45 0",
+                    "5 1 3 7 261888" | "5 1 3 7 1000000" => "0",
+                    _ => "2 1",
                 }
                 .to_string(),
             )
@@ -1170,36 +1433,48 @@ mod tests {
             "sign install is once-per-process"
         );
 
-        // The honest sign produces the accepted signature wire.
-        let sig = ml_dsa_sign_core("5 1 3 7 40")
-            .expect("sign core installed")
-            .expect("accepted iteration");
+        // The honest sign produces the accepted signature wire, tag stripped.
+        let sig = match ml_dsa_sign_core("5 1 3 7 40").expect("sign core installed") {
+            MlDsaSignCoreReply::Signed(sig) => sig,
+            other => panic!("an accepted iteration must be Signed; got {other:?}"),
+        };
         assert_eq!(sig, "7 45 0", "honest sign emits the signature wire");
 
         // ROUND-TRIP: the accepted signature, prefixed with `thi μ` (derived public key thi = 5+1−3 =
         // 3, message μ = 7), VERIFIES through the SAME extracted verify core installed above.
         assert_eq!(
             ml_dsa_verify_core(&format!("3 7 {sig}")),
-            Some(true),
+            Some(MlDsaCoreReply::Accept),
             "the extracted sign output round-trips through the verify core"
         );
 
-        // A REJECTED sample is honestly `Some(None)` — the caller resamples; it is NOT a faked accept.
+        // A REJECTED sample is the HONEST resample — the caller retries; it is NOT a faked accept.
         assert_eq!(
             ml_dsa_sign_core("5 1 3 7 261888"),
-            Some(None),
+            Some(MlDsaSignCoreReply::Resampled),
             "a bad-mask sample (lowGap fails) is honestly rejected (retry)"
         );
         assert_eq!(
             ml_dsa_sign_core("5 1 3 7 1000000"),
-            Some(None),
+            Some(MlDsaSignCoreReply::Resampled),
             "an out-of-norm response is honestly rejected (retry)"
         );
-        // A malformed sign wire fails closed (reject/retry, never a spurious signature).
-        assert_eq!(
+        // ⚑ AND A WIRE THE SIGN CORE COULD NOT READ IS NOT THAT. Before the retag both were
+        // `Some(None)` and this assertion was literally the same as the two above it — so a caller
+        // could resample forever against a wire that would never parse and no test would notice.
+        match ml_dsa_sign_core("garbage").expect("sign core installed") {
+            MlDsaSignCoreReply::WireMalformed { stage } => assert!(
+                stage.contains("scalar token"),
+                "the stage must name the half of the grammar that refused, got {stage:?}"
+            ),
+            other => {
+                panic!("an unreadable sign wire must not be the resample verdict; got {other:?}")
+            }
+        }
+        assert_ne!(
+            ml_dsa_sign_core("5 1 3 7 261888"),
             ml_dsa_sign_core("garbage"),
-            Some(None),
-            "malformed sign wire fails closed"
+            "the honest rejection-sampling abort and an unreadable wire must not be the same answer"
         );
     }
 }

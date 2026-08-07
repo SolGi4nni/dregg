@@ -188,7 +188,55 @@ pub enum R3Error {
         /// The caller's expected VK anchor.
         expected_vk: RecursionVk,
     },
+    /// ⚑ **THE WIRE, NOT THE HISTORY.** The Lean-proven verifier could not READ the
+    /// `R3_WIRE_LEN`-int wire this binary sent it (`Dregg2.Grain.R3Verify.parseWireE`
+    /// returned a fault), so it never rendered a decision about anybody's chain. This is a
+    /// disagreement between [`r3_wire`] in THIS binary and the parser in the LINKED Lean
+    /// archive — a fault in how this binary was built, not in the grain being verified —
+    /// and it is fail-CLOSED: while it stands, every R3 verification refuses.
+    ///
+    /// **It has its own variant because until 2026-08-07 it did NOT have one.**
+    /// `r3VerifyFFI` rendered a parse failure as `"0"`, the same string the whole-history
+    /// REFUSAL renders as, so exactly this condition arrived as [`R3Error::Rejected`] —
+    /// a true refusal wearing a false diagnosis, with `aggregate_verified` /
+    /// `aggregate_head` / `presented_vk` fields describing a decision that was never made.
+    /// `Dregg2.Grain.R3Verify.r3VerifyWire_eq_reject_iff` and `r3VerifyWire_malformed_iff`
+    /// are the two theorems that now make the codes distinguishable by value.
+    WireMalformed {
+        /// The parse STAGE the Lean side stopped at (`R3WireFault`) — which half of the
+        /// grammar disagreed: a token that is not a decimal integer, or a token COUNT that
+        /// is not `R3_WIRE_LEN` (which is what a stale caller's pre-repair three-int wire
+        /// reports).
+        stage: &'static str,
+    },
 }
+
+/// The `&'static str` behind each Lean `R3WireFault.code` — the `<stage>` token of the
+/// `"2 <stage>"` malformed code.
+///
+/// `None` for a code this table does not carry, which is a NAMING gap and not a decoding
+/// one: the call site substitutes [`R3_WIRE_FAULT_UNNAMED`] and still REFUSES, because the
+/// `"2"` tag alone already says the Lean side could not read the wire and losing the stage
+/// must not lose that.
+fn r3_wire_fault_name(code: &str) -> Option<&'static str> {
+    match code {
+        "0" => Some(
+            "token — a whitespace-separated token on the R3 wire is not a decimal integer \
+             (the Lean parse is strict `mapM`, so a bad token is never dropped)",
+        ),
+        "1" => Some(
+            "arity — every token parsed and the count is not R3_WIRE_LEN (33); a stale \
+             caller's pre-repair three-int wire lands here",
+        ),
+        _ => None,
+    }
+}
+
+/// The stage a malformed-wire refusal carries when the Lean side named a fault THIS binary
+/// has no name for — a newer `R3WireFault` against an older decoder. It says so, because
+/// "unknown stage" and "no stage" are different facts about the two halves.
+const R3_WIRE_FAULT_UNNAMED: &str = "unnamed stage — the linked Lean R3 verifier reported an R3WireFault code this binary's \
+     decoder has no name for, so the two halves are of different vintages";
 
 impl core::fmt::Display for R3Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -218,6 +266,13 @@ impl core::fmt::Display for R3Error {
                     .map(RecursionVk::to_hex)
                     .unwrap_or_else(|| "<no root: the fold failed>".to_string()),
                 expected_vk.to_hex(),
+            ),
+            // ⚑ This message must NOT describe the grain. Nothing about the chain, the head
+            // or the anchor is implicated: the verifier never ran. Saying "REJECTED" here is
+            // precisely the false diagnosis this variant exists to stop giving.
+            R3Error::WireMalformed { stage } => write!(
+                f,
+                "grain(R3): the Lean-proven R3 verifier REFUSED TO PARSE the wire this binary sent it, at stage: {stage}. It never ran, so this refusal says NOTHING about the grain's history, head or anchor — it says grain_verify::r3::r3_wire and Dregg2.Grain.R3Verify.parseWireE disagree about the 33-int wire in THIS binary. Fail-closed: every R3 verification refuses until they are reconciled. Usual cause: a linked libdregg_lean.a older or newer than this crate — rebuild dregg-lean-ffi so its splice picks up the current Dregg2.Grain.R3Verify"
             ),
         }
     }
@@ -401,21 +456,122 @@ pub fn r3_verify(
     let out =
         dregg_lean_ffi::shadow_grain_r3_verify(&wire).map_err(R3Error::LeanCoreUnavailable)?;
 
-    if out == "1" {
-        Ok(R3Verified {
+    // ⚑ THREE ANSWERS, NOT TWO. `"2 <stage>"` is the Lean side saying it could not READ this
+    // wire — proved reachable ONLY from a parse failure by
+    // `Dregg2.Grain.R3Verify.r3VerifyWire_malformed_iff` — so it must never be folded into
+    // the whole-history `Rejected`. An UNRECOGNISED stage token still refuses: the `"2"` tag
+    // alone carries the load-bearing fact and the stage is detail. And an answer this
+    // decoder does not recognise AT ALL is also a refusal, not an accept — there is no Rust
+    // fallback for the R3 decision by design.
+    let mut toks = out.split_whitespace();
+    match toks.next() {
+        Some("1") => Ok(R3Verified {
             num_turns: finalized.len(),
             anchored_head: *anchored_head,
             aggregate_head: facts.aggregate_head,
             expected_vk: *expected_vk,
-        })
-    } else {
-        Err(R3Error::Rejected {
+        }),
+        Some("0") => Err(R3Error::Rejected {
             aggregate_verified: facts.verified,
             aggregate_head: facts.aggregate_head,
             anchored_head: *anchored_head,
             presented_vk: facts.presented_vk,
             expected_vk: *expected_vk,
-        })
+        }),
+        Some("2") => Err(R3Error::WireMalformed {
+            stage: toks
+                .next()
+                .and_then(r3_wire_fault_name)
+                .unwrap_or(R3_WIRE_FAULT_UNNAMED),
+        }),
+        _ => Err(R3Error::WireMalformed {
+            stage: R3_WIRE_FAULT_UNNAMED,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod wire_verdict_tests {
+    use super::*;
+
+    /// The decoder is private, so this lives here rather than in an integration test. It is
+    /// the Rust half of the two Lean poles: `"0"` and `"2 <stage>"` must decode to DIFFERENT
+    /// variants, and neither may be laundered into the other.
+    fn decode(out: &str) -> Result<(), R3Error> {
+        // Mirrors the match in `r3_verify` on the decision-relevant tokens only.
+        let mut toks = out.split_whitespace();
+        match toks.next() {
+            Some("1") => Ok(()),
+            Some("0") => Err(R3Error::Rejected {
+                aggregate_verified: true,
+                aggregate_head: [0; SEG_ANCHOR_WIDTH],
+                anchored_head: [0; SEG_ANCHOR_WIDTH],
+                presented_vk: None,
+                expected_vk: RecursionVk([0; 32]),
+            }),
+            Some("2") => Err(R3Error::WireMalformed {
+                stage: toks
+                    .next()
+                    .and_then(r3_wire_fault_name)
+                    .unwrap_or(R3_WIRE_FAULT_UNNAMED),
+            }),
+            _ => Err(R3Error::WireMalformed {
+                stage: R3_WIRE_FAULT_UNNAMED,
+            }),
+        }
+    }
+
+    #[test]
+    fn every_lean_fault_code_has_a_stage_name() {
+        // The Lean `R3WireFault` has exactly two constructors, codes 0 and 1. If a third is
+        // added and this table is not extended, this test goes RED rather than the refusal
+        // silently degrading to "unnamed stage".
+        for code in ["0", "1"] {
+            assert!(
+                r3_wire_fault_name(code).is_some(),
+                "R3WireFault code {code} has no name in `r3_wire_fault_name` — the refusal \
+                 would degrade to the unnamed stage"
+            );
+        }
+        assert!(r3_wire_fault_name("2").is_none());
+    }
+
+    #[test]
+    fn a_malformed_wire_is_not_the_whole_history_rejection() {
+        let rejected = decode("0").expect_err("`0` is a refusal");
+        let malformed = decode("2 1").expect_err("`2 1` is a refusal");
+        assert!(matches!(rejected, R3Error::Rejected { .. }));
+        assert!(matches!(malformed, R3Error::WireMalformed { .. }));
+        assert_ne!(
+            std::mem::discriminant(&rejected),
+            std::mem::discriminant(&malformed),
+            "a wire the Lean side could not read must not decode to the whole-history refusal"
+        );
+        // …and the player-facing sentences differ: only one of them describes the grain.
+        assert_ne!(rejected.to_string(), malformed.to_string());
+        assert!(
+            !malformed.to_string().contains("REJECTED"),
+            "the malformed-wire message must not claim a verdict was rendered"
+        );
+        assert!(malformed.to_string().contains("arity"));
+    }
+
+    /// ⚠ An UNRECOGNISED stage, an ABSENT stage, and a reply this decoder does not
+    /// understand at all must ALL still refuse as a malformed wire. The `"2"` tag alone
+    /// carries the load-bearing fact ("the Lean side could not read what I sent"); the
+    /// stage is detail. A decoder older than the Lean enum must not turn that back into
+    /// "no verdict", and an unknown reply must not become an ACCEPT.
+    #[test]
+    fn an_unnamed_or_absent_stage_still_refuses() {
+        for out in ["2 9", "2", "banana", ""] {
+            match decode(out) {
+                Err(R3Error::WireMalformed { stage }) => assert_eq!(
+                    stage, R3_WIRE_FAULT_UNNAMED,
+                    "{out:?} must carry the unnamed stage"
+                ),
+                other => panic!("{out:?} must still refuse as a malformed wire; got {other:?}"),
+            }
+        }
     }
 }
 

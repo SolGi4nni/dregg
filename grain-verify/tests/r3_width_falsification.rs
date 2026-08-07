@@ -40,11 +40,60 @@ fn honest_vk() -> RecursionVk {
     RecursionVk(b)
 }
 
+/// The DEPLOYED Lean decision's THREE answers.
+///
+/// ⚑ WHY THIS IS NOT A `bool`, AND WHAT WAS WRONG WITH IT WHEN IT WAS. Until 2026-08-07
+/// this helper was `out == "1"`, so every `!lean_decides(…)` below was satisfied by ANY
+/// non-`"1"` reply — including the `"0"` the Lean side rendered for a wire it could not
+/// PARSE. Forty-four negative assertions therefore could not tell "the ~2^31 lane-0 grind
+/// was refused by `r3_wide_head_mismatch_rejected`" from "`r3_wire` and `parseWireE`
+/// disagree and nothing was decided". The falsifications did not falsify; they only
+/// established that the reply was not `"1"`, which a broken wire gives for free.
+///
+/// The Lean side now renders `"2 <fault>"` for an unreadable wire — a code no verdict can
+/// produce (`Dregg2.Grain.R3Verify.renderR3_ne_malformed`, over all wires and all verdicts)
+/// — so each pole below asserts the answer it actually means.
+#[derive(Debug, PartialEq, Eq)]
+enum LeanR3 {
+    Accept,
+    /// The Lean-proven core RAN and REFUSED. This is what a falsifier must observe.
+    Reject,
+    /// The Lean side could not READ the wire, so nothing was decided. In this file that is
+    /// ALWAYS a test bug or a stale archive — never a falsification result.
+    Malformed(String),
+}
+
 /// Ask the DEPLOYED Lean decision.
-fn lean_decides(wire: &str) -> bool {
+fn lean_answer(wire: &str) -> LeanR3 {
     match dregg_lean_ffi::shadow_grain_r3_verify(wire) {
-        Ok(out) => out == "1",
+        Ok(out) => match out.split_whitespace().next() {
+            Some("1") => LeanR3::Accept,
+            Some("0") => LeanR3::Reject,
+            _ => LeanR3::Malformed(out),
+        },
         Err(e) => panic!("the Lean-proven R3 core is present but did not answer: {e}"),
+    }
+}
+
+/// The positive pole, unchanged in meaning.
+fn lean_accepts(wire: &str) -> bool {
+    lean_answer(wire) == LeanR3::Accept
+}
+
+/// ⚑ THE NEGATIVE POLE, AND IT IS NO LONGER FREE. Asserts the Lean core RAN and returned
+/// the whole-history REFUSAL — a malformed wire now FAILS this, loudly, instead of passing
+/// it silently.
+fn assert_lean_refuses(wire: &str, what: &str) {
+    match lean_answer(wire) {
+        LeanR3::Reject => {}
+        LeanR3::Accept => panic!("{what}: the Lean-proven core ACCEPTED — the tooth is gone"),
+        LeanR3::Malformed(out) => panic!(
+            "{what}: VACUOUS — the Lean side answered {out:?}, i.e. it could not READ the wire \
+             this test sent, so it never rendered a verdict and this falsification falsified \
+             NOTHING. Either the marshalling in `r3_wire_for_test` and \
+             `Dregg2.Grain.R3Verify.parseWireE` have drifted apart, or the linked \
+             libdregg_lean.a is stale. Before 2026-08-07 this state PASSED."
+        ),
     }
 }
 
@@ -85,10 +134,11 @@ fn honest_facts_accept_and_the_widened_core_is_linked() {
         "the seam must marshal exactly r3WireLen ints"
     );
     assert!(
-        lean_decides(&wire),
-        "honest facts must ACCEPT — if this REJECTS, the linked archive still carries the \
-         PRE-REPAIR narrow r3VerifyCore (it fails closed on the widened wire); rebuild \
-         dregg-lean-ffi to splice the current Dregg2.Grain.R3Verify"
+        lean_accepts(&wire),
+        "honest facts must ACCEPT — if this answers anything else, the linked archive still \
+         carries a PRE-REPAIR r3VerifyCore (it fails closed on the widened wire); rebuild \
+         dregg-lean-ffi to splice the current Dregg2.Grain.R3Verify. Answer was: {:?}",
+        lean_answer(&wire)
     );
 }
 
@@ -115,10 +165,12 @@ fn a_forged_head_differing_only_outside_lane_0_is_refused() {
             "…while being a genuinely different anchor"
         );
         let wire = r3_wire_for_test(true, &vk, &vk, &forged, &anchored);
-        assert!(
-            !lean_decides(&wire),
-            "a fabricated aggregate head differing only at lane {lane} must be REFUSED \
-             (wound #22, the ~2^31 offline grind)"
+        assert_lean_refuses(
+            &wire,
+            &format!(
+                "a fabricated aggregate head differing only at lane {lane} must be REFUSED \
+                 (wound #22, the ~2^31 offline grind)"
+            ),
         );
     }
 
@@ -126,7 +178,7 @@ fn a_forged_head_differing_only_outside_lane_0_is_refused() {
     // rejecting everything (the restore half of the falsification).
     let wire = r3_wire_for_test(true, &vk, &vk, &anchored, &anchored);
     assert!(
-        lean_decides(&wire),
+        lean_accepts(&wire),
         "the genuine head must still ACCEPT — the width tooth must discriminate, not \
          blanket-reject"
     );
@@ -149,10 +201,12 @@ fn a_presented_vk_that_is_not_the_callers_anchor_is_refused() {
         let presented = RecursionVk(b);
         assert_ne!(presented, expected);
         let wire = r3_wire_for_test(true, &presented, &expected, &head, &head);
-        assert!(
-            !lean_decides(&wire),
-            "a presented root fingerprint differing at byte {i} from the caller's anchor \
-             must be REFUSED (wound #22, the self-anchored VK)"
+        assert_lean_refuses(
+            &wire,
+            &format!(
+                "a presented root fingerprint differing at byte {i} from the caller's anchor \
+                 must be REFUSED (wound #22, the self-anchored VK)"
+            ),
         );
 
         // THE ANTI-LAUNDER, on the wire: the SAME foreign fingerprint, self-anchored
@@ -162,7 +216,7 @@ fn a_presented_vk_that_is_not_the_callers_anchor_is_refused() {
         // `Dregg2.Grain.R3Verify.neither_half_alone_suffices`.
         let laundered = r3_wire_for_test(true, &presented, &presented, &head, &head);
         assert!(
-            lean_decides(&laundered),
+            lean_accepts(&laundered),
             "the self-anchored shape accepts a foreign fingerprint — that is the wound, and \
              it is why the repair could not stop at the felt width"
         );
@@ -171,36 +225,76 @@ fn a_presented_vk_that_is_not_the_callers_anchor_is_refused() {
     // Restore: the caller's own anchor accepts.
     let wire = r3_wire_for_test(true, &expected, &expected, &head, &head);
     assert!(
-        lean_decides(&wire),
+        lean_accepts(&wire),
         "the caller's own anchor must ACCEPT — the VK tooth must discriminate"
     );
 }
 
-/// **FAIL-CLOSED.** A non-accepting verified-status rejects regardless (the proven
-/// `r3_unverified_rejected`, which `r3_verify`'s fold-failure path rests on); the PRE-REPAIR
-/// three-int wire is refused, so a stale caller cannot re-open the ~31-bit binding by
-/// accident; and malformed input is refused.
+/// **FAIL-CLOSED — AND THE TWO KINDS OF REFUSAL ARE NOW DIFFERENT ANSWERS.**
+///
+/// ⚑ THIS TEST IS WHERE THE COLLISION LIVED. It asserted the SAME thing (`!lean_decides`) of
+/// a non-verifying aggregate — a real R3 REFUSAL, resting on the proven
+/// `r3_unverified_rejected` that `r3_verify`'s fold-failure path depends on — and of four
+/// wires the Lean side could not parse. All five produced `"0"`, so the file could not tell
+/// its own load-bearing negative from a grammar disagreement, and a drifted `r3_wire` would
+/// have kept it green.
+///
+/// Now the verdict wires assert `Reject` and the unreadable wires assert `Malformed`, so a
+/// drift in either direction is RED.
 #[test]
-fn fail_closed_on_bad_status_stale_wire_and_garbage() {
+fn a_non_verifying_aggregate_is_refused_by_the_verdict_not_by_the_parser() {
     require_core();
     let head = honest_head();
     let vk = honest_vk();
 
-    assert!(
-        !lean_decides(&r3_wire_for_test(false, &vk, &vk, &head, &head)),
-        "a non-verifying aggregate must REJECT whatever the VKs and heads say"
+    assert_lean_refuses(
+        &r3_wire_for_test(false, &vk, &vk, &head, &head),
+        "a non-verifying aggregate must REJECT whatever the VKs and heads say",
     );
-    assert!(
-        !lean_decides("1 42 42"),
-        "the PRE-REPAIR three-int wire must fail CLOSED — a stale caller must never be able \
-         to re-open the ~31-bit binding"
-    );
-    assert!(!lean_decides("garbage"));
-    assert!(!lean_decides(""), "an empty wire must fail closed");
-    // A well-formed wire with one extra non-integer token: the Lean parse is strict
-    // (`mapM`, not `filterMap`), so a malformed token can never be silently dropped and
-    // shift the lanes into a passing alignment.
-    let mut w = r3_wire_for_test(true, &vk, &vk, &head, &head);
-    w.push_str(" x");
-    assert!(!lean_decides(&w));
+}
+
+/// **THE OTHER POLE — an unreadable wire says SO, in its own code.** Each of these must come
+/// back `"2 <fault>"`, never `"0"`: a stale caller's pre-repair three-int wire still fails
+/// closed (it cannot re-open the ~31-bit binding), and it is now also legible AS a stale
+/// caller rather than as a lying host.
+#[test]
+fn an_unreadable_wire_is_malformed_not_a_whole_history_refusal() {
+    require_core();
+    let head = honest_head();
+    let vk = honest_vk();
+
+    let mut trailing_junk = r3_wire_for_test(true, &vk, &vk, &head, &head);
+    trailing_junk.push_str(" x");
+    let mut trailing_int = r3_wire_for_test(true, &vk, &vk, &head, &head);
+    trailing_int.push_str(" 9");
+
+    for (wire, why) in [
+        (
+            "1 42 42".to_string(),
+            "the PRE-REPAIR three-int wire — a stale caller, not a lying host",
+        ),
+        ("garbage".to_string(), "wholly unreadable input"),
+        (String::new(), "the empty wire"),
+        (
+            trailing_junk,
+            "a well-formed wire plus a non-integer token (the strict `mapM` catches it before \
+             the length gate, so a bad token can never be dropped and shift the lanes)",
+        ),
+        (trailing_int, "a well-formed wire plus one extra integer"),
+    ] {
+        match lean_answer(&wire) {
+            LeanR3::Malformed(out) => {
+                assert!(
+                    out.starts_with('2'),
+                    "{why}: expected the malformed code, got {out:?}"
+                );
+            }
+            LeanR3::Reject => panic!(
+                "{why}: the Lean side answered \"0\" — the WHOLE-HISTORY REFUSAL — for a wire it \
+                 cannot read. That is the exact collision this repair removed; either the Lean \
+                 archive is pre-2026-08-07 or `parseWireE` has been widened to accept this."
+            ),
+            LeanR3::Accept => panic!("{why}: an unreadable wire must never ACCEPT"),
+        }
+    }
 }

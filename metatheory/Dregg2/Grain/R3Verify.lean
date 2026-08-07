@@ -82,6 +82,19 @@ widening `foldedFinalRoot` itself to `Digest8` is a separate, larger model refac
 
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); `EngineSound` enters as a hypothesis
 FIELD exactly as it does in the composed headline. Verified with `lake build Dregg2.Grain.R3Verify`.
+
+## ⚑ WIRE FLAG DAY — 2026-08-07: A MALFORMED WIRE NO LONGER RENDERS AS A WHOLE-HISTORY REFUSAL
+
+`dregg_grain_r3_verify`'s OUTPUT ALPHABET gains a third code:
+
+    before:  "1" (accept)  ·  "0" (reject AND the fail-closed answer for a wire it could not read)
+    after:   "1" (accept)  ·  "0" (reject)  ·  "2 <fault>"  (0 = token, 1 = arity)
+
+Nothing re-genesises and no key material moves — this is a request/response FFI wire with no persisted
+or signed form. What must be rebuilt is `libdregg_lean.a` (a stale archive answers with the old
+alphabet), and what must be re-read is `grain-verify/src/r3.rs`, whose `out == "1"` else
+`R3Error::Rejected` turned a grammar disagreement into a diagnosis about the renter's chain. See §4's
+`⚑ A WIRE THAT COULD NOT BE READ IS NOT A FABRICATED HISTORY`.
 -/
 import Dregg2.Circuit.RecursiveAggregation
 
@@ -312,7 +325,31 @@ theorem r3_narrow_head_mismatch_rejected (v : Bool) (aggHead anchHead : Felt)
     simp only [beq_eq_false_iff_ne]; exact hne
   rw [hb, Bool.and_false]
 
-/-! ## 4. The `@[export]` FFI entry (Rust → Lean), running the verified executable core. -/
+/-! ## 4. The `@[export]` FFI entry (Rust → Lean), running the verified executable core.
+
+## ⚑ A WIRE THAT COULD NOT BE READ IS NOT A FABRICATED HISTORY
+
+Until 2026-08-07 `r3VerifyFFI` answered an unreadable wire with `"0"` — the SAME string the R3
+whole-history anti-forgery REFUSAL renders as. So "a lying host served a fabricated or truncated
+history under an honest-looking head" and "`grain_verify::r3::r3_wire` and this parser disagree about
+the 33-int wire" reached `r3_verify` as one byte, and it turned both into
+`R3Error::Rejected { aggregate_verified, aggregate_head, anchored_head, presented_vk, expected_vk }`
+— a diagnosis about the RENTER'S CHAIN for a fault in how the binary was built.
+
+Fail-CLOSED, so a forged history was never admitted. But the assurance was zero on exactly the
+negative pole that is the point of §5's falsifiers: every `!lean_decides(…)` in
+`grain-verify/tests/r3_width_falsification.rs` was satisfied by "the Lean side refused to parse what
+Rust sent", so the ~2^31 width grind and the foreign-circuit VK were being refused by a theorem or by
+a parse failure and NOTHING COULD TELL WHICH. That is the same collision
+`Dregg2.Exec.DeployedConstraint` was carrying, where nine such assertions stayed green for a week
+with the evaluator never reached.
+
+The repair is in the TYPE. [`parseWireE`] reports WHICH stage refused ([`R3WireFault`]);
+[`R3Outcome`]'s `malformed` constructor is **not an [`R3Verdict`]**, so no run of `r3VerifyCore` can
+construct it; and [`renderR3Outcome`] gives it tag `"2"` plus the fault code, which
+`grain-verify` turns into `R3Error::WireMalformed` — a refusal that names the two halves of the wire
+instead of the renter's chain. Both poles are theorems: [`r3VerifyWire_eq_reject_iff`] and
+[`r3VerifyWire_malformed_iff`]. -/
 
 /-- Read eight consecutive lanes off the parsed wire (missing lanes read `0`; the length gate below
 means that never happens on a well-formed wire). -/
@@ -322,29 +359,164 @@ def lanesFrom (xs : List Felt) (off : ℕ) : Digest8 := fun i => xs.getD (off + 
 values (presented VK ‖ expected VK ‖ aggregate head ‖ anchored head). -/
 def r3WireLen : ℕ := 33
 
-/-- Strict wire parse — EVERY whitespace-separated token must be an integer (`mapM`, not `filterMap`:
-a malformed token can no longer be silently dropped and shift the lanes) and the count must be exactly
-`r3WireLen`. Anything else is `none`, which the entry renders as the fail-closed `"0"`. -/
-def parseWire (input : String) : Option (Bool × Vk8 × Vk8 × Digest8 × Digest8) :=
+/-- WHERE the R3 wire stopped being readable. Payload-free, exactly as
+`DeployedConstraint.DWireFault` is: the code IS the stage, `grain-verify` maps it to a `&'static str`,
+and keeping it single-digit is what keeps `"2 <fault>"` three characters long. -/
+inductive R3WireFault where
+  /-- A whitespace-separated token is not a decimal integer. Reached FIRST (the parse is `mapM`), so
+  a wholly unreadable wire is this stage, not [`R3WireFault.arity`]. -/
+  | token
+  /-- Every token is an integer and the count is not [`r3WireLen`] — the arity drift itself, which is
+  what the PRE-REPAIR three-int wire (`"1 42 42"`) now reports. -/
+  | arity
+  deriving Repr, DecidableEq
+
+/-- The `<fault>` token of the malformed rendering. -/
+def R3WireFault.code : R3WireFault → Nat
+  | .token => 0
+  | .arity => 1
+
+/-- What one R3 decision is. `accept` / `reject` are the WHOLE image of a run of [`r3VerifyCore`] —
+"the wire was unreadable" is deliberately NOT a member. -/
+inductive R3Verdict where
+  /-- The whole history is `R3Attested` under this anchor. -/
+  | accept
+  /-- REFUSED: the aggregate did not verify, or a foreign circuit's fingerprint, or a head that is
+  not this grain's in some lane. -/
+  | reject
+  deriving Repr, DecidableEq
+
+/-- Render an R3 verdict to the deployed wire code. -/
+def renderR3 : R3Verdict → String
+  | .accept => "1"
+  | .reject => "0"
+
+/-- What one `r3VerifyFFI` call decides, INCLUDING the wire never becoming a question. `malformed` is
+not an [`R3Verdict`], so `r3VerifyCore` cannot produce it and the two cannot collide by value. -/
+inductive R3Outcome where
+  | verdict (v : R3Verdict)
+  | malformed (fault : R3WireFault)
+  deriving Repr, DecidableEq
+
+/-- The tag reserved for "this wire is not a question I can answer". Disjoint from `"0"` / `"1"`, and
+it is a REFUSAL: `grain-verify` maps it to `R3Error::WireMalformed`, never to accept and never to the
+whole-history `Rejected`. -/
+def r3MalformedTag : String := "2"
+
+/-- Render an R3 outcome. A verdict renders exactly as before; an unreadable wire renders
+`"2 <fault>"` — three characters, so it is not even the right LENGTH to be `"0"` or `"1"`. -/
+def renderR3Outcome : R3Outcome → String
+  | .verdict v => renderR3 v
+  | .malformed f => r3MalformedTag ++ " " ++ toString f.code
+
+/-- Strict wire parse, reporting the STAGE that refused it. EVERY whitespace-separated token must be
+an integer (`mapM`, not `filterMap`: a malformed token can never be silently dropped and shift the
+lanes) and the count must be exactly [`r3WireLen`].
+
+⚑ THERE IS NO `Option`-valued `parseWire` any more, and deliberately no fault-forgetting
+`(parseWireE s).toOption` view beside it. The whole defect was that "it did not parse" was
+representable as something else; a second entry point that throws the fault away is the same mistake
+with a smaller blast radius, and the next reader would reach for the shorter name. -/
+def parseWireE (input : String) : Except R3WireFault (Bool × Vk8 × Vk8 × Digest8 × Digest8) :=
   match (input.splitOn " ").mapM String.toInt? with
+  | none => .error .token
   | some xs =>
       if xs.length = r3WireLen then
-        some (xs.getD 0 0 != 0, lanesFrom xs 1, lanesFrom xs 9, lanesFrom xs 17, lanesFrom xs 25)
-      else none
-  | none => none
+        .ok (xs.getD 0 0 != 0, lanesFrom xs 1, lanesFrom xs 9, lanesFrom xs 17, lanesFrom xs 25)
+      else .error .arity
+
+/-- The whole String → R3-outcome decision. -/
+def r3VerifyOutcome (input : String) : R3Outcome :=
+  match parseWireE input with
+  | .error f => .malformed f
+  | .ok (av, p, e, a, b) => .verdict (if r3VerifyCore av p e a b then .accept else .reject)
+
+/-- The whole String → String decision. -/
+def r3VerifyWire (input : String) : String := renderR3Outcome (r3VerifyOutcome input)
 
 /-- **FFI entry** (Rust→`grain-verify`→Lean): `r3WireLen` space-separated decimal ints
 `"aggregateVerified presentedVk[0..8] expectedVk[0..8] aggregateHead[0..8] anchoredHead[0..8]"` —
 `aggregateVerified` nonzero = the STARK verifier accepted the whole-chain proof AGAINST THE CALLER'S
 ANCHOR — → the extracted `r3VerifyCore` as `"1"` (accept) / `"0"` (reject). Runs the VERIFIED Lean R3
 decision as native code, the "Lean is the runtime" shape shared with `dregg_fips204_verify` /
-`dregg_storage_content_root`. Malformed input fails CLOSED (`"0"`) — including the PRE-REPAIR three-int
-wire, so a stale caller can never re-open the ~31-bit binding by accident. -/
+`dregg_storage_content_root`.
+
+⚑ A wire this parser cannot READ renders `"2 <fault>"`, NOT `"0"` — including the PRE-REPAIR
+three-int wire, which now reports `arity` rather than masquerading as a whole-history refusal. A
+stale caller still cannot re-open the ~31-bit binding, and now it also cannot be mistaken for a
+lying host. -/
 @[export dregg_grain_r3_verify]
-def r3VerifyFFI (input : String) : String :=
-  match parseWire input with
-  | some (av, p, e, a, b) => if r3VerifyCore av p e a b then "1" else "0"
-  | none => "0"
+def r3VerifyFFI (input : String) : String := r3VerifyWire input
+
+/-! ### THE SEPARATION, PROVED BOTH WAYS — over EVERY wire and EVERY verdict. -/
+
+/-- Every fault renders as exactly three characters (`"2"`, a space, one digit). -/
+private theorem renderR3Outcome_malformed_length (f : R3WireFault) :
+    (renderR3Outcome (.malformed f)).length = 3 := by
+  cases f <;> rfl
+
+/-- **NO R3 VERDICT IS EVER A MALFORMED CODE.** Quantified over `R3Verdict` and `R3WireFault`, so an
+arm added to either is re-checked by this proof rather than by a reader. -/
+theorem renderR3_ne_malformed (v : R3Verdict) (f : R3WireFault) :
+    renderR3 v ≠ renderR3Outcome (.malformed f) := by
+  have hlen := renderR3Outcome_malformed_length f
+  cases v <;> (intro h; rw [renderR3] at h; rw [← h] at hlen; exact absurd hlen (by decide))
+
+/-- **BOTH POLES, ON THE R3 WIRE.** `r3VerifyWire s = "0"` iff the wire PARSED and the Lean-proven
+`r3VerifyCore` REFUSED. This is the pole §5's falsifiers and every `!lean_decides(…)` in
+`r3_width_falsification.rs` assert; before the split it was free for any unreadable wire. -/
+theorem r3VerifyWire_eq_reject_iff (s : String) :
+    r3VerifyWire s = "0" ↔
+      ∃ av p e a b, parseWireE s = .ok (av, p, e, a, b) ∧ r3VerifyCore av p e a b = false := by
+  unfold r3VerifyWire r3VerifyOutcome
+  cases hp : parseWireE s with
+  | error f =>
+      simp only [renderR3Outcome]
+      constructor
+      · intro h
+        exact absurd (renderR3Outcome_malformed_length f)
+          (by rw [show renderR3Outcome (R3Outcome.malformed f) = "0" from h]; decide)
+      · rintro ⟨_, _, _, _, _, hok, -⟩; exact absurd hok (by simp)
+  | ok q =>
+      obtain ⟨av, p, e, a, b⟩ := q
+      simp only [renderR3Outcome]
+      constructor
+      · intro hq
+        refine ⟨av, p, e, a, b, rfl, ?_⟩
+        by_cases hv : r3VerifyCore av p e a b = true
+        · simp only [hv, if_true] at hq; exact absurd hq (by decide)
+        · simpa using hv
+      · rintro ⟨av', p', e', a', b', hok, hv⟩
+        simp only [Except.ok.injEq, Prod.mk.injEq] at hok
+        obtain ⟨rfl, rfl, rfl, rfl, rfl⟩ := hok
+        simp [hv, renderR3]
+
+/-- **THE OTHER POLE.** `r3VerifyWire s` is a malformed code exactly when the wire did not parse,
+with the fault naming the stage. So a `"2 …"` at `grain-verify` is PROOF that no R3 decision was
+made about anybody's history. -/
+theorem r3VerifyWire_malformed_iff (s : String) (f : R3WireFault) :
+    r3VerifyWire s = renderR3Outcome (.malformed f) ↔ parseWireE s = .error f := by
+  unfold r3VerifyWire r3VerifyOutcome
+  cases hp : parseWireE s with
+  | error g =>
+      simp only []
+      constructor
+      · intro h
+        have hgf : g = f := by
+          cases g <;> cases f <;> first
+            | rfl
+            | (exfalso; exact absurd h (by decide))
+        simp [hgf]
+      · intro h; simp only [Except.error.injEq] at h; subst h; rfl
+  | ok q =>
+      obtain ⟨av, p, e, a, b⟩ := q
+      simp only [renderR3Outcome]
+      constructor
+      · intro hq
+        split at hq
+        · exact absurd hq (renderR3_ne_malformed .accept f)
+        · exact absurd hq (renderR3_ne_malformed .reject f)
+      · intro hq; exact absurd hq (by simp)
 
 end Verify
 
@@ -575,25 +747,67 @@ def headA : List Felt := [7, 101, 102, 103, 104, 105, 106, 107]
 compared is equal; the repaired core sees the difference. -/
 def headForged : List Felt := [7, 999, 102, 103, 104, 105, 106, 107]
 
--- ACCEPT: verified, the presented fingerprint IS the anchor, the full 8-felt heads agree.
-#guard r3VerifyFFI (wireOf 1 vkA vkA headA headA) = "1"
--- THE WIDTH TOOTH ON THE WIRE: a forged head differing ONLY OUTSIDE LANE 0 is REFUSED …
-#guard r3VerifyFFI (wireOf 1 vkA vkA headForged headA) = "0"
--- … and its lane-0 squeeze — all the pre-fix seam compared — is IDENTICAL, so the pre-fix core accepted.
-#guard headForged.headD 0 == headA.headD 0
-#guard r3VerifyCoreNarrow true (headForged.headD 0) (headA.headD 0) = true
--- THE ANTI-SELF-ANCHOR TOOTH ON THE WIRE: a foreign circuit's fingerprint is REFUSED …
-#guard r3VerifyFFI (wireOf 1 vkB vkA headA headA) = "0"
--- … while the self-anchored form (presented == expected, whatever it is) accepted it.
-#guard r3VerifyFFI (wireOf 1 vkB vkB headA headA) = "1"
--- A non-accepting aggregate status REJECTS.
-#guard r3VerifyFFI (wireOf 0 vkA vkA headA headA) = "0"
--- FAIL-CLOSED: the PRE-REPAIR three-int wire is now REFUSED, so a stale caller cannot re-open the
--- ~31-bit binding by accident.
-#guard r3VerifyFFI "1 42 42" = "0"
--- FAIL-CLOSED: malformed input, and a wire with a non-integer token (strict `mapM`, never a silent drop).
-#guard r3VerifyFFI "garbage" = "0"
-#guard r3VerifyFFI (wireOf 1 vkA vkA headA headA ++ " x") = "0"
+/-! ⚑ EVERY VALUE BELOW WAS MEASURED BY EVALUATION, NOT PREDICTED — the parse is `mapM`-FIRST, so a
+wire whose tokens do not all parse is `token` (`"2 0"`) even when its COUNT is also wrong, while the
+pre-repair three-int wire (all three parse) is `arity` (`"2 1"`).
+
+⚠ HONEST LABEL: `by native_decide`, not `by decide`. `String.splitOn` / `String.mapM` do not reduce
+in the KERNEL, so every CONCRETE wire fact here is compiler-trusted, and each carries an
+`#assert_compiled` in §7 saying so. The GENERAL facts are NOT — `renderR3_ne_malformed`,
+`r3VerifyWire_eq_reject_iff` and `r3VerifyWire_malformed_iff` are ordinary kernel proofs over ALL
+wires and ALL verdicts, carry `#assert_axioms`, and they are what carries the separation. -/
+
+/-- ACCEPT: verified, the presented fingerprint IS the anchor, the full 8-felt heads agree. -/
+theorem r3Wire_accepts_honest : r3VerifyFFI (wireOf 1 vkA vkA headA headA) = "1" := by native_decide
+/-- THE WIDTH TOOTH ON THE WIRE: a forged head differing ONLY OUTSIDE LANE 0 is REFUSED — and `"0"`
+now means exactly that, a decision the Lean core MADE. -/
+theorem r3Wire_refuses_lane0_grind :
+    r3VerifyFFI (wireOf 1 vkA vkA headForged headA) = "0" := by native_decide
+/-- THE ANTI-SELF-ANCHOR TOOTH ON THE WIRE: a foreign circuit's fingerprint is REFUSED … -/
+theorem r3Wire_refuses_foreign_vk :
+    r3VerifyFFI (wireOf 1 vkB vkA headA headA) = "0" := by native_decide
+/-- … while the self-anchored form (presented == expected, whatever it is) ACCEPTS it — the wound. -/
+theorem r3Wire_self_anchored_admits_foreign_vk :
+    r3VerifyFFI (wireOf 1 vkB vkB headA headA) = "1" := by native_decide
+/-- A non-accepting aggregate status REJECTS. -/
+theorem r3Wire_refuses_unverified :
+    r3VerifyFFI (wireOf 0 vkA vkA headA headA) = "0" := by native_decide
+
+/-- The lane-0 squeeze — ALL the pre-fix seam compared — is identical for the grind product … -/
+theorem headForged_lane0_eq_headA : headForged.headD 0 = headA.headD 0 := by native_decide
+/-- … so the pre-fix core ACCEPTED it. -/
+theorem narrow_core_accepts_the_grind :
+    r3VerifyCoreNarrow true (headForged.headD 0) (headA.headD 0) = true := by native_decide
+
+/-- **THE PRE-REPAIR THREE-INT WIRE IS AN ARITY FAULT, NOT A REFUSAL ABOUT A HISTORY.** All three of
+its tokens parse, so the parse reaches the length gate: `"2 1"`. A stale caller still cannot re-open
+the ~31-bit binding — and can no longer be mistaken for a lying host either. -/
+theorem r3Wire_stale_three_int_wire_is_malformed : r3VerifyFFI "1 42 42" = "2 1" := by native_decide
+/-- Wholly unreadable input, and the empty wire: `token` (`"".splitOn " " = [""]`). -/
+theorem r3Wire_garbage_is_malformed : r3VerifyFFI "garbage" = "2 0" := by native_decide
+theorem r3Wire_empty_is_malformed : r3VerifyFFI "" = "2 0" := by native_decide
+/-- A well-formed wire with ONE extra non-integer token: `token` — the strict `mapM` catches it
+before the length gate, so a bad token can never be silently dropped and shift the lanes. -/
+theorem r3Wire_trailing_junk_is_malformed :
+    r3VerifyFFI (wireOf 1 vkA vkA headA headA ++ " x") = "2 0" := by native_decide
+/-- A well-formed wire with ONE extra INTEGER token: 34 ints, so `arity`. -/
+theorem r3Wire_one_token_long_is_malformed :
+    r3VerifyFFI (wireOf 1 vkA vkA headA headA ++ " 9") = "2 1" := by native_decide
+
+/-- **THE COLLISION IS GONE, AT THE VALUES THAT USED TO COLLIDE.** The two wound-#22 forgeries and an
+unverified aggregate render `"0"` — the whole-history refusal — and five different unreadable wires
+render codes, NOT ONE of which is `"0"`. Before 2026-08-07 every conjunct after the third read
+`"0" ≠ "0"`, which is why `r3_width_falsification.rs`'s four negative tests could not distinguish
+"the ~2^31 grind was refused by a theorem" from "the Lean side could not read what Rust sent". -/
+theorem r3Wire_reject_is_distinguishable_from_a_malformed_wire :
+    r3VerifyFFI (wireOf 1 vkA vkA headForged headA) = "0"
+      ∧ r3VerifyFFI (wireOf 1 vkB vkA headA headA) = "0"
+      ∧ r3VerifyFFI (wireOf 0 vkA vkA headA headA) = "0"
+      ∧ r3VerifyFFI "1 42 42" ≠ "0"
+      ∧ r3VerifyFFI "garbage" ≠ "0"
+      ∧ r3VerifyFFI "" ≠ "0"
+      ∧ r3VerifyFFI (wireOf 1 vkA vkA headA headA ++ " x") ≠ "0"
+      ∧ r3VerifyFFI (wireOf 1 vkA vkA headA headA ++ " 9") ≠ "0" := by native_decide
 
 end Realize
 
@@ -625,5 +839,25 @@ end Realize
 #assert_axioms Dregg2.Grain.R3Verify.r3_real_chain_turn_executed
 #assert_axioms Dregg2.Grain.R3Verify.r3_wrong_head_rejected
 #assert_axioms Dregg2.Grain.R3Verify.r3_foreign_vk_rejected
+
+/-! ### The wire-separation pins: kernel proofs vs compiled evaluation, labelled apart. -/
+
+#assert_axioms Dregg2.Grain.R3Verify.renderR3_ne_malformed
+#assert_axioms Dregg2.Grain.R3Verify.r3VerifyWire_eq_reject_iff
+#assert_axioms Dregg2.Grain.R3Verify.r3VerifyWire_malformed_iff
+
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_accepts_honest
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_refuses_lane0_grind
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_refuses_foreign_vk
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_self_anchored_admits_foreign_vk
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_refuses_unverified
+#assert_compiled Dregg2.Grain.R3Verify.headForged_lane0_eq_headA
+#assert_compiled Dregg2.Grain.R3Verify.narrow_core_accepts_the_grind
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_stale_three_int_wire_is_malformed
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_garbage_is_malformed
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_empty_is_malformed
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_trailing_junk_is_malformed
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_one_token_long_is_malformed
+#assert_compiled Dregg2.Grain.R3Verify.r3Wire_reject_is_distinguishable_from_a_malformed_wire
 
 end Dregg2.Grain.R3Verify

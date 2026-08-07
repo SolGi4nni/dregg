@@ -119,6 +119,13 @@ fn r3_verifies_a_real_driven_grain_session() {
         ),
     }
 
+    // ⚑ The two `R3Error::Rejected` matches in this test became load-bearing on 2026-08-07.
+    // Before then `r3VerifyFFI` rendered an UNREADABLE wire as `"0"` — the same code the
+    // whole-history refusal renders as — and `r3_verify` decoded everything that was not `"1"`
+    // into `Rejected`, so both poles were also satisfied by "the wire drifted and nothing was
+    // decided". An unreadable wire is now `R3Error::WireMalformed`, which the `other => panic!`
+    // arms catch. No edit was needed here; the assertions simply started meaning what they say.
+
     // (iii) TAMPER — forge the last leg's claimed post-state PI → the fold does not verify.
     let forged = forge_last_post_state(minter.records());
     match r3_verify(&forged, &head, &anchor) {

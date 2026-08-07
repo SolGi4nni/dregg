@@ -134,3 +134,60 @@ fn ml_dsa_verify_is_lean_backed_accepts_real_rejects_tampers_and_agrees_with_cra
     assert!(!ml_dsa_verify(&[], CTX, msg, &sig));
     assert!(!ml_dsa_verify(&pk, CTX, msg, &[]));
 }
+
+/// ⚑ **THE NEGATIVE POLE, AT THE WIRE — because at the `bool` it is still free.**
+///
+/// `ml_dsa_verify` returns `bool`, so `!ml_dsa_verify(…, &tampered)` above is satisfied by ANY
+/// fail-closed path: a genuine cryptographic reject, a broken archive, or — until 2026-08-07 — a
+/// wire the Lean parser could not read, which `verifyRealFFI` rendered as `"0"`, exactly what a
+/// forged signature renders as. Three of the assertions in the test above were therefore
+/// indistinguishable from "`dregg_pq::real_verify_wire` and `Fips204Verify.parseByteE` disagree and
+/// nothing was verified".
+///
+/// This test closes that by reading the RAW reply. The tampered signature must come back as the
+/// literal `"0"` — the verdict code — and NOT as a `"2 <fault>"` malformed code. If the wire ever
+/// drifts, this goes RED and names it, instead of the tamper assertions passing for free.
+#[test]
+fn the_tampered_rejection_is_a_verdict_not_an_unreadable_wire() {
+    install_core();
+    assert!(
+        dregg_lean_ffi::fips204_verify_real_core_available(),
+        "the leanc-native REAL ML-DSA verify core must be linked+present"
+    );
+
+    let key = MlDsaKey::from_ed25519_seed(&[42u8; 32]);
+    let pk = key.public_bytes();
+    let msg = b"brick 8: the deployed verify runs the Lean-verified core over the real bytes";
+    let sig = key.sign(CTX, msg);
+    let mut tampered = sig.clone();
+    tampered[100] ^= 0xff;
+
+    // The exact wire `dregg_pq::ml_dsa_verify` marshals: `hex(pk) hex(msg) hex(ctx) hex(sig)`.
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let wire_for = |s: &[u8]| format!("{} {} {} {}", hex(&pk), hex(msg), hex(CTX), hex(s));
+
+    let honest = dregg_lean_ffi::shadow_fips204_verify_real(&wire_for(&sig))
+        .expect("the linked core answers");
+    assert_eq!(honest, "1", "the genuine signature must ACCEPT on the wire");
+
+    let forged = dregg_lean_ffi::shadow_fips204_verify_real(&wire_for(&tampered))
+        .expect("the linked core answers");
+    assert_eq!(
+        forged, "0",
+        "a one-byte tamper must come back as the REJECT verdict `\"0\"`. If this is a `\"2 …\"` \
+         code, the Lean side could not READ the wire this test built and NOTHING was verified — \
+         which before 2026-08-07 was also spelled `\"0\"` and passed silently."
+    );
+
+    // And an unreadable wire is a DIFFERENT string, so the two are distinguishable by value.
+    let malformed =
+        dregg_lean_ffi::shadow_fips204_verify_real("zz zz zz zz").expect("the linked core answers");
+    assert!(
+        malformed.starts_with('2'),
+        "an unreadable wire must render the malformed code, got {malformed:?}"
+    );
+    assert_ne!(
+        forged, malformed,
+        "a forged signature and a wire nothing parsed must not be the same answer"
+    );
+}
