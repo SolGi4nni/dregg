@@ -89,6 +89,13 @@ pub enum RelinError {
         phase: &'static str,
     },
     PartyPanicked,
+    /// A round-2 share was computed against a DIFFERENT round-1 aggregate than the one the
+    /// coordinator published. Upstream's assembler reads the carried aggregate from whichever
+    /// share it sees first and never compares the others, so without this check a party
+    /// answering a forged or stale aggregate folds into the key unnoticed.
+    RoundOneAggregateMismatch {
+        party: usize,
+    },
     /// The candidate n-of-n relin key failed its mandatory acceptance gate: a FRESH random trial ct×ct
     /// product did not decrypt to the exact plaintext product under the full threshold quorum. Fail closed —
     /// a silently-corrupt relin key (a malformed/biased party contribution slips past aggregation, which
@@ -126,6 +133,11 @@ impl std::fmt::Display for RelinError {
             Self::PhaseMismatch => write!(f, "relinearization message has the wrong phase"),
             Self::Fhe { phase } => write!(f, "fhe.rs rejected relinearization {phase}"),
             Self::PartyPanicked => write!(f, "a relinearization party worker panicked"),
+            Self::RoundOneAggregateMismatch { party } => write!(
+                f,
+                "party {party} answered round 2 against a different round-1 aggregate than the \
+                 one published"
+            ),
             Self::AcceptanceFailed { trial } => write!(
                 f,
                 "relin key failed the acceptance gate at trial {trial}: a fresh ct×ct product did not \
@@ -222,7 +234,7 @@ impl RelinKeySession {
         self.timeout
     }
 
-    fn common_random_polys(&self, params: &BfvParams) -> Result<Vec<CommonRandomPoly>> {
+    pub(crate) fn common_random_polys(&self, params: &BfvParams) -> Result<Vec<CommonRandomPoly>> {
         let mut rng = StdRng::from_seed(self.crp_seed);
         CommonRandomPoly::new_vec(params.arc(), &mut rng).map_err(|_| RelinError::Fhe {
             phase: "CRP expansion",

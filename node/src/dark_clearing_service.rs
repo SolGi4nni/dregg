@@ -1122,7 +1122,9 @@ fn run_quorum_dkg(
     let mut inboxes: Vec<Vec<PrivateDealerShare>> =
         (0..KEY_CUSTODIANS).map(|_| Vec::new()).collect();
     for dealer in 0..KEY_CUSTODIANS {
-        let (contribution, private) = deal(&session, dealer, params)
+        // `_relin_secret` drops here: this in-process quorum runs no ct*ct
+        // multiply, so it needs no relinearization key and keeps no `s_d`.
+        let (contribution, private, _relin_secret) = deal(&session, dealer, params)
             .map_err(|e| ClearingRefusal::committee(format!("dealer {dealer} failed: {e:?}")))?
             .into_parts();
         public.push(contribution);

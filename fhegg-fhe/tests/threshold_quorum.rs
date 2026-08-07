@@ -33,7 +33,7 @@ fn setup() -> (
     let mut inboxes: Vec<Vec<PrivateDealerShare>> = (0..N).map(|_| Vec::new()).collect();
 
     for dealer in 0..N {
-        let (contribution, private) = deal(&session, dealer, &params)
+        let (contribution, private, _relin_secret) = deal(&session, dealer, &params)
             .expect("semi-honest dealer")
             .into_parts();
         public.push(contribution);
@@ -272,7 +272,8 @@ fn quorum_roster_share_wire_and_replay_refusals_have_teeth() {
 fn setup_refuses_missing_dealers_before_party_state_exists() {
     let params = BfvParams::fold_set();
     let session = QuorumKeygenSession::from_seed(3, 2, [0xa1; 32]).expect("valid setup session");
-    let (_public, private) = deal(&session, 0, &params).expect("one dealer").into_parts();
+    let (_public, private, _relin_secret) =
+        deal(&session, 0, &params).expect("one dealer").into_parts();
     let only_one = private
         .into_iter()
         .filter(|share| share.recipient() == 0)

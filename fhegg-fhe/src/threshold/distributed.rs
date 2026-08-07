@@ -106,9 +106,9 @@ use crate::mpc_party::transport::{
 use crate::threshold::quorum::{
     assemble_distributed_party, assemble_distributed_transcript, commit_distributed_secret_share,
     deal as deal_contribution, finish_public_key, verify_received_dealer_row,
-    AggregateRowBindingProof, DealerRowCrossEvaluation, DealerVssCommitment, PrivateDealerShare,
-    QuorumError, QuorumKeygenSession, QuorumParty, VerifiedDkgTranscript, VerifiedPartyAssembly,
-    VerifiedPrivateDealerShare,
+    AggregateRowBindingProof, DealerRelinSecret, DealerRowCrossEvaluation, DealerVssCommitment,
+    PrivateDealerShare, QuorumError, QuorumKeygenSession, QuorumParty, VerifiedDkgTranscript,
+    VerifiedPartyAssembly, VerifiedPrivateDealerShare,
 };
 use crate::threshold::{BfvParams, CollectivePublicKey, PublicKeyContribution, ThresholdError};
 

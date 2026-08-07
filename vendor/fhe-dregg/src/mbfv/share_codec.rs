@@ -210,6 +210,19 @@ where
     /// round-2 share the round-1 aggregate it was computed against). The
     /// generator's secret-dependent ephemeral `u` and the party's secret key are
     /// not reachable from here and never enter the encoding.
+    /// The canonical bytes of the round-1 aggregate this share was computed
+    /// against, if it carries one (only a round-2 share does).
+    ///
+    /// A coordinator needs this because upstream's `RelinearizationKey::
+    /// from_shares` takes the carried aggregate from whichever share it sees
+    /// FIRST and never checks the rest agree — so a party that answered against
+    /// a different round-1 aggregate would be folded in unnoticed.
+    pub fn carried_round_1_canonical_bytes(&self) -> Option<Vec<u8>> {
+        self.last_round
+            .as_ref()
+            .map(|last| last.to_canonical_bytes())
+    }
+
     pub fn to_canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         encode_share(&mut out, self);

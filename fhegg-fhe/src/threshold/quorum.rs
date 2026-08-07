@@ -388,16 +388,22 @@ impl DealerBundle {
         &self.vss_commitment
     }
 
-    /// The dealer's own short secret, for the relinearization ceremony.
+    /// Public contribution, the `n` addressed private rows, and the dealer's own
+    /// short secret `s_d`.
     ///
-    /// A caller that does not run relin should simply drop the bundle; nothing
-    /// retains this once the bundle is gone.
-    pub fn into_relin_secret(self) -> DealerRelinSecret {
-        self.relin_secret
-    }
-
-    pub fn into_parts(self) -> (PublicKeyContribution, Vec<PrivateDealerShare>) {
-        (self.public, self.private)
+    /// `s_d` is in the tuple rather than behind a second accessor ON PURPOSE:
+    /// every dealing site is then forced to say what it does with the secret,
+    /// and a caller that does not run relinearization drops it on the spot
+    /// (`let (public, private, _) = ...`), which is the same lifetime the secret
+    /// had before it was retained at all.
+    pub fn into_parts(
+        self,
+    ) -> (
+        PublicKeyContribution,
+        Vec<PrivateDealerShare>,
+        DealerRelinSecret,
+    ) {
+        (self.public, self.private, self.relin_secret)
     }
 
     /// Verify every private row opening and every pairwise bivariate

@@ -15,6 +15,11 @@ pub use fhegg_core::threshold::*;
 
 /// The `t < n` custody with parties in SEPARATE PROCESSES (uses `mpc_party` + `quorum`).
 pub mod distributed;
+/// Relinearization for the DISTRIBUTED committee, run on the additive-of-dealers
+/// structure `s = sum_d s_d` because the Lagrange custody rows provably cannot
+/// carry it. Read the module docs before assuming this is `t`-of-`n`: it is
+/// `n`-of-`n`, exactly like the DKG setup it extends.
+pub mod distributed_relin;
 /// Crash-tolerant `t < n` Shamir custody and opening + the malicious-secure decrypt-share certificate.
 pub mod quorum;
 /// Honest n-of-n multiparty BFV relinearization-key generation + its Tier-0 acceptance gate.

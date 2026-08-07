@@ -237,6 +237,14 @@ name = "party_mpc_preprocessing_use"
 path = "tests/party_mpc_preprocessing_use.rs"
 required-features = ["verified-pq-runtime-tests"]
 
+# The distributed relinearization ceremony: an honest full-roster run assembles a
+# key that actually relinearizes a ct*ct product (opened through the t-of-n
+# quorum), and six ways of not being an honest full roster are refused. No
+# processes and no PQ transport, so it needs no extra features.
+[[test]]
+name = "distributed_relin_ceremony"
+path = "tests/distributed_relin_ceremony.rs"
+
 # The distributed committee's teeth: three party PROCESSES, a fourth relying
 # party, an opening at t, a refusal at t-1, and a dealer that lies to one
 # recipient being refused by that recipient.
