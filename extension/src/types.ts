@@ -239,6 +239,11 @@ export type MessageType =
   // extension-held identity key (verified server-side by
   // OfferingHost::advance_signed).
   | "dregg:signOfferingTurn"
+  // Judged Signal session: sign ONE of exactly two documented session
+  // statements with the extension-held player key (verified node-side by
+  // poa_signal_session::verify_player_signature against its OWN re-derivation).
+  // Structured fields only — this path accepts no caller-supplied bytes.
+  | "dregg:signSignalSession"
   // Durable offline outbox
   | "dregg:listOutbox"
   | "dregg:flushOutbox"

@@ -17,6 +17,7 @@ await esbuild.build({
     'src/poa.ts',
     'src/poa-galley.ts',
     'src/poa-signal.ts',
+    'src/signal-session.ts',
   ],
   outdir: 'test/.build',
   format: 'esm',

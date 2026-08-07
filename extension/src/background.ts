@@ -24,6 +24,12 @@ import {
   type ParsedOfferingTurn,
 } from "./offering-sign";
 import {
+  parseSignalSessionRequest,
+  signalSessionStatement,
+  type ParsedSignalSessionRequest,
+  type SignalSessionSignResult,
+} from "./signal-session";
+import {
   deriveEvmIdentity,
   personalSign as evmPersonalSign,
   personalSignDigest as evmPersonalSignDigest,
@@ -3816,6 +3822,186 @@ async function signOfferingTurn(paramsInput: unknown, origin?: string): Promise<
 }
 
 /**
+ * The judged-Signal-session consent surface: a nonce-bound popup rendering the
+ * EXACT statement about to be signed — schema, authority, slot, and for a guess
+ * the round and the three bands — plus the signing identity.
+ *
+ * Same un-overlayable popup-decision framework as `showOfferingConfirmation`,
+ * with the ACCEPT bound to `bindingHex` (the SHA-256 of the exact statement
+ * bytes): the popup echoes the binding it displayed, and any accept whose echo
+ * differs — a stale or post-confirmation-substituted decision — is a decline.
+ */
+function showSignalSessionConfirmation(input: {
+  origin?: string;
+  kind: string;
+  schema: string;
+  authorityId: string;
+  slotDecimal: string;
+  roundDecimal: string | null;
+  guessText: string | null;
+  /** The full statement text, shown verbatim — this is what is being signed. */
+  statement: string;
+  signerPubkeyHex: string;
+  signerProfile?: string;
+  /** Lowercase hex SHA-256 of the exact statement bytes — the echo binding. */
+  bindingHex: string;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    const nonce = registerPendingDecision("confirm-intent.html", {
+      action: "signSignalSession",
+      origin: input.origin || "unknown",
+      sessionKind: input.kind,
+      sessionSchema: input.schema,
+      sessionAuthorityId: input.authorityId,
+      sessionSlotDecimal: input.slotDecimal,
+      sessionRoundDecimal: input.roundDecimal,
+      sessionGuessText: input.guessText,
+      sessionStatement: input.statement,
+      signerPubkeyHex: input.signerPubkeyHex,
+      signerProfile: input.signerProfile,
+      bindingHex: input.bindingHex,
+    });
+    const popupUrl = chrome.runtime.getURL("confirm-intent.html") + "#nonce=" + nonce;
+
+    chrome.windows.create({
+      url: popupUrl,
+      type: "popup",
+      width: 460,
+      height: 600,
+      focused: true,
+    }, (win) => {
+      const listener = (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): void => {
+        if (message.type !== "dregg:intentConfirmation") return;
+        if (!validatePopupSender(message, sender, nonce, "confirm-intent.html")) return;
+        chrome.runtime.onMessage.removeListener(listener);
+        if (message.confirmed !== true) {
+          resolve(false);
+          return;
+        }
+        // The accept must bind what the popup DISPLAYED.
+        if (message.sessionBindingHex !== input.bindingHex) {
+          resolve(false);
+          return;
+        }
+        resolve(true);
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      if (win?.id) {
+        chrome.windows.onRemoved.addListener(function onClose(closedId: number) {
+          if (closedId === win.id) {
+            chrome.windows.onRemoved.removeListener(onClose);
+            chrome.runtime.onMessage.removeListener(listener);
+            consumePendingDecision(nonce);
+            resolve(false);
+          }
+        });
+      }
+    });
+  });
+}
+
+/**
+ * Sign ONE judged Signal session statement with the extension-held player key.
+ *
+ * The verifying half is `node/src/poa_signal_session.rs::verify_player_signature`,
+ * which RE-DERIVES the statement from the structured request fields and never
+ * accepts it pre-encoded. This handler does the same thing from the other side:
+ * it takes structured fields, re-derives the statement in `src/signal-session.ts`
+ * (pin-tested byte-for-byte against the Rust encodings), and signs THAT.
+ *
+ * ⚑ The player key comes from CUSTODY, not from the request — see the module
+ * header of `signal-session.ts`. The statement's subject is the signer, so the
+ * consent surface cannot display a subject the signature does not have.
+ *
+ * ⚑ REPLAY SAFETY IS NODE-SIDE and it is the `round` field: a guess signature
+ * covers exactly one round, so a captured request refuses as
+ * `session-round-mismatch` rather than spending a second burst. That is why no
+ * session token exists and why this handler holds no session state.
+ *
+ * Fail-closed order: params → custody → user consent → signature. Every refusal
+ * carries a typed `code` the page can distinguish.
+ */
+async function signSignalSession(paramsInput: unknown, origin?: string): Promise<SignalSessionSignResult> {
+  if (!wasmLoaded || !wasm) {
+    return {
+      ok: false,
+      code: "wasm-unavailable",
+      error: `WASM cryptographic module not loaded. ${wasmLoadError ? `Load error: ${wasmLoadError}` : "Module unavailable."}`,
+    };
+  }
+  const w = wasm;
+
+  // Revalidate independently of the page bridge.
+  const parsed = parseSignalSessionRequest(paramsInput);
+  if (!parsed.ok) return { ok: false, code: "invalid-params", error: parsed.error };
+  const r: ParsedSignalSessionRequest = parsed.request;
+
+  const cc = await loadState();
+  if (cc.locked) return { ok: false, code: "custody-locked", error: "Cipherclerk is locked" };
+  if (cc.needsPassphraseSetup) {
+    return { ok: false, code: "custody-locked", error: "Set a cipherclerk passphrase before signing." };
+  }
+  if (!cc.secretKey || cc.secretKey.length !== 32) {
+    return { ok: false, code: "custody-locked", error: "Cipherclerk secret key not available" };
+  }
+  if (!cc.publicKey || cc.publicKey.length !== 32) {
+    return { ok: false, code: "custody-locked", error: "Cipherclerk public key not available" };
+  }
+  const playerKeyHex = offeringBytesToHex(cc.publicKey);
+
+  // The exact bytes about to be signed, and their digest — the consent binding.
+  const statement = signalSessionStatement(r, playerKeyHex);
+  const bindingHex = offeringBytesToHex(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", statement.bytes as Uint8Array<ArrayBuffer>)),
+  );
+
+  const confirmed = await showSignalSessionConfirmation({
+    origin,
+    kind: r.kind,
+    schema: statement.schema,
+    authorityId: r.authorityId,
+    slotDecimal: r.slot.toString(),
+    roundDecimal: r.round === null ? null : String(r.round),
+    guessText: r.guess === null ? null : `${r.guess.low} · ${r.guess.mid} · ${r.guess.high}`,
+    statement: statement.text,
+    signerPubkeyHex: playerKeyHex,
+    signerProfile: cc.activeProfile || undefined,
+    bindingHex,
+  });
+  if (!confirmed) {
+    return { ok: false, code: "user-declined", error: "User declined to sign this judged session statement" };
+  }
+
+  let signature: Uint8Array;
+  try {
+    signature = w.sign_message(new Uint8Array(cc.secretKey), statement.bytes);
+  } catch (e: unknown) {
+    return { ok: false, code: "sign-failed", error: (e as Error).message || "sign_message failed" };
+  }
+  if (signature.length !== 64) {
+    return { ok: false, code: "sign-failed", error: `expected a 64-byte Ed25519 signature, got ${signature.length}` };
+  }
+
+  cc.log.push({
+    action: "signSignalSession",
+    resource: `${r.kind}/${r.authorityId}/${r.slot.toString()}`,
+    allowed: true,
+    timestamp: Date.now(),
+    mode: "signed",
+  });
+  await saveState();
+
+  return {
+    ok: true,
+    kind: r.kind,
+    schema: statement.schema,
+    playerKeyHex,
+    statement: statement.text,
+    signatureHex: offeringBytesToHex(signature),
+  };
+}
+
+/**
  * Register a known federation in local chrome.storage.local.
  * Keyed by federation_id under KNOWN_FEDERATIONS_KEY.
  */
@@ -5654,6 +5840,16 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     case "dregg:signOfferingTurn": {
       const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
       const result = await signOfferingTurn(message.params, origin);
+      if (result.ok) resetLockTimer();
+      return { id: message.id, result };
+    }
+
+    // Judged Signal session: sign one of exactly two documented session
+    // statements with the player key. Consent-gated; typed failure codes ride
+    // in `result` so the page distinguishes a decline from a signing failure.
+    case "dregg:signSignalSession": {
+      const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
+      const result = await signSignalSession(message.params, origin);
       if (result.ok) resetLockTimer();
       return { id: message.id, result };
     }

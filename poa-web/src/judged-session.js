@@ -20,10 +20,20 @@ import { ArtifactRefusal } from "./poag1.js";
  * and the whole point of a judged session is that the node's Lean classification
  * is the only one. The browser authors identity and intent; nothing else.
  *
- * ⚠ AND IT CANNOT PLAY, TODAY. Three separate things are missing, all of them in
- * the node/extension and none of them here; [`judgedCustody`] names whichever one
- * bites first and the panel renders the action DISABLED rather than inventing a
- * way around it. See `CUSTODY_BLOCKERS`.
+ * ⚠ AND IT STILL CANNOT PLAY — but for ONE fewer reason than it could on
+ * 2026-08-07. Of the three things that were missing, the first has LANDED: the
+ * extension now exposes `signSignalSession`, a scoped, schema-pinned signer for
+ * exactly the two documented session statements (`extension/src/signal-session.ts`).
+ * The two that remain are node-side and are named in `CUSTODY_BLOCKERS`;
+ * [`judgedCustody`] reports whichever bites first and the panel renders the
+ * action DISABLED rather than inventing a way around it.
+ *
+ * ⚑ The remaining walls are MEASURED, not assumed. `routesReachable` comes out
+ * of an actual response — a 401 says the bearer wall stands, a served or
+ * 404-ing document says it does not — so the day a bearer reaches this origin,
+ * the button enables with no change here. That is deliberate: a hardcoded
+ * `canPlay: false` would be a wall this file believes in rather than one it
+ * observed.
  */
 
 const SESSION_FORMAT = "POA-SIGNAL-SESSION-1";
@@ -241,34 +251,62 @@ export function parseSessionDocument(value, expected) {
 }
 
 /**
- * ⚑ WHY THIS BROWSER CANNOT PLAY A JUDGED SESSION, in the order the attempt hits
- * them. Each entry is a fact about the node or the extension, measured 2026-08-07,
- * NOT a policy choice made here — and each names the thing that would have to land
- * for the surface below to light up unchanged.
+ * The provider method that signs a session statement, and the only one this page
+ * will use for it. It takes STRUCTURED FIELDS, never bytes, and the extension
+ * re-derives the statement itself — see `extension/src/signal-session.ts`.
+ */
+export const SESSION_SIGNER_METHOD = "signSignalSession";
+
+/**
+ * ⚑ WHAT THE EXTENSION MUST SHIP for this page to sign at all.
  *
- * None of these is worked around. Generating a keypair in page memory to sign the
- * open statement would be a player key with no cell, no funds and no ML-DSA half,
- * i.e. inventing custody to make a button clickable.
+ * This is NOT a wall in `CUSTODY_BLOCKERS` — those are facts about source that
+ * this repo would have to change. This is a per-INSTALL capability check: an
+ * extension older than 2026-08-07 has no `signSignalSession`, and the honest
+ * thing to tell that player is "update the extension", not "the platform cannot
+ * do this".
+ */
+export const SIGNER_ABSENT = Object.freeze({
+  code: "signer-not-installed",
+  what: `The installed extension exposes no \`${SESSION_SIGNER_METHOD}\`.`,
+  detail:
+    "Judged play needs a raw Ed25519 signature by the player key over the node's documented session " +
+    "statement. The extension ships a scoped, schema-pinned signer for exactly that " +
+    "(`extension/src/signal-session.ts`), but this install predates it — `window.dregg` here offers " +
+    "only `getActiveIdentity()` and `signTurnV3`, neither of which produces one.",
+  needs: "an extension build carrying the scoped session signer",
+});
+
+/**
+ * ⚑ WHY THIS BROWSER STILL CANNOT PLAY A JUDGED SESSION, in the order the
+ * attempt hits them. Each entry is a fact about the node, measured 2026-08-07
+ * and re-checked when the signer landed, NOT a policy choice made here — and
+ * each names the thing that would have to land for the surface below to light up
+ * unchanged.
+ *
+ * ⚑ ONE WALL FELL. `no-player-message-signer` used to lead this list: "the
+ * extension holds the player key but will not sign a session statement with
+ * it." It does now. What landed is deliberately NOT the `signMessage(bytes)`
+ * that entry could have been read as asking for — a page that can ask for a
+ * signature over caller-chosen bytes can ask for a signature over a transfer.
+ * What landed takes `{kind, authorityId, slot, round, guess}` and re-derives the
+ * statement inside the extension, over a fixed allowlist of the two session
+ * kinds, with `player_key` supplied by custody rather than by the page.
+ *
+ * Neither of the two below is worked around. Generating a keypair in page memory
+ * would be a player key with no cell, no funds and no ML-DSA half, i.e.
+ * inventing custody to make a button clickable.
  */
 export const CUSTODY_BLOCKERS = Object.freeze([
-  Object.freeze({
-    code: "no-player-message-signer",
-    what: "The extension holds the player key but will not sign a session statement with it.",
-    detail:
-      "`window.dregg` exposes `getActiveIdentity()`, which returns a public key and explicitly no " +
-      "signing capability, and `signTurnV3(turnBytes)`, which signs a decoded v3 Turn rather than " +
-      "caller-chosen bytes. Opening a session needs a raw Ed25519 signature over " +
-      "`open_statement_message`, and no method on the provider produces one.",
-    needs: "a player-key signer for this documented statement, scoped to it — deliberately not a signing oracle",
-  }),
   Object.freeze({
     code: "session-routes-authenticated",
     what: "The three session routes are behind the node's bearer layer; this page carries no bearer.",
     detail:
       "`poa_signal_session::routes()` is merged into `protected_routes` in `node/src/api.rs`, unlike " +
       "the slot publication, which is public and which this terminal does read and verify. Even the " +
-      "read-back `GET …/session/{player}` is authenticated, so a transcript cannot be recovered here.",
-    needs: "a public, player-signed read-back, or a bearer this origin is entitled to hold",
+      "read-back `GET …/session/{player}` is authenticated, so a transcript cannot be recovered here. " +
+      "The signature this page can now produce is refused before it is ever checked.",
+    needs: "a public, player-signed read-back and open/guess, or a bearer this origin is entitled to hold",
   }),
   Object.freeze({
     code: "claim-carrier-unbuildable",
@@ -285,20 +323,208 @@ export const CUSTODY_BLOCKERS = Object.freeze([
 ]);
 
 /**
+ * Did the session routes ANSWER this origin? A measured tri-state, never a
+ * belief.
+ *
+ * `true` — a document was served, refused on its contents, or 404'd; either way
+ * the route answered this origin, so the bearer wall is not standing here.
+ * `false` — 401/403: the bearer wall is standing, measured.
+ * `null` — nothing was asked, or nothing answered at all; unknown, and unknown
+ * is not "reachable".
+ */
+export function routesReachableFrom(session) {
+  if (!session || typeof session.state !== "string") return null;
+  if (session.state === "unauthenticated") return false;
+  if (session.state === "ready" || session.state === "none" || session.state === "refused") return true;
+  return null;
+}
+
+/**
  * What custody this page actually has for judged play.
  *
  * Never throws and never invents: it reports the FIRST blocker that bites, so the
  * panel's honest reason is the one a player would hit first rather than a list.
+ *
+ * `session` is the result of [`loadJudgedSession`], and it is what turns the
+ * bearer wall from an assumption into a measurement — see `routesReachableFrom`.
+ * Called with one argument (nothing measured yet), `canPlay` is `false` and the
+ * blocker is the bearer wall, which is the safe direction.
  */
-export function judgedCustody(provider = globalThis.window?.dregg ?? null) {
-  const identity = provider && typeof provider.getActiveIdentity === "function";
+export function judgedCustody(provider = globalThis.window?.dregg ?? null, session = null) {
+  const identityAvailable = Boolean(provider && typeof provider.getActiveIdentity === "function");
+  const signerAvailable = Boolean(provider && typeof provider[SESSION_SIGNER_METHOD] === "function");
+  const routesReachable = routesReachableFrom(session);
+  const blocker = !signerAvailable ? SIGNER_ABSENT
+    : routesReachable !== true ? CUSTODY_BLOCKERS[0]
+    : null;
   return Object.freeze({
-    canPlay: false,
-    // Recorded because it is the honest half: the page CAN learn who the player
-    // is, which is why the blocker is signing and not identity.
-    identityAvailable: Boolean(identity),
-    blocker: CUSTODY_BLOCKERS[0],
+    // ⚑ EVERY conjunct is observed. `canPlay` never asserts a wall this file
+    // merely believes in: it is identity + signer detected on the provider, and
+    // a route that actually answered.
+    canPlay: identityAvailable && signerAvailable && routesReachable === true,
+    identityAvailable,
+    signerAvailable,
+    routesReachable,
+    blocker: blocker ?? CUSTODY_BLOCKERS[1],
     blockers: CUSTODY_BLOCKERS,
+  });
+}
+
+/**
+ * Ask the extension for a signature over one session statement, and CHECK IT
+ * BEFORE USING IT.
+ *
+ * The extension re-derives the statement from the structured fields; so does
+ * this page (`openStatementMessage` / `guessStatementMessage`). Two independent
+ * derivations of the same pinned node encoding, compared here — a mismatch is a
+ * refusal on this side rather than a 401 from the authority that would read like
+ * a node fault. That comparison is the whole reason the extension returns the
+ * statement text alongside the signature.
+ *
+ * Never throws: every failure is a STATE, the discipline `loadJudgedSession`
+ * follows.
+ */
+export async function requestSessionSignature({ provider, kind, authorityId, slot, round = null, guess = null }) {
+  if (!provider || typeof provider[SESSION_SIGNER_METHOD] !== "function") {
+    return Object.freeze({ state: "unsigned", code: SIGNER_ABSENT.code, reason: SIGNER_ABSENT.what });
+  }
+  if (kind !== "open" && kind !== "guess") {
+    return Object.freeze({ state: "unsigned", code: "session-kind", reason: `unknown session statement kind: ${kind}` });
+  }
+  const request = kind === "open"
+    ? { kind, authorityId, slot }
+    : { kind, authorityId, slot, round, guess };
+  let signed;
+  try {
+    signed = await provider[SESSION_SIGNER_METHOD](request);
+  } catch (error) {
+    return Object.freeze({
+      state: error?.code === "user-declined" ? "declined" : "unsigned",
+      code: error?.code ?? "sign-failed",
+      reason: error?.message ?? "the extension refused to sign this session statement",
+    });
+  }
+  const playerKey = signed?.playerKeyHex;
+  if (typeof playerKey !== "string" || !HEX_32.test(playerKey)) {
+    return Object.freeze({ state: "unsigned", code: "session-player", reason: "the signer returned no player key" });
+  }
+  if (typeof signed?.signatureHex !== "string" || !/^[0-9a-f]{128}$/.test(signed.signatureHex)) {
+    return Object.freeze({
+      state: "unsigned", code: "session-signature",
+      reason: "the signer returned something that is not a 128-hex-digit Ed25519 signature",
+    });
+  }
+  const expected = kind === "open"
+    ? openStatementMessage({ authorityId, slot, playerKey })
+    : guessStatementMessage({ authorityId, slot, playerKey, round, guess });
+  if (signed.statement !== expected) {
+    return Object.freeze({
+      state: "unsigned", code: "session-statement-mismatch",
+      reason:
+        "the extension signed a statement this page does not agree is the documented one, so it is not " +
+        "sent. Two derivations of the node's encoding disagreed; one of them has drifted.",
+    });
+  }
+  return Object.freeze({ state: "signed", playerKey, statement: expected, signature: signed.signatureHex });
+}
+
+async function postSession({ path, body, authorityId, commitment, baseUrl, fetchImpl, prefix }) {
+  const url = new URL(`${prefix}${path}`, baseUrl ?? globalThis.location?.href ?? "https://invalid.local/");
+  let document;
+  try {
+    const response = await fetchImpl(url, {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (response?.status === 401 || response?.status === 403) {
+      return Object.freeze({
+        state: "unauthenticated", code: "session-routes-authenticated",
+        reason: "The session routes are authenticated and this page holds no bearer",
+      });
+    }
+    const text = await response.text();
+    if (!response?.ok) {
+      // The node's refusals are NAMED, and the name is the useful half — a
+      // `session-round-mismatch` is a replayed burst, not an outage.
+      let named = null;
+      try { named = JSON.parse(text); } catch { named = null; }
+      return Object.freeze({
+        state: "refused",
+        code: typeof named?.reason === "string" ? named.reason : "session-status",
+        reason: typeof named?.detail === "string" ? named.detail : `The authority answered HTTP ${response?.status ?? "nothing"}`,
+      });
+    }
+    document = JSON.parse(text);
+  } catch {
+    return Object.freeze({ state: "unreachable", code: "session-fetch", reason: "No PoA authority answered on this origin" });
+  }
+  try {
+    return Object.freeze({ state: "ready", session: parseSessionDocument(document, { authorityId, commitment }) });
+  } catch (error) {
+    return Object.freeze({
+      state: "refused",
+      code: error?.code ?? "session-shape",
+      reason: error?.message ?? "the session document was refused",
+    });
+  }
+}
+
+/**
+ * Open or resume a judged run: sign the open statement, POST it, parse what
+ * comes back against the slot this terminal verified.
+ *
+ * ⚠ On this deployment the POST lands as `unauthenticated` — the bearer wall of
+ * `CUSTODY_BLOCKERS[0]`. That is the honest state, and it is why this function
+ * exists now rather than the day the wall falls: the signature half is real and
+ * exercised, so the wall is the ONLY thing left between here and a played run.
+ */
+export async function openJudgedSession({
+  provider, authorityId, commitment, slot, baseUrl,
+  fetchImpl = globalThis.fetch, prefix = "/node",
+} = {}) {
+  if (typeof authorityId !== "string" || !HEX_32.test(authorityId)) {
+    return Object.freeze({ state: "unreachable", code: "session-authority", reason: "This terminal has no authority id to ask about" });
+  }
+  if (typeof fetchImpl !== "function") {
+    return Object.freeze({ state: "unreachable", code: "session-fetch", reason: "No fetch is available in this environment" });
+  }
+  const signed = await requestSessionSignature({ provider, kind: "open", authorityId, slot });
+  if (signed.state !== "signed") return signed;
+  return postSession({
+    path: `/api/poa/signal/${authorityId}/session/open`,
+    body: { player_key: signed.playerKey, signature: signed.signature },
+    authorityId, commitment, baseUrl, fetchImpl, prefix,
+  });
+}
+
+/**
+ * Spend one burst: sign the guess statement for THIS round, POST it, parse the
+ * transcript that comes back.
+ *
+ * `round` is the number of bursts ALREADY spent — read it off the session
+ * document's `roundsUsed`, never counted here. It is inside the signature, which
+ * is why a replayed request refuses as `session-round-mismatch` rather than
+ * spending a second burst.
+ */
+export async function spendJudgedBurst({
+  provider, authorityId, commitment, slot, round, guess, baseUrl,
+  fetchImpl = globalThis.fetch, prefix = "/node",
+} = {}) {
+  if (typeof authorityId !== "string" || !HEX_32.test(authorityId)) {
+    return Object.freeze({ state: "unreachable", code: "session-authority", reason: "This terminal has no authority id to ask about" });
+  }
+  if (typeof fetchImpl !== "function") {
+    return Object.freeze({ state: "unreachable", code: "session-fetch", reason: "No fetch is available in this environment" });
+  }
+  const signed = await requestSessionSignature({ provider, kind: "guess", authorityId, slot, round, guess });
+  if (signed.state !== "signed") return signed;
+  return postSession({
+    path: `/api/poa/signal/${authorityId}/session/guess`,
+    body: { player_key: signed.playerKey, round, guess, signature: signed.signature },
+    authorityId, commitment, baseUrl, fetchImpl, prefix,
   });
 }
 
@@ -367,12 +593,23 @@ function codeText(code) {
   return `${code.low}-${code.mid}-${code.high}`;
 }
 
+/** The bearer wall and the carrier wall, by name rather than by index. */
+const ROUTES_WALL = CUSTODY_BLOCKERS[0];
+const CARRIER_WALL = CUSTODY_BLOCKERS[1];
+
 /**
  * The judged panel: one state, one honest sentence about what a player may do.
  *
  * Every branch that is not `settled` or `playing` ends in an action that is
  * DISABLED with a reason, and the reason names a node or extension fact rather
  * than saying "coming soon".
+ *
+ * ⚑ THE PLAY ACTION IS NO LONGER DISABLED BY CONSTRUCTION. It follows
+ * `custody.canPlay`, which is identity + signer detected on the provider and a
+ * route that ACTUALLY ANSWERED. On this deployment the route answers 401, so it
+ * is still disabled — but by a measurement, and the day the bearer question is
+ * settled the same code enables it. Settling remains disabled regardless: that
+ * is `CARRIER_WALL`, and it is a separate wall from playing.
  */
 export function buildJudgedPanel({ slot = null, custody = null, session = null } = {}) {
   const seal = (headline, detail, code) => Object.freeze({
@@ -429,14 +666,16 @@ export function buildJudgedPanel({ slot = null, custody = null, session = null }
           label: "Submit this claim",
           enabled: false,
           reason:
-            `Solved, and this page cannot post it. ${CUSTODY_BLOCKERS[2].what} ${CUSTODY_BLOCKERS[2].detail} ` +
+            `Solved, and this page cannot post it. ${CARRIER_WALL.what} ${CARRIER_WALL.detail} ` +
             `The transcript above is durable on the node and is what a claim built elsewhere must carry.`,
-          code: CUSTODY_BLOCKERS[2].code,
+          code: CARRIER_WALL.code,
         }),
         rounds: Object.freeze(rounds), settlement: s.settlement,
       });
     }
     const spent = `${s.roundsUsed} of ${s.maxRounds} bursts spent, ${s.roundsRemaining} left.`;
+    const canSpend = s.open && custody?.canPlay === true;
+    const spendBlocker = custody?.blocker ?? ROUTES_WALL;
     return Object.freeze({
       state: s.open ? "playing" : "spent", eyebrow: "JUDGED SIGNAL",
       headline: s.open ? `${s.roundsRemaining} burst${s.roundsRemaining === 1 ? "" : "s"} left` : "Out of bursts",
@@ -447,17 +686,20 @@ export function buildJudgedPanel({ slot = null, custody = null, session = null }
           `five spent bursts and no settlement.`,
       action: Object.freeze({
         label: s.open ? "Spend a burst" : "Play a judged run",
-        enabled: false,
-        reason: s.open
-          ? `${CUSTODY_BLOCKERS[0].what} ${CUSTODY_BLOCKERS[0].detail}`
-          : "This session is out of bursts. A new one opens against the next slot.",
-        code: s.open ? CUSTODY_BLOCKERS[0].code : "session-budget-exhausted",
+        enabled: canSpend,
+        reason: !s.open
+          ? "This session is out of bursts. A new one opens against the next slot."
+          : canSpend
+            ? "One of five bursts, signed by your player key and classified against the judged target. " +
+              "Nothing is spent on chain until you solve and settle."
+            : `${spendBlocker.what} ${spendBlocker.detail}`,
+        code: !s.open ? "session-budget-exhausted" : canSpend ? "session-guess" : spendBlocker.code,
       }),
       rounds: Object.freeze(rounds), settlement: null,
     });
   }
 
-  const blocker = custody?.blocker ?? CUSTODY_BLOCKERS[0];
+  const blocker = custody?.blocker ?? ROUTES_WALL;
   if (session?.state === "refused") {
     return seal("Judged session refused",
       `A session document was served and this terminal would not accept it (${session.code}). ${session.reason}. ` +
@@ -476,6 +718,28 @@ export function buildJudgedPanel({ slot = null, custody = null, session = null }
         label: "Play a judged run", enabled: false,
         reason: "No Dregg identity is bound to this terminal. Connect the extension to bind one.",
         code: "identity-unbound",
+      }),
+      rounds: Object.freeze([]), settlement: null,
+    });
+  }
+  if (custody?.canPlay === true) {
+    // Identity bound, signer installed, and the route ANSWERED. Every
+    // precondition this page can observe is met, so the action is live: the
+    // click signs the open statement with the player key and POSTs it.
+    return Object.freeze({
+      state: "openable", eyebrow: "JUDGED SIGNAL",
+      headline: "A slot is open, and you can play it",
+      detail:
+        `${instance} Opening a run asks your extension to sign one documented statement with your player key — ` +
+        "it moves no DREGG and authorizes no turn, it proves the run is yours so nobody else can burn your five " +
+        "bursts. Every LOCKED and DRIFT after that comes out of the node's Lean classification; this page never " +
+        "scores a guess.",
+      action: Object.freeze({
+        label: "Play a judged run", enabled: true,
+        reason:
+          "Five bursts against the judged target, per player. Nothing is spent on chain until you solve, and " +
+          "settling is a separate act.",
+        code: "session-open",
       }),
       rounds: Object.freeze([]), settlement: null,
     });

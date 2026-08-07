@@ -30,6 +30,9 @@ let displayedFederationDomainHex = null;
 // about to be signed; the decision echoes it so the background refuses an
 // accept for anything other than what this popup displayed.
 let displayedOfferingBinding = null;
+// Judged-Signal-session confirmations bind the SHA-256 of the exact statement
+// bytes about to be signed, for the same reason.
+let displayedSessionBinding = null;
 
 // Append one label/value row to the details panel (textContent only — the
 // values are page-supplied strings and must never parse as markup).
@@ -134,6 +137,48 @@ async function init() {
         const optionsRow = document.getElementById('optionsRow');
         if (specRow) specRow.style.display = 'none';
         if (optionsRow) optionsRow.style.display = 'none';
+      } else if (p.action === 'signSignalSession') {
+        // Judged Signal session: render the exact statement the player key is
+        // about to sign — schema, authority, slot, and for a guess the round
+        // and the three bands — plus the verbatim statement text, so the user
+        // sees the bytes and not a paraphrase of them.
+        const titleEl = document.getElementById('title');
+        const subtitleEl = document.getElementById('subtitle');
+        const opening = p.sessionKind === 'open';
+        if (titleEl) titleEl.textContent = opening ? 'Open Judged Signal Run' : 'Spend a Judged Burst';
+        if (subtitleEl) subtitleEl.textContent =
+          'A page asks your cipherclerk to prove you hold this player key to the Signal authority. ' +
+          'This is exactly what will be signed:';
+        addDetailRow('Statement', String(p.sessionSchema ?? ''), true);
+        addDetailRow('Signal authority', String(p.sessionAuthorityId ?? ''), true);
+        addDetailRow('Slot', String(p.sessionSlotDecimal ?? ''));
+        if (typeof p.sessionRoundDecimal === 'string') {
+          addDetailRow('Bursts already spent', p.sessionRoundDecimal);
+        }
+        if (typeof p.sessionGuessText === 'string') addDetailRow('Signal code', p.sessionGuessText);
+        addDetailRow(
+          'Signing identity',
+          (typeof p.signerProfile === 'string' && p.signerProfile ? p.signerProfile + ' — ' : '') +
+            String(p.signerPubkeyHex ?? ''),
+          true,
+        );
+        addDetailRow('Signed bytes', String(p.sessionStatement ?? ''), true);
+        const explanationEl = document.getElementById('explanation');
+        if (explanationEl) {
+          explanationEl.textContent = opening
+            ? 'This signature opens or resumes a judged run against this slot. It moves no DREGG, ' +
+              'grants no capability, and authorizes no turn — it proves possession of the player key ' +
+              'so nobody else can burn your five bursts.'
+            : 'This signature spends ONE of five bursts against the judged target, and it covers this ' +
+              'round only: replayed after the burst lands, the authority refuses it rather than ' +
+              'spending a second one. It moves no DREGG and authorizes no turn.';
+          explanationEl.style.display = 'block';
+        }
+        displayedSessionBinding = typeof p.bindingHex === 'string' ? p.bindingHex : null;
+        const specRow = document.getElementById('specRow');
+        const optionsRow = document.getElementById('optionsRow');
+        if (specRow) specRow.style.display = 'none';
+        if (optionsRow) optionsRow.style.display = 'none';
       } else {
         specEl.textContent = JSON.stringify(p.matchSpec || {}, null, 2);
         optionsEl.textContent = JSON.stringify(p.options || {}, null, 2);
@@ -163,6 +208,8 @@ function sendDecision(confirmed) {
   if (displayedFederationDomainHex !== null) message.federationDomainHex = displayedFederationDomainHex;
   // Offering-turn decisions bind the displayed canonical-message digest.
   if (displayedOfferingBinding !== null) message.offeringBindingHex = displayedOfferingBinding;
+  // Judged-session decisions bind the displayed statement digest.
+  if (displayedSessionBinding !== null) message.sessionBindingHex = displayedSessionBinding;
   chrome.runtime.sendMessage(message);
 }
 

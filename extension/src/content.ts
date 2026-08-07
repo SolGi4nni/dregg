@@ -89,6 +89,11 @@ const RESTRICTED_METHODS = new Set<MessageType>([
   // dreggnet-offerings move — per-origin grant + the un-overlayable
   // confirm-intent consent, exactly like signTurnV3.
   "dregg:signOfferingTurn",
+  // Judged Signal session: a key-touching signature over one of exactly two
+  // documented session statements — per-origin grant + the un-overlayable
+  // confirm-intent consent, exactly like signOfferingTurn. The method takes no
+  // bytes, so the grant is a grant to play a judged run, not a signing oracle.
+  "dregg:signSignalSession",
   "dregg:listOutbox",
   "dregg:flushOutbox",
   "dregg:dropOutboxEntry",

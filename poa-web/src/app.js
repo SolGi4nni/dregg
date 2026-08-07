@@ -60,12 +60,14 @@ const state = {
   /**
    * What custody this page has for JUDGED Signal, and the judged session itself.
    *
-   * ⚠ BOTH STAY `null`-ish ON THIS DEPLOYMENT, and the panel says why in words.
-   * Judged play needs a raw Ed25519 signature by the player key over the node's
-   * documented session statement, and `window.dregg` exposes no such signer —
-   * only a public identity and a signer for already-built turns. So the action
-   * renders DISABLED naming that fact, exactly as the crate's crew binding does
-   * above, rather than this page generating a keypair to make a button work.
+   * ⚑ THE SIGNER WALL FELL (2026-08-07). `window.dregg.signSignalSession` now
+   * signs exactly the two documented session statements with the player key —
+   * scoped and schema-pinned, deliberately not a signing oracle. What is left
+   * is node-side: the session routes are in `protected_routes` and this origin
+   * holds no bearer, so the POST lands 401 and `judgedCustody` — which takes the
+   * MEASURED session result, not a belief — reports `canPlay: false` naming that
+   * wall. The panel renders the action DISABLED against a measurement, and
+   * enables itself the day the route answers, with no change here.
    */
   judgedCustody: null,
   judgedSession: null,
@@ -354,6 +356,11 @@ async function initializeJudgedSession() {
     playerKey,
     baseUrl: location.href,
   });
+  // ⚑ RE-READ CUSTODY AGAINST WHAT THE ROUTE ACTUALLY DID. `canPlay` is not a
+  // constant this file believes; it is signer-detected AND route-answered. A
+  // 401 keeps it false and names the bearer wall; a served or 404-ing document
+  // makes it true and the panel's action live.
+  state.judgedCustody = judgedCustody(window.dregg ?? null, state.judgedSession);
   renderJudged();
 }
 

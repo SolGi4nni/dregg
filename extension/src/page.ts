@@ -31,6 +31,14 @@ import {
   type PoASignalClaimParams,
   type PoASignalSubmitResult,
 } from "./poa-signal";
+import {
+  parseSignalSessionRequest,
+  slotWire,
+  type SignalSessionRequest,
+  type SignalSessionSignFailure,
+  type SignalSessionSignResult,
+  type SignedSignalSessionWire,
+} from "./signal-session";
 
 // Retrieve the session nonce from the script tag's data attribute.
 const currentScript = document.currentScript || document.querySelector("script[data-dregg-nonce]");
@@ -392,6 +400,42 @@ export interface DreggAPI {
     arg: number | string;
     text?: string;
   }): Promise<{ actorPubkeyHex: string; counter: number | string; signatureHex: string }>;
+  /**
+   * Sign one JUDGED SIGNAL SESSION statement with the extension-held player key
+   * — the signer half of `node/src/poa_signal_session.rs`, whose `open` and
+   * `guess` routes each require proof of possession of the player key over a
+   * canonical statement on top of the node's bearer token.
+   *
+   * ⚑ THIS IS NOT A SIGNING ORACLE, and the shape is the reason. It accepts no
+   * bytes: only `{kind, authorityId, slot}` (plus `{round, guess}` for a
+   * `guess`), and the extension RE-DERIVES the statement itself in the node's
+   * documented field order — exactly as the node re-derives it before
+   * verifying. `kind` selects from a fixed allowlist of TWO session statements;
+   * no other shape is reachable through this method for any input. `player_key`
+   * is supplied by custody, never by the page, so the statement's subject is
+   * structurally the signer.
+   *
+   * A v3 turn's action authorization is Ed25519 over a 32-byte blake3 digest,
+   * and every statement this path can build is far longer than 32 bytes — so a
+   * signature obtained here can never be a valid authorization for a transfer,
+   * a capability grant, or any other turn. See `src/signal-session.ts`.
+   *
+   * The user sees the exact statement — authority, slot, round, guess, and the
+   * signing identity — in the un-overlayable confirm surface and must accept
+   * before the signature is released. A decline rejects with an `Error` whose
+   * `name` is `"DreggUserDeclined"` and `code` is `"user-declined"`,
+   * distinguishable from `sign-failed` and `custody-locked`.
+   *
+   * Returns the signature plus the exact statement text, so the caller can
+   * compare it against its own builder before POSTing.
+   */
+  signSignalSession(params: SignalSessionRequest): Promise<{
+    kind: string;
+    schema: string;
+    playerKeyHex: string;
+    statement: string;
+    signatureHex: string;
+  }>;
   /** List locally persisted signed submissions waiting for node acceptance. */
   listOutbox(): Promise<OutboxEntry[]>;
   /** Retry pending outbox submissions against the configured node. */
@@ -686,6 +730,49 @@ const dregg: DreggAPI = {
         ) as Error & { code?: string };
         err.code = failure?.code || "sign-failed";
         err.name = failure?.code === "user-declined" ? "DreggUserDeclined" : "DreggOfferingSignError";
+        throw err;
+      });
+  },
+
+  signSignalSession(params) {
+    // Fast typed failure page-side (the background revalidates independently
+    // — page-side validation is never the check that matters).
+    const parsed = parseSignalSessionRequest(params);
+    if (!parsed.ok) {
+      return Promise.reject(new TypeError(`dregg.signSignalSession: ${parsed.error}`));
+    }
+    // The VALIDATED canonical copy crosses the channel (the slot as a JSON-safe
+    // number or decimal string — the message channel is JSON, and a raw number
+    // past 2^53 - 1 would lose precision silently). Mutating the caller's
+    // object after this call cannot change what is signed.
+    const r = parsed.request;
+    const wireParams: Record<string, unknown> = {
+      kind: r.kind,
+      authorityId: r.authorityId,
+      slot: slotWire(r.slot),
+    };
+    if (r.kind === "guess") {
+      wireParams.round = r.round;
+      wireParams.guess = { low: r.guess!.low, mid: r.guess!.mid, high: r.guess!.high };
+    }
+    return (sendMessage("dregg:signSignalSession", { params: wireParams }) as Promise<SignalSessionSignResult>)
+      .then((result) => {
+        if (result && result.ok === true) {
+          const wire = result as SignedSignalSessionWire;
+          return {
+            kind: wire.kind,
+            schema: wire.schema,
+            playerKeyHex: wire.playerKeyHex,
+            statement: wire.statement,
+            signatureHex: wire.signatureHex,
+          };
+        }
+        const failure = result as SignalSessionSignFailure | undefined;
+        const err = new Error(
+          `dregg.signSignalSession: ${failure?.error || "signing failed"}`,
+        ) as Error & { code?: string };
+        err.code = failure?.code || "sign-failed";
+        err.name = failure?.code === "user-declined" ? "DreggUserDeclined" : "DreggSignalSessionSignError";
         throw err;
       });
   },

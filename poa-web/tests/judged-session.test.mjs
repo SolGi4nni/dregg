@@ -4,14 +4,20 @@ import { test } from "node:test";
 import {
   CUSTODY_BLOCKERS,
   MAX_ROUNDS,
+  SESSION_SIGNER_METHOD,
+  SIGNER_ABSENT,
   buildJudgedPanel,
   guessStatementMessage,
   judgedCustody,
   loadJudgedSession,
   mountJudgedPanel,
+  openJudgedSession,
   openStatementMessage,
   parseSessionDocument,
   readingLabels,
+  requestSessionSignature,
+  routesReachableFrom,
+  spendJudgedBurst,
 } from "../src/judged-session.js";
 
 class FakeElement {
@@ -355,37 +361,80 @@ test("this module contains no classifier: LOCKED and DRIFT are read, never compu
 
 // ── Custody ───────────────────────────────────────────────────────────────────
 
-test("custody reports that this page cannot sign a session statement, and why", () => {
+test("custody detects the scoped signer, and says what still bites", () => {
   const none = judgedCustody(null);
   assert.equal(none.canPlay, false);
   assert.equal(none.identityAvailable, false);
-  const withIdentity = judgedCustody({ getActiveIdentity: async () => ({}), signTurnV3: async () => ({}) });
-  assert.equal(withIdentity.canPlay, false);
-  assert.equal(withIdentity.identityAvailable, true);
-  assert.equal(withIdentity.blocker.code, "no-player-message-signer");
+  assert.equal(none.signerAvailable, false);
+  assert.equal(none.blocker.code, SIGNER_ABSENT.code);
+
+  // An extension that predates the scoped signer: identity but no signer.
+  const oldExtension = judgedCustody({ getActiveIdentity: async () => ({}), signTurnV3: async () => ({}) });
+  assert.equal(oldExtension.canPlay, false);
+  assert.equal(oldExtension.identityAvailable, true);
+  assert.equal(oldExtension.signerAvailable, false);
+  assert.equal(oldExtension.blocker.code, "signer-not-installed");
+
+  // ⚑ THE WALL THAT FELL. With the signer installed, the FIRST blocker is no
+  // longer signing — it is the node's bearer layer.
+  const provider = {
+    getActiveIdentity: async () => ({}),
+    signTurnV3: async () => ({}),
+    [SESSION_SIGNER_METHOD]: async () => ({}),
+  };
+  const withSigner = judgedCustody(provider);
+  assert.equal(withSigner.signerAvailable, true);
+  assert.equal(withSigner.blocker.code, "session-routes-authenticated");
+  assert.equal(withSigner.canPlay, false, "nothing was measured yet, so canPlay stays false");
+  assert.equal(withSigner.routesReachable, null);
+
+  // The bearer wall is MEASURED, never assumed: a 401 says it stands, a served
+  // or 404-ing document says it does not, and canPlay follows the measurement.
+  assert.equal(routesReachableFrom({ state: "unauthenticated" }), false);
+  assert.equal(routesReachableFrom({ state: "ready" }), true);
+  assert.equal(routesReachableFrom({ state: "none" }), true);
+  assert.equal(routesReachableFrom({ state: "refused" }), true);
+  assert.equal(routesReachableFrom({ state: "unreachable" }), null);
+  assert.equal(routesReachableFrom(null), null);
+  assert.equal(judgedCustody(provider, { state: "unauthenticated" }).canPlay, false);
+  assert.equal(judgedCustody(provider, { state: "none" }).canPlay, true);
+  assert.equal(judgedCustody(null, { state: "none" }).canPlay, false, "no signer is still no play");
 });
 
-test("each custody blocker is a checkable fact about the node or the extension", async () => {
+test("each custody blocker is a checkable fact about the node", async () => {
   assert.deepEqual(
     CUSTODY_BLOCKERS.map((blocker) => blocker.code),
-    ["no-player-message-signer", "session-routes-authenticated", "claim-carrier-unbuildable"],
+    ["session-routes-authenticated", "claim-carrier-unbuildable"],
   );
-  for (const blocker of CUSTODY_BLOCKERS) {
+  for (const blocker of [...CUSTODY_BLOCKERS, SIGNER_ABSENT]) {
     assert.ok(blocker.needs.length > 0, `${blocker.code} must name what would unblock it`);
   }
   // ⚠ BOTH DIRECTIONS, the discipline `today-board.js` uses for the crate routes:
-  // if any of these three stops being true, this test reds and the copy that
-  // tells a player "you cannot play" has to be rewritten rather than left to rot
-  // into a lie. Each assertion below is the exact fact the blocker asserts.
+  // if either of these stops being true, this test reds and the copy that tells
+  // a player "you cannot play" has to be rewritten rather than left to rot into
+  // a lie. Each assertion below is the exact fact the blocker asserts.
 
-  // 1. The extension exposes no arbitrary-message signer for the player key.
+  // ⚑ 0. THE FALLEN WALL, asserted FALLEN — not deleted. `no-player-message-signer`
+  // used to lead this list; the day it stops being true in the other direction
+  // (the signer removed, or quietly widened into an oracle) this reds.
   const page = await readFile(new URL("../../extension/src/page.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(page, /\bsignMessage\b/);
+  const signer = await readFile(new URL("../../extension/src/signal-session.ts", import.meta.url), "utf8");
+  assert.match(page, new RegExp(`${SESSION_SIGNER_METHOD}\\(params: SignalSessionRequest\\)`),
+    "the scoped session signer left the page provider");
+  // It is SCOPED, and these are the three things that make it so. A signing
+  // oracle would break every one of them.
+  assert.doesNotMatch(page, /\bsignMessage\b/, "an arbitrary-message signer appeared on the provider");
   assert.doesNotMatch(page, /\bsignBytes\b/);
+  assert.match(signer, /kind must be one of/, "the kind allowlist left the signer");
+  assert.match(signer, /SIGNAL_SESSION_SCHEMAS = Object\.freeze\(\{\s*open:[^}]*guess:/,
+    "the schema allowlist is no longer exactly the two session statements");
+  assert.match(signer, /THE PLAYER KEY IS NOT A PARAMETER/,
+    "the statement's subject is no longer structurally the signer");
+  // Identity disclosure is still identity-only.
   assert.match(page, /getActiveIdentity\(\): Promise<ActiveDreggIdentity>/);
   assert.match(page, /no secret key, mnemonic, holding\s+\*\s+receipt, wallet-provider object, or signing capability is returned/);
 
-  // 2. The session routes are protected and the slot publication is not.
+  // 1. The session routes are protected and the slot publication is not.
   const api = await readFile(new URL("../../node/src/api.rs", import.meta.url), "utf8");
   const publicAt = api.indexOf("let mut public_routes = Router::new()");
   const protectedAt = api.indexOf("let protected_routes = Router::new()");
@@ -395,7 +444,7 @@ test("each custody blocker is a checkable fact about the node or the extension",
   assert.ok(sessionAt > protectedAt, "the session routes are no longer protected — this page may now read them");
   assert.ok(slotAt > publicAt && slotAt < protectedAt, "the slot publication is no longer public");
 
-  // 3. No Signal prepare route, and the one extension claim path carries no transcript.
+  // 2. No Signal prepare route, and the one extension claim path carries no transcript.
   const signal = await readFile(new URL("../../extension/src/poa-signal.ts", import.meta.url), "utf8");
   assert.match(signal, /keys\.join\(","\) !== "code,missionId,schema"/);
   assert.doesNotMatch(signal, /transcript/);
@@ -403,6 +452,127 @@ test("each custody blocker is a checkable fact about the node or the extension",
   assert.match(galley, /GALLEY_API_PATH\}\/command/);
   const session = await readFile(new URL("../../node/src/poa_signal_session.rs", import.meta.url), "utf8");
   assert.doesNotMatch(session, /session\/prepare/);
+});
+
+// ── Signing, now that there is a signer ───────────────────────────────────────
+
+const SIGNER_PLAYER = "55".repeat(32);
+
+/** A provider whose signer re-derives the statement the way the extension does. */
+function fakeSigner({ playerKey = SIGNER_PLAYER, statementFor = null, throws = null } = {}) {
+  return {
+    getActiveIdentity: async () => ({ publicKeyHex: playerKey }),
+    async [SESSION_SIGNER_METHOD](request) {
+      if (throws) throw throws;
+      const statement = statementFor
+        ? statementFor(request, playerKey)
+        : request.kind === "open"
+          ? openStatementMessage({ authorityId: request.authorityId, slot: request.slot, playerKey })
+          : guessStatementMessage({
+            authorityId: request.authorityId, slot: request.slot, playerKey,
+            round: request.round, guess: request.guess,
+          });
+      return { kind: request.kind, schema: "x", playerKeyHex: playerKey, statement, signatureHex: "ab".repeat(64) };
+    },
+  };
+}
+
+test("a signature is checked against this page's OWN derivation before it is used", async () => {
+  const base = { provider: fakeSigner(), kind: "open", authorityId: AUTHORITY, slot: 9 };
+  const signed = await requestSessionSignature(base);
+  assert.equal(signed.state, "signed");
+  assert.equal(signed.playerKey, SIGNER_PLAYER);
+  assert.equal(signed.statement, openStatementMessage({ authorityId: AUTHORITY, slot: 9, playerKey: SIGNER_PLAYER }));
+  assert.equal(signed.signature, "ab".repeat(64));
+
+  // ⚑ THE DRIFT POLE. An extension that signed a DIFFERENT statement is refused
+  // here rather than producing a 401 that reads like a node fault. The mutation
+  // is asserted present before the verdict.
+  const drifted = openStatementMessage({ authorityId: AUTHORITY, slot: 10, playerKey: SIGNER_PLAYER });
+  assert.notEqual(drifted, signed.statement, "the drift mutation must actually change the statement");
+  const mismatch = await requestSessionSignature({
+    ...base, provider: fakeSigner({ statementFor: () => drifted }),
+  });
+  assert.equal(mismatch.state, "unsigned");
+  assert.equal(mismatch.code, "session-statement-mismatch");
+
+  // Every other way the signer can fail to hand back something usable.
+  assert.equal((await requestSessionSignature({ ...base, provider: {} })).code, SIGNER_ABSENT.code);
+  assert.equal((await requestSessionSignature({ ...base, kind: "transfer" })).code, "session-kind");
+  assert.equal(
+    (await requestSessionSignature({ ...base, provider: fakeSigner({ playerKey: "nope" }) })).code,
+    "session-player",
+  );
+  const declined = Object.assign(new Error("User declined"), { code: "user-declined" });
+  const decline = await requestSessionSignature({ ...base, provider: fakeSigner({ throws: declined }) });
+  assert.equal(decline.state, "declined");
+  assert.equal(decline.code, "user-declined");
+});
+
+test("a guess signature covers exactly this round, and the POST carries what it signed", async () => {
+  const sent = [];
+  const fetchImpl = async (url, init) => {
+    sent.push({ url: String(url), body: JSON.parse(init.body), method: init.method });
+    return { ok: true, status: 200, text: async () => JSON.stringify(sessionDocument({
+      rounds: [{ guess: code(0, 1, 2), exact: 1, present: 1 }],
+    })) };
+  };
+  const result = await spendJudgedBurst({
+    provider: fakeSigner(), authorityId: AUTHORITY, commitment: COMMITMENT, slot: 9,
+    round: 0, guess: { low: 0, mid: 1, high: 2 },
+    baseUrl: "https://example.test/", fetchImpl, prefix: "/node",
+  });
+  assert.equal(result.state, "ready");
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].method, "POST");
+  assert.match(sent[0].url, /\/session\/guess$/);
+  assert.deepEqual(sent[0].body, {
+    player_key: SIGNER_PLAYER, round: 0, guess: { low: 0, mid: 1, high: 2 }, signature: "ab".repeat(64),
+  });
+});
+
+test("opening posts the signed open statement, and a 401 is the honest bearer wall", async () => {
+  const sent = [];
+  const okFetch = async (url, init) => {
+    sent.push({ url: String(url), body: JSON.parse(init.body) });
+    return { ok: true, status: 200, text: async () => JSON.stringify(sessionDocument()) };
+  };
+  const opened = await openJudgedSession({
+    provider: fakeSigner(), authorityId: AUTHORITY, commitment: COMMITMENT, slot: 9,
+    baseUrl: "https://example.test/", fetchImpl: okFetch,
+  });
+  assert.equal(opened.state, "ready");
+  assert.match(sent[0].url, /\/session\/open$/);
+  assert.deepEqual(sent[0].body, { player_key: SIGNER_PLAYER, signature: "ab".repeat(64) });
+
+  // The live deployment: the route refuses this origin before it checks anything.
+  const walled = await openJudgedSession({
+    provider: fakeSigner(), authorityId: AUTHORITY, commitment: COMMITMENT, slot: 9,
+    baseUrl: "https://example.test/", fetchImpl: async () => ({ ok: false, status: 401, text: async () => "" }),
+  });
+  assert.equal(walled.state, "unauthenticated");
+  assert.equal(walled.code, "session-routes-authenticated");
+
+  // A NAMED node refusal keeps its name — a replayed burst is not an outage.
+  const replayed = await spendJudgedBurst({
+    provider: fakeSigner(), authorityId: AUTHORITY, commitment: COMMITMENT, slot: 9,
+    round: 0, guess: { low: 0, mid: 0, high: 0 }, baseUrl: "https://example.test/",
+    fetchImpl: async () => ({
+      ok: false, status: 409,
+      text: async () => JSON.stringify({ reason: "session-round-mismatch", detail: "one round per signature" }),
+    }),
+  });
+  assert.equal(replayed.state, "refused");
+  assert.equal(replayed.code, "session-round-mismatch");
+
+  // Nothing is signed, let alone posted, without a signer.
+  let touched = false;
+  const noSigner = await openJudgedSession({
+    provider: { getActiveIdentity: async () => ({}) }, authorityId: AUTHORITY, commitment: COMMITMENT, slot: 9,
+    baseUrl: "https://example.test/", fetchImpl: async () => { touched = true; return { ok: true, status: 200, text: async () => "{}" }; },
+  });
+  assert.equal(noSigner.code, SIGNER_ABSENT.code);
+  assert.equal(touched, false, "a missing signer must not reach the network");
 });
 
 // ── Loading ───────────────────────────────────────────────────────────────────
@@ -461,16 +631,39 @@ test("slot open + unbound identity: the reason is the identity, not a fake capab
   assert.match(panel.detail, /per player/);
 });
 
-test("slot open + bound identity: the reason names the missing signer, and no key is invented", () => {
+test("slot open + bound identity, no signer installed: the reason says so, and no key is invented", () => {
   const panel = buildJudgedPanel({
     slot: openSlot,
     custody: judgedCustody({ getActiveIdentity: async () => ({}) }),
   });
   assert.equal(panel.state, "unplayable");
   assert.equal(panel.action.enabled, false);
-  assert.equal(panel.action.code, "no-player-message-signer");
+  assert.equal(panel.action.code, "signer-not-installed");
   assert.match(panel.detail, /no cell, no funds/);
   assert.match(panel.action.reason, /Needs: /);
+});
+
+test("slot open + signer installed, bearer wall standing: the reason is the WALL, not the signer", () => {
+  const panel = buildJudgedPanel({
+    slot: openSlot,
+    custody: judgedCustody(fakeSigner(), { state: "unauthenticated" }),
+  });
+  assert.equal(panel.state, "unplayable");
+  assert.equal(panel.action.enabled, false);
+  assert.equal(panel.action.code, "session-routes-authenticated");
+  assert.doesNotMatch(panel.detail, /will not sign/, "the fallen wall must not be re-asserted as copy");
+});
+
+test("⚑ THE POSITIVE POLE: signer installed and the route answered, the action is LIVE", () => {
+  const panel = buildJudgedPanel({
+    slot: openSlot,
+    custody: judgedCustody(fakeSigner(), { state: "none" }),
+  });
+  assert.equal(panel.state, "openable");
+  assert.equal(panel.action.enabled, true, "every observable precondition is met; the button must work");
+  assert.equal(panel.action.code, "session-open");
+  assert.match(panel.headline, /you can play it/);
+  assert.match(panel.detail, /moves no DREGG and authorizes no turn/);
 });
 
 test("a live session mid-guesses renders the node's readings and cannot spend a burst", () => {
@@ -490,8 +683,16 @@ test("a live session mid-guesses renders the node's readings and cannot spend a 
   assert.deepEqual(panel.rounds.map((round) => round.drift), ["1 DRIFT", "0 DRIFT"]);
   assert.deepEqual(panel.rounds.map((round) => round.code), ["0-1-2", "3-1-4"]);
   assert.equal(panel.action.enabled, false);
-  assert.equal(panel.action.code, "no-player-message-signer");
+  assert.equal(panel.action.code, "signer-not-installed");
   assert.match(panel.detail, /this page never scores a guess/);
+
+  // With the signer installed and the route answering, the SAME transcript
+  // offers a live burst — and the readings are still read, never computed.
+  const live = buildJudgedPanel({ slot: openSlot, custody: judgedCustody(fakeSigner(), session), session });
+  assert.equal(live.state, "playing");
+  assert.equal(live.action.enabled, true);
+  assert.equal(live.action.code, "session-guess");
+  assert.deepEqual(live.rounds, panel.rounds, "enabling an action must not change what was served");
 });
 
 test("a spent, unsolved session says the run ended and nothing was spent on chain", () => {
@@ -545,7 +746,7 @@ test("a refused session document is shown as refused, never as a judged board", 
   assert.match(panel.detail, /session-commitment/);
 });
 
-test("every panel state ends in a disabled action carrying a reason and a code", () => {
+test("a state that cannot play ends in a DISABLED action carrying a reason and a code", () => {
   const custody = judgedCustody({ getActiveIdentity: async () => ({}) });
   const panels = [
     buildJudgedPanel({}),
@@ -553,12 +754,34 @@ test("every panel state ends in a disabled action carrying a reason and a code",
     buildJudgedPanel({ slot: { state: "unreachable", reason: "nothing answered" }, custody }),
     buildJudgedPanel({ slot: openSlot, custody: judgedCustody(null) }),
     buildJudgedPanel({ slot: openSlot, custody }),
+    // Signer installed, bearer wall standing: still disabled, different reason.
+    buildJudgedPanel({ slot: openSlot, custody: judgedCustody(fakeSigner(), { state: "unauthenticated" }) }),
   ];
   for (const panel of panels) {
     assert.equal(panel.action.enabled, false, `${panel.state} must not offer an enabled judged action`);
     assert.ok(panel.action.reason.length > 20, `${panel.state} must give an honest reason`);
     assert.ok(panel.action.code.length > 0, `${panel.state} must carry a machine code`);
     assert.ok(!/coming soon|not yet|todo/i.test(panel.action.reason), `${panel.state} must not say "coming soon"`);
+  }
+});
+
+test("every reason names a fact, and no panel reason survives its own wall falling", () => {
+  // ⚑ The copy that says "you cannot play" must never outlive the reason. The
+  // signer wall FELL, so no panel may still cite it as the thing that bites.
+  const everyPanel = [
+    buildJudgedPanel({}),
+    buildJudgedPanel({ slot: { state: "closed" }, custody: judgedCustody(null) }),
+    buildJudgedPanel({ slot: openSlot, custody: judgedCustody(null) }),
+    buildJudgedPanel({ slot: openSlot, custody: judgedCustody(fakeSigner(), { state: "unauthenticated" }) }),
+    buildJudgedPanel({ slot: openSlot, custody: judgedCustody(fakeSigner(), { state: "none" }) }),
+  ];
+  for (const panel of everyPanel) {
+    assert.doesNotMatch(
+      `${panel.detail} ${panel.action.reason}`,
+      /will not sign a session statement|no method on the provider produces one/,
+      `${panel.state} still tells a player the extension cannot sign, which is no longer true`,
+    );
+    assert.notEqual(panel.action.code, "no-player-message-signer");
   }
 });
 
