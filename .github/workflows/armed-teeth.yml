@@ -542,20 +542,16 @@ jobs:
             echo "::warning::lean-seed.pin TAG is EMPTY — no seed release exists, so the ~43 verified-gate tests behind `if !<x>_available() { SKIP }` CANNOT be armed and this lane is asserting NOTHING about them. Run the 'Publish Lean seed' workflow (needs a self-hosted runner registered with the lean-seed + linux-x86_64 labels); it writes TAG and this lane arms itself."
           fi
 
-      - name: Install elan + zstd, fetch the CI-published seed
+      # ⚑ ROUTED THROUGH THE SHARED COMPOSITE (2026-08-07). This used to be four inline lines
+      # ending in a bare `bash scripts/fetch-lean-seed.sh` under `set -e`, so a missing asset
+      # failed the STEP with the script's own text and nothing else — no owner, no asset name, no
+      # command to fix it. Measured 2026-08-07: that is the entire failure of this job on every
+      # scheduled run, and the `pin` step above still reports `armed=1` while it happens, because
+      # `TAG=lean-seed` is a stable constant and says nothing about whether an asset exists for
+      # THIS commit. `.github/actions/lean-seed` names the missing asset, its content key, the
+      # owning workflow and the one command that cuts it, in the annotation itself.
+      - uses: ./.github/actions/lean-seed
         if: steps.pin.outputs.armed == '1' && !inputs.runner
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # `gh` resolves the target repo from the local git remote; these jobs deliberately do
-          # not check out (they only need to file an issue), so without GH_REPO every one of them
-          # died on `fatal: not a git repository` and NO human was ever paged for a red main.
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          sudo apt-get update && sudo apt-get install -y zstd
-          curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-          bash scripts/fetch-lean-seed.sh
 
       # FAIL LOUD, EARLY. Without this the job's first symptom would be a wall of demand_lean
       # panics that read like the gates are broken, when the real cause is a runner with no seed.
@@ -564,7 +560,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f dregg-lean-ffi/libdregg_lean.a ]; then
-            echo "::error::no dregg-lean-ffi/libdregg_lean.a after fetch. DREGG_TEST_REQUIRE_LEAN=1 asserts the VERIFIED gates actually ran; without the archive every gate would panic for the wrong reason. Check the 'Publish Lean seed' lane cut a Linux-x86_64 asset for THIS commit's Dregg2 tree hash (scripts/lean-seed-key.sh)."
+            echo "::error::no dregg-lean-ffi/libdregg_lean.a after fetch. DREGG_TEST_REQUIRE_LEAN=1 asserts the VERIFIED gates actually ran; without the archive every gate would panic for the wrong reason. Check the 'Publish Lean seed' lane cut a Linux-x86_64 asset for THIS commit's CONTENT KEY — platform, toolchain, mathlib rev and the Dregg2.FFI boundary-closure hash (scripts/lean-seed-key.sh --asset prints the exact name). It is no longer the whole-Dregg2 tree hash; see the flag day in dregg-lean-ffi/lean-seed.pin."
             exit 1
           fi
           echo "seed present: $(du -h dregg-lean-ffi/libdregg_lean.a | cut -f1)"
