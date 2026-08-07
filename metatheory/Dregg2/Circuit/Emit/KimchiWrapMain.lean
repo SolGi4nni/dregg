@@ -802,5 +802,20 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          the_wraphack_tape_reads_no_published_statement_entry
          finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks
          wraphack_digest_is_the_emitted_squeeze
+         -- ⚠ ⚑⚑ **THE FOUR BELOW LANDED IN `…Pins12` WITH `a53b3e852` AND THIS LIST DID NOT
+         -- FOLLOW, SO HEAD WAS RED AT THIS LINE.** The `#assert_compiled` block in that module was
+         -- updated and the umbrella's `except` was not — the caller-committed / callee-not class,
+         -- inside one namespace's two accounting sites. Nothing is weakened by adding them: each is
+         -- `native_decide` + `#assert_compiled` at its own site, which is exactly the pairing this
+         -- clause exists to record, and each reads an emitted `Array FOp` program or a 43-column
+         -- evaluation vector that no kernel reduction reaches.
+         the_live_block_declares_itself_minas_own_wrap_proof
+         the_finalize_evaluations_are_minas_own_wrap_proof
+         the_finalize_evaluations_need_no_encoding
+         finalize_reproduces_minas_own_ft_eval0
+         -- ⚑ …and `the_forty_disagree_only_at_the_step_statement_words`, the agreement grade
+         -- itself: `wrapPublicAt (mkWrap shapeWrap) .close` against openmina's forty, forty
+         -- comparisons over a vector whose closing rung runs `bullData`'s 67 endo ladders.
+         the_forty_disagree_only_at_the_step_statement_words
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

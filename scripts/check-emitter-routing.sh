@@ -157,9 +157,20 @@ declare -A UNROUTED_OK=(
   [EmitPoseidonJson.lean]="no-artifact|writes /tmp/pickles-poseidon/poseidon.json for pickles-poseidon-harness; nothing is checked in"
   [EmitPublicInputJson.lean]="no-artifact|writes /tmp/pickles-publicinput/pi_{mul_a,mul_b,nowire,wide}.json for pickles-publicinput-harness; nothing is checked in"
   [EmitStepFragmentJson.lean]="no-artifact|writes /tmp/pickles-stepfragment/stepfragment*.json (shape via DREGG_SF_SHAPE) for pickles-stepfragment-harness; nothing is checked in"
-  [EmitStepMainJson.lean]="no-artifact|writes \$DREGG_SM_OUT (default /tmp/pickles-stepmain)/*.json for pickles-stepmain-harness; nothing is checked in"
+  # ⚠ ⚑ **THE `nothing is checked in` HALF OF THIS ROW WAS FALSE AND IS CORRECTED (2026-08-06).**
+  # `metatheory/fixtures/pickles-stepmain-harness/fixtures/stepmain_step_r8_finalize.json` IS
+  # tracked -- 10 347 rows, 67 published entries -- and it is the step proof the whole wrap ladder,
+  # `KimchiStepWrapChainFixture` and `MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED` are about.
+  # It still stays `no-artifact` for ROUTING purposes and the reason is worth writing down: the
+  # driver writes only to `$DREGG_SM_OUT`, and the `/tmp -> fixtures/` hop is a MANUAL `cp` that no
+  # script performs, so there is no route for this checker to grade. The tracked copy's own drift
+  # guard is `pickles_kimchi_marshal`'s refusal (`c.name == "stepmain_step_r8_finalize"`,
+  # `c.public_input_size == 67`), added the same day after the generator was found unable to
+  # re-emit its own generated file. Saying "nothing is checked in" is how a tracked artifact stops
+  # being anybody's job.
+  [EmitStepMainJson.lean]="no-artifact|writes \$DREGG_SM_OUT (default /tmp/pickles-stepmain)/*.json for pickles-stepmain-harness; the tracked stepmain_step_r8_finalize.json is copied in BY HAND (no route to grade) and is guarded by pickles_kimchi_marshal's name/width refusal"
   [EmitStepWrapChainJson.lean]="no-artifact|writes /tmp/pickles-chain/chain{,bent,unread}_w*.json for pickles-chain-harness; nothing is checked in"
-  [EmitWrapMainJson.lean]="no-artifact|writes \$DREGG_WM_OUT (default /tmp/pickles-wrapmain)/wrapmain_*.json for pickles-wrapmain-harness; nothing is checked in"
+  [EmitWrapMainJson.lean]="no-artifact|writes \$DREGG_WM_OUT (default /tmp/pickles-wrapmain)/wrapmain_*.json for pickles-wrapmain-harness; the thirty tracked wrapmain_smoke_*.json are copied in BY HAND (no route to grade) and are graded by the harness proving each rung"
   [EmitWrapFinDeferred.lean]="no-artifact|prints the three §15c‴ deferred words to stdout; they are typed INTO Lean (KimchiWrapMainCore's FIN_DEFERRED_CIP/_B/_XI) and discharged there by fin_deferred_words_are_the_derivation — no file"
 
   # ---- covered: the by-name route already re-emits these bytes off the SAME Lean def. -----------
