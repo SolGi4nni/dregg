@@ -586,4 +586,55 @@ mod tests {
         assert_eq!(proof.claim, claim);
         verify_shielded_spend_complete(&proof).expect("the honest complete spend must verify");
     }
+
+    /// **The 8-lane committed-root pin BITES (the #15 mechanism, descriptor half).** A genuine proof,
+    /// then a CLAIM whose committed root differs from the one the membership fold actually reached,
+    /// must REFUSE. `rootPins` (`.piBinding .last`) forces the last-row node digest to equal
+    /// `piCommitted`, so a published root decoupled from the fold has no satisfying assignment.
+    ///
+    /// ⚠ SCOPE: this is the "you cannot LIE about which root your fold reached" half. It is NOT yet
+    /// the route theft. At the descriptor level an attacker CAN prove membership in their OWN tree
+    /// with `piCommitted` = their own fold root (self-consistent). #15 closes only when the ROUTE
+    /// (Phase 2) sources `piCommitted` from the executor's `note_shielded.root8()` — never the wire —
+    /// so a forged tree's root `R ≠ root8` has no satisfying assignment. `deployed_admits_but_pin
+    /// _rejects` stays LIVE by design until then.
+    #[test]
+    fn decoupled_committed_root_refuses() {
+        let mut proof = prove_shielded_spend_complete(&honest_witness())
+            .expect("the honest complete spend must prove");
+        // Tamper one lane of the published committed root away from the fold's reached root.
+        proof.claim.committed_root[0] += BabyBear::ONE;
+        assert!(
+            verify_shielded_spend_complete(&proof).is_err(),
+            "a committed root decoupled from the membership fold must not verify"
+        );
+    }
+
+    /// **The nullifier pin BITES.** `nulPin` (`.piBinding .first cNUL piNUL`) forces the published
+    /// nullifier to equal the in-trace derivation `hash_fact(cCM,[key0..3])`; a decoupled nullifier
+    /// claim REFUSES — a spend cannot publish a nullifier for a note it did not open.
+    #[test]
+    fn decoupled_nullifier_refuses() {
+        let mut proof = prove_shielded_spend_complete(&honest_witness())
+            .expect("the honest complete spend must prove");
+        proof.claim.nullifier += BabyBear::ONE;
+        assert!(
+            verify_shielded_spend_complete(&proof).is_err(),
+            "a nullifier decoupled from the opened note must not verify"
+        );
+    }
+
+    /// **The wide-carrier pins BITE (the same-opening join).** `carrierPins` force the 16 `piWide`
+    /// lanes to equal the `cap_node8` carrier images; a decoupled carrier lane REFUSES — the routed
+    /// `verify_same_opening` join has a genuine full-`u64` opening to compare against.
+    #[test]
+    fn decoupled_wide_carrier_refuses() {
+        let mut proof = prove_shielded_spend_complete(&honest_witness())
+            .expect("the honest complete spend must prove");
+        proof.claim.wide_binding[15] += BabyBear::ONE;
+        assert!(
+            verify_shielded_spend_complete(&proof).is_err(),
+            "a wide-carrier lane decoupled from the note opening must not verify"
+        );
+    }
 }
