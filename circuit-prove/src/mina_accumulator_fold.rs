@@ -16,6 +16,38 @@
 //! (`/usr/bin/time -l`, release, 96 GiB box; `tests/mina_accumulator_fold.rs::
 //! a_one_segment_chain_is_the_final_rung`.)
 //!
+//! ## ⚑⚑ AND MOST OF THAT IS GONE — the leaf minted at its OWN blowup, measured 2026-08-07
+//!
+//! [`prove_accumulator_segment_split`] with
+//! [`dregg_recursion_verify::config::ir2_leaf_wrap_split_config`] verifies the child at the
+//! IDENTICAL `(lb 6, q 19, qpow 16)` engine and mints this layer's own output at
+//! `create_recursion_config`'s `(lb 3, arity 2, q 38, qpow 14)`. Same trace, same descriptor, same
+//! inner proof, same in-circuit verification. Both rows below come from ONE binary on ONE box,
+//! minutes apart, each run alone under `/usr/bin/time -l`
+//! (`tests/leaf_wrap_mint_blowup_repricing.rs`):
+//!
+//! ```text
+//!                        wall        maxrss                 peak footprint          LDE domain
+//!   deployed (lb6)     298.08 s   46.47 GiB / 49.90 GB   117.79 GiB / 126.47 GB      2^26
+//!   split    (lb3)      21.63 s   18.65 GiB / 20.02 GB    23.23 GiB /  24.95 GB      2^23
+//!                        13.8x            2.49x                   5.07x               8x
+//! ```
+//!
+//! ⚠ The 223.36 s above and the 298.08 s here are the SAME object under different co-tenancy (this
+//! box was at load average ~21–34 from sibling work); the 13.8× is against the number measured
+//! beside the split, which is the only comparison that means anything. ⚠ And part of it is a memory
+//! cliff: the deployed run's 117.79 GiB footprint exceeds this box's 96 GiB of RAM and it spends
+//! 348 s of `sys` against 139 s of `user`. The MEMORY ratios are the box-independent ones.
+//!
+//! ⚑ So `tests/mina_accumulator_fold.rs`'s **"AND NO UNLOADED BOX IN THE FLEET CAN HOST IT"** is
+//! retired — see the retraction there. A 32 GiB laptop hosts the split
+//! leaf. The soundness ledger of that move, from Lean at this leaf's real `2^20` height: the commit
+//! column `ε_C` goes **43 → 53** (+10 bits) and per-fold **112 → 118** (+6), while Johnson goes
+//! 73 → 71 and capacity 130 → 128 — onto `JOHNSON_FLOOR_BITS` / `CAPACITY_DRIFT_MARGIN_BITS`
+//! exactly, i.e. equal to `create_recursion_config`, the weakest config already shipped. At this
+//! height ε_C BINDS BELOW Johnson in both configs, so the 64× was buying 2 bits on a column that
+//! does not bind and paying 10 on the one that does.
+//!
 //! ⚠ **AND THE 68.3 GiB THAT STOOD HERE WAS NOT A PEAK.** It was the high-water mark of a run that
 //! was *killed before finishing* — a waypoint on a climb that had not stopped climbing. The
 //! completed run's footprint is 1.7× higher. A killed run bounds nothing from above.
@@ -167,11 +199,11 @@ use dregg_circuit::field::BabyBear;
 
 use p3_recursion::{BatchOnly, RecursionInput, RecursionOutput, Target};
 
+use crate::fold_vk_pin::FoldVkPins;
 use crate::gpu_backend::{
     prove_recursion_aggregation_auto_with_expose, prove_recursion_layer_auto_with_expose,
 };
 use crate::ivc_turn_chain::{expose_claim_instance_index, ir2_leaf_wrap_config};
-use crate::mina_fold_vk_pin::FoldVkPins;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
@@ -355,7 +387,7 @@ pub fn prove_accumulator_segment_split(
 /// the fold would close nothing.
 ///
 /// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child's preprocessed commitment in-circuit
-/// ([`crate::mina_fold_vk_pin`]). This fold was the FOURTH in the Mina tower and the one a
+/// ([`crate::fold_vk_pin`]). This fold was the FOURTH in the Mina tower and the one a
 /// three-item follow-up list missed — the substitution it was open to is the same one the chain and
 /// finalize folds were open to.
 pub fn fold_accumulator_segments(
@@ -466,7 +498,7 @@ pub fn prove_accumulator_fold(
         progress(i, "leaf");
         let leaf = prove_accumulator_segment(rung_of(i), trace, pis, config)?;
         progress(i, "fold");
-        // ⚑ TRACKED pins — see `mina_fold_vk_pin` for what a tracked pin does and does not say.
+        // ⚑ TRACKED pins — see `fold_vk_pin` for what a tracked pin does and does not say.
         let pins = FoldVkPins::tracked(&acc, &leaf)?;
         acc = fold_accumulator_segments(&acc, &leaf, &pins, config)?;
     }

@@ -1,9 +1,13 @@
 //! ⚑⚑ **THE "COST WALL" IS A CONFIG CONFLATION, AND THIS IS THE MEASUREMENT.**
 //!
 //! `mina_accumulator_fold.rs`'s header prices ONE eight-row accumulator leaf — eight Vesta complete
-//! additions — at **223.36 s / 48.85 GiB maxrss / 117.93 GiB peak footprint**, and concludes *"no
-//! unloaded box in the fleet can host it."* That number is real. What it measures is not eight
-//! curve additions.
+//! additions — at **223.36 s / 48.85 GiB maxrss / 117.93 GiB peak footprint**, and its test file
+//! concludes *"AND NO UNLOADED BOX IN THE FLEET CAN HOST IT."* That number is real. What it measures
+//! is not eight curve additions.
+//!
+//! ⚑ **BOTH ARE NOW RETIRED, MEASURED (2026-08-07): the same leaf, minting at its own blowup, is
+//! 21.63 s / 18.65 GiB maxrss / 23.23 GiB peak footprint.** persvati hosts it; so does a 32 GiB
+//! laptop. The table below is the derivation; the measurement is at the bottom of this section.
 //!
 //! ## The two engines, and only one of them is constrained
 //!
@@ -43,8 +47,22 @@
 //! ```
 //!
 //! So the split removes **48.7 GiB of committed LDE** from a leaf whose completed footprint is
-//! 117.93 GiB. It does NOT remove 8/9 of the leaf. See
-//! [`the_split_mint_proves_the_same_eight_additions`] for what the (killed) attempts measured.
+//! 117.79 GiB. ⚑ **AND THE FOOTPRINT FALLS BY FAR MORE THAN THE LDE DOES** — measured 2026-08-07,
+//! both runs from ONE binary on ONE box, minutes apart, each alone under `/usr/bin/time -l`:
+//!
+//! ```text
+//!                          wall        maxrss                 peak footprint          LDE domain
+//!   deployed (lb6/q19)   298.08 s   46.47 GiB / 49.90 GB   117.79 GiB / 126.47 GB      2^26
+//!   split    (lb3/q38)    21.63 s   18.65 GiB / 20.02 GB    23.23 GiB /  24.95 GB      2^23
+//!                          13.8x            2.49x                   5.07x               8x
+//! ```
+//!
+//! ⚠ **Part of the 13.8× is a memory cliff, and saying so is not a hedge.** The deployed run's
+//! footprint (117.79 GiB) EXCEEDS this box's 96 GiB of RAM, and its `sys` time (348.27 s) is 2.5×
+//! its `user` time (138.93 s) — it spends most of its life in the compressor. The split never gets
+//! near the cliff. On a box with ≥128 GiB the deployed side would be faster and the wall-clock ratio
+//! smaller; the MEMORY ratios are the box-independent ones. ⚠ Both runs were taken on a box under
+//! load average ~21–34 from sibling work, which the wall clock feels and the footprint does not.
 //!
 //! ⚑ Two other things this table settles. **The preprocessed side is not the wall** — 30.2% of the
 //! cells, and the only manifest-shaped table in the wrap (`expose_claim`) is ONE row. **And rows are
@@ -84,6 +102,10 @@ use dregg_circuit::descriptor_ir2::{
     prove_vm_descriptor2_for_config,
 };
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::membership_descriptor_4ary::{
+    Digest8, create_test_witness, membership_descriptor_of_depth_4ary, membership_witness_4ary,
+};
+use dregg_circuit_prove::gpu_backend::{prove_recursion_layer_auto, recursion_dispatch_counters};
 use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
 use dregg_circuit_prove::mina_accumulator_fold::{
     ACC_PI_COUNT, Rung, accumulator_descriptor, prove_accumulator_segment,
@@ -101,7 +123,7 @@ use p3_circuit_prover::{
     expose_claim_air_builders, expose_claim_preprocessor, poseidon2_air_builders,
     poseidon2_preprocessor, recompose_air_builders, recompose_preprocessor,
 };
-use p3_recursion::{RecursionInput, Target, build_next_layer_circuit_with_expose};
+use p3_recursion::{RecursionInput, RecursionOutput, Target, build_next_layer_circuit_with_expose};
 
 const D: usize = 4;
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
@@ -318,54 +340,227 @@ fn the_preprocessed_side_is_not_the_wall_and_the_blowup_is() {
     );
 }
 
-/// ⚑ **THE KNOBS EACH CONFIG ACTUALLY RUNS, READ OFF THE OBJECTS — not off a doc comment.**
+/// The FRI shape of an EMITTED recursion root, read off the proof — the mint engine's own
+/// fingerprint, not a config field.
 ///
-/// The deployed leaf wrap mints at the blowup it VERIFIES at; the split one does not. If this test
-/// ever goes green with the two blowups equal, the split has been silently undone and every figure
-/// below is a measurement of the same thing twice.
+/// * `num_queries` is `FriParameters::num_queries` verbatim: the prover pushes one
+///   [`p3_fri::QueryProof`] per query.
+/// * `log_lde_domain` is `log2` of the TALLEST matrix the prover actually committed, read as the
+///   length of its Merkle authentication path (`cap_height = 0`, so path length = tree depth). This
+///   is the mint `log_blowup` **on the artifact**: the committed domain is `2^(degree_bits +
+///   log_blowup)` and it is the quantity the whole repricing is about.
+///
+/// ⚠ `commit_phase_commits.len()` is NOT a blowup discriminator and was asserted as one in the
+/// first draft of this test. Derived from `vendor/plonky3-fri-82cfad73/src/prover.rs:197,199`: the
+/// commit loop runs from `log_max_height = degree_bits + log_blowup` down to
+/// `log_final_height = log_blowup + log_final_poly_len`, so at arity 2 the round count is
+/// `degree_bits − log_final_poly_len` and the blowup CANCELS. Measured: 14 rounds at BOTH lb6 and
+/// lb3.
+struct EmittedFri {
+    num_queries: usize,
+    commit_rounds: usize,
+    log_lde_domain: usize,
+    max_degree_bits: usize,
+}
+
+fn emitted_fri(root: &RecursionOutput<DreggRecursionConfig>) -> EmittedFri {
+    let fri = &root.0.proof.opening_proof;
+    let log_lde_domain = fri
+        .query_proofs
+        .iter()
+        .flat_map(|q| q.input_proof.iter())
+        .map(|b| b.opening_proof.len())
+        .max()
+        .unwrap_or(0);
+    EmittedFri {
+        num_queries: fri.query_proofs.len(),
+        commit_rounds: fri.commit_phase_commits.len(),
+        log_lde_domain,
+        max_degree_bits: root.0.proof.degree_bits.iter().copied().max().unwrap_or(0),
+    }
+}
+
+/// ⚑⚑ **THE GATE: THE EMITTED ROOT'S OWN FRI SHAPE.** A test that reads `mint_knobs()` is testing
+/// the config struct — and the config struct was already right when the split was INERT.
+///
+/// The version of this test that shipped with `657553a2d` asserted
+/// `ir2_leaf_wrap_split_config().mint_knobs().num_queries == 38` and passed, while every root the
+/// production dispatch emitted carried **19** query proofs, because
+/// `prove_recursion_layer_auto_with_expose`'s GPU branch took its minting engine from a hardcoded
+/// `create_gpu_ir2_leaf_wrap_config()` — `(lb 6, 19 queries)`, a CONSTANT — and never looked at the
+/// config it was handed. Verifying such a root at its own config failed
+/// `QueryProofCountMismatch { expected: 38, got: 19 }`. Green test, inert change, and the test could
+/// not have told the difference because it never touched a proof.
+///
+/// So: one CHILD (a Lean-emitted depth-2 4-ary membership descriptor batch, minted at the IR-v2
+/// leaf wrap's `lb 6 / 19 queries` — the knobs BOTH wrap configs verify at, so the same child feeds
+/// both), wrapped TWICE through the **production dispatch** `prove_recursion_layer_auto`, and every
+/// assertion below is a read of an emitted proof:
+///
+/// 1. each root carries its own config's query count (19 vs 38);
+/// 2. the split root's tallest COMMITTED domain is exactly 3 bits shorter — the `lb 6 → lb 3`
+///    8× LDE shrink, read off the artifact's Merkle path depth rather than off `MintKnobs`;
+/// 3. each root verifies at its own engine;
+/// 4. and REFUSES at the other's — which is what makes (1) and (2) claims about two distinct
+///    objects rather than two labels on one.
+///
+/// ⚑⚑ **AND IT RUNS BOTH DISPATCH BRANCHES, FORCED.** Only the GPU branch was broken. A gate that
+/// took whatever branch the box happens to offer would have been green on a CPU box and blind — the
+/// "documented, not detected" shape. `DREGG_GPU_RECURSION` is pinned to `cpu` and then `gpu` and the
+/// SAME assertions run on each, so neither branch can drift from the config it was handed.
 #[test]
-fn the_deployed_wrap_mints_at_its_childs_blowup_and_the_split_one_does_not() {
+fn the_split_mint_reaches_the_prover_and_the_emitted_root_proves_it() {
+    for policy in ["cpu", "gpu"] {
+        // SAFETY: single-threaded read by `production_gpu_recursion_enabled()`; this is the only
+        // non-ignored test in this binary and nextest gives each test its own process. Same pattern
+        // as `gpu_backend_shrink_e2e.rs`.
+        unsafe { std::env::set_var("DREGG_GPU_RECURSION", policy) };
+        println!("\n══ DREGG_GPU_RECURSION={policy} ══");
+        both_wraps_emit_their_own_engine(policy);
+    }
+    unsafe { std::env::remove_var("DREGG_GPU_RECURSION") };
+}
+
+fn both_wraps_emit_their_own_engine(policy: &str) {
     let deployed = ir2_leaf_wrap_config();
     let split = ir2_leaf_wrap_split_config();
 
-    let dep_mint = *deployed.mint_knobs();
-    let spl_mint = *split.mint_knobs();
+    // ── the child: a Lean-emitted membership descriptor batch at the wrap's VERIFY knobs ──
+    // Depth 2 keeps this a gate rather than a measurement. Both wrap configs verify the child at
+    // `IR2_INNER_*` (lb 6 / qpow 16), so ONE child proof serves both wraps — which is exactly the
+    // claim the split makes: the child's in-circuit verification is bit-for-bit unchanged.
+    let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(7_000_003 + k as u32));
+    let (siblings, positions, _root) = create_test_witness(leaf, 2);
+    let desc = membership_descriptor_of_depth_4ary(siblings.len());
+    let (trace, pis) = membership_witness_4ary(leaf, &siblings, &positions).expect("witness");
+    let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        &desc,
+        &trace,
+        &pis,
+        &MemBoundaryWitness::default(),
+        &[],
+        &UMemBoundaryWitness::default(),
+        &deployed,
+    )
+    .expect("the membership child mints at the leaf-wrap engine");
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(&desc, &inner, &pis, &deployed).expect("verify triple");
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner,
+            common_data: &common,
+            table_public_inputs,
+        };
 
-    println!(
-        "\n{:<22} {:>10} {:>10} {:>8} {:>10} {:>10}",
-        "config", "mint lb", "mint q", "arity", "mint qpow", "capacity"
-    );
-    for (label, p) in [("ir2_leaf_wrap", dep_mint), ("split", spl_mint)] {
-        println!(
-            "{:<22} {:>10} {:>10} {:>8} {:>10} {:>10}",
-            label,
-            p.log_blowup,
-            p.num_queries,
-            1 << p.max_log_arity,
-            p.query_pow_bits,
-            p.capacity_bits()
+    // ── the two wraps, through the PRODUCTION dispatch ──
+    let (gpu0, cpu0) = recursion_dispatch_counters();
+    let t = Instant::now();
+    let dep_root = prove_recursion_layer_auto(&input, &deployed).expect("deployed wrap proves");
+    let dep_wall = t.elapsed().as_secs_f64();
+    let t = Instant::now();
+    let spl_root = prove_recursion_layer_auto(&input, &split).expect("split wrap proves");
+    let spl_wall = t.elapsed().as_secs_f64();
+    let (gpu1, cpu1) = recursion_dispatch_counters();
+    let (gpu_ran, cpu_ran) = (gpu1 - gpu0, cpu1 - cpu0);
+    println!("dispatch: {gpu_ran} GPU layer(s), {cpu_ran} CPU layer(s)");
+    // ⚑ The gate must know WHICH branch it just judged. `cpu` forces the CPU branch outright; `gpu`
+    // is honoured only when a native adapter exists, so it is allowed to fall back — but it may not
+    // fall back SILENTLY, and a `cpu` run that dispatched to the GPU would mean the policy knob is
+    // dead and this loop is judging one branch twice.
+    if policy == "cpu" {
+        assert_eq!(
+            (gpu_ran, cpu_ran),
+            (0, 2),
+            "DREGG_GPU_RECURSION=cpu must dispatch both wraps to the CPU branch"
         );
     }
 
-    assert_eq!(dep_mint.log_blowup, 6, "the deployed wrap mints at 64x");
-    assert_eq!(dep_mint.num_queries, 19);
-    assert_eq!(spl_mint.log_blowup, 3, "the split wrap mints at 8x");
-    assert_eq!(spl_mint.num_queries, 38);
+    let dep = emitted_fri(&dep_root);
+    let spl = emitted_fri(&spl_root);
+    println!(
+        "\n{:<16} {:>8} {:>8} {:>11} {:>11} {:>8} {:>8} {:>8}",
+        "config", "mint lb", "mint q", "EMITTED q", "log2 LDE", "max db", "rounds", "wall s"
+    );
+    for (label, k, e, wall) in [
+        ("ir2_leaf_wrap", *deployed.mint_knobs(), &dep, dep_wall),
+        ("split", *split.mint_knobs(), &spl, spl_wall),
+    ] {
+        println!(
+            "{:<16} {:>8} {:>8} {:>11} {:>11} {:>8} {:>8} {:>8.2}",
+            label,
+            k.log_blowup,
+            k.num_queries,
+            e.num_queries,
+            e.log_lde_domain,
+            e.max_degree_bits,
+            e.commit_rounds,
+            wall
+        );
+    }
 
-    // ⚑ NO SOUNDNESS KNOB MOVES DOWN. `lb*q + qpow` is the capacity ledger both configs are gated
-    // against; 128 is the standing drift margin every other recursion layer already sits at.
-    let dep_cap = dep_mint.capacity_bits();
-    let spl_cap = spl_mint.capacity_bits();
-    assert_eq!(dep_cap, 130);
-    assert_eq!(spl_cap, 128);
-    assert!(
-        spl_cap >= 128,
-        "the split must not drop below the 128 drift margin: {spl_cap}"
+    // (1) THE EMITTED QUERY COUNT. This is the assertion the inert version could not make.
+    assert_eq!(
+        dep.num_queries, 19,
+        "the deployed wrap's ROOT must carry 19 query proofs"
+    );
+    assert_eq!(
+        spl.num_queries, 38,
+        "the split wrap's ROOT must carry 38 query proofs — if this is 19 the mint knobs are not \
+         reaching the prover and the split is inert"
     );
 
+    // (2) THE EMITTED BLOWUP — the LDE domain the prover really committed, as Merkle path depth.
+    // Same circuit, same trace degrees, so the whole difference is the mint blowup: 6 − 3 = 3 bits,
+    // i.e. the 8× this repricing is about. This is the quantity, not a proxy for it.
+    assert_eq!(
+        dep.max_degree_bits, spl.max_degree_bits,
+        "both wraps prove the SAME verification circuit — a moved degree means the comparison is \
+         between two different circuits"
+    );
+    assert_eq!(
+        dep.log_lde_domain,
+        spl.log_lde_domain + 3,
+        "the deployed wrap must commit a domain 8x taller than the split one: 2^{} vs 2^{}",
+        dep.log_lde_domain,
+        spl.log_lde_domain
+    );
+    assert_eq!(
+        spl.log_lde_domain,
+        spl.max_degree_bits + 3,
+        "the split root's committed domain must be its trace domain times the SPLIT mint blowup (8x)"
+    );
+
+    // (3) each root verifies at its OWN engine.
+    verify_recursive_batch_proof_with_config(&dep_root.0, &deployed)
+        .expect("the deployed root verifies at the deployed engine");
+    verify_recursive_batch_proof_with_config(&spl_root.0, &split)
+        .expect("the split root verifies at the split engine");
+
+    // (4) and REFUSES at the other's. Without this, (1) and (2) could both be reads of one object
+    // under two labels.
+    assert!(
+        verify_recursive_batch_proof_with_config(&spl_root.0, &deployed).is_err(),
+        "a 38-query root must NOT verify under the 19-query engine"
+    );
+    assert!(
+        verify_recursive_batch_proof_with_config(&dep_root.0, &split).is_err(),
+        "a 19-query root must NOT verify under the 38-query engine"
+    );
+
+    // ⚑ THE SOUNDNESS LEDGER, on the objects. `lb*q + qpow` is the capacity column both configs are
+    // gated against; 128 is the standing drift margin every other recursion layer already sits at.
+    let (dep_k, spl_k) = (*deployed.mint_knobs(), *split.mint_knobs());
+    assert_eq!(dep_k.capacity_bits(), 130);
+    assert_eq!(spl_k.capacity_bits(), 128);
+    assert!(
+        spl_k.capacity_bits() >= 128,
+        "the split must not drop below the 128 drift margin: {}",
+        spl_k.capacity_bits()
+    );
     println!(
         "\nmint LDE ratio deployed:split = {}x — every committed cell of the WRAP circuit",
-        1u32 << (dep_mint.log_blowup - spl_mint.log_blowup)
+        1u32 << (dep_k.log_blowup - spl_k.log_blowup)
     );
 }
 
@@ -373,9 +568,9 @@ fn the_deployed_wrap_mints_at_its_childs_blowup_and_the_split_one_does_not() {
 /// `mina_accumulator_fold.rs::a_one_segment_chain_is_the_final_rung` runs. Present here so the two
 /// numbers come out of ONE binary on ONE box, rather than a fresh run compared against a header.
 ///
-/// ⚠ ~223 s and ~118 GiB peak footprint. Run it alone.
+/// ⚠ ~300 s and ~118 GiB peak footprint — which EXCEEDS this box's 96 GiB of RAM. Run it alone.
 #[test]
-#[ignore = "MEASUREMENT, ~4 min, ~118 GiB peak footprint. Run under /usr/bin/time -l, alone."]
+#[ignore = "MEASUREMENT, ~5 min, ~118 GiB peak footprint (> RAM). Run under /usr/bin/time -l, alone."]
 fn the_deployed_mint_is_the_measured_wall() {
     let t = full_trace();
     let pis = segment_public_inputs(&t).expect("public inputs");
@@ -391,25 +586,43 @@ fn the_deployed_mint_is_the_measured_wall() {
     let claim = read_accumulator_claim(&root).expect("claim");
     assert!(claim.is_identity(), "the eight-add chain must reach O");
 
-    println!("\nDEPLOYED  (mint lb6/q19, verify lb6/q19): {wall:.2} s");
+    let e = emitted_fri(&root);
+    let (gpu, cpu) = recursion_dispatch_counters();
+    println!(
+        "\nDEPLOYED  (mint lb6/q19, verify lb6/q19): {wall:.2} s\n  \
+         EMITTED: {} query proofs, committed LDE domain 2^{} (trace 2^{}), {} FRI rounds\n  \
+         dispatch: {gpu} GPU / {cpu} CPU layer(s)",
+        e.num_queries, e.log_lde_domain, e.max_degree_bits, e.commit_rounds
+    );
+    assert_eq!(e.num_queries, 19, "the deployed baseline must be lb6/q19");
 }
 
 /// ⚑⚑ **THE SAME EIGHT CURVE ADDITIONS, MINTED AT A DOMAIN THAT FITS THEM.**
 ///
 /// Identical trace, identical descriptor, identical inner proof, identical in-circuit verification
 /// of that inner proof. The ONLY difference is the blowup this layer commits its OWN trace at.
-/// ⚠⚠ **RUN THIS ALONE. IT IS NOT SMALL, AND THE 8× IS ON THE LDE ONLY.**
 ///
-/// Two attempts on 2026-08-07 were run CONCURRENTLY with each other on a box already carrying
-/// several `lean` builds. Both were KILLED at ~600 s having reached **72.2 / 73.7 GiB peak
-/// footprint** with 397–425 s of `sys` against 40–44 s of `user` — i.e. ~90% memory-stalled, still
-/// climbing, proving almost nothing. A killed run bounds nothing from above, so those are a LOWER
-/// bound on the split's peak and nothing else. What they do establish is that the mint blowup is
-/// **not** the whole wall: the committed LDE falls 55.6 → 6.9 GiB, and the leaf still wants ≥72 GiB.
-/// The remainder is the verification circuit itself — `Q · W` over the child's 10,756 COMMITTED
-/// columns — which is the term `MinaAccumulatorAir`'s 3,048 → 446 narrowing addresses.
+/// **MEASURED 2026-08-07: 21.63 s, maxrss 18.65 GiB / 20.02 GB, peak footprint 23.23 GiB / 24.95
+/// GB, committed LDE domain 2^23.** Against the deployed baseline from the SAME binary minutes
+/// earlier: 298.08 s, 46.47 GiB / 49.90 GB, 117.79 GiB / 126.47 GB, 2^26.
+///
+/// ⚑⚑ **AND THIS RETRACTS THE PARAGRAPH THAT STOOD HERE.** It read: *"Two attempts were KILLED at
+/// ~600 s having reached 72.2 / 73.7 GiB peak footprint … What they do establish is that the mint
+/// blowup is not the whole wall: the committed LDE falls 55.6 → 6.9 GiB, and the leaf still wants
+/// ≥72 GiB. The remainder is the verification circuit itself."*
+///
+/// **Those runs never applied the split.** `prove_recursion_layer_auto_with_expose`'s GPU branch
+/// took its minting engine from a hardcoded `create_gpu_ir2_leaf_wrap_config()` and never read the
+/// config it was handed, and this box dispatches to that branch — so both "split" attempts minted
+/// at `lb 6`, i.e. they were two more copies of the baseline, run concurrently with each other. The
+/// ≥72 GiB was the BASELINE's climb, and the conclusion drawn from it — that the wall is the
+/// verification circuit rather than the blowup — was drawn from a measurement of the wrong object.
+///
+/// ⚠ The narrowing that paragraph pointed at (`MinaAccumulatorAir`'s 3,048 → 446) is still worth
+/// doing; what is retracted is the EVIDENCE that it is where the remaining wall is. The real
+/// remainder after the split is 23.23 GiB, not ≥72.
 #[test]
-#[ignore = "MEASUREMENT, ≥72 GiB peak. Run under /usr/bin/time -l, ALONE, on a quiet box."]
+#[ignore = "MEASUREMENT, ~22 s / ~23 GiB peak. Run under /usr/bin/time -l, ALONE."]
 fn the_split_mint_proves_the_same_eight_additions() {
     let t = full_trace();
     let pis = segment_public_inputs(&t).expect("public inputs");
@@ -430,5 +643,24 @@ fn the_split_mint_proves_the_same_eight_additions() {
         "the eight-add chain must still reach O — the split moved a commitment rate, not a claim"
     );
 
-    println!("\nSPLIT     (mint lb3/q38, verify lb6/q19): {wall:.2} s");
+    let e = emitted_fri(&root);
+    let (gpu, cpu) = recursion_dispatch_counters();
+    println!(
+        "\nSPLIT     (mint lb3/q38, verify lb6/q19): {wall:.2} s\n  \
+         EMITTED: {} query proofs, committed LDE domain 2^{} (trace 2^{}), {} FRI rounds\n  \
+         dispatch: {gpu} GPU / {cpu} CPU layer(s)",
+        e.num_queries, e.log_lde_domain, e.max_degree_bits, e.commit_rounds
+    );
+    // ⚑ The measurement must refuse to report a number for the WRONG object. Without this the
+    // headline is a timing of the deployed engine wearing the split's label — which is exactly what
+    // shipped for one commit.
+    assert_eq!(
+        e.num_queries, 38,
+        "this run did not mint at the split engine; the number above is not the split's"
+    );
+    assert_eq!(
+        e.log_lde_domain,
+        e.max_degree_bits + 3,
+        "the committed LDE domain must be the trace domain x8, not x64"
+    );
 }

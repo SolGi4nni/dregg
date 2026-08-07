@@ -149,7 +149,7 @@ use crate::dregg_outer_config::{
 use crate::gpu_hidingfri_fold::{GpuHidingFriFold, hidingfri_fold_counters};
 use crate::ivc_turn_chain::ir2_leaf_wrap_config;
 use crate::plonky3_recursion_impl::recursive::{
-    DreggRecursionConfig, create_recursion_backend, create_recursion_config,
+    DreggRecursionConfig, MintKnobs, create_recursion_backend, create_recursion_config,
 };
 
 // ============================================================================
@@ -4628,7 +4628,11 @@ pub fn shrink_apex_to_gpu_outer(
     inner_config: &DreggRecursionConfig,
     gpu_outer_config: &GpuDreggOuterConfig,
 ) -> Result<GpuApexShrinkProof, String> {
-    let input = apex.into_recursion_input::<BatchOnly>();
+    // ⚑ THE APEX'S VK IDENTITY, PINNED — the CPU twin's pin, see `crate::apex_shrink`. Unpinned,
+    // an apex of identical table shape and different preprocessed content shrank to a byte-identical
+    // outer VK, which is what an L1 verifier anchors. Fail-closed on an apex with no commitment.
+    let apex_pre_commit = crate::fold_vk_pin::child_vk_commit(apex, "apex")?;
+    let input = apex.into_recursion_input_pinned::<BatchOnly>(apex_pre_commit);
     shrink_recursion_input_to_gpu_outer(&input, inner_config, gpu_outer_config)
 }
 
@@ -4891,25 +4895,72 @@ pub fn create_gpu_recursion_config() -> GpuDreggRecursionConfig {
     }
 }
 
-/// GPU recursion config matching the production rotated fold's
-/// `ir2_leaf_wrap_config`: log_blowup=6, 19 queries, binary FRI folding, and
-/// 16 query-PoW bits.  The CPU and GPU configs differ only in their DFT/MMCS
-/// implementations, so proofs re-tag byte-for-byte between them.
-pub fn create_gpu_ir2_leaf_wrap_config() -> GpuDreggRecursionConfig {
+// ⚑ `create_gpu_ir2_leaf_wrap_config()` — a process-static GPU config at the CONSTANT
+// `(6, 0, 1, 19, 0, 16)` — is DELETED. It existed for exactly one purpose: to be the hardcoded
+// minting engine of the two `*_auto_*` dispatches below, which is the bug
+// [`gpu_recursion_config_for`] fixes. Kept around it is a loaded gun: a caller that reaches for
+// "the GPU wrap config" gets the IR-v2 leaf wrap's knobs regardless of the layer it is minting.
+// A layer's GPU mint config is now DERIVED from that layer's own `mint_knobs()`, always.
+
+/// ⚑⚑ **THE GPU MINT ENGINE, DERIVED FROM THE LAYER'S OWN KNOBS INSTEAD OF HARDCODED.**
+///
+/// [`prove_recursion_layer_auto_with_expose`] and
+/// [`prove_recursion_aggregation_auto_with_expose`] took their GPU minting config from a bare
+/// `create_gpu_ir2_leaf_wrap_config()` call — `(lb 6, arity 2, 19 queries, qpow 16)`, a CONSTANT —
+/// while the CPU branch beside them mints under `BatchStarkProver::new(config.clone())`, i.e. the
+/// caller's config. So the two branches of one dispatch minted DIFFERENT PROOFS for the same call,
+/// and any caller whose config was not the IR-v2 leaf wrap's silently got the leaf wrap's engine.
+///
+/// That is what made [`dregg_recursion_verify::config::ir2_leaf_wrap_split_config`] inert wherever
+/// the GPU branch is taken: its mint knobs are `(lb 3, 38 queries, qpow 14)`, the emitted root
+/// carried 19 query proofs, and verifying it at its own engine failed
+/// `QueryProofCountMismatch { expected: 38, got: 19 }`.
+///
+/// This reads the six knobs off [`DreggRecursionConfig::mint_knobs`] — recorded by the builder
+/// that constructed the PCS, not reconstructed from constants — and builds the GPU twin at exactly
+/// those. For the two knob sets that shipped before this it is the identity:
+/// `ir2_leaf_wrap_config()` → `(6,0,1,19,0,16)` = the old hardcode, and `create_recursion_config()`
+/// → `(3,0,1,38,0,14)` = [`create_gpu_recursion_config`]. **No existing layer's proof moves.**
+///
+/// ⚠ Process-static storage, keyed by the knob tuple, for the wgpu-TLS teardown reason documented
+/// on [`create_gpu_outer_config`]: a `GpuDreggRecursionConfig` whose last reference dies on a
+/// proving thread can run wgpu's buffer destructors after wgpu's own TLS is gone. The map holds one
+/// live reference per knob set forever, so the clones handed out are free to die anywhere.
+pub fn gpu_recursion_config_for(config: &DreggRecursionConfig) -> GpuDreggRecursionConfig {
+    let k: MintKnobs = *config.mint_knobs();
+    let key = (
+        k.log_blowup,
+        k.log_final_poly_len,
+        k.max_log_arity,
+        k.num_queries,
+        k.commit_pow_bits,
+        k.query_pow_bits,
+    );
+    let build = || {
+        create_gpu_recursion_config_with_fri(
+            k.log_blowup,
+            k.log_final_poly_len,
+            k.max_log_arity,
+            k.num_queries,
+            k.commit_pow_bits,
+            k.query_pow_bits,
+        )
+    };
     #[cfg(not(target_arch = "wasm32"))]
     {
-        static GPU_IR2_WRAP_CONFIG: OnceLock<GpuDreggRecursionConfig> = OnceLock::new();
-        GPU_IR2_WRAP_CONFIG
-            .get_or_init(|| create_gpu_recursion_config_with_fri(6, 0, 1, 19, 0, 16))
-            .clone()
+        type KnobKey = (usize, usize, usize, usize, usize, usize);
+        static GPU_MINT_CONFIGS: OnceLock<Mutex<HashMap<KnobKey, GpuDreggRecursionConfig>>> =
+            OnceLock::new();
+        let map = GPU_MINT_CONFIGS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.entry(key).or_insert_with(build).clone()
     }
     #[cfg(target_arch = "wasm32")]
     {
-        thread_local! {
-            static GPU_IR2_WRAP_CONFIG: GpuDreggRecursionConfig =
-                create_gpu_recursion_config_with_fri(6, 0, 1, 19, 0, 16);
-        }
-        GPU_IR2_WRAP_CONFIG.with(|c| c.clone())
+        let _ = key;
+        build()
     }
 }
 
@@ -5406,6 +5457,13 @@ fn gpu_recursion_proof_to_cpu_with_lookups(
 /// The prover-only cache is intentionally omitted on the GPU boundary.  A
 /// `RecursionOutput` continuation reads its proof's own `stark_common`; the
 /// optional cache is neither serialized nor consulted by the fold/verify path.
+///
+/// ⚑ **`inner_config` CARRIES BOTH FRI ROLES AND BOTH BRANCHES HONOUR BOTH.** Its
+/// `FriVerifierParams` describe the CHILD being verified in-circuit; its `mint_knobs()` are the
+/// engine THIS layer's own output is minted at. The CPU branch gets both for free
+/// (`BatchStarkProver::new(config.clone())`); the GPU branch derives its minting config through
+/// [`gpu_recursion_config_for`]. It used to hardcode the mint engine, which is how a split config
+/// could be passed in and have no effect on the emitted proof.
 pub fn prove_recursion_layer_auto_with_expose<A>(
     input: &RecursionInput<'_, DreggRecursionConfig, A>,
     inner_config: &DreggRecursionConfig,
@@ -5433,7 +5491,9 @@ where
         return output;
     }
 
-    let gpu_config = create_gpu_ir2_leaf_wrap_config();
+    // ⚑ The MINT engine is this layer's own, read off the caller's config — NOT a hardcoded
+    // `create_gpu_ir2_leaf_wrap_config()`. See [`gpu_recursion_config_for`].
+    let gpu_config = gpu_recursion_config_for(inner_config);
     let gpu = prove_recursion_layer_gpu_with_expose(input, inner_config, &gpu_config, expose)?;
     let cpu_proof = gpu_recursion_proof_to_cpu_with_lookups(&gpu.proof, &gpu.cpu_lookups)?;
     GPU_RECURSION_LEAF_PREP_NS.fetch_add(
@@ -5494,7 +5554,8 @@ pub fn prove_recursion_aggregation_auto_with_expose(
         return output;
     }
 
-    let gpu_config = create_gpu_ir2_leaf_wrap_config();
+    // ⚑ Same defect, same fix: the aggregation twin also minted at a constant.
+    let gpu_config = gpu_recursion_config_for(inner_config);
     let gpu = prove_recursion_aggregation_gpu_with_expose(
         left,
         right,

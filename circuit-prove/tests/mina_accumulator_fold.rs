@@ -43,6 +43,29 @@
 //! because macOS compresses. "Re-measure on an unloaded box" has no answer at this width — which is
 //! itself the argument for the narrowing below.
 //!
+//! ## ⚑⚑ RETIRED 2026-08-07 — and it was never a property of the STATEMENT, only of one knob
+//!
+//! Every figure above is `prove_accumulator_segment`, which mints this layer's own proof at the
+//! blowup its CHILD was minted at (`log_blowup 6`). That was one argument doing two jobs.
+//! [`dregg_circuit_prove::mina_accumulator_fold::prove_accumulator_segment_split`] at
+//! `ir2_leaf_wrap_split_config()` verifies the child at the IDENTICAL `(lb 6, q 19, qpow 16)` — the
+//! same unmodified `Ir2BatchProof`, bit for bit — and mints its OWN output at `(lb 3, q 38, qpow
+//! 14)`. Measured the same day, ONE binary, ONE box, alone, `/usr/bin/time -l`
+//! (`tests/leaf_wrap_mint_blowup_repricing.rs::the_split_mint_proves_the_same_eight_additions`):
+//!
+//! | metric         | deployed lb6            | split lb3               | ratio  |
+//! |----------------|-------------------------|-------------------------|--------|
+//! | wall           | 298.08 s                | **21.63 s**             | 13.8×  |
+//! | maxrss         | 46.47 GiB / 49.90 GB    | **18.65 GiB / 20.02 GB**| 2.49×  |
+//! | peak footprint | 117.79 GiB / 126.47 GB  | **23.23 GiB / 24.95 GB**| 5.07×  |
+//! | LDE domain     | 2^26                    | **2^23**                | 8×     |
+//!
+//! ⚑ The deployed footprint reproduces this header's 117.97 / 118.30 GiB to within 0.2%, which is
+//! the same three-parts-in-a-thousand stability the paragraph above claims for it — so the 23.23 GiB
+//! is a comparison against a metric that has earned it. **persvati (83 GiB) hosts the split leaf.
+//! So does a 32 GiB laptop.** The narrowing below is still worth doing; it is no longer the only
+//! way to run this at all.
+//!
 //! ⚑ **AND THE 68.3 GiB THAT STOOD IN THIS HEADER WAS NOT A PEAK.** It was labelled "peak memory
 //! footprint" of a run that was *killed before finishing* — the high-water mark of a climb that had
 //! not stopped climbing. Both completed runs reach ~118 GiB, 1.7× higher. **A killed run's
@@ -131,12 +154,12 @@
 //! ```
 
 use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_accumulator_fold::{
     ACC_CLAIM_LEN, POINT_WIDTH, Rung, SK, accumulator_config, accumulator_descriptor,
     fold_accumulator_segments, prove_accumulator_fold, prove_accumulator_segment,
     read_accumulator_claim, segment_public_inputs,
 };
-use dregg_circuit_prove::mina_fold_vk_pin::FoldVkPins;
 
 const DISCHARGING: &str =
     include_str!("../../circuit/tests/fixtures/mina-accumulator-discharging-trace.txt");

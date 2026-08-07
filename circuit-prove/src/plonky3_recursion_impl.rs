@@ -39,10 +39,10 @@ pub mod recursive {
     // entry points below) it stayed.
     pub use dregg_recursion_verify::config::{
         Challenge, Challenger, D, DIGEST_ELEMS, DreggRecursionConfig, INNER_FRI_MAX_LOG_ARITY,
-        INNER_FRI_NUM_QUERIES, InnerFri, InnerStarkConfig, MyPcs, RATE, RECURSION_EXT_DEGREE,
-        RECURSION_FRI_COMMIT_POW_BITS, RECURSION_FRI_LOG_BLOWUP, RECURSION_FRI_LOG_FINAL_POLY_LEN,
-        RECURSION_FRI_MAX_LOG_ARITY, RECURSION_FRI_NUM_QUERIES, RECURSION_FRI_QUERY_POW_BITS,
-        RecursionCompatibleProof, WIDTH, create_recursion_config,
+        INNER_FRI_NUM_QUERIES, InnerFri, InnerStarkConfig, MintKnobs, MyPcs, RATE,
+        RECURSION_EXT_DEGREE, RECURSION_FRI_COMMIT_POW_BITS, RECURSION_FRI_LOG_BLOWUP,
+        RECURSION_FRI_LOG_FINAL_POLY_LEN, RECURSION_FRI_MAX_LOG_ARITY, RECURSION_FRI_NUM_QUERIES,
+        RECURSION_FRI_QUERY_POW_BITS, RecursionCompatibleProof, WIDTH, create_recursion_config,
         create_recursion_config_for_inner_fri, create_recursion_config_split_fri,
         create_recursion_config_with_fri, ir2_leaf_wrap_split_config,
     };

@@ -165,12 +165,13 @@ use dregg_circuit_prove::dregg_outer_config::{
 };
 use dregg_circuit_prove::ivc_turn_chain::{
     IR2_INNER_COMMIT_POW_BITS, IR2_INNER_LOG_BLOWUP, IR2_INNER_LOG_FINAL_POLY_LEN,
-    IR2_INNER_QUERY_POW_BITS,
+    IR2_INNER_QUERY_POW_BITS, ir2_leaf_wrap_config,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     INNER_FRI_MAX_LOG_ARITY, INNER_FRI_NUM_QUERIES, RECURSION_EXT_DEGREE,
     RECURSION_FRI_COMMIT_POW_BITS, RECURSION_FRI_LOG_BLOWUP, RECURSION_FRI_LOG_FINAL_POLY_LEN,
     RECURSION_FRI_MAX_LOG_ARITY, RECURSION_FRI_NUM_QUERIES, RECURSION_FRI_QUERY_POW_BITS,
+    ir2_leaf_wrap_split_config,
 };
 use dregg_lean_ffi::{FriKnobs, FriLedger, fri_ledger, fri_ledger_available};
 
@@ -1232,6 +1233,140 @@ fn recursion_config_is_the_weakest_link() {
             rec.capacity_bits
         );
     }
+}
+
+/// **⚑⚑ THE SPLIT LEAF WRAP INTRODUCES NO NEW KNOB SET — and THAT is its soundness statement.**
+///
+/// `ir2_leaf_wrap_split_config()` (landed `657553a2d`) mints the leaf wrap's own output at
+/// `create_recursion_config`'s knobs while verifying its child at `ir2_leaf_wrap_config`'s. Both
+/// halves are rows this gate ALREADY judges — row 4 (`FriLedgerSound.recursionConfig`) and row 5
+/// (`FriLedgerSound.ir2LeafWrapRotatedConfig`) — so no new posture enters the system, and
+/// [`recursion_config_is_the_weakest_link`] already pins the mint half's numbers.
+///
+/// This test is the TIE that makes that transitivity real. Without it the split could be retuned to
+/// a knob set no row models and every floor in this file would stay green about a config nobody
+/// runs.
+///
+/// ⚑ **THE LEDGER, SAID PLAINLY.** The mint half lands on `capacity 128 = CAPACITY_DRIFT_MARGIN_BITS`
+/// and `Johnson 71 = JOHNSON_FLOOR_BITS` — **ZERO HEADROOM ON BOTH**, because it IS the weakest
+/// shipped config. It is not made weaker than anything already deployed; it is made **equal to the
+/// weakest thing already deployed**, on the two query columns. What it buys is on `ε_C`, and it buys
+/// there twice: the `1/(2ρ^{3/2})` term improves as the blowup FALLS, and `ε_C ∝ |D⁽⁰⁾|²` improves
+/// again because a smaller blowup is a smaller domain at the same trace height. Both readings below
+/// are Lean's.
+#[test]
+fn the_split_leaf_wrap_lands_on_rows_this_gate_already_judges() {
+    require_ledger();
+    let cfgs = shipped();
+    let mint_row = &cfgs[4];
+    let verify_row = &cfgs[5];
+    assert_eq!(mint_row.lean_model, "FriLedgerSound.recursionConfig");
+    assert_eq!(
+        verify_row.lean_model,
+        "FriLedgerSound.ir2LeafWrapRotatedConfig"
+    );
+
+    // (1) THE MINT HALF IS ROW 4, KNOB FOR KNOB. Read off the config OBJECT the prover is handed —
+    // `MintKnobs` is recorded by the builder that constructed the PCS, so this cannot drift from
+    // what `create_recursion_config_split_fri` actually built.
+    let mint = *ir2_leaf_wrap_split_config().mint_knobs();
+    assert_eq!(
+        (
+            mint.log_blowup,
+            mint.num_queries,
+            mint.query_pow_bits,
+            mint.max_log_arity,
+            mint.log_final_poly_len,
+            mint.commit_pow_bits,
+        ),
+        (
+            mint_row.deployed.log_blowup,
+            mint_row.deployed.num_queries,
+            mint_row.deployed.query_pow_bits,
+            mint_row.deployed.max_log_arity,
+            mint_row.deployed.log_final_poly_len,
+            mint_row.deployed.commit_pow,
+        ),
+        "the split wrap's MINT engine must be exactly row 4 (`create_recursion_config`). If it is \
+         not, the config it mints at is judged by no row here and every floor in this file is green \
+         about somebody else."
+    );
+
+    // (2) THE VERIFY HALF IS ROW 5, unchanged — the child's engine, which is not a choice.
+    let deployed_mint = *ir2_leaf_wrap_config().mint_knobs();
+    assert_eq!(
+        (
+            deployed_mint.log_blowup,
+            deployed_mint.num_queries,
+            deployed_mint.query_pow_bits,
+        ),
+        (
+            verify_row.deployed.log_blowup,
+            verify_row.deployed.num_queries,
+            verify_row.deployed.query_pow_bits,
+        ),
+        "the child's engine — what the split still VERIFIES at, bit-for-bit — must be row 5"
+    );
+
+    // (3) ZERO HEADROOM, NAMED. Equality, not `>=`: this is the weakest shipped config and the whole
+    // point is that the split does not go BELOW it either.
+    let mint_ledger = fri_ledger(mint_row.deployed).expect("ledger");
+    assert_eq!(
+        (mint_ledger.capacity_bits, mint_ledger.johnson_bits),
+        (CAPACITY_DRIFT_MARGIN_BITS, JOHNSON_FLOOR_BITS),
+        "the split's mint half sits ON both floors with zero headroom: {mint_ledger:?}"
+    );
+
+    // (4) THE COMMIT COLUMN, AT THE REAL HEIGHTS OF THE OBJECT BEING REPRICED. The accumulator leaf
+    // wrap's tallest table is `2^20` rows (`leaf_wrap_mint_blowup_repricing.rs`'s census: `Alu` at
+    // log2 20), so `log_d0 = 20 + log_blowup`: 26 deployed, 23 split. Reported at the SAME trace
+    // height under each config's own blowup, which is the only comparison that means anything.
+    const ACC_LEAF_WRAP_LOG_ROWS: usize = 20;
+    let at = |k: FriKnobs| {
+        fri_ledger(FriKnobs {
+            log_d0: ACC_LEAF_WRAP_LOG_ROWS + k.log_blowup,
+            ..k
+        })
+        .expect("ledger")
+    };
+    let dep_at_height = at(verify_row.deployed);
+    let spl_at_height = at(mint_row.deployed);
+    println!(
+        "\nTHE ACCUMULATOR LEAF WRAP at 2^{ACC_LEAF_WRAP_LOG_ROWS} rows — Lean's ledger:\n  \
+         {:<14} log_d0 {:>3}  commit {:>3}  johnson {:>3}  capacity {:>3}  per-fold {:>3}\n  \
+         {:<14} log_d0 {:>3}  commit {:>3}  johnson {:>3}  capacity {:>3}  per-fold {:>3}",
+        "deployed lb6",
+        ACC_LEAF_WRAP_LOG_ROWS + verify_row.deployed.log_blowup,
+        dep_at_height.commit_bits,
+        dep_at_height.johnson_bits,
+        dep_at_height.capacity_bits,
+        dep_at_height.per_fold_bits,
+        "split lb3",
+        ACC_LEAF_WRAP_LOG_ROWS + mint_row.deployed.log_blowup,
+        spl_at_height.commit_bits,
+        spl_at_height.johnson_bits,
+        spl_at_height.capacity_bits,
+        spl_at_height.per_fold_bits,
+    );
+
+    // The commit column MUST improve — that is the claim the repricing was sold on, and it is the
+    // only column that improves. A `>` rather than a pinned delta, because the exact gain is Lean's
+    // to report at whatever height the wrap really has; the DIRECTION is the standing claim.
+    assert!(
+        spl_at_height.commit_bits > dep_at_height.commit_bits,
+        "the split must GAIN on ε_C (smaller blowup ⇒ smaller `1/(2ρ^{{3/2}})` AND smaller |D⁽⁰⁾|): \
+         split {} vs deployed {}",
+        spl_at_height.commit_bits,
+        dep_at_height.commit_bits
+    );
+    // And it must LOSE on the two query columns — this is a trade, and a test that only checked the
+    // improving column would be selling it.
+    assert!(
+        spl_at_height.johnson_bits < dep_at_height.johnson_bits
+            && spl_at_height.capacity_bits < dep_at_height.capacity_bits,
+        "the query columns FALL (71/128 against 73/130). Say so: {spl_at_height:?} vs \
+         {dep_at_height:?}"
+    );
 }
 
 /// **⚑ THE MUTATION CANARY FOR `commit_bits`: ε_C IS *NOT* TRACE-INVARIANT, AND THE FLOOR BITES.**
