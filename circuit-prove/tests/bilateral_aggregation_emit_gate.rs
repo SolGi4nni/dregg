@@ -50,7 +50,8 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// that set again — the fix is to have no copy. `check-emit-gate-weld.py` still gates
 /// the literals that remain (the descriptors with no checked-in artifact to name), and
 /// `check-descriptor-drift.sh` gates this file against its Lean author.
-const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/dregg-bilateral-aggregation-v3.json");
+const GOLDEN_JSON: &str =
+    include_str!("../../circuit/descriptors/dregg-bilateral-aggregation-v3.json");
 
 // --- Trace column layout (must match `BilateralAggregationCompact.lean` Sched.* / AggC.*). ---
 const TURN_HASH_BASE: usize = 0;

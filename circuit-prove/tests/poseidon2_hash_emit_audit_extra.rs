@@ -22,7 +22,8 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// that set again — the fix is to have no copy. `check-emit-gate-weld.py` still gates
 /// the literals that remain (the descriptors with no checked-in artifact to name), and
 /// `check-descriptor-drift.sh` gates this file against its Lean author.
-const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/poseidon2-hash-arity2.json");
+const GOLDEN_JSON: &str =
+    include_str!("../../circuit/descriptors/by-name/poseidon2-hash-arity2.json");
 
 const IN0: usize = 0;
 const IN1: usize = 1;

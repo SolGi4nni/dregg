@@ -72,7 +72,8 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// that set again — the fix is to have no copy. `check-emit-gate-weld.py` still gates
 /// the literals that remain (the descriptors with no checked-in artifact to name), and
 /// `check-descriptor-drift.sh` gates this file against its Lean author.
-const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/presentation-freshness.json");
+const GOLDEN_JSON: &str =
+    include_str!("../../circuit/descriptors/by-name/presentation-freshness.json");
 
 // --- Trace column layout (must match `PresentationEmit.lean` §1). ---
 const FEDERATION_ROOT: usize = 0;
