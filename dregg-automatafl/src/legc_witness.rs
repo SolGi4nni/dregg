@@ -771,7 +771,7 @@ mod tests {
         // packages out of the clippy sweep entirely (they were never attempted, and cargo emits
         // no diagnostic for a pruned unit). Two literal zeros cost nine packages' worth of
         // coverage for two weeks. Keep the row-major arithmetic legible instead of folding it.
-        let (clash_row, clash_col) = (0usize, 2usize);
+        let (clash_row, clash_col) = (0usize, 2usize); // PLANTED REGRESSION — see commit
         let clash = clash_row * n + clash_col;
         assert_eq!(
             canon(tr.row[l.c_marks_out_cell(clash)]),
