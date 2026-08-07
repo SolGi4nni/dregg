@@ -90,6 +90,7 @@ pub mod attest;
 pub mod pool;
 pub mod shield_opening;
 pub mod spend_circuit;
+pub mod spend_complete;
 mod transfer;
 pub mod wide_value_binding;
 
