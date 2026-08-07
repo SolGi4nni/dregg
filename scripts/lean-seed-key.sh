@@ -96,6 +96,20 @@ closure_mods="$(python3 "$ROOT/scripts/lean-ffi-closure.py" "$META" 2>/dev/null 
   import walk is broken. A key computed over an empty closure would be identical for every
   source revision in the repo, which is worse than no key at all."
 
+# ⚠ THE DOT→SLASH REWRITE MUST BE TOTAL. Lean allows «guillemet-quoted» identifiers, in which a
+# literal `.` is part of the NAME rather than a separator. `sed 's#\.#/#g'` would rewrite such a
+# module to a path that does not exist, `[ -f ]` would drop it, and it would vanish from the key —
+# silently, so an edit to it would no longer invalidate a published seed and `build.rs` would
+# accept that seed as evidence for source it does not cover. That is an unsoundness in the
+# evidence, not a missing optimisation, so it fails CLOSED. Measured 2026-08-07: zero quoted
+# identifiers in the closure and zero in the in-tree `.lean` paths, i.e. the rewrite is total
+# today and this guard costs nothing until someone introduces one.
+if printf '%s\n' "$closure_mods" | grep -q '«\|»'; then
+  die "the Dregg2.FFI closure contains a «quoted» module name, which this key's dot→slash path
+  rewrite cannot resolve. Such a module would be dropped from the hash SILENTLY, making the key
+  blind to edits in it. Teach the rewrite to handle quoted identifiers before publishing again."
+fi
+
 # ⚠ BUILTINS ONLY IN THE LOOP. The raw closure is ~8800 modules on a warm lake checkout (mathlib
 # dominates it), and a `$(printf|tr)` per module is ~17,600 forks — measured at 96 SECONDS, which
 # would put a minute and a half onto every fetch, every publish, and every build.rs evidence check.
