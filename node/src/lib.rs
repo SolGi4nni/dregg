@@ -3569,6 +3569,14 @@ async fn complete_boot_recovery(
                 serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())
             }) {
             Ok(genesis) => {
+                // ⚑ PLAYER-GRANT CUSTODY, at the load boundary (flag day
+                // 2026-08-07). A descriptor whose funded grant cell is the one
+                // anyone can recompute from its own public coordinates is
+                // REFUSED, not reinterpreted: that grant is bearer value for
+                // every reader of `genesis.json`. Silent for every descriptor
+                // that issues no grant, which is the legacy devnet profile, the
+                // zero-issuance PoA profile, and the live epoch-1 deployment.
+                genesis::refuse_derivable_player_grant(&genesis)?;
                 let mut s = node_state.write().await;
                 let removed_since_checkpoint = {
                     let cp_h = s.store.latest_ledger_checkpoint_height().unwrap_or(0);
@@ -4231,6 +4239,82 @@ mod boot_recovery_baseline_tests {
         assert!(
             err.contains("convergence"),
             "the refusal must name the convergence failure; got: {err}"
+        );
+    }
+
+    /// POLE 4 — THE PLAYER-GRANT CUSTODY GATE, at the boundary that decides
+    /// whether a node SERVES.
+    ///
+    /// `node/src/genesis.rs`'s `custody` module proves the generator draws the
+    /// grant key and that the gate function refuses the derivable shape. Neither
+    /// says the gate is WIRED: delete the one call in `complete_boot_recovery` and
+    /// every one of those tests still passes while a pre-flag-day descriptor —
+    /// whose funded cell anyone who reads it can spend — boots and serves. So the
+    /// wiring gets its own pole, and it is a real boot of a real data directory.
+    ///
+    /// Both directions: the descriptor the generator just wrote must NOT be
+    /// refused, and the same descriptor with its grant swapped for the publicly
+    /// derivable one must refuse to serve.
+    #[tokio::test]
+    async fn a_publicly_derivable_player_grant_refuses_to_boot() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let domain = "pathofangels.network/federation/v1";
+        genesis::run_genesis_with_options(
+            1,
+            1000,
+            100,
+            tmp.path(),
+            genesis::GenesisOptions {
+                deployment_domain: Some(domain.to_owned()),
+                seed_demo_economy: false,
+                player_grant: Some(100_000),
+            },
+        );
+        let descriptor_path = tmp.path().join("genesis.json");
+        let mut descriptor: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&descriptor_path).expect("read the descriptor"))
+                .expect("descriptor JSON");
+
+        // ── the drawn grant boots ────────────────────────────────────────────
+        {
+            let state = state::NodeState::new(tmp.path(), vec![]).expect("construct");
+            complete_boot_recovery(&state, tmp.path(), BootBaseline::Complete)
+                .await
+                .expect("a freshly drawn grant key must not be refused");
+        }
+
+        // ── the pre-flag-day shape, reconstructed ────────────────────────────
+        let federation_id = hex_decode_32(
+            descriptor["federation_id"]
+                .as_str()
+                .expect("federation_id"),
+        )
+        .expect("32-byte federation id");
+        let derivable = genesis::derivable_player_grant_cell_id(Some(domain), &federation_id);
+        assert_ne!(
+            descriptor["player_grant"].as_str(),
+            Some(derivable.as_str()),
+            "THE MUTATION MUST BE A MUTATION: the generator is already emitting the \
+             derivable grant, so this test grades nothing"
+        );
+        descriptor["player_grant"] = serde_json::Value::String(derivable);
+        std::fs::write(
+            &descriptor_path,
+            serde_json::to_vec_pretty(&descriptor).expect("serialize"),
+        )
+        .expect("write the pre-flag-day descriptor");
+
+        let state = state::NodeState::new(tmp.path(), vec![]).expect("construct");
+        let err = complete_boot_recovery(&state, tmp.path(), BootBaseline::Complete)
+            .await
+            .expect_err(
+                "a descriptor whose funded grant cell anyone can recompute from its own \
+                 public coordinates must REFUSE TO SERVE — if this boots, the grant is \
+                 bearer value for every reader of genesis.json",
+            );
+        assert!(
+            err.contains("DERIVABLE") && err.contains("player-grant"),
+            "the refusal must name the custody failure, not something downstream: {err}"
         );
     }
 
