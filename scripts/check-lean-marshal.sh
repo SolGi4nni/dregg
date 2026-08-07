@@ -31,6 +31,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LEAN_LIB="$ROOT/dregg-lean-ffi/libdregg_lean.a"
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'IF dregg-lean-ffi/libdregg_lean.a exists on disk: do the marshal_roundtrip binary, the dregg-exec-lean lean_state_producer_differential and _widen tests, and the dregg-lean-ffi embeddable_runtime_probe and overspend_probe tests all pass against the Lean kernel in THAT archive — and, when DREGG_REQUIRE_LEAN_GATE is 1/true/yes/on, does the archive exist at all?' \
+  'anything whatsoever when the archive is ABSENT and DREGG_REQUIRE_LEAN_GATE is unset: it prints SKIP and exits 0 having compared no executors, which is the same green it prints when they agree. When it does run, agreement is over the CASES those five test targets enumerate, not over all inputs — and the archive it links may hold objects older than the .lean they were compiled from, which no leg here looks at.'
+
 # Accept 1/true/yes/on, case-insensitively; anything else (incl. unset) leaves the gate unarmed.
 armed=0
 case "$(printf '%s' "${DREGG_REQUIRE_LEAN_GATE:-}" | tr '[:upper:]' '[:lower:]')" in

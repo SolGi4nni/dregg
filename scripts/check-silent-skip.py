@@ -97,6 +97,33 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BASELINE = REPO / "baseline" / "silent-skip.tsv"
 
+# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
+SCOPE_ANSWERS = (
+    "does any non-`#[ignore]`d `#[test]`-shaped fn reach a `return` that exits the test — "
+    "or wrap its whole assertion set in one `if` — under a predicate matching this file's "
+    "fixed GUARD_SHAPES list (directly, or through a per-crate bool helper), with no "
+    "assert!-family macro executed first (SILENT, zero tolerance), and is every "
+    "INVERSE/REENTRANT residual already in baseline/silent-skip.tsv?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether the tests that DO run exercise anything, or whether this box had the fixture "
+    "when they ran. It is a static brace-walk over comment-blanked source on the "
+    "WORKING-TREE filesystem: a skip expressed through a shape not on the list reads as "
+    "clean, so does one preceded by any assert! at all, and DEMANDED means only that the "
+    "probe routes through `demand_lean` — not that it panicked on this box."
+)
+SCOPE_ANSWERS_SELFTEST = (
+    "can the classifier still fire — do 5 direct and 2 indirect disease shapes come back "
+    "SILENT, do 9 look-alikes (prose, a closure, a nested fn, an already-`#[ignore]`d test, "
+    "a two-armed if/else) stay quiet, does a `demand_lean` route classify DEMANDED, and is "
+    "the borrowed `strip_noise` blanker still blanking?"
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "anything about this tree — every case is a literal source string. Its two floor arms "
+    "are weaker still: they compare a hand-written 0 against MIN_TESTS/MIN_GUARDED, so they "
+    "assert the floors are positive, never that the real sweep clears them."
+)
+
 # ── the Rust blanker, borrowed rather than re-grown ────────────────────────────────
 _PC_PATH = REPO / "scripts" / "check-production-callers.py"
 _spec = importlib.util.spec_from_file_location("_pc", _PC_PATH)
@@ -936,7 +963,12 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
+
+    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
+    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     findings, total_tests = sweep()
     guarded = [f for f in findings if f.verdict != "ASSERTED"]

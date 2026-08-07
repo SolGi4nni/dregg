@@ -22,6 +22,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'does the named commit — cloned with --shared into a temp dir and checked out detached, so the shared working tree is never read — pass cargo check --workspace --all-targets --keep-going with the three cdylib members excluded, having actually compiled at least half as many units as the workspace has members?' \
+  'whether HEAD is correct, or whether the working tree builds. It is a type-check only: no test is run, no binary is linked, and nothing is proved. The three excluded members (deos-zed, grain-verify-wasm, starbridge-web) are never checked at all, so a break confined to one of them is invisible here. And a green says the commit compiles, not that it behaves.'
+
 REF="${1:-HEAD}"
 SHA="$(git rev-parse "$REF")"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/headbuild.XXXXXX")"

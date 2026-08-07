@@ -62,6 +62,11 @@ CONTROL_RE='^[[:space:]]*#assert_depends_on[[:space:]]'
 
 TACTICS="$repo_root/metatheory/Dregg2/Tactics.lean"
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'does every .lean file under the scan root that invokes #assert_not_depends_on at line start also invoke #assert_depends_on at line start somewhere in the SAME file, with at least one adopter found and both commands still declared in metatheory/Dregg2/Tactics.lean?' \
+  'whether any independence claim holds, or whether a control calibrates anything. It is a line-anchored grep for two command names per file: it elaborates nothing, it never reads WHICH constant a control pins (a control naming something reachable without a proof term calibrates no walk at all), and it never checks that the control is about, or anywhere near, the rejector it is counted for.'
+
 # --- scan roots -------------------------------------------------------------
 declare -a ROOTS=()
 if [ "$#" -gt 0 ]; then

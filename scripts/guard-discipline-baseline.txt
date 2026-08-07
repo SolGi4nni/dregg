@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15287 guards across 1153 modules (2531 .lean files scanned).
+# TOTAL 15285 guards across 1153 modules (2522 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -43,6 +43,7 @@
 # BASELINE-PROVENANCE 5b0d26cb6-DIRTY 15336→15328 (-8) DECREASED — EffectActionBindingEmit 16 -> 8: the felt-sized 16-bit-limb re-emit (AMOUNT_LIMBS 2 -> 4) converted the 8 non-vacuity #guards into NAMED theorems (cont_accepts_chained, cont_rejects_stash, forgedBorrow_rejects, brokenSubtraction_rejects, nonBooleanBorrow_rejects, undisclosedBurn_rejects, underflowingBurn_rejects, borrowBurnRow_values) plus the new burn_chain_exact / burn_chain_exact_of_modEq / burn_no_underflow forcing theorems. The 8 that remain are the 2 wire-golden byte pins and the 6 descriptor shape pins.
 # BASELINE-PROVENANCE b3e028e1a-DIRTY 15328→15322 (-6) DECREASED — market-cleanup: 19 guards converted-or-retired to named theorems across Market/{RevealNothing,Optimality,Lending,CrossChainSettlement}; plus rows for 2 shielded Emit modules already at HEAD without rows (other lane's landed files, recorded not authored)
 # BASELINE-PROVENANCE bc10ec598-DIRTY 15298→15287 (-11) DECREASED — deleted the bridge-action binding AIR: BridgeActionEmit.lean (11) + BridgeActionRefine.lean (3) retired with their modules. SWEPT IN, not mine: Dregg2/Deos/Affordance.lean 11 -> 0 (another lane's conversion) and a -10 row delta already in the worktree before this pass.
+# BASELINE-PROVENANCE 1ac1a5bbd-DIRTY 15287→15285 (-2) DECREASED — DeployedConstraint: the two malformed-wire guards asserted admitsWire = "1", the string a genuine ConstraintViolated also renders as, so neither could tell a parse failure from its opposite; replaced by named theorems on the new distinct malformed code (unknown_tag_is_malformed / short_wire_is_malformed) plus their violated/ok controls
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -928,7 +929,7 @@
 16	Dregg2/Exec/CrossCellForest.lean
 4	Dregg2/Exec/CrossVatCharter.lean
 24	Dregg2/Exec/CustodyReceipt.lean
-155	Dregg2/Exec/DeployedConstraint.lean
+153	Dregg2/Exec/DeployedConstraint.lean
 2	Dregg2/Exec/DfaRouting.lean
 36	Dregg2/Exec/DistributedExports.lean
 8	Dregg2/Exec/Durability.lean

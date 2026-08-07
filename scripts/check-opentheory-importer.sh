@@ -53,6 +53,17 @@ TIMEOUT="${OT_GATE_TIMEOUT:-600}"
 SELF_TEST=0
 [ "${1:-}" = "--self-test" ] && SELF_TEST=1
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'does docs/opentheory-importer-poc/OTPoC.lean elaborate with exit 0 under the toolchain metatheory/lean-toolchain pins, AND does its log carry at least 3 `imported (kernel-checked`, 4 `reject-test OK` and 14 `axiom gate: discharged` lines plus the five named markers — so that an exit 0 having imported nothing cannot read as a pass?' \
+  'anything about metatheory/, the node, or any deployed circuit. This is a PROOF-OF-CONCEPT importer over two bundled .art articles, and every floor counts LINES THE LEAN FILE PRINTS about its own work — a marker printed on a path that asserts less would satisfy the floor unchanged. Nor does it say that OpenTheory articles are imported anywhere a consumer reads.'
+
+if [ "$SELF_TEST" -eq 1 ]; then
+  printf 'ANSWERS (--self-test):         %s\nDOES NOT ANSWER (--self-test): %s\n' \
+    'can this INSTRUMENT still fire? It deletes one guard at a time from a SCRATCH COPY of OTPoC.lean — the axiom gate exactness check, the thm gamma-content check, the articles themselves, one reject-test reason assertion — and requires the matching negative test to go red NAMING the defect, refusing any sed that matched nothing.' \
+    'whether the guards it re-breaks are the RIGHT guards, or whether the file has others that are load-bearing and untested. Four faults go red; that is a statement about four lines, not about the importer.'
+fi
+
 fail() { echo "check-opentheory-importer: FAIL — $*"; exit 1; }
 
 [ -f "$LEAN_FILE" ] || fail "$LEAN_FILE does not exist"

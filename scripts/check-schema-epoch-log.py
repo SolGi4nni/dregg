@@ -64,6 +64,37 @@ LOG_REL = "docs/VK-REGEN-LOG.md"
 PERSIST_REL = "persist/src/lib.rs"
 TWIN_REL = "persist/src/tests.rs"
 
+# ── SCOPE ─ these two pairs are the ONLY copy; one prints on every run of its mode, pass or
+# fail. The bare gate and `--self-test` answer DIFFERENT questions, so they get separate pairs. ─
+SCOPE_ANSWERS = (
+    "does docs/VK-REGEN-LOG.md still RECONSTRUCT the epoch history — exactly one "
+    "CANONICAL_STATE_SCHEMA_EPOCH definition in persist/src/lib.rs, every event row ending in a "
+    "well-formed epoch cell with the LAST numeric one equal to that constant and the column "
+    "never decreasing, a strictly-increasing ledger whose tail equals it and which has a row for "
+    "every value `git log -p -- persist/src/lib.rs` shows the constant ever held, the row/ledger "
+    "harvest above its floors, and the in-crate twin schema_epoch_log_row still present?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether any epoch bump was CORRECT, or whether what a row SAYS is true. Every comparison is "
+    "on the numbers and the table shape; the prose cell naming what re-genesised and what now "
+    "refuses to load is never read, so a row saying nothing changed satisfies this gate as fully "
+    "as an accurate one. It also does not check that the persisted store or any descriptor "
+    "actually moved with the epoch — only that the constant and the record agree."
+)
+SCOPE_ANSWERS_SELFTEST = (
+    "can this gate go RED — do twelve scenarios on SCRATCH COPIES (the constant bumped with no "
+    "row, then the row appended; a truncated, corrupted and wholly-deleted epoch column; the "
+    "ledger deleted and one ledger row holed; a non-monotone column; an empty log; the constant "
+    "absent; and the reconstructed state at 6441705e8, the bump this gate was written for) each "
+    "land on the verdict and the finding token they are declared to?"
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "whether the tree is clean. Only its scenario 0 reads the real log and constant; the other "
+    "eleven run on temp-dir copies. It reds when the INSTRUMENT is broken — including when an "
+    "injection string stops matching, which is itself a refusal to report rather than a defect "
+    "in the record."
+)
+
 CONST_RE = re.compile(r"^\s*pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = (\d+);", re.M)
 EPOCH_CELL_RE = re.compile(r"^epoch:(\d+|unchanged|unknown)$")
 
@@ -461,7 +492,12 @@ def main() -> int:
     a = ap.parse_args()
 
     if a.self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
+
+    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
+    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     # ⚑ WHY --rev EXISTS: this gate answers "is the committed record self-consistent?", and that
     # question is ONLY answerable about a commit. Read from the working tree it is hostage to every

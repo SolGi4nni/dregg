@@ -39,6 +39,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIR="${1:-$ROOT/wasm/pkg}"
 PROV="$DIR/dregg-wasm-provenance.json"
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'does the artifact directory carry a dregg-wasm-provenance.json, does dregg_wasm_bg.wasm on disk still hash to the wasm_sha256 that record names, and does a fresh run of scripts/wasm-source-fingerprint.sh over the wasm32 local-crate graph equal the source_sha256 that record names?' \
+  'whether the bundle is correct, or whether it is the bundle anybody is serving. It compares hashes against a record the BUILD wrote about itself, so it grades THIS directory only — a deployed copy elsewhere is out of scope unless you pass its path — and it never runs the wasm, never checks a wire version, and never verifies that the recorded fingerprint was honest when written. The source closure is a deliberate superset (cfg(test) code and descriptor data in, tests/benches/examples pruned), so a red can mean a rebuild is due rather than that behaviour changed.'
+
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
   else shasum -a 256 "$1" | awk '{print $1}'; fi

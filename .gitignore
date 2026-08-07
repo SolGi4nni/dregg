@@ -134,3 +134,14 @@ dregg-atlas/site/screenshots/
 # Rebuild: site/dist -> scripts/build-pages-dist.sh · portal/dist/pkg, wasm/pkg* -> build.sh wasm
 site/dist/
 wasm/pkg-mwt/
+
+# ⚑ An ORPHANED worktree directory inside the repo root. `git worktree list` no longer
+# names it, but 4571 `.rs` files remain on disk — so every gate that walks the FILESYSTEM
+# (rather than `git ls-files`) scanned the whole repo TWICE through it. Measured 2026-08-07:
+# `check-bare-ignore` reported 556 `#[ignore]`s against a real 270; 43 of its 45 fence
+# findings were headver echoes of BASELINED rows (the baseline keys on repo-relative paths,
+# so it can never match them); 1017 of 5483 `check-production-callers` lines and 33 of 58
+# `check-silent-skip` rows were the same echo.
+#
+# ⚠ Ignoring it stops the double-scan. DELETING it is whoever created it's call.
+headver/

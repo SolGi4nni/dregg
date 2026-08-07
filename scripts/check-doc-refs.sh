@@ -118,6 +118,11 @@ while [ "$#" -gt 0 ]; do
 done
 set -- ${ARGS[@]+"${ARGS[@]}"}
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'do the path-shaped tokens in markdown prose (docs, site, and root markdown, minus REVIEW-*.md and the dated logs) and in Lean COMMENTS resolve to a CASE-EXACT entry of the subject tree git listing — working tree by default, a git-archive extract under --rev — walked document-relative and then up through each ancestor to the repo root, with markdown misses failing absolutely and lean misses failing only when absent from scripts/doc-refs-lean-baseline.tsv?' \
+  'whether a reference is CORRECT, or whether it resolves anywhere else. Existence is the whole test: the right path under a wrong claim passes, a :NNN inside the file is never read (only past-EOF, and only as a non-failing WARN), and a path that lives in ANOTHER branch or worktree can never resolve here — which is why docs/REVIEW-*.md, reviews of external branches, are excluded by rule rather than reported as dead.'
+
 # --- ⚑ `--rev`: GRADE A COMMIT, not whatever ten lanes have in the tree right now ----
 # Two gates were repaired for exactly this in the preceding week — `check-schema-epoch-log.py`
 # ("it was grading the working tree, so a sibling's WIP read as a defect") and

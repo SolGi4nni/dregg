@@ -42,6 +42,11 @@ esac
 
 BASELINE_FILE="$ROOT/scripts/byte-to-felt.baseline"
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'how many LINES of the working tree match five heterogeneous patterns outside dregg-codec/src/limbs.rs — the ast-grep byte-to-felt-arithmetic rule (L1 felt-from-byte-derived-u32 spellings, L3 array::from_fn felt maps), an `& 0x3F` or `& 0x7FFF_FFFF` mask, a to_le_bytes narrowing inside a file that also mentions commitment or public_input, a *_key/_addr/_root/_commit/_nullifier/_id field typed bare BabyBear, and a DOC-COMMENT line saying injective, collision-resistant, binds the full, measure-zero or ~256-bit — and, under --baseline or --strict ONLY, is that total above the recorded number or above zero?' \
+  'anything at all in the default mode, which is the mode scripts/local-gates.sh runs. A bare invocation is REPORT-ONLY and exits 0 for ANY count; its only reds are environment ones (missing codec file, missing ast-grep or ripgrep, empty file list). It is a line count over regex and syntactic SHAPES, never a judgement that a site is unsound — L6 counts prose in doc comments — and the tracked-file number it prints comes from git ls-files, which none of the five scans consume: ast-grep and ripgrep walk the working-tree directory instead.'
+
 # ── ARM THE GATE. Inherited from the predecessor and kept deliberately: a mechanism that cannot
 # tell you it did nothing is worse than no mechanism. The predecessor FATALed when a scoped producer
 # vanished; the allowlist inverts that — FATAL if the ALLOWLISTED CODEC FILE is missing, because at
