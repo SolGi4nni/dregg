@@ -83,6 +83,12 @@ be64() {
 # next to `Core.lean` where it belongs cost nothing here. Once the bundle is
 # re-emitted, appending is again the safe edit and reordering is again a flag day.
 #
+# ⚠ 2026-08-07: Deck Descent enrolled as the fifth game, which is a source-digest
+# flag day again — `DeckDescent.lean` (the kernel), `DeckDescentEmit.lean` (the
+# wire) and `EmitJson.lean` (the shared JSON/validator helpers `Emit.lean` now
+# converges on) all joined the emitter's import closure at once. They are placed
+# in dependency order for the same reason `SeedDraw.lean` was.
+#
 # The invariant to preserve: this list must contain the TRANSITIVE closure of
 # `Emit.lean`'s imports inside `Dregg2/Games/PathOfAngels/`. It now does.
 source_files=(
@@ -92,8 +98,11 @@ source_files=(
   "Dregg2/Games/PathOfAngels/RelayRepair.lean"
   "Dregg2/Games/PathOfAngels/SalvageLock.lean"
   "Dregg2/Games/PathOfAngels/BlackBoxReconstruction.lean"
+  "Dregg2/Games/PathOfAngels/DeckDescent.lean"
   "Dregg2/Games/PathOfAngels/HiddenInstance.lean"
   "Dregg2/Games/PathOfAngels/FiniteTables.lean"
+  "Dregg2/Games/PathOfAngels/EmitJson.lean"
+  "Dregg2/Games/PathOfAngels/DeckDescentEmit.lean"
   "Dregg2/Games/PathOfAngels/Emit.lean"
   "Dregg2/Games/PathOfAngels/EmitMain.lean"
 )
@@ -160,15 +169,18 @@ export LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-2}"
 )
 
 blackbox_sha="$(sha_file "$tmp_root/games/black-box-reconstruction.json")"
+descent_sha="$(sha_file "$tmp_root/games/deck-descent.json")"
 relay_sha="$(sha_file "$tmp_root/games/relay-repair.json")"
 salvage_sha="$(sha_file "$tmp_root/games/salvage-lock.json")"
 signal_sha="$(sha_file "$tmp_root/games/signal-triangulation.json")"
 # ⚠ PATH-ASCENDING, and the content root's own framing says so
 # (`entry_order: path_ascending` in schema.json). `games/black-box-reconstruction.json`
-# sorts FIRST. A wrong order here does not fail: it silently computes a different
-# content root, which the missions then bind and the curator then accepts.
+# sorts FIRST and `games/deck-descent.json` SECOND. A wrong order here does not fail:
+# it silently computes a different content root, which the missions then bind and the
+# curator then accepts.
 content_paths=(
   "games/black-box-reconstruction.json"
+  "games/deck-descent.json"
   "games/relay-repair.json"
   "games/salvage-lock.json"
   "games/signal-triangulation.json"
@@ -199,7 +211,7 @@ content_root_sha="$(
     POA_FEDERATION_ID="$federation_id" \
     POA_SOURCE_SHA256="$source_sha" POA_RELAY_SHA256="$relay_sha" \
     POA_SALVAGE_SHA256="$salvage_sha" POA_SIGNAL_SHA256="$signal_sha" \
-    POA_BLACKBOX_SHA256="$blackbox_sha" \
+    POA_BLACKBOX_SHA256="$blackbox_sha" POA_DECKDESCENT_SHA256="$descent_sha" \
     POA_CONTENT_ROOT_SHA256="$content_root_sha" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
 )
@@ -213,7 +225,7 @@ catalog_sha="$(sha_file "$tmp_root/catalog.json")"
     POA_FEDERATION_ID="$federation_id" \
     POA_SOURCE_SHA256="$source_sha" POA_RELAY_SHA256="$relay_sha" \
     POA_SALVAGE_SHA256="$salvage_sha" POA_SIGNAL_SHA256="$signal_sha" \
-    POA_BLACKBOX_SHA256="$blackbox_sha" \
+    POA_BLACKBOX_SHA256="$blackbox_sha" POA_DECKDESCENT_SHA256="$descent_sha" \
     POA_CONTENT_ROOT_SHA256="$content_root_sha" \
     POA_SCHEMA_SHA256="$schema_sha" POA_CATALOG_SHA256="$catalog_sha" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
@@ -222,6 +234,7 @@ catalog_sha="$(sha_file "$tmp_root/catalog.json")"
 test "$(sha_file "$tmp_root/schema.json")" = "$schema_sha"
 test "$(sha_file "$tmp_root/catalog.json")" = "$catalog_sha"
 test "$(sha_file "$tmp_root/games/black-box-reconstruction.json")" = "$blackbox_sha"
+test "$(sha_file "$tmp_root/games/deck-descent.json")" = "$descent_sha"
 test "$(sha_file "$tmp_root/games/relay-repair.json")" = "$relay_sha"
 test "$(sha_file "$tmp_root/games/salvage-lock.json")" = "$salvage_sha"
 test "$(sha_file "$tmp_root/games/signal-triangulation.json")" = "$signal_sha"
@@ -239,6 +252,7 @@ expected=(
   "schema.json"
   "catalog.json"
   "games/black-box-reconstruction.json"
+  "games/deck-descent.json"
   "games/relay-repair.json"
   "games/salvage-lock.json"
   "games/signal-triangulation.json"
@@ -337,4 +351,4 @@ const verified = await authenticateContentEpoch({
 process.stdout.write(`POAG1 curator signature authenticated (activation=${verified.activationDigest})\n`);
 NODE
 
-echo "POAG1 artifacts reproduce exactly (federation=$federation_id source=$source_sha relay=$relay_sha salvage=$salvage_sha signal=$signal_sha content_root=$content_root_sha)"
+echo "POAG1 artifacts reproduce exactly (federation=$federation_id source=$source_sha blackbox=$blackbox_sha descent=$descent_sha relay=$relay_sha salvage=$salvage_sha signal=$signal_sha content_root=$content_root_sha)"

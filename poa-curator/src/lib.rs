@@ -64,12 +64,12 @@ const MAX_ARTIFACT_BYTES: u64 = 16 * 1024 * 1024;
 /// exist, and the type made that look mandatory rather than wrong. The census is the
 /// list below; this is only a ceiling.
 ///
-/// ⚠ Say the resolution out loud: with four supported paths this ceiling DOES NOT
+/// ⚠ Say the resolution out loud: with five supported paths this ceiling DOES NOT
 /// BIND. A catalog cannot exceed the count of distinct authenticated descriptors and
 /// every descriptor path must be in `SUPPORTED_GAME_PATHS`, so the effective cap is
 /// `SUPPORTED_GAME_PATHS.len()`. Six is the number this becomes a real bound at, once
-/// Deck Descent and Containment Inspection are enrolled — until then it is headroom,
-/// not a check, and no test can make it refuse.
+/// Containment Inspection is enrolled (Deck Descent enrolled 2026-08-07) — until then
+/// it is headroom, not a check, and no test can make it refuse.
 const MAX_MISSIONS_PER_EPOCH: usize = 6;
 const MAX_FIXTURES_PER_EPOCH: usize = 24;
 const MAX_FIXTURES_PER_MISSION: usize = 8;
@@ -89,6 +89,7 @@ const SIGNAL_PATH: &str = "games/signal-triangulation.json";
 /// checked-in bundle and this curator refuses any path outside this list.
 const SUPPORTED_GAME_PATHS: &[&str] = &[
     BLACKBOX_PATH,
+    "games/deck-descent.json",
     "games/relay-repair.json",
     "games/salvage-lock.json",
     SIGNAL_PATH,
@@ -3569,6 +3570,21 @@ mod tests {
         session_byte: 0x57,
         seed_byte: 0x68,
     };
+    // ⚠ mission_id 10: LAST mission, SECOND artifact — `games/deck-descent.json`
+    // sorts right after `games/black-box-reconstruction.json`, so the fixture keeps
+    // exercising the disagreement between mission order and path order from the
+    // other end of the list.
+    const DECKDESCENT: GameSpec = GameSpec {
+        mission_id: 10,
+        artifact_id: 450,
+        path: "games/deck-descent.json",
+        title: "Deck Descent",
+        engine: "Dregg2.Games.PathOfAngels.DeckDescent",
+        ruleset: "descent-v1",
+        action_limit: 9,
+        session_byte: 0x58,
+        seed_byte: 0x69,
+    };
 
     struct ExactAdmission {
         action: CanonAction,
@@ -3858,11 +3874,12 @@ mod tests {
         let manifest = repo.join("poa/artifacts/poag1/manifest.json");
         let bundle = Poag1Bundle::load(&manifest).unwrap();
         assert_eq!(bundle.content_epoch(), 1);
-        // ⚠ FLAG DAY, 2026-08-06. Black Box Reconstruction joined
-        // `SUPPORTED_GAME_PATHS`, so a checked-in bundle that predates the enrolment
-        // fails HERE and not at load: the curator still accepts a three-game bundle,
-        // it is just no longer the complete one. Re-emit with
-        // `scripts/check-poag1-artifacts.sh --update`, re-sign, then this is green.
+        // ⚠ FLAG DAY, 2026-08-07 (the second of its kind — Black Box was 2026-08-06).
+        // Deck Descent joined `SUPPORTED_GAME_PATHS`, so a checked-in bundle that
+        // predates the enrolment fails HERE and not at load: the curator still
+        // accepts a four-game bundle, it is just no longer the complete one. Re-emit
+        // with `scripts/check-poag1-artifacts.sh --update`, re-sign, regenerate
+        // `tests/snapshots/epoch-1-unsigned.json`, then this is green.
         assert_eq!(
             bundle.game_paths().collect::<Vec<_>>(),
             SUPPORTED_GAME_PATHS,
@@ -3899,14 +3916,17 @@ mod tests {
     #[test]
     fn loads_the_full_supported_game_set_with_one_to_one_descriptors() {
         let temp = tempfile::tempdir().unwrap();
-        let manifest = write_bundle_with_games(temp.path(), &[BLACKBOX, SIGNAL, RELAY, SALVAGE]);
+        let manifest = write_bundle_with_games(
+            temp.path(),
+            &[BLACKBOX, SIGNAL, RELAY, SALVAGE, DECKDESCENT],
+        );
         let bundle = Poag1Bundle::load(manifest).unwrap();
         assert_eq!(bundle.content_epoch(), 2);
         assert_eq!(
             bundle.game_paths().collect::<Vec<_>>(),
             SUPPORTED_GAME_PATHS
         );
-        for spec in [BLACKBOX, SIGNAL, RELAY, SALVAGE] {
+        for spec in [BLACKBOX, SIGNAL, RELAY, SALVAGE, DECKDESCENT] {
             let draft = bundle
                 .prepare_mission(
                     spec.mission_id,

@@ -24,32 +24,24 @@ import Dregg2.Games.PathOfAngels.SignalTriangulation
 import Dregg2.Games.PathOfAngels.FiniteTables
 import Dregg2.Games.PathOfAngels.BlackBoxReconstruction
 import Dregg2.Games.PathOfAngels.HiddenInstance
+import Dregg2.Games.PathOfAngels.EmitJson
+import Dregg2.Games.PathOfAngels.DeckDescentEmit
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.Emit
 
 open Lean
 open Dregg2.Games.PathOfAngels
+/- The JSON helpers, `exactKeys`, `instanceDeclarationJson` and the two shared
+validators come from `EmitJson` — the private copies this module used to carry
+were deleted 2026-08-07 when Deck Descent enrolled, exactly as the descent
+lane's handover named: two copies of `instanceDeclarationJson` is two
+descriptions of where an instance comes from. -/
+open Dregg2.Games.PathOfAngels.EmitJson
 
 abbrev FORMAT : String := "POAG1"
 abbrev SCHEMA_VERSION : Nat := 1
 abbrev AUTHORITY : String := "Dregg2.Games.PathOfAngels"
-
-/-! ## Canonical JSON helpers -/
-
-private def jsonString (s : String) : String :=
-  String.quote s
-
-private def jsonArray (xs : List String) : String :=
-  "[" ++ String.intercalate "," xs ++ "]"
-
-private def jsonPrettyArray (xs : List String) : String :=
-  match xs with
-  | [] => "[]"
-  | _ => "[\n" ++ String.intercalate ",\n" xs ++ "\n  ]"
-
-private def jsonBool (value : Bool) : String :=
-  if value then "true" else "false"
 
 private def lowerHexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat ('0'.toNat + n)
@@ -190,13 +182,6 @@ def Manifest.toJson (m : Manifest) : String :=
     ",\n  \"authority\":" ++ jsonString m.authority ++
     ",\n  \"artifacts\":" ++ jsonPrettyArray (m.artifacts.map ArtifactPin.toJson) ++
     "\n}\n"
-
-private def exactKeys (j : Json) (allowed : List String) : Except String Unit := do
-  let object ← j.getObj?
-  if object.size == allowed.length && allowed.all object.contains then
-    pure ()
-  else
-    throw s!"POAG1 object has missing or unknown fields; expected {allowed}"
 
 private def parseArtifactPin (j : Json) : Except String ArtifactPin := do
   exactKeys j ["path", "media_type", "bytes", "sha256", "fnv1a64"]
@@ -530,32 +515,6 @@ private def signalClassJson (c : Nat × Nat) : String :=
   "{\"exact\":" ++ toString c.1 ++ ",\"present\":" ++ toString c.2 ++
     ",\"solved\":" ++ jsonBool (c.1 == 3) ++ "}"
 
-/-- The declaration every hidden-instance descriptor carries in place of its
-instance.  It states WHERE the instance comes from and what a client must verify
-before a run is scored; it states no value from which one can be computed.
-
-The per-slot commitment itself is NOT in this artifact and cannot be: the bundle
-is signed once per content epoch and slots open afterwards.  It is published per
-slot in the run opening, whose shape `schemaJson` pins, and a client refuses a run
-whose opening does not carry a curator-signed commitment for the slot it claims. -/
-private def instanceDeclarationJson (disclosure : String) : String :=
-  "{\"kind\":\"per-run-hidden-draw\"" ++
-  ",\"derivation_module\":\"Dregg2.Games.PathOfAngels.HiddenInstance\"" ++
-  ",\"disclosure\":" ++ jsonString disclosure ++
-  ",\"commitment\":{\"published_in\":\"slot-opening\",\"domain\":\"POAC\"," ++
-    "\"preimage\":[\"domain\",\"slot\",\"slot_secret\"]," ++
-    "\"binding_bits\":124,\"opened_after\":\"slot-close\"}" ++
-  ",\"draw\":{\"domain\":\"POAD\"," ++
-    "\"preimage\":[\"domain\",\"purpose\",\"slot\",\"mission_id\",\"epoch\"," ++
-      "\"slot_secret\",\"federation_id\",\"content_session\",\"player_key\"]," ++
-    "\"purposes\":{\"judged\":1,\"practice\":2}}" ++
-  ",\"sponge\":{\"permutation\":\"poseidon2-babybear-w16\",\"width\":16,\"rate\":8," ++
-    "\"capacity\":8,\"lane_bytes\":1,\"lane_reject_at_or_above\":2013265920," ++
-    "\"squeeze_blocks\":6}" ++
-  ",\"practice\":{\"seed\":\"client-chosen\",\"scored\":false," ++
-    "\"purpose_tag\":2,\"transcript_field\":\"mode\"}" ++
-  ",\"operator_knows_instance\":true}"
-
 def signalDescriptorJson : String :=
   "{\n" ++
   "  \"format\":\"POAG1-GAME\",\n" ++
@@ -856,35 +815,6 @@ def blackBoxDescriptorJson : String :=
 a security key; `instance` is now required of every game.  The validators below
 refuse the old shape rather than reinterpreting it, so a stale artifact fails to
 load instead of being read as a hidden-instance one. -/
-
-/-- The instance declaration is schema, not a free-form annex.  A descriptor that
-carries no declaration, or one whose commitment or draw block has drifted, is a
-parse error — this is the field that says the answer is elsewhere, so it is not
-allowed to be optional. -/
-private def validateInstanceDeclaration (block : Json) (disclosure : String) :
-    Except String Unit := do
-  exactKeys block ["kind", "derivation_module", "disclosure", "commitment", "draw",
-    "sponge", "practice", "operator_knows_instance"]
-  if (← block.getObjValAs? String "kind") != "per-run-hidden-draw" then
-    throw "POAG1 instance declaration is not a per-run hidden draw"
-  if (← block.getObjValAs? String "disclosure") != disclosure then
-    throw s!"POAG1 instance disclosure is not {disclosure}"
-  exactKeys (← block.getObjVal? "commitment")
-    ["published_in", "domain", "preimage", "binding_bits", "opened_after"]
-  exactKeys (← block.getObjVal? "draw") ["domain", "preimage", "purposes"]
-  exactKeys (← block.getObjVal? "sponge")
-    ["permutation", "width", "rate", "capacity", "lane_bytes",
-     "lane_reject_at_or_above", "squeeze_blocks"]
-  exactKeys (← block.getObjVal? "practice")
-    ["seed", "scored", "purpose_tag", "transcript_field"]
-
-private def validateHiddenSecurity (j : Json) (visibility : String) :
-    Except String Unit := do
-  let security ← j.getObjVal? "security"
-  exactKeys security ["classification", "instance_visibility", "competitive_rewards",
-    "economic_rewards"]
-  if (← security.getObjValAs? String "instance_visibility") != visibility then
-    throw s!"POAG1 descriptor does not declare instance_visibility {visibility}"
 
 private def validateRelayTransitions (machine : Json) : Except String Unit := do
   let transitions ← (machine.getObjVal? "transitions") >>= Json.getArr?
@@ -1506,12 +1436,146 @@ def blackBoxPreview (runSeed : Digest32)
 #assert_axioms blackBoxReward_accepted
 #assert_compiled blackBoxDescriptor_does_not_determine_the_order
 
+/-! ## Deck Descent — the fifth mission
+
+The descriptor, its exact-schema check, the row/view refinements against
+`DeckDescent.rowFor` and the constructive falsifiers all live in
+`Dregg2.Games.PathOfAngels.DeckDescentEmit`; this section is everything that puts
+the game IN the bundle — mission, budget, artifact slot, and the wiring into
+`catalogJson`, `schemaJson`, `canonicalArtifacts` and the manifest pins.
+
+⚠ **`games/deck-descent.json` sorts SECOND**, after
+`games/black-box-reconstruction.json` and before `games/relay-repair.json`.  It is
+the second game entry in `canonicalArtifacts`, the second element of `schemaJson`'s
+`content_root.paths` and the second `content_paths` entry in
+`scripts/check-poag1-artifacts.sh` — while its MISSION (id 5) is the LAST entry of
+`catalogJson`.  The two orders disagree on purpose, exactly as they do for Black
+Box (first artifact, fourth mission). -/
+
+def descentContentSession : Digest32 :=
+  taggedBytes32 [80, 79, 65, 45, 68, 69, 83, 67, 69, 78, 84, 45, 49]
+
+def descentBudget : ContributionBudget :=
+  { intel := ⟨20, by decide⟩
+    supplies := ⟨20, by decide⟩
+    cohesion := ⟨15, by decide⟩
+    influence := ⟨20, by decide⟩
+    score := ⟨1050, by decide⟩
+    relics := ⟨4, by decide⟩ }
+
+/-- The preview reward banks the east pair — the one single-spur line that meets
+`BANK_TARGET` — so its relic set is exactly what `Config.terminalContribution`
+produces for a sling holding both east relics: `eastRelic` ⟨7⟩ and
+`eastSecondRelic` ⟨8⟩. -/
+def descentReward : Contribution :=
+  { intel := ⟨20, by decide⟩
+    supplies := ⟨20, by decide⟩
+    cohesion := ⟨15, by decide⟩
+    influence := ⟨20, by decide⟩
+    score := ⟨1050, by decide⟩
+    relics := {⟨7⟩, ⟨8⟩}
+    relics_bounded := by decide }
+
+theorem descentReward_within : descentReward.within descentBudget = true := by
+  decide
+
+def descentArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
+  { missionId := ⟨5⟩
+    artifactId := ⟨5⟩
+    sourceDigest
+    contentDigest }
+
+/-- Four allowed relics, because a descent Config declares four: the east spur
+holds two (`Chamber.relicCount`), so ⟨5⟩ mouth, ⟨6⟩ west, ⟨7⟩ east, ⟨8⟩ east
+second. -/
+def descentMission (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    MissionSpec :=
+  { missionId := ⟨5⟩
+    artifact := descentArtifact sourceDigest contentDigest
+    epoch := ⟨1⟩
+    federationId
+    contentRoot
+    activationDigest
+    contentSession := descentContentSession
+    runSeed := runSeed
+    budget := descentBudget
+    allowedRelics := {⟨5⟩, ⟨6⟩, ⟨7⟩, ⟨8⟩}
+    privacy := .public
+    ballot := .none
+    artifact_matches := rfl
+    allowed_relics_bounded := by decide }
+
+theorem descentReward_accepted (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (descentMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).acceptsContribution descentReward = true := by
+  apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
+  refine ⟨descentReward_within, ?_⟩
+  -- The allowlist of `descentMission` is a literal that ignores every digest
+  -- argument, so the subset claim is closed by computation once stated over it.
+  show descentReward.relics ⊆ ({⟨5⟩, ⟨6⟩, ⟨7⟩, ⟨8⟩} : Finset RelicId)
+  decide
+
+/-- Total, like `relayConfig`: `DeckDescent.boardFromRunSeed` is total, and
+`draw_below_two_never_rejects` records that its fallback is dead code. -/
+def descentConfig (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    DeckDescent.Config :=
+  { board := DeckDescent.boardFromRunSeed runSeed
+    mission := descentMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest
+    mouthRelic := ⟨5⟩
+    westRelic := ⟨6⟩
+    eastRelic := ⟨7⟩
+    eastSecondRelic := ⟨8⟩
+    reward := descentReward
+    reward_accepted := descentReward_accepted runSeed federationId sourceDigest contentDigest
+      contentRoot activationDigest
+    relics_distinct := by refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+    relics_declared := by refine ⟨?_, ?_, ?_, ?_⟩ <;> simp [descentMission]
+    board_eq := rfl }
+
+/-- ⚑ The board a run is judged on is the one its precommitted seed draws. -/
+theorem descentConfig_board_is_the_live_draw (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (descentConfig runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).board = DeckDescent.boardFromRunSeed runSeed := rfl
+
+private def demoDescentBoard (tag : Nat) : DeckDescent.Board :=
+  DeckDescent.boardFromRunSeed
+    (demoLiveSeed (descentMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+      (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)
+
+/-- ⚑ **The artifact does not determine the board.**  Stated in the repaired
+salvage shape — at least two DISTINCT boards, not merely "the deduped list is not
+a singleton" — although `boardFromRunSeed` is total, so there is no `none` to
+launder a missing difference in the first place. -/
+theorem descentDescriptor_does_not_determine_the_board :
+    2 ≤ (((List.range 8).map demoDescentBoard).eraseDups).length := by
+  native_decide
+
+def descentPreview (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option WorldState :=
+  applyContribution
+    (descentMission runSeed federationId sourceDigest contentDigest contentRoot activationDigest)
+    descentReward WorldState.empty
+
+#assert_axioms descentReward_within
+#assert_axioms descentReward_accepted
+#assert_axioms descentConfig_board_is_the_live_draw
+#assert_compiled descentDescriptor_does_not_determine_the_board
+
 /-- ⚠ Every field here is a game whose descriptor is measured by the driver and
-pinned in the manifest.  `blackBox` was added 2026-08-06; the emit driver requires
-`POA_BLACKBOX_SHA256` and there is no default, so a caller that has not been taught
-the new game fails closed rather than emitting an unmeasured bundle. -/
+pinned in the manifest.  `blackBox` was added 2026-08-06 and `deckDescent`
+2026-08-07; the emit driver requires `POA_BLACKBOX_SHA256` and
+`POA_DECKDESCENT_SHA256` and there is no default for either, so a caller that has
+not been taught a new game fails closed rather than emitting an unmeasured
+bundle. -/
 structure GameContentDigests where
   blackBox : Digest32
+  deckDescent : Digest32
   signal : Digest32
   relay : Digest32
   salvage : Digest32
@@ -1569,9 +1633,11 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
   let relay := relayMission unbound federationId sourceDigest digests.relay contentRoot inactiveActivation
   let salvage := salvageMission unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation
   let blackBox := blackBoxMission unbound federationId sourceDigest digests.blackBox contentRoot inactiveActivation
+  let descent := descentMission unbound federationId sourceDigest digests.deckDescent contentRoot inactiveActivation
   /- ⚠ MISSION order here is `mission_id`-ascending, which is NOT the path-ascending
-  order the manifest and the content root use.  Black Box is mission 4, so it is LAST
-  in this list and FIRST in `canonicalArtifacts`.  The curator refuses both a
+  order the manifest and the content root use.  Black Box is mission 4, so it is
+  fourth in this list and FIRST in `canonicalArtifacts`; Deck Descent is mission 5,
+  so it is LAST in this list and SECOND there.  The curator refuses both a
   non-ascending mission list and a non-ascending artifact list, so the two orders have
   to disagree on purpose. -/
   let missions :=
@@ -1585,7 +1651,10 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
     , missionCatalogJson blackBox "Black Box Reconstruction"
         "Dregg2.Games.PathOfAngels.BlackBoxReconstruction" "blackbox-v2"
         BlackBoxReconstruction.MAX_TURNS [⟨4⟩] "games/black-box-reconstruction.json"
-        "oracle-only" ]
+        "oracle-only"
+    , missionCatalogJson descent "Deck Descent"
+        "Dregg2.Games.PathOfAngels.DeckDescent" "descent-v1"
+        DeckDescent.AIR [⟨5⟩, ⟨6⟩, ⟨7⟩, ⟨8⟩] "games/deck-descent.json" "oracle-only" ]
   let fixtures :=
     [ previewFixtureJson "signal-solved-preview-v1" signal signalReward [⟨1⟩]
         (signalPreview unbound federationId sourceDigest digests.signal contentRoot inactiveActivation)
@@ -1594,7 +1663,9 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
     , previewFixtureJson "salvage-solved-preview-v1" salvage salvageReward [⟨3⟩]
         (salvagePreview unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation)
     , previewFixtureJson "blackbox-solved-preview-v1" blackBox blackBoxReward [⟨4⟩]
-        (blackBoxPreview unbound federationId sourceDigest digests.blackBox contentRoot inactiveActivation) ]
+        (blackBoxPreview unbound federationId sourceDigest digests.blackBox contentRoot inactiveActivation)
+    , previewFixtureJson "descent-solved-preview-v1" descent descentReward [⟨7⟩, ⟨8⟩]
+        (descentPreview unbound federationId sourceDigest digests.deckDescent contentRoot inactiveActivation) ]
   "{\n" ++
   "  \"format\":\"POAG1-CATALOG\",\n" ++
   "  \"schema_version\":1,\n" ++
@@ -1617,8 +1688,9 @@ def schemaJson : String :=
     "\"domain\":\"path-of-angels/content-root/v1\\u0000\"," ++
     "\"framing\":\"file_count_be64 || (path_len_be64 || path_utf8 || content_len_be64 || content_bytes)*\"," ++
     "\"entry_order\":\"path_ascending\"," ++
-    "\"paths\":[\"games/black-box-reconstruction.json\",\"games/relay-repair.json\"," ++
-      "\"games/salvage-lock.json\",\"games/signal-triangulation.json\"]},\n" ++
+    "\"paths\":[\"games/black-box-reconstruction.json\",\"games/deck-descent.json\"," ++
+      "\"games/relay-repair.json\",\"games/salvage-lock.json\"," ++
+      "\"games/signal-triangulation.json\"]},\n" ++
   "    \"activation_digest\":{\"algorithm\":\"sha256\"," ++
     "\"domain\":\"pathofangels.network/activation-digest/v1\\u0000\"," ++
     "\"framing\":\"schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64\"," ++
@@ -1655,13 +1727,16 @@ def canonicalArtifacts (federationId sourceDigest contentRoot : Digest32)
     (digests : GameContentDigests) :
     List ArtifactBytes :=
   /- ⚠ PATH-ASCENDING after schema/catalog, and the curator refuses any other order.
-  `games/black-box-reconstruction.json` sorts before `games/relay-repair.json`, so the
-  fourth game goes FIRST here, not last. -/
+  `games/black-box-reconstruction.json` sorts before `games/deck-descent.json`, which
+  sorts before `games/relay-repair.json` — so the fourth game goes FIRST here and the
+  fifth game SECOND, not last. -/
   [ { path := "schema.json", mediaType := "application/schema+json", contents := schemaJson }
   , { path := "catalog.json", mediaType := "application/json",
       contents := catalogJson federationId sourceDigest contentRoot digests }
   , { path := "games/black-box-reconstruction.json", mediaType := "application/json",
       contents := blackBoxDescriptorJson }
+  , { path := "games/deck-descent.json", mediaType := "application/json",
+      contents := DeckDescentEmit.deckDescentDescriptorJson }
   , { path := "games/relay-repair.json", mediaType := "application/json",
       contents := relayDescriptorJson }
   , { path := "games/salvage-lock.json", mediaType := "application/json",
@@ -1670,12 +1745,13 @@ def canonicalArtifacts (federationId sourceDigest contentRoot : Digest32)
       contents := signalDescriptorJson } ]
 
 /-! SHA-256 is a deployed crypto primitive rather than a theorem implemented in
-this emitter.  The driver measures these six exact Lean-rendered byte strings;
+this emitter.  The driver measures these seven exact Lean-rendered byte strings;
 the signed content epoch anchors the resulting manifest. -/
 structure ArtifactHashes where
   schema : String
   catalog : String
   blackBox : String
+  deckDescent : String
   relay : String
   salvage : String
   signal : String
@@ -1683,20 +1759,22 @@ deriving DecidableEq, Repr
 
 def ArtifactHashes.valid (h : ArtifactHashes) : Bool :=
   validSha256 h.schema && validSha256 h.catalog && validSha256 h.blackBox &&
-    validSha256 h.relay && validSha256 h.salvage && validSha256 h.signal
+    validSha256 h.deckDescent && validSha256 h.relay && validSha256 h.salvage &&
+    validSha256 h.signal
 
 /-- The measured hashes in the SAME order `canonicalArtifacts` renders its entries.
 This list and that one are the two halves of one pairing; nothing else may reorder
 either of them. -/
 def ArtifactHashes.inCanonicalOrder (h : ArtifactHashes) : List String :=
-  [h.schema, h.catalog, h.blackBox, h.relay, h.salvage, h.signal]
+  [h.schema, h.catalog, h.blackBox, h.deckDescent, h.relay, h.salvage, h.signal]
 
 /-- ⚑ THE SIXTH ARTIFACT LANDMINE — REBUILT SO IT CANNOT BE RE-ARMED.
 
 This used to `match` a LITERAL five-element artifact list and fall through to `[]`,
 so a sixth artifact would not fail to compile: it would silently emit a manifest
 **pinning nothing**.  Enrolling Black Box is exactly the change that would have
-tripped it, and Deck Descent and Containment Inspection are next.
+tripped it; Deck Descent has since enrolled through the rebuilt shape below, and
+Containment Inspection is next.
 
 Widening the literal match to six would have re-armed it at seven.  So the match is
 gone: pins are the artifact list zipped against `ArtifactHashes.inCanonicalOrder`.
@@ -1710,8 +1788,10 @@ def canonicalPins (federationId sourceDigest contentRoot : Digest32) (digests : 
 /-- ⚑ THE DETECTOR for the landmine described on `canonicalPins`.
 
 It relates the pin list to the ARTIFACT LIST rather than to a literal count, so the
-moment a seventh artifact is added without a seventh hash, `6 = 7` fails and the
-BUILD goes red at the site of the mistake.
+moment an eighth artifact is added without an eighth hash, `7 = 8` fails and the
+BUILD goes red at the site of the mistake.  (Enrolling Deck Descent exercised
+exactly this: `ArtifactHashes.deckDescent` and the artifact entry moved together,
+and nothing here changed.)
 
 Do not "fix" a failure here by changing an expected length — there is no expected
 length in the statement, and introducing one is how this stops being a gate.  Add
@@ -1746,6 +1826,7 @@ FIRST — appending a new game to the end of this list is right only if its path
 actually sorts last. -/
 def POAG1_GAME_PATHS : List String :=
   [ "games/black-box-reconstruction.json"
+  , "games/deck-descent.json"
   , "games/relay-repair.json"
   , "games/salvage-lock.json"
   , "games/signal-triangulation.json" ]
@@ -1804,6 +1885,7 @@ def acceptsManifest (sourceDigestString : String)
     hashes.valid &&
     decide (digestHex sourceDigest = sourceDigestString) &&
     decide (digestHex digests.blackBox = hashes.blackBox) &&
+    decide (digestHex digests.deckDescent = hashes.deckDescent) &&
     decide (digestHex digests.signal = hashes.signal) &&
     decide (digestHex digests.relay = hashes.relay) &&
     decide (digestHex digests.salvage = hashes.salvage) &&
@@ -1819,6 +1901,7 @@ theorem acceptsManifest_eq_true_iff
       hashes.valid = true ∧
       digestHex sourceDigest = sourceDigestString ∧
       digestHex digests.blackBox = hashes.blackBox ∧
+      digestHex digests.deckDescent = hashes.deckDescent ∧
       digestHex digests.signal = hashes.signal ∧
       digestHex digests.relay = hashes.relay ∧
       digestHex digests.salvage = hashes.salvage ∧
@@ -1843,7 +1926,7 @@ theorem acceptsManifest_determines_the_manifest
       candidate = true) :
     candidate =
       manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes := by
-  obtain ⟨-, -, -, -, -, -, -, hcandidate⟩ :=
+  obtain ⟨-, -, -, -, -, -, -, -, hcandidate⟩ :=
     (acceptsManifest_eq_true_iff _ _ _ _ _ _ _).mp h
   exact hcandidate
 
