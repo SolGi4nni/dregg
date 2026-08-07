@@ -533,6 +533,17 @@ extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_GalleyMaintenanc
 extern lean_object *dregg_poa_galley_daily_judge(lean_object *input);
 #endif
 
+/* Path of Angels Night Watch campaign. The judge takes NO authority argument: the
+ * rulebook is not a parameter, it is whatever the audited world's content root commits
+ * to. ⚠ The input wire carries the node-held SLOT SECRET (as POA-SLOT-DERIVE-1 does) —
+ * these bytes must never be echoed into a response, a trace, or an error. The reply
+ * carries no activation field at all. */
+#ifdef DREGG_POA_NIGHT_WATCH_CAMPAIGN_JUDGE
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NightWatchCampaignWire(uint8_t builtin);
+#define DREGG_POA_NIGHT_WATCH_CAMPAIGN_WIRE_MAX_BYTES ((size_t)1048576u)
+extern lean_object *dregg_poa_night_watch_campaign_judge(lean_object *input);
+#endif
+
 /* Post-finality, multi-stream EventBatch planner. The native host constructs the duplicated
  * authority envelope from its commit record and game-judge result; this bridge transports the
  * exact canonical bytes and never promotes a network caller's alleged authority. */
@@ -1516,6 +1527,16 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(galleyres);
 #endif
+#ifdef DREGG_POA_NIGHT_WATCH_CAMPAIGN_JUDGE
+    lean_object *nightwatchres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_NightWatchCampaignWire(1);
+    if (!lean_io_result_is_ok(nightwatchres)) {
+        lean_io_result_show_error(nightwatchres);
+        lean_dec_ref(nightwatchres);
+        return 1;
+    }
+    lean_dec_ref(nightwatchres);
+#endif
 #if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
     defined(DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST)
     lean_object *batchres =
@@ -1756,6 +1777,33 @@ size_t dregg_poa_galley_daily_judge_str(const char *in_utf8, char *out, size_t o
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_GALLEY_DAILY_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_NIGHT_WATCH_CAMPAIGN_JUDGE
+size_t dregg_poa_night_watch_campaign_judge_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_NIGHT_WATCH_CAMPAIGN_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_night_watch_campaign_judge(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_NIGHT_WATCH_CAMPAIGN_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;

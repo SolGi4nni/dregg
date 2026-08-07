@@ -133,6 +133,9 @@ lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(uint8_t
 #ifdef DREGG_POA_GALLEY_DAILY_JUDGE
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_GalleyMaintenanceDailyRuntime(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_NIGHT_WATCH_CAMPAIGN_JUDGE
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NightWatchCampaignWire(uint8_t builtin);
+#endif
 #if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
     defined(DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST)
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(uint8_t builtin);
@@ -307,6 +310,18 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(galleyres);
+    }
+#endif
+#ifdef DREGG_POA_NIGHT_WATCH_CAMPAIGN_JUDGE
+    {
+        lean_object *nightwatchres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_NightWatchCampaignWire(1);
+        if (!lean_io_result_is_ok(nightwatchres)) {
+            lean_io_result_show_error(nightwatchres);
+            lean_dec_ref(nightwatchres);
+            return 1;
+        }
+        lean_dec_ref(nightwatchres);
     }
 #endif
 #if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
