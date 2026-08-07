@@ -390,13 +390,24 @@ jobs:
           - dir: deos-homeserver
             toolchain: '1.96.1'
             timeout: 90
-          # ⚠ EXPECTED RED at introduction (2026-07-17): src/materialize.rs still
-          # calls the OLD dregg-doc API (`AtomContent::as_bytes()`, `d.string()?:
-          # AtomContent`) — the pre-existing source drift its isolation hid, the
-          # same one that reverted the root-workspace fold (see the exclude-list
-          # note in the repo-root Cargo.toml). This leg is the tooth that keeps
-          # that wound visible until materialize.rs is fixed; do NOT green it by
-          # deleting the leg.
+          # The dregg-doc API drift this leg was introduced to expose (2026-07-17:
+          # src/materialize.rs on the OLD `AtomContent::as_bytes()` / `d.string()?`)
+          # was HEALED the same day by bf8f7ee7b, and the leg has been genuinely
+          # green since — last observed at run 30697013645 (2026-08-01). It is now
+          # an ordinary gate on a compiling crate: `cargo check --all-targets
+          # --locked` is warnings-only as of 2026-08-06.
+          #
+          # ⚠ What it actually catches now is LOCK DRIFT, and that is not a lesser
+          # tooth. This is a SEPARATE workspace with its OWN Cargo.lock, and it
+          # path-deps into the main tree (dregg-doc -> dregg-turn -> dregg-circuit).
+          # A dependency edge added anywhere in that chain does not reach this lock,
+          # so `--locked` refuses to resolve and the leg dies WITHOUT COMPILING A
+          # LINE — which is exactly how it failed on 2026-08-06 (`dregg-codec`
+          # promoted dev-dep -> dep in circuit/Cargo.toml by 1f1962946). If this leg
+          # reds with "cannot update the lock file … because --locked was passed",
+          # the fix is `cd forge-ci-runner && cargo update -w`, not a source change.
+          # ⚑ And read the error before believing any expected-red note above it: a
+          # resolution failure never reaches the source the note is about.
           - dir: forge-ci-runner
             toolchain: nightly-2026-06-21
             timeout: 60
