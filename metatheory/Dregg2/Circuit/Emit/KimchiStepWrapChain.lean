@@ -1079,13 +1079,19 @@ dregg's step rule published twelve unconstrained `Fp` elements. **That is closed
 `stepmain_step_r8_finalize` publishes the statement, and every rung from `.bind` to `.close` places
 with no refusal and no region escape.
 
-⚠⚑ **WHAT IS LEFT IS NOT A PLACEMENT AND NO PLACEMENT CHECK CAN SEE IT.** Three sub-circuits tie a
-packed statement word to a value the wrap circuit COMPUTES — W-FINSPONGE's three deferred words,
-W-WRAPHACK's two `hash_messages_for_next_wrap_proof` squeezes, W-PREV's `messages_for_next_step_
-proof` — and the published statement carries synthetic words at all six. Those rows place, emit and
-render; they have no satisfying WITNESS. `KimchiWrapMainField.the_published_statement_does_not_carry
-_the_derived_words` names the six and `KimchiWrapMain.finsponge_has_no_witness_on_the_published
-_statement` evaluates the assert that fails.
+⚠⚑ **WHAT WAS LEFT WAS NOT A PLACEMENT AND NO PLACEMENT CHECK COULD SEE IT.** Three sub-circuits
+tie a packed statement word to a value the wrap circuit COMPUTES — W-FINSPONGE's three deferred
+words, W-WRAPHACK's two `hash_messages_for_next_wrap_proof` squeezes, W-PREV's
+`messages_for_next_step_proof` — and the published statement carried synthetic words at all six.
+Those rows placed, emitted and rendered; they had no satisfying WITNESS.
+
+✅ ⚑⚑ **FIVE OF THE SIX ARE CLOSED (55/56 on 2026-08-06; 27/28/37 on 2026-08-07), AND THE SIXTH IS
+AN ARITY GAP, NOT A WIRING ONE.**
+`KimchiWrapMainField.the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one`
+names what agrees, and `KimchiWrapMain.finsponge_has_a_witness_on_the_published_statement` evaluates
+the assert that now passes at ZERO differences. What is left is packed word 54:
+`messages_for_next_step_proof`, where segment D hashes 56+20 and the marshaller's
+`MessagesForNextStepProof::hash()` hashes 56+36 (`KimchiWrapMainPins10`).
 
 ✅ ⚑⚑ **AND IT WAS PRICED AS A STEP-SIDE FIXPOINT, WHICH IS WHY IT DID NOT HAPPEN FOR A DAY.**
 This paragraph read: *"Each of the six words is an x_hat MSM entry, so writing the derivation into

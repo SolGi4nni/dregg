@@ -270,7 +270,8 @@ EQUAL, element for element, to `MinaRealBlockTranscript.fqTape2`, which was extr
 block's bytes on a path that has never seen this assembly. Two constructions, ninety-one numbers.
 
 ✅ **WHAT IT SAYS NOW.** When this was written it did not say the EMITTED tape was this one —
-`the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot` said it differed at slot 6, and
+`the_emitted_finalize_tape_is_minas` said it differed at slot 6 when it was named
+`…differs_from_minas_in_exactly_one_slot`, and
 the content here was that the distance between the two was a single statement word. That word is
 published (`KimchiStepMainCore` §1f), so `the_emitted_finalize_tape_is_minas` closes the gap and
 this theorem is the KERNEL half of it: the compiled one is about the emitter's `finZW0` probe, this

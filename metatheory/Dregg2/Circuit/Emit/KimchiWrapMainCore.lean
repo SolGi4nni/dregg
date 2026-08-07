@@ -3761,40 +3761,38 @@ def finRawEnv (s : WrapShape) (sp : SpAcc) (p : Nat) : VarEnv :=
     , (finEvVar s sp p k 1, (finColVal p k 1 : Int)) ])
   ++ finTailEnv s sp p
 
-/-- ⚑ **THE PREVIOUS PROOF'S `z(ζω)`, SOLVED — because an honest previous proof's evaluations ARE the
-ones that make its own deferred values correct.**
+/-- ✅ ⚑⚑⚑ **THE PREVIOUS PROOF'S `z(ζω)` — AND SINCE 2026-08-07 THIS SOLVE IS THE IDENTITY.
+THE CONTAINMENT LABEL IS RETIRED, NOT SOFTENED.**
 
-`Plonk_checks.checked` compares the DERIVED `perm` against the previous statement's deferred word 4,
-and `wrap_main.ml:335`'s `Boolean.Assert.any [finalized; not should_finalize]` refuses a block that
-claims `should_finalize` while carrying a wrong one. Measured at both committed shapes: block 0's
-packed word 26 is 0 and block 1's word 53 is **1**, so block 1 must be consistent and the `a^9`
-mixer is not. That was a real refusal by the prover, and upstream's.
+⚠ **WHAT THIS DOCBLOCK USED TO ARGUE, AND WHY IT IS KEPT VISIBLE.** It said: *"THE FREE CELL TO MOVE
+IS NOT THE STATEMENT WORD. That is MSM scalar material … `z` at ζω is a `Req.Evals` witness this
+sub-circuit alone reads, and `derive_plonk`'s `perm` is `−(e1z · β · α²¹ · zkp · Π …)` — LINEAR in
+it. So the honest value is `e1z · permUsed / perm₀`: one probe evaluation, one inversion, statement
+word untouched."* Its premise expired on 2026-08-06 when §19c started reading Mina devnet block
+539508's own `es` columns — bending a fixture is free, bending a real block's evaluation presents
+§20's sponge a value that block does not have — and it was labelled a CONTAINMENT here from then
+until now. It also priced the alternative as *"not free on the step side: `stepStmtVar` maps the
+live block's `perm` hi/parity to `ftcDiv2 0`/`ftcOdd 0`."*
 
-⚠ **THE FREE CELL TO MOVE IS NOT THE STATEMENT WORD.** That is MSM scalar material — `xhatWordOf`
-splits the five `B Field` words of each block into hi/parity entries, so word 31 is x_hat entries 40
-and 41 and moving it moves `xhatOut 67`, `wrap_verifier.ml:617`'s absorbed point, and every
-wrap-scale rung from `w6_xhat` up. `z` at ζω is a `Req.Evals` witness **this sub-circuit alone
-reads**, and `derive_plonk`'s `perm` is `−(e1z · β · α²¹ · zkp · Π …)` — LINEAR in it. So the honest
-value is `e1z · permUsed / perm₀`: one probe evaluation, one inversion, statement word untouched,
-MSM untouched, every rung below untouched.
+⚑ **THAT PRICE WAS A DESCRIPTION OF THE DEFECT, NOT OF A COST.** `ftcDiv2 0`/`ftcOdd 0` are §6b's
+own **Fp** ft-comm scalar — the WRAP statement's word 4. The step statement's word 31 is an **Fq**
+`Shifted_value.Type2` deferred value about the WRAP proof, which the step circuit never derived and
+never could. It was ALIASED onto those cells, and un-aliasing it (`KimchiStepMainCore` §1f) was
+eleven new cells, one emit and one re-prove — no MSM move that mattered, no fixpoint.
 
-⚠ ⚑⚑ **THAT ARGUMENT'S PREMISE EXPIRED ON 2026-08-06 AND THE PARAGRAPH ABOVE IS KEPT ONLY SO THE
-EXPIRY IS VISIBLE.** "A `Req.Evals` witness this sub-circuit alone reads" was true while
-`finColVal` was `wrapFixtureQ`: bending a fixture costs nothing and the solve was free. §19c reads
-Mina devnet block 539508's own `es` columns now, so this multiply presents §20's sponge an
-evaluation **that block does not have** — and §20's sponge is the one whose squeeze is supposed to
-be that block's ξ′. `KimchiWrapFinalizeSpongeGate.the_emitted_finalize_tape_differs_from_minas_in
-_exactly_one_slot` measures the cost at exactly one tape slot of ninety-one, and
-`the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges` shows the far side: without this
-bend the tape IS `MinaRealBlockTranscript.fqTape2` and the squeezes ARE `V_CHAL` and `U_CHAL`.
+⚑ **SO `permUsed = perm₀` NOW, THE RATIO IS 1, AND THIS FUNCTION RETURNS `finColVal p FIN_IDX_Z 1`
+ON BOTH BLOCKS.** `KimchiWrapFinalizeSpongeGate.the_bend_is_gone_because_the_live_block_publishes
+_the_derived_perm` measures exactly that, and `…the_emitted_finalize_tape_is_minas` measures its
+consequence: the emitted 91-element tape disagrees with `MinaRealBlockTranscript.fqTape2` in **no**
+slot, where it disagreed at slot 6.
 
-⚑ **WHAT IT WOULD TAKE, NAMED.** Packed word 31 must be `qSub perm FIN_SHIFT2`. It is not free on
-the step side: `KimchiStepMainCore.stepStmtVar` maps the live block's `perm` hi/parity to
-`ftcDiv2 0`/`ftcOdd 0`, the split of §6b's own ft-comm `perm` — the STEP circuit's native **Fp**
-`finalize_other_proof` output, about the STEP proof — published where an **Fq** deferred value about
-the WRAP proof belongs. Words 27, 28 and 37 are the same aliasing through `vCipShift`, `vBShift` and
-`vXiStmt`. ⚠ Until that is unwired, keeping this solve is a CONTAINMENT and is labelled one here:
-it is what makes `w10_finalize` prove, and `w11_finsponge` refuses anyway.
+⚠ ⚑ **NAMED, MEASURED, AND UNDONE: THIS FUNCTION SHOULD BE DELETED.** It is inert — the theorem
+above is the measurement that deleting it moves ZERO emitted bytes — and an inert solve is worse
+than no solve, because a future word 31 that stopped being the derived `perm` would be silently
+compensated here instead of refusing at `w10_finalize`'s `Field.equal`. What stopped this pass from
+doing it is that the removal wants its own emit-and-diff to show the byte-identity rather than
+assert it, and this commit's evidence budget went to the de-aliasing. It is dead-code removal on a
+green tree, not a containment left standing in front of a live defect — the defect is closed.
 
 ⚠ ⚑ **AND IT IS APPLIED ONLY TO THE BLOCK THAT CLAIMS `should_finalize`, WHICH IS NOT A DETAIL.**
 Solving it in EVERY block would force `perm = permUsed` for any statement word whatever, so
