@@ -51,6 +51,13 @@ jobs:
       # `--bins` is NOT redundant: cargo target-selection flags are RESTRICTIVE, so a bare
       # `--examples` would build ONLY examples and stop producing the `dregg-demo` binary the next
       # step runs. Both flags together = the original lib+bins, plus every example.
+      # ⚑ THE VERIFIED LEAN RUNTIME. This lane builds --release, which arms
+      # dregg-lean-ffi's require_lean_native gate; without a Lean toolchain + a
+      # key-matched seed the build PANICS at build.rs's sysroot arm and nothing
+      # below this line has ever executed. See .github/actions/lean-seed for the
+      # measurement and for why DREGG_REQUIRE_LEAN=0 is not an option here.
+      - uses: ./.github/actions/lean-seed
+
       - name: Build demo crates (examples INCLUDED — the compile gate)
         run: cargo build --release -p dregg-demo -p dregg-demo-agent --bins --examples
 

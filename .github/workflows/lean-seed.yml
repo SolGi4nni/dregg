@@ -49,6 +49,34 @@ on:
   # is the FALSE-RED class (a bare SIGABRT that a lane reads as its own bug). Mitigation is the
   # nightly below plus a manual cut before any session that needs verified-core tests on a box.
   #
+  # ⚑ THAT COST WAS RE-PRICED ON 2026-08-07, AND THE PRICE IT WAS SET AGAINST NO LONGER HOLDS.
+  # MEASURED, both numbers:
+  #   * OUTCOME. Manual-only produced ONE asset in the 12 days from 2026-07-26 to 2026-08-07,
+  #     against a key that invalidates ~24x/day. The consequence was not "lanes occasionally fall
+  #     back": `Test (ubuntu-latest)`, `Test (macos-latest)` and `Lean marshal gate` have been red
+  #     on EVERY push since, and the one manual cut (08-06 11:42) was stale within ~30 minutes.
+  #     A schedule-only consumer of a manual-only content-keyed publisher is red by construction.
+  #   * THE KEY WAS FOUR TIMES TOO BROAD. It hashed all 2246 modules under `metatheory/Dregg2/`.
+  #     The archive holds ONE target's import closure (`Dregg2.FFI`) — 339 in-tree modules — and
+  #     only 69 of the last 300 commits touching `metatheory/Dregg2/` (23.0%) touched one of them.
+  #     `scripts/lean-seed-key.sh` now keys on the closure, so 77% of the old invalidations are
+  #     gone: those commits keep the SAME key.
+  #
+  # WHICH CHANGES WHAT A PUSH TRIGGER WOULD COST, because the `Already published for this content
+  # key?` step below is a pure key lookup that runs BEFORE any build. Under the old key a
+  # non-closure commit was a fresh key ⇒ a MISS ⇒ the full 19-25 minute hbox saturation. Under the
+  # closure key it is a HIT ⇒ ~23 seconds on a hosted `plan` job plus a no-op self-hosted step. So
+  # re-arming `push: paths: [metatheory/**]` would now cost roughly 5-6 real cuts/day instead of
+  # ~24 — the other ~18 collapse to seconds.
+  #
+  # ⚠ IT IS STILL NOT RE-ARMED, AND THAT IS DELIBERATE: ember removed this trigger and the cron by
+  # name, and a re-price is an input to that decision, not a reversal of it. The numbers above are
+  # here so the choice can be made on them. Three options, priced:
+  #   (a) leave it manual — CI's Lean lanes stay red-by-construction and must stay ATTRIBUTABLE
+  #       (see ci.yml's arm step, which now names this file as the owner);
+  #   (b) `push: paths: [metatheory/**]` — ~5-6 cuts/day on hbox, ~18 no-ops;
+  #   (c) `workflow_dispatch` + a cut on RELEASE/TAG only — CI green at tags, red between them.
+  #
   # THE NIGHTLY IS GONE TOO (ember, explicitly: "disable that damn cron"). This workflow is now
   # MANUAL ONLY. hbox is meant to be a SPARE BOX for interactive work, and the whole point of
   # unhooking this workflow was to give it back — a nightly that pays 20 minutes whenever the Lean
@@ -149,7 +177,7 @@ jobs:
             exit 1
           fi
           for v in asset:K_ASSET key:K_KEY platform:K_PLATFORM lean_toolchain:K_LEAN_TOOLCHAIN \
-                   mathlib_rev:K_MATHLIB_REV dregg_tree:K_DREGG_TREE_HASH; do
+                   mathlib_rev:K_MATHLIB_REV closure_hash:K_DREGG_CLOSURE_HASH; do
             echo "${v%%:*}=$(eval "echo \"\$${v##*:}\"")" >> "$GITHUB_OUTPUT"
           done
           bash scripts/lean-seed-key.sh

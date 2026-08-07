@@ -6,11 +6,17 @@
 # GitHub release to pull the platform-native seed asset from; the .github/workflows/lean-seed.yml
 # publish job REWRITES this file (bumping TAG + the provenance below) each time it cuts a seed.
 #
-# The provenance triple (LEAN_TOOLCHAIN / MATHLIB_REV / DREGG_TREE_HASH) is what fetch compares
+# The provenance triple (LEAN_TOOLCHAIN / MATHLIB_REV / DREGG_CLOSURE_HASH) is what fetch compares
 # against the local checkout: if they match, the published seed is HEAD-compatible for THIS
 # source; if they DRIFTED, fetch warns loudly that the pinned seed is stale (its Dregg2 slice /
 # mathlib closure predates your source — the closure link may then need a local `lake`).
 # Recompute the live values any time with:  scripts/lean-seed-key.sh
+#
+# ⚑ `DREGG_TREE_HASH` BECAME `DREGG_CLOSURE_HASH` on 2026-08-07 and it is a FLAG DAY. The old field
+# was `git rev-parse HEAD:metatheory/Dregg2` — all 2246 modules, of which the archive contains 339
+# (the `Dregg2.FFI` import closure, the only target build.rs builds). Every asset published under
+# the old key is unreachable by the new asset name: re-cut with `gh workflow run lean-seed.yml`.
+# The value below is the pre-cutover snapshot and is DEAD until the first new-scheme cut lands.
 #
 # build host — see docs/LEAN-SEED-ARTIFACT.md, "Cutting a seed release on lassie"), fetch fails
 # loud and the only verified-node path is a local ./scripts/bootstrap.sh (the hours-long bootstrap).
@@ -22,6 +28,6 @@
 TAG=lean-seed
 LEAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 MATHLIB_REV=1c2b90b13009c65b090d95a83c98e248deafb6f1
-DREGG_TREE_HASH=406424cff5c89b25c94e90ad5574380fa6dddda8
+DREGG_CLOSURE_HASH=
 GENERATED_UTC=2026-07-17T08:26:26Z
 NOTE=Published by .github/workflows/lean-seed.yml. Assets under this tag are CONTENT-KEYED (see scripts/lean-seed-key.sh), so TAG is stable and this provenance is a reference snapshot for the drift warning only — fetch-lean-seed.sh always resolves the asset from YOUR checkout's key, not from these values.

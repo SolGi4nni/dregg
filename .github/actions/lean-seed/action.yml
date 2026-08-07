@@ -1,0 +1,105 @@
+name: "Provision the verified Lean runtime"
+description: >
+  Install elan + the pinned Lean toolchain and fetch the content-key-matched seed archive, so a
+  `--release` build of anything depending on dregg-lean-ffi can link the VERIFIED executor instead
+  of panicking. Fails with an ATTRIBUTABLE message naming the exact missing asset and its owner.
+
+# ═══ WHY THIS EXISTS ════════════════════════════════════════════════════════════════════════════
+# `dregg-lean-ffi/build.rs` arms `require_lean_native` on every `--release` build (build.rs:2424).
+# A GitHub-hosted runner has no elan, no lake and no mathlib, so every release build of dregg-node
+# panicked at build.rs's sysroot arm:
+#
+#     DREGG_REQUIRE_LEAN/current release gate cannot resolve the Lean sysroot
+#     (no DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/)
+#
+# MEASURED 2026-08-07 from the run logs: that ONE line is the entire failure of `demos.yml`
+# (1308 runs, zero successes), `federation-node-{1,2,3}.yml` and `intent-service.yml` (~390 runs
+# each, last green 2026-06-30/07-01 — five weeks, and each of them has a `page-on-red` job that has
+# been paging a human that whole time). Not a missing secret, not a dead endpoint, not an
+# assertion: five workflows, one absent toolchain.
+#
+# ⚠ `DREGG_REQUIRE_LEAN=0` IS NOT THE FIX and must never be added to these lanes. It swaps the
+# verified Lean executor for the UNVERIFIED Rust one, and `node/src/lib.rs` refuses to start such a
+# binary anyway — so it would trade a loud build failure for a green build of a node that cannot
+# run. Neither is dropping `--release`: same degrade, quieter.
+#
+# ═══ WHAT MAKES THIS POSSIBLE (2026-08-07) ══════════════════════════════════════════════════════
+# `scripts/fetch-lean-seed.sh` now writes `dregg-lean-ffi/libdregg_lean.a.provenance`, and
+# `build.rs::seed_key_evidence` reads it: a seed whose published content key still equals
+# `scripts/lean-seed-key.sh --key` for THIS checkout IS this checkout's compiled `Dregg2.FFI`
+# closure, and the gate accepts it as current-source evidence without running lake. Before that,
+# the gate's only accepted evidence was "I ran lake myself", which no hosted runner can produce.
+inputs:
+  required:
+    description: >
+      "true" (default): a missing seed FAILS the job. "false": warn and continue, for a lane that
+      genuinely has something to measure without the verified runtime. Never set it to "false" to
+      quiet a red — a lane that needs the seed and does not get it must stay red.
+    required: false
+    default: "true"
+
+outputs:
+  armed:
+    description: "1 if a key-matched seed is installed and the build will link verified; 0 otherwise."
+    value: ${{ steps.fetch.outputs.armed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install zstd + elan (the seed links against the pinned toolchain's Lean runtime)
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd
+        else
+          brew list zstd >/dev/null 2>&1 || brew install zstd
+        fi
+        # The seed is a native archive of compiled Lean; linking it needs the toolchain's
+        # runtime/stdlib static libs. elan + the pinned toolchain is minutes and does NOT
+        # compile mathlib — that is exactly the cost the seed exists to remove.
+        curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none
+        echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+    - name: Resolve the Lean sysroot WITHOUT a mathlib checkout
+      shell: bash
+      run: |
+        set -euo pipefail
+        tc="$(tr -d '[:space:]' < metatheory/lean-toolchain)"
+        elan toolchain install "$tc"
+        # ⚑ `DREGG_LEAN_SYSROOT` is build.rs's documented override (build.rs::lean_sysroot). We set
+        # it explicitly rather than letting build.rs fall through to `lake env printenv
+        # LEAN_SYSROOT`, because `lake env` must load the workspace, which on a fresh clone means
+        # fetching and resolving mathlib — minutes of git for a value `lean --print-prefix` answers
+        # instantly, and a failure mode (network/lakefile) with nothing to do with the sysroot.
+        sysroot="$(elan run "$tc" lean --print-prefix)"
+        [ -n "$sysroot" ] && [ -d "$sysroot" ] || {
+          echo "::error::could not resolve a Lean sysroot for toolchain '$tc' (got '$sysroot'). elan is installed but the toolchain did not provide a prefix — this is a toolchain-provisioning fault in .github/actions/lean-seed, not a repo defect."; exit 1; }
+        echo "DREGG_LEAN_SYSROOT=$sysroot" >> "$GITHUB_ENV"
+        echo "resolved Lean sysroot: $sysroot"
+
+    - name: Fetch the content-key-matched Lean seed
+      id: fetch
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -uo pipefail
+        if bash scripts/fetch-lean-seed.sh; then :; fi
+        if [ -f dregg-lean-ffi/libdregg_lean.a ] && [ -f dregg-lean-ffi/libdregg_lean.a.provenance ]; then
+          echo "armed=1" >> "$GITHUB_OUTPUT"
+          echo "::notice::verified Lean runtime armed — seed $(du -h dregg-lean-ffi/libdregg_lean.a | cut -f1) with a matching provenance record. build.rs will link this checkout's compiled Dregg2.FFI closure."
+          exit 0
+        fi
+        echo "armed=0" >> "$GITHUB_OUTPUT"
+        # ── THE ATTRIBUTABLE RED ──────────────────────────────────────────────────────────────
+        # Everything a reader needs to act, in the failure itself: which asset, who cuts it, the
+        # one command that cuts it, and why we will not paper over it.
+        key="$(bash scripts/lean-seed-key.sh --key 2>/dev/null || echo '<key script failed>')"
+        asset="$(bash scripts/lean-seed-key.sh --asset 2>/dev/null || echo '<key script failed>')"
+        msg="no Lean seed for this commit. OWNER: .github/workflows/lean-seed.yml (the 'Publish Lean seed' workflow), which is workflow_dispatch-ONLY by deliberate operator decision. MISSING ASSET: ${asset} (content key ${key}) on release tag 'lean-seed'. CUT IT: gh workflow run lean-seed.yml -f platforms=linux-x86_64. REASON THIS IS RED RATHER THAN SKIPPED: without the seed every #[cfg(dregg_*_present)] gate compiles out and a --release dregg-node is the UNVERIFIED Rust executor, which node/src/lib.rs refuses to start. Do NOT set DREGG_REQUIRE_LEAN=0 and do NOT drop --release to green this."
+        if [ "${{ inputs.required }}" = "true" ]; then
+          echo "::error::$msg"
+          exit 1
+        fi
+        echo "::warning::$msg (this lane declared required=false, so it continues UNARMED and asserts nothing about the verified runtime)"

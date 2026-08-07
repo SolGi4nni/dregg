@@ -62,6 +62,13 @@ jobs:
         with:
           cache-on-failure: true
 
+      # ⚑ THE VERIFIED LEAN RUNTIME. This lane builds --release, which arms
+      # dregg-lean-ffi's require_lean_native gate; without a Lean toolchain + a
+      # key-matched seed the build PANICS at build.rs's sysroot arm and nothing
+      # below this line has ever executed. See .github/actions/lean-seed for the
+      # measurement and for why DREGG_REQUIRE_LEAN=0 is not an option here.
+      - uses: ./.github/actions/lean-seed
+
       - name: Build dregg-node
         run: cargo build --release -p dregg-node
 

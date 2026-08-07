@@ -663,6 +663,125 @@ fn lean_sysroot() -> Option<PathBuf> {
     None
 }
 
+/// ⚑ THE SECOND FORM OF CURRENT-SOURCE EVIDENCE (2026-08-07).
+///
+/// Until this existed, the current-source gate accepted exactly ONE proof that the linked archive
+/// was built from this checkout's Lean source: *"I ran `lake` on it myself, here, just now."* That
+/// is a sound proof and a needlessly narrow one, and its narrowness is a structural CI defect, not
+/// a nuisance. A GitHub-hosted runner has no elan, no lake and no mathlib; it CANNOT produce that
+/// proof at any price the job budget allows. So `Test (ubuntu-latest)`, `Test (macos-latest)` and
+/// `Lean marshal gate` could not be green on any commit, ever — while holding, or one download
+/// away from holding, a seed that was byte-for-byte the compiled closure of the very tree they
+/// had checked out. The gate could not express a true proposition, so it refused a true thing.
+///
+/// `scripts/lean-seed-key.sh` already computes exactly that proposition's content:
+/// `sha256(platform, lean-toolchain, mathlib rev, the Dregg2.FFI boundary-closure sources)`. Two
+/// checkouts with the same key differ in nothing the archive contains — the splice below builds
+/// ONE target (`Dregg2.FFI`) and ships ONLY its import closure, which is what the key hashes. So
+/// a key-matched seed IS "built from this checkout's Lean source", stated about the right resource.
+///
+/// THREE legs, all of which must hold, and the whole thing FAILS CLOSED (any snag ⇒ `None` ⇒ the
+/// caller behaves exactly as it did before this function existed):
+///   1. a provenance sidecar sits next to the seed (written ONLY by `scripts/fetch-lean-seed.sh`
+///      at install time — never by a build, never by a human, never inferred);
+///   2. its `KEY` still equals what `scripts/lean-seed-key.sh --key` computes RIGHT NOW from the
+///      files on disk. The key script reads the worktree, not `HEAD`, so an uncommitted edit to
+///      any closure module moves the key and the evidence evaporates on its own;
+///   3. its `SHA256` still equals the digest of the archive actually on disk, so the record
+///      describes THIS file. Anything that replaced the archive after the fetch — `bootstrap.sh`,
+///      `rebuild-dregg2-closure.sh`, an rsync — breaks leg 3 and the evidence is refused.
+///
+/// ⚠ WHAT THIS DOES NOT DO. It does not relax the case where `lake` RAN and a module FAILED TO
+/// ELABORATE. That is a real, firing check about the current source and it keeps its panic. This
+/// only answers the case where the toolchain is simply ABSENT — where the alternative is not a
+/// stricter check but no build at all.
+fn seed_key_evidence(crate_dir: &Path, seed: &Path) -> Option<String> {
+    if !seed.exists() {
+        return None;
+    }
+    let prov_path = {
+        let mut p = seed.as_os_str().to_os_string();
+        p.push(".provenance");
+        PathBuf::from(p)
+    };
+    println!("cargo:rerun-if-changed={}", prov_path.display());
+    let prov = std::fs::read_to_string(&prov_path).ok()?;
+    let field = |name: &str| -> Option<String> {
+        prov.lines()
+            .find_map(|l| l.strip_prefix(&format!("{name}=")))
+            .map(|v| v.trim().to_string())
+    };
+    let recorded_key = field("KEY").filter(|s| !s.is_empty())?;
+    let recorded_sha = field("SHA256").filter(|s| !s.is_empty())?;
+
+    // Leg 2 — re-derive the key from the checkout. We SHELL OUT to the same script the publisher
+    // and the fetcher use rather than re-implementing the hash here: a second definition of a
+    // content key is how the producer and the consumer come to disagree about what an artifact IS,
+    // and this repo has already paid for that once (the nine-root seed list, 95 modules short of
+    // the closure it claimed to be). One definition, three callers.
+    let root = crate_dir.parent()?;
+    let key_sh = root.join("scripts/lean-seed-key.sh");
+    if !key_sh.exists() {
+        return None;
+    }
+    println!("cargo:rerun-if-changed={}", key_sh.display());
+    let out = Command::new("bash")
+        .arg(&key_sh)
+        .arg("--key")
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        println!(
+            "cargo:warning=dregg-lean-ffi: a seed provenance record is present but \
+             scripts/lean-seed-key.sh could not re-derive this checkout's key ({}); NOT accepting \
+             the seed as current-source evidence. {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        return None;
+    }
+    let live_key = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if live_key.is_empty() || live_key != recorded_key {
+        println!(
+            "cargo:warning=dregg-lean-ffi: the seed's provenance record says key `{recorded_key}` \
+             but this checkout's Lean source keys to `{live_key}` — the seed is NOT this source. \
+             Fetch the matching asset (./scripts/fetch-lean-seed.sh --force) or build from source."
+        );
+        return None;
+    }
+
+    // Leg 3 — the record must describe the file that is actually there.
+    let live_sha = file_sha256(seed)?;
+    if live_sha != recorded_sha {
+        println!(
+            "cargo:warning=dregg-lean-ffi: the seed provenance record's SHA256 does not match the \
+             archive on disk (recorded {recorded_sha}, actual {live_sha}) — the archive was \
+             replaced after it was fetched. Refusing it as current-source evidence."
+        );
+        return None;
+    }
+    Some(live_key)
+}
+
+/// sha256 of a file, via whichever of `sha256sum` / `shasum` this host has — the same pair
+/// `scripts/lean-seed-key.sh` and `scripts/fetch-lean-seed.sh` use, so the digests are comparable.
+fn file_sha256(path: &Path) -> Option<String> {
+    for (bin, args) in [("sha256sum", &[][..]), ("shasum", &["-a", "256"][..])] {
+        if let Ok(out) = Command::new(bin).args(args).arg(path).output() {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout);
+                if let Some(first) = s.split_whitespace().next() {
+                    if !first.is_empty() {
+                        return Some(first.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// The Lean module an emitted IR `.c` belongs to: `<ir>/Dregg2/Exec/FFI.c` → `Dregg2.Exec.FFI`.
 fn module_name_of_ir_c(ir_root: &Path, c: &Path) -> Option<String> {
     let rel = c.strip_prefix(ir_root).ok()?;
@@ -886,6 +1005,9 @@ fn build_dregg2_archive(
     out_dir: &Path,
     seed: &Path,
     require_current_source: bool,
+    // A content-key-matched provenance record accompanies `seed` (see `seed_key_evidence`). It
+    // is honoured ONLY where `lake` could not be RUN — never where lake ran and a module failed.
+    seed_is_current_source: bool,
     reseeded: bool,
 ) -> bool {
     // ── COLD-LANE GUARD (2026-07-25) — check the archive BEFORE spending a Lean build ─────────
@@ -1045,12 +1167,26 @@ fn build_dregg2_archive(
             return true;
         }
         Err(e) => {
-            if require_current_source {
+            // `lake` could not be RUN at all (not on PATH). This is the toolchain-absent case, and
+            // it is exactly where a content-key-matched seed answers the question lake was going to
+            // be asked. `seed_is_current_source` is that evidence, checked by the caller.
+            if require_current_source && !seed_is_current_source {
                 panic!(
                     "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate could not run the \
                      current-source Lean build ({e}); refusing to link an older seed as if it \
-                     represented this checkout"
+                     represented this checkout. If the seed IS this checkout's closure, install it \
+                     with ./scripts/fetch-lean-seed.sh so it carries a provenance record the gate \
+                     can read (dregg-lean-ffi/libdregg_lean.a.provenance)."
                 );
+            }
+            if seed_is_current_source {
+                println!(
+                    "cargo:warning=dregg-lean-ffi: `lake build` could not run ({e}), but the seed's \
+                     provenance record matches this checkout's content key — the archive IS this \
+                     source's compiled Dregg2.FFI closure. Linking it as current-source."
+                );
+                let _ = seed_build_archive(seed, archive);
+                return false;
             }
             println!(
                 "cargo:warning=dregg-lean-ffi: could not run `lake build` ({e}) — is elan/lake on \
@@ -2536,6 +2672,20 @@ fn main() {
     // refuses to emit `lean_lib_present` / any `dregg_*_present` — see that gate for the wound.
     let mut provenance_downgraded = false;
 
+    // ⚑ The SECOND form of current-source evidence: a seed whose published content key still
+    // equals this checkout's. Computed once (it costs a closure walk + a digest of a ~190 MB
+    // archive, ~4s, and build.rs only re-runs when a watched file changed). `false` restores
+    // the pre-2026-08-07 behaviour exactly, so every path below is unchanged without it.
+    let seed_is_current_source = seed_key_evidence(&crate_dir, &seed_archive).is_some();
+    if seed_is_current_source {
+        println!(
+            "cargo:warning=dregg-lean-ffi: the seed carries a provenance record whose content key \
+             MATCHES this checkout (platform · toolchain · mathlib rev · Dregg2.FFI closure \
+             sources). The archive is this source's compiled closure; a Lean toolchain is needed \
+             to LINK it but not to re-derive it."
+        );
+    }
+
     // ── PRODUCE / REFRESH the archive from the Lean source (the linchpin). We watch the whole
     // `metatheory/Dregg2` source tree + the toolchain marker; when any of those change, build.rs
     // reruns and `build_dregg2_archive` does the incremental `lake build` → `leanc -c` → `ar`
@@ -2563,15 +2713,37 @@ fn main() {
                     &out_dir,
                     &seed_archive,
                     require_lean_native,
+                    seed_is_current_source,
                     reseeded,
                 );
             }
-            None if require_lean_native => panic!(
+            // ⚠ The sysroot is unresolvable — `lake env` failed, usually because elan/lake is not
+            // installed at all. Nothing here can be re-derived from source at any price. Before
+            // 2026-08-07 this was an unconditional panic under the release/CI gate, which is why
+            // no hosted runner could ever build a verified node: the ONLY way to satisfy it was to
+            // provision a Lean toolchain and a mathlib closure on the runner. A key-matched seed
+            // answers the same question — it is not a weaker answer, it is the same proposition
+            // arrived at by the publisher instead of by us. Without one, the panic stands.
+            None if require_lean_native && !seed_is_current_source => panic!(
                 "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate cannot resolve the Lean \
                  sysroot (no DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/); refusing to \
                  reuse an older archive as current-source evidence. Install the pinned Lean \
-                 toolchain/mathlib dependencies or provide DREGG_LEAN_SYSROOT."
+                 toolchain/mathlib dependencies or provide DREGG_LEAN_SYSROOT — or install a \
+                 content-key-matched seed with ./scripts/fetch-lean-seed.sh, which leaves the \
+                 provenance record this gate reads."
             ),
+            None if seed_is_current_source => {
+                // The archive IS this checkout's compiled closure (key-matched). It still cannot be
+                // LINKED without the toolchain's Lean runtime/stdlib — the sysroot gate further
+                // down enforces that separately and is untouched here. What we must NOT do is call
+                // this a provenance downgrade: it is not stale, it is exactly this source.
+                println!(
+                    "cargo:warning=dregg-lean-ffi: no Lean sysroot resolvable, but the seed's \
+                     content key matches this checkout — treating the archive as current-source \
+                     (NOT a provenance downgrade). The link still needs the pinned toolchain's \
+                     runtime; set DREGG_LEAN_SYSROOT or install elan if the link fails below."
+                );
+            }
             None => {
                 // No toolchain ⇒ the archive was NOT refreshed from this checkout, whatever it is.
                 provenance_downgraded = true;
@@ -2587,7 +2759,12 @@ fn main() {
             }
         }
     } else {
-        // No metatheory/ at all ⇒ nothing could have been refreshed from source.
+        // No metatheory/ at all ⇒ nothing could have been refreshed from source. And nothing could
+        // have been KEYED from source either: `scripts/lean-seed-key.sh` hashes the closure's
+        // `.lean` files, so with no metatheory/ it cannot produce a key and `seed_is_current_source`
+        // is false by construction. The `debug_assert` records that dependency rather than leaving
+        // the reader to re-derive it.
+        debug_assert!(!seed_is_current_source);
         provenance_downgraded = true;
         println!(
             "cargo:warning=dregg-lean-ffi: metatheory/ not found (set DREGG_METATHEORY_DIR) — \

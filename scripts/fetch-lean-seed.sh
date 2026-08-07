@@ -33,6 +33,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PIN="$ROOT/dregg-lean-ffi/lean-seed.pin"
 DEST="$ROOT/dregg-lean-ffi/libdregg_lean.a"
+# ⚑ THE EVIDENCE RECORD (2026-08-07). `dregg-lean-ffi/build.rs` reads this sidecar and re-derives
+# the key from the checkout; a match is what lets a `--release` / DREGG_REQUIRE_LEAN build accept
+# this archive as "built from this checkout's Lean source" WITHOUT running lake itself. Before it
+# existed, the gate's only accepted evidence was "I ran lake", so a runner holding a byte-perfect
+# HEAD-matching seed and no mathlib checkout still panicked. See `seed_key_evidence` in build.rs.
+PROV="$DEST.provenance"
 KEYSH="$ROOT/scripts/lean-seed-key.sh"
 
 FORCE=0
@@ -57,7 +63,7 @@ pin_get() { sed -n "s/^$1=//p" "$PIN" | head -1; }
 PIN_TAG="$(pin_get TAG)"
 PIN_TOOLCHAIN="$(pin_get LEAN_TOOLCHAIN)"
 PIN_MATHLIB="$(pin_get MATHLIB_REV)"
-PIN_DREGG="$(pin_get DREGG_TREE_HASH)"
+PIN_DREGG="$(pin_get DREGG_CLOSURE_HASH)"
 
 TAG="${TAG_OVERRIDE:-$PIN_TAG}"
 
@@ -70,15 +76,27 @@ echo "    expected release asset: $ASSET"
 
 # Warn (do not fail) if the committed pin drifted from the local source: the published seed may
 # be stale relative to your checkout — the closure link may then need a warm local .lake.
-if [ -n "$PIN_DREGG" ] && [ "$PIN_DREGG" != "$LOCAL_DREGG_TREE_HASH" ]; then
-  echo "    WARNING: the pin's Dregg2 tree ($PIN_DREGG) != your checkout ($LOCAL_DREGG_TREE_HASH)."
+if [ -n "$PIN_DREGG" ] && [ "$PIN_DREGG" != "$LOCAL_DREGG_CLOSURE_HASH" ]; then
+  echo "    WARNING: the pin's FFI-closure hash ($PIN_DREGG) != your checkout ($LOCAL_DREGG_CLOSURE_HASH)."
   echo "             The pinned seed predates your Lean source; if the link fails on undefined"
   echo "             initializers, re-seed locally (./scripts/bootstrap.sh) or wait for a fresh seed."
 fi
 
 # ── already present? ──────────────────────────────────────────────────────────
+# ⚠ We do NOT write an evidence sidecar here. An archive already on disk may have come from
+# bootstrap.sh, a re-splice, a colleague's rsync or a previous checkout, and this script has no
+# way to know which. Claiming it matches the current key because the current key is what we just
+# computed would be exactly the "assert the conclusion" move the sidecar exists to prevent — so
+# an unaccompanied seed keeps the old, stricter treatment (build.rs demands a real lake build).
 if [ -f "$DEST" ] && [ "$FORCE" -eq 0 ]; then
   say "A seed is already present ($(du -h "$DEST" | cut -f1 | tr -d ' ')): $DEST"
+  if [ -f "$PROV" ] && [ "$(sed -n 's/^KEY=//p' "$PROV" | head -1)" = "$LOCAL_KEY" ]; then
+    echo "    Its provenance sidecar records key $LOCAL_KEY — it MATCHES this checkout."
+  else
+    echo "    NOTE: no matching provenance sidecar ($PROV) — build.rs will not accept this archive"
+    echo "          as current-source evidence and a --release build still needs lake. Pass --force"
+    echo "          to re-fetch the key-matched asset and write the record."
+  fi
   echo "    Leaving it (pass --force to re-fetch). Build with: DREGG_REQUIRE_LEAN=1 cargo build -p dregg-node --release"
   exit 0
 fi
@@ -205,6 +223,39 @@ if [ -x "$(dirname "$0")/check-lean-seed-closure.sh" ]; then
 fi
 
 mv -f "$TMP/libdregg_lean.a" "$DEST"
+
+# ── ⚑ THE EVIDENCE RECORD ────────────────────────────────────────────────────
+# What we now know, and could not previously write down: this exact archive was published under
+# an asset name whose content key is `$LOCAL_KEY`, and that key is a hash of (platform, lean
+# toolchain, mathlib rev, the Dregg2.FFI boundary-closure sources ON DISK). That is precisely the
+# proposition `dregg-lean-ffi/build.rs`'s current-source gate wants and had no way to be told —
+# its only accepted evidence was "I ran lake myself", which a hosted runner with no mathlib
+# checkout can never produce, so a byte-perfect HEAD-matching seed still panicked the build.
+#
+# SHA256 binds the record to THIS FILE. Anything that later replaces the archive (bootstrap.sh,
+# rebuild-dregg2-closure.sh, a stray copy) leaves the sidecar describing a file that is no longer
+# there, build.rs's digest check fails, and the evidence is refused. Fail-closed by construction:
+# the record can only ever be weaker than the archive, never stronger.
+installed_sha="$(sha256_of "$DEST")"
+cat > "$PROV" <<EOF
+# libdregg_lean.a.provenance — written by scripts/fetch-lean-seed.sh. NOT a git blob.
+# Read by dregg-lean-ffi/build.rs (\`seed_key_evidence\`): if KEY still equals
+# \`scripts/lean-seed-key.sh --key\` for this checkout AND SHA256 still matches the archive on
+# disk, the seed IS this checkout's compiled FFI boundary closure and a --release /
+# DREGG_REQUIRE_LEAN build may link it without re-running lake. Delete this file to force the
+# stricter "I ran lake myself" path.
+KEY=$LOCAL_KEY
+PLATFORM=$LOCAL_PLATFORM
+LEAN_TOOLCHAIN=$LOCAL_LEAN_TOOLCHAIN
+MATHLIB_REV=$LOCAL_MATHLIB_REV
+DREGG_CLOSURE_HASH=$LOCAL_DREGG_CLOSURE_HASH
+DREGG_CLOSURE_MODULES=$LOCAL_DREGG_CLOSURE_MODULES
+ASSET=$ASSET
+SHA256=$installed_sha
+TAG=$TAG
+FETCHED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+echo "    wrote the current-source evidence record → $PROV (key $LOCAL_KEY)"
 
 say "DONE — verified Lean seed installed ($(du -h "$DEST" | cut -f1 | tr -d ' '))."
 cat <<EOF
