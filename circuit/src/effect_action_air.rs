@@ -203,10 +203,14 @@ impl EffectActionSchema {
 /// `< 2^16 << p`, so `BabyBear::new` never reduces and two distinct u64s
 /// never share a limb vector. `encode_amount_is_injective` is the tooth.
 ///
-/// ⚠ NO LONGER the same encoding as `bridge_action_witness::encode_amount`,
-/// which is still the 2x32-bit split and carries the same defect. That AIR
-/// is a separate family with its own witness/PI surface; it is named here so
-/// the divergence is visible rather than discovered.
+/// ⚑ `bridge_action_witness::encode_amount` was the 2 × 32-bit split carrying
+/// this same defect when this note was first written; it took the identical
+/// repair later the same day (`BRIDGE_ACTION_WIDTH` 26 → 28), so the two
+/// families now agree on `AMOUNT_LIMBS = 4` at `AMOUNT_LIMB_BITS = 16`. The
+/// pigeonhole that forced it — two BabyBear felts cannot injectively carry a
+/// u64, `p² < 2^64` — is a named theorem on both sides
+/// (`BridgeActionEmit.two_felts_cannot_carry_a_u64`,
+/// `bridge_action_witness::tests::two_felts_cannot_carry_a_u64`).
 pub fn encode_amount(amount: u64) -> [BabyBear; AMOUNT_LIMBS] {
     let mut out = [BabyBear::ZERO; AMOUNT_LIMBS];
     for (i, slot) in out.iter_mut().enumerate() {
@@ -354,13 +358,17 @@ impl EffectActionAir {
 /// ⚑ **THE LEAN DIVERGENCE — this function never reads `schema.algebraic`.**
 /// The Lean author of this same descriptor
 /// (`Dregg2.Circuit.Emit.EffectActionBindingEmit.burnDesc`) is
-/// `contGates 17 ++ piGates 16 ++ burnGates` = 38 constraints, byte-pinned by
-/// `#guard emitVmJson2 burnDesc == …` and carrying five PROVEN Base gates
-/// (the two limb equations, borrow booleanity, and the two disclosure pins).
-/// The two families below are 33. So for `SCHEMA_BURN` the Rust construction is
-/// STRICTLY WEAKER than the Lean object it is supposed to be: the borrow aux
-/// column at `pi_count()` rides completely free — no constraint reads it, and it
-/// is past the PI surface so nothing compares it either. The house law says these
+/// `contGates 27 ++ piGates 24 ++ burnGates` = 62 constraints, byte-pinned by
+/// `#guard emitVmJson2 burnDesc == …` and carrying ELEVEN PROVEN Base gates
+/// (the four-limb borrow chain, three borrow-booleanity gates, and four
+/// disclosure pins).
+/// The two families below are 51. So for `SCHEMA_BURN` the Rust construction is
+/// STRICTLY WEAKER than the Lean object it is supposed to be: the three borrow
+/// aux columns at `pi_count()..+3` ride completely free — no constraint reads
+/// them, and they are past the PI surface so nothing compares them either. So
+/// none of `burn_chain_exact`, `burn_no_underflow` or the `was_burn` disclosure
+/// pins is in the descriptor THIS function builds; `burn_air_conservation_gap.rs`
+/// is the falsifier that keeps that measured. The house law says these
 /// constraints are AUTHORED IN LEAN and Rust only calls the emitted artifact; the
 /// standing repair is to route Burn through the Lean-emitted JSON the way
 /// `descriptor_by_name` already routes every predicate descriptor

@@ -885,15 +885,17 @@ pub fn prove_claim_binding_node_segmented(
 // ============================================================================
 // THE BRIDGE-ACTION FOLD-WIRE (mechanism + caller READY; the deployed-leg tuple emit is the named
 // big-bang piece). The bridge analog of the custom fold-wire above: bind the bridge-mint leg's
-// CLAIMED 26-slot full-fidelity tuple `(nullifier, recipient, dest_federation, amount)` to the
+// CLAIMED 28-slot full-fidelity tuple `(nullifier, recipient, dest_federation, amount)` to the
 // RE-PROVEN bridge-action sub-proof's GENUINE in-circuit tuple, INSIDE the recursion tree a pure
-// light client folds — so a re-executing validator's off-AIR `verify_bridge_action` is no longer
-// the ONLY enforcer.
+// light client folds.
 // ============================================================================
 //
-// The bridge-action binding is today verified OFF-AIR by `turn::executor::apply::apply_bridge_mint`
-// (`verify_bridge_action` over the typed limbs). A PURE LIGHT CLIENT folding only the recursion tree
-// never witnesses it. This fold-wire binds it IN the tree, EXACTLY mirroring the custom wire:
+// ⚠ CORRECTED 2026-08-06. These lines said the binding "is today verified OFF-AIR by
+// `turn::executor::apply::apply_bridge_mint` (`verify_bridge_action` over the typed limbs)", making
+// this wire read as a second witness to a live check. `verify_bridge_action` does not exist anywhere
+// in the tree; `apply_bridge_mint` verifies the note-spend leaf over the COMPRESSED felts. So the
+// 28-slot tuple has NO enforcer today, off-AIR or in it. This fold-wire binds it IN the tree,
+// EXACTLY mirroring the custom wire:
 //   * the bridge-mint leg leaf RE-EXPOSES its CLAIMED tuple (segment ++ the 26 limbs) —
 //     [`prove_bridge_binding_node_segmented`] consumes a DUAL-EXPOSE leg leaf whose `expose_claim`
 //     carries the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` AND the claimed tuple in lanes

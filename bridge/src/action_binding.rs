@@ -29,8 +29,16 @@
 //!
 //! The sibling AIR in `dregg_circuit::bridge_action_witness` carries the full
 //! 32 bytes of each hash field (8 limbs × 4 bytes) and the full 64 bits of
-//! amount (low 32 + high 32). This module is the bridge-side seam that
-//! produces and consumes those proofs.
+//! amount (4 × 16-bit limbs, INJECTIVE — it was 2 × 32-bit and therefore
+//! colliding until 2026-08-06; see that module's flag-day note). This module is
+//! the bridge-side seam that produces and consumes those proofs.
+//!
+//! ⚠ **What this seam does NOT establish.** The 28-slot tuple is PROVER-CHOSEN:
+//! `create_action_binding` will mint a verifying proof for any parameters at
+//! all. `Dregg2/Circuit/BridgeBindingFromFold.lean` refuses this AIR as a
+//! bridge-mint backing for exactly that reason. A verifying
+//! `PortableActionBinding` is evidence that the prover committed to these
+//! bytes — not that the burn it describes happened.
 //!
 //! # Combined-proof shape
 //!

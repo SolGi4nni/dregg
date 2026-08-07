@@ -7,7 +7,13 @@
 //! `bridge_lock_action_air`) that pins every typed parameter of one
 //! runtime `Effect` at full fidelity:
 //!   - 32-byte fields as 8 × 4-byte BabyBear limbs (~248-bit binding)
-//!   - u64 amounts as 2 × 32-bit limbs (full 64-bit binding)
+//!   - u64 amounts as 4 × 16-bit limbs (full 64-bit binding, INJECTIVELY)
+//!
+//! ⚑ The amount limbs were 2 × 32-bit until 2026-08-06. That was not a binding:
+//! `BabyBear::new` reduces and `p < 2^32`, so `lo = 0` and `lo = p` were one
+//! cell. Two felts cannot injectively carry a u64 at all (`p² < 2^64`), so the
+//! repair was to widen, in both AIR families
+//! (`effect_action_air::AMOUNT_LIMBS`, `bridge_action_witness::AMOUNT_LIMBS`).
 //!
 //! # Why a sidecar?
 //!

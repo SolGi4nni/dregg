@@ -64,23 +64,25 @@ set_option autoImplicit false
 
 /-! ## §1 — The authored functional spec: the typed bridge-action tuple + the binding relation. -/
 
-/-- The typed bridge-action tuple the binding AIR computes over: the 8/8/8/2 identity layout of
-`bridge_action_air.rs` (nullifier ‖ recipient ‖ destination_federation ‖ amount_lo ‖ amount_hi). -/
+/-- The typed bridge-action tuple the binding AIR computes over: the 8/8/8/4 identity layout of
+`bridge_action_witness.rs` (nullifier ‖ recipient ‖ destination_federation ‖ 4-limb amount).
+
+⚑ The amount is FOUR 16-bit limbs, not two 32-bit ones (2026-08-06). Two BabyBear felts cannot
+injectively carry a u64 — `p² < 2^64`, `BridgeActionEmit.two_felts_cannot_carry_a_u64` — so the
+retired shape's `amountLo ‖ amountHi` named a tuple that two distinct amounts shared. -/
 structure BridgeAction where
   nullifier      : Fin 8 → ℤ
   recipient      : Fin 8 → ℤ
   destFederation : Fin 8 → ℤ
-  amountLo       : ℤ
-  amountHi       : ℤ
+  amount         : Fin 4 → ℤ
 
-/-- Decode an assignment's identity-layout columns `0..25` into the typed tuple (the same decode the
+/-- Decode an assignment's identity-layout columns `0..27` into the typed tuple (the same decode the
 public inputs and every trace row are read through — `pi_index == col`). -/
 def BridgeAction.decodeAt (a : Assignment) : BridgeAction :=
   { nullifier      := fun j => a j.val
   , recipient      := fun j => a (8 + j.val)
   , destFederation := fun j => a (16 + j.val)
-  , amountLo       := a 24
-  , amountHi       := a 25 }
+  , amount         := fun j => a (24 + j.val) }
 
 /-- A row BINDS the published tuple: every one of the 26 typed columns is congruent (mod `p`, the
 deployed BabyBear field constraint) to the published input. The identity-layout face of "this row
@@ -103,8 +105,7 @@ def BridgeAction.ModEq (x y : BridgeAction) : Prop :=
   (∀ j : Fin 8, x.nullifier j ≡ y.nullifier j [ZMOD 2013265921])
   ∧ (∀ j : Fin 8, x.recipient j ≡ y.recipient j [ZMOD 2013265921])
   ∧ (∀ j : Fin 8, x.destFederation j ≡ y.destFederation j [ZMOD 2013265921])
-  ∧ x.amountLo ≡ y.amountLo [ZMOD 2013265921]
-  ∧ x.amountHi ≡ y.amountHi [ZMOD 2013265921]
+  ∧ (∀ j : Fin 4, x.amount j ≡ y.amount j [ZMOD 2013265921])
 
 /-- The typed face of `BridgeRowBinds`: a binding row DECODES to a `BridgeAction` congruent (mod `p`,
 componentwise) to the published inputs — the functional-correctness statement made explicit over the
@@ -112,12 +113,11 @@ typed tuple. -/
 theorem carriesTuple_decode (row pub : Assignment) (h : BridgeRowBinds row pub) :
     BridgeAction.ModEq (BridgeAction.decodeAt row) (BridgeAction.decodeAt pub) := by
   simp only [BridgeRowBinds, BRIDGE_ACTION_WIDTH] at h
-  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
   · intro j; exact h j.val (by have := j.isLt; omega)
   · intro j; exact h (8 + j.val) (by have := j.isLt; omega)
   · intro j; exact h (16 + j.val) (by have := j.isLt; omega)
-  · exact h 24 (by omega)
-  · exact h 25 (by omega)
+  · intro j; exact h (24 + j.val) (by have := j.isLt; omega)
 
 /-! ## §2 — The per-constraint reductions (the STABLE surface to the two gate families). -/
 

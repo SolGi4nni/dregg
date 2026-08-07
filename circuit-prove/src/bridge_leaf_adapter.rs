@@ -3,15 +3,17 @@
 //!
 //! ## What this closes
 //!
-//! Today a bridge mint's foreign note-spend binding is a bespoke
-//! [`dregg_circuit::bridge_action_witness::BridgeActionAir`] STARK, verified OFF-AIR
-//! by [`turn::executor::apply::apply_bridge_mint`] (it calls
-//! `verify_bridge_action` and compares the typed limbs). A re-executing validator
-//! runs that off-AIR verify, but a PURE LIGHT CLIENT (one that only folds the
-//! per-turn recursion tree) never witnesses the 26-slot full-fidelity binding —
-//! it sees only the substrate `BridgeMint` row's compressed `value_lo`. The bridge
-//! action binding is one of the legs whose soundness a light client cannot
-//! currently see.
+//! ⚠ **CORRECTED 2026-08-06 — the enforcer this module was built beside NO LONGER
+//! EXISTS.** These docs used to say a bridge mint's binding is "verified OFF-AIR by
+//! `turn::executor::apply::apply_bridge_mint`, which calls `verify_bridge_action`".
+//! There is no `verify_bridge_action` anywhere in the tree; `apply_bridge_mint`
+//! verifies the note-spend leaf (`dregg-note-spending-dsl-v3`) instead. So the
+//! `BridgeActionAir` binding has NO deployed enforcer at all — it is a shadow with
+//! nothing behind it, not a shadow of a live off-AIR check.
+//!
+//! What remains true: a PURE LIGHT CLIENT (one that only folds the per-turn
+//! recursion tree) never witnesses the 28-slot full-fidelity binding — it sees only
+//! the substrate `BridgeMint` row's compressed `value_lo`.
 //!
 //! This module adapts the `BridgeActionAir`'s boundary + transition constraints
 //! into an [`EffectVmDescriptor2`] (the EPOCH multi-table grammar), proves it
@@ -80,9 +82,9 @@
 //!    `BridgeMint` row's value/recipient columns inside the EffectVM AIR (the way
 //!    the custom leg's `proof_bind` column would equate the custom commitment), so
 //!    the SAME aggregate fold ties the full-fidelity binding to the deployed mint.
-//!    Until that lands, [`turn::executor::apply::apply_bridge_mint`]'s off-AIR
-//!    `verify_bridge_action` remains the deployed enforcer; this leaf is its
-//!    light-client-witnessable shadow.
+//!    ⚠ Until that lands there is NO deployed enforcer of this binding — see the
+//!    correction at the top of this file. `apply_bridge_mint`'s enforcement is the
+//!    note-spend leaf, which binds the COMPRESSED felts, not this 28-slot tuple.
 
 use dregg_circuit::bridge_action_witness::{
     BRIDGE_ACTION_PI_COUNT, BRIDGE_ACTION_WIDTH, BridgeActionAir, BridgeActionWitness,

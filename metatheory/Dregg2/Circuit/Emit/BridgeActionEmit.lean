@@ -4,38 +4,38 @@
 ## What this file IS
 
 A table-free `EffectVmDescriptor2` that emits, in the IR-v2 grammar, the *binding-only* statement of
-`circuit/src/bridge_action_air.rs::BridgeActionAir`: "a 26-column typed row
-(8-limb nullifier ‖ 8-limb recipient ‖ 8-limb destination_federation ‖ amount_lo ‖ amount_hi) is
-pinned to the 26 public inputs, and replicated identically across the FRI power-of-2 padding".
+`circuit/src/bridge_action_witness.rs::BridgeActionAir`: "a 28-column typed row
+(8-limb nullifier ‖ 8-limb recipient ‖ 8-limb destination_federation ‖ 4-limb amount) is
+pinned to the 28 public inputs, and replicated identically across the FRI power-of-2 padding".
 
-The hand AIR (`bridge_action_air.rs`) enforces EXACTLY two constraint families — nothing else (no
-range decomposition, no in-AIR hashing; the felts are bound directly):
+The hand AIR (`bridge_action_witness.rs`) enforces EXACTLY two constraint families — nothing else
+(no range decomposition, no in-AIR hashing; the felts are bound directly):
 
-  * `boundary_constraints` (`:304`): `row0[col c] == public_inputs[c]` for every column `c ∈ 0..26`
-    (`:317-343`, the 8/8/8/2-limb layout). PI layout is identity (`pi_index == col`).
+  * `boundary_constraints`: `row0[col c] == public_inputs[c]` for every column `c ∈ 0..28`
+    (the 8/8/8/4-limb layout). PI layout is identity (`pi_index == col`).
       → `Base(PiBinding{ row := First, col := c, pi_index := c })`  (the first-row carrier evaluated
         by the IR-v2 main AIR at `descriptor_ir2.rs:2173-2177`).
-  * `eval_constraints` (`:281-302`): every column is constant across rows, `next[c] − local[c] == 0`
-    for all 26 columns, RLC-folded over `alpha` (the "1 typed row replicated for FRI padding" glue,
+  * `eval_constraints`: every column is constant across rows, `next[c] − local[c] == 0`
+    for all 28 columns, RLC-folded over `alpha` (the "1 typed row replicated for FRI padding" glue,
     so a prover cannot bind one tuple in row 0 and a different one in a padding row).
       → `WindowGate{ body := Nxt(c) + (−1)·Loc(c), on_transition := true }`  (fired on the transition
         domain by the IR-v2 main AIR at `descriptor_ir2.rs:2222-2224`). The `alpha`-RLC is the
         prover's own random-linear-combination of these per-column zero constraints — one WindowGate
         per column IS that family, term-for-term.
 
-The `BRIDGE_ACTION_PI_COUNT != 26` guard (`:311-316`) and the `encode_hash`/`encode_amount` limb
-reduction (`:126-141`) are NOT per-row AIR constraints: the first is subsumed by
-`public_input_count = 26` (the general IR-v2 prover fixes the PI count at descriptor level), the
-second is OFF-AIR witness/PI encoding done in Rust (the felts are bound directly, not decomposed).
-There is therefore NO tooth living in a verifier wrapper to preserve — the whole binding is the two
-emitted families.
+The `BRIDGE_ACTION_PI_COUNT != 28` guard and the `bytes32_to_8_limbs`/`encode_amount` limb encoding
+are NOT per-row AIR constraints: the first is subsumed by `public_input_count = 28` (the general
+IR-v2 prover fixes the PI count at descriptor level), the second is OFF-AIR witness/PI encoding done
+in Rust (the felts are bound directly, not decomposed). There is therefore NO tooth living in a
+verifier wrapper to preserve — the whole binding is the two emitted families. ⚠ That is exactly why
+the ENCODER's injectivity is load-bearing and is stated as a theorem in §1 rather than assumed.
 
 This descriptor is the byte-identical Lean twin of the already-proven Rust builder
 `circuit-prove/src/bridge_leaf_adapter.rs::bridge_action_to_descriptor2` (proven total/always-`Ok`,
 folded through `prove_vm_descriptor2_for_config`). The gate
 (`circuit-prove/tests/bridge_action_emit_gate.rs`) decodes the byte-pinned `emitVmJson2` string
 below, asserts it EQUALS both an independently hand-built descriptor AND
-`bridge_action_to_descriptor2()`, proves an HONEST 26-slot witness through the REAL
+`bridge_action_to_descriptor2()`, proves an HONEST 28-slot witness through the REAL
 `prove_vm_descriptor2` / `verify_vm_descriptor2` (ACCEPT), and mutation-canaries a forged PI (→ the
 `PiBinding` boundary tooth) and a broken-continuity padding row (→ the `WindowGate` transition tooth)
 to real UNSAT.
@@ -52,8 +52,10 @@ soundness change to the deployed bridge.
 ## Axiom hygiene
 
 Definitional descriptor + a byte-pinned `#guard` on its wire string + one genuinely-proven,
-non-vacuous semantic lemma (`cont_body_zero_iff`, TRUE iff a column chains, FALSE otherwise).
-`#assert_axioms cont_body_zero_iff` (pure `omega`). NEW file; imports read-only.
+non-vacuous semantic lemma (`cont_body_zero_iff`, TRUE iff a column chains, FALSE otherwise), plus
+the four amount-encoding facts of §1 (`amount_limbs_cover_u64`, `amount_limb_fits_felt`,
+`two_felts_cannot_carry_a_u64`, `four_limbs_carry_u64_exactly`), all `by decide`.
+`#assert_axioms` on each. Imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.GateExpr
@@ -67,11 +69,69 @@ open Dregg2.Circuit.DescriptorIR2
 
 set_option autoImplicit false
 
-/-! ## §1 — Shape constants (mirror `bridge_action_air.rs`). -/
+/-! ## §1 — Shape constants (mirror `bridge_action_witness.rs`).
 
-/-- Trace width AND PI count: 8 (nullifier) + 8 (recipient) + 8 (destination_federation) + 2
-(amount lo/hi) = 26. Both `BRIDGE_ACTION_WIDTH` and `BRIDGE_ACTION_PI_COUNT`. -/
-def BRIDGE_ACTION_WIDTH : Nat := 26
+## ⚑ THE FLAG DAY THIS SECTION IS (2026-08-06): two felts cannot carry a u64
+
+Until this commit the amount rode TWO 32-bit limbs reduced by `BabyBear::new`. `p = 2013265921 <
+2^32`, so `lo = 0` and `lo = p` were the same cell and `encode_amount 0 = encode_amount p` — a
+"full-fidelity binding" that collided on the amount, one ADDITION away, not a search.
+
+⚑ **No coefficient or reduction change could have repaired it, and that is a theorem.** Two felts
+index `p² = 4053239737456637441` pairs and a u64 has `2^64 = 18446744073709551616` values, so by
+pigeonhole EVERY two-felt encoding of a u64 collides (`two_felts_cannot_carry_a_u64`). The only
+repair is to WIDEN, and the width the tree already uses for this exact fact is `AMOUNT_LIMBS = 4`
+at `AMOUNT_LIMB_BITS = 16`: `4·16 = 64` exactly, and `2^16 < p` so no limb is ever reduced
+(`amount_limb_fits_felt`). This is the same repair and the same width
+`EffectActionBindingEmit`/`EffectVmEmitBurn`/`CrossCellConservation` carry.
+
+⚠ **What re-emits / refuses to load.** `BRIDGE_ACTION_WIDTH` 26 → 28, so the descriptor grows to 28
+PI slots and 56 constraints; the `#guard` golden below, `circuit/descriptors/by-name/bridge-action.json`,
+and `scripts/descriptor-anchor-inertness-baseline.txt`'s row all move with it. Every
+previously-minted binding fails `verify_vm_descriptor2` on the PI count — it cannot be
+reinterpreted, only rejected.
+
+⚑ **The limb widths are OFF-AIR, and that is sound here for a reason worth naming.** No range gate
+pins a limb to `[0, 2^16)`, and none is needed: every one of the 28 columns is `piBinding`-pinned to
+a PUBLIC INPUT, and the verifier constructs that PI vector itself by applying `encode_amount` to its
+own u64 (`bridge/src/action_binding.rs::verify_action_binding`). A prover therefore has no freedom
+over the limbs at all — the injectivity that matters is the ENCODER's, and it is total and
+invertible (`decode_amount`). Contrast `EffectActionBindingEmit`'s burn chain, where the limbs feed
+ARITHMETIC gates and `BurnLimbsCanonical` is consequently a real, refutable floor
+(`burnLimbsCanonical_is_load_bearing`). -/
+
+/-- Bits per amount limb — the width at which a limb never reaches `p`. Mirrors
+`bridge_action_witness::AMOUNT_LIMB_BITS` and `EffectActionBindingEmit.LIMB_BITS`. -/
+def AMOUNT_LIMB_BITS : Nat := 16
+
+/-- Limbs per u64 amount: `4 · 16 = 64`, exact — no truncation, no wasted capacity. -/
+def AMOUNT_LIMBS : Nat := 4
+
+theorem amount_limbs_cover_u64 : AMOUNT_LIMBS * AMOUNT_LIMB_BITS = 64 := by decide
+
+/-- Each 16-bit limb is strictly below the felt modulus, so `BabyBear::new` never reduces it —
+the structural reason the four-limb encoding is injective at all. -/
+theorem amount_limb_fits_felt : 2 ^ AMOUNT_LIMB_BITS < 2013265921 := by decide
+
+/-- ⚑ **THE PIGEONHOLE.** Two BabyBear felts carry strictly fewer values than a u64, so NO injective
+`u64 → felt × felt` exists. This is the theorem that made the retired two-limb encoding
+unrepairable in place rather than merely badly chosen. -/
+theorem two_felts_cannot_carry_a_u64 : 2013265921 * 2013265921 < 2 ^ 64 := by decide
+
+/-- …and four 16-bit limbs carry a u64 EXACTLY: the recomposition is onto `[0, 2^64)`, with no
+slack a second u64 could hide in. -/
+theorem four_limbs_carry_u64_exactly : (2 ^ AMOUNT_LIMB_BITS) ^ AMOUNT_LIMBS = 2 ^ 64 := by decide
+
+/-- Trace width AND PI count: 8 (nullifier) + 8 (recipient) + 8 (destination_federation) + 4
+(amount limbs) = 28. Both `BRIDGE_ACTION_WIDTH` and `BRIDGE_ACTION_PI_COUNT`. Kept a LITERAL so
+every downstream `omega`/`decide` over a column index sees a number; the derivation from the layout
+is `width_is_three_hashes_and_the_amount`. -/
+def BRIDGE_ACTION_WIDTH : Nat := 28
+
+/-- The width IS the layout: three 8-limb hashes plus the amount limbs. A change to
+[`AMOUNT_LIMBS`] that is not carried into the width breaks THIS, not a comment. -/
+theorem width_is_three_hashes_and_the_amount :
+    BRIDGE_ACTION_WIDTH = 3 * 8 + AMOUNT_LIMBS := by decide
 
 /-! ## §2 — The two constraint families (boundary pins · transition continuity). -/
 
@@ -119,7 +179,7 @@ THE EQUALITY-GATE ANCHOR: this exact string is embedded verbatim in
 the Rust `assert_eq!(decoded, hand_built)`. -/
 
 #guard emitVmJson2 bridgeActionDesc ==
-  "{\"name\":\"bridge-action-leaf::bridge_action_air_v1\",\"ir\":2,\"trace_width\":26,\"public_input_count\":26,\"challenges\":0,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":19},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":20},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":21},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":22},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":23,\"pi_index\":23},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":24,\"pi_index\":24},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":25,\"pi_index\":25},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":3}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":4}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":6}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":7},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":7}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":8}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":9},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":9}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":10}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":11}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":12},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":12}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":13},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":13}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":14}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":15},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":15}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":16},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":16}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":17},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":17}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":18},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":18}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":19},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":19}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":20},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":20}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":21},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":21}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":22},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":22}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":23},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":23}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":24},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":24}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":25},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":25}}}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"bridge-action-leaf::bridge_action_air_v1\",\"ir\":2,\"trace_width\":28,\"public_input_count\":28,\"challenges\":0,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":19},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":20},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":21},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":22},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":23,\"pi_index\":23},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":24,\"pi_index\":24},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":25,\"pi_index\":25},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":26,\"pi_index\":26},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":27,\"pi_index\":27},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":3}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":4}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":6}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":7},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":7}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":8}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":9},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":9}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":10}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":11}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":12},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":12}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":13},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":13}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":14}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":15},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":15}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":16},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":16}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":17},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":17}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":18},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":18}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":19},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":19}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":20},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":20}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":21},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":21}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":22},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":22}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":23},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":23}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":24},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":24}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":25},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":25}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":26},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":26}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":27},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":27}}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — A genuinely-proven, non-vacuous semantic lemma (the continuity tooth).
 
@@ -156,5 +216,10 @@ def envBroken : VmRowEnv :=
 #guard windowGates.length == BRIDGE_ACTION_WIDTH
 
 #assert_axioms cont_body_zero_iff
+#assert_axioms amount_limbs_cover_u64
+#assert_axioms width_is_three_hashes_and_the_amount
+#assert_axioms amount_limb_fits_felt
+#assert_axioms two_felts_cannot_carry_a_u64
+#assert_axioms four_limbs_carry_u64_exactly
 
 end Dregg2.Circuit.Emit.BridgeActionEmit

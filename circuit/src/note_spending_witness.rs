@@ -89,8 +89,14 @@
 //! at full 32-byte fidelity on (nullifier, recipient, destination_federation)
 //! and at full 64-bit fidelity on amount. The sibling AIR
 //! `crate::bridge_action_witness::BridgeActionAir` provides exactly that: 8 limbs
-//! per 32-byte field and 2 limbs (low+high 32) for u64 amount. A complete
-//! bridge presentation now carries BOTH proofs.
+//! per 32-byte field and 4 × 16-bit limbs for the u64 amount. ⚑ It was 2 × 32-bit
+//! until 2026-08-06, which was not "full fidelity" at all — `p < 2^32`, so
+//! `BabyBear::new` reduced and `amount` collided with `amount + p`. Two felts
+//! cannot injectively carry a u64 (`p² < 2^64`); see that module's flag-day note.
+//!
+//! ⚠ The companion binds the prover's CLAIMED tuple; it does not attest that the
+//! spend happened. That is this AIR's job, and `BridgeBindingFromFold.lean`
+//! refuses the companion as a bridge-mint backing on its own.
 
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_4_to_1, hash_many};
