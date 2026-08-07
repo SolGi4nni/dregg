@@ -398,8 +398,17 @@ GATES=(
   "no-disarmed-guard|240|bash scripts/check-no-disarmed-guard.sh --rev HEAD"
   "no-disarmed-guard-red|120|bash scripts/check-no-disarmed-guard.sh --self-test"
   "lean-seed-freshness|120|bash scripts/check-lean-seed-freshness.sh"
-  # `lean-seed-freshness` compares a TREE HASH recorded in the pin. It says nothing about
-  # what is IN the archive, and a seed can match the pin and still be missing every verified
+  # ⚑ EXPECTED RED until a seed is cut under the closure key (2026-08-07 cutover).
+  # `lean-seed-freshness` now compares the pin's `DREGG_CLOSURE_HASH` — the `Dregg2.FFI`
+  # boundary closure, the set the archive actually holds — against this checkout's, both from
+  # `scripts/lean-seed-key.sh`. The pin's field is EMPTY right now, which means no published
+  # asset is reachable by name for any checkout, so this row fails with that message.
+  # OWNER: `.github/workflows/lean-seed.yml` (workflow_dispatch-only, deliberately).
+  # CLEAR IT: `gh workflow run lean-seed.yml -f platforms=linux-x86_64`, then write the printed
+  # `DREGG_CLOSURE_HASH` into `dregg-lean-ffi/lean-seed.pin`. Do NOT silence the row instead —
+  # an empty pin is MAXIMAL drift, and reading it as "no drift" is the eleven-day stale seed
+  # this gate exists to have caught.
+  # It still says nothing about what is IN the archive, and a seed can match the pin and still be missing every verified
   # decision export. Measured 2026-07-30 (issue #41): the seed installed in this checkout
   # carried 188 `Dregg2_*.o` against a 243-module boundary closure — 55 in-tree modules
   # absent, and no `Dregg2_FFI.o` — while reporting ZERO undefined initializers, because the
