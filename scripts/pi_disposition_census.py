@@ -18,10 +18,11 @@ that slot is reading the producer's word.
 
 "Unpinned in these two registries" is NOT "nothing reads it", and reading the
 table as if it were cost a lane a whole VK rotation on a false premise.
-`docs/PI-DISPOSITION.md` Sec.6 declared `EFFECTS_HASH_GLOBAL` (v1 offsets 37..40)
-dead -- "is there a reader? none" -- off exactly this table's zero.  It is not
-dead.  Those four felts are the declared storage of `sched::EFFECTS_HASH_GLOBAL`
-inside the 49-felt bilateral-schedule contract window `inner_pi[33, 82)`, which
+`docs/PI-DISPOSITION.md` Sec.6 declared `EFFECTS_HASH_GLOBAL` (then at v1 offsets
+37..40, now 30..33) dead -- "is there a reader? none" -- off exactly this table's
+zero.  It is not dead.  Those four felts are the declared storage of
+`sched::EFFECTS_HASH_GLOBAL` inside the 49-felt bilateral-schedule contract
+window `inner_pi[TURN_HASH_BASE, +49)`, which
 `bilateral_aggregation_air::schedule_block_from_inner_pi` projects (host-side)
 into the DEPLOYED `dregg-bilateral-aggregation-v3` main trace at cols 4..7 --
 where they are FORCED by four `window_gate` transitions (equal on every row) and
@@ -43,12 +44,42 @@ before you delete a slot.
 Run:  python3 scripts/pi_disposition_census.py
       python3 scripts/pi_disposition_census.py --json      (machine-readable)
 
-The slot names below are the ROTATED PI WINDOW: indices 0..41 are the v1 prefix
-(`trace_rotated::V1_PI_COUNT = 42`, itself `pi::ACTOR_NONCE + 1`), 42..45 the
+The slot names below are the ROTATED PI WINDOW: indices 0..34 are the v1 prefix
+(`trace_rotated::V1_PI_COUNT = 35`, itself `pi::ACTOR_NONCE + 1`), 35..38 the
 four appended rotated pins, and everything past that is the per-effect / dsl-rc /
 wide tail, which varies per member and is reported as one bucket.
+
+(Those were 0..41 / 42..45 until the 2026-08-07 seven-slot compaction.)
 """
 import json, sys, collections
+
+# -- SCOPE - this pair is the ONLY copy; it prints on every run, pass or fail. ---------
+SCOPE_ANSWERS = (
+    "for the descriptors packed into circuit/descriptors/rotation-wide-registry-staged.tsv "
+    "and circuit/descriptors/rotation-v3-staged-registry.tsv -- those TWO registries and "
+    "nothing else -- how many members carry a `pi_binding` constraint on each PI index, and "
+    "do the hand-written PROJECTIONS rows still find their declared columns pinned by a "
+    "`pi_binding` and read by some non-pin constraint in the emitted descriptor JSON each "
+    "row names?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether anything reads a PI slot. A zero in `felts-bound` with a blank `proj-read` "
+    "means only that no constraint in those two registries binds that index and that no row "
+    "of the PROJECTIONS table below declares it -- every descriptor outside the two "
+    "registries, every host-side projector, every Rust or Lean reader, and every projection "
+    "nobody has measured and added to that table is invisible here. It is never evidence "
+    "that a slot is dead; that reading cost a VK rotation on a false premise."
+)
+SCOPE_ANSWERS_SELFTEST = (
+    "on a throwaway copy of the projection descriptors, does check_projections pass "
+    "unmutated and then REFUSE once every non-pin constraint touching a declared forced "
+    "column is deleted?"
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "anything about the tree. It proves the projection leg can still fire; it never runs the "
+    "registry census, so it says nothing about whether any PI slot is bound, read, or safe "
+    "to touch."
+)
 
 # ---- the v1/v2 PI layout, computed exactly as circuit/src/effect_vm/pi.rs does ----
 L = []          # (name, base, len)
@@ -59,8 +90,10 @@ def slot(name, ln=1):
 slot("OLD_COMMIT", 8); slot("NEW_COMMIT", 8); slot("EFFECTS_HASH", 4)
 slot("INIT_BAL_LO"); slot("INIT_BAL_HI"); slot("FINAL_BAL_LO"); slot("FINAL_BAL_HI")
 slot("NET_DELTA_MAG"); slot("NET_DELTA_SIGN")
-slot("CURRENT_BLOCK_HEIGHT"); slot("MAX_CUSTOM_EFFECTS"); slot("CUSTOM_EFFECT_COUNT")
-slot("APPROVED_HANDOFFS", 4)
+# ⚑ CURRENT_BLOCK_HEIGHT · MAX_CUSTOM_EFFECTS · CUSTOM_EFFECT_COUNT · APPROVED_HANDOFFS[4]
+# stood here (v1 offsets 26..32) and were DELETED on 2026-08-07: 0 pi_bindings on all 117
+# deployed members, no verifier comparison, and the one off-circuit reader class now derives
+# its count from the PI vector's own length.  docs/PI-DISPOSITION.md Sec.6.
 slot("TURN_HASH", 4)
 slot("EFFECTS_HASH_GLOBAL", 4)
 slot("ACTOR_NONCE")
@@ -84,11 +117,11 @@ slot("EMIT_EVENT_COUNT"); slot("EMIT_EVENT_TOPIC_HASH", 8); slot("EMIT_EVENT_PAY
 slot("FEDERATION_ID", 4); slot("OWNER_CELL_ID", 4)
 slot("NOTESPEND_NULLIFIER"); slot("NOTECREATE_COMMITMENT"); slot("BURN_TARGET_PI")
 BASE_COUNT = L[-1][1] + L[-1][2]
-assert BASE_COUNT == 209, BASE_COUNT
+assert BASE_COUNT == 202, BASE_COUNT
 slot("v3::COMMITTED_HEIGHT"); slot("v3::RATE_BOUND_TAG"); slot("v3::CHALLENGE_WINDOW_TAG"); slot("v3::ASSET_CLASS")
-assert L[-1][1] == 212
+assert L[-1][1] == 205
 
-V1_PI_COUNT = 42
+V1_PI_COUNT = 35
 ROT_TAIL = ["rot::OLD_COMMIT", "rot::NEW_COMMIT", "rot::COMMITTED_HEIGHT", "rot::CAVEAT_COMMIT"]
 
 def slot_of(i):
@@ -113,13 +146,14 @@ def slot_of(i):
 PROJECTIONS = [
     {
         # `bilateral_aggregation_air.rs`: `SCHEDULE_PI_BASE == inner_pi::TURN_HASH_BASE
-        # == 33`, `sched::WIDTH == 49`, and `schedule_block_from_inner_pi` copies
-        # `inner_pi[33, 82)` into the aggregation main trace at cols [0, 49).
+        # == 26` (33 before the 2026-08-07 seven-slot compaction, which slid the window
+        # down INTACT), `sched::WIDTH == 49`, and `schedule_block_from_inner_pi` copies
+        # `inner_pi[26, 75)` into the aggregation main trace at cols [0, 49).
         # Pinned by `schedule_block_offsets_match_v1_pi_window` on the Rust side and
         # emitted from `EffectVmEmitBilateralAgg.lean` (`turnIdBindings`) on the Lean side.
         "name": "bilateral-schedule window -> dregg-bilateral-aggregation-v3",
         "descriptor": "circuit/descriptors/dregg-bilateral-aggregation-v3.json",
-        "src_base": 33,
+        "src_base": 26,
         "width": 49,
         # Cols the aggregation PINS to its own outer PI (turn hash 0..3,
         # effects-hash-global 4..7, actor nonce 8, previous-receipt hash 9..12).
@@ -303,8 +337,15 @@ REGISTRIES = [
 if __name__ == "__main__":
     import os, sys
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # `--json` writes a machine-readable document to stdout, so the banner goes to stderr
+    # THERE and only there; every other mode prints it on stdout like the sibling gates.
+    _scope = sys.stderr if "--json" in sys.argv else sys.stdout
     if "--self-test-projections" in sys.argv:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", file=_scope, flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", file=_scope, flush=True)
         sys.exit(self_test_projections(root))
+    print(f"ANSWERS:         {SCOPE_ANSWERS}", file=_scope, flush=True)
+    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", file=_scope, flush=True)
     ok, findings, proj_read = check_projections(root)
     if "--json" in sys.argv:
         out = {"projections_ok": ok, "projection_findings": findings,
