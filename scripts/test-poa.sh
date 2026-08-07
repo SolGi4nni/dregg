@@ -71,6 +71,16 @@ run python3 scripts/poa-design-gate.py \
 # curator's signed activation, so the assembler recomputes them and refuses.
 run python3 scripts/poa-galley-content.py check
 
+# Same class for the night watch: `poa/artifacts/night-watch/epoch-1/` is that
+# world's `content_root`.  The checker is the Lean emit driver itself in check
+# mode (no Python twin by design — the config codec and the Poseidon2 slot
+# commitment live in Lean), re-deriving every byte from the on-disk commitment;
+# no secret is needed to check.  Deleting the artifacts goes RED here rather
+# than silently un-worlding a signed activation.
+run env POA_NIGHT_WATCH_MODE=check \
+  POA_NIGHT_WATCH_OUT="$repo_root/poa/artifacts/night-watch/epoch-1" \
+  sh -c 'cd metatheory && exec lake env lean --run Dregg2/Games/PathOfAngels/NightWatchCampaignContentEmitMain.lean'
+
 run cargo nextest run --manifest-path poa-curator/Cargo.toml
 run node --test scripts/tests/poa-devnet-manifest.test.mjs
 run node --test scripts/tests/poa-follower-package.test.mjs
