@@ -83,6 +83,45 @@
 //! would refuse every honest proof. The anchor binds the **turn identity** instead, which every
 //! effect-vm leg publishes and the verifier takes as a required argument.
 //!
+//! ## ⚠⚠ AND THERE ARE SIX, NOT FOUR — the last two are NOT context conventions
+//!
+//! Added 2026-08-07 by DERIVING what the code decides (`file:line` for each leg below; this file's
+//! arms do not yet exhibit them, and building that gate is the first item of the follow-up — a
+//! documented cause is not a detected one). The four above are fields of `V9RotationContext`, so
+//! re-parameterising the context closes them. These two are not, and no context change reaches
+//! them:
+//!
+//! 5. **The fee.** `TurnExecutor::execute` debits `turn.fee` from the agent in PHASE 1
+//!    (`turn/src/executor/execute.rs:652-674`), BETWEEN the `pre_state_hash` snapshot (`:596-600`)
+//!    and the `post_state_hash` one. The node's classical commit-path prover threads no fee at all
+//!    (`node/src/turn_proving.rs` — the fee-aware wide route
+//!    `prove_wide_umem_welded_staged_with_fee` is reached only from the SDK sovereign path), so a
+//!    turn with `fee > 0` publishes an after-balance the executor's post-cell does not carry.
+//! 6. **The nonce accounting.** The executor bumps the agent's nonce ONCE PER TURN (phase 1, the
+//!    same block), and then again per `IncrementNonce` effect. The circuit VM ticks
+//!    `new_state.nonce += 1` ONCE PER NON-PADDING ROW (`circuit/src/effect_vm/trace.rs:683-1035`,
+//!    including its own `Effect::IncrementNonce` arm at `:811-814`). So an N-actor-effect turn
+//!    publishes `pre + N` where the executor commits `pre + 1 + #IncrementNonce`.
+//!
+//! ⚑ **Why these reach the published pair at all**: the wide generator's `fill_block` does not
+//! merely carry the producer's after-witness limbs — it OVERRIDES the AFTER block's welded
+//! `r0..r10` / `cap_root` from that row's own v1 state block
+//! (`circuit/src/effect_vm/trace_rotated.rs:2728-2736`), i.e. from `VM(pre, effects)`. The BEFORE
+//! block has no such gap: `initial_vm_state` is decoded from the BEFORE witness's own limbs
+//! (`RotationTurnWitness::before_cell_state`), so its weld is the identity and the published
+//! BEFORE commit IS `wire_commit_8_chip` over the before-cell's limbs — the standing differential
+//! `circuit/tests/effect_vm_wide_roundtrip.rs::assert_executor_anchor`.
+//!
+//! **Consequence for the alignment this file gates.** Converging the four fields makes the
+//! published BEFORE anchor equal `receipt.pre_state_hash` exactly — one committee-signed
+//! `expected_old_commit`. It does NOT make the AFTER anchor equal `receipt.post_state_hash`, and
+//! binding it as if it did would REFUSE every honest fee-bearing or multi-effect turn. So the
+//! endpoint serves the node's DERIVED pair for now
+//! (`node/src/api.rs::get_turn_anchor`'s `proof_state_commits`, exhibited in
+//! `node/tests/the_served_pair_binds_the_proofs_commitments.rs`), labelled as the node's claim
+//! rather than the committee's, and closing causes 5–6 means putting the fee and the executor's
+//! nonce rule INSIDE the proven transition — an AIR-level change, not a re-parameterisation.
+//!
 //! ## This test is a GATE, not a note
 //!
 //! It asserts the divergence, so aligning the two contexts (the real fix, priced in

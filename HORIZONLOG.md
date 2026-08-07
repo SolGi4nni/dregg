@@ -1,5 +1,96 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 7 (`x != x`) — the endpoint tooth gets a second value to bite on, and the four causes turn out to be **six**
+
+**⚠ FIRST, THE HONEST LABEL: THIS DID NOT BUILD, AND NOT BECAUSE OF ITSELF.** `dregg-circuit` is
+RED in the shared working tree — `circuit/src/effect_vm/trace_rotated.rs:3263`, `error[E0080]:
+evaluation panicked: "the TB weld appends exactly ONE turn-identity PI, at the first slot past
+rotateV3's 46"` — because the **PI-slot compaction lane** is mid-cutover with `V1_PI_COUNT` moved
+`42 → 35` (hence `ROT_PI_COUNT` 46 → 39) in an unstaged edit. Nothing downstream can produce an
+rlib, so `dregg-node`'s exhibit and the `discord-bot` workspace could not be checked. ⓘ What that
+red DOES establish: rustc reports const-eval failures **after** type checking, and the whole
+`dregg-circuit` compile emitted exactly **one** error and zero diagnostics naming
+`commit8_wire` — so the new module type-checks. Everything else here is UNVERIFIED and must be
+built by whoever picks it up. Reported, not touched: that file belongs to another lane.
+
+**WHAT THE DEFECT WAS.** `dregg_sdk::verify_full_turn_bound` takes `expected_old_commit` /
+`expected_new_commit` from its CALLER, and **no production surface had them**.
+`GET /api/turn/{h}/proof` served `{turn_hash, proof_len, proof_hex}`, so `discord-bot`'s
+`/proof turn` read the pair out of the artifact (`extract_commits`) and handed it back — both
+`CommitmentMismatch` teeth compared `x != x` and *structurally could not fire*.
+
+**WHAT LANDED.** The commit path already DERIVES that pair — `RotationTurnWitness::wide_commit_anchors`
+re-runs the wide generators over the executor's trusted pre-state and the turn's effects,
+generate-only, independent of the proof bytes, and `prove_and_verify_finalized_turn*` then gates
+publication on `verify_full_turn_bound` against exactly it. It existed for the length of one stack
+frame and was thrown away. It is now persisted (`full_turn_proof_anchors:{h}`, beside the proof
+bytes), served (`/api/turn/{h}/anchor` → `proof_state_commits` + `proof_commit_provenance`), and
+BOUND (`check_proof_hex` passes it; `extract_commits` is reporting-only and says so). ONE codec,
+`dregg_circuit::commit8_wire`, byte-identical to `Faithful8::to_bytes32` — two cargo workspaces, no
+twin.
+
+**⚑ THE REFUSAL IS STRUCTURAL, WHICH IS THE `cipherclerk` ANSWER.** Only the finalized commit path
+writes that key. A ledgerless producer cannot compute this chain's whole-ledger rotation context,
+so there is no honest pair for its artifacts — and `proof_commit_status: "absent"` makes
+`check_proof_hex` return **no verdict at all**, refusing *before* it decodes the bytes. Nobody has
+to remember to set a flag; there is simply nothing to serve. The parser separates ABSENT from
+MALFORMED so a broken server cannot hide behind the honest refusal.
+
+**⚑ AND SAY WHOSE CLAIM IT IS.** Node-derived, **not** committee-signed. A hostile NODE can still
+serve a forged artifact beside a matching forged pair; what it can no longer do is serve one whose
+own commitments contradict what its commit path derived. That rides in `proof_commit_provenance`,
+in `unbound_claims[0]`, and in the verdict text.
+
+**⚠⚠ THE BRIEF'S FOUR CAUSES ARE SIX, AND THE LAST TWO ARE NOT CONTEXT CONVENTIONS.** DERIVED from
+the code, not measured (building that gate is the first follow-up — a documented cause is not a
+detected one):
+
+5. **The fee.** The executor debits `turn.fee` in PHASE 1 (`turn/src/executor/execute.rs:652-674`),
+   *between* the `pre_state_hash` snapshot and the `post_state_hash` one. The node's classical
+   prover threads no fee at all — the fee-aware wide route is reached only from the SDK sovereign
+   path.
+6. **The nonce accounting.** The executor bumps the agent's nonce ONCE PER TURN (phase 1) plus once
+   per `IncrementNonce` effect; the VM ticks `new_state.nonce += 1` ONCE PER NON-PADDING ROW
+   (`circuit/src/effect_vm/trace.rs:683-1035`). An N-actor-effect turn publishes `pre + N` where
+   the executor commits `pre + 1 + #IncrementNonce`.
+
+They reach the published pair because `fill_block` OVERRIDES the AFTER block's welded
+`r0..r10`/`cap_root` from that row's own v1 state block
+(`circuit/src/effect_vm/trace_rotated.rs:2728-2736`) — i.e. from `VM(pre, effects)`. The BEFORE
+block has no such gap (`initial_vm_state` is decoded from the BEFORE witness's own limbs), which is
+the standing differential `effect_vm_wide_roundtrip::assert_executor_anchor`.
+
+**So the four-cause convergence reaches the BEFORE anchor only.** Aligned contexts would make the
+published BEFORE commit equal `receipt.pre_state_hash` **exactly** — a committee-signed
+`expected_old_commit`. They cannot make the AFTER commit equal `receipt.post_state_hash`, and
+binding it as if they did would REFUSE every honest fee-bearing or multi-effect turn. Closing 5–6
+means putting the fee and the executor's nonce rule *inside the proven transition* — AIR-level, not
+a re-parameterisation of `V9RotationContext`.
+
+**RE-GENESIS: NO, for what is here.** Nothing in the signed anchor moves; the new key is an
+auxiliary config entry beside `full_turn_proof:{h}`, the endpoint change is additive JSON, no VK
+rotates and nothing re-emits. `CANONICAL_STATE_SCHEMA_EPOCH` stays **24**. Pre-cutover turns have
+no entry, so they serve `absent` and a checker refuses — fail-closed, no migration. ⚠ The
+`material` cause is the one that WOULD cost one: `consensus_ctx` learning to carry
+`RotationCarrierMaterial` moves every `CreateCellFromFactory` turn's `post_state_hash`, hence its
+`receipt_hash` and `receipt_stream_root` ⇒ **schema epoch 24 → 25 and a devnet re-genesis, NO VK
+rotation and NO re-emit** (the carrier octets are free witness limbs on 54 of 57 members). No
+stored proof is invalidated by anything in *this* commit.
+
+**Named follow-ups this leaves:**
+1. ⚑ **Build it.** Nothing here compiled. Start after the PI-compaction lane lands.
+2. **The gate for causes 5 and 6** — an arm in `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`
+   that drives the real executor and exhibits the fee / per-row-nonce divergence, so they stop being
+   prose.
+3. **The four-cause convergence**, now knowing it buys the BEFORE tooth: `turn_proving`'s builders
+   take two `V9RotationContext`s; `blocklace_sync` captures the post-install pre-execution ledger and
+   the pre-execution accumulator roots beside `pre_ledger` (⚠ the executor's `pre_state_hash` is
+   taken AFTER `install_pre_execution_state`, so `pre_ledger` alone is the wrong ledger);
+   `consensus_ctx` gains `material`. **`iroot` normalises to `empty_iroot()`** in the same move,
+   collapsing the three producer conventions (`[receipt_hash]` · `[turn_hash]` · the whole prior
+   chain) — deliberately NOT done blind here because `dregg_turn_prover::finalized_turn_from_full_turn`'s
+   anchor tie must move with it.
+
 ## ⛑⛑⛑ AUGUST 7 (`BODYHASH`) — **DERIVED**: 25 links, no new AIR, and the standing permutation count was 26
 
 `LightClientMinaLinkAir` derived `OWNHASH` on 08-06 and named the residual in the same breath:

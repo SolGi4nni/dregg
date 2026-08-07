@@ -402,16 +402,23 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
                 anchor,
             )
             .await;
-            let verified_ok = matches!(&check, Ok(c) if c.verified);
-            let title = if verified_ok {
-                "Proof Artifact · legs verify, bound to the committee-signed turn"
-            } else {
-                "Proof Artifact · DOES NOT VERIFY"
-            };
-            let base = if verified_ok {
-                embeds::success_embed(title)
-            } else {
-                embeds::error_embed(title, "The fetched bytes failed the bot's own re-check.")
+            // THREE outcomes, not two. `Err` is a REFUSAL (this bot could not obtain a
+            // state-commit pair to judge the artifact against — a `cipherclerk`-minted or
+            // proof-carrying turn) and must not be painted as "the bytes failed", which reads as
+            // evidence against the artifact when it is evidence about what could be obtained.
+            let base = match &check {
+                Ok(c) if c.verified => embeds::success_embed(
+                    "Proof Artifact · legs verify, bound to the committee-signed turn and the \
+                     node's derived state commits",
+                ),
+                Ok(_) => embeds::error_embed(
+                    "Proof Artifact · DOES NOT VERIFY",
+                    "The fetched bytes failed the bot's own re-check.",
+                ),
+                Err(_) => embeds::warning_embed(
+                    "Proof Artifact · NO VERDICT",
+                    "This bot could not obtain values to judge the artifact against.",
+                ),
             };
             let embed = base
                 .field(

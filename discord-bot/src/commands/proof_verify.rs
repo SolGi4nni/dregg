@@ -35,18 +35,29 @@
 //!   audited Plonky3 verifier, the legs chain leg-to-leg (`chain_adjacency`, which DOES fire), the
 //!   object binds one composed VK hash, and every effect-vm leg publishes the COMMITTEE-SIGNED
 //!   turn hash at `pi::TURN_HASH_BASE`.
-//! * **NOT established, seam 1 (the endpoint state anchors are still the proof's own).** The
-//!   anchor DOES carry a committee-signed 8-felt state commit pair — the receipt's
-//!   `pre_state_hash` / `post_state_hash`. **It is a different commitment from the one the proof
-//!   publishes**, measured with both causes isolated in
-//!   `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`: the receipt anchor uses
-//!   `state_commit::consensus_ctx` (whole-ledger `cells_root`, `iroot = empty_iroot()`), the proof
-//!   uses a single-cell context ledger with the real receipt-chain `iroot`. Feeding the receipt's
-//!   pair to `verify_full_turn_bound` would refuse every honest proof, so this module keeps
-//!   passing the artifact's own — and the two endpoint teeth still compare `x != x`. ⚑ This is
-//!   **undone work, not a theorem**: closing it means aligning the executor's and the prover's
-//!   `V9RotationContext` so one 8-felt commit per turn exists. Priced in
-//!   `docs/DESIGN-pi-authority.md`.
+//! * **ESTABLISHED SINCE 2026-08-07, and it was seam 1: the two endpoint commitment teeth now
+//!   FIRE.** `expected_old_commit` / `expected_new_commit` are no longer read out of the artifact.
+//!   `GET /api/turn/{h}/anchor` serves `proof_state_commits` — the 8-felt pair the NODE derived at
+//!   commit time (`RotationTurnWitness::wide_commit_anchors`, generate-only over the executor's
+//!   trusted pre-state and the turn's effects, independent of the proof bytes, and gated on by
+//!   `verify_full_turn_bound` before the artifact was published) — and [`check_proof_hex`] passes
+//!   THAT. A proof whose published commitments disagree with the served pair is REFUSED with
+//!   `CommitmentMismatch`. ⚑ There is no unbound entry point: an anchor carrying no pair
+//!   (`proof_commit_status: "absent"`) yields **no verdict at all**, which is what a
+//!   `sdk::cipherclerk` artifact gets — a ledgerless producer cannot compute this chain's
+//!   whole-ledger context, so no honest pair exists to serve and none is invented.
+//! * **NOT established, seam 1' (whose claim the bound pair is).** It is the NODE's, not the
+//!   committee's. The committee signs `TurnReceipt::{pre,post}_state_hash`, a **different**
+//!   commitment of the same transition — measured cause by cause in
+//!   `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs` (the receipt anchor uses
+//!   `state_commit::consensus_ctx`: whole-ledger `cells_root`, `iroot = empty_iroot()`, the
+//!   executor's live `revoked_root`, `Default` carrier material; the proof-side builders use a
+//!   single-cell context ledger, a per-producer `iroot`, the empty revoked root, and a factory
+//!   turn's installed `child_vk`). Feeding the receipt's pair here still refuses every honest
+//!   proof. So what a malicious NODE can still do is serve a forged artifact together with a
+//!   matching forged pair; what it can no longer do is serve an artifact whose own commitments
+//!   contradict what its commit path derived. ⚑ **Undone work, not a theorem**: aligning the two
+//!   `V9RotationContext`s is priced in `docs/DESIGN-pi-authority.md` §4(a).
 //! * **NOT established, seam 2 (the identity is prover-CHOSEN, not prover-FORCED).** No AIR
 //!   constraint reads those four felts — 0 of the 57 `WIDE_REGISTRY_STAGED_TSV` members bind a
 //!   `pi_index` in `33..37` — so what the check forbids is RELABELLING an artifact. A malicious
@@ -119,6 +130,16 @@ pub struct CheckedAnchor {
     pub verified: VerifiedTurnAnchor,
     /// Whose roster decided that.
     pub roster: RosterProvenance,
+    /// ⚑ **The 8-felt `(old_commit, new_commit)` pair the SERVING NODE derived at commit time**,
+    /// off the anchor response's `proof_state_commits`. This is what [`check_proof_hex`] passes to
+    /// `verify_full_turn_bound` as `expected_old_commit` / `expected_new_commit`, replacing the
+    /// values it used to read out of the artifact.
+    ///
+    /// `None` means the node published no bindable pair (`proof_commit_status: "absent"`) — a
+    /// proof-carrying sovereign turn, an artifact minted by the ledgerless `sdk::cipherclerk`, a
+    /// pre-cutover entry, or a node with proving disabled. [`check_proof_hex`] then REFUSES. It
+    /// never falls back to the artifact's own values: that fallback IS the defect this closes.
+    pub bindable_commits: Option<([BabyBear; 8], [BabyBear; 8])>,
 }
 
 /// Parse a committee roster from configuration strings. **Pure** — the fail-closed rule is
@@ -186,12 +207,15 @@ pub fn committee_from_env() -> Result<Option<AnchorCommittee>, String> {
 }
 
 /// **Verify a served anchor.** `anchor_hex` is the node's `anchor_hex` field (postcard-encoded
-/// [`TurnAnchorV1`]). `configured` is the caller's own roster; when `None` the anchor's served
-/// roster is used and the result says so.
+/// [`TurnAnchorV1`]). `bindable_commits` is the node's `proof_state_commits` pair, already parsed
+/// (see [`parse_proof_state_commits`]) — passed explicitly, and never defaulted, so a call site
+/// cannot end up with no pair by omission rather than by decision. `configured` is the caller's own
+/// roster; when `None` the anchor's served roster is used and the result says so.
 ///
 /// `Err` names which link of the custody chain failed, in the anchor type's own words.
 pub fn verify_anchor_hex(
     anchor_hex: &str,
+    bindable_commits: Option<([BabyBear; 8], [BabyBear; 8])>,
     configured: Option<&AnchorCommittee>,
 ) -> Result<CheckedAnchor, String> {
     let bytes = hex::decode(anchor_hex.trim())
@@ -208,7 +232,46 @@ pub fn verify_anchor_hex(
     let verified = anchor
         .verify(&committee)
         .map_err(|e| format!("the anchor does not verify: {e}"))?;
-    Ok(CheckedAnchor { verified, roster })
+    Ok(CheckedAnchor {
+        verified,
+        roster,
+        bindable_commits,
+    })
+}
+
+/// Parse the anchor response's `proof_state_commits` object into the pair
+/// [`check_proof_hex`] binds against. **Pure**, so the fail-closed rule is testable without a node.
+///
+/// `Ok(None)` is the honest absence — `proof_commit_status` is not `"derived"`, which is what a
+/// `sdk::cipherclerk` artifact, a proof-carrying sovereign turn, or a pre-cutover entry produces.
+/// `Err` is a MALFORMED pair: present but undecodable, wrong length, or a non-canonical lane. Those
+/// are different facts and must not collapse — an absence is a node saying "I have nothing to bind
+/// against", a malformation is a node saying something this checker could not read, and quietly
+/// treating the second as the first would hide a broken (or hostile) server behind the same
+/// refusal text.
+pub fn parse_proof_state_commits(
+    body: &serde_json::Value,
+) -> Result<Option<([BabyBear; 8], [BabyBear; 8])>, String> {
+    let status = body
+        .get("proof_commit_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("absent");
+    if status != "derived" {
+        return Ok(None);
+    }
+    let commits = body.get("proof_state_commits").ok_or_else(|| {
+        "proof_commit_status is `derived` but no `proof_state_commits`".to_string()
+    })?;
+    let field = |name: &str| -> Result<[BabyBear; 8], String> {
+        let hexs = commits
+            .get(name)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("`proof_state_commits.{name}` is missing or not a string"))?;
+        dregg_circuit::commit8_wire::commit8_from_hex(hexs).ok_or_else(|| {
+            format!("`proof_state_commits.{name}` is not 64 hex characters of canonical lanes")
+        })
+    };
+    Ok(Some((field("old_commit")?, field("new_commit")?)))
 }
 
 /// **Fetch and verify the anchor for `turn_hash_hex`.** ONE implementation, shared by every
@@ -249,8 +312,13 @@ pub async fn fetch_and_verify_anchor(
     let anchor_hex = body
         .get("anchor_hex")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "the anchor response carries no `anchor_hex`".to_string())?;
-    let checked = verify_anchor_hex(anchor_hex, configured.as_ref())?;
+        .ok_or_else(|| "the anchor response carries no `anchor_hex`".to_string())?
+        .to_string();
+    // The node's derived 8-felt pair, if it minted this turn's artifact. A malformed pair is an
+    // ERROR here (it fails the whole fetch); an ABSENT one rides through as `None` so the refusal
+    // is produced by `check_proof_hex`, which is where the reason belongs.
+    let bindable_commits = parse_proof_state_commits(&body)?;
+    let checked = verify_anchor_hex(&anchor_hex, bindable_commits, configured.as_ref())?;
     // The anchor must be for the turn we asked about. The node routes by hash, but a verdict is
     // not the place to take routing on trust.
     if hex::encode(checked.verified.turn_hash) != turn_hash_hex.trim().to_ascii_lowercase() {
@@ -283,6 +351,14 @@ pub struct ProofCheck {
     pub anchored_pre_state_commit: String,
     /// The committee-signed 8-felt post-state commit. Same.
     pub anchored_post_state_commit: String,
+    /// ⚑ The pair actually PASSED to `verify_full_turn_bound` as `expected_old_commit` /
+    /// `expected_new_commit` — the node's derived pair off the anchor response, NOT the artifact's.
+    /// Reported so a reader can see that the two endpoint teeth had a real second value to compare
+    /// against; when it equals [`ProofCheck::published_old_commit`] / `published_new_commit` the
+    /// artifact agreed with what the node's commit path derived.
+    pub bound_old_commit: String,
+    /// The `expected_new_commit` actually passed. Same provenance.
+    pub bound_new_commit: String,
     /// What the anchor established — the chain position and quorum this verdict rests on.
     pub anchor_summary: String,
     /// What this check did NOT establish, populated by [`check_proof_hex`] itself (see
@@ -298,16 +374,21 @@ pub struct ProofCheck {
 pub fn unbound_claims(roster: RosterProvenance) -> Vec<String> {
     vec![
         String::from(
-            "The endpoint state anchors are still the proof's own. The before/after commits the \
-             artifact publishes were read OUT of it and handed back to the verifier, so its two \
-             endpoint commitment checks compared each value against itself and could not fire. \
-             The anchor DOES carry a committee-signed 8-felt state-commit pair — the receipt's — \
-             but it is a DIFFERENT commitment of the same transition (whole-ledger `cells_root` \
-             and an empty receipt-chain `iroot`, against the proof's single-cell context ledger \
-             and real `iroot`; measured in \
+            "WHOSE claim the state-commit pair is. The two endpoint commitment checks DID fire \
+             here — `expected_old_commit` / `expected_new_commit` came from the node's \
+             `/anchor` response, derived by its commit path from the executor's trusted pre-state \
+             and the turn's effects, not read out of the artifact. But that pair is the NODE's \
+             assertion, not the COMMITTEE's. The committee signs the receipt's \
+             `pre_state_hash`/`post_state_hash`, which is a DIFFERENT commitment of the same \
+             transition (whole-ledger `cells_root`, pinned empty receipt-chain `iroot`, the \
+             executor's live `revoked_root` and `Default` carrier material, against the proof \
+             side's single-cell context ledger, per-producer `iroot`, empty revoked root and a \
+             factory turn's installed child VK; measured cause by cause in \
              `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`), so passing it \
-             would refuse every honest proof. This is UNDONE WORK, not a theorem: it closes when \
-             the executor's and the prover's rotation contexts are aligned to one commit per turn.",
+             would refuse every honest proof. A hostile NODE can therefore still serve a forged \
+             artifact beside a matching forged pair. This is UNDONE WORK, not a theorem: it \
+             closes when the executor's and the prover's rotation contexts are aligned to one \
+             commit per turn.",
         ),
         String::from(
             "The turn identity is prover-CHOSEN, not prover-FORCED. This turn's hash came from a \
@@ -334,11 +415,30 @@ pub fn unbound_claims(roster: RosterProvenance) -> Vec<String> {
 ///
 /// `proof_hex` is the node's `proof_hex` field (the postcard-serialized `ComposedProof` the
 /// commit path persisted); `anchor` is the committee-verified anchor for the turn it was fetched
-/// for. **The turn hash comes from the anchor**, never from a URL and never from the artifact.
+/// for. **The turn hash comes from the anchor**, never from a URL and never from the artifact —
+/// and since 2026-08-07 so does the 8-felt commit pair.
 ///
-/// `Err` means the bytes could not even be interpreted (not-a-proof); `Ok(check)` carries the
-/// verifier's verdict either way.
+/// `Err` means either that the bytes could not be interpreted (not-a-proof) **or that the anchor
+/// carries no bindable commit pair**. The second is not a softer outcome: without a pair the only
+/// values available are the artifact's own, which is exactly the reflexive comparison this module
+/// exists to stop, so there is no verdict to give.
+///
+/// `Ok(check)` carries the verifier's verdict either way.
 pub fn check_proof_hex(proof_hex: &str, anchor: &CheckedAnchor) -> Result<ProofCheck, String> {
+    // ⚑ NO UNBOUND PATH. Refuse before decoding anything: a caller must not be able to obtain a
+    // verdict for an artifact this process cannot judge against an externally-obtained pair.
+    let Some((expected_old, expected_new)) = anchor.bindable_commits else {
+        return Err(
+            "the node served no bindable state-commit pair for this turn \
+             (`proof_commit_status` is not `derived`), so the only before/after commits available \
+             would be the artifact's own — which is the reflexive comparison this check exists to \
+             refuse. A ledgerless producer (`sdk::cipherclerk`) cannot compute this chain's \
+             whole-ledger rotation context, so its artifacts have no honest pair to serve and none \
+             is invented; a proof-carrying sovereign turn and a pre-cutover entry look the same \
+             from here. NO VERDICT."
+                .to_string(),
+        );
+    };
     let bytes =
         hex::decode(proof_hex.trim()).map_err(|e| format!("the proof hex does not decode: {e}"))?;
     let composed: ComposedProof = postcard::from_bytes(&bytes)
@@ -360,10 +460,10 @@ pub fn check_proof_hex(proof_hex: &str, anchor: &CheckedAnchor) -> Result<ProofC
         has_cap_membership: legs.iter().any(|l| l == "cap-membership"),
     };
 
-    // SEAM 1, at its source: these are the artifact's OWN anchors, and the next call hands them
-    // back to the verifier as the values it should expect, so its two endpoint
-    // `CommitmentMismatch` teeth compare `x != x`. The anchor's committee-signed pair is NOT a
-    // substitute — it is a different commitment of the same transition (module docs).
+    // The artifact's OWN anchors — read for REPORTING only since 2026-08-07. They used to be
+    // handed straight back as the verifier's `expected_*`, which is what made the two endpoint
+    // `CommitmentMismatch` teeth compare `x != x`. They are now one side of a real comparison:
+    // `expected_old`/`expected_new` below come from the node's `/anchor` response.
     let (published_old, published_new) = extract_commits(&composed.sub_proofs)?;
     let vk_hex = hex::encode(composed.composed_vk_hash);
 
@@ -379,8 +479,11 @@ pub fn check_proof_hex(proof_hex: &str, anchor: &CheckedAnchor) -> Result<ProofC
         turn_hash,
         proof_bytes: bytes,
     };
-    let (verified, detail) = match verify_full_turn(&proof, turn_hash, published_old, published_new)
-    {
+    // ⚑ THE ENDPOINT TEETH, WITH A SECOND VALUE TO BITE ON. `expected_old`/`expected_new` are the
+    // node's derived pair, obtained from a route this process fetched itself. A proof whose wide
+    // legs publish anything else fails with `CommitmentMismatch` — the refusal that structurally
+    // could not fire while both arguments came out of the artifact.
+    let (verified, detail) = match verify_full_turn(&proof, turn_hash, expected_old, expected_new) {
         Ok(()) => (true, String::new()),
         Err(e) => (false, format!("{e:?}")),
     };
@@ -392,6 +495,8 @@ pub fn check_proof_hex(proof_hex: &str, anchor: &CheckedAnchor) -> Result<ProofC
         published_new_commit: commit_hex(&published_new),
         anchored_pre_state_commit: hex::encode(anchor.verified.receipt_pre_state_commit),
         anchored_post_state_commit: hex::encode(anchor.verified.receipt_post_state_commit),
+        bound_old_commit: commit_hex(&expected_old),
+        bound_new_commit: commit_hex(&expected_new),
         anchor_summary: anchor_summary(anchor),
         unbound: unbound_claims(anchor.roster),
         detail,
@@ -436,9 +541,11 @@ pub async fn check_proof_hex_blocking(
 /// cap-open leg carries a single felt at `pi::OLD_COMMIT`/`pi::NEW_COMMIT`, broadcast into
 /// slot 0. First leg's BEFORE + last leg's AFTER are the turn's endpoints.
 ///
-/// Because this is the SAME rule `verify_full_turn_bound` applies internally, feeding this
-/// result back in as the verifier's `expected_*` makes its endpoint comparison reflexive. That
-/// is seam 1 in the module docblock, and [`unbound_claims`] reports it.
+/// ⚠ Because this is the SAME rule `verify_full_turn_bound` applies internally, feeding this
+/// result back in as the verifier's `expected_*` makes its endpoint comparison REFLEXIVE — which
+/// is what this module did until 2026-08-07. It is now read for REPORTING ONLY: the values passed
+/// to the verifier are [`CheckedAnchor::bindable_commits`], obtained from the node's `/anchor`
+/// route. **Do not restore this as the `expected_*` argument.**
 fn extract_commits(subs: &[AttachedSubProof]) -> Result<([BabyBear; 8], [BabyBear; 8]), String> {
     let legs: Vec<&AttachedSubProof> = subs
         .iter()
@@ -510,13 +617,18 @@ pub fn verdict_text(check: &Result<ProofCheck, String>) -> String {
              these bytes describe.**\nEstablished: every attached leg ({legs}) verifies under the \
              same audited Plonky3 verifier a remote peer would run \
              (`dregg_sdk::verify_full_turn`), the legs chain leg to leg (each leg's BEFORE anchor \
-             equals the previous leg's AFTER), the object binds the composed VK `{vk}…`, and \
+             equals the previous leg's AFTER), the object binds the composed VK `{vk}…`, \
              every leg publishes the turn hash **taken from a committee-signed anchor this bot \
              verified itself** — not from the URL and not from the artifact — so a proof of \
-             another turn served here is refused. Checked just now over the fetched bytes, not \
-             trusted.\nAnchor: {anchor}\nCommittee-signed state commits (the receipt's — NOT the \
-             pair the proof publishes, see below): `{apre}…` → `{apost}…`.\nAnchors the artifact \
-             PUBLISHES (the prover's claim): `{old}…` → `{new}…`.\nNOT established:\n{unbound}",
+             another turn served here is refused, and **the artifact's before/after state \
+             commitments were compared against a pair fetched from the node's `/anchor` route \
+             rather than read back out of the artifact**, so the two endpoint commitment checks \
+             genuinely fired. Checked just now over the fetched bytes, not trusted.\nAnchor: \
+             {anchor}\nBOUND against (the node's derived pair, `expected_old`/`expected_new`): \
+             `{bold}…` → `{bnew}…`.\nAnchors the artifact PUBLISHES (the prover's claim, and they \
+             matched): `{old}…` → `{new}…`.\nCommittee-signed state commits (the receipt's — a \
+             DIFFERENT commitment of the same transition, reported and never bound against): \
+             `{apre}…` → `{apost}…`.\nNOT established:\n{unbound}",
             vk = &c.vk_hex[..16.min(c.vk_hex.len())],
             legs = if c.legs.is_empty() {
                 "(none)".to_string()
@@ -526,6 +638,8 @@ pub fn verdict_text(check: &Result<ProofCheck, String>) -> String {
             anchor = c.anchor_summary,
             apre = &c.anchored_pre_state_commit[..16.min(c.anchored_pre_state_commit.len())],
             apost = &c.anchored_post_state_commit[..16.min(c.anchored_post_state_commit.len())],
+            bold = &c.bound_old_commit[..16.min(c.bound_old_commit.len())],
+            bnew = &c.bound_new_commit[..16.min(c.bound_new_commit.len())],
             old = &c.published_old_commit[..16.min(c.published_old_commit.len())],
             new = &c.published_new_commit[..16.min(c.published_new_commit.len())],
             unbound = if c.unbound.is_empty() {
@@ -542,12 +656,23 @@ pub fn verdict_text(check: &Result<ProofCheck, String>) -> String {
         ),
         Ok(c) => format!(
             "✗ **The fetched bytes DO NOT verify** under VK `{vk}…` against the committee-signed \
-             anchor. Do not trust this artifact.\nAnchor: {anchor}\n`{detail}`",
+             anchor and the node's derived state-commit pair. Do not trust this \
+             artifact.\nAnchor: {anchor}\nBOUND against: `{bold}…` → `{bnew}…`.\nThe artifact \
+             PUBLISHES: `{old}…` → `{new}…`.\n`{detail}`\n(A `CommitmentMismatch` here means the \
+             artifact's own before/after commitments contradict what the serving node's commit \
+             path derived for this turn — the check that could not fire before 2026-08-07.)",
             vk = &c.vk_hex[..16.min(c.vk_hex.len())],
             anchor = c.anchor_summary,
+            bold = &c.bound_old_commit[..16.min(c.bound_old_commit.len())],
+            bnew = &c.bound_new_commit[..16.min(c.bound_new_commit.len())],
+            old = &c.published_old_commit[..16.min(c.published_old_commit.len())],
+            new = &c.published_new_commit[..16.min(c.published_new_commit.len())],
             detail = c.detail,
         ),
-        Err(e) => format!("✗ **Could not verify the fetched bytes:** {e}"),
+        Err(e) => format!(
+            "**No verdict.** This bot refuses to report on an artifact it cannot judge against \
+             values it obtained independently.\nWhat failed: {e}"
+        ),
     }
 }
 
@@ -572,17 +697,22 @@ pub fn no_anchor_text(turn_hash_hex: &str, why: &str) -> String {
 /// reproduce the bot's calls exactly and you reproduce the bot's seams.
 pub fn offline_recheck_text(node_url: &str, turn_hash_hex: &str) -> String {
     format!(
-        "```\ncurl {base}/api/turn/{turn_hash_hex}/anchor | jq -r .anchor_hex\ncurl \
+        "```\ncurl {base}/api/turn/{turn_hash_hex}/anchor | jq '{{anchor_hex, \
+         proof_commit_status, proof_state_commits}}'\ncurl \
          {base}/api/turn/{turn_hash_hex}/proof  | jq -r .proof_hex\n```\nDecode the anchor hex \
          into `dregg_federation::TurnAnchorV1` and call `.verify(&committee)` with a roster you \
          got from GENESIS, not from the node — it recomputes the receipt hash, re-roots it into \
          the attestation's `receipt_stream_root`, and checks `>= threshold` committee signatures \
-         over `AttestedRoot::signing_message()`. Then hand the proof bytes and the VERIFIED \
-         anchor's `turn_hash` to `dregg_sdk::verify_full_turn` \
-         (`sdk/src/full_turn_proof.rs`).\nMind the ARGUMENTS. The turn-hash argument is a real \
-         check: it came from the committee's signature, and every leg publishes it. The before / \
-         after 8-felt commit arguments are NOT: the only values available are the artifact's own, \
-         so that comparison is reflexive. The anchor's committee-signed `pre_state_hash` / \
+         over `AttestedRoot::signing_message()`. Then hand the proof bytes, the VERIFIED anchor's \
+         `turn_hash`, and the two octets from `proof_state_commits` (parse with \
+         `dregg_circuit::commit8_wire::commit8_from_hex`) to `dregg_sdk::verify_full_turn` \
+         (`sdk/src/full_turn_proof.rs`).\nMind the ARGUMENTS, because they are what the check IS. \
+         The turn-hash argument is committee-signed: every leg publishes it. The two 8-felt commit \
+         arguments come from `proof_state_commits`, which the node DERIVED at commit time from its \
+         executor's trusted pre-state — so the comparison is real, and it is the NODE's word \
+         rather than the committee's. If `proof_commit_status` is `absent` there is no bindable \
+         pair: REFUSE, do not read the pair out of the artifact (that is the reflexive comparison \
+         this route exists to end). The anchor's committee-signed `pre_state_hash` / \
          `post_state_hash` are a DIFFERENT commitment of the same transition and passing them \
          refuses every honest proof — see \
          `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`.",
@@ -594,7 +724,22 @@ pub fn offline_recheck_text(node_url: &str, turn_hash_hex: &str) -> String {
 mod tests {
     use super::*;
 
+    fn an_octet(seed: u32) -> [BabyBear; 8] {
+        let mut o = [BabyBear::ZERO; 8];
+        for (i, l) in o.iter_mut().enumerate() {
+            *l = BabyBear::new(seed.wrapping_mul(i as u32 + 3).wrapping_add(1));
+        }
+        o
+    }
+
     fn a_checked_anchor(roster: RosterProvenance) -> CheckedAnchor {
+        a_checked_anchor_with(roster, Some((an_octet(5), an_octet(9))))
+    }
+
+    fn a_checked_anchor_with(
+        roster: RosterProvenance,
+        bindable_commits: Option<([BabyBear; 8], [BabyBear; 8])>,
+    ) -> CheckedAnchor {
         CheckedAnchor {
             verified: VerifiedTurnAnchor {
                 turn_hash: [0xAB; 32],
@@ -609,6 +754,7 @@ mod tests {
                 threshold: 1,
             },
             roster,
+            bindable_commits,
         }
     }
 
@@ -624,15 +770,72 @@ mod tests {
         assert!(err.contains("do not parse"), "{err}");
     }
 
+    /// ⚑ **THE `cipherclerk` BOUNDARY, AS A REFUSAL.** An anchor with no derived pair yields NO
+    /// VERDICT — not a softened one, and above all not a fallback to the artifact's own commits.
+    /// The refusal fires BEFORE the bytes are even decoded, so it cannot be reached around by
+    /// handing this function a well-formed proof.
+    #[test]
+    fn an_anchor_with_no_bindable_pair_yields_no_verdict() {
+        let anchor = a_checked_anchor_with(RosterProvenance::Configured, None);
+        let err = check_proof_hex(&"ab".repeat(40), &anchor)
+            .expect_err("no bindable pair must produce no verdict");
+        assert!(err.contains("no bindable state-commit pair"), "{err}");
+        assert!(err.contains("cipherclerk"), "{err}");
+        assert!(err.contains("NO VERDICT"), "{err}");
+        // …and it refuses before parsing, so the message is about the PAIR, not about the bytes.
+        assert!(!err.contains("do not parse"), "{err}");
+    }
+
     /// Garbage anchor bytes fail LOUDLY too — an anchor that does not parse must never fall back
     /// to "check it unanchored".
     #[test]
     fn a_malformed_anchor_yields_no_verdict() {
-        let err = verify_anchor_hex("zz-not-hex", None).expect_err("non-hex anchor must refuse");
-        assert!(err.contains("does not decode"), "{err}");
         let err =
-            verify_anchor_hex(&"ab".repeat(40), None).expect_err("random bytes must not parse");
+            verify_anchor_hex("zz-not-hex", None, None).expect_err("non-hex anchor must refuse");
+        assert!(err.contains("does not decode"), "{err}");
+        let err = verify_anchor_hex(&"ab".repeat(40), None, None)
+            .expect_err("random bytes must not parse");
         assert!(err.contains("do not parse"), "{err}");
+    }
+
+    /// The `proof_state_commits` parser separates the three outcomes a node can produce, because
+    /// collapsing them would hide a broken server behind the honest-absence refusal.
+    #[test]
+    fn the_served_commit_pair_parser_separates_absent_from_malformed() {
+        let (old, new) = (an_octet(31), an_octet(77));
+        let good = serde_json::json!({
+            "proof_commit_status": "derived",
+            "proof_state_commits": {
+                "old_commit": dregg_circuit::commit8_wire::commit8_to_hex(&old),
+                "new_commit": dregg_circuit::commit8_wire::commit8_to_hex(&new),
+            },
+        });
+        assert_eq!(
+            parse_proof_state_commits(&good).expect("a well-formed pair parses"),
+            Some((old, new))
+        );
+
+        // ABSENT — the honest "I minted nothing for this turn".
+        let absent = serde_json::json!({ "proof_commit_status": "absent",
+                                         "proof_state_commits": serde_json::Value::Null });
+        assert_eq!(
+            parse_proof_state_commits(&absent).expect("absent is Ok"),
+            None
+        );
+        // A response with no status field at all is absent, never "derived by default".
+        assert_eq!(
+            parse_proof_state_commits(&serde_json::json!({})).expect("no field is Ok"),
+            None
+        );
+
+        // MALFORMED — `derived` with nothing / garbage behind it is an ERROR, not an absence.
+        let claimed = serde_json::json!({ "proof_commit_status": "derived" });
+        assert!(parse_proof_state_commits(&claimed).is_err());
+        let junk = serde_json::json!({
+            "proof_commit_status": "derived",
+            "proof_state_commits": { "old_commit": "zz", "new_commit": "zz" },
+        });
+        assert!(parse_proof_state_commits(&junk).is_err());
     }
 
     /// A partly-configured committee is an ERROR, not a silent fallback to the node's own roster.
@@ -667,6 +870,8 @@ mod tests {
             published_new_commit: "22".repeat(32),
             anchored_pre_state_commit: "33".repeat(32),
             anchored_post_state_commit: "44".repeat(32),
+            bound_old_commit: "11".repeat(32),
+            bound_new_commit: "22".repeat(32),
             anchor_summary: anchor_summary(&anchor),
             unbound: unbound_claims(roster),
             detail: String::new(),
@@ -693,8 +898,41 @@ mod tests {
         assert!(text.contains("DO NOT verify"), "{text}");
         assert!(text.contains("MainProofInvalid"), "{text}");
 
+        // An `Err` is a REFUSAL, not a soft failure: it must read as "no verdict", because the
+        // commonest Err is now "this node served no bindable pair".
         let text = verdict_text(&Err("boom".into()));
-        assert!(text.contains("Could not verify"), "{text}");
+        assert!(text.contains("**No verdict.**"), "{text}");
+        assert!(text.contains("boom"), "{text}");
+        assert!(!text.contains("LIMITED CHECK PASSED"), "{text}");
+    }
+
+    /// ⚑ **THE TOOTH IS VISIBLE IN THE VERDICT.** A passing check must show BOTH sides of the
+    /// endpoint comparison — the pair it bound against and the pair the artifact published — and a
+    /// failing one must name the mismatch as a contradiction with the node's own derivation. A
+    /// reader has no other way to tell a real comparison from the reflexive one it replaced.
+    #[test]
+    fn the_verdict_shows_the_pair_it_bound_against() {
+        let ok = a_passing_check(RosterProvenance::Configured);
+        let text = verdict_text(&Ok(ok.clone()));
+        assert!(text.contains("BOUND against"), "{text}");
+        assert!(
+            text.contains("rather than read back out of the artifact"),
+            "{text}"
+        );
+
+        let mismatched = ProofCheck {
+            verified: false,
+            detail: "CommitmentMismatch".into(),
+            published_old_commit: "ee".repeat(32),
+            ..ok
+        };
+        let text = verdict_text(&Ok(mismatched));
+        assert!(text.contains("CommitmentMismatch"), "{text}");
+        assert!(text.contains("BOUND against"), "{text}");
+        assert!(
+            text.contains("could not fire before"),
+            "the failing arm must say what this check newly catches: {text}"
+        );
     }
 
     /// **The anti-checkmark test.** A passing check must NOT read as "this proof is verified":
@@ -733,15 +971,24 @@ mod tests {
     fn the_unbound_list_names_exactly_the_three_standing_seams() {
         let unbound = unbound_claims(RosterProvenance::Configured);
         assert_eq!(unbound.len(), 3, "{unbound:#?}");
+        // ⚑ Entry 0 is no longer "the comparison is reflexive" — that seam CLOSED. It is now
+        // "whose claim the bound pair is", and the test pins the distinction so a regression back
+        // to reading the pair out of the artifact cannot leave this list looking right.
         assert!(
-            unbound[0].contains("read OUT of it") && unbound[0].contains("could not fire"),
-            "entry 0 must name the reflexive endpoint comparison: {}",
+            unbound[0].contains("The two endpoint commitment checks DID fire")
+                && unbound[0].contains("not read out of the artifact"),
+            "entry 0 must record that the endpoint teeth now fire: {}",
+            unbound[0]
+        );
+        assert!(
+            unbound[0].contains("the NODE's assertion, not the COMMITTEE's"),
+            "entry 0 must name whose claim the bound pair is: {}",
             unbound[0]
         );
         // ⚑ And it must classify itself: undone work, never an "honestly labelled" terminal.
         assert!(
             unbound[0].contains("UNDONE WORK, not a theorem"),
-            "entry 0 must say the endpoint seam is transmutable: {}",
+            "entry 0 must say the remaining seam is transmutable: {}",
             unbound[0]
         );
         assert!(
@@ -800,6 +1047,14 @@ mod tests {
         assert!(text.contains("verify_full_turn"), "{text}");
         assert!(text.contains("TurnAnchorV1"), "{text}");
         assert!(text.contains("refuses every honest proof"), "{text}");
+        // …and it must name the route that supplies the two commit arguments, plus the refusal
+        // when it is absent — an incantation that omits them reproduces the reflexive check.
+        assert!(text.contains("proof_state_commits"), "{text}");
+        assert!(text.contains("commit8_from_hex"), "{text}");
+        assert!(
+            text.contains("REFUSE, do not read the pair out of"),
+            "{text}"
+        );
         assert!(!text.contains("8080//"), "trailing slash trimmed: {text}");
     }
 }

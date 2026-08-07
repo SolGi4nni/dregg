@@ -87,6 +87,44 @@
 //! which every effect-vm leg publishes at `pi::TURN_HASH_BASE` and which
 //! `verify_full_turn_bound` compares as a required argument.
 //!
+//! ## ⚑ THE OTHER TWO ARGUMENTS ARE NOW SERVED TOO — but NOT by this type, and deliberately
+//!
+//! Since 2026-08-07 `GET /api/turn/{h}/anchor` returns, **beside** `anchor_hex` and outside it, a
+//! `proof_state_commits` pair: the 8-felt `(old_commit, new_commit)` the serving node's commit
+//! path derived for that turn (`node::turn_proving::turn_proof_anchors_config_key` —
+//! `RotationTurnWitness::wide_commit_anchors`, generate-only over the executor's trusted pre-state
+//! and the turn's effects, independent of the proof bytes, and gated on by
+//! `verify_full_turn_bound` before the artifact was published). That is what a checker now passes
+//! as `expected_old_commit` / `expected_new_commit`, so the two `CommitmentMismatch` teeth stop
+//! comparing `x != x`.
+//!
+//! ⚠ **It is NOT part of [`TurnAnchorV1`], and must not be moved into it.** This type's whole
+//! contract is that every byte in it is either recomputable by the holder or covered by a
+//! signature the committee already produced. The derived pair is neither: it is the NODE's claim.
+//! Putting it inside the postcard object would launder a node assertion into the anchor's
+//! authority — the same defect one layer out, which is exactly what the type's own docs above
+//! refuse. It rides in the JSON with `proof_commit_provenance` naming what it is, and
+//! `proof_commit_status: "absent"` (⇒ the checker REFUSES) whenever the node did not mint the
+//! artifact — a proof-carrying sovereign turn, or one minted by the ledgerless `sdk::cipherclerk`,
+//! which cannot compute this chain's whole-ledger rotation context and therefore has no honest
+//! pair to serve.
+//!
+//! Making the pair committee-signed is the four-cause alignment above. ⚑ And a lane that does it
+//! should know, before pricing it, that alignment reaches the **BEFORE** anchor only: the
+//! published BEFORE commit is `wire_commit_8_chip` over the before-cell's own limbs (the standing
+//! differential `circuit/tests/effect_vm_wide_roundtrip.rs::assert_executor_anchor`), so under a
+//! shared context it becomes `receipt.pre_state_hash` exactly. The AFTER commit cannot: the wide
+//! generator's `fill_block` OVERRIDES the after block's welded `r0..r10`/`cap_root` from the v1
+//! trace's post-effect state (`circuit/src/effect_vm/trace_rotated.rs:2730-2736`), and that state
+//! is `VM(pre, effects)` — while `receipt.post_state_hash` commits the EXECUTOR's post-cell, which
+//! also carries the phase-1 fee debit and the phase-1 nonce bump
+//! (`turn/src/executor/execute.rs:652-674`) that no AIR on the classical commit path models. The
+//! VM ticks the nonce once per non-padding ROW (`circuit/src/effect_vm/trace.rs:683-1035`) where
+//! the executor bumps once per TURN. So the two post-states coincide only for a fee-free turn with
+//! exactly one actor effect that is not `IncrementNonce`. **That is a fifth and sixth cause, of a
+//! different kind from the four: they are modelling gaps in the proven transition, not context
+//! conventions, and no re-parameterisation of `V9RotationContext` closes them.**
+//!
 //! ## ⚑ WHAT THE >=THRESHOLD COMMITTEE QUORUM COVERS — AND WHAT CHANGED IN v4
 //!
 //! Two quorum legs ride an `AttestedRoot`, over two different preimages. **Since the

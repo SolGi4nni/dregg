@@ -229,6 +229,9 @@ pub mod air_descriptor;
 pub mod babybear8;
 pub mod binding;
 pub mod body_membership;
+/// The ONE wire codec for a published 8-felt state-commit anchor — shared by the node that serves
+/// a finalized turn's proven pair and the checker that binds an artifact against it.
+pub mod commit8_wire;
 pub mod constraint_prover;
 pub mod dsl;
 pub mod faithful8;

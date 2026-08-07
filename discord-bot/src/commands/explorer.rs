@@ -979,25 +979,30 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 }
             };
             // VERIFY the fetched artifact right here (the audited `verify_full_turn`) against
-            // the turn hash the COMMITTEE signed, and report the verdict — never an
-            // "Attached ✅" trust-me. The TITLE says "legs verify": the state anchors compared
-            // are still the proof's own (seam 1), so the bytes are not tied to the chain's
-            // state transition. Every seam is in the Verification field below.
+            // the turn hash the COMMITTEE signed AND the state-commit pair the node derived at
+            // commit time, and report the verdict — never an "Attached ✅" trust-me. Every seam
+            // is in the Verification field below.
             let check = crate::commands::proof_verify::check_proof_hex_blocking(
                 proof.proof_hex.clone(),
                 anchor,
             )
             .await;
-            let verified_ok = matches!(&check, Ok(c) if c.verified);
-            let base = if verified_ok {
-                embeds::dregg_embed(
-                    "Turn Proof Artifact · legs verify, bound to the committee-signed turn",
-                )
-            } else {
-                embeds::error_embed(
+            // THREE outcomes, not two. `Err` is a REFUSAL (no bindable pair to judge against) and
+            // must not be painted as "the bytes failed" — that reads as evidence against the
+            // artifact when it is evidence about what this bot could obtain.
+            let base = match &check {
+                Ok(c) if c.verified => embeds::dregg_embed(
+                    "Turn Proof Artifact · legs verify, bound to the committee-signed turn and the \
+                     node's derived state commits",
+                ),
+                Ok(_) => embeds::error_embed(
                     "Turn Proof Artifact · DOES NOT VERIFY",
                     "The fetched bytes failed the bot's own re-check.",
-                )
+                ),
+                Err(_) => embeds::warning_embed(
+                    "Turn Proof Artifact · NO VERDICT",
+                    "This bot could not obtain values to judge the artifact against.",
+                ),
             };
             let embed = base
                 .field(

@@ -9154,8 +9154,14 @@ async fn execute_finalized_turn(
             // observers as `ProofPending`, so "the proof for this finalized turn
             // did not verify" was indistinguishable from "the proof is in flight",
             // forever, on every surface except the log.
+            //
+            // ⚑ AND THE PROVEN 8-FELT ANCHOR PAIR RIDES WITH THEM (third element). Without it no
+            // surface outside this function ever held the values `verify_full_turn_bound` takes as
+            // `expected_old_commit` / `expected_new_commit`, so the only production re-verifier
+            // read them out of the artifact and compared each against itself. See
+            // `turn_proving::turn_proof_anchors_config_key`.
             let (full_turn_proof_artifacts, full_turn_proof_failure): (
-                Option<(Vec<u8>, Option<Vec<u8>>)>,
+                Option<(Vec<u8>, Option<Vec<u8>>, [u8; 64])>,
                 Option<String>,
             ) = if let Some((pre_balance, pre_nonce)) = full_turn_pre_state {
                 let effects: Vec<dregg_turn::Effect> = signed_turn
@@ -9502,7 +9508,19 @@ async fn execute_finalized_turn(
                         // here. Their store keys are published after the finalized
                         // commit succeeds, so a rejected durable record leaves no
                         // orphan proof that looks accepted.
-                        (Some((proof_bytes, retained_turn)), None)
+                        //
+                        // ⚑ THE PROVEN ANCHOR PAIR, captured at the ONE place it exists. These are
+                        // the felts `prove_and_verify_finalized_turn*` re-derived generate-only
+                        // from the trusted pre-state + effects (`wide_commit_anchors`) and then
+                        // gated the proof on via `verify_full_turn_bound` — so persisting them is
+                        // persisting a check that already ran, not a new claim. `/api/turn/{h}/
+                        // anchor` serves them so a stranger's `expected_old_commit` stops being a
+                        // value read out of the artifact it is meant to judge.
+                        let proven_anchors = dregg_circuit::commit8_wire::commit8_pair_to_bytes(
+                            &proven.old_commit,
+                            &proven.new_commit,
+                        );
+                        (Some((proof_bytes, retained_turn, proven_anchors)), None)
                     }
                     Err(
                         crate::turn_proving::FullTurnProvingError::RevocationCapacityExceeded {
@@ -10185,11 +10203,23 @@ async fn execute_finalized_turn(
             // A crash here can leave an otherwise valid finalized record without
             // those served artifacts. They are never published *before* commit,
             // but complete crash recovery requires welding/rederiving them later.
-            if let Some((proof_bytes, retained_turn)) = &full_turn_proof_artifacts {
+            if let Some((proof_bytes, retained_turn, proven_anchors)) = &full_turn_proof_artifacts {
                 let key = crate::turn_proving::turn_proof_config_key(&turn_hash_hex);
                 if let Err(e) = s.store.set_config(&key, proof_bytes) {
                     warn!(error = %e, turn_hash = %turn_hash_hex,
                             "failed to persist full-turn proof after finalized commit");
+                }
+                // ⚑ THE PROVEN 8-FELT ANCHOR PAIR. Written on the SAME path as the proof so a
+                // reader that finds a proof and no anchors is looking at a pre-cutover entry, and
+                // the anchor endpoint then serves NO bindable pair rather than an unrelated one.
+                // A checker with no pair REFUSES; it never falls back to reading the artifact.
+                let anchors_key =
+                    crate::turn_proving::turn_proof_anchors_config_key(&turn_hash_hex);
+                if let Err(e) = s.store.set_config(&anchors_key, proven_anchors) {
+                    warn!(error = %e, turn_hash = %turn_hash_hex,
+                            "failed to persist the full-turn proof's 8-felt commit anchors; \
+                             /api/turn/{{h}}/anchor will serve no bindable pair for this turn and \
+                             a stranger re-verifying it gets a REFUSAL rather than a verdict");
                 }
                 if let Some(turn_bytes) = retained_turn {
                     let key = crate::turn_proving::finalized_turn_config_key(&turn_hash_hex);

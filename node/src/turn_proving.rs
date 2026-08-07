@@ -1778,6 +1778,48 @@ pub fn turn_proof_config_key(turn_hash_hex: &str) -> String {
     format!("full_turn_proof:{turn_hash_hex}")
 }
 
+/// Config-store key under which a finalized turn's **proven 8-felt commit anchors** are persisted
+/// (the 64-byte `BEFORE ‖ AFTER` pair, [`dregg_circuit::commit8_wire::commit8_pair_to_bytes`]),
+/// keyed by the turn hash (hex).
+///
+/// # ⚑ THIS IS THE VALUE THAT MAKES THE ENDPOINT TEETH FIRE
+///
+/// `dregg_sdk::verify_full_turn_bound` takes `expected_old_commit` / `expected_new_commit` from
+/// its CALLER. Until this key existed no production surface had them: `GET /api/turn/{h}/proof`
+/// served `{turn_hash, proof_len, proof_hex}` and nothing else, so `discord-bot`'s `/proof turn`
+/// read the pair OUT of the artifact (`extract_commits`) and handed it straight back — the two
+/// `CommitmentMismatch` teeth compared `x != x` and **structurally could not fire**.
+///
+/// The pair written here is [`ProvenFinalizedTurn::old_commit`] / `new_commit`, which
+/// [`dregg_sdk::RotationTurnWitness::wide_commit_anchors`] **re-derives generate-only** from the
+/// executor's trusted pre-state (`full_turn_pre_cell`, captured before execution), the turn's
+/// effects, and the node's own accumulator frontiers. It is **independent of the proof bytes** —
+/// the proving path then gates acceptance on `verify_full_turn_bound` against exactly this pair,
+/// so a persisted entry is evidence the node's own re-derivation and the artifact agreed at mint
+/// time.
+///
+/// ## What its provenance is, said plainly
+///
+/// **Node-derived, not committee-signed.** The committee signs `TurnReceipt::{pre,post}_state_hash`
+/// (via `receipt_stream_root`), which is a DIFFERENT commitment of the same transition — see
+/// `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs` for the causes. So this key
+/// closes "the checker compares the artifact against itself"; it does not, on its own, close "the
+/// checker compares the artifact against something the committee signed". Both facts ride to the
+/// far end: `GET /api/turn/{h}/anchor` serves the pair beside the committee-signed anchor and
+/// labels which is which.
+///
+/// ## Absence is a REFUSAL, and that is the `cipherclerk` boundary
+///
+/// Only the finalized commit path writes this key, and only when the node itself minted and
+/// verified the proof. A turn whose artifact came from somewhere else — the ledgerless sovereign
+/// `sdk::cipherclerk`, which **cannot** compute a whole-ledger context and whose published pair is
+/// therefore not this chain's — has no entry, so the anchor endpoint serves none and the checker
+/// refuses to return a verdict rather than binding against a wrong pair. The refusal is structural
+/// (there is nothing to serve), not a flag anybody has to remember to set.
+pub fn turn_proof_anchors_config_key(turn_hash_hex: &str) -> String {
+    format!("full_turn_proof_anchors:{turn_hash_hex}")
+}
+
 /// Config-store key under which a finalized turn's PROVING FAILURE is recorded,
 /// keyed by the turn hash (hex).
 ///

@@ -3617,6 +3617,28 @@ async fn get_turn_proof(
 /// chain" — true of exactly one producer, the ledgerless sovereign `cipherclerk`, whose artifacts
 /// this node never serves. The live commit path folds `[receipt.receipt_hash()]`, a one-entry log.
 ///
+/// # ⚑ AND THE PROOF'S OWN PAIR IS NOW SERVED BESIDE IT — `proof_state_commits`
+///
+/// Because the receipt's pair is not the proof's, a stranger re-verifying a served artifact had
+/// **nothing** to pass as `expected_old_commit` / `expected_new_commit` and passed the artifact's
+/// own values, which is why those two `CommitmentMismatch` teeth compared `x != x`. This response
+/// now carries the pair the NODE derived at commit time
+/// (`turn_proving::turn_proof_anchors_config_key` — `wide_commit_anchors` re-derived generate-only
+/// from the executor's trusted pre-state and the turn's effects, then gated on by
+/// `verify_full_turn_bound` before the proof was published). It rides in the JSON **outside**
+/// `anchor_hex`, deliberately: `TurnAnchorV1`'s contract is that every byte in it is either
+/// recomputable by the holder or covered by a committee signature, and this pair is neither. It is
+/// **node-asserted**, and `proof_commit_provenance` says so in the response itself.
+///
+/// `proof_commit_status` is one of:
+/// * `"derived"` — `proof_state_commits` carries `{old_commit, new_commit}` (64 hex each,
+///   `dregg_circuit::commit8_wire`). Bind against these.
+/// * `"absent"` — this node did not mint the artifact (a proof-carrying sovereign turn, a
+///   pre-cutover entry, or proving disabled). **There is no bindable pair and a checker must
+///   REFUSE rather than fall back to the artifact's own values.** This is the `cipherclerk`
+///   boundary made structural: a ledgerless producer cannot compute a whole-ledger context, so
+///   there is no honest pair to serve for its artifacts and none is served.
+///
 /// * `200` + `anchor_status: "anchored"` — the anchor, postcard-hex.
 /// * `404` + `anchor_status: "not_committed"` — no committed turn under this hash.
 /// * `409` + `anchor_status: "no_attestation"` — the turn committed but carries no attested root
@@ -3767,11 +3789,47 @@ async fn get_turn_anchor(
         );
     };
 
+    // ⚑ THE PROOF'S OWN 8-FELT PAIR, if THIS node minted the artifact. Read from the durable key
+    // the commit path wrote beside the proof bytes; a miss, an unreadable store, or a malformed
+    // entry all resolve to "absent", which a checker must treat as a REFUSAL. Never a fallback,
+    // never a best-effort octet — the whole defect this closes is a checker binding against values
+    // it could not obtain independently.
+    let proven_pair = s
+        .store
+        .get_config(&crate::turn_proving::turn_proof_anchors_config_key(
+            &turn_hash_hex,
+        ))
+        .ok()
+        .flatten()
+        .and_then(|b| dregg_circuit::commit8_wire::commit8_pair_from_bytes(&b));
+    let (proof_commit_status, proof_state_commits) = match &proven_pair {
+        Some((old, new)) => (
+            "derived",
+            serde_json::json!({
+                "old_commit": dregg_circuit::commit8_wire::commit8_to_hex(old),
+                "new_commit": dregg_circuit::commit8_wire::commit8_to_hex(new),
+            }),
+        ),
+        None => ("absent", serde_json::Value::Null),
+    };
+
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "turn_hash": turn_hash_hex,
             "anchor_status": "anchored",
+            // ── the proof's published state-commit pair, and WHOSE claim it is ──
+            "proof_commit_status": proof_commit_status,
+            "proof_state_commits": proof_state_commits,
+            "proof_commit_provenance":
+                "NODE-DERIVED at commit time from the executor's trusted pre-state and the turn's \
+                 effects (dregg_sdk::RotationTurnWitness::wide_commit_anchors, generate-only and \
+                 independent of the proof bytes), then gated on by verify_full_turn_bound before \
+                 the artifact was published. NOT committee-signed: the committee signs the \
+                 receipt's pre/post_state_hash, which is a DIFFERENT commitment of the same \
+                 transition (turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs). \
+                 `absent` means this node did not mint the artifact and there is NO bindable pair \
+                 — refuse, do not fall back to the artifact's own values.",
             "artifact_format": dregg_federation::TURN_ANCHOR_PROTOCOL_V1,
             "anchor_len": bytes.len(),
             "anchor_hex": hex_encode_var(&bytes),
@@ -4831,8 +4889,21 @@ async fn post_submit_turn(
 /// CORS handles `OPTIONS` before routing.  This handler is deliberately public,
 /// so its own boundary is semantic: exact media type and size, the node's exact
 /// configured/installed authority, a strict one-envelope decode, the SDK's
-/// no-piggyback carrier predicate, the deployment mission, and the canonical
-/// signer-derived player cell.  Only then does it enter [`submit_signed_turn`].
+/// no-piggyback carrier predicate, the deployment mission, the canonical
+/// signer-derived player cell, and — since 2026-08-07 — that the transcript the
+/// claim carries is one THIS NODE served.  Only then does it enter
+/// [`submit_signed_turn`].
+///
+/// ⚑ THE TRANSCRIPT CHECK HERE IS A COURTESY, NOT THE GATE. The authoritative one
+/// runs at finalization (`blocklace_sync::execute_finalized_turn`), where it
+/// covers every carrier reaching consensus rather than only the ones that arrived
+/// through this route — a claim gossiped in from a peer or posted to
+/// `/turns/submit` never touches this function. What this adds is that a player
+/// who submits a code with no game behind it is told so immediately and by name,
+/// instead of watching `latest_height` fail to move.
+///
+/// It reveals nothing: the refusal is a function of the caller's own session
+/// record and their own claim, never of the target.
 async fn post_poa_signal_claim(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
