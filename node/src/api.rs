@@ -11224,7 +11224,11 @@ mod tests {
         },
         ShieldedTransfer => GateClass::NoActorTransition, Effect::ShieldedTransfer {
             payload: dregg_turn::action::ShieldedTransferPayload {
-                merkle_root: 0,
+                // ⚑ FLAG DAY 2026-08-07: `merkle_root` is DELETED from the payload —
+                // it was the prover's own choice of commitment-tree root, compared
+                // against nothing, and the executor now supplies the root from
+                // `note_shielded.root8()`. This fixture constructed the retired
+                // field and broke every `cargo test -p dregg-node` in the tree.
                 inputs: vec![],
                 input_legs: vec![],
                 output_legs: vec![],
