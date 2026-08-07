@@ -456,16 +456,39 @@ wrap VK. Two derivations, one shape.
 
 ⚠ The last three legs are the measurement half — the fixture's own lists have the lengths the shape
 claims, so a re-export that changed the proof's IPA round count or `t_comm` chunking reds here rather
-than three rungs up. -/
+than three rungs up.
+
+⚑⚑ **AND THE `prevs` LEG WAS A CONFLATION UNTIL 2026-08-07 — TWO QUANTITIES UNDER ONE NAME.**
+This theorem asserted `(shapeWrap.prevs, …) = (2, 16, 15, 7)`, and the `2` was read off the devnet
+wrap VK's `prev_challenges: 2`. That number is **`Max_proofs_verified`** — the most a wrap instance
+can be handed. What `prevs` actually sizes is the `sg_old` block the wrap circuit replays out of the
+STEP proof's own kimchi transcript (`verifier.rs:165-168`, `wrap_verifier.ml:538`), which is
+**`actual_proofs_verified`**, and `wrap.rs:666` reads that straight off the step record:
+`actual_proofs_verified = <messages_for_next_step_proof>.old_bulletproof_challenges.len()`.
+
+The two are different numbers for dregg's step rule — one `verify_one`, so `N_PREVIOUS = 1` — and
+they COINCIDED only because `prove_step` folded two recursion challenges where upstream folds one,
+i.e. **because dregg's step proof was PADDED where upstream is not.** Fixing the prover
+(`marshal::STEP_RECURSION_SLOTS`) is what separated them; this theorem now states the separation
+instead of the coincidence.
+
+⚠ Read `wrap.rs:729-737` before assuming `Max_proofs_verified` has gone away: it pads the wrap
+proof's OWN accumulator list up to `MAX_PROOFS_VERIFIED_N` by **`vec.insert(0, …)`** —
+`dummy_ipa_wrap_sg()` PREPENDED, so slot 0 is the dummy and the real accumulator is last. That is a
+second list, on the wrap side, and it is NOT this one. `MinaWrapHackDummySg` carries the point. -/
 theorem chain_shape_is_the_measured_step_shape :
     shapeWrap.prevs = STEP_PREVCOMM_XY.length / 2
     ∧ shapeWrap.ipaRounds = STEP_IPA_ROUNDS
     ∧ shapeWrap.wComms = STEP_WCOMM_XY.length / 2
     ∧ shapeWrap.tComms = STEP_TCOMM_XY.length / 2
-    ∧ (shapeWrap.prevs, shapeWrap.ipaRounds, shapeWrap.wComms, shapeWrap.tComms) = (2, 16, 15, 7)
+    -- ⚑ `prevs` is `actual_proofs_verified` = `STEP_RULE_N_PREVIOUS` = 1, NOT the devnet VK's
+    -- `Max_proofs_verified` = 2. The two legs below say both halves of that.
+    ∧ (shapeWrap.prevs, shapeWrap.ipaRounds, shapeWrap.wComms, shapeWrap.tComms) = (1, 16, 15, 7)
+    ∧ shapeWrap.prevs ≠ MAX_PROOFS_VERIFIED
+    ∧ STEP_PREV_CHALLENGES = shapeWrap.prevs
     ∧ shapeWrap.xhatEntries = List.range XHAT_TERMS_FULL
     ∧ shapeWrap.xhatEntries.length = STEP_PUBLIC
-    ∧ chainTape.length = 37
+    ∧ chainTape.length = 35
     ∧ STEP_LR_XY.length = 4 * shapeWrap.ipaRounds
     ∧ STEP_TCOMM_XY.length = 2 * shapeWrap.tComms := by
   native_decide

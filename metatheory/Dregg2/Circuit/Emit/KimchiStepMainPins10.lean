@@ -106,13 +106,19 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
            + (segRows (baseSegD shapeSmoke) tS.specD tS.segD true).length
            + (idxDigestRows shapeSmoke true).length
            + (rDefRows shapeSmoke tS.defc true).length
--- ⚑ …and segment D is NON-EMPTY and is exactly `blocks` permutations' worth of rows with NO init
--- pin row, which is what `Sponge.copy` means here: `nbD` absorb blocks (13 rows each) and NO squeeze
--- block at all — its single squeeze is the last absorb block's own permutation — plus the one probe
--- on the state that squeeze reads. It was `13·nbD + 1 + 13` until 2026-08-03.
+-- ⚑ …and segment D is NON-EMPTY: TWO init pin rows (it starts from a fresh sponge), `nbD` absorb
+-- blocks (13 rows each) and NO squeeze block at all — its single squeeze is the last absorb block's
+-- own permutation — plus the one probe on the state that squeeze reads.
+-- ⚠ **THIS READ `13·nbD + 1` WITH "NO init pin row, which is what `Sponge.copy` means here" UNTIL
+-- 2026-08-07.** `segRows` emits the two init rows exactly when `copyFrom.isNone`, and segment D's
+-- `copyFrom` is now `none` because it runs its own `sponge_after_index` over the instance's own
+-- wrap key (`step.rs:2718`). `nbD` also went 4 → 32 at this shape for the same reason, so the
+-- absolute figure moved 53 → 419; the FORM is what this pins.
 #guard (segRows (baseSegD shapeSmoke) tS.specD tS.segD true).length
-        == 13 * nbD shapeSmoke + 1
-#guard tS.specD.copyFrom.isSome && tS.specA.copyFrom.isNone && tS.specC.copyFrom.isNone
+        == 2 + 13 * nbD shapeSmoke + 1
+-- ⚑ …and NO segment is a copy any more. `tS.specD.copyFrom.isSome` was the single most explicit
+-- "segment D is a copy" proposition in the tree; it is `false` now and this is where that is said.
+#guard tS.specD.copyFrom.isNone && tS.specA.copyFrom.isNone && tS.specC.copyFrom.isNone
 -- …and §3c's digest sub-list is EMPTY while its pin sub-list is one `Generic` row per index
 -- commitment this shape must hold itself.
 #guard (idxDigestRows shapeSmoke true).length == 0
@@ -153,23 +159,27 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 -- read as unconditional.** §3c's derivation lives in R7 — the permutation is squeezed off segment
 -- C's own state, and segment C is an R7 sub-circuit — while R1 ABSORBS the result at block 0. So
 -- from `r1_transcript` to `r6_ft_eval0` `vIdxD 0` is a free witness the transcript eats (class = the
--- absorb row alone), and it is DERIVED at `r7_absorption` and `r8_finalize`. ⚑ FOUR since
--- 2026-08-03, not three: `vIdxD` no longer names a digest permutation of its own — it names segment
--- C's block-28 state lane, whose class is that block's own absorb row, block 27's closing `Zero`,
--- the σ probe on the state, AND R1's block-0 absorb row.
+-- absorb row alone), and it is DERIVED at `r7_absorption` and `r8_finalize`. ⚑ THREE since
+-- 2026-08-07: `vIdxD` names segment C's block-28 state lane, whose class is that block's own absorb
+-- row, block 27's closing `Zero`, and the σ probe on the state.
+-- ⚠ **IT WAS FOUR, AND THE FOURTH CELL WAS SEGMENT D READING SEGMENT C'S STATE.** While `hmOutSpec`
+-- carried `copyFrom`, segment D's block-0 addend row read this very lane, so segment C's index
+-- boundary had a consumer in the OUTER hash. Segment D now runs its own `sponge_after_index` over
+-- the instance's own wrap key (`step.rs:2718`) and reads nothing of segment C's — which is the
+-- stratification `KimchiStepWrapChain`'s pass order depends on, measured here as a cell count.
 -- The reportable object is the full assembly; the lower rungs are sub-circuits and this is where
 -- that costs something.
 /-- **`the_index_digest_word_class_grows_with_the_rung`** — ⚑ FOUR `#guard`s that were four
 instances of ONE fact, converted 2026-08-03 (`metatheory/docs/GUARD-DISCIPLINE.md`). The claim is
 not "this rung has 4 cells"; it is that `vIdxD 0`'s class GROWS as sub-circuits land — 1 at
-`r1_transcript`, still 1 at `r6_ftEval0`, then 4 once `r7_absorb` wires the block-28 state lane and
-4 again at `r9_opening`. Written as ONE statement over the rungs in order, a rung whose count FELL
+`r1_transcript`, still 1 at `r6_ftEval0`, then 3 once `r7_absorb` wires the block-28 state lane and
+3 again at `r9_opening`. Written as ONE statement over the rungs in order, a rung whose count FELL
 while another ROSE can no longer pass, which four independent equalities allowed. -/
 theorem the_index_digest_word_class_grows_with_the_rung :
     ((classCells (posAt .transcript) (vIdxD shapeSmoke 0)).length == 1
      && (classCells (posAt .ftEval0) (vIdxD shapeSmoke 0)).length == 1
-     && (classCells (posAt .absorb) (vIdxD shapeSmoke 0)).length == 4
-     && (classCells (posAt .opening) (vIdxD shapeSmoke 0)).length == 4) = true := by
+     && (classCells (posAt .absorb) (vIdxD shapeSmoke 0)).length == 3
+     && (classCells (posAt .opening) (vIdxD shapeSmoke 0)).length == 3) = true := by
   native_decide
 
 #assert_compiled the_index_digest_word_class_grows_with_the_rung

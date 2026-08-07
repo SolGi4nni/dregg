@@ -137,25 +137,32 @@ set_option maxRecDepth 100000
 #guard (exposedVars shapeSmoke).getD 7 (xv 0) == hmOutDigestVar shapeSmoke
 #guard (stepPublic tS).getD 7 0 == ((tS.segD.states.getLastD []).getD 0 0 : Int)
 #guard (stepPublic tS).getD 6 0 != (stepPublic tS).getD 7 0
--- ⚑ …and it is a `Sponge.copy` of `sponge_after_index` and NOT a re-absorption: its block-0 state
--- lanes ARE segment C's own variables at the index boundary, the same copy `index_digest` takes,
--- and its state at block 0 is `idxAfterState`.
+-- ⚑⚑ …and it is its OWN `sponge_after_index`, NOT a copy of segment C's — CORRECTED 2026-08-07.
+-- These three guards read *"it is a `Sponge.copy` of `sponge_after_index` and NOT a re-absorption:
+-- its block-0 state lanes ARE segment C's own variables at the index boundary … and its state at
+-- block 0 is `idxAfterState`"*, and every word of that was the old model. `step.rs:2718` gives the
+-- OUTER hash `merge::dlog_plonk_index(wrap_prover)` — the instance's OWN wrap key — so segment D
+-- starts from a FRESH sponge, absorbs its own 56 coordinates, and lands somewhere segment C never
+-- goes. The three below say exactly that, and the third is the one with content: **a different key
+-- gives a different `after_index` state**, which is what makes §18's tie bind the key at all.
 #guard (List.range 3).all (fun j =>
   tS.specD.stV (baseSegD shapeSmoke) (nbD shapeSmoke) 1 0 j
-    == sgSt (baseSegC shapeSmoke) (nbC shapeSmoke) 1 (N_IDX_WORDS / 2) j)
-#guard tS.segD.states.headD [] == idxAfterState
+    != sgSt (baseSegC shapeSmoke) (nbC shapeSmoke) 1 (N_IDX_WORDS / 2) j)
+#guard tS.segD.states.headD [] == [0, 0, 0]
 #guard tS.segC.states.getD (N_IDX_WORDS / 2) [] == idxAfterState
--- …so it absorbs NONE of the 56 index words: its whole word list is app state, `G`, challenges.
+#guard tS.segD.states.getD (N_IDX_WORDS / 2) [] != idxAfterState
+-- …and it absorbs ALL 56 index words ahead of the app state, `G` and the challenges.
 #guard tS.specD.ws.length == shapeSmoke.hmOutWords
-#guard tS.specD.ws.length == N_HM_APP + 2 + shapeSmoke.bRounds
-#guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).1 == vGx shapeSmoke
-#guard (tS.specD.ws.getD (N_HM_APP + 1) (xv 0, 0)).1 == vGy shapeSmoke
-#guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).2 == tS.gXY.1
+#guard tS.specD.ws.length == N_IDX_WORDS + N_HM_APP + 2 + shapeSmoke.bRounds
+#guard (tS.specD.ws.getD (N_IDX_WORDS + N_HM_APP) (xv 0, 0)).1 == vGx shapeSmoke
+#guard (tS.specD.ws.getD (N_IDX_WORDS + N_HM_APP + 1) (xv 0, 0)).1 == vGy shapeSmoke
+#guard (tS.specD.ws.getD (N_IDX_WORDS + N_HM_APP) (xv 0, 0)).2 == tS.gXY.1
 -- ⚑ …and its challenge run is `bulletproof_challenges` — the vector `finalize_other_proof` RETURNS
 -- (`step_verifier.ml:1114-1116,1147`), i.e. the LIFTED deferred challenges the `b(ζ)` product folds
 -- over — and NOT segment C's `prev_challenges`. Two hashes, two vectors, and they are disjoint here.
 #guard (List.range shapeSmoke.bRounds).all (fun k =>
-  (tS.specD.ws.getD (N_HM_APP + 2 + k) (xv 0, 0)).1 == vLift shapeSmoke (shapeSmoke.uChal k))
+  (tS.specD.ws.getD (N_IDX_WORDS + N_HM_APP + 2 + k) (xv 0, 0)).1
+    == vLift shapeSmoke (shapeSmoke.uChal k))
 #guard (tS.specD.ws.map (·.1)).all (fun v =>
   ((List.range (2 * shapeSmoke.bRounds)).any (fun i => v == vPrevChal shapeSmoke i)) == false)
 -- …and it is UNMASKED: `hash_messages_for_next_step_proof`, not `…_opt` (`step_main.ml:547`).

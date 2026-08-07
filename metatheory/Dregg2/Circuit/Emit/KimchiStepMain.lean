@@ -164,9 +164,9 @@ line items, not against a round number.
     `prev_challenge_polynomial_commitments` — `sg_old`, which this assembly already held as the
     fold's `~init` and its round-0 base — and the two vectors are INTERLEAVED PER PROOF
     (`composition_types.ml:595-607`), not concatenated. Both were wrong; §12k exhibits the
-    correction in both directions on the emitted digest. **Segment D, the OUTER call**, is new: a
-    `Sponge.copy` of `sponge_after_index` over the app state, `G`
-    (`acc.wrap_proof.opening.challenge_polynomial_commitment`, `:534`) and
+    correction in both directions on the emitted digest. **Segment D, the OUTER call**, is new: its OWN
+    `sponge_after_index` over **the instance's own wrap verification key** (`step.rs:2718`), then
+    the app state, `G` (`acc.wrap_proof.opening.challenge_polynomial_commitment`, `:534`) and
     `finalize_other_proof`'s RETURNED `bulletproof_challenges` (`:563-565` — a different vector from
     segment C's `prev_challenges`), unmasked, its squeeze the step statement's public
     `messages_for_next_step_proof` (`:572-575`). ⚠ See R4 for what that does and does not buy — and
@@ -450,11 +450,15 @@ rung was queued for; see R4, §17 and §18.
     (`composition_types.ml:595-607`) INTERLEAVES each commitment with its own challenge run. §12k
     exhibits both directions on the emitted digest — and names the third fact, that with
     `Prefix_mask.there N1` slot 0 is the `Wrap_hack` dummy and is masked out, so only slot 1 bites.
-  * ⚑⚑ **SEGMENT D, the OUTER `hash_messages_for_next_step_proof`: +121 `Poseidon`, +11 `Generic`,
-    +13 `Zero` (144 rows), and `assert_on_curve` on `G` (+1 `Generic` row).** `step_main.ml:525-566`
-    — a `Sponge.copy` of `sponge_after_index` over the app state, `G` and `finalize_other_proof`'s
+  * ⚑⚑ **SEGMENT D, the OUTER `hash_messages_for_next_step_proof`, and `assert_on_curve` on `G`.**
+    `step_main.ml:525-566` — its OWN `sponge_after_index` over the instance's own wrap verification
+    key (`step.rs:2718`, 56 coordinates), then the app state, `G` and `finalize_other_proof`'s
     returned `bulletproof_challenges`, its squeeze the step statement's public
-    `messages_for_next_step_proof`. ⚠ **It does NOT refuse the substitution §17 exhibits.** `G` went
+    `messages_for_next_step_proof`.
+    ⚠ **THE ROW LEDGER HERE WAS `+121 Poseidon, +11 Generic, +13 Zero (144 rows)` AND IS STALE:**
+    that was the cost of a segment D with NO index prefix. Absorbing its own 56 words takes the
+    whole assembly 10 349 → 10 715 rows (+366) at `shapeStep`. `KimchiStepMainPins14`'s
+    `the_schedule_wires_variables` is the measured figure; do not cite this bullet's numbers. ⚠ **It does NOT refuse the substitution §17 exhibits.** `G` went
     from zero occurrences to a public digest, so a re-solved `G` now moves a public word — but
     `equal_g` still closes and `rhs` is still not emitted. §17(d)–(g) measure exactly that.
   * ⚑ **`sg_old[0]` CLOSED: +1 `CompleteAdd`, +2 `Zero`, +2 on-curve halves** (previous commit).
@@ -535,12 +539,14 @@ branch's own `rule.main` application logic (which is not `verify_one` at all), `
 tail. That is the trade this file is supposed to be making: every commit here should be buying a
 named simplification, not scale.
 
-⚑ Likewise `Poseidon` (2266 vs 6292): R7 brings the count to 206 permutations — ELEVEN more than
-the previous rung, and the eleven are segment D, the OUTER `hash_messages_for_next_step_proof`. It
-costs only eleven because it is a `Sponge.copy` of `sponge_after_index` and re-absorbs none of the
-28 index commitments (`step_verifier.ml:1164`). `verify_one`'s own sponge work plus BOTH of
-`step_main`'s hashes are now assembled; the remaining 366 permutations are the app logic and
-`group_map` (#5).
+⚑ Likewise `Poseidon` (2266 vs 6292): R7's added permutations ARE segment D, the OUTER
+`hash_messages_for_next_step_proof`. ⚠ **THIS PARAGRAPH SAID "ELEVEN … because it is a `Sponge.copy`
+of `sponge_after_index` and re-absorbs none of the 28 index commitments", AND THE "BECAUSE" WAS THE
+LOAD-BEARING FALSEHOOD.** Segment D runs its own `sponge_after_index` over the instance's own wrap
+key (`step.rs:2718`), so it absorbs 56 words ahead of the app state and costs 28 more permutations,
+not eleven — the whole assembly moves 10 349 → 10 715 rows. `verify_one`'s own sponge work plus BOTH
+of `step_main`'s hashes are assembled; every absolute count in this paragraph is stale and
+`KimchiStepMainPins14`/`Pins18`'s censuses are the measured ones.
 
 ⚑ **WHERE FIAT-SHAMIR STANDS, stated at the resolution it is actually at, and BOTH HALVES.**
 

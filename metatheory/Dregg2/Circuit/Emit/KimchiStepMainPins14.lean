@@ -226,14 +226,18 @@ theorem every_scheduled_variable_has_a_witness_entry :
 
 /-- …and it is not vacuous: `rowsS` really does wire variables (a schedule of all-`none` perms would
 satisfy the `all` above trivially). ⚑ An EQUALITY, not a bound — a bound is what "a deleted chain
-would still satisfy" looks like. `3869` rows carry `12977` wired permutation cells; both numbers move
-deliberately or not at all. ⚑ It was `4025`/`13054` until §23 (`…Pins18`) made the sponge LAZY:
+would still satisfy" looks like. `4235` rows carry `13316` wired permutation cells; both numbers move
+deliberately or not at all. ⚑ It was `3869`/`12977` until 2026-08-07, when segment D stopped being a
+`Sponge.copy` of segment C and started running its own `sponge_after_index` over the instance's own
+wrap verification key (`step.rs:2718`): +56 absorbed words is `nbD` 4 → 32 at this shape, plus the
+two init pin rows a non-copied segment emits. **+366 rows, +339 cells**, and the same +366 takes
+`shapeStep` from 10 349 to 10 715 — still inside `2 ^ 14`. ⚑ It was `4025`/`13054` until §23 (`…Pins18`) made the sponge LAZY:
 five permutations left the assembly (one per segment squeeze that a preceding absorb block already
 supplies, two of them segment B's) plus §3c's whole `index_digest` block, and the transcript went
 from `absorbs + chals = 18` permutations to `tBlocks = 11`. **−164 rows, −95 cells**, and the pad
 lane moved from block 0's second lane to the last lane of the pre-β run. -/
 theorem the_schedule_wires_variables :
-    (rowsS.length = 3869 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 12977) := by
+    (rowsS.length = 4235 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 13316) := by
   native_decide
 #assert_compiled the_schedule_wires_variables
 

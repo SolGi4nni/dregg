@@ -6005,8 +6005,22 @@ def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :
 
 /-! ## §8 — the committed shape.
 
-  * `prevs = 2` — the devnet wrap VK's `prev_challenges: 2`
-    (`bridge/mina-zkapp/fixtures/mina-devnet-wrap-transaction-vk.json`).
+  * ⚑⚑ `prevs = 1` — **`actual_proofs_verified`, NOT `Max_proofs_verified`, CORRECTED 2026-08-07.**
+    This field sizes the `sg_old` block the wrap circuit absorbs at `wrap_verifier.ml:538`, i.e.
+    the STEP proof's own kimchi recursion arity. `wrap.rs:658-666` sets that arity outright —
+    `actual_proofs_verified = <messages_for_next_step_proof>.old_bulletproof_challenges.len()` —
+    and `step.rs:2848-2857` builds that record UNPADDED at `N_PREVIOUS`, while the SAME function
+    pads `unfinalized_proofs` (`:2861-2868`) and `messages_for_next_wrap_proof` (`:2764-2772`) to
+    two explicitly and in view. Dregg's step rule assembles ONE `verify_one`
+    (`KimchiStepMainCore`), so `N_PREVIOUS = 1` (`gates::STEP_RULE_N_PREVIOUS`) and the record is
+    one entry long.
+    ⚠ **THIS LINE READ `2` UNTIL 2026-08-07 AND CITED THE WRONG NUMBER FOR IT**: the devnet wrap
+    VK's `prev_challenges: 2` (`bridge/mina-zkapp/fixtures/mina-devnet-wrap-transaction-vk.json`)
+    is `Max_proofs_verified` — the most a wrap instance can be handed — and that is a different
+    quantity from how many this step proof actually carries. The two coincided only because
+    `prove_step` folded two recursion challenges where upstream folds one, i.e. dregg's step proof
+    was PADDED where upstream is not, and the padding then propagated into `STEP_PREVCOMM_XY`
+    (4 coordinates, now 2) and every wrap fixture below it.
   * `ipaRounds = 16` — `Backend.Tick.Rounds.n`, the STEP proof's IPA round count
     (`Common.Max_degree.step_log2 = 16`); `wrap_main.ml:381` sizes `openings_proof.lr` by it.
     ⚠ It is NOT 15; 15 is `Tock.Rounds.n`, which is what the STEP circuit's `verify_one` sees.
@@ -6020,8 +6034,23 @@ def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :
     `WRAP_PRIMARY_LEN = 40` wide at every rung from `w4_bind` up, in Mina's slot order; `w9_prev`
     adds slot 12 and `w11_wraphack` slot 11, which is the 22 → 24 ladder, and the remaining sixteen
     are `WRAP_UNPINNED_SLOTS`. -/
+/-- ⚑⚑ **`MAX_PROOFS_VERIFIED_N` — the OTHER number, kept separate from `shapeWrap.prevs`.**
+
+`wrap.rs:729-737` pads the WRAP proof's own accumulator list up to this by
+`vec.insert(0, InnerCurve::of_affine(dummy_ipa_wrap_sg()))` — a PREPEND, so slot 0 is the dummy and
+the real accumulators are last (`MinaWrapHackDummySg`, `KimchiStepMainFixture.chainSlot0`). It is
+also the devnet wrap VK's `prev_challenges: 2`
+(`bridge/mina-zkapp/fixtures/mina-devnet-wrap-transaction-vk.json`).
+
+⚠ **It is NOT `shapeWrap.prevs`**, which is `actual_proofs_verified` — how many recursion
+accumulators the STEP proof this instance wraps actually carries, read off the step record by
+`wrap.rs:666`. One name served both until 2026-08-07, and the two agreed only while dregg's step
+proof was padded where upstream is not.
+`KimchiStepWrapChain.chain_shape_is_the_measured_step_shape` states the separation. -/
+def MAX_PROOFS_VERIFIED : Nat := 2
+
 def shapeWrap : WrapShape :=
-  { prevs := 2, ipaRounds := 16, wComms := 15, tComms := 7, emsRows := 8
+  { prevs := 1, ipaRounds := 16, wComms := 15, tComms := 7, emsRows := 8
   , branches := 5, pubWords := 22, xhatEntries := xhatSel XHAT_TERMS_FULL
   -- ⚑ `xhatOut XHAT_TERMS_FULL`, and `EmitWrapMainJson` re-derives it and REFUSES on disagreement
   -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far

@@ -202,12 +202,17 @@ set_option maxRecDepth 100000
 
 -- …and `index_digest`'s three lanes. ⚑ SINCE 2026-08-03 THESE ARE SEGMENT C's OWN block-28 state
 -- cells (`vIdxD` is `sgSt … 28 j`): the copy's `squeeze` performs segment C's block-27 permutation
--- and nothing more, so there is no digest block of its own. Lane 0's FOUR cells are that block's
--- closing `Zero` row, block 28's absorb row, the σ-only probe on the state — AND R1's block-0
--- absorb row, which is the whole point and what a `.length ≥ 2` floor would not have caught.
-#guard (classCells posS (vIdxD shapeSmoke 0)).length == 4
-#guard (classCells posS (vIdxD shapeSmoke 1)).length == 3
-#guard (classCells posS (vIdxD shapeSmoke 2)).length == 3
+-- and nothing more, so there is no digest block of its own. Lane 0's THREE cells are that block's
+-- closing `Zero` row, block 28's absorb row, and the σ-only probe on the state.
+-- ⚠ **THE FOURTH CELL WAS SEGMENT D, AND IT LEFT ON 2026-08-07.** This comment read *"AND R1's
+-- block-0 absorb row, which is the whole point"* — that row was the OUTER hash reading segment C's
+-- post-index state through `hmOutSpec.copyFrom`. Segment D now absorbs its own 56 index words
+-- (`step.rs:2718`, `MinaWrapOwnVerifierKey`) and reads no cell of segment C's, so lanes 0/1/2 are
+-- 3/2/2. `KimchiStepMainPins10.the_index_digest_word_class_grows_with_the_rung` is the rung-ordered
+-- form of the same count.
+#guard (classCells posS (vIdxD shapeSmoke 0)).length == 3
+#guard (classCells posS (vIdxD shapeSmoke 1)).length == 2
+#guard (classCells posS (vIdxD shapeSmoke 2)).length == 2
 #guard ((classCells posS (vIdxD shapeSmoke 0)).filter (fun c => c.row < nTrans)).length == 1
 
 -- the helper reproduces the assembly's own digest on the honest word, so what follows measures the

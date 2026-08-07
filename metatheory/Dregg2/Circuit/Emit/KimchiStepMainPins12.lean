@@ -290,7 +290,7 @@ Both halves are measured here, on the emitted object, and neither is inferred fr
 -- What IS pinned is that the two hashes are the two ENDS of that chain and are wired to the two
 -- different objects upstream wires them to: segment C to `sg_old`, segment D to `G`.
 #guard sgOldVar shapeSmoke 0 0 == ipx shapeSmoke (qInit shapeSmoke)
-#guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).1 == vGx shapeSmoke
+#guard (tS.specD.ws.getD (N_IDX_WORDS + N_HM_APP) (xv 0, 0)).1 == vGx shapeSmoke
 #guard (tS.specC.ws.map (·.1)).all (fun v => v != vGx shapeSmoke && v != vGy shapeSmoke)
 #guard (tS.specD.ws.map (·.1)).all (fun v =>
   v != ipx shapeSmoke (qInit shapeSmoke) && v != ipx shapeSmoke (qT shapeSmoke 0))

@@ -117,7 +117,7 @@ use serde::Deserialize;
 use pickles_reality_gate_export::gates;
 use pickles_reality_gate_export::marshal::{
     self, expand_prechallenge, marshal, PreChallenge, PrevStepEvals, WrapKimchiProof,
-    WrapStatementScalars, PROOFS_VERIFIED, STEP_ROUNDS, WRAP_ROUNDS,
+    WrapStatementScalars, PROOFS_VERIFIED, STEP_RECURSION_SLOTS, STEP_ROUNDS, WRAP_ROUNDS,
 };
 use pickles_reality_gate_export::tape::{self, StepTapeOut};
 use pickles_reality_gate_export::transcript::{self, StepTranscript};
@@ -530,7 +530,11 @@ fn prove_step(
         >(
             gates,
             c.public_input_size,
-            PROOFS_VERIFIED,
+            // ⚑ The step VERIFIER INDEX declares the same arity the proof carries. kimchi refuses
+            // the disagreement itself — `IncorrectPrevChallengesLength(2, 1)` out of
+            // `batch_verify` — which is how the 2026-08-07 arity repair was caught the first time
+            // it was only half made.
+            STEP_RECURSION_SLOTS,
             vec![],
             None,
             true,
@@ -555,11 +559,20 @@ fn prove_step(
         .map(|s| Fp::from_str(s).unwrap())
         .collect();
 
-    // The two Tick recursion slots. Each slot's commitment is the commitment to the CHALLENGE
-    // POLYNOMIAL of its own challenges — the same object [`transcript::accumulator`] computes, on
-    // the same SRS — so `messages_for_next_step_proof.old_bulletproof_challenges` is a fact about
-    // this proof and not a caller's decoration.
-    let step_pre: Vec<[PreChallenge; STEP_ROUNDS]> = (0..PROOFS_VERIFIED)
+    // ⚑⚑ **THE Tick RECURSION SLOTS — `STEP_RECURSION_SLOTS`, i.e. ONE, CORRECTED 2026-08-07.**
+    // Each slot's commitment is the commitment to the CHALLENGE POLYNOMIAL of its own challenges —
+    // the same object [`transcript::accumulator`] computes, on the same SRS — so
+    // `messages_for_next_step_proof.old_bulletproof_challenges` is a fact about this proof and not
+    // a caller's decoration. The COUNT is a fact about the RULE: `wrap.rs:658-666` reads
+    // `actual_proofs_verified` straight off that record's length, dregg's step rule has one
+    // `verify_one`, and `step.rs:2848-2857` leaves the record unpadded at `N_PREVIOUS`.
+    //
+    // ⚠ This line read `PROOFS_VERIFIED` (2) until 2026-08-07, so the step proof was PADDED where
+    // upstream is not and `gate_c` reported `MATCH=false` against `gates::STEP_RULE_N_PREVIOUS`
+    // every run. **WHAT RE-BAKES:** `STEP_PREVCOMM_XY` (4 coordinates → 2) and therefore
+    // `KimchiWrapMainCore.shapeWrap.prevs`, `KimchiStepWrapChain.chainTape` (37 words → 35) and
+    // every `wrapmain_wrap_*.json` whose `sg_old` block reads it.
+    let step_pre: Vec<[PreChallenge; STEP_ROUNDS]> = (0..STEP_RECURSION_SLOTS)
         .map(|j| {
             std::array::from_fn(|i| {
                 let k = (j * STEP_ROUNDS + i) as u64;

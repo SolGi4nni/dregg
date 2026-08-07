@@ -103,8 +103,31 @@ pub const STEP_ROUNDS: usize = 16;
 /// `prover.rs:889` — the quotient polynomial is committed in `7 * num_chunks` chunks.
 pub const T_CHUNKS: usize = 7;
 
-/// `Proofs_verified_2`: exactly two recursion slots.
+/// `Proofs_verified_2`: `Max_proofs_verified` — the WRAP side's two recursion slots, and the two
+/// `messages_for_next_wrap_proof` entries `step.rs:2764-2772` pads to explicitly.
+///
+/// ⚠ **THIS IS NOT THE STEP RECORD'S ARITY.** Until 2026-08-07 this one constant served both, which
+/// is how `messages_for_next_step_proof` came to carry two slots for a rule with one `verify_one`.
+/// See [`STEP_RECURSION_SLOTS`].
 pub const PROOFS_VERIFIED: usize = 2;
+
+/// ⚑⚑ **`actual_proofs_verified` — THE STEP PROOF'S OWN KIMCHI RECURSION ARITY, AND THE STEP
+/// RECORD'S LENGTH. ONE.**
+///
+/// `wrap.rs:658-666` is literally
+/// `actual_proofs_verified = <messages_for_next_step_proof>.old_bulletproof_challenges.len()`, so
+/// the RECORD defines the arity rather than reporting it, and `step.rs:2848-2857` builds that
+/// record UNPADDED at `N_PREVIOUS` while the same function pads `unfinalized_proofs` and
+/// `messages_for_next_wrap_proof` to two in view. Dregg's step rule assembles ONE `verify_one`, so
+/// this is 1 — the same number [`crate::gates::STEP_RULE_N_PREVIOUS`] names from the other side.
+///
+/// ⚠ **IT MOVES THREE THINGS AT ONCE OR NOTHING.** `gate_b` folds the same vector into
+/// `expand_deferred`'s `challenges_digest` and kimchi's Fr-sponge folds it into
+/// `prev_challenge_digest` (`verifier.rs:289-299`) at the same transcript position, so truncating
+/// the record alone makes ξ stop agreeing. `prove_step` therefore folds ONE `RecursionChallenge`,
+/// which is what re-bakes `STEP_PREVCOMM_XY` (4 coordinates → 2) and with it `shapeWrap.prevs` and
+/// every wrap fixture below the `sg_old` block.
+pub const STEP_RECURSION_SLOTS: usize = 1;
 
 /// A 128-bit scalar prechallenge, little-endian limbs — exactly what the wire's
 /// `Limb_vector.Constant.Hex64 * Hex64` carries.
@@ -471,10 +494,10 @@ pub fn marshal(
             want: PROOFS_VERIFIED,
         });
     }
-    if st.step_old_bulletproof_challenges.len() != PROOFS_VERIFIED {
+    if st.step_old_bulletproof_challenges.len() != STEP_RECURSION_SLOTS {
         return Err(MarshalError::StepChallengeArity {
             got: st.step_old_bulletproof_challenges.len(),
-            want: PROOFS_VERIFIED,
+            want: STEP_RECURSION_SLOTS,
         });
     }
     // ⚑ The Tick tie, added 2026-08-05. `messages_for_next_step_proof.old_bulletproof_challenges`
@@ -482,10 +505,10 @@ pub fn marshal(
     // kimchi's Fr-sponge folds into `prev_challenge_digest` (`verifier.rs:289-299`) at the SAME
     // position of the SAME transcript. If the statement's copy is not the step proof's own, the
     // two ξ diverge — silently, because the wire carries no ξ to disagree with.
-    if prev.prev_chals.len() != PROOFS_VERIFIED {
+    if prev.prev_chals.len() != STEP_RECURSION_SLOTS {
         return Err(MarshalError::StepChallengeArity {
             got: prev.prev_chals.len(),
-            want: PROOFS_VERIFIED,
+            want: STEP_RECURSION_SLOTS,
         });
     }
     for (i, chals) in prev.prev_chals.iter().enumerate() {
@@ -578,8 +601,18 @@ pub fn marshal(
     // ---- statement.messages_for_next_step_proof ----
     // ⚑ The commitments come out of the PROOF. openmina takes them from its statement and drops
     // `prev_challenges` entirely.
-    let mut cpc: Vec<(BigInt, BigInt)> = Vec::with_capacity(PROOFS_VERIFIED);
-    for (i, rc) in proof.prev_challenges.iter().enumerate() {
+    // ⚑⚑ **AND THERE ARE `STEP_RECURSION_SLOTS` OF THEM, NOT `PROOFS_VERIFIED`.** The record's two
+    // vectors are one `Vector.t (…, N_PREVIOUS)` each (`step.rs:2848-2857`) and must have the SAME
+    // length, so this walks the step record's arity rather than the wrap side's `Max_proofs_verified`.
+    // A two-entry commitment vector beside a one-entry challenge vector is not a padded record; it
+    // is a record `MessagesForNextStepProof::to_fields` would hash as neither shape.
+    let mut cpc: Vec<(BigInt, BigInt)> = Vec::with_capacity(STEP_RECURSION_SLOTS);
+    for (i, rc) in proof
+        .prev_challenges
+        .iter()
+        .take(STEP_RECURSION_SLOTS)
+        .enumerate()
+    {
         if rc.comm.chunks.len() != 1 {
             return Err(MarshalError::Chunks {
                 field: "prev_challenges[_].comm",

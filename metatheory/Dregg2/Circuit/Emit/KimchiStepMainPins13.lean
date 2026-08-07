@@ -68,17 +68,34 @@ see (c) — so it is not taken here.
 
 ## ⚑ THE CHAIN, AND WHY THE TWO HASHES ARE ONE OBJECT
 
-Segment D at step `N` (`step_main.ml:525-566`) absorbs `(app_state_N, G_N, bulletproof_challenges_N)`
-onto a `Sponge.copy` of `sponge_after_index`; its squeeze is step `N`'s public
+Segment D at step `N` (`step_main.ml:525-566`) absorbs
+`(dlog_plonk_index_N, app_state_N, G_N, bulletproof_challenges_N)`; its squeeze is step `N`'s public
 `messages_for_next_step_proof` (`:572-573`). Segment C at step `N+1` (`:59-81`) absorbs
-`(app_state_N, sg_old, prev_challenges)` onto the SAME copy point, masked. `per_proof_witness.ml:
+`(dlog_plonk_index_prev, app_state_N, sg_old, prev_challenges)`, masked. `per_proof_witness.ml:
 90-97` says what those two witness fields are: `prev_challenges` are "the challenges c_0 … c_{k-1}
 corresponding to each W_i" and `prev_challenge_polynomial_commitments` "the commitments to the
 challenge polynomials … corresponding to each of the prev_challenges" — i.e. step `N`'s own
-`G` and `bulletproof_challenges`. **So on the honest chain the two digests are EQUAL**, and that
-equality is the tie. It is pinned below and it is not a definition: the two segments have different
+`G` and `bulletproof_challenges`.
+
+⚑⚑ **AND THE TIE HAS A PREMISE — NAMED SINCE 2026-08-07, WHEN THE TWO PREFIXES STOPPED BEING ONE.**
+This paragraph read *"onto a `Sponge.copy` of `sponge_after_index`"* and *"onto the SAME copy
+point"*, and on that reading the index prefix cancelled: both hashes absorbed the same 56 words, so
+the tie was a `Nat` equality with nothing to say about keys. It is not the same copy point.
+`step.rs:2718` hands the OUTER hash `merge::dlog_plonk_index(wrap_prover)` — **the instance's own
+wrap verification key** — while each `expand_proof` gets the PREVIOUS branch's (`:2725,2734`). So
+the two prefixes are two different keys, and the honest-chain statement is:
+
+> **step `N+1` reconstructs step `N`'s squeeze IFF the key it absorbs as the previous branch's IS
+> step `N`'s own wrap key.**
+
+Which is what an honest chain means, and is strictly more than the old equality said. `hmChainSpec`
+therefore takes the absorbed `key` as a parameter and (a) below states the tie AT step `N`'s own key
+(`idxOVal`) while (a′) states the REFUSAL at a different one (`idxVal`, block 539508's) — the leg
+that says the tie BINDS the key rather than cancelling it.
+
+It is pinned below and it is not a definition: the two segments have different
 word lists, different lengths, different masks and different app-state fixtures, and they coincide
-only if the mask, the interleave (`composition_types.ml:595-607`), the copy point and the block
+only if the mask, the interleave (`composition_types.ml:595-607`), the key and the block
 alignment are all right.
 
 ## ⚑⚑ THE VERDICT — READ IT BEFORE QUOTING THE SECTION
@@ -123,13 +140,16 @@ forward into `sg_old` at step `N+1` (this section), `E_c` is now the right POLYN
 (§8i), and the two still MEET only through a commitment-opening that no rung of this assembly emits.
 The substituted witness is accepted at every one of those rungs. -/
 
--- ⚑ **THE PARAMETERISATION IS FAITHFUL**: at this instance's own values `hmChainSpec` IS `hmSpec`,
--- word for word — same variables, same order, same length. So every measurement below is about the
--- emitted segment C and not about a second model of it.
-#guard (hmChainSpec shapeSmoke hmVal (chainSlot0 shapeSmoke tS.ipa).1 (chainSlot0 shapeSmoke tS.ipa).2
+-- ⚑ **THE PARAMETERISATION IS FAITHFUL**: at this instance's own values AND AT SEGMENT C'S OWN KEY
+-- `hmChainSpec` IS `hmSpec`, word for word — same variables, same order, same length. So every
+-- measurement below is about the emitted segment C and not about a second model of it.
+-- ⚠ `idxVal` and not `idxOVal` HERE, and the difference is the point: `hmSpec` is segment C, which
+-- absorbs the PREVIOUS branch's key (`step.rs:2725,2734`). The chain legs above run at `idxOVal`
+-- because there the absorbed key is step `N`'s own — see §18's premise.
+#guard (hmChainSpec shapeSmoke idxVal hmVal (chainSlot0 shapeSmoke tS.ipa).1 (chainSlot0 shapeSmoke tS.ipa).2
           (sgOldVal tS.ipa 1 0, sgOldVal tS.ipa 1 1)
           (fun k => prevChalVal (shapeSmoke.bRounds + k))).ws == (hmSpec shapeSmoke tS.ipa).ws
-#guard hmChainDigest shapeSmoke hmVal (chainSlot0 shapeSmoke tS.ipa).1 (chainSlot0 shapeSmoke tS.ipa).2
+#guard hmChainDigest shapeSmoke idxVal hmVal (chainSlot0 shapeSmoke tS.ipa).1 (chainSlot0 shapeSmoke tS.ipa).2
           (sgOldVal tS.ipa 1 0, sgOldVal tS.ipa 1 1)
           (fun k => prevChalVal (shapeSmoke.bRounds + k))
         == (tS.segC.states.getLastD []).getD 0 0
@@ -140,20 +160,46 @@ The substituted witness is accepted at every one of those rungs. -/
 -- returned bulletproof challenges, reconstructs step `N`'s public word 7 EXACTLY. This is the
 -- reconstruction-and-comparison, and it is the first time the two hashes are shown to be the two
 -- ends of one chain rather than two sponges that happen to share a copy point.
-#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tS.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tS.ipa).1
           (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
         == wordSeven tS tS.gXY
 -- …and it is not trivially true: segment C's own app-state fixture gives a DIFFERENT digest, so the
 -- identity is carrying the chained app state and not ignoring it.
-#guard hmChainDigest shapeSmoke hmVal (chainSlot0 shapeSmoke tS.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmVal (chainSlot0 shapeSmoke tS.ipa).1
           (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
         != wordSeven tS tS.gXY
+
+/-- ⚑⚑ **(a′) THE TIE BINDS THE KEY — AND THIS IS THE LEG THAT DID NOT EXIST BEFORE 2026-08-07.**
+
+The premise §18's header now names: step `N+1` reconstructs step `N`'s squeeze **iff** the
+`dlog_plonk_index` it absorbs as the previous branch's IS step `N`'s own wrap key. (a) is the `iff`'s
+forward half at `idxOVal`; this is the other half. `idxVal` is `MinaStepPrevCommitments`' 56 words —
+Mina devnet block 539508's `wrap-transaction` key, i.e. a DIFFERENT branch's — and against it the
+reconstruction must MISS.
+
+⚠ **Until segment D got its own index this leg was not merely unproved, it was UNSTATABLE**:
+`hmChainSpec` hard-coded `idxVal` on one side while `hmOutSpec` was a `Sponge.copy` of the other, so
+both digests absorbed the same 56 words by construction and no choice of key could separate them. A
+tie whose premise cannot be falsified is not a tie; it is a definition wearing one's clothes.
+
+`segd_slot12_probe`'s CONTROL 2 is the same statement from the Rust side, against openmina's own
+`MessagesForNextStepProof::hash()`. -/
+theorem the_inter_step_tie_binds_the_absorbed_wrap_key :
+    (hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tS.ipa).1
+        (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
+       == wordSeven tS tS.gXY)
+    ∧ (hmChainDigest shapeSmoke idxVal hmOVal (chainSlot0 shapeSmoke tS.ipa).1
+        (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
+       != wordSeven tS tS.gXY) := by
+  native_decide
+
+#assert_compiled the_inter_step_tie_binds_the_absorbed_wrap_key
 
 -- ⚑⚑ **(b) THE DELIVERABLE. THE SUBSTITUTED CHAIN CLOSES TOO — THE TIE DOES NOT REFUSE IT.**
 -- Step `N` is `tSwapAbs` with `G` re-solved (§17(c)/(e)); its public word 7 has MOVED (§17(d)).
 -- Step `N+1` carries `sg_old := G_resolved` and step `N`'s challenges, and the reconstruction
 -- reproduces the moved word. Nothing anywhere in the chain objects.
-#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
         == wordSeven tSwapAbs bpGResolvedA
 -- …and this really is the §17(e) witness and not a re-run of the honest one: the two chains'
@@ -166,7 +212,7 @@ The substituted witness is accepted at every one of those rungs. -/
 -- Re-solving at `z₁ = z₂ = 1` reaches a third commitment; its chain closes just as well. So the tie
 -- constrains WHICH `G` is carried forward, not WHETHER a satisfying `G` exists.
 #guard onCurveA bpG11 && bpG11 != bpGResolvedA && bpG11 != bpGHonestA
-#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpG11 (chainChals shapeSmoke tSwapAbs.sp)
         == wordSeven tSwapAbs bpG11
 -- …and the reason is structural: `G` is a word of segment D and of NEITHER other place, while `z₁`
@@ -179,27 +225,27 @@ The substituted witness is accepted at every one of those rungs. -/
 -- A prover who moves step `N`'s word 7 and then carries the HONEST `G` forward at step `N+1` is
 -- REFUSED: the reconstruction no longer equals the word the wrap proof was made for. So the fake
 -- commitment cannot be laundered away between steps; it must be carried.
-#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 tS.gXY (chainChals shapeSmoke tSwapAbs.sp)
         != wordSeven tSwapAbs bpGResolvedA
 -- …and each of the other three chained quantities is covered in the same direction:
 --   the carried challenges,
-#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA
           (fun k => if k == 0 then fAdd (chainChals shapeSmoke tSwapAbs.sp 0) 1
                     else chainChals shapeSmoke tSwapAbs.sp k)
         != wordSeven tSwapAbs bpGResolvedA
 --   the app state,
-#guard hmChainDigest shapeSmoke (fun i => fAdd (hmOVal i) 1)
+#guard hmChainDigest shapeSmoke idxOVal (fun i => fAdd (hmOVal i) 1)
           (chainSlot0 shapeSmoke tSwapAbs.ipa).1 (chainSlot0 shapeSmoke tSwapAbs.ipa).2
           bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
         != wordSeven tSwapAbs bpGResolvedA
 --   and either coordinate of the carried commitment alone.
-#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 (fAdd bpGResolvedA.1 1, bpGResolvedA.2)
           (chainChals shapeSmoke tSwapAbs.sp)
         != wordSeven tSwapAbs bpGResolvedA
-#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 (bpGResolvedA.1, fAdd bpGResolvedA.2 1)
           (chainChals shapeSmoke tSwapAbs.sp)
         != wordSeven tSwapAbs bpGResolvedA
@@ -210,19 +256,19 @@ The substituted witness is accepted at every one of those rungs. -/
 -- exactly where it was. It bites only if both mask bits are on — which is the `N2` instance, not
 -- this one.
 #guard MASK_BITS == [0, 1]
-#guard hmChainDigest shapeSmoke hmOVal (fAdd (chainSlot0 shapeSmoke tSwapAbs.ipa).1.1 1,
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (fAdd (chainSlot0 shapeSmoke tSwapAbs.ipa).1.1 1,
             (chainSlot0 shapeSmoke tSwapAbs.ipa).1.2)
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
         == wordSeven tSwapAbs bpGResolvedA
-#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+#guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
           (fun k => fAdd (prevChalVal k) 1) bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
         == wordSeven tSwapAbs bpGResolvedA
 -- …and with BOTH bits on it does bite, so the control is about the mask and not about the slot.
-#guard hmChainDigestMask shapeSmoke [1, 1] hmOVal
+#guard hmChainDigestMask shapeSmoke [1, 1] idxOVal hmOVal
           (fAdd (chainSlot0 shapeSmoke tSwapAbs.ipa).1.1 1,
            (chainSlot0 shapeSmoke tSwapAbs.ipa).1.2)
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
-        != hmChainDigestMask shapeSmoke [1, 1] hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+        != hmChainDigestMask shapeSmoke [1, 1] idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
           (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
 -- …and the two quantities the MIS-WIRED segment C used to hash are in neither word list, so no
 -- bend of `x_hat` or of the fold output `q` can reach this comparison at all (§12k's other half).

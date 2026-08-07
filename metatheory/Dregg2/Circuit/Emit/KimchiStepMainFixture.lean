@@ -813,10 +813,20 @@ def bpGResolvedA : Nat × Nat := jAff bpGResolved
 /-- ⚑ Segment C's spec with each slot's contents supplied, so the CHAIN can be evaluated at step
 `N`'s outputs rather than at this instance's own fixtures. Structurally identical to `hmSpec` — the
 variables, the length, the mask and the interleave are the same objects, only the VALUES differ, and
-the first `#guard` below pins that by comparing the two word lists. -/
-def hmChainSpec (s : StepShape) (app : Nat → Nat)
+the first `#guard` below pins that by comparing the two word lists.
+
+⚑⚑ **AND THE ABSORBED INDEX IS A PARAMETER SINCE 2026-08-07, BECAUSE IT IS WHAT THE TIE IS ABOUT.**
+This read `idxVal` — segment C's own index, Mina devnet block 539508's `wrap-transaction` key —
+which was harmless only while segment D was a `Sponge.copy` off segment C and therefore hashed the
+SAME 56 words. `step.rs:2718` gives segment D the instance's OWN wrap key and `:2725,2734` gives the
+inner hash the PREVIOUS branch's, so the two prefixes are two different keys and the chain tie has a
+premise: step `N+1` reconstructs step `N`'s squeeze **iff the key it absorbs as the previous
+branch's is step `N`'s own wrap key.** On an honest chain that is exactly what it is. Naming `key`
+here is what lets §18 state the tie at a key and the REFUSAL at a different one, instead of stating
+a `Nat` equality that happened to hold because one side had been copied from the other. -/
+def hmChainSpec (s : StepShape) (key : Nat → Nat → Nat) (app : Nat → Nat)
     (G0 : Nat × Nat) (ch0 : Nat → Nat) (G1 : Nat × Nat) (ch1 : Nat → Nat) : SegSpec :=
-  { ws := (List.range N_IDX_WORDS).map (fun i => (idxVar s (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
+  { ws := (List.range N_IDX_WORDS).map (fun i => (idxVar s (i / 2) (i % 2), key (i / 2) (i % 2)))
       ++ (List.range N_HM_APP).map (fun i => (vHm s i, app i))
       ++ [ (sgOldVar s 0 0, G0.1), (sgOldVar s 0 1, G0.2) ]
       ++ (List.range s.bRounds).map (fun k => (vPrevChal s k, ch0 k))
@@ -824,10 +834,11 @@ def hmChainSpec (s : StepShape) (app : Nat → Nat)
       ++ (List.range s.bRounds).map (fun k => (vPrevChal s (s.bRounds + k), ch1 k))
   , squeezes := 1, masked := true, maskFrom := N_HM_FIX / 2, keep := hmKeepAt s MASK_BITS }
 
-/-- Segment C's squeeze on chained inputs — step `N+1`'s reconstruction of step `N`'s statement. -/
-def hmChainDigest (s : StepShape) (app : Nat → Nat)
+/-- Segment C's squeeze on chained inputs — step `N+1`'s reconstruction of step `N`'s statement,
+under the `dlog_plonk_index` step `N+1` absorbs as the previous branch's (`step.rs:2725,2734`). -/
+def hmChainDigest (s : StepShape) (key : Nat → Nat → Nat) (app : Nat → Nat)
     (G0 : Nat × Nat) (ch0 : Nat → Nat) (G1 : Nat × Nat) (ch1 : Nat → Nat) : Nat :=
-  ((runSeg (hmChainSpec s app G0 ch0 G1 ch1)).states.getLastD []).getD 0 0
+  ((runSeg (hmChainSpec s key app G0 ch0 G1 ch1)).states.getLastD []).getD 0 0
 
 /-- Step `N`'s `old_bulletproof_challenges` — `finalize_other_proof`'s RETURNED vector
 (`step_main.ml:563-565`), which in this assembly is `vLift (uChal k)`. These are the words segment D
@@ -840,9 +851,9 @@ def chainSlot0 (_s : StepShape) (v : IpaData) : (Nat × Nat) × (Nat → Nat) :=
 
 /-- ⚑ The chained reconstruction under a SUPPLIED mask, so the `Wrap_hack`-dummy control in (e) can
 be run at `[1,1]` — the `N2` instance's own legal prefix mask — without restating the schedule. -/
-def hmChainDigestMask (s : StepShape) (ms : List Nat) (app : Nat → Nat)
+def hmChainDigestMask (s : StepShape) (ms : List Nat) (key : Nat → Nat → Nat) (app : Nat → Nat)
     (G0 : Nat × Nat) (ch0 : Nat → Nat) (G1 : Nat × Nat) (ch1 : Nat → Nat) : Nat :=
-  ((runSeg { hmChainSpec s app G0 ch0 G1 ch1 with keep := hmKeepAt s ms }).states.getLastD []).getD 0 0
+  ((runSeg { hmChainSpec s key app G0 ch0 G1 ch1 with keep := hmKeepAt s ms }).states.getLastD []).getD 0 0
 
 /-- Step `N`'s public word 7 as a function of the commitment in segment D's slot — §17(d)'s object,
 named here so the two sides of the tie are two named quantities. -/

@@ -838,7 +838,11 @@ def STEP_CIRCUIT : String := "{}"
 def STEP_ROWS : Nat := {}
 /-- Its public-input width. -/
 def STEP_PUBLIC : Nat := {}
-/-- `Max_proofs_verified.n` worth of recursion accumulators, so the tape's `sg_old` block is real. -/
+/-- ⚑ `actual_proofs_verified` worth of recursion accumulators, so the tape's `sg_old` block is
+real. ⚠ This line said `Max_proofs_verified.n` until 2026-08-07 and named the wrong quantity:
+`wrap.rs:666` sets `actual_proofs_verified` from the step record's own length, and `wrap.rs:729-737`
+pads a DIFFERENT list to `MAX_PROOFS_VERIFIED_N`. The two agreed only while `prove_step` folded two
+recursion challenges for a one-`verify_one` rule. -/
 def STEP_PREV_CHALLENGES : Nat := {}
 
 /-! ## The phase-1 Fq tape, in `kimchi/src/verifier.rs:159-273` order — which is the order
@@ -864,7 +868,7 @@ def STEP_VKDIGEST : Nat := {}
     ));
     l.push_str(&lean_nat_list(
         "STEP_PREVCOMM_XY",
-        "The 2 `RecursionChallenge` commitments, `(x,y)` each (`verifier.rs:165-168`; in-circuit `sg_old`, `wrap_verifier.ml:538`).",
+        "⚑ The `actual_proofs_verified` `RecursionChallenge` commitments, `(x,y)` each (`verifier.rs:165-168`; in-circuit `sg_old`, `wrap_verifier.ml:538`). ⚠ It was TWO until 2026-08-07, because `prove_step` padded where `step.rs:2848-2857` does not.",
         &prevcomm_xy,
     ));
     l.push_str(&lean_nat_list(

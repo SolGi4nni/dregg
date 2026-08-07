@@ -22,6 +22,7 @@ import Dregg2.Circuit.Emit.PastaPoseidon
 import Dregg2.Bridge.MinaWrapFtEval0
 import Dregg2.Bridge.TickShifts
 import Dregg2.Bridge.MinaStepPrevCommitments
+import Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey
 import Dregg2.Circuit.Emit.KimchiStepMainField
 import Dregg2.Circuit.Emit.PicklesStepStatement
 -- ⚑ `whPrevDigest` — packed statement words 55/56. `wrap_main.ml:340-348` COMPUTES them and
@@ -1044,14 +1045,20 @@ emitted an EXTRA `permBlockRows` here (`idxDigestRows`) and read `perm idxAfterS
 def vIdxD (s : StepShape) (j : Nat) : PVar :=
   xv (baseSegC s + 3 * (N_IDX_WORDS / 2) + j)
 
-/-- ⚑ Segment D — the **OUTER** `hash_messages_for_next_step_proof` (`step_main.ml:525-566`). It is
-a `Sponge.copy` of `sponge_after_index` (`step_verifier.ml:1162-1164`), so it re-absorbs NONE of the
-28 index commitments: its words are the app state and, per previous proof of THIS rule, the wrap
-proof's `opening.challenge_polynomial_commitment` (`:534`) followed by that proof's computed
+/-- ⚑ Segment D — the **OUTER** `hash_messages_for_next_step_proof` (`step_main.ml:525-566`). It
+runs its OWN `sponge_after_index` over **the instance's own wrap verification key** (`step.rs:2718`,
+`MinaWrapOwnVerifierKey`), then the app state and, per previous proof of THIS rule, the wrap proof's
+`opening.challenge_polynomial_commitment` (`:534`) followed by that proof's computed
 `bulletproof_challenges` (`:563-565`, unpadded). This file assembles ONE `verify_one`, so
-`V.f proofs_verified` (`:538`) is one slot. -/
+`V.f proofs_verified` (`:538`) is one slot.
+
+⚠ **THIS DOCSTRING SAID "a `Sponge.copy` of `sponge_after_index` … so it re-absorbs NONE of the 28
+index commitments" UNTIL 2026-08-07**, on a reading of `step_verifier.ml:1162-1164` that took the
+inner and outer hashes' `Sponge.copy after_index` for the same `after_index`. Both ARE
+`Sponge.copy after_index`; `after_index` is a function OF the index, and the two calls are handed
+different indices (`:2718` vs `:2725,2734`). See `idxOVar`. -/
 def baseSegD (s : StepShape) : Nat := baseSegC s + segVarCount (nbC s) 1
-def nbD (s : StepShape) : Nat := (N_HM_APP + 2 + s.bRounds + 1) / 2
+def nbD (s : StepShape) : Nat := (N_IDX_WORDS + N_HM_APP + 2 + s.bRounds + 1) / 2
 
 /-- The OUTER hash's own witnesses: its two app-state words (`step_main.ml:550-557` — the rule's
 OUTPUT state, a different object from the previous proof's `app_state` segment C absorbs) and the
@@ -1065,7 +1072,46 @@ absorbed by segment D, whose squeeze is the step statement's public `messages_fo
 ⚠ `check_bulletproof`'s `rhs` is still NOT emitted, so no row here relates `G` to the opening. -/
 def vGx (s : StepShape) : PVar := xv (baseOut s + N_HM_APP)
 def vGy (s : StepShape) : PVar := xv (baseOut s + N_HM_APP + 1)
-def N_OUT_VARS : Nat := N_HM_APP + 2
+
+/-! ### ⚑⚑ **THE OUTER `dlog_plonk_index` — A SECOND, DIFFERENT WRAP KEY.**
+
+`step.rs:2718`: `let dlog_plonk_index = w.exists (merge::dlog_plonk_index(wrap_prover))`, and
+`MessagesForNextStepProof::to_fields` (`messages.rs:160-205`) puts those 28 points FIRST, ahead of
+the app state. So the OUTER hash runs its own `sponge_after_index` over **the instance's own wrap
+verification key**. Only `expand_proof` — the INNER, `_opt` hash of `verify_one` — gets the
+PREVIOUS branch's (`:2725,2734`), and that is what `hmSpec`'s `idxVar` carries.
+
+⚠ **THIS FILE READ THE TWO AS ONE UNTIL 2026-08-07**, and the note that did it is worth keeping:
+segment D was a `Sponge.copy` off segment C's state after its 56 index words, on the strength of
+`step_verifier.ml:1164`/`:1178` both saying `Sponge.copy after_index`. Both DO — but `after_index`
+is a function OF the index, and the two calls are handed different indices. Copying segment C's
+made the step statement's published `messages_for_next_step_proof` a hash under Mina devnet block
+539508's `wrap-transaction` key, which is the previous branch's, not dregg's own.
+
+⚑ **AND THEY ARE `exists`'d, NOT PINNED — WHICH IS WHAT KEEPS THE TWO CIRCUITS STRATIFIED.**
+`idxConstRows` pins segment C's index as `Inner_curve.constant`; these get NO such row, because
+`w.exists` is what upstream does and because the wrap circuit ALREADY pins dregg's step key as a
+constant (`wrap_main.ml:98-101`, `KimchiWrapMainCore.keyConst`). Pin both and the two key equations
+close on each other over 28 curve points through two polynomial-commitment maps.
+`KimchiStepWrapChain.the_wrap_gates_carry_the_step_key_and_none_of_the_step_proofs_values` is the
+measurement, and the pass order it names is: step gates → step VK → wrap gates → wrap VK → THESE
+WITNESSES → step proof.
+
+⚠ They are therefore 56 cells no row of this assembly constrains, and that is upstream's shape
+rather than a shortfall here: nothing in `step_main` checks the step circuit's own wrap key. The
+binding is one rung out — `wrap_main.ml:350-351` ties this segment's squeeze to a PUBLIC word of
+the wrap proof, whose own `choose_key` and index sponge pin the key that produced it. -/
+
+/-- The variable segment D's `sponge_after_index` absorbs at coordinate `j` of index commitment
+`k` — dregg's OWN wrap key, `exists`'d. -/
+def idxOVar (s : StepShape) (k j : Nat) : PVar :=
+  xv (baseOut s + N_HM_APP + 2 + 2 * k + (if j == 0 then 0 else 1))
+/-- …and its VALUE, out of `MinaWrapOwnVerifierKey.INDEX_WORDS` — the flattened verifier index of
+the wrap circuit `pickles-wrapmain-harness` compiles and `pickles_kimchi_marshal` proves. -/
+def idxOVal (k j : Nat) : Nat :=
+  Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey.INDEX_WORDS.getD (2 * k + j) 0
+
+def N_OUT_VARS : Nat := N_HM_APP + 2 + N_IDX_WORDS
 
 -- ⚠ ⚑ **`G_XY` was DELETED 2026-08-03 (§19).** `G` was a fixture point (`GAMMA_XY[27]`) because
 -- nothing in the assembly related it to anything. §19's `rhs`/`equal_g` do relate it: `G` is now
@@ -4387,10 +4433,12 @@ def StepShape.optWords (s : StepShape) : Nat := 2 * s.bRounds
 (`sponge_after_index` + app state), then TWO `Opt`-masked runs of `(sg_old[i] ×2, that proof's
 `bRounds` carried challenges)` — interleaved per proof, `composition_types.ml:603-606`. -/
 def StepShape.hmWords (s : StepShape) : Nat := N_HM_FIX + 2 * (2 + s.bRounds)
-/-- The OUTER `hash_messages_for_next_step_proof`'s: app state, then ONE unmasked run of
-(`G` ×2, this step's `bRounds` computed bulletproof challenges). No index prefix — it is a
-`Sponge.copy` of `sponge_after_index` (`step_verifier.ml:1164`). -/
-def StepShape.hmOutWords (s : StepShape) : Nat := N_HM_APP + 2 + s.bRounds
+/-- The OUTER `hash_messages_for_next_step_proof`'s: **its OWN index prefix** (`step.rs:2718`,
+`messages.rs:160-205` — the instance's own wrap key, 56 coordinates, ahead of everything), the app
+state, then ONE unmasked run of (`G` ×2, this step's `bRounds` computed bulletproof challenges).
+⚠ It had no index prefix until 2026-08-07, on a reading of `step_verifier.ml:1164` that took the
+two hashes' `Sponge.copy after_index` for the SAME `after_index`; they are two indices. -/
+def StepShape.hmOutWords (s : StepShape) : Nat := N_IDX_WORDS + N_HM_APP + 2 + s.bRounds
 
 /-! ### §8h — `branch_data`'s `proofs_verified_mask`, UNPACKED.
 
@@ -4590,10 +4638,18 @@ Three things it is NOT, each read at source rather than assumed:
 
   * **NOT masked.** It is `hash_messages_for_next_step_proof`, not `…_opt` (`:547`), so there is no
     `proofs_verified_mask` and no `Opt_sponge` — every word is `Not_opt`.
-  * **NOT a re-absorption of the index.** Both hashes are `Sponge.copy after_index`
+  * ⚑⚑ **IT ABSORBS ITS OWN INDEX, AND IT IS A DIFFERENT KEY — CORRECTED 2026-08-07.** This bullet
+    read *"NOT a re-absorption of the index. Both hashes are `Sponge.copy after_index`
     (`step_verifier.ml:1164`, `:1178`), so segment D starts at segment C's OWN state after its 56
-    index words — the same copy §3c already models for `index_digest`. Its block-0 state lanes ARE
-    segment C's variables.
+    index words."* Both calls ARE `Sponge.copy after_index` — but `after_index` is a function of
+    the index, and the two are handed different ones. `step.rs:2718` gives the OUTER hash
+    `merge::dlog_plonk_index(wrap_prover)`, **the instance's own wrap key**; `expand_proof` gives
+    the inner one the PREVIOUS branch's (`:2725,2734`), and `MessagesForNextStepProof::to_fields`
+    (`messages.rs:160-205`) absorbs those 28 points ahead of everything else. So segment D is its
+    own sponge over `MinaWrapOwnVerifierKey`, and the copy that stood here published the step
+    statement's `messages_for_next_step_proof` under block 539508's key.
+    ⚠ The index words are `exists`'d witnesses, NOT `Inner_curve.constant` pins — see `idxOVar`
+    for why a pin would close a cycle rather than strengthen anything.
   * **NOT `prev_challenges`.** `old_bulletproof_challenges` here is `bulletproof_challenges`, the
     vector `finalize_other_proof` RETURNS (`step_verifier.ml:1114-1116,1147`,
     `compute_challenges ~scalar`), i.e. the deferred challenges the `b(ζ)` product folds over,
@@ -4605,13 +4661,13 @@ Three things it is NOT, each read at source rather than assumed:
 rule, unmasked and unpadded. This file assembles ONE `verify_one`, so segment D has ONE slot.
 (`StepMergeProof` and `StepBlockProof` have two; `StepZkappProvedProof` one.) -/
 def hmOutSpec (s : StepShape) (d : SpongeData) (G : Nat × Nat) : SegSpec :=
-  { ws := (List.range N_HM_APP).map (fun i => (vHmO s i, hmOVal i))
+  { ws := (List.range N_IDX_WORDS).map (fun i =>
+            (idxOVar s (i / 2) (i % 2), idxOVal (i / 2) (i % 2)))
+      ++ (List.range N_HM_APP).map (fun i => (vHmO s i, hmOVal i))
       ++ [ (vGx s, G.1), (vGy s, G.2) ]
       ++ (List.range s.bRounds).map (fun k =>
           (vLift s (s.uChal k), liftOf s d (s.uChal k)))
-  , squeezes := 1, masked := false
-  , copyFrom := some (fun j => sgSt (baseSegC s) (nbC s) 1 (N_IDX_WORDS / 2) j)
-  , init := idxAfterState }
+  , squeezes := 1, masked := false }
 
 /-- ⚑ **The step statement's `messages_for_next_step_proof`** (`step_main.ml:572-575`) — segment D's
 squeeze, and the word `G` moves. -/
@@ -5705,9 +5761,12 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let bp := runBp tSq cipV bSh BP_Z1_VAL BP_Z2_VAL gA lhsPt
   let ver : Nat := bp.ver
   let specC := hmSpec s ipa
-  -- ⚑ segment D copies `sponge_after_index` (`step_verifier.ml:1164`), so it does not depend on
-  -- segment C's own trajectory past the index prefix — the two hashes are SIBLINGS off one copy,
-  -- not a chain.
+  -- ⚑ segment D runs its OWN `sponge_after_index` over the instance's own wrap key
+  -- (`step.rs:2718`), so it does not depend on segment C's trajectory AT ALL — the two hashes are
+  -- SIBLINGS over two different indices, not a chain and not one copy.
+  -- ⚠ This comment said "copies `sponge_after_index` … SIBLINGS off one copy" until 2026-08-07.
+  -- The independence it claimed is real; the reason it gave for it was the wrong one, and that
+  -- reason is what made segment D's block-0 state lanes segment C's variables.
   let specD := hmOutSpec s sp gA
   let fin := runFin s sp ft df segB specB (defc.lift s 1) ver
   let segC := runSeg specC
@@ -5932,8 +5991,11 @@ def circuitEnv (t : StepData) : VarEnv :=
   -- R7: the three sponge segments, `sponge_after_index`'s own pinned commitments and its squeeze,
   -- and the two APP-STATE words that are all that is left of the old fixture prefix (§3c).
   ++ (List.range N_HM_APP).map (fun i => (vHm s i, (hmVal i : Int)))
-  -- ⚑ the OUTER hash's own witnesses: its app-state words and `G`, the previous proof's
+  -- ⚑ the OUTER hash's own witnesses: its OWN `dlog_plonk_index` (`step.rs:2718` — dregg's wrap
+  -- key, `exists`'d, 56 coordinates), its app-state words and `G`, the previous proof's
   -- `opening.challenge_polynomial_commitment` (`step_main.ml:534`).
+  ++ (List.range N_IDX_WORDS).map (fun i =>
+       (idxOVar s (i / 2) (i % 2), (idxOVal (i / 2) (i % 2) : Int)))
   ++ (List.range N_HM_APP).map (fun i => (vHmO s i, (hmOVal i : Int)))
   ++ [ (vGx s, (t.gXY.1 : Int)), (vGy s, (t.gXY.2 : Int)) ]
   -- ⚑ §19: `group_map`'s cells, the four `scale_fast2` ladders, `H`, `G + b_u`, `rhs`, the two free

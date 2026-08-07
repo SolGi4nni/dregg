@@ -1,11 +1,12 @@
-//! ⚑⚑⚑ **SLOT 12 IS AN ARITY, AND THIS BINARY IS THE MEASUREMENT THAT SAYS WHICH SIDE HAS IT
-//! WRONG.** Does openmina's own `MessagesForNextStepProof::hash()` reproduce segment D's squeeze
-//! when it is handed segment D's OWN preimage — 56 index coordinates, `N_HM_APP = 2` app-state
-//! words, **ONE** `[Gx; Gy]`, `bRounds = 16` lifts?
+//! ⚑⚑⚑ **SLOT 12 WAS THREE GAPS. TWO ARE CLOSED; THIS BINARY IS WHERE THE THIRD IS READ.**
 //!
-//! **It does, to the digit.** So there is no VALUE gap at slot 12 and never was: this tree's model
+//! Does openmina's own `MessagesForNextStepProof::hash()` reproduce segment D's squeeze when it is
+//! handed segment D's OWN preimage — 56 index coordinates, `N_HM_APP = 2` app-state words, **ONE**
+//! `[Gx; Gy]`, `bRounds = 16` lifts?
+//!
+//! **It does, to the digit.** So there is no SPONGE gap at slot 12 and never was: this tree's model
 //! of `hash_messages_for_next_step_proof` and Mina's own hasher agree on the same preimage. What
-//! disagrees is the SHAPE the extractor hands it, and upstream settles that shape three times:
+//! disagreed is what each side FILLS that preimage with, and upstream settles the shape three times:
 //!
 //!   * `step.rs:2848-2857` — `MessagesForNextStepProof { app_state: Rc::clone(&app_state), …,
 //!     challenge_polynomial_commitments: prevs.iter().map(|v| … .sg).collect(),
@@ -22,13 +23,25 @@
 //!     construction, and `step.rs:2676-2679` says so outright (2 for block/merge, **1 for zkapp
 //!     with proof authorization, 0 otherwise**).
 //!
-//! ⚠ **AND ONE GAP RUNS THE OTHER WAY, WHICH IS WHY ALIGNING THE ARITY ALONE WILL NOT CLOSE SLOT
-//! 12.** `step.rs:2718` — `let dlog_plonk_index = w.exists(merge::dlog_plonk_index(wrap_prover))` —
-//! makes the OUTER hash's index **the instance's own wrap verification key**, while each
-//! `expand_proof` gets the previous branch's (`:2725,2734`). Segment D absorbs
-//! `MinaStepPrevCommitments.INDEX_XY`, which is Mina devnet block 539508's wrap key: right for
-//! segment C, wrong for segment D. The `[gate C control]` line in `pickles_kimchi_marshal` already
-//! shows the step hash MOVES when one index point moves, so this is not a rounding difference.
+//! ⚑ **THE INDEX GAP THAT RAN THE OTHER WAY IS CLOSED (2026-08-07).** `step.rs:2718` —
+//! `let dlog_plonk_index = w.exists(merge::dlog_plonk_index(wrap_prover))` — makes the OUTER hash's
+//! index **the instance's own wrap verification key**, while each `expand_proof` gets the previous
+//! branch's (`:2725,2734`). Segment D absorbed `MinaStepPrevCommitments.INDEX_XY` — Mina devnet
+//! block 539508's wrap key, right for segment C and wrong for segment D — because `hmOutSpec` was a
+//! `Sponge.copy` off segment C's post-index state. It now absorbs its own 56 coordinates out of
+//! `MinaWrapOwnVerifierKey`, which is what [`wrap_own_index_words`] reads, and the step circuit
+//! grew 10 349 → 10 715 rows for them (still inside `2 ^ 14`).
+//!
+//! ⚠ **AND THE ARITY IS CLOSED TOO**, in `marshal::STEP_RECURSION_SLOTS`: `prove_step` folds ONE
+//! Tick recursion challenge and `gate_c` reports `MATCH=true`.
+//!
+//! ⚠⚠ **WHAT IS STILL OPEN, AND THIS PROBE IS WHERE TO READ IT.** The two sides now agree on the
+//! index, on the app state and on the ARITY, and they still differ on WHICH VALUES fill the one
+//! remaining slot. Segment D absorbs the step assembly's own `G` (`solveG`'s output, `§19`) and its
+//! own sixteen `to_field_checked` lifts; the wire record the extractor marshals carries the WRAP
+//! proof's recursion-slot commitment and the STEP proof's own recursion prechallenges. Those are
+//! different numbers, so `gate_c`'s digest and this file's digest are different — and the control
+//! at the bottom is what shows the difference is exactly those two fields and nothing else.
 //!
 //! RUN: `cargo run --release --bin segd_slot12_probe` (from this crate).
 
@@ -43,8 +56,9 @@ fn f(s: &str) -> Fp {
 }
 
 /// ⚑ **THE STEP STATEMENT'S PUBLISHED WORD 54, READ OUT OF THE TRACKED LEAN FIXTURE — NOT COPIED
-/// HERE.** `SEGD_WORDS` and `INDEX_XY` below ARE a snapshot of the assembly's value layer, and a
-/// snapshot is exactly the shape that drifts silently. This read is what makes the drift LOUD: the
+/// HERE.** `SEGD_WORDS` below IS a snapshot of the assembly's value layer, and a
+/// snapshot is exactly the shape that drifts silently. (The 56 index words stopped being a snapshot
+/// on 2026-08-07 — [`wrap_own_index_words`] reads them out of the tracked module.) This read is what makes the drift LOUD: the
 /// digest this binary recomputes is compared against `KimchiStepWrapChainFixture.STEP_PUBLIC_IN`'s
 /// entry 64 (`wrap_verifier.ml:542-548` expands packed word 54 into entry 64), so if the step
 /// assembly moves and this file is not re-snapshotted, the run REFUSES instead of agreeing with its
@@ -73,11 +87,60 @@ fn step_statement_word_54() -> Fp {
     f(entries[64])
 }
 
+/// ⚑⚑ **THE 56 INDEX COORDINATES, READ OUT OF THE TRACKED LEAN MODULE — NOT SNAPSHOTTED HERE.**
+///
+/// `MinaWrapOwnVerifierKey.INDEX_WORDS` is what `KimchiStepMainCore.idxOVal` feeds segment D, and
+/// it is written by `gates::wrap_own_vk_lean` out of `vk_evals_of_wrap_index(wrap_index)` in
+/// `pickles_kimchi_marshal`. Reading it here rather than pasting it makes this probe a measurement
+/// OF the installed assembly: re-emit the wrap circuit without re-installing the module and the two
+/// sides come apart, and this run REFUSES instead of agreeing with a stale paste.
+///
+/// ⚠ This file carried a 56-entry `INDEX_XY` const until 2026-08-07, and it held Mina devnet block
+/// 539508's `wrap-transaction` key — segment C's index, which is what segment D absorbed back when
+/// it was a `Sponge.copy` of segment C.
+fn wrap_own_index_words() -> Vec<Fp> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../Dregg2/Circuit/Emit/MinaWrapOwnVerifierKey.lean"
+    );
+    let src = std::fs::read_to_string(path).expect("the installed wrap-own-vk module");
+    let at = src
+        .find("def INDEX_WORDS")
+        .expect("INDEX_WORDS in MinaWrapOwnVerifierKey");
+    let open = src[at..].find('[').expect("its list literal") + at;
+    let close = src[open..].find(']').expect("its closing bracket") + open;
+    let words: Vec<Fp> = src[open + 1..close]
+        .split(',')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .map(f)
+        .collect();
+    assert_eq!(
+        words.len(),
+        56,
+        "a `PlonkVerificationKeyEvals` is 28 points, i.e. 56 coordinates"
+    );
+    words
+}
+
+/// The PREVIOUS branch's `dlog_plonk_index`, EVALUATED — Mina devnet block 539508's
+/// `wrap-transaction` key, i.e. `Dregg2.Bridge.MinaStepPrevCommitments.INDEX_WORDS`. That module
+/// COMPUTES its list out of `COMBINE_XY` and `MinaWrapGroupGate.SIGMA6` rather than writing it, so
+/// this cannot be a read the way [`wrap_own_index_words`] is; it is a snapshot of a THIRD PARTY'S
+/// key at a named block, which is the one kind of constant that does not drift under us.
+///
+/// It is here only as CONTROL 2's input: segment D must NOT hash under it. It is what segment D DID
+/// hash under until 2026-08-07, when `hmOutSpec` was a `Sponge.copy` off segment C.
+fn prev_branch_index_words() -> Vec<Fp> {
+    let w: Vec<Fp> = PREV_BRANCH_INDEX_XY.iter().map(|t| f(t)).collect();
+    assert_eq!(w.len(), 56, "28 points, 56 coordinates");
+    w
+}
+
 fn main() {
     // ── the 56 index coordinates, in `to_fields` order: sigma[0..7], coefficients[0..15],
     //    generic, psm, complete_add, mul, emul, endomul_scalar ──
-    let idx: Vec<Fp> = INDEX_XY.iter().map(|s| f(s)).collect();
-    assert_eq!(idx.len(), 56);
+    let idx: Vec<Fp> = wrap_own_index_words();
     let pt = |k: usize| InnerCurve::<Fp>::of_affine(make_group(idx[2 * k], idx[2 * k + 1]));
     let vk = PlonkVerificationKeyEvals::<Fp> {
         sigma: std::array::from_fn(pt),
@@ -122,8 +185,9 @@ fn main() {
         want,
         f(LEAN_DIGEST),
         "the step statement's published word 54 has MOVED away from this file's snapshot of \
-         segment D's preimage. Re-snapshot SEGD_WORDS/INDEX_XY from \
-         `KimchiStepMainCore.hmOutSpec` rather than trusting this run."
+         segment D's preimage. Re-snapshot SEGD_WORDS from \
+         `KimchiStepMainCore.hmOutSpec` (`metatheory/wip/SegDPreimage.lean` prints it) rather than \
+         trusting this run."
     );
     println!("openmina hash over segment D's preimage : {got}");
     println!("segment D's own squeeze (word 54)       : {want}");
@@ -134,7 +198,10 @@ fn main() {
          on segment D's preimage — that would be a VALUE gap, which slot 12 has never had"
     );
 
-    // ── and the CONTROL: the shape the extractor uses today — `app_state = ()`, two slots ──
+    // ── CONTROL 1: the shape the extractor used before 2026-08-07 — `app_state = ()`, TWO slots.
+    //    Both of those are repaired now (`gates::STEP_RULE_APP_STATE`, `STEP_RECURSION_SLOTS`), so
+    //    this is history rather than a live gap; it stays because a control that can no longer be
+    //    reached is how a repair silently un-lands.
     let msg0 = MessagesForNextStepProof {
         app_state: &(),
         dlog_plonk_index: &vk,
@@ -142,12 +209,46 @@ fn main() {
         old_bulletproof_challenges: vec![chals, chals],
     };
     let got0 = Fp::from_bigint(BigInteger256::new(msg0.hash())).unwrap();
-    println!("same preimage at the extractor's arity  : {got0}");
+    println!("same preimage at the OLD arity/app-state: {got0}");
     println!("CONTROL DIFFERS: {}", got0 != want);
+    assert_ne!(
+        got0, want,
+        "the pre-repair shape must not reproduce word 54"
+    );
+
+    // ── CONTROL 2: ⚑ THE ONE THAT IS STILL LIVE. Same index, same app state, same arity — and the
+    //    previous branch's key instead of dregg's own. This is the gap segment D's own index closed,
+    //    and it must still MOVE the digest, or absorbing the right key bought nothing.
+    let prevk: Vec<Fp> = prev_branch_index_words();
+    let ppt = |k: usize| InnerCurve::<Fp>::of_affine(make_group(prevk[2 * k], prevk[2 * k + 1]));
+    let vk_prev = PlonkVerificationKeyEvals::<Fp> {
+        sigma: std::array::from_fn(ppt),
+        coefficients: std::array::from_fn(|i| ppt(7 + i)),
+        generic: ppt(22),
+        psm: ppt(23),
+        complete_add: ppt(24),
+        mul: ppt(25),
+        emul: ppt(26),
+        endomul_scalar: ppt(27),
+    };
+    let msg1 = MessagesForNextStepProof {
+        app_state: &app_state,
+        dlog_plonk_index: &vk_prev,
+        challenge_polynomial_commitments: vec![g.clone()],
+        old_bulletproof_challenges: vec![chals],
+    };
+    let got1 = Fp::from_bigint(BigInteger256::new(msg1.hash())).unwrap();
+    println!("same preimage under the PREVIOUS branch's key: {got1}");
+    println!("KEY IS LOAD-BEARING: {}", got1 != want);
+    assert_ne!(
+        got1, want,
+        "segment D's squeeze did not move when the absorbed wrap key was swapped for the previous \
+         branch's — then absorbing the instance's own key is not what this digest is about"
+    );
 }
 
 const LEAN_DIGEST: &str =
-    "9526386755603608673681358385551766478316159952262318482670480884679514589805";
+    "12050182178576971049813971198188121605941048571897685942524995475420733365304";
 
 const SEGD_WORDS: [&str; 20] = [
     "23",
@@ -172,7 +273,9 @@ const SEGD_WORDS: [&str; 20] = [
     "23100719878972830622576231631500939470045160573100007690092904626774477171434",
 ];
 
-const INDEX_XY: [&str; 56] = [
+/// Mina devnet block 539508's `wrap-transaction` verification key, 56 coordinates. See
+/// [`prev_branch_index_words`].
+const PREV_BRANCH_INDEX_XY: [&str; 56] = [
     "10238517694385979400441067096422230638797003193155225134939062071676615297964",
     "3900210177105842176653843375981629413475496388856003483451534127124171623991",
     "15745569438365094165820543421253218295900016638241048359684559871986848996300",
