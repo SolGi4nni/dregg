@@ -1,5 +1,40 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 7 — a malformed signature wire was an honest REJECT, on all four verify paths
+
+`d62ec21d7`. The class `a02306c5e` closed on the admission oracle was still open on every signature
+wire: `dregg_fips204_verify`, `dregg_fips204_verify_real` and `dregg_grain_r3_verify` rendered an
+unreadable wire as `"0"` — **the same value as an honest REJECT** — and a fourth the hunt found,
+`dregg_fips204_sign`, rendered `"REJECT"`, the honest Fiat–Shamir resample. `dregg-lean-ffi/src/lib.rs:715`
+had documented it in its own words for weeks: *"`0` (reject; also the fail-closed answer for a
+malformed wire)"*.
+
+**21 negative assertion sites across 5 files were vacuous** — 44 executions in
+`r3_width_falsification.rs` alone. Two were worse than blind: `ml_dsa_sign_core` was
+`Option<Option<String>>` and treated **every** non-`"REJECT"` string as signature bytes, so a
+malformed wire's own error code would have been shipped onward AS A SIGNATURE; and the unit test's
+mock **carried the collision itself** (`_ => "0"`, `_ => "REJECT"`), faithfully reproducing the bug it
+was meant to catch. The scalar parser was also `filterMap`, so a bad token was silently DROPPED and
+the survivors shifted into a five-int alignment.
+
+Repaired in the type, as before: `Except FWireFault` / `Except R3WireFault` parsers; `malformed`
+constructors that are **not** verdicts, so `verifyCore`/`signCore` have no way to reach them; the
+fault-forgetting `.toOption` views DELETED. Both poles kernel-proved on every wire and verdict
+(`*_eq_reject_iff`, `*_malformed_iff`, `render*_ne_malformed`), with 36 concrete values **`#eval`-measured,
+not predicted** — the first draft mispredicted `scalarArity` where the `mapM`-first parse gives
+`scalarToken`, the same correction the admission lane had to make.
+
+⚠ Honest label, in both files: the *concrete* values are `native_decide` (`String.splitOn`/`mapM` do
+not reduce in the kernel); the *general* facts are ordinary kernel proofs.
+
+**FLAG DAY:** the four output alphabets gain `"2 <fault>"` and the sign reply is retagged
+`"1 c̃ z h"` / `"0"`. **`libdregg_lean.a` must be rebuilt.** Nothing re-genesises.
+
+⚑ Not mine, still red: `check-guard-discipline.py --rev d62ec21d7` on
+`Dregg2/Circuit/Emit/KimchiStepMainPins08.lean: 72 → 73` — `8015b6f07` landed a guard without
+retiring its baseline row.
+
+
 ## ⛑⛑⛑⛑ AUGUST 7 — judged Signal could be PLAYED but nothing REQUIRED it, and the Lean boundary only ever scored a ONE-ROUND game
 
 `86786886d`, `1eda4187d`. The judged session landed on the 6th and made deduction possible:
